@@ -5483,3 +5483,26 @@ Five reports in one beta push, each built and mutation-checked by a parallel age
   GUILD_INGAME_NAME. Byte-identical for Wolf Pack (neither env name is set on
   Vercel). Left: `web/lib/funLdAuth.ts` still carries a hard-coded character name
   (a logic bug too — it checks one fixed character, not the card's) — follow-up.
+
+### 🧾 2026-10-07 evening — the guild lead's three picks, FB-62/63 (agent 3.7.98)
+The guild lead picked A for all three open choices (DECISIONS-2026-09-21.md §178, on the main-bound branch).
+- **FB-56 — bard mana slot counts what mana buys.** A bard's mana arc/bar keeps filling with mana but its
+  label reads `DIRGE n · FM n · CHARM n` (Dirge from the gems, Fading Memories assumed at 60+, charm when a
+  charm song is memorized); nothing to count → `MANA nn%`. The ring label is now fitted to its arc.
+  `test/me-bard-counts.test.js`.
+- **FB-57 — the Melody AE chip only on area songs.** The agent registers the `⚔n/12` counter only for songs
+  the catalog marks `ae` — and only once a catalog carrying the flag is loaded, so until bot 3.1.217 reaches
+  `main` beta behaves as before.
+- **Overlay height floor (FB-16).** A hand-dragged height is the overlay's floor; content grows above it,
+  never shrinks below; right-click ✥ → "Fit height to content" clears it. `test/mimic-height-floor.test.js`.
+- **FB-62 — DI tick only when DI is memorized and ready.** The CH chain's DI chips read the cleric's spell
+  bar (Zeal gems): ✓ only for memorized and off recast, a countdown on recast, grey "?" when unknown — never
+  a tick by default. A cleric whose bar lacks DI is left out. Other clerics' bars ride live-state `di_mem`
+  through the bot (3.1.218, migration applied); until that reaches `main` they show "?".
+- **FB-63 — a corpse no longer shows another fight.** Target Info's "last fight" section shows only when
+  the corpse is the fought mob's own; a player's corpse reads "corpse of <owner>". The alpha Canvas's
+  last-fight piece gets it by sync.
+- **Name fix:** the version-floor help text and a tells comment named a member; now "the guild lead".
+- **Alpha (FB-64):** the HUD ring "as pieces" is one ring of ten arc pieces on the shared circle
+  (`fc18eaa1`, new "Ring arc" piece mode). The beta→alpha sync failed twice today on me.html/preload.js;
+  it was resolved by hand (`27608cd8`), keeping the alpha's Canvas path in the HUD builder close.

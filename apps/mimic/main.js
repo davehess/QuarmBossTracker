@@ -3961,6 +3961,84 @@ function _persistBounds(key, win) {
   clearTimeout(_boundsSaveTimers[key]);
   _boundsSaveTimers[key] = setTimeout(() => { _boundsSaveTimers[key] = null; _writeBounds(key, win); }, 400);
 }
+
+// ── Height floor (FB-16 — the guild lead's pick: "a dragged height becomes a
+// floor; content only grows above it", 2026-10-07) ───────────────────────────
+// A beta tester: "i want them tiny and they are goliath". A fitting overlay sets
+// its own height to its content in BOTH directions (overlay-auto-height), so a
+// height the user dragged to never stuck: a drag below the content grew back at
+// the next content change, a drag above it shrank back. Now the drag is recorded
+// as a FLOOR and the fit sizes the window to max(content, floor): content grows
+// the window above the floor, and shrinking content returns it to the floor,
+// never below. No floor = exactly the old behaviour.
+// - Only a USER resize writes it. 'will-resize' is Electron's manual-resize event
+//   (Windows/macOS) and setBounds never fires it, so a fit, the right-click menu's
+//   borrowed height (overlay-ensure-min-height), a scale glide and every other
+//   programmatic move leave the floor alone.
+// - Stored UNSCALED, in the page's CSS px: painted height ÷ zoom, minus the setup
+//   bar's chrome while that is up. A scale change or setup mode then re-derives
+//   the window from it instead of baking itself into it.
+// - Stored beside the saved bounds (`<boundsKey>Floor` = { h, sig }) and honoured
+//   only on the screen setup it was set on, the way the bounds are (_resolveBounds).
+// - A width-only drag is not a height choice, and a page that sizes its own window
+//   (the Me overlay's HUD ring, overlay-set-bounds) is not a fitting window: neither
+//   records one. Only a window whose page has asked for a fit (__wpHeightMode)
+//   can have a floor, so a HUD-sized drag cannot come back as a goliath card.
+// - ↕ Fit height to content (overlay-fit-height, in the right-click menu) deletes it.
+// The window asks its page for one fresh fit when a floor is set or cleared
+// ('wp-refit', handled in preload.js): a page that only asks for a height when its
+// HTML changes would otherwise sit at the old size until something on it changed.
+const _SETUP_CHROME_PX = 104;
+function _setupChromeFor(win) {
+  try { return (setupMode || _singleSetupWins.has(win.webContents.id)) ? _SETUP_CHROME_PX : 0; } catch { return 0; }
+}
+// The floor in CSS px for this window, or 0. Cached on the window: a fit asks on
+// every page tick and the config read is a file read.
+function _heightFloorFor(win) {
+  try {
+    if (win.__wpFloor === undefined) {
+      const key = _boundsKeyForWindow(win);
+      win.__wpFloor = (key && loadConfig()[key + 'Floor']) || null;
+    }
+    const f = win.__wpFloor;
+    return (f && f.h > 0 && f.sig === _screenSignature()) ? f.h : 0;
+  } catch { return 0; }
+}
+function _setFloor(win, key, h) {
+  const cfg = loadConfig();
+  if (h > 0) cfg[key + 'Floor'] = { h, sig: _screenSignature() };
+  else delete cfg[key + 'Floor'];
+  saveConfig(cfg);
+  win.__wpFloor = h > 0 ? cfg[key + 'Floor'] : null;
+}
+// A drag ends when 'will-resize' has been quiet for 400 ms (the bounds save's
+// debounce). startH is the height before the gesture's first step: a drag that
+// left the height where it was (an edge pulled sideways) sets no floor.
+function _noteUserResize(win, nb) {
+  try {
+    if (!nb || win.__wpHeightMode !== 'fit' || !_boundsKeyForWindow(win)) return;
+    const g = win.__wpResizeGesture || (win.__wpResizeGesture = { startH: win.getBounds().height, lastH: 0, timer: null });
+    g.lastH = nb.height;
+    clearTimeout(g.timer);
+    g.timer = setTimeout(() => _commitFloor(win, true), 400);
+  } catch { /* a resize event must never throw into Electron */ }
+}
+function _commitFloor(win, askRefit) {
+  const g = win.__wpResizeGesture;
+  if (!g) return;
+  clearTimeout(g.timer);
+  win.__wpResizeGesture = null;
+  try {
+    const key = _boundsKeyForWindow(win);
+    if (!key || win.isDestroyed() || Math.abs(g.lastH - g.startH) <= 2) return;
+    const z = win.webContents.getZoomFactor() || 1;
+    _setFloor(win, key, Math.max(50, Math.round((g.lastH - _setupChromeFor(win)) / z * 100) / 100));
+    if (askRefit) win.webContents.send('wp-refit');
+  } catch { /* best effort */ }
+}
+// ✕ inside the 400 ms: keep the floor the same way _flushBounds keeps the bounds.
+function _flushFloor(win) { if (win && win.__wpResizeGesture) _commitFloor(win, false); }
+
 // Save a window's pending bounds NOW. ✕ destroys the window
 // (_reapDisabledOverlays) and the debounced save above would read getBounds()
 // on a window that is gone, which throws into its own catch: a resize in the
@@ -6754,6 +6832,7 @@ function _reapDisabledOverlays() {
     // Save a resize made in the last 400 ms before the window goes (the debounced
     // save would otherwise read a destroyed window and lose it).
     try { _flushBounds(_boundsKeyForEntry(e.key, win), win); } catch { /* best effort */ }
+    try { _flushFloor(win); } catch { /* best effort */ }   // a height dragged in the last 400 ms is a floor too
     // Let go BEFORE destroying: destroy() emits 'closed', and _forgetClosedOverlay
     // (the catch for outside closes) must find this window already released, or
     // every deliberate free would also be logged as an accident.
@@ -6797,6 +6876,9 @@ function applyAllVisibility() {
 // creator has to remember to wire its own 'closed' (none of the eighteen did).
 app.on('browser-window-created', (_e, win) => {
   try { win.once('closed', () => _forgetClosedOverlay(win)); } catch (e) { void e; }
+  // A hand-dragged height becomes that overlay's floor (see "Height floor" above).
+  // Windows that are not overlays resolve no bounds key and fall straight through.
+  try { win.on('will-resize', (_ev, newBounds) => _noteUserResize(win, newBounds)); } catch (e) { void e; }
 });
 
 // ── Hide-all-overlays toggle ────────────────────────────────────────────────
@@ -8312,6 +8394,7 @@ ipcMain.handle('overlay-set-bounds', (e, b) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed() || !b) return false;
+    win.__wpHeightMode = 'page';   // the page sizes its own window now: a drag is not a height floor
     const wa = screen.getDisplayMatching(win.getBounds()).workArea;
     const width  = Math.max(200, Math.min(wa.width,  Math.round(+b.width  || 0)));
     const height = Math.max(90,  Math.min(wa.height, Math.round(+b.height || 0)));
@@ -8339,8 +8422,16 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
+    win.__wpHeightMode = 'fit';   // this page fits its window: a drag can set a height floor
+    // ↕ Fit height to content asks for an exact fit, once (see overlay-fit-height).
+    const fitNow = (Date.now() - (win.__wpFitNowAt || 0)) < 3000;
+    win.__wpFitNowAt = 0;
     let wanted = Math.max(50, Math.round(+h || 0));
     if (!wanted) return false;
+    // The height the user dragged this overlay to is a floor (see "Height floor"):
+    // content grows the window above it, and shrinking content stops there.
+    // Compared in CSS px, before the zoom multiply, because the floor is stored unscaled.
+    wanted = Math.round(Math.max(wanted, _heightFloorFor(win)));
     // Setup chrome allowance: overlays measure #wrap.scrollHeight, which has
     // never included the setup bar — and now that the bar is position:fixed
     // with #wrap pushed 102 painted px down (preload counter-zoom CSS), a
@@ -8349,10 +8440,7 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
     // shrinking to type 3). Added BEFORE the zoom multiply? No — the chrome
     // counter-zooms to a constant painted size, so it is added after, in
     // painted px (see below).
-    let setupChrome = 0;
-    try {
-      if (setupMode || _singleSetupWins.has(win.webContents.id)) setupChrome = 104;
-    } catch {}
+    const setupChrome = _setupChromeFor(win);
     // h is measured in CSS px inside the page; with an overlay scale
     // (zoomFactor) the PAINTED height is h × zoom. Size the window in the
     // painted unit or every auto-height overlay clips at scale > 100%.
@@ -8368,10 +8456,11 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
     // Don't bounce on tiny pixel-rounding deltas (Chromium font metrics jitter
     // by ±1 between paints); 4 px hysteresis is the sweet spot. Also ignore
     // shrinks smaller than 12 px — a card collapsing for one tick (e.g. a
-    // re-render between data fetches) shouldn't snap the window down.
+    // re-render between data fetches) shouldn't snap the window down — except
+    // right after ↕ Fit height to content, which is asking for exactly that.
     const delta = target - bounds.height;
     if (Math.abs(delta) < 4) return true;
-    if (delta < 0 && delta > -12) return true;
+    if (delta < 0 && delta > -12 && !fitNow) return true;
     // Grow-upward mode (a member, 2026-07-11, asked for Extended Target): the
     // BOTTOM edge stays anchored and the top moves — for overlays parked
     // near the bottom of the screen, where growing downward runs off-screen.
@@ -8582,6 +8671,25 @@ ipcMain.handle('overlay-menu-closed', (e, keepRoom) => {
     win.__wpPreMenuBounds = null;
     if (!_atLoan(b, s)) return false;
     win.setBounds({ x: b.x, y: b.y + (s.y - s.grownY), width: b.width, height: s.height });
+    return true;
+  } catch { return false; }
+});
+
+// ↕ Fit height to content (the right-click menu): forget the height this overlay
+// was dragged to and size it to its content again — the way back from a height
+// floor (see "Height floor"). The page is asked for one fresh fit rather than
+// waited on: most only report a height when their HTML changes. Runs before the
+// menu's own overlay-menu-closed, which hands back the borrowed height first.
+ipcMain.handle('overlay-fit-height', (e) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win || win.isDestroyed()) return false;
+    const key = _boundsKeyForWindow(win);
+    if (!key) return false;
+    win.__wpResizeGesture = null;   // a drag still settling must not set the floor back
+    _setFloor(win, key, 0);
+    win.__wpFitNowAt = Date.now();  // overlay-auto-height: take the next fit exactly, however small the shrink
+    win.webContents.send('wp-refit');
     return true;
   } catch { return false; }
 });

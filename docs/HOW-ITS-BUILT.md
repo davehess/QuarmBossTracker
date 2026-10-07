@@ -2636,10 +2636,32 @@ for every page, since most only ask for a height when their HTML changes. The
 two Setup entries keep the room (`keepRoom`). (2) The setup bar's 104 px, added
 by `overlay-auto-height` while setting up — still saved with the window; same
 class, not yet handled. `_flushBounds` saves pending bounds before ✕ frees the
-window. Height itself follows content on every auto-height overlay (a drag
-below content grows back at the next content change; a drag above it shrinks
-back) — that is by design, and a user-kept height is an open question for the
-guild lead. `test/mimic-menu-grow-loan.test.js`.
+window. Height itself followed content in both directions on every
+auto-height overlay until the height floor below. `test/mimic-menu-grow-loan.test.js`.
+
+**A dragged height is a floor (mimic, beta, 2026-10-07; FB-16 — the guild lead's
+pick: "a dragged height becomes a floor; content only grows above it").**
+`overlay-auto-height` sizes the window to `max(content, floor)`, so content grows
+it above the floor and shrinking content returns it to the floor, never below;
+with no floor it is exactly the old fit. The floor is the height the user last
+dragged to, recorded when Electron's `will-resize` (manual resizes only —
+`setBounds` never fires it, so a fit, the menu's loan and a scale glide cannot
+write one) has been quiet for 400 ms: `_noteUserResize` / `_commitFloor`, hooked
+once on `browser-window-created` for every window and resolved to an overlay by
+`_boundsKeyForWindow`. It is stored UNSCALED — `(painted height − 104 px setup
+chrome) ÷ zoom` — as `cfg.<boundsKey>Floor = { h, sig }` beside the saved bounds,
+and honoured only on the screen setup (`sig`) it was set on, so a scale change or
+setup mode re-derives the window from it instead of baking itself in. Only a
+window whose page has asked for a fit can have one (`win.__wpHeightMode`, set by
+`overlay-auto-height`; `overlay-set-bounds` sets it to `'page'`, which keeps the
+Me HUD ring's drags from coming back as a tall card), and a width-only drag
+records none. After a floor is set or cleared main sends `wp-refit` and
+`preload.js` replays the page's last fit (`_wpLastFitWasRaw` / `_wpLastRawH`),
+because Command Center, Target Info at rest, pets and melody only report a
+height when their HTML changes. **To clear it:** right-click ✥ → **↕ Fit height
+to content** (`overlay-fit-height`: deletes the floor and fits exactly, even a
+shrink under the usual 12 px). The XS–XL presets change the width only and leave
+the floor alone. `test/mimic-height-floor.test.js`.
 
 ---
 

@@ -335,12 +335,14 @@
      seconds-under-fire (a member, 2026-07-06: "we should see their percentage"). */
   .offheal-row .oh-hp{font-variant-numeric:tabular-nums;font-weight:700;flex-shrink:0}
   .oh-hp.hi{color:#56d364} .oh-hp.mid{color:#f0b429} .oh-hp.lo{color:#f87171} .oh-hp.unk{color:#6e7681}
-  /* DI readiness chips — green = up, amber = recast countdown. When only ONE
-     cleric has DI up the whole section gets the gold "save it" outline. */
+  /* DI readiness chips — green ✓ = on the spell gems and ready, amber = recast countdown, grey ? = not
+     confirmed on their gems (no tick). When only ONE cleric has DI up (and none is "?") the whole
+     section gets the gold "save it" outline. */
   .di-rows{display:flex;flex-wrap:wrap;gap:4px;padding:2px 0}
   .di-chip{display:inline-flex;align-items:center;gap:4px;font-size:10px;border-radius:3px;
     padding:1px 6px;border:1px solid rgba(86,211,100,0.6);color:#7ee787;text-shadow:0 1px 2px #000}
   .di-chip.cd{border-color:rgba(240,180,41,0.6);color:#f0b429}
+  .di-chip.unk{border-color:rgba(110,118,129,0.5);color:#8b949e}
   .di-chip .di-sec{font-variant-numeric:tabular-nums;font-weight:700}
   #diready.di-last{outline:1px solid #f0c419;outline-offset:2px;border-radius:4px}
   /* DI nomination (#204) — a death save FIRED, so the tank is alive and now
@@ -902,6 +904,30 @@
   // doesn't hear it all night).
   var _lastDi = null;
   var _diSoloSpokenFor = null;   // cleric name we already called out
+  // What one cleric's chip says (FB-62, a member, 2026-10-07: "we should only show this tickbox if
+  // they have it on spell gems and ready to cast"). A recast is a countdown. The ✓ needs the agent to
+  // say DI is on that cleric's bar (mem) AND ready; everything else — a bar nobody could read, an
+  // older agent — is "?", never a tick by default. The agent already leaves out a cleric whose bar
+  // lacks DI.
+  function diChipState(c){
+    if (c.seconds > 0) return 'cd';
+    return (c.up && c.mem === true) ? 'up' : 'unk';
+  }
+  function diChipHtml(c){
+    var st = diChipState(c);
+    if (st === 'up') return '<span class="di-chip">✓ ' + esc(c.name) + '</span>';
+    if (st === 'unk') return '<span class="di-chip unk" title="Divine Intervention is not confirmed on this cleric’s spell gems yet, so no tick">' + esc(c.name) + ' ?</span>';
+    return '<span class="di-chip cd">' + esc(c.name) + ' <span class="di-sec">' + Math.max(1, c.seconds || 1) + 's</span></span>';
+  }
+  // "Only <X> has DI up" is spoken, so it must be true: exactly one confirmed tick and nobody else
+  // who might also have it (a "?" cleric could).
+  function diSoloUp(di){
+    var list = (di && di.clerics) || [];
+    if (list.length < 2) return null;
+    var ups = list.filter(function(c){ return diChipState(c) === 'up'; });
+    if (ups.length !== 1) return null;
+    return list.some(function(c){ return diChipState(c) === 'unk'; }) ? null : ups[0];
+  }
   function renderDi(){
     var el = document.getElementById('diready');
     var rowsEl = document.getElementById('direadyRows');
@@ -910,14 +936,9 @@
     if (!list.length) { el.style.display = 'none'; _diSoloSpokenFor = null; return; }
     el.style.display = 'block';
     var html = '';
-    for (var i = 0; i < list.length; i++) {
-      var c = list[i];
-      html += c.up
-        ? '<span class="di-chip">✓ ' + esc(c.name) + '</span>'
-        : '<span class="di-chip cd">' + esc(c.name) + ' <span class="di-sec">' + Math.max(1, c.seconds || 1) + 's</span></span>';
-    }
+    for (var i = 0; i < list.length; i++) html += diChipHtml(list[i]);
     rowsEl.innerHTML = html;
-    var soloUp = (di.up_count === 1 && list.length > 1) ? list.filter(function(c){ return c.up; })[0] : null;
+    var soloUp = diSoloUp(di);
     el.classList.toggle('di-last', !!soloUp);
     if (soloUp) {
       if (_diSoloSpokenFor !== soloUp.name) {

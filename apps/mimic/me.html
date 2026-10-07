@@ -52,6 +52,9 @@
     font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px}
   .bar.thin{height:6px} .bar.thin > span{display:none}
   .pct{text-align:right;font-size:11px;font-variant-numeric:tabular-nums}
+  /* a bard's mana slot: "DIRGE 4 · FM 5" where the % was, so the column sizes to its words */
+  .brow.counts{grid-template-columns:minmax(0,1fr) auto}
+  .brow.counts .pct{white-space:nowrap}
   .lbl{font-size:10px;color:var(--dim);margin-top:5px;text-transform:uppercase;letter-spacing:.5px}
   .line{display:flex;gap:6px;align-items:baseline;font-size:11px;margin-top:3px;white-space:nowrap;overflow:hidden}
   .line .grow{flex:1;overflow:hidden;text-overflow:ellipsis}
@@ -428,10 +431,29 @@
     var w = p == null ? 0 : p;
     return '<div class="bar' + (cls ? ' ' + cls : '') + '"><i style="width:' + w.toFixed(1) + '%;background:' + color + '"></i><span>' + (text || '') + '</span></div>';
   }
-  function brow(p, color, text){
-    return '<div class="brow">' + bar(p, color, text) + '<div class="pct" style="color:' + color + '">' + (p == null ? '' : Math.round(p) + '%') + '</div></div>';
+  // `counts`: words that take the percentage's place (a bard's mana slot, below) and the room they need.
+  function brow(p, color, text, counts){
+    return '<div class="brow' + (counts ? ' counts' : '') + '">' + bar(p, color, text) + '<div class="pct" style="color:' + color + '">'
+      + (counts ? esc(counts) : (p == null ? '' : Math.round(p) + '%')) + '</div></div>';
   }
   function curMax(o){ return (o && o.cur != null && o.max != null) ? n0(o.cur) + ' / ' + n0(o.max) : ''; }
+  // A bard's mana slot counts instead of reading a percentage (a member, 2026-10-07, FB-56: "Bard songs
+  // don't take up mana typically - only display how many Faded Memories they have left, or Dirges, or
+  // charms"). The agent sends `bard: { dirges, fm, charm }`: the Dirges, Fading Memories and charm casts
+  // the mana in hand pays for, each null when it does not apply. The arc and the bar still fill with the
+  // mana %, because mana is still the fuel. Nothing to show, or an agent that sends no block, and the
+  // slot reads MANA nn% as it always did. Returns [[name, count], …] in the order shown, or null.
+  var BARD_COUNTS = [['dirges', 'DIRGE'], ['fm', 'FM'], ['charm', 'CHARM']];
+  function bardCounts(s){
+    if (!s || String(s['class'] || '').toLowerCase() !== 'bard' || !s.bard) return null;
+    var out = [];
+    BARD_COUNTS.forEach(function(c){
+      var v = s.bard[c[0]];
+      if (typeof v === 'number' && isFinite(v) && v >= 0) out.push([c[1], String(Math.floor(v))]);
+    });
+    return out.length ? out : null;
+  }
+  function bardText(counts){ return counts.map(function(c){ return c[0] + ' ' + c[1]; }).join(' · '); }
   // Time left on a cast, as a DEPLETING bar — countdowns run right to left
   // across the platform (the CH cast bar).
   function castHtml(c){
@@ -526,7 +548,7 @@
     h += brow(hpP, hpColor(hpP), curMax(s.hp));
     // No mana row for a warrior, rogue or monk — the HUD's rule (it had
     // shown an empty 0% bar for a monk).
-    if (mnP != null && !s.no_mana) h += brow(mnP, 'var(--blue)', curMax(s.mana));
+    if (mnP != null && !s.no_mana) { var bc = bardCounts(s); h += brow(mnP, 'var(--blue)', curMax(s.mana), bc ? bardText(bc) : null); }
     // "Endurance can be small": a thin bar, its % beside it.
     if (s.end && s.end.pct != null) h += '<div class="brow small">' + bar(s.end.pct, 'var(--orange)', '', 'thin')
       + '<div class="pct" style="color:var(--orange)">' + Math.round(s.end.pct) + '%</div></div>';
@@ -676,6 +698,7 @@
     var d = { s: s, hp: pctOf(s.hp), mana: noMana ? null : pctOf(s.mana), end: enP, noMana: noMana };
     // The right arc: mana, or endurance for a class with none.
     d.right = noMana ? { pct: enP, color: 'var(--orange)', label: 'end' } : { pct: d.mana, color: 'var(--blue)', label: 'mana' };
+    d.bard = noMana ? null : bardCounts(s);   // a bard's mana slot reads these counts, the arc still fills with mana % (FB-56)
     if (s.casting) {
       var left = s.casting.remaining_ms != null ? Math.max(0, s.casting.remaining_ms - dt) : null;
       var f0 = s.casting.pct != null ? (100 - s.casting.pct) / 100 : null;
@@ -733,7 +756,9 @@
                text: (f.dir === 'in' ? '▼ ' : '▲ ') + n0(f.amount) + ' ' + esc(nm) + (f.hand ? ' ' + f.hand : ''),
                color: col, op: Math.max(0.35, 1 - (f.age_ms || 0) / 15000).toFixed(2) };
     });
-    d.focus = (s.focus || []).filter(function(f){ return f.timer_ms == null; }).slice(0, 1)
+    // A bard's ring label already says CHARM n, so the "Charm left" focus item would only repeat it.
+    var bardCharm = !!d.bard && d.bard.some(function(c){ return c[0] === 'CHARM'; });
+    d.focus = (s.focus || []).filter(function(f){ return f.timer_ms == null && !(bardCharm && f.key === 'charm'); }).slice(0, 1)
       .map(function(f){ return esc(f.label) + ' ' + focusValue(f); })[0] || null;
     var r = s.resists || {};
     d.res = (r.mr != null || r.fr != null) ? [['MR', r.mr, 'magic'], ['FR', r.fr, 'fire'], ['CR', r.cr, 'cold'], ['PR', r.pr, 'poison'], ['DR', r.dr, 'disease']] : null;
@@ -802,8 +827,12 @@
   // lead, round seven: "IN and Out should be side-swapped. Damage in should be
   // next to health and out should be on the right").
   function hpLabel(d, withDps){ return lbl('HP', pctTxt(d.hp), hpColor(d.hp)) + (withDps && d.inn != null ? '<tspan fill="#8b949e">  · in ' + big(d.inn) + '</tspan>' : ''); }
+  // A bard's counts take the place of "MANA nn%": DIRGE 4 · FM 5 · CHARM 12, in the arc's own colour.
+  function bardLabel(counts, color){
+    return counts.map(function(c){ return lbl(c[0], c[1], color); }).join('<tspan fill="#8b949e"> · </tspan>');
+  }
   function rightLabel(d, withDps, withFocus){
-    return lbl(d.noMana ? 'END' : 'MANA', pctTxt(d.right.pct), d.right.color)
+    return (d.bard ? bardLabel(d.bard, d.right.color) : lbl(d.noMana ? 'END' : 'MANA', pctTxt(d.right.pct), d.right.color))
       + (withDps && d.out != null ? '<tspan fill="#8b949e">  · out ' + big(d.out) + '</tspan>' : '')
       + (withFocus && d.focus ? '<tspan fill="#e6edf3">  · ' + d.focus + '</tspan>' : '');
   }
@@ -1317,7 +1346,10 @@
     }
     if (p.right && d.right.pct != null) {
       h += gauge(R, 56, 124, d.right.pct / 100, d.right.color, 6 * W, true);
-      h += ringLabel('hrt', R + 10, 56, 124, rightLabel(d, p.dps, p.focus), 11 * sz('right'));
+      // Fitted to the arc (68°): a bard's three counts with the damage out beside them is longer than
+      // "MANA 45%" ever was, and a label the arc cuts off reads as a different number.
+      var rl = rightLabel(d, p.dps, p.focus);
+      h += ringLabel('hrt', R + 10, 56, 124, rl, fitSize(11 * sz('right'), rl.replace(/<[^>]*>/g, '').length, 68, R + 10));
       if (!d.noMana && d.end != null) h += gauge(R - 10, 240, 300, d.end / 100, 'var(--orange)', 2 * W);
     }
     // Cooldowns: an inner arc across the bottom (at most 80°, centred on 6
