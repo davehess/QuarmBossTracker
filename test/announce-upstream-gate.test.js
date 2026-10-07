@@ -25,58 +25,70 @@ const src = stripJs(bot);
 // ── 1. the helper ────────────────────────────────────────────────────────────
 const helperBlock = sliceBlock(bot, 'function _upstreamOneshotsEnabledWith(', '  return false;\n}');
 
-function load({ env = {}, config = false } = {}) {
+// The helper asks utils/guildConfig for the tag the bot runs as (env → guild/config.json → 'wolfpack');
+// the fake stands in for that module so the decision is tested on its own.
+function load({ env = {}, tag = 'wolfpack' } = {}) {
   const logs = [];
-  const checked = [];
+  const asked = [];
   const fakes = {
-    fs: { existsSync: (p) => { checked.push(p); return config; } },
-    path: path.posix,
+    './utils/guildConfig': { guildTag: () => { asked.push('guildTag'); return tag; } },
   };
   // eslint-disable-next-line no-new-func
   const api = new Function('process', 'require', '__dirname', 'console',
     helperBlock + '\nreturn { _upstreamOneshotsEnabledWith, _upstreamOneshotsEnabled, _oneshotGate };')(
     { env }, (m) => fakes[m], '/srv/bot', { log: (...a) => logs.push(a.join(' ')) });
-  return { ...api, logs, checked };
+  return { ...api, logs, asked };
 }
 
 describe('_upstreamOneshotsEnabledWith: the decision', () => {
   const { _upstreamOneshotsEnabledWith: decide } = load();
 
-  it('an explicit setting wins over the config file, either way', () => {
+  it('an explicit setting wins over the guild tag, either way', () => {
     for (const on of ['1', 'true', 'yes', 'TRUE', ' Yes ', 'True']) {
-      expect(decide(on, true)).toBe(true);
-      expect(decide(on, false)).toBe(true);
+      expect(decide(on, 'acme')).toBe(true);
+      expect(decide(on, 'wolfpack')).toBe(true);
     }
     for (const off of ['0', 'false', 'no', 'off', 'FALSE', ' 0 ', 'garbage', '2']) {
-      expect(decide(off, true)).toBe(false);
-      expect(decide(off, false)).toBe(false);
+      expect(decide(off, 'acme')).toBe(false);
+      expect(decide(off, 'wolfpack')).toBe(false);
     }
   });
 
-  it('unset (or blank) follows the config file: none → on, present → off', () => {
+  it('unset (or blank) follows the guild tag: wolfpack → on, any other tag → off', () => {
     for (const unset of [undefined, null, '', '   ']) {
-      expect(decide(unset, false)).toBe(true);
-      expect(decide(unset, true)).toBe(false);
+      expect(decide(unset, 'wolfpack')).toBe(true);
+      expect(decide(unset, ' WolfPack ')).toBe(true);
+      expect(decide(unset, 'acme')).toBe(false);
+      expect(decide(unset, 'wolfpack2')).toBe(false);
     }
+  });
+
+  it('a missing tag means the built-in default, which is Wolf Pack: on', () => {
+    expect(decide('', undefined)).toBe(true);
+    expect(decide('', '')).toBe(true);
   });
 });
 
 describe('_upstreamOneshotsEnabled: reads the real inputs', () => {
-  it('Wolf Pack production (nothing in env, no guild/config.json) stays on', () => {
-    const { _upstreamOneshotsEnabled, checked } = load();
+  it('Wolf Pack production (nothing in env, tag resolves to wolfpack) stays on — and the decision comes from the tag, not a file', () => {
+    const { _upstreamOneshotsEnabled, asked } = load();
     expect(_upstreamOneshotsEnabled()).toBe(true);
-    expect(checked).toEqual(['/srv/bot/guild/config.json']);
+    expect(asked).toEqual(['guildTag']);
   });
 
-  it('a deployment that committed guild/config.json is a tenant: off', () => {
-    expect(load({ config: true })._upstreamOneshotsEnabled()).toBe(false);
+  it('a deployment whose tag is not wolfpack (its own guild/config.json or SUPABASE_GUILD_ID) is a tenant: off', () => {
+    expect(load({ tag: 'acme' })._upstreamOneshotsEnabled()).toBe(false);
   });
 
-  it('ANNOUNCE_UPSTREAM_ONESHOTS overrides the file in both directions', () => {
-    expect(load({ env: { ANNOUNCE_UPSTREAM_ONESHOTS: '1' }, config: true })._upstreamOneshotsEnabled()).toBe(true);
-    expect(load({ env: { ANNOUNCE_UPSTREAM_ONESHOTS: 'true' }, config: true })._upstreamOneshotsEnabled()).toBe(true);
-    expect(load({ env: { ANNOUNCE_UPSTREAM_ONESHOTS: '0' }, config: false })._upstreamOneshotsEnabled()).toBe(false);
-    expect(load({ env: { ANNOUNCE_UPSTREAM_ONESHOTS: 'false' }, config: false })._upstreamOneshotsEnabled()).toBe(false);
+  it('ANNOUNCE_UPSTREAM_ONESHOTS overrides the tag in both directions', () => {
+    expect(load({ env: { ANNOUNCE_UPSTREAM_ONESHOTS: '1' }, tag: 'acme' })._upstreamOneshotsEnabled()).toBe(true);
+    expect(load({ env: { ANNOUNCE_UPSTREAM_ONESHOTS: 'true' }, tag: 'acme' })._upstreamOneshotsEnabled()).toBe(true);
+    expect(load({ env: { ANNOUNCE_UPSTREAM_ONESHOTS: '0' }, tag: 'wolfpack' })._upstreamOneshotsEnabled()).toBe(false);
+    expect(load({ env: { ANNOUNCE_UPSTREAM_ONESHOTS: 'false' }, tag: 'wolfpack' })._upstreamOneshotsEnabled()).toBe(false);
+  });
+
+  it('the helper never consults the file system for the decision (no existsSync on guild/config.json)', () => {
+    expect(stripJs(helperBlock)).not.toMatch(/existsSync|config\.json/);
   });
 });
 
@@ -137,8 +149,10 @@ describe('every one-shot announcer is gated', () => {
 
   it('eight gates, one distinct tag each', () => {
     const tags = [...src.matchAll(/_oneshotGate\('([^']+)'\)/g)].map(m => m[1]);
-    expect(tags).toHaveLength(8);
-    expect(new Set(tags).size).toBe(8);
+    // 8 announcers + the howl-card repair one-shot (gated since the 2026-10-07 review; not an
+    // _announce*Once, so NAMES stays at 8).
+    expect(tags).toHaveLength(9);
+    expect(new Set(tags).size).toBe(9);
   });
 });
 
@@ -169,7 +183,7 @@ function run(tag, gateAnswer) {
 
 describe('the gated scheduling statements', () => {
   it('cover all eight tags', () => {
-    expect(TAGS).toHaveLength(8);
+    expect(TAGS).toHaveLength(9);
   });
 
   for (const tag of TAGS) {

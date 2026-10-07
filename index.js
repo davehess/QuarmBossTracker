@@ -21,14 +21,27 @@ function _loadGuildDiscordJson(dir, env) {
   const out = { filled: [], skipped: [], refused: [] };
   const file = path.join(dir, 'discord.json');
   let raw;
-  try { raw = fs.readFileSync(file, 'utf8'); } catch { return out; }   // no file → nothing to do
+  // No file → nothing to do, silently. A file that EXISTS but cannot be read (a directory from a
+  // mistyped Docker -v mount = EISDIR, a root-owned 0600 file under USER node = EACCES) warns,
+  // because that is the mount typo a silent catch would hide (review of 2026-10-07; same rule as
+  // apps/bristlebane/lib.js — keep the two loaders rule-for-rule identical).
+  try { raw = fs.readFileSync(file, 'utf8'); }
+  catch (e) { if (e.code !== 'ENOENT') console.warn(`[guild] ${file} could not be read (${e.code}) — ignored`); return out; }
   let obj;
   try { obj = JSON.parse(raw); }
-  catch (e) { console.warn(`[guild] ${file} is not valid JSON — ignored (${e.message})`); return out; }
+  catch (e) {
+    // Position only: Node's JSON.parse message embeds a snippet of the raw file, and the contract
+    // is "key names, never values".
+    const at = (String(e.message).match(/position \d+/) || [''])[0];
+    console.warn(`[guild] ${file} is not valid JSON — ignored (${e.name}${at ? ' at ' + at : ''})`); return out;
+  }
   for (const [k, v] of Object.entries(obj || {})) {
     if (k.startsWith('_') || v == null) continue;                        // _comment, nulls
     if (/SPEC|TOKEN|KEY|SECRET|PASSWORD/.test(k)) { out.refused.push(k); continue; }
     if (env[k] != null && String(env[k]).trim() !== '') { out.skipped.push(k); continue; }
+    // A bare JSON number above 2^53 was already rounded by the parser (every Discord snowflake is),
+    // so refuse it instead of passing on a wrong id.
+    if (typeof v === 'number' && !Number.isSafeInteger(v)) { console.warn(`[guild] ${file}: ${k} is a number too large to keep exactly — write ids as strings`); continue; }
     env[k] = Array.isArray(v) ? v.join(',') : String(v);
     out.filled.push(k);
   }
@@ -11984,17 +11997,21 @@ if (process.env.MIMIC_RELEASE_ANNOUNCE !== '0') {
 // Pack-specific embeds ("Congrats Wolf Pack on the last Aten Ha Ra of Luclin") and are latched only
 // by a bot_kv row, finding their channel by NAME. A new guild's empty bot_kv plus a channel called
 // #raid-chat would post all of it on its first boot (the guild lead, 2026-10-07). Resolution order:
-// ANNOUNCE_UPSTREAM_ONESHOTS (1/true/yes = on, any other value = off) → a deployment that committed
-// its own guild/config.json is a tenant, off → neither, which is Wolf Pack's production, on.
+// ANNOUNCE_UPSTREAM_ONESHOTS (1/true/yes = on, any other value = off) → the guild tag the bot runs
+// as (env SUPABASE_GUILD_ID → guild/config.json guild.tag → 'wolfpack'): 'wolfpack' is on, any other
+// tag is a tenant, off. Keyed on the IDENTITY, not on whether a config.json exists, because Wolf Pack
+// itself will commit one (the kit's "a configuration, not the configuration" rule, DESIGN-guild-kit §0;
+// the review of 2026-10-07 found two of the eight latches absent from production bot_kv, so a
+// file-existence default would have reposted them the day our config.json landed).
 // The announcers' bodies and latches are untouched; what is gated is where each is SCHEDULED.
-function _upstreamOneshotsEnabledWith(envValue, configExists) {
+function _upstreamOneshotsEnabledWith(envValue, guildTag) {
   const v = String(envValue || '').trim().toLowerCase();
   if (v) return v === '1' || v === 'true' || v === 'yes';
-  return !configExists;
+  return String(guildTag || 'wolfpack').trim().toLowerCase() === 'wolfpack';
 }
 function _upstreamOneshotsEnabled() {
   return _upstreamOneshotsEnabledWith(process.env.ANNOUNCE_UPSTREAM_ONESHOTS,
-    require('fs').existsSync(require('path').join(__dirname, 'guild', 'config.json')));
+    require('./utils/guildConfig').guildTag());
 }
 // true = go ahead and schedule. When off, one log line per tag (the Vex Thal site asks on every kill).
 const _oneshotOffLogged = new Set();
@@ -12002,7 +12019,7 @@ function _oneshotGate(tag) {
   if (_upstreamOneshotsEnabled()) return true;
   if (!_oneshotOffLogged.has(tag)) {
     _oneshotOffLogged.add(tag);
-    console.log(`[${tag}] upstream one-shot announcer is off (ANNOUNCE_UPSTREAM_ONESHOTS / guild/config.json) — not scheduled`);
+    console.log(`[${tag}] upstream one-shot announcer is off (ANNOUNCE_UPSTREAM_ONESHOTS / guild tag) — not scheduled`);
   }
   return false;
 }
@@ -12597,7 +12614,7 @@ async function _fixV200CardNameOnce() {
   }
   console.log('[howl-card] no v2.0.0 card found in the last 30 messages — will retry next boot');
 }
-setTimeout(() => { _fixV200CardNameOnce().catch(err => console.warn('[howl-card]', err?.message)); }, 120_000);
+if (_oneshotGate('howl-card')) setTimeout(() => { _fixV200CardNameOnce().catch(err => console.warn('[howl-card]', err?.message)); }, 120_000);
 
 // ── PoP-lock timer sweep (the guild lead, 2026-07-13) ──────────────────────────────
 // One-shot at startup: clear any active timer on a PoP-locked boss. The
