@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Three picks: bard counts, AE chip by spell data, height floor** (§178) | All three built; HUD counts, AE gate and the floor on beta (agent 3.7.98); the catalog's `ae` flag waits on this branch reaching `main` | the guild lead: push this branch to main (after 00:30 ET on a raid night); a bard on beta checks the ring label; a beta tester drags an overlay small and confirms it stays |
 | **Guild kit slices 1b, 2-prep, 3** (§177) | Bot 3.1.215: `utils/guildConfig.js` loader + getters, Discord self-provisioner (`/setup discord`, standalone script), tag-correct REST filters with a ratchet, one-shot announcers gated on the guild tag, Bristlebane guild file. Web slice A (`web/lib/guild.ts` + the literal swap) reviewed separately → `beta` | a session: slice 2, the de-branding sweep (start from the 11 getter-only env names in `test/guild-config.test.js`); then `doctor` and the wizard CLI (§8 picks stand) |
 | **Mimic 2.7.9 stable + member-report sweep** (§176) | Stable `40af051a` (agent 3.7.96), beta re-parked 2.7.10. 13 older member reports closed with their senders DMed, plus FB-43; 23 stay open (partial / not done / unclear / alpha, listed in §176) | a session: the open member reports, starting with the partials (FB-22, FB-26, FB-3, FB-37); the guild lead: pick the four B/C web previews still on beta |
 | **Main / alt · Inventory only · Hide completely** (§175) | Bot 3.1.214 live; agent 3.7.96, stable in Mimic 2.7.9: the choice in setup and on the dashboard's Me card, Hide completely also stops this PC reading the log | the guild lead: should Inventory only also stop that character's fight uploads? |
@@ -7746,3 +7747,28 @@ stable version."*
 - **Still owed (slice 2 and later).** The de-branding sweep proper (the 11 getter-only env names the config
   test lists are read by nothing yet; `GITHUB_REPO` among them); the agent/Mimic manifest route; SQL bootstrap
   tag substitution; literal Discord ids after a production env check; `doctor`; the wizard CLI.
+
+### 178. Three picks: a bard's mana slot counts what mana buys, the AE chip is decided by the spell's data, a dragged overlay height is a floor (2026-10-07, the guild lead: "A for all 3")
+
+- **FB-56 — the bard's HUD mana slot (pick A, "Swap").** The arc/bar still fills with mana (it is the fuel),
+  but for a Bard the label reads counts instead of a percentage: `DIRGE n · FM n · CHARM n`. Dirges =
+  floor(mana ÷ 800), shown when Denon's Desperate Dirge is on the bard's gems (if the pipe sends no gem labels,
+  for any bard 60+); Fading Memories = floor(mana ÷ 900) for bards 60+ — the pipe cannot say who owns the AA,
+  so it is ASSUMED from the level (the guild lead's call, recorded here so nobody re-derives it); Charm = the
+  existing "charm left" number when a charm song is memorized. Nothing to count → "MANA nn%" as before. The ring
+  label is fitted to its arc (it never was, and long labels already ran off it). Agent `/api/me` `bard` block.
+- **FB-57 — the Melody AE chip (pick A, "Gate on target type").** The bot's spell catalog marks area spells
+  (`ae: true` for targettype 2, 4, 8, 20, 24, 25, 40; catalog version 9), and the agent registers the AE landing
+  counter only for songs that carry it. Single-target songs (Assonance and 28 others) lose the `⚔n/12` chip,
+  including single-target DoT songs (the damage-only variant, B, was not picked). Until the bot change reaches
+  `main` the agent behaves exactly as before (it only gates once a catalog with the flag is loaded), so the
+  two halves can ship in either order; the fix shows once both are live. The bot commit deliberately carries no
+  `Fixes` word, so the report is not marked Implemented before the agent half exists.
+- **Overlay sizes (pick A, "Height floor").** A height the user drags an overlay to becomes its floor: content
+  grows the window above it and never shrinks it below. Only a hand drag writes it (Electron `will-resize`;
+  every programmatic resize — a fit, the right-click menu's borrowed room, a scale change — leaves it alone).
+  Stored unscaled, per screen setup, beside the saved bounds; right-click ✥ → "Fit height to content" clears it.
+  No floor = exactly the old fit. Answers a beta tester's "i want them tiny and they are goliath" and FB-16.
+- **Where it landed.** Beta: agent 3.7.98 with the FB-56 HUD counts, the FB-57 gate, the floor in
+  `apps/mimic/main.js` + `preload.js`. Main-bound branch: the catalog flag (`3ad2fe47`). Docs:
+  `HOW-ITS-BUILT.md`, `STATUS.md`.
