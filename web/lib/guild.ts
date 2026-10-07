@@ -10,6 +10,10 @@
 // would be undefined in the browser. The server-only names (SUPABASE_GUILD_ID, ALLOWED_ROLE_NAMES,
 // OFFICER_ROLE_NAMES) resolve to undefined on the client and fall through to the default, so a value that
 // must agree between server and browser belongs in the NEXT_PUBLIC_ name.
+//
+// ⚠ SUPABASE_GUILD_ID (the bot's name for the tag) is a SERVER-ONLY alias. web/next.config.js copies it into
+// NEXT_PUBLIC_GUILD_TAG at build time when that is unset, so both bundles agree; do not rely on the alias
+// alone, and keep NEXT_PUBLIC_GUILD_TAG equal to the bot's SUPABASE_GUILD_ID.
 
 const clean = (v: string | undefined): string | undefined => (v ?? '').trim() || undefined;
 

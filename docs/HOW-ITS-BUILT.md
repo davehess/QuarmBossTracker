@@ -155,6 +155,25 @@ with four-number costs, and the fork + `sync-upstream.yml` route back upstream:
 `docs/DESIGN-guild-kit.md`. Deployment decisions: `DESIGN-selfhost-wizard.md`
 §3 (2026-09-18). Builds on `DESIGN-external-tenancy.md` Stages 2–3.
 
+**Web half — `web/lib/guild.ts`:** the website's one place for "which guild is
+this". `GUILD_TAG` (the `guild_id` every table is keyed on), `GUILD_NAME`,
+`GUILD_SHORT`, `GUILD_INGAME_NAME` (the name as the game spells it, for data
+comparisons), `SITE_NAME`, `SITE_URL`/`siteUrl()`, `LOGIN_EMAIL_DOMAIN` (frozen),
+the repo and OpenDKP addresses, `RAID_TZ`, the rank/role tables and the role
+gates all resolve from `NEXT_PUBLIC_*` names with Wolf Pack's own values as the
+defaults, so an unset environment is today's site. It imports nothing and reads
+each name statically, so a client bundle may import it (never `GUILD_TAG`
+into a `'use client'` file). `web/next.config.js` copies the bot's server-only
+`SUPABASE_GUILD_ID` into `NEXT_PUBLIC_GUILD_TAG` at build time when that is
+unset, so the server and browser bundles agree. 78 files that hard-coded the
+`'wolfpack'` tag now read `GUILD_TAG`; `test/guild-tag-literal.test.js`
+fails on any new literal and on `GUILD_TAG` in a client file, and
+`test/guild-web-module.test.js` pins the defaults, the resolution order, the
+rank/role copies and the next.config mapping. Names and defaults:
+`web/.env.example` (guild-kit block). Still literal on purpose: the demo-name
+salt in `web/lib/obfuscate.ts`; the hard-coded character name in
+`web/lib/funLdAuth.ts` is a known follow-up.
+
 - **Branches**: `main` ships bot (Railway, deploy name = merge commit
   message) + web (Vercel) + stable Mimic; `beta` ships Mimic/agent betas.
 - **Mimic releases**: `.github/workflows/release-mimic.yml` triggers on

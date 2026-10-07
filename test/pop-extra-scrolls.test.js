@@ -121,9 +121,8 @@ describe('/admin/extra-spells page', () => {
 
   it('reads the RPC for the guild through the service client', () => {
     expect(page).toMatch(/supabaseAdmin\(\)/);
-    // GUILD_TAG (web/lib/guild.ts, defaults to 'wolfpack'); the bare literal is still accepted so this holds on
-    // a branch where the admin directory has not been swept yet.
-    expect(page).toMatch(/\.rpc\('pop_extra_scrolls', \{ p_guild_id: (?:GUILD_TAG|'wolfpack') \}\)/);
+    // The guild tag is GUILD_TAG (web/lib/guild.ts, defaults to 'wolfpack').
+    expect(page).toMatch(/\.rpc\('pop_extra_scrolls', \{ p_guild_id: GUILD_TAG \}\)/);
   });
 
   it('links character names to /character/<name>, holders and needers', () => {

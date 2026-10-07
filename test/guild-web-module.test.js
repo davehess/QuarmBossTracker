@@ -9,6 +9,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { ROOT, stripJs } from './_source-slice.js';
 
 const NAMES = [
@@ -219,5 +220,70 @@ describe('client-bundle safety (source shape)', () => {
 
   it('never touches a service key or a secret-shaped name', () => {
     expect(src).not.toMatch(/SERVICE_ROLE|TOKEN|SECRET|PASSWORD|_KEY\b/);
+  });
+
+  it('GUILD_INGAME_NAME derives only from NEXT_PUBLIC_ names, so a "use client" file may import it', () => {
+    const line = /export const GUILD_INGAME_NAME[^;]*;/.exec(src)[0];
+    expect(line).toMatch(/NEXT_PUBLIC_GUILD_INGAME_NAME/);
+    expect(line).not.toMatch(/process\.env\.(?!NEXT_PUBLIC_)/);
+    expect(/export const GUILD_NAME[^;]*;/.exec(src)[0]).not.toMatch(/process\.env\.(?!NEXT_PUBLIC_)/);
+  });
+});
+
+// The rank and role lists exist in a few places that cannot import each other (a client bundle, a page that
+// pulls in next/*). They are copies, so they are pinned to guild.ts here: an edit to one that is not made to
+// the others is a red test, not a quiet divergence. Order does not matter, membership does.
+describe('the copies of the rank and role lists cannot drift from guild.ts', () => {
+  const same = (a, b) => expect([...a].sort()).toEqual([...b].sort());
+
+  it('RANKS.raider / raidAlt / nonRaid match popRoster and characterRoles', async () => {
+    const g = await load();
+    const pop = await import('../web/lib/popRoster.ts');
+    const roles = await import('../web/lib/characterRoles.ts');
+    same(g.RANKS.raider, pop.RAIDER_RANKS);
+    same(g.RANKS.raidAlt, pop.RAID_ALT_RANKS);
+    same(g.RANKS.nonRaid, roles.LOCAL_ONLY_RANKS);
+  });
+
+  it('ROLES.active matches the ACTIVE_ROLES set on the members page (text pin: the page imports next/*)', async () => {
+    const g = await load();
+    const page = stripJs(fs.readFileSync(path.join(ROOT, 'web/app/admin/members/page.tsx'), 'utf8'));
+    const m = /const ACTIVE_ROLES = new Set\(\[([^\]]*)\]\)/.exec(page);
+    expect(m, 'ACTIVE_ROLES set literal not found on the members page').not.toBeNull();
+    const pageRoles = [...m[1].matchAll(/'([^']+)'/g)].map(x => x[1]);
+    expect(pageRoles.length).toBeGreaterThan(0);
+    same(g.ROLES.active, pageRoles);
+  });
+
+  it('the comparison itself notices a difference (not vacuous)', () => {
+    expect(() => same(['a', 'b'], ['a'])).toThrow();
+    expect(() => same(['b', 'a'], ['a', 'b'])).not.toThrow();
+  });
+});
+
+describe('next.config.js carries the SUPABASE_GUILD_ID -> NEXT_PUBLIC_GUILD_TAG build-time mapping', () => {
+  const cfgPath = path.join(ROOT, 'web/next.config.js');
+  const require = createRequire(import.meta.url);
+  const saved = {};
+  const loadCfg = (env) => {
+    for (const n of ['NEXT_PUBLIC_GUILD_TAG', 'SUPABASE_GUILD_ID']) { saved[n] = process.env[n]; delete process.env[n]; }
+    for (const [k, v] of Object.entries(env)) process.env[k] = v;
+    delete require.cache[cfgPath];
+    try { return require(cfgPath).env.NEXT_PUBLIC_GUILD_TAG; }
+    finally {
+      for (const n of Object.keys(saved)) { if (saved[n] === undefined) delete process.env[n]; else process.env[n] = saved[n]; }
+      delete require.cache[cfgPath];
+    }
+  };
+
+  it('text: the env block reads both names and assigns NEXT_PUBLIC_GUILD_TAG', () => {
+    const cfg = stripJs(fs.readFileSync(cfgPath, 'utf8'));
+    expect(cfg).toMatch(/NEXT_PUBLIC_GUILD_TAG:\s*\(?\s*process\.env\.NEXT_PUBLIC_GUILD_TAG\s*\|\|\s*process\.env\.SUPABASE_GUILD_ID/);
+  });
+
+  it('behaviour: only SUPABASE_GUILD_ID set -> inlined; both set -> the public name wins; neither -> empty (default tag)', () => {
+    expect(loadCfg({ SUPABASE_GUILD_ID: 'owls' })).toBe('owls');
+    expect(loadCfg({ SUPABASE_GUILD_ID: 'owls', NEXT_PUBLIC_GUILD_TAG: 'pub' })).toBe('pub');
+    expect(loadCfg({})).toBe('');
   });
 });
