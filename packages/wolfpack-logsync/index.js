@@ -9141,8 +9141,11 @@ class EncounterBuilder {
       // The instant call, straight down the /api/fires/wait long-poll (see
       // _pushCharmBreakInstant). Own charms only.
       try {
+        // Whose line this is, the way the trigger evaluator decides it (FB-34), so the "Your charm
+        // broke" trigger set for other characters is not counted as having spoken this one.
+        const who = String((this.character && _resolveSelfChatSpeaker(this.character)) || this.character || '').toLowerCase();
         const own = wasSelfLine || (!!ownerWas && String(ownerWas).toLowerCase() === String(this.character || '').toLowerCase());
-        _pushCharmBreakInstant(petKey, petDisplay || _charmTickTracker.get(petKey)?.pet || petKey, own, Date.parse(event.ts));
+        _pushCharmBreakInstant(petKey, petDisplay || _charmTickTracker.get(petKey)?.pet || petKey, own, Date.parse(event.ts), Date.now(), who);
       } catch { /* never block the break */ }
       return;
     }
@@ -28416,7 +28419,9 @@ function wpTrigSettingsHtml(t, scope) {
     if (a.type === 'text_overlay') {
       add(i === 0 ? 'Shows' : 'Then shows', '<b>' + esc(a.text || '') + '</b>' + (a.color ? ' in ' + esc(a.color) : '')
         + (a.duration_ms ? ' for ' + secs(a.duration_ms / 1000) : '') + (a.sticky ? ', stays until dismissed' : ''));
-      add('Says', a.tts ? '<b>' + esc(a.tts) + '</b>' : '<span class="dim">the same words it shows</span>');
+      // A Suggested alert with its 🔊 unticked says nothing (the agent mutes it); any other row with no speech text reads its display text.
+      add('Says', a.tts ? '<b>' + esc(a.tts) + '</b>'
+        : (!guild && String(t.id || '').indexOf('suggested:') === 0 ? '<span class="dim">nothing, its 🔊 is unticked under Suggested triggers</span>' : '<span class="dim">the same words it shows</span>'));
       if (a.sound) add('Sound', esc(a.sound));
     } else {
       var msg = a.message || a.text || '';
@@ -28653,7 +28658,10 @@ function wpTrigApplyForm(base, f) {
         // called "Rampage on me". A button, so the name is also reachable from the keyboard (FB-23).
         + '<td><button type="button" class="trigname" data-trig-open="' + esc(t.id || '') + '" aria-expanded="' + (isOpen ? 'true' : 'false') + '" title="Show this trigger\\'s settings">'
         + '<span class="trigchev" aria-hidden="true">' + (isOpen ? '▾' : '▸') + '</span> ' + esc(t.name || '?') + '</button>'
-        + (t.valid === false ? ' <span style="color:var(--red);font-size:10px">(bad pattern)</span>' : '') + '</td>'
+        + (t.valid === false ? ' <span style="color:var(--red);font-size:10px">(bad pattern)</span>' : '')
+        // A ticked Suggested alert is listed here too. It is the SAME trigger, not a second one (FB-21: "Enabling
+        // either one of these 'charm break' lines makes both enable"), so say so on the row.
+        + (String(t.id || '').indexOf('suggested:') === 0 ? ' <span class="dim" style="font-size:10px" title="The same alert as the one under Suggested triggers, not a second one. Ticking either box moves both; deleting it here switches it off there.">(from Suggested)</span>' : '') + '</td>'
         + '<td><code style="font-size:10px;background:#0d1117;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc(String(t.pattern || '').slice(0, 60)) + '</code></td>'
         + '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>'
         + '<td style="color:' + esc(actionColor) + '">' + esc(actionText) + '</td>'
@@ -41581,11 +41589,13 @@ function _pushOverlay(o) {
 // the log line is the break itself — if the pet died first, its tracker entry is
 // already gone and there is no pet to resolve. Live lines only (a backfill replays
 // old breaks); once per pet per 4 s (the self line and a bystander line can both
-// arrive). When the "Your charm broke" suggested trigger is on with TTS, the
-// trigger overlay already says it, so the fire is marked charm_spoken and the
-// Charm overlay only uses it to skip its own late call.
+// arrive). When the "Your charm broke" suggested trigger will say it itself — on, on for the
+// character whose charm it was (`charLc`, FB-34), and with its 🔊 ticked — the trigger overlay
+// already says it, so the fire is marked charm_spoken and the Charm overlay only uses it to skip
+// its own late call. Anything less and the Charm overlay speaks it, once (FB-21): the trigger,
+// unticked, now only flashes.
 const _charmBreakInstantAt = new Map();
-function _pushCharmBreakInstant(petKey, petName, own, lineMs, now = Date.now()) {
+function _pushCharmBreakInstant(petKey, petName, own, lineMs, now = Date.now(), charLc = '') {
   if (!own || !petKey) return false;
   if (!(Number.isFinite(lineMs) && Math.abs(now - lineMs) < 15_000)) return false;
   if (now - (_charmBreakInstantAt.get(petKey) || 0) < 4000) return false;
@@ -41595,7 +41605,7 @@ function _pushCharmBreakInstant(petKey, petName, own, lineMs, now = Date.now()) 
     text: 'CHARM BREAK', tts: 'charm break', trigger: 'charm break', color: 'red', duration_ms: 3000,
     firedAt: now, shownAt: now,
     charm: true, charm_key: petKey, charm_pet: petName || petKey,
-    charm_spoken: !!(sug && sug.enabled !== false && _suggestedHasTts(sug)),
+    charm_spoken: !!(sug && sug.enabled !== false && _triggerOnFor(sug, charLc) && _suggestedHasTts(sug)),
   });
   return true;
 }
@@ -47383,6 +47393,11 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       // #136 — allow-list muted this guild/relay fire: it still flashes, but
       // triggers.html skips speak() when overlay.mute is set.
       if (_calloutMuted) overlay.mute = true;
+      // A Suggested alert's 🔊 box IS its `tts` text: ticked, the row carries it; unticked, it carries
+      // none. The overlay reads the display text aloud when a fire has no tts of its own, so an
+      // unticked box silenced nothing (FB-21, a beta tester: "it says 'charm break' twice on breaks,
+      // even when tts is disabled"). Unticked now flashes and stays quiet, like a muted callout.
+      if (!ttsText && String(t.id || '').startsWith('suggested:')) overlay.mute = true;
       if (a.sound) overlay.sound = a.sound;
       // Sticky critical callouts (#76): a trigger-level OR action-level `sticky`
       // flag pins the alert on the trigger overlay until the user dismisses it
@@ -50129,6 +50144,7 @@ module.exports = {
   _mobTicks, _dotLastHit, _noteMobTick, _noteDotTickLine, _mobTickFor, _serverTickAtFor,
   _clearNameObservations,
   _waitForFires, _pushOverlay, _tailDelayMs,
+  _pushCharmBreakInstant,   // FB-21: the instant charm break, driven by test/charm-break-once.test.js
   // FB-51 tail watchdog — exported so the tests drive the shipped decision + loop.
   tailFile, _tailStalled, _tailStatus,
   _logSilentCheck, _logSilentSweep, _logSilentForTest: () => _logSilent,

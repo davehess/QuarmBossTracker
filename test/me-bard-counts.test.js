@@ -231,7 +231,7 @@ describe('the ring\'s mana label reads counts for a bard', () => {
     reset();
     R.hudParts.dps = 0; R.hudParts.focus = 0;
     const s = withBard({ dirges: 4, fm: 5, charm: null });
-    R.hudParts.sizes = { right: 0.8 };
+    R.hudParts.sizes = { mana: 0.8 };   // the right arc is the Mana part's for a class with mana (FB-12)
     expect(ringSize(R.renderHud(s), 'hrt')).toBeCloseTo(11 * 0.8, 5);
     reset();
   });

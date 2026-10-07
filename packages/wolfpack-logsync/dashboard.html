@@ -10859,7 +10859,9 @@ function wpTrigSettingsHtml(t, scope) {
     if (a.type === 'text_overlay') {
       add(i === 0 ? 'Shows' : 'Then shows', '<b>' + esc(a.text || '') + '</b>' + (a.color ? ' in ' + esc(a.color) : '')
         + (a.duration_ms ? ' for ' + secs(a.duration_ms / 1000) : '') + (a.sticky ? ', stays until dismissed' : ''));
-      add('Says', a.tts ? '<b>' + esc(a.tts) + '</b>' : '<span class="dim">the same words it shows</span>');
+      // A Suggested alert with its 🔊 unticked says nothing (the agent mutes it); any other row with no speech text reads its display text.
+      add('Says', a.tts ? '<b>' + esc(a.tts) + '</b>'
+        : (!guild && String(t.id || '').indexOf('suggested:') === 0 ? '<span class="dim">nothing, its 🔊 is unticked under Suggested triggers</span>' : '<span class="dim">the same words it shows</span>'));
       if (a.sound) add('Sound', esc(a.sound));
     } else {
       var msg = a.message || a.text || '';
@@ -11096,7 +11098,10 @@ function wpTrigApplyForm(base, f) {
         // called "Rampage on me". A button, so the name is also reachable from the keyboard (FB-23).
         + '<td><button type="button" class="trigname" data-trig-open="' + esc(t.id || '') + '" aria-expanded="' + (isOpen ? 'true' : 'false') + '" title="Show this trigger\'s settings">'
         + '<span class="trigchev" aria-hidden="true">' + (isOpen ? '▾' : '▸') + '</span> ' + esc(t.name || '?') + '</button>'
-        + (t.valid === false ? ' <span style="color:var(--red);font-size:10px">(bad pattern)</span>' : '') + '</td>'
+        + (t.valid === false ? ' <span style="color:var(--red);font-size:10px">(bad pattern)</span>' : '')
+        // A ticked Suggested alert is listed here too. It is the SAME trigger, not a second one (FB-21: "Enabling
+        // either one of these 'charm break' lines makes both enable"), so say so on the row.
+        + (String(t.id || '').indexOf('suggested:') === 0 ? ' <span class="dim" style="font-size:10px" title="The same alert as the one under Suggested triggers, not a second one. Ticking either box moves both; deleting it here switches it off there.">(from Suggested)</span>' : '') + '</td>'
         + '<td><code style="font-size:10px;background:#0d1117;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc(String(t.pattern || '').slice(0, 60)) + '</code></td>'
         + '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>'
         + '<td style="color:' + esc(actionColor) + '">' + esc(actionText) + '</td>'
