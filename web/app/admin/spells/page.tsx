@@ -14,6 +14,7 @@ import WpDbLink from '@/components/WpDbLink';
 import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
 import { loadHeldSpellNeeds } from '@/lib/adminReads';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,7 +42,7 @@ export default async function AdminSpellsPage() {
   const sb = supabaseAdmin();
   // Paged: the function returns a row per held scroll (555 today) and PostgREST cuts a response
   // at 1,000 rows without an error. It orders by spell_name, unique per row, so paging is stable.
-  const { rows, error } = await loadHeldSpellNeeds<HeldSpell>(sb, 'wolfpack');
+  const { rows, error } = await loadHeldSpellNeeds<HeldSpell>(sb, GUILD_TAG);
 
   // Surface the ones someone actually needs first.
   const withNeeders = rows.filter(r => r.needers.length > 0)

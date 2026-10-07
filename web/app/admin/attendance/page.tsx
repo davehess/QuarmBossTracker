@@ -33,6 +33,7 @@ import { isOfficer, requireOfficer } from '@/lib/officer';
 import { loadRoster } from '@/lib/roster';
 import { supabaseServer } from '@/lib/supabase-server';
 import { getDemoMode, maybeFake } from '@/lib/obfuscate';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -107,7 +108,7 @@ async function loadTargetsFromDb(raidSize: string): Promise<Record<string, numbe
   const { data } = await admin
     .from('raid_targets')
     .select('class, target')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .eq('raid_size', raidSize);
   if (!data || data.length === 0) return { ...DEFAULT_TARGETS };
   const out: Record<string, number> = {};
@@ -167,7 +168,7 @@ async function saveTargets(formData: FormData) {
     const raw = formData.get(`target_${cls}`);
     if (raw == null) continue;
     const n = Math.max(0, Math.min(99, parseInt(String(raw), 10) || 0));
-    rows.push({ guild_id: 'wolfpack', raid_size: raidSize, class: cls, target: n, updated_by: actor });
+    rows.push({ guild_id: GUILD_TAG, raid_size: raidSize, class: cls, target: n, updated_by: actor });
   }
   if (rows.length === 0) return;
   const admin = supabaseAdmin();

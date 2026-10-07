@@ -16,6 +16,7 @@ import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
 import { selectAll } from '@/lib/selectAll';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -93,7 +94,7 @@ async function loadData() {
     selectAll<RosterRow>((from, to) => admin
       .from('characters')
       .select('name, main_name, discord_id')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .order('name')
       .range(from, to)),
     selectAll<MemberRow>((from, to) => admin

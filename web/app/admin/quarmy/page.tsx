@@ -19,6 +19,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,7 +37,7 @@ async function loadCharacters(): Promise<CharRow[]> {
   const { data } = await admin
     .from('characters')
     .select('name, main_name, class, rank, active, quarmy_url')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .order('active', { ascending: false })
     .order('name');
   return (data ?? []) as CharRow[];
@@ -57,7 +58,7 @@ async function setQuarmy(formData: FormData) {
   const admin = supabaseAdmin();
   await admin.from('characters')
     .update({ quarmy_url: url || null })
-    .eq('guild_id', 'wolfpack').eq('name', name);
+    .eq('guild_id', GUILD_TAG).eq('name', name);
   revalidatePath('/admin/quarmy');
 }
 
@@ -96,7 +97,7 @@ async function bulkApply(formData: FormData) {
   const { data: known } = await admin
     .from('characters')
     .select('name')
-    .eq('guild_id', 'wolfpack');
+    .eq('guild_id', GUILD_TAG);
   const knownLower = new Map<string, string>(
     ((known ?? []) as { name: string }[]).map(c => [c.name.toLowerCase(), c.name]),
   );
@@ -108,7 +109,7 @@ async function bulkApply(formData: FormData) {
     if (!realName) { missing.push(e.name); continue; }
     await admin.from('characters')
       .update({ quarmy_url: e.url })
-      .eq('guild_id', 'wolfpack').eq('name', realName);
+      .eq('guild_id', GUILD_TAG).eq('name', realName);
     applied++;
   }
   const msg = `Applied ${applied}` + (missing.length ? ` · Unknown chars: ${missing.slice(0, 8).join(', ')}${missing.length > 8 ? '…' : ''}` : '');

@@ -7,6 +7,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
+import { GUILD_TAG } from '@/lib/guild';
 
 async function gate(): Promise<boolean> {
   const { data: { user } } = await supabaseServer().auth.getUser();
@@ -27,7 +28,7 @@ export async function createQuest(form: FormData): Promise<void> {
   const displayOrder = parseInt(String(form.get('display_order') || '100'), 10) || 100;
 
   await supabaseAdmin().from('quest_catalog').insert({
-    guild_id: 'wolfpack', name, category, zone, pqdi_quest_url: pqdi, notes,
+    guild_id: GUILD_TAG, name, category, zone, pqdi_quest_url: pqdi, notes,
     reward_item_name: rewardName, is_stack_turnin: isStack, display_order: displayOrder, active: true,
   });
   revalidatePath('/admin/quests');
