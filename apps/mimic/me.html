@@ -671,8 +671,10 @@
     var noMana = s.no_mana === true || !!(s.mana && s.mana.max === 0);
     var enP = s.end && s.end.pct != null ? s.end.pct : null;
     var d = { s: s, hp: pctOf(s.hp), mana: noMana ? null : pctOf(s.mana), end: enP, noMana: noMana };
-    // The right arc: mana, or endurance for a class with none.
-    d.right = noMana ? { pct: enP, color: 'var(--orange)', label: 'end' } : { pct: d.mana, color: 'var(--blue)', label: 'mana' };
+    // The right arc: mana, or endurance for a class with none. `part` is the builder part that owns it
+    // (FB-12: Mana and Endurance are two parts) — a class with mana draws endurance as the thin arc
+    // under health instead, which the Endurance part switches.
+    d.right = noMana ? { pct: enP, color: 'var(--orange)', label: 'end', part: 'end' } : { pct: d.mana, color: 'var(--blue)', label: 'mana', part: 'mana' };
     d.bard = noMana ? null : bardCounts(s);   // a bard's mana slot reads these counts, the arc still fills with mana % (FB-56)
     if (s.casting) {
       var left = s.casting.remaining_ms != null ? Math.max(0, s.casting.remaining_ms - dt) : null;
@@ -840,7 +842,7 @@
   // leaves a gap rather than moving the others under the player's eye.
   var HUD_PARTS = [
     ['Target', [['target', 'Name, health, level, class'], ['tot', 'Its target (on top)'], ['tres', 'Its resists'], ['status', 'Slow · F/R · summon · enrage']]],
-    ['You', [['hp', 'Health'], ['right', 'Mana or endurance'], ['dps', 'Damage per second (in · out)'], ['focus', 'Class number (CHs left…)']]],
+    ['You', [['hp', 'Health'], ['mana', 'Mana (right arc)'], ['end', 'Endurance (thin arc; right arc with no mana)'], ['dps', 'Damage per second (in · out)'], ['focus', 'Class number (CHs left…)']]],
     ['Timers', [['cooldowns', 'Cooldowns'], ['tick', 'Server tick'], ['swing', 'Swing timer'], ['cast', 'Cast bar (in the swing\'s place)']]],
     ['Hits', [['hitsIn', 'Hits on you (left)'], ['hitsOut', 'Your hits (right)'], ['ds', 'Damage shield'],
       ['procs', 'Procs and stuns/aggro on target'],
@@ -856,14 +858,14 @@
   // round-three look. It scales every arc and the text's dark edge, and takes
   // the numbers off bold.
   var HUD_WEIGHTS = { thin: 0.55, normal: 0.8, bold: 1 };
-  var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, right: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
+  var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, mana: 1, end: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
     hitsIn: 1, hitsOut: 1, ds: 1, procs: 1, rounds: 5, split: 2, hitsSide: 'inside', resists: 1, tres: 1, weight: 'thin',
     track: 1, trackShow: 'all', ramp: 1, lowhp: 1, clickies: 1, clickyPick: [], sizes: {} };
   // Text size per part, from the small slider beside it in the builder (the
   // guild lead, round six: "small sliders next to each of the hud's elements for
   // font size"). 1 = as designed; kept to 0.7–1.6 so a label cannot swallow
   // its neighbours.
-  var HUD_SIZED = ['target', 'tot', 'tres', 'status', 'hp', 'right', 'cooldowns', 'tick', 'swing', 'hitsIn', 'hitsOut', 'ds', 'procs', 'resists', 'track', 'clickies'];
+  var HUD_SIZED = ['target', 'tot', 'tres', 'status', 'hp', 'mana', 'end', 'cooldowns', 'tick', 'swing', 'hitsIn', 'hitsOut', 'ds', 'procs', 'resists', 'track', 'clickies'];
   // A part's size times the builder's "All text" slider (round seven: "a top
   // level slider for all of the text"), each 0.7–1.6.
   function sz(k){
@@ -884,6 +886,21 @@
         || JSON.parse(localStorage.getItem(HUD_PARTS_KEY) || 'null');
       if (saved && typeof saved === 'object') for (var k in HUD_DEFAULTS) if (k in saved) p[k] = saved[k];
       if (!p.sizes || typeof p.sizes !== 'object') p.sizes = {};
+      // FB-12 (a member, 2026-09-27: "mana or endurance … separated to be either or"): Mana and
+      // Endurance were ONE part, `right`. A save from before the split keeps today's look — both new
+      // parts start where the old one was (on, or off) and take its text size — unless the save
+      // already has them. The old keys are dropped, so the next save writes only the new ones.
+      if (saved && typeof saved === 'object') {
+        if ('right' in saved) {
+          if (!('mana' in saved)) p.mana = saved.right;
+          if (!('end' in saved)) p.end = saved.right;
+        }
+        if (p.sizes.right !== undefined) {
+          if (p.sizes.mana === undefined) p.sizes.mana = p.sizes.right;
+          if (p.sizes.end === undefined) p.sizes.end = p.sizes.right;
+          delete p.sizes.right;
+        }
+      }
     } catch (e) {}
     // The clicky picks: always a fresh array of item names, never the one HUD_DEFAULTS holds.
     p.clickyPick = Array.isArray(p.clickyPick) ? p.clickyPick.filter(function(n){ return typeof n === 'string'; }) : [];
@@ -1048,7 +1065,7 @@
   // amount (reshapeForHits), so the ring keeps its size; both SVG layers are
   // overflow:visible, so lines past the square still draw.
   var LANE_EXT = 120, _lanesOut = false;
-  function laneOutR(){ return 186 + 11 * Math.max(sz('hp'), sz('right')); }
+  function laneOutR(){ return 186 + 11 * Math.max(sz('hp'), sz('mana'), sz('end')); }
   // Which edge a line hugs: the ring's side of the column.
   function flushRight(L){ return _lanesOut ? L.side === 'left' : L.side === 'right'; }
   // "a Temple Patroller" → "Patroller": enough to tell two totals apart.
@@ -1413,14 +1430,16 @@
       h += gauge(R, 236, 304, d.hp == null ? 0 : d.hp / 100, hpColor(d.hp), 6 * W);
       h += ringLabel('hhp', R + 10, 236, 304, hpLabel(d, p.dps), 11 * sz('hp'));
     }
-    if (p.right && d.right.pct != null) {
+    // The right arc belongs to Mana, or to Endurance for a class with none (d.right.part); each part
+    // switches only its own drawing (FB-12). Endurance on a class WITH mana is the thin arc under health.
+    if (p[d.right.part] && d.right.pct != null) {
       h += gauge(R, 56, 124, d.right.pct / 100, d.right.color, 6 * W, true);
       // Fitted to the arc (68°): a bard's three counts with the damage out beside them is longer than
       // "MANA 45%" ever was, and a label the arc cuts off reads as a different number.
       var rl = rightLabel(d, p.dps, p.focus);
-      h += ringLabel('hrt', R + 10, 56, 124, rl, fitSize(11 * sz('right'), rl.replace(/<[^>]*>/g, '').length, 68, R + 10));
-      if (!d.noMana && d.end != null) h += gauge(R - 10, 240, 300, d.end / 100, 'var(--orange)', 2 * W);
+      h += ringLabel('hrt', R + 10, 56, 124, rl, fitSize(11 * sz(d.right.part), rl.replace(/<[^>]*>/g, '').length, 68, R + 10));
     }
+    if (p.end && !d.noMana && d.end != null) h += gauge(R - 10, 240, 300, d.end / 100, 'var(--orange)', 2 * W);
     // Cooldowns: an inner arc across the bottom (at most 80°, centred on 6
     // o'clock), left to right, each labelled along the ring beneath it.
     var cds = cdItems(d, p).slice(0, 5);
