@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.214': [
+    '**Mimic can now mark a character inventory-only or hidden.** They are the same switches as My Stats on wolfpack.quest, so both always show the same state. Needs a Mimic build with the new choice in setup.',
+  ],
   '3.1.213': [
     '**My parses can filter by zone and mob, and group by day.** wolfpack.quest/me/parses has a search box and Zone and Mob pickers over your fights, and a By day switch that folds them under each raid night. The chart follows the filters.',
   ],
