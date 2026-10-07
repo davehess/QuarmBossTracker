@@ -206,3 +206,15 @@ describe('your own timers starting is a term (another raider\'s Target Info show
       .toBe(sigOf({ ...BASE, cooldowns: list.map(c => ({ ...c })) }, { now: 1_005_000 }));
   });
 });
+
+describe('Divine Intervention on the spell bar is a term (FB-62)', () => {
+  // A cleric memorizing DI, or dropping it, is an event: the CH chain's tick follows it, and it
+  // should not wait out the 45s heartbeat. The reading is true / false / null (bar unreadable).
+  it('memorizing it re-sends, and so does dropping it', () => {
+    expect(sigOf({ ...BASE, di_mem: false })).not.toBe(sigOf({ ...BASE, di_mem: true }));
+    expect(sigOf({ ...BASE, di_mem: true })).not.toBe(sigOf({ ...BASE, di_mem: null }));
+  });
+  it('the same reading a poll later does not', () => {
+    expect(sigOf({ ...BASE, di_mem: true }, { now: 1_000_000 })).toBe(sigOf({ ...BASE, di_mem: true }, { now: 1_005_000 }));
+  });
+});
