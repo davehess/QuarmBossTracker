@@ -1376,7 +1376,8 @@ describe('the in-game picker', () => {
     expect(stripCss(meHtml)).toContain('body.building #wrap{width:var(--ring-w)}');
     // Closing puts the ring back where the window is NOW, not where it was when the panel opened
     // (FB-16: a resize made with the panel open was undone) — test/mimic-hud-builder-resize.test.js.
-    expect(body).toMatch(/function closeBuilder\(restore, atLoad\)\{[\s\S]*?if \(restore !== false\) \{[\s\S]*?if \(back && back\.width\) setBounds\(back\);/);
+    // (alpha: a Canvas panel skips the window restore — `&& !IN_CANVAS`; test/canvas-real-presets.test.js runs it)
+    expect(body).toMatch(/function closeBuilder\(restore, atLoad\)\{[\s\S]*?if \(restore !== false(?: && !IN_CANVAS)?\) \{[\s\S]*?if \(back && back\.width\) setBounds\(back\);/);
     // quitting with it open must not leave the ring off-centre next launch: a launch has only the stored bounds
     expect(body).toMatch(/if \(pre\) closeBuilder\(isHud\(style\), true\);/);
   });

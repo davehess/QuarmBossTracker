@@ -347,6 +347,7 @@ describe('the HUD builder, docked: it widens the panel, never the window', () =>
       parent: { wpCanvasWiden: (w, px, on) => { log.widen.push([px, on]); return on ? widenAnswer : true; } } };
     const doc = { documentElement: { clientWidth: 343, clientHeight: 343, style: { setProperty: (k, v) => { log.props[k] = v; }, removeProperty: (k) => { delete log.props[k]; } } },
       body: { classList: { add: (...cs) => cs.forEach(k => log.classes.add(k)), remove: (...cs) => cs.forEach(k => log.classes.delete(k)),
+        contains: (k) => log.classes.has(k),
         toggle: (k, on) => { if (on) log.classes.add(k); else log.classes.delete(k); } } } };
     const ls = { setItem: (k, v) => log.stored.push(['set', k, v]), getItem: () => null, removeItem: (k) => log.stored.push(['rm', k]) };
     const fns = new Function('IN_CANVAS', 'window', 'document', 'screen', 'localStorage', 'builderEl', 'renderBuilder', 'setBounds', 'hoverOff',

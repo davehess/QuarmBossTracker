@@ -602,7 +602,9 @@ describe('the overlay reads it only while History or Trend is open, and every co
         if (/fightHistory/.test(stripJs(readSource(path.join(d, f))))) hits.push(f);
       }
     }
-    expect(hits).toEqual(['overlay.html']);                                      // and only as the old-agent fallback above
+    // alpha: the Canvas's meter-history piece (parts.js) reproduces the overlay's History list, so it
+    // reads the same field; it is the one other reader allowed.
+    expect(hits).toEqual(['overlay.html', 'parts.js']);                          // and only as the old-agent fallback above
     // (booleans, not not.toMatch: a failure there would print the whole 45k-line agent)
     // nothing in the agent's embedded pages reads it off a state object — only stats.* and the legacy session file
     expect(/(?<!stats|raw)\.fightHistory/.test(stripJs(agentSrc))).toBe(false);
