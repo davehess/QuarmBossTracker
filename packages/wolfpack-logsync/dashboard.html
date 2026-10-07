@@ -21,6 +21,14 @@ tr:hover td { background:#1f242c }
 .name { color:var(--orange) }
 .dim { color:var(--dim) }
 .dot { color:var(--green) }
+/* Main / alt · Inventory only · Hide completely — three buttons drawn as one segmented control (Me card). */
+.wp-seg { display:inline-flex; border:1px solid var(--border); border-radius:5px; overflow:hidden; vertical-align:middle; }
+.wp-mode { background:none; border:0; border-right:1px solid var(--border); color:var(--dim); font:inherit; font-size:11px; padding:2px 7px; cursor:pointer; white-space:nowrap; }
+.wp-mode:last-child { border-right:0; }
+.wp-mode:hover { color:var(--text); }
+.wp-mode.on { background:#1f6feb33; color:#e6edf3; }
+.wp-mode.hide.on { background:#f8514922; color:var(--red); }
+.wp-mode:focus-visible { outline:2px solid var(--blue); outline-offset:-2px; }
 /* Sidebar navigation (the guild lead, 2026-08-13: "having to scroll in our dashboard is
    somewhat annoying to navigate"). The row was FULL - 8 tabs plus Tour and
    Panels - so every new destination had to wrap or displace something, which is
@@ -1629,6 +1637,77 @@ document.addEventListener('click', function (e) {
   try { refresh(); } catch (err2) { void err2; }   // repaint now instead of waiting for the next poll
 });
 
+// Main / alt · Inventory only · Hide completely (the guild lead, 2026-10-06: "the complete hide or hide from
+// all but inventory should be with mimic during onboarding but the denotation on other side should be
+// carried over"). The setup walkthrough asks it once per character; this is the SAME choice, changeable any
+// time after, over the same engine endpoints (tray/dashboard parity: one path, not two). Rows come from
+// /api/state characterModes: the characters this PC has logs for, INCLUDING any whose log Mimic no longer
+// reads. Those are not in Watched characters, and a character hidden completely has to stay reachable here
+// or it could never be switched back. Under Mimic the click goes through window.mimic.setCharacterMode (the
+// engine asks wolfpack.quest, and Mimic keeps the don't-transmit list, the log gate, in step); a plain
+// browser posts to /api/character-mode, where Hide completely still stops every upload at once but the log
+// itself stays read (that gate is the WOLFPACK_EXCLUDED_CHARS setting).
+var WP_MODES = [['show', 'Main / alt'], ['inventory', 'Inventory only'], ['hidden', 'Hide completely']];
+var _wpModeMsg = null;          // { text, color }: the line under the list. Part of the card's string, so it only repaints when it changes.
+var _wpModeMsgT = null, _wpModeRestartT = null;
+function wpModeNote(r) {
+  if (r.pending) return 'saved on this PC only';
+  if (r.mode === 'hidden' && r.log_read) return 'hidden on wolfpack.quest, log still read here';
+  if (r.mode !== 'hidden' && r.mode !== 'custom' && !r.log_read) return 'log not read on this PC';
+  if (r.mode === 'custom') return 'set differently on wolfpack.quest';
+  return '';
+}
+function wpModesHtml(modes) {
+  var h = '<details ' + wpKeep('me-char-modes') + ' style="margin-top:6px"><summary class="dim" style="cursor:pointer;font-size:11px">'
+    + '👁 How each character shows (' + modes.length + ')</summary>'
+    + '<div class="dim" style="font-size:10px;margin:4px 0"><b>Inventory only</b>: kept for your account inventory, left out of every list and chart. '
+    + '<b>Hide completely</b>: Mimic stops reading that log and the website hides it. Same switches as My Stats on wolfpack.quest.</div>'
+    + '<div style="font-size:12px;line-height:1.9">';
+  modes.forEach(function (r) {
+    var note = wpModeNote(r);
+    h += '<div><span class="name">' + esc(r.name) + '</span> <span class="wp-seg" role="radiogroup" aria-label="Show ' + esc(r.name) + ' as">'
+      + WP_MODES.map(function (m) {
+          return '<button type="button" role="radio" aria-checked="' + (r.mode === m[0] ? 'true' : 'false') + '" class="wp-mode' + (r.mode === m[0] ? ' on' : '') + (m[0] === 'hidden' ? ' hide' : '')
+            + '" data-char="' + esc(r.name) + '" data-mode="' + m[0] + '">' + m[1] + '</button>';
+        }).join('')
+      + '</span>' + (note ? ' <span class="dim" style="font-size:10px">' + esc(note) + '</span>' : '') + '</div>';
+  });
+  h += '</div>';
+  if (_wpModeMsg) h += '<div style="font-size:11px;margin-top:4px;color:' + _wpModeMsg.color + '">' + esc(_wpModeMsg.text) + '</div>';
+  return h + '</details>';
+}
+function wpModeSay(text, color) {
+  _wpModeMsg = { text: text, color: color };
+  clearTimeout(_wpModeMsgT);
+  _wpModeMsgT = setTimeout(function () { _wpModeMsg = null; try { refresh(); } catch (e) { void e; } }, 12000);
+}
+function wpSetCharacterMode(name, mode) {
+  var viaMimic = !!(window.mimic && window.mimic.setCharacterMode);
+  var label = (WP_MODES.filter(function (m) { return m[0] === mode; })[0] || [0, mode])[1];
+  var call = viaMimic
+    ? window.mimic.setCharacterMode(name, mode)
+    : fetch('/api/character-mode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ character: name, mode: mode }) }).then(function (r) { return r.json(); });
+  Promise.resolve(call).then(function (r) {
+    if (!r || r.ok === false) { wpModeSay('Could not save that for ' + name + '. Try again.', 'var(--red)'); return; }
+    var msg = name + ': ' + label + (r.note ? '. ' + r.note : r.synced ? '. Synced with wolfpack.quest.' : '.');
+    if (r.restart_needed && viaMimic) {
+      msg += ' Mimic restarts its engine in a moment to ' + (mode === 'hidden' ? 'stop reading' : 'start reading') + ' that log.';
+      clearTimeout(_wpModeRestartT);
+      _wpModeRestartT = setTimeout(function () { try { window.mimic.relaunchAgent(); } catch (e) { void e; } }, 2500);
+    } else if (!viaMimic && mode === 'hidden') {
+      msg += ' Uploads stop now; to stop this PC reading the log, list it in WOLFPACK_EXCLUDED_CHARS.';
+    }
+    wpModeSay(msg, r.synced ? 'var(--green)' : 'var(--orange)');
+    try { refresh(); } catch (e2) { void e2; }
+  }).catch(function () { wpModeSay('Could not reach the engine. Try again.', 'var(--red)'); });
+}
+document.addEventListener('click', function (e) {
+  var b = e.target && e.target.closest ? e.target.closest('.wp-mode') : null;
+  if (!b) return;
+  e.preventDefault();
+  wpSetCharacterMode(b.dataset.char, b.dataset.mode);
+});
+
 // 🐺 Me — the member's own snapshot at the top of the Dashboard (in place of the
 // old logsync region). Pulls ENTIRELY from local state — the own Zeal client
 // (character + zone + buffs), watched logs (characters), local tells, and recent
@@ -1709,6 +1788,10 @@ function renderMeCard(s) {
     }
     if (part.tucked.length > 0) h += '<div class="dim" style="font-size:11px;margin-top:3px">' + wpLowToggleHtml(part.tucked.length) + '</div>';
   }
+  // Main / alt · Inventory only · Hide completely, per character (see wpModesHtml). Listed even when no
+  // log is being watched: a character this PC no longer reads is exactly the one that needs the way back.
+  const charModes = Array.isArray(s.characterModes) ? s.characterModes : [];
+  if (charModes.length > 0) h += wpModesHtml(charModes);
   h += '</div>';
 
   // Recent tells (local only — they never leave the machine).

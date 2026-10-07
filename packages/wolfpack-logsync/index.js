@@ -16257,6 +16257,9 @@ function _serializeForDashboard() {
     // these characters from anything but account inventory"): hidden characters join the tucked-away set.
     // Display only — the Watched Logs diagnostic card still lists every file and nothing uploads differently.
     watchedLogs:        (stats.watchedLogs || []).map(w => ({ ...w, level: _levelOf(w.character), hidden: _hiddenFromLists(w.character) })),
+    // Main / alt · Inventory only · Hide completely, per character on this PC (the guild lead, 2026-10-06),
+    // including the ones whose log this PC no longer reads. No network, no clock: byte-stable between polls.
+    characterModes:     _pcCharacterModeRows(),
     // FB-51: null, or { character, file, silentSince } while the primary character's log has gone quiet
     // though Zeal says they are in game. silentSince is the last line's time, so the JSON is byte-stable.
     logSilent:          _logSilent,
@@ -17333,6 +17336,14 @@ tr:hover td { background:#1f242c }
 .name { color:var(--orange) }
 .dim { color:var(--dim) }
 .dot { color:var(--green) }
+/* Main / alt · Inventory only · Hide completely — three buttons drawn as one segmented control (Me card). */
+.wp-seg { display:inline-flex; border:1px solid var(--border); border-radius:5px; overflow:hidden; vertical-align:middle; }
+.wp-mode { background:none; border:0; border-right:1px solid var(--border); color:var(--dim); font:inherit; font-size:11px; padding:2px 7px; cursor:pointer; white-space:nowrap; }
+.wp-mode:last-child { border-right:0; }
+.wp-mode:hover { color:var(--text); }
+.wp-mode.on { background:#1f6feb33; color:#e6edf3; }
+.wp-mode.hide.on { background:#f8514922; color:var(--red); }
+.wp-mode:focus-visible { outline:2px solid var(--blue); outline-offset:-2px; }
 /* Sidebar navigation (the guild lead, 2026-08-13: "having to scroll in our dashboard is
    somewhat annoying to navigate"). The row was FULL - 8 tabs plus Tour and
    Panels - so every new destination had to wrap or displace something, which is
@@ -18941,6 +18952,77 @@ document.addEventListener('click', function (e) {
   try { refresh(); } catch (err2) { void err2; }   // repaint now instead of waiting for the next poll
 });
 
+// Main / alt · Inventory only · Hide completely (the guild lead, 2026-10-06: "the complete hide or hide from
+// all but inventory should be with mimic during onboarding but the denotation on other side should be
+// carried over"). The setup walkthrough asks it once per character; this is the SAME choice, changeable any
+// time after, over the same engine endpoints (tray/dashboard parity: one path, not two). Rows come from
+// /api/state characterModes: the characters this PC has logs for, INCLUDING any whose log Mimic no longer
+// reads. Those are not in Watched characters, and a character hidden completely has to stay reachable here
+// or it could never be switched back. Under Mimic the click goes through window.mimic.setCharacterMode (the
+// engine asks wolfpack.quest, and Mimic keeps the don't-transmit list, the log gate, in step); a plain
+// browser posts to /api/character-mode, where Hide completely still stops every upload at once but the log
+// itself stays read (that gate is the WOLFPACK_EXCLUDED_CHARS setting).
+var WP_MODES = [['show', 'Main / alt'], ['inventory', 'Inventory only'], ['hidden', 'Hide completely']];
+var _wpModeMsg = null;          // { text, color }: the line under the list. Part of the card's string, so it only repaints when it changes.
+var _wpModeMsgT = null, _wpModeRestartT = null;
+function wpModeNote(r) {
+  if (r.pending) return 'saved on this PC only';
+  if (r.mode === 'hidden' && r.log_read) return 'hidden on wolfpack.quest, log still read here';
+  if (r.mode !== 'hidden' && r.mode !== 'custom' && !r.log_read) return 'log not read on this PC';
+  if (r.mode === 'custom') return 'set differently on wolfpack.quest';
+  return '';
+}
+function wpModesHtml(modes) {
+  var h = '<details ' + wpKeep('me-char-modes') + ' style="margin-top:6px"><summary class="dim" style="cursor:pointer;font-size:11px">'
+    + '👁 How each character shows (' + modes.length + ')</summary>'
+    + '<div class="dim" style="font-size:10px;margin:4px 0"><b>Inventory only</b>: kept for your account inventory, left out of every list and chart. '
+    + '<b>Hide completely</b>: Mimic stops reading that log and the website hides it. Same switches as My Stats on wolfpack.quest.</div>'
+    + '<div style="font-size:12px;line-height:1.9">';
+  modes.forEach(function (r) {
+    var note = wpModeNote(r);
+    h += '<div><span class="name">' + esc(r.name) + '</span> <span class="wp-seg" role="radiogroup" aria-label="Show ' + esc(r.name) + ' as">'
+      + WP_MODES.map(function (m) {
+          return '<button type="button" role="radio" aria-checked="' + (r.mode === m[0] ? 'true' : 'false') + '" class="wp-mode' + (r.mode === m[0] ? ' on' : '') + (m[0] === 'hidden' ? ' hide' : '')
+            + '" data-char="' + esc(r.name) + '" data-mode="' + m[0] + '">' + m[1] + '</button>';
+        }).join('')
+      + '</span>' + (note ? ' <span class="dim" style="font-size:10px">' + esc(note) + '</span>' : '') + '</div>';
+  });
+  h += '</div>';
+  if (_wpModeMsg) h += '<div style="font-size:11px;margin-top:4px;color:' + _wpModeMsg.color + '">' + esc(_wpModeMsg.text) + '</div>';
+  return h + '</details>';
+}
+function wpModeSay(text, color) {
+  _wpModeMsg = { text: text, color: color };
+  clearTimeout(_wpModeMsgT);
+  _wpModeMsgT = setTimeout(function () { _wpModeMsg = null; try { refresh(); } catch (e) { void e; } }, 12000);
+}
+function wpSetCharacterMode(name, mode) {
+  var viaMimic = !!(window.mimic && window.mimic.setCharacterMode);
+  var label = (WP_MODES.filter(function (m) { return m[0] === mode; })[0] || [0, mode])[1];
+  var call = viaMimic
+    ? window.mimic.setCharacterMode(name, mode)
+    : fetch('/api/character-mode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ character: name, mode: mode }) }).then(function (r) { return r.json(); });
+  Promise.resolve(call).then(function (r) {
+    if (!r || r.ok === false) { wpModeSay('Could not save that for ' + name + '. Try again.', 'var(--red)'); return; }
+    var msg = name + ': ' + label + (r.note ? '. ' + r.note : r.synced ? '. Synced with wolfpack.quest.' : '.');
+    if (r.restart_needed && viaMimic) {
+      msg += ' Mimic restarts its engine in a moment to ' + (mode === 'hidden' ? 'stop reading' : 'start reading') + ' that log.';
+      clearTimeout(_wpModeRestartT);
+      _wpModeRestartT = setTimeout(function () { try { window.mimic.relaunchAgent(); } catch (e) { void e; } }, 2500);
+    } else if (!viaMimic && mode === 'hidden') {
+      msg += ' Uploads stop now; to stop this PC reading the log, list it in WOLFPACK_EXCLUDED_CHARS.';
+    }
+    wpModeSay(msg, r.synced ? 'var(--green)' : 'var(--orange)');
+    try { refresh(); } catch (e2) { void e2; }
+  }).catch(function () { wpModeSay('Could not reach the engine. Try again.', 'var(--red)'); });
+}
+document.addEventListener('click', function (e) {
+  var b = e.target && e.target.closest ? e.target.closest('.wp-mode') : null;
+  if (!b) return;
+  e.preventDefault();
+  wpSetCharacterMode(b.dataset.char, b.dataset.mode);
+});
+
 // 🐺 Me — the member's own snapshot at the top of the Dashboard (in place of the
 // old logsync region). Pulls ENTIRELY from local state — the own Zeal client
 // (character + zone + buffs), watched logs (characters), local tells, and recent
@@ -19021,6 +19103,10 @@ function renderMeCard(s) {
     }
     if (part.tucked.length > 0) h += '<div class="dim" style="font-size:11px;margin-top:3px">' + wpLowToggleHtml(part.tucked.length) + '</div>';
   }
+  // Main / alt · Inventory only · Hide completely, per character (see wpModesHtml). Listed even when no
+  // log is being watched: a character this PC no longer reads is exactly the one that needs the way back.
+  const charModes = Array.isArray(s.characterModes) ? s.characterModes : [];
+  if (charModes.length > 0) h += wpModesHtml(charModes);
   h += '</div>';
 
   // Recent tells (local only — they never leave the machine).
@@ -31539,6 +31625,23 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(_serializeOptinForWeb()));
       }
+      // Character modes (the guild lead, 2026-10-06): Main / alt · Inventory only · Hide completely, one
+      // choice per character, the same three switches as My Stats on wolfpack.quest. GET is the website's
+      // family merged with this PC's logs; POST makes the choice (website first, saved here either way).
+      // Always 200 with the reason in the body on a miss: the callers read the body without the status.
+      if (req.url === '/api/character-modes' && req.method === 'GET') {
+        const out = await characterModesPayload();
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify(out));
+      }
+      if (req.url === '/api/character-mode' && req.method === 'POST') {
+        let payload;
+        try { payload = JSON.parse(await _readBody(req, 2 * 1024) || '{}'); }
+        catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: false, error: 'invalid json' })); }
+        const out = await setCharacterMode(payload && payload.character, payload && payload.mode);
+        res.writeHead(out.ok ? 200 : 400, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify(out));
+      }
 
       // ── Personal triggers CRUD ─────────────────────────────────────────────
       // The agent already loads <state-dir>/personal_triggers.json on startup
@@ -32910,6 +33013,9 @@ const _optinState = {
   ignoredPaths: new Set(),
   // Character names hidden from the Tank/Weapon Loadouts view
   hiddenLoadoutChars: new Set(),
+  // Per-character mode chosen on this PC (persisted): lowercase name → { mode, at, synced }. `synced`
+  // is false when the website never took the choice (see setCharacterMode).
+  characterModes: {},
   // #113 per-user Extended Target pref: exclude other Mimics' targets when the
   // uploader isn't in my zone. Default ON (splinter groups elsewhere stop
   // polluting the list). Read by fetchExtendedTarget → passed to the bot as
@@ -32970,6 +33076,7 @@ function _loadOptInState() {
     _optinState.ignoredPaths         = new Set(raw.ignoredPaths || []);
     _optinState.importedPaths        = Array.isArray(raw.importedPaths) ? raw.importedPaths.filter(e => e && e.path) : [];
     _optinState.hiddenLoadoutChars   = new Set((raw.hiddenLoadoutChars || []).map(s => s.toLowerCase()));
+    _optinState.characterModes       = _cleanCharacterModes(raw.characterModes);
     // #113 default ON: absent (old files) → true; only an explicit false disables.
     _optinState.extSameZoneOnly      = (raw.extSameZoneOnly !== false);
     if (typeof raw.lootAuctionTts === 'boolean') _optinState.lootAuctionTts = raw.lootAuctionTts;
@@ -32993,6 +33100,7 @@ function _saveOptInState() {
       ignoredPaths:       [..._optinState.ignoredPaths],
       importedPaths:      _optinState.importedPaths || [],
       hiddenLoadoutChars: [...(_optinState.hiddenLoadoutChars || [])],
+      characterModes:     _optinState.characterModes || {},
       extSameZoneOnly:    _optinState.extSameZoneOnly !== false,
       lootAuctionTts:        _optinState.lootAuctionTts !== false,
       lootAuctionDefaultSec: _optinState.lootAuctionDefaultSec || 120,
@@ -38194,6 +38302,225 @@ function _hiddenFromLists(character) {
   const p = stats.characterPrefs && stats.characterPrefs[String(character || '').toLowerCase()];
   return !!(p && p.hidden_from_lists);
 }
+
+// ── Character modes: ONE three-way choice per character (the guild lead, 2026-10-06) ─────────────────
+// "the complete hide or hide from all but inventory should be with mimic during onboarding but the
+// denotation on other side should be carried over." wolfpack.quest/me keeps three switches per character;
+// Mimic asks one question, and both sides show the same state:
+//   show       Main / alt       all three switches off
+//   inventory  Inventory only   hidden_from_lists only: kept for the account inventory, in no list or chart
+//   hidden     Hide completely  all three on, and THIS PC stops reading that character's log
+//   custom     (read only)      any other combination, set on the website: shown as it is, never produced here
+// The website's flags are the truth whenever it knows the character. The saved local choice
+// (_optinState.characterModes) covers what the website could not take: local mode, an older bot, a log not
+// linked to the guild yet. A local entry the website never took (`synced:false`) wins over the site's answer
+// until it is synced, so a choice that did not reach the site does not quietly flip back on the next poll.
+const CHARACTER_MODES = ['show', 'inventory', 'hidden'];
+function characterModeFromFlags(p) {
+  const h = !!(p && p.hidden_from_lists), s = !!(p && p.exclude_from_stats), i = !!(p && p.exclude_inventory);
+  if (!h && !s && !i) return 'show';
+  if (h && !s && !i) return 'inventory';
+  if (h && s && i) return 'hidden';
+  return 'custom';
+}
+function characterModeToFlags(mode) {
+  if (mode === 'show')      return { hidden_from_lists: false, exclude_from_stats: false, exclude_inventory: false };
+  if (mode === 'inventory') return { hidden_from_lists: true,  exclude_from_stats: false, exclude_inventory: false };
+  if (mode === 'hidden')    return { hidden_from_lists: true,  exclude_from_stats: true,  exclude_inventory: true };
+  return null;
+}
+// THE decision: only "Hide completely" stops this PC reading the log. It reuses the don't-transmit list that
+// onboarding's "Transmit?" step always wrote (Mimic's excludedCharacters, handed over as
+// WOLFPACK_EXCLUDED_CHARS, applied at boot where the log is never opened) — Mimic adds or removes the name
+// when the choice is made. "Inventory only" keeps the log read, so the inventory exports still upload.
+function modeStopsLog(mode) { return mode === 'hidden'; }
+// EQ names are letters only; anything else never reaches the bot or the saved choices.
+function _modeCharName(v) { const s = String(v == null ? '' : v).trim(); return /^[A-Za-z]{1,24}$/.test(s) ? s : ''; }
+// The saved choices as read back from disk: only plain names with a mode we know survive.
+function _cleanCharacterModes(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [k, v] of Object.entries(raw)) {
+    const lc = String(k).toLowerCase();
+    if (!_modeCharName(lc) || !v || !CHARACTER_MODES.includes(v.mode)) continue;
+    out[lc] = { mode: v.mode, at: Number(v.at) || 0, synced: v.synced !== false };
+  }
+  return out;
+}
+// What to SHOW for one character and where that came from. Pure: callers hand in what they know.
+//   prefs     the website's flags for it (a stats.characterPrefs entry or a ?mine=1 row), or null
+//   local     this PC's saved choice { mode, synced }, or null
+//   excluded  true when this PC's log gate is skipping that character's log
+function characterModeRow(name, { prefs, local, excluded } = {}) {
+  let mode = 'show', src = 'default';
+  const pending = !!(local && local.synced === false && CHARACTER_MODES.includes(local.mode));
+  if (pending) { mode = local.mode; src = 'local'; }
+  else if (prefs) { mode = characterModeFromFlags(prefs); src = 'site'; }
+  else if (local && CHARACTER_MODES.includes(local.mode)) { mode = local.mode; src = 'local'; }
+  else if (excluded) { mode = 'hidden'; src = 'local'; }
+  return { name, mode, src, pending, log_read: !excluded };
+}
+// The characters this PC has logs for, with their modes. No network: the dashboard's /api/state carries it.
+// Excluded logs are not in watchedLogs (the boot filter never registers them), so they come from
+// stats.excludedLogs — without them a character hidden completely would vanish from the list that undoes it.
+function _pcCharacterModeRows() {
+  const seen = new Set(), out = [];
+  const local = _optinState.characterModes || {};
+  const add = (name, excluded) => {
+    const lc = String(name || '').toLowerCase();
+    if (!lc || seen.has(lc)) return;
+    seen.add(lc);
+    out.push(characterModeRow(name, {
+      prefs: (stats.characterPrefs && stats.characterPrefs[lc]) || null,
+      local: local[lc] || null,
+      excluded,
+    }));
+  };
+  for (const w of (stats.watchedLogs || [])) if (w && w.character) add(w.character, false);
+  for (const w of (stats.excludedLogs || [])) if (w && w.character) add(w.character, true);
+  return out.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+}
+// One short line per way a choice can stay on this PC, shown verbatim by Mimic's onboarding and the dashboard.
+const CHARACTER_MODE_NOTES = {
+  local:        'Saved on this PC. Sign in to sync it with wolfpack.quest.',
+  'signed-out': 'Saved on this PC. Sign in to sync it with wolfpack.quest.',
+  'bot-old':    'Saved on this PC. The guild server needs its update before this syncs.',
+  'not-linked': 'Saved on this PC. This character is not linked to your account on wolfpack.quest yet.',
+  offline:      'Saved on this PC. Could not reach wolfpack.quest; pick it again later to sync.',
+};
+// The website's three flags off a ?mine=1 row: the flags themselves, else the ones its `mode` stands for.
+const _MODE_FLAG_KEYS = ['hidden_from_lists', 'exclude_from_stats', 'exclude_inventory'];
+function _siteFlagsOf(c) {
+  if (!c) return null;
+  if (_MODE_FLAG_KEYS.some(k => typeof c[k] === 'boolean')) {
+    return { hidden_from_lists: !!c.hidden_from_lists, exclude_from_stats: !!c.exclude_from_stats, exclude_inventory: !!c.exclude_inventory };
+  }
+  return CHARACTER_MODES.includes(c.mode) ? characterModeToFlags(c.mode) : null;
+}
+// The flags to put on an output row: the website's own when it is the source (a `custom` mix survives
+// intact), else the ones its mode stands for.
+function _rowFlags(row, site) {
+  if (row.src === 'site' && site) return site;
+  return characterModeToFlags(row.mode) || { hidden_from_lists: false, exclude_from_stats: false, exclude_inventory: false };
+}
+const CHARACTER_MODES_TTL_MS = 30_000;
+let _modesMineCache = null;     // { key, at, payload } — the website's answer for this sign-in
+function _characterPrefsHeaders() {
+  const h = { Authorization: 'Bearer ' + _uploadOpts.token, 'User-Agent': 'wolfpack-logsync/' + AGENT_VERSION };
+  if (_mimicSessionToken) h['X-Wolfpack-Mimic-Session'] = _mimicSessionToken;
+  return h;
+}
+// Why this PC cannot ask the website right now, or null when it can. Local mode (no token) makes no call.
+function _characterModesWhyNot() {
+  if (!_canAskGuildForFights()) return 'local';
+  if (!_mimicSessionToken) return 'signed-out';   // ?mine=1 and the POST both name the signed-in person
+  return null;
+}
+// GET /character-prefs?mine=1 — the signed-in person's whole family with its three flags, 30s per sign-in.
+async function fetchCharacterModesMine({ fresh = false } = {}) {
+  const why = _characterModesWhyNot();
+  if (why) return { ok: false, reason: why };
+  const key = String(_mimicSessionToken).slice(-8);
+  if (!fresh && _modesMineCache && _modesMineCache.key === key && (Date.now() - _modesMineCache.at) < CHARACTER_MODES_TTL_MS) return _modesMineCache.payload;
+  try {
+    const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+    const r = await fetch(base + '/character-prefs?mine=1', { headers: _characterPrefsHeaders(), signal: AbortSignal.timeout(8_000) });
+    if (r.status === 401 || r.status === 403) return { ok: false, reason: 'signed-out' };
+    if (r.status === 404) return { ok: false, reason: 'bot-old' };
+    if (!r.ok) return { ok: false, reason: 'offline' };
+    const j = await r.json();
+    // An older bot answers ?mine=1 with its plain { prefs } body: no family list means no support.
+    if (!j || !Array.isArray(j.characters)) return { ok: false, reason: 'bot-old' };
+    const payload = { ok: true, characters: j.characters.filter(c => c && _modeCharName(c.name)) };
+    _modesMineCache = { key, at: Date.now(), payload };
+    return payload;
+  } catch { return { ok: false, reason: 'offline' }; }
+}
+// POST /character-prefs { character, mode } → { synced, reason }. Never throws.
+async function _postCharacterMode(character, mode) {
+  const why = _characterModesWhyNot();
+  if (why) return { synced: false, reason: why };
+  try {
+    const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+    const r = await fetch(base + '/character-prefs', {
+      method: 'POST',
+      headers: { ..._characterPrefsHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ character, mode }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (r.status === 401) return { synced: false, reason: 'signed-out' };
+    if (r.status === 403) return { synced: false, reason: 'not-linked' };
+    if (r.status === 404) return { synced: false, reason: 'bot-old' };
+    if (!r.ok) return { synced: false, reason: 'offline' };
+    const j = await r.json().catch(() => null);
+    // An older bot's catch-all can answer 200 without saving anything: only { ok, mode } counts.
+    if (!j || j.ok !== true || !CHARACTER_MODES.includes(j.mode)) return { synced: false, reason: 'bot-old' };
+    return { synced: true, reason: null };
+  } catch { return { synced: false, reason: 'offline' }; }
+}
+// Make the choice. The website first; either way it is saved on this PC, and the flags reach the upload
+// gates NOW when the website took it. When it did not, only "Hide completely" is applied early: privacy
+// ratchets one way, and an un-hide the website never heard must not start uploads the website still forbids.
+async function setCharacterMode(rawName, rawMode) {
+  const name = _modeCharName(rawName);
+  if (!name) return { ok: false, error: 'bad character' };
+  if (!CHARACTER_MODES.includes(rawMode)) return { ok: false, error: 'bad mode' };
+  const lc = name.toLowerCase();
+  const sent = await _postCharacterMode(name, rawMode);
+  if (!_optinState.characterModes) _optinState.characterModes = {};
+  _optinState.characterModes[lc] = { mode: rawMode, at: Date.now(), synced: sent.synced };
+  _saveOptInState();
+  if (sent.synced || rawMode === 'hidden') {
+    const cur = (stats.characterPrefs && stats.characterPrefs[lc]) || {};
+    stats.characterPrefs = Object.assign({}, stats.characterPrefs, {
+      [lc]: Object.assign({ exclude_from_stats: false, exclude_inventory: false, hidden_from_lists: false }, characterModeToFlags(rawMode), { tell_relay: !!cur.tell_relay }),
+    });
+  }
+  _modesMineCache = null;
+  _stateJsonCache = { at: 0, body: null };   // the dashboard's next /api/state shows it, not a 400ms-old copy
+  try { scheduleRender(); } catch { /* headless */ }
+  return {
+    ok: true, character: name, mode: rawMode, synced: sent.synced, reason: sent.reason,
+    note: sent.synced ? null : (CHARACTER_MODE_NOTES[sent.reason] || CHARACTER_MODE_NOTES.offline),
+    stops_log: modeStopsLog(rawMode),
+    log_read: !(stats.excludedLogs || []).some(w => w && String(w.character).toLowerCase() === lc),
+  };
+}
+// GET /api/character-modes — the website's whole family merged with the logs on this PC. A character on
+// the PC the website does not know (a log not linked yet) still appears, with its mode from the local
+// choice (or the don't-transmit list, or Main / alt). Always an answer; `synced:false` + `reason` says why
+// the website's half is missing.
+async function characterModesPayload({ fresh = false } = {}) {
+  const pc = _pcCharacterModeRows();
+  const pcBy = new Map(pc.map(r => [r.name.toLowerCase(), r]));
+  const mine = await fetchCharacterModesMine({ fresh });
+  const local = _optinState.characterModes || {};
+  const out = [], seen = new Set();
+  if (mine.ok) {
+    for (const c of mine.characters) {
+      const lc = c.name.toLowerCase();
+      if (seen.has(lc)) continue;
+      seen.add(lc);
+      const p = pcBy.get(lc);
+      const site = _siteFlagsOf(c);
+      const row = characterModeRow(c.name, { prefs: site, local: local[lc] || null, excluded: !!p && !p.log_read });
+      out.push(Object.assign(row, { linked: true, on_pc: !!p }, _rowFlags(row, site)));
+    }
+  }
+  for (const r of pc) {
+    const lc = r.name.toLowerCase();
+    if (seen.has(lc)) continue;
+    seen.add(lc);
+    out.push(Object.assign({}, r, { linked: false, on_pc: true }, _rowFlags(r, null)));
+  }
+  return {
+    ok: true, signed_in: !!_mimicSessionToken, local_only: _localOnly(),
+    synced: !!mine.ok, reason: mine.ok ? null : mine.reason,
+    note: mine.ok ? null : (CHARACTER_MODE_NOTES[mine.reason] || null),
+    characters: out,
+  };
+}
+// ── end character modes ─────────────────────────────────────────────────────────────────────────────
 
 // Poll the bot for officer-tuned guild triggers. We refresh stats.guildTriggers
 // every ~10 min and merge with personal triggers loaded from disk in
@@ -48102,10 +48429,15 @@ async function main() {
   const filtered   = [];
   const droppedFor = [];
   const droppedBackups = [];
+  // The logs this PC skips (Hide completely / "Transmit?" off), kept so the dashboard can still list them:
+  // the filter below never registers them in watchedLogs, and a character that vanished from its own list
+  // could not be switched back.
+  stats.excludedLogs = [];
   for (const p of allLogs) {
     const fromName = characterFromFilename(p) || '';
     if (fromName && excludedSet.has(fromName.toLowerCase())) {
       droppedFor.push(fromName);
+      if (!isBackupLogFile(p)) stats.excludedLogs.push({ character: fromName, logPath: p });
       continue;
     }
     // Never LIVE-TAIL a copied-aside backup. Now that eqlog_Aldenmar3 resolves to

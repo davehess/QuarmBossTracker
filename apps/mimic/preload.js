@@ -663,6 +663,11 @@ contextBridge.exposeInMainWorld('mimic', {
   // POSTs it makes: 'import' old logs, 'backfill' the main's log.
   openWelcome:     (v)    => ipcRenderer.invoke('open-welcome', v === 'b' ? 'b' : 'a'),
   welcomeOptin:    (action, paths) => ipcRenderer.invoke('welcome-optin', action, paths),
+  // Main / alt · Inventory only · Hide completely (2026-10-06). characterModes: the website's family merged
+  // with this PC's characters. setCharacterMode: the one call that makes a choice — the engine asks
+  // wolfpack.quest and saves it, and main keeps the don't-transmit list (the log gate) in step.
+  characterModes:   ()                => ipcRenderer.invoke('character-modes-get'),
+  setCharacterMode: (character, mode) => ipcRenderer.invoke('character-mode-set', String(character || ''), String(mode || '')),
   // 📸 Feedback screenshots: every display as JPEG data URLs, the asking window
   // faded out for the shot (main.js 'capture-screens'). [{ name, dataUrl }].
   captureScreens:  ()     => ipcRenderer.invoke('capture-screens'),

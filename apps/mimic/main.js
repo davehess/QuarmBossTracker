@@ -9547,6 +9547,61 @@ ipcMain.handle('welcome-optin', (_e, action, paths) => new Promise((resolve) => 
   appendAgentLog(`[welcome] ${action} ${list.length} path(s)\n`);
   req.end(body);
 }));
+// ── Main / alt · Inventory only · Hide completely (the guild lead, 2026-10-06) ──────────────────────
+// "the complete hide or hide from all but inventory should be with mimic during onboarding but the
+// denotation on other side should be carried over." ONE bridge for the setup walkthrough and the dashboard.
+// The agent asks wolfpack.quest and saves the choice; this keeps the don't-transmit list in step —
+// cfg.excludedCharacters, the very list onboarding's "Transmit?" step always wrote and the agent applies at
+// boot — so "Hide completely" is also "this PC stops reading that log", and any other mode puts the log back.
+// The agent only reads the list when it starts, so a change comes back as `restart_needed` and the caller
+// restarts the engine (once, after the clicking stops).
+function excludedAfterMode(list, character, mode) {
+  const lc = String(character || '').trim().toLowerCase();
+  const names = (Array.isArray(list) ? list : []).map(s => String(s || '').trim()).filter(Boolean);
+  if (mode !== 'hidden') return names.filter(s => s.toLowerCase() !== lc);
+  return names.some(s => s.toLowerCase() === lc) ? names : [...names, String(character).trim()];
+}
+function _agentCall(method, pathname, body) {
+  return new Promise((resolve) => {
+    if (!agentPort) return resolve(null);
+    const data = body == null ? null : JSON.stringify(body);
+    const req = http.request({
+      host: '127.0.0.1', port: agentPort, path: pathname, method,
+      headers: data ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } : {},
+      timeout: 15000,
+    }, (res) => {
+      let buf = '';
+      res.on('data', (c) => { buf += c; });
+      res.on('end', () => { try { resolve(JSON.parse(buf)); } catch { resolve(null); } });
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+    req.end(data || undefined);
+  });
+}
+ipcMain.handle('character-modes-get', async () => {
+  const r = await _agentCall('GET', '/api/character-modes');
+  return r && r.ok ? r : { ok: false, reason: 'engine', characters: [] };
+});
+ipcMain.handle('character-mode-set', async (_e, character, mode) => {
+  const name = String(character || '').trim();
+  if (!/^[A-Za-z]{1,24}$/.test(name) || !['show', 'inventory', 'hidden'].includes(mode)) return { ok: false, error: 'bad request' };
+  const sent = await _agentCall('POST', '/api/character-mode', { character: name, mode });
+  const cfg = loadConfig();
+  const before = Array.isArray(cfg.excludedCharacters) ? cfg.excludedCharacters : [];
+  const after = excludedAfterMode(before, name, mode);
+  const changed = after.length !== before.length || after.some((s, i) => s !== before[i]);
+  if (changed) { cfg.excludedCharacters = after; saveConfig(cfg); }
+  appendAgentLog(`[mimic] character mode: ${name} → ${mode}${changed ? ' (don\'t-transmit list changed)' : ''}${sent && sent.ok ? '' : ' (engine did not answer)'}\n`);
+  if (sent && sent.ok) return { ...sent, restart_needed: changed };
+  // The engine is not up (or did not answer): the log half of the choice still took, the website half did not.
+  return {
+    ok: changed, character: name, mode, synced: false, reason: 'engine', restart_needed: changed, stops_log: mode === 'hidden',
+    note: changed ? 'Saved on this PC for the log. The engine is not running, so wolfpack.quest has not heard it; pick it again once the engine is up.'
+                  : 'The engine is not running, so nothing was saved yet. Pick it again in a moment.',
+  };
+});
+// ── end character modes ─────────────────────────────────────────────────────────────────────────────
 ipcMain.handle('relaunch-agent', async () => {
   appendAgentLog('[mimic] relaunch-agent requested by a renderer (Settings/Setup save)\n');
   if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }

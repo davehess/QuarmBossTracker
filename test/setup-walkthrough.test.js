@@ -82,9 +82,11 @@ describe('a don\'t-send change takes effect', () => {
     expect(h.S.agentReady).toBe(false);
     expect(h.calls.poll).toBe(1);
   });
-  it('an untick schedules it, and Open the dashboard does not leave before it runs', () => {
+  it('a choice that changes the list schedules it, and Open the dashboard does not leave before it runs', () => {
+    // The Send tick became the three-way choice (2026-10-06); main.js keeps the list in step and says so
+    // through restart_needed, which test/character-modes.test.js drives for real.
     const code = stripJs(script);
-    expect(code).toMatch(/saveConfig\(\{ excludedCharacters: out \}\)\)\.catch\(function \(\) \{\}\)\.then\(restartSoon\)/);
+    expect(code).toMatch(/if \(r\.restart_needed\) restartSoon\(\);/);
     const fin = stripJs(sliceBlock(script, 'function finish() {', '\n  }\n'));
     expect(fin).toMatch(/if \(_restartT\) \{[^}]*_finishWhenUp = true;/);
   });

@@ -634,9 +634,13 @@ describe('agent: hidden_from_lists is carried for display and gates nothing', ()
     expect(env._quarmyPrefsBlock('corvale')).toBe(true);
   });
 
-  it('nothing else in the agent reads it: only the prefs normalization and _hiddenFromLists', () => {
+  it('nothing else in the agent reads it: only the prefs normalization, _hiddenFromLists and the character-mode editor', () => {
     const agent = stripJs(agentRaw);
-    const own = stripJs(applyFn) + stripJs(hiddenFn);
+    // The Main / alt · Inventory only · Hide completely editor (2026-10-06) names a mode from the three flags
+    // and writes them back; it is not an upload gate, and the first assertion below keeps it from becoming one.
+    const modes = stripJs(sliceBlock(agentRaw, '// ── Character modes: ONE three-way choice', '// ── end character modes'));
+    expect(modes).not.toMatch(/shouldUploadForCharacter|_quarmyPrefsBlock|enqueueUpload/);
+    const own = stripJs(applyFn) + stripJs(hiddenFn) + modes;
     expect(agent.match(/hidden_from_lists/g).length).toBe(own.match(/hidden_from_lists/g).length);
     // _hiddenFromLists is defined once and called once: the dashboard payload.
     expect(agent.match(/_hiddenFromLists\(/g)).toHaveLength(2);
