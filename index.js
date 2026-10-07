@@ -10925,6 +10925,7 @@ async function _handleAgentItemCatalog(req, res, isPublic) {
 // script (scripts/audit-mob-specials.mjs) can never disagree about what a
 // special-ability code means. See docs/audit-mob-specials.md.
 const mobSpecials = require('./utils/mobSpecials');
+const npcProcs = require('./utils/npcProcs');
 const factionAssist = require('./utils/factionAssist');
 const _MOB_CLASS_NAMES = {
   1:'Warrior', 2:'Cleric', 3:'Paladin', 4:'Ranger', 5:'Shadow Knight', 6:'Druid',
@@ -16289,17 +16290,34 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
       // Once entries are in hand, join eqemu_spells (catalog) to add the
       // human-readable name + mana + cast time per spell.
       let spells = [];
+      // The mob's PROCS (the guild lead, 2026-10-07: "Need to see mobs Procs as well, not
+      // just spells"). They sit on the same list rows the walk below reads, so the walk
+      // carries their columns along; utils/npcProcs.js resolves them, nearest list first.
+      let procs = [];
+      const procChain = [];
       if (r.npc_spells_id && r.npc_spells_id > 0) {
         try {
           const listIds = [r.npc_spells_id];
           let cursor = r.npc_spells_id;
           for (let hop = 0; hop < 4 && cursor; hop++) {
             const parentRows = await supabase.select('eqemu_npc_spells',
-              `id=eq.${cursor}&select=parent_list&limit=1`);
+              `id=eq.${cursor}&select=parent_list,attack_proc,proc_chance,range_proc,rproc_chance,defensive_proc,dproc_chance&limit=1`);
+            if (Array.isArray(parentRows) && parentRows[0]) procChain.push(parentRows[0]);
             const p = Array.isArray(parentRows) && parentRows[0] && parentRows[0].parent_list;
             if (!p || p === 0 || listIds.includes(p)) break;
             listIds.push(p);
             cursor = p;
+          }
+          const procSlots = npcProcs.resolveProcSlots(procChain);
+          if (procSlots.length > 0) {
+            try {
+              const procSpells = await supabase.select('eqemu_spells',
+                `id=in.(${procSlots.map(s => s.spell_id).join(',')})&select=id,name,targettype,buffduration,raw,effect_id_1,effect_base_value_1,effect_id_2,effect_base_value_2,effect_id_3,effect_base_value_3&limit=10`);
+              procs = npcProcs.buildProcs(procChain, procSpells);
+            } catch (err) {
+              console.warn('[mob-info] proc spells fetch failed:', err?.message);
+              procs = npcProcs.buildProcs(procChain, []);   // the proc still shows, by id
+            }
           }
           const entries = await supabase.select('eqemu_npc_spells_entries',
             `npc_spells_id=in.(${listIds.join(',')})&select=spellid,manacost,recast_delay,priority,minlevel,maxlevel,type,min_hp,max_hp,npc_spells_id&order=priority.desc&limit=80`);
@@ -16469,6 +16487,10 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
         variant_scope: picked.scope,
         placeholder: picked.placeholder,
         spells,
+        // [{ kind: 'attack'|'range'|'defensive', spell_id, name, chance (percent|null),
+        // summary }] — [] when the mob has none. An entry cached before this key existed
+        // simply has no `procs`, which readers treat as none.
+        procs,
         loot,
         // [{ name, value }] biggest swing first — what killing this does to
         // your standing. Null when the mob has no faction rows.
@@ -16504,7 +16526,8 @@ const _MOB_PACK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // stored before versions existed has none and reads as 1.
 //   2 (2026-10-06): faction_primary, faction_assists, faction_assisted_by, faction_assisted_by_more
 //   3 (2026-10-06): special-ability labels in Quarm's numbering (utils/mobSpecials.js), Reverse Slow (FB-54)
-const _MOB_PACK_VERSION = 3;
+//   4 (2026-10-07): procs [{ kind, spell_id, name, chance, summary }]
+const _MOB_PACK_VERSION = 4;
 const _MOB_PACK_PINNED = Array.from({ length: 24 }, (_, i) => 200 + i);
 const _mobPacks = new Map();          // zoneId → { etag, builtAt, body, gz, version }
 const _mobPackQueue = [];             // zone ids waiting to build
