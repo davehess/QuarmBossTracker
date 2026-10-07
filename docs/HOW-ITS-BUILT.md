@@ -3605,8 +3605,40 @@ A raider's own DPS per fight over a window they pick. Three surfaces, two data s
   lifetime ≈ 0.6–0.7 s and ~90 KB before gzip (capped at 400 fights).
 - ⚠ **"Bosses" is thin in Planes of Power:** only 14 of the timer board's 43 PoP bosses are curated in
   `bosses_local`, so most PoP kills count as "Everything". Both surfaces say so on an empty Bosses view.
+- **Exploring (web 1.8.110 · bot 3.1.213 · agent 3.7.95 beta, §174):** both surfaces now read
+  `my_parse_series_v2(…, p_zone int, p_search text)` (`20261007000000_my_parse_series_v2.sql`): each fight carries
+  `zone_id`/`zone`, and the answer carries `zones` and `mobs` picker lists computed before the zone and search
+  filters. The bot route takes `&zone=` (1..999) and `&q=` (≤ 40 chars, letters/digits/space/'`-_), so does the
+  agent proxy (cache key includes both). Web: GET form on `/me/parses` (`q` + datalist, zone select, `byday`, Clear;
+  helpers `cleanZoneParam` / `cleanSearchParam` / `groupByNight` in `web/lib/parseTrend.ts`). Mimic: the same
+  controls (`wpMpTyping` 300 ms debounce, `wpMpZone`, By day `wpMpTable(d, byDay)`), saved in `wp:myParses`.
+- **My logs (agent 3.7.95 beta, §174):** the Mimic tab's second source, `GET /api/my-parses?source=local`
+  (`myLogsAnswer`): the guild answer's shape plus `source: 'local'` and `since`, from `logsync.myfights.json`, with no
+  call. `_recordFightHistory` → `_myFightsNote` writes one row per own character per fight (pets credited by
+  `pet_owner`, zone from Zeal, boss = catalog `raid_target` from a held mob pack or Mob Info answer); 365 days /
+  20,000 rows, saved 10 s after a change and at exit; first run seeds from `logsync.fights.json`. No rank, no fight
+  links. Locally a zone's id is its name.
 - **Tests:** `test/my-parses.test.js` (bot route), `test/parse-trend.test.js` (web), and on beta
-  `test/my-parses-tab.test.js` (agent + dashboard + tray) and `test/dps-trend.test.js` (meter Trend).
+  `test/my-parses-tab.test.js` (agent + dashboard + tray + filters + source switch), `test/my-logs-local.test.js`
+  (the local fight log and its answer) and `test/dps-trend.test.js` (meter Trend).
+
+### Main / alt · Inventory only · Hide completely (bot 3.1.214 · agent 3.7.96 beta, §175)
+One choice per character, the same three columns as the switches on `/me` (no second copy):
+show = all off · inventory = `hidden_from_lists` · hidden = all three on. Any other mix reads as `custom`.
+- **Bot:** `utils/characterPrefs.js` (`MODE_FLAGS`, `modeOf`, `setPrefs`, `minePrefs`); routes
+  `_handleAgentCharacterPrefsSet` (POST `/api/agent/character-prefs {character, mode}`) and the `?mine=1` branch of
+  `_handleAgentCharacterPrefs` in `index.js`. The person = the Mimic session's Discord id; ownership =
+  `owned_character_names(p_discord_id)` (`20261007010000_owned_character_names.sql`), cached 5 min. 403 not yours /
+  not linked, 502 on a database miss. Test: `test/character-prefs-write.test.js`.
+- **Agent:** `GET /api/character-modes` (`characterModesPayload`: the website's family merged with this PC's logs,
+  including logs skipped by the don't-transmit list, `stats.excludedLogs`) and `POST /api/character-mode`
+  (`setCharacterMode`: website first, saved in `_optinState.characterModes` either way; unsynced Hide applies at
+  once, unsynced un-hide does not). The Me card's "How each character shows" (`wpModesHtml`) reads
+  `/api/state.characterModes`.
+- **Mimic:** `character-modes-get` / `character-mode-set` IPC in `apps/mimic/main.js` (`excludedAfterMode` keeps
+  `cfg.excludedCharacters` in step; `restart_needed` when it changed), `window.mimic.characterModes` /
+  `setCharacterMode` in `preload.js`, and the "Show as" column in `welcome.html`'s Your characters step.
+- **Tests:** `test/character-modes.test.js`, plus `test/listable-chars.test.js` and `test/setup-walkthrough.test.js`.
 
 ### Reading past the 1,000-row cap (2026-10-04, §155)
 PostgREST answers at most 1,000 rows per response, silently. That includes
