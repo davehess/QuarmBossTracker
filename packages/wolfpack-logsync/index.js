@@ -19173,7 +19173,7 @@ function renderMeCard(s) {
   else {
     h += '<div style="font-size:11px;line-height:1.5">';
     for (const t of tells) {
-      // SPEAKER → LISTENER, so the left name is always who spoke (Hitya
+      // SPEAKER → LISTENER, so the left name is always who spoke (the guild lead,
       // 2026-09-14: a received tell drawn as "Other ← You" read as You
       // speaking). Same convention as the Recent Tells table and the DM relay.
       const tsMs = t.capturedAt || (t.ts ? new Date(t.ts).getTime() : 0);
@@ -23639,7 +23639,7 @@ function _wpKillVersionFloorRow(tuning) {
   h += '<div><b style="font-size:12px">Minimum agent version</b> <code class="dim" style="font-size:10px">min_agent_ver_num</code>'
      + (cur != null ? ' <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(248,81,73,0.18);color:var(--red);border:1px solid rgba(248,81,73,0.4)">floor ' + cur + '</span>' : ' <span class="dim" style="font-size:10px">unset</span>')
      + (pend ? ' <span class="dim" style="font-size:10px">(saving…)</span>' : '') + '</div>';
-  h += '<div class="dim" style="font-size:11px;line-height:1.45;margin-top:3px">Numeric version form (major×10000 + minor×100 + patch), e.g. agent 3.3.95 → 30395. Agents below the floor pause uploads like the kill switch and show an update nudge. Set 0 (or blank) to clear the floor. Conservative — coordinate with Hitya.</div>';
+  h += '<div class="dim" style="font-size:11px;line-height:1.45;margin-top:3px">Numeric version form (major×10000 + minor×100 + patch), e.g. agent 3.3.95 → 30395. Agents below the floor pause uploads like the kill switch and show an update nudge. Set 0 (or blank) to clear the floor. Conservative — coordinate with the guild lead.</div>';
   h += '<div style="display:flex;gap:6px;align-items:center;margin-top:5px">';
   h += '<input id="wpKillVerInput" type="number" min="0" step="1" placeholder="' + (cur != null ? cur : 'unset') + '" style="font-size:11px;padding:3px 6px;background:#161b22;color:var(--text);border:1px solid var(--border);border-radius:4px;width:120px">';
   h += '<button type="button" class="wpKillVerSet" style="font-size:11px;padding:3px 11px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:#21262d;color:var(--text)">Set floor</button>';
