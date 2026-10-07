@@ -22159,6 +22159,8 @@ function renderOverlays(s) {
       + '<span id="' + gp + 'Hint" class="dim"></span></span>';
   }
   h += '<span id="wpOvClash" class="dim"></span></div>';
+  // The saved Canvas groups, each with its key (alpha Mimic): empty here, painted by wpRefreshOverlayHotkeys.
+  h += '<div id="wpCanvasGroups"></div>';
   // 🎨 Look. Theme (the guild lead, 2026-07-12) — a direct pick; the active one
   // highlights from status.overlayTheme. Opacity sits with the background
   // button (2026-09-24: "put the opacity slider with the background button"):
@@ -22547,7 +22549,9 @@ var _WP_HOTKEY_USES = {
   hideAllHotkey: 'the Show / hide ALL key', backdropHotkey: 'the backgrounds key',
   damageAlertHotkey: 'the damage-alert key', miniHotkey: 'the Minimize ALL key',
 };
-function _wpHotkeyUseLabel(id) {
+// A use that names itself (Mimic sends a \`label\` for a Canvas group's key) is called by that name.
+function _wpHotkeyUseLabel(id, use) {
+  if (use && typeof use === 'object' && typeof use.label === 'string' && use.label) return use.label;
   if (_WP_HOTKEY_USES[id]) return _WP_HOTKEY_USES[id];
   var k = String(id).replace(/^overlay:/, '');
   for (var i = 0; i < WP_OVERLAY_ROWS.length; i++) if (WP_OVERLAY_ROWS[i][0] === k) return 'the ' + WP_OVERLAY_ROWS[i][1] + ' overlay’s key';
@@ -22604,7 +22608,7 @@ function _wpCaptureAccel(say, onAccel, onClear, selfId) {
     var accel = parts.join('+'), n = _wpAccelNorm(accel);
     for (var i = 0; i < uses.length; i++) {
       if (uses[i].id !== selfId && _wpAccelNorm(uses[i].accel) === n) {
-        say(_wpFmtAccel(accel) + ' is already ' + _wpHotkeyUseLabel(uses[i].id) + ' — press a different one (Esc cancels).');
+        say(_wpFmtAccel(accel) + ' is already ' + _wpHotkeyUseLabel(uses[i].id, uses[i]) + ' — press a different one (Esc cancels).');
         return;                                                     // keep listening
       }
     }
@@ -22638,8 +22642,21 @@ function _wpHotkeyUsesOf(cfg) {
   }
   return uses;
 }
-// id → { accel, with: [the other ids on that key] } for a shared key, or
-// { accel, taken: true } for one the OS refused (Mimic status reports those).
+// The Canvas groups' keys (alpha Mimic: status carries canvasGroups + canvasGroupHotkeys; a Mimic
+// without them has none). Each names itself, as Mimic's own list does for the capture.
+function _wpCanvasGroupUses(st) {
+  var uses = [], groups = st && st.canvasGroups, keys = (st && st.canvasGroupHotkeys) || {};
+  if (!Array.isArray(groups)) return uses;
+  for (var i = 0; i < groups.length; i++) {
+    var g = groups[i];
+    if (g && typeof g.id === 'string' && typeof keys[g.id] === 'string' && keys[g.id].trim()) {
+      uses.push({ id: 'canvasGroup:' + g.id, accel: keys[g.id].trim(), label: 'the “' + String(g.name || 'Group') + '” Canvas group’s key' });
+    }
+  }
+  return uses;
+}
+// id → { accel, with: [the other ids on that key], uses: [those other entries, same order] } for a
+// shared key, or { accel, taken: true } for one the OS refused (Mimic status reports those).
 function _wpKeyClashes(uses, st) {
   var byKey = {}, out = {}, i, j, n;
   for (i = 0; i < uses.length; i++) {
@@ -22650,15 +22667,16 @@ function _wpKeyClashes(uses, st) {
     var grp = byKey[n];
     if (grp.length < 2) continue;
     for (i = 0; i < grp.length; i++) {
-      var others = [];
-      for (j = 0; j < grp.length; j++) if (j !== i) others.push(grp[j].id);
-      out[grp[i].id] = { accel: grp[i].accel, with: others };
+      var others = [], otherUses = [];
+      for (j = 0; j < grp.length; j++) if (j !== i) { others.push(grp[j].id); otherUses.push(grp[j]); }
+      out[grp[i].id] = { accel: grp[i].accel, with: others, uses: otherUses };
     }
   }
-  var gb = (st && st.hotkeysBlocked) || {}, ob = (st && st.overlayHotkeysBlocked) || {};
+  var gb = (st && st.hotkeysBlocked) || {}, ob = (st && st.overlayHotkeysBlocked) || {}, cb = (st && st.canvasGroupHotkeysBlocked) || {};
   for (i = 0; i < uses.length; i++) {
     var u = uses[i];
-    var refused = u.id.indexOf('overlay:') === 0 ? ob[u.id.slice(8)] : gb[u.id];
+    var refused = u.id.indexOf('overlay:') === 0 ? ob[u.id.slice(8)]
+      : u.id.indexOf('canvasGroup:') === 0 ? cb[u.id.slice(12)] : gb[u.id];
     if (refused && !out[u.id]) out[u.id] = { accel: u.accel, taken: true };
   }
   return out;
@@ -22669,7 +22687,7 @@ function _wpKeycap(accel, clash, plainTitle) {
   if (!clash) return { text: t, cls: 'wp-key', title: plainTitle || '' };
   return { text: t, cls: 'wp-key clash', title: clash.taken
     ? 'Another program already uses ' + t + ', so it does nothing here — pick a different one.'
-    : t + ' is also ' + clash.with.map(_wpHotkeyUseLabel).join(' and ') + ' — only one of them can work. Pick a different one.' };
+    : t + ' is also ' + clash.with.map(function(id, n){ return _wpHotkeyUseLabel(id, clash.uses && clash.uses[n]); }).join(' and ') + ' — only one of them can work. Pick a different one.' };
 }
 // "1 clash: Ctrl+Shift+T" — counted in keys, not in the controls sharing one.
 function _wpClashSummary(clashes) {
@@ -22683,10 +22701,10 @@ function _wpClashSummary(clashes) {
 }
 function wpRefreshOverlayHotkeys() {
   if (!(window.mimic && window.mimic.getConfig && window.mimic.getStatus)) return;
-  Promise.all([window.mimic.getConfig(), window.mimic.getStatus()]).then(function(r){
+  return Promise.all([window.mimic.getConfig(), window.mimic.getStatus()]).then(function(r){
     var cfg = r[0] || {}, st = r[1] || {};
     var map = (cfg.overlayHotkeys && typeof cfg.overlayHotkeys === 'object') ? cfg.overlayHotkeys : {};
-    var clashes = _wpKeyClashes(_wpHotkeyUsesOf(cfg), st);
+    var clashes = _wpKeyClashes(_wpHotkeyUsesOf(cfg).concat(_wpCanvasGroupUses(st)), st);
     var bs = document.querySelectorAll('.wp-ov-hk');
     for (var i = 0; i < bs.length; i++) {
       var b = bs[i], k = b.getAttribute('data-ov');
@@ -22714,6 +22732,7 @@ function wpRefreshOverlayHotkeys() {
       sum.textContent = said || 'no clashes';
       sum.style.color = said ? 'var(--red)' : '';
     }
+    wpPaintCanvasGroups(st, clashes);
   }).catch(function(){});
 }
 function wpCaptureOverlayHotkey(btn) {
@@ -22749,6 +22768,73 @@ function wpCaptureOverlayHotkey(btn) {
   btn.classList.add('capturing');
   btn.textContent = 'press keys…';
   say('Press the keys for this overlay now (Ctrl, Alt or Shift + a key). Backspace removes it, Esc cancels.');
+}
+
+// ⌨ Canvas groups (Mimic 3.0 alpha): tray parity for the tray's "Canvas groups — show / hide" submenu,
+// and the key each saved group can carry. Mimic's status carries canvasGroups [{id, name}],
+// canvasGroupHotkeys {id: accel} and canvasGroupHotkeysBlocked {id: accel}; a Mimic without them (the
+// beta line) has no canvasGroupHotkey bridge either, and then this is NOTHING: no heading, no
+// placeholder. It is painted into its own #wpCanvasGroups by wpRefreshOverlayHotkeys, beside every other
+// key, through morphInto — the HTML is a function of the status, so a poll that changes nothing
+// rewrites nothing. The key capture and the show / hide press are Mimic's own (canvasGroupHotkey,
+// toggleCanvasGroup): the same toggle as the key and the tray.
+function _wpCanvasGroupsHTML(st, clashes) {
+  var groups = st && st.canvasGroups;
+  if (!(window.mimic && typeof window.mimic.canvasGroupHotkey === 'function') || !Array.isArray(groups)) return '';
+  var keys = st.canvasGroupHotkeys || {}, blocked = st.canvasGroupHotkeysBlocked || {}, cells = '';
+  for (var i = 0; i < groups.length; i++) {
+    var g = groups[i];
+    if (!g || typeof g.id !== 'string' || !g.id) continue;
+    var accel = typeof keys[g.id] === 'string' ? keys[g.id].trim() : '';
+    var cap = _wpKeycap(accel, clashes && clashes['canvasGroup:' + g.id], 'Press it anywhere to show or hide this group. Change… picks another.');
+    cells += '<span class="wp-kcell">' + esc(g.name || 'Group') + ' '
+      + (accel ? '<code class="' + cap.cls + '" title="' + esc(cap.title) + '">' + esc(cap.text) + '</code>' : '<span class="dim">no hotkey</span>')
+      + (blocked[g.id] ? ' <span style="color:var(--red)" title="' + esc('Another program already uses ' + _wpFmtAccel(blocked[g.id]) + ', so it does nothing here — pick a different one.') + '">⚠ another program already uses it</span>' : '')
+      + '<button type="button" class="wp-btn ghost wp-cg-key" data-gid="' + esc(g.id) + '">Change…</button>'
+      + '<button type="button" class="wp-btn wp-cg-show" data-gid="' + esc(g.id) + '">Show / hide</button></span>';
+  }
+  if (!cells) return '';
+  return '<div class="wp-strip wp-cgroups"><span class="wp-lbl">Canvas groups</span>' + cells + '<span id="wpCgHint" class="dim"></span></div>';
+}
+function wpPaintCanvasGroups(st, clashes) {
+  var el = document.getElementById('wpCanvasGroups');
+  if (!el || _wpHotkeyCapturing) return;   // a capture in progress keeps the strip, and its prompt, as they are
+  morphInto(el, _wpCanvasGroupsHTML(st, clashes));
+}
+// The strip's one line of feedback; looked up when it is said, because a repaint replaces the element.
+function _wpCgSay(msg, fade) {
+  var hint = document.getElementById('wpCgHint');
+  if (!hint) return;
+  hint.textContent = msg || '';
+  if (fade) setTimeout(function(){ var h2 = document.getElementById('wpCgHint'); if (h2) h2.textContent = ''; }, 4000);
+}
+function wpCanvasGroupChange(id) {
+  var m = window.mimic;
+  if (!(m && typeof m.canvasGroupHotkey === 'function')) return;
+  function save(accel) {
+    return Promise.resolve(m.canvasGroupHotkey(id, accel)).then(function(r){
+      if (!r || r.ok === false) { _wpCgSay('Save failed' + (r && r.error ? ' — ' + r.error : '') + '.', true); return; }
+      // The save re-registers every key: repaint the strip (and the clashes elsewhere on the tab) first,
+      // then say whether the OS took it — the repaint replaces the line it would be said on.
+      return Promise.resolve(wpRefreshOverlayHotkeys()).then(function(){
+        if (!accel) { _wpCgSay('Hotkey removed.', true); return; }
+        var blocked = r.blocked && r.blocked[id];
+        _wpCgSay(blocked ? 'Another program already uses ' + _wpFmtAccel(accel) + ', so it does nothing here — click Change… and pick a different one.'
+                         : 'Saved — press ' + _wpFmtAccel(accel) + ' anywhere to show or hide the group.', !blocked);
+      });
+    }).catch(function(){ _wpCgSay('Save failed.', true); });
+  }
+  var started = _wpCaptureAccel(_wpCgSay, save, function(clear){
+    if (clear) save(''); else wpRefreshOverlayHotkeys();
+  }, 'canvasGroup:' + id);
+  if (started) _wpCgSay('Press the keys for this group now (Ctrl, Alt or Shift + a key). Backspace removes it, Esc cancels.');
+}
+function wpCanvasGroupToggle(id) {
+  var m = window.mimic;
+  if (!(m && typeof m.toggleCanvasGroup === 'function')) return;
+  Promise.resolve(m.toggleCanvasGroup(id)).then(function(ok){
+    _wpCgSay(ok === false ? 'That group no longer exists.' : 'Done — shown or hidden on the Canvas.', true);
+  }).catch(function(){ _wpCgSay('Could not reach Mimic.', true); });
 }
 
 // Dock / undock an overlay from the Overlays page. Docking moves it out of its
@@ -22931,6 +23017,10 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
     if (d) { var dn = d.getAttribute('data-ov'); if (dn) wpDockOverlay(dn); return; }
     var hk = (t && t.closest) ? t.closest('.wp-ov-hk') : null;
     if (hk && window.mimic && window.mimic.saveConfig) { wpCaptureOverlayHotkey(hk); return; }
+    var cgk = (t && t.closest) ? t.closest('.wp-cg-key') : null;
+    if (cgk) { wpCanvasGroupChange(cgk.getAttribute('data-gid')); return; }
+    var cgs = (t && t.closest) ? t.closest('.wp-cg-show') : null;
+    if (cgs) { wpCanvasGroupToggle(cgs.getAttribute('data-gid')); return; }
     var mn = (t && t.closest) ? t.closest('.wp-ov-mini') : null;
     if (mn && window.mimic && window.mimic.setOverlayMini) {
       window.mimic.setOverlayMini(mn.getAttribute('data-mini'), !mn.classList.contains('on'))
