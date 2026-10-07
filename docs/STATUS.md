@@ -211,7 +211,13 @@ next touch one rather than assuming a missing row means a missing doc.
 - **✅ My parses: filters (web 1.8.110 · bot 3.1.213, 2026-10-07).** The guild lead picked option A for exploring
   fights: search with mob suggestions, a Zone picker, "By day" grouping (night headers with count · avg · best), and
   a Zone column. One function, `my_parse_series_v2` (zone filter, mob search, zone/mob facets; a new name because
-  dropping v1 is a destructive statement). ⏳ Mimic tab: the same filters plus a Guild / My logs switch, on beta next.
+  dropping v1 is a destructive statement). Mimic tab (agent 3.7.95, beta): the same filters plus a Guild / My logs
+  switch; My logs reads this PC's own fight log (`logsync.myfights.json`), no sign-in, no call. §174.
+- **✅ Main / alt · Inventory only · Hide completely (bot 3.1.214 live · agent 3.7.96 beta, 2026-10-07).** One choice
+  per character in Mimic's setup walkthrough and on the dashboard's Me card, written to the same three columns as
+  the switches on wolfpack.quest/me (`POST /api/agent/character-prefs`, family check `owned_character_names()`).
+  Hide completely also puts the character on the don't-transmit list, so this PC stops reading that log. Open: should
+  Inventory only also stop that character's fight uploads (the guild lead's call). §175.
 - **✅ My parses over time (web 1.8.107 · bot 3.1.210 live; Mimic parts on beta, 2026-10-06).** A member asked
   for a graph of their own parses over 1 day, 1 week and so on. Live: `wolfpack.quest/me/parses` [beta] (window,
   Bosses/Everything, character; dots per fight, raid-night average, "vs your usual" per boss) and the bot route

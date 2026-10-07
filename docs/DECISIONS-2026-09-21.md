@@ -114,7 +114,9 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Reverse Slow + Quarm ability numbering** (§173, FB-54) | Bot 3.1.212 + web 1.8.109 live: the chip, corrected labels; Mimic beta warnings in progress | the guild lead: add `slow_mitigation` to the mirror? |
+| **Main / alt · Inventory only · Hide completely** (§175) | Bot 3.1.214 live (POST + `?mine=1` on `/api/agent/character-prefs`); agent 3.7.96 on beta: the choice in setup and on the dashboard's Me card, Hide completely also stops this PC reading the log | the guild lead: (1) try it on the beta; (2) should Inventory only also stop that character's fight uploads? |
+| **My parses: explore + Guild / My logs** (§174) | Live: search, zone, By day on `/me/parses` (web 1.8.110 · bot 3.1.213, `my_parse_series_v2`). Beta agent 3.7.95: the same in Mimic plus the Guild / My logs switch | members: try My logs on the beta tab. A session with confirmation: drop the old `my_parse_series` |
+| **Reverse Slow + Quarm ability numbering** (§173, FB-54) | Bot 3.1.212 + web 1.8.109 live: the chip, corrected labels; Mimic beta warnings on beta (agent 3.7.94) | the guild lead: add `slow_mitigation` to the mirror? |
 | **Target Info: faction + who assists** (§172) | Bot 3.1.211 on main; the Faction sub-tab on Mimic beta | the guild lead: target a Plane of Justice mob on the beta and check Faction / Assisted by |
 | **Long-term bidding out of the timers** (§171) | Stable hot-swap agent 3.7.92 (`f5850e89`), beta 3.7.93: auctions set to run over 6 h get no timer and no Command Center row; bidding unchanged. The ✕ on timer chips: hardened on beta (`cf817067`) | the guild lead: retest a ✕ on the beta (locked overlays) and say which window if it still fails |
 | **My parses over time** (§170) | Live: `/me/parses` [beta] (web 1.8.108) + `/api/agent/my-parses` (bot 3.1.210), one function `my_parse_series`; mules and traders fold behind "+N more". On beta (agent 3.7.91+): Mimic's My parses tab + tray item and the meter's Trend view | the guild lead: (1) add the 29 missing PoP bosses to the boss list? (2) link `/me/parses` from `/me` (a change to an existing page, so beta first)? Members: try the beta tab and Trend |
@@ -7608,3 +7610,60 @@ Windfall, pqdi.cc/npc/209070). The guild lead: *"make sure that's something that
   "don't slow it" callout.
 - **Not stored yet:** `slow_mitigation` (Laef Windfall has 50, halving real slows) is not in our mirror; adding it
   needs a column + `scripts/sync-from-eqmac.js` pick. The guild lead's call.
+
+### 174. My parses: search, zones, By day, and a Guild / My logs switch (2026-10-07, bot 3.1.213 · web 1.8.110 · agent 3.7.95 beta)
+
+The guild lead: *"can you make it so that I can explore more in the fights section? chop it up by days, zones, mobs,
+search bar, etc."* Three ways out; the pick: *"A, but also I'd like the user to be able to toggle between their data
+from logs and the guild's data."* (A = filters on the list. The others were a separate explorer view and a
+per-zone breakdown table.)
+
+- **One new function:** `my_parse_series_v2` (`20261007000000_my_parse_series_v2.sql`, applied). It adds a zone
+  filter (zone id = npc id ÷ 1000), a mob-name search, each fight's zone, and two picker lists (`zones`, `mobs`)
+  worked out BEFORE the zone and search filters, so choosing a zone never empties the picker. A new name, not a
+  replacement: dropping the old function is a destructive statement and was refused unconfirmed. The bot route and
+  `/me/parses` moved to v2; `my_parse_series` stays until a session with confirmation drops it.
+- **Website** (`/me/parses`, live, web 1.8.110): search box with the mobs as suggestions, Zone picker, By day (the
+  list grouped under each raid night: "Sun Oct 4 · 12 fights · avg 142 · best 210"), Clear, and a Zone column.
+- **Mimic** (agent 3.7.95, beta): the same filters, plus **Data: Guild | My logs**.
+  - **Guild** is the guild's merged record, through the bot, as before.
+  - **My logs** is what this PC's own log recorded. It needs no sign-in and makes no call, so it works in local
+    mode too. The agent keeps a slim fight log (`logsync.myfights.json`): one row per own character per fight,
+    written when the fight ends from the same hook as the meter's History, with pets credited to their owner. It
+    keeps 365 days or 20,000 rows, and the first run seeds it from History.
+  - My logs can't know everything the guild knows: no rank among the guild, no wolfpack.quest fight link, the zone
+    only when Zeal said where you were, and "boss" only for mobs whose catalog row this PC already holds. The tab
+    leaves those columns out, or says so, rather than guessing.
+- **Answering "is this from the website or my logs?"**: Guild = the website's numbers, merged from every uploader;
+  My logs = this PC only. The tab's subtitle names which one you are looking at.
+
+### 175. Main / alt · Inventory only · Hide completely: one choice per character, set in Mimic, the same on the website (2026-10-07, bot 3.1.214 · agent 3.7.96 beta)
+
+The guild lead, after "where do i set these characters to inventory only?": *"the complete hide or hide from all but
+inventory should be with mimic during onboarding but the denotation on other side should be carried over."*
+
+- **One store, no copy.** The three switches on `wolfpack.quest/me` (`characters.hidden_from_lists`,
+  `exclude_from_stats`, `exclude_inventory`) stay the truth. Mimic asks ONE question per character and writes the
+  same three columns, so the two sides cannot drift:
+  - **Main / alt**: all three off.
+  - **Inventory only**: hidden from lists only. The character is kept for the account inventory, left out of
+    every list and chart, and still uploads.
+  - **Hide completely**: all three on, and this PC stops reading that character's log.
+  - Any other mix (the website's switches can make one) shows as "set differently on wolfpack.quest", and Mimic
+    never writes one.
+- **Bot** (3.1.214, live): `POST /api/agent/character-prefs {character, mode}` and `GET ?mine=1` (the person's whole
+  family with its flags). The person is the Mimic session's own Discord id; a character counts as theirs by
+  `owned_character_names()` (`20261007010000_owned_character_names.sql`, the same family rule as My parses). Not
+  yours or not linked → 403.
+- **Mimic** (agent 3.7.96, beta):
+  - The setup walkthrough's Send tick became "Show as", with the three choices per character. Each row starts on
+    what wolfpack.quest already says.
+  - The dashboard's Me card has the same control under "How each character shows", for any time after setup.
+    That list includes characters whose log this PC no longer reads, so a hidden one can be brought back.
+  - **Hide completely reuses the existing don't-transmit list** (`excludedCharacters`, the "Transmit?" step's own
+    list), so "stops reading the log" is the same gate it always was. The engine restarts once when the list
+    changes.
+- **Signed out, or an older bot:** the choice is saved on this PC and says so. An unsaved "Hide" still takes effect
+  at once. An unsaved un-hide does not: privacy only ratchets one way until the website has heard it.
+- **Open (the guild lead's call):** should Inventory only also stop uploading that character's fights? Today it
+  keeps them (it is a display switch, as on the website).

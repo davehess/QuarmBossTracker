@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'my-logs-char-modes-2026-10-07',
+    title: 'Your own logs, and how each character shows',
+    version: 'Agent 3.7.96 beta · Web 1.8.111 · Bot 3.1.214',
+    date: '2026-10-07',
+    channel: 'beta',
+    headline: 'Explore your parses by mob, zone and night, from the guild\'s record or straight from your own logs, and choose in Mimic how each of your characters shows.',
+    features: [
+      { name: 'Search, zones and By day', blurb: 'On wolfpack.quest/me/parses and in Mimic\'s My parses tab: type a mob name (suggestions come up as you type), pick a zone, or switch on By day to see each raid night with its fight count, average and best. Clear puts it all back.' },
+      { name: 'Guild or My logs', blurb: 'In Mimic\'s My parses tab, Guild shows the guild\'s merged parses of your fights. My logs shows what your own PC recorded from your own log, with no sign-in needed. Mimic starts keeping that record the day you update.' },
+      { name: 'Main / alt, Inventory only, Hide completely', blurb: 'Mimic\'s setup now asks how each character should show. Inventory only keeps a mule\'s bags in your account inventory and leaves it out of every list and chart. Hide completely does that and Mimic stops reading its log. It is the same switch as My Stats on wolfpack.quest, so changing it on one changes the other. You can change it any time on the Mimic dashboard.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'long-bids-2026-10-06',
     title: 'Long-term bidding leaves your timers',
     version: 'Agent 3.7.92 · Web 1.8.109 · Bot 3.1.212',
