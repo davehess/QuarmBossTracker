@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.215': [
+    '**Officers: `/setup discord` can build or check the bot\'s Discord layout.** Run it with dry run on first; it lists every channel and thread the bot expects, which ones exist, and what it would create. Part of the kit that lets another guild run this platform; nothing changes for Wolf Pack\'s server.',
+  ],
   '3.1.214': [
     '**Mimic can now mark a character inventory-only or hidden.** They are the same switches as My Stats on wolfpack.quest, so both always show the same state. Needs a Mimic build with the new choice in setup.',
   ],

@@ -10,7 +10,17 @@ Design: `docs/DESIGN-guild-kit.md`. Status: **slice 1a is live — the bot reads
 the environment. **Slice 1b: `config.json` is now read at boot and by
 `utils/guildConfig.js`** — the loader fills unset env names from it, and new
 code reads typed getters (`guildName()`, `webBase()`, `repo()`, `roles()` …)
-instead of a literal. The rest of the de-brand sweep is slice 2.
+instead of a literal. The rest of the de-brand sweep is slice 2. **Slice 3: the
+bot provisions its own Discord layout** (`GUILD_PROVISION=auto`: report on a
+hand-configured server, create on a virgin one; `/setup discord` for officers,
+`scripts/provision-discord.js` standalone) and writes the anchors it owns to
+`discord.json`. **Bristlebane** (the raid voice bot) reads `DISCORD_GUILD_ID`,
+`RAID_VOICE_CHANNEL_ID`, `RAID_CHAT_CHANNEL_ID` and `OFFNIGHT_VOICE_CHANNEL_ID`
+from `discord.json` too; in Docker mount a copy and set `BRISTLEBANE_GUILD_FILE`.
+Both `discord.json` loaders warn — key names only, never values — on a file
+that exists but cannot be read (`EISDIR` is a mistyped Docker mount), on bad
+JSON (parse position only), and on a numeric id above 2^53 (write ids as
+strings; JSON has already rounded such a number).
 `discord.example.json` lists every anchor key the bot knows, generated from the
 code; `config.example.json` is the schema by example.
 

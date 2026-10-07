@@ -46,7 +46,7 @@ folly** — it's here.*
 | `DESIGN-87-officer-console.md` | #87 officer runbooks + console: the runbook set (RB-01…RB-12, each grounded in a dated incident), the health-signal set, button safety classes, and the anti-rot mechanism | Phase 1 shipped (`/admin/console`); §7.2 bot-side levers still proposed |
 | `DESIGN-quarmy-gear.md` | Build spec for Quarmy gear/AA/spell import to character pages | Unbuilt — still the spec |
 | `DESIGN-external-tenancy.md` | Letting OTHER guilds use Mimic + the platform: self-host vs tenant-on-our-Supabase vs hybrid, the honest self-host cost, the **PvP `/who` carve-out** and how it's enforced, the Mimic-points-elsewhere angle, a staged plan, and the open business questions | Unbuilt — design only (2026-08-02). Read before any tenancy/self-host/`guild_id` work. Stage 0 (publish the `eqemu_*` catalog) + Stage 1 (split PvP data to its own project) are worth doing on their own merits |
-| `DESIGN-guild-kit.md` | **The guild kit:** one configurable spot for a guild's own bits (`guild/config.json` + generated `discord.json`, secrets stay in `.env`), the wizard costed three ways, the vendor-neutral AI-assist manifest (`TENANT.md` / `tenant.json` / `wolfpack doctor`), and the fork + `sync-upstream.yml` route back upstream. Measured: 114 env vars = 75 identifiers + 11 secrets; ~580 hardcoded identity sites | **Designed 2026-09-18, slice 0 landed** (`guild/`). Four picks pending (§8); then slice 1 before the de-branding sweep |
+| `DESIGN-guild-kit.md` | **The guild kit:** one configurable spot for a guild's own bits (`guild/config.json` + generated `discord.json`, secrets stay in `.env`), the wizard costed three ways, the vendor-neutral AI-assist manifest (`TENANT.md` / `tenant.json` / `wolfpack doctor`), and the fork + `sync-upstream.yml` route back upstream. Measured: 114 env vars = 75 identifiers + 11 secrets; ~580 hardcoded identity sites | **Slices 0, 1a, 1b, 2-prep and 3 landed** (bot 3.1.215, 2026-10-07: `utils/guildConfig.js`, the Discord self-provisioner + `/setup discord`, tag-correct REST filters, gated one-shot announcers, Bristlebane guild file). Next: the de-branding sweep (slice 2), then `doctor` + the wizard |
 | `LICENSING.md` | The plain-language license: what a guild may do free, what needs an arrangement, what happens to a PR, and why BSL→AGPL over BSD-3 or AGPL alone | **Live 2026-09-18.** `LICENSE` is binding; this is what people actually read |
 | `COSTS.md` | **What the platform has cost to build and run**, measured, so donations can be justified if anyone asks: per-service spend, the Supabase org-sharing problem and the two defensible attributions, what a donation is and is not, and the two figures that need the guild lead | Written 2026-09-18. ⚠ Domain and Claude/development are **blank pending his figures** — deliberately not estimated |
 | `TERMS-hosted.md` | **DRAFT hosted-service terms, for legal review:** sizes S/M/L, monthly in advance, no SLA, your data is yours (per-incident consent, no `/who` ingestion, cross-tenant never merged), encrypted handover at term end, the guild owns its domain, gated components, and the §9 list a lawyer must settle | Drafted 2026-09-18 from the guild lead's §10 answers. **Not binding until reviewed** |
@@ -5410,3 +5410,36 @@ roadmaps.
   screenshots — the same category as the `OverlayDemo` swap, on a published
   surface. `test-archive-merge.sh`'s names are fixture DATA and stay. Not fixed:
   it is unrelated to the change that found it.
+
+### 🧾 2026-10-07 — guild kit slices 1b, 2-prep and 3 (bot 3.1.215)
+Built as six reviewed branches by parallel agents (one adversarial reviewer per
+branch), fixes applied per review, merged on `integ/guildkit`. `DECISIONS-2026-09-21.md` §177.
+- **1b — `utils/guildConfig.js`.** `guild/config.json` is read at boot and fills
+  only unset env names (`ENV_MAP`); typed getters resolve env → file → Wolf Pack
+  default. Review fixes: `roles()` follows the post-fill precedence `utils/roles.js`
+  sees; the suite never reads the real `guild/` dir (a fork that commits its
+  config stays green); `brand()` is one pass; the legacy `ALLOWED_ROLE_NAME`
+  alias counts as set; placeholders are `<token>`-shaped and warn once; secret
+  stripping is whole-word (`keyboard` survives, `apiKey` does not). Debt named
+  in the test: 11 env names only a getter resolves (nothing in the bot reads
+  them yet) — slice 2's list.
+- **3 — the Discord self-provisioner.** `utils/discordProvisioner.js` +
+  `data/discord-layout.json` + `/setup discord` + `scripts/provision-discord.js`.
+  Auto mode reports on a hand-configured server and creates on a virgin one;
+  the layout is kv-owned (`bot_kv` `discord_anchors` + a lease row). Review
+  fixes: a build cut short by the 25 s boot bound resumes on the next boot;
+  `/setup … dry_run:false` honours `GUILD_PROVISION=off`; the pin cleanup only
+  deletes the notice its own pin caused; archived-thread and history scans are
+  bounded and cached per run; one kv retry on the boot path.
+- **2-prep — tag correctness + the one-shot gate + Bristlebane.** Every REST
+  filter follows `SUPABASE_GUILD_ID` (encoded; `characterPrefs` was the last
+  `'wolfpack'` const behind a live Mimic route); the eight upstream one-shot
+  announcers plus the howl-card repair are gated on the **guild tag**, not on
+  whether a `config.json` exists (Wolf Pack will commit one; two latches were
+  found absent from production `bot_kv`, so the file-existence default would
+  have reposted them); Bristlebane reads its four Discord ids from
+  `guild/discord.json` (`BRISTLEBANE_GUILD_FILE` in Docker), warns on an
+  unreadable file (EISDIR/EACCES), never prints a value, refuses numeric ids
+  above 2^53 — and the root `discord.json` loader now matches it rule for rule.
+- **Web (slice A)** — `web/lib/guild.ts` + the literal swap across ~78 files is
+  reviewed separately and lands on `beta` as web; see the Branch inventory.

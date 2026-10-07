@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Guild kit slices 1b, 2-prep, 3** (§177) | Bot 3.1.215: `utils/guildConfig.js` loader + getters, Discord self-provisioner (`/setup discord`, standalone script), tag-correct REST filters with a ratchet, one-shot announcers gated on the guild tag, Bristlebane guild file. Web slice A (`web/lib/guild.ts` + the literal swap) reviewed separately → `beta` | a session: slice 2, the de-branding sweep (start from the 11 getter-only env names in `test/guild-config.test.js`); then `doctor` and the wizard CLI (§8 picks stand) |
 | **Mimic 2.7.9 stable + member-report sweep** (§176) | Stable `40af051a` (agent 3.7.96), beta re-parked 2.7.10. 13 older member reports closed with their senders DMed, plus FB-43; 23 stay open (partial / not done / unclear / alpha, listed in §176) | a session: the open member reports, starting with the partials (FB-22, FB-26, FB-3, FB-37); the guild lead: pick the four B/C web previews still on beta |
 | **Main / alt · Inventory only · Hide completely** (§175) | Bot 3.1.214 live; agent 3.7.96, stable in Mimic 2.7.9: the choice in setup and on the dashboard's Me card, Hide completely also stops this PC reading the log | the guild lead: should Inventory only also stop that character's fight uploads? |
 | **My parses: explore + Guild / My logs** (§174) | Live: search, zone, By day on `/me/parses` (web 1.8.110 · bot 3.1.213, `my_parse_series_v2`); the same in Mimic plus Guild / My logs, stable in Mimic 2.7.9 | a session with confirmation: drop the old `my_parse_series` |
@@ -7704,3 +7705,44 @@ stable version."*
     stable. A report never moves backwards, so nothing re-sends.
 - **Lesson for the next session:** a fix that ships without an FB line leaves the member's report open forever.
   When a change answers a report, the commit carries `Fixes FB-n` at the gate where the member will see it.
+
+### 177. Guild kit slices 1b, 2-prep and 3: the config loader, tag correctness, the one-shot gate, the Discord self-provisioner, Bristlebane's guild file (2026-10-07, bot 3.1.215 · bristlebane 0.1.2)
+
+- **The call.** The guild lead asked for the hard-coded Wolf Pack values scoped and a provisioner designed
+  (§310 of the session log, 2026-10-06), then "resume". Built as six reviewed branches by parallel agents, one
+  adversarial reviewer per branch, every review "mergeable with fixes"; the fixes were applied per branch and
+  the branches merged on `integ/guildkit`. The web half (slice A: `web/lib/guild.ts` + the literal swap) is
+  reviewed separately and ships as web to `beta`.
+- **Resolution order is law: env → `guild/` file → built-in fallback, env always wins.** Every slice was
+  reviewed against "Wolf Pack production (every env var set, no `guild/config.json`) is byte-identical", and
+  each reviewer traced that path. `utils/guildConfig.js` is the one helper; `roles()` now gives exactly what
+  `utils/roles.js` sees after boot (the review found three cases where the two disagreed).
+- **The one-shot announcers are gated on the guild TAG, not on a file.** The slice as built turned them off
+  when a `guild/config.json` existed. The review found that two of the eight latches
+  (`announce_vex_thal_cleared`, `announce_vex_thal_film`) have no row in production `bot_kv`, and the kit's own
+  rule is that Wolf Pack commits a `config.json` too — so the day it landed, both would have reposted. Now:
+  `ANNOUNCE_UPSTREAM_ONESHOTS` overrides; otherwise `guildTag() === 'wolfpack'` is on, anything else is off.
+  The howl-card repair one-shot is gated the same way (nine gates, eight announcers).
+- **The provisioner owns the layout through `bot_kv`, and auto mode is conservative.** A hand-configured
+  server (every anchor in env) gets `report`: no writes, no fetches beyond today's. A virgin server gets
+  `create` under a 120 s lease, bounded to 25 s per boot, and **resumes** an unfinished build on the next boot
+  (the review caught that the first cut would have called a half-built layout "not virgin" and stopped).
+  `GUILD_PROVISION=off` means off everywhere, `/setup` included. Hub-only channel creation; threads adopted
+  by name; unknown is never gone (a 500 on a fetch does not delete an anchor).
+- **Tag correctness is a ratchet.** `test/guild-tag-rest.test.js` pins the count of inline
+  `process.env.SUPABASE_GUILD_ID || 'wolfpack'` reads at 160 and fails on a new one or on any `'wolfpack'`
+  REST literal; the four pre-existing unencoded filters are encoded. `characterPrefs` was the last literal
+  behind a live Mimic route (`?mine=1` and set-prefs would have found no rows on any other tag).
+- **Loaders print key names, never values.** Both `discord.json` loaders (root and Bristlebane) warn on an
+  existing-but-unreadable file (`EISDIR` is the Docker mount typo), give a parse position but no snippet on
+  bad JSON, and refuse a numeric id above 2^53 instead of passing on a rounded snowflake.
+- **Where it landed.** `utils/guildConfig.js`, `utils/discordProvisioner.js`, `commands/setup.js`,
+  `scripts/provision-discord.js`, `data/discord-layout.json`, `apps/bristlebane/lib.js`, the root loader in
+  `index.js`, `.env.example` (`ANNOUNCE_UPSTREAM_ONESHOTS`, `GUILD_PROVISION*`), `guild/README.md`,
+  `guild/config.example.json`, `guild/discord.example.json`; tests under `test/guild-*.test.js`,
+  `test/discord-provisioner-*.test.js`, `test/setup-command.test.js`, `test/announce-upstream-gate.test.js`,
+  `apps/bristlebane/test/guild-file.test.js`. Docs: `DESIGN-guild-kit.md` §7, `HOW-ITS-BUILT.md`,
+  `DESIGN-selfhost-wizard.md` §3, `STATUS.md`.
+- **Still owed (slice 2 and later).** The de-branding sweep proper (the 11 getter-only env names the config
+  test lists are read by nothing yet; `GITHUB_REPO` among them); the agent/Mimic manifest route; SQL bootstrap
+  tag substitution; literal Discord ids after a production env check; `doctor`; the wizard CLI.

@@ -141,7 +141,32 @@ pages live in the separate hesstastic repo (`eqmimic/`, `vercel.json`). Tests:
 anchor env keys that are unset — env wins, secret-shaped keys are refused,
 no file is a no-op (`test/guild-discord-json.test.js`).
 `guild/discord.example.json` is generated from the bot's real anchor reads.
-`config.json` is still unread (slice 1b). `guild/config.example.json`
+**Slice 1b live (bot 3.1.215):** `utils/guildConfig.js` is the one guild-config
+helper — `fillEnv(process.env)` runs right after the discord.json loader and
+fills only unset env names from `guild/config.json` (`ENV_MAP`: tag, Discord
+guild id, role names, timezone, OpenDKP client, channel names, web base, repo,
+provisioner settings); typed getters (`guildTag()`, `guildName()`, `webBase()`,
+`repo()`, `roles()`, `ranks()`, `provision()` …) resolve env → file → built-in
+Wolf Pack default for new code. `roles()` follows the same post-fill precedence
+`utils/roles.js` sees. Secret-shaped keys are stripped at load (whole-word
+match), example placeholders warn once per path, and the suite never reads the
+real `guild/` directory (`test/guild-config.test.js`).
+**Slice 3 live (bot 3.1.215):** `utils/discordProvisioner.js` builds the
+Discord layout from `data/discord-layout.json` — `GUILD_PROVISION=auto`
+reports on a hand-configured server (every anchor set → no writes), creates on
+a virgin one, resumes an unfinished build, and is off with `off`; anchors go to
+`bot_kv` and `guild/discord.json`. Officers run `/setup discord provision`
+(dry run first); `scripts/provision-discord.js` runs it standalone before a bot
+exists (`test/discord-provisioner-*.test.js`, `test/setup-command.test.js`).
+**Slice 2-prep (bot 3.1.215):** every REST filter follows `SUPABASE_GUILD_ID`
+through `utils/supabase.guildId()` (percent-encoded) with a ratchet on inline
+fallbacks (`test/guild-tag-rest.test.js`); the eight upstream one-shot
+announcers plus the howl-card repair are gated on the guild tag
+(`_oneshotGate`, `ANNOUNCE_UPSTREAM_ONESHOTS` overrides;
+`test/announce-upstream-gate.test.js`); Bristlebane reads its four Discord ids
+from `guild/discord.json` when env leaves them unset
+(`apps/bristlebane/lib.js`, `BRISTLEBANE_GUILD_FILE` for Docker).
+`guild/config.example.json`
 is the schema-by-example for a guild's *own* bits (identity, palette as a set
 with named semantics, wording, channel **names**, raid schedule, sites, APIs,
 feature flags); `guild/discord.json` will be the provisioner-generated anchor
