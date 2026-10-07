@@ -5474,3 +5474,12 @@ Five reports in one beta push, each built and mutation-checked by a parallel age
 - **Target Info shows the mob's procs** (PROCS section above Offensive; bot 3.1.216).
 - **/parses defaults to 7 days** (FB-59) and runs its reads in parallel; preview at
   https://b.wolfpack.quest/parses (old window: https://b.wolfpack.quest/parses?w=60d).
+- **Web guild kit (slice A, web 1.8.114, beta only until the guild lead graduates it):**
+  `web/lib/guild.ts` (GUILD_TAG, GUILD_NAME, GUILD_INGAME_NAME, ROLES, RANKS, site
+  URLs from `NEXT_PUBLIC_*` with Wolf Pack defaults), the `'wolfpack'` literal swapped
+  for GUILD_TAG across 78 files, a guard test that fails on a new literal or a
+  client-bundle import, `next.config.js` mapping SUPABASE_GUILD_ID → NEXT_PUBLIC_GUILD_TAG
+  at build time, and `/pvp/server` + the /who table comparing guild names through
+  GUILD_INGAME_NAME. Byte-identical for Wolf Pack (neither env name is set on
+  Vercel). Left: `web/lib/funLdAuth.ts` still carries a hard-coded character name
+  (a logic bug too — it checks one fixed character, not the card's) — follow-up.
