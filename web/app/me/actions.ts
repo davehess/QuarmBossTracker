@@ -9,6 +9,7 @@
 import { revalidatePath } from 'next/cache';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { GUILD_TAG } from '@/lib/guild';
 
 // hidden_from_lists is the owner's "hide everywhere except account inventory" (the guild lead, 2026-10-03):
 // display only, it stops nothing being collected.
@@ -46,7 +47,7 @@ export async function setCharacterExclusion(
   const { data: target } = await admin
     .from('characters')
     .select('name, discord_id, main_name')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('name', characterName)
     .maybeSingle();
   if (!target) return { ok: false, error: 'unknown character' };
@@ -55,7 +56,7 @@ export async function setCharacterExclusion(
     const { data: root } = await admin
       .from('characters')
       .select('discord_id')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .ilike('name', target.main_name)
       .maybeSingle();
     if (root?.discord_id === pack.discord_id) owned = true;
@@ -71,7 +72,7 @@ export async function setCharacterExclusion(
   const { error } = await admin
     .from('characters')
     .update({ [flag]: value })
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('name', characterName);
   if (error) return { ok: false, error: error.message };
 
@@ -116,7 +117,7 @@ export async function bulkSetCharacterFlag(
   const { data: direct } = await admin
     .from('characters')
     .select(selectCols)
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .eq('discord_id', pack.discord_id);
   const directRows = (direct ?? []) as unknown as Record<string, unknown>[];
   const myMainNames = new Set(directRows.map(r => r.name as string));
@@ -124,7 +125,7 @@ export async function bulkSetCharacterFlag(
     ? await admin
         .from('characters')
         .select(selectCols)
-        .eq('guild_id', 'wolfpack')
+        .eq('guild_id', GUILD_TAG)
         .in('main_name', [...myMainNames])
     : { data: [] as Record<string, unknown>[] };
 
@@ -150,7 +151,7 @@ export async function bulkSetCharacterFlag(
   const { error } = await admin
     .from('characters')
     .update({ [flag]: value })
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .filter('name', 'in', inList);
   if (error) return { ok: false, error: error.message };
 

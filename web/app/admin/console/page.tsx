@@ -29,6 +29,7 @@ import {
 } from '@/lib/consoleHealth';
 import { RUNBOOKS, type Runbook, type LeverRef } from '@/lib/runbooks';
 import { DriftList, EmergencyPanel } from './ConsoleControls';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,7 +46,7 @@ async function loadFacts() {
     tuningRow, lastUpload, active15, lastChat, lastEnc, encToday,
     lastLive, errors, versions, backfill, triggers,
   ] = await Promise.all([
-    sb.from('overlay_tuning').select('tuning, updated_at, updated_by_name').eq('guild_id', 'wolfpack').maybeSingle(),
+    sb.from('overlay_tuning').select('tuning, updated_at, updated_by_name').eq('guild_id', GUILD_TAG).maybeSingle(),
     sb.from('agent_upload_stats').select('last_uploaded_at')
       .order('last_uploaded_at', { ascending: false }).limit(1),
     sb.from('agent_upload_stats').select('character, last_agent_state').gte('last_uploaded_at', q15).limit(1000),

@@ -18,6 +18,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isMustEquipClicky, usableByClass, pickSlot, buildClickyMacro } from '@/lib/clicky-macros';
 import { computeRaidKit, MR_FLOOR, UTILITY_KEYS, UTILITY_LABEL, type RaidKitResult } from '@/lib/raidKit';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -145,7 +146,7 @@ async function load(decoded: string) {
     // utility checklist (EB/Lev/Invis/Port).
     sb.from('character_spellbook')
       .select('spell_name')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .ilike('character_name', decoded)
       .limit(1000),
   ]);

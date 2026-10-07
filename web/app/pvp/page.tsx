@@ -20,6 +20,7 @@ import { FightCards, FightTable } from './Fights';
 import type { PvpFightRow } from '@/lib/pvpMedia';
 import { resolveWindow, type ResolvedWindow } from '@/lib/timeWindow';
 import { loadPvpBossKills } from '@/lib/fullReads';
+import { GUILD_TAG } from '@/lib/guild';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
 // Without this the page inherits the site-wide description and every
@@ -66,7 +67,7 @@ async function loadLeaderboard(sortKey: SortKey, w: ResolvedWindow) {
   const { data: roster } = await sb
     .from('characters')
     .select('name, main_name')
-    .eq('guild_id', 'wolfpack');
+    .eq('guild_id', GUILD_TAG);
   const rosterRows = (roster ?? []) as { name: string; main_name: string | null }[];
   const rosterNames = rosterRows.map(r => r.name);
   if (rosterNames.length === 0) return { rows: [] as LeaderboardRow[], error: null as string | null };
@@ -86,13 +87,13 @@ async function loadLeaderboard(sortKey: SortKey, w: ResolvedWindow) {
   // Merge by killer name into one row per character.
   let killQuery = sb.from('pvp_kills')
     .select('killer, victim, via_pet, killed_at')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .in('killer', rosterNames)
     .order('killed_at', { ascending: false })
     .limit(20000);
   let assistQuery = sb.from('pvp_assists')
     .select('assister')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .in('assister', rosterNames)
     .limit(20000);
   if (w.sinceIso) {
@@ -207,7 +208,7 @@ async function loadQuake(): Promise<string | null> {
   const { data } = await sb
     .from('pvp_quake')
     .select('next_quake_at')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .maybeSingle();
   const iso = (data as { next_quake_at: string | null } | null)?.next_quake_at ?? null;
   if (!iso) return null;
@@ -236,7 +237,7 @@ async function loadHotZones(): Promise<HotZone[]> {
   const { data: kills } = await sb
     .from('pvp_kills')
     .select('zone, killer, victim, killer_is_npc, killed_at')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .gte('killed_at', sinceIso)
     .not('zone', 'is', null)
     .limit(1000);
@@ -286,7 +287,7 @@ async function loadFlagged(): Promise<Flagged[]> {
   const { data, error } = await supabaseAdmin()
     .from('pvp_flag_state')
     .select('character, since')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .eq('discord', true)
     .order('since', { ascending: false })
     .limit(200);

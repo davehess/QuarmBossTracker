@@ -7,8 +7,9 @@
 // per guild (raid_screen_state) and the deck is raid_screen_slides; supabase/migrations/20261006120000.
 
 import { canonicalClass, classAbbr, classColor, type Raider, type ZoneCount } from '@/lib/spectator';
+import { GUILD_TAG } from './guild';
 
-export const SCREEN_GUILD = 'wolfpack';
+export const SCREEN_GUILD = GUILD_TAG;
 export const SCREEN_MODES = ['map', 'slides', 'loot', 'overview'] as const;
 export type ScreenMode = (typeof SCREEN_MODES)[number];
 export const MODE_LABEL: Record<ScreenMode, string> = {

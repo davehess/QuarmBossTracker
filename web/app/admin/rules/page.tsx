@@ -7,6 +7,7 @@
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,7 +35,7 @@ async function loadRules(): Promise<RuleRow[]> {
   const { data } = await admin
     .from('guild_rules')
     .select('id, channel_key, rule_number, title, body, category, source_message_id, source_edited_at, ingested_at, active')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .order('rule_number', { ascending: true, nullsFirst: false });
   return (data ?? []) as RuleRow[];
 }

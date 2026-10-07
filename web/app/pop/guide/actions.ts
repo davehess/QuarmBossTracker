@@ -17,6 +17,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { ownedCharacters } from '@/lib/ownedCharacters';
 import { GUIDE_KEYS } from '@/lib/popGuide';
 import { MAX_FLAGS_PER_TICK, tickKeyForFlag, tickKeysForFlag } from '@/lib/popSelfFlags';
+import { GUILD_TAG } from '@/lib/guild';
 
 type Result = { ok: boolean; error?: string };
 
@@ -68,14 +69,14 @@ async function writeTicks(character: string, write: string[], remove: string[], 
     const { data: me } = await admin.from('wolfpack_members').select('discord_id').eq('user_id', user.id).maybeSingle();
     const now = new Date().toISOString();
     const { error } = await admin.from('pop_guide_ticks').upsert(
-      write.map(item_key => ({ guild_id: 'wolfpack', character_name: owned.name, item_key,
+      write.map(item_key => ({ guild_id: GUILD_TAG, character_name: owned.name, item_key,
         ticked_at: now, ticked_by: me?.discord_id ?? null })),
       { onConflict: 'guild_id,character_name,item_key' },
     );
     if (error) return { ok: false, error: error.message };
   } else {
     const { error } = await admin.from('pop_guide_ticks').delete()
-      .eq('guild_id', 'wolfpack').eq('character_name', owned.name).in('item_key', remove);
+      .eq('guild_id', GUILD_TAG).eq('character_name', owned.name).in('item_key', remove);
     if (error) return { ok: false, error: error.message };
   }
   return { ok: true };

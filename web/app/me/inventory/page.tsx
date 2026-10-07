@@ -21,6 +21,7 @@ import { ownedCharacters } from '@/lib/ownedCharacters';
 import InventoryExplorer, { type InvItem, type LocGroup } from './InventoryExplorer';
 import { selectAll } from '@/lib/selectAll';
 import { clusterSharedBanks } from '@/lib/sharedBank';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'My inventory — Wolf Pack' };
@@ -73,7 +74,7 @@ export default async function MyInventoryPage() {
     const rows = await selectAll<InvRow>((from, to) => admin
       .from('character_inventory')
       .select('character_name, slot_label, item_id, item_name, quantity, observed_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .in('character_name', charNames)
       .order('character_name').order('slot_label')
       .range(from, to));

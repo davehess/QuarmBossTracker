@@ -18,6 +18,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -189,7 +190,7 @@ async function saveOverlayTuning(formData: FormData) {
   // Preserve any keys this form doesn't manage (out-of-band overrides, future
   // flags) so a Save never silently wipes them — the old wholesale rebuild did.
   const { data: existingRow } = await sb
-    .from('overlay_tuning').select('tuning').eq('guild_id', 'wolfpack').maybeSingle();
+    .from('overlay_tuning').select('tuning').eq('guild_id', GUILD_TAG).maybeSingle();
   const existing = (existingRow?.tuning as Record<string, number>) ?? {};
 
   // Only non-empty, in-range numbers become overrides; everything else is
@@ -231,7 +232,7 @@ async function saveOverlayTuning(formData: FormData) {
   await sb
     .from('overlay_tuning')
     .upsert({
-      guild_id: 'wolfpack',
+      guild_id: GUILD_TAG,
       tuning,
       updated_by_discord_id: (user.app_metadata?.provider_id || meta.provider_id || null) as string | null,
       updated_by_name: display,
@@ -264,7 +265,7 @@ async function saveClassSets(formData: FormData) {
   await supabaseAdmin()
     .from('overlay_tuning')
     .upsert({
-      guild_id: 'wolfpack',
+      guild_id: GUILD_TAG,
       class_sets: classSets,
       updated_by_discord_id: (user.app_metadata?.provider_id || meta.provider_id || null) as string | null,
       updated_by_name: display,
@@ -280,7 +281,7 @@ export default async function OverlayTuningPage() {
   const { data } = await sb
     .from('overlay_tuning')
     .select('*')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .maybeSingle();
 
   const tuning: Record<string, number> = (data?.tuning as Record<string, number>) ?? {};

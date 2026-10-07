@@ -42,6 +42,7 @@ import {
   type KitOwnerRow, type KitCoverage, type KitCategory,
   type QuestDef, type QuestProgress, type OwnedItems,
 } from '@/lib/quartermaster';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -84,7 +85,7 @@ async function load(userId: string, officer: boolean): Promise<Loaded> {
   const gearData = await selectAll<{ character: string; item_id: number }>((from, to) => sb
     .from('character_gear')
     .select('character, item_id')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .in('item_id', KIT_ITEM_IDS)
     .in('loc', ['equipped', 'bag'])
     .order('character').order('loc').order('slot')
@@ -103,7 +104,7 @@ async function load(userId: string, officer: boolean): Promise<Loaded> {
   const [{ data: qData }, { data: riData }] = await Promise.all([
     sb.from('quest_catalog')
       .select('id, name, category, display_order')
-      .eq('guild_id', 'wolfpack').eq('active', true).order('display_order'),
+      .eq('guild_id', GUILD_TAG).eq('active', true).order('display_order'),
     sb.from('quest_required_item')
       .select('quest_id, item_id, item_name, quantity, optional, display_order')
       .order('display_order'),
@@ -153,7 +154,7 @@ async function load(userId: string, officer: boolean): Promise<Loaded> {
       (from, to) => sb
         .from('character_inventory')
         .select('character_name, item_id, item_name, quantity')
-        .eq('guild_id', 'wolfpack')
+        .eq('guild_id', GUILD_TAG)
         .in('character_name', invNames)
         // `id` ends the order: (character_name, item_name, item_id) repeats when a character holds
         // one item in two slots, and tied rows fall either side of a page boundary. Measured

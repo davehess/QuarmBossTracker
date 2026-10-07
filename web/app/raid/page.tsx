@@ -29,6 +29,7 @@ import {
 import { groupRaids } from '@/lib/raidGroups';
 import { loadActiveBuffCasts } from '@/lib/fullReads';
 import RaidView, { type RaidRow, type RaidTab } from './RaidView';
+import { GUILD_TAG } from '@/lib/guild';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
 // Without this the page inherits the site-wide description and every
@@ -151,14 +152,14 @@ export default async function RaidHubPage() {
   const [{ data: liveRows }, { data: charRows }, { data: rosterRows }, { data: memberRow }, { data: mgbRows }, { data: buffCastRows }, { data: ariRow }, { data: manaRows }] = await Promise.all([
     admin.from('character_live_state')
       .select('character, zone_name, self_hp_pct, self_mana_pct, buffs, buff_count, pet_name, pet_hp_pct, pet_buffs, swapped_to, swapped_at, updated_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .order('updated_at', { ascending: false }),
     admin.from('characters')
       .select('name, class, main_name, discord_id')
-      .eq('guild_id', 'wolfpack'),
+      .eq('guild_id', GUILD_TAG),
     admin.from('raid_roster')
       .select('name, class, group_num, level, rank, hp_pct, captured_at, loc_at, uploaded_by_discord_id')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .gte('captured_at', rosterSince),
     // Signed-in user → discord_id so we can find THEIR character in the raid.
     // Lets us auto-pick a default Buffer-mode class (their own class) and
@@ -169,7 +170,7 @@ export default async function RaidHubPage() {
       .maybeSingle(),
     admin.from('character_aas')
       .select('character')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .eq('aa_index', MGB_AA_INDEX)
       .gte('rank', 1),
     // One row per (target, spell): the newest cast that has not run its duration
@@ -183,14 +184,14 @@ export default async function RaidHubPage() {
     // stays in Discord; we never render it here).
     admin.from('ari_state')
       .select('character, set_by_name, set_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .maybeSingle(),
     // "% mana" macro self-reports, extracted bot-side from the /gu + /rs chat
     // relay — covers casters NOT running Mimic. Zeal-pipe mana (live-state)
     // wins when fresh; this fills everyone else in.
     admin.from('mana_reports')
       .select('character, pct, reported_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .gte('reported_at', manaSince),
   ]);
   // Macro-reported mana by character (lowercased) — merge source #2.

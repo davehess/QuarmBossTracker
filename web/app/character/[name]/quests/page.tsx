@@ -40,6 +40,7 @@ import { isOfficer } from '@/lib/officer';
 import { QuestActionButtons, QuestUnhideButton, TurninControls } from './QuestPrefsControls';
 import { EPIC_COMPONENTS, EPIC_ROOT, EPIC_CLASSES_BY_ITEM } from '@/lib/eq-epics';
 import { fetchFamilyInventory, fetchDiscoveredQuests, fetchItemsByIds } from '@/lib/capSafeReads';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -84,7 +85,7 @@ async function load(decoded: string) {
       .limit(1),
     sb.from('quest_catalog')
       .select('id, name, category, zone, pqdi_quest_url, notes, is_stack_turnin, reward_item_id, reward_item_name, display_order')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .eq('active', true)
       .order('display_order', { ascending: true }),
     sb.from('quest_required_item')
@@ -94,11 +95,11 @@ async function load(decoded: string) {
     // hold the reward, in inventory OR on the keyring.
     sb.from('character_keys')
       .select('item_id, key_name')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .ilike('character_name', decoded),
     sb.from('character_quest_prefs')
       .select('quest_id, display_order, hidden, dismissed')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .ilike('character_name', decoded),
   ]);
 
@@ -112,7 +113,7 @@ async function load(decoded: string) {
   const { data: familyRows } = await sb
     .from('characters')
     .select('name')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .or(`name.eq.${main},main_name.eq.${main}`);
   const familyNames = new Set(((familyRows ?? []) as { name: string }[]).map(r => r.name.toLowerCase()));
 
@@ -140,7 +141,7 @@ async function load(decoded: string) {
   // its real key item; Howling Stones and Sleeper's Tomb have no catalog quest
   // yet, so their quest implication is null but the zone access still shows.
   const { data: inferredRows } = await sb
-    .rpc('inferred_keys_for_character', { p_guild_id: 'wolfpack', p_character: decoded });
+    .rpc('inferred_keys_for_character', { p_guild_id: GUILD_TAG, p_character: decoded });
   type InferredKey = {
     zone_short: string; zone_long: string;
     key_item_id: number | null; key_item_name: string;
@@ -189,7 +190,7 @@ async function load(decoded: string) {
   const { data: activeRows } = await sb
     .from('character_active_turnins')
     .select('turnin_id, status')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('character_name', decoded);
   const prefRows = ((activeRows ?? []) as { turnin_id: number; status: string }[]);
   const promotedTurninIds = prefRows.filter(r => r.status === 'active').map(r => r.turnin_id);

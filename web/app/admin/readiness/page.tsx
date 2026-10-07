@@ -15,6 +15,7 @@ import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
 import { loadRoster } from '@/lib/roster';
+import { GUILD_TAG } from '@/lib/guild';
 import { selectAll } from '@/lib/selectAll';
 import {
   computeRaidKit, MR_FLOOR, UTILITY_KEYS, UTILITY_LABEL, type RaidKitResult,
@@ -100,7 +101,7 @@ async function load(): Promise<Row[]> {
       (from, to) => sb
         .from('character_spellbook')
         .select('character_name, spell_name')
-        .eq('guild_id', 'wolfpack')
+        .eq('guild_id', GUILD_TAG)
         .in('character_name', computeNames)
         .order('character_name').order('spell_name').order('spell_id')
         .range(from, to));

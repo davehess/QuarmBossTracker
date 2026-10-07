@@ -22,6 +22,7 @@ import {
 import BuffsGrid, { type BuffRow } from './BuffsGrid';
 import BuffGroupsView, { type BuffLayout } from './BuffGroups';
 import Link from 'next/link';
+import { GUILD_TAG } from '@/lib/guild';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
 // Without this the page inherits the site-wide description and every
@@ -68,13 +69,13 @@ export default async function BuffsPage(
     admin
       .from('character_live_state')
       .select('character, zone_name, buffs, buff_count, pet_name, pet_hp_pct, pet_buffs, updated_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .order('updated_at', { ascending: false }),
     loadRoster(),   // the shared, paged roster read (web/lib/roster.ts)
     admin
       .from('raid_roster')
       .select('name, class, group_num, level, rank, captured_at, uploaded_by_discord_id')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .gte('captured_at', rosterSince),
   ]);
 

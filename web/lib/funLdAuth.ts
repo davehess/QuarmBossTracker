@@ -9,6 +9,7 @@
 import { supabaseAdmin } from './supabase';
 import { isOfficer } from './officer';
 import { mayMarkQuit, viewerDiscordId } from './funLd';
+import { GUILD_TAG } from './guild';
 
 export async function viewerMayMarkQuit(
   user: { id: string; app_metadata?: unknown; user_metadata?: unknown } | null | undefined,
@@ -21,7 +22,7 @@ export async function viewerMayMarkQuit(
     const { data } = await supabaseAdmin()
       .from('characters')
       .select('discord_id')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .ilike('name', 'Peopleslayer');
     return mayMarkQuit({
       discordId,

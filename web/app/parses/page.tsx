@@ -21,6 +21,7 @@ import { classifyEncounter, clearClassification } from './actions';
 import WindowPicker from '@/components/WindowPicker';
 import { resolveWindow, windowCaveat, type ResolvedWindow } from '@/lib/timeWindow';
 import { loadLootRecent, loadOffcardRollup, loadTicksForRaids } from '@/lib/fullReads';
+import { GUILD_TAG } from '@/lib/guild';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
 // Without this the page inherits the site-wide description and every
@@ -156,7 +157,7 @@ async function loadAll(w: ResolvedWindow): Promise<{
     ] = await Promise.all([
       encQuery,
       loadOffcardRollup(sb, w.sinceIso),
-      sb.from('characters').select('name').eq('guild_id', 'wolfpack'),
+      sb.from('characters').select('name').eq('guild_id', GUILD_TAG),
       sb.from('eqemu_zone').select('short_name, long_name, zone_id'),
       loadLootRecent<LootDbRow>(
         sb,
