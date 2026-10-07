@@ -438,3 +438,146 @@ describe('the scanner passes the commit through to the DM', () => {
     expect(notes[1]).toMatch(/^\d{4}-\d\d-\d\d ✅ Implemented \(bbbbbbb\) — the HUD keeps its size after a resize$/);
   });
 });
+
+// What the scanner reads as new (the guild lead, 2026-10-07: reports with "Fixes FB-n" on beta stayed acked).
+// A feature is built on a side branch and merged later, so its commit is OLDER by date than a beta tip the
+// scanner already recorded. The date-ordered list stops at that tip and never reaches it; the compare API
+// is reachability, so it does. Runs the real _feedbackFreshCommits + _feedbackCommitWatch + _feedbackAdvance
+// against a stub GitHub that answers by path and records every path asked.
+describe('the scanner reads what is new since its last look, not the newest 40 by date', () => {
+  const msg = (ref) => `bot v3.1.1 — fix\n\nFixes FB-${ref}`;
+  const commit = (sha, ref) => ({ sha, commit: { message: ref ? msg(ref) : `docs — ${sha}` } });
+
+  // `github(path)` answers the stub; `seen` is the bot_kv value per branch; refs are the open reports.
+  function rig({ seen = {}, github, refs = [58, 59, 60, 61] }) {
+    const bot = readSource(BOT_INDEX);
+    const block = sliceBlock(bot, 'async function _feedbackAdvance(', '\nasync function _feedbackCommitWatch(').slice(0, -'\nasync function _feedbackCommitWatch('.length)
+      + '\n' + sliceBlock(bot, 'async function _feedbackCommitWatch(', '\n}\n');
+    const rows = {};
+    for (const r of refs) rows[r] = { id: `row-${r}`, ref: r, status: 'acked', category: 'bug', message: 'x', discord_msg_link: LINK,
+      submitter_discord_id: null, discord_msg_id: null, notes: null };
+    const paths = [];
+    const stored = {};   // branch -> sha written back to bot_kv
+    const supabase = {
+      isEnabled: () => true,
+      select: async (table, filter) => {
+        if (table === 'feedback') { const r = rows[/ref=eq\.(\d+)/.exec(filter)[1]]; return r ? [{ ...r }] : []; }
+        const branch = /key=eq\.fb_commit_seen_(\w+)/.exec(filter)[1];
+        return seen[branch] ? [{ value: { sha: seen[branch] } }] : [];
+      },
+      update: async (table, filter, patch) => { Object.assign(rows[/id=eq\.row-(\d+)/.exec(filter)[1]], patch); },
+      upsert: async (table, list) => { stored[/fb_commit_seen_(\w+)/.exec(list[0].key)[1]] = list[0].value.sha; },
+    };
+    const fakes = { './utils/supabase': supabase, './utils/feedbackRefs': fr };
+    // eslint-disable-next-line no-new-func
+    const run = new Function('require', 'MessageFlags', 'process', '_githubJson', '_EB2', '_feedbackStatusContent',
+      block + '\nreturn _feedbackCommitWatch;')(
+      (m) => fakes[m], { SuppressEmbeds: 4 }, { env: {} },
+      async (p) => { paths.push(p); return github(p); }, class {}, (c) => c);
+    const status = () => Object.fromEntries(Object.entries(rows).map(([r, row]) => [r, row.status]));
+    return { run: () => run({}), paths, stored, status };
+  }
+  const isCompare = (p) => p.includes('/compare/');
+  const isList = (p) => p.includes('/commits?sha=');
+
+  it('a side-branch commit older than the recorded tip still moves its report', async () => {
+    // By date the list is tip, the sha already seen, THEN the side commit (authored before it was recorded).
+    const dateOrdered = [commit('merge1', null), commit('seenB', null), commit('side1', 58)];
+    const { run, paths, stored, status } = rig({
+      seen: { beta: 'seenB', main: 'seenM' },
+      github: (p) => {
+        if (p === '/repos/davehess/QuarmBossTracker/compare/seenB...beta?per_page=100&page=1') return { commits: [commit('side1', 58), commit('merge1', null)] };
+        if (p.includes('/compare/seenM...main')) return { commits: [] };
+        if (isList(p)) return dateOrdered;   // What the old walk would have read.
+        return null;
+      },
+    });
+    await run();
+    expect(status()[58]).toBe('on_beta');
+    expect(paths.some(isList)).toBe(false);
+    expect(stored.beta).toBe('merge1');   // The branch head, i.e. the last commit compare listed.
+  });
+
+  it('a report closed on beta and then on main in one pass ends implemented', async () => {
+    const { run, status } = rig({
+      seen: { beta: 'seenB', main: 'seenM' },
+      github: (p) => {
+        if (p.includes('/compare/seenB...beta')) return { commits: [commit('b1', 59)] };
+        if (p.includes('/compare/seenM...main')) return { commits: [commit('m1', 59)] };
+        return null;
+      },
+    });
+    await run();
+    expect(status()[59]).toBe('addressed');   // Beta first, then main, same pass.
+  });
+
+  it('nothing new: no report moves and the recorded sha is left alone', async () => {
+    const { run, stored, status } = rig({
+      seen: { beta: 'seenB', main: 'seenM' },
+      github: (p) => (isCompare(p) ? { commits: [] } : null),
+    });
+    await run();
+    expect(Object.values(status()).every((s) => s === 'acked')).toBe(true);
+    expect(stored).toEqual({});
+  });
+
+  it('a long stretch is read in pages of 100, three at most, and the last commit read is remembered', async () => {
+    const page = (n) => Array.from({ length: 100 }, (_, i) => commit(`p${n}-${i}`, null));
+    const { run, paths, stored } = rig({
+      seen: { beta: 'seenB' },
+      github: (p) => {
+        const m = /compare\/seenB\.\.\.beta\?per_page=100&page=(\d)/.exec(p);
+        return m ? { commits: page(Number(m[1])) } : { commits: [] };
+      },
+    });
+    await run();
+    const betaPaths = paths.filter((p) => p.includes('...beta'));
+    expect(betaPaths).toHaveLength(3);   // A third full page does not ask for a fourth.
+    expect(betaPaths[2]).toContain('page=3');
+    expect(stored.beta).toBe('p3-99');
+  });
+
+  it('a short page ends the read', async () => {
+    const full = Array.from({ length: 100 }, (_, i) => commit(`a${i}`, null));
+    const { run, paths, stored, status } = rig({
+      seen: { beta: 'seenB' },
+      github: (p) => {
+        if (p.includes('/compare/seenB...beta') && p.endsWith('page=1')) return { commits: full };
+        if (p.includes('/compare/seenB...beta') && p.endsWith('page=2')) return { commits: [commit('z0', 60)] };
+        return { commits: [] };
+      },
+    });
+    await run();
+    expect(paths.filter((p) => p.includes('...beta'))).toHaveLength(2);
+    expect(stored.beta).toBe('z0');
+    expect(status()[60]).toBe('on_beta');
+  });
+
+  it('a compare that cannot be answered (the sha is gone after a reset) falls back to the date walk', async () => {
+    const { run, paths, stored, status } = rig({
+      seen: { beta: 'goneB' },
+      github: (p) => {
+        if (isCompare(p)) return null;   // 404 / 422
+        if (p.includes('sha=beta')) return [commit('tip1', 60), commit('goneB', null), commit('older1', 61)];
+        return [];
+      },
+    });
+    await run();
+    expect(paths.some(isCompare)).toBe(true);
+    expect(status()[60]).toBe('on_beta');    // Newer than the recorded sha.
+    expect(status()[61]).toBe('acked');      // Past it: the walk stops there, as before.
+    expect(stored.beta).toBe('tip1');
+  });
+
+  it('a first look (nothing recorded) walks the newest 40 and never asks compare', async () => {
+    const { run, paths, stored, status } = rig({
+      seen: {},
+      github: (p) => (isList(p) && p.includes('per_page=40') && p.includes('sha=beta') ? [commit('tip1', 60), commit('older1', 61)] : []),
+    });
+    await run();
+    expect(paths.some(isCompare)).toBe(false);
+    expect(status()[60]).toBe('on_beta');
+    expect(status()[61]).toBe('on_beta');
+    expect(stored.beta).toBe('tip1');
+  });
+});

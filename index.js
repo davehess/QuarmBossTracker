@@ -19816,6 +19816,13 @@ async function _backfillMimicFeedbackButtonsOnce(readyClient) {
 // list, no token; the last sha seen per branch sits in bot_kv, so a restart neither misses nor repeats
 // one, and a re-read is harmless because a report only moves forward. Beta first, so a commit that
 // reached both in one pass ends at implemented.
+// "New since that sha" is asked of the compare API (everything the branch reaches that the sha does not),
+// not read off "the newest 40 by date, stop at the sha" (found 2026-10-07: four reports with
+// "Fixes FB-n" on beta stayed acked). Features are built on side branches and merged later, so a commit
+// authored at 20:00 and merged at 22:40 sorts BELOW a tip recorded at 21:00; the date walk stopped at the
+// sha before reaching it and the report never moved. Compare is reachability, so the merged commit is in
+// it. The date walk stays for the first look and for a sha GitHub no longer knows (beta is reset at
+// graduations).
 function _githubJson(pathname) {
   return new Promise((resolve) => {
     const https = require('https');
@@ -19869,6 +19876,28 @@ async function _feedbackAdvance(readyClient, ref, branch, sha, commitMessage) {
   }
   console.log(`[feedback-ref] FB-${ref} → ${next} (${branch} ${String(sha).slice(0, 7)})`);
 }
+// The commits a branch gained since `seen`, oldest first, and the sha to remember (null: nothing to do, keep
+// the old one). Compare returns up to 250 in pages of 100, so three pages are the most it can hold; if a
+// later page fails the earlier ones still count and the next look carries on from where they ended.
+// A compare that fails on its first page (404/422: a reset branch) or no `seen` at all takes the date walk.
+async function _feedbackFreshCommits(branch, seen) {
+  const repo = '/repos/davehess/QuarmBossTracker';
+  if (seen) {
+    let gained = null;
+    for (let page = 1; page <= 3; page++) {
+      const cmp = await _githubJson(`${repo}/compare/${seen}...${branch}?per_page=100&page=${page}`);
+      if (!cmp || !Array.isArray(cmp.commits)) break;
+      gained = (gained || []).concat(cmp.commits);
+      if (cmp.commits.length < 100) break;
+    }
+    if (gained) return { fresh: gained, head: gained.length ? gained[gained.length - 1].sha : null };
+  }
+  const commits = await _githubJson(`${repo}/commits?sha=${branch}&per_page=40`);
+  if (!Array.isArray(commits) || !commits.length) return { fresh: [], head: null };
+  const fresh = [];
+  for (const c of commits) { if (c.sha === seen) break; fresh.push(c); }
+  return { fresh: fresh.reverse(), head: commits[0].sha };
+}
 async function _feedbackCommitWatch(readyClient) {
   const supabase = require('./utils/supabase');
   if (!supabase.isEnabled()) return;
@@ -19879,16 +19908,14 @@ async function _feedbackCommitWatch(readyClient) {
     const kv = await supabase.select('bot_kv',
       `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${key}&select=value&limit=1`).catch(() => null);
     const seen = Array.isArray(kv) && kv[0] && kv[0].value ? kv[0].value.sha : null;
-    const commits = await _githubJson(`/repos/davehess/QuarmBossTracker/commits?sha=${branch}&per_page=40`);
-    if (!Array.isArray(commits) || !commits.length) continue;
-    const fresh = [];
-    for (const c of commits) { if (c.sha === seen) break; fresh.push(c); }
-    for (const c of fresh.reverse()) {
+    const { fresh, head } = await _feedbackFreshCommits(branch, seen);
+    if (!head) continue;
+    for (const c of fresh) {
       for (const ref of fr.refsIn(c.commit && c.commit.message)) {
         await _feedbackAdvance(readyClient, ref, branch, c.sha, c.commit && c.commit.message).catch(err => console.warn('[feedback-ref] failed:', err?.message));
       }
     }
-    await supabase.upsert('bot_kv', [{ guild_id: guildId, key, value: { sha: commits[0].sha }, updated_at: new Date().toISOString() }],
+    await supabase.upsert('bot_kv', [{ guild_id: guildId, key, value: { sha: head }, updated_at: new Date().toISOString() }],
       'guild_id,key').catch(() => {});
   }
 }
