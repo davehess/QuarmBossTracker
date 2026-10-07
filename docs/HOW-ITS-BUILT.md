@@ -141,7 +141,32 @@ pages live in the separate hesstastic repo (`eqmimic/`, `vercel.json`). Tests:
 anchor env keys that are unset — env wins, secret-shaped keys are refused,
 no file is a no-op (`test/guild-discord-json.test.js`).
 `guild/discord.example.json` is generated from the bot's real anchor reads.
-`config.json` is still unread (slice 1b). `guild/config.example.json`
+**Slice 1b live (bot 3.1.215):** `utils/guildConfig.js` is the one guild-config
+helper — `fillEnv(process.env)` runs right after the discord.json loader and
+fills only unset env names from `guild/config.json` (`ENV_MAP`: tag, Discord
+guild id, role names, timezone, OpenDKP client, channel names, web base, repo,
+provisioner settings); typed getters (`guildTag()`, `guildName()`, `webBase()`,
+`repo()`, `roles()`, `ranks()`, `provision()` …) resolve env → file → built-in
+Wolf Pack default for new code. `roles()` follows the same post-fill precedence
+`utils/roles.js` sees. Secret-shaped keys are stripped at load (whole-word
+match), example placeholders warn once per path, and the suite never reads the
+real `guild/` directory (`test/guild-config.test.js`).
+**Slice 3 live (bot 3.1.215):** `utils/discordProvisioner.js` builds the
+Discord layout from `data/discord-layout.json` — `GUILD_PROVISION=auto`
+reports on a hand-configured server (every anchor set → no writes), creates on
+a virgin one, resumes an unfinished build, and is off with `off`; anchors go to
+`bot_kv` and `guild/discord.json`. Officers run `/setup discord provision`
+(dry run first); `scripts/provision-discord.js` runs it standalone before a bot
+exists (`test/discord-provisioner-*.test.js`, `test/setup-command.test.js`).
+**Slice 2-prep (bot 3.1.215):** every REST filter follows `SUPABASE_GUILD_ID`
+through `utils/supabase.guildId()` (percent-encoded) with a ratchet on inline
+fallbacks (`test/guild-tag-rest.test.js`); the eight upstream one-shot
+announcers plus the howl-card repair are gated on the guild tag
+(`_oneshotGate`, `ANNOUNCE_UPSTREAM_ONESHOTS` overrides;
+`test/announce-upstream-gate.test.js`); Bristlebane reads its four Discord ids
+from `guild/discord.json` when env leaves them unset
+(`apps/bristlebane/lib.js`, `BRISTLEBANE_GUILD_FILE` for Docker).
+`guild/config.example.json`
 is the schema-by-example for a guild's *own* bits (identity, palette as a set
 with named semantics, wording, channel **names**, raid schedule, sites, APIs,
 feature flags); `guild/discord.json` will be the provisioner-generated anchor
@@ -1125,6 +1150,16 @@ after its insert returns (`commands/feedback.js`); open cards were numbered once
 last sha per branch in `bot_kv` (`fb_commit_seen_<branch>`), and `_feedbackAdvance` moves each closed ref
 forward only: status `on_beta` / `addressed`, a dated note, the card's status line, a DM. Logic in
 `utils/feedbackRefs.js`; `/admin/feedback` shows the number and the on-beta status. DECISIONS §78.
+**The DM says what changed and how to get it (bot 3.1.216, 2026-10-07; the guild lead: "this message to
+the submitter needs more details").** `buildStatusDm` (pure, `utils/feedbackRefs.js`) renders: the
+submitter's own words quoted (≈160 chars), `What changed:` from the commit (a `<!--player-notes-->` block
+naming the report → the body line naming it, `Fixes FB-n` token stripped → the subject without its
+`<component> vX.Y.Z — ` prefix), then how to get it by component and branch (Mimic/agent on beta → the ⤴
+beta switch; on main → stable updates itself; web → `b.wolfpack.quest<path>` / `wolfpack.quest<path>`;
+bot → live in Discord; docs/none → generic), the card link, and "reply on the card or file it again and
+mention FB-n". The ✅ DM after a 🧪 one skips "What changed" when it is the same sha. A `(bot x.y.z)`
+stamp on a batch commit's FB line beats the subject prefix (a web/docs batch that closes a bot fix says
+Discord). Capped under 1900 chars, sent with embeds suppressed; the row note carries the what-changed text.
 
 ### Feedback screenshots — every path (bot 3.1.154 · web 1.8.20, 2026-09-26)
 The guild lead: *"feedback and suggestion needs to be able to take screenshots..top priority"*.
@@ -1993,6 +2028,16 @@ helps when the other's primary faction is in its npc_faction entries with npc_va
 ignore_primary_assist; same zone by npc id range; helpers through another faction listed first, cap 12). The
 Faction sub-tab heads with "Faction: <name> ↗" (wolfpack.quest/db/faction/<id>), "Assisted by:", "Helps:", above
 the on-kill list.
+**Procs: what the mob procs, not only what it casts (bot 3.1.216 · Mimic beta, 2026-10-07; the guild lead:
+"Need to see mobs Procs as well, not just spells").** `eqemu_npc_spells.attack_proc / range_proc /
+defensive_proc` with their chance columns, resolved along the same bounded `parent_list` walk the spell
+list uses (`utils/npcProcs.js`; the nearest list in the chain that sets a slot wins, −1/0 = none; 668 of
+1,349 lists carry an attack proc, none carry range or defensive today). mob-info adds
+`procs: [{ kind, spell_id, name, chance, summary }]` (`[]` when none; older cached rows lack the key and
+read as none), the summary a short effect digest from `eqemu_spells` ("1500 dmg · stun 2s · AE"); the
+zone-pack version went 3 → 4 so held packs rebuild. The Target Info Spells tab shows a PROCS (n) section
+NAME · CHANCE · EFFECT above Offensive (`apps/mimic/mobinfo.html`); the agent passes the mob object
+through unchanged. The spell mirror has no AoE radius column, so the digest says "AE" without the radius.
 **What a branch does (bot 3.1.170–3.1.171, §74):** `questDialog.effects()` (Lua + Perl) → despawn / spawn /
 faction / items given; `needsItems()` for a HasItem condition; `tradeBranches()` splits `event_trade` per
 `check_turn_in`. `_npcInteract` matches each ProjectEQ hand-in to its Quarm branch (else the snippet), adds
