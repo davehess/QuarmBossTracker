@@ -14,6 +14,8 @@ function isEnabled() {
   return !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
+// The guild tag every row carries. Read at call time so an env override applies after import.
+// Exported as `guildId` so other utils share this one fallback instead of spelling their own.
 function _guildId() {
   return process.env.SUPABASE_GUILD_ID || 'wolfpack';
 }
@@ -902,6 +904,7 @@ async function upsertWhoOverride({ character, klass, isZek, setBy, setByName, no
 
 module.exports = {
   isEnabled,
+  guildId: _guildId,
   breakerState,
   _resetBreaker,   // test-only
   capStats,

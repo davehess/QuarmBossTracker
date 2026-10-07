@@ -8482,14 +8482,14 @@ async function _handleAgentUiLayoutUpload(req, res) {
   // alt's UI snapshot belongs to the main's Discord owner.
   const charRows = await supabase.select(
     'characters',
-    `name=ilike.${encodeURIComponent(character)}&select=name,main_name,discord_id&guild_id=eq.wolfpack&limit=1`,
+    `name=ilike.${encodeURIComponent(character)}&select=name,main_name,discord_id&guild_id=eq.${encodeURIComponent(process.env.SUPABASE_GUILD_ID || 'wolfpack')}&limit=1`,
   ).catch(() => []);
   const charRow = Array.isArray(charRows) ? charRows[0] : null;
   let ownerDiscord = charRow?.discord_id || null;
   if (!ownerDiscord && charRow?.main_name) {
     const rootRows = await supabase.select(
       'characters',
-      `name=ilike.${encodeURIComponent(charRow.main_name)}&select=discord_id&guild_id=eq.wolfpack&limit=1`,
+      `name=ilike.${encodeURIComponent(charRow.main_name)}&select=discord_id&guild_id=eq.${encodeURIComponent(process.env.SUPABASE_GUILD_ID || 'wolfpack')}&limit=1`,
     ).catch(() => []);
     ownerDiscord = Array.isArray(rootRows) && rootRows[0]?.discord_id || null;
   }
@@ -8586,14 +8586,14 @@ async function _handleAgentUiLayoutList(req, res) {
   // Resolve owner (same logic as upload).
   const charRows = await supabase.select(
     'characters',
-    `name=ilike.${encodeURIComponent(character)}&select=name,main_name,discord_id&guild_id=eq.wolfpack&limit=1`,
+    `name=ilike.${encodeURIComponent(character)}&select=name,main_name,discord_id&guild_id=eq.${encodeURIComponent(process.env.SUPABASE_GUILD_ID || 'wolfpack')}&limit=1`,
   ).catch(() => []);
   const charRow = Array.isArray(charRows) ? charRows[0] : null;
   let ownerDiscord = charRow?.discord_id || null;
   if (!ownerDiscord && charRow?.main_name) {
     const rootRows = await supabase.select(
       'characters',
-      `name=ilike.${encodeURIComponent(charRow.main_name)}&select=discord_id&guild_id=eq.wolfpack&limit=1`,
+      `name=ilike.${encodeURIComponent(charRow.main_name)}&select=discord_id&guild_id=eq.${encodeURIComponent(process.env.SUPABASE_GUILD_ID || 'wolfpack')}&limit=1`,
     ).catch(() => []);
     ownerDiscord = Array.isArray(rootRows) && rootRows[0]?.discord_id || null;
   }
@@ -8631,14 +8631,14 @@ async function _handleAgentUiLayoutDownload(req, res, snapshotId) {
 
   const charRows = await supabase.select(
     'characters',
-    `name=ilike.${encodeURIComponent(character)}&select=name,main_name,discord_id&guild_id=eq.wolfpack&limit=1`,
+    `name=ilike.${encodeURIComponent(character)}&select=name,main_name,discord_id&guild_id=eq.${encodeURIComponent(process.env.SUPABASE_GUILD_ID || 'wolfpack')}&limit=1`,
   ).catch(() => []);
   const charRow = Array.isArray(charRows) ? charRows[0] : null;
   let ownerDiscord = charRow?.discord_id || null;
   if (!ownerDiscord && charRow?.main_name) {
     const rootRows = await supabase.select(
       'characters',
-      `name=ilike.${encodeURIComponent(charRow.main_name)}&select=discord_id&guild_id=eq.wolfpack&limit=1`,
+      `name=ilike.${encodeURIComponent(charRow.main_name)}&select=discord_id&guild_id=eq.${encodeURIComponent(process.env.SUPABASE_GUILD_ID || 'wolfpack')}&limit=1`,
     ).catch(() => []);
     ownerDiscord = Array.isArray(rootRows) && rootRows[0]?.discord_id || null;
   }
@@ -17020,7 +17020,7 @@ async function _characterPrefsFor(characters) {
   const inList = '(' + characters.map(c => `"${c.replace(/"/g, '')}"`).join(',') + ')';
   const rows = await supabase.select(
     'characters',
-    `name=in.${encodeURIComponent(inList)}&select=name,exclude_from_stats,exclude_inventory,tell_relay,hidden_from_lists&guild_id=eq.wolfpack`,
+    `name=in.${encodeURIComponent(inList)}&select=name,exclude_from_stats,exclude_inventory,tell_relay,hidden_from_lists&guild_id=eq.${encodeURIComponent(process.env.SUPABASE_GUILD_ID || 'wolfpack')}`,
   ).catch(() => []);
   const prefs = {};
   for (const r of (Array.isArray(rows) ? rows : [])) {
@@ -20167,7 +20167,7 @@ async function _handleAgentTells(req, res) {
   // has no target. The web /me toggle has the symmetric family-root fallback.
   const charRows = await supabase.select(
     'characters',
-    `name=ilike.${encodeURIComponent(character)}&select=name,discord_id,tell_relay,tell_dm,main_name&guild_id=eq.wolfpack&limit=1`,
+    `name=ilike.${encodeURIComponent(character)}&select=name,discord_id,tell_relay,tell_dm,main_name&guild_id=eq.${encodeURIComponent(process.env.SUPABASE_GUILD_ID || 'wolfpack')}&limit=1`,
   ).catch(() => []);
   const charRow = Array.isArray(charRows) ? charRows[0] : null;
   if (!charRow?.tell_relay) {
@@ -20178,7 +20178,7 @@ async function _handleAgentTells(req, res) {
   if (!ownerDiscordId && charRow.main_name && charRow.main_name !== charRow.name) {
     const rootRows = await supabase.select(
       'characters',
-      `name=ilike.${encodeURIComponent(charRow.main_name)}&select=discord_id&guild_id=eq.wolfpack&limit=1`,
+      `name=ilike.${encodeURIComponent(charRow.main_name)}&select=discord_id&guild_id=eq.${encodeURIComponent(process.env.SUPABASE_GUILD_ID || 'wolfpack')}&limit=1`,
     ).catch(() => []);
     const rootRow = Array.isArray(rootRows) ? rootRows[0] : null;
     if (rootRow?.discord_id) ownerDiscordId = rootRow.discord_id;
@@ -20419,14 +20419,14 @@ async function _handleAgentCorpse(req, res) {
   // Owner: the character's discord_id, else its family root's (alts are often unlinked).
   const charRows = await supabase.select(
     'characters',
-    `name=ilike.${encodeURIComponent(character)}&select=name,discord_id,main_name&guild_id=eq.wolfpack&limit=1`,
+    `name=ilike.${encodeURIComponent(character)}&select=name,discord_id,main_name&guild_id=eq.${encodeURIComponent(process.env.SUPABASE_GUILD_ID || 'wolfpack')}&limit=1`,
   ).catch(() => []);
   const charRow = Array.isArray(charRows) ? charRows[0] : null;
   let ownerDiscordId = charRow?.discord_id || null;
   if (charRow && !ownerDiscordId && charRow.main_name && charRow.main_name !== charRow.name) {
     const rootRows = await supabase.select(
       'characters',
-      `name=ilike.${encodeURIComponent(charRow.main_name)}&select=discord_id&guild_id=eq.wolfpack&limit=1`,
+      `name=ilike.${encodeURIComponent(charRow.main_name)}&select=discord_id&guild_id=eq.${encodeURIComponent(process.env.SUPABASE_GUILD_ID || 'wolfpack')}&limit=1`,
     ).catch(() => []);
     ownerDiscordId = (Array.isArray(rootRows) && rootRows[0]?.discord_id) || null;
   }
