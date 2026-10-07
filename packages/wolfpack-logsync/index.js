@@ -3654,13 +3654,16 @@ function trackAriLeadLine(line, character) {
 const _CAST_BEGIN_RX = /\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i;
 // ── Divine Intervention availability (BACKLOG §1, the guild lead 2026-07-14) ───────
 // DI = spell 1546: 6s cast + 90s recast, short enough that "who has it up"
-// matters mid-fight. Zeal's gem/recast payloads aren't wired (zealPipe.js:
-// "need ground truth, not inference"), so this is LOG-driven: a self-cast of
-// Divine Intervention stamps ready_at = castStart + 6s + 90s; an interrupt/
-// fizzle within the cast window clears the stamp (no recast consumed).
-// Default = ready (a cleric who hasn't cast this session shows "up").
+// matters mid-fight. The RECAST is LOG-driven (Zeal's recast gauge direction has no
+// ground-truth capture): a self-cast of Divine Intervention stamps
+// ready_at = castStart + 6s + 90s; an interrupt/fizzle within the cast window
+// clears the stamp (no recast consumed).
 // Rides live-state (di_ready_at) → bot aggregates per-cleric → CH-chain +
 // Command Center chips.
+// ⚠ A missing recast stamp is NOT "ready" (FB-62, a member, 2026-10-07: "we should only show this
+// tickbox if they have it on spell gems and ready to cast"). The spell has to be on the cleric's
+// bar: _diMemorized reads that off Zeal's gem labels, and a cleric whose bar we cannot read is
+// UNKNOWN in diStatusSnapshot, never "up" by default.
 // How long after a self-death the corpse-run confirmation may still arrive.
 // The real sequence is "You died." → "You are bleeding to death!" → "Returning
 // to home point, please wait..." within a couple of seconds, but a player who
@@ -3683,6 +3686,23 @@ function noteDiInterrupt(line, character) {
   const atMs = ts ? ts.getTime() : Date.now();
   // Only within the cast window — a later unrelated interrupt is not DI's.
   if (atMs - st.castAt <= DI_CAST_MS + 1500) _diStateByChar.delete(String(character).toLowerCase());
+}
+// Is Divine Intervention on this character's spell bar? Zeal's labels 60-67 are gems 1-8 (an empty
+// gem sends nothing). true = on the bar, false = the bar is readable and it is not there, null =
+// cannot tell (no Zeal state, a stale snapshot, or a bar with no gem names in it). Only the cleric's
+// OWN agent can answer, so this feeds the local view directly and rides live-state as `di_mem`.
+function _diMemorized(st, nowMs) {
+  if (!st || (nowMs - (st.updatedAt || 0)) > ZEAL_STALE_MS) return null;
+  const ci = Array.isArray(st.charInfo) ? st.charInfo : [];
+  let sawGem = false;
+  for (const x of ci) {
+    if (!x || !(x.id >= 60 && x.id <= 67)) continue;
+    const name = String(x.value == null ? '' : x.value).trim();
+    if (!name || /^(empty|none)$/i.test(name)) continue;
+    sawGem = true;
+    if (name.toLowerCase() === 'divine intervention') return true;
+  }
+  return sawGem ? false : null;
 }
 // Returns the parsed cast ({ name, atMs }) or null, so the relay can reuse the
 // match instead of re-running the identical regex on the same line (the two
@@ -6149,6 +6169,8 @@ function _diSlotTurnInMs(chain, num, nowMs) {
 //   • DI confirmed on cooldown — `up === false && unknown === false` means we
 //     WATCHED the cast. "Rank, don't filter" in the doc is about clerics we
 //     know nothing about, not about a recast we measured.
+//   • DI not on the spell bar (`ctx.noDi`, FB-62) — that cleric's own agent read their gems and it
+//     is not there, which is as measured as a recast. Optional: a ctx without it drops nobody.
 // Then: recently active on the chain, and not due to cast inside
 // DI_CAST_MS + one beat (a cleric who casts a 6s DI misses their CH, and a
 // missed CH is how tanks die). Both of those are soft — if they empty the
@@ -6174,6 +6196,7 @@ function _diRankCandidates(chain, ctx) {
     if (ctx.isDead(lc)) continue;
     const cls = ctx.classOf(lc);
     if (cls && cls !== 'Cleric') continue;
+    if (ctx.noDi && ctx.noDi(lc)) continue;          // measured: not memorized — they cannot cast it
     const di = ctx.diOf(lc);
     if (di && !di.up && !di.unknown) continue;       // measured recast — they cannot cast it
     const sinceMs = now - s.lastAtMs;
@@ -6222,6 +6245,7 @@ function diCalloutCandidates(nowMs) {
   const di = diStatusSnapshot();
   const diByName = new Map();
   for (const c of (di && di.clerics) || []) if (c && c.name) diByName.set(String(c.name).toLowerCase(), c);
+  const noDi = new Set(((di && di.no_di) || []).map(n => String(n).toLowerCase()));
   const exactMana = new Map();
   for (const h of (_diStatusCache.healer_mana || [])) {
     if (h && h.name && h.mana_pct != null) exactMana.set(String(h.name).toLowerCase(), Math.round(h.mana_pct));
@@ -6231,6 +6255,7 @@ function diCalloutCandidates(nowMs) {
     isDead:  (lc) => _isDead(lc, now),
     classOf: (lc) => ((whoData.get(lc) || {}).class) || _raidClassByName.get(lc) || null,
     diOf:    (lc) => diByName.get(lc) || null,
+    noDi:    (lc) => noDi.has(lc),
     // Exact (Mimic) mana beats the percentage the cleric shouted in their chain
     // call — same precedence the Command Center's healer-mana merge uses.
     manaOf:  (lc, called) => (exactMana.has(lc) ? exactMana.get(lc) : (called == null ? null : called)),
@@ -42489,8 +42514,30 @@ function fetchDiStatus() {
     req.end();
   } catch { _diStatusInflight = false; }
 }
+// One cleric's row. `mem` is whether DI is on their spell bar (true / false / null = cannot tell);
+// `readyMs` is the end of the recast we know of (null = no cast seen). `up` — the green tick — needs
+// BOTH: on the bar, and not on recast (FB-62). Not on recast with the bar unreadable is `unknown`,
+// not up: a missing stamp only means nobody's log saw a cast, and before this a cleric with no DI
+// scribed, or no agent at all, read as ready. On recast stays a countdown whatever `mem` says
+// (seconds > 0 = they just cast it = they have the spell). `mem === false` rows are not shown
+// (diStatusSnapshot moves them to `no_di`).
+function _diEntry(name, readyMs, mem, now) {
+  const onRecast = readyMs != null && readyMs > now;
+  return {
+    name,
+    ready_at_ms: readyMs,
+    mem,
+    up: mem === true && !onRecast,
+    unknown: mem == null && !onRecast,
+    seconds: onRecast ? Math.ceil((readyMs - now) / 1000) : 0,
+  };
+}
 // Snapshot for overlays: bot list ⊕ local override (our own machine's DI
-// stamps are authoritative + latency-free for characters we watch).
+// stamps and spell bar are authoritative + latency-free for characters we watch).
+// Returns { clerics, up_count, no_di }: `clerics` is who the overlays list; `no_di` names whoever's
+// spell bar we could read and found DI missing from — the bot's report of a remote cleric, or a
+// character on this machine, a chain caller who is not a cleric included. They are kept out of the
+// list, and out of the two-cleric nomination (they cannot cast it).
 function diStatusSnapshot() {
   fetchDiStatus();
   const now = Date.now();
@@ -42498,38 +42545,32 @@ function diStatusSnapshot() {
   for (const c of (_diStatusCache.clerics || [])) {
     if (!c || !c.name) continue;
     const readyMs = c.ready_at ? Date.parse(c.ready_at) : null;
-    byName.set(String(c.name).toLowerCase(), {
-      name: c.name,
-      ready_at_ms: readyMs,
-      // `up` stays assumed-ready for consumers that gate on it, but UNKNOWN is
-      // now distinguishable. A null ready_at does not mean the DI is available
-      // — it means we never SAW the cast. A member showed a green tick while his
-      // DI was on cooldown, purely because nobody's log gave us his cast
-      // (the guild lead, 2026-08-06, and it is NOT clock skew: the measured offsets
-      // are +314ms / +210ms, and a member has no offset row at all).
-      up: readyMs == null || readyMs <= now,
-      unknown: readyMs == null,
-      seconds: readyMs != null && readyMs > now ? Math.ceil((readyMs - now) / 1000) : 0,
-    });
+    // The bot's `mem` (live-state di_mem) is the cleric's own agent's reading of their bar. A bot
+    // that does not carry it yet sends none, and every remote cleric stays unknown.
+    byName.set(String(c.name).toLowerCase(),
+      _diEntry(c.name, Number.isFinite(readyMs) ? readyMs : null, typeof c.mem === 'boolean' ? c.mem : null, now));
   }
-  for (const [cl, di] of _diStateByChar) {
-    // Resolve the display-cased name from our watched characters; a name
-    // unknown to both the local watch AND the bot list is skipped.
-    let display = null;
-    for (const ch of Object.keys(_zealState || {})) if (String(ch).toLowerCase() === cl) display = ch;
-    if (!display && !byName.has(cl)) continue;
-    const name = display || byName.get(cl).name;
-    byName.set(cl, {
+  // Characters this machine watches: their gems and their casts are first-hand.
+  const watched = new Map();   // lower → display-cased name
+  for (const ch of Object.keys(_zealState || {})) watched.set(String(ch).toLowerCase(), ch);
+  for (const cl of new Set([...watched.keys(), ..._diStateByChar.keys()])) {
+    const prev = byName.get(cl) || null;
+    const cast = _diStateByChar.get(cl) || null;
+    const mem = watched.has(cl) ? _diMemorized(_zealState[watched.get(cl)], now) : null;
+    if (!cast && mem == null) continue;                // nothing first-hand to add
+    // A name unknown to both the local watch AND the bot list is skipped.
+    const name = watched.get(cl) || (prev && prev.name);
+    if (!name) continue;
+    byName.set(cl, _diEntry(
       name,
-      ready_at_ms: di.readyAt,
-      up: di.readyAt <= now,
-      unknown: false,          // we watched this cast ourselves
-      seconds: di.readyAt > now ? Math.ceil((di.readyAt - now) / 1000) : 0,
-    });
+      cast ? cast.readyAt : (prev ? prev.ready_at_ms : null),
+      mem != null ? mem : (prev ? prev.mem : null),
+      now));
   }
-  // Drop assumed-ready clerics who aren't actually in the raid. The default-
-  // ready rule (a cleric who hasn't cast DI shows "up") over-includes a parked
-  // cleric alt that doesn't even have DI scribed (the guild lead, 2026-07-16). Keep anyone who has genuinely cast DI recently (seconds > 0 =
+  const noDi = [];
+  for (const [cl, e] of byName) if (e.mem === false) { noDi.push(e.name); byName.delete(cl); }
+  // Drop clerics who aren't actually in the raid (a parked cleric alt, the guild lead, 2026-07-16).
+  // Keep anyone who has genuinely cast DI recently (seconds > 0 =
   // on cooldown = definitely has the spell) and anyone present in the live raid
   // roster; only prune when we actually have a fresh, populated roster to judge
   // against (else fall back to showing everyone — better than hiding a real DI).
@@ -42543,8 +42584,10 @@ function diStatusSnapshot() {
       list = list.filter(c => c.seconds > 0 || raidNames.has(String(c.name).toLowerCase()));
     }
   }
-  list.sort((a, b) => (a.up === b.up ? a.name.localeCompare(b.name) : a.up ? -1 : 1));
-  return { clerics: list, up_count: list.filter(c => c.up).length };
+  // Ticks first, then the countdowns, then the ones we cannot read.
+  const rank = (c) => (c.up ? 0 : c.unknown ? 2 : 1);
+  list.sort((a, b) => (rank(a) === rank(b) ? a.name.localeCompare(b.name) : rank(a) - rank(b)));
+  return { clerics: list, up_count: list.filter(c => c.up).length, no_di: noDi };
 }
 // 8s felt sluggish once cross-client tank HP shipped (a non-local MT's bar only
 // refreshed every ~8s on top of the roster/relay lag). 2.5s keeps the Tank bar
@@ -44593,6 +44636,11 @@ function flushLiveStateToBot(opts) {
         const di = _diStateByChar.get(String(ch).toLowerCase());
         return di ? new Date(di.readyAt).toISOString() : null;
       })(),
+      // Is DI on this character's spell bar (FB-62): true / false, or null when the bar cannot be
+      // read. Without it a missing di_ready_at reads as "ready" to whoever aggregates this row.
+      // The bot has to carry it (live-state column + /di-status field); until it does the field
+      // is ignored and a remote viewer sees this cleric as unknown, never ready.
+      di_mem: _diMemorized(st, now),
       // This character's own known timers (discipline, Mend, Lay on Hands /
       // Harm Touch, AAs) — another raider's Target Info shows them while
       // targeting this character (_liveCooldownsFor, _targetPlayerTimers).
@@ -44769,6 +44817,7 @@ function flushLiveStateToBot(opts) {
       selfManaBucket,
       selfHpBucket,
       diUp,
+      rec.di_mem,   // memorizing or dropping DI is an event: the chips must not wait out the heartbeat
       (rec.incoming_mob || '').toLowerCase(),
       tankKeys,
       cdKeys,
@@ -49409,6 +49458,9 @@ module.exports = {
   // #204 DI two-cleric callout — exported for the scratchpad harness.
   trackDiFired, diCalloutSnapshot, diCalloutCandidates, _diRankCandidates,
   _diSlotTurnInMs, _DI_FIRED_RX, DI_CALLOUT_NAMES, DI_CALLOUT_TTL_MS,
+  // FB-62: DI on the spell bar → the CH-chain tick. The cache setter stands in for the bot's /di-status.
+  diStatusSnapshot, _diMemorized, _noteDiCast, _diStateByChar,
+  _setDiStatusCacheForTest: (clerics) => { _diStatusCache = { at: Date.now() + 3_600_000, clerics: clerics || [], healer_mana: [] }; },
   _resetDiCalloutForTest: () => { _diCallout = null; _lastDiFired = { key: null, atMs: 0 }; },
   _readZipEntry, _parseCrashReason, _crashZipTime,
   // #107/#149 loot-post announce — exported for the scratchpad smoke test.
