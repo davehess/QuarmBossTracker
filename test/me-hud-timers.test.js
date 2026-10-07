@@ -49,6 +49,7 @@ const slainRx = agent.match(/const _SLAIN_BY_RX {2}= [^\n]+/)[0] + '\n' + agent.
 const EXPORTS = ['_serializeMeState', '_meNoteRawLine', '_meTick', '_meSwingState', '_meHands', '_meSwings',
   '_meCooldowns', '_meDisc', '_meDiscReuseSecs', '_meTargetExtras', '_discReadyAt', '_mobInfoByName', '_zealState',
   '_meNoteHit', '_meMobTallies', '_npcHtFor', '_meNoteCastFailed', '_tickEnrageWarn', '_meNoteMobDeath', '_dsKindOf', '_meClickies', '_noteClickyUse',
+  '_noteClickyRecharged',
   '_xpNoteRawLine', '_xpPending', '_xpFlush',
   'noteSelfCast', 'resolveSelfCastLanding', '_meNoteMyLanding', '_provableTargetId'];
 
@@ -821,8 +822,8 @@ describe('clicky counters', () => {
     setup(true);
     const h = load();
     expect(h._meClickies('Aldenmar')).toEqual([
-      { name: 'Ring of Shadows', left: 5, unlimited: false, used: 0, worn: true },
-      { name: 'Rod of Insidious Glamour', left: null, unlimited: true, used: 0, worn: false },
+      { name: 'Ring of Shadows', left: 5, unlimited: false, used: 0, worn: true, kind: null, max: 5 },
+      { name: 'Rod of Insidious Glamour', left: null, unlimited: true, used: 0, worn: false, kind: null, max: null },
     ]);
     h._noteClickyUse('Aldenmar', 'Ring of Shadows', fileAt - 60_000);   // before the export: already counted in it
     h._noteClickyUse('Aldenmar', 'Ring of Shadows', fileAt + 60_000);
@@ -849,15 +850,159 @@ describe('clicky counters', () => {
       const h = load();
       h._noteClickyUse('Aldenmar', 'Ring of Shadows', fileAt + 60_000);        // before the Quarmy export: in its count
       h._noteClickyUse('Aldenmar', 'Ring of Shadows', fileAt + 3_700_000);     // after it: spends one
-      expect(h._meClickies('Aldenmar')).toEqual([{ name: 'Ring of Shadows', left: 1, unlimited: false, used: 1, worn: true }]);
+      expect(h._meClickies('Aldenmar')).toEqual([{ name: 'Ring of Shadows', left: 1, unlimited: false, used: 1, worn: true, kind: null, max: 5 }]);
       // An older Quarmy export loses to the newer /output inventory.
       globalThis.__quarmy = { at: fileAt - 3_600_000, items: [{ loc: 'Fingers1', name: 'Ring of Shadows', count: 2 }] };
       expect(load()._meClickies('Aldenmar')[0]).toMatchObject({ name: 'Ring of Shadows', left: 5 });
       // Only a Quarmy export at all: it is used.
       globalThis.__invs = null;
       globalThis.__quarmy = { at: fileAt, items: [{ loc: 'General1-Slot1', name: 'Rod of Insidious Glamour', count: 1 }] };
-      expect(load()._meClickies('Aldenmar')).toEqual([{ name: 'Rod of Insidious Glamour', left: null, unlimited: true, used: 0, worn: false }]);
+      expect(load()._meClickies('Aldenmar')).toEqual([{ name: 'Rod of Insidious Glamour', left: null, unlimited: true, used: 0, worn: false, kind: null, max: null }]);
     } finally { globalThis.__quarmy = null; }
+  });
+});
+
+// FB-65 (a member, 2026-10-07): "Should be able to pick which clicky charges you track, and the names
+// need to be easier to see. Root/Dispel/Stun are prioritized" · "When we recharge I don't believe it says
+// anything in the chat, it just says you give a certain amount to the vendor."
+describe('clickies: root, dispel and stun first; a recharge the member reports', () => {
+  afterEach(() => { globalThis.__invs = null; globalThis.__clk = null; globalThis.__quarmy = null; delete globalThis.__hudDisk; });
+  const fileAt = Date.parse('2026-10-07T17:00:00Z');
+  const iso = (ms) => new Date(ms).toISOString();
+  const inv = (items, at = fileAt) => ({ Aldenmar: { _updatedAt: iso(at), items } });
+  const cat = (rows) => new Map(rows.map(([name, clickeffect, maxcharges]) => [name.toLowerCase(), { name, clickeffect, maxcharges }]));
+  // Spell 230 is "Root", 216 "Stun": the catalog tags them `cc`. 49 is Nullify Magic, which the catalog
+  // does not tag (no dispel kind), so it is known by id. 601 is a tree illusion: SPA 99 on a BENEFICIAL
+  // spell, which `cc` leaves out — it roots the wearer, not the target.
+  const spells = [{ id: 230, name: 'Root', cc: ['root'] }, { id: 216, name: 'Stun', cc: ['stun'] },
+    { id: 601, name: 'Illusion: Tree', good: 1 }, { id: 5000, name: 'Plenty', good: 1 }];
+
+  it('sorts root, then dispel, then stun, then the rest (worn first, then by name); each carries its kind', () => {
+    globalThis.__invs = inv([
+      { loc: 'General1-Slot1', name: 'Bridle of Plenty', count: 3 },
+      { loc: 'General1-Slot2', name: 'Stun Wand', count: 2 },
+      { loc: 'General1-Slot3', name: 'Root Rod', count: 3 },
+      { loc: 'General1-Slot4', name: 'Dispel Staff', count: 4 },
+      { loc: 'Fingers', name: 'Worn Ring', count: 5 },
+      { loc: 'General1-Slot5', name: 'Tree Charm', count: 2 },
+    ]);
+    globalThis.__clk = cat([['Bridle of Plenty', 5000, 3], ['Stun Wand', 216, 2], ['Root Rod', 230, 3], ['Dispel Staff', 49, 4],
+      ['Worn Ring', 5001, 5], ['Tree Charm', 601, 2]]);
+    const got = load({ spells })._meClickies('Aldenmar');
+    expect(got.map(c => [c.name, c.kind])).toEqual([['Root Rod', 'root'], ['Dispel Staff', 'dispel'], ['Stun Wand', 'stun'],
+      ['Worn Ring', null], ['Bridle of Plenty', null], ['Tree Charm', null]]);
+  });
+
+  it('with no spell catalog loaded, a dispel is still known by its spell id and nothing else is guessed', () => {
+    globalThis.__invs = inv([{ loc: 'General1-Slot1', name: 'Root Rod', count: 3 }, { loc: 'General1-Slot2', name: 'Dispel Staff', count: 4 }]);
+    globalThis.__clk = cat([['Root Rod', 230, 3], ['Dispel Staff', 48, 4]]);
+    expect(load()._meClickies('Aldenmar').map(c => [c.name, c.kind])).toEqual([['Dispel Staff', 'dispel'], ['Root Rod', null]]);
+  });
+
+  it('the HUD gets the first eight as `clickies`, and the whole list as `clickies_all` only when there are more', () => {
+    const monk60 = () => ({ Aldenmar: { charInfo: [{ id: 2, value: '60' }, { id: 3, value: 'Monk' }], gauges: [], updatedAt: clock } });
+    const rows = (n) => Array.from({ length: n }, (_, i) => ['Gem ' + String.fromCharCode(65 + i), 7000 + i, 3]);
+    const put = (n) => {
+      globalThis.__invs = inv(rows(n).map(([name], i) => ({ loc: 'General1-Slot' + (i + 1), name, count: 3 })));
+      globalThis.__clk = cat(rows(n));
+    };
+    put(10);
+    const big = load({ zeal: monk60() })._serializeMeState();
+    expect(big.clickies.map(c => c.name)).toEqual(rows(8).map(r => r[0]));
+    expect(big.clickies_all.map(c => c.name)).toEqual(rows(10).map(r => r[0]));
+    put(3);
+    const small = load({ zeal: monk60() })._serializeMeState();
+    expect(small.clickies).toHaveLength(3);
+    expect(small.clickies_all).toBeUndefined();
+  });
+
+  describe('a recharge leaves no line naming the item, so the member says so', () => {
+    const ring = () => {
+      globalThis.__invs = inv([{ loc: 'Fingers', name: 'Ring of Shadows', count: 2 }]);
+      globalThis.__clk = cat([['Ring of Shadows', 2577, 5], ['Rod of Glamour', 1000, -1]]);
+    };
+
+    it('puts the counter back to full; glows count from then; an export written later wins again', () => {
+      ring();
+      const h = load();
+      h._noteClickyUse('Aldenmar', 'Ring of Shadows', fileAt + 30_000);              // spent one after the export: 1 left
+      expect(h._meClickies('Aldenmar')[0]).toMatchObject({ left: 1, used: 1, max: 5 });
+      clock = fileAt + 600_000;
+      expect(h._noteClickyRecharged('Aldenmar', 'ring of shadows', clock)).toBe(true);   // any case, as the picker sends it
+      expect(h._meClickies('Aldenmar')[0]).toMatchObject({ left: 5, used: 0 });
+      h._noteClickyUse('Aldenmar', 'Ring of Shadows', clock + 60_000);
+      expect(h._meClickies('Aldenmar')[0]).toMatchObject({ left: 4, used: 1 });
+      globalThis.__invs.Aldenmar._updatedAt = iso(clock + 3_600_000);                 // an /output inventory written later
+      expect(h._meClickies('Aldenmar')[0]).toMatchObject({ left: 2, used: 0 });
+    });
+
+    it('refuses what has no charges to put back, and changes nothing', () => {
+      ring();
+      globalThis.__invs.Aldenmar.items.push({ loc: 'General1-Slot1', name: 'Rod of Glamour', count: 1 });
+      const h = load();
+      expect(h._noteClickyRecharged('Aldenmar', 'Rod of Glamour', clock)).toBe(false);       // never runs out
+      expect(h._noteClickyRecharged('Aldenmar', 'Cloak of Nothing', clock)).toBe(false);     // not carried
+      expect(h._noteClickyRecharged('Brackwyn', 'Ring of Shadows', clock)).toBe(false);      // not on that character
+      expect(h._meClickies('Aldenmar').find(c => c.name === 'Ring of Shadows')).toMatchObject({ left: 2 });
+    });
+
+    it('two of the same item are one counter, each full again', () => {
+      ring();
+      globalThis.__invs.Aldenmar.items.push({ loc: 'General1-Slot2', name: 'Ring of Shadows', count: 1 });
+      const h = load();
+      expect(h._meClickies('Aldenmar')[0]).toMatchObject({ left: 3 });
+      h._noteClickyRecharged('Aldenmar', 'Ring of Shadows', fileAt + 1000);
+      expect(h._meClickies('Aldenmar')[0]).toMatchObject({ left: 10 });
+    });
+
+    it('survives an agent restart (a Mimic update), and is forgotten after 30 days', () => {
+      vi.useFakeTimers({ toFake: ['setTimeout'] });
+      try {
+        ring();
+        globalThis.__hudDisk = {};
+        const first = load();
+        clock = fileAt + 600_000;
+        first._noteClickyRecharged('Aldenmar', 'Ring of Shadows', clock);
+        vi.advanceTimersByTime(2100);                                                  // the debounced save
+        expect(JSON.parse(globalThis.__hudDisk['/agent/logsync.hud-timers.json']).aldenmar.clk).toEqual({ 'ring of shadows': clock });
+        expect(load()._meClickies('Aldenmar')[0]).toMatchObject({ left: 5 });          // a fresh agent, same disk
+        clock += 31 * 86400_000;
+        expect(load()._meClickies('Aldenmar')[0]).toMatchObject({ left: 2 });
+      } finally { vi.useRealTimers(); }
+    });
+  });
+
+  // POST /api/me/clicky-recharged — the route around _noteClickyRecharged.
+  describe('POST /api/me/clicky-recharged', () => {
+    const src = sliceBlock(agent, 'async function _handleClickyRecharged(req, res) {', '\n}');
+    // eslint-disable-next-line no-new-func
+    const make = new Function('_localOriginOk', '_readBody', '_noteClickyRecharged', src + '\nreturn _handleClickyRecharged;');
+    const call = async (body, { origin = true, note = () => true } = {}) => {
+      let out = null;
+      const res = { writeHead(c) { this.code = c; }, end(b) { out = { code: this.code, body: JSON.parse(b) }; } };
+      const read = async () => { if (body instanceof Error) throw body; return typeof body === 'string' ? body : JSON.stringify(body); };
+      await make(() => origin, read, note)({ headers: {} }, res);
+      return out;
+    };
+
+    it('marks the item for the character it names', async () => {
+      const seen = [];
+      const r = await call({ character: 'Aldenmar', item: 'ring of shadows' }, { note: (...a) => { seen.push(a); return true; } });
+      expect(r).toEqual({ code: 200, body: { ok: true } });
+      expect(seen).toHaveLength(1);
+      expect(seen[0].slice(0, 2)).toEqual(['Aldenmar', 'ring of shadows']);
+      expect(seen[0][2]).toBeGreaterThan(0);
+    });
+    it('404 when it is not a charged clicky they carry; 400 without both names or on junk; 403 from a foreign page', async () => {
+      expect((await call({ character: 'Aldenmar', item: 'x' }, { note: () => false })).code).toBe(404);
+      expect((await call({ character: 'Aldenmar' })).code).toBe(400);
+      expect((await call({ item: 'x' })).code).toBe(400);
+      expect((await call('{nope')).code).toBe(400);
+      expect((await call(new Error('payload too large'))).code).toBe(413);
+      let called = false;
+      expect((await call({ character: 'Aldenmar', item: 'x' }, { origin: false, note: () => { called = true; return true; } })).code).toBe(403);
+      expect(called).toBe(false);
+    });
   });
 });
 

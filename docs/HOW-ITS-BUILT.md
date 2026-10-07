@@ -141,7 +141,32 @@ pages live in the separate hesstastic repo (`eqmimic/`, `vercel.json`). Tests:
 anchor env keys that are unset — env wins, secret-shaped keys are refused,
 no file is a no-op (`test/guild-discord-json.test.js`).
 `guild/discord.example.json` is generated from the bot's real anchor reads.
-`config.json` is still unread (slice 1b). `guild/config.example.json`
+**Slice 1b live (bot 3.1.215):** `utils/guildConfig.js` is the one guild-config
+helper — `fillEnv(process.env)` runs right after the discord.json loader and
+fills only unset env names from `guild/config.json` (`ENV_MAP`: tag, Discord
+guild id, role names, timezone, OpenDKP client, channel names, web base, repo,
+provisioner settings); typed getters (`guildTag()`, `guildName()`, `webBase()`,
+`repo()`, `roles()`, `ranks()`, `provision()` …) resolve env → file → built-in
+Wolf Pack default for new code. `roles()` follows the same post-fill precedence
+`utils/roles.js` sees. Secret-shaped keys are stripped at load (whole-word
+match), example placeholders warn once per path, and the suite never reads the
+real `guild/` directory (`test/guild-config.test.js`).
+**Slice 3 live (bot 3.1.215):** `utils/discordProvisioner.js` builds the
+Discord layout from `data/discord-layout.json` — `GUILD_PROVISION=auto`
+reports on a hand-configured server (every anchor set → no writes), creates on
+a virgin one, resumes an unfinished build, and is off with `off`; anchors go to
+`bot_kv` and `guild/discord.json`. Officers run `/setup discord provision`
+(dry run first); `scripts/provision-discord.js` runs it standalone before a bot
+exists (`test/discord-provisioner-*.test.js`, `test/setup-command.test.js`).
+**Slice 2-prep (bot 3.1.215):** every REST filter follows `SUPABASE_GUILD_ID`
+through `utils/supabase.guildId()` (percent-encoded) with a ratchet on inline
+fallbacks (`test/guild-tag-rest.test.js`); the eight upstream one-shot
+announcers plus the howl-card repair are gated on the guild tag
+(`_oneshotGate`, `ANNOUNCE_UPSTREAM_ONESHOTS` overrides;
+`test/announce-upstream-gate.test.js`); Bristlebane reads its four Discord ids
+from `guild/discord.json` when env leaves them unset
+(`apps/bristlebane/lib.js`, `BRISTLEBANE_GUILD_FILE` for Docker).
+`guild/config.example.json`
 is the schema-by-example for a guild's *own* bits (identity, palette as a set
 with named semantics, wording, channel **names**, raid schedule, sites, APIs,
 feature flags); `guild/discord.json` will be the provisioner-generated anchor
@@ -1125,6 +1150,16 @@ after its insert returns (`commands/feedback.js`); open cards were numbered once
 last sha per branch in `bot_kv` (`fb_commit_seen_<branch>`), and `_feedbackAdvance` moves each closed ref
 forward only: status `on_beta` / `addressed`, a dated note, the card's status line, a DM. Logic in
 `utils/feedbackRefs.js`; `/admin/feedback` shows the number and the on-beta status. DECISIONS §78.
+**The DM says what changed and how to get it (bot 3.1.216, 2026-10-07; the guild lead: "this message to
+the submitter needs more details").** `buildStatusDm` (pure, `utils/feedbackRefs.js`) renders: the
+submitter's own words quoted (≈160 chars), `What changed:` from the commit (a `<!--player-notes-->` block
+naming the report → the body line naming it, `Fixes FB-n` token stripped → the subject without its
+`<component> vX.Y.Z — ` prefix), then how to get it by component and branch (Mimic/agent on beta → the ⤴
+beta switch; on main → stable updates itself; web → `b.wolfpack.quest<path>` / `wolfpack.quest<path>`;
+bot → live in Discord; docs/none → generic), the card link, and "reply on the card or file it again and
+mention FB-n". The ✅ DM after a 🧪 one skips "What changed" when it is the same sha. A `(bot x.y.z)`
+stamp on a batch commit's FB line beats the subject prefix (a web/docs batch that closes a bot fix says
+Discord). Capped under 1900 chars, sent with embeds suppressed; the row note carries the what-changed text.
 
 ### Feedback screenshots — every path (bot 3.1.154 · web 1.8.20, 2026-09-26)
 The guild lead: *"feedback and suggestion needs to be able to take screenshots..top priority"*.
@@ -1846,6 +1881,34 @@ swap) and the Zeal gauge evaluator; timer-bar switches count as on while one of
 their characters is played (`_playingCharactersLc`). The Suggested panel's
 **For:** picker posts `char` with each tick. `test/per-character-triggers-and-pet-owners.test.js`.
 
+### Trigger manager: open a trigger, warn before the end, repeat (agent on beta; FB-23, FB-30, FB-26, FB-31)
+
+Dashboard → Triggers tab (`dashboard.html`; never the `WEB_HTML` literal).
+- **Opening a row.** A personal row's name is a `<button class="trigname" data-trig-open>` (NOT `class="name"` — that
+  is the character-page link, and a click on "Rampage on me" opened `/character/Rampage`). Click it, or any plain
+  cell, and a `tr.trigdetail` opens beneath with `wpTrigSettingsHtml(t, 'personal')`; **✎ Edit these settings**
+  loads the add form as an edit (`editing = { id, row }` inside the editor IIFE: title, **Save changes**, **Cancel
+  edit**). The save is `wpTrigApplyForm(freshRow, formValues)` — the form's values laid over the saved row, so a
+  second alert, a sound, an imported end text, the per-character list, a spell-catalog match and a `timer_warnings`
+  list all survive. The pattern is checked against `/api/triggers/test` first because the whole-list save drops a
+  row that will not compile. Open rows live in `_wpTrigOpen` (`p|<id>` / `g|<key>`), not the DOM.
+- **Guild list** is its own card, `#wpGuildTriggers` (`renderGuildTriggersCard`, after `renderTriggers` in
+  `_sections`), so opening a row repaints that card and not the Add form. Read-only; the footer links
+  `wolfpack.quest/admin/triggers?edit=<id>`. **Copy to personal** now carries the guild warning and repeat.
+- **Warning (FB-26).** `warning_seconds` + `warning_text` (+ `warning_tts:false` for flash-only) on the personal row;
+  `_timerWarnings` (agent) turns them into the overlay's `warnings` list, the same code a guild row goes through.
+  `warning_*` and `timer_loop*` are in `PERSONAL_CARRY_FIELDS`, or the whole-list save strips them.
+- **Repeat (FB-31).** `timer_loop: true` + optional `timer_loop_max` (the most restarts; absent = until stopped).
+  `_startTimer` puts `loop` / `loop_max` / `loops_done` on the `_activeTimers` row; `_rollLoopTimer` (called from
+  `_activeTimersSnapshot`, where expiry is decided) advances `started_at_ms`/`ends_at_ms` by whole cycles instead of
+  deleting the row. The overlay drops and rebuilds a row whose countdown hits zero, so each round warns again with no
+  Mimic change. Stops on ✕ (`/api/timers/cancel`), the cancel-early phrase, or the mob dying; the trigger firing again
+  replaces the row. A rehearsal stops after 3; the `cooldown_timer_sec` recast bar never loops.
+  **Guild**: a `guild_triggers` row with `timer_loop` / `timer_loop_max` works through `_applyGuildTriggersResponse`
+  (it spreads the row) — but the columns and the `/admin/triggers` form fields do not exist yet.
+- Guarded by `test/trigger-manager-settings-warn-loop.test.js` (engine behaviour under fake time; the pure dashboard
+  functions and the editor IIFE run from the shipped `dashboard.html`).
+
 ### Timer bars — EQLogParser-style countdowns from tracked state (agent 3.7.24)
 
 The guild's co-leader, a bard, 2026-09-26: *"the only thing i need to get is the
@@ -1965,6 +2028,16 @@ helps when the other's primary faction is in its npc_faction entries with npc_va
 ignore_primary_assist; same zone by npc id range; helpers through another faction listed first, cap 12). The
 Faction sub-tab heads with "Faction: <name> ↗" (wolfpack.quest/db/faction/<id>), "Assisted by:", "Helps:", above
 the on-kill list.
+**Procs: what the mob procs, not only what it casts (bot 3.1.216 · Mimic beta, 2026-10-07; the guild lead:
+"Need to see mobs Procs as well, not just spells").** `eqemu_npc_spells.attack_proc / range_proc /
+defensive_proc` with their chance columns, resolved along the same bounded `parent_list` walk the spell
+list uses (`utils/npcProcs.js`; the nearest list in the chain that sets a slot wins, −1/0 = none; 668 of
+1,349 lists carry an attack proc, none carry range or defensive today). mob-info adds
+`procs: [{ kind, spell_id, name, chance, summary }]` (`[]` when none; older cached rows lack the key and
+read as none), the summary a short effect digest from `eqemu_spells` ("1500 dmg · stun 2s · AE"); the
+zone-pack version went 3 → 4 so held packs rebuild. The Target Info Spells tab shows a PROCS (n) section
+NAME · CHANCE · EFFECT above Offensive (`apps/mimic/mobinfo.html`); the agent passes the mob object
+through unchanged. The spell mirror has no AoE radius column, so the digest says "AE" without the radius.
 **What a branch does (bot 3.1.170–3.1.171, §74):** `questDialog.effects()` (Lua + Perl) → despawn / spawn /
 faction / items given; `needsItems()` for a HasItem condition; `tradeBranches()` splits `event_trade` per
 `check_turn_in`. `_npcInteract` matches each ProjectEQ hand-in to its Quarm branch (else the snippet), adds
@@ -2572,7 +2645,12 @@ HUD (`me.html`): enrage zone 12% since agent 3.7.84 (`ENRAGE_WARN_PCT`, spoken b
 on a 250 ms tick; "Enrage soon" is priority 2 in `triggers.html` `_speakPriority`, beside CH GO),
 cleared by `enrage_ended`; DS button thorns / lava (`_dsKindOf`, `ds.kind`); rampage +
 under-25% arcs (`_meSideArcs` → `rampage`, `low_hp`); clicky counters (`_meClickies`
-from `-Inventory.txt` `items`, spent by `_noteClickyUse` on "begins to glow"). Auctions:
+from `-Inventory.txt` `items`, spent by `_noteClickyUse` on "begins to glow"; sorted root · dispel · stun
+first by `_clickyKind` — the spell catalog's `cc` for root/stun, `_CLICKY_DISPEL_SPELLS` ids for dispel;
+`clickies` = the first 8, `clickies_all` when there are more; `POST /api/me/clicky-recharged` →
+`_noteClickyRecharged` puts a counter back to full, kept in `logsync.hud-timers.json`; on the ring
+`clickyShown` / `clickyFit` / `clickyShort` in `me.html` draw the picks or the first that fit, and the
+⚙ builder's `clickyPickerHtml` is the picker — per character in `hudParts.clickyPick`, FB-65). Auctions:
 `_pollDkpAuctions` → `_applyDkpAuctions` (one `auction|<id>` timer each) + the
 Command Center's `auctions`. Extended Target: `ma_target` row mark + `main_assist`
 header. XP events: `_xpNoteRawLine` → `xp_events` (bot `/api/agent/xp-events`).

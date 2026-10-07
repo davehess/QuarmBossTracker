@@ -46,7 +46,7 @@ folly** — it's here.*
 | `DESIGN-87-officer-console.md` | #87 officer runbooks + console: the runbook set (RB-01…RB-12, each grounded in a dated incident), the health-signal set, button safety classes, and the anti-rot mechanism | Phase 1 shipped (`/admin/console`); §7.2 bot-side levers still proposed |
 | `DESIGN-quarmy-gear.md` | Build spec for Quarmy gear/AA/spell import to character pages | Unbuilt — still the spec |
 | `DESIGN-external-tenancy.md` | Letting OTHER guilds use Mimic + the platform: self-host vs tenant-on-our-Supabase vs hybrid, the honest self-host cost, the **PvP `/who` carve-out** and how it's enforced, the Mimic-points-elsewhere angle, a staged plan, and the open business questions | Unbuilt — design only (2026-08-02). Read before any tenancy/self-host/`guild_id` work. Stage 0 (publish the `eqemu_*` catalog) + Stage 1 (split PvP data to its own project) are worth doing on their own merits |
-| `DESIGN-guild-kit.md` | **The guild kit:** one configurable spot for a guild's own bits (`guild/config.json` + generated `discord.json`, secrets stay in `.env`), the wizard costed three ways, the vendor-neutral AI-assist manifest (`TENANT.md` / `tenant.json` / `wolfpack doctor`), and the fork + `sync-upstream.yml` route back upstream. Measured: 114 env vars = 75 identifiers + 11 secrets; ~580 hardcoded identity sites | **Designed 2026-09-18, slice 0 landed** (`guild/`). Four picks pending (§8); then slice 1 before the de-branding sweep |
+| `DESIGN-guild-kit.md` | **The guild kit:** one configurable spot for a guild's own bits (`guild/config.json` + generated `discord.json`, secrets stay in `.env`), the wizard costed three ways, the vendor-neutral AI-assist manifest (`TENANT.md` / `tenant.json` / `wolfpack doctor`), and the fork + `sync-upstream.yml` route back upstream. Measured: 114 env vars = 75 identifiers + 11 secrets; ~580 hardcoded identity sites | **Slices 0, 1a, 1b, 2-prep and 3 landed** (bot 3.1.215, 2026-10-07: `utils/guildConfig.js`, the Discord self-provisioner + `/setup discord`, tag-correct REST filters, gated one-shot announcers, Bristlebane guild file). Next: the de-branding sweep (slice 2), then `doctor` + the wizard |
 | `LICENSING.md` | The plain-language license: what a guild may do free, what needs an arrangement, what happens to a PR, and why BSL→AGPL over BSD-3 or AGPL alone | **Live 2026-09-18.** `LICENSE` is binding; this is what people actually read |
 | `COSTS.md` | **What the platform has cost to build and run**, measured, so donations can be justified if anyone asks: per-service spend, the Supabase org-sharing problem and the two defensible attributions, what a donation is and is not, and the two figures that need the guild lead | Written 2026-09-18. ⚠ Domain and Claude/development are **blank pending his figures** — deliberately not estimated |
 | `TERMS-hosted.md` | **DRAFT hosted-service terms, for legal review:** sizes S/M/L, monthly in advance, no SLA, your data is yours (per-incident consent, no `/who` ingestion, cross-tenant never merged), encrypted handover at term end, the guild owns its domain, gated components, and the §9 list a lawyer must settle | Drafted 2026-09-18 from the guild lead's §10 answers. **Not binding until reviewed** |
@@ -103,6 +103,26 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ Trigger manager: open a trigger's settings, warn before the end, repeat the countdown (agent on beta, draft on
+  branch `fbtrig-work`, 2026-10-07; FB-23, FB-30, FB-26, FB-31).** Four beta-tester reports on the dashboard's
+  Triggers tab.
+  - **Open a trigger (FB-23 personal, FB-30 guild).** Clicking a row's name (or a plain cell) opens its settings
+    beneath it: pattern, alert and what is said, cooldown, countdown, warnings, repeat, cancel-early phrase and the
+    imported extras. A personal row has **✎ Edit these settings**, which loads the add form as an edit (Save
+    changes / Cancel edit); fields the form has no box for are kept. A guild row is read-only with **Edit on
+    wolfpack.quest** (`/admin/triggers?edit=<id>`). Cause of "I cannot do that": the personal name cell was
+    `class="name"`, the character-link class, so a click opened `/character/<first word>` (404); and the form only
+    ever added. The guild list moved into its own `#wpGuildTriggers` card so opening a row does not wipe the form.
+  - **Warning before the end (FB-26).** The warning already worked for personal triggers (`_startTimer` arms
+    `warning_seconds`/`warning_text` for every scope; the overlay fires it); the form had no box, so it is added:
+    seconds, text, and a "speak it" box (`warning_tts:false` = flash only).
+  - **Repeat (FB-31).** `timer_loop` (+ optional `timer_loop_max`, the most restarts) on a trigger: the timer row
+    is rolled forward by whole cycles at zero (`_rollLoopTimer`, in `_activeTimersSnapshot`) instead of expiring.
+    ✕ on the bar, the cancel-early phrase, or the mob dying ends it; the trigger firing again replaces the row, so
+    loops never stack; a rehearsal stops after 3. The guild consumer reads the same two fields from a
+    `guild_triggers` row — **the columns and the admin form are not added yet** (a `main` change).
+  - `test/trigger-manager-settings-warn-loop.test.js`. Not yet seen in a real window: needs a beta tester to open a
+    row, edit one, and watch a 20 s looping timer warn twice.
 - **⏳ A shrunk overlay stays shrunk (mimic on beta, draft on branch `fbresize-work`, 2026-10-07).** A beta tester:
   "resized these maybe 10 times but each time … they end up getting bigger … they are goliath" (Command Center and
   Target Info, several hundred px tall); FB-16 (2026-09-27): the HUD "reverts to a bigger size after clicking the X".
@@ -746,7 +766,7 @@ next touch one rather than assuming a missing row means a missing doc.
 - **⏳ Zeal: a Bandolier chat filter (branch on the guild lead's fork; passed in game, PR to open, 2026-09-25).** A Quarm Discord request: bandolier status lines flood the "Other" chat filter. Zeal prints them with the default colour; the change gives every bandolier message its own Zeal → Bandolier filter, failures in red. `docs/zeal-bandolier-filter-request.md`, `docs/zeal-bandolier-filter.patch`, `DECISIONS-2026-09-21.md` §26.
 - **⏳ Security audit before a public guild-logo page (2026-09-26).** The website, bot and database were audited before inviting other guilds' traffic. Two fixes are live: web 1.8.10 (every officer page gates itself) and bot 3.1.150 (agents receive only the tuning keys their role needs). The findings and the fix order are in the guild lead's private report. They are kept out of the repo on purpose. Next: the membership gate on web + database, then a logo gallery with a Discord intake (no outsider sign-in until then). `DECISIONS-2026-09-21.md` §36.
 - **📋 Mimic 3.0 = the overlay engine (planned, 2026-09-26).** One transparent freeform view combining every overlay, later able to see the screen and move windows to fit. It gets its own **alpha** update channel (own channel + opt-in, pruned alpha releases, workflow on the branch). `DECISIONS-2026-09-21.md` §36.
-- **🧪 Clicky charge counters on the HUD (queued 2026-09-26; built 2026-10-02, agent 3.7.68 beta `a9934e62`).** Charges left per clicky, from the Quarmy export's count (or `/output inventory`, whichever is newer) merged with the clicks the agent sees. The last-charge warning is still to do. `DECISIONS-2026-09-21.md` §36, §127.
+- **🧪 Clicky charge counters on the HUD (queued 2026-09-26; built 2026-10-02, agent 3.7.68 beta `a9934e62`).** Charges left per clicky, from the Quarmy export's count (or `/output inventory`, whichever is newer) merged with the clicks the agent sees. The last-charge warning is still to do. `DECISIONS-2026-09-21.md` §36, §127. **FB-65 (2026-10-07, beta):** ⚙ → Items has a picker (tick up to four; nothing ticked = the first that fit, **root, dispel and stun clickies first**), the names are bright with their own size slider and are counted ("+3") instead of cut off at the arc's end, and each charged clicky has a **Recharged** button, because a vendor recharge prints only "You give … to <vendor>." and no item name. §177.
 - **⏳ HUD: tracking arrows (agent 3.7.18 on `beta`, 2026-09-26).** A member's idea, with the guild lead's "YES": eight arrows round the HUD ring, and the one toward the mob a ranger, druid or bard is tracking lights gold, from the game's own direction lines ("…is ahead and to the left." and the rest, eqstr 12676–12680). ⚙ → Tracking: all eight or only the lit one, plus a size slider. An old direction dims after 15 s; losing the track or zoning clears it. Not yet tried in game — the exact log wording comes from the client string file, not from a captured log. `DECISIONS-2026-09-21.md` §35.
 - **⏳ HUD: hit numbers inside or outside the ring (Mimic 2.7.2 beta, 2026-09-25).** The guild lead: *"add an option for the HUD to have damage numbers outside the circle."* ⚙ → Hits → Numbers inside/outside; the window widens to fit so the ring keeps its size. `DECISIONS-2026-09-21.md` §25.
 - **✅ The sharing change announced in #wlfpck-general (bot 3.1.149, posted 2026-09-25 12:37 UTC).** One-time, latched in `bot_kv`; names and pings nobody. `DECISIONS-2026-09-21.md` §25.
@@ -5443,6 +5463,51 @@ roadmaps.
   surface. `test-archive-merge.sh`'s names are fixture DATA and stay. Not fixed:
   it is unrelated to the change that found it.
 
+### 🧾 2026-10-07 — guild kit slices 1b, 2-prep and 3 (bot 3.1.215)
+Built as six reviewed branches by parallel agents (one adversarial reviewer per
+branch), fixes applied per review, merged on `integ/guildkit`. `DECISIONS-2026-09-21.md` §177.
+- **1b — `utils/guildConfig.js`.** `guild/config.json` is read at boot and fills
+  only unset env names (`ENV_MAP`); typed getters resolve env → file → Wolf Pack
+  default. Review fixes: `roles()` follows the post-fill precedence `utils/roles.js`
+  sees; the suite never reads the real `guild/` dir (a fork that commits its
+  config stays green); `brand()` is one pass; the legacy `ALLOWED_ROLE_NAME`
+  alias counts as set; placeholders are `<token>`-shaped and warn once; secret
+  stripping is whole-word (`keyboard` survives, `apiKey` does not). Debt named
+  in the test: 11 env names only a getter resolves (nothing in the bot reads
+  them yet) — slice 2's list.
+- **3 — the Discord self-provisioner.** `utils/discordProvisioner.js` +
+  `data/discord-layout.json` + `/setup discord` + `scripts/provision-discord.js`.
+  Auto mode reports on a hand-configured server and creates on a virgin one;
+  the layout is kv-owned (`bot_kv` `discord_anchors` + a lease row). Review
+  fixes: a build cut short by the 25 s boot bound resumes on the next boot;
+  `/setup … dry_run:false` honours `GUILD_PROVISION=off`; the pin cleanup only
+  deletes the notice its own pin caused; archived-thread and history scans are
+  bounded and cached per run; one kv retry on the boot path.
+- **2-prep — tag correctness + the one-shot gate + Bristlebane.** Every REST
+  filter follows `SUPABASE_GUILD_ID` (encoded; `characterPrefs` was the last
+  `'wolfpack'` const behind a live Mimic route); the eight upstream one-shot
+  announcers plus the howl-card repair are gated on the **guild tag**, not on
+  whether a `config.json` exists (Wolf Pack will commit one; two latches were
+  found absent from production `bot_kv`, so the file-existence default would
+  have reposted them); Bristlebane reads its four Discord ids from
+  `guild/discord.json` (`BRISTLEBANE_GUILD_FILE` in Docker), warns on an
+  unreadable file (EISDIR/EACCES), never prints a value, refuses numeric ids
+  above 2^53 — and the root `discord.json` loader now matches it rule for rule.
+- **Web (slice A)** — `web/lib/guild.ts` + the literal swap across ~78 files is
+  reviewed separately and lands on `beta` as web; see the Branch inventory.
+
+### 🧾 2026-10-07 — feedback DMs say what changed; Target Info shows the mob's procs (bot 3.1.216)
+- **Feedback status DMs** (the guild lead: *"This message to the submitter needs
+  more details than this"*). `buildStatusDm` in `utils/feedbackRefs.js` quotes
+  the report, says what changed (player-notes → the commit's FB line → the
+  subject), how to get it per component and branch (the ⤴ beta switch, stable
+  updates itself, the `b.wolfpack.quest` link, live in Discord), links the card,
+  and says how to reopen it. `HOW-ITS-BUILT.md` "Feedback numbers".
+- **Mob procs** (the guild lead: *"Need to see mobs Procs as well, not just
+  spells"*). `eqemu_npc_spells.attack_proc` (+ range/defensive) along the
+  parent-list chain → mob-info `procs[]` with chance and an effect digest
+  (`utils/npcProcs.js`); the Target Info Spells tab's PROCS section is on the
+  Mimic beta. Zone packs are version 4 so held packs rebuild.
 ### 🧾 2026-10-07 — Mimic beta: hide-all crash, taskbar, overlays growing back, Box HUD procs, mob procs, /parses (agent 3.7.97 · web 1.8.113)
 Five reports in one beta push, each built and mutation-checked by a parallel agent.
 - **Hide-all crashed the main process** (the guild lead's dialog: "Object has been

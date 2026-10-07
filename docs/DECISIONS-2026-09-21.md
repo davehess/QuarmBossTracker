@@ -114,6 +114,9 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Three picks: bard counts, AE chip by spell data, height floor** (§178) | All three built; HUD counts, AE gate and the floor on beta (agent 3.7.98); the catalog's `ae` flag waits on this branch reaching `main` | the guild lead: push this branch to main (after 00:30 ET on a raid night); a bard on beta checks the ring label; a beta tester drags an overlay small and confirms it stays |
+| **Guild kit slices 1b, 2-prep, 3** (§177) | Bot 3.1.215: `utils/guildConfig.js` loader + getters, Discord self-provisioner (`/setup discord`, standalone script), tag-correct REST filters with a ratchet, one-shot announcers gated on the guild tag, Bristlebane guild file. Web slice A (`web/lib/guild.ts` + the literal swap) reviewed separately → `beta` | a session: slice 2, the de-branding sweep (start from the 11 getter-only env names in `test/guild-config.test.js`); then `doctor` and the wizard CLI (§8 picks stand) |
+| **Clicky picker + Recharged** (§179, FB-65) | On beta (agent + Mimic, version set at the push): ⚙ → Items picks up to four clickies, root · dispel · stun first, brighter names with their own size slider, a Recharged button per charged clicky | a beta tester with charged clickies: pick, recharge at a vendor, press Recharged; the guild lead: say if one line of four is enough or the ring should get a second row |
 | **Mimic 2.7.9 stable + member-report sweep** (§176) | Stable `40af051a` (agent 3.7.96), beta re-parked 2.7.10. 13 older member reports closed with their senders DMed, plus FB-43; 23 stay open (partial / not done / unclear / alpha, listed in §176) | a session: the open member reports, starting with the partials (FB-22, FB-26, FB-3, FB-37); the guild lead: pick the four B/C web previews still on beta |
 | **Main / alt · Inventory only · Hide completely** (§175) | Bot 3.1.214 live; agent 3.7.96, stable in Mimic 2.7.9: the choice in setup and on the dashboard's Me card, Hide completely also stops this PC reading the log | the guild lead: should Inventory only also stop that character's fight uploads? |
 | **My parses: explore + Guild / My logs** (§174) | Live: search, zone, By day on `/me/parses` (web 1.8.110 · bot 3.1.213, `my_parse_series_v2`); the same in Mimic plus Guild / My logs, stable in Mimic 2.7.9 | a session with confirmation: drop the old `my_parse_series` |
@@ -7704,3 +7707,106 @@ stable version."*
     stable. A report never moves backwards, so nothing re-sends.
 - **Lesson for the next session:** a fix that ships without an FB line leaves the member's report open forever.
   When a change answers a report, the commit carries `Fixes FB-n` at the gate where the member will see it.
+
+### 177. Guild kit slices 1b, 2-prep and 3: the config loader, tag correctness, the one-shot gate, the Discord self-provisioner, Bristlebane's guild file (2026-10-07, bot 3.1.215 · bristlebane 0.1.2)
+
+- **The call.** The guild lead asked for the hard-coded Wolf Pack values scoped and a provisioner designed
+  (§310 of the session log, 2026-10-06), then "resume". Built as six reviewed branches by parallel agents, one
+  adversarial reviewer per branch, every review "mergeable with fixes"; the fixes were applied per branch and
+  the branches merged on `integ/guildkit`. The web half (slice A: `web/lib/guild.ts` + the literal swap) is
+  reviewed separately and ships as web to `beta`.
+- **Resolution order is law: env → `guild/` file → built-in fallback, env always wins.** Every slice was
+  reviewed against "Wolf Pack production (every env var set, no `guild/config.json`) is byte-identical", and
+  each reviewer traced that path. `utils/guildConfig.js` is the one helper; `roles()` now gives exactly what
+  `utils/roles.js` sees after boot (the review found three cases where the two disagreed).
+- **The one-shot announcers are gated on the guild TAG, not on a file.** The slice as built turned them off
+  when a `guild/config.json` existed. The review found that two of the eight latches
+  (`announce_vex_thal_cleared`, `announce_vex_thal_film`) have no row in production `bot_kv`, and the kit's own
+  rule is that Wolf Pack commits a `config.json` too — so the day it landed, both would have reposted. Now:
+  `ANNOUNCE_UPSTREAM_ONESHOTS` overrides; otherwise `guildTag() === 'wolfpack'` is on, anything else is off.
+  The howl-card repair one-shot is gated the same way (nine gates, eight announcers).
+- **The provisioner owns the layout through `bot_kv`, and auto mode is conservative.** A hand-configured
+  server (every anchor in env) gets `report`: no writes, no fetches beyond today's. A virgin server gets
+  `create` under a 120 s lease, bounded to 25 s per boot, and **resumes** an unfinished build on the next boot
+  (the review caught that the first cut would have called a half-built layout "not virgin" and stopped).
+  `GUILD_PROVISION=off` means off everywhere, `/setup` included. Hub-only channel creation; threads adopted
+  by name; unknown is never gone (a 500 on a fetch does not delete an anchor).
+- **Tag correctness is a ratchet.** `test/guild-tag-rest.test.js` pins the count of inline
+  `process.env.SUPABASE_GUILD_ID || 'wolfpack'` reads at 160 and fails on a new one or on any `'wolfpack'`
+  REST literal; the four pre-existing unencoded filters are encoded. `characterPrefs` was the last literal
+  behind a live Mimic route (`?mine=1` and set-prefs would have found no rows on any other tag).
+- **Loaders print key names, never values.** Both `discord.json` loaders (root and Bristlebane) warn on an
+  existing-but-unreadable file (`EISDIR` is the Docker mount typo), give a parse position but no snippet on
+  bad JSON, and refuse a numeric id above 2^53 instead of passing on a rounded snowflake.
+- **Where it landed.** `utils/guildConfig.js`, `utils/discordProvisioner.js`, `commands/setup.js`,
+  `scripts/provision-discord.js`, `data/discord-layout.json`, `apps/bristlebane/lib.js`, the root loader in
+  `index.js`, `.env.example` (`ANNOUNCE_UPSTREAM_ONESHOTS`, `GUILD_PROVISION*`), `guild/README.md`,
+  `guild/config.example.json`, `guild/discord.example.json`; tests under `test/guild-*.test.js`,
+  `test/discord-provisioner-*.test.js`, `test/setup-command.test.js`, `test/announce-upstream-gate.test.js`,
+  `apps/bristlebane/test/guild-file.test.js`. Docs: `DESIGN-guild-kit.md` §7, `HOW-ITS-BUILT.md`,
+  `DESIGN-selfhost-wizard.md` §3, `STATUS.md`.
+- **Still owed (slice 2 and later).** The de-branding sweep proper (the 11 getter-only env names the config
+  test lists are read by nothing yet; `GITHUB_REPO` among them); the agent/Mimic manifest route; SQL bootstrap
+  tag substitution; literal Discord ids after a production env check; `doctor`; the wizard CLI.
+
+### 178. Three picks: a bard's mana slot counts what mana buys, the AE chip is decided by the spell's data, a dragged overlay height is a floor (2026-10-07, the guild lead: "A for all 3")
+
+- **FB-56 — the bard's HUD mana slot (pick A, "Swap").** The arc/bar still fills with mana (it is the fuel),
+  but for a Bard the label reads counts instead of a percentage: `DIRGE n · FM n · CHARM n`. Dirges =
+  floor(mana ÷ 800), shown when Denon's Desperate Dirge is on the bard's gems (if the pipe sends no gem labels,
+  for any bard 60+); Fading Memories = floor(mana ÷ 900) for bards 60+ — the pipe cannot say who owns the AA,
+  so it is ASSUMED from the level (the guild lead's call, recorded here so nobody re-derives it); Charm = the
+  existing "charm left" number when a charm song is memorized. Nothing to count → "MANA nn%" as before. The ring
+  label is fitted to its arc (it never was, and long labels already ran off it). Agent `/api/me` `bard` block.
+- **FB-57 — the Melody AE chip (pick A, "Gate on target type").** The bot's spell catalog marks area spells
+  (`ae: true` for targettype 2, 4, 8, 20, 24, 25, 40; catalog version 9), and the agent registers the AE landing
+  counter only for songs that carry it. Single-target songs (Assonance and 28 others) lose the `⚔n/12` chip,
+  including single-target DoT songs (the damage-only variant, B, was not picked). Until the bot change reaches
+  `main` the agent behaves exactly as before (it only gates once a catalog with the flag is loaded), so the
+  two halves can ship in either order; the fix shows once both are live. The bot commit deliberately carries no
+  `Fixes` word, so the report is not marked Implemented before the agent half exists.
+- **Overlay sizes (pick A, "Height floor").** A height the user drags an overlay to becomes its floor: content
+  grows the window above it and never shrinks it below. Only a hand drag writes it (Electron `will-resize`;
+  every programmatic resize — a fit, the right-click menu's borrowed room, a scale change — leaves it alone).
+  Stored unscaled, per screen setup, beside the saved bounds; right-click ✥ → "Fit height to content" clears it.
+  No floor = exactly the old fit. Answers a beta tester's "i want them tiny and they are goliath" and FB-16.
+- **Where it landed.** Beta: agent 3.7.98 with the FB-56 HUD counts, the FB-57 gate, the floor in
+  `apps/mimic/main.js` + `preload.js`. Main-bound branch: the catalog flag (`3ad2fe47`). Docs:
+  `HOW-ITS-BUILT.md`, `STATUS.md`.
+### 179. Clicky counters: pick which, root · dispel · stun first, and a Recharged button, because a recharge names no item (2026-10-07, FB-65, agent + Mimic beta)
+
+A member (Mimic 3.0.0-alpha.937): *"Should be able to pick which clicky charges you track, and the names need to be
+easier to see. Root/Dispel/Stun are prioritized. When we recharge I don't believe it says anything in the chat, it
+just says you give a certain amount to the vendor. First recharge is double the recharge rate of every other one
+after."*
+
+- **What the log showed.** The report's 771-line excerpt has six lines from the recharge and none that names an
+  item or says "recharged" or "charges": `You give 38 platinum 1 gold 9 silver 0 copper to <vendor>.`, then five
+  of `You give 19 platinum 0 gold 9 silver 5 copper to <vendor>.`, two to three seconds apart. It is the line any
+  hand-in of coin to an NPC prints. The first amount is exactly twice each later one (38,190 copper against 19,095),
+  which fits a price per charge restored with the first item two charges short, but the log cannot say, so nothing
+  reads it.
+- **The call: no guessing, a button.** Attributing a coin amount to an item would set wrong counters silently. Each
+  charged clicky in the picker has **Recharged**: `POST /api/me/clicky-recharged` `{ character, item }` →
+  `_noteClickyRecharged` puts that counter back to the item's full charges from that moment (clicks after it spend
+  one; two copies are each full again). An inventory or Quarmy export written after it is newer and wins again. The
+  mark is kept in `logsync.hud-timers.json` for 30 days, so a Mimic update does not undo it. Refused (404) for an
+  item that is not carried or has no charge count.
+- **Picker.** ⚙ → Items lists every clicky on you with its kind (Root / Dispel / Stun), charges left of full and the
+  button. Tick up to **four** (stored per character, `hudParts.clickyPick`); with nothing ticked the HUD takes the
+  first that fit. Four is what the bottom arc holds: it is 80° at the ring's inside, about 30 characters at the new
+  default size, and the DS button already sits at its right end. A second row would take the clear middle.
+- **Root, dispel, stun first** (`_clickyKind`). The spell catalog's `cc` already tags a harmful spell's SPA 99 and
+  SPA 21; a buff that carries SPA 99 (a tree illusion) is not tagged and is not a root clicky. The catalog has no
+  dispel (SPA 27), so the eight clicky spells that carry it are listed by id in the agent
+  (`_CLICKY_DISPEL_SPELLS`, from `eqemu_spells` joined to `eqemu_items.clickeffect`, 2026-10-07). Adding a dispel
+  kind to the bot's `_ccKinds` would remove that list, but `cc` also feeds the suggested triggers, so it is its own
+  change on `main`.
+- **Names.** Bright instead of grey, their own size slider (they rode the Resists one), a name shortened to the part
+  that tells it apart ("Ring of Shadows" is "Shadows", not "Ring…"), and what does not fit is counted ("+3"). A
+  text path draws nothing past its arc's end, so an overfull line used to lose its first and last items.
+- **Older agent, newer HUD (and the reverse).** `clickies` is still the first eight; `clickies_all` rides along only
+  past eight. An old HUD draws what it always did, in the new order.
+- **No dashboard twin.** The HUD builder lives only in `me.html`, so the tray/dashboard parity rule adds nothing.
+- **Open.** One line of four may be too few for someone with many clickies; a second row, or a bigger share of the
+  ring, is a layout pick for the guild lead.
