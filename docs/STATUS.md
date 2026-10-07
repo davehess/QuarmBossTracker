@@ -103,6 +103,19 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ A shrunk overlay stays shrunk (mimic on beta, draft on branch `fbresize-work`, 2026-10-07).** A beta tester:
+  "resized these maybe 10 times but each time … they end up getting bigger … they are goliath" (Command Center and
+  Target Info, several hundred px tall); FB-16 (2026-09-27): the HUD "reverts to a bigger size after clicking the X".
+  - **Cause.** The right-click menu stretches a short window to 420 px so the menu has room (`overlay-ensure-min-height`).
+    Giving the height back depended on the page asking for a new one, and most pages only do when their HTML changes,
+    so an idle one stayed 420 tall — and the resize event saved the 420 as its size, so it came back that way after ✕
+    and after a restart. Now the extra height is a loan: never saved, handed back when the menu closes
+    (`overlay-menu-closed`), kept only for the two Setup entries (the setup bar needs the room).
+  - Also: a resize made in the last 400 ms before ✕ was dropped (the debounced save read a destroyed window) — ✕ now
+    saves first; and the HUD builder panel's ✕ restored the bounds from when it OPENED, undoing a resize made while it
+    was open — it now reads the live window.
+  - **Left for the guild lead:** minimum heights (Command Center and PoP raids 160, Dock 140 — FB-38's width twin), and
+    whether an auto-height overlay keeps a height you drag it to. `test/mimic-menu-grow-loan.test.js`.
 - **⏳ HUD DS badge counts worn-gear shields (agent 3.7.80 on beta, bot 3.1.202, 2026-10-04).** The guild lead:
   "Missing my additional DS from my neck slot" (Talisman of Vah Kerrath, +8 on a 10-point shield, hits for 18).
   Gear adds only on top of a shield spell, as the server does. Two items carry one today. Waits on the guild lead

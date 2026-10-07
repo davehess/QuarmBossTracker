@@ -2601,6 +2601,24 @@ is on. The setup bar and drag controls counter-zoom (`wp-zoom` push →
 `--wp-zoom` var; `width × z` + `scale(1/z)`) so the setup chrome keeps one
 painted size spanning the window width at every scale.
 
+**What an overlay's saved size is, and what it is not (mimic, beta, 2026-10-07).**
+`_persistBounds` saves the live window on every move/resize (400 ms debounce),
+so anything that changes a window's height for a moment is saved unless it is
+told apart. Two such things exist and neither is the user's size. (1) The
+right-click menu's room: `overlay-ensure-min-height` stretches a short window
+to 420 px and stashes the real bounds in `win.__wpPreMenuBounds` with the loan
+(`grownH`, `grownY`); `_settledBounds` saves the stashed height while the window
+still sits at the loaned one, and `overlay-menu-closed` (sent by the menu's
+cleanup in `preload.js`, before the page's own re-fit replay) hands it back —
+for every page, since most only ask for a height when their HTML changes. The
+two Setup entries keep the room (`keepRoom`). (2) The setup bar's 104 px, added
+by `overlay-auto-height` while setting up — still saved with the window; same
+class, not yet handled. `_flushBounds` saves pending bounds before ✕ frees the
+window. Height itself follows content on every auto-height overlay (a drag
+below content grows back at the next content change; a drag above it shrinks
+back) — that is by design, and a user-kept height is an open question for the
+guild lead. `test/mimic-menu-grow-loan.test.js`.
+
 ---
 
 ### Callout overlay UX — dismissible countdowns + recorded dismissals (#207) — 2026-08-11
