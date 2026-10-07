@@ -292,7 +292,9 @@ no ID to copy.
    (Active Cooldowns, Spawning in the Next 24 Hours, Daily Raid Summary and the expansion thread links), then opens
    one thread per expansion (Classic, Kunark, Velious, Luclin, PoP) and a Historic Kills thread. Each expansion thread
    starts with its own cooldown card and its kill-button boards. The boot log ends with one line that begins
-   `[provision]` and says what it found, made and could not make.
+   `[provision]` and says what it found, made and could not make. This needs the database migrations applied first, or no
+   Supabase variables at all. If the `[provision]` line says `kv=unknown` nothing was built; once the database is up run
+   `/setup discord provision` with `dry_run` set to false.
 4. **Check on it** with `/setup discord status` (you need Manage Server or the officer role). It shows where every
    ID came from, which ones point at something that was deleted, which permissions the bot lacks (by name), and the
    few things only a person can do: set the suggestions forum, follow the patch-notes channel, and the Raid-Helper IDs.
@@ -306,7 +308,8 @@ no ID to copy.
    (`readonly` stops members posting in channels the bot made) and `GUILD_PROVISION_PIN`. They are all in `.env.example`.
 7. **Already set up by hand?** Nothing changes. Any ID you have set stays exactly as you set it, and with a channel
    ID set the bot only reads. Set `GUILD_PROVISION=adopt` to let it find the pieces you have not set by name, or
-   `create` to make what is missing.
+   `create` to make what is missing. `/setup discord provision` with `dry_run:false` on a hand-configured server fills
+   every platform anchor you left unset; read the dry run first.
 8. **No bot to log in with yet?** `node scripts/provision-discord.js --dry-run` does the same job from your own
    computer, needing only `DISCORD_TOKEN`, and writes `guild/discord.json`. Drop `--dry-run` to apply it.
 

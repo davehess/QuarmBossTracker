@@ -60,6 +60,11 @@ async function runStatus(interaction) {
 }
 
 async function runProvision(interaction) {
+  // GUILD_PROVISION=off is documented as "do nothing at all": that covers this
+  // command too, dry runs included.
+  if (String(process.env.GUILD_PROVISION || '').trim().toLowerCase() === 'off') {
+    return interaction.editReply({ content: '❌ GUILD_PROVISION=off on this deployment; unset it to provision from Discord.' });
+  }
   const dry = interaction.options.getBoolean('dry_run');
   const dryRun = dry == null ? true : !!dry;
   const only = list(interaction.options.getString('only'));

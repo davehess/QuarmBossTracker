@@ -595,4 +595,183 @@ describe('boot wrapper', () => {
     expect(world.stats.threadCreates).toBe(0);
     expect(world.stats.sends).toBe(0);
   });
+
+  it('says the next boot picks up where it stopped, and that is true (see "an unfinished build" below)', async () => {
+    const world = makeWorld();
+    const slow = world.guild.channels.fetch;
+    world.guild.channels.fetch = async () => { await new Promise(r => setTimeout(r, 120)); return slow(); };
+    const lines = [];
+    await prov.bootProvision(world.client, { env: { DISCORD_GUILD_ID: world.guildId }, supabase: null, log: (m) => lines.push(m), mode: 'create', timeoutMs: 30 });
+    expect(lines.join('\n')).toMatch(/picks up where it stopped/);
+    expect(lines.join('\n')).not.toMatch(/next boot resumes/);
+  });
+});
+
+describe('an unfinished build', () => {
+  const REQUIRED = expanded.items.filter(i => i.tier === 'required').map(i => i.key);
+  const rec = (over = {}) => ({ v: 1, last_run: { mode: 'create' }, anchors: { TIMER_CHANNEL_ID: { source: 'created', id: '1' } }, ...over });
+  const kvOf = (r) => new Set(Object.keys(r.anchors));
+
+  it('is resumed by auto: our own create run, a required anchor still unset', () => {
+    const r = rec();
+    const m = prov.resolveMode('auto', {}, { kvKeys: kvOf(r), expanded, kvRecord: r });
+    expect(m).toEqual({ mode: 'create', reason: 'auto: resuming an unfinished build' });
+  });
+
+  it('is not resumed once every required anchor is in env or kv', () => {
+    const r = rec({ anchors: Object.fromEntries(REQUIRED.map(k => [k, { source: 'created', id: '1' }])) });
+    expect(prov.resolveMode('auto', {}, { kvKeys: kvOf(r), expanded, kvRecord: r }).mode).toBe('report');
+    const partial = rec();
+    const env = Object.fromEntries(REQUIRED.filter(k => k !== 'TIMER_CHANNEL_ID').map(k => [k, '9']));
+    expect(prov.resolveMode('auto', env, { kvKeys: kvOf(partial), expanded, kvRecord: partial }).mode).toBe('report');
+  });
+
+  it('is not resumed when the last run was not a create run, or built nothing', () => {
+    const adopt = rec({ last_run: { mode: 'adopt' } });
+    expect(prov.resolveMode('auto', {}, { kvKeys: kvOf(adopt), expanded, kvRecord: adopt }).mode).toBe('report');
+    const mirrors = rec({ anchors: { TIMER_CHANNEL_ID: { source: 'env', id: '1' } } });
+    expect(prov.resolveMode('auto', {}, { kvKeys: kvOf(mirrors), expanded, kvRecord: mirrors }).mode).toBe('report');
+    expect(prov.resolveMode('auto', {}, { kvKeys: kvOf(rec()), expanded, kvRecord: null }).mode).toBe('report');
+  });
+
+  it('never applies to a configured deployment: TIMER_CHANNEL_ID in env wins, kv record or not', () => {
+    const r = rec();
+    expect(prov.resolveMode('auto', { TIMER_CHANNEL_ID: '5' }, { kvKeys: kvOf(r), expanded, kvRecord: r }).mode).toBe('report');
+  });
+
+  it('does not count a key the operator skipped as unfinished', () => {
+    const r = rec({ anchors: Object.fromEntries(REQUIRED.filter(k => k !== 'POP_THREAD_ID').map(k => [k, { source: 'created', id: '1' }])) });
+    expect(prov.resolveMode('auto', {}, { kvKeys: kvOf(r), expanded, kvRecord: r }).mode).toBe('create');
+    expect(prov.resolveMode('auto', {}, { kvKeys: kvOf(r), expanded, kvRecord: r, skip: new Set(['POP_THREAD_ID', 'POP_COOLDOWN_ID', 'POP_BOARD_IDS']) }).mode).toBe('report');
+  });
+
+  it('is finished by the next boot: an interrupted first boot, then a second that completes the layout', async () => {
+    const world = makeWorld(); const sb = makeSupabase();
+    world.failSendOn = 3;                                  // the run dies on the third card
+    const env1 = { DISCORD_GUILD_ID: world.guildId };
+    const r1 = await prov.bootProvision(world.client, { env: env1, supabase: sb, log: quiet });
+    expect(r1.mode).toBe('create');
+    expect(r1.errors).toHaveLength(1);
+    const hubId = env1.TIMER_CHANNEL_ID;
+    expect(world.messagesIn(hubId)).toHaveLength(2);
+    expect(world.stats.threadCreates).toBe(0);
+
+    // a fresh process: env is empty again, the hub is already in kv. This used to be 'report' and build nothing.
+    world.failSendOn = null;
+    const env2 = { DISCORD_GUILD_ID: world.guildId };
+    const lines = [];
+    const r2 = await prov.bootProvision(world.client, { env: env2, supabase: sb, log: (m) => lines.push(m) });
+    expect(r2.mode).toBe('create');
+    expect(r2.modeReason).toBe('auto: resuming an unfinished build');
+    expect(r2.errors).toEqual([]);
+    expect(lines.join('\n')).toMatch(/mode=create/);
+    for (const k of REQUIRED) expect(env2[k], k).toBeTruthy();
+    expect(env2.TIMER_CHANNEL_ID).toBe(hubId);
+    expect(world.stats.channelCreates).toBe(1);            // the same hub, not a second one
+    expect(world.messagesIn(hubId).filter(m => m.type === 0)).toHaveLength(4);
+
+    // and a third boot is the plain configured-deployment path: nothing written
+    const before = world.stat();
+    const env3 = { DISCORD_GUILD_ID: world.guildId };
+    const r3 = await prov.bootProvision(world.client, { env: env3, supabase: sb, log: quiet });
+    expect(r3.mode).toBe('report');
+    expect(world.stat().replace(/"fetches":\d+/, '')).toBe(before.replace(/"fetches":\d+/, ''));
+    expect(env3.TIMER_CHANNEL_ID).toBe(hubId);
+  });
+});
+
+describe('a kv that is struggling at boot', () => {
+  it('a boot-path write tries twice; /setup and the CLI keep three', async () => {
+    const mk = () => { const sb = makeSupabase(); sb.upsert = async () => null; return sb; };
+    const w1 = makeWorld();
+    const boot = await prov.bootProvision(w1.client, { env: { DISCORD_GUILD_ID: w1.guildId }, supabase: mk(), log: quiet, mode: 'create' });
+    expect(boot.notes.join('\n')).toMatch(/kv write failed after 2 tries/);
+    const w2 = makeWorld();
+    const cmd = await prov.provisionLayout({ client: w2.client, supabase: mk(), env: { DISCORD_GUILD_ID: w2.guildId }, mode: 'create', log: quiet });
+    expect(cmd.notes.join('\n')).toMatch(/kv write failed after 3 tries/);
+  });
+
+  it('counts every upsert attempt: one create is two persists, so four boot writes against six', async () => {
+    const attempts = async (boot) => {
+      const sb = makeSupabase(); let n = 0; sb.upsert = async () => { n++; return null; };
+      const world = makeWorld();
+      await prov.provisionLayout({ client: world.client, supabase: sb, env: { DISCORD_GUILD_ID: world.guildId }, mode: 'create', only: ['TIMER_CHANNEL_ID'], boot, log: quiet });
+      return n;
+    };
+    expect(await attempts(true)).toBe(4);
+    expect(await attempts(false)).toBe(6);
+  });
+});
+
+describe('what the audit log says', () => {
+  it('names the guild, not a brand, as the reason on every channel and thread it creates', async () => {
+    const world = makeWorld();
+    await prov.provisionLayout({ client: world.client, supabase: null, env: { DISCORD_GUILD_ID: world.guildId }, mode: 'create', guildTag: 'acme', log: quiet });
+    const made = [...world.created.channels, ...world.created.threads];
+    expect(made.length).toBeGreaterThan(2);
+    for (const c of made) expect(c.createOpts.reason).toBe('acme: guild provisioner');
+    expect(made.some(c => /wolfpack/i.test(c.createOpts.reason))).toBe(false);
+  });
+});
+
+describe('how far an adopt scan reads', () => {
+  const hubWith = (n) => {
+    const world = makeWorld();
+    const hub = world.addChannel({ name: 'raid-mobs' });
+    world.addThread(hub.id, { name: 'Historic Kills', archived: true });       // the OLDEST archived thread
+    for (let i = 0; i < n; i++) world.addThread(hub.id, { name: `chatter-${i}`, archived: true });
+    return { world, hub };
+  };
+  const adopt = (world, hub) => prov.provisionLayout({ client: world.client, supabase: null, env: { DISCORD_GUILD_ID: world.guildId, TIMER_CHANNEL_ID: hub.id }, mode: 'adopt', log: quiet });
+  const threadItems = expanded.items.filter(i => i.phase === 'thread').length;
+
+  it('reads a handful of pages of 100, not the whole archive', async () => {
+    const { world, hub } = hubWith(650);
+    const r = await adopt(world, hub);
+    expect(world.stats.archivedFetches).toBeLessThanOrEqual(5 * threadItems);
+    expect(world.stats.archivedFetches).toBeGreaterThan(threadItems);          // it did page
+    expect(r.items.find(i => i.key === 'HISTORIC_KILLS_THREAD_ID').action).toBe('missing');
+  });
+
+  it('still finds a thread archived within the newest few hundred, and unarchives it', async () => {
+    const { world, hub } = hubWith(250);
+    const r = await adopt(world, hub);
+    expect(r.items.find(i => i.key === 'HISTORIC_KILLS_THREAD_ID').action).toBe('adopt');
+    expect(world.stats.unarchives).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('message scans', () => {
+  it('pages a container once for all its slots, not once per slot', async () => {
+    // build a full layout, then forget every id so a fresh adopt has to find them all by identity
+    const world = makeWorld();
+    const built = { DISCORD_GUILD_ID: world.guildId };
+    await prov.provisionLayout({ client: world.client, supabase: null, env: built, mode: 'create', log: quiet });
+    const env = { DISCORD_GUILD_ID: world.guildId, TIMER_CHANNEL_ID: built.TIMER_CHANNEL_ID };
+    const before = world.stats.pageFetches;
+    const r = await prov.provisionLayout({ client: world.client, supabase: null, env, mode: 'adopt', log: quiet });
+    expect(r.adopted.length).toBeGreaterThan(10);
+    const containers = 1 + prov.listEras(bosses).length;     // the hub and one thread per era
+    expect(world.stats.pageFetches - before).toBeLessThanOrEqual(containers);
+  });
+
+  it('re-reads right before it creates, so a card another run just posted is adopted, not doubled', async () => {
+    const world = makeWorld();
+    const hub = world.addChannel({ name: 'raid-mobs' });
+    const title = prov.slotInfo('summaryCard')[0].title;
+    const orig = hub.messages.fetch;
+    let injected = false;
+    hub.messages.fetch = async (arg) => {
+      const out = await orig(arg);
+      if (!injected && arg && arg.limit === 100) {        // the first scan comes back empty; then the other run posts
+        injected = true;
+        world.addBotMessage(hub.id, { embeds: [{ title, footer: { text: 'wp:slot:SUMMARY_MESSAGE_ID' } }] });
+      }
+      return out;
+    };
+    const r = await prov.provisionLayout({ client: world.client, supabase: null, env: { DISCORD_GUILD_ID: world.guildId, TIMER_CHANNEL_ID: hub.id }, mode: 'create', log: quiet });
+    expect(injected).toBe(true);
+    expect(r.items.find(i => i.key === 'SUMMARY_MESSAGE_ID').action).toBe('adopt');
+    expect(world.messagesIn(hub.id).filter(m => m.embeds[0] && m.embeds[0].title === title)).toHaveLength(1);
+  });
 });

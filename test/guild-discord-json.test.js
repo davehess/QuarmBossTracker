@@ -73,7 +73,7 @@ function dynamicReads() {
 }
 function RULE_CHANNEL_LIST() { return RULE_CHANNELS.filter(c => /process\.env\[chan\.env\]/.test(allBotCode)); }
 const DYNAMIC = dynamicReads();
-const isRead = (k) => allBotSrc.includes('process.env.' + k) || DYNAMIC.has(k);
+const isRead = (k) => allBotCode.includes('process.env.' + k) || DYNAMIC.has(k);
 
 function tmpGuild(json) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wp-guild-'));

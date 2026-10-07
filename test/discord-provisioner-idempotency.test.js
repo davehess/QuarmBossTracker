@@ -31,7 +31,7 @@ const fresh = (world, extra = {}) => ({ DISCORD_GUILD_ID: world.guildId, ...extr
 const run = (world, sb, env, over = {}) =>
   prov.provisionLayout({ client: world.client, supabase: sb, env, mode: 'create', log: quiet, ...over });
 // Reads are free; what must not move on a re-run is every WRITE.
-const snapshot = (world) => { const { fetches, ...rest } = world.stats; void fetches; return rest; };
+const snapshot = (world) => { const { fetches, archivedFetches, pageFetches, ...rest } = world.stats; void fetches; void archivedFetches; void pageFetches; return rest; };
 const writes = (s) => s.sends + s.channelCreates + s.threadCreates + s.edits + s.deletes + s.unarchives + s.pins;
 const anchors = (env) => Object.fromEntries(ANCHOR_KEYS.filter(k => env[k] != null).map(k => [k, env[k]]));
 

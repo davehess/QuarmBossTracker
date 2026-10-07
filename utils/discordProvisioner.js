@@ -63,6 +63,7 @@ const LOCK_KEY      = 'discord_provision_lock';
 const LOCK_TTL_MS   = 120 * 1000;
 const BOOT_BOUND_MS = 25 * 1000;
 const MARKER_PREFIX = 'wp:slot:';
+const ARCHIVED_PAGES = 5;          // pages of 100 archived threads an adopt scan will read
 const MODES         = ['off', 'report', 'adopt', 'create'];
 
 // The loader in index.js (_loadGuildDiscordJson) refuses keys matching this. The
@@ -285,8 +286,15 @@ const isSet = (v) => v != null && String(v).trim() !== '';
  * kv record. A kv that could not be read is not proof of anything, so it is
  * never virgin. `kvKeys` is the Set of anchor keys the kv record holds, or
  * null when the record is unknown.
+ *
+ * One more way into `create`: an UNFINISHED BUILD of our own. The kv record
+ * (`kvRecord`) says its last run was a create run, it holds at least one anchor
+ * this module created, and a required anchor is still unset in env and kv (a
+ * first boot that hit its time bound, or died on a failed send). Without this the
+ * second boot would see the hub in kv, call the guild configured, and finish
+ * nothing. `skip` keys are not "unfinished": the operator excluded them.
  */
-function resolveMode(raw, env, { kvKeys = null, expanded = null } = {}) {
+function resolveMode(raw, env, { kvKeys = null, expanded = null, kvRecord = null, skip = null } = {}) {
   const v = String(raw || 'auto').trim().toLowerCase();
   if (MODES.includes(v)) return { mode: v, reason: 'requested' };
   if (isSet(env.TIMER_CHANNEL_ID)) return { mode: 'report', reason: 'auto: TIMER_CHANNEL_ID is set (a configured deployment)' };
@@ -295,9 +303,14 @@ function resolveMode(raw, env, { kvKeys = null, expanded = null } = {}) {
     ? expanded.items.filter(i => i.phase === 'slot' || (i.phase === 'thread' && i.era) || i.hub).map(i => i.key)
     : ['TIMER_CHANNEL_ID'];
   const anySet = keys.some(k => isSet(env[k]) || kvKeys.has(k));
-  return anySet
-    ? { mode: 'report', reason: 'auto: some anchors already exist' }
-    : { mode: 'create', reason: 'auto: a virgin deployment (nothing set in env or kv)' };
+  if (!anySet) return { mode: 'create', reason: 'auto: a virgin deployment (nothing set in env or kv)' };
+  const builtByUs = !!(kvRecord && kvRecord.last_run && kvRecord.last_run.mode === 'create'
+    && Object.values(kvRecord.anchors || {}).some(a => a && a.source === 'created'));
+  const unfinished = builtByUs && !!expanded && expanded.items.some(i =>
+    i.tier === 'required' && !(skip && skip.has(i.key)) && !isSet(env[i.key]) && !kvKeys.has(i.key));
+  return unfinished
+    ? { mode: 'create', reason: 'auto: resuming an unfinished build' }
+    : { mode: 'report', reason: 'auto: some anchors already exist' };
 }
 
 /**
@@ -478,7 +491,10 @@ function makeCtx(opts) {
     abort: opts.abort || { aborted: false },
     log: opts.log || ((m) => console.log(m)),
     kv: { state: 'disabled', record: null },
-    anchors: {}, results: new Map(), chCache: new Map(),
+    anchors: {}, results: new Map(), chCache: new Map(), msgCache: new Map(),
+    // Boot runs share the bot's Supabase circuit breaker (5 straight failures open
+    // it), so a boot-path kv write tries twice; /setup and the CLI keep three.
+    persistTries: opts.boot ? 2 : 3,
     blockedParents: new Set(), leaseHeld: false, holder: null,
     notes: [], errors: [], guild: null,
     nowMs: opts.now || (() => Date.now()),
@@ -560,10 +576,19 @@ async function listThreads(parent) {
     const active = await parent.threads.fetchActive();
     out.push(...[...(active.threads || active).values()]);
   } catch { /* cannot list: the caller sees an empty set and falls back to create */ }
-  try {
-    const arch = await parent.threads.fetchArchived({ type: 'public', fetchAll: true });
-    out.push(...[...(arch.threads || arch).values()]);
-  } catch { /* private archive or no permission: fine */ }
+  // A few pages of the newest archived threads, not the whole archive: a layout
+  // thread archived long ago and buried under a busy channel's history is
+  // recreated rather than found, which beats walking every archived thread.
+  let before;
+  for (let page = 0; page < ARCHIVED_PAGES; page++) {
+    try {
+      const arch = await parent.threads.fetchArchived({ type: 'public', limit: 100, ...(before ? { before } : {}) });
+      const got = [...(arch.threads || arch).values()];
+      out.push(...got);
+      if (!arch.hasMore || got.length === 0) break;
+      before = got[got.length - 1];
+    } catch { break; /* private archive or no permission: fine */ }
+  }
   const seen = new Set();
   return out.filter(t => (seen.has(t.id) ? false : (seen.add(t.id), true)));
 }
@@ -609,7 +634,7 @@ async function persist(ctx, { force = false } = {}) {
     last_run: { at: new Date(ctx.nowMs()).toISOString(), mode: ctx.mode, counts: ctx.counts ? { ...ctx.counts } : {} },
     anchors: ctx.anchors,
   };
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < ctx.persistTries; i++) {
     let r = null;
     try {
       r = await ctx.supabase.upsert('bot_kv', [{
@@ -620,7 +645,7 @@ async function persist(ctx, { force = false } = {}) {
     // the next "did anything change" comparison would be the map against itself.
     if (r != null) { ctx.kv.record = JSON.parse(JSON.stringify(record)); return true; }
   }
-  note(ctx, 'kv write failed after 3 tries: anchors live in env and the export only');
+  note(ctx, `kv write failed after ${ctx.persistTries} tries: anchors live in env and the export only`);
   return false;
 }
 
@@ -721,8 +746,18 @@ async function findThreadByIdentity(ctx, item, parentCh) {
   return m.winner ? { state: 'found', ch: m.winner, duplicates: m.duplicates || [] } : { state: 'none' };
 }
 
-async function findSlotByIdentity(ctx, item, container) {
-  const msgs = await fetchBotMessages(container, botId(ctx));
+// The bot's own messages in a container, paged once per container per run. A
+// send into the container drops its entry (createSlot); `fresh` is the re-find
+// right before a create, which exists to catch a message another run just
+// posted and so must never read a stale scan.
+async function botMessages(ctx, container, { fresh = false } = {}) {
+  if (fresh) ctx.msgCache.delete(container.id);
+  if (!ctx.msgCache.has(container.id)) ctx.msgCache.set(container.id, await fetchBotMessages(container, botId(ctx)));
+  return ctx.msgCache.get(container.id);
+}
+
+async function findSlotByIdentity(ctx, item, container, { fresh = false } = {}) {
+  const msgs = await botMessages(ctx, container, { fresh });
   if (item.kind === 'boardSet') {
     const ids = []; let lastTs = -1; let dup = 0;
     for (let i = 0; i < item.count; i++) {
@@ -756,7 +791,7 @@ async function createChannel(ctx, item) {
   const opts = {
     name: String(item.createName).slice(0, 100),
     type: item.type === 'voice' ? CT.GuildVoice : CT.GuildText,
-    reason: 'wolfpack: guild provisioner',
+    reason: `${ctx.tag}: guild provisioner`,
   };
   if (ctx.lock === 'readonly' && item.botOwned && item.type !== 'voice') {
     opts.permissionOverwrites = [
@@ -774,7 +809,7 @@ async function createChannel(ctx, item) {
 }
 
 async function createThread(ctx, item, parentCh) {
-  const base = { name: String(item.createName).slice(0, 100), reason: 'wolfpack: guild provisioner' };
+  const base = { name: String(item.createName).slice(0, 100), reason: `${ctx.tag}: guild provisioner` };
   if (parentCh.type === CT.GuildText) base.type = CT.PublicThread;
   try {
     return await parentCh.threads.create({ ...base, autoArchiveDuration: 10080 });
@@ -821,10 +856,17 @@ async function pinIfWanted(ctx, item, container, msg) {
   if (!ctx.pin || !item.pin || !msg || typeof msg.pin !== 'function') return;
   try {
     await msg.pin();
-    // A pin posts a system notice; delete the one the bot just caused.
+    // A pin posts a system notice; delete the one for THIS pin and nobody else's.
+    // It references the pinned message; failing that it is the bot's own and newer
+    // than that message (a person's pin, or the bot's pin of another message, is not).
     const recent = await container.messages.fetch({ limit: 3 });
     for (const m of recent.values()) {
-      if (m.type === MessageType.ChannelPinnedMessage && typeof m.delete === 'function') await m.delete().catch(() => {});
+      if (m.type !== MessageType.ChannelPinnedMessage || typeof m.delete !== 'function') continue;
+      const refId = m.reference && m.reference.messageId;
+      const ours = refId != null
+        ? String(refId) === String(msg.id)
+        : !!(m.author && m.author.id === botId(ctx)) && cmpId(m.id, msg.id) > 0;
+      if (ours) await m.delete().catch(() => {});
     }
   } catch (e) { note(ctx, `pin of ${item.key} failed: ${e && e.message}`); }
 }
@@ -841,6 +883,7 @@ function eraThreadIdFor(ctx) {
 async function createSlot(ctx, item, container) {
   if (item.kind === 'text') {
     const msg = await container.send({ content: threadLinksContent(ctx.expanded.eras, eraThreadIdFor(ctx)) });
+    ctx.msgCache.delete(container.id);
     await pinIfWanted(ctx, item, container, msg);
     return [msg.id];
   }
@@ -848,12 +891,13 @@ async function createSlot(ctx, item, container) {
   const n = item.kind === 'boardSet' ? item.count : 1;
   // A board set is several messages and a run can die between them. Reuse any
   // panel an earlier run already posted (by marker) instead of posting it twice.
-  const have = n > 1 ? await fetchBotMessages(container, botId(ctx)) : [];
+  const have = n > 1 ? await botMessages(ctx, container) : [];
   for (let i = 0; i < n; i++) {
     const marker = markerFor(item.key, item.kind === 'boardSet' ? i : null);
     const prior = have.find(m => m.embeds && m.embeds[0] && m.embeds[0].footer && m.embeds[0].footer.text === marker);
     if (prior) { ids.push(prior.id); continue; }
     const msg = await container.send({ embeds: [placeholderEmbed(item.titles[i], item.colors[i], marker)] });
+    ctx.msgCache.delete(container.id);
     ids.push(msg.id);
     await pinIfWanted(ctx, item, container, msg);
   }
@@ -930,11 +974,11 @@ async function processItem(ctx, item) {
   }
 
   // 3. Adopt by identity.
-  const find = async () => {
+  const find = async ({ fresh = false } = {}) => {
     if (parentIsDry) return { state: 'none' };
     if (item.kind === 'channel') return findChannelByIdentity(ctx, item);
     if (item.kind === 'thread') return findThreadByIdentity(ctx, item, parentCh);
-    return findSlotByIdentity(ctx, item, container);
+    return findSlotByIdentity(ctx, item, container, { fresh });
   };
   const adoptFound = async (f) => {
     rep.action = 'adopt';
@@ -1004,7 +1048,7 @@ async function processItem(ctx, item) {
     rep.action = 'blocked'; rep.note = `blocked: the slot before it (${item.prev}) is not present`; return rep;
   }
   if (ctx.dry) { rep.action = 'create'; await commit(ctx, item, rep, item.kind === 'boardSet' ? Array.from({ length: item.count }, (_, i) => `dry:${item.key}:${i}`) : `dry:${item.key}`, 'created', item.titles && item.titles[0]); return rep; }
-  const f2 = await find();
+  const f2 = await find({ fresh: true });
   if (f2.state === 'found') return adoptFound(f2);
   const ids = await createSlot(ctx, item, container);
   rep.action = 'create';
@@ -1092,14 +1136,14 @@ async function provisionLayout(opts = {}) {
     await loadKv(ctx);
     const kvKeys = ctx.kv.state === 'disabled' ? new Set()
       : ctx.kv.state === 'known' ? new Set(Object.keys(ctx.anchors)) : null;
-    const m = resolveMode(ctx.requestedMode, ctx.env, { kvKeys, expanded: ctx.expanded });
+    const m = resolveMode(ctx.requestedMode, ctx.env, { kvKeys, expanded: ctx.expanded, kvRecord: ctx.kv.record, skip: ctx.skip });
     ctx.mode = m.mode; ctx.modeReason = m.reason;
     if (ctx.mode === 'off') return finalize(ctx);
 
     if (!(await acquireLease(ctx))) return finalize(ctx);
     try {
       for (const phase of PHASE_ORDER) {
-        if (ctx.abort.aborted) { note(ctx, 'stopped at the time bound; the next run resumes'); break; }
+        if (ctx.abort.aborted) { note(ctx, 'stopped at the time bound; the next run picks up where it stopped'); break; }
         if (phase === 'fill') { ctx.report.steps.push('THREAD_LINKS_FILL'); await fillThreadLinks(ctx); continue; }
         for (const it of ctx.expanded.items.filter(i => i.phase === phase)) {
           if (ctx.abort.aborted) break;
@@ -1165,10 +1209,10 @@ async function bootProvision(client, opts = {}) {
       timer = setTimeout(() => { abort.aborted = true; resolve({ timedOut: true }); }, opts.timeoutMs || BOOT_BOUND_MS);
       if (timer.unref) timer.unref();
     });
-    const work = provisionLayout({ ...opts, client, env, supabase: sb, abort, mode: requested, log });
+    const work = provisionLayout({ ...opts, client, env, supabase: sb, abort, mode: requested, log, boot: true });
     const out = await Promise.race([work, bound]);
     clearTimeout(timer);
-    if (out && out.timedOut) { log(`[provision] stopped at the ${(opts.timeoutMs || BOOT_BOUND_MS) / 1000}s bound; the next boot resumes`); return { mode: requested, timedOut: true }; }
+    if (out && out.timedOut) { log(`[provision] stopped at the ${(opts.timeoutMs || BOOT_BOUND_MS) / 1000}s bound; the next boot picks up where it stopped (auto mode resumes an unfinished build)`); return { mode: requested, timedOut: true }; }
     log(summaryLine(out, id.set.length ? `identity=${id.set.join('+')}` : ''));
     for (const n of id.notes) log(`[provision] ${n}`);
     return out;

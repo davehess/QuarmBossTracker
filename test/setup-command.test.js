@@ -177,6 +177,27 @@ describe('provision', () => {
     expect(text(i)).not.toMatch(/dry run/i);
   });
 
+  it('does nothing at all when GUILD_PROVISION=off, dry run or not, and says why', async () => {
+    for (const [value, opts] of [['off', { dry_run: false }], [' OFF ', { dry_run: false }], ['off', {}]]) {
+      const world = makeWorld();
+      env(world, { GUILD_PROVISION: value });
+      const i = fakeInteraction({ client: world.client, sub: 'provision', manageGuild: true, opts });
+      await setup.execute(i);
+      expect(writes(world.stats), value).toBe(0);
+      expect(world.stats.fetches, value).toBe(0);
+      expect(process.env.TIMER_CHANNEL_ID).toBeUndefined();
+      expect(text(i)).toBe('❌ GUILD_PROVISION=off on this deployment; unset it to provision from Discord.');
+    }
+  });
+
+  it('is not stopped by any other GUILD_PROVISION value', async () => {
+    const world = makeWorld();
+    env(world, { GUILD_PROVISION: 'adopt' });
+    const i = fakeInteraction({ client: world.client, sub: 'provision', manageGuild: true, opts: { dry_run: false } });
+    await setup.execute(i);
+    expect(world.stats.channelCreates).toBe(1);
+  });
+
   it('only: names the keys to touch and nothing else', async () => {
     const world = makeWorld();
     const hub = world.addChannel({ name: 'raid-mobs' });

@@ -51,12 +51,12 @@ async function main() {
   if (!['report', 'adopt', 'create'].includes(args.mode)) { console.error('--mode must be report, adopt or create'); return 2; }
   if (!process.env.DISCORD_TOKEN) { console.error('DISCORD_TOKEN is not set (put it in .env or the environment).'); return 2; }
 
-  const { Client, GatewayIntentBits } = require('discord.js');
+  const { Client, GatewayIntentBits, Events } = require('discord.js');
   const prov = require('../utils/discordProvisioner');
 
   const client = new Client({ intents: [GatewayIntentBits.Guilds] });
   await new Promise((resolve, reject) => {
-    client.once('ready', resolve);
+    client.once(Events.ClientReady, resolve);
     client.login(process.env.DISCORD_TOKEN).catch(reject);
   });
 

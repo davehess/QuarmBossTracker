@@ -266,6 +266,15 @@ describe('the provisioner keeps its distance', () => {
   });
 });
 
+describe('the CLI waits for the client the supported way', () => {
+  const cli = stripJs(fs.readFileSync(path.join(ROOT, 'scripts', 'provision-discord.js'), 'utf8'));
+  it('uses Events.ClientReady, not the deprecated \'ready\' alias', () => {
+    expect(cli).toMatch(/client\.once\(Events\.ClientReady,/);
+    expect(cli).not.toMatch(/once\(\s*['"]ready['"]/);
+    expect(cli).toMatch(/\{[^}]*\bEvents\b[^}]*\}\s*=\s*require\('discord\.js'\)/);
+  });
+});
+
 describe('wired into the bot', () => {
   const code = stripJs(indexSrc);
   const ready = sliceBlock(code, 'client.once(Events.ClientReady', '\n});');

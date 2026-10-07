@@ -28,11 +28,12 @@ export function makeWorld({ guildId = 'guild-1', guildName = 'Test Guild' } = {}
   const newId = () => String(++nextId);
   const world = {
     guildId,
-    stats: { sends: 0, edits: 0, deletes: 0, channelCreates: 0, threadCreates: 0, unarchives: 0, pins: 0, fetches: 0 },
+    stats: { sends: 0, edits: 0, deletes: 0, channelCreates: 0, threadCreates: 0, unarchives: 0, pins: 0, fetches: 0, archivedFetches: 0, pageFetches: 0 },
     created: { channels: [], threads: [] },
     channels: new Map(),        // id -> channel or thread
     denied: new Set(),          // PermissionFlagsBits names the bot lacks everywhere
     manageChannels: true,
+    pinReferences: false,       // the pin notice carries message_reference to the pinned message
     failSendOn: null,           // the Nth send (1-based, global) throws
     rejectLongArchive: false,   // threads.create with 10080 answers 400
     fetchErrors: new Map(),     // id -> error to throw from channels.fetch(id)
@@ -56,6 +57,7 @@ export function makeWorld({ guildId = 'guild-1', guildName = 'Test Guild' } = {}
           return m;
         }
         const { limit = 50, before } = arg || {};
+        if (limit > 1) world.stats.pageFetches++;       // a paging scan, not a "newest message" peek
         let rows = list.slice().reverse();               // newest first
         if (before) { const i = rows.findIndex(m => m.id === before); rows = i >= 0 ? rows.slice(i + 1) : rows; }
         return new Map(rows.slice(0, limit).map(m => [m.id, m]));
@@ -63,14 +65,14 @@ export function makeWorld({ guildId = 'guild-1', guildName = 'Test Guild' } = {}
     };
   }
 
-  function mkMessage(container, payload, { authorId = BOT_ID, type = 0 } = {}) {
+  function mkMessage(container, payload, { authorId = BOT_ID, type = 0, reference = null } = {}) {
     const embeds = (payload.embeds || []).map(e => {
       const d = e.data || e;
       return { title: d.title, description: d.description, color: d.color, footer: d.footer ? { text: d.footer.text } : null };
     });
     const m = {
       id: newId(), author: { id: authorId }, embeds, content: payload.content || '', components: payload.components || [],
-      createdTimestamp: ++nextTs, type, channelId: container.id,
+      createdTimestamp: ++nextTs, type, channelId: container.id, reference,
       async edit(p) {
         await tick(); world.stats.edits++;
         if (container.archived) throw apiError(50083, 'Thread is archived', 400);
@@ -83,7 +85,8 @@ export function makeWorld({ guildId = 'guild-1', guildName = 'Test Guild' } = {}
         await tick(); world.stats.deletes++;
         const i = container._list.indexOf(m); if (i >= 0) container._list.splice(i, 1);
       },
-      async pin() { await tick(); world.stats.pins++; mkMessage(container, {}, { authorId: BOT_ID, type: MessageType.ChannelPinnedMessage }); },
+      // Discord's notice references the pinned message; `pinReferences` models that (off: a client that drops it).
+      async pin() { await tick(); world.stats.pins++; mkMessage(container, {}, { authorId: BOT_ID, type: MessageType.ChannelPinnedMessage, reference: world.pinReferences ? { messageId: m.id } : null }); },
     };
     container._list.push(m);
     return m;
@@ -117,7 +120,14 @@ export function makeWorld({ guildId = 'guild-1', guildName = 'Test Guild' } = {}
     ch.messages = makeMessages(ch); attachSender(ch);
     ch.threads = {
       async fetchActive() { await tick(); return { threads: new Map(ch._threads.filter(t => !t.archived).map(t => [t.id, t])) }; },
-      async fetchArchived() { await tick(); return { threads: new Map(ch._threads.filter(t => t.archived).map(t => [t.id, t])), hasMore: false }; },
+      // Newest archived first, like the API; honours `limit` and a `before` thread.
+      async fetchArchived(o = {}) {
+        await tick(); world.stats.archivedFetches++;
+        let rows = ch._threads.filter(t => t.archived).reverse();
+        if (o.before) { const i = rows.findIndex(t => t.id === String(o.before.id || o.before)); rows = i >= 0 ? rows.slice(i + 1) : rows; }
+        const page = o.limit ? rows.slice(0, o.limit) : rows;
+        return { threads: new Map(page.map(t => [t.id, t])), hasMore: page.length < rows.length };
+      },
       async create(opts) {
         await tick();
         if (world.rejectLongArchive && opts.autoArchiveDuration === 10080) throw apiError(50035, 'Invalid Form Body', 400);
@@ -169,6 +179,9 @@ export function makeWorld({ guildId = 'guild-1', guildName = 'Test Guild' } = {}
   world.addThread = (parentId, opts) => addThread(world.channels.get(parentId), opts);
   world.addBotMessage = (containerId, payload) => mkMessage(world.channels.get(containerId), payload);
   world.addHumanMessage = (containerId, payload) => mkMessage(world.channels.get(containerId), payload, { authorId: 'human-1' });
+  // A pin notice nobody in the test caused through msg.pin(): a person's, or one that references a message.
+  world.addPinNotice = (containerId, { authorId = 'human-1', reference = null } = {}) =>
+    mkMessage(world.channels.get(containerId), {}, { authorId, type: MessageType.ChannelPinnedMessage, reference });
   world.deleteChannel = (id) => {
     const c = world.channels.get(id);
     world.channels.delete(id);

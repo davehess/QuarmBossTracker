@@ -317,6 +317,41 @@ describe('pinning', () => {
     expect(world.stats.deletes).toBe(4);
   });
 
+  // A person pins something in the hub while the bot is pinning its card. Their
+  // notice is among the three newest messages and must survive; ours must not.
+  const hubWithRacingPin = (world, racer) => {
+    const hub = world.addChannel({ name: 'raid-mobs' });
+    const send = hub.send;
+    hub.send = async (payload) => {
+      const msg = await send(payload);
+      const pin = msg.pin;
+      msg.pin = async () => { await pin(); racer(hub, msg); };
+      return msg;
+    };
+    return hub;
+  };
+  const run = (world, hub) => prov.provisionLayout({ client: world.client, supabase: null, env: { DISCORD_GUILD_ID: world.guildId, TIMER_CHANNEL_ID: hub.id }, mode: 'create', pin: true, log: quiet });
+
+  it('deletes the bot\'s own pin notice and leaves a person\'s alone (no reference on the notice)', async () => {
+    const world = makeWorld();
+    const hub = hubWithRacingPin(world, (h) => world.addPinNotice(h.id, { authorId: 'human-1' }));
+    await run(world, hub);
+    const notices = world.messagesIn(hub.id).filter(m => m.type === 6);
+    expect(notices.length).toBeGreaterThanOrEqual(1);
+    expect(notices.every(m => m.author.id === 'human-1')).toBe(true);
+    expect(world.stats.pins).toBeGreaterThanOrEqual(1);
+  });
+
+  it('with a reference, deletes the notice that points at the message it pinned and no other', async () => {
+    const world = makeWorld();
+    world.pinReferences = true;
+    const hub = hubWithRacingPin(world, (h) => world.addPinNotice(h.id, { authorId: 'bot-1', reference: { messageId: 'somebody-elses-message' } }));
+    await run(world, hub);
+    const notices = world.messagesIn(hub.id).filter(m => m.type === 6);
+    expect(notices.length).toBeGreaterThanOrEqual(1);
+    expect(notices.every(m => m.reference && m.reference.messageId === 'somebody-elses-message')).toBe(true);
+  });
+
   it('when on, asks for the Pin Messages permission first', async () => {
     const world = makeWorld();
     world.addChannel({ name: 'raid-mobs' });
