@@ -2171,6 +2171,16 @@ function _findSongBuff(songName, zealBuffs) {
 // GROUPMATES, and those aren't "mobs affected". If two melody songs share a
 // landing text the first match wins (never seen in a real twist). Damage
 // lines carry the song name themselves so they need no suffix table.
+//
+// AREA songs only (FB-57, a member: "Assonance is single target, should not
+// have the 12 counter"): once the catalog carries the bot's `ae` flag (spell
+// catalog v9, from the spell's own targettype), a song whose entry lacks it —
+// single target, a one-race single — is not counted at all, landing rows AND
+// damage lines, so its row never wears a hits/12 chip. A catalog with NO `ae`
+// on any entry (the bot predates v9 — `_spellCatalogMeta.hasAe` false) keeps
+// the old count-everything behaviour: hiding the chip on every song would be
+// worse than a wrong chip on a few. A song the catalog does not know at all
+// is also left as it was; only a KNOWN single-target song is dropped.
 const SONG_AOE_CAP      = 12;      // Quarm AE target cap — 12 hit = full swarm
 // Pulse boundary, measured in LOG time (1s stamps): rows in the same/adjacent
 // second are one pulse; the next pulse of a 3s song is ≥2s of stamp away.
@@ -2190,7 +2200,10 @@ function _songSlug(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+
 // state keyed by order + catalog signature so it costs nothing per line.
 function _ensureSongAoeMatchers(state) {
   const catCount = _spellCatalogMeta ? (_spellCatalogMeta.count || 0) : 0;
-  const sig = state.order.map(o => (o && o.name) || o || '').join('|') + '#' + catCount;
+  // hasAe is in the signature: a refetch that adds the flag keeps the same spell
+  // COUNT, and without it the matchers built from the old catalog would stand.
+  const hasAe = !!(_spellCatalogMeta && _spellCatalogMeta.hasAe);
+  const sig = state.order.map(o => (o && o.name) || o || '').join('|') + '#' + catCount + (hasAe ? '#ae' : '');
   if (state._aoeSig === sig) return;
   state._aoeSig = sig;
   state._aoeSuffixes = [];
@@ -2200,12 +2213,13 @@ function _ensureSongAoeMatchers(state) {
     if (!name) continue;
     const slug = _songSlug(name);
     if (!slug) continue;
-    state._aoeSongSlugs.add(slug);
     // Catalog lookup: exact name first, then slug scan (Zeal labels use
     // backticks where the catalog has apostrophes). Scan only runs on
     // melody-order change, never per line.
     let e = _spellByNameLower.get(String(name).toLowerCase());
     if (!e) { for (const c of _spellByNameLower.values()) { if (c && c.name && _songSlug(c.name) === slug) { e = c; break; } } }
+    if (hasAe && e && !e.ae) continue;   // FB-57: a known single-target song — no counter, no damage tracking
+    state._aoeSongSlugs.add(slug);
     if (!e || !e.other || e.good !== 0) continue;
     const suffix = String(e.other).trim().toLowerCase();
     if (suffix.length < 5) continue;    // too short → false positives
@@ -37418,9 +37432,14 @@ function pollLatestVersion({ botUrl }) {
 //
 // In-memory shape:
 //   _spellByNameLower:   Map<string, { id, name, you, other, fades }>
-//   _spellCatalogMeta:   { fetchedAt, etag, count }
+//   _spellCatalogMeta:   { fetchedAt, etag, count, hasAe }
 let _spellByNameLower = new Map();
 let _spellCatalogMeta = null;
+// Does this catalog carry the bot's `ae` (area-spell) flag — spell catalog v9, FB-57? Read off
+// the entries, not a version number: the disk cache keeps no version, and "some entry is flagged"
+// is exactly what the Melody AE chip needs to know (the same shape as the `npc` flag's check).
+// False for a pre-v9 bot, and the chip then keeps counting every detrimental song.
+function _catalogHasAe(entries) { return Array.isArray(entries) && entries.some(e => !!(e && e.ae)); }
 const SPELL_CATALOG_FILE = path.join(__dirname, 'logsync.spell-catalog.json');
 
 // Item-clicky catalog — item name (lowercased) → { casttime, clickeffect,
@@ -37455,7 +37474,7 @@ function _loadSpellCatalogFromDisk() {
     for (const e of raw.entries) {
       if (e && e.name) _spellByNameLower.set(String(e.name).toLowerCase(), e);
     }
-    _spellCatalogMeta = { fetchedAt: raw.fetched_at, etag: raw.etag || null, count: raw.entries.length };
+    _spellCatalogMeta = { fetchedAt: raw.fetched_at, etag: raw.etag || null, count: raw.entries.length, hasAe: _catalogHasAe(raw.entries) };
     _rebuildBuffMatchers();
     _rebuildMechanicMatchers();   // #206 — the instant-effect index, built from the same catalog
     console.log(`[spell-catalog] loaded ${raw.entries.length} spells from disk (cached ${raw.fetched_at || '?'})`);
@@ -37515,7 +37534,7 @@ function fetchSpellCatalog({ botUrl, token }) {
             for (const e of data.entries) {
               if (e && e.name) _spellByNameLower.set(String(e.name).toLowerCase(), e);
             }
-            _spellCatalogMeta = { fetchedAt: data.fetched_at, etag: etag || null, count: data.entries.length };
+            _spellCatalogMeta = { fetchedAt: data.fetched_at, etag: etag || null, count: data.entries.length, hasAe: _catalogHasAe(data.entries) };
             _rebuildBuffMatchers();
             _rebuildMechanicMatchers();   // #206 — same catalog, separate instant-effect key
             try {
