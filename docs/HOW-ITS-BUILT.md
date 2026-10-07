@@ -1846,6 +1846,34 @@ swap) and the Zeal gauge evaluator; timer-bar switches count as on while one of
 their characters is played (`_playingCharactersLc`). The Suggested panel's
 **For:** picker posts `char` with each tick. `test/per-character-triggers-and-pet-owners.test.js`.
 
+### Trigger manager: open a trigger, warn before the end, repeat (agent on beta; FB-23, FB-30, FB-26, FB-31)
+
+Dashboard → Triggers tab (`dashboard.html`; never the `WEB_HTML` literal).
+- **Opening a row.** A personal row's name is a `<button class="trigname" data-trig-open>` (NOT `class="name"` — that
+  is the character-page link, and a click on "Rampage on me" opened `/character/Rampage`). Click it, or any plain
+  cell, and a `tr.trigdetail` opens beneath with `wpTrigSettingsHtml(t, 'personal')`; **✎ Edit these settings**
+  loads the add form as an edit (`editing = { id, row }` inside the editor IIFE: title, **Save changes**, **Cancel
+  edit**). The save is `wpTrigApplyForm(freshRow, formValues)` — the form's values laid over the saved row, so a
+  second alert, a sound, an imported end text, the per-character list, a spell-catalog match and a `timer_warnings`
+  list all survive. The pattern is checked against `/api/triggers/test` first because the whole-list save drops a
+  row that will not compile. Open rows live in `_wpTrigOpen` (`p|<id>` / `g|<key>`), not the DOM.
+- **Guild list** is its own card, `#wpGuildTriggers` (`renderGuildTriggersCard`, after `renderTriggers` in
+  `_sections`), so opening a row repaints that card and not the Add form. Read-only; the footer links
+  `wolfpack.quest/admin/triggers?edit=<id>`. **Copy to personal** now carries the guild warning and repeat.
+- **Warning (FB-26).** `warning_seconds` + `warning_text` (+ `warning_tts:false` for flash-only) on the personal row;
+  `_timerWarnings` (agent) turns them into the overlay's `warnings` list, the same code a guild row goes through.
+  `warning_*` and `timer_loop*` are in `PERSONAL_CARRY_FIELDS`, or the whole-list save strips them.
+- **Repeat (FB-31).** `timer_loop: true` + optional `timer_loop_max` (the most restarts; absent = until stopped).
+  `_startTimer` puts `loop` / `loop_max` / `loops_done` on the `_activeTimers` row; `_rollLoopTimer` (called from
+  `_activeTimersSnapshot`, where expiry is decided) advances `started_at_ms`/`ends_at_ms` by whole cycles instead of
+  deleting the row. The overlay drops and rebuilds a row whose countdown hits zero, so each round warns again with no
+  Mimic change. Stops on ✕ (`/api/timers/cancel`), the cancel-early phrase, or the mob dying; the trigger firing again
+  replaces the row. A rehearsal stops after 3; the `cooldown_timer_sec` recast bar never loops.
+  **Guild**: a `guild_triggers` row with `timer_loop` / `timer_loop_max` works through `_applyGuildTriggersResponse`
+  (it spreads the row) — but the columns and the `/admin/triggers` form fields do not exist yet.
+- Guarded by `test/trigger-manager-settings-warn-loop.test.js` (engine behaviour under fake time; the pure dashboard
+  functions and the editor IIFE run from the shipped `dashboard.html`).
+
 ### Timer bars — EQLogParser-style countdowns from tracked state (agent 3.7.24)
 
 The guild's co-leader, a bard, 2026-09-26: *"the only thing i need to get is the
