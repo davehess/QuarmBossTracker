@@ -701,8 +701,10 @@ describe('ENV_MAP targets are env names the bot actually reads', () => {
   // The names nothing in the bot reads yet — they resolve ONLY through a guildConfig getter. That is
   // debt for the de-brand sweep (slice 2) to pay by giving each a real call site; it is listed so the
   // next slice sees it, and the test fails if the list goes stale in either direction.
+  // (GUILD_PROVISION itself is read by the bot since the provisioner slice merged: commands/setup.js
+  // honours GUILD_PROVISION=off. The other provisioner names still resolve through provision().)
   const GETTER_ONLY = ['GITHUB_REPO', 'GUILD_NAME', 'GUILD_SHORT', 'TAG_CHANNEL_NAME', 'OFFICER_CHANNEL_NAME',
-    'GUILD_PROVISION', 'GUILD_PROVISION_OPTIONAL', 'GUILD_PROVISION_SKIP', 'GUILD_PROVISION_CREATE_CHANNELS',
+    'GUILD_PROVISION_OPTIONAL', 'GUILD_PROVISION_SKIP', 'GUILD_PROVISION_CREATE_CHANNELS',
     'GUILD_PROVISION_LOCK', 'GUILD_PROVISION_PIN'];
 
   it('every target is read by the bot or resolvable through a getter; the getter-only names are listed', () => {

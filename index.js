@@ -12011,7 +12011,9 @@ if (process.env.MIMIC_RELEASE_ANNOUNCE !== '0') {
 function _upstreamOneshotsEnabledWith(envValue, guildTag) {
   const v = String(envValue || '').trim().toLowerCase();
   if (v) return v === '1' || v === 'true' || v === 'yes';
-  return String(guildTag || 'wolfpack').trim().toLowerCase() === 'wolfpack';
+  const upstreamTag = 'wolfpack';                       // the guild whose history the one-shots tell
+  const tag = String(guildTag == null ? '' : guildTag).trim().toLowerCase();
+  return !tag || tag === upstreamTag;                   // no tag at all = the built-in default = upstream
 }
 function _upstreamOneshotsEnabled() {
   return _upstreamOneshotsEnabledWith(process.env.ANNOUNCE_UPSTREAM_ONESHOTS,
