@@ -13336,7 +13336,7 @@ async function _handleAgentDiStatus(req, res) {
   const [rows, healers] = await Promise.all([
     supabase.select('character_live_state',
       `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(freshIso)}` +
-      `&select=character,di_ready_at,self_mana_pct,updated_at`).catch(() => []),
+      `&select=character,di_ready_at,di_mem,self_mana_pct,updated_at`).catch(() => []),
     supabase.select('characters',
       `guild_id=eq.${encodeURIComponent(guildId)}&class=in.(Cleric,Druid,Shaman)&select=name,class`).catch(() => []),
   ]);
@@ -13350,7 +13350,9 @@ async function _handleAgentDiStatus(req, res) {
     if (!r || !r.character) continue;
     const cls = healerClassByName.get(String(r.character).toLowerCase());
     if (!cls) continue;
-    if (cls === 'Cleric') out.push({ name: r.character, ready_at: r.di_ready_at || null });
+    // mem: is Divine Intervention on the cleric's spell bar (agent 3.7.98+, from the Zeal gem labels)?
+    // null = unknown; the CH chain shows a DI tick only for mem === true and off recast (FB-62).
+    if (cls === 'Cleric') out.push({ name: r.character, ready_at: r.di_ready_at || null, mem: typeof r.di_mem === 'boolean' ? r.di_mem : null });
     if (typeof r.self_mana_pct === 'number') {
       healerMana.push({ name: r.character, class: cls, mana_pct: r.self_mana_pct, updated_at: r.updated_at });
     }
@@ -17521,6 +17523,8 @@ async function _handleAgentLiveState(req, res) {
     // NULL = no DI cast this session = assumed ready.
     const diReadyAt = (st?.di_ready_at && Number.isFinite(Date.parse(st.di_ready_at)))
       ? new Date(Date.parse(st.di_ready_at)).toISOString() : null;
+    // DI on the spell bar (agent 3.7.98+, Zeal gem labels): true / false / null = unknown (FB-62).
+    const diMem = typeof st?.di_mem === 'boolean' ? st.di_mem : null;
     // Self mana (agent v3.3.10+) — powers the /raid mana list + Twitch Queue.
     const selfManaPct = (st?.self_mana_pct != null && Number.isFinite(Number(st.self_mana_pct))) ? Math.max(0, Math.min(100, Number(st.self_mana_pct))) : null;
     const selfManaCur = (st?.self_mana_cur != null && Number.isFinite(Number(st.self_mana_cur))) ? Math.max(0, Math.trunc(Number(st.self_mana_cur))) : null;
@@ -17569,6 +17573,7 @@ async function _handleAgentLiveState(req, res) {
       self_hp_cur: selfHpCur,
       self_hp_max: selfHpMax,
       di_ready_at: diReadyAt,
+      di_mem:      diMem,
       self_mana_pct: selfManaPct,
       self_mana_cur: selfManaCur,
       self_mana_max: selfManaMax,
