@@ -114,11 +114,12 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Main / alt · Inventory only · Hide completely** (§175) | Bot 3.1.214 live (POST + `?mine=1` on `/api/agent/character-prefs`); agent 3.7.96 on beta: the choice in setup and on the dashboard's Me card, Hide completely also stops this PC reading the log | the guild lead: (1) try it on the beta; (2) should Inventory only also stop that character's fight uploads? |
-| **My parses: explore + Guild / My logs** (§174) | Live: search, zone, By day on `/me/parses` (web 1.8.110 · bot 3.1.213, `my_parse_series_v2`). Beta agent 3.7.95: the same in Mimic plus the Guild / My logs switch | members: try My logs on the beta tab. A session with confirmation: drop the old `my_parse_series` |
-| **Reverse Slow + Quarm ability numbering** (§173, FB-54) | Bot 3.1.212 + web 1.8.109 live: the chip, corrected labels; Mimic beta warnings on beta (agent 3.7.94) | the guild lead: add `slow_mitigation` to the mirror? |
+| **Mimic 2.7.9 stable + member-report sweep** (§176) | Stable `40af051a` (agent 3.7.96), beta re-parked 2.7.10. 13 older member reports closed with their senders DMed, plus FB-43; 23 stay open (partial / not done / unclear / alpha, listed in §176) | a session: the open member reports, starting with the partials (FB-22, FB-26, FB-3, FB-37); the guild lead: pick the four B/C web previews still on beta |
+| **Main / alt · Inventory only · Hide completely** (§175) | Bot 3.1.214 live; agent 3.7.96, stable in Mimic 2.7.9: the choice in setup and on the dashboard's Me card, Hide completely also stops this PC reading the log | the guild lead: should Inventory only also stop that character's fight uploads? |
+| **My parses: explore + Guild / My logs** (§174) | Live: search, zone, By day on `/me/parses` (web 1.8.110 · bot 3.1.213, `my_parse_series_v2`); the same in Mimic plus Guild / My logs, stable in Mimic 2.7.9 | a session with confirmation: drop the old `my_parse_series` |
+| **Reverse Slow + Quarm ability numbering** (§173, FB-54) | Bot 3.1.212 + web 1.8.109 live: the chip, corrected labels; Mimic warnings stable in 2.7.9 (agent 3.7.94+) | the guild lead: add `slow_mitigation` to the mirror? |
 | **Target Info: faction + who assists** (§172) | Bot 3.1.211 on main; the Faction sub-tab on Mimic beta | the guild lead: target a Plane of Justice mob on the beta and check Faction / Assisted by |
-| **Long-term bidding out of the timers** (§171) | Stable hot-swap agent 3.7.92 (`f5850e89`), beta 3.7.93: auctions set to run over 6 h get no timer and no Command Center row; bidding unchanged. The ✕ on timer chips: hardened on beta (`cf817067`) | the guild lead: retest a ✕ on the beta (locked overlays) and say which window if it still fails |
+| **Long-term bidding out of the timers** (§171) | Stable hot-swap agent 3.7.92 (`f5850e89`), beta 3.7.93: auctions set to run over 6 h get no timer and no Command Center row; bidding unchanged. The ✕ on timer chips: hardened (`cf817067`), stable in Mimic 2.7.9 | the guild lead: retest a ✕ with overlays locked and say which window if it still fails |
 | **My parses over time** (§170) | Live: `/me/parses` [beta] (web 1.8.108) + `/api/agent/my-parses` (bot 3.1.210), one function `my_parse_series`; mules and traders fold behind "+N more". On beta (agent 3.7.91+): Mimic's My parses tab + tray item and the meter's Trend view | the guild lead: (1) add the 29 missing PoP bosses to the boss list? (2) link `/me/parses` from `/me` (a change to an existing page, so beta first)? Members: try the beta tab and Trend |
 | **Bristlebane (raid-voice bot) + how raiders look per night** (§166) | Code on main (bristlebane 0.1.0, bot 3.1.208): joins on `raid-live`, records only `/bristlebane optin`; `raid_night_appearance` + catalog model/fog columns. Not deployed | the guild lead: Coolify app from `apps/bristlebane` (env: `BRISTLEBANE_TOKEN`, `DISCORD_GUILD_ID`, `RAID_VOICE_CHANNEL_ID`, `RAID_CHAT_CHANNEL_ID`, `BOT_API_URL`, `BOT_API_KEY`) + `BRISTLEBANE_API_KEY` on Railway + a recordings share; the client-art rights call. Screen: **B live [beta]** (`/screen`, web 1.8.106 · bot 3.1.209; the guild lead sets `SCREEN_TOKEN_SECRET` on Railway + Vercel and `SCREEN_LIVE_URL` on Vercel to move it to the bot's 3-second feed), C planned (`DESIGN-raid-screen-activity.md`; the guild lead reads the portal's App Verification tab first). A session: dispatch `sync-quarm` force=true; Zeal fork appearance feed; Bristlebane callouts |
 | **Raid announcers: miMIC, Bristlebane, Lord Mobsincamp** (§169) | Cast bible v0.2 and engine design written (`DESIGN-raid-announcers.md`, `DESIGN-announcer-engine.md`); voice samples on the guild lead's Casting Room page; v0.2 SillyTavern cards and Bristlebane `SOUL.md` being drafted. Nothing built | the guild lead: pick a voice per persona and the six picks (what "mobs in camp" measures; how miMIC's new calls ship; whose voice Bristlebane is; who is named in praise; the Thank-You Embargo; where the always-on GPU lives). A session: this week's four (retire the doubled guild-trigger callouts, prove Bristlebane can play audio in voice, latch PoP first kills, re-voice today's callouts with clips) |
@@ -7667,3 +7668,39 @@ inventory should be with mimic during onboarding but the denotation on other sid
   at once. An unsaved un-hide does not: privacy only ratchets one way until the website has heard it.
 - **Open (the guild lead's call):** should Inventory only also stop uploading that character's fights? Today it
   keeps them (it is a display switch, as on the website).
+
+### 176. Mimic 2.7.9 stable, and members credited for their reports (2026-10-07, Mimic 2.7.9 · agent 3.7.96, `40af051a`)
+
+The guild lead: *"making sure to attribute recent requests for our members suggestions, please roll out a fresh
+stable version."*
+
+- **The cut.** A file-level promotion, beta → main: `apps/mimic` and `packages/wolfpack-logsync` (agent 3.7.96),
+  their tests and the `.gitignore` lines. That covers everything since the 2.7.9 park, `52526491` (agent 3.7.76 to
+  3.7.96; `git diff v2.7.8 52526491` over those dirs is empty). Gate on the stable tree: 457 test files / 7,821
+  tests, lint, `check:dashboard`, `golden:check`. Four beta tests stayed behind: about-figures, buff-groups-web,
+  pvp-fight-sizes, pvp-fights-page. They check the /about, /buffs and /pvp B/C web previews, which wait on the guild
+  lead's pick and stay on beta. Beta is re-parked at 2.7.10 (`fb48060c`).
+- **Release notes = a `<!--player-notes-->` block** on the stable commit (it is the tip of its own push).
+  - **Credit by role, never by name.** The release is public and the announcer reposts it. A member's item reads
+    "(suggested by a member, FB-n)", or "(a member's request)" when no report number exists.
+  - **The checks behind the tags.** `feedback.submitter_discord_id` was compared with the guild lead's id, so the
+    lead's own reports carry no member tag: FB-1, FB-39–44, FB-47–49 and FB-51–53. My parses, the meter's Trend
+    tab and the lag meter come from members' asks quoted in §170 and §163. FB-54 and FB-22 are members' reports.
+- **The FB sweep.** Three Sonnet audits checked every open report against `origin/main`, `origin/beta`, `v2.7.8`
+  and `origin/alpha`, with strict rules: done only when the code doing that exact thing was found. Then a
+  spot-check confirmed each fix at `v2.7.8` or on `main`.
+  - **The stable commit closes** FB-43 (the RIP gate, this cut) and repeats FB-54.
+  - **The docs commit after it closes** FB-4, FB-5, FB-6, FB-9, FB-10, FB-11, FB-13, FB-14, FB-15, FB-18, FB-19,
+    FB-25 and FB-36. Their fixes reached everyone in earlier releases, but nothing ever marked them done. All
+    thirteen are members' reports, so each sender gets the bot's "done and live, thank you" DM. Most shipped
+    before FB numbers existed (§159), which is why they sat open.
+  - **Stay open.**
+    - Partial: FB-3 (the "my last hit" kills), FB-22 (the current-fight copy still drops pets), FB-26 (no warning
+      field in the personal trigger form), FB-37 (XP rows are collected; no per-hour view), FB-53.
+    - Not done: FB-1, FB-12 (alpha only), FB-17 (needs Zeal), FB-21, FB-23, FB-24, FB-30, FB-31, FB-44, FB-52.
+    - Unclear: FB-2, FB-8, FB-16, FB-20, FB-27, FB-28 and FB-32 (too vague to verify).
+    - Alpha only: FB-40.
+  - **Already closed early.** FB-51 and FB-54 were marked ✅ by their main bot commits before the Mimic half was
+    stable. A report never moves backwards, so nothing re-sends.
+- **Lesson for the next session:** a fix that ships without an FB line leaves the member's report open forever.
+  When a change answers a report, the commit carries `Fixes FB-n` at the gate where the member will see it.

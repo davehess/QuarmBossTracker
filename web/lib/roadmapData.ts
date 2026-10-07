@@ -37,6 +37,28 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-2-7-9-2026-10-07',
+    title: 'Mimic 2.7.9',
+    version: 'Mimic 2.7.9 · Agent 3.7.96 · Web 1.8.112',
+    date: '2026-10-07',
+    headline: 'Everything from the beta since 2.7.8 reaches every raider, and much of it started as a member\'s suggestion. Thank you to everyone who sends one.',
+    features: [
+      { name: 'My parses', blurb: 'A new tab in Mimic\'s main window with your own DPS, fight by fight, over a day, a week, 30 or 90 days or the expansion. Search a mob, pick a zone, group by raid night, or switch to My logs for only what your own PC recorded. The DPS/Tank Meter gets a Trend tab for tonight and this week. (A member\'s request.)' },
+      { name: 'Lag meter', blurb: 'On the Diagnostics tab: your router and the Quarm server side by side, so you can tell home lag from server lag. Nothing leaves your PC. (A member\'s request.)' },
+      { name: 'Reverse Slow', blurb: 'Mobs that turn a slow into a haste get a red warning in Target Info and on the HUD, and Mimic tells you to stop slowing. (Suggested by a member, FB-54.)' },
+      { name: 'Raid tools', blurb: 'The Command Center shows who has hailed the flag NPC after a flag boss dies. The buff queue has a By group view. A Buff blocks tab builds block and allow sets with Quarm\'s commands.' },
+      { name: 'Your characters', blurb: 'Setup asks how each character shows: Main / alt, Inventory only, or Hide completely. It is the same switch as My Stats on wolfpack.quest, and you can change it later on the dashboard.' },
+      { name: 'Target Info and the HUD', blurb: 'A Faction tab with the mob\'s faction and who will come to its aid. The HUD counts your procs and stun or aggro spells on the mob, adds your gear\'s damage shield, and warns "Enrage soon" at 12%.' },
+      { name: 'Meter History and the PoP overlay', blurb: 'History counts real damage, puts pets under their owners and keeps 100 fights (suggested by a member, FB-22). The PoP overlay lists every quest step in the order the NPC needs it.' },
+    ],
+    fixes: [
+      'If EverQuest stops writing your log, Mimic says so, and "Archive log & start fresh" starts a new one without deleting anything.',
+      '"Rest in Peace" no longer fires for a named NPC when you are not in a raid.',
+      'The ✕ on timers and pinned callouts should now take clicks while overlays are locked.',
+      'Thirteen older member reports whose fixes had already reached you are now marked done, and each sender gets a thank-you message.',
+    ],
+  },
+  {
     key: 'my-logs-char-modes-2026-10-07',
     title: 'Your own logs, and how each character shows',
     version: 'Agent 3.7.96 beta · Web 1.8.111 · Bot 3.1.214',
