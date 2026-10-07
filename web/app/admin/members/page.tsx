@@ -25,6 +25,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { getDemoMode, maybeFake } from '@/lib/obfuscate';
 import { selectAll } from '@/lib/selectAll';
 import { charsSeenByUploader, countsByDiscord, readChatCounts, readContribCounts, readWhoActivity } from '@/lib/memberActivity';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -115,7 +116,7 @@ async function loadMembers(): Promise<MemberRow[]> {
     selectAll<{ name: string; class: string | null; discord_id: string | null; main_name: string | null; active: boolean }>((from, to) => admin
       .from('characters')
       .select('name, class, discord_id, main_name, active')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .order('name').range(from, to)),
     readChatCounts(admin, since30),
     readContribCounts(admin, since30),
@@ -125,7 +126,7 @@ async function loadMembers(): Promise<MemberRow[]> {
   const allChars = chars;
   // The /who cross-reference below only ever looks up the name tokens of members' Discord names.
   const uploaderTokens = [...new Set(members.flatMap(m => [...tokenize(m.nickname), ...tokenize(m.global_name)]))];
-  const who = await readWhoActivity(admin, 'wolfpack', since30, uploaderTokens);
+  const who = await readWhoActivity(admin, GUILD_TAG, since30, uploaderTokens);
 
   // discord_id → [character info] (linked + active)
   const charsByDiscord = new Map<string, CharInfo[]>();
@@ -269,11 +270,11 @@ async function linkMainToMember(formData: FormData) {
   // The main itself
   await admin.from('characters')
     .update({ discord_id: discordId })
-    .eq('guild_id', 'wolfpack').eq('name', mainName);
+    .eq('guild_id', GUILD_TAG).eq('name', mainName);
   // All alts pointing at this main
   await admin.from('characters')
     .update({ discord_id: discordId })
-    .eq('guild_id', 'wolfpack').eq('main_name', mainName);
+    .eq('guild_id', GUILD_TAG).eq('main_name', mainName);
   revalidatePath('/admin/members');
 }
 

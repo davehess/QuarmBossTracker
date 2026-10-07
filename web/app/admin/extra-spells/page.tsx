@@ -17,6 +17,7 @@ import WpDbLink from '@/components/WpDbLink';
 import NewPageTag from '@/components/NewPageTag';
 import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: '[beta] Extra PoP spells' };
@@ -53,7 +54,7 @@ function CharLink({ name }: { name: string }) {
 export default async function AdminExtraSpellsPage() {
   await requireOfficer();
   const sb = supabaseAdmin();
-  const { data, error } = await sb.rpc('pop_extra_scrolls', { p_guild_id: 'wolfpack' });
+  const { data, error } = await sb.rpc('pop_extra_scrolls', { p_guild_id: GUILD_TAG });
   const rows = (data ?? []) as ExtraScroll[];
 
   return (

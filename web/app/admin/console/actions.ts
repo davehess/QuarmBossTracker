@@ -22,6 +22,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { isControlKey, setAtKey } from '@/lib/consoleHealth';
+import { GUILD_TAG } from '@/lib/guild';
 
 export type ActionResult = { ok: true; message: string } | { ok: false; error: string };
 
@@ -67,7 +68,7 @@ async function _officer() {
 async function _writeKey(key: string, value: number | null, who: { display: string; discordId: string | null }) {
   const sb = supabaseAdmin();
   const { data: row } = await sb
-    .from('overlay_tuning').select('tuning').eq('guild_id', 'wolfpack').maybeSingle();
+    .from('overlay_tuning').select('tuning').eq('guild_id', GUILD_TAG).maybeSingle();
   const tuning: Record<string, unknown> = { ...((row?.tuning as Record<string, unknown>) ?? {}) };
 
   // The companion `flag_set_at_<key>` stamp is what lets the drift panel show an
@@ -83,7 +84,7 @@ async function _writeKey(key: string, value: number | null, who: { display: stri
   }
 
   const { error } = await sb.from('overlay_tuning').upsert({
-    guild_id: 'wolfpack',
+    guild_id: GUILD_TAG,
     tuning,
     updated_by_discord_id: who.discordId,
     updated_by_name: who.display,

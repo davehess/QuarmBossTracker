@@ -10,6 +10,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
 import { ARCHETYPES } from '@/lib/comp';
 import CompEditor from './CompEditor';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,7 +46,7 @@ export default async function AdminCompPage() {
   const { data } = await sb
     .from('comp_templates')
     .select('templates, updated_by_name, updated_at')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .maybeSingle();
 
   const templates = Array.isArray(data?.templates) ? data!.templates : [];

@@ -21,6 +21,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -66,7 +67,7 @@ async function saveVoiceSettings(formData: FormData) {
   await supabaseAdmin()
     .from('voice_settings')
     .upsert({
-      guild_id: 'wolfpack',
+      guild_id: GUILD_TAG,
       enabled,
       default_voice,
       volume_pct,
@@ -86,11 +87,11 @@ export default async function VoiceAdminPage() {
   const { data } = await sb
     .from('voice_settings')
     .select('*')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .maybeSingle();
 
   const row: VoiceSettingsRow = data ?? {
-    guild_id: 'wolfpack',
+    guild_id: GUILD_TAG,
     enabled: true,
     default_voice: 'en-US-AriaNeural',
     volume_pct: 100,

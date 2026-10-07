@@ -19,6 +19,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import { isLocalOnlyRank, raidAltVerdict, TRADER_DEFAULTS } from '@/lib/characterRoles';
+import { GUILD_TAG } from '@/lib/guild';
 
 type RegisterArgs = {
   name:  string;
@@ -85,7 +86,7 @@ export async function registerInOpenDKP(args: RegisterArgs): Promise<{ ok: boole
   const { error } = await admin
     .from('opendkp_register_requests')
     .insert({
-      guild_id:                'wolfpack',
+      guild_id:                GUILD_TAG,
       name:                    args.name,
       class:                   cls,
       race:                    race,
@@ -128,7 +129,7 @@ export async function ignoreUnregistered(name: string): Promise<{ ok: boolean; e
   if (!/^[A-Za-z]{2,20}$/.test(clean)) return { ok: false, error: 'bad name' };
   const { error } = await supabaseAdmin()
     .from('characters')
-    .upsert({ guild_id: 'wolfpack', name: clean, link_ignored: true, active: false },
+    .upsert({ guild_id: GUILD_TAG, name: clean, link_ignored: true, active: false },
             { onConflict: 'guild_id,name' });
   if (error) return { ok: false, error: error.message };
   revalidatePath('/admin/links');

@@ -20,6 +20,7 @@ import { fmtTime, dayKey, dayLabel, fmtDmg, cleanBossName } from '@/lib/format';
 import { classifyEncounter, clearClassification } from '@/app/parses/actions';
 import { curatedNpcIds } from '@/lib/bossFilter';
 import { loadAnomalyWindow, loadOffHoursEncounters, loadPlayersForEncounters } from '@/lib/adminReads';
+import { GUILD_TAG } from '@/lib/guild';
 import {
   guildShare, isReviewForeign, startedInRaidWindow, OFFHOURS_MIN_PLAYERS,
   REVIEW_FOREIGN_MAX_MEMBER_FRAC, AUTO_FOREIGN_MAX_MEMBER_FRAC, AUTO_FOREIGN_MIN_PLAYERS,
@@ -61,7 +62,7 @@ async function load(curated: number[]) {
   // limit sat under PostgREST's 1,000-row response cap besides. 114 curated kills are in the window.
   const [encs, { data: chars }] = await Promise.all([
     loadAnomalyWindow<Enc>(sb, sinceIso, curated),
-    sb.from('characters').select('name, discord_id, main_name').eq('guild_id', 'wolfpack'),
+    sb.from('characters').select('name, discord_id, main_name').eq('guild_id', GUILD_TAG),
   ]);
   return {
     encs,
