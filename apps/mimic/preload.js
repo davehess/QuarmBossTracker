@@ -435,6 +435,10 @@ function _buildOverlayMenu(onClose, state) {
   // (Extended Target etc.): the list grows UP instead of running off-screen.
   menu.appendChild(mkItem('⬆ Grow upward: ' + (st.growUp ? 'ON' : 'off') + ' (this overlay)', '#20374a',
     () => ipcRenderer.invoke('wp-growup-toggle')));
+  // A height dragged to is kept as a floor (main's "Height floor"); this is the
+  // way back to an overlay exactly as tall as what it shows.
+  menu.appendChild(mkItem('↕ Fit height to content', '#20374a',
+    () => ipcRenderer.invoke('overlay-fit-height')));
   // Trigger overlay only: which edge the timer stack starts from.
   if (st.key === 'trigger') {
     menu.appendChild(mkItem('⇅ Timers start at: ' + (st.timersTopDown ? 'TOP (list grows down)' : 'bottom (list grows up)'), '#20374a',
@@ -475,6 +479,8 @@ let _wpMenuSuppressedFit = null;   // wrap element from a suppressed fit
 let _wpMenuSuppressedRawH = null;  // raw height from a suppressed overlayAutoHeight
 let _wpMenuKeepRoom = false;       // a Setup entry was picked: keep the height the menu borrowed
 let _wpPageUsesAutoFit = false;    // page opted into auto-height at least once
+let _wpLastFitWasRaw = false;      // which call the page used last: overlayAutoHeight(h) or autoFitOverlay(el)
+let _wpLastRawH = null;            // …and the raw height it passed, for main's 'wp-refit' to replay
 let _wpLastFitEl = null;           // #159: last explicitly-measured element — the
                                    // menu-close replay must never fall back to
                                    // document.body (height:100% → measures the
@@ -496,6 +502,7 @@ function _menuFitPaused() {
 function _overlayAutoHeightRaw(h) {
   if (WP_IS_DOCKED) return Promise.resolve(true);   // see _autoFitOverlay
   try {
+    _wpLastFitWasRaw = true; _wpLastRawH = h;
     if (_menuFitPaused()) { _wpMenuSuppressedRawH = h; return Promise.resolve(true); }
     return ipcRenderer.invoke('overlay-auto-height', h);
   } catch (e) { return Promise.resolve(false); }
@@ -594,6 +601,7 @@ function _autoFitOverlay(wrapEl) {
   if (WP_IS_DOCKED) return;
   try {
     _wpPageUsesAutoFit = true;
+    _wpLastFitWasRaw = false;
     if (wrapEl) _wpLastFitEl = wrapEl;
     // Chrome menu open → defer; the menu's close handler replays the fit.
     // Bounded (#159): a stuck menu flag can pause fits at most MENU_FIT_PAUSE_MS.
@@ -609,6 +617,18 @@ function _autoFitOverlay(wrapEl) {
     if (h > 0) ipcRenderer.invoke('overlay-auto-height', h);
   } catch (e) {}
 }
+
+// Main sets or clears an overlay's height floor (a drag set it, ↕ Fit height to
+// content cleared it) and needs ONE fresh fit to move the window. Most pages only
+// report a height when their HTML changes (Command Center and Target Info at rest,
+// pets, melody), so this replays whichever call the page used last, through the
+// same gates: the open-menu hold and the dock opt-out still apply.
+ipcRenderer.on('wp-refit', function () {
+  try {
+    if (_wpLastFitWasRaw) { if (_wpLastRawH != null) _overlayAutoHeightRaw(_wpLastRawH); }
+    else if (_wpPageUsesAutoFit) _autoFitOverlay();
+  } catch (e) {}
+});
 
 contextBridge.exposeInMainWorld('mimic', {
   // This computer's hostname — a plain string, resolved once here because the
