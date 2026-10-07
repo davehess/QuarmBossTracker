@@ -32,6 +32,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { selectAll } from './selectAll';
 import { ERAS, eraForTimestamp, rankIndex, type EraName } from './eras';
+import { GUILD_TAG } from './guild';
 
 export type FamilyMember = {
   name: string;
@@ -69,7 +70,7 @@ export async function loadFamily(
     .from('characters')
     .select(FAMILY_COLS)
     .ilike('name', characterName)
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .limit(1);
 
   const self = (selfRows && selfRows[0]) as FamilyMember | undefined;
@@ -90,13 +91,13 @@ export async function loadFamily(
   const queries = [
     sb.from('characters').select(FAMILY_COLS)
       .or(`main_name.eq.${rootName},name.eq.${rootName}`)
-      .eq('guild_id', 'wolfpack'),
+      .eq('guild_id', GUILD_TAG),
   ];
   if (self.discord_id) {
     queries.push(
       sb.from('characters').select(FAMILY_COLS)
         .eq('discord_id', self.discord_id)
-        .eq('guild_id', 'wolfpack'),
+        .eq('guild_id', GUILD_TAG),
     );
   }
   const results = await Promise.all(queries);

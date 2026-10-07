@@ -18,6 +18,7 @@ import {
   LIST_MIN_LEVEL, isListable, partitionListable, tierOf, partitionTiers, frontTierOf,
   loadLevels, loadTraderNames, loadHiddenNames,
 } from '../web/lib/listableChars.ts';
+import { GUILD_TAG } from '../web/lib/guild.ts';
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
@@ -139,7 +140,7 @@ describe('the loaders (against a fake client)', () => {
       ilike: (k, v) => { seen.push(['ilike', k, v]); return q; },
       limit: async () => ({ data: [{ name: 'Zarrin' }, { name: 'Brackwyn' }] }) };
     const names = await loadTraderNames({ from: (t) => { seen.push(['from', t]); return q; } });
-    expect(seen).toEqual([['from', 'characters'], ['select', 'name'], ['eq', 'guild_id', 'wolfpack'], ['ilike', 'rank', 'trader']]);
+    expect(seen).toEqual([['from', 'characters'], ['select', 'name'], ['eq', 'guild_id', GUILD_TAG], ['ilike', 'rank', 'trader']]);
     expect([...names].sort()).toEqual(['brackwyn', 'zarrin']);
   });
   it('loadHiddenNames reads the characters their owner hid, as lowercase names', async () => {
@@ -147,7 +148,7 @@ describe('the loaders (against a fake client)', () => {
     const q = { select: (c) => { seen.push(['select', c]); return q; }, eq: (k, v) => { seen.push(['eq', k, v]); return q; },
       limit: async () => ({ data: [{ name: 'Rethlan' }, { name: 'Nyssara' }] }) };
     const names = await loadHiddenNames({ from: (t) => { seen.push(['from', t]); return q; } });
-    expect(seen).toEqual([['from', 'characters'], ['select', 'name'], ['eq', 'guild_id', 'wolfpack'], ['eq', 'hidden_from_lists', true]]);
+    expect(seen).toEqual([['from', 'characters'], ['select', 'name'], ['eq', 'guild_id', GUILD_TAG], ['eq', 'hidden_from_lists', true]]);
     expect([...names].sort()).toEqual(['nyssara', 'rethlan']);
   });
 });
