@@ -37,6 +37,26 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pets-clickies-repeat-2026-10-07',
+    title: 'Pets on the meter, two rows of clickies, guild triggers that repeat',
+    version: 'Agent 3.7.100 beta · Web 1.8.116 · Bot 3.1.219',
+    date: '2026-10-07',
+    channel: 'beta',
+    headline: 'Another raider\'s charm pet counts for its owner, the HUD fits more clickies, and officers can make a guild timer repeat. Most of it came from member reports.',
+    features: [
+      { name: 'Two rows of clickies', blurb: 'The HUD ring shows a second row of clickies inside the first, so up to seven picks fit. Switch back to one row under ⚙ → Items.' },
+      { name: 'Charm pets on the meter', blurb: 'Once a charmed pet says who its leader is (its owner types /pet leader), its damage counts for that raider on your DPS meter instead of showing as "(charmed)". (FB-52)' },
+      { name: 'Copy counts pets', blurb: 'The 📋 copy adds each pet\'s damage to its owner\'s line, marked "+Pets", for the current fight and for History. (FB-22)' },
+      { name: 'Mana and Endurance', blurb: 'The HUD builder has separate Mana and Endurance switches, each with its own size. (FB-12)' },
+      { name: 'Guild triggers that repeat', blurb: 'Officers can give a guild trigger a countdown, a warning before it ends and a repeat, right on the triggers page. (FB-31)' },
+    ],
+    fixes: [
+      'Unticking the speaker on a Suggested alert now really silences it, and "charm break" is said once instead of twice. (FB-21)',
+      'Dashboard cards popped out as their own windows reopen at the size and place you left them.',
+      'Reports fixed on the beta now always show as "on beta", and the people who sent them hear about it.',
+    ],
+  },
+  {
     key: 'mimic-2-7-9-2026-10-07',
     title: 'Mimic 2.7.9',
     version: 'Mimic 2.7.9 · Agent 3.7.96 · Web 1.8.112',

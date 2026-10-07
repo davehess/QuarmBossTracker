@@ -116,7 +116,13 @@ is ephemeral. It is a desktop-session job.
 |---|---|---|
 | **Three picks: bard counts, AE chip by spell data, height floor** (§178) | All three built; HUD counts, AE gate and the floor on beta (agent 3.7.98); the catalog's `ae` flag waits on this branch reaching `main` | the guild lead: push this branch to main (after 00:30 ET on a raid night); a bard on beta checks the ring label; a beta tester drags an overlay small and confirms it stays |
 | **Guild kit slices 1b, 2-prep, 3** (§177) | Bot 3.1.215: `utils/guildConfig.js` loader + getters, Discord self-provisioner (`/setup discord`, standalone script), tag-correct REST filters with a ratchet, one-shot announcers gated on the guild tag, Bristlebane guild file. Web slice A (`web/lib/guild.ts` + the literal swap) reviewed separately → `beta` | a session: slice 2, the de-branding sweep (start from the 11 getter-only env names in `test/guild-config.test.js`); then `doctor` and the wizard CLI (§8 picks stand) |
-| **Clicky picker + Recharged** (§179, FB-65) | On beta (agent + Mimic, version set at the push): ⚙ → Items picks up to four clickies, root · dispel · stun first, brighter names with their own size slider, a Recharged button per charged clicky | a beta tester with charged clickies: pick, recharge at a vendor, press Recharged; the guild lead: say if one line of four is enough or the ring should get a second row |
+| **HUD second clicky row** (§185) | Mimic beta: row 2 one line inside row 1, on by default, 7 picks (4 on one row) | the guild lead: keep 7 picks or accept a smaller floor for 8 (A/B in §185) |
+| **Mana / Endurance parts, charm break once, unticked 🔊 = silent** (§184, FB-12, FB-21) | Agent 3.7.100 + Mimic on beta | a beta tester: untick 🔊 on a Suggested alert and hear nothing; break a charm and hear it once; the guild lead: keep the Charm overlay's own "charm break" voice when the row is unticked, or silence both |
+| **Another raider's charm pet on the meter; pets on the copy line** (§183, FB-52, FB-22) | Agent 3.7.100 + Mimic on beta: a fresh, single "My leader is X" credits X live and in local History; the 📋 line folds pets in as "+Pets" | the guild lead: A or B for the upload (below in §183); the pet's owner and a beta tester check the meter after a /pet leader |
+| **FB scanner by reachability** (§182) | Bot 3.1.219 on `claude/sharp-lamport-dC0TW`: reports fixed on a merged branch move on; FB-58–61 move on the first look after deploy | the guild lead: push the branch to `main` after 00:30 ET |
+| **Guild-trigger countdown / warning / repeat** (§181, FB-31) | Web 1.8.115 on beta, migration applied: `https://b.wolfpack.quest/admin/triggers` | an officer: set a repeat on a test trigger there and watch it loop on a beta agent; then graduate the web beta |
+| **Canvas group hotkeys** (§180) | Alpha `9e87325e`: a key per saved group, the overlay's own key moves its Canvas panel; the dashboard's list is agent 3.7.100 on beta | the guild lead: keep or flip the two defaults (a press with the Canvas off shows the group; hide-all is not lifted) |
+| **Clicky picker + Recharged** (§179, FB-65) | On beta (agent + Mimic, version set at the push): ⚙ → Items picks up to four clickies, root · dispel · stun first, brighter names with their own size slider, a Recharged button per charged clicky | a beta tester with charged clickies: pick, recharge at a vendor, press Recharged (the second row is §185) |
 | **Mimic 2.7.9 stable + member-report sweep** (§176) | Stable `40af051a` (agent 3.7.96), beta re-parked 2.7.10. 13 older member reports closed with their senders DMed, plus FB-43; 23 stay open (partial / not done / unclear / alpha, listed in §176) | a session: the open member reports, starting with the partials (FB-22, FB-26, FB-3, FB-37); the guild lead: pick the four B/C web previews still on beta |
 | **Main / alt · Inventory only · Hide completely** (§175) | Bot 3.1.214 live; agent 3.7.96, stable in Mimic 2.7.9: the choice in setup and on the dashboard's Me card, Hide completely also stops this PC reading the log | the guild lead: should Inventory only also stop that character's fight uploads? |
 | **My parses: explore + Guild / My logs** (§174) | Live: search, zone, By day on `/me/parses` (web 1.8.110 · bot 3.1.213, `my_parse_series_v2`); the same in Mimic plus Guild / My logs, stable in Mimic 2.7.9 | a session with confirmation: drop the old `my_parse_series` |
@@ -7810,3 +7816,99 @@ after."*
 - **No dashboard twin.** The HUD builder lives only in `me.html`, so the tray/dashboard parity rule adds nothing.
 - **Open.** One line of four may be too few for someone with many clickies; a second row, or a bigger share of the
   ring, is a layout pick for the guild lead.
+
+### 180. Canvas group hotkeys: a group is a SAVED group, and an overlay's own key moves its Canvas panel too (2026-10-07, Mimic alpha `9e87325e`)
+
+The guild lead: *"we should be able to assign hotkeys to show or hide canvas groups as well"*, then *"if you're using
+an overlay as whole it should let you use that overlay's same hide key combo"*.
+
+- **"A group" is a saved group** (★ Groups → My groups), not an overlay set: a set is the whole screen, and loading
+  one swaps the layout, hidden state included, so the two never overlap. The key is stored by the group's id
+  (`cfg.canvasGroupHotkeys`), so a rename keeps it and deleting the group drops it.
+- **Defaults this session picked; the guild lead can flip either in one line:**
+  - a press while the Canvas is OFF turns it on and **shows** the group (a toggle could hide what you came to see);
+  - a press during a hide-all changes the group's saved state but **does not lift** the hide-all, the same as an
+    overlay hotkey.
+- **An overlay's key** sets its "as is" Canvas panels (every look; not pieces taken apart, which belong to groups)
+  and its own switch to one state. No new key, so no new clash to check. The dashboard's ON/OFF and the tray's
+  overlay toggles are still the plain toggle.
+- **Known gap.** A group already on someone's Canvas from before this build has no link to its saved group, so its key
+  says "not on this screen's canvas" until it is saved or dropped again. Not backfilled: there is nothing to match
+  the pieces by that would not be a guess.
+- **Parity.** The tray lists the groups under the Canvas entry; the dashboard's Overlays tab gets the same list on beta
+  (feature-detected, so beta Mimic shows nothing).
+
+### 181. Guild-trigger countdown, warning and repeat are set on /admin/triggers, beta first (2026-10-07, web 1.8.115 beta, FB-31)
+
+- **The form refuses what the agent would silently ignore**: a warning needs its seconds, its words and a countdown
+  longer than it; a repeat needs a countdown; whole numbers only. Max repeats blank or 0 means until cancelled
+  (stored NULL; the agent reads 0 the same way). Caps are the agent's own clamps: countdown 3600 s, 1000 repeats, 200
+  characters of warning. All 512 live rows passed the rules on 2026-10-07, so none is blocked from a re-save.
+- **Beta first, not main**, because it changes an existing page (CLAUDE.md's UI rule): one form in the page's own
+  style, no variants, since the fields were named by the request. Read it at `https://b.wolfpack.quest/admin/triggers`.
+- **The migration went to production ahead of the web build** (`guild_triggers_loop`, additive: two columns with
+  defaults) and its file is committed identically on `main` and `beta`, so the sync merges it cleanly.
+
+### 182. The FB scanner reads commits by reachability, not by date (2026-10-07, bot 3.1.219)
+
+- **Found:** FB-58, FB-59, FB-60, FB-61 had `Fixes FB-n` on beta and stayed `acked`. The scanner read the newest 40
+  commits by date and stopped at the sha it saw last; our features are built on side branches and merged later, so a
+  commit made at 20:00 and merged at 22:40 sorts below a tip recorded at 21:00 and was never read.
+- **The call:** ask the compare API for everything the branch gained since that sha (up to three pages of 100). The
+  date walk stays only for a first look and for a sha GitHub no longer knows (beta is reset at graduations). The
+  first look after the deploy moves the four stuck reports on its own.
+- **Still true, by design:** the scanner reads `beta` and `main`, so a fix that lives only on `alpha` (FB-64) moves
+  when it reaches beta, not before.
+
+### 183. Another raider's charm pet is credited from its own fresh, single "My leader is" line (2026-10-07, agent 3.7.100 beta, FB-52, FB-22)
+
+- **Found in the report's log:** the pet answered its owner's /pet leader nine times in ten minutes, and the agent
+  parsed every one; the meter still showed "(charmed)" because `_publishLiveThreat` refuses `petLeaders` for
+  article-prefixed names. That refusal is right on its own — `petLeaders` never forgets, and one revenant claim once
+  labelled every revenant all raid (2026-07-31) — but for anyone except the owner the pet's public line is the only
+  proof there is.
+- **The call:** keep the claim WITH ITS TIME and credit it only while it is fresh (no earlier than 15 minutes before
+  the pull, the bot's own number for the same lines) and unambiguous (one raider claims that name in the window).
+  Two claimants (the three-revenants night) stay "(charmed)", crediting nobody. It ranks below every proof the
+  agent holds itself, and a charm-break line ends it.
+- **The 📋 copy line folds pets into owners** with EQLogParser's `+Pets` mark, so each owner's line carries their
+  pet and the lines add up to the header.
+- **Open — the upload (the guild lead's call):**
+  - **A — Meter only:** the claim credits the owner on everyone's live meter and local History; the guild's settled
+    numbers still miss a pet whose owner runs no Mimic. As shipped.
+  - **B — Upload too:** `_provenPets` also sends fresh single claims as `pet_leaders`, so the settled parse credits
+    that owner. It changes durable, bot-visible data, and a wrong claim would be stored, not just shown.
+
+### 184. An unticked 🔊 on a Suggested alert means silent, and a charm break is said once (2026-10-07, agent 3.7.100 beta, FB-12, FB-21)
+
+- **FB-21, what it was.** One suggested trigger (`self_charm_broke`) shows in two lists, so ticking either box moves
+  both — not two triggers. The 🔊 box is the row's `tts` text; unticked, the row had none, and both the agent and the
+  trigger overlay read the DISPLAY text aloud when a fire has no tts — so unticking silenced nothing, on every
+  Suggested alert. And the instant charm fire was marked "spoken" only when 🔊 was ticked, so with it unticked the
+  Charm overlay and the trigger overlay both spoke.
+- **The call:** an unticked 🔊 on a `suggested:` row is muted (flash only), by the same `mute` switch the raid callout
+  allow-list uses. Personal triggers written with no tts still read their text, and guild rows are untouched. The
+  charm fire counts as spoken only when the row is on, on for that character, and 🔊 ticked.
+- **Session pick, the guild lead can flip it:** with the row's 🔊 unticked, the Charm overlay's own "charm break"
+  voice still speaks once (one voice, from a separate feature). The other way, an enabled row would silence the
+  Charm overlay whatever its 🔊 says, and the "flash here, voice there" combination would be gone.
+- **FB-12:** Mana and Endurance are separate HUD parts; an old combined setting becomes both, so nobody's HUD changes on
+  update.
+
+### 185. The HUD's clickies get a second row, inside the first (2026-10-07, Mimic beta)
+
+The guild lead: *"add a second clicky row to the HUD"* (§179 had left one line of four as the open question).
+
+- **Where:** the same 140°–220° bottom arc, one line (1.1 × the font size) INSIDE row 1. Outside is the resists line,
+  six units away, with no room for a line between. Inside only the clear middle and the damage-shield button's corner
+  are near; both rows clear the button by about 23 units.
+- **Cost:** at full size row 2's letter tops reach about 3.5 units into the clear middle; squeezed to 70% they do not.
+  The bottom tracking arrow's tail (shown only while tracking) now sits under row 2 as well as row 1.
+- **Fill:** row 1 first, then row 2, in the same order (picks, else root · dispel · stun · worn · name); `+N` only for
+  what fits on neither. With nothing picked, eight defaults show and may shrink to 70% to fit. One row (⚙ → Items →
+  "Two clicky rows" off) is exactly the old line.
+- **Picks:** up to 7 on two rows (computed: at the 70% floor a worst-case pick, a six-letter name plus a two-digit
+  count, fits 4 on row 1 and 3 on the shorter row 2), 4 on one.
+- **Open, the guild lead's pick:**
+  - **A — 7 picks, 70% floor:** as shipped; nothing gets smaller than today's smallest.
+  - **B — 8 picks, 65% floor:** one more clicky; the smallest text gets about 7% smaller.
