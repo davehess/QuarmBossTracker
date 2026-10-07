@@ -1596,6 +1596,11 @@ const _charmTickTracker = new Map();
 // running) before it's dropped — unless the pet dies first. Per user: keep the
 // pet so the mob's tick counter stays visible; remove on death or after 5 min.
 const PET_LINGER_MS = 5 * 60 * 1000;
+// How long before a fight starts (or any time after) a charm mob's public "My leader is <Owner>."
+// still counts as CURRENT ownership of that mob. Same number as the bot's PET_CLAIM_FRESH_MS (root
+// index.js, the pet_leaders fold): the longest charm is 12 minutes, so a claim older than a quarter
+// hour before the pull is last hour's charm, not tonight's (FB-52).
+const PET_CLAIM_FRESH_MS = 15 * 60 * 1000;
 // Most-recent self charm-spell cast, staged by the `cast` handler. Consumed by
 // the next charm-land (gauge or log) within a short window to attach the charm's
 // class + duration to the session, driving the duration bar + class-aware warn.
@@ -8182,6 +8187,11 @@ class EncounterBuilder {
     // wiped this on every encounter flush, a pet that was summoned during
     // fight #1 would lose its owner mapping by fight #2.
     this.petLeaders     = {};         // lowercasePetName → ownerName
+    // Public "My leader is <Owner>." claims on CHARM mobs (article-prefixed names), with the log time
+    // each was heard: lowercasePetName → [{ o: ownerName, at: logMs }], one entry per distinct owner.
+    // petLeaders alone cannot vouch for a charm mob (it never forgets, and the same name is a different
+    // mob next pull), so the meter asks _freshClaimOwner() instead. Persistent like petLeaders.
+    this.petClaims      = {};
     // lastDirgeCast persists across encounters too — a bard might fire a dirge
     // right before an encounter starts and the damage tick lands inside it.
     this.lastDirgeCast  = null;       // { ts: ms, name: string } | null
@@ -8632,6 +8642,10 @@ class EncounterBuilder {
       if (!petOwner && (this.charmSessions.length > 0 || _charmTickTracker.size > 0)) {
         petOwner = this._provenPetOwner(nl);
       }
+      // Last of all, and for charm mobs only: the pet's own fresh, unambiguous "My leader is <Owner>."
+      // — the only proof there is when the owner is ANOTHER raider (FB-52). Below every proof this
+      // agent holds itself, so a live charm of ours is never overruled by a bystander line.
+      if (!petOwner && /^an?\s/i.test(nl)) petOwner = this._freshClaimOwner(nl);
       if (petOwner === '__SELF__') petOwner = this.character || null;
       const petCharm = !petOwner && /^an?\s/i.test(nl) && !!this.petLeaders[nl];
       if (this.targets.has(name) && !petOwner && !petCharm) continue;
@@ -9104,6 +9118,8 @@ class EncounterBuilder {
         }
       }
       if (!petKey) return;
+      // The charm is over: whoever said "My leader is …" a minute ago no longer holds the mob.
+      delete this.petClaims[petKey];
       const open = this._activeCharms?.get(petKey);
       const ownerWas = open ? open.owner : (_charmTickTracker.get(petKey)?.owner || null);
       if (open) {
@@ -9150,6 +9166,10 @@ class EncounterBuilder {
       const owner = event.owner === '__SELF__' ? (this.character || null) : event.owner;
       if (!owner) return;  // can't attribute without a known character
       this.petLeaders[event.pet.toLowerCase()] = owner;
+      // The pet's own public declaration ("a lesser vind briesl says 'My leader is <Owner>.'") is the one
+      // ownership signal a BYSTANDER gets for a charm mob (FB-52): no charm gauge, no pet-command ack.
+      // Keep it WITH ITS TIME so the meter can credit the owner while it is fresh (_freshClaimOwner).
+      if (!event.source && event.owner !== '__SELF__') this._noteCharmClaim(event.pet, owner, Date.parse(event.ts));
       // Also update the session-wide dashboard tracker so [P] view stays current
       const _pk = event.pet.toLowerCase();
       if (!knownPetOwners.has(_pk)) knownPetOwners.set(_pk, new Set());
@@ -10346,6 +10366,37 @@ class EncounterBuilder {
     }
     const hit = this._provenCache.map.get(nameLower);
     return hit ? hit.owner : null;
+  }
+  // ── A charm mob's own claim, for a BYSTANDER (FB-52) ───────────────────────
+  // A raider's charm pet answers /pet leader, and its summon-time chatter, in PUBLIC: "a lesser vind
+  // briesl says 'My leader is <Owner>.'". Anyone in range reads it; only the owner's own agent has the
+  // charm gauge or the pet-command acks, so for everyone else this line is the entire proof. The meter
+  // used to ignore it for article-prefixed names (petLeaders never forgets, and the same mob name is a
+  // different mob next pull: one revenant claim once labelled every revenant all raid, 2026-07-31) and
+  // so showed another raider's charm as "(charmed)" however many times its owner typed /pet leader.
+  // Time is what makes it safe: a claim counts only while FRESH — heard no earlier than
+  // PET_CLAIM_FRESH_MS before this fight began (any time after) — the bot's own rule for the same
+  // lines. And only while it is UNAMBIGUOUS: two raiders claiming the same name inside the window
+  // (three revenants, 2026-07-30) cannot be told apart from one row, so nobody is credited, as before.
+  _noteCharmClaim(pet, owner, atMs) {
+    const key = String(pet || '').toLowerCase();
+    const own = String(owner || '').trim();
+    // Charm mobs only (summoned pets keep their runtime-long petLeaders ownership), real player-shaped
+    // owners only (a mob that is itself charmed has summoned a sub-pet: "My leader is a Shadel Bandit").
+    if (!/^an?\s/.test(key) || !/^[A-Z][a-z]+$/.test(own) || !Number.isFinite(atMs)) return;
+    const list = this.petClaims[key] || (this.petClaims[key] = []);
+    const mine = list.find(c => c.o.toLowerCase() === own.toLowerCase());
+    if (mine) { mine.o = own; mine.at = Math.max(mine.at, atMs); } else list.push({ o: own, at: atMs });
+  }
+  _freshClaimOwner(nameLower) {
+    const list = this.petClaims[nameLower];
+    if (!list || !list.length) return null;
+    // Measured from this fight's first event; between fights, from the newest thing the log showed.
+    const startMs = this.startedAt ? new Date(this.startedAt).getTime() : NaN;
+    const lastMs = this.lastEvent ? Date.parse(this.lastEvent) : NaN;
+    const ref = Number.isFinite(startMs) ? startMs : (Number.isFinite(lastMs) ? lastMs : Date.now());
+    const fresh = list.filter(c => c.at >= ref - PET_CLAIM_FRESH_MS);
+    return fresh.length === 1 ? fresh[0].o : null;
   }
   flush() {
     // Settle a held DS candidate so a fight that ends on it still counts the
