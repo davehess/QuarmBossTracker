@@ -6164,7 +6164,7 @@ async function _handleAgentBossKill(req, res) {
           }
         });
         // The one-time Vex Thal celebration rides the same kill, right after.
-        discordJobs.push(() => _announceVexThalClearedOnce(kill).catch(err => console.warn('[vt-cleared]', err?.message)));
+        if (_oneshotGate('vt-cleared')) discordJobs.push(() => _announceVexThalClearedOnce(kill).catch(err => console.warn('[vt-cleared]', err?.message)));
       }
       set++;
     } else {
@@ -11979,6 +11979,34 @@ if (process.env.MIMIC_RELEASE_ANNOUNCE !== '0') {
   setInterval(() => { _announceMimicReleases().catch(() => {}); }, 15 * 60_000);
 }
 
+// ── Upstream one-shot announcers: Wolf Pack's own history, OFF for a tenant guild ──
+// The eight one-shot announcers below (Harmonic Howl through the inventory split) post Wolf
+// Pack-specific embeds ("Congrats Wolf Pack on the last Aten Ha Ra of Luclin") and are latched only
+// by a bot_kv row, finding their channel by NAME. A new guild's empty bot_kv plus a channel called
+// #raid-chat would post all of it on its first boot (the guild lead, 2026-10-07). Resolution order:
+// ANNOUNCE_UPSTREAM_ONESHOTS (1/true/yes = on, any other value = off) → a deployment that committed
+// its own guild/config.json is a tenant, off → neither, which is Wolf Pack's production, on.
+// The announcers' bodies and latches are untouched; what is gated is where each is SCHEDULED.
+function _upstreamOneshotsEnabledWith(envValue, configExists) {
+  const v = String(envValue || '').trim().toLowerCase();
+  if (v) return v === '1' || v === 'true' || v === 'yes';
+  return !configExists;
+}
+function _upstreamOneshotsEnabled() {
+  return _upstreamOneshotsEnabledWith(process.env.ANNOUNCE_UPSTREAM_ONESHOTS,
+    require('fs').existsSync(require('path').join(__dirname, 'guild', 'config.json')));
+}
+// true = go ahead and schedule. When off, one log line per tag (the Vex Thal site asks on every kill).
+const _oneshotOffLogged = new Set();
+function _oneshotGate(tag) {
+  if (_upstreamOneshotsEnabled()) return true;
+  if (!_oneshotOffLogged.has(tag)) {
+    _oneshotOffLogged.add(tag);
+    console.log(`[${tag}] upstream one-shot announcer is off (ANNOUNCE_UPSTREAM_ONESHOTS / guild/config.json) — not scheduled`);
+  }
+  return false;
+}
+
 // ── Mimic 2.0 "Harmonic Howl" one-shot raid-chat announcement (2026-07-20) ──
 // The guild lead: post the release card to #raid-chat with the expected release channel.
 // One post ever — the latch lives in bot_kv (survives restarts, the announcer's
@@ -12035,7 +12063,7 @@ async function _announceHarmonicHowlOnce() {
     console.log('[howl-announce] posted to #raid-chat:', posted.id);
   }
 }
-setTimeout(() => { _announceHarmonicHowlOnce().catch(err => console.warn('[howl-announce]', err?.message)); }, 90_000);
+if (_oneshotGate('howl-announce')) setTimeout(() => { _announceHarmonicHowlOnce().catch(err => console.warn('[howl-announce]', err?.message)); }, 90_000);
 
 // ── Mimic 2.7.1 one-shot raid-chat announcement (2026-09-24) ─────────────────
 // The guild lead: "When this is over make sure to post to raid-chat in discord so
@@ -12106,7 +12134,7 @@ async function _announceMimic271Once() {
   return 'posted';
 }
 // Every 5 minutes until it has posted (or finds it already had), for up to 12 hours.
-{
+if (_oneshotGate('mimic271-announce')) {
   let tries = 0;
   const t = setInterval(() => {
     if (++tries > 144) { clearInterval(t); return; }
@@ -12180,7 +12208,7 @@ async function _announceMimic278Once() {
   return 'posted';
 }
 // First look a minute after boot, then every 5 minutes until it has posted (or finds it already had), for up to 12 hours.
-{
+if (_oneshotGate('mimic278-announce')) {
   let tries = 0;
   const tick = () => _announceMimic278Once()
     .then(r => { if (r === 'posted' || r === 'latched') clearInterval(t); })
@@ -12251,7 +12279,7 @@ async function _announceOptinPvpOnce() {
   return 'posted';
 }
 // Every 5 minutes until it has posted (or finds it already had), for up to 12 hours.
-{
+if (_oneshotGate('optin-pvp-announce')) {
   let tries = 0;
   const t = setInterval(() => {
     if (++tries > 144) { clearInterval(t); return; }
@@ -12322,7 +12350,7 @@ async function _announceFilmMakingOnce() {
   return 'posted';
 }
 // First try a minute after boot, then every 5 minutes until it has posted (or finds it already had), for up to 12 hours.
-{
+if (_oneshotGate('film-making-announce')) {
   let tries = 0;
   const go = () => _announceFilmMakingOnce().then(r => { if (r === 'posted' || r === 'latched') clearInterval(t); })
     .catch(err => console.warn('[film-making-announce]', err?.message));
@@ -12456,7 +12484,7 @@ async function _announceVexThalFilmOnce() {
 }
 // Every minute until the film has posted (the tuning read is the 60 s cache; the
 // latch read happens only once a link exists).
-{
+if (_oneshotGate('vt-film')) {
   const t = setInterval(() => {
     _announceVexThalFilmOnce().then(r => { if (r === 'posted' || r === 'latched') clearInterval(t); })
       .catch(err => console.warn('[vt-film]', err?.message));
@@ -12514,7 +12542,7 @@ async function _announceInventorySplitOnce() {
 }
 // 90 s after boot (the guild cache is warm by then), then every 5 minutes until
 // it has posted or finds it already had, for up to 2 hours.
-{
+if (_oneshotGate('inv-split-announce')) {
   let tries = 0, t = null;
   const attempt = () => _announceInventorySplitOnce()
     .then(r => { if ((r === 'posted' || r === 'latched') && t) { clearInterval(t); t = null; } return r; })
