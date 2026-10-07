@@ -38,6 +38,17 @@ function _loadGuildDiscordJson(dir, env) {
 }
 _loadGuildDiscordJson(require('path').join(__dirname, 'guild'), process.env);
 
+// ── guild/config.json → unset env names (the guild kit, slice 1b) ───────────
+// Same shape as the discord.json loader above, for the NAMES and SETTINGS in
+// guild/config.json (guild tag, role names, timezone, OpenDKP client, web base,
+// provisioner mode ...). Env wins; only unset/blank names are filled, so our
+// deployment — everything in env, no config.json — is untouched. Secret-shaped
+// keys in the file are stripped and reported, never used (design §2). The map of
+// which config path fills which env name is ENV_MAP in utils/guildConfig.js,
+// which is also where new code reads the typed getters instead of a literal.
+const _GUILD_CONFIG_FILLED = require('./utils/guildConfig').fillEnv(process.env);
+if (_GUILD_CONFIG_FILLED.filled.length) console.log(`[guild] config.json filled ${_GUILD_CONFIG_FILLED.filled.length} unset name(s): ${_GUILD_CONFIG_FILLED.filled.join(', ')}`);
+
 const {
   Client, GatewayIntentBits, Collection, Events, REST, Routes, MessageFlags,
 } = require('discord.js');
