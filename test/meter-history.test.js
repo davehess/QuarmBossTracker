@@ -32,15 +32,15 @@ const agentSrc = readSource(AGENT_INDEX);
 const upTo = (src, start, next) => { const b = sliceBlock(src, start, next); return b.slice(0, b.length - next.length); };
 
 // The overlay's real code: the fold, the History merge, the live board's row mapping, the /rs filter.
-const { _foldPetsIntoOwners, _histRows } = evalBlock(
+const { _foldPetsIntoOwners, _histRows, _rsRaiders } = evalBlock(
   sliceBlock(overlay, '  function _foldPetsIntoOwners(allRows){', '\n  // ── Poll loop '),
-  ['_foldPetsIntoOwners', '_histRows'],
+  ['_foldPetsIntoOwners', '_histRows', '_rsRaiders'],
 );
 const liveRows = new Function('pp', '_foldPetsIntoOwners',
   "var allRows = []; const TAB_MODE = 'dps'; const field = 'dmg';\n"
   + upTo(overlay, 'allRows = Object.entries(pp)', 'allRows = _foldPetsIntoOwners(allRows);')
   + '\nallRows = _foldPetsIntoOwners(allRows);\nreturn allRows;');
-const histRsRows = new Function('allRows', sliceBlock(overlay, 'var histReal = allRows', '.slice(0, 10);') + '\nreturn histReal;');
+const histRsRows = _rsRaiders;                       // the raiders the /rs line lists (History and live alike)
 
 const MOB = 'a Shissar acolyte';
 const CP = 'a fungoid sporeling';

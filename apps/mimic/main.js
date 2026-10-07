@@ -3915,10 +3915,12 @@ async function _rescueOverlays() {
 // minimum to whatever it is set to — so 200 was saved; the next launch built
 // the window with its own minimum and it came back wider. One number now.
 const _OVERLAY_MIN_W = 200;
-function _resolveBounds(boundsKey, sigKey, def) {
+// `legacySigKey` is a name an older build READ the signature under; it is consulted only when
+// `sigKey` holds nothing, so a save made under the old name is not thrown away.
+function _resolveBounds(boundsKey, sigKey, def, legacySigKey) {
   const cfg = loadConfig();
   const saved = cfg[boundsKey];
-  const savedSig = cfg[sigKey];
+  const savedSig = cfg[sigKey] !== undefined ? cfg[sigKey] : (legacySigKey ? cfg[legacySigKey] : undefined);
   if (saved && savedSig === _screenSignature() && _boundsOnScreen(saved)) {
     return { x: saved.x, y: saved.y, width: saved.width, height: saved.height };
   }
@@ -4672,8 +4674,11 @@ function createPanelOverlay(panelKey) {
     return true;
   }
   const boundsKey = 'panelBounds_' + panelKey;
-  const sigKey    = 'panelBoundsSig_' + panelKey;
-  const b = _resolveBounds(boundsKey, sigKey, { x: 100, y: 100, width: 360, height: 220 });
+  // _writeBounds SAVES the signature as `<boundsKey>Sig`, so that is where it is read from. It was
+  // read from 'panelBoundsSig_<panel>', a name nothing ever wrote, so a panel window never found
+  // its saved size or place and opened at the default every time. The old name stays as a fallback.
+  const sigKey    = boundsKey + 'Sig';
+  const b = _resolveBounds(boundsKey, sigKey, { x: 100, y: 100, width: 360, height: 220 }, 'panelBoundsSig_' + panelKey);
   const win = new BrowserWindow({
     // Descriptive title so this process is identifiable in Task Manager /
     // Alt-Tab (e.g. "Wolf Pack Mimic — DEEPS panel overlay") instead of a

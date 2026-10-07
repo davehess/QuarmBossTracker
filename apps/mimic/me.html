@@ -705,8 +705,10 @@
     var noMana = s.no_mana === true || !!(s.mana && s.mana.max === 0);
     var enP = s.end && s.end.pct != null ? s.end.pct : null;
     var d = { s: s, hp: pctOf(s.hp), mana: noMana ? null : pctOf(s.mana), end: enP, noMana: noMana };
-    // The right arc: mana, or endurance for a class with none.
-    d.right = noMana ? { pct: enP, color: 'var(--orange)', label: 'end' } : { pct: d.mana, color: 'var(--blue)', label: 'mana' };
+    // The right arc: mana, or endurance for a class with none. `part` is the builder part that owns it
+    // (FB-12: Mana and Endurance are two parts) — a class with mana draws endurance as the thin arc
+    // under health instead, which the Endurance part switches.
+    d.right = noMana ? { pct: enP, color: 'var(--orange)', label: 'end', part: 'end' } : { pct: d.mana, color: 'var(--blue)', label: 'mana', part: 'mana' };
     d.bard = noMana ? null : bardCounts(s);   // a bard's mana slot reads these counts, the arc still fills with mana % (FB-56)
     if (s.casting) {
       var left = s.casting.remaining_ms != null ? Math.max(0, s.casting.remaining_ms - dt) : null;
@@ -874,14 +876,14 @@
   // leaves a gap rather than moving the others under the player's eye.
   var HUD_PARTS = [
     ['Target', [['target', 'Name, health, level, class'], ['tot', 'Its target (on top)'], ['tres', 'Its resists'], ['status', 'Slow · F/R · summon · enrage']]],
-    ['You', [['hp', 'Health'], ['right', 'Mana or endurance'], ['dps', 'Damage per second (in · out)'], ['focus', 'Class number (CHs left…)']]],
+    ['You', [['hp', 'Health'], ['mana', 'Mana (right arc)'], ['end', 'Endurance (thin arc; right arc with no mana)'], ['dps', 'Damage per second (in · out)'], ['focus', 'Class number (CHs left…)']]],
     ['Timers', [['cooldowns', 'Cooldowns'], ['tick', 'Server tick'], ['swing', 'Swing timer'], ['cast', 'Cast bar (in the swing\'s place)']]],
     ['Hits', [['hitsIn', 'Hits on you (left)'], ['hitsOut', 'Your hits (right)'], ['ds', 'Damage shield'],
       ['procs', 'Procs and stuns/aggro on target'],
       ['rounds', 'Rounds listed', [3, 4, 5, 6, 8]], ['split', 'Newest rounds hit by hit', [1, 2, 3]],
       ['hitsSide', 'Numbers inside or outside the ring', ['inside', 'outside']]]],
     ['Raid', [['ramp', 'Rampage target (top right)'], ['lowhp', 'Raiders under 25% (top left)']]],
-    ['Items', [['clickies', 'Clicky counters (charges left)']]],
+    ['Items', [['clickies', 'Clicky counters (charges left)'], ['clickyRows', 'Two clicky rows (the 2nd dips into the middle)']]],
     ['Tracking', [['track', 'Arrows toward what you track'], ['trackShow', 'Arrows drawn', ['all', 'lit']]]],
     ['Other', [['resists', 'Resists'], ['weight', 'Line weight', ['thin', 'normal', 'bold']]]],
   ];
@@ -890,14 +892,14 @@
   // round-three look. It scales every arc and the text's dark edge, and takes
   // the numbers off bold.
   var HUD_WEIGHTS = { thin: 0.55, normal: 0.8, bold: 1 };
-  var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, right: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
+  var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, mana: 1, end: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
     hitsIn: 1, hitsOut: 1, ds: 1, procs: 1, rounds: 5, split: 2, hitsSide: 'inside', resists: 1, tres: 1, weight: 'thin',
-    track: 1, trackShow: 'all', ramp: 1, lowhp: 1, clickies: 1, clickyPick: [], sizes: {} };
+    track: 1, trackShow: 'all', ramp: 1, lowhp: 1, clickies: 1, clickyRows: 1, clickyPick: [], sizes: {} };
   // Text size per part, from the small slider beside it in the builder (the
   // guild lead, round six: "small sliders next to each of the hud's elements for
   // font size"). 1 = as designed; kept to 0.7–1.6 so a label cannot swallow
   // its neighbours.
-  var HUD_SIZED = ['target', 'tot', 'tres', 'status', 'hp', 'right', 'cooldowns', 'tick', 'swing', 'hitsIn', 'hitsOut', 'ds', 'procs', 'resists', 'track', 'clickies'];
+  var HUD_SIZED = ['target', 'tot', 'tres', 'status', 'hp', 'mana', 'end', 'cooldowns', 'tick', 'swing', 'hitsIn', 'hitsOut', 'ds', 'procs', 'resists', 'track', 'clickies'];
   // A part's size times the builder's "All text" slider (round seven: "a top
   // level slider for all of the text"), each 0.7–1.6.
   function sz(k){
@@ -918,6 +920,21 @@
         || JSON.parse(localStorage.getItem(HUD_PARTS_KEY) || 'null');
       if (saved && typeof saved === 'object') for (var k in HUD_DEFAULTS) if (k in saved) p[k] = saved[k];
       if (!p.sizes || typeof p.sizes !== 'object') p.sizes = {};
+      // FB-12 (a member, 2026-09-27: "mana or endurance … separated to be either or"): Mana and
+      // Endurance were ONE part, `right`. A save from before the split keeps today's look — both new
+      // parts start where the old one was (on, or off) and take its text size — unless the save
+      // already has them. The old keys are dropped, so the next save writes only the new ones.
+      if (saved && typeof saved === 'object') {
+        if ('right' in saved) {
+          if (!('mana' in saved)) p.mana = saved.right;
+          if (!('end' in saved)) p.end = saved.right;
+        }
+        if (p.sizes.right !== undefined) {
+          if (p.sizes.mana === undefined) p.sizes.mana = p.sizes.right;
+          if (p.sizes.end === undefined) p.sizes.end = p.sizes.right;
+          delete p.sizes.right;
+        }
+      }
     } catch (e) {}
     // The clicky picks: always a fresh array of item names, never the one HUD_DEFAULTS holds.
     p.clickyPick = Array.isArray(p.clickyPick) ? p.clickyPick.filter(function(n){ return typeof n === 'string'; }) : [];
@@ -931,7 +948,23 @@
   // root · dispel · stun first (`clickies_all`; `clickies` is its first eight, which is all an older
   // agent sends). The builder's picker ticks up to CLICKY_MAX_PICK of them; with none ticked the HUD
   // takes the first that fit, which is why that order matters.
-  var CLICKY_DEFAULT_N = 8, CLICKY_MAX_PICK = 4;   // four is what the arc holds at a size you can read
+  // A second row (the guild lead, 2026-10-07: "add a second clicky row to the HUD"): the line is written
+  // along the bottom arc at CLICKY_R, the same 140°–220° span as before; the second row is the same arc on
+  // a smaller circle, one line (CLICKY_PITCH × the font size) just inside it. Inside, not outside: outside
+  // is the resists line (r 136, tops at ~130) with a 6-unit gap to this row, and the cooldown bar and
+  // labels (r 150, 159–165) beyond it; inside only the clear middle (r < 110) and the damage-shield
+  // button's corner (r ~112 at 130°, thorns/lava out to 21 units) are left, and 140° clears that at both
+  // radii. Cost: at the default size the second row's letter tops reach r ~106.5, about 3.5 units into the
+  // clear middle — which is why ⚙ → Items has a "Two clicky rows" switch.
+  // The most picks: the SAME fit math as clickyFit, worst case — every pick a 6-character name (the
+  // smallest the fit tries), a space and a two-digit count, 9 characters, at 70% of the size (the least
+  // it shrinks to). One row holds 4 of those (4 × 9 + 3 × 3 = 45 = the row's 45 characters); the second
+  // row, a shorter arc, 3 (43 characters): 7. An eighth worst-case pick needs 65% (5.5 px at the default
+  // size), so it would be counted ("+1") instead of shown; the test pins both numbers.
+  var CLICKY_DEFAULT_N = 8, CLICKY_MAX_PICK = 7, CLICKY_MAX_PICK_ONE = 4;
+  var CLICKY_R = 122, CLICKY_PITCH = 1.1;
+  // What the builder's picker lets you tick: one row holds four, two rows seven.
+  function clickyMaxPick(){ return hudParts.clickyRows ? CLICKY_MAX_PICK : CLICKY_MAX_PICK_ONE; }
   var CLICKY_KIND = { root: 'Root', dispel: 'Dispel', stun: 'Stun' };
   function clickyList(s){
     var a = Array.isArray(s.clickies_all) ? s.clickies_all : (Array.isArray(s.clickies) ? s.clickies : []);
@@ -971,40 +1004,75 @@
   // The line along the bottom arc. A textPath draws nothing past the end of its arc, so a line with
   // more than fits used to lose its first and last items outright; this decides what fits. Picked
   // clickies (`all`) ALL show — names shorten, the text shrinks (never under 70%) — and the default
-  // list shows the first that fit (at 90% at the least), with "+N" for the rest. `room` is the arc's length,
-  // `size` the font size wanted. Each try is [share of the size, longest name]. Returns
-  // { items: [{ c, nm, n }], more, size }.
-  function clickyFit(list, size, room, all){
-    var tries = all ? [[1, 10], [1, 8], [0.85, 10], [0.85, 8], [0.7, 10], [0.7, 8], [0.7, 7], [0.7, 6]] : [[1, 10], [1, 8], [0.9, 10], [0.9, 8]];
+  // list shows the first that fit (at 90% at the least, on one row), with "+N" for the rest. `room` is the
+  // arc's length, `size` the font size wanted. Each try is [share of the size, longest name]. Returns
+  // { items: [{ c, nm, n }], rows: [[…], […]], more, tail, size } — `items` is every one drawn, `rows` the
+  // same split by row, `tail` the row the " +N" is written on (-1: none).
+  // Two rows (`rows` 2): row 1 is filled first, then row 2, in the same order, so the priority is the
+  // same; row 2 is the same arc on a circle one line smaller (CLICKY_PITCH × the font size) so it holds a
+  // few characters fewer. With twice the room the default list may shrink to 70% like the picks, so
+  // the 8 default clickies show without a "+N", where on one row it drops items first.
+  // `extra` is how many more there are that the caller left out (the default list's ninth onward):
+  // they count into the "+N" too.
+  function clickyFit(list, size, room, all, rows, extra){
+    rows = rows === 2 ? 2 : 1; extra = extra > 0 ? extra : 0;
+    var tries = all || rows === 2 ? [[1, 10], [1, 8], [0.85, 10], [0.85, 8], [0.7, 10], [0.7, 8], [0.7, 7], [0.7, 6]] : [[1, 10], [1, 8], [0.9, 10], [0.9, 8]];
     function entries(cap){
       return list.map(function(c){ var nm = clickyShort(c.name, cap), n = clickyNum(c); return { c: c, nm: nm, n: n, len: nm.length + (n ? 1 + n.length : 0) }; });
     }
-    var ti, es, s, B;
+    // The characters each row holds at font size s (a character is 0.6 of it wide).
+    function budget(s){
+      var b = [Math.floor(room / (0.6 * s))];
+      if (rows === 2) b.push(Math.floor(room * (CLICKY_R - CLICKY_PITCH * s) / CLICKY_R / (0.6 * s)));
+      return b;
+    }
+    function width(row){ return row.reduce(function(a, e, i){ return a + e.len + (i ? 3 : 0); }, 0); }
+    // First fit, in order. Unless `force` (the last resort) it returns null when they do not all fit.
+    // Whatever is left over, and `extra`, is counted as " +N" after the last row that has items — alone
+    // on the next row if that one is full, else in place of the last items that stood there.
+    function place(es, b, force){
+      var out = [], i = 0, r, row, used, add, left, t = 0;
+      for (r = 0; r < b.length; r++) {
+        row = []; used = 0;
+        for (; i < es.length; i++) {
+          add = es[i].len + (row.length ? 3 : 0);
+          if ((row.length || !force) && used + add > b[r]) break;
+          used += add; row.push(es[i]);
+        }
+        out.push(row);
+      }
+      if (!force && i < es.length) return null;
+      left = es.length - i + extra;
+      if (!left) return { rows: out, more: 0, tail: -1 };
+      while (t + 1 < out.length && out[t + 1].length) t++;
+      if (width(out[t]) + 4 > b[t]) {   // 4: the " +N" that follows
+        if (t + 1 < out.length) t++;
+        else if (force) while (out[t].length > 1 && width(out[t]) + 4 > b[t]) { out[t].pop(); left++; }
+        else return null;
+      }
+      return { rows: out, more: left, tail: t };
+    }
+    function done(got, s){ return { items: [].concat.apply([], got.rows), rows: got.rows, more: got.more, tail: got.tail, size: s }; }
+    var ti, s, got;
     for (ti = 0; ti < tries.length; ti++) {
-      s = size * tries[ti][0]; B = Math.floor(room / (0.6 * s));
-      es = entries(tries[ti][1]);
-      if (es.reduce(function(a, e){ return a + e.len; }, 0) + 3 * (es.length - 1) <= B) return { items: es, more: 0, size: s };
+      s = size * tries[ti][0];
+      got = place(entries(tries[ti][1]), budget(s), false);
+      if (got) return done(got, s);
     }
-    s = size * (all ? 0.7 : 1); B = Math.floor(room / (0.6 * s));   // picks: the smallest we go; default: full size
-    es = entries(8);
-    var keep = [], used = 0, i, add;
-    for (i = 0; i < es.length; i++) {
-      add = es[i].len + (keep.length ? 3 : 0);
-      if (keep.length && used + add + 4 > B) break;   // 4: the " +N" that follows
-      used += add; keep.push(es[i]);
-    }
-    return { items: keep, more: es.length - keep.length, size: s };
+    s = size * (all || rows === 2 ? 0.7 : 1);   // picks: the smallest we go; default: full size
+    return done(place(entries(8), budget(s), true), s);
   }
   // The builder's picker: every clicky on you, ticked when it is one you picked, with its kind, its
   // charges and (for a charged one) a "Recharged" button — a recharge prints no line that names the
-  // item, so it is the member's to say.
-  function clickyPickerHtml(list, picks){
+  // item, so it is the member's to say. `max` is how many may be ticked (clickyMaxPick: 7 on two rows, 4 on one).
+  function clickyPickerHtml(list, picks, max){
     if (!list.length) return '<div class="cpk-note dim">No clickies yet. They come from your <b>/output inventory</b> or Quarmy export.</div>';
+    max = max || CLICKY_MAX_PICK;
     var ticked = clickyPicked(list, picks).map(clickyKey);
-    var full = ticked.length >= CLICKY_MAX_PICK;
+    var full = ticked.length >= max;
     var h = '<div class="cpk-note dim">' + (ticked.length
-      ? 'Counting ' + ticked.length + ' of ' + list.length + ' (up to ' + CLICKY_MAX_PICK + '). <button type="button" class="cpk-clear" data-clk-clear="1">Clear</button>'
-      : 'Tick up to ' + CLICKY_MAX_PICK + ' to count. Until you do, the first that fit show, root · dispel · stun first.') + '</div>';
+      ? 'Counting ' + ticked.length + ' of ' + list.length + ' (up to ' + max + '). <button type="button" class="cpk-clear" data-clk-clear="1">Clear</button>'
+      : 'Tick up to ' + max + ' to count. Until you do, the first that fit show, root · dispel · stun first.') + '</div>';
     list.forEach(function(c){
       var k = clickyKey(c), on = ticked.indexOf(k) !== -1;
       var num = c.unlimited ? '∞' : (c.left == null ? '' : c.left + (c.max ? '/' + c.max : ''));
@@ -1082,7 +1150,7 @@
   // amount (reshapeForHits), so the ring keeps its size; both SVG layers are
   // overflow:visible, so lines past the square still draw.
   var LANE_EXT = 120, _lanesOut = false;
-  function laneOutR(){ return 186 + 11 * Math.max(sz('hp'), sz('right')); }
+  function laneOutR(){ return 186 + 11 * Math.max(sz('hp'), sz('mana'), sz('end')); }
   // Which edge a line hugs: the ring's side of the column.
   function flushRight(L){ return _lanesOut ? L.side === 'left' : L.side === 'right'; }
   // "a Temple Patroller" → "Patroller": enough to tell two totals apart.
@@ -1447,14 +1515,16 @@
       h += gauge(R, 236, 304, d.hp == null ? 0 : d.hp / 100, hpColor(d.hp), 6 * W);
       h += ringLabel('hhp', R + 10, 236, 304, hpLabel(d, p.dps), 11 * sz('hp'));
     }
-    if (p.right && d.right.pct != null) {
+    // The right arc belongs to Mana, or to Endurance for a class with none (d.right.part); each part
+    // switches only its own drawing (FB-12). Endurance on a class WITH mana is the thin arc under health.
+    if (p[d.right.part] && d.right.pct != null) {
       h += gauge(R, 56, 124, d.right.pct / 100, d.right.color, 6 * W, true);
       // Fitted to the arc (68°): a bard's three counts with the damage out beside them is longer than
       // "MANA 45%" ever was, and a label the arc cuts off reads as a different number.
       var rl = rightLabel(d, p.dps, p.focus);
-      h += ringLabel('hrt', R + 10, 56, 124, rl, fitSize(11 * sz('right'), rl.replace(/<[^>]*>/g, '').length, 68, R + 10));
-      if (!d.noMana && d.end != null) h += gauge(R - 10, 240, 300, d.end / 100, 'var(--orange)', 2 * W);
+      h += ringLabel('hrt', R + 10, 56, 124, rl, fitSize(11 * sz(d.right.part), rl.replace(/<[^>]*>/g, '').length, 68, R + 10));
     }
+    if (p.end && !d.noMana && d.end != null) h += gauge(R - 10, 240, 300, d.end / 100, 'var(--orange)', 2 * W);
     // Cooldowns: an inner arc across the bottom (at most 80°, centred on 6
     // o'clock), left to right, each labelled along the ring beneath it.
     var cds = cdItems(d, p).slice(0, 5);
@@ -1524,15 +1594,21 @@
     // FB-65 (a member): the ones you picked in the builder, else the first that
     // fit (root · dispel · stun first); names bright, not grey, at their own
     // size slider, and what does not fit is counted ("+3"), not cut off.
+    // A second row (the guild lead, 2026-10-07: "add a second clicky row to the HUD"): the same
+    // 140°–220° arc one line further in (clickyFit has the why), the same size and style; it fills only
+    // when the first is full, and ⚙ → Items → "Two clicky rows" keeps just the first.
     if (p.clickies && d.clk.length) {
-      var cshown = clickyShown(d.clk, p.clickyPick);
-      var cfit = clickyFit(cshown, 8.5 * sz('clickies'), 80 * Math.PI / 180 * 122 * 0.96, clickyPicked(d.clk, p.clickyPick).length > 0);
-      var cspans = cfit.items.map(function(e, i){
-        var col = e.c.left === 0 ? 'var(--red)' : (e.c.left === 1 ? 'var(--orange)' : '#c9d1d9');
-        return (i ? '<tspan fill="#6e7681"> · </tspan>' : '') + '<tspan fill="#e6edf3">' + esc(e.nm) + '</tspan>'
-          + (e.n ? '<tspan fill="' + col + '" font-weight="700"> ' + e.n + '</tspan>' : '');
-      }).join('') + (cfit.more ? '<tspan fill="#8b949e"> +' + cfit.more + '</tspan>' : '');
-      h += ringLabel('hcl', 122, 140, 220, cspans, cfit.size, true);
+      var cshown = clickyShown(d.clk, p.clickyPick), cpicked = clickyPicked(d.clk, p.clickyPick).length > 0, crows = p.clickyRows ? 2 : 1;
+      var cfit = clickyFit(cshown, 8.5 * sz('clickies'), 80 * Math.PI / 180 * CLICKY_R * 0.96, cpicked, crows, crows === 2 && !cpicked ? d.clk.length - cshown.length : 0);
+      cfit.rows.forEach(function(row, ri){
+        if (!row.length && cfit.tail !== ri) return;
+        var cspans = row.map(function(e, i){
+          var col = e.c.left === 0 ? 'var(--red)' : (e.c.left === 1 ? 'var(--orange)' : '#c9d1d9');
+          return (i ? '<tspan fill="#6e7681"> · </tspan>' : '') + '<tspan fill="#e6edf3">' + esc(e.nm) + '</tspan>'
+            + (e.n ? '<tspan fill="' + col + '" font-weight="700"> ' + e.n + '</tspan>' : '');
+        }).join('') + (cfit.tail === ri ? '<tspan fill="#8b949e"> +' + cfit.more + '</tspan>' : '');
+        h += ringLabel(ri ? 'hcl2' : 'hcl', Math.round((CLICKY_R - ri * CLICKY_PITCH * cfit.size) * 10) / 10, 140, 220, cspans, cfit.size, true);
+      });
     }
     if (p.track && d.track) h += trackArrows(d.track, p.trackShow === 'lit', W, sz('track'));
     return svgWrap(h + blindRing(s), HUD_WEIGHTS[p.weight] ? p.weight : 'thin');
@@ -1635,7 +1711,7 @@
   function refreshClickyPicker(force){
     var el = document.getElementById('clkpick');
     if (!el) return;
-    var html = clickyPickerHtml(clickyList(_last || {}), hudParts.clickyPick);
+    var html = clickyPickerHtml(clickyList(_last || {}), hudParts.clickyPick, clickyMaxPick());
     if (force || el._html !== html) { el.innerHTML = html; el._html = html; }
   }
   // Saved for this character, and as the starting point for any character
@@ -1666,13 +1742,13 @@
     reshapeForHits(was, hudParts.hitsSide);
     saveParts();
   });
-  // Ticking a clicky counts it (at most CLICKY_MAX_PICK; the HUD draws them in the agent's order).
+  // Ticking a clicky counts it (at most clickyMaxPick(); the HUD draws them in the agent's order).
   builderList.addEventListener('change', function(e){
     var k = e.target && e.target.getAttribute && e.target.getAttribute('data-clk');
     if (!k) return;
     var now = clickyPicked(clickyList(_last || {}), hudParts.clickyPick).map(clickyKey);
     hudParts.clickyPick = e.target.checked
-      ? (now.indexOf(k) === -1 ? now.concat([k]) : now).slice(0, CLICKY_MAX_PICK)
+      ? (now.indexOf(k) === -1 ? now.concat([k]) : now).slice(0, clickyMaxPick())
       : now.filter(function(x){ return x !== k; });
     saveParts(); refreshClickyPicker();
   });

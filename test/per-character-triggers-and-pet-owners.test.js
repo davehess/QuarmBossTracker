@@ -177,6 +177,8 @@ describe('FB-35: the DPS HUD says (pet) and keeps it out of the /rs line', () =>
   it('labels the row and filters it from the copied parse', () => {
     expect(hud).toMatch(/\(t && t\.pet_charm\) \|\| \(t && t\.pet_summoned \? 'pet' : false\)/);
     expect(hud).toMatch(/petCharm === 'pet'[\s\S]{0,300}>\(pet\)</);
-    expect(hud).toMatch(/return !x\[2\] && !x\[3\] && !\/\\s\/\.test\(x\[0\]\);/);
+    // FB-22 moved the keep-filter into _rsRaiders, which both copies share: an owned pet is folded into
+    // its owner before it gets there (x[3]), an unowned "(pet)" / "(charmed)" row (x[6]) stays off.
+    expect(hud).toMatch(/function _rsRaiders\(rows\) \{\s*return rows\s*\.filter\(function\(x\)\{ return x\[0\] && !x\[3\] && !x\[6\] && !\/\\s\/\.test\(String\(x\[0\]\)\) && x\[1\] > 0; \}\)/);
   });
 });
