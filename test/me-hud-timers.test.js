@@ -818,12 +818,12 @@ describe('clicky counters', () => {
     ]);
   };
 
-  it('lists the clickies on you with charges left; each glow after the export spends one', () => {
+  // Charged items only (the guild lead, 2026-10-07): the unlimited rod is never listed.
+  it('lists the charged clickies on you with charges left; each glow after the export spends one', () => {
     setup(true);
     const h = load();
     expect(h._meClickies('Aldenmar')).toEqual([
       { name: 'Ring of Shadows', left: 5, unlimited: false, used: 0, worn: true, kind: null, max: 5 },
-      { name: 'Rod of Insidious Glamour', left: null, unlimited: true, used: 0, worn: false, kind: null, max: null },
     ]);
     h._noteClickyUse('Aldenmar', 'Ring of Shadows', fileAt - 60_000);   // before the export: already counted in it
     h._noteClickyUse('Aldenmar', 'Ring of Shadows', fileAt + 60_000);
@@ -831,11 +831,11 @@ describe('clicky counters', () => {
     expect(h._meClickies('Aldenmar')[0]).toMatchObject({ left: 3, used: 2 });
   });
 
-  it('without the catalog\'s charge count, a 1 is not shown as "1 left"', () => {
+  it('without the catalog\'s charge count, a 1 is not counted as charges and is left out', () => {
     setup(false);
     const c = load()._meClickies('Aldenmar');
     expect(c.find(x => x.name === 'Ring of Shadows').left).toBe(5);       // more than one: charges
-    expect(c.find(x => x.name === 'Rod of Insidious Glamour')).toMatchObject({ left: null, unlimited: false });
+    expect(c.find(x => x.name === 'Rod of Insidious Glamour')).toBeUndefined();
   });
 
   it('no export, no counters', () => {
@@ -856,8 +856,8 @@ describe('clicky counters', () => {
       expect(load()._meClickies('Aldenmar')[0]).toMatchObject({ name: 'Ring of Shadows', left: 5 });
       // Only a Quarmy export at all: it is used.
       globalThis.__invs = null;
-      globalThis.__quarmy = { at: fileAt, items: [{ loc: 'General1-Slot1', name: 'Rod of Insidious Glamour', count: 1 }] };
-      expect(load()._meClickies('Aldenmar')).toEqual([{ name: 'Rod of Insidious Glamour', left: null, unlimited: true, used: 0, worn: false, kind: null, max: null }]);
+      globalThis.__quarmy = { at: fileAt, items: [{ loc: 'General1-Slot1', name: 'Ring of Shadows', count: 3 }] };
+      expect(load()._meClickies('Aldenmar')).toEqual([{ name: 'Ring of Shadows', left: 3, unlimited: false, used: 0, worn: false, kind: null, max: 5 }]);
     } finally { globalThis.__quarmy = null; }
   });
 });
