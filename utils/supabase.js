@@ -14,6 +14,8 @@ function isEnabled() {
   return !!(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
+// The guild tag every row carries. Read at call time so an env override applies after import.
+// Exported as `guildId` so other utils share this one fallback instead of spelling their own.
 function _guildId() {
   return process.env.SUPABASE_GUILD_ID || 'wolfpack';
 }
@@ -802,7 +804,7 @@ async function getTonightEncounters(date = new Date()) {
   dayEnd.setDate(dayEnd.getDate() + 1);
 
   const guildId = _guildId();
-  const query = `guild_id=eq.${guildId}` +
+  const query = `guild_id=eq.${encodeURIComponent(guildId)}` +
     `&started_at=gte.${dayStart.toISOString()}` +
     `&started_at=lt.${dayEnd.toISOString()}`;
   // Paged: a raid day holds more than the 1,000-row cap (1,210 encounters on
@@ -902,6 +904,7 @@ async function upsertWhoOverride({ character, klass, isZek, setBy, setByName, no
 
 module.exports = {
   isEnabled,
+  guildId: _guildId,
   breakerState,
   _resetBreaker,   // test-only
   capStats,
