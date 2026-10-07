@@ -120,6 +120,15 @@
   #builder select,#builder button{background:rgba(22,27,34,.9);color:var(--text);border:1px solid var(--border);
     border-radius:4px;font:inherit;font-size:10px;padding:1px 6px;cursor:pointer}
   #builder .bfoot{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
+  /* The clicky picker (FB-65): a tickable row per clicky — name and kind, charges, "Recharged". */
+  #builder .cpk-note{font-size:10px;margin:2px 0 3px 4px}
+  #builder .cpk{display:flex;align-items:center;gap:6px;padding-left:4px}
+  #builder .cpk label{flex:1;min-width:0}
+  #builder .cpk .bl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #builder .cpk .cn{flex:none;min-width:30px;text-align:right;font-variant-numeric:tabular-nums}
+  #builder .cpk .crc,#builder .cpk-clear{flex:none;font-size:9.5px;padding:0 5px}
+  #builder .ck{font-style:normal;font-size:9px;padding:0 4px;border:1px solid currentColor;border-radius:3px;margin-left:3px}
+  #builder .ck-root{color:var(--green)} #builder .ck-dispel{color:var(--blue)} #builder .ck-stun{color:var(--gold)}
   #hudsvg text,#hudlanes text{font-family:inherit;font-variant-numeric:tabular-nums;paint-order:stroke;stroke:#000;stroke-width:3px;stroke-linejoin:round}
   /* Line weight (⚙ → Line weight): the dark edge round the text, and the
      numbers' boldness. Arcs are scaled in the script. Consolas has only
@@ -706,7 +715,7 @@
     d.ramp = s.rampage && s.rampage.name ? { name: s.rampage.name, hp: s.rampage.hp_pct, fresh: s.rampage.fresh === true } : null;
     d.low = (Array.isArray(s.low_hp) ? s.low_hp : []).filter(function(m){ return m && m.name; })
       .map(function(m){ return { name: m.name, hp: m.hp_pct }; });
-    d.clk = (Array.isArray(s.clickies) ? s.clickies : []).filter(function(c){ return c && c.name; });
+    d.clk = clickyList(s);
     d.tallies = c && Array.isArray(c.tallies) ? c.tallies : [];
     d.feed = (c && c.feed ? c.feed : []).map(function(f){
       // A weapon proc is purple (round eight: "Procs should be purple") — the
@@ -849,12 +858,12 @@
   var HUD_WEIGHTS = { thin: 0.55, normal: 0.8, bold: 1 };
   var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, right: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
     hitsIn: 1, hitsOut: 1, ds: 1, procs: 1, rounds: 5, split: 2, hitsSide: 'inside', resists: 1, tres: 1, weight: 'thin',
-    track: 1, trackShow: 'all', ramp: 1, lowhp: 1, clickies: 1, sizes: {} };
+    track: 1, trackShow: 'all', ramp: 1, lowhp: 1, clickies: 1, clickyPick: [], sizes: {} };
   // Text size per part, from the small slider beside it in the builder (the
   // guild lead, round six: "small sliders next to each of the hud's elements for
   // font size"). 1 = as designed; kept to 0.7–1.6 so a label cannot swallow
   // its neighbours.
-  var HUD_SIZED = ['target', 'tot', 'tres', 'status', 'hp', 'right', 'cooldowns', 'tick', 'swing', 'hitsIn', 'hitsOut', 'ds', 'procs', 'resists', 'track'];
+  var HUD_SIZED = ['target', 'tot', 'tres', 'status', 'hp', 'right', 'cooldowns', 'tick', 'swing', 'hitsIn', 'hitsOut', 'ds', 'procs', 'resists', 'track', 'clickies'];
   // A part's size times the builder's "All text" slider (round seven: "a top
   // level slider for all of the text"), each 0.7–1.6.
   function sz(k){
@@ -876,9 +885,103 @@
       if (saved && typeof saved === 'object') for (var k in HUD_DEFAULTS) if (k in saved) p[k] = saved[k];
       if (!p.sizes || typeof p.sizes !== 'object') p.sizes = {};
     } catch (e) {}
+    // The clicky picks: always a fresh array of item names, never the one HUD_DEFAULTS holds.
+    p.clickyPick = Array.isArray(p.clickyPick) ? p.clickyPick.filter(function(n){ return typeof n === 'string'; }) : [];
     return p;
   }
   var hudParts = readParts(null);
+
+  // ── Clicky counters: which ones, and how they are written ──────────────────
+  // FB-65 (a member, 2026-10-07): "Should be able to pick which clicky charges you track, and the names
+  // need to be easier to see. Root/Dispel/Stun are prioritized". The agent sends every clicky on you,
+  // root · dispel · stun first (`clickies_all`; `clickies` is its first eight, which is all an older
+  // agent sends). The builder's picker ticks up to CLICKY_MAX_PICK of them; with none ticked the HUD
+  // takes the first that fit, which is why that order matters.
+  var CLICKY_DEFAULT_N = 8, CLICKY_MAX_PICK = 4;   // four is what the arc holds at a size you can read
+  var CLICKY_KIND = { root: 'Root', dispel: 'Dispel', stun: 'Stun' };
+  function clickyList(s){
+    var a = Array.isArray(s.clickies_all) ? s.clickies_all : (Array.isArray(s.clickies) ? s.clickies : []);
+    return a.filter(function(c){ return c && c.name; });
+  }
+  function clickyKey(c){ return String(c.name).toLowerCase(); }
+  // The picked ones that are on you, in the agent's order (root · dispel · stun first).
+  function clickyPicked(list, picks){
+    return Array.isArray(picks) && picks.length ? list.filter(function(c){ return picks.indexOf(clickyKey(c)) !== -1; }) : [];
+  }
+  // What the line lists. Picks that are not on you any more (sold, banked, an export that has not
+  // caught up) fall back to the default list rather than an empty line.
+  function clickyShown(list, picks){
+    var got = clickyPicked(list, picks);
+    return got.length ? got : list.slice(0, CLICKY_DEFAULT_N);
+  }
+  // "Ring of Shadows" → "Shadows", "White Ornate Chain Bridle" → "Bridle": the part of the name that
+  // tells two apart, as much of it as `cap` characters hold. The old cut ("Ring…", "Rod…") made every
+  // "<thing> of …" look the same.
+  function clickyShort(name, cap){
+    var n = String(name).replace(/^(?:the|a|an)\s+/i, '');
+    if (n.length <= cap) return n;
+    var m = n.match(/\s+of\s+(?:the\s+)?(.+)$/i), w, out = '', i, t;
+    if (m) {
+      w = m[1].split(/\s+/);
+      for (i = 0; i < w.length; i++) { t = out ? out + ' ' + w[i] : w[i]; if (t.length > cap) break; out = t; }
+      return out || w[0].slice(0, cap - 1) + '…';
+    }
+    // No "of": "Rooting Rod" → "Rooting Rod" or, short of room, whichever of its first and last word
+    // is longer ("White Ornate Chain Bridle" → "Bridle").
+    w = n.split(/\s+/);
+    if (w.length > 1 && (t = w[0] + ' ' + w[w.length - 1]).length <= cap) return t;
+    t = w[0].length > w[w.length - 1].length ? w[0] : w[w.length - 1];
+    return t.length <= cap ? t : t.slice(0, cap - 1) + '…';
+  }
+  function clickyNum(c){ return c.unlimited ? '∞' : (c.left == null ? '' : String(c.left)); }
+  // The line along the bottom arc. A textPath draws nothing past the end of its arc, so a line with
+  // more than fits used to lose its first and last items outright; this decides what fits. Picked
+  // clickies (`all`) ALL show — names shorten, the text shrinks (never under 70%) — and the default
+  // list shows the first that fit (at 90% at the least), with "+N" for the rest. `room` is the arc's length,
+  // `size` the font size wanted. Each try is [share of the size, longest name]. Returns
+  // { items: [{ c, nm, n }], more, size }.
+  function clickyFit(list, size, room, all){
+    var tries = all ? [[1, 10], [1, 8], [0.85, 10], [0.85, 8], [0.7, 10], [0.7, 8], [0.7, 7], [0.7, 6]] : [[1, 10], [1, 8], [0.9, 10], [0.9, 8]];
+    function entries(cap){
+      return list.map(function(c){ var nm = clickyShort(c.name, cap), n = clickyNum(c); return { c: c, nm: nm, n: n, len: nm.length + (n ? 1 + n.length : 0) }; });
+    }
+    var ti, es, s, B;
+    for (ti = 0; ti < tries.length; ti++) {
+      s = size * tries[ti][0]; B = Math.floor(room / (0.6 * s));
+      es = entries(tries[ti][1]);
+      if (es.reduce(function(a, e){ return a + e.len; }, 0) + 3 * (es.length - 1) <= B) return { items: es, more: 0, size: s };
+    }
+    s = size * (all ? 0.7 : 1); B = Math.floor(room / (0.6 * s));   // picks: the smallest we go; default: full size
+    es = entries(8);
+    var keep = [], used = 0, i, add;
+    for (i = 0; i < es.length; i++) {
+      add = es[i].len + (keep.length ? 3 : 0);
+      if (keep.length && used + add + 4 > B) break;   // 4: the " +N" that follows
+      used += add; keep.push(es[i]);
+    }
+    return { items: keep, more: es.length - keep.length, size: s };
+  }
+  // The builder's picker: every clicky on you, ticked when it is one you picked, with its kind, its
+  // charges and (for a charged one) a "Recharged" button — a recharge prints no line that names the
+  // item, so it is the member's to say.
+  function clickyPickerHtml(list, picks){
+    if (!list.length) return '<div class="cpk-note dim">No clickies yet. They come from your <b>/output inventory</b> or Quarmy export.</div>';
+    var ticked = clickyPicked(list, picks).map(clickyKey);
+    var full = ticked.length >= CLICKY_MAX_PICK;
+    var h = '<div class="cpk-note dim">' + (ticked.length
+      ? 'Counting ' + ticked.length + ' of ' + list.length + ' (up to ' + CLICKY_MAX_PICK + '). <button type="button" class="cpk-clear" data-clk-clear="1">Clear</button>'
+      : 'Tick up to ' + CLICKY_MAX_PICK + ' to count. Until you do, the first that fit show, root · dispel · stun first.') + '</div>';
+    list.forEach(function(c){
+      var k = clickyKey(c), on = ticked.indexOf(k) !== -1;
+      var num = c.unlimited ? '∞' : (c.left == null ? '' : c.left + (c.max ? '/' + c.max : ''));
+      h += '<div class="cpk"><label title="' + esc(c.name) + '"><input type="checkbox" data-clk="' + esc(k) + '"' + (on ? ' checked' : '') + (!on && full ? ' disabled' : '') + '> '
+        + '<span class="bl">' + esc(c.name) + (c.kind && CLICKY_KIND[c.kind] ? ' <i class="ck ck-' + c.kind + '">' + CLICKY_KIND[c.kind] + '</i>' : '') + '</span></label>'
+        + '<span class="cn">' + esc(num) + '</span>'
+        + (c.max ? '<button type="button" class="crc" data-recharged="' + esc(k) + '" title="Recharged it at a vendor? Sets it back to ' + c.max + ' of ' + c.max + '.">Recharged</button>' : '')
+        + '</div>';
+    });
+    return h;
+  }
 
   // Hits in ROUNDS — every hit that shares a log second — newest round first.
   function hitRounds(feed, pick){
@@ -1384,17 +1487,18 @@
     // one, red at none, ∞ when it never runs out, no number when that is not
     // known yet. Names come from the newer of your /output inventory and your
     // Quarmy export.
+    // FB-65 (a member): the ones you picked in the builder, else the first that
+    // fit (root · dispel · stun first); names bright, not grey, at their own
+    // size slider, and what does not fit is counted ("+3"), not cut off.
     if (p.clickies && d.clk.length) {
-      var plainC = '', spans = d.clk.map(function(c, i){
-        var nm = String(c.name).replace(/^(?:the|a|an)\s+/i, '');
-        nm = nm.length > 12 ? nm.split(/\s+/)[0].slice(0, 11) + '…' : nm;
-        var n = c.unlimited ? '∞' : (c.left == null ? '' : String(c.left));
-        var col = c.left === 0 ? 'var(--red)' : (c.left === 1 ? 'var(--orange)' : '#c9d1d9');
-        plainC += (i ? ' · ' : '') + nm + (n ? ' ' + n : '');
-        return (i ? '<tspan fill="#6e7681"> · </tspan>' : '') + '<tspan fill="#8b949e">' + esc(nm) + '</tspan>'
-          + (n ? '<tspan fill="' + col + '" font-weight="700"> ' + n + '</tspan>' : '');
-      }).join('');
-      h += ringLabel('hcl', 122, 140, 220, spans, fitSize(7.5 * sz('resists'), plainC.length, 80, 122), true);
+      var cshown = clickyShown(d.clk, p.clickyPick);
+      var cfit = clickyFit(cshown, 8.5 * sz('clickies'), 80 * Math.PI / 180 * 122 * 0.96, clickyPicked(d.clk, p.clickyPick).length > 0);
+      var cspans = cfit.items.map(function(e, i){
+        var col = e.c.left === 0 ? 'var(--red)' : (e.c.left === 1 ? 'var(--orange)' : '#c9d1d9');
+        return (i ? '<tspan fill="#6e7681"> · </tspan>' : '') + '<tspan fill="#e6edf3">' + esc(e.nm) + '</tspan>'
+          + (e.n ? '<tspan fill="' + col + '" font-weight="700"> ' + e.n + '</tspan>' : '');
+      }).join('') + (cfit.more ? '<tspan fill="#8b949e"> +' + cfit.more + '</tspan>' : '');
+      h += ringLabel('hcl', 122, 140, 220, cspans, cfit.size, true);
     }
     if (p.track && d.track) h += trackArrows(d.track, p.trackShow === 'lit', W, sz('track'));
     return svgWrap(h + blindRing(s), HUD_WEIGHTS[p.weight] ? p.weight : 'thin');
@@ -1483,12 +1587,22 @@
             + '</label>';
         }
       });
+      if (g[0] === 'Items') h += '<div id="clkpick"></div>';   // the clicky picker, filled below
     });
     builderList.innerHTML = h;
+    refreshClickyPicker(true);
     var who = document.getElementById('builder-for');
     if (who) who.textContent = _hudPartsFor ? '· ' + _hudPartsFor : '';
     var all = document.getElementById('builder-all');
     if (all) all.value = String((hudParts.sizes && +hudParts.sizes.all) || 1);
+  }
+  // The picker repaints with the HUD's own poll while the panel is open (a click on "Recharged" shows
+  // its new count), and only when its markup changed.
+  function refreshClickyPicker(force){
+    var el = document.getElementById('clkpick');
+    if (!el) return;
+    var html = clickyPickerHtml(clickyList(_last || {}), hudParts.clickyPick);
+    if (force || el._html !== html) { el.innerHTML = html; el._html = html; }
   }
   // Saved for this character, and as the starting point for any character
   // that has none of its own yet.
@@ -1518,6 +1632,31 @@
     reshapeForHits(was, hudParts.hitsSide);
     saveParts();
   });
+  // Ticking a clicky counts it (at most CLICKY_MAX_PICK; the HUD draws them in the agent's order).
+  builderList.addEventListener('change', function(e){
+    var k = e.target && e.target.getAttribute && e.target.getAttribute('data-clk');
+    if (!k) return;
+    var now = clickyPicked(clickyList(_last || {}), hudParts.clickyPick).map(clickyKey);
+    hudParts.clickyPick = e.target.checked
+      ? (now.indexOf(k) === -1 ? now.concat([k]) : now).slice(0, CLICKY_MAX_PICK)
+      : now.filter(function(x){ return x !== k; });
+    saveParts(); refreshClickyPicker();
+  });
+  // "Clear" goes back to the default list; "Recharged" tells the agent this one is full again — a
+  // recharge at a vendor prints no line naming the item, so there is nothing to read it from.
+  builderList.addEventListener('click', function(e){
+    var t = e.target && e.target.closest ? e.target : null;
+    if (!t) return;
+    if (t.closest('[data-clk-clear]')) { hudParts.clickyPick = []; saveParts(); refreshClickyPicker(); return; }
+    var rc = t.closest('[data-recharged]');
+    if (!rc || !_last || !_last.character) return;
+    rc.disabled = true;
+    var done = function(){ tick(); };
+    fetch('http://127.0.0.1:' + PORT + '/api/me/clicky-recharged', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ character: _last.character, item: rc.getAttribute('data-recharged') }),
+    }).then(done, done);
+  });
   // Size sliders — each part's, and "All text" in the header — repaint as they
   // move and save when let go.
   builderEl.addEventListener('input', function(e){
@@ -1537,6 +1676,7 @@
     delete sizes[k];
     hudParts.sizes = sizes;
     if (k in HUD_DEFAULTS && k !== 'sizes') hudParts[k] = HUD_DEFAULTS[k];
+    if (k === 'clickies') hudParts.clickyPick = [];   // the line's picks are part of the line
     reshapeForHits(was, hudParts.hitsSide);
     renderBuilder(); saveParts();
   });
@@ -1624,6 +1764,7 @@
       // A HUD is sized to its window, not the other way round.
       if (!isHud(style)) _requestAutoHeight();
     }
+    if (!builderEl.hidden) refreshClickyPicker();
   }
   function _requestAutoHeight(){
     if (!(window.mimic && window.mimic.overlayAutoHeight)) return;
