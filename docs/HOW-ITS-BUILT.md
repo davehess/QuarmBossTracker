@@ -3575,7 +3575,7 @@ viewer follows within ~3 s. New page, so it carries `NewPageTag` ([beta]).
 - **The Discord Activity version** (option C) is planned, not built: `docs/DESIGN-raid-screen-activity.md`.
 - **Tests:** `test/raid-screen.test.js`, `test/screen-live.test.js`.
 
-### My parses over time (`/me/parses` web 1.8.107 · bot 3.1.210 · Mimic tab + meter Trend on beta, §170)
+### My parses over time (`/me/parses` web 1.8.107 · bot 3.1.210 · Mimic tab + meter Trend stable in Mimic 2.7.9, §170)
 A raider's own DPS per fight over a window they pick. Three surfaces, two data sources:
 - **One function for the server numbers:** `my_parse_series(p_discord_id, p_since, p_until, p_bosses_only,
   p_character, p_cap)` (migration `20261006200000_my_parse_series.sql`). One jsonb value (row-cap safe), service
@@ -3605,14 +3605,14 @@ A raider's own DPS per fight over a window they pick. Three surfaces, two data s
   lifetime ≈ 0.6–0.7 s and ~90 KB before gzip (capped at 400 fights).
 - ⚠ **"Bosses" is thin in Planes of Power:** only 14 of the timer board's 43 PoP bosses are curated in
   `bosses_local`, so most PoP kills count as "Everything". Both surfaces say so on an empty Bosses view.
-- **Exploring (web 1.8.110 · bot 3.1.213 · agent 3.7.95 beta, §174):** both surfaces now read
+- **Exploring (web 1.8.110 · bot 3.1.213 · agent 3.7.95, stable in Mimic 2.7.9, §174):** both surfaces now read
   `my_parse_series_v2(…, p_zone int, p_search text)` (`20261007000000_my_parse_series_v2.sql`): each fight carries
   `zone_id`/`zone`, and the answer carries `zones` and `mobs` picker lists computed before the zone and search
   filters. The bot route takes `&zone=` (1..999) and `&q=` (≤ 40 chars, letters/digits/space/'`-_), so does the
   agent proxy (cache key includes both). Web: GET form on `/me/parses` (`q` + datalist, zone select, `byday`, Clear;
   helpers `cleanZoneParam` / `cleanSearchParam` / `groupByNight` in `web/lib/parseTrend.ts`). Mimic: the same
   controls (`wpMpTyping` 300 ms debounce, `wpMpZone`, By day `wpMpTable(d, byDay)`), saved in `wp:myParses`.
-- **My logs (agent 3.7.95 beta, §174):** the Mimic tab's second source, `GET /api/my-parses?source=local`
+- **My logs (agent 3.7.95, stable in Mimic 2.7.9, §174):** the Mimic tab's second source, `GET /api/my-parses?source=local`
   (`myLogsAnswer`): the guild answer's shape plus `source: 'local'` and `since`, from `logsync.myfights.json`, with no
   call. `_recordFightHistory` → `_myFightsNote` writes one row per own character per fight (pets credited by
   `pet_owner`, zone from Zeal, boss = catalog `raid_target` from a held mob pack or Mob Info answer); 365 days /
@@ -3622,7 +3622,7 @@ A raider's own DPS per fight over a window they pick. Three surfaces, two data s
   `test/my-parses-tab.test.js` (agent + dashboard + tray + filters + source switch), `test/my-logs-local.test.js`
   (the local fight log and its answer) and `test/dps-trend.test.js` (meter Trend).
 
-### Main / alt · Inventory only · Hide completely (bot 3.1.214 · agent 3.7.96 beta, §175)
+### Main / alt · Inventory only · Hide completely (bot 3.1.214 · agent 3.7.96, stable in Mimic 2.7.9, §175)
 One choice per character, the same three columns as the switches on `/me` (no second copy):
 show = all off · inventory = `hidden_from_lists` · hidden = all three on. Any other mix reads as `custom`.
 - **Bot:** `utils/characterPrefs.js` (`MODE_FLAGS`, `modeOf`, `setPrefs`, `minePrefs`); routes
