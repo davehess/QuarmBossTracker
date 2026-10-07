@@ -1,9 +1,14 @@
 {
-  "_comment": "Schema by example. Copy to guild/config.json and edit. NO SECRETS HERE — passwords, tokens and keys go in .env and are referenced by name. See guild/README.md and docs/DESIGN-guild-kit.md.",
+  "_comment": "Schema by example. Copy to guild/config.json and edit. NO SECRETS HERE — passwords, tokens and keys go in .env and are referenced by name; any key containing spec / token / key / secret / password is refused when the file is read. Values still in <angle brackets> count as 'not filled in yet' and are ignored. Environment variables always win over this file. See guild/README.md and docs/DESIGN-guild-kit.md.",
+
+  "repo": "davehess/QuarmBossTracker",
 
   "guild": {
+    "_comment": "tag is the guild id written to every database row (SUPABASE_GUILD_ID). Pick it once and never change it. inGameGuild is the name as the game shows it, when that differs from the display name.",
+    "tag": "wolfpack",
     "name": "Wolf Pack",
     "short": "WP",
+    "inGameGuild": "Wolf Pack",
     "tagline": "One wolf starts to growl. The whole pack will howl.",
     "server": "Project Quarm",
     "timezone": "America/New_York",
@@ -17,17 +22,47 @@
     "webBeta": "https://b.wolfpack.quest",
     "botApiBase": "https://<your-bot-host>/api/agent",
     "opendkp": "https://<your-guild>.opendkp.com",
-    "pqdi": "https://www.pqdi.cc"
+    "pqdi": "https://www.pqdi.cc",
+    "loginEmailDomain": "<your-web-domain>"
   },
 
   "discord": {
     "guildId": "<discord-guild-id>",
     "layout": "./discord.json",
     "roles": {
-      "member": "Pack Member",
-      "raider": "Raid Pack",
-      "officer": "Officer"
+      "_comment": "Discord role NAMES, as lists. Roles are flat in Discord, so the bot's allow-list is member + officer together; officer is the elevated subset. active is optional (leave empty if unused).",
+      "member": ["Pack Member"],
+      "raider": ["Raid Pack"],
+      "officer": ["Officer", "Guild Leader"],
+      "active": []
+    },
+    "provision": {
+      "_comment": "How the provisioner treats your Discord layout. mode: auto | report | adopt | create | off. optional / skip: layout keys to leave out. createChannels: false = never create channels, only report. lock: none | <policy> for the permission lock. pin: pin the status posts.",
+      "mode": "auto",
+      "optional": [],
+      "skip": [],
+      "createChannels": false,
+      "lock": "none",
+      "pin": false
     }
+  },
+
+  "opendkp": {
+    "_comment": "clientName is the guild slug in OpenDKP (the <slug>.opendkp.com host). ranks are YOUR OpenDKP rank names: priority = main-within-a-family order, highest first; raider = ranks that count as raiding mains; raidAlt = alts that raid; nonRaid = never counted; newMain = the rank a freshly promoted main starts at.",
+    "clientName": "wolfpack",
+    "ranks": {
+      "priority": ["Officer", "Pack Leader", "Raid Pack", "Recruit", "Member", "Inactive"],
+      "raider": ["Pack Leader", "Officer", "Raid Pack", "Recruit"],
+      "raidAlt": ["Raid Alt"],
+      "nonRaid": ["Non-raid Alt", "Trader"],
+      "newMain": "Recruit"
+    }
+  },
+
+  "raid": {
+    "_comment": "Minimum character levels that count toward raid eligibility: altMinLevel for raid alts, popMinLevel once Planes of Power is the current era.",
+    "altMinLevel": 46,
+    "popMinLevel": 60
   },
 
   "channels": {
@@ -60,7 +95,7 @@
   },
 
   "features": {
-    "_comment": "pvp gates the competitive components (PvP /who collection, PvP timers). Overriding anonymous players additionally needs ALLIANCE_CODE in .env — a generated secret issued between allied guilds, never set by the wizard. Off by default on purpose.",
+    "_comment": "pvp gates the competitive components (PvP /who collection, PvP timers). Overriding anonymous players additionally needs ALLIANCE_CODE in .env — a generated secret issued between allied guilds, never set by the wizard. Off by default on purpose. An env var FEATURE_<NAME>=0|1 overrides each flag.",
     "web": true,
     "opendkp": true,
     "pvp": false,
