@@ -19,7 +19,8 @@ import { describe, it, expect } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { readSource, BOT_INDEX, sliceBlock, evalBlock } from './_source-slice.js';
+import { createRequire } from 'node:module';
+import { readSource, BOT_INDEX, sliceBlock, evalBlock, stripJs } from './_source-slice.js';
 
 const src = readSource(BOT_INDEX);
 // evalBlock runs the slice through `new Function`, which has no `require` in
@@ -35,10 +36,44 @@ const { _loadGuildDiscordJson } = evalBlock(
 // The example file was generated from every env read in the bot, utils AND
 // commands — so "is this a real anchor" has to look at all three.
 const ROOT = path.dirname(BOT_INDEX);
-const allBotSrc = [BOT_INDEX,
+// The provisioner and /setup NAME every anchor on purpose (they build the layout),
+// so they cannot be evidence that the BOT reads one. Leave them out of "who reads".
+const PROVISIONER_FILES = new Set([
+  path.join(ROOT, 'utils', 'discordProvisioner.js'), path.join(ROOT, 'commands', 'setup.js'),
+]);
+const botFiles = [BOT_INDEX,
   ...fs.readdirSync(path.join(ROOT, 'utils')).map(f => path.join(ROOT, 'utils', f)),
   ...fs.readdirSync(path.join(ROOT, 'commands')).map(f => path.join(ROOT, 'commands', f)),
-].filter(f => f.endsWith('.js')).map(f => fs.readFileSync(f, 'utf8')).join('\n');
+].filter(f => f.endsWith('.js') && !PROVISIONER_FILES.has(f));
+const allBotSrc = botFiles.map(f => fs.readFileSync(f, 'utf8')).join('\n');
+// Comments are stripped for the converse check: a comment that mentions an old
+// env name is not a read of it.
+const allBotCode = stripJs(allBotSrc);
+
+// Anchors the bot reads through a COMPUTED name rather than a literal
+// `process.env.NAME`: the per-expansion keys (utils/config.js EXPANSION_META,
+// utils/state.js, utils/killops.js), the hate-board ids (utils/state.js) and the
+// rules channels (commands/ingestrules.js reads process.env[chan.env]).
+const requireCjs = createRequire(import.meta.url);
+const { EXPANSION_META } = requireCjs(path.join(ROOT, 'utils', 'config.js'));
+const { RULE_CHANNELS } = requireCjs(path.join(ROOT, 'utils', 'rulesParser.js'));
+function dynamicReads() {
+  const out = new Set();
+  for (const meta of Object.values(EXPANSION_META)) out.add(meta.envKey);
+  for (const era of Object.keys(EXPANSION_META)) {
+    const E = era.toUpperCase();
+    // utils/killops.js builds `${expansion.toUpperCase()}_BOARD_IDS`; utils/state.js
+    // builds expansion.toUpperCase() + '_COOLDOWN_ID'. Both shapes are one read.
+    if (/toUpperCase\(\)(?:\}|\s*\+\s*')_BOARD_IDS/.test(allBotCode)) out.add(`${E}_BOARD_IDS`);
+    if (/toUpperCase\(\)(?:\}|\s*\+\s*')_COOLDOWN_ID/.test(allBotCode)) out.add(`${E}_COOLDOWN_ID`);
+  }
+  for (const k of ['LIVE_HATE_BOARD_ID', 'PVP_HATE_BOARD_ID']) if (allBotCode.includes(`'${k}'`)) out.add(k);
+  for (const c of RULE_CHANNEL_LIST()) out.add(c.env);
+  return out;
+}
+function RULE_CHANNEL_LIST() { return RULE_CHANNELS.filter(c => /process\.env\[chan\.env\]/.test(allBotCode)); }
+const DYNAMIC = dynamicReads();
+const isRead = (k) => allBotSrc.includes('process.env.' + k) || DYNAMIC.has(k);
 
 function tmpGuild(json) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wp-guild-'));
@@ -136,7 +171,45 @@ describe('where it is wired', () => {
     for (const k of keys) {
       expect(k).not.toMatch(/SPEC|TOKEN|KEY|SECRET|PASSWORD/);
       // A key nothing reads is a key the provisioner would fill for nothing.
-      expect(allBotSrc.includes('process.env.' + k), `${k} is read nowhere`).toBe(true);
+      expect(isRead(k), `${k} is read nowhere`).toBe(true);
+    }
+  });
+
+  it('accepts the dynamic reads, and still rejects a key nothing reads', () => {
+    for (const k of ['CLASSIC_THREAD_ID', 'POP_THREAD_ID', 'KUNARK_COOLDOWN_ID', 'LUCLIN_BOARD_IDS',
+      'LIVE_HATE_BOARD_ID', 'PVP_HATE_BOARD_ID', 'RULES_CHANNEL_ID', 'LOOT_RULES_CHANNEL_ID']) {
+      expect(isRead(k), `${k} should count as read`).toBe(true);
+    }
+    // A vacuous isRead would pass everything; these must fail.
+    expect(isRead('NOPE_THREAD_ID')).toBe(false);
+    expect(isRead('RELEASE_ANNOUNCE_CHANNEL_ID')).toBe(false);   // dead: nothing reads it any more
+  });
+
+  it('the example lists every dynamic anchor, none of the flags, and not the dead announce channel', () => {
+    const ex = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'guild', 'discord.example.json'), 'utf8'));
+    for (const k of DYNAMIC) expect(k in ex, `${k} missing from discord.example.json`).toBe(true);
+    for (const k of ['RAID_NIGHT_THREADS', 'RAID_NIGHT_THREAD_BOSS_ONLY', 'RELEASE_ANNOUNCE_CHANNEL_ID']) {
+      expect(k in ex, `${k} is a flag or dead and must not be in the example`).toBe(false);
+    }
+  });
+
+  // The converse: the first check proves nothing in the example is imaginary;
+  // this proves nothing the bot reads is missing from it — the gap that left five
+  // <ERA>_THREAD_ID, five cooldown ids and five board-id lists out of a file that
+  // claimed to hold "every Discord anchor the bot reads".
+  it('every anchor-shaped env read in the bot is in the example or an explicit allowlist', () => {
+    const ex = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'guild', 'discord.example.json'), 'utf8'));
+    // Names that look like an anchor but are not one. Empty today; an entry needs a reason.
+    const ALLOW = new Set([]);
+    const reads = new Set(DYNAMIC);
+    const re = /process\.env\.([A-Z0-9_]*(?:_CHANNEL_ID|_THREAD_ID|_MESSAGE_ID|_MSG_ID|_BOARD_IDS?|_COOLDOWN_ID|THREAD_PARENT_ID)[A-Z0-9_]*)/g;
+    for (const m of allBotCode.matchAll(re)) reads.add(m[1]);
+    for (const k of ['RAIDHELPER_BOT_ID', 'RH_SERVER_ID', 'DISCORD_GUILD_ID', 'DISCORD_CLIENT_ID']) {
+      if (allBotCode.includes('process.env.' + k)) reads.add(k);
+    }
+    expect(reads.size).toBeGreaterThan(45);   // a corpus smaller than the example proves nothing
+    for (const k of reads) {
+      expect(k in ex || ALLOW.has(k), `${k} is read by the bot but missing from guild/discord.example.json`).toBe(true);
     }
   });
 });

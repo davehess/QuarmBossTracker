@@ -279,16 +279,38 @@ once to install Node.js, then in the repo folder run `npm install`, copy
 
 ## First-Time Setup Order
 
-1. Create 5 expansion threads inside `#raid-mobs`: Classic, Kunark, Velious, Luclin, PoP
-2. Create a Historic Kills thread inside `#raid-mobs`
-3. Create a Parse Logs thread (e.g. "Parse Logs") — paste its ID into `PARSES_LOG_THREAD_ID`
-4. Create an Onboarding thread (e.g. "Getting Started") — paste its ID into `ONBOARDING_THREAD_ID`
-5. Optionally create a PVP channel or thread
-6. Add all thread/channel IDs to your env vars
-7. Deploy the bot
-8. Run `/board` — creates all 4 main-channel slots and posts boards in each thread
-9. Right-click each anchored message → Copy ID → add to env vars (prevents re-posting on redeploy)
-10. Run `/board` again to confirm everything edits in place (no new messages posted)
+The bot builds its own Discord layout, so on a brand-new server there is nothing to create by hand and
+no ID to copy.
+
+1. **Invite the bot** with the link under [Required Bot Permissions](#required-bot-permissions) below. If you want it to
+   make the `#raid-mobs` channel for you, the invite needs **Manage Channels** (the second number in that section).
+   If you would rather make `#raid-mobs` yourself, do that now and skip the permission.
+2. **Set the bot's token and deploy.** `DISCORD_TOKEN` is the only variable the bot needs to find its footing; it works
+   out its own application ID, and your server's ID when it is in just one server. Leave `GUILD_PROVISION` unset.
+3. **First boot builds the layout.** On a server where none of the raid-timer pieces exist yet the bot makes
+   `#raid-mobs` (if there is no channel of that name, or `raid-timers` / `boss-timers`), posts its four pinned cards
+   (Active Cooldowns, Spawning in the Next 24 Hours, Daily Raid Summary and the expansion thread links), then opens
+   one thread per expansion (Classic, Kunark, Velious, Luclin, PoP) and a Historic Kills thread. Each expansion thread
+   starts with its own cooldown card and its kill-button boards. The boot log ends with one line that begins
+   `[provision]` and says what it found, made and could not make.
+4. **Check on it** with `/setup discord status` (you need Manage Server or the officer role). It shows where every
+   ID came from, which ones point at something that was deleted, which permissions the bot lacks (by name), and the
+   few things only a person can do: set the suggestions forum, follow the patch-notes channel, and the Raid-Helper IDs.
+5. **Keep a copy of the IDs.** Railway has no disk that survives a deploy, so the bot also remembers what it made in
+   its database. Run `/setup discord export` for two private files: `guild/discord.json` (commit it, IDs are not
+   secrets) and a `discord.env` block you can paste into your host's variables.
+6. **Add the rest when you want it.** `/setup discord provision` (a dry run until you set `dry_run` to false) can
+   also make the other channels (`create_channels`), and optional groups such as `pvp`, `voice`, `loot`, `rules`,
+   `announce`, `hate`, `live`, `deathroll` and `mimic` (`optional`). The same switches exist as variables:
+   `GUILD_PROVISION_CREATE_CHANNELS`, `GUILD_PROVISION_OPTIONAL`, `GUILD_PROVISION_SKIP`, `GUILD_PROVISION_LOCK`
+   (`readonly` stops members posting in channels the bot made) and `GUILD_PROVISION_PIN`. They are all in `.env.example`.
+7. **Already set up by hand?** Nothing changes. Any ID you have set stays exactly as you set it, and with a channel
+   ID set the bot only reads. Set `GUILD_PROVISION=adopt` to let it find the pieces you have not set by name, or
+   `create` to make what is missing.
+8. **No bot to log in with yet?** `node scripts/provision-discord.js --dry-run` does the same job from your own
+   computer, needing only `DISCORD_TOKEN`, and writes `guild/discord.json`. Drop `--dry-run` to apply it.
+
+`/board` and `/cleanup` still work as before; the first `/board` replaces each placeholder card with the live one.
 
 ### Recovery After State Loss
 
@@ -443,18 +465,28 @@ Bristlebane came later. Invite it with scopes `bot applications.commands` and pe
 | Send Messages | Kill cards, spawn alerts, boards, PVP alerts, onboarding messages, Bristlebane's join notice |
 | Send Messages in Threads | Expansion threads, raid-night threads, the roster and parse threads |
 | Create Public Threads | Create announce and raid-night threads |
-| Manage Threads | Rename event threads, archive them at midnight |
+| Manage Threads | Rename event threads, archive them at midnight, wake an archived expansion thread |
 | Embed Links | Rich embeds with PQDI links |
 | Attach Files | Parse and leaderboard images, exports |
 | Read Message History | Fetch messages to edit in place |
 | Manage Messages | Delete kill cards on respawn; clean up at midnight; `/removespam` |
-| Pin Messages | Pin the parse leaderboard (Discord split this out of Manage Messages) |
+| Pin Messages | Pin the parse leaderboard (Discord split this out of Manage Messages); pin the four cards when `GUILD_PROVISION_PIN=1` |
 | Manage Events | Create/delete Discord Scheduled Events for `/announce` and `/quake` |
 | Manage Roles | Add/remove @PVP role via `/pvprole` (the bot's role must sit above @PVP) |
 | Connect | Join the raid voice channel |
 | Speak | Spoken callouts and loot calls |
 | Use Voice Activity | A bot has no push-to-talk; without this it cannot be heard |
 | Change Nickname | Bristlebane's `[REC]` name while a member who opted in is in the channel |
+
+Add **Manage Channels** only if you want the bot to create channels itself (`GUILD_PROVISION_CREATE_CHANNELS`, or the
+hub channel on a brand-new server): the permission number then becomes **`2252135193504784`**. It is the one
+permission here that is about the server rather than a channel, and the bot asks for it by name before it tries.
+
+**What the setup step checks.** Before it writes anywhere, the bot checks that it can see the channel, send
+messages and embeds, read history, send in and create threads, manage threads and manage messages there (and pin,
+if you turned pinning on), and tells you by name what is missing instead of failing half way through. `/setup
+discord status` shows the same gaps at any time, with the invite link carrying the exact number. It never asks for
+Manage Roles to set a layout up; that stays only for `/pvprole`.
 
 Add **Create Invite + Use Activities** (`2252684949318657` in total) only if the raid screen is run as a
 Discord Activity. Privileged intents: **Server Members** (member sync) — on; **Message Content** — only

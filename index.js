@@ -368,6 +368,10 @@ fs.readdirSync(commandsPath).filter((f) => f.endsWith('.js')).forEach((file) => 
 
 // ── Ready ──────────────────────────────────────────────────────────────────
 client.once(Events.ClientReady, async (readyClient) => {
+  // Guild kit slice 3: fill the Discord anchors env does not set (derive the app and
+  // server ids; adopt or create the raid-timer layout), BEFORE anything below reads them.
+  // Bounded to 25 s, never throws; a deployment that sets everything in env is untouched.
+  await require('./utils/discordProvisioner').bootProvision(readyClient).catch(() => {});
   console.log(`✅ ${readyClient.user.tag} | ${getBosses().length} bosses`);
   // #58 health-gated deploys: the HTTP server listens at module load (before the
   // Discord client connects), so `GET /health` returns 503 until THIS point.
