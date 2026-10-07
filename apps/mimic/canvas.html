@@ -1909,9 +1909,20 @@
     save(); render();
     return hide ? 'hidden' : 'shown';
   }
+  // An overlay's own hotkey (main.js _overlayHotkeyPress) sets its "as is" panels — the whole overlay's page,
+  // kind 'overlay', one per look — shown or hidden, the same `off` as a group's. A piece taken apart from the
+  // overlay ('sect') or any other piece ('part') is not the overlay: the groups' keys are theirs.
+  function setOverlayPanels(key, show) {
+    var ps = _layout.panels.filter(function (q) { return q.kind === 'overlay' && q.key === key; });
+    if (!ps.length) return false;
+    ps.forEach(function (q) { q.off = !show; });
+    save(); render();
+    return true;
+  }
   // The presses main queued (a hotkey, the tray, /pipe mimic group), oldest first.
   function applyGroupOps(ops) {
     (Array.isArray(ops) ? ops : []).forEach(function (op) {
+      if (op && typeof op.overlay === 'string') { setOverlayPanels(op.overlay, !!op.show); return; }
       if (!op || typeof op.id !== 'string') return;
       if (toggleSavedGroup(op.id, op.show ? 'show' : 'toggle') !== null) return;
       var g = savedById(op.id);

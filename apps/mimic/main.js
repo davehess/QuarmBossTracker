@@ -7025,8 +7025,10 @@ let _registeredMiniAccel = null;
 // own hotkey config as well. so if i want to pull one up i can do it without
 // much effort"). cfg.overlayHotkeys = { <toggle-overlay key>: accelerator },
 // set from the dashboard's Overlays tab. A press runs the SAME _toggleOverlay
-// the dashboard's ON/OFF button does. No defaults: a global shortcut takes its
-// key away from EverQuest, so nobody gets one they did not ask for.
+// the dashboard's ON/OFF button does — and, for an overlay that is also on the
+// Canvas as a whole, its Canvas panel too (_overlayHotkeyPress, below). No
+// defaults: a global shortcut takes its key away from EverQuest, so nobody gets
+// one they did not ask for.
 const _OVERLAY_HOTKEY_KEYS = ['dock', 'hud', 'trigger', 'charm', 'pet', 'mobinfo', 'buffQueue', 'who', 'melody',
   'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me', 'canvas'];
 let _registeredOverlayAccels = {};   // overlay key → accelerator bound right now
@@ -7040,7 +7042,7 @@ function _registerOverlayHotkeys(globalShortcut, cfg) {
     const accel = typeof map[key] === 'string' ? map[key].trim() : '';
     if (!accel) continue;
     let ok = false;
-    try { ok = globalShortcut.register(accel, () => { try { _toggleOverlay(key); } catch (e) { appendAgentLog(`[mimic] ${key} overlay hotkey: ${e.message}\n`); } }); }
+    try { ok = globalShortcut.register(accel, () => { try { _overlayHotkeyPress(key); } catch (e) { appendAgentLog(`[mimic] ${key} overlay hotkey: ${e.message}\n`); } }); }
     catch { ok = false; }   // a malformed accelerator throws rather than returning false
     if (ok) _registeredOverlayAccels[key] = accel;
     else {
@@ -7059,7 +7061,7 @@ function _registerOverlayHotkeys(globalShortcut, cfg) {
 // No defaults: a global shortcut takes its key away from EverQuest. Registered after the overlay keys.
 let _registeredGroupAccels = {};   // saved group id → accelerator bound right now
 let _blockedGroupAccels = {};      // saved group id → accelerator the OS refused
-let _canvasGroupOps = [];          // presses the Canvas has not read yet: { id, show }
+let _canvasGroupOps = [];          // presses the Canvas has not read yet: { id, show } for a group, { overlay, show } for an overlay's panels
 function _canvasGroupList(cfg) {
   return (Array.isArray(cfg && cfg.canvasGroups) ? cfg.canvasGroups : [])
     .filter(g => g && typeof g.id === 'string' && g.id)
@@ -7119,6 +7121,41 @@ function _toggleCanvasGroup(id) {
   return true;
 }
 function _drainCanvasGroupOps() { const ops = _canvasGroupOps; _canvasGroupOps = []; return ops; }
+// ⌨ An overlay's own key also shows / hides it on the Canvas (the guild lead, 2026-10-07: "if you're using an
+// overlay as whole it should let you use that overlay's same hide key combo"). No new key: the overlay
+// keeps the one it has (cfg.overlayHotkeys), so there is no extra conflict entry. It reaches the overlay's
+// "as is" panels — kind 'overlay', one per look (the HUD's ring and box are both) — and NOT a piece taken
+// apart from it ('sect') or any other piece ('part'): those belong to groups. One press sets one state
+// everywhere the overlay lives so they stay in step: the Canvas panels (queued as { overlay, show }, an
+// explicit state, kept in the layout like a group's) and its own switch (window). The Canvas is what is
+// seen while it is on, so its panels say what a press does; with the Canvas off the window does. An overlay
+// with no such panel is exactly what it was: _toggleOverlay. The Canvas calls the pet tracker 'pets'.
+function _overlayHotkeyPress(key) {
+  const ckey = key === 'pet' ? 'pets' : key;
+  const spec = _canvasSpec(ckey);
+  const layout = spec ? _canvasStatePayload().layout : null;
+  const panels = ((layout && Array.isArray(layout.panels)) ? layout.panels : []).filter(p => p && p.kind === 'overlay' && p.key === ckey);
+  if (!panels.length) return _toggleOverlay(key);
+  const cfg = loadConfig();
+  const queued = _canvasGroupOps.find(o => o.overlay === ckey);       // a press the Canvas has not read yet
+  const shown = cfg.showCanvas ? (queued ? !!queued.show : panels.some(p => !p.off)) : !!cfg[spec.flag];
+  const next = !shown;
+  _canvasGroupOps = _canvasGroupOps.filter(o => o.overlay !== ckey);
+  _canvasGroupOps.push({ overlay: ckey, show: next });
+  if (_canvasGroupOps.length > 40) _canvasGroupOps.shift();
+  if (_live(canvasWindow)) { try { canvasWindow.webContents.send('canvas-group-ops'); } catch { /* mid-close */ } }
+  // Its own switch follows. With the Canvas on the overlay has no window (it is hosted), so only the switch
+  // moves, which keeps "Remove · own window" handing back what the key last chose; with it off the switch is
+  // the window, and the usual toggle opens or closes it.
+  if (!!cfg[spec.flag] !== next) {
+    if (cfg.showCanvas) {
+      cfg[spec.flag] = next; saveConfig(cfg);
+      try { buildTrayMenu(); } catch { /* */ }
+      pushStatus();
+    } else _toggleOverlay(key);
+  }
+  return true;
+}
 // Tray ↔ dashboard parity (CLAUDE.md): the groups under the Canvas entry, each with its key, driving
 // the same toggle as the key. Only when there is a saved group to list.
 function _canvasGroupTrayItems(s) {

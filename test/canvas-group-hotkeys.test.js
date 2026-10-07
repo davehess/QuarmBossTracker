@@ -30,6 +30,8 @@ afterEach(() => { vi.useRealTimers(); });
 // leans on replaced by fakes. canvasWindow is read, never assigned, by this block.
 const groupBlock = sliceBlock(mainRaw, 'let _registeredGroupAccels = {};', '// ⌨ Setting a key that is already in use');
 const fmtAccelSrc = sliceBlock(mainRaw, 'function _fmtAccel(accel) {', "'Ctrl'); }");
+// The Canvas's own catalog of overlays (key → the switch that shows its window), as shipped.
+const catalogSrc = sliceBlock(mainRaw, 'const _DOCK_CATALOG = [', 'function _canvasSpec(key) { return _CANVAS_CATALOG.find(c => c.key === key) || null; }');
 // The IPC handlers that carry it, registered into a table so the test can call them.
 const ipcBlock = sliceBlock(mainRaw, "ipcMain.handle('canvas-state', (e) => {", "ipcMain.handle('canvas-group-toggle', (_e, id) => _toggleCanvasGroup(String(id)));");
 const cmdBlock = sliceBlock(mainRaw, "  if (cmd.verb === 'group') {", '\n  }\n');
@@ -37,6 +39,7 @@ const cmdBlock = sliceBlock(mainRaw, "  if (cmd.verb === 'group') {", '\n  }\n')
 function world(over = {}) {
   const w = {
     cfg: Object.assign({ showCanvas: true, canvasGroups: [{ id: 's1', name: 'Raid HUD', parts: [] }, { id: 's2', name: 'Tank', parts: [] }] }, over.cfg || {}),
+    layout: over.layout || null,             // what the Canvas last saved for this screen
     log: [], overlayToggles: [], saved: [], pings: [], handlers: {}, regCalls: 0, trayBuilds: 0, pushes: 0,
     held: new Map(),                         // accelerator → callback: what the OS gave us
     taken: new Set(over.taken || []),        // "another app" owns these
@@ -51,17 +54,22 @@ function world(over = {}) {
   const saveConfig = (c) => { w.cfg = JSON.parse(JSON.stringify(c)); w.saved.push(w.cfg); };
   const mod = new Function('appendAgentLog', 'loadConfig', 'saveConfig', '_toggleOverlay', '_live', 'canvasWindow', 'registerHideAllHotkey',
     'buildTrayMenu', 'pushStatus', 'ipcMain', 'BrowserWindow', '_canvasStatePayload', '_canvasOverlayList',
-    fmtAccelSrc + '\n' + groupBlock + '\n' + ipcBlock
+    fmtAccelSrc + '\n' + catalogSrc + '\n' + groupBlock + '\n' + ipcBlock
     + '\nreturn { _registerCanvasGroupHotkeys, _toggleCanvasGroup, _drainCanvasGroupOps, _canvasGroupTrayItems, _canvasGroupList, _canvasGroupKeys,'
-    + ' get blocked() { return _blockedGroupAccels; }, get bound() { return _registeredGroupAccels; } };')(
+    + ' _overlayHotkeyPress, get blocked() { return _blockedGroupAccels; }, get bound() { return _registeredGroupAccels; } };')(
     (s) => w.log.push(s), loadConfig, saveConfig,
-    (name) => { w.overlayToggles.push(name); if (name === 'canvas') w.cfg.showCanvas = !w.cfg.showCanvas; },
+    // _toggleOverlay flips the overlay's own switch, as the real one does (the pet tracker is 'pet' here, 'pets' in the Canvas).
+    (name) => {
+      w.overlayToggles.push(name);
+      const flag = name === 'canvas' ? 'showCanvas' : ({ hud: 'showHud', pet: 'showPets', mobinfo: 'showMobInfo', me: 'showMe', trigger: 'enableTriggerTts' })[name];
+      w.cfg[flag] = !w.cfg[flag];
+    },
     (win) => !!(win && !win.isDestroyed()), w.canvasWindow,
     () => { w.regCalls++; if (over.rebind !== false) mod._registerCanvasGroupHotkeys(w.gs, loadConfig()); },
     () => { w.trayBuilds++; }, () => { w.pushes++; },
     { handle: (ch, fn) => { w.handlers[ch] = fn; } },
     { fromWebContents: () => w.senderWindow },
-    () => ({ res: '1920x1080', layout: null, edit: false, displays: 1 }), () => [{ key: 'me' }]);
+    () => ({ res: '1920x1080', layout: w.layout, edit: false, displays: 1 }), () => [{ key: 'me' }]);
   w.mod = mod;
   return w;
 }
@@ -159,6 +167,130 @@ describe('main.js: the press', () => {
     const ops = w.mod._drainCanvasGroupOps();
     expect(ops).toHaveLength(40);
     expect(ops[39]).toEqual({ id: 's2', show: false });         // 45th press (i = 44) is the last kept
+  });
+});
+
+describe('main.js: an overlay\'s own key also shows / hides it on the Canvas', () => {
+  // The guild lead, 2026-10-07: "if you're using an overlay as whole it should let you use that overlay's
+  // same hide key combo." The key is the overlay's own (cfg.overlayHotkeys); nothing new is assigned.
+  const asIs = (key, over = {}) => Object.assign({ id: 'o' + key + (over.style || ''), kind: 'overlay', key, style: '', off: false }, over);
+  const layoutOf = (...panels) => ({ panels: [{ id: 'callouts', kind: 'callouts', off: false }, ...panels] });
+  // What the Canvas does with a queued press, as far as main can see it: the saved layout follows.
+  const canvasApplies = (w) => {
+    for (const op of w.mod._drainCanvasGroupOps()) {
+      if (op.overlay) for (const p of w.layout.panels) if (p.kind === 'overlay' && p.key === op.overlay) p.off = !op.show;
+    }
+  };
+
+  it('the overlay is only on the Canvas: the key hides its panel, then shows it — and no window is opened for it', () => {
+    const w = world({ layout: layoutOf(asIs('mobinfo')), cfg: { showMobInfo: true } });
+    w.mod._overlayHotkeyPress('mobinfo');
+    expect(w.overlayToggles).toEqual([]);                       // hosted: there is no window to toggle
+    expect(w.pings).toEqual(['canvas-group-ops']);
+    expect(w.mod._drainCanvasGroupOps()).toEqual([{ overlay: 'mobinfo', show: false }]);
+    expect(w.cfg.showMobInfo).toBe(false);                      // the overlay's own switch follows the panel
+    w.layout.panels[1].off = true;                              // the Canvas hid it and saved
+    w.mod._overlayHotkeyPress('mobinfo');
+    expect(w.mod._drainCanvasGroupOps()).toEqual([{ overlay: 'mobinfo', show: true }]);
+    expect(w.cfg.showMobInfo).toBe(true);
+    expect(w.overlayToggles).toEqual([]);
+  });
+
+  it('presses the Canvas has not read yet are counted: a second press undoes the first, and only the last state is kept', () => {
+    const w = world({ layout: layoutOf(asIs('mobinfo')), cfg: { showMobInfo: true } });
+    w.mod._overlayHotkeyPress('mobinfo');                       // hide
+    w.mod._overlayHotkeyPress('mobinfo');                       // show again, before the Canvas looked
+    expect(w.mod._drainCanvasGroupOps()).toEqual([{ overlay: 'mobinfo', show: true }]);
+    expect(w.cfg.showMobInfo).toBe(true);
+  });
+
+  it('the overlay is a window AND a Canvas panel: one press moves both, and they stay in step', () => {
+    // Canvas off: the window is what is seen; its panel waits, hidden or shown with it.
+    const w = world({ layout: layoutOf(asIs('mobinfo')), cfg: { showCanvas: false, showMobInfo: true }, noWindow: true });
+    w.mod._overlayHotkeyPress('mobinfo');
+    expect(w.overlayToggles).toEqual(['mobinfo']);              // the window closes the way the dashboard's switch closes it
+    expect(w.cfg.showMobInfo).toBe(false);
+    expect(w.mod._drainCanvasGroupOps()).toEqual([{ overlay: 'mobinfo', show: false }]);   // the panel is hidden too, for when the Canvas is back
+    const q = world({ layout: layoutOf(asIs('mobinfo')), cfg: { showCanvas: false, showMobInfo: true }, noWindow: true });
+    q.mod._overlayHotkeyPress('mobinfo');
+    q.mod._overlayHotkeyPress('mobinfo');
+    expect(q.overlayToggles).toEqual(['mobinfo', 'mobinfo']);
+    expect(q.cfg.showMobInfo).toBe(true);
+    expect(q.mod._drainCanvasGroupOps()).toEqual([{ overlay: 'mobinfo', show: true }]);   // window shown ⇒ panel shown
+  });
+
+  it('a window and a panel that had drifted apart are brought together by the next press', () => {
+    // Canvas on, panel shown, but the switch was off: the panel is what is seen, so the press hides it; the switch is already off.
+    const a = world({ layout: layoutOf(asIs('mobinfo')), cfg: { showMobInfo: false } });
+    a.mod._overlayHotkeyPress('mobinfo');
+    expect(a.mod._drainCanvasGroupOps()).toEqual([{ overlay: 'mobinfo', show: false }]);
+    expect(a.saved).toHaveLength(0);
+    // panel hidden, switch off: the press shows the panel and the switch comes on with it
+    const b = world({ layout: layoutOf(asIs('mobinfo', { off: true })), cfg: { showMobInfo: false } });
+    b.mod._overlayHotkeyPress('mobinfo');
+    expect(b.mod._drainCanvasGroupOps()).toEqual([{ overlay: 'mobinfo', show: true }]);
+    expect(b.cfg.showMobInfo).toBe(true);
+  });
+
+  it('every look of the overlay moves together (the HUD is a ring and a box)', () => {
+    const w = world({ layout: layoutOf(asIs('me', { style: 'hud' }), asIs('me', { style: 'a' }), asIs('mobinfo')), cfg: { showMe: true } });
+    w.mod._overlayHotkeyPress('me');
+    expect(w.mod._drainCanvasGroupOps()).toEqual([{ overlay: 'me', show: false }]);
+    const c = world({ layout: layoutOf(asIs('me', { style: 'hud', off: true }), asIs('me', { style: 'a' })), cfg: { showMe: true } });
+    c.mod._overlayHotkeyPress('me');                            // one look still shown ⇒ the overlay is shown ⇒ hide
+    expect(c.mod._drainCanvasGroupOps()).toEqual([{ overlay: 'me', show: false }]);
+  });
+
+  it('the pet tracker is "pet" to the key and "pets" to the Canvas', () => {
+    const w = world({ layout: layoutOf(asIs('pets')), cfg: { showPets: true } });
+    w.mod._overlayHotkeyPress('pet');
+    expect(w.mod._drainCanvasGroupOps()).toEqual([{ overlay: 'pets', show: false }]);
+    expect(w.cfg.showPets).toBe(false);
+    expect(w.overlayToggles).toEqual([]);
+  });
+
+  it('pieces taken apart from the overlay (or any piece) are NOT the overlay: its key is what it was', () => {
+    const sect = { id: 's1', kind: 'sect', key: 'mobinfo', sect: 'hp', off: false };
+    const part = { id: 'q1', kind: 'part', part: 'target.hp', grp: 'g1', off: false };
+    const other = asIs('who');                                   // another overlay's panel does not count either
+    const w = world({ layout: layoutOf(sect, part, other), cfg: { showMobInfo: true } });
+    w.mod._overlayHotkeyPress('mobinfo');
+    expect(w.overlayToggles).toEqual(['mobinfo']);              // the plain toggle, as before the Canvas existed
+    expect(w.mod._drainCanvasGroupOps()).toEqual([]);           // nothing queued for the Canvas
+    expect(w.pings).toEqual([]);
+  });
+
+  it('no Canvas panel, or an overlay with no Canvas page at all, is exactly the plain toggle', () => {
+    for (const layout of [null, layoutOf()]) {
+      const w = world({ layout });
+      w.mod._overlayHotkeyPress('hud');
+      expect(w.overlayToggles).toEqual(['hud']);
+      expect(w.mod._drainCanvasGroupOps()).toEqual([]);
+    }
+    const t = world({ layout: layoutOf(asIs('trigger')) });     // the trigger overlay has no Canvas page: never an "as is" panel
+    t.mod._overlayHotkeyPress('trigger');
+    expect(t.overlayToggles).toEqual(['trigger']);
+    expect(t.mod._drainCanvasGroupOps()).toEqual([]);
+  });
+
+  it('a press is kept in the layout like a group\'s: the Canvas applying it leaves the panel hidden for the next press to read', () => {
+    const w = world({ layout: layoutOf(asIs('mobinfo')), cfg: { showMobInfo: true } });
+    w.mod._overlayHotkeyPress('mobinfo');
+    canvasApplies(w);
+    expect(w.layout.panels[1].off).toBe(true);
+    w.mod._overlayHotkeyPress('mobinfo');
+    canvasApplies(w);
+    expect(w.layout.panels[1].off).toBe(false);
+  });
+
+  it('the registered key reaches it, and it assigns and binds nothing of its own — the overlay keeps the one key it has', () => {
+    const reg = stripJs(sliceBlock(mainRaw, 'function _registerOverlayHotkeys(globalShortcut, cfg) {', '\n}\n'));
+    expect(reg).toContain('_overlayHotkeyPress(key);');
+    expect(reg).not.toMatch(/_toggleOverlay\(/);
+    const press = stripJs(sliceBlock(mainRaw, 'function _overlayHotkeyPress(key) {', '\n}\n'));
+    expect(press).not.toMatch(/globalShortcut|overlayHotkeys|_mimicHotkeyUses/);
+    // the dashboard's ON/OFF button is still the plain toggle
+    expect(main).toContain("ipcMain.handle('toggle-overlay', (_e, name) => _toggleOverlay(name));");
   });
 });
 
@@ -379,7 +511,7 @@ function groupEnv(panels, named, groups = [{ id: 's1', name: 'Raid HUD' }, { id:
   const calls = { save: 0, render: 0, notes: [] };
   const layout = { panels, named };
   const f = new Function('_layout', 'save', 'render', 'note', 'savedById',
-    toggleBlock + '\nreturn { groupPanels, groupHiddenText, toggleSavedGroup, applyGroupOps, forgetSavedGroup, namedGroup, get gkeys() { return _gkeys; }, seed(k, b) { _gkeys = k; _gblocked = b; } };');
+    toggleBlock + '\nreturn { groupPanels, groupHiddenText, toggleSavedGroup, applyGroupOps, forgetSavedGroup, namedGroup, setOverlayPanels, get gkeys() { return _gkeys; }, seed(k, b) { _gkeys = k; _gblocked = b; } };');
   const r = f(layout, () => { calls.save++; }, () => { calls.render++; }, (m, ms) => { calls.notes.push([m, ms]); }, (id) => groups.find(g => g.id === id) || null);
   return Object.assign(r, { layout, calls });
 }
@@ -454,6 +586,47 @@ describe('canvas.html: hiding and showing a saved group', () => {
   });
 });
 function stripCssLines(s) { return s.replace(/\/\*[\s\S]*?\*\//g, ''); }
+
+describe('canvas.html: an overlay\'s own key hides and shows its "as is" panels, and only those', () => {
+  const ov = (id, key, off = false, style = '') => ({ id, kind: 'overlay', key, style, off, x: 0.3, y: 0.3, w: 320, h: 240 });
+  const sect = (id, key, off = false, grp = null) => ({ id, kind: 'sect', key, sect: 'hp', grp, off, x: 0.5, y: 0.5, w: 100, h: 20 });
+  const mk = () => groupEnv([
+    ov('me-hud', 'me', false, 'hud'), ov('me-box', 'me', false, 'a'), ov('who', 'who'),
+    sect('s1', 'me', false, 'g7'), piece('q1', 'g1'), piece('q2', null),
+    { id: 'callouts', kind: 'callouts', off: false }], { g1: 's1' });
+  const offs = (e) => Object.fromEntries(e.layout.panels.map(p => [p.id, p.off]));
+
+  it('a press of the overlay\'s key hides every look of it and nothing else — pieces taken apart, other pieces, other overlays stay', () => {
+    const e = mk();
+    e.applyGroupOps([{ overlay: 'me', show: false }]);
+    expect(offs(e)).toEqual({ 'me-hud': true, 'me-box': true, who: false, s1: false, q1: false, q2: false, callouts: false });
+    expect(e.layout.panels.slice(0, 2).map(p => [p.x, p.y, p.w, p.h])).toEqual([[0.3, 0.3, 320, 240], [0.3, 0.3, 320, 240]]);   // where it sits is kept
+    expect(e.calls.save).toBe(1);                               // and the choice is saved with the layout
+    expect(e.calls.render).toBe(1);
+    e.applyGroupOps([{ overlay: 'me', show: true }]);
+    expect(offs(e)).toEqual({ 'me-hud': false, 'me-box': false, who: false, s1: false, q1: false, q2: false, callouts: false });
+  });
+  it('it is an explicit state, not a flip: the same press twice leaves it as it was', () => {
+    const e = mk();
+    e.applyGroupOps([{ overlay: 'me', show: false }, { overlay: 'me', show: false }]);
+    expect(offs(e)['me-hud']).toBe(true);
+  });
+  it('an overlay with no panel here is left alone, with no note and no save', () => {
+    const e = mk();
+    e.applyGroupOps([{ overlay: 'charm', show: false }]);
+    expect(e.calls.notes).toEqual([]);
+    expect(e.calls.save).toBe(0);
+    expect(e.setOverlayPanels('charm', true)).toBe(false);
+  });
+  it('group presses and overlay presses share the queue, in order, and a group of taken-apart pieces keeps to its own key', () => {
+    const e = mk();
+    e.applyGroupOps([{ overlay: 'me', show: false }, { id: 's1', show: false }]);
+    expect(offs(e)).toEqual({ 'me-hud': true, 'me-box': true, who: false, s1: false, q1: true, q2: false, callouts: false });
+  });
+  it('the Canvas applies it from loadState (the press that arrived while it was closed) and from the ping', () => {
+    expect(canvas).toMatch(/if \(op && typeof op\.overlay === 'string'\) \{ setOverlayPanels\(op\.overlay, !!op\.show\); return; \}/);
+  });
+});
 
 describe('canvas.html: the key capture (the dashboard\'s, for the Canvas)', () => {
   const capBlock = sliceBlock(canvasRaw, '  var KEY_USES = {', '    return true;\n  }\n');
