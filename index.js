@@ -10426,6 +10426,21 @@ function _decodeSpellEffects(r) {
 
 // ── Spell catalog endpoint ──────────────────────────────────────────────────
 const _SPELL_CATALOG_TTL_MS = 60 * 60 * 1000;
+// FB-57 (a member: "Assonance is single target, should not have the 12 counter") — which spells
+// hit an AREA. The Melody overlay's AE chip (`hits/12`) counts mobs per pulse, and the agent used
+// to register it for ANY detrimental song with landing text, so a single-target DoT song wore a
+// swarm counter. The spell's own data decides now: `eqemu_spells.targettype`. Set from the live
+// table (2026-10-07, `select targettype, count(*) … where good_effect = 0`):
+//   4  PB AE, around the caster       313 detrimental · every bard swarm song (Chords of Dissonance,
+//                                     Largo`s Melodic Binding, Selo`s Chords of Cessation …)
+//   8  targeted AE                    208 · Denon`s Desperate Dirge, the targeted AE nukes
+//   20 targeted AE tap                  5 · 24 AE undead 4 · 25 AE summoned 3
+//   2  AE client v1 · 40 AE bard       0 detrimental (13 + 21 beneficial) — kept so the flag means
+//                                     "area" and not "area, as of today's rows"
+// NOT in the set, on purpose: 5 target (1,049 detrimental — Angstlich's Assonance is here), 1 optional
+// target, 13 tap, 6 self, 9/10/11/16/17/18 the one-race singles (animal, undead, summoned, plant,
+// giant, dragon), and 3 group teleport / 41 group (all beneficial, and a group is not a mob count).
+const _AE_TARGET_TYPES = new Set([2, 4, 8, 20, 24, 25, 40]);
 async function _handleAgentSpellCatalog(req, res, isPublic) {
   if (!isPublic) {
     const identity = await mimicLink.requireAgentAuth(req, res);
@@ -10449,7 +10464,7 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
       // that ARE a damage shield carry the derived `ds` field onward, so the
       // ~3.9k-spell catalog payload barely grows (undefined fields don't
       // serialize).
-      const SELECT = 'select=id,name,cast_on_you,cast_on_other,spell_fades,buffduration,buffdurationformula,cast_time,good_effect,mana,recast_time,resist_type,' +
+      const SELECT = 'select=id,name,cast_on_you,cast_on_other,spell_fades,buffduration,buffdurationformula,cast_time,good_effect,mana,recast_time,resist_type,targettype,' +
         'effect_id_1,effect_base_value_1,effect_id_2,effect_base_value_2,effect_id_3,effect_base_value_3,raw';
       // Damage-shield magnitude for a spell: SPA 59 with a NEGATIVE base value
       // is the real "deal bonus damage to attackers" effect real DS spells use
@@ -10744,11 +10759,16 @@ async function _handleAgentSpellCatalog(req, res, isPublic) {
             // predates v8, and indexing everything would record our own raid's
             // nukes as boss mechanics.
             npc:        npcCastable.has(Number(r.id)) ? 1 : undefined,
+            // FB-57 — an AREA spell (_AE_TARGET_TYPES), so the agent's Melody AE chip can skip
+            // single-target songs. Set only for the ~600 of ~3.9k that are, like `npc`. A catalog
+            // with NO `ae` anywhere is the agent's cue that the bot predates v9 and it keeps the
+            // old chip-everything behaviour rather than hiding every chip.
+            ae:         _AE_TARGET_TYPES.has(Number(r.targettype)) ? true : undefined,
           });
         }
       }
       const body = JSON.stringify({
-        version: 8,   // v8: adds `npc` (NPC-castable flag) — #206 instant-mechanic index
+        version: 9,   // v9: adds `ae` (area-spell flag) — FB-57 Melody AE chip · v8: adds `npc` (NPC-castable flag) — #206 instant-mechanic index
         fetched_at: new Date().toISOString(),
         count: entries.length,
         entries,
