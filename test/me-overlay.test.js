@@ -318,6 +318,68 @@ describe('the Box (was A)', () => {
     expect(css).toMatch(/body:not\(\.hud\) \.card\{background:transparent;border-color:transparent\}/);
     expect(css).toMatch(/\.bar > span\{text-shadow:[^}]*#000/);
   });
+
+  // The guild lead, 2026-10-07 (screenshots): the ring showed "DS 24" with the procs and stuns counts
+  // beside it, and the Box showed the damage block then the group, with none of them. The Box now
+  // carries the SAME fields (target.my_procs / my_stuns, combat.ds) on one line under the target — where
+  // the counts belong, since they are about that mob — in the ring's colours: procs purple, stuns gold,
+  // the shield in its kind's.
+  describe('procs, stuns/aggro and the shield — one line under the target', () => {
+    const DS = { hits: 3, total: 72, last: 24, per_hit: 24, from_buffs: true, measured: true, kind: null };
+    const snap = (target, ds = DS) => Object.assign({}, s, {
+      target: target && Object.assign({ name: 'a gnoll warlord', hp_pct: 63 }, target),
+      dps: { fight: { dps: 173, secs: 45 }, night: { avg_dps: 81, dmg: 181200, fights: 23 } },
+      combat: ds ? { live: true, secs: 30, out: { dps: 0, by: {} }, in: { dps: 0, by: {} }, feed: [], ds } : { live: true, secs: 30, out: { dps: 0, by: {} }, in: { dps: 0, by: {} }, feed: [] },
+    });
+    // The row's chips, in order: [colour, label, value].
+    const chips = (h) => {
+      const row = (h.match(/<div class="kv">(<span title="[^"]*" style="color:[^"]*">[\s\S]*?)<\/div>/g) || []).find(r => /title="(Weapon procs|Your damage shield|A shield-cancelling)/.test(r)) || '';
+      return [...row.matchAll(/<span title="[^"]*" style="color:([^"]*)">([^<]*) <b style="color:inherit">([^<]*)<\/b><\/span>/g)].map(m => [m[1], m[2], m[3]]);
+    };
+
+    it('reads "procs 3 · stuns 2 · DS 24", purple, gold, then the shield\'s own colour', () => {
+      const h = R.renderA(snap({ my_procs: 3, my_stuns: 2 }));
+      expect(chips(h)).toEqual([['var(--purple)', 'procs', '3'], ['var(--gold)', 'stuns', '2'], ['var(--orange)', 'DS', '24']]);
+    });
+
+    it('sits straight under the target\'s bar, above the damage block and the group', () => {
+      const h = R.renderA(snap({ my_procs: 3, my_stuns: 2 }));
+      const at = (x) => h.indexOf(x);
+      expect(at('a gnoll warlord')).toBeGreaterThan(-1);
+      expect(at('title="Weapon procs on the target"')).toBeGreaterThan(at('a gnoll warlord'));
+      expect(at('title="Weapon procs on the target"')).toBeLessThan(at('>damage<'));
+      expect(at('>damage<')).toBeLessThan(at('>group<'));
+      // …and the damage block is untouched
+      expect(h).toContain('fight <b>173</b> <span class="dim">(45s)</span>');
+    });
+
+    it('a 0 stays, dim, the way the ring does; the shield takes its kind\'s colour', () => {
+      expect(chips(R.renderA(snap({ my_procs: 0, my_stuns: 3 }))).slice(0, 2)).toEqual([['var(--dim)', 'procs', '0'], ['var(--gold)', 'stuns', '3']]);
+      expect(chips(R.renderA(snap({ my_procs: 1, my_stuns: 0 }, Object.assign({}, DS, { kind: 'thorns' }))))[2][0]).toBe('var(--green)');
+      expect(chips(R.renderA(snap({ my_procs: 1, my_stuns: 0 }, Object.assign({}, DS, { kind: 'fire' }))))[2][0]).toBe('#ffb347');
+    });
+
+    it('the shield carries the ring\'s "~" while it is an estimate, and none once a hit has landed', () => {
+      expect(chips(R.renderA(snap({ my_procs: 1, my_stuns: 1 }, Object.assign({}, DS, { measured: false }))))[2].slice(1)).toEqual(['DS~', '24']);
+      expect(chips(R.renderA(snap({ my_procs: 1, my_stuns: 1 })))[2].slice(1)).toEqual(['DS', '24']);
+      expect(chips(R.renderA(snap({ my_procs: 1, my_stuns: 1 }, { hits: 0, total: 0, last: null, per_hit: 24, from_buffs: true })))[2].slice(1)).toEqual(['DS~', '24']);   // an older agent
+    });
+
+    it('with no live target, on a corpse, or from an agent that sends neither count: the shield alone, or nothing', () => {
+      expect(chips(R.renderA(snap(null))).map(c => c[1])).toEqual(['DS']);
+      expect(chips(R.renderA(snap({ my_procs: 7, my_stuns: 3, corpse: true }))).map(c => c[1])).toEqual(['DS']);
+      expect(chips(R.renderA(snap({}))).map(c => c[1])).toEqual(['DS']);
+      const bare = R.renderA(snap({ my_procs: 7, my_stuns: 3 }, null));
+      expect(chips(bare).map(c => c[1])).toEqual(['procs', 'stuns']);
+      expect(R.renderA(snap({}, null))).not.toContain('Weapon procs');
+      expect(R.renderA(snap({}, null))).not.toContain('Your damage shield');
+    });
+
+    it('a shield-cancelling debuff reads red "DS OFF" with the time left, as it does on the ring', () => {
+      const off = { name: 'Mark of the Plague Lords', heals: 50, seconds: 125 };
+      expect(chips(R.renderA(snap({ my_procs: 1, my_stuns: 1 }, Object.assign({}, DS, { per_hit: 0, off }))))[2]).toEqual(['#f85149', 'DS OFF', '2:05']);
+    });
+  });
 });
 
 // ── the three HUDs ──────────────────────────────────────────────────────────
@@ -898,7 +960,7 @@ describe('the HUD — rounds, damage shield, builder', () => {
     reset();
     const feed = [hit('out', 38, 0, { kind: 'ds' }), hit('out', 45, 0), hit('out', 38, 2, { kind: 'ds' })];
     const snap = s(feed, { combat: { live: true, secs: 30, out: { dps: 0, by: {} }, in: { dps: 0, by: {} }, feed,
-      ds: { hits: 2, total: 76, last: 38, per_hit: 38, from_buffs: true } } });
+      ds: { hits: 2, total: 76, last: 38, per_hit: 38, from_buffs: true, measured: true } } });
     const h = R.renderHud(snap);
     expect(lane(snap, 'hout')).toEqual(['45']);
     expect(lane(snap, 'hds')).toEqual(['38', '38']);
@@ -907,12 +969,28 @@ describe('the HUD — rounds, damage shield, builder', () => {
     expect(h).toContain('>DS<');
   });
 
+  // A member, 2026-10-07 (FB-58): the shield number missed instrument skill and AAs because it was an
+  // estimate from buffs and gear. The agent now reads the hits that landed and says `measured`; the
+  // button's "~" is the estimate's mark, so a measured number carries none.
+  it('the shield button marks an estimate with "~" and a number read off the hits that landed with nothing', () => {
+    reset();
+    const ds = (x) => R.renderHud(s([], { combat: { live: true, secs: 30, out: { dps: 0, by: {} }, in: { dps: 0, by: {} }, feed: [],
+      ds: Object.assign({ hits: 0, total: 0, last: null, per_hit: 18, from_buffs: true }, x) } }));
+    const est = ds({ measured: false }), got = ds({ hits: 3, total: 66, last: 22, per_hit: 22, measured: true });
+    expect(est).toContain('>DS~<');
+    expect(est).not.toContain('>DS<');
+    expect(got).toContain('>DS<');
+    expect(got).not.toContain('>DS~<');
+    expect(got).toMatch(/font-weight="700">22<\/text>/);
+    expect(ds({})).toContain('>DS~<');          // an older agent never says `measured`: its number was an estimate
+  });
+
   // The guild lead, 2026-10-05: "Hud should have the number of procs that you have had on a mob, as
   // well as how many stuns/aggro spells you've put into the mob. on the right side of the circle hud
   // above the damage shield, Procs can go to the right of damage and stuns/aggro spells can go to the
   // right of that". One short row over the shield button: procs (purple), then stuns/aggro (gold).
   describe('procs and stuns/aggro on the target', () => {
-    const dsInfo = { hits: 2, total: 76, last: 38, per_hit: 38, from_buffs: true };
+    const dsInfo = { hits: 2, total: 76, last: 38, per_hit: 38, from_buffs: true, measured: true };
     const snap = (mine, extra = {}) => s([], Object.assign({
       target: Object.assign({ name: 'a gnoll warlord', hp_pct: 63 }, mine),
       combat: { live: true, secs: 30, out: { dps: 0, by: {} }, in: { dps: 0, by: {} }, feed: [], ds: dsInfo },
