@@ -3,7 +3,10 @@
 A guild platform for Wolf Pack on Project Quarm (EverQuest emu), grown from a
 Discord raid-timer bot into five independently-versioned components in one
 monorepo. This file is the authoritative architectural map; `README.md` is the
-user-facing setup guide + command reference. When they conflict, this file wins.
+public front page (what it is, what it looks like, where to start) and
+`docs/guide/` is the handbook: the user-facing install, operations and
+contributing instructions, one chapter per reader. When they conflict, this
+file wins.
 
 | Component | Path | Runs on | Ships from |
 |---|---|---|---|

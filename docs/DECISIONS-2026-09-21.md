@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **README rewrite + handbook draft** (§177) | On `claude/sharp-lamport-dC0TW`: a front-page README with seven clips of the real software (invented names), `docs/guide/00–11`, media in `docs/media/readme/`; sixteen doc-vs-code contradictions listed in §177 | the guild lead: read the README and the handbook on the branch and say yes, or what to change; then a session merges to `main` (docs only, no deploy) and starts folding the superseded docs |
 | **Mimic 2.7.9 stable + member-report sweep** (§176) | Stable `40af051a` (agent 3.7.96), beta re-parked 2.7.10. 13 older member reports closed with their senders DMed, plus FB-43; 23 stay open (partial / not done / unclear / alpha, listed in §176) | a session: the open member reports, starting with the partials (FB-22, FB-26, FB-3, FB-37); the guild lead: pick the four B/C web previews still on beta |
 | **Main / alt · Inventory only · Hide completely** (§175) | Bot 3.1.214 live; agent 3.7.96, stable in Mimic 2.7.9: the choice in setup and on the dashboard's Me card, Hide completely also stops this PC reading the log | the guild lead: should Inventory only also stop that character's fight uploads? |
 | **My parses: explore + Guild / My logs** (§174) | Live: search, zone, By day on `/me/parses` (web 1.8.110 · bot 3.1.213, `my_parse_series_v2`); the same in Mimic plus Guild / My logs, stable in Mimic 2.7.9 | a session with confirmation: drop the old `my_parse_series` |
@@ -7704,3 +7705,40 @@ stable version."*
     stable. A report never moves backwards, so nothing re-sends.
 - **Lesson for the next session:** a fix that ships without an FB line leaves the member's report open forever.
   When a change answers a report, the commit carries `Fixes FB-n` at the gate where the member will see it.
+
+### 177. The README rewritten as a front page, with film of the real software, and a handbook drafted (2026-10-07, proposed on `claude/sharp-lamport-dC0TW`)
+
+The guild lead: *"comb through every aspect of the codebase and completely rewrite the readme section of the project in
+GitHub. generate samples of the components and include animated gifs to [accentuate] the platform's differentiated
+value. crawl through all of our documents and come up with a draft set of clean instructions for this project, rather
+than the piecemeal built docs that we have now."*
+
+- **The README** is now a front page: what it is in thirty seconds, what it looks like (seven clips and three
+  stills), why a guild runs it, the four parts with the architecture figure, three "get started" paths, the handbook
+  index, feedback, privacy, licence. The install steps, env-var tables and command list it used to carry moved into
+  the handbook, corrected. It names no versions (they live in `package.json`, per the rule above).
+- **Every clip is the real software, not a mock-up.** The agent from `main` ran in local mode (no token, zero server
+  calls) against a synthetic EverQuest log written in the golden fixture's own line formats; Mimic's overlay HTML
+  ran in headless Chromium with a stub standing in for the preload bridge; frames were filmed with Playwright and
+  assembled into GIFs with one shared palette. The Discord board is the bot's own `utils/embeds.js` over the real
+  `data/bosses.json` with invented kill times. The architecture figure is the live `archify` diagram. Website stills
+  are the public pages.
+  - **Every character name in the film is invented** and was checked against `characters`, `who_observations` and
+    `eqemu_npc_types` before use (two candidates were dropped: one is a real player's name on the server, one an NPC
+    prefix). The golden fixture's names were deliberately NOT reused in the film because fixtures carry real names.
+  - The media lives in `docs/media/readme/` (2.2 MB). The capture rig (fight generator, overlay filmer, GIF
+    assembler) stayed in the session scratchpad; it is a few hundred lines and can be re-made.
+  - Overlays that need Zeal (Tank overlay, Command Center, HUD, Extended Target, charm) could not be filmed from a
+    log alone and are not in the README.
+- **The handbook, `docs/guide/`, chapters 00–11.** An inventory of all 140 files under `docs/` found the same
+  instructions in up to six places and sixteen contradictions between docs and code (boss and command counts, the
+  Planes of Power lock, the shared agent token, "free tier", code signing, the licence in one README, the privacy
+  promise about excluded characters, dashboard authoring, file sizes and test counts, the STATUS doc map, the
+  DECISIONS file naming, officer-role defaults, self-host gaps, component READMEs, public-repo hygiene). The chapters
+  were written from the code and the current docs by Sonnet agents and reviewed here; each section ends with a
+  `Source:` line and anything not run end to end is marked `⚠ unverified`.
+- **Nothing was deleted or moved.** `web/app/ai/page.tsx` links six docs by path, tests assert on others, and the
+  SessionStart hook globs the DECISIONS files. The handbook sits beside them; the README and `CLAUDE.md` point at it.
+  Which old documents to fold, archive or keep is the guild lead's call after reading the inventory.
+- **Where it stands:** a draft on the working branch for the guild lead's review, not on `main`. The README is
+  outward-facing, so it waits for a yes.

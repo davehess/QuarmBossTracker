@@ -1,484 +1,161 @@
-# Wolf Pack EQ — bot · wolfpack.quest · Mimic
+<p align="center">
+  <img src="web/public/wolf.png" width="110" alt="">
+</p>
 
-The guild platform for **Wolf Pack** on Project Quarm (EverQuest emu, Luclin era):
+<h1 align="center">Wolf Pack EQ</h1>
 
-| Component | What it is | Where it runs |
-|---|---|---|
-| **Discord bot** | Raid timers, parse aggregation, DKP/loot, onboarding, the `/api/agent/*` ingest surface | Railway, ships from `main` |
-| **[wolfpack.quest](https://wolfpack.quest)** | Guild tracker site — `/raid` hub, parses, buffs, PvP, leaderboards, character pages, officer admin | Vercel, ships from `main` |
-| **Wolf Pack Mimic** | Desktop client for raid members — log parser + overlays + uploads, auto-updating | Member PCs, releases from this repo |
+<p align="center">
+  Raid tooling for an EverQuest guild on Project Quarm: a Discord bot, a website, a desktop companion and a privacy-first log agent.<br>
+  Built by the guild that raids with it. Open source. No paid tier.
+</p>
 
-Timer data sourced from [PQDI.cc](https://www.pqdi.cc/instances). Architecture map + release playbook: `CLAUDE.md`. Component versions live in each `package.json`; builds on the [Releases](https://github.com/davehess/QuarmBossTracker/releases) page.
-
----
-
-## Raid members — install Mimic
-
-**One-click installer:** [**wolfpack.quest/mimic**](https://wolfpack.quest/mimic) (stable) · [beta channel](https://wolfpack.quest/mimic/beta)
-
-Electron desktop app; bundles its own Node runtime — nothing else to install. The installer is not code-signed, so Windows SmartScreen will warn: **More info → Run anyway** (in Edge: ⋯ → Keep → Keep anyway). Auto-updates in place after that.
-
-**What you get:**
-
-- **Buff & Debuff Queue** — who needs what, by your class, severity-sorted; cures with counter type + dispel-slot intel
-- **Buffs / Raid tab** — live raid roster with HP bars and a full per-raider buff breakdown, refreshing every 3s
-- **Overlays** — DPS/Tank HUD, trigger alerts with TTS + countdown timers, charm tracker, pet tracker, Target Info, buff queue, /who, melody/casting, threat meter
-- **Factions & Gear sync** — drop your `<Name>Quarmy.txt` export in your EQ folder (enable Zeal's *Export data on /camp*); gear, AAs and factions sync, powering accurate cast bars + MGB detection. Bank and coin are stripped on **your** machine and never uploaded
-- **Heal-rotation board** — follows the complete-heal rotation call by call, shows whose turn is next, flags a gap before it becomes a dead tank, and speaks your turn out loud
-- **Command Center** — one board for healer mana, who needs curing, whether Divine Intervention is up, and who has a defensive running
-- **Mob Info** — stats, loot table and spell list for whatever you're targeting, pooled from the whole raid's sightings
-- **Loot bidding** — place sealed DKP bids from the dashboard without alt-tabbing, once you've signed in to the guild's loot site
-- **`/tells` history** — synced privately to [wolfpack.quest/me](https://wolfpack.quest/me)
-- **UI Studio** — back up your EQ window layout, hotkeys, chat tabs and `eqclient.ini`; restore on any machine
-
-**After install:** sign in with Discord (Step 1 of onboarding), pick your EQ folder, launch. The dashboard's **Setup Checklist** tells you if anything needs attention (logging on, Zeal connected, export-on-camp, …). The local dashboard lives at `http://localhost:7779`.
-
-<details>
-<summary>🧱 Parser.bat (minimal CLI alternative)</summary>
-
-The original log-tail agent — no GUI, no overlays, same uploads. Double-click **`RUN-FIRST-for-Node.js.bat`** once per machine, then **`Parser.bat`**. Dashboard serves on `http://localhost:7777`.
-</details>
+<p align="center">
+  <a href="https://github.com/davehess/QuarmBossTracker/releases/latest"><b>Download Mimic</b></a> ·
+  <a href="https://wolfpack.quest">wolfpack.quest</a> ·
+  <a href="docs/guide/00-README.md">Handbook</a> ·
+  <a href="docs/PRIVACY.md">Privacy</a> ·
+  <a href="LICENSE">AGPL-3.0-or-later</a>
+</p>
 
 ---
 
-## Bot install (officers / self-host)
+## Thirty seconds
 
-### 1 — Install Node.js
+One raid, every viewpoint. Each raider's **Mimic** reads their own EverQuest log on their own PC, drops private chat before anything is sent, and uploads the fight. The **bot** merges every upload into one parse and keeps the boss timers on Discord boards it edits in place. The **website** turns all of it into the guild's memory. Overlays over the game show what a raider needs mid-pull: who has aggro, what to call out, when the next ability lands.
 
-Same `RUN-FIRST-for-Node.js.bat` flow as above, one time per machine.
+Every clip below is the real software running against a synthetic log in local mode. Every character name is invented.
 
-### 2 — Configure and start
+## What it looks like
 
-Open a normal PowerShell or Command Prompt window in the repo folder:
+### The DPS/Tank Meter, live from your own log
 
-```powershell
-npm install
-copy .env.example .env
-notepad .env        # fill in your Discord token and channel IDs
-npm start
-```
+<img src="docs/media/readme/dps-meter.gif" width="560" alt="The DPS/Tank Meter overlay filling in during a pull: a ranked table of raiders, the owner's row highlighted, a pet folded under its owner.">
 
-> **Tip:** the bot auto-registers slash commands on every startup — no separate deploy step needed.
+Your row stays highlighted wherever you rank. Pets fold under their owners. History keeps the last hundred fights; Trend graphs your own DPS tonight and this week. The **Tank** tab turns it around:
 
-### 3 — Stream your EQ log (optional but recommended)
+<img src="docs/media/readme/tank-tab.gif" width="520" alt="The meter's Tank tab: damage taken, hits, damage taken per second, for the tank.">
 
-Double-click **`Parser.bat`** in the repo folder. That's it. No PowerShell execution policy to fight with — the `.bat` file handles everything.
+### Triggers: callouts and countdowns, spoken and shown
 
-Parser watches every recently-active EQ log file simultaneously (no need to pick a character) and uploads encounter data to the bot while you raid.
+<img src="docs/media/readme/triggers.gif" width="520" alt="The trigger overlay: a boss cast fires a callout, a countdown bar runs to the next one, an enrage warning glows as it nears zero.">
 
-**First run** — auto-detects your EQ directory across all drives (`C:\`, `D:\`, `E:\`, etc.) looking for `EverQuest`, `EQ`, `TAKP`, `TAKP2.2`, and standard install paths. Asks for the bot URL and your personal upload key — run **`/token`** in Discord to mint one (Mimic users get this automatically when they sign in). There is no shared guild token any more; each key is yours alone and can be revoked without affecting anyone else. It then **copies itself into your EQ directory** — which is typically already excluded from Windows Defender — and offers three startup options:
+A log line fires a callout, speaks it, and starts a countdown. Guild triggers are edited by an officer on the website and reach every raider's Mimic within about two minutes. The **« Earlier / Good! / Too early** buttons send timing back to whoever wrote the trigger.
 
-![Parser.bat first run — setup wizard](docs/screenshot-logsync-setup.png)
+### Threat, and who is in the zone
 
-| Option | What it does |
-|--------|-------------|
-| **Run automatically** | Registers a Windows Task Scheduler task — Parser starts silently in the background every time you log into Windows. No window, no clicks needed. |
-| **Desktop shortcut** | Adds a "Parser" shortcut to your desktop — double-click it before a raid. |
-| **Start menu** | Adds "Parser" under Start → All Apps. |
+<table>
+<tr>
+<td><img src="docs/media/readme/threat-meter.gif" width="420" alt="The threat meter: the tank's hate lead building during the fight, each raider's threat split by swing, proc, spell and heal."></td>
+<td><img src="docs/media/readme/who-overlay.gif" width="400" alt="The /who overlay filling in from a /who in the log: eighteen raiders with class and level."></td>
+</tr>
+<tr>
+<td>Threat per raider, split by swing, proc, spell and heal, so a healer sees the aggro coming.</td>
+<td>A <code>/who</code> in game becomes a sortable list with class, level and guild, filterable by class.</td>
+</tr>
+</table>
 
-After first run the repo copy is no longer needed. Everything (`Parser.bat`, `start-logsync.ps1`, `wolfpack-logsync\index.js`, `logsync.config.json`) lives inside your EQ directory. Shortcuts and the scheduled task point there directly.
+### The main window
 
-**Subsequent runs:**
+<img src="docs/media/readme/dashboard-tour.gif" width="760" alt="Mimic's main window: the Dashboard with setup checklist, the Fights tab with a threat breakdown and incoming damage, recent trigger fires, My parses, and Diagnostics.">
 
-![Parser.bat normal run](docs/screenshot-logsync-run.png)
+Setup checklist, every fight this session, recent trigger fires with a replay tool, your parses over time, crash review, lag meter. The same window serves at `http://127.0.0.1:7779/` for a plain browser.
 
-**What gets watched:** any `eqlog_*_pq.proj.txt` modified in the last 30 days. Characters active in the last hour show in green with `*`. Idle log files sit at zero cost until that character logs in.
+### Discord: the boss board
 
-**Privacy:** all filtering is local. Officer chat, tells, group chat, and custom channels are dropped before any upload — they never leave your machine. Guild chat (`/gu`) and raid chat (`/rs`) are forwarded to read-only Discord channels (`#in-game-guild-chat`, `#in-game-raid-chat`). Only combat events from detected boss encounters are uploaded to the parse endpoint.
+<img src="docs/media/readme/discord-board.png" width="520" alt="Two Discord embeds from the bot: Active Cooldowns grouped by expansion with next-spawn times, and Spawning in the Next 24 Hours.">
 
-**Flags** (pass via `start-logsync.ps1` directly if needed):
+Rendered from the bot's own embed code over the real boss list, with made-up kill times. The board is edited in place, never re-posted; kill buttons live in one thread per expansion.
 
-| Flag | Description |
-|------|-------------|
-| `-DryRun` | Parse locally, print summaries — nothing uploaded |
-| `-StaleAfterDays 7` | Tighten the "recently active" window (default: 30) |
-| `-EqDir "D:\TAKP"` | Override EQ path without re-prompting |
-| `-Setup` | Re-run the startup wizard (change auto-start/shortcut preference) |
-| `-Remove` | Remove the scheduled task and any shortcuts |
-| `-Reset` | Forget all saved config and start over |
+### The website
 
----
+<table>
+<tr>
+<td><a href="https://wolfpack.quest"><img src="docs/media/readme/site-home.png" alt="wolfpack.quest home page"></a></td>
+<td><a href="https://wolfpack.quest/about"><img src="docs/media/readme/site-about.png" alt="The about page: how the platform grew from one question"></a></td>
+<td><a href="https://wolfpack.quest/platform"><img src="docs/media/readme/site-platform.png" alt="The platform page"></a></td>
+</tr>
+</table>
 
-## Channel Layout
+Public pages: the story, the platform, the roadmap, the Zeal tag icons, the database. Member pages: parses, buffs, PvP, Planes of Power flags and guide, leaderboards, loadouts, your own `/me`. Officer pages under `/admin`.
 
-### `#raid-mobs` (main channel)
+## Why a guild runs this instead of a parser and a spreadsheet
 
-Four fixed message slots, always edited in place — never re-posted:
+- **Every raider's log, one parse.** Each upload is a viewpoint; the bot merges them into one record of the kill, so one person's lag or line of sight does not decide the night's numbers.
+- **Private chat never leaves the PC.** Officer chat, tells, group and custom channels are dropped at byte level before parsing. Signed out, Mimic makes zero calls to the guild's server.
+- **Triggers are shared, not emailed.** An officer edits a trigger on the website; every Mimic has it in about two minutes. Personal triggers stay personal. GINA and EQLogParser packs import.
+- **The charm break is called the moment the line is read**, and the timer overlay knows which tick a charm will break on.
+- **Mob Info pooled from the whole raid.** Target a mob and see its stats, loot, spells, faction and who will come to its aid, from the catalog and from what every raider's Mimic has seen. Visited zones are cached on your PC.
+- **The Command Center** shows healer mana, who needs a cure, whether Divine Intervention is up, who still has to hail the flag NPC.
+- **Boss timers that survive a redeploy.** Boards in Discord are edited in place; kills post from Mimic without anyone typing a command; lockouts, instance kills and quakes are understood.
+- **The fleet moves without a release.** Tuning, triggers and a kill switch are polled, not shipped; an agent fix hot-swaps to every PC without a new installer.
+- **Reports with handles.** Every bug or idea gets an `FB-n`; when the fix ships, the bot updates the card and messages the person who filed it.
+- **Honest about what it is not.** No code signing (SmartScreen warns), no self-serve data deletion yet, Zeal is needed for live HP and positions. [`docs/PRIVACY.md`](docs/PRIVACY.md) lists the gaps as plainly as the features.
 
-| Slot | Content |
-|------|---------|
-| 1 | 📊 Active Cooldowns (all expansions) |
-| 2 | 🌅 Spawning in the Next 24 Hours |
-| 3 | 📅 Daily Raid Summary (resets midnight) |
-| 4 | Thread links (one message, all 5 expansions) |
+## The four parts
 
-### Expansion Threads (inside `#raid-mobs`)
+<img src="docs/media/readme/architecture.png" width="900" alt="Architecture: EverQuest + Zeal feed the Agent on the raider's PC; the Agent feeds Mimic's overlays and uploads to the Wolf Pack bot; the bot posts to Discord, merges into Supabase, and polls OpenDKP; wolfpack.quest reads Supabase.">
 
-One thread per expansion. Each thread contains:
-1. **Active Cooldowns card** — edited in place at the top
-2. **Zone kill cards** — posted when bosses are killed, edited/deleted as timers clear
-3. **Board panels** with kill buttons — edited in place
+| Part | Where it lives | Runs on | Ships from |
+|---|---|---|---|
+| **Discord bot** and the `/api/agent/*` ingest API | `index.js`, `commands/`, `utils/` | Railway | `main` |
+| **Website** [wolfpack.quest](https://wolfpack.quest) | `web/` (Next.js 14, Supabase auth) | Vercel | `main`; `beta` mirrors to `b.wolfpack.quest` |
+| **Agent** (single-file Node, zero dependencies) | `packages/wolfpack-logsync/` | the raider's PC, inside Mimic or as `Parser.bat` | bundled with Mimic |
+| **Mimic** (Electron, bundles Node and the agent) | `apps/mimic/` | the raider's PC, auto-updating | `release-mimic.yml`: stable from `main`, beta from `beta`, alpha from `alpha` |
 
-| Thread | Env Var |
-|--------|---------|
-| Classic | `CLASSIC_THREAD_ID` |
-| Kunark | `KUNARK_THREAD_ID` |
-| Velious | `VELIOUS_THREAD_ID` |
-| Luclin | `LUCLIN_THREAD_ID` |
-| PoP | `POP_THREAD_ID` |
+Postgres on Supabase holds the EverQuest reference catalog (mirrored weekly from the server's data), the guild's data, and the bot's durable state. Versions live in each `package.json`; builds are on the [Releases](https://github.com/davehess/QuarmBossTracker/releases) page. The live diagram, with the data flow of one log line, is at [wolfpack.quest/platform/architecture](https://wolfpack.quest/platform/architecture).
 
-### Historic Kills Thread — `HISTORIC_KILLS_THREAD_ID`
+## Get started
 
-Receives midnight daily summaries, zone kill cards when bosses respawn, and archived `/announce` messages.
+### I raid: install Mimic
 
-### Onboarding Thread — `ONBOARDING_THREAD_ID`
+1. Download the installer from the [latest release](https://github.com/davehess/QuarmBossTracker/releases/latest) (or `wolfpack.quest/mimic?direct=1`). It is not code-signed: SmartScreen → **More info → Run anyway**.
+2. Run it. **Never install into your EverQuest folder.**
+3. Sign in with Discord, or choose local-only. Point it at your EverQuest folder. Star your main.
 
-Hosts the public Quick Start instructions and the encrypted opt-out registry (salted SHA-256 hashes — no plaintext user IDs).
+The dashboard's **Setup checklist** names anything left: logging on, Zeal connected, export on `/camp`. Full walkthrough: [Install Mimic](docs/guide/02-raiders-install-mimic.md).
 
-### Parse Logs Thread — `PARSES_LOG_THREAD_ID`
+### I run a guild: stand up the bot and the site
 
-Every `/parse` submission is archived here as a JSON embed. This is the **source of truth** for parse data and survives Railway volume wipes — the bot rebuilds `parses.json` from this thread on every startup.
+You need a Discord application, a Supabase project, a Node host (Railway or Docker) and a Next.js host (Vercel). In order: [the Discord bot](docs/guide/03-officers-discord-bot.md) → [the database](docs/guide/05-database-supabase.md) → [the website](docs/guide/04-officers-website.md). The honest picture for another guild, including what is still hard-coded to ours and what the free tiers afford, is [Running it for another guild](docs/guide/11-self-hosting-another-guild.md).
 
----
-
-## Commands
-
-The tables below cover the core raid-timer / parse / PvP set. The bot has 83 slash commands total — run **`/raidbosshelp`** in Discord for the live, complete reference. Whole areas live only there: DKP balances and wishlists, loot bidding, Plane of Hate tracking, `/who` lookups and roster tools, raid attendance ticks, feedback and suggestions, and the officer backfill/recovery set.
-
-### Kill Tracking
-
-| Command | Description |
-|---------|-------------|
-| `/kill <boss>` | Record a kill, start the respawn timer, post a zone kill card in the expansion thread |
-| `/unkill <boss>` | Clear a kill record, remove the boss from the zone kill card |
-| `/updatetimer <boss> <time>` | Override the next-spawn time (e.g. `"3d4h30m"`, `"Expires in 3 Days, 4 Hours"`) |
-| `/timers [zone] [filter]` | View spawn timers — filter by zone (autocomplete, 33+ zones) or status |
-| `/board` | Post or in-place refresh all 4 main-channel slots and all expansion thread boards |
-| `/cleanup` | Remove duplicate/stale messages, re-anchor boards to earliest copies |
-| `/restore <links...>` | Rebuild kill state from any Active Cooldowns or Daily Summary message links |
-
-### Parse Tracking
-
-| Command | Description |
-|---------|-------------|
-| `/parse <data>` | Submit an EQLogParser "Send to EQ" DPS parse — boss auto-detected from the header |
-| `/parseboss <boss> <data>` | Submit a parse with explicit boss selection |
-| `/parsestats <boss>` | DPS scoreboard and raidwide metrics for a boss across all stored kills |
-| `/parseaoe <data>` | Submit an AoE parse combining damage within a 5-minute window (max damage per player) |
-| `/parsenight [public]` | Full-night DPS summary across every kill tonight |
-| `/raidnight` | Open tonight's raid parse thread with a live rolling scoreboard |
-| `/raidreview [date] [preview]` | Post or refresh a night's Raid Night Review in that night's thread (officer only; posts itself ~45 min after midnight) |
-| `/mystats <character>` | Per-character DPS stats — kills, avg DPS, peak DPS, per-boss breakdown (ephemeral) |
-| `/mystatsall <character>` | Same as `/mystats` but aggregates across the full main + alt family |
-| `/parseleaderboard` | Post/update a pinned leaderboard in the parse log thread (officer only) |
-
-EQLogParser "Send to EQ" format:
-```
-<Boss> in <N>s, <X>K/<X>M Damage @<X>K, 1. Player = <X>K@<X> in <X>s | ...
-```
-
-### Raid Announcements
-
-| Command | Description |
-|---------|-------------|
-| `/announce time:<when> [boss:<name>] [zone:<zone>] [note:<text>]` | Create a raid announcement, a thread, and a Discord event |
-| `/addtarget <boss>` | Add a boss to the active announce thread's target list |
-| `/removetarget <boss>` | Remove a boss from the target list |
-| `/adjusttime <time>` | Update the raid time in the announce thread and Discord event |
-| `/adjustdate <date>` | Update the raid date (e.g. `"Friday"`, `"4/30"`) |
-
-**Time formats:** `"8:30 PM"`, `"Thursday 9pm"`, `"tomorrow 8pm"`, `"8:30 PM EST"`, `"in 2 hours"`
-
-The announce thread contains a live control panel. Use the **Cancel Event** button to cancel and archive.
-
-### PVP Tracking
-
-| Command | Description |
-|---------|-------------|
-| `/pvpkill <mob>` | Record a PVP mob kill — timer pulled from bosses.json, card posted to `PVP_KILLS_THREAD_ID` |
-| `/pvpspawn <mob>` | Clear a PVP mob timer when it spawns; ephemeral reply with "Alert PVP" button to rally the pack |
-| `/pvpunkill <mob>` | Remove a PVP kill record without sending an alert |
-| `/quake [time]` | Schedule a quake (`"now"`, `"9pm"`, `"in 2 hours"`) — resets all PVP mob timers, creates a Discord event |
-| `/pvprole [silent]` | Toggle your @PVP role; without `silent`, posts a wolf announcement to the PVP channel |
-| `/pvpalert <zone>` | Ping @PVP with a howl message; other users click 🐺 Howl! to join |
-
-### Boss Management
-
-| Command | Description |
-|---------|-------------|
-| `/addboss <pqdi_url>` | Scrape a PQDI.cc NPC page, add to `bosses.json`, refresh the board |
-| `/removeboss <boss>` | Remove a boss, clear its kill state, refresh the board |
-
-### Help & Onboarding
-
-| Command | Description |
-|---------|-------------|
-| `/raidbosshelp` | Full command reference (ephemeral) |
-| `/onboarding` | Show the Wolf Pack welcome message again, or toggle your opt-out preference |
-
----
-
-## Onboarding System
-
-When a new member joins, the bot sends them a welcome message (DM, or falls back to the onboarding thread) covering the three pillars of coordination: accountability, timing, and announcements. Buttons let them indicate intent (PVP, organizer, or attendee) and see tailored follow-up.
-
-- **Opt out:** Click "Don't show me this again" in the welcome message. The bot records a salted SHA-256 hash of the user ID — no plaintext IDs are stored anywhere.
-- **Opt back in / view again:** Run `/onboarding` at any time.
-- **Version tracking:** The opt-out includes the bot version. If a new version ships new commands, opted-out users receive a brief "what's new" notice.
-- **Registry:** Stored as an embed in `ONBOARDING_THREAD_ID` and reloaded on every startup.
-
----
-
-## Setup: Discord Developer Portal
-
-1. Go to [discord.com/developers/applications](https://discord.com/developers/applications)
-2. **New Application** → name it → **Bot** tab → **Reset Token** → copy the **Bot Token**
-3. Enable **Server Members Intent** under Privileged Gateway Intents
-4. **General Information** → copy your **Application ID** (`DISCORD_CLIENT_ID`)
-5. **OAuth2 → URL Generator:**
-   - Scopes: `bot` and `applications.commands`
-   - Bot Permissions: the list under **Required Bot Permissions** below (or use its ready-made invite URL)
-6. Copy the generated URL and invite the bot to your server
-
-> `Manage Events` is required for Discord Scheduled Events created by `/announce` and `/quake`.
->
-> `Manage Roles` is required for `/pvprole` to add and remove the @PVP role.
->
-> **Server Members Intent** is required for the member-join onboarding messages.
-
----
-
-## Deployment
-
-### Railway (recommended)
-
-1. Push this repo to GitHub
-2. [railway.app](https://railway.app) → **New Project** → **Deploy from GitHub repo**
-3. Add all variables from `.env.example` under the **Variables** tab
-4. **Don't rely on a Railway volume for anything you care about.** `data/state.json` is a within-process cache, not memory across deploys — production runs with no volume mounted and every deploy starts from a fresh file. Durability comes from three other places instead: Discord itself (parses, boards and roster live in threads and are re-read on boot), the message-ID environment variables in step 9 (so anchors survive a restart), and Supabase `bot_kv` for anything keyed per-night or per-fight. Anything you store only in `state.json` will be gone after the next deploy
-
-### Docker
+### I want to change the code
 
 ```bash
-cp .env.example .env
-nano .env          # fill in your values
-docker-compose up -d
-docker-compose logs -f
-
-# To update:
-git pull && docker-compose down && docker-compose up -d --build
+git clone https://github.com/davehess/QuarmBossTracker.git
+cd QuarmBossTracker && npm install          # Node 20
+npm test && npm run lint && npm run check:dashboard && npm run golden:check
 ```
 
-### Local / Development (Windows)
+Read [`CLAUDE.md`](CLAUDE.md) (the architecture map and the rules that keep four components honest) and [Contributing](docs/guide/08-contributing.md). Pull requests: bot and web branch from `main`; agent and Mimic from `beta`.
 
-Same flow as **Bot install** above: double-click `RUN-FIRST-for-Node.js.bat`
-once to install Node.js, then in the repo folder run `npm install`, copy
-`.env.example` to `.env` and fill it in, and `npm start`.
+## The handbook
 
----
+One coherent set of instructions, written from the code, in [`docs/guide/`](docs/guide/00-README.md):
 
-## First-Time Setup Order
+| | Chapter | For |
+|---|---|---|
+| 01 | [How it fits together](docs/guide/01-overview.md) | everyone |
+| 02 | [Install and use Mimic](docs/guide/02-raiders-install-mimic.md) | raiders |
+| 03 | [The Discord bot](docs/guide/03-officers-discord-bot.md) | officers |
+| 04 | [The website](docs/guide/04-officers-website.md) | officers |
+| 05 | [The database](docs/guide/05-database-supabase.md) | officers, contributors |
+| 06 | [The standalone agent](docs/guide/06-standalone-agent.md) | raiders without Mimic, hosts |
+| 07 | [Releases and branches](docs/guide/07-releases-and-branches.md) | maintainers |
+| 08 | [Contributing](docs/guide/08-contributing.md) | contributors |
+| 09 | [Privacy and your data](docs/guide/09-privacy-and-data.md) | raiders, officers |
+| 10 | [Troubleshooting](docs/guide/10-troubleshooting.md) | everyone |
+| 11 | [Running it for another guild](docs/guide/11-self-hosting-another-guild.md) | officers elsewhere |
 
-1. Create 5 expansion threads inside `#raid-mobs`: Classic, Kunark, Velious, Luclin, PoP
-2. Create a Historic Kills thread inside `#raid-mobs`
-3. Create a Parse Logs thread (e.g. "Parse Logs") — paste its ID into `PARSES_LOG_THREAD_ID`
-4. Create an Onboarding thread (e.g. "Getting Started") — paste its ID into `ONBOARDING_THREAD_ID`
-5. Optionally create a PVP channel or thread
-6. Add all thread/channel IDs to your env vars
-7. Deploy the bot
-8. Run `/board` — creates all 4 main-channel slots and posts boards in each thread
-9. Right-click each anchored message → Copy ID → add to env vars (prevents re-posting on redeploy)
-10. Run `/board` again to confirm everything edits in place (no new messages posted)
+Deeper material stays where it is: `CLAUDE.md` (architecture and working rules), `docs/HOW-ITS-BUILT.md` (feature → file index), `docs/STATUS.md` (the ledger), `docs/DECISIONS-*.md` (why), `docs/DESIGN-*.md` (designs, built and unbuilt).
 
-### Recovery After State Loss
+## Feedback
 
-```
-/restore <link1> [<link2> ...]
-```
+Mimic's **Send feedback**, the dashboard's **Feedback** button, [wolfpack.quest/feedback](https://wolfpack.quest/feedback) or `/feedback` in the guild's Discord. Every report gets an `FB-n`; a commit that says `Fixes FB-n` moves it to "on beta" or "implemented" and the bot tells you. GitHub issues are public, so strip names and channels from any pasted log.
 
-Paste links to any combination of Active Cooldowns cards and Daily Raid Summary messages. The most recent `nextSpawn` per boss wins. Parse data is recovered automatically from the Parse Logs thread on startup.
+## Privacy
 
----
-
-## Environment Variables
-
-### Required
-
-| Variable | Description |
-|----------|-------------|
-| `DISCORD_TOKEN` | Bot token from Discord Developer Portal |
-| `DISCORD_CLIENT_ID` | Application ID |
-| `DISCORD_GUILD_ID` | Server ID |
-| `TIMER_CHANNEL_ID` | `#raid-mobs` main channel ID |
-| `CLASSIC_THREAD_ID` | Classic expansion thread ID |
-| `KUNARK_THREAD_ID` | Kunark expansion thread ID |
-| `VELIOUS_THREAD_ID` | Velious expansion thread ID |
-| `LUCLIN_THREAD_ID` | Luclin expansion thread ID |
-| `POP_THREAD_ID` | PoP expansion thread ID |
-| `HISTORIC_KILLS_THREAD_ID` | Historic Kills thread ID |
-| `PARSES_LOG_THREAD_ID` | Parse Logs thread ID (parse data source of truth) |
-| `ONBOARDING_THREAD_ID` | Onboarding thread ID (quick-start instructions + opt-out registry) |
-| `ALLOWED_ROLE_NAMES` | Comma-delimited role names (e.g. `Pack Member,Officer,Guild Leader`) |
-
-The table above is the minimum for the raid-timer bot. The tables here cover the
-common cases; **`.env.example` documents every variable** (load-shed flags,
-overlay tuning, encryption keys, timeouts) — treat it as the authoritative list.
-
-### Platform integrations (parses, website, DKP, agent uploads)
-
-Required for the modern platform — parse aggregation, wolfpack.quest, DKP/loot,
-and the Mimic/agent ingest surface. Without these the bot still runs as a bare
-timer, but the analytics, character pages, and uploads are dark.
-
-| Variable | Description |
-|----------|-------------|
-| `SUPABASE_URL` | Supabase project URL — backs parses, characters, DKP, live state, and every wolfpack.quest surface |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service-role key (bypasses RLS; server-side only — never ship to a client) |
-| `SUPABASE_GUILD_ID` | Guild tag written to all rows (default: `wolfpack`) |
-| `WOLFPACK_AGENT_TOKEN` | **Agent-side only.** Where the standalone Parser reads *your personal* upload key (`wpms_…`, minted by `/token`). The bot does not read this — since 2026-06-04 the ingest surface accepts only per-user session tokens and rejects a shared secret outright. Mimic stores your key itself and ignores this variable |
-| `PORT` | HTTP port for the agent API + `/health` (Railway sets this automatically) |
-| `OPENDKP_*` | OpenDKP connection (raids URL, Cognito client, credentials) for DKP sync and loot auctions — see `.env.example` |
-
-### Hardcoded Slot Anchors (recommended — paste once, survive any redeploy)
-
-| Variable | Description |
-|----------|-------------|
-| `SUMMARY_MESSAGE_ID` | Active Cooldowns message in main channel |
-| `SPAWNING_TOMORROW_MESSAGE_ID` | Spawning Tomorrow message |
-| `DAILY_SUMMARY_MESSAGE_ID` | Daily Summary message |
-| `THREAD_LINKS_MESSAGE_ID` | Thread links message |
-| `CLASSIC_BOARD_IDS` | Comma-delimited board panel message IDs for Classic thread |
-| `KUNARK_BOARD_IDS` | Kunark board IDs |
-| `VELIOUS_BOARD_IDS` | Velious board IDs |
-| `LUCLIN_BOARD_IDS` | Luclin board IDs |
-| `POP_BOARD_IDS` | PoP board IDs |
-| `CLASSIC_COOLDOWN_ID` | Active Cooldowns card at top of Classic thread |
-| `KUNARK_COOLDOWN_ID` | Kunark cooldown card ID |
-| `VELIOUS_COOLDOWN_ID` | Velious cooldown card ID |
-| `LUCLIN_COOLDOWN_ID` | Luclin cooldown card ID |
-| `POP_COOLDOWN_ID` | PoP cooldown card ID |
-
-### Optional
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DEFAULT_TIMEZONE` | `America/New_York` | IANA timezone for time parsing and midnight tasks |
-| `ARCHIVE_CHANNEL_ID` | — | Channel to receive archived raid event summaries |
-| `BOSS_OUTPUT_CHANNEL_ID` | — | Channel where `bosses.json` is posted after `/addboss` or `/removeboss` |
-| `RAID_CHAT_CHANNEL_ID` | `#raid-chat` | Channel for `/raidnight` + auto raid-night threads (known-id default, then `TIMER_CHANNEL_ID`) |
-| `EVENT_CHAT_CHANNEL_ID` | `#event-chat` | Channel for off-night guild-event threads (roll loot, no DKP) |
-| `PVP_KILLS_THREAD_ID` | — | Thread where `/pvpkill` posts kill cards and timers are tracked |
-| `PVP_CHANNEL_ID` | — | Channel for PVP alerts, quake alerts, and spawn notifications |
-| `PVP_THREAD_ID` | — | Thread for PVP alerts (takes priority over `PVP_CHANNEL_ID`) |
-| `PVP_ROLE` | `PVP` | Name of the Discord role to ping for PVP alerts and spawn notifications |
-| `AUDIT_TRAIL_THREAD_ID` | — | Thread for audit log entries with undo buttons (officer-only undo) |
-
----
-
-## Spawn Checker
-
-Runs every 5 minutes. For each boss with an active kill:
-
-- **≤ 0 remaining:** Archives zone kill card to Historic Kills thread, updates spawn alert to "spawned," clears kill, refreshes all cards.
-- **≤ 30 min remaining:** Posts a spawn warning to the expansion thread, stores the message ID for in-place update.
-- **> 30 min:** Clears alert tracking so the warning re-arms if the timer is extended.
-
----
-
-## Midnight Tasks
-
-Run at midnight in `DEFAULT_TIMEZONE` (default: Eastern):
-
-1. Update the fixed Daily Summary slot in the main channel
-2. Archive the summary to the Historic Kills thread
-3. Archive all pending `/announce` messages to Historic Kills, then delete originals
-4. Archive all passed announce threads
-5. Delete stale spawn alert messages
-6. Post PVP mob spawning-today summary to the PVP channel (if any spawn within 24h)
-7. Archive the raid night parse thread
-8. Consolidate multi-user parse submissions within 10-minute windows (max damage per player)
-9. Reset the daily kill log
-
----
-
-## Boss Data
-
-133 bosses across Classic (15), Kunark (17), Velious (35), Luclin (46), and PoP (20, locked until 2026-10-01).
-
-`bosses.json` schema:
-
-```json
-{
-  "id": "lord_nagafen",
-  "name": "Lord Nagafen",
-  "zone": "Nagafen's Lair",
-  "expansion": "Classic",
-  "timerHours": 162,
-  "nicknames": ["naggy", "nag", "nagafen"],
-  "emoji": "🐉",
-  "pqdiUrl": "https://www.pqdi.cc/npc/32040"
-}
-```
-
-Valid `expansion` values: `Classic`, `Kunark`, `Velious`, `Luclin`, `PoP`
-
-Boss data is hot-reloaded on every command — `/addboss` and `/removeboss` take effect immediately without a restart.
-
-> With Docker, sync back after `/addboss`: `docker cp quarm-raid-timer-bot:/app/data/bosses.json ./data/bosses.json`
-
----
-
-## Required Bot Permissions
-
-**One bot for everything (a new guild's setup, 2026-10-06).** The raid-timer bot and the raid-voice
-bot (Bristlebane) are ONE Discord application for a new guild; Wolf Pack runs them as two only because
-Bristlebane came later. Invite it with scopes `bot applications.commands` and permissions
-**`2252135193504768`**:
-
-`https://discord.com/oauth2/authorize?client_id=<your application id>&scope=bot+applications.commands&permissions=2252135193504768`
-
-| Permission | Why |
-|------------|-----|
-| View Channels | See the channels it posts to and the raid voice channel |
-| Send Messages | Kill cards, spawn alerts, boards, PVP alerts, onboarding messages, Bristlebane's join notice |
-| Send Messages in Threads | Expansion threads, raid-night threads, the roster and parse threads |
-| Create Public Threads | Create announce and raid-night threads |
-| Manage Threads | Rename event threads, archive them at midnight |
-| Embed Links | Rich embeds with PQDI links |
-| Attach Files | Parse and leaderboard images, exports |
-| Read Message History | Fetch messages to edit in place |
-| Manage Messages | Delete kill cards on respawn; clean up at midnight; `/removespam` |
-| Pin Messages | Pin the parse leaderboard (Discord split this out of Manage Messages) |
-| Manage Events | Create/delete Discord Scheduled Events for `/announce` and `/quake` |
-| Manage Roles | Add/remove @PVP role via `/pvprole` (the bot's role must sit above @PVP) |
-| Connect | Join the raid voice channel |
-| Speak | Spoken callouts and loot calls |
-| Use Voice Activity | A bot has no push-to-talk; without this it cannot be heard |
-| Change Nickname | Bristlebane's `[REC]` name while a member who opted in is in the channel |
-
-Add **Create Invite + Use Activities** (`2252684949318657` in total) only if the raid screen is run as a
-Discord Activity. Privileged intents: **Server Members** (member sync) — on; **Message Content** — only
-for the patch-notes mirror (`MESSAGE_CONTENT_INTENT=1`); Presence — off. Mentioning @PVP needs the
-role set to "Allow anyone to @mention this role"; the bot does not get Mention Everyone.
-
----
+The filter runs before the parse. Officer chat, tells, group chat and custom channels never leave your PC; guild and raid chat do, and are posted to read-only Discord channels. Nothing is uploaded until you sign in; **Disconnect** stops it. Per-character switches hide a character from lists, keep its fights out of stats, or keep its inventory private, and the setup walkthrough asks the same question in one step. Other raiders' Mimic still records the fights you were in. The whole of it, gaps included: [`docs/PRIVACY.md`](docs/PRIVACY.md), mirrored at [wolfpack.quest/privacy](https://wolfpack.quest/privacy).
 
 ## License
 
-**Open source under the GNU Affero General Public License v3 or later
-(AGPL-3.0-or-later).** Read it, change it, fork it, run it for your guild —
-free, no time limit, no asking.
-
-The one obligation: if you modify it and let other people use your version
-**over a network**, you must offer them your source (AGPL **§13**). That is the
-point of this license rather than a permissive one — your fixes come back to
-everyone instead of dying in a private fork.
-
-**Nothing here is for profit.** Money, where any moves, is cost recovery for
-infrastructure and time — donations, or sharing the cost of a deployment someone
-else runs for you. There is no paid tier and no feature behind a paywall.
-Hosting a modified version commercially *without* publishing your changes needs a
-separate commercial license: open an issue titled "Commercial license".
-
-Binding text: `LICENSE`. Plain-language version, including what happens to a pull
-request: `docs/LICENSING.md`.
+**AGPL-3.0-or-later.** Read it, change it, fork it, run it for your guild: free, no time limit, no asking. The one obligation: if you modify it and let other people use your version over a network, offer them your source (§13). Nothing here is for profit; where money moves it is cost recovery for hosting. Binding text in [`LICENSE`](LICENSE); the plain-language version, including what a pull request agrees to, in [`docs/LICENSING.md`](docs/LICENSING.md).
