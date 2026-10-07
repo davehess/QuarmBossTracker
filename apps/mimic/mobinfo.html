@@ -1191,6 +1191,34 @@
         }
       }
       var specBlock = '<div class="spec" style="padding-top:18px">' + (specChips || '<span class="empty" style="color:#6e7681;font-style:italic">no abilities catalogued</span>') + '</div>';
+      // PROCS above the spell lists (the guild lead, 2026-10-07: "Need to see mobs Procs as
+      // well, not just spells"): a proc lands on the tank every fight, a cast list is what
+      // the mob might do. The bot sends procs: [{ kind, spell_id, name, chance, summary }];
+      // an answer cached before the key existed has none, and so does a mob without any, and
+      // both draw nothing at all (no empty heading).
+      var procsBlock = '';
+      if (mob && Array.isArray(mob.procs) && mob.procs.length > 0){
+        var PROC_KIND = { attack: '', range: ' (ranged)', defensive: ' (when hit)' };
+        var procRows = '';
+        for (var pri = 0; pri < mob.procs.length; pri++){
+          var pr = mob.procs[pri] || {};
+          var prName = esc(pr.name || ('Spell #' + pr.spell_id)) + esc(PROC_KIND[pr.kind] || '');
+          var prChance = (pr.chance == null) ? '—' : (Math.round(Number(pr.chance)) + '%');
+          procRows += '<div style="display:grid;grid-template-columns:minmax(0,1fr) 40px minmax(0,1.5fr);gap:6px;padding:1px 0;font-size:10.5px;align-items:baseline">'
+                    +   '<span style="color:#d2a8ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + prName + '</span>'
+                    +   '<span style="color:#f0b429;text-align:right;font-variant-numeric:tabular-nums">' + prChance + '</span>'
+                    +   '<span style="color:#c9d1d9;font-size:9.5px">' + (pr.summary ? esc(pr.summary) : '—') + '</span>'
+                    + '</div>';
+        }
+        procsBlock = '<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(110,118,129,0.18)">'
+                   +   '<div style="display:grid;grid-template-columns:minmax(0,1fr) 40px minmax(0,1.5fr);gap:6px;font-size:9px;color:#6b7280;letter-spacing:0.05em;text-transform:uppercase;padding:0 0 2px;border-bottom:1px solid rgba(110,118,129,0.12);margin-bottom:2px">'
+                   +     '<span>Procs (' + mob.procs.length + ')</span>'
+                   +     '<span style="text-align:right">Chance</span>'
+                   +     '<span>Effect</span>'
+                   +   '</div>'
+                   +   procRows
+                   + '</div>';
+      }
       var spellsBlock = '';
       if (mob && Array.isArray(mob.spells) && mob.spells.length > 0){
         // Split offensive (good===0 or unknown) from buff (good===1). Buffs
@@ -1246,7 +1274,7 @@
       } else {
         spellsBlock = '<div class="sub" style="margin-top:8px;color:#6e7681">no spell list catalogued (npc_spells_id missing or eqemu_npc_spells_entries not yet synced).</div>';
       }
-      tabBody = '<div data-wp-sect="spells">' + specBlock + spellsBlock + '</div>';
+      tabBody = '<div data-wp-sect="spells">' + specBlock + procsBlock + spellsBlock + '</div>';
     } else {
       // resist grid (AC + 5 resists)
       var res = '';
