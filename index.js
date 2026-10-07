@@ -605,7 +605,7 @@ async function announceAgentReleaseIfNew(discordClient) {
     if (supabase.isEnabled()) {
       const prior = await supabase.select(
         'bot_announcements',
-        `guild_id=eq.${guildId}&kind=eq.agent_release&key=eq.${encodeURIComponent(version)}&select=announced_at&limit=1`,
+        `guild_id=eq.${encodeURIComponent(guildId)}&kind=eq.agent_release&key=eq.${encodeURIComponent(version)}&select=announced_at&limit=1`,
       );
       if (Array.isArray(prior) && prior.length > 0) return;
     }

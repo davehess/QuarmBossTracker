@@ -20,6 +20,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
+import { createRequire } from 'node:module';
 import { ROOT, BOT_INDEX, readSource, sliceBlock, evalBlock, stripJs } from './_source-slice.js';
 
 // ── corpus ───────────────────────────────────────────────────────────────────────────────────────
@@ -48,7 +49,7 @@ const strippedSources = (rels) => rels.flatMap(r => {
 const RULES = [
   { id: 'rest-filter',    test: (line) => /guild_id=eq\.wolfpack\b/.test(line) },
   { id: 'object-literal', test: (line) => /\b(?:p_guild_id|p_guild|guild_id|guildId)\s*:\s*['"`]wolfpack['"`]/.test(line) },
-  { id: 'const-GUILD',    test: (line) => /\bconst\s+GUILD\s*=\s*['"`]wolfpack['"`]/.test(line) },
+  { id: 'const-GUILD',    test: (line) => /\bconst\s+[A-Z_]*GUILD[A-Z_]*\s*=\s*['"`]wolfpack['"`]/.test(line) },
   // `guildId || 'wolfpack'` and friends — the fallback spelled again, without the env in front of it.
   { id: 'bare-fallback',  test: (line) => /\|\|\s*['"`]wolfpack['"`]/.test(line) && /guild/i.test(line) && !/SUPABASE_GUILD_ID/.test(line) },
 ];
@@ -56,9 +57,6 @@ const RULES = [
 // Each entry is an EXEMPTION, not a requirement: a file that stops matching needs no edit here. Every one
 // carries the reason it is allowed to stay.
 const ALLOW = [
-  { rule: 'const-GUILD', file: 'utils/characterPrefs.js',
-    why: 'a real bypass (REST filters on the Mimic prefs routes) outside this slice\'s ownership; the fix is '
-       + '`const GUILD = process.env.SUPABASE_GUILD_ID || \'wolfpack\'` and is filed with the slice report' },
   { rule: 'bare-fallback', file: 'utils/killContext.js',
     why: 'default for an INJECTED argument; its one caller (index.js) always passes the env-aware tag' },
   { rule: 'bare-fallback', file: 'utils/hailBoard.js',
@@ -86,6 +84,14 @@ describe('no literal guild tag outside the env fallback', () => {
     expect(byId['object-literal']('  guild_id: "wolfpack",')).toBe(true);
     expect(byId['object-literal']("  guild_id: process.env.SUPABASE_GUILD_ID || 'wolfpack',")).toBe(false);
     expect(byId['const-GUILD']("const GUILD = 'wolfpack';")).toBe(true);
+    expect(byId['const-GUILD']('const GUILD_ID = "wolfpack";')).toBe(true);
+    expect(byId['const-GUILD']('const DEFAULT_GUILD = `wolfpack`;')).toBe(true);
+    expect(byId['const-GUILD']('const GUILD = require("./supabase").guildId();')).toBe(false);
+    // the inline-fallback ratchet matches double quotes and `??` too, and still skips other env vars
+    expect('process.env.SUPABASE_GUILD_ID || "wolfpack"'.match(INLINE_GUILD_FALLBACK)).toHaveLength(1);
+    expect("process.env.SUPABASE_GUILD_ID ?? 'wolfpack'".match(INLINE_GUILD_FALLBACK)).toHaveLength(1);
+    expect("process.env.SUPABASE_GUILD_ID||'wolfpack'".match(INLINE_GUILD_FALLBACK)).toHaveLength(1);
+    expect("process.env.OPENDKP_CLIENT_NAME || 'wolfpack'".match(INLINE_GUILD_FALLBACK)).toBeNull();
     expect(byId['bare-fallback']("const gid = guildId || 'wolfpack';")).toBe(true);
     expect(byId['bare-fallback']("const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';")).toBe(false);
     expect(byId['bare-fallback']("client_name: process.env.OPENDKP_CLIENT_NAME || 'wolfpack',")).toBe(false);
@@ -115,7 +121,7 @@ describe('no literal guild tag outside the env fallback', () => {
 //   2026-10-07: 160 = index.js 123 + utils 25 + commands 10 + scripts 2. Before the guild-tag fix it was
 //   150: index.js grew from 112 by the eleven literal-tag sites, and utils/officerChannel.js shed its own
 //   copy for the shared getter. The eleven were the last bypasses; the rest already honoured the env.
-const INLINE_GUILD_FALLBACK = /process\.env\.SUPABASE_GUILD_ID\s*\|\|\s*'wolfpack'/g;
+const INLINE_GUILD_FALLBACK = /process\.env\.SUPABASE_GUILD_ID\s*(?:\|\||\?\?)\s*['"]wolfpack['"]/g;
 const INLINE_CEILING = 160;
 
 describe('the inline SUPABASE_GUILD_ID fallback does not spread', () => {
@@ -295,6 +301,80 @@ describe('the corpse DM owner lookup follows the tag', () => {
     const q = await die();
     expect(q).toHaveLength(2);
     for (const query of q) expect(guildOf(query)).toBe('eq.wolfpack');
+  });
+});
+
+// ── the Mimic character-prefs routes follow the tag, and the tag is encoded wherever it is spliced ──
+describe('utils/characterPrefs filters follow SUPABASE_GUILD_ID (read at load, like the env is set at boot)', () => {
+  const nodeRequire = createRequire(import.meta.url);
+  const load = () => {
+    for (const k of Object.keys(nodeRequire.cache)) if (/[\\/]utils[\\/](characterPrefs|supabase)\.js$/.test(k)) delete nodeRequire.cache[k];
+    return nodeRequire('../utils/characterPrefs.js');
+  };
+  async function queries(cp) {
+    const seen = [];
+    const supabase = {
+      async rpc() { return ['Aldenmar']; },
+      async select(_t, q) { seen.push(q); return []; },
+      async update(_t, q) { seen.push(q); return []; },
+    };
+    await cp.minePrefs(supabase, cp.createOwnedCache(), 'D1');
+    await cp.setPrefs(supabase, cp.createOwnedCache(), 'D1', { character: 'Aldenmar', mode: 'show' });
+    return seen;
+  }
+
+  it('SUPABASE_GUILD_ID=acme asks both the list and the write for guild_id=eq.acme', async () => {
+    setGuildEnv('acme');
+    const q = await queries(load());
+    expect(q).toHaveLength(2);
+    for (const query of q) expect(guildOf(query)).toBe('eq.acme');
+  });
+
+  it('a tag like a&b=c is encoded in both', async () => {
+    setGuildEnv('a&b=c');
+    const q = await queries(load());
+    expect(q).toHaveLength(2);
+    for (const query of q) { expect(guildOf(query)).toBe('eq.a&b=c'); expect(query).toContain('guild_id=eq.a%26b%3Dc'); }
+  });
+
+  it('unset is wolfpack, and GUILD is still exported', async () => {
+    setGuildEnv(undefined);
+    const cp = load();
+    expect(cp.GUILD).toBe('wolfpack');
+    for (const query of await queries(cp)) expect(guildOf(query)).toBe('eq.wolfpack');
+  });
+});
+
+describe('every `guild_id=eq.${…}` spliced into a REST filter is percent-encoded', () => {
+  // The tag is operator-supplied, so `a&b=c` must not be able to add a filter. A bare identifier is fine
+  // only when the same file assigns it from an encoder (`const g = encodeURIComponent(…)`).
+  const ENCODERS = /^(?:encodeURIComponent|_?enc)\(/;
+  const SPLICE = /guild_id=eq\.\$\{([^}]*)\}/g;
+  const unencoded = (text) => {
+    const bad = [];
+    for (const m of text.matchAll(SPLICE)) {
+      const expr = m[1].trim();
+      if (ENCODERS.test(expr)) continue;
+      if (/^\w+$/.test(expr) && new RegExp(`\\b(?:const|let)\\s+${expr}\\s*=\\s*(?:encodeURIComponent|_?enc)\\(`).test(text)) continue;
+      bad.push(m[0]);
+    }
+    return bad;
+  };
+
+  it('the detector flags a bare tag and passes an encoded one (so a green result is not a typo)', () => {
+    expect(unencoded('`guild_id=eq.${guildId}&x=1`')).toEqual(['guild_id=eq.${guildId}']);
+    expect(unencoded('`guild_id=eq.${encodeURIComponent(guildId)}`')).toEqual([]);
+    expect(unencoded('`guild_id=eq.${enc(gid())}`')).toEqual([]);
+    expect(unencoded('const g = encodeURIComponent(guildId); `guild_id=eq.${g}`')).toEqual([]);
+    expect(unencoded('const g = guildId; `guild_id=eq.${g}`')).toEqual(['guild_id=eq.${g}']);
+  });
+
+  it('nothing in the bot splices a raw tag', () => {
+    const hits = [];
+    for (const { file, text } of strippedSources(['index.js', 'utils', 'commands'])) {
+      for (const h of unencoded(text)) hits.push(`${file}  ${h}`);
+    }
+    expect(hits).toEqual([]);
   });
 });
 

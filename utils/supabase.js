@@ -804,7 +804,7 @@ async function getTonightEncounters(date = new Date()) {
   dayEnd.setDate(dayEnd.getDate() + 1);
 
   const guildId = _guildId();
-  const query = `guild_id=eq.${guildId}` +
+  const query = `guild_id=eq.${encodeURIComponent(guildId)}` +
     `&started_at=gte.${dayStart.toISOString()}` +
     `&started_at=lt.${dayEnd.toISOString()}`;
   // Paged: a raid day holds more than the 1,000-row cap (1,210 encounters on
