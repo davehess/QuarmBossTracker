@@ -103,6 +103,26 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ Trigger manager: open a trigger's settings, warn before the end, repeat the countdown (agent on beta, draft on
+  branch `fbtrig-work`, 2026-10-07; FB-23, FB-30, FB-26, FB-31).** Four beta-tester reports on the dashboard's
+  Triggers tab.
+  - **Open a trigger (FB-23 personal, FB-30 guild).** Clicking a row's name (or a plain cell) opens its settings
+    beneath it: pattern, alert and what is said, cooldown, countdown, warnings, repeat, cancel-early phrase and the
+    imported extras. A personal row has **✎ Edit these settings**, which loads the add form as an edit (Save
+    changes / Cancel edit); fields the form has no box for are kept. A guild row is read-only with **Edit on
+    wolfpack.quest** (`/admin/triggers?edit=<id>`). Cause of "I cannot do that": the personal name cell was
+    `class="name"`, the character-link class, so a click opened `/character/<first word>` (404); and the form only
+    ever added. The guild list moved into its own `#wpGuildTriggers` card so opening a row does not wipe the form.
+  - **Warning before the end (FB-26).** The warning already worked for personal triggers (`_startTimer` arms
+    `warning_seconds`/`warning_text` for every scope; the overlay fires it); the form had no box, so it is added:
+    seconds, text, and a "speak it" box (`warning_tts:false` = flash only).
+  - **Repeat (FB-31).** `timer_loop` (+ optional `timer_loop_max`, the most restarts) on a trigger: the timer row
+    is rolled forward by whole cycles at zero (`_rollLoopTimer`, in `_activeTimersSnapshot`) instead of expiring.
+    ✕ on the bar, the cancel-early phrase, or the mob dying ends it; the trigger firing again replaces the row, so
+    loops never stack; a rehearsal stops after 3. The guild consumer reads the same two fields from a
+    `guild_triggers` row — **the columns and the admin form are not added yet** (a `main` change).
+  - `test/trigger-manager-settings-warn-loop.test.js`. Not yet seen in a real window: needs a beta tester to open a
+    row, edit one, and watch a 20 s looping timer warn twice.
 - **⏳ A shrunk overlay stays shrunk (mimic on beta, draft on branch `fbresize-work`, 2026-10-07).** A beta tester:
   "resized these maybe 10 times but each time … they end up getting bigger … they are goliath" (Command Center and
   Target Info, several hundred px tall); FB-16 (2026-09-27): the HUD "reverts to a bigger size after clicking the X".

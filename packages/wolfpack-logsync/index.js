@@ -17595,6 +17595,15 @@ button.wp-rerun-stale { position:relative; animation: wp-pulse-glow 1.8s ease-ou
    The hover style telegraphs "this is clickable." */
 .card td.name, .card .name { cursor:pointer; }
 .card td.name:hover, .card .name:hover { text-decoration:underline; color:var(--blue); }
+/* Triggers tab: a trigger's name opens its settings (FB-23 / FB-30). A <button>, not a
+   .name cell — .name is the character-page link, and "Rampage on me" is not a character. */
+.trigname { background:none; border:0; padding:0; font:inherit; color:var(--text); cursor:pointer; text-align:left; }
+.trigname:hover { color:var(--blue); text-decoration:underline; }
+.trigname:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+.trigdetail > td { background:var(--bg); border-left:2px solid var(--blue); padding:8px 10px; }
+.trigset { display:grid; grid-template-columns:max-content 1fr; gap:3px 14px; font-size:11px; }
+.trigset-k { color:var(--dim); }
+.trigset-v { overflow-wrap:anywhere; }
 .wp-quicklinks { display:flex; gap:8px; align-items:center; margin:6px 0 12px 0; font-size:12px; color:var(--dim); flex-wrap:wrap; }
 .wp-quicklinks a { color:var(--blue); text-decoration:none; padding:2px 8px; border:1px solid var(--border); border-radius:4px; }
 .wp-quicklinks a:hover { background:#21262d; border-color:var(--blue); }
@@ -21747,9 +21756,31 @@ function renderTriggers(s) {
   h += '<div id="trigEditorPanel"></div>';
   h += '</div>';
 
-  // Guild triggers — read-only (managed in wolfpack.quest/admin/triggers).
-  h += '<div class="card wide"><h2>🛡️ Guild triggers <span class="dim" style="font-size:11px;font-weight:normal">(read-only; edit on wolfpack.quest/admin/triggers)</span></h2>';
-  const gt = s.guildTriggers || [];
+  // Guild triggers — read-only (managed in wolfpack.quest/admin/triggers). Its own wp* placeholder,
+  // filled by renderGuildTriggersCard: opening a row repaints just this card, so the Add form's
+  // half-typed text and the Replay inputs above are not wiped by it (FB-30).
+  h += '<div id="wpGuildTriggers" class="card wide"></div>';
+
+  h += '</div>';
+  if (!setSectionHTML('triggers', h)) return;
+  // Mount the editor + render the personal list (idempotent — _wpTrigEditor
+  // installs itself once and rebinds list rows on every paint).
+  if (window._wpTrigEditor && window._wpTrigEditor.mount) {
+    window._wpTrigEditor.mount();
+  }
+  if (window._wpSuggestedTriggers && window._wpSuggestedTriggers.mount) {
+    window._wpSuggestedTriggers.mount();
+  }
+}
+
+// 🛡️ Guild triggers (FB-30) — read-only list, filled into the #wpGuildTriggers placeholder renderTriggers
+// emits. A name (or any plain cell of its row) opens the trigger's settings beneath it, with a link to
+// edit it on the site. Which rows are open is kept in _wpTrigOpen, so a repaint puts them back.
+function renderGuildTriggersCard(s) {
+  var el = document.getElementById('wpGuildTriggers');
+  if (!el) return;   // Triggers tab not painted yet
+  var gt = s.guildTriggers || [];
+  var h = '<h2>🛡️ Guild triggers <span class="dim" style="font-size:11px;font-weight:normal">(read-only: click one to see its settings; officers edit on wolfpack.quest/admin/triggers)</span></h2>';
   if (gt.length === 0) {
     h += '<div class="dim" style="font-size:12px">No guild triggers loaded. Officers can add them at <a href="https://wolfpack.quest/admin/triggers" target="_blank" rel="noreferrer" style="color:var(--blue)">/admin/triggers</a>.</div>';
   } else {
@@ -21761,14 +21792,16 @@ function renderTriggers(s) {
     // delegation walks .name elements, slices text to the first space, and
     // opens /character/<first-token>. A trigger named "Aten Ha Ra Charm"
     // would clip to "Aten" → 404. Same trap as the DPS HUD label cell.
-    for (const t of gt) {
+    for (var i = 0; i < gt.length; i++) {
+      var t = gt[i];
       // "Copy → personal": stash the guild trigger's editable fields as JSON in
       // a data-attr (esc() escapes the quotes for the attribute, same pattern as
       // the dismiss-td buttons) so the delegated handler can prefill the personal
       // editor with them. No write to the guild set — it just clones into the
       // local personal triggers so the user can tweak their own copy.
-      const _act = (Array.isArray(t.actions) ? t.actions : []).find(a => a && a.type === 'text_overlay') || {};
-      const _copy = {
+      var _act = (Array.isArray(t.actions) ? t.actions : []).find(function (a) { return a && a.type === 'text_overlay'; }) || {};
+      var _w = wpTrigWarnings(t)[0];
+      var _copy = {
         name: (t.name || 'trigger') + ' (copy)',
         pattern: t.pattern || '',
         cooldown_seconds: t.cooldown_seconds || 0,
@@ -21778,26 +21811,34 @@ function renderTriggers(s) {
         timer_duration_sec: t.timer_duration_sec || 0,
         end_early_pattern: t.end_early_pattern || '',
         zeal_condition: t.zeal_condition || null,
+        warn_sec: _w ? _w.sec : 0,
+        warn_text: _w ? _w.text : '',
+        warn_tts: _w ? _w.tts : true,
+        timer_loop: t.timer_loop === true,
+        timer_loop_max: t.timer_loop_max || 0,
       };
-      h += '<tr><td style="color:var(--orange)">' + esc(t.name || '?') + '</td>' +
+      var key = String(t.id || t.name || '');
+      var open = !!_wpTrigOpen['g|' + key];
+      h += '<tr data-trig-key="' + esc(key) + '" style="cursor:pointer"><td>'
+        + '<button type="button" class="trigname" data-trig-view="' + esc(key) + '" aria-expanded="' + (open ? 'true' : 'false') + '" style="color:var(--orange)" title="Show this trigger\\'s settings">'
+        + (open ? '▾' : '▸') + ' ' + esc(t.name || '?') + '</button></td>' +
            '<td class="dim">' + esc(t.category || 'callout') + '</td>' +
            '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc((t.pattern || '').slice(0, 80)) + '</code></td>' +
            '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>' +
            '<td><button type="button" data-trig-copy="' + esc(JSON.stringify(_copy)) + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;white-space:nowrap" title="Copy this guild trigger to your own list so you can customize it without changing the guild\\'s version">⎘ Copy to personal</button></td></tr>';
+      if (open) h += '<tr class="trigdetail"><td colspan="5">' + wpTrigSettingsHtml(t, 'guild') + '</td></tr>';
     }
     h += '</table>';
   }
-  h += '</div>';
-
-  h += '</div>';
-  if (!setSectionHTML('triggers', h)) return;
-  // Mount the editor + render the personal list (idempotent — _wpTrigEditor
-  // installs itself once and rebinds list rows on every paint).
-  if (window._wpTrigEditor && window._wpTrigEditor.mount) {
-    window._wpTrigEditor.mount();
-  }
-  if (window._wpSuggestedTriggers && window._wpSuggestedTriggers.mount) {
-    window._wpSuggestedTriggers.mount();
+  morphInto(el, h);
+}
+function wpGuildTrigToggle(key) {
+  _wpTrigOpen['g|' + key] = !_wpTrigOpen['g|' + key];
+  if (window.__wpLastState) renderGuildTriggersCard(window.__wpLastState);
+  // The card was rebuilt, so put the keyboard back on the name it came from.
+  var bs = document.querySelectorAll('#wpGuildTriggers [data-trig-view]');
+  for (var i = 0; i < bs.length; i++) {
+    if (bs[i].getAttribute('data-trig-view') === key) { try { bs[i].focus({ preventScroll: true }); } catch (e) { void e; } break; }
   }
 }
 
@@ -25143,7 +25184,7 @@ async function refresh() {
                      ['healingcard', renderHealingCard], ['watchedlogs', renderWatchedLogsCard],
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
                      ['tanks', renderTanks], ['deeps', renderDeeps],
-                     ['triggers', renderTriggers],
+                     ['triggers', renderTriggers], ['guildtriggers', renderGuildTriggersCard],
                      // 🩺 Diagnostics owns the pipe/charm/pet/journal/mechanics/
                      // explorer placeholders — it MUST run before their fillers
                      // below, same rule as renderDash → renderMeCard.
@@ -28131,6 +28172,153 @@ async function dismissTopDamage(key) {
   setInterval(refresh, 5000);
 })();
 
+// ── Trigger settings: what a trigger is set to do ───────────────────────────
+// FB-23 / FB-30: a trigger's name and pattern were all the list showed. A personal row's name was
+// also a .name cell, so clicking it went to the character page (a 404 for "Rampage on me")
+// instead of anywhere useful. Both lists now open a row into its settings, and a personal one
+// into the edit form. FB-26 / FB-31 add the warning-before-the-end and repeat settings the
+// personal form never had.
+// The three functions below are PURE (data in, text or a row out) so a test runs the shipped code.
+var WP_TRIG_ZEAL = { target_hp_pct: 'Target HP', self_hp_pct: 'Your HP', group_min_hp_pct: 'Lowest group HP' };
+// Which rows are open, by 'g|<key>' (guild) or 'p|<id>' (personal). Kept here, not in the DOM,
+// because both lists repaint under it.
+var _wpTrigOpen = {};
+
+// The warnings a trigger will fire, as {sec, text, tts}: the timer_warnings list when it has
+// one, else the single warning_seconds / warning_text pair — the order the agent reads them in.
+function wpTrigWarnings(t) {
+  var out = [];
+  var list = Array.isArray(t.timer_warnings) ? t.timer_warnings : [];
+  for (var i = 0; i < list.length; i++) {
+    var w = list[i];
+    if (w && Number(w.seconds) > 0 && w.text) out.push({ sec: Number(w.seconds), text: String(w.text), tts: w.tts !== false });
+  }
+  if (!out.length && t.warning_seconds > 0 && t.warning_text) {
+    out.push({ sec: Number(t.warning_seconds), text: String(t.warning_text), tts: t.warning_tts !== false });
+  }
+  out.sort(function (a, b) { return b.sec - a.sec; });
+  return out;
+}
+
+// A trigger's settings as a read-only list, for a personal row (scope 'personal') or a guild row
+// ('guild'). Skips what is not set. The footer is the next step: edit here, or edit on the site.
+function wpTrigSettingsHtml(t, scope) {
+  var guild = scope === 'guild';
+  var rows = [];
+  function add(k, v) { if (v) rows.push('<div class="trigset-k">' + k + '</div><div class="trigset-v">' + v + '</div>'); }
+  function code(s) { return '<code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc(String(s)) + '</code>'; }
+  function secs(n) { return esc(String(Math.round(Number(n) * 10) / 10)) + 's'; }
+  function names(a) { return a.map(function (c) { c = String(c); return esc(c.charAt(0).toUpperCase() + c.slice(1)); }).join(', '); }
+  // when it fires
+  if (t.pattern) add('Fires on', code(t.pattern) + (t.use_regex === false ? ' <span class="dim">plain text, not a regex</span>' : ''));
+  var zc = t.zeal_condition;
+  if (zc && zc.field) add('Fires when', esc((WP_TRIG_ZEAL[zc.field] || zc.field) + ' ' + zc.op + ' ' + zc.value + '%'));
+  var cm = t.catalog_match;
+  if (cm && cm.on) {
+    add('Fires on', (cm.on === 'worn_off' ? 'one of your ' + esc((cm.cc || []).join(' / ')) + ' spells wearing off'
+                                           : 'a ' + esc((cm.cc || []).join(' / ')) + ' spell landing on you') + ' <span class="dim">(read from the spell catalog)</span>');
+  }
+  if (t.builtin_timer) add('Timer bar', esc(String(t.builtin_timer).replace(/_/g, ' ')) + ' <span class="dim">a switch: it draws a bar, there is nothing to match</span>');
+  if (Array.isArray(t.exclude_patterns) && t.exclude_patterns.length) add('Unless', t.exclude_patterns.map(function (p) { return code(p); }).join(' '));
+  if (Array.isArray(t.characters) && t.characters.length) add('Only on', names(t.characters));
+  if (guild && Array.isArray(t.applies_to_classes) && t.applies_to_classes.length) add('Classes', esc(t.applies_to_classes.join(', ')));
+  // what it does
+  var acts = Array.isArray(t.actions) ? t.actions : [];
+  var timed = t.timer_duration_sec > 0 || !!t.timer_duration_capture;
+  for (var i = 0; i < acts.length; i++) {
+    var a = acts[i];
+    if (!a || !a.type) continue;
+    if (a.type === 'text_overlay') {
+      add(i === 0 ? 'Shows' : 'Then shows', '<b>' + esc(a.text || '') + '</b>' + (a.color ? ' in ' + esc(a.color) : '')
+        + (a.duration_ms ? ' for ' + secs(a.duration_ms / 1000) : '') + (a.sticky ? ', stays until dismissed' : ''));
+      add('Says', a.tts ? '<b>' + esc(a.tts) + '</b>' : '<span class="dim">the same words it shows</span>');
+      if (a.sound) add('Sound', esc(a.sound));
+    } else {
+      var msg = a.message || a.text || '';
+      add('Also', esc(String(a.type).replace(/_/g, ' ')) + (msg ? ': ' + esc(String(msg).slice(0, 120)) : ''));
+    }
+  }
+  if (!acts.length && timed) add('Shows', '<span class="dim">nothing when it matches — only the countdown</span>');
+  if (t.sticky) add('Stays', 'on screen until dismissed');
+  add('Cooldown', t.cooldown_seconds > 0 ? secs(t.cooldown_seconds) + ' between fires' : '');
+  // the countdown, its warning, and whether it repeats
+  if (timed) {
+    var cap = t.timer_duration_capture;
+    add('Countdown', (cap ? 'length read from <b>{' + esc(cap) + '}</b>' + (t.timer_duration_sec > 0 ? ', else ' + secs(t.timer_duration_sec) : '')
+                          : secs(t.timer_duration_sec)) + (t.pinned ? ', pinned to the top' : ''));
+    if (t.timer_key_capture) add('One bar per', '<b>{' + esc(t.timer_key_capture) + '}</b>');
+    if (t.display_threshold_sec > 0) add('Shown', 'only in the last ' + secs(t.display_threshold_sec));
+    var ws = wpTrigWarnings(t);
+    add('Warns', ws.length
+      ? ws.map(function (w) { return secs(w.sec) + ' before the end: <b>' + esc(w.text) + '</b> <span class="dim">' + (w.tts ? 'spoken' : 'shown only') + '</span>'; }).join('<br>')
+      : '<span class="dim">no warning before the end</span>');
+    add('Repeats', t.timer_loop === true
+      ? '&#8635; restarts itself when it ends' + (t.timer_loop_max > 0 ? ', up to ' + esc(String(t.timer_loop_max)) + ' times' : ' until you &#10005; it, the cancel phrase fires or the mob dies')
+      : '<span class="dim">no, it ends once</span>');
+  }
+  if (t.cooldown_timer_sec > 0) add('Recast bar', secs(t.cooldown_timer_sec));
+  if (t.end_early_pattern) add('Ends early on', code(t.end_early_pattern));
+  if (t.end_text) add('End text', esc(t.end_text));
+  if (t.bar_color) add('Bar colour', esc(t.bar_color));
+  // about the trigger itself (a personal row's on/off is its own checkbox, so it is not repeated here)
+  if (guild) {
+    add('Category', esc(t.category || 'callout'));
+    if (t.default_scope) add('Scope', esc(t.default_scope));
+    if (t.notes) add('Notes', esc(String(t.notes).slice(0, 300)));
+  }
+  var foot = guild
+    ? '<a href="https://wolfpack.quest/admin/triggers?edit=' + encodeURIComponent(t.id || '') + '" target="_blank" rel="noopener noreferrer" style="color:var(--blue)">Edit on wolfpack.quest</a> <span class="dim">&middot; officers only; guild triggers are changed there</span>'
+    : (t.builtin_timer
+      ? '<span class="dim">This one is a switch: turn it on or off under Suggested triggers.</span>'
+      : '<button type="button" data-trig-edit="' + esc(t.id || '') + '" style="background:#1f6feb;color:#fff;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;font-weight:bold">&#9998; Edit these settings</button>'
+        + ' <span class="dim">anything the form has no box for is kept as it is'
+        // Suggested triggers rebuild their row from the template when they are ticked or their 🔊 flips.
+        + (String(t.id || '').indexOf('suggested:') === 0 ? '; this one came from Suggested triggers, and ticking it or its 🔊 there puts the standard version back' : '')
+        + '</span>');
+  return '<div class="trigset">' + rows.join('') + '</div><div style="margin-top:8px;font-size:11px">' + foot + '</div>';
+}
+
+// The edit form's values laid over a saved row ({} for a new one). Everything the form has no box
+// for — a second alert, a sound, an imported end text, a bar colour, the per-character list, a
+// spell-catalog match, a timer_warnings list — rides along untouched, so editing one setting of an
+// imported trigger cannot quietly strip the rest. Mirrors how the old add-only form built a row.
+function wpTrigApplyForm(base, f) {
+  var row = Object.assign({}, base || {});
+  delete row.valid; delete row.import_error;   // flags the list adds on the way out, not settings
+  row.name = f.name;
+  row.pattern = f.pattern;
+  if (row.use_regex === undefined) row.use_regex = true;
+  if (row.enabled === undefined) row.enabled = true;
+  row.cooldown_seconds = f.cooldown;
+  var acts = Array.isArray(row.actions) ? row.actions.slice() : [];
+  var at = -1;
+  for (var i = 0; i < acts.length; i++) { if (acts[i] && acts[i].type === 'text_overlay') { at = i; break; } }
+  if (f.overlay) {
+    var a = Object.assign({ type: 'text_overlay' }, at >= 0 ? acts[at] : {}, { text: f.overlay, color: f.color, duration_ms: f.duration });
+    if (f.tts) a.tts = f.tts; else delete a.tts;
+    if (at >= 0) acts[at] = a; else acts.unshift(a);
+  } else if (at >= 0) {
+    acts.splice(at, 1);
+  }
+  row.actions = acts;
+  if (f.timerSec > 0) row.timer_duration_sec = f.timerSec; else delete row.timer_duration_sec;
+  if (f.endEarly) { row.end_early_pattern = f.endEarly; if (row.end_use_regex === undefined) row.end_use_regex = true; }
+  else { delete row.end_early_pattern; delete row.end_use_regex; }
+  if (f.zeal) row.zeal_condition = f.zeal; else delete row.zeal_condition;
+  // FB-26: warn N seconds before the end. warning_tts is stored only when off — absent means speak.
+  if (f.warnSec > 0 && f.warnText) {
+    row.warning_seconds = f.warnSec;
+    row.warning_text = f.warnText;
+    if (f.warnTts === false) row.warning_tts = false; else delete row.warning_tts;
+  } else {
+    delete row.warning_seconds; delete row.warning_text; delete row.warning_tts;
+  }
+  // FB-31: restart when it ends; timer_loop_max absent = keep going.
+  if (f.loop) { row.timer_loop = true; if (f.loopMax > 0) row.timer_loop_max = f.loopMax; else delete row.timer_loop_max; }
+  else { delete row.timer_loop; delete row.timer_loop_max; }
+  return row;
+}
+
 // ── ⚡ Triggers editor (mounted once, owned by the Triggers tab) ────────────
 // renderTriggers() rewrites the section\\'s read-only blocks on every poll.
 // This IIFE owns the EDITOR + list area inside #trigEditorPanel — installed
@@ -28143,12 +28331,17 @@ async function dismissTopDamage(key) {
   var mounted = false;
   var listEl  = null;
   var editorEl = null;
+  // The list as last fetched (a row opens from this, no refetch) and the saved trigger the form is
+  // editing, if any. Both live here, not in the DOM: a section repaint rebuilds the list and the
+  // form from scratch, and the edit has to survive that (FB-23).
+  var lastTriggers = [];
+  var editing = null;   // { id, row } while the form edits a saved trigger
   // Track an in-flight create row so polls don\\'t blow away the user\\'s typing
   // (the form is uncontrolled — we read values on submit).
   function buildEditorHtml() {
     return ''
       + '<div style="margin-top:12px;padding:12px;background:#161b22;border:1px solid var(--border);border-radius:8px">'
-      + '  <div style="font-weight:bold;margin-bottom:8px;color:var(--blue)">+ Add personal trigger</div>'
+      + '  <div id="trigFormTitle" style="font-weight:bold;margin-bottom:8px;color:var(--blue)">+ Add personal trigger</div>'
       + '  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">'
       + '    <label>Name<br><input id="trigNewName" type="text" placeholder="e.g. Rampage on me" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label>Cooldown (sec)<br><input id="trigNewCooldown" type="number" min="0" max="3600" value="0" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
@@ -28162,6 +28355,14 @@ async function dismissTopDamage(key) {
       + '    <label>Duration (ms)<br><input id="trigNewDuration" type="number" min="500" max="60000" value="5000" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label>Countdown timer (sec, 0 = no timer)<br><input id="trigNewTimerSec" type="number" min="0" max="3600" value="0" placeholder="e.g. 18 for a Cazic Touch refresh" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label>Cancel-early phrase (optional)<br><input id="trigNewEndEarly" type="text" placeholder="e.g. {target} has been slain" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"></label>'
+      // FB-26 (EQLogParser / GINA "warn N seconds before the end") and FB-31 ("restart the timer when it ends"):
+      // both ride on the countdown above, so both are checked against it on save.
+      + '    <label>Warn when this many seconds remain (0 = no warning)<br><input id="trigNewWarnSec" type="number" min="0" max="3600" value="0" placeholder="e.g. 10" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '    <label>Warning text (flashed, and spoken)<br><input id="trigNewWarnText" type="text" placeholder="e.g. AE in 10 seconds" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '    <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input id="trigNewWarnTts" type="checkbox" checked> 🔊 Speak the warning (untick to only flash it)</label>'
+      + '    <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input id="trigNewLoop" type="checkbox"> ↻ Repeat when the countdown ends</label>'
+      + '    <label>Stop repeating after this many times (blank = keep going)<br><input id="trigNewLoopMax" type="number" min="1" max="1000" placeholder="blank = until you ✕ it" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '    <div class="dim" style="font-size:11px;align-self:end">Both need a countdown timer. A repeating timer starts over at 0 and warns again each round; ✕ on its bar, the cancel-early phrase, or the mob dying stops it, and the trigger firing again restarts it from the top.</div>'
       + '    <label style="grid-column:1/3">Zeal HP condition (optional — fires off live Zeal gauges, no log line needed; use {target} and {value} in the overlay text)<br>'
       + '      <span style="display:flex;gap:6px;align-items:center">'
       + '        <select id="trigNewZealField" style="flex:2;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"><option value="">— none —</option><option value="target_hp_pct">Target HP %</option><option value="self_hp_pct">Self HP %</option><option value="group_min_hp_pct">Lowest group HP %</option></select>'
@@ -28171,6 +28372,7 @@ async function dismissTopDamage(key) {
       + '  </div>'
       + '  <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
       + '    <button id="trigAddBtn" type="button" style="background:#1f6feb;color:#fff;border:0;padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:bold">Add trigger</button>'
+      + '    <button id="trigCancelBtn" type="button" style="display:none;background:#21262d;color:var(--text);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px">Cancel edit</button>'
       + '    <button id="trigPreviewBtn" type="button" style="background:#21262d;color:var(--green);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px" title="Fire the overlay with the current form text (no save, no DB)">▶ Preview</button>'
       + '    <button id="trigTestBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px">Test pattern…</button>'
       + '    <button id="trigImportBtn" type="button" style="background:#21262d;color:var(--blue);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px" title="Paste a GINA or EQLogParser trigger XML to bulk-import">⬇ Import GINA / EQLP</button>'
@@ -28199,6 +28401,9 @@ async function dismissTopDamage(key) {
       payload = r.ok ? await r.json() : null;
     } catch (e) { void e; }
     const triggers = payload && payload.triggers ? payload.triggers : [];
+    lastTriggers = triggers;
+    // Deleted (here, in bulk, or by another window) while it was open in the form: nothing left to save to.
+    if (payload && editing && !triggers.some(function(x){ return x.id === editing.id; })) endEdit(true);
     // The Suggested panel shows a template as ON while its personal copy exists, so it must redraw with
     // this list: a copy deleted here stayed ON there, and unticking it only looked like nothing
     // happened (a bard, 2026-09-26: "i deleted it out of personal trigger … and now i cant get it back").
@@ -28254,11 +28459,16 @@ async function dismissTopDamage(key) {
         actionText = String(t.actions[0].text || '').slice(0, 80);
         actionColor = String(t.actions[0].color || 'red');
       }
-      html += '<tr data-trig-id="' + esc(t.id || '') + '">'
+      var isOpen = !!_wpTrigOpen['p|' + (t.id || '')];
+      html += '<tr data-trig-id="' + esc(t.id || '') + '" style="cursor:pointer">'
         + '<td><input type="checkbox" data-trig-sel="' + esc(t.id || '') + '"'
         + (t.enabled === false ? ' data-trig-off="1"' : '') + '></td>'
         + '<td><input type="checkbox" ' + (t.enabled !== false ? 'checked' : '') + ' data-trig-toggle="' + esc(t.id || '') + '"></td>'
-        + '<td class="name">' + esc(t.name || '?') + (t.valid === false ? ' <span style="color:var(--red);font-size:10px">(bad pattern)</span>' : '') + '</td>'
+        // NOT class="name": that class is the character-page link, which opened /character/Rampage for a trigger
+        // called "Rampage on me". A button, so the name is also reachable from the keyboard (FB-23).
+        + '<td><button type="button" class="trigname" data-trig-open="' + esc(t.id || '') + '" aria-expanded="' + (isOpen ? 'true' : 'false') + '" title="Show this trigger\\'s settings">'
+        + '<span class="trigchev" aria-hidden="true">' + (isOpen ? '▾' : '▸') + '</span> ' + esc(t.name || '?') + '</button>'
+        + (t.valid === false ? ' <span style="color:var(--red);font-size:10px">(bad pattern)</span>' : '') + '</td>'
         + '<td><code style="font-size:10px;background:#0d1117;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc(String(t.pattern || '').slice(0, 60)) + '</code></td>'
         + '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>'
         + '<td style="color:' + esc(actionColor) + '">' + esc(actionText) + '</td>'
@@ -28268,6 +28478,7 @@ async function dismissTopDamage(key) {
         + '<button type="button" data-trig-delete="' + esc(t.id || '') + '" style="background:transparent;border:0;color:var(--red);cursor:pointer;font-size:13px" title="Delete">✕</button>'
         + '</td>'
         + '</tr>';
+      if (isOpen) html += detailRowHtml(t);
     }
     html += '</table>';
     listEl.innerHTML = html;
@@ -28319,6 +28530,120 @@ async function dismissTopDamage(key) {
     var delAll = listEl.querySelector('#trigDeleteAll');
     if (delAll) delAll.addEventListener('click', function(){ onDeleteAll(triggers.length); });
     refreshCount();
+  }
+  // ── Open a row to its settings, edit it in the form (FB-23) ───────────
+  function detailRowHtml(t) {
+    return '<tr class="trigdetail" data-trig-detail="' + esc(t.id || '') + '"><td colspan="7">' + wpTrigSettingsHtml(t, 'personal') + '</td></tr>';
+  }
+  function rowById(id) {
+    var rows = listEl ? listEl.querySelectorAll('tr[data-trig-id]') : [];
+    for (var i = 0; i < rows.length; i++) if (rows[i].getAttribute('data-trig-id') === id) return rows[i];
+    return null;
+  }
+  // Open or close one row's settings in place. The row-select ticks live in the DOM, so this adds or
+  // removes just the detail row; redrawing the list would clear them.
+  function toggleOpen(id) {
+    var tr = rowById(id);
+    var t = lastTriggers.filter(function(x){ return x.id === id; })[0];
+    if (!tr || !t) return;
+    var key = 'p|' + id;
+    var nowOpen = !_wpTrigOpen[key];
+    _wpTrigOpen[key] = nowOpen;
+    var next = tr.nextElementSibling;
+    var hasDetail = !!(next && next.classList.contains('trigdetail'));
+    if (nowOpen && !hasDetail) tr.insertAdjacentHTML('afterend', detailRowHtml(t));
+    else if (!nowOpen && hasDetail) next.remove();
+    var b = tr.querySelector('[data-trig-open]');
+    if (b) {
+      b.setAttribute('aria-expanded', nowOpen ? 'true' : 'false');
+      var ch = b.querySelector('.trigchev');
+      if (ch) ch.textContent = nowOpen ? '▾' : '▸';
+    }
+  }
+  // One delegated handler for the list (the Edit button lives in detail rows that are added after the
+  // list is drawn). A click on the name, or on a plain cell of the row, opens it; a control on the row
+  // keeps its own job, and dragging across a pattern to copy it does not toggle anything.
+  function onListClick(e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var ed = t.closest('[data-trig-edit]');
+    if (ed) { startEdit(ed.getAttribute('data-trig-edit')); return; }
+    var tr = t.closest('tr[data-trig-id]');
+    if (!tr) return;
+    var opener = t.closest('[data-trig-open]');
+    if (!opener && t.closest('input, button, a, label, select, textarea')) return;
+    if (!opener && window.getSelection && String(window.getSelection()) !== '') return;
+    toggleOpen(tr.getAttribute('data-trig-id'));
+  }
+  function setVal(id, v) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var s = (v == null ? '' : String(v));
+    // A colour the dropdown has no option for (the suggested alerts use yellow) would read back blank
+    // and quietly turn red on save; give it an option of its own.
+    if (el.tagName === 'SELECT' && s && !Array.prototype.some.call(el.options, function(o){ return o.value === s; })) el.add(new Option(s, s));
+    el.value = s;
+  }
+  function setChk(id, on) { var el = document.getElementById(id); if (el) el.checked = !!on; }
+  // A saved row into the form. The form has one warning box: the earliest of the row's warnings.
+  function fillForm(row) {
+    var o = (Array.isArray(row.actions) ? row.actions : []).filter(function(a){ return a && a.type === 'text_overlay'; })[0] || {};
+    var zc = row.zeal_condition || null;
+    var w = wpTrigWarnings(row)[0];
+    setVal('trigNewName', row.name); setVal('trigNewPattern', row.pattern);
+    setVal('trigNewCooldown', row.cooldown_seconds || 0);
+    setVal('trigNewOverlay', o.text || ''); setVal('trigNewTts', o.tts || '');
+    setVal('trigNewColor', o.color || 'red'); setVal('trigNewDuration', o.duration_ms || 5000);
+    setVal('trigNewTimerSec', row.timer_duration_sec || 0);
+    setVal('trigNewEndEarly', row.end_early_pattern || '');
+    setVal('trigNewZealField', zc && zc.field ? zc.field : '');
+    setVal('trigNewZealOp', zc && zc.op ? zc.op : '<');
+    setVal('trigNewZealValue', zc && zc.value != null ? zc.value : '');
+    setVal('trigNewWarnSec', w ? w.sec : 0); setVal('trigNewWarnText', w ? w.text : '');
+    setChk('trigNewWarnTts', w ? w.tts : true);
+    setChk('trigNewLoop', row.timer_loop === true);
+    setVal('trigNewLoopMax', row.timer_loop_max > 0 ? row.timer_loop_max : '');
+  }
+  // Title, button labels and (when editing) the form's contents. Also what the form comes back as after
+  // a section repaint rebuilds it: the edit survives, any unsaved typing does not.
+  function applyEditUi() {
+    var title = document.getElementById('trigFormTitle');
+    var add = document.getElementById('trigAddBtn');
+    var cancel = document.getElementById('trigCancelBtn');
+    var msg = document.getElementById('trigAddMsg');
+    if (title) title.textContent = editing ? '✎ Editing: ' + (editing.row.name || 'trigger') : '+ Add personal trigger';
+    if (add) add.textContent = editing ? 'Save changes' : 'Add trigger';
+    if (cancel) cancel.style.display = editing ? '' : 'none';
+    if (!editing) return;
+    fillForm(editing.row);
+    if (msg) {
+      var many = Array.isArray(editing.row.timer_warnings) && editing.row.timer_warnings.length > 0;
+      msg.textContent = 'Change what you like and click Save changes. Settings this form has no box for are kept as they are.'
+        + (many ? ' This trigger carries its own list of ' + editing.row.timer_warnings.length + ' warnings: it is kept, and it takes priority over the warning box.' : '');
+      msg.style.color = 'var(--blue)';
+    }
+  }
+  async function startEdit(id) {
+    if (!id) return;
+    var r = await fetch('/api/personal-triggers');
+    var j = r.ok ? await r.json() : { triggers: [] };
+    var row = (j.triggers || []).filter(function(x){ return x.id === id; })[0];
+    if (!row) { alert('Trigger not found.'); return; }
+    editing = { id: id, row: row };
+    applyEditUi();
+    var panel = document.getElementById('trigEditorPanel');
+    if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    var nameEl = document.getElementById('trigNewName');
+    if (nameEl && nameEl.focus) { try { nameEl.focus(); } catch (e) { void e; } }
+  }
+  function endEdit(reset) {
+    editing = null;
+    applyEditUi();
+    if (reset) {
+      fillForm({ name: '', pattern: '', actions: [] });
+      var msg = document.getElementById('trigAddMsg');
+      if (msg) msg.textContent = '';
+    }
   }
   // Open wolfpack.quest/admin/triggers prefilled with this trigger's config
   // so an officer can review + click Create. We deliberately DON'T post
@@ -28539,42 +28864,86 @@ async function dismissTopDamage(key) {
     var zVal   = (document.getElementById('trigNewZealValue') || {}).value || '';
     var zealCond = null;
     if (zField && zVal !== '') zealCond = { field: zField, op: zOp, value: Number(zVal) };
+    // FB-26 / FB-31: the warning before the end, and the repeat.
+    var warnSec  = parseInt((document.getElementById('trigNewWarnSec') || {}).value || '0', 10) || 0;
+    var warnText = ((document.getElementById('trigNewWarnText') || {}).value || '').trim();
+    var warnTts  = (document.getElementById('trigNewWarnTts') || {}).checked !== false;
+    var loop     = !!(document.getElementById('trigNewLoop') || {}).checked;
+    var loopMax  = parseInt((document.getElementById('trigNewLoopMax') || {}).value || '0', 10) || 0;
     var msg = document.getElementById('trigAddMsg');
+    function fail(text) { if (msg) { msg.textContent = text; msg.style.color = 'var(--red)'; } }
+    // Editing a saved trigger: its row is the base the form's values go over.
+    var base = editing ? editing.row : null;
     // A trigger needs an overlay text plus EITHER a log pattern OR a Zeal
-    // condition. Pure-Zeal triggers (HP thresholds) carry no log pattern.
-    if (!name || !overlayText || (!pattern && !zealCond)) {
-      if (msg) { msg.textContent = 'Need a name, overlay text, and either a pattern or a Zeal condition.'; msg.style.color = 'var(--red)'; }
+    // condition. Pure-Zeal triggers (HP thresholds) carry no log pattern. Editing relaxes two of those: a
+    // switch or a spell-catalog row has no pattern, and an imported timer-only one never had an alert.
+    var hadAlert = !!(base && (Array.isArray(base.actions) ? base.actions : []).some(function(a){ return a && a.type === 'text_overlay'; }));
+    var noPatternOk = !!(base && (base.builtin_timer || base.catalog_match));
+    if (!name || ((!base || hadAlert) && !overlayText) || (!pattern && !zealCond && !noPatternOk)) {
+      fail('Need a name, overlay text, and either a pattern or a Zeal condition.');
       return;
+    }
+    // Both settings count down to the end of the timer; a length read from a capture counts as a timer.
+    var hasTimer = timerSec > 0 || !!(base && base.timer_duration_capture);
+    if (warnSec > 0 && !warnText) { fail('Add the warning text, or set the warning seconds back to 0.'); return; }
+    if (warnText && !(warnSec > 0)) { fail('Say how many seconds before the end to warn, or clear the warning text.'); return; }
+    if (warnSec > 0 && !hasTimer) { fail('A warning counts down to the end of a timer: set a countdown timer first.'); return; }
+    if (warnSec > 0 && timerSec > 0 && warnSec >= timerSec) { fail('The warning has to come before the end: use fewer seconds than the ' + timerSec + 's countdown.'); return; }
+    if (loop && !hasTimer) { fail('Repeat restarts the countdown: set a countdown timer first.'); return; }
+    // The save REPLACES the whole list and drops a row whose pattern will not compile, so a typo in an
+    // edit would delete the trigger. Ask the agent first (the same compiler the save uses).
+    if (pattern) {
+      try {
+        var chk = await fetch('/api/triggers/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pattern: pattern, use_regex: !base || base.use_regex !== false, pattern_flags: (base && base.pattern_flags) || 'i', line: ' ' }),
+        });
+        var chkJ = await chk.json().catch(function(){ return {}; });
+        if (chkJ && chkJ.error) { fail('That pattern will not compile, so nothing was saved: ' + chkJ.error); return; }
+      } catch (e) { void e; }
     }
     const r = await fetch('/api/personal-triggers');
     const j = r.ok ? await r.json() : { triggers: [] };
-    const row = {
-      name: name, pattern: pattern, use_regex: true, enabled: true,
-      cooldown_seconds: cooldown,
-      // tts only when the user typed one: absent means the overlay falls back
-      // to the display text (cleaned of emoji by triggers.html), which is the
-      // sane default for the many triggers that read fine as written.
-      actions: [{ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration, ...(ttsText ? { tts: ttsText } : {}) }],
-    };
-    if (timerSec > 0) row.timer_duration_sec = timerSec;
-    if (endEarly.trim()) { row.end_early_pattern = endEarly.trim(); row.end_use_regex = true; }
-    if (zealCond) row.zeal_condition = zealCond;
-    const next = (j.triggers || []).concat([row]);
+    const all = j.triggers || [];
+    // tts only when the user typed one: absent means the overlay falls back
+    // to the display text (cleaned of emoji by triggers.html), which is the
+    // sane default for the many triggers that read fine as written.
+    const form = { name: name, pattern: pattern, cooldown: cooldown, overlay: overlayText, tts: ttsText, color: color,
+      duration: duration, timerSec: timerSec, endEarly: endEarly.trim(), zeal: zealCond,
+      warnSec: warnSec, warnText: warnText, warnTts: warnTts, loop: loop, loopMax: loopMax };
+    var next;
+    if (editing) {
+      var at = -1;
+      for (var k = 0; k < all.length; k++) { if (all[k].id === editing.id) { at = k; break; } }
+      if (at < 0) { fail('That trigger is gone (deleted elsewhere). Cancel the edit to start again.'); return; }
+      next = all.slice();
+      next[at] = wpTrigApplyForm(all[at], form);
+    } else {
+      next = all.concat([wpTrigApplyForm({}, form)]);
+    }
     const save = await fetch('/api/personal-triggers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ triggers: next }),
     });
     if (save.ok) {
+      if (editing) {
+        endEdit(true);
+      } else {
+        ['trigNewName','trigNewPattern','trigNewOverlay','trigNewEndEarly','trigNewZealValue','trigNewWarnText','trigNewLoopMax'].forEach(function(id){ var el = document.getElementById(id); if (el) el.value = ''; });
+        var ts = document.getElementById('trigNewTimerSec'); if (ts) ts.value = '0';
+        var ws = document.getElementById('trigNewWarnSec'); if (ws) ws.value = '0';
+        var lp = document.getElementById('trigNewLoop'); if (lp) lp.checked = false;
+        var zf = document.getElementById('trigNewZealField'); if (zf) zf.value = '';
+      }
       if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--green)'; }
-      ['trigNewName','trigNewPattern','trigNewOverlay','trigNewEndEarly','trigNewZealValue'].forEach(function(id){ var el = document.getElementById(id); if (el) el.value = ''; });
-      var ts = document.getElementById('trigNewTimerSec'); if (ts) ts.value = '0';
-      var zf = document.getElementById('trigNewZealField'); if (zf) zf.value = '';
       fetchAndRenderList();
     } else {
-      if (msg) { msg.textContent = 'Save failed.'; msg.style.color = 'var(--red)'; }
+      fail('Save failed.');
     }
   }
+  function onCancelEdit() { endEdit(true); }
   async function onTest() {
     var panel = document.getElementById('trigTestPanel');
     if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
@@ -28586,6 +28955,7 @@ async function dismissTopDamage(key) {
   // clicks Add.
   function prefill(cfg) {
     if (!cfg) return;
+    if (editing) { editing = null; applyEditUi(); }   // a copy is a NEW trigger, not a change to the one open
     var set = function(id, val){ var el = document.getElementById(id); if (el) el.value = (val == null ? '' : String(val)); };
     set('trigNewName',     cfg.name || '');
     set('trigNewPattern',  cfg.pattern || '');
@@ -28599,6 +28969,12 @@ async function dismissTopDamage(key) {
     set('trigNewZealField', zc && zc.field ? zc.field : '');
     set('trigNewZealOp',    zc && zc.op    ? zc.op    : '<');
     set('trigNewZealValue', zc && zc.value != null ? zc.value : '');
+    // A guild trigger's warning and repeat come along (FB-26 / FB-31); the form holds one warning.
+    set('trigNewWarnSec',  cfg.warn_sec || 0);
+    set('trigNewWarnText', cfg.warn_text || '');
+    var wt = document.getElementById('trigNewWarnTts'); if (wt) wt.checked = cfg.warn_tts !== false;
+    var lp = document.getElementById('trigNewLoop'); if (lp) lp.checked = cfg.timer_loop === true;
+    set('trigNewLoopMax',  cfg.timer_loop_max || '');
     var msg = document.getElementById('trigAddMsg');
     if (msg) { msg.textContent = 'Copied from guild trigger — review and click "Add trigger" to save your personal copy.'; msg.style.color = 'var(--blue)'; }
     var panel = document.getElementById('trigEditorPanel');
@@ -28756,6 +29132,10 @@ async function dismissTopDamage(key) {
     if (importFile) importFile.addEventListener('change', onImportFile);
     var runBtn      = document.getElementById('trigTestRun');
     if (addBtn)     addBtn.addEventListener('click', onAdd);
+    var cancelBtn   = document.getElementById('trigCancelBtn');
+    if (cancelBtn)  cancelBtn.addEventListener('click', onCancelEdit);
+    listEl.addEventListener('click', onListClick);
+    applyEditUi();   // a repaint rebuilt the form: put an open edit back
     if (previewBtn) previewBtn.addEventListener('click', onPreview);
     if (testBtn)    testBtn.addEventListener('click', onTest);
     if (runBtn)     runBtn.addEventListener('click', onTestRun);
@@ -28772,6 +29152,14 @@ async function dismissTopDamage(key) {
         var cp = t.closest ? t.closest('[data-trig-copy]') : null;
         if (cp) {
           try { prefill(JSON.parse(cp.getAttribute('data-trig-copy'))); } catch (err) { void err; }
+          return;
+        }
+        // A guild trigger's name, or a plain cell of its row, opens its settings (FB-30). Dragging across
+        // the pattern to copy it is not a click on the row.
+        var gr = t.closest ? t.closest('tr[data-trig-key]') : null;
+        if (gr) {
+          if (!t.closest('[data-trig-view]') && window.getSelection && String(window.getSelection()) !== '') return;
+          wpGuildTrigToggle(gr.getAttribute('data-trig-key'));
           return;
         }
         if (!t.id) return;
@@ -40743,8 +41131,12 @@ const SUGGESTED_TRIGGERS = [
 
 const BUILTIN_TIMER_KINDS = new Set(SUGGESTED_TRIGGERS.map(t => t.builtin_timer).filter(Boolean));
 // Fields a personal row carries beyond the core shape the POST rebuild writes
-// (EQLogParser imports set the first three; guild-parity rows the rest).
-const PERSONAL_CARRY_FIELDS = ['warning_seconds', 'warning_text', 'end_text', 'timer_warnings',
+// (EQLogParser imports set the first three; guild-parity rows the rest). The
+// dashboard form writes warning_seconds/warning_text/warning_tts (FB-26) and
+// timer_loop/timer_loop_max (FB-31) — a field the whole-list save leaves out of
+// this list is a field it strips from every row.
+const PERSONAL_CARRY_FIELDS = ['warning_seconds', 'warning_text', 'warning_tts', 'end_text', 'timer_warnings',
+  'timer_loop', 'timer_loop_max',
   'timer_key_capture', 'timer_duration_capture', 'bar_color', 'pinned',
   'display_threshold_sec', 'exclude_patterns', 'characters', 'catalog_match'];
 // Saved suggested rows keep the pattern they were created with, so a template
@@ -44979,8 +45371,10 @@ function _timerWarnings(t) {
                  text: String(w.text).slice(0, 200),
                  tts: w.tts !== false }));
   if (out.length === 0 && t.warning_seconds > 0 && t.warning_text) {
+    // warning_tts:false = flash the warning without speaking it (the personal
+    // form's "Speak the warning" box, FB-26). Absent keeps the old always-speak.
     out.push({ at_ms: t.warning_seconds * 1000,
-               text: String(t.warning_text).slice(0, 200), tts: true });
+               text: String(t.warning_text).slice(0, 200), tts: t.warning_tts !== false });
   }
   return out.sort((a, b) => b.at_ms - a.at_ms);
 }
@@ -45103,6 +45497,15 @@ function _startTimer(t, tsMs, isTest, captures) {
   // unaffected (tsMs is already ~now).
   const startMs = t._replay ? Date.now() : (tsMs || Date.now());
   const action = (Array.isArray(t.actions) && t.actions[0]) || {};
+  // ↻ Repeat when it ends (timer_loop, FB-31): _activeTimersSnapshot rolls the
+  // row forward at zero instead of letting it expire. loop_max = the most
+  // restarts it will make (0 = no limit: it runs until a ✕, the cancel phrase,
+  // the mob dying, or the trigger firing again — which REPLACES this row, so
+  // loops never stack). A rehearsal stops after 3, so a test fire cannot tick on
+  // for the rest of the night.
+  const _loop = t.timer_loop === true;
+  const _lm = Math.max(0, Math.floor(Number(t.timer_loop_max)) || 0);
+  const _loopMax = !_loop ? 0 : (isTest ? Math.min(_lm || 3, 3) : Math.min(_lm, 1000));
   _activeTimers.set(id, {
     id,
     // `name` keeps backward compatibility (older dashboards read it). The
@@ -45122,6 +45525,9 @@ function _startTimer(t, tsMs, isTest, captures) {
     warn_ms:        (t.warning_seconds > 0 && t.warning_text) ? t.warning_seconds * 1000 : 0,
     warn_text:      t.warning_text || null,
     warnings:       _timerWarnings(t),
+    loop:           _loop,
+    loop_max:       _loopMax,
+    loops_done:     0,
     bar_color:      t.bar_color || null,
     pinned:         !!t.pinned,
     show_at_ms:     (Number(t.display_threshold_sec) || 0) * 1000,
@@ -45690,14 +46096,34 @@ function _builtinTimerRows(now) {
   return rows;
 }
 
+// ↻ A looping timer (timer_loop) restarts at zero instead of expiring (FB-31).
+// It moves forward by WHOLE cycles from its own start, so a poll that arrives a
+// little late — or none for a while, since nothing reads the snapshot with every
+// window closed — does not drift the beat. The warnings need nothing here: the
+// overlay builds a fresh row when the countdown comes back up, so each round
+// warns again. Returns true while the row lives on; false once loop_max restarts
+// are spent, and the caller lets it expire like any other.
+function _rollLoopTimer(t, now) {
+  if (!t.loop || !(t.duration_sec > 0)) return false;
+  const cycleMs = t.duration_sec * 1000;
+  const missed = Math.floor((now - t.ends_at_ms) / cycleMs) + 1;   // runs that have ended since we last looked (>= 1)
+  const used = (t.loops_done || 0) + missed;
+  if (t.loop_max > 0 && used > t.loop_max) return false;
+  t.loops_done = used;
+  t.started_at_ms += missed * cycleMs;
+  t.ends_at_ms    += missed * cycleMs;
+  return true;
+}
+
 function _activeTimersSnapshot() {
   const now = Date.now();
   const out = [];
   for (const [id, t] of _activeTimers) {
     // Aged out untouched — the control group for the dismissal rate (#207).
     // Only a NATURAL expiry lands here: a mob-death cancel and a user dismissal
-    // both delete the row themselves, so neither is double-counted.
-    if (t.ends_at_ms <= now) {
+    // both delete the row themselves, so neither is double-counted. A looping
+    // row that restarts is not an expiry.
+    if (t.ends_at_ms <= now && !_rollLoopTimer(t, now)) {
       _activeTimers.delete(id);
       try { _recordCalloutFeedback({ direction: 'expired', timer: t, source: 'timer_expired' }); }
       catch { /* never let bookkeeping break the snapshot */ }
@@ -46858,6 +47284,7 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       timer_duration_capture: null, timer_key_capture: null,
       timer_warnings: [{ seconds: 1, text: (t.name || 'ability') + ' ready', tts: true }],
       warning_seconds: 0, warning_text: null, pinned: false,
+      timer_loop: false,   // the recast bar is one-shot even when the main countdown repeats
     }, tsMs, test, null);
   }
 
