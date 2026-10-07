@@ -1296,9 +1296,11 @@ describe('the in-game picker', () => {
     expect(body).toContain('setBounds({ x: toLeft ? x - PANEL_W : x, y: y, width: w + PANEL_W, height: hgt })');
     expect(body).toContain("document.documentElement.style.setProperty('--ring-w', w + 'px')");
     expect(stripCss(meHtml)).toContain('body.building #wrap{width:var(--ring-w)}');
-    expect(body).toMatch(/function closeBuilder\(restore\)\{[\s\S]*?if \(restore !== false && pre && pre\.width\) setBounds\(pre\);/);
-    // quitting with it open must not leave the ring off-centre next launch
-    expect(body).toMatch(/if \(pre\) closeBuilder\(isHud\(style\)\);/);
+    // Closing puts the ring back where the window is NOW, not where it was when the panel opened
+    // (FB-16: a resize made with the panel open was undone) — test/mimic-hud-builder-resize.test.js.
+    expect(body).toMatch(/function closeBuilder\(restore, atLoad\)\{[\s\S]*?if \(restore !== false\) \{[\s\S]*?if \(back && back\.width\) setBounds\(back\);/);
+    // quitting with it open must not leave the ring off-centre next launch: a launch has only the stored bounds
+    expect(body).toMatch(/if \(pre\) closeBuilder\(isHud\(style\), true\);/);
   });
   // Round five: "It should be animated and smooth, not just jump." The hit
   // lines are kept between repaints (paintLanes), so CSS can move them — and

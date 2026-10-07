@@ -1492,21 +1492,37 @@
     builderEl.hidden = false;
     setBounds({ x: toLeft ? x - PANEL_W : x, y: y, width: w + PANEL_W, height: hgt });
   }
-  function closeBuilder(restore){
+  // The ring's own bounds, read off the window the panel grew: the panel takes
+  // PANEL_W on the left or the right and the ring keeps the rest. Closing the
+  // panel puts the window back to THIS, not to the bounds from the moment it
+  // opened: a resize or a move made while it was open used to be undone, and the
+  // HUD "reverts to a bigger size after clicking the X" (FB-16, a member,
+  // 2026-09-27). Pure, so it can be tested.
+  function ringBoundsOf(win, panelW, left){
+    return { x: left ? win.x + panelW : win.x, y: win.y, width: win.width - panelW, height: win.height };
+  }
+  // atLoad: the page just started with the panel left open (quit with it open),
+  // so the stored bounds are all there is; any other close reads the live window.
+  function closeBuilder(restore, atLoad){
     var pre = null;
     try { pre = JSON.parse(localStorage.getItem(BUILD_KEY) || 'null'); localStorage.removeItem(BUILD_KEY); } catch (e) {}
+    var left = document.body.classList.contains('build-left');
     builderEl.hidden = true;
     document.body.classList.remove('building', 'build-left');
     document.documentElement.style.removeProperty('--ring-w');
     document.documentElement.style.removeProperty('--ring-h');
-    if (restore !== false && pre && pre.width) setBounds(pre);
+    if (restore !== false) {
+      var back = atLoad ? pre : ringBoundsOf({ x: window.screenX, y: window.screenY, width: window.outerWidth, height: window.outerHeight }, PANEL_W, left);
+      if (!(back && back.width >= 100)) back = pre;
+      if (back && back.width) setBounds(back);
+    }
     hoverOff();
   }
   // Quit with the panel open → the window comes back at the ring's size.
   (function(){
     var pre = null;
     try { pre = JSON.parse(localStorage.getItem(BUILD_KEY) || 'null'); } catch (e) {}
-    if (pre) closeBuilder(isHud(style));
+    if (pre) closeBuilder(isHud(style), true);
   })();
   document.getElementById('build-btn').addEventListener('click', function(){
     if (builderEl.hidden) openBuilder(); else closeBuilder();

@@ -3713,21 +3713,53 @@ function _resolveBounds(boundsKey, sigKey, def) {
 // signature lets the next launch decide whether the saved coords are still
 // valid for the current monitor layout.
 const _boundsSaveTimers = {};
+// The size to SAVE for a window. The right-click menu stretches a short overlay
+// to 420 px so it has room to draw (overlay-ensure-min-height) and stashes the
+// real bounds with the height it gave (grownH, at grownY). That height is a
+// loan, not the user's size: saved, it came back on the next launch and after
+// every ✕ (a beta tester, 2026-10-07: "I've resized these maybe 10 times but
+// each time they end up bigger… they are goliath"; FB-16, a member, 2026-09-27:
+// "it reverts to a bigger size after clicking the X"). While the window still
+// sits at the loaned height, save the height it had before. The y is taken
+// relative to the grow (a grow-upward window moved up with it), so a window the
+// user has moved since keeps its move.
+// "Still at the loaned height" allows a pixel or two: Windows rounds DIP bounds
+// on fractional display scaling, so a height we set can read back off by one.
+function _atLoan(b, stash) {
+  return !!stash && stash.grownH != null && Math.abs(b.height - stash.grownH) <= 2;
+}
+function _settledBounds(b, stash) {
+  if (_atLoan(b, stash)) {
+    return { x: b.x, y: b.y + (stash.y - stash.grownY), width: b.width, height: stash.height };
+  }
+  return { x: b.x, y: b.y, width: b.width, height: b.height };
+}
+function _writeBounds(key, win) {
+  try {
+    const b = _settledBounds(win.getBounds(), win.__wpPreMenuBounds);
+    const cfg = loadConfig();
+    cfg[key] = { x: b.x, y: b.y, width: b.width, height: b.height };
+    cfg[key + 'Sig'] = _screenSignature();
+    // Remembered per screen setup — but not while the screens are settling,
+    // or Windows' own shove off a dead monitor would overwrite the real layout.
+    if (Date.now() >= _displaySettleUntil) _rememberLayout(cfg, cfg[key + 'Sig'], key, b);
+    saveConfig(cfg);
+  } catch {}
+}
 function _persistBounds(key, win) {
   if (!win || win.isDestroyed()) return;
   clearTimeout(_boundsSaveTimers[key]);
-  _boundsSaveTimers[key] = setTimeout(() => {
-    try {
-      const b = win.getBounds();
-      const cfg = loadConfig();
-      cfg[key] = { x: b.x, y: b.y, width: b.width, height: b.height };
-      cfg[key + 'Sig'] = _screenSignature();
-      // Remembered per screen setup — but not while the screens are settling,
-      // or Windows' own shove off a dead monitor would overwrite the real layout.
-      if (Date.now() >= _displaySettleUntil) _rememberLayout(cfg, cfg[key + 'Sig'], key, b);
-      saveConfig(cfg);
-    } catch {}
-  }, 400);
+  _boundsSaveTimers[key] = setTimeout(() => { _boundsSaveTimers[key] = null; _writeBounds(key, win); }, 400);
+}
+// Save a window's pending bounds NOW. ✕ destroys the window
+// (_reapDisabledOverlays) and the debounced save above would read getBounds()
+// on a window that is gone, which throws into its own catch: a resize in the
+// last 400 ms before ✕ was dropped and the overlay reopened at the size before.
+function _flushBounds(key, win) {
+  if (!key || !win || win.isDestroyed() || !_boundsSaveTimers[key]) return;
+  clearTimeout(_boundsSaveTimers[key]);
+  _boundsSaveTimers[key] = null;
+  _writeBounds(key, win);
 }
 
 // Apply lock state to an overlay WITHOUT restarting anything. Locked =
@@ -6466,6 +6498,9 @@ function _reapDisabledOverlays() {
     if (!win) continue;
     if (_overlayWanted(cfg, e)) continue;
     if (_inSingleSetup(win)) continue;
+    // Save a resize made in the last 400 ms before the window goes (the debounced
+    // save would otherwise read a destroyed window and lose it).
+    try { _flushBounds(_boundsKeyForEntry(e.key, win), win); } catch { /* best effort */ }
     // Let go BEFORE destroying: destroy() emits 'closed', and _forgetClosedOverlay
     // (the catch for outside closes) must find this window already released, or
     // every deliberate free would also be logged as an accident.
@@ -8228,8 +8263,11 @@ function toggleMinimizeAllOverlays() {
 // shared right-click chrome menu needs ~280 px to render its 7 buttons,
 // and an XS-preset overlay (100 px tall) clips the bottom of the menu
 // because the menu DOM lives inside the window. Grows the window without
-// moving its top-left; the overlay's regular overlayAutoHeight call
-// shrinks it back to content size once the menu closes.
+// moving its top-left. The extra height is a LOAN: overlay-menu-closed gives
+// it back (the overlay's own overlayAutoHeight is NOT relied on — most pages
+// only ask for a height when their HTML changes, so an idle one never did, and
+// the window stayed 420 tall and was saved that way) and _settledBounds never
+// saves it.
 ipcMain.handle('overlay-ensure-min-height', (e, h) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
@@ -8253,14 +8291,40 @@ ipcMain.handle('overlay-ensure-min-height', (e, h) => {
     // ⬆ Grow upward from the menu bottom-anchored the re-fit to the grown
     // window's extended bottom and teleported the overlay far south
     // (a member, 2026-07-11). Consumed by the next overlay-auto-height.
-    if (!win.__wpPreMenuBounds) {
-      win.__wpPreMenuBounds = { x: b.x, y: b.y, width: b.width, height: b.height, at: Date.now() };
-    }
+    // A stash is reused only while its loan is still out (the window sits at the
+    // height it gave); an older one is a size the user has changed since, and
+    // handing THAT back would undo the change.
+    const prior = win.__wpPreMenuBounds;
+    const stash = _atLoan(b, prior) ? prior : { x: b.x, y: b.y, width: b.width, height: b.height, at: Date.now() };
+    win.__wpPreMenuBounds = stash;
     // Grow-upward overlays sit near the bottom edge — extending downward
     // would push the menu off-screen, so anchor the bottom here too.
     let y = b.y;
     if (_overlayGrowsUp(win)) y = Math.max(disp.workArea.y, b.y + b.height - target);
+    stash.grownH = target;
+    stash.grownY = y;
     win.setBounds({ x: b.x, y, width: b.width, height: target });
+    return true;
+  } catch { return false; }
+});
+
+// The menu closed: give back the height it borrowed (see overlay-ensure-min-height).
+// Only while the window still sits at that height — a ✥ drag, an edge drag or a
+// fit has already moved it on, and THAT is the size to keep. `keepRoom` is the
+// Setup entries: the setup bar needs the room, so the window stays as it is
+// (still on loan, so still never saved at that height). The y comes back by the
+// same amount the grow moved it, not to a stored spot, so a "Move to <screen>"
+// picked from the menu is kept. Runs BEFORE the page's own re-fit replay.
+ipcMain.handle('overlay-menu-closed', (e, keepRoom) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win || win.isDestroyed()) return false;
+    const s = win.__wpPreMenuBounds;
+    if (!s || s.grownH == null || keepRoom) return false;
+    const b = win.getBounds();
+    win.__wpPreMenuBounds = null;
+    if (!_atLoan(b, s)) return false;
+    win.setBounds({ x: b.x, y: b.y + (s.y - s.grownY), width: b.width, height: s.height });
     return true;
   } catch { return false; }
 });
