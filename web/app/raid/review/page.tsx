@@ -23,6 +23,7 @@ import { selectAll } from '@/lib/selectAll';
 import { loadLootRecent, loadReviewEncounters } from '@/lib/fullReads';
 import { buildNights, nightNames, type NightRaid, type NightTick } from '@/lib/raidHeatmap';
 import WindowPicker from '@/components/WindowPicker';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -69,7 +70,7 @@ async function loadNights(sinceIso: string | null): Promise<{ nights: NightRow[]
     const { data: rosterRows } = await sb
       .from('characters')
       .select('name')
-      .eq('guild_id', 'wolfpack');
+      .eq('guild_id', GUILD_TAG);
     const roster = new Set<string>(
       (rosterRows ?? []).map((r: { name: string }) => (r.name || '').toLowerCase()).filter(Boolean),
     );

@@ -40,6 +40,7 @@ import { requireOfficer } from '@/lib/officer';
 import { selectAll } from '@/lib/selectAll';
 import { userTz, fmtAbs } from '@/lib/timezone';
 import { isCurrentEraName, currentEraNames } from '@/lib/eras';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Loot lockouts — Wolf Pack admin' };
@@ -125,7 +126,7 @@ export default async function LockoutsPage() {
   const rows = await selectAll<Row>((from, to) => sb
     .from('character_lockouts')
     .select('character, boss_key, boss_name, expires_at, implied_kill_at, ours, observed_at, observed_by, source, encounter_id')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .gt('expires_at', new Date().toISOString())
     .order('expires_at', { ascending: true })
     .order('character', { ascending: true })
@@ -136,7 +137,7 @@ export default async function LockoutsPage() {
   // that shouldn't normally happen for a current-era boss.
   const names = [...new Set(rows.map(r => r.character))];
   const { data: charRows } = names.length
-    ? await sb.from('characters').select('name, main_name').eq('guild_id', 'wolfpack').in('name', names)
+    ? await sb.from('characters').select('name, main_name').eq('guild_id', GUILD_TAG).in('name', names)
     : { data: [] as { name: string; main_name: string | null }[] };
   const kindByName = new Map<string, Kind>();
   for (const c of (charRows ?? []) as { name: string; main_name: string | null }[]) {

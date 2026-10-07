@@ -21,6 +21,7 @@ import { classifyEncounter, clearClassification } from './actions';
 import WindowPicker from '@/components/WindowPicker';
 import { resolveWindow, windowCaveat, type ResolvedWindow } from '@/lib/timeWindow';
 import { loadLootRecent, loadOffcardRollup, loadTicksForRaids } from '@/lib/fullReads';
+import { GUILD_TAG } from '@/lib/guild';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
 // Without this the page inherits the site-wide description and every
@@ -47,7 +48,7 @@ type EncounterRow = {
   eqemu_npc_types: NpcRef | null;
   encounter_players: PlayerRow[];
 };
-type ZoneRow = { short_name: string; long_name: string; expansion: number | null; zone_id: number | null };
+type ZoneRow = { short_name: string; long_name: string; zone_id: number | null };
 // One per raid-day + zone: kills of mobs that aren't curated bosses (farm,
 // raid trash, uncurated nameds) — collected in full, displayed as a line.
 type OffcardRow = { day: string; zone_short: string | null; is_raid: boolean; kills: number; total_damage: number };
@@ -69,6 +70,31 @@ type AttendanceRollup = {
 };
 
 const ROW_LIMIT = 250;
+
+// The page opens on the last week (FB-59, a member, 2026-10-07: "defaults to 60 days instead of 7
+// days, and lags out when it loads"). Measured that day: a week holds 15 curated kill cards and 131
+// player rows; 60 days holds 320, of which the 250-card limit keeps 250 with 6,031 embedded player
+// rows (~460 KB of JSON) — and the page was built from ~8 reads awaited one after another.
+const DEFAULT_WINDOW = '7d' as const;
+
+// OpenDKP raids in the window, then the ticks of exactly those raids (opendkp_ticks has no window
+// column, so the raid ids ARE the window). Its own function so the two sequential steps can run
+// beside the page's other reads.
+async function loadRaidTicks(sb: ReturnType<typeof supabaseAdmin>, since: string | null) {
+  let raidQuery = sb
+    .from('opendkp_raids')
+    .select('raid_id, ts')
+    .range(0, 19999);
+  if (since) raidQuery = raidQuery.gte('ts', since);
+  const { data: raidRows } = await raidQuery;
+  // opendkp_ticks has no per-window column, so the window is the set of raids
+  // loaded above: ticks of exactly those raids, PAGED. A `.range(0, 99999)` does
+  // NOT lift PostgREST's 1,000-row cap (it is silent), and this table is 1,578
+  // rows with none of the last 30 days in the first 1,000 — every recent night
+  // showed no attendance while this comment said it was fixed.
+  const tickRows = await loadTicksForRaids(sb, (raidRows ?? []).map((r: any) => r.raid_id));
+  return { raidRows, tickRows };
+}
 
 async function loadAll(w: ResolvedWindow): Promise<{
   rows: EncounterRow[];
@@ -101,43 +127,54 @@ async function loadAll(w: ResolvedWindow): Promise<{
       .order('started_at', { ascending: false })
       .limit(ROW_LIMIT);
     if (w.sinceIso) encQuery = encQuery.gte('started_at', w.sinceIso);
-    const { data: encs, error: encErr } = await encQuery;
-    if (encErr) return { ...empty, error: encErr.message };
-
-    // Everything off-card in the window, rolled up server-side per raid-day +
-    // zone (the RPC buckets days in ET to match dayKey). PAGED: a set-returning
-    // RPC is capped at 1,000 rows like a select, and the rollup is 730 rows at
-    // 60 days, 1,185 lifetime.
-    const offcard: OffcardRow[] = await loadOffcardRollup(sb, w.sinceIso);
-
-    // Guild roster names (lowercased) — presence = Pack member. Used to detect
-    // "foreign" raids: an upload where almost no named player is on our roster
-    // is a guildie pugging another guild's raid, not a Wolf Pack kill.
-    const { data: rosterRows } = await sb
-      .from('characters')
-      .select('name')
-      .eq('guild_id', 'wolfpack');
-    const roster = new Set<string>(
-      (rosterRows ?? []).map((r: { name: string }) => (r.name || '').toLowerCase()).filter(Boolean),
-    );
-
-    const { data: zoneRows } = await sb
-      .from('eqemu_zone')
-      .select('short_name, long_name, expansion, zone_id');
-    const zones = new Map<string, ZoneRow>(
-      (zoneRows ?? []).map((z: ZoneRow) => [z.short_name, z]),
-    );
 
     // Loot + attendance context follow the page window (was a hardcoded 60d).
     // The loot view is a "recent" sync window — long lookbacks under-count.
     const since = (w.sinceIso ?? '1970-01-01').slice(0, 10);
-    // PAGED: opendkp_loot_recent is 933 rows at 90 days and 9,251 lifetime. The
-    // night's loot block sorts itself by DKP, so the read order is free.
-    const lootRows = await loadLootRecent<LootDbRow>(
-      sb,
-      'raid_date, raid_id, raid_name, item_name, character_name, dkp, game_item_id, notes',
-      w.sinceIso ? since : null,
+
+    // The six reads below do not depend on one another, so they run TOGETHER: awaited one by one
+    // the page waited for the sum of them (the off-card rollup alone is ~250-340 ms of SQL), and
+    // now it waits for the slowest. A failed read rejects the Promise.all, which the catch below
+    // turns into the same error panel a failed read always produced. In order:
+    //   1. the kill cards (encQuery above);
+    //   2. everything off-card in the window, rolled up server-side per raid-day + zone (the RPC
+    //      buckets days in ET to match dayKey). PAGED: a set-returning RPC is capped at 1,000 rows
+    //      like a select, and the rollup is 730 rows at 60 days, 1,185 lifetime;
+    //   3. guild roster names (lowercased) — presence = Pack member. Used to detect "foreign"
+    //      raids: an upload where almost no named player is on our roster is a guildie pugging
+    //      another guild's raid, not a Wolf Pack kill;
+    //   4. zones, only the three columns the page reads;
+    //   5. loot. PAGED: opendkp_loot_recent is 933 rows at 90 days and 9,251 lifetime. The night's
+    //      loot block sorts itself by DKP, so the read order is free;
+    //   6. attendance: the window's raids, then their ticks.
+    const [
+      { data: encs, error: encErr },
+      offcard,
+      { data: rosterRows },
+      { data: zoneRows },
+      lootRows,
+      { raidRows, tickRows },
+    ] = await Promise.all([
+      encQuery,
+      loadOffcardRollup(sb, w.sinceIso),
+      sb.from('characters').select('name').eq('guild_id', GUILD_TAG),
+      sb.from('eqemu_zone').select('short_name, long_name, zone_id'),
+      loadLootRecent<LootDbRow>(
+        sb,
+        'raid_date, raid_id, raid_name, item_name, character_name, dkp, game_item_id, notes',
+        w.sinceIso ? since : null,
+      ),
+      loadRaidTicks(sb, w.sinceIso ? since : null),
+    ]);
+    if (encErr) return { ...empty, error: encErr.message };
+
+    const roster = new Set<string>(
+      (rosterRows ?? []).map((r: { name: string }) => (r.name || '').toLowerCase()).filter(Boolean),
     );
+    const zones = new Map<string, ZoneRow>(
+      (zoneRows ?? []).map((z: ZoneRow) => [z.short_name, z]),
+    );
+
     const loot = new Map<string, LootDbRow[]>();
     for (const r of lootRows) {
       // raid_date is YYYY-MM-DD from the view
@@ -150,19 +187,6 @@ async function loadAll(w: ResolvedWindow): Promise<{
     // We compute this in app code from opendkp_raids + opendkp_ticks rather
     // than trying to build a view that handles all the edge cases (multi-pool
     // nights, bonus ticks, etc).
-    let raidQuery = sb
-      .from('opendkp_raids')
-      .select('raid_id, ts')
-      .range(0, 19999);
-    if (w.sinceIso) raidQuery = raidQuery.gte('ts', since);
-    const { data: raidRows } = await raidQuery;
-    // opendkp_ticks has no per-window column, so the window is the set of raids
-    // loaded above: ticks of exactly those raids, PAGED. A `.range(0, 99999)` does
-    // NOT lift PostgREST's 1,000-row cap (it is silent), and this table is 1,578
-    // rows with none of the last 30 days in the first 1,000 — every recent night
-    // showed no attendance while this comment said it was fixed.
-    const tickRows = await loadTicksForRaids(sb, (raidRows ?? []).map((r: any) => r.raid_id));
-
     const attendance = new Map<string, AttendanceRollup>();
     if (raidRows && tickRows) {
       const raidToDate = new Map<number, string>();
@@ -355,7 +379,7 @@ export default async function ParsesPage(
   const officer = await isOfficer(user.id);
 
   const { w: wParam } = await searchParams;
-  const w = resolveWindow(wParam, '60d');
+  const w = resolveWindow(wParam, DEFAULT_WINDOW);   // no ?w= means the last week
   const caveat = windowCaveat('parses', w);
   const { rows: allRows, offcard, zones, loot, attendance, roster, error } = await loadAll(w);
   const zonesById = new Map<number, ZoneRow>(
@@ -462,8 +486,15 @@ export default async function ParsesPage(
 
       {!error && rows.length === 0 && (
         <section className="bg-panel border border-border rounded-lg p-6 text-sm text-dim">
-          No encounters with damage recorded yet. Run <code>/parse</code> in Discord
-          after a kill, or make sure the wolfpack-logsync agent is running.
+          {w.key === 'life' ? (
+            <>
+              No encounters with damage recorded yet. Run <code>/parse</code> in Discord
+              after a kill, or make sure the wolfpack-logsync agent is running.
+            </>
+          ) : (
+            // The page opens on the last week, so an empty window is a quiet week, not a new install.
+            <>No boss kills with damage recorded in the {w.label} window — pick a longer one above to look further back.</>
+          )}
         </section>
       )}
 

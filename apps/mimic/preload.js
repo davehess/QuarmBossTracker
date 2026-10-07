@@ -432,8 +432,9 @@ function _buildOverlayMenu(onClose, state) {
     return b;
   };
   // "Setup ALL" first — the most-used entry sits at the top.
-  menu.appendChild(mkItem('🛠 Setup ALL overlays', '#2a3d57', () => ipcRenderer.invoke('set-setup-mode', true)));
-  menu.appendChild(mkItem('🛠 Setup THIS overlay',  '#3d2a57', () => ipcRenderer.invoke('set-setup-mode-this', true)));
+  // Both keep the window as tall as the menu made it: the setup bar needs the room.
+  menu.appendChild(mkItem('🛠 Setup ALL overlays', '#2a3d57', () => { _wpMenuKeepRoom = true; return ipcRenderer.invoke('set-setup-mode', true); }));
+  menu.appendChild(mkItem('🛠 Setup THIS overlay',  '#3d2a57', () => { _wpMenuKeepRoom = true; return ipcRenderer.invoke('set-setup-mode-this', true); }));
   // 3.0 alpha: the canvas editor from any overlay's corner (the guild lead, 2026-09-29: "I have no way of
   // bringing up the overlay editing other than the taskbar now").
   menu.appendChild(mkItem('🧩 Arrange the canvas (pieces)', '#1f3d57', () => ipcRenderer.invoke('canvas-edit', true)));
@@ -494,6 +495,7 @@ let _wpMenuOpenAt = 0;             // #159: when suppression began — bounds th
 let _wpMenuCleanupFn = null;
 let _wpMenuSuppressedFit = null;   // wrap element from a suppressed fit
 let _wpMenuSuppressedRawH = null;  // raw height from a suppressed overlayAutoHeight
+let _wpMenuKeepRoom = false;       // a Setup entry was picked: keep the height the menu borrowed
 let _wpPageUsesAutoFit = false;    // page opted into auto-height at least once
 let _wpLastFitEl = null;           // #159: last explicitly-measured element — the
                                    // menu-close replay must never fall back to
@@ -546,7 +548,12 @@ function _attachOverlayMenu(moveBtn) {
 
 function _openOverlayMenu(state) {
   // Re-open while one is up: tear the old one down cleanly first.
-  if (_wpMenuCleanupFn) { try { _wpMenuCleanupFn(); } catch (e) {} }
+  // (That close hands the menu's borrowed height back, and this menu needs it
+  // again: borrow it once more, after the give-back, in the same IPC order.)
+  if (_wpMenuCleanupFn) {
+    try { _wpMenuCleanupFn(); } catch (e) {}
+    try { ipcRenderer.invoke('overlay-ensure-min-height', 420); } catch (e) {}
+  }
   _wpMenuOpen = true;
   _wpMenuOpenAt = Date.now();
   let closed = false;
@@ -563,8 +570,14 @@ function _openOverlayMenu(state) {
     try { window.removeEventListener('blur', onBlur); } catch (e) {}
     try { if (menu.parentNode) menu.remove(); } catch (e) {}
     _hoverOff();
-    // Give the window its height back — ensure-min-height grew it and fits
-    // were suppressed while open. Only for pages that use auto-height.
+    // Give the window its height back — ensure-min-height grew it. Main hands
+    // back what it borrowed FIRST (every page, fitting or not: an idle page
+    // that only asks for a height when its HTML changes never re-fits, so the
+    // window used to stay 420 tall and be saved that way), then the replays
+    // below re-fit to content for pages that do. Setup entries keep the room.
+    const keepRoom = _wpMenuKeepRoom; _wpMenuKeepRoom = false;
+    try { ipcRenderer.invoke('overlay-menu-closed', keepRoom); } catch (e) {}
+    // Fits were suppressed while open. Only for pages that use auto-height.
     if (_wpPageUsesAutoFit) { try { _autoFitOverlay(_wpMenuSuppressedFit || undefined); } catch (e) {} }
     _wpMenuSuppressedFit = null;
     if (_wpMenuSuppressedRawH != null) {

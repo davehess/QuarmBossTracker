@@ -52,7 +52,7 @@ describe('the page', () => {
     expect(body).toMatch(/const chars: CharFlags\[\] = members\s*\.map\(m => \{\s*const c = byChar\.get\(m\.name\.toLowerCase\(\)\);\s*return \{ name: m\.name, flags: c\?\.flags \?\? new Set<string>\(\)/);
   });
   it('adds the flags /who proves to each character, marked as seen (2026-10-01)', () => {
-    expect(body).toMatch(/sb\.rpc\('pop_who_sightings', \{ p_guild_id: 'wolfpack', p_names: \[\.\.\.nameOf\.keys\(\)\], p_zones: WHO_ZONE_NAMES \}\)/);
+    expect(body).toMatch(/sb\.rpc\('pop_who_sightings', \{ p_guild_id: GUILD_TAG, p_names: \[\.\.\.nameOf\.keys\(\)\], p_zones: WHO_ZONE_NAMES \}\)/);
     expect(body).toMatch(/for \(const \[f, proof\] of flagsFromSightings\(rows\)\) \{\s*if \(c\.flags\.has\(f\)\) continue;\s*c\.flags\.add\(f\);\s*c\.seen\.set\(f, proof\);/);
     // A gate only /who proves is a blue ✓, in the matrix and in My Characters alike: both tables render a
     // cell through GateCell (2026-10-03, which makes it the owner's button), and GateCell's other branch is AccessMark.

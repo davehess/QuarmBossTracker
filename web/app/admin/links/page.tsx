@@ -29,6 +29,7 @@ import MainCombobox from './MainCombobox';
 import { authorizeMimicForMember } from './mimic-link-actions';
 import { createSiteAccessInvite } from './site-access-actions';
 import { loadAgentUploadStats, loadWhoForNames } from '@/lib/adminReads';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -161,9 +162,9 @@ async function setLink(formData: FormData) {
   if (!name) return;
   const admin = supabaseAdmin();
   if (!discordId) {
-    await admin.from('characters').update({ discord_id: null }).eq('guild_id', 'wolfpack').eq('name', name);
+    await admin.from('characters').update({ discord_id: null }).eq('guild_id', GUILD_TAG).eq('name', name);
   } else {
-    await admin.from('characters').update({ discord_id: discordId }).eq('guild_id', 'wolfpack').eq('name', name);
+    await admin.from('characters').update({ discord_id: discordId }).eq('guild_id', GUILD_TAG).eq('name', name);
   }
   revalidatePath('/admin/links');
 }
@@ -181,7 +182,7 @@ async function setLinkIgnored(formData: FormData) {
   await supabaseAdmin()
     .from('characters')
     .update({ link_ignored: ignored })
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .eq('name', name);
   revalidatePath('/admin/links');
 }
@@ -192,7 +193,7 @@ async function applyAllAutoMatches() {
   if (!ok) redirect('/?error=admin_required');
   const admin = supabaseAdmin();
   const [{ data: chars }, { data: members }] = await Promise.all([
-    admin.from('characters').select('guild_id, name, main_name, main_name_override, class, rank, active, discord_id, link_ignored, opendkp_id').eq('guild_id', 'wolfpack'),
+    admin.from('characters').select('guild_id, name, main_name, main_name_override, class, rank, active, discord_id, link_ignored, opendkp_id').eq('guild_id', GUILD_TAG),
     admin.from('wolfpack_members').select('discord_id, nickname, global_name').eq('is_member', true),
   ]);
   const ix = buildTokenIndex((members ?? []) as Member[]);
@@ -206,7 +207,7 @@ async function applyAllAutoMatches() {
   }
   // No batch upsert helper — issue parallel updates (small set, 100ish).
   await Promise.all(updates.map(u =>
-    admin.from('characters').update({ discord_id: u.discord_id }).eq('guild_id', 'wolfpack').eq('name', u.name)
+    admin.from('characters').update({ discord_id: u.discord_id }).eq('guild_id', GUILD_TAG).eq('name', u.name)
   ));
   revalidatePath('/admin/links');
 }
@@ -231,7 +232,7 @@ async function setFamilyLink(formData: FormData) {
   if (!main) {
     await admin.from('characters')
       .update({ main_name_override: null })
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .ilike('name', name);
     revalidatePath('/admin/links');
     return;
@@ -243,7 +244,7 @@ async function setFamilyLink(formData: FormData) {
   const { data: targetRows } = await admin
     .from('characters')
     .select('name, main_name')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('name', main)
     .limit(1);
   const target = (targetRows ?? [])[0] as { name: string; main_name: string | null } | undefined;
@@ -253,7 +254,7 @@ async function setFamilyLink(formData: FormData) {
   // The character itself + anything currently rooted at it (its alts).
   await admin.from('characters')
     .update({ main_name_override: target.name, main_name: target.name })
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .neq('name', target.name)
     .or(`name.ilike.${name},main_name.ilike.${name}`);
   revalidatePath('/admin/links');
@@ -274,7 +275,7 @@ async function _linkOneUnder(
   const { data: targetRows } = await admin
     .from('characters')
     .select('name, main_name')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('name', mainName)
     .limit(1);
   const target = (targetRows ?? [])[0] as { name: string; main_name: string | null } | undefined;
@@ -282,7 +283,7 @@ async function _linkOneUnder(
   if ((target.main_name || target.name).toLowerCase() === name.toLowerCase()) return;   // cycle guard
   await admin.from('characters')
     .update({ main_name_override: target.name, main_name: target.name })
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .neq('name', target.name)
     .or(`name.ilike.${name},main_name.ilike.${name}`);
 }
@@ -330,7 +331,7 @@ async function makeOwnMain(formData: FormData) {
   await supabaseAdmin()
     .from('characters')
     .update({ main_name: name, main_name_override: name })
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('name', name);
   revalidatePath('/admin/links');
   revalidatePath('/admin/agents');
@@ -357,7 +358,7 @@ async function clearSelfPinnedOverrides() {
   const { data: rows } = await admin
     .from('characters')
     .select('name, main_name, main_name_override')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .not('main_name_override', 'is', null);
   const selfPinned = ((rows ?? []) as { name: string; main_name: string | null; main_name_override: string }[])
     .filter(r => {
@@ -369,7 +370,7 @@ async function clearSelfPinnedOverrides() {
   if (selfPinned.length > 0) {
     await admin.from('characters')
       .update({ main_name_override: null })
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .in('name', selfPinned);
   }
   revalidatePath('/admin/links');
@@ -394,7 +395,7 @@ async function resolveMainName(admin: ReturnType<typeof supabaseAdmin>, discordI
   const { data } = await admin
     .from('characters')
     .select('name, main_name')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .eq('discord_id', discordId);
   const rows = (data ?? []) as { name: string; main_name: string | null }[];
   const main = rows.find(c => !c.main_name || c.main_name.toLowerCase() === c.name.toLowerCase());
@@ -425,17 +426,17 @@ async function approveLinkRequest(formData: FormData) {
   const { data: existing } = await admin
     .from('characters')
     .select('name')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('name', req.character_name)
     .limit(1);
   if (Array.isArray(existing) && existing.length > 0) {
     await admin.from('characters')
       .update({ discord_id: req.requester_discord_id, main_name: mainName, active: true })
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .ilike('name', req.character_name);
   } else {
     await admin.from('characters').insert({
-      guild_id: 'wolfpack',
+      guild_id: GUILD_TAG,
       name: req.character_name,
       discord_id: req.requester_discord_id,
       main_name: mainName,
@@ -449,7 +450,7 @@ async function approveLinkRequest(formData: FormData) {
   if (mainName) {
     await admin.from('characters')
       .update({ main_name_override: mainName })
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .ilike('name', req.character_name);
   }
 
@@ -499,7 +500,7 @@ export default async function AdminLinksPage({
     admin
       .from('characters')
       .select('guild_id, name, main_name, main_name_override, class, rank, active, discord_id, link_ignored, opendkp_id')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .order('active', { ascending: false })
       .order('name'),
     admin
@@ -510,7 +511,7 @@ export default async function AdminLinksPage({
     admin
       .from('character_link_requests')
       .select('id, character_name, requester_discord_id, requester_name, source, created_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .eq('status', 'pending')
       .order('created_at', { ascending: true }),
     // Every uploader row, paged: the old `.limit(3000)` was cut at PostgREST's 1,000-row
@@ -524,13 +525,13 @@ export default async function AdminLinksPage({
     admin
       .from('who_observations')
       .select('character, level, class, observed_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .order('observed_at', { ascending: false })
       .limit(3000),
     admin
       .from('opendkp_register_requests')
       .select('id, name, status, error, requested_by_discord_id, opendkp_id, created_at, processed_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .order('created_at', { ascending: false })
       .limit(100),
   ]);
@@ -728,7 +729,7 @@ export default async function AdminLinksPage({
   {
     const needLevel = unregistered.filter(u => u.level == null).map(u => u.name);
     if (needLevel.length > 0) {
-      const targetedWho = await loadWhoForNames(admin, 'wolfpack', needLevel);
+      const targetedWho = await loadWhoForNames(admin, GUILD_TAG, needLevel);
       const best = new Map<string, { level: number | null; cls: string | null }>();
       for (const w of targetedWho) {
         const k = (w.character || '').toLowerCase();

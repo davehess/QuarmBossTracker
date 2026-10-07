@@ -31,6 +31,7 @@ import {
   rollBreakdown,
   type RollSetRow, type LootedRow, type RollSession,
 } from '@/lib/rolls';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,13 +50,13 @@ export default async function RollsPage() {
   const [rollRows, lootRows, funRes, ovRes, officer] = await Promise.all([
     selectAll<RollSetRow>((from, to) => sb.from('roll_sets')
       .select('roll_from, roll_to, item, qty, zone, rolls, started_at, last_at, uploaded_by_discord_id')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .gte('started_at', sinceIso)
       .order('started_at', { ascending: false }).order('id', { ascending: false })
       .range(from, to)),
     selectAll<LootedRow>((from, to) => sb.from('looted_items')
       .select('looter_character, item_name, zone, looted_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .gte('looted_at', sinceIso)
       .order('looted_at', { ascending: false }).order('id', { ascending: false })
       .range(from, to)),
@@ -67,7 +68,7 @@ export default async function RollsPage() {
       .limit(2000),
     sb.from('roll_set_overrides')
       .select('roll_from, roll_to, started_at, hidden, item, edited_by_name')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .gte('started_at', sinceIso)
       .limit(2000),
     isOfficer(user.id),

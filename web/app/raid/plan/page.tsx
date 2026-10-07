@@ -25,6 +25,7 @@ import {
   type FightCardRow, type TriggerRow,
 } from '@/lib/fightCards';
 import { createFightCard, updateFightCard, deleteFightCard } from './actions';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,7 +45,7 @@ export default async function RaidPlanPage() {
   const { data: cardRows, error } = await sb
     .from('fight_cards')
     .select('id, boss_npc_id, title, comp_notes, kit_notes, tactics, trigger_ids, guide_ref, sort_order, active, updated_by, updated_at')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .order('sort_order', { ascending: true });
   if (error) {
     return <div className="bg-panel border border-red rounded-lg p-4 text-red text-sm font-mono">Error loading fight cards: {error.message}</div>;

@@ -11,6 +11,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { validateTemplate } from '@/lib/comp';
+import { GUILD_TAG } from '@/lib/guild';
 
 export type SaveResult = { ok: true } | { ok: false; errors: string[] };
 
@@ -50,7 +51,7 @@ export async function saveCompTemplates(rawJson: string): Promise<SaveResult> {
   const { error } = await supabaseAdmin()
     .from('comp_templates')
     .upsert({
-      guild_id: 'wolfpack',
+      guild_id: GUILD_TAG,
       templates: parsed,
       updated_by_discord_id: (user.app_metadata?.provider_id || meta.provider_id || null) as string | null,
       updated_by_name: display,

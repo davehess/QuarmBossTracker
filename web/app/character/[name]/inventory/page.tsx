@@ -28,6 +28,7 @@ import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
+import { GUILD_TAG } from '@/lib/guild';
 import { type ItemCard } from './ItemHover';
 import InventoryView, { type ViewData, type CellData, type ContainerData } from './InventoryView';
 
@@ -64,7 +65,7 @@ export default async function CharacterInventoryPage({ params }: { params: Promi
   const { data: charRows } = await sb
     .from('characters')
     .select('name, class, discord_id, show_inventory_publicly')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('name', decoded)
     .limit(1);
   const char = (charRows && charRows[0]) as
@@ -97,7 +98,7 @@ export default async function CharacterInventoryPage({ params }: { params: Promi
   const { data: rows } = await sb
     .from('character_inventory')
     .select('slot_label, item_id, item_name, quantity')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('character_name', decoded)
     .limit(2000);
   const inv = (rows ?? []) as InvRow[];

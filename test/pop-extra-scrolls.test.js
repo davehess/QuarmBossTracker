@@ -119,9 +119,10 @@ describe('/admin/extra-spells page', () => {
     expect(page).toMatch(/export const metadata = \{ title: '\[beta\] Extra PoP spells' \};/);
   });
 
-  it('reads the RPC for the wolfpack guild through the service client', () => {
+  it('reads the RPC for the guild through the service client', () => {
     expect(page).toMatch(/supabaseAdmin\(\)/);
-    expect(page).toMatch(/\.rpc\('pop_extra_scrolls', \{ p_guild_id: 'wolfpack' \}\)/);
+    // The guild tag is GUILD_TAG (web/lib/guild.ts, defaults to 'wolfpack').
+    expect(page).toMatch(/\.rpc\('pop_extra_scrolls', \{ p_guild_id: GUILD_TAG \}\)/);
   });
 
   it('links character names to /character/<name>, holders and needers', () => {

@@ -11,6 +11,7 @@ import { setWhoClass, setWhoZek, deleteWhoCharacter } from './actions';
 import { BASE_CLASSES } from './classes';
 import { normalizeClass } from '@/lib/class-titles';
 import WhoBreakdown from './WhoBreakdown';
+import { GUILD_INGAME_NAME } from '@/lib/guild';
 
 export type WhoRow = {
   character: string;
@@ -163,7 +164,7 @@ export default function WhoTable({ rows: initial, canEdit = false, totalInDb = n
       const k = normalizeClass(r.effectiveClass);
       if (k) byClass.set(k, (byClass.get(k) || 0) + 1);
       const g = r.guild ? r.guild.trim() : '';
-      if (g && g !== 'Wolf Pack') byGuild.set(g, (byGuild.get(g) || 0) + 1);
+      if (g && g !== GUILD_INGAME_NAME) byGuild.set(g, (byGuild.get(g) || 0) + 1);
     }
     const sort = (m: Map<string, number>) => [...m.entries()]
       .map(([label, count]) => ({ label, count }))

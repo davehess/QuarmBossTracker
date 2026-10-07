@@ -103,6 +103,38 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ A shrunk overlay stays shrunk (mimic on beta, draft on branch `fbresize-work`, 2026-10-07).** A beta tester:
+  "resized these maybe 10 times but each time … they end up getting bigger … they are goliath" (Command Center and
+  Target Info, several hundred px tall); FB-16 (2026-09-27): the HUD "reverts to a bigger size after clicking the X".
+  - **Cause.** The right-click menu stretches a short window to 420 px so the menu has room (`overlay-ensure-min-height`).
+    Giving the height back depended on the page asking for a new one, and most pages only do when their HTML changes,
+    so an idle one stayed 420 tall — and the resize event saved the 420 as its size, so it came back that way after ✕
+    and after a restart. Now the extra height is a loan: never saved, handed back when the menu closes
+    (`overlay-menu-closed`), kept only for the two Setup entries (the setup bar needs the room).
+  - Also: a resize made in the last 400 ms before ✕ was dropped (the debounced save read a destroyed window) — ✕ now
+    saves first; and the HUD builder panel's ✕ restored the bounds from when it OPENED, undoing a resize made while it
+    was open — it now reads the live window.
+  - **Left for the guild lead:** minimum heights (Command Center and PoP raids 160, Dock 140 — FB-38's width twin), and
+    whether an auto-height overlay keeps a height you drag it to. `test/mimic-menu-grow-loan.test.js`.
+- **⏳ Box HUD shows procs, stuns and DS; procs exclude Dragon Punch (FB-60); DS badge reads the hit (FB-58) —
+  branch `fbhud-work`, not yet on beta (2026-10-07).** The guild lead's screenshots: the ring had "DS 24" with
+  the procs/stuns counts, the Box had none of them.
+  - **Box** (`me.html` `mineHtml`): one line under the target, `procs 3 · stuns 2 · DS 24` — the ring's fields
+    (`target.my_procs` / `my_stuns`, `combat.ds`) and colours; the Box has no per-part text sliders (that is the
+    HUD builder), so it is the line's own 11px. Chosen over a second line in the damage block because the counts
+    are about the mob on the line above, and that block only exists once a fight has been counted.
+  - **FB-60:** a monk's Dragon Punch fires the spell Dragon Force, which prints an anonymous 1–12 point hit beside
+    the skill swing ("You strike …") — what a weapon proc looks like. Its landing text, "<mob> is stricken by
+    the force of a dragon.", comes one line later; `_meNoteDragonForce` then takes the newest anonymous hit on
+    that mob back out of the proc count. On the report's own excerpt: 24 counted → 17 (the 7 landings given back).
+    Not verified: the Iksar Tail Rake (assumed the same spell).
+  - **FB-58:** the badge was an ESTIMATE (catalog value of each shield buff + worn gear); only with no shield
+    visible did it read a landed hit. Bard songs scale with instrument and skill and an AA adds more — none of it
+    in the catalog. Now `combat.ds.measured` / `per_hit` read the amount that repeats among the last five of your
+    shield hits this fight (`_dsSeenPerHit`), and the badge drops its "~" (the estimate's mark). It can only
+    read a hit the HUD ledger already takes for your shield: a named "YOUR" line, or an anonymous hit after the
+    mob hit you that fits the shield you wear + 30. The report's excerpt holds none of the reporter's own shield
+    hits, so this is unconfirmed on their log. Waits on the guild lead checking both on the beta.
 - **⏳ HUD DS badge counts worn-gear shields (agent 3.7.80 on beta, bot 3.1.202, 2026-10-04).** The guild lead:
   "Missing my additional DS from my neck slot" (Talisman of Vah Kerrath, +8 on a 10-point shield, hits for 18).
   Gear adds only on top of a shield spell, as the server does. Two items carry one today. Waits on the guild lead
@@ -5410,3 +5442,44 @@ roadmaps.
   screenshots — the same category as the `OverlayDemo` swap, on a published
   surface. `test-archive-merge.sh`'s names are fixture DATA and stay. Not fixed:
   it is unrelated to the change that found it.
+
+### 🧾 2026-10-07 — Mimic beta: hide-all crash, taskbar, overlays growing back, Box HUD procs, mob procs, /parses (agent 3.7.97 · web 1.8.113)
+Five reports in one beta push, each built and mutation-checked by a parallel agent.
+- **Hide-all crashed the main process** (the guild lead's dialog: "Object has been
+  destroyed at applyMobInfoVisibility"). Mob Info's window had been closed from
+  outside Mimic (nothing in the log said `freed mobinfo` for that session), nothing
+  nulled the reference, and the next hide-all called `.hide()` on a corpse. Now every
+  window's `closed` event drops its reference (`_forgetClosedOverlay`, logged as
+  "closed from outside Mimic"), the materialise sweep rebuilds a destroyed one, and
+  all 18 `apply*Visibility` guards use `_live(win)`. **FB-61**: Settings, Resource use
+  and UI Studio were the three framed windows without `skipTaskbar`; every overlay
+  already had it — if a tester still sees overlays on the taskbar, the next suspects
+  are a post-show `setSkipTaskbar(true)` re-assert and popup windows from dashboard links.
+- **Overlays came back bigger after every resize** (a beta tester; FB-16). The
+  right-click ✥ menu stretches a short overlay to 420 px so the menu fits, and that
+  loan was SAVED as the overlay's size on byte-stable pages (Command Center, Target
+  Info, the HUD) — ✕ and restarts brought the 420 back. The loan is now returned on
+  menu close for every page (`overlay-menu-closed`), the pre-menu height is what gets
+  saved, ✕ flushes a resize made in the last 400 ms, and the HUD builder's ✕ keeps the
+  size you left instead of restoring the bounds from when the panel opened. Left for
+  the guild lead: whether a dragged height should become a floor for auto-height
+  overlays (DECISIONS to follow).
+- **Box HUD** shows `procs · stuns · DS` under the target line like the ring. **FB-60**:
+  a monk's Dragon Punch lands "Dragon Force" as an anonymous 10-point hit right after
+  the strike, which the proc counter took for a proc; the "stricken by the force of a
+  dragon" line now takes it back (24 → 17 procs on the report's own log). **FB-58**: the
+  DS badge shows the measured per-hit value once your own shield hits repeat
+  (`DS`), the catalog estimate until then (`DS~`); still an estimate for a bard whose
+  real shield is more than 30 above the catalog with no shield buff visible.
+- **Target Info shows the mob's procs** (PROCS section above Offensive; bot 3.1.216).
+- **/parses defaults to 7 days** (FB-59) and runs its reads in parallel; preview at
+  https://b.wolfpack.quest/parses (old window: https://b.wolfpack.quest/parses?w=60d).
+- **Web guild kit (slice A, web 1.8.114, beta only until the guild lead graduates it):**
+  `web/lib/guild.ts` (GUILD_TAG, GUILD_NAME, GUILD_INGAME_NAME, ROLES, RANKS, site
+  URLs from `NEXT_PUBLIC_*` with Wolf Pack defaults), the `'wolfpack'` literal swapped
+  for GUILD_TAG across 78 files, a guard test that fails on a new literal or a
+  client-bundle import, `next.config.js` mapping SUPABASE_GUILD_ID → NEXT_PUBLIC_GUILD_TAG
+  at build time, and `/pvp/server` + the /who table comparing guild names through
+  GUILD_INGAME_NAME. Byte-identical for Wolf Pack (neither env name is set on
+  Vercel). Left: `web/lib/funLdAuth.ts` still carries a hard-coded character name
+  (a logic bug too — it checks one fixed character, not the card's) — follow-up.

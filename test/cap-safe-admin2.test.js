@@ -708,7 +708,7 @@ describe('the seven pages no longer carry the cap-blind reads', () => {
 
   it('/admin/spells reads the function through the paged loader and still shows its error', () => {
     const s = page('spells');
-    expect(s).toContain("loadHeldSpellNeeds<HeldSpell>(sb, 'wolfpack')");
+    expect(s).toContain('loadHeldSpellNeeds<HeldSpell>(sb, GUILD_TAG)');
     expect(s).not.toMatch(/sb\.rpc\('guild_held_spell_needs'/);
     expect(s).toMatch(/error && <p[^>]*>⚠ \{error\.message\}/);
   });

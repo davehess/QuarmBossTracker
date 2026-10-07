@@ -488,6 +488,7 @@ vi.mock('@/lib/supabase', () => ({
   }),
 }));
 vi.mock('@/lib/spectator', async () => await import('../web/lib/spectator.ts'));
+vi.mock('@/lib/guild', async () => await import('../web/lib/guild.ts'));
 // CI's test job installs the root packages only, so `next/server` (web/node_modules) does not
 // resolve there; the route only needs NextResponse.json, which is a plain Response.
 vi.mock('next/server', () => ({

@@ -155,6 +155,25 @@ with four-number costs, and the fork + `sync-upstream.yml` route back upstream:
 `docs/DESIGN-guild-kit.md`. Deployment decisions: `DESIGN-selfhost-wizard.md`
 §3 (2026-09-18). Builds on `DESIGN-external-tenancy.md` Stages 2–3.
 
+**Web half — `web/lib/guild.ts`:** the website's one place for "which guild is
+this". `GUILD_TAG` (the `guild_id` every table is keyed on), `GUILD_NAME`,
+`GUILD_SHORT`, `GUILD_INGAME_NAME` (the name as the game spells it, for data
+comparisons), `SITE_NAME`, `SITE_URL`/`siteUrl()`, `LOGIN_EMAIL_DOMAIN` (frozen),
+the repo and OpenDKP addresses, `RAID_TZ`, the rank/role tables and the role
+gates all resolve from `NEXT_PUBLIC_*` names with Wolf Pack's own values as the
+defaults, so an unset environment is today's site. It imports nothing and reads
+each name statically, so a client bundle may import it (never `GUILD_TAG`
+into a `'use client'` file). `web/next.config.js` copies the bot's server-only
+`SUPABASE_GUILD_ID` into `NEXT_PUBLIC_GUILD_TAG` at build time when that is
+unset, so the server and browser bundles agree. 78 files that hard-coded the
+`'wolfpack'` tag now read `GUILD_TAG`; `test/guild-tag-literal.test.js`
+fails on any new literal and on `GUILD_TAG` in a client file, and
+`test/guild-web-module.test.js` pins the defaults, the resolution order, the
+rank/role copies and the next.config mapping. Names and defaults:
+`web/.env.example` (guild-kit block). Still literal on purpose: the demo-name
+salt in `web/lib/obfuscate.ts`; the hard-coded character name in
+`web/lib/funLdAuth.ts` is a known follow-up.
+
 - **Branches**: `main` ships bot (Railway, deploy name = merge commit
   message) + web (Vercel) + stable Mimic; `beta` ships Mimic/agent betas.
 - **Mimic releases**: `.github/workflows/release-mimic.yml` triggers on
@@ -2545,7 +2564,10 @@ into its corpse or hits 0% (`_noteMobDeathFromState` →
 `EncounterBuilder.noteZealTargetDead`), for when the slain line never reached this log.
 HUD per-mob ⚡ procs / ✦ stuns-aggro (agent 3.7.88): `_meNoteHit` proc flag + `_meNoteMyLanding` (catalog
 cc 'stun' or `hate` > 0, bot 3.1.205), keyed name#spawn id → `/api/me` `target.my_procs` / `my_stuns`;
-drawn above the DS badge, builder part `procs`.
+drawn above the DS badge, builder part `procs`. The Box layout (`renderA`) draws the same fields as one line
+under the target, `procs 3 · stuns 2 · DS 24` (`mineHtml`; `mineOf` and `dsMark` are shared with the ring). A
+monk's Dragon Punch is not a proc: its spell, Dragon Force, prints an anonymous hit beside the swing and the
+landing line "<mob> is stricken by the force of a dragon." takes it back out (`_meNoteDragonForce`, FB-60).
 HUD (`me.html`): enrage zone 12% since agent 3.7.84 (`ENRAGE_WARN_PCT`, spoken by `_tickEnrageWarn`
 on a 250 ms tick; "Enrage soon" is priority 2 in `triggers.html` `_speakPriority`, beside CH GO),
 cleared by `enrage_ended`; DS button thorns / lava (`_dsKindOf`, `ds.kind`); rampage +
@@ -2600,6 +2622,24 @@ out of the global scale unless "Scale the dock too" (`cfg.overlayScaleDock`)
 is on. The setup bar and drag controls counter-zoom (`wp-zoom` push →
 `--wp-zoom` var; `width × z` + `scale(1/z)`) so the setup chrome keeps one
 painted size spanning the window width at every scale.
+
+**What an overlay's saved size is, and what it is not (mimic, beta, 2026-10-07).**
+`_persistBounds` saves the live window on every move/resize (400 ms debounce),
+so anything that changes a window's height for a moment is saved unless it is
+told apart. Two such things exist and neither is the user's size. (1) The
+right-click menu's room: `overlay-ensure-min-height` stretches a short window
+to 420 px and stashes the real bounds in `win.__wpPreMenuBounds` with the loan
+(`grownH`, `grownY`); `_settledBounds` saves the stashed height while the window
+still sits at the loaned one, and `overlay-menu-closed` (sent by the menu's
+cleanup in `preload.js`, before the page's own re-fit replay) hands it back —
+for every page, since most only ask for a height when their HTML changes. The
+two Setup entries keep the room (`keepRoom`). (2) The setup bar's 104 px, added
+by `overlay-auto-height` while setting up — still saved with the window; same
+class, not yet handled. `_flushBounds` saves pending bounds before ✕ frees the
+window. Height itself follows content on every auto-height overlay (a drag
+below content grows back at the next content change; a drag above it shrinks
+back) — that is by design, and a user-kept height is an open question for the
+guild lead. `test/mimic-menu-grow-loan.test.js`.
 
 ---
 
@@ -3919,6 +3959,11 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   worn effect is a damage shield, from `/output inventory` or the Quarmy export) only while a shield
   spell is up; `combat.ds.from_items` says how much. The item list is view `item_worn_damage_shield`,
   served as `worn_ds` on `/api/agent/item-clickies` (v2).
+  **Measured wins (FB-58):** that sum is an ESTIMATE (catalog values — no instrument skill, no AA). Once a
+  shield hit of yours has landed this fight, `per_hit` is the amount that repeats among the last five
+  (`_dsSeenPerHit`, a tie to the newest) and `combat.ds.measured` is true; the badge's "~" (`dsMark`) marks
+  the estimate. The hits it reads are the ledger's `kind: 'ds'` ones: the named "YOUR" line, or an anonymous
+  hit after the mob hit you that fits the shield you wear + `DS_UNLISTED_SLACK`.
   **Round four (agent 3.7.9):** cooldowns on an inner arc (`cdItems`), tick
   and swing their own arcs under them (`tickItem` / `swingItem`); `weight`
   part (`HUD_WEIGHTS`, svg class `w-<weight>`); builder is a side panel

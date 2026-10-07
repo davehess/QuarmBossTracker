@@ -32,6 +32,7 @@ import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 import { selectAll } from '@/lib/selectAll';
 import { loadEncounterGap, hasMissingDamage, GAP_HARD_CAP } from '@/lib/adminReads';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -359,7 +360,7 @@ async function fileBackfillRequest(formData: FormData) {
   // request for this window.
   await Promise.all(characters.map(async (character) => {
     await admin.from('agent_backfill_requests').insert({
-      guild_id: 'wolfpack',
+      guild_id: GUILD_TAG,
       character,
       requested_by_discord_id: requestedByDiscordId,
       requested_by_name: requestedByName,

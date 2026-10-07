@@ -28,6 +28,7 @@ import {
   computeCompGaps, ARCHETYPE_LABEL, type CompTemplate, type CompGaps,
 } from '@/lib/comp';
 import { loadSignupStatuses, loadRaidWindowNames } from '@/lib/adminReads';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -115,7 +116,7 @@ export default async function AdminSignupsPage({
 
   // #93 comp templates — the officer-authored target compositions (/admin/comp).
   const { data: tplRow } = await admin
-    .from('comp_templates').select('templates').eq('guild_id', 'wolfpack').maybeSingle();
+    .from('comp_templates').select('templates').eq('guild_id', GUILD_TAG).maybeSingle();
   const templates: CompTemplate[] = Array.isArray(tplRow?.templates) ? (tplRow!.templates as CompTemplate[]) : [];
 
   // Stats header
@@ -169,7 +170,7 @@ export default async function AdminSignupsPage({
         const { data: chars } = await admin
           .from('characters')
           .select('name, discord_id')
-          .eq('guild_id', 'wolfpack');
+          .eq('guild_id', GUILD_TAG);
         const charToDiscord = new Map<string, string>();
         for (const c of (chars ?? []) as CharRow[]) {
           if (c.discord_id) charToDiscord.set(c.name.toLowerCase(), c.discord_id);
@@ -263,7 +264,7 @@ export default async function AdminSignupsPage({
         const { data: rr } = await admin
           .from('raid_roster')
           .select('name, class, captured_at')
-          .eq('guild_id', 'wolfpack')
+          .eq('guild_id', GUILD_TAG)
           .gte('captured_at', lo).lt('captured_at', hi);
         const rows = (rr ?? []) as { name: string; class: string | null; captured_at: string }[];
         if (rows.length > 0) {

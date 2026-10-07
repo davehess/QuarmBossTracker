@@ -17,6 +17,7 @@ import BulkTellsToggle from './BulkTellsToggle';
 import TellsSnoozeControl from './TellsSnoozeControl';
 import { userTz, fmtShort, relTime } from '@/lib/timezone';
 import { fetchTellSummary, EMPTY_TELL_SUMMARY } from '@/lib/capSafeReads';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,7 +42,7 @@ async function loadOwnerCharacters(userId: string) {
   const { data: chars } = await admin
     .from('characters')
     .select('name, tell_relay')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .eq('discord_id', pack.discord_id);
   return {
     discordId:   pack.discord_id,

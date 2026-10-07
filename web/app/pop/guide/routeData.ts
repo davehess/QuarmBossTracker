@@ -12,6 +12,7 @@ import { WHO_ZONE, WHO_ZONE_NAMES, type Sighting } from '@/lib/popWho';
 import { loadLootSightings, type LootRow } from '@/lib/popLootRows';
 import type { RouteChar } from './GuideRoute';
 import type { ZoneOutline } from './ZoneMap';
+import { GUILD_TAG } from '@/lib/guild';
 
 type Owned = { name: string; class: string | null; main_name: string | null };
 type SightRow = Sighting & { character_key: string };
@@ -34,7 +35,7 @@ export async function loadRoute(mine: Owned[]): Promise<{ chars: RouteChar[]; ou
   const zones = [...new Set(GUIDE_ITEMS.flatMap(i => stepPlaces(i, STEP_MORE[i.key]).map(p => p.zone)))];
 
   const [ticks, flags, loots, inv, chars, who, live, sights, lootSights, ...outlineList] = await Promise.all([
-    names.length ? admin.from('pop_guide_ticks').select('character_name, item_key').eq('guild_id', 'wolfpack').in('character_name', names) : none,
+    names.length ? admin.from('pop_guide_ticks').select('character_name, item_key').eq('guild_id', GUILD_TAG).in('character_name', names) : none,
     names.length ? admin.from('pop_flags').select('character, flag_key, earned_at').neq('flag_key', 'unmapped')
       .or(names.map(n => `character.ilike.${n}`).join(',')).order('earned_at', { ascending: true }).limit(1000) : none,
     names.length ? admin.from('looted_items').select('looter_lower, item_name, looted_at').in('looter_lower', lower)
@@ -48,7 +49,7 @@ export async function loadRoute(mine: Owned[]): Promise<{ chars: RouteChar[]; ou
     // Paged (selectAll): the API stops at 1,000 rows a request and this grows with every /who of a gated plane.
     names.length
       ? selectAll<SightRow>((from, to) =>
-        admin.rpc('pop_who_sightings', { p_guild_id: 'wolfpack', p_names: lower, p_zones: WHO_ZONE_NAMES }).range(from, to))
+        admin.rpc('pop_who_sightings', { p_guild_id: GUILD_TAG, p_names: lower, p_zones: WHO_ZONE_NAMES }).range(from, to))
       : Promise.resolve([] as SightRow[]),
     // …and what they looted inside one (the same proof of presence; popWho.ts flagsFromLoot).
     names.length ? loadLootSightings(admin) : Promise.resolve([] as LootRow[]),
