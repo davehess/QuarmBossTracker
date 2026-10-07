@@ -826,6 +826,12 @@ contextBridge.exposeInMainWorld('mimic', {
   // Saved groups of pieces (3.0 alpha), one list for every screen.
   canvasGroups:      ()       => ipcRenderer.invoke('canvas-groups'),
   canvasGroupsSave:  (groups) => ipcRenderer.invoke('canvas-groups-save', groups),
+  // ⌨ A hotkey per saved group: canvasGroupHotkey(id, accel | '') sets or clears it → { ok, keys, blocked };
+  // toggleCanvasGroup(id) is the key's own press (show / hide the group); onCanvasGroupOps hears a press
+  // made while the Canvas is up (it then asks canvasState for it).
+  canvasGroupHotkey: (id, accel) => ipcRenderer.invoke('canvas-group-hotkey', id, accel || ''),
+  toggleCanvasGroup: (id)     => ipcRenderer.invoke('canvas-group-toggle', id),
+  onCanvasGroupOps:  (cb)     => ipcRenderer.on('canvas-group-ops', () => cb()),
 
   // ── Dock ──────────────────────────────────────────────────────────────────
   // dock.html only. dockState() returns { keys, cols, catalog }; dockSet()

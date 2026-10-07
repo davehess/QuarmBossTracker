@@ -2805,7 +2805,7 @@ function _setsSay(r, quiet) {
   return r;
 }
 // The one way in for /pipe, the tray and Settings.
-// cmd: { verb: 'save'|'load'|'next'|'prev'|'delete'|'lock', name?, on? } → { ok, message }
+// cmd: { verb: 'save'|'load'|'next'|'prev'|'delete'|'lock'|'edit'|'group', name?, on? } → { ok, message }
 function _overlaySetCommand(cmd, char, quiet) {
   const file = _SETS_FILE();
   const store = overlaySets.load(file);
@@ -2858,6 +2858,13 @@ function _overlaySetCommand(cmd, char, quiet) {
     const on = cmd.on == null ? !_canvasArrange : !!cmd.on;
     _setCanvasArrange(on);
     return _setsSay({ ok: true, message: on ? 'Arranging the canvas' : 'Done arranging' }, quiet);
+  }
+  // `/pipe mimic group <name>` — show or hide a saved Canvas group, the same toggle as its hotkey.
+  if (cmd.verb === 'group') {
+    const g = _canvasGroupList(loadConfig()).find(x => x.name.toLowerCase() === String(cmd.name).toLowerCase());
+    if (!g) return _setsSay({ ok: false, message: `No Canvas group called "${cmd.name}"` }, quiet);
+    _toggleCanvasGroup(g.id);
+    return _setsSay({ ok: true, message: `Canvas group: ${g.name}` }, quiet);
   }
   return { ok: false, message: 'Unknown overlay set command' };
 }
@@ -7042,6 +7049,88 @@ function _registerOverlayHotkeys(globalShortcut, cfg) {
     }
   }
 }
+// ⌨ A hotkey per Canvas group (Mimic 3.0 alpha; the guild lead, 2026-10-07: "we should be able to
+// assign hotkeys to show or hide canvas groups as well"). "A group" is a SAVED group, the named ones in
+// the Canvas's ★ Groups list; cfg.canvasGroupHotkeys = { <saved group id>: accelerator } is keyed by
+// that id, so a rename keeps the key, and a deleted group drops it. A press toggles the group: every
+// piece placed from it is hidden, or shown again, in the Canvas layout (canvas.html toggleSavedGroup;
+// positions and sizes are kept and the choice is saved with the layout). The Canvas does the toggling
+// because it owns the layout; main queues the press and the Canvas reads it (canvas-state, or a ping).
+// No defaults: a global shortcut takes its key away from EverQuest. Registered after the overlay keys.
+let _registeredGroupAccels = {};   // saved group id → accelerator bound right now
+let _blockedGroupAccels = {};      // saved group id → accelerator the OS refused
+let _canvasGroupOps = [];          // presses the Canvas has not read yet: { id, show }
+function _canvasGroupList(cfg) {
+  return (Array.isArray(cfg && cfg.canvasGroups) ? cfg.canvasGroups : [])
+    .filter(g => g && typeof g.id === 'string' && g.id)
+    .map(g => ({ id: g.id, name: String(g.name || 'Group') }));
+}
+// id → accelerator, for the groups that exist.
+function _canvasGroupKeys(cfg) {
+  const map = (cfg && cfg.canvasGroupHotkeys && typeof cfg.canvasGroupHotkeys === 'object') ? cfg.canvasGroupHotkeys : {};
+  const out = {};
+  for (const g of _canvasGroupList(cfg)) if (typeof map[g.id] === 'string' && map[g.id].trim()) out[g.id] = map[g.id].trim();
+  return out;
+}
+function _registerCanvasGroupHotkeys(globalShortcut, cfg) {
+  for (const a of Object.values(_registeredGroupAccels)) { try { globalShortcut.unregister(a); } catch {} }
+  _registeredGroupAccels = {};
+  _blockedGroupAccels = {};
+  const map = (cfg && cfg.canvasGroupHotkeys && typeof cfg.canvasGroupHotkeys === 'object') ? cfg.canvasGroupHotkeys : {};
+  const names = {};
+  for (const g of _canvasGroupList(cfg)) names[g.id] = g.name;
+  let dropped = false;
+  for (const id of Object.keys(map)) {
+    if (!names[id]) {
+      // The group was deleted (or never saved): a key for nothing is dropped, not kept.
+      appendAgentLog(`[mimic] dropped the Canvas group hotkey for "${id}": that saved group no longer exists\n`);
+      delete map[id]; dropped = true;
+      continue;
+    }
+    const accel = typeof map[id] === 'string' ? map[id].trim() : '';
+    if (!accel) continue;
+    let ok = false;
+    try { ok = globalShortcut.register(accel, () => { try { _toggleCanvasGroup(id); } catch (e) { appendAgentLog(`[mimic] Canvas group hotkey: ${e.message}\n`); } }); }
+    catch { ok = false; }   // a malformed accelerator throws rather than returning false
+    if (ok) _registeredGroupAccels[id] = accel;
+    else {
+      _blockedGroupAccels[id] = accel;
+      appendAgentLog(`[mimic] failed to register the Canvas group hotkey "${accel}" for "${names[id]}" (in use by another app or another Mimic hotkey?)\n`);
+    }
+  }
+  if (dropped) { try { saveConfig(cfg); } catch {} }
+}
+// The press: show or hide the group's pieces. The Canvas is the group's home, so a press while it is
+// switched off turns it on and the group is SHOWN (a toggle could hide what you came to see). While a
+// hide-all is in force the press changes the group's saved state like any overlay hotkey does and does
+// not lift the hide-all: that is the member's call, made on purpose.
+function _toggleCanvasGroup(id) {
+  const cfg = loadConfig();
+  if (!_canvasGroupList(cfg).some(g => g.id === id)) {
+    appendAgentLog(`[mimic] Canvas group "${id}": no such saved group\n`);
+    return false;
+  }
+  const closed = !cfg.showCanvas;
+  if (closed) _toggleOverlay('canvas');
+  _canvasGroupOps.push({ id, show: closed });
+  if (_canvasGroupOps.length > 40) _canvasGroupOps.shift();
+  // A window that is up reads the press now; one still loading finds it in its first canvas-state.
+  if (_live(canvasWindow)) { try { canvasWindow.webContents.send('canvas-group-ops'); } catch { /* mid-close */ } }
+  return true;
+}
+function _drainCanvasGroupOps() { const ops = _canvasGroupOps; _canvasGroupOps = []; return ops; }
+// Tray ↔ dashboard parity (CLAUDE.md): the groups under the Canvas entry, each with its key, driving
+// the same toggle as the key. Only when there is a saved group to list.
+function _canvasGroupTrayItems(s) {
+  const groups = (s && s.canvasGroups) || [];
+  if (!groups.length) return [];
+  const keys = s.canvasGroupHotkeys || {}, blocked = s.canvasGroupHotkeysBlocked || {};
+  return [{ label: '  ↳ Canvas groups — show / hide', enabled: !s.hideOverlays,
+    submenu: groups.map(g => ({
+      label: g.name.replace(/&/g, '&&') + ' (' + (blocked[g.id] ? '⚠ ' + _fmtAccel(keys[g.id]) + ' blocked by another app' : keys[g.id] ? _fmtAccel(keys[g.id]) : 'no hotkey') + ')',
+      click: () => { _toggleCanvasGroup(g.id); },
+    })) }];
+}
 // ⌨ Setting a key that is already in use (the guild lead, 2026-09-24: "When
 // setting hotkeys it should tell you when you're trying to use one that's
 // currently in use rather than doing nothing"). A key held as a GLOBAL shortcut
@@ -7066,6 +7155,13 @@ function _mimicHotkeyUses(cfg) {
   const map = (c.overlayHotkeys && typeof c.overlayHotkeys === 'object') ? c.overlayHotkeys : {};
   for (const key of _OVERLAY_HOTKEY_KEYS) {
     if (typeof map[key] === 'string' && map[key].trim()) uses.push({ id: 'overlay:' + key, accel: map[key].trim() });
+  }
+  // …and each saved Canvas group's key (only for a group that still exists), named by its group.
+  const gmap = (c.canvasGroupHotkeys && typeof c.canvasGroupHotkeys === 'object') ? c.canvasGroupHotkeys : {};
+  for (const g of (Array.isArray(c.canvasGroups) ? c.canvasGroups : [])) {
+    if (g && typeof g.id === 'string' && typeof gmap[g.id] === 'string' && gmap[g.id].trim()) {
+      uses.push({ id: 'canvasGroup:' + g.id, accel: gmap[g.id].trim(), label: 'the “' + String(g.name || 'Group') + '” Canvas group’s key' });
+    }
   }
   return uses;
 }
@@ -7188,6 +7284,8 @@ function registerHideAllHotkey() {
     }
     // ⌨ One per overlay, registered last so the four above keep their keys.
     _registerOverlayHotkeys(globalShortcut, cfg);
+    // …and one per saved Canvas group, after those (an overlay key is never taken by a group).
+    _registerCanvasGroupHotkeys(globalShortcut, cfg);
   } catch (e) { appendAgentLog('[mimic] hide-all hotkey error: ' + e.message + '\n'); }
 }
 
@@ -7277,6 +7375,11 @@ function currentStatus() {
     // Overlay hotkeys the OS refused (key → accelerator), so the dashboard can
     // say "taken by another app" instead of showing a key that does nothing.
     overlayHotkeysBlocked: Object.assign({}, _blockedOverlayAccels),
+    // ⌨ The saved Canvas groups and the key each has (saved group id → accelerator), and the ones the
+    // OS refused — for a UI that lists them (the tray does; the dashboard's Overlays tab can).
+    canvasGroups: _canvasGroupList(cfg),
+    canvasGroupHotkeys: _canvasGroupKeys(cfg),
+    canvasGroupHotkeysBlocked: Object.assign({}, _blockedGroupAccels),
     // …and the same for the four all-overlay keys (hide-all, backgrounds,
     // damage alert, minimize-all), by their cfg key.
     hotkeysBlocked: Object.assign({}, _blockedHotkeys),
@@ -7659,6 +7762,7 @@ function buildTrayMenu() {
     { label: _canvasArrange ? '  ↳ ✓ Done arranging the canvas' : '  ↳ Arrange the canvas…', enabled: !s.hideOverlays, click: () => {
         _setCanvasArrange(!_canvasArrange);
       } },
+    ..._canvasGroupTrayItems(s),
     { type: 'separator' },
     // Panel-overlay tray toggles removed per user feedback — the per-card
     // "🪟 overlay" buttons on the dashboard cover ad-hoc pop-outs without a
@@ -9198,7 +9302,18 @@ function _canvasOverlayList() {
       showing: !!at, docked: docked.includes(c.key), at, w: size[0], h: size[1] };
   });
 }
-ipcMain.handle('canvas-state', () => Object.assign(_canvasStatePayload(), { overlays: _canvasOverlayList() }));
+// groupOps: the group-hotkey presses made since the Canvas last asked (read once, then gone);
+// groupKeys / groupKeysBlocked: what each saved group's chip shows.
+ipcMain.handle('canvas-state', (e) => {
+  const cfg = loadConfig();
+  const mine = !!canvasWindow && !canvasWindow.isDestroyed() && BrowserWindow.fromWebContents(e.sender) === canvasWindow;
+  return Object.assign(_canvasStatePayload(), {
+    overlays: _canvasOverlayList(),
+    groupOps: mine ? _drainCanvasGroupOps() : [],
+    groupKeys: _canvasGroupKeys(cfg),
+    groupKeysBlocked: Object.assign({}, _blockedGroupAccels),
+  });
+});
 // Only the canvas itself saves its layout, keyed by the resolution it is on.
 // Bounded: a layout is a few dozen small panels, never a blob.
 ipcMain.handle('canvas-save', (e, layout) => {
@@ -9249,9 +9364,33 @@ ipcMain.handle('canvas-groups-save', (e, groups) => {
   if (json.length > 128_000) return false;
   const cfg = loadConfig();
   cfg.canvasGroups = JSON.parse(json);
+  // A group deleted here takes its hotkey with it (registering again lets the key go and logs the drop).
+  const hadKeys = Object.keys(cfg.canvasGroupHotkeys || {}).length;
   saveConfig(cfg);
+  if (hadKeys) { try { registerHideAllHotkey(); } catch { /* */ } }
+  try { buildTrayMenu(); } catch { /* */ }
+  pushStatus();
   return true;
 });
+// A saved group's hotkey, set (accel) or cleared (blank) — from the Canvas's Hotkey… / Clear hotkey.
+// The capture UI has already refused a key Mimic uses (hotkey-capture); the OS refusing one (another
+// program holds it) is reported back as `blocked`. Keyed by the group's id.
+ipcMain.handle('canvas-group-hotkey', (_e, id, accel) => {
+  const cfg = loadConfig();
+  if (!_canvasGroupList(cfg).some(g => g.id === id)) return { ok: false, error: 'no such group' };
+  const a = typeof accel === 'string' ? accel.trim() : '';
+  if (a && !/^[\x21-\x7e]{1,40}$/.test(a)) return { ok: false, error: 'not a key combination' };
+  const map = Object.assign({}, (cfg.canvasGroupHotkeys && typeof cfg.canvasGroupHotkeys === 'object') ? cfg.canvasGroupHotkeys : {});
+  if (a) map[id] = a; else delete map[id];
+  cfg.canvasGroupHotkeys = map;
+  saveConfig(cfg);
+  try { registerHideAllHotkey(); } catch { /* */ }
+  try { buildTrayMenu(); } catch { /* */ }
+  pushStatus();
+  return { ok: true, keys: _canvasGroupKeys(cfg), blocked: Object.assign({}, _blockedGroupAccels) };
+});
+// Show or hide a saved group: the key's own toggle, for any UI that lists the groups.
+ipcMain.handle('canvas-group-toggle', (_e, id) => _toggleCanvasGroup(String(id)));
 ipcMain.handle('canvas-edit', (_e, on) => _setCanvasArrange(!!on));
 ipcMain.handle('canvas-next-display', () => {
   if (!canvasWindow || canvasWindow.isDestroyed()) return _canvasStatePayload();
@@ -9976,7 +10115,7 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   // flag (2026-07-12: backdropHotkey saves were ignored until restart —
   // only hideAllHotkey was in this condition).
   const HOTKEY_KEYS = ['hideAllHotkey', 'backdropHotkey', 'hideAllHotkeyEnabled', 'backdropHotkeyEnabled',
-    'damageAlertHotkey', 'damageAlertHotkeyEnabled', 'overlayHotkeys', 'miniHotkey', 'miniHotkeyEnabled'];
+    'damageAlertHotkey', 'damageAlertHotkeyEnabled', 'overlayHotkeys', 'miniHotkey', 'miniHotkeyEnabled', 'canvasGroupHotkeys'];
   if (incoming && HOTKEY_KEYS.some(k => Object.prototype.hasOwnProperty.call(incoming, k))) {
     try { registerHideAllHotkey(); } catch {}
   }

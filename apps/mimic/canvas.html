@@ -202,6 +202,13 @@
   #chooser .pc-ms{flex-basis:100%;display:flex;flex-wrap:wrap;gap:3px}
   #chooser .pc-m{padding:0 5px;border:1px solid #30363d;border-radius:3px;color:#58a6ff;cursor:grab;font-size:11px;line-height:17px}
   #chooser .pc-m:hover{border-color:#58a6ff}
+  /* A saved group's hotkey: dashed when it has none, blue with a key, amber while it listens, red when
+     another program holds it. */
+  #chooser .pc-k{padding:0 5px;border:1px dashed #30363d;border-radius:3px;color:#6e7681;cursor:pointer;font-size:11px;line-height:17px}
+  #chooser .pc-k:hover{border-color:#58a6ff;color:#e6edf3}
+  #chooser .pc-k.set{border-style:solid;color:#58a6ff}
+  #chooser .pc-k.on{border-style:solid;border-color:#d29922;color:#d29922}
+  #chooser .pc-k.clash{border-style:solid;border-color:#f85149;color:#f85149}
   #chooser .pc .x{color:#6e7681;cursor:pointer;padding:0 3px}
   #chooser .pc .x:hover{color:#f85149}
   #chooser .ch-f{border-top:1px solid #30363d;padding:5px 6px;display:flex;flex-wrap:wrap;gap:4px;align-items:center}
@@ -390,6 +397,17 @@
     if (!haveCallouts) out.unshift(d[0]);
     if (!haveAll) out.push(d[1]);
     var res = { panels: out };
+    // Which live group (the grp its pieces share) was placed or saved as which SAVED group: how a
+    // group's hotkey finds its pieces. Only for a group that still has pieces here.
+    if (layout.named && typeof layout.named === 'object') {
+      var live = {}, nm = {}, any = false;
+      out.forEach(function (q) { if (q.grp) live[q.grp] = true; });
+      Object.keys(layout.named).forEach(function (g) {
+        var sid = layout.named[g];
+        if (live[g] && typeof sid === 'string' && sid) { nm[g] = sid.slice(0, 24); any = true; }
+      });
+      if (any) res.named = nm;
+    }
     // The chooser remembers whether it was open, where, how wide, and on which tab.
     var ch = layout.chooser;
     if (ch && typeof ch === 'object') {
@@ -1060,6 +1078,9 @@
             + (_isTesting(p.id) ? '🧪 Hide the test rows' : '🧪 Show test rows') + '</button>')
         + '</div>';
     }
+    // A piece of a SAVED group: show / hide the whole group, and the key that does it from anywhere.
+    var ng = p.grp ? namedGroup(p.grp) : null;
+    if (ng) h += groupMenuHtml(ng);
     h += '<div class="row">'
       + '<button class="btn" data-hide>' + (p.off ? '👁 Show panel' : '✕ Hide panel') + '</button>'
       + ((p.kind === 'timers' && !p.all) ? '<button class="btn warn" data-remove>Remove panel</button>' : '')
@@ -1275,6 +1296,9 @@
       if (takeApart(p)) { save(); render(); }
       return;
     }
+    else if (t.hasAttribute('data-gtoggle')) { toggleSavedGroup(t.getAttribute('data-gtoggle'), 'toggle'); }
+    else if (t.hasAttribute('data-gkey')) { captureGroupKey(t.getAttribute('data-gkey')); return; }
+    else if (t.hasAttribute('data-gclear')) { setGroupKey(t.getAttribute('data-gclear'), ''); return; }
     else if (t.hasAttribute('data-hide')) { p.off = !p.off; }
     else if (t.hasAttribute('data-remove')) { closeMenu(); removePanels([p.id]); return; }
     else if (t.hasAttribute('data-rmgrp')) {
@@ -1471,7 +1495,8 @@
       lh += '<div class="ch-sec">My groups</div>';
       if (!_groups.length) lh += '<div class="dim">Shift-click pieces on the screen, then 💾 below.</div>';
       _groups.forEach(function (g) {
-        lh += '<div class="pc" data-drag="group:' + g.id + '"><span class="pc-l">★ ' + esc(g.name) + '</span><span class="pc-v">' + g.parts.length + ' pieces</span>'
+        lh += '<div class="pc" data-drag="group:' + g.id + '"><span class="pc-l">★ ' + esc(g.name) + '</span><span class="pc-v">' + g.parts.length + ' pieces' + groupHiddenText(g.id) + '</span>'
+          + groupKeyChip(g)
           + '<span class="x" data-delgrp="' + g.id + '" title="Delete this group">' + (_delArm === g.id ? 'sure?' : '🗑') + '</span></div>';
       });
       var on = {};
@@ -1559,6 +1584,9 @@
   });
   var _delArm = null, _delArmT = null;
   chList.addEventListener('click', function (ev) {
+    var kg = ev.target.closest('[data-keygrp]'), cg = ev.target.closest('[data-clrgrp]');
+    if (kg) { captureGroupKey(kg.getAttribute('data-keygrp')); return; }
+    if (cg) { setGroupKey(cg.getAttribute('data-clrgrp'), ''); return; }
     var del = ev.target.closest('[data-delgrp]');
     if (!del) return;
     var id = del.getAttribute('data-delgrp');
@@ -1570,6 +1598,7 @@
     _delArm = null;
     _groups = _groups.filter(function (g) { return g.id !== id; });
     try { if (M.canvasGroupsSave) M.canvasGroupsSave(_groups); } catch (e) {}
+    forgetSavedGroup(id);
     renderChooser();
   });
 
@@ -1588,7 +1617,7 @@
   // the screen, or click it to drop it near the middle.
   var _pd = null, _cascade = 0;
   chList.addEventListener('mousedown', function (ev) {
-    if (ev.button !== 0 || ev.target.closest('[data-delgrp]')) return;
+    if (ev.button !== 0 || ev.target.closest('[data-delgrp],[data-keygrp],[data-clrgrp]')) return;
     var el = ev.target.closest('[data-drag]');
     if (!el) return;
     ev.preventDefault();
@@ -1652,9 +1681,11 @@
   }
   // A group goes down as separate pieces that remember they came together:
   // Ctrl-drag moves them as one, a plain drag pulls one out.
+  // Returns the group id the pieces share (a SAVED group going down links it to its own id; see dropThing).
   function placeGroup(pieces, X, Y) {
     var grp = newId('g');
     pieces.forEach(function (q) { addPart(q.part, q.mode, X + (q.dx || 0), Y + (q.dy || 0), grp, q); });
+    return grp;
   }
   // a[6], where a row has one, is a Ring arc's arc (its place on the HUD's circle), colour and no-label.
   function presetPiece(a) {
@@ -1690,7 +1721,11 @@
       }
       else if (g) placeGroup(g.parts.map(presetPiece), X, Y);
     }
-    else if (bits[0] === 'group') { var sg = savedById(bits[1]); if (sg) placeGroup(sg.parts, X, Y); }
+    else if (bits[0] === 'group') {
+      // A saved group: its pieces are marked as that group (_layout.named), so its hotkey finds them.
+      var sg = savedById(bits[1]);
+      if (sg) { var sgrp = placeGroup(sg.parts, X, Y); (_layout.named = _layout.named || {})[sgrp] = sg.id; }
+    }
     else if (bits[0] === 'overlay') {
       var o = ovEntry(bits[1]);
       var added = o ? addOverlay(o, 0) : null;
@@ -1823,6 +1858,7 @@
     // The selection is that group on the screen too.
     var grp = newId('g');
     ps.forEach(function (p) { p.grp = grp; });
+    (_layout.named = _layout.named || {})[grp] = g.id;
     _sel = {};
     save(); render();
   }
@@ -1836,9 +1872,191 @@
   }
   try { if (M.canvasGroups) M.canvasGroups().then(function (g) { _groups = sanitizeGroups(g); renderChooser(); }).catch(function () {}); } catch (e) {}
 
+  // ── ⌨ Saved groups: show / hide them, and a hotkey that does it ──────────────
+  // The guild lead, 2026-10-07: "we should be able to assign hotkeys to show or hide canvas groups as
+  // well". A group here is a SAVED group (★ Groups → My groups). Pieces placed from it, or saved as it,
+  // are marked in _layout.named (the live group they share → the saved group's id), so one press finds
+  // every piece of it on this screen and hides them or shows them again: panel.off, the hide the ✕ on a
+  // panel makes — not drawn, not a click target, place and size kept, saved with the layout. The key
+  // itself belongs to main.js (cfg.canvasGroupHotkeys, by saved group id, so a rename keeps it); it
+  // queues each press and loadState reads it. A group that is not here (no pieces on this screen's
+  // layout) says so instead of doing nothing.
+  var _gkeys = {}, _gblocked = {};   // saved group id → its accelerator / the one the OS refused
+  var _capKey = null;                // the saved group whose key is being captured now
+  var _capBusy = false;
+  function namedGroup(grp) { return (_layout.named && _layout.named[grp]) ? savedById(_layout.named[grp]) : null; }
+  function groupPanels(savedId) {
+    var named = _layout.named || {};
+    return _layout.panels.filter(function (q) { return q.grp && named[q.grp] === savedId; });
+  }
+  function groupHiddenText(savedId) {
+    var ps = groupPanels(savedId);
+    return ps.length && ps.every(function (q) { return q.off; }) ? ' · hidden' : '';
+  }
+  // A deleted saved group is no one's any more: its pieces stay, as the locked set they are.
+  function forgetSavedGroup(id) {
+    var named = _layout.named;
+    if (named) { Object.keys(named).forEach(function (g) { if (named[g] === id) delete named[g]; }); save(); }
+    delete _gkeys[id]; delete _gblocked[id];
+  }
+  // mode 'show' forces them on. Otherwise all hidden → shown, anything else (shown, or a mix) → hidden.
+  // 'shown' | 'hidden', or null when none of its pieces is on this screen's canvas.
+  function toggleSavedGroup(id, mode) {
+    var ps = groupPanels(id);
+    if (!ps.length) return null;
+    var hide = mode === 'show' ? false : !ps.every(function (q) { return q.off; });
+    ps.forEach(function (q) { q.off = hide; });
+    save(); render();
+    return hide ? 'hidden' : 'shown';
+  }
+  // The presses main queued (a hotkey, the tray, /pipe mimic group), oldest first.
+  function applyGroupOps(ops) {
+    (Array.isArray(ops) ? ops : []).forEach(function (op) {
+      if (!op || typeof op.id !== 'string') return;
+      if (toggleSavedGroup(op.id, op.show ? 'show' : 'toggle') !== null) return;
+      var g = savedById(op.id);
+      note('“' + (g ? g.name : 'That group') + '” is not on this screen’s canvas — drag it in from ★ Groups', 4000);
+    });
+  }
+
+  // The key capture, the dashboard's (_wpCaptureAccel) for the Canvas: waits for a real key with Ctrl, Alt or
+  // Shift held and hands back an Electron accelerator. Esc cancels; Backspace/Delete run onClear(true) to
+  // remove the key. Letters and digits come from the physical key (e.code), so Shift+1 is "Shift+1". While it
+  // listens Mimic lets go of every key it holds (hotkeyCapture), so its own keys arrive and are checked
+  // against the list it returns — the same list the dashboard's capture checks, groups' keys included.
+  // `selfId` is the control being set, which may keep its own key. A key another PROGRAM holds never
+  // arrives (Windows hands it to its owner): modifiers pressed and let go with no key between is said out loud.
+  var KEY_USES = { hideAllHotkey: 'the Show / hide ALL key', backdropHotkey: 'the backgrounds key',
+    damageAlertHotkey: 'the damage-alert key', miniHotkey: 'the Minimize ALL key' };
+  function fmtAccel(a) { return String(a || '').replace(/CommandOrControl|CmdOrCtrl/gi, 'Ctrl'); }
+  // "Ctrl+Shift+H", "CommandOrControl+Shift+h" and "Shift+Control+H" are one key.
+  function accelNorm(a) {
+    var mods = [], key = '';
+    String(a || '').split('+').forEach(function (p) {
+      var t = p.trim().toLowerCase();
+      if (/^(commandorcontrol|cmdorctrl|control|ctrl|command|cmd)$/.test(t)) mods.push('ctrl');
+      else if (t === 'alt' || t === 'option') mods.push('alt');
+      else if (t === 'shift') mods.push('shift');
+      else if (t) key = t;
+    });
+    return mods.sort().join('+') + '+' + key;
+  }
+  function useLabel(u) {
+    if (u.label) return u.label;
+    if (KEY_USES[u.id]) return KEY_USES[u.id];
+    var o = ovEntry(String(u.id).replace(/^overlay:/, ''));
+    return o ? 'the ' + o.label + ' overlay’s key' : 'another Mimic key';
+  }
+  function captureAccel(say, onAccel, onClear, selfId) {
+    if (_capBusy) return false;
+    _capBusy = true;
+    var uses = [], modsDown = false, gotKey = false, timer = null;
+    var bridge = !!M.hotkeyCapture;
+    if (bridge) { try { M.hotkeyCapture(true).then(function (u) { uses = Array.isArray(u) ? u : []; }).catch(function () {}); } catch (e) {} }
+    try { window.focus(); } catch (e) {}
+    function stop() {
+      _capBusy = false;
+      clearTimeout(timer);
+      document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('keyup', onUp, true);
+      if (bridge) { try { M.hotkeyCapture(false); } catch (e) {} }
+    }
+    function onUp(e) {
+      var mod = e.key === 'Control' || e.key === 'Alt' || e.key === 'Shift' || e.key === 'Meta';
+      if (!mod || e.ctrlKey || e.altKey || e.shiftKey) return;   // still holding one
+      if (modsDown && !gotKey) say('Nothing came through with those held. If you pressed a key with them, another program is already using that combination as its own hotkey — try a different one (Esc cancels).');
+      modsDown = false; gotKey = false;
+    }
+    function onKey(e) {
+      e.preventDefault(); e.stopPropagation();
+      var k = e.key, code = e.code || '';
+      if (k === 'Escape') { stop(); say('Cancelled.', true); if (onClear) onClear(null); return; }
+      if (onClear && (k === 'Backspace' || k === 'Delete') && !e.ctrlKey && !e.altKey && !e.shiftKey) { stop(); onClear(true); return; }
+      if (k === 'Control' || k === 'Alt' || k === 'Shift' || k === 'Meta') { modsDown = true; return; }  // wait for the real key
+      gotKey = true;
+      if (!e.ctrlKey && !e.altKey && !e.shiftKey) { say('Add Ctrl, Alt or Shift — a bare key would eat normal typing.'); return; }
+      var key = /^Key[A-Z]$/.test(code) ? code.slice(3)
+        : /^Digit[0-9]$/.test(code) ? code.slice(5)
+        : /^Numpad[0-9]$/.test(code) ? 'num' + code.slice(6)
+        : (k.length === 1 ? k.toUpperCase() : k);                     // F1-F12 etc. pass through
+      if (key === ' ') key = 'Space';
+      var parts = [];
+      if (e.ctrlKey)  parts.push('CommandOrControl');
+      if (e.altKey)   parts.push('Alt');
+      if (e.shiftKey) parts.push('Shift');
+      parts.push(key);
+      var accel = parts.join('+'), n = accelNorm(accel);
+      for (var i = 0; i < uses.length; i++) {
+        if (uses[i].id !== selfId && accelNorm(uses[i].accel) === n) {
+          say(fmtAccel(accel) + ' is already ' + useLabel(uses[i]) + ' — press a different one (Esc cancels).');
+          return;                                                     // keep listening
+        }
+      }
+      stop();
+      onAccel(accel);
+    }
+    document.addEventListener('keydown', onKey, true);
+    document.addEventListener('keyup', onUp, true);
+    // A capture nobody finishes lets go on its own, so it cannot hold the keys (or the next capture) for good.
+    timer = setTimeout(function () { stop(); say('No key came through — click the key to try again.', true); if (onClear) onClear(null); }, 20000);
+    return true;
+  }
+
+  function keyText(id) { return _capKey === id ? 'press keys…' : _gkeys[id] ? '⌨ ' + fmtAccel(_gkeys[id]) : '⌨ Hotkey…'; }
+  function keyTitle(id) {
+    if (_gblocked[id]) return 'Another program already uses ' + fmtAccel(_gblocked[id]) + ', so it does nothing here — click to pick a different one.';
+    return _gkeys[id] ? 'Press ' + fmtAccel(_gkeys[id]) + ' anywhere to show or hide this group. Click to change it.'
+      : 'A key that shows or hides this group from anywhere. Click, then press Ctrl, Alt or Shift + a key.';
+  }
+  // A saved group's row in the chooser: its key (click to set or change it) and a way to clear it.
+  function groupKeyChip(g) {
+    var cls = _capKey === g.id ? ' on' : _gkeys[g.id] ? (_gblocked[g.id] ? ' clash' : ' set') : '';
+    return '<span class="pc-k' + cls + '" data-keygrp="' + esc(g.id) + '" title="' + esc(keyTitle(g.id)) + '">' + esc(keyText(g.id)) + '</span>'
+      + (_gkeys[g.id] && _capKey !== g.id ? '<span class="pc-k" data-clrgrp="' + esc(g.id) + '" title="Take this group\'s hotkey off">clear</span>' : '');
+  }
+  // …and in the ⚙ of any piece that belongs to it.
+  function groupMenuHtml(g) {
+    var ps = groupPanels(g.id), shown = ps.some(function (q) { return !q.off; });
+    return '<div class="sec">Saved group “' + esc(g.name) + '” · ' + ps.length + ' here</div><div class="row" style="flex-wrap:wrap">'
+      + '<button class="btn" data-gtoggle="' + esc(g.id) + '" title="Every piece of this group, together; the key does the same">' + (shown ? '✕ Hide the group' : '👁 Show the group') + '</button>'
+      + '<button class="btn' + (_capKey === g.id ? ' on' : '') + '" data-gkey="' + esc(g.id) + '" title="' + esc(keyTitle(g.id)) + '">' + esc(keyText(g.id)) + '</button>'
+      + (_gkeys[g.id] && _capKey !== g.id ? '<button class="btn warn" data-gclear="' + esc(g.id) + '" title="Take this group\'s hotkey off">Clear hotkey</button>' : '')
+      + '</div>';
+  }
+  function repaintKeys() {
+    renderChooser();
+    if (_menuFor && _menuFor !== PICKER && panelById(_menuFor) && menuEl.classList.contains('show')) openMenu(_menuFor, _menuAnchor || (_els[_menuFor] && _els[_menuFor].root));
+  }
+  function captureGroupKey(id) {
+    var g = savedById(id);
+    if (!g || _capKey) return;
+    var started = captureAccel(function (msg, fade) { note(msg, fade ? 4000 : 20000); },
+      function (accel) { _capKey = null; setGroupKey(id, accel); },
+      function (clear) { _capKey = null; if (clear) setGroupKey(id, ''); else repaintKeys(); },
+      'canvasGroup:' + id);
+    if (!started) return;
+    _capKey = id;
+    repaintKeys();
+    note('Press the keys for “' + g.name + '” now (Ctrl, Alt or Shift + a key). Backspace removes it, Esc cancels.', 20000);
+  }
+  // accel '' takes the key off. main answers with every key and the ones the OS refused.
+  function setGroupKey(id, accel) {
+    var g = savedById(id), name = g ? g.name : 'the group';
+    if (!M.canvasGroupHotkey) return;
+    M.canvasGroupHotkey(id, accel).then(function (r) {
+      if (r && r.ok) { _gkeys = r.keys || {}; _gblocked = r.blocked || {}; }
+      repaintKeys();
+      if (!r || !r.ok) note('Could not save that key.', 4000);
+      else if (!accel) note('Hotkey removed from “' + name + '”.', 4000);
+      else if (_gblocked[id]) note('Another program already uses ' + fmtAccel(accel) + ', so it does nothing here — pick a different one.', 6000);
+      else note('Saved — press ' + fmtAccel(accel) + ' anywhere to show or hide “' + name + '”.', 5000);
+    }).catch(function () { repaintKeys(); note('Could not save that key.', 4000); });
+  }
+
   // Delete removes the selected pieces; Esc clears the selection.
   document.addEventListener('keydown', function (ev) {
-    if (!_edit || (ev.target && /^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName))) return;
+    // Not while a group's hotkey is being captured: Backspace there removes the key, not the pieces.
+    if (!_edit || _capKey || (ev.target && /^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName))) return;
     if (ev.key === 'Delete' || ev.key === 'Backspace') {
       if (Object.keys(_sel).length) removePanels(Object.keys(_sel));
     } else if (ev.key === 'Escape') { _sel = {}; render(); }
@@ -1880,12 +2098,12 @@
 
   // A piece's clickable items: a /say or /map copies (paste it into EQ), PQDI opens the browser.
   // They work locked too — each carries data-wp-interact, so the click reaches the canvas.
-  function note(msg) {
+  function note(msg, ms) {
     toastMsg.textContent = msg;
     toastEl.classList.remove('undo');
     toastEl.classList.add('on');
     clearTimeout(_undoT);
-    _undoT = setTimeout(function () { _undo = null; toastEl.classList.remove('on'); }, 2500);
+    _undoT = setTimeout(function () { _undo = null; toastEl.classList.remove('on'); }, ms || 2500);
   }
   function copyText(text) {
     function fallback() {
@@ -1923,7 +2141,7 @@
       + (ids.length > 1 && !locked ? '<button class="btn go" data-sel="lock" title="They move together from now on, wherever they sit">🔗 Lock together</button>' : '')
       + (locked ? '<span class="dim">locked together</span>' : '')
       + (Object.keys(grps).length ? '<button class="btn" data-sel="unlock" title="Each moves on its own again">🔓 Unlock</button>' : '')
-      + (parts ? '<input id="selName" maxlength="24" placeholder="name it"><button class="btn" data-sel="save" title="Keep this set in the chooser\'s Groups tab, to drop again anywhere">💾 Save as a group</button>' : '')
+      + (parts ? '<input id="selName" maxlength="24" placeholder="name it"><button class="btn" data-sel="save" title="Keep this set in the chooser\'s Groups tab, to drop again anywhere — and give it a hotkey that shows or hides it">💾 Save as a group</button>' : '')
       + '<button class="btn warn" data-sel="delete" title="Delete the selected (Undo appears)">🗑 Delete</button>'
       + '<button class="btn" data-sel="clear">Clear</button>';
     if (selbar._html !== h) { selbar._html = h; selbar.innerHTML = h; }
@@ -1998,8 +2216,12 @@
     }
     _arrange = !!st.edit;
     screenBtn.style.display = (st.displays > 1) ? '' : 'none';
+    // Each saved group's key, and the ones another program holds (the chooser's chips).
+    if (st.groupKeys) { _gkeys = st.groupKeys; _gblocked = st.groupKeysBlocked || {}; }
     render();
     setEdit();
+    // A group's hotkey pressed since the last look (or the press that switched the canvas on).
+    if (st.groupOps && st.groupOps.length) applyGroupOps(st.groupOps);
     // First time on: keep the starting layout and open arranging, so the three
     // panels are placed before a pull (and not re-opened on the next refresh).
     if (fresh) {
@@ -2009,6 +2231,8 @@
   }
   function refresh() { try { if (M.canvasState) M.canvasState().then(loadState).catch(function () {}); } catch (e) {} }
   refresh();
+  // A group's hotkey pressed while this is up: read it now.
+  try { if (M.onCanvasGroupOps) M.onCanvasGroupOps(refresh); } catch (e) {}
   // A resolution change resizes this window; keep the fractions, re-read the
   // layout saved for the new size if there is one.
   var _rsT = null;

@@ -143,7 +143,7 @@ function list(store, char) {
 
 // `/pipe mimic <verb> [name]` → { verb, name?, on? } or null for anything that is not ours.
 //   load <set> · save [set] (no name = over the current one) · next · prev
-//   lock (flips) · lock on|off · unlock
+//   lock (flips) · lock on|off · unlock · group <canvas group name> (show / hide it)
 // No delete from the game: one typo on a hotbar would lose a set. Settings deletes.
 function parsePipeCommand(text) {
   const m = String(text == null ? '' : text).trim().match(/^mimic\s+([a-z]+)\b\s*(.*)$/i);
@@ -154,6 +154,8 @@ function parsePipeCommand(text) {
   if (verb === 'save') return { verb, name: cleanName(arg) };
   if (verb === 'next' || verb === 'prev') return { verb };
   if (verb === 'unlock') return { verb: 'lock', on: false };
+  // Show or hide a saved Canvas group by name: the same toggle as its hotkey.
+  if (verb === 'group') { const name = cleanName(arg); return name ? { verb, name } : null; }
   // Arrange the Timers canvas (the pieces chooser opens with it): the fast way in from the game.
   if (verb === 'edit' || verb === 'arrange') {
     if (!arg) return { verb: 'edit', on: null };
