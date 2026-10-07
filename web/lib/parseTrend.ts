@@ -2,8 +2,9 @@
 // result, the clock work (the picked zone's labels, Eastern raid nights) and the chart's scales.
 // No React and no Supabase here, so it is unit-tested directly (test/parse-trend.test.js).
 //
-// The data is one jsonb value from the my_parse_series function (20261006200000_my_parse_series.sql),
-// the same one the Mimic tab reads, so the page and the tab show the same numbers.
+// The data is one jsonb value from the my_parse_series_v2 function (20261007000000_my_parse_series_v2.sql:
+// the first version, 20261006200000, plus a zone filter, a mob search and the zone/mob lists for their
+// pickers), the same one the Mimic tab reads, so the page and the tab show the same numbers.
 
 import { RAID_TZ, cleanBossName } from './format';
 
@@ -12,6 +13,8 @@ export type ParseFight = {
   eid: string;             // encounter id, for /parses/<eid>
   npc_id: number | null;
   name: string;
+  zone_id: number | null;  // the mob's zone (npc id / 1000)
+  zone: string | null;     // that zone's long name, when the catalog has it
   boss: boolean;           // a curated boss, not trash
   char: string;
   dps: number;
@@ -21,6 +24,10 @@ export type ParseFight = {
   usual: number | null;    // that character's typical DPS on this same mob, when there are 3+ fights
 };
 export type ParseNight = { night: string; fights: number; bosses: number; avg_dps: number; best_dps: number };
+/** One entry of the Zone picker: every zone with fights in the window and scope, before the zone/search filters. */
+export type ParseZoneFacet = { id: number; name: string; fights: number };
+/** One entry of the mob search's suggestions (the 300 most fought), same basis as the zones. */
+export type ParseMobFacet = { name: string; fights: number };
 export type ParseCharacter = {
   name: string;
   class: string | null;
@@ -35,8 +42,35 @@ export type ParseSeries = {
   total: number;
   truncated: boolean;
   fights: ParseFight[];    // oldest first
-  nights: ParseNight[];    // oldest first, always covers the WHOLE window
+  nights: ParseNight[];    // oldest first, always covers the WHOLE window (of the zone/search filters, if any)
+  zones: ParseZoneFacet[]; // busiest first
+  mobs: ParseMobFacet[];   // busiest first
 };
+
+// ── the zone and mob filters ─────────────────────────────────────────────────
+
+// These two mirror cleanZone / cleanSearch in utils/myParses.js (the bot's /api/agent/my-parses): the page and
+// Mimic read one function, so they take the same inputs. test/parse-trend.test.js runs both over one corpus.
+const ZONE_MAX = 999;
+export const SEARCH_MAX_LEN = 40;
+const SEARCH_RX = /^[A-Za-z0-9 '`_-]+$/;
+
+/** ?zone= as a zone id (an integer 1..999), or null when absent or not one. */
+export function cleanZoneParam(raw: unknown): number | null {
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (!/^\d{1,3}$/.test(s)) return null;
+  const n = Number(s);
+  return n >= 1 && n <= ZONE_MAX ? n : null;
+}
+
+/** ?q= as a mob-name search (trimmed, up to 40 name-shaped characters), or null when absent or not one. */
+export function cleanSearchParam(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (!s || s.length > SEARCH_MAX_LEN || !SEARCH_RX.test(s)) return null;
+  return s;
+}
 
 /** Parses before this are not comparable (multi-uploader rows were max-merged), so none are served. */
 export const PARSE_FLOOR_ISO = '2026-07-14T00:00:00Z';
@@ -63,6 +97,8 @@ export function readParseSeries(raw: unknown): ParseSeries {
     fights.push({
       t, eid: String(f.eid), npc_id: num(f.npc_id),
       name: typeof f.name === 'string' ? f.name : '',
+      zone_id: num(f.zone_id),
+      zone: typeof f.zone === 'string' && f.zone.trim() ? f.zone : null,
       boss: f.boss === true, char: String(f.char ?? ''),
       dps, dmg: num(f.dmg) ?? 0, dur: num(f.dur), rank: num(f.rank), usual: num(f.usual),
     });
@@ -91,12 +127,32 @@ export function readParseSeries(raw: unknown): ParseSeries {
     });
   }
 
+  // The picker lists, busiest first. An older function (no v2) sends neither, which reads as empty pickers.
+  const byBusy = (a: { fights: number; name: string }, b: { fights: number; name: string }) =>
+    b.fights - a.fights || a.name.localeCompare(b.name);
+  const zones: ParseZoneFacet[] = [];
+  for (const z of list(o.zones)) {
+    const id = num(z.id);
+    if (id == null) continue;
+    zones.push({
+      id, name: typeof z.name === 'string' && z.name.trim() ? z.name : `Zone ${id}`,
+      fights: Math.max(0, num(z.fights) ?? 0),
+    });
+  }
+  zones.sort(byBusy);
+  const mobs: ParseMobFacet[] = [];
+  for (const m of list(o.mobs)) {
+    if (typeof m.name !== 'string' || !m.name.trim()) continue;
+    mobs.push({ name: m.name, fights: Math.max(0, num(m.fights) ?? 0) });
+  }
+  mobs.sort(byBusy);
+
   return {
     floor: typeof o.floor === 'string' ? o.floor : PARSE_FLOOR_ISO,
     characters,
     total: num(o.total) ?? fights.length,
     truncated: o.truncated === true,
-    fights, nights,
+    fights, nights, zones, mobs,
   };
 }
 
@@ -345,4 +401,56 @@ export function buildTrend(
   const ticks = xTicks(lo, hi, o.tz).map(t => ({ ...t, x: xOf(t.ms), labelX: xOf(t.labelMs) }));
 
   return { dots, avgs, top, xTicks: ticks, hasOther: series.fights.some(f => !f.boss), spanDays: span / DAY };
+}
+
+// ── the list by day ──────────────────────────────────────────────────────────
+
+/** "Sun Oct 4" for a raid-night key (YYYY-MM-DD). The key is already a calendar date, so no zone is applied. */
+export function fmtNight(night: string): string {
+  const [y, mo, d] = night.split('-').map(Number);
+  return `${WEEKDAY(y, mo, d)} ${MONTH_DAY(y, mo, d)}`;
+}
+
+export type NightGroup = {
+  night: string;           // YYYY-MM-DD, the Eastern raid night (see nightKey)
+  summary: ParseNight;     // the function's numbers for the whole night (derived from `fights` if it sent none)
+  fights: ParseFight[];    // this night's fights that are in the list, newest first
+};
+
+/**
+ * The fights in raid-night groups for the "By day" list, newest night first and each night's fights newest
+ * first. The numbers come from the function's `nights` summary, which covers the whole window and so can count
+ * more fights than the list holds (a window cut at the fetch cap); a night with no fights in the list gets no
+ * group, and a fight whose night the summary lacks gets one derived from its own group. The input order does
+ * not matter and is not changed.
+ */
+export function groupByNight(fights: ParseFight[], nights: ParseNight[]): NightGroup[] {
+  const sent = new Map(nights.map(n => [n.night, n]));
+  const byNight = new Map<string, ParseFight[]>();
+  for (const f of fights) {
+    const k = nightKey(Date.parse(f.t));
+    const g = byNight.get(k);
+    if (g) g.push(f); else byNight.set(k, [f]);
+  }
+  const newestFirst = (a: ParseFight, b: ParseFight) => Date.parse(b.t) - Date.parse(a.t) || b.eid.localeCompare(a.eid);
+  return [...byNight.entries()]
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([night, group]) => {
+      const rows = [...group].sort(newestFirst);
+      const dps = rows.map(f => f.dps);
+      return {
+        night,
+        fights: rows,
+        summary: sent.get(night) ?? {
+          night, fights: rows.length, bosses: rows.filter(f => f.boss).length,
+          avg_dps: Math.round(dps.reduce((s, v) => s + v, 0) / dps.length), best_dps: Math.max(...dps),
+        },
+      };
+    });
+}
+
+/** "Sun Oct 4 · 12 fights · avg 142 · best 210", the header over a night's rows. */
+export function nightHeading(s: ParseNight): string {
+  return `${fmtNight(s.night)} · ${s.fights} ${s.fights === 1 ? 'fight' : 'fights'}`
+    + ` · avg ${fmtInt(s.avg_dps)} · best ${fmtInt(s.best_dps)}`;
 }
