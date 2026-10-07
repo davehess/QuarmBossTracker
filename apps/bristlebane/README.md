@@ -107,7 +107,9 @@ file: `DISCORD_GUILD_ID`, `RAID_VOICE_CHANNEL_ID`, `RAID_CHAT_CHANNEL_ID`, `OFFN
 - **In Docker the image cannot see this file.** It is built from this folder alone (build context
   `apps/bristlebane`), so `../../guild` does not exist inside it. Mount a copy and point at it, for example
   `-v "$PWD/guild/discord.json:/config/discord.json:ro"` with `BRISTLEBANE_GUILD_FILE=/config/discord.json` (in
-  Coolify, a file mount plus that variable). A path that is named but missing logs a warning.
+  Coolify, a file mount plus that variable). A path that is named but missing logs a warning. A mistyped
+  host path mounts a directory instead, and the log then says `could not be read (EISDIR)`; a file the
+  container's user may not open says `(EACCES)`.
 
 **The key.** The main bot's `/api/agent/*` routes want a per-user session token, which a service has no person
 to borrow. So the main bot has one dedicated variable, **`BRISTLEBANE_API_KEY`** (generate a long random

@@ -112,6 +112,59 @@ describe('fillEnvFromGuildFile', () => {
     expect(said(warn)).toMatch(/not valid JSON — ignored/);
   });
 
+  it('a malformed file\'s warning gives the position at most, never a snippet of the file', () => {
+    const { warn } = spies();
+    // Node quotes the start of the text in some parse errors (`Unexpected token 'o', "not json hu"... is not valid JSON`),
+    // and the start of a file can be a value. Two shapes: a bare word, and a value followed by a missing comma.
+    for (const text of ['not json hunter2-value', '{ "DISCORD_GUILD_ID": "hunter2-value" "X": 1 }']) {
+      warn.mockClear();
+      expect(lib.fillEnvFromGuildFile({}, guildFile(text))).toEqual({ filled: [], skipped: [], refused: [] });
+      expect(said(warn)).toMatch(/not valid JSON — ignored \(SyntaxError( at position \d+)?\)/);
+      expect(said(warn)).not.toContain('hunter2');
+      expect(said(warn)).not.toContain('not json');
+    }
+  });
+
+  it('a path that exists but cannot be read as a file warns with the error code, and fills nothing', () => {
+    const { warn } = spies();
+    const env = { KEEP: 'me' };
+    const dir = tmp();                       // a directory where a file was meant: Docker makes one of a mistyped -v host path
+    expect(lib.fillEnvFromGuildFile(env, dir)).toEqual({ filled: [], skipped: [], refused: [] });
+    expect(env).toEqual({ KEEP: 'me' });
+    expect(said(warn)).toContain(`${dir} could not be read (EISDIR) — ignored`);
+
+    // A file the process may not open (root-owned 0600 under `USER node`). Simulated: the tests may run as root.
+    const f = guildFile({ DISCORD_GUILD_ID: '111111' });
+    const real = fs.readFileSync;
+    vi.spyOn(fs, 'readFileSync').mockImplementation((p, ...rest) => {
+      if (p === f) throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      return real(p, ...rest);
+    });
+    warn.mockClear();
+    expect(lib.fillEnvFromGuildFile(env, f).filled).toEqual([]);
+    expect(said(warn)).toContain(`${f} could not be read (EACCES) — ignored`);
+  });
+
+  it('a number too large to be an exact id is refused with a warning, not rounded into a wrong id', () => {
+    const { warn, log } = spies();
+    // Written as text: JSON.stringify of the number would already have rounded it.
+    // 9007199254740993 is 2^53 + 1, which JSON.parse reads as 9007199254740992.
+    const f = guildFile('{ "DISCORD_GUILD_ID": 9007199254740993, "RAID_VOICE_CHANNEL_ID": "222222", "A_SMALL_NUMBER": 42 }');
+    const env = {};
+    const out = lib.fillEnvFromGuildFile(env, f);
+    expect(env).toEqual({ RAID_VOICE_CHANNEL_ID: '222222', A_SMALL_NUMBER: '42' });
+    expect(out.filled).toEqual(['RAID_VOICE_CHANNEL_ID', 'A_SMALL_NUMBER']);
+    expect(said(warn)).toContain('DISCORD_GUILD_ID is a number too large to keep exactly — write ids as strings');
+    expect(said(warn) + said(log)).not.toContain('9007199254740992');     // the rounded value is never printed either
+
+    // The warning is about a key the file would have filled: when env already has it, there is nothing to say.
+    warn.mockClear();
+    const env2 = { DISCORD_GUILD_ID: 'from-env' };
+    expect(lib.fillEnvFromGuildFile(env2, f).skipped).toEqual(['DISCORD_GUILD_ID']);
+    expect(env2.DISCORD_GUILD_ID).toBe('from-env');
+    expect(said(warn)).not.toContain('too large');
+  });
+
   it('JSON that is not an object (a list, a string, a number) fills nothing', () => {
     const { warn } = spies();
     for (const text of ['["a","b"]', '"abc"', '7', 'null']) {
@@ -230,10 +283,30 @@ describe('loadConfig with a guild file', () => {
     expect(said(warn)).toContain(`${gone} does not exist`);
     expect(() => lib.loadConfig({ ...rest }, gone)).toThrow(/DISCORD_GUILD_ID is not set/);
     expect(warn).toHaveBeenCalledTimes(2);
-    warn.mockClear();
-    // No file named: the default path is read without a word if it is absent. Every id is set here, so the
-    // outcome does not depend on whether this checkout has a guild/discord.json.
-    lib.loadConfig({ ...rest, ...ids });
+  });
+
+  it('with no file named, an absent default path is read without a word', () => {
+    const { warn, log } = spies();
+    // The real guild/discord.json is never touched: reading the default path is made to fail as "absent",
+    // so this holds in a checkout that has filled that file in, too.
+    const real = fs.readFileSync;
+    const read = vi.spyOn(fs, 'readFileSync').mockImplementation((p, ...a) => {
+      if (p === lib.DEFAULT_GUILD_FILE) throw Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' });
+      return real(p, ...a);
+    });
+    expect(() => lib.loadConfig({ ...rest })).toThrow(/DISCORD_GUILD_ID is not set/);
+    expect(read).toHaveBeenCalledWith(lib.DEFAULT_GUILD_FILE, 'utf8');
     expect(warn).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it('a directory named as the guild file warns (EISDIR) and the boot still stops for the missing ids', () => {
+    const { warn } = spies();
+    const dir = tmp();
+    expect(() => lib.loadConfig({ ...rest }, dir)).toThrow(/DISCORD_GUILD_ID is not set; RAID_VOICE_CHANNEL_ID is not set/);
+    expect(() => lib.loadConfig({ ...rest, BRISTLEBANE_GUILD_FILE: dir })).toThrow(/DISCORD_GUILD_ID is not set/);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(said(warn)).toContain(`${dir} could not be read (EISDIR)`);
+    expect(said(warn)).not.toContain('does not exist');     // it exists; it is just not a file
   });
 });

@@ -38,10 +38,22 @@ const DEFAULT_GUILD_FILE = path.join(__dirname, '..', '..', 'guild', 'discord.js
 function fillEnvFromGuildFile(env, file = DEFAULT_GUILD_FILE, only = null) {
   const out = { filled: [], skipped: [], refused: [] };
   let raw;
-  try { raw = fs.readFileSync(file, 'utf8'); } catch { return out; }   // no file → nothing to do
+  // No file → nothing to do, and silently (the absent default path is the normal case). A path that exists but
+  // cannot be read as a file is a mistake worth a line: a directory (EISDIR — what Docker makes of a mistyped
+  // `-v` host path) or a file the process may not open (EACCES).
+  try { raw = fs.readFileSync(file, 'utf8'); }
+  catch (e) {
+    if (e.code !== 'ENOENT') console.warn(`[guild] ${file} could not be read (${e.code}) — ignored`);
+    return out;
+  }
   let obj;
+  // Position only, never e.message: Node's parse error quotes a snippet of the file, which could be a value.
   try { obj = JSON.parse(raw); }
-  catch (e) { console.warn(`[guild] ${file} is not valid JSON — ignored (${e.message})`); return out; }
+  catch (e) {
+    const at = (String(e.message).match(/position \d+/) || [''])[0];
+    console.warn(`[guild] ${file} is not valid JSON — ignored (${e.name}${at ? ' at ' + at : ''})`);
+    return out;
+  }
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
     console.warn(`[guild] ${file} is not a JSON object — ignored`);
     return out;
@@ -51,6 +63,11 @@ function fillEnvFromGuildFile(env, file = DEFAULT_GUILD_FILE, only = null) {
     if (/SPEC|TOKEN|KEY|SECRET|PASSWORD/.test(k)) { out.refused.push(k); continue; }
     if (only && !only.includes(k)) continue;
     if (env[k] != null && String(env[k]).trim() !== '') { out.skipped.push(k); continue; }
+    // A JSON number past 2^53 has already been rounded by JSON.parse, so String(v) would hand Discord a wrong id.
+    if (typeof v === 'number' && !Number.isSafeInteger(v)) {
+      console.warn(`[guild] ${file}: ${k} is a number too large to keep exactly — write ids as strings`);
+      continue;
+    }
     env[k] = Array.isArray(v) ? v.join(',') : String(v);
     out.filled.push(k);
   }
