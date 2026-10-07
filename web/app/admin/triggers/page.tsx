@@ -18,7 +18,9 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 import { normalizeTriggerPattern, isDeadAnchored } from '@/lib/triggerPattern';
+import { parseTimerFields, timerInputFrom, describeTimer } from '@/lib/triggerTimer';
 import { foldFeedback, loadFeedbackRollup, loadGuildTriggers, type FbAgg } from '@/lib/triggerFeedback';
+import TimerFields from './TimerFields';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,6 +39,11 @@ type TriggerRow = {
   notes: string | null;
   updated_at: string;
   created_by_name: string | null;
+  timer_duration_sec: number | null;
+  warning_seconds: number | null;
+  warning_text: string | null;
+  timer_loop: boolean;
+  timer_loop_max: number | null;
 };
 
 const CATEGORIES = ['callout', 'rampage', 'spawn', 'phase', 'mechanic', 'heal', 'ae', 'misc'];
@@ -75,6 +82,16 @@ async function createOrUpdate(formData: FormData) {
   const sticky = formData.get('sticky') === 'on';
   if (!name || !pattern || !overlayText) return;
 
+  // Countdown / warning / repeat. The form checks the same rules live (TimerFields), so a refusal
+  // here is the backstop for a browser that skipped that; it comes back as a banner, not a silent
+  // no-save. Written as columns, not into `actions`: the agent reads them off the row.
+  const timer = parseTimerFields(timerInputFrom(k => formData.get(k)));
+  if (!timer.ok) {
+    const q = new URLSearchParams({ timer_error: timer.error });
+    if (id) q.set('edit', id);
+    redirect(`/admin/triggers?${q.toString()}`);
+  }
+
   const admin = supabaseAdmin();
   const overlayAction: Record<string, unknown> = { type: 'text_overlay', text: overlayText, color: overlayColor, duration_ms: overlayMs };
   if (sticky) overlayAction.sticky = true;
@@ -86,6 +103,7 @@ async function createOrUpdate(formData: FormData) {
     applies_to_classes: classes,
     notes,
     created_by_name: u!.email || null,
+    ...timer.columns,
   };
   if (id) {
     await admin.from('guild_triggers').update(row).eq('id', id);
@@ -120,6 +138,8 @@ export default async function AdminTriggersPage({
   searchParams: Promise<{
     edit?:         string;
     category?:     string;
+    // Set by createOrUpdate when the countdown / warning / repeat fields failed the save-time check.
+    timer_error?:  string;
     // URL-prefill params — the Mimic dashboard's "↑ Promote" button on a
     // personal trigger row links here with these query params filled in so
     // the form arrives pre-populated. Officer still has to review + click
@@ -139,7 +159,7 @@ export default async function AdminTriggersPage({
   const admin = supabaseAdmin();
   // Paged (512 triggers today; a plain read stops at 1,000 without saying so).
   const triggers = await loadGuildTriggers<TriggerRow>(admin,
-    'id, name, category, enabled, source, pattern, pattern_flags, condition_expr, actions, cooldown_seconds, applies_to_classes, notes, updated_at, created_by_name',
+    'id, name, category, enabled, source, pattern, pattern_flags, condition_expr, actions, cooldown_seconds, applies_to_classes, notes, updated_at, created_by_name, timer_duration_sec, warning_seconds, warning_text, timer_loop, timer_loop_max',
     p.category);
 
   // ── Trigger timing feedback aggregate (the guild lead, 2026-06-26 — v1.1.3).
@@ -271,6 +291,11 @@ export default async function AdminTriggersPage({
             ? `✏️ Edit: ${editTarget.name}`
             : (p.name ? `➕ New trigger — promoted from Mimic: ${p.name}` : '➕ New trigger')}
         </h3>
+        {p.timer_error && (
+          <p role="alert" className="mb-3 text-xs text-red-400 border border-red-400/50 bg-red-400/10 rounded px-3 py-2">
+            Not saved — {p.timer_error.slice(0, 300)}
+          </p>
+        )}
         <form action={createOrUpdate} className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
           {editTarget && <input type="hidden" name="id" value={editTarget.id} />}
           <label className="space-y-1">
@@ -323,6 +348,16 @@ export default async function AdminTriggersPage({
               defaultValue={editTarget?.cooldown_seconds ?? (p.cooldown ? parseInt(p.cooldown, 10) : 0)}
               className="w-full bg-bg border border-border rounded px-2 py-1.5" />
           </label>
+          <TimerFields
+            key={editTarget?.id ?? 'new'}
+            defaults={{
+              timer_duration_sec: editTarget?.timer_duration_sec ?? null,
+              warning_seconds:    editTarget?.warning_seconds ?? null,
+              warning_text:       editTarget?.warning_text ?? null,
+              timer_loop:         editTarget?.timer_loop ?? false,
+              timer_loop_max:     editTarget?.timer_loop_max ?? null,
+            }}
+          />
           <label className="flex items-start gap-2 sm:col-span-2 cursor-pointer">
             <input name="sticky" type="checkbox" defaultChecked={!!overlayDefault.sticky} className="mt-0.5" />
             <span className="text-dim leading-5">
@@ -374,6 +409,7 @@ export default async function AdminTriggersPage({
                         <span className="text-dim text-[10px] px-1.5 py-0.5 rounded border border-border">{t.category}</span>
                         {t.cooldown_seconds > 0 && <span className="text-dim text-[10px]">cd {t.cooldown_seconds}s</span>}
                         {ov?.sticky && <span className="text-orange text-[10px] px-1.5 py-0.5 rounded border border-orange/50">📌 sticky</span>}
+                        {describeTimer(t) && <span className="text-blue text-[10px] px-1.5 py-0.5 rounded border border-blue/50">⏱ {describeTimer(t)}</span>}
                         {t.applies_to_classes && t.applies_to_classes.length > 0 && (
                           <span className="text-dim text-[10px]">[{t.applies_to_classes.join(', ')}]</span>
                         )}
