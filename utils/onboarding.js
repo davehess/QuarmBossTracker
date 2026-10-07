@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.213': [
+    '**My parses can filter by zone and mob, and group by day.** wolfpack.quest/me/parses has a search box and Zone and Mob pickers over your fights, and a By day switch that folds them under each raid night. The chart follows the filters.',
+  ],
   '3.1.212': [
     '**Reverse Slow mobs are called out.** A few Planes of Power mobs (Fennin Ro, Magmaton and three Bastion of Thunder nameds) turn a slow into a haste. Target Info now flags them. It also stops showing a few wrong chips ("Immune Ranged Attacks", "Immune Damage (NPC/Pet)", "Quad Attack") that came from reading the mob data with another server\'s numbering.',
   ],
