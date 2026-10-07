@@ -765,6 +765,44 @@
     return merged.sort(function(a,b){ return (b[1]||0) - (a[1]||0); });
   }
 
+  // ── The /rs parse line (📋) ─────────────────────────────────────────────────
+  // FB-22: the copied line left pets out of the current fight altogether and, from History, did not
+  // say whose they were. Both copies now build from rows that have been through _foldPetsIntoOwners,
+  // so a pet's damage is in its owner's number exactly as the board's row shows it, and the owner is
+  // marked the way EQLogParser marks one — "Owner +Pets = 4.59K@148 in 31s" — which the bot's parser
+  // reads back as the owner plus a pets flag (utils/parseEqLog.js hasPets).
+  // Raiders only on the line: a pet nobody owns ("(pet)" / "(charmed)") or a mob is not a raider and
+  // would not round-trip; its damage is still in the header total, as before.
+  function _rsRaiders(rows) {
+    return rows
+      .filter(function(x){ return x[0] && !x[3] && !x[6] && !/\s/.test(String(x[0])) && x[1] > 0; })
+      .slice(0, 10);
+  }
+  // rows: board tuples ([name, dmg, _, petOwner, _, _, petCharm, _, +pet]) already folded, biggest first.
+  // null when there is nothing a raid could be told.
+  function _rsLine(boss, secs, totalDmg, rows) {
+    var real = _rsRaiders(rows);
+    if (!real.length || !(totalDmg > 0) || !(secs > 0)) return null;
+    return '/rs ' + boss + ' in ' + secs + 's, ' + pnumK(totalDmg)
+      + ' Damage @' + pnum(Math.round(totalDmg / secs)) + ', '
+      + real.map(function(x, i){
+          return (i + 1) + '. ' + x[0] + (x[8] ? ' +Pets' : '') + ' = ' + pnum(x[1]) + '@'
+               + pnum(Math.round(x[1] / secs)) + ' in ' + secs + 's';
+        }).join(' | ');
+  }
+  // The live fight as folded damage rows, whichever tab is showing — a "/rs parse" is always a DAMAGE
+  // parse. Same row shape and keep-filter as the DPS board's own mapping in tick().
+  function _liveRsRows(perPlayer) {
+    var rows = Object.entries(perPlayer || {})
+      .map(function(e){
+        var t = e[1] || {};
+        return [e[0], t.dmg || 0, 0, t.pet_owner || null, 0, 0, t.pet_charm || (t.pet_summoned ? 'pet' : false),
+                undefined, false, t.pet_spawn_id || null];
+      })
+      .filter(function(x){ return x[0] && (!/\s/.test(x[0]) || x[3] || x[6]) && x[1] > 0; });
+    return _foldPetsIntoOwners(rows);
+  }
+
   // ── Poll loop ───────────────────────────────────────────────────────────────
   // The History fights come from their own endpoint, asked for only while that tab is on screen: the
   // ring holds up to 100 and used to ride every /api/state poll (1–2 Hz, every overlay). `rev` is the
@@ -958,6 +996,7 @@
       // when a fight has data and never clear it, so the button stays copyable
       // after the mob dies. Format the bot expects:
       //   <Boss> in <s>s, <total>K Damage @<dps>, 1. <Name> = <d>@<dps> in <s>s | 2. …
+      // …and an owner whose number carries a pet reads "<Name> +Pets = …" (see _rsLine).
       try {
         // History copy (the guild lead, 2026-08-16: "in history there's no copy
         // button"): build the line from the rows being BROWSED — allRows is
@@ -967,41 +1006,18 @@
         // can't leave the previous fight's line copyable.
         _histParseLine = null;
         if (HIST && boss && secs > 0 && allRows.length && totalDmg > 0) {
-          var histReal = allRows
-            .filter(function(x){ return x[0] && !x[3] && !x[6] && !/\s/.test(String(x[0])) && x[1] > 0; })
-            .slice(0, 10);
-          if (histReal.length) {
-            _histParseLine = '/rs ' + boss + ' in ' + secs + 's, ' + pnumK(totalDmg)
-              + ' Damage @' + pnum(Math.round(totalDmg / secs)) + ', '
-              + histReal.map(function(x, i){
-                  return (i + 1) + '. ' + x[0] + ' = ' + pnum(x[1]) + '@'
-                       + pnum(Math.round(x[1] / secs)) + ' in ' + secs + 's';
-                }).join(' | ');
-          }
+          _histParseLine = _rsLine(boss, secs, totalDmg, allRows);
         }
         // ⚠ `!HIST` is load-bearing: on the History tab `boss` and `secs`
         // describe the fight being BROWSED while et.perPlayer is still the live
         // one, so building the LIVE line here would splice one fight's rows onto
         // another fight's header — and that line gets pasted into /rs.
         if (!HIST && et && et.perPlayer && boss && secs > 0) {
-          var dmgAll = Object.entries(et.perPlayer)
-            .map(function(e){ var t = e[1]; return [e[0], (t && t.dmg) || 0, (t && t.pet_owner) || null, (t && t.pet_charm) || !!(t && t.pet_summoned)]; })
-            .filter(function(x){ return x[0] && (!/\s/.test(x[0]) || x[2] || x[3]) && x[1] > 0; });
-          if (dmgAll.length) {
-            var fullTotal = dmgAll.reduce(function(a, x){ return a + x[1]; }, 0);
-            var realp = dmgAll
-              .filter(function(x){ return !x[2] && !x[3] && !/\s/.test(x[0]); })
-              .sort(function(a, b){ return b[1] - a[1]; })
-              .slice(0, 10);
-            if (fullTotal > 0 && realp.length) {
-              _lastParseLine = '/rs ' + boss + ' in ' + secs + 's, ' + pnumK(fullTotal)
-                + ' Damage @' + pnum(Math.round(fullTotal / secs)) + ', '
-                + realp.map(function(x, i){
-                    return (i + 1) + '. ' + x[0] + ' = ' + pnum(x[1]) + '@'
-                         + pnum(Math.round(x[1] / secs)) + ' in ' + secs + 's';
-                  }).join(' | ');
-            }
-          }
+          // FB-22: pets fold into their owners (the charmer who never swung gets a line too) before
+          // the line is built; it used to drop every pet row and keep only their sum in the header.
+          var liveRs = _liveRsRows(et.perPlayer);
+          var liveRsLine = _rsLine(boss, secs, liveRs.reduce(function(a, x){ return a + x[1]; }, 0), liveRs);
+          if (liveRsLine) _lastParseLine = liveRsLine;
         }
       } catch (e) {}
       if (copyRsBtn) copyRsBtn.style.display =
