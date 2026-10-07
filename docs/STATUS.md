@@ -208,12 +208,18 @@ next touch one rather than assuming a missing row means a missing doc.
   Next: the guild lead sets the two variables, then an officer drives it on a raid night. C, a Discord Activity,
   is planned in `docs/DESIGN-raid-screen-activity.md` and blocked on Discord verifying the app (first step: the
   guild lead reads the portal's App Verification tab). §166.
+- **✅ Mimic 2.7.9 stable (agent 3.7.96, 2026-10-07, `40af051a`).** Everything Mimic/agent on beta since the 2.7.9
+  park (agent 3.7.76–3.7.96): My parses tab + filters + My logs, meter Trend, lag meter, Reverse Slow warning, hail
+  board, Buff blocks, buff queue By group, character modes, Faction tab, quiet-log warning + Archive log, PoP overlay
+  rounds, HUD procs/stuns + worn DS, enrage at 12%. File-level promotion; the /about, /pvp, /db/item, /buffs B/C
+  previews stay on beta. Beta re-parked at 2.7.10. The release credits member suggestions; 13 older member
+  reports whose fixes had already shipped were closed the same night. §176.
 - **✅ My parses: filters (web 1.8.110 · bot 3.1.213, 2026-10-07).** The guild lead picked option A for exploring
   fights: search with mob suggestions, a Zone picker, "By day" grouping (night headers with count · avg · best), and
   a Zone column. One function, `my_parse_series_v2` (zone filter, mob search, zone/mob facets; a new name because
-  dropping v1 is a destructive statement). Mimic tab (agent 3.7.95, beta): the same filters plus a Guild / My logs
-  switch; My logs reads this PC's own fight log (`logsync.myfights.json`), no sign-in, no call. §174.
-- **✅ Main / alt · Inventory only · Hide completely (bot 3.1.214 live · agent 3.7.96 beta, 2026-10-07).** One choice
+  dropping v1 is a destructive statement). Mimic tab (agent 3.7.95, stable in Mimic 2.7.9): the same filters plus a
+  Guild / My logs switch; My logs reads this PC's own fight log (`logsync.myfights.json`), no sign-in, no call. §174.
+- **✅ Main / alt · Inventory only · Hide completely (bot 3.1.214 · agent 3.7.96, stable in Mimic 2.7.9, 2026-10-07).** One choice
   per character in Mimic's setup walkthrough and on the dashboard's Me card, written to the same three columns as
   the switches on wolfpack.quest/me (`POST /api/agent/character-prefs`, family check `owned_character_names()`).
   Hide completely also puts the character on the don't-transmit list, so this PC stops reading that log. Open: should
