@@ -151,6 +151,9 @@
   .panel.part > .pbody{position:absolute;inset:0;padding:1px 3px;box-sizing:border-box;overflow:hidden}
   .panel.part.back > .pbody{background:rgba(13,17,23,var(--bg-alpha,0.72));border:1px solid #30363d;border-radius:5px;padding:3px 6px}
   body.edit .panel.part.sample > .pbody{opacity:0.7}
+  /* A Ring arc is drawn into its panel's whole box, so the arcs of one ring line up: no padding, no border. */
+  .panel.part.seg > .pbody,.panel.part.seg.back > .pbody{padding:0}
+  .panel.part.seg.back > .pbody{border:0}
   /* Pieces sit close together, so a piece's tab shows only while the mouse is
      on it (the piece itself drags; right-click opens its ⚙). */
   body.edit .panel.part .tab{display:none}
@@ -319,6 +322,8 @@
           thick: (p.thick === 'thin' || p.thick === 'thick') ? p.thick : '',
           color: /^#[0-9a-fA-F]{6}$/.test(String(p.color || '')) ? p.color : '',
           align: (p.align === 'c' || p.align === 'r') ? p.align : '',
+          // A Ring arc's place on the HUD's circle (parts.js cleanArc); null for any other mode.
+          arc: (window.WpParts && p.arc) ? WpParts.cleanArc(p.arc) : null,
           grp: (typeof p.grp === 'string' && p.grp) ? p.grp.slice(0, 24) : null,
           off: !!p.off,
         });
@@ -672,6 +677,7 @@
       if (p.kind === 'part') {
         e.root.style.setProperty('--ps', String(p.scale || 1));
         e.root.classList.toggle('back', !!p.back);
+        e.root.classList.toggle('seg', p.mode === 'seg');
       }
       e.root.classList.toggle('sel', !!_sel[p.id]);
       place(e, p);
@@ -1238,7 +1244,7 @@
       // Otherwise it keeps its width and takes the height its content needs (the guild lead,
       // 2026-09-29: chips on "Its buffs" "doesn't expand to match the size of the overlay").
       var nm = t.getAttribute('data-mode'), sz = (pdefOf(p) && pdefOf(p).size && pdefOf(p).size[nm]) || WpParts.DEFAULT_SIZE[nm];
-      var ringy = nm === 'ring' || p.mode === 'ring' || nm === 'arc' || p.mode === 'arc';
+      var ringy = nm === 'ring' || p.mode === 'ring' || nm === 'arc' || p.mode === 'arc' || nm === 'seg' || p.mode === 'seg';
       if (nm !== p.mode && sz) { if (ringy || !p.w) p.w = sz[0]; p.h = sz[1]; }
       var fit = nm !== p.mode && !ringy;
       p.mode = nm;
@@ -1311,7 +1317,7 @@
   var _groups = [];              // saved groups, one list for every screen (main: canvas-groups)
   var STALE_MS = 10000;          // older than this and a source counts as silent
   var MODE_ICON = { bar: '▭', thin: '▬', vbar: '▮', ring: '◯', arc: '◠', readout: 'ab', big: '12', badge: '◉', pips: '⁞⁞',
-    rows: '☰', chips: '◌◌', inline: '⋯', columns: '▦' };
+    rows: '☰', chips: '◌◌', inline: '⋯', columns: '▦', seg: '◜' };
 
   function catName(k) {
     var c = window.WpParts ? WpParts.CATS : [];
@@ -1390,7 +1396,7 @@
       var v = viewFor(d), sample = false;
       if (!v && _edit) { v = sampleFor(d, now); sample = !!v; }
       e.root.classList.toggle('sample', sample);
-      setBody(e, WpParts.render(d, p.mode, v, now, { nolabel: p.nolabel, thick: p.thick, color: p.color, align: p.align }));
+      setBody(e, WpParts.render(d, p.mode, v, now, { nolabel: p.nolabel, thick: p.thick, color: p.color, align: p.align, arc: p.arc, uid: p.id }));
     });
   }
   // A piece's height to what it shows right now (chips wrap onto however many lines they need),
@@ -1632,9 +1638,10 @@
     var W = window.innerWidth, H = window.innerHeight;
     var p = { id: newId('q'), kind: 'part', part: pid, mode: mode, name: '',
       x: num(X / W, 0, 1, 0.3), y: num(Y / H, 0, 1, 0.3), w: num(sz[0], 40, 4000, 200), h: num(sz[1], 16, 3000, 30),
-      scale: num(o && o.scale, 0.5, 3, 1), back: !!(o && o.back), grp: grp || null, off: false };
+      scale: num(o && o.scale, 0.5, 3, 1), back: !!(o && o.back), grp: grp || null, off: false, arc: null };
     // A saved group brings each piece's own look with it.
     if (o) {
+      p.arc = o.arc ? WpParts.cleanArc(o.arc) : null;   // a Ring arc's place on the HUD's circle
       p.nolabel = !!o.nolabel;
       p.thick = (o.thick === 'thin' || o.thick === 'thick') ? o.thick : '';
       p.color = /^#[0-9a-fA-F]{6}$/.test(String(o.color || '')) ? o.color : '';
@@ -1649,7 +1656,17 @@
     var grp = newId('g');
     pieces.forEach(function (q) { addPart(q.part, q.mode, X + (q.dx || 0), Y + (q.dy || 0), grp, q); });
   }
-  function presetPiece(a) { return { part: a[0], mode: a[1], dx: a[2], dy: a[3], w: a[4], h: a[5] }; }
+  // a[6], where a row has one, is a Ring arc's arc (its place on the HUD's circle), colour and no-label.
+  function presetPiece(a) {
+    var x = a[6] || {};
+    return { part: a[0], mode: a[1], dx: a[2], dy: a[3], w: a[4], h: a[5], arc: x.arc, color: x.color, nolabel: x.nolabel };
+  }
+  // A row of a preset in the ring's own space (parts.js `ring`), scaled to a ring k times as big.
+  function ringPiece(a, k) {
+    var q = presetPiece(a);
+    ['dx', 'dy', 'w', 'h'].forEach(function (f) { q[f] = Math.round(q[f] * k * 10) / 10; });
+    return q;
+  }
   function dropThing(what, X, Y) {
     var W = window.innerWidth, H = window.innerHeight;
     var clicked = X == null;
@@ -1664,6 +1681,13 @@
       // A preset that is an overlay is that overlay's own page; "as pieces", or a page the list from main has
       // not named yet, lays out the pieces.
       if (g && g.embed && bits[2] !== 'pieces' && ovEntry(g.embed)) dropEmbed(g, X, Y, clicked);
+      else if (g && g.ring) {
+        // The ring as pieces (FB-64): one circle, every arc a piece on it. The rows are in the ring's space, so
+        // they are scaled to the size "as is" gives the ring and centred as it is: in the middle of the screen when
+        // clicked in, on the drop when dragged (dropEmbed's rule).
+        var S = embedSize({ key: g.embed }, g.style)[0], k = S / g.ring;
+        placeGroup(g.parts.map(function (a) { return ringPiece(a, k); }), (clicked ? W / 2 : X) - S / 2, (clicked ? H / 2 : Y) - S / 2);
+      }
       else if (g) placeGroup(g.parts.map(presetPiece), X, Y);
     }
     else if (bits[0] === 'group') { var sg = savedById(bits[1]); if (sg) placeGroup(sg.parts, X, Y); }
@@ -1790,7 +1814,8 @@
     var g = { id: newId('s'), name: String(name || '').trim().slice(0, 24) || ('Group ' + (_groups.length + 1)),
       parts: ps.map(function (p) {
         return { part: p.part, mode: p.mode, dx: Math.round(p.x * W - minX), dy: Math.round(p.y * H - minY),
-          w: p.w, h: p.h, scale: p.scale, back: p.back, nolabel: !!p.nolabel, thick: p.thick || '', color: p.color || '', align: p.align || '' };
+          w: p.w, h: p.h, scale: p.scale, back: p.back, nolabel: !!p.nolabel, thick: p.thick || '', color: p.color || '', align: p.align || '',
+          arc: p.arc || null };
       }) };
     _groups.push(g);
     _groups = _groups.slice(-60);

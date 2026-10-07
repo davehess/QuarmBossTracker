@@ -343,7 +343,7 @@ describe('pieces, round three', () => {
     const c = stripJs(canvas);
     expect(c).toMatch(/var path = typeof S\.path === 'function' \? S\.path\(liveData\) : S\.path;/);
     expect(c).toMatch(/\(S && S\.needs \|\| \[\]\)\.forEach\(function \(n\) \{ need\[n\] = true; \}\);/);
-    expect(c).toContain('WpParts.render(d, p.mode, v, now, { nolabel: p.nolabel, thick: p.thick, color: p.color, align: p.align })');
+    expect(c).toContain('WpParts.render(d, p.mode, v, now, { nolabel: p.nolabel, thick: p.thick, color: p.color, align: p.align, arc: p.arc, uid: p.id })');
     const r = evalBlock('var window = {};\n' + sliceBlock(canvas, '  var GROUPS = [', '  // ── Panels ──'), ['sanitize']);
     const s = r.sanitize({ panels: [{ id: 'a', kind: 'part', part: 'me.hp', mode: 'arc', x: 0, y: 0, w: 140, h: 90, nolabel: 1, thick: 'thick', color: '#58a6ff', align: 'c' },
       { id: 'b', kind: 'part', part: 'me.hp', mode: 'bar', x: 0, y: 0, w: 99, h: 30, thick: 'x', color: 'red;background:url(x)', align: 'z' }] });

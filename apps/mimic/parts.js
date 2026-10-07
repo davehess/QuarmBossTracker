@@ -43,18 +43,20 @@
   // element types, sizes, formats like in the hud"): a slim one-line bar, an upright bar, a half
   // ring, a round badge (the HUD's DS circle), and lists as one coloured line (the HUD's
   // resists) or as columns.
+  // 'seg' ("Ring arc") is ONE arc of the HUD's big ring — see "The HUD ring's own space" below.
   var MODES = {
     gauge:     [['bar', 'Bar'], ['thin', 'Slim bar'], ['vbar', 'Upright bar'], ['ring', 'Ring'], ['arc', 'Half ring'],
-                ['readout', 'Readout'], ['big', 'Big number'], ['badge', 'Badge'], ['pips', 'Pips']],
+                ['readout', 'Readout'], ['big', 'Big number'], ['badge', 'Badge'], ['pips', 'Pips'], ['seg', 'Ring arc']],
     countdown: [['bar', 'Bar'], ['thin', 'Slim bar'], ['vbar', 'Upright bar'], ['ring', 'Ring'], ['arc', 'Half ring'],
-                ['readout', 'Readout'], ['big', 'Big number'], ['badge', 'Badge']],
-    value:     [['readout', 'Readout'], ['big', 'Big number'], ['badge', 'Badge']],
-    list:      [['rows', 'Rows'], ['chips', 'Chips'], ['inline', 'One line'], ['columns', 'Columns']],
+                ['readout', 'Readout'], ['big', 'Big number'], ['badge', 'Badge'], ['seg', 'Ring arc']],
+    value:     [['readout', 'Readout'], ['big', 'Big number'], ['badge', 'Badge'], ['seg', 'Ring arc']],
+    list:      [['rows', 'Rows'], ['chips', 'Chips'], ['inline', 'One line'], ['columns', 'Columns'], ['seg', 'Ring arc']],
   };
   var DEFAULT_SIZE = {
     bar: [220, 34], thin: [220, 18], vbar: [40, 120], ring: [96, 96], arc: [140, 90], readout: [200, 22],
     big: [120, 52], badge: [60, 60], pips: [180, 30],
     rows: [260, 150], chips: [260, 48], inline: [320, 22], columns: [300, 90],
+    seg: [190, 52],   // DEFAULT_ARC's box (segBox) at about 0.7×, for a Ring arc placed on its own
   };
   // What any piece can also set, whatever its mode: its label shown or not, how thick its bar or
   // ring is, its own colour, and where its text sits. Offered in the piece's menu.
@@ -235,8 +237,110 @@
     return '<div class="pt pt-columns"><div class="pt-l pt-head">' + esc(lbl(part, v)) + '</div>'
       + (h ? '<div class="pt-cols">' + h + '</div>' : '<div class="pt-sub">' + esc(v.empty || 'nothing right now') + '</div>') + '</div>';
   }
+
+  // ── The HUD ring's own space (FB-64) ────────────────────────────────────────
+  // The guild lead's testers, 2026-10-07 (FB-64): choosing HUD (ring) "as pieces" gave six small separate
+  // rings; it should be the one big ring, every arc its own piece. me.html draws the ring into ONE square,
+  // 400×400, centre 200,200, angles clockwise from 12 o'clock, each part on its own arc of that circle.
+  // A Ring arc piece (mode 'seg') draws one such arc and nothing else, and its SVG viewBox is that arc's
+  // box IN THE RING'S SPACE — so the piece looks the same wherever its panel sits, and every arc piece
+  // sits on the one centre and radius it was cut from. The canvas gives the panel the same box scaled to
+  // the ring on the screen (segBox × the ring's size / RING): that is the ring, laid out as "as is" has
+  // it, until a piece is moved.
+  //   arc  { r, a0, a1 }  the bar: radius and degrees (a0 < a1)
+  //        { w }          its stroke width     { rev } fills from a1 back toward a0 (the right arc)
+  //        { lr, ls }     label radius and font size    { below } label upright along the bottom
+  var RING = 400;
+  var DEFAULT_ARC = { r: 172, a0: -44, a1: 44, w: 3.3, ls: 11 };
+  function lim(v, lo, hi, d) { v = num(v); return v == null ? d : Math.max(lo, Math.min(hi, v)); }
+  function f1(n) { return (Math.round(n * 10) / 10).toString(); }
+  // Anything that is not an arc is null; every number is clamped, so a hand-edited layout can only draw
+  // somewhere inside the ring.
+  function cleanArc(a) {
+    if (!a || typeof a !== 'object') return null;
+    if (num(a.r) == null || num(a.a0) == null || num(a.a1) == null) return null;
+    var r = lim(a.r, 30, 198, 172), a0 = lim(a.a0, -360, 360, 0), below = !!a.below;
+    return { r: Math.round(r * 10) / 10, a0: Math.round(a0 * 10) / 10, a1: Math.round(lim(a.a1, a0 + 1, a0 + 360, a0 + 1) * 10) / 10,
+      w: lim(a.w, 0.5, 24, 3.3), ls: lim(a.ls, 4, 24, 11), lr: lim(a.lr, 20, 199, r + (below ? 15 : 10)),
+      rev: !!a.rev, below: below };
+  }
+  function ringPt(r, deg) { var t = (deg - 90) * Math.PI / 180; return [RING / 2 + r * Math.cos(t), RING / 2 + r * Math.sin(t)]; }
+  // me.html's arcD. ccw runs the same arc the other way round: the direction a label needs to read left to
+  // right along the bottom.
+  function arcD(r, a0, a1, ccw) {
+    if (a1 - a0 < 0.05) return '';
+    var p0 = ringPt(r, ccw ? a1 : a0), p1 = ringPt(r, ccw ? a0 : a1);
+    return 'M' + f1(p0[0]) + ' ' + f1(p0[1]) + ' A' + r + ' ' + r + ' 0 ' + (a1 - a0 > 180 ? 1 : 0) + ' ' + (ccw ? 0 : 1) + ' ' + f1(p1[0]) + ' ' + f1(p1[1]);
+  }
+  // The box of an arc piece in the ring's space, [x, y, w, h]: the bar and the label written beside it.
+  // The extremes of a sector are its four corners and any compass point it passes, at its outer radius.
+  var SEG_PAD = 3;
+  function segBox(arc) {
+    var a = cleanArc(arc) || cleanArc(DEFAULT_ARC), half = a.w / 2;
+    var rin = a.below ? Math.min(a.r - half, a.lr - 0.8 * a.ls) : a.r - half;
+    var rout = a.below ? Math.max(a.r + half, a.lr + 0.25 * a.ls) : Math.max(a.r + half, a.lr + 0.8 * a.ls);
+    var pts = [ringPt(rin, a.a0), ringPt(rin, a.a1), ringPt(rout, a.a0), ringPt(rout, a.a1)];
+    for (var d = Math.ceil(a.a0 / 90) * 90; d <= a.a1; d += 90) pts.push(ringPt(rout, d));
+    var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    pts.forEach(function (q) { x0 = Math.min(x0, q[0]); y0 = Math.min(y0, q[1]); x1 = Math.max(x1, q[0]); y1 = Math.max(y1, q[1]); });
+    x0 = Math.floor((x0 - SEG_PAD) * 10) / 10; y0 = Math.floor((y0 - SEG_PAD) * 10) / 10;
+    return [x0, y0, Math.ceil((x1 + SEG_PAD - x0) * 10) / 10, Math.ceil((y1 + SEG_PAD - y0) * 10) / 10];
+  }
+  // The largest size (up to `size`) at which `chars` monospace characters fit an arc of `spanDeg` at radius
+  // r, never under 70% of it (me.html's fitSize).
+  function fitSize(size, chars, spanDeg, r) {
+    var room = spanDeg * Math.PI / 180 * r * 0.96;
+    return Math.max(size * 0.7, Math.min(size, room / (Math.max(1, chars) * 0.6)));
+  }
+  var SEG_DIM = '#8b949e';
+  // A label written along the ring: an invisible path to follow and the text on it, centred.
+  function segLabel(id, a, from, to, spans, chars) {
+    var size = fitSize(a.ls, chars, to - from, a.lr);
+    return '<path id="' + id + '" d="' + arcD(a.lr, from, to, a.below) + '" fill="none" stroke="none"/>'
+      + '<text font-size="' + f1(size) + '"><textPath href="#' + id + '" startOffset="50%" text-anchor="middle">' + spans + '</textPath></text>';
+  }
+  function segStroke(d, color, w) { return d ? '<path d="' + d + '" stroke="' + color + '" stroke-width="' + f1(w) + '" fill="none" stroke-linecap="round"/>' : ''; }
+  // Track and fill; rev fills from the far end back (the right arc fills from the bottom up).
+  function segGauge(a, f, color, w, from, to, rev) {
+    f = Math.max(0, Math.min(1, f)); from = from == null ? a.a0 : from; to = to == null ? a.a1 : to;
+    var span = to - from;
+    return segStroke(arcD(a.r, from, to), 'rgba(255,255,255,0.12)', w)
+      + segStroke(rev ? arcD(a.r, to - span * f, to) : arcD(a.r, from, from + span * f), color, w);
+  }
+  function rSeg(part, v, o) {
+    var a = cleanArc(o && o.arc) || cleanArc(DEFAULT_ARC), box = segBox(a), nl = !!(o && o.nolabel);
+    var id = 'sg' + String((o && o.uid) || part.id).replace(/[^A-Za-z0-9_-]/g, '');
+    var w = a.w * (o && o.thick === 'thin' ? 0.6 : o && o.thick === 'thick' ? 1.8 : 1), h = '';
+    if (part.kind === 'list') {
+      // The HUD's cooldowns: up to five short segments side by side, centred on the arc, each labelled.
+      var items = (v.items || []).slice(0, 5), n = items.length, gap = 2, span = a.a1 - a.a0;
+      var seg = Math.min(span / 4, (span - gap * (n - 1)) / Math.max(1, n));
+      var c1 = (a.a0 + a.a1) / 2 + (seg * n + gap * (n - 1)) / 2;
+      items.forEach(function (it, i) {
+        var c0 = c1 - seg, col = (o && o.color) || it.color || C.text;
+        var ready = it.ready != null ? !!it.ready : it.text === 'ready';
+        var f = it.frac != null ? it.frac : (pct(it.pct) != null ? pct(it.pct) / 100 : 1);
+        h += ready ? segStroke(arcD(a.r, c0, c1), C.green, w) : segGauge(a, f, col, w, c0, c1, false);
+        var txt = (it.short || it.name) + ' ' + (ready ? '✓' : itemText(it));
+        if (!nl) h += segLabel(id + i, a, c0, c1, '<tspan fill="' + col + '">' + esc(txt) + '</tspan>', txt.length);
+        c1 = c0 - gap;
+      });
+    } else if (part.kind === 'value') {
+      // Words only (the target's target, its slow state), written along the ring.
+      var vt = valueText(v), vs = v.sub ? ' ' + v.sub : '';
+      h += segLabel(id, a, a.a0, a.a1, '<tspan fill="' + textCol(part, v, o, C.text) + '">' + esc(vt) + '</tspan>'
+        + (vs ? '<tspan fill="' + SEG_DIM + '">' + esc(vs) + '</tspan>' : ''), vt.length + vs.length);
+    } else {
+      var col2 = fillCol(part, v, o), p = pct(v.pct), txt2 = lbl(part, v) + ' ' + headline(part, v);
+      h += segGauge(a, p == null ? 0 : p / 100, col2, w, null, null, a.rev);
+      if (!nl) h += segLabel(id, a, a.a0, a.a1, '<tspan fill="' + SEG_DIM + '">' + esc(lbl(part, v)) + ' </tspan>'
+        + '<tspan fill="' + col2 + '" font-weight="500">' + esc(headline(part, v)) + '</tspan>', txt2.length);
+    }
+    return '<div class="pt pt-seg"><svg viewBox="' + box.map(f1).join(' ') + '" preserveAspectRatio="xMidYMid meet">' + h + '</svg></div>';
+  }
+
   var RENDER = { bar: rBar, thin: rThin, vbar: rVbar, ring: rRing, arc: rArc, readout: rReadout, big: rBig, badge: rBadge,
-    pips: rPips, rows: rRows, chips: rChips, inline: rInline, columns: rColumns };
+    pips: rPips, rows: rRows, chips: rChips, inline: rInline, columns: rColumns, seg: rSeg };
 
   // The one entry point: a piece, the mode it is drawn in, its view, and the piece's own
   // options ({ nolabel, thick, color, align }).
@@ -245,7 +349,8 @@
     var v = resolve(part.kind, view, now || Date.now());
     var modes = MODES[part.kind] || MODES.value;
     if (!modes.some(function (m) { return m[0] === mode; })) mode = modes[0][0];
-    if (!v) return '<div class="pt pt-none"><span class="pt-l">' + esc(part.short || part.label) + '</span> <span class="pt-sub">—</span></div>';
+    // An arc of the ring with nothing to show draws nothing (the HUD leaves its swing arc bare out of combat).
+    if (!v) return mode === 'seg' ? '<div class="pt pt-none pt-seg"></div>' : '<div class="pt pt-none"><span class="pt-l">' + esc(part.short || part.label) + '</span> <span class="pt-sub">—</span></div>';
     var cls = (o.nolabel ? ' nl' : '') + (o.thick === 'thin' || o.thick === 'thick' ? ' tk-' + o.thick : '')
       + (o.align === 'c' || o.align === 'r' ? ' al-' + o.align : '');
     var html = RENDER[mode](part, v, o);
@@ -288,6 +393,9 @@
     + '.pt-vt{flex:1;width:calc(12px * var(--ps,1));background:rgba(13,17,23,0.75);border:1px solid #30363d;border-radius:3px;display:flex;align-items:flex-end;overflow:hidden}'
     + '.pt-vf{width:100%;transition:height 0.25s linear}'
     + '.pt-arc svg{width:100%;height:100%;display:block}'
+    // A ring arc: its text is the HUD ring's (thin weight), in the ring's own units, so it scales with the arc.
+    + '.pt-seg{overflow:visible}.pt-seg svg{width:100%;height:100%;display:block;overflow:visible}'
+    + '.pt-seg text{font-variant-numeric:tabular-nums;paint-order:stroke;stroke:rgba(0,0,0,.8);stroke-width:1.6px;stroke-linejoin:round}'
     + '.pt-badge{display:flex;align-items:center;justify-content:center}'
     + '.pt-bc{box-sizing:border-box;height:100%;max-width:100%;aspect-ratio:1;border:2px solid;border-radius:50%;background:rgba(13,17,23,0.6);'
     + 'display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.1}'
@@ -374,6 +482,11 @@
   }
   function cdSample(label, left, tot) { return function (now) { return { endAt: now + left, total: tot, doneText: 'ready', label: label }; }; }
 
+  // The HUD's short names for its cooldowns (me.html CD_SHORT), for the ring's cooldown arc.
+  var CD_SHORT = { 'Flying Kick': 'FK', 'Round Kick': 'RK', 'Dragon Punch': 'DP', 'Eagle Strike': 'ES', 'Tiger Claw': 'TC',
+    'Kick': 'KICK', 'Bash': 'BASH', 'Backstab': 'BS', 'Mend': 'MEND', 'Taunt': 'TNT', 'Harm Touch': 'HT',
+    'Feign Death': 'FD', 'Lay on Hands': 'LOH', 'Boastful Bellow': 'BB' };
+
   var PARTS = [];
   function P(id, cat, label, src, kind, get, sample, extra) {
     var p = { id: id, cat: cat, label: label, src: src, kind: kind, get: get, sample: sample };
@@ -430,12 +543,17 @@
   P('me.cooldowns', 'me', 'All my cooldowns', 'me', 'list',
     function (d, at) {
       if (!d.character || !Array.isArray(d.cooldowns)) return null;
+      // short / ready / frac are for the Ring arc mode (the HUD's cooldown arc: "FD 0:07", "MEND ✓", a draining segment).
       return { items: d.cooldowns.filter(function (c) { return c.seen !== false; }).map(function (c) {
         var ms = num(c.ms_left); if (ms != null) ms -= Date.now() - at;
-        return { name: c.label, text: c.failed ? '✗' : (ms == null || ms <= 0) ? 'ready' : mmss(ms),
+        var ready = !c.failed && (ms == null || ms <= 0), tot = num(c.total_ms);
+        return { name: c.label, short: CD_SHORT[c.label] || String(c.label || '').slice(0, 4).toUpperCase(), ready: ready,
+          frac: !ready && ms != null && tot ? Math.max(0, Math.min(1, ms / tot)) : 0,
+          text: c.failed ? '✗' : (ms == null || ms <= 0) ? 'ready' : mmss(ms),
           color: c.failed ? C.red : (ms == null || ms <= 0) ? C.green : C.orange }; }) };
     },
-    { items: [{ name: 'Mend', text: 'ready', color: C.green }, { name: 'Feign Death', text: '0:07', color: C.orange }] }, { short: 'Cooldowns' });
+    { items: [{ name: 'Mend', short: 'MEND', ready: true, text: 'ready', color: C.green },
+      { name: 'Feign Death', short: 'FD', frac: 0.7, text: '0:07', color: C.orange }] }, { short: 'Cooldowns' });
   [['ability', 'Combat ability'], ['mend', 'Mend'], ['taunt', 'Taunt'], ['fd', 'Feign Death'], ['loh', 'Lay on Hands'], ['ht', 'Harm Touch'], ['disc', 'Discipline']]
     .forEach(function (k) {
       P('me.cd_' + k[0], 'me', k[1] + ' cooldown', 'me', 'countdown',
@@ -906,6 +1024,17 @@
   }
   // A second column: the same rows moved dx to the right.
   function beside(rows, dx) { return rows.map(function (r) { return [r[0], r[1], r[2] + dx, r[3], r[4], r[5]]; }); }
+  // The HUD ring as pieces (FB-64: it used to be six separate small rings and three text rows, "a bunch of
+  // individual rings, rather than the one big ring"). The ring is ONE circle, so a row is [piece, arc, look?]:
+  // the arc me.html draws that piece on, in the ring's own 400-unit space, and the row it makes carries the
+  // arc's box there ([piece, 'seg', x, y, w, h, { arc, color, nolabel }]). A preset with `ring` is laid out
+  // by the canvas at the size the ring has "as is" (the rows × that size / RING), centred where it is dropped.
+  function ringRows(list) {
+    return list.map(function (e) {
+      var arc = cleanArc(e[1]), b = segBox(arc), x = e[2] || {};
+      return [e[0], 'seg', b[0], b[1], b[2], b[3], { arc: arc, color: x.color || '', nolabel: !!x.nolabel }];
+    });
+  }
   // `embed` names the overlay (its key in main's canvas catalog) a preset IS: choosing it puts that overlay's own
   // page on the canvas instead of laying out `parts` (the guild lead, 2026-10-03: "when I look at an overlay
   // outside of the canvas or choose it as a preset within the canvas they should be extremely close to being
@@ -914,10 +1043,19 @@
   // (no overlay of its own) is only ever pieces.
   var PRESETS = [
     // The ring first: it is the HUD (the guild lead, 2026-10-03: "we also should have the default HUD circle
-    // view in canvas"); the six dials are what "as pieces" gives.
-    { id: 'hud-ring', name: 'HUD (ring)', embed: 'me', style: 'hud', parts: [['me.hp', 'ring', 0, 0, 96, 96], ['me.mana', 'ring', 100, 0, 96, 96], ['target.hp', 'ring', 200, 0, 96, 96],
-      ['tick.server', 'ring', 0, 100, 96, 96], ['tick.swing', 'ring', 100, 100, 96, 96], ['me.cast', 'ring', 200, 100, 96, 96],
-      ['target.tot', 'readout', 0, 200, 296, 22], ['target.slow', 'readout', 0, 224, 296, 22], ['me.cooldowns', 'chips', 0, 248, 296, 48]] },
+    // view in canvas"); the arcs below are what "as pieces" gives: me.html's own places on its circle (radius 172,
+    // degrees clockwise from 12), the weight its default 'thin' look has (6 / 4 / 2 × 0.55).
+    { id: 'hud-ring', name: 'HUD (ring)', embed: 'me', style: 'hud', ring: RING, parts: ringRows([
+      ['target.hp', { r: 172, a0: -44, a1: 44, w: 3.3, lr: 177, ls: 13 }],
+      ['target.tot', { r: 190.5, a0: -30, a1: 30, w: 1, lr: 193, ls: 8 }],
+      ['target.slow', { r: 152, a0: -40, a1: 40, w: 1, lr: 152, ls: 9.5 }],
+      ['me.hp', { r: 172, a0: 236, a1: 304, w: 3.3, lr: 182, ls: 11 }],
+      ['me.mana', { r: 172, a0: 56, a1: 124, w: 3.3, lr: 182, ls: 11, rev: true }],
+      ['me.end', { r: 162, a0: 240, a1: 300, w: 1.1 }, { color: C.orange, nolabel: true }],
+      ['tick.server', { r: 172, a0: 184, a1: 228, w: 2.2, lr: 187, ls: 8.5, below: true }, { color: SEG_DIM }],
+      ['tick.swing', { r: 172, a0: 132, a1: 176, w: 2.2, lr: 187, ls: 8.5, below: true }],
+      ['me.cast', { r: 172, a0: 132, a1: 176, w: 2.2, lr: 187, ls: 8.5, below: true }],
+      ['me.cooldowns', { r: 150, a0: 140, a1: 220, w: 2.2, lr: 165, ls: 8.5, below: true }]]) },
     { id: 'hud-box', name: 'HUD (box)', embed: 'me', style: 'a', parts: stack([['me.name', 'readout'], ['me.hp', 'bar'], ['me.mana', 'bar'], ['me.end', 'bar'], ['me.xp', 'bar'], ['me.aa', 'bar'],
       ['me.cast', 'bar'], ['target.name', 'readout'], ['target.hp', 'bar'], ['pet.hp', 'bar'], ['group.members', 'rows', 110], ['me.gems', 'rows', 150]], 240) },
     { id: 'tank', name: 'Tank', embed: 'tank', parts: stack([['tank.mt', 'bar'], ['tank.heals', 'rows', 80], ['tank.da', 'bar'], ['tank.target', 'bar'], ['tank.enrage', 'readout'],
@@ -949,6 +1087,7 @@
 
   root.WpParts = {
     C: C, CATS: CATS, MODES: MODES, DEFAULT_SIZE: DEFAULT_SIZE, CSS: CSS, THICK: THICK, ALIGN: ALIGN, PALETTE: PALETTE,
+    RING: RING, cleanArc: cleanArc, segBox: segBox,
     render: render, resolve: resolve,
     util: { esc: esc, num: num, pct: pct, hpColor: hpColor, mmss: mmss, fmtNum: fmtNum, pctOf: pctOf, at: at },
     SOURCES: SOURCES, PARTS: PARTS, byId: byId, PRESETS: PRESETS,
