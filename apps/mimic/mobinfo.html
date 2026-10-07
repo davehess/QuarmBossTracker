@@ -1011,6 +1011,24 @@
     return '<div class="mini">' + h + '</div>';
   }
 
+  // A corpse is named "<owner>'s corpse" — with a backtick or curly apostrophe in some names, and a
+  // number after "corpse" on some builds. The owner, or null for a name that is not a corpse's.
+  function corpseOwner(name){
+    var m = /^(.+?)['`’]s\s+corpse\d*$/i.exec(String(name || '').trim());
+    return m ? m[1] : null;
+  }
+  // Whether the last fight's top-damage list is about THIS corpse (FB-63, a member, 2026-10-07: "I'm
+  // targetting <a player>'s corpse but it shows the last fight data here and its not correct"). It is
+  // only when the corpse is the mob that fight was against, the way a boss you just killed is. Any
+  // other corpse — a raider's, or one from another pull — has no fight of its own to show, and the
+  // list would just be whichever fight is most recent. A corpse is a new spawn, so the name is the link.
+  function lastFightFits(owner, enc){
+    if (!owner || !enc) return false;
+    var norm = function(n){ return String(n == null ? '' : n).toLowerCase().replace(/[`’]/g, "'").replace(/^#/, '').replace(/\s+/g, ' ').trim(); };
+    var o = norm(owner);
+    return !!o && (o === norm(enc.targetName) || o === norm(enc.bossName));
+  }
+
   function _renderBody(mi){
     if (!mi || !mi.target_name) {
       bodyEl.innerHTML = '';
@@ -1022,6 +1040,7 @@
     emptyEl.style.display = 'none';
     var mob = mi.mob || null;
     var nm = mob && mob.name ? mob.name : mi.target_name;
+    var corpseOf = corpseOwner(mi.target_name);   // who the corpse belonged to, or null
     // Two bodies share this name and differ in CLASS; only the sex tells them
     // apart in game (the guild lead, 2026-09-15, Plane of Hate's forsaken revenants:
     // male Magician, female Enchanter). Until Zeal puts the target's sex on
@@ -1296,7 +1315,8 @@
       }
       if (chips) spec = '<div class="spec">'+chips+'</div>';
       var loadingNote = (!mob && mi.loading) ? '<div class="sub" style="color:#a371f7">looking up stats…</div>'
-                       : (!mob ? '<div class="sub">no catalog stats for this target</div>' : '');
+                       : (!mob ? (corpseOf ? '<div class="sub">corpse of ' + esc(corpseOf) + '</div>'
+                                           : '<div class="sub">no catalog stats for this target</div>') : '');
       // A PLAYER target (the guild lead, 2026-09-24): class and level from /who,
       // or a level RANGE from your /consider when they are anonymous, and in
       // PvP what your drains took from them. Replaces "no catalog stats".
@@ -1304,15 +1324,14 @@
       if (pl) loadingNote = playerCard(pl);
       tabBody = res + spec + loadingNote;
     }
-    // Corpse target → splice in the just-finished fight's top-damage
+    // Corpse of the mob the fight was against → splice in that just-finished fight's top-damage
     // scoreboard from /api/state.stats.currentEncounterThreat.perPlayer.
     // Reads the agent's local encounter snapshot (already on the wire for
     // the DPS overlay), so no server round-trip and no version bump
     // needed elsewhere. Top 5 players by total damage; tank bar gets a
-    // taken-damage flag.
-    var isCorpse = (mi.target_name || '').toLowerCase().match(/'s\s+corpse$/);
+    // taken-damage flag. Any other corpse (a player's, an unrelated mob's) gets none (FB-63).
     var lastFight = '';
-    if (isCorpse && mi._enc && mi._enc.perPlayer) {
+    if (lastFightFits(corpseOf, mi._enc) && mi._enc.perPlayer) {
       var pp = mi._enc.perPlayer;
       var names = Object.keys(pp);
       var rows = names
@@ -1411,8 +1430,8 @@
       // Splice the local /api/state.stats.currentEncounterThreat onto the
       // mobInfo blob so corpse-targets can render "Last fight" damage
       // without a server change. The renderer only surfaces it when the
-      // target_name ends in "'s corpse" (i.e., the just-killed mob you're
-      // now standing on for loot).
+      // target is the corpse of the mob that fight was against (the
+      // just-killed mob you're now standing on for loot) — lastFightFits.
       // (It is top-level in /api/state; this read `s.stats…`, which does not exist, so the "last
       // fight" scoreboard never showed. Found by the 3.0 Canvas audit, 2026-10-02.)
       var mi = s.mobInfo;
