@@ -180,6 +180,25 @@ with four-number costs, and the fork + `sync-upstream.yml` route back upstream:
 `docs/DESIGN-guild-kit.md`. Deployment decisions: `DESIGN-selfhost-wizard.md`
 §3 (2026-09-18). Builds on `DESIGN-external-tenancy.md` Stages 2–3.
 
+**Web half — `web/lib/guild.ts`:** the website's one place for "which guild is
+this". `GUILD_TAG` (the `guild_id` every table is keyed on), `GUILD_NAME`,
+`GUILD_SHORT`, `GUILD_INGAME_NAME` (the name as the game spells it, for data
+comparisons), `SITE_NAME`, `SITE_URL`/`siteUrl()`, `LOGIN_EMAIL_DOMAIN` (frozen),
+the repo and OpenDKP addresses, `RAID_TZ`, the rank/role tables and the role
+gates all resolve from `NEXT_PUBLIC_*` names with Wolf Pack's own values as the
+defaults, so an unset environment is today's site. It imports nothing and reads
+each name statically, so a client bundle may import it (never `GUILD_TAG`
+into a `'use client'` file). `web/next.config.js` copies the bot's server-only
+`SUPABASE_GUILD_ID` into `NEXT_PUBLIC_GUILD_TAG` at build time when that is
+unset, so the server and browser bundles agree. 78 files that hard-coded the
+`'wolfpack'` tag now read `GUILD_TAG`; `test/guild-tag-literal.test.js`
+fails on any new literal and on `GUILD_TAG` in a client file, and
+`test/guild-web-module.test.js` pins the defaults, the resolution order, the
+rank/role copies and the next.config mapping. Names and defaults:
+`web/.env.example` (guild-kit block). Still literal on purpose: the demo-name
+salt in `web/lib/obfuscate.ts`; the hard-coded character name in
+`web/lib/funLdAuth.ts` is a known follow-up.
+
 - **Branches**: `main` ships bot (Railway, deploy name = merge commit
   message) + web (Vercel) + stable Mimic; `beta` ships Mimic/agent betas.
 - **Mimic releases**: `.github/workflows/release-mimic.yml` triggers on
@@ -1862,6 +1881,34 @@ swap) and the Zeal gauge evaluator; timer-bar switches count as on while one of
 their characters is played (`_playingCharactersLc`). The Suggested panel's
 **For:** picker posts `char` with each tick. `test/per-character-triggers-and-pet-owners.test.js`.
 
+### Trigger manager: open a trigger, warn before the end, repeat (agent on beta; FB-23, FB-30, FB-26, FB-31)
+
+Dashboard → Triggers tab (`dashboard.html`; never the `WEB_HTML` literal).
+- **Opening a row.** A personal row's name is a `<button class="trigname" data-trig-open>` (NOT `class="name"` — that
+  is the character-page link, and a click on "Rampage on me" opened `/character/Rampage`). Click it, or any plain
+  cell, and a `tr.trigdetail` opens beneath with `wpTrigSettingsHtml(t, 'personal')`; **✎ Edit these settings**
+  loads the add form as an edit (`editing = { id, row }` inside the editor IIFE: title, **Save changes**, **Cancel
+  edit**). The save is `wpTrigApplyForm(freshRow, formValues)` — the form's values laid over the saved row, so a
+  second alert, a sound, an imported end text, the per-character list, a spell-catalog match and a `timer_warnings`
+  list all survive. The pattern is checked against `/api/triggers/test` first because the whole-list save drops a
+  row that will not compile. Open rows live in `_wpTrigOpen` (`p|<id>` / `g|<key>`), not the DOM.
+- **Guild list** is its own card, `#wpGuildTriggers` (`renderGuildTriggersCard`, after `renderTriggers` in
+  `_sections`), so opening a row repaints that card and not the Add form. Read-only; the footer links
+  `wolfpack.quest/admin/triggers?edit=<id>`. **Copy to personal** now carries the guild warning and repeat.
+- **Warning (FB-26).** `warning_seconds` + `warning_text` (+ `warning_tts:false` for flash-only) on the personal row;
+  `_timerWarnings` (agent) turns them into the overlay's `warnings` list, the same code a guild row goes through.
+  `warning_*` and `timer_loop*` are in `PERSONAL_CARRY_FIELDS`, or the whole-list save strips them.
+- **Repeat (FB-31).** `timer_loop: true` + optional `timer_loop_max` (the most restarts; absent = until stopped).
+  `_startTimer` puts `loop` / `loop_max` / `loops_done` on the `_activeTimers` row; `_rollLoopTimer` (called from
+  `_activeTimersSnapshot`, where expiry is decided) advances `started_at_ms`/`ends_at_ms` by whole cycles instead of
+  deleting the row. The overlay drops and rebuilds a row whose countdown hits zero, so each round warns again with no
+  Mimic change. Stops on ✕ (`/api/timers/cancel`), the cancel-early phrase, or the mob dying; the trigger firing again
+  replaces the row. A rehearsal stops after 3; the `cooldown_timer_sec` recast bar never loops.
+  **Guild**: a `guild_triggers` row with `timer_loop` / `timer_loop_max` works through `_applyGuildTriggersResponse`
+  (it spreads the row) — but the columns and the `/admin/triggers` form fields do not exist yet.
+- Guarded by `test/trigger-manager-settings-warn-loop.test.js` (engine behaviour under fake time; the pure dashboard
+  functions and the editor IIFE run from the shipped `dashboard.html`).
+
 ### Timer bars — EQLogParser-style countdowns from tracked state (agent 3.7.24)
 
 The guild's co-leader, a bard, 2026-09-26: *"the only thing i need to get is the
@@ -2590,12 +2637,20 @@ into its corpse or hits 0% (`_noteMobDeathFromState` →
 `EncounterBuilder.noteZealTargetDead`), for when the slain line never reached this log.
 HUD per-mob ⚡ procs / ✦ stuns-aggro (agent 3.7.88): `_meNoteHit` proc flag + `_meNoteMyLanding` (catalog
 cc 'stun' or `hate` > 0, bot 3.1.205), keyed name#spawn id → `/api/me` `target.my_procs` / `my_stuns`;
-drawn above the DS badge, builder part `procs`.
+drawn above the DS badge, builder part `procs`. The Box layout (`renderA`) draws the same fields as one line
+under the target, `procs 3 · stuns 2 · DS 24` (`mineHtml`; `mineOf` and `dsMark` are shared with the ring). A
+monk's Dragon Punch is not a proc: its spell, Dragon Force, prints an anonymous hit beside the swing and the
+landing line "<mob> is stricken by the force of a dragon." takes it back out (`_meNoteDragonForce`, FB-60).
 HUD (`me.html`): enrage zone 12% since agent 3.7.84 (`ENRAGE_WARN_PCT`, spoken by `_tickEnrageWarn`
 on a 250 ms tick; "Enrage soon" is priority 2 in `triggers.html` `_speakPriority`, beside CH GO),
 cleared by `enrage_ended`; DS button thorns / lava (`_dsKindOf`, `ds.kind`); rampage +
 under-25% arcs (`_meSideArcs` → `rampage`, `low_hp`); clicky counters (`_meClickies`
-from `-Inventory.txt` `items`, spent by `_noteClickyUse` on "begins to glow"). Auctions:
+from `-Inventory.txt` `items`, spent by `_noteClickyUse` on "begins to glow"; sorted root · dispel · stun
+first by `_clickyKind` — the spell catalog's `cc` for root/stun, `_CLICKY_DISPEL_SPELLS` ids for dispel;
+`clickies` = the first 8, `clickies_all` when there are more; `POST /api/me/clicky-recharged` →
+`_noteClickyRecharged` puts a counter back to full, kept in `logsync.hud-timers.json`; on the ring
+`clickyShown` / `clickyFit` / `clickyShort` in `me.html` draw the picks or the first that fit, and the
+⚙ builder's `clickyPickerHtml` is the picker — per character in `hudParts.clickyPick`, FB-65). Auctions:
 `_pollDkpAuctions` → `_applyDkpAuctions` (one `auction|<id>` timer each) + the
 Command Center's `auctions`. Extended Target: `ma_target` row mark + `main_assist`
 header. XP events: `_xpNoteRawLine` → `xp_events` (bot `/api/agent/xp-events`).
@@ -2645,6 +2700,46 @@ out of the global scale unless "Scale the dock too" (`cfg.overlayScaleDock`)
 is on. The setup bar and drag controls counter-zoom (`wp-zoom` push →
 `--wp-zoom` var; `width × z` + `scale(1/z)`) so the setup chrome keeps one
 painted size spanning the window width at every scale.
+
+**What an overlay's saved size is, and what it is not (mimic, beta, 2026-10-07).**
+`_persistBounds` saves the live window on every move/resize (400 ms debounce),
+so anything that changes a window's height for a moment is saved unless it is
+told apart. Two such things exist and neither is the user's size. (1) The
+right-click menu's room: `overlay-ensure-min-height` stretches a short window
+to 420 px and stashes the real bounds in `win.__wpPreMenuBounds` with the loan
+(`grownH`, `grownY`); `_settledBounds` saves the stashed height while the window
+still sits at the loaned one, and `overlay-menu-closed` (sent by the menu's
+cleanup in `preload.js`, before the page's own re-fit replay) hands it back —
+for every page, since most only ask for a height when their HTML changes. The
+two Setup entries keep the room (`keepRoom`). (2) The setup bar's 104 px, added
+by `overlay-auto-height` while setting up — still saved with the window; same
+class, not yet handled. `_flushBounds` saves pending bounds before ✕ frees the
+window. Height itself followed content in both directions on every
+auto-height overlay until the height floor below. `test/mimic-menu-grow-loan.test.js`.
+
+**A dragged height is a floor (mimic, beta, 2026-10-07; FB-16 — the guild lead's
+pick: "a dragged height becomes a floor; content only grows above it").**
+`overlay-auto-height` sizes the window to `max(content, floor)`, so content grows
+it above the floor and shrinking content returns it to the floor, never below;
+with no floor it is exactly the old fit. The floor is the height the user last
+dragged to, recorded when Electron's `will-resize` (manual resizes only —
+`setBounds` never fires it, so a fit, the menu's loan and a scale glide cannot
+write one) has been quiet for 400 ms: `_noteUserResize` / `_commitFloor`, hooked
+once on `browser-window-created` for every window and resolved to an overlay by
+`_boundsKeyForWindow`. It is stored UNSCALED — `(painted height − 104 px setup
+chrome) ÷ zoom` — as `cfg.<boundsKey>Floor = { h, sig }` beside the saved bounds,
+and honoured only on the screen setup (`sig`) it was set on, so a scale change or
+setup mode re-derives the window from it instead of baking itself in. Only a
+window whose page has asked for a fit can have one (`win.__wpHeightMode`, set by
+`overlay-auto-height`; `overlay-set-bounds` sets it to `'page'`, which keeps the
+Me HUD ring's drags from coming back as a tall card), and a width-only drag
+records none. After a floor is set or cleared main sends `wp-refit` and
+`preload.js` replays the page's last fit (`_wpLastFitWasRaw` / `_wpLastRawH`),
+because Command Center, Target Info at rest, pets and melody only report a
+height when their HTML changes. **To clear it:** right-click ✥ → **↕ Fit height
+to content** (`overlay-fit-height`: deletes the floor and fits exactly, even a
+shrink under the usual 12 px). The XS–XL presets change the width only and leave
+the floor alone. `test/mimic-height-floor.test.js`.
 
 ---
 
@@ -3964,6 +4059,11 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   worn effect is a damage shield, from `/output inventory` or the Quarmy export) only while a shield
   spell is up; `combat.ds.from_items` says how much. The item list is view `item_worn_damage_shield`,
   served as `worn_ds` on `/api/agent/item-clickies` (v2).
+  **Measured wins (FB-58):** that sum is an ESTIMATE (catalog values — no instrument skill, no AA). Once a
+  shield hit of yours has landed this fight, `per_hit` is the amount that repeats among the last five
+  (`_dsSeenPerHit`, a tie to the newest) and `combat.ds.measured` is true; the badge's "~" (`dsMark`) marks
+  the estimate. The hits it reads are the ledger's `kind: 'ds'` ones: the named "YOUR" line, or an anonymous
+  hit after the mob hit you that fits the shield you wear + `DS_UNLISTED_SLACK`.
   **Round four (agent 3.7.9):** cooldowns on an inner arc (`cdItems`), tick
   and swing their own arcs under them (`tickItem` / `swingItem`); `weight`
   part (`HUD_WEIGHTS`, svg class `w-<weight>`); builder is a side panel

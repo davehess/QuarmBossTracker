@@ -103,6 +103,58 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ Trigger manager: open a trigger's settings, warn before the end, repeat the countdown (agent on beta, draft on
+  branch `fbtrig-work`, 2026-10-07; FB-23, FB-30, FB-26, FB-31).** Four beta-tester reports on the dashboard's
+  Triggers tab.
+  - **Open a trigger (FB-23 personal, FB-30 guild).** Clicking a row's name (or a plain cell) opens its settings
+    beneath it: pattern, alert and what is said, cooldown, countdown, warnings, repeat, cancel-early phrase and the
+    imported extras. A personal row has **✎ Edit these settings**, which loads the add form as an edit (Save
+    changes / Cancel edit); fields the form has no box for are kept. A guild row is read-only with **Edit on
+    wolfpack.quest** (`/admin/triggers?edit=<id>`). Cause of "I cannot do that": the personal name cell was
+    `class="name"`, the character-link class, so a click opened `/character/<first word>` (404); and the form only
+    ever added. The guild list moved into its own `#wpGuildTriggers` card so opening a row does not wipe the form.
+  - **Warning before the end (FB-26).** The warning already worked for personal triggers (`_startTimer` arms
+    `warning_seconds`/`warning_text` for every scope; the overlay fires it); the form had no box, so it is added:
+    seconds, text, and a "speak it" box (`warning_tts:false` = flash only).
+  - **Repeat (FB-31).** `timer_loop` (+ optional `timer_loop_max`, the most restarts) on a trigger: the timer row
+    is rolled forward by whole cycles at zero (`_rollLoopTimer`, in `_activeTimersSnapshot`) instead of expiring.
+    ✕ on the bar, the cancel-early phrase, or the mob dying ends it; the trigger firing again replaces the row, so
+    loops never stack; a rehearsal stops after 3. The guild consumer reads the same two fields from a
+    `guild_triggers` row — **the columns and the admin form are not added yet** (a `main` change).
+  - `test/trigger-manager-settings-warn-loop.test.js`. Not yet seen in a real window: needs a beta tester to open a
+    row, edit one, and watch a 20 s looping timer warn twice.
+- **⏳ A shrunk overlay stays shrunk (mimic on beta, draft on branch `fbresize-work`, 2026-10-07).** A beta tester:
+  "resized these maybe 10 times but each time … they end up getting bigger … they are goliath" (Command Center and
+  Target Info, several hundred px tall); FB-16 (2026-09-27): the HUD "reverts to a bigger size after clicking the X".
+  - **Cause.** The right-click menu stretches a short window to 420 px so the menu has room (`overlay-ensure-min-height`).
+    Giving the height back depended on the page asking for a new one, and most pages only do when their HTML changes,
+    so an idle one stayed 420 tall — and the resize event saved the 420 as its size, so it came back that way after ✕
+    and after a restart. Now the extra height is a loan: never saved, handed back when the menu closes
+    (`overlay-menu-closed`), kept only for the two Setup entries (the setup bar needs the room).
+  - Also: a resize made in the last 400 ms before ✕ was dropped (the debounced save read a destroyed window) — ✕ now
+    saves first; and the HUD builder panel's ✕ restored the bounds from when it OPENED, undoing a resize made while it
+    was open — it now reads the live window.
+  - **Left for the guild lead:** minimum heights (Command Center and PoP raids 160, Dock 140 — FB-38's width twin), and
+    whether an auto-height overlay keeps a height you drag it to. `test/mimic-menu-grow-loan.test.js`.
+- **⏳ Box HUD shows procs, stuns and DS; procs exclude Dragon Punch (FB-60); DS badge reads the hit (FB-58) —
+  branch `fbhud-work`, not yet on beta (2026-10-07).** The guild lead's screenshots: the ring had "DS 24" with
+  the procs/stuns counts, the Box had none of them.
+  - **Box** (`me.html` `mineHtml`): one line under the target, `procs 3 · stuns 2 · DS 24` — the ring's fields
+    (`target.my_procs` / `my_stuns`, `combat.ds`) and colours; the Box has no per-part text sliders (that is the
+    HUD builder), so it is the line's own 11px. Chosen over a second line in the damage block because the counts
+    are about the mob on the line above, and that block only exists once a fight has been counted.
+  - **FB-60:** a monk's Dragon Punch fires the spell Dragon Force, which prints an anonymous 1–12 point hit beside
+    the skill swing ("You strike …") — what a weapon proc looks like. Its landing text, "<mob> is stricken by
+    the force of a dragon.", comes one line later; `_meNoteDragonForce` then takes the newest anonymous hit on
+    that mob back out of the proc count. On the report's own excerpt: 24 counted → 17 (the 7 landings given back).
+    Not verified: the Iksar Tail Rake (assumed the same spell).
+  - **FB-58:** the badge was an ESTIMATE (catalog value of each shield buff + worn gear); only with no shield
+    visible did it read a landed hit. Bard songs scale with instrument and skill and an AA adds more — none of it
+    in the catalog. Now `combat.ds.measured` / `per_hit` read the amount that repeats among the last five of your
+    shield hits this fight (`_dsSeenPerHit`), and the badge drops its "~" (the estimate's mark). It can only
+    read a hit the HUD ledger already takes for your shield: a named "YOUR" line, or an anonymous hit after the
+    mob hit you that fits the shield you wear + 30. The report's excerpt holds none of the reporter's own shield
+    hits, so this is unconfirmed on their log. Waits on the guild lead checking both on the beta.
 - **⏳ HUD DS badge counts worn-gear shields (agent 3.7.80 on beta, bot 3.1.202, 2026-10-04).** The guild lead:
   "Missing my additional DS from my neck slot" (Talisman of Vah Kerrath, +8 on a 10-point shield, hits for 18).
   Gear adds only on top of a shield spell, as the server does. Two items carry one today. Waits on the guild lead
@@ -714,7 +766,7 @@ next touch one rather than assuming a missing row means a missing doc.
 - **⏳ Zeal: a Bandolier chat filter (branch on the guild lead's fork; passed in game, PR to open, 2026-09-25).** A Quarm Discord request: bandolier status lines flood the "Other" chat filter. Zeal prints them with the default colour; the change gives every bandolier message its own Zeal → Bandolier filter, failures in red. `docs/zeal-bandolier-filter-request.md`, `docs/zeal-bandolier-filter.patch`, `DECISIONS-2026-09-21.md` §26.
 - **⏳ Security audit before a public guild-logo page (2026-09-26).** The website, bot and database were audited before inviting other guilds' traffic. Two fixes are live: web 1.8.10 (every officer page gates itself) and bot 3.1.150 (agents receive only the tuning keys their role needs). The findings and the fix order are in the guild lead's private report. They are kept out of the repo on purpose. Next: the membership gate on web + database, then a logo gallery with a Discord intake (no outsider sign-in until then). `DECISIONS-2026-09-21.md` §36.
 - **📋 Mimic 3.0 = the overlay engine (planned, 2026-09-26).** One transparent freeform view combining every overlay, later able to see the screen and move windows to fit. It gets its own **alpha** update channel (own channel + opt-in, pruned alpha releases, workflow on the branch). `DECISIONS-2026-09-21.md` §36.
-- **🧪 Clicky charge counters on the HUD (queued 2026-09-26; built 2026-10-02, agent 3.7.68 beta `a9934e62`).** Charges left per clicky, from the Quarmy export's count (or `/output inventory`, whichever is newer) merged with the clicks the agent sees. The last-charge warning is still to do. `DECISIONS-2026-09-21.md` §36, §127.
+- **🧪 Clicky charge counters on the HUD (queued 2026-09-26; built 2026-10-02, agent 3.7.68 beta `a9934e62`).** Charges left per clicky, from the Quarmy export's count (or `/output inventory`, whichever is newer) merged with the clicks the agent sees. The last-charge warning is still to do. `DECISIONS-2026-09-21.md` §36, §127. **FB-65 (2026-10-07, beta):** ⚙ → Items has a picker (tick up to four; nothing ticked = the first that fit, **root, dispel and stun clickies first**), the names are bright with their own size slider and are counted ("+3") instead of cut off at the arc's end, and each charged clicky has a **Recharged** button, because a vendor recharge prints only "You give … to <vendor>." and no item name. §177.
 - **⏳ HUD: tracking arrows (agent 3.7.18 on `beta`, 2026-09-26).** A member's idea, with the guild lead's "YES": eight arrows round the HUD ring, and the one toward the mob a ranger, druid or bard is tracking lights gold, from the game's own direction lines ("…is ahead and to the left." and the rest, eqstr 12676–12680). ⚙ → Tracking: all eight or only the lit one, plus a size slider. An old direction dims after 15 s; losing the track or zoning clears it. Not yet tried in game — the exact log wording comes from the client string file, not from a captured log. `DECISIONS-2026-09-21.md` §35.
 - **⏳ HUD: hit numbers inside or outside the ring (Mimic 2.7.2 beta, 2026-09-25).** The guild lead: *"add an option for the HUD to have damage numbers outside the circle."* ⚙ → Hits → Numbers inside/outside; the window widens to fit so the ring keeps its size. `DECISIONS-2026-09-21.md` §25.
 - **✅ The sharing change announced in #wlfpck-general (bot 3.1.149, posted 2026-09-25 12:37 UTC).** One-time, latched in `bot_kv`; names and pings nobody. `DECISIONS-2026-09-21.md` §25.
@@ -5456,3 +5508,66 @@ branch), fixes applied per review, merged on `integ/guildkit`. `DECISIONS-2026-0
   parent-list chain → mob-info `procs[]` with chance and an effect digest
   (`utils/npcProcs.js`); the Target Info Spells tab's PROCS section is on the
   Mimic beta. Zone packs are version 4 so held packs rebuild.
+### 🧾 2026-10-07 — Mimic beta: hide-all crash, taskbar, overlays growing back, Box HUD procs, mob procs, /parses (agent 3.7.97 · web 1.8.113)
+Five reports in one beta push, each built and mutation-checked by a parallel agent.
+- **Hide-all crashed the main process** (the guild lead's dialog: "Object has been
+  destroyed at applyMobInfoVisibility"). Mob Info's window had been closed from
+  outside Mimic (nothing in the log said `freed mobinfo` for that session), nothing
+  nulled the reference, and the next hide-all called `.hide()` on a corpse. Now every
+  window's `closed` event drops its reference (`_forgetClosedOverlay`, logged as
+  "closed from outside Mimic"), the materialise sweep rebuilds a destroyed one, and
+  all 18 `apply*Visibility` guards use `_live(win)`. **FB-61**: Settings, Resource use
+  and UI Studio were the three framed windows without `skipTaskbar`; every overlay
+  already had it — if a tester still sees overlays on the taskbar, the next suspects
+  are a post-show `setSkipTaskbar(true)` re-assert and popup windows from dashboard links.
+- **Overlays came back bigger after every resize** (a beta tester; FB-16). The
+  right-click ✥ menu stretches a short overlay to 420 px so the menu fits, and that
+  loan was SAVED as the overlay's size on byte-stable pages (Command Center, Target
+  Info, the HUD) — ✕ and restarts brought the 420 back. The loan is now returned on
+  menu close for every page (`overlay-menu-closed`), the pre-menu height is what gets
+  saved, ✕ flushes a resize made in the last 400 ms, and the HUD builder's ✕ keeps the
+  size you left instead of restoring the bounds from when the panel opened. Left for
+  the guild lead: whether a dragged height should become a floor for auto-height
+  overlays (DECISIONS to follow).
+- **Box HUD** shows `procs · stuns · DS` under the target line like the ring. **FB-60**:
+  a monk's Dragon Punch lands "Dragon Force" as an anonymous 10-point hit right after
+  the strike, which the proc counter took for a proc; the "stricken by the force of a
+  dragon" line now takes it back (24 → 17 procs on the report's own log). **FB-58**: the
+  DS badge shows the measured per-hit value once your own shield hits repeat
+  (`DS`), the catalog estimate until then (`DS~`); still an estimate for a bard whose
+  real shield is more than 30 above the catalog with no shield buff visible.
+- **Target Info shows the mob's procs** (PROCS section above Offensive; bot 3.1.216).
+- **/parses defaults to 7 days** (FB-59) and runs its reads in parallel; preview at
+  https://b.wolfpack.quest/parses (old window: https://b.wolfpack.quest/parses?w=60d).
+- **Web guild kit (slice A, web 1.8.114, beta only until the guild lead graduates it):**
+  `web/lib/guild.ts` (GUILD_TAG, GUILD_NAME, GUILD_INGAME_NAME, ROLES, RANKS, site
+  URLs from `NEXT_PUBLIC_*` with Wolf Pack defaults), the `'wolfpack'` literal swapped
+  for GUILD_TAG across 78 files, a guard test that fails on a new literal or a
+  client-bundle import, `next.config.js` mapping SUPABASE_GUILD_ID → NEXT_PUBLIC_GUILD_TAG
+  at build time, and `/pvp/server` + the /who table comparing guild names through
+  GUILD_INGAME_NAME. Byte-identical for Wolf Pack (neither env name is set on
+  Vercel). Left: `web/lib/funLdAuth.ts` still carries a hard-coded character name
+  (a logic bug too — it checks one fixed character, not the card's) — follow-up.
+
+### 🧾 2026-10-07 evening — the guild lead's three picks, FB-62/63 (agent 3.7.98)
+The guild lead picked A for all three open choices (DECISIONS-2026-09-21.md §178, on the main-bound branch).
+- **FB-56 — bard mana slot counts what mana buys.** A bard's mana arc/bar keeps filling with mana but its
+  label reads `DIRGE n · FM n · CHARM n` (Dirge from the gems, Fading Memories assumed at 60+, charm when a
+  charm song is memorized); nothing to count → `MANA nn%`. The ring label is now fitted to its arc.
+  `test/me-bard-counts.test.js`.
+- **FB-57 — the Melody AE chip only on area songs.** The agent registers the `⚔n/12` counter only for songs
+  the catalog marks `ae` — and only once a catalog carrying the flag is loaded, so until bot 3.1.217 reaches
+  `main` beta behaves as before.
+- **Overlay height floor (FB-16).** A hand-dragged height is the overlay's floor; content grows above it,
+  never shrinks below; right-click ✥ → "Fit height to content" clears it. `test/mimic-height-floor.test.js`.
+- **FB-62 — DI tick only when DI is memorized and ready.** The CH chain's DI chips read the cleric's spell
+  bar (Zeal gems): ✓ only for memorized and off recast, a countdown on recast, grey "?" when unknown — never
+  a tick by default. A cleric whose bar lacks DI is left out. Other clerics' bars ride live-state `di_mem`
+  through the bot (3.1.218, migration applied); until that reaches `main` they show "?".
+- **FB-63 — a corpse no longer shows another fight.** Target Info's "last fight" section shows only when
+  the corpse is the fought mob's own; a player's corpse reads "corpse of <owner>". The alpha Canvas's
+  last-fight piece gets it by sync.
+- **Name fix:** the version-floor help text and a tells comment named a member; now "the guild lead".
+- **Alpha (FB-64):** the HUD ring "as pieces" is one ring of ten arc pieces on the shared circle
+  (`fc18eaa1`, new "Ring arc" piece mode). The beta→alpha sync failed twice today on me.html/preload.js;
+  it was resolved by hand (`27608cd8`), keeping the alpha's Canvas path in the HUD builder close.

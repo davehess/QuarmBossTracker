@@ -116,6 +116,7 @@ is ephemeral. It is a desktop-session job.
 |---|---|---|
 | **Three picks: bard counts, AE chip by spell data, height floor** (§178) | All three built; HUD counts, AE gate and the floor on beta (agent 3.7.98); the catalog's `ae` flag waits on this branch reaching `main` | the guild lead: push this branch to main (after 00:30 ET on a raid night); a bard on beta checks the ring label; a beta tester drags an overlay small and confirms it stays |
 | **Guild kit slices 1b, 2-prep, 3** (§177) | Bot 3.1.215: `utils/guildConfig.js` loader + getters, Discord self-provisioner (`/setup discord`, standalone script), tag-correct REST filters with a ratchet, one-shot announcers gated on the guild tag, Bristlebane guild file. Web slice A (`web/lib/guild.ts` + the literal swap) reviewed separately → `beta` | a session: slice 2, the de-branding sweep (start from the 11 getter-only env names in `test/guild-config.test.js`); then `doctor` and the wizard CLI (§8 picks stand) |
+| **Clicky picker + Recharged** (§179, FB-65) | On beta (agent + Mimic, version set at the push): ⚙ → Items picks up to four clickies, root · dispel · stun first, brighter names with their own size slider, a Recharged button per charged clicky | a beta tester with charged clickies: pick, recharge at a vendor, press Recharged; the guild lead: say if one line of four is enough or the ring should get a second row |
 | **Mimic 2.7.9 stable + member-report sweep** (§176) | Stable `40af051a` (agent 3.7.96), beta re-parked 2.7.10. 13 older member reports closed with their senders DMed, plus FB-43; 23 stay open (partial / not done / unclear / alpha, listed in §176) | a session: the open member reports, starting with the partials (FB-22, FB-26, FB-3, FB-37); the guild lead: pick the four B/C web previews still on beta |
 | **Main / alt · Inventory only · Hide completely** (§175) | Bot 3.1.214 live; agent 3.7.96, stable in Mimic 2.7.9: the choice in setup and on the dashboard's Me card, Hide completely also stops this PC reading the log | the guild lead: should Inventory only also stop that character's fight uploads? |
 | **My parses: explore + Guild / My logs** (§174) | Live: search, zone, By day on `/me/parses` (web 1.8.110 · bot 3.1.213, `my_parse_series_v2`); the same in Mimic plus Guild / My logs, stable in Mimic 2.7.9 | a session with confirmation: drop the old `my_parse_series` |
@@ -7772,3 +7773,40 @@ stable version."*
 - **Where it landed.** Beta: agent 3.7.98 with the FB-56 HUD counts, the FB-57 gate, the floor in
   `apps/mimic/main.js` + `preload.js`. Main-bound branch: the catalog flag (`3ad2fe47`). Docs:
   `HOW-ITS-BUILT.md`, `STATUS.md`.
+### 179. Clicky counters: pick which, root · dispel · stun first, and a Recharged button, because a recharge names no item (2026-10-07, FB-65, agent + Mimic beta)
+
+A member (Mimic 3.0.0-alpha.937): *"Should be able to pick which clicky charges you track, and the names need to be
+easier to see. Root/Dispel/Stun are prioritized. When we recharge I don't believe it says anything in the chat, it
+just says you give a certain amount to the vendor. First recharge is double the recharge rate of every other one
+after."*
+
+- **What the log showed.** The report's 771-line excerpt has six lines from the recharge and none that names an
+  item or says "recharged" or "charges": `You give 38 platinum 1 gold 9 silver 0 copper to <vendor>.`, then five
+  of `You give 19 platinum 0 gold 9 silver 5 copper to <vendor>.`, two to three seconds apart. It is the line any
+  hand-in of coin to an NPC prints. The first amount is exactly twice each later one (38,190 copper against 19,095),
+  which fits a price per charge restored with the first item two charges short, but the log cannot say, so nothing
+  reads it.
+- **The call: no guessing, a button.** Attributing a coin amount to an item would set wrong counters silently. Each
+  charged clicky in the picker has **Recharged**: `POST /api/me/clicky-recharged` `{ character, item }` →
+  `_noteClickyRecharged` puts that counter back to the item's full charges from that moment (clicks after it spend
+  one; two copies are each full again). An inventory or Quarmy export written after it is newer and wins again. The
+  mark is kept in `logsync.hud-timers.json` for 30 days, so a Mimic update does not undo it. Refused (404) for an
+  item that is not carried or has no charge count.
+- **Picker.** ⚙ → Items lists every clicky on you with its kind (Root / Dispel / Stun), charges left of full and the
+  button. Tick up to **four** (stored per character, `hudParts.clickyPick`); with nothing ticked the HUD takes the
+  first that fit. Four is what the bottom arc holds: it is 80° at the ring's inside, about 30 characters at the new
+  default size, and the DS button already sits at its right end. A second row would take the clear middle.
+- **Root, dispel, stun first** (`_clickyKind`). The spell catalog's `cc` already tags a harmful spell's SPA 99 and
+  SPA 21; a buff that carries SPA 99 (a tree illusion) is not tagged and is not a root clicky. The catalog has no
+  dispel (SPA 27), so the eight clicky spells that carry it are listed by id in the agent
+  (`_CLICKY_DISPEL_SPELLS`, from `eqemu_spells` joined to `eqemu_items.clickeffect`, 2026-10-07). Adding a dispel
+  kind to the bot's `_ccKinds` would remove that list, but `cc` also feeds the suggested triggers, so it is its own
+  change on `main`.
+- **Names.** Bright instead of grey, their own size slider (they rode the Resists one), a name shortened to the part
+  that tells it apart ("Ring of Shadows" is "Shadows", not "Ring…"), and what does not fit is counted ("+3"). A
+  text path draws nothing past its arc's end, so an overfull line used to lose its first and last items.
+- **Older agent, newer HUD (and the reverse).** `clickies` is still the first eight; `clickies_all` rides along only
+  past eight. An old HUD draws what it always did, in the new order.
+- **No dashboard twin.** The HUD builder lives only in `me.html`, so the tray/dashboard parity rule adds nothing.
+- **Open.** One line of four may be too few for someone with many clickies; a second row, or a bigger share of the
+  ring, is a layout pick for the guild lead.
