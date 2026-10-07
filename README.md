@@ -23,7 +23,7 @@
 
 One raid, every viewpoint. Each raider's **Mimic** reads their own EverQuest log on their own PC, drops private chat before anything is sent, and uploads the fight. The **bot** merges every upload into one parse and keeps the boss timers on Discord boards it edits in place. The **website** turns all of it into the guild's memory. Overlays over the game show what a raider needs mid-pull: who has aggro, what to call out, when the next ability lands.
 
-Every clip below is the real software running against a synthetic log in local mode. Every character name is invented.
+Every clip below is the real software running against a synthetic log in local mode: one pull of **Vyzh`dra the Cursed** in Ssraeshza Temple, a raid mob that casts area spells and leaves a debuff to cure, with the spell text from the server's own data. Every raider's name is invented.
 
 ## What it looks like
 
@@ -33,11 +33,11 @@ Every clip below is the real software running against a synthetic log in local m
 
 Your row stays highlighted wherever you rank. Pets fold under their owners. History keeps the last hundred fights; Trend graphs your own DPS tonight and this week. The **Tank** tab turns it around:
 
-<img src="docs/media/readme/tank-tab.gif" width="520" alt="The meter's Tank tab: damage taken, hits, damage taken per second, for the tank.">
+<img src="docs/media/readme/tank-tab.gif" width="520" alt="The meter's Tank tab: damage taken, hits and damage taken per second for the tank, then the area spell's hit on every melee around the mob.">
 
 ### Triggers: callouts and countdowns, spoken and shown
 
-<img src="docs/media/readme/triggers.gif" width="520" alt="The trigger overlay: a boss cast fires a callout, a countdown bar runs to the next one, an enrage warning glows as it nears zero.">
+<img src="docs/media/readme/triggers.gif" width="520" alt="The trigger overlay: the mob's cast fires a callout, the debuff landing on you starts a cure timer, a countdown runs to the next area spell, an enrage warning glows as it nears zero.">
 
 A log line fires a callout, speaks it, and starts a countdown. Guild triggers are edited by an officer on the website and reach every raider's Mimic within about two minutes. The **« Earlier / Good! / Too early** buttons send timing back to whoever wrote the trigger.
 

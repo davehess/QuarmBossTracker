@@ -19,7 +19,7 @@ Source: `CLAUDE.md` (the component table); `docs/diagrams/platform.architecture.
 
 ## One log line, end to end
 
-1. EverQuest appends `[Tue Oct 07 21:05:01 2026] Lord Nagafen hits Dorbane for 412 points of damage.` to `eqlog_<Name>_pq.proj.txt`.
+1. EverQuest appends ``[Wed Oct 07 21:05:01 2026] Vyzh`dra the Cursed hits Dorbane for 412 points of damage.`` to `eqlog_<Name>_pq.proj.txt`.
 2. The agent tails the file. A byte-level filter drops the lines that must never leave the PC (officer chat, tells, group, custom channels) before anything is parsed.
 3. The parser turns the line into an event: who, whom, how much, what kind. Events accumulate into a fight keyed by the mob.
 4. Triggers run against the raw line: a personal trigger from `personal_triggers.json`, or a guild trigger fetched from the bot. A match fires a callout, speech and a timer through the trigger overlay.

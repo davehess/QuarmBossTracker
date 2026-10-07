@@ -7730,6 +7730,13 @@ than the piecemeal built docs that we have now."*
     assembler) stayed in the session scratchpad; it is a few hundred lines and can be re-made.
   - Overlays that need Zeal (Tank overlay, Command Center, HUD, Extended Target, charm) could not be filmed from a
     log alone and are not in the README.
+  - **The filmed fight is Vyzh`dra the Cursed in Ssraeshza Temple** (the guild lead, 2026-10-07: *"can you use the
+    emperor ssra fight as the example instead? or one of the ssra cursed mobs that debuffs and does an AOE?"*). The
+    cursed mob was picked over the Emperor because the catalog gives the Emperor only a self-buff and melee
+    abilities, so his fight would show nothing beyond hits; Vyzh`dra carries two point-blank area spells with real
+    log text (`eqemu_spells` 2814 Caustic Mist, a debuff with a fade line, and 2813 Mass Insanity), which is what
+    the trigger, Tank tab and threat clips exist to show. The loot line is its 100% drop. The first cut (same
+    morning) had used a Classic dragon.
 - **The handbook, `docs/guide/`, chapters 00–11.** An inventory of all 140 files under `docs/` found the same
   instructions in up to six places and sixteen contradictions between docs and code (boss and command counts, the
   Planes of Power lock, the shared agent token, "free tier", code signing, the licence in one README, the privacy
