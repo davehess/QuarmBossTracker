@@ -21,6 +21,14 @@ tr:hover td { background:#1f242c }
 .name { color:var(--orange) }
 .dim { color:var(--dim) }
 .dot { color:var(--green) }
+/* Main / alt · Inventory only · Hide completely — three buttons drawn as one segmented control (Me card). */
+.wp-seg { display:inline-flex; border:1px solid var(--border); border-radius:5px; overflow:hidden; vertical-align:middle; }
+.wp-mode { background:none; border:0; border-right:1px solid var(--border); color:var(--dim); font:inherit; font-size:11px; padding:2px 7px; cursor:pointer; white-space:nowrap; }
+.wp-mode:last-child { border-right:0; }
+.wp-mode:hover { color:var(--text); }
+.wp-mode.on { background:#1f6feb33; color:#e6edf3; }
+.wp-mode.hide.on { background:#f8514922; color:var(--red); }
+.wp-mode:focus-visible { outline:2px solid var(--blue); outline-offset:-2px; }
 /* Sidebar navigation (the guild lead, 2026-08-13: "having to scroll in our dashboard is
    somewhat annoying to navigate"). The row was FULL - 8 tabs plus Tour and
    Panels - so every new destination had to wrap or displace something, which is
@@ -1629,6 +1637,77 @@ document.addEventListener('click', function (e) {
   try { refresh(); } catch (err2) { void err2; }   // repaint now instead of waiting for the next poll
 });
 
+// Main / alt · Inventory only · Hide completely (the guild lead, 2026-10-06: "the complete hide or hide from
+// all but inventory should be with mimic during onboarding but the denotation on other side should be
+// carried over"). The setup walkthrough asks it once per character; this is the SAME choice, changeable any
+// time after, over the same engine endpoints (tray/dashboard parity: one path, not two). Rows come from
+// /api/state characterModes: the characters this PC has logs for, INCLUDING any whose log Mimic no longer
+// reads. Those are not in Watched characters, and a character hidden completely has to stay reachable here
+// or it could never be switched back. Under Mimic the click goes through window.mimic.setCharacterMode (the
+// engine asks wolfpack.quest, and Mimic keeps the don't-transmit list, the log gate, in step); a plain
+// browser posts to /api/character-mode, where Hide completely still stops every upload at once but the log
+// itself stays read (that gate is the WOLFPACK_EXCLUDED_CHARS setting).
+var WP_MODES = [['show', 'Main / alt'], ['inventory', 'Inventory only'], ['hidden', 'Hide completely']];
+var _wpModeMsg = null;          // { text, color }: the line under the list. Part of the card's string, so it only repaints when it changes.
+var _wpModeMsgT = null, _wpModeRestartT = null;
+function wpModeNote(r) {
+  if (r.pending) return 'saved on this PC only';
+  if (r.mode === 'hidden' && r.log_read) return 'hidden on wolfpack.quest, log still read here';
+  if (r.mode !== 'hidden' && r.mode !== 'custom' && !r.log_read) return 'log not read on this PC';
+  if (r.mode === 'custom') return 'set differently on wolfpack.quest';
+  return '';
+}
+function wpModesHtml(modes) {
+  var h = '<details ' + wpKeep('me-char-modes') + ' style="margin-top:6px"><summary class="dim" style="cursor:pointer;font-size:11px">'
+    + '👁 How each character shows (' + modes.length + ')</summary>'
+    + '<div class="dim" style="font-size:10px;margin:4px 0"><b>Inventory only</b>: kept for your account inventory, left out of every list and chart. '
+    + '<b>Hide completely</b>: Mimic stops reading that log and the website hides it. Same switches as My Stats on wolfpack.quest.</div>'
+    + '<div style="font-size:12px;line-height:1.9">';
+  modes.forEach(function (r) {
+    var note = wpModeNote(r);
+    h += '<div><span class="name">' + esc(r.name) + '</span> <span class="wp-seg" role="radiogroup" aria-label="Show ' + esc(r.name) + ' as">'
+      + WP_MODES.map(function (m) {
+          return '<button type="button" role="radio" aria-checked="' + (r.mode === m[0] ? 'true' : 'false') + '" class="wp-mode' + (r.mode === m[0] ? ' on' : '') + (m[0] === 'hidden' ? ' hide' : '')
+            + '" data-char="' + esc(r.name) + '" data-mode="' + m[0] + '">' + m[1] + '</button>';
+        }).join('')
+      + '</span>' + (note ? ' <span class="dim" style="font-size:10px">' + esc(note) + '</span>' : '') + '</div>';
+  });
+  h += '</div>';
+  if (_wpModeMsg) h += '<div style="font-size:11px;margin-top:4px;color:' + _wpModeMsg.color + '">' + esc(_wpModeMsg.text) + '</div>';
+  return h + '</details>';
+}
+function wpModeSay(text, color) {
+  _wpModeMsg = { text: text, color: color };
+  clearTimeout(_wpModeMsgT);
+  _wpModeMsgT = setTimeout(function () { _wpModeMsg = null; try { refresh(); } catch (e) { void e; } }, 12000);
+}
+function wpSetCharacterMode(name, mode) {
+  var viaMimic = !!(window.mimic && window.mimic.setCharacterMode);
+  var label = (WP_MODES.filter(function (m) { return m[0] === mode; })[0] || [0, mode])[1];
+  var call = viaMimic
+    ? window.mimic.setCharacterMode(name, mode)
+    : fetch('/api/character-mode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ character: name, mode: mode }) }).then(function (r) { return r.json(); });
+  Promise.resolve(call).then(function (r) {
+    if (!r || r.ok === false) { wpModeSay('Could not save that for ' + name + '. Try again.', 'var(--red)'); return; }
+    var msg = name + ': ' + label + (r.note ? '. ' + r.note : r.synced ? '. Synced with wolfpack.quest.' : '.');
+    if (r.restart_needed && viaMimic) {
+      msg += ' Mimic restarts its engine in a moment to ' + (mode === 'hidden' ? 'stop reading' : 'start reading') + ' that log.';
+      clearTimeout(_wpModeRestartT);
+      _wpModeRestartT = setTimeout(function () { try { window.mimic.relaunchAgent(); } catch (e) { void e; } }, 2500);
+    } else if (!viaMimic && mode === 'hidden') {
+      msg += ' Uploads stop now; to stop this PC reading the log, list it in WOLFPACK_EXCLUDED_CHARS.';
+    }
+    wpModeSay(msg, r.synced ? 'var(--green)' : 'var(--orange)');
+    try { refresh(); } catch (e2) { void e2; }
+  }).catch(function () { wpModeSay('Could not reach the engine. Try again.', 'var(--red)'); });
+}
+document.addEventListener('click', function (e) {
+  var b = e.target && e.target.closest ? e.target.closest('.wp-mode') : null;
+  if (!b) return;
+  e.preventDefault();
+  wpSetCharacterMode(b.dataset.char, b.dataset.mode);
+});
+
 // 🐺 Me — the member's own snapshot at the top of the Dashboard (in place of the
 // old logsync region). Pulls ENTIRELY from local state — the own Zeal client
 // (character + zone + buffs), watched logs (characters), local tells, and recent
@@ -1709,6 +1788,10 @@ function renderMeCard(s) {
     }
     if (part.tucked.length > 0) h += '<div class="dim" style="font-size:11px;margin-top:3px">' + wpLowToggleHtml(part.tucked.length) + '</div>';
   }
+  // Main / alt · Inventory only · Hide completely, per character (see wpModesHtml). Listed even when no
+  // log is being watched: a character this PC no longer reads is exactly the one that needs the way back.
+  const charModes = Array.isArray(s.characterModes) ? s.characterModes : [];
+  if (charModes.length > 0) h += wpModesHtml(charModes);
   h += '</div>';
 
   // Recent tells (local only — they never leave the machine).
@@ -3726,11 +3809,23 @@ function renderNetMeter(s) {
 // and ONLY when it is opened, a chip changes, or ↻ is pressed: there is no poll and no render-loop entry. The
 // section is painted from _wpMp alone, so its HTML is byte-stable and holds no "5m ago" timestamp. In local
 // mode (no token) the agent answers signed_out without a call and the tab says to sign in.
+// Two sources (the guild lead, 2026-10-06: "toggle between their data from logs and the guild's data"): Guild
+// is the above; My logs asks the same route with source=local and gets what THIS PC's Mimic recorded from the
+// player's own log, in the same shape, with no call and no sign-in. And a way to explore either one ("chop it
+// up by days, zones, mobs, search bar"): a search box with the mobs as suggestions, a Zone picker, and By day,
+// which groups the list under each raid night. The chart follows the filters because the answer does.
 // The chart is a fixed-viewBox SVG string like _wpNetChart: boss fights #4493e8, other fights #4a5568, the
 // raid-night average #a371f7. #f85149 is reserved for death/critical and is never used here.
 var WP_MP_WINDOWS = [['1d', '1 day'], ['7d', '1 week'], ['30d', '30 days'], ['90d', '90 days'], ['exp', 'This expansion']];
 var WP_MP_SCOPES = [['bosses', 'Bosses'], ['all', 'Everything']];
-var _wpMp = { w: '7d', scope: 'bosses', char: '', chars: [], showAll: false, data: null, state: 'idle', seq: 0, asOf: 0 };
+// src: 'guild' | 'local'. zone: the picked zone's id as text (the bot's integer id for Guild, the zone's name
+// for My logs: the id an answer gives each zone). q: what the search box asked for; qBox is what is typed in it
+// right now (the debounce below is what turns one into the other). zones/mobs are the last answer's pickers, and
+// facets says it had any: an older bot sends none, and the tab then leaves the pickers out.
+var _wpMp = { w: '7d', scope: 'bosses', char: '', src: 'guild', zone: '', q: '', qBox: '', day: false, chars: [], zones: [], mobs: [], facets: false, showAll: false, data: null, state: 'idle', seq: 0, asOf: 0 };
+// What a search may hold, as the agent's whitelist has it: letters, digits, spaces and ' ` - _, at most 40.
+function wpMpCleanQ(v) { return String(v || '').replace(/[^A-Za-z0-9 '`_-]/g, '').replace(/ +/g, ' ').trim().slice(0, 40); }
+function _wpMpZoneOk(src, z) { z = String(z || ''); return src === 'local' ? z.length > 0 && z.length <= 64 : /^[1-9][0-9]{0,2}$/.test(z); }
 // The last choice, per machine (the dashboard's convention for these is localStorage, like wp:bufferClass).
 try {
   var _wpMpSaved = JSON.parse(localStorage.getItem('wp:myParses') || 'null');
@@ -3738,6 +3833,10 @@ try {
     if (WP_MP_WINDOWS.some(function (x) { return x[0] === _wpMpSaved.w; })) _wpMp.w = _wpMpSaved.w;
     if (_wpMpSaved.scope === 'all') _wpMp.scope = 'all';
     if (/^[A-Za-z]{1,24}$/.test(String(_wpMpSaved.char || ''))) _wpMp.char = String(_wpMpSaved.char);
+    if (_wpMpSaved.src === 'local') _wpMp.src = 'local';
+    if (_wpMpZoneOk(_wpMp.src, _wpMpSaved.zone)) _wpMp.zone = String(_wpMpSaved.zone);
+    _wpMp.q = _wpMp.qBox = wpMpCleanQ(_wpMpSaved.q);
+    _wpMp.day = _wpMpSaved.day === true;
   }
 } catch (e) { void e; }
 var _WP_MP_DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -3766,6 +3865,31 @@ function _wpMpNightMs(night) {
     var wall = Date.UTC(y, mo, da, 22, 0, 0);         // 22:00 read as if it were UTC
     return wall - off(wall - off(wall));
   } catch (e) { return new Date(y, mo, da, 22, 0, 0).getTime(); }
+}
+// The raid night a fight belongs to ("YYYY-MM-DD"), as the bot's `nights` reckons it: the Eastern date, with the
+// night running to 6 am (Eastern wall clock minus six hours). Falls back to the viewer's own clock minus six
+// hours if Intl cannot do zones. The Day headers group fights by this, and look their numbers up in `nights` by it.
+var _wpMpEtFmt = null;
+function _wpMpNightKey(ms) {
+  if (!isFinite(ms)) return '';
+  var d;
+  try {
+    if (!_wpMpEtFmt) _wpMpEtFmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' });
+    var o = {};
+    _wpMpEtFmt.formatToParts(new Date(ms)).forEach(function (x) { o[x.type] = +x.value; });
+    d = new Date(Date.UTC(o.year, o.month - 1, o.day, o.hour % 24, o.minute, o.second) - 6 * 3600000);
+  } catch (e) {
+    var l = new Date(ms - 6 * 3600000);
+    d = new Date(Date.UTC(l.getFullYear(), l.getMonth(), l.getDate()));
+  }
+  var p2 = function (n) { return (n < 10 ? '0' : '') + n; };
+  return d.getUTCFullYear() + '-' + p2(d.getUTCMonth() + 1) + '-' + p2(d.getUTCDate());
+}
+// "Sun Oct 4" for a raid night's own date, whatever the viewer's clock says.
+function _wpMpNightLabel(night) {
+  var p = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(night || ''));
+  if (!p) return '—';
+  return _WP_MP_DOW[new Date(Date.UTC(+p[1], +p[2] - 1, +p[3])).getUTCDay()] + ' ' + _WP_MP_MON[+p[2] - 1] + ' ' + (+p[3]);
 }
 // The top of the DPS axis: the first round figure at or above the highest point.
 function _wpMpNice(top) {
@@ -3867,21 +3991,44 @@ function wpMpChart(d, asOf) {
   }
   return s + '</svg>';
 }
-// The newest twelve fights, newest first. The Character column only exists when more than one character is in the data.
-function wpMpTable(d) {
-  var all = (d && d.fights) || [], seen = {}, nChars = 0, i;
-  for (i = 0; i < all.length; i++) { var c = String(all[i].char || ''); if (c && !seen[c]) { seen[c] = 1; nChars++; } }
-  var rows = all.slice(-12).reverse(), th = 'style="text-align:right"', td = 'style="text-align:right;font-variant-numeric:tabular-nums"';
-  var h = '<table style="font-size:12px;margin:10px 0 4px"><thead><tr><th>When</th><th>Fight</th>' + (nChars > 1 ? '<th>Character</th>' : '')
-    + '<th ' + th + '>DPS</th><th ' + th + '>vs usual</th><th ' + th + '>Rank</th></tr></thead><tbody>';
+// The newest twelve fights, newest first; with `byDay`, every fight in the answer, newest first, under a header
+// for each raid night ("Sun Oct 4 · 12 fights · avg 142 · best 210", the numbers from `nights`, which cover the
+// whole window, so a night cut by the 400-fight limit still says how many it had). The Character column only
+// exists when more than one character is in the data, the Zone column when any fight has a zone (an older bot
+// sends none), and the Rank column not for My logs (a log has no rank among the guild).
+function wpMpTable(d, byDay) {
+  var all = (d && d.fights) || [], seen = {}, nChars = 0, anyZone = false, i;
+  for (i = 0; i < all.length; i++) {
+    var c = String(all[i].char || '');
+    if (c && !seen[c]) { seen[c] = 1; nChars++; }
+    if (all[i].zone) anyZone = true;
+  }
+  var noRank = !!(d && d.source === 'local');
+  var rows = byDay ? all.slice().reverse() : all.slice(-12).reverse(), th = 'style="text-align:right"', td = 'style="text-align:right;font-variant-numeric:tabular-nums"';
+  var cols = 4 + (nChars > 1 ? 1 : 0) + (anyZone ? 1 : 0) + (noRank ? 0 : 1);
+  var nmap = {};
+  ((d && d.nights) || []).forEach(function (n) { if (n && n.night) nmap[n.night] = n; });
+  var h = '<table style="font-size:12px;margin:10px 0 4px"><thead><tr><th>When</th><th>Fight</th>' + (anyZone ? '<th>Zone</th>' : '') + (nChars > 1 ? '<th>Character</th>' : '')
+    + '<th ' + th + '>DPS</th><th ' + th + '>vs usual</th>' + (noRank ? '' : '<th ' + th + '>Rank</th>') + '</tr></thead><tbody>';
+  var lastNight = null;
   for (i = 0; i < rows.length; i++) {
-    var f = rows[i], rank = Number(f.rank);
-    h += '<tr><td class="dim" style="white-space:nowrap">' + _wpMpWhen(Date.parse(f.t), true) + '</td>'
+    var f = rows[i], rank = Number(f.rank), ms = Date.parse(f.t);
+    if (byDay) {
+      var night = _wpMpNightKey(ms);
+      if (night !== lastNight) {
+        lastNight = night;
+        var nt = nmap[night], nf = nt ? Number(nt.fights) || 0 : 0;
+        h += '<tr><td colspan="' + cols + '" style="padding-top:10px;font-weight:600;border-bottom:1px solid var(--border)">' + esc(_wpMpNightLabel(night))
+          +  (nt ? ' · ' + nf + (nf === 1 ? ' fight' : ' fights') + ' · avg ' + Math.round(Number(nt.avg_dps) || 0) + ' · best ' + Math.round(Number(nt.best_dps) || 0) : '') + '</td></tr>';
+      }
+    }
+    h += '<tr><td class="dim" style="white-space:nowrap">' + (byDay ? (isFinite(ms) ? _wpMpClock(new Date(ms)) : '—') : _wpMpWhen(ms, true)) + '</td>'
       +  '<td><span style="color:' + (f.boss ? '#4493e8' : '#4a5568') + '">●</span> ' + _wpMpFightLink(f) + '</td>'
+      +  (anyZone ? '<td class="dim">' + (f.zone ? esc(f.zone) : '—') + '</td>' : '')
       +  (nChars > 1 ? '<td>' + esc(f.char) + '</td>' : '')
       +  '<td ' + td + '>' + Math.round(Number(f.dps) || 0) + '</td>'
       +  '<td ' + td + '>' + _wpMpVsUsual(f.dps, f.usual) + '</td>'
-      +  '<td ' + td + '>' + (f.rank != null && isFinite(rank) ? '#' + Math.round(rank) : '<span class="dim">—</span>') + '</td></tr>';
+      +  (noRank ? '' : '<td ' + td + '>' + (f.rank != null && isFinite(rank) ? '#' + Math.round(rank) : '<span class="dim">—</span>') + '</td>') + '</tr>';
   }
   return h + '</tbody></table>';
 }
@@ -3913,12 +4060,17 @@ function wpMpSplitChars(chars, selected) {
 var WP_MP_HIDDEN_TIP = 'Hidden on wolfpack.quest/me (Hide from lists)';
 // The whole tab, from _wpMp alone.
 function wpMpHtml() {
-  var m = _wpMp, i, split = wpMpSplitChars(m.chars, m.char);
+  var m = _wpMp, i, split = wpMpSplitChars(m.chars, m.char), local = m.src === 'local';
   var chip = function (k, v, label, on, title, dim) {
     return '<button type="button" class="wp-btn' + (on ? ' pri' : '') + '" data-k="' + k + '" data-v="' + esc(v) + '" onclick="wpMpSet(this)"' + (title ? ' title="' + esc(title) + '"' : '') + (dim ? ' style="opacity:.55"' : '') + '>' + esc(label) + '</button>';
   };
   var row = function (label, inner) { return '<span style="display:inline-flex;flex-wrap:wrap;gap:4px;align-items:center"><span class="wp-lbl" style="margin-right:4px">' + label + '</span>' + inner + '</span>'; };
-  var h = '<div class="grid"><div class="card wide"><h2>📈 My parses <span class="dim" style="font-size:11px;font-weight:normal;text-transform:none;letter-spacing:0">· your own fights, from the guild&rsquo;s record</span></h2>';
+  var h = '<div class="grid"><div class="card wide"><h2>📈 My parses <span class="dim" style="font-size:11px;font-weight:normal;text-transform:none;letter-spacing:0">· your own fights, from '
+    + (local ? 'this PC&rsquo;s logs' : 'the guild&rsquo;s record') + '</span></h2>';
+  // Where the numbers come from: the guild's merged parses, or what this PC's own log recorded.
+  h += '<div style="margin:0 0 8px">' + row('Data',
+    chip('src', 'guild', 'Guild', !local, "The guild's merged parses of your fights")
+    + chip('src', 'local', 'My logs', local, "What this PC's Mimic recorded from your own log. Nothing here is uploaded or merged.")) + '</div>';
   var wins = '', scopes = '', chars = '';
   for (i = 0; i < WP_MP_WINDOWS.length; i++) wins += chip('w', WP_MP_WINDOWS[i][0], WP_MP_WINDOWS[i][1], m.w === WP_MP_WINDOWS[i][0]);
   for (i = 0; i < WP_MP_SCOPES.length; i++) scopes += chip('scope', WP_MP_SCOPES[i][0], WP_MP_SCOPES[i][1], m.scope === WP_MP_SCOPES[i][0]);
@@ -3932,7 +4084,7 @@ function wpMpHtml() {
     chars = chip('char', '', 'All', !m.char);
     for (i = 0; i < split.shown.length; i++) chars += cchip(split.shown[i]);
     if (split.folded.length) {
-      chars += '<button type="button" class="wp-btn ghost" onclick="wpMpMore()" title="Characters with no fights in 30 days, and ones hidden on wolfpack.quest/me">'
+      chars += '<button type="button" class="wp-btn ghost" onclick="wpMpMore()" title="Characters with no fights in 30 days' + (local ? '' : ', and ones hidden on wolfpack.quest/me') + '">'
         + (m.showAll ? 'fewer' : '+' + split.folded.length + ' more') + '</button>';
       if (m.showAll) for (i = 0; i < split.folded.length; i++) chars += cchip(split.folded[i]);
     }
@@ -3941,22 +4093,42 @@ function wpMpHtml() {
   h += '<div style="display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;margin:0 0 10px">'
     +  row('Window', wins) + row('Show', scopes) + (chars ? row('Character', chars) : '')
     +  '<span style="margin-left:auto;display:inline-flex;gap:6px;align-items:center">'
-    +  '<button type="button" class="wp-btn ghost" onclick="wpMpRefresh()" title="Ask the guild server again">↻</button>'
-    +  '<a class="wp-btn ghost" href="' + esc(site) + '" target="_blank" rel="noreferrer" onclick="return wpMpLink(this)" style="text-decoration:none;color:var(--blue)">Open on wolfpack.quest ↗</a>'
+    +  '<button type="button" class="wp-btn ghost" onclick="wpMpRefresh()" title="' + (local ? 'Read this PC&rsquo;s log again' : 'Ask the guild server again') + '">↻</button>'
+    +  (local ? '' : '<a class="wp-btn ghost" href="' + esc(site) + '" target="_blank" rel="noreferrer" onclick="return wpMpLink(this)" style="text-decoration:none;color:var(--blue)">Open on wolfpack.quest ↗</a>')
     +  '</span></div>';
   var dimNote = function (t) { return '<div class="dim" style="font-size:12px;line-height:1.5;margin:6px 0">' + t + '</div>'; };
   if (split.folded.length) {
-    h += dimNote('Characters with no fights in 30 days, and ones you hid on '
+    h += dimNote(local ? 'Characters with no fights in 30 days are tucked away.' : 'Characters with no fights in 30 days, and ones you hid on '
       + '<a href="https://wolfpack.quest/me" target="_blank" rel="noreferrer" onclick="return wpMpLink(this)" style="color:var(--blue);text-decoration:none">wolfpack.quest/me</a>, are tucked away.');
   }
-  if (m.state === 'signed_out') return h + dimNote('Sign in to Mimic to see your parses.') + '</div></div>';
-  if (m.state === 'unavailable') return h + dimNote("Couldn't reach the guild server. Try again in a minute.") + '</div></div>';
+  // Search, Zone, By day, Clear. The pickers come from the last answer (the zones and mobs in the window and
+  // scope, before the search and zone narrow them) and wait for one; By day only regroups what is drawn.
+  var fl = '';
+  if (m.facets) {
+    var inStyle = 'background:#0e1116;color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-family:inherit;font-size:11px';
+    var zs = (m.zones || []).filter(function (z) { return z && z.id != null && z.name; }).sort(function (a, b) {
+      return (Number(b.fights) || 0) - (Number(a.fights) || 0) || (String(a.name) < String(b.name) ? -1 : String(a.name) > String(b.name) ? 1 : 0);
+    });
+    var zopts = '<option value="">All zones</option>', mopts = '';
+    for (i = 0; i < zs.length; i++) zopts += '<option value="' + esc(zs[i].id) + '"' + (String(zs[i].id) === m.zone ? ' selected' : '') + '>' + esc(zs[i].name) + ' (' + (Number(zs[i].fights) || 0) + ')</option>';
+    (m.mobs || []).slice(0, 200).forEach(function (x) { if (x && x.name) mopts += '<option value="' + esc(x.name) + '">'; });
+    fl += row('Search', '<input type="search" id="wpMpQ" list="wpMpMobs" maxlength="40" autocomplete="off" placeholder="mob name" value="' + esc(m.qBox) + '" oninput="wpMpTyping(this)" style="' + inStyle + ';width:170px">'
+        + '<datalist id="wpMpMobs">' + mopts + '</datalist>')
+      +  row('Zone', '<select id="wpMpZoneSel" onchange="wpMpZone(this)" style="' + inStyle + ';max-width:220px">' + zopts + '</select>');
+  }
+  fl += chip('day', m.day ? '0' : '1', 'By day', m.day, 'Group the list under each raid night');
+  if (m.q || m.zone) fl += '<button type="button" class="wp-btn ghost" onclick="wpMpClear()" title="Drop the search and the zone">Clear</button>';
+  h += '<div style="display:flex;flex-wrap:wrap;gap:6px 16px;align-items:center;margin:0 0 10px">' + fl + '</div>';
+  if (m.state === 'signed_out') return h + dimNote('Sign in to Mimic to see your parses. My logs works without signing in.') + '</div></div>';
+  if (m.state === 'unavailable') return h + dimNote(local ? "Couldn't read this PC's fight log. Try again in a minute." : "Couldn't reach the guild server. Try again in a minute.") + '</div></div>';
   if (m.state !== 'ok' || !m.data) return h + dimNote('Loading…') + '</div></div>';
   var d = m.data, fights = d.fights || [];
   if (!fights.length) {
-    h += dimNote(m.scope === 'bosses'
-      ? "No boss fights in this window. Most Planes of Power bosses aren't on the boss list yet, so try Everything."
-      : 'No parses in this window yet.');
+    h += dimNote(m.q || m.zone ? 'Nothing matches those filters in this window. Clear them to see everything.'
+      : m.scope === 'bosses'
+        ? (local ? "No boss fights in your logs for this window. Mimic only knows a fight was a boss when it already holds that mob's details, so try Everything."
+                 : "No boss fights in this window. Most Planes of Power bosses aren't on the boss list yet, so try Everything.")
+        : (local ? 'No fights recorded from your logs in this window yet. Mimic adds each fight as it ends.' : 'No parses in this window yet.'));
   } else {
     var total = d.total != null ? d.total : fights.length, nn = (d.nights || []).length;
     h += '<div style="font-size:12px;margin:0 0 4px"><b>' + esc((d.window && d.window.label) || '') + '</b> <span class="dim">· ' + total + (total === 1 ? ' fight' : ' fights')
@@ -3964,14 +4136,25 @@ function wpMpHtml() {
       +  wpMpChart(d, m.asOf)
       +  '<div class="dim" style="font-size:11px;margin-top:2px"><span style="color:#4493e8">●</span> boss fight · <span style="color:#4a5568">●</span> other fight · '
       +  '<span style="color:#a371f7">━</span> raid-night average · shaded = a raid night</div>'
-      +  wpMpTable(d);
+      +  wpMpTable(d, m.day);
     if (d.truncated) h += dimNote('Showing the newest ' + fights.length + ' of ' + total + ' fights.');
   }
-  return h + dimNote('Numbers start 14 July 2026, when parse merging was fixed.') + '</div></div>';
+  var since = local ? Date.parse(d.since || '') : NaN;
+  return h + dimNote(local ? "From this PC's logs" + (isFinite(since) ? ' since ' + _wpMpDay(since) : '') + '.' : 'Numbers start 14 July 2026, when parse merging was fixed.') + '</div></div>';
 }
-function wpMpRepaint() { setSectionHTML('myparses', wpMpHtml()); }
+// A repaint wipes the search box with the rest of the section, so what is typed in it is read first and the focus
+// and caret are put back (the Buff blocks editor's rule): a keystroke typed while an answer is landing is not lost.
+function wpMpRepaint() {
+  var ae = typeof document !== 'undefined' ? document.activeElement : null, typing = !!(ae && ae.id === 'wpMpQ'), pos = 0;
+  if (typing) { _wpMp.qBox = String(ae.value || ''); pos = ae.selectionStart || 0; }
+  setSectionHTML('myparses', wpMpHtml());
+  if (typing) {
+    var again = document.getElementById('wpMpQ');
+    if (again && again !== document.activeElement) { again.focus(); try { again.setSelectionRange(pos, pos); } catch (e) { void e; } }
+  }
+}
 function wpMpSave() {
-  try { localStorage.setItem('wp:myParses', JSON.stringify({ w: _wpMp.w, scope: _wpMp.scope, char: _wpMp.char })); } catch (e) { void e; }
+  try { localStorage.setItem('wp:myParses', JSON.stringify({ w: _wpMp.w, scope: _wpMp.scope, char: _wpMp.char, src: _wpMp.src, zone: _wpMp.zone, q: _wpMp.q, day: _wpMp.day })); } catch (e) { void e; }
 }
 // Ask the agent. `fresh` is the ↻ button: it skips the agent's five-minute copy (the agent still holds a
 // floor of a few seconds between asks). A newer ask makes an older answer irrelevant, whenever it lands.
@@ -3980,7 +4163,8 @@ function wpMpFetch(fresh) {
   m.state = 'loading';
   wpMpRepaint();
   var url = '/api/my-parses?w=' + encodeURIComponent(m.w) + '&scope=' + encodeURIComponent(m.scope)
-    + (m.char ? '&char=' + encodeURIComponent(m.char) : '') + (fresh ? '&fresh=1' : '');
+    + (m.char ? '&char=' + encodeURIComponent(m.char) : '') + (m.zone ? '&zone=' + encodeURIComponent(m.zone) : '') + (m.q ? '&q=' + encodeURIComponent(m.q) : '')
+    + (m.src === 'local' ? '&source=local' : '') + (fresh ? '&fresh=1' : '');
   fetch(url, { cache: 'no-store' })
     .then(function (r) { if (!r.ok) throw new Error('http ' + r.status); return r.json(); })
     .then(function (j) {
@@ -3989,10 +4173,21 @@ function wpMpFetch(fresh) {
       if (!j || j.error || !Array.isArray(j.fights)) { m.state = 'unavailable'; m.data = null; return; }
       m.data = j; m.state = 'ok'; m.asOf = Date.now();
       m.chars = Array.isArray(j.characters) ? j.characters.filter(function (c) { return c && c.name; }) : [];
+      m.zones = Array.isArray(j.zones) ? j.zones : [];
+      m.mobs = Array.isArray(j.mobs) ? j.mobs : [];
+      m.facets = Array.isArray(j.zones) || Array.isArray(j.mobs);
+      var again = false;
       // A remembered character the guild no longer lists for this raider: back to All, once.
-      if (m.char && !m.chars.some(function (c) { return String(c.name).toLowerCase() === m.char.toLowerCase(); })) {
-        m.char = ''; wpMpSave(); wpMpFetch(false);
+      if (m.char && !m.chars.some(function (c) { return String(c.name).toLowerCase() === m.char.toLowerCase(); })) { m.char = ''; again = true; }
+      if (!m.facets) {
+        // An older bot ignored the search and the zone, so what came back is not filtered by them: forget them
+        // rather than show a filter that is not applied (nothing to ask again, the answer is what it is).
+        if (m.zone || m.q || m.qBox) { m.zone = ''; m.q = ''; m.qBox = ''; wpMpSave(); }
+      } else if (m.zone && !m.zones.some(function (z) { return z && String(z.id) === m.zone; })) {
+        // The same for a zone the picker no longer offers (a new window, or the other source): back to All, once.
+        m.zone = ''; again = true;
       }
+      if (again) { wpMpSave(); wpMpFetch(false); }
     })
     .catch(function () { if (seq === m.seq) { m.state = 'unavailable'; m.data = null; } })
     .then(function () { if (seq === m.seq) wpMpRepaint(); });
@@ -4002,7 +4197,47 @@ function wpMpSet(el) {
   if (k === 'w') { if (m.w === v || !WP_MP_WINDOWS.some(function (x) { return x[0] === v; })) return; m.w = v; }
   else if (k === 'scope') { if (m.scope === v || (v !== 'bosses' && v !== 'all')) return; m.scope = v; }
   else if (k === 'char') { if (m.char === v) return; m.char = v; }
+  else if (k === 'src') {
+    if (m.src === v || (v !== 'guild' && v !== 'local')) return;
+    // A zone id means something different on each source, and so do the pickers and the character list.
+    m.src = v; m.zone = ''; m.data = null; m.chars = []; m.zones = []; m.mobs = []; m.facets = false; m.showAll = false;
+  }
+  else if (k === 'day') { m.day = v === '1'; wpMpSave(); wpMpRepaint(); return; }       // only regroups what is drawn: asks nothing
   else return;
+  wpMpSave();
+  wpMpFetch(false);
+}
+// The search box: what is typed is held in qBox at once, and one pause of 300 ms later turns it into the search
+// that is asked for. This is the tab's only timer; each keystroke restarts it.
+var _wpMpTimer = null;
+function wpMpTyping(el) {
+  _wpMp.qBox = el ? String(el.value || '') : '';
+  clearTimeout(_wpMpTimer);
+  _wpMpTimer = setTimeout(wpMpApplyQ, 300);
+}
+function wpMpApplyQ() {
+  var m = _wpMp, q = wpMpCleanQ(m.qBox);
+  _wpMpTimer = null;
+  if (q === m.q) return;
+  m.q = q;
+  wpMpSave();
+  wpMpFetch(false);
+}
+// The Zone picker.
+function wpMpZone(el) {
+  var m = _wpMp, v = el ? String(el.value || '') : '';
+  if (!el || v === m.zone || (v && !_wpMpZoneOk(m.src, v))) return;
+  m.zone = v;
+  wpMpSave();
+  wpMpFetch(false);
+}
+// Clear: drops the search and the zone (By day is a way of reading, not a filter, so it stays).
+function wpMpClear() {
+  var m = _wpMp;
+  if (!m.q && !m.zone && !m.qBox) return;
+  clearTimeout(_wpMpTimer);
+  _wpMpTimer = null;
+  m.q = ''; m.qBox = ''; m.zone = '';
   wpMpSave();
   wpMpFetch(false);
 }
