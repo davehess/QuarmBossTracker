@@ -31362,7 +31362,10 @@ function startWebDashboard(port) {
         // switch (?scope=group) narrows it to your raid group.
         try {
           const wantScope = /[?&]scope=group(?:&|$)/.test(req.url) ? 'group' : 'raid';
-          outPayload = _scopeExtToGroup(outPayload, selfCharacter, selfSt, _lastRaidPipe && _lastRaidPipe.at, Date.now(),
+          // The "active" character can be one Zeal is not streaming (an alt's log touched last); then the group
+          // comes from the character Zeal IS streaming, or the board would read the group as unknown.
+          const scoped = _zealSelfForScope(_zealState, selfCharacter, selfSt, Date.now());
+          outPayload = _scopeExtToGroup(outPayload, scoped.character, scoped.st, _lastRaidPipe && _lastRaidPipe.at, Date.now(),
             wantScope, _lastRaidPipe && _lastRaidPipe.members);
         }
         catch { /* scoping must never break the proxy — fall back to the zone view */ }
@@ -36905,9 +36908,21 @@ function _heartbeatGroupNames(zealState, character, nowMs) {
   if (!zealState || !character) return undefined;
   const want = String(character).toLowerCase();
   const key = Object.keys(zealState).find(k => k.toLowerCase() === want);
-  const st = key ? zealState[key] : null;
-  if (!st || !Array.isArray(st.group_members) || nowMs - (st.updatedAt || 0) > 60_000) return undefined;
-  return st.group_members.map(m => m && m.name ? String(m.name) : null).filter(Boolean).slice(0, 12);
+  const names = _zealGroupNames(key ? zealState[key] : null, nowMs);
+  return names ? names.slice(0, 12) : undefined;
+}
+// Who is in the group window, from one character's Zeal state: the type-6 group list AND the group HP gauges
+// (slots 11..15, the F2..F6 bars). The gauges matter in a raid: Zeal's group list was not fresh there, so a
+// grouped raider read as "group unknown" (the guild lead, 2026-10-08, "not working"). Fresh state only (60 s).
+// Returns names (self excluded), [] when the state says solo, null when it cannot tell.
+function _zealGroupNames(st, nowMs) {
+  if (!st || nowMs - (st.updatedAt || 0) > 60_000) return null;
+  const out = [], seen = new Set();
+  const add = (n) => { const s = n ? String(n).trim() : ''; if (s && !seen.has(s.toLowerCase())) { seen.add(s.toLowerCase()); out.push(s); } };
+  if (Array.isArray(st.group_members)) for (const m of st.group_members) add(m && m.name);
+  if (Array.isArray(st.gauges)) for (const g of st.gauges) if (g && g.text && g.slot >= 11 && g.slot <= 15) add(g.text);
+  if (out.length) return out;
+  return Array.isArray(st.group_members) ? [] : null;
 }
 function _reporterHeartbeatOnce() {
   const opts = _uploadOpts;
@@ -44157,26 +44172,41 @@ function _sampleExtMobHp(payload, nowMs) {
 // raid-roster entry (`raidMembers`, the type-5 list) sharing self's group
 // number. Ungrouped (0) / self absent from the roster → the Zeal group
 // window if fresh, else unchanged (fail open).
+// The group window (_zealGroupNames: type-6 list + F2..F6 gauges) is read first,
+// in or out of a raid; the raid roster only fills in when it says nothing.
+// A chosen Group never fails open (an empty list that says the group is unknown).
+//
+// Which character's Zeal state: the requested one when it is fresh, else the
+// character Zeal is actually streaming (newest state within 60 s).
+function _zealSelfForScope(zealState, character, st, nowMs) {
+  if (st && nowMs - (st.updatedAt || 0) <= 60_000) return { character, st };
+  let best = null;
+  for (const ch of Object.keys(zealState || {})) {
+    const s = zealState[ch];
+    if (!s || nowMs - (s.updatedAt || 0) > 60_000) continue;
+    if (!best || (s.updatedAt || 0) > (best.st.updatedAt || 0)) best = { character: ch, st: s };
+  }
+  return best || { character, st };
+}
 const EXT_RAID_FRESH_MS = 60_000;
 function _scopeExtToGroup(payload, selfCharacter, selfSt, raidSeenAt, nowMs, want = 'raid', raidMembers = null) {
   if (!payload || !Array.isArray(payload.targets)) return payload;
   const inRaid = !!(raidSeenAt && nowMs - raidSeenAt < EXT_RAID_FRESH_MS);
   if (inRaid && want !== 'group') return payload;
-  if (!selfCharacter) return payload;
-  const selfLc = String(selfCharacter).toLowerCase();
-  const zealFresh = !!(selfSt && Array.isArray(selfSt.group_members) && nowMs - (selfSt.updatedAt || 0) <= 60_000);
-  const zealGroup = () => selfSt.group_members.map(m => m && m.name);
-  let names = null;
-  if (inRaid) {
+  const selfLc = selfCharacter ? String(selfCharacter).toLowerCase() : '';
+  // Your group window first (type-6 list + the F2..F6 HP gauges), in a raid too: it is the group you see.
+  const zg = selfLc ? _zealGroupNames(selfSt, nowMs) : null;
+  let names = zg && zg.length ? zg : null;
+  if (!names && selfLc && inRaid) {
     const roster = Array.isArray(raidMembers) ? raidMembers : [];
     const grp = (m) => (m && m.group != null && m.group !== '') ? Number.parseInt(m.group, 10) : NaN;
     const self = roster.find(m => m && m.name && String(m.name).toLowerCase() === selfLc);
     const g = grp(self);
     // Groups are 1..12; 0 is the ungrouped bucket (raid_roster 2026-10-08: group 0 held ~2x any real group),
-    // the same rule as utils/buffGroups.js. Ungrouped falls through to the Zeal group window.
+    // the same rule as utils/buffGroups.js.
     if (Number.isInteger(g) && g >= 1 && g <= 12) names = roster.filter(m => m && m.name && grp(m) === g).map(m => m.name);
-    else if (zealFresh) names = zealGroup();
-  } else if (zealFresh) names = zealGroup();
+  }
+  if (!names && zg) names = zg;   // the state says solo: a group of one
   // A chosen Group never falls back to the whole board: the guild lead picked Group to stop seeing other groups'
   // mobs (2026-10-08, "still showing other groups"), so an unknown group shows an empty list that says why.
   if (!names && want === 'group') {

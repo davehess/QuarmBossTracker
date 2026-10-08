@@ -15,9 +15,11 @@ import { describe, it, expect } from 'vitest';
 import { readSource, sliceBlock, evalBlock, stripJs, AGENT_INDEX } from './_source-slice.js';
 
 const src = readSource(AGENT_INDEX);
-const { _scopeExtToGroup } = evalBlock(
-  sliceBlock(src, 'const EXT_RAID_FRESH_MS = 60_000;', '\n}'),
-  ['_scopeExtToGroup'],
+const { _scopeExtToGroup, _zealSelfForScope } = evalBlock(
+  sliceBlock(src, 'function _zealGroupNames(', '\n}') + '\n'
+    + sliceBlock(src, 'function _zealSelfForScope(', '\n}') + '\n'
+    + sliceBlock(src, 'const EXT_RAID_FRESH_MS = 60_000;', '\n}'),
+  ['_scopeExtToGroup', '_zealSelfForScope'],
 );
 
 const NOW = 1_700_000_000_000;
@@ -116,8 +118,9 @@ describe('in a raid, the Group switch keeps my raid group', () => {
   const run = (want, members = roster(), st = MY_GROUP) =>
     _scopeExtToGroup(payload(), me, st, RAID, NOW, want, members);
 
+  // No group window here (st null), so the raid roster decides.
   it('keeps only rows my raid group is on, and says raid_group', () => {
-    const out = run('group');
+    const out = run('group', roster(), null);
     expect(out.scope).toBe('raid_group');
     expect(names(out)).toEqual(expect.arrayContaining(
       ['a shissar disciple', 'a shissar guard', 'Brackwyn`s warder']));
@@ -128,9 +131,14 @@ describe('in a raid, the Group switch keeps my raid group', () => {
     expect(names(out)).not.toContain('Zarrin');
   });
   it('counts my raid group and recounts off-tanks', () => {
-    const out = run('group');
+    const out = run('group', roster(), null);
     expect(out.online).toBe(2);
     expect(out.off_tank_count).toBe(1);
+  });
+  it('the group window wins over the raid roster (it is the group you see)', () => {
+    const out = run('group');   // window: Brackwyn + Corvale; roster says Corvale is raid group 2
+    expect(out.online).toBe(3);
+    expect(names(out)).toContain('a plagued soriz');
   });
   it('leaves the main-assist fields alone', () => {
     const p = payload(); p.main_assist = { name: 'Rethlan' };
@@ -193,11 +201,42 @@ describe('in a raid, the Group switch keeps my raid group', () => {
 describe('the proxy applies it', () => {
   const clean = stripJs(src);
   it('after every enricher, with the raid window\'s freshness and the raid roster', () => {
+    expect(clean).toContain("const scoped = _zealSelfForScope(_zealState, selfCharacter, selfSt, Date.now());");
     expect(clean).toContain(
-      "outPayload = _scopeExtToGroup(outPayload, selfCharacter, selfSt, _lastRaidPipe && _lastRaidPipe.at, Date.now(),");
+      "outPayload = _scopeExtToGroup(outPayload, scoped.character, scoped.st, _lastRaidPipe && _lastRaidPipe.at, Date.now(),");
     expect(clean).toContain("wantScope, _lastRaidPipe && _lastRaidPipe.members);");
   });
+});
+
+// The guild lead, 2026-10-08, grouped and NOT in a raid, Group on: the board still showed the whole raid.
+// The type-6 group list was not usable, so the group is also read off the F2..F6 HP gauges, and from the
+// character Zeal is actually streaming when the "active" one has no fresh Zeal state.
+describe('finding my group when the group list is missing', () => {
+  const gauges = (names, ageMs = 1000) => ({
+    updatedAt: NOW - ageMs,
+    gauges: [{ slot: 6, text: 'a jord tyv' }, ...names.map((text, i) => ({ slot: 11 + i, text, hp_pct: 100 }))],
+  });
+  it('reads the group off the F2..F6 gauges', () => {
+    const out = _scopeExtToGroup(payload(), me, gauges(['Brackwyn', 'Corvale']), null, NOW, 'group', null);
+    expect(out.scope).toBe('group');
+    expect(out.online).toBe(3);
+    expect(names(out)).not.toContain('a soriz slave');
+    expect(names(out)).toContain('a plagued soriz');
+  });
+  it('the target gauge (slot 6) is not a group member', () => {
+    const out = _scopeExtToGroup(payload(), me, gauges(['Brackwyn']), null, NOW, 'group', null);
+    expect(out.online).toBe(2);
+  });
+  it('a stale "active" character falls over to the one Zeal is streaming', () => {
+    const zs = { Aldenmar: gauges(['Brackwyn'], 1000), Rethlan: { updatedAt: NOW - 600_000 } };
+    expect(_zealSelfForScope(zs, 'Rethlan', zs.Rethlan, NOW)).toEqual({ character: 'Aldenmar', st: zs.Aldenmar });
+    expect(_zealSelfForScope(zs, 'Aldenmar', zs.Aldenmar, NOW).character).toBe('Aldenmar');
+    expect(_zealSelfForScope({}, 'Rethlan', null, NOW)).toEqual({ character: 'Rethlan', st: null });
+  });
+});
+
+describe('the proxy reads the switch', () => {
   it('reads ?scope=group from the url; anything else is raid', () => {
-    expect(clean).toMatch(/\/\[\?&\]scope=group\(\?:&\|\$\)\/\.test\(req\.url\) \? 'group' : 'raid'/);
+    expect(stripJs(src)).toMatch(/\/\[\?&\]scope=group\(\?:&\|\$\)\/\.test\(req\.url\) \? 'group' : 'raid'/);
   });
 });
