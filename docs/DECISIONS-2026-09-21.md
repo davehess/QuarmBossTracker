@@ -7988,3 +7988,11 @@ online · MA …", five mobs targeted from other groups in the same zone) had th
 - **Left alone on purpose:** loot posted, boss timers and lockouts, quakes, control-plane notices, the buff queue.
   A grouped player outside a raid no longer gets the raid's main assist on Extended Target. A single raid's board
   still shows non-members in the zone, as before (§124's "one raid is byte-identical").
+- **Raid | Group switch on Extended Target (the guild lead, 2026-10-08, answering the raid-group question):** *"Seeing
+  the whole raid is often worthwhile, but when grouping it can be annoying to see this mode. Make it a toggle at the
+  top."* Both, switchable, in the overlay's title bar (agent 3.7.104, beta). **Raid** (default) = everything the raid
+  is on; **Group** = in a raid, your RAID group from the Zeal raid list (outside one it changes nothing — you already
+  see only your group). Remembered per install. Raid group 0 is the ungrouped bucket (raid_roster on 2026-10-08:
+  group 0 held about twice any real group), so 1..12 count, the same rule as `utils/buffGroups.js`; an ungrouped
+  raider falls back to their Zeal group window. Agent-side only (`_scopeExtToGroup`, `?scope=group`); the main
+  assist line stays.
