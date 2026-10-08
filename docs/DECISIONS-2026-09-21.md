@@ -8328,3 +8328,32 @@ with PQDI's own list for the Planes of Power.
   is what §136 chose, so that is the guild lead's call, not a bug to fix quietly.
 - **My own slip, same night:** the Plane of Tactics stampede triggers (§200) speak "Stampede" and were silent for the same
   reason. `\bstampede\b` is now in the `mechanic` category (stable 3.7.108, beta 3.7.112).
+
+### 206. Feedback names, the /parses week, and the HUD's clicky list (2026-10-08, web 1.8.125 · bot 3.1.232 main · Mimic HUD on beta)
+**The asks** (the guild lead, in one pass over the latest feedback):
+- *"Don't use email in here for 'Addressed by' instead say my discord name"*. `/admin/feedback` wrote the officer's sign-in
+  email into `acked_by` / `addressed_by`. The server action now reads `nickname`, then `global_name`, from `wolfpack_members`
+  (keyed by the signed-in user), and never touches the email. The one stored email was rewritten to the Discord name.
+- *"All of the submissions for [the alt's character name] should be coming from [the main]"*. A report sent from Mimic carried
+  the character the sender had up as `submitter_name`, so the same person showed under two names (15 rows, FB-52 to FB-70, shared
+  one Discord id). The bot now looks the name up from `wolfpack_members` by Discord id when it knows it, the character as the
+  fallback (`_handleAgentFeedback`); the 15 stored rows were rewritten. Attribution in docs stays by role.
+- *"Have you changed the default to FB-59 to 7 days?"*. **No: it was on beta only** (`b.wolfpack.quest/parses`, STATUS said so).
+  `main` still opened on 60 days. `/parses` now resolves `'7d'` on main too; the picker still offers 30/60/90d, expansion and
+  lifetime, and `?w=60d` is the old window. Only the default moved: the parallel-reads rewrite and the guild-tag swap stay on beta.
+- *"The rod and all unlimited should not show up."* The agent has dropped unlimited clickies from the counters since 3.7.101, but a
+  Mimic running an older agent still sent them (with an ∞) and the HUD drew them. `clickyList` in `apps/mimic/me.html` now drops
+  any item with `unlimited` or no charge count, whatever the agent sends (beta).
+- **Clicky counter report (FB-68 / FB-70), what the logs showed.** FB-70's numbers were right (7 of one potion, 8 of Larrikan's
+  Mask); nothing wrong there. FB-68 is a **zero-cast-time clicky** (the Wooly Spider Silk Net, a 3-charge Root): it prints no
+  "begins to glow" line, which is the only thing the counter listened for, so those uses were never counted. What it does print is
+  an outcome the member can see: "Your target resisted the Root spell." or "<mob> adheres to the ground." The fix (count a
+  resist and a landing for a zero-cast clicky, skipping a spell the member began casting by hand) shipped on beta as agent
+  3.7.113. The guild lead's word on the log: *"the root click is not invisible, it will show a resist or it will show that the
+  mob adheres to the ground"*.
+- **Linux:** *"the linux client looks for the eq client and hides the windows when not on, like the Windows 'Hide Overlays when
+  Everquest is not running'"* (FB-66) and *"Linux client needs to be revisioned when we revision the windows client"*. The poller
+  fix is on the Deck branch, refreshed to Mimic 2.7.11 / agent 3.7.113. **The guild lead picked A (every Windows beta and
+  stable cut): "A".** Built as `linux-follow-windows.yml` (STATUS has the mechanics): merge the Windows commit into the Deck
+  branch, build there, so the Linux-only code never has to ride to Windows or stable. Rejected: B (stable only), because Deck
+  testers would trail a whole beta line.
