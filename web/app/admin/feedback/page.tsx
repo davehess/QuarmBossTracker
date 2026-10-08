@@ -130,8 +130,9 @@ export default async function AdminFeedbackPage({
 
   return (
     <div className="space-y-6">
-      <div className="text-sm">
+      <div className="text-sm flex gap-4 flex-wrap">
         <Link href="/admin" className="text-blue hover:underline">← back to admin</Link>
+        <Link href="/admin/feedback/anonymous" className="text-blue hover:underline">Anonymous feedback (AFB) →</Link>
       </div>
 
       <section className="bg-panel border border-border rounded-lg p-6">
