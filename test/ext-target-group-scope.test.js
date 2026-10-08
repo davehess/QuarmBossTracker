@@ -103,9 +103,87 @@ describe('solo counts as a group of one', () => {
   });
 });
 
+// The Raid | Group switch (the guild lead, 2026-10-08): in a raid, want === 'group'
+// narrows the board to the player's RAID group (type-5 roster, `group` is a string).
+describe('in a raid, the Group switch keeps my raid group', () => {
+  const RAID = NOW - 5_000;
+  // Aldenmar + Brackwyn are raid group "1"; Corvale is "2"; Rethlan + Zarrin "3".
+  const roster = () => [
+    { name: 'Aldenmar', group: '1' }, { name: 'Brackwyn', group: '1' },
+    { name: 'Corvale', group: '2' },
+    { name: 'Rethlan', group: '3' }, { name: 'Zarrin', group: '3' },
+  ];
+  const run = (want, members = roster(), st = MY_GROUP) =>
+    _scopeExtToGroup(payload(), me, st, RAID, NOW, want, members);
+
+  it('keeps only rows my raid group is on, and says raid_group', () => {
+    const out = run('group');
+    expect(out.scope).toBe('raid_group');
+    expect(names(out)).toEqual(expect.arrayContaining(
+      ['a shissar disciple', 'a shissar guard', 'Brackwyn`s warder']));
+    // Corvale is raid group 2 here, so the row only Corvale is on goes too.
+    expect(names(out)).not.toContain('a plagued soriz');
+    expect(names(out)).not.toContain('Corvale');
+    expect(names(out)).not.toContain('a soriz slave');
+    expect(names(out)).not.toContain('Zarrin');
+  });
+  it('counts my raid group and recounts off-tanks', () => {
+    const out = run('group');
+    expect(out.online).toBe(2);
+    expect(out.off_tank_count).toBe(1);
+  });
+  it('leaves the main-assist fields alone', () => {
+    const p = payload(); p.main_assist = { name: 'Rethlan' };
+    const out = _scopeExtToGroup(p, me, MY_GROUP, RAID, NOW, 'group', roster());
+    expect(out.main_assist).toEqual({ name: 'Rethlan' });
+  });
+  it('want raid (or nothing): the very same payload, raid-wide', () => {
+    const p = payload();
+    expect(_scopeExtToGroup(p, me, MY_GROUP, RAID, NOW, 'raid', roster())).toBe(p);
+    expect(_scopeExtToGroup(p, me, MY_GROUP, RAID, NOW)).toBe(p);
+    expect(_scopeExtToGroup(p, me, MY_GROUP, RAID, NOW, 'bogus', roster())).toBe(p);
+  });
+  it('self missing from the roster: the fresh Zeal group window', () => {
+    const out = run('group', [{ name: 'Rethlan', group: '3' }]);
+    expect(out.scope).toBe('raid_group');
+    expect(out.online).toBe(3);   // me + Brackwyn + Corvale, from the Zeal window
+    expect(names(out)).toContain('a plagued soriz');
+  });
+  it('self has no group number: the Zeal window too', () => {
+    const out = run('group', [{ name: 'Aldenmar', group: null }, { name: 'Zarrin', group: '3' }]);
+    expect(out.online).toBe(3);
+  });
+  it('group 0 is ungrouped, not a group: the Zeal window, never everyone else in group 0', () => {
+    const out = run('group', [{ name: 'Aldenmar', group: '0' }, { name: 'Rethlan', group: '0' }, { name: 'Zarrin', group: '0' }]);
+    expect(out.online).toBe(3);   // me + Brackwyn + Corvale (Zeal window), not the two other group-0 raiders
+    expect(names(out)).not.toContain('Zarrin');
+  });
+  it('no usable group anywhere: unchanged (fail open)', () => {
+    const p = payload();
+    expect(_scopeExtToGroup(p, me, null, RAID, NOW, 'group', [])).toBe(p);
+    expect(_scopeExtToGroup(p, me, zeal(['Brackwyn'], 120_000), RAID, NOW, 'group', null)).toBe(p);
+  });
+  it('a stale raid window is not a raid: the plain group filter', () => {
+    const out = _scopeExtToGroup(payload(), me, MY_GROUP, NOW - 120_000, NOW, 'group', roster());
+    expect(out.scope).toBe('group');
+    expect(out.online).toBe(3);
+  });
+  it('outside a raid, want changes nothing', () => {
+    const a = _scopeExtToGroup(payload(), me, MY_GROUP, null, NOW, 'raid', roster());
+    const b = _scopeExtToGroup(payload(), me, MY_GROUP, null, NOW, 'group', roster());
+    expect(b).toEqual(a);
+    expect(a.scope).toBe('group');
+  });
+});
+
 describe('the proxy applies it', () => {
-  it('after every enricher, with the raid window\'s freshness', () => {
-    expect(stripJs(src)).toContain(
-      "outPayload = _scopeExtToGroup(outPayload, selfCharacter, selfSt, _lastRaidPipe && _lastRaidPipe.at, Date.now());");
+  const clean = stripJs(src);
+  it('after every enricher, with the raid window\'s freshness and the raid roster', () => {
+    expect(clean).toContain(
+      "outPayload = _scopeExtToGroup(outPayload, selfCharacter, selfSt, _lastRaidPipe && _lastRaidPipe.at, Date.now(),");
+    expect(clean).toContain("wantScope, _lastRaidPipe && _lastRaidPipe.members);");
+  });
+  it('reads ?scope=group from the url; anything else is raid', () => {
+    expect(clean).toMatch(/\/\[\?&\]scope=group\(\?:&\|\$\)\/\.test\(req\.url\) \? 'group' : 'raid'/);
   });
 });
