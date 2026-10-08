@@ -113,6 +113,15 @@ function _wpPrefs(name, extra) {
   }, extra || {});
 }
 
+// A window reference is only drivable while the window is alive. Electron
+// THROWS ("Object has been destroyed") on any method call against a destroyed
+// BrowserWindow, and in the main process that is an uncaught exception - an
+// error dialog, not a log line (the guild lead, 2026-10-07: hide-all hotkey,
+// applyMobInfoVisibility). `if (!win)` is not this check: a destroyed window is
+// still truthy. Every guard in front of showInactive()/hide()/show()/
+// setBounds()/webContents on an overlay reference uses this instead.
+function _live(win) { return !!(win && !win.isDestroyed()); }
+
 let mainWindow = null;
 let dockWindow = null;      // the Dock — hosts other overlays as iframe panes
 let overlayWindow = null;
@@ -3689,10 +3698,12 @@ async function _rescueOverlays() {
 // minimum to whatever it is set to — so 200 was saved; the next launch built
 // the window with its own minimum and it came back wider. One number now.
 const _OVERLAY_MIN_W = 200;
-function _resolveBounds(boundsKey, sigKey, def) {
+// `legacySigKey` is a name an older build READ the signature under; it is consulted only when
+// `sigKey` holds nothing, so a save made under the old name is not thrown away.
+function _resolveBounds(boundsKey, sigKey, def, legacySigKey) {
   const cfg = loadConfig();
   const saved = cfg[boundsKey];
-  const savedSig = cfg[sigKey];
+  const savedSig = cfg[sigKey] !== undefined ? cfg[sigKey] : (legacySigKey ? cfg[legacySigKey] : undefined);
   if (saved && savedSig === _screenSignature() && _boundsOnScreen(saved)) {
     return { x: saved.x, y: saved.y, width: saved.width, height: saved.height };
   }
@@ -3704,21 +3715,131 @@ function _resolveBounds(boundsKey, sigKey, def) {
 // signature lets the next launch decide whether the saved coords are still
 // valid for the current monitor layout.
 const _boundsSaveTimers = {};
+// The size to SAVE for a window. The right-click menu stretches a short overlay
+// to 420 px so it has room to draw (overlay-ensure-min-height) and stashes the
+// real bounds with the height it gave (grownH, at grownY). That height is a
+// loan, not the user's size: saved, it came back on the next launch and after
+// every ✕ (a beta tester, 2026-10-07: "I've resized these maybe 10 times but
+// each time they end up bigger… they are goliath"; FB-16, a member, 2026-09-27:
+// "it reverts to a bigger size after clicking the X"). While the window still
+// sits at the loaned height, save the height it had before. The y is taken
+// relative to the grow (a grow-upward window moved up with it), so a window the
+// user has moved since keeps its move.
+// "Still at the loaned height" allows a pixel or two: Windows rounds DIP bounds
+// on fractional display scaling, so a height we set can read back off by one.
+function _atLoan(b, stash) {
+  return !!stash && stash.grownH != null && Math.abs(b.height - stash.grownH) <= 2;
+}
+function _settledBounds(b, stash) {
+  if (_atLoan(b, stash)) {
+    return { x: b.x, y: b.y + (stash.y - stash.grownY), width: b.width, height: stash.height };
+  }
+  return { x: b.x, y: b.y, width: b.width, height: b.height };
+}
+function _writeBounds(key, win) {
+  try {
+    const b = _settledBounds(win.getBounds(), win.__wpPreMenuBounds);
+    const cfg = loadConfig();
+    cfg[key] = { x: b.x, y: b.y, width: b.width, height: b.height };
+    cfg[key + 'Sig'] = _screenSignature();
+    // Remembered per screen setup — but not while the screens are settling,
+    // or Windows' own shove off a dead monitor would overwrite the real layout.
+    if (Date.now() >= _displaySettleUntil) _rememberLayout(cfg, cfg[key + 'Sig'], key, b);
+    saveConfig(cfg);
+  } catch {}
+}
 function _persistBounds(key, win) {
   if (!win || win.isDestroyed()) return;
   clearTimeout(_boundsSaveTimers[key]);
-  _boundsSaveTimers[key] = setTimeout(() => {
-    try {
-      const b = win.getBounds();
-      const cfg = loadConfig();
-      cfg[key] = { x: b.x, y: b.y, width: b.width, height: b.height };
-      cfg[key + 'Sig'] = _screenSignature();
-      // Remembered per screen setup — but not while the screens are settling,
-      // or Windows' own shove off a dead monitor would overwrite the real layout.
-      if (Date.now() >= _displaySettleUntil) _rememberLayout(cfg, cfg[key + 'Sig'], key, b);
-      saveConfig(cfg);
-    } catch {}
-  }, 400);
+  _boundsSaveTimers[key] = setTimeout(() => { _boundsSaveTimers[key] = null; _writeBounds(key, win); }, 400);
+}
+
+// ── Height floor (FB-16 — the guild lead's pick: "a dragged height becomes a
+// floor; content only grows above it", 2026-10-07) ───────────────────────────
+// A beta tester: "i want them tiny and they are goliath". A fitting overlay sets
+// its own height to its content in BOTH directions (overlay-auto-height), so a
+// height the user dragged to never stuck: a drag below the content grew back at
+// the next content change, a drag above it shrank back. Now the drag is recorded
+// as a FLOOR and the fit sizes the window to max(content, floor): content grows
+// the window above the floor, and shrinking content returns it to the floor,
+// never below. No floor = exactly the old behaviour.
+// - Only a USER resize writes it. 'will-resize' is Electron's manual-resize event
+//   (Windows/macOS) and setBounds never fires it, so a fit, the right-click menu's
+//   borrowed height (overlay-ensure-min-height), a scale glide and every other
+//   programmatic move leave the floor alone.
+// - Stored UNSCALED, in the page's CSS px: painted height ÷ zoom, minus the setup
+//   bar's chrome while that is up. A scale change or setup mode then re-derives
+//   the window from it instead of baking itself into it.
+// - Stored beside the saved bounds (`<boundsKey>Floor` = { h, sig }) and honoured
+//   only on the screen setup it was set on, the way the bounds are (_resolveBounds).
+// - A width-only drag is not a height choice, and a page that sizes its own window
+//   (the Me overlay's HUD ring, overlay-set-bounds) is not a fitting window: neither
+//   records one. Only a window whose page has asked for a fit (__wpHeightMode)
+//   can have a floor, so a HUD-sized drag cannot come back as a goliath card.
+// - ↕ Fit height to content (overlay-fit-height, in the right-click menu) deletes it.
+// The window asks its page for one fresh fit when a floor is set or cleared
+// ('wp-refit', handled in preload.js): a page that only asks for a height when its
+// HTML changes would otherwise sit at the old size until something on it changed.
+const _SETUP_CHROME_PX = 104;
+function _setupChromeFor(win) {
+  try { return (setupMode || _singleSetupWins.has(win.webContents.id)) ? _SETUP_CHROME_PX : 0; } catch { return 0; }
+}
+// The floor in CSS px for this window, or 0. Cached on the window: a fit asks on
+// every page tick and the config read is a file read.
+function _heightFloorFor(win) {
+  try {
+    if (win.__wpFloor === undefined) {
+      const key = _boundsKeyForWindow(win);
+      win.__wpFloor = (key && loadConfig()[key + 'Floor']) || null;
+    }
+    const f = win.__wpFloor;
+    return (f && f.h > 0 && f.sig === _screenSignature()) ? f.h : 0;
+  } catch { return 0; }
+}
+function _setFloor(win, key, h) {
+  const cfg = loadConfig();
+  if (h > 0) cfg[key + 'Floor'] = { h, sig: _screenSignature() };
+  else delete cfg[key + 'Floor'];
+  saveConfig(cfg);
+  win.__wpFloor = h > 0 ? cfg[key + 'Floor'] : null;
+}
+// A drag ends when 'will-resize' has been quiet for 400 ms (the bounds save's
+// debounce). startH is the height before the gesture's first step: a drag that
+// left the height where it was (an edge pulled sideways) sets no floor.
+function _noteUserResize(win, nb) {
+  try {
+    if (!nb || win.__wpHeightMode !== 'fit' || !_boundsKeyForWindow(win)) return;
+    const g = win.__wpResizeGesture || (win.__wpResizeGesture = { startH: win.getBounds().height, lastH: 0, timer: null });
+    g.lastH = nb.height;
+    clearTimeout(g.timer);
+    g.timer = setTimeout(() => _commitFloor(win, true), 400);
+  } catch { /* a resize event must never throw into Electron */ }
+}
+function _commitFloor(win, askRefit) {
+  const g = win.__wpResizeGesture;
+  if (!g) return;
+  clearTimeout(g.timer);
+  win.__wpResizeGesture = null;
+  try {
+    const key = _boundsKeyForWindow(win);
+    if (!key || win.isDestroyed() || Math.abs(g.lastH - g.startH) <= 2) return;
+    const z = win.webContents.getZoomFactor() || 1;
+    _setFloor(win, key, Math.max(50, Math.round((g.lastH - _setupChromeFor(win)) / z * 100) / 100));
+    if (askRefit) win.webContents.send('wp-refit');
+  } catch { /* best effort */ }
+}
+// ✕ inside the 400 ms: keep the floor the same way _flushBounds keeps the bounds.
+function _flushFloor(win) { if (win && win.__wpResizeGesture) _commitFloor(win, false); }
+
+// Save a window's pending bounds NOW. ✕ destroys the window
+// (_reapDisabledOverlays) and the debounced save above would read getBounds()
+// on a window that is gone, which throws into its own catch: a resize in the
+// last 400 ms before ✕ was dropped and the overlay reopened at the size before.
+function _flushBounds(key, win) {
+  if (!key || !win || win.isDestroyed() || !_boundsSaveTimers[key]) return;
+  clearTimeout(_boundsSaveTimers[key]);
+  _boundsSaveTimers[key] = null;
+  _writeBounds(key, win);
 }
 
 // Apply lock state to an overlay WITHOUT restarting anything. Locked =
@@ -4336,8 +4457,11 @@ function createPanelOverlay(panelKey) {
     return true;
   }
   const boundsKey = 'panelBounds_' + panelKey;
-  const sigKey    = 'panelBoundsSig_' + panelKey;
-  const b = _resolveBounds(boundsKey, sigKey, { x: 100, y: 100, width: 360, height: 220 });
+  // _writeBounds SAVES the signature as `<boundsKey>Sig`, so that is where it is read from. It was
+  // read from 'panelBoundsSig_<panel>', a name nothing ever wrote, so a panel window never found
+  // its saved size or place and opened at the default every time. The old name stays as a fallback.
+  const sigKey    = boundsKey + 'Sig';
+  const b = _resolveBounds(boundsKey, sigKey, { x: 100, y: 100, width: 360, height: 220 }, 'panelBoundsSig_' + panelKey);
   const win = new BrowserWindow({
     // Descriptive title so this process is identifiable in Task Manager /
     // Alt-Tab (e.g. "Wolf Pack Mimic — DEEPS panel overlay") instead of a
@@ -4442,6 +4566,7 @@ function openSettings(section) {
   }
   settingsWindow = new BrowserWindow({
     width: 540, height: 560, title: 'Mimic Settings', backgroundColor: '#0e1116',
+    skipTaskbar: true,   // only the dashboard takes a taskbar slot (FB-61)
     webPreferences: _wpPrefs('Settings'),
   });
   settingsWindow.loadFile('settings.html', sec ? { hash: sec } : undefined);
@@ -4463,6 +4588,7 @@ function openResources() {
   if (resourcesWindow) { resourcesWindow.focus(); return; }
   resourcesWindow = new BrowserWindow({
     width: 520, height: 520, title: 'Mimic — Resource use', backgroundColor: '#0e1116',
+    skipTaskbar: true,
     webPreferences: _wpPrefs('Resource use'),
   });
   resourcesWindow.loadFile('resources.html');
@@ -4486,6 +4612,7 @@ function openUiStudio() {
   uiStudioWindow = new BrowserWindow({
     width: 1200, height: 780, title: 'Wolf Pack miMIC — UI Studio',
     backgroundColor: '#0d1117',
+    skipTaskbar: true,
     webPreferences: _wpPrefs('UI Studio'),
   });
   uiStudioWindow.setMenu(null);
@@ -5501,14 +5628,14 @@ function _eqGateOk(cfg) {
   return _eqRunning;
 }
 function applyOverlayVisibility() {
-  if (!overlayWindow) return;
+  if (!_live(overlayWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   const shouldShow = unlocked || (cfg.showHud && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) overlayWindow.showInactive(); else overlayWindow.hide();
 }
 function applyTriggerVisibility() {
-  if (!triggerWindow) return;
+  if (!_live(triggerWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // The Timers canvas shows the timers and callouts while it is on; this window
@@ -5567,7 +5694,7 @@ function createCanvasWindow() {
   });
 }
 function applyCanvasVisibility() {
-  if (!canvasWindow) return;
+  if (!_live(canvasWindow)) return;
   const cfg = loadConfig();
   const unlocked = setupMode || cfg.overlaysLocked === false;
   const shouldShow = !!cfg.showCanvas && (unlocked || _canvasArrange || (!cfg.hideOverlays && _eqGateOk(cfg)));
@@ -5626,7 +5753,7 @@ function createCharmOverlay() {
   });
 }
 function applyCharmVisibility() {
-  if (!charmWindow) return;
+  if (!_live(charmWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Charm tracker is opt-in (default off) — it's only useful to charm classes.
@@ -5660,7 +5787,7 @@ function createPetsOverlay() {
   });
 }
 function applyPetsVisibility() {
-  if (!petsWindow) return;
+  if (!_live(petsWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — only useful to pet classes. EQ-gated.
@@ -5694,7 +5821,7 @@ function createBuffQueueOverlay() {
   });
 }
 function applyBuffQueueVisibility() {
-  if (!buffQueueWindow) return;
+  if (!_live(buffQueueWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — most useful to support classes (clerics, druids,
@@ -5730,7 +5857,7 @@ function createPopRaidOverlay() {
   });
 }
 function applyPopRaidVisibility() {
-  if (!popRaidWindow) return;
+  if (!_live(popRaidWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — raid leaders + anyone following the fight plan.
@@ -5765,7 +5892,7 @@ function createMeOverlay() {
   });
 }
 function applyMeVisibility() {
-  if (!meWindow) return;
+  if (!_live(meWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   const shouldShow = unlocked || _blindForceOpen('me') || (cfg.showMe && !cfg.hideOverlays && _eqGateOk(cfg));
@@ -5796,7 +5923,7 @@ function createMobInfoOverlay() {
   });
 }
 function applyMobInfoVisibility() {
-  if (!mobInfoWindow) return;
+  if (!_live(mobInfoWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   const shouldShow = unlocked || _blindForceOpen('mobinfo') || (cfg.showMobInfo && !cfg.hideOverlays && _eqGateOk(cfg));
@@ -5827,7 +5954,7 @@ function createWhoOverlay() {
   });
 }
 function applyWhoVisibility() {
-  if (!whoWindow) return;
+  if (!_live(whoWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   const shouldShow = unlocked || (cfg.showWho && !cfg.hideOverlays && _eqGateOk(cfg));
@@ -5859,7 +5986,7 @@ function createMelodyOverlay() {
   });
 }
 function applyMelodyVisibility() {
-  if (!melodyWindow) return;
+  if (!_live(melodyWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — only useful to bards. EQ-gated.
@@ -5895,7 +6022,7 @@ function createZealHealthOverlay() {
   });
 }
 function applyZealVisibility() {
-  if (!zealWindow) return;
+  if (!_live(zealWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — diagnostic; users only need it during setup
@@ -5932,7 +6059,7 @@ function createTankOverlay() {
   });
 }
 function applyTankVisibility() {
-  if (!tankWindow) return;
+  if (!_live(tankWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in — most members don't tank, so default off. EQ-gated like the rest.
@@ -5967,7 +6094,7 @@ function createThreatMeterOverlay() {
   });
 }
 function applyThreatVisibility() {
-  if (!threatWindow) return;
+  if (!_live(threatWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — primarily for tanks but useful to anyone who
@@ -6002,7 +6129,7 @@ function createExtTargetOverlay() {
   });
 }
 function applyExtTargetVisibility() {
-  if (!extTargetWindow) return;
+  if (!_live(extTargetWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off). EQ-gated like every other built-in.
@@ -6086,7 +6213,7 @@ function createCommandOverlay() {
   _loadOverlayPreferAgent(commandWindow, '/overlay/command', 'command.html');
 }
 function applyCommandVisibility() {
-  if (!commandWindow) return;
+  if (!_live(commandWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off). EQ-gated like every other built-in.
@@ -6169,7 +6296,7 @@ function createDockWindow() {
   });
 }
 function applyDockVisibility() {
-  if (!dockWindow) return;
+  if (!_live(dockWindow)) return;
   const cfg = loadConfig();
   // setupMode counts as unlocked here (and in every apply* fn above): setup
   // force-shows every overlay ONCE in applySetupMode, but any later
@@ -6189,7 +6316,7 @@ function applyDockVisibility() {
 }
 
 function applyChChainVisibility() {
-  if (!chChainWindow) return;
+  if (!_live(chChainWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // Opt-in (default off) — healers + raid leads watching the rotation. EQ-gated.
@@ -6406,10 +6533,40 @@ function _overlayWanted(cfg, e) {
 function _materializeEnabledOverlays() {
   let cfg; try { cfg = loadConfig(); } catch { cfg = {}; }
   for (const e of _OVERLAY_WINDOWS) {
-    if (e.get()) continue;
+    const held = e.get();
+    if (_live(held)) continue;
+    // A destroyed window is still truthy, so the old `if (e.get()) continue`
+    // treated it as "exists" and never rebuilt it. Let it go through drop()
+    // like any other freed window, so the create below can run.
+    if (held) {
+      e.drop();
+      appendAgentLog(`[overlay] ${e.key} window was already destroyed — forgot it\n`);
+    }
     if (!_overlayWanted(cfg, e)) continue;
     try { e.create(); }
     catch (err) { appendAgentLog(`[overlay] could not create ${e.key}: ${err && err.message}\n`); }
+  }
+}
+
+// A window can die WITHOUT going through the reaper below: the user closes an
+// overlay (Alt+F4 while it has focus, the taskbar's "Close window", the window
+// menu) or its page closes itself. Electron then destroys the BrowserWindow,
+// but the module-level reference still points at it - and a destroyed window
+// is truthy, so every `!xWindow` create-if-missing test said "it exists" and
+// the next showInactive()/hide() on it threw "Object has been destroyed" out of
+// the main process (the guild lead, 2026-10-07: hide-all hotkey ->
+// applyAllVisibility -> applyMobInfoVisibility, Mimic 2.7.10-beta.1). The
+// reaper cannot have done it: it is the only code that destroys an overlay on
+// purpose, it nulls the reference through drop() and it always logs "freed",
+// and that session's log has no "freed mobinfo" line.
+// Wired to every window's 'closed' event by the 'browser-window-created'
+// listener just below applyAllVisibility; matching by identity, so the
+// dashboard, Settings and panel overlays fall straight through.
+function _forgetClosedOverlay(win) {
+  for (const e of _OVERLAY_WINDOWS) {
+    if (e.get() !== win) continue;
+    e.drop();
+    appendAgentLog(`[overlay] ${e.key} window was closed from outside Mimic (Alt+F4, the taskbar or the window menu) — forgot it; it is rebuilt when it is next wanted\n`);
   }
 }
 
@@ -6424,8 +6581,15 @@ function _reapDisabledOverlays() {
     if (!win) continue;
     if (_overlayWanted(cfg, e)) continue;
     if (_inSingleSetup(win)) continue;
-    try { if (!win.isDestroyed()) win.destroy(); } catch { /* already gone */ }
+    // Save a resize made in the last 400 ms before the window goes (the debounced
+    // save would otherwise read a destroyed window and lose it).
+    try { _flushBounds(_boundsKeyForEntry(e.key, win), win); } catch { /* best effort */ }
+    try { _flushFloor(win); } catch { /* best effort */ }   // a height dragged in the last 400 ms is a floor too
+    // Let go BEFORE destroying: destroy() emits 'closed', and _forgetClosedOverlay
+    // (the catch for outside closes) must find this window already released, or
+    // every deliberate free would also be logged as an accident.
     e.drop();
+    try { if (!win.isDestroyed()) win.destroy(); } catch { /* already gone */ }
     const why = !cfg[e.flag] ? `${e.flag} is off`
               : cfg.hideOverlays ? 'overlays are switched off'
               : 'EverQuest is not running';
@@ -6459,6 +6623,15 @@ function applyAllVisibility() {
   applyCanvasVisibility();
   _reapDisabledOverlays();
 }
+
+// Every window we build reports here the moment it is constructed, so no
+// creator has to remember to wire its own 'closed' (none of the eighteen did).
+app.on('browser-window-created', (_e, win) => {
+  try { win.once('closed', () => _forgetClosedOverlay(win)); } catch (e) { void e; }
+  // A hand-dragged height becomes that overlay's floor (see "Height floor" above).
+  // Windows that are not overlays resolve no bounds key and fall straight through.
+  try { win.on('will-resize', (_ev, newBounds) => _noteUserResize(win, newBounds)); } catch (e) { void e; }
+});
 
 // ── Hide-all-overlays toggle ────────────────────────────────────────────────
 // Quick way to clear the screen for a screenshot / a tough fight / whatever.
@@ -7969,6 +8142,7 @@ ipcMain.handle('overlay-set-bounds', (e, b) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed() || !b) return false;
+    win.__wpHeightMode = 'page';   // the page sizes its own window now: a drag is not a height floor
     const wa = screen.getDisplayMatching(win.getBounds()).workArea;
     const width  = Math.max(200, Math.min(wa.width,  Math.round(+b.width  || 0)));
     const height = Math.max(90,  Math.min(wa.height, Math.round(+b.height || 0)));
@@ -7996,8 +8170,16 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed()) return false;
+    win.__wpHeightMode = 'fit';   // this page fits its window: a drag can set a height floor
+    // ↕ Fit height to content asks for an exact fit, once (see overlay-fit-height).
+    const fitNow = (Date.now() - (win.__wpFitNowAt || 0)) < 3000;
+    win.__wpFitNowAt = 0;
     let wanted = Math.max(50, Math.round(+h || 0));
     if (!wanted) return false;
+    // The height the user dragged this overlay to is a floor (see "Height floor"):
+    // content grows the window above it, and shrinking content stops there.
+    // Compared in CSS px, before the zoom multiply, because the floor is stored unscaled.
+    wanted = Math.round(Math.max(wanted, _heightFloorFor(win)));
     // Setup chrome allowance: overlays measure #wrap.scrollHeight, which has
     // never included the setup bar — and now that the bar is position:fixed
     // with #wrap pushed 102 painted px down (preload counter-zoom CSS), a
@@ -8006,10 +8188,7 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
     // shrinking to type 3). Added BEFORE the zoom multiply? No — the chrome
     // counter-zooms to a constant painted size, so it is added after, in
     // painted px (see below).
-    let setupChrome = 0;
-    try {
-      if (setupMode || _singleSetupWins.has(win.webContents.id)) setupChrome = 104;
-    } catch {}
+    const setupChrome = _setupChromeFor(win);
     // h is measured in CSS px inside the page; with an overlay scale
     // (zoomFactor) the PAINTED height is h × zoom. Size the window in the
     // painted unit or every auto-height overlay clips at scale > 100%.
@@ -8025,10 +8204,11 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
     // Don't bounce on tiny pixel-rounding deltas (Chromium font metrics jitter
     // by ±1 between paints); 4 px hysteresis is the sweet spot. Also ignore
     // shrinks smaller than 12 px — a card collapsing for one tick (e.g. a
-    // re-render between data fetches) shouldn't snap the window down.
+    // re-render between data fetches) shouldn't snap the window down — except
+    // right after ↕ Fit height to content, which is asking for exactly that.
     const delta = target - bounds.height;
     if (Math.abs(delta) < 4) return true;
-    if (delta < 0 && delta > -12) return true;
+    if (delta < 0 && delta > -12 && !fitNow) return true;
     // Grow-upward mode (a member, 2026-07-11, asked for Extended Target): the
     // BOTTOM edge stays anchored and the top moves — for overlays parked
     // near the bottom of the screen, where growing downward runs off-screen.
@@ -8177,8 +8357,11 @@ function toggleMinimizeAllOverlays() {
 // shared right-click chrome menu needs ~280 px to render its 7 buttons,
 // and an XS-preset overlay (100 px tall) clips the bottom of the menu
 // because the menu DOM lives inside the window. Grows the window without
-// moving its top-left; the overlay's regular overlayAutoHeight call
-// shrinks it back to content size once the menu closes.
+// moving its top-left. The extra height is a LOAN: overlay-menu-closed gives
+// it back (the overlay's own overlayAutoHeight is NOT relied on — most pages
+// only ask for a height when their HTML changes, so an idle one never did, and
+// the window stayed 420 tall and was saved that way) and _settledBounds never
+// saves it.
 ipcMain.handle('overlay-ensure-min-height', (e, h) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
@@ -8202,14 +8385,59 @@ ipcMain.handle('overlay-ensure-min-height', (e, h) => {
     // ⬆ Grow upward from the menu bottom-anchored the re-fit to the grown
     // window's extended bottom and teleported the overlay far south
     // (a member, 2026-07-11). Consumed by the next overlay-auto-height.
-    if (!win.__wpPreMenuBounds) {
-      win.__wpPreMenuBounds = { x: b.x, y: b.y, width: b.width, height: b.height, at: Date.now() };
-    }
+    // A stash is reused only while its loan is still out (the window sits at the
+    // height it gave); an older one is a size the user has changed since, and
+    // handing THAT back would undo the change.
+    const prior = win.__wpPreMenuBounds;
+    const stash = _atLoan(b, prior) ? prior : { x: b.x, y: b.y, width: b.width, height: b.height, at: Date.now() };
+    win.__wpPreMenuBounds = stash;
     // Grow-upward overlays sit near the bottom edge — extending downward
     // would push the menu off-screen, so anchor the bottom here too.
     let y = b.y;
     if (_overlayGrowsUp(win)) y = Math.max(disp.workArea.y, b.y + b.height - target);
+    stash.grownH = target;
+    stash.grownY = y;
     win.setBounds({ x: b.x, y, width: b.width, height: target });
+    return true;
+  } catch { return false; }
+});
+
+// The menu closed: give back the height it borrowed (see overlay-ensure-min-height).
+// Only while the window still sits at that height — a ✥ drag, an edge drag or a
+// fit has already moved it on, and THAT is the size to keep. `keepRoom` is the
+// Setup entries: the setup bar needs the room, so the window stays as it is
+// (still on loan, so still never saved at that height). The y comes back by the
+// same amount the grow moved it, not to a stored spot, so a "Move to <screen>"
+// picked from the menu is kept. Runs BEFORE the page's own re-fit replay.
+ipcMain.handle('overlay-menu-closed', (e, keepRoom) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win || win.isDestroyed()) return false;
+    const s = win.__wpPreMenuBounds;
+    if (!s || s.grownH == null || keepRoom) return false;
+    const b = win.getBounds();
+    win.__wpPreMenuBounds = null;
+    if (!_atLoan(b, s)) return false;
+    win.setBounds({ x: b.x, y: b.y + (s.y - s.grownY), width: b.width, height: s.height });
+    return true;
+  } catch { return false; }
+});
+
+// ↕ Fit height to content (the right-click menu): forget the height this overlay
+// was dragged to and size it to its content again — the way back from a height
+// floor (see "Height floor"). The page is asked for one fresh fit rather than
+// waited on: most only report a height when their HTML changes. Runs before the
+// menu's own overlay-menu-closed, which hands back the borrowed height first.
+ipcMain.handle('overlay-fit-height', (e) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win || win.isDestroyed()) return false;
+    const key = _boundsKeyForWindow(win);
+    if (!key) return false;
+    win.__wpResizeGesture = null;   // a drag still settling must not set the floor back
+    _setFloor(win, key, 0);
+    win.__wpFitNowAt = Date.now();  // overlay-auto-height: take the next fit exactly, however small the shrink
+    win.webContents.send('wp-refit');
     return true;
   } catch { return false; }
 });

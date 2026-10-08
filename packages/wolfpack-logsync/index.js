@@ -1596,6 +1596,11 @@ const _charmTickTracker = new Map();
 // running) before it's dropped — unless the pet dies first. Per user: keep the
 // pet so the mob's tick counter stays visible; remove on death or after 5 min.
 const PET_LINGER_MS = 5 * 60 * 1000;
+// How long before a fight starts (or any time after) a charm mob's public "My leader is <Owner>."
+// still counts as CURRENT ownership of that mob. Same number as the bot's PET_CLAIM_FRESH_MS (root
+// index.js, the pet_leaders fold): the longest charm is 12 minutes, so a claim older than a quarter
+// hour before the pull is last hour's charm, not tonight's (FB-52).
+const PET_CLAIM_FRESH_MS = 15 * 60 * 1000;
 // Most-recent self charm-spell cast, staged by the `cast` handler. Consumed by
 // the next charm-land (gauge or log) within a short window to attach the charm's
 // class + duration to the session, driving the duration bar + class-aware warn.
@@ -2171,6 +2176,16 @@ function _findSongBuff(songName, zealBuffs) {
 // GROUPMATES, and those aren't "mobs affected". If two melody songs share a
 // landing text the first match wins (never seen in a real twist). Damage
 // lines carry the song name themselves so they need no suffix table.
+//
+// AREA songs only (FB-57, a member: "Assonance is single target, should not
+// have the 12 counter"): once the catalog carries the bot's `ae` flag (spell
+// catalog v9, from the spell's own targettype), a song whose entry lacks it —
+// single target, a one-race single — is not counted at all, landing rows AND
+// damage lines, so its row never wears a hits/12 chip. A catalog with NO `ae`
+// on any entry (the bot predates v9 — `_spellCatalogMeta.hasAe` false) keeps
+// the old count-everything behaviour: hiding the chip on every song would be
+// worse than a wrong chip on a few. A song the catalog does not know at all
+// is also left as it was; only a KNOWN single-target song is dropped.
 const SONG_AOE_CAP      = 12;      // Quarm AE target cap — 12 hit = full swarm
 // Pulse boundary, measured in LOG time (1s stamps): rows in the same/adjacent
 // second are one pulse; the next pulse of a 3s song is ≥2s of stamp away.
@@ -2190,7 +2205,10 @@ function _songSlug(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+
 // state keyed by order + catalog signature so it costs nothing per line.
 function _ensureSongAoeMatchers(state) {
   const catCount = _spellCatalogMeta ? (_spellCatalogMeta.count || 0) : 0;
-  const sig = state.order.map(o => (o && o.name) || o || '').join('|') + '#' + catCount;
+  // hasAe is in the signature: a refetch that adds the flag keeps the same spell
+  // COUNT, and without it the matchers built from the old catalog would stand.
+  const hasAe = !!(_spellCatalogMeta && _spellCatalogMeta.hasAe);
+  const sig = state.order.map(o => (o && o.name) || o || '').join('|') + '#' + catCount + (hasAe ? '#ae' : '');
   if (state._aoeSig === sig) return;
   state._aoeSig = sig;
   state._aoeSuffixes = [];
@@ -2200,12 +2218,13 @@ function _ensureSongAoeMatchers(state) {
     if (!name) continue;
     const slug = _songSlug(name);
     if (!slug) continue;
-    state._aoeSongSlugs.add(slug);
     // Catalog lookup: exact name first, then slug scan (Zeal labels use
     // backticks where the catalog has apostrophes). Scan only runs on
     // melody-order change, never per line.
     let e = _spellByNameLower.get(String(name).toLowerCase());
     if (!e) { for (const c of _spellByNameLower.values()) { if (c && c.name && _songSlug(c.name) === slug) { e = c; break; } } }
+    if (hasAe && e && !e.ae) continue;   // FB-57: a known single-target song — no counter, no damage tracking
+    state._aoeSongSlugs.add(slug);
     if (!e || !e.other || e.good !== 0) continue;
     const suffix = String(e.other).trim().toLowerCase();
     if (suffix.length < 5) continue;    // too short → false positives
@@ -3654,13 +3673,16 @@ function trackAriLeadLine(line, character) {
 const _CAST_BEGIN_RX = /\]\s+You begin (?:casting|singing)\s+(.+?)\.\s*$/i;
 // ── Divine Intervention availability (BACKLOG §1, the guild lead 2026-07-14) ───────
 // DI = spell 1546: 6s cast + 90s recast, short enough that "who has it up"
-// matters mid-fight. Zeal's gem/recast payloads aren't wired (zealPipe.js:
-// "need ground truth, not inference"), so this is LOG-driven: a self-cast of
-// Divine Intervention stamps ready_at = castStart + 6s + 90s; an interrupt/
-// fizzle within the cast window clears the stamp (no recast consumed).
-// Default = ready (a cleric who hasn't cast this session shows "up").
+// matters mid-fight. The RECAST is LOG-driven (Zeal's recast gauge direction has no
+// ground-truth capture): a self-cast of Divine Intervention stamps
+// ready_at = castStart + 6s + 90s; an interrupt/fizzle within the cast window
+// clears the stamp (no recast consumed).
 // Rides live-state (di_ready_at) → bot aggregates per-cleric → CH-chain +
 // Command Center chips.
+// ⚠ A missing recast stamp is NOT "ready" (FB-62, a member, 2026-10-07: "we should only show this
+// tickbox if they have it on spell gems and ready to cast"). The spell has to be on the cleric's
+// bar: _diMemorized reads that off Zeal's gem labels, and a cleric whose bar we cannot read is
+// UNKNOWN in diStatusSnapshot, never "up" by default.
 // How long after a self-death the corpse-run confirmation may still arrive.
 // The real sequence is "You died." → "You are bleeding to death!" → "Returning
 // to home point, please wait..." within a couple of seconds, but a player who
@@ -3683,6 +3705,23 @@ function noteDiInterrupt(line, character) {
   const atMs = ts ? ts.getTime() : Date.now();
   // Only within the cast window — a later unrelated interrupt is not DI's.
   if (atMs - st.castAt <= DI_CAST_MS + 1500) _diStateByChar.delete(String(character).toLowerCase());
+}
+// Is Divine Intervention on this character's spell bar? Zeal's labels 60-67 are gems 1-8 (an empty
+// gem sends nothing). true = on the bar, false = the bar is readable and it is not there, null =
+// cannot tell (no Zeal state, a stale snapshot, or a bar with no gem names in it). Only the cleric's
+// OWN agent can answer, so this feeds the local view directly and rides live-state as `di_mem`.
+function _diMemorized(st, nowMs) {
+  if (!st || (nowMs - (st.updatedAt || 0)) > ZEAL_STALE_MS) return null;
+  const ci = Array.isArray(st.charInfo) ? st.charInfo : [];
+  let sawGem = false;
+  for (const x of ci) {
+    if (!x || !(x.id >= 60 && x.id <= 67)) continue;
+    const name = String(x.value == null ? '' : x.value).trim();
+    if (!name || /^(empty|none)$/i.test(name)) continue;
+    sawGem = true;
+    if (name.toLowerCase() === 'divine intervention') return true;
+  }
+  return sawGem ? false : null;
 }
 // Returns the parsed cast ({ name, atMs }) or null, so the relay can reuse the
 // match instead of re-running the identical regex on the same line (the two
@@ -6149,6 +6188,8 @@ function _diSlotTurnInMs(chain, num, nowMs) {
 //   • DI confirmed on cooldown — `up === false && unknown === false` means we
 //     WATCHED the cast. "Rank, don't filter" in the doc is about clerics we
 //     know nothing about, not about a recast we measured.
+//   • DI not on the spell bar (`ctx.noDi`, FB-62) — that cleric's own agent read their gems and it
+//     is not there, which is as measured as a recast. Optional: a ctx without it drops nobody.
 // Then: recently active on the chain, and not due to cast inside
 // DI_CAST_MS + one beat (a cleric who casts a 6s DI misses their CH, and a
 // missed CH is how tanks die). Both of those are soft — if they empty the
@@ -6174,6 +6215,7 @@ function _diRankCandidates(chain, ctx) {
     if (ctx.isDead(lc)) continue;
     const cls = ctx.classOf(lc);
     if (cls && cls !== 'Cleric') continue;
+    if (ctx.noDi && ctx.noDi(lc)) continue;          // measured: not memorized — they cannot cast it
     const di = ctx.diOf(lc);
     if (di && !di.up && !di.unknown) continue;       // measured recast — they cannot cast it
     const sinceMs = now - s.lastAtMs;
@@ -6222,6 +6264,7 @@ function diCalloutCandidates(nowMs) {
   const di = diStatusSnapshot();
   const diByName = new Map();
   for (const c of (di && di.clerics) || []) if (c && c.name) diByName.set(String(c.name).toLowerCase(), c);
+  const noDi = new Set(((di && di.no_di) || []).map(n => String(n).toLowerCase()));
   const exactMana = new Map();
   for (const h of (_diStatusCache.healer_mana || [])) {
     if (h && h.name && h.mana_pct != null) exactMana.set(String(h.name).toLowerCase(), Math.round(h.mana_pct));
@@ -6231,6 +6274,7 @@ function diCalloutCandidates(nowMs) {
     isDead:  (lc) => _isDead(lc, now),
     classOf: (lc) => ((whoData.get(lc) || {}).class) || _raidClassByName.get(lc) || null,
     diOf:    (lc) => diByName.get(lc) || null,
+    noDi:    (lc) => noDi.has(lc),
     // Exact (Mimic) mana beats the percentage the cleric shouted in their chain
     // call — same precedence the Command Center's healer-mana merge uses.
     manaOf:  (lc, called) => (exactMana.has(lc) ? exactMana.get(lc) : (called == null ? null : called)),
@@ -8143,6 +8187,11 @@ class EncounterBuilder {
     // wiped this on every encounter flush, a pet that was summoned during
     // fight #1 would lose its owner mapping by fight #2.
     this.petLeaders     = {};         // lowercasePetName → ownerName
+    // Public "My leader is <Owner>." claims on CHARM mobs (article-prefixed names), with the log time
+    // each was heard: lowercasePetName → [{ o: ownerName, at: logMs }], one entry per distinct owner.
+    // petLeaders alone cannot vouch for a charm mob (it never forgets, and the same name is a different
+    // mob next pull), so the meter asks _freshClaimOwner() instead. Persistent like petLeaders.
+    this.petClaims      = {};
     // lastDirgeCast persists across encounters too — a bard might fire a dirge
     // right before an encounter starts and the damage tick lands inside it.
     this.lastDirgeCast  = null;       // { ts: ms, name: string } | null
@@ -8593,6 +8642,10 @@ class EncounterBuilder {
       if (!petOwner && (this.charmSessions.length > 0 || _charmTickTracker.size > 0)) {
         petOwner = this._provenPetOwner(nl);
       }
+      // Last of all, and for charm mobs only: the pet's own fresh, unambiguous "My leader is <Owner>."
+      // — the only proof there is when the owner is ANOTHER raider (FB-52). Below every proof this
+      // agent holds itself, so a live charm of ours is never overruled by a bystander line.
+      if (!petOwner && /^an?\s/i.test(nl)) petOwner = this._freshClaimOwner(nl);
       if (petOwner === '__SELF__') petOwner = this.character || null;
       const petCharm = !petOwner && /^an?\s/i.test(nl) && !!this.petLeaders[nl];
       if (this.targets.has(name) && !petOwner && !petCharm) continue;
@@ -9065,6 +9118,8 @@ class EncounterBuilder {
         }
       }
       if (!petKey) return;
+      // The charm is over: whoever said "My leader is …" a minute ago no longer holds the mob.
+      delete this.petClaims[petKey];
       const open = this._activeCharms?.get(petKey);
       const ownerWas = open ? open.owner : (_charmTickTracker.get(petKey)?.owner || null);
       if (open) {
@@ -9086,8 +9141,11 @@ class EncounterBuilder {
       // The instant call, straight down the /api/fires/wait long-poll (see
       // _pushCharmBreakInstant). Own charms only.
       try {
+        // Whose line this is, the way the trigger evaluator decides it (FB-34), so the "Your charm
+        // broke" trigger set for other characters is not counted as having spoken this one.
+        const who = String((this.character && _resolveSelfChatSpeaker(this.character)) || this.character || '').toLowerCase();
         const own = wasSelfLine || (!!ownerWas && String(ownerWas).toLowerCase() === String(this.character || '').toLowerCase());
-        _pushCharmBreakInstant(petKey, petDisplay || _charmTickTracker.get(petKey)?.pet || petKey, own, Date.parse(event.ts));
+        _pushCharmBreakInstant(petKey, petDisplay || _charmTickTracker.get(petKey)?.pet || petKey, own, Date.parse(event.ts), Date.now(), who);
       } catch { /* never block the break */ }
       return;
     }
@@ -9111,6 +9169,10 @@ class EncounterBuilder {
       const owner = event.owner === '__SELF__' ? (this.character || null) : event.owner;
       if (!owner) return;  // can't attribute without a known character
       this.petLeaders[event.pet.toLowerCase()] = owner;
+      // The pet's own public declaration ("a lesser vind briesl says 'My leader is <Owner>.'") is the one
+      // ownership signal a BYSTANDER gets for a charm mob (FB-52): no charm gauge, no pet-command ack.
+      // Keep it WITH ITS TIME so the meter can credit the owner while it is fresh (_freshClaimOwner).
+      if (!event.source && event.owner !== '__SELF__') this._noteCharmClaim(event.pet, owner, Date.parse(event.ts));
       // Also update the session-wide dashboard tracker so [P] view stays current
       const _pk = event.pet.toLowerCase();
       if (!knownPetOwners.has(_pk)) knownPetOwners.set(_pk, new Set());
@@ -10307,6 +10369,37 @@ class EncounterBuilder {
     }
     const hit = this._provenCache.map.get(nameLower);
     return hit ? hit.owner : null;
+  }
+  // ── A charm mob's own claim, for a BYSTANDER (FB-52) ───────────────────────
+  // A raider's charm pet answers /pet leader, and its summon-time chatter, in PUBLIC: "a lesser vind
+  // briesl says 'My leader is <Owner>.'". Anyone in range reads it; only the owner's own agent has the
+  // charm gauge or the pet-command acks, so for everyone else this line is the entire proof. The meter
+  // used to ignore it for article-prefixed names (petLeaders never forgets, and the same mob name is a
+  // different mob next pull: one revenant claim once labelled every revenant all raid, 2026-07-31) and
+  // so showed another raider's charm as "(charmed)" however many times its owner typed /pet leader.
+  // Time is what makes it safe: a claim counts only while FRESH — heard no earlier than
+  // PET_CLAIM_FRESH_MS before this fight began (any time after) — the bot's own rule for the same
+  // lines. And only while it is UNAMBIGUOUS: two raiders claiming the same name inside the window
+  // (three revenants, 2026-07-30) cannot be told apart from one row, so nobody is credited, as before.
+  _noteCharmClaim(pet, owner, atMs) {
+    const key = String(pet || '').toLowerCase();
+    const own = String(owner || '').trim();
+    // Charm mobs only (summoned pets keep their runtime-long petLeaders ownership), real player-shaped
+    // owners only (a mob that is itself charmed has summoned a sub-pet: "My leader is a Shadel Bandit").
+    if (!/^an?\s/.test(key) || !/^[A-Z][a-z]+$/.test(own) || !Number.isFinite(atMs)) return;
+    const list = this.petClaims[key] || (this.petClaims[key] = []);
+    const mine = list.find(c => c.o.toLowerCase() === own.toLowerCase());
+    if (mine) { mine.o = own; mine.at = Math.max(mine.at, atMs); } else list.push({ o: own, at: atMs });
+  }
+  _freshClaimOwner(nameLower) {
+    const list = this.petClaims[nameLower];
+    if (!list || !list.length) return null;
+    // Measured from this fight's first event; between fights, from the newest thing the log showed.
+    const startMs = this.startedAt ? new Date(this.startedAt).getTime() : NaN;
+    const lastMs = this.lastEvent ? Date.parse(this.lastEvent) : NaN;
+    const ref = Number.isFinite(startMs) ? startMs : (Number.isFinite(lastMs) ? lastMs : Date.now());
+    const fresh = list.filter(c => c.at >= ref - PET_CLAIM_FRESH_MS);
+    return fresh.length === 1 ? fresh[0].o : null;
   }
   flush() {
     // Settle a held DS candidate so a fight that ends on it still counts the
@@ -13436,6 +13529,7 @@ function _meNoteHit(character, ev) {
   const nearSwing = arr.some(x => x.dir === 'out' && x.kind === 'melee' && Math.abs(t - x.t) <= 1500);
   const hit = { t, dir, amount: ev.amount, kind, name, el, other: dir === 'in' ? (ev.attacker || null) : (ev.defender || null),
     anon: dir === 'out' && kind === 'spell' && nonMelee, cast: fromCast,
+    dsGuess: kind === 'ds' && !ev.ds,   // a shield by inference (a mob's hit on you), not by the log's own say-so
     proc: dir === 'out' && kind === 'spell' && nearSwing && !fromCast };
   arr.push(hit);
   if (hit.proc) _meProcCount(cl, hit, true);
@@ -13450,12 +13544,39 @@ function _meNoteHit(character, ev) {
     for (let i = arr.length - 2; i >= 0 && Math.abs(t - arr[i].t) <= 1500; i--) {
       const x = arr[i];
       if (!x.anon || !x.other || String(x.other).toLowerCase() !== mob || !fitsDs(x.amount)) continue;
-      x.kind = 'ds'; x.name = 'damage shield'; x.anon = false; x.proc = false;
+      x.kind = 'ds'; x.name = 'damage shield'; x.anon = false; x.proc = false; x.dsGuess = true;
       _meProcCount(cl, x, false);   // it was the shield after all: not a proc
     }
   }
   const cutoff = t - 10 * 60_000;
   while (arr.length > 400 || (arr.length && arr[0].t < cutoff)) arr.shift();
+}
+// A monk's Dragon Punch is not a weapon proc (a member, 2026-10-07, FB-60: "The proc counter is
+// including monk AA Dragon Punches instead of just damage procs"). The AA fires the spell Dragon Force
+// from the skill hit, and the log prints, one line after another:
+//   You strike A jord militis for 64 points of damage.            ← the skill, your swing
+//   A jord militis was hit by non-melee for 10 points of damage.  ← the spell's damage, anonymous
+//   A jord militis is stricken by the force of a dragon.          ← its landing text (cast_on_other)
+// The middle line is an anonymous spell hit beside your swing, which is exactly what a proc looks like
+// when it arrives, so _meNoteHit counts it. The landing line after it is what says whose it was: the
+// newest anonymous hit on that mob in the last 1.5 s is Dragon Force's — it stops being a proc (and is
+// given back from the count), keeps its place as spell damage, and the swing that follows it cannot
+// make it one again (`cast`). A resisted Dragon Force prints no damage and no landing, so it never
+// gets here. 10 is its base damage; the log showed 1, 10 and 12 (a crit), so the amount is not a test.
+// A hit the log had taken for your damage shield on a guess (`dsGuess`) is Dragon Force's too.
+const _ME_DRAGON_FORCE_LANDING = ' is stricken by the force of a dragon.';
+function _meNoteDragonForce(cl, mob, atMs) {
+  const arr = _meHits.get(cl);
+  const m = String(mob || '').toLowerCase();
+  if (!arr || !m) return;
+  for (let i = arr.length - 1; i >= 0 && atMs - arr[i].t <= 1500; i--) {
+    const x = arr[i];
+    if (x.dir !== 'out' || !x.other || String(x.other).toLowerCase() !== m || !(x.anon || x.dsGuess)) continue;
+    _meProcCount(cl, x, false);
+    x.kind = 'spell'; x.name = 'Dragon Force'; x.el = 'magic';   // resist type 1, spell 2767
+    x.anon = false; x.dsGuess = false; x.proc = false; x.cast = true;
+    return;
+  }
 }
 // In/out totals and per-element split since `sinceMs`, plus the newest hits.
 function _meCombatSince(cl, sinceMs, now) {
@@ -13480,8 +13601,24 @@ function _meCombatSince(cl, sinceMs, now) {
   // The damage shield in this window, and what it does per hit.
   const dsHits = arr.filter(h => h.kind === 'ds' && h.t >= sinceMs);
   const ds = dsHits.length ? { hits: dsHits.length, total: dsHits.reduce((a, h) => a + h.amount, 0), last: dsHits[dsHits.length - 1].amount,
-    kind: _dsKindOf(dsHits[dsHits.length - 1].name) } : null;
+    seen: _dsSeenPerHit(dsHits), kind: _dsKindOf(dsHits[dsHits.length - 1].name) } : null;
   return { secs, out, in: inn, feed, ds, tallies: _meMobTallies(cl, now) };
+}
+// What your shield DOES per hit, read off the hits themselves (a member, 2026-10-07, FB-58: "DS doesn't
+// seem to account for AA or +skill from instruments"). The buffs-and-gear sum the badge used to show is
+// an estimate from catalog data, and a bard song scales with the instrument and singing skill while an
+// AA adds on top, none of which the catalog or the buff list carries. A shield hits for the same amount
+// every time, so the amount that repeats among the newest few hits is the shield — and one stray hit
+// (a proc the mob's swing made look like a shield) cannot move it. A tie goes to the newest hit.
+function _dsSeenPerHit(dsHits) {
+  const recent = dsHits.slice(-5), n = new Map();
+  for (const h of recent) n.set(h.amount, (n.get(h.amount) || 0) + 1);
+  let best = null, most = 0;
+  for (let i = recent.length - 1; i >= 0; i--) {
+    const c = n.get(recent[i].amount);
+    if (c > most) { best = recent[i].amount; most = c; }
+  }
+  return best;
 }
 // Damage per MOB — done, taken and your damage shield — so the HUD can roll
 // old hits into a running total and drop it when the mob dies (the guild lead,
@@ -14271,6 +14408,10 @@ function _meTimersLoad() {
         if (!mp) { mp = new Map(); _meAaTimers.set(cl, mp); }
         if (!mp.has(k)) mp.set(k, a);
       }
+      // Clickies the member marked recharged (FB-65), by item name.
+      for (const [item, at] of Object.entries(e.clk || {})) {
+        if (item && at > now - _CLICKY_RECHARGE_KEEP_MS && !_clickyRecharged.has(cl + '|' + item)) _clickyRecharged.set(cl + '|' + item, at);
+      }
     }
   } catch { /* first run, or not writable — nothing to restore */ }
 }
@@ -14289,6 +14430,10 @@ function _meTimersSave() {
       }
       for (const [cl, mp] of _meAaTimers) {
         for (const [k, a] of mp) if (a.learned || a.ready > now - _ME_TIMER_KEEP_MS) (slot(cl).aa = slot(cl).aa || {})[k] = a;
+      }
+      for (const [k, at] of _clickyRecharged) {
+        const bar = k.indexOf('|');
+        if (bar > 0 && at > now - _CLICKY_RECHARGE_KEEP_MS) (slot(k.slice(0, bar)).clk = slot(k.slice(0, bar)).clk || {})[k.slice(bar + 1)] = at;
       }
       fs.writeFileSync(_meTimerFile(), JSON.stringify(out));
     } catch { /* best effort */ }
@@ -14464,6 +14609,12 @@ function _meNoteRawLine(line, character) {
   }
   if (msg.endsWith(' is shaken by a loud bellow.')) {
     _meNoteBellow(cl, 'land', msg.slice(0, -' is shaken by a loud bellow.'.length), now);
+    return;
+  }
+  // A Dragon Punch landing: the anonymous hit just before it is the AA's spell, not a proc (FB-60).
+  if (msg.endsWith(_ME_DRAGON_FORCE_LANDING)) {
+    const d = parseEqTimestamp(line);
+    _meNoteDragonForce(cl, msg.slice(0, -_ME_DRAGON_FORCE_LANDING.length), d ? d.getTime() : now);
     return;
   }
   const disc = _ME_DISCS.get(msg);
@@ -14712,8 +14863,50 @@ function _noteClickyUse(character, itemName, atMs) {
   if (list.length > 50) list.shift();
   _clickyUses.set(k, list);
 }
-const ME_CLICKIES_MAX = 8;
+// FB-65 (a member, 2026-10-07: "Root/Dispel/Stun are prioritized" · "pick which clicky charges you track"):
+// the counters are sorted root, dispel, stun first, and each carries its `kind` and full `max` so the
+// HUD's picker can show them. The spell catalog's `cc` already tags a HARMFUL spell's SPA 99 (root) and
+// SPA 21 (stun) — the read the suggested triggers use. It has no dispel (SPA 27), so the clicky spells
+// that carry one are listed by id: eqemu_spells joined to eqemu_items.clickeffect, 2026-10-07 — Strip
+// Enchantment 24, Pillage Enchantment 25, Cancel Magic 48, Nullify Magic 49, Static Pulse 1025, Guide
+// Cancel Magic 1211, Annul Magic 1526, Abolish Enchantment 1792. A new one would show as a plain clicky.
+const _CLICKY_DISPEL_SPELLS = new Set([24, 25, 48, 49, 1025, 1211, 1526, 1792]);
+const _CLICKY_KIND_RANK = { root: 0, dispel: 1, stun: 2 };
+let _clickySpellIdx = null, _clickySpellIdxSrc = null;   // spell id → catalog entry, rebuilt when the catalog is
+function _clickyKind(spellId) {
+  const id = Number(spellId);
+  if (!(id > 0)) return null;
+  if (_CLICKY_DISPEL_SPELLS.has(id)) return 'dispel';
+  if (_clickySpellIdxSrc !== _spellByNameLower) {
+    _clickySpellIdx = new Map();
+    for (const e of _spellByNameLower.values()) if (e && e.id != null) _clickySpellIdx.set(Number(e.id), e);
+    _clickySpellIdxSrc = _spellByNameLower;
+  }
+  const cc = (_clickySpellIdx.get(id) || {}).cc;
+  if (!Array.isArray(cc)) return null;
+  return cc.includes('root') ? 'root' : (cc.includes('stun') ? 'stun' : null);
+}
+// A recharge leaves NOTHING in the log that names the item. The one report we have (FB-65) shows six
+// lines, "You give 38 platinum 1 gold 9 silver 0 copper to <vendor>." then five of "You give 19 platinum 0
+// gold 9 silver 5 copper to <vendor>.", and no other line from the vendor transaction — a coin amount to
+// an NPC, which is also what any hand-in of coin prints. Guessing which item it paid for would mis-set
+// counters, so the member says so instead: the picker's "Recharged" button lands here, putting
+// that counter back to the item's full charges from this moment (glows count from then). An export
+// written after it is newer, and wins again.
+const _clickyRecharged = new Map();   // "char|itemLower" → ms the member marked it recharged
+const _CLICKY_RECHARGE_KEEP_MS = 30 * 86400_000;
+function _noteClickyRecharged(character, itemName, atMs) {
+  const lower = String(itemName || '').toLowerCase();
+  const c = _meClickies(character).find(x => x.name.toLowerCase() === lower);
+  if (!c || !(c.max > 0)) return false;   // not carried, or not a charged item: nothing to put back
+  _clickyRecharged.set(String(character).toLowerCase() + '|' + lower, atMs);
+  _meTimersSave();
+  return true;
+}
+const ME_CLICKIES_MAX = 8;          // what `clickies` carries (an older HUD draws all of it)
+const ME_CLICKIES_LIST_MAX = 40;    // what `clickies_all` carries, for the picker
 function _meClickies(character) {
+  _meTimersLoad();   // a restored "recharged" mark, before the first poll after a restart
   const invs = stats.characterInventories || {};
   const cl = String(character || '').toLowerCase();
   const key = Object.keys(invs).find(k => k.toLowerCase() === cl);
@@ -14733,16 +14926,27 @@ function _meClickies(character) {
     const cat = _itemClickyByNameLower.get(lower);
     if (!cat || !cat.clickeffect) continue;
     const prev = seen.get(lower);
-    if (prev) { prev.count += it.count; continue; }   // two of the same: one counter
-    seen.set(lower, { name: it.name, count: it.count, max: cat.maxcharges != null ? Number(cat.maxcharges) : null,
+    if (prev) { prev.count += it.count; prev.copies++; continue; }   // two of the same: one counter
+    seen.set(lower, { name: it.name, count: it.count, copies: 1, effect: cat.clickeffect,
+      max: cat.maxcharges != null ? Number(cat.maxcharges) : null,
       worn: !/^General|^Bank|^SharedBank/i.test(it.loc || '') });
   }
   return [...seen.values()].map(c => {
-    const used = (_clickyUses.get(cl + '|' + c.name.toLowerCase()) || []).filter(t => t >= since).length;
+    const lower = c.name.toLowerCase();
+    const full = c.max != null && c.max > 0 ? c.max : null;
+    // "Recharged" newer than the export: full charges (per copy), and glows count from the mark.
+    const mark = _clickyRecharged.get(cl + '|' + lower) || 0;
+    const fresh = full != null && mark > since;
+    const used = (_clickyUses.get(cl + '|' + lower) || []).filter(t => t >= (fresh ? mark : since)).length;
     const unlimited = c.max != null && c.max < 0;
     const charged = c.max != null ? c.max > 0 : c.count > 1;
-    return { name: c.name, left: charged ? Math.max(0, c.count - used) : null, unlimited, used, worn: c.worn };
-  }).sort((a, b) => (b.worn - a.worn) || a.name.localeCompare(b.name)).slice(0, ME_CLICKIES_MAX);
+    const have = fresh ? full * c.copies : c.count;
+    return { name: c.name, left: charged ? Math.max(0, have - used) : null, unlimited, used, worn: c.worn,
+      kind: _clickyKind(c.effect), max: full };
+  // Charged items only (the guild lead, 2026-10-07: "tracked clickies should only be for charged items, not
+  // unlimited clickies"): an unlimited clicky, or one whose charges are unknown, has nothing to count down.
+  }).filter(c => c.left != null).sort((a, b) => ((_CLICKY_KIND_RANK[a.kind] ?? 3) - (_CLICKY_KIND_RANK[b.kind] ?? 3))
+    || (b.worn - a.worn) || a.name.localeCompare(b.name)).slice(0, ME_CLICKIES_LIST_MAX);
 }
 // Damage shield from WORN gear (the guild lead, 2026-10-04: "Missing my additional DS from my neck
 // slot. It only gets added when you have other damage shield"). An item's worn-effect shield
@@ -14911,6 +15115,34 @@ function _meSideArcs(active, st, now, skip) {
   return { rampage, low_hp: low };
 }
 
+// A bard's mana slot on the HUD counts instead of reading a percentage (a member, 2026-10-07, FB-56:
+// "Bard songs don't take up mana typically - only display how many Faded Memories they have left, or
+// Dirges, or charms"; the guild lead picked option A the same day). 78 of the 80 bard songs cost no
+// mana; what a bard spends it on is the Dirge (800), the Fading Memories AA (900, invisible until
+// broken, reuse 1 s — DECISIONS-2026-09-21 §128) and the charm song (60). So the HUD gets the three
+// counts, and the mana arc keeps filling with the mana %.
+//  - dirges: shown when Denon`s Desperate Dirge is memorized. _dirgeInfo (the Melody board) cannot say —
+//    it counts for every bard — but the spell gems can. With no gem labels at all the pipe is not
+//    saying, and a level 60 bard is assumed to carry it, the level the guild lead gave for the song.
+//  - fm: the pipe cannot say who owns the AA, so a bard of level 60 or more is assumed to (the guild
+//    lead's call, 2026-10-07).
+//  - charm: the same number as the "Charm left" focus item, handed in so the two cannot disagree.
+// A count that does not apply is null and the HUD leaves it out; a non-bard gets no block.
+const FADING_MEMORIES_MANA = 900;
+const FADING_MEMORIES_LEVEL = 60;
+const DIRGE_LEVEL = 60;
+function _meBardCounts(cls, level, manaCur, gems, charmLeft) {
+  if (cls !== 'Bard' || manaCur == null) return null;
+  const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const list = Array.isArray(gems) ? gems : [];
+  const hasDirge = list.length ? list.some(g => g && slug(g.name) === 'denonsdesperatedirge') : (level != null && level >= DIRGE_LEVEL);
+  return {
+    dirges: hasDirge ? Math.floor(manaCur / DIRGE_MANA) : null,
+    fm: (level != null && level >= FADING_MEMORIES_LEVEL) ? Math.floor(manaCur / FADING_MEMORIES_MANA) : null,
+    charm: charmLeft != null ? charmLeft : null,
+  };
+}
+
 function _serializeMeState() {
   const now = Date.now();
   let active = null, activeTs = 0;
@@ -14992,6 +15224,7 @@ function _serializeMeState() {
   for (const t of timers) {
     focus.push({ key: 'timer:' + t.name.toLowerCase(), label: t.name, timer_ms: t.ready_in_ms, recast_ms: t.recast_ms });
   }
+  const bard = _meBardCounts(cls, level, manaCur, gems, charmGem ? charmGem.casts_left : null);   // FB-56
 
   // Group: Zeal's group gauges 11-15 (name + HP%), class from /pipeverbose.
   const group = [];
@@ -15029,6 +15262,10 @@ function _serializeMeState() {
   // Your damage shield per hit — the HUD's DS button ("a button with current DS
   // amount per hit in it", the guild lead, 2026-09-24): the shield you visibly wear
   // right now, else the last one that landed.
+  // ⚠ The shield you visibly wear is an ESTIMATE (catalog value of each buff + worn gear); what your
+  // shield hits for lands in the log. Once a hit has landed this fight the badge reads THAT, whenever the
+  // two differ (a member, 2026-10-07, FB-58: bard songs scale with instrument and skill, an AA adds
+  // more, and neither is in the catalog) — `measured` tells the HUD which one it is drawing.
   const dsWorn = {};
   const dsKnown = _knownDsPerHitFor(active, dsWorn);
   if (!combat.ds && (dsKnown || dsWorn.off)) combat.ds = { hits: 0, total: 0, last: null };
@@ -15036,11 +15273,14 @@ function _serializeMeState() {
     // Worn-gear shields add only on top of a shield spell (_wornItemDs). The last-hit fallback
     // already includes them: it is what landed.
     const dsItem = dsKnown ? _wornItemDs(active) : 0;
-    combat.ds.per_hit = dsKnown ? dsKnown + dsItem : combat.ds.last; combat.ds.from_buffs = !!dsKnown;
+    const seen = combat.ds.seen > 0 ? combat.ds.seen : null;
+    delete combat.ds.seen;
+    combat.ds.per_hit = seen != null ? seen : (dsKnown ? dsKnown + dsItem : combat.ds.last);
+    combat.ds.measured = seen != null; combat.ds.from_buffs = !!dsKnown;
     combat.ds.from_items = dsItem;
     combat.ds.kind = (dsKnown && dsWorn.kind) || combat.ds.kind || null;   // thorns / fire / plain
     // Shield cancelled (_dsOffFrom): 0 a hit, whatever landed before the debuff.
-    if (dsWorn.off) { combat.ds.off = dsWorn.off; combat.ds.per_hit = 0; combat.ds.from_buffs = true; combat.ds.kind = null; }
+    if (dsWorn.off) { combat.ds.off = dsWorn.off; combat.ds.per_hit = 0; combat.ds.measured = false; combat.ds.from_buffs = true; combat.ds.kind = null; }
   }
   // HUD: swing timer, and which hand each of your melee hits came from when
   // the two hands swing with different verbs.
@@ -15080,6 +15320,7 @@ function _serializeMeState() {
     gems,
     timers,
     focus,
+    bard,
     group,
     dps: { fight, night },
     combat,
@@ -15091,8 +15332,14 @@ function _serializeMeState() {
     blind: !!(blind && blind.active),
     track: _meTrackFor(cl, st, now),
     ..._meSideArcs(active, st, now, [tx && tx.tot ? tx.tot.name : null]),
-    clickies: _meClickies(active),
+    ..._meClickyFields(active),
   };
+}
+// `clickies` is the first ME_CLICKIES_MAX, as an older HUD has always drawn them; `clickies_all` rides
+// along only when there are more, for the builder's picker (FB-65).
+function _meClickyFields(active) {
+  const all = _meClickies(active);
+  return { clickies: all.slice(0, ME_CLICKIES_MAX), clickies_all: all.length > ME_CLICKIES_MAX ? all : undefined };
 }
 
 function _serializeTankState() {
@@ -17538,6 +17785,15 @@ button.wp-rerun-stale { position:relative; animation: wp-pulse-glow 1.8s ease-ou
    The hover style telegraphs "this is clickable." */
 .card td.name, .card .name { cursor:pointer; }
 .card td.name:hover, .card .name:hover { text-decoration:underline; color:var(--blue); }
+/* Triggers tab: a trigger's name opens its settings (FB-23 / FB-30). A <button>, not a
+   .name cell — .name is the character-page link, and "Rampage on me" is not a character. */
+.trigname { background:none; border:0; padding:0; font:inherit; color:var(--text); cursor:pointer; text-align:left; }
+.trigname:hover { color:var(--blue); text-decoration:underline; }
+.trigname:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+.trigdetail > td { background:var(--bg); border-left:2px solid var(--blue); padding:8px 10px; }
+.trigset { display:grid; grid-template-columns:max-content 1fr; gap:3px 14px; font-size:11px; }
+.trigset-k { color:var(--dim); }
+.trigset-v { overflow-wrap:anywhere; }
 .wp-quicklinks { display:flex; gap:8px; align-items:center; margin:6px 0 12px 0; font-size:12px; color:var(--dim); flex-wrap:wrap; }
 .wp-quicklinks a { color:var(--blue); text-decoration:none; padding:2px 8px; border:1px solid var(--border); border-radius:4px; }
 .wp-quicklinks a:hover { background:#21262d; border-color:var(--blue); }
@@ -19116,7 +19372,7 @@ function renderMeCard(s) {
   else {
     h += '<div style="font-size:11px;line-height:1.5">';
     for (const t of tells) {
-      // SPEAKER → LISTENER, so the left name is always who spoke (Hitya
+      // SPEAKER → LISTENER, so the left name is always who spoke (the guild lead,
       // 2026-09-14: a received tell drawn as "Other ← You" read as You
       // speaking). Same convention as the Recent Tells table and the DM relay.
       const tsMs = t.capturedAt || (t.ts ? new Date(t.ts).getTime() : 0);
@@ -21690,9 +21946,31 @@ function renderTriggers(s) {
   h += '<div id="trigEditorPanel"></div>';
   h += '</div>';
 
-  // Guild triggers — read-only (managed in wolfpack.quest/admin/triggers).
-  h += '<div class="card wide"><h2>🛡️ Guild triggers <span class="dim" style="font-size:11px;font-weight:normal">(read-only; edit on wolfpack.quest/admin/triggers)</span></h2>';
-  const gt = s.guildTriggers || [];
+  // Guild triggers — read-only (managed in wolfpack.quest/admin/triggers). Its own wp* placeholder,
+  // filled by renderGuildTriggersCard: opening a row repaints just this card, so the Add form's
+  // half-typed text and the Replay inputs above are not wiped by it (FB-30).
+  h += '<div id="wpGuildTriggers" class="card wide"></div>';
+
+  h += '</div>';
+  if (!setSectionHTML('triggers', h)) return;
+  // Mount the editor + render the personal list (idempotent — _wpTrigEditor
+  // installs itself once and rebinds list rows on every paint).
+  if (window._wpTrigEditor && window._wpTrigEditor.mount) {
+    window._wpTrigEditor.mount();
+  }
+  if (window._wpSuggestedTriggers && window._wpSuggestedTriggers.mount) {
+    window._wpSuggestedTriggers.mount();
+  }
+}
+
+// 🛡️ Guild triggers (FB-30) — read-only list, filled into the #wpGuildTriggers placeholder renderTriggers
+// emits. A name (or any plain cell of its row) opens the trigger's settings beneath it, with a link to
+// edit it on the site. Which rows are open is kept in _wpTrigOpen, so a repaint puts them back.
+function renderGuildTriggersCard(s) {
+  var el = document.getElementById('wpGuildTriggers');
+  if (!el) return;   // Triggers tab not painted yet
+  var gt = s.guildTriggers || [];
+  var h = '<h2>🛡️ Guild triggers <span class="dim" style="font-size:11px;font-weight:normal">(read-only: click one to see its settings; officers edit on wolfpack.quest/admin/triggers)</span></h2>';
   if (gt.length === 0) {
     h += '<div class="dim" style="font-size:12px">No guild triggers loaded. Officers can add them at <a href="https://wolfpack.quest/admin/triggers" target="_blank" rel="noreferrer" style="color:var(--blue)">/admin/triggers</a>.</div>';
   } else {
@@ -21704,14 +21982,16 @@ function renderTriggers(s) {
     // delegation walks .name elements, slices text to the first space, and
     // opens /character/<first-token>. A trigger named "Aten Ha Ra Charm"
     // would clip to "Aten" → 404. Same trap as the DPS HUD label cell.
-    for (const t of gt) {
+    for (var i = 0; i < gt.length; i++) {
+      var t = gt[i];
       // "Copy → personal": stash the guild trigger's editable fields as JSON in
       // a data-attr (esc() escapes the quotes for the attribute, same pattern as
       // the dismiss-td buttons) so the delegated handler can prefill the personal
       // editor with them. No write to the guild set — it just clones into the
       // local personal triggers so the user can tweak their own copy.
-      const _act = (Array.isArray(t.actions) ? t.actions : []).find(a => a && a.type === 'text_overlay') || {};
-      const _copy = {
+      var _act = (Array.isArray(t.actions) ? t.actions : []).find(function (a) { return a && a.type === 'text_overlay'; }) || {};
+      var _w = wpTrigWarnings(t)[0];
+      var _copy = {
         name: (t.name || 'trigger') + ' (copy)',
         pattern: t.pattern || '',
         cooldown_seconds: t.cooldown_seconds || 0,
@@ -21721,26 +22001,34 @@ function renderTriggers(s) {
         timer_duration_sec: t.timer_duration_sec || 0,
         end_early_pattern: t.end_early_pattern || '',
         zeal_condition: t.zeal_condition || null,
+        warn_sec: _w ? _w.sec : 0,
+        warn_text: _w ? _w.text : '',
+        warn_tts: _w ? _w.tts : true,
+        timer_loop: t.timer_loop === true,
+        timer_loop_max: t.timer_loop_max || 0,
       };
-      h += '<tr><td style="color:var(--orange)">' + esc(t.name || '?') + '</td>' +
+      var key = String(t.id || t.name || '');
+      var open = !!_wpTrigOpen['g|' + key];
+      h += '<tr data-trig-key="' + esc(key) + '" style="cursor:pointer"><td>'
+        + '<button type="button" class="trigname" data-trig-view="' + esc(key) + '" aria-expanded="' + (open ? 'true' : 'false') + '" style="color:var(--orange)" title="Show this trigger\\'s settings">'
+        + (open ? '▾' : '▸') + ' ' + esc(t.name || '?') + '</button></td>' +
            '<td class="dim">' + esc(t.category || 'callout') + '</td>' +
            '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc((t.pattern || '').slice(0, 80)) + '</code></td>' +
            '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>' +
            '<td><button type="button" data-trig-copy="' + esc(JSON.stringify(_copy)) + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;white-space:nowrap" title="Copy this guild trigger to your own list so you can customize it without changing the guild\\'s version">⎘ Copy to personal</button></td></tr>';
+      if (open) h += '<tr class="trigdetail"><td colspan="5">' + wpTrigSettingsHtml(t, 'guild') + '</td></tr>';
     }
     h += '</table>';
   }
-  h += '</div>';
-
-  h += '</div>';
-  if (!setSectionHTML('triggers', h)) return;
-  // Mount the editor + render the personal list (idempotent — _wpTrigEditor
-  // installs itself once and rebinds list rows on every paint).
-  if (window._wpTrigEditor && window._wpTrigEditor.mount) {
-    window._wpTrigEditor.mount();
-  }
-  if (window._wpSuggestedTriggers && window._wpSuggestedTriggers.mount) {
-    window._wpSuggestedTriggers.mount();
+  morphInto(el, h);
+}
+function wpGuildTrigToggle(key) {
+  _wpTrigOpen['g|' + key] = !_wpTrigOpen['g|' + key];
+  if (window.__wpLastState) renderGuildTriggersCard(window.__wpLastState);
+  // The card was rebuilt, so put the keyboard back on the name it came from.
+  var bs = document.querySelectorAll('#wpGuildTriggers [data-trig-view]');
+  for (var i = 0; i < bs.length; i++) {
+    if (bs[i].getAttribute('data-trig-view') === key) { try { bs[i].focus({ preventScroll: true }); } catch (e) { void e; } break; }
   }
 }
 
@@ -21927,6 +22215,8 @@ function renderOverlays(s) {
       + '<span id="' + gp + 'Hint" class="dim"></span></span>';
   }
   h += '<span id="wpOvClash" class="dim"></span></div>';
+  // The saved Canvas groups, each with its key (alpha Mimic): empty here, painted by wpRefreshOverlayHotkeys.
+  h += '<div id="wpCanvasGroups"></div>';
   // 🎨 Look. Theme (the guild lead, 2026-07-12) — a direct pick; the active one
   // highlights from status.overlayTheme. Opacity sits with the background
   // button (2026-09-24: "put the opacity slider with the background button"):
@@ -22315,7 +22605,9 @@ var _WP_HOTKEY_USES = {
   hideAllHotkey: 'the Show / hide ALL key', backdropHotkey: 'the backgrounds key',
   damageAlertHotkey: 'the damage-alert key', miniHotkey: 'the Minimize ALL key',
 };
-function _wpHotkeyUseLabel(id) {
+// A use that names itself (Mimic sends a \`label\` for a Canvas group's key) is called by that name.
+function _wpHotkeyUseLabel(id, use) {
+  if (use && typeof use === 'object' && typeof use.label === 'string' && use.label) return use.label;
   if (_WP_HOTKEY_USES[id]) return _WP_HOTKEY_USES[id];
   var k = String(id).replace(/^overlay:/, '');
   for (var i = 0; i < WP_OVERLAY_ROWS.length; i++) if (WP_OVERLAY_ROWS[i][0] === k) return 'the ' + WP_OVERLAY_ROWS[i][1] + ' overlay’s key';
@@ -22372,7 +22664,7 @@ function _wpCaptureAccel(say, onAccel, onClear, selfId) {
     var accel = parts.join('+'), n = _wpAccelNorm(accel);
     for (var i = 0; i < uses.length; i++) {
       if (uses[i].id !== selfId && _wpAccelNorm(uses[i].accel) === n) {
-        say(_wpFmtAccel(accel) + ' is already ' + _wpHotkeyUseLabel(uses[i].id) + ' — press a different one (Esc cancels).');
+        say(_wpFmtAccel(accel) + ' is already ' + _wpHotkeyUseLabel(uses[i].id, uses[i]) + ' — press a different one (Esc cancels).');
         return;                                                     // keep listening
       }
     }
@@ -22406,8 +22698,21 @@ function _wpHotkeyUsesOf(cfg) {
   }
   return uses;
 }
-// id → { accel, with: [the other ids on that key] } for a shared key, or
-// { accel, taken: true } for one the OS refused (Mimic status reports those).
+// The Canvas groups' keys (alpha Mimic: status carries canvasGroups + canvasGroupHotkeys; a Mimic
+// without them has none). Each names itself, as Mimic's own list does for the capture.
+function _wpCanvasGroupUses(st) {
+  var uses = [], groups = st && st.canvasGroups, keys = (st && st.canvasGroupHotkeys) || {};
+  if (!Array.isArray(groups)) return uses;
+  for (var i = 0; i < groups.length; i++) {
+    var g = groups[i];
+    if (g && typeof g.id === 'string' && typeof keys[g.id] === 'string' && keys[g.id].trim()) {
+      uses.push({ id: 'canvasGroup:' + g.id, accel: keys[g.id].trim(), label: 'the “' + String(g.name || 'Group') + '” Canvas group’s key' });
+    }
+  }
+  return uses;
+}
+// id → { accel, with: [the other ids on that key], uses: [those other entries, same order] } for a
+// shared key, or { accel, taken: true } for one the OS refused (Mimic status reports those).
 function _wpKeyClashes(uses, st) {
   var byKey = {}, out = {}, i, j, n;
   for (i = 0; i < uses.length; i++) {
@@ -22418,15 +22723,16 @@ function _wpKeyClashes(uses, st) {
     var grp = byKey[n];
     if (grp.length < 2) continue;
     for (i = 0; i < grp.length; i++) {
-      var others = [];
-      for (j = 0; j < grp.length; j++) if (j !== i) others.push(grp[j].id);
-      out[grp[i].id] = { accel: grp[i].accel, with: others };
+      var others = [], otherUses = [];
+      for (j = 0; j < grp.length; j++) if (j !== i) { others.push(grp[j].id); otherUses.push(grp[j]); }
+      out[grp[i].id] = { accel: grp[i].accel, with: others, uses: otherUses };
     }
   }
-  var gb = (st && st.hotkeysBlocked) || {}, ob = (st && st.overlayHotkeysBlocked) || {};
+  var gb = (st && st.hotkeysBlocked) || {}, ob = (st && st.overlayHotkeysBlocked) || {}, cb = (st && st.canvasGroupHotkeysBlocked) || {};
   for (i = 0; i < uses.length; i++) {
     var u = uses[i];
-    var refused = u.id.indexOf('overlay:') === 0 ? ob[u.id.slice(8)] : gb[u.id];
+    var refused = u.id.indexOf('overlay:') === 0 ? ob[u.id.slice(8)]
+      : u.id.indexOf('canvasGroup:') === 0 ? cb[u.id.slice(12)] : gb[u.id];
     if (refused && !out[u.id]) out[u.id] = { accel: u.accel, taken: true };
   }
   return out;
@@ -22437,7 +22743,7 @@ function _wpKeycap(accel, clash, plainTitle) {
   if (!clash) return { text: t, cls: 'wp-key', title: plainTitle || '' };
   return { text: t, cls: 'wp-key clash', title: clash.taken
     ? 'Another program already uses ' + t + ', so it does nothing here — pick a different one.'
-    : t + ' is also ' + clash.with.map(_wpHotkeyUseLabel).join(' and ') + ' — only one of them can work. Pick a different one.' };
+    : t + ' is also ' + clash.with.map(function(id, n){ return _wpHotkeyUseLabel(id, clash.uses && clash.uses[n]); }).join(' and ') + ' — only one of them can work. Pick a different one.' };
 }
 // "1 clash: Ctrl+Shift+T" — counted in keys, not in the controls sharing one.
 function _wpClashSummary(clashes) {
@@ -22451,10 +22757,10 @@ function _wpClashSummary(clashes) {
 }
 function wpRefreshOverlayHotkeys() {
   if (!(window.mimic && window.mimic.getConfig && window.mimic.getStatus)) return;
-  Promise.all([window.mimic.getConfig(), window.mimic.getStatus()]).then(function(r){
+  return Promise.all([window.mimic.getConfig(), window.mimic.getStatus()]).then(function(r){
     var cfg = r[0] || {}, st = r[1] || {};
     var map = (cfg.overlayHotkeys && typeof cfg.overlayHotkeys === 'object') ? cfg.overlayHotkeys : {};
-    var clashes = _wpKeyClashes(_wpHotkeyUsesOf(cfg), st);
+    var clashes = _wpKeyClashes(_wpHotkeyUsesOf(cfg).concat(_wpCanvasGroupUses(st)), st);
     var bs = document.querySelectorAll('.wp-ov-hk');
     for (var i = 0; i < bs.length; i++) {
       var b = bs[i], k = b.getAttribute('data-ov');
@@ -22482,6 +22788,7 @@ function wpRefreshOverlayHotkeys() {
       sum.textContent = said || 'no clashes';
       sum.style.color = said ? 'var(--red)' : '';
     }
+    wpPaintCanvasGroups(st, clashes);
   }).catch(function(){});
 }
 function wpCaptureOverlayHotkey(btn) {
@@ -22517,6 +22824,73 @@ function wpCaptureOverlayHotkey(btn) {
   btn.classList.add('capturing');
   btn.textContent = 'press keys…';
   say('Press the keys for this overlay now (Ctrl, Alt or Shift + a key). Backspace removes it, Esc cancels.');
+}
+
+// ⌨ Canvas groups (Mimic 3.0 alpha): tray parity for the tray's "Canvas groups — show / hide" submenu,
+// and the key each saved group can carry. Mimic's status carries canvasGroups [{id, name}],
+// canvasGroupHotkeys {id: accel} and canvasGroupHotkeysBlocked {id: accel}; a Mimic without them (the
+// beta line) has no canvasGroupHotkey bridge either, and then this is NOTHING: no heading, no
+// placeholder. It is painted into its own #wpCanvasGroups by wpRefreshOverlayHotkeys, beside every other
+// key, through morphInto — the HTML is a function of the status, so a poll that changes nothing
+// rewrites nothing. The key capture and the show / hide press are Mimic's own (canvasGroupHotkey,
+// toggleCanvasGroup): the same toggle as the key and the tray.
+function _wpCanvasGroupsHTML(st, clashes) {
+  var groups = st && st.canvasGroups;
+  if (!(window.mimic && typeof window.mimic.canvasGroupHotkey === 'function') || !Array.isArray(groups)) return '';
+  var keys = st.canvasGroupHotkeys || {}, blocked = st.canvasGroupHotkeysBlocked || {}, cells = '';
+  for (var i = 0; i < groups.length; i++) {
+    var g = groups[i];
+    if (!g || typeof g.id !== 'string' || !g.id) continue;
+    var accel = typeof keys[g.id] === 'string' ? keys[g.id].trim() : '';
+    var cap = _wpKeycap(accel, clashes && clashes['canvasGroup:' + g.id], 'Press it anywhere to show or hide this group. Change… picks another.');
+    cells += '<span class="wp-kcell">' + esc(g.name || 'Group') + ' '
+      + (accel ? '<code class="' + cap.cls + '" title="' + esc(cap.title) + '">' + esc(cap.text) + '</code>' : '<span class="dim">no hotkey</span>')
+      + (blocked[g.id] ? ' <span style="color:var(--red)" title="' + esc('Another program already uses ' + _wpFmtAccel(blocked[g.id]) + ', so it does nothing here — pick a different one.') + '">⚠ another program already uses it</span>' : '')
+      + '<button type="button" class="wp-btn ghost wp-cg-key" data-gid="' + esc(g.id) + '">Change…</button>'
+      + '<button type="button" class="wp-btn wp-cg-show" data-gid="' + esc(g.id) + '">Show / hide</button></span>';
+  }
+  if (!cells) return '';
+  return '<div class="wp-strip wp-cgroups"><span class="wp-lbl">Canvas groups</span>' + cells + '<span id="wpCgHint" class="dim"></span></div>';
+}
+function wpPaintCanvasGroups(st, clashes) {
+  var el = document.getElementById('wpCanvasGroups');
+  if (!el || _wpHotkeyCapturing) return;   // a capture in progress keeps the strip, and its prompt, as they are
+  morphInto(el, _wpCanvasGroupsHTML(st, clashes));
+}
+// The strip's one line of feedback; looked up when it is said, because a repaint replaces the element.
+function _wpCgSay(msg, fade) {
+  var hint = document.getElementById('wpCgHint');
+  if (!hint) return;
+  hint.textContent = msg || '';
+  if (fade) setTimeout(function(){ var h2 = document.getElementById('wpCgHint'); if (h2) h2.textContent = ''; }, 4000);
+}
+function wpCanvasGroupChange(id) {
+  var m = window.mimic;
+  if (!(m && typeof m.canvasGroupHotkey === 'function')) return;
+  function save(accel) {
+    return Promise.resolve(m.canvasGroupHotkey(id, accel)).then(function(r){
+      if (!r || r.ok === false) { _wpCgSay('Save failed' + (r && r.error ? ' — ' + r.error : '') + '.', true); return; }
+      // The save re-registers every key: repaint the strip (and the clashes elsewhere on the tab) first,
+      // then say whether the OS took it — the repaint replaces the line it would be said on.
+      return Promise.resolve(wpRefreshOverlayHotkeys()).then(function(){
+        if (!accel) { _wpCgSay('Hotkey removed.', true); return; }
+        var blocked = r.blocked && r.blocked[id];
+        _wpCgSay(blocked ? 'Another program already uses ' + _wpFmtAccel(accel) + ', so it does nothing here — click Change… and pick a different one.'
+                         : 'Saved — press ' + _wpFmtAccel(accel) + ' anywhere to show or hide the group.', !blocked);
+      });
+    }).catch(function(){ _wpCgSay('Save failed.', true); });
+  }
+  var started = _wpCaptureAccel(_wpCgSay, save, function(clear){
+    if (clear) save(''); else wpRefreshOverlayHotkeys();
+  }, 'canvasGroup:' + id);
+  if (started) _wpCgSay('Press the keys for this group now (Ctrl, Alt or Shift + a key). Backspace removes it, Esc cancels.');
+}
+function wpCanvasGroupToggle(id) {
+  var m = window.mimic;
+  if (!(m && typeof m.toggleCanvasGroup === 'function')) return;
+  Promise.resolve(m.toggleCanvasGroup(id)).then(function(ok){
+    _wpCgSay(ok === false ? 'That group no longer exists.' : 'Done — shown or hidden on the Canvas.', true);
+  }).catch(function(){ _wpCgSay('Could not reach Mimic.', true); });
 }
 
 // Dock / undock an overlay from the Overlays page. Docking moves it out of its
@@ -22699,6 +23073,10 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
     if (d) { var dn = d.getAttribute('data-ov'); if (dn) wpDockOverlay(dn); return; }
     var hk = (t && t.closest) ? t.closest('.wp-ov-hk') : null;
     if (hk && window.mimic && window.mimic.saveConfig) { wpCaptureOverlayHotkey(hk); return; }
+    var cgk = (t && t.closest) ? t.closest('.wp-cg-key') : null;
+    if (cgk) { wpCanvasGroupChange(cgk.getAttribute('data-gid')); return; }
+    var cgs = (t && t.closest) ? t.closest('.wp-cg-show') : null;
+    if (cgs) { wpCanvasGroupToggle(cgs.getAttribute('data-gid')); return; }
     var mn = (t && t.closest) ? t.closest('.wp-ov-mini') : null;
     if (mn && window.mimic && window.mimic.setOverlayMini) {
       window.mimic.setOverlayMini(mn.getAttribute('data-mini'), !mn.classList.contains('on'))
@@ -23582,7 +23960,7 @@ function _wpKillVersionFloorRow(tuning) {
   h += '<div><b style="font-size:12px">Minimum agent version</b> <code class="dim" style="font-size:10px">min_agent_ver_num</code>'
      + (cur != null ? ' <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(248,81,73,0.18);color:var(--red);border:1px solid rgba(248,81,73,0.4)">floor ' + cur + '</span>' : ' <span class="dim" style="font-size:10px">unset</span>')
      + (pend ? ' <span class="dim" style="font-size:10px">(saving…)</span>' : '') + '</div>';
-  h += '<div class="dim" style="font-size:11px;line-height:1.45;margin-top:3px">Numeric version form (major×10000 + minor×100 + patch), e.g. agent 3.3.95 → 30395. Agents below the floor pause uploads like the kill switch and show an update nudge. Set 0 (or blank) to clear the floor. Conservative — coordinate with Hitya.</div>';
+  h += '<div class="dim" style="font-size:11px;line-height:1.45;margin-top:3px">Numeric version form (major×10000 + minor×100 + patch), e.g. agent 3.3.95 → 30395. Agents below the floor pause uploads like the kill switch and show an update nudge. Set 0 (or blank) to clear the floor. Conservative — coordinate with the guild lead.</div>';
   h += '<div style="display:flex;gap:6px;align-items:center;margin-top:5px">';
   h += '<input id="wpKillVerInput" type="number" min="0" step="1" placeholder="' + (cur != null ? cur : 'unset') + '" style="font-size:11px;padding:3px 6px;background:#161b22;color:var(--text);border:1px solid var(--border);border-radius:4px;width:120px">';
   h += '<button type="button" class="wpKillVerSet" style="font-size:11px;padding:3px 11px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:#21262d;color:var(--text)">Set floor</button>';
@@ -25086,7 +25464,7 @@ async function refresh() {
                      ['healingcard', renderHealingCard], ['watchedlogs', renderWatchedLogsCard],
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
                      ['tanks', renderTanks], ['deeps', renderDeeps],
-                     ['triggers', renderTriggers],
+                     ['triggers', renderTriggers], ['guildtriggers', renderGuildTriggersCard],
                      // 🩺 Diagnostics owns the pipe/charm/pet/journal/mechanics/
                      // explorer placeholders — it MUST run before their fillers
                      // below, same rule as renderDash → renderMeCard.
@@ -28074,6 +28452,155 @@ async function dismissTopDamage(key) {
   setInterval(refresh, 5000);
 })();
 
+// ── Trigger settings: what a trigger is set to do ───────────────────────────
+// FB-23 / FB-30: a trigger's name and pattern were all the list showed. A personal row's name was
+// also a .name cell, so clicking it went to the character page (a 404 for "Rampage on me")
+// instead of anywhere useful. Both lists now open a row into its settings, and a personal one
+// into the edit form. FB-26 / FB-31 add the warning-before-the-end and repeat settings the
+// personal form never had.
+// The three functions below are PURE (data in, text or a row out) so a test runs the shipped code.
+var WP_TRIG_ZEAL = { target_hp_pct: 'Target HP', self_hp_pct: 'Your HP', group_min_hp_pct: 'Lowest group HP' };
+// Which rows are open, by 'g|<key>' (guild) or 'p|<id>' (personal). Kept here, not in the DOM,
+// because both lists repaint under it.
+var _wpTrigOpen = {};
+
+// The warnings a trigger will fire, as {sec, text, tts}: the timer_warnings list when it has
+// one, else the single warning_seconds / warning_text pair — the order the agent reads them in.
+function wpTrigWarnings(t) {
+  var out = [];
+  var list = Array.isArray(t.timer_warnings) ? t.timer_warnings : [];
+  for (var i = 0; i < list.length; i++) {
+    var w = list[i];
+    if (w && Number(w.seconds) > 0 && w.text) out.push({ sec: Number(w.seconds), text: String(w.text), tts: w.tts !== false });
+  }
+  if (!out.length && t.warning_seconds > 0 && t.warning_text) {
+    out.push({ sec: Number(t.warning_seconds), text: String(t.warning_text), tts: t.warning_tts !== false });
+  }
+  out.sort(function (a, b) { return b.sec - a.sec; });
+  return out;
+}
+
+// A trigger's settings as a read-only list, for a personal row (scope 'personal') or a guild row
+// ('guild'). Skips what is not set. The footer is the next step: edit here, or edit on the site.
+function wpTrigSettingsHtml(t, scope) {
+  var guild = scope === 'guild';
+  var rows = [];
+  function add(k, v) { if (v) rows.push('<div class="trigset-k">' + k + '</div><div class="trigset-v">' + v + '</div>'); }
+  function code(s) { return '<code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc(String(s)) + '</code>'; }
+  function secs(n) { return esc(String(Math.round(Number(n) * 10) / 10)) + 's'; }
+  function names(a) { return a.map(function (c) { c = String(c); return esc(c.charAt(0).toUpperCase() + c.slice(1)); }).join(', '); }
+  // when it fires
+  if (t.pattern) add('Fires on', code(t.pattern) + (t.use_regex === false ? ' <span class="dim">plain text, not a regex</span>' : ''));
+  var zc = t.zeal_condition;
+  if (zc && zc.field) add('Fires when', esc((WP_TRIG_ZEAL[zc.field] || zc.field) + ' ' + zc.op + ' ' + zc.value + '%'));
+  var cm = t.catalog_match;
+  if (cm && cm.on) {
+    add('Fires on', (cm.on === 'worn_off' ? 'one of your ' + esc((cm.cc || []).join(' / ')) + ' spells wearing off'
+                                           : 'a ' + esc((cm.cc || []).join(' / ')) + ' spell landing on you') + ' <span class="dim">(read from the spell catalog)</span>');
+  }
+  if (t.builtin_timer) add('Timer bar', esc(String(t.builtin_timer).replace(/_/g, ' ')) + ' <span class="dim">a switch: it draws a bar, there is nothing to match</span>');
+  if (Array.isArray(t.exclude_patterns) && t.exclude_patterns.length) add('Unless', t.exclude_patterns.map(function (p) { return code(p); }).join(' '));
+  if (Array.isArray(t.characters) && t.characters.length) add('Only on', names(t.characters));
+  if (guild && Array.isArray(t.applies_to_classes) && t.applies_to_classes.length) add('Classes', esc(t.applies_to_classes.join(', ')));
+  // what it does
+  var acts = Array.isArray(t.actions) ? t.actions : [];
+  var timed = t.timer_duration_sec > 0 || !!t.timer_duration_capture;
+  for (var i = 0; i < acts.length; i++) {
+    var a = acts[i];
+    if (!a || !a.type) continue;
+    if (a.type === 'text_overlay') {
+      add(i === 0 ? 'Shows' : 'Then shows', '<b>' + esc(a.text || '') + '</b>' + (a.color ? ' in ' + esc(a.color) : '')
+        + (a.duration_ms ? ' for ' + secs(a.duration_ms / 1000) : '') + (a.sticky ? ', stays until dismissed' : ''));
+      // A Suggested alert with its 🔊 unticked says nothing (the agent mutes it); any other row with no speech text reads its display text.
+      add('Says', a.tts ? '<b>' + esc(a.tts) + '</b>'
+        : (!guild && String(t.id || '').indexOf('suggested:') === 0 ? '<span class="dim">nothing, its 🔊 is unticked under Suggested triggers</span>' : '<span class="dim">the same words it shows</span>'));
+      if (a.sound) add('Sound', esc(a.sound));
+    } else {
+      var msg = a.message || a.text || '';
+      add('Also', esc(String(a.type).replace(/_/g, ' ')) + (msg ? ': ' + esc(String(msg).slice(0, 120)) : ''));
+    }
+  }
+  if (!acts.length && timed) add('Shows', '<span class="dim">nothing when it matches — only the countdown</span>');
+  if (t.sticky) add('Stays', 'on screen until dismissed');
+  add('Cooldown', t.cooldown_seconds > 0 ? secs(t.cooldown_seconds) + ' between fires' : '');
+  // the countdown, its warning, and whether it repeats
+  if (timed) {
+    var cap = t.timer_duration_capture;
+    add('Countdown', (cap ? 'length read from <b>{' + esc(cap) + '}</b>' + (t.timer_duration_sec > 0 ? ', else ' + secs(t.timer_duration_sec) : '')
+                          : secs(t.timer_duration_sec)) + (t.pinned ? ', pinned to the top' : ''));
+    if (t.timer_key_capture) add('One bar per', '<b>{' + esc(t.timer_key_capture) + '}</b>');
+    if (t.display_threshold_sec > 0) add('Shown', 'only in the last ' + secs(t.display_threshold_sec));
+    var ws = wpTrigWarnings(t);
+    add('Warns', ws.length
+      ? ws.map(function (w) { return secs(w.sec) + ' before the end: <b>' + esc(w.text) + '</b> <span class="dim">' + (w.tts ? 'spoken' : 'shown only') + '</span>'; }).join('<br>')
+      : '<span class="dim">no warning before the end</span>');
+    add('Repeats', t.timer_loop === true
+      ? '&#8635; restarts itself when it ends' + (t.timer_loop_max > 0 ? ', up to ' + esc(String(t.timer_loop_max)) + ' times' : ' until you &#10005; it, the cancel phrase fires or the mob dies')
+      : '<span class="dim">no, it ends once</span>');
+  }
+  if (t.cooldown_timer_sec > 0) add('Recast bar', secs(t.cooldown_timer_sec));
+  if (t.end_early_pattern) add('Ends early on', code(t.end_early_pattern));
+  if (t.end_text) add('End text', esc(t.end_text));
+  if (t.bar_color) add('Bar colour', esc(t.bar_color));
+  // about the trigger itself (a personal row's on/off is its own checkbox, so it is not repeated here)
+  if (guild) {
+    add('Category', esc(t.category || 'callout'));
+    if (t.default_scope) add('Scope', esc(t.default_scope));
+    if (t.notes) add('Notes', esc(String(t.notes).slice(0, 300)));
+  }
+  var foot = guild
+    ? '<a href="https://wolfpack.quest/admin/triggers?edit=' + encodeURIComponent(t.id || '') + '" target="_blank" rel="noopener noreferrer" style="color:var(--blue)">Edit on wolfpack.quest</a> <span class="dim">&middot; officers only; guild triggers are changed there</span>'
+    : (t.builtin_timer
+      ? '<span class="dim">This one is a switch: turn it on or off under Suggested triggers.</span>'
+      : '<button type="button" data-trig-edit="' + esc(t.id || '') + '" style="background:#1f6feb;color:#fff;border:0;padding:4px 12px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px;font-weight:bold">&#9998; Edit these settings</button>'
+        + ' <span class="dim">anything the form has no box for is kept as it is'
+        // Suggested triggers rebuild their row from the template when they are ticked or their 🔊 flips.
+        + (String(t.id || '').indexOf('suggested:') === 0 ? '; this one came from Suggested triggers, and ticking it or its 🔊 there puts the standard version back' : '')
+        + '</span>');
+  return '<div class="trigset">' + rows.join('') + '</div><div style="margin-top:8px;font-size:11px">' + foot + '</div>';
+}
+
+// The edit form's values laid over a saved row ({} for a new one). Everything the form has no box
+// for — a second alert, a sound, an imported end text, a bar colour, the per-character list, a
+// spell-catalog match, a timer_warnings list — rides along untouched, so editing one setting of an
+// imported trigger cannot quietly strip the rest. Mirrors how the old add-only form built a row.
+function wpTrigApplyForm(base, f) {
+  var row = Object.assign({}, base || {});
+  delete row.valid; delete row.import_error;   // flags the list adds on the way out, not settings
+  row.name = f.name;
+  row.pattern = f.pattern;
+  if (row.use_regex === undefined) row.use_regex = true;
+  if (row.enabled === undefined) row.enabled = true;
+  row.cooldown_seconds = f.cooldown;
+  var acts = Array.isArray(row.actions) ? row.actions.slice() : [];
+  var at = -1;
+  for (var i = 0; i < acts.length; i++) { if (acts[i] && acts[i].type === 'text_overlay') { at = i; break; } }
+  if (f.overlay) {
+    var a = Object.assign({ type: 'text_overlay' }, at >= 0 ? acts[at] : {}, { text: f.overlay, color: f.color, duration_ms: f.duration });
+    if (f.tts) a.tts = f.tts; else delete a.tts;
+    if (at >= 0) acts[at] = a; else acts.unshift(a);
+  } else if (at >= 0) {
+    acts.splice(at, 1);
+  }
+  row.actions = acts;
+  if (f.timerSec > 0) row.timer_duration_sec = f.timerSec; else delete row.timer_duration_sec;
+  if (f.endEarly) { row.end_early_pattern = f.endEarly; if (row.end_use_regex === undefined) row.end_use_regex = true; }
+  else { delete row.end_early_pattern; delete row.end_use_regex; }
+  if (f.zeal) row.zeal_condition = f.zeal; else delete row.zeal_condition;
+  // FB-26: warn N seconds before the end. warning_tts is stored only when off — absent means speak.
+  if (f.warnSec > 0 && f.warnText) {
+    row.warning_seconds = f.warnSec;
+    row.warning_text = f.warnText;
+    if (f.warnTts === false) row.warning_tts = false; else delete row.warning_tts;
+  } else {
+    delete row.warning_seconds; delete row.warning_text; delete row.warning_tts;
+  }
+  // FB-31: restart when it ends; timer_loop_max absent = keep going.
+  if (f.loop) { row.timer_loop = true; if (f.loopMax > 0) row.timer_loop_max = f.loopMax; else delete row.timer_loop_max; }
+  else { delete row.timer_loop; delete row.timer_loop_max; }
+  return row;
+}
+
 // ── ⚡ Triggers editor (mounted once, owned by the Triggers tab) ────────────
 // renderTriggers() rewrites the section\\'s read-only blocks on every poll.
 // This IIFE owns the EDITOR + list area inside #trigEditorPanel — installed
@@ -28086,12 +28613,17 @@ async function dismissTopDamage(key) {
   var mounted = false;
   var listEl  = null;
   var editorEl = null;
+  // The list as last fetched (a row opens from this, no refetch) and the saved trigger the form is
+  // editing, if any. Both live here, not in the DOM: a section repaint rebuilds the list and the
+  // form from scratch, and the edit has to survive that (FB-23).
+  var lastTriggers = [];
+  var editing = null;   // { id, row } while the form edits a saved trigger
   // Track an in-flight create row so polls don\\'t blow away the user\\'s typing
   // (the form is uncontrolled — we read values on submit).
   function buildEditorHtml() {
     return ''
       + '<div style="margin-top:12px;padding:12px;background:#161b22;border:1px solid var(--border);border-radius:8px">'
-      + '  <div style="font-weight:bold;margin-bottom:8px;color:var(--blue)">+ Add personal trigger</div>'
+      + '  <div id="trigFormTitle" style="font-weight:bold;margin-bottom:8px;color:var(--blue)">+ Add personal trigger</div>'
       + '  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">'
       + '    <label>Name<br><input id="trigNewName" type="text" placeholder="e.g. Rampage on me" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label>Cooldown (sec)<br><input id="trigNewCooldown" type="number" min="0" max="3600" value="0" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
@@ -28105,6 +28637,14 @@ async function dismissTopDamage(key) {
       + '    <label>Duration (ms)<br><input id="trigNewDuration" type="number" min="500" max="60000" value="5000" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label>Countdown timer (sec, 0 = no timer)<br><input id="trigNewTimerSec" type="number" min="0" max="3600" value="0" placeholder="e.g. 18 for a Cazic Touch refresh" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label>Cancel-early phrase (optional)<br><input id="trigNewEndEarly" type="text" placeholder="e.g. {target} has been slain" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"></label>'
+      // FB-26 (EQLogParser / GINA "warn N seconds before the end") and FB-31 ("restart the timer when it ends"):
+      // both ride on the countdown above, so both are checked against it on save.
+      + '    <label>Warn when this many seconds remain (0 = no warning)<br><input id="trigNewWarnSec" type="number" min="0" max="3600" value="0" placeholder="e.g. 10" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '    <label>Warning text (flashed, and spoken)<br><input id="trigNewWarnText" type="text" placeholder="e.g. AE in 10 seconds" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '    <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input id="trigNewWarnTts" type="checkbox" checked> 🔊 Speak the warning (untick to only flash it)</label>'
+      + '    <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input id="trigNewLoop" type="checkbox"> ↻ Repeat when the countdown ends</label>'
+      + '    <label>Stop repeating after this many times (blank = keep going)<br><input id="trigNewLoopMax" type="number" min="1" max="1000" placeholder="blank = until you ✕ it" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      + '    <div class="dim" style="font-size:11px;align-self:end">Both need a countdown timer. A repeating timer starts over at 0 and warns again each round; ✕ on its bar, the cancel-early phrase, or the mob dying stops it, and the trigger firing again restarts it from the top.</div>'
       + '    <label style="grid-column:1/3">Zeal HP condition (optional — fires off live Zeal gauges, no log line needed; use {target} and {value} in the overlay text)<br>'
       + '      <span style="display:flex;gap:6px;align-items:center">'
       + '        <select id="trigNewZealField" style="flex:2;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"><option value="">— none —</option><option value="target_hp_pct">Target HP %</option><option value="self_hp_pct">Self HP %</option><option value="group_min_hp_pct">Lowest group HP %</option></select>'
@@ -28114,6 +28654,7 @@ async function dismissTopDamage(key) {
       + '  </div>'
       + '  <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
       + '    <button id="trigAddBtn" type="button" style="background:#1f6feb;color:#fff;border:0;padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:bold">Add trigger</button>'
+      + '    <button id="trigCancelBtn" type="button" style="display:none;background:#21262d;color:var(--text);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px">Cancel edit</button>'
       + '    <button id="trigPreviewBtn" type="button" style="background:#21262d;color:var(--green);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px" title="Fire the overlay with the current form text (no save, no DB)">▶ Preview</button>'
       + '    <button id="trigTestBtn" type="button" style="background:#21262d;color:var(--text);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px">Test pattern…</button>'
       + '    <button id="trigImportBtn" type="button" style="background:#21262d;color:var(--blue);border:1px solid var(--border);padding:6px 14px;border-radius:5px;cursor:pointer;font-family:inherit;font-size:12px" title="Paste a GINA or EQLogParser trigger XML to bulk-import">⬇ Import GINA / EQLP</button>'
@@ -28142,6 +28683,9 @@ async function dismissTopDamage(key) {
       payload = r.ok ? await r.json() : null;
     } catch (e) { void e; }
     const triggers = payload && payload.triggers ? payload.triggers : [];
+    lastTriggers = triggers;
+    // Deleted (here, in bulk, or by another window) while it was open in the form: nothing left to save to.
+    if (payload && editing && !triggers.some(function(x){ return x.id === editing.id; })) endEdit(true);
     // The Suggested panel shows a template as ON while its personal copy exists, so it must redraw with
     // this list: a copy deleted here stayed ON there, and unticking it only looked like nothing
     // happened (a bard, 2026-09-26: "i deleted it out of personal trigger … and now i cant get it back").
@@ -28197,11 +28741,19 @@ async function dismissTopDamage(key) {
         actionText = String(t.actions[0].text || '').slice(0, 80);
         actionColor = String(t.actions[0].color || 'red');
       }
-      html += '<tr data-trig-id="' + esc(t.id || '') + '">'
+      var isOpen = !!_wpTrigOpen['p|' + (t.id || '')];
+      html += '<tr data-trig-id="' + esc(t.id || '') + '" style="cursor:pointer">'
         + '<td><input type="checkbox" data-trig-sel="' + esc(t.id || '') + '"'
         + (t.enabled === false ? ' data-trig-off="1"' : '') + '></td>'
         + '<td><input type="checkbox" ' + (t.enabled !== false ? 'checked' : '') + ' data-trig-toggle="' + esc(t.id || '') + '"></td>'
-        + '<td class="name">' + esc(t.name || '?') + (t.valid === false ? ' <span style="color:var(--red);font-size:10px">(bad pattern)</span>' : '') + '</td>'
+        // NOT class="name": that class is the character-page link, which opened /character/Rampage for a trigger
+        // called "Rampage on me". A button, so the name is also reachable from the keyboard (FB-23).
+        + '<td><button type="button" class="trigname" data-trig-open="' + esc(t.id || '') + '" aria-expanded="' + (isOpen ? 'true' : 'false') + '" title="Show this trigger\\'s settings">'
+        + '<span class="trigchev" aria-hidden="true">' + (isOpen ? '▾' : '▸') + '</span> ' + esc(t.name || '?') + '</button>'
+        + (t.valid === false ? ' <span style="color:var(--red);font-size:10px">(bad pattern)</span>' : '')
+        // A ticked Suggested alert is listed here too. It is the SAME trigger, not a second one (FB-21: "Enabling
+        // either one of these 'charm break' lines makes both enable"), so say so on the row.
+        + (String(t.id || '').indexOf('suggested:') === 0 ? ' <span class="dim" style="font-size:10px" title="The same alert as the one under Suggested triggers, not a second one. Ticking either box moves both; deleting it here switches it off there.">(from Suggested)</span>' : '') + '</td>'
         + '<td><code style="font-size:10px;background:#0d1117;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc(String(t.pattern || '').slice(0, 60)) + '</code></td>'
         + '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>'
         + '<td style="color:' + esc(actionColor) + '">' + esc(actionText) + '</td>'
@@ -28211,6 +28763,7 @@ async function dismissTopDamage(key) {
         + '<button type="button" data-trig-delete="' + esc(t.id || '') + '" style="background:transparent;border:0;color:var(--red);cursor:pointer;font-size:13px" title="Delete">✕</button>'
         + '</td>'
         + '</tr>';
+      if (isOpen) html += detailRowHtml(t);
     }
     html += '</table>';
     listEl.innerHTML = html;
@@ -28262,6 +28815,120 @@ async function dismissTopDamage(key) {
     var delAll = listEl.querySelector('#trigDeleteAll');
     if (delAll) delAll.addEventListener('click', function(){ onDeleteAll(triggers.length); });
     refreshCount();
+  }
+  // ── Open a row to its settings, edit it in the form (FB-23) ───────────
+  function detailRowHtml(t) {
+    return '<tr class="trigdetail" data-trig-detail="' + esc(t.id || '') + '"><td colspan="7">' + wpTrigSettingsHtml(t, 'personal') + '</td></tr>';
+  }
+  function rowById(id) {
+    var rows = listEl ? listEl.querySelectorAll('tr[data-trig-id]') : [];
+    for (var i = 0; i < rows.length; i++) if (rows[i].getAttribute('data-trig-id') === id) return rows[i];
+    return null;
+  }
+  // Open or close one row's settings in place. The row-select ticks live in the DOM, so this adds or
+  // removes just the detail row; redrawing the list would clear them.
+  function toggleOpen(id) {
+    var tr = rowById(id);
+    var t = lastTriggers.filter(function(x){ return x.id === id; })[0];
+    if (!tr || !t) return;
+    var key = 'p|' + id;
+    var nowOpen = !_wpTrigOpen[key];
+    _wpTrigOpen[key] = nowOpen;
+    var next = tr.nextElementSibling;
+    var hasDetail = !!(next && next.classList.contains('trigdetail'));
+    if (nowOpen && !hasDetail) tr.insertAdjacentHTML('afterend', detailRowHtml(t));
+    else if (!nowOpen && hasDetail) next.remove();
+    var b = tr.querySelector('[data-trig-open]');
+    if (b) {
+      b.setAttribute('aria-expanded', nowOpen ? 'true' : 'false');
+      var ch = b.querySelector('.trigchev');
+      if (ch) ch.textContent = nowOpen ? '▾' : '▸';
+    }
+  }
+  // One delegated handler for the list (the Edit button lives in detail rows that are added after the
+  // list is drawn). A click on the name, or on a plain cell of the row, opens it; a control on the row
+  // keeps its own job, and dragging across a pattern to copy it does not toggle anything.
+  function onListClick(e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var ed = t.closest('[data-trig-edit]');
+    if (ed) { startEdit(ed.getAttribute('data-trig-edit')); return; }
+    var tr = t.closest('tr[data-trig-id]');
+    if (!tr) return;
+    var opener = t.closest('[data-trig-open]');
+    if (!opener && t.closest('input, button, a, label, select, textarea')) return;
+    if (!opener && window.getSelection && String(window.getSelection()) !== '') return;
+    toggleOpen(tr.getAttribute('data-trig-id'));
+  }
+  function setVal(id, v) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    var s = (v == null ? '' : String(v));
+    // A colour the dropdown has no option for (the suggested alerts use yellow) would read back blank
+    // and quietly turn red on save; give it an option of its own.
+    if (el.tagName === 'SELECT' && s && !Array.prototype.some.call(el.options, function(o){ return o.value === s; })) el.add(new Option(s, s));
+    el.value = s;
+  }
+  function setChk(id, on) { var el = document.getElementById(id); if (el) el.checked = !!on; }
+  // A saved row into the form. The form has one warning box: the earliest of the row's warnings.
+  function fillForm(row) {
+    var o = (Array.isArray(row.actions) ? row.actions : []).filter(function(a){ return a && a.type === 'text_overlay'; })[0] || {};
+    var zc = row.zeal_condition || null;
+    var w = wpTrigWarnings(row)[0];
+    setVal('trigNewName', row.name); setVal('trigNewPattern', row.pattern);
+    setVal('trigNewCooldown', row.cooldown_seconds || 0);
+    setVal('trigNewOverlay', o.text || ''); setVal('trigNewTts', o.tts || '');
+    setVal('trigNewColor', o.color || 'red'); setVal('trigNewDuration', o.duration_ms || 5000);
+    setVal('trigNewTimerSec', row.timer_duration_sec || 0);
+    setVal('trigNewEndEarly', row.end_early_pattern || '');
+    setVal('trigNewZealField', zc && zc.field ? zc.field : '');
+    setVal('trigNewZealOp', zc && zc.op ? zc.op : '<');
+    setVal('trigNewZealValue', zc && zc.value != null ? zc.value : '');
+    setVal('trigNewWarnSec', w ? w.sec : 0); setVal('trigNewWarnText', w ? w.text : '');
+    setChk('trigNewWarnTts', w ? w.tts : true);
+    setChk('trigNewLoop', row.timer_loop === true);
+    setVal('trigNewLoopMax', row.timer_loop_max > 0 ? row.timer_loop_max : '');
+  }
+  // Title, button labels and (when editing) the form's contents. Also what the form comes back as after
+  // a section repaint rebuilds it: the edit survives, any unsaved typing does not.
+  function applyEditUi() {
+    var title = document.getElementById('trigFormTitle');
+    var add = document.getElementById('trigAddBtn');
+    var cancel = document.getElementById('trigCancelBtn');
+    var msg = document.getElementById('trigAddMsg');
+    if (title) title.textContent = editing ? '✎ Editing: ' + (editing.row.name || 'trigger') : '+ Add personal trigger';
+    if (add) add.textContent = editing ? 'Save changes' : 'Add trigger';
+    if (cancel) cancel.style.display = editing ? '' : 'none';
+    if (!editing) return;
+    fillForm(editing.row);
+    if (msg) {
+      var many = Array.isArray(editing.row.timer_warnings) && editing.row.timer_warnings.length > 0;
+      msg.textContent = 'Change what you like and click Save changes. Settings this form has no box for are kept as they are.'
+        + (many ? ' This trigger carries its own list of ' + editing.row.timer_warnings.length + ' warnings: it is kept, and it takes priority over the warning box.' : '');
+      msg.style.color = 'var(--blue)';
+    }
+  }
+  async function startEdit(id) {
+    if (!id) return;
+    var r = await fetch('/api/personal-triggers');
+    var j = r.ok ? await r.json() : { triggers: [] };
+    var row = (j.triggers || []).filter(function(x){ return x.id === id; })[0];
+    if (!row) { alert('Trigger not found.'); return; }
+    editing = { id: id, row: row };
+    applyEditUi();
+    var panel = document.getElementById('trigEditorPanel');
+    if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    var nameEl = document.getElementById('trigNewName');
+    if (nameEl && nameEl.focus) { try { nameEl.focus(); } catch (e) { void e; } }
+  }
+  function endEdit(reset) {
+    editing = null;
+    applyEditUi();
+    if (reset) {
+      fillForm({ name: '', pattern: '', actions: [] });
+      var msg = document.getElementById('trigAddMsg');
+      if (msg) msg.textContent = '';
+    }
   }
   // Open wolfpack.quest/admin/triggers prefilled with this trigger's config
   // so an officer can review + click Create. We deliberately DON'T post
@@ -28482,42 +29149,86 @@ async function dismissTopDamage(key) {
     var zVal   = (document.getElementById('trigNewZealValue') || {}).value || '';
     var zealCond = null;
     if (zField && zVal !== '') zealCond = { field: zField, op: zOp, value: Number(zVal) };
+    // FB-26 / FB-31: the warning before the end, and the repeat.
+    var warnSec  = parseInt((document.getElementById('trigNewWarnSec') || {}).value || '0', 10) || 0;
+    var warnText = ((document.getElementById('trigNewWarnText') || {}).value || '').trim();
+    var warnTts  = (document.getElementById('trigNewWarnTts') || {}).checked !== false;
+    var loop     = !!(document.getElementById('trigNewLoop') || {}).checked;
+    var loopMax  = parseInt((document.getElementById('trigNewLoopMax') || {}).value || '0', 10) || 0;
     var msg = document.getElementById('trigAddMsg');
+    function fail(text) { if (msg) { msg.textContent = text; msg.style.color = 'var(--red)'; } }
+    // Editing a saved trigger: its row is the base the form's values go over.
+    var base = editing ? editing.row : null;
     // A trigger needs an overlay text plus EITHER a log pattern OR a Zeal
-    // condition. Pure-Zeal triggers (HP thresholds) carry no log pattern.
-    if (!name || !overlayText || (!pattern && !zealCond)) {
-      if (msg) { msg.textContent = 'Need a name, overlay text, and either a pattern or a Zeal condition.'; msg.style.color = 'var(--red)'; }
+    // condition. Pure-Zeal triggers (HP thresholds) carry no log pattern. Editing relaxes two of those: a
+    // switch or a spell-catalog row has no pattern, and an imported timer-only one never had an alert.
+    var hadAlert = !!(base && (Array.isArray(base.actions) ? base.actions : []).some(function(a){ return a && a.type === 'text_overlay'; }));
+    var noPatternOk = !!(base && (base.builtin_timer || base.catalog_match));
+    if (!name || ((!base || hadAlert) && !overlayText) || (!pattern && !zealCond && !noPatternOk)) {
+      fail('Need a name, overlay text, and either a pattern or a Zeal condition.');
       return;
+    }
+    // Both settings count down to the end of the timer; a length read from a capture counts as a timer.
+    var hasTimer = timerSec > 0 || !!(base && base.timer_duration_capture);
+    if (warnSec > 0 && !warnText) { fail('Add the warning text, or set the warning seconds back to 0.'); return; }
+    if (warnText && !(warnSec > 0)) { fail('Say how many seconds before the end to warn, or clear the warning text.'); return; }
+    if (warnSec > 0 && !hasTimer) { fail('A warning counts down to the end of a timer: set a countdown timer first.'); return; }
+    if (warnSec > 0 && timerSec > 0 && warnSec >= timerSec) { fail('The warning has to come before the end: use fewer seconds than the ' + timerSec + 's countdown.'); return; }
+    if (loop && !hasTimer) { fail('Repeat restarts the countdown: set a countdown timer first.'); return; }
+    // The save REPLACES the whole list and drops a row whose pattern will not compile, so a typo in an
+    // edit would delete the trigger. Ask the agent first (the same compiler the save uses).
+    if (pattern) {
+      try {
+        var chk = await fetch('/api/triggers/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pattern: pattern, use_regex: !base || base.use_regex !== false, pattern_flags: (base && base.pattern_flags) || 'i', line: ' ' }),
+        });
+        var chkJ = await chk.json().catch(function(){ return {}; });
+        if (chkJ && chkJ.error) { fail('That pattern will not compile, so nothing was saved: ' + chkJ.error); return; }
+      } catch (e) { void e; }
     }
     const r = await fetch('/api/personal-triggers');
     const j = r.ok ? await r.json() : { triggers: [] };
-    const row = {
-      name: name, pattern: pattern, use_regex: true, enabled: true,
-      cooldown_seconds: cooldown,
-      // tts only when the user typed one: absent means the overlay falls back
-      // to the display text (cleaned of emoji by triggers.html), which is the
-      // sane default for the many triggers that read fine as written.
-      actions: [{ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration, ...(ttsText ? { tts: ttsText } : {}) }],
-    };
-    if (timerSec > 0) row.timer_duration_sec = timerSec;
-    if (endEarly.trim()) { row.end_early_pattern = endEarly.trim(); row.end_use_regex = true; }
-    if (zealCond) row.zeal_condition = zealCond;
-    const next = (j.triggers || []).concat([row]);
+    const all = j.triggers || [];
+    // tts only when the user typed one: absent means the overlay falls back
+    // to the display text (cleaned of emoji by triggers.html), which is the
+    // sane default for the many triggers that read fine as written.
+    const form = { name: name, pattern: pattern, cooldown: cooldown, overlay: overlayText, tts: ttsText, color: color,
+      duration: duration, timerSec: timerSec, endEarly: endEarly.trim(), zeal: zealCond,
+      warnSec: warnSec, warnText: warnText, warnTts: warnTts, loop: loop, loopMax: loopMax };
+    var next;
+    if (editing) {
+      var at = -1;
+      for (var k = 0; k < all.length; k++) { if (all[k].id === editing.id) { at = k; break; } }
+      if (at < 0) { fail('That trigger is gone (deleted elsewhere). Cancel the edit to start again.'); return; }
+      next = all.slice();
+      next[at] = wpTrigApplyForm(all[at], form);
+    } else {
+      next = all.concat([wpTrigApplyForm({}, form)]);
+    }
     const save = await fetch('/api/personal-triggers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ triggers: next }),
     });
     if (save.ok) {
+      if (editing) {
+        endEdit(true);
+      } else {
+        ['trigNewName','trigNewPattern','trigNewOverlay','trigNewEndEarly','trigNewZealValue','trigNewWarnText','trigNewLoopMax'].forEach(function(id){ var el = document.getElementById(id); if (el) el.value = ''; });
+        var ts = document.getElementById('trigNewTimerSec'); if (ts) ts.value = '0';
+        var ws = document.getElementById('trigNewWarnSec'); if (ws) ws.value = '0';
+        var lp = document.getElementById('trigNewLoop'); if (lp) lp.checked = false;
+        var zf = document.getElementById('trigNewZealField'); if (zf) zf.value = '';
+      }
       if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--green)'; }
-      ['trigNewName','trigNewPattern','trigNewOverlay','trigNewEndEarly','trigNewZealValue'].forEach(function(id){ var el = document.getElementById(id); if (el) el.value = ''; });
-      var ts = document.getElementById('trigNewTimerSec'); if (ts) ts.value = '0';
-      var zf = document.getElementById('trigNewZealField'); if (zf) zf.value = '';
       fetchAndRenderList();
     } else {
-      if (msg) { msg.textContent = 'Save failed.'; msg.style.color = 'var(--red)'; }
+      fail('Save failed.');
     }
   }
+  function onCancelEdit() { endEdit(true); }
   async function onTest() {
     var panel = document.getElementById('trigTestPanel');
     if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
@@ -28529,6 +29240,7 @@ async function dismissTopDamage(key) {
   // clicks Add.
   function prefill(cfg) {
     if (!cfg) return;
+    if (editing) { editing = null; applyEditUi(); }   // a copy is a NEW trigger, not a change to the one open
     var set = function(id, val){ var el = document.getElementById(id); if (el) el.value = (val == null ? '' : String(val)); };
     set('trigNewName',     cfg.name || '');
     set('trigNewPattern',  cfg.pattern || '');
@@ -28542,6 +29254,12 @@ async function dismissTopDamage(key) {
     set('trigNewZealField', zc && zc.field ? zc.field : '');
     set('trigNewZealOp',    zc && zc.op    ? zc.op    : '<');
     set('trigNewZealValue', zc && zc.value != null ? zc.value : '');
+    // A guild trigger's warning and repeat come along (FB-26 / FB-31); the form holds one warning.
+    set('trigNewWarnSec',  cfg.warn_sec || 0);
+    set('trigNewWarnText', cfg.warn_text || '');
+    var wt = document.getElementById('trigNewWarnTts'); if (wt) wt.checked = cfg.warn_tts !== false;
+    var lp = document.getElementById('trigNewLoop'); if (lp) lp.checked = cfg.timer_loop === true;
+    set('trigNewLoopMax',  cfg.timer_loop_max || '');
     var msg = document.getElementById('trigAddMsg');
     if (msg) { msg.textContent = 'Copied from guild trigger — review and click "Add trigger" to save your personal copy.'; msg.style.color = 'var(--blue)'; }
     var panel = document.getElementById('trigEditorPanel');
@@ -28699,6 +29417,10 @@ async function dismissTopDamage(key) {
     if (importFile) importFile.addEventListener('change', onImportFile);
     var runBtn      = document.getElementById('trigTestRun');
     if (addBtn)     addBtn.addEventListener('click', onAdd);
+    var cancelBtn   = document.getElementById('trigCancelBtn');
+    if (cancelBtn)  cancelBtn.addEventListener('click', onCancelEdit);
+    listEl.addEventListener('click', onListClick);
+    applyEditUi();   // a repaint rebuilt the form: put an open edit back
     if (previewBtn) previewBtn.addEventListener('click', onPreview);
     if (testBtn)    testBtn.addEventListener('click', onTest);
     if (runBtn)     runBtn.addEventListener('click', onTestRun);
@@ -28715,6 +29437,14 @@ async function dismissTopDamage(key) {
         var cp = t.closest ? t.closest('[data-trig-copy]') : null;
         if (cp) {
           try { prefill(JSON.parse(cp.getAttribute('data-trig-copy'))); } catch (err) { void err; }
+          return;
+        }
+        // A guild trigger's name, or a plain cell of its row, opens its settings (FB-30). Dragging across
+        // the pattern to copy it is not a click on the row.
+        var gr = t.closest ? t.closest('tr[data-trig-key]') : null;
+        if (gr) {
+          if (!t.closest('[data-trig-view]') && window.getSelection && String(window.getSelection()) !== '') return;
+          wpGuildTrigToggle(gr.getAttribute('data-trig-key'));
           return;
         }
         if (!t.id) return;
@@ -29194,6 +29924,12 @@ const COMMAND_HTML = `<!doctype html>
     color:#d29922;font-variant-numeric:tabular-nums}
   .hail-clock.soon{color:#ffa657}
   .hail-clock.crit{color:#f85149}
+  /* The NPC's flag cap (the guild lead, 2026-10-07): "Flags: 23 / 72 used", amber and bold when the flags left
+     do not cover the raiders still to hail. Drawn only when the bot sends a cap. */
+  .hail-cap{font-size:9px;margin:3px 0 2px;color:#c9d1d9}
+  .hail-cap b{font-weight:700;color:#e6edf3;font-variant-numeric:tabular-nums}
+  .hail-cap .note{font-size:8px;color:#7d8590;margin-left:4px}
+  .hail-cap.warn{color:#ffa657;font-weight:700}
   .hail-sub{display:flex;align-items:baseline;gap:4px;font-size:9px;margin:3px 0 2px;color:#c9d1d9}
   .hail-sub b{font-weight:700;color:#e6edf3;font-variant-numeric:tabular-nums}
   .hail-sub.todo{color:#e6edf3;font-weight:700}
@@ -29470,13 +30206,31 @@ const COMMAND_HTML = `<!doctype html>
   var HAIL_DONE_CAP  = 8;
   var _hailMore = new Set();   // 'windowId|still' / 'windowId|hailed' lists opened past their cap (this client)
   var _hailPend = new Set();   // 'windowId|name' taps sent and not answered yet; the chip dims meanwhile
-  // "17:52 left". Painted by paintHailClocks() every second from the card's data-end and never put in
-  // the card's HTML: a clock in the HTML would repaint the whole board each second, and a repaint between
-  // a press and its release throws the tap away.
-  function hailClockText(endMs, nowMs){
-    var left = Math.max(0, Math.round((endMs - nowMs) / 1000));
-    if (left <= 0) return 'closed';
-    return Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + ' left';
+  // "leaves in 17:52", then "gone". Painted by paintHailClocks() every second from the card's data-end and
+  // never put in the card's HTML: a clock in the HTML would repaint the whole board each second, and a
+  // repaint between a press and its release throws the tap away. The end is when the NPC's script depops it.
+  // urgent = the last two minutes (red), soon = the last five (amber).
+  function hailClockState(endMs, nowMs){
+    var left = Math.round((endMs - nowMs) / 1000);
+    if (!(left > 0)) return { text: 'gone', gone: true, urgent: true, soon: true };
+    return { text: 'leaves in ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0'),
+      gone: false, urgent: left <= 120, soon: left <= 300 };
+  }
+  function hailClockText(endMs, nowMs){ return hailClockState(endMs, nowMs).text; }
+  // "Flags: 23 / 72 used", from the bot's flag_cap / flags_granted / flags_left. Nothing at all when the
+  // bot sent no cap (an older bot, or an NPC whose script states none). The count is only the grants we
+  // saw, so the note says so, and the warning fires when the flags left do not outnumber the raiders
+  // still to hail.
+  function hailCapHtml(w, stillCount){
+    var cap = w.flag_cap == null ? NaN : Number(w.flag_cap);
+    if (!(cap > 0)) return '';
+    var used = Math.max(0, Number(w.flags_granted) || 0);
+    var left = w.flags_left == null ? Math.max(0, cap - used) : Math.max(0, Number(w.flags_left) || 0);
+    var tight = stillCount > 0 && left <= stillCount;
+    return '<div class="hail-cap" title="Counts only the flags we saw granted. A raider without Mimic, or a hail outside our data, is not counted, so more may be gone.">'
+         + 'Flags: <b>' + used + ' / ' + cap + '</b> used<span class="note">seen only</span></div>'
+         + (tight ? '<div class="hail-cap warn">' + (left === 0 ? '⚠ No flags left, ' : '⚠ Only ' + left + ' flag' + (left === 1 ? '' : 's') + ' left, ')
+         + stillCount + ' still to hail</div>' : '');
   }
   function hailMoreHtml(key, total, cap, open){
     if (total <= cap) return '';
@@ -29503,6 +30257,7 @@ const COMMAND_HTML = `<!doctype html>
          +   '<span class="hail-clock" data-end="' + esc(end) + '"></span>'
          + '</div>';
       if (!col) {
+        h += hailCapHtml(w, still.length);
         if (still.length) {
           var stillOpen = _hailMore.has(wid + '|still');
           var sMax = stillOpen ? still.length : Math.min(still.length, HAIL_STILL_CAP);
@@ -29905,8 +30660,8 @@ const COMMAND_HTML = `<!doctype html>
   function paintHailClocks(){
     var els = contentEl.querySelectorAll('.hail-clock'), now = Date.now();
     for (var i = 0; i < els.length; i++) {
-      var end = Number(els[i].getAttribute('data-end')), left = (end - now) / 1000;
-      var t = hailClockText(end, now), cls = 'hail-clock' + (left <= 60 ? ' crit' : (left <= 300 ? ' soon' : ''));
+      var st = hailClockState(Number(els[i].getAttribute('data-end')), now);
+      var t = st.text, cls = 'hail-clock' + (st.urgent ? ' crit' : (st.soon ? ' soon' : ''));
       if (els[i].textContent !== t) els[i].textContent = t;
       if (els[i].className !== cls) els[i].className = cls;
     }
@@ -30436,6 +31191,8 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(_b || 'null');
       }
+      // The HUD builder's "Recharged" button on a clicky (FB-65).
+      if (req.url === '/api/me/clicky-recharged' && req.method === 'POST') return _handleClickyRecharged(req, res);
       // Command Center overlay (command.html) — the "one window" board.
       if (req.url === '/api/command-center') {
         let _b;
@@ -30601,8 +31358,16 @@ function startWebDashboard(port) {
         try { outPayload = _mobTracksObserveExtPayload(outPayload, Date.now()); }
         catch { /* engine must never break the ext-target proxy */ }
         // Outside a raid, only your own group's rows. LAST, so every enricher
-        // above still saw the whole zone.
-        try { outPayload = _scopeExtToGroup(outPayload, selfCharacter, selfSt, _lastRaidPipe && _lastRaidPipe.at, Date.now()); }
+        // above still saw the whole zone. In a raid the overlay's Raid | Group
+        // switch (?scope=group) narrows it to your raid group.
+        try {
+          const wantScope = /[?&]scope=group(?:&|$)/.test(req.url) ? 'group' : 'raid';
+          // The "active" character can be one Zeal is not streaming (an alt's log touched last); then the group
+          // comes from the character Zeal IS streaming, or the board would read the group as unknown.
+          const scoped = _zealSelfForScope(_zealState, selfCharacter, selfSt, Date.now());
+          outPayload = _scopeExtToGroup(outPayload, scoped.character, scoped.st, _lastRaidPipe && _lastRaidPipe.at, Date.now(),
+            wantScope, _lastRaidPipe && _lastRaidPipe.members);
+        }
         catch { /* scoping must never break the proxy — fall back to the zone view */ }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(outPayload));
@@ -36136,6 +36901,29 @@ function _computeLiveness(watchedLogs, now, idleMs) {
   const live_character = last_line_ms < idleMs ? bestChar : null;
   return { last_line_ms, live_character };
 }
+// The names in the played character's Zeal group window, for the bot's group scope (utils/groupScope.js:
+// outside a raid, callouts and Extended Target keep to your group). Fresh Zeal state only: [] = solo,
+// undefined = unknown, which JSON drops so the bot falls back to its zone rule.
+function _heartbeatGroupNames(zealState, character, nowMs) {
+  if (!zealState || !character) return undefined;
+  const want = String(character).toLowerCase();
+  const key = Object.keys(zealState).find(k => k.toLowerCase() === want);
+  const names = _zealGroupNames(key ? zealState[key] : null, nowMs);
+  return names ? names.slice(0, 12) : undefined;
+}
+// Who is in the group window, from one character's Zeal state: the type-6 group list AND the group HP gauges
+// (slots 11..15, the F2..F6 bars). The gauges matter in a raid: Zeal's group list was not fresh there, so a
+// grouped raider read as "group unknown" (the guild lead, 2026-10-08, "not working"). Fresh state only (60 s).
+// Returns names (self excluded), [] when the state says solo, null when it cannot tell.
+function _zealGroupNames(st, nowMs) {
+  if (!st || nowMs - (st.updatedAt || 0) > 60_000) return null;
+  const out = [], seen = new Set();
+  const add = (n) => { const s = n ? String(n).trim() : ''; if (s && !seen.has(s.toLowerCase())) { seen.add(s.toLowerCase()); out.push(s); } };
+  if (Array.isArray(st.group_members)) for (const m of st.group_members) add(m && m.name);
+  if (Array.isArray(st.gauges)) for (const g of st.gauges) if (g && g.text && g.slot >= 11 && g.slot <= 15) add(g.text);
+  if (out.length) return out;
+  return Array.isArray(st.group_members) ? [] : null;
+}
 function _reporterHeartbeatOnce() {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token || opts.dryRun) return;
@@ -36166,6 +36954,8 @@ function _reporterHeartbeatOnce() {
       if (Number.isFinite(g)) group_num = g;
     }
   } catch { /* best-effort */ }
+  let group_names;
+  try { group_names = _heartbeatGroupNames(_zealState, live_character || primary, Date.now()); } catch { /* unknown */ }
   try {
     const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/reporter-poll');
     const u   = new URL(url);
@@ -36182,7 +36972,7 @@ function _reporterHeartbeatOnce() {
     // phantom second death (2026-08-02 Seru parse). Rides the existing 20s
     // heartbeat — no new stream, no new timer.
     const _t1 = Date.now();
-    const body = JSON.stringify({ primary_character: primary, zone, group_num, camping: _camping, has_zeal, agent_version: AGENT_VERSION, mimic_version, last_line_ms, live_character, client_now: _t1 });
+    const body = JSON.stringify({ primary_character: primary, zone, group_num, camping: _camping, has_zeal, agent_version: AGENT_VERSION, mimic_version, last_line_ms, live_character, group_names, client_now: _t1 });
     const req = mod.request({
       method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname,
       headers: {
@@ -37361,9 +38151,14 @@ function pollLatestVersion({ botUrl }) {
 //
 // In-memory shape:
 //   _spellByNameLower:   Map<string, { id, name, you, other, fades }>
-//   _spellCatalogMeta:   { fetchedAt, etag, count }
+//   _spellCatalogMeta:   { fetchedAt, etag, count, hasAe }
 let _spellByNameLower = new Map();
 let _spellCatalogMeta = null;
+// Does this catalog carry the bot's `ae` (area-spell) flag — spell catalog v9, FB-57? Read off
+// the entries, not a version number: the disk cache keeps no version, and "some entry is flagged"
+// is exactly what the Melody AE chip needs to know (the same shape as the `npc` flag's check).
+// False for a pre-v9 bot, and the chip then keeps counting every detrimental song.
+function _catalogHasAe(entries) { return Array.isArray(entries) && entries.some(e => !!(e && e.ae)); }
 const SPELL_CATALOG_FILE = path.join(__dirname, 'logsync.spell-catalog.json');
 
 // Item-clicky catalog — item name (lowercased) → { casttime, clickeffect,
@@ -37398,7 +38193,7 @@ function _loadSpellCatalogFromDisk() {
     for (const e of raw.entries) {
       if (e && e.name) _spellByNameLower.set(String(e.name).toLowerCase(), e);
     }
-    _spellCatalogMeta = { fetchedAt: raw.fetched_at, etag: raw.etag || null, count: raw.entries.length };
+    _spellCatalogMeta = { fetchedAt: raw.fetched_at, etag: raw.etag || null, count: raw.entries.length, hasAe: _catalogHasAe(raw.entries) };
     _rebuildBuffMatchers();
     _rebuildMechanicMatchers();   // #206 — the instant-effect index, built from the same catalog
     console.log(`[spell-catalog] loaded ${raw.entries.length} spells from disk (cached ${raw.fetched_at || '?'})`);
@@ -37458,7 +38253,7 @@ function fetchSpellCatalog({ botUrl, token }) {
             for (const e of data.entries) {
               if (e && e.name) _spellByNameLower.set(String(e.name).toLowerCase(), e);
             }
-            _spellCatalogMeta = { fetchedAt: data.fetched_at, etag: etag || null, count: data.entries.length };
+            _spellCatalogMeta = { fetchedAt: data.fetched_at, etag: etag || null, count: data.entries.length, hasAe: _catalogHasAe(data.entries) };
             _rebuildBuffMatchers();
             _rebuildMechanicMatchers();   // #206 — same catalog, separate instant-effect key
             try {
@@ -40686,8 +41481,12 @@ const SUGGESTED_TRIGGERS = [
 
 const BUILTIN_TIMER_KINDS = new Set(SUGGESTED_TRIGGERS.map(t => t.builtin_timer).filter(Boolean));
 // Fields a personal row carries beyond the core shape the POST rebuild writes
-// (EQLogParser imports set the first three; guild-parity rows the rest).
-const PERSONAL_CARRY_FIELDS = ['warning_seconds', 'warning_text', 'end_text', 'timer_warnings',
+// (EQLogParser imports set the first three; guild-parity rows the rest). The
+// dashboard form writes warning_seconds/warning_text/warning_tts (FB-26) and
+// timer_loop/timer_loop_max (FB-31) — a field the whole-list save leaves out of
+// this list is a field it strips from every row.
+const PERSONAL_CARRY_FIELDS = ['warning_seconds', 'warning_text', 'warning_tts', 'end_text', 'timer_warnings',
+  'timer_loop', 'timer_loop_max',
   'timer_key_capture', 'timer_duration_capture', 'bar_color', 'pinned',
   'display_threshold_sec', 'exclude_patterns', 'characters', 'catalog_match'];
 // Saved suggested rows keep the pattern they were created with, so a template
@@ -40940,11 +41739,13 @@ function _pushOverlay(o) {
 // the log line is the break itself — if the pet died first, its tracker entry is
 // already gone and there is no pet to resolve. Live lines only (a backfill replays
 // old breaks); once per pet per 4 s (the self line and a bystander line can both
-// arrive). When the "Your charm broke" suggested trigger is on with TTS, the
-// trigger overlay already says it, so the fire is marked charm_spoken and the
-// Charm overlay only uses it to skip its own late call.
+// arrive). When the "Your charm broke" suggested trigger will say it itself — on, on for the
+// character whose charm it was (`charLc`, FB-34), and with its 🔊 ticked — the trigger overlay
+// already says it, so the fire is marked charm_spoken and the Charm overlay only uses it to skip
+// its own late call. Anything less and the Charm overlay speaks it, once (FB-21): the trigger,
+// unticked, now only flashes.
 const _charmBreakInstantAt = new Map();
-function _pushCharmBreakInstant(petKey, petName, own, lineMs, now = Date.now()) {
+function _pushCharmBreakInstant(petKey, petName, own, lineMs, now = Date.now(), charLc = '') {
   if (!own || !petKey) return false;
   if (!(Number.isFinite(lineMs) && Math.abs(now - lineMs) < 15_000)) return false;
   if (now - (_charmBreakInstantAt.get(petKey) || 0) < 4000) return false;
@@ -40954,7 +41755,7 @@ function _pushCharmBreakInstant(petKey, petName, own, lineMs, now = Date.now()) 
     text: 'CHARM BREAK', tts: 'charm break', trigger: 'charm break', color: 'red', duration_ms: 3000,
     firedAt: now, shownAt: now,
     charm: true, charm_key: petKey, charm_pet: petName || petKey,
-    charm_spoken: !!(sug && sug.enabled !== false && _suggestedHasTts(sug)),
+    charm_spoken: !!(sug && sug.enabled !== false && _triggerOnFor(sug, charLc) && _suggestedHasTts(sug)),
   });
   return true;
 }
@@ -42432,8 +43233,30 @@ function fetchDiStatus() {
     req.end();
   } catch { _diStatusInflight = false; }
 }
+// One cleric's row. `mem` is whether DI is on their spell bar (true / false / null = cannot tell);
+// `readyMs` is the end of the recast we know of (null = no cast seen). `up` — the green tick — needs
+// BOTH: on the bar, and not on recast (FB-62). Not on recast with the bar unreadable is `unknown`,
+// not up: a missing stamp only means nobody's log saw a cast, and before this a cleric with no DI
+// scribed, or no agent at all, read as ready. On recast stays a countdown whatever `mem` says
+// (seconds > 0 = they just cast it = they have the spell). `mem === false` rows are not shown
+// (diStatusSnapshot moves them to `no_di`).
+function _diEntry(name, readyMs, mem, now) {
+  const onRecast = readyMs != null && readyMs > now;
+  return {
+    name,
+    ready_at_ms: readyMs,
+    mem,
+    up: mem === true && !onRecast,
+    unknown: mem == null && !onRecast,
+    seconds: onRecast ? Math.ceil((readyMs - now) / 1000) : 0,
+  };
+}
 // Snapshot for overlays: bot list ⊕ local override (our own machine's DI
-// stamps are authoritative + latency-free for characters we watch).
+// stamps and spell bar are authoritative + latency-free for characters we watch).
+// Returns { clerics, up_count, no_di }: `clerics` is who the overlays list; `no_di` names whoever's
+// spell bar we could read and found DI missing from — the bot's report of a remote cleric, or a
+// character on this machine, a chain caller who is not a cleric included. They are kept out of the
+// list, and out of the two-cleric nomination (they cannot cast it).
 function diStatusSnapshot() {
   fetchDiStatus();
   const now = Date.now();
@@ -42441,38 +43264,32 @@ function diStatusSnapshot() {
   for (const c of (_diStatusCache.clerics || [])) {
     if (!c || !c.name) continue;
     const readyMs = c.ready_at ? Date.parse(c.ready_at) : null;
-    byName.set(String(c.name).toLowerCase(), {
-      name: c.name,
-      ready_at_ms: readyMs,
-      // `up` stays assumed-ready for consumers that gate on it, but UNKNOWN is
-      // now distinguishable. A null ready_at does not mean the DI is available
-      // — it means we never SAW the cast. A member showed a green tick while his
-      // DI was on cooldown, purely because nobody's log gave us his cast
-      // (the guild lead, 2026-08-06, and it is NOT clock skew: the measured offsets
-      // are +314ms / +210ms, and a member has no offset row at all).
-      up: readyMs == null || readyMs <= now,
-      unknown: readyMs == null,
-      seconds: readyMs != null && readyMs > now ? Math.ceil((readyMs - now) / 1000) : 0,
-    });
+    // The bot's `mem` (live-state di_mem) is the cleric's own agent's reading of their bar. A bot
+    // that does not carry it yet sends none, and every remote cleric stays unknown.
+    byName.set(String(c.name).toLowerCase(),
+      _diEntry(c.name, Number.isFinite(readyMs) ? readyMs : null, typeof c.mem === 'boolean' ? c.mem : null, now));
   }
-  for (const [cl, di] of _diStateByChar) {
-    // Resolve the display-cased name from our watched characters; a name
-    // unknown to both the local watch AND the bot list is skipped.
-    let display = null;
-    for (const ch of Object.keys(_zealState || {})) if (String(ch).toLowerCase() === cl) display = ch;
-    if (!display && !byName.has(cl)) continue;
-    const name = display || byName.get(cl).name;
-    byName.set(cl, {
+  // Characters this machine watches: their gems and their casts are first-hand.
+  const watched = new Map();   // lower → display-cased name
+  for (const ch of Object.keys(_zealState || {})) watched.set(String(ch).toLowerCase(), ch);
+  for (const cl of new Set([...watched.keys(), ..._diStateByChar.keys()])) {
+    const prev = byName.get(cl) || null;
+    const cast = _diStateByChar.get(cl) || null;
+    const mem = watched.has(cl) ? _diMemorized(_zealState[watched.get(cl)], now) : null;
+    if (!cast && mem == null) continue;                // nothing first-hand to add
+    // A name unknown to both the local watch AND the bot list is skipped.
+    const name = watched.get(cl) || (prev && prev.name);
+    if (!name) continue;
+    byName.set(cl, _diEntry(
       name,
-      ready_at_ms: di.readyAt,
-      up: di.readyAt <= now,
-      unknown: false,          // we watched this cast ourselves
-      seconds: di.readyAt > now ? Math.ceil((di.readyAt - now) / 1000) : 0,
-    });
+      cast ? cast.readyAt : (prev ? prev.ready_at_ms : null),
+      mem != null ? mem : (prev ? prev.mem : null),
+      now));
   }
-  // Drop assumed-ready clerics who aren't actually in the raid. The default-
-  // ready rule (a cleric who hasn't cast DI shows "up") over-includes a parked
-  // cleric alt that doesn't even have DI scribed (the guild lead, 2026-07-16). Keep anyone who has genuinely cast DI recently (seconds > 0 =
+  const noDi = [];
+  for (const [cl, e] of byName) if (e.mem === false) { noDi.push(e.name); byName.delete(cl); }
+  // Drop clerics who aren't actually in the raid (a parked cleric alt, the guild lead, 2026-07-16).
+  // Keep anyone who has genuinely cast DI recently (seconds > 0 =
   // on cooldown = definitely has the spell) and anyone present in the live raid
   // roster; only prune when we actually have a fresh, populated roster to judge
   // against (else fall back to showing everyone — better than hiding a real DI).
@@ -42486,8 +43303,10 @@ function diStatusSnapshot() {
       list = list.filter(c => c.seconds > 0 || raidNames.has(String(c.name).toLowerCase()));
     }
   }
-  list.sort((a, b) => (a.up === b.up ? a.name.localeCompare(b.name) : a.up ? -1 : 1));
-  return { clerics: list, up_count: list.filter(c => c.up).length };
+  // Ticks first, then the countdowns, then the ones we cannot read.
+  const rank = (c) => (c.up ? 0 : c.unknown ? 2 : 1);
+  list.sort((a, b) => (rank(a) === rank(b) ? a.name.localeCompare(b.name) : rank(a) - rank(b)));
+  return { clerics: list, up_count: list.filter(c => c.up).length, no_di: noDi };
 }
 // 8s felt sluggish once cross-client tank HP shipped (a non-local MT's bar only
 // refreshed every ~8s on top of the roster/relay lag). 2.5s keeps the Tank bar
@@ -43345,25 +44164,69 @@ function _sampleExtMobHp(payload, nowMs) {
 //
 // Fails open — no Zeal state, stale state, or no group list → unchanged.
 // Solo counts as a group of one.
+//
+// In a raid the board stays raid-wide unless the overlay asks for `want ===
+// 'group'` (the Raid | Group switch in its title bar — the guild lead,
+// 2026-10-08: "seeing the whole raid is often worthwhile, but when grouping it
+// can be annoying"). Then "mine" is the player's RAID group: self plus every
+// raid-roster entry (`raidMembers`, the type-5 list) sharing self's group
+// number. Ungrouped (0) / self absent from the roster → the Zeal group
+// window if fresh, else unchanged (fail open).
+// The group window (_zealGroupNames: type-6 list + F2..F6 gauges) is read first,
+// in or out of a raid; the raid roster only fills in when it says nothing.
+// A chosen Group never fails open (an empty list that says the group is unknown).
+//
+// Which character's Zeal state: the requested one when it is fresh, else the
+// character Zeal is actually streaming (newest state within 60 s).
+function _zealSelfForScope(zealState, character, st, nowMs) {
+  if (st && nowMs - (st.updatedAt || 0) <= 60_000) return { character, st };
+  let best = null;
+  for (const ch of Object.keys(zealState || {})) {
+    const s = zealState[ch];
+    if (!s || nowMs - (s.updatedAt || 0) > 60_000) continue;
+    if (!best || (s.updatedAt || 0) > (best.st.updatedAt || 0)) best = { character: ch, st: s };
+  }
+  return best || { character, st };
+}
 const EXT_RAID_FRESH_MS = 60_000;
-function _scopeExtToGroup(payload, selfCharacter, selfSt, raidSeenAt, nowMs) {
+function _scopeExtToGroup(payload, selfCharacter, selfSt, raidSeenAt, nowMs, want = 'raid', raidMembers = null) {
   if (!payload || !Array.isArray(payload.targets)) return payload;
-  if (raidSeenAt && nowMs - raidSeenAt < EXT_RAID_FRESH_MS) return payload;
-  if (!selfCharacter || !selfSt || !Array.isArray(selfSt.group_members)) return payload;
-  if (nowMs - (selfSt.updatedAt || 0) > 60_000) return payload;
-  const mine = new Set([String(selfCharacter).toLowerCase()]);
-  for (const m of selfSt.group_members) if (m && m.name) mine.add(String(m.name).toLowerCase());
+  const inRaid = !!(raidSeenAt && nowMs - raidSeenAt < EXT_RAID_FRESH_MS);
+  if (inRaid && want !== 'group') return payload;
+  const selfLc = selfCharacter ? String(selfCharacter).toLowerCase() : '';
+  // Your group window first (type-6 list + the F2..F6 HP gauges), in a raid too: it is the group you see.
+  const zg = selfLc ? _zealGroupNames(selfSt, nowMs) : null;
+  let names = zg && zg.length ? zg : null;
+  if (!names && selfLc && inRaid) {
+    const roster = Array.isArray(raidMembers) ? raidMembers : [];
+    const grp = (m) => (m && m.group != null && m.group !== '') ? Number.parseInt(m.group, 10) : NaN;
+    const self = roster.find(m => m && m.name && String(m.name).toLowerCase() === selfLc);
+    const g = grp(self);
+    // Groups are 1..12; 0 is the ungrouped bucket (raid_roster 2026-10-08: group 0 held ~2x any real group),
+    // the same rule as utils/buffGroups.js.
+    if (Number.isInteger(g) && g >= 1 && g <= 12) names = roster.filter(m => m && m.name && grp(m) === g).map(m => m.name);
+  }
+  if (!names && zg) names = zg;   // the state says solo: a group of one
+  // A chosen Group never falls back to the whole board: the guild lead picked Group to stop seeing other groups'
+  // mobs (2026-10-08, "still showing other groups"), so an unknown group shows an empty list that says why.
+  if (!names && want === 'group') {
+    return { ...payload, targets: [], scope: inRaid ? 'raid_group' : 'group', group_unknown: true, online: null,
+             ...(payload.off_tank_count != null ? { off_tank_count: 0 } : {}) };
+  }
+  if (!names) return payload;
+  const mine = new Set([selfLc]);
+  for (const n of names) if (n) mine.add(String(n).toLowerCase());
   const has = (n) => n != null && mine.has(String(typeof n === 'object' ? n.name : n).toLowerCase());
   const any = (arr) => Array.isArray(arr) && arr.some(has);
   const targets = payload.targets.filter(t => {
     if (!t) return false;
     if (t.kind === 'player') return has(t.name);
-    if (t.kind === 'pet') return t.owner ? has(t.owner) : true;
+    if (t.kind === 'pet') return t.owner ? has(t.owner) : want !== 'group';
     return any(t.raiders) || any(t.tanks) || any(t.off_tank_raiders) || has(t.mob_victim);
   });
   const offTank = targets.reduce((n, t) =>
     n + (Array.isArray(t.off_tank_raiders) ? t.off_tank_raiders.filter(has).length : 0), 0);
-  return { ...payload, targets, scope: 'group', online: mine.size,
+  return { ...payload, targets, scope: inRaid ? 'raid_group' : 'group', online: mine.size,
            ...(payload.off_tank_count != null ? { off_tank_count: offTank } : {}) };
 }
 
@@ -44536,6 +45399,11 @@ function flushLiveStateToBot(opts) {
         const di = _diStateByChar.get(String(ch).toLowerCase());
         return di ? new Date(di.readyAt).toISOString() : null;
       })(),
+      // Is DI on this character's spell bar (FB-62): true / false, or null when the bar cannot be
+      // read. Without it a missing di_ready_at reads as "ready" to whoever aggregates this row.
+      // The bot has to carry it (live-state column + /di-status field); until it does the field
+      // is ignored and a remote viewer sees this cleric as unknown, never ready.
+      di_mem: _diMemorized(st, now),
       // This character's own known timers (discipline, Mend, Lay on Hands /
       // Harm Touch, AAs) — another raider's Target Info shows them while
       // targeting this character (_liveCooldownsFor, _targetPlayerTimers).
@@ -44712,6 +45580,7 @@ function flushLiveStateToBot(opts) {
       selfManaBucket,
       selfHpBucket,
       diUp,
+      rec.di_mem,   // memorizing or dropping DI is an event: the chips must not wait out the heartbeat
       (rec.incoming_mob || '').toLowerCase(),
       tankKeys,
       cdKeys,
@@ -44922,8 +45791,10 @@ function _timerWarnings(t) {
                  text: String(w.text).slice(0, 200),
                  tts: w.tts !== false }));
   if (out.length === 0 && t.warning_seconds > 0 && t.warning_text) {
+    // warning_tts:false = flash the warning without speaking it (the personal
+    // form's "Speak the warning" box, FB-26). Absent keeps the old always-speak.
     out.push({ at_ms: t.warning_seconds * 1000,
-               text: String(t.warning_text).slice(0, 200), tts: true });
+               text: String(t.warning_text).slice(0, 200), tts: t.warning_tts !== false });
   }
   return out.sort((a, b) => b.at_ms - a.at_ms);
 }
@@ -45046,6 +45917,15 @@ function _startTimer(t, tsMs, isTest, captures) {
   // unaffected (tsMs is already ~now).
   const startMs = t._replay ? Date.now() : (tsMs || Date.now());
   const action = (Array.isArray(t.actions) && t.actions[0]) || {};
+  // ↻ Repeat when it ends (timer_loop, FB-31): _activeTimersSnapshot rolls the
+  // row forward at zero instead of letting it expire. loop_max = the most
+  // restarts it will make (0 = no limit: it runs until a ✕, the cancel phrase,
+  // the mob dying, or the trigger firing again — which REPLACES this row, so
+  // loops never stack). A rehearsal stops after 3, so a test fire cannot tick on
+  // for the rest of the night.
+  const _loop = t.timer_loop === true;
+  const _lm = Math.max(0, Math.floor(Number(t.timer_loop_max)) || 0);
+  const _loopMax = !_loop ? 0 : (isTest ? Math.min(_lm || 3, 3) : Math.min(_lm, 1000));
   _activeTimers.set(id, {
     id,
     // `name` keeps backward compatibility (older dashboards read it). The
@@ -45065,6 +45945,9 @@ function _startTimer(t, tsMs, isTest, captures) {
     warn_ms:        (t.warning_seconds > 0 && t.warning_text) ? t.warning_seconds * 1000 : 0,
     warn_text:      t.warning_text || null,
     warnings:       _timerWarnings(t),
+    loop:           _loop,
+    loop_max:       _loopMax,
+    loops_done:     0,
     bar_color:      t.bar_color || null,
     pinned:         !!t.pinned,
     show_at_ms:     (Number(t.display_threshold_sec) || 0) * 1000,
@@ -45633,14 +46516,34 @@ function _builtinTimerRows(now) {
   return rows;
 }
 
+// ↻ A looping timer (timer_loop) restarts at zero instead of expiring (FB-31).
+// It moves forward by WHOLE cycles from its own start, so a poll that arrives a
+// little late — or none for a while, since nothing reads the snapshot with every
+// window closed — does not drift the beat. The warnings need nothing here: the
+// overlay builds a fresh row when the countdown comes back up, so each round
+// warns again. Returns true while the row lives on; false once loop_max restarts
+// are spent, and the caller lets it expire like any other.
+function _rollLoopTimer(t, now) {
+  if (!t.loop || !(t.duration_sec > 0)) return false;
+  const cycleMs = t.duration_sec * 1000;
+  const missed = Math.floor((now - t.ends_at_ms) / cycleMs) + 1;   // runs that have ended since we last looked (>= 1)
+  const used = (t.loops_done || 0) + missed;
+  if (t.loop_max > 0 && used > t.loop_max) return false;
+  t.loops_done = used;
+  t.started_at_ms += missed * cycleMs;
+  t.ends_at_ms    += missed * cycleMs;
+  return true;
+}
+
 function _activeTimersSnapshot() {
   const now = Date.now();
   const out = [];
   for (const [id, t] of _activeTimers) {
     // Aged out untouched — the control group for the dismissal rate (#207).
     // Only a NATURAL expiry lands here: a mob-death cancel and a user dismissal
-    // both delete the row themselves, so neither is double-counted.
-    if (t.ends_at_ms <= now) {
+    // both delete the row themselves, so neither is double-counted. A looping
+    // row that restarts is not an expiry.
+    if (t.ends_at_ms <= now && !_rollLoopTimer(t, now)) {
       _activeTimers.delete(id);
       try { _recordCalloutFeedback({ direction: 'expired', timer: t, source: 'timer_expired' }); }
       catch { /* never let bookkeeping break the snapshot */ }
@@ -45799,11 +46702,17 @@ const HAIL_LIST_MAX        = 300;       // one raid is 72; this only bounds a ba
 let _hailBoard = { at: 0, windows: [] };
 const _hailText = (x) => String(x == null ? '' : x).trim().slice(0, 64);
 const _hailRows = (list, shape) => (Array.isArray(list) ? list : []).slice(0, HAIL_LIST_MAX).map(shape).filter(Boolean);
+// The flag-cap numbers ride through untouched; a bot that sends none (an older one, or an NPC whose script
+// states no cap) leaves them null and the card draws nothing extra.
+const _hailCount = (v) => (v != null && v !== '' && Number.isFinite(Number(v)) && Number(v) >= 0 ? Math.round(Number(v)) : null);
 function _hailNormWindow(w) {
   if (!w || w.id == null) return null;
   const expiresMs = Date.parse(w.expires_at);
   if (!Number.isFinite(expiresMs)) return null;
   return {
+    flag_cap: _hailCount(w.flag_cap),
+    flags_granted: _hailCount(w.flags_granted),
+    flags_left: _hailCount(w.flags_left),
     id: String(w.id).slice(0, 64),
     boss_id: w.boss_id == null ? null : _hailText(w.boss_id),
     boss_name: _hailText(w.boss_name),
@@ -45948,6 +46857,18 @@ async function _handleHailMark(req, res) {
   let by = null;
   try { by = (stats.activeCharacter && String(stats.activeCharacter)) || (stats.watchedLogs && stats.watchedLogs[0] && stats.watchedLogs[0].character) || null; } catch { void 0; }
   _hailMarkRelay({ window_id: windowId, name, hailed: b.hailed, by }, send);
+}
+// POST /api/me/clicky-recharged (the HUD builder's "Recharged" button): { character, item }.
+async function _handleClickyRecharged(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 2048)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { error: 'bad body' }); }
+  const character = b && b.character ? String(b.character).trim().slice(0, 40) : '';
+  const item = b && b.item ? String(b.item).trim().slice(0, 120) : '';
+  if (!character || !item) return send(400, { error: 'character and item are required' });
+  if (!_noteClickyRecharged(character, item, Date.now())) return send(404, { error: 'no charged clicky of that name on that character' });
+  send(200, { ok: true });
 }
 // Words that mark a bid call. Kept broad but anchored on \b so it doesn't fire
 // on substrings ("forbidden", "auctioneer" etc. still match "bid"/"auction" as
@@ -46672,6 +47593,11 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       // #136 — allow-list muted this guild/relay fire: it still flashes, but
       // triggers.html skips speak() when overlay.mute is set.
       if (_calloutMuted) overlay.mute = true;
+      // A Suggested alert's 🔊 box IS its `tts` text: ticked, the row carries it; unticked, it carries
+      // none. The overlay reads the display text aloud when a fire has no tts of its own, so an
+      // unticked box silenced nothing (FB-21, a beta tester: "it says 'charm break' twice on breaks,
+      // even when tts is disabled"). Unticked now flashes and stays quiet, like a muted callout.
+      if (!ttsText && String(t.id || '').startsWith('suggested:')) overlay.mute = true;
       if (a.sound) overlay.sound = a.sound;
       // Sticky critical callouts (#76): a trigger-level OR action-level `sticky`
       // flag pins the alert on the trigger overlay until the user dismisses it
@@ -46801,6 +47727,7 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       timer_duration_capture: null, timer_key_capture: null,
       timer_warnings: [{ seconds: 1, text: (t.name || 'ability') + ' ready', tts: true }],
       warning_seconds: 0, warning_text: null, pinned: false,
+      timer_loop: false,   // the recast bar is one-shot even when the main countdown repeats
     }, tsMs, test, null);
   }
 
@@ -49352,6 +50279,9 @@ module.exports = {
   // #204 DI two-cleric callout — exported for the scratchpad harness.
   trackDiFired, diCalloutSnapshot, diCalloutCandidates, _diRankCandidates,
   _diSlotTurnInMs, _DI_FIRED_RX, DI_CALLOUT_NAMES, DI_CALLOUT_TTL_MS,
+  // FB-62: DI on the spell bar → the CH-chain tick. The cache setter stands in for the bot's /di-status.
+  diStatusSnapshot, _diMemorized, _noteDiCast, _diStateByChar,
+  _setDiStatusCacheForTest: (clerics) => { _diStatusCache = { at: Date.now() + 3_600_000, clerics: clerics || [], healer_mana: [] }; },
   _resetDiCalloutForTest: () => { _diCallout = null; _lastDiFired = { key: null, atMs: 0 }; },
   _readZipEntry, _parseCrashReason, _crashZipTime,
   // #107/#149 loot-post announce — exported for the scratchpad smoke test.
@@ -49414,6 +50344,7 @@ module.exports = {
   _mobTicks, _dotLastHit, _noteMobTick, _noteDotTickLine, _mobTickFor, _serverTickAtFor,
   _clearNameObservations,
   _waitForFires, _pushOverlay, _tailDelayMs,
+  _pushCharmBreakInstant,   // FB-21: the instant charm break, driven by test/charm-break-once.test.js
   // FB-51 tail watchdog — exported so the tests drive the shipped decision + loop.
   tailFile, _tailStalled, _tailStatus,
   _logSilentCheck, _logSilentSweep, _logSilentForTest: () => _logSilent,

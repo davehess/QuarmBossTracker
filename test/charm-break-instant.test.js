@@ -15,13 +15,15 @@ import { readSource, AGENT_INDEX, ROOT, sliceBlock, stripJs, stripCss } from './
 const agent = readSource(AGENT_INDEX);
 const pushBlock = sliceBlock(agent, 'const _charmBreakInstantAt = new Map();', '  return true;\n}');
 const fireForWeb = sliceBlock(agent, 'function _fireForWeb(o) {', '\n}\n');
+// The real per-character gate (FB-34), not a copy: the break asks it whether the trigger is on for this character.
+const triggerOnFor = sliceBlock(agent, 'function _triggerOnFor(t, charLc) {', '\n}\n');
 const mimic = (f) => fs.readFileSync(path.join(ROOT, 'apps', 'mimic', f), 'utf8');
 
 function harness({ suggested = null } = {}) {
   const pushed = [];
   // eslint-disable-next-line no-new-func
   const push = new Function('_pushOverlay', '_findSuggestedRow', '_suggestedHasTts',
-    pushBlock + '\nreturn _pushCharmBreakInstant;')(
+    triggerOnFor + pushBlock + '\nreturn _pushCharmBreakInstant;')(
     (o) => pushed.push(o),
     () => suggested,
     (row) => !!(row && row.actions && row.actions[0] && row.actions[0].tts));
@@ -74,6 +76,9 @@ describe('the agent pushes the break the moment the line is read', () => {
     const h = stripJs(sliceBlock(agent, "    if (event.type === 'charm_break') {", "      return;\n    }"));
     expect(h).toContain("const wasSelfLine = String(event.pet || '').toLowerCase() === '__self__';");
     expect(h).toMatch(/const own = wasSelfLine \|\| \(!!ownerWas && String\(ownerWas\)\.toLowerCase\(\) === String\(this\.character \|\| ''\)\.toLowerCase\(\)\);\s*_pushCharmBreakInstant\(petKey,/);
+    // ... and says whose line it is (FB-21 / FB-34), the way the trigger evaluator decides it.
+    expect(h).toContain("const who = String((this.character && _resolveSelfChatSpeaker(this.character)) || this.character || '').toLowerCase();");
+    expect(h).toMatch(/_pushCharmBreakInstant\(petKey, [^\n]*Date\.parse\(event\.ts\), Date\.now\(\), who\);/);
   });
 });
 

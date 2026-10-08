@@ -61,7 +61,7 @@ function load({ opts = { botUrl: BOT, token: 'tok' }, down = false, reply } = {}
   // eslint-disable-next-line no-new-func
   const api = new Function('https', 'http', '_uploadOpts', '_controlStandDown', '_nowOnServerClock', 'AGENT_VERSION', 'setTimeout', '_readBody', 'stats',
     readBodySrc + '\n' + block + '\nreturn { _pollHailBoard, _applyHailBoard, _hailBoardSnapshot, _hailNpcWanted, _hailMarkRelay, _handleHailMark,'
-    + ' _localOriginOk, _hailNormWindow, board: () => _hailBoard };')(
+    + ' _localOriginOk, _hailNormWindow, _hailReplaceWindow, board: () => _hailBoard };')(
     net.mod, net.mod, opts, () => ({ down: state.down }), () => Date.now(), '3.7.89', fakeSetTimeout, undefined, stats);
   return { api, net, timers, stats, state, opts };
 }
@@ -265,6 +265,30 @@ describe('what the Command Center is given', () => {
     expect(snap[0].still.map((s) => [s.name, s.prior_missing])).toEqual([['Brackwyn', false], ['Corvale', true], ['Rethlan', false]]);
     expect(snap[0].hailed.map((s) => [s.name, s.how])).toEqual([['Kestrin', 'flag'], ['Valmora', 'seen'], ['Ysolde', 'marked']]);
     expect(snap[0].already_flagged).toEqual(['Thessaly', 'Ordeth']);
+  });
+
+  it('passes the flag cap through to the card, and leaves it null for a bot that sends none', () => {
+    const h = load();
+    const now = Date.now();
+    h.api._applyHailBoard({ windows: [
+      win({ flag_cap: 72, flags_granted: 23, flags_left: 49, ms_left: 123 }),
+      win({ id: 'w2', flag_cap: 54, flags_granted: '7', flags_left: undefined }),
+      win({ id: 'w3', flag_cap: 'lots', flags_granted: -4, flags_left: null }),
+      win({ id: 'old-bot' }),
+    ] }, now);
+    const by = Object.fromEntries(h.api._hailBoardSnapshot(now, null).map((w) => [w.id, [w.flag_cap, w.flags_granted, w.flags_left]]));
+    expect(by.w1).toEqual([72, 23, 49]);
+    expect(by.w2).toEqual([54, 7, null]);
+    expect(by.w3).toEqual([null, null, null]);
+    expect(by['old-bot']).toEqual([null, null, null]);
+  });
+
+  it('a mark\'s answer carries the cap too, so a tap does not blank the line until the next poll', () => {
+    const h = load();
+    const now = Date.now();
+    h.api._applyHailBoard({ windows: [win({ flag_cap: 72, flags_granted: 23, flags_left: 49 })] }, now);
+    h.api._hailReplaceWindow(win({ flag_cap: 72, flags_granted: 24, flags_left: 48 }));
+    expect(h.api._hailBoardSnapshot(now, null)[0]).toMatchObject({ flag_cap: 72, flags_granted: 24, flags_left: 48 });
   });
 
   it('reads the time left off the clock it is given (the bot\'s), not the machine\'s', () => {

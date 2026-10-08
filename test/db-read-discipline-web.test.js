@@ -145,8 +145,10 @@ function lift(rel, kind, name, vars = {}, { nth = 0, mutate = (s) => s, builder 
   const mutated = mutate(expr);
   return {
     recv, expr, changed: mutated !== expr,
-    make: (client) => new Function(recv, ...Object.keys(vars),
-      `return ${builder ? '(from, to) => ' : ''}${recv}${mutated}`)(client, ...Object.values(vars)),
+    // GUILD_TAG: the pages now spell the tag as the imported constant (web/lib/guild.ts); bound to Wolf Pack's
+    // default so a lifted chain evaluates the same as when it carried the literal.
+    make: (client) => new Function(recv, 'GUILD_TAG', ...Object.keys(vars),
+      `return ${builder ? '(from, to) => ' : ''}${recv}${mutated}`)(client, 'wolfpack', ...Object.values(vars)),
   };
 }
 

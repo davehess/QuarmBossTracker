@@ -15,9 +15,12 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { readSource, ROOT, sliceBlock, stripJs } from './_source-slice.js';
 
 const agent = readSource(path.join(ROOT, 'packages', 'wolfpack-logsync', 'index.js'));
+// The real parser, for the tests that replay log lines exactly as a member's log printed them.
+const agentMod = createRequire(import.meta.url)('../packages/wolfpack-logsync/index.js');
 const meBlock = sliceBlock(agent, '// ── Me overlay (the guild lead, 2026-09-24)', '\nfunction _serializeTankState() {')
   .replace(/\nfunction _serializeTankState\(\) \{$/, '');
 const parseTs = agent.match(/const TS_RX = [^\n]+/)[0] + '\n'
@@ -46,6 +49,7 @@ const slainRx = agent.match(/const _SLAIN_BY_RX {2}= [^\n]+/)[0] + '\n' + agent.
 const EXPORTS = ['_serializeMeState', '_meNoteRawLine', '_meTick', '_meSwingState', '_meHands', '_meSwings',
   '_meCooldowns', '_meDisc', '_meDiscReuseSecs', '_meTargetExtras', '_discReadyAt', '_mobInfoByName', '_zealState',
   '_meNoteHit', '_meMobTallies', '_npcHtFor', '_meNoteCastFailed', '_tickEnrageWarn', '_meNoteMobDeath', '_dsKindOf', '_meClickies', '_noteClickyUse',
+  '_noteClickyRecharged',
   '_xpNoteRawLine', '_xpPending', '_xpFlush',
   'noteSelfCast', 'resolveSelfCastLanding', '_meNoteMyLanding', '_provableTargetId'];
 
@@ -620,10 +624,10 @@ describe('damage shield — its own kind, and its per-hit value', () => {
 
   it('the button reads the shield you wear, else the last one that landed', () => {
     let h = load({ zeal: Z.zeal, dsKnown: 40 });
-    expect(h._serializeMeState().combat.ds).toMatchObject({ per_hit: 40, from_buffs: true, hits: 0 });
+    expect(h._serializeMeState().combat.ds).toMatchObject({ per_hit: 40, from_buffs: true, measured: false, hits: 0 });
     h = load({ zeal: Z.zeal });
     h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'thorns', amount: 38, ds: true });
-    expect(h._serializeMeState().combat.ds).toMatchObject({ per_hit: 38, from_buffs: false, hits: 1, total: 38 });
+    expect(h._serializeMeState().combat.ds).toMatchObject({ per_hit: 38, from_buffs: false, measured: true, hits: 1, total: 38 });
     expect(load({ zeal: Z.zeal })._serializeMeState().combat.ds).toBeFalsy();   // no shield, no button
   });
 
@@ -814,12 +818,12 @@ describe('clicky counters', () => {
     ]);
   };
 
-  it('lists the clickies on you with charges left; each glow after the export spends one', () => {
+  // Charged items only (the guild lead, 2026-10-07): the unlimited rod is never listed.
+  it('lists the charged clickies on you with charges left; each glow after the export spends one', () => {
     setup(true);
     const h = load();
     expect(h._meClickies('Aldenmar')).toEqual([
-      { name: 'Ring of Shadows', left: 5, unlimited: false, used: 0, worn: true },
-      { name: 'Rod of Insidious Glamour', left: null, unlimited: true, used: 0, worn: false },
+      { name: 'Ring of Shadows', left: 5, unlimited: false, used: 0, worn: true, kind: null, max: 5 },
     ]);
     h._noteClickyUse('Aldenmar', 'Ring of Shadows', fileAt - 60_000);   // before the export: already counted in it
     h._noteClickyUse('Aldenmar', 'Ring of Shadows', fileAt + 60_000);
@@ -827,11 +831,11 @@ describe('clicky counters', () => {
     expect(h._meClickies('Aldenmar')[0]).toMatchObject({ left: 3, used: 2 });
   });
 
-  it('without the catalog\'s charge count, a 1 is not shown as "1 left"', () => {
+  it('without the catalog\'s charge count, a 1 is not counted as charges and is left out', () => {
     setup(false);
     const c = load()._meClickies('Aldenmar');
     expect(c.find(x => x.name === 'Ring of Shadows').left).toBe(5);       // more than one: charges
-    expect(c.find(x => x.name === 'Rod of Insidious Glamour')).toMatchObject({ left: null, unlimited: false });
+    expect(c.find(x => x.name === 'Rod of Insidious Glamour')).toBeUndefined();
   });
 
   it('no export, no counters', () => {
@@ -846,15 +850,159 @@ describe('clicky counters', () => {
       const h = load();
       h._noteClickyUse('Aldenmar', 'Ring of Shadows', fileAt + 60_000);        // before the Quarmy export: in its count
       h._noteClickyUse('Aldenmar', 'Ring of Shadows', fileAt + 3_700_000);     // after it: spends one
-      expect(h._meClickies('Aldenmar')).toEqual([{ name: 'Ring of Shadows', left: 1, unlimited: false, used: 1, worn: true }]);
+      expect(h._meClickies('Aldenmar')).toEqual([{ name: 'Ring of Shadows', left: 1, unlimited: false, used: 1, worn: true, kind: null, max: 5 }]);
       // An older Quarmy export loses to the newer /output inventory.
       globalThis.__quarmy = { at: fileAt - 3_600_000, items: [{ loc: 'Fingers1', name: 'Ring of Shadows', count: 2 }] };
       expect(load()._meClickies('Aldenmar')[0]).toMatchObject({ name: 'Ring of Shadows', left: 5 });
       // Only a Quarmy export at all: it is used.
       globalThis.__invs = null;
-      globalThis.__quarmy = { at: fileAt, items: [{ loc: 'General1-Slot1', name: 'Rod of Insidious Glamour', count: 1 }] };
-      expect(load()._meClickies('Aldenmar')).toEqual([{ name: 'Rod of Insidious Glamour', left: null, unlimited: true, used: 0, worn: false }]);
+      globalThis.__quarmy = { at: fileAt, items: [{ loc: 'General1-Slot1', name: 'Ring of Shadows', count: 3 }] };
+      expect(load()._meClickies('Aldenmar')).toEqual([{ name: 'Ring of Shadows', left: 3, unlimited: false, used: 0, worn: false, kind: null, max: 5 }]);
     } finally { globalThis.__quarmy = null; }
+  });
+});
+
+// FB-65 (a member, 2026-10-07): "Should be able to pick which clicky charges you track, and the names
+// need to be easier to see. Root/Dispel/Stun are prioritized" · "When we recharge I don't believe it says
+// anything in the chat, it just says you give a certain amount to the vendor."
+describe('clickies: root, dispel and stun first; a recharge the member reports', () => {
+  afterEach(() => { globalThis.__invs = null; globalThis.__clk = null; globalThis.__quarmy = null; delete globalThis.__hudDisk; });
+  const fileAt = Date.parse('2026-10-07T17:00:00Z');
+  const iso = (ms) => new Date(ms).toISOString();
+  const inv = (items, at = fileAt) => ({ Aldenmar: { _updatedAt: iso(at), items } });
+  const cat = (rows) => new Map(rows.map(([name, clickeffect, maxcharges]) => [name.toLowerCase(), { name, clickeffect, maxcharges }]));
+  // Spell 230 is "Root", 216 "Stun": the catalog tags them `cc`. 49 is Nullify Magic, which the catalog
+  // does not tag (no dispel kind), so it is known by id. 601 is a tree illusion: SPA 99 on a BENEFICIAL
+  // spell, which `cc` leaves out — it roots the wearer, not the target.
+  const spells = [{ id: 230, name: 'Root', cc: ['root'] }, { id: 216, name: 'Stun', cc: ['stun'] },
+    { id: 601, name: 'Illusion: Tree', good: 1 }, { id: 5000, name: 'Plenty', good: 1 }];
+
+  it('sorts root, then dispel, then stun, then the rest (worn first, then by name); each carries its kind', () => {
+    globalThis.__invs = inv([
+      { loc: 'General1-Slot1', name: 'Bridle of Plenty', count: 3 },
+      { loc: 'General1-Slot2', name: 'Stun Wand', count: 2 },
+      { loc: 'General1-Slot3', name: 'Root Rod', count: 3 },
+      { loc: 'General1-Slot4', name: 'Dispel Staff', count: 4 },
+      { loc: 'Fingers', name: 'Worn Ring', count: 5 },
+      { loc: 'General1-Slot5', name: 'Tree Charm', count: 2 },
+    ]);
+    globalThis.__clk = cat([['Bridle of Plenty', 5000, 3], ['Stun Wand', 216, 2], ['Root Rod', 230, 3], ['Dispel Staff', 49, 4],
+      ['Worn Ring', 5001, 5], ['Tree Charm', 601, 2]]);
+    const got = load({ spells })._meClickies('Aldenmar');
+    expect(got.map(c => [c.name, c.kind])).toEqual([['Root Rod', 'root'], ['Dispel Staff', 'dispel'], ['Stun Wand', 'stun'],
+      ['Worn Ring', null], ['Bridle of Plenty', null], ['Tree Charm', null]]);
+  });
+
+  it('with no spell catalog loaded, a dispel is still known by its spell id and nothing else is guessed', () => {
+    globalThis.__invs = inv([{ loc: 'General1-Slot1', name: 'Root Rod', count: 3 }, { loc: 'General1-Slot2', name: 'Dispel Staff', count: 4 }]);
+    globalThis.__clk = cat([['Root Rod', 230, 3], ['Dispel Staff', 48, 4]]);
+    expect(load()._meClickies('Aldenmar').map(c => [c.name, c.kind])).toEqual([['Dispel Staff', 'dispel'], ['Root Rod', null]]);
+  });
+
+  it('the HUD gets the first eight as `clickies`, and the whole list as `clickies_all` only when there are more', () => {
+    const monk60 = () => ({ Aldenmar: { charInfo: [{ id: 2, value: '60' }, { id: 3, value: 'Monk' }], gauges: [], updatedAt: clock } });
+    const rows = (n) => Array.from({ length: n }, (_, i) => ['Gem ' + String.fromCharCode(65 + i), 7000 + i, 3]);
+    const put = (n) => {
+      globalThis.__invs = inv(rows(n).map(([name], i) => ({ loc: 'General1-Slot' + (i + 1), name, count: 3 })));
+      globalThis.__clk = cat(rows(n));
+    };
+    put(10);
+    const big = load({ zeal: monk60() })._serializeMeState();
+    expect(big.clickies.map(c => c.name)).toEqual(rows(8).map(r => r[0]));
+    expect(big.clickies_all.map(c => c.name)).toEqual(rows(10).map(r => r[0]));
+    put(3);
+    const small = load({ zeal: monk60() })._serializeMeState();
+    expect(small.clickies).toHaveLength(3);
+    expect(small.clickies_all).toBeUndefined();
+  });
+
+  describe('a recharge leaves no line naming the item, so the member says so', () => {
+    const ring = () => {
+      globalThis.__invs = inv([{ loc: 'Fingers', name: 'Ring of Shadows', count: 2 }]);
+      globalThis.__clk = cat([['Ring of Shadows', 2577, 5], ['Rod of Glamour', 1000, -1]]);
+    };
+
+    it('puts the counter back to full; glows count from then; an export written later wins again', () => {
+      ring();
+      const h = load();
+      h._noteClickyUse('Aldenmar', 'Ring of Shadows', fileAt + 30_000);              // spent one after the export: 1 left
+      expect(h._meClickies('Aldenmar')[0]).toMatchObject({ left: 1, used: 1, max: 5 });
+      clock = fileAt + 600_000;
+      expect(h._noteClickyRecharged('Aldenmar', 'ring of shadows', clock)).toBe(true);   // any case, as the picker sends it
+      expect(h._meClickies('Aldenmar')[0]).toMatchObject({ left: 5, used: 0 });
+      h._noteClickyUse('Aldenmar', 'Ring of Shadows', clock + 60_000);
+      expect(h._meClickies('Aldenmar')[0]).toMatchObject({ left: 4, used: 1 });
+      globalThis.__invs.Aldenmar._updatedAt = iso(clock + 3_600_000);                 // an /output inventory written later
+      expect(h._meClickies('Aldenmar')[0]).toMatchObject({ left: 2, used: 0 });
+    });
+
+    it('refuses what has no charges to put back, and changes nothing', () => {
+      ring();
+      globalThis.__invs.Aldenmar.items.push({ loc: 'General1-Slot1', name: 'Rod of Glamour', count: 1 });
+      const h = load();
+      expect(h._noteClickyRecharged('Aldenmar', 'Rod of Glamour', clock)).toBe(false);       // never runs out
+      expect(h._noteClickyRecharged('Aldenmar', 'Cloak of Nothing', clock)).toBe(false);     // not carried
+      expect(h._noteClickyRecharged('Brackwyn', 'Ring of Shadows', clock)).toBe(false);      // not on that character
+      expect(h._meClickies('Aldenmar').find(c => c.name === 'Ring of Shadows')).toMatchObject({ left: 2 });
+    });
+
+    it('two of the same item are one counter, each full again', () => {
+      ring();
+      globalThis.__invs.Aldenmar.items.push({ loc: 'General1-Slot2', name: 'Ring of Shadows', count: 1 });
+      const h = load();
+      expect(h._meClickies('Aldenmar')[0]).toMatchObject({ left: 3 });
+      h._noteClickyRecharged('Aldenmar', 'Ring of Shadows', fileAt + 1000);
+      expect(h._meClickies('Aldenmar')[0]).toMatchObject({ left: 10 });
+    });
+
+    it('survives an agent restart (a Mimic update), and is forgotten after 30 days', () => {
+      vi.useFakeTimers({ toFake: ['setTimeout'] });
+      try {
+        ring();
+        globalThis.__hudDisk = {};
+        const first = load();
+        clock = fileAt + 600_000;
+        first._noteClickyRecharged('Aldenmar', 'Ring of Shadows', clock);
+        vi.advanceTimersByTime(2100);                                                  // the debounced save
+        expect(JSON.parse(globalThis.__hudDisk['/agent/logsync.hud-timers.json']).aldenmar.clk).toEqual({ 'ring of shadows': clock });
+        expect(load()._meClickies('Aldenmar')[0]).toMatchObject({ left: 5 });          // a fresh agent, same disk
+        clock += 31 * 86400_000;
+        expect(load()._meClickies('Aldenmar')[0]).toMatchObject({ left: 2 });
+      } finally { vi.useRealTimers(); }
+    });
+  });
+
+  // POST /api/me/clicky-recharged — the route around _noteClickyRecharged.
+  describe('POST /api/me/clicky-recharged', () => {
+    const src = sliceBlock(agent, 'async function _handleClickyRecharged(req, res) {', '\n}');
+    // eslint-disable-next-line no-new-func
+    const make = new Function('_localOriginOk', '_readBody', '_noteClickyRecharged', src + '\nreturn _handleClickyRecharged;');
+    const call = async (body, { origin = true, note = () => true } = {}) => {
+      let out = null;
+      const res = { writeHead(c) { this.code = c; }, end(b) { out = { code: this.code, body: JSON.parse(b) }; } };
+      const read = async () => { if (body instanceof Error) throw body; return typeof body === 'string' ? body : JSON.stringify(body); };
+      await make(() => origin, read, note)({ headers: {} }, res);
+      return out;
+    };
+
+    it('marks the item for the character it names', async () => {
+      const seen = [];
+      const r = await call({ character: 'Aldenmar', item: 'ring of shadows' }, { note: (...a) => { seen.push(a); return true; } });
+      expect(r).toEqual({ code: 200, body: { ok: true } });
+      expect(seen).toHaveLength(1);
+      expect(seen[0].slice(0, 2)).toEqual(['Aldenmar', 'ring of shadows']);
+      expect(seen[0][2]).toBeGreaterThan(0);
+    });
+    it('404 when it is not a charged clicky they carry; 400 without both names or on junk; 403 from a foreign page', async () => {
+      expect((await call({ character: 'Aldenmar', item: 'x' }, { note: () => false })).code).toBe(404);
+      expect((await call({ character: 'Aldenmar' })).code).toBe(400);
+      expect((await call({ item: 'x' })).code).toBe(400);
+      expect((await call('{nope')).code).toBe(400);
+      expect((await call(new Error('payload too large'))).code).toBe(413);
+      let called = false;
+      expect((await call({ character: 'Aldenmar', item: 'x' }, { origin: false, note: () => { called = true; return true; } })).code).toBe(403);
+      expect(called).toBe(false);
+    });
   });
 });
 
@@ -1320,5 +1468,224 @@ describe('tracking — the client\'s direction lines', () => {
     const s = h._serializeMeState();
     expect(s.cooldowns.every(c => c.seen === false)).toBe(true);
     expect(s.swing).toBeFalsy();
+  });
+});
+
+// A member, 2026-10-07 (Mimic 2.7.10-beta.1, FB-60): "The proc counter is including monk AA Dragon
+// Punches instead of just damage procs." The log lines below are the report's own excerpt, verbatim:
+// a Dragon Punch prints the skill hit ("You strike …"), then the spell it fires — Dragon Force —
+// as an anonymous 1-12 point hit, then its landing text. That middle line is what a weapon proc looks
+// like beside a swing, so it was counted; its landing line, one line later, is what says whose it was.
+describe('FB-60: a monk\'s Dragon Punch is not a weapon proc', () => {
+  const MOB = 'A jord militis', KRIGER = 'A jord kriger';
+  const CONTROL = [   // a real weapon proc: 150 points, anonymous, between the swings
+    '[Wed Oct 07 12:53:16 2026] You kick A jord militis for 79 points of damage.',
+    '[Wed Oct 07 12:53:16 2026] You punch A jord militis for 110 points of damage.',
+    '[Wed Oct 07 12:53:16 2026] You punch A jord militis for 57 points of damage.',
+    '[Wed Oct 07 12:53:16 2026] A jord militis was hit by non-melee for 150 points of damage.',
+    "[Wed Oct 07 12:53:16 2026] A jord militis's body is rent by savage fury.",
+    '[Wed Oct 07 12:53:16 2026] You punch A jord militis for 81 points of damage.',
+  ];
+  const DRAGON_PUNCH = [
+    '[Wed Oct 07 12:57:19 2026] You punch A jord militis for 88 points of damage.',
+    '[Wed Oct 07 12:57:19 2026] You strike A jord militis for 33 points of damage.',
+    '[Wed Oct 07 12:57:19 2026] A jord militis was hit by non-melee for 10 points of damage.',
+    '[Wed Oct 07 12:57:19 2026] A jord militis is stricken by the force of a dragon.',
+    '[Wed Oct 07 12:57:19 2026] You cannot disarm NPCs in this zone.',
+    '[Wed Oct 07 12:57:19 2026] You feel the blessing of ancient Coldain heroes.',
+    '[Wed Oct 07 12:57:19 2026] You punch A jord militis for 86 points of damage.',   // the next swing, same second
+    '[Wed Oct 07 12:57:19 2026] You try to punch A jord militis, but miss!',
+    '[Wed Oct 07 12:57:19 2026] You punch A jord militis for 42 points of damage.',
+  ];
+  const CRIT_DRAGON_PUNCH = [   // the spell crit announcement sits between the skill hit and the damage
+    '[Wed Oct 07 13:01:15 2026] You strike A jord kriger for 64 points of damage.',
+    '[Wed Oct 07 13:01:15 2026] You deliver a critical blast! (12)',
+    '[Wed Oct 07 13:01:15 2026] A jord kriger was hit by non-melee for 12 points of damage.',
+    '[Wed Oct 07 13:01:15 2026] A jord kriger is stricken by the force of a dragon.',
+    '[Wed Oct 07 13:01:15 2026] You kick A jord kriger for 103 points of damage.',
+  ];
+  const RESISTED = [   // a resisted Dragon Force prints no damage and no landing
+    '[Wed Oct 07 12:57:39 2026] You strike A jord militis for 74 points of damage.',
+    '[Wed Oct 07 12:57:39 2026] Your target resisted the Dragon Force spell.',
+    '[Wed Oct 07 12:57:39 2026] You try to kick A jord militis, but miss!',
+  ];
+  const logMs = (line) => agentMod.parseEqTimestamp(line).getTime();
+  const zealAt = (ms) => ({ Aldenmar: { charInfo: [{ id: 3, value: 'Monk' }], gauges: [], target_name: MOB, target_id: 7, updatedAt: ms } });
+  const start = (lines, opts = {}) => { clock = logMs(lines[0]); return load(Object.assign({ zeal: zealAt(clock) }, opts)); };
+  // One log line the way the tail takes it: the raw hook first, then the parsed damage event.
+  const replay = (h, lines) => lines.forEach((line) => {
+    clock = logMs(line);
+    h._meNoteRawLine(line, 'Aldenmar');
+    const ev = agentMod.parseEvent(line, agentMod.parseEqTimestamp(line));
+    if (ev) h._meNoteHit('Aldenmar', ev);
+  });
+  const procs = (h, mob = MOB) => h._meTargetExtras({ target_name: mob, target_id: 7, zone: 12, gauges: [] }, 'Aldenmar', clock).my_procs;
+  const spellHits = (h) => h._serializeMeState().combat.feed.filter(f => f.kind === 'spell').map(f => [f.amount, f.name, f.proc]);
+
+  it('the control: a real weapon proc between the swings counts', () => {
+    const h = start(CONTROL);
+    replay(h, CONTROL);
+    expect(procs(h)).toBe(1);
+    expect(spellHits(h)).toEqual([[150, null, true]]);
+  });
+
+  it('a Dragon Punch\'s Dragon Force is not a proc — before its landing line it looks like one, after it does not', () => {
+    const h = start(DRAGON_PUNCH);
+    replay(h, DRAGON_PUNCH.slice(0, 3));              // through the anonymous 10-point hit
+    expect(procs(h)).toBe(1);                          // nothing yet says it is not a proc
+    replay(h, DRAGON_PUNCH.slice(3));                 // …its landing text does
+    expect(procs(h)).toBe(0);
+    expect(spellHits(h)).toEqual([[10, 'Dragon Force', false]]);   // still damage you dealt, in the feed, not purple
+  });
+
+  it('…and the swing that follows it, in the same second, cannot make it one again', () => {
+    const h = start(DRAGON_PUNCH);
+    replay(h, DRAGON_PUNCH);
+    expect(procs(h)).toBe(0);
+    expect(spellHits(h)).toEqual([[10, 'Dragon Force', false]]);
+  });
+
+  it('a real proc and a Dragon Punch in the same stretch: only the proc counts', () => {
+    const lines = CONTROL.slice(0, 5).concat(DRAGON_PUNCH.map(l => l.replace('12:57:19', '12:53:17')));
+    const h = start(lines);
+    replay(h, lines);
+    expect(procs(h)).toBe(1);
+    expect(spellHits(h).sort((a, b) => b[0] - a[0])).toEqual([[150, null, true], [10, 'Dragon Force', false]]);
+  });
+
+  it('a real proc that prints just before the Dragon Force is still a proc: the landing claims the newest hit', () => {
+    const lines = [
+      '[Wed Oct 07 12:57:19 2026] You strike A jord militis for 33 points of damage.',
+      '[Wed Oct 07 12:57:19 2026] A jord militis was hit by non-melee for 150 points of damage.',
+      '[Wed Oct 07 12:57:19 2026] A jord militis was hit by non-melee for 10 points of damage.',
+      '[Wed Oct 07 12:57:19 2026] A jord militis is stricken by the force of a dragon.',
+    ];
+    const h = start(lines);
+    replay(h, lines);
+    expect(procs(h)).toBe(1);
+    expect(spellHits(h).sort((a, b) => b[0] - a[0])).toEqual([[150, null, true], [10, 'Dragon Force', false]]);
+  });
+
+  it('its damage is not always 10 (the report shows a crit at 12): the landing line is the test, not the amount', () => {
+    const h = start(CRIT_DRAGON_PUNCH, { zeal: Object.assign({}, zealAt(logMs(CRIT_DRAGON_PUNCH[0]))) });
+    replay(h, CRIT_DRAGON_PUNCH);
+    expect(procs(h, KRIGER)).toBe(0);
+    expect(spellHits(h)).toEqual([[12, 'Dragon Force', false]]);
+  });
+
+  it('a resisted Dragon Force leaves nothing behind to count', () => {
+    const h = start(RESISTED);
+    replay(h, RESISTED);
+    expect(procs(h)).toBe(0);
+    expect(spellHits(h)).toEqual([]);
+  });
+
+  it('a Dragon Force landing names its mob: a proc on another mob is left alone', () => {
+    const lines = [
+      '[Wed Oct 07 12:57:19 2026] You punch A jord militis for 88 points of damage.',
+      '[Wed Oct 07 12:57:19 2026] A jord militis was hit by non-melee for 150 points of damage.',
+      '[Wed Oct 07 12:57:19 2026] A jord kriger is stricken by the force of a dragon.',
+    ];
+    const h = start(lines);
+    replay(h, lines);
+    expect(procs(h)).toBe(1);
+  });
+
+  it('a landing a few seconds after the last hit takes nothing: the hit it follows is its own, one line up', () => {
+    const lines = [
+      '[Wed Oct 07 12:57:10 2026] You punch A jord militis for 88 points of damage.',
+      '[Wed Oct 07 12:57:10 2026] A jord militis was hit by non-melee for 150 points of damage.',
+      '[Wed Oct 07 12:57:19 2026] A jord militis is stricken by the force of a dragon.',
+    ];
+    const h = start(lines);
+    replay(h, lines);
+    expect(procs(h)).toBe(1);
+  });
+
+  // The hit the HUD took for your damage shield on a guess (the mob had just hit you and the amount
+  // fits the shield you wear) is not the shield if a Dragon Force lands right after it — and a
+  // shield you did not have must not become the "measured" number (FB-58, below).
+  it('a Dragon Force the HUD had taken for your damage shield is given back', () => {
+    const lines = [
+      '[Wed Oct 07 12:57:19 2026] A jord militis hits YOU for 347 points of damage.',
+      '[Wed Oct 07 12:57:19 2026] You strike A jord militis for 33 points of damage.',
+      '[Wed Oct 07 12:57:19 2026] A jord militis was hit by non-melee for 10 points of damage.',
+      '[Wed Oct 07 12:57:19 2026] A jord militis is stricken by the force of a dragon.',
+    ];
+    const h = start(lines, { dsKnown: 14 });
+    replay(h, lines.slice(0, 3));
+    expect(h._serializeMeState().combat.ds).toMatchObject({ hits: 1, last: 10, measured: true });   // a guess, for now
+    replay(h, lines.slice(3));
+    expect(h._serializeMeState().combat.ds).toMatchObject({ hits: 0, per_hit: 14, measured: false });
+    expect(spellHits(h)).toEqual([[10, 'Dragon Force', false]]);
+    expect(procs(h)).toBe(0);
+  });
+});
+
+// A member, 2026-10-07 (FB-58): "DS doesn't seem to account for AA or +skill from instruments." The
+// badge read the SUM OF THE CATALOG VALUES of the shield buffs and gear you wear — an estimate — and
+// only fell back to a hit that landed when no shield was visible. A bard song scales with the
+// instrument and singing skill and an AA adds on top, none of which the catalog carries, so the
+// estimate was wrong exactly for them. Once a hit has landed this fight the badge reads the hit.
+describe('FB-58: the shield badge reads what the shield did', () => {
+  const Z = { get zeal() { return { Aldenmar: { charInfo: [{ id: 3, value: 'Bard' }], gauges: [], updatedAt: clock } }; } };
+  const iso = (ms) => new Date(ms).toISOString();
+  // The mob hits you, and your shield answers with `amount` — the anonymous line a shield prints.
+  const landed = (h, amount, dt = 1000) => {
+    h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: 'a gnoll', defender: 'You', ability: 'hits', amount: 82 });
+    h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'non-melee', spellName: 'non-melee', amount });
+    clock += dt;
+  };
+  const badge = (h) => { const d = h._serializeMeState().combat.ds; return d && [d.per_hit, d.measured]; };
+
+  it('is the estimate from your buffs until a hit lands — then the hit wins, whether it is more or less', () => {
+    const h = load({ zeal: Z.zeal, dsKnown: 10 });
+    expect(badge(h)).toEqual([10, false]);              // what the catalog says the song gives
+    landed(h, 18);                                      // what it gave with the instrument and the AA
+    expect(badge(h)).toEqual([18, true]);
+    const low = load({ zeal: Z.zeal, dsKnown: 40 });
+    landed(low, 25);
+    expect(badge(low)).toEqual([25, true]);
+  });
+
+  it('is the amount that repeats, so one stray hit (a proc beside the mob\'s swing) cannot move it', () => {
+    const h = load({ zeal: Z.zeal, dsKnown: 10 });
+    [18, 18, 18].forEach(n => landed(h, n));
+    landed(h, 35);
+    expect(badge(h)).toEqual([18, true]);
+  });
+
+  it('follows a shield that changes: a tie goes to the newest hit, and a few of the new amount settle it', () => {
+    const tie = load({ zeal: Z.zeal, dsKnown: 10 });
+    landed(tie, 18); landed(tie, 22);
+    expect(badge(tie)).toEqual([22, true]);
+    const h = load({ zeal: Z.zeal, dsKnown: 10 });
+    [18, 18, 18, 18, 18].forEach(n => landed(h, n));
+    [22, 22, 22].forEach(n => landed(h, n));
+    expect(badge(h)).toEqual([22, true]);
+  });
+
+  it('reads this fight — with none live, the last 30 seconds — and falls back to the estimate after', () => {
+    const h = load({ zeal: Z.zeal, dsKnown: 10 });
+    landed(h, 18, 40_000);
+    expect(badge(h)).toEqual([10, false]);
+  });
+
+  it('a named shield line is measured too, and a shield-cancelling debuff is not a measurement', () => {
+    const h = load({ zeal: Z.zeal });
+    h._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'thorns', amount: 38, ds: true });
+    expect(badge(h)).toEqual([38, true]);
+    try {
+      globalThis.__dsWornOff = { name: 'Mark of the Plague Lords', heals: 50, seconds: 150 };
+      const off = load({ zeal: Z.zeal });
+      off._meNoteHit('Aldenmar', { ts: iso(clock), type: 'damage', attacker: null, defender: 'a gnoll', ability: 'thorns', amount: 38, ds: true });
+      expect(badge(off)).toEqual([0, false]);
+    } finally { globalThis.__dsWornOff = null; }
+  });
+
+  it('the measured number is not a field the HUD has to know about: it leaves no `seen` behind', () => {
+    const h = load({ zeal: Z.zeal, dsKnown: 10 });
+    landed(h, 18);
+    expect(Object.keys(h._serializeMeState().combat.ds)).not.toContain('seen');
   });
 });

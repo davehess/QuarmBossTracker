@@ -52,6 +52,9 @@
     font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 4px}
   .bar.thin{height:6px} .bar.thin > span{display:none}
   .pct{text-align:right;font-size:11px;font-variant-numeric:tabular-nums}
+  /* a bard's mana slot: "DIRGE 4 · FM 5" where the % was, so the column sizes to its words */
+  .brow.counts{grid-template-columns:minmax(0,1fr) auto}
+  .brow.counts .pct{white-space:nowrap}
   .lbl{font-size:10px;color:var(--dim);margin-top:5px;text-transform:uppercase;letter-spacing:.5px}
   .line{display:flex;gap:6px;align-items:baseline;font-size:11px;margin-top:3px;white-space:nowrap;overflow:hidden}
   .line .grow{flex:1;overflow:hidden;text-overflow:ellipsis}
@@ -117,6 +120,15 @@
   #builder select,#builder button{background:rgba(22,27,34,.9);color:var(--text);border:1px solid var(--border);
     border-radius:4px;font:inherit;font-size:10px;padding:1px 6px;cursor:pointer}
   #builder .bfoot{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
+  /* The clicky picker (FB-65): a tickable row per clicky — name and kind, charges, "Recharged". */
+  #builder .cpk-note{font-size:10px;margin:2px 0 3px 4px}
+  #builder .cpk{display:flex;align-items:center;gap:6px;padding-left:4px}
+  #builder .cpk label{flex:1;min-width:0}
+  #builder .cpk .bl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #builder .cpk .cn{flex:none;min-width:30px;text-align:right;font-variant-numeric:tabular-nums}
+  #builder .cpk .crc,#builder .cpk-clear{flex:none;font-size:9.5px;padding:0 5px}
+  #builder .ck{font-style:normal;font-size:9px;padding:0 4px;border:1px solid currentColor;border-radius:3px;margin-left:3px}
+  #builder .ck-root{color:var(--green)} #builder .ck-dispel{color:var(--blue)} #builder .ck-stun{color:var(--gold)}
   #hudsvg text,#hudlanes text{font-family:inherit;font-variant-numeric:tabular-nums;paint-order:stroke;stroke:#000;stroke-width:3px;stroke-linejoin:round}
   /* Line weight (⚙ → Line weight): the dark edge round the text, and the
      numbers' boldness. Arcs are scaled in the script. Consolas has only
@@ -394,10 +406,29 @@
     var w = p == null ? 0 : p;
     return '<div class="bar' + (cls ? ' ' + cls : '') + '"><i style="width:' + w.toFixed(1) + '%;background:' + color + '"></i><span>' + (text || '') + '</span></div>';
   }
-  function brow(p, color, text){
-    return '<div class="brow">' + bar(p, color, text) + '<div class="pct" style="color:' + color + '">' + (p == null ? '' : Math.round(p) + '%') + '</div></div>';
+  // `counts`: words that take the percentage's place (a bard's mana slot, below) and the room they need.
+  function brow(p, color, text, counts){
+    return '<div class="brow' + (counts ? ' counts' : '') + '">' + bar(p, color, text) + '<div class="pct" style="color:' + color + '">'
+      + (counts ? esc(counts) : (p == null ? '' : Math.round(p) + '%')) + '</div></div>';
   }
   function curMax(o){ return (o && o.cur != null && o.max != null) ? n0(o.cur) + ' / ' + n0(o.max) : ''; }
+  // A bard's mana slot counts instead of reading a percentage (a member, 2026-10-07, FB-56: "Bard songs
+  // don't take up mana typically - only display how many Faded Memories they have left, or Dirges, or
+  // charms"). The agent sends `bard: { dirges, fm, charm }`: the Dirges, Fading Memories and charm casts
+  // the mana in hand pays for, each null when it does not apply. The arc and the bar still fill with the
+  // mana %, because mana is still the fuel. Nothing to show, or an agent that sends no block, and the
+  // slot reads MANA nn% as it always did. Returns [[name, count], …] in the order shown, or null.
+  var BARD_COUNTS = [['dirges', 'DIRGE'], ['fm', 'FM'], ['charm', 'CHARM']];
+  function bardCounts(s){
+    if (!s || String(s['class'] || '').toLowerCase() !== 'bard' || !s.bard) return null;
+    var out = [];
+    BARD_COUNTS.forEach(function(c){
+      var v = s.bard[c[0]];
+      if (typeof v === 'number' && isFinite(v) && v >= 0) out.push([c[1], String(Math.floor(v))]);
+    });
+    return out.length ? out : null;
+  }
+  function bardText(counts){ return counts.map(function(c){ return c[0] + ' ' + c[1]; }).join(' · '); }
   // Time left on a cast, as a DEPLETING bar — countdowns run right to left
   // across the platform (the CH cast bar).
   function castHtml(c){
@@ -446,6 +477,45 @@
     return h + '</div>';
   }
 
+  // What you have put into the target (the agent's target.my_procs / my_stuns): weapon procs, and
+  // stuns plus aggro spells that landed. None for a corpse, and none from an agent that sends neither.
+  // The ring (hudData) and the Box (mineHtml) both read it here.
+  function mineOf(s){
+    var t = s && s.target;
+    return (t && t.corpse !== true && (t.my_procs != null || t.my_stuns != null))
+      ? { procs: Math.max(0, Math.round(+t.my_procs || 0)), stuns: Math.max(0, Math.round(+t.my_stuns || 0)) } : null;
+  }
+  // The shield's "~": the agent says `measured` once a hit of yours has landed this fight and the number
+  // is what that hit did (a member, 2026-10-07, FB-58: the estimate from buffs missed instrument skill
+  // and AAs). Before the first hit the number is an estimate from the buffs and gear you wear, and "~"
+  // says so; an older agent never says `measured`, so it reads "~" too, which is what its number was.
+  function dsMark(ds){ return ds && ds.measured === true ? '' : '~'; }
+  // Procs, stuns/aggro and the shield on ONE line under the target (the guild lead, 2026-10-07: the
+  // ring had them and the Box did not). Under the target and not in the damage block because the
+  // counts are about THAT mob — the eye is already on its health bar — while the damage block is the
+  // footer, only there once a fight has been counted, and far from the mob. The words are the ring's
+  // own, in the ring's colours: procs purple, stuns and aggro spells gold, the shield in its kind's
+  // colour (thorns green, fire amber, else orange; red "DS OFF" and the time left under a cancelling
+  // debuff). A 0 stays, dim, the way the ring does. The Box has no per-part text sliders (that is the
+  // HUD's builder), so the row is the .kv line's own 11px.
+  function mineHtml(s){
+    var m = mineOf(s), ds = s.combat && s.combat.ds ? s.combat.ds : null, c = [];
+    function chip(label, value, col, tip, zero){
+      return '<span title="' + esc(tip) + '" style="color:' + (zero ? 'var(--dim)' : col) + '">' + label + ' <b style="color:inherit">' + value + '</b></span>';
+    }
+    if (m) {
+      c.push(chip('procs', m.procs, 'var(--purple)', 'Weapon procs on the target', !m.procs));
+      c.push(chip('stuns', m.stuns, 'var(--gold)', 'Stuns and aggro spells you landed on the target', !m.stuns));
+    }
+    if (ds && ds.off) {
+      c.push(chip('DS OFF', ds.off.seconds != null ? mmss(ds.off.seconds * 1000) : '—', '#f85149', 'A shield-cancelling debuff is on you', false));
+    } else if (ds) {
+      c.push(chip('DS' + dsMark(ds), ds.per_hit != null ? n0(ds.per_hit) : '—', dsColor(ds.kind),
+        ds.measured === true ? 'Your damage shield per hit, as it landed' : 'Your damage shield per hit, estimated from your buffs and gear until one lands', false));
+    }
+    return c.length ? '<div class="kv">' + c.join('<span class="dim">·</span>') + '</div>' : '';
+  }
+
   // ── A · Classic ───────────────────────────────────────────────────────────
   function renderA(s){
     var hpP = pctOf(s.hp), mnP = pctOf(s.mana);
@@ -453,7 +523,7 @@
     h += brow(hpP, hpColor(hpP), curMax(s.hp));
     // No mana row for a warrior, rogue or monk — the HUD's rule (it had
     // shown an empty 0% bar for a monk).
-    if (mnP != null && !s.no_mana) h += brow(mnP, 'var(--blue)', curMax(s.mana));
+    if (mnP != null && !s.no_mana) { var bc = bardCounts(s); h += brow(mnP, 'var(--blue)', curMax(s.mana), bc ? bardText(bc) : null); }
     // "Endurance can be small": a thin bar, its % beside it.
     if (s.end && s.end.pct != null) h += '<div class="brow small">' + bar(s.end.pct, 'var(--orange)', '', 'thin')
       + '<div class="pct" style="color:var(--orange)">' + Math.round(s.end.pct) + '%</div></div>';
@@ -466,6 +536,7 @@
     if (meta.length) h += '<div class="kv">' + meta.join('') + '</div>';
     h += castHtml(s.casting);
     h += targetHtml(s.target);
+    h += mineHtml(s);
     if (s.focus && s.focus.length) {
       h += '<div class="kv">' + s.focus.map(function(f){ return esc(f.label) + ' <b>' + focusValue(f) + '</b>' + (f.sub ? ' <span class="dim">' + esc(f.sub) + '</span>' : ''); }).join('') + '</div>';
     }
@@ -600,8 +671,11 @@
     var noMana = s.no_mana === true || !!(s.mana && s.mana.max === 0);
     var enP = s.end && s.end.pct != null ? s.end.pct : null;
     var d = { s: s, hp: pctOf(s.hp), mana: noMana ? null : pctOf(s.mana), end: enP, noMana: noMana };
-    // The right arc: mana, or endurance for a class with none.
-    d.right = noMana ? { pct: enP, color: 'var(--orange)', label: 'end' } : { pct: d.mana, color: 'var(--blue)', label: 'mana' };
+    // The right arc: mana, or endurance for a class with none. `part` is the builder part that owns it
+    // (FB-12: Mana and Endurance are two parts) — a class with mana draws endurance as the thin arc
+    // under health instead, which the Endurance part switches.
+    d.right = noMana ? { pct: enP, color: 'var(--orange)', label: 'end', part: 'end' } : { pct: d.mana, color: 'var(--blue)', label: 'mana', part: 'mana' };
+    d.bard = noMana ? null : bardCounts(s);   // a bard's mana slot reads these counts, the arc still fills with mana % (FB-56)
     if (s.casting) {
       var left = s.casting.remaining_ms != null ? Math.max(0, s.casting.remaining_ms - dt) : null;
       var f0 = s.casting.pct != null ? (100 - s.casting.pct) / 100 : null;
@@ -635,10 +709,7 @@
               flurry: !corpse && (t.flurry === true || t.flurry_lit === true), flurryLit: !corpse && t.flurry_lit === true,
               rampage: !corpse && (t.rampage === true || t.rampage_lit === true), rampageLit: !corpse && t.rampage_lit === true };
     }
-    // What you have put into the target (the agent's target.my_procs / my_stuns): weapon procs, and
-    // stuns plus aggro spells that landed. None for a corpse, and none from an agent that sends neither.
-    d.mine = (t && t.corpse !== true && (t.my_procs != null || t.my_stuns != null))
-      ? { procs: Math.max(0, Math.round(+t.my_procs || 0)), stuns: Math.max(0, Math.round(+t.my_stuns || 0)) } : null;
+    d.mine = mineOf(s);   // procs and stuns/aggro put into the target (shared with the Box)
     var c = s.combat || null;
     d.out = c ? c.out.dps : null; d.inn = c ? c['in'].dps : null;
     d.ds = c && c.ds ? c.ds : null;
@@ -646,7 +717,7 @@
     d.ramp = s.rampage && s.rampage.name ? { name: s.rampage.name, hp: s.rampage.hp_pct, fresh: s.rampage.fresh === true } : null;
     d.low = (Array.isArray(s.low_hp) ? s.low_hp : []).filter(function(m){ return m && m.name; })
       .map(function(m){ return { name: m.name, hp: m.hp_pct }; });
-    d.clk = (Array.isArray(s.clickies) ? s.clickies : []).filter(function(c){ return c && c.name; });
+    d.clk = clickyList(s);
     d.tallies = c && Array.isArray(c.tallies) ? c.tallies : [];
     d.feed = (c && c.feed ? c.feed : []).map(function(f){
       // A weapon proc is purple (round eight: "Procs should be purple") — the
@@ -662,7 +733,9 @@
                text: (f.dir === 'in' ? '▼ ' : '▲ ') + n0(f.amount) + ' ' + esc(nm) + (f.hand ? ' ' + f.hand : ''),
                color: col, op: Math.max(0.35, 1 - (f.age_ms || 0) / 15000).toFixed(2) };
     });
-    d.focus = (s.focus || []).filter(function(f){ return f.timer_ms == null; }).slice(0, 1)
+    // A bard's ring label already says CHARM n, so the "Charm left" focus item would only repeat it.
+    var bardCharm = !!d.bard && d.bard.some(function(c){ return c[0] === 'CHARM'; });
+    d.focus = (s.focus || []).filter(function(f){ return f.timer_ms == null && !(bardCharm && f.key === 'charm'); }).slice(0, 1)
       .map(function(f){ return esc(f.label) + ' ' + focusValue(f); })[0] || null;
     var r = s.resists || {};
     d.res = (r.mr != null || r.fr != null) ? [['MR', r.mr, 'magic'], ['FR', r.fr, 'fire'], ['CR', r.cr, 'cold'], ['PR', r.pr, 'poison'], ['DR', r.dr, 'disease']] : null;
@@ -731,8 +804,12 @@
   // lead, round seven: "IN and Out should be side-swapped. Damage in should be
   // next to health and out should be on the right").
   function hpLabel(d, withDps){ return lbl('HP', pctTxt(d.hp), hpColor(d.hp)) + (withDps && d.inn != null ? '<tspan fill="#8b949e">  · in ' + big(d.inn) + '</tspan>' : ''); }
+  // A bard's counts take the place of "MANA nn%": DIRGE 4 · FM 5 · CHARM 12, in the arc's own colour.
+  function bardLabel(counts, color){
+    return counts.map(function(c){ return lbl(c[0], c[1], color); }).join('<tspan fill="#8b949e"> · </tspan>');
+  }
   function rightLabel(d, withDps, withFocus){
-    return lbl(d.noMana ? 'END' : 'MANA', pctTxt(d.right.pct), d.right.color)
+    return (d.bard ? bardLabel(d.bard, d.right.color) : lbl(d.noMana ? 'END' : 'MANA', pctTxt(d.right.pct), d.right.color))
       + (withDps && d.out != null ? '<tspan fill="#8b949e">  · out ' + big(d.out) + '</tspan>' : '')
       + (withFocus && d.focus ? '<tspan fill="#e6edf3">  · ' + d.focus + '</tspan>' : '');
   }
@@ -765,14 +842,14 @@
   // leaves a gap rather than moving the others under the player's eye.
   var HUD_PARTS = [
     ['Target', [['target', 'Name, health, level, class'], ['tot', 'Its target (on top)'], ['tres', 'Its resists'], ['status', 'Slow · F/R · summon · enrage']]],
-    ['You', [['hp', 'Health'], ['right', 'Mana or endurance'], ['dps', 'Damage per second (in · out)'], ['focus', 'Class number (CHs left…)']]],
+    ['You', [['hp', 'Health'], ['mana', 'Mana (right arc)'], ['end', 'Endurance (thin arc; right arc with no mana)'], ['dps', 'Damage per second (in · out)'], ['focus', 'Class number (CHs left…)']]],
     ['Timers', [['cooldowns', 'Cooldowns'], ['tick', 'Server tick'], ['swing', 'Swing timer'], ['cast', 'Cast bar (in the swing\'s place)']]],
     ['Hits', [['hitsIn', 'Hits on you (left)'], ['hitsOut', 'Your hits (right)'], ['ds', 'Damage shield'],
       ['procs', 'Procs and stuns/aggro on target'],
       ['rounds', 'Rounds listed', [3, 4, 5, 6, 8]], ['split', 'Newest rounds hit by hit', [1, 2, 3]],
       ['hitsSide', 'Numbers inside or outside the ring', ['inside', 'outside']]]],
     ['Raid', [['ramp', 'Rampage target (top right)'], ['lowhp', 'Raiders under 25% (top left)']]],
-    ['Items', [['clickies', 'Clicky counters (charges left)']]],
+    ['Items', [['clickies', 'Clicky counters (charges left)'], ['clickyRows', 'Two clicky rows (the 2nd dips into the middle)']]],
     ['Tracking', [['track', 'Arrows toward what you track'], ['trackShow', 'Arrows drawn', ['all', 'lit']]]],
     ['Other', [['resists', 'Resists'], ['weight', 'Line weight', ['thin', 'normal', 'bold']]]],
   ];
@@ -781,14 +858,14 @@
   // round-three look. It scales every arc and the text's dark edge, and takes
   // the numbers off bold.
   var HUD_WEIGHTS = { thin: 0.55, normal: 0.8, bold: 1 };
-  var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, right: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
+  var HUD_DEFAULTS = { target: 1, tot: 1, status: 1, hp: 1, mana: 1, end: 1, dps: 1, focus: 1, tick: 1, swing: 1, cast: 1, cooldowns: 1,
     hitsIn: 1, hitsOut: 1, ds: 1, procs: 1, rounds: 5, split: 2, hitsSide: 'inside', resists: 1, tres: 1, weight: 'thin',
-    track: 1, trackShow: 'all', ramp: 1, lowhp: 1, clickies: 1, sizes: {} };
+    track: 1, trackShow: 'all', ramp: 1, lowhp: 1, clickies: 1, clickyRows: 1, clickyPick: [], sizes: {} };
   // Text size per part, from the small slider beside it in the builder (the
   // guild lead, round six: "small sliders next to each of the hud's elements for
   // font size"). 1 = as designed; kept to 0.7–1.6 so a label cannot swallow
   // its neighbours.
-  var HUD_SIZED = ['target', 'tot', 'tres', 'status', 'hp', 'right', 'cooldowns', 'tick', 'swing', 'hitsIn', 'hitsOut', 'ds', 'procs', 'resists', 'track'];
+  var HUD_SIZED = ['target', 'tot', 'tres', 'status', 'hp', 'mana', 'end', 'cooldowns', 'tick', 'swing', 'hitsIn', 'hitsOut', 'ds', 'procs', 'resists', 'track', 'clickies'];
   // A part's size times the builder's "All text" slider (round seven: "a top
   // level slider for all of the text"), each 0.7–1.6.
   function sz(k){
@@ -809,10 +886,181 @@
         || JSON.parse(localStorage.getItem(HUD_PARTS_KEY) || 'null');
       if (saved && typeof saved === 'object') for (var k in HUD_DEFAULTS) if (k in saved) p[k] = saved[k];
       if (!p.sizes || typeof p.sizes !== 'object') p.sizes = {};
+      // FB-12 (a member, 2026-09-27: "mana or endurance … separated to be either or"): Mana and
+      // Endurance were ONE part, `right`. A save from before the split keeps today's look — both new
+      // parts start where the old one was (on, or off) and take its text size — unless the save
+      // already has them. The old keys are dropped, so the next save writes only the new ones.
+      if (saved && typeof saved === 'object') {
+        if ('right' in saved) {
+          if (!('mana' in saved)) p.mana = saved.right;
+          if (!('end' in saved)) p.end = saved.right;
+        }
+        if (p.sizes.right !== undefined) {
+          if (p.sizes.mana === undefined) p.sizes.mana = p.sizes.right;
+          if (p.sizes.end === undefined) p.sizes.end = p.sizes.right;
+          delete p.sizes.right;
+        }
+      }
     } catch (e) {}
+    // The clicky picks: always a fresh array of item names, never the one HUD_DEFAULTS holds.
+    p.clickyPick = Array.isArray(p.clickyPick) ? p.clickyPick.filter(function(n){ return typeof n === 'string'; }) : [];
     return p;
   }
   var hudParts = readParts(null);
+
+  // ── Clicky counters: which ones, and how they are written ──────────────────
+  // FB-65 (a member, 2026-10-07): "Should be able to pick which clicky charges you track, and the names
+  // need to be easier to see. Root/Dispel/Stun are prioritized". The agent sends every clicky on you,
+  // root · dispel · stun first (`clickies_all`; `clickies` is its first eight, which is all an older
+  // agent sends). The builder's picker ticks up to CLICKY_MAX_PICK of them; with none ticked the HUD
+  // takes the first that fit, which is why that order matters.
+  // A second row (the guild lead, 2026-10-07: "add a second clicky row to the HUD"): the line is written
+  // along the bottom arc at CLICKY_R, the same 140°–220° span as before; the second row is the same arc on
+  // a smaller circle, one line (CLICKY_PITCH × the font size) just inside it. Inside, not outside: outside
+  // is the resists line (r 136, tops at ~130) with a 6-unit gap to this row, and the cooldown bar and
+  // labels (r 150, 159–165) beyond it; inside only the clear middle (r < 110) and the damage-shield
+  // button's corner (r ~112 at 130°, thorns/lava out to 21 units) are left, and 140° clears that at both
+  // radii. Cost: at the default size the second row's letter tops reach r ~106.5, about 3.5 units into the
+  // clear middle — which is why ⚙ → Items has a "Two clicky rows" switch.
+  // The most picks: the SAME fit math as clickyFit, worst case — every pick a 6-character name (the
+  // smallest the fit tries), a space and a two-digit count, 9 characters, at 70% of the size (the least
+  // it shrinks to). One row holds 4 of those (4 × 9 + 3 × 3 = 45 = the row's 45 characters); the second
+  // row, a shorter arc, 3 (43 characters): 7. An eighth worst-case pick needs 65% (5.5 px at the default
+  // size), so it would be counted ("+1") instead of shown; the test pins both numbers.
+  var CLICKY_DEFAULT_N = 8, CLICKY_MAX_PICK = 7, CLICKY_MAX_PICK_ONE = 4;
+  var CLICKY_R = 122, CLICKY_PITCH = 1.1;
+  // What the builder's picker lets you tick: one row holds four, two rows seven.
+  function clickyMaxPick(){ return hudParts.clickyRows ? CLICKY_MAX_PICK : CLICKY_MAX_PICK_ONE; }
+  var CLICKY_KIND = { root: 'Root', dispel: 'Dispel', stun: 'Stun' };
+  function clickyList(s){
+    var a = Array.isArray(s.clickies_all) ? s.clickies_all : (Array.isArray(s.clickies) ? s.clickies : []);
+    return a.filter(function(c){ return c && c.name; });
+  }
+  function clickyKey(c){ return String(c.name).toLowerCase(); }
+  // The picked ones that are on you, in the agent's order (root · dispel · stun first).
+  function clickyPicked(list, picks){
+    return Array.isArray(picks) && picks.length ? list.filter(function(c){ return picks.indexOf(clickyKey(c)) !== -1; }) : [];
+  }
+  // What the line lists. Picks that are not on you any more (sold, banked, an export that has not
+  // caught up) fall back to the default list rather than an empty line.
+  function clickyShown(list, picks){
+    var got = clickyPicked(list, picks);
+    return got.length ? got : list.slice(0, CLICKY_DEFAULT_N);
+  }
+  // "Ring of Shadows" → "Shadows", "White Ornate Chain Bridle" → "Bridle": the part of the name that
+  // tells two apart, as much of it as `cap` characters hold. The old cut ("Ring…", "Rod…") made every
+  // "<thing> of …" look the same.
+  // What a raider calls it, before any cutting (the guild lead, 2026-10-08: "Undead Recourse can show as
+  // U.Recourse, Cloudy potion can say Invis Pot. Larrikan's Mask can say 'invis mask' Rolfron should say
+  // 'Totem'"). Matched on the whole item name, so every dose size of a potion gets the same label.
+  var CLICKY_ALIASES = [
+    [/cloudy potion/i, 'Invis Pot'],
+    [/undeads?\W*s?\s+recourse/i, 'U.Recourse'],
+    [/larrikan\W?s mask/i, 'Invis Mask'],
+    [/totem of rolfron zek/i, 'Totem'],
+  ];
+  function clickyShort(name, cap){
+    for (var a = 0; a < CLICKY_ALIASES.length; a++) if (CLICKY_ALIASES[a][0].test(String(name))) return CLICKY_ALIASES[a][1];
+    // "10 Dose …", "5 Doses of …": the dose count is not the name.
+    var n = String(name).replace(/^\d+\s+doses?\s+(?:of\s+)?/i, '').replace(/^(?:the|a|an)\s+/i, '');
+    if (n.length <= cap) return n;
+    var m = n.match(/\s+of\s+(?:the\s+)?(.+)$/i), w, out = '', i, t;
+    if (m) {
+      w = m[1].split(/\s+/);
+      for (i = 0; i < w.length; i++) { t = out ? out + ' ' + w[i] : w[i]; if (t.length > cap) break; out = t; }
+      return out || w[0].slice(0, cap - 1) + '…';
+    }
+    // No "of": "Rooting Rod" → "Rooting Rod" or, short of room, whichever of its first and last word
+    // is longer ("White Ornate Chain Bridle" → "Bridle").
+    w = n.split(/\s+/);
+    if (w.length > 1 && (t = w[0] + ' ' + w[w.length - 1]).length <= cap) return t;
+    t = w[0].length > w[w.length - 1].length ? w[0] : w[w.length - 1];
+    return t.length <= cap ? t : t.slice(0, cap - 1) + '…';
+  }
+  function clickyNum(c){ return c.unlimited ? '∞' : (c.left == null ? '' : String(c.left)); }
+  // The line along the bottom arc. A textPath draws nothing past the end of its arc, so a line with
+  // more than fits used to lose its first and last items outright; this decides what fits. Picked
+  // clickies (`all`) ALL show — names shorten, the text shrinks (never under 70%) — and the default
+  // list shows the first that fit (at 90% at the least, on one row), with "+N" for the rest. `room` is the
+  // arc's length, `size` the font size wanted. Each try is [share of the size, longest name]. Returns
+  // { items: [{ c, nm, n }], rows: [[…], […]], more, tail, size } — `items` is every one drawn, `rows` the
+  // same split by row, `tail` the row the " +N" is written on (-1: none).
+  // Two rows (`rows` 2): row 1 is filled first, then row 2, in the same order, so the priority is the
+  // same; row 2 is the same arc on a circle one line smaller (CLICKY_PITCH × the font size) so it holds a
+  // few characters fewer. With twice the room the default list may shrink to 70% like the picks, so
+  // the 8 default clickies show without a "+N", where on one row it drops items first.
+  // `extra` is how many more there are that the caller left out (the default list's ninth onward):
+  // they count into the "+N" too.
+  function clickyFit(list, size, room, all, rows, extra){
+    rows = rows === 2 ? 2 : 1; extra = extra > 0 ? extra : 0;
+    var tries = all || rows === 2 ? [[1, 10], [1, 8], [0.85, 10], [0.85, 8], [0.7, 10], [0.7, 8], [0.7, 7], [0.7, 6]] : [[1, 10], [1, 8], [0.9, 10], [0.9, 8]];
+    function entries(cap){
+      return list.map(function(c){ var nm = clickyShort(c.name, cap), n = clickyNum(c); return { c: c, nm: nm, n: n, len: nm.length + (n ? 1 + n.length : 0) }; });
+    }
+    // The characters each row holds at font size s (a character is 0.6 of it wide).
+    function budget(s){
+      var b = [Math.floor(room / (0.6 * s))];
+      if (rows === 2) b.push(Math.floor(room * (CLICKY_R - CLICKY_PITCH * s) / CLICKY_R / (0.6 * s)));
+      return b;
+    }
+    function width(row){ return row.reduce(function(a, e, i){ return a + e.len + (i ? 3 : 0); }, 0); }
+    // First fit, in order. Unless `force` (the last resort) it returns null when they do not all fit.
+    // Whatever is left over, and `extra`, is counted as " +N" after the last row that has items — alone
+    // on the next row if that one is full, else in place of the last items that stood there.
+    function place(es, b, force){
+      var out = [], i = 0, r, row, used, add, left, t = 0;
+      for (r = 0; r < b.length; r++) {
+        row = []; used = 0;
+        for (; i < es.length; i++) {
+          add = es[i].len + (row.length ? 3 : 0);
+          if ((row.length || !force) && used + add > b[r]) break;
+          used += add; row.push(es[i]);
+        }
+        out.push(row);
+      }
+      if (!force && i < es.length) return null;
+      left = es.length - i + extra;
+      if (!left) return { rows: out, more: 0, tail: -1 };
+      while (t + 1 < out.length && out[t + 1].length) t++;
+      if (width(out[t]) + 4 > b[t]) {   // 4: the " +N" that follows
+        if (t + 1 < out.length) t++;
+        else if (force) while (out[t].length > 1 && width(out[t]) + 4 > b[t]) { out[t].pop(); left++; }
+        else return null;
+      }
+      return { rows: out, more: left, tail: t };
+    }
+    function done(got, s){ return { items: [].concat.apply([], got.rows), rows: got.rows, more: got.more, tail: got.tail, size: s }; }
+    var ti, s, got;
+    for (ti = 0; ti < tries.length; ti++) {
+      s = size * tries[ti][0];
+      got = place(entries(tries[ti][1]), budget(s), false);
+      if (got) return done(got, s);
+    }
+    s = size * (all || rows === 2 ? 0.7 : 1);   // picks: the smallest we go; default: full size
+    return done(place(entries(8), budget(s), true), s);
+  }
+  // The builder's picker: every clicky on you, ticked when it is one you picked, with its kind, its
+  // charges and (for a charged one) a "Recharged" button — a recharge prints no line that names the
+  // item, so it is the member's to say. `max` is how many may be ticked (clickyMaxPick: 7 on two rows, 4 on one).
+  function clickyPickerHtml(list, picks, max){
+    if (!list.length) return '<div class="cpk-note dim">No clickies yet. They come from your <b>/output inventory</b> or Quarmy export.</div>';
+    max = max || CLICKY_MAX_PICK;
+    var ticked = clickyPicked(list, picks).map(clickyKey);
+    var full = ticked.length >= max;
+    var h = '<div class="cpk-note dim">' + (ticked.length
+      ? 'Counting ' + ticked.length + ' of ' + list.length + ' (up to ' + max + '). <button type="button" class="cpk-clear" data-clk-clear="1">Clear</button>'
+      : 'Tick up to ' + max + ' to count. Until you do, the first that fit show, root · dispel · stun first.') + '</div>';
+    list.forEach(function(c){
+      var k = clickyKey(c), on = ticked.indexOf(k) !== -1;
+      var num = c.unlimited ? '∞' : (c.left == null ? '' : c.left + (c.max ? '/' + c.max : ''));
+      h += '<div class="cpk"><label title="' + esc(c.name) + '"><input type="checkbox" data-clk="' + esc(k) + '"' + (on ? ' checked' : '') + (!on && full ? ' disabled' : '') + '> '
+        + '<span class="bl">' + esc(c.name) + (c.kind && CLICKY_KIND[c.kind] ? ' <i class="ck ck-' + c.kind + '">' + CLICKY_KIND[c.kind] + '</i>' : '') + '</span></label>'
+        + '<span class="cn">' + esc(num) + '</span>'
+        + (c.max ? '<button type="button" class="crc" data-recharged="' + esc(k) + '" title="Recharged it at a vendor? Sets it back to ' + c.max + ' of ' + c.max + '.">Recharged</button>' : '')
+        + '</div>';
+    });
+    return h;
+  }
 
   // Hits in ROUNDS — every hit that shares a log second — newest round first.
   function hitRounds(feed, pick){
@@ -879,7 +1127,7 @@
   // amount (reshapeForHits), so the ring keeps its size; both SVG layers are
   // overflow:visible, so lines past the square still draw.
   var LANE_EXT = 120, _lanesOut = false;
-  function laneOutR(){ return 186 + 11 * Math.max(sz('hp'), sz('right')); }
+  function laneOutR(){ return 186 + 11 * Math.max(sz('hp'), sz('mana'), sz('end')); }
   // Which edge a line hugs: the ring's side of the column.
   function flushRight(L){ return _lanesOut ? L.side === 'left' : L.side === 'right'; }
   // "a Temple Patroller" → "Patroller": enough to tell two totals apart.
@@ -1244,11 +1492,16 @@
       h += gauge(R, 236, 304, d.hp == null ? 0 : d.hp / 100, hpColor(d.hp), 6 * W);
       h += ringLabel('hhp', R + 10, 236, 304, hpLabel(d, p.dps), 11 * sz('hp'));
     }
-    if (p.right && d.right.pct != null) {
+    // The right arc belongs to Mana, or to Endurance for a class with none (d.right.part); each part
+    // switches only its own drawing (FB-12). Endurance on a class WITH mana is the thin arc under health.
+    if (p[d.right.part] && d.right.pct != null) {
       h += gauge(R, 56, 124, d.right.pct / 100, d.right.color, 6 * W, true);
-      h += ringLabel('hrt', R + 10, 56, 124, rightLabel(d, p.dps, p.focus), 11 * sz('right'));
-      if (!d.noMana && d.end != null) h += gauge(R - 10, 240, 300, d.end / 100, 'var(--orange)', 2 * W);
+      // Fitted to the arc (68°): a bard's three counts with the damage out beside them is longer than
+      // "MANA 45%" ever was, and a label the arc cuts off reads as a different number.
+      var rl = rightLabel(d, p.dps, p.focus);
+      h += ringLabel('hrt', R + 10, 56, 124, rl, fitSize(11 * sz(d.right.part), rl.replace(/<[^>]*>/g, '').length, 68, R + 10));
     }
+    if (p.end && !d.noMana && d.end != null) h += gauge(R - 10, 240, 300, d.end / 100, 'var(--orange)', 2 * W);
     // Cooldowns: an inner arc across the bottom (at most 80°, centred on 6
     // o'clock), left to right, each labelled along the ring beneath it.
     var cds = cdItems(d, p).slice(0, 5);
@@ -1291,7 +1544,7 @@
       var bp = [286, 272], dsc = dsColor(d.ds.kind);
       h += dsWrap(bp[0], bp[1], d.ds.kind, W)
         + '<circle cx="' + f1(bp[0]) + '" cy="' + f1(bp[1]) + '" r="13" fill="' + (d.ds.kind === 'fire' ? 'rgba(48,14,4,0.82)' : 'rgba(13,17,23,0.72)') + '" stroke="' + dsc + '" stroke-width="' + f1(1.2 * W + 0.3) + '"/>'
-        + T(bp[0], bp[1] - 3.5, 'DS' + (d.ds.from_buffs ? '' : '~'), 6, dsc)
+        + T(bp[0], bp[1] - 3.5, 'DS' + dsMark(d.ds), 6, dsc)
         + T(bp[0], bp[1] + 7, d.ds.per_hit != null ? n0(d.ds.per_hit) : '—', 9.5 * Math.min(1.2, sz('ds')), dsc, 'middle', 700);
     }
     // Procs and stuns/aggro landed on the target, in the band over the damage-shield button (mineRow).
@@ -1315,17 +1568,24 @@
     // one, red at none, ∞ when it never runs out, no number when that is not
     // known yet. Names come from the newer of your /output inventory and your
     // Quarmy export.
+    // FB-65 (a member): the ones you picked in the builder, else the first that
+    // fit (root · dispel · stun first); names bright, not grey, at their own
+    // size slider, and what does not fit is counted ("+3"), not cut off.
+    // A second row (the guild lead, 2026-10-07: "add a second clicky row to the HUD"): the same
+    // 140°–220° arc one line further in (clickyFit has the why), the same size and style; it fills only
+    // when the first is full, and ⚙ → Items → "Two clicky rows" keeps just the first.
     if (p.clickies && d.clk.length) {
-      var plainC = '', spans = d.clk.map(function(c, i){
-        var nm = String(c.name).replace(/^(?:the|a|an)\s+/i, '');
-        nm = nm.length > 12 ? nm.split(/\s+/)[0].slice(0, 11) + '…' : nm;
-        var n = c.unlimited ? '∞' : (c.left == null ? '' : String(c.left));
-        var col = c.left === 0 ? 'var(--red)' : (c.left === 1 ? 'var(--orange)' : '#c9d1d9');
-        plainC += (i ? ' · ' : '') + nm + (n ? ' ' + n : '');
-        return (i ? '<tspan fill="#6e7681"> · </tspan>' : '') + '<tspan fill="#8b949e">' + esc(nm) + '</tspan>'
-          + (n ? '<tspan fill="' + col + '" font-weight="700"> ' + n + '</tspan>' : '');
-      }).join('');
-      h += ringLabel('hcl', 122, 140, 220, spans, fitSize(7.5 * sz('resists'), plainC.length, 80, 122), true);
+      var cshown = clickyShown(d.clk, p.clickyPick), cpicked = clickyPicked(d.clk, p.clickyPick).length > 0, crows = p.clickyRows ? 2 : 1;
+      var cfit = clickyFit(cshown, 8.5 * sz('clickies'), 80 * Math.PI / 180 * CLICKY_R * 0.96, cpicked, crows, crows === 2 && !cpicked ? d.clk.length - cshown.length : 0);
+      cfit.rows.forEach(function(row, ri){
+        if (!row.length && cfit.tail !== ri) return;
+        var cspans = row.map(function(e, i){
+          var col = e.c.left === 0 ? 'var(--red)' : (e.c.left === 1 ? 'var(--orange)' : '#c9d1d9');
+          return (i ? '<tspan fill="#6e7681"> · </tspan>' : '') + '<tspan fill="#e6edf3">' + esc(e.nm) + '</tspan>'
+            + (e.n ? '<tspan fill="' + col + '" font-weight="700"> ' + e.n + '</tspan>' : '');
+        }).join('') + (cfit.tail === ri ? '<tspan fill="#8b949e"> +' + cfit.more + '</tspan>' : '');
+        h += ringLabel(ri ? 'hcl2' : 'hcl', Math.round((CLICKY_R - ri * CLICKY_PITCH * cfit.size) * 10) / 10, 140, 220, cspans, cfit.size, true);
+      });
     }
     if (p.track && d.track) h += trackArrows(d.track, p.trackShow === 'lit', W, sz('track'));
     return svgWrap(h + blindRing(s), HUD_WEIGHTS[p.weight] ? p.weight : 'thin');
@@ -1414,12 +1674,22 @@
             + '</label>';
         }
       });
+      if (g[0] === 'Items') h += '<div id="clkpick"></div>';   // the clicky picker, filled below
     });
     builderList.innerHTML = h;
+    refreshClickyPicker(true);
     var who = document.getElementById('builder-for');
     if (who) who.textContent = _hudPartsFor ? '· ' + _hudPartsFor : '';
     var all = document.getElementById('builder-all');
     if (all) all.value = String((hudParts.sizes && +hudParts.sizes.all) || 1);
+  }
+  // The picker repaints with the HUD's own poll while the panel is open (a click on "Recharged" shows
+  // its new count), and only when its markup changed.
+  function refreshClickyPicker(force){
+    var el = document.getElementById('clkpick');
+    if (!el) return;
+    var html = clickyPickerHtml(clickyList(_last || {}), hudParts.clickyPick, clickyMaxPick());
+    if (force || el._html !== html) { el.innerHTML = html; el._html = html; }
   }
   // Saved for this character, and as the starting point for any character
   // that has none of its own yet.
@@ -1449,6 +1719,31 @@
     reshapeForHits(was, hudParts.hitsSide);
     saveParts();
   });
+  // Ticking a clicky counts it (at most clickyMaxPick(); the HUD draws them in the agent's order).
+  builderList.addEventListener('change', function(e){
+    var k = e.target && e.target.getAttribute && e.target.getAttribute('data-clk');
+    if (!k) return;
+    var now = clickyPicked(clickyList(_last || {}), hudParts.clickyPick).map(clickyKey);
+    hudParts.clickyPick = e.target.checked
+      ? (now.indexOf(k) === -1 ? now.concat([k]) : now).slice(0, clickyMaxPick())
+      : now.filter(function(x){ return x !== k; });
+    saveParts(); refreshClickyPicker();
+  });
+  // "Clear" goes back to the default list; "Recharged" tells the agent this one is full again — a
+  // recharge at a vendor prints no line naming the item, so there is nothing to read it from.
+  builderList.addEventListener('click', function(e){
+    var t = e.target && e.target.closest ? e.target : null;
+    if (!t) return;
+    if (t.closest('[data-clk-clear]')) { hudParts.clickyPick = []; saveParts(); refreshClickyPicker(); return; }
+    var rc = t.closest('[data-recharged]');
+    if (!rc || !_last || !_last.character) return;
+    rc.disabled = true;
+    var done = function(){ tick(); };
+    fetch('http://127.0.0.1:' + PORT + '/api/me/clicky-recharged', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ character: _last.character, item: rc.getAttribute('data-recharged') }),
+    }).then(done, done);
+  });
   // Size sliders — each part's, and "All text" in the header — repaint as they
   // move and save when let go.
   builderEl.addEventListener('input', function(e){
@@ -1468,6 +1763,7 @@
     delete sizes[k];
     hudParts.sizes = sizes;
     if (k in HUD_DEFAULTS && k !== 'sizes') hudParts[k] = HUD_DEFAULTS[k];
+    if (k === 'clickies') hudParts.clickyPick = [];   // the line's picks are part of the line
     reshapeForHits(was, hudParts.hitsSide);
     renderBuilder(); saveParts();
   });
@@ -1492,21 +1788,37 @@
     builderEl.hidden = false;
     setBounds({ x: toLeft ? x - PANEL_W : x, y: y, width: w + PANEL_W, height: hgt });
   }
-  function closeBuilder(restore){
+  // The ring's own bounds, read off the window the panel grew: the panel takes
+  // PANEL_W on the left or the right and the ring keeps the rest. Closing the
+  // panel puts the window back to THIS, not to the bounds from the moment it
+  // opened: a resize or a move made while it was open used to be undone, and the
+  // HUD "reverts to a bigger size after clicking the X" (FB-16, a member,
+  // 2026-09-27). Pure, so it can be tested.
+  function ringBoundsOf(win, panelW, left){
+    return { x: left ? win.x + panelW : win.x, y: win.y, width: win.width - panelW, height: win.height };
+  }
+  // atLoad: the page just started with the panel left open (quit with it open),
+  // so the stored bounds are all there is; any other close reads the live window.
+  function closeBuilder(restore, atLoad){
     var pre = null;
     try { pre = JSON.parse(localStorage.getItem(BUILD_KEY) || 'null'); localStorage.removeItem(BUILD_KEY); } catch (e) {}
+    var left = document.body.classList.contains('build-left');
     builderEl.hidden = true;
     document.body.classList.remove('building', 'build-left');
     document.documentElement.style.removeProperty('--ring-w');
     document.documentElement.style.removeProperty('--ring-h');
-    if (restore !== false && pre && pre.width) setBounds(pre);
+    if (restore !== false) {
+      var back = atLoad ? pre : ringBoundsOf({ x: window.screenX, y: window.screenY, width: window.outerWidth, height: window.outerHeight }, PANEL_W, left);
+      if (!(back && back.width >= 100)) back = pre;
+      if (back && back.width) setBounds(back);
+    }
     hoverOff();
   }
   // Quit with the panel open → the window comes back at the ring's size.
   (function(){
     var pre = null;
     try { pre = JSON.parse(localStorage.getItem(BUILD_KEY) || 'null'); } catch (e) {}
-    if (pre) closeBuilder(isHud(style));
+    if (pre) closeBuilder(isHud(style), true);
   })();
   document.getElementById('build-btn').addEventListener('click', function(){
     if (builderEl.hidden) openBuilder(); else closeBuilder();
@@ -1539,6 +1851,7 @@
       // A HUD is sized to its window, not the other way round.
       if (!isHud(style)) _requestAutoHeight();
     }
+    if (!builderEl.hidden) refreshClickyPicker();
   }
   function _requestAutoHeight(){
     if (!(window.mimic && window.mimic.overlayAutoHeight)) return;
