@@ -7604,16 +7604,7 @@ function buildTrayMenu() {
     { label: '🧲 Rescue overlays to this screen', click: () => {
         _rescueOverlays().catch((e) => appendAgentLog('[rescue] failed: ' + e.message + '\n'));
       } },
-    { label: '🔇 Quiet mode — no TTS audio or sounds (overlays still show)', type: 'checkbox', checked: s.quietMode, click: (mi) => {
-        const cfg = loadConfig(); cfg.quietMode = mi.checked; saveConfig(cfg);
-        // Renderers only learn Mute from this broadcast (window.mimic.isMuted).
-        // It used to be sent from the Settings save alone, so muting HERE never
-        // reached the CH-chain or charm voices at all.
-        _broadcastMute(cfg);
-        applyAllVisibility();
-        pushStatus();
-      } },
-    // The display-off half of the pair above. It lived only in Settings (a
+    // The display-off half of Quiet mode (bottom block). It lived only in Settings (a
     // member, 2026-09-23: "We don't have a taskbar option for No Overlays").
     // Same flag and the same apply path as the Settings save — not a parallel one.
     { label: '🙈 No overlays — I use another parser (uploads and voice continue)', type: 'checkbox', checked: !!s.hideOverlays, click: (mi) => {
@@ -7670,7 +7661,17 @@ function buildTrayMenu() {
     // Bottom block per user request: Overlays sits right above Restart agent
     // (the tray opens upward, so this puts the most-used submenu nearest the
     // cursor), then Check for updates directly below Restart, then Settings →
-    // Quit as the two safe bottom actions.
+    // Quit as the two safe bottom actions. Quiet mode sits just above Overlays, near the cursor (the guild
+    // lead, 2026-10-08: "Move quiet mode towards the bottom of the right click window for task bar").
+    { label: '🔇 Quiet mode — no TTS audio or sounds (overlays still show)', type: 'checkbox', checked: s.quietMode, click: (mi) => {
+        const cfg = loadConfig(); cfg.quietMode = mi.checked; saveConfig(cfg);
+        // Renderers only learn Mute from this broadcast (window.mimic.isMuted).
+        // It used to be sent from the Settings save alone, so muting HERE never
+        // reached the CH-chain or charm voices at all.
+        _broadcastMute(cfg);
+        applyAllVisibility();
+        pushStatus();
+      } },
     { label: 'Overlays', submenu: overlaysSubmenu },
     { label: 'Restart agent', click: async () => {
         appendAgentLog('[mimic] tray "Restart agent" clicked\n');
