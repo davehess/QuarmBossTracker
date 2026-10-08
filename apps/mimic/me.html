@@ -968,7 +968,9 @@
   var CLICKY_KIND = { root: 'Root', dispel: 'Dispel', stun: 'Stun' };
   function clickyList(s){
     var a = Array.isArray(s.clickies_all) ? s.clickies_all : (Array.isArray(s.clickies) ? s.clickies : []);
-    return a.filter(function(c){ return c && c.name; });
+    // Charged items only (the guild lead, 2026-10-08: "the rod and all unlimited should not show up").
+    // The agent has dropped them since 3.7.101; this keeps an older agent's list out of the HUD too.
+    return a.filter(function(c){ return c && c.name && !c.unlimited && c.left != null; });
   }
   function clickyKey(c){ return String(c.name).toLowerCase(); }
   // The picked ones that are on you, in the agent's order (root · dispel · stun first).

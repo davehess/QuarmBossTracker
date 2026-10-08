@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'parses-week-2026-10-08',
+    title: 'Parses opens on the last week',
+    version: 'Web 1.8.125 · Bot 3.1.232',
+    date: '2026-10-08',
+    headline: 'The parses page opens on the last 7 days, so it loads fast.',
+    features: [
+      { name: 'Week by default', blurb: 'The parses page now opens on the last week instead of the last 60 days. The window picker at the top still has 30, 60 and 90 days, the expansion and lifetime.' },
+    ],
+    fixes: [
+      'Feedback sent from Mimic now shows the sender\'s Discord name, not whichever character they had up.',
+    ],
+  },
+  {
     key: 'does-not-equip-2026-10-08',
     title: 'Target Info says when a mob does not equip',
     version: 'Web 1.8.124 · Bot 3.1.230',

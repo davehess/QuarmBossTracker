@@ -54,7 +54,14 @@ async function updateStatus(formData: FormData) {
   if (!id || !status) return;
 
   const admin = supabaseAdmin();
-  const actorName = u!.email || u!.id;
+  // The officer's Discord name, never their sign-in email (the guild lead, 2026-10-08: "Don't use email
+  // in here for 'Addressed by'"). wolfpack_members keeps it, keyed by the signed-in user.
+  const { data: member } = await admin
+    .from('wolfpack_members')
+    .select('nickname, global_name')
+    .eq('user_id', u!.id)
+    .maybeSingle();
+  const actorName = member?.nickname || member?.global_name || 'an officer';
   const nowIso = new Date().toISOString();
 
   const patch: Record<string, any> = { status };
