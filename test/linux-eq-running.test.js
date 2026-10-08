@@ -26,6 +26,18 @@ describe('Linux EQ-running check', () => {
     expect(calls).toEqual([{ file: 'pgrep', args: ['-f', 'eqgame\\.exe'] }]);
   });
 
+  // FB-66: the overlay gate's poll (_checkEqRunning) answered "running" unconditionally on Linux,
+  // so overlays never hid when the game closed. It must ask the pgrep check.
+  it('the overlay gate poll asks the pgrep check on Linux', async () => {
+    const poll = sliceBlock(readSource(MAIN), 'function _checkEqRunning() {', '\n}');
+    for (const answer of [false, true]) {
+      // eslint-disable-next-line no-new-func
+      const fn = new Function('process', '_isEqRunning', 'spawn', poll + '\nreturn _checkEqRunning;')(
+        { platform: 'linux' }, async () => answer, () => { throw new Error('tasklist must not run on Linux'); });
+      expect(await fn()).toBe(answer);
+    }
+  });
+
   it('a pid back means EQ is running', async () => {
     const cp = { execFile: (f, a, o, cb) => cb(null, '4242\n'), exec: () => { throw new Error('no'); } };
     expect(await load('linux', cp)()).toBe(true);

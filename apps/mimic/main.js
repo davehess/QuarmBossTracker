@@ -5798,6 +5798,9 @@ function _resolveEqPidOwners(pids) {
 }
 
 function _checkEqRunning() {
+  // Linux: the pgrep check (_isEqRunning). It answered "running" unconditionally here, so overlays never hid
+  // when the game closed (FB-66, a native-Wine tester, 2026-10-08: "shuts off when you exit game").
+  if (process.platform === 'linux') return _isEqRunning();
   return new Promise(resolve => {
     if (process.platform !== 'win32') return resolve(true);
     try {
