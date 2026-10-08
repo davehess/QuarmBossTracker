@@ -147,6 +147,7 @@ describe('the central helpers', () => {
       const setupMode = !!globalThis.__extra.setup, _canvasArrange = false;
       const _eqGateOk = () => true;
       const _overlayForcedOn = () => !!globalThis.__extra.forced;
+      const _canvasHostedKeys = () => [];   // alpha's Canvas-hosted overlays; none here
       ${sliceBlock(MAIN, 'function _overlayWanted(cfg, e) {', '\n}\n')}
     `, ['_overlayWanted']);
     const out = {};
