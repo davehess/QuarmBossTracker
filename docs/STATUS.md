@@ -752,6 +752,14 @@ next touch one rather than assuming a missing row means a missing doc.
   replaced the last one. No `?v=` is what production shows. Empty until the bot ledger is live and the two stampede
   rows carry the `zone-timer` tag. `web/lib/zoneTimers.ts`, `web/app/boards/ZoneTimers.tsx`,
   `test/zone-timers-web.test.js`. Link: https://b.wolfpack.quest/boards?v=b
+- **🧪 Sha`s Revenge is a slow; the Planes of Power charms are tracked (agent 3.7.117 beta, 2026-10-08).** A member
+  reported Sha`s Revenge not showing as a slow: spell 3462 (SPA 11 base 35, a 65% slow) was on none of the name-keyed
+  slow lists. Added with Sha's Vengeance (55%) and Sha's Lethargy (30%), in the agent and the Extended Target
+  window. Note that Revenge and Sha's Advantage print the same landing text, so a bystander landing stays ambiguous
+  (self-casts resolve by name). New charms in `CHARM_SPELLS` (all SPA 22 spells with a player class that were missing):
+  enchanter Beckon + Command of Druzzil, druid Command of Tunare, necro Word of Terris + Enslave Death, mage Call of
+  the Arch Mage, bard Call of the Banshee. `test/sha-revenge-and-pop-charms.test.js`. ⚠ Open: enchanter charm
+  warning is a countdown to a 720 s maximum that breaks early at random, so it almost never fires (pick pending).
 - **✅ Officer page `/admin/loot` [beta] — loot by value (web 1.8.120 main, 2026-10-08; paged in 1.8.122).** Note
   that the looter is not always the owner; window, per-character totals; one row per looter + item (count, each,
   row total), 50 a page, sorted on the server; DKP items listed but left out of totals (`loot_value_grouped` +
@@ -5755,3 +5763,23 @@ The guild lead: *"we should move to 2.8, don't mention the loot page"*, then *"m
 - **Beta re-parked at 2.8.1, agent 3.7.114** (`04a47a2f`), above the stable. Linux follows: stable gives `2.8.0-linux.N`, beta
   `2.8.1-linux.N`.
 - **Known, unannounced:** Mimic's own Loot tab still counts DKP items (the web `/admin/loot` page does not).
+
+### 🧾 2026-10-08 (late) — Zone timers: the stampede timer follows you in (bot 3.1.233 · agent 3.7.115, DECISIONS §208)
+The guild lead: *"if one person had the stampede window it should go to anyone currently in the zone when it opens"*, picked
+"the timer follows you in", then asked for an earliest/latest window that clears for everyone and survives a bot restart.
+- **Built (local branch, not pushed):** `utils/zoneTimers.js` (the window ledger), the relay POST records a window when a fire
+  names a guild trigger tagged `zone-timer` (the bot reads the tag itself, so every observer's Mimic counts), and
+  recent-fires hands a raider who stands in that zone each still-running countdown once (`late_join`, no actions, original
+  fire time). Agent 3.7.115 `_runLateJoinFire` arms the trigger's own countdown with its end text, unless it already runs one
+  from that window. Old agents drop the fire as stale. Relay clamp raised from 1 h to 4 h for tagged rows only.
+- **Window:** waiting before the 40-min bound, open until the 2-hour bound, then cleared for everyone: `expired_unobserved`
+  (no sighting by the latest bound) or `replaced_by_sighting` (anyone in the zone hears the next one). One nameless cleared
+  record per pack + zone stays for a future page.
+- **Persisted** in bot_kv `zone_timer_windows` (shape in §208), reloaded on boot with expired windows cleared; who saw a
+  window and who was handed it are memory only (a re-delivery after a restart is skipped by the agent). No member names or
+  discord ids are stored.
+- **To switch it on:** the guild lead runs the tag SQL in §208 on the two rows "Tactics: stampede window opens" and "Tactics:
+  stampede by" (NOT the 15 s "boar stampede incoming"). Agent part goes to `beta`.
+- **Open:** a timer armed through the normal relay still carries no end text (pre-existing). Web countdown on
+  wolfpack.quest/boards is a separate beta change.
+- Tests: `test/zone-timers.test.js`, `test/zone-timers-relay.test.js`, `test/zone-timers-agent.test.js` (mutation-checked).

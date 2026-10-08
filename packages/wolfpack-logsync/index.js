@@ -628,6 +628,19 @@ const CHARM_SPELLS = new Map([
   // backticks.
   ["tunare's request",  { cls: 'enchanter', dur: 10800, catalogDur: true }],
   ["tunare`s request",  { cls: 'enchanter', dur: 10800, catalogDur: true }],
+  // Planes of Power charms (the guild lead, 2026-10-08: "the new charms for bards and enchanters, druids,
+  // necros, and mages"). Every SPA 22 spell with a player class in eqemu_spells that this table lacked:
+  // enchanter Beckon 3347 / Command of Druzzil 3355 (75 ticks, formula 8), druid Command of Tunare 3445,
+  // necro Word of Terris 3316 and mage Call of the Arch Mage 3484 (205 ticks, formula 10), bard Call of the
+  // Banshee 3371 (10 ticks = 60s) and necro Enslave Death 1629 (5 ticks = 30s). Non-bards are 'enchanter'
+  // like the rest of the table. catalogDur: level-aware from the catalog, the static dur is the L60 fallback.
+  ['beckon',                 { cls: 'enchanter', dur: 420,  catalogDur: true }],
+  ['command of druzzil',     { cls: 'enchanter', dur: 420,  catalogDur: true }],
+  ['command of tunare',      { cls: 'enchanter', dur: 1140, catalogDur: true }],
+  ['word of terris',         { cls: 'enchanter', dur: 1140, catalogDur: true }],
+  ['call of the arch mage',  { cls: 'enchanter', dur: 1140, catalogDur: true }],
+  ['call of the banshee',    { cls: 'bard',      dur: 60 }],
+  ['enslave death',          { cls: 'enchanter', dur: 30 }],
 ]);
 // Level-aware charm duration from the spell catalog, for CHARM_SPELLS entries
 // flagged catalogDur (curated durations stay authoritative for the rest —
@@ -6754,8 +6767,8 @@ const SLOW_SPELLS = new Set([
   'drowsy', 'walking sleep', "tagar's insects", "togor's insects", "tigir's insects", "turgur's insects", 'cripple',
   // Enchanter
   'languid pace', 'shiftless deeds', 'tepid deeds', 'forlorn deeds',
-  // Beastlord
-  "sha's advantage",
+  // Beastlord (Sha`s Revenge was missing: a 65% slow, spell 3462, a member report 2026-10-08)
+  "sha's advantage", "sha's revenge", "sha's vengeance", "sha's lethargy",
   // Boss tank-busters that are ALSO attack-speed slows (#142). Rage of
   // Ssraeshza (spell 2310, SPA 11 base 10 = −90% attack speed + a 4000 hit)
   // lands on the Emperor's tank; grounded from eqemu_spells.
@@ -6807,8 +6820,11 @@ const SLOW_MAGNITUDES = new Map([
   ["tagar's insects",   50],
   ["tigir's insects",   50],
   ['tepid deeds',       50],
+  ["sha's revenge",     65],
+  ["sha's vengeance",   55],
   ["sha's advantage",   50],
   ['walking sleep',     35],
+  ["sha's lethargy",    30],
   ['languid pace',      30],
   ['drowsy',            25],
 ]);
@@ -6819,7 +6835,7 @@ const SLOW_CLASSES = new Map([
   ["tigir's insects",  'SHM'], ['walking sleep',   'SHM'], ['drowsy',          'SHM'],
   ['forlorn deeds',    'ENC'], ['shiftless deeds', 'ENC'], ['tepid deeds',     'ENC'],
   ['languid pace',     'ENC'],
-  ["sha's advantage",  'BST'],
+  ["sha's advantage",  'BST'], ["sha's revenge",    'BST'], ["sha's vengeance",  'BST'], ["sha's lethargy",   'BST'],
 ]);
 function _slowClass(name) {
   if (!name) return null;

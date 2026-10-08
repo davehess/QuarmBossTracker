@@ -1278,6 +1278,16 @@ and no raid roster hears no relays off-schedule; that is the intended trade.
 Tests: `test/relay-scope-gate.test.js` (runs the predicate; mutation-checked on
 the fail-closed branch).
 
+### Zone timers: a long countdown follows you into the zone (bot 3.1.233 · agent 3.7.115, §208)
+The Plane of Tactics stampede windows. A guild trigger tagged **`zone-timer`** (read by the bot from
+`guild_triggers.tags`, `_zoneTimerTriggerMap`, 2-min cache) opens a window in `utils/zoneTimers.js` when its
+relayed fire reaches `_handleTriggerRelayPost`; tagged rows sharing a `source_pack` are one window (shortest =
+`min_at_ms`, longest = `max_at_ms`). `_recentFiresFor` appends `late_join` fires (no actions, original fire
+time) for a listener whose live zone is the window's, once each; the agent's `_runLateJoinFire` arms the
+trigger's own countdown unless it already runs one from that window. Cleared when `max_at` passes unobserved
+or a fresh sighting replaces it, with one nameless `cleared` record per pack+zone. Stored in bot_kv
+`zone_timer_windows` (shape in DECISIONS §208). Tests: `test/zone-timers*.test.js`.
+
 ### /platform/architecture — the deep platform page (web 1.7.10)
 `/platform` answers "what is all this?"; this answers "how does it work?" — every
 overlay, dashboard and integration, plus the path one log line takes to the guild.
