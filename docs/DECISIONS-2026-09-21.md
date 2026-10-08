@@ -8087,3 +8087,23 @@ users are not visible currently"* — the status DM linked the card in the offic
 - **Weekly AFB count** (`utils/afbDigest.js`, `_afbWeeklyDigest`): Mondays from 13:00 UTC, one line with counts
   only (new this week, waiting for review) and a link to the officer page; nothing when both are zero; latched
   per ISO week in `bot_kv` so a redeploy never double-posts. It reads only the date and status columns.
+
+### 194. A kill by one or two guildmates starts its board timer (2026-10-08, bot 3.1.224 · migration 20261008160000)
+The guild lead, from the Planes of Power board: *"I don't see the timers updated on bastion of thunder's timers
+GAUKR and one other … This needs to stay updated."* Two guildmates killed Gaukr Sandstorm and Hreidar Lynhillig;
+the bot logged each as `unknown: 2 fighter(s) — too few to judge` and started nothing (§165's rule 5). Laef
+Windfall fell out the same way with `1 fighter(s)`: the uploader's own list held one name while the merged parse
+held five, all guild.
+- **Rule 5 now:** 1–2 fighters who are ALL on the roster → `ours`. Anyone off the roster, or no roster to read,
+  is still `unknown`. Rules 1–4 still run first, so a PvP broadcast, a PvP flag, or another guild in a fighter's
+  own /who still makes the kill pvp/live.
+- **Fighters = this upload's list + the merged `encounter_players`** (`gatherKillSignals`, one bounded read; a
+  failed read falls back like the others). A lone uploader of a mostly-stranger fight is now judged on the whole
+  fight, which can turn an old `unknown` into `live`.
+- **The restart re-seed agrees** (`latest_kill_per_npc`, migration `20261008160000`, applied on production
+  before the deploy): 3+ players, or 1–2 all on the roster. The roster is read once as an array — 153 ms over
+  every tracked boss for 186 h; a correlated anti-join took 2.3 s.
+- **Today's three timers come back on the deploy itself:** the startup reconcile reads Gaukr, Hreidar and Laef
+  through the new function (checked on production) and seeds them from the fights' start times.
+- **The risk accepted:** two guildmates killing a named in the open world with no /who taken get a timer they
+  should not. An officer's 'live' mark on /parses takes it back on the next reconcile.
