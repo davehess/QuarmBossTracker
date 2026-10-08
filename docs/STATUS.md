@@ -717,6 +717,9 @@ next touch one rather than assuming a missing row means a missing doc.
   `deploymentEnabled`. Web 1.8.53 also keeps a `/pop` link's query through sign-in. §101.
 - **⏳ Command Center 📋 on deathrolls (agent 3.7.47, Mimic beta `013e2e0c`) · Target Info even con = your
   level for a player (agent 3.7.48, beta `386cfc99`), 2026-09-29.** §97, §98 (reverses part of §15).
+- **✅ Feign Death failure callout speaks again (agent 3.7.107 main hot-swap · 3.7.111 beta, 2026-10-08).** The guild trigger was
+  firing but the §136 raid callout allow-list muted it (no critical word in its name or text); new `feign` category. ⏳ pass over
+  the other guild triggers for the same silent-by-default trap. DECISIONS §205.
 - **✅ Glyphed Rune Word droppers on a spawn over 2 h are on the boards (bot 3.1.231 data, main 2026-10-08).** Nine added to
   the 44 already there: Emmerik Skyfury, Evynd Firestorm, three Halls of Honor, Lossenmachar, Calebgrothiel, Neffiken, Gurebk (260
   on the board). ⏳ 61 scripted event mobs on that list have no spawn row, so no timer; they wait for a kill or a PQDI read.
