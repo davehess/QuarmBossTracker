@@ -1008,6 +1008,11 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   line; `charm.html`'s `waitCharmFires` long-polls the same route and speaks it (250 ms floor after a
   fast empty answer), `triggers.html` `fire()` skips it, and the deferred Charm-overlay call is
   skipped for 8 s after (`_instantCalled`). `DECISIONS-2026-09-21.md` §59c.
+- **Overlays without the graphics card** (Mimic beta, 2026-10-08, §195): `cfg.disableGpu` (default off) is
+  read straight off disk before app-ready (`_gpuOffAtStart` in `main.js`) and calls
+  `app.disableHardwareAcceleration()`. Set from Settings ("Use the graphics card for overlays"), the tray
+  checkbox (both offer Restart now / Later via `_setGpuDrawing`) and the setup walk's "Screen flicker" step
+  (`welcome.html`, lands next start). For black screens with a device-disconnect sound: a driver reset.
 - **Settings drafts** (`settings.html`): `wp:settings:draft` in localStorage, built from the same
   signature as the floating Save and never holding the token; `_offerDraft` at the end of `load()`;
   a `beforeunload` bar asks before closing. `before-quit` destroys the Settings window, because in
