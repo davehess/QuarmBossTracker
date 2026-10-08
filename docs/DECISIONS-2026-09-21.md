@@ -116,12 +116,12 @@ is ephemeral. It is a desktop-session job.
 |---|---|---|
 | **Three picks: bard counts, AE chip by spell data, height floor** (§178) | All three built; HUD counts, AE gate and the floor on beta (agent 3.7.98); the catalog's `ae` flag waits on this branch reaching `main` | the guild lead: push this branch to main (after 00:30 ET on a raid night); a bard on beta checks the ring label; a beta tester drags an overlay small and confirms it stays |
 | **Guild kit slices 1b, 2-prep, 3** (§177) | Bot 3.1.215: `utils/guildConfig.js` loader + getters, Discord self-provisioner (`/setup discord`, standalone script), tag-correct REST filters with a ratchet, one-shot announcers gated on the guild tag, Bristlebane guild file. Web slice A (`web/lib/guild.ts` + the literal swap) reviewed separately → `beta` | a session: slice 2, the de-branding sweep (start from the 11 getter-only env names in `test/guild-config.test.js`); then `doctor` and the wizard CLI (§8 picks stand) |
-| **HUD second clicky row** (§185) | Mimic beta: row 2 one line inside row 1, on by default, 7 picks (4 on one row) | the guild lead: keep 7 picks or accept a smaller floor for 8 (A/B in §185) |
-| **Mana / Endurance parts, charm break once, unticked 🔊 = silent** (§184, FB-12, FB-21) | Agent 3.7.100 + Mimic on beta | a beta tester: untick 🔊 on a Suggested alert and hear nothing; break a charm and hear it once; the guild lead: keep the Charm overlay's own "charm break" voice when the row is unticked, or silence both |
-| **Another raider's charm pet on the meter; pets on the copy line** (§183, FB-52, FB-22) | Agent 3.7.100 + Mimic on beta: a fresh, single "My leader is X" credits X live and in local History; the 📋 line folds pets in as "+Pets" | the guild lead: A or B for the upload (below in §183); the pet's owner and a beta tester check the meter after a /pet leader |
+| **HUD second clicky row** (§185) | Mimic beta: row 2 one line inside row 1, on by default, 7 picks (4 on one row) | Picked A (7 picks), §187. Next: a beta tester with many clickies tries two rows |
+| **Mana / Endurance parts, charm break once, unticked 🔊 = silent** (§184, FB-12, FB-21) | Agent 3.7.100 + Mimic on beta | a beta tester: untick 🔊 on a Suggested alert and hear nothing; break a charm and hear it once. Picked A (the Charm overlay keeps its one voice), §187 |
+| **Another raider's charm pet on the meter; pets on the copy line** (§183, FB-52, FB-22) | Agent 3.7.100 + Mimic on beta: a fresh, single "My leader is X" credits X live and in local History; the 📋 line folds pets in as "+Pets" | Picked A (meter only, no upload), §187. The pet's owner and a beta tester check the meter after a /pet leader |
 | **FB scanner by reachability** (§182) | Bot 3.1.219 on `claude/sharp-lamport-dC0TW`: reports fixed on a merged branch move on; FB-58–61 move on the first look after deploy | the guild lead: push the branch to `main` after 00:30 ET |
 | **Guild-trigger countdown / warning / repeat** (§181, FB-31) | Web 1.8.115 on beta, migration applied: `https://b.wolfpack.quest/admin/triggers` | an officer: set a repeat on a test trigger there and watch it loop on a beta agent; then graduate the web beta |
-| **Canvas group hotkeys** (§180) | Alpha `9e87325e`: a key per saved group, the overlay's own key moves its Canvas panel; the dashboard's list is agent 3.7.100 on beta | the guild lead: keep or flip the two defaults (a press with the Canvas off shows the group; hide-all is not lifted) |
+| **Canvas group hotkeys** (§180) | Alpha `9e87325e`: a key per saved group, the overlay's own key moves its Canvas panel; the dashboard's list is agent 3.7.100 on beta | Defaults kept (A), §187. Next: Canvas show-when rules (design rule A) on alpha |
 | **Clicky picker + Recharged** (§179, FB-65) | On beta (agent + Mimic, version set at the push): ⚙ → Items picks up to four clickies, root · dispel · stun first, brighter names with their own size slider, a Recharged button per charged clicky | a beta tester with charged clickies: pick, recharge at a vendor, press Recharged (the second row is §185) |
 | **Mimic 2.7.9 stable + member-report sweep** (§176) | Stable `40af051a` (agent 3.7.96), beta re-parked 2.7.10. 13 older member reports closed with their senders DMed, plus FB-43; 23 stay open (partial / not done / unclear / alpha, listed in §176) | a session: the open member reports, starting with the partials (FB-22, FB-26, FB-3, FB-37); the guild lead: pick the four B/C web previews still on beta |
 | **Main / alt · Inventory only · Hide completely** (§175) | Bot 3.1.214 live; agent 3.7.96, stable in Mimic 2.7.9: the choice in setup and on the dashboard's Me card, Hide completely also stops this PC reading the log | the guild lead: should Inventory only also stop that character's fight uploads? |
@@ -7928,3 +7928,16 @@ The guild lead: *"add the 72-flag cap to the hail board, and the countdown timer
   unknown expired trigger in the callout-feedback learning set.
 - **Session picks:** the cap reads in raiders (144 shows as 72), and the warning fires when flags left are at or
   below the raiders still to hail.
+
+### 187. Five picks: A for all (the guild lead, 2026-10-07: "A for all of them")
+
+- **Canvas group hotkeys (§180):** the defaults stand — a group key with the Canvas off turns it on and shows the
+  group; a hide-all stays in force.
+- **Another raider's charm pet (§183):** A, meter only. The claim credits the owner on everyone's live meter and
+  local History; `_provenPets` does not upload it, so stored parses are unchanged.
+- **Clicky picks (§185):** A, seven on two rows at the 70% floor.
+- **Charm break with the alert's 🔊 unticked (§184):** A, the Charm overlay still says it once.
+- **Canvas design rules (the A–G list in chat, 2026-10-07):** A, show-when rules — each piece can show only in
+  combat, out of combat, with a target, with an NPC target, in a raid, or for chosen classes; it fails open (a
+  missing signal keeps the piece visible) and everything shows while arranging. Being built on alpha. B–G (loudness
+  budget, no layout shift, legibility preview, piece-to-piece guides, full undo, role starters) stay on the list.
