@@ -158,10 +158,24 @@ describe('in a raid, the Group switch keeps my raid group', () => {
     expect(out.online).toBe(3);   // me + Brackwyn + Corvale (Zeal window), not the two other group-0 raiders
     expect(names(out)).not.toContain('Zarrin');
   });
-  it('no usable group anywhere: unchanged (fail open)', () => {
+  // A chosen Group never shows the whole raid (the guild lead, 2026-10-08: "still showing other groups").
+  it('no usable group anywhere: an empty list that says the group is unknown, never the raid', () => {
+    for (const out of [
+      _scopeExtToGroup(payload(), me, null, RAID, NOW, 'group', []),
+      _scopeExtToGroup(payload(), me, zeal(['Brackwyn'], 120_000), RAID, NOW, 'group', null),
+      _scopeExtToGroup(payload(), me, null, null, NOW, 'group', null),
+    ]) {
+      expect(out.targets).toEqual([]);
+      expect(out.group_unknown).toBe(true);
+    }
+    // Raid (or the default) still fails open outside a raid.
     const p = payload();
-    expect(_scopeExtToGroup(p, me, null, RAID, NOW, 'group', [])).toBe(p);
-    expect(_scopeExtToGroup(p, me, zeal(['Brackwyn'], 120_000), RAID, NOW, 'group', null)).toBe(p);
+    expect(_scopeExtToGroup(p, me, null, null, NOW, 'raid', null)).toBe(p);
+  });
+  it('Group drops a pet with no known owner', () => {
+    const p = payload(); p.targets.push({ kind: 'pet', name: 'a stray warder' });
+    expect(names(_scopeExtToGroup(p, me, MY_GROUP, RAID, NOW, 'group', roster()))).not.toContain('a stray warder');
+    expect(names(_scopeExtToGroup(p, me, MY_GROUP, null, NOW, 'raid', null))).toContain('a stray warder');
   });
   it('a stale raid window is not a raid: the plain group filter', () => {
     const out = _scopeExtToGroup(payload(), me, MY_GROUP, NOW - 120_000, NOW, 'group', roster());
