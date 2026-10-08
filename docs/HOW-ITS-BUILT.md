@@ -2709,7 +2709,9 @@ under-25% arcs (`_meSideArcs` → `rampage`, `low_hp`); clicky counters (`_meCli
 from `-Inventory.txt` `items`, spent by `_noteClickyUse` on "begins to glow"; sorted root · dispel · stun
 first by `_clickyKind` — the spell catalog's `cc` for root/stun, `_CLICKY_DISPEL_SPELLS` ids for dispel;
 CHARGED items only (agent 3.7.101 beta, 2026-10-07, the guild lead: "not unlimited clickies") — an
-unlimited clicky, or a count-1 item whose charges the catalog does not know, is left out;
+unlimited clicky, or a count-1 item whose charges the catalog does not know, is left out; the ring's labels
+use raiders' names first (`CLICKY_ALIASES` in `me.html`: Invis Pot, U.Recourse, Invis Mask, Totem — Mimic beta
+2026-10-08) and drop a "10 Dose" prefix;
 `clickies` = the first 8, `clickies_all` when there are more; `POST /api/me/clicky-recharged` →
 `_noteClickyRecharged` puts a counter back to full, kept in `logsync.hud-timers.json`; on the ring
 `clickyShown` / `clickyFit` / `clickyShort` in `me.html` draw the picks or the first that fit, and the
