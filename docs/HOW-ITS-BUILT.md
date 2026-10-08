@@ -2322,6 +2322,16 @@ anyone `pop_flags` + `STAGE_IMPLIES` already flag). Agent `_pollHailBoard` reads
 into the `hail` key of the Command Center state; a witnessed or own flag-NPC hail (`parseWitnessedHail`,
 `_hailNpcWanted`) rides the pop-flag upload; a tap posts the local `/api/hail-mark` (`_localOriginOk`) →
 `POST /api/agent/hail-mark`. Render: `hailBoardHtml` in `apps/mimic/command.html`.
+**Flag cap + "leaves in" (bot 3.1.220 · agent 3.7.102 beta, 2026-10-07, the guild lead: "add the 72-flag cap to
+the hail board, and the countdown timers for when those mobs disappear"; §186):** each `HAIL_BOSSES` row carries
+its flagger script's `flagCap` (72 for every NPC; 144 = 72 × 2 with `flagTicks: 2` for Grummus and Mithaniel Marr,
+whose hail ticks twice; 54 keys for the Arbitor of Earth), read from `eqemu_quest_scripts` with each script's
+comparison noted. Windows carry `flag_cap` (in raiders), `flags_granted` (grants we SAW after the kill — a lower
+bound), `flags_left`, `expires_at`, `ms_left`. The Command Center card shows "Flags: N / 72 used", warns "Only N
+flags left, M still to hail", and its clock (`hailClockState`) reads "leaves in m:ss" — amber at 5 min, red at 2,
+"gone" after. An older bot sends no cap and the card is byte-identical. No timer-window row: a plain timer would
+land in the callout-feedback learning set as an unknown expired trigger. Tests `test/hail-board.test.js`,
+`test/hail-board-command-center.test.js`, `test/hail-board-agent.test.js`.
 
 ### Bristlebane — the raid-voice bot (bristlebane 0.1.0, bot 3.1.208, §166)
 Its own Discord application and container: `apps/bristlebane/` (`index.js` = Discord glue, `lib.js` = the

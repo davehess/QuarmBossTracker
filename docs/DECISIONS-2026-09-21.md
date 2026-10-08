@@ -7912,3 +7912,19 @@ The guild lead: *"add a second clicky row to the HUD"* (§179 had left one line 
 - **Open, the guild lead's pick:**
   - **A — 7 picks, 70% floor:** as shipped; nothing gets smaller than today's smallest.
   - **B — 8 picks, 65% floor:** one more clicky; the smallest text gets about 7% smaller.
+
+### 186. The hail board shows each flagger's flag cap and when it leaves (2026-10-07, bot 3.1.220, agent 3.7.102 beta)
+
+The guild lead: *"add the 72-flag cap to the hail board, and the countdown timers for when those mobs disappear"*.
+
+- **Read from the scripts, not assumed.** Every flagger in `HAIL_BOSSES` states a cap: 72 for the Planar
+  Projections, Tylis Newleaf and Giwin Mirakon; `72 * 2` for Grummus and Mithaniel Marr (one hail ticks twice, so
+  the board shows 72 raiders); 54 keys for the Arbitor of Earth. Each script's `<` or `<=` is noted on its row.
+  Every row's stay already matched its script (20 minutes for a projection, 10 for Tylis and Giwin).
+- **The count is a lower bound.** Only grants we saw after the kill count; a raider with no Mimic, and anyone
+  outside the raid hailing Tylis (whose script has no raid check), burn flags we never see. The card says
+  "seen only".
+- **No timer-window row.** The Command Center's own clock carries it; a plain timer row would be logged as an
+  unknown expired trigger in the callout-feedback learning set.
+- **Session picks:** the cap reads in raiders (144 shows as 72), and the warning fires when flags left are at or
+  below the raiders still to hail.
