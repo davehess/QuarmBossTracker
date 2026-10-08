@@ -7941,3 +7941,19 @@ The guild lead: *"add the 72-flag cap to the hail board, and the countdown timer
   combat, out of combat, with a target, with an NPC target, in a raid, or for chosen classes; it fails open (a
   missing signal keeps the piece visible) and everything shows while arranging. Being built on alpha. B–G (loudness
   budget, no layout shift, legibility preview, piece-to-piece guides, full undo, role starters) stay on the list.
+
+### 188. The Linux build is refreshed from beta for a native-Wine tester (2026-10-08, branch `claude/deck-156-refresh` `b8fe506d`)
+
+The guild lead: a tester runs EverQuest under native Wine; picked A (refresh) *"because windows mimic in the same
+wine is throwing wined3d errors"*.
+
+- **Windows Mimic under Wine is out** for now: it throws wined3d errors in the tester's prefix. The native Linux
+  AppImage plus the Zeal pipe bridge is the route (`docs/RUNBOOK-linux-zeal-pipe.md`, still unproven end to end).
+- **What the refresh was:** beta merged INTO the Linux branch (never the reverse). It had been cut from main on
+  2026-08-23 (586 commits behind main, 1,154 behind beta). Of its 108 own commits, 25 are Linux/Deck plumbing, kept
+  and re-applied on beta's code; the rest were stale beta-era copies, overridden by beta. Builds now read
+  2.7.10-linux.N, above the old 2.6.1-linux.N, so the updater offers it.
+- **Also:** the Linux build now stages the offline spell/item catalog (`npm run predist`), as Windows does; and the
+  branch's Deck-only prose names people by role.
+- **Keeping it current:** the Linux branch does not follow beta by itself (no sync workflow). Re-merge beta into it
+  before each Linux test round.
