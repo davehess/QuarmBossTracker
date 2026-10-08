@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Callouts + Extended Target keep to your raid or group** (§189) | Bot 3.1.222 on `claude/sharp-lamport-dC0TW`: the raid-evening blanket is gone, raid/zone scoping from the live roster; group scoping waits for the agent to send `group_names` on the heartbeat | an agent session: send `group_names` (beta); the guild lead: push the branch to `main` after 00:30 ET |
+| **Callouts + Extended Target keep to your raid or group** (§189) | Bot 3.1.222 on `claude/sharp-lamport-dC0TW`: the raid-evening blanket is gone, raid/zone scoping from the live roster; agent 3.7.103 (beta) sends `group_names` on the heartbeat, so beta installs get group scoping once the bot is live | a session: push the branch to `main` after 00:30 ET (scheduled); stable installs follow at the next stable cut |
 | **Three picks: bard counts, AE chip by spell data, height floor** (§178) | All three built; HUD counts, AE gate and the floor on beta (agent 3.7.98); the catalog's `ae` flag waits on this branch reaching `main` | the guild lead: push this branch to main (after 00:30 ET on a raid night); a bard on beta checks the ring label; a beta tester drags an overlay small and confirms it stays |
 | **Guild kit slices 1b, 2-prep, 3** (§177) | Bot 3.1.215: `utils/guildConfig.js` loader + getters, Discord self-provisioner (`/setup discord`, standalone script), tag-correct REST filters with a ratchet, one-shot announcers gated on the guild tag, Bristlebane guild file. Web slice A (`web/lib/guild.ts` + the literal swap) reviewed separately → `beta` | a session: slice 2, the de-branding sweep (start from the 11 getter-only env names in `test/guild-config.test.js`); then `doctor` and the wizard CLI (§8 picks stand) |
 | **HUD second clicky row** (§185) | Mimic beta: row 2 one line inside row 1, on by default, 7 picks (4 on one row) | Picked A (7 picks), §187. Next: a beta tester with many clickies tries two rows |
@@ -7979,8 +7979,9 @@ online · MA …", five mobs targeted from other groups in the same zone) had th
 - **Where the bot learns a group:** it did not. `live-state`, `raid-roster` and the heartbeat carried only the RAID
   group number. The reporter heartbeat now accepts `group_names` (names in the played character's Zeal group window,
   memory only, 60 s fresh); the relay stamps `origin_raid` / `origin_group` on each fire at POST. **Until a Mimic
-  sends `group_names`, "group unknown" applies: the zone rule, minus the raid-evening blanket.** The agent change is
-  one field on the heartbeat; it is not built.
+  sends `group_names`, "group unknown" applies: the zone rule, minus the raid-evening blanket.** Agent 3.7.103 (beta)
+  sends it: `_heartbeatGroupNames` reads the played character's Zeal group window, only when under 60 s old;
+  `[]` = solo, left out = unknown. Stable Mimic installs keep the zone rule until the next stable cut.
 - **Fail open:** no data, a stale or other-character heartbeat, a failed roster read, or Supabase off → today's rule.
   A listener the bot cannot place at all keeps hearing the whole raid evening (today's), and nothing off-evening
   (the 2026-09-11 rule). `flag_disable_groupscope=1` (tuning map, 60 s) restores the old behaviour for both.

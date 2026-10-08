@@ -106,8 +106,8 @@ next touch one rather than assuming a missing row means a missing doc.
 - **⏳ Callouts and Extended Target keep to your raid, or your group outside one (bot 3.1.222 on
   `claude/sharp-lamport-dC0TW`, waiting for the main push; DECISIONS §189).** The guild lead, 2026-10-07: other
   groups' mobs and callouts leaking in. The relay's raid-evening blanket is gone (raid from the live roster, else
-  group, else zone); `flag_disable_groupscope=1` restores it. ⚠ The group half needs the agent to send
-  `group_names` on the reporter heartbeat (not built): until then it is the zone rule.
+  group, else zone); `flag_disable_groupscope=1` restores it. The group half: agent 3.7.103 (beta) sends
+  `group_names` on the reporter heartbeat; stable installs keep the zone rule until the next stable cut.
 
 - **⏳ Canvas show-when rules (Mimic alpha `d97ae9d7`, 2026-10-07; DECISIONS §187).** Each piece can show only in
   combat, out of combat, with a target, with an NPC target, in a raid, or for chosen classes; arranging shows all.
