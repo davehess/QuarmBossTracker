@@ -8310,3 +8310,16 @@ with PQDI's own list for the Planes of Power.
   (Air), Pwelon / Nrinda / Vamuil (Water), Azobian, Javonn, Reaxnous, Warlord Prollaz, Omni Magus Crato, Chancellors Kirtra and Traxom,
   Hebabbilys (Fire), and the Earth event set, plus Rallos Zek / Vallon Zek's instance bodies (already on the board by name). They need
   a kill or a PQDI read to learn the timer.
+
+### 205. The Feign Death failure callout was muted by the raid callout allow-list (2026-10-08, agent 3.7.107 main · 3.7.111 beta)
+**The ask** (the guild lead): *"fd FAILURE callout needs to go off for a monk, it's critical"*.
+- **Cause:** the trigger and the match were fine. The guild trigger "Feign Death Fail" (`{c} has fallen to the ground.`, overlay
+  "FD FAIL", speech "FD failure", enabled since May) fires on the monk's own agent. But §136's allow-list only lets a
+  guild-pushed trigger SPEAK when its name, tags or text hit a critical category (slow, death, tank swap, disc, deathtouch, charm,
+  enrage, mechanic). Nothing in "Feign Death Fail", "FD FAIL" or "FD failure" matched, so it rendered on the overlay and stayed
+  silent. Same trap as enrage (§1) and the same shape: a trigger that is enabled and firing reads as coverage.
+- **Fix:** a `feign` category in `_CALLOUT_ALLOW_CATEGORIES`: `feign` / `feigned` / `feigning`, and `FD fail` / `failed` / `failure`.
+  A bare "FD" stays out (an "FD ready" callout stays muted). Shipped to BOTH lines because it is a raid-critical call: stable agent
+  3.7.107 (hot-swap on main) and beta agent 3.7.111. No trigger row or bot change.
+- ⚠ **Not changed:** the allow-list is a deny-by-default list. Any other guild trigger whose name and text avoid those words is
+  still muted on voice. Worth one pass over the live `guild_triggers` for callouts the guild would call critical.
