@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Stampede timer follows you into the zone** (§208) | Built on a local branch: bot 3.1.233 (`utils/zoneTimers.js`, bot_kv `zone_timer_windows`) + agent 3.7.115 (`_runLateJoinFire`). Inert until the two stampede rows carry the `zone-timer` tag | the guild lead: route the bot to `main` and the agent to `beta`, then run the tag SQL in §208; a raider zones into Tactics after a stampede and checks both countdowns |
 | **Callouts + Extended Target keep to your raid or group** (§189) | Live: bot 3.1.222 on `main` (2026-10-08 00:36 ET) and stable Mimic 2.7.10 / agent 3.7.106 with the Raid \| Group switch (§190) | the guild lead: try Group while grouped and say if it still shows other groups; the rest of the separation inventory (loot posts, shared alerts, attendance per raid) waits on picks |
 | **Three picks: bard counts, AE chip by spell data, height floor** (§178) | All three built; HUD counts, AE gate and the floor on beta (agent 3.7.98); the catalog's `ae` flag waits on this branch reaching `main` | the guild lead: push this branch to main (after 00:30 ET on a raid night); a bard on beta checks the ring label; a beta tester drags an overlay small and confirms it stays |
 | **Guild kit slices 1b, 2-prep, 3** (§177) | Bot 3.1.215: `utils/guildConfig.js` loader + getters, Discord self-provisioner (`/setup discord`, standalone script), tag-correct REST filters with a ratchet, one-shot announcers gated on the guild tag, Bristlebane guild file. Web slice A (`web/lib/guild.ts` + the literal swap) reviewed separately → `beta` | a session: slice 2, the de-branding sweep (start from the 11 getter-only env names in `test/guild-config.test.js`); then `doctor` and the wizard CLI (§8 picks stand) |
@@ -8371,3 +8372,77 @@ with PQDI's own list for the Planes of Power.
   its push (release body) and the web commit stayed the tip of its own (Vercel's ignoreCommand compares only the last commit).
 - **Linux:** the `linux-follow-windows` workflow (§206) turns the stable into `2.8.0-linux.N` and the next beta into
   `2.8.1-linux.N`.
+
+### 208. Zone timers: the stampede timer follows you into the zone (2026-10-08, bot 3.1.233 · agent 3.7.115)
+**The ask** (the guild lead, on the Plane of Tactics stampede): *"if one person had the stampede window it should go to anyone
+currently in the zone when it opens"*. Picked **B — the timer follows you in** (over a bot-side announce): a raider who zones in
+after `You hear the pounding of hooves.` gets the countdowns that are still running, with the time left, and they end with
+their own end text. Then two more calls the same evening: the window has an **earliest and a latest** bound, it **clears for
+everyone** when the latest passes unobserved or a fresh sighting replaces it, and it **survives a bot restart** in bot_kv.
+- **The tag contract.** A guild_triggers row opts in with the tag `zone-timer` (`tags` is `text[]`). The bot reads the tag
+  itself (`_zoneTimerTriggerMap`, one select by tag, 2-min cache, only when a relayed fire names a trigger), so it works
+  whatever agent the OBSERVER runs. Tagged rows sharing a `source_pack` are ONE window: the shortest timer is the earliest
+  bound (`min_at_ms`, "window opens" 2400 s), the longest the latest (`max_at_ms`, "stampede by" 7200 s). A tagged row with no
+  pack is a window of its own. The relay's 3600 s clamp is raised to 4 h for tagged rows only. **Do not tag "Tactics: boar
+  stampede incoming"** (15 s, overlay + TTS): it would be handed to late joiners, and the point is that it is never replayed.
+- **Why the bot reads the tag, not the agent:** carrying a flag from the agent would only work once every observer updated
+  Mimic; the bot already holds `trigger_id` on every relayed fire, so a tag set in the database works on the whole fleet the
+  moment the bot deploys. Only the LISTENER needs agent 3.7.115.
+- **A window and how it ends** (`utils/zoneTimers.js`): waiting before `min_at`, open until `max_at`, then cleared:
+  `expired_unobserved` when `max_at` passes with no sighting (the stampede happened and nobody with Mimic heard it, so the
+  old countdown is wrong and is never handed out again), or `replaced_by_sighting` when anyone in the zone hears the next one
+  (more than 2 min after the held window's sighting; inside 2 min it is another observer of the same emote). One `cleared`
+  record per pack + zone stays, so a page can say "no timer, the last stampede went unobserved". An older straggler (a
+  queue backlog) never brings a replaced window back.
+- **Placing the zone.** The bot knows the sender's live zones, not which character heard the line. One live zone places it;
+  several (a boxed trader in the Bazaar) place it only in a zone that already has a window or cleared record for that pack,
+  otherwise the sighting is skipped and the next observer places it. A wrong-zone window would hand a stampede timer out in
+  the Bazaar.
+- **Delivery.** `_recentFiresFor` appends, after the ring's own fires, one `late_join` fire per still-running timer of each
+  window whose zone the listener stands in: `actions: []`, `timer_duration_sec` the timer's FULL length, `fired_at_*` the
+  original stamps (so the agent's clock translation lands it on the listener's clock), plus `window_id`, `window_status`,
+  `remaining_sec`, `end_text`. Once per listener while they stay in the zone; leaving forgets it. Never to an observer of
+  that window. Raid mode carries no zones in the scope, so the listener's zones come from the warm live-state caches.
+  Late joiners after the 40-minute mark get only "stampede by". This differs from the brief on purpose: sending the full
+  length from the original time (instead of the remaining time) keeps the bar's proportion right and gives an older agent the
+  correct end too.
+- **Agent** (`_runLateJoinFire`, 3.7.115): a `late_join` fire skips the 15 s ghost TTL and the fire dedup, runs NO actions, and
+  arms the trigger's own countdown from its own definition (end text, warnings, colour; the bot's fields are the fallback).
+  Skipped when it already runs that trigger's countdown from the same window (started within 2 min of the sighting), so an
+  observer or a live-relay receiver never gets a second end callout; a countdown from an OLDER window is replaced.
+- **Older agents:** a `late_join` fire is older than their 15 s ghost TTL, so they journal it as stale-skipped and drop it.
+  Inside the first 15 s they arm the same correct countdown through the normal relay path, without the end text (a relayed
+  timer has never carried one; see below).
+- **Storage: bot_kv key `zone_timer_windows`**, never state.json. Write-through on every record, replace and expiry; expired
+  windows are cleared on load. Plain JSON the website can read with the service role:
+  ```json
+  { "windows": [{ "window_id": "potactics-stampede|Drunder, the Fortress of Zek@1791234567890",
+                  "trigger_name": "Tactics: stampede by", "zone": "Drunder, the Fortress of Zek",
+                  "observed_at_ms": 1791234567890, "min_at_ms": 1791236967890, "max_at_ms": 1791241767890,
+                  "pack": "potactics-stampede", "fired_at_ms": 1791234567000,
+                  "timers": [{ "trigger_id": "<uuid>", "name": "Tactics: stampede window opens", "duration_sec": 2400,
+                               "ends_at_ms": 1791236967890, "end_text": "…", "cooldown_seconds": 120 }] }],
+    "cleared": [{ "trigger_name": "Tactics: stampede by", "zone": "Drunder, the Fortress of Zek",
+                  "at_ms": 1791241767890, "reason": "expired_unobserved", "pack": "potactics-stampede" }] }
+  ```
+  Times are epoch ms on the bot's clock (`observed_at_ms` is the skew-resolved sighting). `trigger_name` is the longest
+  timer's name. `reason` is `expired_unobserved` or `replaced_by_sighting`. **No discord ids or character names are
+  stored**: who saw a window and who was handed it stay in memory. After a restart a listener still in the zone (an observer
+  included) is handed the window once more, which the agent skips because it already runs that countdown. A failed bot_kv
+  read or write is logged and the ledger runs from memory; it never throws into the relay POST. The `zone` is the live-state
+  long name (Plane of Tactics is `Drunder, the Fortress of Zek`). No web code yet: a wolfpack.quest/boards countdown is a
+  separate beta change.
+- **Cost:** one guild_triggers select per 2 min while relays arrive, one bot_kv upsert per sighting or expiry, and nothing
+  per poll while no window is open.
+- **Not done, flagged:** a timer armed through the NORMAL relay (someone in the zone whose own log missed the emote) still
+  has no end text, because `_runRelayedFire` builds its trigger without one. Pre-existing, outside this change.
+- **The guild lead runs this to switch it on** (not run by the session):
+  ```sql
+  update guild_triggers
+     set tags = array_append(coalesce(tags, '{}'::text[]), 'zone-timer'), updated_at = now()
+   where guild_id = 'wolfpack'
+     and source_pack = 'potactics-stampede'
+     and name in ('Tactics: stampede window opens', 'Tactics: stampede by')
+     and not ('zone-timer' = any(coalesce(tags, '{}'::text[])));
+  ```
+  It should report `UPDATE 2`. The bot picks the tag up within 2 minutes; no deploy needed after the bot change is live.

@@ -301,6 +301,7 @@ const clockOffset = require('./utils/clockOffset');
 const kvLatch = require('./utils/kvLatch');
 const _raidGroups = require('./utils/raidGroups');
 const _groupScope = require('./utils/groupScope');
+const _zoneTimersMod = require('./utils/zoneTimers');
 const _mainAssist = require('./utils/mainAssist');
 const _mainAssistStore = _mainAssist.createStore();
 const { discordAbsoluteTime, discordRelativeTime, isShortTimerBoss } = require('./utils/timer');
@@ -4410,6 +4411,45 @@ const _triggerRelay = {
   nextId:  Date.now(),
   entries: [],   // { id, name, key, captures, actions, timer_duration_sec, fired_at_ms, posted_at_ms, uploaded_by }
 };
+// ── Zone timers: a long countdown follows you into the zone (utils/zoneTimers.js) ──
+// A relayed fire of a guild trigger tagged `zone-timer` (the Plane of Tactics stampede windows) opens a
+// window in a bot_kv-backed ledger; a listener who later stands in that zone is handed it once on the
+// recent-fires payload (late_join, no actions). The tag is read HERE, from guild_triggers, so it works
+// whatever agent the observer runs: one small select, cached 2 min, and only when a fire names a trigger.
+let _zoneTimersInst = null;
+const _zoneTimers = () => _zoneTimersInst || (_zoneTimersInst = _zoneTimersMod.create({
+  supabase: require('./utils/supabase'),   // its guildId() names the bot_kv row
+}));
+let _zoneTimerTrigCache = { at: 0, map: new Map() };
+async function _zoneTimerTriggerMap() {
+  if ((Date.now() - _zoneTimerTrigCache.at) < 120_000) return _zoneTimerTrigCache.map;
+  const supabase = require('./utils/supabase');
+  let map = _zoneTimerTrigCache.map;   // a failed read keeps the last good map
+  if (supabase.isEnabled()) {
+    try {
+      const rows = await supabase.select('guild_triggers',
+        `guild_id=eq.${encodeURIComponent(supabase.guildId())}&enabled=eq.true` +
+        `&tags=cs.${encodeURIComponent('{' + _zoneTimersMod.ZONE_TIMER_TAG + '}')}` +
+        `&select=id,name,timer_duration_sec,cooldown_seconds,end_text,tags,source_pack&limit=50`);
+      if (Array.isArray(rows)) {
+        map = new Map();
+        for (const r of rows) if (r && r.id && _zoneTimersMod.hasZoneTimerTag(r.tags)) map.set(String(r.id), r);
+      }
+    } catch (err) { console.warn('[zone-timers] tagged-trigger read failed:', err && err.message); }
+  }
+  _zoneTimerTrigCache = { at: Date.now(), map };
+  return map;
+}
+// The listener's zones from the warm caches behind _requesterZones, without awaiting: _recentFiresFor is
+// sync, and in raid mode the scope carries no zones. Stale by at most one cache refresh.
+function _requesterZonesCached(discordId) {
+  const out = new Set();
+  if (!discordId) return out;
+  for (const [charLower, z] of _liveZoneCache.map) {
+    if (z && z.zone_name && _charDiscordCache.map.get(charLower) === discordId) out.add(z.zone_name);
+  }
+  return out;
+}
 // ── Loot-posted broadcast (#149) ─────────────────────────────────────────────
 // When an officer posts loot "for bidding" from their Mimic (_handleAgentLootPost
 // → OpenDKP closed auctions actually created), we record the event in this ring
@@ -19553,6 +19593,11 @@ async function _handleTriggerRelayPost(req, res) {
   let originStamp = { origin_raid: null, origin_group: null };
   try { originStamp = await _senderStamp(identity.discord_id); }
   catch { /* unknown sender → no opinion, the zone rule decides */ }
+  // Guild triggers tagged zone-timer (utils/zoneTimers.js). Fail-soft: no map → no windows, relay unchanged.
+  let ztMap = new Map();
+  if (fires.some(f => f && f.trigger_id)) {
+    try { ztMap = await _zoneTimerTriggerMap(); await _zoneTimers().load(); } catch { /* relay as before */ }
+  }
 
   let accepted = 0;
   for (const f of fires.slice(0, 10)) {
@@ -19561,6 +19606,23 @@ async function _handleTriggerRelayPost(req, res) {
     if (!name) continue;
     const firedAt = Number(f?.fired_at_ms) || now;
     const firedAtTrue = firedAt + senderOffset;
+    // A zone-timer window is recorded from EVERY observer, before the duplicate check below drops the
+    // second one, so each observer is known and never handed their own window back. Durations and end texts
+    // come from the tagged trigger rows, not from the fire.
+    const zt = f?.trigger_id ? ztMap.get(String(f.trigger_id)) : null;
+    if (zt) {
+      try {
+        // Every tagged row of the same pack is one window (the stampede's 40-min earliest and 2-hour latest).
+        const pack = zt.source_pack || null;
+        const rows = pack ? [...ztMap.values()].filter(r => r.source_pack === pack) : [zt];
+        _zoneTimers().record({
+          pack, origin_zones: originZones, fired_at_ms: firedAt, fired_at_true_ms: firedAtTrue,
+          uploaded_by: identity.discord_id,
+          timers: rows.map(r => ({ trigger_id: r.id, name: r.name, duration_sec: r.timer_duration_sec,
+            end_text: r.end_text, cooldown_seconds: r.cooldown_seconds })),
+        });
+      } catch (err) { console.warn('[zone-timers] record failed:', err && err.message); }
+    }
     // Cross-agent dedup: same key fired within 8s = same logical event,
     // skip storing the duplicate so polling clients don't echo it. Compared on
     // TRUE time — these stamps come from DIFFERENT machines, so two observers of
@@ -19582,7 +19644,8 @@ async function _handleTriggerRelayPost(req, res) {
       key,
       captures:            (f?.captures && typeof f.captures === 'object') ? f.captures : {},
       actions:             Array.isArray(f?.actions) ? f.actions.slice(0, 5) : [],
-      timer_duration_sec:  Math.max(0, Math.min(3600, parseInt(f?.timer_duration_sec, 10) || 0)),
+      // A zone-timer trigger's countdown is longer than an hour (the stampede-by row is 7200 s).
+      timer_duration_sec:  Math.max(0, Math.min(zt ? _zoneTimersMod.ZONE_TIMER_MAX_SEC : 3600, parseInt(f?.timer_duration_sec, 10) || 0)),
       // Carried so a receiver can apply the same cooldown gate as the origin —
       // relayed fires previously had no cooldown at all.
       trigger_id:          f?.trigger_id ? String(f.trigger_id).slice(0, 64) : null,
@@ -19770,7 +19833,24 @@ function _recentFiresFor(identity, sinceId, lootSinceId = 0, scope = null) {
       fired_at_true_ms:    e.fired_at_true_ms,
     }));
   const loot = _lootPostedSince(lootSinceId);
-  return { next_id: _triggerRelay.nextId, fires, loot_posted: loot.loot_posted, loot_next_id: loot.loot_next_id };
+  // Zone timers (utils/zoneTimers.js): a window running in a zone this listener stands in, handed once,
+  // AFTER the ring's fires so a live relay of the same window is consumed first. Zero cost with no window;
+  // any failure leaves the payload exactly as it was.
+  let late = [];
+  try {
+    const zt = _zoneTimers();
+    if (!zt._loaded()) zt.load().catch(() => {});
+    if (zt.hasActive()) {
+      let zones = scope && scope.requesterZones instanceof Set ? scope.requesterZones : null;
+      if (!zones) {                       // raid mode resolves no zones: read the warm caches, refresh them for next poll
+        zones = _requesterZonesCached(identity.discord_id);
+        _liveZoneMap().catch(() => {}); _charDiscordMap().catch(() => {});
+      }
+      late = zt.lateJoinFires(identity.discord_id, zones);
+    }
+  } catch { late = []; }
+  return { next_id: _triggerRelay.nextId, fires: late.length ? fires.concat(late) : fires,
+           loot_posted: loot.loot_posted, loot_next_id: loot.loot_next_id };
 }
 
 // Resolve the scope inputs once per poll. During a raid window this costs

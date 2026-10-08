@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.233': [
+    '**The stampede timer follows you into Plane of Tactics.** If you zone in after someone heard the hooves, Mimic picks up the "window opens" and "stampede by" countdowns with the time left, and they call out when they end like everyone else\'s. Nothing is replayed when you arrive, and anyone in the zone who hears the next stampede restarts the clock for everyone (needs the next Mimic update).',
+  ],
   '3.1.226': [
     '**Mimic\'s Loot tab can say what loot is worth.** "Who looted what" can now cover 12 hours, a day, a week or 30 days, shows each item\'s merchant value in platinum, and totals what each character looted (needs the Mimic beta).',
   ],
