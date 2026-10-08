@@ -717,6 +717,9 @@ next touch one rather than assuming a missing row means a missing doc.
   `deploymentEnabled`. Web 1.8.53 also keeps a `/pop` link's query through sign-in. §101.
 - **⏳ Command Center 📋 on deathrolls (agent 3.7.47, Mimic beta `013e2e0c`) · Target Info even con = your
   level for a player (agent 3.7.48, beta `386cfc99`), 2026-09-29.** §97, §98 (reverses part of §15).
+- **✅ Target Info shows "Does Not Equip" (bot 3.1.230 · web 1.8.124, main 2026-10-08).** Special-ability code 8 is a chip
+  now, about 1 mob in 10; Mimic needs no release (the bot ships the label), cached mob info turns over within 6 h.
+  DECISIONS §203.
 - **✅ 93 more named mobs on the boards (bot 3.1.228 + 3.1.229 data, main 2026-10-08).** Glykus Helmir, Tagrin Maldric and
   The Diaku Overseer first (Tactics, 24 h); then every named 18 h+ mob that drops parchments, glyphed rune words or
   real loot (90: Fire, Air, Earth, Water, Torment, Tower of Solusek Ro, Temple of Marr, Temple of Veeshan, Vex Thal,

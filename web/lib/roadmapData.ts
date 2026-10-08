@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'does-not-equip-2026-10-08',
+    title: 'Target Info says when a mob does not equip',
+    version: 'Web 1.8.124 · Bot 3.1.230',
+    date: '2026-10-08',
+    headline: 'A mob that never wields its gear now carries a "Does Not Equip" tag.',
+    features: [
+      { name: 'Does Not Equip tag', blurb: 'Target Info and the mob pages show a "Does Not Equip" tag on mobs that never use the weapons and armour they carry, so what you see on the model is not its loot. About one mob in ten has it.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'missing-spells-names-2026-10-08',
     title: 'Songs you already know stop showing as missing',
     version: 'Web 1.8.123 · Bot 3.1.227',

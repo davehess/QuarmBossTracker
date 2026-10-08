@@ -219,7 +219,8 @@ describe('#171 (a2) the legacy label set survives on EVERY real catalog fixture'
   it('the shown-code set is exactly legacy (minus 7) + the confirmed additions + Reverse Slow', () => {
     const shown = Object.keys(ms.MOB_SPECIAL_CODES)
       .filter((c) => ms.MOB_SPECIAL_CODES[c].show).map(Number).sort((a, b) => a - b);
-    const expected = [...ms.LEGACY_DECODED_CODES.filter((c) => c !== 7), 22, 26, 36, 37, 39, 50].sort((a, b) => a - b);
+    // 8 = Does Not Equip, added 2026-10-08 (the guild lead: "see if a mob does not equip or not in target info").
+    const expected = [...ms.LEGACY_DECODED_CODES.filter((c) => c !== 7), 8, 22, 26, 36, 37, 39, 50].sort((a, b) => a - b);
     expect(shown).toEqual(expected);
   });
 });
