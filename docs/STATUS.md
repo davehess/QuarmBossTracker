@@ -5717,4 +5717,16 @@ Detail and the guild lead's quotes in `DECISIONS-2026-09-21.md` §206.
   10-entry releases.atom trap). `build-mimic-linux.yml` now also sits on main, inert there (its push trigger is `claude/**`),
   because `gh workflow run` only finds a workflow file on the default branch. Why merge instead of building the Windows commit:
   the Linux-only code lives on the Deck branch and must not ride to Windows or stable. `test/linux-follow-windows.test.js`
-  pins the wiring. First live run: see the session note below.
+  pins the wiring. First live run (a manual dispatch against beta) succeeded: merge, push, then `build-mimic-linux` green.
+
+### 🧾 2026-10-08 (evening) — Mimic 2.8.0 stable, beta re-parked at 2.8.1 (web 1.8.126)
+The guild lead: *"we should move to 2.8, don't mention the loot page"*, then *"main to 2.8.0, beta repark 2.8.1"*.
+- **Stable 2.8.0 (`9f1dea7f`, agent 3.7.113):** a file-level promotion of `apps/mimic/**` and `packages/wolfpack-logsync/**` plus
+  the tests that cover them, from beta onto main (the beta web and bot work stays on beta). Carries agent-only mode, overlays drawn
+  without the graphics card, Target Info live buff bars with the caster, anonymous feedback from a signed-out Mimic, the tray's
+  Quiet-mode move, and the zero-cast clicky counting + unlimited clickies hidden. The release notes and the roadmap entry do
+  NOT mention the Loot page (the guild lead's call); the Loot tab code ships, it is simply not announced. `Fixes FB-68` is on
+  the stable commit so the report moves from "On beta" to "Implemented".
+- **Beta re-parked at 2.8.1, agent 3.7.114** (`04a47a2f`), above the stable. Linux follows: stable gives `2.8.0-linux.N`, beta
+  `2.8.1-linux.N`.
+- **Known, unannounced:** Mimic's own Loot tab still counts DKP items (the web `/admin/loot` page does not).

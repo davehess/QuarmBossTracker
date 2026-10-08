@@ -37,6 +37,24 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-2-8-0-2026-10-08',
+    title: 'Mimic 2.8',
+    version: 'Mimic 2.8.0 · Agent 3.7.113 · Web 1.8.126',
+    date: '2026-10-08',
+    headline: 'Run Mimic with no overlays, draw overlays without the graphics card, and watch buff bars count down on Target Info.',
+    features: [
+      { name: 'Agent-only mode', blurb: 'Run Mimic as just the data engine with no overlays, and switch it back any time from setup, Settings, the tray or the dashboard.' },
+      { name: 'Overlays without the graphics card', blurb: 'An option in setup, Settings and the tray for PCs where overlays show black or flicker.' },
+      { name: 'Live buff bars on Target Info', blurb: 'Buff bars count down as they run. Hover the time to see the full length, how long it has been running and who cast it.' },
+      { name: 'Anonymous feedback', blurb: 'If you are signed out of Mimic you can still send feedback; it goes in anonymously.' },
+      { name: 'Quiet mode in the tray', blurb: 'Quiet mode now sits just above Overlays.' },
+    ],
+    fixes: [
+      'Clickies with no cast time, like nets, now count down when they resist or land, and unlimited clickies no longer show on the HUD.',
+      'The Feign Death failure call and the Plane of Tactics stampede warning are spoken again.',
+    ],
+  },
+  {
     key: 'parses-week-2026-10-08',
     title: 'Parses opens on the last week',
     version: 'Web 1.8.125 · Bot 3.1.232',
