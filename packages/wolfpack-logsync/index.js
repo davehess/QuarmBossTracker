@@ -9792,7 +9792,24 @@ class EncounterBuilder {
       const attacker = /^you$/i.test(event.attacker) ? (this.character || 'You') : event.attacker;
       // Skip crits against other players (PvP / charm) same as damage events
       const critOnPlayer = event.defender && !/^you$/i.test(event.defender) && isConfirmedPlayer(event.defender);
-      if (!critOnPlayer && attacker && (!/\s/.test(attacker) || attacker === this.character)) {
+      // Our OWN spell crit is logged twice, once in each voice (the guild lead, 2026-10-08, "double-messages for
+      // PROC CRITS": "Aldenmar delivers a critical blast! (300)" then "You deliver a critical blast! (300)", same
+      // second, same number). Both parse to a crit for this character, so every crit counted twice. The second
+      // line of such a PAIR (one in each voice, same amount, within 2 s) is the same crit and is skipped. Two
+      // lines in the SAME voice are two crits, so a real double crit still counts twice.
+      let sameSpellCrit = false;
+      if (event.kind === 'spell' && attacker === this.character) {
+        const voice = /^you$/i.test(event.attacker) ? 'you' : 'name';
+        const at = Date.parse(event.ts);
+        const prev = this._lastOwnSpellCrit;
+        if (prev && prev.voice !== voice && prev.amount === event.amount && Math.abs(at - prev.at) <= 2000) {
+          sameSpellCrit = true;
+          this._lastOwnSpellCrit = null;
+        } else {
+          this._lastOwnSpellCrit = { voice, amount: event.amount, at };
+        }
+      }
+      if (!sameSpellCrit && !critOnPlayer && attacker && (!/\s/.test(attacker) || attacker === this.character)) {
         this._bumpDeeps(attacker, 'crit', event.amount, null);
         // My Crits tracker — only the box's OWN crits (attacker resolves to
         // this.character), split melee vs spell. Skip silent/backfill so the
