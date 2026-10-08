@@ -14863,6 +14863,67 @@ function _noteClickyUse(character, itemName, atMs) {
   if (list.length > 50) list.shift();
   _clickyUses.set(k, list);
 }
+// A clicky with NO cast time (FB-68, a member, 2026-10-08: "Resists need to also knock down the number of
+// available charges left, not just successes"; the guild lead: "the root click is not invisible, it will show a
+// resist or it will show that the mob adheres to the ground"). The Wooly Spider Silk Net, a 3-charge Root, logs no
+// "Your <item> begins to glow." and no "You begin casting", so the glow line above never counted it. What it
+// leaves is its outcome: "Your target resisted the <Spell> spell." (only OUR casts print it) or the spell's
+// cast_on_other landing on the mob we have targeted. A spell the member began casting by hand ("You begin
+// casting <Spell>." just before) is not a click, so it is skipped. The list of such clickies is cached a minute:
+// _meClickies reads the inventory exports.
+const _zeroCastClickies = new Map();   // charLower → { at, list: [{ name, spellLower, suffix }] }
+const _clickyBeginCast = new Map();    // "char|spellLower" → ms of the last "You begin casting <spell>."
+const _CLICKY_HAND_CAST_MS = 6000;
+function _zeroCastClickyList(character) {
+  const cl = String(character).toLowerCase();
+  const hit = _zeroCastClickies.get(cl);
+  if (hit && Date.now() - hit.at < 60_000) return hit.list;
+  const list = [];
+  try {
+    for (const c of _meClickies(character)) {
+      const cat = _itemClickyByNameLower.get(String(c.name).toLowerCase());
+      if (!cat || !(cat.clickeffect > 0) || cat.casttime > 0) continue;   // a cast time prints the glow line
+      const spellName = _spellNameById(cat.clickeffect);
+      if (!spellName) continue;
+      const e = _spellByNameLower.get(spellName.toLowerCase());
+      const suffix = e && e.other ? String(e.other).trim().toLowerCase() : '';
+      list.push({ name: c.name, spellLower: spellName.toLowerCase(), suffix: suffix.length >= 5 ? suffix : '' });
+    }
+  } catch { /* no inventory yet: nothing to count */ }
+  _zeroCastClickies.set(cl, { at: Date.now(), list });
+  return list;
+}
+function _noteClickyOutcomeLine(character, line, atMs) {
+  if (!character) return false;
+  const cl = String(character).toLowerCase();
+  const list = _zeroCastClickyList(character);
+  if (!list.length) return false;
+  const body = (/^\[[^\]]+\]\s+(.+?)\s*$/.exec(line) || [])[1];
+  if (!body) return false;
+  const began = /^You begin casting (.+?)\.$/.exec(body);
+  if (began) { _clickyBeginCast.set(cl + '|' + began[1].toLowerCase(), atMs); return false; }
+  let hit = null;
+  const resisted = /^Your target resisted the (.+?) spell\.$/.exec(body);
+  if (resisted) {
+    const sp = resisted[1].toLowerCase();
+    hit = list.find(c => c.spellLower === sp) || null;
+  } else {
+    const lower = body.toLowerCase();
+    const tgt = _zealTargetForChar(cl);
+    if (!tgt) return false;
+    const bare = (s) => String(s).toLowerCase().replace(/^(?:an?|the)\s+/, '').trim();
+    hit = list.find(c => {
+      if (!c.suffix || !lower.endsWith(c.suffix)) return false;
+      const name = body.slice(0, body.length - c.suffix.length).trim();
+      return name && bare(name) === bare(tgt);
+    }) || null;
+  }
+  if (!hit) return false;
+  const handAt = _clickyBeginCast.get(cl + '|' + hit.spellLower);
+  if (handAt != null && atMs - handAt >= 0 && atMs - handAt < _CLICKY_HAND_CAST_MS) return false;
+  _noteClickyUse(character, hit.name, atMs);
+  return true;
+}
 // FB-65 (a member, 2026-10-07: "Root/Dispel/Stun are prioritized" · "pick which clicky charges you track"):
 // the counters are sorted root, dispel, stun first, and each carries its `kind` and full `max` so the
 // HUD's picker can show them. The spell catalog's `cc` already tags a HARMFUL spell's SPA 99 (root) and
@@ -49891,6 +49952,10 @@ async function main() {
               const stamp = /^\[[^\]]+\]/.exec(line);
               try { noteSelfCast((stamp ? stamp[0] : '[]') + ' You begin casting ' + clickSpell + '.', b.character); } catch (e) { void e; }
             }
+          }
+          // A clicky with no cast time prints no glow line; its resist / landing is what counts (FB-68).
+          if (!m && b.character) {
+            try { _noteClickyOutcomeLine(b.character, line, (parseEqTimestamp(line) || new Date()).getTime()); } catch (e) { void e; }
           }
         }
 
