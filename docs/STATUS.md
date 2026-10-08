@@ -1193,7 +1193,7 @@ next touch one rather than assuming a missing row means a missing doc.
   Spectral 63-64 / Glyphed 65, derived from the cleric script alone). The
   runbook has the exact searches and the JSON shape to commit back.
 
-- **🔧 In flight on `claude/deck-156-refresh` — resolution lock (#156, Hitya
+- **🔧 In flight on `claude/deck-156-refresh` — resolution lock (#156, the guild lead
   2026-08-24: "make sure we're resetting the height and width each time the
   game tries to overwrite it into the crapped 4:3 formats it expects").**
   `apps/mimic/resolutionLock.js` + `main.js` wiring holds `eqclient.ini`'s

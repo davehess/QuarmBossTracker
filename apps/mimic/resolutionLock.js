@@ -1,7 +1,7 @@
 // resolutionLock.js — hold eqclient.ini's [VideoMode] at the resolution the
 // USER chose, against a client that keeps rewriting it behind their back.
 //
-// WHY (Hitya, 2026-08-24): "make sure we're resetting the height and width each
+// WHY (the guild lead, 2026-08-24): "make sure we're resetting the height and width each
 // time the game tries to overwrite it into the crapped 4:3 formats it expects."
 // The old EQ client rewrites eqclient.ini's [VideoMode] block on exit and from
 // its first-run display dialog, stomping the Steam Deck's 1280×800 (or the

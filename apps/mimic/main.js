@@ -6052,7 +6052,7 @@ function _backgroundActive() {
 }
 
 // ── Resolution lock (#156) ──────────────────────────────────────────────────
-// Hitya, 2026-08-24: "make sure we're resetting the height and width each time
+// The guild lead, 2026-08-24: "make sure we're resetting the height and width each time
 // the game tries to overwrite it into the crapped 4:3 formats it expects."
 //
 // The client rewrites eqclient.ini's [VideoMode] on exit and from its first-run
@@ -6068,7 +6068,7 @@ const RESOLUTION_LOCK_SETTLE_MS   = 2500;  // let the client's own exit-flush la
 const RESOLUTION_LOCK_DEBOUNCE_MS = 750;   // coalesce an editor's / the client's write burst
 // The Deck's native panel. quarm.guide's Bonus Step 7 recommends 1440×900
 // instead (a supersample — it's a UI Studio preset), but the SUGGESTION here is
-// native per Hitya. Suggested only: nothing in this feature auto-enables.
+// native per the guild lead. Suggested only: nothing in this feature auto-enables.
 const DECK_SUGGESTED_RESOLUTION = { width: 1280, height: 800 };
 
 function _deckDetected() {

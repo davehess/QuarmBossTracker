@@ -70,7 +70,7 @@ each mutation-checked. Full suite green (2,458).
 
 ## What the lutris.net installer script actually says (#156)
 
-Hitya supplied the two files quarm.guide points at: the Lutris installer JSON
+The guild lead supplied the two files quarm.guide points at: the Lutris installer JSON
 (revision **`quarmNov2025`**, updated 2025-11-10) and the `dgVoodoo.conf` that
 ships with the install. Reading the real script settles three things this
 runbook had been guessing at, and hands us one concrete Deck win.

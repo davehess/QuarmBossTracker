@@ -2,7 +2,7 @@
 
 Previous file: `DECISIONS-2026-08-21.md`.
 
-## Mimic defends the chosen resolution against the client (#156, Hitya)
+## Mimic defends the chosen resolution against the client (#156, the guild lead)
 
 **The call.** *"make sure we're resetting the height and width each time the
 game tries to overwrite it into the crapped 4:3 formats it expects."*
@@ -63,7 +63,7 @@ one — enforce immediately before spawning the client.
 | Item | State |
 |---|---|
 | Resolution lock UI | The config key is live and readable/writable through the existing `get-config` / `save-config` IPC, but no Settings card exposes it yet — turning it on needs a hand-edited config. A Settings control (with the Deck suggestion prefilled) is the next step. |
-| Resolution lock on Windows | Watcher is Linux-gated. Whether the Windows fleet wants this at all is Hitya's call — Windows users have an in-client display dialog that mostly sticks. |
+| Resolution lock on Windows | Watcher is Linux-gated. Whether the Windows fleet wants this at all is the guild lead's call — Windows users have an in-client display dialog that mostly sticks. |
 | 1280×800 vs 1440×900 as the Deck suggestion | Shipped as 1280×800 (native panel) per tonight's call. quarm.guide's Bonus Step 7 recommends 1440×900, and UI Studio offers both presets — worth a second look once a Deck tester has run both. |
 
 ## Officer-assisted Mimic linking (from a member's "verify your account" wall)

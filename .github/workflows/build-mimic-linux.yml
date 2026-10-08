@@ -59,7 +59,13 @@ jobs:
         working-directory: apps/mimic
         run: npm install
 
-      # Version = <mimic base>-linux.<run_number>, e.g. 2.6.1-linux.19.
+      # The bundled spell/item catalog snapshot (the Windows release runs the same step as `predist`
+      # before electron-builder). Best-effort: the script degrades gracefully when the bot is unreachable.
+      - name: Stage the offline catalog
+        working-directory: apps/mimic
+        run: npm run predist
+
+      # Version =<mimic base>-linux.<run_number>, e.g. 2.6.1-linux.19.
       #
       # The base is READ FROM package.json, not hard-coded. It used to be a
       # literal "2.1.1" and stayed that way while Mimic went 2.1.1 → 2.6.1, so
