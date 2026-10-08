@@ -57,6 +57,10 @@
   /* A hidden panel keeps its page (a callouts panel is where a pinned callout
      lives); it is only invisible. */
   .panel.off{visibility:hidden}
+  /* A show-when rule that is false hides a panel the same way, as a class of its own so `off` is never
+     touched; while arranging nothing carries it, and the badge says which rule the panel has. */
+  .panel.wh{visibility:hidden}
+  .whb{display:none}
   .tab,.grip{display:none}
 
   /* ── Arranging ─────────────────────────────────────────────────────────── */
@@ -67,6 +71,9 @@
   /* Its size is its section's; A−/A+ and the page width in ⚙ change it, not a drag. */
   .panel.sect > .grip{display:none!important}
   body.edit .panel.off{visibility:visible;opacity:0.4}
+  body.edit .whb.on{display:block;position:absolute;left:2px;bottom:2px;z-index:3;max-width:calc(100% - 22px);
+    padding:0 5px;font-size:10px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    pointer-events:none;color:#0d1117;background:rgba(210,153,34,0.92);border-radius:3px}
   body.edit .panel.lift{z-index:50;outline-style:solid}
   body.edit .tab{display:flex;align-items:center;gap:6px;position:absolute;left:-1px;
     bottom:100%;max-width:calc(100% + 2px);box-sizing:border-box;
@@ -170,6 +177,7 @@
   #selbar{display:none;flex-basis:100%;align-items:center;gap:6px;flex-wrap:wrap;padding-top:4px;border-top:1px solid #30363d}
   #selbar.on{display:flex}
   #selbar b{color:#d29922}
+  #selbar select{font:inherit;font-size:11px;padding:2px 4px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px}
   #selbar input{font:inherit;font-size:11px;padding:2px 6px;width:120px;background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:4px}
   /* ✕ on a piece deletes it; Undo stays here for a few seconds. */
   #toast{display:none;position:fixed;left:50%;bottom:48px;transform:translateX(-50%);z-index:96;align-items:center;gap:10px;
@@ -263,6 +271,123 @@
   ];
   var MAX_PANELS = 150;
 
+  // ── Show when ───────────────────────────────────────────────────────────────
+  // The guild lead picked "show-when rules" for the Canvas: the screen empties itself between pulls, each
+  // piece with a condition. A panel's `when` is one of WHEN (absent = always), and `cls` an optional list of
+  // classes it is for; together they are an AND. A rule that is FALSE hides the panel exactly as `off` does
+  // (not drawn, not a click target, place kept) but is computed, never saved into `off`; one the agent
+  // cannot answer is TRUE (a hidden callout is worse than a visible one). Arranging shows everything.
+  var WHEN = [
+    ['combat',   'In combat'],
+    ['nocombat', 'Out of combat'],
+    ['target',   'Have a target'],
+    ['npc',      'NPC target'],
+    ['raid',     'In a raid'],
+  ];
+  var WHEN_CLASSES = [['Warrior', 'WAR'], ['Cleric', 'CLR'], ['Paladin', 'PAL'], ['Ranger', 'RNG'], ['Shadow Knight', 'SHD'],
+    ['Druid', 'DRU'], ['Monk', 'MNK'], ['Bard', 'BRD'], ['Rogue', 'ROG'], ['Shaman', 'SHM'], ['Necromancer', 'NEC'],
+    ['Wizard', 'WIZ'], ['Magician', 'MAG'], ['Enchanter', 'ENC'], ['Beastlord', 'BST']];
+  // When a fight ends, combat-only pieces stay up this long, so the gap between two mobs does not flicker them.
+  var COMBAT_HOLD_MS = 8000;
+  // The agent keeps the last Zeal raid window it saw and never clears it on leaving; a raid is "a window
+  // within this long" (the agent's own rule for the same question: EXT_RAID_FRESH_MS).
+  var RAID_FRESH_MS = 60000;
+
+  // A panel's rule as the layout keeps it: only valid values, and only the keys that are set.
+  function cleanWhen(src, dst) {
+    var w = String((src && src.when) || '');
+    if (WHEN.some(function (x) { return x[0] === w; })) dst.when = w;
+    if (src && Array.isArray(src.cls)) {
+      var c = WHEN_CLASSES.filter(function (k) { return src.cls.indexOf(k[0]) >= 0; }).map(function (k) { return k[0]; });
+      if (c.length) dst.cls = c;
+    }
+    return dst;
+  }
+  // The agent's sources a rule reads (the canvas polls a source only while something needs it).
+  function whenSources(p) {
+    var k = [];
+    if (p.when === 'raid') k.push('state');
+    else if (p.when) k.push('me');
+    if (p.cls && p.cls.length && k.indexOf('me') < 0) k.push('me');
+    return k;
+  }
+  // true / false when the target is known to be an NPC / a player; null when it cannot be told yet. The
+  // agent marks no target as an NPC, but only a catalog mob carries level_src 'catalog' and only a player
+  // gets one from /who, Zeal, a con or history; a name with a space (or a leading #) is an NPC's.
+  function targetIsNpc(t) {
+    if (!t) return false;
+    if (t.corpse) return false;
+    if (t.level_src === 'catalog') return true;
+    if (t.level_src) return false;
+    var n = String(t.name || '');
+    if (/\s/.test(n) || n.charAt(0) === '#') return true;
+    return null;
+  }
+  // What the agent says right now, from /api/me and /api/state: true / false, or null when unknown. `miss`
+  // names a signal the agent answered without (an older agent), so the menu can say so.
+  function whenSignals(me, state, now) {
+    var s = { combat: null, target: null, npc: null, raid: null, cls: null, miss: {} };
+    if (me && me.character) {
+      if (me.combat && typeof me.combat.live === 'boolean') s.combat = me.combat.live; else s.miss.combat = true;
+      if ('target' in me) { s.target = !!me.target; s.npc = targetIsNpc(me.target); } else { s.miss.target = true; s.miss.npc = true; }
+      if (!('class' in me)) s.miss.cls = true;
+      else if (typeof me.class === 'string' && me.class) s.cls = me.class;
+    }
+    if (state) {
+      if (!('raidPipe' in state)) s.miss.raid = true;
+      else {
+        var rp = state.raidPipe;
+        s.raid = !!(rp && Array.isArray(rp.members) && rp.members.length && now - rp.at < RAID_FRESH_MS);
+      }
+    }
+    return s;
+  }
+  var _combatAt = -Infinity;
+  function holdCombat(live, now) {
+    if (live === null) return null;
+    if (live) { _combatAt = now; return true; }
+    return now - _combatAt < COMBAT_HOLD_MS;
+  }
+  // Does the panel's rule hold? An unknown signal holds.
+  function whenHolds(p, sig) {
+    var v = true;
+    if (p.when === 'combat') v = sig.combat;
+    else if (p.when === 'nocombat') v = sig.combat === null ? null : !sig.combat;
+    else if (p.when === 'target') v = sig.target;
+    else if (p.when === 'npc') v = sig.npc;
+    else if (p.when === 'raid') v = sig.raid;
+    if (v === false) return false;
+    if (p.cls && p.cls.length && sig.cls !== null) {
+      var mine = sig.cls.toLowerCase();
+      if (!p.cls.some(function (c) { return c.toLowerCase() === mine; })) return false;
+    }
+    return true;
+  }
+  // The small label on a panel while arranging, '' for a panel with no rule.
+  function whenBadge(p) {
+    var t = [];
+    for (var i = 0; i < WHEN.length; i++) if (WHEN[i][0] === p.when) t.push(WHEN[i][1]);
+    if (p.cls && p.cls.length) t.push(p.cls.map(function (c) {
+      for (var j = 0; j < WHEN_CLASSES.length; j++) if (WHEN_CLASSES[j][0] === c) return WHEN_CLASSES[j][1];
+      return c;
+    }).join(' '));
+    return t.join(' · ');
+  }
+  // Setting a rule on panels (the ⚙ menu: one; the selection bar: every selected one). '' = always / any class.
+  function setWhen(ps, w) {
+    if (w && !WHEN.some(function (x) { return x[0] === w; })) return;
+    ps.forEach(function (q) { if (w) q.when = w; else delete q.when; });
+  }
+  function setWhenClasses(ps, list) {
+    var c = WHEN_CLASSES.filter(function (k) { return list.indexOf(k[0]) >= 0; }).map(function (k) { return k[0]; });
+    ps.forEach(function (q) { if (c.length) q.cls = c.slice(); else delete q.cls; });
+  }
+  function toggleWhenClass(p, c) {
+    var cur = p.cls || [];
+    setWhenClasses([p], !c ? [] : cur.indexOf(c) >= 0 ? cur.filter(function (x) { return x !== c; }) : cur.concat([c]));
+  }
+  // ── end Show when ──
+
   // Every overlay the canvas can host, from main (canvas-state): key, label,
   // the page to load, and where its own window is right now.
   var _overlays = [];
@@ -308,6 +433,7 @@
     if (!src) return null;
     var out = [], seen = {}, haveCallouts = false, haveAll = false;
     var seenKey = {};
+    function add(src1, o) { out.push(cleanWhen(src1, o)); }
     for (var i = 0; i < src.length && out.length < MAX_PANELS; i++) {
       var p = src[i];
       if (!p || typeof p.id !== 'string' || !p.id || seen[p.id]) continue;
@@ -317,7 +443,7 @@
         var pid = String(p.part || '');
         if (!/^[a-z]+\.[A-Za-z0-9_]+$/.test(pid)) continue;
         seen[p.id] = true;
-        out.push({
+        add(p, {
           id: p.id.slice(0, 24), kind: 'part', part: pid.slice(0, 40),
           mode: /^[a-z]{2,10}$/.test(String(p.mode || '')) ? p.mode : '',
           name: String(p.name || '').slice(0, 32),
@@ -343,7 +469,7 @@
         var skey = String(p.key || ''), sid = String(p.sect || '');
         if (!/^[A-Za-z]{2,16}$/.test(skey) || !/^[a-z][a-z0-9-]{0,23}$/.test(sid)) continue;
         seen[p.id] = true;
-        out.push({
+        add(p, {
           id: p.id.slice(0, 24), kind: 'sect', key: skey, sect: sid,
           name: String(p.name || '').slice(0, 32),
           x: num(p.x, 0, 1, 0.3), y: num(p.y, 0, 1, 0.3),
@@ -362,7 +488,7 @@
         var look = (key === 'me' && /^(hud|a)$/.test(String(p.style || ''))) ? p.style : '';
         if (!/^[A-Za-z]{2,16}$/.test(key) || seenKey[key + ':' + look]) continue;
         seen[p.id] = true; seenKey[key + ':' + look] = true;
-        out.push({
+        add(p, {
           id: p.id.slice(0, 24), kind: 'overlay', key: key, style: look,
           name: String(p.name || key).slice(0, 24),
           x: num(p.x, 0, 1, 0.3), y: num(p.y, 0, 1, 0.3),
@@ -379,7 +505,7 @@
       seen[p.id] = true;
       if (kind === 'callouts') haveCallouts = true;
       if (all) haveAll = true;
-      out.push({
+      add(p, {
         id: p.id.slice(0, 24), kind: kind, all: all,
         name: String(p.name || (kind === 'callouts' ? 'Callouts' : 'Timers')).slice(0, 24),
         groups: Array.isArray(p.groups) ? p.groups.filter(function (g) { return GROUPS.some(function (G) { return G[0] === g; }); }) : [],
@@ -509,8 +635,10 @@
     mv.textContent = '✥';
     mv.setAttribute('data-wp-interact', '');
     mv.title = 'Drag to move this panel · right-click for what it shows';
-    root.appendChild(fr || body); root.appendChild(tab); root.appendChild(grip); root.appendChild(mv);
-    var e = { root: root, tab: tab, frame: fr, body: body, grip: grip, mv: mv };
+    var whb = document.createElement('span');
+    whb.className = 'whb';
+    root.appendChild(fr || body); root.appendChild(tab); root.appendChild(grip); root.appendChild(mv); root.appendChild(whb);
+    var e = { root: root, tab: tab, frame: fr, body: body, grip: grip, mv: mv, whb: whb };
     if (fr) fr.addEventListener('load', function () {
       var q = panelById(p.id);
       if (!q) return;
@@ -711,6 +839,7 @@
     Object.keys(_els).forEach(function (id) {
       if (!keep[id]) { _els[id].root.remove(); delete _els[id]; delete _widen[id]; delete _fitAdd[id]; }
     });
+    applyWhen();
     markGroupMovers();
     paintParts();
     syncSources();
@@ -1078,6 +1207,7 @@
             + (_isTesting(p.id) ? '🧪 Hide the test rows' : '🧪 Show test rows') + '</button>')
         + '</div>';
     }
+    h += whenMenuHtml(p);
     // A piece of a SAVED group: show / hide the whole group, and the key that does it from anywhere.
     var ng = p.grp ? namedGroup(p.grp) : null;
     if (ng) h += groupMenuHtml(ng);
@@ -1299,6 +1429,8 @@
     else if (t.hasAttribute('data-gtoggle')) { toggleSavedGroup(t.getAttribute('data-gtoggle'), 'toggle'); }
     else if (t.hasAttribute('data-gkey')) { captureGroupKey(t.getAttribute('data-gkey')); return; }
     else if (t.hasAttribute('data-gclear')) { setGroupKey(t.getAttribute('data-gclear'), ''); return; }
+    else if (t.hasAttribute('data-when')) { setWhen([p], t.getAttribute('data-when')); }
+    else if (t.hasAttribute('data-wcls')) { toggleWhenClass(p, t.getAttribute('data-wcls')); }
     else if (t.hasAttribute('data-hide')) { p.off = !p.off; }
     else if (t.hasAttribute('data-remove')) { closeMenu(); removePanels([p.id]); return; }
     else if (t.hasAttribute('data-rmgrp')) {
@@ -1358,6 +1490,7 @@
     var need = {};
     if (!window.WpParts) return need;
     _layout.panels.forEach(function (p) {
+      if (!p.off && (p.when || p.cls)) whenSources(p).forEach(function (k) { need[k] = true; });
       if (p.kind !== 'part' || p.off) return;
       var d = partDef(p);
       if (d) need[d.src] = true;
@@ -1389,10 +1522,51 @@
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (j) { if (j && s.path === path) { s.data = j; s.at = Date.now(); } })
         .catch(function () {})
-        .then(function () { paintParts(k); paintChooserValues(); setTimeout(tick, (s.data && s.data.loading) ? 1500 : S.every); });
+        .then(function () { paintParts(k); paintChooserValues(); applyWhen(); setTimeout(tick, (s.data && s.data.loading) ? 1500 : S.every); });
     })();
   }
   function liveData(k) { var s = _src[k]; return (s && s.data && Date.now() - s.at < STALE_MS) ? s.data : null; }
+  // ── Show when, on the screen ──
+  // Read at the cadence the sources already poll at (a rule adds none of its own: whenSources above);
+  // the combat hold runs out on the next answer from /api/me, at most half a second later.
+  function currentWhen() {
+    var now = Date.now(), sig = whenSignals(liveData('me'), liveData('state'), now);
+    sig.combat = holdCombat(sig.combat, now);
+    return sig;
+  }
+  // The ⚙ menu's "Show when" rows. Saying "needs a newer agent" reads the agent's answer as it is when the
+  // menu opens: an agent that answered without a signal the rule needs.
+  function whenMenuHtml(p) {
+    var h = '<div class="sec">Show when</div><div class="row" style="flex-wrap:wrap">'
+      + '<button class="btn' + (!p.when ? ' on' : '') + '" data-when="">Always</button>';
+    WHEN.forEach(function (w) { h += '<button class="btn' + (p.when === w[0] ? ' on' : '') + '" data-when="' + w[0] + '">' + esc(w[1]) + '</button>'; });
+    var anyCls = !(p.cls && p.cls.length);
+    h += '</div><div class="sec">Only for</div><div class="row" style="flex-wrap:wrap">'
+      + '<button class="btn' + (anyCls ? ' on' : '') + '" data-wcls="">Any class</button>';
+    WHEN_CLASSES.forEach(function (c) {
+      h += '<button class="btn' + (!anyCls && p.cls.indexOf(c[0]) >= 0 ? ' on' : '') + '" data-wcls="' + esc(c[0]) + '" title="' + esc(c[0]) + '">' + c[1] + '</button>';
+    });
+    var miss = (p.when || !anyCls) ? currentWhen().miss : {};
+    var lacks = (p.when && miss[p.when === 'nocombat' ? 'combat' : p.when]) || (!anyCls && miss.cls);
+    h += '</div><div class="note">' + (lacks
+      ? 'This agent does not report what the rule needs: needs a newer agent. The panel stays visible until it does.'
+      : 'Out in play it hides while the rule is false and comes back on its own. Arranging shows everything.') + '</div>';
+    return h;
+  }
+  function applyWhen() {
+    var sig = null;
+    _layout.panels.forEach(function (p) {
+      var e = _els[p.id];
+      if (!e) return;
+      var ruled = !!(p.when || (p.cls && p.cls.length));
+      var hide = false;
+      if (ruled && !_edit) { sig = sig || currentWhen(); hide = !whenHolds(p, sig); }
+      e.root.classList.toggle('wh', hide);
+      var badge = ruled && _edit ? whenBadge(p) : '';
+      if (e.whb._t !== badge) { e.whb._t = badge; e.whb.textContent = badge; }
+      e.whb.classList.toggle('on', !!badge);
+    });
+  }
   // get(data, at): `at` is when the answer arrived, so a "ms left" in it
   // becomes an end time the piece can count down to between polls.
   function viewFor(d) {
@@ -2153,6 +2327,8 @@
       + (locked ? '<span class="dim">locked together</span>' : '')
       + (Object.keys(grps).length ? '<button class="btn" data-sel="unlock" title="Each moves on its own again">🔓 Unlock</button>' : '')
       + (parts ? '<input id="selName" maxlength="24" placeholder="name it"><button class="btn" data-sel="save" title="Keep this set in the chooser\'s Groups tab, to drop again anywhere — and give it a hotkey that shows or hides it">💾 Save as a group</button>' : '')
+      + '<select id="selWhen" title="Show every selected piece only when this holds, out in play">' + whenOptions('Show when…', 'Always', WHEN) + '</select>'
+      + '<select id="selCls" title="Show every selected piece only for this class">' + whenOptions('Only for…', 'Any class', WHEN_CLASSES.map(function (c) { return [c[0], c[0]]; })) + '</select>'
       + '<button class="btn warn" data-sel="delete" title="Delete the selected (Undo appears)">🗑 Delete</button>'
       + '<button class="btn" data-sel="clear">Clear</button>';
     if (selbar._html !== h) { selbar._html = h; selbar.innerHTML = h; }
@@ -2166,6 +2342,21 @@
     else if (a === 'save') { var inp = document.getElementById('selName'); saveSelectionAsGroup(inp ? inp.value : ''); }
     else if (a === 'delete') removePanels(ids);
     else if (a === 'clear') { _sel = {}; render(); }
+  });
+  // A select here is an action, not a state (the pieces selected may each have their own rule): it applies
+  // to every selected panel, then goes back to its heading.
+  function whenOptions(head, none, list) {
+    var h = '<option value="">' + head + '</option><option value="*">' + none + '</option>';
+    list.forEach(function (x) { h += '<option value="' + esc(x[0]) + '">' + esc(x[1]) + '</option>'; });
+    return h;
+  }
+  selbar.addEventListener('change', function (ev) {
+    var t = ev.target, v = t.value, ps = selIds().map(panelById);
+    if (!v || (t.id !== 'selWhen' && t.id !== 'selCls')) return;
+    if (t.id === 'selWhen') setWhen(ps, v === '*' ? '' : v);
+    else setWhenClasses(ps, v === '*' ? [] : [v]);
+    t.value = '';
+    save(); render();
   });
   selbar.addEventListener('keydown', function (ev) {
     if (ev.key === 'Enter' && ev.target.id === 'selName') { ev.preventDefault(); saveSelectionAsGroup(ev.target.value); }
