@@ -750,6 +750,12 @@ next touch one rather than assuming a missing row means a missing doc.
   replaced the last one. No `?v=` is what production shows. Empty until the bot ledger is live and the two stampede
   rows carry the `zone-timer` tag. `web/lib/zoneTimers.ts`, `web/app/boards/ZoneTimers.tsx`,
   `test/zone-timers-web.test.js`. Link: https://b.wolfpack.quest/boards?v=b
+- **🧪 Charm overlay mini mode: "B — Mob tick first" (agent 3.7.118 beta, 2026-10-08).** Row two keeps the charm
+  timer; the mob tick is a big teal number (no longer the charm bar's purple) and the server tick a smaller blue one,
+  each over a 2 px line that counts down its 6 s cycle (a dash and an empty line while unknown; `~` on a learned mob
+  tick). Row one gains an `MR n` chip: the #petstats sheet's live signed value first, else the catalog base with a
+  `~`, else nothing. The charm row carries a new `mr` (cached mob-info). The full card is unchanged.
+  `apps/mimic/charm.html`, `test/mini-popraid-charm.test.js`.
 - **🧪 Sha`s Revenge is a slow; the Planes of Power charms are tracked (agent 3.7.117 beta, 2026-10-08).** A member
   reported Sha`s Revenge not showing as a slow: spell 3462 (SPA 11 base 35, a 65% slow) was on none of the name-keyed
   slow lists. Added with Sha's Vengeance (55%) and Sha's Lethargy (30%), in the agent and the Extended Target
