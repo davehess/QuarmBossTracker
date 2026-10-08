@@ -759,6 +759,7 @@
       emptyEl.style.display = 'block';
       emptyEl.textContent = (payload && payload.local_only) ? 'guild feature: it needs your raid\'s Mimics, so sign in to use it'
         : (payload && payload.loading) ? 'loading…'
+        : (payload && payload.group_unknown) ? 'Group: can\'t tell your group yet (no fresh Zeal group or raid window) — switch to Raid to see everything'
         : (all.length ? 'no directly-targeted mobs — toggle 🛡 off-tanks to see ' + offTankCount + ' held'
                       : (groupScope ? 'waiting for group targets…' : 'waiting for raid targets…'));
       cntEl.innerHTML = cntHtml(false);

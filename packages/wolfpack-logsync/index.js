@@ -44177,6 +44177,12 @@ function _scopeExtToGroup(payload, selfCharacter, selfSt, raidSeenAt, nowMs, wan
     if (Number.isInteger(g) && g >= 1 && g <= 12) names = roster.filter(m => m && m.name && grp(m) === g).map(m => m.name);
     else if (zealFresh) names = zealGroup();
   } else if (zealFresh) names = zealGroup();
+  // A chosen Group never falls back to the whole board: the guild lead picked Group to stop seeing other groups'
+  // mobs (2026-10-08, "still showing other groups"), so an unknown group shows an empty list that says why.
+  if (!names && want === 'group') {
+    return { ...payload, targets: [], scope: inRaid ? 'raid_group' : 'group', group_unknown: true, online: null,
+             ...(payload.off_tank_count != null ? { off_tank_count: 0 } : {}) };
+  }
   if (!names) return payload;
   const mine = new Set([selfLc]);
   for (const n of names) if (n) mine.add(String(n).toLowerCase());
@@ -44185,7 +44191,7 @@ function _scopeExtToGroup(payload, selfCharacter, selfSt, raidSeenAt, nowMs, wan
   const targets = payload.targets.filter(t => {
     if (!t) return false;
     if (t.kind === 'player') return has(t.name);
-    if (t.kind === 'pet') return t.owner ? has(t.owner) : true;
+    if (t.kind === 'pet') return t.owner ? has(t.owner) : want !== 'group';
     return any(t.raiders) || any(t.tanks) || any(t.off_tank_raiders) || has(t.mob_victim);
   });
   const offTank = targets.reduce((n, t) =>
