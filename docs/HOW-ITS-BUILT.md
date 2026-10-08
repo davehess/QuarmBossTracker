@@ -2065,7 +2065,10 @@ gains the `who` source from `pop_who_sightings` (`routeData.ts`). `test/pop-who.
 `apps/mimic/mobinfo.html`'s Factions tab became F/Q/V with sub-tabs. Quest and Vendor come from the
 agent's `/api/npc-interact?id=` (only while the tab is open), which proxies the bot's
 `/api/agent/npc-interact` (`_npcInteract` in `index.js`, 6 h cache): `utils/questDialog.js` reads the
-NPC's Lua script (`findi` keywords → `/say` chips with replies, GM branches dropped), hand-ins from
+NPC's Lua script (`findi` keywords → `/say` chips with replies, GM branches dropped; an NPC with no script of
+its own is looked up in the zone's encounter files — `questDialog.encounterHandlers` finds the say/trade
+handlers registered for its npc id, by literal or `local` constant — bot 3.1.221, 2026-10-08, Thelin Poxbourne
+in `ponightmare/encounters/Maze.lua`), hand-ins from
 `scripted_npc_turnins`, who's next from named NPCs the replies mention (with a spawn for `/map Y X`),
 and a merchant's `eqemu_merchantlist`. Vendor shows only when the list is non-empty. Bot 3.1.166, agent
 3.7.37 + Mimic beta; DECISIONS 2026-09-21 §70.
