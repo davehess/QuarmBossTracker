@@ -8202,3 +8202,30 @@ and totals for that row."*
   exactly (30 days: 24,477 items, 120 DKP, same platinum total).
 - 90 days is about 7,150 looter + item rows, so 143 pages of 50.
 - v1 / v2 stay in place, unused, until a DROP FUNCTION works on production again (§198).
+
+### 199. Mimic agent-only mode, switchable both ways (2026-10-08, agent 3.7.110 · Mimic beta `8cf8bcc7`)
+**The call** (the guild lead): *"update the installer to have agent only mode and a way to update it to have full
+mimic, and vice versa"*, then picked **A — one install, a mode switch** over a second installer.
+- **Where it landed:** `cfg.runMode` ('full' default, or 'agent'), read off disk before any window exists and fixed
+  for the run, like the graphics-card switch (§195). Agent only keeps uploads, the tray, the dashboard and the
+  spoken trigger callouts (the trigger window stays alive and hidden, the one voice); every overlay window is left
+  out. The setup walk asks which one; Settings, the tray and the dashboard's Overlays tab switch it later and offer
+  a restart (tray ↔ dashboard parity rule). The tray hides overlay-only items in agent only and shows a "Spoken
+  trigger callouts (TTS)" check instead.
+- **Why one install:** a second installer doubles the release work and the updater channels, and switching would
+  mean uninstalling. The overlay code is on disk either way; agent only just never opens it.
+- **Guard:** `test/mimic-agent-only-mode.test.js` fails any `create*Overlay` / `create*Window` without the gate.
+- Graduates with the next stable cut.
+
+### 200. Plane of Tactics boar stampede: what starts it, and two guild triggers (2026-10-08, live)
+**The ask** (the guild lead): *"There is a stampede … in Plane of Tactics where a bunch of boars run from around
+-350, 1200. What triggers that? is it a timer? can we build in a trigger for those in the zone when that
+happens?"*
+- **What starts it:** a zone controller script (`potactics/Stampede_Controller.lua` in the server's quest set) on a
+  random timer, re-rolled to 40–120 minutes after each run, and skipped while Rallos Zek is up. Each run sends the
+  zone emote **"You hear the pounding of hooves."**; the boars spawn about 15 s later. Confirmed in a raider's own
+  log: the emote at 2026-10-07 16:20, 2026-10-08 12:45 and 13:28 (43 minutes apart), boars engaged ~40 s after it.
+- **Where it landed:** two guild triggers, `source_pack` `potactics-stampede`, live through the 2-minute guild
+  trigger poll: "Tactics: boar stampede incoming" (pattern `You hear the pounding of hooves\.`, overlay + TTS
+  "Stampede", 15 s timer, 120 s cooldown) and "Tactics: next stampede possible" (same line, 40-minute timer, shown
+  from 5 minutes out). The 40 minutes is the script's minimum; the real gap can run to 2 hours.
