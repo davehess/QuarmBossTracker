@@ -1013,6 +1013,13 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   `app.disableHardwareAcceleration()`. Set from Settings ("Use the graphics card for overlays"), the tray
   checkbox (both offer Restart now / Later via `_setGpuDrawing`) and the setup walk's "Screen flicker" step
   (`welcome.html`, lands next start). For black screens with a device-disconnect sound: a driver reset.
+- **Agent-only mode** (Mimic beta, agent 3.7.110, 2026-10-08, §199): `cfg.runMode` 'full' | 'agent', read off disk
+  before any window exists (`_runModeAtStart` / `_agentOnly()` in `main.js`). Agent only: every `create*`
+  overlay function returns early, `_overlayWanted` keeps only the hidden trigger window (the voice for spoken
+  callouts), `_overlayEntries` is empty, hide-all and the screen-change prompt do nothing. Switched from the
+  setup walk's "mode" step, Settings, the tray and the dashboard's `#wpRunMode` (all through `_setRunMode` /
+  IPC `set-run-mode`, Restart now / Later). `test/mimic-agent-only-mode.test.js` fails any new overlay creator
+  that forgets the gate.
 - **Settings drafts** (`settings.html`): `wp:settings:draft` in localStorage, built from the same
   signature as the floating Save and never holding the token; `_offerDraft` at the end of `load()`;
   a `beforeunload` bar asks before closing. `before-quit` destroys the Settings window, because in
