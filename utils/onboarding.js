@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.226': [
+    '**Mimic\'s Loot tab can say what loot is worth.** "Who looted what" can now cover 12 hours, a day, a week or 30 days, shows each item\'s merchant value in platinum, and totals what each character looted (needs the Mimic beta).',
+  ],
   '3.1.225': [
     '**Target Info can say who cast a buff.** When a raider running Mimic casts a buff or debuff, the bot remembers who cast it on whom for three hours, and for group spells on everyone in that group. Hover the time left on a Target Info buff to see the caster (needs the Mimic beta).',
   ],

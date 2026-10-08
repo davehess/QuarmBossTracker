@@ -717,6 +717,8 @@ next touch one rather than assuming a missing row means a missing doc.
   `deploymentEnabled`. Web 1.8.53 also keeps a `/pop` link's query through sign-in. §101.
 - **⏳ Command Center 📋 on deathrolls (agent 3.7.47, Mimic beta `013e2e0c`) · Target Info even con = your
   level for a player (agent 3.7.48, beta `386cfc99`), 2026-09-29.** §97, §98 (reverses part of §15).
+- **🧪 Loot in platinum, per character, over 12 h / 24 h / 7 d / 30 d (bot 3.1.226 main; Mimic Loot tab beta,
+  2026-10-08).** Merchant value from the item database, NO DROP tagged. DECISIONS §197.
 - **🧪 Target Info: buff bars count down; hover the time for length and caster (Mimic beta `2eb8796e`,
   bot 3.1.225 main, agent beta, 2026-10-08).** Caster from the casting relay (Mimic users only), group spells
   to the caster's group; length from the spell catalog once the caster is known. DECISIONS §196.
