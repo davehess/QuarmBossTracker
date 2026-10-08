@@ -61,7 +61,7 @@ describe('FB-54 the table covers exactly the Quarm enum', () => {
   it('pins the codes that differ from the older EQEmu numbering', () => {
     const L = (c) => ms.MOB_SPECIAL_CODES[c].label;
     expect(L(7)).toBe('Dual Wield');             // was 'Quad Attack'
-    expect(L(8)).toBe('Disallow Equip');         // was 'Dual Wield'
+    expect(L(8)).toBe('Does Not Equip');         // was 'Dual Wield'; shown on Target Info since 2026-10-08
     expect(L(31)).toBe('Immune Pacify');         // unchanged — the agent's pacify gate keys on it
     expect(L(34)).toBe('Permaroot Flee');        // was 'Destructible Object'
     expect(L(41)).toBe('Allowed To Tank');       // was 'Casting Resist Diff'
@@ -90,7 +90,7 @@ describe('FB-54 Reverse Slow is called out', () => {
 
   it('Laef Windfall (209070) decodes the way PQDI reads it', () => {
     expect(ms.decodeSpecialLabels(LAEF.special_abilities, null)).toEqual([
-      'Summon', 'Magical', 'Unmezzable', 'Uncharmable', 'Unsnareable', 'Unfearable',
+      'Summon', 'Does Not Equip', 'Magical', 'Unmezzable', 'Uncharmable', 'Unsnareable', 'Unfearable',
       'Immune Fleeing', 'Immune Non-Magical', REVERSE,
     ]);
   });
@@ -137,5 +137,12 @@ describe('FB-54 the old numbering no longer leaks onto real mobs', () => {
 
   it('No Loitering (46) is no longer shown as "Immune Damage (NPC/Pet)"', () => {
     expect(ms.decodeSpecialLabels('10,1^46,1', null)).toEqual(['Magical']);
+  });
+
+  it('Does Not Equip (8) is a Target Info chip (the guild lead, 2026-10-08); Dual Wield (7) still is not', () => {
+    expect(ms.decodeSpecialLabels('8,1', null)).toEqual(['Does Not Equip']);
+    expect(ms.decodeSpecialLabels('7,1^8,1^10,1', null)).toEqual(['Does Not Equip', 'Magical']);
+    expect(ms.decodeSpecialLabels('7,1', null)).toEqual([]);
+    expect(ms.decodeSpecialLabels('10,1', null)).not.toContain('Does Not Equip');
   });
 });

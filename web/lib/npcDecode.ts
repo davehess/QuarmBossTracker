@@ -21,7 +21,7 @@ export const MOB_SPECIAL_CODES: Record<number, MobSpecialDef> = {
   5: { label: 'Flurry', show: true, danger: true },
   6: { label: 'Triple Attack', show: true, danger: false },
   7: { label: 'Dual Wield', show: false, danger: false },
-  8: { label: 'Disallow Equip', show: false, danger: false },
+  8: { label: 'Does Not Equip', show: true, danger: false },
   9: { label: 'Bane', show: true, danger: false },
   10: { label: 'Magical', show: true, danger: false },
   11: { label: 'Ranged', show: true, danger: false },

@@ -8281,3 +8281,14 @@ then widened it past PoP.
 - Rejected: option B (every named mob, ~180 names, mostly trash-named Vex Thal / Temple of Veeshan) and option C (the
   board grows itself on a kill; a bot change that only learns a mob after the guild kills it). C is still the better
   long-term rule and stays an open item.
+
+### 203. Target Info says when a mob does not equip (2026-10-08, bot 3.1.230 · web 1.8.124)
+**The ask** (the guild lead): *"We need to see if a mob does not equip or not in target info"*.
+- **What it is:** Quarm special-ability code 8 ("Do Not Equip"; the table already had it as 'Disallow Equip', hidden).
+  The mob never wields what it carries, so the gear on its model is not its loot. 1,847 of the 18,033 catalog rows have
+  it (about 1 in 10; 8 of 201 raid targets), few enough that a chip still means something.
+- **Where it landed:** `utils/mobSpecials.js` code 8 is now `show: true`, label **Does Not Equip**; the bot's mob-info
+  already ships every shown label, so Mimic's Target Info (a neutral chip) and the Mob Info web decode (`web/lib/npcDecode.ts`,
+  kept equal by `test/mob-specials-web-parity.test.js`) pick it up with no Mimic release. No consumer matched the old
+  label. A mob without the flag simply has no chip: the absence is the "equips" answer, not a second chip.
+- ⚠ Mimic caches mob info on the player's machine (6 h), so an already-seen mob shows the chip after the cache turns over.

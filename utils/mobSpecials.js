@@ -75,7 +75,10 @@ const MOB_SPECIAL_CODES = {
   // Quarm has NO Quad Attack: 7 is Dual Wield and 8 is Do Not Equip. The old
   // 7 'Quad Attack' chip was wrong on every mob that carried it (Lord Yelinak).
   7:  { label: 'Dual Wield',                show: false, danger: false },
-  8:  { label: 'Disallow Equip',            show: false, danger: false },
+  // Shown (the guild lead, 2026-10-08: "We need to see if a mob does not equip or not in target info"): the mob
+  // never wields what it carries, so the weapons and armour on its model are not its loot table. 1,847 of the
+  // 18,033 catalog rows have it (about 1 in 10), few enough that the chip still means something.
+  8:  { label: 'Does Not Equip',            show: true,  danger: false },
   9:  { label: 'Bane',                      show: true,  danger: false },
   10: { label: 'Magical',                   show: true,  danger: false },
   11: { label: 'Ranged',                    show: true,  danger: false },
