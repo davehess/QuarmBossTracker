@@ -8019,3 +8019,24 @@ the Group switch to be proven in play.
 - It closes FB-12, 16, 21, 22, 23, 26, 30, 31, 52, 56, 57, 58, 60, 61, 62, 63 and 65. FB-59 (`/parses` default) is a
   website change still on beta; FB-64 is alpha-only; FB-66 is on the Linux branch.
 - Beta re-parks at 2.7.11.
+
+### 191. PoP checklist: The Binden Concerrentia (2026-10-08, web 1.8.118)
+The guild lead: *"https://www.eqprogression.com/the-binden-concerrentia-quest-guide/ this needs to be tracked"*.
+Three optional steps on `/pop/guide`, built like §95: every claim read off the server's scripts and data, not
+copied.
+- **The quest:** a Plane of Knowledge gate built over three trades with no flag, level or phrase checks:
+  Jimlok Keylifter (Tranquility), Tabben Bromal (Knowledge, the Jeral section) and Elder Clinka (Tranquility).
+  Part 1 `binden_small` (tier one) gives the Small Clockwork Talisman; part 2 `binden_powered` (end of tier
+  three) the Powered Clockwork Talisman; part 3 `binden_final` (tier four) The Binden Concerrentia. Sources:
+  the three NPC scripts (`eqemu_quest_scripts`), recipes 9983 / 9874 / 9980, `eqemu_npc_drops`, `eqemu_spawn2`.
+- **New over the source page, each pinned in `test/pop-guide.test.js` and mutation-checked:** the silk is
+  Disease's and the ooze Nightmare's (the page has them swapped); the Tactics casing is from Diaku, not ogres;
+  Valor is arachnae only; sun guardians also drop the power source; the Torment chain is 50%, not a sure drop;
+  the elemental fragments are not from mephits; the Justice rats respawn in about 20 minutes, not 10 to 13;
+  Tabben's "ready to write down" only reads the parts out (and only while you hold the Small Parts Container).
+- **No loot call:** none of the parts is lore or no drop, unlike the essences (§95).
+- **Auto-fill** (`popGuideAuto.ts`, `any`): a later item ticks the earlier parts, because each talisman is used up
+  in the next combine. It proves possession, not completion (nothing here is no drop).
+- **Not confirmed:** where Talisman Gate lands and its reagent (the spell row carries only effect slots), so the
+  guide says our data cannot confirm the destination. The Mimic PoP overlay data (`apps/mimic/pop-quests.js`)
+  is regenerated with the three steps; it reaches Mimic with the next beta build and stable cut.

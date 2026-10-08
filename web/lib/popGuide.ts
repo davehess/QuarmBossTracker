@@ -193,6 +193,11 @@ const L = {
   einoPok: { npc: 'Aid Eino', zone: 'poknowledge', y: -11, x: 1005, note: 'top of the library elevator' },
   einoTree: { npc: 'The big tree by the waterfall', zone: 'ponightmare', y: -510, x: 1687, note: 'upper plateau; say it right beside the tree' },
   kerasha: { npc: 'Councilwoman Kerasha', zone: 'poknowledge', y: 0, x: 1003, note: 'top of the library elevator' },
+  // The Binden Concerrentia (eqemu_spawn2 rows of Jimlok_Keylifter, Tabben_Bromal and Elder_Clinka). Jimlok's own
+  // script sends you to his cousin "in the Jeral section of New Tanaan".
+  jimlok: { npc: 'Jimlok Keylifter', zone: 'potranquility', y: -540, x: -1388 },
+  tabben: { npc: 'Tabben Bromal', zone: 'poknowledge', y: -391, x: 540, note: 'his tinker’s shop in the Jeral section' },
+  clinka: { npc: 'Elder Clinka', zone: 'potranquility', y: -384, x: -1271 },
   // The say/hand-in fill (2026-10-03). y/x are eqemu_spawn2 rows for placed NPCs, eqemu_doors pos_y/pos_x
   // for the things you click, and, for an NPC the quest script spawns itself, the spot the script names
   // (Tarkil Adan: codecay/#High_Priest_Ultor_Szanvon.lua; Loreseeker Maelin: poinnovation/#Chronographer_Muon.lua).
@@ -404,6 +409,14 @@ const BASE_ITEMS: GuideItem[] = [
     link: pqdiNpc(204467),
     says: [{ to: 'The big tree in Nightmare', text: 'Quellious be my guide' }, { to: 'Aid Eino (PoK, optional)', text: 'help' }],
     where: [L.einoTree, L.einoPok] },
+  // The Binden Concerrentia, part 1 (the guild lead, 2026-10-08: "this needs to be tracked",
+  // eqprogression.com/the-binden-concerrentia-quest-guide). Hand-ins and rewards are read off
+  // potranquility/Jimlok_Keylifter.lua, poknowledge/Tabben_Bromal.lua and potranquility/Elder_Clinka.lua; the
+  // combines are tradeskill recipes 9983, 9874 and 9980; the sources are the loot tables (eqemu_npc_drops).
+  { key: 'binden_small', section: 't1', who: 'group', title: 'Optional: the [[Small Clockwork Talisman#28284]] (The Binden Concerrentia, part 1)',
+    detail: 'Nobody in this chain checks a flag, a level or a phrase. Loot a [[Tiny Bottle and Note#28277]] from a festering rat in the Plane of Justice (10% a kill; they respawn in about 20 minutes) and give it to Jimlok Keylifter in the Plane of Tranquility for the [[Strange Jeweler’s Schematic#28278]]. Give that to Tabben Bromal in the Plane of Knowledge: he hands it back with a [[Small parts kit#17277]]. In the kit combine [[Creeping Silk Strands#28281]] (the piles of bile, goo and flesh in Disease, 8%), [[Congealed Bile-based Ooze#28282]] (virulent arachnids and hatchlings in Nightmare, 10%), [[Size C Spring#28280]] (corroded and erratic models in Innovation, 8%) and [[Tri-coated Metal Casing#28279]] (defective clockworks in Innovation, 8%) for a [[Sealed Parts Box#28283]]. Give that to Tabben for the Talisman and a [[Small Parts Container#17278]]; keep the container for part two. New over the source page: EQProgression has the silk and the ooze the wrong way round, so the ooze is Nightmare’s and the silk is Disease’s. The Talisman is already a gate (Talisman Gate, 5 charges), but part two uses it up.',
+    link: pqdiNpc(202151),
+    where: [L.jimlok, L.tabben] },
 
   // ── Tier two ──────────────────────────────────────────────────────────────
   // Nightmare B
@@ -557,6 +570,13 @@ const BASE_ITEMS: GuideItem[] = [
     link: popZone('solro') },
   { key: 'flag_solro', section: 't3', who: 'raid', must: true, flag: 'solro_dead', title: 'Kill Solusek Ro',
     detail: `${PROJECTION} Then drop into the lava pit in his chamber to reach the Plane of Fire.`, link: popZone('solro') },
+  // The Binden Concerrentia, part 2 (poknowledge/Tabben_Bromal.lua: "ready to write down" needs the Small Parts
+  // Container in your bags and only reads the parts out; the hand-in of the Locked Parts Box checks nothing else).
+  { key: 'binden_powered', section: 't3', who: 'group', title: 'Optional: the [[Powered Clockwork Talisman#28290]] (The Binden Concerrentia, part 2)',
+    detail: 'Needs the Small Clockwork Talisman and the Small Parts Container from part one. Gather a [[Crystalline Carapace#28286]] (Crystalline and Lucid Arachnae in the Plane of Valor, 8%), a [[Dense Hammered Casing#28285]] (the Diaku in the Plane of Tactics, 10%), a [[Fiery Power Source#28287]] (protectors and sentries of Ro and sun guardians in the Tower of Solusek Ro, 10%) and [[Strands of Living Chain#28288]] (the parylyx spiders in the Plane of Torment, 50%). In the container combine those four and the Small Clockwork Talisman for a [[Locked Parts Box#28289]], and give it to Tabben Bromal for the Powered Talisman (15 charges) and [[The Talisman Schematic#28291]]. Saying “ready to write down” to Tabben while you hold the container only makes him read the four parts out. New over the source page: the Tactics casing comes from Diaku, not ogres; the Valor drops are arachnae only; sun guardians drop the power source too; and the chain is 50%, not a sure drop.',
+    link: pqdiNpc(202151),
+    says: [{ to: 'Tabben Bromal', text: 'ready to write down' }],
+    where: [L.tabben] },
 
   // ── Elemental ─────────────────────────────────────────────────────────────
   { key: 'flag_fennin', section: 't4', who: 'raid', must: true, flag: 'fennin_dead', title: 'Kill Fennin Ro (Plane of Fire)',
@@ -583,6 +603,12 @@ const BASE_ITEMS: GuideItem[] = [
     link: pqdiNpc(202126),
     says: [{ to: 'Councilwoman Kerasha', text: 'essences of power' }],
     where: [L.kerasha] },
+  // The Binden Concerrentia, part 3 (potranquility/Elder_Clinka.lua; recipe 9980). The fragments are 8-9% trash
+  // drops: none is lore or no drop, which is why this has no loot call to make, unlike the essences above.
+  { key: 'binden_final', section: 't4', who: 'group', title: 'Optional: [[The Binden Concerrentia#28296]] (part 3)',
+    detail: 'Needs the Powered Clockwork Talisman and The Talisman Schematic from part two. Give the schematic to Elder Clinka in the Plane of Tranquility for a [[Small Lined Case#17279]]. In the case combine the Powered Talisman with [[A Living Fragment of Air#28292]] (the Temple Guardians in Air, 9%), [[A Living Fragment of Water#28293]] (the triloun in the Reef of Coirnav, 9%), [[A Living Fragment of Fire#28294]] (the jopal in Fire, 8%) and [[A Living Fragment of Earth#28295]] (the Vekerchiki and the Earthcrafted Assassins in Earth, 9%) for a [[Sealed Lined Case#28297]], and give that to Clinka for the Binden. New over the source page: the fragments drop from those mobs, not from mephits. Nothing here is lore or no drop, so unlike the essences there is no loot call: anyone can hold, trade or hand on a fragment. The Binden casts Talisman Gate with no charge limit; EQProgression says it lands you on the good side of the Plane of Knowledge, which our data cannot confirm.',
+    link: pqdiNpc(203405),
+    where: [L.clinka] },
 
   // ── Time ──────────────────────────────────────────────────────────────────
   { key: 'time_vial', section: 'time', who: 'solo', title: 'Optional: craft an [[Odylic Vial#17186]]',
@@ -638,6 +664,9 @@ const TRANQ = 'potranquility/player.lua';        // the Tranquility portals set 
 const SOLRO_PLAYER = 'solrotower/player.lua';
 const FUIRSTEL = 'potranquility/Elder_Fuirstel.lua';
 const KERASHA = 'poknowledge/Councilwoman_Kerasha.lua';
+const JIMLOK = 'potranquility/Jimlok_Keylifter.lua';
+const TABBEN = 'poknowledge/Tabben_Bromal.lua';
+const CLINKA = 'potranquility/Elder_Clinka.lua';
 const TORMENT_PORTAL = 'the Torment portal in the Plane of Tranquility';
 const TORMENT_PORTAL_TEXT = 'Click it once both Elders have answered (your Fuirstel flag at 5 and your Thelin flag at 4): that click sets the Torment zone flag.';
 const SHARD = I('Dagger Blade Shard', 9258);
@@ -834,6 +863,29 @@ const SEQ: Record<string, Act[]> = {
     get('ponightmare/Aid_Eino.lua', { items: [I('Strand of Nightmare', 16261)], text: 'loot it' }),
     give('Aid Eino', [I('Strand of Nightmare', 16261)], 'ponightmare/Aid_Eino.lua', 'when he asks for it at the Tranquility portal'),
     get('ponightmare/Aid_Eino.lua', { items: [FIST], text: '100,000 experience' }),
+  ],
+
+  // The Binden Concerrentia (potranquility/Jimlok_Keylifter.lua, poknowledge/Tabben_Bromal.lua, potranquility/
+  // Elder_Clinka.lua). All trades: no script here tests a flag or a level, and the story phrases are flavour.
+  binden_small: [
+    note('Nobody here checks a flag or a level. Loot the Tiny Bottle and Note from a festering rat in the Plane of Justice.', JIMLOK, [I('Tiny Bottle and Note', 28277)]),
+    give('Jimlok Keylifter', [I('Tiny Bottle and Note', 28277)], JIMLOK), get(JIMLOK, { items: [I('Strange Jeweler’s Schematic', 28278)] }),
+    give('Tabben Bromal', [I('Strange Jeweler’s Schematic', 28278)], TABBEN),
+    get(TABBEN, { items: [I('Small parts kit', 17277), I('Strange Jeweler’s Schematic', 28278)], text: 'he hands the schematic back' }),
+    click('Combine', TABBEN, { text: 'in the Small parts kit', items: [I('Creeping Silk Strands', 28281), I('Congealed Bile-based Ooze', 28282), I('Size C Spring', 28280), I('Tri-coated Metal Casing', 28279)] }),
+    get(TABBEN, { items: [I('Sealed Parts Box', 28283)] }),
+    give('Tabben Bromal', [I('Sealed Parts Box', 28283)], TABBEN),
+    get(TABBEN, { items: [I('Small Clockwork Talisman', 28284), I('Small Parts Container', 17278)] }),
+  ],
+  // "ready to write down" needs the Small Parts Container (HasItem 17278) and only has him read the parts out.
+  binden_powered: [
+    note('Keep the Small Parts Container from part one, and the Small Clockwork Talisman: the combine uses it up.', TABBEN, [I('Small Parts Container', 17278), I('Small Clockwork Talisman', 28284)]),
+    say('Tabben Bromal', 'ready to write down', TABBEN),
+    note('Optional: with the container in your bags he only reads the four parts out. The hand-in below needs no phrase.', TABBEN),
+    click('Combine', TABBEN, { text: 'in the Small Parts Container', items: [I('Dense Hammered Casing', 28285), I('Crystalline Carapace', 28286), I('Fiery Power Source', 28287), I('Strands of Living Chain', 28288), I('Small Clockwork Talisman', 28284)] }),
+    get(TABBEN, { items: [I('Locked Parts Box', 28289)] }),
+    give('Tabben Bromal', [I('Locked Parts Box', 28289)], TABBEN),
+    get(TABBEN, { items: [I('Powered Clockwork Talisman', 28290), I('The Talisman Schematic', 28291)] }),
   ],
 
   // ── Tier two ──
@@ -1052,6 +1104,14 @@ const SEQ: Record<string, Act[]> = {
     give('Councilwoman Kerasha', [I('Power of the Planes', 16266)], KERASHA), get(KERASHA, { items: [I('Jade Hoop of Speed', 32106)] }),
     give('Councilwoman Kerasha', [I('Jade Hoop of Speed', 32106), I('Frizzniks Endless Coin Purse', 17209), I('Cord of Invigoration', 32107), I('Mace of the Ancients', 32108), I('Ring of Farsight', 32109)], KERASHA, 'to change the reward, hand back the one you hold'),
     get(KERASHA, { items: [I('Frizzniks Endless Coin Purse', 17209), I('Cord of Invigoration', 32107), I('Mace of the Ancients', 32108), I('Ring of Farsight', 32109), I('Jade Hoop of Speed', 32106)], text: 'the next one, in that order (each hand-back gives the next)' }),
+  ],
+  // The Binden Concerrentia, part 3 (potranquility/Elder_Clinka.lua). Her story lines have no keywords.
+  binden_final: [
+    note('Keep the Powered Clockwork Talisman and The Talisman Schematic from part two. Elder Clinka checks no flag.', CLINKA, [I('Powered Clockwork Talisman', 28290), I('The Talisman Schematic', 28291)]),
+    give('Elder Clinka', [I('The Talisman Schematic', 28291)], CLINKA), get(CLINKA, { items: [I('Small Lined Case', 17279)] }),
+    click('Combine', CLINKA, { text: 'in the Small Lined Case', items: [I('A Living Fragment of Air', 28292), I('A Living Fragment of Earth', 28295), I('A Living Fragment of Fire', 28294), I('A Living Fragment of Water', 28293), I('Powered Clockwork Talisman', 28290)] }),
+    get(CLINKA, { items: [I('Sealed Lined Case', 28297)] }),
+    give('Elder Clinka', [I('Sealed Lined Case', 28297)], CLINKA), get(CLINKA, { items: [I('The Binden Concerrentia', 28296)] }),
   ],
 
   // ── Time ──

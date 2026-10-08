@@ -225,6 +225,83 @@ describe('Essences of Power reads the way the server works', () => {
   });
 });
 
+// The Binden Concerrentia (the guild lead, 2026-10-08: "this needs to be tracked",
+// eqprogression.com/the-binden-concerrentia-quest-guide). Checked against the server: potranquility/
+// Jimlok_Keylifter.lua, poknowledge/Tabben_Bromal.lua, potranquility/Elder_Clinka.lua (all trades, no flag or
+// level test anywhere), tradeskill recipes 9983 / 9874 / 9980, and eqemu_npc_drops for every part.
+describe('The Binden Concerrentia reads the way the server works', () => {
+  const step = (k) => GUIDE_ITEMS.find(i => i.key === k);
+  const ids = (t) => splitItems(t ?? '').filter(p => 'item' in p).map(p => p.item.id);
+  const trade = (k) => step(k).seq.filter(a => a.kind === 'give' || a.kind === 'get').map(a => [a.kind, a.to ?? '', (a.items ?? []).map(t => Number(/#(\d+)\]\]/.exec(t)[1]))]);
+  it('part one: bottle to Jimlok, schematic to Tabben, the four parts in his kit, then the box', () => {
+    const s = step('binden_small');
+    expect(s.section).toBe('t1');
+    expect(s.where.map(l => [l.npc, l.zone, l.y, l.x])).toEqual([
+      ['Jimlok Keylifter', 'potranquility', -540, -1388], ['Tabben Bromal', 'poknowledge', -391, 540]]);
+    expect(ids(s.title)).toEqual([28284]);
+    // Bottle, schematic, kit, silk, ooze, spring, casing, the box, the container.
+    expect(ids(s.detail)).toEqual([28277, 28278, 17277, 28281, 28282, 28280, 28279, 28283, 17278]);
+    expect(trade('binden_small')).toEqual([
+      ['give', 'Jimlok Keylifter', [28277]], ['get', '', [28278]],
+      ['give', 'Tabben Bromal', [28278]], ['get', '', [17277, 28278]],
+      ['get', '', [28283]],
+      ['give', 'Tabben Bromal', [28283]], ['get', '', [28284, 17278]],
+    ]);
+    expect(s.says).toBeUndefined();   // every hand-in is a trade: no phrase is needed
+  });
+  it('part one, new over the source: the silk is Disease’s and the ooze is Nightmare’s (EQProgression swaps them)', () => {
+    const d = step('binden_small').detail;
+    expect(d).toMatch(/Creeping Silk Strands#28281\]\] \(the piles of bile, goo and flesh in Disease, 8%\)/);
+    expect(d).toMatch(/Congealed Bile-based Ooze#28282\]\] \(virulent arachnids and hatchlings in Nightmare, 10%\)/);
+    expect(d).toMatch(/silk and the ooze the wrong way round/);
+    expect(d).toMatch(/Nobody in this chain checks a flag, a level or a phrase/);
+    expect(d).toMatch(/about 20 minutes/);
+  });
+  it('part two: four parts and the first talisman in the container, one box to Tabben, two things back', () => {
+    const s = step('binden_powered');
+    expect(s.section).toBe('t3');
+    expect(s.says.map(x => x.text)).toEqual(['ready to write down']);
+    expect(s.where.map(l => [l.npc, l.y, l.x])).toEqual([['Tabben Bromal', -391, 540]]);
+    expect(ids(s.title)).toEqual([28290]);
+    expect(ids(s.detail)).toEqual([28286, 28285, 28287, 28288, 28289, 28291]);
+    expect(trade('binden_powered')).toEqual([
+      ['get', '', [28289]], ['give', 'Tabben Bromal', [28289]], ['get', '', [28290, 28291]],
+    ]);
+    // The drops the source page gets wrong: Diaku not ogres, arachnae only, sun guardians too, 50% not always.
+    expect(s.detail).toMatch(/the Diaku in the Plane of Tactics, 10%/);
+    expect(s.detail).toMatch(/Crystalline and Lucid Arachnae in the Plane of Valor, 8%/);
+    expect(s.detail).toMatch(/sun guardians in the Tower of Solusek Ro, 10%/);
+    expect(s.detail).toMatch(/the parylyx spiders in the Plane of Torment, 50%/);
+    expect(s.detail).toMatch(/not ogres/);
+    expect(s.detail).toMatch(/only makes him read the four parts out/);
+  });
+  it('part three: the schematic for a case, four fragments and the Powered talisman in it, the Binden back', () => {
+    const s = step('binden_final');
+    expect(s.section).toBe('t4');
+    expect(s.where.map(l => [l.npc, l.zone, l.y, l.x])).toEqual([['Elder Clinka', 'potranquility', -384, -1271]]);
+    expect(ids(s.title)).toEqual([28296]);
+    // Case, then Air, Water, Fire, Earth, the sealed case.
+    expect(ids(s.detail)).toEqual([17279, 28292, 28293, 28294, 28295, 28297]);
+    expect(trade('binden_final')).toEqual([
+      ['give', 'Elder Clinka', [28291]], ['get', '', [17279]],
+      ['get', '', [28297]],
+      ['give', 'Elder Clinka', [28297]], ['get', '', [28296]],
+    ]);
+    expect(s.detail).toMatch(/not from mephits/);
+    expect(s.detail).toMatch(/no loot call/);
+    expect(s.detail).toMatch(/Temple Guardians in Air, 9%.*triloun in the Reef of Coirnav, 9%.*jopal in Fire, 8%/);
+    expect(s.detail).toMatch(/our data cannot confirm/);
+  });
+  it('the three parts keep their order on the page: tier one, tier three, the elemental planes', () => {
+    const at = (k) => GUIDE_ITEMS.findIndex(i => i.key === k);
+    expect(at('binden_small')).toBeLessThan(at('flag_tthule'));
+    expect(at('binden_powered')).toBeGreaterThan(at('flag_solro'));
+    expect(at('binden_powered')).toBeLessThan(at('flag_fennin'));
+    expect(at('binden_final')).toBeGreaterThan(at('essences_power'));
+    expect(at('binden_final')).toBeLessThan(at('time_vial'));
+  });
+});
+
 describe('the page and the table', () => {
   it('is members-only and reads only the viewer’s own characters', () => {
     const page = stripJs(read('web/app/pop/guide/page.tsx'));

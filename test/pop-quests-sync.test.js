@@ -142,7 +142,7 @@ describe('pop-quests.js is the generated copy of the web guide', () => {
       expect(q.detail, `${i.key}: detail must stay whole beside the brief`).toBe(bare(i.detail));
       expect(q.expect, i.key).toBe(STEP_MORE[i.key].expect ? bare(STEP_MORE[i.key].expect) : undefined);
     }
-    expect(n).toBe(23);
+    expect(n).toBe(26);
   });
 
   it('turns [[Item#id]] tokens into the bare item name, everywhere', () => {

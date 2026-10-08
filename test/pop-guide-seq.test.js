@@ -60,6 +60,7 @@ const KW = {
   'poknowledge/Curator_Merri.lua': ['hail', 'artifacts', 'special items', "collector's box", 'collectors box'],
   'poknowledge/Grand_Librarian_Maelin.lua': ['hail', 'lore', 'information'],
   'poknowledge/Sage_Balic.lua': ['hail', 'your research', 'continue', 'their research', 'froglok', 'magical mask'],
+  'poknowledge/Tabben_Bromal.lua': ['hail', 'ready to write down'],
   'poknowledge/Seer_Mal_Nae-Shi.lua': ['hail', 'guided meditation', 'unlock', 'memories'],
   'poknowledge/Soulbinder_Jera.lua': ['hail', 'bind my soul'],
   'poknowledge/Tarerd_Gahar.lua': ['hail', 'pool', 'from me'],
@@ -114,6 +115,7 @@ const SCRIPTS = new Set([
   'powater/encounters/Coirnav.lua', 'solrotower/#Rizlona.lua', 'solrotower/Arlyxir.lua', 'solrotower/Guardian_of_Dresolik.lua',
   'solrotower/Jiva.lua', 'solrotower/Rizlona.lua', 'solrotower/Solusek_Ro.lua', 'solrotower/The_Protector_of_Dresolik.lua',
   'solrotower/Xuzl.lua', 'solrotower/player.lua',
+  'potranquility/Jimlok_Keylifter.lua', 'potranquility/Elder_Clinka.lua',
   // The six Justice trials (a part's kill and its Mark are cited to the script that spawns the boss).
   'pojustice/encounters/BurningTrial.lua', 'pojustice/encounters/ExecutionTrial.lua', 'pojustice/encounters/HangingTrial.lua',
   'pojustice/encounters/LashingTrial.lua', 'pojustice/encounters/StoningTrial.lua', 'pojustice/encounters/TortureTrial.lua',
@@ -147,6 +149,14 @@ const ITEMS = {
   32019: "Sage's Apprentice Cap", 32020: 'Twisted Talisman', 32021: 'Three Ringed Hoop', 32022: 'Joined Signet',
   32023: "Apprentice's Notebook", 32106: 'Jade Hoop of Speed', 32107: 'Cord of Invigoration', 32108: 'Mace of the Ancients',
   32109: 'Ring of Farsight', 32111: 'Essence of Earth',
+  // The Binden Concerrentia (eqemu_items, 2026-10-08).
+  17277: 'Small parts kit', 17278: 'Small Parts Container', 17279: 'Small Lined Case', 28277: 'Tiny Bottle and Note',
+  28278: "Strange Jeweler's Schematic", 28279: 'Tri-coated Metal Casing', 28280: 'Size C Spring', 28281: 'Creeping Silk Strands',
+  28282: 'Congealed Bile-based Ooze', 28283: 'Sealed Parts Box', 28284: 'Small Clockwork Talisman', 28285: 'Dense Hammered Casing',
+  28286: 'Crystalline Carapace', 28287: 'Fiery Power Source', 28288: 'Strands of Living Chain', 28289: 'Locked Parts Box',
+  28290: 'Powered Clockwork Talisman', 28291: 'The Talisman Schematic', 28292: 'A Living Fragment of Air',
+  28293: 'A Living Fragment of Water', 28294: 'A Living Fragment of Fire', 28295: 'A Living Fragment of Earth',
+  28296: 'The Binden Concerrentia', 28297: 'Sealed Lined Case',
 };
 const noApos = (s) => s.replace(/[’']/g, '');
 const TOKEN = /^\[\[([^\]#]+)#(\d+)\]\]$/;
@@ -174,7 +184,7 @@ describe('the coverage: every step with words, a hand-in or a hail has an ordere
   });
 
   it('every seq sits on a real step (a typo in the table would silently attach to nothing)', () => {
-    expect(withSeq.length).toBe(65);
+    expect(withSeq.length).toBe(68);
     for (const i of withSeq) expect(i.seq.length, i.key).toBeGreaterThan(0);
   });
 
@@ -207,7 +217,7 @@ describe('every act: a kind, a script it was read from, and the words the script
   const acts = withSeq.flatMap(i => i.seq.map((a, n) => ({ key: i.key, n, a })));
 
   it('has a known kind, a src that is a real script, and the fields its kind needs', () => {
-    expect(acts.length).toBe(313);
+    expect(acts.length).toBe(336);
     for (const { key, n, a } of acts) {
       const at = `${key}[${n}] ${a.kind}`;
       expect(KINDS, at).toContain(a.kind);

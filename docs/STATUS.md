@@ -717,6 +717,9 @@ next touch one rather than assuming a missing row means a missing doc.
   `deploymentEnabled`. Web 1.8.53 also keeps a `/pop` link's query through sign-in. §101.
 - **⏳ Command Center 📋 on deathrolls (agent 3.7.47, Mimic beta `013e2e0c`) · Target Info even con = your
   level for a player (agent 3.7.48, beta `386cfc99`), 2026-09-29.** §97, §98 (reverses part of §15).
+- **✅ PoP checklist: The Binden Concerrentia (web 1.8.118, main 2026-10-08).** Three optional steps (the
+  Small, then Powered Clockwork Talisman, then the Binden), read off the three NPC scripts; eight corrections
+  over EQProgression's page, auto-fill from held items. DECISIONS §191.
 - **✅ PoP checklist: Essences of Power (web 1.8.49, main 2026-09-29).** Part 1, the Nightmare escort for
   the Tiny Gold Fist, one Fist per run (tier one); part 2, the four elemental essences in Kerasha's Sacred Bowl
   for the Jade Hoop and the four other rewards she cycles through (elemental planes). Checked against the
