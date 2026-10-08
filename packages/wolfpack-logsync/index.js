@@ -47453,6 +47453,11 @@ const _CALLOUT_ALLOW_CATEGORIES = [
   // call out" on `Guard Sklinus has become ENRAGED.`). Whole word only: a loose
   // /rage/ would wake "average" and "storage" back up.
   { cat: 'enrage',     rx: /\benrage[ds]?\b/i },
+  // Feign Death failing is a death sentence for the monk / necro / shadow knight who rolled it, and the
+  // guild's "Feign Death Fail" trigger ("FD FAIL" / "FD failure") matched none of the words above, so
+  // it rendered and stayed silent (the guild lead, 2026-10-08: "fd FAILURE callout needs to go off for a
+  // monk, it's critical"). "FD" alone stays out: a bare \bFD\b would also wake "FD ready" style chatter.
+  { cat: 'feign',      rx: /\bfeign(?:ed|ing)?\b|\bFD\s*(?:fail(?:s|ed|ure)?)\b/i },
   // Boss-mechanic countdowns already curated in the built-ins — keep audible
   // even when a guild trigger drives them (e.g. a voice-mark sequence).
   { cat: 'mechanic',   rx: /\bbuster\b|tank\s*buster|\baoe\b|\bdance\b|\brampage\b|\bch\s*go\b|\bloot\b/i },
