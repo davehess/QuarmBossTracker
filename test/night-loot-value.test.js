@@ -7,7 +7,8 @@
 // branch sliced out and run against test/_cap_fake_supabase.js (which enforces PostgREST's silent 1,000-row
 // cap, so "totals cover the whole window" is proven on fixtures past the cap, not on ten rows).
 //
-// Prices are eqemu_items.price in COPPER; nodrop = true is NO DROP. Names are invented fixtures.
+// Prices are eqemu_items.price in COPPER; the output's nodrop = true is NO DROP (the mirror column is inverted,
+// see itemRow). Names are invented fixtures.
 //
 // Run: npx vitest run test/night-loot-value.test.js
 
@@ -32,7 +33,8 @@ const { _nightLootPanelBody } = evalBlock('const require = globalThis.__nightLoo
 let nextId = 1;
 const lootRow = (looter, item, ago, zone = 'The Overthere') =>
   ({ id: nextId++, guild_id: GUILD, looter_character: looter, item_name: item, zone, looted_at: iso(ago) });
-const itemRow = (id, name, price, nodrop = true) => ({ id, name, price, nodrop });
+// `noDrop` is the meaning (true = NO DROP); the mirror's column is INVERTED (false = NO DROP), so that is what is stored.
+const itemRow = (id, name, price, noDrop = true) => ({ id, name, price, nodrop: !noDrop });
 
 beforeEach(() => { _resetPriceCache(); nextId = 1; });
 

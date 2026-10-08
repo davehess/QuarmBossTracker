@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'missing-spells-names-2026-10-08',
+    title: 'Songs you already know stop showing as missing',
+    version: 'Web 1.8.123 · Bot 3.1.227',
+    date: '2026-10-08',
+    headline: 'The missing-spells list and shopping list no longer ask a bard to buy songs they already have.',
+    features: [],
+    fixes: [
+      'Fixed songs and spells you already know showing as missing when their name has an apostrophe, such as Angstlich’s Assonance and Kazumi’s Note of Preservation. Names are now compared without punctuation, and a few scrolls that are named differently from their spell (Kazumi’s, Katta’s, Selo’s and others) are matched by hand.',
+      'Fixed the loot page and the Loot tab marking tradeable items NO DROP while real NO DROP items went unmarked. The tag was backwards.',
+    ],
+  },
+  {
     key: 'admin-loot-2026-10-08',
     title: 'Loot by value (officers)',
     version: 'Web 1.8.122',
