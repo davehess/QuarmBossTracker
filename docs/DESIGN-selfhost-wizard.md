@@ -548,6 +548,15 @@ and the same never-refetch guarantee.
   snapshot.
 - Local mode (no token) sends nothing to the guild server, so an install can be handed to
   people outside the guild. eqmimic.quest is ours; the wizard should not assume it.
+- **2026-10-08 — anonymous feedback lives on a second domain served by the same web deployment**
+  (`DECISIONS-2026-09-21.md` §192): `eqmimic.quest` is a domain on our Vercel project; middleware sends every
+  path on that host to one form and the layout drops our chrome there. Reports land in `anon_feedback`
+  (AFB-n, service role only), cleaned before storage; a salted IP hash is kept one day for a 5/hour limit
+  (needs `ANON_FEEDBACK_SALT` or `DEMO_OBFUSCATE_SALT` in BOTH Production and Preview). For the wizard: the
+  second domain is optional; a guild without one can serve the same page under `/eqmimic/feedback`.
+- **2026-10-08 — members read their own reports on the site** (§193): `/feedback/FB-n` for the submitter
+  and officers, replies in `feedback_replies` relayed by the bot to the officer card, and a Monday
+  count-only AFB line latched in `bot_kv` (`afb_weekly_digest`). Small rows, no pruning needed on any tier.
 
 ## 4. Open questions for whoever builds it
 
@@ -584,6 +593,26 @@ and the same never-refetch guarantee.
   config AND keeps the compiled pattern, so a mis-set name cannot switch a
   protection off. The wizard verifies the name it wrote matches the pattern it
   compiled.
+- **2026-10-07 — the bot provisions its own Discord layout; the anchors live in
+  `bot_kv`, not in a file the deployer must fill.** `GUILD_PROVISION=auto` (the
+  default) reports on a hand-configured server and creates on a virgin one
+  (`utils/discordProvisioner.js`, bot 3.1.215); `/setup discord` and
+  `scripts/provision-discord.js` run it on demand. Storage cost: two `bot_kv`
+  rows (`discord_anchors` + a lease), no new table. The wizard therefore asks
+  for a bot token and a server, not for thirty ids — but it must apply the
+  database migrations BEFORE the first boot, or auto resolves to report and
+  builds nothing (the `[provision]` line then says `kv=unknown`).
+- **2026-10-07 — a tenant's deployment is identified by its guild TAG.** Every
+  REST filter follows `SUPABASE_GUILD_ID` (encoded), Mimic's character-prefs
+  routes included, and the Wolf Pack one-shot announcers run only when the tag
+  is `wolfpack` (`ANNOUNCE_UPSTREAM_ONESHOTS` overrides). The wizard writes the
+  tag once, into `guild/config.json` `guild.tag`, and nothing else needs
+  switching off.
+- **2026-10-07 — Bristlebane (the raid voice bot) reads the same `guild/discord.json`.**
+  In Docker the file is mounted and named with `BRISTLEBANE_GUILD_FILE`; a
+  mistyped host path mounts a directory and the log says `EISDIR` instead of
+  staying silent. Ids are strings in the file (a bare number above 2^53 is
+  refused, since JSON already rounded it).
 - **2026-09-18 — wizard shape: a CLI engine (picked by the guild lead the same
   day, with fork as the default repo shape, palette as a semantic set, and the
   hosted path stubbed to "talk to us").**

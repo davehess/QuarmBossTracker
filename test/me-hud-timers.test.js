@@ -49,7 +49,7 @@ const slainRx = agent.match(/const _SLAIN_BY_RX {2}= [^\n]+/)[0] + '\n' + agent.
 const EXPORTS = ['_serializeMeState', '_meNoteRawLine', '_meTick', '_meSwingState', '_meHands', '_meSwings',
   '_meCooldowns', '_meDisc', '_meDiscReuseSecs', '_meTargetExtras', '_discReadyAt', '_mobInfoByName', '_zealState',
   '_meNoteHit', '_meMobTallies', '_npcHtFor', '_meNoteCastFailed', '_tickEnrageWarn', '_meNoteMobDeath', '_dsKindOf', '_meClickies', '_noteClickyUse',
-  '_noteClickyRecharged',
+  '_noteClickyRecharged', '_noteClickyOutcomeLine',
   '_xpNoteRawLine', '_xpPending', '_xpFlush',
   'noteSelfCast', 'resolveSelfCastLanding', '_meNoteMyLanding', '_provableTargetId'];
 
@@ -67,6 +67,7 @@ function load({ zeal = {}, victim = null, dsKnown = 0, player = null, spells = [
     const stats = { currentEncounterThreat: null, characterInventories: globalThis.__invs || {} };
     const _itemClickyByNameLower = globalThis.__clk || new Map();
     function _quarmyLocalItems() { return globalThis.__quarmy || null; }
+    ${sliceBlock(agent, 'function _spellNameById(id) {', '\n}')}
     const _blindState = {};
     function normalizeClass(s) { return s ? String(s).trim() : s; }
     ${failRx}
@@ -840,6 +841,70 @@ describe('clicky counters', () => {
 
   it('no export, no counters', () => {
     expect(load()._meClickies('Aldenmar')).toEqual([]);
+  });
+
+  // FB-68 (a member, 2026-10-08: "Resists need to also knock down the number of available charges left, not just
+  // successes"; the guild lead: "the root click is not invisible, it will show a resist or it will show that the mob
+  // adheres to the ground"). A clicky with no cast time prints no "begins to glow", so the glow counter never saw it.
+  describe('a clicky with no cast time counts by its outcome (FB-68)', () => {
+    const NET = 'Wooly Spider Silk Net';
+    const spells = [{ id: 230, name: 'Root', other: ' adheres to the ground.', good: 0, cc: ['root'] }];
+    const net = (casttime = 0) => {
+      globalThis.__invs = { Aldenmar: { _updatedAt: new Date(fileAt).toISOString(), items: [
+        { loc: 'General6-Slot5', name: NET, count: 3 }] } };
+      globalThis.__clk = new Map([[NET.toLowerCase(), { name: NET, clickeffect: 230, maxcharges: 3, casttime }]]);
+    };
+    const target = (name) => ({ Aldenmar: { target_name: name } });
+    const at = fileAt + 3_600_000;
+    const line = (msg) => ts(at) + msg;
+    const left = (h) => (h._meClickies('Aldenmar').find(c => c.name === NET) || {}).left;
+
+    it('a resisted click spends a charge', () => {
+      net();
+      const h = load({ spells });
+      expect(left(h)).toBe(3);
+      expect(h._noteClickyOutcomeLine('Aldenmar', line('Your target resisted the Root spell.'), at)).toBe(true);
+      expect(h._noteClickyOutcomeLine('Aldenmar', line('Your target resisted the Root spell.'), at + 1000)).toBe(true);   // the report: two in a row
+      expect(left(h)).toBe(1);
+    });
+
+    it('a landing on YOUR target spends one; the same words on another mob do not', () => {
+      net();
+      const h = load({ spells, zeal: target('a Stampeding Piglet') });
+      expect(h._noteClickyOutcomeLine('Aldenmar', line('A Stampeding Piglet adheres to the ground.'), at)).toBe(true);
+      expect(h._noteClickyOutcomeLine('Aldenmar', line('A boar beast adheres to the ground.'), at + 500)).toBe(false);
+      expect(left(h)).toBe(2);
+    });
+
+    it('a landing with no target known is not guessed at', () => {
+      net();
+      const h = load({ spells });
+      expect(h._noteClickyOutcomeLine('Aldenmar', line('A Stampeding Piglet adheres to the ground.'), at)).toBe(false);
+      expect(left(h)).toBe(3);
+    });
+
+    it('a Root the member began casting by hand is not a click', () => {
+      net();
+      const h = load({ spells, zeal: target('a Stampeding Piglet') });
+      h._noteClickyOutcomeLine('Aldenmar', line('You begin casting Root.'), at);
+      expect(h._noteClickyOutcomeLine('Aldenmar', line('Your target resisted the Root spell.'), at + 2000)).toBe(false);
+      expect(h._noteClickyOutcomeLine('Aldenmar', line('A Stampeding Piglet adheres to the ground.'), at + 3000)).toBe(false);
+      expect(left(h)).toBe(3);
+    });
+
+    it('the log-line handler feeds every line that is not a glow line to it', () => {
+      expect(stripJs(agent)).toMatch(/if \(!m && b\.character\) \{\s*try \{ _noteClickyOutcomeLine\(b\.character, line,/);
+    });
+
+    it('another spell resisting is not this clicky; a clicky WITH a cast time is left to its glow line', () => {
+      net();
+      const h = load({ spells });
+      expect(h._noteClickyOutcomeLine('Aldenmar', line('Your target resisted the Stun spell.'), at)).toBe(false);
+      net(3000);
+      const g = load({ spells });
+      expect(g._noteClickyOutcomeLine('Aldenmar', line('Your target resisted the Root spell.'), at)).toBe(false);
+      expect(left(g)).toBe(3);
+    });
   });
 
   // The guild lead, 2026-10-02: "quarmy has the charges per item".

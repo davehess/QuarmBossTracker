@@ -374,7 +374,7 @@ function requestReason(finding, candidate) {
  * quietly duplicate an officer's manual filing for the same fight.
  */
 function buildRequestRows(findings, opts = {}) {
-  const guildId   = opts.guildId || 'wolfpack';
+  const guildId   = opts.guildId || require('./supabase').guildId();
   const byName    = opts.requestedByName || 'Wolf Pack parse check';
   const byId      = opts.requestedByDiscordId || null;
   const perFind   = opts.maxPerFinding != null ? opts.maxPerFinding : MAX_ASKS_PER_FINDING;

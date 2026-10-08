@@ -92,3 +92,41 @@ describe('#136 allow-list: the existing categories are intact', () => {
     expect(_calloutAllowedToSpeak(t)).toBe(true);
   });
 });
+
+describe('#136 allow-list: Feign Death failing speaks (the guild lead, 2026-10-08)', () => {
+  // "fd FAILURE callout needs to go off for a monk, it's critical." The live guild trigger is named
+  // "Feign Death Fail" with text "FD FAIL" and speech "FD failure"; none of those words were on the list.
+  const FD_FAIL = {
+    name: 'Feign Death Fail',
+    actions: [
+      { type: 'text_overlay', text: 'FD FAIL', color: 'red', duration_ms: 5000 },
+      { type: 'tts', text: 'FD failure' },
+    ],
+  };
+  it('the live "Feign Death Fail" trigger is allowed to speak', () => {
+    expect(_calloutAllowedToSpeak(FD_FAIL)).toBe(true);
+  });
+  it.each([
+    ['named only in its speech', { name: 'Pull helper', actions: [{ type: 'tts', text: 'FD failure' }] }],
+    ['named only in its overlay', { name: 'Pull helper', actions: [{ type: 'text_overlay', text: 'FD FAILED' }] }],
+    ['feigned', { name: 'Necro feigned', actions: [] }],
+  ])('%s', (_label, t) => {
+    expect(_calloutAllowedToSpeak(t)).toBe(true);
+  });
+  it('a bare FD mention (FD ready) stays muted', () => {
+    expect(_calloutAllowedToSpeak({ name: 'FD ready', actions: [{ type: 'tts', text: 'FD ready' }] })).toBe(false);
+  });
+});
+
+describe('#136 allow-list: the Plane of Tactics stampede callout speaks (2026-10-08)', () => {
+  // The guild trigger "Tactics: boar stampede incoming" speaks "Stampede"; before this it was muted.
+  it('the live stampede trigger is allowed to speak', () => {
+    expect(_calloutAllowedToSpeak({
+      name: 'Tactics: boar stampede incoming',
+      actions: [{ type: 'text_overlay', text: 'STAMPEDE: about 30 boars and a piglet run out from 1200, -300 in ~15 s' }, { type: 'tts', text: 'Stampede' }],
+    })).toBe(true);
+  });
+  it('a word that merely contains it stays muted', () => {
+    expect(_calloutAllowedToSpeak({ name: 'Stampeded herd note', actions: [] })).toBe(false);
+  });
+});

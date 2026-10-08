@@ -296,9 +296,19 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   version is a Raids card (`raidsNoteHtml` in `apps/mimic/command.html`): one row per raid with the
   leader and player count, yours first, totals in the collapsible header (§136). The Command Center's guild-wide priest
   mana keeps to this Mimic's raid window while two raids run (`_noteRaidSplit` / `_raidSplitNow`).
-- **Not split yet:** attendance ticks, the trigger relay, `/buffs`, the signup comp matcher, the essence
+- **Not split yet:** attendance ticks, `/buffs`, the signup comp matcher, the essence
   queue, the `dedup_roster` election (§124 lists them).
-- **Tests:** `test/raid-groups.test.js` (both copies, parity), `test/raid-split-agent.test.js` (beta).
+- **Raid, else group, else zone (bot 3.1.222, §189):** `utils/groupScope.js` is the one rule for the trigger relay
+  and Extended Target. The relay no longer keeps everything guild-wide for the raid evening: a listener in a raid
+  (live roster) hears the raid, with two raids a sender stamped `origin_raid` of the other one is dropped; a
+  listener not in one hears their GROUP (heartbeat `group_names` against the fire's `origin_group`), else the
+  same-zone rule. Extended Target keeps a grouped, raidless player to their group (`scope: 'group'`, no main
+  assist). `flag_disable_groupscope=1` restores the old behaviour. The agent sends `group_names` from 3.7.103
+  (`_heartbeatGroupNames`, beta). In a raid, the overlay's **Raid | Group** switch (`extarget.html`, localStorage
+  `wp_ext_scope`, sent as `?scope=group`) has the agent keep only your raid group's rows (`scope: 'raid_group'`;
+  groups 1..12, group 0 = ungrouped → Zeal group window), agent 3.7.104.
+- **Tests:** `test/raid-groups.test.js` (both copies, parity), `test/raid-split-agent.test.js` (beta),
+  `test/group-scope.test.js` (the raid/group/zone scoping, end to end).
 
 ### Loot tab: who looted what, last 12 hours (bot 3.1.192 · agent 3.7.73 beta, 2026-10-03)
 - **Bot:** server-panel key `night-loot` (`_nightLootPanelBody` in `index.js`, `buildNightLootPanel` +
@@ -426,10 +436,11 @@ Kills arrive via `/kill`-family commands or agent `bosskill` uploads
 (instance kills auto-start timers). **Only our own kills start a timer from a fight upload (bot 3.1.207,
 §165):** `utils/killContext.js` sorts a confirmed kill into ours / pvp / live / unknown (PvP "(Instanced)"
 broadcast or a PvP flag → pvp; guild share under half of 3+, or another guild on a /who one of the fighters
-took → live; 1–2 fighters with nothing else → unknown), decided post-ack in `_decideKillDeferred` (index.js;
-150 s wait in Hate/Fear/Sky/Hole). pvp/live set `encounters.classification` (`classification_by = 'auto'`,
-never over an officer's mark), and the restart re-seed `latest_kill_per_npc` reads only unclassified,
-finished kills with 3+ players. `#raid-mobs` holds four fixed message
+took → live; 1–2 fighters all on the roster → ours, else unknown — bot 3.1.224, §194), decided post-ack in
+`_decideKillDeferred` (index.js; 150 s wait in Hate/Fear/Sky/Hole). The fighters are this upload's list plus
+every name the merged `encounter_players` already holds. pvp/live set `encounters.classification`
+(`classification_by = 'auto'`, never over an officer's mark), and the restart re-seed `latest_kill_per_npc`
+reads only unclassified, finished kills with 3+ players or 1–2 all on the roster (migration `20261008160000`). `#raid-mobs` holds four fixed message
 slots + one thread per expansion (cooldown card, zone kill cards, board
 panels) — all **edited in place** by message id; anchor ids resolve
 `process.env.<KEY>` → `state.channelSlots` → null so they survive volume
@@ -967,6 +978,19 @@ offering it on "add a dark mode" collects data we asked for and do not need.
 would otherwise wipe a half-typed report.
 Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.test.js` (bot).
 
+### Anonymous feedback (AFB) and the My report page (web 1.8.119 · bot 3.1.223 · agent 3.7.107, 2026-10-08)
+- **Signed out:** the dashboard card's button opens `https://eqmimic.quest/feedback#…` (fragment only). That host
+  is our Vercel project; `web/middleware.ts` + `web/lib/eqmimicHost.ts` route every path there to
+  `web/app/eqmimic/feedback`, `web/app/layout.tsx` drops the chrome. The action cleans with
+  `web/lib/anonFeedbackClean.ts`, rate-limits by a one-day salted hash, writes `anon_feedback` (AFB-n).
+  Officers: `/admin/feedback/anonymous`. Mimic's `open-external` allowlist admits only that one page. §192.
+- **Signed in:** `/feedback/FB-n` (`web/app/feedback/[ref]`, rules in `web/lib/feedbackReport.ts`) for the
+  submitter and officers; replies in `feedback_replies`, relayed by `_feedbackRelayReplies` (index.js) to the
+  card; the status DM links the page. Weekly count-only AFB line: `_afbWeeklyDigest` + `utils/afbDigest.js`. §193.
+- Tests: `test/anon-feedback-clean.test.js`, `test/anon-feedback-surface.test.js`,
+  `test/feedback-replies.test.js`, `test/afb-digest.test.js`, `test/dashboard-feedback-anon-web.test.js` (beta),
+  `test/mimic-open-external-eqmimic.test.js` (beta).
+
 ### Mimic robustness: tray, config, alert speed, Settings drafts (agent 3.7.27, 2026-09-26)
 - **Tray** (`apps/mimic/main.js` createTray / buildTrayMenu): on Windows/macOS, right-click builds
   the menu and `tray.popUpContextMenu` shows it; only Linux uses `setContextMenu`. ⚠ Do not go back to
@@ -984,6 +1008,18 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   line; `charm.html`'s `waitCharmFires` long-polls the same route and speaks it (250 ms floor after a
   fast empty answer), `triggers.html` `fire()` skips it, and the deferred Charm-overlay call is
   skipped for 8 s after (`_instantCalled`). `DECISIONS-2026-09-21.md` §59c.
+- **Overlays without the graphics card** (Mimic beta, 2026-10-08, §195): `cfg.disableGpu` (default off) is
+  read straight off disk before app-ready (`_gpuOffAtStart` in `main.js`) and calls
+  `app.disableHardwareAcceleration()`. Set from Settings ("Use the graphics card for overlays"), the tray
+  checkbox (both offer Restart now / Later via `_setGpuDrawing`) and the setup walk's "Screen flicker" step
+  (`welcome.html`, lands next start). For black screens with a device-disconnect sound: a driver reset.
+- **Agent-only mode** (Mimic beta, agent 3.7.110, 2026-10-08, §199): `cfg.runMode` 'full' | 'agent', read off disk
+  before any window exists (`_runModeAtStart` / `_agentOnly()` in `main.js`). Agent only: every `create*`
+  overlay function returns early, `_overlayWanted` keeps only the hidden trigger window (the voice for spoken
+  callouts), `_overlayEntries` is empty, hide-all and the screen-change prompt do nothing. Switched from the
+  setup walk's "mode" step, Settings, the tray and the dashboard's `#wpRunMode` (all through `_setRunMode` /
+  IPC `set-run-mode`, Restart now / Later). `test/mimic-agent-only-mode.test.js` fails any new overlay creator
+  that forgets the gate.
 - **Settings drafts** (`settings.html`): `wp:settings:draft` in localStorage, built from the same
   signature as the floating Save and never holding the token; `_offerDraft` at the end of `load()`;
   a `beforeunload` bar asks before closing. `before-quit` destroys the Settings window, because in
@@ -2065,7 +2101,10 @@ gains the `who` source from `pop_who_sightings` (`routeData.ts`). `test/pop-who.
 `apps/mimic/mobinfo.html`'s Factions tab became F/Q/V with sub-tabs. Quest and Vendor come from the
 agent's `/api/npc-interact?id=` (only while the tab is open), which proxies the bot's
 `/api/agent/npc-interact` (`_npcInteract` in `index.js`, 6 h cache): `utils/questDialog.js` reads the
-NPC's Lua script (`findi` keywords → `/say` chips with replies, GM branches dropped), hand-ins from
+NPC's Lua script (`findi` keywords → `/say` chips with replies, GM branches dropped; an NPC with no script of
+its own is looked up in the zone's encounter files — `questDialog.encounterHandlers` finds the say/trade
+handlers registered for its npc id, by literal or `local` constant — bot 3.1.221, 2026-10-08, Thelin Poxbourne
+in `ponightmare/encounters/Maze.lua`), hand-ins from
 `scripted_npc_turnins`, who's next from named NPCs the replies mention (with a spawn for `/map Y X`),
 and a merchant's `eqemu_merchantlist`. Vendor shows only when the list is non-empty. Bot 3.1.166, agent
 3.7.37 + Mimic beta; DECISIONS 2026-09-21 §70.
@@ -2803,7 +2842,9 @@ under-25% arcs (`_meSideArcs` → `rampage`, `low_hp`); clicky counters (`_meCli
 from `-Inventory.txt` `items`, spent by `_noteClickyUse` on "begins to glow"; sorted root · dispel · stun
 first by `_clickyKind` — the spell catalog's `cc` for root/stun, `_CLICKY_DISPEL_SPELLS` ids for dispel;
 CHARGED items only (agent 3.7.101 beta, 2026-10-07, the guild lead: "not unlimited clickies") — an
-unlimited clicky, or a count-1 item whose charges the catalog does not know, is left out;
+unlimited clicky, or a count-1 item whose charges the catalog does not know, is left out; the ring's labels
+use raiders' names first (`CLICKY_ALIASES` in `me.html`: Invis Pot, U.Recourse, Invis Mask, Totem — Mimic beta
+2026-10-08) and drop a "10 Dose" prefix;
 `clickies` = the first 8, `clickies_all` when there are more; `POST /api/me/clicky-recharged` →
 `_noteClickyRecharged` puts a counter back to full, kept in `logsync.hud-timers.json`; on the ring
 `clickyShown` / `clickyFit` / `clickyShort` in `me.html` draw the picks or the first that fit, and the

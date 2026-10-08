@@ -105,6 +105,13 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **✅ Callouts and Extended Target keep to your raid, or your group outside one (bot 3.1.222 live 2026-10-08;
+  stable Mimic 2.7.10 / agent 3.7.106; DECISIONS §189).** The guild lead, 2026-10-07: other groups' mobs and
+  callouts leaking in. The relay's raid-evening blanket is gone (raid from the live roster, else group, else zone);
+  `flag_disable_groupscope=1` restores it. The agent sends `group_names` on the reporter heartbeat (from the group
+  window's list and F2..F6 gauges), and Extended Target's title-bar **Raid | Group** switch keeps the board to your
+  group. Both reached the whole fleet with stable 2.7.10.
+
 - **⏳ Canvas show-when rules (Mimic alpha `d97ae9d7`, 2026-10-07; DECISIONS §187).** Each piece can show only in
   combat, out of combat, with a target, with an NPC target, in a raid, or for chosen classes; arranging shows all.
   Follow-ups: an agent `raid_active` and `target.is_npc` signal (beta) to replace the Zeal-raid-window and name
@@ -712,6 +719,58 @@ next touch one rather than assuming a missing row means a missing doc.
   `deploymentEnabled`. Web 1.8.53 also keeps a `/pop` link's query through sign-in. §101.
 - **⏳ Command Center 📋 on deathrolls (agent 3.7.47, Mimic beta `013e2e0c`) · Target Info even con = your
   level for a player (agent 3.7.48, beta `386cfc99`), 2026-09-29.** §97, §98 (reverses part of §15).
+- **✅ Feign Death failure callout speaks again (agent 3.7.107 main hot-swap · 3.7.111 beta, 2026-10-08).** The guild trigger was
+  firing but the §136 raid callout allow-list muted it (no critical word in its name or text); new `feign` category. ⏳ pass over
+  the other guild triggers for the same silent-by-default trap. DECISIONS §205.
+- **✅ Glyphed Rune Word droppers on a spawn over 2 h are on the boards (bot 3.1.231 data, main 2026-10-08).** Nine added to
+  the 44 already there: Emmerik Skyfury, Evynd Firestorm, three Halls of Honor, Lossenmachar, Calebgrothiel, Neffiken, Gurebk (260
+  on the board). ⏳ 61 scripted event mobs on that list have no spawn row, so no timer; they wait for a kill or a PQDI read.
+  DECISIONS §204.
+- **✅ Target Info shows "Does Not Equip" (bot 3.1.230 · web 1.8.124, main 2026-10-08).** Special-ability code 8 is a chip
+  now, about 1 mob in 10; Mimic needs no release (the bot ships the label), cached mob info turns over within 6 h.
+  DECISIONS §203.
+- **✅ 93 more named mobs on the boards (bot 3.1.228 + 3.1.229 data, main 2026-10-08).** Glykus Helmir, Tagrin Maldric and
+  The Diaku Overseer first (Tactics, 24 h); then every named 18 h+ mob that drops parchments, glyphed rune words or
+  real loot (90: Fire, Air, Earth, Water, Torment, Tower of Solusek Ro, Temple of Marr, Temple of Veeshan, Vex Thal,
+  Growth and more). 251 on the board. ⏳ `/board` once to lay out the extra parts; ⏳ lockout flags unchecked;
+  ⏳ option C (board grows on first kill). DECISIONS §202.
+- **✅ Owned songs no longer listed as missing (FB-67), and the NO DROP tag fixed (web 1.8.123 · bot 3.1.227 ·
+  migrations `20261008200000` + `20261008210000`, 2026-10-08).** Names compared without punctuation + 24 scroll
+  aliases; a bard went from 27 "missing" to 6. ND tag was inverted on `/admin/loot` and the Mimic Loot tab. ⏳ Same name
+  match in `pop_spell_needs` / `guild_held_spell_needs` / `pop_extra_scrolls`. ⏳ FB-68 waits on a log excerpt
+  (the code already counts a resisted click). DECISIONS §201.
+- **🧪 Mimic agent-only mode, switchable both ways (agent 3.7.110, beta `8cf8bcc7`, 2026-10-08).** One install;
+  setup asks "full Mimic or agent only", and Settings, the tray and the dashboard's Overlays tab switch it later
+  (restart to apply). Agent only = uploads, tray, dashboard and spoken callouts, no overlay windows. Graduates
+  with the next stable cut. DECISIONS §199.
+- **✅ Plane of Tactics stampede triggers (guild triggers, live 2026-10-08).** "You hear the pounding of hooves."
+  → overlay + "Stampede" + 15 s timer; then a window: "stampede window opens" bar (40 min) and "stampede by" bar
+  (120 min), both shown from the emote (FB-69). DECISIONS §200.
+- **✅ Officer page `/admin/loot` [beta] — loot by value (web 1.8.120 main, 2026-10-08; paged in 1.8.122).** Note
+  that the looter is not always the owner; window, per-character totals; one row per looter + item (count, each,
+  row total), 50 a page, sorted on the server; DKP items listed but left out of totals (`loot_value_grouped` +
+  `_by_looter_v3`). ⏳ Mimic's Loot tab still counts DKP items; ⏳ drop the v1 + v2 RPCs and
+  `_tmp_probe2_20261008()` once a DROP FUNCTION works on production again. DECISIONS §198, §198b.
+- **🧪 Loot in platinum, per character, over 12 h / 24 h / 7 d / 30 d (bot 3.1.226 main; Mimic Loot tab beta,
+  2026-10-08).** Merchant value from the item database, NO DROP tagged. DECISIONS §197.
+- **🧪 Target Info: buff bars count down; hover the time for length and caster (Mimic beta `2eb8796e`,
+  bot 3.1.225 main, agent beta, 2026-10-08).** Caster from the casting relay (Mimic users only), group spells
+  to the caster's group; length from the spell catalog once the caster is known. DECISIONS §196.
+- **✅ Anonymous feedback (AFB) on eqmimic.quest (web 1.8.119, main 2026-10-08; Mimic side agent 3.7.107 beta).**
+  Signed-out Mimic users send cleaned, rate-limited reports to `anon_feedback` (AFB-n); officers read them at
+  `/admin/feedback/anonymous`; never acted on automatically, counted weekly. ⏳ eqmimic.quest DNS still points
+  elsewhere (the guild lead). DECISIONS §192.
+- **🧪 Mimic can draw overlays without the graphics card (beta `3ba7154a`, 2026-10-08).** Settings + tray
+  switch and a setup question, for screens that go black with a device-disconnect sound (a driver reset).
+  Graduates with the next stable cut. DECISIONS §195.
+- **✅ Guildmate duo kills start board timers (bot 3.1.224 + migration `20261008160000`, main 2026-10-08).**
+  A 1–2 fighter kill where everyone is on the roster is `ours`; the fighters include the merged parse's names;
+  the restart re-seed agrees. DECISIONS §194.
+- **✅ My report page + replies; status DMs link to it (bot 3.1.223, web 1.8.119, main 2026-10-08).**
+  `/feedback/FB-n` for the submitter and officers; replies relayed to the officer card. DECISIONS §193.
+- **✅ PoP checklist: The Binden Concerrentia (web 1.8.118, main 2026-10-08).** Three optional steps (the
+  Small, then Powered Clockwork Talisman, then the Binden), read off the three NPC scripts; eight corrections
+  over EQProgression's page, auto-fill from held items. DECISIONS §191.
 - **✅ PoP checklist: Essences of Power (web 1.8.49, main 2026-09-29).** Part 1, the Nightmare escort for
   the Tiny Gold Fist, one Fist per run (tier one); part 2, the four elemental essences in Kerasha's Sacred Bowl
   for the Jade Hoop and the four other rewards she cycles through (elemental planes). Checked against the

@@ -934,7 +934,9 @@
   var CLICKY_KIND = { root: 'Root', dispel: 'Dispel', stun: 'Stun' };
   function clickyList(s){
     var a = Array.isArray(s.clickies_all) ? s.clickies_all : (Array.isArray(s.clickies) ? s.clickies : []);
-    return a.filter(function(c){ return c && c.name; });
+    // Charged items only (the guild lead, 2026-10-08: "the rod and all unlimited should not show up").
+    // The agent has dropped them since 3.7.101; this keeps an older agent's list out of the HUD too.
+    return a.filter(function(c){ return c && c.name && !c.unlimited && c.left != null; });
   }
   function clickyKey(c){ return String(c.name).toLowerCase(); }
   // The picked ones that are on you, in the agent's order (root · dispel · stun first).
@@ -950,8 +952,19 @@
   // "Ring of Shadows" → "Shadows", "White Ornate Chain Bridle" → "Bridle": the part of the name that
   // tells two apart, as much of it as `cap` characters hold. The old cut ("Ring…", "Rod…") made every
   // "<thing> of …" look the same.
+  // What a raider calls it, before any cutting (the guild lead, 2026-10-08: "Undead Recourse can show as
+  // U.Recourse, Cloudy potion can say Invis Pot. Larrikan's Mask can say 'invis mask' Rolfron should say
+  // 'Totem'"). Matched on the whole item name, so every dose size of a potion gets the same label.
+  var CLICKY_ALIASES = [
+    [/cloudy potion/i, 'Invis Pot'],
+    [/undeads?\W*s?\s+recourse/i, 'U.Recourse'],
+    [/larrikan\W?s mask/i, 'Invis Mask'],
+    [/totem of rolfron zek/i, 'Totem'],
+  ];
   function clickyShort(name, cap){
-    var n = String(name).replace(/^(?:the|a|an)\s+/i, '');
+    for (var a = 0; a < CLICKY_ALIASES.length; a++) if (CLICKY_ALIASES[a][0].test(String(name))) return CLICKY_ALIASES[a][1];
+    // "10 Dose …", "5 Doses of …": the dose count is not the name.
+    var n = String(name).replace(/^\d+\s+doses?\s+(?:of\s+)?/i, '').replace(/^(?:the|a|an)\s+/i, '');
     if (n.length <= cap) return n;
     var m = n.match(/\s+of\s+(?:the\s+)?(.+)$/i), w, out = '', i, t;
     if (m) {

@@ -665,6 +665,13 @@ contextBridge.exposeInMainWorld('mimic', {
 
   // User-facing toggles.
   setQuietMode:    (on)   => ipcRenderer.invoke('set-quiet-mode', !!on),
+  // Draw overlays with the graphics card (true, the default) or without it. Takes effect on restart;
+  // `ask` offers the restart straight away (Settings), setup leaves it for the next start.
+  setGpuDrawing:   (useGpu, ask) => ipcRenderer.invoke('set-gpu-drawing', !!useGpu, !!ask),
+  // Run mode: 'full' (overlays) or 'agent' (agent only: uploads, tray, dashboard and spoken callouts,
+  // no overlay windows). Takes effect on restart; `ask` offers it straight away, setup leaves it for the
+  // next start.
+  setRunMode:      (mode, ask) => ipcRenderer.invoke('set-run-mode', mode === 'agent' ? 'agent' : 'full', !!ask),
   setTellsMode:    (mode) => ipcRenderer.invoke('set-tells-mode', mode),
   setLocalOnly:    (on)   => ipcRenderer.invoke('set-local-only', !!on),   // local mode: nothing online, no setup nag
   setOverlaysLocked: (on) => ipcRenderer.invoke('set-overlays-locked', !!on),

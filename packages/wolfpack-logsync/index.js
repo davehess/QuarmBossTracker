@@ -14863,6 +14863,67 @@ function _noteClickyUse(character, itemName, atMs) {
   if (list.length > 50) list.shift();
   _clickyUses.set(k, list);
 }
+// A clicky with NO cast time (FB-68, a member, 2026-10-08: "Resists need to also knock down the number of
+// available charges left, not just successes"; the guild lead: "the root click is not invisible, it will show a
+// resist or it will show that the mob adheres to the ground"). The Wooly Spider Silk Net, a 3-charge Root, logs no
+// "Your <item> begins to glow." and no "You begin casting", so the glow line above never counted it. What it
+// leaves is its outcome: "Your target resisted the <Spell> spell." (only OUR casts print it) or the spell's
+// cast_on_other landing on the mob we have targeted. A spell the member began casting by hand ("You begin
+// casting <Spell>." just before) is not a click, so it is skipped. The list of such clickies is cached a minute:
+// _meClickies reads the inventory exports.
+const _zeroCastClickies = new Map();   // charLower → { at, list: [{ name, spellLower, suffix }] }
+const _clickyBeginCast = new Map();    // "char|spellLower" → ms of the last "You begin casting <spell>."
+const _CLICKY_HAND_CAST_MS = 6000;
+function _zeroCastClickyList(character) {
+  const cl = String(character).toLowerCase();
+  const hit = _zeroCastClickies.get(cl);
+  if (hit && Date.now() - hit.at < 60_000) return hit.list;
+  const list = [];
+  try {
+    for (const c of _meClickies(character)) {
+      const cat = _itemClickyByNameLower.get(String(c.name).toLowerCase());
+      if (!cat || !(cat.clickeffect > 0) || cat.casttime > 0) continue;   // a cast time prints the glow line
+      const spellName = _spellNameById(cat.clickeffect);
+      if (!spellName) continue;
+      const e = _spellByNameLower.get(spellName.toLowerCase());
+      const suffix = e && e.other ? String(e.other).trim().toLowerCase() : '';
+      list.push({ name: c.name, spellLower: spellName.toLowerCase(), suffix: suffix.length >= 5 ? suffix : '' });
+    }
+  } catch { /* no inventory yet: nothing to count */ }
+  _zeroCastClickies.set(cl, { at: Date.now(), list });
+  return list;
+}
+function _noteClickyOutcomeLine(character, line, atMs) {
+  if (!character) return false;
+  const cl = String(character).toLowerCase();
+  const list = _zeroCastClickyList(character);
+  if (!list.length) return false;
+  const body = (/^\[[^\]]+\]\s+(.+?)\s*$/.exec(line) || [])[1];
+  if (!body) return false;
+  const began = /^You begin casting (.+?)\.$/.exec(body);
+  if (began) { _clickyBeginCast.set(cl + '|' + began[1].toLowerCase(), atMs); return false; }
+  let hit = null;
+  const resisted = /^Your target resisted the (.+?) spell\.$/.exec(body);
+  if (resisted) {
+    const sp = resisted[1].toLowerCase();
+    hit = list.find(c => c.spellLower === sp) || null;
+  } else {
+    const lower = body.toLowerCase();
+    const tgt = _zealTargetForChar(cl);
+    if (!tgt) return false;
+    const bare = (s) => String(s).toLowerCase().replace(/^(?:an?|the)\s+/, '').trim();
+    hit = list.find(c => {
+      if (!c.suffix || !lower.endsWith(c.suffix)) return false;
+      const name = body.slice(0, body.length - c.suffix.length).trim();
+      return name && bare(name) === bare(tgt);
+    }) || null;
+  }
+  if (!hit) return false;
+  const handAt = _clickyBeginCast.get(cl + '|' + hit.spellLower);
+  if (handAt != null && atMs - handAt >= 0 && atMs - handAt < _CLICKY_HAND_CAST_MS) return false;
+  _noteClickyUse(character, hit.name, atMs);
+  return true;
+}
 // FB-65 (a member, 2026-10-07: "Root/Dispel/Stun are prioritized" · "pick which clicky charges you track"):
 // the counters are sorted root, dispel, stun first, and each carries its `kind` and full `max` so the
 // HUD's picker can show them. The spell catalog's `cc` already tags a HARMFUL spell's SPA 99 (root) and
@@ -18133,8 +18194,15 @@ function wpOpenFeedback() {
 function renderFeedback(s) {
   const el = document.getElementById('wpFeedback');
   if (!el) return;
+  // Local mode (signed out, no token): the card cannot send to the guild, so it hands the words to the
+  // anonymous form on eqmimic.quest instead. The card is built once to protect a half-typed report, so a
+  // flip between signed-out and signed-in rebuilds it (the draft survives in _wpFbDraft).
+  const _fbLocal = !!(s && s.localOnly);
+  if (el._wpLocal !== undefined && el._wpLocal !== _fbLocal) el._wpBuilt = false;
   if (el._wpBuilt) return;
   el._wpBuilt = true;
+  el._wpLocal = _fbLocal;
+  _wpFbVer = s && s.version ? String(s.version) : '';
   // The tray's "Send feedback" item opens /#feedback. Honour that by expanding
   // the card, otherwise the tray route drops someone on a dashboard with the
   // thing they asked for still collapsed.
@@ -18153,7 +18221,8 @@ function renderFeedback(s) {
     // Screenshots (the guild lead, 2026-09-26: "feedback and suggestion needs to be able to take
     // screenshots..top priority"). 📸 only inside Mimic (it photographs your screens); 📎 and
     // Ctrl+V work in any browser. Nothing is attached until it shows as a thumbnail here.
-    + '<div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    + (_fbLocal ? '' :
+      '<div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
     +   '<button type="button" id="wpFbSnap" style="display:none" title="Photograph your screen (this window hides for the shot) — you choose what gets sent">📸 Screenshot my screen</button>'
     +   '<button type="button" id="wpFbPick">📎 Add a picture</button>'
     +   '<span class="dim" style="font-size:11px">or paste one (Ctrl+V) · up to 3 · you see each one before it sends</span>'
@@ -18170,11 +18239,17 @@ function renderFeedback(s) {
     +     '<button type="button" class="wp-fb-min" data-min="60">60 min</button>'
     +   '</span>'
     + '</div>'
-    + '<div id="wpFbPreview" style="margin-top:8px"></div>'
+    + '<div id="wpFbPreview" style="margin-top:8px"></div>')
     + '<div style="margin-top:10px;display:flex;align-items:center;gap:10px">'
-    +   '<button type="button" id="wpFbSend">Send</button>'
+    +   (_fbLocal
+          ? '<button type="button" id="wpFbWeb">Send anonymously on eqmimic.quest</button>'
+          : '<button type="button" id="wpFbSend">Send</button>')
     +   '<span id="wpFbMsg" class="dim" style="font-size:11px"></span>'
     + '</div>'
+    + (_fbLocal
+        ? '<div class="dim" style="font-size:11px;margin-top:6px">Opens your browser. Nothing is sent until you press Send there. '
+          + 'Leave your Discord name on the form if you want a reply. No logs or screenshots go this way.</div>'
+        : '')
     + '</details>';
   _wpFbWire();
 }
@@ -18368,6 +18443,7 @@ function _wpFbWire() {
     var min = t.closest('.wp-fb-min');
     if (min) { _wpFbSetMin(parseInt(min.getAttribute('data-min'), 10) || 30); _wpFbPreviewNow(); return; }
     if (t.id === 'wpFbSend') { _wpFbSend(); return; }
+    if (t.id === 'wpFbWeb') { _wpFbWeb(); return; }
   });
   root.addEventListener('change', function (e) {
     if (e.target && e.target.id === 'wpFbAttach') {
@@ -18383,6 +18459,41 @@ function _wpFbSetMin(m) {
   for (var i = 0; i < btns.length; i++) {
     btns[i].style.opacity = (parseInt(btns[i].getAttribute('data-min'), 10) === m) ? '1' : '0.55';
   }
+}
+// Signed-out path: the link to the anonymous form on eqmimic.quest. The words ride in the URL FRAGMENT
+// (after #), which a browser never sends to a server, so the text cannot land in anyone's request log.
+// Capped at 1800 characters to keep the link a sane length. Returns { url, trimmed }.
+var WP_FB_WEB_MAX = 1800;
+var _wpFbVer = '';
+function _wpFbWebUrl(kind, text, ver, plat) {
+  var t = String(text || '');
+  var trimmed = t.length > WP_FB_WEB_MAX;
+  if (trimmed) {
+    t = t.slice(0, WP_FB_WEB_MAX);
+    var last = t.charCodeAt(t.length - 1);
+    if (last >= 0xD800 && last <= 0xDBFF) t = t.slice(0, -1);   // never cut a pair in half
+  }
+  return {
+    url: 'https://eqmimic.quest/feedback#cat=' + (kind === 'idea' ? 'idea' : 'bug')
+      + '&text=' + encodeURIComponent(t)
+      + '&v=' + encodeURIComponent(String(ver || ''))
+      + '&p=' + encodeURIComponent(String(plat || '')),
+    trimmed: trimmed,
+  };
+}
+async function _wpFbWeb() {
+  var ta  = document.getElementById('wpFbText');
+  var msg = document.getElementById('wpFbMsg');
+  var ua = String(navigator.userAgent || '');
+  var plat = /Windows/i.test(ua) ? 'win' : /Mac/i.test(ua) ? 'mac' : /Linux/i.test(ua) ? 'linux' : '';
+  var link = _wpFbWebUrl(_wpFbKind, ta && ta.value ? ta.value.trim() : '', _wpFbVer, plat);
+  // Same route every other Mimic link takes (window.mimic.openExternal, see wpMpLink); a plain browser opens a tab.
+  var opened = false;
+  try { if (window.mimic && window.mimic.openExternal) opened = (await window.mimic.openExternal(link.url)) !== false; } catch (e) { opened = false; }
+  if (!opened) { try { window.open(link.url, '_blank', 'noopener'); opened = true; } catch (e) { void e; } }
+  if (msg) msg.textContent = opened
+    ? 'opened in your browser' + (link.trimmed ? ' (trimmed — paste the rest there)' : '')
+    : '✕ could not open your browser';
 }
 async function _wpFbSend() {
   var ta  = document.getElementById('wpFbText');
@@ -19540,7 +19651,11 @@ function _wpRefreshMimicCfg() {
   try {
     window.mimic.getConfig().then(function (c) {
       if (!c) return;
-      _wpMimicCfg = { quietMode: !!c.quietMode, hideOverlays: !!c.hideOverlays, hideWhenEqDown: c.hideOverlaysWhenEqDown !== false };
+      _wpMimicCfg = { quietMode: !!c.quietMode, hideOverlays: !!c.hideOverlays, hideWhenEqDown: c.hideOverlaysWhenEqDown !== false, agentOnly: false };
+      // Agent only is the mode this run STARTED in (a saved-but-not-restarted change is not it yet).
+      if (window.mimic.getStatus) window.mimic.getStatus().then(function (st) {
+        if (_wpMimicCfg && st) _wpMimicCfg.agentOnly = st.runModeNow === 'agent';
+      }).catch(function () { /* leave it false */ });
     }).catch(function () { /* bridge refused — leave the row out rather than guess */ });
   } catch (e) { void e; }
 }
@@ -19660,7 +19775,11 @@ function renderSetupChecks(s) {
   // EVERY overlay, and until 2026-09-10 said so nowhere. (Quiet mode used to be
   // this switch; since 2026-09-11 it only mutes.) Rendered only when hosted in
   // Mimic: a browser tab has no overlays, so the row would be noise there.
-  if (_wpMimicCfg && _wpMimicCfg.hideOverlays) {
+  if (_wpMimicCfg && _wpMimicCfg.agentOnly) {
+    h += '<tr><td style="width:18px;text-align:center"><span class="dim">·</span></td>'
+       + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Overlays can show</td>'
+       + '<td class="dim" style="font-size:11px"><b>Agent only is on, so there are no overlays</b> &mdash; by your choice. Uploads, this dashboard and spoken callouts keep running. Switch back on the Overlays tab, in Settings or from the tray.</td></tr>';
+  } else if (_wpMimicCfg && _wpMimicCfg.hideOverlays) {
     h += '<tr><td style="width:18px;text-align:center"><span style="color:var(--red)">✗</span></td>'
        + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Overlays can show</td>'
        + '<td class="dim" style="font-size:11px"><b>Don\\'t show any overlays is ON, so every overlay stays hidden</b> — they still appear while you are positioning them, which is why this looks like a bug. Settings → untick <b>Don\\'t show any overlays</b>. Uploads are unaffected either way.</td></tr>';
@@ -22112,6 +22231,9 @@ function renderOverlays(s) {
   // the section HTML is byte-stable across polls (see the morphInto note).
   // One line, filled by wpRefreshOverlayToggles while hide-all is on.
   h += '<div id="wpHideAllBanner"></div>';
+  // Run mode — full Mimic or agent only (the guild lead, 2026-10-08). The tray item and Settings
+  // radios drive the same IPC (window.mimic.setRunMode); painted by wpRefreshOverlayToggles.
+  h += '<div id="wpRunMode"></div>';
   // 💾 Your layouts — the per-character saves, tray parity (the guild lead,
   // 2026-08-19: "Overlay layouts should be saves and in the overlay tab"). A
   // saved layout is WHICH overlays are on; where they sit is per screen setup
@@ -23035,6 +23157,21 @@ function wpRefreshOverlayToggles() {
             + '</div>'
           : '');
       }
+      // Run mode. rm is the saved choice, rn what this run started as; they differ until Mimic
+      // restarts. Agent only has no overlay windows, so say so above a list that cannot do anything.
+      var rmEl = document.getElementById('wpRunMode');
+      if (rmEl) {
+        var rm = st.runMode === 'agent' ? 'agent' : 'full', rn = st.runModeNow === 'agent' ? 'agent' : 'full';
+        var rmBtn = function(to, label){ return '<button type="button" class="wp-ov-act wp-btn" data-act="runmode" data-to="' + to + '">' + label + '</button>'; };
+        morphInto(rmEl, rm !== rn
+          ? '<div class="wp-ovbanner"><span>🔄 <b>' + (rm === 'agent' ? 'Agent only' : 'Full Mimic') + ' is saved</b> &middot; it takes effect when Mimic restarts</span>'
+            + rmBtn(rn, 'Keep ' + (rn === 'agent' ? 'agent only' : 'full Mimic')) + '</div>'
+          : rn === 'agent'
+            ? '<div class="wp-ovbanner"><span>🖥 <b>Agent only &mdash; overlays are off</b> &middot; uploads, this dashboard and spoken callouts keep running. The controls below are saved for when you switch back.</span>'
+              + rmBtn('full', 'Switch to full Mimic…') + '</div>'
+            : '<div class="wp-ovhd"><span><span class="wp-lbl">Mode</span> <span class="dim">Full Mimic &mdash; overlays, timers and callouts over the game</span></span>'
+              + rmBtn('agent', 'Switch to agent only…') + '</div>');
+      }
       // 💾 Your layouts, and the switch that swaps them with the character.
       var lays = document.getElementById('wpOvLays');
       if (lays) morphInto(lays, _wpOvLaysHtml(st, cfg, flagOf));
@@ -23101,6 +23238,12 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
           var locked = !(st && st.overlaysLocked === false);
           return window.mimic.setOverlaysLocked(!locked);
         }).then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      }
+      // Run mode — the tray's "Switch to agent only / full Mimic" item and Settings drive the same setter.
+      if (a === 'runmode' && window.mimic.setRunMode) {
+        window.mimic.setRunMode(act.getAttribute('data-to') === 'agent' ? 'agent' : 'full', true).then(function(){
           setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
         }).catch(function(){});
       }
@@ -24052,32 +24195,83 @@ function _wpDeathrollHtml(e) {
 var _wpNightLoot = null;   // null = not asked yet; { missing } / { failed } = no list; else the bot's body
 function _wpHHMM(ms) { var d = new Date(ms); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); }
 function _wpNightDay(ms) { return new Date(ms).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }); }
+// Value + window (the guild lead, 2026-10-08: "how much each item is worth … how much each toon has
+// looted in platinum … time bound it"). The chips pick how far back the bot reads (12h · 24h · 7d · 30d,
+// remembered per viewer); values are the item's base merchant value in copper, shown as platinum.
+var WP_NIGHT_HOURS = [[12, '12h', '12 hours'], [24, '24h', '24 hours'], [168, '7d', '7 days'], [720, '30d', '30 days']];
+var _wpNightHours = 12;
+try {
+  var _wpNightSaved = Number(localStorage.getItem('wp:nightLootHours'));
+  if (WP_NIGHT_HOURS.some(function (w) { return w[0] === _wpNightSaved; })) _wpNightHours = _wpNightSaved;
+} catch (e) { void e; }
+function _wpNightWindowText(hrs) {
+  for (var i = 0; i < WP_NIGHT_HOURS.length; i++) if (WP_NIGHT_HOURS[i][0] === hrs) return WP_NIGHT_HOURS[i][2];
+  return '12 hours';
+}
+// Copper -> platinum, up to one decimal, grouped. null (no price in the item database) is a dash.
+function wpFmtPP(cp) {
+  if (cp == null || !isFinite(cp)) return '—';
+  if (cp > 0 && cp < 50) return '&lt;0.1';
+  return (Math.round(cp / 100) / 10).toLocaleString('en-US', { maximumFractionDigits: 1 });
+}
+function wpNightLootWindowChips() {
+  var h = '<div style="display:flex;gap:4px;align-items:center;margin-bottom:6px"><span class="wp-lbl" style="margin-right:2px">Window</span>';
+  for (var i = 0; i < WP_NIGHT_HOURS.length; i++) {
+    var w = WP_NIGHT_HOURS[i];
+    h += '<button type="button" class="wp-btn' + (w[0] === _wpNightHours ? ' pri' : '') + '" data-v="' + w[0] + '" onclick="wpNightLootWindow(this)">' + w[1] + '</button>';
+  }
+  return h + '</div>';
+}
+function wpNightLootTotalsHtml(nl, win) {
+  var t = (nl.totals || []).slice().sort(function (a, b) { return (b.value_cp || 0) - (a.value_cp || 0); });
+  if (!t.length) return '';
+  var h = '<div style="margin-bottom:8px"><div style="font-size:12px;margin-bottom:4px"><b>Totals by character</b> <span class="dim">· last ' + win + ' · '
+    + wpFmtPP(nl.total_value_cp) + ' pp across ' + (nl.priced_items + nl.unpriced_items) + ' items</span></div>'
+    + '<div style="max-height:200px;overflow:auto"><table><tr><th>Character</th><th>Items</th><th>Vendor value (pp)</th><th>NO DROP</th></tr>';
+  for (var i = 0; i < t.length; i++) {
+    h += '<tr><td class="name">' + esc(t[i].looter) + '</td><td class="num">' + t[i].items + '</td>'
+       + '<td class="num">' + wpFmtPP(t[i].value_cp) + '</td><td class="num dim">' + t[i].nodrop_items + '</td></tr>';
+  }
+  h += '</table></div><div class="dim" style="font-size:11px;margin-top:4px">Value = the item&rsquo;s base merchant value from the item database (what EverQuest prices it at), not bazaar prices. NO DROP items can only be sold to a merchant.'
+    + (nl.unpriced_items > 0 ? ' ' + nl.unpriced_items + ' item' + (nl.unpriced_items === 1 ? '' : 's') + ' not in the item database count as 0.' : '') + '</div></div>';
+  return h;
+}
 function wpNightLootHtml(nl) {
-  var h = '<div class="card wide"><h2>📦 Who looted what <span class="dim" style="font-size:11px;text-transform:none;letter-spacing:0">· last 12 hours</span></h2>';
+  var have = nl && Array.isArray(nl.loot);
+  var dataHrs = have && nl.window_hours ? nl.window_hours : 12;
+  var win = _wpNightWindowText(dataHrs);
+  var h = '<div class="card wide"><h2>📦 Who looted what <span class="dim" style="font-size:11px;text-transform:none;letter-spacing:0">· last ' + win + '</span></h2>';
   if (!nl) {
-    return h + '<div class="dim" style="padding:6px">Loading…</div></div>';
+    return h + wpNightLootWindowChips() + '<div class="dim" style="padding:6px">Loading…</div></div>';
   }
   if (nl.missing) {
     return h + '<div class="dim" style="padding:6px">Needs the bot update.</div></div>';
   }
   if (nl.failed) {
-    return h + '<div class="dim" style="padding:6px">Cannot reach the server for this list right now.</div></div>';
+    return h + wpNightLootWindowChips() + '<div class="dim" style="padding:6px">Cannot reach the server for this list right now.</div></div>';
   }
   var rows = nl.loot || [];
+  // The server answers for the window it understood; an older one ignores the chip and keeps sending 12h.
+  var behind = dataHrs !== _wpNightHours
+    ? '<div class="dim" style="font-size:11px;margin-bottom:6px">Still showing the last ' + win + ' — the server has not answered for ' + _wpNightWindowText(_wpNightHours) + ' yet.</div>' : '';
   if (rows.length === 0) {
-    return h + '<div class="dim" style="padding:6px">No loot seen in the last 12 hours.</div></div>';
+    return h + wpNightLootWindowChips() + behind + '<div class="dim" style="padding:6px">No loot seen in the last ' + win + '.</div></div>';
   }
+  var hasVal = Array.isArray(nl.totals);
+  h += wpNightLootWindowChips() + behind;
   h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Raiders running Mimic report their own "You have looted" line to the bot, so this is the raid, not just you. Newest first.</div>';
-  h += '<div style="max-height:340px;overflow:auto"><table><tr><th>Time</th><th>Looter</th><th>Item</th><th>Zone</th></tr>';
+  if (hasVal) h += wpNightLootTotalsHtml(nl, win);
+  h += '<div style="max-height:340px;overflow:auto"><table><tr><th>Time</th><th>Looter</th><th>Item</th><th>Zone</th>' + (hasVal ? '<th>Value (pp)</th>' : '') + '</tr>';
   var lastDay = '';
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i];
     var ms = Date.parse(r.at);
     if (!isFinite(ms)) continue;
     var day = _wpNightDay(ms);
-    if (day !== lastDay) { lastDay = day; h += '<tr><td colspan="4" class="dim" style="padding-top:8px">' + esc(day) + '</td></tr>'; }
+    if (day !== lastDay) { lastDay = day; h += '<tr><td colspan="' + (hasVal ? 5 : 4) + '" class="dim" style="padding-top:8px">' + esc(day) + '</td></tr>'; }
     h += '<tr><td class="dim">' + _wpHHMM(ms) + '</td><td class="name">' + esc(r.looter) + '</td>'
-       + '<td>' + esc(r.item) + '</td><td class="dim">' + (r.zone ? esc(r.zone) : '—') + '</td></tr>';
+       + '<td>' + esc(r.item) + (r.nodrop ? ' <span class="dim" style="font-size:10px" title="NO DROP: a merchant is the only buyer">ND</span>' : '') + '</td><td class="dim">' + (r.zone ? esc(r.zone) : '—') + '</td>'
+       + (hasVal ? '<td class="num">' + wpFmtPP(r.value_cp) + '</td>' : '') + '</tr>';
   }
   h += '</table></div>';
   if (nl.loot_total > rows.length) h += '<div class="dim" style="font-size:11px;margin-top:6px">Showing the newest ' + rows.length + ' of ' + nl.loot_total + '.</div>';
@@ -24108,6 +24302,16 @@ function wpNightLootSet(j) {
   if (bad && _wpNightLoot && Array.isArray(_wpNightLoot.loot)) return;
   _wpNightLoot = bad ? (j && j.missing ? { missing: true } : { failed: true }) : j;
   wpRenderNightLoot();
+}
+// A window chip: remember the pick, redraw the chips at once, and ask the bot for that window now
+// (the Loot IIFE exposes its fetch as wpNightLootRefetch; its 30s throttle is skipped on a click).
+function wpNightLootWindow(el) {
+  var v = Number(el && el.getAttribute('data-v'));
+  if (!WP_NIGHT_HOURS.some(function (w) { return w[0] === v; }) || v === _wpNightHours) return;
+  _wpNightHours = v;
+  try { localStorage.setItem('wp:nightLootHours', String(v)); } catch (e) { void e; }
+  wpRenderNightLoot();
+  if (typeof wpNightLootRefetch === 'function') wpNightLootRefetch(true);
 }
 // Who looted a roll set's item when that is NOT someone the card already shows as
 // a winner (a re-roll or a pass hands it on). The bot linked looters to the
@@ -27954,17 +28158,21 @@ async function dismissTopDamage(key) {
   // and never joins the bidding chain below, so a slow or missing key cannot hold
   // the bidding card. The bot caches the answer for 60s, so 30s here is plenty.
   // A 404 is a bot that predates the key; anything else is a blip.
+  // The chosen window rides as ?hours= (the agent's /api/server/ passthrough forwards the query);
+  // 12h sends none, exactly as before. A reply for a window the viewer has since left is dropped.
   var lastNightLootAt = 0;
-  function fetchNightLoot(){
-    if (Date.now() - lastNightLootAt < 30000) return;
+  function fetchNightLoot(force){
+    if (!force && Date.now() - lastNightLootAt < 30000) return;
     lastNightLootAt = Date.now();
+    var hrs = _wpNightHours;
     try {
-      fetch("/api/server/night-loot").then(function(r){
+      fetch("/api/server/night-loot" + (hrs === 12 ? "" : "?hours=" + hrs)).then(function(r){
         if (r.status === 404) return { missing:true };
         return r.ok ? r.json() : { failed:true };
-      }).then(function(j){ wpNightLootSet(j); }).catch(function(){ wpNightLootSet({ failed:true }); });
+      }).then(function(j){ if (hrs === _wpNightHours) wpNightLootSet(j); }).catch(function(){ if (hrs === _wpNightHours) wpNightLootSet({ failed:true }); });
     } catch (e) { wpNightLootSet({ failed:true }); }
   }
+  window.wpNightLootRefetch = fetchNightLoot;
   function fetchServer(){
     if (!wpLootPollWanted()) { return Promise.resolve(); }
     fetchNightLoot();
@@ -31358,8 +31566,16 @@ function startWebDashboard(port) {
         try { outPayload = _mobTracksObserveExtPayload(outPayload, Date.now()); }
         catch { /* engine must never break the ext-target proxy */ }
         // Outside a raid, only your own group's rows. LAST, so every enricher
-        // above still saw the whole zone.
-        try { outPayload = _scopeExtToGroup(outPayload, selfCharacter, selfSt, _lastRaidPipe && _lastRaidPipe.at, Date.now()); }
+        // above still saw the whole zone. In a raid the overlay's Raid | Group
+        // switch (?scope=group) narrows it to your raid group.
+        try {
+          const wantScope = /[?&]scope=group(?:&|$)/.test(req.url) ? 'group' : 'raid';
+          // The "active" character can be one Zeal is not streaming (an alt's log touched last); then the group
+          // comes from the character Zeal IS streaming, or the board would read the group as unknown.
+          const scoped = _zealSelfForScope(_zealState, selfCharacter, selfSt, Date.now());
+          outPayload = _scopeExtToGroup(outPayload, scoped.character, scoped.st, _lastRaidPipe && _lastRaidPipe.at, Date.now(),
+            wantScope, _lastRaidPipe && _lastRaidPipe.members);
+        }
         catch { /* scoping must never break the proxy — fall back to the zone view */ }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(outPayload));
@@ -36893,6 +37109,29 @@ function _computeLiveness(watchedLogs, now, idleMs) {
   const live_character = last_line_ms < idleMs ? bestChar : null;
   return { last_line_ms, live_character };
 }
+// The names in the played character's Zeal group window, for the bot's group scope (utils/groupScope.js:
+// outside a raid, callouts and Extended Target keep to your group). Fresh Zeal state only: [] = solo,
+// undefined = unknown, which JSON drops so the bot falls back to its zone rule.
+function _heartbeatGroupNames(zealState, character, nowMs) {
+  if (!zealState || !character) return undefined;
+  const want = String(character).toLowerCase();
+  const key = Object.keys(zealState).find(k => k.toLowerCase() === want);
+  const names = _zealGroupNames(key ? zealState[key] : null, nowMs);
+  return names ? names.slice(0, 12) : undefined;
+}
+// Who is in the group window, from one character's Zeal state: the type-6 group list AND the group HP gauges
+// (slots 11..15, the F2..F6 bars). The gauges matter in a raid: Zeal's group list was not fresh there, so a
+// grouped raider read as "group unknown" (the guild lead, 2026-10-08, "not working"). Fresh state only (60 s).
+// Returns names (self excluded), [] when the state says solo, null when it cannot tell.
+function _zealGroupNames(st, nowMs) {
+  if (!st || nowMs - (st.updatedAt || 0) > 60_000) return null;
+  const out = [], seen = new Set();
+  const add = (n) => { const s = n ? String(n).trim() : ''; if (s && !seen.has(s.toLowerCase())) { seen.add(s.toLowerCase()); out.push(s); } };
+  if (Array.isArray(st.group_members)) for (const m of st.group_members) add(m && m.name);
+  if (Array.isArray(st.gauges)) for (const g of st.gauges) if (g && g.text && g.slot >= 11 && g.slot <= 15) add(g.text);
+  if (out.length) return out;
+  return Array.isArray(st.group_members) ? [] : null;
+}
 function _reporterHeartbeatOnce() {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token || opts.dryRun) return;
@@ -36923,6 +37162,8 @@ function _reporterHeartbeatOnce() {
       if (Number.isFinite(g)) group_num = g;
     }
   } catch { /* best-effort */ }
+  let group_names;
+  try { group_names = _heartbeatGroupNames(_zealState, live_character || primary, Date.now()); } catch { /* unknown */ }
   try {
     const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/reporter-poll');
     const u   = new URL(url);
@@ -36939,7 +37180,7 @@ function _reporterHeartbeatOnce() {
     // phantom second death (2026-08-02 Seru parse). Rides the existing 20s
     // heartbeat — no new stream, no new timer.
     const _t1 = Date.now();
-    const body = JSON.stringify({ primary_character: primary, zone, group_num, camping: _camping, has_zeal, agent_version: AGENT_VERSION, mimic_version, last_line_ms, live_character, client_now: _t1 });
+    const body = JSON.stringify({ primary_character: primary, zone, group_num, camping: _camping, has_zeal, agent_version: AGENT_VERSION, mimic_version, last_line_ms, live_character, group_names, client_now: _t1 });
     const req = mod.request({
       method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname,
       headers: {
@@ -43073,14 +43314,51 @@ function fetchTargetCasts(name, selfChar, targetId) {
       res.on('data', c => body += c);
       res.on('end', () => {
         _targetCastsInflight.delete(key);
-        try { const j = JSON.parse(body); _targetCastsByName.set(key, { at: Date.now(), casts: (j && j.casts) || [] }); }
-        catch { _targetCastsByName.set(key, { at: Date.now(), casts: [] }); }
+        // last_casters: who LAST cast each spell on this target (the bot remembers 3h).
+        // Absent from an older bot → [] and no caster is named.
+        try {
+          const j = JSON.parse(body);
+          _targetCastsByName.set(key, { at: Date.now(), casts: (j && j.casts) || [],
+            last_casters: (j && Array.isArray(j.last_casters)) ? j.last_casters : [] });
+        }
+        catch { _targetCastsByName.set(key, { at: Date.now(), casts: [], last_casters: [] }); }
       });
     });
     req.on('error',   () => { _targetCastsInflight.delete(key); });
     req.on('timeout', () => { req.destroy(); _targetCastsInflight.delete(key); });
     req.end();
   } catch { _targetCastsInflight.delete(key); }
+}
+
+// Name the caster of each Target Info effect (the guild lead, 2026-10-08: mousing over the time left
+// "should show you how long it lasted and who cast it"). EverQuest's landing lines never name a
+// caster, so the only source is the bot's cast relay: target-casts' `last_casters` ([{ spell, caster,
+// at_ms }], newest first) remembers who last cast each spell on this target. Matched by spell name,
+// case-insensitive. A buff that already names someone (a charm's `owner`, an earlier `caster`) is left
+// alone. When a caster is attached and the length is unknown, the catalog length fills `total_secs`
+// (_catalogDurationSec: the era-cap level fallback), never below what is left on the timer.
+// Returns a new array; the input rows are not mutated.
+function _attachBuffCasters(buffs, lastCasters) {
+  if (!Array.isArray(buffs) || !buffs.length || !Array.isArray(lastCasters) || !lastCasters.length) return buffs;
+  const norm = (s) => String(s || '').trim().toLowerCase().replace(/`/g, "'");
+  const bySpell = new Map();
+  for (const lc of lastCasters) {
+    if (!lc || !lc.spell || !lc.caster) continue;
+    const k = norm(lc.spell);
+    if (!bySpell.has(k)) bySpell.set(k, lc.caster);   // newest first: the first one wins
+  }
+  if (!bySpell.size) return buffs;
+  return buffs.map((b) => {
+    if (!b || !b.name || b.owner || b.caster) return b;
+    const caster = bySpell.get(norm(b.name));
+    if (!caster) return b;
+    const out = { ...b, caster };
+    if (out.total_secs == null) {
+      const d = _catalogDurationSec(b.name);
+      if (d) out.total_secs = Math.max(d, Number(out.remaining_secs) || 0);
+    }
+    return out;
+  });
 }
 
 // Cross-client target_buffs on the current target — pulled from buff_casts via
@@ -44131,25 +44409,69 @@ function _sampleExtMobHp(payload, nowMs) {
 //
 // Fails open — no Zeal state, stale state, or no group list → unchanged.
 // Solo counts as a group of one.
+//
+// In a raid the board stays raid-wide unless the overlay asks for `want ===
+// 'group'` (the Raid | Group switch in its title bar — the guild lead,
+// 2026-10-08: "seeing the whole raid is often worthwhile, but when grouping it
+// can be annoying"). Then "mine" is the player's RAID group: self plus every
+// raid-roster entry (`raidMembers`, the type-5 list) sharing self's group
+// number. Ungrouped (0) / self absent from the roster → the Zeal group
+// window if fresh, else unchanged (fail open).
+// The group window (_zealGroupNames: type-6 list + F2..F6 gauges) is read first,
+// in or out of a raid; the raid roster only fills in when it says nothing.
+// A chosen Group never fails open (an empty list that says the group is unknown).
+//
+// Which character's Zeal state: the requested one when it is fresh, else the
+// character Zeal is actually streaming (newest state within 60 s).
+function _zealSelfForScope(zealState, character, st, nowMs) {
+  if (st && nowMs - (st.updatedAt || 0) <= 60_000) return { character, st };
+  let best = null;
+  for (const ch of Object.keys(zealState || {})) {
+    const s = zealState[ch];
+    if (!s || nowMs - (s.updatedAt || 0) > 60_000) continue;
+    if (!best || (s.updatedAt || 0) > (best.st.updatedAt || 0)) best = { character: ch, st: s };
+  }
+  return best || { character, st };
+}
 const EXT_RAID_FRESH_MS = 60_000;
-function _scopeExtToGroup(payload, selfCharacter, selfSt, raidSeenAt, nowMs) {
+function _scopeExtToGroup(payload, selfCharacter, selfSt, raidSeenAt, nowMs, want = 'raid', raidMembers = null) {
   if (!payload || !Array.isArray(payload.targets)) return payload;
-  if (raidSeenAt && nowMs - raidSeenAt < EXT_RAID_FRESH_MS) return payload;
-  if (!selfCharacter || !selfSt || !Array.isArray(selfSt.group_members)) return payload;
-  if (nowMs - (selfSt.updatedAt || 0) > 60_000) return payload;
-  const mine = new Set([String(selfCharacter).toLowerCase()]);
-  for (const m of selfSt.group_members) if (m && m.name) mine.add(String(m.name).toLowerCase());
+  const inRaid = !!(raidSeenAt && nowMs - raidSeenAt < EXT_RAID_FRESH_MS);
+  if (inRaid && want !== 'group') return payload;
+  const selfLc = selfCharacter ? String(selfCharacter).toLowerCase() : '';
+  // Your group window first (type-6 list + the F2..F6 HP gauges), in a raid too: it is the group you see.
+  const zg = selfLc ? _zealGroupNames(selfSt, nowMs) : null;
+  let names = zg && zg.length ? zg : null;
+  if (!names && selfLc && inRaid) {
+    const roster = Array.isArray(raidMembers) ? raidMembers : [];
+    const grp = (m) => (m && m.group != null && m.group !== '') ? Number.parseInt(m.group, 10) : NaN;
+    const self = roster.find(m => m && m.name && String(m.name).toLowerCase() === selfLc);
+    const g = grp(self);
+    // Groups are 1..12; 0 is the ungrouped bucket (raid_roster 2026-10-08: group 0 held ~2x any real group),
+    // the same rule as utils/buffGroups.js.
+    if (Number.isInteger(g) && g >= 1 && g <= 12) names = roster.filter(m => m && m.name && grp(m) === g).map(m => m.name);
+  }
+  if (!names && zg) names = zg;   // the state says solo: a group of one
+  // A chosen Group never falls back to the whole board: the guild lead picked Group to stop seeing other groups'
+  // mobs (2026-10-08, "still showing other groups"), so an unknown group shows an empty list that says why.
+  if (!names && want === 'group') {
+    return { ...payload, targets: [], scope: inRaid ? 'raid_group' : 'group', group_unknown: true, online: null,
+             ...(payload.off_tank_count != null ? { off_tank_count: 0 } : {}) };
+  }
+  if (!names) return payload;
+  const mine = new Set([selfLc]);
+  for (const n of names) if (n) mine.add(String(n).toLowerCase());
   const has = (n) => n != null && mine.has(String(typeof n === 'object' ? n.name : n).toLowerCase());
   const any = (arr) => Array.isArray(arr) && arr.some(has);
   const targets = payload.targets.filter(t => {
     if (!t) return false;
     if (t.kind === 'player') return has(t.name);
-    if (t.kind === 'pet') return t.owner ? has(t.owner) : true;
+    if (t.kind === 'pet') return t.owner ? has(t.owner) : want !== 'group';
     return any(t.raiders) || any(t.tanks) || any(t.off_tank_raiders) || has(t.mob_victim);
   });
   const offTank = targets.reduce((n, t) =>
     n + (Array.isArray(t.off_tank_raiders) ? t.off_tank_raiders.filter(has).length : 0), 0);
-  return { ...payload, targets, scope: 'group', online: mine.size,
+  return { ...payload, targets, scope: inRaid ? 'raid_group' : 'group', online: mine.size,
            ...(payload.off_tank_count != null ? { off_tank_count: offTank } : {}) };
 }
 
@@ -44495,6 +44817,8 @@ function buildMobInfo() {
     // observed occupant of each slot so a stale overwritten buff doesn't linger.
     buffs = _collapseObservedBuffSlots(buffs);
   }
+  // Who cast each effect, from the bot's cast relay (see _attachBuffCasters).
+  buffs = _attachBuffCasters(buffs, ctc ? ctc.last_casters : null);
   // Slot occupancy for PC targets (authoritative via Zeal): the classic
   // buff window holds 15 buff/debuff slots, the song window 6. Null for
   // mobs/unwatched players — we only see observed landings for those.
@@ -47376,9 +47700,16 @@ const _CALLOUT_ALLOW_CATEGORIES = [
   // call out" on `Guard Sklinus has become ENRAGED.`). Whole word only: a loose
   // /rage/ would wake "average" and "storage" back up.
   { cat: 'enrage',     rx: /\benrage[ds]?\b/i },
+  // Feign Death failing is a death sentence for the monk / necro / shadow knight who rolled it, and the
+  // guild's "Feign Death Fail" trigger ("FD FAIL" / "FD failure") matched none of the words above, so
+  // it rendered and stayed silent (the guild lead, 2026-10-08: "fd FAILURE callout needs to go off for a
+  // monk, it's critical"). "FD" alone stays out: a bare \bFD\b would also wake "FD ready" style chatter.
+  { cat: 'feign',      rx: /\bfeign(?:ed|ing)?\b|\bFD\s*(?:fail(?:s|ed|ure)?)\b/i },
   // Boss-mechanic countdowns already curated in the built-ins — keep audible
   // even when a guild trigger drives them (e.g. a voice-mark sequence).
-  { cat: 'mechanic',   rx: /\bbuster\b|tank\s*buster|\baoe\b|\bdance\b|\brampage\b|\bch\s*go\b|\bloot\b/i },
+  // \bstampede\b: Plane of Tactics boar stampede callout (2026-10-08), built as a guild trigger whose
+  // speech "Stampede" matched nothing here and so stayed silent.
+  { cat: 'mechanic',   rx: /\bbuster\b|tank\s*buster|\baoe\b|\bdance\b|\brampage\b|\bch\s*go\b|\bloot\b|\bstampede\b/i },
 ];
 // Is this trigger (or relayed fire) allowed to SPEAK under the allow-list? Scans
 // the trigger name, its tags (guild_triggers rows carry `tags`; array or CSV
@@ -49621,6 +49952,10 @@ async function main() {
               const stamp = /^\[[^\]]+\]/.exec(line);
               try { noteSelfCast((stamp ? stamp[0] : '[]') + ' You begin casting ' + clickSpell + '.', b.character); } catch (e) { void e; }
             }
+          }
+          // A clicky with no cast time prints no glow line; its resist / landing is what counts (FB-68).
+          if (!m && b.character) {
+            try { _noteClickyOutcomeLine(b.character, line, (parseEqTimestamp(line) || new Date()).getTime()); } catch (e) { void e; }
           }
         }
 

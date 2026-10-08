@@ -29,6 +29,25 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.226': [
+    '**Mimic\'s Loot tab can say what loot is worth.** "Who looted what" can now cover 12 hours, a day, a week or 30 days, shows each item\'s merchant value in platinum, and totals what each character looted (needs the Mimic beta).',
+  ],
+  '3.1.225': [
+    '**Target Info can say who cast a buff.** When a raider running Mimic casts a buff or debuff, the bot remembers who cast it on whom for three hours, and for group spells on everyone in that group. Hover the time left on a Target Info buff to see the caster (needs the Mimic beta).',
+  ],
+  '3.1.224': [
+    '**Small-group boss kills start timers again.** A named killed by one or two guildmates (Bastion of Thunder duos, for example) was being skipped as "too few to tell". If everyone in the fight is in the guild and nobody from another guild was seen in the zone, the timer now starts, and it survives a bot restart.',
+  ],
+  '3.1.223': [
+    '**Your feedback DMs now link to a page you can open.** The old link went to a card in the officers\' channel that members could not see. It now goes to wolfpack.quest/feedback/FB-<number>, where you see your report, where it stands, and can reply if it is not fixed for you. Replies reach the officers in Discord.',
+  ],
+  '3.1.216': [
+    '**Your feedback DMs now say what changed and how to get it.** When a bug or idea you filed is fixed, the bot quotes your report, says what was done, and tells you whether it is on the Mimic beta, in stable, on the website or already live in Discord, with a link back to your card.',
+    '**Target Info shows what a mob can proc.** The Spells tab lists the mob\'s procs with their chance and effect (for example Stone Gale: 1500 damage, 2 s stun, area) above the spells it casts. Needs the Mimic beta for the overlay side.',
+  ],
+  '3.1.215': [
+    '**Officers: `/setup discord` can build or check the bot\'s Discord layout.** Run it with dry run on first; it lists every channel and thread the bot expects, which ones exist, and what it would create. Part of the kit that lets another guild run this platform; nothing changes for Wolf Pack\'s server.',
+  ],
   '3.1.214': [
     '**Mimic can now mark a character inventory-only or hidden.** They are the same switches as My Stats on wolfpack.quest, so both always show the same state. Needs a Mimic build with the new choice in setup.',
   ],

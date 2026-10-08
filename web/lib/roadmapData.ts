@@ -37,6 +37,102 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'does-not-equip-2026-10-08',
+    title: 'Target Info says when a mob does not equip',
+    version: 'Web 1.8.124 · Bot 3.1.230',
+    date: '2026-10-08',
+    headline: 'A mob that never wields its gear now carries a "Does Not Equip" tag.',
+    features: [
+      { name: 'Does Not Equip tag', blurb: 'Target Info and the mob pages show a "Does Not Equip" tag on mobs that never use the weapons and armour they carry, so what you see on the model is not its loot. About one mob in ten has it.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'missing-spells-names-2026-10-08',
+    title: 'Songs you already know stop showing as missing',
+    version: 'Web 1.8.123 · Bot 3.1.227',
+    date: '2026-10-08',
+    headline: 'The missing-spells list and shopping list no longer ask a bard to buy songs they already have.',
+    features: [],
+    fixes: [
+      'Fixed songs and spells you already know showing as missing when their name has an apostrophe, such as Angstlich’s Assonance and Kazumi’s Note of Preservation. Names are now compared without punctuation, and a few scrolls that are named differently from their spell (Kazumi’s, Katta’s, Selo’s and others) are matched by hand.',
+      'Fixed the loot page and the Loot tab marking tradeable items NO DROP while real NO DROP items went unmarked. The tag was backwards.',
+    ],
+  },
+  {
+    key: 'admin-loot-2026-10-08',
+    title: 'Loot by value (officers)',
+    version: 'Web 1.8.122',
+    date: '2026-10-08',
+    headline: 'Officers get a page showing what the raid has looted, highest value first.',
+    features: [
+      { name: 'Loot by value', blurb: 'An officer page listing what each raider looted: one row per raider and item, with how many, the value of one and the row total, 50 rows a page. Sort by total, value, count, newest, looter or item, with a per-character total and each character\'s most valuable item. Pick the last day, week, month or three months. Marked [beta] while it is new.' },
+      { name: 'Looter is not owner', blurb: 'The page says up top that whoever looted an item is not always who ends up with it. Values are the item\'s base merchant value, not bazaar prices.' },
+      { name: 'DKP loot left out', blurb: 'Anything that went through a DKP auction or award is still listed, tagged DKP, but not counted in anyone\'s total.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'my-report-afb-2026-10-08',
+    title: 'Your own report page, and feedback without signing in',
+    version: 'Web 1.8.119 · Bot 3.1.223',
+    date: '2026-10-08',
+    headline: 'When a bug or idea you sent moves, the message now links to a page you can actually open, and you can answer there. People without a Wolf Pack sign-in can send feedback too.',
+    features: [
+      { name: 'My report', blurb: 'wolfpack.quest/feedback/FB-12 (your own number) shows what you sent, where it stands and what changed. If it is not fixed for you, reply right there and the officers see it.' },
+      { name: 'Anonymous feedback', blurb: 'Mimic users who are not signed in can send a bug or idea from Mimic; it opens a short form on eqmimic.quest. Links, emails and anything that looks like a password are removed before it is saved. Leave a Discord name if you want a reply.' },
+    ],
+    fixes: [
+      'The "your report moved" message linked to a Discord post only officers could see. It now links to your report page.',
+    ],
+  },
+  {
+    key: 'pop-guide-binden-2026-10-08',
+    title: 'Web 1.8.118',
+    version: 'Web 1.8.118',
+    date: '2026-10-08',
+    headline: 'The PoP checklist has The Binden Concerrentia, the Plane of Knowledge gate you build over three trades.',
+    features: [
+      {
+        name: 'Part one: the Small Clockwork Talisman',
+        blurb: 'A rat\'s bottle in the Plane of Justice, the schematic from Jimlok Keylifter, then four parts from Disease, Nightmare and Innovation combined in Tabben Bromal\'s kit. It lists where each part drops, with the drop chance.',
+      },
+      {
+        name: 'Part two: the Powered Clockwork Talisman',
+        blurb: 'Four more parts, from Valor, Tactics, the Tower of Solusek Ro and Torment, combined with the first talisman and handed to Tabben.',
+      },
+      {
+        name: 'Part three: the Binden',
+        blurb: 'Elder Clinka turns the schematic into a case. Fill it with a fragment from each elemental plane and the Powered talisman, and she hands back The Binden Concerrentia, a gate that never runs out of charges.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'mimic-2-7-10-2026-10-08',
+    title: 'Mimic 2.7.10',
+    version: 'Mimic 2.7.10 · Agent 3.7.106 · Web 1.8.117 · Bot 3.1.222',
+    date: '2026-10-08',
+    headline: 'Your group\'s fight stays your group\'s: callouts and Extended Target keep to your raid, or to your group when you are not in one. Plus two rows of clickies, pets on the meter, and a long list of member reports fixed.',
+    features: [
+      { name: 'Raid | Group switch', blurb: 'Extended Target has a switch at the top. Raid shows everything your raid is on; Group shows only the mobs your group is on. It remembers your pick.' },
+      { name: 'Callouts keep to you', blurb: 'Guild callouts reach your raid while you are in one, and your group when you are not. Other groups in the same zone no longer hear yours, or you theirs.' },
+      { name: 'Clickies on the HUD', blurb: 'Pick which clickies the HUD counts, with a Recharged button (FB-65). Only items with charges are tracked, a second row fits up to seven, and the common ones get short names: Invis Pot, U.Recourse, Invis Mask, Totem.' },
+      { name: 'Pets on the meter', blurb: 'Another raider\'s charm pet counts for its owner once it says who its leader is (FB-52), and the copy button adds each pet\'s damage to its owner (FB-22).' },
+      { name: 'Hail board', blurb: 'The Command Center shows how many flags the flag NPC can still give (72 for most) and counts down to when it leaves.' },
+      { name: 'Trigger manager', blurb: 'Open a trigger\'s settings from the list, add a warning before a timer ends, and make timers repeat. (FB-23, FB-26, FB-30, FB-31)' },
+      { name: 'HUD for every class', blurb: 'A bard\'s mana slot counts Dirges and Fading Memories (FB-56), the AE chip shows only on area songs (FB-57), Mana and Endurance are separate parts (FB-12), and the Box HUD shows procs, stuns and your damage shield (FB-58, FB-60). Target Info lists the mob\'s procs.' },
+    ],
+    fixes: [
+      'Hide all no longer crashes after Target Info closes, and overlays stay off the taskbar. (FB-61)',
+      'An overlay you shrink stays shrunk, and one you resize keeps the height you gave it. (FB-16)',
+      'The CH chain shows Divine Intervention only for clerics who have it memorized and ready. (FB-62)',
+      'Targeting a corpse no longer shows another fight\'s numbers. (FB-63)',
+      '"Charm break" is said once, and unticking the speaker on a Suggested alert really silences it. (FB-21)',
+      'Monk strikes such as Dragon Punch no longer count as procs. (FB-60)',
+    ],
+  },
+  {
     key: 'pets-clickies-repeat-2026-10-07',
     title: 'Pets on the meter, two rows of clickies, guild triggers that repeat',
     version: 'Agent 3.7.100 beta · Web 1.8.116 · Bot 3.1.219',

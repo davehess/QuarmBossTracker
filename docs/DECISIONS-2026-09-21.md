@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Callouts + Extended Target keep to your raid or group** (§189) | Live: bot 3.1.222 on `main` (2026-10-08 00:36 ET) and stable Mimic 2.7.10 / agent 3.7.106 with the Raid \| Group switch (§190) | the guild lead: try Group while grouped and say if it still shows other groups; the rest of the separation inventory (loot posts, shared alerts, attendance per raid) waits on picks |
 | **Three picks: bard counts, AE chip by spell data, height floor** (§178) | All three built; HUD counts, AE gate and the floor on beta (agent 3.7.98); the catalog's `ae` flag waits on this branch reaching `main` | the guild lead: push this branch to main (after 00:30 ET on a raid night); a bard on beta checks the ring label; a beta tester drags an overlay small and confirms it stays |
 | **Guild kit slices 1b, 2-prep, 3** (§177) | Bot 3.1.215: `utils/guildConfig.js` loader + getters, Discord self-provisioner (`/setup discord`, standalone script), tag-correct REST filters with a ratchet, one-shot announcers gated on the guild tag, Bristlebane guild file. Web slice A (`web/lib/guild.ts` + the literal swap) reviewed separately → `beta` | a session: slice 2, the de-branding sweep (start from the 11 getter-only env names in `test/guild-config.test.js`); then `doctor` and the wizard CLI (§8 picks stand) |
 | **HUD second clicky row** (§185) | Mimic beta: row 2 one line inside row 1, on by default, 7 picks (4 on one row) | Picked A (7 picks), §187. Next: a beta tester with many clickies tries two rows |
@@ -7941,3 +7942,389 @@ The guild lead: *"add the 72-flag cap to the hail board, and the countdown timer
   combat, out of combat, with a target, with an NPC target, in a raid, or for chosen classes; it fails open (a
   missing signal keeps the piece visible) and everything shows while arranging. Being built on alpha. B–G (loudness
   budget, no layout shift, legibility preview, piece-to-piece guides, full undo, role starters) stay on the list.
+
+### 188. The Linux build is refreshed from beta for a native-Wine tester (2026-10-08, branch `claude/deck-156-refresh` `b8fe506d`)
+
+The guild lead: a tester runs EverQuest under native Wine; picked A (refresh) *"because windows mimic in the same
+wine is throwing wined3d errors"*.
+
+- **Windows Mimic under Wine is out** for now: it throws wined3d errors in the tester's prefix. The native Linux
+  AppImage plus the Zeal pipe bridge is the route (`docs/RUNBOOK-linux-zeal-pipe.md`, still unproven end to end).
+- **What the refresh was:** beta merged INTO the Linux branch (never the reverse). It had been cut from main on
+  2026-08-23 (586 commits behind main, 1,154 behind beta). Of its 108 own commits, 25 are Linux/Deck plumbing, kept
+  and re-applied on beta's code; the rest were stale beta-era copies, overridden by beta. Builds now read
+  2.7.10-linux.N, above the old 2.6.1-linux.N, so the updater offers it.
+- **Also:** the Linux build now stages the offline spell/item catalog (`npm run predist`), as Windows does; and the
+  branch's Deck-only prose names people by role.
+- **Keeping it current:** the Linux branch does not follow beta by itself (no sync workflow). Re-merge beta into it
+  before each Linux test round.
+
+### 189. Callouts and Extended Target keep to your raid, or your group when you are not in one (bot 3.1.222, 2026-10-08)
+
+The guild lead, 2026-10-07 ~22:40 ET, after the raid broke into groups: *"We need to do a better job of not leaking
+other group's mobs or callouts when we're not in a raid mode."* The Extended Target screenshot (not in a raid, "21
+online · MA …", five mobs targeted from other groups in the same zone) had the same cause as the relay's.
+
+- **Two leaks.** (1) The trigger relay kept every guild callout guild-wide for the whole Sun/Wed/Thu 19:00–01:00 ET
+  window, and for 10 minutes after any raid-roster upload, whether or not the listener was in a raid. (2) The bot
+  scoped Extended Target by ZONE only; the "outside a raid, only your group" rule lives in the agent
+  (`_scopeExtToGroup`, `EXT_RAID_FRESH_MS` 60 s) and steps aside whenever a Zeal raid window arrived in the last
+  minute, or the Mimic has no fresh group list. A raid that only splits into groups stays one raid, so the board
+  is still raid-wide by design.
+- **The rule (`utils/groupScope.js`, decided from data, not the clock):** in a raid = the live roster (an uploader's
+  latest `raid_roster`, 2 minutes, the §124 `groupRaids` rule) puts the listener's account or character in one;
+  else their GROUP when the Mimic told the bot; else the old same-zone rule, and nothing wider. Raid: unchanged,
+  and with two raids a sender KNOWN to be in the other one is dropped (one raid changes nothing). Group: only the
+  listener's group's fires and targets; a sender in a raid while the listener is not is another group.
+- **Where the bot learns a group:** it did not. `live-state`, `raid-roster` and the heartbeat carried only the RAID
+  group number. The reporter heartbeat now accepts `group_names` (names in the played character's Zeal group window,
+  memory only, 60 s fresh); the relay stamps `origin_raid` / `origin_group` on each fire at POST. **Until a Mimic
+  sends `group_names`, "group unknown" applies: the zone rule, minus the raid-evening blanket.** Agent 3.7.103 (beta)
+  sends it: `_heartbeatGroupNames` reads the played character's Zeal group window, only when under 60 s old;
+  `[]` = solo, left out = unknown. Stable Mimic installs keep the zone rule until the next stable cut.
+- **Fail open:** no data, a stale or other-character heartbeat, a failed roster read, or Supabase off → today's rule.
+  A listener the bot cannot place at all keeps hearing the whole raid evening (today's), and nothing off-evening
+  (the 2026-09-11 rule). `flag_disable_groupscope=1` (tuning map, 60 s) restores the old behaviour for both.
+- **Left alone on purpose:** loot posted, boss timers and lockouts, quakes, control-plane notices, the buff queue.
+  A grouped player outside a raid no longer gets the raid's main assist on Extended Target. A single raid's board
+  still shows non-members in the zone, as before (§124's "one raid is byte-identical").
+- **Raid | Group switch on Extended Target (the guild lead, 2026-10-08, answering the raid-group question):** *"Seeing
+  the whole raid is often worthwhile, but when grouping it can be annoying to see this mode. Make it a toggle at the
+  top."* Both, switchable, in the overlay's title bar (agent 3.7.104, beta). **Raid** (default) = everything the raid
+  is on; **Group** = in a raid, your RAID group from the Zeal raid list (outside one it changes nothing — you already
+  see only your group). Remembered per install. Raid group 0 is the ungrouped bucket (raid_roster on 2026-10-08:
+  group 0 held about twice any real group), so 1..12 count, the same rule as `utils/buffGroups.js`; an ungrouped
+  raider falls back to their Zeal group window. Agent-side only (`_scopeExtToGroup`, `?scope=group`); the main
+  assist line stays. **Agent 3.7.105: a chosen Group never falls back to the whole board** (the guild lead, the same
+  night, "still showing other groups"): an unknown group shows an empty list that says so, and an ownerless pet
+  row is dropped. Raid keeps failing open as before. **Agent 3.7.106** (the guild lead, grouped and NOT raiding,
+  Group on, still saw the whole raid: "not working"): the group is now read off the group window's F2..F6 HP gauges
+  as well as Zeal's group list (`_zealGroupNames`, also used by the heartbeat's `group_names`), the group window
+  wins over the raid roster, and when the "active" character has no fresh Zeal state the character Zeal is
+  streaming is used (`_zealSelfForScope`).
+
+### 190. Mimic 2.7.10 stable, and bot 3.1.222 + web 1.8.116/117 on main (2026-10-08, after 00:30 ET)
+
+The guild lead, 2026-10-08: *"go ahead and push beta to main"*, and picked **A — cut stable now** over waiting for
+the Group switch to be proven in play.
+- **Main push (00:36 ET):** the session branch fast-forwarded `main` in two pushes, the web commit first, so Vercel
+  built web 1.8.116 (its ignore step reads only a push's last commit). That carried bot 3.1.222 (§189 group scope),
+  3.1.221 (encounter-script quest bits), 3.1.220 (hail board cap) and 3.1.219 (FB scanner by reachability).
+- **Stable 2.7.10 (agent 3.7.106):** a file-level promotion like 2.7.9: `apps/mimic` and `packages/wolfpack-logsync`
+  from beta, plus beta's tests except sixteen that check website or bot work still on beta only (the guild-kit web
+  module and tag sweep, `/parses` 7-day default, `/about` and `/pvp` previews, `/buffs` groups, admin row-cap pages,
+  guild trigger timer fields) and one main owns newer (`pgrst-cap-bot-reads`). Gate on that tree: 487 files /
+  8,801 tests, lint, check:dashboard and golden:check clean. Roadmap entry in web 1.8.117, pushed on its own first;
+  the stable commit is the tip of its push so its notes become the release body.
+- It closes FB-12, 16, 21, 22, 23, 26, 30, 31, 52, 56, 57, 58, 60, 61, 62, 63 and 65. FB-59 (`/parses` default) is a
+  website change still on beta; FB-64 is alpha-only; FB-66 is on the Linux branch.
+- Beta re-parks at 2.7.11.
+
+### 191. PoP checklist: The Binden Concerrentia (2026-10-08, web 1.8.118)
+The guild lead: *"https://www.eqprogression.com/the-binden-concerrentia-quest-guide/ this needs to be tracked"*.
+Three optional steps on `/pop/guide`, built like §95: every claim read off the server's scripts and data, not
+copied.
+- **The quest:** a Plane of Knowledge gate built over three trades with no flag, level or phrase checks:
+  Jimlok Keylifter (Tranquility), Tabben Bromal (Knowledge, the Jeral section) and Elder Clinka (Tranquility).
+  Part 1 `binden_small` (tier one) gives the Small Clockwork Talisman; part 2 `binden_powered` (end of tier
+  three) the Powered Clockwork Talisman; part 3 `binden_final` (tier four) The Binden Concerrentia. Sources:
+  the three NPC scripts (`eqemu_quest_scripts`), recipes 9983 / 9874 / 9980, `eqemu_npc_drops`, `eqemu_spawn2`.
+- **New over the source page, each pinned in `test/pop-guide.test.js` and mutation-checked:** the silk is
+  Disease's and the ooze Nightmare's (the page has them swapped); the Tactics casing is from Diaku, not ogres;
+  Valor is arachnae only; sun guardians also drop the power source; the Torment chain is 50%, not a sure drop;
+  the elemental fragments are not from mephits; the Justice rats respawn in about 20 minutes, not 10 to 13;
+  Tabben's "ready to write down" only reads the parts out (and only while you hold the Small Parts Container).
+- **No loot call:** none of the parts is lore or no drop, unlike the essences (§95).
+- **Auto-fill** (`popGuideAuto.ts`, `any`): a later item ticks the earlier parts, because each talisman is used up
+  in the next combine. It proves possession, not completion (nothing here is no drop).
+- **Not confirmed:** where Talisman Gate lands and its reagent (the spell row carries only effect slots), so the
+  guide says our data cannot confirm the destination. The Mimic PoP overlay data (`apps/mimic/pop-quests.js`)
+  is regenerated with the three steps; it reaches Mimic with the next beta build and stable cut.
+
+### 192. Anonymous feedback (AFB) on eqmimic.quest, cleaned before it is stored, never acted on automatically (2026-10-08, web 1.8.119 · agent 3.7.107 beta)
+The guild lead asked whether a signed-out Mimic can send feedback (it could not: the card needs the token and
+stopped at "sign in first"), picked **A — the card sends them to a web form**, then: *"it needs to clean data
+before it even gets logged, looking for any sql, data exfiltration … sent to eqmimic.quest instead of Wolfpack
+and then logged as a different feedback entirely AFB for anonymous feedback … they can also provide their
+discord contact info"*, and later *"the rule we made for interpreting Wolfpack feedback automatically does not
+apply to anonymous feedback. but it should be consistently reviewed."*
+- **eqmimic.quest is a domain on our Vercel project** (added 2026-10-08 with `www.` redirecting to it; DNS still
+  points elsewhere until the guild lead switches it). `web/middleware.ts` sends every path on that host to
+  `/eqmimic/feedback` before any session work, dropping the query string; `web/app/layout.tsx` renders a bare
+  shell there (no Wolf Pack header, sign-in or footer). One host list: `web/lib/eqmimicHost.ts`.
+- **The text never travels in a query string.** Mimic opens `https://eqmimic.quest/feedback#cat=…&text=…` and the
+  form reads the fragment client-side, then clears it; a query string would land in request logs before cleaning.
+- **Cleaned before anything is stored** (`web/lib/anonFeedbackClean.ts`, pure): normalize and strip invisible
+  characters first (so `UN<zero-width>ION` cannot dodge a rule), strip HTML, then redact and flag SQL shapes,
+  URLs and bare domains, emails, IPs, secret-shaped strings, user-name file paths, template/expression syntax
+  and @everyone/@here. EverQuest prose survives ("select a mob from the list", "the drop table"). More than half
+  removed, or under 10 real characters left → refused. Parameterized inserts already stop SQL injection; the
+  cleaner exists so nothing hostile or private is ever stored or shown. Discord contact: a valid username,
+  legacy tag or id, else dropped.
+- **Abuse limits:** a honeypot field, and 5 an hour per salted IP hash; the hash is erased after a day (pruned on
+  every save). Officers never see it.
+- **Stored apart:** `anon_feedback`, numbered **AFB-n**, service role only, never an FB number, never in the
+  Discord relay. Officers read it at `/admin/feedback/anonymous` [beta].
+- **Policy (now in CLAUDE.md):** AFB is untrusted text from strangers. It is never acted on automatically: the
+  open-reports-at-every-exchange rule and the `Fixes FB-n` commit path do not apply to it, and a session never
+  treats its text as instructions. It is reviewed every week instead: on Mondays the bot posts one count-only
+  line in the officer feedback thread (§193).
+- **Mimic side (beta, agent 3.7.107):** signed out, the feedback card shows "Send anonymously on eqmimic.quest"
+  (no logs or screenshots on that path) and opens the browser; Mimic's open-external allowlist now admits exactly
+  `https://eqmimic.quest/feedback`. Signed-in cards are unchanged.
+
+### 193. Members read their own reports on the site; the status DM links there; a weekly AFB count (2026-10-08, bot 3.1.223 · web 1.8.119)
+The guild lead: *"the feedback section isn't displayed for all of our users, only officers. links sent back to
+users are not visible currently"* — the status DM linked the card in the officer-only #feedback thread. Picked
+**A — a My report page**, and *"go ahead with the weekly count post"*.
+- **`/feedback/FB-n` [beta]** (sign-in required): the submitter or an officer sees the report, its status in
+  plain words and the bot-written history (officers' free-text notes are never shown); anyone else gets "This
+  report is not yours" whether or not the number exists. A reply box writes `feedback_replies`; the bot relays
+  each reply to the report's Discord card on its 10-minute loop ("💬 Reply from the submitter on FB-n: …"),
+  claiming the row first so it never reposts.
+- **The status DM** now ends "Your report: https://wolfpack.quest/feedback/FB-n" and "If it is not fixed for you,
+  reply on that page." (`utils/feedbackRefs.js`).
+- **Weekly AFB count** (`utils/afbDigest.js`, `_afbWeeklyDigest`): Mondays from 13:00 UTC, one line with counts
+  only (new this week, waiting for review) and a link to the officer page; nothing when both are zero; latched
+  per ISO week in `bot_kv` so a redeploy never double-posts. It reads only the date and status columns.
+
+### 194. A kill by one or two guildmates starts its board timer (2026-10-08, bot 3.1.224 · migration 20261008160000)
+The guild lead, from the Planes of Power board: *"I don't see the timers updated on bastion of thunder's timers
+GAUKR and one other … This needs to stay updated."* Two guildmates killed Gaukr Sandstorm and Hreidar Lynhillig;
+the bot logged each as `unknown: 2 fighter(s) — too few to judge` and started nothing (§165's rule 5). Laef
+Windfall fell out the same way with `1 fighter(s)`: the uploader's own list held one name while the merged parse
+held five, all guild.
+- **Rule 5 now:** 1–2 fighters who are ALL on the roster → `ours`. Anyone off the roster, or no roster to read,
+  is still `unknown`. Rules 1–4 still run first, so a PvP broadcast, a PvP flag, or another guild in a fighter's
+  own /who still makes the kill pvp/live.
+- **Fighters = this upload's list + the merged `encounter_players`** (`gatherKillSignals`, one bounded read; a
+  failed read falls back like the others). A lone uploader of a mostly-stranger fight is now judged on the whole
+  fight, which can turn an old `unknown` into `live`.
+- **The restart re-seed agrees** (`latest_kill_per_npc`, migration `20261008160000`, applied on production
+  before the deploy): 3+ players, or 1–2 all on the roster. The roster is read once as an array — 153 ms over
+  every tracked boss for 186 h; a correlated anti-join took 2.3 s.
+- **Today's three timers come back on the deploy itself:** the startup reconcile reads Gaukr, Hreidar and Laef
+  through the new function (checked on production) and seeds them from the fights' start times.
+- **The risk accepted:** two guildmates killing a named in the open world with no /who taken get a timer they
+  should not. An officer's 'live' mark on /parses takes it back on the next reconcile.
+
+### 195. Mimic can draw overlays without the graphics card, and setup asks (2026-10-08, Mimic beta `3ba7154a`)
+A member reported Mimic "crashing his computer": the whole screen went black with Windows' device-disconnect
+sound, one character, an RTX 50-series card on an older board — a graphics-driver reset, not an app crash
+(no crash rows, uploads healthy). Every overlay is a transparent always-on-top window composited on the
+graphics card over a DirectX 8 game, and each show/hide/resize can flip how Windows presents the game; newer
+50-series drivers have been fragile exactly there. The guild lead picked **A — a switch to draw overlays in
+software**, and *"ask people as they set up"*.
+- `cfg.disableGpu` (default off = graphics card), read off disk before app-ready, `app.disableHardwareAcceleration()`
+  when on; a missing or torn config keeps the graphics card.
+- Settings ("Use the graphics card for overlays") and the tray checkbox share `_setGpuDrawing` and offer
+  Restart now / Later. The setup walk's optional "Screen flicker" step asks *"Has your screen ever gone black,
+  or flickered, while EverQuest and an overlay app were running?"* and lands on the next start (setup never
+  restarts mid-walk).
+- Cost: overlays use more processor. Member-facing text says "graphics card", never GPU/acceleration.
+- Also told the member: newest driver (clean install), hardware-accelerated GPU scheduling off, windowed or
+  borderless EQ, and event 4101 in Event Viewer to confirm the reset.
+
+### 196. Target Info buff bars count down, and the time says how long and who cast it (2026-10-08, Mimic beta `2eb8796e` · bot 3.1.225 · agent beta)
+The guild lead, on a guildmate's card with every buff bar full green: *"This should record how long it was to
+start and not just show all green. it should count down like everything else"*, then *"MOUSING OVER the time
+left should show you how long it lasted and who cast it"*, then *"we should know it since we have the timer and
+the person casting it when they start, the target, the target's group if they're using mimic"*.
+- **Bars** (`mobinfo.html`, `_tbuffSeenTotal`): a live Zeal buff has time left but no length, so the overlay
+  remembers the longest time it has seen per target + buff and draws against it; a refresh raises it, a buff
+  that leaves the list is forgotten.
+- **Hover on the time left:** "Lasts M:SS · M:SS gone · cast by <name>", or "caster unknown (only Mimic users'
+  casts are named)". EverQuest's landing lines never name a caster and `buff_casts` has no caster column.
+- **Caster** (bot): the casting relay now remembers the last caster per target + spell for 3 h (in memory,
+  5000 cap; a restart reads as "unknown", never a wrong name), served as `last_casters` on
+  `/api/agent/target-casts` under the same zone and spawn-id scope as live casts. A GROUP spell (targettype 3 /
+  41) is recorded for every member of the caster's group from the live raid roster (`group_num`), off the reply
+  path. A fizzled or interrupted cast is still recorded (only a failed cure says so).
+- **Length** (agent): when a caster is attached and the buff has no length, the agent fills it from the spell
+  catalog at the era-cap level, never below the time left, so the bar measures against the real duration.
+
+### 197. Loot is valued in platinum, totalled per character, over a chosen window (2026-10-08, bot 3.1.226 · Mimic beta)
+The guild lead: *"quantify the loot tab with how much each item is worth and say how much each toon has looted
+equivalently in platinum from what you've seen, and time bound it"*.
+- **Worth = `eqemu_items.price`**, the item's base merchant value (copper; shown as platinum). Not bazaar
+  prices: those live only in trader files on players' PCs. ~90% of looted rows are NO DROP, which can only ever
+  go to a merchant, so the merchant value is the one figure that applies to everything; NO DROP rows are tagged.
+  Measured: 10,738 loots in 7 days by 63 characters, all matched by exact name, ≈223k pp.
+- **Bot** (`utils/lootValue.js`, `_nightLootPanelBody`): server-panel `night-loot` takes `?hours=` 12 / 24 / 168
+  / 720 (anything else → 12, so an old agent sees exactly what it did). Prices by exact `name=in.(…)` (the only
+  indexed lookup; lowest id wins), cached 6 h. Per-looter totals are summed over EVERY row in the window (paged),
+  only the list is capped at 200. Cache 60 s for 12 h, 300 s for longer windows; a partial price read is not
+  cached.
+- **Mimic** (dashboard Loot tab): window chips, a "Totals by character" table, a Value column and an ND tag; an
+  old bot renders exactly as before.
+- **Who looted is not who kept it**: rows are each raider's own "You have looted" line; master-looting and
+  hand-offs mean the looter is often not the owner. Said on the officer page (§198) and in the footnote.
+
+### 198. Officer page: loot by value (2026-10-08, web 1.8.120 · migration 20261008170000, applied)
+The guild lead: *"make an admin page with loot, sortable by highest value. note at the top that who looted it is
+not always the person that ends up with it"*.
+- **`/admin/loot` [beta]** (new route → live on main with the marker, §135; officer-gated like its siblings):
+  the note first, then a window (24h · 7d · 30d · 90d, default 7d, `?days=`), a totals-by-character table
+  (items, value, NO DROP count, most valuable item) over EVERY row in the window, and the item list (top 2,000
+  by value) sortable by value (default), time, looter or item.
+- **Two RPCs** (`loot_value_items`, `loot_value_by_looter`; service_role only; exact-name join, lowest id per
+  name): applied on production before the push and run over 90 days (135 looters, 2,000-row list).
+- **Known skew:** merchant prices for Luclin horse bridles are huge (White Ornate Chain Bridle 150,000 pp,
+  Silken Bridles ~60,000 pp), so a looted bridle dominates any total it is in. Shown as-is: it IS the item's
+  merchant value. If that misleads, the next step is a per-item cap or excluding mount items — the guild lead's
+  call.
+- **DKP items are listed but not counted** (the guild lead: *"If something has a DKP bid associated with it, don't
+  count that in the totals"*). `looted_items` carries no auction link, so a looted row is DKP when the same item
+  name had an OpenDKP auction with a winner or a bid within ±6 h, or an OpenDKP award in a raid dated within
+  ±12 h. 30 days: 120 of 24,478 looted rows. The page's per-character value, headline total and "most valuable
+  item" skip them; a DKP column counts them and a DKP tag marks the rows. Migration `20261008180000` adds
+  `loot_value_items_v2` / `loot_value_by_looter_v2` (the page calls these).
+- ⚠ **A `DROP FUNCTION` hung on production on 2026-10-08** — through both `apply_migration` and `execute_sql`,
+  with no lock or other session visible, while a plain `CREATE` returned at once. Hence `_v2` beside the
+  unused v1 pair instead of drop-and-recreate. Left behind by the probing: `public._tmp_probe2_20261008()`
+  (returns 1, unused) — drop it, and the v1 pair, once a DROP works again (try from the Supabase SQL editor).
+- **Mimic's Loot tab (bot 3.1.226) does not yet leave DKP items out** — the same rule belongs in
+  `utils/lootValue.js`; queued.
+
+### 198b. /admin/loot: one row per looter + item, paged in the database (2026-10-08, web 1.8.122 · migration 20261008190000, applied)
+**The call** (the guild lead): *"that page … takes forever to load. bringing in a full list of loot on there isn't
+great. it lags out my machine just to open it. Please paginate, and give distinct looter+item+count rows instead,
+and totals for that row."*
+- **Where it landed:** `loot_value_grouped(p_guild_id, p_since, p_sort, p_limit, p_offset)` groups per looter +
+  item: count, DKP count, value of one, row total (non-DKP lines only), NO DROP, latest zone and time, and the
+  group count for the pager. The page asks for 50 rows at a time (`?page=`); each column header is a link that
+  sorts on the server (`?sort=total|unit|count|recent|looter|item`). `LootTable.tsx` is now a server component, so
+  the browser gets plain HTML and no sorting script. The per-character table moved to `loot_value_by_looter_v3`.
+- **Why it was slow:** two things. The browser drew up to 1,000 single-loot rows. And the DKP test ran two
+  look-ups per looted line, one of them on `opendkp_loot`, which has no item-name index: 2.2 s for 90 days. The new
+  shared base `loot_value_rows()` collects the window's DKP events (auctions with a winner or bid, awards) once, then
+  tests each line against that small set: 0.9 s for 90 days. Same DKP rule as §198, and v3's totals match v2's
+  exactly (30 days: 24,477 items, 120 DKP, same platinum total).
+- 90 days is about 7,150 looter + item rows, so 143 pages of 50.
+- v1 / v2 stay in place, unused, until a DROP FUNCTION works on production again (§198).
+
+### 199. Mimic agent-only mode, switchable both ways (2026-10-08, agent 3.7.110 · Mimic beta `8cf8bcc7`)
+**The call** (the guild lead): *"update the installer to have agent only mode and a way to update it to have full
+mimic, and vice versa"*, then picked **A — one install, a mode switch** over a second installer.
+- **Where it landed:** `cfg.runMode` ('full' default, or 'agent'), read off disk before any window exists and fixed
+  for the run, like the graphics-card switch (§195). Agent only keeps uploads, the tray, the dashboard and the
+  spoken trigger callouts (the trigger window stays alive and hidden, the one voice); every overlay window is left
+  out. The setup walk asks which one; Settings, the tray and the dashboard's Overlays tab switch it later and offer
+  a restart (tray ↔ dashboard parity rule). The tray hides overlay-only items in agent only and shows a "Spoken
+  trigger callouts (TTS)" check instead.
+- **Why one install:** a second installer doubles the release work and the updater channels, and switching would
+  mean uninstalling. The overlay code is on disk either way; agent only just never opens it.
+- **Guard:** `test/mimic-agent-only-mode.test.js` fails any `create*Overlay` / `create*Window` without the gate.
+- Graduates with the next stable cut.
+
+### 200. Plane of Tactics boar stampede: what starts it, and two guild triggers (2026-10-08, live)
+**The ask** (the guild lead): *"There is a stampede … in Plane of Tactics where a bunch of boars run from around
+-350, 1200. What triggers that? is it a timer? can we build in a trigger for those in the zone when that
+happens?"*
+- **What starts it:** a zone controller script (`potactics/Stampede_Controller.lua` in the server's quest set) on a
+  random timer, re-rolled to 40–120 minutes after each run, and skipped while Rallos Zek is up. Each run sends the
+  zone emote **"You hear the pounding of hooves."**; the boars spawn about 15 s later. Confirmed in a raider's own
+  log: the emote at 2026-10-07 16:20, 2026-10-08 12:45 and 13:28 (43 minutes apart), boars engaged ~40 s after it.
+- **Where it landed:** two guild triggers, `source_pack` `potactics-stampede`, live through the 2-minute guild
+  trigger poll: "Tactics: boar stampede incoming" (pattern `You hear the pounding of hooves\.`, overlay + TTS
+  "Stampede", 15 s timer, 120 s cooldown) and "Tactics: next stampede possible" (same line, 40-minute timer, shown
+  from 5 minutes out). The 40 minutes is the script's minimum; the real gap can run to 2 hours.
+- **Follow-up, same day: the whole window, shown at once** (the guild lead: *"we should be able to say when a spawn
+  may happen after seeing the stampede go off and give a timer"*; a member's FB-69 asked to record the time of the
+  emote). The first timer hid until its last 5 minutes and said nothing about the far edge. Now two bars start the
+  moment the emote is seen: **"Tactics: stampede window opens"** (40 min, spoken warning at 5 min, ends "Stampede
+  possible now") and **"Tactics: stampede by"** (120 min, text warning at 10 min, ends "Stampede is overdue: Rallos
+  Zek up, or the roll ran long"). Guild-trigger rows only, so they reach raiders on the 2-minute poll with no release.
+  Implements FB-69.
+
+### 201. Owned songs listed as missing (FB-67) and the inverted NO DROP tag (2026-10-08, web 1.8.123 · bot 3.1.227 · migrations 20261008200000 + 20261008210000, applied)
+**FB-67** (a member): the shopping list showed songs the character already owns, Kazumi's Preservation and
+Angstlich's Assonance. **Confirmed on production bytes**, not guessed: the spellbook says `Angstlich's Assonance`
+(apostrophe), the scroll item says `Song: Angstlich`s Assonance` (backtick), `Song: Angstlichs Appalling Screech` has no
+quote, and `Song: Kazumi`s Preservation` teaches the spell `Kazumi's Note of Preservation` (a different name). The
+function compared `lower(name)` equality, and bards only met it now because 20260825060000 first added `Song:` scrolls.
+- **Where it landed:** `spell_name_key(text)` (lower-case letters and digits only) on both sides, plus
+  `spell_scroll_aliases` for the 24 scrolls whose item name is not the spell's name (only the unambiguous ones: a
+  dropped word, a one-letter misspelling in the mirror, a reordering; the rest are left alone rather than guessed).
+  Display names and the signature are unchanged. A bard who owns three of the reported songs went from 27 missing to 6;
+  the other 21 were the same bug, not real gaps.
+- **Not done:** `pop_spell_needs`, `guild_held_spell_needs` and `pop_extra_scrolls` use the same name equality, and
+  take `substring(name from 8)` after "Spell: ", which would cut a `Song: ` name's first letter. Queued, separate.
+**NO DROP tag backwards** (the guild lead, on the new loot page: *"All of these ND items are not actually no drop"*).
+`eqemu_items.nodrop` is INVERTED on this mirror (false = NO DROP), which the repo already knew in four other places;
+the loot code passed it through raw, so Diamonds were tagged ND and real NO DROP items were not. `loot_value_rows` and the
+bot's Loot tab (`utils/lootValue.js`) now return plain polarity (true = NO DROP). The "about 90% of looted items are
+NO DROP" figure noted while building it was this same inversion.
+**FB-68 (resisted clicky should use a charge) is not what the code does**: the counter spends a charge on the
+"begins to glow" line, before any resist, so a resisted click is already counted. The likeliest cause is a click that
+printed no matching glow line. Waiting on a raw log excerpt from the member before changing anything.
+
+### 202. More named mobs on the boards: the rule is "drops parchments, glyphed runes or real loot" (2026-10-08, bot 3.1.228 + 3.1.229 data)
+**The ask** (the guild lead): *"We need to add a bunch of the other mobs to the boards, like Glykus Helmir, and The
+Diaku Overseer. Any of the named mobs with a long respawn timer should be tracked on that page"*, then, on the cut:
+*"any of the ones that drop parchments or glyphed runes, or real loot"*. Picked **A, the PoP sweep** first; the loot rule
+then widened it past PoP.
+- **Glykus Helmir, Tagrin Maldric, The Diaku Overseer** (Plane of Tactics, 24 h, from `eqemu_spawn2`) went on first
+  (3.1.228), same shape as the Plane of Valor 24 h entries (`lockout:false`).
+- **The rule**, run against `eqemu_npc_types` + `eqemu_spawn2` + `eqemu_npc_drops` (3.1.229): a named mob (not `a_` /
+  `an_`), level 45 or more, a spawn timer of 18 h or longer (placeholder timers over ~277 h left out), not already on the
+  board, AND it drops an Ethereal Parchment, a Spectral Parchment or a Glyphed Rune Word (the spell turn-in tiers, §63-64
+  of DECISIONS-2026-08-20), or real loot: a wearable item that is magic or NO DROP, with at least 30k HP for the
+  loot-only ones. 87 named mobs have no loot rows at all; 140 more drop only junk or quest bits; neither group is added.
+- **Result: 90 added, 251 bosses on the board**: Plane of Fire 10, Air 7, Earth 6, Water 5, Torment 5, Innovation 1,
+  Tower of Solusek Ro 5, Temple of Marr 4 (all PoP); Temple of Veeshan 19, Vex Thal 12, Plane of Growth 7, Dragon
+  Necropolis 3, Western Wastes 3, Akheva Ruins 3, Echo Caverns, Grieg's End, Katta Castellum. Timer = the server's spawn
+  timer in hours. Data: `data/bosses.json`, ids by slug, PQDI link by npc id, nicknames only where unique on the board.
+- ⚠ **Not decided:** `lockout` is left unset on the 90 (the board's default, which can create raid lockouts from kills);
+  the 18-30 h ones may have none. And a high-HP named with no drop rows in this mirror (87) could be a gap in the loot
+  tables rather than a mob that drops nothing. Both are for the guild lead's eye on the first kills.
+- Rejected: option B (every named mob, ~180 names, mostly trash-named Vex Thal / Temple of Veeshan) and option C (the
+  board grows itself on a kill; a bot change that only learns a mob after the guild kills it). C is still the better
+  long-term rule and stays an open item.
+
+### 203. Target Info says when a mob does not equip (2026-10-08, bot 3.1.230 · web 1.8.124)
+**The ask** (the guild lead): *"We need to see if a mob does not equip or not in target info"*.
+- **What it is:** Quarm special-ability code 8 ("Do Not Equip"; the table already had it as 'Disallow Equip', hidden).
+  The mob never wields what it carries, so the gear on its model is not its loot. 1,847 of the 18,033 catalog rows have
+  it (about 1 in 10; 8 of 201 raid targets), few enough that a chip still means something.
+- **Where it landed:** `utils/mobSpecials.js` code 8 is now `show: true`, label **Does Not Equip**; the bot's mob-info
+  already ships every shown label, so Mimic's Target Info (a neutral chip) and the Mob Info web decode (`web/lib/npcDecode.ts`,
+  kept equal by `test/mob-specials-web-parity.test.js`) pick it up with no Mimic release. No consumer matched the old
+  label. A mob without the flag simply has no chip: the absence is the "equips" answer, not a second chip.
+- ⚠ Mimic caches mob info on the player's machine (6 h), so an already-seen mob shows the chip after the cache turns over.
+
+### 204. The Glyphed Rune Word drop list is the board's rule: anyone on it with a spawn over 2 h (2026-10-08, bot 3.1.231 data)
+**The ask** (the guild lead, pasting pqdi item 29132, Glyphed Rune Word, with its 167 droppers): *"Anyone from this list
+should be on that boards page if they have a longer than 2 hour spawn cooldown"*. This replaces the §202 loot guess
+with PQDI's own list for the Planes of Power.
+- **Checked against `eqemu_spawn2`:** of the 167 ids, 53 spawn on a timer over 2 h, 53 on 2 h or less (the trash named of
+  Fire and Water, the Doomfire mobs and so on), and 61 have **no spawn row** (spawned by a zone script, so there is no
+  respawn to read). 44 of the 53 were already on the board (§202 + earlier); **nine were added**: Emmerik Skyfury and
+  Evynd Firestorm (Bastion of Thunder, 6 h), An Undead Inhabitant, A Rabid Wrulon and A Recuso Degenerate (Halls of Honor, 12 h),
+  Lossenmachar and Calebgrothiel (Plane of Air, 4 h), Neffiken, Lord of Kelek`Vor and Gurebk, Lord of Krendic (Plane of Storms, 3 h).
+  260 on the board. The six on 6 h or less are short-timer bosses (§isShortTimerBoss): on the board and in Active
+  Cooldowns, off the spawn alerts, `lockout:false` like their Bastion siblings; the tests that pinned "exactly the eight" now name them.
+- ⚠ **Open: the 61 scripted spawns are NOT on the board**, because their cooldown is unknowable from the catalog. They are the
+  event and boss mobs of the planes: Falto, Ston`Ruak and Jeplak (Storms), Rydda`Dar (Halls of Honor), Rizlona and The Protector of
+  Dresolik (Tower of Solusek Ro), Pherlondien Clawpike, the four Avatars (Wind, Smoke, Mist, Dust) and Melernil, Inlokher, Escalardian
+  (Air), Pwelon / Nrinda / Vamuil (Water), Azobian, Javonn, Reaxnous, Warlord Prollaz, Omni Magus Crato, Chancellors Kirtra and Traxom,
+  Hebabbilys (Fire), and the Earth event set, plus Rallos Zek / Vallon Zek's instance bodies (already on the board by name). They need
+  a kill or a PQDI read to learn the timer.
+
+### 205. The Feign Death failure callout was muted by the raid callout allow-list (2026-10-08, agent 3.7.107 main · 3.7.111 beta)
+**The ask** (the guild lead): *"fd FAILURE callout needs to go off for a monk, it's critical"*.
+- **Cause:** the trigger and the match were fine. The guild trigger "Feign Death Fail" (`{c} has fallen to the ground.`, overlay
+  "FD FAIL", speech "FD failure", enabled since May) fires on the monk's own agent. But §136's allow-list only lets a
+  guild-pushed trigger SPEAK when its name, tags or text hit a critical category (slow, death, tank swap, disc, deathtouch, charm,
+  enrage, mechanic). Nothing in "Feign Death Fail", "FD FAIL" or "FD failure" matched, so it rendered on the overlay and stayed
+  silent. Same trap as enrage (§1) and the same shape: a trigger that is enabled and firing reads as coverage.
+- **Fix:** a `feign` category in `_CALLOUT_ALLOW_CATEGORIES`: `feign` / `feigned` / `feigning`, and `FD fail` / `failed` / `failure`.
+  A bare "FD" stays out (an "FD ready" callout stays muted). Shipped to BOTH lines because it is a raid-critical call: stable agent
+  3.7.107 (hot-swap on main) and beta agent 3.7.111. No trigger row or bot change.
+- ⚠ **Not changed:** the allow-list is a deny-by-default list. Any other guild trigger whose name and text avoid those words is
+  still muted on voice. Worth one pass over the live `guild_triggers` for callouts the guild would call critical.
+  Measured the same night: **296 of the 487 enabled guild triggers match no category** (boss "recast" warnings, spell-landed
+  and zone-event callouts for Fire, Air, Water, Torment, Tower of Solusek Ro, Justice and Hedge Maze among them). Muting them
+  is what §136 chose, so that is the guild lead's call, not a bug to fix quietly.
+- **My own slip, same night:** the Plane of Tactics stampede triggers (§200) speak "Stampede" and were silent for the same
+  reason. `\bstampede\b` is now in the `mechanic` category (stable 3.7.108, beta 3.7.112).

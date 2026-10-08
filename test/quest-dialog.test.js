@@ -352,3 +352,227 @@ describe('Askr the Lost: lines kept in a table', () => {
     expect(q._stringTables('local L = { "one", -- note\n "two" };')).toEqual({ L: ['one', 'two'] });
   });
 });
+
+// ponightmare/encounters/Maze.lua, trimmed: the constants, a helper with nested blocks and a
+// string holding "end" ahead of the handlers, then the three Thelin handlers (the ready branch's
+// trial-picking cut down to its shape) and the register block. Thelin Poxbourne has no file of
+// his own, so the Quest tab saw "no quest script" (the guild lead, 2026-10-08).
+const MAZE = `local GOVERNOR_TYPE = 204458; -- Maze_Checker
+local THELIN_OUTSIDE_TYPE = 204070; -- Thelin_Poxbourne
+local THELIN_INSIDE_TYPE = 204486; -- Thelin_Poxbourne
+local TERRIS_TYPE = 204483; -- Terris_Thule
+
+function GetMazeGroup(client, dist)
+	local members = {};
+	local function add(member)
+		if ( member and member.valid ) then
+			table.insert(members, member);
+		end
+	end
+	for i = 0, 5 do
+		add(client);
+	end
+	eq.debug("the end of the group");   -- if ( this ) then
+	return members;
+end
+
+function ThelinTradeEvent(e)
+	local i = GetInstanceFromSpawnID(e.self:GetSpawnPointID());
+	local item_lib = require("items");
+
+	if ( instance[i].state == 3 and item_lib.check_turn_in(e.self, e.trade, {item1 = 9258}) ) then -- Dagger Blade Shard
+		e.self:Emote("takes the final shard from you and places all of the pieces on the ground.  Thelin picks it up and hands it to you.");
+		e.other:QuestReward(e.self, 0, 0, 0, 0, 9259); -- Thelin's Dagger
+		local offset = 1000 - (i * 1000);
+		instance[i].terris = eq.spawn2(TERRIS_TYPE, 0, 0, -4532, 5950+offset, 8, 0);
+	end
+
+	item_lib.return_items(e.self, e.other, e.trade);
+end
+
+function ThelinOutsideSayEvent(e)
+
+	local qglobals = eq.get_qglobals(e.other);
+
+	if ( not qglobals.thelin ) then
+		if ( e.message:findi("hail") ) then
+			e.other:Message(0, "Thelin Poxbourne screams loudly, and then falls asleep once again.");
+		end
+		return;
+	end
+
+	if ( e.message:findi("hail") ) then
+		e.other:Message(0, "Thelin Poxbourne tells you, 'Who is it?  Are you.. really there?  She has offered me a pact.  If I can retrieve my [dagger], then I am free to go.'");
+
+	elseif ( e.message:findi("dagger") ) then
+		e.other:Message(0, "Thelin Poxbourne tells you, 'She broke it into seven pieces.  I must retrieve it, will you [help] me.'");
+
+	elseif ( e.message:findi("help") ) then
+		e.other:Message(0, "Thelin Poxbourne tells you, 'Please when you are prepared have the leader of each of your band of adventurers tell me they are ready.'");
+
+	elseif ( e.message:findi("ready") ) then
+		local members = GetMazeGroup(e.other, 150);
+		if ( #members == 0 ) then return; end
+		local trial = 0;
+		for i = 1, 3 do
+			if ( instance[i].state == 0 and not ClientInTrial(i) ) then
+				trial = i;
+				break;
+			end
+		end
+		if ( trial > 0 ) then
+			e.self:Emote("closes his eyes and falls asleep immediately.  He looks peaceful for a moment and then screams in agony!");
+		else
+			e.self:Emote("groans in agony. 'I must.. rest.  Can you please come back after I have rested.'");
+		end
+	end
+end
+
+function ThelinInsideSayEvent(e)
+	local i = GetInstanceFromSpawnID(e.self:GetSpawnPointID());
+
+	if ( instance[i].state == 1 ) then
+
+		if ( e.message:findi("hail") ) then
+			e.self:Say("Has everyone made it here safely?  When you tell me I will seal off my dream and we can begin.  Are you ready to follow?");
+
+		elseif ( e.message:findi("ready") ) then
+			e.self:Say("Please stay close, I know not what horror Terris will unleash upon us, so stay with me to the end.");
+			instance[i].state = 2;   -- if you fall, this is the end
+		end
+
+	elseif ( instance[i].state == 4 ) then
+
+		if ( e.message:findi("hail") ) then
+			e.other:Message(0, "Thelin Poxbourne tells you, 'Please destroy her for all that have had to endure her hideous visions.'");
+		end
+	end
+end
+
+function ThelinTimerEvent(e)
+	if ( e.timer == "talk1" ) then
+		e.self:Say("Terris hear me now!");
+	end
+end
+
+function event_encounter_load(e)
+	eq.register_npc_event("Maze", Event.timer, GOVERNOR_TYPE, GovernorTimerEvent);
+	eq.register_npc_event("Maze", Event.timer, THELIN_INSIDE_TYPE, ThelinTimerEvent);
+	eq.register_npc_event("Maze", Event.trade, THELIN_INSIDE_TYPE, ThelinTradeEvent);
+	eq.register_npc_event("Maze", Event.say, THELIN_OUTSIDE_TYPE, ThelinOutsideSayEvent);
+	eq.register_npc_event("Maze", Event.say, THELIN_INSIDE_TYPE, ThelinInsideSayEvent);
+end
+`;
+
+// eastwastes/encounters/ringfour.lua, trimmed: ids written as literals; Tain has a say handler
+// and a timer, nobody in it takes a hand-in.
+const RINGFOUR = `-- Coldain Ring: Quest 4
+local hailtimer = 0;
+
+function TainSay(e)
+	if(e.message:findi("hail")) then
+		e.self:Say("The bloody Kromrif ambushed me! I escaped, but I am near death. Without [help], I'm as good as dead.");
+	elseif(e.message:findi("help") and hailtimer == 0) then
+		eq.unique_spawn(116018, 0, 0, -3260, -4819, 190, 65); -- NPC: Ghrek_Squatnot
+		hailtimer = 1;
+	end
+end
+
+function TainTimer(e)
+	if(e.timer == "passout") then
+		e.self:SetAppearance(3);
+	end
+end
+
+function FrostTimer(e)
+	eq.depop();
+end
+
+function event_encounter_load(e)
+	eq.register_npc_event("ringfour", Event.say, 116005, TainSay);
+	eq.register_npc_event("ringfour", Event.timer, 116005, TainTimer);
+	eq.register_npc_event("ringfour", Event.timer, 116019, FrostTimer);
+end
+`;
+
+describe('NPCs scripted by an encounter file', () => {
+  it('finds the handlers through a constant: Thelin inside the maze says and takes a hand-in', () => {
+    const lua = q.encounterHandlers(MAZE, 204486);
+    expect(lua).toMatch(/^function event_say\(e\)/);
+    expect(lua).toMatch(/\nfunction event_trade\(e\)/);
+    const say = q.parseDialog(lua);
+    expect(say.map((b) => b.keywords[0])).toEqual(['hail', 'ready', 'hail']);   // state 1, state 1, state 4
+    expect(say[1].replies[0].text).toMatch(/Please stay close/);
+    const br = q.tradeBranches(lua);
+    expect(br).toHaveLength(1);
+    expect(br[0].items).toEqual([9258]);
+    expect(br[0].fx.gives).toEqual([9259]);
+    expect(q.tradeReplies(lua)[0].text).toMatch(/Thelin picks it up/);
+  });
+
+  it('reads the outside Thelin from the same file, whole handler to its own end', () => {
+    const lua = q.encounterHandlers(MAZE, 204070);
+    const say = q.parseDialog(lua);
+    expect(say.map((b) => b.keywords[0])).toEqual(['hail', 'hail', 'dagger', 'help', 'ready']);
+    expect(say[4].replies.map((r) => r.text)).toEqual([
+      'closes his eyes and falls asleep immediately. He looks peaceful for a moment and then screams in agony!',
+      "groans in agony. 'I must.. rest. Can you please come back after I have rested.'",
+    ]);
+    expect(lua).not.toMatch(/Please stay close/);      // the inside handler is not this NPC's
+    expect(q.tradeBranches(lua)).toEqual([]);          // outside Thelin registers no trade
+  });
+
+  it('takes a literal npc id and leaves the handlers of other ids behind', () => {
+    const lua = q.encounterHandlers(RINGFOUR, 116005);
+    expect(lua).not.toMatch(/event_trade/);
+    const say = q.parseDialog(lua);
+    expect(say.map((b) => b.keywords)).toEqual([['hail']]);   // "help" only spawns Ghrek, says nothing: the parser drops a silent branch
+    expect(say[0].replies[0].text).toMatch(/Kromrif ambushed me/);
+    expect(lua).not.toMatch(/passout/);                // TainTimer is not a say handler
+  });
+
+  it('gives nothing for an id the file never registers say or trade for', () => {
+    expect(q.encounterHandlers(MAZE, 204999)).toBeNull();
+    expect(q.encounterHandlers(MAZE, 204483)).toBeNull();     // Terris: a constant, but no say/trade
+    expect(q.encounterHandlers(RINGFOUR, 116006)).toBeNull();
+  });
+
+  it('gives nothing when the id is only registered for a timer', () => {
+    expect(q.encounterHandlers(MAZE, 204458)).toBeNull();      // GOVERNOR_TYPE: Event.timer only
+    expect(q.encounterHandlers(RINGFOUR, 116019)).toBeNull();
+  });
+
+  it('cuts the handler at its own end, not at an end inside a string, comment or loop', () => {
+    const body = [
+      'local NPC = 100;',
+      'function Before(e)',
+      '  if x then y() end',
+      'end',
+      'function SaySide(e)',
+      '  for i = 1, 3 do',
+      '    if e.message:findi("end") then -- end of the line',
+      '      e.self:Say("the end is nigh");',
+      '    elseif z then',
+      '      --[[ the',
+      '      end ]] while a do b() end',
+      '    end',
+      '  end',
+      'end',
+      'function Other(e) e.self:Say("not me") end',
+      'eq.register_npc_event("T", Event.say, NPC, SaySide);',
+      'eq.register_npc_event("T", Event.say, NPC, Other);',
+    ].join('\n');
+    expect(q.encounterHandlers(body, 100)).toBe([
+      'function event_say(e)',
+      '  for i = 1, 3 do',
+      '    if e.message:findi("end") then -- end of the line',
+      '      e.self:Say("the end is nigh");',
+      '    elseif z then',
+      '      --[[ the',
+      '      end ]] while a do b() end',
+      '    end',
+      '  end',
+      'end',
+    ].join('\n'));
+  });
+});

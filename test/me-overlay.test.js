@@ -588,7 +588,7 @@ describe('the three HUDs', () => {
     expect(fn(base)).not.toMatch(/id="hrp"|id="hlh0"/);   // nothing to show, nothing drawn
   });
 
-  it('HUD carries a clicky counter line — charges left, ∞ for unlimited, red at none', () => {
+  it('HUD carries a clicky counter line — charges left, red at none; unlimited and uncounted items never show', () => {
     const h = HUDS.HUD(Object.assign({}, base, { clickies: [
       { name: 'Ring of Shadows', left: 0, unlimited: false }, { name: 'Rod of Insidious Glamour', left: null, unlimited: true },
       { name: 'Bracer', left: null, unlimited: false }] }));
@@ -596,9 +596,13 @@ describe('the three HUDs', () => {
     // The distinctive part of the name, bright (FB-65: "the names need to be easier to see") — not the
     // old grey "Ring…" / "Rod…", which made every "<thing> of …" look alike.
     expect(h).toMatch(/<tspan fill="#e6edf3">Shadows<\/tspan><tspan fill="var\(--red\)" font-weight="700"> 0</);
-    expect(h).toMatch(/<tspan fill="#e6edf3">Insid[^<]*<\/tspan><tspan fill="#c9d1d9" font-weight="700"> ∞</);
-    expect(h).toMatch(/Bracer<\/tspan>(?!<tspan fill="(?:var|#c9))/);   // not known: no number
+    // The guild lead, 2026-10-08: "the rod and all unlimited should not show up." An older agent still
+    // sends them (∞, or no count at all); the HUD drops them whatever the agent sends.
+    expect(h).not.toMatch(/Insid|∞|Bracer/);
     expect(HUDS.HUD(base)).not.toMatch(/id="hcl"/);
+    // Nothing but unlimited / uncounted items: no line at all.
+    expect(HUDS.HUD(Object.assign({}, base, { clickies: [
+      { name: 'Rod of Insidious Glamour', left: null, unlimited: true }] }))).not.toMatch(/id="hcl"/);
   });
 
   // FB-65 (a member, 2026-10-07): "Should be able to pick which clicky charges you track, and the names
@@ -627,6 +631,16 @@ describe('the three HUDs', () => {
       expect(R.clickyShort('White Ornate Chain Bridle', 12)).toBe('White Bridle');
       expect(R.clickyShort('Rooting Rod', 8)).toBe('Rooting');                         // the longer of its two words
       expect(R.clickyShort('The Gnarled Staff', 20)).toBe('Gnarled Staff');
+      // What raiders call them (the guild lead, 2026-10-08), every dose size alike, whatever the room.
+      expect(R.clickyShort('10 Dose Cloudy Potion', 10)).toBe('Invis Pot');
+      expect(R.clickyShort('5 Dose Cloudy Potion', 30)).toBe('Invis Pot');
+      expect(R.clickyShort('10 Doses of Undeads Recourse', 10)).toBe('U.Recourse');
+      expect(R.clickyShort('Potion of Undeads Recourse', 30)).toBe('U.Recourse');
+      expect(R.clickyShort("Larrikan's Mask", 30)).toBe('Invis Mask');
+      expect(R.clickyShort('Forlorn Totem of Rolfron Zek', 30)).toBe('Totem');
+      // The dose count is not the name.
+      expect(R.clickyShort('10 Dose Potion of Negation', 10)).toBe('Negation');
+      expect(R.clickyShort('10 Dose Potion of Negation', 30)).toBe('Potion of Negation');
       expect(R.clickyShort('Ring of Shadows', 30)).toBe('Ring of Shadows');           // room for all of it: all of it
       expect(R.clickyShort('Ring of Supercalifragilistic', 8)).toBe('Superca…');           // 8 characters in all
     });
@@ -707,6 +721,13 @@ describe('the three HUDs', () => {
       Object.assign(R.hudParts, R.HUD_DEFAULTS, { clickyPick: ['ring of shadows'] });
       const l = line(HUDS.HUD({ ...base, clickies: eight }));
       expect(l.text).toBe('Shadows 5');
+    });
+
+    it('the list the HUD and the picker read drops unlimited and uncounted items, from either agent field (2026-10-08)', () => {
+      const rod = C('Abashi\'s Rod of Disempowerment', null, { unlimited: true }), hat = C('Plain Hat', null);
+      expect(R.clickyList({ clickies_all: eight.concat([rod, hat]) }).map(c => c.name)).toEqual(eight.map(c => c.name));
+      expect(R.clickyList({ clickies: [rod, eight[3], hat] }).map(c => c.name)).toEqual(['Ring of Shadows']);
+      expect(R.clickyList({})).toEqual([]);
     });
 
     it('the picker lists every clicky, ticks the picked, shows kind and charges, and offers Recharged on a charged one', () => {

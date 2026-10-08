@@ -20,7 +20,8 @@
 
 const KEY = 'officer_channel_id';
 
-function _guildId() { return process.env.SUPABASE_GUILD_ID || 'wolfpack'; }
+// The tag comes from the real client module, not the injected `supabase` argument (a stand-in has no getter).
+const _guildId = () => require('./supabase').guildId();
 
 async function getOfficerChannelId(supabase) {
   try {

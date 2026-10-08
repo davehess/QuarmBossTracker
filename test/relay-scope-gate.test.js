@@ -106,12 +106,14 @@ describe('wiring', () => {
     expect(fn).toContain('_relayScopeKeep({ inRaidWindow, inRaid, originZones: e.origin_zones, requesterZones })');
   });
 
-  it('resolves window → raid roster → zones, in that order, and each early return skips the rest', () => {
+  // The kill switch's (flag_disable_groupscope) and failed-read path: the pre-2026-10-07 rule, after the
+  // raid / group resolver, which test/group-scope.test.js owns.
+  it('the old rule resolves window → raid roster → zones, in that order, and each early return skips the rest', () => {
     const fn = sliceBlock(bot, 'async function _relayScopeFor(identity) {', '\nasync function _handleRecentFiresGet');
     const early  = fn.indexOf('if (inRaidWindow) return { inRaidWindow: true, inRaid: true, requesterZones: null };');
     const roster = fn.indexOf('_raidUploaderIds()');
     const rEarly = fn.indexOf('if (inRaid) return { inRaidWindow: false, inRaid: true, requesterZones: null };');
-    const lookup = fn.indexOf('_requesterZones(');
+    const lookup = fn.lastIndexOf('_requesterZones(');
     expect(early).toBeGreaterThan(-1);
     expect(roster).toBeGreaterThan(early);
     expect(rEarly).toBeGreaterThan(roster);

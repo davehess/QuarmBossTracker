@@ -267,7 +267,7 @@ describe('the Loot IIFE fetch', () => {
     globalThis.__nlFetch = (url) => { calls.push(url); return respond(url); };
     globalThis.__nlSet = (j) => got.push(j);
     const { fetchNightLoot } = evalBlock(
-      'const fetch = globalThis.__nlFetch; const wpNightLootSet = globalThis.__nlSet;\n' + fetchBlock,
+      'const fetch = globalThis.__nlFetch; const wpNightLootSet = globalThis.__nlSet; const _wpNightHours = 12;\n' + fetchBlock,
       ['fetchNightLoot'],
     );
     const settle = () => new Promise(r => setImmediate(r));

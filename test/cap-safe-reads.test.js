@@ -772,6 +772,35 @@ describe('8c · catalogs read whole, and a failed page is never cached as the ca
       expect(body.entries.filter(e => e.npc === 1).map(e => e.id).sort((a, b) => a - b)).toEqual(Array.from({ length: 900 }, (_, i) => i + 1));
     });
 
+    // FB-57: the Melody AE chip counts mobs per pulse, so only an AREA spell may wear it. The
+    // spell's own targettype decides (4 PB AE, 8 targeted AE, 20/24/25 the AE variants, 2/40 the
+    // client/bard AE codes); single target (5) and every one-race single stays unflagged and the key
+    // is OMITTED, not false — the payload stays flat for the other ~3.3k spells.
+    it('flags exactly the area spells by targettype and leaves the key off the rest (FB-57)', async () => {
+      const tt = (id, name, targettype) => ({ ...spells()[0], id, name, targettype });
+      const rows = [
+        tt(1748, 'Angstlich`s Assonance', 5),          // single target — the reported song
+        tt(703, 'Chords of Dissonance', 4),            // PB AE
+        tt(742, 'Denon`s Desperate Dirge', 8),         // targeted AE
+        tt(9001, 'AE tap fixture', 20), tt(9002, 'AE undead fixture', 24), tt(9003, 'AE summoned fixture', 25),
+        tt(9004, 'AE client fixture', 2), tt(9005, 'AE bard fixture', 40),
+        tt(9010, 'optional target fixture', 1), tt(9011, 'group teleport fixture', 3), tt(9012, 'self fixture', 6),
+        tt(9013, 'tap fixture', 13), tt(9014, 'animal fixture', 9), tt(9015, 'undead fixture', 10),
+        tt(9016, 'summoned fixture', 11), tt(9017, 'group fixture', 41),
+        { ...spells()[0], id: 9020, name: 'no targettype fixture', targettype: null },
+      ];
+      fake = installFakePostgrest({ tables: { eqemu_spells: rows, eqemu_npc_spells_entries: [] } });
+      const body = JSON.parse((await get(load().handler)).body);
+      expect(body.version).toBe(9);
+      const flagged = body.entries.filter(e => e.ae === true).map(e => e.id).sort((a, b) => a - b);
+      expect(flagged).toEqual([703, 742, 9001, 9002, 9003, 9004, 9005]);
+      // Omitted, not `false`: a flat payload, and the agent reads "no entry has ae" as a pre-v9 bot.
+      const single = body.entries.find(e => e.id === 1748);
+      expect(single.name).toBe('Angstlich`s Assonance');
+      expect('ae' in single).toBe(false);
+      expect(body.entries.filter(e => 'ae' in e)).toHaveLength(flagged.length);
+    });
+
     it('a failed spell page is a 500 and nothing is cached (it used to cache the partial catalog for an hour)', async () => {
       fake = installFakePostgrest({ tables: { eqemu_spells: spells(), eqemu_npc_spells_entries: npcEntries() } });
       fake.failWhen = ({ table, query }) => table === 'eqemu_spells' && /offset=1000/.test(query);

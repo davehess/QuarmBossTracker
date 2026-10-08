@@ -84,6 +84,7 @@ function harness({ cfg = {}, setupMode = false, hideAll = false, blind = [], sin
     const __cfg = ${JSON.stringify(cfg)};
     function loadConfig() { return __cfg; }
     function appendAgentLog(s) { __log.push(s); }
+    function _agentOnly() { return false; }   // full Mimic: the agent-only gate (test/mimic-agent-only-mode.test.js) is off
     let setupMode = ${JSON.stringify(setupMode)};
     let _canvasArrange = false;
     let _hideAllActive = ${JSON.stringify(hideAll)};

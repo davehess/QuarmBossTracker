@@ -208,12 +208,25 @@ describe('rule 4 — a /who sighting of another guild in the zone, within ±10 m
   });
 });
 
-describe('rules 5 and 6 — unknown for a duo, ours for the rest', () => {
-  it('one or two fighters and no signal is unknown, not ours and not live', () => {
-    expect(verdict({ participants: ours(1) })).toBe('unknown');
-    expect(verdict({ participants: ours(2) })).toBe('unknown');
+describe('rules 5 and 6 — unknown for a duo not all ours, ours for the rest', () => {
+  it('one or two fighters, not all on the roster, and no signal is unknown, not ours and not live', () => {
+    expect(verdict({ participants: [...ours(1), ...strangers(1)] })).toBe('unknown');
     expect(verdict({ participants: strangers(2) })).toBe('unknown');   // two strangers are too few to accuse
+    expect(verdict({ participants: strangers(1) })).toBe('unknown');
     expect(verdict({ participants: [] })).toBe('unknown');
+  });
+  it('one or two fighters ALL on the roster is ours (2026-10-08: two guildmates\' Bastion kills never reached the board)', () => {
+    expect(verdict({ participants: ours(1) })).toBe('ours');
+    expect(verdict({ participants: ours(2) })).toBe('ours');
+    expect(kc.classifyKillContext(base({ participants: ours(2) })).reason).toMatch(/all on our roster/);
+  });
+  it('an all-ours duo still loses to an outsider in a fighter\'s own /who, and to a PvP signal', () => {
+    expect(verdict({ participants: ours(2), whoSightings: [seen('Mayhem', 'Plane of Hate')] })).toBe('live');
+    expect(verdict({ participants: ours(2), pvpBroadcasts: [bcast(0)] })).toBe('pvp');
+  });
+  it('no roster means no proof the duo is ours: unknown', () => {
+    expect(verdict({ participants: ours(2), roster: null })).toBe('unknown');
+    expect(verdict({ participants: ours(2), roster: new Set() })).toBe('unknown');
   });
   it('three or more with no signal is ours', () => {
     expect(verdict({ participants: ours(3) })).toBe('ours');
@@ -420,8 +433,19 @@ describe('gatherKillSignals', () => {
     expect(sb.asked.some(a => a.table === 'encounters')).toBe(false);
   });
 
+  it('adds everyone the stored parse names to this upload\'s fighters (Laef Windfall: 1 in the upload, 5 stored)', async () => {
+    const t = tables();
+    t.encounter_players = [{ character_name: 'Aldenmar' }, { character_name: 'Oruvane' }, { character_name: 'Kestrel' }, { character_name: null }];
+    const sb = stubSupabase({ tables: t });
+    const { signals } = await gather(sb, { participants: ['aldenmar'] });
+    expect(signals.participants).toEqual(['aldenmar', 'Oruvane', 'Kestrel']);       // case-blind, no repeats
+    expect(sb.asked.find(a => a.table === 'encounter_players').q).toMatch(/^encounter_id=eq\.enc-1&select=character_name&limit=\d+$/);
+    // A lone uploader of a mostly-stranger fight is now judged on the whole fight.
+    expect(kc.classifyKillContext({ ...signals, pvpBroadcasts: [], flagEvents: [], whoSightings: [] }).verdict).toBe('live');
+  });
+
   it('THROWS when any read fails — a null is not "no rows"', async () => {
-    for (const table of ['encounters', 'pvp_boss_kills', 'fun_events', 'who_observations', 'characters']) {
+    for (const table of ['encounters', 'encounter_players', 'pvp_boss_kills', 'fun_events', 'who_observations', 'characters']) {
       await expect(gather(stubSupabase({ tables: tables(), fail: [table] })), table).rejects.toThrow(/read failed/);
     }
   });
@@ -514,12 +538,19 @@ describe('_decideKillDeferred (the real handler code, run)', () => {
     expect(calls.lockouts[0].killVerdict).toBe('live');
   });
 
-  it('unknown: a duo starts no timer and does NOT touch the encounter', async () => {
-    const { decide, calls, sb } = runDecision({ playersIn: ours(2) });
+  it('unknown: a duo with a stranger starts no timer and does NOT touch the encounter', async () => {
+    const { decide, calls, sb } = runDecision({ playersIn: [...ours(1), ...strangers(1)] });
     await decide();
     expect(calls.recordKill).toEqual([]);
     expect(sb.updates).toEqual([]);
     expect(calls.lockouts[0].killVerdict).toBe('unknown');
+  });
+
+  it('ours: a duo of guildmates records the timer (Gaukr Sandstorm, 2026-10-08)', async () => {
+    const { decide, calls, sb } = runDecision({ playersIn: ours(2) });
+    await decide();
+    expect(calls.recordKill).toEqual([['gaukr_sandstorm', 3, null]]);
+    expect(sb.updates).toEqual([]);
   });
 
   it('an officer\'s mark already on the encounter keeps the timer down even on an ours verdict', async () => {
@@ -646,5 +677,35 @@ describe('migration 20261005220000_latest_kill_per_npc_ours_only.sql', () => {
   });
   it('sorts after the migration it replaces', () => {
     expect(path.basename(file) > '20261004140000_latest_kill_per_npc.sql').toBe(true);
+  });
+});
+
+describe('migration 20261008160000_latest_kill_per_npc_rostered_duo.sql', () => {
+  const file = path.join(ROOT, 'supabase', 'migrations', '20261008160000_latest_kill_per_npc_rostered_duo.sql');
+  const sql = stripSql(fs.readFileSync(file, 'utf8')).replace(/\s+/g, ' ');
+
+  it('keeps the unclassified + finished filters', () => {
+    expect(sql).toMatch(/and e\.classification is null/i);
+    expect(sql).toMatch(/and e\.ended_at is not null/i);
+  });
+  it('keeps 3+ player kills, and a 1–2 player kill only when every player is on the roster (same line as rule 5)', () => {
+    expect(sql).toMatch(/and exists \(select 1 from encounter_players ep where ep\.encounter_id = e\.id\) and \(/i);
+    expect(sql).toMatch(/exists \(select 1 from encounter_players ep where ep\.encounter_id = e\.id offset 2\) or not exists \(/i);
+    expect(sql).toMatch(/lower\(ep\.character_name\) <> all \(array\(select lower\(c\.name\) from characters c where c\.guild_id = p_guild_id\)\)/i);
+  });
+  it('is the same function otherwise, with the same grants', () => {
+    expect(sql).toMatch(/create or replace function public\.latest_kill_per_npc\(p_guild_id text, p_since timestamptz, p_npc_ids int\[\]\)/i);
+    expect(sql).toMatch(/returns table\(npc_id int, started_at timestamptz, zone_short text, id uuid\)/i);
+    expect(sql).toMatch(/select distinct on \(e\.npc_id\) e\.npc_id, e\.started_at, e\.zone_short, e\.id/i);
+    expect(sql).toMatch(/order by e\.npc_id, e\.started_at desc, e\.id/i);
+    expect(sql).toMatch(/language sql stable security invoker set search_path = public/i);
+    expect(sql).not.toMatch(/security definer/i);
+    for (const who of ['public', 'anon', 'authenticated']) {
+      expect(sql).toMatch(new RegExp(`revoke all on function public\\.latest_kill_per_npc\\(text, timestamptz, int\\[\\]\\) from ${who};`, 'i'));
+    }
+    expect(sql).toMatch(/grant execute on function public\.latest_kill_per_npc\(text, timestamptz, int\[\]\) to service_role;/i);
+  });
+  it('sorts after the migration it replaces', () => {
+    expect(path.basename(file) > '20261005220000_latest_kill_per_npc_ours_only.sql').toBe(true);
   });
 });
