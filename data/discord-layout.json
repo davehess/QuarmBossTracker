@@ -1,0 +1,128 @@
+{
+  "_comment": "The Discord layout the bot expects, owned by upstream. utils/discordProvisioner.js reads this to adopt or create the channels, threads and pinned cards a guild needs, and to know which env key each one answers to. A guild never edits this file: its own ids live in guild/discord.json and env. `tier` is required (the bot does not work without it), platform (a normal deployment wants it) or optional (never touched unless its `group` is named in GUILD_PROVISION_OPTIONAL). `names` are aliases in priority order, matched case- and punctuation-insensitively; the first is what gets created. `{era}`, `{label}` and `{labelPlain}` expand per expansion from utils/config.js; `{ERA}` is the upper-case era key. Slot titles are NOT stored here: they are read from the real card builders at run time so a placeholder can never drift from the card it stands in for.",
+  "version": 1,
+
+  "groups": ["pvp", "voice", "loot", "rules", "announce", "hate", "live", "deathroll", "mimic"],
+
+  "parents": [
+    { "id": "raidMobs",         "env": "TIMER_CHANNEL_ID",            "tier": "required", "type": "text", "hub": true, "botOwned": true,
+      "names": ["raid-mobs", "raid-timers", "boss-timers"], "label": "the raid-timer hub (boards, cooldowns, expansion threads)" },
+    { "id": "raidChat",         "env": "RAID_CHAT_CHANNEL_ID",        "tier": "platform", "type": "text",
+      "names": ["raid-chat", "raid-talk"], "label": "raid chat (raid-night threads live here)" },
+    { "id": "eventChat",        "env": "EVENT_CHAT_CHANNEL_ID",       "tier": "platform", "type": "text",
+      "names": ["event-chat"], "label": "event chat (non-raid event threads)" },
+    { "id": "raidMobsArchive",  "env": "RAID_MOBS_ARCHIVE_CHANNEL_ID", "tier": "platform", "type": "text", "botOwned": true,
+      "names": ["raid-mobs-archive"], "label": "the archive that holds the parse, roster and onboarding threads" },
+    { "id": "archive",          "env": "ARCHIVE_CHANNEL_ID",          "tier": "platform", "type": "text", "botOwned": true,
+      "names": ["archive", "daily-archive"], "label": "where finished announce threads are summarised" },
+    { "id": "officer",          "env": "OFFICER_CHAT_CHANNEL_ID",     "tier": "platform", "type": "text", "adoptOnly": true,
+      "names": ["officer-chat", "officers", "officer"], "label": "officer chat (never created: its privacy is the guild's call)" },
+    { "id": "bossOutput",       "env": "BOSS_OUTPUT_CHANNEL_ID",      "tier": "platform", "type": "text", "botOwned": true,
+      "names": ["boss-output", "boss-list"], "label": "where /addboss and /removeboss echo the boss list" },
+    { "id": "suggest",          "env": "SUGGEST_CHANNEL_ID",          "tier": "platform", "type": "text",
+      "names": ["suggest", "suggestions", "raid-suggestions"], "label": "where /suggest event requests land for officers" },
+
+    { "id": "loot",             "env": "LOOT_CHANNEL_ID",             "tier": "optional", "group": "loot", "type": "text",
+      "names": ["loot", "loot-log"], "label": "loot posts" },
+    { "id": "live",             "env": "LIVE_CHANNEL_ID",             "tier": "optional", "group": "live", "type": "text", "botOwned": true,
+      "names": ["live-raids"], "label": "live (guild-instance) kill cards" },
+    { "id": "pvp",              "env": "PVP_CHANNEL_ID",              "tier": "optional", "group": "pvp", "type": "text", "botOwned": true,
+      "names": ["pvp", "pvp-kills"], "label": "PvP alerts and boss timers" },
+    { "id": "deathroll",        "env": "DEATHROLL_CHANNEL_ID",        "tier": "optional", "group": "deathroll", "type": "text", "botOwned": true,
+      "names": ["deathroll", "death-rolls"], "label": "deathroll results" },
+    { "id": "triggerBroadcast", "env": "TRIGGER_BROADCAST_CHANNEL_ID", "tier": "optional", "group": "mimic", "type": "text", "botOwned": true,
+      "names": ["trigger-broadcast", "mimic-triggers"], "label": "trigger broadcasts from the desktop app" },
+    { "id": "mimicRelease",     "env": "MIMIC_RELEASE_CHANNEL_ID",    "tier": "optional", "group": "mimic", "type": "text", "botOwned": true,
+      "names": ["mimic-releases", "mimic-release"], "label": "desktop app release announcements" },
+    { "id": "mimicNotice",      "env": "MIMIC_NOTICE_CHANNEL_ID",     "tier": "optional", "group": "mimic", "type": "text", "botOwned": true,
+      "names": ["mimic-notices", "mimic-notice"], "label": "desktop app notices" },
+    { "id": "preraid",          "env": "PRERAID_CHECK_CHANNEL_ID",    "tier": "optional", "group": "announce", "type": "text", "botOwned": true,
+      "names": ["pre-raid", "preraid-check", "pre-raid-check"], "label": "the pre-raid health line" },
+    { "id": "guildChat",        "env": "GUILD_CHAT_CHANNEL_ID",       "tier": "optional", "group": "announce", "type": "text",
+      "names": ["guild-chat"], "label": "guild chat (the /gu relay)" },
+    { "id": "slop",             "env": "SLOP_CHANNEL_ID",             "tier": "optional", "group": "announce", "type": "text",
+      "names": ["the-slop", "slop"], "label": "where moved music links go" },
+    { "id": "rules",            "env": "RULES_CHANNEL_ID",            "tier": "optional", "group": "rules", "type": "text",
+      "names": ["rules", "guild-rules"], "label": "guild rules (read by /ingestrules)" },
+    { "id": "raidRules",        "env": "RAID_RULES_CHANNEL_ID",       "tier": "optional", "group": "rules", "type": "text",
+      "names": ["raid-rules"], "label": "raid rules (read by /ingestrules)" },
+    { "id": "lootRules",        "env": "LOOT_RULES_CHANNEL_ID",       "tier": "optional", "group": "rules", "type": "text",
+      "names": ["loot-rules"], "label": "loot rules (read by /ingestrules)" },
+    { "id": "raidVoice",        "env": "RAID_VOICE_CHANNEL_ID",       "tier": "optional", "group": "voice", "type": "voice",
+      "names": ["raid-voice"], "label": "the raid voice channel" },
+    { "id": "offnightVoice",    "env": "OFFNIGHT_VOICE_CHANNEL_ID",   "tier": "optional", "group": "voice", "type": "voice",
+      "names": ["offnight-voice", "off-night-voice", "off-night"], "label": "the off-night voice channel" }
+  ],
+
+  "threads": [
+    { "id": "historicKills",  "env": "HISTORIC_KILLS_THREAD_ID", "parent": "raidMobs", "tier": "required",
+      "names": ["Historic Kills", "historic-kills"], "label": "the daily kill archive" },
+    { "id": "era", "forEach": "era", "env": "{ERA}_THREAD_ID", "parent": "raidMobs", "tier": "required",
+      "names": ["{label}", "{era}", "{labelPlain}"], "createName": "{label}", "slots": "perEra",
+      "label": "the {era} expansion thread (cooldown card + kill buttons)" },
+
+    { "id": "parsesLog",      "env": "PARSES_LOG_THREAD_ID",     "parent": "raidMobsArchive", "tier": "platform",
+      "names": ["Parses Log", "Parse Log", "Parse Logs"], "label": "the parse log" },
+    { "id": "onboarding",     "env": "ONBOARDING_THREAD_ID",     "parent": "raidMobsArchive", "tier": "platform",
+      "names": ["Getting Started", "Onboarding"], "label": "the onboarding thread" },
+    { "id": "rosterActive",   "env": "ROSTER_ACTIVE_THREAD_ID",  "parent": "raidMobsArchive", "tier": "platform",
+      "names": ["Roster - Active", "Roster Active", "Active Roster"], "label": "the active roster" },
+    { "id": "rosterInactive", "env": "ROSTER_INACTIVE_THREAD_ID", "parent": "raidMobsArchive", "tier": "platform",
+      "names": ["Roster - Inactive", "Roster Inactive", "Inactive Roster"], "label": "the inactive roster" },
+    { "id": "autoparseTest",  "env": "AUTOPARSE_TEST_THREAD_ID", "parent": "raidMobsArchive", "tier": "platform",
+      "names": ["Autoparse Test", "Auto Parse Test", "Parse Test"], "label": "autoparse test posts" },
+    { "id": "audit",          "env": "AUDIT_TRAIL_THREAD_ID",    "parent": "officer", "tier": "platform",
+      "names": ["Audit Trail", "Audit"], "label": "the officer audit trail" },
+    { "id": "feedback",       "env": "FEEDBACK_THREAD_ID",       "parent": "officer", "tier": "platform",
+      "names": ["Feedback"], "label": "member feedback" },
+    { "id": "qol",            "env": "QOL_THREAD_ID",            "parent": "officer", "tier": "platform",
+      "names": ["QoL", "Quality of Life"], "label": "quality-of-life ideas" },
+    { "id": "hate",           "env": "HATE_THREAD_ID",           "parent": "raidMobsArchive", "tier": "optional", "group": "hate",
+      "names": ["Plane of Hate", "Hate"], "label": "the Plane of Hate trackers" },
+    { "id": "pvpThread",      "env": "PVP_THREAD_ID",            "parent": "pvp", "tier": "optional", "group": "pvp",
+      "names": ["PvP Alerts", "PvP"], "label": "PvP alerts (wins over the PvP channel when set)" },
+    { "id": "pvpKills",       "env": "PVP_KILLS_THREAD_ID",      "parent": "pvp", "tier": "optional", "group": "pvp",
+      "names": ["PvP Kills", "Kills"], "label": "the PvP kill log" }
+  ],
+
+  "slots": {
+    "main": [
+      { "id": "summary",        "env": "SUMMARY_MESSAGE_ID",           "kind": "message", "builder": "summaryCard",       "tier": "required", "pin": true,
+        "label": "Active Cooldowns card" },
+      { "id": "spawning",       "env": "SPAWNING_TOMORROW_MESSAGE_ID", "kind": "message", "builder": "spawningCard",      "tier": "required", "pin": true,
+        "label": "Spawning in the next 24 hours card" },
+      { "id": "dailySummary",   "env": "DAILY_SUMMARY_MESSAGE_ID",     "kind": "message", "builder": "dailySummaryCard",  "tier": "required", "pin": true,
+        "label": "Daily Raid Summary card" },
+      { "id": "threadLinks",    "env": "THREAD_LINKS_MESSAGE_ID",      "kind": "text",                                      "tier": "required", "pin": true,
+        "label": "the expansion thread links" }
+    ],
+    "perEra": [
+      { "id": "cooldown", "env": "{ERA}_COOLDOWN_ID", "kind": "message",  "builder": "eraCooldown", "tier": "required",
+        "label": "the {era} Active Cooldowns card" },
+      { "id": "boards",   "env": "{ERA}_BOARD_IDS",   "kind": "boardSet", "builder": "eraBoards",   "tier": "required",
+        "label": "the {era} kill-button boards" }
+    ]
+  },
+
+  "selfHealing": [
+    { "env": "PARSE_LEADERBOARD_MSG_ID",     "why": "the parse leaderboard message; the bot posts and re-finds it itself" },
+    { "env": "LIVE_HATE_BOARD_ID",           "why": "a hate board message the bot posts and re-finds itself" },
+    { "env": "PVP_HATE_BOARD_ID",            "why": "a hate board message the bot posts and re-finds itself" },
+    { "env": "RAID_NIGHT_THREAD_ID",         "why": "an operator pin that forces every raid night into one thread" },
+    { "env": "RAID_NIGHT_THREAD_PARENT_ID",  "why": "an operator pin for the channel raid-night threads open in" },
+    { "env": "OFFICER_ALERT_CHANNEL_ID",     "why": "the older name for the officer channel; still read as a fallback" }
+  ],
+
+  "external": [
+    { "env": "FORUM_CHANNEL_ID",             "step": "Set this to your suggestions forum channel id by hand: the bot never creates a forum." },
+    { "env": "QUARM_PATCH_NOTES_CHANNEL_ID", "step": "Follow Project Quarm's patch-notes announcement channel into your server, then set this to that channel's id." },
+    { "env": "RAIDHELPER_CHANNEL_ID",        "step": "Set this to the channel where Raid-Helper posts your signups, if you use Raid-Helper." },
+    { "env": "RAIDHELPER_BOT_ID",            "step": "Set this to Raid-Helper's bot user id, if you use Raid-Helper." },
+    { "env": "RH_SERVER_ID",                 "step": "Set this to your Raid-Helper server id, if it differs from your Discord server id." }
+  ],
+
+  "derived": [
+    { "env": "DISCORD_GUILD_ID",  "how": "taken from the bot's only server on first boot" },
+    { "env": "DISCORD_CLIENT_ID", "how": "taken from the bot's own application id on first boot" }
+  ]
+}

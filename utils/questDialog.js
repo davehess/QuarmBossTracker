@@ -315,6 +315,68 @@ function tradeBranches(body) {
   return out;
 }
 
+// Index just past the `end` that closes the Lua `function` at s[from]. Strings and comments are
+// skipped; `function`, `if` and `do` (which `for` and `while` carry) each open a block, `end`
+// closes one. `elseif` is its own word and `repeat…until` has no `end`, so neither counts.
+function _blockEnd(s, from) {
+  let depth = 0;
+  for (let j = from; j < s.length;) {
+    const c = s[j];
+    if (c === '"' || c === "'") { j = _readString(s, j).end; continue; }
+    const long = (c === '-' && s[j + 1] === '-' ? /--\[(=*)\[/y : c === '[' ? /\[(=*)\[/y : null);
+    if (long) {
+      long.lastIndex = j;
+      const lm = long.exec(s);
+      if (lm) { const close = s.indexOf(']' + lm[1] + ']', j + lm[0].length); j = close < 0 ? s.length : close + lm[1].length + 2; continue; }
+    }
+    if (c === '-' && s[j + 1] === '-') { const nl = s.indexOf('\n', j); j = nl < 0 ? s.length : nl; continue; }
+    if (/[A-Za-z_]/.test(c)) {
+      const w = /\w+/y;
+      w.lastIndex = j;
+      const word = w.exec(s)[0];
+      j += word.length;
+      if (word === 'function' || word === 'if' || word === 'do') depth++;
+      else if (word === 'end' && --depth === 0) return j;
+      continue;
+    }
+    j++;
+  }
+  return s.length;
+}
+
+// An NPC with no script of its own can be scripted by a zone ENCOUNTER file instead: the hedge maze's
+// Thelin Poxbourne (ponightmare/encounters/Maze.lua, the guild lead, 2026-10-08) says nothing in a
+// file named for him, but Maze.lua registers his handlers by npc id:
+//   local THELIN_INSIDE_TYPE = 204486;
+//   eq.register_npc_event("Maze", Event.say, THELIN_INSIDE_TYPE, ThelinInsideSayEvent);
+// The id is a literal or a `local NAME = <digits>` constant. Returns the file's say and trade
+// handlers for npcId renamed to event_say / event_trade, so parseDialog and tradeReplies read them
+// as they read any NPC's own script; null when the file registers neither for this id.
+function encounterHandlers(body, npcId) {
+  const src = String(body || '');
+  const id = Number(npcId);
+  const consts = {};
+  for (const m of src.matchAll(/^[ \t]*local\s+([A-Za-z_]\w*)\s*=\s*(\d+)\s*(?:;|--|$)/gm)) consts[m[1]] = Number(m[2]);
+  const found = {};
+  for (const m of src.matchAll(/\bregister_npc_event\s*\(/g)) {
+    const args = _splitTop(_callArgs(src, m.index + m[0].length - 1), ',').map((a) => a.trim());
+    const k = args.findIndex((a) => /^Event\.(?:say|trade)$/.test(a));
+    if (k < 0 || args.length < k + 3) continue;
+    const kind = args[k].slice(6);
+    const who = /^\d+$/.test(args[k + 1]) ? Number(args[k + 1]) : consts[args[k + 1]];
+    if (who === id && /^[A-Za-z_]\w*$/.test(args[k + 2]) && !found[kind]) found[kind] = args[k + 2];
+  }
+  const parts = [];
+  for (const kind of ['say', 'trade']) {
+    if (!found[kind]) continue;
+    const h = new RegExp(`(?:^|\\n)[ \\t]*(?:local\\s+)?function\\s+${found[kind]}\\s*\\(([^)]*)\\)`).exec(src);
+    if (!h) continue;
+    const headEnd = h.index + h[0].length;
+    parts.push(`function event_${kind}(${h[1]})${src.slice(headEnd, _blockEnd(src, src.indexOf('function', h.index)))}`);
+  }
+  return parts.length ? parts.join('\n') : null;
+}
+
 // Names worth looking up as "who to talk to next": runs of Capitalised words (with the
 // `'- joiners EQ names use, and "of"/"the" inside a run), plus every shorter run inside
 // them. The catalog decides which are NPCs.
@@ -365,4 +427,4 @@ const displayName = (n) => String(n || '').replace(/^#+/, '').replace(/_/g, ' ')
 // filenames cannot hold written as "-" (Seer_Mal_Nae`Shi → Seer_Mal_Nae-Shi.lua).
 const scriptPath = (zoneShort, npcName) => `${zoneShort}/${String(npcName).replace(/`/g, '-')}.lua`;
 
-module.exports = { parseDialog, tradeReplies, tradeBranches, effects, needsItems, nameCandidates, sentenceStartOnly, displayName, scriptPath, _exprText, _replies, _stringTables };
+module.exports = { parseDialog, tradeReplies, tradeBranches, encounterHandlers, effects, needsItems, nameCandidates, sentenceStartOnly, displayName, scriptPath, _exprText, _replies, _stringTables };

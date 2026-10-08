@@ -171,7 +171,7 @@ function buildKillLockouts({
     memberFrac: memberFraction(participants, roster),
     playerCount: participants.length,
   });
-  const gid  = guildId || 'wolfpack';
+  const gid  = guildId || require('./supabase').guildId();
   const obs  = new Date(Number.isFinite(observedAtMs) ? observedAtMs : Date.now()).toISOString();
 
   return participants.map(character => ({

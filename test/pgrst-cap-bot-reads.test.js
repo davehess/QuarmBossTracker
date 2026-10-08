@@ -287,6 +287,8 @@ function loadExtTarget(sb) {
     _rosterNameSet: async () => new Set(),
     _keepRaidSplit: (split) => split,
     _raidGroups: requireBot('./utils/raidGroups'),
+    _groupScope: requireBot('./utils/groupScope'),
+    _groupNamesFor: () => null,   // no group reported: the zone scope these cases were written against
     _raidSplitCache: { at: 0, split: null },
     _mainAssistStore: { get: () => null },
     _extHurtSince: new Map(),
