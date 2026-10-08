@@ -8236,3 +8236,25 @@ happens?"*
   possible now") and **"Tactics: stampede by"** (120 min, text warning at 10 min, ends "Stampede is overdue: Rallos
   Zek up, or the roll ran long"). Guild-trigger rows only, so they reach raiders on the 2-minute poll with no release.
   Implements FB-69.
+
+### 201. Owned songs listed as missing (FB-67) and the inverted NO DROP tag (2026-10-08, web 1.8.123 · bot 3.1.227 · migrations 20261008200000 + 20261008210000, applied)
+**FB-67** (a member): the shopping list showed songs the character already owns, Kazumi's Preservation and
+Angstlich's Assonance. **Confirmed on production bytes**, not guessed: the spellbook says `Angstlich's Assonance`
+(apostrophe), the scroll item says `Song: Angstlich`s Assonance` (backtick), `Song: Angstlichs Appalling Screech` has no
+quote, and `Song: Kazumi`s Preservation` teaches the spell `Kazumi's Note of Preservation` (a different name). The
+function compared `lower(name)` equality, and bards only met it now because 20260825060000 first added `Song:` scrolls.
+- **Where it landed:** `spell_name_key(text)` (lower-case letters and digits only) on both sides, plus
+  `spell_scroll_aliases` for the 24 scrolls whose item name is not the spell's name (only the unambiguous ones: a
+  dropped word, a one-letter misspelling in the mirror, a reordering; the rest are left alone rather than guessed).
+  Display names and the signature are unchanged. A bard who owns three of the reported songs went from 27 missing to 6;
+  the other 21 were the same bug, not real gaps.
+- **Not done:** `pop_spell_needs`, `guild_held_spell_needs` and `pop_extra_scrolls` use the same name equality, and
+  take `substring(name from 8)` after "Spell: ", which would cut a `Song: ` name's first letter. Queued, separate.
+**NO DROP tag backwards** (the guild lead, on the new loot page: *"All of these ND items are not actually no drop"*).
+`eqemu_items.nodrop` is INVERTED on this mirror (false = NO DROP), which the repo already knew in four other places;
+the loot code passed it through raw, so Diamonds were tagged ND and real NO DROP items were not. `loot_value_rows` and the
+bot's Loot tab (`utils/lootValue.js`) now return plain polarity (true = NO DROP). The "about 90% of looted items are
+NO DROP" figure noted while building it was this same inversion.
+**FB-68 (resisted clicky should use a charge) is not what the code does**: the counter spends a charge on the
+"begins to glow" line, before any resist, so a resisted click is already counted. The likeliest cause is a click that
+printed no matching glow line. Waiting on a raw log excerpt from the member before changing anything.

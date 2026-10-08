@@ -717,6 +717,11 @@ next touch one rather than assuming a missing row means a missing doc.
   `deploymentEnabled`. Web 1.8.53 also keeps a `/pop` link's query through sign-in. §101.
 - **⏳ Command Center 📋 on deathrolls (agent 3.7.47, Mimic beta `013e2e0c`) · Target Info even con = your
   level for a player (agent 3.7.48, beta `386cfc99`), 2026-09-29.** §97, §98 (reverses part of §15).
+- **✅ Owned songs no longer listed as missing (FB-67), and the NO DROP tag fixed (web 1.8.123 · bot 3.1.227 ·
+  migrations `20261008200000` + `20261008210000`, 2026-10-08).** Names compared without punctuation + 24 scroll
+  aliases; a bard went from 27 "missing" to 6. ND tag was inverted on `/admin/loot` and the Mimic Loot tab. ⏳ Same name
+  match in `pop_spell_needs` / `guild_held_spell_needs` / `pop_extra_scrolls`. ⏳ FB-68 waits on a log excerpt
+  (the code already counts a resisted click). DECISIONS §201.
 - **🧪 Mimic agent-only mode, switchable both ways (agent 3.7.110, beta `8cf8bcc7`, 2026-10-08).** One install;
   setup asks "full Mimic or agent only", and Settings, the tray and the dashboard's Overlays tab switch it later
   (restart to apply). Agent only = uploads, tray, dashboard and spoken callouts, no overlay windows. Graduates
