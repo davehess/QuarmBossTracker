@@ -19,7 +19,7 @@ function load() {
   const stubs = "var esc = function(s){ return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;'); };"
     + 'var _isCollapsed = function(k){ return !!collapsed[k]; };';
   // eslint-disable-next-line no-new-func
-  const api = new Function('collapsed', stubs + block + '\nreturn { hailBoardHtml, hailClockText, _hailMore, _hailPend };')(collapsed);
+  const api = new Function('collapsed', stubs + block + '\nreturn { hailBoardHtml, hailClockText, hailClockState, _hailMore, _hailPend };')(collapsed);
   return { ...api, collapsed };
 }
 
@@ -89,20 +89,92 @@ describe('the card', () => {
 describe('the clock', () => {
   const { hailBoardHtml, hailClockText } = load();
 
-  it('reads minutes and seconds left, and "closed" at the end', () => {
+  it('reads "leaves in" minutes and seconds, and "gone" at the end', () => {
     const end = 5_000_000;
-    expect(hailClockText(end, end - (17 * 60 + 52) * 1000)).toBe('17:52 left');
-    expect(hailClockText(end, end - 45_000)).toBe('0:45 left');
-    expect(hailClockText(end, end - 61_000)).toBe('1:01 left');
-    expect(hailClockText(end, end)).toBe('closed');
-    expect(hailClockText(end, end + 3000)).toBe('closed');
+    expect(hailClockText(end, end - (17 * 60 + 52) * 1000)).toBe('leaves in 17:52');
+    expect(hailClockText(end, end - (7 * 60 + 42) * 1000)).toBe('leaves in 7:42');
+    expect(hailClockText(end, end - 45_000)).toBe('leaves in 0:45');
+    expect(hailClockText(end, end - 61_000)).toBe('leaves in 1:01');
+    expect(hailClockText(end, end)).toBe('gone');
+    expect(hailClockText(end, end + 3000)).toBe('gone');
+  });
+
+  it('turns urgent in the last two minutes, amber in the last five, and is gone after', () => {
+    const { hailClockState } = load();
+    const end = 5_000_000;
+    const at = (secLeft) => hailClockState(end, end - secLeft * 1000);
+    expect(at(301)).toMatchObject({ urgent: false, soon: false, gone: false });
+    expect(at(300)).toMatchObject({ urgent: false, soon: true, gone: false });
+    expect(at(121)).toMatchObject({ urgent: false, soon: true });
+    expect(at(120)).toMatchObject({ urgent: true, soon: true, gone: false });
+    expect(at(1)).toMatchObject({ urgent: true, gone: false, text: 'leaves in 0:01' });
+    expect(at(0)).toMatchObject({ urgent: true, gone: true, text: 'gone' });
+    expect(at(-30)).toMatchObject({ gone: true, text: 'gone' });
+    expect(hailClockState(NaN, end).gone).toBe(true);   // a card with no usable end does not claim time left
   });
 
   it('is never in the card\'s HTML, so the board is byte-stable from one poll to the next', () => {
     const a = hailBoardHtml([win({ ms_left: 900_000 })], 'x');
     const b = hailBoardHtml([win({ ms_left: 897_000 })], 'x');
     expect(a).toBe(b);
-    expect(a).not.toMatch(/\d+:\d\d left/);
+    expect(a).not.toMatch(/leaves in|gone|\d+:\d\d/);
+  });
+});
+
+describe('the flag cap line', () => {
+  const { hailBoardHtml } = load();
+  const capped = (over = {}) => win({ flag_cap: 72, flags_granted: 23, flags_left: 49, ...over });
+
+  it('says how many of the cap are used, and that it counts only what we saw', () => {
+    const html = hailBoardHtml([capped()], 'x');
+    expect(html).toContain('Flags: <b>23 / 72</b> used<span class="note">seen only</span>');
+    expect(html).toContain('Counts only the flags we saw granted.');
+    expect(html).not.toContain('hail-cap warn');         // 49 left, 6 still to hail
+  });
+
+  it('draws nothing from an older bot, or for an NPC with no cap, and the card is otherwise the same', () => {
+    const plain = hailBoardHtml([win()], 'x');
+    expect(plain).not.toContain('hail-cap');
+    expect(plain).not.toContain('Flags:');
+    for (const none of [{ flag_cap: null, flags_granted: 4, flags_left: null }, { flag_cap: 0 }, { flag_cap: undefined, flags_left: 3 }]) {
+      expect(hailBoardHtml([win(none)], 'x')).toBe(plain);
+    }
+    // the capped card is the plain card plus the cap line, nothing else moved
+    const line = hailBoardHtml([capped()], 'x').match(/<div class="hail-cap"[\s\S]*?<\/div>/)[0];
+    expect(hailBoardHtml([capped()], 'x').replace(line, '')).toBe(plain);
+  });
+
+  it('warns when the flags left do not outnumber the raiders still to hail', () => {
+    // win() has 6 still to hail
+    expect(hailBoardHtml([capped({ flags_granted: 66, flags_left: 6 })], 'x')).toContain('<div class="hail-cap warn">⚠ Only 6 flags left, 6 still to hail</div>');
+    expect(hailBoardHtml([capped({ flags_granted: 67, flags_left: 5 })], 'x')).toContain('⚠ Only 5 flags left, 6 still to hail');
+    expect(hailBoardHtml([capped({ flags_granted: 71, flags_left: 1 })], 'x')).toContain('⚠ Only 1 flag left, 6 still to hail');
+    expect(hailBoardHtml([capped({ flags_granted: 72, flags_left: 0 })], 'x')).toContain('⚠ No flags left, 6 still to hail');
+    expect(hailBoardHtml([capped({ flags_granted: 65, flags_left: 7 })], 'x')).not.toContain('hail-cap warn');
+  });
+
+  it('does not warn when nobody is left to hail, however few flags remain', () => {
+    const html = hailBoardHtml([capped({ flags_granted: 72, flags_left: 0, still: [] })], 'x');
+    expect(html).toContain('Flags: <b>72 / 72</b> used');
+    expect(html).not.toContain('hail-cap warn');
+  });
+
+  it('works out the flags left itself when the bot sent only the cap and the count', () => {
+    const html = hailBoardHtml([win({ flag_cap: 54, flags_granted: 50 })], 'x');
+    expect(html).toContain('Flags: <b>50 / 54</b> used');
+    expect(html).toContain('⚠ Only 4 flags left, 6 still to hail');
+  });
+
+  it('a collapsed card keeps the header and clock and drops the line, like every other list', () => {
+    const t = load();
+    t.collapsed.hail = true;
+    const html = t.hailBoardHtml([capped()], 'x');
+    expect(html).toContain('class="hail-clock"');
+    expect(html).not.toContain('Flags:');
+  });
+
+  it('is byte-stable between polls that change nothing', () => {
+    expect(hailBoardHtml([capped({ ms_left: 900_000 })], 'x')).toBe(hailBoardHtml([capped({ ms_left: 897_000 })], 'x'));
   });
 });
 

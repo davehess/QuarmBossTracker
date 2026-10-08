@@ -168,6 +168,12 @@
     color:#d29922;font-variant-numeric:tabular-nums}
   .hail-clock.soon{color:#ffa657}
   .hail-clock.crit{color:#f85149}
+  /* The NPC's flag cap (the guild lead, 2026-10-07): "Flags: 23 / 72 used", amber and bold when the flags left
+     do not cover the raiders still to hail. Drawn only when the bot sends a cap. */
+  .hail-cap{font-size:9px;margin:3px 0 2px;color:#c9d1d9}
+  .hail-cap b{font-weight:700;color:#e6edf3;font-variant-numeric:tabular-nums}
+  .hail-cap .note{font-size:8px;color:#7d8590;margin-left:4px}
+  .hail-cap.warn{color:#ffa657;font-weight:700}
   .hail-sub{display:flex;align-items:baseline;gap:4px;font-size:9px;margin:3px 0 2px;color:#c9d1d9}
   .hail-sub b{font-weight:700;color:#e6edf3;font-variant-numeric:tabular-nums}
   .hail-sub.todo{color:#e6edf3;font-weight:700}
@@ -444,13 +450,31 @@
   var HAIL_DONE_CAP  = 8;
   var _hailMore = new Set();   // 'windowId|still' / 'windowId|hailed' lists opened past their cap (this client)
   var _hailPend = new Set();   // 'windowId|name' taps sent and not answered yet; the chip dims meanwhile
-  // "17:52 left". Painted by paintHailClocks() every second from the card's data-end and never put in
-  // the card's HTML: a clock in the HTML would repaint the whole board each second, and a repaint between
-  // a press and its release throws the tap away.
-  function hailClockText(endMs, nowMs){
-    var left = Math.max(0, Math.round((endMs - nowMs) / 1000));
-    if (left <= 0) return 'closed';
-    return Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + ' left';
+  // "leaves in 17:52", then "gone". Painted by paintHailClocks() every second from the card's data-end and
+  // never put in the card's HTML: a clock in the HTML would repaint the whole board each second, and a
+  // repaint between a press and its release throws the tap away. The end is when the NPC's script depops it.
+  // urgent = the last two minutes (red), soon = the last five (amber).
+  function hailClockState(endMs, nowMs){
+    var left = Math.round((endMs - nowMs) / 1000);
+    if (!(left > 0)) return { text: 'gone', gone: true, urgent: true, soon: true };
+    return { text: 'leaves in ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0'),
+      gone: false, urgent: left <= 120, soon: left <= 300 };
+  }
+  function hailClockText(endMs, nowMs){ return hailClockState(endMs, nowMs).text; }
+  // "Flags: 23 / 72 used", from the bot's flag_cap / flags_granted / flags_left. Nothing at all when the
+  // bot sent no cap (an older bot, or an NPC whose script states none). The count is only the grants we
+  // saw, so the note says so, and the warning fires when the flags left do not outnumber the raiders
+  // still to hail.
+  function hailCapHtml(w, stillCount){
+    var cap = w.flag_cap == null ? NaN : Number(w.flag_cap);
+    if (!(cap > 0)) return '';
+    var used = Math.max(0, Number(w.flags_granted) || 0);
+    var left = w.flags_left == null ? Math.max(0, cap - used) : Math.max(0, Number(w.flags_left) || 0);
+    var tight = stillCount > 0 && left <= stillCount;
+    return '<div class="hail-cap" title="Counts only the flags we saw granted. A raider without Mimic, or a hail outside our data, is not counted, so more may be gone.">'
+         + 'Flags: <b>' + used + ' / ' + cap + '</b> used<span class="note">seen only</span></div>'
+         + (tight ? '<div class="hail-cap warn">' + (left === 0 ? '⚠ No flags left, ' : '⚠ Only ' + left + ' flag' + (left === 1 ? '' : 's') + ' left, ')
+         + stillCount + ' still to hail</div>' : '');
   }
   function hailMoreHtml(key, total, cap, open){
     if (total <= cap) return '';
@@ -477,6 +501,7 @@
          +   '<span class="hail-clock" data-end="' + esc(end) + '"></span>'
          + '</div>';
       if (!col) {
+        h += hailCapHtml(w, still.length);
         if (still.length) {
           var stillOpen = _hailMore.has(wid + '|still');
           var sMax = stillOpen ? still.length : Math.min(still.length, HAIL_STILL_CAP);
@@ -879,8 +904,8 @@
   function paintHailClocks(){
     var els = contentEl.querySelectorAll('.hail-clock'), now = Date.now();
     for (var i = 0; i < els.length; i++) {
-      var end = Number(els[i].getAttribute('data-end')), left = (end - now) / 1000;
-      var t = hailClockText(end, now), cls = 'hail-clock' + (left <= 60 ? ' crit' : (left <= 300 ? ' soon' : ''));
+      var st = hailClockState(Number(els[i].getAttribute('data-end')), now);
+      var t = st.text, cls = 'hail-clock' + (st.urgent ? ' crit' : (st.soon ? ' soon' : ''));
       if (els[i].textContent !== t) els[i].textContent = t;
       if (els[i].className !== cls) els[i].className = cls;
     }
