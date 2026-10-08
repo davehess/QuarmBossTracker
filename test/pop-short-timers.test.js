@@ -190,10 +190,10 @@ describe('the PoP board holds every boss', () => {
     });
   });
 
-  it('Bastion of Thunder takes two rows (ten bosses)', () => {
+  it('Bastion of Thunder takes three rows (twelve bosses: the ten, plus Emmerik Skyfury and Evynd Firestorm)', () => {
     const bot = bosses.filter(b => b.zone === 'Bastion of Thunder');
-    expect(bot.length).toBe(10);
-    expect(Math.ceil(bot.length / 5)).toBe(2);
+    expect(bot.length).toBe(12);
+    expect(Math.ceil(bot.length / 5)).toBe(3);
   });
 });
 
@@ -210,9 +210,13 @@ describe('isShortTimerBoss', () => {
     expect(isShortTimerBoss(null)).toBe(false);
   });
 
-  it('exactly the eight Bastion of Thunder named are short in bosses.json', () => {
+  it('the short ones in bosses.json are the eight Bastion of Thunder named plus the Glyphed Rune Word drops on a 6 h or shorter spawn', () => {
+    // 2026-10-08, the guild lead: anyone on the Glyphed Rune Word drop list (pqdi item 29132) with a spawn cooldown
+    // over 2 h goes on the board. Six of them respawn in 6 h or less (spawn2), so they are short-timer bosses too.
+    const PLUS = ['Emmerik Skyfury', 'Evynd Firestorm', 'Lossenmachar', 'Calebgrothiel',
+      'Neffiken, Lord of Kelek`Vor', 'Gurebk, Lord of Krendic'];
     const short = bosses.filter(isShortTimerBoss).map(b => b.name).sort();
-    expect(short).toEqual([...BOT_NAMED].sort());
+    expect(short).toEqual([...BOT_NAMED, ...PLUS].sort());
   });
 });
 
