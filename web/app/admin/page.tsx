@@ -90,6 +90,11 @@ export default function AdminPage() {
           href="/admin/extra-spells"
         />
         <Card
+          title="💰 Loot by value"
+          body="[beta] What the raid has looted, highest base value first, with totals per character. The looter is not always who ends up with the item."
+          href="/admin/loot"
+        />
+        <Card
           title="📜 Audit log"
           body="Searchable mirror of the audit trail thread — filter by actor, action, boss name, date range. Bot v2.5.35+ mirrors every kill/unkill/updatetimer."
           href="/admin/audit"
