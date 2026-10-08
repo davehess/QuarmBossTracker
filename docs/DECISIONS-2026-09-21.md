@@ -8357,3 +8357,17 @@ with PQDI's own list for the Planes of Power.
   stable cut): "A".** Built as `linux-follow-windows.yml` (STATUS has the mechanics): merge the Windows commit into the Deck
   branch, build there, so the Linux-only code never has to ride to Windows or stable. Rejected: B (stable only), because Deck
   testers would trail a whole beta line.
+
+### 207. Mimic 2.8: stable 2.8.0 on main, beta re-parked at 2.8.1 (2026-10-08, 18:27 ET)
+**The asks** (the guild lead): *"we should move to 2.8, don't mention the loot page"*, then *"main to 2.8.0, beta repark 2.8.1"*.
+- **Cut:** `9f1dea7f` on main, Mimic 2.8.0 + agent 3.7.113, a file-level promotion of `apps/mimic/**` and
+  `packages/wolfpack-logsync/**` and their tests from beta (never a branch merge; beta carries web and bot work that is not
+  ready). Pushed before the 19:30 ET raid freeze, on its own, so the commit body is the release body (its `player-notes` block).
+  Beta re-parked at Mimic 2.8.1 / agent 3.7.114 (`04a47a2f`).
+- **The Loot page is not announced:** the release notes and the roadmap entry name nothing about it, by the guild lead's call.
+  The Loot tab code is in the build; it is just not mentioned. Not a bug or a leak: do not add it to the notes later without
+  asking.
+- **Web roadmap entry** (web 1.8.126) went out as its own push AFTER the stable commit, so the Mimic commit stayed the tip of
+  its push (release body) and the web commit stayed the tip of its own (Vercel's ignoreCommand compares only the last commit).
+- **Linux:** the `linux-follow-windows` workflow (§206) turns the stable into `2.8.0-linux.N` and the next beta into
+  `2.8.1-linux.N`.
