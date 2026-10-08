@@ -32,7 +32,9 @@ const WINDOWS = [
   { label: '90d', days: 90 },
 ];
 const DEFAULT_DAYS = 7;
-const ITEM_LIMIT = 2000;
+// The API returns at most 1,000 rows per response (PostgREST max-rows), set-returning functions included,
+// so a bigger list would be cut silently. 1,000 in one explicit range; the totals cover every row anyway.
+const ITEM_LIMIT = 1000;
 
 type LooterRow = {
   looter_character: string;
@@ -60,8 +62,8 @@ export default async function AdminLootPage({ searchParams }: { searchParams: Pr
   const [itemsRes, looterRes] = await Promise.all([
     // _v2: each row carries `dkp`, and the per-character value leaves DKP items out (the guild lead, 2026-10-08:
     // "If something has a DKP bid associated with it, don't count that in the totals").
-    sb.rpc('loot_value_items_v2', { p_guild_id: 'wolfpack', p_since: since, p_limit: ITEM_LIMIT }),
-    sb.rpc('loot_value_by_looter_v2', { p_guild_id: 'wolfpack', p_since: since }),
+    sb.rpc('loot_value_items_v2', { p_guild_id: 'wolfpack', p_since: since, p_limit: ITEM_LIMIT }).range(0, ITEM_LIMIT - 1),
+    sb.rpc('loot_value_by_looter_v2', { p_guild_id: 'wolfpack', p_since: since }).range(0, ITEM_LIMIT - 1),   // ~135 looters a month
   ]);
   const items = (itemsRes.data ?? []) as LootRow[];
   const looters = (looterRes.data ?? []) as LooterRow[];

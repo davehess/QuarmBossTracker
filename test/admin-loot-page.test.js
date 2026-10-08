@@ -150,7 +150,10 @@ describe('/admin/loot page', () => {
     expect(page).toMatch(/\.rpc\('loot_value_items_v2', \{ p_guild_id: 'wolfpack', p_since: since, p_limit: ITEM_LIMIT \}\)/);
     expect(page).toMatch(/\.rpc\('loot_value_by_looter_v2', \{ p_guild_id: 'wolfpack', p_since: since \}\)/);
     expect(page).not.toMatch(/\.rpc\('loot_value_items'/);
-    expect(page).toMatch(/const ITEM_LIMIT = 2000;/);
+    // PostgREST cuts every response at 1,000 rows, set-returning functions included: one explicit range.
+    expect(page).toMatch(/const ITEM_LIMIT = 1000;/);
+    expect(page).toMatch(/p_limit: ITEM_LIMIT \}\)\.range\(0, ITEM_LIMIT - 1\)/);
+    expect(page).toMatch(/loot_value_by_looter_v2', \{ p_guild_id: 'wolfpack', p_since: since \}\)\.range\(0, ITEM_LIMIT - 1\)/);
   });
 
   it('shows DKP items as listed-but-not-counted (the guild lead: "don\'t count that in the totals")', () => {
