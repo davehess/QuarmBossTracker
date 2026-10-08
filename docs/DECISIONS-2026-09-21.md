@@ -8353,5 +8353,7 @@ with PQDI's own list for the Planes of Power.
   mob adheres to the ground"*.
 - **Linux:** *"the linux client looks for the eq client and hides the windows when not on, like the Windows 'Hide Overlays when
   Everquest is not running'"* (FB-66) and *"Linux client needs to be revisioned when we revision the windows client"*. The poller
-  fix is on the Deck branch, refreshed to Mimic 2.7.11 / agent 3.7.113. The automatic "Windows cut → Linux build" link is NOT
-  built: options A (every cut) and B (stable only) are in STATUS, waiting on the guild lead.
+  fix is on the Deck branch, refreshed to Mimic 2.7.11 / agent 3.7.113. **The guild lead picked A (every Windows beta and
+  stable cut): "A".** Built as `linux-follow-windows.yml` (STATUS has the mechanics): merge the Windows commit into the Deck
+  branch, build there, so the Linux-only code never has to ride to Windows or stable. Rejected: B (stable only), because Deck
+  testers would trail a whole beta line.

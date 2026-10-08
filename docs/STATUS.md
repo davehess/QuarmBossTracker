@@ -5709,7 +5709,12 @@ Detail and the guild lead's quotes in `DECISIONS-2026-09-21.md` §206.
   and overlays stayed up after EQ closed. It now runs on linux too, the tray switch shows on linux, and the Settings hint is
   platform-neutral. The branch was also refreshed from beta (`1b1825d5`): Mimic 2.7.11, agent 3.7.113, so Deck builds are
   named `2.7.11-linux.N`.
-- **Open — Linux versioning:** a Windows cut still does not produce a Linux build by itself: `build-mimic-linux.yml` exists only on
-  the Deck branch and runs on `claude/**` pushes. Options for the guild lead: **A** Linux builds after every Windows beta or
-  stable cut (move the workflow to main/beta, trigger on `release-mimic` success; prune stays at 2 for the 10-entry
-  releases.atom trap), **B** on stable cuts only. Until picked, a Deck refresh from beta is a manual step.
+- **Linux follows Windows (guild lead picked A, 2026-10-08):** `.github/workflows/linux-follow-windows.yml` (on main; a
+  `workflow_run` workflow runs from the default branch's copy) waits for `Release Mimic (Electron)` to succeed on main or beta,
+  merges that exact commit into `claude/deck-156-refresh` (only the two version files may take the Windows side; any other
+  conflict fails loudly), pushes the merge, and dispatches `build-mimic-linux.yml` on the Deck branch. So a beta parked at
+  2.7.11 gives `2.7.11-linux.N` and a stable 2.7.12 gives `2.7.12-linux.N`; prune keeps the newest 2 `-linux.N` releases (the
+  10-entry releases.atom trap). `build-mimic-linux.yml` now also sits on main, inert there (its push trigger is `claude/**`),
+  because `gh workflow run` only finds a workflow file on the default branch. Why merge instead of building the Windows commit:
+  the Linux-only code lives on the Deck branch and must not ride to Windows or stable. `test/linux-follow-windows.test.js`
+  pins the wiring. First live run: see the session note below.

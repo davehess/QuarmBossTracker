@@ -1,0 +1,104 @@
+name: Linux follows Windows
+
+# RULE (the guild lead, 2026-10-08): "Linux client needs to be revisioned when we revision the Windows client."
+# Picked option A: every Windows beta or stable cut is followed by a Linux / Steam Deck build on the same base
+# version (a beta parked at 2.7.11 gives 2.7.11-linux.N; a stable 2.7.12 gives 2.7.12-linux.N).
+#
+# Why it is a separate workflow and not a step of release-mimic. The Linux-only code (pgrep detection, the Deck
+# packaging) lives on the Deck working branch, not on main or beta, and must not ride to the Windows fleet or to
+# stable before the Deck work is blessed (CLAUDE.md, "Linux support code lives on the working branch"). So a Linux
+# build cannot be cut from the Windows commit itself: it would lack that code. Instead this merges the Windows
+# commit INTO the Deck branch and builds that.
+#
+# ⚠ A `workflow_run` workflow runs from the DEFAULT branch's copy of this file, whichever branch the Windows
+# release ran on, so this file must live on main (sync-beta carries it to beta).
+#
+# What it does, in order:
+#   1. waits for `Release Mimic (Electron)` to finish successfully on main or beta;
+#   2. merges that exact commit into the Deck branch (conflicts in the two version files take the Windows side, so
+#      the Deck takes the Windows base; any OTHER conflict fails the run loudly, same as sync-beta);
+#   3. pushes the merge back with GITHUB_TOKEN (which does not trigger push workflows, so no double build);
+#   4. dispatches build-mimic-linux.yml on the Deck branch. It reads the base version from package.json and
+#      appends -linux.<run_number>, then prunes old -linux.N releases to keep the shared 10-entry releases.atom
+#      feed from starving the Windows channels (the 2026-07-30 incident, prune-linux-releases.yml).
+#
+# Not every Windows run cuts a release (a push whose tag already exists builds nothing); the Linux build still runs,
+# which is harmless: it republishes the same base with a newer -linux.N and the prune keeps the newest two.
+
+on:
+  workflow_run:
+    workflows: ['Release Mimic (Electron)']
+    types: [completed]
+    branches: [main, beta]
+  workflow_dispatch:
+    inputs:
+      windows_ref:
+        description: 'Windows ref to merge into the Deck branch (main or beta)'
+        required: false
+        default: 'beta'
+
+# One at a time: a second Windows cut waits for the first Deck merge instead of racing it.
+concurrency:
+  group: linux-follow-windows
+  cancel-in-progress: false
+
+permissions:
+  contents: write     # push the merge to the Deck branch
+  actions: write      # dispatch build-mimic-linux.yml
+
+env:
+  DECK_BRANCH: claude/deck-156-refresh
+
+jobs:
+  follow:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Merge the Windows commit into the Deck branch
+        shell: bash
+        env:
+          WIN_SHA: ${{ github.event.workflow_run.head_sha }}
+          WIN_INPUT: ${{ inputs.windows_ref }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin main beta "$DECK_BRANCH"
+          WIN_REF="${WIN_SHA:-origin/${WIN_INPUT:-beta}}"
+          echo "Following Windows ref: $WIN_REF"
+          git checkout -B "$DECK_BRANCH" "origin/$DECK_BRANCH"
+
+          if git merge-base --is-ancestor "$WIN_REF" HEAD; then
+            echo "Deck branch already contains $WIN_REF."
+          else
+            # The two version files are deliberately the WINDOWS side: that is what makes the Linux build carry
+            # the Windows base version. Everything else must merge cleanly.
+            VERSION_FILES="apps/mimic/package.json packages/wolfpack-logsync/package.json"
+            if git merge --no-edit -m "mimic: merge the Windows cut into the Linux / Deck line [sync]" "$WIN_REF"; then
+              echo "clean merge"
+            else
+              CONFLICTED=$(git diff --name-only --diff-filter=U)
+              echo "Conflicted: $CONFLICTED"
+              for f in $CONFLICTED; do
+                case " $VERSION_FILES " in
+                  *" $f "*) git checkout --theirs -- "$f"; git add -- "$f" ;;
+                  *) echo "::error::Conflict in $f — the Deck branch and the Windows line diverged on shared code; a human has to merge."; git merge --abort; exit 1 ;;
+                esac
+              done
+              git commit --no-edit
+            fi
+            git push origin "$DECK_BRANCH"
+          fi
+
+      - name: Build the Linux AppImage on the Deck branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh workflow run build-mimic-linux.yml --ref "$DECK_BRANCH"
+          echo "Dispatched build-mimic-linux.yml on $DECK_BRANCH"
