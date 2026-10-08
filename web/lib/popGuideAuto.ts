@@ -65,6 +65,12 @@ export const HELD_ITEM_STEPS: Record<string, { ids: number[]; what: string; any?
   time_quintessence: { ids: [29165], what: 'You hold the Quintessence of Elements.' },
   essences_escort: { ids: [16260], what: 'You hold the Tiny Gold Fist, its reward.' },
   essences_power: { ids: [32106, 17209, 32107, 32108, 32109], any: true, what: 'You hold one of its five rewards.' },
+  // The Binden Concerrentia: each part's reward is the next part's ingredient, so holding any LATER item
+  // proves the earlier parts too (and the talisman is used up in the combine, so the Binden alone must count).
+  // None of these is no drop (eqemu_items), so a traded or bought piece ticks the box as well.
+  binden_small: { ids: [28284, 28289, 28290, 28297, 28296], any: true, what: 'You hold the Small Clockwork Talisman, or something made from it.' },
+  binden_powered: { ids: [28290, 28291, 28297, 28296], any: true, what: 'You hold the Powered Clockwork Talisman, or something made from it.' },
+  binden_final: { ids: [28296], what: 'You hold The Binden Concerrentia.' },
 };
 
 const MARK_RX = /^Mark of (Execution|Flame|Lashing|Stone|Suffocation|Torture)$/i;

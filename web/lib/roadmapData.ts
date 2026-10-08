@@ -37,6 +37,28 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'pop-guide-binden-2026-10-08',
+    title: 'Web 1.8.118',
+    version: 'Web 1.8.118',
+    date: '2026-10-08',
+    headline: 'The PoP checklist has The Binden Concerrentia, the Plane of Knowledge gate you build over three trades.',
+    features: [
+      {
+        name: 'Part one: the Small Clockwork Talisman',
+        blurb: 'A rat\'s bottle in the Plane of Justice, the schematic from Jimlok Keylifter, then four parts from Disease, Nightmare and Innovation combined in Tabben Bromal\'s kit. It lists where each part drops, with the drop chance.',
+      },
+      {
+        name: 'Part two: the Powered Clockwork Talisman',
+        blurb: 'Four more parts, from Valor, Tactics, the Tower of Solusek Ro and Torment, combined with the first talisman and handed to Tabben.',
+      },
+      {
+        name: 'Part three: the Binden',
+        blurb: 'Elder Clinka turns the schematic into a case. Fill it with a fragment from each elemental plane and the Powered talisman, and she hands back The Binden Concerrentia, a gate that never runs out of charges.',
+      },
+    ],
+    fixes: [],
+  },
+  {
     key: 'mimic-2-7-10-2026-10-08',
     title: 'Mimic 2.7.10',
     version: 'Mimic 2.7.10 · Agent 3.7.106 · Web 1.8.117 · Bot 3.1.222',
