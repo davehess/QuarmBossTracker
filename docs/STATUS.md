@@ -721,6 +721,9 @@ next touch one rather than assuming a missing row means a missing doc.
   Signed-out Mimic users send cleaned, rate-limited reports to `anon_feedback` (AFB-n); officers read them at
   `/admin/feedback/anonymous`; never acted on automatically, counted weekly. ⏳ eqmimic.quest DNS still points
   elsewhere (the guild lead). DECISIONS §192.
+- **🧪 Mimic can draw overlays without the graphics card (beta `3ba7154a`, 2026-10-08).** Settings + tray
+  switch and a setup question, for screens that go black with a device-disconnect sound (a driver reset).
+  Graduates with the next stable cut. DECISIONS §195.
 - **✅ Guildmate duo kills start board timers (bot 3.1.224 + migration `20261008160000`, main 2026-10-08).**
   A 1–2 fighter kill where everyone is on the roster is `ours`; the fighters include the merged parse's names;
   the restart re-seed agrees. DECISIONS §194.

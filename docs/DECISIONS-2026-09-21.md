@@ -8107,3 +8107,20 @@ held five, all guild.
   through the new function (checked on production) and seeds them from the fights' start times.
 - **The risk accepted:** two guildmates killing a named in the open world with no /who taken get a timer they
   should not. An officer's 'live' mark on /parses takes it back on the next reconcile.
+
+### 195. Mimic can draw overlays without the graphics card, and setup asks (2026-10-08, Mimic beta `3ba7154a`)
+A member reported Mimic "crashing his computer": the whole screen went black with Windows' device-disconnect
+sound, one character, an RTX 50-series card on an older board — a graphics-driver reset, not an app crash
+(no crash rows, uploads healthy). Every overlay is a transparent always-on-top window composited on the
+graphics card over a DirectX 8 game, and each show/hide/resize can flip how Windows presents the game; newer
+50-series drivers have been fragile exactly there. The guild lead picked **A — a switch to draw overlays in
+software**, and *"ask people as they set up"*.
+- `cfg.disableGpu` (default off = graphics card), read off disk before app-ready, `app.disableHardwareAcceleration()`
+  when on; a missing or torn config keeps the graphics card.
+- Settings ("Use the graphics card for overlays") and the tray checkbox share `_setGpuDrawing` and offer
+  Restart now / Later. The setup walk's optional "Screen flicker" step asks *"Has your screen ever gone black,
+  or flickered, while EverQuest and an overlay app were running?"* and lands on the next start (setup never
+  restarts mid-walk).
+- Cost: overlays use more processor. Member-facing text says "graphics card", never GPU/acceleration.
+- Also told the member: newest driver (clean install), hardware-accelerated GPU scheduling off, windowed or
+  borderless EQ, and event 4101 in Event Viewer to confirm the reset.
