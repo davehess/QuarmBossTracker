@@ -717,6 +717,9 @@ next touch one rather than assuming a missing row means a missing doc.
   `deploymentEnabled`. Web 1.8.53 also keeps a `/pop` link's query through sign-in. §101.
 - **⏳ Command Center 📋 on deathrolls (agent 3.7.47, Mimic beta `013e2e0c`) · Target Info even con = your
   level for a player (agent 3.7.48, beta `386cfc99`), 2026-09-29.** §97, §98 (reverses part of §15).
+- **🧪 Target Info: buff bars count down; hover the time for length and caster (Mimic beta `2eb8796e`,
+  bot 3.1.225 main, agent beta, 2026-10-08).** Caster from the casting relay (Mimic users only), group spells
+  to the caster's group; length from the spell catalog once the caster is known. DECISIONS §196.
 - **✅ Anonymous feedback (AFB) on eqmimic.quest (web 1.8.119, main 2026-10-08; Mimic side agent 3.7.107 beta).**
   Signed-out Mimic users send cleaned, rate-limited reports to `anon_feedback` (AFB-n); officers read them at
   `/admin/feedback/anonymous`; never acted on automatically, counted weekly. ⏳ eqmimic.quest DNS still points

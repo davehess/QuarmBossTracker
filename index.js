@@ -11377,8 +11377,15 @@ async function _handleAgentTargetCasts(req, res) {
       });
     }
   }
+  // Who last cast each spell on this target (3h memory), under the SAME zone
+  // and spawn-id scope as the live casts above. Lets Target Info name the
+  // caster of an effect long after its cast finished.
+  const last_casters = tk ? _lastCastersFor(tk, now, (e) => {
+    const casterZone = (zoneMap.get(String(e.caster || '').toLowerCase()) || {}).zone_name || null;
+    return _zoneScopeKeepForName(requesterZone, casterZone, _nameZones) && _idScopeKeep(targetId, e.target_id);
+  }) : [];
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  return res.end(JSON.stringify({ casts }));
+  return res.end(JSON.stringify({ casts, last_casters }));
 }
 
 // Curse counter map for the debuff queue's "high-counter first" sort. Higher
@@ -14138,7 +14145,7 @@ async function _liveRaidSplit(supabase, guildId, maxAgeMs = 5000) {
   // and the split reads "one raid" when it cannot see the second.
   const rows = await supabase.selectAllPaged('raid_roster',
     `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(since)}` +
-    `&select=name,rank,uploaded_by_discord_id,captured_at`, 'uploaded_by_discord_id.asc,name').catch(() => null);
+    `&select=name,rank,uploaded_by_discord_id,captured_at,group_num`, 'uploaded_by_discord_id.asc,name').catch(() => null);
   // `failed` tells groupScope that "no raids" here means "could not look": it keeps today's behaviour.
   if (!rows) return Object.assign(_raidGroups.groupRaids([]), { failed: true });
   return _keepRaidSplit(_raidGroups.groupRaids(rows));
@@ -14871,6 +14878,7 @@ let _spellFxByName = null;
 let _spellFxAt = 0;
 const _SPELL_FX_TTL_MS = 60 * 60 * 1000;
 const _RESIST_SPA = { 46: 'FR', 47: 'CR', 48: 'PR', 49: 'DR', 50: 'MR' };
+const _GROUP_TARGET_TYPES = new Set([3, 41]);   // eqemu_spells.targettype: group teleport / group
 async function _spellFxMap() {
   if (_spellFxByName && (Date.now() - _spellFxAt) < _SPELL_FX_TTL_MS) return _spellFxByName;
   const supabase = require('./utils/supabase');
@@ -14881,7 +14889,7 @@ async function _spellFxMap() {
       // previous map: this used to `break` on it and cache the spells loaded so
       // far — the focus-haste limit checks and the cure detection read this map.
       const rows = await supabase.selectAllPaged('eqemu_spells',
-        'select=name,raw,buffduration,good_effect', 'id');
+        'select=name,raw,buffduration,good_effect,targettype', 'id');
       if (!Array.isArray(rows)) throw new Error('eqemu_spells read failed');
       for (const sp of rows) {
         if (!sp || !sp.name || !sp.raw || !Array.isArray(sp.raw.eff)) continue;
@@ -14891,6 +14899,9 @@ async function _spellFxMap() {
         // detection (counters only matter on detrimentals).
         if (sp.buffduration != null) fx.dur = Number(sp.buffduration) || 0;
         if (sp.good_effect != null)  fx.good = Number(sp.good_effect) ? 1 : 0;
+        // Group spells (3 group teleport, 41 group) land on the caster's whole
+        // group — drives the last-caster attribution of a groupmate's buff.
+        if (_GROUP_TARGET_TYPES.has(Number(sp.targettype))) fx.groupCast = true;
         for (let i = 0; i < sp.raw.eff.length; i++) {
           const eff = sp.raw.eff[i];
           const base = (sp.raw.base && sp.raw.base[i]) || 0;
@@ -17989,6 +18000,75 @@ async function _handleAgentPopAnomaly(req, res) {
 //   { casts: [{ caster, spell, target, started_at: ISO, cast_secs }] }
 const _castingByTarget = new Map();   // targetLower → Map<casterLower, {caster,spell,target,started_at_ms,cast_secs,received_at}>
 
+// Last-caster memory (the guild lead, 2026-10-08: mousing over a Target Info
+// timer "should show you how long it lasted and who cast it"). EQ's landing
+// lines never name a caster and buff_casts has no caster column, so the only
+// source is the casting relay above — but _castingByTarget forgets a cast ~3s
+// after it finishes, long before the effect ends. This remembers who LAST cast
+// each spell on each target for 3h (the buff-queue window), keyed
+// `targetLower|spellLower`. In-memory and bounded; a restart just forgets,
+// which reads as "caster unknown" and never as a wrong name. Insertion order is
+// recency order (a re-cast deletes then re-sets), so pruning stops at the
+// first live entry and the size cap evicts the oldest.
+const _LAST_CASTER_TTL_MS = 3 * 60 * 60 * 1000;
+const _LAST_CASTER_MAX = 5000;
+const _lastCasterByTargetSpell = new Map();   // 'target|spell' → {tk,caster,spell,at_ms,target_id}
+function _pruneLastCasters(now) {
+  for (const [k, e] of _lastCasterByTargetSpell) {
+    if (now - e.at_ms <= _LAST_CASTER_TTL_MS) break;
+    _lastCasterByTargetSpell.delete(k);
+  }
+}
+function _noteLastCaster(caster, spell, target, targetId, atMs) {
+  const tk = String(target || '').toLowerCase();
+  const sk = String(spell || '').toLowerCase();
+  if (!caster || !tk || !sk) return;
+  const k = tk + '|' + sk;
+  _lastCasterByTargetSpell.delete(k);   // re-insert at the tail: newest last
+  _lastCasterByTargetSpell.set(k, { tk, caster, spell, at_ms: atMs, target_id: targetId == null ? null : targetId });
+  while (_lastCasterByTargetSpell.size > _LAST_CASTER_MAX) {
+    _lastCasterByTargetSpell.delete(_lastCasterByTargetSpell.keys().next().value);
+  }
+}
+// `keep(entry)` is the caller's zone + spawn-id scope; entries it rejects are
+// someone else's mob. Newest first.
+function _lastCastersFor(tk, now, keep) {
+  _pruneLastCasters(now);
+  const out = [];
+  for (const e of _lastCasterByTargetSpell.values()) {
+    if (e.tk !== tk) continue;
+    if (keep && !keep(e)) continue;
+    out.push({ spell: e.spell, caster: e.caster, at_ms: e.at_ms });
+  }
+  return out.reverse();
+}
+// Group spells (targettype 3 / 41) land on every member of the caster's group,
+// so a groupmate's landing is the caster's too. `split` is _liveRaidSplit's
+// answer: the caster's raid, then the rows in it sharing the caster's group
+// number. Group 0 / null is "ungrouped" and has no mates; only the caster's own
+// raid is searched (two raids at once reuse group numbers). Names, not rows.
+function _groupmatesFromSplit(split, caster) {
+  const me = String(caster || '').toLowerCase();
+  const raid = me && split && typeof split.raidForName === 'function' ? split.raidForName(me) : null;
+  const row = raid && raid.members ? raid.members.get(me) : null;
+  const g = row ? Number(row.group_num) : 0;
+  if (!(g > 0)) return [];
+  const out = [];
+  for (const [k, r] of raid.members) {
+    if (k !== me && Number(r.group_num) === g) out.push(String(r.name));
+  }
+  return out;
+}
+async function _groupmatesOf(caster) {
+  try {
+    const supabase = require('./utils/supabase');
+    if (!supabase.isEnabled()) return [];
+    const split = await _liveRaidSplit(supabase, supabase.guildId(), 15_000);
+    return _groupmatesFromSplit(split, caster);
+  } catch { return []; }   // attribution is a nicety: never fail the cast relay
+}
+// ── end last-caster memory
+
 // Per-raider death timeline — used by the buff-queue inference to discard
 // observed buff_casts that landed BEFORE the raider's most recent death (which
 // would have stripped the buff). Updated from every encounter upload's
@@ -18238,6 +18318,19 @@ async function _handleAgentCasting(req, res) {
     // only way a non-Mimic raider ever gets off it (they never report their own
     // buff array, and cure spells have no landing line to observe).
     const fxC = _spellFxByName ? _spellFxByName.get(spell.toLowerCase()) : null;
+    // Last-caster memory (see _noteLastCaster). A GROUP spell lands on the
+    // caster's whole group, so the landing a groupmate sees is this caster's
+    // too: record the caster under each groupmate's name as well (the spawn id
+    // is the cast target's, so it is not copied across).
+    _noteLastCaster(caster, spell, target, mp.get(caster.toLowerCase()).target_id, now);
+    // Off the reply path: the roster read is cached but still a round trip, and the agent never needs it.
+    if (fxC && fxC.groupCast) {
+      _groupmatesOf(caster).then((mates) => {
+        for (const mate of mates) {
+          if (mate.toLowerCase() !== tk) _noteLastCaster(caster, spell, mate, null, now);
+        }
+      }).catch(() => {});
+    }
     if (fxC) {
       const cures = [];
       // Blindness carries no counters (SPA 20 is a flag), so it's worth 1.

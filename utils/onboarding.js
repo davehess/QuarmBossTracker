@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.225': [
+    '**Target Info can say who cast a buff.** When a raider running Mimic casts a buff or debuff, the bot remembers who cast it on whom for three hours, and for group spells on everyone in that group. Hover the time left on a Target Info buff to see the caster (needs the Mimic beta).',
+  ],
   '3.1.224': [
     '**Small-group boss kills start timers again.** A named killed by one or two guildmates (Bastion of Thunder duos, for example) was being skipped as "too few to tell". If everyone in the fight is in the guild and nobody from another guild was seen in the zone, the timer now starts, and it survives a bot restart.',
   ],
