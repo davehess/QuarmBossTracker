@@ -54,6 +54,15 @@ describe('Linux follows Windows', () => {
     expect(src).toMatch(/git merge --abort; exit 1/);
   });
 
+  it('a stable cut on main follows THROUGH beta: waits for sync-beta to carry the commit, then merges beta', () => {
+    const src = noComments(read('linux-follow-windows.yml'));
+    expect(src).toMatch(/HEAD_BRANCH: \$\{\{ github\.event\.workflow_run\.head_branch \}\}/);
+    expect(src).toMatch(/if \[ "\$HEAD_BRANCH" = "main" \]; then VIA_BETA=1; fi/);
+    expect(src).toMatch(/git merge-base --is-ancestor "\$MAIN_REF" origin\/beta/);
+    expect(src).toMatch(/WIN_REF="origin\/beta"/);
+    expect(src).toMatch(/beta never received \$MAIN_REF/);
+  });
+
   it('runs one at a time and may write the Deck branch and dispatch workflows', () => {
     expect(follow.concurrency.group).toBe('linux-follow-windows');
     expect(follow.concurrency['cancel-in-progress']).toBe(false);

@@ -5718,6 +5718,9 @@ Detail and the guild lead's quotes in `DECISIONS-2026-09-21.md` §206.
   because `gh workflow run` only finds a workflow file on the default branch. Why merge instead of building the Windows commit:
   the Linux-only code lives on the Deck branch and must not ride to Windows or stable. `test/linux-follow-windows.test.js`
   pins the wiring. First live run (a manual dispatch against beta) succeeded: merge, push, then `build-mimic-linux` green.
+  **A stable cut follows THROUGH beta** (2026-10-08, after the 2.8.0 run failed on a conflict in `apps/mimic/main.js`): a stable
+  lands on main as a file-level promotion, so its history shares nothing with the Deck branch; the workflow now waits up to 6
+  minutes for `sync-beta` to carry the main commit into beta and merges beta. If beta never gets it, the run fails loudly.
 
 ### 🧾 2026-10-08 (evening) — Mimic 2.8.0 stable, beta re-parked at 2.8.1 (web 1.8.126)
 The guild lead: *"we should move to 2.8, don't mention the loot page"*, then *"main to 2.8.0, beta repark 2.8.1"*.
