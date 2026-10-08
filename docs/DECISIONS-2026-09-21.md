@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Callouts + Extended Target keep to your raid or group** (§189) | Bot 3.1.222 on `claude/sharp-lamport-dC0TW`: the raid-evening blanket is gone, raid/zone scoping from the live roster; agent 3.7.103 (beta) sends `group_names` on the heartbeat, so beta installs get group scoping once the bot is live | a session: push the branch to `main` after 00:30 ET (scheduled); stable installs follow at the next stable cut |
+| **Callouts + Extended Target keep to your raid or group** (§189) | Live: bot 3.1.222 on `main` (2026-10-08 00:36 ET) and stable Mimic 2.7.10 / agent 3.7.106 with the Raid \| Group switch (§190) | the guild lead: try Group while grouped and say if it still shows other groups; the rest of the separation inventory (loot posts, shared alerts, attendance per raid) waits on picks |
 | **Three picks: bard counts, AE chip by spell data, height floor** (§178) | All three built; HUD counts, AE gate and the floor on beta (agent 3.7.98); the catalog's `ae` flag waits on this branch reaching `main` | the guild lead: push this branch to main (after 00:30 ET on a raid night); a bard on beta checks the ring label; a beta tester drags an overlay small and confirms it stays |
 | **Guild kit slices 1b, 2-prep, 3** (§177) | Bot 3.1.215: `utils/guildConfig.js` loader + getters, Discord self-provisioner (`/setup discord`, standalone script), tag-correct REST filters with a ratchet, one-shot announcers gated on the guild tag, Bristlebane guild file. Web slice A (`web/lib/guild.ts` + the literal swap) reviewed separately → `beta` | a session: slice 2, the de-branding sweep (start from the 11 getter-only env names in `test/guild-config.test.js`); then `doctor` and the wizard CLI (§8 picks stand) |
 | **HUD second clicky row** (§185) | Mimic beta: row 2 one line inside row 1, on by default, 7 picks (4 on one row) | Picked A (7 picks), §187. Next: a beta tester with many clickies tries two rows |
@@ -8002,3 +8002,20 @@ online · MA …", five mobs targeted from other groups in the same zone) had th
   as well as Zeal's group list (`_zealGroupNames`, also used by the heartbeat's `group_names`), the group window
   wins over the raid roster, and when the "active" character has no fresh Zeal state the character Zeal is
   streaming is used (`_zealSelfForScope`).
+
+### 190. Mimic 2.7.10 stable, and bot 3.1.222 + web 1.8.116/117 on main (2026-10-08, after 00:30 ET)
+
+The guild lead, 2026-10-08: *"go ahead and push beta to main"*, and picked **A — cut stable now** over waiting for
+the Group switch to be proven in play.
+- **Main push (00:36 ET):** the session branch fast-forwarded `main` in two pushes, the web commit first, so Vercel
+  built web 1.8.116 (its ignore step reads only a push's last commit). That carried bot 3.1.222 (§189 group scope),
+  3.1.221 (encounter-script quest bits), 3.1.220 (hail board cap) and 3.1.219 (FB scanner by reachability).
+- **Stable 2.7.10 (agent 3.7.106):** a file-level promotion like 2.7.9: `apps/mimic` and `packages/wolfpack-logsync`
+  from beta, plus beta's tests except sixteen that check website or bot work still on beta only (the guild-kit web
+  module and tag sweep, `/parses` 7-day default, `/about` and `/pvp` previews, `/buffs` groups, admin row-cap pages,
+  guild trigger timer fields) and one main owns newer (`pgrst-cap-bot-reads`). Gate on that tree: 487 files /
+  8,801 tests, lint, check:dashboard and golden:check clean. Roadmap entry in web 1.8.117, pushed on its own first;
+  the stable commit is the tip of its push so its notes become the release body.
+- It closes FB-12, 16, 21, 22, 23, 26, 30, 31, 52, 56, 57, 58, 60, 61, 62, 63 and 65. FB-59 (`/parses` default) is a
+  website change still on beta; FB-64 is alpha-only; FB-66 is on the Linux branch.
+- Beta re-parks at 2.7.11.
