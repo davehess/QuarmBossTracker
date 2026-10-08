@@ -170,6 +170,7 @@ function fakeSupabase({ rolls = [], looted = [] } = {}) {
     calls.push({ table, q });
     if (table === 'roll_sets') return rolls;
     if (table === 'looted_items') return looted;
+    if (table === 'eqemu_items') return [];   // prices: see test/night-loot-value.test.js
     throw new Error('unexpected table ' + table);
   };
   return { calls, select, selectAllPaged: (table, q, orderCol) => realSelectAllPaged(table, q, orderCol, select) };
@@ -213,16 +214,17 @@ describe('_nightLootPanelBody', () => {
 const cacheBlock = sliceBlock(src, 'const _lootPanelCache = new Map();', '_lootPanelCache.delete(first); } }');
 const branchBlock = sliceBlock(src, "if (key === 'night-loot') {", 'return res.end(out);\n    }');
 
-function runBranch({ body }) {
+function runBranch({ body, query = '' }) {
   const { handle } = evalBlock(
     cacheBlock + '\n'
-    + 'async function handle(key, res, guildId, supabase, _nightLootPanelBody) {\n' + branchBlock + '\n}\n',
+    + 'async function handle(key, res, guildId, supabase, _nightLootPanelBody, url, require) {\n' + branchBlock + '\n}\n',
     ['handle'],
   );
   const mkRes = () => { const r = { status: null, body: null, writeHead(s) { r.status = s; }, end(b) { r.body = b; } }; return r; };
   const calls = [];
-  const fetchBody = async () => { calls.push(1); return body(); };
-  return { handle: async () => { const res = mkRes(); await handle('night-loot', res, 'wolfpack', {}, fetchBody); return res; }, calls };
+  const fetchBody = async (...args) => { calls.push(args); return body(); };
+  const url = new URL('http://localhost/api/agent/server-panel/night-loot' + query);
+  return { handle: async () => { const res = mkRes(); await handle('night-loot', res, 'wolfpack', {}, fetchBody, url, require_); return res; }, calls };
 }
 
 describe('night-loot handler branch', () => {
@@ -248,7 +250,7 @@ describe('night-loot handler branch', () => {
     expect(h.calls).toHaveLength(2);
   });
 
-  it('is one shared cache entry per guild, not per caller', () => {
-    expect(stripJs(branchBlock)).toMatch(/const ck = 'night-loot:' \+ guildId;/);
+  it('is one shared cache entry per guild and window, not per caller', () => {
+    expect(stripJs(branchBlock)).toMatch(/const ck = 'night-loot:' \+ guildId \+ ':' \+ hours;/);
   });
 });
