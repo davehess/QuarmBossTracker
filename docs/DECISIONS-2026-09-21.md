@@ -8348,4 +8348,10 @@ with PQDI's own list for the Planes of Power.
   Mask); nothing wrong there. FB-68 is a **zero-cast-time clicky** (the Wooly Spider Silk Net, a 3-charge Root): it prints no
   "begins to glow" line, which is the only thing the counter listened for, so those uses were never counted. What it does print is
   an outcome the member can see: "Your target resisted the Root spell." or "<mob> adheres to the ground." The fix (count a
-  resist and a landing for a zero-cast clicky, skipping a spell the member began casting by hand) is tracked in STATUS.
+  resist and a landing for a zero-cast clicky, skipping a spell the member began casting by hand) shipped on beta as agent
+  3.7.113. The guild lead's word on the log: *"the root click is not invisible, it will show a resist or it will show that the
+  mob adheres to the ground"*.
+- **Linux:** *"the linux client looks for the eq client and hides the windows when not on, like the Windows 'Hide Overlays when
+  Everquest is not running'"* (FB-66) and *"Linux client needs to be revisioned when we revision the windows client"*. The poller
+  fix is on the Deck branch, refreshed to Mimic 2.7.11 / agent 3.7.113. The automatic "Windows cut → Linux build" link is NOT
+  built: options A (every cut) and B (stable only) are in STATUS, waiting on the guild lead.

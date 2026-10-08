@@ -5701,12 +5701,15 @@ Detail and the guild lead's quotes in `DECISIONS-2026-09-21.md` §206.
   Discord name, not the character they had up (15 stored rows + 1 stored email rewritten); `/parses` opens on 7 days (it was
   beta-only until now; the parallel-reads rewrite is still beta-only).
 - **Done, on beta (Mimic HUD):** unlimited clickies never show, whatever agent version sends them.
-- **Open — FB-68 (clicky counters):** a zero-cast-time clicky (the Wooly Spider Silk Net, a 3-charge Root) prints no
-  "begins to glow" line, so the agent never counts it. Its outcomes are visible: "Your target resisted the Root spell." and
-  "<mob> adheres to the ground." Plan: count a resist (only ours prints it) and a landing for a clicky whose catalog cast
-  time is 0, skipping a spell the member began casting by hand ("You begin casting <spell>" just before). Agent, beta first.
-- **Open — FB-66 Linux:** the Deck branch has a `_checkEqRunning` Linux branch (pgrep) but `_startEqPolling` still bails on
-  non-win32, so overlays never hide when EQ closes. One-line fix on the Deck branch.
-- **Open — Linux versioning:** a Windows cut does not produce a Linux build. `build-mimic-linux.yml` exists only on the Deck
-  branch and names builds `<parked>-linux.<run>`. Proposal: move it to main/beta, trigger it from `release-mimic` success,
-  keep `prune-linux-releases` at 2 (the 10-entry releases.atom trap).
+- **On beta — FB-68 (clicky counters), agent 3.7.113 (`71116479`):** a zero-cast-time clicky (the Wooly Spider Silk Net, a
+  3-charge Root) prints no "begins to glow" line, so the agent never counted it. A resist ("Your target resisted the Root
+  spell.") and a landing on your own target ("<mob> adheres to the ground.") now spend a charge; a spell begun by hand is
+  skipped. A landing needs Zeal's target name; a resist does not. Waits on the member trying it (stable not yet).
+- **On the Deck branch — FB-66 Linux (`3aa9ad50`):** `_startEqPolling` ran only on win32, so the pgrep check was never asked
+  and overlays stayed up after EQ closed. It now runs on linux too, the tray switch shows on linux, and the Settings hint is
+  platform-neutral. The branch was also refreshed from beta (`1b1825d5`): Mimic 2.7.11, agent 3.7.113, so Deck builds are
+  named `2.7.11-linux.N`.
+- **Open — Linux versioning:** a Windows cut still does not produce a Linux build by itself: `build-mimic-linux.yml` exists only on
+  the Deck branch and runs on `claude/**` pushes. Options for the guild lead: **A** Linux builds after every Windows beta or
+  stable cut (move the workflow to main/beta, trigger on `release-mimic` success; prune stays at 2 for the 10-entry
+  releases.atom trap), **B** on stable cuts only. Until picked, a Deck refresh from beta is a manual step.
