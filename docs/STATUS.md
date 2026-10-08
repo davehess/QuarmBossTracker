@@ -744,6 +744,12 @@ next touch one rather than assuming a missing row means a missing doc.
 - **✅ Plane of Tactics stampede triggers (guild triggers, live 2026-10-08).** "You hear the pounding of hooves."
   → overlay + "Stampede" + 15 s timer; then a window: "stampede window opens" bar (40 min) and "stampede by" bar
   (120 min), both shown from the emote (FB-69). DECISIONS §200.
+- **🧪 `/boards` zone-timers panel (beta variant `?v=b`, web 1.8.127, 2026-10-08).** Reads the bot's ledger
+  (`bot_kv` `zone_timer_windows`, DECISIONS §208): per running window the zone, "earliest in" / "possible now" and the
+  latest time, "the window has closed, it happened unobserved" once it passes, and a note when a fresh sighting
+  replaced the last one. No `?v=` is what production shows. Empty until the bot ledger is live and the two stampede
+  rows carry the `zone-timer` tag. `web/lib/zoneTimers.ts`, `web/app/boards/ZoneTimers.tsx`,
+  `test/zone-timers-web.test.js`. Link: https://b.wolfpack.quest/boards?v=b
 - **✅ Officer page `/admin/loot` [beta] — loot by value (web 1.8.120 main, 2026-10-08; paged in 1.8.122).** Note
   that the looter is not always the owner; window, per-character totals; one row per looter + item (count, each,
   row total), 50 a page, sorted on the server; DKP items listed but left out of totals (`loot_value_grouped` +
