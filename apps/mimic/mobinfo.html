@@ -364,13 +364,17 @@
   // agent's _slowShortName so the badge, the callout, and the debuff row agree).
   function _slowShort(n){ return String(n||'').replace(/\s+(Insects|Deeds|Pace|Sleep)$/i,'').trim() || String(n||''); }
   // Buffs on the current target. For our own characters these are live Zeal
-  // buffs (real remaining time, no original duration → full bar). For mobs /
-  // other players they're observed cast-landings (proportional bar).
+  // buffs (real remaining time, no original duration). For mobs / other players
+  // they're observed cast-landings (proportional bar); live ones count down against
+  // the longest time seen (_tbuffSeenTotal, below).
   // One buff/debuff row.
   function _tbuffRow(b, isPacify){
     var hasRem   = b.remaining_secs != null;
     var hasTotal = hasRem && b.total_secs;
-    var pct = hasTotal ? Math.max(0, Math.min(100, (b.remaining_secs / b.total_secs) * 100)) : (hasRem ? 100 : 0);
+    var seenTotal = (hasRem && !hasTotal) ? _tbuffSeenTotal(b) : 0;
+    var pct = hasTotal ? Math.max(0, Math.min(100, (b.remaining_secs / b.total_secs) * 100))
+            : seenTotal ? Math.max(0, Math.min(100, (b.remaining_secs / seenTotal) * 100))
+            : (hasRem ? 100 : 0);
     // Buff = green, debuff (good===0) = red; unknown remaining = gray.
     // Pacify is BLUE — deliberately outside the good/bad axis. It is not a buff
     // on the mob and not a debuff we want it to suffer; it is a pull condition
@@ -415,11 +419,37 @@
       tip = esc(b.name) + (b.owner ? ' · cast by ' + esc(b.owner) : '')
           + (b.fell_off ? ' · fell off (rebuff)' : (hasRem ? ' · ' + fmtSecs(b.remaining_secs) + ' left' : ' · present'));
     }
+    // The time-left label's own hover: how long it lasts, how much has gone, and who cast it (the guild
+    // lead, 2026-10-08: "MOUSING OVER the time left should show you how long it lasted and who cast it").
+    // A live buff's length is the longest Mimic has seen on it, so it says so. The caster comes from the
+    // cast relay (b.caster) or a charm's owner; EverQuest itself never names who cast a buff.
+    var lenSecs = hasTotal ? b.total_secs : seenTotal;
+    var btTip = '';
+    if (!b.fell_off && hasRem && lenSecs) {
+      btTip = 'Lasts ' + fmtSecs(lenSecs) + (hasTotal ? '' : ' (as first seen by Mimic)')
+            + ' · ' + fmtSecs(Math.max(0, lenSecs - b.remaining_secs)) + ' gone';
+    }
+    var castBy = b.caster || b.owner;
+    btTip += (btTip ? ' · ' : '') + (castBy ? 'cast by ' + castBy : 'caster unknown (only Mimic users’ casts are named)');
     return '<div class="tbuff" title="'+tip+'">'
          +    '<span class="bn">'+esc(b.name)+ownerStr+'</span>'
          +    '<div class="bbar"><div style="width:'+pct.toFixed(0)+'%;background:'+col+'"></div></div>'
-         +    '<span class="bt">'+bt+'</span>'
+         +    '<span class="bt" title="'+esc(btTip)+'">'+bt+'</span>'
          +  '</div>';
+  }
+  // A live buff with no original duration used to draw a full bar for its whole life (the guild
+  // lead, 2026-10-08: "This should record how long it was to start and not just show all green. it
+  // should count down like everything else"). So the overlay remembers the longest time it has seen
+  // on each buff of the current target and draws the bar against that: full when first seen, then
+  // shrinking. A refresh raises the remembered length; a buff that leaves the list is forgotten, so a
+  // later shorter cast starts its own bar.
+  var _tbuffSeen = {};          // 'target|buff' → longest remaining_secs seen while it has been up
+  var _tbuffTarget = '';
+  function _tbuffSeenTotal(b){
+    if (b.remaining_secs == null || b.fell_off) return 0;
+    var k = _tbuffTarget + '|' + b.name;
+    if (!(b.remaining_secs <= (_tbuffSeen[k] || 0))) _tbuffSeen[k] = b.remaining_secs;
+    return _tbuffSeen[k];
   }
   // Render a titled section for a buff list, sorted by time-left ascending
   // (lowest at top; untimed sink to the bottom). Returns '' if the list is empty.
@@ -438,6 +468,12 @@
   }
   function renderTargetBuffs(mi){
     var buffs = (mi && Array.isArray(mi.target_buffs)) ? mi.target_buffs.slice() : null;
+    // Forget the remembered lengths of this target's buffs that are gone (see _tbuffSeenTotal).
+    _tbuffTarget = String((mi && mi.target_name) || '');
+    var upNow = {};
+    for (var u = 0; buffs && u < buffs.length; u++) if (buffs[u] && buffs[u].name && !buffs[u].fell_off) upNow[_tbuffTarget + '|' + buffs[u].name] = 1;
+    for (var sk in _tbuffSeen) if (sk.indexOf(_tbuffTarget + '|') === 0 && !upNow[sk]) delete _tbuffSeen[sk];
+    if (Object.keys(_tbuffSeen).length > 3000) _tbuffSeen = {};   // a long night of other targets' buffs
     if (!buffs || !buffs.length) return '';
     // Pacify FIRST, on its own line, then Debuffs (good===0), then Buffs
     // (the guild lead, 2026-09-02). It is pulled out before the good/bad split because it
