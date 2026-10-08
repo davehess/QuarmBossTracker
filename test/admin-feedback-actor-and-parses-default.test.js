@@ -39,7 +39,10 @@ describe('a Mimic report is stamped with the sender\'s Discord name, not the cha
 
 describe('/parses defaults to a week', () => {
   it('resolves the window with 7d as the fallback', () => {
-    expect(parsesPage).toMatch(/resolveWindow\(wParam, '7d'\)/);
+    // Either spelled inline (main) or through the named constant (beta, whose page carries the parallel-reads rewrite).
+    const inline = /resolveWindow\(wParam, '7d'\)/.test(parsesPage);
+    const named = /const DEFAULT_WINDOW = '7d'/.test(parsesPage) && /resolveWindow\(wParam, DEFAULT_WINDOW\)/.test(parsesPage);
+    expect(inline || named).toBe(true);
     expect(parsesPage).not.toMatch(/resolveWindow\(wParam, '60d'\)/);
   });
   it('still offers 60d in the picker', () => {
