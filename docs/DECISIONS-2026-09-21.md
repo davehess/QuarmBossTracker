@@ -7995,4 +7995,6 @@ online · MA …", five mobs targeted from other groups in the same zone) had th
   see only your group). Remembered per install. Raid group 0 is the ungrouped bucket (raid_roster on 2026-10-08:
   group 0 held about twice any real group), so 1..12 count, the same rule as `utils/buffGroups.js`; an ungrouped
   raider falls back to their Zeal group window. Agent-side only (`_scopeExtToGroup`, `?scope=group`); the main
-  assist line stays.
+  assist line stays. **Agent 3.7.105: a chosen Group never falls back to the whole board** (the guild lead, the same
+  night, "still showing other groups"): an unknown group shows an empty list that says so, and an ownerless pet
+  row is dropped. Raid keeps failing open as before.
