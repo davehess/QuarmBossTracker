@@ -5999,7 +5999,7 @@ async function _pollEqPresence() {
 // 2026-08-03), and they had a point about this one: everything else already
 // idles hard — the 1Hz blind poll early-returns on !_eqRunning, the 300ms Zeal
 // flush no-ops when no snapshot is dirty — but _checkEqRunning() SPAWNS
-// tasklist.exe unconditionally. At a flat 10s that is ~8,640 process spawns a
+// tasklist.exe (pgrep on Linux) unconditionally. At a flat 10s that is ~8,640 process spawns a
 // day on a desktop that is not even running the game, and spawn pressure is
 // already why this went 5s -> 10s in the 2026-07-07 review.
 //
@@ -6017,7 +6017,8 @@ function _eqPollDelay() {
   return (!_eqRunning && _eqAbsentStreak >= EQ_POLL_IDLE_AFTER) ? EQ_POLL_IDLE_MS : EQ_POLL_ACTIVE_MS;
 }
 function _startEqPolling() {
-  if (_eqPollTimer || process.platform !== 'win32') return;
+  // Windows (tasklist) and Linux (pgrep via _isEqRunning); any other platform answers "running" and needs no poll.
+  if (_eqPollTimer || (process.platform !== 'win32' && process.platform !== 'linux')) return;
   _eqPollStopped = false;
   const tick = async () => {
     const before = _eqRunning;
@@ -8253,6 +8254,9 @@ function buildTrayMenu() {
           const cfg = loadConfig(); cfg.autoStart = !!mi.checked; saveConfig(cfg);
           applyAutoStart(); pushStatus();
         } },
+    ] : []),
+    // Windows and Linux both poll for EverQuest (FB-66), so the gate's switch shows on both.
+    ...((process.platform === 'win32' || process.platform === 'linux') ? [
       { label: 'Hide overlays when EverQuest isn\'t running', type: 'checkbox', checked: s.hideOverlaysWhenEqDown !== false, visible: !agentOnly, click: (mi) => {
           const cfg = loadConfig(); cfg.hideOverlaysWhenEqDown = !!mi.checked; saveConfig(cfg);
           // Re-probe immediately so the next visibility flip is accurate
