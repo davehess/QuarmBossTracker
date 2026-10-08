@@ -571,8 +571,15 @@ function wpOpenFeedback() {
 function renderFeedback(s) {
   const el = document.getElementById('wpFeedback');
   if (!el) return;
+  // Local mode (signed out, no token): the card cannot send to the guild, so it hands the words to the
+  // anonymous form on eqmimic.quest instead. The card is built once to protect a half-typed report, so a
+  // flip between signed-out and signed-in rebuilds it (the draft survives in _wpFbDraft).
+  const _fbLocal = !!(s && s.localOnly);
+  if (el._wpLocal !== undefined && el._wpLocal !== _fbLocal) el._wpBuilt = false;
   if (el._wpBuilt) return;
   el._wpBuilt = true;
+  el._wpLocal = _fbLocal;
+  _wpFbVer = s && s.version ? String(s.version) : '';
   // The tray's "Send feedback" item opens /#feedback. Honour that by expanding
   // the card, otherwise the tray route drops someone on a dashboard with the
   // thing they asked for still collapsed.
@@ -591,7 +598,8 @@ function renderFeedback(s) {
     // Screenshots (the guild lead, 2026-09-26: "feedback and suggestion needs to be able to take
     // screenshots..top priority"). 📸 only inside Mimic (it photographs your screens); 📎 and
     // Ctrl+V work in any browser. Nothing is attached until it shows as a thumbnail here.
-    + '<div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    + (_fbLocal ? '' :
+      '<div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
     +   '<button type="button" id="wpFbSnap" style="display:none" title="Photograph your screen (this window hides for the shot) — you choose what gets sent">📸 Screenshot my screen</button>'
     +   '<button type="button" id="wpFbPick">📎 Add a picture</button>'
     +   '<span class="dim" style="font-size:11px">or paste one (Ctrl+V) · up to 3 · you see each one before it sends</span>'
@@ -608,11 +616,17 @@ function renderFeedback(s) {
     +     '<button type="button" class="wp-fb-min" data-min="60">60 min</button>'
     +   '</span>'
     + '</div>'
-    + '<div id="wpFbPreview" style="margin-top:8px"></div>'
+    + '<div id="wpFbPreview" style="margin-top:8px"></div>')
     + '<div style="margin-top:10px;display:flex;align-items:center;gap:10px">'
-    +   '<button type="button" id="wpFbSend">Send</button>'
+    +   (_fbLocal
+          ? '<button type="button" id="wpFbWeb">Send anonymously on eqmimic.quest</button>'
+          : '<button type="button" id="wpFbSend">Send</button>')
     +   '<span id="wpFbMsg" class="dim" style="font-size:11px"></span>'
     + '</div>'
+    + (_fbLocal
+        ? '<div class="dim" style="font-size:11px;margin-top:6px">Opens your browser. Nothing is sent until you press Send there. '
+          + 'Leave your Discord name on the form if you want a reply. No logs or screenshots go this way.</div>'
+        : '')
     + '</details>';
   _wpFbWire();
 }
@@ -806,6 +820,7 @@ function _wpFbWire() {
     var min = t.closest('.wp-fb-min');
     if (min) { _wpFbSetMin(parseInt(min.getAttribute('data-min'), 10) || 30); _wpFbPreviewNow(); return; }
     if (t.id === 'wpFbSend') { _wpFbSend(); return; }
+    if (t.id === 'wpFbWeb') { _wpFbWeb(); return; }
   });
   root.addEventListener('change', function (e) {
     if (e.target && e.target.id === 'wpFbAttach') {
@@ -821,6 +836,41 @@ function _wpFbSetMin(m) {
   for (var i = 0; i < btns.length; i++) {
     btns[i].style.opacity = (parseInt(btns[i].getAttribute('data-min'), 10) === m) ? '1' : '0.55';
   }
+}
+// Signed-out path: the link to the anonymous form on eqmimic.quest. The words ride in the URL FRAGMENT
+// (after #), which a browser never sends to a server, so the text cannot land in anyone's request log.
+// Capped at 1800 characters to keep the link a sane length. Returns { url, trimmed }.
+var WP_FB_WEB_MAX = 1800;
+var _wpFbVer = '';
+function _wpFbWebUrl(kind, text, ver, plat) {
+  var t = String(text || '');
+  var trimmed = t.length > WP_FB_WEB_MAX;
+  if (trimmed) {
+    t = t.slice(0, WP_FB_WEB_MAX);
+    var last = t.charCodeAt(t.length - 1);
+    if (last >= 0xD800 && last <= 0xDBFF) t = t.slice(0, -1);   // never cut a pair in half
+  }
+  return {
+    url: 'https://eqmimic.quest/feedback#cat=' + (kind === 'idea' ? 'idea' : 'bug')
+      + '&text=' + encodeURIComponent(t)
+      + '&v=' + encodeURIComponent(String(ver || ''))
+      + '&p=' + encodeURIComponent(String(plat || '')),
+    trimmed: trimmed,
+  };
+}
+async function _wpFbWeb() {
+  var ta  = document.getElementById('wpFbText');
+  var msg = document.getElementById('wpFbMsg');
+  var ua = String(navigator.userAgent || '');
+  var plat = /Windows/i.test(ua) ? 'win' : /Mac/i.test(ua) ? 'mac' : /Linux/i.test(ua) ? 'linux' : '';
+  var link = _wpFbWebUrl(_wpFbKind, ta && ta.value ? ta.value.trim() : '', _wpFbVer, plat);
+  // Same route every other Mimic link takes (window.mimic.openExternal, see wpMpLink); a plain browser opens a tab.
+  var opened = false;
+  try { if (window.mimic && window.mimic.openExternal) opened = (await window.mimic.openExternal(link.url)) !== false; } catch (e) { opened = false; }
+  if (!opened) { try { window.open(link.url, '_blank', 'noopener'); opened = true; } catch (e) { void e; } }
+  if (msg) msg.textContent = opened
+    ? 'opened in your browser' + (link.trimmed ? ' (trimmed — paste the rest there)' : '')
+    : '✕ could not open your browser';
 }
 async function _wpFbSend() {
   var ta  = document.getElementById('wpFbText');
