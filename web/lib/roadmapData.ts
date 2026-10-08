@@ -39,11 +39,11 @@ export const releases: Release[] = [
   {
     key: 'admin-loot-2026-10-08',
     title: 'Loot by value (officers)',
-    version: 'Web 1.8.120',
+    version: 'Web 1.8.122',
     date: '2026-10-08',
     headline: 'Officers get a page showing what the raid has looted, highest value first.',
     features: [
-      { name: 'Loot by value', blurb: 'An officer page listing every item a raider looted, sortable by value, time, looter or item name, with a per-character total and each character\'s most valuable item. Pick the last day, week, month or three months. Marked [beta] while it is new.' },
+      { name: 'Loot by value', blurb: 'An officer page listing what each raider looted: one row per raider and item, with how many, the value of one and the row total, 50 rows a page. Sort by total, value, count, newest, looter or item, with a per-character total and each character\'s most valuable item. Pick the last day, week, month or three months. Marked [beta] while it is new.' },
       { name: 'Looter is not owner', blurb: 'The page says up top that whoever looted an item is not always who ends up with it. Values are the item\'s base merchant value, not bazaar prices.' },
       { name: 'DKP loot left out', blurb: 'Anything that went through a DKP auction or award is still listed, tagged DKP, but not counted in anyone\'s total.' },
     ],
