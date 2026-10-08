@@ -4,8 +4,10 @@
 // much each toon has looted equivalently in platinum from what you've seen, and time bound it."
 //
 // "Worth" is eqemu_items.price — the item's base merchant value in COPPER (1pp = 1000cp). It is the
-// vendor figure the game itself prices an item at, not a bazaar price. eqemu_items.nodrop = true means
-// NO DROP (it can only be sold to a merchant).
+// vendor figure the game itself prices an item at, not a bazaar price. ⚠ eqemu_items.nodrop is INVERTED on
+// this Quarm mirror: false means NO DROP (it can only be sold to a merchant), true means tradeable. The
+// guild lead, 2026-10-08, looking at the admin loot page: "All of these ND items are not actually no drop".
+// Everything this file returns is in plain polarity: `nodrop: true` = NO DROP.
 //
 // Three pieces, all pure or injectable so test/night-loot-value.test.js runs the shipped code:
 //   clampLootHours / lootWindowLabel — the window the panel accepts (12h · 24h · 7d · 30d);
@@ -77,7 +79,7 @@ async function lookupItemValues(supabase, names, { nowMs = Date.now(), cache = _
       }
       for (const name of chunk) {
         const r = best.get(name);
-        const v = r ? { value_cp: Number(r.price) || 0, nodrop: r.nodrop == null ? null : !!r.nodrop } : null;
+        const v = r ? { value_cp: Number(r.price) || 0, nodrop: r.nodrop == null ? null : !r.nodrop } : null;   // inverted column: false = NO DROP
         out.set(name, v);
         if (cache.size >= PRICE_CACHE_MAX) cache.clear();
         cache.set(name, { at: nowMs, v });
