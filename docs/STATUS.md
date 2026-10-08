@@ -721,6 +721,9 @@ next touch one rather than assuming a missing row means a missing doc.
   Signed-out Mimic users send cleaned, rate-limited reports to `anon_feedback` (AFB-n); officers read them at
   `/admin/feedback/anonymous`; never acted on automatically, counted weekly. ⏳ eqmimic.quest DNS still points
   elsewhere (the guild lead). DECISIONS §192.
+- **✅ Guildmate duo kills start board timers (bot 3.1.224 + migration `20261008160000`, main 2026-10-08).**
+  A 1–2 fighter kill where everyone is on the roster is `ours`; the fighters include the merged parse's names;
+  the restart re-seed agrees. DECISIONS §194.
 - **✅ My report page + replies; status DMs link to it (bot 3.1.223, web 1.8.119, main 2026-10-08).**
   `/feedback/FB-n` for the submitter and officers; replies relayed to the officer card. DECISIONS §193.
 - **✅ PoP checklist: The Binden Concerrentia (web 1.8.118, main 2026-10-08).** Three optional steps (the

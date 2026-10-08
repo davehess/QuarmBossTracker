@@ -436,10 +436,11 @@ Kills arrive via `/kill`-family commands or agent `bosskill` uploads
 (instance kills auto-start timers). **Only our own kills start a timer from a fight upload (bot 3.1.207,
 §165):** `utils/killContext.js` sorts a confirmed kill into ours / pvp / live / unknown (PvP "(Instanced)"
 broadcast or a PvP flag → pvp; guild share under half of 3+, or another guild on a /who one of the fighters
-took → live; 1–2 fighters with nothing else → unknown), decided post-ack in `_decideKillDeferred` (index.js;
-150 s wait in Hate/Fear/Sky/Hole). pvp/live set `encounters.classification` (`classification_by = 'auto'`,
-never over an officer's mark), and the restart re-seed `latest_kill_per_npc` reads only unclassified,
-finished kills with 3+ players. `#raid-mobs` holds four fixed message
+took → live; 1–2 fighters all on the roster → ours, else unknown — bot 3.1.224, §194), decided post-ack in
+`_decideKillDeferred` (index.js; 150 s wait in Hate/Fear/Sky/Hole). The fighters are this upload's list plus
+every name the merged `encounter_players` already holds. pvp/live set `encounters.classification`
+(`classification_by = 'auto'`, never over an officer's mark), and the restart re-seed `latest_kill_per_npc`
+reads only unclassified, finished kills with 3+ players or 1–2 all on the roster (migration `20261008160000`). `#raid-mobs` holds four fixed message
 slots + one thread per expansion (cooldown card, zone kill cards, board
 panels) — all **edited in place** by message id; anchor ids resolve
 `process.env.<KEY>` → `state.channelSlots` → null so they survive volume
