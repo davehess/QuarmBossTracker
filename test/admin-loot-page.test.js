@@ -52,6 +52,39 @@ describe('migration 20261008180000_loot_value_dkp.sql', () => {
   });
 });
 
+// Round three (20261008190000): grouped looter + item rows, paged in the database, on a faster shared base.
+const SQL3 = stripSql(readSource(path.join(ROOT, 'supabase', 'migrations', '20261008190000_loot_value_grouped.sql'))).replace(/\s+/g, ' ');
+describe('migration 20261008190000_loot_value_grouped.sql', () => {
+  it('creates the base, the grouped list and v3 totals, and drops nothing', () => {
+    expect(SQL3).toMatch(/create or replace function public\.loot_value_rows\( p_guild_id text, p_since timestamptz \)/i);
+    expect(SQL3).toMatch(/create or replace function public\.loot_value_grouped\( p_guild_id text, p_since timestamptz, p_sort text default 'total', p_limit int default 50, p_offset int default 0 \)/i);
+    expect(SQL3).toMatch(/create or replace function public\.loot_value_by_looter_v3\( p_guild_id text, p_since timestamptz \)/i);
+    expect(SQL3).not.toMatch(/drop function/i);
+    expect(SQL3).not.toMatch(/security definer/i);
+  });
+  it('collects the DKP events once, by exact item name, with the same ±6 h auction / ±12 h award rule', () => {
+    expect(SQL3).toMatch(/from opendkp_auctions a where a\.item_name in \(select n\.item_name from names n\) and coalesce\(a\.created_at, a\.awarded_at, a\.end_at\) >= p_since - interval '6 hours' and \(a\.winner is not null or exists \(select 1 from opendkp_auction_bids b where b\.auction_id = a\.auction_id\)\)/i);
+    expect(SQL3).toMatch(/interval '6 hours' as slack/i);
+    expect(SQL3).toMatch(/select o\.item_name, r\.ts, interval '12 hours' from opendkp_raids r join opendkp_loot o on o\.raid_id = r\.raid_id where r\.ts >= p_since - interval '12 hours'/i);
+    expect(SQL3).toMatch(/exists \( select 1 from d where d\.item_name = l\.item_name and d\.t between l\.looted_at - d\.slack and l\.looted_at \+ d\.slack \) as dkp/i);
+    // Exact name, lowest id — same price join as before.
+    expect(SQL3).toMatch(/select distinct on \(i\.name\) i\.name, i\.price, i\.nodrop from eqemu_items i where i\.name in \(select n\.item_name from names n\) order by i\.name, i\.id/i);
+  });
+  it('groups per looter + item, totals only the non-DKP lines, and counts every group for paging', () => {
+    expect(SQL3).toMatch(/group by r\.looter_lower, r\.item_name/i);
+    expect(SQL3).toMatch(/coalesce\(sum\(r\.price\) filter \(where not r\.dkp\), 0\)::bigint as total_cp/i);
+    expect(SQL3).toMatch(/count\(\*\) over \(\)::bigint/i);
+    expect(SQL3).toMatch(/limit least\(greatest\(coalesce\(p_limit, 50\), 1\), 200\) offset greatest\(coalesce\(p_offset, 0\), 0\)/i);
+    for (const s of ['unit', 'count', 'recent', 'looter', 'item']) expect(SQL3).toMatch(new RegExp(`when p_sort = '${s}'`));
+  });
+  it('keeps service_role-only grants on all three', () => {
+    for (const sig of ['loot_value_rows\\(text, timestamptz\\)', 'loot_value_grouped\\(text, timestamptz, text, int, int\\)', 'loot_value_by_looter_v3\\(text, timestamptz\\)']) {
+      expect(SQL3).toMatch(new RegExp(`revoke all on function public\\.${sig} from public, anon, authenticated;`, 'i'));
+      expect(SQL3).toMatch(new RegExp(`grant execute on function public\\.${sig} to service_role;`, 'i'));
+    }
+  });
+});
+
 describe('loot value migration', () => {
   it('has both functions, idempotent, never a bare create or a drop', () => {
     expect(sql).toMatch(/create or replace function public\.loot_value_items\(\s*p_guild_id text,\s*p_since\s+timestamptz,\s*p_limit\s+int default 500\s*\)/i);
@@ -141,26 +174,38 @@ describe('/admin/loot page', () => {
     for (const d of [1, 7, 30, 90]) expect(page).toMatch(new RegExp(`days: ${d}\\b`));
     expect(page).toMatch(/const DEFAULT_DAYS = 7;/);
     expect(page).toMatch(/WINDOWS\.some\(w => w\.days === n\) \? n : DEFAULT_DAYS/);
-    expect(page).toMatch(/searchParams: Promise<\{ days\?: string \}>/);
     expect(page).toMatch(/clampDays\(rawDays\)/);
   });
 
-  it('reads both _v2 RPCs (DKP-aware) through the service-role client', () => {
+  it('reads one PAGE of grouped rows and the per-character totals, through the service-role client', () => {
+    // The guild lead, 2026-10-08: the 1,000-row list "lags out my machine just to open it. Please paginate".
+    const flat = page.replace(/\s+/g, ' ');
     expect(page).toMatch(/supabaseAdmin\(\)/);
-    expect(page).toMatch(/\.rpc\('loot_value_items_v2', \{ p_guild_id: 'wolfpack', p_since: since, p_limit: ITEM_LIMIT \}\)/);
-    expect(page).toMatch(/\.rpc\('loot_value_by_looter_v2', \{ p_guild_id: 'wolfpack', p_since: since \}\)/);
-    expect(page).not.toMatch(/\.rpc\('loot_value_items'/);
-    // PostgREST cuts every response at 1,000 rows, set-returning functions included: one explicit range.
-    expect(page).toMatch(/const ITEM_LIMIT = 1000;/);
-    expect(page).toMatch(/p_limit: ITEM_LIMIT \}\)\.range\(0, ITEM_LIMIT - 1\)/);
-    expect(page).toMatch(/loot_value_by_looter_v2', \{ p_guild_id: 'wolfpack', p_since: since \}\)\.range\(0, ITEM_LIMIT - 1\)/);
+    expect(page).toMatch(/const PAGE_SIZE = 50;/);
+    expect(flat).toMatch(/\.rpc\('loot_value_grouped', \{ p_guild_id: GUILD_TAG, p_since: since, p_sort: sort, p_limit: PAGE_SIZE, p_offset: \(pageNo - 1\) \* PAGE_SIZE, \}\)\.range\(0, PAGE_SIZE - 1\)/);
+    expect(page).toMatch(/\.rpc\('loot_value_by_looter_v3', \{ p_guild_id: GUILD_TAG, p_since: since \}\)\.range\(0, LOOTER_LIMIT - 1\)/);
+    expect(page).toMatch(/import \{ GUILD_TAG \} from '@\/lib\/guild';/);
+    expect(page).toMatch(/const LOOTER_LIMIT = 1000;/);
+    // The old single-loot list (up to 1,000 rows into the browser) is gone.
+    expect(page).not.toMatch(/loot_value_items/);
+    expect(page).not.toMatch(/loot_value_by_looter_v2/);
+  });
+
+  it('pages with ?page= and sorts with ?sort=, both clamped, and keeps both across the window chips', () => {
+    expect(page).toMatch(/searchParams: Promise<\{ days\?: string; sort\?: string; page\?: string \}>/);
+    expect(page).toMatch(/\(SORTS as readonly string\[\]\)\.includes\(raw \?\? ''\) \? \(raw as Sort\) : 'total'/);
+    expect(page).toMatch(/Number\.isFinite\(n\) && n >= 1 \? Math\.min\(n, 10000\) : 1/);
+    expect(page).toMatch(/Math\.ceil\(totalGroups \/ PAGE_SIZE\)/);
+    expect(page).toMatch(/href\(\{ page: pageNo - 1 \}\)/);
+    expect(page).toMatch(/href\(\{ page: pageNo \+ 1 \}\)/);
+    expect(page).toMatch(/href=\{`\/admin\/loot\?days=\$\{w\.days\}\$\{sort !== 'total' \? `&sort=\$\{sort\}` : ''\}`\}/);
   });
 
   it('shows DKP items as listed-but-not-counted (the guild lead: "don\'t count that in the totals")', () => {
     expect(page).toMatch(/>DKP<\/th>/);
     expect(page).toMatch(/l\.dkp_items/);
     expect(page).toMatch(/not counting the .*went through DKP/s);
-    expect(table).toMatch(/r\.dkp && <span/);
+    expect(table).toMatch(/Number\(r\.dkp_count\) > 0 && \(/);
   });
 
   it('shows the base-merchant-value footnote and the totals columns', () => {
@@ -174,20 +219,24 @@ describe('/admin/loot page', () => {
   });
 });
 
-describe('LootTable (the sortable item list)', () => {
-  it('is a client component sorting by value, highest first, by default', () => {
-    expect(table.trimStart().startsWith("'use client';")).toBe(true);
-    expect(table).toMatch(/useState<Key>\('value'\)/);
-    expect(table).toMatch(/useState<Dir>\('desc'\)/);
+describe('LootTable (the looter + item list)', () => {
+  it('is a server component: no client JavaScript, nothing sorted in the browser', () => {
+    expect(table).not.toMatch(/'use client'/);
+    expect(table).not.toMatch(/useState|useMemo|\.sort\(/);
   });
 
-  it('can sort by Value, Time, Looter and Item', () => {
-    for (const k of ['value', 'time', 'looter', 'item']) expect(table).toMatch(new RegExp(`th\\('${k}'`));
+  it('every sort is a link to the server-sorted page, starting again at page 1', () => {
+    expect(table).toMatch(/export const SORTS = \['total', 'unit', 'count', 'recent', 'looter', 'item'\] as const;/);
+    for (const k of ['looter', 'item', 'count', 'unit', 'total', 'recent']) expect(table).toMatch(new RegExp(`th\\('${k}'`));
+    expect(table).toMatch(/<Link href=\{href\(\{ sort: k, page: 1 \}\)\}/);
   });
 
-  it('keeps unpriced rows at the bottom whichever way value is sorted', () => {
-    // A null on the left returns +1 and a null on the right -1 BEFORE the direction sign is applied.
-    expect(table).toMatch(/if \(a\.value_cp == null\) return 1;\s*if \(b\.value_cp == null\) return -1;/);
+  it('shows one row per looter + item with the count, the value of one, and the row total', () => {
+    for (const h of ["'Count'", "'Each (pp)'", "'Total (pp)'"]) expect(table).toContain(h);
+    expect(table).toMatch(/Number\(r\.looted\)\.toLocaleString\(\)/);
+    expect(table).toMatch(/fmtPp\(r\.unit_cp\)/);
+    expect(table).toMatch(/r\.unit_cp == null \? '—' : fmtPp\(Number\(r\.total_cp\)\)/);
+    expect(table).toMatch(/key=\{`\$\{r\.looter_character\}\|\$\{r\.item_name\}`\}/);
   });
 
   it('renders value in platinum, a dash when unpriced, and an ND tag for NO DROP', () => {

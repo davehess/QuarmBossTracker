@@ -8185,3 +8185,20 @@ not always the person that ends up with it"*.
   (returns 1, unused) — drop it, and the v1 pair, once a DROP works again (try from the Supabase SQL editor).
 - **Mimic's Loot tab (bot 3.1.226) does not yet leave DKP items out** — the same rule belongs in
   `utils/lootValue.js`; queued.
+
+### 198b. /admin/loot: one row per looter + item, paged in the database (2026-10-08, web 1.8.122 · migration 20261008190000, applied)
+**The call** (the guild lead): *"that page … takes forever to load. bringing in a full list of loot on there isn't
+great. it lags out my machine just to open it. Please paginate, and give distinct looter+item+count rows instead,
+and totals for that row."*
+- **Where it landed:** `loot_value_grouped(p_guild_id, p_since, p_sort, p_limit, p_offset)` groups per looter +
+  item: count, DKP count, value of one, row total (non-DKP lines only), NO DROP, latest zone and time, and the
+  group count for the pager. The page asks for 50 rows at a time (`?page=`); each column header is a link that
+  sorts on the server (`?sort=total|unit|count|recent|looter|item`). `LootTable.tsx` is now a server component, so
+  the browser gets plain HTML and no sorting script. The per-character table moved to `loot_value_by_looter_v3`.
+- **Why it was slow:** two things. The browser drew up to 1,000 single-loot rows. And the DKP test ran two
+  look-ups per looted line, one of them on `opendkp_loot`, which has no item-name index: 2.2 s for 90 days. The new
+  shared base `loot_value_rows()` collects the window's DKP events (auctions with a winner or bid, awards) once, then
+  tests each line against that small set: 0.9 s for 90 days. Same DKP rule as §198, and v3's totals match v2's
+  exactly (30 days: 24,477 items, 120 DKP, same platinum total).
+- 90 days is about 7,150 looter + item rows, so 143 pages of 50.
+- v1 / v2 stay in place, unused, until a DROP FUNCTION works on production again (§198).

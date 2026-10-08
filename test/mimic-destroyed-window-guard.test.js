@@ -99,6 +99,7 @@ describe('every apply*Visibility refuses to drive a destroyed window', () => {
           function loadConfig() { return __cfg; }
           function _eqGateOk() { return true; }
           function _blindForceOpen() { return false; }
+          function _agentOnly() { return false; }   // full Mimic (test/mimic-agent-only-mode.test.js covers agent only)
           function _dockedKeys() { return ['hud']; }
           ${liveSrc}
           ${body}
@@ -123,6 +124,7 @@ describe('every apply*Visibility refuses to drive a destroyed window', () => {
         function loadConfig() { return { overlaysLocked: true }; }
         function _eqGateOk() { return true; }
         function _blindForceOpen() { return false; }
+        function _agentOnly() { return false; }
         function _dockedKeys() { return ['hud']; }
         ${liveSrc}
         ${body}

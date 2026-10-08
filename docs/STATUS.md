@@ -717,10 +717,11 @@ next touch one rather than assuming a missing row means a missing doc.
   `deploymentEnabled`. Web 1.8.53 also keeps a `/pop` link's query through sign-in. §101.
 - **⏳ Command Center 📋 on deathrolls (agent 3.7.47, Mimic beta `013e2e0c`) · Target Info even con = your
   level for a player (agent 3.7.48, beta `386cfc99`), 2026-09-29.** §97, §98 (reverses part of §15).
-- **✅ Officer page `/admin/loot` [beta] — loot by value (web 1.8.120 main, 2026-10-08).** Note that the looter
-  is not always the owner; window, per-character totals, sortable list; DKP items listed but left out of totals
-  (`_v2` RPCs). ⏳ Mimic's Loot tab still counts DKP items; ⏳ drop the v1 RPCs + `_tmp_probe2_20261008()` once a
-  DROP FUNCTION works on production again. DECISIONS §198.
+- **✅ Officer page `/admin/loot` [beta] — loot by value (web 1.8.120 main, 2026-10-08; paged in 1.8.122).** Note
+  that the looter is not always the owner; window, per-character totals; one row per looter + item (count, each,
+  row total), 50 a page, sorted on the server; DKP items listed but left out of totals (`loot_value_grouped` +
+  `_by_looter_v3`). ⏳ Mimic's Loot tab still counts DKP items; ⏳ drop the v1 + v2 RPCs and
+  `_tmp_probe2_20261008()` once a DROP FUNCTION works on production again. DECISIONS §198, §198b.
 - **🧪 Loot in platinum, per character, over 12 h / 24 h / 7 d / 30 d (bot 3.1.226 main; Mimic Loot tab beta,
   2026-10-08).** Merchant value from the item database, NO DROP tagged. DECISIONS §197.
 - **🧪 Target Info: buff bars count down; hover the time for length and caster (Mimic beta `2eb8796e`,

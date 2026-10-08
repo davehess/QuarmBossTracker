@@ -101,6 +101,18 @@ const WOLFPACK_URL    = 'https://wolfpack.quest';
 const _gpuOffAtStart = (() => { try { const raw = _readConfigRaw(); return !!(raw && raw.disableGpu === true); } catch { return false; } })();
 if (_gpuOffAtStart) app.disableHardwareAcceleration();
 
+// ── Run mode: full Mimic, or agent only ─────────────────────────────────────
+// "update the installer to have agent only mode and a way to update it to have full mimic, and vice
+// versa" (the guild lead, 2026-10-08). Agent only is the same install with every visible overlay
+// window left out: logs still upload, the tray and the dashboard stay, and the hidden trigger window
+// still speaks the callouts. cfg.runMode is 'full' (default) or 'agent'. It is read here, off disk,
+// BEFORE any window is created, and fixed for this run — changing it saves the choice and offers a
+// restart (_setRunMode), like the graphics-card switch above. The overlay gate lives in the create*
+// functions, _overlayWanted and _overlayEntries; test/mimic-agent-only-mode.test.js fails any
+// overlay creator that forgets it.
+const _runModeAtStart = (() => { try { const raw = _readConfigRaw(); return (raw && raw.runMode === 'agent') ? 'agent' : 'full'; } catch { return 'full'; } })();
+function _agentOnly() { return _runModeAtStart === 'agent'; }
+
 // Standard webPreferences for every window we open, PLUS a name stamped onto
 // that renderer's own command line.
 //
@@ -309,6 +321,9 @@ function defaultConfig() {
     // Draw overlays on the processor instead of the graphics card. Off = graphics card.
     // Read before app-ready (see _gpuOffAtStart), so a change needs a restart.
     disableGpu: false,
+    // 'full' = overlays; 'agent' = agent only (uploads, tray, dashboard and spoken callouts, no overlay
+    // windows). Read before any window exists (see _runModeAtStart), so a change needs a restart.
+    runMode: 'full',
   };
 }
 // The config, or the last good copy of it. saveConfig keeps `.bak` (the file as
@@ -3703,6 +3718,7 @@ function _rescueOffscreenOverlays() {
   }
 }
 function _onDisplaysChanged() {
+  if (_agentOnly()) return;   // no overlays to ask about
   _displaySettleUntil = Date.now() + 6000;
   clearTimeout(_displayChangeTimer);
   _displayChangeTimer = setTimeout(_askAboutDisplays, 3000);   // a monitor power-cycle is a burst of events
@@ -4079,6 +4095,9 @@ function _flushBounds(key, win) {
 // look up per-window state in config (opacity bounds) and to address
 // individual windows over IPC.
 function _overlayEntries() {
+  // Agent only: nothing may be moved, shown, faded or rescued — the one window that lives (the
+  // hidden trigger window, the voice) must never be grabbed by an unlock, setup or arrange pass.
+  if (_agentOnly()) return [];
   const out = [];
   if (dockWindow    && !dockWindow.isDestroyed())    out.push(['dock',    dockWindow]);
   if (overlayWindow && !overlayWindow.isDestroyed()) out.push(['hud',     overlayWindow]);
@@ -4671,6 +4690,7 @@ function applySetupMode(on) {
 // dashboard's live render loop so the overlay updates with zero
 // duplication. Bounds + screen-signature persist per panelKey.
 function createPanelOverlay(panelKey) {
+  if (_agentOnly()) return false;   // agent only: no overlay windows (see _runModeAtStart)
   if (typeof panelKey !== 'string' || !panelKey) return false;
   // Normalize so caller can pass loose user input (e.g. an <h2> text);
   // matched against the dashboard's own panelKey() lowercasing.
@@ -4723,6 +4743,7 @@ function createPanelOverlay(panelKey) {
 }
 
 function createOverlayWindow() {
+  if (_agentOnly()) return;   // agent only: no overlay windows (see _runModeAtStart)
   const b = _resolveBounds('hudBounds', 'hudBoundsSig', { x: 40, y: 40, width: 320, height: 220 });
   overlayWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — HUD overlay',
@@ -5870,6 +5891,7 @@ function applyTriggerVisibility() {
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   // The Timers canvas shows the timers and callouts while it is on; this window
   // stays, hidden, as their voice (#97's rule — hidden, never freed).
+  if (_agentOnly()) { triggerWindow.hide(); return; }   // agent only: the voice, never on screen
   if (cfg.showCanvas) { triggerWindow.hide(); return; }
   const shouldShow = unlocked || _blindForceOpen('triggers') || (cfg.enableTriggerTts && cfg.showTriggerOverlay !== false && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) triggerWindow.showInactive(); else triggerWindow.hide();
@@ -5904,6 +5926,7 @@ function _canvasDisplay() {
   return screen.getPrimaryDisplay();
 }
 function createCanvasWindow() {
+  if (_agentOnly()) return;
   const d = _canvasDisplay();
   canvasWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Canvas',
@@ -5961,6 +5984,7 @@ function _setCanvasArrange(on) {
   return _canvasArrange;
 }
 function createCharmOverlay() {
+  if (_agentOnly()) return;
   const b = _resolveBounds('charmBounds', 'charmBoundsSig', { x: 700, y: 420, width: 300, height: 180 });
   charmWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Charm tracker overlay',
@@ -5995,6 +6019,7 @@ function applyCharmVisibility() {
 // counters. Distinct from the charm tracker: no 6s tickdown, no recharm alarm,
 // no break detection — just HP + buff timers for a pet you keep around.
 function createPetsOverlay() {
+  if (_agentOnly()) return;
   const b = _resolveBounds('petsBounds', 'petsBoundsSig', { x: 700, y: 620, width: 300, height: 160 });
   petsWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Pet tracker overlay',
@@ -6029,6 +6054,7 @@ function applyPetsVisibility() {
 // pinned in-game so a buffer can work the list without alt-tabbing. Polls the
 // agent which proxies the bot's /api/agent/raid-buff-queue with a 3s cache.
 function createBuffQueueOverlay() {
+  if (_agentOnly()) return;
   const b = _resolveBounds('buffQueueBounds', 'buffQueueBoundsSig', { x: 1020, y: 60, width: 330, height: 260 });
   buffQueueWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Buff queue overlay',
@@ -6065,6 +6091,7 @@ function applyBuffQueueVisibility() {
 // diagrams, ⚑ anomaly flags). Data ships in pop-raids.js; the shared
 // objective board + loot proxy through the local agent.
 function createPopRaidOverlay() {
+  if (_agentOnly()) return;
   const b = _resolveBounds('popRaidBounds', 'popRaidBoundsSig', { x: 880, y: 80, width: 440, height: 540 });
   popRaidWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — PoP raids overlay',
@@ -6100,6 +6127,7 @@ function applyPopRaidVisibility() {
 // 2026-09-24). Three layouts in one file, picked in the overlay. Reads
 // /api/me. Opt-in, and forced open while blind (_BLIND_FORCED_KEYS).
 function createMeOverlay() {
+  if (_agentOnly()) return;
   const b = _resolveBounds('meBounds', 'meBoundsSig', { x: 40, y: 620, width: 330, height: 300 });
   meWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — HUD overlay',
@@ -6131,6 +6159,7 @@ function applyMeVisibility() {
 
 // Mob Info — current target's catalog stats (HP/AC/resists/special attacks).
 function createMobInfoOverlay() {
+  if (_agentOnly()) return;
   const b = _resolveBounds('mobInfoBounds', 'mobInfoBoundsSig', { x: 700, y: 60, width: 320, height: 200 });
   mobInfoWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Target Info overlay',
@@ -6162,6 +6191,7 @@ function applyMobInfoVisibility() {
 
 // /who overlay — latest /who + recently-gone, anon rows de-anon'd from history.
 function createWhoOverlay() {
+  if (_agentOnly()) return;
   const b = _resolveBounds('whoBounds', 'whoBoundsSig', { x: 40, y: 300, width: 320, height: 280 });
   whoWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — /who overlay',
@@ -6194,6 +6224,7 @@ function applyWhoVisibility() {
 // Melody overlay — bard /melody twist queue with per-song play / casting /
 // stopped state. Reads from /api/state.bardMelody (per-character).
 function createMelodyOverlay() {
+  if (_agentOnly()) return;
   const b = _resolveBounds('melodyBounds', 'melodyBoundsSig', { x: 40, y: 600, width: 280, height: 180 });
   melodyWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Melody overlay',
@@ -6230,6 +6261,7 @@ function applyMelodyVisibility() {
 // co-leader, 2026-09-27), with the Zeal pipe check and this PC's clock
 // offset one click down. Opt-in.
 function createZealHealthOverlay() {
+  if (_agentOnly()) return;
   const b = _resolveBounds('zealBounds', 'zealBoundsSig', { x: 40, y: 800, width: 280, height: 220 });
   zealWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Tick overlay',
@@ -6267,6 +6299,7 @@ function applyZealVisibility() {
 // is Tier 4 (deferred); the overlay shows the active local character only.
 // (a member, 2026-06-25.)
 function createTankOverlay() {
+  if (_agentOnly()) return;
   const b = _resolveBounds('tankBounds', 'tankBoundsSig', { x: 40, y: 480, width: 300, height: 280 });
   tankWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Tank overlay',
@@ -6302,6 +6335,7 @@ function applyTankVisibility() {
 // where their hate is coming from; non-tanks see when they're about to pull.
 // Opt-in (default off); EQ-gated like every other built-in.
 function createThreatMeterOverlay() {
+  if (_agentOnly()) return;
   const b = _resolveBounds('threatBounds', 'threatBoundsSig', { x: 40, y: 320, width: 320, height: 200 });
   threatWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Threat meter overlay',
@@ -6337,6 +6371,7 @@ function applyThreatVisibility() {
 // count, with HP + debuffs per target. Polls /api/extended-target (agent proxy
 // of the bot aggregation). Opt-in (default off); EQ-gated. (a member, 2026-06-29.)
 function createExtTargetOverlay() {
+  if (_agentOnly()) return;
   const b = _resolveBounds('extTargetBounds', 'extTargetBoundsSig', { x: 40, y: 360, width: 320, height: 240 });
   extTargetWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Extended Target overlay',
@@ -6418,6 +6453,7 @@ async function _loadOverlayPreferAgent(win, overlayPath, fallbackFile) {
 // (#65) Served from the agent at /overlay/command so overlay updates ride
 // agent hot-swaps; falls back to the bundled command.html when the agent is down.
 function createCommandOverlay() {
+  if (_agentOnly()) return;
   const b = _resolveBounds('commandBounds', 'commandBoundsSig', { x: 40, y: 40, width: 320, height: 360 });
   commandWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Command Center',
@@ -6456,6 +6492,7 @@ function applyCommandVisibility() {
 // Slot order, caller + mana, live cast bar, NEXT cue + beat countdown.
 // Reads stats.chChain via /api/state — fully local, no relay. Opt-in.
 function createChChainOverlay() {
+  if (_agentOnly()) return;
   const b = _resolveBounds('chChainBounds', 'chChainBoundsSig', { x: 40, y: 540, width: 280, height: 240 });
   chChainWindow = new BrowserWindow({
     title: 'Wolf Pack Mimic — CH chain overlay',
@@ -6502,6 +6539,7 @@ function createChChainOverlay() {
 // `focusable: true` unlike the read-only overlays: the dock has a pane picker
 // with real checkboxes.
 function createDockWindow() {
+  if (_agentOnly()) return;
   const b = _resolveBounds('dockBounds', 'dockBoundsSig', { x: 40, y: 40, width: 360, height: 620 });
   dockWindow = new BrowserWindow({
     title: 'Wolf Pack Mimic — Dock',
@@ -6784,6 +6822,9 @@ function _overlayForcedOn(cfg, e) {
 // gate. Reaping it would trade a missed raid callout for 35 MB while EQ is
 // closed, which is precisely when nobody cares about the 35 MB.
 function _overlayWanted(cfg, e) {
+  // Agent only: the trigger window (the voice) is the one that lives, hidden; every other overlay
+  // is freed and never built, whatever its flag says.
+  if (_agentOnly()) return e.key === 'trigger' && !!cfg[e.flag];
   // The Timers canvas is an alternative home for the trigger overlay's
   // visuals, so setup / unlock never conjure it for placement (that would
   // show every timer twice): its own switch decides, and while it is being
@@ -6960,6 +7001,7 @@ const _HIDEALL_FLAGS = [
   'showMe', 'showCanvas',
 ];
 function toggleHideAllOverlays() {
+  if (_agentOnly()) return;   // nothing on screen to hide, and it would rewrite the saved overlay flags
   const cfg = loadConfig();
   if (!_hideAllActive) {
     // Snapshot + flip all off.
@@ -7452,6 +7494,9 @@ function currentStatus() {
     quietMode: !!cfg.quietMode,
     hideOverlays: !!cfg.hideOverlays,
     useGpu: !cfg.disableGpu,
+    // runMode is the saved choice; runModeNow is what this run started as (they differ until a restart).
+    runMode: cfg.runMode === 'agent' ? 'agent' : 'full',
+    runModeNow: _runModeAtStart,
     tellsMode: cfg.tellsMode || 'off',
     tellsDmPausedUntil: (Number(cfg.tellsDmPausedUntil) || 0) > Date.now() ? Number(cfg.tellsDmPausedUntil) : 0,
     showHud: !!cfg.showHud,
@@ -7561,7 +7606,7 @@ function tooltipFor(s) {
       + (_hideAllHotkeyBound() ? '' : ' (hotkey blocked by another app)');
   }
   const mode = s.localOnly ? 'Local only' : 'Uploading';
-  const quiet = (s.quietMode ? ' · Muted' : '') + (s.hideOverlays ? ' · Overlays off' : '');
+  const quiet = (s.quietMode ? ' · Muted' : '') + (s.hideOverlays ? ' · Overlays off' : '') + (s.runModeNow === 'agent' ? ' · Agent only' : '');
   const upd = s.updatePending ? ` · update ${s.updatePending} ready` : '';
   return `Wolf Pack miMIC ${v} — ${mode} · port ${s.agentPort}${quiet}${upd}`;
 }
@@ -7680,6 +7725,27 @@ function _setGpuDrawing(useGpu, ask) {
   pushStatus();
   return { ok: true, useGpu: !cfg.disableGpu, restartNeeded };
 }
+// Save the run mode ('full' or 'agent'). Like the graphics-card switch it only takes hold at startup,
+// so when the saved mode differs from what this run started in, `ask` offers the restart (tray,
+// dashboard, Settings); setup passes ask=false and lets it land the next time Mimic starts.
+function _setRunMode(mode, ask) {
+  const next = mode === 'agent' ? 'agent' : 'full';
+  const cfg = loadConfig(); cfg.runMode = next; saveConfig(cfg);
+  const restartNeeded = next !== _runModeAtStart;
+  if (restartNeeded && ask) {
+    dialog.showMessageBox({
+      type: 'question', buttons: ['Restart now', 'Later'], defaultId: 0, cancelId: 1,
+      title: 'Restart Mimic',
+      message: next === 'agent' ? 'Mimic will run as agent only: no overlays.' : 'Mimic will run as full Mimic, with overlays.',
+      detail: next === 'agent'
+        ? 'Your logs keep uploading and spoken callouts keep working. This takes effect when Mimic restarts. Restart now?'
+        : 'This takes effect when Mimic restarts. Restart now?',
+    }).then((r) => { if (r.response === 0) { app.relaunch(); _quitMimic(); } }).catch(() => {});
+  }
+  pushStatus();
+  try { buildTrayMenu(); } catch { /* menu is rebuilt on the next right-click anyway */ }
+  return { ok: true, runMode: next, restartNeeded };
+}
 function _trayFallbackMenu() {
   return Menu.buildFromTemplate([
     { label: 'Open Wolf Pack Mimic', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
@@ -7718,6 +7784,7 @@ function buildTrayMenu() {
   if (!tray) return;
   const s = currentStatus();
   const v = `v${app.getVersion()}`;
+  const agentOnly = _agentOnly();   // this run has no overlay windows: hide the overlay-only items below
   const headerLabel = s.localOnly
     ? `🐺 Wolf Pack Mimic ${v} — Local only · :${s.agentPort}`
     : `🐺 Wolf Pack Mimic ${v} — Connected · :${s.agentPort}`;
@@ -7992,16 +8059,22 @@ function buildTrayMenu() {
     { label: '📈 My parses', click: () => showDashboardTab('myparses') },
     { label: 'Open wolfpack.quest ↗', click: () => shell.openExternal(WOLFPACK_URL) },
     { type: 'separator' },
+    // Run mode — full Mimic or agent only (the guild lead, 2026-10-08). Same setter as the dashboard's
+    // Overlays tab and Settings; saves the choice and offers a restart. In agent only the items that
+    // only mean something with overlays on screen are `visible: false` (hidden, not greyed — least
+    // diff, and a greyed list of things that can never work is noise).
+    { label: s.runMode === 'agent' ? '🪟 Switch to full Mimic (overlays)…' : '🖥 Switch to agent only (no overlays)…',
+      click: () => { _setRunMode(loadConfig().runMode === 'agent' ? 'full' : 'agent', true); } },
     // Multi-monitor rescue — run from the tray on the monitor you play on;
     // lost overlays come back there, the rest stay put (a member, 2026-07-15:
     // "lost several overlays off my window and cannot find them").
-    { label: '🧲 Rescue overlays to this screen', click: () => {
+    { label: '🧲 Rescue overlays to this screen', visible: !agentOnly, click: () => {
         _rescueOverlays().catch((e) => appendAgentLog('[rescue] failed: ' + e.message + '\n'));
       } },
     // The display-off half of Quiet mode (bottom block). It lived only in Settings (a
     // member, 2026-09-23: "We don't have a taskbar option for No Overlays").
     // Same flag and the same apply path as the Settings save — not a parallel one.
-    { label: '🙈 No overlays — I use another parser (uploads and voice continue)', type: 'checkbox', checked: !!s.hideOverlays, click: (mi) => {
+    { label: '🙈 No overlays — I use another parser (uploads and voice continue)', type: 'checkbox', checked: !!s.hideOverlays, visible: !agentOnly, click: (mi) => {
         const cfg = loadConfig(); cfg.hideOverlays = mi.checked; saveConfig(cfg);
         applyAllVisibility();
         pushStatus();
@@ -8019,7 +8092,7 @@ function buildTrayMenu() {
           const cfg = loadConfig(); cfg.autoStart = !!mi.checked; saveConfig(cfg);
           applyAutoStart(); pushStatus();
         } },
-      { label: 'Hide overlays when EverQuest isn\'t running', type: 'checkbox', checked: s.hideOverlaysWhenEqDown !== false, click: (mi) => {
+      { label: 'Hide overlays when EverQuest isn\'t running', type: 'checkbox', checked: s.hideOverlaysWhenEqDown !== false, visible: !agentOnly, click: (mi) => {
           const cfg = loadConfig(); cfg.hideOverlaysWhenEqDown = !!mi.checked; saveConfig(cfg);
           // Re-probe immediately so the next visibility flip is accurate
           // instead of waiting up to 5s for the poller to tick.
@@ -8028,7 +8101,7 @@ function buildTrayMenu() {
         } },
     ] : []),
     // Same switch as Settings → "Use the graphics card for overlays" (restarts Mimic).
-    { label: 'Use the graphics card for overlays (restarts Mimic)', type: 'checkbox', checked: s.useGpu !== false, click: (mi) => { _setGpuDrawing(!!mi.checked, true); } },
+    { label: 'Use the graphics card for overlays (restarts Mimic)', type: 'checkbox', checked: s.useGpu !== false, visible: !agentOnly, click: (mi) => { _setGpuDrawing(!!mi.checked, true); } },
     { label: 'My /tells  🔒 PRIVATE', submenu: tellsSubmenu },
     { type: 'separator' },
     connectItem,
@@ -8066,8 +8139,11 @@ function buildTrayMenu() {
         applyAllVisibility();
         pushStatus();
       } },
-    { label: 'Overlays', submenu: overlaysSubmenu },
-    { label: '🗂 Overlay sets', submenu: _overlaySetTrayItems() },
+    ...(agentOnly ? [] : [{ label: 'Overlays', submenu: overlaysSubmenu }]),
+    ...(agentOnly ? [] : [{ label: '🗂 Overlay sets', submenu: _overlaySetTrayItems() }]),
+    // Agent only keeps the one overlay control that is not about the screen: the spoken callouts.
+    { label: 'Spoken trigger callouts (TTS)', type: 'checkbox', checked: !!s.enableTriggerTts, visible: agentOnly,
+      click: () => { _toggleOverlay('trigger'); buildTrayMenu(); } },
     { label: 'Restart agent', click: async () => {
         appendAgentLog('[mimic] tray "Restart agent" clicked\n');
         if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
@@ -10384,6 +10460,7 @@ ipcMain.handle('relaunch-agent', async () => {
 ipcMain.handle('get-status', () => currentStatus());
 // "Use the graphics card for overlays" — Settings and setup. `ask` = offer the restart now.
 ipcMain.handle('set-gpu-drawing', (_e, useGpu, ask) => _setGpuDrawing(!!useGpu, !!ask));
+ipcMain.handle('set-run-mode', (_e, mode, ask) => _setRunMode(mode, !!ask));
 ipcMain.handle('set-quiet-mode', (_e, on) => {
   const cfg = loadConfig(); cfg.quietMode = !!on; saveConfig(cfg);
   _broadcastMute(cfg);   // see the tray's Quiet mode item — same gap
