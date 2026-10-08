@@ -627,6 +627,16 @@ describe('the three HUDs', () => {
       expect(R.clickyShort('White Ornate Chain Bridle', 12)).toBe('White Bridle');
       expect(R.clickyShort('Rooting Rod', 8)).toBe('Rooting');                         // the longer of its two words
       expect(R.clickyShort('The Gnarled Staff', 20)).toBe('Gnarled Staff');
+      // What raiders call them (the guild lead, 2026-10-08), every dose size alike, whatever the room.
+      expect(R.clickyShort('10 Dose Cloudy Potion', 10)).toBe('Invis Pot');
+      expect(R.clickyShort('5 Dose Cloudy Potion', 30)).toBe('Invis Pot');
+      expect(R.clickyShort('10 Doses of Undeads Recourse', 10)).toBe('U.Recourse');
+      expect(R.clickyShort('Potion of Undeads Recourse', 30)).toBe('U.Recourse');
+      expect(R.clickyShort("Larrikan's Mask", 30)).toBe('Invis Mask');
+      expect(R.clickyShort('Forlorn Totem of Rolfron Zek', 30)).toBe('Totem');
+      // The dose count is not the name.
+      expect(R.clickyShort('10 Dose Potion of Negation', 10)).toBe('Negation');
+      expect(R.clickyShort('10 Dose Potion of Negation', 30)).toBe('Potion of Negation');
       expect(R.clickyShort('Ring of Shadows', 30)).toBe('Ring of Shadows');           // room for all of it: all of it
       expect(R.clickyShort('Ring of Supercalifragilistic', 8)).toBe('Superca…');           // 8 characters in all
     });

@@ -984,8 +984,19 @@
   // "Ring of Shadows" → "Shadows", "White Ornate Chain Bridle" → "Bridle": the part of the name that
   // tells two apart, as much of it as `cap` characters hold. The old cut ("Ring…", "Rod…") made every
   // "<thing> of …" look the same.
+  // What a raider calls it, before any cutting (the guild lead, 2026-10-08: "Undead Recourse can show as
+  // U.Recourse, Cloudy potion can say Invis Pot. Larrikan's Mask can say 'invis mask' Rolfron should say
+  // 'Totem'"). Matched on the whole item name, so every dose size of a potion gets the same label.
+  var CLICKY_ALIASES = [
+    [/cloudy potion/i, 'Invis Pot'],
+    [/undeads?\W*s?\s+recourse/i, 'U.Recourse'],
+    [/larrikan\W?s mask/i, 'Invis Mask'],
+    [/totem of rolfron zek/i, 'Totem'],
+  ];
   function clickyShort(name, cap){
-    var n = String(name).replace(/^(?:the|a|an)\s+/i, '');
+    for (var a = 0; a < CLICKY_ALIASES.length; a++) if (CLICKY_ALIASES[a][0].test(String(name))) return CLICKY_ALIASES[a][1];
+    // "10 Dose …", "5 Doses of …": the dose count is not the name.
+    var n = String(name).replace(/^\d+\s+doses?\s+(?:of\s+)?/i, '').replace(/^(?:the|a|an)\s+/i, '');
     if (n.length <= cap) return n;
     var m = n.match(/\s+of\s+(?:the\s+)?(.+)$/i), w, out = '', i, t;
     if (m) {
