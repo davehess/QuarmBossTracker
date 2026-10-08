@@ -722,7 +722,8 @@ next touch one rather than assuming a missing row means a missing doc.
   (restart to apply). Agent only = uploads, tray, dashboard and spoken callouts, no overlay windows. Graduates
   with the next stable cut. DECISIONS §199.
 - **✅ Plane of Tactics stampede triggers (guild triggers, live 2026-10-08).** "You hear the pounding of hooves."
-  → overlay + "Stampede" + 15 s timer; a 40-minute "next stampede possible" timer. DECISIONS §200.
+  → overlay + "Stampede" + 15 s timer; then a window: "stampede window opens" bar (40 min) and "stampede by" bar
+  (120 min), both shown from the emote (FB-69). DECISIONS §200.
 - **✅ Officer page `/admin/loot` [beta] — loot by value (web 1.8.120 main, 2026-10-08; paged in 1.8.122).** Note
   that the looter is not always the owner; window, per-character totals; one row per looter + item (count, each,
   row total), 50 a page, sorted on the server; DKP items listed but left out of totals (`loot_value_grouped` +
