@@ -5694,3 +5694,22 @@ The guild lead picked A for all three open choices (DECISIONS-2026-09-21.md §17
 - **Alpha (FB-64):** the HUD ring "as pieces" is one ring of ten arc pieces on the shared circle
   (`fc18eaa1`, new "Ring arc" piece mode). The beta→alpha sync failed twice today on me.html/preload.js;
   it was resolved by hand (`27608cd8`), keeping the alpha's Canvas path in the HUD builder close.
+
+### 🧾 2026-10-08 (evening) — feedback names, /parses week on main, clicky counters (web 1.8.125 · bot 3.1.232)
+Detail and the guild lead's quotes in `DECISIONS-2026-09-21.md` §206.
+- **Done, on main:** `/admin/feedback` "Addressed by" shows the Discord name, not the email; Mimic reports carry the sender's
+  Discord name, not the character they had up (15 stored rows + 1 stored email rewritten); `/parses` opens on 7 days (it was
+  beta-only until now; the parallel-reads rewrite is still beta-only).
+- **Done, on beta (Mimic HUD):** unlimited clickies never show, whatever agent version sends them.
+- **On beta — FB-68 (clicky counters), agent 3.7.113 (`71116479`):** a zero-cast-time clicky (the Wooly Spider Silk Net, a
+  3-charge Root) prints no "begins to glow" line, so the agent never counted it. A resist ("Your target resisted the Root
+  spell.") and a landing on your own target ("<mob> adheres to the ground.") now spend a charge; a spell begun by hand is
+  skipped. A landing needs Zeal's target name; a resist does not. Waits on the member trying it (stable not yet).
+- **On the Deck branch — FB-66 Linux (`3aa9ad50`):** `_startEqPolling` ran only on win32, so the pgrep check was never asked
+  and overlays stayed up after EQ closed. It now runs on linux too, the tray switch shows on linux, and the Settings hint is
+  platform-neutral. The branch was also refreshed from beta (`1b1825d5`): Mimic 2.7.11, agent 3.7.113, so Deck builds are
+  named `2.7.11-linux.N`.
+- **Open — Linux versioning:** a Windows cut still does not produce a Linux build by itself: `build-mimic-linux.yml` exists only on
+  the Deck branch and runs on `claude/**` pushes. Options for the guild lead: **A** Linux builds after every Windows beta or
+  stable cut (move the workflow to main/beta, trigger on `release-mimic` success; prune stays at 2 for the 10-entry
+  releases.atom trap), **B** on stable cuts only. Until picked, a Deck refresh from beta is a manual step.

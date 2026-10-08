@@ -19434,10 +19434,21 @@ async function _handleAgentFeedback(req, res) {
   }
 
   const supabase = require('./utils/supabase');
+  // The report is from a person, not whichever character they had up (the guild lead, 2026-10-08: every
+  // submission from an alt should read as the main's Discord name). Fall back to the character.
+  let submitterName = p?.character ? String(p.character).slice(0, 64) : null;
+  if (identity.discord_id) {
+    try {
+      const m = await supabase.select('wolfpack_members',
+        `discord_id=eq.${encodeURIComponent(identity.discord_id)}&select=nickname,global_name&limit=1`);
+      const n = m?.[0]?.nickname || m?.[0]?.global_name;
+      if (n) submitterName = String(n).slice(0, 64);
+    } catch { /* keep the character name */ }
+  }
   const row = {
     guild_id:             process.env.SUPABASE_GUILD_ID || 'wolfpack',
     submitter_discord_id: identity.discord_id || null,
-    submitter_name:       p?.character ? String(p.character).slice(0, 64) : null,
+    submitter_name:       submitterName,
     category:             p?.category === 'bug' ? 'bug' : 'idea',
     message:              message.slice(0, 4000),
     client:               p?.client ? String(p.client).slice(0, 32) : null,
