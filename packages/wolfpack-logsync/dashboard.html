@@ -6540,32 +6540,83 @@ function _wpDeathrollHtml(e) {
 var _wpNightLoot = null;   // null = not asked yet; { missing } / { failed } = no list; else the bot's body
 function _wpHHMM(ms) { var d = new Date(ms); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); }
 function _wpNightDay(ms) { return new Date(ms).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }); }
+// Value + window (the guild lead, 2026-10-08: "how much each item is worth … how much each toon has
+// looted in platinum … time bound it"). The chips pick how far back the bot reads (12h · 24h · 7d · 30d,
+// remembered per viewer); values are the item's base merchant value in copper, shown as platinum.
+var WP_NIGHT_HOURS = [[12, '12h', '12 hours'], [24, '24h', '24 hours'], [168, '7d', '7 days'], [720, '30d', '30 days']];
+var _wpNightHours = 12;
+try {
+  var _wpNightSaved = Number(localStorage.getItem('wp:nightLootHours'));
+  if (WP_NIGHT_HOURS.some(function (w) { return w[0] === _wpNightSaved; })) _wpNightHours = _wpNightSaved;
+} catch (e) { void e; }
+function _wpNightWindowText(hrs) {
+  for (var i = 0; i < WP_NIGHT_HOURS.length; i++) if (WP_NIGHT_HOURS[i][0] === hrs) return WP_NIGHT_HOURS[i][2];
+  return '12 hours';
+}
+// Copper -> platinum, up to one decimal, grouped. null (no price in the item database) is a dash.
+function wpFmtPP(cp) {
+  if (cp == null || !isFinite(cp)) return '—';
+  if (cp > 0 && cp < 50) return '&lt;0.1';
+  return (Math.round(cp / 100) / 10).toLocaleString('en-US', { maximumFractionDigits: 1 });
+}
+function wpNightLootWindowChips() {
+  var h = '<div style="display:flex;gap:4px;align-items:center;margin-bottom:6px"><span class="wp-lbl" style="margin-right:2px">Window</span>';
+  for (var i = 0; i < WP_NIGHT_HOURS.length; i++) {
+    var w = WP_NIGHT_HOURS[i];
+    h += '<button type="button" class="wp-btn' + (w[0] === _wpNightHours ? ' pri' : '') + '" data-v="' + w[0] + '" onclick="wpNightLootWindow(this)">' + w[1] + '</button>';
+  }
+  return h + '</div>';
+}
+function wpNightLootTotalsHtml(nl, win) {
+  var t = (nl.totals || []).slice().sort(function (a, b) { return (b.value_cp || 0) - (a.value_cp || 0); });
+  if (!t.length) return '';
+  var h = '<div style="margin-bottom:8px"><div style="font-size:12px;margin-bottom:4px"><b>Totals by character</b> <span class="dim">· last ' + win + ' · '
+    + wpFmtPP(nl.total_value_cp) + ' pp across ' + (nl.priced_items + nl.unpriced_items) + ' items</span></div>'
+    + '<div style="max-height:200px;overflow:auto"><table><tr><th>Character</th><th>Items</th><th>Vendor value (pp)</th><th>NO DROP</th></tr>';
+  for (var i = 0; i < t.length; i++) {
+    h += '<tr><td class="name">' + esc(t[i].looter) + '</td><td class="num">' + t[i].items + '</td>'
+       + '<td class="num">' + wpFmtPP(t[i].value_cp) + '</td><td class="num dim">' + t[i].nodrop_items + '</td></tr>';
+  }
+  h += '</table></div><div class="dim" style="font-size:11px;margin-top:4px">Value = the item&rsquo;s base merchant value from the item database (what EverQuest prices it at), not bazaar prices. NO DROP items can only be sold to a merchant.'
+    + (nl.unpriced_items > 0 ? ' ' + nl.unpriced_items + ' item' + (nl.unpriced_items === 1 ? '' : 's') + ' not in the item database count as 0.' : '') + '</div></div>';
+  return h;
+}
 function wpNightLootHtml(nl) {
-  var h = '<div class="card wide"><h2>📦 Who looted what <span class="dim" style="font-size:11px;text-transform:none;letter-spacing:0">· last 12 hours</span></h2>';
+  var have = nl && Array.isArray(nl.loot);
+  var dataHrs = have && nl.window_hours ? nl.window_hours : 12;
+  var win = _wpNightWindowText(dataHrs);
+  var h = '<div class="card wide"><h2>📦 Who looted what <span class="dim" style="font-size:11px;text-transform:none;letter-spacing:0">· last ' + win + '</span></h2>';
   if (!nl) {
-    return h + '<div class="dim" style="padding:6px">Loading…</div></div>';
+    return h + wpNightLootWindowChips() + '<div class="dim" style="padding:6px">Loading…</div></div>';
   }
   if (nl.missing) {
     return h + '<div class="dim" style="padding:6px">Needs the bot update.</div></div>';
   }
   if (nl.failed) {
-    return h + '<div class="dim" style="padding:6px">Cannot reach the server for this list right now.</div></div>';
+    return h + wpNightLootWindowChips() + '<div class="dim" style="padding:6px">Cannot reach the server for this list right now.</div></div>';
   }
   var rows = nl.loot || [];
+  // The server answers for the window it understood; an older one ignores the chip and keeps sending 12h.
+  var behind = dataHrs !== _wpNightHours
+    ? '<div class="dim" style="font-size:11px;margin-bottom:6px">Still showing the last ' + win + ' — the server has not answered for ' + _wpNightWindowText(_wpNightHours) + ' yet.</div>' : '';
   if (rows.length === 0) {
-    return h + '<div class="dim" style="padding:6px">No loot seen in the last 12 hours.</div></div>';
+    return h + wpNightLootWindowChips() + behind + '<div class="dim" style="padding:6px">No loot seen in the last ' + win + '.</div></div>';
   }
+  var hasVal = Array.isArray(nl.totals);
+  h += wpNightLootWindowChips() + behind;
   h += '<div class="subtle" style="font-size:11px;margin-bottom:6px">Raiders running Mimic report their own "You have looted" line to the bot, so this is the raid, not just you. Newest first.</div>';
-  h += '<div style="max-height:340px;overflow:auto"><table><tr><th>Time</th><th>Looter</th><th>Item</th><th>Zone</th></tr>';
+  if (hasVal) h += wpNightLootTotalsHtml(nl, win);
+  h += '<div style="max-height:340px;overflow:auto"><table><tr><th>Time</th><th>Looter</th><th>Item</th><th>Zone</th>' + (hasVal ? '<th>Value (pp)</th>' : '') + '</tr>';
   var lastDay = '';
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i];
     var ms = Date.parse(r.at);
     if (!isFinite(ms)) continue;
     var day = _wpNightDay(ms);
-    if (day !== lastDay) { lastDay = day; h += '<tr><td colspan="4" class="dim" style="padding-top:8px">' + esc(day) + '</td></tr>'; }
+    if (day !== lastDay) { lastDay = day; h += '<tr><td colspan="' + (hasVal ? 5 : 4) + '" class="dim" style="padding-top:8px">' + esc(day) + '</td></tr>'; }
     h += '<tr><td class="dim">' + _wpHHMM(ms) + '</td><td class="name">' + esc(r.looter) + '</td>'
-       + '<td>' + esc(r.item) + '</td><td class="dim">' + (r.zone ? esc(r.zone) : '—') + '</td></tr>';
+       + '<td>' + esc(r.item) + (r.nodrop ? ' <span class="dim" style="font-size:10px" title="NO DROP: a merchant is the only buyer">ND</span>' : '') + '</td><td class="dim">' + (r.zone ? esc(r.zone) : '—') + '</td>'
+       + (hasVal ? '<td class="num">' + wpFmtPP(r.value_cp) + '</td>' : '') + '</tr>';
   }
   h += '</table></div>';
   if (nl.loot_total > rows.length) h += '<div class="dim" style="font-size:11px;margin-top:6px">Showing the newest ' + rows.length + ' of ' + nl.loot_total + '.</div>';
@@ -6596,6 +6647,16 @@ function wpNightLootSet(j) {
   if (bad && _wpNightLoot && Array.isArray(_wpNightLoot.loot)) return;
   _wpNightLoot = bad ? (j && j.missing ? { missing: true } : { failed: true }) : j;
   wpRenderNightLoot();
+}
+// A window chip: remember the pick, redraw the chips at once, and ask the bot for that window now
+// (the Loot IIFE exposes its fetch as wpNightLootRefetch; its 30s throttle is skipped on a click).
+function wpNightLootWindow(el) {
+  var v = Number(el && el.getAttribute('data-v'));
+  if (!WP_NIGHT_HOURS.some(function (w) { return w[0] === v; }) || v === _wpNightHours) return;
+  _wpNightHours = v;
+  try { localStorage.setItem('wp:nightLootHours', String(v)); } catch (e) { void e; }
+  wpRenderNightLoot();
+  if (typeof wpNightLootRefetch === 'function') wpNightLootRefetch(true);
 }
 // Who looted a roll set's item when that is NOT someone the card already shows as
 // a winner (a re-roll or a pass hands it on). The bot linked looters to the
@@ -10442,17 +10503,21 @@ async function dismissTopDamage(key) {
   // and never joins the bidding chain below, so a slow or missing key cannot hold
   // the bidding card. The bot caches the answer for 60s, so 30s here is plenty.
   // A 404 is a bot that predates the key; anything else is a blip.
+  // The chosen window rides as ?hours= (the agent's /api/server/ passthrough forwards the query);
+  // 12h sends none, exactly as before. A reply for a window the viewer has since left is dropped.
   var lastNightLootAt = 0;
-  function fetchNightLoot(){
-    if (Date.now() - lastNightLootAt < 30000) return;
+  function fetchNightLoot(force){
+    if (!force && Date.now() - lastNightLootAt < 30000) return;
     lastNightLootAt = Date.now();
+    var hrs = _wpNightHours;
     try {
-      fetch("/api/server/night-loot").then(function(r){
+      fetch("/api/server/night-loot" + (hrs === 12 ? "" : "?hours=" + hrs)).then(function(r){
         if (r.status === 404) return { missing:true };
         return r.ok ? r.json() : { failed:true };
-      }).then(function(j){ wpNightLootSet(j); }).catch(function(){ wpNightLootSet({ failed:true }); });
+      }).then(function(j){ if (hrs === _wpNightHours) wpNightLootSet(j); }).catch(function(){ if (hrs === _wpNightHours) wpNightLootSet({ failed:true }); });
     } catch (e) { wpNightLootSet({ failed:true }); }
   }
+  window.wpNightLootRefetch = fetchNightLoot;
   function fetchServer(){
     if (!wpLootPollWanted()) { return Promise.resolve(); }
     fetchNightLoot();
