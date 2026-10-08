@@ -2028,7 +2028,11 @@ function _wpRefreshMimicCfg() {
   try {
     window.mimic.getConfig().then(function (c) {
       if (!c) return;
-      _wpMimicCfg = { quietMode: !!c.quietMode, hideOverlays: !!c.hideOverlays, hideWhenEqDown: c.hideOverlaysWhenEqDown !== false };
+      _wpMimicCfg = { quietMode: !!c.quietMode, hideOverlays: !!c.hideOverlays, hideWhenEqDown: c.hideOverlaysWhenEqDown !== false, agentOnly: false };
+      // Agent only is the mode this run STARTED in (a saved-but-not-restarted change is not it yet).
+      if (window.mimic.getStatus) window.mimic.getStatus().then(function (st) {
+        if (_wpMimicCfg && st) _wpMimicCfg.agentOnly = st.runModeNow === 'agent';
+      }).catch(function () { /* leave it false */ });
     }).catch(function () { /* bridge refused — leave the row out rather than guess */ });
   } catch (e) { void e; }
 }
@@ -2148,7 +2152,11 @@ function renderSetupChecks(s) {
   // EVERY overlay, and until 2026-09-10 said so nowhere. (Quiet mode used to be
   // this switch; since 2026-09-11 it only mutes.) Rendered only when hosted in
   // Mimic: a browser tab has no overlays, so the row would be noise there.
-  if (_wpMimicCfg && _wpMimicCfg.hideOverlays) {
+  if (_wpMimicCfg && _wpMimicCfg.agentOnly) {
+    h += '<tr><td style="width:18px;text-align:center"><span class="dim">·</span></td>'
+       + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Overlays can show</td>'
+       + '<td class="dim" style="font-size:11px"><b>Agent only is on, so there are no overlays</b> &mdash; by your choice. Uploads, this dashboard and spoken callouts keep running. Switch back on the Overlays tab, in Settings or from the tray.</td></tr>';
+  } else if (_wpMimicCfg && _wpMimicCfg.hideOverlays) {
     h += '<tr><td style="width:18px;text-align:center"><span style="color:var(--red)">✗</span></td>'
        + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Overlays can show</td>'
        + '<td class="dim" style="font-size:11px"><b>Don\'t show any overlays is ON, so every overlay stays hidden</b> — they still appear while you are positioning them, which is why this looks like a bug. Settings → untick <b>Don\'t show any overlays</b>. Uploads are unaffected either way.</td></tr>';
@@ -4600,6 +4608,9 @@ function renderOverlays(s) {
   // the section HTML is byte-stable across polls (see the morphInto note).
   // One line, filled by wpRefreshOverlayToggles while hide-all is on.
   h += '<div id="wpHideAllBanner"></div>';
+  // Run mode — full Mimic or agent only (the guild lead, 2026-10-08). The tray item and Settings
+  // radios drive the same IPC (window.mimic.setRunMode); painted by wpRefreshOverlayToggles.
+  h += '<div id="wpRunMode"></div>';
   // 💾 Your layouts — the per-character saves, tray parity (the guild lead,
   // 2026-08-19: "Overlay layouts should be saves and in the overlay tab"). A
   // saved layout is WHICH overlays are on; where they sit is per screen setup
@@ -5523,6 +5534,21 @@ function wpRefreshOverlayToggles() {
             + '</div>'
           : '');
       }
+      // Run mode. rm is the saved choice, rn what this run started as; they differ until Mimic
+      // restarts. Agent only has no overlay windows, so say so above a list that cannot do anything.
+      var rmEl = document.getElementById('wpRunMode');
+      if (rmEl) {
+        var rm = st.runMode === 'agent' ? 'agent' : 'full', rn = st.runModeNow === 'agent' ? 'agent' : 'full';
+        var rmBtn = function(to, label){ return '<button type="button" class="wp-ov-act wp-btn" data-act="runmode" data-to="' + to + '">' + label + '</button>'; };
+        morphInto(rmEl, rm !== rn
+          ? '<div class="wp-ovbanner"><span>🔄 <b>' + (rm === 'agent' ? 'Agent only' : 'Full Mimic') + ' is saved</b> &middot; it takes effect when Mimic restarts</span>'
+            + rmBtn(rn, 'Keep ' + (rn === 'agent' ? 'agent only' : 'full Mimic')) + '</div>'
+          : rn === 'agent'
+            ? '<div class="wp-ovbanner"><span>🖥 <b>Agent only &mdash; overlays are off</b> &middot; uploads, this dashboard and spoken callouts keep running. The controls below are saved for when you switch back.</span>'
+              + rmBtn('full', 'Switch to full Mimic…') + '</div>'
+            : '<div class="wp-ovhd"><span><span class="wp-lbl">Mode</span> <span class="dim">Full Mimic &mdash; overlays, timers and callouts over the game</span></span>'
+              + rmBtn('agent', 'Switch to agent only…') + '</div>');
+      }
       // 💾 Your layouts, and the switch that swaps them with the character.
       var lays = document.getElementById('wpOvLays');
       if (lays) morphInto(lays, _wpOvLaysHtml(st, cfg, flagOf));
@@ -5589,6 +5615,12 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
           var locked = !(st && st.overlaysLocked === false);
           return window.mimic.setOverlaysLocked(!locked);
         }).then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      }
+      // Run mode — the tray's "Switch to agent only / full Mimic" item and Settings drive the same setter.
+      if (a === 'runmode' && window.mimic.setRunMode) {
+        window.mimic.setRunMode(act.getAttribute('data-to') === 'agent' ? 'agent' : 'full', true).then(function(){
           setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
         }).catch(function(){});
       }

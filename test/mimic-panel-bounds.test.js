@@ -45,6 +45,7 @@ function env() {
     const _singleSetupWins = new Set();
     const panelOverlays = new Map();
     const agentPort = 7777;
+    function _agentOnly() { return false; }   // full Mimic: the agent-only gate (test/mimic-agent-only-mode.test.js) is off
     const created = [];
     function _wpPrefs() { return {}; }
     function applyOverlayInteractivity() {}

@@ -235,6 +235,10 @@
   </div>
   <div class="hint">Turn off if your screen goes black or you hear a device disconnect sound while Mimic runs. Overlays use a little more processor. Restarts Mimic.</div>
 
+  <div class="row"><input type="radio" name="runMode" value="full" id="runMode_full"><label for="runMode_full">Full Mimic — overlays, timers and callouts over the game</label></div>
+  <div class="row"><input type="radio" name="runMode" value="agent" id="runMode_agent"><label for="runMode_agent">Agent only — upload my logs and keep the dashboard; no overlays</label></div>
+  <div class="hint">Agent only keeps log uploads, the tray, the dashboard and spoken trigger callouts, and draws nothing over the game. Switch back any time; either way restarts Mimic.</div>
+
   <h2>Private — /tells <span class="lock">🔒</span></h2>
   <div class="hint" style="margin-bottom:8px">EQ writes your tells to your log. These never upload to the bot. Display window ships in v0.2; the choice persists now.</div>
   <div class="row"><input type="radio" name="tells" value="off" id="tells_off"><label for="tells_off">Off — ignore tells</label></div>
@@ -729,6 +733,7 @@
     document.getElementById('autoStart').checked         = (c.autoStart !== false);
     document.getElementById('hideOverlaysWhenEqDown').checked = (c.hideOverlaysWhenEqDown !== false);
     document.getElementById('useGpu').checked            = (c.disableGpu !== true);
+    document.getElementById(c.runMode === 'agent' ? 'runMode_agent' : 'runMode_full').checked = true;
     document.getElementById('zealAutoCheck').checked = (c.zealAutoCheck !== false);
     // Overlay scale — its own live IPC, not part of the Save payload.
     try {
@@ -785,6 +790,11 @@
   document.getElementById('useGpu').addEventListener('change', async (e) => {
     try { await window.mimic.setGpuDrawing(e.target.checked, true); } catch {}
   });
+  // Run mode — same shape: its own IPC, not part of Save; main saves it and offers the restart.
+  document.querySelectorAll('input[name="runMode"]').forEach((r) => r.addEventListener('change', async (e) => {
+    if (!e.target.checked) return;
+    try { await window.mimic.setRunMode(e.target.value, true); } catch {}
+  }));
 
   // ── Dirty tracking for the floating Save ─────────────────────────────────
   // The button only appears once something Save would actually SEND has

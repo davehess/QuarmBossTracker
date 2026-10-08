@@ -115,7 +115,7 @@ describe('hideOverlays owns visibility; quietMode no longer does', () => {
 
   it('_overlayWanted: overlays-off frees a window, mute alone does not, the trigger window survives both', () => {
     const src = fnSource(main, 'function _overlayWanted(cfg, e) {');
-    const wanted = new Function('_overlayForcedOn', '_eqGateOk', src + '\nreturn _overlayWanted;')(() => false, () => true);
+    const wanted = new Function('_overlayForcedOn', '_eqGateOk', '_agentOnly', src + '\nreturn _overlayWanted;')(() => false, () => true, () => false);
     const hud = { key: 'hud', flag: 'showHud' }, trig = { key: 'trigger', flag: 'enableTriggerTts' };
     expect(wanted({ showHud: true }, hud)).toBe(true);
     expect(wanted({ showHud: true, hideOverlays: true }, hud)).toBe(false);
