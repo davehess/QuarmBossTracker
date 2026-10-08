@@ -299,6 +299,11 @@ function defaultConfig() {
     // being distracting on their desktop while alt-tabbed out. Unlocking
     // (setup mode) overrides this so they can still be positioned without EQ.
     hideOverlaysWhenEqDown: true,
+    // Hide overlays AND let go of the global hotkeys while neither EverQuest nor
+    // a Mimic window is the foreground application (the guild lead, 2026-10-08:
+    // "hide overlays and dampen hotkeys when EQ focus or Mimic focus is lost").
+    // Default OFF, Windows only. Unlocking / setup mode overrides it.
+    hideOverlaysWhenUnfocused: false,
     // Diagnostic: dump every raw Zeal pipe object to zeal-raw.ndjson (userData).
     // Off by default — it's a "show me exactly what the pipe sends" capture for
     // protocol work, not something a normal user needs running. Toggled from the
@@ -4616,6 +4621,8 @@ function _arrangeOnScreen(area, wins, occupied, keepMiddleClear, pinnedKey, MARG
 
 function applyOverlayInteractivity() {
   const cfg = loadConfig();
+  // Unlock / setup mode bypass the focus gate, hotkeys included.
+  try { _syncFocusHotkeys(); } catch (e) { void e; }
   // Unlocking force-shows EVERY overlay for placement — including ones whose
   // pref is off, whose windows lazy creation has not built (or has reaped).
   // Build them first or "unlock to move" would silently skip them.
@@ -5592,6 +5599,7 @@ ipcMain.handle('ui-studio-capture-pvp-draft', (_e, params) => {
 // behavior since there's no EverQuest target. State is sticky across one
 // failed poll (CSV parse error etc.) to avoid flicker.
 let _eqRunning = true;     // assume running until first poll resolves
+let _eqPids = new Set();   // eqgame.exe pids that are OURS, from the same tasklist read (focus gate)
 let _eqPollTimer = null;
 
 // The EQ folders that count as OURS, lowercased with trailing separators
@@ -5688,12 +5696,15 @@ function _checkEqRunning() {
         // came from.
         const pids = [];
         for (const m of String(out).matchAll(/"eqgame\.exe"\s*,\s*"(\d+)"/gi)) pids.push(Number(m[1]));
-        if (!pids.length) { _eqPidVerdict.clear(); _eqIgnoredPaths.clear(); return resolve(false); }
+        if (!pids.length) { _eqPidVerdict.clear(); _eqIgnoredPaths.clear(); _eqPids = new Set(); return resolve(false); }
         // Drop exited PIDs so the verdict map can't grow across a long session.
         for (const known of [..._eqPidVerdict.keys()]) if (!pids.includes(known)) { _eqPidVerdict.delete(known); _eqIgnoredPaths.delete(known); }
         // `!== false` keeps the fail-open default: only a PID we positively
         // identified as someone else's client is discounted.
-        const done = () => resolve(pids.some(p => _eqPidVerdict.get(p) !== false));
+        const done = () => {
+          _eqPids = new Set(pids.filter(p => _eqPidVerdict.get(p) !== false));   // the focus gate's EQ pids
+          resolve(pids.some(p => _eqPidVerdict.get(p) !== false));
+        };
         const unknown = pids.filter(p => !_eqPidVerdict.has(p));
         if (!unknown.length) return done();
         _resolveEqPidOwners(unknown).then(done, done);
@@ -5788,6 +5799,8 @@ function _nagPendingUpdate() {
 
 async function _pollEqPresence() {
   const running = await _checkEqRunning();
+  // The eq pids just refreshed: classify the window that is in front again.
+  try { _focusReevaluate(); } catch { /* never let the focus gate break presence polling */ }
   if (running !== _eqRunning) {
     const wasRunning = _eqRunning;
     _eqRunning = running;
@@ -5875,8 +5888,121 @@ function _stopEqPolling() {
 // also bypassed in unlock mode so the user can place overlays before launching
 // EverQuest.
 function _eqGateOk(cfg) {
-  if (cfg.hideOverlaysWhenEqDown === false) return true;
-  return _eqRunning;
+  const eqOk = cfg.hideOverlaysWhenEqDown === false ? true : _eqRunning;
+  return eqOk && _focusPass(cfg, process.platform, setupMode, _focusOk);
+}
+
+// ── Focus gate (hideOverlaysWhenUnfocused) ──────────────────────────────────
+// Option on + Windows: overlays hide and the global hotkeys are released while
+// neither EverQuest nor any Mimic window is the foreground application. One
+// resident hidden PowerShell prints the foreground window's process id when it
+// CHANGES; everything else here is pure and tested (test/focus-gate.test.js).
+// Unlock / setup mode bypass it (arranging overlays must never hide them), and
+// every doubt FAILS OPEN: the gate only ever hides on a positively identified
+// foreign foreground window.
+const FOCUS_LOST_DEBOUNCE_MS = 600;
+let _focusOk = true;                 // false only after 600 ms of continuous foreign focus
+let _focusFgPid = 0;                 // last foreground pid the watcher reported
+function _focusGateOn(cfg, platform) {
+  return platform === 'win32' && !!cfg && cfg.hideOverlaysWhenUnfocused === true;
+}
+// true = this foreground pid counts as focused (EQ, Mimic, or unknowable).
+function _focusClassify(fgPid, eqPids, ownPids) {
+  const pid = Number(fgPid);
+  if (!Number.isFinite(pid) || pid <= 0) return true;   // no foreground window / unreadable
+  if (!eqPids || !eqPids.size) return true;             // EQ pids unknown: cannot tell, so do not hide
+  return eqPids.has(pid) || !!(ownPids && ownPids.has(pid));
+}
+// The gate's answer: option off, other platforms, unlock/setup => pass.
+function _focusPass(cfg, platform, setup, focusOk) {
+  if (!_focusGateOn(cfg, platform)) return true;
+  if (setup || cfg.overlaysLocked === false) return true;
+  return !!focusOk;
+}
+// Lost focus flips after `ms` of continuous unfocused (alt-tab flicker never
+// does); regained focus flips at once.
+function _makeFocusDebouncer(onFlip, ms) {
+  let ok = true, timer = null;
+  return {
+    note(focused) {
+      if (focused) {
+        if (timer) { clearTimeout(timer); timer = null; }
+        if (!ok) { ok = true; onFlip(true); }
+        return;
+      }
+      if (!ok || timer) return;
+      timer = setTimeout(() => { timer = null; ok = false; onFlip(false); }, ms);
+    },
+    reset() { if (timer) { clearTimeout(timer); timer = null; } ok = true; },
+  };
+}
+const _focusDeb = _makeFocusDebouncer((ok) => {
+  _focusOk = ok;
+  try { applyAllVisibility(); } catch (e) { void e; }   // also re-syncs the hotkeys
+  try { pushStatus(); } catch (e) { void e; }
+}, FOCUS_LOST_DEBOUNCE_MS);
+function _focusOwnPids() {
+  const s = new Set([process.pid]);
+  try { for (const m of app.getAppMetrics()) s.add(m.pid); } catch (e) { void e; }
+  return s;
+}
+function _focusReevaluate() {
+  if (!_focusProc) return;
+  _focusDeb.note(_focusClassify(_focusFgPid, _eqPids, _focusOwnPids()));
+}
+
+let _focusProc = null, _focusFailLogged = false;
+// -EncodedCommand (UTF-16LE base64) sidesteps every quoting layer between here
+// and PowerShell.
+// It also exits on its own if Mimic dies without killing it (checked every ~4 s).
+const _focusScript = (parentPid) => [
+  'Add-Type -TypeDefinition \'using System;using System.Runtime.InteropServices;public static class WpFg{[DllImport("user32.dll")]public static extern IntPtr GetForegroundWindow();[DllImport("user32.dll")]public static extern uint GetWindowThreadProcessId(IntPtr h,out uint p);}\'',
+  '[Console]::Out.AutoFlush=$true',
+  '$last=[int64]-1;$n=0',
+  `while($true){$p=[uint32]0;$h=[WpFg]::GetForegroundWindow();if($h -ne [IntPtr]::Zero){[void][WpFg]::GetWindowThreadProcessId($h,[ref]$p)};if([int64]$p -ne $last){$last=[int64]$p;[Console]::WriteLine($p)};$n++;if($n % 10 -eq 0 -and -not (Get-Process -Id ${Number(parentPid) || 0} -ErrorAction SilentlyContinue)){break};Start-Sleep -Milliseconds 400}`,
+].join(';');
+function _focusFailOpen(why) {
+  if (!_focusFailLogged) { _focusFailLogged = true; appendAgentLog(`[focus] ${why} — treating Mimic as focused (the gate fails open)\n`); }
+  _focusFgPid = 0;
+  try { _focusDeb.note(true); } catch (e) { void e; }
+}
+function _startFocusWatcher() {
+  if (_focusProc || process.platform !== 'win32') return;
+  try {
+    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand',
+      Buffer.from(_focusScript(process.pid), 'utf16le').toString('base64')], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    _focusProc = child;
+    let buf = '';
+    child.stdout.on('data', (chunk) => {
+      buf += chunk.toString();
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+        if (!/^\d+$/.test(line)) continue;
+        _focusFgPid = Number(line);
+        try { _focusReevaluate(); } catch (e) { void e; }
+      }
+    });
+    child.stderr.on('data', () => {});
+    const gone = (why) => { if (_focusProc === child) { _focusProc = null; _focusFailOpen(why); } };
+    child.once('error', (e) => gone('focus watcher failed to start: ' + (e && e.message)));
+    child.once('exit', (code) => gone('focus watcher exited (' + code + ')'));
+  } catch (e) { _focusProc = null; _focusFailOpen('focus watcher failed to start: ' + (e && e.message)); }
+}
+function _stopFocusWatcher() {
+  const child = _focusProc; _focusProc = null;
+  if (child) { try { child.kill(); } catch (e) { void e; } }
+  _focusDeb.reset(); _focusOk = true; _focusFgPid = 0;
+}
+// Run after the option changes (tray, Settings, dashboard) and at startup: the
+// watcher lives exactly while the option is on, the visibility and hotkey
+// passes follow, and the dashboard hears about it.
+function _onFocusGateOptionChanged() {
+  let on = false;
+  try { on = _focusGateOn(loadConfig(), process.platform); } catch (e) { void e; }
+  if (on) { _focusFailLogged = false; _startFocusWatcher(); } else _stopFocusWatcher();
+  try { applyAllVisibility(); } catch (e) { void e; }
+  try { pushStatus(); } catch (e) { void e; }
 }
 function applyOverlayVisibility() {
   if (!_live(overlayWindow)) return;
@@ -6916,6 +7042,7 @@ function _reapDisabledOverlays() {
 // Materialize BEFORE applying (each apply*Visibility no-ops without a window)
 // and reap AFTER (so a window is only freed once it has been asked to hide).
 function applyAllVisibility() {
+  try { _syncFocusHotkeys(); } catch (e) { void e; }
   _materializeEnabledOverlays();
   applyDockVisibility();
   applyOverlayVisibility();
@@ -7093,6 +7220,7 @@ const _OVERLAY_HOTKEY_KEYS = ['dock', 'hud', 'trigger', 'charm', 'pet', 'mobinfo
   'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me', 'canvas'];
 let _registeredOverlayAccels = {};   // overlay key → accelerator bound right now
 let _blockedOverlayAccels = {};      // overlay key → accelerator the OS refused
+let _hotkeyQuiet = false;            // true while the focus gate re-registers: no failure logs, blocked state untouched
 function _registerOverlayHotkeys(globalShortcut, cfg) {
   for (const a of Object.values(_registeredOverlayAccels)) { try { globalShortcut.unregister(a); } catch {} }
   _registeredOverlayAccels = {};
@@ -7107,7 +7235,7 @@ function _registerOverlayHotkeys(globalShortcut, cfg) {
     if (ok) _registeredOverlayAccels[key] = accel;
     else {
       _blockedOverlayAccels[key] = accel;
-      appendAgentLog(`[mimic] failed to register the ${key} overlay hotkey "${accel}" (in use by another app or another Mimic hotkey?)\n`);
+      if (!_hotkeyQuiet) appendAgentLog(`[mimic] failed to register the ${key} overlay hotkey "${accel}" (in use by another app or another Mimic hotkey?)\n`);
     }
   }
 }
@@ -7240,6 +7368,7 @@ function _canvasGroupTrayItems(s) {
 // Resumes on its own after 30 s, so a dashboard closed mid-capture cannot
 // leave every hotkey off.
 let _hotkeysSuspended = false, _hotkeysResumeTimer = null;
+let _hotkeysGatedOff = false;        // the focus gate has released every global key (registerHideAllHotkey holds nothing until it lifts)
 let _blockedHotkeys = {};            // family cfg key → accelerator the OS refused
 function _mimicHotkeyUses(cfg) {
   const c = cfg || {};
@@ -7272,6 +7401,28 @@ function _setHotkeysSuspended(on) {
     _hotkeysSuspended = false;
     registerHideAllHotkey();
   }
+}
+// Focus gate (hideOverlaysWhenUnfocused) for the global keys. Idempotent: it
+// compares what the gate WANTS with what it did, so it is safe to call from any
+// visibility pass (applyAllVisibility does). Releasing is unregisterAll; lifting
+// re-registers through registerHideAllHotkey with _hotkeyQuiet set, so the
+// dashboard's blocked-key display is not rewritten by a gate-driven pass. A
+// capture still in progress keeps its own say: registerHideAllHotkey returns
+// early while suspended, and the capture's 30 s resume returns early while the
+// gate holds the keys off.
+function _quietHotkeyRegister() {
+  const keepH = _blockedHotkeys, keepO = _blockedOverlayAccels;
+  _hotkeyQuiet = true;
+  try { registerHideAllHotkey(); }
+  finally { _hotkeyQuiet = false; _blockedHotkeys = keepH; _blockedOverlayAccels = keepO; }
+}
+function _syncFocusHotkeys() {
+  let want = false;
+  try { want = !_focusPass(loadConfig(), process.platform, setupMode, _focusOk); } catch (e) { void e; }
+  if (want === _hotkeysGatedOff) return;
+  _hotkeysGatedOff = want;
+  if (want) { try { require('electron').globalShortcut.unregisterAll(); } catch (e) { void e; } }
+  else _quietHotkeyRegister();
 }
 ipcMain.handle('hotkey-capture', (_e, on) => {
   _setHotkeysSuspended(!!on);
@@ -7331,6 +7482,8 @@ function registerHideAllHotkey() {
   // The dashboard is capturing a key: hold nothing until it is done
   // (_setHotkeysSuspended re-runs this on resume).
   if (_hotkeysSuspended) return;
+  // The focus gate holds every key off until focus returns (_syncFocusHotkeys).
+  if (_hotkeysGatedOff) return;
   _blockedHotkeys = {};
   try {
     const { globalShortcut } = require('electron');
@@ -7345,7 +7498,7 @@ function registerHideAllHotkey() {
     if (accel && cfg.hideAllHotkeyEnabled !== false) {
       const ok = globalShortcut.register(accel, toggleHideAllOverlays);
       if (ok) _registeredHideAccel = accel;
-      else { _blockedHotkeys.hideAllHotkey = accel; appendAgentLog(`[mimic] failed to register hide-all hotkey "${accel}" (in use by another app?)\n`); }
+      else { _blockedHotkeys.hideAllHotkey = accel; if (!_hotkeyQuiet) appendAgentLog(`[mimic] failed to register hide-all hotkey "${accel}" (in use by another app?)\n`); }
     }
     // Backdrop hotkey — flips the solid background on/off for ALL overlays at
     // once (per-overlay control lives in the right-click chrome menu).
@@ -7355,7 +7508,7 @@ function registerHideAllHotkey() {
     if (bAccel && cfg.backdropHotkeyEnabled !== false) {
       const ok2 = globalShortcut.register(bAccel, toggleAllBackdrops);
       if (ok2) _registeredBackdropAccel = bAccel;
-      else { _blockedHotkeys.backdropHotkey = bAccel; appendAgentLog(`[mimic] failed to register backdrop hotkey "${bAccel}" (in use by another app?)\n`); }
+      else { _blockedHotkeys.backdropHotkey = bAccel; if (!_hotkeyQuiet) appendAgentLog(`[mimic] failed to register backdrop hotkey "${bAccel}" (in use by another app?)\n`); }
     }
     // 💥 Damage-taken alert hotkey — same shape as the two above: configurable
     // accelerator (cfg.damageAlertHotkey), per-hotkey kill switch, and a log
@@ -7365,7 +7518,7 @@ function registerHideAllHotkey() {
     if (dAccel && cfg.damageAlertHotkeyEnabled !== false) {
       const ok3 = globalShortcut.register(dAccel, toggleDamageAlert);
       if (ok3) _registeredDamageAccel = dAccel;
-      else { _blockedHotkeys.damageAlertHotkey = dAccel; appendAgentLog(`[mimic] failed to register damage-alert hotkey "${dAccel}" (in use by another app?)\n`); }
+      else { _blockedHotkeys.damageAlertHotkey = dAccel; if (!_hotkeyQuiet) appendAgentLog(`[mimic] failed to register damage-alert hotkey "${dAccel}" (in use by another app?)\n`); }
     }
     // ▭ Minimize-all hotkey. Same shape again; the persisted latch is restored
     // first so a restart taken while everything was mini still knows which way
@@ -7377,7 +7530,7 @@ function registerHideAllHotkey() {
     if (mAccel && cfg.miniHotkeyEnabled !== false) {
       const ok4 = globalShortcut.register(mAccel, toggleMinimizeAllOverlays);
       if (ok4) _registeredMiniAccel = mAccel;
-      else { _blockedHotkeys.miniHotkey = mAccel; appendAgentLog(`[mimic] failed to register minimize-all hotkey "${mAccel}" (in use by another app?)\n`); }
+      else { _blockedHotkeys.miniHotkey = mAccel; if (!_hotkeyQuiet) appendAgentLog(`[mimic] failed to register minimize-all hotkey "${mAccel}" (in use by another app?)\n`); }
     }
     // ⌨ One per overlay, registered last so the four above keep their keys.
     _registerOverlayHotkeys(globalShortcut, cfg);
@@ -7530,6 +7683,10 @@ function currentStatus() {
     damageAlert: !!cfg.damageAlert,
     overlayTheme: cfg.overlayTheme || 'default',
     overlaysLocked: cfg.overlaysLocked !== false,
+    // Focus gate: the option, and whether it is holding overlays + hotkeys back right now.
+    hideOverlaysWhenUnfocused: cfg.hideOverlaysWhenUnfocused === true,
+    focusGateOn: _focusGateOn(cfg, process.platform),
+    focusOk: !!_focusOk,
     // Hide-all flips every show* flag to false, which makes "I turned this off"
     // and "the hotkey hid this" look identical everywhere — the dashboard, the
     // tray, this payload (a member, 2026-08-04: "we should be able to see in the
@@ -8098,6 +8255,11 @@ function buildTrayMenu() {
           // instead of waiting up to 5s for the poller to tick.
           _pollEqPresence().then(() => applyAllVisibility()).catch(() => applyAllVisibility());
           pushStatus();
+        } },
+      // Same switch as Settings and the dashboard's Overlays tab (all land in _onFocusGateOptionChanged).
+      { label: 'Hide overlays + hotkeys when EverQuest/Mimic isn\'t focused', type: 'checkbox', checked: !!s.hideOverlaysWhenUnfocused, visible: !agentOnly, click: (mi) => {
+          const cfg = loadConfig(); cfg.hideOverlaysWhenUnfocused = !!mi.checked; saveConfig(cfg);
+          _onFocusGateOptionChanged();
         } },
     ] : []),
     // Same switch as Settings → "Use the graphics card for overlays" (restarts Mimic).
@@ -10271,6 +10433,11 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   if (incoming && HOTKEY_KEYS.some(k => Object.prototype.hasOwnProperty.call(incoming, k))) {
     try { registerHideAllHotkey(); } catch {}
   }
+  // The focus gate (Settings checkbox / dashboard toggle): start or stop the
+  // watcher and re-run visibility + hotkeys. Turning it off lifts a hold too.
+  if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'hideOverlaysWhenUnfocused')) {
+    try { _onFocusGateOptionChanged(); } catch {}
+  }
   // 💥 Damage-taken alert flipped from the dashboard Overlays tab — route it
   // through the same single writer the hotkey/tray use so the dead-toggle
   // guard runs and the agent gets the push + spoken confirmation.
@@ -11813,6 +11980,10 @@ app.whenReady().then(async () => {
   // toggle: snapshots current prefs, hides everything, restores on second
   // press. Bindable from tray menu too.
   registerHideAllHotkey();
+
+  // Focus gate watcher, when the option is on (default off). After the hotkeys
+  // so a gate that closes finds them registered and releases them.
+  try { if (_focusGateOn(loadConfig(), process.platform)) _startFocusWatcher(); } catch (e) { void e; }
 });
 
 app.on('window-all-closed', () => { /* stay alive in tray */ });
@@ -11823,6 +11994,7 @@ app.on('before-quit', () => {
   // close it without asking; the next open offers the draft back.
   try { if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.destroy(); } catch {}
   _stopEqPolling();
+  _stopFocusWatcher();   // kill the PowerShell child: no orphan
   try { const { globalShortcut } = require('electron'); globalShortcut.unregisterAll(); } catch {}
   if (agentProc) { try { agentProc.kill(); } catch {} }
 });

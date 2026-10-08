@@ -19698,7 +19698,7 @@ function _wpRefreshMimicCfg() {
   try {
     window.mimic.getConfig().then(function (c) {
       if (!c) return;
-      _wpMimicCfg = { quietMode: !!c.quietMode, hideOverlays: !!c.hideOverlays, hideWhenEqDown: c.hideOverlaysWhenEqDown !== false, agentOnly: false };
+      _wpMimicCfg = { quietMode: !!c.quietMode, hideOverlays: !!c.hideOverlays, hideWhenEqDown: c.hideOverlaysWhenEqDown !== false, hideWhenUnfocused: c.hideOverlaysWhenUnfocused === true, agentOnly: false };
       // Agent only is the mode this run STARTED in (a saved-but-not-restarted change is not it yet).
       if (window.mimic.getStatus) window.mimic.getStatus().then(function (st) {
         if (_wpMimicCfg && st) _wpMimicCfg.agentOnly = st.runModeNow === 'agent';
@@ -19835,6 +19835,7 @@ function renderSetupChecks(s) {
        + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Overlays can show</td>'
        + '<td class="dim" style="font-size:11px">Overlays are on'
        + (_wpMimicCfg.hideWhenEqDown ? ' — they appear once EverQuest is running.' : '.')
+       + (_wpMimicCfg.hideWhenUnfocused ? ' They hide while another app is in front (Overlays tab).' : '')
        + (_wpMimicCfg.quietMode ? ' Sounds and voice are muted (Settings → Mute Mimic).' : '')
        + '</td></tr>';
   }
@@ -22360,6 +22361,12 @@ function renderOverlays(s) {
     + '</div>'
     + '</div>';
   h += '<div id="wpOvHkHint" class="dim" style="font-size:11px;margin-top:6px">Keys: click one, then press Ctrl, Alt or Shift + a key. Backspace clears an overlay&rsquo;s key, Esc cancels. Pick keys EverQuest does not use &mdash; Mimic takes the key away from the game.</div>';
+  // Focus gate (tray parity): same setting as the tray item and Settings. Checked state is
+  // applied after render by wpWireHideHotkey, so this string stays byte-stable.
+  h += '<label class="dim" style="display:flex;align-items:center;gap:8px;font-size:11px;margin-top:6px;cursor:pointer">'
+    +  '<input type="checkbox" id="wpFocusGate" style="cursor:pointer" />'
+    +  '<span><b>Hide overlays + hotkeys when EverQuest/Mimic isn&rsquo;t the active window</b> (Windows, off by default). Typing in a browser or Discord then neither shows overlays nor fires Mimic&rsquo;s keys; spoken callouts keep playing. Unlocking overlays overrides it.</span>'
+    +  '</label>';
   // ⌨ Keys: the all-overlay keys, each beside what it does, in the same keycap
   // as the overlays' own (painted by wpRefreshOverlayHotkeys, which also counts
   // clashes). Mimic registers them globally (registerHideAllHotkey); saving
@@ -22680,6 +22687,17 @@ function wpWireHideHotkey() {
   _wpWireHotkeyRow('wpDmgHotkey', 'damageAlertHotkey', 'damageAlertHotkeyEnabled', 'CommandOrControl+Shift+D');
   _wpWireHotkeyRow('wpMiniHotkey', 'miniHotkey', 'miniHotkeyEnabled', 'CommandOrControl+Shift+M');
   wpWireDamageAlert();
+  // Focus gate checkbox — the SAME save-config path as Settings; main.js starts/stops the watcher.
+  var fgate = document.getElementById('wpFocusGate');
+  if (fgate && window.mimic && window.mimic.getConfig && window.mimic.saveConfig) {
+    if (!fgate.__wpInit) {
+      fgate.__wpInit = true;
+      window.mimic.getConfig().then(function(cfg){ fgate.checked = !!(cfg && cfg.hideOverlaysWhenUnfocused); }).catch(function(){});
+    }
+    _bindOnce(fgate, 'change', function(){
+      try { window.mimic.saveConfig({ hideOverlaysWhenUnfocused: !!fgate.checked }); } catch (e) {}
+    });
+  }
 }
 // 💥 Damage-taken alert ON/OFF button. Same contract as the hotkey rows: read
 // Mimic config, write a one-key patch, repaint. main.js's save-config handler

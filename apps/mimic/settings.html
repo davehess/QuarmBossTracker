@@ -239,7 +239,13 @@
     <input id="hideOverlaysWhenEqDown" type="checkbox" />
     <label for="hideOverlaysWhenEqDown">Hide overlays when EverQuest isn't running</label>
   </div>
-  <div class="hint">Polls eqgame.exe every 5s; flips overlays back on when EQ launches. Unchecked = overlays always visible.</div>
+  <div class="hint">Checks for eqgame.exe every 10s (every 45s once EQ has been gone a minute); flips overlays back on when EQ launches. Unchecked = overlays always visible.</div>
+
+  <div class="row">
+    <input id="hideOverlaysWhenUnfocused" type="checkbox" />
+    <label for="hideOverlaysWhenUnfocused">Hide overlays + hotkeys when EverQuest/Mimic isn't focused (Windows)</label>
+  </div>
+  <div class="hint">Off by default. While neither EverQuest nor a Mimic window is the active window (you are typing in a browser or Discord), overlays hide and Mimic's global hotkeys are released, so nothing pops up over what you are doing and Mimic's keys stay out of your way. Spoken callouts keep playing. Unlocking overlays or setup mode overrides it.</div>
 
   <div class="row">
     <input id="useGpu" type="checkbox" checked />
@@ -744,6 +750,7 @@
     document.getElementById('overlaysUnlocked').checked  = (c.overlaysLocked === false);
     document.getElementById('autoStart').checked         = (c.autoStart !== false);
     document.getElementById('hideOverlaysWhenEqDown').checked = (c.hideOverlaysWhenEqDown !== false);
+    document.getElementById('hideOverlaysWhenUnfocused').checked = (c.hideOverlaysWhenUnfocused === true);
     document.getElementById('useGpu').checked            = (c.disableGpu !== true);
     document.getElementById(c.runMode === 'agent' ? 'runMode_agent' : 'runMode_full').checked = true;
     document.getElementById('zealAutoCheck').checked = (c.zealAutoCheck !== false);
@@ -838,6 +845,7 @@
         overlaysUnlocked: document.getElementById('overlaysUnlocked').checked,
         autoStart:              document.getElementById('autoStart').checked,
         hideOverlaysWhenEqDown: document.getElementById('hideOverlaysWhenEqDown').checked,
+        hideOverlaysWhenUnfocused: document.getElementById('hideOverlaysWhenUnfocused').checked,
         zealAutoCheck:          document.getElementById('zealAutoCheck').checked,
       });
     } catch (e) { return null; }
@@ -894,7 +902,7 @@
     const radio = document.querySelector('input[name=tells][value="' + String(f.tellsMode || 'off').replace(/"/g, '') + '"]');
     if (radio) radio.checked = true;
     for (const id of ['quietMode', 'hideOverlays', 'showHud', 'enableTriggerTts', 'overlaysUnlocked',
-                      'autoStart', 'hideOverlaysWhenEqDown', 'zealAutoCheck']) {
+                      'autoStart', 'hideOverlaysWhenEqDown', 'hideOverlaysWhenUnfocused', 'zealAutoCheck']) {
       if (typeof f[id] === 'boolean') document.getElementById(id).checked = f[id];
     }
     _refreshDirty();
@@ -987,6 +995,7 @@
         overlaysLocked:   !document.getElementById('overlaysUnlocked').checked,
         autoStart:                document.getElementById('autoStart').checked,
         hideOverlaysWhenEqDown:   document.getElementById('hideOverlaysWhenEqDown').checked,
+        hideOverlaysWhenUnfocused: document.getElementById('hideOverlaysWhenUnfocused').checked,
         zealAutoCheck:            document.getElementById('zealAutoCheck').checked,
       };
       if (tokenInput) payload.token = tokenInput;

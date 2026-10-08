@@ -891,6 +891,24 @@ be a confidently wrong number. The `vs catalog` ratio column is the answer
 instead: it is the focus effect **observed**, correct for Quarm's own tuning.
 Tests: `test/buff-durations.test.js`.
 
+### Focus gate: hide overlays + release hotkeys when EQ/Mimic isn't in front (Mimic beta, 2026-10-08)
+`cfg.hideOverlaysWhenUnfocused` (default off, Windows only). Switch: tray ("Hide overlays + hotkeys when
+EverQuest/Mimic isn't focused"), Settings, and a checkbox under the keys on the dashboard's Overlays tab
+(`dashboard.html`, `#wpFocusGate`) — all three end in `_onFocusGateOptionChanged` in `apps/mimic/main.js`.
+- **Watcher:** one resident hidden PowerShell (`_startFocusWatcher`, `-EncodedCommand`, user32
+  `GetForegroundWindow`) prints the foreground pid only when it changes; it exits itself if Mimic dies.
+- **Classify:** `_focusClassify` — EQ pids (`_eqPids`, from the same tasklist read as `_checkEqRunning`) or
+  Mimic's own pids (`process.pid` + `app.getAppMetrics()`) = focused; anything unreadable or unknown FAILS OPEN.
+- **Debounce:** `_makeFocusDebouncer` — 600 ms of foreign focus before the flip, regained focus is immediate.
+- **Gate:** `_eqGateOk` = EQ-running part AND `_focusPass` (bypassed by option off, other platforms, setup mode,
+  unlocked overlays), so every `apply*Visibility()` and `_overlayWanted` follow it; the trigger window stays alive
+  hidden, so spoken callouts keep playing.
+- **Hotkeys:** `_syncFocusHotkeys` (idempotent, run from `applyAllVisibility` / `applyOverlayInteractivity`)
+  `unregisterAll`s on focus loss and re-registers through `registerHideAllHotkey` under `_hotkeyQuiet` (no
+  failure logs, `_blockedHotkeys`/`_blockedOverlayAccels` restored). `_hotkeysGatedOff` makes
+  `registerHideAllHotkey` a no-op, so the dashboard key-capture's 30 s auto-resume cannot re-register mid-gate.
+- Tests: `test/focus-gate.test.js`. Status fields: `focusGateOn`, `focusOk`.
+
 ### Dashboard: the Overlays tab, option C (agent 3.7.49, beta `b8c6b98c`, 2026-09-29)
 The guild lead picked option C of three mockups (DECISIONS §106–§107). The tab, top to bottom:
 - **Your layouts**: one tile per saved per-character layout (`_wpOvLaysHtml`), with its ✕ forget and a

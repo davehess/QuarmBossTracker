@@ -375,6 +375,14 @@ next touch one rather than assuming a missing row means a missing doc.
   deity and worn armor/weapons (models from the new `eqemu_items.idfile/material/color`) beside the
   position track; zone sky/fog columns too. First real night: Wednesday 2026-10-07. Next: the Zeal fork's
   appearance feed (gender, face, hair, dyes), which needs a push this session cannot make. §166.
+- **🧪 Focus gate on beta (Mimic, 2026-10-08): hide overlays and release hotkeys when EverQuest/Mimic isn't in
+  front.** The guild lead: *"an option to hide overlays and dampen hotkeys when EQ focus or Mimic focus is lost."*
+  Default OFF, Windows only; tray item, Settings checkbox and a dashboard Overlays-tab checkbox. A resident hidden
+  PowerShell reports the foreground window's process; neither EQ nor a Mimic window = overlays hide and the global
+  keys are released after 600 ms (alt-tab flicker ignored); focus back restores both at once. Any doubt FAILS OPEN
+  (child dies, pid unknown). Unlock / setup mode bypass it; spoken callouts keep playing (the trigger window stays
+  alive hidden). Not yet exercised on a Windows machine: watcher child, `getAppMetrics` pids, real hotkey release.
+  Tests: `test/focus-gate.test.js`. Graduates to stable with the next Mimic cut.
 - **🧪 Hail board on beta (agent 3.7.89 `564de49c`, bot 3.1.206, 2026-10-05).** After a flag boss dies the
   Command Center lists the raid at the kill as still to hail / hailed with the NPC's clock; flagged characters
   are left off; a seen hail or a tap moves a name. The bot side reached main with 3.1.207 the same evening;
