@@ -22,6 +22,10 @@ import {
   shortBuffName, fmtBuffRemaining, buffTimeTone, isCurseBuff,
   type BuffCategory, type Role, type HpSlotState, type ResistType,
 } from '@/lib/buffs';
+import { isRaidLeader, isGroupLeader } from '@/lib/raidGroups';
+
+// One tab per raid when two or more run at once; keyed by the raid's leader, not its position.
+export type RaidTab = { key: string; label: string };
 
 // Tone for a buff's live time-left — crit (refresh now) → low → ok. "unknown"
 // renders the "?" chip dimmer + italic so it reads differently from a real
@@ -36,9 +40,9 @@ export type RaidRow = {
   className: string | null;
   role: Role;
   raidGroup: number | null;
-  raidIdx: number | null;        // which concurrent raid (0-based, biggest first)
+  raidKey: string | null;        // which raid, when two or more run at once (its leader, lower-cased)
   level: number | null;
-  rank: string | null;           // '2' raid leader, '1' group leader
+  rank: string | null;           // Zeal's "Raid Leader" / "Group Leader" (isRaidLeader / isGroupLeader)
   inRaid: boolean;
   swappedTo: string | null;      // this client logged another character in
   noAgent: boolean;              // no buff data for this row (see hasAgent — NOT the same question)
@@ -120,7 +124,7 @@ const CLASS_PROVIDES: Record<string, BuffCategory[]> = {
 };
 
 // Which resist SCHOOLS each class can cover — drives per-school gaps in the
-// buffer queue ("Resist Magic missing on Dafeet") instead of the generic
+// buffer queue ("Resist Magic missing on Kelbrin") instead of the generic
 // resists bucket, which any one resist buff satisfied.
 const CLASS_PROVIDES_RESISTS: Record<string, ResistType[]> = {
   enchanter: ['MR'],
@@ -164,7 +168,7 @@ function asBufferClass(s: string | null | undefined): BufferClass | '' {
   return '';
 }
 
-// Twitch Queue sort key — LOWEST MANA FIRST is the spine (Hitya 2026-07-19:
+// Twitch Queue sort key — LOWEST MANA FIRST is the spine (the guild lead, 2026-07-19:
 // "it really should be lowest first"), with a class boost that floats the most
 // mana-critical raiders up at a given fill: clerics hardest (a dry cleric = a
 // wipe), then wizards/enchanters (pure-mana nukers/CC). Lower key = higher in
@@ -176,7 +180,7 @@ function twitchSortKey(r: { className: string | null; manaPct: number }): number
 }
 // Bards can't be mana-fed by any external source (only meditate + Flowing
 // Thought), so twitching them is wasted — they never belong on the board
-// (Hitya 2026-07-19).
+// (the guild lead, 2026-07-19).
 function twitchEligible(className: string | null): boolean {
   return (className || '').trim().toLowerCase() !== 'bard';
 }
@@ -189,10 +193,10 @@ function manaFillClass(pct: number): string {
 }
 
 export default function RaidView({
-  rows, raidLabels, myClass, dsValues, ari, rosterMissing = false,
+  rows, raidTabs, myClass, dsValues, ari, rosterMissing = false,
 }: {
   rows: RaidRow[];
-  raidLabels: string[];
+  raidTabs: RaidTab[];
   myClass: string | null;
   dsValues: Record<string, number>;
   // Auto-Raid-Invite registry (officer-set via Discord /ari, mirrored to
@@ -200,8 +204,8 @@ export default function RaidView({
   ari: { character: string; setByName: string | null; setAt: string | null } | null;
   // No Zeal type-5 raid snapshot from ANY uploader, yet we do have live-state
   // characters — the roster grid can't group anyone, so surface WHY instead of
-  // a bare "No roster yet" (Hitya 2026-07-05: "lost Peopleslayer off the
-  // raids tab and Bstie isn't here").
+  // a bare "No roster yet" (the guild lead, 2026-07-05: "lost someone off the
+  // raids tab and they aren't here").
   rosterMissing?: boolean;
 }) {
   // Default Buffer-mode class = the signed-in user's own class as detected in
@@ -210,15 +214,18 @@ export default function RaidView({
   const [bufferClass, setBufferClass] = useState<BufferClass | ''>(() => asBufferClass(myClass));
   const [selectedName, setSelectedName] = useState<string | null>(null);
   // Concurrent raids → one tab each (Raid 1 = biggest). Defaults to the raid
-  // containing the signed-in user's character.
-  const [activeRaid, setActiveRaid] = useState<number>(() => {
-    const mine = rows.find(r => r.isMe && r.raidIdx != null);
-    return mine?.raidIdx ?? 0;
+  // containing the signed-in user's character. Held by the raid's key, so the
+  // 15s refresh never moves you to the other raid when it outgrows yours; a
+  // raid that ends drops you on the first tab.
+  const [pickedRaid, setActiveRaid] = useState<string | null>(() => {
+    const mine = rows.find(r => r.isMe && r.raidKey != null);
+    return mine?.raidKey ?? null;
   });
-  const multiRaid = raidLabels.length > 1;
+  const multiRaid = raidTabs.length > 1;
+  const activeRaid = raidTabs.some(t => t.key === pickedRaid) ? pickedRaid : (raidTabs[0]?.key ?? null);
   // Rows visible under the active tab: the tab's raid + everything parked.
   const tabRows = useMemo(
-    () => (multiRaid ? rows.filter(r => !r.inRaid || r.raidIdx === activeRaid || r.raidIdx == null) : rows),
+    () => (multiRaid ? rows.filter(r => !r.inRaid || r.raidKey === activeRaid || r.raidKey == null) : rows),
     [rows, activeRaid, multiRaid],
   );
   // Headline counters for the ACTIVE raid (previously page-computed globals,
@@ -229,18 +236,18 @@ export default function RaidView({
   // the hasAgent note in page.tsx: !noAgent includes INFERRED raiders (buffs
   // seen by a groupmate's Mimic), which pinned this at 100%.
   const mimicCovered = inRaidRows.filter(r => r.hasAgent).length;
-  const leaderRow    = inRaidRows.find(r => r.rank === '2') ?? null;
+  const leaderRow    = inRaidRows.find(r => isRaidLeader(r.rank)) ?? null;
   const leaderName   = leaderRow?.name ?? null;
   const leaderClass  = leaderRow?.className ?? null;
   const groupLeaders = useMemo(() => {
     const m: Record<number, string> = {};
     for (const r of inRaidRows) {
-      if (r.rank === '1' && r.raidGroup != null && m[r.raidGroup] == null) m[r.raidGroup] = r.name;
+      if (isGroupLeader(r.rank) && r.raidGroup != null && m[r.raidGroup] == null) m[r.raidGroup] = r.name;
     }
     return m;
   }, [inRaidRows]);
   // Parking-lot threshold: characters unseen for >5 min get moved to the
-  // "Not seen / offline" group (Hitya 2026-06-22 — "Not in raid implies
+  // "Not seen / offline" group (Rethlan 2026-06-22 — "Not in raid implies
   // they're still online"). 5 min lines up with Mimic's live-state heartbeat
   // cadence; anything older than that is almost always logged out, not
   // just sitting in the parking lot. Default still hides stale rows from
@@ -382,7 +389,7 @@ export default function RaidView({
            .sort((a, b) => (b.manaPct! - a.manaPct!) || a.name.localeCompare(b.name)),
     [tabRows]);
   // Twitch Queue — who to feed mana next: LOWEST mana up top, clerics floated
-  // hardest, then wizards/enchanters (Hitya 2026-07-19). Bards excluded — they
+  // hardest, then wizards/enchanters (the guild lead, 2026-07-19). Bards excluded — they
   // can't be twitched. Same source list, re-filtered + re-sorted.
   const twitchQueue = useMemo(() =>
     manaList.filter(r => twitchEligible(r.className))
@@ -430,17 +437,18 @@ export default function RaidView({
         </div>
       )}
 
-      {/* Concurrent raids — one tab each. Only rendered when Zeal snapshots
-          cluster into MORE than one raid (two crews running at once). */}
+      {/* Concurrent raids — one tab each. Only rendered when Mimics report
+          MORE than one raid leader (two crews running at once). */}
       {multiRaid && (
         <div className="flex items-center gap-2 flex-wrap">
-          {raidLabels.map((label, i) => (
+          <span className="text-xs text-orange">{raidTabs.length} raids at once:</span>
+          {raidTabs.map((t) => (
             <button
-              key={label}
+              key={t.key}
               type="button"
-              onClick={() => setActiveRaid(i)}
-              className={`px-3 py-1.5 text-xs rounded border transition-colors ${activeRaid === i ? 'bg-[#1f6feb33] text-blue border-blue' : 'bg-panel text-dim border-border hover:border-blue'}`}
-            >⚔️ {label}</button>
+              onClick={() => setActiveRaid(t.key)}
+              className={`px-3 py-1.5 text-xs rounded border transition-colors ${activeRaid === t.key ? 'bg-[#1f6feb33] text-blue border-blue' : 'bg-panel text-dim border-border hover:border-blue'}`}
+            >⚔️ {t.label}</button>
           ))}
         </div>
       )}
@@ -535,7 +543,7 @@ export default function RaidView({
             // (someone else's Mimic saw the cast) but produces no HP signal of
             // their own, so !noAgent marked whole groups as covered when nobody
             // in them ran anything. Group 6 showed the MIMIC chip on five
-            // inferred rows (Hitya 2026-08-06).
+            // inferred rows (the guild lead, 2026-08-06).
             const mimicInGroup = grpRows.some(r => r.hasAgent);
             return (
               <section key={label} className="bg-panel border border-border rounded-lg overflow-hidden">
@@ -566,8 +574,8 @@ export default function RaidView({
                 <ul className="divide-y divide-border/40">
                   {grpRows.map(r => {
                     const style = TIER_STYLE[r.tier];
-                    const isLeader = r.rank === '2';
-                    const isGrpLead = r.rank === '1';
+                    const isLeader = isRaidLeader(r.rank);
+                    const isGrpLead = isGroupLeader(r.rank);
                     return (
                       <li
                         key={r.name}
@@ -1073,8 +1081,8 @@ function CharacterDetail({ row, dsValues, onClose }: { row: RaidRow; dsValues: R
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-text text-base font-medium truncate">
-            {row.rank === '2' && '👑 '}
-            {row.rank === '1' && '⭐ '}
+            {isRaidLeader(row.rank) && '👑 '}
+            {isGroupLeader(row.rank) && '⭐ '}
             {row.name}
           </div>
           <div className="text-dim text-[11px]">

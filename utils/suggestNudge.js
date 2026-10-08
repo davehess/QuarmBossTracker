@@ -1,5 +1,5 @@
 // utils/suggestNudge.js — tap-through event requests from the forum nudge card
-// (Hitya 2026-08-17, from Fungalfist's Trakanon thread: the card told members
+// (the guild lead, 2026-08-17, from a member's Trakanon thread: the card told members
 // to type `/suggest boss:… time:…` — "which is more effort than people put
 // together. fungal would have hit '1' if he could have").
 //
@@ -34,7 +34,7 @@ function _bosses() {
 // into timers. Deliberately NOT in data/bosses.json — that file drives the
 // boards and spawn timers, and these are untracked by design.
 //
-// Seru Minis (Hitya 2026-08-19, from Hawkner's "Seru Mini's" thread): the
+// Seru Minis (the guild lead, 2026-08-19, from a member's "Seru Mini's" thread): the
 // four Praesertum house leaders of Sanctus Seru — Bikun (NW), Vantorus (SW),
 // Rhugol (NE), Matpa (SE) — each dropping one Shard (Shoulder/Hand/Eye/
 // Heart). 18h respawns on Quarm, deliberately untracked; the GROUP is the
@@ -256,7 +256,7 @@ async function handleNudgeBossSelect(interaction) {
 }
 
 // The ✅ done card. When we know the posted officer message's id, it carries
-// a 🕐 Change time button (Hitya 2026-08-19: Hawkner submitted "tomorrow 8pm",
+// a 🕐 Change time button (the guild lead, 2026-08-19: a member submitted "tomorrow 8pm",
 // actually wanted 10:30pm after the alt raid, and the one-shot card left him
 // stuck — "can't change time"). The customId carries boss + officer-message +
 // requester; the ≤92 guard keeps every DERIVED customId (time/exact/modal,

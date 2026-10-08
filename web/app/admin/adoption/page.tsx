@@ -1,4 +1,4 @@
-// /admin/adoption — the product-health page (Hitya 2026-08-18: "if you were a
+// /admin/adoption — the product-health page (the guild lead, 2026-08-18: "if you were a
 // product manager justifying our product and showing new user acquisition or
 // new raider adoption (those are varied) and what other stats would you
 // present to your execs?").
@@ -20,7 +20,9 @@
 
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
+import { requireOfficer } from '@/lib/officer';
 import { selectAll } from '@/lib/selectAll';
+import { GUILD_TAG } from '@/lib/guild';
 import {
   weeklyActive, activations, activationsByMonth, retention,
   corroborationByNight, versionSpread, conversionTargets, displayName,
@@ -32,6 +34,7 @@ export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Adoption — Admin' };
 
 export default async function AdminAdoptionPage() {
+  await requireOfficer();
   const admin = supabaseAdmin();
 
   const [dayRows, encRows, memberRows, statRows, charRows] = await Promise.all([
@@ -59,7 +62,7 @@ export default async function AdminAdoptionPage() {
     selectAll<CharLink>((from, to) => admin
       .from('characters')
       .select('name, main_name, discord_id')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .order('name')
       .range(from, to)),
   ]);
@@ -74,7 +77,7 @@ export default async function AdminAdoptionPage() {
       .from('opendkp_ticks')
       .select('raid_id, attendees')
       .in('raid_id', raidRows.map(r => r.raid_id))
-      .order('raid_id')
+      .order('raid_id').order('tick_id')
       .range(from, to));
     attendees = [...new Set(ticks.flatMap(t => Array.isArray(t.attendees) ? t.attendees : []))];
   }

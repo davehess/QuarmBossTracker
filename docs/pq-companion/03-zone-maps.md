@@ -649,10 +649,10 @@ GET /api/map-state          ← polled ~4 Hz by the overlay
 {
   "at": 1754500000000,
   "zone": { "id": 161, "short": "netherbian", "name": "Netherbian Lair" },
-  "self": { "character": "Uilnayar",
+  "self": { "character": "Aramil",
             "x": 1042, "y": -234, "z": 12,        // MAP space, already converted
             "heading": 341, "live": true, "at": … },
-  "raid": [ { "name": "Dafeet", "class": "Warrior", "group": "1",
+  "raid": [ { "name": "Peveril", "class": "Warrior", "group": "1",
               "x": …, "y": …, "z": …, "heading": …, "hp_pct": 88, "self": false } ],
   "raid_at": 1754499998000,
   "marks": [],                                    // phase 3
@@ -924,7 +924,7 @@ piggybacking the poll `extarget.html` already makes. Mark payload shape:
 ```jsonc
 "marks": [
   { "kind": "mob", "label": "Thall Va Xakra", "x": …, "y": …, "z": …,
-    "hp_pct": 41, "tanks": ["Dafeet"], "spawn_id": 360,
+    "hp_pct": 41, "tanks": ["Peveril"], "spawn_id": 360,
     "confidence": "tagged" }        // "tagged" | "clustered" | "single-tank"
 ]
 ```

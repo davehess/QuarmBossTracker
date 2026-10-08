@@ -5,7 +5,12 @@
 //     viewer's wolfpack_members.discord_id).
 //   • Always visible to officers.
 //   • Visible to other signed-in members only if the character has set
-//     characters.show_inventory_publicly = true.
+//     characters.show_quests_publicly = true (its own switch since 2026-09-25;
+//     it used to share show_inventory_publicly with the inventory pages).
+//   • For those members, the inventory-derived parts — key evidence item
+//     names, inventory-driven discovery, stack turn-ins, turn-in rewards held,
+//     hidden/dismissed, and the "probably don't need" / broken-item lists —
+//     show only if show_inventory_publicly is on too (`showInvDetail`).
 //
 // Data:
 //   • quest_catalog + quest_required_item — the curated list of trackable
@@ -18,7 +23,7 @@
 //
 // Sections on the page (top → bottom):
 //   1. Active quests — catalog quests + turn-ins the character pinned from
-//      discovery (▲ to active). At the top per Hitya 2026-06-24.
+//      discovery (▲ to active). At the top per the guild lead 2026-06-24.
 //   2. Inferred zone access — locked zones proven by NO DROP loot held.
 //   3. Inventory-driven discovery — scripted NPC turn-ins matched to held
 //      items, triaged: Ready to turn in → NO DROP vs tradeable → gems folded.
@@ -34,6 +39,8 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { QuestActionButtons, QuestUnhideButton, TurninControls } from './QuestPrefsControls';
 import { EPIC_COMPONENTS, EPIC_ROOT, EPIC_CLASSES_BY_ITEM } from '@/lib/eq-epics';
+import { fetchFamilyInventory, fetchDiscoveredQuests, fetchItemsByIds } from '@/lib/capSafeReads';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -73,12 +80,12 @@ async function load(decoded: string) {
     charRes, questsRes, itemsRes, keysRes, prefsRes,
   ] = await Promise.all([
     sb.from('characters')
-      .select('name, class, race, main_name, discord_id, show_inventory_publicly')
+      .select('name, class, race, main_name, discord_id, show_inventory_publicly, show_quests_publicly')
       .ilike('name', decoded)
       .limit(1),
     sb.from('quest_catalog')
       .select('id, name, category, zone, pqdi_quest_url, notes, is_stack_turnin, reward_item_id, reward_item_name, display_order')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .eq('active', true)
       .order('display_order', { ascending: true }),
     sb.from('quest_required_item')
@@ -88,16 +95,16 @@ async function load(decoded: string) {
     // hold the reward, in inventory OR on the keyring.
     sb.from('character_keys')
       .select('item_id, key_name')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .ilike('character_name', decoded),
     sb.from('character_quest_prefs')
       .select('quest_id, display_order, hidden, dismissed')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .ilike('character_name', decoded),
   ]);
 
   const char = (charRes.data && charRes.data[0]) as
-    | { name: string; class: string | null; race: string | null; main_name: string | null; discord_id: string | null; show_inventory_publicly: boolean }
+    | { name: string; class: string | null; race: string | null; main_name: string | null; discord_id: string | null; show_inventory_publicly: boolean; show_quests_publicly: boolean }
     | undefined;
   if (!char) return null;
 
@@ -106,7 +113,7 @@ async function load(decoded: string) {
   const { data: familyRows } = await sb
     .from('characters')
     .select('name')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .or(`name.eq.${main},main_name.eq.${main}`);
   const familyNames = new Set(((familyRows ?? []) as { name: string }[]).map(r => r.name.toLowerCase()));
 
@@ -117,24 +124,24 @@ async function load(decoded: string) {
   // keeps the match case-insensitive like the old JS filter.
   const familyList = ((familyRows ?? []) as { name: string }[]).map(r => r.name);
   if (familyList.length === 0) familyList.push(char.name);
-  const invRes = await sb
-    .from('character_inventory')
-    .select('character_name, slot_label, item_id, item_name, quantity')
-    .eq('guild_id', 'wolfpack')
-    .or(familyList.map(n => `character_name.ilike.${n}`).join(','))
-    .limit(10000);
+  // ⚠ Paged. The family's inventory runs to 8,302 rows (10 families are over
+  // 1,000) and the old `.limit(10000)` returned 1,000 in heap order — so the
+  // viewed character's OWN rows could be among the missing, and "nothing held"
+  // would show for items they carry. The family stays whole because the page
+  // shows when ANOTHER family member holds a quest item.
+  const invRows = await fetchFamilyInventory(sb, familyList);
 
   const quests = (questsRes.data ?? []) as Quest[];
   const questItems = (itemsRes.data ?? []) as QuestItem[];
 
   // Key inference: holding a NO-DROP item exclusive to a locked zone proves
-  // you had the key (Hitya 2026-06-24). This implies the catalog quest
+  // you had the key (the guild lead, 2026-06-24). This implies the catalog quest
   // whose reward IS that key — VP key, Trakanon Idol, VT Scepter of Shadows.
-  // The Howling Stones row has no key_item_id (no single mirrored key item),
-  // so its catalog implication is currently null but the evidence is still
-  // reported for the diagnostic line.
+  // Five keyed zones since 2026-09-25 (v2: the server's door table), each with
+  // its real key item; Howling Stones and Sleeper's Tomb have no catalog quest
+  // yet, so their quest implication is null but the zone access still shows.
   const { data: inferredRows } = await sb
-    .rpc('inferred_keys_for_character', { p_guild_id: 'wolfpack', p_character: decoded });
+    .rpc('inferred_keys_for_character', { p_guild_id: GUILD_TAG, p_character: decoded });
   type InferredKey = {
     zone_short: string; zone_long: string;
     key_item_id: number | null; key_item_name: string;
@@ -143,14 +150,14 @@ async function load(decoded: string) {
   };
   const inferredKeys = (inferredRows ?? []) as InferredKey[];
 
-  // Inventory-driven quest discovery from scripted_npc_turnins (Hitya
+  // Inventory-driven quest discovery from scripted_npc_turnins (the guild lead
   // 2026-06-24: "start populating quests based on the inventories"). For every
   // item id the character holds, surface the NPC turn-ins where that item is
   // either an input (piece-of-quest) or an output (completed turn-in). We
   // resolve the in/out item names via eqemu_items in one batched call so the
   // page can render "Captain Bvellos: Storm Giant Toes → +Kromzek faction".
   const ownInventoryIds = Array.from(new Set(
-    (invRes.data ?? []).filter(r => r.character_name.toLowerCase() === decoded.toLowerCase() && r.item_id != null).map(r => r.item_id as number)
+    invRows.filter(r => r.character_name.toLowerCase() === decoded.toLowerCase() && r.item_id != null).map(r => r.item_id as number)
   ));
   type Money = { plat?: number; gold?: number; silver?: number; copper?: number };
   type TurninCore = {
@@ -169,18 +176,21 @@ async function load(decoded: string) {
   };
   let discovered: Discovered[] = [];
   if (ownInventoryIds.length > 0) {
-    const { data: dRows } = await sb.rpc('discover_quests_for_item', { p_item_ids: ownInventoryIds });
-    discovered = (dRows ?? []) as Discovered[];
+    // discover_quests_for_item used to end in `LIMIT 500` (4 of the top-25
+    // inventories hit it, and 'piece' sorts before 'completed', so completed
+    // turn-ins were what got cut). It is unlimited now, with a total order, and
+    // drained in pages in case it ever passes the 1,000-row response cap.
+    discovered = await fetchDiscoveredQuests<Discovered>(sb, ownInventoryIds);
   }
 
-  // Per-character turn-in prefs (Hitya 2026-06-24): 'active' = pinned into
+  // Per-character turn-in prefs (the guild lead, 2026-06-24): 'active' = pinned into
   // the Active section, 'dismissed' = hidden from discovery. Fetch the pinned +
   // dismissed turn-ins by id so they render even if the matching inventory item
   // was since consumed.
   const { data: activeRows } = await sb
     .from('character_active_turnins')
     .select('turnin_id, status')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('character_name', decoded);
   const prefRows = ((activeRows ?? []) as { turnin_id: number; status: string }[]);
   const promotedTurninIds = prefRows.filter(r => r.status === 'active').map(r => r.turnin_id);
@@ -206,8 +216,12 @@ async function load(decoded: string) {
   type ItemMeta = { name: string; nodrop: boolean; classes: number | null; races: number | null; price: number | null; slots: number | null; damage: number | null; clickeffect: number | null; clicktype: number | null };
   const itemMetaById = new Map<number, ItemMeta>();
   if (discoveryItemIds.length > 0) {
-    const { data: irows } = await sb.from('eqemu_items').select('id, name, nodrop, classes, races, price, slots, damage, clickeffect, clicktype').in('id', discoveryItemIds);
-    for (const r of ((irows ?? []) as ({ id: number } & ItemMeta)[])) {
+    // ⚠ Chunked: the heaviest inventories reach 1,045–1,335 distinct ids once
+    // the turn-ins' inputs and outputs are counted, and one `.in()` of that
+    // size returns 1,000 rows at most — the rest lost their name and NO DROP
+    // flag on the page.
+    const irows = await fetchItemsByIds<{ id: number } & ItemMeta>(sb, 'id, name, nodrop, classes, races, price, slots, damage, clickeffect, clicktype', discoveryItemIds);
+    for (const r of irows) {
       itemMetaById.set(r.id, { name: r.name, nodrop: r.nodrop, classes: r.classes, races: r.races, price: r.price, slots: r.slots, damage: r.damage, clickeffect: r.clickeffect, clicktype: r.clicktype });
     }
   }
@@ -236,7 +250,7 @@ async function load(decoded: string) {
     char,
     quests,
     questItems,
-    inventory: (invRes.data ?? []) as InventoryRow[],
+    inventory: invRows as InventoryRow[],
     keys: (keysRes.data ?? []) as { item_id: number | null; key_name: string }[],
     familyNames,
     itemInfo,
@@ -274,7 +288,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   }
 
   // Visibility gate. Officer or owner always; everyone else needs the
-  // character's show_inventory_publicly flag.
+  // character's show_quests_publicly flag.
   const officer = await isOfficer(user.id);
   let isOwner = false;
   if (char.discord_id) {
@@ -285,7 +299,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
       .maybeSingle();
     isOwner = !!me?.discord_id && me.discord_id === char.discord_id;
   }
-  if (!officer && !isOwner && !char.show_inventory_publicly) {
+  if (!officer && !isOwner && !char.show_quests_publicly) {
     return (
       <div className="space-y-4">
         <div className="text-sm"><Link href={`/character/${encodeURIComponent(decoded)}`} className="text-blue hover:underline">← back to {decoded}</Link></div>
@@ -299,6 +313,9 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
       </div>
     );
   }
+  // Quest page shared but inventory not: keep the quest content, hide the
+  // parts that are really inventory listings.
+  const showInvDetail = officer || isOwner || !!char.show_inventory_publicly;
 
   // Index inventory by lowercase item name (we may not have item_id for
   // every row from the eventual upload). Sum quantities across slots so
@@ -391,7 +408,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
 
   // Chain-implication: if you hold a downstream output, the upstream steps that
   // feed it are provably done — their components were consumed in the combine.
-  // (Hitya 2026-06-23: "If someone has the Vex Thal key, they definitely did
+  // (the guild lead, 2026-06-23: "If someone has the Vex Thal key, they definitely did
   // the first part of the quest.") Edge: quest Q's reward_item_id appears as a
   // required item of quest P ⇒ completing P implies Q. Propagate to a fixpoint
   // so a 3+-step chain fully resolves.
@@ -449,7 +466,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   const stacks     = visibleProgress.filter(p => !p.completed &&  p.quest.is_stack_turnin);
   const completed  = visibleProgress.filter(p => p.completed);
 
-  // ---- Class Epic 1.0 components held (Hitya 2026-06-26: "Epics section at
+  // ---- Class Epic 1.0 components held (the guild lead, 2026-06-26: "Epics section at
   // the top that shows pieces of epic 1.0 quests that you have on your character
   // by class … e.g. dragon scales of kedge backbone"). Walk the character's
   // inventory; for every held item that appears in any class's Epic 1.0 chain,
@@ -480,7 +497,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
     }))
     .sort((a, b) => b.hits.length - a.hits.length || a.cls.localeCompare(b.cls));
 
-  // ---- Inventory-driven discovery presentation (Hitya 2026-06-24 rework) ----
+  // ---- Inventory-driven discovery presentation (the guild lead, 2026-06-24 rework) ----
   // One row per turn-in (deduped), classified for triage:
   //   • Ready to turn in (hold every component) → top
   //   • In progress, NO DROP component vs tradeable-only → two groups
@@ -509,7 +526,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   const promotedSet = new Set<number>(promotedTurninIds);
   const dismissedSet = new Set<number>(dismissedTurninIds);
 
-  // ── Class/race usability (Hitya 2026-06-24: "say the classes/races that
+  // ── Class/race usability (the guild lead, 2026-06-24: "say the classes/races that
   // can use the item; if it's not one that that character can use and it's
   // droppable" → route to 'don't need'). eqemu_items.classes / .races are EQ
   // bitmasks. The viewed character's bit is matched against them.
@@ -546,7 +563,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   };
   // A clicky usable from inventory (any slot) is useful to ANY class — clicktype
   // 4 = "must equip", anything else with a click effect works from bags. (Manastone,
-  // Amulet of Necropotence, etc.) Weapons may be carried for pets. (Hitya 2026-06-24.)
+  // Amulet of Necropotence, etc.) Weapons may be carried for pets. (the guild lead, 2026-06-24.)
   const hasInventoryClicky = (id: number) => { const m = itemMetaById.get(id); return !!m && (m.clickeffect ?? 0) > 0 && m.clicktype !== 4; };
   const isWeapon = (id: number) => (itemMetaById.get(id)?.damage ?? 0) > 0;
   const isEquippable = (id: number) => (itemMetaById.get(id)?.slots ?? 0) > 0;
@@ -625,7 +642,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
 
   // Shared row renderer for a discovered/promoted/dismissed turn-in. Format the
   // header as "Item — Turn-in NPC — where" (the held item drives discovery),
-  // then a ✓/✗ give-list and the reward. (Hitya 2026-06-24.)
+  // then a ✓/✗ give-list and the reward. (the guild lead, 2026-06-24.)
   const turninRow = (t: Turnin, matched: Set<number>, kind: 'discovery' | 'promoted' | 'dismissed') => {
     const ready = t.inputs.every(i => heldQty(i.item_id) >= i.qty);
     const headId = [...matched][0] ?? t.inputs[0]?.item_id ?? t.outputs[0]?.item_id ?? null;
@@ -653,7 +670,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
             {/* MQ matters when there's a NO DROP component you can't just trade
                 to one person — the NO DROP holder does the final hand-in while
                 others contribute the tradeable pieces. All-tradeable turn-ins
-                don't need MQ; just trade everything to one person. (Hitya
+                don't need MQ; just trade everything to one person. (the guild lead
                 2026-06-24.) */}
             {t.inputs.length >= 2 && t.inputs.some(i => dIsNoDrop(i.item_id)) && (
               <span className="text-[9px] text-purple/90 border border-purple/40 rounded px-1" title="Multi-questable — the NO DROP holder does the final hand-in; others contribute the tradeable pieces">MQ</span>
@@ -706,7 +723,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
 
   // Render a list of turn-ins grouped by the held item that drives them — each
   // group a collapsible "Item ✓ — N turn-ins" (auto-open when small). Fixes the
-  // flood from one item feeding many NPCs. (Hitya 2026-06-24.)
+  // flood from one item feeding many NPCs. (the guild lead, 2026-06-24.)
   const renderGroups = (entries: Entry[]) =>
     groupByHeld(entries).map(([itemId, list]) => (
       <details key={itemId} open={list.length <= 2} className="border-l-2 border-purple/20 pl-2">
@@ -718,7 +735,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
       </details>
     ));
 
-  // ── Inventory dead-weight + broken items (Hitya 2026-06-24) ──
+  // ── Inventory dead-weight + broken items (the guild lead, 2026-06-24) ──
   // Classify held bag/bank items (not equipped). A "quest piece" is any held
   // item that feeds or is rewarded by a discovered turn-in.
   const questPieceIds = new Set<number>(discovered.map(d => d.matched_item_id));
@@ -732,7 +749,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   // (questPieceIds) — the previous single "Quest pieces you probably don't
   // need" bucket lumped in plain unusable loot (spell scrolls for other
   // classes, generic droppable armor) that has nothing to do with any quest.
-  // (Hitya 2026-06-30: "If these items ... are not quest pieces they can
+  // (the guild lead, 2026-06-30: "If these items ... are not quest pieces they can
   // be in a different section.")
   const dontNeedQuest: { id: number; qty: number }[] = [];  // droppable quest-turn-in piece, unusable by this char
   const dontNeedOther: { id: number; qty: number }[] = [];  // droppable non-quest loot, unusable by this char
@@ -742,7 +759,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
     if (!m) continue;
     const usable = usableByChar(id);
     // Clickies usable from inventory (any class) and weapons (often carried for
-    // pets) are NOT dead-weight even if the class can't wear them. (Hitya
+    // pets) are NOT dead-weight even if the class can't wear them. (the guild lead
     // 2026-06-24: Amulet of Necropotence / Shield of the Immaculate / Blade of
     // the Earthcaller.)
     if (hasInventoryClicky(id) || isWeapon(id)) continue;
@@ -758,7 +775,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
   dontNeedOther.sort((a, b) => dItemName(a.id).localeCompare(dItemName(b.id)));
   brokenItems.sort((a, b) => dItemName(a.id).localeCompare(dItemName(b.id)));
   // Bag/bank slot location for a held item — same lookup the Completed-quests
-  // section uses (ownInvSlotByName, keyed by lowercased item name). (Hitya
+  // section uses (ownInvSlotByName, keyed by lowercased item name). (the guild lead
   // 2026-06-30: "Droppable vs nondroppable with the specific bag and slot
   // they're in.")
   const slotsFor = (id: number) => ownInvSlotByName.get(dItemName(id).toLowerCase());
@@ -802,7 +819,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-2xl text-gold flex items-center gap-3 mb-1">
           📋 {decoded} — Quest tracker
-          {!char.show_inventory_publicly && (
+          {!char.show_quests_publicly && (
             <span className="text-[10px] tracking-widest font-bold px-2 py-0.5 rounded bg-dim/20 border border-dim/60 text-dim uppercase" title="Owner/officer only. Toggle on /me to share with the guild.">
               🔒 Private
             </span>
@@ -817,6 +834,12 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
           useful for MQ planning. Catalog is officer-managed at{' '}
           <Link href="/admin/quests" className="text-blue hover:underline">/admin/quests</Link>.
         </p>
+        {!showInvDetail && (
+          <p className="text-xs text-dim mt-3">
+            🔒 {decoded}&apos;s inventory page is private, so this shows quest progress
+            only — not the inventory lists.
+          </p>
+        )}
         {inventory.length === 0 && (
           <p className="text-xs text-orange mt-3">
             ⚠ No inventory data yet for any character. The page will light up
@@ -826,7 +849,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
         )}
       </section>
 
-      {/* Class Epic 1.0 components held (Hitya 2026-06-26). Grouped by
+      {/* Class Epic 1.0 components held (the guild lead, 2026-06-26). Grouped by
           class — the same piece can feed more than one class chain (e.g.
           Shining Metallic Robes feeds both the Rogue and Enchanter epics),
           so it shows up under every relevant section. Sorted by held-count
@@ -873,7 +896,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
       )}
 
       {/* Active quests — catalog quests + turn-ins the character pinned from
-          discovery. Pinned ones render first. (Hitya 2026-06-24: "Let people
+          discovery. Pinned ones render first. (the guild lead, 2026-06-24: "Let people
           move those quests to the active quests section and have that be at the
           top of the page.") */}
       <section className="bg-panel border border-border rounded-lg p-5">
@@ -940,7 +963,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
       {/* Inferred zone access — derived from NO DROP loot in inventory that
           drops ONLY in a locked zone. Surfaces even when no catalog quest is
           seeded for the zone (e.g. Howling Stones), so the evidence is always
-          visible. (Hitya 2026-06-24.) */}
+          visible. (the guild lead, 2026-06-24.) */}
       {inferredKeys.length > 0 && (
         <section className="bg-panel border border-gold/40 rounded-lg p-5">
           <h3 className="text-lg text-gold mb-2">🗝 Inferred zone access</h3>
@@ -957,7 +980,8 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
                   {k.key_item_name && `· ${k.key_item_name}`}
                 </span>
                 <span className="text-dim/70 text-[10px]">
-                  {k.evidence_count} item{k.evidence_count === 1 ? '' : 's'} held — {k.evidence_items.slice(0, 3).join(', ')}{k.evidence_items.length < k.evidence_count ? '…' : ''}
+                  {k.evidence_count} item{k.evidence_count === 1 ? '' : 's'} held
+                  {showInvDetail && <> — {k.evidence_items.slice(0, 3).join(', ')}{k.evidence_items.length < k.evidence_count ? '…' : ''}</>}
                 </span>
               </li>
             ))}
@@ -967,10 +991,10 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
 
       {/* Inventory-driven discovery — scripted NPC turn-ins matched against the
           player's inventory (ProjectEQ quest scripts → scripted_npc_turnins).
-          Reworked (Hitya 2026-06-24): ready-to-turn-in first, NO DROP vs
+          Reworked (the guild lead, 2026-06-24): ready-to-turn-in first, NO DROP vs
           tradeable split, gem-only matches minimized, "Item — NPC — where"
           format with PQDI links and ✓/✗ per component. */}
-      {(discoveryCount > 0 || completedTurninItems.length > 0 || dismissed.length > 0) && (
+      {showInvDetail && (discoveryCount > 0 || completedTurninItems.length > 0 || dismissed.length > 0) && (
         <section className="bg-panel border border-purple/40 rounded-lg p-5">
           <h3 className="text-lg text-purple mb-2">🔍 Inventory-driven discovery</h3>
           <p className="text-xs text-dim leading-5 mb-3">
@@ -1028,6 +1052,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
       )}
 
       {/* Stack turn-ins */}
+      {showInvDetail && (
       <section className="bg-panel border border-border rounded-lg p-5">
         <h3 className="text-lg text-orange mb-2">Stack turn-ins ({stacks.length})</h3>
         <p className="text-xs text-dim mb-3">
@@ -1076,6 +1101,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
           </table>
         )}
       </section>
+      )}
 
       {/* Completed quests (collapsible-ish — just a dim folded list) */}
       <section className="bg-panel border border-border rounded-lg p-5">
@@ -1111,10 +1137,10 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
           </ul>
         )}
 
-        {/* Turn-in rewards held — deduped by item with a held count (Hitya
+        {/* Turn-in rewards held — deduped by item with a held count (the guild lead
             2026-06-24: "there shouldn't be multiples displayed - we should see a
             count (x)"). Holding a turn-in's reward implies the turn-in was done. */}
-        {completedTurninItems.length > 0 && (
+        {showInvDetail && completedTurninItems.length > 0 && (
           <div className="mt-4">
             <h4 className="text-sm text-green mb-1">Turn-in rewards held ({completedTurninItems.length})</h4>
             <p className="text-[11px] text-dim mb-1.5">
@@ -1136,7 +1162,7 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
       {/* Hidden / Dismissed — restore from here. Hidden = "out of the way for now",
           dismissed = "I'm not doing this." Both stay in the database; restore
           buttons bring them back to active. */}
-      {(hiddenProgress.length > 0 || dismissedProgress.length > 0) && (
+      {showInvDetail && (hiddenProgress.length > 0 || dismissedProgress.length > 0) && (
         <section className="bg-panel border border-border rounded-lg p-5 space-y-3">
           {hiddenProgress.length > 0 && (
             <details>
@@ -1175,10 +1201,11 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
 
       {/* Dead-weight: held (bag/bank) items the char's class/race can't use,
           split by whether they actually tie to a discovered turn-in.
-          (Hitya 2026-06-24; split + droppable tag + slot location added
+          (the guild lead, 2026-06-24; split + droppable tag + slot location added
           2026-06-30 — "if these are not quest pieces they can be in a
           different section... Droppable vs nondroppable with the specific
           bag and slot they're in.") */}
+      {showInvDetail && (<>
       <section className="bg-panel border border-border rounded-lg p-5">
         <h3 className="text-lg text-orange mb-2">Quest pieces you probably don&apos;t need ({dontNeedQuest.length})</h3>
         <p className="text-xs text-dim leading-6 mb-2">
@@ -1212,10 +1239,11 @@ export default async function CharacterQuestsPage({ params }: { params: Promise<
           </ul>
         )}
       </section>
+      </>)}
 
       {/* Broken quest items — NO DROP, no value, feed no quest, unusable.
           Advisory only ("safe to destroy"); double-check before deleting. */}
-      {brokenItems.length > 0 && (
+      {showInvDetail && brokenItems.length > 0 && (
         <section className="bg-panel border border-red/30 rounded-lg p-5">
           <h3 className="text-lg text-red-400 mb-2">🗑 Broken quest items ({brokenItems.length})</h3>
           <p className="text-xs text-dim leading-6 mb-2">

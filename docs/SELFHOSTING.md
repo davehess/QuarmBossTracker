@@ -106,7 +106,7 @@ Point `cfg.botUrl` at your bot. Nothing else changes — the agent already takes
   but item/NPC/spell lookups are empty. The design doc's recommendation stands:
   publish this as a read-only shared resource rather than making each guild
   rebuild it.
-- **PvP `/who` intelligence** — deliberately carved out (Hitya, 2026-08-02). The
+- **PvP `/who` intelligence** — deliberately carved out (guild lead, 2026-08-02). The
   tables exist and the code ships; they start empty and stay that way unless you
   run the harvest yourself.
 - **Discord layout automation** — the ~30 anchor IDs are still hand-copied into

@@ -5,7 +5,7 @@
 // knight or necro threw — and the stored record kept only name/ts/class, so the
 // two were byte-identical and could not be separated after the fact.
 //
-// Hitya's insight: a REAL death has a tail a feign never produces —
+// The guild lead's insight: a REAL death has a tail a feign never produces —
 //     You died.
 //     You are bleeding to death!
 //     Returning to home point, please wait...
@@ -77,7 +77,7 @@ describe('death confirmation', () => {
     // These lines exist solely in the dying player's log, so our corpse run must
     // never be credited to a death we merely observed.
     //
-    // Fargan has to be made a CONFIRMED player first, or the builder drops his
+    // A member has to be made a CONFIRMED player first, or the builder drops his
     // death via isConfirmedPlayer and there is nothing left to mis-stamp — the
     // assertion would pass whether or not the self-only guard existed.
     agent._setWatchedLogsForTest([

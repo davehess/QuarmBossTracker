@@ -11,12 +11,27 @@
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { loadRoster } from '@/lib/roster';
 import {
   categorizeBuff, classToRole, analyzeHpSlots, CATEGORY_ORDER, isCorpse,
   type BuffCategory, type Role,
 } from '@/lib/buffs';
+import {
+  freshestByName, splitRaids, buildBuffGroups, STALE_SYNC_MS, type GroupInput,
+} from '@/lib/buffGroups';
 import BuffsGrid, { type BuffRow } from './BuffsGrid';
+import BuffGroupsView, { type BuffLayout } from './BuffGroups';
 import Link from 'next/link';
+import { GUILD_TAG } from '@/lib/guild';
+
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'Buffs',
+  description:
+    'Who is missing what, right now — buff coverage across the raid so buffers can see the gaps.',
+};
 
 export const dynamic = 'force-dynamic';
 
@@ -32,9 +47,16 @@ type LiveStateRow = {
   updated_at: string | null;
 };
 
-export default async function BuffsPage() {
+export default async function BuffsPage(
+  { searchParams }: { searchParams: Promise<{ v?: string }> },
+) {
+  // Two group-aware layouts on beta until the guild lead picks one (the guild lead, 2026-10-04: "we should
+  // be grouping people for buffs on /buffs"). No ?v= is the classic grid exactly as production shows it.
+  const { v } = await searchParams;
+  const layout: BuffLayout | null = v === 'b' || v === 'c' ? v : null;
   const { data: { user } } = await supabaseServer().auth.getUser();
-  if (!user) redirect('/auth/signin?next=/buffs');
+  // Keep the variant through sign-in, so a shared ?v=b link still opens what it names.
+  if (!user) redirect(layout ? '/auth/signin?next=' + encodeURIComponent('/buffs?v=' + layout) : '/auth/signin?next=/buffs');
 
   // Raid members refreshed within this window count as "currently in the raid".
   // The agent re-uploads the roster on change + a 60s heartbeat, so 15 min
@@ -43,40 +65,38 @@ export default async function BuffsPage() {
   const rosterSince = new Date(Date.now() - ROSTER_FRESH_MS).toISOString();
 
   const admin = supabaseAdmin();
-  const [{ data: liveRows }, { data: charRows }, { data: rosterRows }] = await Promise.all([
+  const [{ data: liveRows }, charRows, { data: rosterRows }] = await Promise.all([
     admin
       .from('character_live_state')
       .select('character, zone_name, buffs, buff_count, pet_name, pet_hp_pct, pet_buffs, updated_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .order('updated_at', { ascending: false }),
-    admin
-      .from('characters')
-      .select('name, class')
-      .eq('guild_id', 'wolfpack'),
+    loadRoster(),   // the shared, paged roster read (web/lib/roster.ts)
     admin
       .from('raid_roster')
-      .select('name, class, group_num, level, captured_at')
-      .eq('guild_id', 'wolfpack')
+      .select('name, class, group_num, level, rank, captured_at, uploaded_by_discord_id')
+      .eq('guild_id', GUILD_TAG)
       .gte('captured_at', rosterSince),
   ]);
 
   // EQ corpses ("<Owner>'s corpse1234") register as live characters — drop them.
   const liveClean   = ((liveRows ?? []) as LiveStateRow[]).filter(r => !isCorpse(r.character));
 
-  // name(lower) → roster entry (group + live Zeal class) for current raid members.
-  type RosterRow = { name: string; class: string | null; group_num: number | null };
-  const rosterByName = new Map<string, RosterRow>(
-    ((rosterRows ?? []) as RosterRow[])
-      .filter(r => !isCorpse(r.name))
-      .map(r => [r.name.toLowerCase(), r]),
-  );
+  // name(lower) → roster entry (group + live Zeal class) for current raid members. raid_roster keeps one
+  // row per UPLOADER per member, so the FRESHEST captured_at wins — "last row wins" kept whichever row
+  // the query happened to return last, often a stale group (the group-buff pass, 2026-10-04).
+  type RosterRow = {
+    name: string; class: string | null; group_num: number | null; level: number | null;
+    rank: string | null; captured_at: string | null; uploaded_by_discord_id: string | null;
+  };
+  const rosterClean = ((rosterRows ?? []) as RosterRow[]).filter(r => !isCorpse(r.name));
+  const rosterByName = freshestByName(rosterClean);
 
   // name(lower) → class. Prefer the OpenDKP roster class (authoritative), fall
   // back to the live Zeal class from the raid roster for anyone not yet in the
   // characters table.
   const classByName = new Map<string, string | null>(
-    ((charRows ?? []) as { name: string; class: string | null }[])
-      .map(c => [c.name.toLowerCase(), c.class]),
+    charRows.map(c => [c.name.toLowerCase(), c.class] as const),
   );
   const classFor = (name: string): string | null =>
     classByName.get(name.toLowerCase()) ?? rosterByName.get(name.toLowerCase())?.class ?? null;
@@ -145,12 +165,36 @@ export default async function BuffsPage() {
     });
   }
 
+  // ?v=b / ?v=c — the group-aware layouts. Raid members only (the roster window above), split by raid
+  // first (two raids both have a "group 1") with /raid's own split, then by raid group. They show no
+  // buff chips, so the PQDI spell-id lookup below is skipped. Server-rendered like the grid.
+  if (layout) {
+    const split = splitRaids(rosterClean);
+    const nowMs = Date.now();
+    const members: GroupInput[] = rows.filter(r => r.inRaid).map(r => {
+      const lower = r.name.toLowerCase();
+      return {
+        name: r.name,
+        className: r.className,
+        role: r.role,
+        group: r.raidGroup ?? null,
+        raidKey: split.keyFor(r.name, rosterByName.get(lower)?.uploaded_by_discord_id),
+        noAgent: !!r.noAgent,
+        level: rosterByName.get(lower)?.level ?? null,
+        stale: !r.noAgent && !!r.updatedAt && nowMs - new Date(r.updatedAt).getTime() > STALE_SYNC_MS,
+        byCategory: r.byCategory,
+        hpSlots: r.hpSlots,
+      };
+    });
+    return <BuffGroupsView layout={layout} sections={buildBuffGroups(members, split.raids)} />;
+  }
+
   // HP is shown as the three dedicated HP-slot columns, so drop it from the
   // category column set.
   const categories = (CATEGORY_ORDER as BuffCategory[]).filter(c => c !== 'hp');
 
   // Resolve buff names → eqemu_spells.id so BuffChip can deep-link each
-  // chip to its PQDI page (Hitya 2026-06-23). Only look up the names
+  // chip to its PQDI page (the guild lead, 2026-06-23). Only look up the names
   // that actually appear in the current rows (player buffs + pet buffs +
   // HP slots + Other), bounded — avoids fetching the full 4k-spell catalog.
   const wantedNames = new Set<string>();

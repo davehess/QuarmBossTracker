@@ -2,7 +2,7 @@
 <html lang="en"><head><meta charset="utf-8"><title>ch chain</title>
 <style>
   /* CH Chain overlay — cleric Complete Heal rotation, read from the zone-
-     visible shout/raid callouts ("004 - CH - Naggato - Mana: 52%" /
+     visible shout/raid callouts ("004 - CH - Drayvon - Mana: 52%" /
      "005 GO GO GO"). One row per chain slot: number, cleric, mana%, and
      either a live 10s cast bar (the slot that just called CH) or how long
      ago they last cast. Footer: NEXT slot + beat countdown. Reads
@@ -36,7 +36,7 @@
     text-shadow:0 1px 2px #000;border-left:2px solid transparent;
     transition:background 200ms ease}
   /* Slot number — was hard to read at 10px / dim grey. Larger + amber +
-     bold + tabular numerals + a subtle dark chip to anchor it. (Uilnayar
+     bold + tabular numerals + a subtle dark chip to anchor it. (a member
      2026-06-26: 'the left side numbers are hard to see with ch chain.
      needs to be more distinct'.) Casting/next rows tint it brighter via
      row-state overrides below so the active slot's number jumps. */
@@ -64,7 +64,7 @@
   .mana.hi{color:#56d364} .mana.mid{color:#f0b429} .mana.lo{color:#f87171} .mana.unk{color:#6e7681}
   .row .stat{color:#8b949e;font-size:10px;font-variant-numeric:tabular-nums;text-align:right;min-width:3.4em}
   /* Casting row — BLUE accent + a 10s CH cast bar that fills RIGHT-TO-LEFT
-     (Hitya 2026-08-11: every countdown fills left-to-right, so the cast bar
+     (the guild lead, 2026-08-11: every countdown fills left-to-right, so the cast bar
      runs the other way and in its own color — one glance tells a cast from a
      countdown). GO stays green (green = go), interrupted stays red-frozen. */
   .row.casting{background:rgba(88,166,255,0.12);border-left-color:#58a6ff}
@@ -92,7 +92,7 @@
   .bar{grid-column:1 / -1;height:4px;background:rgba(255,255,255,0.08);
     border-radius:2px;overflow:hidden;margin-top:3px;position:relative}
   /* Anchored LEFT by default: a COUNTDOWN fills left→right, toward the GO at
-     the right end (Hitya 2026-08-20: "The Yellow on the CH chain should go
+     the right end (the guild lead, 2026-08-20: "The Yellow on the CH chain should go
      Left to Right, then say GO on the right when its time, then right to left
      in blue when casting"). The in-flight cast bar re-anchors right below, so
      the two read as opposite motions at a glance. */
@@ -123,7 +123,7 @@
   .row.next .bar .fill{background:#f0b429}
   .row.next .bar.due .fill{background:#f87171}
   .row.next .stat{color:#f0b429}
-  /* ORDER CONFLICT (Hitya 2026-08-11): two callers on one slot number. Bright
+  /* ORDER CONFLICT (the guild lead, 2026-08-11): two callers on one slot number. Bright
      yellow letters with a red outline — loud on purpose; a contested rotation
      is a wipe risk the raid should see before the missed beat. Static text,
      not clickable, so no hover-interact handshake is needed. */
@@ -136,7 +136,7 @@
   .xbadge{display:inline-block;font-weight:800;font-size:11px;color:#fff;
     background:rgba(220,38,38,0.85);border-radius:8px;padding:0 6px;
     text-shadow:none;box-shadow:0 0 8px rgba(248,113,113,0.6)}
-  /* ── Per-row ✕ "take them off the chain" (Hitya 2026-08-14) ─────────────
+  /* ── Per-row ✕ "take them off the chain" (the guild lead, 2026-08-14) ─────────────
      ⚠ ALWAYS RENDERED, only dimmed — do NOT "tidy" this into a hover-reveal.
      That was the first attempt and it fails exactly when the button is needed.
      The rows' innerHTML is rebuilt on every paint while a cast bar is moving,
@@ -154,7 +154,7 @@
     opacity:0.30;transition:opacity 120ms ease,color 120ms ease}
   .row:hover .rmv{opacity:0.75}
   .row .rmv:hover{opacity:1;color:#f87171;background:rgba(220,38,38,0.25)}
-  /* ── DDR grade sticker (Hitya 2026-07-31) ──────────────────────────────
+  /* ── DDR grade sticker (the guild lead, 2026-07-31) ──────────────────────────────
      Arcade-style GOOD / GREAT / PERFECT / MARVELOUS flash slapped on top of
      that cleric's own cast bar. Bold condensed italic, warm gradient fill,
      thick dark outline, scale-pop then fade — pure CSS, no images (this is a
@@ -291,7 +291,7 @@
   #go-btn.on{color:#7ee787;border-color:rgba(126,231,135,0.6);opacity:0.9}
   #go-btn.off{color:#6e7681}
   body.setup #go-btn{top:30px}
-  /* DDR grading toggle (Hitya 2026-07-31). Furthest LEFT of the button row
+  /* DDR grading toggle (the guild lead, 2026-07-31). Furthest LEFT of the button row
      (right:86px) so it stays well clear of the ✕ at right:6 and its ~30px
      gutter — go(66) / cfg(46) / mute(26) / hide(6) keep their positions. */
   #ddr-btn{position:fixed;top:6px;right:86px;z-index:65;width:18px;height:18px;
@@ -322,7 +322,7 @@
   /* Off-heal candidates — raiders taking repeated single-target damage
      outside the MT/Rampage (see offHealCandidatesSnapshot in the agent).
      Sits at the bottom of the overlay since healers already have this
-     window open — Uilnayar 2026-07-04. Independent of chain state (renders
+     window open — a member 2026-07-04. Independent of chain state (renders
      even with no active CH chain), so it's its own card, not a table row. */
   .offheal{margin-top:5px;background:rgb(0 0 0 / var(--bg-alpha));border-radius:5px;padding:5px 7px}
   .offheal-hd{font-size:9px;color:#9aa4ad;text-transform:uppercase;letter-spacing:0.5px;
@@ -332,15 +332,17 @@
   .offheal-row .oh-nm{font-weight:600;color:#fca5a5;flex-shrink:0}
   .offheal-row .oh-mob{color:#9aa4ad;font-size:9px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* HP% of the candidate (who needs an off-heal) — colored by severity, not
-     seconds-under-fire (Uilnayar 2026-07-06: "we should see their percentage"). */
+     seconds-under-fire (a member, 2026-07-06: "we should see their percentage"). */
   .offheal-row .oh-hp{font-variant-numeric:tabular-nums;font-weight:700;flex-shrink:0}
   .oh-hp.hi{color:#56d364} .oh-hp.mid{color:#f0b429} .oh-hp.lo{color:#f87171} .oh-hp.unk{color:#6e7681}
-  /* DI readiness chips — green = up, amber = recast countdown. When only ONE
-     cleric has DI up the whole section gets the gold "save it" outline. */
+  /* DI readiness chips — green ✓ = on the spell gems and ready, amber = recast countdown, grey ? = not
+     confirmed on their gems (no tick). When only ONE cleric has DI up (and none is "?") the whole
+     section gets the gold "save it" outline. */
   .di-rows{display:flex;flex-wrap:wrap;gap:4px;padding:2px 0}
   .di-chip{display:inline-flex;align-items:center;gap:4px;font-size:10px;border-radius:3px;
     padding:1px 6px;border:1px solid rgba(86,211,100,0.6);color:#7ee787;text-shadow:0 1px 2px #000}
   .di-chip.cd{border-color:rgba(240,180,41,0.6);color:#f0b429}
+  .di-chip.unk{border-color:rgba(110,118,129,0.5);color:#8b949e}
   .di-chip .di-sec{font-variant-numeric:tabular-nums;font-weight:700}
   #diready.di-last{outline:1px solid #f0c419;outline-offset:2px;border-radius:4px}
   /* DI nomination (#204) — a death save FIRED, so the tank is alive and now
@@ -394,6 +396,64 @@
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
   #move-btn:hover{opacity:1;color:#7ee787;border-color:#7ee787}
   body.setup #move-btn{top:30px}
+  /* ── ▭ Mini — variant B "Timeline lanes" (the guild vote, 2026-09-17) ───────
+     The per-overlay half of mini mode; preload owns the shared half (the
+     corner ✥ / ✕ fade, the wp-mini-* helpers). Full mode is untouched: every
+     rule here is scoped under body.wp-mini or to #chmini, which only shows
+     under it.
+     KEPT in mini, on purpose: the ORDER CONFLICT banner, the chain-integrity
+     banner (red = GO MANUAL) and the pivot banner. Each is display:none while
+     the chain is healthy, so they cost no height until they matter, and hiding
+     one would let a mini overlay look fine while the chain is not.
+     Everything else gives way to the lanes: the header (the tank moves to the
+     MT row), the slot rows and NEXT footer (the lanes carry both), the gap row
+     (an orange block reaching the centre line IS that warning, and its TTS
+     still speaks), the spot-heal / off-heal / DI cards, and the four title-bar
+     toggles, which would otherwise sit on top of the MT row. */
+  body.wp-mini .head, body.wp-mini #cfg-panel, body.wp-mini #gaprow, body.wp-mini #dicall,
+  body.wp-mini #rows, body.wp-mini #spotrow, body.wp-mini #nextrow, body.wp-mini #offheal,
+  body.wp-mini #diready, body.wp-mini #ddr-btn, body.wp-mini #go-btn, body.wp-mini #cfg-btn,
+  body.wp-mini #mute-btn{display:none !important}
+  .chmini{display:none;background:rgb(0 0 0 / var(--bg-alpha));border-radius:5px;padding:2px 4px;
+    text-shadow:0 1px 2px #000}
+  body.wp-mini .chmini.on{display:block}
+  /* MT row — the side padding clears the corner ✥ / ✕, as .head's does. */
+  .chmini .mt{display:flex;align-items:center;gap:6px;min-height:18px;padding:0 20px;font-size:11px}
+  .chmini .mt-pct{flex:0 0 4ch;text-align:right;font-weight:700}
+  .chmini .mt-bar{flex:1 1 auto;min-width:24px;height:4px;background:rgba(255,255,255,0.09);
+    border-radius:2px;overflow:hidden}
+  .chmini .mt-bar i{display:block;height:100%;transition:width 120ms linear}
+  .chmini .mt-nm{flex:0 1 auto;color:#e6edf3;font-weight:600}
+  .chmini .mt-tag{flex:0 0 auto;color:#6e7681;font-size:9px}
+  .mt-pct.hi{color:#56d364} .mt-pct.mid{color:#f0b429} .mt-pct.lo{color:#f85149} .mt-pct.unk{color:#6e7681}
+  .mt-bar i.hi{background:#56d364} .mt-bar i.mid{background:#f0b429} .mt-bar i.lo{background:#f85149}
+  /* Axis and lanes share one grid at 10px, so the 9ch name column lines up
+     (ch resolves against each element's own font size, and the axis text is
+     smaller). */
+  .chmini .axis,.chmini .lane{display:grid;grid-template-columns:9ch minmax(0,1fr);gap:6px;
+    align-items:center;font-size:10px}
+  .chmini .axis{height:11px}
+  .chmini .ax{display:flex;font-size:8px;color:#6e7681;letter-spacing:0.06em;
+    text-transform:uppercase;white-space:nowrap}
+  .chmini .ax > span{flex:1 1 0;min-width:0}
+  .chmini .ax-r{display:flex;justify-content:space-between}
+  .chmini .ax-c{margin-left:-0.5ch}
+  .chmini .lane{height:15px}
+  .chmini .lnm{font-weight:600}
+  .chmini .cQ{color:#ffa657} .chmini .cC{color:#79c0ff} .chmini .cX{color:#fca5a5}
+  .chmini .cL{color:#7ee787} .chmini .cI{color:#6e7681}
+  .chmini .trk{position:relative;height:8px;background:rgba(255,255,255,0.06);border-radius:2px}
+  .chmini .trk::after{content:"";position:absolute;left:50%;top:-3px;bottom:-3px;width:1px;
+    background:rgba(255,255,255,0.55)}
+  .chmini .blk{position:absolute;top:0;height:100%;border-radius:2px;
+    transition:left 100ms linear,width 100ms linear}
+  .chmini .bQ{background:#ffa657} .chmini .bC{background:#58a6ff}
+  .chmini .bX{background:#f85149;transition:none}
+  .chmini .bL{background:#56d364;box-shadow:0 0 6px rgba(86,211,100,0.8)}
+  .chmini.stale #miniLanes{opacity:0.5}
+  @media (prefers-reduced-motion: reduce){
+    .chmini .blk,.chmini .mt-bar i{transition:none}
+  }
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (right-click for resize + Setup)">✥</button>
@@ -465,11 +525,21 @@
       <div id="dicallNote" class="dicall-note" style="display:none"></div>
     </div>
     <div id="rows" class="rows"></div>
-    <!-- Pivot banner — v1.1.5 (Uilnayar 2026-06-26). Flashes red when the
+    <!-- ▭ Mini, variant B "Timeline lanes" (the guild vote, 2026-09-17). Shown
+         only under body.wp-mini while a chain exists; filled by renderMini().
+         MT row on top, then the axis, then one lane per healer in rotation
+         order. Sits where #rows sits, so the conflict / integrity banners stay
+         above it and the pivot banner below, as in full mode. -->
+    <div id="chmini" class="chmini">
+      <div id="miniMt" class="mt"></div>
+      <div class="axis"><span></span><span class="ax"><span>◀ lands</span><span class="ax-r"><span class="ax-c">│ starts</span><span>next ▶</span></span></span></div>
+      <div id="miniLanes"></div>
+    </div>
+    <!-- Pivot banner — v1.1.5 (a member, 2026-06-26). Flashes red when the
          chain has slipped (next caller didn't shout within 1.5× the beat).
          Hidden when chain is healthy. Display name + suggest who's next. -->
     <div id="pivotrow" class="pivotrow" style="display:none"></div>
-    <!-- Spot-heal banner (Uilnayar 2026-07-02: "our druids will hop in and
+    <!-- Spot-heal banner (a member, 2026-07-02: "our druids will hop in and
          fill the CH gaps, are they able to be included?"). A CH-equivalent
          cast (Tunare's Renewal) folds straight into the numbered rows above
          instead — this banner is only for a one-off heal that ISN'T a
@@ -481,7 +551,7 @@
       <span class="cd" id="cd"></span>
     </div>
     <div id="empty">waiting for CH calls…</div>
-    <!-- Off-heal candidates (Uilnayar 2026-07-04: "who's taking repeated
+    <!-- Off-heal candidates (a member, 2026-07-04: "who's taking repeated
          single target damage outside of the current main tank and rampage
          ... CH chain could list off heal candidates at the bottom").
          Independent of chain state — shows even with no active chain. -->
@@ -489,7 +559,7 @@
       <div class="offheal-hd">⚕ Off-heal candidates</div>
       <div id="offhealRows"></div>
     </div>
-    <!-- Divine Intervention readiness (BACKLOG §1, Uilnayar 2026-07-14):
+    <!-- Divine Intervention readiness (BACKLOG §1, a member 2026-07-14):
          per-cleric DI up/cooldown chips from log-driven recast tracking
          (cast = 6s + 90s recast; interrupts refund). Independent of chain
          state; hidden until at least one Mimic cleric reports. -->
@@ -524,6 +594,8 @@
   // no stored value at all (fresh install, or an existing user who never
   // touched this button) now means muted, not unmuted.
   var _muted = true;
+  // Mimic-wide mute (Settings → "Mute Mimic") on top of this overlay's own 🔇.
+  function _wpMutedNow(){ try { return !!(window.mimic && window.mimic.isMuted && window.mimic.isMuted()); } catch (e) { return false; } }
   try {
     var _mutedStored = localStorage.getItem('chchain_mute');
     if (_mutedStored === '0') _muted = false;
@@ -589,7 +661,7 @@
     });
   }
 
-  // DDR grading toggle (Hitya 2026-07-31). Default ON. Same contract as the
+  // DDR grading toggle (the guild lead, 2026-07-31). Default ON. Same contract as the
   // "0X GO" button above — the AGENT owns the grading (it stamps a grade on the
   // slot the moment a cast starts), so this button just tells the agent whether
   // to. Persist locally, POST on every change AND on load, and re-sync if the
@@ -637,7 +709,7 @@
   // Alert-lead knob — how many seconds BEFORE the next cleric is due we
   // start screaming. AUTO (default): derived live from the chain's own
   // measured beat_ms (median gap between callouts) instead of a fixed
-  // guess. A flat 1.5s lead on a real 2-4s chain (Uilnayar 2026-07-02: "it
+  // guess. A flat 1.5s lead on a real 2-4s chain (a member, 2026-07-02: "it
   // goes off far too frequently... we typically set delays of 2-4 seconds")
   // left GAP SOON active for well over half of every single cycle — it
   // fired on almost every handoff even when the chain was running exactly
@@ -811,7 +883,7 @@
   var _spokeLate = false;       // have we said "CH GAP" (overdue) for this key
 
   function speakGap(text){
-    if (_muted) return;
+    if (_muted || _wpMutedNow()) return;
     try {
       if (!window.speechSynthesis) return;
       var u = new SpeechSynthesisUtterance(text);
@@ -827,6 +899,30 @@
   // doesn't hear it all night).
   var _lastDi = null;
   var _diSoloSpokenFor = null;   // cleric name we already called out
+  // What one cleric's chip says (FB-62, a member, 2026-10-07: "we should only show this tickbox if
+  // they have it on spell gems and ready to cast"). A recast is a countdown. The ✓ needs the agent to
+  // say DI is on that cleric's bar (mem) AND ready; everything else — a bar nobody could read, an
+  // older agent — is "?", never a tick by default. The agent already leaves out a cleric whose bar
+  // lacks DI.
+  function diChipState(c){
+    if (c.seconds > 0) return 'cd';
+    return (c.up && c.mem === true) ? 'up' : 'unk';
+  }
+  function diChipHtml(c){
+    var st = diChipState(c);
+    if (st === 'up') return '<span class="di-chip">✓ ' + esc(c.name) + '</span>';
+    if (st === 'unk') return '<span class="di-chip unk" title="Divine Intervention is not confirmed on this cleric’s spell gems yet, so no tick">' + esc(c.name) + ' ?</span>';
+    return '<span class="di-chip cd">' + esc(c.name) + ' <span class="di-sec">' + Math.max(1, c.seconds || 1) + 's</span></span>';
+  }
+  // "Only <X> has DI up" is spoken, so it must be true: exactly one confirmed tick and nobody else
+  // who might also have it (a "?" cleric could).
+  function diSoloUp(di){
+    var list = (di && di.clerics) || [];
+    if (list.length < 2) return null;
+    var ups = list.filter(function(c){ return diChipState(c) === 'up'; });
+    if (ups.length !== 1) return null;
+    return list.some(function(c){ return diChipState(c) === 'unk'; }) ? null : ups[0];
+  }
   function renderDi(){
     var el = document.getElementById('diready');
     var rowsEl = document.getElementById('direadyRows');
@@ -835,14 +931,9 @@
     if (!list.length) { el.style.display = 'none'; _diSoloSpokenFor = null; return; }
     el.style.display = 'block';
     var html = '';
-    for (var i = 0; i < list.length; i++) {
-      var c = list[i];
-      html += c.up
-        ? '<span class="di-chip">✓ ' + esc(c.name) + '</span>'
-        : '<span class="di-chip cd">' + esc(c.name) + ' <span class="di-sec">' + Math.max(1, c.seconds || 1) + 's</span></span>';
-    }
+    for (var i = 0; i < list.length; i++) html += diChipHtml(list[i]);
     rowsEl.innerHTML = html;
-    var soloUp = (di.up_count === 1 && list.length > 1) ? list.filter(function(c){ return c.up; })[0] : null;
+    var soloUp = diSoloUp(di);
     el.classList.toggle('di-last', !!soloUp);
     if (soloUp) {
       if (_diSoloSpokenFor !== soloUp.name) {
@@ -1019,7 +1110,7 @@
       + '<span class="txt" data-g="' + esc(label) + '">' + esc(label) + '</span></span>';
   }
 
-  // ✕ that takes a healer off the chain (Hitya 2026-08-14). Emitted on every
+  // ✕ that takes a healer off the chain (the guild lead, 2026-08-14). Emitted on every
   // row; CSS keeps it invisible until that row is hovered. The name rides in a
   // data attribute so a CONTESTED slot removes the right claimant — see
   // removeChChainSlot in the agent.
@@ -1061,6 +1152,237 @@
       try { window.mimic.overlayHoverInteractive(false); } catch (err) {}
     });
   })();
+
+  // ── ▭ Mini — variant B "Timeline lanes" (the guild vote, 2026-09-17) ───────
+  // The guild lead's ask: "a per-healer timeline scrolling right to left:
+  // middle is cast start, left edge is the land. Orange getting ready, blue
+  // casting, red interrupted, green when it lands. Main tank health stays."
+  // One lane per healer, in rotation order. The track's centre line is "cast
+  // starts". The LEFT half is the cast: a blue block grows from the centre
+  // toward the left edge (the land), the same right-to-left direction as the
+  // full overlay's cast bar. The RIGHT half is the queue: orange blocks slide
+  // in toward the centre as each turn comes.
+  //
+  // Everything is derived from the snapshot the full rows already read: no new
+  // poll, no agent change. Two states are INFERRED, not observed:
+  //   • "landed" = the cast clock ran out with no interrupt seen. The agent's
+  //     own note on interrupts: their ABSENCE is never proof the cast completed
+  //     (the message is range-limited and filterable). Green means "should
+  //     have landed", not a confirmed heal.
+  //   • the queue past NEXT is extrapolated: next's due time + k beats, which
+  //     assumes the chain holds its measured beat.
+  //
+  // Motion: render() (every 150ms) rebuilds the lane skeleton only when the
+  // lane LIST changes. A 100ms local ticker moves the blocks by writing their
+  // left / width and class, never HTML. It runs only while mini is on and a
+  // live (not stale) chain has lanes, and is cleared otherwise.
+  var CH_MINI_TICK_MS     = 100;    // the vote: "smooth needs a 100ms local tick"
+  var CH_MINI_QUEUE_SECS  = 9;      // a turn this far out sits at the right edge
+  var CH_MINI_Q_W         = 6;      // % width of a queued block
+  var CH_MINI_LAND_W      = 6;      // % width of the green land flash
+  var CH_MINI_LAND_MS     = 1000;   // how long the land flash holds
+  var CH_MINI_HP_FRESH_MS = 10000;  // older raid-pipe HP reads as unknown, never as current
+  var _raidPipe   = null;   // /api/state.raidPipe (Zeal type 5, this machine only)
+  var _miniModel  = null;   // { castMs, lingerMs, lanes } — what the ticker animates
+  var _miniEls    = null;   // { blks, nms } of the current skeleton
+  var _miniHtml   = null;   // byte-stability guards, as #rows has
+  var _miniMtHtml = null;
+  var _miniTimer  = null;
+
+  function chMiniOn(){
+    return !!(document.body && document.body.classList.contains('wp-mini'));
+  }
+
+  // Which state is a lane in at `now`? Same rules as the full rows (interrupt
+  // mark must be for THIS cast; cast window = the agent's ch_cast_ms), with one
+  // deliberate difference: an interrupted cast never goes back to blue or on
+  // to green once its red has lingered — it died, so it neither casts nor lands.
+  function chLaneState(l, now, castMs, lingerMs){
+    var el = l.lastAtMs ? now - l.lastAtMs : Number.POSITIVE_INFINITY;
+    var intAt = (l.interruptedAt && l.lastAtMs && l.interruptedAt >= l.lastAtMs) ? l.interruptedAt : 0;
+    if (intAt) {
+      if (now - intAt < lingerMs) return { state: 'interrupted', secs: (intAt - l.lastAtMs) / 1000 };
+    } else if (el < castMs) {
+      return { state: 'casting', secs: Math.max(0, el) / 1000 };
+    } else if (el < castMs + CH_MINI_LAND_MS) {
+      return { state: 'landed', secs: el / 1000 };
+    }
+    // A called GO outranks the predicted queue position: it means now.
+    if (l.go) return { state: 'queued', secs: 0 };
+    if (l.dueAtMs) return { state: 'queued', secs: Math.max(0, (l.dueAtMs - now) / 1000) };
+    // NEXT with no measured beat yet: orange name, but no block — we cannot
+    // say where on the track they are.
+    if (l.next) return { state: 'queued', secs: null };
+    return { state: 'idle', secs: 0 };
+  }
+
+  // Lane geometry — pure: (state, seconds) → where the block sits on the track
+  // (left / width in %, centre line at 50) and its colour classes. `secs` is
+  // seconds INTO the cast (casting / interrupted) or seconds UNTIL the turn
+  // (queued). blk null = no block on the track.
+  function chLaneGeom(state, secs, castSecs){
+    var cast = castSecs > 0 ? castSecs : CH_CAST_SECS;
+    if (state === 'casting' || state === 'interrupted') {
+      // Grows leftward from the centre; an interrupt freezes it where it died.
+      // 1% floor so a cast that has just started is visible at all.
+      var w = Math.max(1, Math.min(1, Math.max(0, secs || 0) / cast) * 50);
+      return { left: 50 - w, width: w,
+               blk: state === 'casting' ? 'bC' : 'bX', name: state === 'casting' ? 'cC' : 'cX' };
+    }
+    if (state === 'landed') return { left: 0, width: CH_MINI_LAND_W, blk: 'bL', name: 'cL' };
+    if (state === 'queued') {
+      if (secs == null) return { left: null, width: null, blk: null, name: 'cQ' };
+      if (secs > CH_MINI_QUEUE_SECS) return { left: null, width: null, blk: null, name: 'cI' };
+      // 0s → touching the centre line; CH_MINI_QUEUE_SECS → flush with the right edge.
+      return { left: 50 + (Math.max(0, secs) / CH_MINI_QUEUE_SECS) * (50 - CH_MINI_Q_W),
+               width: CH_MINI_Q_W, blk: 'bQ', name: 'cQ' };
+    }
+    return { left: null, width: null, blk: null, name: 'cI' };
+  }
+
+  // Lanes in rotation order (slot number), from the same snapshot fields the
+  // full rows use. A contested slot gets one lane per live claimant, as it
+  // gets one row each in full mode. A stale chain predicts nothing: every lane
+  // idles rather than piling overdue queue blocks on the centre line.
+  function chMiniModel(c, now, stale){
+    var nums = Object.keys(c.slots).map(Number).sort(function(a, b){ return a - b; });
+    var N = nums.length;
+    var beatMs = c.beat_ms > 0 ? c.beat_ms : 0;
+    // The due time the NEXT row and the footer count down to, so a lane can
+    // never disagree with them.
+    var dueMs = (!stale && c.next_num != null && c.last_ch && beatMs)
+      ? ((c.next_expected_at > 0) ? c.next_expected_at : (c.last_ch.atMs + beatMs)) : 0;
+    var ni = nums.indexOf(c.next_num);
+    var claimWindowMs = (c.ch_claim_window_ms > 0 ? c.ch_claim_window_ms : CH_CLAIM_WINDOW_MS);
+    var lanes = [];
+    for (var i = 0; i < N; i++) {
+      var n = nums[i], s = c.slots[n] || {};
+      var k = (ni >= 0) ? (i - ni + N) % N : -1;
+      var dueAt = (dueMs && k >= 0) ? dueMs + k * beatMs : 0;
+      var live = (s.claimants || []).filter(function (cl) {
+        return cl && cl.lastAtMs && (now - cl.lastAtMs) <= claimWindowMs;
+      });
+      var who = (live.length > 1) ? live : [{ name: s.name, lastAtMs: s.lastAtMs }];
+      for (var j = 0; j < who.length; j++) {
+        lanes.push({
+          name: who[j].name || '?',
+          lastAtMs: who[j].lastAtMs || 0,
+          // The agent marks the interrupt on the slot, for the caster it
+          // matched by name — so only that claimant's lane freezes red.
+          interruptedAt: (who[j].name === s.name) ? (s.interruptedAt || 0) : 0,
+          dueAtMs: dueAt,
+          next: !stale && c.next_num === n,
+          go: !stale && !!(c.last_go && c.last_go.num === n),
+        });
+      }
+    }
+    return {
+      castMs:   (c.ch_cast_ms > 0 ? c.ch_cast_ms : CH_CAST_SECS * 1000),
+      lingerMs: (c.ch_interrupt_linger_ms > 0 ? c.ch_interrupt_linger_ms : CH_INTERRUPT_LINGER_MS),
+      lanes: lanes,
+    };
+  }
+
+  // The MT row. Full mode names the tank in its header ("CH → <target>") but
+  // has no HP; the HP here is the raid-pipe entry the same /api/state fetch
+  // already carries, so it only exists when THIS machine's Zeal can see the
+  // tank (in your group, or /pipeverbose on). Otherwise it reads "—".
+  function chMiniMt(c, pipe, now){
+    var name = (c && c.target) ? String(c.target) : '';
+    var hp = null;
+    if (name && pipe && Array.isArray(pipe.members) && (now - (pipe.at || 0)) <= CH_MINI_HP_FRESH_MS) {
+      var lc = name.toLowerCase();
+      for (var i = 0; i < pipe.members.length; i++) {
+        var m = pipe.members[i];
+        if (m && m.name && String(m.name).toLowerCase() === lc && m.hp_pct != null) {
+          hp = Math.max(0, Math.min(100, Math.round(m.hp_pct)));
+          break;
+        }
+      }
+    }
+    return { name: name, hp: hp };
+  }
+  function chMiniMtHtml(mt){
+    var hp = mt.hp;
+    // The tank overlay's 50 / 25 steps, which every mini HP bar keeps.
+    var cls = (hp == null) ? 'unk' : (hp <= 25 ? 'lo' : (hp <= 50 ? 'mid' : 'hi'));
+    return '<span class="mt-pct wp-mini-num ' + cls + '">' + (hp == null ? '—' : hp + '%') + '</span>'
+      + '<span class="mt-bar wp-mini-bar"><i class="' + cls + '" style="width:' + (hp == null ? 0 : hp) + '%"></i></span>'
+      + '<span class="mt-nm wp-mini-name">' + esc(mt.name || 'CH chain') + '</span>'
+      + (mt.name ? '<span class="mt-tag">MT</span>' : '');
+  }
+  // Skeleton only: names and empty blocks. State colours and positions are
+  // the ticker's job, so this string changes only when the lane list does.
+  function chMiniLanesHtml(lanes){
+    var h = '';
+    for (var i = 0; i < lanes.length; i++) {
+      h += '<div class="lane"><span class="lnm wp-mini-name cI">' + esc(lanes[i].name) + '</span>'
+        +  '<span class="trk"><span class="blk" style="display:none"></span></span></div>';
+    }
+    return h;
+  }
+
+  function chMiniTick(){
+    var m = _miniModel, els = _miniEls;
+    if (!m || !els) return;
+    var now = Date.now();
+    for (var i = 0; i < m.lanes.length; i++) {
+      var b = els.blks[i], nm = els.nms[i];
+      if (!b || !nm) continue;
+      var st = chLaneState(m.lanes[i], now, m.castMs, m.lingerMs);
+      var g = chLaneGeom(st.state, st.secs, m.castMs / 1000);
+      var nc = 'lnm wp-mini-name ' + g.name;
+      if (nm.className !== nc) nm.className = nc;
+      // Diffed against what we last WROTE: the browser normalises style
+      // strings, so reading them back would always look changed. A hidden
+      // block is display:none, not width 0 — a block appearing from
+      // display:none does not transition, so it never slides in from wherever
+      // it last was.
+      var D = g.blk ? '' : 'none';
+      if (b.__d !== D) { b.style.display = D; b.__d = D; }
+      if (!g.blk) continue;
+      var bc = 'blk ' + g.blk;
+      if (b.className !== bc) b.className = bc;
+      var L = g.left.toFixed(2) + '%', W = g.width.toFixed(2) + '%';
+      if (b.__l !== L) { b.style.left = L; b.__l = L; }
+      if (b.__w !== W) { b.style.width = W; b.__w = W; }
+    }
+  }
+  function chMiniTicker(run){
+    if (run && !_miniTimer) _miniTimer = setInterval(chMiniTick, CH_MINI_TICK_MS);
+    else if (!run && _miniTimer) { clearInterval(_miniTimer); _miniTimer = null; }
+  }
+
+  // Called from render() on both of its paths, BEFORE its autoFitOverlay call,
+  // so the refit measures the rendition that is actually showing.
+  function renderMini(c, now, stale){
+    var box = document.getElementById('chmini');
+    if (!box) return;
+    var on = chMiniOn() && !!(c && c.slots && Object.keys(c.slots).length);
+    _miniModel = on ? chMiniModel(c, now, stale) : null;
+    box.classList.toggle('on', on);
+    box.classList.toggle('stale', on && !!stale);
+    if (!on) {
+      // Drop the guards too, so coming back into mini always rebuilds.
+      _miniEls = null; _miniHtml = null; _miniMtHtml = null;
+      chMiniTicker(false);
+      return;
+    }
+    var mtHtml = chMiniMtHtml(chMiniMt(c, _raidPipe, now));
+    if (mtHtml !== _miniMtHtml) {
+      document.getElementById('miniMt').innerHTML = mtHtml;
+      _miniMtHtml = mtHtml;
+    }
+    var lanesEl = document.getElementById('miniLanes');
+    var html = chMiniLanesHtml(_miniModel.lanes);
+    if (html !== _miniHtml || !_miniEls) {
+      lanesEl.innerHTML = html;
+      _miniHtml = html;
+      _miniEls = { blks: lanesEl.getElementsByClassName('blk'), nms: lanesEl.getElementsByClassName('lnm') };
+    }
+    chMiniTick();   // place the blocks now, not up to 100ms from now
+    chMiniTicker(!stale && _miniModel.lanes.length > 0);
+  }
 
   // v1.1.5 — pivot announcement state (only speak once per slip).
   var _lastPivotKey = null;
@@ -1143,6 +1465,7 @@
       beatEl.textContent = '';
       emptyEl.style.display = 'block';
       _gapKey = null; _spokeSoon = false; _spokeLate = false;
+      renderMini(null, 0, false);
       try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
       return;
     }
@@ -1179,7 +1502,7 @@
     // from the same two fields (next_expected_at, else last_ch.atMs + beat_ms),
     // so the row and the footer can never disagree — the healer who is up next
     // reads their own number under their own name instead of having to find it
-    // in the strip at the bottom (Hitya 2026-08-13).
+    // in the strip at the bottom (the guild lead, 2026-08-13).
     var nextRemSec = null;
     if (c.next_num != null && c.last_ch && beatSecs) {
       var _dueMsRow = (c.next_expected_at > 0) ? c.next_expected_at : (c.last_ch.atMs + c.beat_ms);
@@ -1204,19 +1527,19 @@
       var isCasting = !isInterrupted && slotElapsedMs < castSecs * 1000;
       // Explicit GO cue for THIS slot (server-gated: fresh + not yet cast).
       // Outranks the passive NEXT — a called "GO GO GO" is louder than "you're
-      // up next" (Uilnayar 2026-07-06).
+      // up next" (a member, 2026-07-06).
       var goActive  = !isCasting && !isInterrupted && c.last_go && c.last_go.num === n;
       var isNext    = !isCasting && !isInterrupted && !goActive && c.next_num === n;
       // Two live claimants on this number → ONE ROW EACH, in first-claimed
-      // order, rather than the last caller silently owning the row (Mcdorf
-      // stays first when Pyxil mis-calls 001). Separate rows because a merged
-      // "Mcdorf / Stupidric…" truncates AND collapses two different casts into
+      // order, rather than the last caller silently owning the row (a member
+      // stays first when a member mis-calls 001). Separate rows because a merged
+      // "Zelbarr / Stupidric…" truncates AND collapses two different casts into
       // one bar — you could see that the slot was contested but not what either
-      // cleric was actually doing (Hitya, live test 2026-08-12).
+      // cleric was actually doing (the guild lead, live test 2026-08-12).
       // Age them out HERE too. The agent's order_conflict flag applies the claim
       // window, but this row check did not, so a stale claimant kept the rows
       // split and the banner lit long after the agent had stopped flagging it —
-      // the two could disagree indefinitely (Hitya, live 2026-08-12).
+      // the two could disagree indefinitely (the guild lead, live 2026-08-12).
       var claimWindowMs = (c.ch_claim_window_ms > 0 ? c.ch_claim_window_ms : CH_CLAIM_WINDOW_MS);
       var liveClaims = (s.claimants || []).filter(function (cl) {
         return cl && cl.lastAtMs && (now - cl.lastAtMs) <= claimWindowMs;
@@ -1235,7 +1558,7 @@
         var el = slotElapsedMs / 1000;
         var remain = Math.max(0, castSecs - el);
         // Seconds LEFT on the cast, unit included so it reads as a cast time
-        // rather than a bare number (Hitya 2026-07-31).
+        // rather than a bare number (the guild lead, 2026-07-31).
         stat = remain.toFixed(1) + 's';
         bar = '<div class="bar"><div class="fill" style="width:' + Math.min(100, (el / castSecs) * 100).toFixed(1) + '%"></div></div>';
       } else if (goActive) {
@@ -1365,6 +1688,7 @@
       if (gapState === 'soon' && !_spokeSoon) { _spokeSoon = true; speakGap('CH gap soon on ' + gapTank); }
       if (gapState === 'late' && !_spokeLate) { _spokeLate = true; speakGap('CH gap on ' + gapTank); }
     }
+    renderMini(c, now, stale);
     try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
   }
 
@@ -1384,6 +1708,7 @@
       _lastOffHeal = (s && s.offHealCandidates) || [];
       _lastDi = (s && s.diStatus) || null;
       _lastDiCall = (s && s.diCallout) || null;
+      _raidPipe = (s && s.raidPipe) || null;   // mini's MT HP (renderMini)
       // Integrity signals — every link in the chain-data path (see the
       // heartbeat state block above for why each one matters).
       _lastFetchOkAt = Date.now();
@@ -1405,5 +1730,8 @@
   // between fetches (timestamps come from the same machine's log, so local
   // Date.now() math is exact).
   render(); setInterval(render, 150);
+  // A mini flip re-renders at once rather than on the next 150ms beat, so the
+  // refit at the end of render() measures the rendition that is now showing.
+  window.addEventListener('wp-mini-change', function(){ render(); });
 </script>
 </body></html>

@@ -1,4 +1,4 @@
-// Curated-boss display filter (Hitya 2026-08-19: "THESE are not the right
+// Curated-boss display filter (the guild lead, 2026-08-19: "THESE are not the right
 // parses to display here for nonbosses").
 //
 // Since bot 3.1.52, encounter persistence self-registers ANY exactly-matched

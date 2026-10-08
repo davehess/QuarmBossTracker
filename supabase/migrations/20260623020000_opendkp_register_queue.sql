@@ -16,7 +16,7 @@ create table if not exists opendkp_register_requests (
   level                    integer     not null,
   rank                     text        not null,
   parent_opendkp_id        integer,                 -- family root to parent under (0/null = root)
-  parent_name              text,                    -- display + DM ("alt of Canopy")
+  parent_name              text,                    -- display + DM ("alt of Hessmoor")
   requested_by_discord_id  text,                    -- officer who clicked Register
   uploader_discord_id      text,                    -- character owner (claim-DM target)
   dm_owner                 boolean     not null default true,

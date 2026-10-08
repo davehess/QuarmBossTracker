@@ -1,0 +1,129 @@
+// GET /api/agent/item-catalog — the wishlist picker's local universe.
+//
+// The guild lead asked what syncing the item list down would cost before agreeing to it,
+// so the numbers are part of the contract, not trivia:
+//   11,099 rows · ~380 kB JSON · ~130 kB gzipped · ~16 players · source moves
+//   weekly ⇒ ~2 MB/week egress, 304 on every other startup.
+// The two things that keep it that cheap are the TTL and the ETag. Both are
+// asserted here because both are one-character changes away from costing 20×.
+import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { createRequire } from 'node:module';
+import { BOT_INDEX, readSource, sliceBlock, stripSql } from './_source-slice.js';
+
+const realSupabase = createRequire(import.meta.url)('../utils/supabase.js');
+
+const src = readSource(BOT_INDEX);
+const handler = sliceBlock(src, 'async function _handleAgentItemCatalog(req, res', '\n}');
+const ROOT = path.dirname(BOT_INDEX);
+
+describe('item catalog endpoint', () => {
+  it('caches for 12h, not the spell catalog\'s 1h', () => {
+    // The source table only changes on the weekly sync. At a 1h TTL a full miss
+    // cycle re-reads 380 kB 24×/day; at 12h it is twice.
+    const ttl = src.match(/const _ITEM_CATALOG_TTL_MS = ([^;]+);/);
+    expect(ttl).toBeTruthy();
+    const ms = Function(`return ${ttl[1]}`)();
+    expect(ms).toBeGreaterThanOrEqual(12 * 60 * 60 * 1000);
+  });
+
+  it('serves a 304 when the client already has this version', () => {
+    // Without this every startup pays the full body instead of ~200 bytes.
+    expect(handler).toMatch(/if-none-match/);
+    expect(handler).toMatch(/res\.writeHead\(304/);
+    expect(handler).toMatch(/ETag/);
+  });
+
+  it('sends rows as arrays, not objects', () => {
+    // At 11k rows the repeated key names would be most of the payload.
+    expect(handler).toMatch(/entries\.push\(\[r\.item_id, r\.item_name, r\.era\]\)/);
+  });
+
+  it('reads every row past the server\'s 1000-row cap', async () => {
+    // PostgREST answers at most 1000 rows whatever limit is asked. A page size above that came
+    // back "short" and ended the loop: agents got 1,000 of 11,104 items until 2026-10-01.
+    const ROWS = 2500;
+    const capped = {
+      select: async (_t, qs) => {
+        const off = Number(/offset=(\d+)/.exec(qs)[1]);
+        const lim = Math.min(Number(/limit=(\d+)/.exec(qs)[1]), 1000);   // the server's cap
+        const out = [];
+        for (let i = off; i < Math.min(off + lim, ROWS); i++) out.push({ item_id: i, item_name: 'x' + i, era: 'classic' });
+        return out;
+      },
+    };
+    // The handler reads through the shared pager (utils/supabase.js selectAllPaged); feed the REAL
+    // pager this capped server, so the walk past the cap is the shipped one.
+    const supabase = { ...capped, selectAllPaged: (t, q, order) => realSupabase.selectAllPaged(t, q, order, capped.select) };
+    let cache = null;
+    // eslint-disable-next-line no-new-func
+    const fn = new Function('require', 'mimicLink', '_ITEM_CATALOG_TTL_MS', 'setCache',
+      `let _itemCatalogCache = null;\n${handler}\nreturn async (req, res) => { await _handleAgentItemCatalog(req, res, true); setCache(_itemCatalogCache); };`)(
+      (m) => (m === 'crypto' ? crypto : supabase), {}, 1000, (c) => { cache = c; });
+    let body = null;
+    await fn({ headers: {} }, { writeHead: () => {}, end: (b) => { body = b; } });
+    expect(JSON.parse(body).entries.length).toBe(ROWS);
+    expect(cache.body).toBe(body);
+  });
+
+  it('reads the view, so the era join stays in Postgres', () => {
+    expect(handler).toMatch(/item_catalog_droppable/);
+    expect(handler).toMatch(/selectAllPaged\('item_catalog_droppable'/);   // paged — the view is 11k rows
+  });
+
+  it('survives a Supabase failure instead of 500ing the fleet', () => {
+    // A failed read is never cached and never served half-built: the last good catalog keeps
+    // serving, and with none the agent keeps its own disk cache (or the picker asks the server,
+    // which is how it worked before this existed). Behaviour: test/cap-safe-reads.test.js.
+    expect(handler).toMatch(/catch \(err\)/);
+    expect(handler).toMatch(/\[item-catalog\] fetch failed/);
+  });
+
+  it('is registered as a GET route', () => {
+    expect(src).toMatch(/req\.url\.startsWith\('\/api\/agent\/item-catalog'\)/);
+    expect(src).toMatch(/_handleAgentItemCatalog\(req, res\)/);
+  });
+
+  it('requires agent auth like every other agent endpoint', () => {
+    expect(handler).toMatch(/requireAgentAuth/);
+  });
+});
+
+describe('the migration that backs it', () => {
+  const file = path.join(ROOT, 'supabase', 'migrations', '20260830142205_item_catalog_droppable_view.sql');
+  // ⚠ Strip `--` comments before matching. This migration's header explains why
+  // it does NOT key on bosses_local, and that explanation satisfied the
+  // assertion checking bosses_local is absent. Fifth time in this session that
+  // a comment has stood in for the code it describes — see CLAUDE.md.
+  const sql = stripSql(fs.readFileSync(file, 'utf8'));
+
+  it('is idempotent', () => {
+    expect(sql).toMatch(/create or replace view/i);
+  });
+
+  it('includes Planes of Power by DROP TABLE, not by tracked boss', () => {
+    // The guild lead, 2026-08-30: PoP items must be wishlistable before the unlock. Only
+    // 12 PoP bosses are registered (vs 407 Luclin) because that board is built
+    // out after unlock — a boss-driven universe reached 113 of 1,212 PoP items.
+    expect(sql).toMatch(/eqemu_npc_drops/);
+    expect(sql).not.toMatch(/bosses_local/);
+  });
+
+  it('derives era from the dropping NPC\'s zone, the documented recipe', () => {
+    // Items have no expansion column; id = zoneid*1000 + n is how era is known.
+    expect(sql).toMatch(/z\.zone_id = \(d\.npc_id \/ 1000\)/);
+    expect(sql).toMatch(/expansion/);
+  });
+
+  it('keeps an item that resolves to no zone rather than dropping it', () => {
+    // 22 rows have no zone match; losing them would silently shrink the picker.
+    expect(sql).toMatch(/left join eqemu_zone/i);
+    expect(sql).toMatch(/nulls last/i);
+  });
+
+  it('is readable by the same audience as the mirrors it is built from', () => {
+    expect(sql).toMatch(/grant select on item_catalog_droppable to anon, authenticated/);
+  });
+});

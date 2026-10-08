@@ -19,7 +19,7 @@ raid. They have never fired and never could.
 which begins with the EQ timestamp:
 
 ```
-[Sun Aug 02 21:10:01 2026] Uilnayar looks somewhat dimwitted.
+[Sun Aug 02 21:10:01 2026] Aramil looks somewhat dimwitted.
 ```
 
 Patterns compile with flags `'i'` — **no `m`** (`_applyGuildTriggersResponse`) —
@@ -59,14 +59,14 @@ including multi-word and backtick names:
 
 | trigger | captured `{s}` after fix |
 |---|---|
-| Feeblemind — landed | `Uilnayar` |
+| Feeblemind — landed | `Aramil` |
 | Shadow Poison — cure | `Aten Ha Ra` |
 | Wave of Death — serpent AE | `` Rhag`Zhezum `` |
 | Enrage (Begin) | `a shissar disciple` |
 
 > **Do NOT "fix" this by just deleting the `^`.** The `{s}` character class
 > (`[\w'`\ -]`) includes **space**, so an unanchored pattern matches starting at
-> the space after `]` and captures **` Uilnayar`** with a leading space. That
+> the space after `]` and captures **` Aramil`** with a leading space. That
 > silently corrupts every name-keyed thing downstream — TTS, the charm-pet
 > suppression check, `require_raid_member`. The explicit prefix consumes the
 > separator with `\s+` and hands back a clean name.

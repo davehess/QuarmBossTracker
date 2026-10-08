@@ -535,7 +535,7 @@ describe('composition', () => {
   it('uses the SAME death dedup as the parse card (#134), then collapses across encounters', () => {
     const t = FIRST_PULL + 10_000;
     const iso = (ms) => new Date(ms).toISOString();
-    // Three parsers see one Hitya death (clock skew), and one parser reports
+    // Three parsers see one the guild lead death (clock skew), and one parser reports
     // "Shavimo" twice — the NPC-namesake phantom rule drops Shavimo entirely.
     const contribs = [
       { encounter_id: 'e1', deaths: [{ name: 'Hitya', ts: iso(t),        class: 'Monk' },
@@ -601,6 +601,56 @@ describe('composition', () => {
     expect(thinHist.slowFights).toHaveLength(0);
   });
 
+  it('a median the database already reduced (historyStats) judges a fight exactly as the raw rows do', () => {
+    // collectNightData asks raid_review_history_medians for { npc_id, n, median_sec } because the raw
+    // rows no longer fit in one response. Same comparison, same floors, same "no claim under 4 samples".
+    const slowRows = raidReview.summarizeNight(nightData({
+      encounters: [enc({ duration_sec: 400 })],
+      history: Array.from({ length: 8 }, () => ({ npc_id: 162037, duration_sec: 200 })),
+    }));
+    const slowStats = raidReview.summarizeNight(nightData({
+      encounters: [enc({ duration_sec: 400 })], historyStats: [{ npc_id: 162037, n: 8, median_sec: 200 }],
+    }));
+    expect(slowStats.slowFights).toEqual(slowRows.slowFights);
+    expect(slowStats.slowFights[0]).toMatchObject({ median_sec: 200, pct: 100 });
+    const fastStats = raidReview.summarizeNight(nightData({
+      encounters: [enc({ duration_sec: 100 })], historyStats: [{ npc_id: 162037, n: 8, median_sec: 200 }],
+    }));
+    expect(fastStats.fastFights[0]).toMatchObject({ median_sec: 200, pct: 50 });
+    // Under four samples → no claim; and the minute-of-real-time floor still applies
+    // (255 s against 200 s is over 25% but not a minute over).
+    expect(raidReview.summarizeNight(nightData({
+      encounters: [enc({ duration_sec: 400 })], historyStats: [{ npc_id: 162037, n: 3, median_sec: 200 }],
+    })).slowFights).toHaveLength(0);
+    expect(raidReview.summarizeNight(nightData({
+      encounters: [enc({ duration_sec: 255 })], historyStats: [{ npc_id: 162037, n: 8, median_sec: 200 }],
+    })).slowFights).toHaveLength(0);
+  });
+
+  it('the median of an even sample is the UPPER middle, in the rows path and the stats path alike', () => {
+    // [100,200,300,400] → sorted[2] = 300, never 250. The SQL (row_number = n/2) is built to match.
+    const rows = [100, 200, 300, 400].map(d => ({ npc_id: 162037, duration_sec: d }));
+    const a = raidReview.summarizeNight(nightData({ encounters: [enc({ duration_sec: 600 })], history: rows }));
+    const b = raidReview.summarizeNight(nightData({ encounters: [enc({ duration_sec: 600 })],
+      historyStats: [{ npc_id: 162037, n: 4, median_sec: 300 }] }));
+    expect(a.slowFights[0].median_sec).toBe(300);
+    expect(b.slowFights).toEqual(a.slowFights);
+  });
+
+  it('the campfire line counts the same from per-type counts (funCounts) as from raw rows', () => {
+    const rows = [...Array(5).fill('drunkard'), ...Array(3).fill('dragon_punch'), 'summon_food']
+      .map(event_type => ({ event_type }));
+    const fromRows = raidReview.summarizeNight(nightData({ funEvents: rows })).fun;
+    const fromCounts = raidReview.summarizeNight(nightData({ funCounts: [
+      { event_type: 'drunkard', n: 5 }, { event_type: 'dragon_punch', n: 3 }, { event_type: 'summon_food', n: 1 },
+    ] })).fun;
+    expect(fromCounts).toEqual(fromRows);
+    expect(fromCounts).toEqual([{ type: 'drunkard', n: 5 }, { type: 'dragon_punch', n: 3 }]);
+    // A bigint count that arrives as a string, or a row with no type, is read safely.
+    expect(raidReview.summarizeNight(nightData({ funCounts: [{ event_type: 'drunkard', n: '7' }, { n: 2 }] })).fun)
+      .toEqual([{ type: 'drunkard', n: 7 }]);
+  });
+
   it('engaged-but-not-confirmed fights are wipes, not kills', () => {
     const wipe = enc({ id: 'e2', ended_at: null });
     const sum = raidReview.summarizeNight(nightData({ encounters: [enc(), wipe] }));
@@ -645,7 +695,7 @@ describe('composition', () => {
   });
 });
 
-// ── Content additions: the timeline strip + trash (Hitya 2026-08-02) ─────────
+// ── Content additions: the timeline strip + trash (the guild lead, 2026-08-02) ─────────
 
 const iso = (ms) => new Date(ms).toISOString();
 
@@ -685,7 +735,7 @@ describe('the Discord fight timeline (the FightTimeline analogue)', () => {
     const quiet = enc({ id: 'e2', npc_id: 162039, eqemu_npc_types: { name: '#Vyzh`dra_the_Exiled', zone_short: null } });
     const sum = raidReview.summarizeNight(nightData({
       encounters: [enc(), quiet],
-      // Two parsers see ONE Hitya death — the shared dedup keeps one, so the
+      // Two parsers see ONE the guild lead death — the shared dedup keeps one, so the
       // timeline must show one, not two.
       deathContribs: [
         { encounter_id: 'e1', deaths: [{ name: 'Hitya', ts: iso(FIRST_PULL + 5000), class: 'Monk' }] },
@@ -697,7 +747,7 @@ describe('the Discord fight timeline (the FightTimeline analogue)', () => {
     expect(sum.deaths).toHaveLength(1);
   });
 
-  // Hitya 2026-08-06: "we only saw 4 of the fight timelines posted" — on a
+  // The guild lead 2026-08-06: "we only saw 4 of the fight timelines posted" — on a
   // night with 12 kills. The suppression was correct (the other 8 were clean),
   // but the embed printed "Fight timelines (4)" a few lines under "12 down"
   // with nothing connecting them, so a suppressed clean kill was
@@ -1023,7 +1073,7 @@ describe('(f) _handleAgentUpload is unchanged by the live hook', () => {
   });
 });
 
-// ── Intentional deaths (R2, Hitya 2026-08-06) ─────────────────────────────
+// ── Intentional deaths (R2, the guild lead 2026-08-06) ─────────────────────────────
 //
 // "Fawx and Dant both 'made corpses' on purpose with Kaas Thox Xi Ans Dyek, so
 // while they did have 2 deaths, they were intentional. Perhaps officers can
@@ -1155,7 +1205,7 @@ describe('intentional deaths', () => {
   });
 });
 
-// ── Reserved top-of-thread slots (R3, Hitya 2026-08-06) ───────────────────
+// ── Reserved top-of-thread slots (R3, the guild lead 2026-08-06) ───────────────────
 //
 // "the /raidreview posted to the third line of the page — when the raid night
 // thread opens up it should reserve the first two lines of it for the raid
@@ -1239,7 +1289,7 @@ describe('reserved review slots', () => {
     // "here:true" makes the CURRENT CHANNEL the night's target, so
     // getRaidNightTarget can hand back #raid-chat itself. Six placeholder cards
     // are fine at the top of a quiet per-night thread and are pure spam in the
-    // guild's busiest channel (Hitya, 2026-08-06).
+    // guild's busiest channel (the guild lead, 2026-08-06).
     const kv = fakeKv();
     const channel = fakeThread('RAID_CHAT');
     channel.isThread = () => false;                 // a plain text channel

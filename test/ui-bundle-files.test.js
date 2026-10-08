@@ -57,7 +57,7 @@ const FOLDER = [
   'Hitya_pq.proj.ini', 'UI_Hitya_pq.proj.ini',
   'Sock_Hitya_pq.proj.ini', 'Socials_Hitya_pq.proj.ini',
   'Hitya_spellsets.ini',
-  // REAL filenames, confirmed against Hitya's own EQ folder 2026-08-09 — these
+  // REAL filenames, confirmed against the guild lead's own EQ folder 2026-08-09 — these
   // are the two the old enumeration dropped on a machine move.
   'Hitya_bandolier.ini',            // [setname] → 4 item-id slots per weapon set
   'Hitya_protected.ini',            // itemid^Name, guards against destroying items
@@ -96,7 +96,7 @@ describe('UI Studio bundle — what travels to a new machine', () => {
   });
 
   it('name must sit on a boundary — a short name cannot match a longer one', () => {
-    // 'Uil' must not drag in Uilnayar's files.
+    // 'Uil' must not drag in a member's files.
     const folder = ['Uilnayar_pq.proj.ini', 'UI_Uilnayar_pq.proj.ini', 'Uil_pq.proj.ini'];
     const short = wanted(folder, 'Uil');
     expect(short).toContain('Uil_pq.proj.ini');

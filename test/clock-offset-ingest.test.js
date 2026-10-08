@@ -1,6 +1,6 @@
 // Clock-offset correction at ingest (R1).
 //
-// The bug, from the 2026-08-06 raid: Fargan's install reads ~63s behind, so his
+// The bug, from the 2026-08-06 raid: a member's install reads ~63s behind, so his
 // copy of a SHARED death landed 63s later than everyone else's. Death dedup
 // collapses sightings within 30s, 63 > 30, so his copy escaped as a phantom
 // second death and the parse card overcounted.
@@ -20,7 +20,7 @@ const { dedupParseDeaths } = require('../utils/parseDeaths.js');
 const NOW = Date.parse('2026-08-06T21:15:00.000Z');
 const iso = ms => new Date(ms).toISOString();
 
-// Fargan's real row, 2026-08-06.
+// A member's real row, 2026-08-06.
 const FARGAN = {
   offset_ms: 63541, samples: 364, spread_ms: 10333,
   last_sample_at: iso(NOW - 60_000),
@@ -125,7 +125,7 @@ describe('applyClockOffsetToDeaths', () => {
 });
 
 describe('the actual bug: a skewed observer no longer doubles a death', () => {
-  // One death. Three people saw it. Two clocks are fine, Fargan's reads 63.5s
+  // One death. Three people saw it. Two clocks are fine, a member's reads 63.5s
   // behind, so his copy is stamped 63.5s early.
   const T = Date.parse('2026-08-06T21:10:00.000Z');
   const sighting = (tsMs) => [{ name: 'Syko', ts: iso(tsMs), class: 'Warrior' }];

@@ -1,6 +1,6 @@
 // Hide-all must stay distinguishable from "I turned this off".
 //
-// Uilnayar, 2026-08-04: "we should be able to see in the overlays section which
+// A member, 2026-08-04: "we should be able to see in the overlays section which
 // ones were previously off but are hidden. Currently, when we hide the windows,
 // it just sets everything to off."
 //
@@ -18,7 +18,7 @@
 
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import { readSource, sliceBlock, evalBlock, ROOT } from './_source-slice.js';
+import { readSource, sliceBlock, evalBlock, stripJs, ROOT } from './_source-slice.js';
 
 const main  = readSource(path.join(ROOT, 'apps', 'mimic', 'main.js'));
 const agent = readSource(path.join(ROOT, 'packages', 'wolfpack-logsync', 'index.js'));
@@ -105,7 +105,11 @@ describe('the dashboard renders the third state', () => {
   const fn = sliceBlock(agent, 'function wpRefreshOverlayToggles() {', '\n}');
 
   it('labels a hidden-but-enabled overlay HIDDEN, not OFF', () => {
-    expect(fn).toMatch(/b\.textContent = isOn \? 'ON' : \(wasOn \? 'HIDDEN' : 'OFF'\);/);
+    // Option C (2026-09-29): the state word decides the placement too — HIDDEN
+    // stays under On screen now, only OFF becomes an Add card. Run for real in
+    // test/overlays-tab-option-c.test.js.
+    expect(fn).toMatch(/var word = inDock \? 'DOCKED' : \(isOn \? 'ON' : \(wasOn \? 'HIDDEN' : 'OFF'\)\);/);
+    expect(fn).toMatch(/var listed = word !== 'OFF';/);
   });
 
   it('derives HIDDEN from the snapshot, not from hideAllActive alone', () => {
@@ -132,7 +136,7 @@ describe('the dashboard renders the third state', () => {
 
     const rows = sliceBlock(agent, 'var WP_OVERLAY_ROWS = [', '\n];');
     const keys = [...rows.matchAll(/^\s*\['([a-zA-Z]+)',/gm)].map(m => m[1]);
-    expect(keys.length).toBe(16);   // 15 overlays + the dock row (2026-08-19)
+    expect(keys.length).toBe(18);   // 17 overlays (Timers canvas, 2026-09-29) + the dock row (2026-08-19)
     expect(onKeys).toHaveLength(keys.length);
     for (const k of keys) {
       expect(map[k], `row '${k}' has no flag mapping`).toBeTruthy();
@@ -153,6 +157,6 @@ describe('the dashboard renders the third state', () => {
   it('clears the banner when hide-all is released', () => {
     // A banner that only ever gets set would stay on screen claiming overlays
     // are parked after they came back.
-    expect(fn).toMatch(/: '';/);
+    expect(stripJs(fn)).toMatch(/morphInto\(hb, hidPrev\s*\?[\s\S]*?: ''\);/);
   });
 });

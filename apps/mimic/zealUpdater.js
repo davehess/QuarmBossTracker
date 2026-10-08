@@ -19,7 +19,29 @@ const fs   = require('fs');
 const path = require('path');
 const { httpsGet, unzip, backupAndWriteBinary } = require('./ghDownload');
 
-const GH_API = 'https://api.github.com/repos/CoastalRedwood/Zeal/releases/latest';
+// Where Zeal comes from (cfg.zealSource). 'official' is CoastalRedwood's latest
+// release, everyone's default. 'test' is the guild's fork: its test-all branch
+// (every tag branch merged onto the current Zeal), rebuilt on GitHub on every push
+// into one rolling prerelease (the guild lead, 2026-10-01: "build the option into
+// mimic to pull my zeal repo's build as an option"; fork workflow
+// build-test-all.yml, DECISIONS §117). Anything else reads as 'official'.
+const ZEAL_SOURCES = {
+  official: { api: 'https://api.github.com/repos/CoastalRedwood/Zeal/releases/latest' },
+  test:     { api: 'https://api.github.com/repos/davehess/Zeal/releases/tags/test-all-build' },
+};
+function _zealSource(name) { return Object.prototype.hasOwnProperty.call(ZEAL_SOURCES, name) ? name : 'official'; }
+
+// The test release keeps one tag, so a build is named by its commit instead:
+// "testall-<7 hex>", the label Zeal's own options window shows for it. The
+// workflow names the release "test-all (<hash>)"; target_commitish is the
+// fallback, then the asset's upload time, so a new build always reads as new.
+function _testBuildTag(rel, zip) {
+  const m = /\(([0-9a-f]{7,40})\)/i.exec(String((rel && rel.name) || ''));
+  const commitish = String((rel && rel.target_commitish) || '');
+  const sha = m ? m[1] : (/^[0-9a-f]{7,40}$/i.test(commitish) ? commitish : null);
+  if (sha) return 'testall-' + sha.slice(0, 7).toLowerCase();
+  return 'testall-' + String((zip && (zip.updated_at || zip.id)) || (rel && rel.published_at) || 'unknown');
+}
 
 // Map a zip entry to its destination under the EQ client folder, or null to
 // skip it. Handles both flat zips and zips nested under a top-level folder:
@@ -42,18 +64,20 @@ function _destFor(eqDir, entryName) {
 
 // ── Public API ──────────────────────────────────────────────────────────────
 
-// Fetch the latest release metadata. Picks the zeal_v*.zip asset (falls back to
-// any .zip). Network-only, no disk writes.
-async function checkLatest() {
-  const rel = await httpsGet(GH_API, { json: true });
+// Fetch the latest release metadata from `source` ('official' | 'test'). Picks the
+// zeal_v*.zip asset (falls back to any .zip). Network-only, no disk writes.
+async function checkLatest(source) {
+  const src = _zealSource(source);
+  const rel = await httpsGet(ZEAL_SOURCES[src].api, { json: true });
   const assets = Array.isArray(rel.assets) ? rel.assets : [];
   const zip = assets.find(a => /^zeal_v.*\.zip$/i.test(a.name))
            || assets.find(a => /\.zip$/i.test(a.name));
   if (!zip || !zip.browser_download_url) {
-    throw new Error('latest Zeal release has no .zip asset');
+    throw new Error(src === 'test' ? 'the Zeal test build has no .zip yet' : 'latest Zeal release has no .zip asset');
   }
   return {
-    tag:         rel.tag_name || null,
+    source:      src,
+    tag:         src === 'test' ? _testBuildTag(rel, zip) : (rel.tag_name || null),
     name:        rel.name || rel.tag_name || null,
     htmlUrl:     rel.html_url || null,
     publishedAt: rel.published_at || null,
@@ -74,14 +98,15 @@ function localStatus(eqDir, installedTag) {
 
 // Download the release zip and install Zeal.asi + uifiles/ into eqDir, backing
 // up every replaced file. Returns { ok, tag, written:[], backedUp:[] }.
-// `release` may be passed in (from a prior checkLatest) to avoid a second fetch.
-async function install(eqDir, { release } = {}) {
+// `release` may be passed in (from a prior checkLatest) to avoid a second fetch;
+// otherwise `source` picks where to fetch from.
+async function install(eqDir, { release, source } = {}) {
   const dir = String(eqDir || '').trim();
   if (!dir) throw new Error('no EverQuest folder set');
   if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
     throw new Error('EverQuest folder not found: ' + dir);
   }
-  const rel = release || await checkLatest();
+  const rel = release || await checkLatest(source);
   const buf = await httpsGet(rel.assetUrl, { json: false });
   const entries = unzip(buf);
   const written = [], backedUp = [];
@@ -100,4 +125,4 @@ async function install(eqDir, { release } = {}) {
   return { ok: true, tag: rel.tag, name: rel.name, written, backedUp };
 }
 
-module.exports = { checkLatest, localStatus, install, _destFor };
+module.exports = { checkLatest, localStatus, install, _destFor, ZEAL_SOURCES, _zealSource, _testBuildTag };

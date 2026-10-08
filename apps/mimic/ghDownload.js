@@ -103,17 +103,45 @@ function stamp() { return `${Date.now()}-${_seq++}`; }
 // Binary-safe backup-then-write (main.js's _backupAndWriteFile is utf8-only, and
 // these payloads include .tga/.dll binaries). Copies any existing file to
 // <target>.<tag>bak-<ts>, then writes atomically via .tmp + rename.
+//
+// A file that already holds exactly these bytes is left alone: no backup, no
+// write, null back. Copies this tag made earlier that are byte-identical to what
+// the file now holds are deleted, since they keep nothing the file does not.
+// (The guild lead, 2026-10-01: every Zeal update left one more copy of each
+// target ring beside it, "even though they're byte-identical".)
 function backupAndWriteBinary(target, data, tag = 'wpk') {
   fs.mkdirSync(path.dirname(target), { recursive: true });
+  const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
   let backedUp = null;
   if (fs.existsSync(target)) {
+    if (fs.readFileSync(target).equals(buf)) {
+      _dropIdenticalBackups(target, tag, buf);
+      return null;
+    }
     backedUp = `${target}.${tag}bak-${stamp()}`;
     fs.copyFileSync(target, backedUp);
   }
   const tmp = `${target}.tmp-${stamp()}`;
-  fs.writeFileSync(tmp, data);
+  fs.writeFileSync(tmp, buf);
   fs.renameSync(tmp, target);
+  _dropIdenticalBackups(target, tag, buf);
   return backedUp;
+}
+
+// Delete <target>.<tag>bak-* copies whose bytes equal `buf`. Only this tag's
+// copies, only exact matches; anything unreadable is left where it is.
+function _dropIdenticalBackups(target, tag, buf) {
+  const dir = path.dirname(target);
+  const prefix = `${path.basename(target)}.${tag}bak-`;
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return; }
+  for (const n of names) {
+    if (!n.startsWith(prefix)) continue;
+    const p = path.join(dir, n);
+    try {
+      if (fs.statSync(p).size === buf.length && fs.readFileSync(p).equals(buf)) fs.unlinkSync(p);
+    } catch { /* leave it */ }
+  }
 }
 
 module.exports = { httpsGet, unzip, stamp, backupAndWriteBinary };

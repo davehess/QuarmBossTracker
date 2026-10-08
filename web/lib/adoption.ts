@@ -1,5 +1,5 @@
 // web/lib/adoption.ts — pure transforms behind /admin/adoption (the PM funnel,
-// Hitya 2026-08-18: "if you were a product manager justifying our product…").
+// The guild lead 2026-08-18: "if you were a product manager justifying our product…").
 //
 // Everything counts PLAYERS (distinct discord ids), never characters — the
 // standing rule (2026-08-16: "character counts mean almost nothing"). No

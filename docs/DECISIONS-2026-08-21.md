@@ -2,7 +2,7 @@
 
 Previous file: `DECISIONS-2026-08-20.md`.
 
-## PoP flag coverage for raiders without Mimic: witnessed hails (Hitya)
+## PoP flag coverage for raiders without Mimic: witnessed hails (the guild lead)
 
 **The call.** *"we need people that don't use mimic to be covered as well. When
 someone Hails a flagging NPC and we see that from a mimic-enabled raider, we
@@ -32,14 +32,14 @@ runbook for the full list — and for the phrase list, without which the "or
 saying a key phrase" half stays unbuilt (we will not hunt for phrases by
 capturing arbitrary say-chat).
 
-## Foreign lockouts are CAPTURED; foreign raids stay excluded (Hitya)
+## Foreign lockouts are CAPTURED; foreign raids stay excluded (the guild lead)
 
 **The call.** *"several raiders have spent time with Breakfast Club doing raids
 on alts. we need to remain vigilant about these not being included, but also
 capture loot lockouts for raid mobs when they don't occur with our guild — put
 those into another admin section."*
 
-**⚠ Corrected same day by Hitya — a lockout is an ENGAGE lock.** I built and
+**⚠ Corrected same day by the guild lead — a lockout is an ENGAGE lock.** I built and
 described this as a *loot* lockout. It is stronger: a locked character
 **cannot fight the mob at all** and is **teleported out of the zone on
 engage**. That moves the whole feature from a loot-distribution question to a
@@ -66,7 +66,7 @@ no kill of that boss at all, so we cannot say**. /admin/lockouts shows the three
 bands separately, and the null band is labelled "usually just a boss we don't
 track — not evidence of anything". An unknown must not read as an accusation.
 
-## Pre-raid lockout briefing to officer chat (Hitya)
+## Pre-raid lockout briefing to officer chat (the guild lead)
 
 **The call.** *"put it into a post in officer chat about characters currently
 locked out for the upcoming night's raid by zone from the raid planner's
@@ -92,7 +92,7 @@ posts automatically once per raid night in the T-90m window, deduped on
 for a current-era boss is the expected Breakfast Club case, a main is the
 surprising one.
 
-## Officer pre-raid checklist + midday raid-info post (Hitya)
+## Officer pre-raid checklist + midday raid-info post (the guild lead)
 
 **The calls.** *"let's build an admin-facing officer-chat pre-raid checklist,
 active mimics, class shortages below our average, lockouts, other pertinent
@@ -132,7 +132,7 @@ header parser is tested against the REAL Vex Thal signup post; its first cut
 silently dropped "Raid Set 1 - Vex Thal" because the label pattern didn't allow
 digits, which the fixture caught.
 
-## The officer channel is wired from Discord, not from an env var (Hitya: "wire it to officer channel")
+## The officer channel is wired from Discord, not from an env var (Guild lead: "wire it to officer channel")
 
 **The finding that forced this.** `OFFICER_CHAT_CHANNEL_ID` is **not set on
 Railway** (checked against the live service, 2026-08-21). Both officer posts I
@@ -157,10 +157,10 @@ worse than no briefing.
 
 # 2026-08-22
 
-## A kill parse IS a lockout observation (Hitya: "taeya reported this Ventani kill so they should have a lockout")
+## A kill parse IS a lockout observation (Guild lead: "taeya reported this Ventani kill so they should have a lockout")
 
-**Context.** Hitya linked a Ventani parse
-(`/parses/1b943d2d-0059-4407-8ab2-9346421f0d79`) uploaded by **Taeya** from a
+**Context.** the guild lead linked a Ventani parse
+(`/parses/1b943d2d-0059-4407-8ab2-9346421f0d79`) uploaded by **a member** from a
 raid that was not ours, and asked why she had no lockout.
 
 **The finding.** She had none because `character_lockouts` had **zero rows,
@@ -181,7 +181,7 @@ into the encounter handler as `_recordKillLockouts`). Load-bearing details:
 
 - **Participants come from four places, not just the damage list.** The
   uploader, `players`, `healers`, `defenders`. This is the case that prompted
-  the work: Taeya is a **cleric** — zero damage, therefore no
+  the work: a member is a **cleric** — zero damage, therefore no
   `encounter_players` row on the very kill she uploaded. A damage-list-only
   derivation would still have missed her.
 - **We never infer who else was there.** A healer on a night nobody ran Mimic
@@ -200,7 +200,7 @@ into the encounter handler as `_recordKillLockouts`). Load-bearing details:
 - **A kill row never overwrites a live /sll row** (`dropRowsShadowedBySll`).
 
 **Backfill** (`scripts/backfill-kill-lockouts.sql`, run 2026-08-22): 753 live
-lockouts across 162 characters and 21 bosses. Taeya's three now show, all
+lockouts across 162 characters and 21 bosses. a member's three now show, all
 lifting Aug 28.
 
 ## Two things the new data volume broke, found by looking at what the post would say
@@ -220,7 +220,7 @@ Both were invisible while the table was empty.
    respawn-length is a model we have not measured, and an unknown timer is
    treated as UP so a missing boss state can never hide a real block.
 
-## Three corrections to the lockout model, same evening (Hitya)
+## Three corrections to the lockout model, same evening (the guild lead)
 
 > "Friday was a guild rolling event, so internal, but still a lockout. only the
 > lockouts from current era or night's targets really matter, and as long as
@@ -268,11 +268,11 @@ colour and the checklist flag. An alt-only night reads "✅ All mains clear —
 sorts mains first inside each band.
 
 **What the three filters do to the signal.** 753 rows → the officer-relevant
-set for Sunday Aug 23 is **six**, of which four are mains: Chadivarius and
-Hawkner on Grieg Veneficus (locked to Mon Aug 24, boss up since Aug 19), and
-Fittir on both Sleeper's warders (locked to Fri Aug 28, both up Sun ~4pm).
+set for Sunday Aug 23 is **six**, of which four are mains: a member and
+a member on Grieg Veneficus (locked to Mon Aug 24, boss up since Aug 19), and
+a member on both Sleeper's warders (locked to Fri Aug 28, both up Sun ~4pm).
 
-## The methodology gets published at wolfpack.quest/ai (Hitya, 2026-08-23)
+## The methodology gets published at wolfpack.quest/ai (guild lead, 2026-08-23)
 
 > "publish all of this detail to wolfpack.quest/ai. it should be human and
 > agent readable. I would like the current view and be able to unwind a slider
@@ -322,7 +322,7 @@ the commit that implemented it. Gold marks only the slider position.
 
 **Motion is allowed here and almost nowhere else.** The overlay rule is that
 animation is a cost because those surfaces are read mid-fight; this page is
-read deliberately, and Hitya asked for smooth transitions. Principle cards stay
+read deliberately, and the guild lead asked for smooth transitions. Principle cards stay
 mounted and toggle a class rather than unmounting, which is what makes
 scrubbing continuous instead of a re-layout flash. All of it is off under
 `prefers-reduced-motion`, and every state is also carried by colour and text.

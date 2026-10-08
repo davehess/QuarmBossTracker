@@ -1,4 +1,4 @@
--- Task #39 (Hitya's go-ahead 2026-08-16): dedupe the 337 groups / 560 excess
+-- Task #39 (the guild lead's go-ahead 2026-08-16): dedupe the 337 groups / 560 excess
 -- rows left by overlapping /backfillopendkploot runs, then pin award identity
 -- in the schema so the class of bug cannot recur.
 --

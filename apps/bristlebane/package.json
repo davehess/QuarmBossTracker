@@ -1,0 +1,19 @@
+{
+  "name": "bristlebane",
+  "version": "0.1.1",
+  "private": true,
+  "description": "Wolf Pack's raid-voice bot: joins the raid voice channel while a raid is live and (when enabled) records per-speaker audio",
+  "license": "AGPL-3.0-or-later",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "dependencies": {
+    "@discordjs/voice": "0.19.2",
+    "@snazzah/davey": "^0.1.9",
+    "discord.js": "^14.26.4"
+  }
+}

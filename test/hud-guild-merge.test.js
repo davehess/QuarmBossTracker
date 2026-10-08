@@ -2,7 +2,7 @@
 //
 // ⚠ Moved surface, 2026-08-14 (agent 3.5.80). This merge used to run LIVE on the
 // DPS tab against `s.guildDamage`. It now runs only on the **History** tab,
-// against a captured fight whose numbers have settled. Hitya, watching the live
+// against a captured fight whose numbers have settled. The guild lead, watching the live
 // version double people's damage: "the overcount from time skew and whatnot is
 // too much to account for in a live stat review and it is legitimately doubling
 // damage." Mid-fight the bot has under three independent readings of most
@@ -20,36 +20,23 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ROOT } from './_source-slice.js';
+import { ROOT, sliceBlock, evalBlock } from './_source-slice.js';
 
 const html = fs.readFileSync(path.join(ROOT, 'apps', 'mimic', 'overlay.html'), 'utf8');
 
-// Mirror of the shipped merge (the real one lives inside the poll handler and
-// needs a DOM). The source assertions below keep this honest.
-// Row shape: [name, guildDmg, tookMax, petOwner, rank, extra, petCharm, localDmg, hasPet]
-function mergeRows(histEntry) {
-  if (!histEntry) return { rows: [], GUILD: null };
-  const histLocal = (histEntry.local || []).map(p =>
-    [p.character, p.dmg || 0, 0, p.pet_owner || null, 0, 0, false, p.dmg || 0, false]);
-  if (!Array.isArray(histEntry.players) || !histEntry.players.length) {
-    return { rows: histLocal.sort((a, b) => (b[1] || 0) - (a[1] || 0)), GUILD: null };
-  }
-  const localBy = new Map(histLocal.map(r => [String(r[0]).toLowerCase(), r]));
-  const merged = histEntry.players.map(p => {
-    const loc = localBy.get(String(p.character).toLowerCase());
-    return [p.character, p.dmg || 0, 0, loc ? loc[3] : null,
-            0, 0, false, loc ? loc[1] : 0, false];
-  });
-  const seen = new Set(merged.map(m => String(m[0]).toLowerCase()));
-  for (const r of histLocal) {
-    if (!seen.has(String(r[0]).toLowerCase())) merged.push(r);
-  }
-  return { rows: merged.sort((a, b) => (b[1] || 0) - (a[1] || 0)), GUILD: histEntry };
-}
+// The REAL merge: _histRows, sliced out of overlay.html with the fold it calls (it used to be a mirror
+// of an inline block, and a mirror cannot fail when the shipped code drifts — 2026-10-04). The end
+// anchor is the declaration that follows, never a line of the code under test.
+const { _histRows } = evalBlock(
+  sliceBlock(html, '  function _foldPetsIntoOwners(allRows){', '\n  // ── Poll loop '),
+  ['_histRows'],
+);
+// Row shape: [name, guildDmg, tookMax, petOwner, rank, extra, petCharm, localDmg, hasPet, spawnId, pets]
+const mergeRows = (histEntry) => ({ rows: histEntry ? _histRows(histEntry) : [] });
 
 const lp = (character, dmg, pet_owner = null) => ({ character, dmg, pet_owner });
 
-describe('the shipped HUD still merges the way this models', () => {
+describe('the shipped HUD still merges the way this expects', () => {
   it('merges against the captured fight, not the live guild stream', () => {
     expect(html).toMatch(/HIST && Array\.isArray\(HIST\.players\) && HIST\.players\.length/);
   });
@@ -57,7 +44,7 @@ describe('the shipped HUD still merges the way this models', () => {
   it('does NOT read s.guildDamage for the live rows any more', () => {
     // The regression this guards: someone "restores" the live merge and the
     // doubling comes straight back with no other visible change.
-    const merge = html.slice(html.indexOf('var GUILD = null, localBy = null;'),
+    const merge = html.slice(html.indexOf('var GUILD = null;'),
                              html.indexOf('const totalDmg'));
     expect(merge).not.toMatch(/s\.guildDamage/);
     expect(merge.length).toBeGreaterThan(200);      // the slice actually found the block
@@ -100,22 +87,29 @@ describe('merge behaviour', () => {
   });
 
   it('re-sorts on the GUILD number, not the local one', () => {
-    // Locally Hitya looks like the top damage; guild-wide Wabumkin is.
+    // Locally the guild lead looks like the top damage; guild-wide a member is.
     expect(mergeRows(entry).rows[0][0]).toBe('Wabumkin');
   });
 
-  it('carries pet_owner across from the local row', () => {
+  it('folds a pet this machine knows the owner of into that owner', () => {
+    // Was "carries pet_owner across": History listed the pet as a raider of its own with the
+    // owner in parentheses. The owner is the raider (the guild lead, 2026-10-04), +pet beside them.
     const { rows } = mergeRows({ ...entry, local: [lp('Hitya', 90000, 'Owner')] });
-    expect(rows.find(r => r[0] === 'Hitya')[3]).toBe('Owner');
+    expect(rows.map(r => r[0])).toEqual(['Wabumkin', 'Owner']);            // no 'Hitya' row, guild's or local
+    const owner = rows.find(r => r[0] === 'Owner');
+    expect(owner[1]).toBe(90000);
+    expect(owner[8]).toBe(true);                                           // "+pet"
+    expect(owner[3]).toBeNull();                                           // an owner is not itself a pet
   });
 
   it('falls back to local-only while the fight is still settling', () => {
     // A kill recorded but not yet answered for. Showing this machine's slice is
-    // right; showing it as the GUILD's answer would not be, which is why GUILD
-    // stays null and the header says "settling…".
-    const { rows, GUILD } = mergeRows({ ...entry, settled: false, players: [] });
-    expect(GUILD).toBeNull();
+    // right; showing it as the GUILD's answer would not be, which is why the
+    // shipped tick only sets GUILD with players (asserted above) and the header says
+    // "settling…".
+    const { rows } = mergeRows({ ...entry, settled: false, players: [] });
     expect(rows.map(r => r[0])).toEqual(['Hitya']);
+    expect(rows[0][7]).toBe(rows[0][1]);        // local == shown: no parenthetical
   });
 
   it('renders nothing at all with no fight selected', () => {

@@ -1,7 +1,7 @@
 // test/inventory-upload-scan.test.js — the agent half of inventory auto-upload
 // (SOURCE-SLICE fidelity tier: the parser is sliced out of the shipped agent).
 //
-// The gap this pins (Hitya 2026-08-20, "are the inventory lists missing or are
+// The gap this pins (the guild lead, 2026-08-20, "are the inventory lists missing or are
 // we not consuming inventory files when they get updated?"): the bot's
 // /api/agent/inventory endpoint existed since June but the agent never had a
 // scan for <Char>-Inventory.txt — quarmy and spellbook shipped, inventory

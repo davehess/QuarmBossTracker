@@ -1,6 +1,6 @@
 -- Right grain per fight type, so the threat roll-up is genuinely permanent.
 --
--- Hitya: "if it's that tiny we can continue to retain it indefinitely." At
+-- The guild lead: "if it's that tiny we can continue to retain it indefinitely." At
 -- per-fight-per-player grain it was NOT tiny — 31 MB for five weeks
 -- (~330 MB/yr), 87% of it trash. The signal differs by fight type:
 --   · BOSS  — "where did I rank on THIS pull". Per-fight is the unit.

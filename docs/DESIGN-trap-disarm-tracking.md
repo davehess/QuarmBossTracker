@@ -1,6 +1,6 @@
 # Trap disarm tracking — by disarmer location, 10-minute timer
 
-Hitya, 2026-08-10 (mid-raid): *"We should start tracking the disarmed traps by
+The guild lead, 2026-08-10 (mid-raid): *"We should start tracking the disarmed traps by
 location of the person disarming them — 10 minute timer."*
 
 ## What exists today: nothing, and the location half is already solved
@@ -86,7 +86,7 @@ create table if not exists trap_disarms (
 create index if not exists trap_disarms_live on trap_disarms (guild_id, zone_short, disarmed_at desc);
 ```
 
-Ten minutes is Hitya's number, from raid practice. Put it in the schema as the
+Ten minutes is the guild lead's number, from raid practice. Put it in the schema as the
 generated column above **and** nowhere else — one place to change it if the real
 respawn turns out to differ.
 

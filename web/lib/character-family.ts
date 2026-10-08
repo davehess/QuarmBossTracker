@@ -32,6 +32,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { selectAll } from './selectAll';
 import { ERAS, eraForTimestamp, rankIndex, type EraName } from './eras';
+import { GUILD_TAG } from './guild';
 
 export type FamilyMember = {
   name: string;
@@ -69,7 +70,7 @@ export async function loadFamily(
     .from('characters')
     .select(FAMILY_COLS)
     .ilike('name', characterName)
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .limit(1);
 
   const self = (selfRows && selfRows[0]) as FamilyMember | undefined;
@@ -84,19 +85,19 @@ export async function loadFamily(
   //       grouping sometimes splits ONE person's characters across roots
   //       (e.g. when an officer's newer main becomes its own root), which
   //       breaks the era timeline because each split sees only part of the
-  //       person's DKP history. (Hitya 2026-06-23: Hitya was its own root,
-  //       split from Canopy/Melting, so Hitya's page claimed Hitya was the
-  //       Classic main when the player was actually Canopy then.)
+  //       person's DKP history. (the guild lead, 2026-06-23: their current main
+  //       was its own root, split from the earlier ones, so the page claimed
+  //       that main for Classic when the player was on a different one then.)
   const queries = [
     sb.from('characters').select(FAMILY_COLS)
       .or(`main_name.eq.${rootName},name.eq.${rootName}`)
-      .eq('guild_id', 'wolfpack'),
+      .eq('guild_id', GUILD_TAG),
   ];
   if (self.discord_id) {
     queries.push(
       sb.from('characters').select(FAMILY_COLS)
         .eq('discord_id', self.discord_id)
-        .eq('guild_id', 'wolfpack'),
+        .eq('guild_id', GUILD_TAG),
     );
   }
   const results = await Promise.all(queries);
@@ -166,24 +167,24 @@ export async function loadEraTimeline(
   // is 1,149 rows, the unordered query returned heap order, so the 149 rows
   // dropped were the NEWEST. A main who started this era has ALL of their ticks
   // in that tail, so "most ticks" kept naming the previous main and no swap was
-  // ever detected (Chadivarius → still showing Moash for Luclin, Uilnayar
-  // 2026-08-05). The .order() calls are load-bearing: range pagination over an
+  // ever detected — a family that had swapped mains still showed the OLD one
+  // for Luclin (a member, 2026-08-05). The .order() calls are load-bearing: range pagination over an
   // unordered query may repeat or skip rows between pages.
   const bidSelect = 'character_id, character_name, value, auction_id, opendkp_auctions!inner(end_at)';
   const [bidsById, bidsByName, loot, ticks] = await Promise.all([
     familyIds.length > 0
       ? selectAll<BidRow>((from, to) => sb.from('opendkp_auction_bids').select(bidSelect)
-          .gt('value', 100).in('character_id', familyIds).order('auction_id').order('character_id').range(from, to))
+          .gt('value', 100).in('character_id', familyIds).order('auction_id').order('character_id').order('id').range(from, to))
       : Promise.resolve([] as BidRow[]),
     selectAll<BidRow>((from, to) => sb.from('opendkp_auction_bids').select(bidSelect)
       .gt('value', 100).is('character_id', null).in('character_name', familyNames)
-      .order('auction_id').order('character_name').range(from, to)),
+      .order('auction_id').order('character_name').order('id').range(from, to)),
     selectAll<LootRow>((from, to) => sb.from('opendkp_loot_recent')
       .select('character_name, dkp, raid_date, item_name').in('character_name', familyNames)
-      .order('raid_date', { ascending: true }).order('character_name').order('item_name').range(from, to)),
+      .order('raid_date', { ascending: true }).order('character_name').order('item_name').order('auction_id').range(from, to)),
     selectAll<TickRow>((from, to) => sb.from('opendkp_ticks')
       .select('value, attendees, raid_id, opendkp_raids!inner(ts)').overlaps('attendees', familyNames)
-      .order('raid_id').range(from, to)),
+      .order('raid_id').order('tick_id').range(from, to)),
   ]);
 
   type BidRow   = { character_id: number | null; character_name: string | null; value: number | null; auction_id: number | null; opendkp_auctions: { end_at: string | null } | { end_at: string | null }[] | null };
@@ -275,8 +276,8 @@ export async function loadEraTimeline(
     // A single end-of-era big bid shouldn't override a season of attendance,
     // so big-bid count is only a tiebreaker — and stands in alone when there
     // were no ticks at all (e.g. a main who bid but whose ticks predate our
-    // OpenDKP history). Rank breaks remaining ties. (Hitya 2026-06-23:
-    // big-bid-first wrongly flipped Classic from Canopy→Melting on one bid.)
+    // OpenDKP history). Rank breaks remaining ties. (the guild lead, 2026-06-23:
+    // big-bid-first wrongly flipped one family's Classic main on a single bid.)
     const candidates = new Set<string>([...tickCounts.keys(), ...bidVotes.keys()]);
     let detectedMain: string | null = null;
     let mainSource: EraSummary['mainSource'] = 'no_activity';
@@ -327,7 +328,7 @@ export async function loadEraTimeline(
 
   // Mark main swaps: an era whose main differs from the previous known main.
   // Runs AFTER carry-forward so quiet eras (which inherit the prior main)
-  // don't register a false swap. (Hitya 2026-06-23: surface WHEN the main
+  // don't register a false swap. (the guild lead, 2026-06-23: surface WHEN the main
   // changed in the timeline.)
   let prevMain: string | null = null;
   for (const r of results) {

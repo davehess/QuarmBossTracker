@@ -4,8 +4,9 @@
   "buildCommand": "next build",
   "installCommand": "npm install",
   "outputDirectory": ".next",
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- .",
   "git": {
-    "deploymentEnabled": { "beta": true }
+    "deploymentEnabled": { "**": false, "main": true, "beta": true }
   },
   "redirects": [
     {

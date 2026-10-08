@@ -7,8 +7,8 @@
 //     The three uploads named in docs/STATUS.md as the `state.petOwners`
 //     casualties are carried in their AS-UPLOADED form (the repaired rows keep
 //     the originals under `raw_parse.players_pre_petfix`, which is where these
-//     numbers come from) — Hawkner 380,247/35 on Blood, Bardtholemu
-//     3,048,578/45 on the Emperor, Uilnayar 338,515/34 on Rhag`Mozdezh.
+//     numbers come from) — 380,247/35 on Blood, 3,048,578/45 on the Emperor,
+//     338,515/34 on Rhag`Mozdezh.
 //   · EMPEROR_FAMILY — the two eqemu_npc_types rows the Emperor's name matches.
 //   · BLOOD_* — the real melee rollup, defender and class data for that fight.
 //
@@ -176,7 +176,7 @@ describe('findInflated — why BOTH gates are needed', () => {
   const blood = NIGHT.find(f => f.name === '#Blood_of_Ssraeshza');
 
   // Verbatim: Trakanon, 2026-07-30 01:03:20Z, npc 89154 (hp 32,000), six uploads.
-  // Bardtholemu is 2.04x the median of the others — the sibling gate fires —
+  // A member is 2.04x the median of the others — the sibling gate fires —
   // but only 1.28x the mob's health, which the HP anchor holds back. This is
   // the nearest MISS in the whole corpus and the reason the anchor exists: a
   // 31-second trash kill with one wide parse is not evidence of corruption.
@@ -337,7 +337,7 @@ describe('rankAskCandidates — who can actually settle it', () => {
 
 describe('meleeHitsOf — melee verbs only', () => {
   it('counts swings, not spells, damage shields or pets', () => {
-    // Verbatim by_skill for Currygoat on the Blood fight.
+    // Verbatim by_skill for a member on the Blood fight.
     expect(bf.meleeHitsOf({ by_skill: {
       hit: { dmg: 9350, hits: 94 }, kick: { dmg: 42, hits: 6 },
       slash: { dmg: 6450, hits: 258 }, 'ds:non-melee': { dmg: 2880, hits: 8 },

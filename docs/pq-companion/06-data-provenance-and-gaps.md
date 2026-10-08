@@ -1,6 +1,6 @@
 # 06 — Where their data comes from, and what we were missing
 
-**2026-08-13.** Hitya: *"comb back through the PQ Companion features on where the
+**2026-08-13.** Guild lead: *"comb back through the PQ Companion features on where the
 data in their environment comes from and any elements we may be missing… they
 have a number of zone info bits about spawns and I'm curious how they're doing
 serialization"*, plus a follow-up naming **tradeskills, Piper/Kokoro TTS, and
@@ -143,7 +143,7 @@ raid callouts are a small, highly repetitive set of strings ("CH ON TANK",
 once ever and thereafter plays instantly from disk. That is *lower* latency than
 `speechSynthesis`, not higher.
 
-**Kokoro** (Hitya's addition) is the newer local neural TTS — better prosody
+**Kokoro** (the guild lead's addition) is the newer local neural TTS — better prosody
 than Piper, heavier to run. Same integration shape, so the sane build is a
 **voice-backend interface** with `browser | piper | kokoro` behind it rather
 than wiring either one directly. Fall back to browser on any failure, always.

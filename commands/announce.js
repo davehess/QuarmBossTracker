@@ -412,7 +412,7 @@ const zoneSiblings = boss ? bosses.filter(b => b.zone === boss.zone && !targets.
     // Agent uploads for this zone will append parse cards here automatically.
     // /raidnight will honour the existing session and link here instead of creating a new thread.
     //
-    // ONLY when the event starts soon (Hitya 2026-08-20: announcing tomorrow's
+    // ONLY when the event starts soon (the guild lead, 2026-08-20: announcing tomorrow's
     // event just after midnight opened the session immediately, and the
     // All-Night Leaderboard filled the event thread with overnight FARM kills
     // for an event that hadn't happened). A future announce parks a pending

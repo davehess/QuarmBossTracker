@@ -1,13 +1,13 @@
 // web/lib/inventoryFile.ts — reading an EQ inventory export, and working out
 // WHO it belongs to.
 //
-// Why this file exists (Hitya, 2026-08-14): "can you make it so that anyone can
+// Why this file exists (the guild lead, 2026-08-14): "can you make it so that anyone can
 // upload additional inventory files from the /me page and have it bring in
 // their other characters/mules?"
 //
 // The existing /me upload is per-character and gated on the character ALREADY
 // being in `characters` with your discord_id — which is exactly what a mule is
-// not. Pyxil's bank toons (Archanistsells, Lavenderna, Pyxtrade, …) exist only
+// not. A member's bank toons (Archanistsells, Lavenderna, Pyxtrade, …) exist only
 // as files on her disk: no logs, no /who sighting, no OpenDKP row. The file
 // itself is the only evidence they exist, and its NAME is the only thing that
 // says whose it is.
@@ -70,8 +70,8 @@ export function parseInventory(text: string): ParsedInvRow[] {
  * several. Handles all of those and refuses anything that does not reduce to a
  * plausible EverQuest character name.
  *
- * ⚠ EQ names are letters only — no digits, no spaces (Hitya, 2026-08-13, the
- * "Atlasius2 is a backup log not a person" finding). A name that fails that is
+ * ⚠ EQ names are letters only — no digits, no spaces (the guild lead, 2026-08-13, the
+ * "Dunmara2 is a backup log not a person" finding). A name that fails that is
  * a renamed copy we cannot attribute, and guessing would create a junk
  * character row that somebody then has to clean up.
  */
@@ -116,10 +116,10 @@ export type ExistingCharacter = {
  *  • **Anything else — new, or in `characters` but unclaimed** → it becomes
  *    yours.
  *
- * ⚠ That last line is a DELIBERATE widening (Hitya, 2026-08-14). The first cut
+ * ⚠ That last line is a DELIBERATE widening (the guild lead, 2026-08-14). The first cut
  * refused to claim an unclaimed character that carried an `opendkp_id`, on the
  * reasoning that an OpenDKP row means a real member who merely has not linked
- * Discord, and claiming it would transfer their character. Hitya overruled it:
+ * Discord, and claiming it would transfer their character. The guild lead overruled it:
  *
  *   "We should at least take the data and allow them to see their characters in
  *    their account if they have the inventory files and are not already claimed

@@ -86,8 +86,8 @@ describe('_ilikeAnyClause — case-insensitive multi-name PostgREST filter', () 
 // ── #121 loot bidding v2 (real index.js) ────────────────────────────────────
 describe('_resolveCharIdNames — char_id → real name via MODE over loot join', () => {
   it('takes the most-frequent loot name per char_id (2x-drop noise dropped)', () => {
-    // char 108064 won item 1 in raid 100 (loot → Hitya) and item 2 in raid 101
-    // (Hitya again); a 2x-drop in raid 100 also awarded item 1 to Bippo → noise.
+    // char 108064 won item 1 in raid 100 (loot → the guild lead) and item 2 in raid 101
+    // (the guild lead again); a 2x-drop in raid 100 also awarded item 1 to Bippo → noise.
     const wonAuctions = [
       { winner_character_id: 108064, raid_id: 100, item_id: 1 },
       { winner_character_id: 108064, raid_id: 101, item_id: 2 },
@@ -144,27 +144,96 @@ describe('_eraFromPool — OpenDKP pool → expansion label', () => {
   });
 });
 
-describe('_buildMisses — bid-and-lost, grouped per item', () => {
+describe('_buildMisses — bid-and-lost, per (item, character)', () => {
   const nameByCharId = { 108064: 'Hitya', 100899: 'Melting' };
-  it('keeps only lost items and the top-bidding family char', () => {
+  it('keeps lost items, attributed to the character that bid', () => {
     const bidRows = [
-      // Robe: family char 108064 bid 126 but auction won by a stranger (500) → miss
+      // Robe: char 108064 bid 126 but auction won by a stranger (500) → miss
       { auction_id: 10, character_id: 108064, value: 126, item_id: 1, item_name: 'Robe', winner_character_id: 500, end_at: '2026-07-02', raid_id: 60463 },
       // Katana: 100899 lost
       { auction_id: 11, character_id: 100899, value: 46, item_id: 2, item_name: 'Katana', winner_character_id: 999, end_at: '2026-07-05', raid_id: 60900 },
-      // Cloak: family WON this auction → not a miss
+      // Cloak: THIS character won this auction → not a miss for them
       { auction_id: 12, character_id: 108064, value: 40, item_id: 3, item_name: 'Cloak', winner_character_id: 108064, end_at: '2026-07-06', raid_id: 61000 },
     ];
-    const rows = _buildMisses({ bidRows, famCharIds: [108064, 100899], nameByCharId, wonItemIds: [] });
+    const rows = _buildMisses({ bidRows, nameByCharId, wonByChar: {} });
     expect(rows.map(r => r.item_name)).toEqual(['Katana', 'Robe']);  // most-recent end first
     const robe = rows.find(r => r.item_id === 1);
     expect(robe.character).toBe('Hitya');
     expect(robe.my_last_bid).toBe(126);
     expect(robe.raid_id).toBe(60463);
   });
-  it('excludes items the family won in ANY auction (wonItemIds)', () => {
-    const bidRows = [{ auction_id: 10, character_id: 108064, value: 126, item_id: 1, item_name: 'Robe', winner_character_id: 500, end_at: 'x', raid_id: 1 }];
-    expect(_buildMisses({ bidRows, famCharIds: [108064], nameByCharId, wonItemIds: [1] })).toEqual([]);
+
+  it('excludes an item only for the character that has it', () => {
+    // ⚠ The regression the guild lead reported (2026-08-29). Both characters bid on the
+    // same item and both lost; a member already owns one. Under the old
+    // family-wide rule a member's copy erased the guild lead's miss too. Measured on the
+    // real account: 20 items bid on and lost, 19 hidden this way, 1 displayed.
+    const bidRows = [
+      { auction_id: 10, character_id: 108064, value: 126, item_id: 1, item_name: 'Robe', winner_character_id: 500, end_at: '2026-07-02', raid_id: 1 },
+      { auction_id: 11, character_id: 100899, value: 40,  item_id: 1, item_name: 'Robe', winner_character_id: 500, end_at: '2026-07-03', raid_id: 2 },
+    ];
+    const rows = _buildMisses({ bidRows, nameByCharId, wonByChar: { 100899: new Set([1]) } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].character).toBe('Hitya');
+  });
+
+  it('gives each character their own row for the same item', () => {
+    const bidRows = [
+      { auction_id: 10, character_id: 108064, value: 12, item_id: 1, item_name: 'Robe', winner_character_id: 500, end_at: '2026-07-02', raid_id: 1 },
+      { auction_id: 11, character_id: 100899, value: 40, item_id: 1, item_name: 'Robe', winner_character_id: 500, end_at: '2026-07-03', raid_id: 2 },
+    ];
+    const rows = _buildMisses({ bidRows, nameByCharId, wonByChar: {} });
+    expect(rows).toHaveLength(2);
+    expect(rows.map(r => r.character).sort()).toEqual(['Hitya', 'Melting']);
+    // ...each carrying that character's OWN highest bid, not the family max.
+    expect(rows.find(r => r.character === 'Hitya').my_last_bid).toBe(12);
+    expect(rows.find(r => r.character === 'Melting').my_last_bid).toBe(40);
+  });
+
+  it('does not let a sibling winning the auction erase your miss', () => {
+    const bidRows = [
+      { auction_id: 10, character_id: 108064, value: 12, item_id: 1, item_name: 'Robe', winner_character_id: 100899, end_at: '2026-07-02', raid_id: 1 },
+    ];
+    const rows = _buildMisses({ bidRows, nameByCharId, wonByChar: {} });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].character).toBe('Hitya');
+  });
+
+  it('accepts an array as well as a Set for owned items', () => {
+    const bidRows = [{ auction_id: 10, character_id: 108064, value: 12, item_id: 1, item_name: 'Robe', winner_character_id: 500, end_at: 'x', raid_id: 1 }];
+    expect(_buildMisses({ bidRows, nameByCharId, wonByChar: { 108064: [1] } })).toEqual([]);
+  });
+
+  it('keys a DETAIL-sourced row by name when CharacterId is absent', () => {
+    // ⚠ The a member regression (2026-08-30). OpenDKP's per-auction bid history is
+    // Name/Rank/Value/Date — no CharacterId — and the builder used to skip
+    // id-less rows entirely, silently hiding every backfilled loss: exactly
+    // the data the detail backfill exists to surface.
+    const bidRows = [
+      { auction_id: 20, character_id: null, character_name: 'Utoh', value: 8,
+        item_id: 5, item_name: 'Vengeful Mail of the Void', winner_character_id: 94262,
+        end_at: '2026-08-20', raid_id: 3 },
+    ];
+    const rows = _buildMisses({ bidRows, nameByCharId, wonByChar: {}, ownsByName: {} });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].character).toBe('Utoh');
+    expect(rows[0].my_last_bid).toBe(8);
+  });
+
+  it('drops a name-keyed row once that character owns the item', () => {
+    // No id to compare to the winner, so the loot mirror answers instead — a
+    // winner's award writes a loot row, so this also covers the won case.
+    const bidRows = [
+      { auction_id: 21, character_id: null, character_name: 'Utoh', value: 8,
+        item_id: 5, item_name: 'Vengeful Mail', winner_character_id: 94262, end_at: 'x', raid_id: 3 },
+    ];
+    expect(_buildMisses({ bidRows, nameByCharId, wonByChar: {}, ownsByName: { utoh: new Set([5]) } })).toEqual([]);
+  });
+
+  it('ignores a row with neither id nor name — there is nothing to key on', () => {
+    const bidRows = [{ auction_id: 22, character_id: null, character_name: '', value: 9,
+      item_id: 6, item_name: 'X', winner_character_id: 1, end_at: 'x', raid_id: 1 }];
+    expect(_buildMisses({ bidRows, nameByCharId, wonByChar: {}, ownsByName: {} })).toEqual([]);
   });
 });
 

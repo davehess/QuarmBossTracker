@@ -1,5 +1,5 @@
 // commands/retrigger.js — re-run the bot's automatic reaction for a place,
-// from recent context (Hitya 2026-08-18: "retrigger the last discord command
+// from recent context (the guild lead, 2026-08-18: "retrigger the last discord command
 // in the thread or channel that it thinks it should have based on recent
 // context"). The driving case: suggestion-forum threads that got the old
 // text-only nudge card — /retrigger re-reads the thread and posts (or edits

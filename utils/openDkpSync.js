@@ -252,6 +252,51 @@ function _bidsFromAuction(auctionId, a) {
   }).filter(Boolean);
 }
 
+// ── Full-bid backfill: one detail call per auction, per lifetime ────────────
+// A closed auction's bid list is immutable, so bids_synced_at makes each
+// auction cost exactly ONE detail call ever. Newest-first, so the RECENT
+// MISSES window heals first and deep history trickles in behind it.
+//
+// Outbound-traffic contract (the OpenDKP citizenship rules apply — see
+// DESIGN-selfhost-wizard §3): at most OPENDKP_BIDS_PER_PASS (default 10)
+// detail calls per sync pass, 0 disables, and the pass runs inside
+// syncAuctions so OPENDKP_HALT and every cadence gate already cover it. The
+// first error aborts the pass — a struggling API gets quiet, not hammered.
+const BIDS_PER_PASS = () => {
+  const n = parseInt(process.env.OPENDKP_BIDS_PER_PASS, 10);
+  return Number.isFinite(n) ? Math.max(0, Math.min(50, n)) : 10;
+};
+
+async function syncPendingAuctionBids() {
+  const cap = BIDS_PER_PASS();
+  if (cap === 0) return { detail_calls: 0, bids_written: 0, disabled: true };
+  const pending = await supabase.select(
+    'opendkp_auctions',
+    `select=auction_id&bids_synced_at=is.null&winner_character_id=not.is.null&order=end_at.desc.nullslast&limit=${cap}`
+  ) || [];
+  let calls = 0, written = 0;
+  for (const row of pending) {
+    const r = await syncAuctionBids(row.auction_id);
+    calls++;
+    if (r && r.error) {
+      console.warn(`[opendkp-sync] bid detail ${row.auction_id} failed (${r.error}) — aborting pass`);
+      return { detail_calls: calls, bids_written: written, error: r.error };
+    }
+    written += r?.bids_written || 0;
+    // Mark synced even at 0 bids written: the detail answered, and answering
+    // is the thing we never ask twice for.
+    // ⚠ signature is update(table, QUERYSTRING, body) — these were swapped on
+    // first ship, which PATCHed garbage, matched nothing, threw nothing, and
+    // left every marker NULL: the pass re-detailed the same newest 10 forever
+    // (caught night one: "10 auctions, 40 bid rows" logged, 0 rows marked).
+    await supabase.update('opendkp_auctions', `auction_id=eq.${row.auction_id}`,
+      { bids_synced_at: new Date().toISOString() });
+    await new Promise(res => setTimeout(res, 250));
+  }
+  if (calls) console.log(`[opendkp-sync] bid details: ${calls} auction(s), ${written} bid row(s)`);
+  return { detail_calls: calls, bids_written: written };
+}
+
 // Walk /clients/wolfpack/auctions?page=N until an empty page (or the safety
 // cap) is hit. OpenDKP's "Include all" toggle issues exactly the same fetches
 // pages 1..13 currently, so AUCTION_PAGE_LIMIT=25 is generous headroom.
@@ -374,15 +419,18 @@ async function syncAuctions(opts = {}) {
       // Minimal-return: the auction upsert often batches more than 1000
       // rows on a full sync, and PostgREST caps the representation response
       // at max-rows (default 1000), which made the "upserted" count read
-      // 1000 even when more rows were written (Hitya 2026-06-23: "12,797
+      // 1000 even when more rows were written (the guild lead, 2026-06-23: "12,797
       // actual auctions but the report said 1000"). All rows ARE written;
       // count from the input length.
       await supabase.upsert('opendkp_auctions', auctionRows, 'auction_id', { minimal: true });
       totalUpserted += auctionRows.length;
     }
 
-    // Bid rows live inline in each auction's Bids[] — no detail call needed.
-    // Flatten across all auctions on this page, upsert as one batch.
+    // ⚠ The list's Bids[] carries ONLY the winning bid(s) — measured
+    // 2026-08-30: 1.08 bids/auction mirrored, 92% of auctions with no losing
+    // bid at all. These rows are kept (they make winners visible immediately),
+    // but the FULL list needs the detail endpoint — syncPendingAuctionBids,
+    // one call per auction per lifetime.
     const allBids = list.flatMap(a => {
       const auctionId = a?.AuctionId ?? a?.AuctionID ?? a?.Id;
       if (auctionId == null) return [];
@@ -414,36 +462,111 @@ async function syncAuctions(opts = {}) {
     if (arr?.TotalPages && arr?.CurrentPage && arr.CurrentPage >= arr.TotalPages) break;
   }
 
+  // Full bid lists: up to OPENDKP_BIDS_PER_PASS detail calls, newest-first,
+  // each auction paying that call exactly once (bids_synced_at).
+  const detail = await syncPendingAuctionBids().catch(err => {
+    // A THROW here (vs the per-auction error the pass logs itself) means the
+    // pending-picker query or the marker write failed — the shape of failure
+    // that produced "0 auctions detailed, no log line" on day one. Never quiet.
+    console.warn('[opendkp-sync] bid-detail pass threw:', err?.message || String(err));
+    return { detail_calls: 0, bids_written: 0, error: err?.message || String(err) };
+  });
+
   return {
     upserted:       totalUpserted,
     pages:          pagesWalked,
-    bids_written:   bidsWritten,
-    // Kept for backwards-compat with the /syncopendkp reply formatter
-    auctions_detailed: pagesWalked, // bids are now extracted inline, not via per-auction calls
-    bid_errors:        0,
+    bids_written:   bidsWritten + (detail.bids_written || 0),
+    auctions_detailed: detail.detail_calls || 0,
+    bid_errors:        detail.error ? 1 : 0,
   };
 }
 
 // Upsert the raid summary list. Returns { fetched, upserted }.
+// How many recent raids the routine pass asks for, and how often we still take
+// the whole list so an upstream EDIT to an older raid cannot hide forever.
+function _raidsCount()          { return _envNum('OPENDKP_RAIDS_COUNT', 25); }
+function _raidsFullEveryHours() { return _envNum('OPENDKP_RAIDS_FULL_HOURS', 24); }
+let _lastRaidsFullAt = 0;
+let _loggedRaidsShape = false;
+
+// PURE so the decision can be tested as BEHAVIOUR rather than by grepping the
+// source for the right words. The first version of this test asserted only
+// that `_raidsFullEveryHours` appeared in the file, which stayed green when a
+// mutation forced useCount=true and deleted the periodic heal entirely — a
+// test that cannot fail is worse than no test, because it manufactures
+// confidence.
+function _raidsFetchMode(nowMs, lastFullAtMs, count, fullEveryHours) {
+  const n = Number(count);
+  // ⚠ DISABLED 2026-08-27, mid-raid. `?count=N` was added in 3.1.83 on the
+  // assumption that it returns the NEWEST N raids. That assumption was never
+  // verified and the evidence says it is wrong: the mirror's newest raid stayed
+  // at #101101 (8-26) all through the 8-27 raid, while #101157 existed upstream
+  // and the UNCOUNTED full fetch (once a day) was the only thing that ever
+  // advanced it. An ordering assumption on a paginated endpoint is exactly the
+  // mistake that cost us the audits walk — page 1 of /auctions is oldest-first,
+  // proved by probe — and I made it again from a Postman doc that documents the
+  // parameter but not its order.
+  //
+  // The raid mirror feeds attendance, ticks and loot attribution, so a silently
+  // stale one is expensive. Full list every pass until `count`'s ordering is
+  // PROVED against production, the same standard the audits fast path had to
+  // meet. Re-enable with OPENDKP_RAIDS_COUNT once proved.
+  const usable = false && Number.isInteger(n) && n > 0;
+  const fullDue = (nowMs - (lastFullAtMs || 0)) >= fullEveryHours * 3600 * 1000;
+  return { useCount: usable && !fullDue, count: usable ? n : null, fullDue };
+}
+
 async function syncRaidsList() {
   if (!supabase.isEnabled()) return { fetched: 0, upserted: 0, error: 'supabase disabled' };
+  // Full list on a schedule, newest-N otherwise. A raid summary is append-only
+  // in practice, so pulling all 412 every 30 minutes was ~90 KB a pass to
+  // re-learn rows that had not moved.
+  const count = _raidsCount();
+  const { useCount } = _raidsFetchMode(Date.now(), _lastRaidsFullAt, count, _raidsFullEveryHours());
   let raids;
-  try { raids = await getRaids(); }
+  try { raids = await getRaids(useCount ? { count } : {}); }
   catch (err) { return { fetched: 0, upserted: 0, error: err?.message || String(err) }; }
+  if (!useCount) _lastRaidsFullAt = Date.now();
 
-  if (!Array.isArray(raids)) return { fetched: 0, upserted: 0, error: 'getRaids returned non-array' };
+  // ⚠ /raids is NOT reliably a bare array. Measured 2026-08-28 03:05 UTC,
+  // mid-raid: an uncounted call returned 11,469 bytes with ZERO errors and
+  // `Array.isArray` false, which aborted the whole sync. Every sibling list
+  // endpoint on this API wraps its rows ({ Results }, { Items }, { Raids }, or
+  // a { TotalPages, CurrentPage, … } page object) — /auctions and /audits both
+  // do, which is why _rowsFromListPayload exists. Accept the same shapes here
+  // instead of assuming the one that happened to work.
+  const raidList = Array.isArray(raids) ? raids
+                 : Array.isArray(raids?.Results) ? raids.Results
+                 : Array.isArray(raids?.Raids)   ? raids.Raids
+                 : Array.isArray(raids?.Items)   ? raids.Items
+                 : Array.isArray(raids?.data)    ? raids.data
+                 : null;
+  if (!raidList) {
+    // Log the shape ONCE rather than guess at it a third time tonight — the
+    // same probe pattern the audits walk uses. Two diagnoses were already wrong
+    // for want of this line.
+    if (!_loggedRaidsShape) {
+      _loggedRaidsShape = true;
+      const keys = Object.keys(raids || {}).filter(k => typeof raids[k] !== 'function');
+      console.log('[opendkp-sync] raids unexpected shape — top-level keys:', keys.join(', '));
+      try { console.log('[opendkp-sync] raids sample:', JSON.stringify(raids).slice(0, 600)); } catch { /* */ }
+    }
+    return { fetched: 0, upserted: 0, error: 'getRaids returned non-array' };
+  }
+  raids = raidList;
 
   const rows = raids.map(_raidSummaryRow).filter(Boolean);
   if (rows.length === 0) return { fetched: raids.length, upserted: 0 };
 
   // Minimal-return: same 1000-row PostgREST cap that hit the auctions upsert
-  // (Hitya 2026-06-23). We're at 385 raids today but the count will grow,
+  // (the guild lead, 2026-06-23). We're at 385 raids today but the count will grow,
   // and getting capped silently 18 months from now is exactly the failure
   // mode we just fixed elsewhere. Count from the input length.
   await supabase.upsert('opendkp_raids', rows, 'raid_id', { minimal: true });
   return {
     fetched:  raids.length,
     upserted: rows.length,
+    scope:    useCount ? `newest ${count}` : 'full',
   };
 }
 
@@ -454,7 +577,7 @@ async function syncRaidsList() {
 //     mid-raid before attendance was finalized, or a fetch returned partial
 //     data — this is the bug behind the wildly-low attendance %: empty-
 //     attendee ticks still count in the denominator but credit nobody, so
-//     regulars like Rorschach/Gonner read far below their true RA). Forcing
+//     regulars read far below their true RA). Forcing
 //     a re-fetch until every tick is populated backfills the real attendance.
 //   - the upstream Version (from summary) is newer than ours.
 // Empty-tick re-fetch only matters for raids the attendance page actually
@@ -580,7 +703,82 @@ async function syncRaidDetail(raidId) {
 //
 // opts.full = true forces detail fetch for every raid (use sparingly — only for
 // manual /syncopendkp).
+// ── Off-raid sync cadence (the guild lead, 2026-08-27: "cut down the number of calls as
+// much as possible outside of raid times") ─────────────────────────────────
+// The mirror sync runs every 30 minutes, around the clock, and it is now the
+// bulk of what OpenDKP sees from us: over a recent 12h window, /auctions cost
+// 26 calls / 11.9 MB, /characters 65 / 8.9 MB, /raids/{id} 245 / 1.5 MB — all
+// of it maintenance, none of it urgent.
+//
+// The same argument that made the live DKP check raids-only applies here, and
+// harder: DKP moves per TICK, raids are when ticks happen, and a raid is also
+// the only time new raids, new auctions and new loot appear. Between raids the
+// sync overwhelmingly re-learns that nothing changed.
+//
+// So: full cadence inside a raid window (and the hour before it, so the board
+// is current when the pull starts), and once every few hours otherwise.
+// Deliberately a SKIP rather than a re-scheduled timer — the interval stays a
+// dumb 30-minute tick and this decides whether the pass is worth making, which
+// is the same shape as _skipForIdleBackoff and needs no restart to re-arm.
+//
+// ⚠ The cost is latency on an OFF-RAID officer edit (a manual adjustment, a
+// corrected tick): it lands in the mirror within OPENDKP_OFFRAID_SYNC_HOURS
+// rather than 30 minutes. That is the same trade already accepted for the
+// audits idle backoff, which caps at 6h. Bidding is unaffected — the loot panel
+// reads _panelAuctions on demand, not this sync.
+// ⚠ SLOTS, NOT AN ELAPSED INTERVAL, and the difference is load-bearing.
+// `_lastSyncSlot` is process-local, and `main` takes 12-42 pushes a day. With a
+// relative "has it been 3 hours" test, either every boot forces a sync (the
+// redeploy amplification we just spent two days removing from the audits walk)
+// or a cold process adopts the clock and a bot restarting more often than the
+// interval NEVER syncs at all — starved indefinitely, silently, and it would
+// look exactly like working. Anchoring to fixed clock blocks makes both
+// impossible: a restart re-adopts the CURRENT block, and the next block still
+// arrives on schedule no matter how many times we deploy.
+let _lastSyncSlot = null;
+
+function _offRaidSyncIntervalMs() {
+  return _envNum('OPENDKP_OFFRAID_SYNC_HOURS', 3) * 3600 * 1000;
+}
+
+// Pure: should this scheduled pass actually run? `adopt` is the cold-process
+// case — take the current block without spending a pass on it.
+function _syncPassWanted({ nowMs, lastSlot, inRaid, offRaidIntervalMs }) {
+  if (inRaid) return { run: true, reason: 'raid-window', adopt: null };
+  const slot = Math.floor(nowMs / offRaidIntervalMs);
+  if (lastSlot == null) return { run: false, reason: 'off-raid-cold', adopt: slot };
+  if (slot > lastSlot)  return { run: true,  reason: 'off-raid-due',  adopt: null };
+  return { run: false, reason: 'off-raid-throttled', adopt: null };
+}
+
+// The raid window, widened an hour EARLIER than _inRaidWindow so the board is
+// already current when the pull starts. (_inRaidWindow itself is shared with
+// the idle backoff and deliberately left alone.)
+function _inSyncRaidWindow(now = new Date()) {
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const day = et.getDay();
+  if (![0, 3, 4].includes(day)) return false;
+  const h = et.getHours();
+  return h >= 18 || h < 1;
+}
+
 async function runSync(opts = {}) {
+  // ⚠ The manual path is NEVER throttled. /syncopendkp is an officer saying
+  // "go now", usually BECAUSE something looks wrong or they just made an
+  // off-raid adjustment — precisely the moment the off-raid throttle would
+  // otherwise swallow the request and report success having done nothing.
+  // `full` implies force too: nobody asks for a full sweep and means "maybe".
+  if (!opts.force && !opts.full) {
+    const ivl = _offRaidSyncIntervalMs();
+    const d = _syncPassWanted({
+      nowMs: Date.now(), lastSlot: _lastSyncSlot,
+      inRaid: _inSyncRaidWindow(), offRaidIntervalMs: ivl,
+    });
+    if (d.adopt != null) _lastSyncSlot = d.adopt;
+    if (!d.run) return { phase: 'skipped', skipped: d.reason };
+    _lastSyncSlot = Math.floor(Date.now() / ivl);
+  }
+
   // Characters first — uses bearer auth, works even when OPENDKP_CLIENT_ID
   // (the read-side base64 token) is missing. Independent of the raids flow
   // so a CLIENT_ID outage still keeps the roster fresh.
@@ -590,13 +788,15 @@ async function runSync(opts = {}) {
   // fails we still surface the character sync result so the caller knows
   // SOMETHING worked.
   const listResult = await syncRaidsList();
+  // ⚠ A raids failure used to RETURN HERE, killing the entire pass — audits,
+  // adjustments, auctions, loot folding, tick detail, all of it. Seen live
+  // 2026-08-28 mid-raid: one bad response shape on /raids took the whole
+  // mirror offline and the only symptom was `phase: "list"` in a log line.
+  // The raid list is one input among several; the rest do not depend on it
+  // having succeeded, so they now run regardless and the error is reported
+  // alongside their results rather than instead of them.
   if (listResult.error) {
-    return {
-      phase: 'list',
-      ...listResult,
-      characters_upserted: charResult?.upserted ?? 0,
-      characters_error:    charResult?.error || null,
-    };
+    console.warn('[opendkp-sync] raids list failed, continuing with the rest:', listResult.error);
   }
 
   // Pull the freshly-upserted raid list (oldest first so backfills land in
@@ -675,6 +875,7 @@ async function runSync(opts = {}) {
     phase: 'done',
     raids_fetched:     listResult.fetched,
     raids_upserted:    listResult.upserted,
+    raids_error:       listResult.error || null,
     detail_synced:     candidates.length,
     detail_errors:     detailErrors,
     tick_rows_written: tickRowsWritten,
@@ -752,12 +953,205 @@ async function _maxMirroredId(table, pkCol) {
 // optimization, not correctness state, so losing it on redeploy is harmless —
 // a redeploy just buys one extra (write-free) full offer.
 const _lastFullSweepAt = new Map();
-function _fullSweepIntervalMs() {
-  return _envNum('OPENDKP_LIST_FULL_SWEEP_HOURS', 24) * 3600 * 1000;
+
+// ── Idle backoff (the guild lead, 2026-08-26: "the dkp numbers don't change outside of
+// raids unless we have to override something. why are we auditing so
+// frequently") ──────────────────────────────────────────────────────────────
+// Measured that day: the audits walk cost 17 calls / 6.2 MB EVERY 30 MINUTES,
+// identically — 297 MB/day, essentially all of it spent discovering that
+// nothing had happened. The endpoint has no "since" filter and (per the
+// ordering probe below) does not appear to page newest-first, so there is no
+// cheap way to ASK whether anything changed. The answer is therefore to ask
+// less often when the answer keeps being no.
+//
+// Doubling backoff per consecutive empty pass, from the natural 30-min cadence
+// to a cap. Any new row resets it instantly, and a raid window pins it back to
+// every pass — which is exactly the shape of the real world: DKP moves during
+// raids and during the occasional manual override, and is static in between.
+// An override made at 3pm on a Tuesday is picked up within the cap rather than
+// within 30 minutes, which is the deliberate trade.
+const _idleStreak = new Map();
+const _nextDueAt  = new Map();
+
+// ── Oldest-first fast path ──────────────────────────────────────────────────
+// PROVED on 2026-08-26, not assumed. The ordering probe logged:
+//
+//   audits: page1 ids 1669729..1968002 vs watermark 4627656 — NOT newest-first
+//
+// Page 1 holds the OLDEST audits by 2.7 million ids, so a forward walk from
+// page 1 can never reach a new row — it just re-reads 17 pages and offers zero
+// (`audits_pages: 17, audits_offered: 0`, every single pass, 6.2 MB a time).
+//
+// New rows land at the END. So: go straight to the LAST page. If nothing there
+// is above the watermark, we are done in ONE call instead of seventeen. Only
+// when the last page DOES hold something new do we fall back to the full walk,
+// which at ~37 audits/day is once or twice a day rather than 48 times.
+//
+// `TotalPages` is learned from any response and cached per table; a page count
+// only changes when a page fills (~2,800 rows, i.e. every couple of months), so
+// the hint is stable and a stale one self-corrects on the next response.
+const _lastPageHint = new Map();
+
+// OpenDKP wraps list payloads inside { TotalPages, CurrentPage, <KEY> } where
+// <KEY> varies per endpoint — BidResults (auctions), Audits, Adjustments,
+// Items, Results — and in some cases the response IS a bare array. Extracted
+// into one place so the fast path below and the full walk can never disagree
+// about what counts as "the rows"; duplicating this list is how one of them
+// silently starts seeing nothing.
+// Map a raw payload list into mirror rows. Shared by the walk and the fast
+// path so the two can never disagree about row shape.
+function _mapListRows(list, pkCol, idKeys, tsKeys) {
+  return (list || []).map(row => {
+    const id = _firstNumber(row, ...idKeys);
+    if (id == null) return null;
+    const tsRaw = _firstString(row, ...tsKeys);
+    return {
+      [pkCol]:    id,
+      ts:         tsRaw ? new Date(tsRaw).toISOString() : null,
+      raw:        row,
+      fetched_at: new Date().toISOString(),
+    };
+  }).filter(Boolean);
 }
-function _dueForFullSweep(table) {
-  const last = _lastFullSweepAt.get(table);
-  return last == null || (Date.now() - last) >= _fullSweepIntervalMs();
+
+function _rowsFromListPayload(arr, label) {
+  const capLabel = label ? label.charAt(0).toUpperCase() + label.slice(1) : null;
+  return Array.isArray(arr?.BidResults)  ? arr.BidResults
+       : Array.isArray(arr?.Audits)      ? arr.Audits
+       : Array.isArray(arr?.Adjustments) ? arr.Adjustments
+       : (capLabel && Array.isArray(arr?.[capLabel])) ? arr[capLabel]
+       : Array.isArray(arr?.Results)     ? arr.Results
+       : Array.isArray(arr?.Items)       ? arr.Items
+       : Array.isArray(arr)              ? arr
+       : Array.isArray(arr?.data)        ? arr.data
+       : null;
+}
+
+// Raid nights: Sun/Wed/Thu 8pm-midnight ET, with an hour either side so a late
+// start or a long night is never the thing that delays a sync.
+function _inRaidWindow(now = new Date()) {
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const day = et.getDay();                       // 0 Sun, 3 Wed, 4 Thu
+  if (![0, 3, 4].includes(day)) return false;
+  const h = et.getHours();
+  return h >= 19 || h < 1;
+}
+
+function _backoffCapMs() { return _envNum('OPENDKP_LIST_IDLE_MAX_HOURS', 6) * 3600 * 1000; }
+
+// Returns true when the walk should be skipped entirely — no HTTP at all.
+function _skipForIdleBackoff(table) {
+  if (_envNum('OPENDKP_LIST_IDLE_BACKOFF', 1) < 1) return false;
+  if (_inRaidWindow()) return false;
+  const due = _nextDueAt.get(table);
+  return Number.isFinite(due) && Date.now() < due;
+}
+
+function _noteIdleResult(table, freshCount) {
+  if (freshCount > 0) { _idleStreak.set(table, 0); _nextDueAt.delete(table); return; }
+  const streak = (_idleStreak.get(table) || 0) + 1;
+  _idleStreak.set(table, streak);
+  // 30min base, doubling: 30m, 1h, 2h, 4h, capped.
+  const wait = Math.min(30 * 60 * 1000 * Math.pow(2, streak - 1), _backoffCapMs());
+  _nextDueAt.set(table, Date.now() + wait);
+}
+// ── Full sweep cadence: anchored to the raid calendar, not a rolling clock ──
+// The guild lead, 2026-08-27, twice. First: "we don't need a full download that often,
+// just before a raid. three times a week." Then, an hour later:
+// "let's make the full audit once per week then until we have the new version
+// that has the since tag."
+//
+// The full sweep is the healing pass — it re-offers EVERY row, so a gap below
+// the watermark (a partial run, an upstream out-of-order insert) closes. It is
+// also the single most expensive thing we ask OpenDKP for: 17 pages / 6.2 MB on
+// audits. A 24h rolling timer fired it at whatever time of day the process
+// happened to boot, which on 2026-08-26 meant mid-raid.
+//
+// It now runs ONCE A WEEK, at 6pm ET on Sunday — two hours ahead of the first
+// pull of the raid week, clear of the 19:30 deploy freeze. That is deliberately
+// slacker than the healing pass wants: a gap can now wait a full 7 days. It is
+// **temporary, and tied to the API request** — if OpenDKP gains a `since` /
+// `afterId` parameter, the full pull stops costing anything and this goes back
+// to being frequent (or unnecessary). Until then we are buying his bandwidth
+// with our staleness, which is the right way round.
+//
+// ⚠ The days are a LIST because the cadence is a policy, not a constant:
+// `OPENDKP_LIST_FULL_SWEEP_DAYS=0,3,4` restores the three raid nights without a
+// deploy, which is the first thing to do if a gap ever shows up.
+const _SWEEP_ANCHOR_DAYS_DEFAULT = [0];      // Sunday — one full pull a week
+
+function _sweepAnchorDays() {
+  return _parseSweepDays(process.env.OPENDKP_LIST_FULL_SWEEP_DAYS);
+}
+// Pure, so a malformed env value is testable. Anything unparseable falls back
+// to the default rather than to an empty list — an empty list would mean the
+// healing pass never runs again, and would look exactly like it working.
+function _parseSweepDays(raw) {
+  // ⚠ Empty segments must be dropped BEFORE Number(): `Number('')` is 0, not
+  // NaN, so an unset env used to arrive at the filter as a valid "Sunday" and
+  // the fallback below was unreachable. It happened to agree with the default,
+  // which is exactly why it would have survived unnoticed until the default
+  // changed.
+  const days = String(raw ?? '').split(',')
+    .map(x => String(x).trim())
+    .filter(x => x !== '')
+    .map(Number)
+    .filter(n => Number.isInteger(n) && n >= 0 && n <= 6);
+  return days.length ? [...new Set(days)] : _SWEEP_ANCHOR_DAYS_DEFAULT;
+}
+
+function _sweepAnchorHourEt() {
+  const h = _envNum('OPENDKP_LIST_FULL_SWEEP_HOUR_ET', 18);
+  return (Number.isFinite(h) && h >= 0 && h <= 23) ? Math.floor(h) : 18;
+}
+// Safety net ONLY — it must sit ABOVE the widest gap the anchors can produce,
+// or it becomes the schedule. At one anchor a week that gap is 168h, so 240h
+// (10 days). ⚠ This moves whenever the anchor days do: left at the 96h that
+// suited three-a-week, it would have fired every fourth day and quietly
+// reinstated the cadence we just removed.
+function _sweepMaxAgeMs() {
+  return _envNum('OPENDKP_LIST_FULL_SWEEP_MAX_HOURS', 240) * 3600 * 1000;
+}
+
+// Epoch ms of the most recent pre-raid anchor at or before `nowMs`. Pure, so
+// the tests can drive it across a whole week without waiting for one.
+// ET comes from toLocaleString, the same trick _inRaidWindow uses: the returned
+// Date carries ET wall-clock in its LOCAL fields, and its distance from the real
+// instant is the offset that converts a wall time back to an epoch. A DST
+// changeover can leave that offset an hour out for a day; an hour of slop on a
+// 6pm anchor changes nothing.
+function _lastSweepAnchor(nowMs = Date.now(), hourEt = _sweepAnchorHourEt(), days = _sweepAnchorDays()) {
+  const et = new Date(new Date(nowMs).toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const offsetMs = et.getTime() - nowMs;
+  for (let back = 0; back < 8; back++) {
+    const d = new Date(et.getTime());
+    d.setDate(d.getDate() - back);
+    if (!days.includes(d.getDay())) continue;
+    d.setHours(hourEt, 0, 0, 0);
+    const epoch = d.getTime() - offsetMs;
+    if (epoch <= nowMs) return epoch;
+  }
+  return nowMs;                              // unreachable: 8 days covers every case
+}
+
+// Pure decision, split out so it can be tested without a clock or a Map.
+// `adopt` is the cold-process case: do NOT sweep just because we lost the
+// timestamp on a redeploy — main takes 12–42 pushes a day, and a per-boot full
+// sweep is precisely the thing that kept the audits bill up. Adopt the current
+// anchor instead; the next real anchor still fires, at most a week out.
+function _sweepDecision(lastMs, nowMs, anchorMs, maxAgeMs) {
+  if (lastMs == null)                  return { due: false, adopt: anchorMs };
+  if ((nowMs - lastMs) >= maxAgeMs)    return { due: true,  adopt: null };
+  return { due: lastMs < anchorMs, adopt: null };
+}
+
+function _dueForFullSweep(table, nowMs = Date.now()) {
+  const d = _sweepDecision(
+    _lastFullSweepAt.has(table) ? _lastFullSweepAt.get(table) : null,
+    nowMs, _lastSweepAnchor(nowMs), _sweepMaxAgeMs(),
+  );
+  if (d.adopt != null) _lastFullSweepAt.set(table, d.adopt);
+  return d.due;
 }
 function _markFullSweep(table) {
   _lastFullSweepAt.set(table, Date.now());
@@ -775,6 +1169,11 @@ async function _syncListEndpoint({
 
   const pkCol = _pkColFor(idKeys);
 
+  // Cheapest possible pass: no HTTP at all while the answer keeps being "no".
+  if (_skipForIdleBackoff(table)) {
+    return { upserted: 0, pages: 0, offered: 0, full_sweep: false, skipped: 'idle-backoff' };
+  }
+
   // Highest id we already hold. Everything at or below it is already mirrored
   // and — because these endpoints are append-only — can never have changed, so
   // it does not need to be sent again. One row read, not a 47k-row scan.
@@ -783,13 +1182,88 @@ async function _syncListEndpoint({
   // Periodic full offer so a gap below priorMax (a partial run, an upstream
   // out-of-order insert) still heals. Costs nothing to be wrong about: the
   // write path is DO NOTHING, so re-offering a known row is an index probe.
+  // Read the marker BEFORE _dueForFullSweep, which mutates it on the cold path.
+  const _priorMarker = _lastFullSweepAt.has(table) ? _lastFullSweepAt.get(table) : null;
   const fullSweep = _dueForFullSweep(table);
+  if (fullSweep) {
+    // ⚠ UNEXPLAINED SWEEP, 2026-08-27 04:02 UTC (00:02 ET). A warm process —
+    // no restart in the logs — swept both audits and adjustments one pass after
+    // ET midnight. Replaying the shipped decision offline against that exact
+    // timestamp returns false, under this version's anchors AND the previous
+    // one's. So the model and production disagree and we do not yet know how.
+    // This line is the instrument: it prints every input the decision took, so
+    // the next occurrence is diagnosable from one log line instead of another
+    // evening of inference. Do not remove it until a sweep has been seen to
+    // fire on the right day for the right reason.
+    console.log(`[opendkp-sync] ${label}: FULL SWEEP —`
+      + ` marker=${_priorMarker == null ? 'none (cold)' : new Date(_priorMarker).toISOString()}`
+      + ` anchor=${new Date(_lastSweepAnchor()).toISOString()}`
+      + ` days=[${_sweepAnchorDays()}] hourEt=${_sweepAnchorHourEt()}`
+      + ` maxAgeH=${_sweepMaxAgeMs() / 3600000} now=${new Date().toISOString()}`);
+  }
 
   let pagesWalked   = 0;
   let totalUpserted = 0;
   let totalOffered  = 0;
+  let newestFirstProven = false;   // set from page 1; gates the early break
+  let jumpedToLast      = false;   // set when page 1 proves oldest-first
+  let lastPageDone      = 0;       // the page the jump already processed
+
+  // Oldest-first fast path: check the LAST page and stop if it holds nothing
+  // new. Skipped on a full sweep (which must genuinely walk everything) and on
+  // a cold process (no hint yet — the first walk after a deploy learns it).
+  const hintPage = Number(_lastPageHint.get(table));
+  if (!fullSweep && Number.isFinite(hintPage) && hintPage > 1) {
+    try {
+      let arr = await fetchPage(hintPage);
+      let seen = 1;
+      // The count can have grown since we cached it; go to the real last page.
+      const total = Number(arr?.TotalPages);
+      if (Number.isFinite(total) && total > hintPage) {
+        _lastPageHint.set(table, total);
+        arr = await fetchPage(total);
+        seen = 2;
+      } else if (Number.isFinite(total)) {
+        _lastPageHint.set(table, total);
+      }
+      const list = _rowsFromListPayload(arr, label);
+      // Unknown shape → no rows → would read as "nothing new", which is WRONG.
+      // Fall through to the walk, which reports the shape properly.
+      if (!list) throw new Error('unknown shape on fast path');
+      const rows = _mapListRows(list, pkCol, idKeys, tsKeys);
+      const fresh = rows.filter(r => Number(r[pkCol]) > priorMax);
+
+      // ⚠ THE CASE THAT COST US A RAID NIGHT (2026-08-26). v1 fell through to
+      // the full 17-page walk whenever the last page held anything new — and
+      // during a raid EVERY pass holds something new, because loot awards and
+      // ticks generate audits. So the "fast" path was fast only while idle and
+      // reverted to 6.2 MB a pass exactly when raiding. Measured: 1 call /
+      // 438 bytes at 22:43 and 23:13, then 18 calls / 6.2 MB every pass from
+      // 23:43 once the raid started.
+      //
+      // Oldest-first means new rows APPEND to the end, so the last page already
+      // contains them — there is nothing to go back for unless the page has
+      // JUST rolled over, which shows up as every row on it being fresh.
+      if (fresh.length === 0 || fresh.length < rows.length) {
+        if (fresh.length > 0) await supabase.insertIgnoreDuplicates(table, fresh);
+        _noteIdleResult(table, fresh.length);
+        return {
+          upserted: fresh.length, pages: seen, offered: fresh.length,
+          full_sweep: false, fast_path: 'last-page',
+        };
+      }
+      // Every row on the last page is new → the boundary is on an earlier page
+      // (a page rollover, roughly every couple of months at ~37 audits/day).
+      // Fall through to the full walk, which knows how to page back.
+    } catch { /* fast path is an optimization; any failure just walks normally */ }
+  }
 
   for (let page = 1; page <= AUDIT_PAGE_LIMIT; page++) {
+    // The rollback below resumes the walk at page 2, but the jump has already
+    // fetched and written the last page — don't pay for it a second time (and
+    // don't double-count its rows in `upserted`).
+    if (lastPageDone && page >= lastPageDone) break;
+
     let arr;
     try { arr = await fetchPage(page); }
     catch (err) { return { error: err?.message || String(err), upserted: totalUpserted, pages: pagesWalked }; }
@@ -799,16 +1273,11 @@ async function _syncListEndpoint({
     // Items, Results — and in some cases the response IS a bare array. We accept
     // all of those, plus a capitalized form derived from the endpoint label
     // ("audits" → "Audits") as the primary fallback.
-    const capLabel = label ? label.charAt(0).toUpperCase() + label.slice(1) : null;
-    const list = Array.isArray(arr?.BidResults) ? arr.BidResults
-              : Array.isArray(arr?.Audits)     ? arr.Audits
-              : Array.isArray(arr?.Adjustments) ? arr.Adjustments
-              : (capLabel && Array.isArray(arr?.[capLabel])) ? arr[capLabel]
-              : Array.isArray(arr?.Results)    ? arr.Results
-              : Array.isArray(arr?.Items)      ? arr.Items
-              : Array.isArray(arr)             ? arr
-              : Array.isArray(arr?.data)       ? arr.data
-              : null;
+    const list = _rowsFromListPayload(arr, label);
+    // Capture the page count HERE, before any of the breaks below — putting it
+    // at the end of the loop meant the early break skipped it and the fast path
+    // never got a hint to work from.
+    if (Number.isFinite(Number(arr?.TotalPages))) _lastPageHint.set(table, Number(arr.TotalPages));
 
     if (!list) {
       if (!shapeFlag.value) {
@@ -847,6 +1316,31 @@ async function _syncListEndpoint({
     const freshRows = rows.filter(r => Number(r[pkCol]) > priorMax);
     const toSend    = fullSweep ? rows : freshRows;
 
+    // Early break (2026-08-25, the Moncs incident): these endpoints have no
+    // "since" filter, so this walk made OpenDKP re-serialise its ENTIRE audit
+    // table (~15 pages, 48k rows) every 30 minutes for three months. The pages
+    // are newest-first, so once a page yields nothing above our watermark,
+    // every later page is older still — stop asking for them. The ordering is
+    // PROVEN per run, not assumed: page 1's max id must be >= our watermark
+    // (oldest-first paging would put the SMALLEST ids on page 1 and fail this
+    // test, and the walk then continues exactly as before). The 24h fullSweep
+    // still walks everything, so a gap below the watermark still heals.
+    if (page === 1 && rows.length > 0) {
+      const pageMax = Math.max(...rows.map(r => Number(r[pkCol])));
+      newestFirstProven = Number.isFinite(priorMax) && pageMax >= priorMax;
+      // ⚠ ORDERING PROBE. The early break assumed newest-first (inferred from
+      // the auctions endpoint's "page 1 = most recent" note). The 2026-08-26
+      // measurement says otherwise for audits: a full 17-page walk every pass,
+      // which is what this guard does when it CANNOT prove the ordering. Log it
+      // once per pass so the next session can read the truth off Railway
+      // instead of inferring it from a sibling endpoint again.
+      if (!newestFirstProven) {
+        const pageMin = Math.min(...rows.map(r => Number(r[pkCol])));
+        console.log(`[opendkp-sync] ${label}: page1 ids ${pageMin}..${pageMax} vs watermark ${priorMax}`
+          + ` — NOT newest-first, walking all pages (this is the expensive path)`);
+      }
+    }
+
     if (toSend.length > 0) {
       totalOffered += toSend.length;
       // ON CONFLICT DO NOTHING, not merge-duplicates. These endpoints are
@@ -866,10 +1360,41 @@ async function _syncListEndpoint({
     }
     totalUpserted += freshRows.length;
 
+    // ── Cold-start jump (2026-08-27) ────────────────────────────────
+    // The fast path above needs a cached page count and a fresh process has
+    // none — so every redeploy walked all 17 pages to re-learn what page 1 had
+    // just told it: the ids run OLDEST-first, so nothing between here and the
+    // end can sit above our watermark. Measured the night this shipped — three
+    // deploys inside ten minutes, 17 calls / 6.2 MB apiece — that per-boot walk,
+    // not the periodic sweep, was most of what remained of the audits bill.
+    // Page 1 has just proven the ordering, so jump to the last page: two calls.
+    const totalPages = Number(arr?.TotalPages);
+    if (!fullSweep && !jumpedToLast && page === 1 && !newestFirstProven
+        && Number.isFinite(totalPages) && totalPages > 2) {
+      jumpedToLast = true;
+      page = totalPages - 1;          // the loop's page++ lands us on the last one
+      continue;
+    }
+
+    // The last page came back ENTIRELY new, so the boundary sits on an earlier
+    // page (a rollover — every couple of months at ~37 audits/day). Hand the
+    // saved calls back and walk the middle: a silent gap is the worse outcome.
+    if (jumpedToLast && rows.length > 0 && freshRows.length === rows.length) {
+      jumpedToLast = false;
+      lastPageDone = page;
+      page = 1;                       // … and page++ resumes the walk at page 2
+      continue;
+    }
+
+    // Nothing on this page was new and newer-first paging is proven for this
+    // run → every remaining page is older than what we hold. Done.
+    if (!fullSweep && newestFirstProven && freshRows.length === 0) break;
+
     if (arr?.TotalPages && arr?.CurrentPage && arr.CurrentPage >= arr.TotalPages) break;
   }
 
   if (fullSweep) _markFullSweep(table);
+  _noteIdleResult(table, totalUpserted);
 
   return {
     upserted:   totalUpserted,
@@ -1167,7 +1692,7 @@ async function reconcileRecentLoot(opts = {}) {
 // not just an integer.
 // Pull every page of characters. OpenDKP's /characters endpoint paginates
 // (the web UI exposes page-size + page controls), and a single un-paged call
-// only returns the first slice — that's how active level-60 mains like Dant
+// only returns the first slice — that's how active level-60 mains like a member
 // went missing from our mirror. We walk ?page=N until a page yields no NEW
 // CharacterIds (handles both real pagination AND an endpoint that ignores
 // ?page and returns the same full list every time — the new-id check stops
@@ -1226,7 +1751,7 @@ async function syncCharacters() {
   }
 
   // Officer family-link overrides (/admin/links). OpenDKP parentage is
-  // routinely incomplete — rank "Raid Alt" with ParentId 0 (Adiwen) splits
+  // routinely incomplete — rank "Raid Alt" with ParentId 0 (a member) splits
   // one human into two families. When main_name_override is set, it wins
   // over the ParentId resolution so the officer's fix survives every sync.
   const overrideByName = new Map();
@@ -1268,12 +1793,12 @@ async function syncCharacters() {
 
   // Dedup by (guild_id, lower(name)) BEFORE upserting. OpenDKP rosters
   // frequently contain duplicate character names — the same toon registered
-  // twice, a main + a stale dupe, etc. (the live roster shows "Fronzz" listed
+  // twice, a main + a stale dupe, etc. (the live roster shows "Pellwyn" listed
   // twice). The upsert conflict target is (guild_id, name), so two rows with
   // the same name in ONE PostgREST batch trigger Postgres's "ON CONFLICT DO
   // UPDATE command cannot affect row a second time" error — which fails the
   // ENTIRE batch and silently drops up to 200 unrelated characters. THIS is
-  // why Ashieron / Abrahms / Damyu / Ghalix never imported despite being
+  // why four characters never imported despite being
   // clearly present in OpenDKP: they happened to share a batch with a
   // duplicate-name pair. Collapse duplicates first, keeping the best row.
   const RANK_SCORE = {
@@ -1329,8 +1854,8 @@ async function syncCharacters() {
 // counts — and until now the ONLY thing that ever wrote the OpenDKP half of it
 // was an officer typing `/backfillopendkploot`. Somebody last ran that on
 // 2026-06-04, so by 2026-08-14 the Loot tab was missing **758 awards across 28
-// raids**: Kazmodon won Silver Band of Secrets at raid 98561 for 150 DKP and the
-// item still read as never dropped (Hitya spotted it, "are we missing rows of
+// raids**: a member won Silver Band of Secrets at raid 98561 for 150 DKP and the
+// item still read as never dropped (the guild lead spotted it, "are we missing rows of
 // loot drops?").
 //
 // The failure mode is the point: a derived table fed only by a human command
@@ -1441,17 +1966,20 @@ async function foldLootObservations(opts = {}) {
   const dropIds = [...new Set([...catalogIdByAward.values()].filter(v => Number.isFinite(v) && v > 0))];
   const dropOwnerByItem = new Map();
   for (let i = 0; i < dropIds.length; i += 100) {
-    const rows = await supabase.select('eqemu_npc_drops',
-      `item_id=in.(${dropIds.slice(i, i + 100).join(',')})&select=item_id,npc_id,npc_name&limit=20000`);
-    if (!Array.isArray(rows)) continue;
-    const byItem = new Map();
+    // One row per item (eqemu_item_drop_owner): its NPC count and, when the count is 1, that NPC.
+    // The (item, NPC) pairs of a 100-item chunk are thousands of rows (27.7 NPCs per item on
+    // average, 1,847 at most) and PostgREST cut them at 1,000 whatever `limit` said, so an item whose
+    // rows fell past the cut read as dropped by one NPC, or by none (627 loot_observations rows
+    // disagree with the drop tables on 2026-10-04). A chunk now answers with at most its own 100 rows.
+    const rows = await supabase.select('eqemu_item_drop_owner',
+      `item_id=in.(${dropIds.slice(i, i + 100).join(',')})&select=item_id,npc_count,npc_id,npc_name`);
+    // A failed read is not "no NPC drops these": the rows below are written once and the unique index
+    // keeps them (ignore-duplicates), so filing a chunk as unknown on a timeout — or while the view is
+    // not there yet — would stick. Stop and let the next sync pass fold it.
+    if (!Array.isArray(rows)) return { skipped: 'drop owner read failed' };
     for (const row of rows) {
-      if (!byItem.has(row.item_id)) byItem.set(row.item_id, new Map());
-      byItem.get(row.item_id).set(row.npc_id, row.npc_name);
-    }
-    for (const [id, npcs] of byItem) {
-      dropOwnerByItem.set(id, npcs.size === 1
-        ? { npc_id: [...npcs.keys()][0], npc_name: [...npcs.values()][0] }
+      dropOwnerByItem.set(row.item_id, row.npc_count === 1
+        ? { npc_id: row.npc_id, npc_name: row.npc_name }
         : null);
     }
   }
@@ -1514,7 +2042,7 @@ async function foldLootObservations(opts = {}) {
 }
 
 module.exports = {
-  runSync, syncRaidsList, syncRaidDetail, syncCharacters, syncAuctions, syncAudits, syncAdjustments,
+  runSync, syncRaidsList, syncRaidDetail, syncCharacters, syncAuctions, syncAuctionBids, syncPendingAuctionBids, syncAudits, syncAdjustments,
   reconcileRecentLoot, classifyAuditAction, lootDiffRemovals, dedupByConflictKey,
   foldLootObservations, resolveCatalogItemId, selectAllPaged,
 };

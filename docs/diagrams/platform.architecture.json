@@ -1,0 +1,248 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Wolf Pack platform",
+    "subtitle": "Four components, one raid night",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1120,
+      640
+    ],
+    "views": [
+      {
+        "id": "raid-night",
+        "label": "During a pull",
+        "focus": [
+          "eq",
+          "agent",
+          "mimic",
+          "bot",
+          "discord"
+        ],
+        "note": "The live loop: the game writes a line, the agent reads it locally, overlays paint it, and only shared data leaves the machine."
+      },
+      {
+        "id": "the-record",
+        "label": "After the pull",
+        "focus": [
+          "bot",
+          "db",
+          "web",
+          "dkp"
+        ],
+        "note": "The durable half. What survives the night lands in Postgres, and the site reads it back under the Discord membership gate."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "eq",
+      "type": "external",
+      "label": "EverQuest + Zeal",
+      "sublabel": "Log file · named pipe",
+      "pos": [
+        40,
+        250
+      ],
+      "size": [
+        150,
+        68
+      ]
+    },
+    {
+      "id": "agent",
+      "type": "backend",
+      "label": "Agent",
+      "sublabel": "Reads logs locally",
+      "pos": [
+        246,
+        250
+      ],
+      "size": [
+        150,
+        68
+      ]
+    },
+    {
+      "id": "mimic",
+      "type": "frontend",
+      "label": "Mimic",
+      "sublabel": "15 game overlays",
+      "pos": [
+        246,
+        412
+      ],
+      "size": [
+        150,
+        68
+      ]
+    },
+    {
+      "id": "bot",
+      "type": "backend",
+      "label": "Wolf Pack bot",
+      "sublabel": "Discord + HTTP API",
+      "brand": "railway",
+      "pos": [
+        478,
+        250
+      ],
+      "size": [
+        150,
+        68
+      ]
+    },
+    {
+      "id": "discord",
+      "type": "messagebus",
+      "label": "Discord",
+      "sublabel": "Boards and alerts",
+      "brand": "discord",
+      "pos": [
+        478,
+        88
+      ],
+      "size": [
+        150,
+        68
+      ]
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "Supabase",
+      "sublabel": "Postgres and auth",
+      "brand": "supabase",
+      "pos": [
+        710,
+        250
+      ],
+      "size": [
+        150,
+        68
+      ]
+    },
+    {
+      "id": "dkp",
+      "type": "external",
+      "label": "OpenDKP",
+      "sublabel": "Attendance and bids",
+      "pos": [
+        710,
+        412
+      ],
+      "size": [
+        150,
+        68
+      ]
+    },
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "wolfpack.quest",
+      "sublabel": "The guild's memory",
+      "brand": "vercel",
+      "pos": [
+        942,
+        250
+      ],
+      "size": [
+        150,
+        68
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "eq-agent",
+      "from": "eq",
+      "to": "agent",
+      "label": "log + pipe",
+      "variant": "emphasis",
+      "labelDy": -30
+    },
+    {
+      "id": "agent-mimic",
+      "from": "agent",
+      "to": "mimic",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "agent-bot",
+      "from": "agent",
+      "to": "bot",
+      "label": "uploads",
+      "variant": "emphasis",
+      "labelDy": -30
+    },
+    {
+      "id": "bot-discord",
+      "from": "bot",
+      "to": "discord",
+      "label": "timers, kills",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "bot-db",
+      "from": "bot",
+      "to": "db",
+      "label": "merge + store",
+      "labelDy": -30
+    },
+    {
+      "id": "bot-dkp",
+      "from": "bot",
+      "to": "dkp",
+      "label": "ticks and bids",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "left"
+    },
+    {
+      "id": "db-web",
+      "from": "db",
+      "to": "web",
+      "label": "gated reads",
+      "variant": "emphasis",
+      "labelDy": -30
+    },
+    {
+      "id": "bot-agent",
+      "from": "bot",
+      "to": "agent",
+      "label": "triggers, tuning",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "right"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Privacy is a filter, not a promise",
+      "items": [
+        "Officer chat, tells and group never leave the PC",
+        "The byte filter runs before the parser sees a line"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Every viewpoint of one fight",
+      "items": [
+        "Each raider uploads what they saw",
+        "The bot merges them into a single parse"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "The fleet moves without a deploy",
+      "items": [
+        "Triggers and tuning are polled, not shipped",
+        "A kill switch can pause every agent mid-raid"
+      ]
+    }
+  ]
+}

@@ -9,6 +9,7 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
+import { GUILD_TAG } from '@/lib/guild';
 
 async function assertOfficer() {
   const { data: { user } } = await supabaseServer().auth.getUser();
@@ -57,10 +58,10 @@ export async function clearClassification(formData: FormData) {
   revalidatePath('/admin/anomalies');
 }
 
-// ── Intentional deaths (Hitya 2026-08-06) ─────────────────────────────────
+// ── Intentional deaths (the guild lead, 2026-08-06) ─────────────────────────────────
 // A STANDING rule: "<character> always dies on purpose on <this boss>". Set
 // once from the fight the officer is already looking at, and it applies every
-// week after — Fawx and Dant make a corpse on Kaas Thox Xi Ans Dyek every
+// week after — two rogues make a corpse on Kaas Thox Xi Ans Dyek every
 // single raid, and a per-death toggle would have officers re-marking the same
 // two rogues forever.
 //
@@ -97,7 +98,7 @@ export async function markDeathIntentional(formData: FormData) {
   // with it. The index remains the backstop if two officers race.
   const { data: existing } = await admin.from('intentional_death_rules')
     .select('id')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .eq('npc_id', npcId)
     .ilike('character_name', character)
     .maybeSingle();
@@ -108,7 +109,7 @@ export async function markDeathIntentional(formData: FormData) {
       .eq('id', existing.id);
   } else {
     await admin.from('intentional_death_rules').insert({
-      guild_id: 'wolfpack',
+      guild_id: GUILD_TAG,
       character_name: character,
       npc_id: npcId,
       note,
@@ -133,7 +134,7 @@ export async function unmarkDeathIntentional(formData: FormData) {
   const admin = supabaseAdmin();
   await admin.from('intentional_death_rules')
     .update({ active: false, updated_at: new Date().toISOString() })
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .eq('npc_id', npcId)
     .ilike('character_name', character);
   revalidatePath(`/parses/${id}`);

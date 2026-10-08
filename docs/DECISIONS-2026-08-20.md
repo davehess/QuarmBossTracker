@@ -3,7 +3,7 @@
 Overnight (the Wed 08-19 raid ran into this morning) plus the Thursday-morning
 landing. Previous file: `DECISIONS-2026-08-19.md`.
 
-## DT countdown: a gated fire on a timer-bearing trigger still ARMS the timer (Hitya, mid-raid)
+## DT countdown: a gated fire on a timer-bearing trigger still ARMS the timer (the guild lead, mid-raid)
 
 **The call.** *"we still missed the deathtouch timer from the second cursed
 cycle mob on a pet."* Two holes, two fixes: (1) the guild trigger's target
@@ -23,7 +23,7 @@ re-fixed backwards.
 **Where it landed.** `packages/wolfpack-logsync/index.js`
 (`_fireTriggerActions`), guild_triggers `d1a04e39…`, beta build off `0debca07`.
 
-## /parses: collection is open, DISPLAY is curated (Hitya: "not the right parses for nonbosses")
+## /parses: collection is open, DISPLAY is curated (Guild lead: "not the right parses for nonbosses")
 
 **The call.** Bot 3.1.52's self-registration (first kills are sacred) turned
 out to have removed the page's only boss filter — one overnight farm session
@@ -37,7 +37,7 @@ page finally says Ssraeshza Temple instead of "Unknown zone").
 **Where it landed.** Web **1.1.77** + bot **3.1.60**, two migrations (applied
 via MCP 2026-08-20 ~02:1x UTC, identical files committed).
 
-**Post-deploy leak + cleanup (Hitya, Thu morning: "Still seeing a bunch of
+**Post-deploy leak + cleanup (the guild lead, Thu morning: "Still seeing a bunch of
 trash").** The backfill ran at 02:13 UTC but the flag-stamping bot only
 deployed at 13:46 UTC — for those ~11.5 hours the OLD bot kept self-registering
 first-seen mobs with the column DEFAULT (false = curated), so last night's
@@ -51,7 +51,7 @@ the sweep (Tolapumj, Prophet Grikplag, Centurion Regorator, Legionnaire Rukos)
 stay off-card by the lockout rule; any that ever appears in a lockout/bosskill
 relay self-promotes.
 
-## "If they have a loot lockout we can keep them on" (Hitya) — lockout ⇒ card-worthy, self-enforcing
+## "If they have a loot lockout we can keep them on" (the guild lead) — lockout ⇒ card-worthy, self-enforcing
 
 **The call.** Uncurated NAMEDS (instanced City of Mist / Ssra minis) shouldn't
 be promoted by hand-picked lists: the SERVER already declares what's a boss —
@@ -64,7 +64,7 @@ never creates rows, never touches timers, war-god PVP names are no-ops).
 dropped non-board names), so tonight's nameds promote the first time anyone
 locked to them runs /sll after the deploy, or on their next kill broadcast.
 
-## /announce for a future event DEFERS its parse session (Hitya: "it hasn't happened yet!")
+## /announce for a future event DEFERS its parse session (Guild lead: "it hasn't happened yet!")
 
 **The call.** The All-Night Leaderboard appeared at 12:21 AM in the "Sanctus
 Seru — Thu, Aug 20, 10:30 PM EDT" thread, full of overnight FARM kills.
@@ -85,17 +85,17 @@ time (or re-announce ≤2h out, which now opens immediately). Also: the stale
 All-Night Leaderboard message from 12:21 AM in that thread is farm data —
 delete it by hand.
 
-## Inventory auto-upload: the third sibling was never built (Hitya: "are we not consuming inventory files when they get updated?")
+## Inventory auto-upload: the third sibling was never built (Guild lead: "are we not consuming inventory files when they get updated?")
 
 **The finding.** The bot's `/api/agent/inventory` endpoint has existed since
-2026-06-23 (Hitya: *"load the inventory, spellbook, and quarmy files via
+2026-06-23 (Guild lead: *"load the inventory, spellbook, and quarmy files via
 mimic the way we are the logs"*) and the `/character/<name>/inventory` page
 copy claimed "Mimic uploads this automatically in 1.0.78+" — but the
 agent-side scan was NEVER written, in any version, anywhere (repo history
 searched). Quarmy and spellbook shipped their halves; inventory silently
 stayed manual-/me-upload-only. Result: 2 of 122 characters fresher than 30
 days, family snapshots frozen at July 15, August's Ancient scrolls invisible
-to the item search, Manamana's file sitting unconsumed in the scanned dir.
+to the item search, a member's file sitting unconsumed in the scanned dir.
 
 **The fix.** Agent **3.5.94** (beta): `scanInventoryUploads`, an exact
 sibling of the quarmy/spellbook scans — same dir, same exclude_inventory
@@ -113,11 +113,11 @@ invisible by construction — verify the pipe end-to-end when shipping the
 copy, not just the endpoint.
 
 **Verify (next Mimic beta on any box):** `[inventory] queued inventory
-upload for <Char>` in the agent log within ~40s of boot; Manamana's page
+upload for <Char>` in the agent log within ~40s of boot; a member's page
 fills; `character_inventory.observed_at` goes current for every character
 with a file on a running box.
 
-**Graduated same-day (Hitya: "lets go to a new minor version for agent and
+**Graduated same-day (Guild lead: "lets go to a new minor version for agent and
 send this out as a miMIC update as well since this is pretty important").**
 Agent re-versioned **3.6.0** (new minor line), Mimic stable **2.6.0** cut
 from main carrying the whole beta delta (inventory auto-upload + buff-queue
@@ -128,7 +128,7 @@ none was given).
 
 ## Backfill Dismiss was a no-op inside Mimic: Electron has no window.prompt()
 
-**The finding (Hitya: "dismiss button for backfill doesn't do anything, and
+**The finding (Guild lead: "dismiss button for backfill doesn't do anything, and
 closing that panel just refreshes and brings it back").** Two bugs. (1) The
 Dismiss handler opened `window.prompt()` for the optional officer reason —
 Electron renderers do not support prompt() (it THROWS), so inside Mimic the
@@ -143,14 +143,14 @@ and decorateButtons — which already observes every section — re-asserts
 wp-hidden from the persisted set on every repaint, healing all sections
 generically.
 
-**Cleanup.** Hitya's two stuck June-12 requests (Rockin, Manamana) dismissed
+**Cleanup.** the guild lead's two stuck June-12 requests (a member, a member) dismissed
 server-side per his clicks. ⚠ **~115 more stale June 9–15 data-gap requests
 are still open fleet-wide** — every member with a matching character sees
 their own undismissable-until-3.6.1 nag card. Bulk-dismissing the June sweep
-is Hitya's call (the four 2026-08-17 Sleeper's Tomb recovery requests must
+is the guild lead's call (the four 2026-08-17 Sleeper's Tomb recovery requests must
 survive any sweep — they are the live P1 tail).
 
-## Shared banks: fingerprint the content, group by account, count once (Hitya: "build fingerprinting on shared bank lines")
+## Shared banks: fingerprint the content, group by account, count once (Guild lead: "build fingerprinting on shared bank lines")
 
 **The problem.** The shared bank is ACCOUNT-level — every character on a game
 account exports identical SharedBank rows — so /me/inventory's totals counted
@@ -166,9 +166,9 @@ identity IS the account fingerprint: hash each character's SharedBank row-set
 (slot|item|qty, ordered); identical hash = same game account; the freshest
 snapshot in a group is its representative and the only one whose shared bank
 counts. Regrouping is automatic — a moved character's next upload carries the
-new account's shared bank. Verified against live data: Hitya's alt account
-(Utoh/Manamana/Melting/Pearlclutcher/Rockin) and the mule accounts
-(Zbag/Hurryupandbuy/Morebagsplz/…, Holdquest/Holdgems/…) grouped correctly on
+new account's shared bank. Verified against live data: the guild lead's alt account
+(a member/a member/a member/a member/a member) and the mule accounts
+(Zbag/Hurryupandbuy/Morebagsplz/…, a member/a member/…) grouped correctly on
 the first query. Designed-in caveats, recorded in the migration: empty shared
 banks never group (no rows → no fingerprint); differently-aged snapshots can
 transiently split a group until the stale one refreshes (auto-upload closes
@@ -183,7 +183,7 @@ rows (coin never uploads); the doc now says so. `web/lib/quartermaster.ts`'s
 "bank already stripped upstream" comment was false — and per-character kit
 checks are CORRECT to count bank/shared-bank (reachability), so behavior is
 unchanged there; only /me/inventory sums across characters and only it dedups.
-Worn/equipped items were already uploaded + searchable on every path (Hitya
+Worn/equipped items were already uploaded + searchable on every path (the guild lead
 asked — confirmed, no change needed). Follow-up noted, not built: the
 `character_missing_spells` `held_by[]` list can still name every same-account
 character for a shared-bank scroll (names, not counts — low harm).
@@ -192,7 +192,7 @@ character for a shared-bank scroll (names, not counts — low harm).
 
 **What was wrong.** The morning's `shared_bank_groups` view hashed each
 character's WHOLE SharedBank row-set and grouped exact matches. It grouped
-almost nothing, and Hitya caught it the same evening: *"Fairly certain that
+almost nothing, and the guild lead caught it the same evening: *"Fairly certain that
 these are duplicates for the shared bank bits of 1 or 3 items"* — ten
 characters each reporting `SharedBank6-Slot9 = Words of the Spectre ×3`, one
 physical stack counted ten times. Root cause: an inventory file is written
@@ -215,7 +215,7 @@ chained those weak links into a 29-character and a 17-character "account".
 Over the union a 20-slot mule bank scores 20/108 against a 108-slot bank and
 stays separate, while two snapshots of the same bank score 0.99.
 
-**The account model, from Hitya (this is the authoritative version).** A game
+**The account model, from the guild lead (this is the authoritative version).** A game
 account holds **at most 8 characters**. One person can own **~10 game accounts
 under one forum account**, so "same owner" and "same account" are different
 questions — ownership is answered by the Discord/OpenDKP family, and this
@@ -232,7 +232,7 @@ conclude the cap was invented and raise it to 16 — wrong conclusion from real
 data: 8 IS the rule, and the 10-cluster was an over-merge. The lesson is not
 "don't guess" alone; it is **when measurement contradicts a rule, suspect the
 measurement's interpretation too** — here the extra two characters
-(Hidya, Okigetyou) were transfers to a second account still carrying a stale
+(a member, a member) were transfers to a second account still carrying a stale
 near-copy of the first account's bank.
 
 **Final shape.** Cap is 8 (the server rule). A cluster that comes out larger is
@@ -243,7 +243,7 @@ transferred characters at 0.9714 with each other and ≤0.9533 with the account 
 so 0.96 separates them into 8 + 2, both plausible accounts. Only a group that
 survives every threshold is left un-deduped and logged.
 
-## Character filing moves to the MEMBER; traders stop needing a class (Hitya)
+## Character filing moves to the MEMBER; traders stop needing a class (the guild lead)
 
 **The call.** *"I need a way for the end user that we suspect these are a part
 of to tell us about these users."* Plus the blocker: *"For all of the ones that
@@ -252,7 +252,7 @@ traders because of the class requirement."*
 
 **Why officers couldn't do this.** ~110 characters upload from members' machines
 with no `characters.discord_id`. An officer cannot classify them — they don't
-know whose Beltbroker is whose — and the one button that fit (Trader) was
+know whose a member is whose — and the one button that fit (Trader) was
 disabled until a class was picked, for a bank mule `/who` has never seen. So
 the queue only grew.
 
@@ -285,7 +285,7 @@ caught a new `.limit(2000)` (PostgREST silently caps at 1000 — switched to the
 shared paginator), and the roles test caught `Number(null) === 0` rendering an
 unknown level as the nonsense "L0".
 
-## /parses: raid kills split from everything else (Hitya, mid-raid)
+## /parses: raid kills split from everything else (the guild lead, mid-raid)
 
 **The call.** *"separate raid kills from no raid kills"*, then the spec when the
 first cut showed three zones: *"tonight is Seru and VT trash, so it should just
@@ -308,7 +308,7 @@ against the night: Sanctus Seru 12 + Vex Thal 3 as raid, wolf out. Web 1.1.85.
 
 **Known, not fixed:** day bucketing still uses `started_at` in ET, so a raid
 running past midnight puts its late kills on the next calendar day even though
-`raid_night_id` knows better. Raised with Hitya; unanswered.
+`raid_night_id` knows better. Raised with the guild lead; unanswered.
 
 ## PoP spell turn-ins are LEVEL TIERS, not per-class lists
 
@@ -354,8 +354,8 @@ the pending landing into the task list + docs so ANY next session picks it up.
 | **Buff-queue batch needs a field pass** | Landed: overlay collapse groups + burst ⏳ countdowns (mimic beta), dashboard cures-only/Feral-only filters (agent 3.5.92), bot 3.1.59 burst carry. Watch tonight's raid |
 | **DT trigger: verify on the next cursed cycle** | Pattern fix is fleet-wide already; agent 3.5.93 (timer-arm) reaches beta Mimics via hot-swap. The next Vyzh`dra cycle DT on a pet should produce a raid-wide countdown with no callout |
 | **Tray↔dashboard parity audit — remainder** | Still tray-only: quiet mode, tells mode + DM pause, melody toggles, auto-arrange-on-show, start-with-Windows, check-for-updates (task #52) |
-| **P1 recovery tail (bot 3.1.52)** | 4 backfills (Chadivarius/Bardtholemu/Dafeet/Lowang) recover The Final Arbiter — still pending. Stage branch `…-stage-web-1-1-62` still needs local-session deletion |
-| **Overlay design-consistency pass** | Task #54 — load frontend-design skill first; Hitya flagged it hardest |
-| **Task #27 — the 8 muted trash triggers** | Restore on Hitya's word — raid-noise call |
+| **P1 recovery tail (bot 3.1.52)** | 4 backfills (a member/a member/a member/a member) recover The Final Arbiter — still pending. Stage branch `…-stage-web-1-1-62` still needs local-session deletion |
+| **Overlay design-consistency pass** | Task #54 — load frontend-design skill first; the guild lead flagged it hardest |
+| **Task #27 — the 8 muted trash triggers** | Restore on the guild lead's word — raid-noise call |
 | **Dead-triggers runbook needs re-measuring** | Agent 3.5.46+ auto-heals bare-`^`; the Aug-4 "37 of 109" predates it |
 | **Item icons / Zeal EPERM / #204–#207 / Data Sentinel / guild-gate / ratchet+O1 / Mob Info DoT grouping / eql-support doc** | Unchanged — see `DECISIONS-2026-08-19.md` for detail (tasks #36, #31, #42, #40, #41, #44) |

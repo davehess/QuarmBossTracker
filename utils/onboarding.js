@@ -29,6 +29,112 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.214': [
+    '**Mimic can now mark a character inventory-only or hidden.** They are the same switches as My Stats on wolfpack.quest, so both always show the same state. Needs a Mimic build with the new choice in setup.',
+  ],
+  '3.1.213': [
+    '**My parses can filter by zone and mob, and group by day.** wolfpack.quest/me/parses has a search box and Zone and Mob pickers over your fights, and a By day switch that folds them under each raid night. The chart follows the filters.',
+  ],
+  '3.1.212': [
+    '**Reverse Slow mobs are called out.** A few Planes of Power mobs (Fennin Ro, Magmaton and three Bastion of Thunder nameds) turn a slow into a haste. Target Info now flags them. It also stops showing a few wrong chips ("Immune Ranged Attacks", "Immune Damage (NPC/Pet)", "Quad Attack") that came from reading the mob data with another server\'s numbering.',
+  ],
+  '3.1.211': [
+    '**Mimic\'s Target Info says which faction a mob is on.** It shows the mob\'s faction, the factions it will help, and which mobs in the zone will come to its aid (like the Guardians of Justice answering a KOS enforcer). Needs a Mimic that shows the new lines.',
+  ],
+  '3.1.210': [
+    '**Your parses over time.** wolfpack.quest/me/parses graphs your own fights over a day, a week, 30 or 90 days, this expansion or all time, bosses only or every fight, and shows how each fight compares with your usual on that boss. The Mimic beta gets the same chart as a My parses tab.',
+  ],
+  '3.1.207': [
+    '**PvP and live kills no longer start a guild boss timer.** A kill of a boss like Lord of Ire in the PvP instance, or in the open world with other guilds in the zone, used to look exactly like our own instance kill and put the timer up. The bot now checks the PvP kill broadcast, whether a fighter was flagged, how many of the fighters are ours and whether one of the fighters saw another guild in the zone on /who. Only a kill that looks like ours starts a timer, and a kill by one or two people with nothing else to go on starts none. The parse is still saved; a kill marked PvP or live stays off the guild kill counts and the parse list, the same as when an officer marks it.',
+  ],
+  '3.1.206': [
+    '**A hail board for the Planes of Power.** When a boss dies and leaves an NPC to hail (the Planar Projections, Giwin Mirakon after the Behemoth, Tylis Newleaf after the Keeper), the bot opens a shared list for the raid that was there: who has hailed, who still has to, and who already holds that flag and does not need to. It fills itself from every Mimic in the raid, and anyone can tap a name to mark it. Mimic\'s Command Center slot for it comes in a later Mimic build.',
+  ],
+  '3.1.204': [
+    '**The Planes of Power board has timers for the guild instance bosses.** The eight Bastion of Thunder named (3 hours), plus Crypt of Decay, Plane of Disease, Plane of Innovation, Plane of Justice, Plane of Nightmare and Plane of Valor bosses (24 hours), each with a kill button. A boss on a timer of a day or less shows the time it is up again in Eastern ("up 9:42p") instead of the kill date. The 3-hour bosses stay off the spawn alerts and the "Spawning in 24 hours" card, and Grummus is 24 hours now, not 66.',
+    '**A tortured soul no longer counts as a Ture kill.** Boss names now match on whole words, so a mob with a boss\'s letters buried inside its name (tortured, mature, frightfinger) is no longer taken for the boss.',
+  ],
+  '3.1.202': [
+    '**Mimic\'s DS badge counts the shield from your gear.** A Talisman of Vah Kerrath (+8) or Shroud of Eternity (+5) adds to your damage shield spell, so a 10-point shield with the Talisman now reads 18, as it hits. Gear adds nothing without a shield spell, and the badge shows that too. Needs the beta Mimic for now.',
+  ],
+  '3.1.201': [
+    '**/encounter tonight works again.** It failed with an error on any day that had a fight; it now lists the day\'s fights with the short id that /encounter view takes.',
+  ],
+  '3.1.198': [
+    '**Busy nights no longer get cut short.** The buff queue, Extended Target\'s debuffs, the raid review\'s slows and callouts, Mimic\'s damage panel, your DKP balance and bid history, and the loot and roll windows all read the whole night now. Before, each one stopped at the first 1,000 rows, so an earlier Aegolism could show as missing.',
+  ],
+  '3.1.197': [
+    '**Mimic\'s UI backups list only shows the character you opened it for.** It used to list every character on your account under each one, with no name on the rows, so a Restore could pick another character\'s backup.',
+  ],
+  '3.1.196': [
+    '**Mimic\'s /who overlay shows a level for guildmates who are /anon.** It uses the level their own Mimic reports, or the last level /who showed, whichever is higher. The beta Mimic also takes the exact level of anyone in your raid straight from the raid window.',
+  ],
+  '3.1.195': [
+    '**The buff queue knows the group versions of raid buffs.** Marzin\'s Mark, Focus of the Seventh, Vallon\'s Quickening, Spirit of Bih`Li and a few more no longer read as missing, and the queue now groups people by raid group with who in each group can group-cast what. The by-group view is in the beta Mimic.',
+  ],
+  '3.1.192': [
+    '**Mimic\'s Loot tab can show who looted what.** The last 12 hours of loot from everyone running Mimic, newest first, and a roll that someone other than the winner looted says who did. Needs the beta Mimic for now.',
+  ],
+  '3.1.191': [
+    '**Xanamech is off the timer board.** Since the October 1 patch he has no lockout, so the 72-hour timer meant nothing. A kill of him in raid chat now says "no lockout" instead of asking an officer to add him back.',
+    '**#pvp reads every new Rallos Zek line.** Deaths to an NPC post again, as they did before the PoP patch; a death with no worthy foe and a player fleeing the battlefield post too, and the newer "exults as … cuts down" kill counts as a kill. The guild is taken from the line when it names one. Needs the beta Mimic for now.',
+  ],
+  '3.1.190': [
+    '**Your corpse DM now says when a Planes of Power corpse moves.** Since the October 2 patch a corpse in a PoP zone moves after an hour: to the Plane of Tranquility graveyard from a guild instance, or to that zone\'s graveyard in the open world. The DM shows the time it moves, so the /loc is not trusted after that. In the Plane of Justice it also says a failed trial\'s corpse goes to the Tribunal.',
+  ],
+  '3.1.189': [
+    '**Fifteen more suggested triggers in Mimic, and four old ones that never worked now do.** Failed Feign Death, a spell breaking your feign, a resist that names the spell and the mob, immune to slow, snare or stun, can\'t mez, can\'t charm, your mez or slow wearing off, out of range, no line of sight, not enough mana and invisibility fading. "You are snared", "mezzed", "feared" and "interrupted" were waiting for words the game never prints; they fire now. Tick them in the dashboard\'s Triggers tab. Shows on the beta Mimic first.',
+  ],
+  '3.1.188': [
+    '**Mark of the Plague Lords turns your damage shield off — and Mimic now says so.** While it is on you, no shield you wear does anything and every hit a mob lands on you heals it 50. The HUD’s shield button goes red “DS OFF” with the time left, and the Tank window says which debuff and for how long. Shows on the beta Mimic first.',
+  ],
+  '3.1.187': [
+    '**Loot auctions get their own timers, and History gets its own fight.** Each open auction counts down in Mimic’s timers and the Command Center, and moves when a late bid extends it. The DPS/Tank Meter’s History now gets the guild’s numbers for that exact fight, not the next pull of the same mob. Shows on the beta Mimic first.',
+  ],
+  '3.1.186': [
+    '**The main assist’s target goes to the top of Extended Target.** Say it in raid chat — “MA is Bob”, “Bob is MA”, “assist Bob”, or the assist macro’s “ASSIST ME ON …” — and the mob that person is on sits first, marked MA. With no main assist named, the mob most of the raid is on stays first.',
+  ],
+  '3.1.185': [
+    '**See another raider’s timers on Target Info.** Target a guildmate and Target Info shows the timers their Mimic knows: discipline, Mend, Lay on Hands, Harm Touch, Area Taunt, with a ✓ when ready. A discipline you watched someone start shows too, even if they do not run Mimic. Shows on the beta Mimic first.',
+  ],
+  '3.1.184': [
+    '**Two raids at once stay two raids.** When the guild runs a second raid (a flagging crew, an alt raid), the buff queue and Extended Target show your own raid, and wolfpack.quest/raid gives each raid its own tab, named for its leader. It used to merge them as soon as one person moved from one raid to the other. The raid page also marks the 👑 raid leader and ⭐ group leaders now; it never recognised them before.',
+  ],
+  '3.1.178': [
+    '**Extended Target puts each debuff on the right mob.** When two mobs share a name and Zeal tells them apart, a slow or a tash now shows on the mob it landed on, going by the mob number the caster’s Mimic saw, instead of on whichever one you happen to be targeting. Shows on the beta Mimic first.',
+  ],
+  '3.1.165': [
+    '**Quest NPCs no longer arrive as tells.** Some NPCs, like Grand Librarian Maelin in the Plane of Knowledge library, print their lines the way a tell looks, and those were being DM’d to you. They are not any more. Real tells from players are untouched.',
+  ],
+  '3.1.154': [
+    '**Feedback takes screenshots.** Add up to three pictures to feedback or a roadmap suggestion on the website (📷 or paste with Ctrl+V; sign in first), and a screenshot on `/feedback` in Discord is kept for good now instead of expiring. Mimic’s 📸 button follows on the beta.',
+  ],
+  '3.1.151': [
+    '**Where did I die?** When your character dies, Mimic sends you a Discord DM with the zone, the time, and your corpse’s location in the numbers /loc shows. It comes from your own Mimic, only for your own characters, and at most six an hour. Beta Mimic first.',
+  ],
+  '3.1.143': [
+    '**Extended Target stops stacking old tags.** During a trash clear every mob gets tagged “KILL”, and the tags of mobs you had already killed piled up under the row — six “▲ KILL” chips for one live mob. Each different tag now shows once. And when your Zeal knows which mob you are targeting, its tag now sits on that mob’s own row.',
+  ],
+  '3.1.142': [
+    '**Deathrolls are tracked.** When a deathroll finishes — each player rolling 0 to whatever the last player got, until someone hits 0 — the bot records who lost and who won, and posts it in #wlfpck-general. Anyone running Mimic nearby is enough; there is nothing to set up.',
+  ],
+  '3.1.127': [
+    '**Mob Info stops guessing between two bodies with one name.** Plane of Hate\u2019s forsaken revenants are a male Magician and a female Enchanter with nothing else different. When a name is two classes, Mob Info now shows both (\u201cMagician \u2642 / Enchanter \u2640\u201d) instead of picking one; the exact body comes once Zeal sends the target\u2019s sex.',
+  ],
+  '3.1.126': [
+    '**Tell relay: the arrow now points from whoever spoke.** A tell you received reads \u201c**Fandango** \u2192 Hitya\u201d and one you sent reads \u201cHitya \u2192 **Fandango**\u201d, so the left name is always the speaker. It used to draw received tells as \u201cFandango \u2190 Hitya\u201d, which reads backwards.',
+  ],
+  '3.1.125': [
+    '**Guild callouts stop leaking between zones \u2014 for real this time.** \u201cShaman Slow\u201d and the other guild-wide callouts were supposed to reach you only during a raid or from the zone you are standing in. The check had a hole and never actually stopped anything, so a slow landed by someone else in Ssraeshza could speak on your screen in Vex Thal. Now a callout relays raid-wide while you are in a raid (raid night, or your Mimic is uploading a raid roster) and otherwise only from your own zone. If either side cannot be placed outside a raid, it stays quiet.',
+  ],
+  '3.1.124': [
+    '**Two events on one night each get their own kills.** Kill cards now land in the thread for the zone they happened in, instead of whichever event started nearest the clock. Officers: the guild\u2019s own words for a zone (\u201cring war\u201d, \u201cseru\u201d) live in the zone list and can be extended without a code change.',
+  ],
+  '3.1.114': [
+    '**Guild callouts stop firing when you are nowhere near the fight.** \u201cShaman Slow\u201d and the rest are guild-wide by design, but they were reaching everyone regardless of where they were standing \u2014 so people got called out for a slow landing in a zone they were not in. A callout now reaches you if you are in the same zone as the person who set it off, or if it is raid night. Outside raid hours you only hear your own zone. When the bot cannot tell where somebody is, the callout still goes out; being noisy is the safer mistake.',
+    '**Two mobs with the same name stop sharing their debuffs and their casts.** Mob Info shows what has landed on a mob and who is casting on it. Both of those were matched by name alone, so two mobs called the same thing pooled everything together. They are now matched by the mob itself where your game client can say which one it is, and by name everywhere else \u2014 which is still everywhere, until the client update is released. Nothing changes for anyone today.',
+    '**Feedback can come from inside Mimic now, and it can bring your log.** There is a Feedback button in Mimic\u2019s top bar and in its tray menu. If you are reporting a bug you can attach the last 15, 30 or 60 minutes of your log \u2014 with chat, tells, group and /who stripped out on your machine before it sends, and the exact text shown to you first.',
+  ],
   '3.1.62': [
     '**The parses page shows boss kills again — farm and trash roll up into one line per zone.** Every kill still counts and is kept, but only real bosses get cards, so a night of clearing can\'t bury the boss kills. Any mob the server gives a loot lockout for counts as a boss automatically — instanced nameds earn their card the first time a lockout or kill broadcast names them, history intact. And announcing tomorrow\'s raid no longer starts tonight\'s scoreboard early — the parse session opens shortly before the event, not the moment it\'s announced.',
   ],

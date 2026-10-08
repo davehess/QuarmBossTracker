@@ -1,10 +1,10 @@
 -- HOTFIX: discover_quests_for_item resolved npc_id via a correlated subquery
 -- (scan eqemu_npc_types with lower(replace(name)) per result row). For a
--- heavy inventory (Hitya, 498 items) that pushed the RPC to ~8.1s — over the
+-- heavy inventory (the guild lead, 498 items) that pushed the RPC to ~8.1s — over the
 -- PostgREST statement timeout — so the call failed and the discovery panel
 -- vanished. Fix: materialize npc_id as a column on scripted_npc_turnins
 -- (resolved once via trigger + a one-time backfill), and have the RPCs just
--- read it. (Hitya 2026-06-24.)
+-- read it. (the guild lead, 2026-06-24.)
 
 alter table scripted_npc_turnins add column if not exists npc_id integer;
 

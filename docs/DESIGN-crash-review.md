@@ -1,6 +1,6 @@
 # DESIGN — consent-driven crash review
 
-**Hitya, 2026-08-12**, after Razek reported crashing twice while zoning with
+**The guild lead, 2026-08-12**, after a member reported crashing twice while zoning with
 Mimic running:
 
 > *"ideally we would be able to review any of the crash reports that are on the
@@ -165,7 +165,7 @@ grab-bag: the client tears the world down, something still reaches for the
 player, and it dies on the way out. It shows up in every Zeal version in the
 corpus over 19 months, so it is not a regression in any particular build.
 
-**Razek's crashes are in the data, and they are their own signature.** All 29 of
+**a member's crashes are in the data, and they are their own signature.** All 29 of
 his reports (2026-07-31 → 2026-08-12, including the pair he reported) carry one
 fingerprint: `0x6ef` in `kernelbase.dll` at `+9f54`, Zeal 1.4.2 — and the four
 that kept their context all read `Game state: ff`, `Zone ID: ffffffff`,
@@ -189,13 +189,13 @@ not build correlations across the archive on those fields.
 
 ⚠ **`Multiple Crashes` is the handler re-entering and it destroys the evidence.**
 0 of 64 such rows carry a zone, skin, character or game state — Zeal cannot
-safely re-read game state on the second pass. It is 25 of Razek's 29. That is a
+safely re-read game state on the second pass. It is 25 of a member's 29. That is a
 concrete, cheap upstream ask independent of the crash itself: *carry the context
 captured on the first pass into the re-entrant report.*
 
 ## 8. SOLVED — the `0x6ef` crash is the Windows audio stack, not Zeal (2026-08-12)
 
-Hitya sent the actual crash zip for the 16:13 ET report. Its `crash_reason.txt`
+The guild lead sent the actual crash zip for the 16:13 ET report. Its `crash_reason.txt`
 is a context-free `Multiple Crashes`, exactly as §7 predicted — but the zip also
 carries `minidump.dmp`, which we had never looked at. `scripts/read-minidump.py`
 answers it outright:
@@ -265,9 +265,9 @@ and `RPC_X_SS_IN_NULL_CONTEXT` is what the next `waveOut` call gets afterwards.
 in memory:
 
 ```
-RENDER (playback)  {9f0d0636-5fdf-4de9-b052-834835a41ca2}  via wodMessage
-CAPTURE (mic)      {8220f162-a788-4e8c-95ab-c47c9acaaa66}  via widMessage
-CAPTURE (mic)      {da8cd4f0-2b54-47b6-9873-d469d6265314}  via widMessage
+RENDER (playback)  {<device-guid>}  via wodMessage
+CAPTURE (mic)      {<device-guid>}  via widMessage
+CAPTURE (mic)      {<device-guid>}  via widMessage
 ```
 
 `wodMessage` is the waveOut path — the one that faulted — on render endpoint
@@ -355,3 +355,48 @@ run, never the answer.
 3. **The corpus question was the wrong question here.** §7 spent its effort on
    whether the *signature* was fleet-wide. One dump beat the whole table. Keep
    the corpus for prevalence; use the dump for causation.
+
+## 9. Field note — a UI-ini rebuild that stopped one raider's crashes (2026-09-06)
+
+a member was crashing constantly, rebuilt his UI files, and has not crashed
+since. The guild lead sent both generations of the affected ini files for a diff. Recorded here because it is the first
+UI-file case with before/after evidence, and because it shows exactly where the
+corpus goes blind: **he has never uploaded a crash report (0 rows), so there is
+no signature to test any of this against.** The upload toggle is off by default.
+
+**Same skin both times** (`NillipussUI_1080p`), so the skin is not the variable;
+the ini contents are. The character ini (socials, hotbuttons, friends) differs
+only in content a social cannot crash the client with — ruled out.
+
+**The old UI ini, ranked by plausibility as the cause:**
+
+1. **`[Chat 4]` was 80×24 px at y=−5** — a chat window (his Auction window) with
+   no usable text area once the title bar and frame are taken out. The client
+   lays out and scrolls text into a client rectangle of zero or negative height;
+   that is the one setting in the file with the shape of a classic crash. The
+   new file's smallest chat window is 153×337.
+2. **`[TargetRing]` enabled** (128 segments, texture `Space`, attack indicator) —
+   Zeal drawing into the D3D path every frame. Absent in the new file. The
+   corpus puts most client crashes in the graphics stack (`dpvs.dll`,
+   `eqgfx_dx8.dll`, the NVIDIA driver), which makes this a real suspect and
+   nothing more than that.
+3. **Ten-second fades on every window** — `GlobalFadeDuration=10000`,
+   `GlobalFadeDelay=10000`, per-window `Delay`/`Duration` 10000, `FadeToAlpha`
+   190. Constant alpha animation on every window; the new file is stock
+   2000/500 with the HUD windows not fading at all. A load, not a known crash.
+4. **Eight resolutions of stored positions** with negative coordinates
+   scattered through them — cruft from monitor changes. The client clamps
+   windows on-screen; not a cause. But the new file is 4K-only, so the monitor
+   may have changed at the same time as the file — a confound, as is the XP
+   compatibility mode this same raider had on in August.
+
+**What would turn this from a story into evidence:** crash uploads on for this
+box (one tray toggle), so the next crash — if there is one — carries a module
+and an address. And the cheap reversible test, if the old file still exists:
+restore it with `[Chat 4]` resized to something sane, and see whether the
+crashes return. Without one of those it is n=1 with three confounds.
+
+**A cheap preventive check that falls out of this:** UI Studio already reads
+every window section to de-duplicate them; a warning on any chat window under
+~100×60 px or positioned off-screen would have named `[Chat 4]` months ago.
+Not built; noted.

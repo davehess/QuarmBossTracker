@@ -3,7 +3,7 @@
 // PORT of the web parse page's death logic (web/app/parses/[id]/page.tsx
 // ~369-418) so the Discord auto-parse card matches the website (#134). The bot
 // card USED to SUM each parser's sighting of the same death — three parsers
-// each seeing "Melting" die once rendered "Melting ×3" — while the web page
+// each seeing "Ambriel" die once rendered "Ambriel ×3" — while the web page
 // correctly collapses them to one. Keep these two implementations in sync: any
 // change to the web algorithm should be mirrored here (and vice-versa).
 //
@@ -12,8 +12,8 @@
 //      ≥2 times, drop that name entirely across the whole fight. A real player
 //      can only die once per encounter (corpses don't respawn mid-fight), so a
 //      repeat death from one observer means an NPC namesake got mis-attributed
-//      to the player (Hitya 2026-06-25: 30+ phantom "Syphon" deaths in Ssra
-//      because "Syphon" is both an SK player and a Quarm-custom NPC). One
+//      to the player (the guild lead, 2026-06-25: 30+ phantom "Varnok" deaths in Ssra
+//      because "Varnok" is both an SK player and a Quarm-custom NPC). One
 //      agent's view is enough to discredit the name across the whole fight.
 //   2. Window dedup — collect the surviving deaths across all contributors,
 //      sort by (name, ts), and drop any within DEATH_DEDUP_MS of the LAST KEPT

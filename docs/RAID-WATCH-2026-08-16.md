@@ -1,13 +1,13 @@
 # Raid watch — 2.5.0's first raids (alt raid, 2026-08-16 → 18)
 
-Hitya's program: **Tunare tonight** (one long bard kite + one boss kill),
+The guild lead's program: **Tunare tonight** (one long bard kite + one boss kill),
 **Sleeper's Tomb tomorrow** (similarly-named trash, then 5 named — melee dance
 callouts must fire for the AoE slow), then the **Vulak ring** (6 waves, the
 6th is Vulak`Aerr). This doc is the pre-raid review, everything below checked
 against the live database or the real compiler this morning — plus the
 watch/triage lists per night. Fleet status **in PLAYERS (distinct discord
 ids — character counts inflate ~10× because each player plays several
-characters distinctly, Hitya's rule
+characters distinctly, the guild lead's rule
 2026-08-16): 16 players on stable 2.5.0 (15 active in 48h), 1–2 on beta,
 1 active straggler on 3.5.72 + 4 idle-since-Thursday on 3.5.71** who
 auto-update on next launch.
@@ -31,7 +31,7 @@ auto-update on next launch.
    agent, matches the web normalizer); CLAUDE.md's rule stands for what we
    WRITE, but "bare ^ = dead" is no longer true at runtime.
 2. **The Final Arbiter (128132) and The Progenitor (128125) added to the
-   board** — Hitya said FIVE named in ST; bosses.json had only the four
+   board** — the guild lead said FIVE named in ST; bosses.json had only the four
    Warders. Both level 70, 200k/150k HP, 49 drops each, 162h timers. Without
    this, tomorrow's Arbiter kill would have relayed to nothing. Run `/board`
    after tonight's deploy so the thread picks them up.
@@ -69,12 +69,12 @@ ONE merged card where there should be two.
   should be separate rows (dedup is boss+start-within-60s); the settle window
   re-resolves totals at +40s/+100s. A very long kite is the stress case.
 - **CH ✕ + spot-heal rule** on the kill: un-numbered CH-macro shouts must NOT
-  seat anyone on the chain (Pyxil rule, 3.5.79); the ✕ is there if one leaks.
+  seat anyone on the chain (a member rule, 3.5.79); the ✕ is there if one leaks.
 - **Pet fold**: alt raid = mage armies. Pet rows labeled with owners; no
   NPC bleeding onto the meter through the pet whitelist.
-- **Backup-log rule**: alts night — nobody's `Atlasius2`-style backup log
+- **Backup-log rule**: alts night — nobody's `Elowen2`-style backup log
   should mint a phantom character.
-- **Loot is DKP tonight, not NBG rolling** (Hitya's correction — the watch
+- **Loot is DKP tonight, not NBG rolling** (the guild lead's correction — the watch
   item is the DKP path, not the rolls page): loot-post announce + auction
   chips (#107/#149), sealed bids via place-bid, and the post-raid check that
   the OpenDKP sync + loot fold picked the night up (fold_lag). If incidental
@@ -89,12 +89,12 @@ ONE merged card where there should be two.
   cards and don't chase them as bugs; History tab trash totals are the read.
 - **The 5 named**: 4 Warders (on board) + The Final Arbiter (added today).
   The Progenitor also added in case it's the fifth actually killed.
-- **The dance callouts — CONFIRMED Ventani's Freezing Breath (Hitya) and
+- **The dance callouts — CONFIRMED Ventani's Freezing Breath (the guild lead) and
   armed.** Cycle **~15s (12–17s jitter), measured from our own 2026-08-07
   Ventani kill** (14 casts, encounter `92ce667c`). ONE consolidated trigger
   now re-anchors a 15s timer on every breath, says **"Melee out" at T-3s**,
   and calls **"A O E"** on the actual land (4s cooldown). Its pattern carries
-  all THREE lines — hit, resist, and the cast-on-other text Hitya supplied
+  all THREE lines — hit, resist, and the cast-on-other text the guild lead supplied
   (*"<Victim> is slowed by the freezing blast."*) — because **the other-line
   is load-bearing: a melee who successfully danced OUT sees neither hit nor
   resist, and others' land lines are the only way their timer re-anchors.**
@@ -109,14 +109,14 @@ ONE merged card where there should be two.
   If tomorrow's first pull shows a different rhythm, one UPDATE recalibrates
   mid-raid. The other 17 breath triggers stay announce-only until each cycle
   is measured from a real kill.
-- **The hail LoS probe — DEFERRED by Hitya, denoted for the future.** For
+- **The hail LoS probe — DEFERRED by the guild lead, denoted for the future.** For
   every warder EXCEPT Ventani, no line of sight to the MT = the breath can't
   hit you; the raid's probe is hailing the tank (a bare `You say, 'Hail'`
   with no name = no LoS = safe). Both triggers exist in `guild_triggers`
   **disabled** ("LoS check — SAFE" / "LoS check — VISIBLE"), patterns already
   verified through the real compiler with negatives, scope reasoning in
   their notes. Enabling them later is one toggle each — no other work.
-- **Slow callouts renamed for TTS (Hitya):** "SHM SLOW"/"BRD SLOW"/"ENC
+- **Slow callouts renamed for TTS (the guild lead):** "SHM SLOW"/"BRD SLOW"/"ENC
   SLOW" overlays read out as letters — now "Shaman Slow" / "Bard Slow" /
   "Enchanter Slow" / "Plague Slow". **Enchanter Slow enabled** (it exists);
   **Magician Slow disabled** ("mage slow isn't a thing right now" — pattern
@@ -124,7 +124,7 @@ ONE merged card where there should be two.
 - **Task #27 gate has CLEARED**: the 8 muted trash triggers were gated on
   "the fleet is on the fix" — 178 characters are on 3.5.80 as of this
   morning. Restoring them is now purely the raid-noise call, and an ST trash
-  night is exactly when they'd earn their keep. Hitya's word.
+  night is exactly when they'd earn their keep. The guild lead's word.
 
 ## Vulak ring — 6 waves + Vulak`Aerr
 
@@ -135,13 +135,13 @@ ONE merged card where there should be two.
   stands ready if live streams need trimming (durables can never shed).
 - Herald false-timer: retired (exact-name matching, above).
 
-## Tonight's actuals (reported live by Hitya, ~20:35 ET)
+## Tonight's actuals (reported live by the guild lead, ~20:35 ET)
 
 - **Pre-raid Zlandicar** to key people for Sleeper's Tomb — killed 20:08 ET
   (187s, encounter `719dff28`). The **Caustic Mist dance trigger fired 3×**
   during it via the shared "…flesh begins to liquefy." line (Putrefy Flesh) —
   the documented caveat, now observed in the field. Triage: confirm no timer
-  confusion resulted; the scoping decision (leave vs narrow) is Hitya's.
+  confusion resulted; the scoping decision (leave vs narrow) is the guild lead's.
 - **The Tunare kite FAILED — no kill.** No Tunare encounter row existed as of
   20:35 ET. Triage: re-run the two-Tunares query after agents flush; if a
   wipe engagement recorded, classify it (Mark Wipe) so it stays out of kill
@@ -177,7 +177,7 @@ Hraashna 161s → Ventani 145s), 9–13 uploads each.
 - **Zero trash encounters between Zlandicar (20:08) and Tukaarak (21:48)**
   — and zero trash contributions, so it's not a pipeline miss: no trash
   combat was uploaded at all, consistent with keying + a skip-to-warders
-  path. Confirm with Hitya in one line; if they DID clear trash, that's a
+  path. Confirm with the guild lead in one line; if they DID clear trash, that's a
   real finding.
 - **Fold lag: ZERO** (newest folded raid = newest OpenDKP raid, 100549).
 - **No digit-suffix phantom characters** — the backup-log rule held.
@@ -197,7 +197,7 @@ Hraashna 161s → Ventani 145s), 9–13 uploads each.
 
 ## ⚠ P1 FOUND POST-RAID — first-time content is silently dropped by the encounter path
 
-Hitya: *"there were a ton of trash mobs from the start of raid at 830"* — and
+Guild lead: *"there were a ton of trash mobs from the start of raid at 830"* — and
 the platform recorded NONE of it. Diagnosis from the bot's own logs, complete:
 
 - **The encounter handler requires a `bosses_local` match to persist.** Every
@@ -223,7 +223,7 @@ the platform recorded NONE of it. Diagnosis from the bot's own logs, complete:
   2026-08-17) from two or three of tonight's uploaders re-creates the
   encounters with their original timestamps now that bosses_local matches;
   `find_or_create_encounter` + `merge_encounter_players` assemble them as if
-  they'd landed live. (Bardtholemu's was the richest single view at 4,178
+  they'd landed live. (a member's was the richest single view at 4,178
   events.)
 - **The structural fix (bot, post-freeze, NOT tonight):** the handler must
   stop treating bosses_local as an allowlist — fall back to zone-aware

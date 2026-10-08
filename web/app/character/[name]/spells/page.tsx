@@ -3,7 +3,7 @@
 // What it answers: "which vendor-buyable spells for this class hasn't this
 // character scribed yet, and is a guildmate already holding the scroll?"
 // PQDI's Missing Spells parser inspired this; the guild-holdings overlay is
-// the part PQDI can't do (Hitya 2026-06-23).
+// the part PQDI can't do (the guild lead, 2026-06-23).
 //
 // Data path (see migration 20260624020000_spell_exchange.sql):
 //   • character_spellbook — uploaded on /me (📖 Upload spellbook).
@@ -15,8 +15,9 @@
 //     cross-check, not the answer). Rendering + the zone-by-zone 🛒 shopping
 //     mode live in MissingSpellsView (client); grouping in lib/spellSources.
 //
-// Visibility mirrors the quests page: owner + officers always; others need
-// characters.show_inventory_publicly.
+// Visibility mirrors the inventory page: owner + officers always; others need
+// characters.show_inventory_publicly (the /me "Inventory page" switch — the
+// quests page has had its own switch since 2026-09-25).
 
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
@@ -24,8 +25,11 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { classBit, normalizeClass } from '@/lib/class-titles';
-import { groupSources, type SourceRow, type ItemSources } from '@/lib/spellSources';
+import { groupSources, vendorSpots, type ItemSources, type VendorSpots } from '@/lib/spellSources';
+import { fetchScrollSources } from '@/lib/capSafeReads';
 import MissingSpellsView from './MissingSpellsView';
+import { poolTierByName, type PoolRow } from '@/lib/popSpells';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,8 +41,8 @@ type MissingSpell = {
   held_by: string[];
   buyable: boolean;
   // PoP = only obtainable from Planes of Power sources (sold only in PoK or
-  // dropped in a PoP zone) or scribe level 61+. Locked until 2026-10-01, so it's
-  // called out separately — no point chasing a scroll you can't scribe yet.
+  // dropped in a PoP zone) or scribe level 61+. Called out separately because
+  // those scrolls come from different places (live since 2026-10-01).
   pop: boolean;
 };
 
@@ -54,7 +58,7 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
   const { data: charRows } = await sb
     .from('characters')
     .select('name, class, discord_id, show_inventory_publicly')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('name', decoded)
     .limit(1);
   const char = (charRows && charRows[0]) as
@@ -77,8 +81,8 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
         <section className="bg-panel border border-border rounded-lg p-6">
           <h2 className="text-xl text-gold">🔒 Private</h2>
           <p className="text-sm text-dim mt-2">
-            {decoded} hasn&apos;t made their tracker public yet. Only the owner
-            (and officers) can see this page.
+            {decoded} hasn&apos;t made their inventory and spellbook public yet. Only
+            the owner (and officers) can see this page.
           </p>
         </section>
       </div>
@@ -88,18 +92,26 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
   const bit = classBit(char.class);
   const baseClass = normalizeClass(char.class);
 
+  // Quest-script parchment pools for this class (pop_parchment_pools view) —
+  // drives the "PoP · <parchment>" badges from what the trainer actually
+  // awards, not from spell levels (Lacunanight, 2026-08-25).
+  const { data: poolRows } = await sb
+    .from('pop_parchment_pools')
+    .select('class_name, tier, scroll_item_id, spell_name');
+  const popTiers = poolTierByName((poolRows ?? []) as PoolRow[], char.class);
+
   // Scribed count (for the header summary).
   const { count: scribedCount } = await sb
     .from('character_spellbook')
     .select('id', { count: 'exact', head: true })
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('character_name', decoded);
 
   let missing: MissingSpell[] = [];
   let rpcError: string | null = null;
   if (bit > 0) {
     const { data, error } = await sb.rpc('character_missing_spells', {
-      p_guild_id: 'wolfpack', p_character: decoded, p_class_bit: bit,
+      p_guild_id: GUILD_TAG, p_character: decoded, p_class_bit: bit,
     });
     if (error) rpcError = error.message;
     else missing = (data ?? []) as MissingSpell[];
@@ -112,9 +124,32 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
   let sourcesByItem: Record<number, ItemSources> = {};
   const scrollIds = [...new Set(missing.map(m => m.scroll_item_id).filter((n): n is number => typeof n === 'number'))];
   if (scrollIds.length) {
-    const { data: srcRows } = await sb.rpc('spell_scroll_sources', { p_item_ids: scrollIds });
-    if (Array.isArray(srcRows)) {
-      sourcesByItem = Object.fromEntries(groupSources(srcRows as SourceRow[]).entries());
+    // spell_scroll_sources is a set-returning function with no ORDER BY, and one
+    // spellbook is up to 4,632 rows — 40 of 117 spellbook characters are over
+    // PostgREST's 1,000-row response cap. The _json variant returns the same
+    // rows as ONE jsonb array, which the cap does not touch.
+    const srcRows = await fetchScrollSources(sb, scrollIds);
+    if (srcRows.length) {
+      sourcesByItem = Object.fromEntries(groupSources(srcRows).entries());
+    }
+  }
+
+  // Where each vendor stands, for the 📍 /map Y X copy (the guild lead, 2026-09-28).
+  // Vendors only: across every spell scroll no vendor has more than 3 spawn
+  // points (463 in all, measured 2026-09-28), so both reads stay under the
+  // cap. A dropper can have 100+ points; its name links to its NPC page instead.
+  let spots: VendorSpots = {};
+  const vendorIds = [...new Set(Object.values(sourcesByItem)
+    .flatMap(s => s.merchants.map(v => v.npcId))
+    .filter((n): n is number => typeof n === 'number'))];
+  if (vendorIds.length) {
+    const { data: entries } = await sb.from('eqemu_spawnentry')
+      .select('npc_id, spawngroup_id').in('npc_id', vendorIds).limit(1000);
+    const groups = [...new Set((entries ?? []).map(e => e.spawngroup_id as number))];
+    if (groups.length) {
+      const { data: points } = await sb.from('eqemu_spawn2')
+        .select('id, spawngroup_id, zone_short, x, y').in('spawngroup_id', groups).limit(1000);
+      spots = vendorSpots(entries ?? [], points ?? []);
     }
   }
 
@@ -146,8 +181,8 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
           scroll right now — ask them first.{' '}
           <span className="text-[10px] font-bold px-1 py-0.5 rounded bg-blue/20 border border-blue/60 text-blue align-middle">PoP</span>{' '}
           = Planes of Power (level 61+, or only sold in PoK / dropped in a PoP
-          zone) — <b>locked until Oct 1</b>, so don&apos;t chase it yet. Levels come
-          from guild spellbooks, so a few may be blank until someone uploads.
+          zone). Levels come from guild spellbooks, so a few may be blank until
+          someone uploads.
         </p>
         <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-dim">
           <span>Class: <span className="text-text">{baseClass ?? '—'}</span></span>
@@ -156,7 +191,7 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
           <span>🛒 Buyable: <span className="text-orange">{buyableCount}</span></span>
           <span>⚔ Go get: <span className="text-purple">{otherCount}</span></span>
           <span>🎒 Held by a guildmate: <span className="text-green">{heldCount}</span></span>
-          <span>PoP-locked: <span className="text-blue">{popCount}</span></span>
+          <span>PoP: <span className="text-blue">{popCount}</span></span>
         </div>
         {!hasBook && (
           <p className="text-xs text-orange mt-3">
@@ -185,8 +220,10 @@ export default async function CharacterSpellsPage({ params }: { params: Promise<
             <MissingSpellsView
               missing={missing}
               sources={sourcesByItem}
+              spots={spots}
               officer={officer}
               character={decoded}
+              popTiers={popTiers}
             />
           )}
         </section>

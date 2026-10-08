@@ -5,7 +5,7 @@
 // ⚠ This used to hotlink PQDI (`https://www.pqdi.cc/Icons/item_<icon>.png`) and
 // hide the <img> via onError. That degradation was deliberate — "never a broken
 // image square" — but it is also SILENT, and silent is how it shipped broken:
-// every icon on the inventory page rendered as nothing at all (Hitya,
+// every icon on the inventory page rendered as nothing at all (the guild lead,
 // 2026-08-13). Names showed, art did not, and there was no console error and no
 // broken-image placeholder to hint at why.
 //

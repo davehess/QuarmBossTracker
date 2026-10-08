@@ -124,10 +124,12 @@ describe('placeholders have exactly one owner, filled after it', () => {
     wpMechanics:      'renderDiag',
     wpZealExplorer:   'renderDiag',
     wpRecentFires:    'renderTriggers',
-    wpCrashReview:    'renderInfo',     // Hitya put the crash card on Info on purpose
+    wpCrashReview:    'renderDiag',     // The guild lead, 2026-10-03: crash reporting on Diagnostics
     wpBackupsCard:    'renderInfo',
     wpMeCard:         'renderDash',
     wpEngine:         'renderDash',
+    wpFeedback:       'renderDash',
+    wpRecentParses:   'renderDash',
   };
 
   for (const [id, owner] of Object.entries(OWNERSHIP)) {
@@ -152,6 +154,8 @@ describe('placeholders have exactly one owner, filled after it', () => {
       wpBackupsCard:    'renderBackupsCard',
       wpMeCard:         'renderMeCard',
       wpEngine:         'renderEngine',
+      wpFeedback:       'renderFeedback',
+      wpRecentParses:   'renderRecentParsesCard',
     };
     for (const [id, filler] of Object.entries(fillers)) {
       const emitAt = order.indexOf(OWNERSHIP[id]);
@@ -167,11 +171,34 @@ describe('the split actually moved the cards', () => {
   it('Stats owns the session-observation cards, Info no longer does', () => {
     const stats = bodyOf('renderStats');
     const info  = bodyOf('renderInfo');
-    for (const h of ['Monk Mending', 'Top Abilities', 'Spells Resisted', 'Rolls (this session)',
+    for (const h of ['Monk Mending', 'Top Abilities', 'Spells Resisted',
                      'Spell Damage Inbound', 'Spell Casts This Session']) {
       expect(stats, `Stats should carry "${h}"`).toContain(h);
       expect(info, `Info should no longer carry "${h}"`).not.toContain(h);
     }
+  });
+
+  it('Loot owns rolls AND bidding — Stats no longer carries rolls', () => {
+    // The guild lead, 2026-08-27: "move the opendkp bits to their own loot tab with
+    // rolls". Rolls were on Stats and bidding was on the Dashboard, which put
+    // the two ways of handing out the same drop on two different screens.
+    // This exact assertion caught the move when it happened, which is the
+    // point of it — it was asserting Stats owned rolls.
+    const loot = bodyOf('renderLootTab');
+    expect(loot, 'Loot should carry the roll sets').toContain('Rolls (this session)');
+    expect(bodyOf('renderStats'), 'Stats should no longer carry rolls').not.toContain('Rolls (this session)');
+    // The bidding card is a persistent element, not markup in a render string,
+    // so it is asserted by where it MOUNTS.
+    expect(src).toContain('var lootSec = document.getElementById("loot"); if (!lootSec) return;');
+    expect(src).toContain('lootSec.insertBefore(card, lootSec.firstChild);');
+  });
+
+  it('the Loot tab has a button and a section to switch to', () => {
+    // A render function with no tab to paint into is invisible, and nothing
+    // else in the suite would notice.
+    expect(src).toContain('<button data-tab="loot">');
+    expect(src).toContain('<div id="loot" class="section"></div>');
+    expect(src).toContain("['loottab', renderLootTab]");
   });
 
   it('Diagnostics owns the raw Zeal capture, Info no longer does', () => {
@@ -181,10 +208,20 @@ describe('the split actually moved the cards', () => {
     expect(bodyOf('renderInfo')).not.toContain('<h2>🩺 Raw Zeal Capture');
   });
 
-  it('Info keeps the parser facts and the crash card', () => {
+  it('Info keeps the parser facts', () => {
     const info = bodyOf('renderInfo');
-    for (const h of ['Parser Info', 'Client versions', 'Log archiving', 'Zeal tag capture', 'Crash review']) {
+    for (const h of ['Parser Info', 'Client versions', 'Log archiving', 'Zeal tag capture']) {
       expect(info, `Info should still carry "${h}"`).toContain(h);
+    }
+  });
+
+  // The guild lead, 2026-10-03: "crash reporting should be on the diagnostics tab of mimic".
+  // The card, its share checkbox and its button moved together; markup, not the phrase, because
+  // renderInfo's comment still says where the card went.
+  it('Diagnostics owns crash review, Info no longer does', () => {
+    for (const m of ['id="wpCrashReview"', 'id="wpCrashShare"', 'id="wpCrashBtn"', 'id="wpCrashOut"']) {
+      expect(bodyOf('renderDiag')).toContain(m);
+      expect(bodyOf('renderInfo')).not.toContain(m);
     }
   });
 

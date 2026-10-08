@@ -1,0 +1,2204 @@
+From 3c02f6578dca464c3011527be21c36e60d9f84f0 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 25 Sep 2026 13:35:57 +0000
+Subject: [PATCH] Add icon shapes, numbered badges, lettered paws and guild
+ marks for /tag
+
+Tags can show a colored arrow, the stop sign or the paw today. Raid
+marking wants more distinct symbols: the familiar skull / X / sword /
+diamond / flame / star set, role marks, numbers for kill or crowd-control
+order, a way for a charmer to mark their own pet, and a mark for each
+guild, so a caller can say "kill skull, then 3, mez the moons" and
+everyone sees it.
+
+- Icon keys after '^': K skull, X red X, A gold sword, D blue diamond,
+  F green flame, T purple star, M moon (mez), U lasso (pull), N lute
+  (bard), H shield (tank), $ dollar, E euro. They avoid R/O/Y/G/B/W/P/S
+  on purpose: an older client reads only the first key character, so a
+  free letter shows the text with no shape rather than a different,
+  wrong one.
+- ^WP^: a wolf's head. Read as a two-character key only when exactly W
+  and P are followed by a '^'; an older client shows a white arrow.
+- Numbered badges ^1^ to ^12^: a white disc with block digits. "^10^" to
+  "^12^" are read as two-digit keys (only when both characters are digits
+  and a '^' follows, so no existing prefix changes meaning).
+- Lettered paws ^P0^ to ^PZ^: the paw with a letter or digit on its pad,
+  for a charmer's initial. Drawn as the paw plus a glyph shape queued at
+  the same spot. An older client reads "^PK^" as a plain paw.
+- Guild marks for 30 guilds (TagShapes::kGuilds): ^B<code>^ is a
+  swallowtail banner in the guild's color with its code on it (^BEUR^),
+  and ^I<code>^ is the guild's own icon (^IMAY^, a lightning bolt). A
+  guild key is read only when the letters up to the next '^' name a
+  guild, so "^Blue^" is still a blue arrow; an older client shows a blue
+  arrow for a banner and only the text for an icon. /tag guilds lists
+  the codes. Three guilds reuse an existing shape as their icon (the
+  wolf, the euro and the dollar sign).
+- Digits and letters sit on each face separately, the back copy mirrored,
+  so they read correctly from either side.
+- tag_shapes.cpp/.h (new): the geometry, with no DirectX dependency. Every
+  shape is flat parts extruded to the same thickness as the octagon and
+  paw. Parts are convex (or star-shaped about their center) and fan-
+  triangulated, or carry their own triangles (the traced wolf, and a
+  small ear-clipping triangulator for the concave outlines). Concave
+  outlines otherwise come from overlapping parts, and detail stands
+  slightly proud of the face in a dark, light, contrasting, shaded or
+  eye-yellow tone. No textures.
+- tag_shapes_wolf.inc (generated): the wolf is traced from Wolf Pack's
+  own wolf artwork into nested layers (face, dark linework, yellow eyes,
+  pupils), each filled and drawn a step prouder than the one it sits in,
+  so no polygon needs holes.
+- TagArrows builds the meshes at startup, colors them with the existing
+  face gradients plus the accent tones, and sizes the vertex buffer to
+  hold every shape at once alongside the arrow color cache. static_asserts
+  keep its Shape enum in step with TagShapes::Kind.
+- The shape is now picked from the tag's own color rather than after a
+  nameplate color is substituted, so a nameplate color can no longer
+  collide with a shape's color.
+- Prettyprint, the target tooltip and /tag help name the new shapes.
+- README: the new keys and examples.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Uq6P6RYLtiKKfy5UWjT7AX
+---
+ README.md                 |   11 +
+ Zeal/Zeal.vcxproj         |    2 +
+ Zeal/Zeal.vcxproj.filters |    6 +
+ Zeal/nameplate.cpp        |  278 +++++++++-
+ Zeal/tag_arrows.cpp       |   96 +++-
+ Zeal/tag_arrows.h         |   35 ++
+ Zeal/tag_shapes.cpp       | 1103 +++++++++++++++++++++++++++++++++++++
+ Zeal/tag_shapes.h         |   93 ++++
+ Zeal/tag_shapes_wolf.inc  |  264 +++++++++
+ 9 files changed, 1873 insertions(+), 15 deletions(-)
+ create mode 100644 Zeal/tag_shapes.cpp
+ create mode 100644 Zeal/tag_shapes.h
+ create mode 100644 Zeal/tag_shapes_wolf.inc
+
+diff --git a/README.md b/README.md
+index c4bd3a9..ac4fbb6 100644
+--- a/README.md
++++ b/README.md
+@@ -693,6 +693,14 @@ Manual editing of the ini file is required to copy from old section to the new s
+       - Colored arrow: (`R` = red, `O` = orange, `Y` = yellow, `G` = green, `B` = blue, `W` = white)
+       - Green pet paw symbol: `P`
+       - Red stop sign (octagon): `S`
++      - Icon shapes: `K` = skull, `X` = red X, `A` = gold sword, `D` = blue diamond, `F` = green flame,
++        `T` = purple star, `WP` = wolf (`^WP^`), `M` = moon (mez), `U` = lasso (pull), `N` = lute (bard),
++        `H` = shield (tank), `$` = dollar, `E` = euro
++      - Numbered badges: `1` to `12` (e.g. `^7^`, `^12^`), readable from either side
++      - Paw with a letter or digit on it: `P` then the character (e.g. `^PK^`), for a charmer's initial
++      - A guild's banner (a flag with its code) or icon: `B` or `I` then the guild's code (e.g. `^BEUR^`,
++        `^IMAY^`). `/tag guilds` lists the codes. An unknown code is read as the single letter (`^Blue^`
++        is still a blue arrow)
+       - Clear any existing shape: `-`
+ - Tags can be cleared with:
+   - `/tag clear`: Clears tag from current target if there is a target else all tags
+@@ -723,6 +731,9 @@ Manual editing of the ini file is required to copy from old section to the new s
+   - `/tag rsay Assist me` broadcasts a raid-wide tag that sets 'Assist Me'
+   - `/tag rsay +TASH` appends ' | TASH' to the tag text (does not affect explicit shape)
+   - `/tag rsay ^p^` adds an explicit paw shape above the target for all raid members
++  - `/tag rsay ^k^Kill first` adds a skull above the target with the text 'Kill first'
++  - `/tag rsay ^3^` adds a numbered badge 3 above the target (e.g. a kill or crowd-control order)
++  - `/tag rsay ^PK^` adds a paw with a K on it (a charmer marking their pet)
+   - `/tag rsay -` clears text but leaves shape if explicitly set
+   - `/tag rsay ^-^` leaves text but clears the shape
+   - `/tag rsay +^Y^OFFTANK` appends ' | OFFTANK' to the tag text and adds explicit yellow arrow shape
+diff --git a/Zeal/Zeal.vcxproj b/Zeal/Zeal.vcxproj
+index 1084304..d11f525 100644
+--- a/Zeal/Zeal.vcxproj
++++ b/Zeal/Zeal.vcxproj
+@@ -88,6 +88,7 @@
+     <ClInclude Include="raid_bars_manage.h" />
+     <ClInclude Include="survey.h" />
+     <ClInclude Include="tag_arrows.h" />
++    <ClInclude Include="tag_shapes.h" />
+     <ClInclude Include="tick.h" />
+     <ClInclude Include="triggers.h" />
+     <ClInclude Include="ui_buff.h" />
+@@ -175,6 +176,7 @@
+     <ClCompile Include="raid_bars_manage.cpp" />
+     <ClCompile Include="survey.cpp" />
+     <ClCompile Include="tag_arrows.cpp" />
++    <ClCompile Include="tag_shapes.cpp" />
+     <ClCompile Include="tick.cpp" />
+     <ClCompile Include="triggers.cpp" />
+     <ClCompile Include="ui_buff.cpp" />
+diff --git a/Zeal/Zeal.vcxproj.filters b/Zeal/Zeal.vcxproj.filters
+index eda60ee..701987f 100644
+--- a/Zeal/Zeal.vcxproj.filters
++++ b/Zeal/Zeal.vcxproj.filters
+@@ -300,6 +300,9 @@
+     <ClInclude Include="tag_arrows.h">
+       <Filter>Header Files</Filter>
+     </ClInclude>
++    <ClInclude Include="tag_shapes.h">
++      <Filter>Header Files</Filter>
++    </ClInclude>
+     <ClInclude Include="triggers.h">
+       <Filter>Header Files</Filter>
+     </ClInclude>
+@@ -536,6 +539,9 @@
+     <ClCompile Include="tag_arrows.cpp">
+       <Filter>Source Files</Filter>
+     </ClCompile>
++    <ClCompile Include="tag_shapes.cpp">
++      <Filter>Source Files</Filter>
++    </ClCompile>
+     <ClCompile Include="triggers.cpp">
+       <Filter>Source Files</Filter>
+     </ClCompile>
+diff --git a/Zeal/nameplate.cpp b/Zeal/nameplate.cpp
+index 030a79f..52f2ca2 100644
+--- a/Zeal/nameplate.cpp
++++ b/Zeal/nameplate.cpp
+@@ -3,6 +3,7 @@
+ #include <algorithm>
+ #include <array>
+ #include <cmath>
++#include <cstdio>
+ 
+ #include "callbacks.h"
+ #include "chat.h"
+@@ -37,6 +38,19 @@ enum TagArrowColor : DWORD {
+   Nameplate = 1,
+   Paw = D3DCOLOR_XRGB(0x20, 0xc0, 0x20),       // Ensure this is unique.
+   StopSign = D3DCOLOR_XRGB(0xf0, 0x00, 0x00),  // Ensure this is unique.
++  Skull = D3DCOLOR_XRGB(0xe8, 0xe2, 0xd1),     // Icon shapes (keys K X A D F T WP M U N H $ E): ensure unique.
++  Cross = D3DCOLOR_XRGB(0xe8, 0x1c, 0x1c),
++  Sword = D3DCOLOR_XRGB(0xf2, 0xc0, 0x2a),
++  Diamond = D3DCOLOR_XRGB(0x2e, 0x8c, 0xf5),
++  Flame = D3DCOLOR_XRGB(0x3c, 0xd8, 0x3c),
++  Star = D3DCOLOR_XRGB(0xb5, 0x5c, 0xf2),
++  Wolf = D3DCOLOR_XRGB(0xe8, 0xe2, 0xd4),  // The landing-page wolf's bone.
++  Moon = D3DCOLOR_XRGB(0xf2, 0xf2, 0xf5),
++  Lasso = D3DCOLOR_XRGB(0x9c, 0x5f, 0x2e),
++  Lute = D3DCOLOR_XRGB(0xa8, 0x6b, 0x3a),
++  Shield = D3DCOLOR_XRGB(0xa8, 0xb0, 0xbc),
++  Dollar = D3DCOLOR_XRGB(0x3a, 0xb0, 0x5a),
++  Euro = D3DCOLOR_XRGB(0xe8, 0xa0, 0x20),
+   Red = D3DCOLOR_XRGB(0xff, 0, 0),
+   Orange = D3DCOLOR_XRGB(0xff, 0x80, 0),
+   Yellow = D3DCOLOR_XRGB(0xff, 0xff, 0),
+@@ -45,6 +59,150 @@ enum TagArrowColor : DWORD {
+   White = D3DCOLOR_XRGB(0xff, 0xff, 0xff),
+ };
+ 
++// Numbered badges ^1^ to ^12^ all look alike (a white badge). The shape is looked up from the tag color,
++// so each number's color differs in the low bits of blue only, which keeps every key's value unique.
++static constexpr DWORD kNumberColorBase = D3DCOLOR_XRGB(0xf0, 0xf0, 0xf0);
++static constexpr int kMaxTagNumber = 12;
++static constexpr const char *kNumberNames[kMaxTagNumber] = {"#1", "#2", "#3", "#4",  "#5",  "#6",
++                                                            "#7", "#8", "#9", "#10", "#11", "#12"};
++
++static DWORD GetNumberColor(int number) { return kNumberColorBase + number; }
++
++// Returns the badge number (1 to 12) of a tag color, else 0.
++static int GetTagNumber(DWORD tag_color) {
++  if (tag_color <= kNumberColorBase || tag_color > kNumberColorBase + kMaxTagNumber) return 0;
++  return static_cast<int>(tag_color - kNumberColorBase);
++}
++
++// The paw with a letter or digit on its pad (^PK^: a charmer's initial) looks like the paw; as with the
++// numbers, the low bits of blue carry which glyph it is.
++static constexpr DWORD kPawGlyphColorBase = D3DCOLOR_XRGB(0x20, 0xc0, 0x40);
++static constexpr int kPawGlyphCount = 36;  // '0' to '9', then 'A' to 'Z'.
++
++// Returns the glyph index (0 to 35) of a paw-with-glyph tag color, else -1.
++static int GetPawGlyph(DWORD tag_color) {
++  if (tag_color < kPawGlyphColorBase || tag_color >= kPawGlyphColorBase + kPawGlyphCount) return -1;
++  return static_cast<int>(tag_color - kPawGlyphColorBase);
++}
++
++// Guild banners (^BEUR^) and guild icons (^IMAY^) each have their own color (TagShapes::kGuilds), which is
++// how the shape is found again. A guild whose icon is an existing shape (icon_key) uses that shape's color.
++static DWORD GetGuildBannerColor(int guild) { return 0xff000000u | TagShapes::kGuilds[guild].banner_rgb; }
++
++static DWORD GetGuildIconColor(int guild) { return 0xff000000u | TagShapes::kGuilds[guild].icon_rgb; }
++
++// Returns the guild index of a banner tag color, else -1.
++static int GetGuildBanner(DWORD tag_color) {
++  for (int i = 0; i < TagShapes::kGuildCount; ++i)
++    if (GetGuildBannerColor(i) == tag_color) return i;
++  return -1;
++}
++
++// Returns the guild index of a guild icon tag color (only guilds with an icon of their own), else -1.
++static int GetGuildIcon(DWORD tag_color) {
++  for (int i = 0; i < TagShapes::kGuildCount; ++i)
++    if (!TagShapes::kGuilds[i].icon_key && GetGuildIconColor(i) == tag_color) return i;
++  return -1;
++}
++
++// Display name of an icon, numbered or lettered shape (nullptr for the arrows, plain paw and stop sign).
++static const char *GetShapeName(DWORD tag_color) {
++  if (int number = GetTagNumber(tag_color)) return kNumberNames[number - 1];
++  if (int glyph = GetPawGlyph(tag_color); glyph >= 0) {
++    static char names[kPawGlyphCount][6];  // "Paw K"
++    if (!names[glyph][0])
++      snprintf(names[glyph], sizeof(names[glyph]), "Paw %c", "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"[glyph]);
++    return names[glyph];
++  }
++  if (int guild = GetGuildBanner(tag_color); guild >= 0) {
++    static char names[TagShapes::kGuildCount][12];  // "Banner EUR"
++    if (!names[guild][0]) snprintf(names[guild], sizeof(names[guild]), "Banner %s", TagShapes::kGuilds[guild].code);
++    return names[guild];
++  }
++  if (int guild = GetGuildIcon(tag_color); guild >= 0) {
++    static char names[TagShapes::kGuildCount][12];  // "Icon MAY"
++    if (!names[guild][0]) snprintf(names[guild], sizeof(names[guild]), "Icon %s", TagShapes::kGuilds[guild].code);
++    return names[guild];
++  }
++  switch (tag_color) {
++    case TagArrowColor::Skull:
++      return "Skull";
++    case TagArrowColor::Cross:
++      return "X";
++    case TagArrowColor::Sword:
++      return "Sword";
++    case TagArrowColor::Diamond:
++      return "Diamond";
++    case TagArrowColor::Flame:
++      return "Flame";
++    case TagArrowColor::Star:
++      return "Star";
++    case TagArrowColor::Wolf:
++      return "Wolf";
++    case TagArrowColor::Moon:
++      return "Moon";
++    case TagArrowColor::Lasso:
++      return "Lasso";
++    case TagArrowColor::Lute:
++      return "Lute";
++    case TagArrowColor::Shield:
++      return "Shield";
++    case TagArrowColor::Dollar:
++      return "Dollar";
++    case TagArrowColor::Euro:
++      return "Euro";
++    default:
++      break;
++  }
++  return nullptr;
++}
++
++// The shape drawn for an explicit tag color (plain colors draw an arrow).
++static TagArrows::Shape GetTagShape(DWORD tag_color) {
++  if (int number = GetTagNumber(tag_color))
++    return static_cast<TagArrows::Shape>(static_cast<int>(TagArrows::Shape::Number1) + number - 1);
++  if (GetPawGlyph(tag_color) >= 0) return TagArrows::Shape::Paw;  // The glyph is queued on top separately.
++  if (int guild = GetGuildBanner(tag_color); guild >= 0)
++    return static_cast<TagArrows::Shape>(static_cast<int>(TagArrows::Shape::Banner0) + guild);
++  if (int guild = GetGuildIcon(tag_color); guild >= 0)
++    return static_cast<TagArrows::Shape>(static_cast<int>(TagArrows::Shape::GuildIcon0) + guild);
++  switch (tag_color) {
++    case TagArrowColor::Paw:
++      return TagArrows::Shape::Paw;
++    case TagArrowColor::StopSign:
++      return TagArrows::Shape::Octagon;
++    case TagArrowColor::Skull:
++      return TagArrows::Shape::Skull;
++    case TagArrowColor::Cross:
++      return TagArrows::Shape::Cross;
++    case TagArrowColor::Sword:
++      return TagArrows::Shape::Sword;
++    case TagArrowColor::Diamond:
++      return TagArrows::Shape::Diamond;
++    case TagArrowColor::Flame:
++      return TagArrows::Shape::Flame;
++    case TagArrowColor::Star:
++      return TagArrows::Shape::Star;
++    case TagArrowColor::Wolf:
++      return TagArrows::Shape::Wolf;
++    case TagArrowColor::Moon:
++      return TagArrows::Shape::Moon;
++    case TagArrowColor::Lasso:
++      return TagArrows::Shape::Lasso;
++    case TagArrowColor::Lute:
++      return TagArrows::Shape::Lute;
++    case TagArrowColor::Shield:
++      return TagArrows::Shape::Shield;
++    case TagArrowColor::Dollar:
++      return TagArrows::Shape::Dollar;
++    case TagArrowColor::Euro:
++      return TagArrows::Shape::Euro;
++    default:
++      break;
++  }
++  return TagArrows::Shape::Arrow;
++}
++
+ static float z_position_offset = 1.5f;  // Static global to allow parse overrides during evaluation.
+ 
+ static void ChangeDagStringSprite(Zeal::GameStructures::GAMEDAGINFO *dag, int fontTexture, const char *str) {
+@@ -418,12 +576,14 @@ void NamePlate::render_ui() {
+     // If an explicit tag color was set, use that color otherwise use the nameplate color.
+     if (!is_corpse && info.tag_color != TagArrowColor::Off) {
+       auto tag_color = (info.tag_color == TagArrowColor::Nameplate) ? nameplate_color : info.tag_color;
+-      TagArrows::Shape shape = (tag_color == TagArrowColor::Paw)        ? TagArrows::Shape::Paw
+-                               : (tag_color == TagArrowColor::StopSign) ? TagArrows::Shape::Octagon
+-                                                                        : TagArrows::Shape::Arrow;
++      TagArrows::Shape shape = GetTagShape(info.tag_color);  // From the tag, so no nameplate color can match.
+       position.z += sprite_font->get_text_height(full_text) + 1.5f;
+       float bearing = (shape == TagArrows::Shape::Arrow) ? 0.0f : get_bearing(self, entity);
+       tag_arrows->QueueTagShape(position, tag_color, shape, bearing);
++      if (int glyph = GetPawGlyph(info.tag_color); glyph >= 0)  // The charmer's initial, over the paw's pad.
++        tag_arrows->QueueTagShape(position, tag_color,
++                                  static_cast<TagArrows::Shape>(static_cast<int>(TagArrows::Shape::Glyph0) + glyph),
++                                  bearing);
+     }
+   }
+   tag_arrows->FlushQueueToScreen();
+@@ -910,6 +1070,19 @@ void NamePlate::handle_tag_command(const std::vector<std::string> &args) {
+     return;
+   }
+ 
++  if (args.size() == 2 && args[1] == "guilds") {
++    Zeal::Game::print_chat("Guild banners ^B<code>^ and icons ^I<code>^ (like /tag local ^BEUR^):");
++    std::string line;
++    for (int i = 0; i < TagShapes::kGuildCount; ++i) {
++      line += std::string(line.empty() ? "" : ", ") + TagShapes::kGuilds[i].code + " " + TagShapes::kGuilds[i].name;
++      if (i % 5 == 4 || i + 1 == TagShapes::kGuildCount) {
++        Zeal::Game::print_chat("  %s", line.c_str());
++        line.clear();
++      }
++    }
++    return;
++  }
++
+   if (args.size() == 2 && args[1] == "clear") {
+     auto target = Zeal::Game::get_target();
+     if (target) {
+@@ -982,15 +1155,66 @@ void NamePlate::handle_tag_command(const std::vector<std::string> &args) {
+   Zeal::Game::print_chat("Usage: /tag target <text_to_match>");
+   Zeal::Game::print_chat("Usage: /tag <gsay | rsay | chat> local> <message | clear | channel>");
+   Zeal::Game::print_chat("Usage: <message> prefixes: '+' to append, '^R^' or '*R:' for color arrow (R, O, Y, G, B, W)");
++  Zeal::Game::print_chat(
++      "Usage: shapes in place of the color: P paw, S stop, K skull, X x, A sword, D diamond, F flame, T star, "
++      "WP wolf, M moon, U lasso, N lute, H shield, $ dollar, E euro");
++  Zeal::Game::print_chat("Usage: numbered badges in place of the color: 1 to 12 (like '^7^' or '^12^')");
++  Zeal::Game::print_chat("Usage: a paw with a letter or digit on it: P then the character (like '^PK^')");
++  Zeal::Game::print_chat(
++      "Usage: a guild's banner or icon: B or I then its code (like '^BEUR^'); /tag guilds lists them");
+   Zeal::Game::print_chat("Example: /tag rsay Assist me");
+   Zeal::Game::print_chat("Example: /tag gsay Off tank");
+   Zeal::Game::print_chat("Example: /tag gsay clear (broadcasts a clear all tags)");
+   return;
+ }
+ 
+-// Returns a RGB color based on the color_key (else TagArrowColor::Off if no match).
+-static D3DCOLOR GetTagArrowColor(char color_key) {
+-  color_key = std::tolower(color_key);
++// Returns the guild index of a `kind` ('b' or 'i') plus guild code key (like "BEUR" or "imay"), else -1.
++static int ReadGuildKey(const std::string &key, char kind) {
++  if (key.size() < 3 || std::tolower(static_cast<unsigned char>(key[0])) != kind) return -1;
++  return TagShapes::GuildIndex(key.substr(1));
++}
++
++// Returns the key of a "^key^" prefix (text starts with '^'): two digits for "^10^" to "^12^", 'P' plus
++// a letter or digit for a paw with that character ("^PK^"), "WP" for the wolf ("^WP^"), 'B' or 'I' plus
++// a guild code for that guild's banner or icon ("^BEUR^", "^IEUR^"), else the single character after the
++// '^'. Older clients read only the first character, so "^PK^" shows them a plain paw, "^WP^" a white arrow
++// and "^BEUR^" a blue one.
++static std::string ReadTagKey(const std::string &text) {
++  bool two_digits = text.size() > 3 && std::isdigit(static_cast<unsigned char>(text[1])) &&
++                    std::isdigit(static_cast<unsigned char>(text[2])) && text[3] == '^';
++  bool paw_glyph =
++      text.size() > 3 && (text[1] == 'p' || text[1] == 'P') && TagShapes::GlyphIndex(text[2]) >= 0 && text[3] == '^';
++  bool wolf =
++      text.size() > 3 && (text[1] == 'w' || text[1] == 'W') && (text[2] == 'p' || text[2] == 'P') && text[3] == '^';
++  // A guild key runs to the next '^' and must name a guild, so "^Blue^" stays a blue arrow.
++  const size_t end = text.find('^', 1);
++  if (end != std::string::npos) {
++    const std::string key = text.substr(1, end - 1);
++    if (ReadGuildKey(key, 'b') >= 0 || ReadGuildKey(key, 'i') >= 0) return key;
++  }
++  return text.substr(1, (two_digits || paw_glyph || wolf) ? 2 : 1);
++}
++
++// Returns a RGB color based on the key (else TagArrowColor::Off if no match).
++static D3DCOLOR GetTagArrowColor(const std::string &key) {
++  if (key.empty()) return TagArrowColor::Off;
++  if (std::isdigit(static_cast<unsigned char>(key[0]))) {  // Numbered badge.
++    int number = 0;
++    for (char c : key) number = number * 10 + (c - '0');
++    return (number >= 1 && number <= kMaxTagNumber) ? GetNumberColor(number) : TagArrowColor::Off;
++  }
++  if (key.size() == 2 && (key[0] == 'p' || key[0] == 'P')) {  // Paw with a letter or digit.
++    int glyph = TagShapes::GlyphIndex(key[1]);
++    return (glyph >= 0) ? kPawGlyphColorBase + glyph : TagArrowColor::Off;
++  }
++  if (key.size() == 2 && (key[0] == 'w' || key[0] == 'W') && (key[1] == 'p' || key[1] == 'P'))
++    return TagArrowColor::Wolf;
++  if (int guild = ReadGuildKey(key, 'b'); guild >= 0) return GetGuildBannerColor(guild);
++  if (int guild = ReadGuildKey(key, 'i'); guild >= 0) {
++    const char *icon_key = TagShapes::kGuilds[guild].icon_key;
++    return icon_key ? GetTagArrowColor(icon_key) : GetGuildIconColor(guild);
++  }
++  char color_key = std::tolower(key[0]);
+   switch (color_key) {
+     case 'r':
+       return TagArrowColor::Red;
+@@ -1008,6 +1232,30 @@ static D3DCOLOR GetTagArrowColor(char color_key) {
+       return TagArrowColor::Paw;
+     case 's':
+       return TagArrowColor::StopSign;
++    case 'k':
++      return TagArrowColor::Skull;
++    case 'x':
++      return TagArrowColor::Cross;
++    case 'a':
++      return TagArrowColor::Sword;
++    case 'd':
++      return TagArrowColor::Diamond;
++    case 'f':
++      return TagArrowColor::Flame;
++    case 't':
++      return TagArrowColor::Star;
++    case 'm':
++      return TagArrowColor::Moon;
++    case 'u':
++      return TagArrowColor::Lasso;
++    case 'n':
++      return TagArrowColor::Lute;
++    case 'h':
++      return TagArrowColor::Shield;
++    case '$':
++      return TagArrowColor::Dollar;
++    case 'e':
++      return TagArrowColor::Euro;
+     default:
+       break;
+   }
+@@ -1099,8 +1347,9 @@ bool NamePlate::handle_tag_message(const char *message, bool apply, bool allow_m
+   // The tag arrow is either enabled explicitly with a specific color (which must be disabled explicitly)
+   // or enabled by default on a NPC if there is any tag text (can suppress with ^-^).
+   if (tag_text.size() > 2 && tag_text[0] == '^') {
+-    it->second.tag_color = GetTagArrowColor(tag_text[1]);
+-    tag_text = tag_text.substr(2);
++    const std::string key = ReadTagKey(tag_text);
++    it->second.tag_color = GetTagArrowColor(key);
++    tag_text = tag_text.substr(1 + key.size());
+   } else if (it->second.tag_color == TagArrowColor::Off || it->second.tag_color == TagArrowColor::Nameplate) {
+     bool disable_arrow = !setting_tag_default_arrow.get() || entity->Type != Zeal::GameEnums::NPC ||
+                          (tag_text.empty() && it->second.tag_text.empty());
+@@ -1267,13 +1516,17 @@ static std::string prettyprint_tag_message(const std::string &msg) {
+   }
+ 
+   if (text.size() > 2 && text[0] == '^') {
+-    if (text[1] == 's' || text[1] == 'S')
++    const std::string key = ReadTagKey(text);
++    const char *shape_name = GetShapeName(GetTagArrowColor(key));
++    if (key == "s" || key == "S")
+       prefix += "Stop";
+-    else if (text[1] == 'p' || text[1] == 'P')
++    else if (key == "p" || key == "P")
+       prefix += "Paw";
++    else if (shape_name)
++      prefix += shape_name;
+     else
+-      prefix += std::string("Arrow:") + text[1];
+-    text = text.substr(2);
++      prefix += "Arrow:" + key;
++    text = text.substr(1 + key.size());
+   }
+ 
+   // Prefix ends with a ^ if one exists. Adding this search here to try and support
+@@ -1361,6 +1614,7 @@ static const char *get_tag_color_description(DWORD color) {
+     case TagArrowColor::StopSign:
+       return "Stop";
+     default:
++      if (const char *name = GetShapeName(color)) return name;
+       break;
+   }
+   return "Unknown";
+diff --git a/Zeal/tag_arrows.cpp b/Zeal/tag_arrows.cpp
+index fde0949..cc85249 100644
+--- a/Zeal/tag_arrows.cpp
++++ b/Zeal/tag_arrows.cpp
+@@ -157,7 +157,7 @@ void TagArrows::FlushQueueToScreen() {
+ 
+   if (!vertex_buffer) {
+     render_infos.clear();
+-    if (FAILED(device.CreateVertexBuffer(kBufferVertices * sizeof(ArrowVertex), D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC,
++    if (FAILED(device.CreateVertexBuffer(buffer_vertices * sizeof(ArrowVertex), D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC,
+                                          ArrowVertex::kFvfCode, D3DPOOL_DEFAULT, &vertex_buffer))) {
+       vertex_buffer = nullptr;  // Ensure nullptr.
+       Release();                // Do a full cleanup.
+@@ -241,7 +241,7 @@ TagArrows::RenderInfo TagArrows::GetRenderInfo(const Arrow &tag) {
+     case Shape::Paw:
+       return AllocatePaw(tag);
+     default:
+-      return RenderInfo();
++      return AllocateIconShape(tag);  // Icon shapes and numbered badges (range checked there).
+   }
+ }
+ 
+@@ -252,7 +252,7 @@ int TagArrows::AppendVertices(std::vector<ArrowVertex> &vertices) {
+     start_vertex_index = render_infos.back().start_vertex_index + render_infos.back().num_vertices;
+   }
+ 
+-  if (start_vertex_index + vertices.size() > kBufferVertices) {
++  if (start_vertex_index + vertices.size() > buffer_vertices) {
+     start_vertex_index = 0;
+     render_infos.clear();  // Flush cache.
+   }
+@@ -280,6 +280,7 @@ void TagArrows::CalculateShapes() {
+   AppendOctagonIndices();
+   CalculatePawVertices();
+   AppendPawIndices();
++  CalculateIconShapes();
+ }
+ 
+ void TagArrows::CalculateArrowVertices() {
+@@ -549,6 +550,95 @@ TagArrows::RenderInfo TagArrows::AllocatePaw(const Arrow &tag) {
+   return render_infos.back();
+ }
+ 
++void TagArrows::CalculateIconShapes() {
++  buffer_vertices = kBufferVertices;
++  for (size_t i = 0; i < icon_shapes.size(); ++i) {
++    auto &icon = icon_shapes[i];
++    icon.mesh = TagShapes::Build(static_cast<TagShapes::Kind>(i));
++    icon.index_start = indices.size();
++    indices.insert(indices.end(), icon.mesh.indices.begin(), icon.mesh.indices.end());
++    icon.primitive_count = (icon.mesh.indices.size() > 2) ? icon.mesh.indices.size() - 2 : 0;
++    buffer_vertices += icon.mesh.vertices.size();  // Room for every icon shape at once.
++  }
++}
++
++// Lightens a color toward white for the accent parts (the sword's blade, the diamond's facet, etc).
++static D3DCOLOR LightenColor(D3DCOLOR color) {
++  auto lighten = [](int c) { return c + (255 - c) * 3 / 5; };
++  return D3DCOLOR_XRGB(lighten((color >> 16) & 0xFF), lighten((color >> 8) & 0xFF), lighten(color & 0xFF));
++}
++
++// The icon shapes index TagShapes::Kind by their offset from Shape::Skull, so the two enums must line up.
++static_assert(static_cast<int>(TagArrows::Shape::Number1) - static_cast<int>(TagArrows::Shape::Skull) ==
++              static_cast<int>(TagShapes::Kind::Number1));
++static_assert(static_cast<int>(TagArrows::Shape::Glyph0) - static_cast<int>(TagArrows::Shape::Skull) ==
++              static_cast<int>(TagShapes::Kind::Glyph0));
++static_assert(static_cast<int>(TagArrows::Shape::Banner0) - static_cast<int>(TagArrows::Shape::Skull) ==
++              static_cast<int>(TagShapes::Kind::Banner0));
++static_assert(static_cast<int>(TagArrows::Shape::GuildIcon0) - static_cast<int>(TagArrows::Shape::Skull) ==
++              static_cast<int>(TagShapes::Kind::GuildIcon0));
++static_assert(static_cast<int>(TagArrows::Shape::GuildIconLast) - static_cast<int>(TagArrows::Shape::Skull) + 1 ==
++              static_cast<int>(TagShapes::Kind::Count));
++
++static constexpr D3DCOLOR kEyeYellow = D3DCOLOR_XRGB(0xff, 0xcf, 0x5c);  // The Wolf Pack wolf's eyes.
++
++TagArrows::RenderInfo TagArrows::AllocateIconShape(const Arrow &tag) {
++  const int index = static_cast<int>(tag.shape) - static_cast<int>(Shape::Skull);
++  if (index < 0 || index >= static_cast<int>(icon_shapes.size())) return RenderInfo();
++  const auto &icon = icon_shapes[index];
++  if (icon.mesh.vertices.empty() || !icon.primitive_count) return RenderInfo();
++
++  // The same face gradients as the octagon and paw, plus a light and a dark accent tone.
++  const float min_z = icon.mesh.min_z;
++  const float max_z = icon.mesh.max_z;
++  const D3DCOLOR light = LightenColor(tag.color);
++  const D3DCOLOR dark =
++      D3DCOLOR_XRGB(((tag.color >> 16) & 0xFF) / 6, ((tag.color >> 8) & 0xFF) / 6, (tag.color & 0xFF) / 6);
++  Gradient gradient(tag.color, 192, min_z, max_z);
++  Gradient gradient2(tag.color, 64, min_z, max_z, 0.0f, 0.7f);
++  Gradient light_gradient(light, 224, min_z, max_z);
++  Gradient light_gradient2(light, 96, min_z, max_z, 0.0f, 0.7f);
++  // Contrast parts (a badge's digits) take the dark accent on a light tag color, else the light one.
++  const int luminance = static_cast<int>(
++      (((tag.color >> 16) & 0xFF) * 299 + ((tag.color >> 8) & 0xFF) * 587 + (tag.color & 0xFF) * 114) / 1000);
++  const auto contrast = (luminance > 140) ? TagShapes::Tone::Dark : TagShapes::Tone::Light;
++  // Eyes glow a fixed yellow; shaded parts (the moon's craters) are the tag color darkened.
++  Gradient eye_gradient(kEyeYellow, 255, min_z, max_z, 0.55f);
++  Gradient eye_gradient2(kEyeYellow, 160, min_z, max_z, 0.4f);
++  const D3DCOLOR shade = D3DCOLOR_XRGB(((tag.color >> 16) & 0xFF) * 7 / 10, ((tag.color >> 8) & 0xFF) * 7 / 10,
++                                       (tag.color & 0xFF) * 7 / 10);
++  Gradient shade_gradient(shade, 150, min_z, max_z);
++  Gradient shade_gradient2(shade, 50, min_z, max_z, 0.0f, 0.7f);
++
++  std::vector<ArrowVertex> vertices;
++  vertices.reserve(icon.mesh.vertices.size());
++  for (const auto &vertex : icon.mesh.vertices) {
++    const auto tone = (vertex.tone == TagShapes::Tone::Contrast) ? contrast : vertex.tone;
++    D3DCOLOR color = dark;
++    if (tone == TagShapes::Tone::Base)
++      color = vertex.y < 0 ? gradient.GetColor(vertex.z) : gradient2.GetColor(vertex.z);
++    else if (tone == TagShapes::Tone::Light)
++      color = vertex.y < 0 ? light_gradient.GetColor(vertex.z) : light_gradient2.GetColor(vertex.z);
++    else if (tone == TagShapes::Tone::Eye)
++      color = vertex.y < 0 ? eye_gradient.GetColor(vertex.z) : eye_gradient2.GetColor(vertex.z);
++    else if (tone == TagShapes::Tone::Shade)
++      color = vertex.y < 0 ? shade_gradient.GetColor(vertex.z) : shade_gradient2.GetColor(vertex.z);
++    vertices.push_back({.x = vertex.x, .y = vertex.y, .z = vertex.z, .color = color});
++  }
++
++  int start_vertex_index = AppendVertices(vertices);
++  if (start_vertex_index < 0) return RenderInfo();
++
++  render_infos.emplace_back(RenderInfo{.shape = tag.shape,
++                                       .color = tag.color,
++                                       .start_vertex_index = start_vertex_index,
++                                       .num_vertices = vertices.size(),
++                                       .start_index = icon.index_start,
++                                       .num_primitives = icon.primitive_count,
++                                       .bearing = tag.bearing});
++  return render_infos.back();
++}
++
+ // Copy over the fixed index lookup maps that access the shape vertices in the required strip order.
+ bool TagArrows::CreateIndexBuffer() {
+   if (index_buffer) return true;
+diff --git a/Zeal/tag_arrows.h b/Zeal/tag_arrows.h
+index 4f71028..42eb40f 100644
+--- a/Zeal/tag_arrows.h
++++ b/Zeal/tag_arrows.h
+@@ -1,8 +1,10 @@
+ #pragma once
+ 
++#include <array>
+ #include <vector>
+ 
+ #include "directx.h"
++#include "tag_shapes.h"
+ #include "vectors.h"
+ 
+ // Directx 8 compatible class for rendering a 3-D shapes at specified locations.
+@@ -12,6 +14,28 @@ class TagArrows {
+     Arrow = 0,    // 3-D arrow pointing down (primary shape).
+     Octagon = 1,  // 3-D extruded octagon (stop-sign) shape.
+     Paw = 2,      // 3-D extruded pet paw print shape.
++    // Icon shapes built by TagShapes (keep in TagShapes::Kind order).
++    Skull = 3,
++    Cross = 4,
++    Sword = 5,
++    Diamond = 6,
++    Flame = 7,
++    Star = 8,
++    Wolf = 9,
++    Moon = 10,
++    Lasso = 11,
++    Lute = 12,
++    Shield = 13,
++    Dollar = 14,
++    Euro = 15,
++    Number1 = 16,  // Numbered badges: Number1 + (n - 1), up to Number12.
++    Number12 = 27,
++    Glyph0 = 28,  // Letters and digits drawn over the paw ('0'-'9' then 'A'-'Z'), up to GlyphZ.
++    GlyphZ = 63,
++    Banner0 = 64,  // Guild banners, in TagShapes::kGuilds order, up to BannerLast.
++    BannerLast = 93,
++    GuildIcon0 = 94,  // Guild icons, in TagShapes::kGuilds order, up to GuildIconLast.
++    GuildIconLast = 123,
+   };
+ 
+   // Vertices allow texturing and color modulation.
+@@ -67,6 +91,7 @@ class TagArrows {
+   void CalculateArrowVertices();    // Calculates the cached, fixed 3D arrow shape stored in vertices.
+   void CalculateOctagonVertices();  // Calculates the cached, fixed 3D octagon shape stored in vertices.
+   void CalculatePawVertices();      // Calculates the cached, fixed 3D paw shape stored in vertices.
++  void CalculateIconShapes();       // Builds the TagShapes meshes and appends their indices.
+   bool CreateIndexBuffer();         // Populates the index_buffer LUT for mapping triangles across vertices.
+   void AppendArrowIndices();
+   void AppendOctagonIndices();
+@@ -76,6 +101,7 @@ class TagArrows {
+   RenderInfo AllocateArrow(const Arrow &arrow);
+   RenderInfo AllocateOctagon(const Arrow &arrow);
+   RenderInfo AllocatePaw(const Arrow &arrow);
++  RenderInfo AllocateIconShape(const Arrow &arrow);
+   int AppendVertices(std::vector<ArrowVertex> &vertices);
+ 
+   IDirect3DDevice8 &device;
+@@ -99,4 +125,13 @@ class TagArrows {
+   unsigned int octagon_primitive_count = 0;
+   unsigned int paw_index_start = 0;
+   unsigned int paw_primitive_count = 0;
++
++  struct IconShape {
++    TagShapes::Mesh mesh;
++    unsigned int index_start = 0;
++    unsigned int primitive_count = 0;
++  };
++
++  std::array<IconShape, static_cast<size_t>(TagShapes::Kind::Count)> icon_shapes;  // Indexed from Shape::Skull.
++  int buffer_vertices = 0;  // Vertex buffer capacity: the arrow color cache plus every other shape once.
+ };
+\ No newline at end of file
+diff --git a/Zeal/tag_shapes.cpp b/Zeal/tag_shapes.cpp
+new file mode 100644
+index 0000000..138dfe4
+--- /dev/null
++++ b/Zeal/tag_shapes.cpp
+@@ -0,0 +1,1103 @@
++#include "tag_shapes.h"
++
++#include <algorithm>
++#include <cctype>
++#include <cmath>
++#include <cstddef>
++#include <string>
++#include <utility>
++
++namespace TagShapes {
++namespace {
++
++constexpr float kPi = 3.14159265f;
++constexpr float kHalfThickness = 0.25f;  // Same thickness as the octagon and paw.
++constexpr float kProud = 0.03f;          // How far detail parts stand out of each face.
++constexpr float kInset = 0.02f;          // How far a one-sided part sinks into its face.
++
++struct Point {
++  float x;
++  float z;
++};
++
++struct Part {
++  std::vector<Point> outline;  // Convex, or star-shaped around center (unless triangles are given).
++  Point center;
++  Tone tone = Tone::Base;
++  float y_front = -kHalfThickness;  // The part spans y_front to y_back.
++  float y_back = kHalfThickness;
++  std::vector<int16_t> triangles = {};  // Optional triangulation of the outline (index triples); else a fan.
++};
++
++// A part standing `level` steps proud of both faces (layers stack without z-fighting).
++Part Raised(std::vector<Point> outline, Point center, Tone tone, int level) {
++  const float y = kHalfThickness + kProud * static_cast<float>(level);
++  return {std::move(outline), center, tone, -y, y};
++}
++
++std::vector<Point> Ellipse(Point center, float rx, float rz, int count) {
++  std::vector<Point> points;
++  for (int i = 0; i < count; ++i) {
++    float angle = 2 * kPi * static_cast<float>(i) / static_cast<float>(count);
++    points.push_back({center.x + rx * cosf(angle), center.z + rz * sinf(angle)});
++  }
++  return points;
++}
++
++std::vector<Point> Rect(float x0, float z0, float x1, float z1) { return {{x0, z0}, {x1, z0}, {x1, z1}, {x0, z1}}; }
++
++// A bar of the given length and width centered on center and rotated counter-clockwise by angle.
++std::vector<Point> Bar(Point center, float length, float width, float angle) {
++  const float c = cosf(angle), s = sinf(angle);
++  const float hl = length / 2, hw = width / 2;
++  std::vector<Point> points;
++  for (const auto &corner : {Point{-hl, -hw}, Point{hl, -hw}, Point{hl, hw}, Point{-hl, hw}})
++    points.push_back({center.x + corner.x * c - corner.z * s, center.z + corner.x * s + corner.z * c});
++  return points;
++}
++
++// A drop: a circle of radius r drawn out to a point at tip (the convex hull of the two).
++std::vector<Point> Teardrop(Point center, float r, Point tip, int count) {
++  const float dx = tip.x - center.x, dz = tip.z - center.z;
++  const float direction = atan2f(dz, dx);
++  const float tangent = acosf(r / sqrtf(dx * dx + dz * dz));  // Angle to where the sides leave the circle.
++  std::vector<Point> points;
++  for (int i = 0; i <= count; ++i) {
++    float angle = direction + tangent + (2 * kPi - 2 * tangent) * static_cast<float>(i) / static_cast<float>(count);
++    points.push_back({center.x + r * cosf(angle), center.z + r * sinf(angle)});
++  }
++  points.push_back(tip);
++  return points;
++}
++
++// A star with the given number of points, the first one straight up.
++std::vector<Point> Star(Point center, float outer, float inner, int points_count) {
++  std::vector<Point> points;
++  for (int i = 0; i < 2 * points_count; ++i) {
++    float angle = kPi / 2 + kPi * static_cast<float>(i) / static_cast<float>(points_count);
++    float r = (i % 2) ? inner : outer;
++    points.push_back({center.x + r * cosf(angle), center.z + r * sinf(angle)});
++  }
++  return points;
++}
++
++Part Detail(std::vector<Point> outline, Point center, Tone tone) {
++  return {std::move(outline), center, tone, -(kHalfThickness + kProud), kHalfThickness + kProud};
++}
++
++// Adds a strip to the mesh, joined to the previous one with degenerate triangles.
++void AppendStrip(Mesh &mesh, const std::vector<int16_t> &strip) {
++  if (strip.empty()) return;
++  if (!mesh.indices.empty()) {
++    mesh.indices.push_back(mesh.indices.back());
++    mesh.indices.push_back(strip.front());
++  }
++  mesh.indices.insert(mesh.indices.end(), strip.begin(), strip.end());
++}
++
++// Adds the front face, back face and side wall of an extruded part.
++void AppendPart(Mesh &mesh, const Part &part) {
++  const int count = static_cast<int>(part.outline.size());
++  const int base = static_cast<int>(mesh.vertices.size());
++  for (float y : {part.y_front, part.y_back}) {
++    mesh.vertices.push_back({part.center.x, y, part.center.z, part.tone});
++    for (const auto &point : part.outline) mesh.vertices.push_back({point.x, y, point.z, part.tone});
++  }
++  const int front_ring = base + 1;
++  const int back_ring = base + count + 2;
++
++  for (const auto &[center, ring] : {std::pair{base, front_ring}, std::pair{base + count + 1, back_ring}}) {
++    if (!part.triangles.empty()) {  // A traced outline: each given triangle is its own short strip.
++      for (size_t i = 0; i + 2 < part.triangles.size(); i += 3)
++        AppendStrip(mesh,
++                    {static_cast<int16_t>(ring + part.triangles[i]), static_cast<int16_t>(ring + part.triangles[i + 1]),
++                     static_cast<int16_t>(ring + part.triangles[i + 2])});
++      continue;
++    }
++    // Otherwise the face is a fan around its center: ring, center, next ring, center, ... back to the first.
++    std::vector<int16_t> fan;
++    for (int i = 0; i < count; ++i) {
++      fan.push_back(static_cast<int16_t>(ring + i));
++      fan.push_back(static_cast<int16_t>(center));
++    }
++    fan.push_back(static_cast<int16_t>(ring));
++    AppendStrip(mesh, fan);
++  }
++
++  std::vector<int16_t> wall;
++  for (int i = 0; i <= count; ++i) {
++    wall.push_back(static_cast<int16_t>(front_ring + i % count));
++    wall.push_back(static_cast<int16_t>(back_ring + i % count));
++  }
++  AppendStrip(mesh, wall);
++}
++
++std::vector<Part> SkullParts() {
++  const std::vector<Point> jaw = {{-0.78f, 1.0f}, {-0.72f, 0.3f}, {-0.55f, 0.06f}, {-0.3f, 0},
++                                  {0.3f, 0},      {0.55f, 0.06f}, {0.72f, 0.3f},   {0.78f, 1.0f}};
++  std::vector<Part> parts;
++  parts.push_back({Ellipse({0, 1.6f}, 1.15f, 1.05f, 48), {0, 1.6f}});  // Cranium.
++  parts.push_back({jaw, {0, 0.5f}});
++  for (float x : {-0.44f, 0.44f})  // Eye sockets.
++    parts.push_back(Detail(Ellipse({x, 1.45f}, 0.3f, 0.28f, 24), {x, 1.45f}, Tone::Dark));
++  parts.push_back(Detail({{0, 1.12f}, {-0.15f, 0.84f}, {0.15f, 0.84f}}, {0, 0.93f}, Tone::Dark));  // Nose.
++  for (float x : {-0.36f, -0.12f, 0.12f, 0.36f})  // Gaps between the teeth.
++    parts.push_back(Detail(Rect(x - 0.035f, 0.12f, x + 0.035f, 0.55f), {x, 0.335f}, Tone::Dark));
++  return parts;
++}
++
++std::vector<Part> CrossParts() {
++  const Point center = {0, 1.256f};  // Puts the lowest corners at the bottom.
++  return {{Bar(center, 3.0f, 0.55f, kPi / 4), center}, {Bar(center, 3.0f, 0.55f, -kPi / 4), center}};
++}
++
++std::vector<Part> SwordParts() {
++  // Points down, like the arrow.
++  const std::vector<Point> blade = {{0, 0}, {0.24f, 0.4f}, {0.24f, 1.72f}, {-0.24f, 1.72f}, {-0.24f, 0.4f}};
++  const std::vector<Point> guard = {{-0.9f, 1.84f}, {-0.78f, 1.72f}, {0.78f, 1.72f},
++                                    {0.9f, 1.84f},  {0.78f, 1.96f},  {-0.78f, 1.96f}};
++  std::vector<Part> parts;
++  parts.push_back({blade, {0, 1.0f}, Tone::Light});
++  parts.push_back(Detail(Rect(-0.05f, 0.45f, 0.05f, 1.6f), {0, 1.0f}, Tone::Dark));  // Fuller.
++  parts.push_back({guard, {0, 1.84f}});
++  parts.push_back({Rect(-0.12f, 1.96f, 0.12f, 2.46f), {0, 2.21f}});      // Grip.
++  parts.push_back({Ellipse({0, 2.58f}, 0.18f, 0.18f, 20), {0, 2.58f}});  // Pommel.
++  return parts;
++}
++
++std::vector<Part> DiamondParts() {
++  const Point center = {0, 1.35f};
++  return {{{{0, 0}, {1.05f, 1.35f}, {0, 2.7f}, {-1.05f, 1.35f}}, center},
++          Detail({{0, 0.6f}, {0.5f, 1.35f}, {0, 2.1f}, {-0.5f, 1.35f}}, center, Tone::Light)};  // Facet.
++}
++
++std::vector<Part> FlameParts() {
++  // A body, a tongue either side, and a lighter core.
++  return {{Teardrop({0, 0.95f}, 0.95f, {0.12f, 2.8f}, 32), {0, 0.95f}},
++          {Teardrop({-0.62f, 0.72f}, 0.5f, {-1.1f, 2.0f}, 20), {-0.62f, 0.72f}},
++          {Teardrop({0.62f, 0.66f}, 0.45f, {1.05f, 1.8f}, 20), {0.62f, 0.66f}},
++          Detail(Teardrop({0.02f, 0.56f}, 0.42f, {-0.14f, 1.75f}, 24), {0.02f, 0.56f}, Tone::Light)};
++}
++
++std::vector<Part> StarParts() {
++  const Point center = {0, 1.095f};  // Puts the two lower points at the bottom.
++  return {{Star(center, 1.35f, 0.55f, 5), center}, Detail(Star(center, 0.62f, 0.25f, 5), center, Tone::Light)};
++}
++
++// The wolf is traced from Wolf Pack's landing-page wolf (WolfParts(), generated data).
++#include "tag_shapes_wolf.inc"
++
++std::vector<Part> MoonParts() {
++  // A full moon: the shaded rim shows as a crescent where the lit disc doesn't cover it, plus craters.
++  const Point center = {0, 1.3f};
++  std::vector<Part> parts;
++  parts.push_back({Ellipse(center, 1.3f, 1.3f, 48), center, Tone::Shade});
++  parts.push_back(Raised(Ellipse({-0.12f, 1.36f}, 1.17f, 1.17f, 48), {-0.12f, 1.36f}, Tone::Base, 1));
++
++  struct Crater {
++    float x, z, r;
++  };
++
++  for (const auto &c : {Crater{0.42f, 1.85f, 0.27f}, Crater{-0.45f, 0.85f, 0.28f}, Crater{-0.62f, 1.62f, 0.16f},
++                        Crater{0.52f, 1.0f, 0.16f}, Crater{0.22f, 0.5f, 0.15f}, Crater{-0.22f, 2.12f, 0.09f},
++                        Crater{-0.1f, 1.42f, 0.09f}, Crater{0.12f, 1.05f, 0.09f}, Crater{-0.95f, 1.2f, 0.09f},
++                        Crater{-0.38f, 0.42f, 0.09f}})
++    parts.push_back(Raised(Ellipse({c.x, c.z}, c.r, c.r, 20), {c.x, c.z}, Tone::Shade, 2));
++  return parts;
++}
++
++// A rope or line of the given width along a polyline, as one quad per segment (each convex). Segment ends
++// overlap a little so bends don't show gaps.
++std::vector<Part> Stroke(const std::vector<Point> &points, float width, Tone tone, int level, bool closed) {
++  std::vector<Part> parts;
++  const size_t count = closed ? points.size() : points.size() - 1;
++  for (size_t i = 0; i < count; ++i) {
++    const Point a = points[i], b = points[(i + 1) % points.size()];
++    const float dx = b.x - a.x, dz = b.z - a.z;
++    const float length = sqrtf(dx * dx + dz * dz);
++    if (length <= 0) continue;
++    const Point center = {(a.x + b.x) / 2, (a.z + b.z) / 2};
++    auto part = Raised(Bar(center, length + width * 0.6f, width, atan2f(dz, dx)), center, tone, level);
++    parts.push_back(std::move(part));
++  }
++  return parts;
++}
++
++std::vector<Part> LassoParts() {
++  // A rope loop over a tail that runs down to a knot and a handle (for the puller's target).
++  std::vector<Point> loop = Ellipse({0, 2.25f}, 1.25f, 0.55f, 36);
++  const std::vector<Point> tail = {{0.05f, 1.7f},   {-0.2f, 1.5f},   {-0.36f, 1.22f},
++                                   {-0.36f, 0.95f}, {-0.22f, 0.75f}, {0.0f, 0.62f}};
++  std::vector<Part> parts;
++  for (auto &part : Stroke(loop, 0.2f, Tone::Base, 0, true)) parts.push_back(std::move(part));
++  for (auto &part : Stroke(tail, 0.2f, Tone::Base, 0, false)) parts.push_back(std::move(part));
++  for (auto &part : Stroke(loop, 0.07f, Tone::Light, 1, true)) parts.push_back(std::move(part));  // Highlight.
++  for (auto &part : Stroke(tail, 0.07f, Tone::Light, 1, false)) parts.push_back(std::move(part));
++  parts.push_back(Raised(Ellipse({0.02f, 0.6f}, 0.17f, 0.17f, 16), {0.02f, 0.6f}, Tone::Base, 1));  // Knot.
++  const Point grip = {0.3f, 0.3f};
++  parts.push_back({Bar(grip, 0.6f, 0.2f, -0.8f), grip, Tone::Dark});                                // Handle.
++  parts.push_back(Raised(Ellipse({0.5f, 0.11f}, 0.11f, 0.11f, 12), {0.5f, 0.11f}, Tone::Base, 1));  // End cap.
++  return parts;
++}
++
++// Points along a circular arc from angle a0 to a1 (radians, counter-clockwise when a1 > a0).
++std::vector<Point> Arc(Point center, float r, float a0, float a1, int count) {
++  std::vector<Point> points;
++  for (int i = 0; i <= count; ++i) {
++    const float angle = a0 + (a1 - a0) * static_cast<float>(i) / static_cast<float>(count);
++    points.push_back({center.x + r * cosf(angle), center.z + r * sinf(angle)});
++  }
++  return points;
++}
++
++// A thick stroke with a thin highlight along it, like the lasso's rope.
++void AppendStroke(std::vector<Part> &parts, const std::vector<Point> &points, float width) {
++  for (auto &part : Stroke(points, width, Tone::Base, 0, false)) parts.push_back(std::move(part));
++  for (auto &part : Stroke(points, width * 0.3f, Tone::Light, 1, false)) parts.push_back(std::move(part));
++}
++
++std::vector<Part> DollarParts() {
++  // An S of two arcs with a bar through it.
++  constexpr float kDeg = kPi / 180;
++  std::vector<Point> s = Arc({0, 1.78f}, 0.5f, 25 * kDeg, 270 * kDeg, 16);
++  const auto lower = Arc({0, 0.78f}, 0.5f, 90 * kDeg, -155 * kDeg, 16);
++  s.insert(s.end(), lower.begin() + 1, lower.end());
++  std::vector<Part> parts;
++  parts.push_back({Rect(-0.09f, 0, 0.09f, 2.55f), {0, 1.28f}, Tone::Base});
++  AppendStroke(parts, s, 0.28f);
++  return parts;
++}
++
++std::vector<Part> EuroParts() {
++  // A C open to the right, crossed by two bars.
++  constexpr float kDeg = kPi / 180;
++  const Point center = {0.1f, 1.16f};
++  std::vector<Part> parts;
++  AppendStroke(parts, Arc(center, 1.0f, 45 * kDeg, 315 * kDeg, 24), 0.28f);
++  for (float z : {1.34f, 0.98f})
++    parts.push_back(Raised(Rect(-1.2f, z - 0.09f, 0.45f, z + 0.09f), {-0.4f, z}, Tone::Base, 1));
++  return parts;
++}
++
++std::vector<Part> ShieldParts() {
++  // A heater shield: a darker rim, the face, and a cross band (the tank's mark).
++  std::vector<Point> outline = {{-1.1f, 2.7f},   {1.1f, 2.7f},   {1.1f, 1.7f}, {1.02f, 1.2f},
++                                {0.82f, 0.72f},  {0.52f, 0.3f},  {0, 0},       {-0.52f, 0.3f},
++                                {-0.82f, 0.72f}, {-1.02f, 1.2f}, {-1.1f, 1.7f}};
++  const Point center = {0, 1.6f};
++  std::vector<Point> face;
++  for (const auto &point : outline)  // The face: the outline drawn in toward the center.
++    face.push_back({center.x + (point.x - center.x) * 0.86f, center.z + (point.z - center.z) * 0.9f});
++  std::vector<Part> parts;
++  parts.push_back({outline, center, Tone::Shade});
++  parts.push_back(Raised(face, center, Tone::Base, 1));
++  parts.push_back(Raised(Rect(-0.13f, 0.42f, 0.13f, 2.5f), {0, 1.46f}, Tone::Shade, 2));     // Upright band.
++  parts.push_back(Raised(Rect(-0.9f, 1.72f, 0.9f, 1.98f), {0, 1.85f}, Tone::Shade, 2));      // Cross band.
++  parts.push_back(Raised(Ellipse({0, 1.85f}, 0.2f, 0.2f, 16), {0, 1.85f}, Tone::Light, 3));  // Boss.
++  return parts;
++}
++
++std::vector<Part> LuteParts() {
++  // A lute, built upright (neck up) and then tilted like the bard's instrument in hand.
++  std::vector<Part> parts;
++  const Point body = {0, 0.85f};
++  parts.push_back({Teardrop(body, 0.86f, {0, 2.3f}, 32), body, Tone::Light});  // Rim.
++  parts.push_back(Raised(Teardrop(body, 0.78f, {0, 2.2f}, 32), body, Tone::Base, 1));
++  parts.push_back(Raised(Rect(-0.13f, 1.9f, 0.13f, 3.05f), {0, 2.5f}, Tone::Base, 1));  // Neck.
++  parts.push_back({Bar({0.08f, 3.2f}, 0.4f, 0.2f, 1.2f), {0.08f, 3.2f}, Tone::Base});   // Pegbox.
++  for (float z : {2.95f, 3.1f, 3.25f})                                                  // Pegs.
++    for (float side : {-1.0f, 1.0f})
++      parts.push_back(
++          Raised(Ellipse({side * 0.28f + 0.05f, z}, 0.07f, 0.07f, 10), {side * 0.28f + 0.05f, z}, Tone::Light, 1));
++  parts.push_back(Raised(Ellipse({0, 1.2f}, 0.28f, 0.28f, 24), {0, 1.2f}, Tone::Dark, 2));  // Rosette.
++  parts.push_back(Raised(Ellipse({0, 1.2f}, 0.17f, 0.17f, 20), {0, 1.2f}, Tone::Light, 3));
++  parts.push_back(Raised(Ellipse({0, 1.2f}, 0.06f, 0.06f, 12), {0, 1.2f}, Tone::Dark, 4));
++  parts.push_back(Raised(Rect(-0.26f, 0.42f, 0.26f, 0.5f), {0, 0.46f}, Tone::Dark, 2));  // Bridge.
++  for (float x : {-0.08f, 0.0f, 0.08f})                                                  // Strings.
++    parts.push_back(Raised(Rect(x - 0.012f, 0.46f, x + 0.012f, 3.0f), {x, 1.7f}, Tone::Light, 3));
++
++  // Tilt 40 degrees to the right about the base, then sit the lowest point on z = 0.
++  const float angle = -0.7f, c = cosf(angle), s = sinf(angle);
++  const auto tilt = [c, s](Point p) { return Point{p.x * c - p.z * s, p.x * s + p.z * c}; };
++  float min_z = 1e9f, min_x = 1e9f, max_x = -1e9f;
++  for (auto &part : parts) {
++    for (auto &point : part.outline) {
++      point = tilt(point);
++      min_z = fminf(min_z, point.z);
++      min_x = fminf(min_x, point.x);
++      max_x = fmaxf(max_x, point.x);
++    }
++    part.center = tilt(part.center);
++  }
++  const float shift_x = -(min_x + max_x) / 2;
++  for (auto &part : parts) {
++    for (auto &point : part.outline) point = {point.x + shift_x, point.z - min_z};
++    part.center = {part.center.x + shift_x, part.center.z - min_z};
++  }
++  return parts;
++}
++
++// Block digits for the numbered badges: seven-segment strokes that overlap at the corners, so a digit is a
++// few rectangles. '1' is a stem with a flag rather than the right-hand segments, so it reads as a one.
++constexpr float kDigitWidth = 0.64f;
++constexpr float kDigitHeight = 1.3f;
++constexpr float kStroke = 0.2f;
++
++std::vector<std::vector<Point>> DigitStrokes(int digit, float x0, float z0) {
++  const float x1 = x0 + kDigitWidth, z1 = z0 + kDigitHeight, zm = z0 + kDigitHeight / 2, t = kStroke;
++  if (digit == 1) {
++    const float stem = x0 + kDigitWidth * 0.55f;
++    return {Rect(stem - t / 2, z0, stem + t / 2, z1), Rect(stem - t / 2 - 0.2f, z1 - t, stem - t / 2, z1)};
++  }
++  // Segments a (top), b (upper right), c (lower right), d (bottom), e (lower left), f (upper left), g (middle).
++  const std::vector<Point> segments[7] = {Rect(x0, z1 - t, x1, z1),
++                                          Rect(x1 - t, zm - t / 2, x1, z1),
++                                          Rect(x1 - t, z0, x1, zm + t / 2),
++                                          Rect(x0, z0, x1, z0 + t),
++                                          Rect(x0, z0, x0 + t, zm + t / 2),
++                                          Rect(x0, zm - t / 2, x0 + t, z1),
++                                          Rect(x0, zm - t / 2, x1, zm + t / 2)};
++  static constexpr const char *kLit[10] = {"abcdef", "bc",     "abdeg", "abcdg",   "bcfg",
++                                           "acdfg",  "acdefg", "abc",   "abcdefg", "abcdfg"};
++  std::vector<std::vector<Point>> strokes;
++  for (const char *segment = kLit[digit]; *segment; ++segment) strokes.push_back(segments[*segment - 'a']);
++  return strokes;
++}
++
++Point Centroid(const std::vector<Point> &points) {
++  Point sum = {0, 0};
++  for (const auto &point : points) sum = {sum.x + point.x, sum.z + point.z};
++  return {sum.x / static_cast<float>(points.size()), sum.z / static_cast<float>(points.size())};
++}
++
++std::vector<Point> Mirror(const std::vector<Point> &points) {
++  std::vector<Point> mirrored;
++  for (const auto &point : points) mirrored.push_back({-point.x, point.z});
++  return mirrored;
++}
++
++std::vector<Part> NumberParts(int number) {
++  const Point center = {0, 1.25f};
++  std::vector<Part> parts;
++  parts.push_back({Ellipse(center, 1.25f, 1.25f, 48), center});  // The badge.
++  const std::string digits = std::to_string(number);
++  const float gap = 0.14f;
++  const float width = static_cast<float>(digits.size()) * kDigitWidth + static_cast<float>(digits.size() - 1) * gap;
++  float x = -width / 2;
++  for (char digit : digits) {
++    for (const auto &stroke : DigitStrokes(digit - '0', x, center.z - kDigitHeight / 2)) {
++      // Each face gets its own copy, the back one mirrored, so the number reads correctly from either side.
++      const auto back = Mirror(stroke);
++      parts.push_back(
++          {stroke, Centroid(stroke), Tone::Contrast, -(kHalfThickness + kProud), -(kHalfThickness - kInset)});
++      parts.push_back({back, Centroid(back), Tone::Contrast, kHalfThickness - kInset, kHalfThickness + kProud});
++    }
++    x += kDigitWidth + gap;
++  }
++  return parts;
++}
++
++// 5x7 block font for the letters and digits drawn on the pet paw (a charmer's initial). Each row is five
++// bits, most significant on the left, top row first.
++constexpr uint8_t kGlyphRows[36][7] = {
++    {14, 17, 19, 21, 25, 17, 14}, {4, 12, 4, 4, 4, 4, 14},      {14, 17, 1, 2, 4, 8, 31},      // 0 1 2
++    {31, 2, 4, 2, 1, 17, 14},     {2, 6, 10, 18, 31, 2, 2},     {31, 16, 30, 1, 1, 17, 14},    // 3 4 5
++    {6, 8, 16, 30, 17, 17, 14},   {31, 1, 2, 4, 8, 8, 8},       {14, 17, 17, 14, 17, 17, 14},  // 6 7 8
++    {14, 17, 17, 15, 1, 2, 12},   {14, 17, 17, 31, 17, 17, 17}, {30, 17, 17, 30, 17, 17, 30},  // 9 A B
++    {14, 17, 16, 16, 16, 17, 14}, {28, 18, 17, 17, 17, 18, 28}, {31, 16, 16, 30, 16, 16, 31},  // C D E
++    {31, 16, 16, 30, 16, 16, 16}, {14, 17, 16, 23, 17, 17, 15}, {17, 17, 17, 31, 17, 17, 17},  // F G H
++    {14, 4, 4, 4, 4, 4, 14},      {7, 2, 2, 2, 2, 18, 12},      {17, 18, 20, 24, 20, 18, 17},  // I J K
++    {16, 16, 16, 16, 16, 16, 31}, {17, 27, 21, 21, 17, 17, 17}, {17, 17, 25, 21, 19, 17, 17},  // L M N
++    {14, 17, 17, 17, 17, 17, 14}, {30, 17, 17, 30, 16, 16, 16}, {14, 17, 17, 17, 21, 18, 13},  // O P Q
++    {30, 17, 17, 30, 20, 18, 17}, {15, 16, 16, 14, 1, 1, 30},   {31, 4, 4, 4, 4, 4, 4},        // R S T
++    {17, 17, 17, 17, 17, 17, 14}, {17, 17, 17, 17, 17, 10, 4},  {17, 17, 17, 21, 21, 21, 10},  // U V W
++    {17, 17, 10, 4, 10, 17, 17},  {17, 17, 17, 10, 4, 4, 4},    {31, 1, 2, 4, 8, 16, 31}};     // X Y Z
++
++// A 5x7 glyph with its top left corner at (x0, z_top), `cell` per font cell, standing `proud` out of each
++// face. Runs of lit cells become rectangles, and a run repeated on the rows below grows into one taller
++// rectangle.
++std::vector<Part> GlyphRects(int index, float x0, float z_top, float cell, Tone tone, float proud) {
++  struct Run {
++    int start, end, top, bottom;
++  };
++
++  std::vector<Run> runs;
++  for (int row = 0; row < 7; ++row) {
++    const int bits = kGlyphRows[index][row];
++    for (int col = 0; col < 5;) {
++      if (!(bits & (16 >> col))) {
++        ++col;
++        continue;
++      }
++      int end = col;
++      while (end + 1 < 5 && (bits & (16 >> (end + 1)))) ++end;
++      bool grown = false;
++      for (auto &run : runs)
++        if (run.start == col && run.end == end && run.bottom == row - 1) {
++          run.bottom = row;
++          grown = true;
++          break;
++        }
++      if (!grown) runs.push_back({col, end, row, row});
++      col = end + 1;
++    }
++  }
++  std::vector<Part> parts;
++  for (const auto &run : runs) {
++    const auto front =
++        Rect(x0 + static_cast<float>(run.start) * cell, z_top - static_cast<float>(run.bottom + 1) * cell,
++             x0 + static_cast<float>(run.end + 1) * cell, z_top - static_cast<float>(run.top) * cell);
++    // Like the badges: a copy on each face, the back one mirrored, so it reads correctly from either side.
++    const auto back = Mirror(front);
++    parts.push_back({front, Centroid(front), tone, -(kHalfThickness + proud), -(kHalfThickness - kInset)});
++    parts.push_back({back, Centroid(back), tone, kHalfThickness - kInset, kHalfThickness + proud});
++  }
++  return parts;
++}
++
++std::vector<Part> GlyphParts(int index) {
++  // Sits on the paw's main pad (x -1.05..1.05, z 0..1.19). Dark rather than contrast: a dark letter reads
++  // best on the paw's green.
++  constexpr float kCell = 0.13f;
++  return GlyphRects(index, -2.5f * kCell, 0.6f + 3.5f * kCell, kCell, Tone::Dark, kProud);
++}
++
++// Guild banners and icons ---------------------------------------------------------------------------------
++
++constexpr float kDeg = kPi / 180;
++
++// Ear-clipping triangulation of a simple polygon, for the concave outlines (a crescent, a bolt, a wing).
++std::vector<int16_t> Triangulate(const std::vector<Point> &outline) {
++  const auto cross = [](Point o, Point a, Point b) { return (a.x - o.x) * (b.z - o.z) - (a.z - o.z) * (b.x - o.x); };
++  std::vector<int> remaining;
++  float area = 0;
++  for (size_t i = 0; i < outline.size(); ++i) {
++    remaining.push_back(static_cast<int>(i));
++    const Point a = outline[i], b = outline[(i + 1) % outline.size()];
++    area += a.x * b.z - b.x * a.z;
++  }
++  if (area < 0) std::reverse(remaining.begin(), remaining.end());  // Clip ears counter-clockwise.
++
++  std::vector<int16_t> triangles;
++  while (remaining.size() > 3) {
++    const size_t n = remaining.size();
++    size_t ear = n;
++    for (size_t i = 0; i < n && ear == n; ++i) {
++      const int ia = remaining[(i + n - 1) % n], ib = remaining[i], ic = remaining[(i + 1) % n];
++      const Point a = outline[ia], b = outline[ib], c = outline[ic];
++      if (cross(a, b, c) <= 1e-9f) continue;  // Reflex or flat.
++      bool contains = false;
++      for (int j : remaining) {
++        const Point p = outline[j];
++        if (j == ia || j == ib || j == ic) continue;
++        if (cross(a, b, p) >= 0 && cross(b, c, p) >= 0 && cross(c, a, p) >= 0) {
++          contains = true;
++          break;
++        }
++      }
++      if (!contains) ear = i;
++    }
++    if (ear == n) {  // Only a degenerate spot is left: drop the flattest vertex and carry on.
++      float flattest = 1e9f;
++      for (size_t i = 0; i < n; ++i) {
++        const float f =
++            fabsf(cross(outline[remaining[(i + n - 1) % n]], outline[remaining[i]], outline[remaining[(i + 1) % n]]));
++        if (f < flattest) {
++          flattest = f;
++          ear = i;
++        }
++      }
++      remaining.erase(remaining.begin() + static_cast<std::ptrdiff_t>(ear));
++      continue;
++    }
++    for (size_t k : {(ear + n - 1) % n, ear, (ear + 1) % n}) triangles.push_back(static_cast<int16_t>(remaining[k]));
++    remaining.erase(remaining.begin() + static_cast<std::ptrdiff_t>(ear));
++  }
++  if (remaining.size() == 3)
++    for (int k : remaining) triangles.push_back(static_cast<int16_t>(k));
++  return triangles;
++}
++
++Part Concave(std::vector<Point> outline, Tone tone, int level) {
++  Part part = Raised(outline, Centroid(outline), tone, level);
++  part.triangles = Triangulate(part.outline);
++  return part;
++}
++
++Part Flat(std::vector<Point> outline, Tone tone, int level) {
++  const Point center = Centroid(outline);
++  return Raised(std::move(outline), center, tone, level);
++}
++
++void Append(std::vector<Part> &parts, std::vector<Part> more) {
++  for (auto &part : more) parts.push_back(std::move(part));
++}
++
++Point Rotate(Point p, float angle, Point pivot) {
++  const float c = cosf(angle), s = sinf(angle), dx = p.x - pivot.x, dz = p.z - pivot.z;
++  return {pivot.x + dx * c - dz * s, pivot.z + dx * s + dz * c};
++}
++
++std::vector<Point> Rotate(std::vector<Point> points, float angle, Point pivot) {
++  for (auto &point : points) point = Rotate(point, angle, pivot);
++  return points;
++}
++
++void RotateParts(std::vector<Part> &parts, float angle, Point pivot) {
++  for (auto &part : parts) {
++    part.outline = Rotate(part.outline, angle, pivot);
++    part.center = Rotate(part.center, angle, pivot);
++  }
++}
++
++std::vector<Point> MirrorX(std::vector<Point> points, float side) {
++  for (auto &point : points) point.x *= side;
++  return points;
++}
++
++// A curved, tapering stroke from a to b as an outline. It bows `bend` to the left of a->b at its middle, and
++// its width is width * profile(t) along it (0 makes a point).
++template <typename Profile>
++std::vector<Point> Tapered(Point a, Point b, float bend, float width, Profile profile) {
++  constexpr int kCount = 14;
++  const float dx = b.x - a.x, dz = b.z - a.z, length = sqrtf(dx * dx + dz * dz);
++  const float nx = -dz / length, nz = dx / length;
++  std::vector<Point> left, right;
++  for (int i = 0; i <= kCount; ++i) {
++    const float t = static_cast<float>(i) / static_cast<float>(kCount);
++    const float bow = bend * sinf(kPi * t);
++    const Point middle = {a.x + dx * t + nx * bow, a.z + dz * t + nz * bow};
++    const float w = width * profile(t) / 2;
++    left.push_back({middle.x + nx * w, middle.z + nz * w});
++    right.push_back({middle.x - nx * w, middle.z - nz * w});
++  }
++  if (profile(1.0f) < 1e-6f) right.pop_back();  // A pointed end is a single vertex.
++  if (profile(0.0f) < 1e-6f) right.erase(right.begin());
++  left.insert(left.end(), right.rbegin(), right.rend());
++  return left;
++}
++
++// A petal (pointed at both ends) of the given length and half width, standing on base and tilted by angle.
++std::vector<Point> Petal(float length, float width, float angle, Point base) {
++  constexpr int kCount = 16;
++  std::vector<Point> points;
++  for (int i = 0; i <= kCount; ++i) {
++    const float t = static_cast<float>(i) / static_cast<float>(kCount);
++    points.push_back({width * fmaxf(0.0f, sinf(kPi * t)), length * t});
++  }
++  for (int i = kCount - 1; i > 0; --i) points.push_back({-points[i].x, points[i].z});
++  for (auto &point : points) point = Rotate({base.x + point.x, base.z + point.z}, angle, base);
++  return points;
++}
++
++// A chain link: a rounded slot around center.
++std::vector<Point> Stadium(Point center, float half, float r) {
++  auto points = Arc({center.x + half, center.z}, r, -kPi / 2, kPi / 2, 12);
++  const auto left = Arc({center.x - half, center.z}, r, kPi / 2, 3 * kPi / 2, 12);
++  points.insert(points.end(), left.begin(), left.end());
++  return points;
++}
++
++// Centers a finished shape across x and sits its lowest point on z = 0.
++void Settle(std::vector<Part> &parts) {
++  float min_x = 1e9f, max_x = -1e9f, min_z = 1e9f;
++  for (const auto &part : parts)
++    for (const auto &point : part.outline) {
++      min_x = fminf(min_x, point.x);
++      max_x = fmaxf(max_x, point.x);
++      min_z = fminf(min_z, point.z);
++    }
++  const float shift_x = -(min_x + max_x) / 2;
++  for (auto &part : parts) {
++    for (auto &point : part.outline) point = {point.x + shift_x, point.z - min_z};
++    part.center = {part.center.x + shift_x, part.center.z - min_z};
++  }
++}
++
++std::vector<Part> BannerParts(int index) {
++  // A swallowtail flag in the guild's color (shaded border, raised field) hanging from a rod, with the
++  // guild's code in block letters on each face. Both outlines are star-shaped about (0, 1.5), above the notch.
++  const std::vector<Point> flag = {{-0.95f, 0}, {0, 0.55f}, {0.95f, 0}, {0.95f, 2.75f}, {-0.95f, 2.75f}};
++  const std::vector<Point> field = {{-0.83f, 0.2f}, {0, 0.7f}, {0.83f, 0.2f}, {0.83f, 2.63f}, {-0.83f, 2.63f}};
++  std::vector<Part> parts;
++  parts.push_back({flag, {0, 1.5f}, Tone::Shade});
++  parts.push_back(Raised(field, {0, 1.5f}, Tone::Base, 1));
++  parts.push_back(Flat(Rect(-1.15f, 2.75f, 1.15f, 2.9f), Tone::Dark, 0));  // The rod and its finials.
++  for (float x : {-1.2f, 1.2f})
++    parts.push_back(Raised(Ellipse({x, 2.825f}, 0.1f, 0.1f, 12), {x, 2.825f}, Tone::Dark, 1));
++  const std::string code = kGuilds[index].code;
++  const float count = static_cast<float>(code.size());
++  const float cell = (code.size() > 2) ? 0.095f : 0.125f;
++  float x = -(count * 5 + count - 1) * cell / 2;
++  for (char c : code) {  // Letters a step above the field, or they would sit level with it.
++    Append(parts, GlyphRects(GlyphIndex(c), x, 1.75f + 3.5f * cell, cell, Tone::Contrast, 2 * kProud));
++    x += 6 * cell;
++  }
++  return parts;
++}
++
++std::vector<Part> LightningParts() {  // Mayhem.
++  return {
++      Concave({{0.25f, 2.8f}, {-0.75f, 1.25f}, {-0.05f, 1.25f}, {-0.45f, 0}, {0.8f, 1.7f}, {0.1f, 1.7f}, {0.65f, 2.8f}},
++              Tone::Base, 0)};
++}
++
++std::vector<Part> LotusParts() {  // Tranquility.
++
++  struct Petals {
++    float angle, length, width;
++    Tone tone;
++    int level;
++  };
++
++  std::vector<Part> parts;
++  for (const auto &p : {Petals{1.3f, 1.25f, 0.32f, Tone::Shade, 0}, Petals{-1.3f, 1.25f, 0.32f, Tone::Shade, 0},
++                        Petals{0.62f, 1.75f, 0.4f, Tone::Shade, 1}, Petals{-0.62f, 1.75f, 0.4f, Tone::Shade, 1},
++                        Petals{0, 2.25f, 0.46f, Tone::Base, 2}})
++    parts.push_back(Flat(Petal(p.length, p.width, p.angle, {0, 0.35f}), p.tone, p.level));
++  Append(parts, Stroke({{-1.3f, 0.3f}, {1.3f, 0.3f}}, 0.12f, Tone::Light, 3, false));  // The water line.
++  return parts;
++}
++
++std::vector<Part> AcornParts() {  // Squirrels of War.
++  std::vector<Part> parts;
++  parts.push_back(
++      Concave({{-0.66f, 1.3f}, {-0.6f, 0.85f}, {-0.35f, 0.35f}, {0, 0}, {0.35f, 0.35f}, {0.6f, 0.85f}, {0.66f, 1.3f}},
++              Tone::Base, 0));
++  parts.push_back(Raised(Arc({0, 1.3f}, 0.8f, 0, kPi, 18), {0, 1.55f}, Tone::Shade, 1));  // The cap.
++  parts.push_back(Raised(Rect(-0.07f, 2.05f, 0.07f, 2.45f), {0, 2.25f}, Tone::Shade, 1));
++  Append(parts, Stroke(Arc({0, 1.3f}, 0.8f, 0.15f, kPi - 0.15f, 10), 0.05f, Tone::Dark, 2, false));
++  return parts;
++}
++
++std::vector<Part> AnkhParts() {  // Intervention.
++  const auto loop = Ellipse({0, 2.2f}, 0.42f, 0.56f, 24);
++  std::vector<Part> parts = Stroke(loop, 0.26f, Tone::Base, 0, true);
++  Append(parts, Stroke(loop, 0.07f, Tone::Light, 1, true));
++  parts.push_back(Flat(Rect(-0.82f, 1.42f, 0.82f, 1.7f), Tone::Base, 0));
++  parts.push_back(Flat({{-0.13f, 1.6f}, {0.13f, 1.6f}, {0.26f, 0}, {-0.26f, 0}}, Tone::Base, 0));
++  return parts;
++}
++
++std::vector<Part> AnchorParts() {  // Erud's Crossing Guard.
++  std::vector<Part> parts = Stroke(Ellipse({0, 2.52f}, 0.22f, 0.22f, 16), 0.12f, Tone::Base, 0, true);  // Ring.
++  parts.push_back(Flat(Rect(-0.09f, 0.3f, 0.09f, 2.3f), Tone::Base, 0));                                // Shank.
++  parts.push_back(Flat(Rect(-0.6f, 1.95f, 0.6f, 2.12f), Tone::Base, 0));                                // Stock.
++  Append(parts, Stroke(Arc({0, 1.05f}, 0.95f, 200 * kDeg, 340 * kDeg, 14), 0.22f, Tone::Base, 0, false));
++  for (float side : {-1.0f, 1.0f}) {  // Flukes.
++    const float x = side * 0.95f * cosf(20 * kDeg), z = 1.05f - 0.95f * sinf(20 * kDeg);
++    parts.push_back(Flat({{x + side * 0.05f, z + 0.45f}, {x - side * 0.2f, z - 0.1f}, {x + side * 0.26f, z - 0.02f}},
++                         Tone::Base, 0));
++  }
++  return parts;
++}
++
++std::vector<Part> ClawParts() {  // Savage.
++  const auto profile = [](float t) { return powf(fmaxf(0.0f, sinf(kPi * t)), 0.7f); };
++  std::vector<Part> parts;
++  for (float dx : {-0.5f, 0.0f, 0.5f})
++    parts.push_back(Concave(Tapered({0.55f + dx, 2.7f}, {-0.75f + dx, 0.1f}, 0.18f, 0.34f, profile), Tone::Base, 0));
++  return parts;
++}
++
++std::vector<Part> MatchParts() {  // Burnouts.
++  std::vector<Part> parts;
++  parts.push_back(Flat(Rect(-0.1f, 0, 0.1f, 1.95f), Tone::Base, 0));
++  parts.push_back(Raised(Ellipse({0, 2.12f}, 0.2f, 0.3f, 16), {0, 2.12f}, Tone::Dark, 1));          // Burnt head.
++  parts.push_back(Raised(Ellipse({0.02f, 2.25f}, 0.07f, 0.07f, 8), {0.02f, 2.25f}, Tone::Eye, 2));  // Ember.
++  Append(parts, Stroke({{0.02f, 2.55f}, {0.2f, 2.75f}, {0.05f, 2.95f}, {0.25f, 3.15f}, {0.12f, 3.35f}}, 0.08f,
++                       Tone::Light, 0, false));  // Smoke.
++  return parts;
++}
++
++std::vector<Part> CrownParts() {  // Former Glory: a toppled crown.
++  std::vector<Part> parts;
++  parts.push_back(Flat(Rect(-0.9f, 0.5f, 0.9f, 0.9f), Tone::Base, 0));
++  parts.push_back(
++      Concave({{-0.9f, 0.85f}, {0.9f, 0.85f}, {1.05f, 2.0f}, {0.5f, 1.35f}, {0, 2.25f}, {-0.5f, 1.35f}, {-1.05f, 2.0f}},
++              Tone::Base, 0));
++  for (const Point tip : {Point{-1.05f, 2.0f}, Point{0, 2.25f}, Point{1.05f, 2.0f}})
++    parts.push_back(Raised(Ellipse(tip, 0.12f, 0.12f, 10), tip, Tone::Light, 1));
++  for (float x : {-0.5f, 0.0f, 0.5f})
++    parts.push_back(Raised(Ellipse({x, 0.7f}, 0.1f, 0.1f, 10), {x, 0.7f}, Tone::Dark, 1));
++  RotateParts(parts, -18 * kDeg, {0, 1.2f});
++  return parts;
++}
++
++std::vector<Part> DeltaParts() {  // Axiom.
++  const std::vector<Point> triangle = {{0, 2.5f}, {-1.25f, 0.15f}, {1.25f, 0.15f}};
++  std::vector<Part> parts = Stroke(triangle, 0.26f, Tone::Base, 0, true);
++  Append(parts, Stroke(triangle, 0.07f, Tone::Light, 1, true));
++  parts.push_back({Ellipse({0, 0.95f}, 0.24f, 0.24f, 16), {0, 0.95f}, Tone::Base});
++  return parts;
++}
++
++std::vector<Part> HouseParts() {  // Haven: a house with its window lit.
++  std::vector<Part> parts;
++  parts.push_back(Flat(Rect(-0.85f, 0, 0.85f, 1.3f), Tone::Base, 0));
++  parts.push_back(Flat(Rect(0.5f, 1.5f, 0.78f, 2.35f), Tone::Shade, 0));  // Chimney.
++  parts.push_back(Flat({{-1.18f, 1.2f}, {1.18f, 1.2f}, {0, 2.3f}}, Tone::Shade, 1));
++  parts.push_back(Flat(Rect(-0.22f, 0, 0.22f, 0.78f), Tone::Dark, 1));
++  parts.push_back(Flat(Rect(0.36f, 0.62f, 0.68f, 0.98f), Tone::Eye, 1));
++  return parts;
++}
++
++std::vector<Part> BirdParts() {  // Freedom.
++  const auto wing = [](float t) { return powf(1 - t, 0.8f); };
++  std::vector<Part> parts;
++  parts.push_back(Concave(Tapered({-0.08f, 1.1f}, {-1.35f, 2.0f}, -0.32f, 0.34f, wing), Tone::Base, 0));
++  parts.push_back(Concave(Tapered({0.08f, 1.1f}, {1.35f, 2.0f}, 0.32f, 0.34f, wing), Tone::Base, 0));
++  parts.push_back({Ellipse({0, 1.08f}, 0.2f, 0.16f, 12), {0, 1.08f}, Tone::Base});
++  return parts;
++}
++
++std::vector<Part> EyeParts() {  // Seekers of Souls.
++  const float half_w = 1.3f, half_h = 0.62f, cz = 1.25f;
++  const float r = (half_w * half_w + half_h * half_h) / (2 * half_h), span = asinf(half_w / r);
++  auto lens = Arc({0, cz + half_h - r}, r, kPi / 2 - span, kPi / 2 + span, 18);
++  const auto lower = Arc({0, cz - half_h + r}, r, 3 * kPi / 2 - span, 3 * kPi / 2 + span, 18);
++  lens.insert(lens.end(), lower.begin() + 1, lower.end() - 1);
++  std::vector<Part> parts;
++  parts.push_back({lens, {0, cz}, Tone::Base});
++  parts.push_back(Raised(Ellipse({0, cz}, 0.52f, 0.52f, 24), {0, cz}, Tone::Eye, 1));
++  parts.push_back(Raised(Ellipse({0, cz}, 0.24f, 0.24f, 16), {0, cz}, Tone::Dark, 2));
++  parts.push_back(Raised(Ellipse({0.16f, cz + 0.16f}, 0.08f, 0.08f, 10), {0.16f, cz + 0.16f}, Tone::Light, 3));
++  return parts;
++}
++
++std::vector<Part> TankardParts() {  // Hardened Casuals.
++  std::vector<Part> parts;
++  parts.push_back(Flat(Rect(-0.6f, 0, 0.6f, 1.7f), Tone::Base, 0));
++  Append(parts, Stroke(Arc({0.62f, 0.9f}, 0.45f, -80 * kDeg, 80 * kDeg, 10), 0.18f, Tone::Shade, 0, false));
++  for (float z : {0.22f, 1.3f}) parts.push_back(Flat(Rect(-0.6f, z, 0.6f, z + 0.13f), Tone::Dark, 1));
++  parts.push_back(Flat(Rect(-0.64f, 1.62f, 0.64f, 1.82f), Tone::Light, 1));  // Foam.
++
++  struct Bubble {
++    float x, z, rx, rz;
++  };
++
++  for (const auto &b :
++       {Bubble{-0.35f, 1.85f, 0.34f, 0.26f}, Bubble{0.1f, 1.95f, 0.38f, 0.3f}, Bubble{0.45f, 1.83f, 0.3f, 0.24f}})
++    parts.push_back(Raised(Ellipse({b.x, b.z}, b.rx, b.rz, 16), {b.x, b.z}, Tone::Light, 1));
++  return parts;
++}
++
++std::vector<Part> CrescentParts() {  // Nocturnal (the round moon is the mez mark).
++  const float big = 1.2f, small = 1.0f, offset = 0.55f, cz = 1.25f;
++  const float x = (big * big - small * small + offset * offset) / (2 * offset);  // Where the circles cross.
++  const float z = sqrtf(big * big - x * x);
++  const float a = atan2f(z, x), b = atan2f(z, x - offset);
++  auto outline = Arc({0, cz}, big, a, 2 * kPi - a, 30);
++  const auto inner = Arc({offset, cz}, small, 2 * kPi - b, b, 24);
++  outline.insert(outline.end(), inner.begin() + 1, inner.end() - 1);
++  std::vector<Part> parts;
++  parts.push_back(Concave(outline, Tone::Base, 0));
++  parts.push_back(Raised(Ellipse({-0.86f, 1.55f}, 0.1f, 0.1f, 10), {-0.86f, 1.55f}, Tone::Shade, 1));
++  parts.push_back(Raised(Ellipse({-0.8f, 0.95f}, 0.13f, 0.13f, 10), {-0.8f, 0.95f}, Tone::Shade, 1));
++  return parts;
++}
++
++std::vector<Part> D20Parts() {  // Dungeons and Dragons.
++  std::vector<Point> hexagon;
++  for (int i = 0; i < 6; ++i) {
++    const float angle = (90 + 60 * static_cast<float>(i)) * kDeg;
++    hexagon.push_back({1.15f * cosf(angle), 1.3f + 1.3f * sinf(angle)});
++  }
++  const std::vector<Point> face = {{0, 2.05f}, {-0.72f, 0.8f}, {0.72f, 0.8f}};
++  std::vector<Part> parts;
++  parts.push_back({hexagon, {0, 1.3f}, Tone::Base});
++  parts.push_back(Flat(face, Tone::Light, 1));
++  const std::pair<int, int> edges[] = {{0, 0}, {1, 2}, {1, 3}, {2, 3}, {2, 4}, {0, 1}, {0, 5}, {1, 1}, {2, 5}};
++  for (const auto &[f, h] : edges) Append(parts, Stroke({face[f], hexagon[h]}, 0.06f, Tone::Dark, 2, false));
++  constexpr float kCell = 0.055f;
++  float x = -11 * kCell / 2;
++  for (char digit : {'2', '0'}) {
++    Append(parts, GlyphRects(GlyphIndex(digit), x, 1.2f + 3.5f * kCell, kCell, Tone::Dark, 2 * kProud));
++    x += 6 * kCell;
++  }
++  return parts;
++}
++
++std::vector<Part> AxeParts() {  // Zek.
++  std::vector<Part> parts;
++  parts.push_back(Flat(Rect(-0.08f, 0, 0.08f, 2.75f), Tone::Dark, 0));
++  parts.push_back(Flat({{-0.08f, 2.75f}, {0.08f, 2.75f}, {0, 3.05f}}, Tone::Dark, 0));
++  for (float side : {-1.0f, 1.0f}) {
++    std::vector<Point> blade = {{0.08f, 2.35f}};
++    const auto edge = Arc({0.3f, 2.1f}, 0.95f, 48 * kDeg, -48 * kDeg, 12);
++    blade.insert(blade.end(), edge.begin(), edge.end());
++    blade.push_back({0.08f, 1.85f});
++    parts.push_back(Flat(MirrorX(blade, side), Tone::Base, 1));
++    Append(parts,
++           Stroke(MirrorX(Arc({0.3f, 2.1f}, 0.86f, 44 * kDeg, -44 * kDeg, 10), side), 0.06f, Tone::Light, 2, false));
++  }
++  return parts;
++}
++
++std::vector<Part> WaveParts() {  // The Drift.
++  std::vector<Part> parts;
++  for (int k = 0; k < 3; ++k) {
++    std::vector<Point> wave;
++    for (int i = -12; i <= 12; ++i) {
++      const float x = static_cast<float>(i) / 10;
++      wave.push_back({x, 0.45f + 0.8f * static_cast<float>(k) + 0.18f * sinf(2.6f * x + static_cast<float>(k))});
++    }
++    Append(parts, Stroke(wave, 0.22f, Tone::Base, 0, false));
++    Append(parts, Stroke(wave, 0.06f, Tone::Light, 1, false));
++  }
++  return parts;
++}
++
++std::vector<Part> InfinityParts() {  // Continuum.
++  std::vector<Part> parts;
++  for (float x : {-0.58f, 0.58f}) {
++    const auto loop = Ellipse({x, 1.1f}, 0.58f, 0.46f, 28);
++    Append(parts, Stroke(loop, 0.24f, Tone::Base, 0, true));
++    Append(parts, Stroke(loop, 0.07f, Tone::Light, 1, true));
++  }
++  return parts;
++}
++
++std::vector<Part> EclipseParts() {  // Eclipse: a dark disc inside a glowing ring.
++  const Point center = {0, 1.25f};
++  std::vector<Part> parts;
++  parts.push_back({Ellipse(center, 1.25f, 1.25f, 40), center, Tone::Eye});
++  parts.push_back(Raised(Ellipse(center, 1.02f, 1.02f, 40), center, Tone::Base, 1));
++  Append(parts, Stroke(Ellipse(center, 1.12f, 1.12f, 40), 0.05f, Tone::Light, 2, true));
++  return parts;
++}
++
++std::vector<Part> NovaParts() {  // Novae.
++  const Point center = {0, 1.3f};
++  return {{Star(center, 1.3f, 0.5f, 8), center, Tone::Base},
++          Raised(Ellipse(center, 0.38f, 0.38f, 20), center, Tone::Light, 1)};
++}
++
++std::vector<Part> MirrorParts() {  // Mass Group Ego: a hand mirror.
++  std::vector<Part> parts;
++  parts.push_back(Flat(Rect(-0.12f, 0, 0.12f, 1.05f), Tone::Base, 0));
++  parts.push_back({Ellipse({0, 0.05f}, 0.2f, 0.12f, 12), {0, 0.05f}, Tone::Base});
++  parts.push_back({Ellipse({0, 1.85f}, 0.76f, 0.92f, 32), {0, 1.85f}, Tone::Base});
++  parts.push_back(Raised(Ellipse({0, 1.85f}, 0.6f, 0.76f, 32), {0, 1.85f}, Tone::Dark, 1));  // The glass.
++  Append(parts, Stroke({{-0.35f, 1.9f}, {-0.05f, 2.3f}}, 0.09f, Tone::Light, 2, false));     // Glints.
++  Append(parts, Stroke({{-0.3f, 1.6f}, {0.12f, 2.15f}}, 0.05f, Tone::Light, 2, false));
++  return parts;
++}
++
++std::vector<Part> EggParts() {  // Breakfast Club.
++  std::vector<Point> white;
++  for (int i = 0; i < 40; ++i) {
++    const float t = 2 * kPi * static_cast<float>(i) / 40;
++    white.push_back({(1.25f + 0.12f * sinf(5 * t)) * cosf(t), 1.25f + (1.1f + 0.1f * sinf(4 * t + 1)) * sinf(t)});
++  }
++  std::vector<Part> parts;
++  parts.push_back({white, {0, 1.25f}, Tone::Base});
++  parts.push_back(Raised(Ellipse({0.12f, 1.35f}, 0.48f, 0.45f, 28), {0.12f, 1.35f}, Tone::Eye, 1));  // Yolk.
++  parts.push_back(Raised(Ellipse({0, 1.5f}, 0.14f, 0.1f, 12), {0, 1.5f}, Tone::Light, 2));
++  return parts;
++}
++
++std::vector<Part> SerpentParts() {  // Here There Be Monsters: a sea serpent over the waterline.
++  std::vector<Point> water;
++  for (int i = -14; i <= 14; ++i)
++    water.push_back({static_cast<float>(i) / 10, 0.45f + 0.06f * sinf(static_cast<float>(i))});
++  std::vector<Part> parts = Stroke(water, 0.08f, Tone::Light, 0, false);
++  for (float x : {-0.95f, -0.2f}) Append(parts, Stroke(Arc({x, 0.5f}, 0.32f, 0, kPi, 10), 0.26f, Tone::Base, 1, false));
++  Append(parts, Stroke({{0.4f, 0.5f}, {0.5f, 1.1f}, {0.7f, 1.55f}}, 0.26f, Tone::Base, 1, false));  // Neck.
++  parts.push_back(Raised(Ellipse({0.9f, 1.62f}, 0.32f, 0.18f, 16), {0.9f, 1.62f}, Tone::Base, 1));
++  parts.push_back(Raised(Ellipse({0.88f, 1.7f}, 0.05f, 0.05f, 8), {0.88f, 1.7f}, Tone::Eye, 2));
++  return parts;
++}
++
++std::vector<Part> TowerParts() {  // Sentinels: a watchtower.
++  std::vector<Part> parts;
++  parts.push_back(Flat({{-0.6f, 0}, {0.6f, 0}, {0.5f, 1.9f}, {-0.5f, 1.9f}}, Tone::Base, 0));
++  parts.push_back(Flat(Rect(-0.72f, 1.85f, 0.72f, 2.2f), Tone::Base, 0));
++  for (float x : {-0.72f, -0.15f, 0.42f}) parts.push_back(Flat(Rect(x, 2.15f, x + 0.3f, 2.5f), Tone::Base, 0));
++  parts.push_back(Flat(Rect(-0.2f, 0, 0.2f, 0.5f), Tone::Dark, 1));  // Door.
++  parts.push_back(Raised(Ellipse({0, 0.5f}, 0.2f, 0.2f, 12), {0, 0.5f}, Tone::Dark, 1));
++  parts.push_back(Flat(Rect(-0.06f, 1.1f, 0.06f, 1.5f), Tone::Eye, 1));  // Lit arrow slit.
++  return parts;
++}
++
++std::vector<Part> ChainParts() {  // Alianza: two linked chain links.
++  std::vector<Part> parts = Stroke(Stadium({-0.55f, 1.25f}, 0.4f, 0.4f), 0.2f, Tone::Base, 0, true);
++  Append(parts, Stroke(Stadium({0.55f, 1.25f}, 0.4f, 0.4f), 0.2f, Tone::Shade, 1, true));
++  // The first link passes back over the second here, so they read as linked.
++  Append(parts, Stroke(Arc({-0.15f, 1.25f}, 0.4f, 45 * kDeg, 88 * kDeg, 5), 0.2f, Tone::Base, 2, false));
++  RotateParts(parts, 30 * kDeg, {0, 1.25f});
++  return parts;
++}
++
++std::vector<Part> TentParts() {  // Camped.
++  std::vector<Part> parts;
++  parts.push_back(Flat({{-1.3f, 0}, {1.3f, 0}, {0, 2.3f}}, Tone::Base, 0));
++  parts.push_back(Flat({{-0.42f, 0}, {0.42f, 0}, {0, 1.1f}}, Tone::Dark, 1));
++  parts.push_back(Flat(Rect(-0.05f, 2.2f, 0.05f, 2.7f), Tone::Dark, 0));
++  parts.push_back(Flat({{0.05f, 2.7f}, {0.6f, 2.55f}, {0.05f, 2.4f}}, Tone::Shade, 0));  // Pennant.
++  return parts;
++}
++
++std::vector<Part> BallAndChainParts() {  // Convicts.
++  std::vector<Part> parts;
++  parts.push_back({Ellipse({0.45f, 0.75f}, 0.75f, 0.75f, 28), {0.45f, 0.75f}, Tone::Base});
++  parts.push_back(Raised(Ellipse({0.2f, 1.0f}, 0.16f, 0.16f, 10), {0.2f, 1.0f}, Tone::Light, 1));
++  const Point links[] = {{-0.12f, 1.55f}, {-0.42f, 1.85f}, {-0.72f, 2.15f}};
++  for (int i = 0; i < 3; ++i) {  // Alternate links face on and edge on.
++    const Point c = links[i];
++    if (i % 2 == 0)
++      Append(parts, Stroke(Ellipse(c, 0.24f, 0.16f, 14), 0.1f, Tone::Shade, 1, true));
++    else
++      parts.push_back(
++          Flat(Rotate(Rect(c.x - 0.26f, c.z - 0.06f, c.x + 0.26f, c.z + 0.06f), -45 * kDeg, c), Tone::Shade, 2));
++  }
++  Append(parts,
++         Stroke(Arc({-0.98f, 2.5f}, 0.36f, -60 * kDeg, 240 * kDeg, 14), 0.14f, Tone::Shade, 1, false));  // Shackle.
++  return parts;
++}
++
++std::vector<Part> GuildIconParts(int index) {
++  struct Icon {
++    const char *code;
++    std::vector<Part> (*build)();
++  };
++
++  static constexpr Icon kIcons[] = {
++      {"MAY", LightningParts}, {"TRQ", LotusParts},    {"SOW", AcornParts},       {"INT", AnkhParts},
++      {"ECG", AnchorParts},    {"SAV", ClawParts},     {"BRN", MatchParts},       {"FG", CrownParts},
++      {"AX", DeltaParts},      {"HVN", HouseParts},    {"FRE", BirdParts},        {"SOS", EyeParts},
++      {"HC", TankardParts},    {"NOC", CrescentParts}, {"DND", D20Parts},         {"ZEK", AxeParts},
++      {"DRF", WaveParts},      {"CON", InfinityParts}, {"ECL", EclipseParts},     {"NOV", NovaParts},
++      {"MGE", MirrorParts},    {"BC", EggParts},       {"HBM", SerpentParts},     {"SEN", TowerParts},
++      {"ALZ", ChainParts},     {"CMP", TentParts},     {"CVT", BallAndChainParts}};
++  for (const auto &icon : kIcons)
++    if (std::string(icon.code) == kGuilds[index].code) {
++      auto parts = icon.build();
++      Settle(parts);
++      return parts;
++    }
++  return {};  // The guild uses an existing shape (icon_key).
++}
++
++}  // namespace
++
++// Wolf Pack first, then the other guilds in the order they were listed. The banner colors step round the hue
++// wheel by the golden ratio, alternating bright and deep, so neighbors never look alike.
++const Guild kGuilds[kGuildCount] = {
++    {"WP", "Wolf Pack", 0xd29922, 0, "WP"},  // Its icon is the wolf.
++    {"MAY", "Mayhem", 0x5279d8, 0xf4d030, nullptr},
++    {"EUR", "Europa", 0x709e2f, 0, "E"},  // The euro sign.
++    {"TRQ", "Tranquility", 0xd852c8, 0xf09ac8, nullptr},
++    {"SOW", "Squirrels of War", 0x2f9e8b, 0xb07840, nullptr},
++    {"INT", "Intervention", 0xd89b52, 0xe8c040, nullptr},
++    {"ECG", "Erud's Crossing Guard", 0x4b2f9e, 0x4a86d8, nullptr},
++    {"SAV", "Savage", 0x58d852, 0xd82a2a, nullptr},
++    {"BRN", "Burnouts", 0x9e2f54, 0xd8b078, nullptr},
++    {"FG", "Former Glory", 0x52a6d8, 0xe8b830, nullptr},
++    {"AX", "Axiom", 0x959e2f, 0x40d0b0, nullptr},
++    {"HVN", "Haven", 0xbc52d8, 0xc88a5a, nullptr},
++    {"FRE", "Freedom", 0x2f9e66, 0x8cc8f0, nullptr},
++    {"SOS", "Seekers of Souls", 0xd86e52, 0x9ab4d8, nullptr},
++    {"HC", "Hardened Casuals", 0x2f389e, 0xc88630, nullptr},
++    {"NOC", "Nocturnal", 0x85d852, 0xd8dcf0, nullptr},
++    {"DND", "Dungeons and Dragons", 0x9e2f79, 0xc03030, nullptr},
++    {"ZEK", "Zek", 0x52d3d8, 0xb8bec8, nullptr},
++    {"DRF", "The Drift", 0x9e822f, 0x30b8c8, nullptr},
++    {"CON", "Continuum", 0x8f52d8, 0x40c0e0, nullptr},
++    {"ECL", "Eclipse", 0x2f9e41, 0x1c212a, nullptr},
++    {"LSF", "Loot & Some Fun", 0xd85263, 0, "$"},  // The dollar sign.
++    {"NOV", "Novae", 0x2f5d9e, 0xa070f0, nullptr},
++    {"MGE", "Mass Group Ego", 0xb1d852, 0xe0b040, nullptr},
++    {"BC", "Breakfast Club", 0x9d2f9e, 0xf6f4ee, nullptr},
++    {"HBM", "Here There Be Monsters", 0x52d8b1, 0x48b060, nullptr},
++    {"SEN", "Sentinels", 0x9e5d2f, 0x9ca4b0, nullptr},
++    {"ALZ", "Alianza", 0x6252d8, 0xe0b848, nullptr},
++    {"CMP", "Camped", 0x429e2f, 0x6e8b3d, nullptr},
++    {"CVT", "Convicts", 0xd85290, 0x8a929e, nullptr},
++};
++
++int GuildIndex(const std::string &code) {
++  for (int i = 0; i < kGuildCount; ++i) {
++    const std::string guild = kGuilds[i].code;
++    bool same = guild.size() == code.size();
++    for (size_t k = 0; same && k < code.size(); ++k)
++      same = std::toupper(static_cast<unsigned char>(code[k])) == guild[k];
++    if (same) return i;
++  }
++  return -1;
++}
++
++int GlyphIndex(char c) {
++  if (c >= '0' && c <= '9') return c - '0';
++  if (c >= 'A' && c <= 'Z') return 10 + (c - 'A');
++  if (c >= 'a' && c <= 'z') return 10 + (c - 'a');
++  return -1;
++}
++
++Mesh Build(Kind kind) {
++  std::vector<Part> parts;
++  switch (kind) {
++    case Kind::Skull:
++      parts = SkullParts();
++      break;
++    case Kind::Cross:
++      parts = CrossParts();
++      break;
++    case Kind::Sword:
++      parts = SwordParts();
++      break;
++    case Kind::Diamond:
++      parts = DiamondParts();
++      break;
++    case Kind::Flame:
++      parts = FlameParts();
++      break;
++    case Kind::Star:
++      parts = StarParts();
++      break;
++    case Kind::Wolf:
++      parts = WolfParts();
++      break;
++    case Kind::Moon:
++      parts = MoonParts();
++      break;
++    case Kind::Lasso:
++      parts = LassoParts();
++      break;
++    case Kind::Lute:
++      parts = LuteParts();
++      break;
++    case Kind::Shield:
++      parts = ShieldParts();
++      break;
++    case Kind::Dollar:
++      parts = DollarParts();
++      break;
++    case Kind::Euro:
++      parts = EuroParts();
++      break;
++    default:
++      if (kind >= Kind::Number1 && kind <= Kind::Number12)
++        parts = NumberParts(static_cast<int>(kind) - static_cast<int>(Kind::Number1) + 1);
++      else if (kind >= Kind::Glyph0 && kind <= Kind::GlyphZ)
++        parts = GlyphParts(static_cast<int>(kind) - static_cast<int>(Kind::Glyph0));
++      else if (kind >= Kind::Banner0 && kind <= Kind::BannerLast)
++        parts = BannerParts(static_cast<int>(kind) - static_cast<int>(Kind::Banner0));
++      else if (kind >= Kind::GuildIcon0 && kind <= Kind::GuildIconLast)
++        parts = GuildIconParts(static_cast<int>(kind) - static_cast<int>(Kind::GuildIcon0));
++      break;
++  }
++
++  Mesh mesh;
++  for (const auto &part : parts) AppendPart(mesh, part);
++  if (!mesh.vertices.empty()) {
++    mesh.min_z = mesh.max_z = mesh.vertices.front().z;
++    for (const auto &vertex : mesh.vertices) {
++      mesh.min_z = (vertex.z < mesh.min_z) ? vertex.z : mesh.min_z;
++      mesh.max_z = (vertex.z > mesh.max_z) ? vertex.z : mesh.max_z;
++    }
++  }
++  return mesh;
++}
++
++}  // namespace TagShapes
+diff --git a/Zeal/tag_shapes.h b/Zeal/tag_shapes.h
+new file mode 100644
+index 0000000..af226be
+--- /dev/null
++++ b/Zeal/tag_shapes.h
+@@ -0,0 +1,93 @@
++#pragma once
++
++#include <cstdint>
++#include <string>
++#include <vector>
++
++// Geometry for the icon-style tag shapes (skull, cross, sword, diamond, flame, star, wolf, moon, lasso,
++// lute, shield, dollar, euro), the numbered badges 1 to 12, the letters and digits drawn on the pet paw,
++// and a banner and an icon for each guild in kGuilds.
++//
++// Each shape is a set of flat parts extruded to a thickness. Most parts are convex (or at least
++// star-shaped around their center) so they triangulate as a simple fan; the wolf's traced parts carry
++// their own triangles. Concave outlines are built by overlapping parts, and detail such as eye sockets
++// or a blade's fuller is a part that stands slightly proud of the face in an accent tone, so no
++// texture is needed.
++//
++// This is plain math with no DirectX dependency so the meshes can be checked and previewed off-client.
++namespace TagShapes {
++
++// Guilds with a banner (^B<code>^: a swallowtail flag in the guild's color with its code on it) and an
++// icon (^I<code>^: the guild's own symbol).
++struct Guild {
++  const char *code;      // Two or three uppercase letters.
++  const char *name;      // For the /tag guilds listing.
++  uint32_t banner_rgb;   // The banner's color, 0xRRGGBB.
++  uint32_t icon_rgb;     // The icon's color, 0xRRGGBB (unused when icon_key is set).
++  const char *icon_key;  // An existing shape's key used as the icon instead of one of its own, else nullptr.
++};
++
++constexpr int kGuildCount = 30;
++extern const Guild kGuilds[kGuildCount];
++
++// Returns the index in kGuilds of a guild code (either case), else -1.
++int GuildIndex(const std::string &code);
++
++enum class Kind {
++  Skull = 0,
++  Cross,
++  Sword,
++  Diamond,
++  Flame,
++  Star,
++  Wolf,
++  Moon,
++  Lasso,
++  Lute,
++  Shield,
++  Dollar,
++  Euro,
++  Number1,  // Number1 to Number12 are consecutive: Number1 + (n - 1).
++  Number12 = Number1 + 11,
++  Glyph0,  // Glyphs drawn over the paw's main pad: '0' to '9' then 'A' to 'Z', consecutive.
++  GlyphZ = Glyph0 + 35,
++  Banner0,  // Guild banners and then guild icons, each in kGuilds order.
++  BannerLast = Banner0 + kGuildCount - 1,
++  GuildIcon0,  // Empty for a guild whose icon is an existing shape (icon_key).
++  GuildIconLast = GuildIcon0 + kGuildCount - 1,
++  Count,  // Number of shapes (not a shape).
++};
++
++// Which color a vertex takes: the tag color, a dark accent, a light accent, whichever of the two
++// accents contrasts with the tag color (the digits on a numbered badge), a fixed eye yellow, or a
++// shaded version of the tag color (the moon's craters).
++enum class Tone : uint8_t {
++  Base = 0,
++  Dark,
++  Light,
++  Contrast,
++  Eye,
++  Shade,
++};
++
++struct Vertex {
++  float x;  // Model space: x runs across the face,
++  float y;  // y through its thickness (negative is the front face),
++  float z;  // and z up, with the bottom of the shape at 0.
++  Tone tone;
++};
++
++struct Mesh {
++  std::vector<Vertex> vertices;
++  std::vector<int16_t> indices;  // A single triangle strip; degenerate triangles join the parts.
++  float min_z = 0;
++  float max_z = 0;
++};
++
++// Returns the mesh for a shape (empty for Kind::Count).
++Mesh Build(Kind kind);
++
++// Returns the paw glyph index (0 to 35) of '0'-'9' or 'A'-'Z' (either case), else -1.
++int GlyphIndex(char c);
++
++}  // namespace TagShapes
+diff --git a/Zeal/tag_shapes_wolf.inc b/Zeal/tag_shapes_wolf.inc
+new file mode 100644
+index 0000000..9e413e7
+--- /dev/null
++++ b/Zeal/tag_shapes_wolf.inc
+@@ -0,0 +1,264 @@
++// Generated by trace_wolf.py from web/public/wolf.png and wolf-eyes.png (the Wolf Pack landing-page wolf),
++// variant 'outlined'. Do not edit by hand; regenerate instead.
++std::vector<Part> WolfParts() {
++  std::vector<Part> parts;
++  parts.push_back(
++      {{{0.906f, 2.760f},  {0.830f, 2.912f},  {0.766f, 2.963f},  {0.728f, 2.950f},  {0.564f, 2.773f},
++        {0.538f, 2.773f},  {0.272f, 2.520f},  {-0.272f, 2.520f}, {-0.386f, 2.646f}, {-0.412f, 2.646f},
++        {-0.754f, 2.963f}, {-0.830f, 2.900f}, {-0.906f, 2.748f}, {-0.982f, 2.368f}, {-0.969f, 2.089f},
++        {-1.045f, 2.076f}, {-1.045f, 2.013f}, {-0.994f, 1.975f}, {-1.083f, 1.886f}, {-1.070f, 1.848f},
++        {-1.020f, 1.823f}, {-1.096f, 1.747f}, {-1.197f, 1.570f}, {-1.159f, 1.519f}, {-1.045f, 1.557f},
++        {-1.146f, 1.329f}, {-1.184f, 1.101f}, {-1.134f, 1.063f}, {-1.032f, 1.139f}, {-1.032f, 0.860f},
++        {-0.982f, 0.683f}, {-0.918f, 0.683f}, {-0.868f, 0.797f}, {-0.779f, 0.569f}, {-0.640f, 0.404f},
++        {-0.576f, 0.404f}, {-0.564f, 0.506f}, {-0.500f, 0.404f}, {-0.336f, 0.252f}, {-0.260f, 0.202f},
++        {-0.196f, 0.240f}, {-0.006f, 0.037f}, {0.044f, 0.050f},  {0.044f, 0.075f},  {0.209f, 0.252f},
++        {0.285f, 0.214f},  {0.374f, 0.278f},  {0.551f, 0.455f},  {0.564f, 0.493f},  {0.589f, 0.404f},
++        {0.652f, 0.404f},  {0.792f, 0.582f},  {0.880f, 0.797f},  {0.931f, 0.683f},  {0.994f, 0.683f},
++        {1.045f, 0.898f},  {1.032f, 1.139f},  {1.134f, 1.063f},  {1.184f, 1.101f},  {1.146f, 1.354f},
++        {1.045f, 1.570f},  {1.159f, 1.519f},  {1.184f, 1.532f},  {1.197f, 1.582f},  {1.032f, 1.823f},
++        {1.083f, 1.848f},  {1.096f, 1.886f},  {1.032f, 1.962f},  {1.007f, 1.962f},  {1.058f, 2.038f},
++        {1.045f, 2.076f},  {0.969f, 2.089f},  {0.982f, 2.431f},  {0.956f, 2.570f}},
++       {0, 0},
++       Tone::Dark,
++       -0.25f,
++       0.25f,
++       {73, 0,  1,  73, 1,  2,  73, 2,  3,  73, 3,  4,  73, 4,  5,  73, 5,  6,  7,  8,  9,  9,  10, 11, 7,  9,  11,
++        7,  11, 12, 7,  12, 13, 6,  7,  13, 73, 6,  13, 73, 13, 14, 14, 15, 16, 73, 14, 16, 73, 16, 17, 73, 17, 18,
++        73, 18, 19, 73, 19, 20, 73, 20, 21, 73, 21, 22, 73, 22, 23, 73, 23, 24, 73, 24, 25, 73, 25, 26, 26, 27, 28,
++        73, 26, 28, 73, 28, 29, 29, 30, 31, 29, 31, 32, 73, 29, 32, 73, 32, 33, 73, 33, 34, 34, 35, 36, 73, 34, 36,
++        73, 36, 37, 73, 37, 38, 73, 38, 39, 73, 39, 40, 73, 40, 41, 41, 42, 43, 73, 41, 43, 73, 43, 44, 73, 44, 45,
++        73, 45, 46, 73, 46, 47, 73, 47, 48, 73, 48, 49, 73, 49, 50, 73, 50, 51, 73, 51, 52, 73, 52, 53, 73, 53, 54,
++        54, 55, 56, 56, 57, 58, 56, 58, 59, 56, 59, 60, 54, 56, 60, 60, 61, 62, 60, 62, 63, 60, 63, 64, 54, 60, 64,
++        64, 65, 66, 64, 66, 67, 54, 64, 67, 54, 67, 68, 68, 69, 70, 68, 70, 71, 54, 68, 71, 73, 54, 71, 71, 72, 73}});
++  parts.push_back(
++      {{{-0.868f, 2.748f}, {-0.918f, 2.558f}, {-0.944f, 2.165f}, {-0.918f, 2.051f}, {-1.020f, 2.051f},
++        {-0.944f, 1.988f}, {-0.944f, 1.962f}, {-1.045f, 1.886f}, {-0.918f, 1.886f}, {-0.994f, 1.823f},
++        {-1.159f, 1.570f}, {-1.121f, 1.557f}, {-0.944f, 1.646f}, {-1.070f, 1.443f}, {-1.146f, 1.101f},
++        {-1.020f, 1.202f}, {-0.969f, 1.215f}, {-0.994f, 1.139f}, {-0.994f, 0.860f}, {-0.956f, 0.708f},
++        {-0.880f, 0.873f}, {-0.842f, 0.886f}, {-0.830f, 0.759f}, {-0.754f, 0.594f}, {-0.614f, 0.430f},
++        {-0.614f, 0.607f}, {-0.589f, 0.607f}, {-0.576f, 0.556f}, {-0.475f, 0.455f}, {-0.475f, 0.430f},
++        {-0.310f, 0.278f}, {-0.247f, 0.240f}, {-0.272f, 0.341f}, {-0.234f, 0.328f}, {-0.006f, 0.075f},
++        {0.019f, 0.075f},  {0.082f, 0.176f},  {0.260f, 0.341f},  {0.285f, 0.328f},  {0.260f, 0.252f},
++        {0.348f, 0.303f},  {0.526f, 0.480f},  {0.602f, 0.607f},  {0.627f, 0.430f},  {0.716f, 0.531f},
++        {0.817f, 0.708f},  {0.855f, 0.886f},  {0.918f, 0.822f},  {0.969f, 0.708f},  {1.007f, 0.898f},
++        {1.007f, 1.101f},  {0.982f, 1.215f},  {1.045f, 1.190f},  {1.146f, 1.101f},  {1.134f, 1.253f},
++        {1.083f, 1.430f},  {0.982f, 1.608f},  {0.944f, 1.633f},  {0.969f, 1.646f},  {1.134f, 1.557f},
++        {1.159f, 1.557f},  {1.159f, 1.582f},  {1.020f, 1.798f},  {0.931f, 1.886f},  {1.058f, 1.886f},
++        {0.944f, 1.975f},  {1.020f, 2.051f},  {0.931f, 2.051f},  {0.944f, 2.431f},  {0.906f, 2.646f},
++        {0.804f, 2.887f},  {0.754f, 2.925f},  {0.589f, 2.748f},  {0.462f, 2.659f},  {0.386f, 2.570f},
++        {0.361f, 2.570f},  {0.285f, 2.482f},  {-0.285f, 2.482f}, {-0.412f, 2.621f}, {-0.437f, 2.621f},
++        {-0.766f, 2.925f}},
++       {0, 0},
++       Tone::Base,
++       -0.27f,
++       0.27f,
++       {80, 0,  1,  80, 1,  2,  80, 2,  3,  3,  4,  5,  3,  5,  6,  6,  7,  8,  3,  6,  8,  80, 3,  8,  8,  9,  10,
++        8,  10, 11, 8,  11, 12, 80, 8,  12, 12, 13, 14, 12, 14, 15, 12, 15, 16, 80, 12, 16, 16, 17, 18, 80, 16, 18,
++        80, 18, 19, 80, 19, 20, 80, 20, 21, 80, 21, 22, 80, 22, 23, 80, 23, 24, 80, 24, 25, 80, 25, 26, 80, 26, 27,
++        80, 27, 28, 28, 29, 30, 80, 28, 30, 30, 31, 32, 80, 30, 32, 80, 32, 33, 80, 33, 34, 80, 34, 35, 80, 35, 36,
++        80, 36, 37, 80, 37, 38, 38, 39, 40, 80, 38, 40, 80, 40, 41, 80, 41, 42, 42, 43, 44, 80, 42, 44, 80, 44, 45,
++        80, 45, 46, 80, 46, 47, 47, 48, 49, 80, 47, 49, 80, 49, 50, 80, 50, 51, 80, 51, 52, 80, 52, 53, 53, 54, 55,
++        53, 55, 56, 53, 56, 57, 58, 59, 60, 58, 60, 61, 58, 61, 62, 57, 58, 62, 57, 62, 63, 63, 64, 65, 65, 66, 67,
++        63, 65, 67, 67, 68, 69, 63, 67, 69, 63, 69, 70, 57, 63, 70, 57, 70, 71, 57, 71, 72, 57, 72, 73, 53, 57, 73,
++        53, 73, 74, 53, 74, 75, 53, 75, 76, 53, 76, 77, 77, 78, 79, 53, 77, 79, 53, 79, 80}});
++  parts.push_back(
++      {{{-0.830f, 2.659f}, {-0.842f, 2.558f}, {-0.792f, 2.672f}, {-0.728f, 2.735f}, {-0.728f, 2.710f},
++        {-0.488f, 2.444f}, {-0.450f, 2.342f}, {-0.576f, 2.228f}, {-0.640f, 2.266f}, {-0.678f, 2.342f},
++        {-0.602f, 2.342f}, {-0.690f, 2.418f}, {-0.690f, 2.444f}, {-0.627f, 2.418f}, {-0.602f, 2.431f},
++        {-0.640f, 2.456f}, {-0.741f, 2.634f}, {-0.779f, 2.545f}, {-0.792f, 2.342f}, {-0.728f, 2.127f},
++        {-0.792f, 2.089f}, {-0.868f, 2.330f}, {-0.855f, 2.127f}, {-0.817f, 1.988f}, {-0.652f, 2.089f},
++        {-0.462f, 2.266f}, {-0.285f, 2.368f}, {-0.323f, 2.380f}, {-0.754f, 2.824f}},
++       {0, 0},
++       Tone::Dark,
++       -0.29f,
++       0.29f,
++       {28, 0,  1,  28, 1,  2,  28, 2,  3,  3, 4,  5,  28, 3,  5,  9, 10, 11, 12, 13, 14, 12, 14, 15, 12, 15, 16,
++        11, 12, 16, 9,  11, 16, 9,  16, 17, 9, 17, 18, 8,  9,  18, 7, 8,  18, 7,  18, 19, 20, 21, 22, 20, 22, 23,
++        19, 20, 23, 7,  19, 23, 6,  7,  23, 6, 23, 24, 6,  24, 25, 6, 25, 26, 6,  26, 27, 5,  6,  27, 5,  27, 28}});
++  parts.push_back({{{-0.741f, 1.962f},
++                    {-0.906f, 1.810f},
++                    {-0.956f, 1.722f},
++                    {-0.842f, 1.760f},
++                    {-0.792f, 1.874f},
++                    {-0.716f, 1.962f}},
++                   {0, 0},
++                   Tone::Dark,
++                   -0.29f,
++                   0.29f,
++                   {5, 0, 1, 5, 1, 2, 2, 3, 4, 2, 4, 5}});
++  parts.push_back(
++      {{{-0.652f, 1.836f}, {-0.652f, 1.810f}, {-0.589f, 1.760f}, {-0.614f, 1.608f}, {-0.513f, 1.506f},
++        {-0.450f, 1.481f}, {-0.526f, 1.570f}, {-0.564f, 1.696f}, {-0.564f, 1.722f}, {-0.488f, 1.722f},
++        {-0.475f, 1.671f}, {-0.399f, 1.582f}, {-0.234f, 1.544f}, {-0.184f, 1.494f}, {-0.146f, 1.405f},
++        {-0.158f, 1.544f}, {-0.070f, 1.671f}, {-0.070f, 1.760f}, {-0.108f, 1.836f}, {-0.171f, 1.886f},
++        {-0.133f, 1.785f}, {-0.133f, 1.658f}, {-0.171f, 1.633f}, {-0.260f, 1.747f}, {-0.348f, 1.798f},
++        {-0.374f, 1.785f}, {-0.336f, 1.772f}, {-0.310f, 1.734f}, {-0.323f, 1.722f}, {-0.348f, 1.747f},
++        {-0.475f, 1.760f}, {-0.564f, 1.798f}, {-0.488f, 1.848f}, {-0.336f, 1.848f}, {-0.285f, 1.823f},
++        {-0.399f, 1.912f}, {-0.475f, 1.912f}},
++       {0, 0},
++       Tone::Dark,
++       -0.29f,
++       0.29f,
++       {36, 0,  1,  2,  3,  4,  4,  5,  6,  2,  4,  6,  2,  6,  7,  2,  7,  8,  2,  8,  9,  1,  2,  9,  9,  10, 11,
++        9,  11, 12, 13, 14, 15, 12, 13, 15, 9,  12, 15, 15, 16, 17, 17, 18, 19, 17, 19, 20, 17, 20, 21, 15, 17, 21,
++        15, 21, 22, 9,  15, 22, 1,  9,  22, 22, 23, 24, 24, 25, 26, 22, 24, 26, 22, 26, 27, 22, 27, 28, 28, 29, 30,
++        22, 28, 30, 1,  22, 30, 1,  30, 31, 36, 1,  31, 36, 31, 32, 36, 32, 33, 33, 34, 35, 33, 35, 36}});
++  parts.push_back(
++      {{{0.336f, 2.380f}, {0.285f, 2.368f}, {0.450f, 2.279f}, {0.627f, 2.114f}, {0.830f, 1.988f}, {0.868f, 2.165f},
++        {0.868f, 2.304f}, {0.804f, 2.102f}, {0.779f, 2.089f}, {0.728f, 2.127f}, {0.792f, 2.304f}, {0.792f, 2.520f},
++        {0.754f, 2.634f}, {0.614f, 2.431f}, {0.703f, 2.431f}, {0.614f, 2.342f}, {0.690f, 2.330f}, {0.602f, 2.228f},
++        {0.576f, 2.228f}, {0.450f, 2.355f}, {0.513f, 2.469f}, {0.741f, 2.735f}, {0.792f, 2.684f}, {0.842f, 2.570f},
++        {0.817f, 2.722f}, {0.779f, 2.798f}, {0.741f, 2.811f}},
++       {0, 0},
++       Tone::Dark,
++       -0.29f,
++       0.29f,
++       {0,  1,  2,  2,  3,  4,  0,  2,  4, 4,  5,  6,  4,  6,  7,  4,  7,  8,  0,  4,  8,  0,  8,  9,  9,
++        10, 11, 9,  11, 12, 12, 13, 14, 9, 12, 14, 14, 15, 16, 9,  14, 16, 9,  16, 17, 9,  17, 18, 0,  9,
++        18, 0,  18, 19, 0,  19, 20, 26, 0, 20, 26, 20, 21, 26, 21, 22, 26, 22, 23, 26, 23, 24, 24, 25, 26}});
++  parts.push_back({{{-0.906f, 1.519f},
++                    {-1.007f, 1.291f},
++                    {-0.855f, 1.380f},
++                    {-0.906f, 1.164f},
++                    {-0.906f, 0.949f},
++                    {-0.792f, 1.063f},
++                    {-0.766f, 1.063f},
++                    {-0.754f, 0.860f},
++                    {-0.703f, 0.746f},
++                    {-0.703f, 0.974f},
++                    {-0.627f, 1.240f},
++                    {-0.779f, 1.164f},
++                    {-0.754f, 1.380f},
++                    {-0.703f, 1.532f},
++                    {-0.830f, 1.481f},
++                    {-0.842f, 1.456f},
++                    {-0.855f, 1.494f},
++                    {-0.766f, 1.671f}},
++                   {0, 0},
++                   Tone::Dark,
++                   -0.29f,
++                   0.29f,
++                   {17, 0, 1,  2, 3,  4,  2, 4,  5,  2, 5, 6,  6,  7,  8,  6, 8,  9,  6, 9,  10, 6, 10, 11,
++                    2,  6, 11, 2, 11, 12, 2, 12, 13, 1, 2, 13, 13, 14, 15, 1, 13, 15, 1, 15, 16, 1, 16, 17}});
++  parts.push_back(
++      {{{0.133f, 1.861f}, {0.070f, 1.734f}, {0.070f, 1.684f}, {0.120f, 1.582f}, {0.158f, 1.557f}, {0.158f, 1.418f},
++        {0.234f, 1.544f}, {0.424f, 1.595f}, {0.500f, 1.722f}, {0.564f, 1.722f}, {0.564f, 1.658f}, {0.526f, 1.557f},
++        {0.450f, 1.481f}, {0.538f, 1.519f}, {0.614f, 1.595f}, {0.602f, 1.760f}, {0.652f, 1.836f}, {0.475f, 1.912f},
++        {0.412f, 1.912f}, {0.310f, 1.836f}, {0.488f, 1.848f}, {0.564f, 1.823f}, {0.564f, 1.798f}, {0.323f, 1.722f},
++        {0.310f, 1.734f}, {0.361f, 1.772f}, {0.336f, 1.785f}, {0.184f, 1.658f}, {0.184f, 1.633f}, {0.158f, 1.633f},
++        {0.133f, 1.671f}, {0.133f, 1.747f}, {0.196f, 1.912f}},
++       {0, 0},
++       Tone::Dark,
++       -0.29f,
++       0.29f,
++       {32, 0,  1,  32, 1,  2,  2,  3,  4,  4, 5,  6,  2, 4,  6,  6, 7,  8,  11, 12, 13, 10, 11, 13,
++        10, 13, 14, 9,  10, 14, 9,  14, 15, 8, 9,  15, 8, 15, 16, 6, 8,  16, 16, 17, 18, 18, 19, 20,
++        16, 18, 20, 16, 20, 21, 16, 21, 22, 6, 16, 22, 6, 22, 23, 6, 23, 24, 24, 25, 26, 24, 26, 27,
++        6,  24, 27, 6,  27, 28, 6,  28, 29, 2, 6,  29, 2, 29, 30, 2, 30, 31, 2,  31, 32}});
++  parts.push_back(
++      {{{-0.336f, 1.139f}, {-0.361f, 1.000f}, {-0.462f, 1.177f}, {-0.513f, 1.215f}, {-0.437f, 1.000f},
++        {-0.424f, 0.734f}, {-0.374f, 0.620f}, {-0.260f, 0.468f}, {-0.146f, 0.379f}, {-0.184f, 0.480f},
++        {-0.171f, 0.518f}, {0.006f, 0.252f},  {0.082f, 0.404f},  {0.184f, 0.518f},  {0.196f, 0.493f},
++        {0.146f, 0.392f},  {0.158f, 0.366f},  {0.374f, 0.607f},  {0.437f, 0.772f},  {0.437f, 0.962f},
++        {0.513f, 1.202f},  {0.450f, 1.152f},  {0.374f, 1.012f},  {0.336f, 1.152f},  {0.272f, 1.253f},
++        {0.310f, 1.126f},  {0.323f, 0.936f},  {0.247f, 0.772f},  {0.095f, 0.759f},  {0.032f, 0.784f},
++        {0.044f, 0.835f},  {0.108f, 0.848f},  {0.171f, 0.911f},  {0.171f, 1.038f},  {0.082f, 1.088f},
++        {-0.070f, 1.088f}, {-0.171f, 1.038f}, {-0.171f, 0.949f}, {-0.120f, 0.860f}, {-0.019f, 0.822f},
++        {-0.019f, 0.784f}, {-0.209f, 0.759f}, {-0.272f, 0.810f}, {-0.310f, 0.898f}, {-0.310f, 1.076f},
++        {-0.272f, 1.240f}},
++       {0, 0},
++       Tone::Dark,
++       -0.29f,
++       0.29f,
++       {45, 0,  1,  1,  2,  3,  1,  3,  4,  1,  4,  5,  45, 1,  5,  5,  6,  7,  5,  7,  8,  5,  8,  9,  5,  9,  10,
++        10, 11, 12, 5,  10, 12, 5,  12, 13, 14, 15, 16, 14, 16, 17, 13, 14, 17, 5,  13, 17, 5,  17, 18, 19, 20, 21,
++        19, 21, 22, 18, 19, 22, 18, 22, 23, 18, 23, 24, 18, 24, 25, 18, 25, 26, 18, 26, 27, 18, 27, 28, 5,  18, 28,
++        5,  28, 29, 30, 31, 32, 30, 32, 33, 30, 33, 34, 29, 30, 34, 29, 34, 35, 29, 35, 36, 29, 36, 37, 37, 38, 39,
++        29, 37, 39, 29, 39, 40, 29, 40, 41, 5,  29, 41, 5,  41, 42, 5,  42, 43, 5,  43, 44, 5,  44, 45}});
++  parts.push_back({{{-0.589f, 0.721f}, {-0.361f, 0.468f}, {-0.399f, 0.620f}, {-0.513f, 0.759f}, {-0.602f, 0.962f}},
++                   {0, 0},
++                   Tone::Dark,
++                   -0.29f,
++                   0.29f,
++                   {0, 1, 2, 0, 2, 3, 0, 3, 4}});
++  parts.push_back({{{0.855f, 1.760f}, {0.982f, 1.709f}, {0.779f, 1.937f}, {0.728f, 1.962f}},
++                   {0, 0},
++                   Tone::Dark,
++                   -0.29f,
++                   0.29f,
++                   {3, 0, 1, 1, 2, 3}});
++  parts.push_back({{{0.868f, 1.456f},
++                    {0.716f, 1.532f},
++                    {0.766f, 1.354f},
++                    {0.779f, 1.164f},
++                    {0.640f, 1.240f},
++                    {0.703f, 1.025f},
++                    {0.716f, 0.759f},
++                    {0.754f, 0.835f},
++                    {0.779f, 1.063f},
++                    {0.804f, 1.063f},
++                    {0.918f, 0.949f},
++                    {0.906f, 1.202f},
++                    {0.855f, 1.380f},
++                    {1.020f, 1.291f},
++                    {0.944f, 1.468f},
++                    {0.868f, 1.582f},
++                    {0.779f, 1.658f}},
++                   {0, 0},
++                   Tone::Dark,
++                   -0.29f,
++                   0.29f,
++                   {0,  1, 2, 0,  2, 3,  3,  4, 5, 3,  5, 6,  3,  6,  7, 3,  7,  8,  0,  3,  8,  9, 10,
++                    11, 8, 9, 11, 8, 11, 12, 0, 8, 12, 0, 12, 13, 16, 0, 13, 16, 13, 14, 14, 15, 16}});
++  parts.push_back({{{0.513f, 0.746f},
++                    {0.399f, 0.607f},
++                    {0.374f, 0.480f},
++                    {0.500f, 0.594f},
++                    {0.602f, 0.734f},
++                    {0.614f, 0.886f},
++                    {0.589f, 0.949f}},
++                   {0, 0},
++                   Tone::Dark,
++                   -0.29f,
++                   0.29f,
++                   {0, 1, 2, 0, 2, 3, 6, 0, 3, 6, 3, 4, 4, 5, 6}});
++  parts.push_back({{{-0.386f, 1.620f},
++                    {-0.260f, 1.620f},
++                    {-0.272f, 1.658f},
++                    {-0.348f, 1.646f},
++                    {-0.374f, 1.709f},
++                    {-0.412f, 1.709f}},
++                   {0, 0},
++                   Tone::Eye,
++                   -0.31f,
++                   0.31f,
++                   {0, 1, 2, 0, 2, 3, 5, 0, 3, 3, 4, 5}});
++  parts.push_back({{{0.361f, 1.696f},
++                    {0.348f, 1.646f},
++                    {0.285f, 1.658f},
++                    {0.272f, 1.620f},
++                    {0.374f, 1.608f},
++                    {0.412f, 1.646f},
++                    {0.412f, 1.709f},
++                    {0.386f, 1.709f}},
++                   {0, 0},
++                   Tone::Eye,
++                   -0.31f,
++                   0.31f,
++                   {7, 0, 1, 1, 2, 3, 1, 3, 4, 7, 1, 4, 7, 4, 5, 5, 6, 7}});
++  parts.push_back(
++      {{{-0.171f, 0.696f}, {-0.044f, 0.632f}, {0.095f, 0.645f}, {0.184f, 0.696f}, {0.095f, 0.721f}, {-0.082f, 0.721f}},
++       {0, 0},
++       Tone::Base,
++       -0.31f,
++       0.31f,
++       {5, 0, 1, 5, 1, 2, 5, 2, 3, 3, 4, 5}});
++  parts.push_back(
++      {{{-0.120f, 1.038f}, {-0.120f, 1.000f}, {0.133f, 1.000f}, {0.108f, 1.050f}, {0.070f, 1.063f}, {-0.057f, 1.063f}},
++       {0, 0},
++       Tone::Base,
++       -0.31f,
++       0.31f,
++       {5, 0, 1, 5, 1, 2, 5, 2, 3, 3, 4, 5}});
++  return parts;
++}
+-- 
+2.43.0
+

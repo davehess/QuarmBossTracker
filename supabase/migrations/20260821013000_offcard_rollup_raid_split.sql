@@ -1,5 +1,5 @@
 -- Split the /parses off-card rollup into RAID vs NOT-RAID kills
--- (Hitya 2026-08-20, mid-raid: "separate raid kills from no raid kills" and
+-- (the guild lead, 2026-08-20, mid-raid: "separate raid kills from no raid kills" and
 -- then, as the spec: "tonight is Seru and VT trash, so it should just be two
 -- zones").
 --

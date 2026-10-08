@@ -2,7 +2,7 @@
 // role has to clear. Pure + tested (test/character-roles.test.js); shared by
 // the officer surface (/admin/links) and the member surface (/me).
 //
-// Hitya 2026-08-20: "Raid Alts must be 46 or higher at minimum for classic
+// The guild lead 2026-08-20: "Raid Alts must be 46 or higher at minimum for classic
 // raids, 50+ for Kunark, 55+ for velius, 60 for luclin. Anything else, they
 // don't need to be put into openDKP. They can be non-raiding alts or traders."
 //
@@ -74,7 +74,7 @@ export function raidAltVerdict(level: number | null | undefined): RaidAltVerdict
 // Traders (bank mules, bazaar toons) are level-1 nobodies by design, and the
 // class of a mule is both unknown and irrelevant — /who never saw them, they
 // never raid. Demanding a class before they could be filed as Traders is what
-// left ~110 uploading characters unlinked (Hitya 2026-08-20: "I can't easily
+// left ~110 uploading characters unlinked (the guild lead, 2026-08-20: "I can't easily
 // make them traders because of the class requirement"). So a Trader carries
 // fixed, honest placeholders and never reaches OpenDKP.
 export const TRADER_DEFAULTS = {

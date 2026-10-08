@@ -1,6 +1,14 @@
 // commands/register.js — Create a new character in OpenDKP and add to the local roster.
 // Defaults: Level=10, Active=1.
-// Rank choices: 'Non-raid Alt' (default) or 'Trader level 1'.
+// Rank choices: 'Recruit' (a new raid main), 'Non-raid Alt' (default) or
+// 'Trader level 1'.
+// ⚠ 'Trader level 1' is UNVERIFIED against OpenDKP. Every other choice here
+// appears in the `characters` rank mirror ('Non-raid Alt' 1, 'Recruit' 17,
+// alongside 'Raid Alt' 232, 'Raid Pack' 50, 'Trader' 36, 'Officer' 9, …) but
+// 'Trader level 1' appears on ZERO characters while a bare 'Trader' has 36.
+// That is either a rank OpenDKP renames on write, or a stale value that has
+// been silently creating traders under a name nothing else uses. Confirm
+// against OpenDKP before trusting it; do not "fix" it by guessing.
 // If a main is specified, the character is linked via ParentId set to the family root's
 // CharacterId (the ParentId=0 root in OpenDKP's family tree, NOT necessarily the rank-
 // priority main's own CharacterId).
@@ -10,6 +18,12 @@ const { SlashCommandBuilder, MessageFlags, EmbedBuilder } = require('discord.js'
 const { getCharacter, getActiveRoster, addCharacterEntry, saveRosters } = require('../utils/roster');
 const { createCharacter, getCharacters } = require('../utils/opendkp');
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
+
+// Ranks that live in OUR database only and are never created in OpenDKP.
+// Neither earns DKP, and neither counts toward guild membership — that
+// predicate is OpenDKP rank `Raid Pack`+ — so an upstream record buys nothing
+// and only clutters the export every `/rosterimport` reads.
+const LOCAL_ONLY_RANKS = new Set(['Non-raid Alt', 'Trader level 1']);
 
 const EQ_CLASSES = [
   { name: 'Bard',          value: 'Bard' },
@@ -117,11 +131,20 @@ module.exports = {
     )
     .addStringOption(opt =>
       opt.setName('rank')
-        .setDescription('Rank to assign (default: Non-raid Alt)')
+        .setDescription('Rank to assign (default: Non-raid Alt — pick Recruit for a new raid main)')
         .setRequired(false)
+        // ⚠ Recruit added 2026-09-22: there was no way to register a new RAID
+        // MAIN here at all, only an alt or a trader (the guild lead: "I should
+        // be able to register a new raid main from that, this wasn't available
+        // as an option… raid mains often start as 'Recruit'").
+        // Listed first for discoverability; the default is unchanged, so an
+        // officer who picks nothing still gets Non-raid Alt.
+        // The string is the one OpenDKP actually uses — 17 characters in the
+        // mirror carry it — not an invented label.
         .addChoices(
-          { name: 'Non-raid Alt',   value: 'Non-raid Alt' },
-          { name: 'Trader level 1', value: 'Trader level 1' },
+          { name: 'Recruit (new raid main)', value: 'Recruit' },
+          { name: 'Non-raid Alt',            value: 'Non-raid Alt' },
+          { name: 'Trader level 1',          value: 'Trader level 1' },
         )
     ),
 
@@ -153,6 +176,14 @@ module.exports = {
     // Proper-case the name
     const name = rawName.replace(/\b\w/g, c => c.toUpperCase());
 
+    // ⚠ Traders and non-raid alts are OURS, not OpenDKP's (the guild lead,
+    // 2026-09-22: "traders and non-raid Alts don't need to be in opendkp, only
+    // in our db"). They never earn DKP and never count toward membership —
+    // that predicate is OpenDKP rank `Raid Pack`+ — so a record upstream buys
+    // nothing and clutters the roster export. Skip the create entirely; the
+    // character lives in `characters` and in the roster threads.
+    const localOnly = LOCAL_ONLY_RANKS.has(rank);
+
     // ── Validate + resolve ParentId ──────────────────────────────────────────
     let parentId = 0;
     if (mainName) {
@@ -173,30 +204,61 @@ module.exports = {
       // Fast path uses rootCharId; slow path fetches from API
       // Both paths may need async, so defer now
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      const { parentId: resolved, error } = await _resolveParentId(mainChar, mainName);
-      if (error) return interaction.editReply(error);
-      parentId = resolved;
+      // ParentId only exists to link the family IN OpenDKP. A local-only
+      // character is never created there, so resolving it would be a pointless
+      // API round-trip that can also fail and block a registration that does
+      // not need it. The local main↔alt link is `mainName`, below.
+      if (!localOnly) {
+        const { parentId: resolved, error } = await _resolveParentId(mainChar, mainName);
+        if (error) return interaction.editReply(error);
+        parentId = resolved;
+      }
     }
 
     if (!interaction.deferred) {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     }
 
-    // ── Create character in OpenDKP ──────────────────────────────────────────
+    // ── Create character in OpenDKP (raid ranks only) ────────────────────────
     let newCharId = null;
-    try {
-      const result = await createCharacter({
-        Name:     name,
-        Class:    charClass,
-        Race:     charRace,
-        Level:    10,
-        Active:   1,
-        Rank:     rank,
-        ParentId: parentId,
-      });
-      newCharId = result?.CharacterId ?? result?.characterId ?? result?.id ?? null;
-    } catch (err) {
-      return interaction.editReply(`❌ Failed to create character in OpenDKP: ${err?.message}`);
+    if (!localOnly) {
+      try {
+        const result = await createCharacter({
+          Name:     name,
+          Class:    charClass,
+          Race:     charRace,
+          Level:    10,
+          Active:   1,
+          Rank:     rank,
+          ParentId: parentId,
+        });
+        newCharId = result?.CharacterId ?? result?.characterId ?? result?.id ?? null;
+      } catch (err) {
+        return interaction.editReply(`❌ Failed to create character in OpenDKP: ${err?.message}`);
+      }
+    } else {
+      // ⚠ The DURABLE home. The roster lives in Discord threads that
+      // `/rosterimport` rewrites from the OpenDKP export, and `characters` is
+      // the table the rest of the platform reads. `openDkpSync` upserts and
+      // never deletes, so a row it has never seen upstream survives its passes
+      // — which is what makes this safe as the record of a local character.
+      // Best-effort: a Supabase hiccup must not lose the roster entry below.
+      try {
+        const supabase = require('../utils/supabase');
+        if (supabase.isEnabled()) {
+          await supabase.upsert('characters', [{
+            guild_id:  process.env.SUPABASE_GUILD_ID || 'wolfpack',
+            name,
+            class:     charClass,
+            race:      charRace,
+            rank,
+            main_name: mainName || null,
+            active:    true,
+          }], 'guild_id,name');
+        }
+      } catch (err) {
+        console.warn('[register] local-only characters upsert failed:', err?.message);
+      }
     }
 
     // ── Build DKP URL ────────────────────────────────────────────────────────
@@ -208,7 +270,7 @@ module.exports = {
     const rootCharId = mainName ? null : newCharId;
     addCharacterEntry({ name, race: charRace, charClass, dkpUrl, mainName, rootCharId });
 
-    saveRosters(interaction.client).catch(err =>
+    saveRosters(interaction.client, `/register ${name} by ${interaction.user?.tag || interaction.user?.id || '?'}`).catch(err =>
       console.warn('[register] saveRosters failed:', err?.message)
     );
 
@@ -232,6 +294,9 @@ module.exports = {
             { name: 'Rank',  value: rank,      inline: true },
           );
         if (dkpUrl) embed.addFields({ name: '🔗 OpenDKP', value: `[View Character](<${dkpUrl}>)`, inline: false });
+        // Say it plainly, so nobody goes hunting for a record that was never
+        // meant to exist upstream.
+        else if (localOnly) embed.addFields({ name: '📒 Where', value: 'Guild roster only — not created in OpenDKP.', inline: false });
         await ch.send({ embeds: [embed] });
       } catch (err) {
         console.warn('[register] officer notification failed:', err?.message);
@@ -242,8 +307,14 @@ module.exports = {
     const classEmoji = CLASS_EMOJI[charClass] || '❓';
     const lines = [`✅ **${name}** created successfully!`, `${classEmoji} ${charRace} ${charClass} — ${rank}`];
     if (mainName) lines.push(`Alt of **${mainName}**`);
-    if (dkpUrl)   lines.push(`🔗 [View on OpenDKP](<${dkpUrl}>)`);
-    else          lines.push('*(CharacterId not returned — verify on OpenDKP)*');
+    // ⚠ Three states, not two. "No URL" used to mean one thing — the create
+    // succeeded but OpenDKP did not hand back an id — and the message said so.
+    // A local-only rank now also has no URL, and telling an officer to go
+    // verify it upstream would send them looking for a record we deliberately
+    // never made.
+    if (dkpUrl)        lines.push(`🔗 [View on OpenDKP](<${dkpUrl}>)`);
+    else if (localOnly) lines.push('📒 Saved to the guild roster only — traders and non-raid alts are not created in OpenDKP.');
+    else               lines.push('*(CharacterId not returned — verify on OpenDKP)*');
 
     await interaction.editReply(lines.join('\n'));
   },

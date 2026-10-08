@@ -57,7 +57,7 @@ async function postEventRequest({ client, userId, boss = null, rawLabel = null, 
 }
 
 // Edit the Wanted-time field on an already-posted Event Request card — powers
-// the nudge flow's 🕐 Change time (Hitya 2026-08-19: Hawkner tapped a preset,
+// the nudge flow's 🕐 Change time (the guild lead, 2026-08-19: a member tapped a preset,
 // actually wanted 10:30pm ET after the alt raid, and "couldn't change time";
 // the done card was one-shot and the officer card was already posted).
 async function updateEventRequestTime({ client, messageId, timeStr }) {

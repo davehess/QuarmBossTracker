@@ -12,7 +12,7 @@
 // real problem.
 //
 // Not hypothetical: the first cut of scripts/pack-item-icons.ps1 was BOM-less
-// UTF-8 with nine non-ASCII characters and would not parse AT ALL on Hitya's
+// UTF-8 with nine non-ASCII characters and would not parse AT ALL on the guild lead's
 // machine, failing with three cascading errors pointing at the wrong lines.
 //
 // ⚠ The first version of THIS test demanded ASCII unconditionally, which would

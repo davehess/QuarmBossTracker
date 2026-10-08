@@ -31,7 +31,8 @@ async function getMimicDownloadUrls() {
       for (const r of Array.isArray(releases) ? releases : []) {
         const setup = (r.assets || []).find(a => a && _SETUP_RX.test(a.name || ''));
         if (!setup || !setup.browser_download_url) continue;
-        if (r.prerelease) { if (!beta) beta = setup.browser_download_url; }
+        // Only a -beta.N tag is the beta; the 3.0 alpha (`mimic-alpha`) is a prerelease too.
+        if (r.prerelease) { if (!beta && /-beta\.\d+$/.test(r.tag_name || '')) beta = setup.browser_download_url; }
         else              { if (!stable) stable = setup.browser_download_url; }
         if (stable && beta) break;
       }

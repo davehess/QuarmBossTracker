@@ -1,10 +1,18 @@
 # DESIGN — Multi-raid awareness (board #114)
 
-*Written 2026-07-19 (Fable design pass, Hitya's direction). Implementation is
+> **Built 2026-10-02 (bot 3.1.184 · web 1.8.70 · agent 3.7.65 beta; DECISIONS-2026-09-21 §124)**, after
+> two flagging raids ran at once. What differs from this contract: there is no `raid_id` column or
+> migration (raids are worked out at read time from each Mimic's latest upload, `utils/raidGroups.js`);
+> leader hand-over is handled by folding raids that share 60% of their members, not by a stable id; the
+> kill switch was not built (with one raid nothing changes, so there is nothing to switch off); and
+> rank arrives as the text "Raid Leader", not '2'. Attendance ticks, the trigger relay and the
+> `dedup_roster` election are not split yet.
+
+*Written 2026-07-19 (Fable design pass, the guild lead's direction). Implementation is
 deferred to a later session — this doc is the contract. Read
 `DESIGN-dedup-and-mob-serialization.md` first; its bounds apply throughout.*
 
-## 0. The operating principle (Hitya, verbatim intent)
+## 0. The operating principle (the guild lead, verbatim intent)
 
 Multiple concurrent raids are **one of the most atypical things that will
 happen** — usually OFF-schedule, small-group split ops (epic fights, backflag

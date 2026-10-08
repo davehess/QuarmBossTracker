@@ -1,5 +1,5 @@
 -- /about page numbers, in one cheap round trip. (Final shape — iterated three
--- times on 2026-08-09, each against Hitya's corrections; the discarded attempts
+-- times on 2026-08-09, each against the guild lead's corrections; the discarded attempts
 -- and why they were wrong are recorded below so they are not rebuilt.)
 --
 -- ── Why a function and not PostgREST counts ──────────────────────────────────
@@ -19,7 +19,7 @@
 --    eqlog in the folder, so one person contributes from several characters;
 --    distinct contributor_character read 23 where distinct
 --    uploaded_by_discord_id reads the true 21.
--- 3. NOTHING here is a "right now" count (Hitya: "that would fluctuate wildly
+-- 3. NOTHING here is a "right now" count (The guild lead: "that would fluctuate wildly
 --    with the time of day"). The guild raids Sun/Wed/Thu; a live figure read
 --    at 3am Saturday makes a healthy platform look dead.
 --

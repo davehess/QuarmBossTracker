@@ -16,7 +16,20 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { userTz, fmtDateOnly } from '@/lib/timezone';
 import QuakeBanner from './QuakeBanner';
 import WindowPicker from '@/components/WindowPicker';
+import { FightCards, FightTable } from './Fights';
+import type { PvpFightRow } from '@/lib/pvpMedia';
 import { resolveWindow, type ResolvedWindow } from '@/lib/timeWindow';
+import { loadPvpBossKills } from '@/lib/fullReads';
+import { GUILD_TAG } from '@/lib/guild';
+
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'PvP',
+  description:
+    'Wolf Pack kill leaderboard on the Zeks, with assists and who was nearby.',
+};
 
 export const dynamic = 'force-dynamic';
 
@@ -44,17 +57,17 @@ async function loadLeaderboard(sortKey: SortKey, w: ResolvedWindow) {
   // broadcast". Older broadcasts had no guild suffix and members who
   // transferred IN from other guilds carry their prior guild on their old
   // rows — both cases would silently drop from the leaderboard otherwise.
-  // (Concrete example: Malthur, 218 kills, 144 stamped 'Wolf Pack', 62 stamped
+  // (Concrete example: a member, 218 kills, 144 stamped 'Wolf Pack', 62 stamped
   // his prior guild Tranquility, 12 NULL — the broken filter showed 144 then
   // 73 once a partial fetch landed.) Filter by roster membership instead.
   //
   // We also pull main_name so each alt's kills fold up under their main on the
-  // leaderboard. Concrete case: Adiwen (Wabumkin's alt) had her 1 kill listed
-  // separately from Wabumkin's 19; we want one "Wabumkin · 20" row.
+  // leaderboard. Concrete case: an alt's single kill was listed separately from
+  // the main's 19; we want one folded row of 20.
   const { data: roster } = await sb
     .from('characters')
     .select('name, main_name')
-    .eq('guild_id', 'wolfpack');
+    .eq('guild_id', GUILD_TAG);
   const rosterRows = (roster ?? []) as { name: string; main_name: string | null }[];
   const rosterNames = rosterRows.map(r => r.name);
   if (rosterNames.length === 0) return { rows: [] as LeaderboardRow[], error: null as string | null };
@@ -74,13 +87,13 @@ async function loadLeaderboard(sortKey: SortKey, w: ResolvedWindow) {
   // Merge by killer name into one row per character.
   let killQuery = sb.from('pvp_kills')
     .select('killer, victim, via_pet, killed_at')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .in('killer', rosterNames)
     .order('killed_at', { ascending: false })
     .limit(20000);
   let assistQuery = sb.from('pvp_assists')
     .select('assister')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .in('assister', rosterNames)
     .limit(20000);
   if (w.sinceIso) {
@@ -153,16 +166,13 @@ type BossKill = {
 async function loadBossTimers(): Promise<BossKill[]> {
   const sb = supabaseAdmin();
   const since = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString();
-  const { data } = await sb
-    .from('pvp_boss_kills')
-    .select('boss_id, boss_name, zone, timer_hours, killed_at, killed_by, killed_by_guild, spawn_earliest, spawn_latest, spawn_earliest_override')
-    .eq('guild_id', 'wolfpack')
-    .gte('killed_at', since)
-    .order('killed_at', { ascending: false })
-    .limit(2000);
+  // PAGED, not `.limit(2000)`: PostgREST caps a response at 1,000 whatever the limit
+  // says, and 90 days is already 511 of those. Newest first, so the first row seen
+  // per boss is its latest kill.
+  const data = await loadPvpBossKills<BossKill>(sb, since);
   const seen = new Set<string>();
   const out: BossKill[] = [];
-  for (const r of (data ?? []) as BossKill[]) {
+  for (const r of data) {
     if (seen.has(r.boss_id)) continue;
     seen.add(r.boss_id);
     out.push(r);
@@ -172,7 +182,7 @@ async function loadBossTimers(): Promise<BossKill[]> {
   //      spawn_earliest — useful camp planning.
   //   2. Already-open rows (camp now): newest killed_at first — most recently
   //      camped/contested floats to the top so you can spot fresh activity
-  //      and friend the killers. (Hitya 2026-06-23.)
+  //      and friend the killers. (the guild lead, 2026-06-23.)
   const now = Date.now();
   out.sort((a, b) => {
     const aOpen = new Date(a.spawn_latest).getTime() < now;
@@ -198,7 +208,7 @@ async function loadQuake(): Promise<string | null> {
   const { data } = await sb
     .from('pvp_quake')
     .select('next_quake_at')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .maybeSingle();
   const iso = (data as { next_quake_at: string | null } | null)?.next_quake_at ?? null;
   if (!iso) return null;
@@ -227,7 +237,7 @@ async function loadHotZones(): Promise<HotZone[]> {
   const { data: kills } = await sb
     .from('pvp_kills')
     .select('zone, killer, victim, killer_is_npc, killed_at')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .gte('killed_at', sinceIso)
     .not('zone', 'is', null)
     .limit(1000);
@@ -255,6 +265,43 @@ async function loadHotZones(): Promise<HotZone[]> {
     .sort((a, b) => (b.last_event_at || '').localeCompare(a.last_event_at || ''));
 }
 
+// Fights from every PvP death (pvp_fights, DECISIONS-2026-09-21.md §46). Beta variants only for now.
+async function loadFights(): Promise<PvpFightRow[]> {
+  const { data, error } = await supabaseAdmin().rpc('pvp_fights', {
+    p_since: new Date(Date.now() - 30 * 86400000).toISOString(),
+    p_wave_gap: '3 minutes',
+    p_join_gap: '20 minutes',
+    p_limit: 15,
+  });
+  if (error) console.warn('[pvp] pvp_fights failed:', error.message);
+  return (data ?? []) as PvpFightRow[];
+}
+
+// Who follows Discord right now: the latest #togglepvp line each character's own Mimic saw
+// ("You are now player kill and follow the ways of Discord." / "You now follow the ways of Order."),
+// through the pvp_flag_state view (migration 20260927040100). Self-only lines, so only characters
+// running Mimic have a state. The guild lead, 2026-09-27: "start looking for the messages when
+// people #togglepvp in game and follow the way of discord vs order".
+type Flagged = { character: string; since: string };
+async function loadFlagged(): Promise<Flagged[]> {
+  const { data, error } = await supabaseAdmin()
+    .from('pvp_flag_state')
+    .select('character, since')
+    .eq('guild_id', GUILD_TAG)
+    .eq('discord', true)
+    .order('since', { ascending: false })
+    .limit(200);
+  if (error) { console.warn('[pvp] pvp_flag_state failed:', error.message); return []; }
+  return (data ?? []) as Flagged[];
+}
+function fmtAgo(iso: string, fromMs: number = Date.now()): string {
+  const m = Math.max(0, Math.round((fromMs - Date.parse(iso)) / 60000));
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
 function fmtCountdown(toIso: string, fromMs: number = Date.now()): string {
   const diff = new Date(toIso).getTime() - fromMs;
   const abs  = Math.abs(diff);
@@ -271,7 +318,7 @@ function fmtCountdown(toIso: string, fromMs: number = Date.now()): string {
 export default async function PvpPage({
   searchParams,
 }: {
-  searchParams: Promise<{ sort?: string; w?: string }>;
+  searchParams: Promise<{ sort?: string; w?: string; v?: string }>;
 }) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pvp');
@@ -287,11 +334,14 @@ export default async function PvpPage({
   const w = resolveWindow(sp?.w, 'life');
 
   const tz = await userTz();
-  const [{ rows, error }, bossTimers, quakeAt, hotZones] = await Promise.all([
+  const variant = sp?.v === 'b' || sp?.v === 'c' ? sp.v : null;
+  const [{ rows, error }, bossTimers, quakeAt, hotZones, fights, flagged] = await Promise.all([
     loadLeaderboard(sortKey, w),
     loadBossTimers(),
     loadQuake(),
     loadHotZones(),
+    variant ? loadFights() : Promise.resolve([] as PvpFightRow[]),
+    loadFlagged(),
   ]);
   if (error) {
     return (
@@ -309,7 +359,7 @@ export default async function PvpPage({
         <h2 className="text-2xl text-gold flex items-center gap-3 flex-wrap">
           <span aria-hidden>⚔️</span>
           <span>PvP Kills</span>
-          <WindowPicker page="pvp" current={w.key} options={['7d', '30d', '90d', 'exp', 'life']} />
+          <WindowPicker page="pvp" current={w.key} options={['1d', '7d', '30d', '90d', 'exp', 'life']} />
         </h2>
         <p className="text-sm text-dim mt-2">
           Wolf Pack PvP kill leaderboard. Each row shows total kills and, in
@@ -323,6 +373,24 @@ export default async function PvpPage({
           <Link href="/pvp/hate" className="text-blue hover:underline">Plane of Hate tracker →</Link>
         </div>
       </section>
+
+      {flagged.length > 0 && (
+        <section className="bg-panel border border-border rounded-lg p-4">
+          <h3 className="text-lg text-gold flex items-center gap-2"><span aria-hidden>⚔️</span><span>Following Discord now</span></h3>
+          <p className="text-xs text-dim mt-1">
+            PvP-flagged, from the last <code>#togglepvp</code> their own Mimic saw. Order is the peaceful side. Only characters running Mimic show here.
+          </p>
+          <p className="text-sm mt-2 leading-relaxed">
+            {flagged.map((f, i) => (
+              <span key={f.character}>
+                {i > 0 && <span className="text-dim"> · </span>}
+                <Link href={`/pvp/${encodeURIComponent(f.character)}`} className="text-text hover:underline">{f.character}</Link>
+                <span className="text-dim text-xs"> {fmtAgo(f.since)}</span>
+              </span>
+            ))}
+          </p>
+        </section>
+      )}
 
       <section className="bg-panel border border-border rounded-lg p-4">
         {rows.length === 0 ? (
@@ -391,6 +459,9 @@ export default async function PvpPage({
           </table>
         )}
       </section>
+
+      {variant === 'b' && <FightCards fights={fights} tz={tz} />}
+      {variant === 'c' && <FightTable fights={fights} tz={tz} />}
 
       {/* Next earthquake — a quake repops every PvP mob, so it sits directly
           above the boss timers (it resets all of them). Live countdown. */}
@@ -555,17 +626,17 @@ export default async function PvpPage({
           {/* GIFs are not optimized through next/image — use a plain <img> so
               the animation plays. The inline gif is downscaled (~4MB); clicking
               opens the full-resolution original (~23MB) in a new tab. */}
-          <a href="/pvp/boxers-deeps-pit-full.gif" target="_blank" rel="noopener noreferrer" title="Open full resolution">
+          <a href="/pvp/deeps-pit-full.gif" target="_blank" rel="noopener noreferrer" title="Open full resolution">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="/pvp/boxers-deeps-pit.gif"
-              alt="Malthur and Timberowl of the Wolf Pack taking down boxers before they jump into the Deep's pit"
+              src="/pvp/deeps-pit.gif"
+              alt="Malthur and Timberowl of the Wolf Pack taking down a group before they jump into the Deep's pit"
               className="w-full h-auto rounded border border-border cursor-zoom-in"
               loading="lazy"
             />
           </a>
           <figcaption className="text-xs text-dim mt-2">
-            Malthur and Timberowl, taking down boxers before they jump into the Deep&apos;s pit.
+            Malthur and Timberowl, taking down a group before they jump into the Deep&apos;s pit.
             {' '}<span className="text-dim">(click for full resolution)</span>
           </figcaption>
         </figure>

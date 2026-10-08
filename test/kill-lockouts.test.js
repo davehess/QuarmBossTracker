@@ -47,7 +47,7 @@ describe('participantsFromUpload', () => {
   });
 
   it('includes the uploader even when they dealt no damage', () => {
-    // The whole point: Taeya is a cleric, so she has no encounter_players row.
+    // The whole point: a member is a cleric, so she has no encounter_players row.
     const got = participantsFromUpload({ contributor: 'Taeya', players: [{ name: 'Badcop' }] });
     expect(got).toContain('Taeya');
   });
@@ -87,7 +87,7 @@ describe('classifyOurs', () => {
   });
 
   it('is true for an off-calendar guild event — most of the raid is ours', () => {
-    // Hitya 2026-08-22: "Friday was a guild rolling event, so internal, but
+    // The guild lead 2026-08-22: "Friday was a guild rolling event, so internal, but
     // still a lockout." Measured, our raids run 0.75-0.89 roster share.
     expect(classifyOurs({
       inRaidNight: false, inRaidWindow: false, memberFrac: 0.78, playerCount: 9,
@@ -158,6 +158,16 @@ describe('buildKillLockouts', () => {
   it('refuses an implausible boss timer rather than filing a year-long lockout', () => {
     expect(buildKillLockouts({ ...base, boss: { ...VENTANI, timerHours: 9000 } })).toEqual([]);
     expect(buildKillLockouts({ ...base, boss: { ...VENTANI, timerHours: 0 } })).toEqual([]);
+  });
+
+  // The PoP named moved to 3 h / 24 h respawns (2026-10-05) are board timers, not engage locks.
+  it('files no lockout for a respawn-only named (lockout: false), and every new PoP named is one', () => {
+    expect(buildKillLockouts({ ...base, boss: { ...VENTANI, lockout: false } })).toEqual([]);
+    expect(buildKillLockouts(base).length).toBeGreaterThan(0);
+    const bosses = require('../data/bosses.json');
+    for (const id of ['gaukr_sandstorm', 'eindride_icestorm', 'banord_paffa', 'the_sleep_walker', 'manaetic_prototype_xi']) {
+      expect(bosses.find(b => b.id === id)?.lockout).toBe(false);
+    }
   });
 
   it('refuses incomplete input', () => {

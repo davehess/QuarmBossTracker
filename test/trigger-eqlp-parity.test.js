@@ -1,6 +1,6 @@
 // test/trigger-eqlp-parity.test.js — the EQLogParser-parity trigger fields.
 //
-// Hitya 2026-08-07: "I'm doing almost all of the authoring, until this system
+// The guild lead 2026-08-07: "I'm doing almost all of the authoring, until this system
 // is as granular as EQLogParser triggers." That removed the officer
 // authoring-floor blocker, so these ship against the newest shape — but every
 // one MUST degrade to the legacy portable shape, because an older bundled

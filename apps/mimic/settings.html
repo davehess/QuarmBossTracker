@@ -1,9 +1,22 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Mimic Settings</title>
 <style>
-  body{margin:0;background:#0e1116;color:#c9d1d9;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;padding:20px}
+  /* Bottom padding reserves the strip the floating Save sits in, so the last
+     control on the page can never end up underneath it. */
+  body{margin:0;background:#0e1116;color:#c9d1d9;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;padding:20px 20px 76px}
   h1{color:#f6c365;font-size:16px;font-weight:normal;margin:0 0 4px}
   h2{color:#58a6ff;font-size:12px;font-weight:normal;text-transform:uppercase;letter-spacing:0.08em;margin:22px 0 8px;border-bottom:1px solid #2a3140;padding-bottom:4px}
+  /* Maximized, the sections flow into as many ~520px columns as fit (a member,
+     2026-09-23). The page is a flat run of <h2> + controls, so a small script at
+     the end of <body> wraps each heading and its controls in a .sec; a section
+     never splits across two columns. Below 1200px it is the one column it was. */
+  @media (min-width: 1200px){
+    #cols{columns:520px;column-gap:44px;margin-top:22px}
+    #cols > .sec{break-inside:avoid}
+    /* A heading's top margin is dropped at a column break but kept on the very
+       first one, which sat column 1 lower than 2 and 3 by exactly that much. */
+    #cols > .sec:first-child > h2{margin-top:0}
+  }
   .sub{color:#8b949e;font-size:11px;margin-bottom:8px}
   label{display:block;color:#8b949e;font-size:11px;margin:12px 0 4px}
   input[type=text]{width:100%;box-sizing:border-box;background:#161b22;border:1px solid #2a3140;border-radius:4px;
@@ -30,9 +43,32 @@
   .toast.pending{background:#1f6feb;color:#fff;border-color:#3a8bff}
   .toast.success{background:#1a7f37;color:#fff;border-color:#56d364}
   .toast.error  {background:#a3260a;color:#fff;border-color:#f87171}
+  /* Save floats bottom-right and only appears once something has actually
+     changed (the guild lead, 2026-09-18). This page is a long scroll — nine
+     sections — and a Save button parked after the last one is off-screen for
+     almost the whole form, so a change made at the top meant scrolling to the
+     bottom to commit it, or worse, not realising you had to.
+     Fixed rather than sticky: sticky still needs the button's own row to be in
+     view, which is the problem. z-index sits UNDER .toast (1000) so the save
+     result banner is never covered by the button that produced it. */
+  #save{
+    position:fixed;right:20px;bottom:20px;z-index:900;margin:0;
+    box-shadow:0 6px 18px rgba(0,0,0,0.55);
+    opacity:0;transform:translateY(12px);pointer-events:none;
+    transition:opacity .18s ease-out,transform .18s ease-out;
+  }
+  #save.show{opacity:1;transform:translateY(0);pointer-events:auto}
+  /* Drafts + the before-closing reminder (2026-09-26). Pinned above the floating Save. */
+  #draftBar{position:fixed;left:14px;right:14px;bottom:64px;z-index:90;display:none;align-items:center;
+    gap:8px;flex-wrap:wrap;padding:8px 10px;border-radius:6px;background:#161b22;border:1px solid #d29922;
+    color:#c9d1d9;font-size:12px;box-shadow:0 6px 18px rgba(0,0,0,0.55)}
+  #draftBar.show{display:flex}
+  #draftBar .msg{flex:1 1 220px}
+  #draftBar button{font-size:12px}
 </style></head>
 <body>
   <div id="toast" class="toast"></div>
+  <div id="draftBar" role="status"></div>
   <h1 style="display:flex;align-items:center;gap:10px"><img src="assets/icon-256.png" alt="" style="width:34px;height:34px;border-radius:8px"><span>mi<span style="letter-spacing:0.5px">MIC</span> Settings</span></h1>
   <div class="sub">Stored locally in your user profile. Mimic brings its own Node runtime — nothing else to install.</div>
   <div style="margin:8px 0 2px">
@@ -200,8 +236,12 @@
     </div>
   </div>
 
-  <h2>Zeal</h2>
+  <h2 id="zeal">Zeal</h2>
   <div class="sub">Keep the CoastalRedwood <b>Zeal</b> mod current without dragging files around. Mimic downloads the latest release and drops <code>Zeal.asi</code> + <code>uifiles/</code> into your EverQuest folder — backing up whatever's there first. Close EverQuest before installing (the game holds the file while it's running).</div>
+
+  <div class="row" style="margin-top:8px"><input type="radio" name="zealSource" value="official" id="zealSrcOfficial"><label for="zealSrcOfficial">Official Zeal — CoastalRedwood's latest release</label></div>
+  <div class="row"><input type="radio" name="zealSource" value="test" id="zealSrcTest"><label for="zealSrcTest">Test build — our Zeal fork: the current Zeal plus the tag changes we're testing (shapes, pictures, corpses, tags that survive zoning). May be unstable</label></div>
+  <div class="hint">Switching installs nothing by itself: Check then offers that build. To go back, pick Official and install.</div>
 
   <div id="zealPanel" style="margin-top:10px">
     <div class="hint" id="zealStatusLine">Checking your Zeal install…</div>
@@ -213,12 +253,12 @@
   </div>
   <div class="row" style="margin-top:10px">
     <input id="zealAutoCheck" type="checkbox" />
-    <label for="zealAutoCheck">Notify me when a newer Zeal is released</label>
+    <label for="zealAutoCheck">Notify me when a new version of the Zeal plugin is available</label>
   </div>
   <div class="hint">Checks GitHub in the background every 12 hours and pops a notification — it never installs on its own. Uncheck to stop the reminders.</div>
 
   <h2>Custom UI packs</h2>
-  <div class="sub">One-click install and update for popular Quarm UIs. Mimic downloads the latest release and drops it into <code>uifiles/</code>, backing up what's there. After installing, pick an alternate <b>layout</b> from the pack's Options and apply it. Type the <code>/load</code> command in-game to switch to the UI, then <code>/reloadskin</code> after applying a layout.</div>
+  <div class="sub">One-click install and update for popular Quarm UIs. Mimic downloads the latest release and drops it into <code>uifiles/</code>, backing up what's there. After installing, tick any of the pack's <b>layout options</b>; nothing ticked is the pack as it ships. Type the <code>/load</code> command in-game to switch to the UI, then <code>/reloadskin</code> after changing a layout.</div>
   <div id="uiPacksList" style="margin-top:10px">
     <div class="hint">Loading UI packs…</div>
   </div>
@@ -226,21 +266,27 @@
   <h2>Local UI</h2>
   <div class="row">
     <input id="quietMode" type="checkbox" />
-    <label for="quietMode">I use EQLogParser / another parser — Quiet mode (hide HUD + TTS, still upload)</label>
+    <label for="quietMode">🔇 Mute Mimic — no voice callouts or sounds (overlays still show)</label>
   </div>
-  <div class="hint">Use this if another tool is already showing you a DPS panel and trigger alerts. Mimic keeps uploading silently so your guild stats stay current.</div>
+  <div class="hint">Trigger callouts, CH-chain and charm warnings go silent. Everything still shows and still uploads.</div>
+  <div class="row">
+    <input id="hideOverlays" type="checkbox" />
+    <label for="hideOverlays">🙈 Don't show any overlays — I use EQLogParser / another parser for the display</label>
+  </div>
+  <div class="hint">Hides every overlay. Mimic keeps uploading so guild stats stay current, and voice callouts still play unless you also mute.</div>
 
   <div class="row">
     <input id="showHud" type="checkbox" />
-    <label for="showHud">Show DPS HUD overlay</label>
+    <label for="showHud">Show DPS/Tank Meter overlay</label>
   </div>
   <div class="row">
     <input id="enableTriggerTts" type="checkbox" />
-    <label for="enableTriggerTts">Trigger alerts (text-to-speech)</label>
+    <label for="enableTriggerTts">⚡ Trigger alerts — on-screen banner and voice</label>
   </div>
+  <div class="hint">Off turns trigger alerts off completely: no banner and no voice. To keep the banner and silence only the voice, use Mute Mimic above. Same switch as "Trigger alerts (TTS)" in the tray.</div>
   <div class="row">
     <input id="overlaysUnlocked" type="checkbox" />
-    <label for="overlaysUnlocked">Unlock overlays to move/resize them (uncheck = locked + click-through in place)</label>
+    <label for="overlaysUnlocked">Unlock overlays to move or resize them (unchecked: overlays stay in place and clicks pass through to EverQuest)</label>
   </div>
   <div class="hint">When unlocked, a blue drag bar appears on each overlay — drag to move, pull the edges to resize, then re-lock. Changes apply instantly, no engine restart.</div>
 
@@ -343,6 +389,33 @@
   </div>
 
 <script>
+  // Section wrapper for the maximized column layout (CSS: #cols). Each <h2>
+  // and everything up to the next one moves into a <section class="sec">,
+  // stopping at the Save button and the scripts. Moving a node keeps its id and
+  // listeners, and nothing on this page reads its structure. Runs before the
+  // page's other scripts, so they see the final DOM.
+  (function wrapSettingsSections(){
+    const firstH2 = document.querySelector('body > h2');
+    if (!firstH2) return;
+    const cols = document.createElement('div');
+    cols.id = 'cols';
+    document.body.insertBefore(cols, firstH2);
+    let sec = null;
+    for (let n = cols.nextSibling; n; ) {
+      const next = n.nextSibling;
+      if (n.nodeType === 1 && (n.tagName === 'SCRIPT' || n.querySelector('#save'))) break;
+      if (n.nodeType === 1 && n.tagName === 'H2') {
+        sec = document.createElement('section');
+        sec.className = 'sec';
+        cols.appendChild(sec);
+      }
+      if (sec) sec.appendChild(n);
+      n = next;
+    }
+  })();
+</script>
+
+<script>
   // Toast helper — explicit save feedback that lives at the top of the
   // window so it's never missed. State machine: pending → success | error.
   function showToast(state, text, ms){
@@ -429,6 +502,11 @@
   function _updateWarning() {
     const total = _checkedFound.size + _manualFolders.length;
     document.getElementById('eqWarning').style.display = total === 0 ? 'block' : 'none';
+    // Folder edits live in JS state, not in a form control, so they raise no
+    // input/change event the document listener could catch. Every folder
+    // mutation already funnels through here, which makes this the one hook
+    // that keeps the Save button honest about them.
+    try { _refreshDirty(); } catch (e) {}
   }
 
   async function _loadEqFolders(c) {
@@ -502,6 +580,23 @@
   // time with a "Show more" button. idx in the rendered rows maps 1:1 to the
   // full _uiStudioChars list (slice preserves order), so the existing
   // capture/restore handlers keep working unchanged.
+  // What a backed-up file holds, for the 📄 Files list. Names follow EQ's and Zeal's own
+  // conventions (Zeal: <Name>_bandolier.ini, _spellsets.ini, _protected.ini; its page-10
+  // key binds share <Name>_pq.proj.ini with EQ's hotkeys and socials). Unknown → no label.
+  function _uiFileWhat(name, character) {
+    const n = String(name).toLowerCase();
+    const c = String(character || '').toLowerCase();
+    if (n === 'eqclient.ini') return 'game settings (every character)';
+    if (n === 'zeal.ini') return 'Zeal settings (every character)';
+    if (/^ui_/.test(n)) return 'window layout';
+    if (n === c + '_pq.proj.ini') return 'hotbuttons, socials (macros), key binds';
+    if (/^(sock|socials)_/.test(n)) return 'socials';
+    if (n.includes('bandolier')) return 'bandolier sets';
+    if (n.includes('spellsets')) return 'spell sets';
+    if (n.includes('_protected')) return 'Zeal protected items';
+    return '';
+  }
+
   function _paintUiStudio() {
     const status = document.getElementById('uiStudioStatus');
     const list   = document.getElementById('uiStudioCharList');
@@ -591,12 +686,47 @@
                   '<td style="padding:3px 4px;color:#c9d1d9">' + new Date(s.created_at).toLocaleString() + '</td>' +
                   '<td style="padding:3px 4px;color:#8b949e">' + (s.source_width && s.source_height ? s.source_width + '×' + s.source_height : '—') + '</td>' +
                   '<td style="padding:3px 4px;color:#8b949e">' + s.file_count + '</td>' +
-                  '<td style="padding:3px 4px;text-align:right">' +
+                  '<td style="padding:3px 4px;text-align:right;white-space:nowrap">' +
+                    '<button type="button" class="ui-files" data-id="' + s.id + '" data-charidx="' + idx + '" style="margin:0 4px 0 0;padding:3px 9px;font-size:10px;background:#21262d;border:1px solid #2a3140;color:#c9d1d9">📄 Files</button>' +
                     '<button type="button" class="ui-restore" data-id="' + s.id + '" data-charidx="' + idx + '" style="margin:0;padding:3px 9px;font-size:10px;background:#1a7f37">↩ Restore</button>' +
                   '</td>' +
-                '</tr>'
+                '</tr>' +
+                '<tr data-files-for="' + s.id + '" style="display:none"><td colspan="4" style="padding:4px 6px 8px"></td></tr>'
               ).join('') +
             '</table>';
+            // 📄 Files: what is inside a backup (the guild lead, 2026-10-04: "What 19 files were
+            // backed up? My macros/socials/bandoliers?"). The server stores the bundle encrypted
+            // and keeps no file list, so this downloads the backup (the same call UI Studio's
+            // cloud restore makes) and lists the names; nothing is written to disk.
+            slot.querySelectorAll('.ui-files').forEach(b => {
+              b.addEventListener('click', async (ev) => {
+                const sid = ev.target.dataset.id;
+                const ch  = chars[parseInt(ev.target.dataset.charidx, 10)];
+                const row = slot.querySelector('[data-files-for="' + sid + '"]');
+                if (!row) return;
+                if (row.style.display !== 'none') { row.style.display = 'none'; return; }
+                const cell = row.firstChild;
+                row.style.display = '';
+                cell.innerHTML = '<span style="color:#8b949e;font-size:11px">Loading…</span>';
+                const e = (t) => String(t == null ? '' : t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+                try {
+                  const r3 = await window.mimic.uiStudioGetSnapshot({ character: ch.character, id: sid });
+                  if (!r3 || !r3.ok || !r3.files) {
+                    cell.innerHTML = '<span style="color:#f87171;font-size:11px">✕ ' + e(r3 && r3.error ? r3.error : 'could not load this backup') + '</span>';
+                    return;
+                  }
+                  const names = Object.keys(r3.files).sort((a, z) => a.localeCompare(z, undefined, { sensitivity: 'base' }));
+                  cell.innerHTML = '<div style="font-size:11px;line-height:1.6">' + names.map(n => {
+                    const kb = Math.max(1, Math.round(String(r3.files[n] || '').length / 1024));
+                    const what = _uiFileWhat(n, ch.character);
+                    return '<div><code style="color:#c9d1d9">' + e(n) + '</code> <span style="color:#6b7280">' + kb + ' KB</span>' +
+                      (what ? ' <span style="color:#8b949e">— ' + e(what) + '</span>' : '') + '</div>';
+                  }).join('') + '</div>';
+                } catch (err) {
+                  cell.innerHTML = '<span style="color:#f87171;font-size:11px">✕ ' + e(err && err.message ? err.message : String(err)) + '</span>';
+                }
+              });
+            });
             slot.querySelectorAll('.ui-restore').forEach(b => {
               b.addEventListener('click', async (ev) => {
                 const sid     = ev.target.dataset.id;
@@ -666,6 +796,7 @@
       ? '•••••••• connected — paste a new token to replace, or leave blank'
       : 'paste from /token in Discord, or leave blank for local-only';
     document.getElementById('quietMode').checked         = !!c.quietMode;
+    document.getElementById('hideOverlays').checked      = !!c.hideOverlays;
     document.getElementById('showHud').checked           = !!c.showHud;
     document.getElementById('enableTriggerTts').checked  = !!c.enableTriggerTts;
     document.getElementById('overlaysUnlocked').checked  = (c.overlaysLocked === false);
@@ -685,10 +816,31 @@
     const tm = c.tellsMode || 'off';
     document.querySelectorAll('input[name=tells]').forEach(r => { r.checked = (r.value === tm); });
     _loaded = { eqPaths: _collectEqPaths().slice(), botUrl: c.botUrl || '', token: null };
+    // Baseline for the floating Save. Placed HERE, at the end of load(), because
+    // every field the signature reads is populated by now — _loadEqFolders is
+    // awaited at the top, and the tells radios are set just above. Baselining
+    // any earlier would record a half-filled form as "clean" and leave the
+    // button showing on a window nobody had touched.
+    _markClean();
+    // A draft left from last time (closed without saving, or Mimic quit) comes
+    // back on top of what is saved, with a bar to keep or discard it.
+    _offerDraft();
     // UI Studio runs in parallel — it scans for characters across the
     // configured EQ folders, no token needed for the scan itself.
     _renderUiStudio();
+    // Opened for one part (a Zeal update notice opens #zeal — FB-46).
+    _gotoSection((location.hash || '').slice(1));
   }
+  // Scroll a part of Settings into view. Once more a moment later: the UI
+  // Studio list above Zeal fills in after load and pushes it down.
+  function _gotoSection(id) {
+    const el = id && /^[a-z]{1,20}$/.test(id) ? document.getElementById(id) : null;
+    if (!el) return;
+    el.scrollIntoView({ block: 'start' });
+    setTimeout(() => { try { el.scrollIntoView({ block: 'start' }); } catch {} }, 700);
+  }
+  // Already open: main sends the part to show instead of reloading.
+  if (window.mimic && window.mimic.onSettingsGoto) window.mimic.onSettingsGoto(_gotoSection);
 
   // Overlay scale — label follows the drag; the scale applies on RELEASE
   // ('change'), and main glides every overlay's zoom + window bounds to the
@@ -703,12 +855,163 @@
     try { await window.mimic.setOverlayScale(pct / 100); } catch {}
   });
 
+  // ── Dirty tracking for the floating Save ─────────────────────────────────
+  // The button only appears once something Save would actually SEND has
+  // changed, so an untouched Settings window carries no call to action.
+  //
+  // The signature is built from the same fields the save handler posts, not
+  // from a generic sweep of the DOM, for two reasons. The EQ folder list lives
+  // in JS state (_collectEqPaths / _excludedFound) rather than in an input, so
+  // a DOM sweep would miss folder edits entirely. And the overlay-scale slider
+  // is deliberately NOT part of Save — it applies live over its own IPC — so a
+  // sweep would light the button up for a control that has already taken
+  // effect, teaching people the button lies.
+  let _cleanSig = null;    // null until load() has populated the form
+  let _saveBusy = false;   // hold the button up while a save result plays out
+  function _settingsSig(){
+    try {
+      return JSON.stringify({
+        eqPaths: _collectEqPaths().slice().sort(),
+        eqPathsExcluded: [..._excludedFound].sort(),
+        botUrl: document.getElementById('botUrl').value.trim(),
+        // Write-only field: compare WHETHER one was typed, never the value, so
+        // the signature can never hold a credential.
+        tokenTyped: document.getElementById('token').value.trim().length > 0,
+        tellsMode: (document.querySelector('input[name=tells]:checked') || {}).value || 'off',
+        quietMode:        document.getElementById('quietMode').checked,
+        hideOverlays:     document.getElementById('hideOverlays').checked,
+        showHud:          document.getElementById('showHud').checked,
+        enableTriggerTts: document.getElementById('enableTriggerTts').checked,
+        overlaysUnlocked: document.getElementById('overlaysUnlocked').checked,
+        autoStart:              document.getElementById('autoStart').checked,
+        hideOverlaysWhenEqDown: document.getElementById('hideOverlaysWhenEqDown').checked,
+        zealAutoCheck:          document.getElementById('zealAutoCheck').checked,
+      });
+    } catch (e) { return null; }
+  }
+  function _refreshDirty(){
+    const btn = document.getElementById('save');
+    if (!btn) return;
+    const sig = _settingsSig();
+    const dirty = _cleanSig !== null && sig !== null && sig !== _cleanSig;
+    btn.classList.toggle('show', dirty || _saveBusy);
+    _saveDraftSoon();
+  }
+
+  // ── Drafts, and a reminder before closing (the guild lead, 2026-09-26: "can
+  // we start saving potential settings changes as drafts as people start making
+  // changes, and give them a reminder to save before exiting the page?") ──────
+  // Every edit Save would send is kept as a draft in this window's storage as
+  // it happens — never the token, which is a credential — and offered back the
+  // next time Settings opens. Closing with unsaved edits asks first. Quitting
+  // Mimic closes this window without asking (main.js before-quit), which is
+  // safe because the draft is already written.
+  const DRAFT_KEY = 'wp:settings:draft';
+  let _draftTimer = null;
+  let _allowClose = false;
+  function _saveDraftSoon(){
+    if (_draftTimer) clearTimeout(_draftTimer);
+    _draftTimer = setTimeout(_saveDraftNow, 250);
+  }
+  function _saveDraftNow(){
+    _draftTimer = null;
+    if (_cleanSig === null) return;          // form not loaded yet: nothing to compare
+    const sig = _settingsSig();
+    if (sig === null) return;
+    try {
+      if (sig === _cleanSig) { localStorage.removeItem(DRAFT_KEY); return; }
+      const form = JSON.parse(sig);
+      delete form.tokenTyped;
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ at: Date.now(), form }));
+    } catch (e) { /* storage unavailable: the close reminder still works */ }
+  }
+  function _readDraft(){
+    try { const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); return d && d.form ? d : null; }
+    catch (e) { return null; }
+  }
+  function _applyDraft(f){
+    if (Array.isArray(f.eqPaths)) {
+      const want = f.eqPaths.map(_norm);
+      _checkedFound = new Set(_foundCandidates.map(c => _norm(c.path)).filter(p => want.includes(p)));
+      _manualFolders = f.eqPaths.filter(p => !_foundCandidates.some(c => _norm(c.path) === _norm(p)));
+    }
+    if (Array.isArray(f.eqPathsExcluded)) _excludedFound = new Set(f.eqPathsExcluded);
+    try { _renderFolderPicker(); } catch (e) {}
+    if (typeof f.botUrl === 'string') document.getElementById('botUrl').value = f.botUrl;
+    const radio = document.querySelector('input[name=tells][value="' + String(f.tellsMode || 'off').replace(/"/g, '') + '"]');
+    if (radio) radio.checked = true;
+    for (const id of ['quietMode', 'hideOverlays', 'showHud', 'enableTriggerTts', 'overlaysUnlocked',
+                      'autoStart', 'hideOverlaysWhenEqDown', 'zealAutoCheck']) {
+      if (typeof f[id] === 'boolean') document.getElementById(id).checked = f[id];
+    }
+    _refreshDirty();
+  }
+  function _agoText(at){
+    const m = Math.round((Date.now() - (at || Date.now())) / 60000);
+    return m < 1 ? 'just now' : (m < 60 ? m + ' min ago' : Math.round(m / 60) + ' h ago');
+  }
+  function _showBar(kind, at){
+    const bar = document.getElementById('draftBar');
+    if (!bar) return;
+    if (!kind) { bar.classList.remove('show'); bar.innerHTML = ''; return; }
+    bar.innerHTML = kind === 'draft'
+      ? '<span class="msg">↺ Your unsaved changes from ' + _agoText(at) + ' are back. Save them, or discard them to keep what is saved.</span>'
+        + '<button type="button" data-draft="save">Save</button><button type="button" data-draft="discard">Discard them</button>'
+      : '<span class="msg">You have unsaved changes.</span>'
+        + '<button type="button" data-draft="saveclose">Save and close</button>'
+        + '<button type="button" data-draft="close">Close without saving</button>'
+        + '<button type="button" data-draft="keep">Keep editing</button>';
+    bar.classList.add('show');
+  }
+  // Offer a leftover draft once the saved settings are on screen (end of load()).
+  function _offerDraft(){
+    const d = _readDraft();
+    if (!d) return;
+    _applyDraft(d.form);
+    if (_settingsSig() === _cleanSig) { try { localStorage.removeItem(DRAFT_KEY); } catch (e) {} return; }
+    _showBar('draft', d.at);
+  }
+  document.getElementById('draftBar').addEventListener('click', async (e) => {
+    const act = e.target && e.target.getAttribute && e.target.getAttribute('data-draft');
+    if (!act) return;
+    if (act === 'keep') { _showBar(null); return; }
+    if (act === 'discard' || act === 'close') {
+      try { localStorage.removeItem(DRAFT_KEY); } catch (err) {}
+      _showBar(null);
+      if (act === 'close') { _allowClose = true; window.close(); return; }
+      await load();                               // back to what is saved
+      return;
+    }
+    if (act === 'save' || act === 'saveclose') {
+      _showBar(null);
+      await document.getElementById('save').onclick();
+      if (act === 'saveclose' && _settingsSig() === _cleanSig) { _allowClose = true; window.close(); }
+    }
+  });
+  // Electron cancels the close quietly when this returns a value; the bar asks.
+  window.addEventListener('beforeunload', (e) => {
+    if (_allowClose || _cleanSig === null || _settingsSig() === _cleanSig) return;
+    _saveDraftNow();
+    _showBar('closing');
+    e.preventDefault();
+    e.returnValue = false;
+    return false;
+  });
+  function _markClean(){ _cleanSig = _settingsSig(); _refreshDirty(); }
+  // Capture phase so this still fires for controls the folder picker re-renders
+  // after load, and on BOTH events because a checkbox reports `change` while a
+  // text field reports `input`.
+  document.addEventListener('input',  _refreshDirty, true);
+  document.addEventListener('change', _refreshDirty, true);
+
   document.getElementById('save').onclick = async () => {
     const btn = document.getElementById('save');
     const origLabel = btn.textContent;
+    _saveBusy = true;
     btn.disabled = true;
     btn.textContent = 'Saving…';
     btn.className = '';
+    _refreshDirty();   // className reset drops .show — put it straight back
     showToast('pending', 'Saving settings…', 0);
     try {
       const eqPaths = _collectEqPaths();
@@ -725,6 +1028,7 @@
         eqPath: null,    // clear the legacy single-folder field
         botUrl, tellsMode,
         quietMode:        document.getElementById('quietMode').checked,
+        hideOverlays:     document.getElementById('hideOverlays').checked,
         showHud:          document.getElementById('showHud').checked,
         enableTriggerTts: document.getElementById('enableTriggerTts').checked,
         overlaysLocked:   !document.getElementById('overlaysUnlocked').checked,
@@ -751,12 +1055,25 @@
       btn.className = 'success';
       document.getElementById('token').value = '';
       _loaded = { eqPaths: eqPaths.slice(), botUrl, token: null };
-      setTimeout(() => { btn.textContent = origLabel; btn.className = ''; btn.disabled = false; }, 3000);
+      // Re-baseline AFTER the token field is cleared, so what was just saved is
+      // what "unchanged" means from here. _saveBusy keeps the button up so the
+      // ✓ is readable even though the form is now clean.
+      _markClean();
+      setTimeout(() => {
+        btn.textContent = origLabel; btn.className = ''; btn.disabled = false;
+        _saveBusy = false; _refreshDirty();
+      }, 3000);
     } catch (e) {
       btn.textContent = '✕ Save failed';
       btn.className = 'error';
+      _refreshDirty();
       showToast('error', '✕ Save failed: ' + (e && e.message ? e.message : String(e)), 8000);
-      setTimeout(() => { btn.textContent = origLabel; btn.className = ''; btn.disabled = false; }, 6000);
+      // Deliberately NOT re-baselined: the edits were never persisted, so the
+      // form is still dirty and the button must stay up to be clicked again.
+      setTimeout(() => {
+        btn.textContent = origLabel; btn.className = ''; btn.disabled = false;
+        _saveBusy = false; _refreshDirty();
+      }, 6000);
     }
   };
   // ── Wolf Pack account section (Discord login via device-code flow) ─────
@@ -1048,12 +1365,17 @@
     if (!line) return;
     try {
       var s = await window.mimic.zealStatus();
+      var srcRadio = document.getElementById(s && s.source === 'test' ? 'zealSrcTest' : 'zealSrcOfficial');
+      if (srcRadio) srcRadio.checked = true;
       if (!s || !s.eqDir) {
         line.innerHTML = 'No EverQuest folder set yet — add one above and Mimic can manage Zeal for you.';
         return;
       }
+      // A test build's tag is "testall-<commit>", the same label Zeal's options window shows.
+      var isTestBuild = /^testall-/.test(String(s.installedTag || ''));
       var installed = s.installedTag
         ? 'Installed via Mimic: <b style="color:#7ee787">' + String(s.installedTag).replace(/</g,'&lt;') + '</b>'
+          + (isTestBuild ? ' (test build)' : '')
         : (s.hasZealAsi
             ? '<b style="color:#f6c365">Zeal.asi present</b> (version unknown — install below to be sure you\'re current)'
             : '<b style="color:#ff9b9b">Zeal not installed</b> in this folder');
@@ -1067,6 +1389,18 @@
     var installBtn = document.getElementById('zealInstallBtn');
     var msg        = document.getElementById('zealMsg');
     if (!checkBtn) return;
+    // Official ↔ test build: saved at once (main.js zeal-set-source), then Check
+    // runs so the Install button offers the chosen source's build.
+    document.querySelectorAll('input[name=zealSource]').forEach(function(r){
+      r.addEventListener('change', async function(){
+        if (!r.checked) return;
+        try {
+          var res = await window.mimic.zealSetSource(r.value);
+          if (!res || !res.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((res && res.error) || 'could not switch'); return; }
+          checkBtn.click();
+        } catch (err) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((err && err.message) || err); }
+      });
+    });
     checkBtn.addEventListener('click', async function(){
       var orig = checkBtn.textContent; checkBtn.disabled = true; checkBtn.textContent = 'Checking…';
       installBtn.style.display = 'none';
@@ -1075,14 +1409,15 @@
         var r = await window.mimic.zealCheckUpdate();
         if (!r || !r.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((r && r.error) || 'check failed'); return; }
         _zealLatestTag = r.latestTag;
+        var what = r.source === 'test' ? 'test build' : 'Zeal';
         if (r.updateAvailable) {
           msg.style.color = '#7ee787';
-          msg.textContent = 'Latest is ' + (r.latestTag || '?') + (r.installedTag ? ' (you have ' + r.installedTag + ')' : '') + '.';
+          msg.textContent = 'Latest ' + what + ' is ' + (r.latestTag || '?') + (r.installedTag ? ' (you have ' + r.installedTag + ')' : '') + '.';
           installBtn.textContent = '⬇ Install ' + (r.latestTag || 'latest');
           installBtn.style.display = 'inline-block';
         } else {
           msg.style.color = '#7ee787';
-          msg.textContent = '✓ You\'re on the latest Zeal (' + (r.latestTag || '?') + ').';
+          msg.textContent = '✓ You\'re on the latest ' + what + ' (' + (r.latestTag || '?') + ').';
         }
       } catch (err) {
         msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((err && err.message) || err);
@@ -1106,9 +1441,26 @@
   })();
 
   // ── Custom UI packs (Nillipuss etc.) ──────────────────────────────────────
-  // Each pack renders a card: install/update button + (when installed) an
-  // Options layout picker. All actions bridge through main.js -> uiPacks.js.
+  // Each pack renders a card: install/update button + (when installed) one
+  // checkbox per layout option. A tick takes effect at once, and the boxes are
+  // redrawn from what the files ARE, so they can't drift from the pack. Boxes
+  // that change the same window as a ticked one are disabled and say which.
+  // All actions bridge through main.js -> uiPacks.js.
   function _esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  var _UI_WND = { bankwnd: 'bank', hotbuttonwnd: 'hotbar', playerwindow: 'player window', targetwindow: 'target window',
+    buffwindow: 'buff window', shortdurationbuffwindow: 'song window', castspellwnd: 'spell bar', merchantwnd: 'merchant',
+    container: 'bags', inventory: 'inventory', spellbookwnd: 'spellbook' };
+  function _uiWhat(files){
+    var seen = {}, out = [];
+    (files || []).forEach(function(n){
+      var m = /^EQUI_(.+)\.xml$/i.exec(n);
+      var label = m ? (_UI_WND[m[1].toLowerCase()] || m[1]) : /^dzbars/i.test(n) ? 'bars' : /\.tga$/i.test(n) ? 'colors' : n;
+      if (!seen[label]) { seen[label] = 1; out.push(label); }
+    });
+    return out.join(', ');
+  }
+  function _uiLabel(c){ return c.variant ? c.option + ' · ' + c.variant : c.option; }
+  var _uiPackPrepTried = {};   // one defaults fetch per pack per Settings open
   async function _renderUiPacks(){
     var host = document.getElementById('uiPacksList');
     if (!host) return;
@@ -1128,16 +1480,28 @@
       var badge = p.installed
         ? '<span style="background:#0f2a1a;color:#56d364;border:1px solid #1a7f37;border-radius:3px;font-size:9px;padding:1px 6px;margin-left:8px;vertical-align:middle">INSTALLED' + (p.installedTag ? ' ' + _esc(p.installedTag) : '') + '</span>'
         : '';
-      var options = (p.options || []);
+      var opts = p.options || { ready: false, choices: [] };
+      var boxes = opts.choices.filter(function(c){ return !c.noop; });
+      var noops = opts.choices.filter(function(c){ return c.noop; });
       var optHtml = '';
-      if (p.installed && options.length) {
+      if (p.installed && opts.choices.length) {
         optHtml =
-          '<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
-            '<span style="font-size:11px;color:#8b949e">Layout option:</span>' +
-            '<select class="uiOptSel" style="background:#161b22;color:#c9d1d9;border:1px solid #2a3140;border-radius:4px;padding:4px 8px;font-size:11px;font-family:inherit">' +
-              options.map(function(o){ return '<option value="' + _esc(o) + '">' + _esc(o) + '</option>'; }).join('') +
-            '</select>' +
-            '<button type="button" class="uiOptApply" style="background:#21262d;border:1px solid #2a3140;color:#c9d1d9;padding:5px 10px;font-size:11px;margin:0;border-radius:4px;cursor:pointer">Apply layout</button>' +
+          '<div class="uiOpts" style="margin-top:8px">' +
+            '<div style="font-size:11px;color:#8b949e;margin-bottom:4px">Layout options: tick the ones you want, then <b>Apply</b>. Type <code>/reloadskin</code> in-game to see them.</div>' +
+            (opts.ready ? '' : '<div class="hint uiOptPrep" style="margin-bottom:4px">Getting the pack’s own files from GitHub so an untick can put them back…</div>') +
+            boxes.map(function(c){
+              return '<label style="display:flex;gap:6px;align-items:baseline;font-size:12px;padding:2px 0;cursor:pointer">' +
+                '<input type="checkbox" class="uiOptBox" data-id="' + _esc(c.id) + '"' + (c.applied ? ' checked' : '') + (opts.ready ? '' : ' disabled') + ' style="margin:0">' +
+                '<span>' + _esc(_uiLabel(c)) + '</span>' +
+                '<span class="uiOptWhy" data-what="' + _esc(_uiWhat(c.files)) + '" style="font-size:10px;color:#6e7681">' + _esc(_uiWhat(c.files)) + '</span>' +
+              '</label>';
+            }).join('') +
+            (noops.length ? '<div class="hint" style="margin-top:2px">' + _esc(noops.map(_uiLabel).join(', ')) + (noops.length === 1 ? ' is' : ' are') + ' what you have with nothing ticked.</div>' : '') +
+            '<div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+              '<button type="button" class="uiOptApply" disabled style="background:#21262d;border:1px solid #2a3140;color:#8b949e;padding:5px 14px;font-size:12px;font-weight:600;border-radius:5px;cursor:pointer">Apply</button>' +
+              '<button type="button" class="uiOptReset" style="background:#21262d;border:1px solid #2a3140;color:#c9d1d9;padding:4px 10px;font-size:11px;border-radius:4px;cursor:pointer">Untick all (the pack as it ships)</button>' +
+              '<span class="uiOptPending" style="font-size:11px;color:#d29922"></span>' +
+            '</div>' +
           '</div>';
       } else if (p.installed) {
         optHtml = '<div class="hint" style="margin-top:6px;font-style:italic">No alternate layouts in this pack.</div>';
@@ -1176,7 +1540,8 @@
             var u = await window.mimic.uiPackInstall(p.id);
             if (!u || !u.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((u && u.error) || 'update failed'); return; }
             msg.style.color = '#7ee787';
-            msg.textContent = '✓ Updated to ' + (u.tag || c.latestTag || '') + '. /reloadskin in-game to see it.';
+            msg.textContent = '✓ Updated to ' + (u.tag || c.latestTag || '') +
+              ((u.reapplied && u.reapplied.length) ? ', your options kept on' : '') + '. /reloadskin in-game to see it.';
             await _renderUiPacks();
           }
         } catch (err) {
@@ -1184,21 +1549,79 @@
         } finally { btn.disabled = false; btn.textContent = orig; }
       });
 
+      var optBoxes = [].slice.call(card.querySelectorAll('.uiOptBox'));
+      var byId = {};
+      opts.choices.forEach(function(c){ byId[c.id] = c; });
+      // A box that shares a window with a ticked one can't be ticked; say why.
+      function syncClashes(){
+        var on = optBoxes.filter(function(b){ return b.checked; }).map(function(b){ return b.getAttribute('data-id'); });
+        optBoxes.forEach(function(b){
+          var c = byId[b.getAttribute('data-id')];
+          var why = b.parentNode.querySelector('.uiOptWhy');
+          var clash = b.checked ? null : (c.conflicts || []).filter(function(x){ return on.indexOf(x.id) >= 0; })[0];
+          b.disabled = !opts.ready || !!clash;
+          why.textContent = clash
+            ? 'off while ' + _uiLabel(byId[clash.id] || { option: clash.id }) + ' is on (' +
+              (clash.files.length ? 'both change the ' + _uiWhat(clash.files) : 'pick one') + ')'
+            : why.getAttribute('data-what');
+          why.style.color = clash ? '#d29922' : '#6e7681';
+        });
+      }
+      async function setOpts(ids){
+        optBoxes.forEach(function(b){ b.disabled = true; });
+        msg.style.color = '#8b949e'; msg.textContent = 'Changing layout files…';
+        try {
+          var r = await window.mimic.uiPackSetOptions(p.id, ids);
+          if (!r || !r.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((r && r.error) || 'could not change the options'); await _renderUiPacks(); return; }
+          // Redraw the ticks from what main says is on now, not from the clicks.
+          optBoxes.forEach(function(b){ b.checked = r.applied.indexOf(b.getAttribute('data-id')) >= 0; });
+          msg.style.color = '#7ee787';
+          msg.textContent = '✓ ' + (r.applied.length ? 'On: ' + r.applied.map(function(id){ return _uiLabel(byId[id] || { option: id }); }).join(', ') : 'Back to the pack as it ships') +
+            (r.backedUp ? ' (' + r.backedUp + ' of your own edited files backed up)' : '') + '. Type /reloadskin in-game.';
+        } catch (err) {
+          msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((err && err.message) || err);
+        } finally { syncClashes(); }
+      }
+      // Tick, then Apply (the guild lead, 2026-09-28: "There's no button to install, only reset and
+      // untick"). A tick only plans the change; Apply writes the files. Apply lights up while the
+      // ticks differ from what is on, and says how many changes are waiting.
       var applyBtn = card.querySelector('.uiOptApply');
-      if (applyBtn) {
-        applyBtn.addEventListener('click', async function(){
-          var sel = card.querySelector('.uiOptSel');
-          var opt = sel ? sel.value : '';
-          var orig = applyBtn.textContent; applyBtn.disabled = true; applyBtn.textContent = 'Applying…';
-          msg.style.color = '#8b949e'; msg.textContent = '';
-          try {
-            var r = await window.mimic.uiPackApplyOption(p.id, opt);
-            if (!r || !r.ok) { msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((r && r.error) || 'apply failed'); return; }
-            msg.style.color = '#7ee787';
-            msg.textContent = '✓ Applied "' + opt + '" — ' + r.written + ' files' + (r.backedUp ? ', ' + r.backedUp + ' backed up' : '') + '. Type /reloadskin in-game.';
-          } catch (err) {
-            msg.style.color = '#ff9b9b'; msg.textContent = '✕ ' + ((err && err.message) || err);
-          } finally { applyBtn.disabled = false; applyBtn.textContent = orig; }
+      var pendingEl = card.querySelector('.uiOptPending');
+      var appliedNow = opts.choices.filter(function(c){ return c.applied; }).map(function(c){ return c.id; });
+      function ticked(){ return optBoxes.filter(function(x){ return x.checked; }).map(function(x){ return x.getAttribute('data-id'); }); }
+      function syncApply(){
+        var want = ticked();
+        var diff = want.filter(function(id){ return appliedNow.indexOf(id) < 0; }).length
+                 + appliedNow.filter(function(id){ return want.indexOf(id) < 0; }).length;
+        if (!applyBtn) return;
+        applyBtn.disabled = !diff || !opts.ready;
+        applyBtn.style.background = diff ? '#1f6feb' : '#21262d';
+        applyBtn.style.color = diff ? '#fff' : '#8b949e';
+        applyBtn.style.border = diff ? '0' : '1px solid #2a3140';
+        if (pendingEl) pendingEl.textContent = diff ? diff + ' change' + (diff === 1 ? '' : 's') + ' not applied yet' : '';
+      }
+      optBoxes.forEach(function(b){
+        b.addEventListener('change', function(){ syncClashes(); syncApply(); });
+      });
+      if (applyBtn) applyBtn.addEventListener('click', async function(){
+        await setOpts(ticked());
+        appliedNow = optBoxes.filter(function(x){ return x.checked; }).map(function(x){ return x.getAttribute('data-id'); });
+        syncApply();
+      });
+      var resetBtn = card.querySelector('.uiOptReset');
+      if (resetBtn) resetBtn.addEventListener('click', function(){
+        optBoxes.forEach(function(b){ b.checked = false; });
+        syncClashes(); syncApply();
+      });
+      syncClashes();
+      syncApply();
+      // A pack installed before Mimic kept its default files: fetch them once, then redraw.
+      if (p.installed && opts.choices.length && !opts.ready && !_uiPackPrepTried[p.id]) {
+        _uiPackPrepTried[p.id] = true;
+        window.mimic.uiPackPrepare(p.id).then(function(r){
+          if (r && r.ok) return _renderUiPacks();
+          var prep = card.querySelector('.uiOptPrep');
+          if (prep) { prep.style.color = '#ff9b9b'; prep.textContent = '✕ Could not get the pack’s own files (' + ((r && r.error) || 'no answer') + '). Check your connection and reopen Settings.'; }
         });
       }
     });

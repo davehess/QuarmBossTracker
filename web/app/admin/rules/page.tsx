@@ -3,9 +3,11 @@
 // Lists the rows /ingestrules wrote to guild_rules, grouped by channel, in rule
 // order. Shows parsed (numbered) vs raw rows and flags deactivated (source
 // message deleted) ones. Read-only — the source of truth is Discord; edit there
-// and re-run /ingestrules. Officer gating is handled by the parent admin layout.
+// and re-run /ingestrules. Officer-only: requireOfficer() first, like every admin page.
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
+import { requireOfficer } from '@/lib/officer';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,7 +35,7 @@ async function loadRules(): Promise<RuleRow[]> {
   const { data } = await admin
     .from('guild_rules')
     .select('id, channel_key, rule_number, title, body, category, source_message_id, source_edited_at, ingested_at, active')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .order('rule_number', { ascending: true, nullsFirst: false });
   return (data ?? []) as RuleRow[];
 }
@@ -44,6 +46,7 @@ function fmtDate(iso: string | null): string {
 }
 
 export default async function AdminRulesPage() {
+  await requireOfficer();
   const rules = await loadRules();
 
   const byChannel = new Map<string, RuleRow[]>();

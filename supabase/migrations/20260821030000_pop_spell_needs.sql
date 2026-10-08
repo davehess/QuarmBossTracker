@@ -1,4 +1,4 @@
--- Who still needs which PoP spell (Hitya 2026-08-20: "make a section on the
+-- Who still needs which PoP spell (the guild lead, 2026-08-20: "make a section on the
 -- pop page for spells that mains need if they've submitted … Whoever gets to
 -- that level first should get first dibs on those spells so prioritize high
 -- level to low").

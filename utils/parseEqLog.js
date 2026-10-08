@@ -1,7 +1,7 @@
 // utils/parseEqLog.js — EQLogParser "Send to EQ" paste parser.
 //
 // Format reference (single-mob and combined-multi-mob):
-//   "High Priest of Ssraeshza in 42s, 53.12K Damage @1.26K, 1. Statlander +Pets = 4.59K@148 in 31s | ..."
+//   "High Priest of Ssraeshza in 42s, 53.12K Damage @1.26K, 1. Kaldrim +Pets = 4.59K@148 in 31s | ..."
 //   "Combined (3): Lord Nagafen in 397s, 1.54M Damage @3.87K, 1. Player = 78.22K@216 in 362s | ..."
 //
 // Returned shape (matches what utils/supabase.recordParse expects as `parsed`):
@@ -50,7 +50,24 @@ function parseEQLog(str) {
   return { bossName, duration, totalDamage, totalDps, players };
 }
 
+// True when `needle` sits inside `hay` as whole words — the characters on both
+// sides (if any) are not letters or digits. Bare substring matching let "a
+// tortured soul" and "a mature wurm" become Ture kills ("ture" is inside
+// "tortured" and "mature"); the guild lead, 2026-10-05: 8 false Ture encounters
+// since Oct 2.
+function containsWholeWords(hay, needle) {
+  if (!needle) return false;
+  const isWordChar = (c) => !!c && /[\p{L}\p{N}]/u.test(c);
+  for (let from = 0; ;) {
+    const i = hay.indexOf(needle, from);
+    if (i < 0) return false;
+    if (!isWordChar(hay[i - 1]) && !isWordChar(hay[i + needle.length])) return true;
+    from = i + 1;
+  }
+}
+
 // Boss matching: exact > nickname > partial (closest name length, tie: longer wins).
+// Partial = the shorter name appears inside the longer one as WHOLE WORDS.
 // Final tiebreaker for direction-specific Vex Thal mobs (Kaas Thox Xi Aten Ha Ra,
 // Thall Va Xakra): when EQ logs the unqualified name, both (North) and (South)
 // variants are equally-good partial matches. Prefer (South) so the bot's auto-
@@ -66,7 +83,17 @@ function findBossFromName(parsedName, bosses) {
   const nick = bosses.find(b => (b.nicknames || []).some(n => n.toLowerCase() === nl));
   if (nick) return nick;
   const partials = bosses
-    .filter(b => { const bn = b.name.toLowerCase(); return bn.includes(nl) || nl.includes(bn); })
+    .filter(b => {
+      const bn = b.name.toLowerCase();
+      if (containsWholeWords(bn, nl)) return true;
+      // The boss name inside a LONGER mob name: trash, when the mob is "a/an …" (EQ's own naming for
+      // common mobs) or the boss is what it is "of" — "a cleric of vallon zek", "the herald of
+      // vulak`aerr", "a chokidai terror" were Vallon Zek / Vulak / Terror kills otherwise.
+      if (!containsWholeWords(nl, bn)) return false;
+      if (/^an? /.test(nl)) return false;
+      if (containsWholeWords(nl, 'of ' + bn)) return false;
+      return true;
+    })
     .sort((a, b) => {
       const da = Math.abs(a.name.length - nl.length);
       const db = Math.abs(b.name.length - nl.length);

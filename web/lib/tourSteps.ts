@@ -2,7 +2,7 @@
 // re-runnable any time from the ✨ Tour button, always over the member's OWN
 // live data (nothing is mocked; every page shows what the guild has actually
 // recorded about them). Copy leans on what the member has ACCOMPLISHED —
-// their characters, their parses, their standing — per Hitya 2026-08-01.
+// their characters, their parses, their standing — per the guild lead 2026-08-01.
 //
 // PvP is deliberately not part of the core loop: the last core step offers it
 // as an opt-in branch ("don't make a huge deal out of the PVP parts unless

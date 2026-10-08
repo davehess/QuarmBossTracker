@@ -1,6 +1,6 @@
 # The Architect's Rebuild — 2026-08-16
 
-Premise, per Hitya: act as the platform's new architect. If this were rebuilt
+Premise, per Guild lead: act as the platform's new architect. If this were rebuilt
 from scratch knowing everything fourteen months of operation have taught, what
 changes first, why didn't we do it the first time, and what is actually costing
 us. **This is an assessment, not a migration plan** — CLAUDE.md remains the map
@@ -192,7 +192,7 @@ because a warning in a file is not a layer. What it cost, documented:
 - **Identity is not in the schema**: nothing stops a re-run from double-
   inserting an award. Measured live this morning: **337 duplicate groups / 560
   excess rows** in `loot_observations`, inflating "N× won" pills members see
-  today (task #39, awaiting Hitya's word on the destructive cleanup + unique
+  today (task #39, awaiting the guild lead's word on the destructive cleanup + unique
   index).
 
 Exposure surface, measured today: **177** raw `supabase.select(` call sites in
@@ -276,7 +276,7 @@ claim, and this doc's over-engineering pick is confirmed.
   over (`check:dashboard`, `wpKeep` gate, golden logs): a rule that is not a
   failing check is a suggestion.
 
-## Open questions for Hitya
+## Open questions for the guild lead
 
 1. Adopt **U1** as a CI gate (one shared paginator, grep-enforced)? ~2h to
    consolidate, then mechanical adoption.
@@ -289,7 +289,7 @@ claim, and this doc's over-engineering pick is confirmed.
 
 # Part II — the rest of the platform (same day, after U1/U2 landed)
 
-Hitya's follow-up, verbatim on the direction: *"discord was a source of
+The guild lead's follow-up, verbatim on the direction: *"discord was a source of
 semi-truth. now it should just be a projection"* — decision #1 is ratified —
 and *"let's start looking at the database read/write layers as that is
 complexity I have not designed in."* Part I's six decisions covered bot state,

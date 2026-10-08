@@ -9,12 +9,14 @@
 
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { storeShots } from '@/lib/feedbackShots';
 
 const CATEGORIES = ['bug', 'idea', 'praise', 'other'] as const;
 
 export async function submitFeedback(input: {
   category: string;
   message: string;
+  screenshots?: string[];
 }): Promise<{ ok: boolean; error?: string }> {
   const message = (input.message || '').trim();
   if (!message) return { ok: false, error: 'Please write something first.' };
@@ -40,14 +42,20 @@ export async function submitFeedback(input: {
     }
   } catch { /* anonymous is fine */ }
 
+  // Screenshots (2026-09-26) only from a signed-in pack member: an anonymous
+  // form that stores images and reposts them into Discord is an open door.
+  // Anonymous text feedback is unchanged.
+  const shotPaths = discordId ? await storeShots(admin, input.screenshots, 'web') : [];
+
   const { error } = await admin.from('feedback').insert([{
     submitter_discord_id: discordId,
     submitter_name:       name || 'web (anonymous)',
     category,
     message:              `[from wolfpack.quest] ${message}`,
     // discord_msg_id left NULL → the bot's web-feedback relay posts it to the
-    // #feedback thread and backfills the id/link.
+    // #feedback thread (screenshots attached) and backfills the id/link.
     status:               'new',
+    ...(shotPaths.length ? { screenshot_paths: shotPaths } : {}),
   }]);
   if (error) return { ok: false, error: 'Could not save — please try again.' };
   return { ok: true };

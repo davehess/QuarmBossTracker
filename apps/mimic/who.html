@@ -15,6 +15,38 @@
     font-size:12px;color:#7ee7c7;text-shadow:0 1px 2px #000;margin-bottom:4px;}
   .conn{font-size:11px}
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  /* Zek only toggle (the guild lead, 2026-09-26). Lit in the ZEK flag's red when on. */
+  .zekbtn{font-family:inherit;font-size:9px;font-weight:bold;letter-spacing:0.5px;padding:0 5px;border-radius:3px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid #30363d;cursor:pointer;line-height:14px}
+  .zekbtn:hover{color:#ff7b72;border-color:#ff7b72}
+  .zekbtn.on{background:#3d1d1d;color:#ff7b72;border-color:#ff7b72}
+  .nozek{font-size:11px;color:#8b949e;text-shadow:0 1px 2px #000;padding:1px 0}
+  /* Fixed size, scrolling, filters (the guild lead, 2026-09-26: "add scrolling and filtering to the
+     who overlay. treat it like the in game tracking with filters for guilds or classes"; a member:
+     "a certain modifiable size, and u can just scroll down it, instead of it getting bigger or smaller
+     with number of people in zone"). In fixed mode #wrap fills the window and #body scrolls; the grip
+     at the bottom sets the height. */
+  body.fixed #wrap{height:100vh;box-sizing:border-box;display:flex;flex-direction:column}
+  body.fixed #body{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding-right:2px}
+  #body::-webkit-scrollbar{width:6px}
+  #body::-webkit-scrollbar-thumb{background:rgba(126,231,199,0.35);border-radius:3px}
+  #body::-webkit-scrollbar-track{background:transparent}
+  .title{padding-right:22px}
+  .fbtn{font-family:inherit;font-size:9px;font-weight:bold;letter-spacing:0.5px;padding:0 5px;border-radius:3px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid #30363d;cursor:pointer;line-height:14px;white-space:nowrap}
+  .fbtn:hover{color:#7ee7c7;border-color:#2da68a}
+  .fbtn.on{background:#10302a;color:#7ee7c7;border-color:#2da68a}
+  #fpanel{display:none;flex-wrap:wrap;gap:3px;margin:0 0 5px;padding:4px;background:rgb(0 0 0 / var(--bg-alpha));border-radius:5px}
+  #fpanel.open{display:flex}
+  .fchip{font-family:inherit;font-size:10px;padding:0 5px;border-radius:3px;background:rgba(14,17,22,0.6);
+    color:#c9d1d9;border:1px solid #30363d;cursor:pointer;line-height:15px;white-space:nowrap}
+  .fchip .c{color:#6e7681;margin-left:3px}
+  .fchip:hover{border-color:#2da68a}
+  .fchip.on{background:#10302a;color:#7ee7c7;border-color:#2da68a}
+  .fchip.on .c{color:#7ee7c7}
+  #grip{flex:0 0 auto;height:7px;margin-top:3px;border-radius:3px;cursor:ns-resize;opacity:0.3;
+    background:repeating-linear-gradient(90deg,rgba(126,231,199,0.8) 0 6px,transparent 6px 10px)}
+  #grip:hover,#grip.drag{opacity:1}
   .sec{margin-bottom:6px}
   .sec-h{font-size:10px;color:#8b949e;letter-spacing:0.5px;margin:3px 0 2px;text-transform:uppercase}
   .sec-h .n{color:#7ee7c7}
@@ -55,9 +87,19 @@
   .r .klass{font-size:10px;color:#9aa4ad;flex-shrink:0;width:96px;text-align:left;white-space:nowrap;overflow:hidden}
   .r .lvl{font-size:10px;color:#9aa4ad;font-variant-numeric:tabular-nums;flex-shrink:0;width:34px;text-align:left}
   .r .klass.deanon,.r .lvl.deanon{font-style:italic;color:#6e7681}
+  /* Zone column, behind the title bar's ZONE switch (the guild lead, 2026-09-29). As the game printed
+     it: the short name from /who all, the full name from a plain /who's footer. */
+  .r .zn{font-size:10px;color:#9aa4ad;flex-shrink:0;width:96px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .r .goneAt{font-size:10px;color:#9aa4ad;flex-shrink:0}
   .gone .r .nm{color:#9aa4ad;font-weight:normal}
   .gone .r{opacity:0.85}
+  /* The player you are targeting, pinned on top with their guild UNDER the name (like a nameplate) —
+     the guild lead, 2026-09-26, in a raid shared with other guilds. Italic when the guild or class comes
+     from /who history rather than a live /who. */
+  .tgt .rowlist{border-left:2px solid #d29922}
+  .tgt .r .nm{color:#f2ede1}
+  .tgt .guildline{font-size:11px;color:#6e9bd6;text-shadow:0 1px 2px #000;line-height:1.35}
+  .tgt .guildline.deanon{font-style:italic}
   /* #160 "recently gone" collapse — the +N more / show fewer toggle row. State
      lives in a JS var (_goneExpanded) read by the 500ms render loop, not DOM. */
   .gone .gone-toggle{font-size:10px;color:#7ee7c7;cursor:pointer;padding:2px 2px 0;
@@ -104,9 +146,11 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title"><span id="conn" class="conn bad">○</span><span>👁 /who</span></div>
+    <div class="title"><span id="conn" class="conn bad">○</span><span>👁 /who</span><button id="zek-btn" class="zekbtn" aria-pressed="false" title="Zek only: show just the players known to be Zek">ZEK</button><button class="fbtn" data-fbtn="class" title="Filter by class">CLASS</button><button class="fbtn" data-fbtn="guild" title="Filter by guild">GUILD</button><button id="zone-btn" class="fbtn" aria-pressed="false" title="Zone column: where each player was at their last /who (/who all shows everyone's)">ZONE</button><button class="fbtn" data-fbtn="sort" title="Sort order: click to change">⇅ seen</button></div>
+    <div id="fpanel"></div>
     <div id="body"></div>
     <div id="empty">run <b>/who</b> in game</div>
+    <div id="grip" title="Drag to set the height (the list scrolls) · double-click to fit the list instead"></div>
   </div>
 <script>
   let PORT = 7779;
@@ -165,13 +209,109 @@
 
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
   function ago(iso){ if(!iso) return ''; var ms = Date.now() - Date.parse(iso); if(!(ms>0)) return ''; var s=Math.floor(ms/1000); if(s<60) return s+'s'; var m=Math.floor(s/60); if(m<60) return m+'m'; return Math.floor(m/60)+'h'; }
+  // Fixed height (the default): the window keeps the height you gave it and the list scrolls. 'fit' =
+  // the old behaviour, sized to the list. Remembered on this machine.
+  var WHO_DEFAULT_H = 320, WHO_MIN_H = 110, WHO_MAX_H = 2000;
+  var _fixedH = WHO_DEFAULT_H;
+  try {
+    var _savedH = localStorage.getItem('wp:who:height');
+    if (_savedH === 'fit') _fixedH = null;
+    else if (_savedH && +_savedH >= WHO_MIN_H) _fixedH = Math.min(WHO_MAX_H, +_savedH);
+  } catch (e) {}
+  document.body.classList.toggle('fixed', _fixedH != null);
   function _requestAutoHeight(){
     if (!(window.mimic && window.mimic.overlayAutoHeight)) return;
+    if (_fixedH != null) { try { window.mimic.overlayAutoHeight(_fixedH); } catch (e) {} return; }
     var w = document.getElementById('wrap'); if (!w) return;
     try { window.mimic.overlayAutoHeight(w.scrollHeight + 8); } catch (e) {}
   }
 
-  // Crowd-sourced class picker (Uilnayar 2026-07-14): anyone who KNOWS an anon
+  // One hover-interact owner for the whole overlay (a locked overlay is click-through, overlay
+  // checklist item 3): interactive while the pointer is over the title bar, the filter panel or the
+  // grip — and, in fixed mode, anywhere on the list, so the wheel scrolls it. In fit mode the list
+  // stays click-through except its own controls, as before. Replaces the per-control handlers, whose
+  // "leave" fired when the pointer moved from one control onto the scrolling list and switched the
+  // wheel off under it.
+  function _zoneOf(el){
+    if (!el || !el.closest) return null;
+    return el.closest('.title, #fpanel, #grip')
+      || (document.body.classList.contains('fixed') ? el.closest('#body') : el.closest('.copybtn, .clspick, .gone-toggle'));
+  }
+  function _hover(on){ try { window.mimic.overlayHoverInteractive(on); } catch (e) {} }
+  var _gripDrag = null;
+  document.addEventListener('mouseover', function(e){ if (_zoneOf(e.target)) _hover(true); });
+  document.addEventListener('mouseout', function(e){
+    if (_gripDrag) return;
+    if (_zoneOf(e.target) && !_zoneOf(e.relatedTarget)) _hover(false);
+  });
+
+  // Filters + sort, like EQ's tracking window. Empty lists = everyone. Class '?' = class unknown;
+  // guild '' = no guild known. Remembered on this machine.
+  var _filt = { classes: [], guilds: [] };
+  var WHO_SORTS = ['seen', 'name', 'class', 'level', 'guild'];
+  var _sortBy = 'seen';
+  var _panel = null;                                   // null | 'class' | 'guild'
+  try {
+    var _fs = JSON.parse(localStorage.getItem('wp:who:filters') || 'null');
+    if (_fs) {
+      if (Array.isArray(_fs.classes)) _filt.classes = _fs.classes.map(String);
+      if (Array.isArray(_fs.guilds))  _filt.guilds  = _fs.guilds.map(String);
+      if (WHO_SORTS.indexOf(_fs.sortBy) >= 0) _sortBy = _fs.sortBy;
+    }
+  } catch (e) {}
+  function _saveFilters(){
+    try { localStorage.setItem('wp:who:filters', JSON.stringify({ classes: _filt.classes, guilds: _filt.guilds, sortBy: _sortBy })); } catch (e) {}
+  }
+  // A row's class and guild for filtering and sorting: the live /who value, else what history knows.
+  function whoClassOf(p){ return (p && (p.class || (p.known && p.known.class))) || '?'; }
+  function whoGuildOf(p){ return (p && (p.guild || (p.known && p.known.guild))) || ''; }
+  function whoLevelOf(p){ return +((p && (p.level || (p.known && p.known.level))) || 0); }
+  function whoFiltActive(f){ return !!(f && ((f.classes && f.classes.length) || (f.guilds && f.guilds.length))); }
+  function whoFilterRows(rows, f){
+    if (!whoFiltActive(f)) return rows;
+    return rows.filter(function(p){
+      if (f.classes.length && f.classes.indexOf(whoClassOf(p)) < 0) return false;
+      if (f.guilds.length  && f.guilds.indexOf(whoGuildOf(p))  < 0) return false;
+      return true;
+    });
+  }
+  function whoSortRows(rows, by){
+    if (!by || by === 'seen') return rows;
+    function nm(p){ return String((p && p.name) || '').toLowerCase(); }
+    // Unknown class ('?') and no guild ('') sort last.
+    function txt(p){
+      if (by === 'name') return nm(p);
+      var v = by === 'class' ? whoClassOf(p) : whoGuildOf(p);
+      return (v && v !== '?') ? v.toLowerCase() : '~~~~';
+    }
+    return rows.slice().sort(function(a, b){
+      if (by === 'level') { var d = whoLevelOf(b) - whoLevelOf(a); if (d) return d; }
+      else { var x = txt(a), y = txt(b); if (x !== y) return x < y ? -1 : 1; }
+      var p = nm(a), q = nm(b); return p < q ? -1 : (p > q ? 1 : 0);
+    });
+  }
+  // What the rows hold, most common first: [[value, count], …]. Chosen values always appear, even at 0.
+  function whoFacet(rows, of, chosen){
+    var m = {};
+    for (var i = 0; i < rows.length; i++) { var v = of(rows[i]); m[v] = (m[v] || 0) + 1; }
+    for (var j = 0; j < chosen.length; j++) if (!(chosen[j] in m)) m[chosen[j]] = 0;
+    return Object.keys(m).map(function(k){ return [k, m[k]]; })
+      .sort(function(a, b){ return (b[1] - a[1]) || (a[0] < b[0] ? -1 : (a[0] > b[0] ? 1 : 0)); });
+  }
+  function whoPanelHtml(kind, rows){
+    var chosen = kind === 'class' ? _filt.classes : _filt.guilds;
+    var facet = whoFacet(rows, kind === 'class' ? whoClassOf : whoGuildOf, chosen);
+    var h = '<button class="fchip' + (chosen.length ? '' : ' on') + '" data-fclear="' + kind + '">all</button>';
+    for (var i = 0; i < facet.length; i++) {
+      var v = facet[i][0];
+      var label = kind === 'class' ? (v === '?' ? 'unknown' : v) : (v === '' ? '(no guild)' : '<' + v + '>');
+      h += '<button class="fchip' + (chosen.indexOf(v) >= 0 ? ' on' : '') + '" data-fk="' + kind + '" data-fv="' + esc(v) + '">'
+        + esc(label) + '<span class="c">' + facet[i][1] + '</span></button>';
+    }
+    return h;
+  }
+
+  // Crowd-sourced class picker (a member, 2026-07-14): anyone who KNOWS an anon
   // player's class (inspected their gear, etc.) can set it for the whole guild
   // from the dropdown on that row. The pick POSTs to the agent → who_overrides →
   // propagates via /who-lookup. _pendingClass keeps a just-made pick shown +
@@ -199,7 +339,7 @@
   }
 
   function rowHtml(p, gone){
-    var zek = !!(p.known && p.known.is_zek);
+    var zek = isZek(p);
     var cls = 'r' + (zek ? ' zek' : '');
     // De-anon fallback: when the LIVE row is anon (class/level/guild null),
     // fill in from who history so the columns still render. Mark those values
@@ -238,6 +378,7 @@
     var klassTxt = (klass && !showPicker) ? esc(klass) : '';
     var col = '<span class="klass' + (klassIsDeanon ? ' deanon' : '') + '">' + klassTxt + '</span>';
     col    += '<span class="lvl'   + (lvlIsDeanon   ? ' deanon' : '') + '">' + (lvl ? 'L' + lvl : '') + '</span>';
+    if (_zoneCol) col += zoneColHtml(p.zone);
     if (gone)  col += '<span class="goneAt">· ' + ago(p.observedAt) + ' ago</span>';
     return '<div class="' + cls + '"><span class="left">' + left + '</span>' + col + '</div>';
   }
@@ -253,21 +394,9 @@
   var emptyEl = document.getElementById('empty');
 
   // Copy-name buttons: rows re-render every 500ms, so everything is
-  // DELEGATED off bodyEl. The hover-interact handshake is mandatory — a
-  // locked overlay is click-through, so without it the click would fall
-  // through to EQ (overlay checklist item 3). mouseover/out (which bubble)
-  // stand in for mouseenter/leave.
+  // DELEGATED off bodyEl. Their hover-interact handshake is the document-level
+  // _zoneOf owner above.
   var _copyFlashUntil = 0;
-  bodyEl.addEventListener('mouseover', function(e){
-    if (e.target && e.target.classList && e.target.classList.contains('copybtn')) {
-      try { window.mimic.overlayHoverInteractive(true); } catch (err) {}
-    }
-  });
-  bodyEl.addEventListener('mouseout', function(e){
-    if (e.target && e.target.classList && e.target.classList.contains('copybtn')) {
-      try { window.mimic.overlayHoverInteractive(false); } catch (err) {}
-    }
-  });
   bodyEl.addEventListener('click', function(e){
     var btn = e.target && e.target.classList && e.target.classList.contains('copybtn') ? e.target : null;
     if (!btn) return;
@@ -286,18 +415,8 @@
     }
   });
 
-  // Class picker: hover-interact handshake (locked overlay is click-through)
-  // + change → POST the pick to the local agent (which forwards to the bot).
-  bodyEl.addEventListener('mouseover', function(e){
-    if (e.target && e.target.classList && e.target.classList.contains('clspick')) {
-      try { window.mimic.overlayHoverInteractive(true); } catch (err) {}
-    }
-  });
-  bodyEl.addEventListener('mouseout', function(e){
-    if (e.target && e.target.classList && e.target.classList.contains('clspick')) {
-      try { window.mimic.overlayHoverInteractive(false); } catch (err) {}
-    }
-  });
+  // Class picker: change → POST the pick to the local agent (which forwards to
+  // the bot). Hover-interact is the _zoneOf owner above.
   bodyEl.addEventListener('change', function(e){
     var sel = e.target && e.target.classList && e.target.classList.contains('clspick') ? e.target : null;
     if (!sel) return;
@@ -328,22 +447,115 @@
   var _goneExpanded = false;
   var _lastWho = null;
 
+  // Zek only (the guild lead, 2026-09-26: "a Zek only mode"): both lists show just the players known
+  // to be Zek, by their guild or inferred by the bot. The Target card stays whoever it is. Remembered
+  // on this machine.
+  function isZek(p){ return !!(p && (p.zek || (p.known && p.known.is_zek))); }
+  function listsFor(w, zekOnly){
+    var cur  = (w && Array.isArray(w.current)) ? w.current : [];
+    var gone = (w && Array.isArray(w.recentGone)) ? w.recentGone : [];
+    if (!zekOnly) return { current: cur, gone: gone, total: cur.length };
+    return { current: cur.filter(isZek), gone: gone.filter(isZek), total: cur.length };
+  }
+  var _zekOnly = false;
+  try { _zekOnly = localStorage.getItem('wp:who:zekOnly') === '1'; } catch (e) {}
+  var zekBtn = document.getElementById('zek-btn');
+  function _paintZekBtn(){
+    if (!zekBtn) return;
+    zekBtn.classList.toggle('on', _zekOnly);
+    zekBtn.setAttribute('aria-pressed', _zekOnly ? 'true' : 'false');
+  }
+  _paintZekBtn();
+  if (zekBtn) {
+    zekBtn.addEventListener('click', function(){
+      _zekOnly = !_zekOnly;
+      try { localStorage.setItem('wp:who:zekOnly', _zekOnly ? '1' : '0'); } catch (e) {}
+      _paintZekBtn();
+      renderWho(_lastWho);
+    });
+  }
+
+  // Zone column (the guild lead, 2026-09-29: "lets include zone on /who overlay as toggleable column").
+  // Off until switched on; remembered on this machine. The agent sends each row's zone from its last
+  // /who: /who all names everyone's, a plain /who names yours.
+  var _zoneCol = false;
+  try { _zoneCol = localStorage.getItem('wp:who:zoneCol') === '1'; } catch (e) {}
+  function zoneColHtml(zone){
+    return '<span class="zn"' + (zone ? ' title="' + esc(zone) + '"' : '') + '>' + esc(zone || '') + '</span>';
+  }
+  var zoneBtn = document.getElementById('zone-btn');
+  function _paintZoneBtn(){
+    if (!zoneBtn) return;
+    zoneBtn.classList.toggle('on', _zoneCol);
+    zoneBtn.setAttribute('aria-pressed', _zoneCol ? 'true' : 'false');
+  }
+  _paintZoneBtn();
+  if (zoneBtn) {
+    zoneBtn.addEventListener('click', function(){
+      _zoneCol = !_zoneCol;
+      try { localStorage.setItem('wp:who:zoneCol', _zoneCol ? '1' : '0'); } catch (e) {}
+      _paintZoneBtn();
+      renderWho(_lastWho);
+    });
+  }
+
+  // The targeted player's card: name, 🐺 / (main) / flags, class + level columns, then the guild on its
+  // own line under the name when we know it. The agent has already taken them out of the lists below.
+  function targetHtml(t){
+    var left = '<span class="nm">' + esc(t.name || '?') + '</span>';
+    if (t.mimic) left += '<span class="wolf" title="Running Mimic">🐺</span>';
+    if (t.main)  left += '<span class="main">(' + esc(t.main) + ')</span>';
+    if (t.anonymous) left += '<span class="flag anon">anon</span>';
+    if (t.gm)        left += '<span class="flag gm">GM</span>';
+    if (t.zek)       left += '<span class="flag zek">ZEK</span>';
+    var col = '<span class="klass' + (t.class_src === 'history' ? ' deanon' : '') + '">' + esc(t.class || '') + '</span>';
+    col    += '<span class="lvl'   + (t.level_src === 'history' ? ' deanon' : '') + '">' + (t.level ? 'L' + t.level : '') + '</span>';
+    if (_zoneCol) col += zoneColHtml(null);   // Holds the column so the card lines up with the list.
+    var h = '<div class="sec tgt"><div class="sec-h">Target</div><div class="rowlist">';
+    h += '<div class="r' + (t.zek ? ' zek' : '') + '"><span class="left">' + left + '</span>' + col + '</div>';
+    if (t.guild) {
+      var fromHistory = t.guild_src === 'history';
+      h += '<div class="guildline' + (fromHistory ? ' deanon' : '') + '"'
+        + (fromHistory ? ' title="From /who history: the last guild anyone saw"' : '') + '>&lt;'
+        + esc(t.guild) + '&gt;</div>';
+    }
+    return h + '</div></div>';
+  }
+  function safeTarget(t){
+    try { return t ? targetHtml(t) : ''; }
+    catch (err) { return ''; }
+  }
+
   // Build + paint the /who body from a whoSnapshot. Extracted from tick() so the
   // collapse toggle can re-render immediately from _lastWho without waiting for
   // the next poll. Keeps the byte-stability guard so unchanged HTML never
   // repaints (no flicker / lost hover).
   function renderWho(w){
     _lastWho = w;
-    if (!w || !Array.isArray(w.current) || !w.current.length) {
+    var hasList = !!(w && Array.isArray(w.current) && w.current.length);
+    var tgt = w ? safeTarget(w.target) : '';
+    if (!hasList && !tgt) {
       bodyEl.innerHTML = ''; bodyEl.__wpHtml = ''; emptyEl.style.display = 'block'; _requestAutoHeight(); return;
     }
-    emptyEl.style.display = 'none';
-    var h = '';
-    h += '<div class="sec"><div class="sec-h">Current <span class="n">' + w.current.length + '</span> · ' + ago(new Date(w.capturedAt).toISOString()) + ' ago</div><div class="rowlist">';
-    for (var i=0;i<w.current.length;i++) h += safeRow(w.current[i], false);
-    h += '</div></div>';
-    if (Array.isArray(w.recentGone) && w.recentGone.length) {
-      var gone = w.recentGone;
+    emptyEl.style.display = hasList ? 'none' : 'block';
+    var lists = listsFor(w, _zekOnly);
+    // The chips count what the Zek switch leaves; the class/guild filters then narrow it.
+    _paintFilterChrome(lists.current.concat(lists.gone));
+    var filtOn = whoFiltActive(_filt);
+    lists.current = whoSortRows(whoFilterRows(lists.current, _filt), _sortBy);
+    lists.gone    = whoSortRows(whoFilterRows(lists.gone, _filt), _sortBy);
+    var h = tgt;
+    if (hasList) {
+      var head = (_zekOnly || filtOn)
+        ? (_zekOnly ? 'Zek' : 'Current') + ' <span class="n">' + lists.current.length + '</span> of ' + lists.total
+        : 'Current <span class="n">' + lists.total + '</span>';
+      h += '<div class="sec"><div class="sec-h">' + head + ' · ' + ago(new Date(w.capturedAt).toISOString()) + ' ago</div><div class="rowlist">';
+      if (!lists.current.length) h += '<div class="nozek">' + (filtOn ? 'Nobody in your last /who matches the filter' : 'No Zek in your last /who') + '</div>';
+      for (var i=0;i<lists.current.length;i++) h += safeRow(lists.current[i], false);
+      h += '</div></div>';
+    }
+    if (lists.gone.length) {
+      var gone = lists.gone;
       var total = gone.length;
       var collapsed = !_goneExpanded && total > GONE_CAP;
       var shown = collapsed ? GONE_CAP : total;
@@ -363,19 +575,85 @@
     }
   }
 
+  // Title-bar filter buttons + the chip panel. The panel's HTML is rebuilt on every render (counts
+  // move), behind the same byte guard as the list; its open/closed state is the JS var _panel.
+  var fpanelEl = document.getElementById('fpanel');
+  function _paintFilterChrome(rows){
+    var btns = document.querySelectorAll('.fbtn[data-fbtn]');
+    for (var i = 0; i < btns.length; i++) {
+      var k = btns[i].getAttribute('data-fbtn');
+      var n = k === 'class' ? _filt.classes.length : (k === 'guild' ? _filt.guilds.length : 0);
+      var txt = k === 'sort' ? '⇅ ' + _sortBy : (k.toUpperCase() + (n ? ' ' + n : ''));
+      if (btns[i].textContent !== txt) btns[i].textContent = txt;
+      btns[i].classList.toggle('on', (k !== 'sort' && (n > 0 || _panel === k)) || (k === 'sort' && _sortBy !== 'seen'));
+    }
+    var ph = _panel ? whoPanelHtml(_panel, rows) : '';
+    if (fpanelEl.__wpHtml !== ph) { fpanelEl.innerHTML = ph; fpanelEl.__wpHtml = ph; }
+    fpanelEl.classList.toggle('open', !!_panel);
+  }
+  document.querySelector('.title').addEventListener('click', function(e){
+    var b = e.target && e.target.closest ? e.target.closest('[data-fbtn]') : null;
+    if (!b) return;
+    var k = b.getAttribute('data-fbtn');
+    if (k === 'sort') { _sortBy = WHO_SORTS[(WHO_SORTS.indexOf(_sortBy) + 1) % WHO_SORTS.length]; _saveFilters(); }
+    else _panel = (_panel === k) ? null : k;
+    renderWho(_lastWho);
+  });
+  fpanelEl.addEventListener('click', function(e){
+    var c = e.target && e.target.closest ? e.target.closest('.fchip') : null;
+    if (!c) return;
+    var clear = c.getAttribute('data-fclear');
+    if (clear) { if (clear === 'class') _filt.classes = []; else _filt.guilds = []; }
+    else {
+      var list = c.getAttribute('data-fk') === 'class' ? _filt.classes : _filt.guilds;
+      var v = c.getAttribute('data-fv') || '';
+      var at = list.indexOf(v);
+      if (at >= 0) list.splice(at, 1); else list.push(v);
+    }
+    _saveFilters();
+    renderWho(_lastWho);
+  });
+
+  // Height grip: drag to set the window's height (it stays there and the list scrolls); double-click
+  // to go back to fitting the list. Measured in screen px and converted by the overlay's own scale,
+  // so it works for a window that grows upward too.
+  var gripEl = document.getElementById('grip');
+  gripEl.addEventListener('pointerdown', function(e){
+    if (e.button !== 0) return;
+    e.preventDefault();
+    var z = (window.outerHeight && window.innerHeight) ? (window.outerHeight / window.innerHeight) : 1;
+    _gripDrag = { y0: e.screenY, h0: _fixedH != null ? _fixedH : document.getElementById('wrap').scrollHeight + 8, z: z > 0 ? z : 1 };
+    gripEl.classList.add('drag');
+    try { gripEl.setPointerCapture(e.pointerId); } catch (err) {}
+    _hover(true);
+  });
+  gripEl.addEventListener('pointermove', function(e){
+    if (!_gripDrag) return;
+    var h = Math.round(_gripDrag.h0 + (e.screenY - _gripDrag.y0) / _gripDrag.z);
+    _fixedH = Math.max(WHO_MIN_H, Math.min(WHO_MAX_H, h));
+    document.body.classList.add('fixed');
+    _requestAutoHeight();
+  });
+  function _endGrip(e){
+    if (!_gripDrag) return;
+    _gripDrag = null;
+    gripEl.classList.remove('drag');
+    try { gripEl.releasePointerCapture(e.pointerId); } catch (err) {}
+    try { localStorage.setItem('wp:who:height', String(_fixedH)); } catch (err) {}
+    if (!_zoneOf(document.elementFromPoint(e.clientX, e.clientY))) _hover(false);
+  }
+  gripEl.addEventListener('pointerup', _endGrip);
+  gripEl.addEventListener('pointercancel', _endGrip);
+  gripEl.addEventListener('dblclick', function(){
+    _fixedH = null;
+    document.body.classList.remove('fixed');
+    try { localStorage.setItem('wp:who:height', 'fit'); } catch (err) {}
+    _requestAutoHeight();
+  });
+
   // "recently gone" collapse toggle — delegated off bodyEl (rebuilt every poll).
-  // Hover-interact handshake is mandatory (locked overlay is click-through), and
-  // the click flips the JS var + re-renders from _lastWho.
-  bodyEl.addEventListener('mouseover', function(e){
-    if (e.target && e.target.classList && e.target.classList.contains('gone-toggle')) {
-      try { window.mimic.overlayHoverInteractive(true); } catch (err) {}
-    }
-  });
-  bodyEl.addEventListener('mouseout', function(e){
-    if (e.target && e.target.classList && e.target.classList.contains('gone-toggle')) {
-      try { window.mimic.overlayHoverInteractive(false); } catch (err) {}
-    }
-  });
+  // Hover-interact is the _zoneOf owner above; the click flips the JS var and
+  // re-renders from _lastWho.
   bodyEl.addEventListener('click', function(e){
     var tog = e.target && e.target.closest ? e.target.closest('[data-gone-toggle]') : null;
     if (!tog) return;

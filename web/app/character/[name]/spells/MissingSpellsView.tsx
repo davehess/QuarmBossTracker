@@ -1,14 +1,16 @@
 'use client';
 
 // MissingSpellsView — the missing-spells list with per-spell "where from"
-// dropdowns, Expand all, and the zone-by-zone 🛒 Shopping list mode (Hitya
+// dropdowns, Expand all, and the zone-by-zone 🛒 Shopping list mode (the guild lead
 // 2026-08-18). Sources come pre-resolved from OUR mirror via
 // spell_scroll_sources — PQDI is the escape hatch, not the answer.
 
 import { useMemo, useState } from 'react';
-import { tierForLevel } from '@/lib/popSpells';
-import type { ItemSources } from '@/lib/spellSources';
-import { shoppingList, type MissingForShopping } from '@/lib/spellSources';
+import Link from 'next/link';
+import { POP_TURN_INS, type TurnInKey } from '@/lib/popSpells';
+import type { ItemSources, VendorSpots } from '@/lib/spellSources';
+import { shoppingList, spotCommand, type MissingForShopping } from '@/lib/spellSources';
+import CopyChip from '@/components/CopyChip';
 import SpellLevelEditor from './SpellLevelEditor';
 
 export type MissingSpellRow = {
@@ -23,7 +25,20 @@ export type MissingSpellRow = {
 
 const zoneLabel = (z: { short: string | null; long: string | null }) => z.long || z.short || 'unknown zone';
 
-function SourcePanel({ src, itemId }: { src: ItemSources | undefined; itemId: number | null }) {
+// A vendor or dropper: its name opens its NPC page (every spawn point, loot, faction).
+function NpcName({ npcId, name }: { npcId: number | null; name: string }) {
+  return npcId
+    ? <Link href={`/db/npc/${npcId}`} className="hover:text-blue hover:underline">{name}</Link>
+    : <>{name}</>;
+}
+
+// 📍 copies the vendor's /map Y X for that zone; nothing when we have no spawn point.
+function MapChip({ spots, npcId, zone }: { spots: VendorSpots; npcId: number | null; zone: string | null }) {
+  const s = npcId && zone ? spots[npcId]?.[zone] : undefined;
+  return s ? <CopyChip text={spotCommand(s)} label="📍" /> : null;
+}
+
+function SourcePanel({ src, itemId, spots }: { src: ItemSources | undefined; itemId: number | null; spots: VendorSpots }) {
   const pqdi = itemId ? `https://www.pqdi.cc/item/${itemId}` : null;
   const merchants = src?.merchants ?? [];
   const drops = src?.drops ?? [];
@@ -35,8 +50,12 @@ function SourcePanel({ src, itemId }: { src: ItemSources | undefined; itemId: nu
           <ul className="mt-0.5 space-y-0.5">
             {merchants.slice(0, 8).map(v => (
               <li key={`${v.npcId}-${v.name}`} className="text-text">
-                {v.name}
-                <span className="text-dim"> — {v.zones.length ? v.zones.map(zoneLabel).join(', ') : 'spawn spot unknown'}</span>
+                <NpcName npcId={v.npcId} name={v.name} />
+                <span className="text-dim"> — {v.zones.length ? v.zones.map((z, i) => (
+                  <span key={z.short ?? i}>
+                    {i > 0 && ', '}{zoneLabel(z)} <MapChip spots={spots} npcId={v.npcId} zone={z.short} />
+                  </span>
+                )) : 'spawn spot unknown'}</span>
               </li>
             ))}
             {merchants.length > 8 && <li className="text-dim">…and {merchants.length - 8} more vendors</li>}
@@ -49,7 +68,7 @@ function SourcePanel({ src, itemId }: { src: ItemSources | undefined; itemId: nu
           <ul className="mt-0.5 space-y-0.5">
             {drops.slice(0, 6).map(d => (
               <li key={`${d.npcId}-${d.name}`} className="text-text">
-                {d.name}
+                <NpcName npcId={d.npcId} name={d.name} />
                 <span className="text-dim"> — {d.zones.length ? d.zones.map(zoneLabel).join(', ') : 'zone unknown'}</span>
               </li>
             ))}
@@ -72,12 +91,17 @@ function SourcePanel({ src, itemId }: { src: ItemSources | undefined; itemId: nu
 }
 
 export default function MissingSpellsView({
-  missing, sources, officer, character,
+  missing, sources, spots = {}, officer, character, popTiers = {},
 }: {
   missing: MissingSpellRow[];
   sources: Record<number, ItemSources>;
+  spots?: VendorSpots;
   officer: boolean;
   character: string;
+  // spell name (lowercased) -> parchment tier, from the quest-script pools
+  // for THIS character's class (lib/popSpells.poolTierByName). Replaces the
+  // level-based guess that overcounted (Lacunanight, 2026-08-25).
+  popTiers?: Record<string, TurnInKey>;
 }) {
   const [mode, setMode] = useState<'levels' | 'shopping'>('levels');
   const [open, setOpen] = useState<Set<string>>(new Set());
@@ -159,22 +183,24 @@ export default function MissingSpellsView({
                         </span>
                         <button
                           onClick={() => toggle(m.spell_name)}
-                          className={`${m.pop ? 'text-dim' : 'text-text'} hover:text-blue text-left`}
+                          className="text-text hover:text-blue text-left"
                           title="Show where this comes from"
                         >
                           {m.spell_name} <span className="text-dim text-[10px]">{isOpen(m.spell_name) ? '▾' : '▸'}</span>
                         </button>
                         {m.pop && (() => {
-                          // Name the TURN-IN, not just the era: a PoP spell is
-                          // bought with a parchment whose tier follows the
-                          // spell's level (web/lib/popSpells.ts).
-                          const t = tierForLevel(m.scribe_level);
+                          // Name the TURN-IN from the quest-script pools —
+                          // not the spell's level, which overcounted
+                          // (Lacunanight, 2026-08-25). No pool entry = the
+                          // class's turn-ins can't award it.
+                          const k = popTiers[m.spell_name.toLowerCase()];
+                          const t = k ? POP_TURN_INS[k] : null;
                           return (
                             <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-blue/20 border border-blue/60 text-blue"
                                   title={t
-                                    ? `${t.blurb} Hand a ${t.item} to your class's spell NPC — the spell you get is random from that tier.`
-                                    : "Planes of Power — locked until Oct 1. Can't scribe it yet."}>
-                              {t ? `PoP · ${t.item}` : 'PoP'}
+                                    ? `${t.blurb}`
+                                    : 'Planes of Power — not in your class trainer\u2019s turn-in lists (research, or another class\u2019s tradeable scroll).'}>
+                              {t ? `PoP \u00b7 ${t.item}` : 'PoP \u00b7 not a turn-in'}
                             </span>
                           );
                         })()}
@@ -188,7 +214,7 @@ export default function MissingSpellsView({
                         )}
                       </div>
                       {isOpen(m.spell_name) && (
-                        <SourcePanel src={m.scroll_item_id ? sourceMap.get(m.scroll_item_id) : undefined} itemId={m.scroll_item_id} />
+                        <SourcePanel src={m.scroll_item_id ? sourceMap.get(m.scroll_item_id) : undefined} itemId={m.scroll_item_id} spots={spots} />
                       )}
                     </li>
                   ))}
@@ -218,8 +244,8 @@ export default function MissingSpellsView({
               </h3>
               <ul className="text-sm space-y-0.5">
                 {z.spells.map(s => (
-                  <li key={s.spellName} className="flex items-baseline gap-2">
-                    <span className={s.pop ? 'text-dim' : 'text-text'}>
+                  <li key={s.spellName} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    <span className="text-text">
                       {s.spellName}
                       {s.level != null && <span className="text-dim text-[10px]"> · L{s.level}</span>}
                     </span>
@@ -228,15 +254,23 @@ export default function MissingSpellsView({
                             title="Sold only in this zone.">only here</span>
                     )}
                     {s.pop && (() => {
-                      const t = tierForLevel(s.level ?? null);
+                      const k = popTiers[s.spellName.toLowerCase()];
+                      const t = k ? POP_TURN_INS[k] : null;
                       return (
                         <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-blue/20 border border-blue/60 text-blue"
-                              title={t ? t.blurb : 'Planes of Power'}>
-                          {t ? `PoP · ${t.item}` : 'PoP'}
+                              title={t ? t.blurb : 'Planes of Power \u2014 not in your class trainer\u2019s turn-in lists.'}>
+                          {t ? `PoP \u00b7 ${t.item}` : 'PoP'}
                         </span>
                       );
                     })()}
-                    <span className="text-dim text-[10px]">{s.vendors.slice(0, 3).join(', ')}{s.vendors.length > 3 ? ` +${s.vendors.length - 3}` : ''}</span>
+                    <span className="text-dim text-[10px]">
+                      {s.vendors.slice(0, 3).map((v, i) => (
+                        <span key={`${v.npcId}-${v.name}`}>
+                          {i > 0 && ', '}<NpcName npcId={v.npcId} name={v.name} /> <MapChip spots={spots} npcId={v.npcId} zone={z.zoneShort} />
+                        </span>
+                      ))}
+                      {s.vendors.length > 3 ? ` +${s.vendors.length - 3}` : ''}
+                    </span>
                     {s.heldBy.length > 0 && <span className="text-green text-[10px]">🎒 {s.heldBy.join(', ')}</span>}
                   </li>
                 ))}
@@ -249,7 +283,7 @@ export default function MissingSpellsView({
               <p className="text-xs text-dim mb-1">Open these in the By-level view for their droppers.</p>
               <ul className="text-sm grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0.5">
                 {shopping.noVendor.map(m => (
-                  <li key={m.spell_name} className={m.pop ? 'text-dim' : 'text-text'}>
+                  <li key={m.spell_name} className="text-text">
                     {m.spell_name}{m.scribe_level != null && <span className="text-dim text-[10px]"> · L{m.scribe_level}</span>}
                   </li>
                 ))}

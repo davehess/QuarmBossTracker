@@ -1,23 +1,29 @@
-# Feature request for Zeal: expose `spawn_id` on the named-pipe target/pet gauges
+# Zeal: expose spawn ids on the named pipe — the EVIDENCE
 
-**Status:** draft to send upstream to [CoastalRedwood/Zeal](https://github.com/CoastalRedwood/Zeal).
-This is not a Wolf Pack change — it documents the one upstream addition that
-would unblock same-name mob identification for any companion tool reading
-Zeal's named pipe. Keep it here so the ask (and the reasoning) survives.
+**Status: FILED as [PR #229](https://github.com/CoastalRedwood/Zeal/pull/229)
+on 2026-08-31, implementing the pipe half of upstream issue #218.** the guild lead, 2026-08-31:
+*"I think we should prepare the pull request for Zeal to include spawn id in
+pipes. It's not happening otherwise."* Two softer approaches (a forum post on
+2026-07-20, and this document as a would-be issue) produced no response, so the
+ask is now a concrete diff.
 
-> **See also `zeal-tag-spawn-id-collision.md`** — a separate, and much cheaper,
-> upstream ask. `/tag` ALREADY carries a spawn id (and the mob name) over the
-> chat channel, and measured on 2026-08-07 it cleanly separated four
-> simultaneous same-name mobs. So the same-name problem this doc opens with is
-> partly solved already, by an operator-driven path rather than a passive one.
-> That doc reports the bug in it: Zeal applies a received tag by id alone and
-> ignores the name it was sent, so tags land on unrelated mobs across zones.
->
-> Note also the CLAUDE.md correction: the ask BELOW is aimed at the gauge
-> stream, which is the hardest possible surface to extend. The **entity**
-> surface (raid/group loops in `named_pipe.cpp`, which already dereference the
-> `Entity*` carrying `SpawnId` at `0x0094`) is a one-line change. Re-aim this
-> request there before sending it.
+👉 **The submittable PR lives in `docs/upstream/zeal-spawn-id/`** — two
+`git am`-able patches against Zeal `a5f5cbf` (1.4.5) plus the PR title, body and
+push instructions. Read that first. This file is kept for the MEASUREMENTS the
+PR body summarises, which are the actual argument and are not repeated in full
+there.
+
+⚠ **The ask below was aimed at the GAUGES, and that was wrong.** The gauges are
+a stringly-typed `GetGauge(id, text)` channel with no room for structured
+fields, which is probably why it got no traction. The patch we are sending
+targets the **entity** surface instead: the raid/group loops already hold the
+`Entity*` and dereference it for `Position`/`Heading`, so the id is 10 added
+lines. The gauge proposal is retained below only as the rejected alternative.
+
+> **See also `zeal-tag-spawn-id-collision.md`** — a separate upstream ask, and a
+> BUG rather than a feature (Zeal applies a received tag by id alone and ignores
+> the name it was sent, so tags land on unrelated mobs across zones). Do not
+> bundle the two.
 
 ---
 
@@ -73,9 +79,9 @@ A gauge object (decoded), abbreviated to the mob-relevant slots:
 ```json
 {
   "type": 2,
-  "character": "Hopeya",
+  "character": "Dalwin",
   "data": [
-    { "type": 1,  "text": "Hopeya",        "value": 999 },
+    { "type": 1,  "text": "Dalwin",        "value": 999 },
     { "type": 6,  "text": "an orc warrior", "value": 1000 },
     { "type": 16, "text": "an orc warrior", "value": 874 }
   ]
@@ -107,24 +113,48 @@ segmentation, HP-continuity matching) that work for *sequential* kills but
 **cannot** disambiguate same-name mobs that are alive simultaneously — exactly
 the case for enchanter charm rotations, adds, and pulls.
 
-## Proposed change
+## What we actually implemented (2026-08-31)
 
-**Preferred: emit the id where the pipe already holds the `Entity*`.** These are
-one-line additions to code that already dereferences the object in question, and
-they are strictly easier than the gauge change described afterwards.
+⚠ **This is the section that matches the patch.** Everything above is the
+argument; everything below "Secondary" is the rejected alternative. The shipped
+diff is 14 added lines and 0 changed lines in `Zeal/named_pipe.cpp`:
 
-1. **Target.** `player_data["target"] = { id, name }` sourced from
-   `get_target()->SpawnId`. This alone closes the disambiguation case for the
-   mob you are fighting.
-2. **Raid (type 5) / group (type 6) members.** Those loops already hold the
-   `Entity*` and read `->Position`, `->Heading`, `->HpCurrent` off it.
-   `raid_data["spawn_id"] = entity->SpawnId;` is one line that is never written.
-3. **Pet position.** Zeal already resolves the player's pet every frame to draw
-   the map arrow (`zone_map.cpp` `add_self_pet_position_vertices`:
-   `self->ActorInfo->PetID` → `get_entity_by_id()` → `Position`/`Heading`), but
-   the pipe emits `loc` only for raid member, group member and self. A
-   pet-tanked mob is therefore unplaceable for a companion tool while being
-   plainly visible on the user's own map.
+| Message | Key | Source |
+|---|---|---|
+| `raid` (type 5) | `spawn_id` | `entity->SpawnId` |
+| `group` (type 6) | `spawn_id` | `member->SpawnId` |
+| `player` (type 3) | `spawn_id` | `get_self()->SpawnId` |
+| `player` (type 3) | `target_id` | `get_target()->SpawnId` |
+| `player` (type 3) | `pet_id` | `get_self()->ActorInfo->PetID` |
+
+Two deliberate departures from the earlier sketch above:
+
+- **Flat scalars, not a `target: {id, name}` object.** `player_data` is flat
+  (`zone`, `location`, `heading`, `autoattack`), so `target_id` matches the
+  surrounding style. The NAME is deliberately left out: the gauge stream already
+  carries the target's display name in slot 6, and `Entity::Name` is the
+  *internal* form (`an_orc_warrior00`), so emitting it would put two different
+  spellings of the same mob on the wire. The id is the only missing piece.
+- **`pet_id` needs no entity lookup at all.** `ActorInfo->PetID` IS the pet's
+  spawn id — `zone_map.cpp` passes it straight to `get_entity_by_id`, which is
+  an O(1) bounds-checked array index. So the pet line costs a struct read.
+
+`target_id` and `pet_id` are OMITTED when there is no target / no pet, so a
+consumer tests for presence rather than for a `0`/`-1` sentinel.
+
+### ⚠ NOT in the patch: pet position
+
+The third item in the original sketch — emitting the pet's `loc`/`heading` —
+is **not** in this PR and remains an open ask. Zeal already resolves the pet
+every frame to draw the map arrow (`zone_map.cpp`
+`add_self_pet_position_vertices`), but the pipe emits `loc` only for raid
+member, group member and self, so a pet-tanked mob is unplaceable for a
+companion tool while being plainly visible on the user's own map.
+
+It was left out on purpose: it is a different kind of change (new data, not an
+id the loop already holds), and bundling it would turn a 10-line diff that is
+easy to say yes to into a design conversation. Raise it separately if this one
+lands.
 
 ### Secondary: the gauge slots
 
@@ -138,11 +168,11 @@ why this request got no traction the first time it was made.
 ```json
 {
   "type": 2,
-  "character": "Hopeya",
+  "character": "Dalwin",
   "data": [
-    { "type": 1,  "text": "Hopeya",         "value": 999 },
-    { "type": 6,  "text": "an orc warrior", "value": 1000, "spawn_id": 14823 },
-    { "type": 16, "text": "an orc warrior", "value": 874,  "spawn_id": 14911 }
+    { "type": 1,  "text": "Dalwin",         "value": 999 },
+    { "type": 6,  "text": "an orc warrior", "value": 1000, "spawn_id": 1482 },
+    { "type": 16, "text": "an orc warrior", "value": 874,  "spawn_id": 1491 }
   ]
 }
 ```
@@ -200,6 +230,40 @@ mobs while exporting the verbose pipe: **tag state does not serialize to the
 pipe** (consistent with the capture above). The ask is only to expose the id
 that tagging demonstrably already keys on.
 
+## Independent corroboration — upstream issue #218 (found 2026-08-31)
+
+**Someone else asked for this first, and got no answer either.**
+[#218](https://github.com/CoastalRedwood/Zeal/issues/218), *"[FEATURE REQUEST]
+Allow for Native Display of Zeal ID to Target Bar + Pipe Zeal ID for overlays"*,
+opened 2026-06-29 by `derekwolfson`, still open, no labels, no assignee, no
+linked branch or PR.
+
+They are running **our workaround**, arrived at independently: a `/tag` hotkey
+to force the id into the chat log, scraped back out to feed an overlay. Their
+words: *"I have a workaround that uses a zealtag hotkey to assign a tag name to
+show the ID in the log that I use to populate my overlay -- and it is fine --
+but would be nice to have that information natively available on the zeal pipe."*
+
+Verified that their ask and ours are the same field, not merely similar. The
+`156` in their example `ZEALTAG | this | Lookout Reloen | 156` is
+`Entity::SpawnId` — `nameplate.cpp` builds the broadcast with
+`int spawn_id = is_clear ? 0 : target->SpawnId;` (line 960). That is the exact
+field the patch emits as `target_id`.
+
+Two consequences:
+
+1. **The PR references #218 rather than closing it.** #218 asks for two things
+   — the pipe id AND a native target-bar display toggle — and we implement only
+   the first. `Closes #218` would auto-close on merge and drop the other half on
+   the floor, which would be rude to the person who raised it.
+2. **Their suggested key name was `NPC_ID`.** We used `target_id`/`spawn_id`
+   because these ids cover players and pets too, not just NPCs — but naming is
+   the maintainers' call and the PR says so.
+
+⚠ Spawn ids are indices into a 5,000-entry array (`kEntityIdArraySize` in
+`game_addresses.h`), so they are small numbers — their `156` is typical. Any
+example in this doc showing a five-digit id is illustrative and wrong.
+
 ## Prior outreach
 
 Posted to the Zeal community forum on 2026-07-20 ("Zeal tags exposed in
@@ -207,7 +271,7 @@ Pipes") — no responses. Filing on the GitHub repo instead, where the
 implementation context below is actionable by maintainers; the issue should
 link the forum post for continuity.
 
-## Implementation sketch (from reading upstream `main`, 2026-07-31)
+## Implementation sketch for the GAUGE path (rejected — kept for the record)
 
 Grounding for the "additive, low-risk" claim — the change is one loop in
 `Zeal/named_pipe.cpp`, `NamedPipe::main_loop()`:
@@ -232,15 +296,29 @@ gauge already reads, however the maintainers prefer to source it (directly in
 the loop, or by widening `GetGauge`'s signature). No new walk, no per-frame
 cost, no existing key changes shape.
 
-## How we intend to route this (etiquette)
+## How we routed it, and why that changed (2026-08-31)
 
-**Issue first, PR second.** This is a pipe-protocol surface — the maintainers
-may prefer a different key name, a protocol version bump, or a config toggle,
-and a cold PR would pre-decide all three. The issue carries this document's
-summary + the capture evidence + the implementation sketch, and explicitly
-offers: (a) to submit the PR ourselves if the approach is blessed, and (b) to
-test any build against the four-same-name-mob repro. Filed by the guild lead
-from their own account; this repo's tooling only prepares the material.
+This section used to read **"issue first, PR second"** — the reasoning being
+that a pipe-protocol surface is the maintainers' to shape, and a cold PR
+pre-decides the key names, any version bump, and whether it sits behind a
+config toggle.
+
+That reasoning was sound and it still is, but it assumed someone would answer.
+Two attempts got no response: the forum post (2026-07-20) and this document,
+which was never filed. So the calculus flipped — **a small diff is now the
+cheaper thing to hand a maintainer than a design question.** A PR costs them a
+review they can decline in one line; an issue costs them a conversation.
+
+What we kept from the etiquette, because it still matters:
+
+- the PR body **explicitly offers** to rename the keys, to gate them behind
+  `pipe_verbose`, or to split target/pet out of the raid/group change;
+- it **states plainly that we could not compile it** — no Windows/MSVC x86
+  environment here — and offers to test any build they produce against the
+  four-simultaneous-same-name-mob repro;
+- it links the prior forum post for continuity;
+- it is filed by the guild lead from their own account. This repo's tooling only
+  prepares the material.
 
 ## Contact
 

@@ -18,6 +18,7 @@ import type { Metadata } from 'next';
 import { supabaseAdmin } from '@/lib/supabase';
 import { Reveal, CountUp } from '@/components/about/Reveal';
 import { TankOverlayDemo, CommandCenterDemo, ChChainDemo, LootTtsDemo } from '@/components/about/OverlayDemo';
+import { AboutIllustrated, AboutTour } from './Story';
 
 export const revalidate = 3600;
 
@@ -115,8 +116,12 @@ function Chapter({
 
 /* ── page ───────────────────────────────────────────────────────────────── */
 
-export default async function AboutPage() {
+export default async function AboutPage({ searchParams }: { searchParams: Promise<{ v?: string }> }) {
   const s = await getStats();
+  // Beta: two picture-led layouts to pick from (Story.tsx). No ?v= is this page, as production has it.
+  const { v } = await searchParams;
+  if (v === 'b') return <AboutIllustrated s={s} />;
+  if (v === 'c') return <AboutTour s={s} />;
 
   return (
     <div className="space-y-20 sm:space-y-32 pb-24">

@@ -1,0 +1,33 @@
+zeal/marks/*.png: provenance
+============================
+Rendered in this repo, with no external service, from the real Zeal tag meshes: the tag-shapes
+branch of the guild lead's Zeal fork (tag_shapes.cpp), dumped by
+docs/upstream/zeal-tag-shapes/preview/dump.cpp and rasterised by export_marks.py in the same folder.
+Colours come from nameplate.cpp's TagArrowColor values and the kGuilds table. Each file is a
+face-on view, 160x160 with a transparent background.
+
+- icon-<name>.png: the symbol keys (K X A D F T WP M U N H $ E).
+- badge-<n>.png: the numbered badges ^1^ to ^12^.
+- paw-<c>.png: the paw with a letter or digit, ^P<c>^.
+- banner-<CODE>.png and guild-<CODE>.png: each guild's banner ^B<CODE>^ and icon ^I<CODE>^.
+
+The guild icons are our own drawings, made for each guild's name or theme. No guild's artwork
+was traced for them.
+
+To regenerate after a shape changes, from a checkout of the fork:
+  g++ -std=c++20 -O2 -I<zeal>/Zeal -o dump dump.cpp <zeal>/Zeal/tag_shapes.cpp && ./dump > meshes.json
+  python3 export_marks.py meshes.json <zeal>/Zeal/tag_shapes.cpp <zeal>/Zeal/tag_arrows.cpp <web>/public/zeal/marks
+
+zeal/tagicons/*: provenance
+===========================
+Picture files for Zeal's tag pictures (^I<name>^ with <name>.png or .tga in uifiles/zeal/tagicons).
+
+- EUR.png, EUR.tga: Europa's guild logo. Their guild leader sent it on 2026-09-25 and asked for it
+  to be made into a Zeal tag icon. The file was processed in this repo:
+  - the black background was removed by flood fill from the edges, with enclosed dark areas put
+    back;
+  - it was scaled to 244x256.
+  The TGA is the same pixels as the PNG, 32-bit with alpha. The logo belongs to Europa.
+
+Every picture file here must pass Zeal's own checks: a PNG or true-colour TGA, at most 512 pixels a
+side, at most 1 MB. test/zeal-icons-page.test.js enforces this.

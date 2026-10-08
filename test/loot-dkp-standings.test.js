@@ -30,7 +30,7 @@ function slice() {
 }
 const { _pickAccountDkp } = slice();
 
-// A stand-in for the real OpenDKP standings Models[] (Hitya's family).
+// A stand-in for the real OpenDKP standings Models[] (the guild lead's family).
 // The main "Hitya" reads 171 — exactly what the standings site shows for the
 // account — while the alts carry their own separate rows.
 const HITYA_STANDINGS = {

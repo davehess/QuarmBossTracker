@@ -1,6 +1,6 @@
 # Decisions — 2026-08-07
 
-Durable calls made in one long session (Hitya + cloud Claude). Recorded because
+Durable calls made in one long session (the guild lead + cloud Claude). Recorded because
 they were made in chat and chat does not survive; the rules that outlive this
 week were also folded into `CLAUDE.md`.
 
@@ -53,13 +53,13 @@ is now per-family, floored at that family's first tick, for every window —
 `GREATEST(window_start, first_attended)`, the same rule OpenDKP applies.
 Previously every member was measured against all 1,492 guild ticks ever, so
 everyone who joined after the guild started was under-reported, worst for the
-newest people. Gonner went 64% → 100%, which matches ground truth: he has never
+newest people. a member went 64% → 100%, which matches ground truth: he has never
 missed a tick.
 → migration `20260808030000_attendance_denominator_member_floor.sql`.
 
 **Roster counts: two different questions, both right.** The leader's sheet
 filters to ≥50% RA over 30 days (41 people); ours counts every raiding rank
-(64). Neither is wrong — ours is not the recruiting number. Dant and Denniker
+(64). Neither is wrong — ours is not the recruiting number. a member and a member
 sit at exactly 50%, which is where 41-vs-42 comes from.
 
 ## Releases / process
@@ -71,7 +71,7 @@ identifiers are not. Applies to graduation commit bodies (the announcer reposts
 them verbatim), `roadmapData.ts`, and any Discord-facing changelog.
 → folded into `CLAUDE.md`.
 
-**Hitya authors almost all triggers**, until the system is as granular as
+**The guild lead authors almost all triggers**, until the system is as granular as
 EQLogParser. So the officer "authoring floor" question is moot — build trigger
 features against the newest shape rather than the oldest deployed Mimic.
 
@@ -125,7 +125,7 @@ NOT evidence the broadcast happened.
 
 **A capped DISPLAY query must never double as a SET.** `bid-history` seeded the
 "already won" set from `wins` — `opendkp_loot … order=fetched_at.desc&limit=100`.
-The Hitya/Melting/Canopy family has 187 awards, so 87 read as unwon and came back
+The the guild lead/a member/a member family has 187 awards, so 87 read as unwon and came back
 as "bid on but not yet won" and RECENT MISSES. The three items reported sat at
 rows 101, 120 and 184. Worse, `fetched_at` is the MIRROR SYNC time, so *which*
 100 survived would have reshuffled on every weekly sync. Won-set is now its own
@@ -193,7 +193,7 @@ history.** Every beta build cut a tag (`v2.3.4-beta.1` … `v2.3.5-beta.1`)
 pointing at its commit, so the discarded branch history stays reachable. Verify
 that before any future force-push; it is what makes this reversible.
 
-**Version call: the graduation shipped as 2.3.4, not 2.4.0** (Hitya). The park
+**Version call: the graduation shipped as 2.3.4, not 2.4.0** (the guild lead). The park
 IS the line's target — cut stable at whatever the line was parked at rather than
 re-deriving a number from how big the feature set feels.
 
@@ -201,9 +201,9 @@ re-deriving a number from how big the feature set feels.
 environment (`production`), ONE service, `source.branch = main`. Checked rather
 than assumed. Nothing to remove.
 
-**The web beta became `b.wolfpack.quest`** (Hitya, same session). First pass
+**The web beta became `b.wolfpack.quest`** (the guild lead, same session). First pass
 disabled beta web builds entirely on "we don't run either component
-separately"; Hitya then asked for the better version — *put a `b.` in front of
+separately"; the guild lead then asked for the better version — *put a `b.` in front of
 any page to see the beta of it, with a beta tag at the top*. So the build is
 back ON and now has a real address instead of an unguessable preview URL.
 Superseded within the hour; the interesting part is WHY the first answer was
@@ -266,7 +266,7 @@ shipped from them (3.5.44–3.5.48).
 | Zone map overlay | blocked on a 1–2h in-game coordinate spike (docs say Zeal transposes x/y; the dashboard path disagrees) |
 | Report 04 P3–P5 | taunt-emote attribution, wildcard verb fallback, EQMac threat weights |
 | Archived logs | drop out of the smart-backfill picker until moved back |
-| ~~Release naming~~ | **DECIDED 2026-08-08** — the tag/trigger/parser graduation is named **"Tag! You're spawn_id it!"** (Hitya). No standing theme system; names stay ad-hoc per release |
+| ~~Release naming~~ | **DECIDED 2026-08-08** — the tag/trigger/parser graduation is named **"Tag! You're spawn_id it!"** (the guild lead). No standing theme system; names stay ad-hoc per release |
 | ~~Graduate "Tag! You're spawn_id it!"~~ | **DONE 2026-08-09** — Mimic 2.3.4 stable + agent 3.5.54 to the whole Windows fleet, by file-level promotion (never a branch merge: `beta` was 79k lines stale on bot/web/docs). Re-park beta at 2.3.5 |
 | ~~Beta's test suite is a SUBSET of main's~~ | **FIXED 2026-08-09** by the resync — beta went from 35 test files to 90. It was 55 files short, which is why the `{s}` P1 shipped in ten releases. Re-sync after every graduation or it drifts back |
 | ~~beta ↔ main drift~~ | **FIXED 2026-08-09** — beta re-synced to `main` + the Mimic park (was 79,199 lines behind). Rule + procedure in `CLAUDE.md` → Branches |

@@ -2,12 +2,12 @@
 
 // "Characters we think are yours" — the MEMBER side of character linking.
 //
-// Hitya 2026-08-20: "I need a way for the end user that we suspect these are a
+// The guild lead 2026-08-20: "I need a way for the end user that we suspect these are a
 // part of to tell us about these users." Until now the only way an uploading-
 // but-unlinked character got filed was an officer working /admin/links, and
 // ~110 characters were sitting there unclaimed — mostly traders and bank
 // mules, which an officer cannot classify anyway (they don't know whose
-// Beltbroker is whose).
+// A member is whose).
 //
 // The person whose Mimic uploaded the file DOES know. The agent authenticates
 // as them, so `agent_upload_stats.uploaded_by_discord_id` is a first-party
@@ -25,6 +25,7 @@ import { revalidatePath } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { raidAltVerdict, TRADER_DEFAULTS } from '@/lib/characterRoles';
+import { GUILD_TAG } from '@/lib/guild';
 
 type Result = { ok: boolean; error?: string };
 
@@ -50,7 +51,7 @@ async function me() {
   // Family root name for main_name, same rule the mule upload uses.
   const { data: mine } = await admin
     .from('characters').select('name, main_name')
-    .eq('guild_id', 'wolfpack').in('discord_id', [...household]).limit(50);
+    .eq('guild_id', GUILD_TAG).in('discord_id', [...household]).limit(50);
   const familyMain = ((mine ?? []) as { name: string; main_name: string | null }[])
     .map(c => c.main_name || c.name).find(Boolean) || null;
 
@@ -77,7 +78,7 @@ async function assertClaimable(
 
   const { data: existing } = await admin
     .from('characters').select('discord_id')
-    .eq('guild_id', 'wolfpack').ilike('name', name).maybeSingle();
+    .eq('guild_id', GUILD_TAG).ilike('name', name).maybeSingle();
   const owner = (existing as { discord_id: string | null } | null)?.discord_id;
   if (owner && !household.has(owner)) {
     return { ok: false, error: 'that character is already linked to another member' };
@@ -97,7 +98,7 @@ export async function claimAsTrader(name: string): Promise<Result> {
   // Upsert rather than update: some uploading characters have no roster row at
   // all yet (the agent writes inventory keyed by name, not by a characters row).
   const { error } = await ctx.admin.from('characters').upsert({
-    guild_id:   'wolfpack',
+    guild_id:   GUILD_TAG,
     name:       clean,
     discord_id: ctx.discordId,
     rank:       'Trader',
@@ -132,11 +133,11 @@ export async function claimAsRaidAlt(name: string, cls: string, level: number): 
   // Parent under the member's own OpenDKP family root when we have one.
   const { data: parent } = await ctx.admin
     .from('characters').select('name, opendkp_id')
-    .eq('guild_id', 'wolfpack').ilike('name', ctx.familyMain || clean).maybeSingle();
+    .eq('guild_id', GUILD_TAG).ilike('name', ctx.familyMain || clean).maybeSingle();
   const p = parent as { name: string; opendkp_id: number | null } | null;
 
   const { error } = await ctx.admin.from('opendkp_register_requests').insert({
-    guild_id: 'wolfpack',
+    guild_id: GUILD_TAG,
     name: clean,
     class: cls,
     race: 'Human',                      // same correctable placeholder the officer row uses
@@ -168,7 +169,7 @@ export async function dismissSuspected(name: string): Promise<Result> {
   if (!gate.ok) return gate;
 
   const { error } = await ctx.admin.from('characters').upsert({
-    guild_id: 'wolfpack', name: clean, link_ignored: true, active: false,
+    guild_id: GUILD_TAG, name: clean, link_ignored: true, active: false,
   }, { onConflict: 'guild_id,name' });
   if (error) return { ok: false, error: error.message };
 

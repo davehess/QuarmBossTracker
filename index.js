@@ -1,6 +1,42 @@
 // index.js — Quarm Raid Timer Bot
 
 require('dotenv').config();
+// ── guild/discord.json → unset env anchors (the guild kit, slice 1a) ────────
+// The bot resolves every Discord anchor straight from process.env, at ~54
+// sites — there is no single resolver to put a file layer BEHIND. So the file
+// layer goes in FRONT: read guild/discord.json once, here, before anything
+// reads env, and fill ONLY the keys env does not already set. Env wins, so a
+// deployment that sets everything (ours) is untouched, and a fork that commits
+// its provisioner-generated discord.json needs no anchor env at all.
+// Runs immediately after dotenv on purpose: utils/hateBoard.js reads env at
+// require time, so this must precede every require below.
+//
+// Refuses secret-shaped keys (SPEC / TOKEN / KEY / SECRET / PASSWORD) by
+// design. A channel password pasted into a committed file must not silently
+// work — it is logged and skipped, so the mistake is visible instead of
+// load-bearing. Names are config; passwords are secrets (guild/README.md).
+// Design: docs/DESIGN-guild-kit.md §2.
+function _loadGuildDiscordJson(dir, env) {
+  const fs = require('fs'), path = require('path');
+  const out = { filled: [], skipped: [], refused: [] };
+  const file = path.join(dir, 'discord.json');
+  let raw;
+  try { raw = fs.readFileSync(file, 'utf8'); } catch { return out; }   // no file → nothing to do
+  let obj;
+  try { obj = JSON.parse(raw); }
+  catch (e) { console.warn(`[guild] ${file} is not valid JSON — ignored (${e.message})`); return out; }
+  for (const [k, v] of Object.entries(obj || {})) {
+    if (k.startsWith('_') || v == null) continue;                        // _comment, nulls
+    if (/SPEC|TOKEN|KEY|SECRET|PASSWORD/.test(k)) { out.refused.push(k); continue; }
+    if (env[k] != null && String(env[k]).trim() !== '') { out.skipped.push(k); continue; }
+    env[k] = Array.isArray(v) ? v.join(',') : String(v);
+    out.filled.push(k);
+  }
+  if (out.refused.length) console.warn(`[guild] discord.json: refused secret-shaped key(s) ${out.refused.join(', ')} — secrets belong in .env, never in a committed file`);
+  if (out.filled.length)  console.log(`[guild] discord.json filled ${out.filled.length} unset anchor(s): ${out.filled.join(', ')}`);
+  return out;
+}
+_loadGuildDiscordJson(require('path').join(__dirname, 'guild'), process.env);
 
 const {
   Client, GatewayIntentBits, Collection, Events, REST, Routes, MessageFlags,
@@ -206,6 +242,7 @@ const {
   getLastAnnouncedAgentVersion, setLastAnnouncedAgentVersion,
   recordAgentUpload, clearAgentActivity,
   getPetOwners, addPetOwners, clearPetOwners, petOwnerEntries,
+  addPetSpawnIds, getPetSpawnIds,
   mergeWhoData, applyKnownZekTips,
   clearAllPendingLoot,
   getAllLiveKills, clearLiveKill,
@@ -231,13 +268,17 @@ const {
 const {
   postKillUpdate, postOrUpdateExpansionBoard,
 } = require('./utils/killops');
-const { hasAllowedRole, allowedRolesList, hasOfficerRole, officerRolesList } = require('./utils/roles');
+const { hasAllowedRole, allowedRolesList, hasOfficerRole, officerRolesList, isGuildMember, MEMBERS_ONLY } = require('./utils/roles');
 const mimicLink = require('./utils/mimicLink');
+const popFlagStages = require('./utils/popFlagStages');
 const { EXPANSION_ORDER, getThreadId, getBossExpansion, isPopLocked, isPopEraLocked } = require('./utils/config');
 const { dedupParseDeaths } = require('./utils/parseDeaths');
 const clockOffset = require('./utils/clockOffset');
 const kvLatch = require('./utils/kvLatch');
-const { discordAbsoluteTime, discordRelativeTime } = require('./utils/timer');
+const _raidGroups = require('./utils/raidGroups');
+const _mainAssist = require('./utils/mainAssist');
+const _mainAssistStore = _mainAssist.createStore();
+const { discordAbsoluteTime, discordRelativeTime, isShortTimerBoss } = require('./utils/timer');
 
 function getBosses() {
   delete require.cache[require.resolve('./data/bosses.json')];
@@ -257,7 +298,7 @@ const _intents = [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, Gate
 if (process.env.MESSAGE_CONTENT_INTENT === '1') _intents.push(GatewayIntentBits.MessageContent);
 const client = new Client({ intents: _intents });
 
-// ── SUNO-link mover (Hitya 2026-07-19) ──────────────────────────────────────
+// ── SUNO-link mover (the guild lead, 2026-07-19) ──────────────────────────────────────
 // Suno links from configured members belong in #the-slop: repost there with
 // attribution, delete the original, leave a short self-deleting pointer.
 // Requires MESSAGE_CONTENT_INTENT=1 (see above) — without it content is empty
@@ -267,6 +308,7 @@ const _SUNO_USERS = String(process.env.SUNO_MOVER_USERS || 'workoutbro').toLower
 const _SUNO_RX = /https?:\/\/(?:www\.)?(?:app\.)?suno\.(?:com|ai)\/\S+/i;
 client.on(Events.MessageCreate, async (msg) => {
   try {
+    if (msg.channelId === _QUARM_NOTES_CHANNEL_ID) _quarmNoteLive(msg);   // patch-notes mirror; crossposts are bot posts, so this goes before the early-outs
     if (!msg.guildId || msg.author?.bot) return;
     if (msg.channelId === _SLOP_CHANNEL_ID) return;
     if (!_SUNO_USERS.includes(String(msg.author?.username || '').toLowerCase())) return;
@@ -438,6 +480,16 @@ client.once(Events.ClientReady, async (readyClient) => {
   const FEEDBACK_POLL_MS = parseInt(process.env.FEEDBACK_POLL_MS, 10) || 60_000;
   setTimeout(() => relayWebFeedback(readyClient).catch(() => {}), 12_000);
   setInterval(() => relayWebFeedback(readyClient).catch(() => {}), FEEDBACK_POLL_MS);
+  setTimeout(() => _backfillMimicFeedbackButtonsOnce(readyClient)
+    .catch(err => console.warn('[feedback] button backfill:', err?.message)), 20_000);
+  setTimeout(() => _backfillFeedbackRefsOnce(readyClient)
+    .catch(err => console.warn('[feedback-ref] card backfill:', err?.message)), 45_000);
+  // Reports closed by commits ("Fixes FB-12"): every 10 minutes, two unauthenticated GitHub calls.
+  setTimeout(() => _feedbackCommitWatch(readyClient).catch(err => console.warn('[feedback-ref] watch:', err?.message)), 90_000);
+  setInterval(() => _feedbackCommitWatch(readyClient).catch(err => console.warn('[feedback-ref] watch:', err?.message)), 10 * 60_000);
+  // Quarm patch notes mirror (it never throws): a minute after boot, then every 6 hours.
+  setTimeout(() => _syncQuarmPatchNotes(), 60_000);
+  setInterval(() => _syncQuarmPatchNotes(), 6 * 60 * 60_000);
 
   // Seed the bot_boards Supabase mirror once on startup so wolfpack.quest
   // /boards has data immediately (otherwise it'd be empty until the next
@@ -641,6 +693,14 @@ async function announceAgentReleaseIfNew(discordClient) {
 // quickly enough for the web "Tonight" panel to be useful). Was 6h, which
 // hid in-progress raid attendance until well after the raid ended.
 const OPENDKP_SYNC_INTERVAL_MS = 30 * 60 * 1000;
+// Public call counter → wolfpack.quest/opendkp. Flushes completed minute
+// buckets every 60s. Runs unconditionally (not inside the Cognito-creds gate
+// below) because BLOCKED calls are worth counting too: while halted, the page
+// should show zero outbound and a non-zero "refused locally", which is the
+// difference between "the halt works" and "the bot is dead".
+setInterval(() => {
+  try { require('./utils/opendkp').flushCallStats(); } catch { /* fail-open */ }
+}, 60_000).unref?.();
 function startOpenDkpSync() {
   // Sync uses bearer auth exclusively now (post-v2.5.11) — characters,
   // raids list, raid detail, and auctions all live under /clients/{name}/*
@@ -657,10 +717,32 @@ function startOpenDkpSync() {
     return;
   }
   const { runSync } = require('./utils/openDkpSync');
-  setTimeout(() => {
-    runSync().then(r => console.log('[opendkp-sync] initial:', JSON.stringify(r)))
-             .catch(err => console.warn('[opendkp-sync] initial failed:', err?.message));
-  }, 45_000);
+  // ⚠ NO BOOT PULL. The guild lead, 2026-08-27: "can we take the opendkp pull out of
+  // main redeploy? we have the data that isn't stale prior to the raid, save
+  // for peoples saved bids and wishlists."
+  //
+  // There used to be a sync 45s after start. On a platform that redeploys on
+  // every push to main — 12-42 a day — that is a per-deploy OpenDKP pull for
+  // data the process we just replaced had already mirrored minutes earlier.
+  // It is the same redeploy-amplification shape that turned out to dominate
+  // the audits bill (3.1.84) and that the block-anchored off-raid cadence was
+  // built to avoid (3.1.89); leaving the boot pass in place would have been a
+  // hole straight through both.
+  //
+  // The interval below is the only trigger now. Cost of removing it: after a
+  // deploy, the mirror waits one scheduled pass — up to 30 min inside a raid
+  // window, up to the next 3h block outside one.
+  //
+  // ⚠ Bids and wishlists are the one thing that genuinely could be stale (the
+  // wishlist is INFERRED from bid history), and a bids-only boot pass is NOT
+  // the answer: bids arrive on /auctions, which at ~680 KB is the single most
+  // expensive call we make. Waiting for the scheduled pass is strictly cheaper
+  // than "just refreshing the bids". Live auctions do not come from the mirror
+  // at all — the loot panel reads /auctions/active on demand (_panelAuctions),
+  // so bidding itself is unaffected by any of this.
+  //
+  // An officer who needs it now runs /syncopendkp, which is force-flagged and
+  // never throttled.
   setInterval(() => {
     runSync().then(r => console.log('[opendkp-sync] interval:', JSON.stringify(r)))
              .catch(err => console.warn('[opendkp-sync] interval failed:', err?.message));
@@ -710,7 +792,7 @@ async function _processRegisterQueue(client) {
     const dmBatch = new Map();
     // Ranks that should STAY OFF the OpenDKP roster — Non-raid Alts and
     // Traders end up cluttering the top-nav "your characters" list with
-    // bank/mule characters that have no DKP relevance (Hitya 2026-06-23).
+    // bank/mule characters that have no DKP relevance (the guild lead, 2026-06-23).
     // We still record the family linkage on our side so /admin/links and the
     // upload picture reflect reality; just skip the OpenDKP createCharacter
     // call and the claim DM (nothing to claim).
@@ -738,7 +820,7 @@ async function _processRegisterQueue(client) {
 
           // Link the new character under its OpenDKP parent. createCharacter's
           // ParentId field does NOT establish the family link (confirmed
-          // 2026-06-23 — Dwaalin came up un-parented), so the separate
+          // 2026-06-23 — a member came up un-parented), so the separate
           // /characters/links PUT is required. Best-effort: if it fails the
           // character still exists and an officer can link manually, so we log
           // and continue rather than failing the whole registration.
@@ -834,7 +916,7 @@ async function _processRegisterQueue(client) {
           // OpenDKP claim flow lives on the LIST page — the per-character
           // page (#/characters/<id>) has no claim button. So link to the
           // list and tell them which name to type into the search box.
-          // Query-string pre-fill on the hash route doesn't work (Hitya
+          // Query-string pre-fill on the hash route doesn't work (the guild lead
           // 2026-06-23 confirmed manually), so this is the cleanest path.
           const nameList = chars.length === 1
             ? `**${chars[0].name}**${chars[0].parentName ? ` _(alt of ${chars[0].parentName})_` : ''}`
@@ -1085,6 +1167,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.customId === 'onb_show_again')              { await handleOnbShowAgain(interaction); return; }
     if (interaction.customId.startsWith('mark_avail:'))           { await handleMarkAvail(interaction); return; }
     if (interaction.customId.startsWith('pvp_window_spawned:')) { await handlePvpWindowSpawned(interaction); return; }
+    if (interaction.customId.startsWith('raid_end:'))           { await handleRaidEndButton(interaction, true);  return; }
+    if (interaction.customId.startsWith('raid_reopen:'))        { await handleRaidEndButton(interaction, false); return; }
     if (interaction.customId.startsWith('hate_kill:'))          { await handleHateKillButton(interaction); return; }
     if (interaction.customId.startsWith('hate_confirm_unkill:')){ await handleHateConfirmUnkill(interaction); return; }
     if (interaction.customId.startsWith('hate_unknown:'))       { await handleHateUnknownButton(interaction); return; }
@@ -1148,7 +1232,7 @@ async function handleBoardButton(interaction) {
   if (!hasAllowedRole(interaction.member))
     return interaction.reply({ flags: MessageFlags.Ephemeral, content: `❌ You need one of these roles: ${allowedRolesList()}` });
 
-  // EVERY kill button confirms before it records (Hitya 2026-08-09: a phone
+  // EVERY kill button confirms before it records (the guild lead, 2026-08-09: a phone
   // left within reach of the dog recorded a Thall Va Xakra (North) kill nobody
   // meant to press). /announce messages have always confirmed; the BOARD
   // buttons recorded on the first tap, and a stray tap there starts a respawn
@@ -1269,12 +1353,12 @@ async function handleLootPost(interaction) {
     await interaction.editReply({ embeds: [posted], components: [] });
     clearPendingLoot(msgId);
 
-    // Raid-facing copy into tonight's raid-night thread (Hitya 2026-07-31).
+    // Raid-facing copy into tonight's raid-night thread (the guild lead, 2026-07-31).
     // The /loot message itself is the officer's staging UI and has to stay in
     // the channel it was invoked from (interaction.editReply owns it), so the
     // announcement raiders read is a separate post. Best-effort — the auctions
     // are already live, and a failure here must not look like a failed post.
-    // NOTE (Hitya 2026-07-31): DKP/bidding posts belong to the RAID flow only.
+    // NOTE (the guild lead, 2026-07-31): DKP/bidding posts belong to the RAID flow only.
     // A non-raid guild event threads in #event-chat and gets roll loot instead
     // (utils/rollLoot.js), so an 'event' target is skipped here entirely.
     try {
@@ -1472,6 +1556,44 @@ function _feedbackAckRow() {
   );
 }
 
+// The first pair a new report gets, same as the web relay's (the guild lead,
+// 2026-09-27: Mimic's posts had "no acknowledgement in discord" — they were
+// plain messages with no buttons at all).
+function _feedbackRecvRow() {
+  return new _ARB2().addComponents(
+    new _BB2().setCustomId('fb_recv').setLabel('📬 Acknowledge').setStyle(_BS2.Primary),
+    new _BB2().setCustomId('fb_nope').setLabel('❌ Not Implementing').setStyle(_BS2.Danger),
+  );
+}
+
+// Mimic's reports are plain posts (the log and screenshots ride as files), not
+// embeds, so their submitter and category live on the feedback row, found by the
+// message id the post was stamped with. Every button also moves that row on, so
+// the /admin/feedback inbox agrees with the thread.
+async function _feedbackRowForMsg(msgId) {
+  try {
+    const supabase = require('./utils/supabase');
+    if (!supabase.isEnabled() || !msgId) return null;
+    const rows = await supabase.select('feedback',
+      `discord_msg_id=eq.${encodeURIComponent(msgId)}&select=id,ref,submitter_discord_id,category&limit=1`);
+    return Array.isArray(rows) && rows[0] ? rows[0] : null;
+  } catch { return null; }
+}
+async function _feedbackRowUpdate(row, patch) {
+  if (!row?.id) return;
+  const supabase = require('./utils/supabase');
+  await supabase.update('feedback', `id=eq.${encodeURIComponent(row.id)}`, patch)
+    .catch(err => console.warn('[feedback] status update failed:', err?.message));
+}
+// A plain post's status rides on its first line ("🐞 Bug from X via mimic 2.7.3
+// · 📬 Acknowledged by Y"); everything after it is a >>> quote, so a line added
+// at the end would read as part of the report.
+function _feedbackStatusContent(content, status) {
+  const lines = String(content || '').split('\n');
+  lines[0] = lines[0].replace(/ · (?:📬|✅|❌|🧪) .*$/u, '') + ' · ' + status;
+  return lines.join('\n').slice(0, 2000);
+}
+
 async function handleFeedbackRecv(interaction) {
   const { hasOfficerRole, officerRolesList: orl } = require('./utils/roles');
   if (!hasOfficerRole(interaction.member))
@@ -1480,7 +1602,20 @@ async function handleFeedbackRecv(interaction) {
   await interaction.deferUpdate();
   const msg   = interaction.message;
   const embed = msg.embeds[0];
-  if (!embed) return;
+  const reviewerName = interaction.member?.displayName || interaction.user.username;
+  const row = await _feedbackRowForMsg(msg.id);
+  await _feedbackRowUpdate(row, { status: 'acked', acked_by: reviewerName, acked_at: new Date().toISOString() });
+  if (!embed) {
+    if (row?.submitter_discord_id) {
+      try {
+        const user = await interaction.client.users.fetch(row.submitter_discord_id);
+        const fbTag = require('./utils/feedbackRefs').tag(row.ref);
+        await user.send(`📬 Your ${row.category === 'bug' ? 'bug report' : 'idea'}${fbTag ? ' ' + fbTag : ''} from Mimic has been received by leadership. Thank you!`);
+      } catch { /* DMs may be closed */ }
+    }
+    await msg.edit({ content: _feedbackStatusContent(msg.content, `📬 Acknowledged by ${reviewerName}`), components: [_feedbackAckRow()] });
+    return;
+  }
 
   // Extract submitter user ID from footer (stored as "uid:<id>")
   const footerText = embed.footer?.text || '';
@@ -1510,12 +1645,17 @@ async function handleFeedbackClose(interaction, implemented) {
   await interaction.deferUpdate();
   const msg    = interaction.message;
   const embed  = msg.embeds[0];
-  if (!embed) return;
 
   const reviewer = interaction.member?.displayName || interaction.user.username;
   const statusVal = implemented
     ? `✅ Implemented by ${reviewer}`
     : `❌ Not implementing (${reviewer})`;
+  await _feedbackRowUpdate(await _feedbackRowForMsg(msg.id),
+    { status: 'addressed', addressed_by: reviewer, addressed_at: new Date().toISOString() });
+  if (!embed) {
+    await msg.edit({ content: _feedbackStatusContent(msg.content, statusVal), components: [] });
+    return;
+  }
 
   const updated = _EB2.from(embed)
     .setFields(...(embed.fields || []).filter(f => f.name !== 'Status'), { name: 'Status', value: statusVal, inline: false });
@@ -2386,6 +2526,8 @@ async function handleOnbShowFull(interaction) {
 }
 
 async function handleWhoFamily(interaction) {
+  // Members only, like /who itself: a forwarded button must not show a family to anyone else.
+  if (!isGuildMember(interaction)) return interaction.reply({ flags: MessageFlags.Ephemeral, content: MEMBERS_ONLY });
   const name = interaction.customId.replace('who_family:', '');
   const { buildWhoallEmbed } = require('./commands/whoall');
   const embed = buildWhoallEmbed(name);
@@ -2468,7 +2610,7 @@ client.on(Events.ThreadCreate, async (thread, newlyCreated) => {
     starterContent = starter?.content || '';
   } catch {}
 
-  // Tap-through request flow (Hitya 2026-08-17): the card used to DESCRIBE
+  // Tap-through request flow (the guild lead, 2026-08-17): the card used to DESCRIBE
   // the /suggest command, which is more effort than members put together —
   // now it IS the flow. Buttons for the detected bosses, a picker fallback,
   // then time buttons; the formal officer request posts on the second tap.
@@ -2492,7 +2634,7 @@ const liveAlertedSoon = new Set(), liveAlertedSpawned = new Set();
 const PVP_SOON_MS  = 30 * 60 * 1000;
 const SOON_WARN_MS = 30 * 60 * 1000;
 
-// Deferred /announce parse session (Hitya 2026-08-20): a future announce parks
+// Deferred /announce parse session (the guild lead, 2026-08-20): a future announce parks
 // its session in bot_kv instead of opening it immediately; open it here once
 // the event is PENDING_SESSION_ARM_MS out. Pure decision in
 // pendingSessionAction (commands/raidnight.js), so this stays a thin shell.
@@ -2515,7 +2657,7 @@ async function _maybeOpenPendingSession(readyClient) {
   }
 }
 
-// Pre-raid checklist (Hitya 2026-08-21). Posted to officer chat in the 90
+// Pre-raid checklist (the guild lead, 2026-08-21). Posted to officer chat in the 90
 // minutes before a raid night starts, once per night, while there is still
 // time to act: signups, class shortages vs our own average, Mimic coverage,
 // lockouts (an ENGAGE lock — it has to arrive BEFORE the pull), and whether
@@ -2554,7 +2696,7 @@ async function _maybePreRaidChecklist(readyClient) {
   }
 }
 
-// Midday raid-info post (Hitya 2026-08-21: "post the raid info midday to our
+// Midday raid-info post (the guild lead, 2026-08-21: "post the raid info midday to our
 // channel"). Member-facing, to the raid channel, once per raid day in the
 // noon hour — re-surfacing the header block officers already typed into the
 // signup post plus which classes are still wanted, while there's most of a day
@@ -2608,29 +2750,36 @@ function startSpawnChecker(readyClient) {
         const remaining = entry.nextSpawn - now;
         const expansion = getBossExpansion(boss);
         const threadId  = getThreadId(expansion);
+        // A 3 h boss is on the board and in Active Cooldowns but posts no 30-min
+        // warning, no "spawned" message and no Historic Kills line — it would be
+        // eight bosses every three hours (the guild lead, 2026-10-05). The
+        // clearKill + board refresh below still run, so its button flips to "up".
+        const quiet = isShortTimerBoss(boss);
 
         // ── Boss has spawned ───────────────────────────────────────────────
         if (remaining <= 0 && !alertedSpawned.has(boss.id)) {
           alertedSpawned.add(boss.id);
           alertedSoon.delete(boss.id);
 
-          // Archive zone card
-          await archiveZoneCardEntry(readyClient, boss, bosses, state, historyThread);
+          // Archive zone card (a quiet boss still drops off the card, minus the history line)
+          await archiveZoneCardEntry(readyClient, boss, bosses, state, quiet ? null : historyThread);
 
           // Update the "soon" alert message in place to "spawned", or post new spawned msg
-          const alertMsgId = getSpawnAlertMessageId(boss.id);
-          const target     = threadId ? await readyClient.channels.fetch(threadId).catch(async () => await readyClient.channels.fetch(channelId)) : await readyClient.channels.fetch(channelId);
-          const spawnedEmbed = buildSpawnedEmbed(boss);
-          if (alertMsgId) {
-            try {
-              const alertMsg = await target.messages.fetch(alertMsgId);
-              await alertMsg.edit({ embeds: [spawnedEmbed] });
-            } catch {
+          if (!quiet) {
+            const alertMsgId = getSpawnAlertMessageId(boss.id);
+            const target     = threadId ? await readyClient.channels.fetch(threadId).catch(async () => await readyClient.channels.fetch(channelId)) : await readyClient.channels.fetch(channelId);
+            const spawnedEmbed = buildSpawnedEmbed(boss);
+            if (alertMsgId) {
+              try {
+                const alertMsg = await target.messages.fetch(alertMsgId);
+                await alertMsg.edit({ embeds: [spawnedEmbed] });
+              } catch {
+                await target.send({ embeds: [spawnedEmbed] });
+              }
+              clearSpawnAlertMessageId(boss.id);
+            } else {
               await target.send({ embeds: [spawnedEmbed] });
             }
-            clearSpawnAlertMessageId(boss.id);
-          } else {
-            await target.send({ embeds: [spawnedEmbed] });
           }
 
           clearKill(boss.id);
@@ -2643,7 +2792,7 @@ function startSpawnChecker(readyClient) {
         if (remaining > 30 * 60 * 1000) { alertedSpawned.delete(boss.id); alertedSoon.delete(boss.id); }
 
         // ── 30 min warning ─────────────────────────────────────────────────
-        if (remaining > 0 && remaining <= 30 * 60 * 1000 && !alertedSoon.has(boss.id)) {
+        if (!quiet && remaining > 0 && remaining <= 30 * 60 * 1000 && !alertedSoon.has(boss.id)) {
           alertedSoon.add(boss.id);
           const target = threadId ? await readyClient.channels.fetch(threadId).catch(async () => await readyClient.channels.fetch(channelId)) : await readyClient.channels.fetch(channelId);
           const sent = await target.send({ embeds: [buildSpawnAlertEmbed(boss)] });
@@ -2915,9 +3064,11 @@ async function computeHotDiceNightAward() {
 
   let rows = [];
   try {
-    rows = await supabase.select('roll_sets',
+    // Paged: a busy day is more than PostgREST's silent 1,000 whatever `limit` says (1,130 roll sets in
+    // the ET day of 2026-10-02), and the award counts wins out of every contested set.
+    rows = await supabase.selectAllPaged('roll_sets',
       `guild_id=eq.${encodeURIComponent(guildId)}&started_at=gte.${encodeURIComponent(startIso)}&started_at=lt.${encodeURIComponent(endIso)}` +
-      `&select=roll_from,roll_to,started_at,rolls&limit=2000`);
+      `&select=roll_from,roll_to,started_at,rolls`, 'id');
   } catch (err) { console.warn('[hot-dice-night] roll_sets fetch failed:', err?.message); return; }
   if (!Array.isArray(rows) || rows.length === 0) return;
 
@@ -2939,6 +3090,14 @@ async function computeHotDiceNightAward() {
     await supabase.upsert('fun_events', [funRow], 'guild_id,event_type,caster,event_ts');
     console.log(`[hot-dice-night] ${award.winner}: ${award.wins}/${award.contested} (${pctStr}%)`);
   } catch (err) { console.warn('[hot-dice-night] fun_events upsert failed:', err?.message); }
+}
+
+// How far back threat snapshots may be deleted: the OLDEST of what Tower holds,
+// what the stored fight graphs cover, and the retention window — so no bound
+// can be crossed. Either watermark missing → null → delete nothing.
+function _threatDeleteCutoff({ archivedThrough, graphThrough, retentionCutoff }) {
+  if (!archivedThrough || !graphThrough || !retentionCutoff) return null;
+  return new Date(Math.min(archivedThrough.getTime(), graphThrough.getTime(), retentionCutoff.getTime()));
 }
 
 // ── Midnight tasks ─────────────────────────────────────────────────────────
@@ -3097,21 +3256,91 @@ function scheduleMidnightSummary(readyClient) {
         // card queries exactly 30 days back, limit 2000; nothing on the web
         // reads this table).
         const keep = Number.isFinite(retainDays) ? retainDays : 30;
+        // ⚠ ARCHIVE-GATED, AND IT FAILS CLOSED (the guild lead, 2026-09-22:
+        // "let's keep threat data until it gets pulled out into the backup
+        // database on my server… make sure that the data isn't removed from
+        // the on-prem database then make deletions from the table").
+        //
+        // This sweep has never actually deleted a row — its predicate had no
+        // usable index, so the DELETE seq-scanned and the 10s abort killed it
+        // every night (migration 20260923010000 fixes that). Which means the
+        // moment the index lands, the FIRST working run would remove 747k rows
+        // — 62.8% of the table — whether or not Tower has them. A bug that was
+        // protecting data by failing is not protection, and the fix must not
+        // turn it into a deletion.
+        //
+        // So: delete only up to what the on-prem archive says it HAS. The
+        // watermark is written by the archive side (`bot_kv` key
+        // `archive_watermark_threat_snapshots`, an ISO timestamp meaning
+        // "every snapshot at or before this is on Tower"). No watermark, an
+        // unparseable one, or a read failure → delete NOTHING and say so.
+        // Losing a night's cleanup costs disk; deleting unarchived telemetry
+        // costs the data.
+        const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+        let archivedThrough = null;
+        try {
+          const rows = await supabase.select('bot_kv',
+            `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.archive_watermark_threat_snapshots&select=value&limit=1`);
+          const raw = Array.isArray(rows) && rows[0] && rows[0].value && rows[0].value.through;
+          const t = raw ? Date.parse(raw) : NaN;
+          if (Number.isFinite(t)) archivedThrough = new Date(t);
+        } catch (err) {
+          console.warn('[midnight] threat archive watermark unreadable:', err?.message);
+        }
+        // CONSOLIDATE before anything can delete (the guild lead's order:
+        // consolidate → confirm on-prem → delete). Each settled fight's threat
+        // curve is stored in encounter_threat_graph with its deaths, and
+        // encounter_timeline serves it once the raw rows are gone (migration
+        // 20260923200000). threat_graph_built_through is the second watermark:
+        // every snapshot before it belongs to a fight whose graph is stored.
+        let graphThrough = null;
+        if (supabase.isEnabled()) {
+          try {
+            const built = await supabase.rpc('build_encounter_threat_graphs', { p_limit: 5000 });
+            if (built) console.log(`[midnight] stored ${built} fight threat graph(s)`);
+            const through = await supabase.rpc('threat_graph_built_through', {});
+            const t = through ? Date.parse(through) : NaN;
+            if (Number.isFinite(t)) graphThrough = new Date(t);
+          } catch (err) {
+            console.warn('[midnight] threat graph build failed — nothing will be deleted:', err?.message);
+          }
+        }
         if (supabase.isEnabled() && keep > 0) {
-          const cutoff = new Date(Date.now() - keep * 24 * 60 * 60 * 1000).toISOString();
-          await supabase.del(
-            'encounter_threat_snapshots',
-            `snapshot_at=lt.${encodeURIComponent(cutoff)}`,
-          );
-          console.log(`[midnight] swept encounter_threat_snapshots older than ${keep} days`);
+          const cutoffDate = _threatDeleteCutoff({ archivedThrough, graphThrough,
+            retentionCutoff: new Date(Date.now() - keep * 24 * 60 * 60 * 1000) });
+          if (!cutoffDate) {
+            console.warn('[midnight] threat sweep SKIPPED — '
+              + (!archivedThrough ? 'no on-prem archive watermark (bot_kv archive_watermark_threat_snapshots)'
+                                  : 'no threat-graph watermark')
+              + '. Nothing deleted; the table will grow until both report in. Deliberate: see the header above.');
+          } else {
+            const cutoff = cutoffDate.toISOString();
+            await supabase.del(
+              'encounter_threat_snapshots',
+              `snapshot_at=lt.${encodeURIComponent(cutoff)}`,
+            );
+            console.log(`[midnight] swept encounter_threat_snapshots older than ${cutoff} `
+              + `(retention ${keep}d; archived through ${archivedThrough.toISOString()}; `
+              + `graphs through ${graphThrough.toISOString()})`);
+          }
         }
         // Downsample the survivors: rows older than 7 days thin to the FIRST
-        // snapshot per minute per (uploader, boss) — the rank card samples
-        // per-minute shape fine, and this removes ~70% of aged volume
-        // (migration 20260709050000; one-time backfill already applied).
+        // snapshot per minute per (uploader, boss) (migration 20260709050000).
+        // ⚠ It DELETES, so it takes the same gate as the sweep: it may only
+        // touch rows the archive holds and the graphs cover. It had no gate
+        // until 2026-09-23 and was dormant only because it timed out on the
+        // same missing index as the sweep (measured: rows per uploader-minute
+        // identical either side of 7 days) — a fix to that index would have
+        // woken an ungated deletion.
         if (supabase.isEnabled()) {
-          const thinned = await supabase.rpc('thin_threat_snapshots', { p_older_than_days: 7 });
-          if (thinned) console.log(`[midnight] thinned ${thinned} old threat snapshots to 1/min`);
+          const thinFrom = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+          const thinCut = _threatDeleteCutoff({ archivedThrough, graphThrough, retentionCutoff: thinFrom });
+          if (thinCut && thinCut.getTime() >= thinFrom.getTime()) {
+            const thinned = await supabase.rpc('thin_threat_snapshots', { p_older_than_days: 7 });
+            if (thinned) console.log(`[midnight] thinned ${thinned} old threat snapshots to 1/min`);
+          } else {
+            console.log('[midnight] threat thinning skipped — the archive and graphs do not cover the last 7 days yet');
+          }
         }
       } catch (err) {
         console.warn('[midnight] threat snapshot retention skipped:', err?.message);
@@ -3123,10 +3352,23 @@ function scheduleMidnightSummary(readyClient) {
       // snapshots. Still swept, because nothing here is worth keeping forever
       // and an unbounded telemetry table is how the last one reached 351 MB.
       // TARGET_OBSERVATION_RETENTION_DAYS (0 disables).
+      //
+      // ⚠ Default 90 → 1 day (the guild lead, 2026-09-22). Their reasoning is
+      // the whole justification and it is a USE-CASE argument, not a disk one:
+      // "Target observations do not matter the next day. they matter while
+      // you're in a raid and they matter while you are working on buffs or
+      // debuffs for someone." Both windows are same-session, so a day covers
+      // every real read and the other 89 were storing telemetry nobody asks
+      // for. It had grown to 111 MB and ~4.5 MB/day — the second-fastest
+      // grower in the database, ahead of the chat history we keep on purpose.
+      // ⚠ The FIRST run after this ships deletes ~48 days at once (the table
+      // starts 2026-08-04 and nothing has ever aged out of a 90-day window),
+      // which is exactly the DELETE shape that has been silently timing out on
+      // the threat table. Migration 20260923010000 adds the `at` index first.
       try {
         const supabase = require('./utils/supabase');
         const d = parseInt(process.env.TARGET_OBSERVATION_RETENTION_DAYS, 10);
-        const keep = Number.isFinite(d) ? d : 90;
+        const keep = Number.isFinite(d) ? d : 1;
         if (supabase.isEnabled() && keep > 0) {
           const cutoff = new Date(Date.now() - keep * 24 * 60 * 60 * 1000).toISOString();
           await supabase.del('target_observations', `at=lt.${encodeURIComponent(cutoff)}`);
@@ -3134,6 +3376,21 @@ function scheduleMidnightSummary(readyClient) {
         }
       } catch (err) {
         console.warn('[midnight] target_observations retention skipped:', err?.message);
+      }
+
+      // ── Retention sweep: xp_events (FB-37 XP board) ───────────────────────
+      // One row per kill that gave XP. 30 days: a week for the board, a month for trends
+      // (docs/DESIGN-selfhost-wizard.md §3). XP_EVENTS_RETENTION_DAYS overrides (0 disables).
+      try {
+        const supabase = require('./utils/supabase');
+        const d = parseInt(process.env.XP_EVENTS_RETENTION_DAYS, 10);
+        const keep = Number.isFinite(d) ? d : 30;
+        if (supabase.isEnabled() && keep > 0) {
+          const cutoff = new Date(Date.now() - keep * 24 * 60 * 60 * 1000).toISOString();
+          await supabase.del('xp_events', `at=lt.${encodeURIComponent(cutoff)}`);
+        }
+      } catch (err) {
+        console.warn('[midnight] xp_events retention skipped:', err?.message);
       }
 
       // ── Retention sweep: buff_casts ───────────────────────────────────────
@@ -3182,8 +3439,38 @@ function scheduleMidnightSummary(readyClient) {
         console.warn('[midnight] raid_roster retention skipped:', err?.message);
       }
 
+      // ── Retention sweep: raid_track_minutes ───────────────────────────────
+      // The raid replay recorder (utils/raidTrack.js) writes one row per UTC minute while a raid
+      // is up, ~2–4 MB a night. Every raid is KEPT until storage becomes an issue (the guild lead,
+      // 2026-10-05), so this is off unless RAID_TRACK_RETENTION_DAYS is set to a number of days.
+      // Even then it deletes only what the Tower archive already holds — the same fail-closed gate
+      // as the threat-snapshot sweep: bot_kv `archive_watermark_raid_track_minutes` = { through:
+      // ISO } ("every minute at or before this is on Tower"). No watermark → delete nothing.
+      // minute_at leads its own index (migration 20261005020000), so the delete does not seq-scan.
+      try {
+        const supabase = require('./utils/supabase');
+        const retainDays = parseInt(process.env.RAID_TRACK_RETENTION_DAYS, 10);
+        const keep = Number.isFinite(retainDays) ? retainDays : 0;
+        if (supabase.isEnabled() && keep > 0) {
+          const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+          const rows = await supabase.select('bot_kv',
+            `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.archive_watermark_raid_track_minutes&select=value&limit=1`);
+          const raw = Array.isArray(rows) && rows[0] && rows[0].value && rows[0].value.through;
+          const archivedThrough = raw ? Date.parse(raw) : NaN;
+          if (!Number.isFinite(archivedThrough)) {
+            console.warn('[midnight] raid_track_minutes retention skipped: no Tower archive watermark — nothing deleted');
+          } else {
+            const cutoff = new Date(Math.min(Date.now() - keep * 24 * 60 * 60 * 1000, archivedThrough)).toISOString();
+            await supabase.del('raid_track_minutes', `minute_at=lt.${encodeURIComponent(cutoff)}`);
+            console.log(`[midnight] swept raid_track_minutes before ${cutoff} (archived on Tower)`);
+          }
+        }
+      } catch (err) {
+        console.warn('[midnight] raid_track_minutes retention skipped:', err?.message);
+      }
+
       // ── Retention sweep: who_observations ─────────────────────────────────
-      // Keep the who INFORMATION but not every instance (Hitya 2026-07-07):
+      // Keep the who INFORMATION but not every instance (the guild lead, 2026-07-07):
       // everything from the last N days stays raw (feeds the ±3-min Zek
       // proximity inference + the ±15-min raid-attendance reconstruction on
       // /admin/encounters + /admin/signups), and before that each character
@@ -3205,7 +3492,7 @@ function scheduleMidnightSummary(readyClient) {
 
       // ── ARI staleness sweep ───────────────────────────────────────────────
       // Auto-raid-invite state hangs around until an officer manually
-      // clears it. Stale ARI confuses members ("ARI via Hitya · 6/4/2026"
+      // clears it. Stale ARI confuses members ("ARI via Rethlan · 6/4/2026"
       // when it's now late June and someone else has run /ari since,
       // per the user's report 2026-06-21). Clear here if the ARI is
       // more than 12 hours old — long enough that a raid set right
@@ -3510,7 +3797,7 @@ const CHAT_SKEW_FLUSH_MS = 5 * 60 * 1000;
 const _chatDedup = new Map(); // key: "channel|speaker|normtext" → { at, ts, by }
 // Relay-only dedup. The same in-game line captured by two different uploaders
 // can arrive with DIFFERENT speaker attribution (self "You say to your guild"
-// vs third-person "Canopy tells the guild", or a multi-log mis-attribution) —
+// vs third-person "Hessmoor tells the guild", or a multi-log mis-attribution) —
 // so the speaker-keyed dedup above sees two distinct keys and double-posts to
 // Discord. This text-only window collapses the relay POST regardless of who it
 // was attributed to. It deliberately does NOT gate the Supabase mirror, which
@@ -3526,7 +3813,7 @@ const _chatRelayDedup = new Map(); // key: "channel|normtext" → timestamp
 // ("FUCK ZERG" → "Esev ZERG", "Ljyu ZERG", "Nnqj ZERG", "Tgfq ZERG"…). The
 // exact-text key above doesn't catch these — Discord gets every variant.
 // Same problem for the censor filter ("F*** ZERG" vs "FUCK ZERG" — only the
-// uncensored receiver gets the real text). (Hitya 2026-06-26.)
+// uncensored receiver gets the real text). (the guild lead, 2026-06-26.)
 //
 // Strategy: per-speaker rolling buffer of recent message shapes. A new
 // message is a "near-dupe" of a buffered one when the messages have the same
@@ -3614,8 +3901,8 @@ setInterval(() => {
 // A misconfigured agent tails a stray log (an old / foreign eqlog_<Name> file
 // still in the watched folder), so guild chat the player actually typed on
 // their REAL character gets stamped with that stray name. Observed repeatedly:
-// Wabumkin's machine emitting "Dopefiend" (a Freedom player), earlier
-// "Facehack"; Chadivarius's machine emitting "Ashaiya" (Hitya 2026-06-23).
+// A member's machine emitting "Dopefiend" (a Freedom player), earlier
+// "Facehack"; Ithren's machine emitting "Ashaiya" (Rethlan 2026-06-23).
 //
 // Guild/raid chat is WP-only, so a speaker we can't vouch for is suspect. We
 // trust a speaker when ANY of:
@@ -3632,7 +3919,7 @@ setInterval(() => {
 // include the EQ-second, but each agent stamps the line with its OWN
 // machine's clock — 2-5s of skew between machines meant two perspectives of
 // the same broadcast almost never landed on the same key, so corroboration
-// silently never fired (found 2026-07-07: the same Wabumkin line arrived at
+// silently never fired (found 2026-07-07: the same a member line arrived at
 // :51 from one machine and :54 from another). The 90s slot window bounds
 // unification now; two people genuinely typing the same word close together
 // share a slot, which is safe because relabeling only ever applies to
@@ -3731,6 +4018,32 @@ const REPORTER_BUFF_PER_ZONE = 3;     // buff landings dedup to 3 reporters per 
 const REPORTER_ROSTER_PER_GROUP = 1;  // raid roster dedup to 1 reporter per raid group (P1c)
 const REPORTER_LIVENESS_MAX_MS_DEFAULT = 90_000; // #112: chat candidacy requires a live log line newer than this (tunable key reporter_liveness_max_ms)
 const _reporterRegistry   = new Map(); // guild_id → Map(discord_id → {last_seen, primary, zone, group_num, camping, has_zeal, ver, mimic_ver, last_line_ms, live_character})
+// One account, several machines: may THIS heartbeat claim the account's fleet
+// slot? (the guild lead, 2026-08-30: two PCs both on, a member idle on one at 320h since
+// its last log line, a member live on the other at 4s — the panel flip-flopped
+// between them because the ingest was last-writer-wins on discord_id.)
+//
+// Rule: the freshest LOG wins the slot, not the latest heartbeat. Ages are
+// projected to `now` (the incumbent's stored age grows while it sits), and
+// CLAIM_SLACK_MS absorbs jitter so a lone idle machine keeps updating its own
+// entry — without slack, an unchanged log ties itself and the entry starves to
+// TTL death. A dead or camping incumbent is always claimable. Agents too old
+// to report last_line_ms count as never-saw-a-line, but two such agents keep
+// the old last-writer behavior rather than deadlocking.
+const REPORTER_CLAIM_SLACK_MS = 5000;
+function _reporterClaimAllowed({ incoming, incumbent, now, ttlMs }) {
+  if (!incumbent) return true;
+  if (incumbent.camping) return true;
+  if ((now - (incumbent.last_seen || 0)) > ttlMs) return true;      // effectively gone
+  const incAge = Number.isFinite(incoming?.last_line_ms) ? incoming.last_line_ms : null;
+  const curAge = incumbent.last_line_ms == null
+    ? null
+    : incumbent.last_line_ms + Math.max(0, now - (incumbent.last_seen || now));
+  if (curAge == null) return true;                 // incumbent has no line signal
+  if (incAge == null) return false;                // it does, we don't — keep it
+  return incAge <= curAge + REPORTER_CLAIM_SLACK_MS;
+}
+
 function _reporterGuildBook(guildId) {
   let book = _reporterRegistry.get(guildId);
   if (!book) { book = new Map(); _reporterRegistry.set(guildId, book); }
@@ -3752,7 +4065,7 @@ function _reporterRank(a, b) {
 function _reporterZoneKey(e)  { const z = e.zone && String(e.zone).trim(); return z ? z.toLowerCase() : `__solo__${e.id}`; }
 function _reporterGroupKey(e) { return Number.isFinite(e.group_num) ? `g${e.group_num}` : `__solo__${e.id}`; }
 // #119 — the fleet table's CHARACTER cell. Show the LIVE character the agent is
-// actively playing with the family MAIN in parens ("Canopy (Hitya)") when they
+// actively playing with the family MAIN in parens ("Hessmoor (Rethlan)") when they
 // differ; fall back to the primary alone when the agent is idle (live_character
 // null) or on their main. The parenthetical is a main name, so it obeys the
 // SAME server-side hide_main_names rule as the #111 /who enrichment — a hidden
@@ -4180,11 +4493,34 @@ setInterval(() => {
 // Fire-and-forget — bump a per-(character, endpoint) COUNTER in
 // agent_upload_stats so the /admin/agents board (and /me upload panel) can show
 // who is uploading what, when, on what version, and error counts. This replaced
-// the old row-per-upload `agent_uploads` log, which grew ~30k rows/day and was
-// the fastest path to the Supabase free-tier cap. The RPC upserts + increments
-// in one call. Best-effort: failures are warned and swallowed so the upload
+// the old row-per-upload `agent_uploads` log, which grew ~30k rows/day. The RPC
+// upserts + increments in one call.
+// ⚠ That retirement is often cited as "to stay on the free tier", which has been
+// WRONG since the org moved to Pro (verified 2026-09-01: org `hesstastic`, plan
+// `pro`). The reason still holds; it is just a different one. Supabase meters
+// DATABASE SIZE (8 GB/project included — we are at 1.7 GB) and EGRESS (250
+// GB/mo), and NEITHER plan has a per-request quota at all. So a table growing
+// 30k rows a day was a real cost, and the calls that wrote it were not. Best-effort: failures are warned and swallowed so the upload
 // response is never blocked on the metadata write. (payloadBytes is no longer
 // stored — the counter doesn't track per-upload bytes.)
+// Zeal version + spawn-id capability ride the agent_state jsonb this function
+// already receives on every tracked endpoint, so all ~17 call sites get them
+// with no edits.
+// ⚠ live-state — the endpoint where the target spawn id ACTUALLY arrives — is
+// deliberately not one of them, which is the whole reason the agent reports its
+// own capability instead of the bot inferring it from traffic it can see.
+// Measured 2026-09-01: 56 characters in 24h, batched to ~16 installs, at a 45s
+// per-character heartbeat floor ≈ 30k POSTs/day before the change-driven sends
+// that dominate a raid. Same order as the row-per-upload `agent_uploads` log
+// retired above, so a Supabase RPC per live-state POST is a real cost — not a
+// catastrophic one, but not one worth paying for a fact the agent can just
+// state.
+//
+// ⚠ They answer two DIFFERENT questions and neither substitutes for the other
+// (see migration 20260901160000). The version is for chasing adoption; the
+// observed id is the capability. A patched Zeal reports the same version
+// string as a stock one, so a version test would call a capable client
+// incapable — consumers branch on spawn_id_seen_at.
 function _trackUpload({ endpoint, character, agentVersion, ok = true, statusCode = 200, errorMessage = null, payloadBytes = null, agentState = null, uploadedBy = null }) {
   void payloadBytes;
   try {
@@ -4200,6 +4536,8 @@ function _trackUpload({ endpoint, character, agentVersion, ok = true, statusCode
       p_error:       errorMessage,
       p_agent_state: agentState,
       p_uploaded_by: uploadedBy || null,
+      p_zeal_version:  (agentState && agentState.zeal_version) ? String(agentState.zeal_version).slice(0, 40) : null,
+      p_spawn_id_seen: !!(agentState && agentState.spawn_id_capable),
     }).catch(err => console.warn('[agent-uploads] stat bump failed:', err?.message));
   } catch (err) {
     console.warn('[agent-uploads] track failed:', err?.message);
@@ -4207,7 +4545,7 @@ function _trackUpload({ endpoint, character, agentVersion, ok = true, statusCode
 }
 
 // Self-reported "% mana" macro call-outs riding the relayed /gu + /rs chat —
-// "Kazmodon has 45% Mana", "-= Ethereal Light Abrahms =- 45% Mana", "cleric
+// "Ulmarr has 45% Mana", "-= Ethereal Light Aldenmar =- 45% Mana", "cleric
 // mana 45%". Every observed variant is the SPEAKER's own mana with a percent
 // near the word "mana" in either order (same shape the agent's Command Center
 // tracks locally). Extracted here into mana_reports so the /raid Mana list +
@@ -4287,7 +4625,7 @@ async function _handleAgentChat(req, res) {
   const supabaseChatRows = [];
   // fun_events emitted from this batch — pottymouth + drunkard. Persisted at
   // the end of the handler with the same idempotent unique on
-  // (guild, event_type, caster, event_ts) used elsewhere. (Hitya 2026-06-26.)
+  // (guild, event_type, caster, event_ts) used elsewhere. (the guild lead, 2026-06-26.)
   const funEventRows = [];
   // "% mana" self-reports in this batch — keyed by speaker so a multi-line
   // batch keeps only the newest, upserted fire-and-forget after the loop.
@@ -4388,9 +4726,9 @@ async function _handleAgentChat(req, res) {
     //
     // ⚠ The casing difference is NOT EQ auto-capitalizing on the wire — that
     // was this comment's claim until 2026-08-13 and it is wrong. Measured:
-    // Hitya's own client, as a BYSTANDER, shows the raw line verbatim
+    // The guild lead's own client, as a BYSTANDER, shows the raw line verbatim
     // ("its usually 5-7 k per full clear"). Instead, two specific uploaders
-    // (Hawkner, Syko) ship a REWRITTEN copy of lines they merely witnessed:
+    // ship a REWRITTEN copy of lines they merely witnessed:
     // first letter capitalized, and `-` `!` `/` `=` turned into spaces or
     // dropped — "5-7 k" → "5 7 k", "ok!/camp" → "Ok camp", "=x" → "x".
     // NOT our code: uploaders on the SAME agent build (3.5.58) sit on both
@@ -4415,7 +4753,7 @@ async function _handleAgentChat(req, res) {
     // the good text alongside the bad one.
     const textScore = (s) => (String(s || '').match(/[^a-z0-9\s]/gi) || []).length;
     const myTextScore = textScore(text);
-    // Speaker safeguard: relabel a stray-log ghost name (e.g. Wabumkin's agent
+    // Speaker safeguard: relabel a stray-log ghost name (e.g. A member's agent
     // emitting "Dopefiend") to a trusted alternative witnessed on the same
     // line. See the _safeguardSpeaker comment above.
     const witnessSlot = _recordWitness(_witnessKey(channel, msgTs, normText), speaker, identity.discord_id, speakerSource);
@@ -4423,8 +4761,8 @@ async function _handleAgentChat(req, res) {
     // to any witness of the same line whose name was IN the line ('line' —
     // server truth). This is what the roster-trust check below can't catch:
     // the stale-log ghost is usually the player's OWN other character, which
-    // passes every trust test (Starrburst — roster member, linked to the same
-    // Discord account — posting Wabumkin's words, 2026-07-07).
+    // passes every trust test (a member — roster member, linked to the same
+    // Discord account — posting a member's words, 2026-07-07).
     let effectiveSpeaker = speaker;
     if (speakerIsGuess) {
       for (const [otherLc, w] of witnessSlot.bySpeaker) {
@@ -4435,12 +4773,12 @@ async function _handleAgentChat(req, res) {
     effectiveSpeaker = _safeguardSpeaker(witnessSlot, effectiveSpeaker, identity.discord_id, rosterSet, uploaderCharacters);
     // The agent-attached who block describes the ORIGINAL name — never let it
     // decorate a relabeled speaker (it's what stamped "[48 Troll Shaman]" on
-    // Wabumkin's words).
+    // A member's words).
     const whoForSpeaker = effectiveSpeaker.toLowerCase() === speaker.toLowerCase() ? uploadedWho : null;
     const key = `${channel}|${effectiveSpeaker.toLowerCase()}|${dedupText}`;
     const _dupOf = _chatDedup.get(key);
     if (_dupOf) {
-      // ── Free clock-skew sample (Hitya 2026-08-14) ───────────────────────────
+      // ── Free clock-skew sample (the guild lead, 2026-08-14) ───────────────────────────
       // This `continue` used to be where a thousand measurements a night went
       // in the bin. The EQ server broadcast this line to every client at once;
       // we are holding the FIRST uploader's stamp for it and, right now, a
@@ -4471,7 +4809,7 @@ async function _handleAgentChat(req, res) {
     // mutation of the same line to each receiver, so each agent ships a
     // different normText and the exact-match key above lets them all through.
     // Tokens are same length + ≥50% identical word positions ⇒ same line.
-    // (Hitya 2026-06-26.)
+    // (the guild lead, 2026-06-26.)
     const tokens   = _fuzzyTokenize(text);
     const nowMs    = Date.now();
     const slurHit  = _findSlurVariant(channel, effectiveSpeaker, tokens, nowMs);
@@ -4551,15 +4889,31 @@ async function _handleAgentChat(req, res) {
       }
     }
 
+    // A main assist declared in raid chat ("MA is Bob", "assist me on …") → Extended Target pins
+    // their target first (utils/mainAssist.js). Same post-dedup spot as the mana report, so N agents
+    // hearing one line note it once. A named MA must be a character we know.
+    if (channel === 'raid' && /\b(?:ma|main\s*assist|assist)\b/i.test(String(text))) {
+      try {
+        const known = await _rosterNameSet();
+        const decl = _mainAssist.parseDeclaration(text, effectiveSpeaker, (n) => known.has(n));
+        if (decl) {
+          const split = _raidSplitCache.split;
+          const raid = split && split.multi ? split.raidForName(effectiveSpeaker) : null;
+          _mainAssistStore.note(raid ? raid.key : '_', decl, effectiveSpeaker, Date.now());
+          console.log(`[main-assist] ${decl.name}${decl.target ? ` on ${decl.target}` : ''} (said by ${effectiveSpeaker})`);
+        }
+      } catch (err) { console.warn('[main-assist] parse failed:', err?.message); }
+    }
+
     // Class/level tag: try server-side whoData first, fall back to what the agent sent.
     // Only render the tag when we actually have level/race/class content —
     // otherwise an empty whoEntry produced a bare " []" after the name
-    // (the bug behind "Wabumkin []: no :(").
+    // (the bug behind "Dunstan []: no :(").
     const { getWhoEntry } = require('./utils/state');
     const whoEntry = getWhoEntry(effectiveSpeaker) || whoForSpeaker || null;
     const whoBits  = whoEntry ? [whoEntry.level, whoEntry.race, whoEntry.class].filter(Boolean) : [];
     let whoTag     = whoBits.length ? ` [${whoBits.join(' ')}]` : '';
-    // Sticky tags (Hitya 2026-07-12: "why does this sometimes show info
+    // Sticky tags (the guild lead, 2026-07-12: "why does this sometimes show info
     // and sometimes not"): once a speaker resolves to a FULL [lvl race class]
     // tag, reuse it for the rest of the session instead of flickering back to
     // bare/partial whenever the /who data ages out mid-conversation. A fresh
@@ -4588,7 +4942,7 @@ async function _handleAgentChat(req, res) {
     // window. Usually skip the duplicate post — but two repairs live here:
     //   • HEAL: the posted copy ran under a filename-guessed name and THIS
     //     copy carries the server-authoritative in-line name → edit the posted
-    //     Discord message to the true speaker (the Starrburst→Wabumkin case).
+    //     Discord message to the true speaker (the stray-log ghost-name case).
     //   • DISTINCT REPEAT: both copies are authoritative with different names
     //     → two people genuinely typed the same text; post this one too
     //     (the old text-only dedup silently swallowed raid "111" count-offs).
@@ -4730,7 +5084,7 @@ const WP_GUILD_NAME = process.env.PVP_GUILD_NAME || 'Wolf Pack';
 // bucket (deduped), but the same killer killing the same victim in the same
 // zone on a DIFFERENT day is many buckets away (kept). This is the fix for
 // the regression where a pure text-only key collapsed a backfill's worth of
-// identical-text historical kills into one row (Malthur's "1 kill" bug).
+// identical-text historical kills into one row (a member's "1 kill" bug).
 //
 // CRITICAL: backfill uploads skip this entirely (see _isPvpDupe). A backfill
 // replays months of kills in one batch — wall-clock Date.now() bucketing is
@@ -4755,18 +5109,97 @@ function _isPvpDupe(b) {
   }
   const norm = _pvpNorm(b);
   if (!norm) return false;
+  // One kill can arrive in two wordings (the old "X of <G> has killed Y" and the PoP patch's
+  // "Rallos Zek watches as X spills Y's blood"), so killer + victim is a second key.
+  const pair = (b?.killType === 'pvp' && b?.killer && b?.victim)
+    ? `pair|${String(b.killer).toLowerCase()}|${String(b.victim).toLowerCase()}` : null;
   const bucket = _pvpBucket(b);
   // Check the current bucket AND its neighbors so two observers whose
   // timestamps straddle a 15s boundary still collapse to one.
   for (const nb of [bucket - 1, bucket, bucket + 1]) {
     if (_recentPvpBroadcasts.has(`${nb}|${norm}`)) return true;
+    if (pair && _recentPvpBroadcasts.has(`${nb}|${pair}`)) return true;
   }
   _recentPvpBroadcasts.set(`${bucket}|${norm}`, now + 5 * 60_000);
+  if (pair) _recentPvpBroadcasts.set(`${bucket}|${pair}`, now + 5 * 60_000);
   return false;
 }
 
+// Rallosian Glory kill lines (PoP patch, 2026-09-28) name no guilds. Fill them in from the latest
+// /who sighting of each name that carried a guild (last 30 days), else our own roster → Wolf Pack.
+// An unknown guild becomes '' so the death still records; '' is never read as a guild downstream
+// (_hasRealGuild, _pvpDeathRow's real()).
+async function _resolveGloryGuilds(broadcasts) {
+  const glory = broadcasts.filter(b => b && b.source === 'rallos_glory');
+  if (glory.length === 0) return;
+  const names = [...new Set(glory.flatMap(b => [b.killer, b.victim])
+    .filter(n => typeof n === 'string' && /^[A-Za-z]{2,20}$/.test(n)))];
+  const guildOf = new Map();
+  try {
+    const supabase = require('./utils/supabase');
+    if (names.length && supabase.isEnabled()) {
+      const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+      const rows = await supabase.select('who_observations',
+        `select=character,guild_name,observed_at&character=in.(${names.join(',')})`
+        + `&guild_name=not.is.null&anonymous=is.false&observed_at=gte.${encodeURIComponent(since)}`
+        + '&order=observed_at.desc&limit=500');
+      for (const r of (Array.isArray(rows) ? rows : [])) {
+        const k = String(r?.character || '').toLowerCase();
+        const g = typeof r?.guild_name === 'string' ? r.guild_name.trim() : '';
+        if (k && g && !guildOf.has(k)) guildOf.set(k, g);
+      }
+    }
+  } catch (err) { console.warn('[pvp-relay] glory guild lookup failed:', err?.message); }
+  const roster = await _rosterNameSet().catch(() => new Set());
+  for (const b of glory) {
+    for (const side of ['killer', 'victim']) {
+      // The Oct 1 wording names the guild ("Aldenmar <Wolf Pack>"); one the line carried stays.
+      if (b[`${side}Guild`] != null) continue;
+      const k = String(b[side] || '').toLowerCase();
+      b[`${side}Guild`] = guildOf.get(k) || (roster.has(k) ? WP_GUILD_NAME : '');
+    }
+  }
+}
+
+// One pvp_deaths row per death the PvP broadcast reports, whoever is on either side: the fight
+// history on /pvp (DECISIONS-2026-09-21.md §46). Null for a boss kill (no victim guild) or anything
+// that is not a death. The key is victim + MINUTE: two relays of one death can disagree by a second
+// or two, and nobody dies twice in one minute.
+function _pvpDeathRow(b, guildId, discordId, petOwners) {
+  if (!b || !b.victim) return null;
+  const npc = b.killType === 'npc';
+  if (!npc && !(b.killType === 'pvp' && b.victimGuild != null)) return null;
+  const at = b.ts ? new Date(b.ts) : new Date();
+  if (isNaN(at.getTime())) return null;
+  const real = (g) => {
+    const s = typeof g === 'string' ? g.trim() : '';
+    return s && s !== '<>' && !/^<?null>?$/i.test(s) ? s : null;
+  };
+  let killer = b.killer || null;
+  let petName = null;
+  if (killer && !npc) {
+    const owners = petOwnerEntries((petOwners || {})[String(killer).toLowerCase()]);
+    if (owners.length > 0) { petName = killer; killer = owners[owners.length - 1].o; }
+  }
+  return {
+    guild_id:      guildId,
+    victim:        b.victim,
+    victim_guild:  real(b.victimGuild),
+    killer,
+    killer_guild:  npc ? null : real(b.killerGuild),
+    killer_is_npc: npc,
+    pet_name:      petName,
+    zone:          b.zone || null,
+    died_at:       at.toISOString(),
+    source:        b.backfill ? 'log_backfill' : 'pvp_channel',
+    raw_text:      String(b.text || '').slice(0, 300),
+    dedup_key:     `${guildId}|${String(b.victim).toLowerCase()}|${at.toISOString().slice(0, 16)}`,
+    uploaded_by_discord_id: discordId || null,
+  };
+}
+
 // Note: earlier versions had a rate-limited "@PVP fyi-ping" on non-WP
-// deaths plus a raid-window suppressor. Per Dant's feedback ("don't like
+// deaths plus a raid-window suppressor. Per a member's feedback ("don't like
 // getting a ping every kill"), all non-WP-involvement events now post
 // silently as plain death notices. Pings are reserved for Wolf Pack kills
 // + Wolf Pack deaths only.
@@ -4789,6 +5222,7 @@ async function _handleAgentPvp(req, res) {
   if (broadcasts.length === 0) {
     res.writeHead(200); return res.end(JSON.stringify({ ok: true, posted: 0 }));
   }
+  await _resolveGloryGuilds(broadcasts);
 
   const pvpTargetId = process.env.PVP_THREAD_ID || process.env.PVP_CHANNEL_ID;
   if (!pvpTargetId) {
@@ -4824,6 +5258,8 @@ async function _handleAgentPvp(req, res) {
   // who_observations so /whois and the web app pick them up.
   const harvestedRows = [];
   for (const b of broadcasts) {
+    // A Glory line's guilds came FROM /who; writing them back as a sighting would only echo it.
+    if (b?.source === 'rallos_glory') continue;
     const nowIso = b?.ts || new Date().toISOString();
     const zone = b?.zone || null;
     for (const side of ['victim', 'killer']) {
@@ -4833,7 +5269,7 @@ async function _handleAgentPvp(req, res) {
       // genuinely lack it; we still want the name + zone observation.
       if (!name) continue;
       if (side === 'killer' && b?.killer_is_npc) continue;
-      // VICTIM-side NPC filter (Hitya 2026-06-21 — Praesertums leaking
+      // VICTIM-side NPC filter (the guild lead, 2026-06-21 — Praesertums leaking
       // into /who from Sanctus Seru kill broadcasts). When the parser
       // matched the BOSS_ACTIVE pattern ("X of <G> has killed Boss in
       // Zone!"), victim is the NPC's name and victimGuild is NULL by
@@ -4884,16 +5320,34 @@ async function _handleAgentPvp(req, res) {
     }
   }
 
+  // Every death, any guilds, before the post loop: a post dedup or a missing channel must not drop one.
+  // One row per key per batch, since an upsert cannot touch the same row twice.
+  try {
+    const supabase = require('./utils/supabase');
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const deathRows = new Map();
+    for (const b of broadcasts) {
+      const row = _pvpDeathRow(b, guildId, identity.discord_id, _petOwners);
+      if (row) deathRows.set(row.dedup_key, row);
+    }
+    if (deathRows.size > 0 && supabase.isEnabled()) {
+      supabase.upsert('pvp_deaths', [...deathRows.values()], 'dedup_key')
+        .catch(err => console.warn('[pvp-relay] pvp_deaths upsert failed:', err?.message));
+    }
+  } catch (err) {
+    console.warn('[pvp-relay] pvp_deaths wrap failed:', err?.message);
+  }
+
   for (const b of broadcasts) {
     if (_isPvpDupe(b)) { deduped++; continue; }
     const { killType, victim, victimGuild, killer, killerGuild, zone, text } = b || {};
     // (Instanced) [PVP]-channel kill echoes — recorded + posted informational,
     // NEVER tick the open-world respawn timer (instances have private spawns —
     // "this was a PVP instance kill, doesn't count towards our guild's
-    // resources or timer", Hitya 2026-07-05). This USED to drop OWN-guild
+    // resources or timer", the guild lead 2026-07-05). This USED to drop OWN-guild
     // instance echoes here, assuming a Druzzil → /bosskill path already had
     // them. It doesn't when the killer runs no Mimic and no Mimic guildmate is
-    // in the instance: Timberr's Lord of Ire instance kill was lost entirely
+    // in the instance: a member's Lord of Ire instance kill was lost entirely
     // (zero records anywhere). So own-guild instance echoes now flow through
     // exactly like foreign-guild ones — the boss auto-track below mirrors them
     // to pvp_boss_kills for /pvp/hate and posts an informational #pvp notice,
@@ -4907,12 +5361,18 @@ async function _handleAgentPvp(req, res) {
       // True PvP requires BOTH sides to have a real player guild. Druzzil Ro
       // broadcasts NPC kills with empty/null/<null> victim guilds — those
       // should never trigger AWROOOO celebrations or backup-requested pings
-      // even when a Wolf Pack member is the killer (e.g. "Adiwen killed
+      // even when a Wolf Pack member is the killer (e.g. "a member killed
       // Lord of Ire of <null>"). The plain death-notice fallback handles
       // them as informational posts.
       const _hasRealGuild = (g) => typeof g === 'string' && g.length > 0 && g.toLowerCase() !== 'null' && g !== '<>' && g.toLowerCase() !== '<null>';
-      const isWpKill   = killType === 'pvp' && killerGuild === WP_GUILD_NAME && _hasRealGuild(victimGuild);
-      const isWpDeath  = killType === 'pvp' && victimGuild === WP_GUILD_NAME && _hasRealGuild(killerGuild);
+      // A Rallosian Glory line is only ever player-versus-player, so an unknown guild on the other
+      // side does not make it an NPC kill.
+      const isGlory    = b?.source === 'rallos_glory';
+      const isWpKill   = killType === 'pvp' && killerGuild === WP_GUILD_NAME && (isGlory || _hasRealGuild(victimGuild));
+      // "Falls in <zone> without a worthy foe" names no killer: recorded, posted, but no backup ping.
+      const isWpDeath  = killType === 'pvp' && !!killer && victimGuild === WP_GUILD_NAME && (isGlory || _hasRealGuild(killerGuild));
+      const ofG = (g) => (_hasRealGuild(g) ? ` of <${g}>` : '');
+      const gloryNote = isGlory && b?.glory === false ? ' _(no Glory: Rallos Zek finds no worthy conquest)_' : '';
 
       // Record the kill to the PvP ledger (player-vs-player, WP involved).
       if (killType === 'pvp' && (isWpKill || isWpDeath) && killer && victim) {
@@ -4951,26 +5411,27 @@ async function _handleAgentPvp(req, res) {
       let content;
       if (isWpKill) {
         // Celebrate — Wolf Pack got a PvP kill. Ping @PVP so the pack joins the
-        // howl. The previous "no ping on our kills" rule (Dant, 2026-06-01) is
+        // howl. The previous "no ping on our kills" rule (a member, 2026-06-01) is
         // reversed: Wolf Pack PvP kills are the rallying moment, not the
         // afk-able ones. Deaths still ping for backup; other-guild / NPC kills
         // remain informational with no mention.
         const pvpRole = ch.guild?.roles.cache.find(r => r.name === pvpRoleName);
         const mention = pvpQuiet ? _pvpQuietPing : (pvpRole ? `<@&${pvpRole.id}> ` : '');
-        content = `${mention}⚔️ **${killer}** of <${killerGuild}> killed **${victim}** of <${victimGuild}> in ${zone}! AWROOOO!`;
+        content = `${mention}⚔️ **${killer}**${ofG(killerGuild)} killed **${victim}**${ofG(victimGuild)} in ${zone}! AWROOOO!${gloryNote}`;
       } else if (isWpDeath) {
         // Request backup — Wolf Pack member was killed
         const pvpRole = ch.guild?.roles.cache.find(r => r.name === pvpRoleName);
         const mention = pvpQuiet ? _pvpQuietPing : (pvpRole ? `<@&${pvpRole.id}> ` : '');
-        content = `${mention}💀 **${victim}** of <${victimGuild}> was killed by **${killer}** of <${killerGuild}> in ${zone}! Backup requested!`;
+        content = `${mention}💀 **${victim}**${ofG(victimGuild)} was killed by **${killer}**${ofG(killerGuild)} in ${zone}! Backup requested!`;
       } else {
         // NPC kill or other-guild kill — informational only, NO @PVP
         // mention regardless of raid window or cooldown. Pings are
         // reserved for events where Wolf Pack is actually involved
         // (our kill or our death); anything else is just a death notice
         // people can scroll past. ("Hmm don't like getting a ping every
-        // kill" — Dant, 2026-06-01)
-        content = `☠️ ${text}`;
+        // kill" — a member, 2026-06-01)
+        // A forfeit (fled or abandoned the battlefield, Glory surrendered) is not a death.
+        content = `${killType === 'forfeit' ? '🏃' : '☠️'} ${text}`;
       }
 
       // Auto-record PvP boss respawn timer when the broadcast names a known
@@ -4980,8 +5441,8 @@ async function _handleAgentPvp(req, res) {
       // victimGuild (PVP_BOSS_KILL_ACTIVE_RX shape: "X of <G> has killed Boss
       // [in Zone]!"). Auto-records call recordPvpKill with the broadcast
       // timestamp so the ±20% window is anchored to when the kill actually
-      // happened, not when the relay landed.
-      if (killType === 'pvp' && !victimGuild && victim) {
+      // happened, not when the relay landed. A Glory line's victim is always a player, never a boss.
+      if (killType === 'pvp' && !victimGuild && victim && !isGlory) {
         try {
           delete require.cache[require.resolve('./data/bosses.json')];
           const bosses = require('./data/bosses.json');
@@ -5097,7 +5558,7 @@ async function _handleAgentPvp(req, res) {
       // data recorded above only — same policy as historical chat backfill
       // ("collection IS in scope, display is NOT"). Without this, a single
       // --since backfill run replays months of PvP kills into #pvp live, as
-      // if they all just happened (Hitya 2026-07-01: a backfill flooded
+      // if they all just happened (the guild lead, 2026-07-01: a backfill flooded
       // #pvp with dozens of old Zek/Eclipse/Nocturnal kill notices at once).
       if (!b?.backfill) {
         // Deferred post-ack (task #44). Capture this iteration's channel +
@@ -5116,13 +5577,32 @@ async function _handleAgentPvp(req, res) {
   }
 
   // Persist the PvP kill ledger. Idempotent via dedup_key so multi-parser
-  // uploads of the same broadcast collapse to one row.
+  // uploads of the same broadcast collapse to one row. A kill replayed from an
+  // old log is also dropped when another raider already stored it a few
+  // seconds off (their clock) — see PVP_SAME_MS. Live kills are covered by
+  // _isPvpDupe; this also keeps the opt-in summary's "new kills" honest.
   if (pvpKillRows.length > 0) {
     try {
       const supabase = require('./utils/supabase');
       if (supabase.isEnabled()) {
-        await supabase.upsert('pvp_kills', pvpKillRows, 'dedup_key')
-          .catch(err => console.warn('[pvp-relay] pvp_kills upsert failed:', err?.message));
+        const replayed = pvpKillRows.filter(r => r.source === 'log_backfill');
+        const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+        const job = _pvpWriteQ.then(async () => {
+          let rows = pvpKillRows;
+          if (replayed.length) {
+            const near = await _pvpNeighbours(replayed, guildId, (q) => supabase.select('pvp_kills', q), 'killer')
+              .catch(() => null);
+            if (Array.isArray(near)) {
+              const keep = new Set(_pvpUnseen(replayed, near, 'killer'));
+              rows = pvpKillRows.filter(r => r.source !== 'log_backfill' || keep.has(r));
+            }
+          }
+          if (rows.length === 0) return null;
+          return supabase.upsert('pvp_kills', rows, 'dedup_key')
+            .catch(err => console.warn('[pvp-relay] pvp_kills upsert failed:', err?.message));
+        });
+        _pvpWriteQ = job.catch(() => {});
+        await job;
       }
     } catch (err) {
       console.warn('[pvp-relay] pvp_kills persist wrap failed:', err?.message);
@@ -5156,12 +5636,64 @@ async function _handleAgentPvp(req, res) {
   })();
 }
 
+// One assist, many witnesses (the guild lead, 2026-09-27: "credit assists to
+// guildmates our agents see"). Agent 3.7.29+ reports every player it saw hit
+// or debuff the victim, so each raider running Mimic reports the same
+// guildmate's assist — stamped off their own clock, a second or two apart.
+// dedup_key is per second, and the /pvp leaderboard counts rows, so that alone
+// would count one assist once per witness. Same assister + same victim within
+// ±30 s is one assist: nobody dies twice in that time.
+// The same holds for a KILL replayed from an old log (`who` = 'killer'):
+// measured 2026-09-27, 23 duplicate pairs in 611 pvp_kills rows, every one
+// from a log catch-up, 1–4 s off a row another raider's Mimic had stored.
+const PVP_SAME_MS = 30_000;
+let _pvpWriteQ = Promise.resolve();
+function _pvpUnseen(rows, existing, who = 'assister') {
+  const seen = existing.map(e => ({
+    a: String(e[who] || '').toLowerCase(), v: String(e.victim || '').toLowerCase(), t: Date.parse(e.killed_at),
+  }));
+  const out = [];
+  for (const r of rows) {
+    const s = { a: String(r[who] || '').toLowerCase(), v: r.victim.toLowerCase(), t: Date.parse(r.killed_at) };
+    if (seen.some(x => x.a === s.a && x.v === s.v && Math.abs(x.t - s.t) <= PVP_SAME_MS)) continue;
+    seen.push(s);   // and within this batch
+    out.push(r);
+  }
+  return out;
+}
+// The stored rows near these, read per fight: clusters of ≤ 10 min, each
+// asking for its own victims ±30 s. A replayed log's batch can span months,
+// and one query over that span would hit PostgREST's 1,000-row cap and miss
+// rows. null when any read fails.
+async function _pvpNeighbours(rows, guildId, select, who = 'assister') {
+  const sorted = rows.slice().sort((a, b) => Date.parse(a.killed_at) - Date.parse(b.killed_at));
+  const found = [];
+  for (let i = 0; i < sorted.length;) {
+    const t0 = Date.parse(sorted[i].killed_at);
+    let j = i;
+    while (j < sorted.length && Date.parse(sorted[j].killed_at) - t0 <= 600_000) j++;
+    const part = sorted.slice(i, j);
+    i = j;
+    const lo = new Date(t0 - PVP_SAME_MS).toISOString();
+    const hi = new Date(Date.parse(part[part.length - 1].killed_at) + PVP_SAME_MS).toISOString();
+    const victims = [...new Set(part.map(r => r.victim.replace(/[",()]/g, '')))];
+    const got = await select(
+      `select=${who},victim,killed_at&guild_id=eq.${encodeURIComponent(guildId)}`
+      + `&victim=in.(${victims.map(v => '"' + encodeURIComponent(v) + '"').join(',')})`
+      + `&killed_at=gte.${encodeURIComponent(lo)}&killed_at=lte.${encodeURIComponent(hi)}&limit=1000`);
+    if (!Array.isArray(got)) return null;
+    found.push(...got);
+  }
+  return found;
+}
+
 // POST /api/agent/pvp_assists — receive correlated assist events from the
 // agent. Agent has already computed the (assister, victim, killer, gap)
-// tuple from its own outbound damage window vs. a PvP death broadcast. Bot
-// validates the assister is on the WP roster, builds a dedup_key, and
-// upserts to public.pvp_assists. No Discord post — assists are a stat-only
-// signal (no rally moment to celebrate, no @PVP ping).
+// tuple from what its log saw on the victim vs. a PvP death broadcast. Bot
+// validates the assister is on the WP roster, builds a dedup_key, drops a
+// report another witness already stored, and upserts to public.pvp_assists.
+// A LIVE assist posts one bundled 🪶 note per kill (no @PVP ping); a replayed
+// log's never posts — its run gets one summary (_postOptinPvpSummary).
 async function _handleAgentPvpAssists(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -5242,6 +5774,31 @@ async function _handleAgentPvpAssists(req, res) {
     return found || agentSaidNpc;
   }
 
+  // An assist on an NPC is not a PvP assist. The server announces a boss kill in the same words as a
+  // player kill ("Aldenmar of <Wolf Pack> has killed Trakanon in Ruins of Sebilis!"), so the agent
+  // credited every raider on the boss (the guild lead, 2026-09-30: "flag any pvp kills that are probably
+  // an NPC name. trakanon is an NPC"). A victim is an NPC when the broadcast gave it no guild, its name
+  // is in the NPC catalog, and /who has never shown it with a class or a guild — a real player who
+  // shares a boss's name has both.
+  const victimNpcCache = new Map();
+  async function _victimIsNpc(victimName, victimGuild) {
+    if (victimGuild) return false;
+    const key = victimName.toLowerCase();
+    if (victimNpcCache.has(key)) return victimNpcCache.get(key);
+    let npc = false;
+    try {
+      const inCatalog = await supabase.select('eqemu_npc_types',
+        `name=ilike.${encodeURIComponent(victimName.replace(/\s+/g, '_'))}&select=id&limit=1`);
+      if (Array.isArray(inCatalog) && inCatalog.length) {
+        const asPlayer = await supabase.select('who_observations',
+          `character=ilike.${encodeURIComponent(victimName)}&or=(class.not.is.null,guild_name.not.is.null)&select=id&limit=1`);
+        npc = !(Array.isArray(asPlayer) && asPlayer.length);
+      }
+    } catch (e) { void e; }
+    victimNpcCache.set(key, npc);
+    return npc;
+  }
+
   const rows = [];
   let dropped = 0;
   for (const a of assists) {
@@ -5250,6 +5807,7 @@ async function _handleAgentPvpAssists(req, res) {
     const killedAtRaw = a?.killed_at ? new Date(a.killed_at) : null;
     if (!assister || !victim || !killedAtRaw || isNaN(killedAtRaw.getTime())) { dropped++; continue; }
     if (!rosterLower.has(assister.toLowerCase())) { dropped++; continue; }
+    if (await _victimIsNpc(victim, a?.victim_guild ? String(a.victim_guild) : null)) { dropped++; continue; }
     const killedAt = killedAtRaw.toISOString();
     const secondIso = killedAt.slice(0, 19);
     const killerName = a?.killer ? String(a.killer).slice(0, 64) : null;
@@ -5273,8 +5831,19 @@ async function _handleAgentPvpAssists(req, res) {
   if (rows.length === 0) {
     res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: 0, dropped }));
   }
-  const written = await supabase.upsert('pvp_assists', rows, 'dedup_key')
-    .catch(err => { console.warn('[pvp-assists] upsert failed:', err?.message); return null; });
+  // Read-then-write, one request at a time, so two witnesses uploading together
+  // cannot both miss each other's row.
+  const job = _pvpWriteQ.then(async () => {
+    const existing = await _pvpNeighbours(rows, guildId, (q) => supabase.select('pvp_assists', q))
+      .catch(() => null);
+    // A failed read stores everything: the per-second dedup_key still holds.
+    const fresh = Array.isArray(existing) ? _pvpUnseen(rows, existing) : rows;
+    if (fresh.length === 0) return [];
+    return supabase.upsert('pvp_assists', fresh, 'dedup_key')
+      .catch(err => { console.warn('[pvp-assists] upsert failed:', err?.message); return null; });
+  });
+  _pvpWriteQ = job.catch(() => {});
+  const written = await job;
   const stored = Array.isArray(written) ? written.length : 0;
 
   // Harvest assist rows into who_observations — same pattern as the main PvP
@@ -5330,13 +5899,18 @@ async function _handleAgentPvpAssists(req, res) {
 
   // Discord post — group by (victim, killed-at-second) so multiple assisters
   // on the same kill bundle into one message. Skip kills we've recently
-  // posted (10-min in-memory dedup) so an agent retry doesn't double-post.
-  // Goes to PVP_THREAD_ID / PVP_CHANNEL_ID like the kill broadcast.
+  // posted (10-min in-memory dedup, same victim ±30 s — several witnesses'
+  // clocks differ by seconds) so a retry or a second witness doesn't
+  // double-post. Goes to PVP_THREAD_ID / PVP_CHANNEL_ID like the kill broadcast.
+  // Only rows stored just now, and never a replayed log's: an opt-in parse
+  // gets ONE summary note instead (the guild lead, 2026-09-27: "make sure we're
+  // not posting in the channels for it each time") — _postOptinPvpSummary.
   try {
     const pvpTargetId = process.env.PVP_THREAD_ID || process.env.PVP_CHANNEL_ID;
-    if (pvpTargetId && rows.length > 0) {
+    const postRows = (Array.isArray(written) ? written : []).filter(r => r && r.source !== 'log_backfill');
+    if (pvpTargetId && postRows.length > 0) {
       const groups = new Map();   // (victim|second) → { victim, victimGuild, zone, killer, killerIsNpc, killedAt, assisters[] }
-      for (const r of rows) {
+      for (const r of postRows) {
         const k = (r.victim.toLowerCase()) + '|' + r.killed_at.slice(0, 19);
         let g = groups.get(k);
         if (!g) {
@@ -5353,10 +5927,9 @@ async function _handleAgentPvpAssists(req, res) {
       if (ch) {
         for (const g of groups.values()) {
           if (g.assisters.length === 0) continue;
-          const dedupKey = (g.victim.toLowerCase()) + '|' + g.killedAt.slice(0, 19);
-          if (_recentPvpAssistPost(dedupKey)) continue;
-          // "🪶 Assist on Bob of <Tranquility> in nro — Carol, Hopeya, Hitya (3)
-          //   killed by Adiwen". Zone + killed-by lines included when known.
+          if (_recentPvpAssistPost(g.victim.toLowerCase(), Date.parse(g.killedAt))) continue;
+          // "🪶 Assist on Bob of <Tranquility> in nro — Carol, Sorvane, Rethlan (3)
+          //   killed by a member". Zone + killed-by lines included when known.
           const victimLine = g.victim + (g.victimGuild ? ` of <${g.victimGuild}>` : '');
           const zoneLine   = g.zone ? ` in ${g.zone}` : '';
           const killerLine = g.killer
@@ -5375,20 +5948,112 @@ async function _handleAgentPvpAssists(req, res) {
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify({ ok: true, stored, dropped }));
 }
-// 10-min in-memory ring for assist-group dedup. Keys are
-// "victimLower|killedAtSecondIso" so an agent retry / a same-second double
-// upload doesn't double-post. Bounded at 500 entries to cap memory.
-const _recentPvpAssistPosts = new Map();   // key → expiresAt
-function _recentPvpAssistPost(key) {
+// 10-min in-memory ring for assist-group dedup: a victim posted within ±30 s
+// of this kill is this kill (an agent retry, or another witness whose clock
+// is a second or two off). Bounded at 500 victims to cap memory.
+const _recentPvpAssistPosts = new Map();   // victimLower → [{ t: killedAtMs, ex: expiresAt }]
+function _recentPvpAssistPost(victimLower, killedAtMs) {
   const now = Date.now();
-  for (const [k, ex] of _recentPvpAssistPosts) if (ex <= now) _recentPvpAssistPosts.delete(k);
-  if (_recentPvpAssistPosts.has(key)) return true;
-  if (_recentPvpAssistPosts.size > 500) {
+  for (const [k, list] of _recentPvpAssistPosts) {
+    const live = list.filter(e => e.ex > now);
+    if (live.length) _recentPvpAssistPosts.set(k, live); else _recentPvpAssistPosts.delete(k);
+  }
+  const list = _recentPvpAssistPosts.get(victimLower) || [];
+  if (list.some(e => Math.abs(e.t - killedAtMs) <= PVP_SAME_MS)) return true;
+  if (!_recentPvpAssistPosts.has(victimLower) && _recentPvpAssistPosts.size >= 500) {
     const oldest = _recentPvpAssistPosts.keys().next().value;
     if (oldest) _recentPvpAssistPosts.delete(oldest);
   }
-  _recentPvpAssistPosts.set(key, now + 10 * 60 * 1000);
+  list.push({ t: killedAtMs, ex: now + 10 * 60 * 1000 });
+  _recentPvpAssistPosts.set(victimLower, list);
   return false;
+}
+
+// ── Opt-in log parse → ONE PvP note (the guild lead, 2026-09-27) ────────────
+// "when parsing through old logs make sure we're not posting in the channels
+// for it each time. we can put in a note in pvp that the @user's opt-in log
+// parse found N new pvp kills and assists and total them out per guildie".
+// Replayed kills and assists never post one by one (the pvp relay and the
+// assist post both skip them); when a run ends the agent sends
+// POST /api/agent/optin_summary { started_at }, and after the run's last
+// uploads have had time to land we count what THIS uploader's replay added —
+// rows it inserted since the run began, source log_backfill — and post once.
+const _OPTIN_SUMMARY_SETTLE_MS = 90_000;
+const _OPTIN_SUMMARY_MAX_LINES = 30;
+function _optinPvpSummaryText(discordId, kills, assists) {
+  const per = new Map();
+  const bump = (name, k) => {
+    const key = String(name).toLowerCase();
+    const e = per.get(key) || { name: String(name), kills: 0, assists: 0 };
+    e[k]++;
+    per.set(key, e);
+  };
+  for (const r of kills) if (r && r.killer) bump(r.killer, 'kills');
+  for (const r of assists) if (r && r.assister) bump(r.assister, 'assists');
+  if (!per.size) return null;
+  const nk = kills.filter(r => r && r.killer).length, na = assists.filter(r => r && r.assister).length;
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const day = (ms) => new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
+  const times = [...kills, ...assists].map(r => Date.parse(r && r.killed_at)).filter(Number.isFinite);
+  const lo = times.length ? day(Math.min(...times)) : null, hi = times.length ? day(Math.max(...times)) : null;
+  const span = lo ? (lo === hi ? ` (${lo})` : ` (${lo} – ${hi})`) : '';
+  const rows = [...per.values()].sort((a, b) => (b.kills + b.assists) - (a.kills + a.assists) || a.name.localeCompare(b.name));
+  const lines = rows.slice(0, _OPTIN_SUMMARY_MAX_LINES).map(e => `• **${e.name}** — `
+    + [e.kills ? plural(e.kills, 'kill') : null, e.assists ? plural(e.assists, 'assist') : null].filter(Boolean).join(' · '));
+  if (rows.length > _OPTIN_SUMMARY_MAX_LINES) lines.push(`…and ${rows.length - _OPTIN_SUMMARY_MAX_LINES} more`);
+  return `📜 <@${discordId}>'s opt-in log parse found **${plural(nk, 'new PvP kill')}** and **${plural(na, 'new assist')}**${span}.\n`
+    + lines.join('\n');
+}
+async function _postOptinPvpSummary(discordId, startedMs) {
+  const supabase = require('./utils/supabase');
+  const pvpTargetId = process.env.PVP_THREAD_ID || process.env.PVP_CHANNEL_ID;
+  if (!supabase.isEnabled() || !pvpTargetId) return;
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  // 2 min of slack for the agent's clock running ahead of the database's.
+  const since = new Date(startedMs - 2 * 60_000).toISOString();
+  const base = `guild_id=eq.${encodeURIComponent(guildId)}&source=eq.log_backfill`
+    + `&uploaded_by_discord_id=eq.${encodeURIComponent(discordId)}&created_at=gte.${encodeURIComponent(since)}`;
+  const [kills, assists] = await Promise.all([
+    supabase.selectAllPaged('pvp_kills', `${base}&killer_guild=eq.${encodeURIComponent(WP_GUILD_NAME)}&select=killer,killed_at`, 'id'),
+    supabase.selectAllPaged('pvp_assists', `${base}&select=assister,killed_at`, 'id'),
+  ]);
+  // A failed read is not "found nothing" — post nothing rather than a wrong count.
+  if (!Array.isArray(kills) || !Array.isArray(assists)) return;
+  const content = _optinPvpSummaryText(discordId, kills, assists);
+  if (!content) return;
+  const ch = await client.channels.fetch(pvpTargetId).catch(() => null);
+  if (ch && typeof ch.send === 'function') {
+    await ch.send({ content, allowedMentions: { users: [discordId] } })
+      .catch(err => console.warn('[optin-summary] post failed:', err?.message));
+  }
+}
+async function _handleAgentOptinSummary(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 16 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+  const startedMs = Date.parse(payload?.started_at);
+  const now = Date.now();
+  // A run can take hours on a big log; a week is plenty, and anything older
+  // or in the future is a bad clock, not a run.
+  if (!Number.isFinite(startedMs) || startedMs > now + 10 * 60_000 || now - startedMs > 7 * 86_400_000
+      || !/^\d{5,25}$/.test(String(identity.discord_id || ''))) {
+    res.writeHead(400); return res.end(JSON.stringify({ error: 'started_at must be within the last 7 days' }));
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, posting_in_ms: _OPTIN_SUMMARY_SETTLE_MS }));
+  const t = setTimeout(() => {
+    _postOptinPvpSummary(String(identity.discord_id), startedMs)
+      .catch(err => console.warn('[optin-summary] failed:', err?.message));
+  }, _OPTIN_SUMMARY_SETTLE_MS);
+  if (typeof t.unref === 'function') t.unref();
 }
 
 // ── Druzzil Ro boss-kill auto-timer ───────────────────────────────────────
@@ -5396,6 +6061,10 @@ function _recentPvpAssistPost(key) {
 //   1. Match boss name against bosses.json (by name or nickname)
 //   2. Record kill + trigger full postKillUpdate refresh
 //   3. Post human-readable confirmation to RAID_CHAT_CHANNEL_ID with next-spawn time
+// Bosses deliberately taken off the board because the server gave them no
+// lockout (lower-case names). The guild lead, 2026-10-02, on the Oct 1 patch's
+// "Xanamech has no lockout": take him off the board.
+const _OFF_BOARD_NO_LOCKOUT = new Set(['xanamech nezmirthafen']);
 async function _handleAgentBossKill(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -5432,6 +6101,11 @@ async function _handleAgentBossKill(req, res) {
     const { character, guild, boss: bossName, zone, ts } = kill || {};
     if (!bossName) continue;
 
+    // Dead → off the Extended Target board, before anything else can `continue`
+    // past it. Deliberately ABOVE the PoP lock check below: that gate is about
+    // timers and boards, and a locked boss is every bit as dead on the overlay.
+    _extEvictDeadMob(bossName);
+
     // A server kill broadcast = lockout content → card-worthy. Promote its
     // bosses_local row if the persist path auto-registered it (fire-and-
     // forget — timers below don't depend on it).
@@ -5451,7 +6125,7 @@ async function _handleAgentBossKill(req, res) {
     // /updatetimer) already enforce this, but this automated relay didn't,
     // and PVP-event content shares names with PoP bosses (the war gods:
     // "Tallon Zek" / "Vallon Zek" are both PVP-event entities AND Plane of
-    // Tactics bosses in bosses.json). Hitya 2026-07-13: bogus Tactics
+    // Tactics bosses in bosses.json). The guild lead 2026-07-13: bogus Tactics
     // timers appeared on the locked PoP board. Date-gated, so this relay
     // starts working for PoP the moment the expansion unlocks.
     if (boss && isPopLocked(boss)) {
@@ -5478,17 +6152,26 @@ async function _handleAgentBossKill(req, res) {
             );
           }
         });
+        // The one-time Vex Thal celebration rides the same kill, right after.
+        discordJobs.push(() => _announceVexThalClearedOnce(kill).catch(err => console.warn('[vt-cleared]', err?.message)));
       }
       set++;
     } else {
+      // Boss not on the board: the kill listener never sees it, so a hail boss (Mithaniel Marr, Solusek Ro,
+      // the Keeper, the Behemoth, the Arbitor) opens its hail window here, by name.
+      _hailKill({ bossName, killedAtMs: killedAt });
       // Boss not in database — still post to raid channel as FYI (deferred).
+      // A boss taken off the board on purpose says so, instead of inviting an
+      // officer to /addboss it back (§132).
+      const offBoard = _OFF_BOARD_NO_LOCKOUT.has(nameLower);
       if (raidChId) {
         discordJobs.push(async () => {
           const ch = await client.channels.fetch(raidChId).catch(() => null);
           if (ch) {
             await ch.send(
               `⚔️ **${character}** of <${guild}> killed **${bossName}** in ${zone} ` +
-              `*(not in timer database — use \`/addboss\` to add it)*`
+              (offBoard ? `*(no lockout — not on the timer board)*`
+                        : `*(not in timer database — use \`/addboss\` to add it)*`)
             );
           }
         });
@@ -5511,7 +6194,7 @@ async function _handleAgentBossKill(req, res) {
 // ── /api/agent/hatekill ─────────────────────────────────────────────────────
 // Agent forwards Plane-of-Hate mini-boss kills it sees in the [PVP] channel
 // (and Druzzil broadcasts for foreign-guild instance kills, which we never
-// hear about otherwise). Per the user spec 2026-06-21 (Hitya's missed
+// hear about otherwise). Per the user spec 2026-06-21 (the guild lead's missed
 // Lord-of-Ire-Singzu screenshot): own-guild PvP open-world kills get a row
 // + an instant spot-picker so a guildmate can assign which spot died.
 // Foreign-guild kills get a row with spot_num=NULL + an info-only post — the
@@ -5663,14 +6346,14 @@ async function _handleAgentHateKill(req, res) {
 const HISTORICAL_CHAT_PATH = require('path').join(__dirname, 'data', 'historical_chat.jsonl');
 
 // ── Fun-events ingestion ────────────────────────────────────────────────────
-// Receives tagged "just for fun" occurrences (Peopleslayer LD counter,
+// Receives tagged "just for fun" occurrences (a member LD counter,
 // future CoH/DI/Aegolism/Rune) and upserts into the fun_events Supabase
 // table. The table's unique constraint on (guild_id, event_type, caster,
 // event_ts) makes backfill replays idempotent — re-running the same opt-in
 // ── Server-view panels for the local dashboard (increment 2f) ──────────────
 // ── Web UI Studio (/me/ui) support ──────────────────────────────────────────
 // ui_snapshots payloads are encrypted with the bot's key, so the WEB can't
-// read them. The bot extracts what /me/ui needs (Hitya 2026-07-06):
+// read them. The bot extracts what /me/ui needs (the guild lead, 2026-07-06):
 //   • ui_socials_index — [Socials] macros per character, written in plaintext
 //     at UPLOAD time (we hold the plaintext right before encrypting) and
 //     backfilled once from each character's latest snapshot on startup.
@@ -5758,26 +6441,22 @@ async function _recomputeCommonMacros() {
   if (!supabase.isEnabled()) return;
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   // Page through the whole index (PostgREST caps a single response at 1000).
-  const all = [];
-  for (let from = 0; ; from += 1000) {
-    const rows = await supabase.select('ui_socials_index',
-      `guild_id=eq.${encodeURIComponent(guildId)}&select=character,name,lines&offset=${from}&limit=1000`);
-    if (!Array.isArray(rows) || rows.length === 0) break;
-    all.push(...rows);
-    if (rows.length < 1000) break;
-  }
+  // Ordered by the key — with guild_id pinned, (character, page, button) is
+  // unique. The walk used to carry no order, so a page boundary could skip one
+  // macro and repeat another and the tally of carriers shifted run to run.
+  const all = await supabase.selectAllPaged('ui_socials_index',
+    `guild_id=eq.${encodeURIComponent(guildId)}&select=character,name,lines`, 'character,page,button');
+  // A failed page is not an empty index: rewriting common_macros from nothing,
+  // or from half the rows, would wipe or shrink it. Keep what is there.
+  if (!all) { console.warn('[common-macros] index read failed — keeping the existing common_macros'); return; }
   // Class per carrying character — powers the /me/ui "what do other druids
   // run" filter. Best-effort: characters without a known class just don't
   // contribute to the tally (the macro still counts toward char_count).
   const classByChar = new Map();
   try {
-    for (let from = 0; ; from += 1000) {
-      const rows = await supabase.select('characters',
-        `guild_id=eq.${encodeURIComponent(guildId)}&select=name,class&offset=${from}&limit=1000`);
-      if (!Array.isArray(rows) || rows.length === 0) break;
-      for (const r of rows) if (r.name && r.class) classByChar.set(String(r.name).toLowerCase(), String(r.class));
-      if (rows.length < 1000) break;
-    }
+    const chars = await supabase.selectAllPaged('characters',
+      `guild_id=eq.${encodeURIComponent(guildId)}&select=name,class`, 'name');
+    for (const r of (chars || [])) if (r.name && r.class) classByChar.set(String(r.name).toLowerCase(), String(r.class));
   } catch { /* class column is enrichment only */ }
   const bySig = new Map();   // sig → { chars:Set, names:Map, lines }
   for (const r of all) {
@@ -5824,9 +6503,14 @@ async function _backfillSocialsIndex() {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   try {
     const indexed = new Set();
-    const idxRows = await supabase.select('ui_socials_index',
-      `guild_id=eq.${encodeURIComponent(guildId)}&select=character&limit=1000`);
-    for (const r of (idxRows || [])) indexed.add(String(r.character).toLowerCase());
+    // The "already indexed" set, whole: the index holds 1,165 rows (one per
+    // macro), and `limit=1000` saw only the first 1,000 — so characters past it
+    // looked unindexed and were decrypted and re-indexed after EVERY boot.
+    const idxRows = await supabase.selectAllPaged('ui_socials_index',
+      `guild_id=eq.${encodeURIComponent(guildId)}&select=character`, 'character,page,button');
+    // A failed read is not "nothing indexed" — that would redo every character.
+    if (!idxRows) { console.warn('[ui-socials-index] backfill skipped: index read failed'); return; }
+    for (const r of idxRows) indexed.add(String(r.character).toLowerCase());
     // Newest snapshots first; first hit per character wins.
     const snaps = await supabase.select('ui_snapshots',
       `select=id,character_name,owner_discord_id,created_at&order=created_at.desc&limit=500`);
@@ -5991,7 +6675,377 @@ async function _handleAgentUiEditResult(req, res) {
 // drive the login gate locally), "item-history" (per-item last winner +
 // runner-up), and "bid-history" (the caller's own wins + wishlist). The last
 // two are cached (60s) since a room of Mimics polls them — same spirit as the
-// target-buffs cache.
+// target-buffs cache. "night-loot" (2026-10-03) is the guild-wide looted list +
+// roll sessions for the last 12h, same 60s cache.
+
+// ── Panel auction cache (source-sliced by test/server-panel-auction-cache.test.js)
+// 2026-08-25, from OpenDKP's own API Gateway logs: every open Mimic dashboard
+// polled the "auctions" + "my-bids" keys every 7s, and this handler forwarded
+// EVERY poll upstream — 1,678 calls / 1.1 GB in one afternoon from ONE open
+// dashboard, which is what got our IP blocked. Two changes:
+//   • upstream is now GET /clients/{name}/auctions/active (OpenDKP's own
+//     documented "Get Active Auctions") — the open auctions the panel renders,
+//     not the ~665 KB full settled history;
+//   • one shared cache serves the whole fleet: 15s TTL while auctions are up
+//     (bid-fresh), 120s while none are (idle) — so N dashboards cost the same
+//     as one, and an idle fleet costs ≤30 upstream calls/hour, demand-driven
+//     (nobody polling → zero upstream). "my-bids" reads the same cache: each
+//     active auction already carries Bids[] inline (the same fact the mirror
+//     sync exploits), so its per-auction getAuction() N+1 and per-request
+//     getCharacters() are gone entirely (roster cached 1h below).
+//
+// ⚠ THE IDLE TTL USED TO BE THE ENTIRE BIDDING WINDOW (the guild lead, 2026-08-30: "The
+// loot is not posted quickly on the channel"). Every auction opened on that
+// raid ran for 2 MINUTES and the idle TTL was 120s — so from the moment an
+// officer opened bidding, a raider's panel could sit on a cached EMPTY list
+// until the auction had already closed. Nothing errored; the item simply was
+// not there yet, and then it was gone. Two changes, in order of what they buy:
+//   • the officer's own post drops the cache in-process
+//     (`_invalidatePanelAuctions`, called from POST /api/agent/loot-post).
+//     That is the path all twelve of that night's posts took, it is exact, and
+//     it costs NOTHING upstream — it moves a call we were going to make within
+//     the TTL anyway, earlier.
+//   • inside a raid window the idle TTL drops to 30s, purely as a backstop for
+//     auctions opened on the OpenDKP website, which our handler never sees.
+//     Off-raid stays 120s: nobody is bidding, so nobody is waiting on it.
+// The 15s ACTIVE TTL is untouched — once an auction is up, that is the number
+// that governs, and it was never the problem.
+const _PANEL_AUCTIONS_TTL_ACTIVE_MS = 15_000;
+const _PANEL_AUCTIONS_TTL_IDLE_MS   = 120_000;
+const _PANEL_AUCTIONS_TTL_IDLE_RAID_MS =
+  Number(process.env.PANEL_AUCTIONS_TTL_IDLE_RAID_MS) || 30_000;
+const _PANEL_AUCTIONS_TTL_FAILED_MS = 20_000;
+let _panelAuctionsCache = null;   // { at, list }
+let _loggedActiveAuctionShape = false;
+async function _panelAuctions(deps = {}) {
+  const now   = deps.now   || Date.now;
+  const fetch = deps.fetch || (() => require('./utils/opendkp').getActiveAuctions());
+  const inRaid = deps.inRaid !== undefined ? deps.inRaid : _inRaidWindowEt(new Date(now()));
+  const c = _panelAuctionsCache;
+  if (c) {
+    // A cached FAILURE gets its own short TTL: long enough to collapse a poll
+    // storm, short enough that recovery is seconds not minutes. It must never
+    // inherit the 120s idle TTL, which would make "upstream is broken" look
+    // identical to "no auctions are open" for two minutes.
+    // "Nothing is up for bid" is the answer that goes stale in a way somebody
+    // is actually waiting on, and only while a raid is on.
+    const idleTtl = inRaid ? _PANEL_AUCTIONS_TTL_IDLE_RAID_MS : _PANEL_AUCTIONS_TTL_IDLE_MS;
+    const ttl = c.failed ? _PANEL_AUCTIONS_TTL_FAILED_MS
+              : (c.list.length > 0 ? _PANEL_AUCTIONS_TTL_ACTIVE_MS : idleTtl);
+    if (now() - c.at < ttl) {
+      if (c.failed) throw new Error('OpenDKP unreachable (cached failure) — not re-attempting yet');
+      return c.list;
+    }
+  }
+  let raw;
+  try { raw = await fetch(); }
+  catch (err) {
+    // Serve stale over erroring — a raid-night blip should not blank the
+    // bidding panel.
+    if (c) return c.list;
+    // ⚠ NEGATIVE CACHE (2026-08-26). Without this, a COLD cache plus a failing
+    // upstream meant the fan-in protection vanished exactly when it mattered:
+    // every dashboard poll re-attempted, because a failure cached nothing.
+    // Measured during the halt — 1,486 auth attempts in 14 minutes, ~106/min,
+    // which is 4 dashboards × 7s × the auctions+my-bids pair. The cache is
+    // supposed to make N dashboards cost the same as one; that guarantee has
+    // to hold while OpenDKP is DOWN too, or we hammer whoever we depend on at
+    // precisely the moment they are already struggling.
+    _panelAuctionsCache = { at: now(), list: [], failed: true };
+    throw err;
+  }
+  // ⚠ SHAPE TOLERANCE + PROBE (2026-08-26). We moved the panel onto
+  // /auctions/active in 3.1.72 on the strength of OpenDKP's Postman doc listing
+  // "Get Active Auctions" — without ever seeing a response. The live counter
+  // then showed 85 calls returning 170 BYTES TOTAL (~2 each), i.e. `[]` every
+  // time, which is either "nothing is up for bid" or "we are reading the wrong
+  // key off a shape we guessed". Those look identical from here and only one
+  // of them means bidding is dead on raid night.
+  //
+  // So: accept every wrapper the rest of this client already tolerates
+  // (OpenDKP varies the key per endpoint — BidResults, Items, Results…), and
+  // log the actual top-level shape ONCE when it parses to empty, so the answer
+  // is in Railway rather than inferred from a doc a second time.
+  const list = Array.isArray(raw) ? raw
+             : Array.isArray(raw?.Items) ? raw.Items
+             : Array.isArray(raw?.Results) ? raw.Results
+             : Array.isArray(raw?.Auctions) ? raw.Auctions
+             : Array.isArray(raw?.BidResults) ? raw.BidResults
+             : [];
+  if (list.length === 0 && !_loggedActiveAuctionShape) {
+    _loggedActiveAuctionShape = true;
+    const keys = raw && typeof raw === 'object' ? Object.keys(raw) : [];
+    console.log('[panel-auctions] /auctions/active parsed EMPTY —'
+      + ` typeof=${typeof raw} isArray=${Array.isArray(raw)} keys=[${keys.join(', ')}]`
+      + ` sample=${(() => { try { return JSON.stringify(raw).slice(0, 300); } catch { return '?'; } })()}`);
+  }
+  _panelAuctionsCache = { at: now(), list };
+  return list;
+}
+
+// An OpenDKP timestamp as ISO UTC. They arrive without a zone ("2026-09-28T03:06:35"), which
+// Date.parse would read as the host's local time; the stored history shows they are UTC.
+function _odkpTime(v) {
+  if (v == null || v === '') return null;
+  let s = String(v).trim();
+  if (/^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d(\.\d+)?)?$/.test(s)) s += 'Z';
+  const ms = Date.parse(s);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
+// Drop the shared auctions cache so the NEXT poll goes upstream. Called only
+// when we already know the answer changed — an officer opening bidding — never
+// on a timer and never from a request we did not cause. A no-op if nothing is
+// cached, so it is safe to call unconditionally.
+function _invalidatePanelAuctions() { _panelAuctionsCache = null; }
+
+// The open auctions the shared cache above holds RIGHT NOW, for the raid screen (utils/screenLive.js): item and
+// end time only (a sealed bid is never read here), as { at, items } — or null when nothing usable is cached. It
+// never calls OpenDKP: the cache is kept warm by the raiders' Mimic panels, and a screen that finds it cold
+// shows the OpenDKP mirror instead, so sixty open screens cost OpenDKP nothing.
+function _peekPanelAuctions() {
+  const c = _panelAuctionsCache;
+  if (!c || c.failed || !Array.isArray(c.list)) return null;
+  return {
+    at: c.at,
+    items: c.list.map(a => ({
+      item: a.ItemName || a.Item?.Name || null,
+      endsAt: _odkpTime(a.EndTimestamp || a.EndTime || a.EndsAt),
+    })),
+  };
+}
+
+// Pooled family DKP recomputed from OUR MIRROR — ticks earned, plus
+// adjustments, minus loot spent. No upstream call: it reads the Supabase tables
+// the 30-minute sync fills.
+//
+// This is the off-raid answer (the guild lead, 2026-08-27: "the live dkp checkin should
+// be raids-only since users are getting more dkp with each tick. the rest of
+// the time the checkin should be just to the bot and database"). Between raids
+// nobody is earning ticks, so the mirror is not merely an acceptable
+// approximation — it is the same number, sourced without spending anybody's
+// API budget.
+//
+// ⚠ Extracted from the bid-history key rather than copied. Two hand-maintained
+// copies of a DKP formula is how the loot panel and the bid panel start
+// quietly disagreeing about what somebody can afford.
+async function _familyDkpFromMirror(family) {
+  const supabase = require('./utils/supabase');
+  const ADJ_LIMIT = 1000;
+  const [mirrorRows, adjRows] = await Promise.all([
+    // Ticks earned and loot spent per family name, summed in the database
+    // (family_dkp_mirror, migration 20261004140200). This used to read the family's tick rows with
+    // `limit=3000`, which PostgREST holds to 1,000: 18 families have more (the most, 1,456), and the
+    // understatement ran from 35 to 2,347 DKP of `earned` on the production mirror, 2026-10-04.
+    supabase.rpc('family_dkp_mirror', { p_names: family }),
+    // ⚠ Unfiltered: adjustments have no queryable character column (the name is
+    // inside `raw`), so this pulls the whole table and filters in JS. 295 rows
+    // today against a 1000 cap — lots of headroom, but it is the SAME shape as
+    // the bug that made /opendkp under-report by a third (an ordered-wrong
+    // limit silently dropping rows), and here it would drop DKP off somebody's
+    // BALANCE rather than off a chart. Loud if it ever bites.
+    //
+    // Volume is a steady trickle, not a burst: the dominant category is
+    // OpenDKP's OWN automated inactivity decay, which fires at 12:00 UTC and
+    // wrote 165 rows across 62 days — ~2.6 on a day it runs at all. (An earlier
+    // comment here called it a Friday burst by officers; that was a day-of-week
+    // rollup flattening a recurring job into a fake spike. The guild lead: the decay
+    // "happens automatically based on settings that we've deployed in open
+    // dkp". The handful of 2024 rows at other times are the manual era.)
+    supabase.select('opendkp_adjustments', `select=raw,fetched_at&limit=${ADJ_LIMIT}`),
+  ]);
+  // A failed read is not a family that never earned a tick: carrying on would show a balance with no
+  // earnings in it as if it were the answer. The callers already treat a throw as "no figure".
+  if (!Array.isArray(mirrorRows)) throw new Error('family_dkp_mirror read failed');
+  if ((adjRows || []).length >= ADJ_LIMIT) {
+    console.warn(`[dkp-mirror] adjustments hit the ${ADJ_LIMIT}-row cap — balances may be UNDERSTATED.`
+      + ' Paginate this read or give adjustments a queryable character column.');
+  }
+  const per = new Map(family.map(f => [f.toLowerCase(), { name: f, earned: 0, adjustments: 0, spent: 0 }]));
+  let fresh = 0;
+  for (const m of mirrorRows) {
+    const row = per.get(String(m.name_lower || '').toLowerCase());
+    if (row) { row.earned += Number(m.earned) || 0; row.spent += Number(m.spent) || 0; }
+    if (m.fetched_at) fresh = Math.max(fresh, Date.parse(m.fetched_at) || 0);
+  }
+  for (const a of (adjRows || [])) {
+    const nm = a.raw && a.raw.Character && a.raw.Character.Name;
+    const k = nm ? String(nm).toLowerCase() : '';
+    if (k && per.has(k)) per.get(k).adjustments += Number(a.raw.Value) || 0;
+    if (a.fetched_at) fresh = Math.max(fresh, Date.parse(a.fetched_at) || 0);
+  }
+  return { ..._familyDkpTotals([...per.values()]), source: 'mirror', pooled: true,
+           fetched_at: fresh ? new Date(fresh).toISOString() : null };
+}
+
+// Pick a family's pooled balance out of the standings array. Behaviour is
+// ported from the agent's #124 _pickAccountDkp so the number members saw before
+// this moved server-side is the number they see after: prefer the main's own
+// row, else the highest-DKP row among the alts. OpenDKP's field name for the
+// balance varies by instance, hence the ladder.
+function _pickAccountDkpFromModels(models, main, familyNames) {
+  const rows = Array.isArray(models) ? models
+             : (models && Array.isArray(models.Models)) ? models.Models : [];
+  const byName = new Map();
+  for (const r of rows) {
+    if (!r) continue;
+    const nm = r.CharacterName || r.Name || r.character_name;
+    if (!nm) continue;
+    const raw = r.CurrentDKP ?? r.CurrentDkp ?? r.currentDkp ?? r.Dkp ?? r.DKP ?? null;
+    const dkp = Number(raw);
+    if (!Number.isFinite(dkp)) continue;
+    const k = String(nm).toLowerCase();
+    if (!byName.has(k)) byName.set(k, { name: String(nm), dkp });   // one active row per name
+  }
+  const mainKey = main ? String(main).trim().toLowerCase() : '';
+  if (mainKey && byName.has(mainKey)) {
+    const m = byName.get(mainKey);
+    return { dkp: m.dkp, character: m.name, matched: 'main' };
+  }
+  let best = null;
+  for (const f of (Array.isArray(familyNames) ? familyNames : [])) {
+    const k = f ? String(f).trim().toLowerCase() : '';
+    const row = k && byName.get(k);
+    if (row && (best === null || row.dkp > best.dkp)) best = row;
+  }
+  return best ? { dkp: best.dkp, character: best.name, matched: 'family' } : null;
+}
+
+// ── Panel standings cache (#… agent third-party removal, 2026-08-27) ────────
+// Moncs: "Do you purposefully call /dkp once a minute? Looking back over the
+// past 60 minutes, it looks like theres about 54 calls from <ip> calling it".
+// That ip was a MEMBER'S PC. Every open Mimic asked OpenDKP for the full 472-
+// character standings array once a minute, directly, to render one number.
+//
+// The standings now live here — one fetch for the whole guild, through
+// utils/opendkp so the call counter sees it, the outbound governor caps it and
+// OPENDKP_HALT stops it. Agents read the answer from the bot and never speak to
+// OpenDKP themselves.
+//
+// ⚠ THE REFRESH TRIGGER IS AN OPEN AUCTION, NOT A MOB KILL (the guild lead, 2026-08-27:
+// "maybe there's a better design than those two given what we know about loot
+// being posted from trash mobs as well"). Keying off named-mob kills would have
+// been wrong on both sides: loot gets posted off trash too, so it would MISS
+// auctions; and a mob dying does not move anyone's DKP, so it would refresh for
+// no reason. What actually changes a balance is a bid settling, and an auction
+// being open is the cheap, already-cached signal that bidding is happening.
+// _panelAuctions is 113 bytes a call and demand-driven, so gating on it costs
+// nothing extra.
+//
+// Outside a raid window with nothing live, we do not refresh at all — a stale
+// figure is served with its age attached, and the panel can say so. DKP does
+// not move when nobody is raiding.
+const _PANEL_DKP_TTL_BIDDING_MS = 60_000;         // an auction is open
+const _PANEL_DKP_TTL_RAID_MS    = 30 * 60_000;    // raiding, nothing live
+const _PANEL_DKP_TTL_FAILED_MS  = 60_000;
+let _panelStandingsCache = null;  // { at, models, failed }
+
+// Pure: given what we know right now, may we spend an upstream call?
+// Split out so the policy is testable without a clock, a network or a raid.
+function _standingsRefreshDecision({ cache, nowMs, auctionsLive, inRaid }) {
+  // ⚠ RAID WINDOW IS THE GATE, and an open auction only sets the pace inside
+  // it. The guild lead, 2026-08-27: "the live dkp checkin should be raids-only since
+  // users are getting more dkp with each tick. the rest of the time the
+  // checkin should be just to the bot and database."
+  //
+  // That is the actual reason a live figure is worth anything: DKP moves per
+  // TICK, and ticks only happen while raiding. Between raids the mirror holds
+  // the same number — so an off-raid upstream call buys a value we already
+  // have, on somebody else's bill. The first cut of this let an open auction
+  // alone justify a refresh; an auction can sit open off-raid (a market night,
+  // a late award) and that would have kept a trickle running all week.
+  if (!inRaid) return { refresh: false, reason: cache ? 'off-raid-use-mirror' : 'off-raid-no-live-data' };
+
+  if (cache && cache.failed && (nowMs - cache.at) < _PANEL_DKP_TTL_FAILED_MS) {
+    return { refresh: false, reason: 'cached-failure' };
+  }
+  // Inside a raid, an open auction is the signal that somebody is about to
+  // spend — that is when a stale balance actually costs a member something.
+  const ttl = auctionsLive ? _PANEL_DKP_TTL_BIDDING_MS : _PANEL_DKP_TTL_RAID_MS;
+  if (cache && !cache.failed && (nowMs - cache.at) < ttl) {
+    return { refresh: false, reason: 'fresh' };
+  }
+  return { refresh: true, reason: auctionsLive ? 'auction-open' : 'raid-window' };
+}
+
+async function _panelStandings(deps = {}) {
+  const now   = deps.now   || Date.now;
+  const fetch = deps.fetch || (() => require('./utils/opendkp').getStandings());
+  const inRaid = deps.inRaid !== undefined ? deps.inRaid : _inRaidWindowEt(new Date(now()));
+  let auctionsLive = false;
+  if (deps.auctionsLive !== undefined) auctionsLive = deps.auctionsLive;
+  else { try { auctionsLive = (await _panelAuctions()).length > 0; } catch { auctionsLive = false; } }
+
+  const d = _standingsRefreshDecision({ cache: _panelStandingsCache, nowMs: now(), auctionsLive, inRaid });
+  if (!d.refresh) {
+    return { models: _panelStandingsCache?.models || null, at: _panelStandingsCache?.at || null, reason: d.reason };
+  }
+  let models = null;
+  try { models = await fetch(); } catch { models = null; }
+  if (!models) {
+    _panelStandingsCache = { at: now(), models: _panelStandingsCache?.models || null, failed: true };
+    return { models: _panelStandingsCache.models, at: _panelStandingsCache.at, reason: 'fetch-failed' };
+  }
+  _panelStandingsCache = { at: now(), models, failed: false };
+  _logStandingsShapeOnce(models);
+  return { models, at: _panelStandingsCache.at, reason: d.reason };
+}
+
+// ── One-shot shape probe for /clients/{client}/dkp ─────────────────────────
+// The guild lead, 2026-08-31: the panel showed 192 where OpenDKP says 143. OpenDKP's own
+// docs describe this endpoint as returning "current DKP ... and calculated
+// values for different time periods (30, 60, 90 days, and lifetime)", so the
+// right number IS in the response we already fetch and _pickAccountDkpFromModels
+// is reading the wrong key out of it — its ladder guesses at five spellings and
+// falls through to `Dkp`, which on a row carrying period totals is not
+// necessarily the balance.
+//
+// We cannot fix the ladder without knowing the real key names, and the last
+// time this bit us the lesson was written down: /auctions/active was adopted
+// "on the strength of OpenDKP's Postman doc ... without ever seeing a response".
+// So log the actual keys ONCE rather than infer from a doc a second time.
+//
+// Free: it prints what has already been fetched, adds no upstream call, logs a
+// single line per process, and prints KEY NAMES plus the caller's own row —
+// not the guild's balances.
+let _loggedStandingsShape = false;
+function _logStandingsShapeOnce(models) {
+  if (_loggedStandingsShape) return;
+  try {
+    const rows = Array.isArray(models) ? models : (models && models.Models) || [];
+    if (!rows.length) return;
+    _loggedStandingsShape = true;
+    console.log('[panel-standings] row keys=[' + Object.keys(rows[0]).join(', ') + ']');
+    // A sample row makes the mapping obvious (which key holds 143 vs 192).
+    // Restricted to ONE row so this is a shape probe, not a roster dump.
+    console.log('[panel-standings] sample=' + (() => {
+      try { return JSON.stringify(rows[0]).slice(0, 600); } catch { return '?'; }
+    })());
+  } catch { /* a probe must never break the caller */ }
+}
+
+// Raid window, ET: Sun/Wed/Thu 8pm-midnight with an hour either side, matching
+// utils/openDkpSync's _inRaidWindow. Duplicated rather than exported across the
+// module boundary because index.js must not import the sync's private state.
+function _inRaidWindowEt(now = new Date()) {
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  if (![0, 3, 4].includes(et.getDay())) return false;
+  const h = et.getHours();
+  return h >= 19 || h < 1;
+}
+
+// OpenDKP roster, cached 1h — consumed only by "my-bids" CharacterId matching.
+// The roster changes on officer action, not mid-raid; the 30-min mirror sync
+// keeps Supabase current independently of this.
+let _panelCharsCache = null;      // { at, chars }
+async function _panelCharacters() {
+  if (_panelCharsCache && Date.now() - _panelCharsCache.at < 3600_000) return _panelCharsCache.chars;
+  const opendkp = require('./utils/opendkp');
+  const raw = await opendkp.getCharacters().catch(() => null);
+  const chars = Array.isArray(raw) ? raw : (raw?.Items || []);
+  if (chars.length) _panelCharsCache = { at: Date.now(), chars };
+  return chars;
+}
 
 // ── #108 pure helpers (source-sliced by test/loot-bidding.test.js) ──────────
 // Derive an item's { winner, winning_bid, runner_up } from its settled OpenDKP
@@ -6006,15 +7060,41 @@ function _lootItemSummary(auctionsDesc, bidsByAuction) {
   }
   const winningBid = auc.bid_amount;
   const bids = (bidsByAuction && bidsByAuction[auc.auction_id]) || [];
-  const vals = bids.map(b => Number(b.value)).filter(v => Number.isFinite(v));
-  // Remove ONE instance of the winning value (the winner), max of the rest.
-  let removed = false;
-  const losing = [];
-  for (const v of vals) {
-    if (!removed && v === winningBid) { removed = true; continue; }
-    losing.push(v);
+  // ⚠ SECOND PLACE COMES FROM `position`, NOT FROM THE VALUES.
+  //
+  // Verified against OpenDKP's own results pages (the guild lead, 2026-08-30):
+  //   Thorny Chain Sleeves 1068644 — the same bidder at 10 TWICE at position 1
+  //     (the account login and the character name are the SAME bid, mirrored
+  //     twice), real second = 5 at position 2. We showed 10.
+  //   Bone Chill Shield  1068673 — two logins of one account both at 20 in
+  //     position 1, real second = 7 at position 2. We showed 20.
+  // The old rule dropped ONE instance of the winning value and took the max of
+  // the rest, so the winner's duplicate row became "second place" every time an
+  // auction had one — which is most of them.
+  //
+  // Position is OpenDKP's own ranking from the per-auction detail, so it also
+  // keeps a GENUINE tie correct: Thorny Chain HELM 1010784 is 15 (1),
+  // 15 (2), 7 (3) — a real second bidder at the same
+  // value, and position 2 still reports 15, which is what the guild lead asked for on
+  // 2026-08-30. A value-based rule cannot tell these two shapes apart.
+  const ranked = bids.filter(b => Number.isFinite(Number(b.position)) && Number(b.position) > 1
+                                && Number.isFinite(Number(b.value)));
+  let runnerUp;
+  if (ranked.length) {
+    runnerUp = Math.max(...ranked.map(b => Number(b.value)));
+  } else {
+    // No ranked rows: this auction has only list-path bids (winners-only, all
+    // position 1) and has not been detail-synced yet. Fall back to the old
+    // value rule so nothing regresses while the backfill catches up.
+    const vals = bids.map(b => Number(b.value)).filter(v => Number.isFinite(v));
+    let removed = false;
+    const losing = [];
+    for (const v of vals) {
+      if (!removed && v === winningBid) { removed = true; continue; }
+      losing.push(v);
+    }
+    runnerUp = losing.length ? Math.max(...losing) : null;
   }
-  const runnerUp = losing.length ? Math.max(...losing) : null;
   return { winner: auc.winner || null, winning_bid: winningBid, runner_up: runnerUp, item_name: auc.item_name || null };
 }
 
@@ -6043,6 +7123,41 @@ const _lootPanelCache = new Map();
 function _lootCacheGet(k) { const e = _lootPanelCache.get(k); return (e && Date.now() < e.exp) ? e.val : null; }
 function _lootCacheSet(k, val, ttlMs = 60_000) { _lootPanelCache.set(k, { val, exp: Date.now() + ttlMs }); if (_lootPanelCache.size > 200) { const first = _lootPanelCache.keys().next().value; _lootPanelCache.delete(first); } }
 
+// ── night-loot panel fetch (source-sliced by test/night-loot-panel.test.js) ──
+// The Mimic Loot tab's "who looted what" + rolls (the guild lead, 2026-10-03).
+// The agent only ever sees its OWN `--You have looted--` lines, so the
+// guild-wide list can only come from here. The join is utils/rollLoot.js —
+// the same buildRollSessions the Discord rolled-loot card and /rolls use.
+// ⚠ No exclude_from_stats filter on read, deliberately: like /rolls and the
+// card, it is enforced UPSTREAM (an excluded character's agent never uploads
+// its own looted/roll lines) and another raider's observation of them is theirs.
+// Looted rows are fetched 5 min ahead of the window (the card's own slack) so a
+// loot just before a roll resolves still links; buildNightLootPanel trims the
+// displayed list back to the window.
+async function _nightLootPanelBody(supabase, guildId, nowMs = Date.now()) {
+  const { buildNightLootPanel, NIGHT_LOOT_WINDOW_MS } = require('./utils/rollLoot');
+  const sinceIso = encodeURIComponent(new Date(nowMs - NIGHT_LOOT_WINDOW_MS).toISOString());
+  const slackIso = encodeURIComponent(new Date(nowMs - NIGHT_LOOT_WINDOW_MS - 5 * 60_000).toISOString());
+  const g = encodeURIComponent(guildId);
+  // Paged, newest first: a 12h window on a busy loot night holds more than the `limit=400` / `limit=500`
+  // these were (1,021 roll sets and 1,070 looted rows in the 12h to 2026-10-03 03:30 UTC), and a cut
+  // drops the OLDEST rows of the night.
+  const [rollRows, lootedRows] = await Promise.all([
+    supabase.selectAllPaged('roll_sets',
+      `guild_id=eq.${g}&started_at=gte.${sinceIso}`
+      + `&select=roll_from,roll_to,item,qty,zone,rolls,started_at,last_at`, 'started_at.desc,id'),
+    supabase.selectAllPaged('looted_items',
+      `guild_id=eq.${g}&looted_at=gte.${slackIso}`
+      + `&select=looter_character,item_name,zone,looted_at`, 'looted_at.desc,id'),
+  ]);
+  // supabase.select / selectAllPaged answer null on ANY failure (timeout, breaker, 4xx/5xx), and
+  // a null is not an empty night — throw so the 60s cache never holds a hollow
+  // panel and the agent sees an error instead of "nobody looted anything".
+  if (!Array.isArray(rollRows) || !Array.isArray(lootedRows)) throw new Error('night-loot: roll_sets / looted_items fetch failed');
+  return buildNightLootPanel(rollRows, lootedRows, { nowMs });
+}
+// ── end night-loot panel fetch ──
+
 // Build the PostgREST `or=(col.ilike.a,col.ilike.b,…)` clause for a name list —
 // case-insensitive multi-name match. Names are [A-Za-z], so no comma/wildcard
 // escaping hazards; still cap the list.
@@ -6054,13 +7169,14 @@ function _ilikeAnyClause(col, names) {
 
 // ── #121 loot bidding v2 pure helpers (source-sliced by test/loot-bidding.test.js) ──
 // Resolve an OpenDKP character_id → real in-game name. The mirror stores the
-// ACCOUNT LOGIN (e.g. "vaporjesus") in opendkp_auctions.winner AND
+// ACCOUNT LOGIN (not a character name) in opendkp_auctions.winner AND
 // opendkp_auction_bids.character_name, and opendkp_character_id_to_name is
 // empty in prod — so the only ground truth for a char_id's real name is the
 // LOOT it won: a won auction (winner_character_id) joins opendkp_loot on
 // (raid_id,item_id) → loot.character_name. The same raid can award one item to
 // two chars (2× drop), so take the MODE (most-frequent) name per char_id.
-// Confirmed 2026-07-19 vs vaporjesus: 108064→Hitya, 100899→Melting, 94318→Canopy.
+// Confirmed 2026-07-19 against one account's three char_ids — each resolved to
+// the right character name.
 function _resolveCharIdNames(wonAuctions, lootRows) {
   const lootIdx = new Map(); // "raid|item" → [name,…]
   for (const l of (lootRows || [])) {
@@ -6088,7 +7204,7 @@ function _resolveCharIdNames(wonAuctions, lootRows) {
 }
 
 // Suggested bid family (auto-prefill after login). main = the char_id with the
-// most auction wins (field-confirmed: vaporjesus → main Hitya), alts = the
+// most auction wins (field-confirmed: vaporjesus → main the guild lead), alts = the
 // rest, name-resolved + de-duped. Never invents names it can't resolve.
 function _suggestFamily(charWins) {
   const named = (charWins || []).filter(c => c && c.name);
@@ -6129,24 +7245,61 @@ function _eraFromPool(poolName) {
 // char's best bid), and the most-recent auction end (ordering + raid deep-link).
 // last_winning_bid / last_second_bid are attached by the caller from the item's
 // MOST-RECENT auction (via _lootItemSummary) — not from the specific loss.
-function _buildMisses({ bidRows, famCharIds, nameByCharId, wonItemIds }) {
-  const famSet = new Set((famCharIds || []).map(Number));
-  const won = new Set((wonItemIds || []).filter(n => Number.isFinite(n)));
-  const byItem = new Map();
+// ⚠ PER CHARACTER, not per family (the guild lead, 2026-08-29: "removed for that
+// character after that character wins that item").
+//
+// This used to group by item and drop anything ANY family character owned. The
+// 2026-08-09 fix that introduced the family-wide drop was right that an item you
+// already hold is not a miss — but wrong about WHOSE. EverQuest items belong to
+// a character, and one alt looting a Cloak does not give it to your main.
+//
+// Measured on the guild lead's own account before changing it: 20 items bid on and lost,
+// 19 of them hidden because some character in the family had looted that item at
+// some point. The panel showed ONE row — which is exactly what they reported.
+// Keying on (item, character) and only dropping what THAT character owns puts
+// the other 19 back.
+function _buildMisses({ bidRows, nameByCharId, wonByChar, ownsByName }) {
+  const owns = (charId, itemId) => {
+    const set = wonByChar && (wonByChar[charId] || wonByChar[String(charId)]);
+    if (!set) return false;
+    return typeof set.has === 'function' ? set.has(itemId) : (Array.isArray(set) && set.includes(itemId));
+  };
+  const ownsName = (nameLower, itemId) => {
+    const set = ownsByName && ownsByName[nameLower];
+    if (!set) return false;
+    return typeof set.has === 'function' ? set.has(itemId) : (Array.isArray(set) && set.includes(itemId));
+  };
+  const byPair = new Map();
   for (const b of (bidRows || [])) {
     if (b == null || b.item_id == null) continue;
-    if (won.has(b.item_id)) continue;                                            // already won → not a miss
-    if (b.winner_character_id != null && famSet.has(Number(b.winner_character_id))) continue; // family won this auction
-    let cur = byItem.get(b.item_id);
-    if (!cur) { cur = { item_id: b.item_id, item_name: b.item_name || null, char_id: null, my_last_bid: null, last_end: null, raid_id: null, auction_id: null, _t: -1 }; byItem.set(b.item_id, cur); }
-    if ((b.value || 0) > (cur.my_last_bid || 0)) { cur.my_last_bid = b.value || 0; if (b.character_id != null) cur.char_id = Number(b.character_id); }
+    const cid = (b.character_id != null && Number.isFinite(Number(b.character_id))) ? Number(b.character_id) : null;
+    // ⚠ DETAIL-sourced bid rows have NO CharacterId — OpenDKP's per-auction
+    // bid history is Name/Rank/Value/Date. Dropping id-less rows silently
+    // hid every backfilled loss (a member's Vengeful Mail bid, 2026-08-30), which
+    // is precisely the data the backfill exists to surface. Key by the
+    // character NAME when the id is absent; a row with neither is unusable.
+    const nameLower = String(b.character_name || '').toLowerCase();
+    if (cid == null && !nameLower) continue;
+    if (cid != null) {
+      // Only THIS character winning this auction settles it for this character.
+      if (b.winner_character_id != null && Number(b.winner_character_id) === cid) continue;
+      if (owns(cid, b.item_id)) continue;                     // already has it
+    } else {
+      // No id to compare against the winner; ownership answers instead — a
+      // winner's award writes a loot row, so ownsName covers the won case.
+      if (ownsName(nameLower, b.item_id)) continue;
+    }
+    const key = b.item_id + '|' + (cid != null ? 'c' + cid : 'n' + nameLower);
+    let cur = byPair.get(key);
+    if (!cur) { cur = { item_id: b.item_id, item_name: b.item_name || null, char_id: cid, char_name: b.character_name || null, my_last_bid: null, last_end: null, raid_id: null, auction_id: null, _t: -1 }; byPair.set(key, cur); }
+    if ((b.value || 0) > (cur.my_last_bid || 0)) cur.my_last_bid = b.value || 0;
     const t = b.end_at ? (Date.parse(b.end_at) || 0) : 0;
     if (t >= cur._t) { cur._t = t; cur.last_end = b.end_at || cur.last_end; if (b.raid_id != null) cur.raid_id = b.raid_id; if (b.auction_id != null) cur.auction_id = b.auction_id; }
     if (!cur.item_name && b.item_name) cur.item_name = b.item_name;
   }
-  const rows = [...byItem.values()].map(r => ({
+  const rows = [...byPair.values()].map(r => ({
     item_id: r.item_id, item_name: r.item_name,
-    character: (r.char_id != null && nameByCharId && nameByCharId[r.char_id]) || null,
+    character: (r.char_id != null && nameByCharId && nameByCharId[r.char_id]) || r.char_name || null,
     char_id: r.char_id, my_last_bid: r.my_last_bid,
     raid_id: r.raid_id, auction_id: r.auction_id, last_end: r.last_end,
   }));
@@ -6157,7 +7310,7 @@ function _buildMisses({ bidRows, famCharIds, nameByCharId, wonItemIds }) {
 // Family-pooled current DKP from mirror parts (ask #6). OpenDKP links alts to a
 // SHARED pool, so per-character is misleading (the main runs deep negative — it
 // spends the pool the alts fill); the real bidding balance is the family SUM.
-// Confirmed 2026-07-19: vaporjesus family nets +860 while main Hitya alone
+// Confirmed 2026-07-19: vaporjesus family nets +860 while main the guild lead alone
 // computes to −125. perName: [{ name, earned, adjustments, spent }].
 function _familyDkpTotals(perName) {
   let earned = 0, adj = 0, spent = 0;
@@ -6189,27 +7342,19 @@ async function _handleAgentServerPanel(req, res) {
 
   try {
     if (key === 'damage') {
-      // Top characters by 30d total damage (recent_encounters via
-      // encounter_players → encounters). Keep response small; dashboard
-      // overlays rank+total+dps onto its existing "Damage" panel layout.
-      const rows = await supabase.select(
-        'encounter_players',
-        `select=character_name,total_damage,dps,encounters!inner(started_at)` +
-        `&encounters.started_at=gte.${since30d}` +
-        `&order=total_damage.desc&limit=200`
-      );
-      // Aggregate by character (multiple encounter rows per char)
-      const byChar = new Map();
-      for (const r of (rows || [])) {
-        const k = r.character_name;
-        if (!k) continue;
-        const cur = byChar.get(k) || { character: k, totalDamage: 0, encounters: 0, peakDps: 0 };
-        cur.totalDamage += r.total_damage || 0;
-        cur.encounters  += 1;
-        if ((r.dps || 0) > cur.peakDps) cur.peakDps = r.dps || 0;
-        byChar.set(k, cur);
-      }
-      const list = [...byChar.values()].sort((a, b) => b.totalDamage - a.totalDamage).slice(0, 25);
+      // Top characters by 30d total damage (encounter_players → encounters). Keep response small;
+      // dashboard overlays rank+total+dps onto its existing "Damage" panel layout.
+      // Summed in the database: this used to total the 200 largest SINGLE-FIGHT rows and call that
+      // the "30 d total" (a top-25 whose first place showed 5.5M over 19 fights against a real 15.8M
+      // over 845, 2026-10-04) — a ranking of one-fight peaks, wrong by construction.
+      const rows = await supabase.rpc('encounter_damage_by_character',
+        { p_guild_id: guildId, p_since: since30d, p_limit: 25 });
+      const list = (rows || []).map(r => ({
+        character: r.character_name,
+        totalDamage: Number(r.total_damage) || 0,
+        encounters: Number(r.encounters) || 0,
+        peakDps: Number(r.peak_dps) || 0,
+      })).sort((a, b) => b.totalDamage - a.totalDamage).slice(0, 25);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ key, scope: 'last 30d', updated_at: new Date().toISOString(), rows: list }));
     }
@@ -6280,32 +7425,41 @@ async function _handleAgentServerPanel(req, res) {
     if (key === 'threat') {
       if (!character) { res.writeHead(400); return res.end(JSON.stringify({ error: 'character required' })); }
       const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-      // Pull recent snapshots for any encounter where this character appears
-      // in per_player. PostgREST JSONB existence: per_player=cs.{character}
-      // (contains) is the cheap test.
-      const rows = await supabase.select(
-        'encounter_threat_snapshots',
-        `select=boss_name,snapshot_at,per_player,total` +
+      // Read the per-fight rank rollup, not the raw snapshot stream. encounter_threat_snapshots is
+      // 1.5M rows / 1.4 GB and `per_player` containment has no index, so the old read was a seq scan
+      // the 10s abort killed (and, when it did answer, capped at 1,000 of its 2,000 rows). The
+      // rollup (rollup_threat_ranks) already ranks every character in every snapshot: one row per
+      // (boss or raid night, character) with how many snapshots it saw them in and how many of those
+      // they led / were top 3 in, so the totals below are sums, and `recent` lists whole fights
+      // (rank = their average rank in it, of = the average field size) instead of single snapshots.
+      // ⚠ Only as fresh as the rollup: the newest rolled_up_at in the table is 2026-08-19, and the
+      // rollup's own source scan has no usable snapshot_at index (the one migration 20260923010000 adds
+      // is not in production), the likely reason. Until it runs again this reads 0 for any fight after
+      // that date.
+      const rows = await supabase.selectAllPaged(
+        'encounter_threat_rank',
+        `select=boss_name,boss_name_key,started_at_key,snapshots,times_top1,times_top3,avg_rank,avg_field` +
         `&guild_id=eq.${encodeURIComponent(guildId)}` +
-        `&snapshot_at=gte.${since}` +
-        `&per_player=cs.${encodeURIComponent(JSON.stringify({ [character]: {} }))}` +
-        `&order=snapshot_at.desc&limit=2000`
+        `&character_name=ilike.${encodeURIComponent(character)}` +
+        `&started_at_key=gte.${encodeURIComponent(since)}`,
+        'started_at_key.desc,boss_name_key'
       );
-      // Rank the character within each snapshot; aggregate.
-      let topCount = 0, top3Count = 0;
+      let snapshotCount = 0, topCount = 0, top3Count = 0;
       const recent = [];
       for (const r of (rows || [])) {
-        const entries = Object.entries(r.per_player || {}).map(([n, v]) => [n, (v.swing||0)+(v.proc||0)+(v.spell||0)+(v.heal||0)]).sort((a,b)=>b[1]-a[1]);
-        const idx = entries.findIndex(e => (e[0]||'').toLowerCase() === character.toLowerCase());
-        if (idx === 0) topCount++;
-        if (idx >= 0 && idx < 3) top3Count++;
-        if (recent.length < 10) recent.push({ boss: r.boss_name, snapshot_at: r.snapshot_at, rank: idx + 1, of: entries.length });
+        snapshotCount += Number(r.snapshots) || 0;
+        topCount      += Number(r.times_top1) || 0;
+        top3Count     += Number(r.times_top3) || 0;
+        if (recent.length < 10) recent.push({
+          boss: r.boss_name || r.boss_name_key, snapshot_at: r.started_at_key,
+          rank: Math.round(Number(r.avg_rank)) || 0, of: Math.round(Number(r.avg_field)) || 0,
+        });
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({
         key, character, scope: 'last 30d',
         updated_at: new Date().toISOString(),
-        snapshots: (rows || []).length,
+        snapshots: snapshotCount,
         times_topped_threat: topCount,
         times_top3:          top3Count,
         recent,
@@ -6349,12 +7503,8 @@ async function _handleAgentServerPanel(req, res) {
       // in-game Bidding overlay (Mimic) + the dashboard "💸 Live Bidding"
       // panel. We also enrich with the caller's matching wishlist entries
       // so the overlay can show "you wishlisted this for X DKP" inline.
-      const opendkp = require('./utils/opendkp');
       try {
-        const auctions = await opendkp.getAuctions().catch(() => ({}));
-        const list = Array.isArray(auctions?.Items) ? auctions.Items
-                    : Array.isArray(auctions) ? auctions
-                    : [];
+        const list = await _panelAuctions().catch(() => []);
         // Wishlist enrichment for the caller (optional ?character=).
         let wishById = new Map();
         if (character) {
@@ -6382,7 +7532,11 @@ async function _handleAgentServerPanel(req, res) {
             item_id:    a.ItemId || a.Item?.Id,
             item_name:  a.ItemName || a.Item?.Name,
             top_bid:    a.TopBid || a.HighestBid || null,
-            ends_at:    a.EndTime || a.EndsAt || null,
+            // OpenDKP names it EndTimestamp (the settled history's field, openDkpSync.js); this read
+            // EndTime / EndsAt only, so ends_at was always null and no auction had a countdown. A late
+            // bid moves it later, so a reader re-reads it every poll (the guild lead, 2026-10-02).
+            ends_at:    _odkpTime(a.EndTimestamp || a.EndTime || a.EndsAt),
+            started_at: _odkpTime(a.CreatedTimestamp || a.StartTimestamp),
             wishlisted: !!wishById.get(a.ItemId || a.Item?.Id),
           })),
         }));
@@ -6392,33 +7546,76 @@ async function _handleAgentServerPanel(req, res) {
         return res.end(JSON.stringify({ error: 'opendkp fetch failed' }));
       }
     }
+    if (key === 'account-dkp') {
+      // The authoritative pooled account balance, from OpenDKP's own standings.
+      // Replaces the per-member DIRECT call that Moncs caught on 2026-08-27 —
+      // see _panelStandings above. One upstream fetch serves the whole guild,
+      // gated on an auction being open (or a raid window), and it is counted,
+      // governed and haltable like every other call this bot makes.
+      //
+      // Always 200. `ok:false` means "no figure available right now", which the
+      // panel already knows how to render (it falls back to the mirror "est."
+      // number). A stale figure is returned WITH its age so the panel can say
+      // how old it is rather than quietly present it as live.
+      const main  = (url.searchParams.get('main') || character || '').trim();
+      const chars = (url.searchParams.get('characters') || '').split(',').map(x => x.trim()).filter(Boolean);
+      const family = chars.length ? chars : (main ? [main] : []);
+      let out = { ok: false, reason: 'unavailable' };
+      try {
+        const { models, at, reason } = await _panelStandings();
+        const picked = models ? _pickAccountDkpFromModels(models, main, family) : null;
+        if (picked) {
+          out = { ok: true, source: 'opendkp', account_dkp: Math.round(picked.dkp),
+                  character: picked.character, matched: picked.matched,
+                  as_of: at ? new Date(at).toISOString() : null, reason };
+        } else if (family.length) {
+          // No live figure — off-raid by design, or upstream is unwell. Answer
+          // from our own database rather than making the panel show nothing:
+          // between raids nobody is earning ticks, so this IS the number.
+          // `source` tells the panel which it got, so it can label an estimate
+          // as an estimate instead of quietly presenting it as live.
+          // ⚠ Normalise to the SAME shape as the live answer. _familyDkpTotals
+          // returns `family_total`, not `account_dkp` — handing its object
+          // through unchanged would have given the panel a response with no
+          // balance field at all, which reads as "no data" rather than as an
+          // error. Only `source` differs between the two paths.
+          const m = await _familyDkpFromMirror(family);
+          out = Number.isFinite(m?.family_total)
+            ? { ok: true, source: 'mirror', account_dkp: Math.round(m.family_total),
+                character: main || family[0], matched: 'family',
+                as_of: m.fetched_at || null, breakdown: m, reason }
+            : { ok: false, reason: models ? 'no-matching-character' : reason };
+        } else {
+          out = { ok: false, reason: models ? 'no-matching-character' : reason };
+        }
+      } catch (err) {
+        console.warn('[server-panel:account-dkp] failed:', err?.message);
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify(out));
+    }
+
     if (key === 'my-bids') {
       // The caller's currently-active bids across all open auctions. OpenDKP
-      // doesn't expose a "list my bids" endpoint, so we walk the auctions
-      // list and pull each auction's Bids[] (getAuction returns them) and
-      // filter to entries whose CharacterId belongs to the caller's
-      // characters. Returns one row per (auction, item) the caller has bid on.
+      // doesn't expose a "list my bids" endpoint, so we read the cached active
+      // list — each auction carries its Bids[] inline (same fact the mirror
+      // sync exploits) — and filter to entries whose CharacterId belongs to
+      // the caller's characters (roster cached 1h). ZERO extra upstream calls
+      // beyond the shared _panelAuctions cache.
       if (!character) { res.writeHead(400); return res.end(JSON.stringify({ error: 'character required' })); }
-      const opendkp = require('./utils/opendkp');
       try {
-        const chars = await opendkp.getCharacters().catch(() => []);
+        const chars = await _panelCharacters().catch(() => []);
         const myCharIds = new Set(
-          (Array.isArray(chars) ? chars : (chars?.Items || []))
+          chars
             .filter(c => (c.Name || '').toLowerCase() === character.toLowerCase() || (c.ParentName || '').toLowerCase() === character.toLowerCase())
             .map(c => c.Id || c.CharacterId)
         );
-        const auctions = await opendkp.getAuctions().catch(() => ({}));
-        const list = Array.isArray(auctions?.Items) ? auctions.Items
-                    : Array.isArray(auctions) ? auctions
-                    : [];
+        const list = await _panelAuctions().catch(() => []);
         const mine = [];
         for (const a of list) {
           const aid = a.AuctionId || a.SessionId || a.Id;
           if (!aid) continue;
-          // getAuction returns Bids[]; cap concurrent fetches to keep this cheap.
-          let full;
-          try { full = await opendkp.getAuction(aid); } catch { continue; }
-          const bids = (full && (full.Bids || full.bids)) || [];
+          const bids = a.Bids || a.bids || [];
           for (const b of bids) {
             if (myCharIds.has(b.CharacterId)) {
               mine.push({
@@ -6451,6 +7648,19 @@ async function _handleAgentServerPanel(req, res) {
       // site JS). Lets Mimic's Loot bidding panel drive USER_PASSWORD_AUTH
       // locally without the agent carrying any OpenDKP secret. Never returns
       // the officer username/password — those stay in the bot's env.
+      //
+      // HALT GATE (2026-08-25): agents call OpenDKP's /clients/{name}/dkp
+      // DIRECTLY from members' machines (the #124 standings fetch) — the only
+      // OpenDKP traffic that does NOT flow through _get/_post above, so
+      // OPENDKP_HALT alone can't stop it. It CAN starve it: the agent's
+      // Cognito token refresh depends on this config (≤1h config cache, ~1h
+      // token life), so refusing here dries up the whole fleet's direct calls
+      // within ~2 hours — no agent update needed. 503 (not 200-empty) so the
+      // agent's cfg cache never stores a hollow config.
+      if (require('./utils/opendkp').opendkpHalted()) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'OpenDKP traffic halted (OPENDKP_HALT) — login config withheld so agents stop calling OpenDKP directly' }));
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({
         key,
@@ -6471,9 +7681,12 @@ async function _handleAgentServerPanel(req, res) {
       const ck = 'item-history:' + ids.slice().sort((a, b) => a - b).join(',');
       const cached = _lootCacheGet(ck);
       if (cached) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(cached); }
-      const aucRows = await supabase.select(
+      // Paged, newest first: 60 ids can hold 1,600 settled auctions (the 60 busiest items do), and
+      // `limit=400` kept only the newest 400, so an item whose auctions were all older vanished.
+      const aucRows = await supabase.selectAllPaged(
         'opendkp_auctions',
-        `select=auction_id,item_id,item_name,winner,bid_amount,end_at&item_id=in.(${ids.join(',')})&winner=not.is.null&order=end_at.desc&limit=400`
+        `select=auction_id,item_id,item_name,winner,bid_amount,end_at&item_id=in.(${ids.join(',')})&winner=not.is.null`,
+        'end_at.desc,auction_id'
       ) || [];
       // Most-recent-first auctions per item; collect the winning auction ids for
       // a single runner-up bid lookup.
@@ -6488,7 +7701,7 @@ async function _handleAgentServerPanel(req, res) {
       if (winAuctionIds.length) {
         const bidRows = await supabase.select(
           'opendkp_auction_bids',
-          `select=auction_id,value&auction_id=in.(${winAuctionIds.slice(0, 60).join(',')})&limit=1000`
+          `select=auction_id,value,position&auction_id=in.(${winAuctionIds.slice(0, 60).join(',')})&limit=1000`
         ) || [];
         for (const b of bidRows) { (bidsByAuction[b.auction_id] = bidsByAuction[b.auction_id] || []).push(b); }
       }
@@ -6503,6 +7716,25 @@ async function _handleAgentServerPanel(req, res) {
       _lootCacheSet(ck, out);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(out);
+    }
+    if (key === 'bid-prefs') {
+      // Roaming half of the bidding panel's local state (#121 → bid assist).
+      // The agent's logsync.plannedbids.json / lootdismiss.json stay the LIVE
+      // source of truth; this is the backup that makes them survive a
+      // reinstall or a move between machines (docs/DESIGN-bid-assist.md).
+      //
+      // Scoped to the caller's own characters — a member reads and writes only
+      // their own rows, and the family csv is what scopes it, the same way
+      // bid-history below is scoped.
+      const famRaw = (url.searchParams.get('characters') || character || '').trim();
+      const fam = famRaw.split(',').map(s => s.trim()).filter(Boolean).slice(0, 40);
+      if (fam.length === 0) { res.writeHead(400); return res.end(JSON.stringify({ error: 'characters required' })); }
+      const inList = fam.map(n => `"${n.replace(/"/g, '')}"`).join(',');
+      const rows = await supabase.select('character_bid_prefs',
+        `guild_id=eq.${encodeURIComponent(guildId)}&character=in.(${encodeURIComponent(inList)})`
+        + `&select=character,item_id,planned_bid,autobid,dismissed,item_name,updated_at&limit=1000`) || [];
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ key, characters: fam, prefs: rows, updated_at: new Date().toISOString() }));
     }
     if (key === 'bid-history') {
       // The caller's own loot: wins (opendkp_loot) + wishlist (explicit prereg
@@ -6526,23 +7758,34 @@ async function _handleAgentServerPanel(req, res) {
       if (famClause) {
         const winRows = await supabase.select(
           'opendkp_loot',
-          `select=character_name,item_id,item_name,dkp,raid_id,fetched_at&${famClause}&order=raid_id.desc&limit=100`
+          `select=character_name,item_id,item_name,dkp,raid_id,fetched_at&${famClause}&order=raid_id.desc&limit=400`
         ) || [];
         wins = winRows.map(r => ({ character: r.character_name, item_id: r.item_id, item_name: r.item_name, dkp: r.dkp, raid_id: r.raid_id, when: r.fetched_at }));
       }
       // ⚠ The "already won" SET is a SEPARATE, UNCAPPED sweep — never derive it
-      // from `wins` above. `wins` is capped at 100 for display, and Hitya's
+      // from `wins` above. `wins` is capped at 100 for display, and the guild lead's
       // family alone has 187 awards; building the set from the capped list left
       // 87 genuinely-won items looking unwon, so they came back as "bid on but
       // not yet won" and as RECENT MISSES (reported 2026-08-09). item_id only,
       // so the row is tiny and the high cap is cheap.
       const wonItemIds = new Set();
+      const lootByName = new Map();   // character_name(lower) → Set(item_id) — per-character ownership
       if (famClause) {
+        // character_name comes along so ownership can be answered PER CHARACTER.
+        // The family-wide set below still prunes the wishlist; RECENT MISSES
+        // uses the per-character map instead (the guild lead, 2026-08-29).
         const wonIdRows = await supabase.select(
           'opendkp_loot',
-          `select=item_id&${famClause}&limit=5000`
+          `select=item_id,character_name&${famClause}&limit=5000`
         ) || [];
-        for (const r of wonIdRows) if (r.item_id != null) wonItemIds.add(r.item_id);
+        for (const r of wonIdRows) {
+          if (r.item_id == null) continue;
+          wonItemIds.add(r.item_id);
+          const nm = String(r.character_name || '').toLowerCase();
+          if (!nm) continue;
+          if (!lootByName.has(nm)) lootByName.set(nm, new Set());
+          lootByName.get(nm).add(r.item_id);
+        }
       }
       // Explicit prereg wishlist (+ resolve item names from eqemu_items).
       let preregRows = [];
@@ -6561,11 +7804,21 @@ async function _handleAgentServerPanel(req, res) {
       if (login) bidClauses.push(`user_login.ilike.${encodeURIComponent(login)}`);
       for (const n of family) if (/^[A-Za-z]{2,20}$/.test(n)) bidClauses.push(`character_name.ilike.${encodeURIComponent(n)}`);
       if (bidClauses.length) {
-        const rawBids = await supabase.select(
+        // character_name comes along because DETAIL-sourced bid rows have no
+        // CharacterId — OpenDKP's per-auction bid history is Name/Rank/Value/
+        // Date only. Without the name those rows are unkeyable and every miss
+        // they witness is silently invisible (a member's Vengeful Mail loss,
+        // 2026-08-30 — present in the mirror, skipped by the builder).
+        // Paged on the table's own id: the busiest family has 1,196 bids, past PostgREST's silent
+        // 1,000 (a `limit=3000` read of it was 1,000), and the dropped bids were misses nobody saw.
+        const rawBids = await supabase.selectAllPaged(
           'opendkp_auction_bids',
-          `select=auction_id,character_id,value&or=(${bidClauses.slice(0, 26).join(',')})&limit=3000`
+          `select=auction_id,character_id,character_name,value&or=(${bidClauses.slice(0, 26).join(',')})`,
+          'id'
         ) || [];
-        const aids = [...new Set(rawBids.map(b => b.auction_id).filter(Boolean))].slice(0, 1000);
+        // Not sliced to 1,000 any more: bids are read in id order, so that slice silently dropped the
+        // LAST (newest) auctions of the busiest family (1,196 bids). The chunk loop below takes any count.
+        const aids = [...new Set(rawBids.map(b => b.auction_id).filter(Boolean))];
         const aucById = new Map();
         if (aids.length) {
           // in.() is capped per request to keep URLs sane; chunk the auction fetch.
@@ -6582,7 +7835,8 @@ async function _handleAgentServerPanel(req, res) {
         for (const b of rawBids) {
           const a = aucById.get(b.auction_id);
           if (!a) continue;
-          bidRows.push({ auction_id: b.auction_id, character_id: b.character_id, value: b.value,
+          bidRows.push({ auction_id: b.auction_id, character_id: b.character_id,
+            character_name: b.character_name || null, value: b.value,
             item_id: a.item_id, item_name: a.item_name, winner_character_id: a.winner_character_id,
             end_at: a.end_at, raid_id: a.raid_id });
           if (a.item_id != null && !seen.has(a.item_id)) { seen.add(a.item_id); bidItemRows.push({ item_id: a.item_id, item_name: a.item_name }); }
@@ -6600,17 +7854,34 @@ async function _handleAgentServerPanel(req, res) {
         ) || [];
       }
       for (const a of wonAuctions) if (a.item_id != null) wonItemIds.add(a.item_id);
-      // char_id → real name (MODE over the won-auction ↔ loot join).
+      // char_id → real name. characters.opendkp_id is AUTHORITATIVE (473 rows
+      // maintained by the character sync) — the MODE-over-loot heuristic below
+      // stays only as a fallback for ids the table doesn't know. The heuristic
+      // failing silently is what showed CHAR "—" on the guild lead's misses AND broke
+      // per-character ownership: a member WON a Thorny Chain Helm, but with no
+      // name for that opendkp_id the loot join never connected, so the win
+      // rendered as a family miss (2026-08-30).
       let nameByCharId = {};
+      if (famCharIds.length) {
+        const mapped = await supabase.select(
+          'characters',
+          `select=name,opendkp_id&opendkp_id=in.(${famCharIds.join(',')})&limit=200`
+        ) || [];
+        for (const r of mapped) if (r.opendkp_id != null && r.name) nameByCharId[Number(r.opendkp_id)] = r.name;
+      }
       if (wonAuctions.length) {
         const raidIds = [...new Set(wonAuctions.map(a => a.raid_id).filter(Boolean))].slice(0, 400);
         let lootRows = [];
         for (let i = 0; i < raidIds.length; i += 200) {
           const chunk = raidIds.slice(i, i + 200);
-          const lr = await supabase.select('opendkp_loot', `select=raid_id,item_id,character_name&raid_id=in.(${chunk.join(',')})&limit=5000`) || [];
+          // Paged: 200 raids of loot is ~5.3k rows, five times PostgREST's silent per-response cap.
+          const lr = await supabase.selectAllPaged('opendkp_loot', `select=raid_id,item_id,character_name&raid_id=in.(${chunk.join(',')})`, 'id') || [];
           lootRows = lootRows.concat(lr);
         }
-        nameByCharId = _resolveCharIdNames(wonAuctions, lootRows);
+        const inferred = _resolveCharIdNames(wonAuctions, lootRows);
+        for (const [cid, nm] of Object.entries(inferred)) {
+          if (nameByCharId[cid] == null) nameByCharId[cid] = nm;   // fallback only
+        }
       }
       // Resolve prereg item names.
       const preregIds = [...new Set(preregRows.map(r => r.item_id).filter(n => Number.isFinite(n)))].slice(0, 200);
@@ -6623,12 +7894,41 @@ async function _handleAgentServerPanel(req, res) {
       // Wishlist = merge, then DROP items the family already WON (preregs stay).
       const wishlist = _pruneWonWishlist(_mergeWishlist(preregForMerge, bidItemRows), [...wonItemIds]).slice(0, 60);
       // RECENT MISSES + per-item last winning / second-place figures.
-      let misses = _buildMisses({ bidRows, famCharIds, nameByCharId, wonItemIds: [...wonItemIds] }).slice(0, 40);
+      // What each character already HAS: the auctions that character won, plus
+      // everything the mirror shows in their loot. Family-wide ownership is
+      // deliberately NOT used here — see _buildMisses.
+      const wonByChar = {};
+      const ownedAdd = (cid, itemId) => {
+        if (cid == null || itemId == null) return;
+        if (!wonByChar[cid]) wonByChar[cid] = new Set();
+        wonByChar[cid].add(itemId);
+      };
+      for (const a of wonAuctions) ownedAdd(Number(a.winner_character_id), a.item_id);
+      for (const cid of famCharIds) {
+        const nm = String((nameByCharId && nameByCharId[cid]) || '').toLowerCase();
+        const owned = nm && lootByName.get(nm);
+        if (owned) for (const itemId of owned) ownedAdd(Number(cid), itemId);
+      }
+      // Name-keyed ownership for detail-sourced rows (no CharacterId): the
+      // loot mirror is by real name, and auction wins map into it through the
+      // authoritative name table.
+      const ownsByName = {};
+      for (const [nm, set] of lootByName) ownsByName[nm] = set;
+      for (const [cid, set] of Object.entries(wonByChar)) {
+        const nm = String((nameByCharId && nameByCharId[cid]) || '').toLowerCase();
+        if (!nm) continue;
+        if (!ownsByName[nm]) ownsByName[nm] = new Set();
+        for (const itemId of set) ownsByName[nm].add(itemId);
+      }
+      let misses = _buildMisses({ bidRows, nameByCharId, wonByChar, ownsByName }).slice(0, 60);
       if (misses.length) {
         const missIds = misses.map(m => m.item_id);
-        const mAuc = await supabase.select(
+        // Paged, newest first: 60 items average ~350 settled auctions and the busiest ones far more,
+        // so `limit=600` cut the OLDEST auctions of every item and some items vanished whole.
+        const mAuc = await supabase.selectAllPaged(
           'opendkp_auctions',
-          `select=auction_id,item_id,item_name,winner,bid_amount,end_at&item_id=in.(${missIds.slice(0, 60).join(',')})&winner=not.is.null&order=end_at.desc&limit=600`
+          `select=auction_id,item_id,item_name,winner,bid_amount,end_at&item_id=in.(${missIds.slice(0, 60).join(',')})&winner=not.is.null`,
+          'end_at.desc,auction_id'
         ) || [];
         const mByItem = new Map();
         for (const a of mAuc) { if (!mByItem.has(a.item_id)) mByItem.set(a.item_id, []); mByItem.get(a.item_id).push(a); }
@@ -6636,7 +7936,7 @@ async function _handleAgentServerPanel(req, res) {
         for (const list of mByItem.values()) { const top = list.find(x => x.winner != null && x.bid_amount != null); if (top) mWinAids.push(top.auction_id); }
         let mBidsByAuc = {};
         if (mWinAids.length) {
-          const mBids = await supabase.select('opendkp_auction_bids', `select=auction_id,value&auction_id=in.(${mWinAids.slice(0, 60).join(',')})&limit=1500`) || [];
+          const mBids = await supabase.select('opendkp_auction_bids', `select=auction_id,value,position&auction_id=in.(${mWinAids.slice(0, 60).join(',')})&limit=1500`) || [];
           for (const b of mBids) { (mBidsByAuc[b.auction_id] = mBidsByAuc[b.auction_id] || []).push(b); }
         }
         misses = misses.map(m => {
@@ -6655,7 +7955,9 @@ async function _handleAgentServerPanel(req, res) {
         let eAuc = [];
         for (let i = 0; i < listedIds.length; i += 150) {
           const chunk = listedIds.slice(i, i + 150);
-          const r = await supabase.select('opendkp_auctions', `select=item_id,raid_id,end_at&item_id=in.(${chunk.join(',')})&order=end_at.desc&limit=2000`) || [];
+          // Paged, newest first (the loop below takes the first row per item as the most recent):
+          // 150 items x ~7.7 auctions is ~1,150 rows, just past the 1,000 cap.
+          const r = await supabase.selectAllPaged('opendkp_auctions', `select=item_id,raid_id,end_at&item_id=in.(${chunk.join(',')})`, 'end_at.desc,auction_id') || [];
           eAuc = eAuc.concat(r);
         }
         const raidIds = [...new Set(eAuc.map(a => a.raid_id).filter(Boolean))].slice(0, 400);
@@ -6678,33 +7980,8 @@ async function _handleAgentServerPanel(req, res) {
       // attended; adj = adjustment rows for family names; spent = loot dkp.
       let dkp = null;
       if (family.length) {
-        try {
-          const [tickRows, adjRows, spentRows] = await Promise.all([
-            supabase.select('opendkp_ticks', `select=value,attendees,fetched_at&attendees=ov.{${family.join(',')}}&limit=3000`),
-            supabase.select('opendkp_adjustments', `select=raw,fetched_at&limit=1000`),
-            supabase.select('opendkp_loot', `select=character_name,dkp,fetched_at&${famClause || 'character_name=eq.__none__'}&limit=3000`),
-          ]);
-          const famLc = new Set(family.map(f => f.toLowerCase()));
-          const per = new Map(family.map(f => [f.toLowerCase(), { name: f, earned: 0, adjustments: 0, spent: 0 }]));
-          let fresh = 0;
-          for (const t of (tickRows || [])) {
-            const att = Array.isArray(t.attendees) ? t.attendees : [];
-            for (const nm of att) { const k = String(nm).toLowerCase(); if (per.has(k)) per.get(k).earned += (t.value || 0); }
-            if (t.fetched_at) fresh = Math.max(fresh, Date.parse(t.fetched_at) || 0);
-          }
-          for (const a of (adjRows || [])) {
-            const nm = a.raw && a.raw.Character && a.raw.Character.Name;
-            const k = nm ? String(nm).toLowerCase() : '';
-            if (k && per.has(k)) per.get(k).adjustments += Number(a.raw.Value) || 0;
-            if (a.fetched_at) fresh = Math.max(fresh, Date.parse(a.fetched_at) || 0);
-          }
-          for (const l of (spentRows || [])) {
-            const k = String(l.character_name || '').toLowerCase();
-            if (famLc.has(k) && per.has(k)) per.get(k).spent += (l.dkp || 0);
-            if (l.fetched_at) fresh = Math.max(fresh, Date.parse(l.fetched_at) || 0);
-          }
-          dkp = { ..._familyDkpTotals([...per.values()]), source: 'mirror', pooled: true, fetched_at: fresh ? new Date(fresh).toISOString() : null };
-        } catch (e) { console.warn('[server-panel:bid-history] dkp failed:', e?.message); }
+        try { dkp = await _familyDkpFromMirror(family); }
+        catch (e) { console.warn('[server-panel:bid-history] dkp failed:', e?.message); }
       }
       // Suggested family (auto-prefill) — main = most auction wins.
       const suggested_family = _suggestFamily(famCharIds.map(cid => ({
@@ -6717,6 +7994,20 @@ async function _handleAgentServerPanel(req, res) {
         updated_at: new Date().toISOString(),
         opendkp_base, wins, wishlist: wishlistOut, misses, dkp, suggested_family,
       });
+      _lootCacheSet(ck, out);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(out);
+    }
+    if (key === 'night-loot') {
+      // Guild-wide "who looted what" + roll sessions for the last 12h, for the
+      // Mimic Loot tab. One shared cache entry (not per caller): the data is the
+      // same for every raider and a room of dashboards polls it. A failed fetch
+      // throws to the 500 below and is never cached.
+      const ck = 'night-loot:' + guildId;
+      const cached = _lootCacheGet(ck);
+      if (cached) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(cached); }
+      const body = await _nightLootPanelBody(supabase, guildId);
+      const out = JSON.stringify({ key, scope: 'last 12h', updated_at: new Date().toISOString(), ...body });
       _lootCacheSet(ck, out);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(out);
@@ -6750,7 +8041,7 @@ async function _handleAgentServerPanel(req, res) {
           discord_id:       rid,
           character:        e.primary || null,   // primary is the election identity — swap/pin resolve by it
           live_character:   e.live_character || null,
-          character_label:  _reporterCharacterLabel(e, mainMap, hideSet),   // "Canopy (Hitya)" / primary when idle
+          character_label:  _reporterCharacterLabel(e, mainMap, hideSet),   // "Hessmoor (Rethlan)" / primary when idle
           zone:             e.zone || null,
           group_num:        Number.isFinite(e.group_num) ? e.group_num : null,
           agent_version:    e.ver || null,
@@ -6899,7 +8190,7 @@ async function _handleAgentThreatSnapshot(req, res) {
     res.writeHead(200); return res.end(JSON.stringify({ ok: true, written: 0, note: 'empty' }));
   }
   // ── Is this worth keeping at all? ───────────────────────────────────────
-  // Threat only means something when the guild is together (Hitya
+  // Threat only means something when the guild is together (the guild lead
   // 2026-08-07: "most of those fights outside of raiding time aren't things
   // we need to count... we can still include trash when we're all together").
   // Measured before building this: snapshots from outside raid time were 54%
@@ -6940,7 +8231,7 @@ async function _handleAgentThreatSnapshot(req, res) {
 }
 
 // POST /api/agent/dkp-tick — OFFICER-ONLY DKP tick from the Mimic dashboard
-// (Hitya 2026-07-16: "do ticks from here"). Reuses the shared submitRaidTick
+// (the guild lead, 2026-07-16: "do ticks from here"). Reuses the shared submitRaidTick
 // util so the OpenDKP write is byte-identical to the Discord /tick command.
 // body: { slot:'1'..'4'|'bonus'|'ot', players:[names], points?, description?,
 //         raid_name?, dry_run }. dry_run resolves the target raid + attendee
@@ -6984,7 +8275,7 @@ async function _handleAgentDkpTick(req, res) {
     return res.end(JSON.stringify(result));
   } catch (err) {
     const msg = err?.message || 'unknown';
-    // Name the config gap so the officer (Hitya) knows exactly what to set on
+    // Name the config gap so the officer (the guild lead) knows exactly what to set on
     // Railway rather than seeing a generic failure.
     const hint = /OPENDKP_RAIDS_URL/.test(msg)
       ? 'The bot needs OPENDKP_RAIDS_URL set on Railway (the raids API Gateway URL — see .env.example) to WRITE ticks. Reads/preview work without it.'
@@ -7024,7 +8315,7 @@ async function _resolveItemIds(items) {
 }
 
 // POST /api/agent/loot-post — OFFICER-ONLY. Create CLOSED OpenDKP auctions for
-// the selected loot straight from the Mimic dashboard (Hitya 2026-07-16: "i
+// the selected loot straight from the Mimic dashboard (the guild lead, 2026-07-16: "i
 // want a button to post from dashboard"). Body: { items:[{name,quantity}],
 // duration? (minutes), boss? }. Resolves names → GameItemId, builds the exact
 // captured auction shape, PUTs them (createAuctions), announces to the loot
@@ -7049,13 +8340,27 @@ async function _handleAgentLootPost(req, res) {
       return res.end(JSON.stringify({ ok: true, dryRun: true, matched: matched.map(m => ({ name: m.name, quantity: m.quantity })), unmatched: unmatched.map(u => u.name), duration }));
     }
     if (matched.length === 0) { res.writeHead(409, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: false, reason: 'No items matched the item catalog — nothing posted.', unmatched: unmatched.map(u => u.name) })); }
-    const { createAuctions, getMostRecentRaid } = require('./utils/opendkp');
+    const { createAuctions, getMostRecentRaid, _raidLooksStale } = require('./utils/opendkp');
     // Link the auctions to the current raid so DKP charges attach correctly
     // (captured: the site passes RaidId on the auction). Best-effort — if the
     // lookup fails the auction still posts, just unlinked.
+    //
+    // ⚠ The chosen raid is REPORTED BACK, not just used. Reported 2026-08-27
+    // mid-raid: loot was being linked to the previous night's raid, and the
+    // officer posting had no way to see which raid they had just charged.
+    // Silent best-effort is fine for a failure; it is not fine for a wrong
+    // answer that looks like a right one.
     let linkRaidId = 0;
-    try { const raid = await getMostRecentRaid(); if (raid && raid.RaidId) linkRaidId = raid.RaidId; }
-    catch (e) { console.warn('[loot-post] raid link lookup failed:', e?.message); }
+    let linkedRaid = null;
+    try {
+      const raid = await getMostRecentRaid();
+      if (raid && raid.RaidId) { linkRaidId = raid.RaidId; linkedRaid = raid; }
+    } catch (e) { console.warn('[loot-post] raid link lookup failed:', e?.message); }
+    const raidStale = linkedRaid ? _raidLooksStale(linkedRaid) : false;
+    if (raidStale) {
+      console.warn(`[loot-post] ⚠ linking to raid #${linkRaidId} "${linkedRaid.Name}" dated`
+        + ` ${linkedRaid.Timestamp} — more than a day old. Tonight's raid may not exist yet.`);
+    }
     const auctions = matched.map(m => ({
       BidType: 'Closed', ItemQuantity: m.quantity || 1, Duration: duration, Bids: [],
       Item: { Name: m.name, GameItemId: m.gameItemId },
@@ -7064,6 +8369,12 @@ async function _handleAgentLootPost(req, res) {
     }));
     await createAuctions(auctions);
     console.log(`[loot-post] ${identity.display_name || identity.discord_id} opened ${auctions.length} closed auction(s), ${duration}m`);
+
+    // The panel's shared auctions cache is stale BY CONSTRUCTION now — we just
+    // created these auctions upstream. Drop it so the next 7s dashboard poll
+    // renders them instead of waiting out the idle TTL, which used to be as
+    // long as the whole bidding window (see the cache header above).
+    try { _invalidatePanelAuctions(); } catch { /* fail-open — the TTL still expires */ }
 
     // Broadcast a loot-posted event to every agent (#149) so the raid-wide
     // "Loot posted — N items" TTS can fire off this REAL post instead of chat
@@ -7082,7 +8393,7 @@ async function _handleAgentLootPost(req, res) {
     // when night threads are off/unresolvable (best-effort — the auctions are
     // already live either way).
     // Raid flow only — an off-night event thread never carries DKP bidding
-    // (Hitya 2026-07-31); it falls back to the loot thread instead.
+    // (the guild lead, 2026-07-31); it falls back to the loot thread instead.
     const threadId = process.env.LOOT_CHANNEL_ID || '1527421284747706551';
     try {
       const _t = await require('./utils/raidNight').getRaidNightTarget(client)
@@ -7098,7 +8409,12 @@ async function _handleAgentLootPost(req, res) {
     } catch (e) { console.warn('[loot-post] thread announce failed:', e?.message); }
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ ok: true, posted: matched.map(m => m.name), count: matched.length, unmatched: unmatched.map(u => u.name), duration }));
+    return res.end(JSON.stringify({ ok: true, posted: matched.map(m => m.name), count: matched.length,
+      unmatched: unmatched.map(u => u.name), duration,
+      // Which raid this loot was actually charged to, so Mimic can show it
+      // rather than the officer finding out after the raid.
+      linked_raid: linkedRaid ? { id: linkRaidId, name: linkedRaid.Name || null,
+                                  dated: linkedRaid.Timestamp || null, stale: raidStale } : null }));
   } catch (err) {
     console.error('[loot-post] failed:', err);
     res.writeHead(502, { 'Content-Type': 'application/json' });
@@ -7107,7 +8423,7 @@ async function _handleAgentLootPost(req, res) {
 }
 
 // POST /api/agent/place-bid
-// Body: { character: "Hitya", auction_id: 993920, value: 50, priority?: 1 }
+// Body: { character: "Rethlan", auction_id: 993920, value: 50, priority?: 1 }
 // ── UI Studio — encrypted snapshots of a player's EQ ini files ─────────────
 // Mimic POSTs a JSON bundle of UI / chat / hotkey / bandolier / socials
 // files. Bot encrypts with WISHLIST_BID_KEY before storing — even DB admins
@@ -7128,7 +8444,7 @@ async function _handleAgentUiLayoutUpload(req, res) {
     req.on('data', (chunk) => {
       body += chunk;
       // UI bundles can include hundreds of small ini files; 8MB is a comfortable
-      // ceiling. (Hitya's full set was ~600KB pre-encryption.)
+      // ceiling. (the guild lead's full set was ~600KB pre-encryption.)
       if (body.length > 8 * 1024 * 1024) { req.destroy(); resolve(); }
     });
     req.on('end',   resolve);
@@ -7147,7 +8463,7 @@ async function _handleAgentUiLayoutUpload(req, res) {
   const files         = (payload?.files && typeof payload.files === 'object') ? payload.files : null;
   const agentVersion  = (payload?.agent_version || null) && String(payload.agent_version).slice(0, 32);
   // Which computer took this backup. Older agents don't send it — the restore
-  // picker shows "unknown machine" rather than guessing (Hitya 2026-08-09:
+  // picker shows "unknown machine" rather than guessing (the guild lead, 2026-08-09:
   // with several machines backing up the same character, the timestamp alone
   // can't tell you which box a snapshot came from).
   const machineName   = (payload?.machine_name || null) && String(payload.machine_name).trim().slice(0, 64);
@@ -7285,9 +8601,12 @@ async function _handleAgentUiLayoutList(req, res) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ snapshots: [] }));
   }
+  // Owner AND character: the owner alone listed every character in the family
+  // under each one, with no name on the row — so "Backups" under one character
+  // showed (and offered to restore) another's (the guild lead, 2026-10-04).
   const rows = await supabase.select(
     'ui_snapshots',
-    `owner_discord_id=eq.${encodeURIComponent(ownerDiscord)}&select=id,character_name,server_short,label,source_width,source_height,payload_bytes_plain,file_count,agent_version,machine_name,created_at&order=created_at.desc&limit=50`,
+    `owner_discord_id=eq.${encodeURIComponent(ownerDiscord)}&character_name=ilike.${encodeURIComponent(character)}&select=id,character_name,server_short,label,source_width,source_height,payload_bytes_plain,file_count,agent_version,machine_name,created_at&order=created_at.desc&limit=50`,
   ).catch(() => []);
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify({ snapshots: Array.isArray(rows) ? rows : [] }));
@@ -7359,6 +8678,160 @@ async function _handleAgentUiLayoutDownload(req, res, snapshotId) {
 
 // Looks up CharacterId + Rank from OpenDKP roster and forwards as a bid.
 // Returns the OpenDKP response (or a 4xx if the input is bad).
+// ── Autobid gate ────────────────────────────────────────────────────────────
+// The guild lead, 2026-08-26, twice — the second time correcting my first build:
+//   "you have to be in the raid for it to fire"
+//   "one of your characters needs to be in the raid currently OR have been on a
+//    tick so far that night"
+//
+// Both halves matter and my first version had neither right:
+//
+//   • FAMILY, not the bidding character. You bid on the alt you want the item
+//     for while your MAIN is the one standing in the raid. Checking only the
+//     bidding character would refuse exactly the normal case.
+//   • "or on a tick tonight", not just "in the roster right now". You raided
+//     the first two hours, took the ticks, then logged or went AFK — you are
+//     still owed the loot you are bidding on. A roster-only check would refuse
+//     the person who earned the DKP being spent.
+//
+// ⚠ FAILS CLOSED, an INVERSION of the identical predicate in the agent's
+// trigger path. `require_raid_member` there deliberately falls OPEN on an empty
+// roster ("so out-of-raid testing still fires") because a missed callout is
+// worse than a spurious one. Here the polarity flips: cannot prove you were in
+// the raid ⇒ do not spend your DKP. Same question, opposite correct answer.
+//
+// Enforced HERE, on the bot, not the agent — the bid is submitted from the bot,
+// so a gate living only next to the decision is advisory and stale local state
+// walks past it.
+const _AUTOBID_ROSTER_FRESH_MS = 10 * 60 * 1000;
+
+// "Tonight" = since the most recent 6pm ET boundary. Raids are Sun/Wed/Thu
+// 8pm-midnight ET but routinely run past midnight, so a calendar-day boundary
+// would cut a live raid in half at 00:00 and refuse everyone still standing
+// there. 6pm is comfortably before any pull and after the previous night ended.
+function _raidNightStartIso(now = new Date()) {
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const boundary = new Date(et);
+  boundary.setHours(18, 0, 0, 0);
+  if (et < boundary) boundary.setDate(boundary.getDate() - 1);
+  // Convert the ET wall-clock boundary back to a real instant.
+  const offsetMs = now.getTime() - et.getTime();
+  return new Date(boundary.getTime() + offsetMs).toISOString();
+}
+
+// Every character sharing a family root with `name` (root = main_name || name),
+// lowercased. Includes the input even when we know nothing about it, so a
+// character missing from `characters` still checks itself rather than nothing.
+async function _bidFamilyNamesFor(name) {
+  const out = new Set([String(name || '').trim().toLowerCase()].filter(Boolean));
+  try {
+    const supabase = require('./utils/supabase');
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const rows = await supabase.select('characters',
+      `guild_id=eq.${encodeURIComponent(guildId)}&select=name,main_name&limit=1000`) || [];
+    const lc = (v) => String(v || '').trim().toLowerCase();
+    const rootOf = (r) => lc(r.main_name) || lc(r.name);
+    const me = rows.find(r => lc(r.name) === lc(name));
+    if (!me) return out;
+    const root = rootOf(me);
+    for (const r of rows) if (rootOf(r) === root) out.add(lc(r.name));
+  } catch { /* fall back to just the input — never widens permission on error */ }
+  return out;
+}
+
+async function _familyInRaidTonight(characterName, { freshMs = _AUTOBID_ROSTER_FRESH_MS, now = new Date() } = {}) {
+  const name = String(characterName || '').trim();
+  if (!name) return { ok: false, reason: 'no character' };
+  try {
+    const supabase = require('./utils/supabase');
+    if (!supabase.isEnabled()) return { ok: false, reason: 'supabase disabled' };
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const family = await _bidFamilyNamesFor(name);
+
+    // (a) Any family member standing in the raid right now.
+    const since = new Date(now.getTime() - freshMs).toISOString();
+    // Paged: one row per (uploader, name) is ~1,000 at peak, so a `limit=1000` read could miss the
+    // family member standing in the raid and refuse an auto-bid.
+    const roster = await supabase.selectAllPaged('raid_roster',
+      `guild_id=eq.${encodeURIComponent(guildId)}`
+      + `&captured_at=gte.${encodeURIComponent(since)}&select=name`, 'uploaded_by_discord_id.asc,name') || [];
+    const hit = roster.find(r => family.has(String(r.name || '').trim().toLowerCase()));
+    if (hit) return { ok: true, via: 'roster', character: hit.name, family: family.size };
+
+    // (b) Any family member credited on a tick since tonight's boundary.
+    // opendkp_ticks carries no tick timestamp of its own — `fetched_at` is OUR
+    // sync time and is never an ordering key (bot 3.1.33 lesson) — so the time
+    // filter has to come from the RAID's ts.
+    const nightStart = _raidNightStartIso(now);
+    const raids = await supabase.select('opendkp_raids',
+      `ts=gte.${encodeURIComponent(nightStart)}&select=raid_id&limit=1000`) || [];
+    if (raids.length === 0) return { ok: false, reason: 'no raid tonight', family: family.size };
+    const ids = raids.map(r => r.raid_id).filter(Number.isFinite);
+    if (ids.length === 0) return { ok: false, reason: 'no raid tonight', family: family.size };
+    const ticks = await supabase.select('opendkp_ticks',
+      `raid_id=in.(${ids.join(',')})&select=tick_id,attendees&limit=1000`) || [];
+    for (const t of ticks) {
+      for (const a of (Array.isArray(t.attendees) ? t.attendees : [])) {
+        if (family.has(String(a || '').trim().toLowerCase())) {
+          return { ok: true, via: 'tick', character: a, tick_id: t.tick_id, family: family.size };
+        }
+      }
+    }
+    return { ok: false, reason: 'no family member in the raid or on a tick tonight', family: family.size };
+  } catch (err) {
+    // A lookup failure is NOT permission to bid.
+    return { ok: false, reason: 'gate lookup failed: ' + (err && err.message) };
+  }
+}
+
+// Roaming bid prefs — the WRITE half (docs/DESIGN-bid-assist.md).
+// Body: { prefs: [{ character, item_id, planned_bid, autobid, dismissed,
+//                   item_name, updated_at }] }
+//
+// LAST-WRITER-WINS on updated_at, deliberately not a merge: these are one
+// person's preferences edited on one machine at a time, and merging would let a
+// stale Deck resurrect a planned bid the desktop just cleared.
+//
+// requireAgentAuth is not optional here. These rows are keyed by character
+// name, so without it any valid agent token could overwrite anyone else's
+// planned bids — and a planned bid is what someone is about to spend DKP on.
+async function _handleAgentBidPrefs(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    // A corrupt local file must not become a multi-megabyte write.
+    if (total > 256 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = Array.isArray(payload && payload.prefs) ? payload.prefs : [];
+  const clean = rows.slice(0, 2000).map(r => ({
+    guild_id:    guildId,
+    character:   String(r.character || '').slice(0, 64),
+    item_id:     parseInt(r.item_id, 10),
+    planned_bid: Number.isFinite(parseInt(r.planned_bid, 10)) ? parseInt(r.planned_bid, 10) : null,
+    autobid:     !!r.autobid,
+    dismissed:   !!r.dismissed,
+    item_name:   r.item_name ? String(r.item_name).slice(0, 200) : null,
+    updated_at:  r.updated_at || new Date().toISOString(),
+  })).filter(r => r.character && Number.isInteger(r.item_id) && r.item_id > 0);
+
+  if (clean.length === 0) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, written: 0 }));
+  }
+  const supabase = require('./utils/supabase');
+  await supabase.upsert('character_bid_prefs', clean, 'guild_id,character,item_id');
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ ok: true, written: clean.length }));
+}
+
 async function _handleAgentPlaceBid(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -7459,7 +8932,7 @@ async function _handleAgentFunEvent(req, res) {
 // (<< Earlier / ✓ Good! / >> Too early). Each call is one or more vote rows
 // into trigger_timing_feedback. No dedup — the overlay debounces locally; we
 //'d rather honestly count three quick clicks than risk losing a real burst
-// of disagreement. (Hitya 2026-06-26 — v1.1.2.)
+// of disagreement. (the guild lead, 2026-06-26 — v1.1.2.)
 //
 // #207 adds two IMPLICIT directions on the same table: `dismissed` (the raider
 // cleared the callout) and `expired` (it aged out untouched). The second is the
@@ -7540,6 +9013,106 @@ async function _handleAgentTriggerFeedback(req, res) {
 //       (an engaged mob cons scowls/threateningly regardless of faction, so
 //       those are combat noise — and the agent already drops them); we keep
 //       the LATEST standing per (character, mob), overwritten in place.
+// ── Turning a faction hit into a POINT value ─────────────────────────────────
+// The guild lead, 2026-09-03: the faction page "is currently not helping" because a
+// -2000 Lord Seru hit and a +5 spire-spirit kill both render as one "hit".
+// Classic prints no magnitude, but the exact per-mob value is in the mirror --
+// so once the agent names the mob that died in the same second (agent 3.6.32),
+// the number is a lookup, not a guess.
+//
+// Validated end to end against the guild lead's own client log:
+//   #Lord_Inquisitor_Seru  → -2000 to Seru / Hand / Eye / Heart / Shoulders,
+//                            +200 to four Katta factions   (9 entries, 9 lines)
+//   A_Greater_Spire_Spirit → +5 to six Seru-bloc factions, -5 The Recuso,
+//                            -50 Spire Spirits             (8 entries, 8 lines)
+//
+// ⚠ Names come from eqemu_faction_list_full, NOT eqemu_faction_list — the
+// short table is missing rows (every faction_id on npc_faction 967 resolves to
+// NULL there) and a null name silently drops the value.
+const _FACTION_VALUE_TTL_MS = 6 * 3600 * 1000;
+let _factionValueCache = { at: 0, byMob: null, rowsByMob: null };
+async function _factionValueMap() {
+  if (_factionValueCache.byMob && Date.now() - _factionValueCache.at < _FACTION_VALUE_TTL_MS) {
+    return _factionValueCache.byMob;
+  }
+  const byMob = new Map();   // normMobName → Map(factionLower → value)
+  // ⚠ A SECOND structure, not a change to the first. byMob lowercases the
+  // faction name because its consumer matches log text case-insensitively, and
+  // a UI needs "Dain Frostreaver IV" rather than a title-cased guess that gets
+  // the numeral wrong. Built in the same pass off the same rows, so it cannot
+  // drift from the map beside it, and no existing caller's shape changes.
+  const rowsByMob = new Map();   // normMobName → [{ name, value }]
+  try {
+    const supabase = require('./utils/supabase');
+    if (supabase.isEnabled()) {
+      // ⚠ selectAllPaged, NOT select with a big limit. PostgREST silently caps
+      // a response at 1000 rows, so `limit=20000` returns 1000 and the map
+      // comes out quietly incomplete — most mobs would resolve to no value and
+      // look like "unattributable" rather than like a bug. The repo's
+      // over-cap ratchet test caught this; it is why that test exists.
+      const [names, entries, npcs] = await Promise.all([
+        supabase.selectAllPaged('eqemu_faction_list_full',
+          'id=gt.0&select=id,name', 'id', undefined),
+        // ⚠ Ordered on the whole primary key. npc_faction_id alone is not unique
+        // (many factions per npc_faction), and a replay on it lost 4 of 5,354 rows.
+        supabase.selectAllPaged('eqemu_npc_faction_entries',
+          'npc_faction_id=gt.0&select=npc_faction_id,faction_id,value', 'npc_faction_id,faction_id', undefined),
+        // ⚠ Narrow select on purpose: this is an 18k-row table and egress is
+        // the metered thing on our plan, so the default all-columns paged read
+        // would pull the whole NPC catalog to learn two fields.
+        supabase.selectAllPaged('eqemu_npc_types',
+          'npc_faction_id=gt.0&select=id,name,npc_faction_id', 'id', undefined),
+      ]);
+      // A failed page returns null, which is NOT an empty catalog — bail rather
+      // than cache a half-built map for six hours.
+      if (!names || !entries || !npcs) {
+        console.warn('[faction] value map: a catalog page failed; not caching a partial map');
+        return byMob;
+      }
+      const factionName = new Map((names || []).map(r => [Number(r.id), String(r.name || '')]));
+      const byNpcFaction = new Map();
+      const rowsByNpcFaction = new Map();
+      for (const e of (entries || [])) {
+        const fn = factionName.get(Number(e.faction_id));
+        if (!fn) continue;
+        const v = Number(e.value);
+        if (!Number.isFinite(v) || v === 0) continue;
+        let m = byNpcFaction.get(Number(e.npc_faction_id));
+        if (!m) { m = new Map(); byNpcFaction.set(Number(e.npc_faction_id), m); }
+        m.set(fn.toLowerCase(), v);
+        let rl = rowsByNpcFaction.get(Number(e.npc_faction_id));
+        if (!rl) { rl = []; rowsByNpcFaction.set(Number(e.npc_faction_id), rl); }
+        rl.push({ name: fn, value: v });
+      }
+      for (const n of (npcs || [])) {
+        const m = byNpcFaction.get(Number(n.npc_faction_id));
+        if (!m) continue;
+        byMob.set(_normFactionMobName(n.name), m);
+        const rl = rowsByNpcFaction.get(Number(n.npc_faction_id));
+        if (rl) rowsByMob.set(_normFactionMobName(n.name), rl);
+      }
+    }
+  } catch (err) {
+    console.warn('[faction] value map build failed:', err && err.message);
+  }
+  _factionValueCache = { at: Date.now(), byMob, rowsByMob };
+  return byMob;
+}
+// Display-cased faction consequences for ONE mob, biggest swing first — what
+// the Target Info Factions tab renders. Shares the 6h cache above, so asking
+// for a mob costs nothing beyond the first build.
+async function _factionRowsFor(mobName) {
+  await _factionValueMap();                       // ensures the cache is warm
+  const rows = _factionValueCache.rowsByMob && _factionValueCache.rowsByMob.get(_normFactionMobName(mobName));
+  if (!rows || !rows.length) return null;
+  return rows.slice().sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+}
+// npc_types stores "A_Greater_Spire_Spirit" and instanced rows carry a leading
+// "#"; the log prints "A Greater Spire Spirit". Normalise both to one key.
+function _normFactionMobName(v) {
+  return String(v || '').trim().replace(/^#/, '').replace(/[\s_]+/g, ' ').toLowerCase();
+}
+
 async function _handleAgentFaction(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -7567,11 +9140,21 @@ async function _handleAgentFaction(req, res) {
 
   // Hits → one aggregate per (character, faction). A 1,500-event backfill
   // chunk collapses to a handful of RPC rows.
+  // Only pay for the catalog map when at least one hit names its kill.
+  const _needValues = events.some(e => e && e.kind === 'hit' && e.mob);
+  const _factionValues = _needValues ? await _factionValueMap() : null;
   const agg = new Map();   // charLower|factionLower → rollup row
   // Cons → latest per (character, mob); a single upsert payload must not
   // contain the same key twice (Postgres rejects double-update in one
   // statement), so collapse here too.
   const latestCon = new Map();
+  // Raw per-hit rows for faction_hits. Not deduped here — the table carries a
+  // unique index and the insert is ON CONFLICT DO NOTHING, so a raider
+  // re-running a backfill over the same logs cannot double-count. That matters
+  // because re-backfilling IS the documented way to enrich history, and it is
+  // also how the pre-2026-09-22 history can be rebuilt at all: the aggregate
+  // lost it, but the raiders' own log files did not.
+  const hits = [];
 
   for (const e of events) {
     if (!e || !e.character || !e.ts) continue;
@@ -7586,6 +9169,10 @@ async function _handleAgentFaction(req, res) {
       if (!a) {
         a = { guild_id: guildId, character, faction, better: 0, worse: 0,
               better_total: 0, worse_total: 0,
+              // Hits whose point value was actually resolved (line magnitude or
+              // catalog lookup). The page needs this to say "points from N of
+              // M hits" instead of implying every hit was priced.
+              better_priced: 0, worse_priced: 0,
               capped_max_at: null, capped_min_at: null,
               first_hit_at: iso, last_hit_at: iso, last_direction: null };
         agg.set(key, a);
@@ -7598,14 +9185,40 @@ async function _handleAgentFaction(req, res) {
       // the web can show actual point swings instead of just hit counts.
       // Clamp to a sane range so a corrupt log line can't poison the rollup.
       const magRaw = Number(e.magnitude);
-      if (Number.isFinite(magRaw) && magRaw > 0 && magRaw < 100000) {
-        const mag = Math.trunc(magRaw);
-        if (dir > 0) a.better_total += mag; else a.worse_total += mag;
+      let mag = (Number.isFinite(magRaw) && magRaw > 0 && magRaw < 100000) ? Math.trunc(magRaw) : null;
+      // No magnitude in the line (every classic hit) but the agent named the
+      // kill that caused it → the exact value is a catalog lookup. Sign is
+      // taken from the LINE, not from the catalog: the same kill raises some
+      // factions and lowers others, and the line already tells us which way
+      // this one went.
+      if (mag == null && e.mob) {
+        const fv = (_factionValues && _factionValues.get(_normFactionMobName(e.mob))) || null;
+        const v  = fv ? fv.get(faction.toLowerCase()) : null;
+        if (Number.isFinite(v) && Math.abs(v) > 0 && Math.abs(v) < 100000) mag = Math.abs(Math.trunc(v));
+      }
+      if (mag != null) {
+        if (dir > 0) { a.better_total += mag; a.better_priced++; }
+        else         { a.worse_total  += mag; a.worse_priced++;  }
       }
       if (e.capped && dir > 0 && (!a.capped_max_at || iso > a.capped_max_at)) a.capped_max_at = iso;
       if (e.capped && dir < 0 && (!a.capped_min_at || iso > a.capped_min_at)) a.capped_min_at = iso;
       if (iso < a.first_hit_at) a.first_hit_at = iso;
       if (iso >= a.last_hit_at) { a.last_hit_at = iso; a.last_direction = dir; }
+      // ── Keep the EVENT, not just the counter (the guild lead, 2026-09-22) ──
+      // The aggregate above answers "how much, ever". It cannot answer "how
+      // much this week", because the per-hit detail was computed right here
+      // and then thrown away — 749,753 hits reduced to counters. Everything
+      // the windowed view needs is already resolved at this point, so keeping
+      // it costs one more row.
+      hits.push({
+        guild_id: guildId, character, faction,
+        mob: e.mob ? String(e.mob).slice(0, 64) : null,
+        direction: dir > 0 ? 'better' : 'worse',
+        // Mirrors the aggregate's priced/unpriced split: a hit with no
+        // magnitude still COUNTS but must never be summed.
+        amount: mag, priced: mag != null,
+        ts: iso,
+      });
     } else if (e.kind === 'con' && e.mob && e.standing) {
       // Defense in depth — the agent drops hostile cons (rank ≤ 1) before
       // upload, but never trust the wire.
@@ -7634,6 +9247,18 @@ async function _handleAgentFaction(req, res) {
   if (latestCon.size) {
     const r = await supabase.upsert('faction_cons', Array.from(latestCon.values()), 'guild_id,character,mob')
       .catch(err => { console.warn('[faction] cons upsert failed:', err?.message); return null; });
+    if (Array.isArray(r)) written += r.length;
+  }
+  // ⚠ insertIgnoreDuplicates, not upsert: the dedup index is an EXPRESSION
+  // index (coalesce(mob,'')), which PostgREST's `on_conflict=` cannot name.
+  // Chunked rather than truncated — a backfill chunk carries up to ~1,500
+  // events and silently dropping the tail would put holes in the very history
+  // this table exists to keep. Failure here must never cost the aggregate,
+  // which has already been written above.
+  for (let i = 0; i < hits.length; i += 500) {
+    const chunk = hits.slice(i, i + 500);
+    const r = await supabase.insertIgnoreDuplicates('faction_hits', chunk)
+      .catch(err => { console.warn('[faction] hits insert failed:', err?.message); return null; });
     if (Array.isArray(r)) written += r.length;
   }
   _trackUpload({ endpoint: 'faction', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
@@ -7678,7 +9303,18 @@ const POP_FLAG_BY_BOSS = {
   'xegony':                  'xegony_dead',     // Eryslai (Time gate)
   'xegony the queen of air': 'xegony_dead',
   'quarm':                   'quarm_dead',      // Plane of Time, Phase VI
+  // The names the server's NPC catalog actually uses (eqemu_npc_types, checked 2026-09-29): the short
+  // names above would never match these kills, so their flags would all land as 'unmapped'.
+  'the keeper of sorrows':        'keeper_dead',
+  'lord mithaniel marr':          'marr_dead',
+  'coirnav the avatar of water':  'coirnav_dead',
+  'fennin ro the tyrant of fire': 'fennin_dead',
+  'a mystical arbitor of earth':  'arbitor_dead',
+  'a rathe councilman':           'rathe_dead',
 };
+// A catalog name ("#Xegony_the_Queen_of_Air") and a log name ("Xegony the Queen of Air") are the same
+// boss: drop the leading #, read _ as a space, lowercase.
+const _popBossKey = (b) => (b ? String(b).trim().replace(/^#/, '').replace(/_/g, ' ').toLowerCase() : '');
 async function _handleAgentPopFlags(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -7699,14 +9335,9 @@ async function _handleAgentPopFlags(req, res) {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const rows = [];
   const seen = new Set();
-  for (const e of events) {
-    if (!e || !e.character || !e.ts) continue;
-    const ts = new Date(e.ts);
-    if (isNaN(ts.getTime())) continue;
-    const bossLower = e.boss ? String(e.boss).toLowerCase() : '';
-    const flagKey = POP_FLAG_BY_BOSS[bossLower] || 'unmapped';
-    const key = `${String(e.character).toLowerCase()}|${flagKey}|${ts.toISOString()}`;
-    if (seen.has(key)) continue;
+  const push = (e, ts, flagKey, extra) => {
+    const key = `${String(e.character).toLowerCase()}|${flagKey}|${ts}`;
+    if (seen.has(key)) return;
     seen.add(key);
     rows.push({
       guild_id:  guildId,
@@ -7715,8 +9346,35 @@ async function _handleAgentPopFlags(req, res) {
       zone:      e.zone ? String(e.zone).slice(0, 64) : null,
       boss:      e.boss ? String(e.boss).slice(0, 64) : null,
       source:    'event',
-      earned_at: ts.toISOString(),
+      earned_at: ts,
+      stage:     null,
+      npc:       null,
+      ...extra,
     });
+  };
+  for (const e of events) {
+    if (!e || !e.character || !e.ts) continue;
+    const ts = new Date(e.ts);
+    if (isNaN(ts.getTime())) continue;
+    const iso = ts.toISOString();
+    // A hail the agent WITNESSED is evidence someone talked to an NPC, not a flag. It used to be
+    // stored as an 'unmapped' grant with the NPC thrown away (DECISIONS §119).
+    if (e.source === 'hail_witnessed') {
+      push(e, iso, 'hail', { source: 'hail_witnessed', npc: e.npc ? String(e.npc).slice(0, 64) : null });
+      continue;
+    }
+    const bossLower = _popBossKey(e.boss);
+    // The server's own flag step first (utils/popFlagStages.js), then what it proves in the catalog's
+    // terms; the boss map is the fallback for anything the step tables do not name.
+    const hit = popFlagStages.resolveStage(e, bossLower);
+    const source = e.kind === 'recital' ? 'recital' : (e.kind === 'checklist' ? 'checklist' : 'event');
+    if (hit) {
+      push(e, iso, hit.stage, { source, stage: hit.stage });
+      for (const k of popFlagStages.STAGE_IMPLIES[hit.stage] || []) push(e, iso, k, { source, stage: hit.stage });
+      continue;
+    }
+    if (e.kind === 'recital') continue;   // a sentence the tables do not know proves nothing
+    push(e, iso, POP_FLAG_BY_BOSS[bossLower] || 'unmapped', { source });
   }
   let written = 0;
   if (rows.length) {
@@ -7727,6 +9385,65 @@ async function _handleAgentPopFlags(req, res) {
   _trackUpload({ endpoint: 'pop_flags', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);
   res.end(JSON.stringify({ ok: true, written }));
+}
+
+// ── The hail board ───────────────────────────────────────────────────────────
+// The guild lead, 2026-10-05: "Upon boss death and spawn of a creature that needs to be hailed, we should
+// have that as an available slot in command center to track who has not yet hailed and who has already."
+// A kill of a boss whose death spawns a hail NPC opens a window (utils/hailBoard.js holds the whole story:
+// the boss → NPC → step table, the status rules, the bot_kv shape). Every Mimic polls GET /hail-board; any
+// raider's tap lands on POST /hail-mark.
+let _hailBoardInst = null;
+const _hailBoard = () => _hailBoardInst || (_hailBoardInst = require('./utils/hailBoard').create({
+  supabase: require('./utils/supabase'),
+  guildId: () => process.env.SUPABASE_GUILD_ID || 'wolfpack',
+}));
+function _hailKill(args) {
+  try { _hailBoard().openWindow(args).catch(err => console.warn('[hail-board] open failed:', err?.message)); }
+  catch (err) { console.warn('[hail-board] open failed:', err?.message); }
+}
+// Every kill recorded on the board, whichever path recorded it. The bosses the board does not carry
+// (Mithaniel Marr, Solusek Ro, the Keeper, the Behemoth, the Arbitor) are opened by name where the kill is
+// seen: the agent's kill relay and the confirmed encounter upload.
+require('./utils/state').onKillRecorded(({ bossId, killedAt }) => _hailKill({ bossId, killedAtMs: killedAt }));
+
+// GET /api/agent/hail-board → { windows: [...] }
+async function _handleAgentHailBoard(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const board = await _hailBoard().getBoard();
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(board));
+}
+
+// POST /api/agent/hail-mark { window_id, name, hailed } → the updated window
+async function _handleAgentHailMark(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 4 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+  const windowId = typeof payload?.window_id === 'string' ? payload.window_id.slice(0, 96) : '';
+  const name = typeof payload?.name === 'string' ? payload.name.trim().slice(0, 64) : '';
+  if (!windowId || !name) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'window_id and name required' }));
+  }
+  // The marker is whoever's session this is; an install with no member row resolves to a bare Discord id.
+  const by = identity.display_name && identity.display_name !== identity.discord_id ? identity.display_name : null;
+  const r = await _hailBoard().markHailed({ windowId, name, hailed: payload.hailed !== false, by });
+  if (r.error) {
+    res.writeHead(r.status || 400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: r.error }));
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, ...r.window }));
 }
 
 // POST /api/agent/quarmy
@@ -7741,7 +9458,7 @@ async function _handleAgentPopFlags(req, res) {
 const _QUARMY_BANNED_SLOT_RX = /^(bank|sharedbank)|coin/i;
 // AA-catalog memo for ingest validation (eqmacid → { max_level, classes }).
 // Quarmy's in-game exporter writes JUNK AA rows for some indices — rank-255
-// sentinels and stray bytes (Hitya the monk uploaded "Jewelcraft Mastery
+// sentinels and stray bytes (the guild lead the monk uploaded "Jewelcraft Mastery
 // r255", "Elemental Form: Fire r79", bard-only "Fleet of Foot", 2026-07-09).
 // A row is only stored when the catalog knows the index, the rank fits
 // max_level, and the character's class can actually train it.
@@ -7879,7 +9596,7 @@ async function _handleAgentQuarmy(req, res) {
 
 // POST /api/agent/inventory
 //
-// Mimic-auto-uploaded inventory snapshot (Hitya 2026-06-23: "load the
+// Mimic-auto-uploaded inventory snapshot (the guild lead, 2026-06-23: "load the
 // inventory, spellbook, and quarmy files via mimic the way we are the logs").
 // EQ writes <Char>-Inventory.txt on /outputfile inventory; the agent watches
 // the file and POSTs pre-parsed rows here on mtime change. Shape matches the
@@ -8192,6 +9909,10 @@ async function _handleAgentBuffCasts(req, res) {
       dur_formula:  Number.isFinite(c.dur_formula) ? Math.trunc(c.dur_formula) : null,
       cast_at:      castDate.toISOString(),
       observer:     c.observer ? String(c.observer).slice(0, 64) : null,
+      // Which SPAWN it landed on, when the observer could prove it by targeting
+      // that mob (Zeal PR #229; migration 20260902100000). NULL is the normal
+      // case and means UNPROVEN, never "a different mob" — see _idScopeKeep.
+      target_id:    Number.isFinite(Number(c.target_id)) ? Math.trunc(Number(c.target_id)) : null,
       is_charm_spell: !!c.is_charm_spell,
       uploaded_by_discord_id: identity.discord_id,
     };
@@ -8390,7 +10111,7 @@ async function _handleAgentLockout(req, res) {
     // PoP locked until 2026-10-01: /sll lockout entries from PVP events carry
     // the war gods' names ("Tallon Zek"/"Vallon Zek") and name-match the
     // Plane of Tactics bosses — without this gate the relay SYNTHESIZED kills
-    // for locked PoP bosses from those lockouts (Hitya 2026-07-13, the
+    // for locked PoP bosses from those lockouts (the guild lead, 2026-07-13, the
     // exact source of the bogus 17h Tactics timers). Date-gated; goes live
     // for PoP automatically at unlock.
     if (isPopLocked(boss)) {
@@ -8402,7 +10123,7 @@ async function _handleAgentLockout(req, res) {
     const existing    = getBossState(boss.id);
 
     // Record the lockout itself, not just what it implies for the timer
-    // (Hitya 2026-08-21: capture lockouts from raids that weren't ours). A
+    // (the guild lead, 2026-08-21: capture lockouts from raids that weren't ours). A
     // lockout binds US even when the kill wasn't ours — they cannot loot that
     // boss on our night. `ours` is three-state and NEVER guessed:
     //   • our board has a kill whose respawn matches theirs → ours
@@ -8479,7 +10200,7 @@ async function _handleAgentLockout(req, res) {
 // each post a fresh card.
 const _liveCards = new Map();
 
-// GET /api/agent/incomplete-encounters?characters=Hitya,Statlander[&limit=20]
+// GET /api/agent/incomplete-encounters?characters=Aldenmar,Brackwyn[&limit=20]
 //
 // Returns the list of encounters flagged data_incomplete that include any of
 // the queried characters in encounter_players. Sorted newest-first. The agent
@@ -8596,10 +10317,92 @@ const _healAmtFor = (spell) => {
   const e = _healAmountByName.get(key) || _healAmountByName.get(key.replace(/`/g, "'"));
   return e && e.amount > 0 ? e.amount : 0;
 };
+// ── Buff effect decoding (the guild lead, 2026-09-02) ─────────────────────────────────
+// "The buffs on the buffs page should give the affects that they're providing
+// each, and then a summary below of all of the things that are provided."
+//
+// Decoded HERE, once, rather than shipping a SPA table to every agent: the
+// catalog is already ETag'd and hour-cached, so the strings ride along for free
+// and there is one place to correct a label.
+//
+// ⚠ EVERY LABEL BELOW IS GROUNDED IN THE CATALOG, NOT REMEMBERED. Each was read
+// off a spell whose in-game text is known — Girdle of Karana is SPA 4 base 42
+// against "Increase Strength by 42"; Mask of the Stalker is 89/125, 87/115,
+// 15/3, 13/1 against "Target Size 25%, Magnification 115%, Mana 3, See
+// Invisible" (both from the guild lead's own screenshots). Resists were pinned at BOTH
+// ends and through the middle (Resist Fire 46 … Resist Magic 50, Endure
+// Cold/Poison/Disease 47/48/49) rather than inferred from the two ends.
+//
+// Anything not listed falls back to a raw "SPA <n>: <base>" — the same rule
+// web/lib/spellDecode.ts uses. A wrong label is worse than an opaque one:
+// nobody acts on "SPA 132", but everyone acts on a mislabeled stat.
+const _SPA_LABEL = {
+  0:   (b) => `HP regen ${b >= 0 ? '+' : ''}${b}/tick`,   // Regeneration = 0/5
+  1:   (b) => `AC ${b >= 0 ? '+' : ''}${b}`,              // Bravery 1/20, Aegolism 1/180
+  2:   (b) => `ATK ${b >= 0 ? '+' : ''}${b}`,
+  3:   (b) => `Run speed ${b >= 0 ? '+' : ''}${b}%`,      // Spirit of Wolf = 3/30
+  4:   (b) => `STR ${b >= 0 ? '+' : ''}${b}`,             // Strength / Girdle of Karana = 4/42
+  5:   (b) => `DEX ${b >= 0 ? '+' : ''}${b}`,             // Dexterity
+  6:   (b) => `AGI ${b >= 0 ? '+' : ''}${b}`,             // Agility = 6/21
+  7:   (b) => `STA ${b >= 0 ? '+' : ''}${b}`,
+  8:   (b) => `INT ${b >= 0 ? '+' : ''}${b}`,             // Brilliance
+  9:   (b) => `WIS ${b >= 0 ? '+' : ''}${b}`,             // Brilliance
+  // 10 is the inert filler slot (base 0 on 1166 buffs) — dropped below, never labeled.
+  11:  (b) => `Haste ${b - 100 >= 0 ? '+' : ''}${b - 100}%`,   // Celerity = 11/128 → +28%
+  12:  ()  => 'Invisibility',                            // Invisibility = 12/1
+  13:  ()  => 'See Invisible',                           // See Invisible / Mask of the Stalker
+  15:  (b) => `Mana ${b >= 0 ? '+' : ''}${b}/tick`,       // Clarity = 15/1
+  46:  (b) => `Fire resist ${b >= 0 ? '+' : ''}${b}`,     // Resist Fire
+  47:  (b) => `Cold resist ${b >= 0 ? '+' : ''}${b}`,     // Endure/Resist Cold
+  48:  (b) => `Poison resist ${b >= 0 ? '+' : ''}${b}`,   // Endure/Resist Poison
+  49:  (b) => `Disease resist ${b >= 0 ? '+' : ''}${b}`,  // Endure/Resist Disease
+  50:  (b) => `Magic resist ${b >= 0 ? '+' : ''}${b}`,    // Resist Magic
+  57:  ()  => 'Levitate',                                 // Levitate = 57/1
+  // 59 is stored NEGATIVE for a real damage shield (see _dsMagnitude) — the
+  // number a player cares about is the per-hit damage, so flip it.
+  59:  (b) => `Damage shield ${Math.abs(b)}/hit`,         // Shield of Thorns -24
+  66:  ()  => 'Ultravision',                              // Ultravision = 66/1
+  69:  (b) => `Max HP ${b >= 0 ? '+' : ''}${b}`,          // Skin like Wood 69/10, Aegolism 69/1100
+  79:  (b) => `HP ${b >= 0 ? '+' : ''}${b}`,              // Bravery 79/90 alongside 69/90
+  87:  (b) => `Magnification ${b}%`,                      // Mask of the Stalker = 87/115
+  89:  (b) => `Target size ${b - 100 >= 0 ? '+' : ''}${b - 100}%`,  // Mask of the Stalker 89/125 → +25%
+};
+// Slots that describe STACKING RULES rather than anything the player receives
+// (Aegolism carries 148/69 and 149/69). Listing them would put "SPA 148: 69" on
+// a card next to real stats, which reads as a missing label rather than as
+// something deliberately not shown.
+const _SPA_INTERNAL = new Set([148, 149, 254]);
+function _decodeSpellEffects(r) {
+  const eff  = (r && r.raw && Array.isArray(r.raw.eff))  ? r.raw.eff  : null;
+  const base = (r && r.raw && Array.isArray(r.raw.base)) ? r.raw.base : null;
+  const slots = [];
+  if (eff) {
+    for (let i = 0; i < eff.length; i++) slots.push({ e: Number(eff[i]), b: Number((base && base[i]) || 0) });
+  } else {
+    for (const i of [1, 2, 3]) {
+      const e = r[`effect_id_${i}`];
+      if (e == null) continue;
+      slots.push({ e: Number(e), b: Number(r[`effect_base_value_${i}`] || 0) });
+    }
+  }
+  const out = [];
+  for (const { e, b } of slots) {
+    if (!Number.isFinite(e) || _SPA_INTERNAL.has(e)) continue;
+    if (e === 10 && b === 0) continue;              // the inert filler slot
+    if (e === 0 && b === 0) continue;               // empty HP slot
+    const fn = _SPA_LABEL[e];
+    out.push(fn ? fn(b) : `SPA ${e}: ${b}`);
+  }
+  return out;
+}
+
+// ── Spell catalog endpoint ──────────────────────────────────────────────────
 const _SPELL_CATALOG_TTL_MS = 60 * 60 * 1000;
-async function _handleAgentSpellCatalog(req, res) {
-  const identity = await mimicLink.requireAgentAuth(req, res);
-  if (!identity) return;
+async function _handleAgentSpellCatalog(req, res, isPublic) {
+  if (!isPublic) {
+    const identity = await mimicLink.requireAgentAuth(req, res);
+    if (!identity) return;
+  }
 
   const fresh = _spellCatalogCache && (Date.now() - _spellCatalogCache.fetchedAt) < _SPELL_CATALOG_TTL_MS;
   if (!fresh) {
@@ -8613,14 +10416,12 @@ async function _handleAgentSpellCatalog(req, res) {
       // Switched to the REST helper's actual signature.
       const supabase = require('./utils/supabase');
       const entries = [];
-      let from = 0;
-      const PAGE = 1000;
       // effect_id_1..3 / raw are transient — used ONLY here to detect SPA 59
       // (damage shield) and its per-hit magnitude, then dropped. Only entries
       // that ARE a damage shield carry the derived `ds` field onward, so the
       // ~3.9k-spell catalog payload barely grows (undefined fields don't
       // serialize).
-      const SELECT = 'select=id,name,cast_on_you,cast_on_other,spell_fades,buffduration,buffdurationformula,cast_time,good_effect,' +
+      const SELECT = 'select=id,name,cast_on_you,cast_on_other,spell_fades,buffduration,buffdurationformula,cast_time,good_effect,mana,recast_time,resist_type,' +
         'effect_id_1,effect_base_value_1,effect_id_2,effect_base_value_2,effect_id_3,effect_base_value_3,raw';
       // Damage-shield magnitude for a spell: SPA 59 with a NEGATIVE base value
       // is the real "deal bonus damage to attackers" effect real DS spells use
@@ -8648,7 +10449,7 @@ async function _handleAgentSpellCatalog(req, res) {
       // are just |base|. The Illusion DS line scales: Illusion: Fire Elemental
       // is base -1 / formula 109 = |base| + level/4, i.e. 1 + 60/4 = 16 at L60
       // (matches the in-game "9 (L34) to 17 (L64)"; the old |base| showed 1).
-      // Hitya 2026-07-14. Only formulas verified/canonical are scaled; any
+      // The guild lead 2026-07-14. Only formulas verified/canonical are scaled; any
       // other falls back to |base| (no worse than before) and is logged once.
       const _dsFormulaWarned = new Set();
       function _dsFormulaValue(base, formula, level, maxAbs) {
@@ -8672,6 +10473,35 @@ async function _handleAgentSpellCatalog(req, res) {
         }
         return maxAbs > 0 ? Math.min(v, maxAbs) : v;
       }
+      // Mana DRAIN on the target (SPA 15, negative base, detrimental only):
+      // { b: magnitude, f: formula, m: cap (0 = none) }. good_effect gates it —
+      // the same SPA on a beneficial spell is the CASTER's cost (Succor,
+      // Evacuate, paladin self-buffs), never a drain (checked 2026-09-24: 23
+      // detrimental player drains, 6 beneficial caster costs). The agent
+      // resolves the formula (1–99 = base + level × f, the Quarm server's rule)
+      // and applies the high-level-NPC cut.
+      function _manaDrain(r) {
+        if (Number(r.good_effect) !== 0) return null;
+        const eff  = r.raw && Array.isArray(r.raw.eff)     ? r.raw.eff     : null;
+        const base = r.raw && Array.isArray(r.raw.base)    ? r.raw.base    : null;
+        const form = r.raw && Array.isArray(r.raw.formula) ? r.raw.formula : null;
+        const maxA = r.raw && Array.isArray(r.raw.max)     ? r.raw.max     : null;
+        if (!eff || !base) return null;
+        for (let i = 0; i < eff.length; i++) {
+          if (eff[i] === 15 && Number(base[i]) < 0) {
+            return { b: Math.abs(Number(base[i])), f: form ? (Number(form[i]) || 100) : 100,
+                     m: maxA && maxA[i] != null ? Math.abs(Number(maxA[i])) : 0 };
+          }
+        }
+        return null;
+      }
+      // Does the spell carry effect `spa` in any slot? raw.eff has all twelve;
+      // the indexed columns only the first three.
+      function _hasSpa(r, spa) {
+        const eff = r.raw && Array.isArray(r.raw.eff) ? r.raw.eff : null;
+        if (eff) return eff.includes(spa);
+        return [r.effect_id_1, r.effect_id_2, r.effect_id_3].includes(spa);
+      }
       function _dsMagnitude(r) {
         // Prefer raw — it carries the per-slot formula the indexed columns lack,
         // which is what makes level-scaled DS (Illusion line) come out right.
@@ -8694,8 +10524,62 @@ async function _handleAgentSpellCatalog(req, res) {
         }
         return null;
       }
+      // SPA 59 with a POSITIVE value — the other half of the excluded case above.
+      // On the Quarm server it is not a smaller shield: the spell-bonus sum lets a
+      // positive value REPLACE every shield the wearer has, and a positive total
+      // HEALS whoever lands a melee hit on them by that much (zone/bonuses.cpp
+      // SE_DamageShield; zone/attack.cpp Mob::DamageShield). Mark of the Plague
+      // Lords (+50, Plane of Disease, on raiders) turns the tank's shield off;
+      // Mark of Karn (+6, a cleric's, on a mob) heals the melee hitting the mob.
+      // The guild lead, 2026-10-02: "this debuff exists for damage shield
+      // reduction and should be reflected in the hud and overlays."
+      function _dsHealMagnitude(r) {
+        const eff  = r.raw && Array.isArray(r.raw.eff)  ? r.raw.eff  : null;
+        const base = r.raw && Array.isArray(r.raw.base) ? r.raw.base : null;
+        if (eff && base) {
+          const idx = eff.indexOf(59);
+          return (idx >= 0 && Number(base[idx]) > 0) ? Number(base[idx]) : null;
+        }
+        const slots = [[r.effect_id_1, r.effect_base_value_1], [r.effect_id_2, r.effect_base_value_2], [r.effect_id_3, r.effect_base_value_3]];
+        for (const [id, val] of slots) {
+          if (id === 59 && Number(val) > 0) return Number(val);
+        }
+        return null;
+      }
+      // Crowd control a DETRIMENTAL spell carries, for the agent's suggested
+      // triggers that match by effect, not by text (the guild lead, 2026-10-02: "We need
+      // more in suggested triggers"). Three of those used to name landing texts no
+      // spell prints ("You have been ensnared", "You feel calm", "You are afraid");
+      // the catalog has 70+ snare texts and 30+ mez ones, so the agent reads each
+      // spell's own `you` text against these kinds instead. SPA 31 mez · 22 charm ·
+      // 23 fear · 21 stun · 99 root · 96 silence · 3 negative = snare · 11 under
+      // 100 = slow (Turgur's Insects 85, Tepid Deeds 80; a haste is over 100).
+      const _CC_SPA = { 31: 'mez', 22: 'charm', 23: 'fear', 21: 'stun', 99: 'root', 96: 'silence' };
+      function _ccKinds(r) {
+        if (Number(r.good_effect) !== 0) return null;
+        const eff  = r.raw && Array.isArray(r.raw.eff)  ? r.raw.eff  : [r.effect_id_1, r.effect_id_2, r.effect_id_3];
+        const base = r.raw && Array.isArray(r.raw.base) ? r.raw.base : [r.effect_base_value_1, r.effect_base_value_2, r.effect_base_value_3];
+        const out = [];
+        for (let i = 0; i < eff.length; i++) {
+          const e = Number(eff[i]), b = Number(base[i]) || 0;
+          const k = _CC_SPA[e] || (e === 3 && b < 0 ? 'snare' : null) || (e === 11 && b > 0 && b < 100 ? 'slow' : null);
+          if (k && !out.includes(k)) out.push(k);
+        }
+        return out.length ? out : null;
+      }
+      // Hate a spell ADDS to its target: effect 92 (instant hate) with a POSITIVE base — the Terror
+      // line, Taunting / Enraging Blow, Pique (checked against the live catalog 2026-10-05). A
+      // negative base takes hate OFF (Jolt, Concussion), so it is not a hate spell. The agent's Me HUD
+      // counts a landing of one as an "aggro" spell beside the stuns (the guild lead, 2026-10-05).
+      function _hateAdded(r) {
+        const eff  = r.raw && Array.isArray(r.raw.eff)  ? r.raw.eff  : [r.effect_id_1, r.effect_id_2, r.effect_id_3];
+        const base = r.raw && Array.isArray(r.raw.base) ? r.raw.base : [r.effect_base_value_1, r.effect_base_value_2, r.effect_base_value_3];
+        let sum = 0;
+        for (let i = 0; i < eff.length; i++) if (Number(eff[i]) === 92 && Number(base[i]) > 0) sum += Number(base[i]);
+        return sum > 0 ? sum : null;
+      }
       // Estimated heal magnitude for the heal-attribution join + the tank
-      // overlay's inbound-heal amounts (Hitya 2026-07-14: heal amounts are
+      // overlay's inbound-heal amounts (the guild lead, 2026-07-14: heal amounts are
       // private to the healed, so a witnessed landing is credited at the
       // catalog value). SPA 0 (current HP) with a POSITIVE base is a direct
       // heal — level-scaled by the same formula math as DS, capped at max.
@@ -8742,26 +10626,27 @@ async function _handleAgentSpellCatalog(req, res) {
       // unflagged catalog as "bot too old" and leaves its mechanic index idle.
       const npcCastable = new Set();
       try {
-        let nfrom = 0;
-        while (true) {
-          const nrows = await supabase.select('eqemu_npc_spells_entries',
-            `select=spellid&order=spellid.asc&offset=${nfrom}&limit=${PAGE}`);
-          if (!Array.isArray(nrows) || nrows.length === 0) break;
+        // All or nothing: selectAllPaged returns null when any page fails, so a
+        // failed read leaves the flag unset (served as "bot too old" for an hour)
+        // rather than half-set (some NPC spells silently unflagged). Ordered on
+        // the whole key — spellid alone has ties.
+        const nrows = await supabase.selectAllPaged('eqemu_npc_spells_entries',
+          'select=spellid', 'npc_spells_id,spellid,minlevel');
+        if (Array.isArray(nrows)) {
           for (const nr of nrows) if (nr && nr.spellid != null) npcCastable.add(Number(nr.spellid));
-          if (nrows.length < PAGE) break;
-          nfrom += PAGE;
+        } else {
+          console.warn('[spell-catalog] NPC-castable flag unavailable: read failed');
         }
       } catch (err) {
         npcCastable.clear();
         console.warn('[spell-catalog] NPC-castable flag unavailable:', err && err.message);
       }
-      while (true) {
-        // PostgREST paging via Range header is wrapped by Supabase's REST API
-        // as offset/limit query params. We pass them as `&offset=X&limit=Y`
-        // which the supabase utility forwards verbatim.
-        const data = await supabase.select('eqemu_spells',
-          `${SELECT}&order=id.asc&offset=${from}&limit=${PAGE}`);
-        if (!Array.isArray(data) || data.length === 0) break;
+      {
+        // One paged read of the whole spell table. A failed page throws to the
+        // catch below: this used to `break` on it and cache whatever had loaded
+        // — nothing at all, if it was the first page — for an hour.
+        const data = await supabase.selectAllPaged('eqemu_spells', SELECT, 'id');
+        if (!Array.isArray(data)) throw new Error('eqemu_spells read failed');
         for (const r of data) {
           const _hm = _healMagnitude(r);
           // Live bot-side name→amount map so a relayed heal cast that arrives
@@ -8774,15 +10659,51 @@ async function _handleAgentSpellCatalog(req, res) {
             id: r.id, name: r.name, you: r.cast_on_you, other: r.cast_on_other, fades: r.spell_fades,
             dur: r.buffduration, durf: r.buffdurationformula,
             cast_ms: r.cast_time,
+            // Mana cost and recast (ms) — the Me overlay's "CHs left", "mezzes
+            // left" and Theft of Thought / Harvest timers (the guild lead,
+            // 2026-09-24). Omitted when zero, which most spells' recast is.
+            mana:   Number(r.mana) > 0 ? Number(r.mana) : undefined,
+            recast: Number(r.recast_time) > 0 ? Number(r.recast_time) : undefined,
+            // SPA 31 = mesmerize ("mezzes left"); SPA 20 = blindness (Blind
+            // Mode reads its landing and fade text from the catalog instead
+            // of a hand-kept list that knew one spell). Flag only when set.
+            mez:   _hasSpa(r, 31) ? 1 : undefined,
+            blind: _hasSpa(r, 20) ? 1 : undefined,
+            // Resist type = the spell's element (1 magic · 2 fire · 3 cold ·
+            // 4 poison · 5 disease) — the Me HUD colours damage in/out by it
+            // (the guild lead, 2026-09-24: "cast damage too with elements").
+            // 0 (unresistable) is omitted like every other zero here.
+            rt:    Number(r.resist_type) > 0 ? Number(r.resist_type) : undefined,
+            // Mana drained from the target — Target Info's mob mana bar and
+            // the PvP "drained from them" tally (the guild lead, 2026-09-24).
+            drain: _manaDrain(r) || undefined,
             // 1 = beneficial (buff), 0 = detrimental (debuff); null until the
             // eqemu sync populates good_effect. Lets overlays color buff/debuff.
             good: (r.good_effect == null ? null : (Number(r.good_effect) ? 1 : 0)),
             // Damage-shield per-hit magnitude (SPA 59) — omitted entirely for
             // the ~99% of spells that aren't a DS, so the wire payload barely
             // grows. Lets the Tank overlay attribute "Legacy of Thorn +28/hit"
-            // from a raider's CURRENT buff list (Hitya 2026-06-29: "Highlight
+            // from a raider's CURRENT buff list (the guild lead, 2026-06-29: "Highlight
             // the DS spells and songs and how much you're getting from each").
             ds: _dsMagnitude(r) || undefined,
+            // Positive SPA 59: while it is up the wearer's shield is off and
+            // attackers are healed this much per hit (_dsHealMagnitude).
+            ds_heal: _dsHealMagnitude(r) || undefined,
+            // Crowd control on a detrimental spell (_ccKinds), e.g. ['mez'].
+            cc: _ccKinds(r) || undefined,
+            // Hate the spell adds (_hateAdded) — omitted for the ~99% that add none.
+            hate: _hateAdded(r) || undefined,
+            // Decoded effect strings, for the dashboard's Buffs tab. Attached
+            // ONLY to beneficial timed buffs (1233 of 3933 spells), so the
+            // catalog grows by ~50KB on an hour-cached ETag'd fetch rather than
+            // by a third. A debuff or an instant nuke has nothing to show in a
+            // buff window, so it carries no fx at all.
+            fx: (Number(r.good_effect) === 1
+                 && Number(r.buffduration) > 0
+                 && Number(r.buffdurationformula) > 0
+                 && Number(r.buffdurationformula) < 50)
+                  ? (_decodeSpellEffects(r).slice(0, 8) || undefined)
+                  : undefined,
             // Estimated heal amount (SPA 0 / SPA 101). Only heal spells carry
             // it, so the payload barely grows. The agent attaches it to each
             // heal_cast → the bot's heal-attribution join credits a witnessed
@@ -8797,8 +10718,6 @@ async function _handleAgentSpellCatalog(req, res) {
             npc:        npcCastable.has(Number(r.id)) ? 1 : undefined,
           });
         }
-        if (data.length < PAGE) break;
-        from += PAGE;
       }
       const body = JSON.stringify({
         version: 8,   // v8: adds `npc` (NPC-castable flag) — #206 instant-mechanic index
@@ -8840,48 +10759,71 @@ async function _handleAgentSpellCatalog(req, res) {
 // item catalog is huge but virtually static.
 //
 // Defensively handles the case where the migration adding casttime /
-// clickeffect / clicktype columns hasn't applied yet — returns an empty
-// catalog instead of 500ing so the agent can still operate.
+// clickeffect / clicktype columns hasn't applied yet — a failed read is never
+// cached; the agent gets a 503 and keeps its own disk cache, which is how it
+// already treats any non-200 here.
 let _itemClickyCache    = null;
 const _ITEM_CLICKY_TTL_MS = 6 * 60 * 60 * 1000;
-async function _handleAgentItemClickies(req, res) {
-  const identity = await mimicLink.requireAgentAuth(req, res);
-  if (!identity) return;
+async function _handleAgentItemClickies(req, res, isPublic) {
+  if (!isPublic) {
+    const identity = await mimicLink.requireAgentAuth(req, res);
+    if (!identity) return;
+  }
   const fresh = _itemClickyCache && (Date.now() - _itemClickyCache.fetchedAt) < _ITEM_CLICKY_TTL_MS;
   if (!fresh) {
     const entries = [];
+    let wornDs = [];
+    let failed = false;
     try {
       const supabase = require('./utils/supabase');
-      let from = 0;
-      const PAGE = 1000;
-      while (true) {
-        const data = await supabase.select('eqemu_items',
-          `select=id,name,casttime,clickeffect,clicktype,clicklevel&clickeffect=not.is.null&order=id.asc&offset=${from}&limit=${PAGE}`);
-        if (!Array.isArray(data) || data.length === 0) break;
-        for (const r of data) {
-          entries.push({
-            id: r.id, name: r.name,
-            casttime: r.casttime, clickeffect: r.clickeffect,
-            clicktype: r.clicktype, clicklevel: r.clicklevel,
-          });
-        }
-        if (data.length < PAGE) break;
-        from += PAGE;
+      // ⚠ Paged, and filtered to items that really have a click. `clickeffect` is
+      // NOT NULL on every item (-1 = no click: 23,092 rows · 0: 2,269 · >0: 1,611),
+      // so the old `not.is.null` matched all 26,972 items and the 1,000-row cap
+      // handed agents the 1,000 LOWEST ids — 57 of the 1,611 real clickies.
+      // Paging alone would have shipped every item in the game.
+      const data = await supabase.selectAllPaged('eqemu_items',
+        'select=id,name,casttime,clickeffect,clicktype,clicklevel,maxcharges&clickeffect=gt.0', 'id');
+      if (!Array.isArray(data)) throw new Error('eqemu_items read failed');
+      for (const r of data) {
+        entries.push({
+          id: r.id, name: r.name,
+          casttime: r.casttime, clickeffect: r.clickeffect,
+          clicktype: r.clicktype, clicklevel: r.clicklevel,
+          // The HUD's clicky counters: -1 never runs out, >0 has charges (2026-10-02).
+          maxcharges: r.maxcharges != null ? r.maxcharges : null,
+        });
       }
+      // Items whose WORN effect is a damage shield (Talisman of Vah Kerrath +8): the HUD adds them on
+      // top of a shield spell (the guild lead, 2026-10-04: "Missing my additional DS from my neck slot").
+      // Their own list, not clicky entries, so nothing that reads `entries` sees them. A failed read
+      // serves the catalog without them: the agent then shows the spell shield alone, as before.
+      const worn = await supabase.select('item_worn_damage_shield', 'select=item_id,item_name,ds&order=item_id&limit=500');
+      if (Array.isArray(worn)) wornDs = worn.map(w => ({ id: w.item_id, name: w.item_name, ds: Number(w.ds) || 0 }));
+      else console.warn('[item-clickies] worn damage-shield read failed — serving without it');
     } catch (err) {
-      // Column missing (migration not applied yet) or other transient
-      // failure — keep the bot alive and return an empty catalog so the
-      // agent gracefully falls back to spell-based cast times.
-      console.warn('[item-clickies] fetch failed (returning empty):', err && err.message);
+      // Column missing (migration not applied yet) or other transient failure.
+      // Nothing from a failed read is cached: the last good catalog keeps serving
+      // (retry in 5 min), and with none the agent gets a 503 and keeps ITS disk
+      // cache — this used to cache an empty or partial catalog for 6 h.
+      failed = true;
+      console.warn('[item-clickies] fetch failed (keeping the last good catalog):', err && err.message);
     }
-    const body = JSON.stringify({
-      version: 1,
-      fetched_at: new Date().toISOString(),
-      count: entries.length,
-      entries,
-    });
-    const etag = '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"';
-    _itemClickyCache = { fetchedAt: Date.now(), body, etag };
+    if (!failed) {
+      const body = JSON.stringify({
+        version: 2,                         // 2: + worn_ds (additive; older agents ignore it)
+        fetched_at: new Date().toISOString(),
+        count: entries.length,
+        entries,
+        worn_ds: wornDs,
+      });
+      const etag = '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"';
+      _itemClickyCache = { fetchedAt: Date.now(), body, etag };
+    } else if (_itemClickyCache) {
+      _itemClickyCache.fetchedAt = Date.now() - _ITEM_CLICKY_TTL_MS + 5 * 60 * 1000;
+    } else {
+      res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '300' });
+      return res.end(JSON.stringify({ error: 'item catalog unavailable' }));
+    }
   }
   const ifNoneMatch = req.headers['if-none-match'];
   if (ifNoneMatch && ifNoneMatch === _itemClickyCache.etag) {
@@ -8894,6 +10836,80 @@ async function _handleAgentItemClickies(req, res) {
     'Cache-Control': 'max-age=21600',
   });
   return res.end(_itemClickyCache.body);
+}
+
+// GET /api/agent/item-catalog
+//
+// The wishlist picker's universe: every item any catalogued NPC can drop, with
+// its expansion. Agents cache it on disk and search it locally, so choosing a
+// wishlist item costs nothing at the time you choose it (the guild lead, 2026-08-30).
+//
+// Measured before building it: 11,099 rows, ~380 kB of JSON, ~130 kB gzipped.
+// At ~16 players and a source that only moves on the weekly sync, that is
+// ~2 MB/week of egress and a 304 on every other startup.
+//
+// ⚠ The TTL is the thing that actually costs money here. The spell catalog
+// uses 1h; at that rate a full miss cycle would re-read this 24×/day. The
+// source table changes WEEKLY (sync-quarm.yml), so 12h is both safe and ~20×
+// cheaper. Do not lower it without a reason.
+const _ITEM_CATALOG_TTL_MS = 12 * 60 * 60 * 1000;
+let _itemCatalogCache = null;        // { fetchedAt, body, etag }
+async function _handleAgentItemCatalog(req, res, isPublic) {
+  if (!isPublic) {
+    const identity = await mimicLink.requireAgentAuth(req, res);
+    if (!identity) return;
+  }
+
+  const fresh = _itemCatalogCache && (Date.now() - _itemCatalogCache.fetchedAt) < _ITEM_CATALOG_TTL_MS;
+  if (!fresh) {
+    const entries = [];
+    let failed = false;
+    try {
+      const supabase = require('./utils/supabase');
+      // Paged by the shared reader, which keeps every page at the 1000 cap (it was
+      // 2000 until 2026-10-01, and agents got 1,000 of 11,104 items) and gives up
+      // on a failed page instead of handing back the pages before it.
+      const data = await supabase.selectAllPaged('item_catalog_droppable',
+        'select=item_id,item_name,era', 'item_id');
+      if (!Array.isArray(data)) throw new Error('item_catalog_droppable read failed');
+      // Array-of-arrays, not objects: at 11k rows the key names would be
+      // most of the payload.
+      for (const r of data) entries.push([r.item_id, r.item_name, r.era]);
+    } catch (err) {
+      // Nothing from a failed read is cached (it used to cache the partial
+      // catalog for 12 h). The last good one keeps serving, retrying in 5 min;
+      // with none the agent gets a 503 and keeps its disk cache — or, with no
+      // cache either, the picker asks the server, as it did before the catalog.
+      failed = true;
+      console.warn('[item-catalog] fetch failed (keeping the last good catalog):', err && err.message);
+    }
+    if (!failed) {
+      const body = JSON.stringify({
+        version: 1,
+        fetched_at: new Date().toISOString(),
+        count: entries.length,
+        entries,
+      });
+      const etag = '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"';
+      _itemCatalogCache = { fetchedAt: Date.now(), body, etag };
+    } else if (_itemCatalogCache) {
+      _itemCatalogCache.fetchedAt = Date.now() - _ITEM_CATALOG_TTL_MS + 5 * 60 * 1000;
+    } else {
+      res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '300' });
+      return res.end(JSON.stringify({ error: 'item catalog unavailable' }));
+    }
+  }
+  const ifNoneMatch = req.headers['if-none-match'];
+  if (ifNoneMatch && ifNoneMatch === _itemCatalogCache.etag) {
+    res.writeHead(304, { 'ETag': _itemCatalogCache.etag, 'Cache-Control': 'max-age=43200' });
+    return res.end();
+  }
+  res.writeHead(200, {
+    'Content-Type': 'application/json',
+    'ETag': _itemCatalogCache.etag,
+    'Cache-Control': 'max-age=43200',
+  });
+  return res.end(_itemCatalogCache.body);
 }
 
 // GET /api/agent/mob-info?name=<npc>
@@ -8909,11 +10925,29 @@ async function _handleAgentItemClickies(req, res) {
 // script (scripts/audit-mob-specials.mjs) can never disagree about what a
 // special-ability code means. See docs/audit-mob-specials.md.
 const mobSpecials = require('./utils/mobSpecials');
+const npcProcs = require('./utils/npcProcs');
+const factionAssist = require('./utils/factionAssist');
 const _MOB_CLASS_NAMES = {
   1:'Warrior', 2:'Cleric', 3:'Paladin', 4:'Ranger', 5:'Shadow Knight', 6:'Druid',
   7:'Monk', 8:'Bard', 9:'Rogue', 10:'Shaman', 11:'Necromancer', 12:'Wizard',
   13:'Magician', 14:'Enchanter', 15:'Beastlord', 16:'Berserker',
 };
+// eqemu_npc_types.gender — the one field that tells Plane of Hate's two
+// a_forsaken_revenant bodies apart (the guild lead, 2026-09-15: "Female forsaken
+// revenant are enchanters, but show up as magicians"). 76004 is male +
+// Magician, 76005 female + Enchanter, identical in every other stat.
+const _GENDER_NAMES = { 0: 'male', 1: 'female', 2: 'neuter' };
+// A `gender` hint on the mob-info request: 0/1/2 or male/female/neuter.
+// Nothing sends it yet — the Zeal pipe's target object is {id, name} — but
+// the moment it does, the exact body wins over the class-ambiguous pair.
+function _parseGender(v) {
+  const t = String(v == null ? '' : v).trim().toLowerCase();
+  if (t === '' ) return null;
+  if (t === '0' || t === 'male' || t === 'm') return 0;
+  if (t === '1' || t === 'female' || t === 'f') return 1;
+  if (t === '2' || t === 'neuter' || t === 'n') return 2;
+  return null;
+}
 function _normMobName(n) {
   // Strip the "'s corpse" suffix BEFORE normalizing punctuation so a target
   // like "Vyzh`dra the Exiled's corpse" still resolves to the live NPC row
@@ -8924,7 +10958,28 @@ function _normMobName(n) {
     .replace(/'s\s+corpse$/, '')
     .replace(/[\s`'’]+/g, '_').replace(/^#/, '');
 }
-const _mobInfoCache = new Map();   // normName → { at, row|null }
+// _normMobName with the CASE kept — except the first letter, which is folded
+// because the log capitalises a name that starts a sentence ("A Shissar acolyte
+// hits YOU") while Zeal and the catalog do not. Capitalisation after the first
+// letter is exact on every surface, and in the catalog it is real information:
+// `A_Shissar_Acolyte` (162153) is a Wizard, `a_Shissar_acolyte` (162488) a
+// Warrior (the guild lead, 2026-09-23). 76 names differ only this way; 19 of
+// them differ in class.
+function _mobCaseKey(n) {
+  const s = String(n || '').trim()
+    .replace(/'s\s+corpse$/i, '')
+    .replace(/[\s`'’]+/g, '_').replace(/^#/, '');
+  return s.charAt(0).toLowerCase() + s.slice(1);
+}
+// The bodies whose name matches the request's case exactly (first letter aside);
+// ALL rows when none do — a request that arrives lowercased, or a name with one
+// spelling, behaves exactly as before.
+function _mobRowsForCase(rows, caseKey) {
+  if (!Array.isArray(rows) || !caseKey) return rows;
+  const exact = rows.filter(r => r && _mobCaseKey(r.name) === caseKey);
+  return exact.length ? exact : rows;
+}
+const _mobInfoCache = new Map();   // caseKey → { at, row|null }
 const _MOB_INFO_TTL_MS = 6 * 60 * 60 * 1000;   // static catalog data — cache hard
 const _MOB_INFO_MISS_TTL_MS = 60 * 1000;       // a MISS is retried in a minute, never pinned for 6h
 // ── Chat → loot detection ───────────────────────────────────────────────────
@@ -9078,6 +11133,28 @@ async function _liveZoneMap() {
   _liveZoneCache = { at: Date.now(), map };
   return map;
 }
+// Which ZONE a kill happened in, as an eqemu zone id, for routing its card to
+// the right event thread when two events overlap (the guild lead, 2026-09-07). Two
+// sources, best first, and null when neither knows — null means "route by the
+// clock, as before", never a wrong zone:
+//   1. a curated boss → its bosses.json zone name → the zone vocabulary
+//      (raidEvents.zoneIdsForText; the smallest id is the base zone when an
+//      instanced twin shares the name)
+//   2. the uploader's own live-state zone (10-min freshness, _liveZoneMap)
+async function _killZoneId(bossName, character) {
+  try {
+    const b = bossName ? require('./commands/parse').findBossFromName(bossName, getBosses()) : null;
+    if (b?.zone) {
+      const ids = require('./utils/raidEvents').zoneIdsForText(b.zone);
+      if (ids.length) return ids[0];
+    }
+  } catch { /* fall through to the uploader's zone */ }
+  try {
+    const live = (await _liveZoneMap()).get(String(character || '').toLowerCase());
+    if (live && Number.isFinite(live.zone_id) && live.zone_id > 0) return live.zone_id;
+  } catch { /* unknown */ }
+  return null;
+}
 // Pure predicate: does a cross-client observation belong in the requester's
 // Target Info? (Source-sliced by test/target-info-zone.test.js — keep the
 // signature + body stable.)
@@ -9093,6 +11170,106 @@ function _zoneScopeKeep(requesterZone, observerZone) {
   if (!observerZone)  return false;
   return String(observerZone) === String(requesterZone);
 }
+// How many ZONES does this NPC name exist in? The zone filter above exists to
+// stop a same-name mob in another zone leaking its effects in — but it pays for
+// that with a hard DROP whenever the observer's zone is unknown, and unknown is
+// the ordinary case: `_liveZoneMap` only sees the last 10 minutes of
+// `character_live_state`, while `buff_casts` is queried 3 hours back. Measured
+// 2026-09-02: **8 of the 21 observers** of the last two hours of debuffs had no
+// resolvable zone, so better than a third of the raid's observations were
+// silently invisible on Target Info while Extended Target showed them (The guild lead:
+// "Debuffs don't show on Target Info but show on Extended Target" — Extended
+// Target's own comment says it lets null-zone rows ride along rather than
+// vanish, and those two surfaces disagreeing is the bug).
+//
+// The discriminator #141 actually needed is whether the NAME is ambiguous at
+// all. `eqemu_npc_types.id` encodes its zone (`id = zoneid*1000 + n`), so the
+// distinct zone count is a column read with no join. Grounded, not guessed:
+// `a_geonid` — #141's own worked example — really is 2 zones, while
+// `The_Avatar_of_War` is 1.
+//
+//   name in >1 zone  → ambiguous; an unknown observer zone stays suspicious
+//   name in 1 zone   → every observation of it is about the same mob
+//   name not in the catalog → treat as unambiguous and KEEP; a name we cannot
+//     look up is not evidence against the row, and hiding data on missing info
+//     is the failure this whole fix is about
+const _NAME_ZONES_TTL_MS = 6 * 3600 * 1000;
+const _nameZonesCache = new Map();          // nameLower → { at, zones }
+async function _nameZoneCount(name) {
+  const key = String(name || '').trim().toLowerCase();
+  if (!key) return 1;
+  const hit = _nameZonesCache.get(key);
+  if (hit && Date.now() - hit.at < _NAME_ZONES_TTL_MS) return hit.zones;
+  let zones = 1;
+  try {
+    const supabase = require('./utils/supabase');
+    if (supabase.isEnabled()) {
+      // npc_types stores names underscored.
+      // ⚠ Query the name as GIVEN, not the lowercased cache key. npc_types
+      // matches `eq.` case-sensitively, so `the_avatar_of_war` returns 0 rows
+      // where `The_Avatar_of_War` returns 1 — and 0 rows means "unambiguous,
+      // keep", so the guard would have silently switched itself off for every
+      // capitalised (i.e. every NAMED) mob. Caught by a test asserting on the
+      // query string, not by review. `ilike` is NOT the fix: LIKE treats `_` as
+      // a single-character wildcard, and every one of these names is full of
+      // them, so it would over-match and inflate the zone count — which drops
+      // rows, the dangerous direction.
+      const rows = await supabase.select('eqemu_npc_types',
+        `name=eq.${encodeURIComponent(String(name).trim().replace(/\s+/g, '_'))}&select=id&limit=200`);
+      const z = new Set((rows || []).map(r => Math.floor(Number(r.id) / 1000)));
+      zones = z.size || 1;                  // 0 rows → unambiguous, see above
+    }
+  } catch (err) {
+    console.warn('[name-zones] lookup failed:', err && err.message);
+    zones = 1;                              // fail OPEN, same reason
+  }
+  _nameZonesCache.set(key, { at: Date.now(), zones });
+  return zones;
+}
+// Zone scope for a row whose observer we may not be able to place. Keeps
+// `_zoneScopeKeep`'s contract untouched (it is documented and depended on) and
+// only relaxes the UNKNOWN-observer case, and only for a name that cannot be
+// confused across zones in the first place.
+function _zoneScopeKeepForName(requesterZone, observerZone, nameZones) {
+  if (observerZone == null && Number(nameZones) <= 1) return true;
+  return _zoneScopeKeep(requesterZone, observerZone);
+}
+// Sibling of the above, one level down: same NAME, same ZONE, DIFFERENT SPAWN.
+// Zone scoping stopped "a geonid" in Crystal Caverns leaking into The Wakening
+// Land's Target Info; this stops three "a thought horror evoker" standing next
+// to each other from sharing one pooled effect list (the guild lead, 2026-09-02).
+//
+// ⚠ ITS NULL RULE IS THE OPPOSITE OF _zoneScopeKeep'S, ON PURPOSE — COPYING
+// THAT FUNCTION'S SHAPE HERE WOULD EMPTY TARGET INFO FOR THE WHOLE GUILD.
+// An unknown observer ZONE is suspicious: a wrong-zone mob is never useful, so
+// that case drops. An unknown row ID is the ORDINARY case: a landing line names
+// its target by name only, and the pipe carries an id for exactly one mob — the
+// observer's own current target — so anyone targeting something else when the
+// debuff landed has nothing to send, and no released Zeal sends one at all.
+// Unproven is not disproven: those rows already matched on name AND zone.
+//
+//   requester has no id     → keep  (every unpatched client; today's behaviour)
+//   row id is null OR 0     → keep  (unproven, not disproven)
+//   row id === requester's  → keep  (the mob in front of you)
+//   row id differs          → DROP  (a proven sibling — the whole point)
+//
+// ⚠ ZERO IS UNPROVEN, NOT SPAWN ZERO — and missing that emptied Target Info
+// for the whole raid (the guild lead, live on Kaas Thox, 2026-09-06). Zeal reports a
+// target id of 0 when there is no target, `Number.isFinite(0)` is true, so the
+// agent's _provableTargetId stamped 0 onto the row instead of null. Measured
+// that night: 111 of 134 rows on that boss — 13 of 15 observers — carried
+// target_id 0, so a requester whose own Zeal DID send a real id compared
+// `0 === 592` and dropped every one of them. Target Info showed the three
+// debuffs from the single id-matching observer while Extended Target, which
+// sends no id and therefore never reaches this filter, showed all eight.
+// The null check alone is not enough because 0 is not null; both spellings of
+// "I could not prove a spawn" have to pass.
+function _idScopeKeep(requesterId, rowId) {
+  const unproven = (v) => v == null || Number(v) === 0;
+  if (unproven(requesterId)) return true;
+  if (unproven(rowId)) return true;
+  return Number(rowId) === Number(requesterId);
+}
 
 // GET /api/agent/target-casts?name=<npc|player> → active casts on that target,
 // from the cross-client casting relay (_castingByTarget). Each entry counts down
@@ -9100,11 +11277,15 @@ function _zoneScopeKeep(requesterZone, observerZone) {
 async function _handleAgentTargetCasts(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
-  let name = '', selfChar = '';
+  let name = '', selfChar = '', targetId = null;
   try {
     const sp = new URL(req.url, 'http://x').searchParams;
     name = sp.get('name') || '';
     selfChar = (sp.get('character') || '').trim();   // #141 requester → zone scope
+    // The spawn the requester is looking at, when their client can name it.
+    // Absent on every unpatched Zeal → served unfiltered, exactly as before.
+    const _tid = sp.get('target_id');
+    if (_tid && Number.isFinite(Number(_tid))) targetId = Math.trunc(Number(_tid));
   } catch { /* */ }
   const tk = String(name).trim().toLowerCase();
   const now = Date.now();
@@ -9114,12 +11295,20 @@ async function _handleAgentTargetCasts(req, res) {
   // requester's zone (see _zoneScopeKeep).
   const zoneMap = await _liveZoneMap();
   const requesterZone = selfChar ? ((zoneMap.get(selfChar.toLowerCase()) || {}).zone_name || null) : null;
+  const _nameZones = await _nameZoneCount(name);   // 6h-cached column read
   const mp = tk ? _castingByTarget.get(tk) : null;
   const casts = [];
   if (mp) {
     for (const c of mp.values()) {
       const casterZone = (zoneMap.get(String(c.caster || '').toLowerCase()) || {}).zone_name || null;
-      if (!_zoneScopeKeep(requesterZone, casterZone)) continue;
+      // Same relaxation as target-buffs: a caster we cannot place only
+      // disqualifies the row for a name that exists in more than one zone.
+      if (!_zoneScopeKeepForName(requesterZone, casterZone, _nameZones)) continue;
+      // Spawn id FIRST, name second (the guild lead, 2026-09-02). Same name, same zone,
+      // provably a different spawn → somebody else's mob. _idScopeKeep fails
+      // open on either side being unknown, so a fleet with no ids behaves
+      // exactly as it does today and a mixed fleet gets the benefit per client.
+      if (!_idScopeKeep(targetId, c.target_id)) continue;
       casts.push({
         caster:         c.caster,
         spell:          c.spell,
@@ -9173,7 +11362,7 @@ const _CURE_RANK = { curse: 0, blind: 1, poison: 2, disease: 3 };
 // — without this relay, only the caster's Mimic ever sees the charm timer.
 // Filtered to entries not yet past their catalog duration. Each row carries
 // `owner` (the caster — observer field on the original landing) so Mob Info
-// can render "Allure (Hopeya)".
+// can render "Allure (Sorvane)".
 // Short-TTL per-target cache (#73) — target-buffs was the only hot-path GET
 // that hit Supabase on EVERY request (audit); at 60 raiders a shared boss is
 // polled by everyone at once. Mirror the character-live-state relay cache: 2s
@@ -9186,11 +11375,15 @@ const _targetBuffsRelayCache = new Map();   // nameLower → { at, payload }
 async function _handleAgentTargetBuffs(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
-  let name = '', selfChar = '';
+  let name = '', selfChar = '', targetId = null;
   try {
     const sp = new URL(req.url, 'http://x').searchParams;
     name = sp.get('name') || '';
     selfChar = (sp.get('character') || '').trim();   // #141 requester → zone scope
+    // The spawn id of the mob the requester is actually looking at, when their
+    // client can supply one. Absent on every unpatched Zeal → served unfiltered.
+    const _tid = sp.get('target_id');
+    if (_tid && Number.isFinite(Number(_tid))) targetId = Math.trunc(Number(_tid));
   } catch { /* */ }
   if (!name) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -9201,7 +11394,12 @@ async function _handleAgentTargetBuffs(req, res) {
   // zones don't share (and cross-contaminate) one cached debuff list.
   const zoneMap = await _liveZoneMap();
   const requesterZone = selfChar ? ((zoneMap.get(selfChar.toLowerCase()) || {}).zone_name || null) : null;
-  const cacheKey = name.trim().toLowerCase() + '|' + (requesterZone || '*');
+  const _nameZones = await _nameZoneCount(name);   // 6h-cached column read
+  // ⚠ The spawn id belongs in the cache key for the same reason the zone does:
+  // without it two raiders targeting DIFFERENT same-name mobs in one zone share
+  // a cached list, and the cache silently undoes the filtering below.
+  const cacheKey = name.trim().toLowerCase() + '|' + (requesterZone || '*')
+                 + '|' + (targetId != null ? targetId : '*');
   const cached = _targetBuffsRelayCache.get(cacheKey);
   if (cached && Date.now() - cached.at < TARGET_BUFFS_CACHE_MS) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -9220,7 +11418,7 @@ async function _handleAgentTargetBuffs(req, res) {
     const rows = await supabase.select('buff_casts',
       `guild_id=eq.${encodeURIComponent(guildId)}&target=ilike.${encodeURIComponent(name)}` +
       `&cast_at=gte.${encodeURIComponent(since)}` +
-      `&select=spell_name,dur_ticks,cast_at,observer,is_charm_spell&order=cast_at.desc&limit=50`);
+      `&select=spell_name,dur_ticks,cast_at,observer,is_charm_spell,target_id&order=cast_at.desc&limit=50`);
     const now = Date.now();
     // Dedup by spell_name — most recent cast wins (a recast overwrites the
     // previous landing's timer).
@@ -9230,7 +11428,12 @@ async function _handleAgentTargetBuffs(req, res) {
       // #141 — only merge observations from an observer in the requester's zone
       // (a same-name mob in another zone is never our target's data).
       const observerZone = (zoneMap.get(String(r.observer || '').toLowerCase()) || {}).zone_name || null;
-      if (!_zoneScopeKeep(requesterZone, observerZone)) continue;
+      // An observer we cannot place is the ORDINARY case (10-min live-state
+      // window vs a 3-hour row window), so it only disqualifies the row when
+      // the name could belong to another zone's mob at all.
+      if (!_zoneScopeKeepForName(requesterZone, observerZone, _nameZones)) continue;
+      // Same name, same zone, provably a different spawn → not our target's.
+      if (!_idScopeKeep(targetId, r.target_id)) continue;
       if (_isJunkSpellName(r.spell_name)) continue;   // hide phantom "Kneel Test"
       const castMs  = Date.parse(r.cast_at) || 0;
       if (!castMs) continue;
@@ -9287,19 +11490,70 @@ async function _refreshOverlayTuningCache() {
     const row = Array.isArray(rows) && rows[0];
     const asObj = (v) => (v && typeof v === 'object' && !Array.isArray(v)) ? v : {};
     _overlayTuningCache = { at: Date.now(), values: asObj(row && row.tuning), classSets: asObj(row && row.class_sets) };
+    // No-deploy OpenDKP kill switch. `flag_opendkp_halt = 1` on /admin/overlays
+    // stops every outbound OpenDKP call within one cache period (60s). The env
+    // var OPENDKP_HALT still works and still needs a redeploy; this is the one
+    // we promised OpenDKP's owner we could hit "quickly" when he unblocks us,
+    // and a build is not quickly. Either halts; both must be clear to resume.
+    try {
+      require('./utils/opendkp').setRuntimeHalt(
+        Number(_overlayTuningCache.values.flag_opendkp_halt) >= 1);
+    } catch { /* never let a tuning refresh take the bot down */ }
   } catch {
     _overlayTuningCache.at = Date.now();   // don't hammer on failure
   }
 }
+// ── /tag + officer channel join specs (the guild lead, 2026-09-03) ────────────────────
+// "We can save the channel:pass as an environmental variable for officer chat
+// and for tagging. The tagging piece is critical."
+//
+// Resolved HERE, once, so every path that hands tuning to an agent (the
+// overlay-tuning GET and the /poll bundle both call _overlayTuningMap) carries
+// two READY-TO-WRITE specs — `tag_channel_spec` and `officer_channel_spec` —
+// and the agent holds no policy and no secret of its own. Precedent:
+// AGENT_RELEASE_REF_BETA (env default, tuning key overrides live, no redeploy).
+//
+// ⚠ These are shared guild secrets. They live in env (Railway) or in the
+// /admin/overlays tuning row, and nowhere else: never in source, never logged
+// (the tuning cache refresh logs key COUNTS, not values — keep it that way),
+// and they reach only bearer-authenticated agents.
+const TAG_CHANNEL_SPEC     = (process.env.TAG_CHANNEL_SPEC     || '').trim();
+const OFFICER_CHANNEL_SPEC = (process.env.OFFICER_CHANNEL_SPEC || '').trim();
+function _withChannelSpecs(values) {
+  const v = values && typeof values === 'object' ? values : {};
+  const pick = (key, envVal) => {
+    const t = typeof v[key] === 'string' ? v[key].trim() : '';
+    return t || envVal || '';
+  };
+  const tag = pick('tag_channel_spec', TAG_CHANNEL_SPEC);
+  const off = pick('officer_channel_spec', OFFICER_CHANNEL_SPEC);
+  // Return a COPY — the cache object is shared and must not grow env-derived
+  // keys that a later refresh would then treat as officer-set overrides.
+  const out = { ...v };
+  if (tag) out.tag_channel_spec = tag; else delete out.tag_channel_spec;
+  if (off) out.officer_channel_spec = off; else delete out.officer_channel_spec;
+  return out;
+}
+// What an agent is SENT of the tuning map. The officer channel goes only to an
+// officer's session — the agent's own officer check decides what it joins, but
+// the response is what the caller receives. The hide-main list is applied here
+// on the bot and is never sent at all.
+function _tuningForAgent(tune, identity) {
+  const out = { ...(tune || {}) };
+  if (!(identity && identity.is_officer)) delete out.officer_channel_spec;
+  delete out.hide_main_names;
+  return out;
+}
+// ── The tuning map every agent-facing path reads ────────────────────────────
 async function _overlayTuningMap() {
   await _refreshOverlayTuningCache();
-  return _overlayTuningCache.values;
+  return _withChannelSpecs(_overlayTuningCache.values);
 }
 async function _overlayClassSets() {
   await _refreshOverlayTuningCache();
   return _overlayTuningCache.classSets;
 }
-// ── Mid-raid load-shed kill switches (Hitya 2026-07-13; #74 full coverage 2026-07-18) ──
+// ── Mid-raid load-shed kill switches (the guild lead, 2026-07-13; #74 full coverage 2026-07-18) ──
 // Officers can shed a misbehaving/flooding ingest stream DURING a raid with
 // no deploy and no agent update: set `flag_shed_<kind>` to 1 in the tuning
 // editor (/admin/overlays — same numbers-only jsonb the overlay knobs use;
@@ -9328,6 +11582,8 @@ const _SHED_KINDS = new Set([
   'live_state', 'raid_roster', 'casting', 'threat_snapshot',   // original four (ephemeral)
   'buff_casts', 'pvp', 'pvp_assists', 'fun_event',             // redundant / re-derivable
   'trigger_relay', 'ui_layout', 'tells',                       // fan-out / backup / side-record
+  'corpse',                                                    // the corpse DM's off switch
+  'xp_events',                                                 // XP board telemetry (FB-37)
 ]);
 const _SHED_NEVER = new Set(['encounter', 'chat', 'bosskill', 'lockout', 'historical_chat']);
 async function _isShedded(kind, res) {
@@ -9342,6 +11598,30 @@ async function _isShedded(kind, res) {
     return true;
   }
   return false;
+}
+
+// ── Uncurated-mob tracking gate (the guild lead, 2026-09-04) ──────────────────────────
+// Since bot 3.1.52 the ingest path self-registers every exactly-matched mob so
+// a first kill can never be lost — and that made encounter collection scale
+// with member FARMING. Measured 2026-09-04: 5,789 of the 5,969 encounters in
+// the trailing 30 days (97%) were auto-registered trash; ~170 MB across the
+// encounter tables in 18 days, threat snapshots most of it. Display filters
+// (`bosses_local.auto_registered`) keep the surfaces readable; THIS is the
+// ingest gate for a deployment that does not want the volume at all ("a flag
+// into the setup to turn those off … for other guilds that may use this").
+//   · env TRACK_UNCURATED_MOBS=0 — off at boot (deployment default);
+//   · tuning flag_skip_uncurated_mobs=1 (/admin/overlays) — off live, ~60s.
+// Off means: no self-registration, and encounters on already auto-registered
+// rows stop persisting. Curated bosses are untouched; the trash tally on the
+// review still runs off the upload stream; _promoteLockoutBoss still curates
+// a row the server hands a loot lockout for, which then persists as normal.
+const TRACK_UNCURATED_MOBS_ENV = String(process.env.TRACK_UNCURATED_MOBS ?? '1').trim() !== '0';
+const _uncuratedGateLogged = new Set();
+async function _trackUncuratedMobs() {
+  let tune = {};
+  try { tune = await _overlayTuningMap(); } catch { /* fall through to the env default */ }
+  if (Number(tune.flag_skip_uncurated_mobs) >= 1) return false;
+  return TRACK_UNCURATED_MOBS_ENV;
 }
 
 // ── Per-uploader admission-control budgets (#73) ─────────────────────────────
@@ -9485,7 +11765,7 @@ setInterval(() => {
     for (const [k, b] of book) if (b.windowStart < cutoff) book.delete(k);
   }
 }, 5 * 60_000).unref?.();
-// ── Mimic Mail — guild notices (Hitya 2026-07-07) ────────────────────────
+// ── Mimic Mail — guild notices (the guild lead, 2026-07-07) ────────────────────────
 // Officer broadcasts from /admin/notices (mimic_notices table). Served to
 // every agent alongside the overlay tuning (same poll, zero new timers) →
 // pulsing ✉ on the dashboard. CRITICAL notices additionally post to Discord
@@ -9528,7 +11808,7 @@ async function _postCriticalNotices() {
 }
 setInterval(() => { _postCriticalNotices().catch(() => {}); }, 60_000);
 
-// ── Mimic release announcements (Hitya 2026-07-11; re-homed to Supabase
+// ── Mimic release announcements (the guild lead, 2026-07-11; re-homed to Supabase
 // 2026-07-13) ────────────────────────────────────────────────────────────────
 // Posts one embed in MIMIC_RELEASE_CHANNEL_ID when a new STABLE Mimic release
 // ships. The dedup cursor (last-announced tag) lives in Supabase bot_kv — the
@@ -9583,13 +11863,13 @@ async function _announceMimicReleases() {
   const REL = 'https://github.com/davehess/QuarmBossTracker/releases';
   // The release body leads with the actual changelog (from the release commit
   // message) with install boilerplate below a `---` rule — show the changelog
-  // part only (Hitya 2026-07-14). Falls back to the whole body for older
+  // part only (the guild lead, 2026-07-14). Falls back to the whole body for older
   // releases that have no rule.
   // The card is read by RAIDERS, but the body it renders is a release COMMIT
   // MESSAGE written for `git log` — file-checkout rationale, blast-radius
   // notes, test counts. At 20 lines / 1550 chars that produced an unreadable
   // wall, truncated mid-sentence, with the bold subject repeated verbatim
-  // under a title already derived from it (Hitya 2026-08-05, screenshot of
+  // under a title already derived from it (the guild lead, 2026-08-05, screenshot of
   // the v2.3.0 + v2.3.1 cards). Budgeting by LINE was the 2026-07-15 fix for a
   // mid-sentence cut; the real problem is that the whole body was never the
   // right thing to show.
@@ -9633,7 +11913,7 @@ async function _announceMimicReleases() {
   // Title carries the release's NAME when the body leads with the bold
   // commit subject ("**mimic v1.9.0 — the healing release (stable)**" →
   // "✅ Mimic v1.9.0 — the healing release"), so the notice reads like a
-  // release, not a tag (Hitya 2026-07-15). Falls back to the tag-only
+  // release, not a tag (the guild lead, 2026-07-15). Falls back to the tag-only
   // title for bodies without one.
   const rel = rels.find(r => r && !r.prerelease && !r.draft) || null;
   if (rel && rel.tag_name && rel.tag_name !== st.lastTag) {
@@ -9644,7 +11924,7 @@ async function _announceMimicReleases() {
       if (nm) stableTitle = ('✅ Mimic ' + nm).slice(0, 250);
     }
     // v2.0.0's release name changed AFTER the tag was cut (Full Cry → Harmonic
-    // Howl, Hitya 2026-07-19); release bodies are immutable via our tooling,
+    // Howl, the guild lead 2026-07-19); release bodies are immutable via our tooling,
     // so rename at render time.
     stableTitle = stableTitle.replace(/Full Cry/g, 'Harmonic Howl');
     const emb = new EmbedBuilder()
@@ -9654,13 +11934,15 @@ async function _announceMimicReleases() {
     const sent = await ch.send({ embeds: [emb], allowedMentions: { parse: [] } }).catch(() => null);
     if (sent) { st.lastTag = rel.tag_name; await _mimicAnnSave(st); console.log('[mimic-announce] announced', rel.tag_name); }
   }
-  // BETA — ONE rolling card edited in place (Hitya 2026-07-15: "none of
+  // BETA — ONE rolling card edited in place (the guild lead, 2026-07-15: "none of
   // these betas have posted"). Betas auto-increment several times a day, so
   // per-beta posts are the exact spam the stable-only rule was written
   // against — instead the channel keeps a single 🧪 card that always shows
   // the newest beta + its notes. Edits don't ping anyone; a deleted card
   // just gets re-posted once.
-  const beta = rels.find(r => r && r.prerelease && !r.draft) || null;
+  // Only a -beta.N tag is a beta: the 3.0 alpha (rolling `mimic-alpha`) and the
+  // Deck's -linux.N builds are prereleases too, and must not take this card.
+  const beta = rels.find(r => r && r.prerelease && !r.draft && /-beta\.\d+$/.test(r.tag_name || '')) || null;
   if (beta && beta.tag_name && beta.tag_name !== st.lastBetaTag) {
     const embB = new EmbedBuilder()
       .setColor(0xf0b429)
@@ -9688,7 +11970,7 @@ if (process.env.MIMIC_RELEASE_ANNOUNCE !== '0') {
 }
 
 // ── Mimic 2.0 "Harmonic Howl" one-shot raid-chat announcement (2026-07-20) ──
-// Hitya: post the release card to #raid-chat with the expected release channel.
+// The guild lead: post the release card to #raid-chat with the expected release channel.
 // One post ever — the latch lives in bot_kv (survives restarts, the announcer's
 // re-homed pattern). Needs RAID_CHAT_CHANNEL_ID set (skips with a log if not,
 // so setting the env on Railway later still fires it on that restart).
@@ -9706,7 +11988,7 @@ async function _announceHarmonicHowlOnce() {
     if (kvLatch.latchState(rows) === 'unknown') console.warn('[howl-announce] latch unreadable — NOT posting');
     return;
   }
-  // Channel: env wins; else resolve #raid-chat by NAME (Hitya 2026-07-19:
+  // Channel: env wins; else resolve #raid-chat by NAME (the guild lead, 2026-07-19:
   // "deploy that image to raid chat" — the id was never captured as an env).
   let ch = process.env.RAID_CHAT_CHANNEL_ID
     ? await client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null)
@@ -9744,6 +12026,496 @@ async function _announceHarmonicHowlOnce() {
   }
 }
 setTimeout(() => { _announceHarmonicHowlOnce().catch(err => console.warn('[howl-announce]', err?.message)); }, 90_000);
+
+// ── Mimic 2.7.1 one-shot raid-chat announcement (2026-09-24) ─────────────────
+// The guild lead: "When this is over make sure to post to raid-chat in discord so
+// that people know to get the new version. Include the mini modes, Hud
+// overlay, colorblind modes, mana bits. Looking for feedback on skills that
+// people want to track." Same one-post-ever latch as the 2.0 card above. It
+// waits for the STABLE v2.7.1 release to carry its installer: the bot deploys
+// minutes after the push, the installer takes longer to build, and a post
+// that beats it sends people to an update that is not there yet.
+const _MIMIC271_KV_KEY = 'announce_mimic_2_7_1_raid_chat';
+const _MIMIC271_TAG = 'v2.7.1';
+function _mimic271Ready(rel) {
+  return !!(rel && rel.tag_name === _MIMIC271_TAG && !rel.draft && !rel.prerelease
+    && Array.isArray(rel.assets) && rel.assets.some(a => /\.exe$/i.test(String(a && a.name))));
+}
+function _mimic271Embed() {
+  const { EmbedBuilder } = require('discord.js');
+  return new EmbedBuilder()
+    .setColor(0x58a6ff)
+    .setTitle('🐺 Mimic 2.7.1 is out — update before raid')
+    .setDescription([
+      'Accept the Mimic update prompt, or restart Mimic, to get it.',
+      '',
+      '- **The HUD** — your own character in a ring round the middle of your screen: health, mana or endurance, the server tick and your swing timer, your cooldowns, and your target with its health, level, resists and slow. Turn it on from the dashboard → Overlays → HUD; ⚙ picks what it shows.',
+      '- **Mini mode** — nine overlays now have the small version the guild voted for. Right-click an overlay → Mini, use the Mini column on the Overlays page, or press Ctrl+Shift+M for all of them.',
+      '- **Colour-blind themes** — Deuteranopia, Protanopia and Tritanopia, under Theme on the Overlays page.',
+      '- **Mana** — Target Info\'s mob mana now counts the drains that land on it, a PvP target keeps a tally of what you drained, and the HUD shows how many heals, mezzes or casts your mana has left.',
+      '',
+      '**Which skills do you want tracked?** Cooldowns, discs, clickies, procs — reply here or post in #feedback.',
+    ].join('\n'))
+    .setFooter({ text: 'Mimic 2.7.1 stable · agent 3.7.16 · one-time announcement' });
+}
+async function _announceMimic271Once() {
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_MIMIC271_KV_KEY}&select=value&limit=1`);
+  // Fail closed (utils/kvLatch.js): null is "could not check", not "never posted".
+  if (!kvLatch.shouldRunOnce(rows)) {
+    if (kvLatch.latchState(rows) === 'unknown') { console.warn('[mimic271-announce] latch unreadable — NOT posting, will retry'); return 'unknown'; }
+    return 'latched';
+  }
+  const rel = await new Promise((resolve) => {
+    const https = require('https');
+    https.get({ hostname: 'api.github.com', path: '/repos/davehess/QuarmBossTracker/releases/tags/' + _MIMIC271_TAG,
+      headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
+      (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { resolve(JSON.parse(b)); } catch { resolve(null); } }); }
+    ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
+  });
+  if (!_mimic271Ready(rel)) return 'waiting';
+  let ch = process.env.RAID_CHAT_CHANNEL_ID
+    ? await client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null)
+    : null;
+  if (!ch) {
+    const g = client.guilds.cache.get(process.env.DISCORD_GUILD_ID) || client.guilds.cache.first();
+    ch = g?.channels?.cache?.find(c => c?.name === 'raid-chat' && typeof c.send === 'function') || null;
+  }
+  if (!ch) { console.log('[mimic271-announce] no #raid-chat channel found — skipping'); return 'no-channel'; }
+  const posted = await ch.send({ embeds: [_mimic271Embed()], allowedMentions: { parse: [] } }).catch(err => {
+    console.warn('[mimic271-announce] post failed:', err?.message);
+    return null;
+  });
+  if (!posted) return 'failed';
+  await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _MIMIC271_KV_KEY, value: { posted_at: new Date().toISOString(), message_id: posted.id }, updated_at: new Date().toISOString() }],
+    'guild_id,key');
+  console.log('[mimic271-announce] posted to #raid-chat:', posted.id);
+  return 'posted';
+}
+// Every 5 minutes until it has posted (or finds it already had), for up to 12 hours.
+{
+  let tries = 0;
+  const t = setInterval(() => {
+    if (++tries > 144) { clearInterval(t); return; }
+    _announceMimic271Once().then(r => { if (r === 'posted' || r === 'latched') clearInterval(t); })
+      .catch(err => console.warn('[mimic271-announce]', err?.message));
+  }, 5 * 60_000);
+}
+
+// ── Mimic 2.7.8 one-shot raid-chat announcement (2026-10-03) ─────────────────
+// The guild lead: "post the release to raid chat". The 2.7.1 card's shape: one post ever (bot_kv
+// latch, fail-closed), and only once the STABLE v2.7.8 release carries its installer.
+const _MIMIC278_KV_KEY = 'announce_mimic_2_7_8_raid_chat';
+const _MIMIC278_TAG = 'v2.7.8';
+function _mimic278Ready(rel) {
+  return !!(rel && rel.tag_name === _MIMIC278_TAG && !rel.draft && !rel.prerelease
+    && Array.isArray(rel.assets) && rel.assets.some(a => /\.exe$/i.test(String(a && a.name))));
+}
+function _mimic278Embed() {
+  const { EmbedBuilder } = require('discord.js');
+  return new EmbedBuilder()
+    .setColor(0x58a6ff)
+    .setTitle('🐺 Mimic 2.7.8 is out')
+    .setDescription([
+      'Accept the Mimic update prompt, or restart Mimic, to get it. If EverQuest is open it waits quietly in the tray.',
+      '',
+      '- **PoP quests in the PoP overlay** — switch it to Quests, pick any flag or quest, and it shows who to talk to, where they stand, and every word to say, ready to copy into the game.',
+      '- **Raids at a glance** — when the guild runs two or more raids, the Command Center lists each raid\'s leader and how many players it has.',
+      '- **Who looted what** — the Loot tab lists the last 12 hours of loot from everyone running Mimic, and a roll someone other than the winner looted says who did.',
+      '- **Crash review** now lives on the Diagnostics tab.',
+      '- **Tidier character lists** — traders, characters under 46 and any character you hide step aside; characters nobody has a level for fold away.',
+      '',
+      'On the website: every PoP flag step now has the exact words to say (https://wolfpack.quest/pop/guide), and your character page has a **Hide from lists** switch for mules and traders (https://wolfpack.quest/me).',
+    ].join('\n'))
+    .setFooter({ text: 'Mimic 2.7.8 stable · agent 3.7.75 · one-time announcement' });
+}
+async function _announceMimic278Once() {
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_MIMIC278_KV_KEY}&select=value&limit=1`);
+  // Fail closed (utils/kvLatch.js): null is "could not check", not "never posted".
+  if (!kvLatch.shouldRunOnce(rows)) {
+    if (kvLatch.latchState(rows) === 'unknown') { console.warn('[mimic278-announce] latch unreadable — NOT posting, will retry'); return 'unknown'; }
+    return 'latched';
+  }
+  const rel = await new Promise((resolve) => {
+    const https = require('https');
+    https.get({ hostname: 'api.github.com', path: '/repos/davehess/QuarmBossTracker/releases/tags/' + _MIMIC278_TAG,
+      headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
+      (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { resolve(JSON.parse(b)); } catch { resolve(null); } }); }
+    ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
+  });
+  if (!_mimic278Ready(rel)) return 'waiting';
+  let ch = process.env.RAID_CHAT_CHANNEL_ID
+    ? await client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null)
+    : null;
+  if (!ch) {
+    const g = client.guilds.cache.get(process.env.DISCORD_GUILD_ID) || client.guilds.cache.first();
+    ch = g?.channels?.cache?.find(c => c?.name === 'raid-chat' && typeof c.send === 'function') || null;
+  }
+  if (!ch) { console.log('[mimic278-announce] no #raid-chat channel found — skipping'); return 'no-channel'; }
+  const posted = await ch.send({ embeds: [_mimic278Embed()], allowedMentions: { parse: [] } }).catch(err => {
+    console.warn('[mimic278-announce] post failed:', err?.message);
+    return null;
+  });
+  if (!posted) return 'failed';
+  await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _MIMIC278_KV_KEY, value: { posted_at: new Date().toISOString(), message_id: posted.id }, updated_at: new Date().toISOString() }],
+    'guild_id,key');
+  console.log('[mimic278-announce] posted to #raid-chat:', posted.id);
+  return 'posted';
+}
+// First look a minute after boot, then every 5 minutes until it has posted (or finds it already had), for up to 12 hours.
+{
+  let tries = 0;
+  const tick = () => _announceMimic278Once()
+    .then(r => { if (r === 'posted' || r === 'latched') clearInterval(t); })
+    .catch(err => console.warn('[mimic278-announce]', err?.message));
+  const t = setInterval(() => { if (++tries > 144) { clearInterval(t); return; } tick(); }, 5 * 60_000);
+  setTimeout(tick, 60_000);
+}
+
+// ── Opt-in logs → PvP credit: one-shot #pvp post (2026-09-27) ────────────────
+// The guild lead: "make a note in the PVP channel for people to run their opt
+// in logs to get historical credit on pvp kills and assists." Guildmate
+// assists (§54) and the one-note-per-parse summary (§55) reach stable users in
+// Mimic 2.7.2, so this waits for the v2.7.2 release to carry its installer,
+// exactly like the 2.7.1 card. One post ever; pings nobody.
+const _OPTINPVP_KV_KEY = 'announce_optin_pvp_credit';
+const _OPTINPVP_TAG = 'v2.7.2';
+function _optinPvpEmbed() {
+  const { EmbedBuilder } = require('discord.js');
+  return new EmbedBuilder()
+    .setColor(0xd29922)
+    .setTitle('📜 Your old PvP kills and assists can count now — run your Opt-in Logs')
+    .setDescription([
+      'Mimic 2.7.2 credits an assist to every guildmate it saw hit, slow, snare, root, mez or DoT a player who then died to someone else — even guildmates who never ran Mimic. A catch-up over your old logs credits the nights before today too.',
+      '',
+      '1. Update Mimic: accept the update prompt, or restart it.',
+      '2. Open the dashboard → **Opt-in Logs**, tick your characters, and press **Backfill**. A log you imported before wants **Re-run** instead.',
+      '3. When it finishes, this channel gets one note with what it found, totalled per guildmate. Never a flood.',
+      '',
+      'The leaderboard on wolfpack.quest/pvp updates as they land.',
+    ].join('\n'))
+    .setFooter({ text: 'Mimic 2.7.2 stable · one-time note' });
+}
+async function _announceOptinPvpOnce() {
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_OPTINPVP_KV_KEY}&select=value&limit=1`);
+  if (!kvLatch.shouldRunOnce(rows)) {
+    if (kvLatch.latchState(rows) === 'unknown') { console.warn('[optin-pvp-announce] latch unreadable — NOT posting, will retry'); return 'unknown'; }
+    return 'latched';
+  }
+  const rel = await new Promise((resolve) => {
+    const https = require('https');
+    https.get({ hostname: 'api.github.com', path: '/repos/davehess/QuarmBossTracker/releases/tags/' + _OPTINPVP_TAG,
+      headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
+      (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { resolve(JSON.parse(b)); } catch { resolve(null); } }); }
+    ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
+  });
+  const ready = !!(rel && rel.tag_name === _OPTINPVP_TAG && !rel.draft && !rel.prerelease
+    && Array.isArray(rel.assets) && rel.assets.some(a => /\.exe$/i.test(String(a && a.name))));
+  if (!ready) return 'waiting';
+  const pvpTargetId = process.env.PVP_THREAD_ID || process.env.PVP_CHANNEL_ID;
+  let ch = pvpTargetId ? await client.channels.fetch(pvpTargetId).catch(() => null) : null;
+  if (!ch) {
+    const g = client.guilds.cache.get(process.env.DISCORD_GUILD_ID) || client.guilds.cache.first();
+    ch = g?.channels?.cache?.find(c => c?.name === 'pvp' && typeof c.send === 'function') || null;
+  }
+  if (!ch) { console.log('[optin-pvp-announce] no #pvp channel found — skipping'); return 'no-channel'; }
+  const posted = await ch.send({ embeds: [_optinPvpEmbed()], allowedMentions: { parse: [] } }).catch(err => {
+    console.warn('[optin-pvp-announce] post failed:', err?.message);
+    return null;
+  });
+  if (!posted) return 'failed';
+  await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _OPTINPVP_KV_KEY, value: { posted_at: new Date().toISOString(), message_id: posted.id }, updated_at: new Date().toISOString() }],
+    'guild_id,key');
+  console.log('[optin-pvp-announce] posted to #pvp:', posted.id);
+  return 'posted';
+}
+// Every 5 minutes until it has posted (or finds it already had), for up to 12 hours.
+{
+  let tries = 0;
+  const t = setInterval(() => {
+    if (++tries > 144) { clearInterval(t); return; }
+    _announceOptinPvpOnce().then(r => { if (r === 'posted' || r === 'latched') clearInterval(t); })
+      .catch(err => console.warn('[optin-pvp-announce]', err?.message));
+  }, 5 * 60_000);
+}
+
+// ── The film's making-of: one-shot #raid-chat card (2026-09-28) ──────────────
+// The guild lead: "send a link to the guild's raid-chat using this image as the
+// 'come look at the stuff'." Waits until the card's picture is live on
+// wolfpack.quest, which ships in the same web deploy as /film/making, so the
+// post never beats the page. One post ever; pings nobody.
+const _FILMMAKING_KV_KEY = 'announce_film_making_raid_chat';
+const _FILMMAKING_IMG = 'https://wolfpack.quest/film/making-of.jpg';
+function _filmMakingEmbed() {
+  const { EmbedBuilder } = require('discord.js');
+  return new EmbedBuilder()
+    .setColor(0xd29922)
+    .setTitle('🎬 How the Aten Ha Ra film was made — come look')
+    .setURL('https://wolfpack.quest/film/making')
+    .setDescription([
+      'Every picture, animation and outtake from the film is up on wolfpack.quest.',
+      '',
+      '- **Find yourself:** type your name or pick your class at the top, then click your character — every picture and animation of you, how the song says your name, and when it is sung.',
+      '- **The whole story:** the song and its lyric sheet, every take, the four-armed queen, and the outtakes (some are very funny).',
+      '- **Your character page** has a Gallery now, kept for good.',
+      '',
+      '**https://wolfpack.quest/film/making** — sign in with Discord.',
+    ].join('\n'))
+    .setImage(_FILMMAKING_IMG)
+    .setFooter({ text: 'Wolf Pack · Aten Ha Ra · one-time note' });
+}
+async function _announceFilmMakingOnce() {
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_FILMMAKING_KV_KEY}&select=value&limit=1`);
+  if (!kvLatch.shouldRunOnce(rows)) {
+    if (kvLatch.latchState(rows) === 'unknown') { console.warn('[film-making-announce] latch unreadable — NOT posting, will retry'); return 'unknown'; }
+    return 'latched';
+  }
+  const status = await new Promise((resolve) => {
+    const https = require('https');
+    const u = new URL(_FILMMAKING_IMG);
+    https.get({ hostname: u.hostname, path: u.pathname, headers: { 'User-Agent': 'wolfpack-bot' }, timeout: 10000 },
+      (res) => { res.on('data', () => {}); res.on('end', () => resolve(res.statusCode)); }
+    ).on('error', () => resolve(0)).on('timeout', function () { this.destroy(); resolve(0); });
+  });
+  if (status !== 200) return 'waiting';
+  let ch = process.env.RAID_CHAT_CHANNEL_ID
+    ? await client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null)
+    : null;
+  if (!ch) {
+    const g = client.guilds.cache.get(process.env.DISCORD_GUILD_ID) || client.guilds.cache.first();
+    ch = g?.channels?.cache?.find(c => c?.name === 'raid-chat' && typeof c.send === 'function') || null;
+  }
+  if (!ch) { console.log('[film-making-announce] no #raid-chat channel found — skipping'); return 'no-channel'; }
+  const posted = await ch.send({ embeds: [_filmMakingEmbed()], allowedMentions: { parse: [] } }).catch(err => {
+    console.warn('[film-making-announce] post failed:', err?.message);
+    return null;
+  });
+  if (!posted) return 'failed';
+  await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _FILMMAKING_KV_KEY, value: { posted_at: new Date().toISOString(), message_id: posted.id }, updated_at: new Date().toISOString() }],
+    'guild_id,key');
+  console.log('[film-making-announce] posted to #raid-chat:', posted.id);
+  return 'posted';
+}
+// First try a minute after boot, then every 5 minutes until it has posted (or finds it already had), for up to 12 hours.
+{
+  let tries = 0;
+  const go = () => _announceFilmMakingOnce().then(r => { if (r === 'posted' || r === 'latched') clearInterval(t); })
+    .catch(err => console.warn('[film-making-announce]', err?.message));
+  const t = setInterval(() => { if (++tries > 144) { clearInterval(t); return; } go(); }, 5 * 60_000);
+  setTimeout(go, 60_000);
+}
+
+// ── Vex Thal cleared: the one-time celebration on the Aten Ha Ra kill ────────
+// The guild lead, 2026-09-27: "a one time celebration for all miMIC users after
+// tomorrow's defeat of Aten Ha Ra in our last scheduled Vex Thal raid." The
+// Mimic side is a guild trigger on her death line (flash + voice + fanfare, no
+// deploy). This is the Discord side: one embed in #raid-chat the moment the
+// kill relays, latched in bot_kv. The film's link is read from the tuning map
+// (`celebration_video_url`, /admin/overlays), so it can be added before or
+// after the kill without a deploy; until then the embed says it is coming.
+// Wording (the guild lead, later the same night): "congrats Wolf Pack on the
+// last Aten Ha Ra of Luclin!" · "The guild has done approximately N damage to
+// Aten Ha Ra since <first kill>" · "post the video into discord" — so the link
+// rides the message CONTENT (Discord unfurls it), not the embed text, and a
+// once-a-minute poller posts it on its own when the link arrives after the kill.
+const _VT_CLEARED_KV_KEY = 'announce_vex_thal_cleared';
+const _VT_FILM_KV_KEY = 'announce_vex_thal_film';
+const _VT_NPC_ID = 158436;   // eqemu_npc_types: Aten Ha Ra (not the Kaas Thox pair)
+function _vtFilmUrl(tune) {
+  const s = String((tune && tune.celebration_video_url) || '').trim();
+  return /^https:\/\/\S+$/.test(s) ? s : null;
+}
+// 22642841 → "22.6 million"; the number is a parse total, so it is always "approximately".
+function _vtBigNumber(n) {
+  if (!(n > 0)) return null;
+  const f = (v) => v.toFixed(1).replace(/\.0$/, '');
+  if (n >= 1e9) return f(n / 1e9) + ' billion';
+  if (n >= 1e6) return f(n / 1e6) + ' million';
+  if (n >= 1e3) return Math.round(n / 1e3) + ' thousand';
+  return String(Math.round(n));
+}
+function _vtKillDate(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' });
+}
+async function _announceVexThalClearedOnce(kill) {
+  const name = String((kill && kill.boss) || '').trim().toLowerCase();
+  if (name !== 'aten ha ra') return 'not-her';
+  if (String((kill && kill.guild) || '').trim() !== WP_GUILD_NAME) return 'not-us';
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_VT_CLEARED_KV_KEY}&select=value&limit=1`);
+  if (!kvLatch.shouldRunOnce(rows)) {
+    if (kvLatch.latchState(rows) === 'unknown') { console.warn('[vt-cleared] latch unreadable — NOT posting'); return 'unknown'; }
+    return 'latched';
+  }
+  const ch = process.env.RAID_CHAT_CHANNEL_ID
+    ? await client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null) : null;
+  if (!ch) { console.log('[vt-cleared] no #raid-chat channel — skipping'); return 'no-channel'; }
+  // Her history before tonight: confirmed fights that started more than two
+  // hours ago, so tonight's own parse never counts itself. The damage is the
+  // sum of each fight's parsed total — a floor, hence "approximately". All of
+  // it is decoration; null when unread.
+  let prior = null, damage = null, first = null;
+  try {
+    const before = new Date(Date.now() - 2 * 3600_000).toISOString();
+    const r = await supabase.select('encounters',
+      `guild_id=eq.${encodeURIComponent(guildId)}&npc_id=eq.${_VT_NPC_ID}&duration_sec=gt.120&ended_at=not.is.null`
+      + `&started_at=lt.${encodeURIComponent(before)}&select=id,started_at,total_damage&order=started_at.asc&limit=1000`);
+    if (Array.isArray(r)) {
+      prior = r.length;
+      damage = r.reduce((s, e) => s + (Number(e && e.total_damage) || 0), 0);
+      first = r.length ? _vtKillDate(r[0].started_at) : null;
+    }
+  } catch { /* the history is decoration */ }
+  let video = null;
+  try { video = _vtFilmUrl(await _overlayTuningMap()); } catch { /* no link yet */ }
+  const { EmbedBuilder } = require('discord.js');
+  const big = _vtBigNumber(damage);
+  const embed = new EmbedBuilder()
+    .setColor(0xd29922)
+    .setTitle('🐺 Congrats Wolf Pack on the last Aten Ha Ra of Luclin!')
+    .setDescription([
+      `**${kill.character}** and the raid put her down in ${kill.zone || 'Vex Thal'} — the last scheduled Vex Thal raid.`,
+      big && first ? `The guild has done approximately **${big}** damage to Aten Ha Ra since the first kill on ${first}. Tonight was kill number **${prior + 1}**.`
+        : prior != null ? `Tonight was Wolf Pack's Aten Ha Ra kill number **${prior + 1}**.` : null,
+      '',
+      video ? '🎬 **The film** is below.' : '🎬 The film is in the works — it lands in this channel when it is cut.',
+      'Mimic users: the flash and the fanfare you just got was the guild trigger. Howl.',
+    ].filter(l => l != null).join('\n'))
+    .setFooter({ text: 'One-time celebration' });
+  const posted = await ch.send({ ...(video ? { content: video } : {}), embeds: [embed], allowedMentions: { parse: [] } }).catch(err => {
+    console.warn('[vt-cleared] post failed:', err?.message);
+    return null;
+  });
+  if (!posted) return 'failed';
+  const now = new Date().toISOString();
+  const latches = [{ guild_id: guildId, key: _VT_CLEARED_KV_KEY, value: { posted_at: now, message_id: posted.id, killer: kill.character }, updated_at: now }];
+  // The link rode this message, so the film poller has nothing left to post.
+  if (video) latches.push({ guild_id: guildId, key: _VT_FILM_KV_KEY, value: { posted_at: now, message_id: posted.id, url: video }, updated_at: now });
+  await supabase.upsert('bot_kv', latches, 'guild_id,key');
+  console.log('[vt-cleared] posted to #raid-chat:', posted.id);
+  return 'posted';
+}
+// The film, whenever it is cut: the guild lead pastes its link into
+// `celebration_video_url` and within a minute this posts it to #raid-chat, once
+// (the link in the content, so Discord unfurls the video). Only after the kill
+// embed exists — the film is a follow-up, never a spoiler — and only if that
+// embed did not already carry the link. Fail-closed on an unreadable latch.
+async function _announceVexThalFilmOnce() {
+  const video = _vtFilmUrl(await _overlayTuningMap().catch(() => null));
+  if (!video) return 'no-link';
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=in.(${_VT_CLEARED_KV_KEY},${_VT_FILM_KV_KEY})&select=key,value`);
+  if (!Array.isArray(rows)) { console.warn('[vt-film] latch unreadable — NOT posting'); return 'unknown'; }
+  if (rows.some(r => r && r.key === _VT_FILM_KV_KEY)) return 'latched';
+  if (!rows.some(r => r && r.key === _VT_CLEARED_KV_KEY)) return 'waiting';
+  const ch = process.env.RAID_CHAT_CHANNEL_ID
+    ? await client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null) : null;
+  if (!ch) return 'no-channel';
+  const posted = await ch.send({
+    content: `🎬 **The film.** The last Aten Ha Ra of Luclin, as Wolf Pack fought her.\n${video}`,
+    allowedMentions: { parse: [] },
+  }).catch(err => { console.warn('[vt-film] post failed:', err?.message); return null; });
+  if (!posted) return 'failed';
+  const now = new Date().toISOString();
+  await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _VT_FILM_KV_KEY, value: { posted_at: now, message_id: posted.id, url: video }, updated_at: now }],
+    'guild_id,key');
+  console.log('[vt-film] posted to #raid-chat:', posted.id);
+  return 'posted';
+}
+// Every minute until the film has posted (the tuning read is the 60 s cache; the
+// latch read happens only once a link exists).
+{
+  const t = setInterval(() => {
+    _announceVexThalFilmOnce().then(r => { if (r === 'posted' || r === 'latched') clearInterval(t); })
+      .catch(err => console.warn('[vt-film]', err?.message));
+  }, 60_000);
+}
+
+// ── Inventory-sharing split: one-shot #wlfpck-general post (2026-09-25) ──────
+// The guild lead: "post the inventory change to Wlfpck-general channel." Web
+// 1.8.8 split the one "Quests: public" switch into "Quest page" and "Inventory
+// page", and turned inventory private for the characters that had the old
+// switch on. Same one-post-ever latch as the 2.7.1 card; names and pings nobody.
+const _INVSPLIT_KV_KEY = 'announce_inventory_split_general';
+const _WLFPCK_GENERAL_ID = '1210572328589721660';   // #wlfpck-general (documented in .env.example)
+function _invSplitEmbed() {
+  const { EmbedBuilder } = require('discord.js');
+  return new EmbedBuilder()
+    .setColor(0x56d364)
+    .setTitle('🔒 Your quest page and your inventory are shared separately now')
+    .setDescription([
+      'Each character on wolfpack.quest/me now has two switches:',
+      '',
+      '- **Quest page** — members see your quest progress, keys and completed quests.',
+      '- **Inventory page** — members see your bags, bank and spellbook.',
+      '',
+      'The old **Quests: public** switch also shared your inventory and spellbook without saying so. If you had it on, your quest page is still public and your inventory is now private. Want your inventory shared? Turn **Inventory page** back on at wolfpack.quest/me.',
+      '',
+      'What we collect and who can see it: wolfpack.quest/privacy',
+    ].join('\n'))
+    .setFooter({ text: 'Web 1.8.8 · one-time announcement' });
+}
+async function _announceInventorySplitOnce() {
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_INVSPLIT_KV_KEY}&select=value&limit=1`);
+  // Fail closed (utils/kvLatch.js): null is "could not check", not "never posted".
+  if (!kvLatch.shouldRunOnce(rows)) {
+    if (kvLatch.latchState(rows) === 'unknown') { console.warn('[inv-split-announce] latch unreadable — NOT posting, will retry'); return 'unknown'; }
+    return 'latched';
+  }
+  const g = client.guilds.cache.get(process.env.DISCORD_GUILD_ID) || client.guilds.cache.first();
+  let ch = g?.channels?.cache?.find(c => c?.name === 'wlfpck-general' && typeof c.send === 'function') || null;
+  if (!ch) ch = await client.channels.fetch(_WLFPCK_GENERAL_ID).catch(() => null);
+  if (!ch || typeof ch.send !== 'function') { console.log('[inv-split-announce] no #wlfpck-general channel found — will retry'); return 'no-channel'; }
+  const posted = await ch.send({ embeds: [_invSplitEmbed()], allowedMentions: { parse: [] } }).catch(err => {
+    console.warn('[inv-split-announce] post failed:', err?.message);
+    return null;
+  });
+  if (!posted) return 'failed';
+  await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _INVSPLIT_KV_KEY, value: { posted_at: new Date().toISOString(), message_id: posted.id }, updated_at: new Date().toISOString() }],
+    'guild_id,key');
+  console.log('[inv-split-announce] posted to #wlfpck-general:', posted.id);
+  return 'posted';
+}
+// 90 s after boot (the guild cache is warm by then), then every 5 minutes until
+// it has posted or finds it already had, for up to 2 hours.
+{
+  let tries = 0, t = null;
+  const attempt = () => _announceInventorySplitOnce()
+    .then(r => { if ((r === 'posted' || r === 'latched') && t) { clearInterval(t); t = null; } return r; })
+    .catch(err => console.warn('[inv-split-announce]', err?.message));
+  setTimeout(() => {
+    attempt().then(r => {
+      if (r === 'posted' || r === 'latched') return;
+      t = setInterval(() => { if (++tries > 24) { clearInterval(t); t = null; return; } attempt(); }, 5 * 60_000);
+    });
+  }, 90_000);
+}
 
 // One-shot: rename the ALREADY-POSTED v2.0.0 stable release card (it went out
 // reading "Full Cry" before the rename; the stable announcer stores no message
@@ -9789,7 +12561,7 @@ async function _fixV200CardNameOnce() {
 }
 setTimeout(() => { _fixV200CardNameOnce().catch(err => console.warn('[howl-card]', err?.message)); }, 120_000);
 
-// ── PoP-lock timer sweep (Hitya 2026-07-13) ──────────────────────────────
+// ── PoP-lock timer sweep (the guild lead, 2026-07-13) ──────────────────────────────
 // One-shot at startup: clear any active timer on a PoP-locked boss. The
 // automated ingest relays (bosskill + /sll lockout) historically had no lock
 // gate, and PVP-event lockouts named for the war gods ("Tallon Zek" /
@@ -9822,7 +12594,7 @@ setTimeout(() => {
   }
 }, 60_000);
 
-// ── Pre-raid health check (Hitya 2026-07-13, raid-night hardening) ───────
+// ── Pre-raid health check (the guild lead, 2026-07-13, raid-night hardening) ───────
 // At 7:30pm ET on raid nights (Sun/Wed/Thu), probe every dependency the raid
 // leans on and post ONE green/red line to Discord — so a wedged GoTrue or a
 // slow DB surfaces at setup time, not at the first CH chain. Probes:
@@ -9910,7 +12682,7 @@ setInterval(async () => {
     const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
     const rows = await supabase.select('bot_kv',
       `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_PRERAID_KV_KEY}&select=value&limit=1`);
-    // A FAILED READ IS NOT "HASN'T RUN TONIGHT" (Hitya 2026-08-06: this posted
+    // A FAILED READ IS NOT "HASN'T RUN TONIGHT" (the guild lead, 2026-08-06: this posted
     // FIVE times at 19:30, once per minute of the firing window). supabase.select
     // returns null on a timeout or an open breaker, `|| {}` turned that into an
     // empty state, `st.lastRunDate` was undefined, and the check ran again — then
@@ -9932,7 +12704,7 @@ setInterval(async () => {
   }
 }, 60_000);
 
-// ── Staged raid-attendance tick capture (Hitya 2026-08-06) ───────────────
+// ── Staged raid-attendance tick capture (the guild lead, 2026-08-06) ───────────────
 // "can we put in the automatic raid tick capture (without submission) at
 // 830/930/1030/1130" — following "sometimes we will take the 'last tick' before
 // the end of the raid, though, so we're not missing people."
@@ -9990,6 +12762,15 @@ async function _captureRaidTickIfDue() {
   // window instead of paging the roster five times. Not the safety guard — the
   // unique index is — so a failed read falls THROUGH to the insert, which the
   // constraint will refuse if it is genuinely a duplicate.
+  // An officer pressed "End raid" — the night is over, whoever is still
+  // logged in. This is checked BEFORE the roster paging, so an ended night
+  // costs one cached lookup a minute rather than five roster pages.
+  const endedBy = await _raidEndedInfo(nightKey);
+  if (endedBy) {
+    console.log(`[raid-tick] slot ${slot.slot}: night ${nightKey} was ended by ${endedBy.by || 'an officer'} — not recording`);
+    return;
+  }
+
   const existing = await supabase.select('raid_attendance_ticks',
     `select=id&guild_id=eq.${encodeURIComponent(guildId)}` +
     `&night_key=eq.${encodeURIComponent(nightKey)}&slot=eq.${slot.slot}&limit=1`);
@@ -10038,7 +12819,7 @@ async function _captureRaidTickIfDue() {
   }
 }
 
-// Put the captured tick in the night's thread, in its reserved slot (Hitya
+// Put the captured tick in the night's thread, in its reserved slot (the guild lead
 // 2026-08-06: "can you add the captured raid ticks for now in the raid thread?
 // and put them as reserved posts 3-6"). Slots 1-2 are the review, 3-6 are these
 // four ticks in order, so the top of the thread reads review → 8:30 → 9:30 →
@@ -10048,6 +12829,124 @@ async function _captureRaidTickIfDue() {
 // already written by the time this runs, so a Discord failure loses a card, not
 // an attendance record. It says NOT SUBMITTED on its face because that is the
 // one thing an officer must not have to guess about.
+// ── "End raid" — an officer says the night is over ──────────────────────────
+// The guild lead, 2026-08-30: "We need a button on the raid night thread for officers
+// and leaders to be able to click to end the raid."
+//
+// WHAT IT ACTUALLY DOES: stops the automatic attendance ticks for the rest of
+// the night. The four slots fire on the clock (20:30 / 21:30 / 22:30 / 23:30
+// ET), and since 2026-08-16 alt raids and Seru/misc nights deliberately run
+// THREE ticks over two hours — so on those nights slot 4 is a row claiming
+// people were present at 23:30 when the raid ended at 22:00. Until now the
+// only defence was the MIN_NAMES floor, which is a guess about how many
+// stragglers are still logged in, not a statement that the raid is over. This
+// is the statement.
+//
+// ⚠ bot_kv, never state.json. It is keyed per NIGHT, and state.json does not
+// survive a Railway deploy — the exact shape that posted eleven copies of one
+// raid review (CLAUDE.md).
+const _raidEndedKey = (nightKey) => `raid_ended_${nightKey}`;
+
+// The tick checker runs every 60s all evening, so the lookup is cached rather
+// than costing a Supabase read a minute. Bounded staleness is fine here: the
+// only way it can be wrong is one extra tick card in the minute after the
+// button is pressed, and both writers refresh the cache anyway.
+const _RAID_ENDED_TTL_MS = 60_000;
+let _raidEndedCache = { night: null, at: 0, value: null };
+
+async function _raidEndedInfo(nightKey) {
+  if (_raidEndedCache.night === nightKey && (Date.now() - _raidEndedCache.at) < _RAID_ENDED_TTL_MS) {
+    return _raidEndedCache.value;
+  }
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return null;
+  try {
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const rows = await supabase.select('bot_kv',
+      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${encodeURIComponent(_raidEndedKey(nightKey))}&select=value&limit=1`);
+    const v = (Array.isArray(rows) && rows[0]?.value) || null;
+    const value = (v && v.ended) ? v : null;
+    _raidEndedCache = { night: nightKey, at: Date.now(), value };
+    return value;
+  } catch (err) {
+    // ⚠ FAIL OPEN, deliberately. A failed read must not silently stop
+    // attendance capture — a missing tick is unrecoverable (raid_roster is a
+    // live view pruned hourly), while an extra one is visible and editable.
+    console.warn('[raid-end] state read failed — capturing anyway:', err?.message);
+    return null;
+  }
+}
+
+async function _setRaidEnded(nightKey, { ended, by, byId }) {
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return false;
+  const value = ended
+    ? { ended: true, by: by || null, by_id: byId || null, at: new Date().toISOString() }
+    : { ended: false, by: by || null, by_id: byId || null, at: new Date().toISOString() };
+  try {
+    await supabase.upsert('bot_kv', [{
+      guild_id: process.env.SUPABASE_GUILD_ID || 'wolfpack',
+      key: _raidEndedKey(nightKey), value, updated_at: new Date().toISOString(),
+    }], 'guild_id,key');
+    _raidEndedCache = { night: nightKey, at: Date.now(), value: ended ? value : null };
+    return true;
+  } catch (err) {
+    console.warn('[raid-end] state write failed:', err?.message);
+    return false;
+  }
+}
+
+// The button row a tick card carries. Ended nights offer the way back, because
+// an officer who ends the raid one tick early has no other route to undo it.
+function _raidEndComponents(nightKey, ended) {
+  const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+  return [new ActionRowBuilder().addComponents(
+    ended
+      ? new ButtonBuilder().setCustomId(`raid_reopen:${nightKey}`)
+          .setLabel('Reopen the raid').setEmoji('↩').setStyle(ButtonStyle.Secondary)
+      : new ButtonBuilder().setCustomId(`raid_end:${nightKey}`)
+          .setLabel('End raid').setEmoji('🏁').setStyle(ButtonStyle.Secondary),
+  )];
+}
+
+async function handleRaidEndButton(interaction, ending) {
+  const nightKey = (interaction.customId.split(':')[1] || '').trim();
+  if (!nightKey) return interaction.reply({ content: 'This button has lost its night.', ephemeral: true });
+
+  // Officers and leaders only — the same gate every other officer control uses.
+  if (!interaction.member || !hasOfficerRole(interaction.member)) {
+    return interaction.reply({
+      content: `Only ${officerRolesList()} can end the raid.`, ephemeral: true,
+    });
+  }
+
+  const already = await _raidEndedInfo(nightKey);
+  if (ending && already) {
+    return interaction.reply({
+      content: `🏁 Already ended — ${already.by || 'an officer'} called it <t:${Math.floor(Date.parse(already.at) / 1000)}:R>.`,
+      ephemeral: true,
+    });
+  }
+
+  const who = interaction.member.displayName || interaction.user.username;
+  const ok = await _setRaidEnded(nightKey, { ended: ending, by: who, byId: interaction.user.id });
+  if (!ok) {
+    return interaction.reply({ content: '⚠ Could not save that — try again in a moment.', ephemeral: true });
+  }
+  console.log(`[raid-end] ${who} ${ending ? 'ENDED' : 'reopened'} night ${nightKey}`);
+
+  // Flip the button on the card that was clicked. Other tick cards keep the
+  // stale label; pressing one is idempotent and answers "already ended".
+  await interaction.update({ components: _raidEndComponents(nightKey, ending) }).catch(async () => {
+    await interaction.reply({ content: 'Saved.', ephemeral: true }).catch(() => {});
+  });
+
+  const note = ending
+    ? `🏁 **Raid ended** by ${who} — no further attendance ticks will be captured tonight.`
+    : `↩ **Raid reopened** by ${who} — the remaining attendance ticks will be captured as usual.`;
+  await interaction.followUp({ content: note, allowedMentions: { parse: [] } }).catch(() => {});
+}
+
 async function _postRaidTickCard(slot, names, uploaders, scheduledForIso, nightKey) {
   const raidReview = require('./utils/raidReview');
   const target = await require('./utils/raidNight').getRaidNightTarget(client, Date.now()).catch(() => null);
@@ -10061,7 +12960,7 @@ async function _postRaidTickCard(slot, names, uploaders, scheduledForIso, nightK
     .setDescription([
       `<t:${when}:t> · seen by ${uploaders} Mimic${uploaders === 1 ? '' : 's'}`,
       '',
-      // One name per LINE, not the middot the rest of the cards use (Hitya
+      // One name per LINE, not the middot the rest of the cards use (the guild lead
       // 2026-08-06). This list gets copied out of Discord and pasted into bulk
       // entry, which splits on newlines — so the separator is not decoration,
       // it is the paste format. Keep it a bare `\n`: no bullets, no numbering,
@@ -10077,9 +12976,10 @@ async function _postRaidTickCard(slot, names, uploaders, scheduledForIso, nightK
 
   // Try the reserved slot; fall back to a normal post rather than losing the card.
   const idx = raidReview.tickSlotIndex(slot.slot);
-  const claimed = await raidReview.claimSlot(target.thread, nightKey, idx, { embeds: [emb] });
+  const components = _raidEndComponents(nightKey, false);
+  const claimed = await raidReview.claimSlot(target.thread, nightKey, idx, { embeds: [emb], components });
   if (!claimed) {
-    await target.thread.send({ embeds: [emb], allowedMentions: { parse: [] } });
+    await target.thread.send({ embeds: [emb], components, allowedMentions: { parse: [] } });
     console.log(`[raid-tick] slot ${slot.slot}: no reserved slot ${idx} — posted at the end instead`);
   }
 }
@@ -10088,9 +12988,12 @@ if (process.env.RAID_TICK_CAPTURE !== '0') {
   setInterval(() => { _captureRaidTickIfDue().catch(err => console.warn('[raid-tick] pass failed:', err?.message)); }, 60_000);
 }
 
+// Raid replay recorder (utils/raidTrack.js): folds the roster uploads into one row per minute.
+require('./utils/raidTrack').start();
+
 // Raid hold — tells every agent to hold its background file work for later
 // while a raid is active ("gracefully tell mimic to hold onto its files",
-// Hitya 2026-07-16). Agents 3.3.58+ defer gear/spellbook/crash scans AND
+// The guild lead 2026-07-16). Agents 3.3.58+ defer gear/spellbook/crash scans AND
 // report the hold from their update gate, so agent hot-swaps wait out the
 // whole raid instead of firing between pulls. Automatic on the standing
 // schedule (Sun/Wed/Thu, 19:00 ET → 00:30 ET — 30 min of pre-raid buffer);
@@ -10122,7 +13025,7 @@ async function _handleAgentOverlayTuning(req, res) {
   if (!identity) return;
   const [tuning, notices, classSets] = await Promise.all([_overlayTuningMap(), _activeNotices(), _overlayClassSets()]);
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  return res.end(JSON.stringify({ tuning, notices, class_sets: classSets, raid_hold: _raidHoldNow(tuning) }));
+  return res.end(JSON.stringify({ tuning: _tuningForAgent(tuning, identity), notices, class_sets: classSets, raid_hold: _raidHoldNow(tuning) }));
 }
 
 // POST /api/agent/crash_report — opt-in EQ client crash telemetry (agent
@@ -10251,7 +13154,7 @@ async function _handleAgentCharacterLiveState(req, res) {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const rows = await supabase.select('character_live_state',
     `guild_id=eq.${encodeURIComponent(guildId)}&character=ilike.${encodeURIComponent(name)}` +
-    `&select=character,zone_name,self_hp_pct,self_hp_cur,self_hp_max,buffs,updated_at&limit=1`).catch(() => []);
+    `&select=character,zone_name,self_hp_pct,self_hp_cur,self_hp_max,buffs,cooldowns,updated_at&limit=1`).catch(() => []);
   const r = Array.isArray(rows) && rows[0];
   let state = null;
   if (r && r.updated_at) {
@@ -10274,6 +13177,9 @@ async function _handleAgentCharacterLiveState(req, res) {
                      : (b && typeof b.ticks === 'number') ? b.ticks * 6 : null,
             })).filter(b => b.name)
           : [],
+        // Their own known timers (discs, Mend, LoH/HT, AAs) — absolute ready
+        // times, so the 10-minute row gate above is all the freshness they need.
+        cooldowns: Array.isArray(r.cooldowns) ? r.cooldowns : [],
         updated_at: r.updated_at,
       };
     }
@@ -10354,7 +13260,7 @@ async function _handleAgentDiStatus(req, res) {
   ]);
   const healerClassByName = new Map((healers || []).map(c => [String(c.name || '').toLowerCase(), String(c.class || '')]));
   const out = [];
-  // Piggybacked healer mana (Hitya 2026-07-15: "Command center should have
+  // Piggybacked healer mana (the guild lead, 2026-07-15: "Command center should have
   // all healer mana … if they're in mimic") — every Mimic-running priest's
   // exact self mana, same freshness window, zero extra polls for the raid.
   const healerMana = [];
@@ -10494,6 +13400,61 @@ function _extPosCluster(engaged, units, hOpts) {
 // (same references, Object.is — fixture-enforced). With exactly one instance
 // and one HP cluster the single row is returned labeled; the EMIT layer drops
 // the label at K=1, so the K=1 payload stays byte-identical either way.
+// Instances proven by SPAWN ID (Zeal PR #229). The strongest evidence we have:
+// HP clustering guesses that two "a cliff golem" at different health are two
+// mobs and fails the moment they match, position clustering needs two engaged
+// tanks — an id just says which mob it is.
+//
+// Returns [] unless the ids prove something (≥2 distinct ids for this name), so
+// a fleet with no ids, or with everyone on the same mob, falls through to the
+// existing HP/position machinery completely unchanged.
+//
+// ⚠ Reporters WITHOUT an id still belong on the board. Each is attached to the
+// instance whose HP is closest, and with no HP to compare, to the first — the
+// same "nobody vanishes" rule the position binder uses for unplaceable
+// raiders. Their membership is a guess; the instance's own HP is not, because
+// it is derived only from reporters who actually named the id.
+function _extIdInstances(obs) {
+  // Same median as the handler's (round-half-up on an even count), duplicated
+  // rather than shared so this stays a pure, independently testable function.
+  // ⚠ It must MATCH: two medians in one pipeline would make an id-split row's
+  // HP disagree with an HP-split row's for no visible reason.
+  const median = (arr) => {
+    if (!arr.length) return null;
+    const a = [...arr].sort((x, y) => x - y); const m = Math.floor(a.length / 2);
+    return a.length % 2 ? a[m] : Math.round((a[m - 1] + a[m]) / 2);
+  };
+  const byId = new Map();
+  for (const o of (obs || [])) {
+    if (!o || o.id == null) continue;
+    if (!byId.has(o.id)) byId.set(o.id, { spawn_id: o.spawn_id, raiders: [], hps: [] });
+    const g = byId.get(o.id);
+    g.raiders.push(o.raider);
+    if (o.hp != null) g.hps.push(o.hp);
+  }
+  if (byId.size < 2) return [];
+  const insts = [...byId.values()].map(g => ({
+    raiders: g.raiders,
+    hp: g.hps.length ? median(g.hps) : null,
+    spawn_id: g.spawn_id,
+    id_proven: true,
+  }));
+  for (const o of (obs || [])) {
+    if (!o || o.id != null) continue;
+    let best = insts[0];
+    if (o.hp != null) {
+      let bestDist = Infinity;
+      for (const inst of insts) {
+        if (inst.hp == null) continue;
+        const d = Math.abs(inst.hp - o.hp);
+        if (d < bestDist) { bestDist = d; best = inst; }
+      }
+    }
+    best.raiders.push(o.raider);
+  }
+  return insts;
+}
+
 function _extBindInstances(hpClusters, posInstances) {
   if (!posInstances || posInstances.length === 0) return hpClusters;
   const memberOf = new Map();   // raiderLower → instance index
@@ -10543,6 +13504,120 @@ function _extBindInstances(hpClusters, posInstances) {
   return out;
 }
 
+// Spawn ids overrule the position and HP guesses in BOTH directions.
+// _extIdInstances only ever used them to SPLIT (≥2 distinct ids). When the
+// targeters of a name all report ONE id, that is proof of one mob — and the
+// guesses downstream went on splitting it anyway: a member's Extended Target,
+// 2026-09-23, showed "A Shissar Taskmaster" as #1/3, #2/3, #3/3 — one targeter
+// per row, all at 14%, all being hit on the same tank. The rows carried the
+// asterisk, not an id, so ids had not split them; three engaged tanks standing
+// apart had, via _extPosCluster.
+//
+// So: rows whose targeters share an id are one mob and merge back. Rows with no
+// ids are untouched (returned as the same array — Object.is), so a fleet that
+// sends no ids behaves exactly as before, and a raider with no id stays wherever
+// the guesses put them.
+// #194 — put each Zeal /tag on the row it belongs to; return the rest as the
+// name's pool. Sets `_tag` on matched rows. Pure, so it is tested directly.
+//
+// A tag matches a row, in order:
+//   1. by SPAWN ID — the row's raiders (or the row itself) report exactly one
+//      id, and it is the tag's. Zeal 1.4.6+ sends the id, and an id is the
+//      mob, whatever the tag says. Before 2026-09-23 this step did not exist,
+//      so a row whose id was proven still dumped its own tag into the pool.
+//   2. by TANK — the tag text names the row's tank ("Drayvon-Tanking").
+//   3. a single leftover tag on a single row — nothing else it could be.
+// The pool shows each DISTINCT tag once (the guild lead, 2026-09-23, on six
+// "▲ KILL" chips: "why are there so many tags here"). A trash clear marks
+// every mob "KILL", and nothing clears a tag when its mob dies, so the pool
+// stacked one chip per corpse for ten minutes. Newest wins, and a tag already
+// shown on a row of this name is not repeated.
+function _extPlaceTags(rows, nameTags, spawnOfRaider) {
+  if (!nameTags || !nameTags.size) return [];
+  const rowIds = rows.map(c => {
+    const ids = new Set();
+    if (c.spawn_id != null) ids.add(c.spawn_id);
+    for (const r of (c.raiders || [])) {
+      const s = spawnOfRaider && spawnOfRaider.get(String(r).toLowerCase());
+      if (s != null) ids.add(s);
+    }
+    return ids;
+  });
+  const unwelded = [];
+  const sorted = [...nameTags.values()].sort((a, b) => a.spawn_id - b.spawn_id);
+  for (const tg of sorted) {
+    let target = rows.find((c, i) => !c._tag && rowIds[i].size === 1 && rowIds[i].has(tg.spawn_id));
+    if (!target) {
+      const textLower = String(tg.text || '').toLowerCase();
+      target = rows.find(c => !c._tag && (c.tanks || []).some(t2 =>
+        textLower.includes(String(t2).toLowerCase())));
+    }
+    if (target) target._tag = tg;
+    else unwelded.push(tg);
+  }
+  if (unwelded.length === 1 && rows.length === 1 && !rows[0]._tag) {
+    rows[0]._tag = unwelded.pop();
+  }
+  // A tag with neither text nor shape is only its id — keep those apart.
+  const keyOf = tg => (tg.text || tg.shape)
+    ? `${tg.shape || ''}|${String(tg.text || '').toLowerCase()}` : `#${tg.spawn_id}`;
+  const shown = new Set(rows.filter(c => c._tag).map(c => keyOf(c._tag)));
+  const newest = new Map();
+  for (const tg of unwelded) {
+    const k = keyOf(tg);
+    if (shown.has(k)) continue;
+    const prev = newest.get(k);
+    if (!prev || (tg.sinceMs || 0) > (prev.sinceMs || 0)) newest.set(k, tg);
+  }
+  return [...newest.values()]
+    .sort((a, b) => (b.sinceMs || 0) - (a.sinceMs || 0))
+    .map(tg => ({ spawn_id: tg.spawn_id, text: tg.text, shape: tg.shape }));
+}
+
+function _extMergeByAgreedId(rows, idOf, hpOf) {
+  if (!rows || rows.length < 2 || !idOf || idOf.size === 0) return rows;
+  const parent = rows.map((_, i) => i);
+  const find = (i) => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+  const firstRowOfId = new Map();
+  rows.forEach((row, i) => {
+    for (const r of (row.raiders || [])) {
+      const id = idOf.get(String(r).toLowerCase());
+      if (id == null) continue;
+      if (!firstRowOfId.has(id)) { firstRowOfId.set(id, i); continue; }
+      const a = find(firstRowOfId.get(id)), b = find(i);
+      if (a !== b) parent[Math.max(a, b)] = Math.min(a, b);
+    }
+  });
+  const groups = new Map();
+  rows.forEach((row, i) => {
+    const root = find(i);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(row);
+  });
+  if (groups.size === rows.length) return rows;
+  // Same median as the handler's (round-half-up on an even count).
+  const median = (arr) => {
+    const a = [...arr].sort((x, y) => x - y); const m = Math.floor(a.length / 2);
+    return a.length % 2 ? a[m] : Math.round((a[m - 1] + a[m]) / 2);
+  };
+  const out = [];
+  for (const members of groups.values()) {
+    if (members.length === 1) { out.push(members[0]); continue; }
+    const raiders = [], seen = new Set(), tanks = [];
+    for (const m of members) {
+      for (const r of (m.raiders || [])) {
+        const k = String(r).toLowerCase();
+        if (!seen.has(k)) { seen.add(k); raiders.push(r); }
+      }
+      for (const t of (m.tanks || [])) if (!tanks.includes(t)) tanks.push(t);
+    }
+    const hps = raiders.map(r => hpOf && hpOf.get(String(r).toLowerCase())).filter(h => h != null);
+    const { pos_split, ...base } = members[0];
+    out.push({ ...base, raiders, hp: hps.length ? median(hps) : base.hp, ...(tanks.length ? { tanks } : {}) });
+  }
+  return out;
+}
+
 // #194 debuff attribution at K≥2. A landing's observer is the agent whose log
 // saw it — for self-casts the observer IS the caster (resolveSelfCastLanding),
 // and a caster targets what they debuff. The same landing reaches us once per
@@ -10560,10 +13635,31 @@ function _extBindInstances(hpClusters, posInstances) {
 // live, which is when anyone looks at the overlay.
 //
 // `observerInfo`: Map(observerLower → { targetsName: bool, targetHp: n|null }).
-function _extAttributeDebuffs(debuffEntries, rows, observerInfo, hpTol) {
+//
+// Rule 0, before all of those: the landing's own SPAWN ID (FB-39, the guild lead, 2026-09-30:
+// "the spawnids are varied and the buffs should have been associated but they weren't, even though
+// both of us were using miMIC"). A row's id is its own, or the one id its targeters report — the
+// rule _extPlaceTags uses. An id that matches no row, when every row has one, is a mob none of these
+// rows is, so the debuff is not shown on them at all. `spawnOfRaider`: Map(raiderLower → spawn id).
+function _extAttributeDebuffs(debuffEntries, rows, observerInfo, hpTol, spawnOfRaider) {
   if (rows.length <= 1) return;   // K=1 — debuffs stay exactly as they are
   for (const row of rows) row.debuffs = [];
+  const rowIds = rows.map(c => {
+    const ids = new Set();
+    if (c.spawn_id != null) ids.add(c.spawn_id);
+    for (const r of (c.raiders || [])) {
+      const s = spawnOfRaider && spawnOfRaider.get(String(r).toLowerCase());
+      if (s != null) ids.add(s);
+    }
+    return ids;
+  });
+  const allHaveIds = rowIds.every(s => s.size === 1);
   for (const d of debuffEntries) {
+    if (d.spawn_id != null) {
+      const i = rowIds.findIndex(s => s.size === 1 && s.has(d.spawn_id));
+      if (i >= 0) { rows[i].debuffs.push({ name: d.name, remaining_secs: d.remaining_secs }); continue; }
+      if (allHaveIds) continue;
+    }
     let target = null;
     for (const obs of (d.observers || [])) {
       const ol = String(obs || '').toLowerCase();
@@ -10583,9 +13679,42 @@ function _extAttributeDebuffs(debuffEntries, rows, observerInfo, hpTol) {
   for (const row of rows) row.debuffs = row.debuffs.slice(0, 12);
 }
 
+// The landings on one mob NAME → one debuff entry per spell per MOB, for _extAttributeDebuffs (FB-39).
+// The name-keyed map above keeps only the newest landing of each spell, so a slow on one of two
+// same-name mobs vanished when the other was slowed. Here:
+//   · landings of one spell within 5 s are one cast seen by several Mimics: observers pool, ids pool;
+//   · a cast whose Mimics report exactly one spawn id is that mob's; none, or two that disagree, is
+//     unknown (a bystander's Mimic stamps its OWN target's id when the name matches, so two ids for one
+//     cast means one of them is another mob of that name — neither is trusted);
+//   · newest cast per (spell, mob) wins, and an id-less cast older than an id'd one of the same spell
+//     is dropped rather than repeated dimmed on every row.
+// `landings`: [{ spell, castMs, durSecs, observer, sid }], newest first. Returns entries newest first.
+function _extDebuffInstances(landings) {
+  const casts = [];
+  for (const l of (landings || [])) {
+    if (!l || !l.spell) continue;
+    const sk = String(l.spell).toLowerCase();
+    let c = casts.find(x => x.sk === sk && Math.abs(x.castMs - l.castMs) <= 5000);
+    if (!c) { c = { sk, name: l.spell, castMs: l.castMs, durSecs: l.durSecs, observers: [], ids: new Set() }; casts.push(c); }
+    if (l.observer && !c.observers.some(o => o.toLowerCase() === String(l.observer).toLowerCase())) c.observers.push(String(l.observer));
+    if (l.sid != null) c.ids.add(l.sid);
+  }
+  const out = [], seen = new Set(), idSpells = new Set();
+  for (const c of casts) {
+    const sid = c.ids.size === 1 ? [...c.ids][0] : null;
+    const k = c.sk + '#' + (sid == null ? '?' : sid);
+    if (seen.has(k)) continue;
+    if (sid == null && idSpells.has(c.sk)) continue;
+    seen.add(k);
+    if (sid != null) idSpells.add(c.sk);
+    out.push({ name: c.name, castMs: c.castMs, durSecs: c.durSecs, observers: c.observers, spawn_id: sid });
+  }
+  return out;
+}
+
 // Previously-targeted mobs that drop off everyone's target gauge (an
 // off-tank's brief targeting gap, a target swap mid-fight) stay on the
-// board for a grace window if they were last seen hurt — Uilnayar
+// board for a grace window if they were last seen hurt — a member
 // 2026-07-04: "keep non-targeted but previously targeted mobs that had
 // less than 100% health." Only unique (non-ambiguous, non-duplicate) mobs
 // are cached — a generic "a wolf" name can't be reliably re-identified
@@ -10594,9 +13723,34 @@ function _extAttributeDebuffs(debuffEntries, rows, observerInfo, hpTol) {
 const _extMobLastSeen = new Map();
 // Grace for a mob that dropped off every target gauge (a targeting gap on a mob
 // still being fought). 5 min was far too long — a killed mob lingered as a
-// "corpse" on the tracker (Hitya 2026-07-06). 90s covers a real target swap;
+// "corpse" on the tracker (Rethlan 2026-07-06). 90s covers a real target swap;
 // genuinely off-tanked mobs are kept alive independently by the off-tank path.
 const EXT_STALE_GRACE_MS = 90 * 1000;
+// Evict a mob from that cache the moment we KNOW it died, instead of waiting
+// out the grace timer.
+//
+// ⚠ The grace window is a timeout, not a death signal, and shortening it was
+// never a fix. The 5min → 90s cut above was made for exactly this report on
+// 2026-07-06; the guild lead hit the same thing again on 2026-09-01 (Lord of Ire, Plane
+// of Hate, killed at 5% and still sitting on the board at "last seen 56s ago"
+// carrying its whole debuff list). The bot ALREADY knew — it had announced the
+// kill — the board just had no way to hear about it.
+//
+// Matches on the NAME segment and deliberately ignores the zone: the key is
+// <guild>|<zone>|<name>, and the zone strings do not agree across sources
+// (live-state carries a Zeal zone name, the kill relay carries whatever the
+// server broadcast said — "Plane of Hate (Instanced)"). Only unique-name,
+// non-ambiguous mobs are ever cached here, so a name match can never evict the
+// wrong same-name instance — the ambiguous ones were never in the map.
+function _extEvictDeadMob(mobName) {
+  const n = String(mobName || '').trim().toLowerCase();
+  if (!n) return 0;
+  let gone = 0;
+  for (const k of [..._extMobLastSeen.keys()]) {
+    if (k.slice(k.lastIndexOf('|') + 1) === n) { _extMobLastSeen.delete(k); gone++; }
+  }
+  return gone;
+}
 // Off-tank freshness — how recently the agent's own recentTankHits must have
 // confirmed a mob hitting a raider for it to still count as "currently
 // hitting someone" for the 100%-HP off-tank case (Emperor-style fights: an
@@ -10620,7 +13774,7 @@ const EXT_OFFTANK_FRESH_MS = 30_000;
 //
 // ⚠ NO exclusion filter here, deliberately. `exclude_from_stats` is enforced
 // UPSTREAM: the agent suppresses its own outbound uploads. If another raider
-// observed you, that observation is theirs and is shown (Hitya, 2026-08-13).
+// observed you, that observation is theirs and is shown (the guild lead, 2026-08-13).
 // Filtering on read would hide a player from the people who legitimately saw
 // them, which is the opposite of what the opt-out means. Do not "fix" this.
 // Reduce many observers' readings of ONE player's damage to a single number.
@@ -10628,12 +13782,12 @@ const EXT_OFFTANK_FRESH_MS = 30_000;
 // Max was the obvious choice and is wrong. An observer can only ever MISS
 // damage, never invent it — so max WOULD be right if every client were honest.
 // They are not, and max is maximally sensitive to whichever one is least
-// honest. Measured on Va Xi Aten Ha Ra: seven independent clients put Atlasius
-// at ~100,000 while an uploader calling itself "Atlasius2" reported 250,060.
+// honest. Measured on Va Xi Aten Ha Ra: seven independent clients put a member
+// at ~100,000 while an uploader calling itself "Dunmara2" reported 250,060.
 // We shipped the 250,060.
 //
-// "Atlasius2" is not a character — EQ names cannot contain digits (Hitya) — so
-// it is a name the agent derived from a stray log FILE (eqlog_Atlasius2_…),
+// "Dunmara2" is not a character — EQ names cannot contain digits (Rethlan) — so
+// it is a name the agent derived from a stray log FILE (eqlog_<Name>2_…),
 // i.e. a copy or backup someone left in their Logs folder, replayed as if it
 // were a separate raider. That specific cause is guarded at the source in the
 // agent, but this estimator must not depend on having anticipated the cause:
@@ -10673,9 +13827,15 @@ async function _handleAgentLiveDamage(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
 
-  let boss = '';
-  try { boss = (new URL(req.url, 'http://x').searchParams.get('boss') || '').trim(); }
-  catch { /* */ }
+  let boss = '', fightStartMs = NaN;
+  try {
+    const sp = new URL(req.url, 'http://x').searchParams;
+    boss = (sp.get('boss') || '').trim();
+    // The DPS/Tank Meter's History asks for ONE fight by its start (agent 3.7.67+). Without it,
+    // the second of two back-to-back same-name kills answered for the first one too (the guild
+    // lead, 2026-10-02: "This fight was backtoback with the same name").
+    fightStartMs = Date.parse(sp.get('fight_start') || '');
+  } catch { /* */ }
   if (!boss) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ players: [], note: 'no boss' }));
@@ -10690,7 +13850,8 @@ async function _handleAgentLiveDamage(req, res) {
   // Memo per boss — a raid of ~20 agents polls this on the same fight, and the
   // query is identical for all of them. Same idiom as the extended-target
   // bundle's 1.5s memo; without it this is 20x the reads for one answer.
-  const key = boss.toLowerCase();
+  const oneFight = Number.isFinite(fightStartMs);
+  const key = boss.toLowerCase() + (oneFight ? '|' + fightStartMs : '');
   const now = Date.now();
   globalThis._liveDmgCache = globalThis._liveDmgCache || new Map();
   const hit = globalThis._liveDmgCache.get(key);
@@ -10704,13 +13865,21 @@ async function _handleAgentLiveDamage(req, res) {
   // enough that the PREVIOUS pull of the same boss cannot bleed in. Repeat
   // pulls inside that window are the known limitation (see the design doc's
   // encounter-binding section) and are why `oldest_sample_age_sec` is returned.
-  const since = new Date(now - 3 * 60 * 1000).toISOString();
+  // One fight: every uploader's snapshots whose own fight began within 20 s of it (each client
+  // starts its fight on its first line, so the starts differ by a few seconds, never by a whole
+  // pull), however long ago that was.
+  const since = new Date(oneFight ? fightStartMs - 20_000 : now - 3 * 60 * 1000).toISOString();
+  const fightClause = oneFight
+    ? `&started_at=gte.${encodeURIComponent(new Date(fightStartMs - 20_000).toISOString())}`
+      + `&started_at=lte.${encodeURIComponent(new Date(fightStartMs + 20_000).toISOString())}`
+    : '';
   let rows = [];
   try {
     rows = await supabase.select('encounter_threat_snapshots',
       `guild_id=eq.${encodeURIComponent(guildId)}`
       + `&boss_name=eq.${encodeURIComponent(boss)}`
       + `&snapshot_at=gte.${encodeURIComponent(since)}`
+      + fightClause
       + `&select=uploader,snapshot_at,per_player&order=snapshot_at.desc&limit=400`) || [];
   } catch (err) {
     console.warn('[live-damage] select failed:', err?.message);
@@ -10727,15 +13896,15 @@ async function _handleAgentLiveDamage(req, res) {
 
   const best = new Map();       // character -> best OBSERVER figure
   // A player's OWN client is authoritative for their own damage and outranks
-  // every observer (Hitya, 2026-08-13). Only that log carries their damage
+  // every observer (the guild lead, 2026-08-13). Only that log carries their damage
   // spells, DoT ticks, procs and pets in full, so an observer can never see
   // more of it — and when an observer reports MORE, that is over-counting, not
   // extra detail.
   //
-  // Measured on Diabo Xi Xin Thall: five independent clients agreed Wabumkin
+  // Measured on Diabo Xi Xin Thall: five independent clients agreed a member
   // did 96,241 while his own client said 153,115 — the gap is his damage
-  // spells, and HIS number is the right one. In the other direction Hitya's own
-  // log said 57,848 while Hawkner read 61,085 and Squeekie 70,559 for the same
+  // spells, and THEIR number is the right one. In the other direction the guild lead's own
+  // log said 57,848 while two observers read 61,085 and 70,559 for the same
   // player, which is observers counting hits that did not happen.
   //
   // The max-across-everyone rule got the first case right by accident and the
@@ -10752,7 +13921,7 @@ async function _handleAgentLiveDamage(req, res) {
     const pp = r.per_player && typeof r.per_player === 'object' ? r.per_player : {};
     // Roll up THIS uploader's view first: a player's total from one client is
     // their own row PLUS every pet row that client attributes to them. Your
-    // pet's damage is your damage (Hitya, 2026-08-13) — the old code took
+    // pet's damage is your damage (the guild lead, 2026-08-13) — the old code took
     // max(owner, pet) and silently dropped whichever was smaller, so a pet
     // class was under-reported by however much its pet contributed.
     //
@@ -10773,8 +13942,8 @@ async function _handleAgentLiveDamage(req, res) {
     // ⚠ 3.1.43 gave a player's OWN client the last word, on the reasoning that
     // only their log carries their damage spells in full so an observer can
     // never see MORE. EQLogParser ground truth on Va Xi Aten Ha Ra disproved it:
-    // Hitya's own client reported 118,192 against a true 59,504 — 1.99x — and
-    // Wabumkin's own 153,115 against a true 58,355. Their own clients were not
+    // The guild lead's own client reported 118,192 against a true 59,504 — 1.99x — and
+    // A member's own 153,115 against a true 58,355. Their own clients were not
     // more complete, they were double-counting, so "self wins" promoted the
     // error instead of correcting it.
     for (const [who, dmg] of perUploader) {
@@ -10811,6 +13980,106 @@ async function _handleAgentLiveDamage(req, res) {
   return res.end(body);
 }
 
+// GET /api/agent/my-parses?w=<1d|7d|30d|90d|exp|life>&scope=<bosses|all>&char=<name>&zone=<id>&q=<mob text>
+//
+// The signed-in raider's own parses over a window, for Mimic's My parses chart (a member asked
+// 2026-10-06 for a graph of their parses over a variable window; the guild lead picked this design).
+// One call to the my_parse_series_v2() function (supabase/migrations/20261007000000_my_parse_series_v2.sql:
+// the first version plus the zone and mob filters the guild lead asked for 2026-10-06),
+// the same one wolfpack.quest/me/parses reads, so the two always agree. utils/myParses.js has the query
+// rules and the cache; this is the route.
+// WHO: the person is the Mimic session's own discord_id and nothing in the query string can change that.
+// The function is service_role only for the same reason.
+// A read route, not an ingest stream: no shed flag and no admission budget. A raid's worth of raiders
+// opening the chart at once costs one function call each per five minutes (the cache below), and a
+// failed read is a 502 that is never cached.
+const myParses = require('./utils/myParses');
+const _myParsesCache = myParses.createCache();
+async function _handleAgentMyParses(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const discordId = String(identity.discord_id || '');
+  if (!discordId) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'no linked account' }));
+  }
+
+  const q = myParses.parseQuery(req.url);
+  const key = myParses.cacheKey(discordId, q);
+  let body = _myParsesCache.get(key);
+  if (!body) {
+    const out = await myParses.fetchSeries(require('./utils/supabase'), discordId, q);
+    if (!out) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'unavailable' }));
+    }
+    body = JSON.stringify(out);
+    _myParsesCache.set(key, body);
+  }
+
+  const gzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
+  res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'Vary': 'Accept-Encoding' },
+    gzip ? { 'Content-Encoding': 'gzip' } : {}));
+  return res.end(gzip ? require('zlib').gzipSync(body) : body);
+}
+
+// The live raid split (§124, utils/raidGroups.js): which raid each uploader and raider is in when
+// two or more run at once. The buff queue computes it from the roster it already reads and leaves
+// it here; other handlers read it here, and fetch only the last RAID_LIVE_MS of uploads (the only
+// ones that can name a raid) when it has gone stale. A failed read means "one raid": no scoping.
+let _raidSplitCache = { at: 0, split: null };
+let _raidSplitSig = '';
+function _keepRaidSplit(split) {
+  _raidSplitCache = { at: Date.now(), split };
+  // Taking note (the guild lead, 2026-10-01): one log line each time the set of raids changes.
+  const sig = split.multi ? split.raids.map(r => r.key).sort().join('|') : '';
+  if (sig === _raidSplitSig) return split;
+  _raidSplitSig = sig;
+  console.log(sig
+    ? `[raids] ${split.raids.length} raids at once: ` + split.raids.map(r => `${r.leader} (${r.size})`).join(', ')
+    : '[raids] one raid again');
+  return split;
+}
+async function _liveRaidSplit(supabase, guildId) {
+  if (_raidSplitCache.split && Date.now() - _raidSplitCache.at < 5000) return _raidSplitCache.split;
+  const since = new Date(Date.now() - _raidGroups.RAID_LIVE_MS).toISOString();
+  // Paged: one row per (uploader, name), ~1,000 at peak. A truncated read drops whole uploaders,
+  // and the split reads "one raid" when it cannot see the second.
+  const rows = await supabase.selectAllPaged('raid_roster',
+    `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(since)}` +
+    `&select=name,rank,uploaded_by_discord_id,captured_at`, 'uploaded_by_discord_id.asc,name').catch(() => null);
+  if (!rows) return _raidGroups.groupRaids([]);
+  return _keepRaidSplit(_raidGroups.groupRaids(rows));
+}
+
+// The declared main assist's target to the top of Extended Target, marked `ma_target`. Rows are
+// already sorted; this moves the matching NPC rows (by spawn id when the MA's Mimic sends one) to the
+// front and keeps everything else in order. → the `main_assist` payload field, or null.
+function _mainAssistPin(targets, ma, liveRows) {
+  if (!ma) return null;
+  const norm = (s) => String(s || '').replace(/^#/, '').replace(/_/g, ' ').trim().toLowerCase();
+  const row = (liveRows || []).find(r => r && r.character && r.character.toLowerCase() === ma.name.toLowerCase());
+  let target = null, targetId = null, source = null;
+  if (row && row.target_name && norm(row.target_name) !== ma.name.toLowerCase()) {
+    target = row.target_name; source = 'mimic';
+    targetId = Number.isFinite(Number(row.target_id)) && Number(row.target_id) > 0 ? Number(row.target_id) : null;
+  } else if (ma.called_target) { target = ma.called_target; source = 'called'; }
+  if (target) {
+    const want = norm(target);
+    const pinned = [], rest = [];
+    for (const t of targets) {
+      const hit = t.kind === 'npc' && norm(t.name) === want
+        && (targetId == null || t.spawn_id == null || Number(t.spawn_id) === targetId);
+      if (hit) { t.ma_target = true; pinned.push(t); } else rest.push(t);
+    }
+    if (pinned.length) targets.splice(0, targets.length, ...pinned, ...rest);
+  }
+  return {
+    name: ma.name, target, target_source: source,
+    declared_by: ma.by, declared_at: new Date(ma.declared_at).toISOString(),
+  };
+}
+
 // GET /api/agent/extended-target?character=<self>
 // Powers the Extended Target raid overlay. Aggregates every ONLINE raider's
 // current target (character_live_state.target_name, Zeal slot 6) into a list of
@@ -10822,7 +14091,7 @@ async function _handleAgentLiveDamage(req, res) {
 // look identical by NAME — but if raiders report DIFFERENT HP for the same
 // name, those are provably different mobs. We sub-cluster each name by HP (a
 // gap > EXT_HP_SPLIT_TOL splits a cluster) so multiple same-name mobs at
-// different health show as separate rows (Hitya: "track non-unique named
+// different health show as separate rows (The guild lead: "track non-unique named
 // NPCs as well if they have different health totals"). Clusters are still
 // asterisked — coincidentally-equal HP still merges, and debuffs can't be
 // pinned to one of several same-name mobs.
@@ -10851,7 +14120,7 @@ async function _handleAgentExtendedTarget(req, res) {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   // Officer knob overrides (see _overlayTuningMap) — numbers only, compiled
   // defaults when unset. Lets raid leadership move these mid-raid from
-  // /admin/overlays without waiting on a redeploy (Hitya 2026-07-06).
+  // /admin/overlays without waiting on a redeploy (the guild lead, 2026-07-06).
   const _tune = await _overlayTuningMap();
   const tn = (k, d) => { const v = _tune[k]; return (typeof v === 'number' && isFinite(v)) ? v : d; };
   const extOnlineMs      = tn('ext_online_sec', EXT_ONLINE_MS / 1000) * 1000;
@@ -10874,18 +14143,23 @@ async function _handleAgentExtendedTarget(req, res) {
     [liveRows, buffRows, rosterLocRows] = await Promise.all([
       supabase.select('character_live_state',
         `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(onlineSince)}` +
-        `&select=character,zone_name,self_hp_pct,self_hp_cur,self_hp_max,target_name,target_hp_pct,pet_name,pet_hp_pct,` +
+        `&select=character,zone_name,self_hp_pct,self_hp_cur,self_hp_max,target_name,target_hp_pct,target_id,pet_name,pet_hp_pct,` +
         `incoming_mob,incoming_mob_since,loc_x,loc_y,loc_z,observed_tanks,zeal_tags,updated_at`),
-      supabase.select('buff_casts',
-        `guild_id=eq.${encodeURIComponent(guildId)}&cast_at=gte.${encodeURIComponent(debuffSince)}` +
-        `&select=target,spell_name,dur_ticks,cast_at,observer,is_charm_spell&order=cast_at.desc&limit=600`),
+      // Every landing still inside its duration, newest first, paged. A 30-minute window holds up to
+      // ~4,250 buff_casts rows and `limit=600` kept the newest 600, i.e. the last few minutes, so
+      // debuffs landed earlier fell off the board; the function drops the rows the loop below skips
+      // as expired anyway (migration 20261004140200_cap_safe_reads.sql), leaving <= ~650.
+      supabase.selectAllPaged('rpc/recent_debuff_landings',
+        `p_guild_id=${encodeURIComponent(guildId)}&p_since=${encodeURIComponent(debuffSince)}`,
+        'cast_at.desc,id'),
       // #194: raid-wide position from the type-5 forward (beta agents). One
       // Mimic in the raid covers every member's loc; rows without loc_at are
       // pre-forwarding uploads and are skipped at use time. Best-effort — the
       // clustering works (with less coverage) when this returns nothing.
-      supabase.select('raid_roster',
+      // Paged: one row per (uploader, name), ~1,000 at peak.
+      supabase.selectAllPaged('raid_roster',
         `guild_id=eq.${encodeURIComponent(guildId)}&loc_at=gte.${encodeURIComponent(onlineSince)}` +
-        `&select=name,loc_x,loc_y,loc_z,heading,loc_at`).catch(() => []),
+        `&select=name,loc_x,loc_y,loc_z,heading,loc_at`, 'uploaded_by_discord_id.asc,name').catch(() => []),
     ]);
     globalThis._extBundleCache = { at: Date.now(), liveRows, buffRows, rosterLocRows };
     }
@@ -10906,13 +14180,20 @@ async function _handleAgentExtendedTarget(req, res) {
     // raider whose zone we can't resolve (null zone_name) rides along rather
     // than vanishing — never hide data on missing info. My-zone-unknown is
     // handled by scopeZone staying null above (→ every online raider).
-    const inScope = scopeZone ? live.filter(r => !r.zone_name || r.zone_name === scopeZone) : live;
+    const inZone = scopeZone ? live.filter(r => !r.zone_name || r.zone_name === scopeZone) : live;
+    // Two raids at once (§124): the other raid's raiders, and what they target, are not this raid's,
+    // even in the same zone. Raiders in no raid stay (fail open); one raid changes nothing.
+    const raidSplit = await _liveRaidSplit(supabase, guildId);
+    const myRaid = raidSplit.multi ? raidSplit.raidFor({ discordId: identity.discord_id, character: selfChar }) : null;
+    const inScope = myRaid
+      ? inZone.filter(r => { const theirs = raidSplit.raidForName(r.character); return !theirs || theirs === myRaid; })
+      : inZone;
 
     const raiderNames = new Set(inScope.map(r => r.character.toLowerCase()));
     const petNames = new Set(inScope.filter(r => r.pet_name).map(r => r.pet_name.toLowerCase()));
     // Durable guild roster — raiders who've dropped out of the 60s live-state
     // window are still PCs, not named NPCs. Without this they get misread as
-    // mobs and surface at full health (Hitya 2026-07-06: "too many PCs with
+    // mobs and surface at full health (the guild lead, 2026-07-06: "too many PCs with
     // full health on Extended Target"). 10-min cached, shared with chat safeguard.
     const knownPlayers = await _rosterNameSet();
 
@@ -10925,7 +14206,7 @@ async function _handleAgentExtendedTarget(req, res) {
       if (raiderNames.has(key)) return { kind: 'player', is_named: true, ambiguous: false };
       if (petNames.has(key))    return { kind: 'pet',    is_named: true, ambiguous: false };
       if (knownPlayers.has(key)) return { kind: 'player', is_named: true, ambiguous: false };
-      // Possessive pet — "Kravenn`s warder" / "Shavimo's pet": when the owner
+      // Possessive pet — "Wyldane`s warder" / "Irwyn's pet": when the owner
       // before the 's is a known raider, it's OUR pet (a real mob would never
       // be possessed by a player name), so treat it like a pet — off the bar
       // unless it's hurt, not a full-health "mob".
@@ -10957,6 +14238,10 @@ async function _handleAgentExtendedTarget(req, res) {
     // splits into multiple mobs we can't say WHICH, so it rides on all of them
     // (the ambiguous asterisk is the caveat).
     const debuffsByTarget = new Map();
+    // FB-39: every landing with its spawn id, for per-mob attribution at K≥2 (_extDebuffInstances).
+    // An id is a slot in its ZONE's table, so one from a Mimic in another zone is dropped.
+    const landingsByTarget = new Map();
+    const zoneOfChar = new Map(live.map(r => [r.character.toLowerCase(), r.zone_name || null]));
     for (const b of (buffRows || [])) {
       if (!b || !b.target || !b.spell_name) continue;
       if (_isJunkSpellName(b.spell_name)) continue;   // hide phantom "Kneel Test"
@@ -10964,6 +14249,10 @@ async function _handleAgentExtendedTarget(req, res) {
       const durSecs = (Number(b.dur_ticks) || 0) * 6;
       if (durSecs > 0 && (now - castMs) > durSecs * 1000) continue;   // expired
       const k = String(b.target).toLowerCase();
+      const obsZone = b.observer ? zoneOfChar.get(String(b.observer).toLowerCase()) : null;
+      const sid = (Number(b.target_id) > 0 && !(scopeZone && obsZone && obsZone !== scopeZone)) ? Number(b.target_id) : null;
+      if (!landingsByTarget.has(k)) landingsByTarget.set(k, []);
+      landingsByTarget.get(k).push({ spell: String(b.spell_name), castMs, durSecs, observer: b.observer ? String(b.observer) : null, sid });
       if (!debuffsByTarget.has(k)) debuffsByTarget.set(k, new Map());
       const m = debuffsByTarget.get(k);
       const sk = String(b.spell_name).toLowerCase();
@@ -10989,13 +14278,14 @@ async function _handleAgentExtendedTarget(req, res) {
         remaining_secs: d.durSecs > 0 ? Math.max(0, Math.round(d.durSecs - (now - d.castMs) / 1000)) : null,
       })).slice(0, 12);
     };
-    // #194: same map, with observers retained — the attribution input at K≥2.
+    // #194: the attribution input at K≥2 — one entry per spell per mob, with observers and the
+    // spawn id when the Mimics that saw it agree on one (FB-39).
     const debuffEntriesFor = (key) => {
-      const m = debuffsByTarget.get(key); if (!m) return [];
-      return [...m.values()].map(d => ({
+      return _extDebuffInstances(landingsByTarget.get(key)).map(d => ({
         name: d.name,
         remaining_secs: d.durSecs > 0 ? Math.max(0, Math.round(d.durSecs - (now - d.castMs) / 1000)) : null,
         observers: d.observers || [],
+        spawn_id: d.spawn_id,
       })).slice(0, 24);
     };
 
@@ -11109,7 +14399,25 @@ async function _handleAgentExtendedTarget(req, res) {
       const key = tn.toLowerCase();
       let g = byName.get(key);
       if (!g) { g = { name: tn, key, obs: [] }; byName.set(key, g); }
-      g.obs.push({ raider: r.character, hp: (r.target_hp_pct != null ? Number(r.target_hp_pct) : null) });
+      g.obs.push({
+        raider: r.character,
+        hp: (r.target_hp_pct != null ? Number(r.target_hp_pct) : null),
+        // Zeal spawn id (PR #229) — null on every released Zeal, so a mixed
+        // fleet is the steady state and this must never be required.
+        //
+        // ⚠ SCOPED BY ZONE, deliberately. inScope spans every zone when the
+        // same-zone filter is off, and even with it on it keeps null-zone
+        // rows — and an id is a slot in the ZONE's entity table, so slot 4425
+        // in Sebilis is an unrelated mob to slot 4425 in The Deep. An id whose
+        // reporter has no zone_name cannot be matched against another
+        // reporter's, so it is treated as absent rather than trusted.
+        //
+        // ⚠ 0 is "no target", not spawn zero (same rule as _idScopeKeep): a 0
+        // kept here became the id `<zone>|0`, a phantom instance that split a
+        // real mob into itself plus a "#0" row.
+        id: (Number(r.target_id) > 0 && r.zone_name) ? `${r.zone_name}|${r.target_id}` : null,
+        spawn_id: Number(r.target_id) > 0 ? Number(r.target_id) : null,
+      });
     }
     // #194: an engaged tank is a TARGETER whether or not they run Mimic — a
     // tag-channel claim ("tag <mob>") or an observed melee connect puts them on
@@ -11133,7 +14441,7 @@ async function _handleAgentExtendedTarget(req, res) {
       // Only MOBS earn a target row. Allies (players/pets) are surfaced solely
       // by the hurt-tracking pass below (<85% HP for 10s) — a healer targeting a
       // tank, or the whole raid sitting at Zeal's 99.9%-"full", was flooding the
-      // bar with a corpse-length roster (Hitya 2026-07-06: "way too many
+      // bar with a corpse-length roster (the guild lead, 2026-07-06: "way too many
       // people ... we don't need corpses"). "<100%" was the wrong cut: Zeal
       // reports full HP as 99.9, so it matched everyone.
       if (cls.kind !== 'npc') continue;
@@ -11147,9 +14455,18 @@ async function _handleAgentExtendedTarget(req, res) {
       // spawns. Players, pets, and uniquely-named NPCs are one entity —
       // clustering those just turns reporter HP disagreement into fake
       // duplicate rows, so collapse straight to a single median-HP row.
-      const clusters = cls.ambiguous
-        ? clusterByHp(g.obs)
-        : [{ raiders: g.obs.map(o => o.raider), hp: median(g.obs.filter(o => o.hp != null).map(o => o.hp)) }];
+      // Spawn ids first: when they prove ≥2 instances they REPLACE the HP
+      // guess for this name rather than being reconciled with it, because a
+      // guess adds nothing to a fact. Everything below — position clustering,
+      // tag welding, per-instance debuff attribution — runs on the result
+      // unchanged, so an id-split name gets the same treatment a
+      // heuristic-split one always did.
+      const idInstances = _extIdInstances(g.obs);
+      const clusters = idInstances.length >= 2
+        ? idInstances
+        : (cls.ambiguous
+            ? clusterByHp(g.obs)
+            : [{ raiders: g.obs.map(o => o.raider), hp: median(g.obs.filter(o => o.hp != null).map(o => o.hp)) }]);
       // #194: position instances for this name. Runs for CAPITALIZED npc names
       // too — Vex Thal-style adds share a capitalized name with no article
       // ("Thall Va Xakra" ×2), which the classifier calls unique and collapses.
@@ -11184,7 +14501,7 @@ async function _handleAgentExtendedTarget(req, res) {
           }
         } catch { /* telemetry only */ }
       }
-      const rows = _extBindInstances(clusters, posInstances);
+      let rows = _extBindInstances(clusters, posInstances);
       // A pos-split row inherits the merged cluster's median — recompute from
       // the raiders that actually landed on it so the two rows don't show one HP.
       const hpOfRaider = new Map(g.obs.filter(o => o.hp != null).map(o => [String(o.raider).toLowerCase(), o.hp]));
@@ -11193,8 +14510,13 @@ async function _handleAgentExtendedTarget(req, res) {
         const hps = c.raiders.map(r2 => hpOfRaider.get(String(r2).toLowerCase())).filter(h => h != null);
         if (hps.length) c.hp = median(hps);
       }
+      // Ids overrule the position/HP guesses in the MERGE direction too.
+      const idOfRaider = new Map(g.obs.filter(o => o.id != null).map(o => [String(o.raider).toLowerCase(), o.id]));
+      rows = _extMergeByAgreedId(rows, idOfRaider, hpOfRaider);
       const multi = rows.length > 1;         // proven duplicate same-name mobs
       const debuffs = debuffsFor(g.key);
+      const spawnOfRaider = new Map(g.obs.filter(o => o.spawn_id != null)
+        .map(o => [String(o.raider).toLowerCase(), o.spawn_id]));
       if (multi) {
         // Per-instance debuff attribution — the actual #194 payoff. Sets
         // c.debuffs per row; unplaceable landings appear on every row with
@@ -11205,40 +14527,22 @@ async function _handleAgentExtendedTarget(req, res) {
           if (t2 === g.key) observerInfo.set(r2.character.toLowerCase(),
             { targetsName: true, targetHp: r2.target_hp_pct != null ? Number(r2.target_hp_pct) : null });
         }
-        _extAttributeDebuffs(debuffEntriesFor(g.key), rows, observerInfo, extHpSplitTol);
+        _extAttributeDebuffs(debuffEntriesFor(g.key), rows, observerInfo, extHpSplitTol, spawnOfRaider);
       }
       // ── #194 Zeal tags: label rows, pool what can't be welded ────────────
       // A tag welds to a row when its text mentions that row's tank by name
-      // ("Naggato-Tanking" → the row tanked by Naggato). Unweldable tags pool
+      // ("Drayvon-Tanking" → the row tanked by a member). Unweldable tags pool
       // on the group's first row — shown as "tags on this name", never pinned
       // to a guessed row. Tags do not change K in v1 (an unwelded tag cannot
       // say WHICH HP band is its mob); the shadow log records K_tags for the
       // soak that decides whether spawn-id counting should raise K next.
       //
-      // Deliberate deviation from the strict K=1 byte-law (Hitya 2026-08-05,
+      // Deliberate deviation from the strict K=1 byte-law (the guild lead, 2026-08-05,
       // "if we could add that into our target info/extended target display
       // that would be fabulous"): a tagged SINGLE-instance mob does show its
       // tag — the assist-arrow-on-the-boss case is mostly a K=1 case. Additive
       // fields only; with no tags present the K=1 payload is byte-identical.
-      const nameTags = tagsByName.get(g.key);
-      let tagPool = [];
-      if (nameTags && nameTags.size) {
-        const unwelded = [];
-        const sorted = [...nameTags.values()].sort((a, b) => a.spawn_id - b.spawn_id);
-        for (const tg of sorted) {
-          const textLower = String(tg.text || '').toLowerCase();
-          const target = rows.find(c => !c._tag && (c.tanks || []).some(t2 =>
-            textLower.includes(String(t2).toLowerCase())));
-          if (target) target._tag = tg;
-          else unwelded.push(tg);
-        }
-        // A single tag on a single row is unambiguous — weld it even with no
-        // text match (there is nothing else it could be).
-        if (unwelded.length === 1 && rows.length === 1 && !rows[0]._tag) {
-          rows[0]._tag = unwelded.pop();
-        }
-        tagPool = unwelded.map(tg => ({ spawn_id: tg.spawn_id, text: tg.text, shape: tg.shape }));
-      }
+      const tagPool = _extPlaceTags(rows, tagsByName.get(g.key), spawnOfRaider);
       rows.forEach((c, idx) => {
         targets.push({
           name: g.name, kind: cls.kind,
@@ -11246,13 +14550,26 @@ async function _handleAgentExtendedTarget(req, res) {
           hp_pct: c.hp,
           is_named: cls.is_named,
           ambiguous: cls.ambiguous || multi,
+          // ⚠ `ambiguous` stays TRUE on an id-proven split, even though the
+          // split is a fact rather than a guess. It is not only the overlay's
+          // asterisk — it also gates the restore cache below, which is keyed by
+          // NAME, so two proven instances of one name would overwrite each
+          // other there. The overlay reads `id_proven` for the asterisk
+          // instead, which separates "we know which mob this is" from "this row
+          // is safe to cache under its name".
+          ...(c.id_proven ? { id_proven: true } : {}),
           same_name_count: rows.length,
           dup_index: multi ? idx + 1 : null,
           debuffs: multi ? (c.debuffs || []) : debuffs,
           // Tank labels only at K≥2 — the K=1 payload stays byte-identical
           // (the non-negotiable guarantee; fixture-enforced).
           ...(multi && c.tanks && c.tanks.length ? { tanks: c.tanks.slice(0, 4) } : {}),
-          ...(c._tag ? { tag_text: c._tag.text, tag_shape: c._tag.shape, spawn_id: c._tag.spawn_id } : {}),
+          // A tag wins over the pipe id for display because it also carries the
+          // operator's text and shape — they are the SAME field upstream
+          // (Entity::SpawnId), so they should agree, and a disagreement means
+          // the tag is stale rather than that either source is wrong.
+          ...(c._tag ? { tag_text: c._tag.text, tag_shape: c._tag.shape, spawn_id: c._tag.spawn_id }
+                     : (c.spawn_id != null ? { spawn_id: c.spawn_id } : {})),
           ...(idx === 0 && tagPool.length ? { tag_pool: tagPool.slice(0, 8) } : {}),
           hurt: false, hurt_secs: 0,
           zone: scopeZone || null,
@@ -11263,7 +14580,7 @@ async function _handleAgentExtendedTarget(req, res) {
     // Persist unique (non-ambiguous, non-duplicate) NPC rows this poll so a
     // brief targeting gap doesn't drop them off the board, then restore any
     // cached mob NOT seen this poll that's still within its grace window and
-    // was last known hurt — Hitya 2026-07-04: "keep non-targeted but
+    // was last known hurt — the guild lead 2026-07-04: "keep non-targeted but
     // previously targeted mobs that had less than 100% health."
     const scopeKeyPrefix = guildId + '|' + (scopeZone || '*') + '|';
     for (const t of targets) {
@@ -11283,7 +14600,7 @@ async function _handleAgentExtendedTarget(req, res) {
       if (now - cached.lastSeenMs > extStaleGraceMs) { _extMobLastSeen.delete(k); continue; }
       const key = k.slice(scopeKeyPrefix.length);
       if (byName.has(key)) continue;                       // already fresh this poll
-      // A TAGGED mob stays on the board at ANY health (Hitya 2026-08-10: "for
+      // A TAGGED mob stays on the board at ANY health (the guild lead, 2026-08-10: "for
       // these tagged mobs I think we should keep them on extended target so we
       // can still see their timers"). A tag is a deliberate mark someone put on
       // a specific spawn — "DON'T FRICKIN TOUCH THIS MOB", "<Tank> TANK" — and
@@ -11405,11 +14722,16 @@ async function _handleAgentExtendedTarget(req, res) {
       (b.raider_count - a.raider_count) ||
       ((b.hurt ? 1 : 0) - (a.hurt ? 1 : 0)) ||
       a.name.localeCompare(b.name));
+    // A main assist declared in raid chat pins their target above that (the guild lead, 2026-10-02;
+    // utils/mainAssist.js). Their target is what their own Mimic reports, else the mob their assist
+    // macro named in the last 90 s. With no declaration the most-targeted mob stays first.
+    const mainAssist = _mainAssistPin(targets, _mainAssistStore.get(myRaid ? myRaid.key : null, now), inScope);
 
+    const extOut = { targets, zone: scopeZone || null, online: inScope.length, off_tank_count: offTankCount };
+    if (mainAssist) extOut.main_assist = mainAssist;
+    if (raidSplit.multi) extOut.raids = raidSplit.raids.map(r => _raidGroups.raidSummary(r, r === myRaid));
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({
-      targets, zone: scopeZone || null, online: inScope.length, off_tank_count: offTankCount,
-    }));
+    return res.end(JSON.stringify(extOut));
   } catch (err) {
     console.error('[extended-target] fetch failed:', err && err.message);
     res.writeHead(500, { 'Content-Type': 'application/json' });
@@ -11451,12 +14773,13 @@ async function _spellFxMap() {
   const supabase = require('./utils/supabase');
   try {
     const m = new Map();
-    let from = 0;
-    const PAGE = 1000;
-    while (true) {
-      const rows = await supabase.select('eqemu_spells',
-        `select=name,raw,buffduration,good_effect&order=id.asc&offset=${from}&limit=${PAGE}`);
-      if (!Array.isArray(rows) || rows.length === 0) break;
+    {
+      // One paged read. A failed page throws to the catch below and keeps the
+      // previous map: this used to `break` on it and cache the spells loaded so
+      // far — the focus-haste limit checks and the cure detection read this map.
+      const rows = await supabase.selectAllPaged('eqemu_spells',
+        'select=name,raw,buffduration,good_effect', 'id');
+      if (!Array.isArray(rows)) throw new Error('eqemu_spells read failed');
       for (const sp of rows) {
         if (!sp || !sp.name || !sp.raw || !Array.isArray(sp.raw.eff)) continue;
         const fx = m.get(sp.name.toLowerCase()) || { res: {} };
@@ -11500,8 +14823,6 @@ async function _spellFxMap() {
         if (fx.cureBlindMaybe && fx.good === 1) fx.cureBlind = true;
         m.set(sp.name.toLowerCase(), fx);
       }
-      if (rows.length < PAGE) break;
-      from += PAGE;
     }
     _spellFxByName = m;
     _spellFxAt = Date.now();
@@ -11643,19 +14964,22 @@ async function _handleAgentRaidBuffQueue(req, res) {
     [liveRows, rosterRows, charRows, buffCastRows] = await Promise.all([
       supabase.select('character_live_state',
         `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(liveSince)}&select=character,buffs,buff_count,zone_name,self_hp_pct,loc_x,loc_y,loc_z,updated_at`),
-      supabase.select('raid_roster',
-        `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(rosterSince)}&select=name,class,group_num,rank,level,hp_pct,uploaded_by_discord_id,captured_at`),
+      // Paged: one row per (uploader, name) is ~1,000 rows at peak (21 uploaders x 48), which is
+      // PostgREST's silent per-response cap, so an unpaged read dropped raiders off the queue.
+      supabase.selectAllPaged('raid_roster',
+        `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(rosterSince)}&select=name,class,group_num,rank,level,hp_pct,uploaded_by_discord_id,captured_at`,
+        'uploaded_by_discord_id.asc,name'),
       supabase.select('characters',
         `guild_id=eq.${encodeURIComponent(guildId)}&class=not.is.null&select=name,class`),
-      // Buff-queue row limit. Default 2000 — cranked up 2026-06-21 after
-      // the Pro upgrade (post-egress-squeeze was 400; original was 3000).
-      // A 3h window with 30 active raiders peaks ~300-400 *distinct*
-      // rows but with cast repetition the raw count climbs higher; 2000
-      // gives a full history for the buff queue's prioritization logic.
-      // Configurable via BUFF_QUEUE_POLL_LIMIT.
-      supabase.select('buff_casts',
-        `guild_id=eq.${encodeURIComponent(guildId)}&cast_at=gte.${encodeURIComponent(buffCastsSince)}` +
-        `&select=target,spell_name,dur_ticks,cast_at&order=cast_at.desc&limit=${parseInt(process.env.BUFF_QUEUE_POLL_LIMIT, 10) || 2000}`),
+      // The newest still-running row per (target, spell) — NOT the newest N rows. A busy 3h window
+      // holds 7-15k buff_casts rows but only ~350 distinct running (target, spell) pairs; a
+      // `limit=2000` read was really 1,000, i.e. the last ~4 minutes of the raid, so an Aegolism cast
+      // an hour ago read as missing (2026-10-04 audit). The function drops expired rows itself, the
+      // same test the loop below applies (migration 20261004140200_cap_safe_reads.sql). Paged, so a
+      // raid big enough to pass 1,000 pairs is still read whole.
+      supabase.selectAllPaged('rpc/latest_buff_landings',
+        `p_guild_id=${encodeURIComponent(guildId)}&p_since=${encodeURIComponent(buffCastsSince)}`,
+        'target.asc,spell_name'),
     ]);
     globalThis._rbqBundleCache = { at: Date.now(), liveRows, rosterRows, charRows, buffCastRows };
     }
@@ -11700,12 +15024,19 @@ async function _handleAgentRaidBuffQueue(req, res) {
         scopedUploaders = uploaders.filter(u => find(u) === c);
       }
     }
+    // Two raids at once (§124): one raider moving across joins the clusters above into one, so scope
+    // by the raid the requester's latest upload names instead, keeping its members only. One raid
+    // (or none) leaves the clusters exactly as they were.
+    const raidSplit = _keepRaidSplit(_raidGroups.groupRaids(rosterRows));
+    const myRaid = raidSplit.multi ? raidSplit.raidFor({ discordId: identity.discord_id, character: bufferCharacter }) : null;
+    if (myRaid) scopedUploaders = null;
     const rosterByName = new Map();
     const hpByName = new Map();   // member → freshest row that actually has hp_pct
     for (const [up, rows] of snapsByUploader) {
       if (scopedUploaders && !scopedUploaders.includes(up)) continue;
       for (const r of rows) {
         const k = r.name.toLowerCase();
+        if (myRaid && !myRaid.members.has(k)) continue;
         const prev = rosterByName.get(k);
         if (!prev || String(r.captured_at || '') > String(prev.captured_at || '')) rosterByName.set(k, r);
         if (r.hp_pct != null) {
@@ -12007,16 +15338,10 @@ async function _handleAgentRaidBuffQueue(req, res) {
       // raid-wide information regardless of who can fix it.
       if (bardGroupScope != null && rr && rr.group_num !== bardGroupScope) continue;
       const expected = rb.ROLE_TARGETS[role] || [];
-      const byCategory = {};
-      for (const b of buffs) if (b && b.name) {
-        const cat = rb.categorizeBuff(b.name);
-        if (cat) (byCategory[cat] = byCategory[cat] || []).push(b.name);
-        // Secondary credits — VoG/Bihli carry ATK; POTG/POTC carry mana
-        // regen (a POTG caster isn't "missing Mana Regen" to an enchanter).
-        for (const sec of rb.secondaryCategoriesFor(b.name)) {
-          if (sec !== cat && !(byCategory[sec] = byCategory[sec] || []).includes(b.name)) byCategory[sec].push(b.name);
-        }
-      }
+      // Secondary credits — VoG/Bihli carry ATK; POTG/POTC carry mana regen (a
+      // POTG caster isn't "missing Mana Regen" to an enchanter). Shared with
+      // the group view's rb.missingLines so the two cannot drift.
+      const byCategory = rb.buffCategoriesPresent(buffs.map(b => b && b.name));
       const missing = provides.filter(cat => expected.includes(cat) && !(byCategory[cat] || []).length);
       const hpSlots = rb.analyzeHpSlots(buffs.map(b => b && b.name).filter(Boolean));
       // Only nag the buffer about HP slots THEIR class can actually fill —
@@ -12118,15 +15443,15 @@ async function _handleAgentRaidBuffQueue(req, res) {
       const sinceIso = new Date(Date.now() - 6 * 3600 * 1000).toISOString();
       const dmgByName = new Map();
       try {
-        // 20s memo (2026-07-07 review): a 5000-row join per shaman/beastlord
-        // poll, but tonight's damage totals move slowly.
+        // 20s memo (2026-07-07 review): tonight's damage totals move slowly.
+        // Summed in the database, one row per character: the 6h join is 2-3k rows on a raid night and
+        // the `limit=5000` read of it was really PostgREST's 1,000, so half the raiders (54 of 105 in a
+        // measured 6h window, 2026-10-04) had no damage and sorted to the bottom of the queue.
         let dmg;
         if (globalThis._burstDmgCache && Date.now() - globalThis._burstDmgCache.at < 20_000) {
           dmg = globalThis._burstDmgCache.dmg;
         } else {
-          dmg = await supabase.select('encounter_players',
-          `encounters.guild_id=eq.${encodeURIComponent(guildId)}&encounters.started_at=gte.${encodeURIComponent(sinceIso)}` +
-          `&select=character_name,total_damage,encounters!inner(guild_id,started_at)&limit=5000`);
+          dmg = await supabase.rpc('encounter_damage_by_character', { p_guild_id: guildId, p_since: sinceIso });
           globalThis._burstDmgCache = { at: Date.now(), dmg };
         }
         for (const r of (dmg || [])) {
@@ -12154,7 +15479,7 @@ async function _handleAgentRaidBuffQueue(req, res) {
         const buffs = buffsFor(live, inferred);
         const isInferred = !live && (inferred && inferred.length > 0);
         // Already carrying the burst buff: KEEP the row, with time remaining
-        // (Hitya 2026-08-19, mid-raid: "should have timers left on feral
+        // (the guild lead, 2026-08-19, mid-raid: "should have timers left on feral
         // avatar targets"). Silently dropping the target meant the shaman/BL
         // never saw the recast coming — carried rows now list after the
         // needs-it rows, soonest-to-expire first, so the next recast is
@@ -12215,6 +15540,10 @@ async function _handleAgentRaidBuffQueue(req, res) {
     // mirrors /raid's severity intent.
     const mgbTrained = await _mgbTrainedSet(supabase, guildId);
     const rosterOut = [];
+    // One row per scoped raider for the `groups` view — built here, before any
+    // cap, because buffQueue only lists what the buffer's class can fix (and is
+    // cut to 40) while the group view needs every raider's gaps.
+    const groupRows = [];
     for (const [k, rr] of rosterByName) {
       const live = liveByName.get(k);
       const inferred = inferredBuffsByName.get(k) || null;
@@ -12224,6 +15553,13 @@ async function _handleAgentRaidBuffQueue(req, res) {
       const hpSlots = rb.analyzeHpSlots(buffs.map(b => b && b.name).filter(Boolean));
       const missingHp = rb.HP_SLOTS.filter(sl => !hpSlots[sl]).length;
       const noSignal = !live && !(inferred && inferred.length);
+      // `characters.class` can read "Unknown"; the Zeal roster row then knows better.
+      const gCls = (cls && !/^unknown$/i.test(cls)) ? cls : (rr.class || cls || null);
+      groupRows.push({
+        name: rr.name, class: gCls, level: rr.level, group: rr.group_num,
+        inferred: !live && !!(inferred && inferred.length), noSignal,
+        missing: noSignal ? [] : rb.missingLines(buffs.map(b => b && b.name), rb.classToRole(gCls)),
+      });
       let tier = 'unknown';
       if (!noSignal) {
         const totalBuffs = buffs.filter(b => b && b.name).length;
@@ -12273,7 +15609,17 @@ async function _handleAgentRaidBuffQueue(req, res) {
       // empty-state hint mentions groups.
       group_mode:   groupMode,
     };
+    // Buffs by GROUP (the guild lead, 2026-10-04): raid mode only — group mode has no
+    // roster, so no group numbers. Additive; older clients ignore the fields.
+    // self_group = the requester's own group (null if ungrouped / not on the roster), so the
+    // overlay can list the buffer's group first.
+    if (!groupMode) {
+      const buffGroups = require('./utils/buffGroups');
+      out.groups = buffGroups.buildBuffGroups(groupRows);
+      out.self_group = buffGroups.groupOf(out.groups, bufferCharacter);
+    }
     if (burstSpec) { out[burstSpec.key] = burstQueue; out.burst_label = burstSpec.label; }
+    if (raidSplit.multi) out.raids = raidSplit.raids.map(r => _raidGroups.raidSummary(r, r === myRaid));
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify(out));
   } catch (err) {
@@ -12303,7 +15649,7 @@ function _castingOnTarget(name) {
     let effSecs = (isStubDefault && catSecs > 0) ? catSecs : c.cast_secs;
     // Focus spell haste from the caster's Quarmy gear (worn Enhancement
     // Haste etc.). The agent relays the CATALOG cast time — it doesn't know
-    // the caster's gear — so Utoh's Khura's Focusing (26s catalog) ran ~7s
+    // the caster's gear — so a member's Khura's Focusing (26s catalog) ran ~7s
     // past the real 18.2s cast (30% Enhancement Haste III). Apply the best
     // applicable focus whenever the value we're about to use IS the catalog
     // number (agent stub or catalog match); if a future agent ships a
@@ -12351,15 +15697,31 @@ function _focusHastePctFor(caster, spell, baseCastSecs) {
   }
   return best;
 }
+let _focusHasteInflight = false;
 function _refreshFocusHaste() {
   _focusHasteAt = _focusHasteAt || Date.now();   // guard tight error loops
   const supabase = require('./utils/supabase');
   if (!supabase.isEnabled()) return;
-  (async () => {
+  // The read is several requests now, and every cast event asks while the cache
+  // is stale — one refresh at a time.
+  if (_focusHasteInflight) return;
+  _focusHasteInflight = true;
+  // A failed read keeps the last good map (an empty one if there never was one)
+  // and retries in a minute — it must not read as "nobody wears a focus".
+  const backoff = () => {
+    _focusHasteByChar = _focusHasteByChar || new Map();
+    _focusHasteAt = Date.now() - _FOCUS_HASTE_TTL_MS + 60_000;
+  };
+  return (async () => {
     const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
-    const gear = await supabase.select('character_gear',
-      `guild_id=eq.${encodeURIComponent(guildId)}&loc=eq.equipped&select=character,item_id&limit=10000`);
-    if (!Array.isArray(gear) || gear.length === 0) { _focusHasteByChar = new Map(); _focusHasteAt = Date.now(); return; }
+    // ⚠ Paged: 3,327 equipped rows (223 characters) against PostgREST's silent
+    // 1,000-row cap. The old `limit=10000` read ~30% of them, in no order, so
+    // most raiders' spell-haste foci were unknown and their cast bars ran long.
+    // guild_id and loc are pinned, so (character, slot) is unique.
+    const gear = await supabase.selectAllPaged('character_gear',
+      `guild_id=eq.${encodeURIComponent(guildId)}&loc=eq.equipped&select=character,item_id`, 'character,slot');
+    if (!Array.isArray(gear)) { backoff(); return; }
+    if (gear.length === 0) { _focusHasteByChar = new Map(); _focusHasteAt = Date.now(); return; }
     const itemIds = [...new Set(gear.map(g => g && g.item_id).filter(Boolean))];
     // item → worn-effect spell id (chunked in() lists keep the URLs sane)
     const wornByItem = new Map();
@@ -12367,7 +15729,10 @@ function _refreshFocusHaste() {
       const chunk = itemIds.slice(i, i + 150);
       const rows = await supabase.select('eqemu_items',
         `id=in.(${chunk.join(',')})&select=id,worneffect`);
-      for (const r of rows || []) if (r && r.worneffect > 0) wornByItem.set(r.id, r.worneffect);
+      // A failed chunk throws to the catch below: a map built without it would
+      // be cached as the whole truth.
+      if (!Array.isArray(rows)) throw new Error('eqemu_items chunk read failed');
+      for (const r of rows) if (r && r.worneffect > 0) wornByItem.set(r.id, r.worneffect);
     }
     const spellIds = [...new Set(wornByItem.values())];
     const fociBySpell = new Map();   // spell id → focus decode (or null)
@@ -12375,7 +15740,8 @@ function _refreshFocusHaste() {
       const chunk = spellIds.slice(i, i + 150);
       const rows = await supabase.select('eqemu_spells',
         `id=in.(${chunk.join(',')})&select=id,raw`);
-      for (const sp of rows || []) {
+      if (!Array.isArray(rows)) throw new Error('eqemu_spells chunk read failed');
+      for (const sp of rows) {
         if (!sp || !sp.raw || !Array.isArray(sp.raw.eff)) continue;
         let pct = 0, minCastMs = 0, minDurTicks = 0, beneficialOnly = false;
         for (let j = 0; j < sp.raw.eff.length; j++) {
@@ -12401,7 +15767,8 @@ function _refreshFocusHaste() {
     _focusHasteByChar = m;
     _focusHasteAt = Date.now();
     console.log(`[focus-haste] refreshed: ${m.size} characters with worn spell-haste foci`);
-  })().catch(e => console.warn('[focus-haste] refresh failed:', e && e.message));
+  })().catch(e => { console.warn('[focus-haste] refresh failed:', e && e.message); backoff(); })
+    .finally(() => { _focusHasteInflight = false; });
 }
 
 // Bot-side catalog cache for "real" cast time in seconds, keyed by lowercase
@@ -12418,13 +15785,29 @@ function _catalogCastSecs(name) {
   }
   return _catalogCastSecsByName.get(String(name).toLowerCase()) || 0;
 }
+let _catalogCastSecsInflight = false;
 function _refreshCatalogCastSecs() {
   const supabase = require('./utils/supabase');
+  // Four paged requests now, and every cast asks while the cache is stale —
+  // one refresh at a time.
+  if (_catalogCastSecsInflight) return;
+  _catalogCastSecsInflight = true;
+  // A failed read keeps the last good map (an empty one if there never was one)
+  // and retries in a minute — an empty map cached for an hour reads as "no
+  // spell has a cast time".
+  const backoff = () => {
+    _catalogCastSecsByName = _catalogCastSecsByName || new Map();
+    _catalogCastSecsAt = Date.now() - _CATALOG_CAST_TTL_MS + 60_000;
+  };
   // fire-and-forget refresh; subsequent callers use whatever's loaded
-  supabase.select('eqemu_spells', 'select=name,cast_time&order=id.asc&limit=10000')
+  // ⚠ Paged: eqemu_spells holds 3,933 rows and PostgREST caps a response at
+  // 1,000, so `limit=10000` kept only the lowest 1,000 ids — 812 of the 2,331
+  // spells that have a cast time. Every higher-id spell fell back to the 4s stub.
+  const p = supabase.selectAllPaged('eqemu_spells', 'select=name,cast_time', 'id')
     .then(rows => {
+      if (!Array.isArray(rows)) { backoff(); return; }
       const m = new Map();
-      for (const r of rows || []) {
+      for (const r of rows) {
         if (!r || !r.name) continue;
         const ms = Number(r.cast_time) || 0;
         if (ms > 0) m.set(String(r.name).toLowerCase(), Math.round(ms / 100) / 10);
@@ -12432,9 +15815,249 @@ function _refreshCatalogCastSecs() {
       _catalogCastSecsByName = m;
       _catalogCastSecsAt = Date.now();
     })
-    .catch(e => console.warn('[catalog cast secs] refresh failed:', e && e.message));
+    .catch(e => { console.warn('[catalog cast secs] refresh failed:', e && e.message); backoff(); })
+    .finally(() => { _catalogCastSecsInflight = false; });
   // Mark touched so we don't refire on a tight error loop.
   _catalogCastSecsAt = _catalogCastSecsAt || Date.now();
+  return p;
+}
+
+// ── Target Info's F/Q/V tab: quest and vendor for one NPC ─────────────────────
+// (the guild lead, 2026-09-28: "a quest tab on target info that has the quest details for what
+// to say and copyable /say and /map items for who to talk to next", then "Make it F/Q/V for
+// Faction, Quests, and Vendor. Don't bother showing Vendor if its not a vendor mob".) Faction
+// already rides mob-info; this adds, by npc id: what to say (utils/questDialog.js over the
+// eqemu_quest_scripts mirror), hand-ins (scripted_npc_turnins), who to talk to next (named NPCs
+// the replies mention, with a placed spawn for /map Y X) and what it sells (merchantlist).
+// Static catalog data: cached 6 h per id.
+const _npcInteractCache = new Map();   // npcId → { at, body }
+const _NPC_INTERACT_TTL_MS = 6 * 60 * 60 * 1000;
+async function _npcInteract(npcId) {
+  const supabase = require('./utils/supabase');
+  const qd = require('./utils/questDialog');
+  const zoneId = Math.floor(npcId / 1000);
+  const [npcRows, zoneRows] = await Promise.all([
+    supabase.select('eqemu_npc_types', `id=eq.${npcId}&select=id,name,merchant_id&limit=1`),
+    supabase.select('eqemu_zone', `zone_id=eq.${zoneId}&select=short_name,long_name&limit=1`),
+  ]);
+  const npc = Array.isArray(npcRows) ? npcRows[0] : null;
+  if (!npc) return null;
+  const zone = Array.isArray(zoneRows) ? zoneRows[0] : null;
+  const display = qd.displayName(npc.name);
+
+  // The script: the exact file first (zone folder + catalog name), else by name in the zone.
+  let script = null;
+  if (zone) {
+    const s = await supabase.select('eqemu_quest_scripts',
+      `path=eq.${encodeURIComponent(qd.scriptPath(zone.short_name, npc.name))}&select=path,body&limit=1`).catch(() => []);
+    script = (Array.isArray(s) && s[0]) || null;
+    if (!script) {
+      const s2 = await supabase.select('eqemu_quest_scripts',
+        `zone_short=eq.${encodeURIComponent(zone.short_name)}&npc_name=ilike.${encodeURIComponent(display)}&is_encounter=eq.false&select=path,body&limit=1`).catch(() => []);
+      script = (Array.isArray(s2) && s2[0]) || null;
+    }
+  }
+  const say = script ? qd.parseDialog(script.body) : [];
+  const trade = script ? qd.tradeReplies(script.body) : [];
+  const tradeBr = script ? qd.tradeBranches(script.body) : [];
+
+  const turnRows = await supabase.select('scripted_npc_turnins',
+    `npc_id=eq.${npcId}&is_duplicate=eq.false&select=inputs,outputs,cash,exp_award,faction_changes,random_outputs,raw_snippet&limit=20`).catch(() => []);
+  const vendorRows = npc.merchant_id
+    ? await supabase.select('eqemu_merchantlist', `merchantid=eq.${npc.merchant_id}&select=item,slot&order=slot.asc&limit=300`).catch(() => [])
+    : [];
+  // Each hand-in's effects (despawns, spawns, faction) come from its own branch of the script,
+  // matched on the items it takes; without a match, from the importer's snippet (800 chars, so a
+  // late depop can be cut off) and its faction list (Perl only).
+  const turnList = (Array.isArray(turnRows) ? turnRows : []).map((t) => {
+    const ids = (t.inputs || []).filter((x) => Number.isInteger(x?.item_id)).flatMap((x) => Array(x.qty || 1).fill(x.item_id)).sort((a, b) => a - b);
+    const br = tradeBr.find((b) => b.items.length === ids.length && [...b.items].sort((a, c) => a - c).every((v, i) => v === ids[i]));
+    const fx = br ? br.fx : qd.effects(t.raw_snippet);
+    if (!br && !fx.faction.length && Array.isArray(t.faction_changes)) {
+      fx.faction = t.faction_changes.filter((f) => Number(f?.delta)).map((f) => ({ id: Number(f.faction_id), delta: Number(f.delta) }));
+    }
+    const says = br ? br.replies : qd._replies(String(t.raw_snippet || ''));
+    // The table is ProjectEQ's (every era). A hand-in Quarm's own script lacks, or on an NPC Quarm
+    // has no script for, may not exist here; the overlay says so.
+    return { t, fx, says, br, unverified: !br };
+  });
+  // Hand-ins only Quarm has (its custom quests, the PoP changes) are in its script and not in
+  // ProjectEQ's table (the guild lead, 2026-09-29: "go out and get the missing script info").
+  // Items from check_turn_in (a repeat is a count), rewards from what the branch gives.
+  for (const b of tradeBr) {
+    if (turnList.some((x) => x.br === b)) continue;
+    const counts = new Map();
+    for (const id of b.items) counts.set(id, (counts.get(id) || 0) + 1);
+    turnList.push({
+      t: { inputs: [...counts].map(([item_id, qty]) => ({ item_id, qty })), outputs: b.fx.gives.map((item_id) => ({ item_id })), exp_award: null, random_outputs: b.fx.givesRandom },
+      fx: b.fx, says: b.replies, br: b, unverified: false, quarmOnly: true,
+    });
+  }
+  const itemIds = new Set(), fxNpcIds = new Set(), factionIds = new Set();
+  for (const { t, fx } of turnList) {
+    for (const x of [...(t.inputs || []), ...(t.outputs || [])]) if (Number.isInteger(x?.item_id)) itemIds.add(x.item_id);
+    for (const id of fx.gives || []) itemIds.add(id);
+  }
+  for (const fx of [...say.map((b) => b.fx), ...turnList.map((x) => x.fx)]) {
+    for (const id of [...fx.spawns, ...fx.depops]) fxNpcIds.add(id);
+    for (const f of fx.faction) factionIds.add(f.id);
+  }
+  for (const b of say) for (const id of [...b.fx.gives, ...b.needs]) itemIds.add(id);
+  for (const v of (Array.isArray(vendorRows) ? vendorRows : [])) if (Number.isInteger(v.item)) itemIds.add(v.item);
+  const [itemRows, fxNpcRows, factionRows] = await Promise.all([
+    itemIds.size ? supabase.select('eqemu_items', `id=in.(${[...itemIds].join(',')})&select=id,name,price&limit=1000`).catch(() => []) : [],
+    fxNpcIds.size ? supabase.select('eqemu_npc_types', `id=in.(${[...fxNpcIds].join(',')})&select=id,name&limit=200`).catch(() => []) : [],
+    factionIds.size ? supabase.select('eqemu_faction_list_full', `id=in.(${[...factionIds].join(',')})&select=id,name&limit=200`).catch(() => []) : [],
+  ]);
+  const items = new Map((Array.isArray(itemRows) ? itemRows : []).map((r) => [r.id, r]));
+  const npcNames = new Map((Array.isArray(fxNpcRows) ? fxNpcRows : []).map((r) => [r.id, qd.displayName(r.name)]));
+  const factionNames = new Map((Array.isArray(factionRows) ? factionRows : []).map((r) => [r.id, r.name]));
+  const itemRef = (id) => ({ id, name: items.get(id)?.name || `Item ${id}` });
+  // What a branch or hand-in does, named, for the Quest tab (the guild lead, 2026-09-29: warn on
+  // despawns, spawns and faction losses; "we should also track faction for these quests as well").
+  // Empty parts are left out so a plain NPC's payload stays small.
+  const fxOut = (fx) => {
+    const npcRef = (id) => ({ id, name: npcNames.get(id) || `NPC ${id}` });
+    const warn = {};
+    if (fx.depopSelf) warn.despawn = true;
+    if (fx.depops.length) warn.despawns = fx.depops.map(npcRef);
+    if (fx.spawns.length) warn.spawns = fx.spawns.map(npcRef);
+    if (fx.spawnOther) warn.spawn_other = true;
+    const faction = fx.faction.map((f) => ({ id: f.id, name: factionNames.get(f.id) || `Faction ${f.id}`, delta: f.delta }));
+    return { warn: Object.keys(warn).length ? warn : undefined, faction: faction.length ? faction : undefined };
+  };
+
+  // Who to talk to next: named NPCs (capitalised, not "a sarnak") that the replies mention.
+  // Full names anywhere; a bare surname ("Thiran") only in this zone ("Vicar Thiran").
+  const texts = [...say.flatMap((b) => b.replies.map((r) => r.text)), ...trade.map((r) => r.text)];
+  const joined = texts.join('\n');
+  const cands = qd.nameCandidates(texts).filter((c) => c.toLowerCase() !== display.toLowerCase());
+  const named = (n) => /^#*[A-Z]/.test(n);
+  const byName = new Map();   // display name → { id, name }
+  const pick = (row) => {
+    const dn = qd.displayName(row.name);
+    const prev = byName.get(dn);
+    const here = Math.floor(row.id / 1000) === zoneId;
+    if (!prev || (here && Math.floor(prev.id / 1000) !== zoneId)) byName.set(dn, row);
+  };
+  if (cands.length) {
+    // A bare word the replies only capitalise at a sentence start ("Some are not even aware…")
+    // is not looked up catalog-wide: there is an NPC called Some, in Grieg's End. It can still
+    // match this zone's NPCs by surname below.
+    const startOnly = qd.sentenceStartOnly(texts);
+    const wide = cands.filter((c) => c.includes(' ') || !startOnly.has(c.toLowerCase()));
+    // 60 names per request keeps each URL a few KB; a long flag NPC yields a few hundred.
+    const chunks = [];
+    for (let i = 0; i < Math.min(wide.length, 240); i += 60) chunks.push(wide.slice(i, i + 60));
+    const found = await Promise.all(chunks.map((ch) => {
+      const quoted = ch.flatMap((c) => { const u = c.replace(/ /g, '_'); return [u, '#' + u]; })
+        .map((n) => `"${n.replace(/"/g, '')}"`).join(',');
+      return supabase.select('eqemu_npc_types', `name=in.(${encodeURIComponent(quoted)})&select=id,name&limit=200`).catch(() => []);
+    }));
+    for (const r of found.flat()) if (r && named(r.name) && r.id !== npcId) pick(r);
+    const singles = new Set(cands.filter((c) => !c.includes(' ')).map((c) => c.toLowerCase()));
+    if (singles.size) {
+      const local = await supabase.select('eqemu_npc_types',
+        `id=gte.${zoneId * 1000}&id=lte.${zoneId * 1000 + 999}&select=id,name&limit=1000`).catch(() => []);
+      for (const r of (Array.isArray(local) ? local : [])) {
+        if (!named(r.name) || r.id === npcId) continue;
+        const last = qd.displayName(r.name).split(' ').pop().toLowerCase();
+        if (singles.has(last)) pick(r);
+      }
+    }
+  }
+  const mentionAt = (dn) => {
+    const i = joined.indexOf(dn);
+    return i >= 0 ? i : joined.indexOf(dn.split(' ').pop());
+  };
+  const nextNpcs = [...byName.entries()].sort((a, b) => mentionAt(a[0]) - mentionAt(b[0])).slice(0, 6);
+  const next = [];
+  if (nextNpcs.length) {
+    const ids = nextNpcs.map(([, r]) => r.id);
+    const ents = await supabase.select('eqemu_spawnentry', `npc_id=in.(${ids.join(',')})&select=npc_id,spawngroup_id&limit=500`).catch(() => []);
+    const groups = [...new Set((Array.isArray(ents) ? ents : []).map((e) => e.spawngroup_id))];
+    const pts = groups.length
+      ? await supabase.select('eqemu_spawn2', `spawngroup_id=in.(${groups.join(',')})&select=id,spawngroup_id,zone_short,x,y&order=id.asc&limit=500`).catch(() => [])
+      : [];
+    const zoneShorts = [...new Set((Array.isArray(pts) ? pts : []).map((p) => p.zone_short).filter(Boolean))];
+    const zRows = zoneShorts.length
+      ? await supabase.select('eqemu_zone', `short_name=in.(${zoneShorts.map(encodeURIComponent).join(',')})&select=short_name,long_name&limit=50`).catch(() => [])
+      : [];
+    const zoneLong = new Map((Array.isArray(zRows) ? zRows : []).map((z) => [z.short_name, z.long_name]));
+    for (const [dn, r] of nextNpcs) {
+      const g = new Set((ents || []).filter((e) => e.npc_id === r.id).map((e) => e.spawngroup_id));
+      const p = (pts || []).find((x) => g.has(x.spawngroup_id));
+      next.push({
+        id: r.id, name: dn,
+        zone_short: p ? p.zone_short : null, zone_long: p ? (zoneLong.get(p.zone_short) || p.zone_short) : null,
+        y: p ? Math.round(p.y) : null, x: p ? Math.round(p.x) : null,
+      });
+    }
+  }
+
+  const clip = (s) => (s.length > 600 ? s.slice(0, 597) + '…' : s);
+  return {
+    id: npcId, name: display, zone_short: zone ? zone.short_name : null, script: script ? script.path : null,
+    say: say.slice(0, 30).map(({ fx, needs, ...b }) => ({
+      ...b,
+      replies: b.replies.slice(0, 6).map((r) => ({ kind: r.kind, text: clip(r.text) })),
+      ...fxOut(fx),
+      gives: fx.gives.length ? fx.gives.map(itemRef) : undefined,
+      gives_random: fx.givesRandom || undefined,
+      needs: needs.length ? needs.map(itemRef) : undefined,
+    })),
+    trade: trade.slice(0, 4).map((r) => ({ kind: r.kind, text: clip(r.text) })),
+    // Outputs: the table's, plus what Quarm's own script hands over (SummonCursorItem, the exp in
+    // QuestReward) and a character flag when the branch sets one: Askr's bag and meld showed
+    // "nothing listed" though they are the Thunder flag steps (the guild lead, 2026-10-01). Hand-ins
+    // that are alternatives in one condition (any of three giant heads) and read the same are shown once.
+    turnins: (() => {
+      const shown = new Set();
+      return turnList.map(({ t, fx, says, br, unverified }) => {
+        const outIds = (t.outputs || []).filter((x) => Number.isInteger(x?.item_id)).map((x) => x.item_id);
+        for (const id of fx.gives || []) if (!outIds.includes(id)) outIds.push(id);
+        const outputs = outIds.map(itemRef);
+        if (br && br.flag) outputs.push({ id: null, name: 'a character flag' });
+        return {
+          inputs: (t.inputs || []).filter((x) => Number.isInteger(x?.item_id)).map((x) => ({ ...itemRef(x.item_id), qty: x.qty || 1 })),
+          outputs,
+          exp: t.exp_award || fx.exp || null,
+          random: !!t.random_outputs || fx.givesRandom || undefined,
+          ...fxOut(fx),
+          says: says.length ? says.slice(0, 4).map((r) => ({ kind: r.kind, text: clip(r.text) })) : undefined,
+          unverified: unverified || undefined,
+          _group: br ? br.group : null,
+        };
+      }).filter((t) => {
+        if (!t.inputs.length) return false;
+        if (t._group == null) return true;
+        const key = t._group + '|' + t.inputs.map((x) => x.qty + 'x' + x.name).join('+');
+        if (shown.has(key)) return false;
+        shown.add(key);
+        return true;
+      }).map(({ _group, ...t }) => t);
+    })(),
+    next,
+    vendor: (Array.isArray(vendorRows) ? vendorRows : []).filter((v) => items.has(v.item))
+      .map((v) => ({ id: v.item, name: items.get(v.item).name, price: items.get(v.item).price ?? null })),
+  };
+}
+
+async function _handleAgentNpcInteract(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  let npcId = NaN;
+  try { npcId = Number(new URL(req.url, 'http://x').searchParams.get('id')); } catch { /* */ }
+  if (!Number.isInteger(npcId) || npcId <= 0) { res.writeHead(400); return res.end(JSON.stringify({ error: 'id required' })); }
+  const hit = _npcInteractCache.get(npcId);
+  let body = hit && Date.now() - hit.at < _NPC_INTERACT_TTL_MS ? hit.body : undefined;
+  if (body === undefined) {
+    body = await _npcInteract(npcId);
+    if (_npcInteractCache.size > 1000) _npcInteractCache.clear();
+    _npcInteractCache.set(npcId, { at: body ? Date.now() : Date.now() - _NPC_INTERACT_TTL_MS + 10 * 60 * 1000, body });
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(body ? { ok: true, npc: body } : { ok: true, npc: null }));
 }
 
 async function _handleAgentMobInfo(req, res) {
@@ -12457,7 +16080,11 @@ async function _handleAgentMobInfo(req, res) {
   // same-name mob in another zone re-resolves instead of serving a stale row.
   const zoneMap = await _liveZoneMap();
   const reqZoneId = selfChar ? ((zoneMap.get(selfChar.toLowerCase()) || {}).zone_id ?? null) : null;
-  const cacheKey = norm + '|' + (reqZoneId != null ? reqZoneId : '*');
+  const reqGender = _parseGender(new URL(req.url, 'http://x').searchParams.get('gender'));
+  // Keyed on the CASE-KEPT name: keyed on `norm`, whichever of two same-name
+  // bodies was asked for first would be served for both for six hours.
+  const caseKey = _mobCaseKey(name);
+  const cacheKey = caseKey + '|' + (reqZoneId != null ? reqZoneId : '*') + (reqGender != null ? '|g' + reqGender : '');
 
   const cached = _mobInfoCache.get(cacheKey);
   if (cached && (Date.now() - cached.at) < (cached.ttl || _MOB_INFO_TTL_MS)) {
@@ -12467,6 +16094,22 @@ async function _handleAgentMobInfo(req, res) {
 
   const supabase = require('./utils/supabase');
   if (!supabase.isEnabled()) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, mob: null })); }
+  const mob = await _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGender });
+  if (_mobInfoCache.size > 1000) _mobInfoCache.clear();   // cap set-only growth (efficiency review rule 4)
+  // #141 zone-scoped key. A MISS is cached far shorter than a hit: the 6h TTL
+  // is right for catalog rows (they never change between weekly syncs) but
+  // catastrophic for nulls, because a single transient failure — a Supabase
+  // timeout, a lookup that lands mid-deploy — pinned "no catalog stats for this
+  // target" for six hours on a mob whose row exists and whose query works.
+  // A member hit it on Va_Xi_Aten_Ha_Ra (id 158440, 1.6M HP), 2026-08-06.
+  _mobInfoCache.set(cacheKey, { at: Date.now(), row: mob, ttl: mob ? _MOB_INFO_TTL_MS : _MOB_INFO_MISS_TTL_MS });
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, mob }));
+}
+
+// The lookup itself, lifted out of the handler unchanged so a zone pack
+// (/api/agent/mob-pack) builds every mob exactly the way a live lookup does.
+async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGender }) {
   let mob = null;
   try {
     // Case-insensitive exact match on the normalized (underscored) name.
@@ -12484,7 +16127,7 @@ async function _handleAgentMobInfo(req, res) {
     // Vius showed as L1/16k HP "Immune Melee + Immune Magic". 200 is a hard
     // ceiling over the catalog's largest real-name cluster (34 rows; only the
     // junk "_" names go higher) so the payload stays bounded.
-    const _nameSel = `select=id,name,class,level,maxlevel,hp,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,runspeed,npcspecialattks,special_abilities,raid_target,bodytype,npc_spells_id,see_invis,see_invis_undead,see_hide,see_improved_hide&limit=200`;
+    const _nameSel = `select=id,name,class,level,maxlevel,hp,mana,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,runspeed,npcspecialattks,special_abilities,raid_target,bodytype,npc_spells_id,see_invis,see_invis_undead,see_hide,see_improved_hide,race,gender&limit=200`;
     const rows = await supabase.select('eqemu_npc_types',
       `or=(name.ilike.${encPlain},name.ilike.${encHashed})&${_nameSel}`);
     // Pick-and-merge (docs/audit-mob-specials.md §"The fix"). The requester's
@@ -12492,8 +16135,28 @@ async function _handleAgentMobInfo(req, res) {
     // the full row set (an NPC id encodes its zone: id = zoneid*1000 + n) so a
     // zone that holds ONLY the placeholder body can fall through to the real
     // row instead of serving the un-killable one.
-    const picked = mobSpecials.pickAndMergeMobRows(rows, { zoneId: reqZoneId });
-    const r = picked.row;
+    // The ilike above is case-blind on purpose (it finds every body of the
+    // name); the case filter then keeps the ones that are actually THIS mob.
+    const picked = mobSpecials.pickAndMergeMobRows(_mobRowsForCase(rows, caseKey), { zoneId: reqZoneId });
+    let r = picked.row;
+    // Same name, different CLASS, told apart in game only by sex (the guild lead
+    // 2026-09-15, Plane of Hate's revenants). List every (class, sex) the
+    // candidates carry; when they disagree on class the overlay shows the
+    // pair rather than the winner's class as fact, and a `gender` hint on
+    // the request picks the exact body once the pipe can supply one.
+    const cands = Array.isArray(picked.candidates) && picked.candidates.length ? picked.candidates : (r ? [r] : []);
+    const classVariants = [];
+    for (const c of cands) {
+      const cls = _MOB_CLASS_NAMES[c.class] || null;
+      if (!cls) continue;
+      const g = _GENDER_NAMES[c.gender] ?? null;
+      if (!classVariants.some(v => v.class === cls && v.gender === g)) classVariants.push({ class: cls, gender: g, id: c.id ?? null });
+    }
+    const classAmbiguous = new Set(classVariants.map(v => v.class)).size > 1;
+    if (classAmbiguous && reqGender != null) {
+      const exact = cands.find(c => Number(c.gender) === reqGender && _MOB_CLASS_NAMES[c.class]);
+      if (exact) r = exact;
+    }
     if (r) {
       // Drop table from eqemu_npc_drops view (per-item effective_chance — the
       // real published drop rate accounting for table_probability + lootdrop
@@ -12565,18 +16228,17 @@ async function _handleAgentMobInfo(req, res) {
               // b) Per-item "how many NPCs drop this" → exposes uniqueness so
               //    the overlay can ⭐ items unique to THIS mob and dim items
               //    that drop from many places (gems, spells, cloth pieces).
-              const cands = await supabase.select('eqemu_npc_drops',
-                `item_id=in.(${itemIds.join(',')})&select=item_id,npc_id&limit=50000`);
+              // One row per item with its NPC count (eqemu_item_drop_owner, migration 20261004140200):
+              // the (item, NPC) pairs of these items are thousands of rows (27.7 NPCs per item on
+              // average) and PostgREST cut them at 1,000, so a cut item read as "unique to this mob".
+              const cands = await supabase.select('eqemu_item_drop_owner',
+                `item_id=in.(${itemIds.join(',')})&select=item_id,npc_count`);
               if (Array.isArray(cands)) {
-                const distinct = new Map();
-                for (const row of cands) {
-                  if (!distinct.has(row.item_id)) distinct.set(row.item_id, new Set());
-                  distinct.get(row.item_id).add(row.npc_id);
-                }
+                const countByItem = new Map(cands.map(row => [row.item_id, Number(row.npc_count) || 0]));
                 for (const it of loot) {
-                  const n = distinct.get(it.id);
-                  it.candidate_npcs = n ? n.size : 0;
-                  it.unique_to_mob  = (n && n.size === 1);
+                  const n = countByItem.get(it.id) || 0;
+                  it.candidate_npcs = n;
+                  it.unique_to_mob  = (n === 1);
                 }
               }
             }
@@ -12628,17 +16290,34 @@ async function _handleAgentMobInfo(req, res) {
       // Once entries are in hand, join eqemu_spells (catalog) to add the
       // human-readable name + mana + cast time per spell.
       let spells = [];
+      // The mob's PROCS (the guild lead, 2026-10-07: "Need to see mobs Procs as well, not
+      // just spells"). They sit on the same list rows the walk below reads, so the walk
+      // carries their columns along; utils/npcProcs.js resolves them, nearest list first.
+      let procs = [];
+      const procChain = [];
       if (r.npc_spells_id && r.npc_spells_id > 0) {
         try {
           const listIds = [r.npc_spells_id];
           let cursor = r.npc_spells_id;
           for (let hop = 0; hop < 4 && cursor; hop++) {
             const parentRows = await supabase.select('eqemu_npc_spells',
-              `id=eq.${cursor}&select=parent_list&limit=1`);
+              `id=eq.${cursor}&select=parent_list,attack_proc,proc_chance,range_proc,rproc_chance,defensive_proc,dproc_chance&limit=1`);
+            if (Array.isArray(parentRows) && parentRows[0]) procChain.push(parentRows[0]);
             const p = Array.isArray(parentRows) && parentRows[0] && parentRows[0].parent_list;
             if (!p || p === 0 || listIds.includes(p)) break;
             listIds.push(p);
             cursor = p;
+          }
+          const procSlots = npcProcs.resolveProcSlots(procChain);
+          if (procSlots.length > 0) {
+            try {
+              const procSpells = await supabase.select('eqemu_spells',
+                `id=in.(${procSlots.map(s => s.spell_id).join(',')})&select=id,name,targettype,buffduration,raw,effect_id_1,effect_base_value_1,effect_id_2,effect_base_value_2,effect_id_3,effect_base_value_3&limit=10`);
+              procs = npcProcs.buildProcs(procChain, procSpells);
+            } catch (err) {
+              console.warn('[mob-info] proc spells fetch failed:', err?.message);
+              procs = npcProcs.buildProcs(procChain, []);   // the proc still shows, by id
+            }
           }
           const entries = await supabase.select('eqemu_npc_spells_entries',
             `npc_spells_id=in.(${listIds.join(',')})&select=spellid,manacost,recast_delay,priority,minlevel,maxlevel,type,min_hp,max_hp,npc_spells_id&order=priority.desc&limit=80`);
@@ -12669,7 +16348,7 @@ async function _handleAgentMobInfo(req, res) {
           const ids = inWindow.map(e => e.spellid).filter(Boolean);
             if (ids.length > 0) {
               const catRows = await supabase.select('eqemu_spells',
-                `id=in.(${ids.join(',')})&select=id,name,mana,cast_time,resist_type,resist_diff,good_effect&limit=80`);
+                `id=in.(${ids.join(',')})&select=id,name,mana,cast_time,resist_type,resist_diff,good_effect,cast_on_other,cast_on_you&limit=80`);
               const cat = new Map((Array.isArray(catRows) ? catRows : []).map(s => [s.id, s]));
               // npc_spells_entries.manacost = -1 means "use the spell's catalog
               // mana cost"; same convention for recast_delay (-1 = spell default).
@@ -12698,6 +16377,13 @@ async function _handleAgentMobInfo(req, res) {
                   // tab — buffs render without the (always 'Unresist.') resist
                   // column. Null when the catalog isn't enriched yet.
                   good:         (c.good_effect == null ? null : (Number(c.good_effect) ? 1 : 0)),
+                  // ⚠ The landing text is what identifies an NPC's cast. EQ's
+                  // log says only "<Caster> begins to cast a spell." — never
+                  // the name — so the ONLY way to know what a mob cast is to
+                  // match the message its spell prints when it lands, against
+                  // this list. Shipped for that; harmless everywhere else.
+                  other:        c.cast_on_other || null,
+                  you:          c.cast_on_you   || null,
                   priority:     e.priority ?? null,
                   type:         e.type ?? null,
                   minlevel:     e.minlevel ?? null,
@@ -12716,13 +16402,45 @@ async function _handleAgentMobInfo(req, res) {
       // body is rooted, that one isn't" is two different mobs, not a warning).
       const move = mobSpecials.deriveMovement(r);
 
+      // Faction consequences of killing this mob. ⚠ Reuses the bot's existing
+      // resolver rather than re-deriving the npc_faction → faction_list chain:
+      // that map is already 6h-cached and was validated end to end against a
+      // real client log, and it already knows the trap that names live in
+      // eqemu_faction_list_full because eqemu_faction_list is EMPTY in our
+      // mirror (a null name silently drops the value).
+      // Fail-soft: a faction miss must never cost the overlay its stats.
+      let factions = null;
+      try { factions = await _factionRowsFor(r.name); }
+      catch (err) { console.warn('[mob-info] faction rows failed:', err?.message); }
+
+      // Which faction the mob is on, which factions it will help, and which mobs in its
+      // zone will help it (the guild lead, 2026-10-06, on "an enforcer" in Plane of
+      // Justice). Keyed by the picked body's npc id, not its name, so a same-name mob in
+      // another zone cannot lend its faction. Nothing is added when the mob has no
+      // npc_faction, and a failed catalog read costs the overlay nothing else.
+      let assist = null;
+      try {
+        const ix = await factionAssist.getIndex(supabase);
+        assist = ix ? factionAssist.assistFor(ix, r.id) : null;
+      } catch (err) { console.warn('[mob-info] faction assist failed:', err?.message); }
+
       mob = {
         id:      r.id ?? null,   // #186 eqemu npc id → the overlay's PQDI link (pqdi.cc/npc/<id>)
         name:    String(r.name || name).replace(/_/g, ' '),
         class:   _MOB_CLASS_NAMES[r.class] || null,
+        gender:  _GENDER_NAMES[r.gender] ?? null,
+        // Every (class, sex) this name resolves to; class_ambiguous is true
+        // when they disagree on class — the overlay then shows the pair.
+        class_variants:  classVariants,
+        class_ambiguous: classAmbiguous,
         level:    r.level ?? null,
         maxlevel: (r.maxlevel != null && r.maxlevel !== r.level) ? r.maxlevel : null,
         hp:      r.hp ?? null,
+        // The NPC's mana pool. Only ~21% of the catalog has one (3,741 of
+        // 18,033), and 3,384 have both a pool and a spell list — so the
+        // overlay draws no bar at all when this is null rather than an empty
+        // one. "Where applicable" is literal here.
+        mana:    r.mana ?? null,
         ac:      r.ac ?? null,
         zone:    zoneLong,
         zone_short: zoneShort,
@@ -12738,6 +16456,18 @@ async function _handleAgentMobInfo(req, res) {
         see_invis_undead:    !!r.see_invis_undead,
         see_hide:            !!r.see_hide,
         see_improved_hide:   !!r.see_improved_hide,
+        // Undead-ness, because the sight flags are only READABLE with it
+        // (the guild lead, 2026-09-02, asking for see-invis on Mob Info). Measured over
+        // the 18,033-row catalog:
+        //   • non-undead: see_invis 11%, see_invis_undead 96%
+        //   • UNDEAD (bodytype 3): see_invis 98%, see_invis_undead 15%
+        // So "sees invis" is near-universal on undead and says nothing, while
+        // "sees invis vs undead" is near-universal on the LIVING and says
+        // nothing there. Each flag is signal on exactly one side, and the
+        // overlay needs this to know which one to show. bodytype 3 is the only
+        // value in the catalog with that inverted signature.
+        bodytype:            r.bodytype ?? null,
+        undead:              Number(r.bodytype) === 3,
         // #171 movement — `rooted` is runspeed 0 (stationary: Itraer Vius,
         // Yelinak, most NToV dragons); `flees` is true/false/null where null
         // means the catalog doesn't say, and `flee_pct` is the HP% of code 37.
@@ -12757,22 +16487,182 @@ async function _handleAgentMobInfo(req, res) {
         variant_scope: picked.scope,
         placeholder: picked.placeholder,
         spells,
+        // [{ kind: 'attack'|'range'|'defensive', spell_id, name, chance (percent|null),
+        // summary }] — [] when the mob has none. An entry cached before this key existed
+        // simply has no `procs`, which readers treat as none.
+        procs,
         loot,
+        // [{ name, value }] biggest swing first — what killing this does to
+        // your standing. Null when the mob has no faction rows.
+        factions,
+        // faction_primary, faction_assists, faction_assisted_by, faction_assisted_by_more —
+        // utils/factionAssist.js. Absent (not null) when the mob has no npc_faction.
+        ...(assist || {}),
       };
     }
   } catch (err) {
     console.warn('[mob-info] lookup failed:', err?.message);
   }
-  if (_mobInfoCache.size > 1000) _mobInfoCache.clear();   // cap set-only growth (efficiency review rule 4)
-  // #141 zone-scoped key. A MISS is cached far shorter than a hit: the 6h TTL
-  // is right for catalog rows (they never change between weekly syncs) but
-  // catastrophic for nulls, because a single transient failure — a Supabase
-  // timeout, a lookup that lands mid-deploy — pinned "no catalog stats for this
-  // target" for six hours on a mob whose row exists and whose query works.
-  // Uilnayar hit it on Va_Xi_Aten_Ha_Ra (id 158440, 1.6M HP), 2026-08-06.
-  _mobInfoCache.set(cacheKey, { at: Date.now(), row: mob, ttl: mob ? _MOB_INFO_TTL_MS : _MOB_INFO_MISS_TTL_MS });
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ ok: true, mob }));
+  return mob;
+}
+
+// ── Zone packs: every mob in a zone, for Mimic to keep on disk ──────────────
+// The guild lead, 2026-09-30: "keep all of the PoP mobs cached on a user's machine, as
+// well as zones that the user frequents". GET /api/agent/mob-pack?zone=<id> answers
+// every NPC name whose id sits in the zone's block (id = zoneid*1000 + n, so scripted
+// event spawns come too, which spawn2 would miss), each built by _buildMobInfo with that
+// zone as the requester's, keyed by _mobCaseKey. ?pinned=1 lists the zones every Mimic
+// keeps: the Planes of Power, zone ids 200 to 223 (codecay and pojustice are tagged
+// expansion 0 in our mirror, so the id range, not the flag).
+// A pack is built once and kept a week, in memory and in bot_kv so a deploy does not
+// rebuild it, and served with an ETag so a Mimic revalidating what it holds gets a 304.
+// A pack not built yet answers 202 and builds in the background: one zone at a time,
+// three lookups at a time, so a fleet booting together cannot flood the database.
+const _MOB_PACK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// The SHAPE of a mob inside a pack. Bump it whenever _buildMobInfo gains or changes a field:
+// a pack stored under another version is still served (a Mimic keeps something useful
+// meanwhile) but counts as stale, so the next ask for that zone rebuilds it, lazily and one
+// zone at a time, instead of waiting out the week or deleting bot_kv keys by hand. A row
+// stored before versions existed has none and reads as 1.
+//   2 (2026-10-06): faction_primary, faction_assists, faction_assisted_by, faction_assisted_by_more
+//   3 (2026-10-06): special-ability labels in Quarm's numbering (utils/mobSpecials.js), Reverse Slow (FB-54)
+//   4 (2026-10-07): procs [{ kind, spell_id, name, chance, summary }]
+const _MOB_PACK_VERSION = 4;
+const _MOB_PACK_PINNED = Array.from({ length: 24 }, (_, i) => 200 + i);
+const _mobPacks = new Map();          // zoneId → { etag, builtAt, body, gz, version }
+const _mobPackQueue = [];             // zone ids waiting to build
+let _mobPackBuilding = null;          // the zone id being built
+
+function _mobPackFrom(body, builtAt, version) {
+  return {
+    etag: '"' + require('crypto').createHash('sha1').update(body).digest('hex') + '"',
+    builtAt, body, gz: require('zlib').gzipSync(body), version,
+  };
+}
+// Built to the current shape, and not past its week?
+const _mobPackFresh = (pack) =>
+  !!pack && pack.version === _MOB_PACK_VERSION && (Date.now() - pack.builtAt) < _MOB_PACK_TTL_MS;
+
+const _mobPackKvMiss = new Map();    // zoneId → when bot_kv last had nothing for it
+async function _mobPackLoad(zoneId) {
+  if (_mobPacks.has(zoneId)) return _mobPacks.get(zoneId);
+  // Until a first build lands, every Mimic in the zone asks; one bot_kv read a minute is enough.
+  if (Date.now() - (_mobPackKvMiss.get(zoneId) || 0) < 60 * 1000) return null;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return null;
+  try {
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const rows = await supabase.select('bot_kv',
+      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.mob_pack:${zoneId}&select=value&limit=1`);
+    const v = Array.isArray(rows) && rows[0] && rows[0].value;
+    // The body is stored as the exact string served, so the ETag survives a deploy.
+    if (v && typeof v.body === 'string' && v.built_at) {
+      const pack = _mobPackFrom(v.body, Date.parse(v.built_at) || 0, Number(v.version) || 1);
+      _mobPackKeep(zoneId, pack);
+      return pack;
+    }
+    _mobPackKvMiss.set(zoneId, Date.now());
+  } catch (e) { console.warn('[mob-pack] load failed:', e?.message); }
+  return null;
+}
+// About 1 MB a zone plus its gzip; 120 zones is far past what a guild visits in a week.
+function _mobPackKeep(zoneId, pack) {
+  _mobPacks.delete(zoneId);
+  _mobPacks.set(zoneId, pack);
+  if (_mobPacks.size > 120) _mobPacks.delete(_mobPacks.keys().next().value);
+  _mobPackKvMiss.delete(zoneId);
+}
+
+async function _mobPackBuild(zoneId) {
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return;
+  // Every mob below takes its faction fields from one catalog read. A pack built while that
+  // read fails would be stamped with the current version and go a week without them, so wait
+  // for it here (it is cached six hours, and a failure is retried in five minutes) and keep
+  // the old pack, if there is one, until it answers.
+  if (!(await factionAssist.getIndex(supabase))) {
+    console.warn(`[mob-pack] zone ${zoneId}: faction catalog unreadable — not built`);
+    return;
+  }
+  const lo = zoneId * 1000;
+  const rows = await supabase.select('eqemu_npc_types', `id=gte.${lo}&id=lte.${lo + 999}&select=name&limit=1000`);
+  const names = new Map();   // case-kept key → a catalog spelling of it
+  for (const r of rows || []) {
+    const n = String((r && r.name) || '');
+    if (!/[a-z]/i.test(n)) continue;   // the "_" placeholder names
+    const ck = _mobCaseKey(n);
+    if (!names.has(ck)) names.set(ck, n);
+  }
+  const list = [...names.entries()];
+  const mobs = {};
+  let next = 0, found = 0;
+  const worker = async () => {
+    while (next < list.length) {
+      const [ck, n] = list[next++];
+      const mob = await _buildMobInfo(supabase, { name: n, norm: _normMobName(n), caseKey: ck, reqZoneId: zoneId, reqGender: null });
+      if (mob) { mobs[ck] = mob; found++; }
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  // A lookup that fails reads as "no such mob", so a build during a database hiccup
+  // would pin a hollow pack for a week. Keep the old one instead and try again later.
+  if (list.length >= 10 && found < list.length / 2) {
+    console.warn(`[mob-pack] zone ${zoneId}: only ${found}/${list.length} mobs built — not saved`);
+    return;
+  }
+  const builtAt = new Date().toISOString();
+  const body = JSON.stringify({ ok: true, zone_id: zoneId, built_at: builtAt, mobs });
+  _mobPackKeep(zoneId, _mobPackFrom(body, Date.now(), _MOB_PACK_VERSION));
+  try {
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    await supabase.upsert('bot_kv',
+      [{ guild_id: guildId, key: `mob_pack:${zoneId}`, value: { built_at: builtAt, body, version: _MOB_PACK_VERSION }, updated_at: builtAt }],
+      'guild_id,key');
+  } catch (e) { console.warn('[mob-pack] save failed:', e?.message); }
+  console.log(`[mob-pack] zone ${zoneId}: ${found}/${list.length} mobs, ${Math.round(body.length / 1024)} KB`);
+}
+
+function _mobPackEnqueue(zoneId) {
+  if (_mobPackBuilding === zoneId || _mobPackQueue.includes(zoneId) || _mobPackQueue.length >= 64) return;
+  _mobPackQueue.push(zoneId);
+  if (_mobPackBuilding != null) return;
+  (async () => {
+    while (_mobPackQueue.length) {
+      _mobPackBuilding = _mobPackQueue.shift();
+      try { await _mobPackBuild(_mobPackBuilding); }
+      catch (e) { console.warn(`[mob-pack] zone ${_mobPackBuilding} build failed:`, e?.message); }
+    }
+    _mobPackBuilding = null;
+  })();
+}
+
+async function _handleAgentMobPack(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const sp = new URL(req.url, 'http://x').searchParams;
+  if (sp.get('pinned')) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, zones: _MOB_PACK_PINNED }));
+  }
+  const zoneId = parseInt(sp.get('zone'), 10);
+  if (!(zoneId >= 1 && zoneId <= 999)) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'zone required' }));
+  }
+  const pack = await _mobPackLoad(zoneId);
+  if (!_mobPackFresh(pack)) _mobPackEnqueue(zoneId);   // missing, past its week, or an older shape
+  if (!pack) {
+    res.writeHead(202, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, building: true, retry_after_sec: 120 }));
+  }
+  if (req.headers['if-none-match'] === pack.etag) {
+    res.writeHead(304, { 'ETag': pack.etag });
+    return res.end();
+  }
+  const gzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
+  res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'ETag': pack.etag },
+    gzip ? { 'Content-Encoding': 'gzip' } : {}));
+  res.end(gzip ? pack.gz : pack.body);
 }
 
 // GET /api/agent/who-lookup?names=a,b,c
@@ -12786,10 +16676,12 @@ async function _handleAgentMobInfo(req, res) {
 //                           (Quarm's anon-by-default raiders); class lives here
 //   3. supabase characters — secondary backstop / pulled if roster misses
 // All in-memory after the first lookup, so it's cheap to call per /who.
+// The LEVEL gets one more read at the end (pass 3b): the member's own Mimic-reported
+// level from xp_events, and the last non-anon /who level from who_observations.
 // Officer-curated /who overrides (class + Zek, set on /admin/who) cached with a
 // SHORT TTL just for the de-anon path. state.whoData only pulls who_overrides
 // every 30 min (fine for /whois), but that made an officer's just-set class take
-// up to ~30 min to reach the in-game /who overlay (Hitya 2026-07-14, set a
+// up to ~30 min to reach the in-game /who overlay (the guild lead, 2026-07-14, set a
 // dozen classes by inspecting gear, none showed up). This makes /who-lookup read
 // who_overrides directly on a 60s cache, so a curation reaches the overlay within
 // the agent's own 5-min lookup cache instead of behind the 30-min refresh.
@@ -12813,7 +16705,7 @@ async function _freshWhoOverrides() {
 
 // POST /api/agent/who-override  { character, class }
 // Crowd-sourced /who de-anon: ANY guild member running Mimic (the shared agent
-// token is the gate — not officer-only, Hitya 2026-07-14) can set a player's
+// token is the gate — not officer-only, the guild lead 2026-07-14) can set a player's
 // class from the in-game /who overlay when they know it (e.g. they inspected
 // gear). Writes who_overrides — the same table /admin/who uses — so the
 // /who-lookup fast path (60s cache) propagates it to every overlay within
@@ -12988,9 +16880,9 @@ async function _handleAgentWhoLookup(req, res) {
   // Pass 2: who_directory — the DURABLE de-anon source, best-ever-seen
   // class/level/guild per character from who_observations (survives bot
   // restarts, covers CROSS-GUILD raiders the roster/characters tables never
-  // hold). This is the source that was missing entirely: Hitya 2026-07-14
+  // hold). This is the source that was missing entirely: the guild lead 2026-07-14
   // saw Cataran (Wizard/Savage), Jinroh (Enchanter/Eclipse) and even the
-  // guild's own Camping (Necro, but recently-gone) render as bare "anon"
+  // guild's own a member (Necro, but recently-gone) render as bare "anon"
   // though the who DB had every class. Runs for any requested name still
   // without a class — INCLUDING names pass 1 skipped for having no in-memory
   // or roster row (a cross-guild toon has neither), so this pass can CREATE a
@@ -13047,6 +16939,45 @@ async function _handleAgentWhoLookup(req, res) {
     } catch (err) { console.warn('[who-lookup] characters backfill failed:', err?.message); }
   }
 
+  // Pass 3b: levels (the guild lead, 2026-10-04: "We shouldn't have a gap in our own players
+  // levels."). One RPC, two sources per name: the member's OWN Mimic-reported level (xp_events
+  // carries the exact level every Mimic-running character uploads on each experience gain, the
+  // freshest we hold) and the last non-anon /who level (who_level, from who_observations). The
+  // roster and overrides give a class and no level, and the last /who level goes stale across a
+  // cap raise (59 against a Mimic-reported 64 the same day). who_observations is read here, not
+  // through the who_directory view: the view scans the whole table (~1.4 s for 10 names, ~3 ms
+  // on the table's own index). A name only known from these gets a result. Several sources → the
+  // HIGHEST level wins (levels only rise; a death de-level is rare and short). Every requested
+  // name is asked; fail-open like the passes above.
+  if (names.length) {
+    try {
+      const supabase = require('./utils/supabase');
+      if (supabase.isEnabled()) {
+        // xp_events stores names in EQ capitalisation and the RPC matches those exactly
+        // (who_observations is matched on lower() both sides).
+        const eqNames = [...new Set(names.map(s => s[0].toUpperCase() + s.slice(1).toLowerCase()))];
+        const rows = await supabase.rpc('latest_character_levels', {
+          p_guild_id: process.env.SUPABASE_GUILD_ID || 'wolfpack',
+          p_names:    eqNames,
+        });
+        if (!Array.isArray(rows)) throw new Error('rpc result is not an array');
+        for (const row of rows) {
+          const key = String(row?.character || '').toLowerCase();
+          const mimicLvl = Number(row?.level);
+          const whoLvl   = Number(row?.who_level);
+          const hasMimic = Number.isInteger(mimicLvl) && mimicLvl >= 1;
+          const hasWho   = Number.isInteger(whoLvl) && whoLvl >= 1;
+          if (!key || (!hasMimic && !hasWho)) continue;
+          const cur = results[key] || (results[key] = {
+            class: null, level: null, guild: null, guild_rank: null, is_zek: false, last_seen: null, source: hasMimic ? 'mimic' : 'who',
+          });
+          const best = Math.max(cur.level || 0, hasMimic ? mimicLvl : 0, hasWho ? whoLvl : 0);
+          if (best > (cur.level || 0)) cur.level = best;
+        }
+      }
+    } catch (err) { console.warn('[who-lookup] level lookup failed:', err?.message); }
+  }
+
   // Pass 4 (#111): main-in-parens + Mimic presence for guild members. Runs for
   // EVERY requested name (not just anon) — a member showing normally in /who
   // still earns their 🐺 and (Main). The hide list is enforced inside
@@ -13063,7 +16994,7 @@ async function _handleAgentWhoLookup(req, res) {
   } catch (err) { console.warn('[who-lookup] enrichment failed:', err?.message); }
 
   // Fold EQ level titles back to base classes at the serve boundary
-  // ("Warlock" = a 60 Necromancer — Hitya 2026-08-19, Syczlak on the /who
+  // ("Warlock" = a 60 Necromancer — the guild lead 2026-08-19, Syczlak on the /who
   // overlay). who_observations keeps whatever the /who line said, so rows
   // harvested before agent-side normalization (or from older agents) still
   // hold titles, and who_directory carries them into pass 2 above. The
@@ -13085,7 +17016,7 @@ async function _handleAgentWhoLookup(req, res) {
 // user can also dismiss the request from the dashboard.
 //
 // GET  /api/agent/backfill-requests?character=X[,Y]  — list pending for char(s)
-// GET /api/agent/character-prefs?characters=Hitya,Canopy
+// GET /api/agent/character-prefs?characters=Aldenmar,Brackwyn
 //
 // Returns the per-character data-handling preferences the owner has set on
 // `characters` (exclude_from_stats, exclude_inventory). The agent polls this
@@ -13096,6 +17027,11 @@ async function _handleAgentWhoLookup(req, res) {
 // exclude_inventory is returned but not yet acted on (no inventory upload
 // path exists yet — slated for the Mimic timeline); surfacing it now lets the
 // agent display the setting and refuse to send when the path lands.
+//
+// hidden_from_lists is DISPLAY ONLY (the guild lead, 2026-10-03: "make it so I can hide these
+// characters from anything but account inventory"). The agent hands it to its dashboard so a hidden
+// character drops out of the per-character pickers; it gates no upload and no collection — that is
+// exactly what exclude_from_stats / exclude_inventory are for.
 // Assemble per-character data-handling prefs. Shared by the standalone GET
 // /character-prefs and the multiplexed GET /poll (#106).
 async function _characterPrefsFor(characters) {
@@ -13107,7 +17043,7 @@ async function _characterPrefsFor(characters) {
   const inList = '(' + characters.map(c => `"${c.replace(/"/g, '')}"`).join(',') + ')';
   const rows = await supabase.select(
     'characters',
-    `name=in.${encodeURIComponent(inList)}&select=name,exclude_from_stats,exclude_inventory,tell_relay&guild_id=eq.wolfpack`,
+    `name=in.${encodeURIComponent(inList)}&select=name,exclude_from_stats,exclude_inventory,tell_relay,hidden_from_lists&guild_id=eq.wolfpack`,
   ).catch(() => []);
   const prefs = {};
   for (const r of (Array.isArray(rows) ? rows : [])) {
@@ -13116,9 +17052,22 @@ async function _characterPrefsFor(characters) {
       exclude_from_stats: !!r.exclude_from_stats,
       exclude_inventory:  !!r.exclude_inventory,
       tell_relay:         !!r.tell_relay,
+      hidden_from_lists:  !!r.hidden_from_lists,
     };
   }
   return { prefs };
+}
+
+// ?mine=1 is the OTHER question, asked by Mimic's onboarding: not "what are these characters' prefs" but
+// "which characters are mine, and what is each set to". It answers every character in the caller's family
+// (the Mimic session's own discord_id, nothing in the query) with its three flags and the mode they name:
+//   { ok, characters: [{ name, hidden_from_lists, exclude_from_stats, exclude_inventory, mode }] }
+// and 403s a session with no linked account. utils/characterPrefs.js has the rules.
+const characterPrefs = require('./utils/characterPrefs');
+const _ownedCharsCache = characterPrefs.createOwnedCache();
+function _sendPrefsResult(res, out) {
+  res.writeHead(out.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  return res.end(JSON.stringify(out.body));
 }
 
 async function _handleAgentCharacterPrefs(req, res) {
@@ -13126,11 +17075,49 @@ async function _handleAgentCharacterPrefs(req, res) {
   if (!identity) return;
 
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  if (url.searchParams.get('mine') === '1') {
+    return _sendPrefsResult(res, await characterPrefs.minePrefs(
+      require('./utils/supabase'), _ownedCharsCache, String(identity.discord_id || '')));
+  }
   const raw = url.searchParams.get('characters') || url.searchParams.get('character') || '';
   const characters = raw.split(',').map(s => s.trim()).filter(Boolean);
   const data = await _characterPrefsFor(characters);
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify(data));
+}
+
+// POST /api/agent/character-prefs — Mimic SETS a character's display and collection switches (the guild lead,
+// 2026-10-06: "the complete hide or hide from all but inventory should be with mimic during onboarding but
+// the denotation on other side should be carried over"). It writes the same three columns on the characters
+// row that wolfpack.quest/me writes (hidden_from_lists, exclude_from_stats, exclude_inventory), so both sides
+// show the same state; there is no second copy and, like the website's switch, no audit_log row.
+//   body  { character, mode?: 'show'|'inventory'|'hidden', hidden_from_lists?, exclude_from_stats?,
+//           exclude_inventory? }   mode sets all three (show: none; inventory: hidden from lists only;
+//           hidden: all three); an explicit boolean overrides it, or alone changes just that one flag.
+//   200   { ok, character, prefs: {three flags}, mode }   mode is 'custom' when the three match no named mode
+//   400 bad body · 403 not your character / no linked account · 404 gone · 502 database unavailable
+// WHO: the Mimic session's own discord_id; a character is the caller's when it is in its family (see
+// utils/characterPrefs.js). Agents pick the change up on their next prefs poll (no prefs cache to bust:
+// _characterPrefsFor reads the row every time). A write route, not an ingest stream: no shed flag, no budget.
+async function _handleAgentCharacterPrefsSet(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 16 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const discordId = String(identity.discord_id || '');
+  const out = await characterPrefs.setPrefs(require('./utils/supabase'), _ownedCharsCache, discordId, payload);
+  if (out.status === 200) {
+    console.log(`[character-prefs] ${discordId} set ${out.body.character} → ${out.body.mode} (${JSON.stringify(out.body.prefs)})`);
+  }
+  return _sendPrefsResult(res, out);
 }
 
 // POST /api/agent/live-state
@@ -13192,7 +17179,7 @@ async function _noteTargetSwitches(rows) {
 
 // ── #194 Zeal /tag observations — append the evidence before it evaporates ───
 //
-// Hitya 2026-08-06: "let's craft a table to store these tags into to verify
+// The guild lead 2026-08-06: "let's craft a table to store these tags into to verify
 // how this operates … we need to determine if those spawn IDs are unique or
 // random or per person."
 //
@@ -13219,7 +17206,7 @@ function _zealTagKey(guildId, observer, spawnId, tagger, taggedAt) {
 
 // How many tags survive one live-state upload. Was 24, and a full-zone tagging
 // sweep in The Deep hit it EXACTLY — 24/24 on two independent agents, with the
-// rest silently gone (Hitya 2026-08-07). Worse, the old slice took the array
+// rest silently gone (the guild lead, 2026-08-07). Worse, the old slice took the array
 // as given, which from the agent is Map INSERTION order: the oldest tags were
 // kept and the newest dropped, so `Thought Horror Overfiend` — tagged last, and
 // the one mob in the zone anybody needed identified — fell off the end.
@@ -13279,6 +17266,107 @@ async function _noteZealTags(rows) {
   if (out.length === 0) return 0;
   await supabase.insert('zeal_tag_observations', out);
   return out.length;
+}
+
+// POST /api/agent/xp-events — one row per experience line (agent 3.7.67+), for the XP board
+// (FB-37 option B; the guild lead, 2026-10-02: "observe group composition and xp totals for groups
+// that are together during the day and find what compositions work and in what area in what zone,
+// with what mobs we're killing" · "Also track when we have an XP potion on"). Stored raw: the bars
+// before and after, so the total is computed at read time (docs/DESIGN-xp-tracking.md §2).
+const _XP_KINDS = new Set(['solo', 'party', 'raid']);
+function _num(v, lo, hi) {
+  const n = Number(v);
+  return v != null && v !== '' && Number.isFinite(n) && n >= lo && n <= hi ? n : null;
+}
+function _sanitizeXpEvent(e, guildId, uploadedBy, nowMs) {
+  const character = typeof e?.character === 'string' ? e.character.trim() : '';
+  if (!/^[A-Za-z]{2,15}$/.test(character)) return null;
+  const at = Date.parse(e?.at);
+  if (!Number.isFinite(at) || at > nowMs + 5 * 60_000 || at < nowMs - 3 * 86400_000) return null;
+  if (!_XP_KINDS.has(e?.kind)) return null;
+  const str = (v, n) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : null);
+  const group = Array.isArray(e?.group_members)
+    ? e.group_members.slice(0, 6).map(g => ({
+        name: str(g?.name, 15), class: str(g?.class, 24), level: _num(g?.level, 1, 70),
+      })).filter(g => g.name && /^[A-Za-z]{2,15}$/.test(g.name))
+    : null;
+  const int = (v, lo, hi) => { const n = _num(v, lo, hi); return n == null ? null : Math.trunc(n); };
+  return {
+    guild_id: guildId, character, at: new Date(at).toISOString(), kind: e.kind,
+    level: int(e.level, 1, 70), level_after: int(e.level_after, 1, 70),
+    xp_before: _num(e.xp_before, 0, 100), xp_after: _num(e.xp_after, 0, 100),
+    aa_before: _num(e.aa_before, 0, 100), aa_after: _num(e.aa_after, 0, 100),
+    aa_banked_before: int(e.aa_banked_before, 0, 10000), aa_banked_after: int(e.aa_banked_after, 0, 10000),
+    zone_id: int(e.zone_id, 0, 1000), zone_name: str(e.zone_name, 80),
+    loc_x: _num(e.loc_x, -1e6, 1e6), loc_y: _num(e.loc_y, -1e6, 1e6), loc_z: _num(e.loc_z, -1e6, 1e6),
+    mob: str(e.mob, 80),
+    group_members: group && group.length ? group : null,
+    potion: e?.potion === true,
+    race: str(e.race, 24), class: str(e.class, 24),
+    uploaded_by: uploadedBy, agent_version: str(e.agent_version, 24),
+  };
+}
+async function _handleAgentXpEvents(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) { total += chunk.length; if (total > 256 * 1024) { res.writeHead(413); return res.end(); } chunks.push(chunk); }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid json' })); }
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: true, stored: 0 })); }
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const now = Date.now();
+  const rows = (Array.isArray(payload?.events) ? payload.events : []).slice(0, 200)
+    .map(e => _sanitizeXpEvent(e, guildId, identity.discord_id || null, now)).filter(Boolean);
+  if (!rows.length) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ ok: true, stored: 0 })); }
+  try {
+    await supabase.upsert('xp_events', rows, 'guild_id,character,at,kind');
+  } catch (err) {
+    // A missing table (the migration not applied yet) must not leave every agent retrying the same
+    // batch from its durable queue: say it was taken, store nothing, log it.
+    if (/xp_events|does not exist|42P01/i.test(String(err?.message))) {
+      console.warn('[xp-events] table missing — accepted without storing:', err?.message);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ ok: true, stored: 0, note: 'not stored' }));
+    }
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'upsert failed', detail: err?.message }));
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ ok: true, stored: rows.length }));
+}
+
+// A character's own known timers, as their Mimic reports them (agent 3.7.66+):
+// [{key, label, ready_at, total_ms, est}]. Another raider's Target Info shows
+// them while targeting that character (the guild lead, 2026-10-02: "When we have a
+// known timer, for someone's disciplines or mend or area taunt, we should
+// display those on target info"). ready_at is absolute, so a reader counts down
+// without a fresh upload. Capped and range-checked; null when none sent.
+const _LIVE_CD_MAX = 12;
+function _sanitizeLiveCooldowns(list, nowMs) {
+  if (!Array.isArray(list) || !list.length) return null;
+  const out = [];
+  for (const c of list) {
+    if (out.length >= _LIVE_CD_MAX) break;
+    const key = typeof c?.key === 'string' ? c.key : '';
+    if (!/^[a-z0-9:_-]{1,32}$/.test(key)) continue;
+    const label = typeof c?.label === 'string' ? c.label.trim().slice(0, 40) : '';
+    if (!label) continue;
+    const at = Date.parse(c?.ready_at);
+    // A timer ready more than 12 h ago tells nothing; one more than 4 h out is
+    // longer than any reuse we track (Lay on Hands is 72 min).
+    if (!Number.isFinite(at) || at < nowMs - 12 * 3600_000 || at > nowMs + 4 * 3600_000) continue;
+    const total = Number(c?.total_ms);
+    out.push({
+      key, label,
+      ready_at: new Date(at).toISOString(),
+      total_ms: Number.isFinite(total) && total > 0 && total <= 5 * 3600_000 ? Math.trunc(total) : null,
+      est: c?.est === true,
+    });
+  }
+  return out.length ? out : null;
 }
 
 async function _handleAgentLiveState(req, res) {
@@ -13370,15 +17458,26 @@ async function _handleAgentLiveState(req, res) {
       if (petBuffs.length === 0) petBuffs = null;
     }
     // Current target (Zeal slot 6) — name + HP%. Powers the Extended Target
-    // overlay's "who's targeting what" aggregation. No spawn id on the pipe, so
-    // same-name mobs collapse to one name (the overlay asterisks non-unique).
+    // overlay's "who's targeting what" aggregation.
     const targetName = st?.target_name ? String(st.target_name).slice(0, 80) : null;
     const targetHp   = (st?.target_hp_pct != null && Number.isFinite(Number(st.target_hp_pct))) ? Number(st.target_hp_pct) : null;
+    // Spawn id of that target (Zeal PR #229, agent 3.6.13+). NULL on every
+    // released Zeal — this is an enhancement over target_name, never a
+    // requirement, and a mixed fleet is the steady state.
+    //
+    // ⚠ Only meaningful WITH zone_id on the same row: an id is a slot in the
+    // zone's entity table, so slot 4425 in Sebilis and slot 4425 in The Deep
+    // are unrelated mobs. Consumers key on (zone_id, target_id).
+    const targetId = (st?.target_id != null && Number.isFinite(Number(st.target_id)))
+      ? Math.trunc(Number(st.target_id)) : null;
     // Position (agent v3.3.94+, Zeal loc {x,y,z}) — powers the raid-buff-queue's
     // advisory "likely out of range" flag (#117). Nullable; fail-open downstream.
     const locX = (st?.loc_x != null && Number.isFinite(Number(st.loc_x))) ? Number(st.loc_x) : null;
     const locY = (st?.loc_y != null && Number.isFinite(Number(st.loc_y))) ? Number(st.loc_y) : null;
     const locZ = (st?.loc_z != null && Number.isFinite(Number(st.loc_z))) ? Number(st.loc_z) : null;
+    // The character's own known timers (agent 3.7.66+) — read back by
+    // character-live-state for another raider's Target Info.
+    const cooldowns = _sanitizeLiveCooldowns(st?.cooldowns, Date.now());
     rows.push({
       guild_id:    guildId,
       character,
@@ -13393,6 +17492,7 @@ async function _handleAgentLiveState(req, res) {
       self_mana_max: selfManaMax,
       target_name: targetName,
       target_hp_pct: targetHp,
+      target_id:   targetId,
       // Off-tank surfacing (#rn-serialization audit 2026-07-31): the agent has
       // sent these since 2026-07-04 and _handleAgentExtendedTarget selects +
       // consumes them — but this row never wrote them, so the column sat 100%
@@ -13434,6 +17534,7 @@ async function _handleAgentLiveState(req, res) {
       loc_x:       locX,
       loc_y:       locY,
       loc_z:       locZ,
+      cooldowns,
       buffs,
       buff_count:  Number.isFinite(Number(st?.buff_count)) ? Math.trunc(Number(st.buff_count)) : buffs.length,
       pet_name:    petName,
@@ -13486,7 +17587,7 @@ async function _handleAgentLiveState(req, res) {
 // log, that a character is BOTH the raid leader ("You are now the leader of
 // the raid.") AND has in-game Auto-Raid invite enabled ("Auto-Raid invite
 // enabled."). That character IS who members should /who for an auto-invite,
-// so we auto-set the ARI to them (Hitya 2026-07-13: "this is what we go off
+// so we auto-set the ARI to them (the guild lead, 2026-07-13: "this is what we go off
 // of for autoraidinvite"). Body: { character, active }. active:false (they
 // disabled ARI or lost raid lead) clears an AUTO-set ARI for that character —
 // never clobbers a manual /autoraidinvite set by an officer.
@@ -13800,7 +17901,7 @@ function _pruneCasts(now) {
       // lingers landed heals as a "+N healed" cue, and its poll cadence
       // (1s tick + 2s fetch TTL) needs the entry to survive a couple of
       // cycles past the land or a cross-client spot heal vanishes before the
-      // recipient ever fetches it (Hitya 2026-07-15).
+      // recipient ever fetches it (the guild lead, 2026-07-15).
       const grace = (c.heal_amount != null && c.heal_amount > 0) ? 9000 : 3000;
       const done = c.started_at_ms + (c.cast_secs || 6) * 1000 + grace;
       if (now > done || (now - c.received_at) > 30000) mp.delete(ck);
@@ -13827,7 +17928,7 @@ function _pruneCasts(now) {
 const _cureCastByTarget = new Map();
 const _CURE_SUPPRESS_MS = 8000;   // hide a cured debuff this long after the cure lands
 
-// Manual "✓ cured" overrides from the buff-queue overlay (Hitya
+// Manual "✓ cured" overrides from the buff-queue overlay (the guild lead
 // 2026-07-07: "need a way to prune curse/poison/disease cure needs when both
 // the curer and the affected player are not using Mimic"). When NEITHER party
 // uploads, no agent can observe the cure landing, so the inferred debuff chip
@@ -13994,6 +18095,11 @@ async function _handleAgentCasting(req, res) {
     const startMs = Number.isFinite(startedMs) ? startedMs : now;
     mp.set(caster.toLowerCase(), {
       caster, spell, target,
+      // Which SPAWN the caster was on (Zeal PR #229). The caster's own client
+      // knows this for certain — it is their current target — so unlike a
+      // witnessed buff landing there is nothing to prove here. Null on every
+      // unpatched Zeal, which the read side treats as unproven, never as wrong.
+      target_id: Number.isFinite(Number(c.target_id)) ? Math.trunc(Number(c.target_id)) : null,
       started_at_ms: startMs,
       cast_secs: castSecs, received_at: now,
       // Heal casts carry their estimated catalog amount (agent-attached, agent
@@ -14090,7 +18196,7 @@ async function _handleAgentRaidRoster(req, res) {
     // hp_max must be > 100: the EQ client only knows REAL cur/max for the
     // uploader themself — raid members arrive as a percent with hp_max=100,
     // and storing that as "exact" made the Tank overlay read "88 / 100 · 88%"
-    // (Hitya 2026-07-09). A ≤100 pool means "that's a %, keep hp_pct only".
+    // (the guild lead, 2026-07-09). A ≤100 pool means "that's a %, keep hp_pct only".
     const hpc = Number.parseInt(m?.hp_current, 10);
     const hpm = Number.parseInt(m?.hp_max, 10);
     const hasExact = Number.isFinite(hpc) && Number.isFinite(hpm) && hpm > 100;
@@ -14121,6 +18227,8 @@ async function _handleAgentRaidRoster(req, res) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, stored: 0 }));
   }
+  // Hand the positions to the raid replay recorder (memory only, no I/O, never throws).
+  try { require('./utils/raidTrack').noteRows(rows, identity.discord_id); } catch {}
   try {
     // Plain upsert per (guild, uploader, name) — merge-duplicates (#72 item 2.1).
     // This replaced the old DELETE-then-upsert: one round trip instead of two
@@ -14139,6 +18247,31 @@ async function _handleAgentRaidRoster(req, res) {
     res.writeHead(500, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'upsert failed', detail: err && err.message ? err.message : String(err) }));
   }
+}
+
+// GET /api/agent/raid-live — "is a raid on the ground right now?", polled by Bristlebane (the separate
+// raid-voice bot, apps/bristlebane): it joins the raid voice channel while this says live and leaves when
+// it stops. Answered from memory — the roster samples utils/raidTrack.js already holds ARE the signal
+// (raiders placed in the last few seconds; one in another zone arrives as (0,0,0) and is never counted),
+// so a poll costs no Supabase read. `ended` is the officer's "End raid" flag (_raidEndedInfo, bot_kv, 60 s
+// cache): the roster stays live after the button because everyone is still logged in, so the caller needs
+// it to tell "raid over" from "raid on". It is left out when Supabase is off, since nothing can say.
+// Auth: Bristlebane has no person's session token to send, so when BRISTLEBANE_API_KEY is set THIS route (and
+// no other) also accepts it as the bearer; unset, or any other bearer, falls through to requireAgentAuth.
+async function _handleAgentRaidLive(req, res) {
+  if (!require('./utils/serviceKey').matchesServiceKey(req, process.env.BRISTLEBANE_API_KEY)) {
+    const identity = await mimicLink.requireAgentAuth(req, res);
+    if (!identity) return;
+  }
+  const raidTrack = require('./utils/raidTrack');
+  const now = Date.now();
+  const { placed, lastRowAt } = raidTrack.liveSnapshot(now);
+  const nightKey = require('./utils/raidNight').nightKey(now);
+  const out = { live: placed >= raidTrack.minPlaced(), placed, lastRowAt, nightKey };
+  if (require('./utils/supabase').isEnabled()) out.ended = !!(await _raidEndedInfo(nightKey));
+  out.inWindow = require('./utils/timezone').isInRaidWindow(now);
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  return res.end(JSON.stringify(out));
 }
 
 // ── Stream classification — the dedup/load-shed guardrail (#72/#74) ──────────
@@ -14181,7 +18314,7 @@ function _dedupFlags(tune) {
 // from the same 60s tuning map and served on BOTH the reporter-poll (20s primary
 // control channel) AND the guild-trigger (2-min backup) responses so an agent
 // honors it via whichever channel it has. These are OFFICER-FACING POLICY
-// semantics — conservative v1, Hitya to sign off (STATUS + BETA-TESTING).
+// semantics — conservative v1, the guild lead to sign off (STATUS + BETA-TESTING).
 // FAIL-OPEN by construction: a missing/0 key = no effect (kill=false, floor=0),
 // and the agent only stands down while it has a FRESH reading — bot down = agents
 // run normally.
@@ -14320,7 +18453,7 @@ async function _handleAgentReporterPoll(req, res) {
   // timestamps with that same clock — so an install running 48s slow reports
   // deaths 48s slow. That is not a rounding nuisance: death dedup collapses
   // reports within 30s, so a skewed observer's copy escapes as a phantom second
-  // death (Dongru + Uilnayar, 2026-08-02 Seru parse).
+  // death (two raiders, 2026-08-02 Seru parse).
   //
   // The heartbeat is already a 20s unqueued round trip, so the offset comes free
   // — no new stream, no new timer. One-way latency contaminates it by tens of
@@ -14337,12 +18470,15 @@ async function _handleAgentReporterPoll(req, res) {
     }
   } catch { /* never break the heartbeat over telemetry */ }
 
-  // Always record the heartbeat so liveness/failover works even while disabled.
-  // `camping` (agent typed /camp) demotes this agent from every election ~30s
-  // before its logout would trip the TTL — see _dropCampers. `last_line_ms`
-  // (#112) is the agent's ms-since-last-live-log-line from its primary's tail —
-  // the liveness signal that catches a logged-out-but-heartbeating reporter.
-  _reporterGuildBook(guildId).set(id, {
+  // Record the heartbeat so liveness/failover works even while disabled —
+  // UNLESS a fresher sibling holds the slot: one account's several machines
+  // share this key, and the freshest LOG keeps it, not the latest heartbeat
+  // (see _reporterClaimAllowed). A refused machine loses nothing but the
+  // panel row — roles and elections key on the shared discord_id either way.
+  const _claimBook = _reporterGuildBook(guildId);
+  const _incoming = { last_line_ms: Number.isFinite(payload.last_line_ms) ? Math.max(0, Math.floor(payload.last_line_ms)) : null };
+  if (_reporterClaimAllowed({ incoming: _incoming, incumbent: _claimBook.get(id), now: Date.now(), ttlMs: REPORTER_TTL_MS }))
+  _claimBook.set(id, {
     last_seen: Date.now(),
     primary:   payload.primary_character ? String(payload.primary_character).slice(0, 32) : '',
     zone:      payload.zone ? String(payload.zone).slice(0, 64) : null,
@@ -14591,7 +18727,7 @@ async function _handleAgentFlagOverride(req, res) {
 }
 
 // ── Off-night event thread: the 🎲 rolled-loot card ──────────────────────────
-// Hitya 2026-07-31: a NON-raid guild event gets no DKP loot posts. Instead the
+// The guild lead 2026-07-31: a NON-raid guild event gets no DKP loot posts. Instead the
 // thread carries the items that dropped with their assigned roll ranges, the
 // night's parses (the autoparse cards already land there), and the rolled loot
 // with its winners.
@@ -14620,13 +18756,15 @@ async function _refreshEventRollCardNow() {
   const sinceMs = target.event ? (target.event.window?.fromMs || target.event.startMs) : (Date.now() - 12 * 3600_000);
   const sinceIso = new Date(sinceMs - 5 * 60_000).toISOString();
 
+  // Paged, oldest first: an event window on a busy loot night passes `limit=300` / `limit=500` (and the
+  // 1,000 PostgREST holds them to), and the card must list the whole window, not its first slice.
   const [rollRows, lootedRows] = await Promise.all([
-    supabase.select('roll_sets',
+    supabase.selectAllPaged('roll_sets',
       `guild_id=eq.${encodeURIComponent(guildId)}&started_at=gte.${encodeURIComponent(sinceIso)}`
-      + `&select=roll_from,roll_to,item,qty,zone,rolls,started_at,last_at&order=started_at.asc&limit=300`).catch(() => []),
-    supabase.select('looted_items',
+      + `&select=roll_from,roll_to,item,qty,zone,rolls,started_at,last_at`, 'started_at,id').catch(() => []),
+    supabase.selectAllPaged('looted_items',
       `guild_id=eq.${encodeURIComponent(guildId)}&looted_at=gte.${encodeURIComponent(sinceIso)}`
-      + `&select=looter_character,item_name,zone,looted_at&order=looted_at.asc&limit=500`).catch(() => []),
+      + `&select=looter_character,item_name,zone,looted_at`, 'looted_at,id').catch(() => []),
   ]);
   const { buildRollSessions, renderRollLootLines } = require('./utils/rollLoot');
   const sessions = buildRollSessions(rollRows || [], lootedRows || []);
@@ -14665,6 +18803,77 @@ function _scheduleEventRollCard() {
     _refreshEventRollCardNow().catch(err => console.warn('[roll-card] refresh failed:', err?.message));
   }, wait);
   if (typeof _rollCardTimer.unref === 'function') _rollCardTimer.unref();
+}
+
+// ── Deathrolls (the guild lead, 2026-09-23) ─────────────────────────────────
+// "First one to roll a zero loses - we should track these for fun." Found in
+// roll_sets by utils/deathroll.js (per uploader, then merged — uploaders'
+// clocks disagree by seconds). Each game is recorded once as a `deathroll`
+// fun_event and announced once in DEATHROLL_CHANNEL_ID.
+//
+// Settle before looking: every raider's Mimic uploads the ending within ~15s
+// of each other, and one pass after the burst sees the fullest copy and posts
+// once. Dedup is against fun_events itself, so a restart mid-game cannot
+// announce a game twice.
+const _DEATHROLL_SETTLE_MS  = 20_000;
+const _DEATHROLL_LOOKBACK_MS = 30 * 60_000;   // a 15-roll game at the 2-min step cap
+const _DEATHROLL_POST_MAX_AGE_MS = 10 * 60_000; // older than this: record, don't announce
+let _deathrollTimer = null;
+
+async function _checkDeathrollsNow() {
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return;
+  const { deathrollsFromRows, describeGame } = require('./utils/deathroll');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const sinceIso = new Date(Date.now() - _DEATHROLL_LOOKBACK_MS).toISOString();
+  // Paged: eleven uploaders on a busy loot night can pass PostgREST's silent
+  // 1000-row cap inside the lookback, and a truncated read drops the newest rows
+  // — exactly where the game that just ended lives.
+  const [rows, recorded] = await Promise.all([
+    supabase.selectAllPaged('roll_sets',
+      `guild_id=eq.${encodeURIComponent(guildId)}&roll_from=eq.0&started_at=gte.${encodeURIComponent(sinceIso)}`
+      + '&select=uploaded_by_discord_id,roll_from,roll_to,started_at,rolls', 'id'),
+    supabase.select('fun_events',
+      `guild_id=eq.${encodeURIComponent(guildId)}&event_type=eq.deathroll&event_ts=gte.${encodeURIComponent(sinceIso)}`
+      + '&select=caster,event_ts&limit=200'),
+  ]);
+  const games = deathrollsFromRows(rows || []);
+  for (const g of games) {
+    const already = (recorded || []).some(e => String(e.caster).toLowerCase() === g.loser.toLowerCase()
+      && Math.abs(Date.parse(e.event_ts) - g.endMs) <= 60_000);
+    if (already) continue;
+    await supabase.upsert('fun_events', [{
+      guild_id:   guildId,
+      event_type: 'deathroll',
+      caster:     g.loser,
+      target:     g.winners.join(', ').slice(0, 120) || null,
+      reagent_qty: Math.min(g.rolls, 32767),
+      event_ts:   new Date(g.endMs).toISOString(),
+      raw_text:   describeGame(g),
+      detail:     { start: g.start, rolls: g.rolls, players: g.players, winners: g.winners,
+                    loser: g.loser, started_at: new Date(g.startMs).toISOString(),
+                    steps: g.steps.map(s => ({ name: s.name, to: s.to, value: s.value })) },
+    }], 'guild_id,event_type,caster,event_ts');
+    (recorded || []).push({ caster: g.loser, event_ts: new Date(g.endMs).toISOString() });
+    console.log(`[deathroll] ${describeGame(g)}`);
+    const chId = process.env.DEATHROLL_CHANNEL_ID;
+    if (!chId || Date.now() - g.endMs > _DEATHROLL_POST_MAX_AGE_MS) continue;
+    const ch = await client.channels.fetch(chId).catch(() => null);
+    if (ch && typeof ch.send === 'function') {
+      await ch.send({ content: `☠️ ${describeGame(g, { bold: true })}`, allowedMentions: { parse: [] } })
+        .catch(err => console.warn('[deathroll] post failed:', err?.message));
+    }
+  }
+}
+
+/** Debounced, never-throwing trigger. Called from the rolls ingest. */
+function _scheduleDeathrollCheck() {
+  if (_deathrollTimer) return;
+  _deathrollTimer = setTimeout(() => {
+    _deathrollTimer = null;
+    _checkDeathrollsNow().catch(err => console.warn('[deathroll] check failed:', err?.message));
+  }, _DEATHROLL_SETTLE_MS);
+  if (typeof _deathrollTimer.unref === 'function') _deathrollTimer.unref();
 }
 
 // POST /api/agent/rolls  (#91 off-night NBG roll capture)
@@ -14724,6 +18933,11 @@ async function _handleAgentRolls(req, res) {
     res.writeHead(200);
     res.end(JSON.stringify({ ok: true, stored: rows.length }));
     try { _scheduleEventRollCard(); } catch { /* presentation only */ }
+    // A 0 on a 0-N roll may have ended a deathroll. Loot rolls land here too
+    // and simply find no chain.
+    if (rows.some(r => r.roll_from === 0 && r.rolls.some(x => x.value === 0))) {
+      try { _scheduleDeathrollCheck(); } catch { /* fun only */ }
+    }
     return;
   } catch (err) {
     res.writeHead(500); return res.end(JSON.stringify({ error: 'upsert failed', detail: err && err.message ? err.message : String(err) }));
@@ -14954,6 +19168,96 @@ function _senderClockOffsetMs(payload) {
   return raw;
 }
 
+async function _handleAgentFeedback(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    // Generous vs the other ingest routes because a log excerpt rides along
+    // (the agent caps its slice at 512KB) and up to three screenshots, which
+    // the client shrinks to ~1 MB JPEGs (5 MB each is the hard cap below). A
+    // report bigger than this is malformed rather than thorough.
+    if (total > 16 * 1024 * 1024) { res.writeHead(413); return res.end(JSON.stringify({ error: 'payload too large' })); }
+    chunks.push(chunk);
+  }
+  let p;
+  try { p = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const message = String(p?.message || '').trim();
+  if (message.length < 10) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'message too short' }));
+  }
+
+  const supabase = require('./utils/supabase');
+  const row = {
+    guild_id:             process.env.SUPABASE_GUILD_ID || 'wolfpack',
+    submitter_discord_id: identity.discord_id || null,
+    submitter_name:       p?.character ? String(p.character).slice(0, 64) : null,
+    category:             p?.category === 'bug' ? 'bug' : 'idea',
+    message:              message.slice(0, 4000),
+    client:               p?.client ? String(p.client).slice(0, 32) : null,
+    client_version:       p?.app_version ? String(p.app_version).slice(0, 40) : null,
+    platform:             p?.platform ? String(p.platform).slice(0, 32) : null,
+    // Opt-in, already redacted agent-side. Stored as-is so an officer reads
+    // exactly what the reporter previewed.
+    log_excerpt:          typeof p?.log_excerpt === 'string' ? p.log_excerpt.slice(0, 600_000) : null,
+    log_meta:             (p?.log_meta && typeof p.log_meta === 'object') ? p.log_meta : null,
+  };
+
+  // Screenshots (the guild lead, 2026-09-26). Anything that is not a real
+  // JPEG/PNG/WebP is dropped by decodeShots; the rest go to the private bucket.
+  const shotsMod = require('./utils/feedbackShots');
+  const shots = shotsMod.decodeShots(p?.screenshots);
+  const shotPaths = shots.length ? await shotsMod.uploadShots(shots, 'mimic') : [];
+  if (shotPaths.length) row.screenshot_paths = shotPaths;
+
+  let saved = null;
+  if (supabase.isEnabled()) {
+    saved = await supabase.insert('feedback', [row])
+      .catch(err => { console.warn('[feedback] insert failed:', err?.message); return null; });
+  }
+
+  // Tell the officers, post-ack — a slow Discord must never fail the submit.
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, stored: !!saved, screenshots: shotPaths.length }));
+
+  const threadId = process.env.FEEDBACK_THREAD_ID;
+  if (!threadId) return;
+  try {
+    const ch = await client.channels.fetch(threadId).catch(() => null);
+    if (!ch) return;
+    const m = row.log_meta || {};
+    const who = row.submitter_name || 'someone';
+    const tag = row.category === 'bug' ? '\u{1F41E} Bug' : '\u{1F4A1} Idea';
+    const attached = row.log_excerpt
+      ? `\n\u{1F4CE} log: ${m.lines || 0} lines over ${m.minutes || '?'} min` +
+        `${m.removed ? ` (${m.removed} private lines removed)` : ''}` +
+        `${m.truncated ? ' \u2014 truncated' : ''}`
+      : '';
+    // FB-<ref>: the handle commits and people use for it (feedbackRefs).
+    const fbTag = require('./utils/feedbackRefs').tag(Array.isArray(saved) && saved[0] ? saved[0].ref : null);
+    const sent = await ch.send({
+      content:
+        `${tag}${fbTag ? ' ' + fbTag : ''} from **${who}** via ${row.client || 'Mimic'}${row.client_version ? ' ' + row.client_version : ''}\n` +
+        `>>> ${message.slice(0, 1500)}${attached}`,
+      files: shotsMod.discordFiles(shots),
+      components: [_feedbackRecvRow()],
+    });
+    // Stamp the post on the row. Without it relayWebFeedback (which posts every
+    // row with no discord_msg_id) posted this report a second time a minute
+    // later, as an embed with no log or screenshots.
+    const id = Array.isArray(saved) && saved[0] && saved[0].id;
+    if (id && sent?.id) {
+      const link = sent.guildId ? `https://discord.com/channels/${sent.guildId}/${threadId}/${sent.id}` : null;
+      await supabase.update('feedback', `id=eq.${encodeURIComponent(id)}`, { discord_msg_id: sent.id, discord_msg_link: link })
+        .catch(err => console.warn('[feedback] stamp failed:', err?.message));
+    }
+  } catch (err) { console.warn('[feedback] discord post failed:', err?.message); }
+}
+
 async function _handleTriggerRelayPost(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -14983,6 +19287,15 @@ async function _handleTriggerRelayPost(req, res) {
   }
 
   const senderOffset = _senderClockOffsetMs(payload);
+  // The sender's zones, for the scope gate — every live character on the
+  // uploading ACCOUNT, resolved from the identity. The 3.1.111 version read
+  // `payload.character`, which no agent has ever sent, so the origin was null
+  // on every fire and the gate failed open for everyone: the guild lead, 2026-09-11,
+  // hearing a member's slows from Ssraeshza Temple while alone in Vex Thal.
+  // Resolved once per request (2s-cached live-state read), not per fire.
+  let originZones = [];
+  try { originZones = [...await _requesterZones(identity.discord_id)]; }
+  catch { originZones = []; }   // unknown → the gate treats it as not local
 
   let accepted = 0;
   for (const f of fires.slice(0, 10)) {
@@ -15021,6 +19334,12 @@ async function _handleTriggerRelayPost(req, res) {
       fired_at_true_ms:    firedAtTrue,    // skew-resolved; what receivers time off
       posted_at_ms:        now,
       uploaded_by:         identity.discord_id,
+      // Where the sender was standing, resolved HERE rather than sent by the
+      // agent: the bot already knows every character's live zone, so the gate
+      // works on the whole fleet the moment this deploys instead of waiting for
+      // ~16 people to update Mimic. Empty when live-state is stale — outside a
+      // raid that reads as "not local" (see _relayScopeKeep).
+      origin_zones:        originZones,
     };
     _triggerRelay.entries.push(entry);
     accepted++;
@@ -15034,6 +19353,93 @@ async function _handleTriggerRelayPost(req, res) {
   return res.end(JSON.stringify({ ok: true, accepted, next_id: _triggerRelay.nextId }));
 }
 
+// ── Relay scope gate (the guild lead, 2026-09-02; tightened 2026-09-11) ──────────────
+// "Every so often we hear Shaman Slow when we're not around combat. These should
+// only trigger for local fights or during raids, not outside."
+//
+// The relay had NO scope of any kind: every guild-trigger fire from any raider
+// ran on every other Mimic within 15s. Someone soloing an alt in East Commons on
+// a Tuesday landed a slow, and the whole guild heard it.
+//
+// The rule: raid-wide while you are in a raid — the scheduled window, OR your
+// own Mimic uploading a raid roster in the last 10 minutes (off-schedule raids)
+// — and same-zone-only otherwise.
+//
+// ⚠ OUTSIDE A RAID, UNKNOWN MEANS NOT LOCAL. The 3.1.111 gate failed open when
+// either side could not be placed, and because the ingest read a payload field
+// no agent ever sent, the sender was NEVER placed and the gate never dropped a
+// single fire. The guild lead, 2026-09-11, alone in Vex Thal hearing a Ssraeshza slow:
+// "I'm not in a zone with another guild member, or in a group, or even a raid.
+// These random slips need to stop." The raid cases are the safety net for a
+// real callout: inside them nothing is consulted and everything relays.
+function _relayScopeKeep({ inRaidWindow, inRaid, originZones, requesterZones }) {
+  if (inRaidWindow || inRaid) return true;                          // in a raid: unchanged, raid-wide
+  const origin = originZones instanceof Set ? originZones
+    : new Set(Array.isArray(originZones) ? originZones : (originZones ? [originZones] : []));
+  if (origin.size === 0) return false;                              // can't place the sender → not local
+  if (!requesterZones || requesterZones.size === 0) return false;   // can't place ourselves → not local
+  for (const z of origin) if (z && requesterZones.has(z)) return true;
+  return false;
+}
+
+// character name (lower) → owning discord id. Cached 5 min: the roster changes on
+// officer action, never mid-fight.
+let _charDiscordCache = { at: 0, map: new Map() };
+async function _charDiscordMap() {
+  if (_charDiscordCache.map.size && (Date.now() - _charDiscordCache.at) < 300_000) return _charDiscordCache.map;
+  const supabase = require('./utils/supabase');
+  const map = new Map();
+  if (supabase.isEnabled()) {
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    try {
+      const rows = await supabase.select('characters',
+        `guild_id=eq.${encodeURIComponent(guildId)}&discord_id=not.is.null&select=name,discord_id`);
+      for (const r of (rows || [])) {
+        if (r && r.name && r.discord_id) map.set(String(r.name).toLowerCase(), String(r.discord_id));
+      }
+    } catch (err) { console.warn('[relay-scope] char→discord fetch failed:', err && err.message); }
+  }
+  _charDiscordCache = { at: Date.now(), map };
+  return map;
+}
+
+// Every zone this discord account currently has a live character in. A set, not
+// a single value: one person can have several characters streaming at once, and
+// a fire in ANY of their zones is local to them.
+async function _requesterZones(discordId) {
+  if (!discordId) return new Set();
+  const [zoneByChar, discordByChar] = await Promise.all([_liveZoneMap(), _charDiscordMap()]);
+  const out = new Set();
+  for (const [charLower, z] of zoneByChar) {
+    if (!z || !z.zone_name) continue;
+    if (discordByChar.get(charLower) === discordId) out.add(z.zone_name);
+  }
+  return out;
+}
+
+// Accounts whose Mimic uploaded a raid roster in the last 10 minutes — the
+// "I am in a raid right now" signal that keeps the relay raid-wide on an
+// off-schedule night. Newest 500 rows (a few captures of a full raid), cached
+// 30s: one small read per half-minute for the whole fleet, never per poll.
+let _raidUploadersCache = { at: 0, ids: new Set() };
+async function _raidUploaderIds() {
+  if ((Date.now() - _raidUploadersCache.at) < 30_000) return _raidUploadersCache.ids;
+  const supabase = require('./utils/supabase');
+  const ids = new Set();
+  if (supabase.isEnabled()) {
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const since = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    try {
+      const rows = await supabase.select('raid_roster',
+        `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(since)}` +
+        `&select=uploaded_by_discord_id&order=captured_at.desc&limit=500`);
+      for (const r of (rows || [])) if (r && r.uploaded_by_discord_id) ids.add(String(r.uploaded_by_discord_id));
+    } catch (err) { console.warn('[relay-scope] raid uploaders fetch failed:', err && err.message); }
+  }
+  _raidUploadersCache = { at: Date.now(), ids };
+  return ids;
+}
+
 // Assemble the recent-fires payload from the in-memory relay ring buffer.
 // Shared by the standalone GET /recent-fires and the multiplexed GET /poll
 // (#106) so both stay byte-identical. Suppresses the caller's own fires — they
@@ -15043,9 +19449,16 @@ async function _handleTriggerRelayPost(req, res) {
 // own `loot_since_id`/`loot_next_id` cursor is independent of the fires cursor
 // (loot events are NOT suppressed by uploader — the officer's own Mimic should
 // announce too, since the post came from Discord/OpenDKP, not a fire it played).
-function _recentFiresFor(identity, sinceId, lootSinceId = 0) {
+// `scope` is { inRaidWindow, inRaid, requesterZones } resolved by the caller
+// (both call sites are async; this stays sync and pure so it can be tested
+// directly). Omitting it keeps every fire — the pre-gate behaviour.
+function _recentFiresFor(identity, sinceId, lootSinceId = 0, scope = null) {
+  const inRaidWindow  = scope ? !!scope.inRaidWindow : true;
+  const inRaid        = scope ? !!scope.inRaid : true;
+  const requesterZones = scope ? scope.requesterZones : null;
   const fires = _triggerRelay.entries
     .filter(e => e.id > sinceId && e.uploaded_by !== identity.discord_id)
+    .filter(e => _relayScopeKeep({ inRaidWindow, inRaid, originZones: e.origin_zones, requesterZones }))
     .map(e => ({
       id:                  e.id,
       name:                e.name,
@@ -15065,14 +19478,32 @@ function _recentFiresFor(identity, sinceId, lootSinceId = 0) {
   return { next_id: _triggerRelay.nextId, fires, loot_posted: loot.loot_posted, loot_next_id: loot.loot_next_id };
 }
 
+// Resolve the scope inputs once per poll. During a raid window this costs
+// nothing — the lookups are skipped entirely, which is also when the fleet
+// polls hardest. Off-schedule, the listener's own fresh raid-roster upload is
+// checked next (30s-cached set), and only then the zones.
+async function _relayScopeFor(identity) {
+  const inRaidWindow = _inRaidWindowEt(new Date());
+  if (inRaidWindow) return { inRaidWindow: true, inRaid: true, requesterZones: null };
+  const discordId = String((identity && identity.discord_id) || '');
+  let inRaid = false;
+  try { inRaid = discordId ? (await _raidUploaderIds()).has(discordId) : false; } catch { inRaid = false; }
+  if (inRaid) return { inRaidWindow: false, inRaid: true, requesterZones: null };
+  let requesterZones = new Set();
+  try { requesterZones = await _requesterZones(discordId); }
+  catch { requesterZones = new Set(); }   // unknown → not local (see _relayScopeKeep)
+  return { inRaidWindow: false, inRaid: false, requesterZones };
+}
+
 async function _handleRecentFiresGet(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
   const url = new URL(req.url, 'http://x');
   const sinceId     = parseInt(url.searchParams.get('since_id') || '0', 10) || 0;
   const lootSinceId = parseInt(url.searchParams.get('loot_since_id') || '0', 10) || 0;
+  const scope = await _relayScopeFor(identity);
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  return res.end(JSON.stringify(_recentFiresFor(identity, sinceId, lootSinceId)));
+  return res.end(JSON.stringify(_recentFiresFor(identity, sinceId, lootSinceId, scope)));
 }
 
 // ── Multiplexed agent poll (#106) ────────────────────────────────────────────
@@ -15091,7 +19522,7 @@ async function _handleRecentFiresGet(req, res) {
 // plus per-stream cursors reusing each stream's existing semantics:
 //   since_id=<n>      recent_fires cursor (id ring)
 //   tuning_ver=<hash> tuning bundle version (unchanged-gate)
-//   trig_ver=<ts>     guild-triggers version (max updated_at; unchanged-gate)
+//   trig_ver=<hash>   guild-triggers version (_guildTriggersVersion; unchanged-gate)
 //   classes=<csv>     guild-triggers class targeting
 //   characters=<csv>  prefs / backfill / ui_edits key list
 // Response: { ok, streams: { <key>: {data…} | { unchanged:true } }, agent_kill,
@@ -15133,6 +19564,41 @@ async function _tuningBundleFor(tune) {
   return { version: _pollTuningVersion(payload), ...payload };
 }
 
+// A member, 2026-09-29 (FB-35): "This doesn't show pets? maybe its only if they
+// dont use /pet leader". Right: a summoned pet names its owner only when the pet
+// says "My leader is <Owner>" (summon, or /pet leader), so a client that missed
+// that line cannot tell the pet from a raider. The bot already pools every
+// declaration any raider's agent uploaded (addPetOwners); this hands the pool
+// back. Summoned names only — one word, no article: a charm pet is a mob whose
+// owner changes by the minute, and a warder names its owner in its own name.
+// Latest declaration wins; anything older than 12 h is dropped.
+function _petOwnersForAgents(now) {
+  const t = now || Date.now();
+  const out = {};
+  let map = {};
+  try { map = getPetOwners() || {}; } catch { /* empty */ }
+  for (const [pet, val] of Object.entries(map)) {
+    if (!pet || /\s/.test(pet)) continue;
+    const list = petOwnerEntries(val);
+    const last = list[list.length - 1];
+    if (!last || !last.o || /\s/.test(last.o)) continue;
+    if (last.at && t - last.at > 12 * 3600_000) continue;
+    out[pet.toLowerCase()] = last.o;
+  }
+  // …and each named pet's spawn id, when its owner's Mimic uploaded one within
+  // the hour (an id lasts one zone and one summon; every fight re-sends it).
+  // The DPS HUD shows it under +pet (the guild lead, 2026-09-29).
+  const ids = {};
+  let idMap = {};
+  try { idMap = getPetSpawnIds() || {}; } catch { /* empty */ }
+  for (const [pet, v] of Object.entries(idMap)) {
+    const k = pet.toLowerCase();
+    if (!out[k] || !v || !(Number(v.id) > 0) || !v.at || t - v.at > 3600_000) continue;
+    ids[k] = Number(v.id);
+  }
+  return { owners: out, ids };
+}
+
 async function _handleAgentPoll(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -15152,12 +19618,12 @@ async function _handleAgentPoll(req, res) {
   if (_pollStreamDecision('recent_fires', want, tune, null, null) === 'send') {
     const sinceId     = parseInt(url.searchParams.get('since_id') || '0', 10) || 0;
     const lootSinceId = parseInt(url.searchParams.get('loot_since_id') || '0', 10) || 0;
-    out.streams.recent_fires = _recentFiresFor(identity, sinceId, lootSinceId);
+    out.streams.recent_fires = _recentFiresFor(identity, sinceId, lootSinceId, await _relayScopeFor(identity));
   }
 
   // tuning — 60s cache; version-gated so an unchanged blob costs a few bytes.
   if (_pollStreamDecision('tuning', want, tune, null, null) === 'send') {
-    const bundle = await _tuningBundleFor(tune);
+    const bundle = await _tuningBundleFor(_tuningForAgent(tune, identity));
     const dec = _pollStreamDecision('tuning', want, tune, url.searchParams.get('tuning_ver'), bundle.version);
     out.streams.tuning = dec === 'unchanged' ? { version: bundle.version, unchanged: true } : bundle;
   }
@@ -15182,6 +19648,11 @@ async function _handleAgentPoll(req, res) {
   }
   if (_pollStreamDecision('ui_edits', want, tune, null, null) === 'send') {
     out.streams.ui_edits = await _uiPendingEditsFor(chars);
+  }
+  // pet_owners (FB-35) — the owners pooled from every raider's uploads, so one
+  // "My leader is <Owner>" seen by anyone names that pet on every client's live meter.
+  if (_pollStreamDecision('pet_owners', want, tune, null, null) === 'send') {
+    out.streams.pet_owners = _petOwnersForAgents();
   }
 
   // Control plane (#74) rides every poll — the dormancy/floor channel, fresh even
@@ -15220,6 +19691,155 @@ async function _playVoiceTrigger({ message, voiceId, channelId, uploadedBy, trig
   void uploadedBy;   // logged upstream via _trackUpload; voice doesn't need it
 }
 
+// Mimic's reports went out with no buttons until 2026-09-27, so the ones still
+// open had no way to be acknowledged. Add the pair to each, once (latched in
+// bot_kv, fail-closed), skipping any post that already has buttons.
+const _FB_BUTTONS_BACKFILL_KEY = 'feedback_mimic_buttons_backfill';
+async function _backfillMimicFeedbackButtonsOnce(readyClient) {
+  const threadId = process.env.FEEDBACK_THREAD_ID;
+  const supabase = require('./utils/supabase');
+  if (!threadId || !supabase.isEnabled()) return 'skipped';
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const latch = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_FB_BUTTONS_BACKFILL_KEY}&select=value&limit=1`);
+  if (!kvLatch.shouldRunOnce(latch)) return kvLatch.latchState(latch) === 'unknown' ? 'unknown' : 'latched';
+  const rows = await supabase.select('feedback',
+    'client=eq.mimic&status=eq.new&discord_msg_id=not.is.null&select=discord_msg_id&order=submitted_at.asc&limit=100');
+  if (!Array.isArray(rows)) return 'unknown';
+  const thread = await readyClient.channels.fetch(threadId).catch(() => null);
+  if (!thread) return 'no-thread';
+  let added = 0;
+  for (const r of rows) {
+    const m = await thread.messages.fetch(r.discord_msg_id).catch(() => null);
+    if (!m || (m.components && m.components.length)) continue;
+    const ok = await m.edit({ components: [_feedbackRecvRow()] }).then(() => true).catch(() => false);
+    if (ok) added++;
+  }
+  await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _FB_BUTTONS_BACKFILL_KEY, value: { ran_at: new Date().toISOString(), added }, updated_at: new Date().toISOString() }],
+    'guild_id,key');
+  console.log(`[feedback] added buttons to ${added} Mimic report(s)`);
+  return 'done';
+}
+
+// Reports closed by commits move on by themselves (utils/feedbackRefs.js; the guild lead, 2026-09-29:
+// "referenceable IDs for each bug or enhancement request so the bot can update these when they get
+// implemented"). A commit on beta saying "Fixes FB-12" marks report 12 on beta; one on main marks it
+// implemented. The row, the Discord card and the submitter all hear. Reads the public repo's commit
+// list, no token; the last sha seen per branch sits in bot_kv, so a restart neither misses nor repeats
+// one, and a re-read is harmless because a report only moves forward. Beta first, so a commit that
+// reached both in one pass ends at implemented.
+function _githubJson(pathname) {
+  return new Promise((resolve) => {
+    const https = require('https');
+    https.get({ hostname: 'api.github.com', path: pathname,
+      headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
+      (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { resolve(res.statusCode === 200 ? JSON.parse(b) : null); } catch { resolve(null); } }); }
+    ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
+  });
+}
+async function _feedbackAdvance(readyClient, ref, branch, sha) {
+  const supabase = require('./utils/supabase');
+  const fr = require('./utils/feedbackRefs');
+  const rows = await supabase.select('feedback',
+    `ref=eq.${ref}&select=id,ref,status,category,submitter_discord_id,discord_msg_id,notes&limit=1`).catch(() => null);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  const next = row ? fr.advance(row.status, branch) : null;
+  if (!next) return;
+  const line = fr.statusLine(next, sha);
+  const now = new Date().toISOString();
+  const patch = { status: next, notes: [row.notes, `${now.slice(0, 10)} ${line}`].filter(Boolean).join('\n') };
+  if (next === 'addressed') { patch.addressed_by = `commit ${String(sha).slice(0, 7)}`; patch.addressed_at = now; }
+  await supabase.update('feedback', `id=eq.${encodeURIComponent(row.id)}`, patch)
+    .catch(err => console.warn('[feedback-ref] row update failed:', err?.message));
+  const threadId = process.env.FEEDBACK_THREAD_ID;
+  if (threadId && row.discord_msg_id) {
+    try {
+      const ch = await readyClient.channels.fetch(threadId);
+      const msg = await ch.messages.fetch(row.discord_msg_id);
+      const components = next === 'addressed' ? [] : msg.components;   // Beta keeps the buttons.
+      if (msg.embeds?.[0]) {
+        const e = _EB2.from(msg.embeds[0])
+          .setFields(...(msg.embeds[0].fields || []).filter(f => f.name !== 'Status'), { name: 'Status', value: line, inline: false });
+        await msg.edit({ embeds: [e], components });
+      } else {
+        await msg.edit({ content: _feedbackStatusContent(msg.content, line), components });
+      }
+    } catch (err) { console.warn('[feedback-ref] card edit failed:', err?.message); }
+  }
+  if (row.submitter_discord_id) {
+    try {
+      const text = fr.dmText(row.ref, row.category, next);
+      if (text) await (await readyClient.users.fetch(row.submitter_discord_id)).send(text);
+    } catch { /* DMs may be closed */ }
+  }
+  console.log(`[feedback-ref] FB-${ref} → ${next} (${branch} ${String(sha).slice(0, 7)})`);
+}
+async function _feedbackCommitWatch(readyClient) {
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return;
+  const fr = require('./utils/feedbackRefs');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  for (const branch of ['beta', 'main']) {
+    const key = `fb_commit_seen_${branch}`;
+    const kv = await supabase.select('bot_kv',
+      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${key}&select=value&limit=1`).catch(() => null);
+    const seen = Array.isArray(kv) && kv[0] && kv[0].value ? kv[0].value.sha : null;
+    const commits = await _githubJson(`/repos/davehess/QuarmBossTracker/commits?sha=${branch}&per_page=40`);
+    if (!Array.isArray(commits) || !commits.length) continue;
+    const fresh = [];
+    for (const c of commits) { if (c.sha === seen) break; fresh.push(c); }
+    for (const c of fresh.reverse()) {
+      for (const ref of fr.refsIn(c.commit && c.commit.message)) {
+        await _feedbackAdvance(readyClient, ref, branch, c.sha).catch(err => console.warn('[feedback-ref] failed:', err?.message));
+      }
+    }
+    await supabase.upsert('bot_kv', [{ guild_id: guildId, key, value: { sha: commits[0].sha }, updated_at: new Date().toISOString() }],
+      'guild_id,key').catch(() => {});
+  }
+}
+
+// One-shot: the reports still open when FB numbers arrived get theirs on the card, so they can be named
+// too. A Mimic post's first line gains it after "Bug"/"Idea"; an embed's title swaps "Feedback" for it.
+// Latched in bot_kv like the button backfill above.
+const _FB_REFS_BACKFILL_KEY = 'feedback_refs_backfill_v1';
+async function _backfillFeedbackRefsOnce(readyClient) {
+  const threadId = process.env.FEEDBACK_THREAD_ID;
+  const supabase = require('./utils/supabase');
+  if (!threadId || !supabase.isEnabled()) return 'skipped';
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const latch = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_FB_REFS_BACKFILL_KEY}&select=value&limit=1`);
+  if (!kvLatch.shouldRunOnce(latch)) return kvLatch.latchState(latch) === 'unknown' ? 'unknown' : 'latched';
+  const rows = await supabase.select('feedback',
+    'status=neq.addressed&ref=not.is.null&discord_msg_id=not.is.null&select=ref,discord_msg_id&order=ref.asc&limit=100');
+  if (!Array.isArray(rows)) return 'unknown';
+  const thread = await readyClient.channels.fetch(threadId).catch(() => null);
+  if (!thread) return 'no-thread';
+  const fr = require('./utils/feedbackRefs');
+  let tagged = 0;
+  for (const r of rows) {
+    const m = await thread.messages.fetch(r.discord_msg_id).catch(() => null);
+    if (!m) continue;
+    const t = fr.tag(r.ref);
+    let edit = null;
+    if (m.embeds?.[0]) {
+      const title = m.embeds[0].title || '';
+      if (!title.includes(t)) edit = { embeds: [_EB2.from(m.embeds[0]).setTitle(title.replace(/Feedback/, t) === title ? `${t} — ${title}` : title.replace(/Feedback/, t))] };
+    } else if (m.content && !m.content.includes(t)) {
+      const lines = m.content.split('\n');
+      lines[0] = lines[0].replace(/^(\S+ (?:Bug|Idea))/u, `$1 ${t}`);
+      edit = { content: lines.join('\n') };
+    }
+    if (edit && await m.edit(edit).then(() => true).catch(() => false)) tagged++;
+  }
+  await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _FB_REFS_BACKFILL_KEY, value: { ran_at: new Date().toISOString(), tagged }, updated_at: new Date().toISOString() }],
+    'guild_id,key');
+  console.log(`[feedback-ref] numbered ${tagged} open report card(s)`);
+  return 'done';
+}
+
 // Relay web-submitted feedback (discord_msg_id IS NULL) into the #feedback
 // thread, mirroring the /feedback command's embed + buttons, then stamp the
 // row's discord_msg_id/link so it's posted exactly once. Called on an interval
@@ -15230,11 +19850,20 @@ async function relayWebFeedback(readyClient) {
   const supabase = require('./utils/supabase');
   if (!supabase.isEnabled()) return;
 
+  // A row sent by Mimic or the Parser (client set) is posted by its own route,
+  // which stamps discord_msg_id only after its Discord upload finishes — seconds,
+  // with screenshots. A relay pass in that window posted the same report twice,
+  // and the relay's stamp won, so acknowledging the real post found no row (the
+  // guild lead, 2026-09-27: "double posted in the feedback channel"). Web and
+  // /feedback rows (client null) still relay at once; a client row only after
+  // 5 minutes unstamped, i.e. when its own post failed.
+  const clientGraceIso = new Date(Date.now() - 5 * 60_000).toISOString();
   let rows;
   try {
     rows = await supabase.select(
       'feedback',
-      'discord_msg_id=is.null&order=submitted_at.asc&limit=10&select=id,submitter_name,submitter_discord_id,category,message,submitted_at',
+      `discord_msg_id=is.null&or=(client.is.null,submitted_at.lt.${encodeURIComponent(clientGraceIso)})` +
+      '&order=submitted_at.asc&limit=10&select=id,ref,submitter_name,submitter_discord_id,category,message,submitted_at,screenshot_paths',
     );
   } catch { return; }
   if (!Array.isArray(rows) || rows.length === 0) return;
@@ -15248,7 +19877,7 @@ async function relayWebFeedback(readyClient) {
       const cat = r.category || 'general';
       const embed = new EmbedBuilder()
         .setColor(0x5865f2)
-        .setTitle(`📬 Feedback — ${cat}`)
+        .setTitle(`📬 ${require('./utils/feedbackRefs').tag(r.ref) || 'Feedback'} — ${cat}`)
         .setDescription(String(r.message || '(no message)').slice(0, 4000))
         .addFields({ name: 'Submitted by', value: r.submitter_name || 'web (anonymous)', inline: true })
         .setFooter({ text: r.submitter_discord_id ? `uid:${r.submitter_discord_id} · via web` : 'via wolfpack.quest' })
@@ -15257,7 +19886,16 @@ async function relayWebFeedback(readyClient) {
         new ButtonBuilder().setCustomId('fb_recv').setLabel('📬 Acknowledge').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId('fb_nope').setLabel('❌ Not Implementing').setStyle(ButtonStyle.Danger),
       );
-      const sent    = await thread.send({ embeds: [embed], components: [row] });
+      // Screenshots from the web form ride along as real attachments; the first
+      // one is also the embed's picture.
+      const shotBufs = [];
+      for (const pth of (Array.isArray(r.screenshot_paths) ? r.screenshot_paths : []).slice(0, 3)) {
+        const buf = await require('./utils/feedbackShots').downloadShot(pth);
+        if (buf) shotBufs.push(buf);
+      }
+      const files = require('./utils/feedbackShots').discordFiles(shotBufs);
+      if (files.length) embed.setImage(`attachment://${files[0].name}`);
+      const sent    = await thread.send({ embeds: [embed], components: [row], files });
       const guildId = sent?.guildId;
       const msgLink = guildId ? `https://discord.com/channels/${guildId}/${threadId}/${sent.id}` : null;
       // Stamp id/link so this row won't be picked up again. If this update
@@ -15270,6 +19908,168 @@ async function relayWebFeedback(readyClient) {
     }
   }
 }
+
+// ── Quarm patch notes mirror (the guild lead, 2026-10-04: "1175117242682331146 is the Quarm patch notes
+// channel id in our discord. pull everything from there") ──────────────────────────────────────────────
+// Every message in that channel lands in `quarm_patch_notes`, so a session can read Project Quarm's patch
+// history and quote a change word for word. The channel is normally a FOLLOWED announcement channel, so a
+// post is a webhook crosspost: its text can sit in `content`, in `embeds` or in `attachments`, and all three
+// are kept. Deleted posts stay stored.
+//
+// ⚠ Without the Message Content intent (portal toggle + MESSAGE_CONTENT_INTENT=1) Discord returns empty
+// content, embeds and attachments for any message that does not mention the bot, over the gateway and over
+// REST alike. Such a message is still stored, flagged `content_missing`, and the sweep counts them into its
+// bot_kv status and logs it loudly. Once the intent is on, the first sweep re-walks the whole channel and
+// rewrites those rows.
+//
+// The sweep pages BACKWARD from the newest message, 100 at a time. A FULL walk (the first one, one resuming
+// after a cap or an error, one after the intent turned on) goes to the start of the channel. Otherwise it
+// stops at the first page whose oldest message is already stored: the sweep before it had stored everything
+// older. A re-sweep only sees edits that fall inside the pages it fetches (the newest ~100 when nothing is
+// new). An edit to an older post comes from the messageUpdate listener below, not from the sweep.
+// Status and the resume point live in bot_kv (state.json does not survive a Railway deploy).
+//
+// ONLY QUARM'S OWN POSTS are kept (2026-10-04, the first sweep): the channel follows Quarm's #patch-notes,
+// #announcements and #server-status-downtimes, and members talk in it too. A followed-channel post is
+// written by a webhook (`webhookId`); a member's message is not, and it is not a patch note, so it is
+// never stored.
+const _QUARM_NOTES_CHANNEL_ID = process.env.QUARM_PATCH_NOTES_CHANNEL_ID || '1175117242682331146';
+const _isQuarmFeedPost = (msg) => !!(msg && msg.webhookId);
+const _QUARM_NOTES_KV_KEY = 'quarm_patch_notes_sync';
+const _QUARM_NOTES_CAP = 20_000;     // messages read per run; a bigger channel resumes on the next run
+let _quarmSyncRunning = false;
+
+// Pure: a Discord message → one quarm_patch_notes row (fetched_at is stamped by the writer).
+function _quarmNoteRow(msg) {
+  const embeds = (msg.embeds || []).map(e => ({
+    title: e.title || null,
+    description: e.description || null,
+    url: e.url || null,
+    fields: (e.fields || []).map(f => ({ name: f.name, value: f.value })),
+    footer: e.footer?.text || null,
+    author: e.author?.name || null,
+  }));
+  const attachments = [...(msg.attachments?.values?.() || [])]
+    .map(a => ({ name: a.name || null, url: a.url, contentType: a.contentType || null }));
+  const content = msg.content || '';
+  return {
+    message_id: msg.id,
+    channel_id: msg.channelId,
+    posted_at: msg.createdAt.toISOString(),
+    edited_at: msg.editedAt ? msg.editedAt.toISOString() : null,
+    author: msg.member?.displayName || msg.author?.globalName || msg.author?.username || null,   // a webhook post: the webhook's name
+    content,
+    embeds,
+    attachments,
+    content_missing: !content && !embeds.length && !attachments.length,
+  };
+}
+
+async function _syncQuarmPatchNotes() {
+  if (_quarmSyncRunning) return;
+  _quarmSyncRunning = true;
+  try {
+    const supabase = require('./utils/supabase');
+    if (!supabase.isEnabled()) return;
+    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const kv = await supabase.select('bot_kv',
+      `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_QUARM_NOTES_KV_KEY}&select=value&limit=1`);
+    // A failed read says nothing about whether the history is complete: skip, do not guess.
+    if (!Array.isArray(kv)) { console.warn('[quarm-notes] sync state unreadable — skipping this pass'); return; }
+    const prev = (kv[0] && kv[0].value) || {};
+    const intentOn = process.env.MESSAGE_CONTENT_INTENT === '1';
+    // `feed_only` is unset until one full walk has run with the member filter: that walk removes the member
+    // messages bot 3.1.199 stored.
+    const full = !prev.complete || !!prev.resume_before || (intentOn && !prev.message_content_intent) || !prev.feed_only;
+    const st = {
+      last_run: new Date().toISOString(), stored: 0, new: 0, fetched: 0, content_missing: 0,
+      complete: !!prev.complete, resume_before: prev.resume_before || null,
+      message_content_intent: !!prev.message_content_intent, feed_only: !!prev.feed_only,
+    };
+    let before = full ? (prev.resume_before || undefined) : undefined;
+    let finished = false;
+    try {
+      const channel = await client.channels.fetch(_QUARM_NOTES_CHANNEL_ID)
+        .catch(err => { throw new Error(`channel unreachable: ${err?.message}`); });
+      if (!channel || !channel.messages) throw new Error('channel unreachable: not a text channel');
+      for (;;) {
+        const page = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}), cache: false });
+        const msgs = page ? [...page.values()] : [];
+        if (!msgs.length) { finished = true; break; }
+        st.fetched += msgs.length;
+        // A member's message on the page is deleted in case an earlier sweep stored it (a no-op once clean;
+        // a failed delete is logged by the client).
+        const strays = msgs.filter(m => !_isQuarmFeedPost(m)).map(m => m.id);
+        if (strays.length) await supabase.del('quarm_patch_notes', `message_id=in.(${strays.join(',')})`);
+        const rows = msgs.filter(_isQuarmFeedPost).map(_quarmNoteRow);
+        st.content_missing += rows.filter(r => r.content_missing).length;
+        const have = rows.length ? await supabase.select('quarm_patch_notes',
+          `message_id=in.(${rows.map(r => r.message_id).join(',')})&select=message_id,edited_at,content_missing&limit=${rows.length}`) : [];
+        if (!Array.isArray(have)) throw new Error('stored-notes lookup failed');
+        const byId = new Map(have.map(h => [h.message_id, h]));
+        const instant = (iso) => (iso ? Date.parse(iso) : null);
+        // Write what is new, what was edited, and what was stored blank before the intent was on.
+        const todo = rows.filter(r => {
+          const h = byId.get(r.message_id);
+          return !h || instant(h.edited_at) !== instant(r.edited_at) || (h.content_missing && !r.content_missing);
+        });
+        st.new += rows.filter(r => !byId.has(r.message_id)).length;
+        if (todo.length) {
+          const at = new Date().toISOString();
+          const res = await supabase.upsert('quarm_patch_notes', todo.map(r => ({ ...r, fetched_at: at })), 'message_id');
+          if (!Array.isArray(res)) throw new Error('upsert failed');
+          st.stored += todo.length;
+        }
+        before = msgs.reduce((a, m) => (BigInt(m.id) < BigInt(a) ? m.id : a), msgs[0].id);   // the oldest id on the page
+        // The oldest QUARM post on the page decides "already stored": a member's message never is.
+        const oldestKept = rows.length
+          ? rows.reduce((a, r) => (BigInt(r.message_id) < BigInt(a) ? r.message_id : a), rows[0].message_id) : null;
+        if (msgs.length < 100) { finished = true; break; }          // the start of the channel
+        if (!full && oldestKept && byId.has(oldestKept)) { finished = true; break; }  // back in stored territory
+        if (st.fetched >= _QUARM_NOTES_CAP) {
+          st.capped = true;
+          console.warn(`[quarm-notes] hit the ${_QUARM_NOTES_CAP}-message cap — the next run resumes from ${before}`);
+          break;
+        }
+      }
+    } catch (err) {
+      st.error = String(err?.message || err).slice(0, 300);
+      console.warn('[quarm-notes] sync failed:', st.error);
+    }
+    if (finished) {
+      st.complete = true; st.resume_before = null; st.message_content_intent = intentOn; st.feed_only = true;
+    } else if (full) {
+      st.resume_before = before || null;    // pick the full walk up where it stopped
+    }
+    if (st.fetched && st.content_missing === st.fetched) {
+      console.warn(`[quarm-notes] all ${st.fetched} message(s) read had no content, embeds or attachments — the Message Content intent is off (portal toggle + MESSAGE_CONTENT_INTENT=1)`);
+    } else if (st.content_missing) {
+      console.warn(`[quarm-notes] ${st.content_missing} of ${st.fetched} message(s) read had no content, embeds or attachments`);
+    }
+    console.log(`[quarm-notes] ${st.fetched} read, ${st.new} new, ${st.stored} written, ${st.content_missing} without content${st.capped ? ', cap hit' : ''}${st.error ? ', ERROR' : ''}`);
+    const saved = await supabase.upsert('bot_kv',
+      [{ guild_id: guildId, key: _QUARM_NOTES_KV_KEY, value: st, updated_at: new Date().toISOString() }], 'guild_id,key');
+    if (!Array.isArray(saved)) console.warn('[quarm-notes] status save failed');
+  } catch (err) {
+    console.warn('[quarm-notes] sweep crashed:', err?.message);
+  } finally {
+    _quarmSyncRunning = false;
+  }
+}
+
+// One post, as it arrives or is edited. A partial (an edit that carries only what changed) is fetched whole first.
+async function _quarmNoteLive(msg) {
+  try {
+    const supabase = require('./utils/supabase');
+    if (!supabase.isEnabled()) return;
+    const whole = msg.partial ? await msg.fetch() : msg;
+    if (!_isQuarmFeedPost(whole)) return;   // a member's message, not a Quarm post
+    const res = await supabase.upsert('quarm_patch_notes',
+      [{ ..._quarmNoteRow(whole), fetched_at: new Date().toISOString() }], 'message_id');
+    if (!Array.isArray(res)) console.warn('[quarm-notes] live upsert failed for', msg.id);
+  } catch (err) { console.warn('[quarm-notes] live upsert failed:', err?.message); }
+}
+client.on(Events.MessageUpdate, (_before, msg) => { if (msg.channelId === _QUARM_NOTES_CHANNEL_ID) _quarmNoteLive(msg); });
 
 // POST /api/agent/tells
 //
@@ -15288,6 +20088,44 @@ async function relayWebFeedback(readyClient) {
 // linked Discord user (characters.discord_id → wolfpack_members → discord
 // user). Outgoing tells are stored but NOT DMed (the user is already at their
 // keyboard, that would be noise). DM failures are non-fatal.
+//
+// NPC lines that only LOOK like tells (the guild lead, 2026-09-28: "this is an NPC
+// message, not a tell"). A quest script can print its own chat line with
+// e.other:Message(0, "Maelin tells you, '...'"), which lands in the log byte
+// for byte like a /tell; Grand Librarian Maelin's PoK script does it 17 times,
+// on every PoP flag step. The agent's NPC-sender rule compares the full name
+// ("Grand Librarian Maelin") and misses the short one, and a name rule alone
+// would also drop real players who share an NPC's name. The script's own text
+// is the exact signal: every (sender, text) pair a script prints as a tell,
+// read from our eqemu_quest_scripts mirror. Cached 6h; fail-open, so a failed
+// read drops nothing.
+const _scriptedTellKey = (sender, text) =>
+  `${String(sender || '').trim().toLowerCase()}|${String(text || '').replace(/\s+/g, ' ').trim()}`;
+let _scriptedTellCache = { at: 0, set: new Set(), loading: null };
+async function _scriptedNpcTells() {
+  if (Date.now() - _scriptedTellCache.at < 6 * 3600 * 1000) return _scriptedTellCache.set;
+  if (_scriptedTellCache.loading) return _scriptedTellCache.loading;
+  _scriptedTellCache.loading = (async () => {
+    try {
+      const rows = await require('./utils/supabase').select('eqemu_quest_scripts',
+        'select=body&body=like.*tells%20you%2C*&limit=500');
+      const set = new Set();
+      for (const r of (Array.isArray(rows) ? rows : [])) {
+        for (const m of String(r.body || '').matchAll(/"([A-Za-z`' ]+?) tells you, '([^"]*)'"/g)) {
+          set.add(_scriptedTellKey(m[1], m[2]));
+        }
+      }
+      _scriptedTellCache = { at: Date.now(), set, loading: null };
+    } catch (err) {
+      console.warn('[tells] scripted NPC lines unavailable:', err?.message);
+      // Keep what we had; try again in 30 minutes.
+      _scriptedTellCache = { at: Date.now() - 5.5 * 3600 * 1000, set: _scriptedTellCache.set, loading: null };
+    }
+    return _scriptedTellCache.set;
+  })();
+  return _scriptedTellCache.loading;
+}
+
 async function _handleAgentTells(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -15322,7 +20160,9 @@ async function _handleAgentTells(req, res) {
     if (/^(that['’]?ll be|i['’]?ll give you)\b.*\b(platinum|gold|silver|copper)\b/i.test(t)) return true;
     return false;
   };
-  const tells = tellsRaw.filter(t => !(t && t.direction === 'incoming' && _isNpcTellText(t.text)));
+  const scriptedNpc = await _scriptedNpcTells();
+  const tells = tellsRaw.filter(t => !(t && t.direction === 'incoming'
+    && (_isNpcTellText(t.text) || scriptedNpc.has(_scriptedTellKey(t.other, t.text)))));
   // Per-machine DM pause set from the Mimic tray. When in the future, we still
   // STORE the tells (so /me/tells + the local card stay current) but skip the
   // Discord DM relay — same effect as the per-user snooze, but driven from the
@@ -15377,8 +20217,8 @@ async function _handleAgentTells(req, res) {
   // this upload is capturing SOMEONE ELSE'S private tells and would DM them to the
   // wrong person. Root cause (2026-07-24): the agent's NPC-hail character rename
   // fires on hail responses that bystanders also see, so a nearby raider's agent
-  // rebinds its identity to the hailer (e.g. "Hitya") and then relays that
-  // machine's tells under Hitya's opt-in — a real cross-user leak, seen live.
+  // rebinds its identity to the hailer (e.g. "Rethlan") and then relays that
+  // machine's tells under the guild lead's opt-in — a real cross-user leak, seen live.
   // The agent-side fix removes the flip at the source; THIS gate makes the leak
   // structurally impossible from the server regardless of agent version: the
   // owning discord must match the uploading discord. Shared/loaner alts are
@@ -15479,7 +20319,10 @@ async function _handleAgentTells(req, res) {
 // DM the owner with the freshly-relayed tells. Batched into one message so a
 // rapid volley of tells doesn't fan out as a wall of pings. Format matches
 // the Mimic dashboard's "Recent Tells" panel — one chronological line per
-// tell, "**Other** ← You" for incoming, "You → **Other**" for outgoing.
+// tell, SPEAKER → LISTENER in both directions: "**Other** → You" for
+// incoming, "You → **Other**" for outgoing. The left name is always who spoke.
+// (It used to draw incoming as "**Other** ← You", which reads as You speaking
+// — the guild lead, 2026-09-14: "These are still going the wrong direction.")
 // No header preamble and no per-message mute footer; the bot's name + 📬
 // glyph are the only chrome, and snooze controls live on /me/tells.
 async function _relayTellsToDM(discordUserId, ownerCharacter, tellRows) {
@@ -15502,10 +20345,9 @@ async function _relayTellsToDM(discordUserId, ownerCharacter, tellRows) {
     for (let i = 0; i < sorted.length; i++) {
       if (lines.length >= MAX_LINES) { omitted = sorted.length - i; break; }
       const r = sorted[i];
-      const arrow = r.direction === 'outgoing' ? '→' : '←';
       const who   = r.direction === 'outgoing'
-        ? `${ownerCharacter} ${arrow} **${r.other_name}**`
-        : `**${r.other_name}** ${arrow} ${ownerCharacter}`;
+        ? `${ownerCharacter} → **${r.other_name}**`
+        : `**${r.other_name}** → ${ownerCharacter}`;
       lines.push(`${who}: ${r.text}`);
     }
     if (omitted > 0) lines.push(`_…and ${omitted} more — wolfpack.quest/me/tells_`);
@@ -15533,6 +20375,110 @@ async function _relayTellsToDM(discordUserId, ownerCharacter, tellRows) {
       }
     }
   } catch { /* non-fatal */ }
+}
+
+// ── POST /api/agent/corpse — DM a character's owner where their corpse lies ──────────────────────────
+// The guild lead, 2026-09-26: "when a character dies we should discord message them to send them their
+// corpse coordinates and what zone they were in. we have all of that detail". The dying character's own
+// agent sends it once the death is confirmed real: {character, died_at, zone_id, zone, loc:{x,y,z}}, with
+// loc already in the order /loc prints. Same owner rules as tells: the uploading Mimic must own the
+// character (or its family root), so no one can aim a corpse DM at someone else. flag_shed_corpse=1
+// turns the whole thing off.
+const _corpseDmSeen = new Map();    // `${character}|${died_at}` → ms: a queue retry never DMs twice
+const _corpseDmRecent = new Map();  // owner discord id → [ms]: a cap per hour, for a bad night
+const CORPSE_DM_MAX_PER_HOUR = 6;
+// Planes of Power zones whose corpses the server moves after an hour (Quarm patch notes, 2026-10-02):
+// from a guild instance to the Plane of Tranquility graveyard, in the open world to the zone's own
+// graveyard; a failed Plane of Justice trial's corpse goes to the Tribunal. Zone ids 200–223 less the
+// Plane of Knowledge (202) and Tranquility (203) — listed by id because the catalog files the Crypt of
+// Decay and Plane of Justice under expansion 0.
+const _POP_CORPSE_MOVE_ZONES = new Set([200, 201, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214,
+  215, 216, 217, 218, 219, 220, 221, 222, 223]);
+
+function _corpseDmText({ character, zone, zoneId, loc, diedAtMs }) {
+  const unix = Math.floor(diedAtMs / 1000);
+  const where = zone ? ` in **${zone}**` : '';
+  const lines = [`💀 **${character}** died${where} <t:${unix}:t> (<t:${unix}:R>).`];
+  if (loc) {
+    lines.push(`Corpse at \`/loc\` **${Math.round(loc.x)}, ${Math.round(loc.y)}, ${Math.round(loc.z)}**`);
+  } else {
+    lines.push('Corpse position unknown: Zeal was not sending your location.');
+  }
+  // The /loc above is good for an hour in the Planes of Power, then the corpse moves.
+  if (_POP_CORPSE_MOVE_ZONES.has(Number(zoneId))) {
+    const moveAt = unix + 3600;
+    lines.push(`It moves <t:${moveAt}:R>: to the Plane of Tranquility graveyard from a guild instance, or to this zone's graveyard in the open world.`);
+    if (Number(zoneId) === 201) lines.push('A corpse from a failed trial goes to the Tribunal instead, in the same instance.');
+  }
+  return lines.join('\n');
+}
+
+async function _handleAgentCorpse(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  let body = '';
+  await new Promise((resolve) => {
+    req.on('data', (chunk) => { body += chunk; if (body.length > 16 * 1024) { req.destroy(); resolve(); } });
+    req.on('end', resolve);
+    req.on('error', resolve);
+  });
+  let payload;
+  try { payload = JSON.parse(body); } catch {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'invalid json' }));
+  }
+  const done = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  const character = String(payload?.character || '').trim();
+  if (!/^[A-Za-z]{2,32}$/.test(character)) return done(400, { error: 'bad character' });
+  const diedRaw = new Date(payload?.died_at || Date.now());
+  const diedAtMs = isNaN(diedRaw.getTime()) ? Date.now() : diedRaw.getTime();
+  const zone = typeof payload?.zone === 'string' ? payload.zone.trim().slice(0, 64) : '';
+  const l = payload?.loc;
+  const loc = l && [l.x, l.y, l.z].every(v => Number.isFinite(Number(v)))
+    ? { x: Number(l.x), y: Number(l.y), z: Number(l.z) } : null;
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return done(200, { ok: true, dm: false, note: 'supabase disabled' });
+  // Owner: the character's discord_id, else its family root's (alts are often unlinked).
+  const charRows = await supabase.select(
+    'characters',
+    `name=ilike.${encodeURIComponent(character)}&select=name,discord_id,main_name&guild_id=eq.wolfpack&limit=1`,
+  ).catch(() => []);
+  const charRow = Array.isArray(charRows) ? charRows[0] : null;
+  let ownerDiscordId = charRow?.discord_id || null;
+  if (charRow && !ownerDiscordId && charRow.main_name && charRow.main_name !== charRow.name) {
+    const rootRows = await supabase.select(
+      'characters',
+      `name=ilike.${encodeURIComponent(charRow.main_name)}&select=discord_id&guild_id=eq.wolfpack&limit=1`,
+    ).catch(() => []);
+    ownerDiscordId = (Array.isArray(rootRows) && rootRows[0]?.discord_id) || null;
+  }
+  if (!ownerDiscordId) return done(200, { ok: true, dm: false, note: 'character has no linked discord account' });
+  const uploaderDiscordId = identity && identity.discord_id ? String(identity.discord_id) : null;
+  if (!uploaderDiscordId || String(ownerDiscordId) !== uploaderDiscordId) {
+    return done(403, { error: 'character owner does not match the authenticated uploader', code: 'owner_mismatch' });
+  }
+
+  const now = Date.now();
+  const key = `${character.toLowerCase()}|${diedAtMs}`;
+  for (const [k, at] of _corpseDmSeen) if (now - at > 6 * 3600 * 1000) _corpseDmSeen.delete(k);
+  if (_corpseDmSeen.has(key)) return done(200, { ok: true, dm: false, duplicate: true });
+  const recent = (_corpseDmRecent.get(ownerDiscordId) || []).filter(t => now - t < 3600 * 1000);
+  if (recent.length >= CORPSE_DM_MAX_PER_HOUR) return done(200, { ok: true, dm: false, capped: true });
+  _corpseDmSeen.set(key, now);
+  recent.push(now);
+  _corpseDmRecent.set(ownerDiscordId, recent);
+  done(200, { ok: true, dm: true });
+
+  // After the ack: the agent never waits on Discord.
+  try {
+    const user = await client.users.fetch(ownerDiscordId).catch(() => null);
+    if (!user) return;
+    await user.send({
+      content: _corpseDmText({ character: charRow.name || character, zone, zoneId: payload?.zone_id, loc, diedAtMs }),
+      allowedMentions: { parse: [] },
+    }).catch(() => {});
+  } catch (err) { console.warn('[corpse] DM failed:', err?.message); }
 }
 
 // Assemble pending backfill requests for a character list. Shared by the
@@ -15630,9 +20576,13 @@ async function _guildTriggersFor({ classes = [], category = null } = {}) {
   if (!supabase.isEnabled()) return { version: '0', triggers: [], note: 'supabase disabled' };
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
 
-  let q = `guild_id=eq.${encodeURIComponent(guildId)}&enabled=eq.true&order=category.asc,name.asc`;
+  let q = `guild_id=eq.${encodeURIComponent(guildId)}&enabled=eq.true`;
   if (category) q += `&category=eq.${encodeURIComponent(category)}`;
-  const rows = await supabase.select('guild_triggers', q);
+  // Paged, in the order the agents have always been served (category, name) with
+  // id to break ties. It was one unpaged read: 484 enabled rows today, but a
+  // single import added 381 of them, so the 1,000-row cap was one import away
+  // from silently dropping triggers off the end of every agent's set.
+  const rows = await supabase.selectAllPaged('guild_triggers', q, 'category,name,id');
 
   // Server-side class targeting filter — applies_to_classes is text[]; we
   // include triggers where the column is null/empty OR overlaps the
@@ -15644,10 +20594,20 @@ async function _guildTriggersFor({ classes = [], category = null } = {}) {
     if (classes.length === 0) return true;
     return classes.some(c => arr.includes(c));
   });
-  const version = filtered.length
-    ? filtered.map(t => t.updated_at || '').sort().pop()
-    : '0';
-  return { version, triggers: filtered };
+  return { version: _guildTriggersVersion(filtered), triggers: filtered };
+}
+
+// The agent's no-change gate: it recompiles only when this string changes.
+// ⚠ It used to be max(updated_at) over the ENABLED rows served, which a disable
+// or delete can never move — the row simply leaves the set, taking its
+// timestamp with it. So switching a trigger off (from /admin/triggers or SQL)
+// never reached running agents: they kept firing it until some OTHER trigger
+// was edited or Mimic restarted. Found 2026-09-23 while disabling five duplicate
+// callouts that went on firing. A hash of which rows are served and when each
+// last changed moves on every add, edit, disable, enable and delete.
+function _guildTriggersVersion(rows) {
+  if (!rows || !rows.length) return '0';
+  return _pollTuningVersion(rows.map(t => `${t.id}@${t.updated_at || ''}`).sort());
 }
 
 async function _handleAgentGuildTriggers(req, res) {
@@ -15714,26 +20674,35 @@ function _bossPersistKeys(bossName, matchedBossId) {
 // exact, unambiguous eqemu match — which keeps junk boss names (a mis-parsed
 // player like 'Labanab') out of the table, exactly what the old allowlist was
 // accidentally good at.
-async function _resolveBossForPersist(bossName, matchedBossId, supabase) {
+// With `trackUncurated: false` (the 2026-09-04 gate) an uncurated mob returns
+// { internalId: null, gated: 'uncurated' } instead — distinguishable from the
+// junk null so the call site does not log it as a miss.
+async function _resolveBossForPersist(bossName, matchedBossId, supabase, { trackUncurated = true } = {}) {
   const { keys, rawSlug, eqemuForms } = _bossPersistKeys(bossName, matchedBossId);
   if (!keys.length || !rawSlug) return null;
+  const GATED = { internalId: null, gated: 'uncurated' };
   const rows = await supabase.select(
     'bosses_local',
-    `internal_id=in.(${keys.map(encodeURIComponent).join(',')})&select=internal_id`
+    `internal_id=in.(${keys.map(encodeURIComponent).join(',')})&select=internal_id,auto_registered`
   );
   if (Array.isArray(rows) && rows.length) {
-    const have = new Set(rows.map(r => r.internal_id));
-    for (const k of keys) if (have.has(k)) return { internalId: k, registered: false };
+    const have = new Map(rows.map(r => [r.internal_id, !!r.auto_registered]));
+    for (const k of keys) if (have.has(k)) {
+      if (!trackUncurated && have.get(k)) return GATED;
+      return { internalId: k, registered: false };
+    }
   }
   const or = eqemuForms.map(f => `name.eq.${encodeURIComponent(f)}`).join(',');
   const npcs = await supabase.select('eqemu_npc_types', `or=(${or})&select=id&limit=3`);
   const ids = [...new Set((Array.isArray(npcs) ? npcs : []).map(r => r.id).filter(n => Number.isFinite(n)))];
   if (ids.length !== 1) return null;   // no exact match, or ambiguous — refuse
   const npcId = ids[0];
-  const byNpc = await supabase.select('bosses_local', `npc_id=eq.${npcId}&select=internal_id&limit=1`);
+  const byNpc = await supabase.select('bosses_local', `npc_id=eq.${npcId}&select=internal_id,auto_registered&limit=1`);
   if (Array.isArray(byNpc) && byNpc[0]?.internal_id) {
+    if (!trackUncurated && byNpc[0].auto_registered) return GATED;
     return { internalId: byNpc[0].internal_id, registered: false };
   }
+  if (!trackUncurated) return GATED;
   await supabase.insertIgnoreDuplicates('bosses_local', [{
     npc_id: npcId, internal_id: rawSlug, nicknames: [],
     added_at: new Date().toISOString(),
@@ -15751,7 +20720,7 @@ async function _resolveBossForPersist(bossName, matchedBossId, supabase) {
   return { internalId: finalId, registered: true };
 }
 
-// Hitya 2026-08-19: "If they have a loot lockout we can keep them on." A mob
+// The guild lead 2026-08-19: "If they have a loot lockout we can keep them on." A mob
 // the SERVER hands out a loot lockout for is card-worthy by definition — and
 // the lockout (/sll) + bosskill relays carry exactly those names, including
 // the ones bosses.json doesn't know (instanced nameds outside the boards).
@@ -15782,7 +20751,7 @@ async function _promoteLockoutBoss(bossName, supabase) {
 // utils/killLockouts.js for why the parse is the higher-coverage source, and
 // the 2026-08-22 migration for why the two share one row per (character, boss).
 async function _recordKillLockouts({
-  boss, encounterId, killedAtMs, contributor, players, healers, defenders, inRaidWindow,
+  boss, encounterId, killedAtMs, contributor, players, healers, defenders, inRaidWindow, killVerdict,
 }) {
   const kl       = require('./utils/killLockouts');
   const supabase = require('./utils/supabase');
@@ -15798,7 +20767,7 @@ async function _recordKillLockouts({
 
   // Was this one of OUR kills? The encounter's raid_nights binding is the
   // direct answer when it exists. When it doesn't, the ROSTER SHARE decides —
-  // a raid night is not the only thing we run (Hitya 2026-08-22: "Friday was a
+  // a raid night is not the only thing we run (the guild lead, 2026-08-22: "Friday was a
   // guild rolling event, so internal, but still a lockout"), and only the
   // share of named players who are ours can tell an off-calendar guild event
   // from somebody else's raid. The raid-window check is the last fallback.
@@ -15820,7 +20789,7 @@ async function _recordKillLockouts({
   }
 
   const rows = kl.buildKillLockouts({
-    boss, killedAtMs, participants, inRaidNight, inRaidWindow, roster,
+    boss, killedAtMs, participants, inRaidNight, inRaidWindow, roster, killVerdict,
     guildId: process.env.SUPABASE_GUILD_ID || 'wolfpack',
     encounterId, observedBy: contributor,
   });
@@ -15967,6 +20936,16 @@ async function _handleAgentUpload(req, res) {
   // from different characters. The persistent map is cleared at midnight.
   const uploadedPetLeaders = encounter.pet_leaders || {};
   try { addPetOwners(uploadedPetLeaders); } catch {}
+  // Each pet row may carry the spawn id the OWNER's Mimic read off its own Zeal
+  // (pet_id). Pooled beside the owner so every DPS HUD's +pet line can show it.
+  try {
+    const petIds = {};
+    for (const p of Array.isArray(encounter.pets) ? encounter.pets : []) {
+      const id = Number(p && p.spawn_id);
+      if (p && p.name && !/\s/.test(String(p.name)) && Number.isInteger(id) && id > 0) petIds[String(p.name).toLowerCase()] = id;
+    }
+    addPetSpawnIds(petIds);
+  } catch {}
   // Normalise petLeaders to { petNameLower: [{o, at}, …] } — timestamped
   // declarations (petOwnerEntries upgrades legacy string shapes with at:0).
   // Build by starting from state then layering in the upload's claims stamped
@@ -16023,7 +21002,7 @@ async function _handleAgentUpload(req, res) {
     if (isPet) e.pet += amount; else e.direct += amount;
   };
   // 🐾 Charmed summary for the parse card ("list the charmed mobs together",
-  // Hitya 2026-07-31): per pet NAME, the damage bucket + the claimants it
+  // The guild lead 2026-07-31): per pet NAME, the damage bucket + the claimants it
   // split across, from THIS upload's fold (latest perspective, like the
   // events count in the card footer).
   const _charmedPets = new Map();   // display name → { damage, claimants:Set }
@@ -16056,7 +21035,7 @@ async function _handleAgentUpload(req, res) {
       // least of all the charmer's own — sees the whole picture. When several
       // raiders legitimately run same-named charms in one fight (three
       // Revenants, 2026-07-30), an equal split across the CURRENT claimants
-      // is the honest non-unique attribution (Hitya 2026-07-31). What we
+      // is the honest non-unique attribution (the guild lead, 2026-07-31). What we
       // never do again is split across everyone who charmed that name all
       // night — that's the Blood of Sraeshza corruption (damage credited to
       // raiders who were mezzing, dead, or in another zone).
@@ -16078,7 +21057,7 @@ async function _handleAgentUpload(req, res) {
         // raider's will, where attribution is the interesting part. Regular
         // summons ride the same pet_leaders path but are NOT charmed:
         //   • possessive names ("Purrina`s warder") — warders/summons named
-        //     after their master (Hitya 2026-07-31: "regular pets just named
+        //     after their master (the guild lead, 2026-07-31: "regular pets just named
         //     after their Master");
         //   • single-word names ("Gobn") — mage/necro summons.
         // Their damage still folds into the owner exactly as before; they
@@ -16141,7 +21120,7 @@ async function _handleAgentUpload(req, res) {
   // time here — before dedup, before _noteRaiderDeaths, and before they are
   // persisted on the contribution (utils/clockOffset.js). A skewed observer's
   // copy of a shared death used to escape the 30s dedup window and render as a
-  // second death (Fargan's 63s-slow install, Hitya 2026-08-06).
+  // second death (a member's 63s-slow install, the guild lead 2026-08-06).
   //
   // Gated on there being deaths at all: most uploads have none, and the lookup
   // is a Supabase read. No deaths, nothing to correct, no reason to ask.
@@ -16196,7 +21175,7 @@ async function _handleAgentUpload(req, res) {
   // Shows every encounter as it arrives — boss and trash — so officers can verify
   // data quality in real-time without touching the live raid boards.
   //
-  // ROUTING (Hitya 2026-07-31): the card goes to the per-night thread
+  // ROUTING (the guild lead, 2026-07-31): the card goes to the per-night thread
   // (utils/raidNight.js, created lazily on the night's first card) and falls
   // back to AUTOPARSE_TEST_THREAD_ID when night threads are off/unresolvable.
   // The CANONICAL parse record does NOT move: logParseToDiscord still writes
@@ -16228,9 +21207,13 @@ async function _handleAgentUpload(req, res) {
       // that finishes at 00:05 still lands in the night it began in), then the
       // original QA thread. Resolution is cached per night — not per card.
       const _rn = require('./utils/raidNight');
-      const _target = await _rn.getRaidNightTarget(client, startedMs)
+      // Which zone the kill was in, so two events running at once each get
+      // their own kills rather than whichever start time is nearer (the guild lead
+      // 2026-09-07). Null when unknown → the clock decides, as before.
+      const _zoneId = await _killZoneId(encounter.boss_name, character).catch(() => null);
+      const _target = await _rn.getRaidNightTarget(client, startedMs, _zoneId)
         .catch(() => ({ thread: null, kind: null, event: null }));
-      // Volume knob (Hitya 2026-07-31) — 1-player/1-second trash cards flooded
+      // Volume knob (the guild lead, 2026-07-31) — 1-player/1-second trash cards flooded
       // night one's thread. Known bosses always pass; everything else has to
       // clear the floors. The canonical '📊 Parse Log' record below is NOT
       // filtered, and neither is Supabase — this only gates what raiders read.
@@ -16244,7 +21227,7 @@ async function _handleAgentUpload(req, res) {
         durationSec: duration, playerCount: players.length, isBoss: _isBossCard,
       });
       const nightThread = (_target.thread && _passesVolume) ? _target.thread : null;
-      // QA copy (Hitya: "can still get a copy if need be") —
+      // QA copy (The guild lead: "can still get a copy if need be") —
       //   AUTOPARSE_QA_COPY=off       never post to the QA thread
       //   AUTOPARSE_QA_COPY=fallback  (default) only when the night thread
       //                               didn't take the card — the safety net
@@ -16283,8 +21266,8 @@ async function _handleAgentUpload(req, res) {
         // at the exact same timestamp are treated as separate kills.
         //
         // Earlier attempt that only compared ended_at proximity broke for
-        // the out-of-range case — Utoh's encounter ended via idle flush
-        // ~minutes before Syrl's in-range parser saw the death event, so
+        // the out-of-range case — a member's encounter ended via idle flush
+        // ~minutes before a member's in-range parser saw the death event, so
         // their ended_at gap exceeded any reasonable tolerance window.
         // Cache-first lookup: _liveCards is updated immediately (before the async
         // Discord send resolves), so concurrent uploads for the same boss find
@@ -16411,7 +21394,7 @@ async function _handleAgentUpload(req, res) {
 
           // ── Merge deaths (#134) ───────────────────────────────────────────
           // The old code SUMMED each parser's sighting of the same death — three
-          // parsers each seeing "Melting" die once rendered "Melting ×3". The
+          // parsers each seeing "Ambriel" die once rendered "Ambriel ×3". The
           // website already does this right: dedup across uploaders on name+ts
           // (~30s window) and suppress any name a SINGLE uploader reported dying
           // 2+ times (an NPC namesake). Accumulate each parser's RAW sightings
@@ -16670,7 +21653,7 @@ async function _handleAgentUpload(req, res) {
         card.setFooter({ text: `${perspLabel}${stagingTag} · ${perspNames} · ${encounter.events.length} events (latest)` });
 
         // 🐾 Charmed — the charm pets listed together with who their damage
-        // split across ("A Shissar Revenant — 12,480 (Jankzer / Rorschach)").
+        // split across ("A Shissar Revenant — 12,480 (Tilbrook / Gwenna)").
         // Latest-perspective like the footer's event count; same-named pets
         // stay one line because the log can't tell them apart (no spawn id).
         if (_charmedPets.size > 0) {
@@ -16771,7 +21754,7 @@ async function _handleAgentUpload(req, res) {
         }
 
         // #83b — point the web parse page's "View in Discord" at THIS
-        // human-readable card, not the Parse Log JSON embed (Hitya
+        // human-readable card, not the Parse Log JSON embed (the guild lead
         // 2026-07-31: the button landed on the machine-format thread).
         // Unconditional write so the card wins over the JSON-embed stitch
         // (applyEncounterParseLink), whose is.null guard keeps it as the
@@ -16847,7 +21830,7 @@ async function _handleAgentUpload(req, res) {
         if (session?.threadId) {
           sessionTargetChannel = await client.channels.fetch(session.threadId).catch(() => null);
         }
-        // The night/event thread IS the landing spot (Hitya 2026-07-31). On a
+        // The night/event thread IS the landing spot (the guild lead, 2026-07-31). On a
         // normal raid night the /raidnight session thread above already IS it;
         // this covers the nights nobody ran /raidnight — without it the card
         // fell through to the officers' QA thread, because RAID_CHAT_CHANNEL_ID
@@ -16985,23 +21968,15 @@ async function _handleAgentUpload(req, res) {
         }
 
         // Auto-record kill if (1) the agent confirmed the boss's death line
-        // was observed AND (2) the boss isn't already on cooldown.
+        // was observed AND (2) the boss isn't already on cooldown AND (3) the
+        // kill was in OUR instance. (2) and (3) are decided after the ack, in
+        // _decideKillDeferred below — (3) reads Supabase.
         // confirmed_kill=false uploads (idle-timeout flushes — pulls and
         // wipes where the boss survived) only record the parse; they must
         // not move timers. Old agents (no flag) treated as unconfirmed:
         // safer to require an explicit /kill than fire a wrong timer.
-        const { getBossState, recordKill } = require('./utils/state');
-        const { postKillUpdate } = require('./utils/killops');
-        const bossState = getBossState(matchedBoss.id);
-        const now = Date.now();
         if (encounter.confirmed_kill !== true) {
           console.log(`[agent] ${matchedBoss.name} parse recorded but kill NOT confirmed (no death line observed) — timer unchanged`);
-        } else if (!bossState || !bossState.killedAt || bossState.nextSpawn <= now) {
-          recordKill(matchedBoss.id, matchedBoss.timerHours, null);
-          postKillUpdate(client, process.env.TIMER_CHANNEL_ID, matchedBoss.id).catch(console.warn);
-          console.log(`[agent] auto-killed ${matchedBoss.name} from ${character || '?'} agent upload`);
-        } else {
-          console.log(`[agent] ${matchedBoss.name} already on cooldown — parse recorded, no timer change`);
         }
       } else {
         console.log(`[agent] no bosses.json match for "${encounter.boss_name}" — parse not stored locally`);
@@ -17009,6 +21984,17 @@ async function _handleAgentUpload(req, res) {
     }
   } catch (err) {
     console.warn('[agent] local parse write failed:', err?.message);
+  }
+
+  // ── Hail board: a confirmed kill of a boss whose death spawns a hail NPC opens its window. Outside the
+  // Supabase block on purpose — an uncurated boss (Mithaniel Marr and the rest) can be gated out of persisting
+  // and its window must open anyway. One window per death however many agents upload it (utils/hailBoard.js).
+  if (!isBackfill && encounter.confirmed_kill === true && encounter.boss_name) {
+    _hailKill({
+      bossName: encounter.boss_name,
+      killedAtMs: encounter.ended_at ? new Date(encounter.ended_at).getTime() : startedMs + duration * 1000,
+      participants: players.map(p => p.name),
+    });
   }
 
   // ── Best-effort Supabase write. Falls through silently if Supabase isn't set up ──
@@ -17065,11 +22051,12 @@ async function _handleAgentUpload(req, res) {
       // article-stripped slug → exact eqemu match with self-registration for
       // first-time content. See _resolveBossForPersist for why (the Final
       // Arbiter P1, 2026-08-16).
+      const trackUncurated = await _trackUncuratedMobs();
       const resolved = await _resolveBossForPersist(
-        encounter.boss_name, matchedBoss?.id || null, supabase);
+        encounter.boss_name, matchedBoss?.id || null, supabase, { trackUncurated });
       const bossInternalId = resolved?.internalId
         || (encounter.boss_name || '').toLowerCase().replace(/\W+/g, '_');
-      if (resolved) {
+      if (resolved?.internalId) {
         const recParseResult = await supabase.recordParse({
           bossInternalId,
           parsed: rawParse,
@@ -17090,13 +22077,19 @@ async function _handleAgentUpload(req, res) {
         // #83 — remember the encounter id for the post-200 parse deep-link step.
         if (recParseResult?.encounterId) _encIdForLink = recParseResult.encounterId;
 
+        // Same eviction as the kill relay, on the broader signal: the relay
+        // only fires for server broadcasts (instanced / lockout content), while
+        // this fires whenever ANY raider's agent saw the death line — so a mob
+        // killed without a broadcast also leaves the board immediately.
+        if (encounter.confirmed_kill === true) _extEvictDeadMob(encounter.boss_name);
+
         // Register the kill the moment ANY contributor's agent confirms the
         // boss's slain line (confirmed_kill). Sets encounters.ended_at — the
         // marker the /parses "Engaged now" section keys off — so a dead boss
         // stops showing as ENGAGED as soon as one of the raid's agents saw it
         // die. Set-once (ended_at=is.null filter): the first confirmed death
         // time wins; later unconfirmed idle-flush uploads can't clear it.
-        // (Hitya 2026-06-29 — "anyone saw the mob die … register the parse".)
+        // (the guild lead, 2026-06-29 — "anyone saw the mob die … register the parse".)
         if (recParseResult?.encounterId && encounter.confirmed_kill === true) {
           const endedIso = encounter.ended_at
             ? new Date(encounter.ended_at).toISOString()
@@ -17107,26 +22100,9 @@ async function _handleAgentUpload(req, res) {
           ).catch(err => console.warn('[agent] ended_at set failed:', err?.message));
         }
 
-        // A confirmed kill of a lockout-bearing raid boss IS a lockout
-        // observation for everyone who was there — Hitya 2026-08-22, on a
-        // Ventani parse Taeya had uploaded from a non-guild raid: "taeya
-        // reported this Ventani kill so they should have a lockout." The
-        // /sll relay this table was built on needs a human to type /sll in
-        // game, so it had produced zero rows while the encounter pipe had
-        // already captured three foreign raid kills from that same player.
-        // Fire-and-forget: a lockout write must never fail an upload.
-        if (recParseResult?.encounterId && encounter.confirmed_kill === true && matchedBoss) {
-          _recordKillLockouts({
-            boss:        matchedBoss,
-            encounterId: recParseResult.encounterId,
-            killedAtMs:  encounter.ended_at
-                           ? new Date(encounter.ended_at).getTime()
-                           : startedMs + duration * 1000,
-            contributor: character || null,
-            players, healers: uploadedHealers, defenders: uploadedDefenders,
-            inRaidWindow: isRaidWindow,
-          }).catch(err => console.warn('[lockout] kill-derived write failed:', err?.message));
-        }
+        // (The kill-derived lockout write that used to sit here moved into
+        // _decideKillDeferred, after the ack: its `ours` flag now follows the
+        // kill-context verdict, which has to be read first.)
 
         // Persist charm sessions for this encounter. Upsert dedup'd by
         // (guild_id, pet_name, owner, started_at) so re-uploads from
@@ -17152,6 +22128,13 @@ async function _handleAgentUpload(req, res) {
             console.warn('[agent] charm_sessions upsert failed:', err?.message);
           }
         }
+      } else if (resolved?.gated) {
+        // The uncurated-mob gate, working as configured — once per mob per
+        // process, or a farm night would write thousands of these.
+        if (!_uncuratedGateLogged.has(bossInternalId)) {
+          _uncuratedGateLogged.add(bossInternalId);
+          console.log(`[agent] "${bossInternalId}" not persisted — uncurated-mob tracking is off (TRACK_UNCURATED_MOBS / flag_skip_uncurated_mobs)`);
+        }
       } else {
         // Only reachable when the boss name has no exact, unambiguous eqemu
         // match — a mis-parsed boss (player name, garbled line), not real
@@ -17163,6 +22146,93 @@ async function _handleAgentUpload(req, res) {
   } catch (err) {
     console.warn('[agent] supabase write failed:', err?.message);
   }
+
+  // ── Which instance was this kill in — and so, does it start a board timer? ──────────────────────────
+  // The guild lead 2026-10-05: "Lord of Ire PVP kills are still being triggered as regular guild instance
+  // kills … If anyone from outside of our guild is in the zone there's a good chance they are in live and
+  // we do not count those timers." Zone ids cannot tell the instances apart, so utils/killContext.js reads
+  // the circumstantial evidence (PvP broadcast, PvP flag, roster share, /who) and only an `ours` verdict
+  // records a timer. A pvp/live verdict also stamps the encounter row's classification, which keeps the
+  // fight out of guild kill counts and — via latest_kill_per_npc — out of timer recovery after a deploy.
+  //
+  // Runs AFTER the ack (the agent never waits on Supabase reads, same as the Discord card work above).
+  // A boss in a PvP-capable zone waits PVP_DEFER_MS first: the PvP broadcast is relayed by another
+  // agent and can trail this upload by ~2 min. Any failure reads as `ours`, i.e. today's behaviour — a
+  // dropped timer on a real guild kill is worse than a wrong one on a PvP kill an officer can clear.
+  const _decideKillDeferred = async () => {
+    const kc = require('./utils/killContext');
+    const killedAtMs = encounter.ended_at ? new Date(encounter.ended_at).getTime() : startedMs + duration * 1000;
+    if (kc.isPvpCapableZone(matchedBoss.zone)) {
+      await new Promise(resolve => { setTimeout(resolve, kc.PVP_DEFER_MS).unref(); });
+    }
+
+    let verdict = { verdict: 'ours', reason: 'kill context unavailable' };
+    let alreadyClassified = null;
+    try {
+      const supabase = require('./utils/supabase');
+      if (supabase.isEnabled()) {
+        const participants = require('./utils/killLockouts').participantsFromUpload({
+          contributor: character || null, players, healers: uploadedHealers, defenders: uploadedDefenders,
+        });
+        const gathered = await kc.gatherKillSignals({
+          supabase, guildId: process.env.SUPABASE_GUILD_ID || 'wolfpack', ourGuild: WP_GUILD_NAME,
+          boss: matchedBoss, encounterId: _encIdForLink, killedAtMs, participants,
+        });
+        verdict = kc.classifyKillContext(gathered.signals);
+        alreadyClassified = gathered.existingClassification;
+        const patch = kc.classificationPatch(verdict);
+        if (patch && _encIdForLink) {
+          // `classification=is.null`: an officer's mark (or an earlier upload's verdict) is never overwritten.
+          await supabase.update('encounters',
+            `id=eq.${encodeURIComponent(_encIdForLink)}&classification=is.null`, patch);
+        }
+      }
+    } catch (err) {
+      console.warn(`[kill-context] ${matchedBoss.name}: classification failed — recording the timer as before:`, err?.message);
+      verdict = { verdict: 'ours', reason: 'classification failed' };
+      alreadyClassified = null;
+    }
+
+    // A confirmed kill of a lockout-bearing raid boss IS a lockout
+    // observation for everyone who was there — the guild lead 2026-08-22, on a
+    // Ventani parse a member had uploaded from a non-guild raid: "<they>
+    // reported this Ventani kill so they should have a lockout." The
+    // /sll relay this table was built on needs a human to type /sll in
+    // game, so it had produced zero rows while the encounter pipe had
+    // already captured three foreign raid kills from that same player.
+    // A PvP/live kill still locks the characters who were in it — only its `ours` flag follows the verdict.
+    // Fire-and-forget: a lockout write must never fail an upload.
+    if (_encIdForLink) {
+      _recordKillLockouts({
+        boss:        matchedBoss,
+        encounterId: _encIdForLink,
+        killedAtMs,
+        contributor: character || null,
+        players, healers: uploadedHealers, defenders: uploadedDefenders,
+        inRaidWindow: isRaidWindow,
+        killVerdict:  verdict.verdict,
+      }).catch(err => console.warn('[lockout] kill-derived write failed:', err?.message));
+    }
+
+    if (verdict.verdict !== 'ours' || alreadyClassified) {
+      console.log(`[agent] ${matchedBoss.name} kill NOT started as a board timer — `
+        + (alreadyClassified ? `the encounter is already marked "${alreadyClassified}"` : `${verdict.verdict}: ${verdict.reason}`));
+      return;
+    }
+    const { getBossState, recordKill } = require('./utils/state');
+    const { postKillUpdate } = require('./utils/killops');
+    // Read the board AFTER the awaits above: two agents uploading one kill both reach this line, and the
+    // second must see the first's timer.
+    const bossState = getBossState(matchedBoss.id);
+    const now = Date.now();
+    if (!bossState || !bossState.killedAt || bossState.nextSpawn <= now) {
+      recordKill(matchedBoss.id, matchedBoss.timerHours, null);
+      postKillUpdate(client, process.env.TIMER_CHANNEL_ID, matchedBoss.id).catch(console.warn);
+      console.log(`[agent] auto-killed ${matchedBoss.name} from ${character || '?'} agent upload`);
+    } else {
+      console.log(`[agent] ${matchedBoss.name} already on cooldown — parse recorded, no timer change`);
+    }
+  };
 
   // Characters the bot wants extra coverage on (comma-separated env var).
   // Agents highlight these in blue on the [O] historical opt-in screen.
@@ -17193,11 +22263,16 @@ async function _handleAgentUpload(req, res) {
   // catch is the backstop so an unexpected throw can't become an unhandled
   // rejection.
   _postParseCardsDeferred().catch(err => console.warn('[agent] deferred card work failed:', err?.message));
+  // The timer decision rides the same post-ack rule (see _decideKillDeferred above). `matchedBoss` is only
+  // ever set outside backfill, so a replayed log still cannot move a timer.
+  if (matchedBoss && encounter.confirmed_kill === true) {
+    _decideKillDeferred().catch(err => console.warn('[agent] kill decision failed:', err?.message));
+  }
 
   // [#80-live] Live Raid Night Review — post-ack, synchronous, fully swallowed.
   // Two jobs, neither of which may ever reach this handler's control flow:
   //   • tally the kill when it was NOT a tracked boss (`encounters` is
-  //     boss-only, so the trash totals Hitya asked for have no other source);
+  //     boss-only, so the trash totals the guild lead asked for have no other source);
   //   • mark the night dirty so the live card refreshes on its own debounce.
   // It is handed a SIGNAL, never combat data — every number on the card still
   // comes from Supabase, so the live card can't disagree with the parse card.
@@ -17324,7 +22399,7 @@ const httpServer = http.createServer(async (req, res) => {
   // it without redirecting the officer to Discord. Auth via the agent
   // bearer (same shared secret); the web action validates officer status
   // server-side before calling, and the bot logs the recorded_by id for
-  // audit. Hitya 2026-06-21.
+  // audit. The guild lead 2026-06-21.
   if (req.method === 'POST' && req.url === '/api/admin/opendkp-register') {
     const identity = await mimicLink.requireAgentAuth(req, res);
     if (!identity) return;
@@ -17346,9 +22421,9 @@ const httpServer = http.createServer(async (req, res) => {
       const recordedBy = String(body?.recorded_by_discord_id || '').trim();
       // OpenDKP CharacterId of the family root this new character should be
       // parented under. The web /admin/links page computes this from the
-      // uploader's existing characters cluster — e.g. Hitya's Mimic uploads
-      // a new alt, OpenDKP already lists her family rooted at Canopy, so
-      // the new character lands as one of Canopy's alts instead of becoming
+      // uploader's existing characters cluster — e.g. a Mimic uploads
+      // a new alt and OpenDKP already roots that family somewhere, so
+      // the new character lands as one of that main's alts instead of becoming
       // its own un-parented root. 0 = no parent (acceptable when the web
       // genuinely couldn't resolve a family root for the uploader).
       const parentOpenDkpId = Number.isFinite(parseInt(body?.parent_opendkp_id, 10))
@@ -17441,10 +22516,29 @@ const httpServer = http.createServer(async (req, res) => {
     }
   }
 
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/mob-pack')) {
+    try { return await _handleAgentMobPack(req, res); }
+    catch (err) {
+      console.error('[mob-pack] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
   if (req.method === 'GET' && req.url.startsWith('/api/agent/mob-info')) {
     try { return await _handleAgentMobInfo(req, res); }
     catch (err) {
       console.error('[mob-info] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Target Info F/Q/V: what to say, hand-ins, who's next, what it sells — by npc id.
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/npc-interact')) {
+    try { return await _handleAgentNpcInteract(req, res); }
+    catch (err) {
+      console.error('[npc-interact] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
@@ -17484,6 +22578,14 @@ const httpServer = http.createServer(async (req, res) => {
       console.error('[live-damage] handler error:', err);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ players: [], note: 'error' }));
+    }
+  }
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/my-parses')) {
+    try { return await _handleAgentMyParses(req, res); }
+    catch (err) {
+      console.error('[my-parses] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
     }
   }
   if (req.method === 'GET' && req.url.startsWith('/api/agent/extended-target')) {
@@ -17532,6 +22634,37 @@ const httpServer = http.createServer(async (req, res) => {
     }
   }
 
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/item-catalog')) {
+    try { return await _handleAgentItemCatalog(req, res); }
+    catch (err) {
+      console.error('[item-catalog] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // The same three catalogs without sign-in, so the Mimic build can bundle them
+  // for local-mode installs (the guild lead, 2026-10-01; DECISIONS §118). Safe to
+  // publish: every row comes from the eqemu_* mirror, which anyone can already read
+  // with the site's public key. Each body is cached and ETag'd, so a hit costs no
+  // database read.
+  if (req.method === 'GET' && req.url.startsWith('/api/public/catalog/')) {
+    const which = req.url.slice('/api/public/catalog/'.length).split(/[?#]/)[0];
+    const handler = which === 'spell-catalog' ? _handleAgentSpellCatalog
+      : which === 'item-clickies' ? _handleAgentItemClickies
+      : which === 'item-catalog' ? _handleAgentItemCatalog : null;
+    if (!handler) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'unknown catalog' }));
+    }
+    try { return await handler(req, res, true); }
+    catch (err) {
+      console.error('[public-catalog] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
   if (req.method === 'GET' && req.url.startsWith('/api/agent/di-status')) {
     try { return await _handleAgentDiStatus(req, res); }
     catch (err) {
@@ -17545,6 +22678,15 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentCharacterPrefs(req, res); }
     catch (err) {
       console.error('[character-prefs] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/character-prefs') {
+    try { return await _handleAgentCharacterPrefsSet(req, res); }
+    catch (err) {
+      console.error('[character-prefs set] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
@@ -17600,6 +22742,16 @@ const httpServer = http.createServer(async (req, res) => {
     }
   }
 
+  if (req.method === 'POST' && req.url === '/api/agent/corpse') {
+    if (await _isShedded('corpse', res)) return;
+    try { return await _handleAgentCorpse(req, res); }
+    catch (err) {
+      console.error('[corpse] handler error:', err);
+      if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'internal error' })); }
+      return;
+    }
+  }
+
   if (req.method === 'POST' && req.url === '/api/agent/tells') {
     if (await _isShedded('tells', res)) return;
     try { return await _handleAgentTells(req, res); }
@@ -17621,6 +22773,16 @@ const httpServer = http.createServer(async (req, res) => {
     }
   }
 
+  if (req.method === 'POST' && req.url === '/api/agent/xp-events') {
+    if (await _isShedded('xp_events', res)) return;
+    try { return await _handleAgentXpEvents(req, res); }
+    catch (err) {
+      console.error('[xp-events] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
   if (req.method === 'POST' && req.url === '/api/agent/raid-roster') {
     if (await _isShedded('raid_roster', res)) return;
     if (await _overBudget('raid_roster', req, res)) return;
@@ -17628,6 +22790,26 @@ const httpServer = http.createServer(async (req, res) => {
     catch (err) {
       console.error('[raid-roster] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/raid-live')) {
+    try { return await _handleAgentRaidLive(req, res); }
+    catch (err) {
+      console.error('[raid-live] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // The raid screen's 3-second feed (wolfpack.quest/screen): positions + screen state, read from memory and a
+  // memo, behind a screen ticket Vercel signs and CORS for the site only. utils/screenLive.js has the why.
+  if ((req.method === 'GET' || req.method === 'OPTIONS') && req.url.split('?')[0] === '/api/screen/live') {
+    try { return await require('./utils/screenLive').handle(req, res, { auctions: _peekPanelAuctions }); }
+    catch (err) {
+      console.error('[screen-live] handler error:', err);
+      if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
   }
@@ -17747,6 +22929,19 @@ const httpServer = http.createServer(async (req, res) => {
   // Fan-out POST — agent reports a local fire so other Mimics that
   // missed the source line can replay it. Stored in _triggerRelay ring
   // buffer; receivers fetch via GET /api/agent/recent-fires below.
+  // Feedback from inside Mimic, with an optional redacted log slice
+  // (the guild lead, 2026-09-02). The agent does the redaction — officer chat, tells,
+  // group and /who are gone before this ever sees the bytes — so the bot's job
+  // is to store it and tell the officers.
+  if (req.method === 'POST' && req.url === '/api/agent/feedback') {
+    try { return await _handleAgentFeedback(req, res); }
+    catch (err) {
+      console.error('[feedback] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
   if (req.method === 'POST' && req.url === '/api/agent/trigger-relay') {
     if (await _isShedded('trigger_relay', res)) return;
     try { return await _handleTriggerRelayPost(req, res); }
@@ -17804,6 +22999,13 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   // PVP broadcast relay — posts PvP kills/deaths to PVP_CHANNEL_ID
+  if (req.method === 'POST' && req.url === '/api/agent/optin_summary') {
+    try { return await _handleAgentOptinSummary(req, res); }
+    catch (err) {
+      console.error('[optin-summary] handler error:', err);
+      res.writeHead(500); return res.end();
+    }
+  }
   if (req.method === 'POST' && req.url === '/api/agent/pvp_assists') {
     if (await _isShedded('pvp_assists', res)) return;
     try { return await _handleAgentPvpAssists(req, res); }
@@ -17867,7 +23069,7 @@ const httpServer = http.createServer(async (req, res) => {
     }
   }
 
-  // Fun-events ingestion — Peopleslayer LD counter, future CoH/DI/Aegolism/Rune.
+  // Fun-events ingestion — a member LD counter, future CoH/DI/Aegolism/Rune.
   // Each event upserts into the fun_events table; the unique constraint on
   // (guild_id, event_type, caster, event_ts) silently dedups replays.
   if (req.method === 'POST' && req.url === '/api/agent/fun_event') {
@@ -17880,7 +23082,7 @@ const httpServer = http.createServer(async (req, res) => {
     }
   }
 
-  // Trigger timing feedback — votes from Mimic's trigger overlay (Hitya
+  // Trigger timing feedback — votes from Mimic's trigger overlay (the guild lead
   // 2026-06-26 — v1.1.2). Each vote inserts a trigger_timing_feedback row;
   // officer /admin/triggers will surface aggregates in a follow-up so the
   // guild's triggers can be tuned from evidence instead of guesswork.
@@ -17926,6 +23128,24 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentPopFlags(req, res); }
     catch (err) {
       console.error('[pop-flags] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/hail-board')) {
+    try { return await _handleAgentHailBoard(req, res); }
+    catch (err) {
+      console.error('[hail-board] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/hail-mark') {
+    try { return await _handleAgentHailMark(req, res); }
+    catch (err) {
+      console.error('[hail-mark] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
@@ -17987,6 +23207,14 @@ const httpServer = http.createServer(async (req, res) => {
     }
   }
 
+  if (req.method === 'POST' && req.url === '/api/agent/bid-prefs') {
+    try { return await _handleAgentBidPrefs(req, res); }
+    catch (err) {
+      console.error('[bid-prefs] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
   if (req.method === 'POST' && req.url === '/api/agent/place-bid') {
     try { return await _handleAgentPlaceBid(req, res); }
     catch (err) {
@@ -18053,6 +23281,10 @@ const httpServer = http.createServer(async (req, res) => {
   if (req.method === 'GET' && (req.url === '/health' || req.url === '/healthz')) {
     let breaker = null;
     try { breaker = require('./utils/supabase').breakerState(); } catch { /* */ }
+    // Reads that came back with exactly PostgREST's 1,000-row cap and no limit of
+    // their own: almost certainly truncated. Non-zero here means a read needs paging.
+    let rowCap = null;
+    try { rowCap = require('./utils/supabase').capStats(); } catch { /* */ }
     const budgets = {};
     for (const [kind, book] of _budgetBuckets) {
       const perMin = _BUDGET_DEFAULTS[kind]?.perMin;
@@ -18064,7 +23296,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.writeHead(ready ? 200 : 503, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({
       ok: ready, ready, shutting_down: _shuttingDown,
-      supabase_breaker: breaker, budgets,
+      supabase_breaker: breaker, supabase_row_cap: rowCap, budgets,
     }));
   }
 

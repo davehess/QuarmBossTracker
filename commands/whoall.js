@@ -2,6 +2,7 @@
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { getCharacter, getFamily, getAllNames } = require('../utils/roster');
 const { CLASS_EMOJI } = require('./parse');
+const { isGuildMember, MEMBERS_ONLY } = require('../utils/roles');
 
 function charLink(name) {
   const url = getCharacter(name)?.quarmyUrl;
@@ -64,6 +65,7 @@ module.exports = {
     ),
 
   async autocomplete(interaction) {
+    if (!isGuildMember(interaction)) return interaction.respond([]);   // the labels name mains and alts
     const focused = interaction.options.getFocused().toLowerCase();
     const names = getAllNames();
     const matches = names
@@ -79,6 +81,7 @@ module.exports = {
   },
 
   async execute(interaction) {
+    if (!isGuildMember(interaction)) return interaction.reply({ flags: MessageFlags.Ephemeral, content: MEMBERS_ONLY });
     const name = interaction.options.getString('name');
 
     if (!getCharacter(name)) {

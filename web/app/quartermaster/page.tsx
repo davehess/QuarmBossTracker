@@ -5,7 +5,7 @@
 //     Read from character_gear × eqemu_items, extending the raidKit idiom.
 //     VISIBLE ownership only — the bank is stripped before upload — so a blank
 //     means "not seen", not "doesn't exist".
-//     ⚠ OWNER NAMES ARE OFFICER-ONLY (Hitya, 2026-08-14: "quartermaster should
+//     ⚠ OWNER NAMES ARE OFFICER-ONLY (the guild lead, 2026-08-14: "quartermaster should
 //     display raider information for that user not for everyone. it can display
 //     for everyone for admins"). A member sees their OWN characters named and a
 //     nameless guild-wide count; scoping lives in scopeKitCoverage so the rule
@@ -25,13 +25,24 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import { ownedCharacters } from '@/lib/ownedCharacters';
+import { loadRoster } from '@/lib/roster';
 import { selectAll } from '@/lib/selectAll';
+
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'Quartermaster',
+  description:
+    'Guild logistics: what the bank holds, what is spoken for, and what still needs sourcing.',
+};
 import {
   KIT_CATALOG, KIT_ITEM_IDS, KIT_CATEGORY_LABEL, computeKitCoverage, scopeKitCoverage,
   ownedFromRows, computeQuestProgress,
   type KitOwnerRow, type KitCoverage, type KitCategory,
   type QuestDef, type QuestProgress, type OwnedItems,
 } from '@/lib/quartermaster';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -63,22 +74,24 @@ type Loaded = {
 async function load(userId: string, officer: boolean): Promise<Loaded> {
   const sb = supabaseAdmin();
 
-  const { data: charData } = await sb
-    .from('characters')
-    .select('name, class, rank, main_name, main_name_override, exclude_from_stats, exclude_inventory')
-    .eq('guild_id', 'wolfpack');
-  const chars = (charData ?? []) as CharRow[];
+  // The shared roster read (web/lib/roster.ts): paged, and the same read ownedCharacters() below uses.
+  const chars: CharRow[] = await loadRoster();
   const charByLower = new Map(chars.map(c => [c.name.toLowerCase(), c]));
 
   // ── Board 1 — kit coverage (gear rows for exactly the catalog ids) ──────────
-  const { data: gearData } = await sb
+  // Paged: a plain read stops at the API's 1,000 rows however high the .limit is set (415 today, but it is
+  // every kit item on every character). (character, loc, slot) is the rest of the primary key once the
+  // guild is fixed, so the pages never skip or repeat a row.
+  const gearData = await selectAll<{ character: string; item_id: number }>((from, to) => sb
     .from('character_gear')
     .select('character, item_id')
+    .eq('guild_id', GUILD_TAG)
     .in('item_id', KIT_ITEM_IDS)
     .in('loc', ['equipped', 'bag'])
-    .limit(20000);
+    .order('character').order('loc').order('slot')
+    .range(from, to));
   const kitRows: KitOwnerRow[] = [];
-  for (const g of (gearData ?? []) as { character: string; item_id: number }[]) {
+  for (const g of gearData) {
     const c = charByLower.get(g.character.toLowerCase());
     if (!c || excluded(c)) continue;
     kitRows.push({ itemId: g.item_id, character: c.name, main: mainOf(c), className: c.class });
@@ -91,7 +104,7 @@ async function load(userId: string, officer: boolean): Promise<Loaded> {
   const [{ data: qData }, { data: riData }] = await Promise.all([
     sb.from('quest_catalog')
       .select('id, name, category, display_order')
-      .eq('guild_id', 'wolfpack').eq('active', true).order('display_order'),
+      .eq('guild_id', GUILD_TAG).eq('active', true).order('display_order'),
     sb.from('quest_required_item')
       .select('quest_id, item_id, item_name, quantity, optional, display_order')
       .order('display_order'),
@@ -141,9 +154,12 @@ async function load(userId: string, officer: boolean): Promise<Loaded> {
       (from, to) => sb
         .from('character_inventory')
         .select('character_name, item_id, item_name, quantity')
-        .eq('guild_id', 'wolfpack')
+        .eq('guild_id', GUILD_TAG)
         .in('character_name', invNames)
-        .order('character_name').order('item_name').order('item_id')
+        // `id` ends the order: (character_name, item_name, item_id) repeats when a character holds
+        // one item in two slots, and tied rows fall either side of a page boundary. Measured
+        // 2026-10-04: 12 of 49,418 rows never came back with the order stopping at item_id.
+        .order('character_name').order('item_name').order('item_id').order('id')
         .range(from, to));
     for (const r of invData) {
       const k = r.character_name.toLowerCase();

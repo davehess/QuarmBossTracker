@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-28T00:00:00Z",
+  "title": "Design System: wolfpack.quest",
+  "extensions": {
+    "colorMeta": {
+      "night-ground": { "role": "neutral", "displayName": "Night Ground", "canonical": "#0d1117", "tonalRamp": ["#05070a", "#0d1117", "#161b22", "#21262d", "#30363d", "#4a5560", "#6e7681", "#c9d1d9"] },
+      "panel-slate": { "role": "neutral", "displayName": "Panel Slate", "canonical": "#161b22", "tonalRamp": ["#080b0f", "#0d1117", "#161b22", "#21262d", "#2c333d", "#3d4652", "#5a6675", "#8a94a3"] },
+      "hairline": { "role": "neutral", "displayName": "Hairline", "canonical": "#30363d", "tonalRamp": ["#0e1013", "#171a1f", "#22262c", "#30363d", "#454d57", "#5c6672", "#8b95a1", "#c2c8d0"] },
+      "bone-line": { "role": "neutral", "displayName": "Bone Line", "canonical": "#e8e2d4", "tonalRamp": ["#26241f", "#3d3a32", "#585449", "#7a7466", "#a09884", "#c4bcaa", "#e8e2d4", "#f6f3ec"] },
+      "bone-bright": { "role": "neutral", "displayName": "Bone Bright", "canonical": "#f2ede1", "tonalRamp": ["#28261f", "#403d33", "#5c5849", "#807a68", "#a8a08b", "#ccc5b4", "#f2ede1", "#faf8f2"] },
+      "read-grey": { "role": "neutral", "displayName": "Read Grey", "canonical": "#c9d1d9", "tonalRamp": ["#1c2126", "#2b323a", "#3f4852", "#57626e", "#77838f", "#9aa5b0", "#c9d1d9", "#e9edf1"] },
+      "dim-grey": { "role": "neutral", "displayName": "Dim Grey", "canonical": "#6e7681", "tonalRamp": ["#14171a", "#22262b", "#32373e", "#454b54", "#5a616b", "#6e7681", "#98a0aa", "#c8ced5"] },
+      "eye-gold": { "role": "primary", "displayName": "Eye Gold", "canonical": "#d29922", "tonalRamp": ["#2b1e04", "#432f07", "#5f430b", "#815a10", "#a67418", "#d29922", "#e6b955", "#f4dda1"] },
+      "eye-gold-lit": { "role": "primary", "displayName": "Lit Gold", "canonical": "#e0a92c", "tonalRamp": ["#2e2205", "#48350a", "#654a0e", "#886414", "#b0821c", "#e0a92c", "#eec55e", "#f8e5a8"] },
+      "gold-ink": { "role": "primary", "displayName": "Gold Ink", "canonical": "#1a1206", "tonalRamp": ["#0a0703", "#1a1206", "#2d1f0a", "#42300f", "#5c4416", "#7d5d20", "#a67e2e", "#d2a95a"] },
+      "link-blue": { "role": "secondary", "displayName": "Link Blue", "canonical": "#58a6ff", "tonalRamp": ["#08192e", "#0d2647", "#123763", "#1a4c88", "#2668b5", "#3a86dd", "#58a6ff", "#a6cfff"] },
+      "accent-blue": { "role": "secondary", "displayName": "Accent Blue", "canonical": "#1f6feb", "tonalRamp": ["#06152e", "#0a2149", "#0f3068", "#15448f", "#1a57ba", "#1f6feb", "#5c98f4", "#a9c8fa"] },
+      "live-green": { "role": "tertiary", "displayName": "Live Green", "canonical": "#56d364", "tonalRamp": ["#0a2c10", "#0f421a", "#165e25", "#1f8033", "#2ba644", "#3ec755", "#56d364", "#a5ecad"] },
+      "alarm-red": { "role": "tertiary", "displayName": "Alarm Red", "canonical": "#f85149", "tonalRamp": ["#2e0b09", "#470f0d", "#661613", "#8b1f1a", "#b32c25", "#d93b33", "#f85149", "#fba39e"] },
+      "warn-orange": { "role": "tertiary", "displayName": "Warn Orange", "canonical": "#ffa657", "tonalRamp": ["#301a06", "#4a290a", "#6a3b0f", "#8f5215", "#b86d1e", "#e08c2f", "#ffa657", "#ffd0a6"] },
+      "class-purple": { "role": "tertiary", "displayName": "Class Purple", "canonical": "#a371f7", "tonalRamp": ["#1d0f34", "#2c184f", "#3f236f", "#563194", "#7044bd", "#8b58e0", "#a371f7", "#cfb1fb"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Plate Display", "purpose": "Prata Didone. One per page, hero headline only, centred on the plate's symmetry axis, capped at 18ch with text-balance." },
+      "headline": { "displayName": "Section Heading", "purpose": "Prata at 1.25rem above a hairline-ruled block." },
+      "title": { "displayName": "Index Entry Name", "purpose": "Prata at 1.125rem — the name of a destination in the editorial index." },
+      "body": { "displayName": "Lead Prose", "purpose": "Faustina. Lead paragraphs, capped at 58ch." },
+      "bodySmall": { "displayName": "Supporting Prose", "purpose": "Faustina. The sentence under an index entry, capped at 68ch." },
+      "label": { "displayName": "Chrome Label", "purpose": "Mono at 0.75rem — timestamps, chrome, footer." },
+      "data": { "displayName": "Measurement", "purpose": "Mono with tabular numerals. Damage figures, counts, any column of numbers. Mono appears ONLY where the content is a measurement." }
+    },
+    "shadows": [
+      { "name": "plate-lift", "value": "drop-shadow(0 18px 42px rgba(0, 0, 0, 0.55))", "purpose": "Alpha wolf only. Atmosphere, not elevation — seats the specimen on the ground without drawing an edge." },
+      { "name": "eye-glow", "value": "drop-shadow(0 0 9px rgba(210, 153, 34, 0.75))", "purpose": "The alpha's irises. The only lit thing on the plate." },
+      { "name": "ring-focus", "value": "0 0 0 4px rgba(88, 166, 255, 0.45)", "purpose": "Keyboard focus on the /ai scrubber thumb. No other component uses a box-shadow." }
+    ],
+    "motion": [
+      { "name": "ease-emerge", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Exponential ease-out for the one authored moment: the pack surfacing behind the alpha." },
+      { "name": "duration-surface", "value": "1.5s", "purpose": "Length of the wolf-surface reveal (opacity + blur + mask together)." },
+      { "name": "stagger-pack", "value": "0.35s, 0.55s, 0.80s, 1.00s, 1.25s", "purpose": "Per-wolf animation delay, near pair outward to the far single." },
+      { "name": "ease-considered", "value": "cubic-bezier(0.22, 0.61, 0.36, 1)", "purpose": "Deliberate-reading surfaces (/ai methodology scrubber): 320ms state changes, 420ms for the lit rail, 160ms on the thumb." },
+      { "name": "duration-hover", "value": "150ms", "purpose": "Default colour transition on every hover. Colour only — nothing lifts, scales or moves." },
+      { "name": "reduced-motion", "value": "animation: none; final opacity and blur retained", "purpose": "The pack renders already-surfaced rather than being removed. Motion is removed; content never is." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "lg", "value": "1024px" },
+      { "name": "container", "value": "max-w-7xl (80rem)" },
+      { "name": "plate-cap", "value": "1040px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one gold action per view — sign in, or go to your record.",
+      "html": "<a class=\"ds-btn-primary\" href=\"#\">Sign in with Discord</a>",
+      "css": ".ds-btn-primary { display: inline-block; background: #d29922; color: #1a1206; padding: 10px 20px; border-radius: 6px; font-family: 'Cascadia Code', Consolas, ui-monospace, monospace; font-size: 0.875rem; font-weight: 600; text-decoration: none; transition: background-color 150ms ease; } .ds-btn-primary:hover { background: #e0a92c; } .ds-btn-primary:focus-visible { outline: 2px solid #d29922; outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Hairline-bordered companion to the primary. Same size, so the pair reads as one cluster.",
+      "html": "<a class=\"ds-btn-secondary\" href=\"#\">See everything it tracks</a>",
+      "css": ".ds-btn-secondary { display: inline-block; background: transparent; color: #c9d1d9; border: 1px solid #30363d; padding: 10px 20px; border-radius: 6px; font-family: 'Cascadia Code', Consolas, ui-monospace, monospace; font-size: 0.875rem; text-decoration: none; transition: border-color 150ms ease, color 150ms ease; } .ds-btn-secondary:hover { border-color: #d29922; color: #f2ede1; } .ds-btn-secondary:focus-visible { outline: 2px solid #d29922; outline-offset: 2px; }"
+    },
+    {
+      "name": "Editorial Index Entry",
+      "kind": "custom",
+      "refersTo": "index-row",
+      "description": "A destination in a hairline-ruled index: drawn icon, Prata name, one Faustina sentence. Replaces the card grid.",
+      "html": "<a class=\"ds-index-row\" href=\"#\"><svg class=\"ds-index-icon\" viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" fill=\"none\" stroke=\"currentColor\" aria-hidden=\"true\"><path d=\"M3 16V8M7.5 16V4M12 16v-6M16.5 16v-9\"/><path d=\"M2 18h16\"/></svg><span class=\"ds-index-text\"><span class=\"ds-index-name\">Parses</span><span class=\"ds-index-line\">Every kill grouped by night and zone — damage, healing, deaths, and what dropped.</span></span></a>",
+      "css": ".ds-index-row { display: flex; align-items: flex-start; gap: 16px; padding: 16px 0; border-bottom: 1px solid rgba(48, 54, 61, 0.4); text-decoration: none; } .ds-index-row:last-child { border-bottom: 0; } .ds-index-icon { flex-shrink: 0; margin-top: 2px; color: #6e7681; transition: color 150ms ease; } .ds-index-text { min-width: 0; } .ds-index-name { display: block; font-family: Prata, Georgia, serif; font-size: 1.125rem; color: #e8e2d4; transition: color 150ms ease; } .ds-index-line { display: block; margin-top: 2px; max-width: 68ch; font-family: Faustina, Georgia, serif; font-size: 0.875rem; line-height: 1.5rem; color: #6e7681; } .ds-index-row:hover .ds-index-icon, .ds-index-row:hover .ds-index-name { color: #d29922; } .ds-index-row:focus-visible { outline: 2px solid #d29922; outline-offset: 2px; border-radius: 2px; }"
+    },
+    {
+      "name": "Live Ledger Row",
+      "kind": "custom",
+      "refersTo": "ledger-row",
+      "description": "One real kill: boss name, timestamp, and the damage figure in gold because it came from the database.",
+      "html": "<a class=\"ds-ledger-row\" href=\"#\"><span class=\"ds-ledger-left\"><span class=\"ds-ledger-name\">Lord Nagafen</span><span class=\"ds-ledger-time\">Wed · 9:42 PM</span></span><span class=\"ds-ledger-value\">4.81M</span></a>",
+      "css": ".ds-ledger-row { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 10px 0; border-bottom: 1px solid rgba(48, 54, 61, 0.4); text-decoration: none; } .ds-ledger-row:last-child { border-bottom: 0; } .ds-ledger-left { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-ledger-name { font-family: Faustina, Georgia, serif; font-size: 0.95rem; color: #e8e2d4; transition: color 150ms ease; } .ds-ledger-time { margin-left: 8px; font-family: 'Cascadia Code', Consolas, ui-monospace, monospace; font-size: 0.75rem; color: #6e7681; } .ds-ledger-value { font-family: 'Cascadia Code', Consolas, ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 0.875rem; color: #d29922; white-space: nowrap; } .ds-ledger-row:hover .ds-ledger-name { color: #d29922; } .ds-ledger-row:focus-visible { outline: 2px solid #d29922; outline-offset: 2px; border-radius: 2px; }"
+    },
+    {
+      "name": "Ruled Section Header",
+      "kind": "custom",
+      "refersTo": "index-row",
+      "description": "How every section opens: a hairline rule, a Prata heading, and a quiet mono link on the right. No card, no fill.",
+      "html": "<div class=\"ds-section\"><div class=\"ds-section-head\"><h2 class=\"ds-section-title\">Last six kills</h2><a class=\"ds-section-more\" href=\"#\">all parses →</a></div></div>",
+      "css": ".ds-section { border-top: 1px solid rgba(48, 54, 61, 0.7); padding-top: 24px; } .ds-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; } .ds-section-title { margin: 0; font-family: Prata, Georgia, serif; font-weight: 400; font-size: 1.25rem; color: #f2ede1; } .ds-section-more { font-family: 'Cascadia Code', Consolas, ui-monospace, monospace; font-size: 0.75rem; color: #6e7681; text-decoration: none; transition: color 150ms ease; } .ds-section-more:hover { color: #d29922; } .ds-section-more:focus-visible { outline: 2px solid #d29922; outline-offset: 2px; }"
+    },
+    {
+      "name": "Header Chip",
+      "kind": "chip",
+      "refersTo": "header-chip",
+      "description": "Chrome-only pill in the global header. Panel fill, hairline border. Not part of the editorial vocabulary.",
+      "html": "<a class=\"ds-chip\" href=\"#\">Feedback</a>",
+      "css": ".ds-chip { display: inline-flex; align-items: center; gap: 6px; background: #161b22; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; padding: 4px 10px; font-family: 'Cascadia Code', Consolas, ui-monospace, monospace; font-size: 0.875rem; text-decoration: none; white-space: nowrap; transition: background-color 150ms ease; } .ds-chip:hover { background: #21262d; } .ds-chip:focus-visible { outline: 2px solid #d29922; outline-offset: 2px; }"
+    },
+    {
+      "name": "Plate Icon Set",
+      "kind": "custom",
+      "refersTo": "index-row",
+      "description": "One 20x20 grid, one stroke weight (1.5), round caps, currentColor. Six icons replace the emoji the page used to lean on.",
+      "html": "<span class=\"ds-icons\"><svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" fill=\"none\" stroke=\"currentColor\" aria-hidden=\"true\"><path d=\"M3 16V8M7.5 16V4M12 16v-6M16.5 16v-9\"/><path d=\"M2 18h16\"/></svg><svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" fill=\"none\" stroke=\"currentColor\" aria-hidden=\"true\"><circle cx=\"10\" cy=\"11\" r=\"6.4\"/><path d=\"M10 7.6V11l2.6 1.7M7.6 2.6h4.8\"/></svg><svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" fill=\"none\" stroke=\"currentColor\" aria-hidden=\"true\"><path d=\"M3.4 3.4 12 12M16.6 3.4 8 12\"/><path d=\"M6.2 16.4 8 12M13.8 16.4 12 12\"/></svg><svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" fill=\"none\" stroke=\"currentColor\" aria-hidden=\"true\"><path d=\"M10 3.2 12 7.4l4.6.6-3.3 3.2.8 4.6L10 13.6 5.9 15.8l.8-4.6L3.4 8l4.6-.6Z\"/></svg><svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" fill=\"none\" stroke=\"currentColor\" aria-hidden=\"true\"><path d=\"M2.8 5.4 7.4 3.4v11.2L2.8 16.6ZM7.4 3.4l5.2 2v11.2l-5.2-2ZM12.6 5.4l4.6-2v11.2l-4.6 2Z\"/></svg><svg viewBox=\"0 0 20 20\" width=\"20\" height=\"20\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" fill=\"none\" stroke=\"currentColor\" aria-hidden=\"true\"><path d=\"M10 2.4 11.6 8 17 9.8 11.6 11.6 10 17.2 8.4 11.6 3 9.8 8.4 8Z\"/></svg></span>",
+      "css": ".ds-icons { display: inline-flex; gap: 16px; color: #6e7681; } .ds-icons svg { transition: color 150ms ease; } .ds-icons svg:hover { color: #d29922; }"
+    },
+    {
+      "name": "Wolf Plate",
+      "kind": "custom",
+      "refersTo": "index-row",
+      "description": "The signature: an alpha present on arrival, five pack members surfacing behind her out of blur and a lifting mask. Filled tapering forms, mirrored from one authored half.",
+      "html": "<div class=\"ds-wolf-stage\"><div class=\"ds-wolf-alpha\"><svg viewBox=\"0 0 400 400\" preserveAspectRatio=\"xMidYMid meet\" aria-hidden=\"true\"><g stroke-linejoin=\"round\"><path class=\"ds-wolf-ink\" d=\"M 200 92 C 173 94, 147 106, 128 126 L 95 34 L 78 150 L 41 182 L 83 202 L 29 250 L 78 268 L 45 324 L 101 322 L 149 366 L 200 382 L 200 362 L 157 348 L 113 306 L 71 306 L 98 264 L 55 248 L 99 204 L 66 186 L 96 156 L 110 74 L 137 143 C 154 124, 176 113, 200 111 Z\"/><path class=\"ds-wolf-ink\" d=\"M 104 78 L 115 145 L 131 137 Z\"/><path class=\"ds-wolf-ink\" d=\"M 186 168 L 128 186 L 121 205 L 133 200 L 188 182 Z\"/><path class=\"ds-wolf-eye\" d=\"M 130 212 L 168 200 L 179 209 L 166 222 L 141 222 Z\"/><path class=\"ds-wolf-ink2\" d=\"M 200 248 L 163 258 L 141 286 L 152 289 L 172 268 L 200 261 Z\"/></g><g transform=\"translate(400,0) scale(-1,1)\" stroke-linejoin=\"round\"><path class=\"ds-wolf-ink\" d=\"M 200 92 C 173 94, 147 106, 128 126 L 95 34 L 78 150 L 41 182 L 83 202 L 29 250 L 78 268 L 45 324 L 101 322 L 149 366 L 200 382 L 200 362 L 157 348 L 113 306 L 71 306 L 98 264 L 55 248 L 99 204 L 66 186 L 96 156 L 110 74 L 137 143 C 154 124, 176 113, 200 111 Z\"/><path class=\"ds-wolf-ink\" d=\"M 104 78 L 115 145 L 131 137 Z\"/><path class=\"ds-wolf-ink\" d=\"M 186 168 L 128 186 L 121 205 L 133 200 L 188 182 Z\"/><path class=\"ds-wolf-eye\" d=\"M 130 212 L 168 200 L 179 209 L 166 222 L 141 222 Z\"/><path class=\"ds-wolf-ink2\" d=\"M 200 248 L 163 258 L 141 286 L 152 289 L 172 268 L 200 261 Z\"/></g><path class=\"ds-wolf-ink\" d=\"M 176 288 C 186 278, 214 278, 224 288 C 224 302, 212 312, 200 312 C 188 312, 176 302, 176 288 Z\"/></svg></div></div>",
+      "css": ".ds-wolf-stage { position: relative; width: 100%; aspect-ratio: 1 / 1; background: #0d1117; } .ds-wolf-stage svg { display: block; width: 100%; height: 100%; overflow: visible; } .ds-wolf-alpha { position: absolute; inset: 0; filter: drop-shadow(0 18px 42px rgba(0,0,0,0.55)); } .ds-wolf-ink { fill: #e8e2d4; stroke: none; } .ds-wolf-ink2 { fill: #e8e2d4; stroke: none; opacity: 0.75; } .ds-wolf-eye { fill: #d29922; stroke: none; filter: drop-shadow(0 0 9px rgba(210,153,34,0.75)); } .ds-wolf-packmember { position: absolute; transform: translateX(-50%); opacity: 0; filter: blur(6px); -webkit-mask-image: linear-gradient(to top, transparent 0%, #000 62%); mask-image: linear-gradient(to top, transparent 0%, #000 62%); animation: ds-wolf-surface 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; } @keyframes ds-wolf-surface { from { opacity: 0; filter: blur(6px); } to { opacity: var(--wolf-o, 0.46); filter: blur(var(--wolf-b, 1.1px)); } } @media (prefers-reduced-motion: reduce) { .ds-wolf-packmember { animation: none; opacity: var(--wolf-o, 0.46); filter: blur(var(--wolf-b, 1.1px)); } }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Engraved Specimen Plate, Inverted onto Night",
+    "overview": "A nineteenth-century natural-history plate — bone-white line, symmetric frontal subject, hairline rules, no colour but the one that matters — printed in negative on the near-black ground the audience is already staring at. The wolf is drawn as a specimen rather than a logo, because the product's claim is that this guild instruments itself, and the wolf is the first thing it measured. Below the plate, the page stops being a plate and becomes a ledger: named bosses, real timestamps, real damage figures.\n\nDensity is editorial, not dashboard. Content sits on horizontal hairline rules in a single column; there are no filled cards on the landing surface and no boxes drawn around prose. The register is quiet — bone line on night ground, one gold — with all of the page's tension held in a single accent and a single authored motion.\n\nDark-only, and this is not a stylistic default. The audience reads this at night, on a second monitor, beside a dark EverQuest client, and every other surface of the platform is dark. There is no light theme in the build and none should be added.",
+    "keyCharacteristics": [
+      "Bone line (#e8e2d4) on night ground (#0d1117); one reserved gold.",
+      "Prata for the plate voice, Faustina for prose, mono only for measurement.",
+      "Hairline rules and editorial indexes — never a grid of identical cards.",
+      "Hand-authored SVG artwork; no raster, no stock, no emoji.",
+      "Exactly one authored motion on the page; everything else is a colour fade.",
+      "Type is centred on the plate's symmetry axis in the hero, flush-left below it."
+    ],
+    "rules": [
+      { "name": "The Reserved Gold Rule", "body": "#d29922 is spoken for. It belongs to three things and nothing else: the wolf's eyes, values that came from the live database, and the surface responding to the user's pointer or keyboard (hover, focus, selection, caret). Audit test: cover the gold on a screen — if anything decorative disappears, it was wrong.", "section": "colors" },
+      { "name": "The Blue Stays Outside Rule", "body": "Blue is platform chrome. Inside an editorial column, links carry no colour and no underline at rest; they announce themselves by going gold under the pointer.", "section": "colors" },
+      { "name": "The Status-Colour Firewall Rule", "body": "Green/red/orange/purple mean a state in the data. Never use one to make a heading interesting.", "section": "colors" },
+      { "name": "The Mono-Is-Measurement Rule", "body": "Mono appears where the content is a measurement — damage, counts, durations, timestamps, tabular columns — and nowhere else. Mono as a costume for 'this is technical' is out. Any number in a column that a reader will compare to the number above it also takes .tnum.", "section": "typography" },
+      { "name": "The One Display Line Rule", "body": "Prata is set once at display size per page. Everything else it touches is a short heading. It is a headline face, not a body face, and it is never set below ~1.1rem.", "section": "typography" },
+      { "name": "The Prose Measure Rule", "body": "Prose is capped by ch, not by container width: 58ch for a lead, 68ch for a supporting line, 18ch for a display headline.", "section": "typography" },
+      { "name": "The Hairline Index Rule", "body": "A list of destinations is an editorial index on hairline rules: icon, name, one sentence. It is never a grid of same-size cards with an icon, a heading and a paragraph in each.", "section": "layout" },
+      { "name": "The Axis Rule", "body": "Type that sits under a symmetric, frontal object is centred on that object's axis. Everything below the plate returns to flush left.", "section": "layout" },
+      { "name": "The No-Shadow Rule", "body": "Surfaces are flat. If something needs to separate from what is behind it, give it a hairline or a tonal step, not a shadow. Hard offset shadows are not part of this world at any size.", "section": "elevation" },
+      { "name": "The Authored-Mark Rule", "body": "Artwork on this system is drawn in code as SVG path data and committed. No raster hero images, no stock photography, no generated imagery — and no image-generation capability exists in this build environment, so a design that needs a bitmap cannot ship.", "section": "shapes" },
+      { "name": "The Mirror Rule", "body": "Anything symmetric is authored once and mirrored. Symmetry is a property of the source, not a thing to be maintained by hand.", "section": "shapes" },
+      { "name": "The One Authored Moment Rule", "body": "A page gets exactly one piece of real motion. Here it is the pack surfacing. Everything else is a 150ms colour transition on hover. The hero never assembles itself.", "section": "components" },
+      { "name": "The Reduced-Motion-Keeps-Content Rule", "body": "Under prefers-reduced-motion: reduce, the pack renders already surfaced at its final opacity and blur — it is not removed. Motion is removed; content never is.", "section": "components" },
+      { "name": "The Emerge-Don't-Fade Rule", "body": "Something arriving from depth resolves blur and lifts a mask as well as gaining opacity. Opacity alone reads as a fade, not as distance.", "section": "components" }
+    ],
+    "dos": [
+      "Do build every new surface dark on #0d1117. There is no light theme.",
+      "Do reserve #d29922 for the wolf's eyes, live data values, and interaction state (hover / focus / selection / caret).",
+      "Do pair Prata for headings with Faustina for prose, and set the font variable explicitly rather than inheriting the body default.",
+      "Do use mono only where the content is a measurement, with .tnum on any figure that sits in a column.",
+      "Do separate sections with a border-t hairline at 70% and rows at 40%, and drop the last row's rule.",
+      "Do cap prose by measure (58ch lead, 68ch supporting, 18ch display).",
+      "Do draw new icons into the same 20x20 grid at stroke 1.5 with round caps, fill: none, stroke: currentColor — and draw new plate artwork as filled tapering forms, never as uniform-width strokes.",
+      "Do hover a whole row as one gesture with group-hover, moving icon and name to gold together.",
+      "Do give reduced-motion users the finished composition, not an emptier one."
+    ],
+    "donts": [
+      "Don't add a light theme, or a prefers-color-scheme: light branch.",
+      "Don't build a grid of same-size cards each carrying an icon, a heading and a paragraph. Use the hairline index.",
+      "Don't put a kicker or eyebrow line above a heading. The build has none; headings start at the heading.",
+      "Don't use emoji as an icon on any editorial surface — draw it.",
+      "Don't add shadows to surfaces. Depth is tonal steps and hairlines.",
+      "Don't ship a raster image as artwork. Draw it as SVG path data, mirrored from one half if it is symmetric.",
+      "Don't animate the hero in. The primary message is present on first paint.",
+      "Don't spend gold on decoration, or spend a status colour on anything that is not a state in the data.",
+      "Don't set prose in mono because the subject is technical.",
+      "Don't put a coloured, underlined link inside an editorial column; links there are undecorated and resolve to gold on hover."
+    ]
+  }
+}

@@ -9,8 +9,11 @@
 import { revalidatePath } from 'next/cache';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
+import { GUILD_TAG } from '@/lib/guild';
 
-type FlagKey = 'exclude_from_stats' | 'exclude_inventory' | 'tell_relay' | 'tell_dm' | 'show_inventory_publicly';
+// hidden_from_lists is the owner's "hide everywhere except account inventory" (the guild lead, 2026-10-03):
+// display only, it stops nothing being collected.
+type FlagKey = 'exclude_from_stats' | 'exclude_inventory' | 'tell_relay' | 'tell_dm' | 'show_inventory_publicly' | 'show_quests_publicly' | 'hidden_from_lists';
 
 export async function setCharacterExclusion(
   characterName: string,
@@ -40,11 +43,11 @@ export async function setCharacterExclusion(
   // the main, and weekly roster syncs reset alt rows. Without the family-root
   // fallback, toggling Tells/Stats/Inventory on any alt silently fails (the UI
   // optimistically shows "ON" then never persists) while only the main works,
-  // which is the exact symptom that left Canopy stuck OFF in production.
+  // which is the exact symptom that left a member stuck OFF in production.
   const { data: target } = await admin
     .from('characters')
     .select('name, discord_id, main_name')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('name', characterName)
     .maybeSingle();
   if (!target) return { ok: false, error: 'unknown character' };
@@ -53,7 +56,7 @@ export async function setCharacterExclusion(
     const { data: root } = await admin
       .from('characters')
       .select('discord_id')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .ilike('name', target.main_name)
       .maybeSingle();
     if (root?.discord_id === pack.discord_id) owned = true;
@@ -63,17 +66,19 @@ export async function setCharacterExclusion(
   }
 
   // Whitelist the column so a hostile caller can't drift the flag name.
-  const allowed: FlagKey[] = ['exclude_from_stats', 'exclude_inventory', 'tell_relay', 'tell_dm', 'show_inventory_publicly'];
+  const allowed: FlagKey[] = ['exclude_from_stats', 'exclude_inventory', 'tell_relay', 'tell_dm', 'show_inventory_publicly', 'show_quests_publicly', 'hidden_from_lists'];
   if (!allowed.includes(flag)) return { ok: false, error: 'invalid flag' };
 
   const { error } = await admin
     .from('characters')
     .update({ [flag]: value })
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('name', characterName);
   if (error) return { ok: false, error: error.message };
 
   revalidatePath('/me');
+  // The lists that fold or drop a hidden character live on the PoP pages.
+  if (flag === 'hidden_from_lists') { revalidatePath('/pop'); revalidatePath('/pop/guide'); }
   return { ok: true };
 }
 
@@ -112,7 +117,7 @@ export async function bulkSetCharacterFlag(
   const { data: direct } = await admin
     .from('characters')
     .select(selectCols)
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .eq('discord_id', pack.discord_id);
   const directRows = (direct ?? []) as unknown as Record<string, unknown>[];
   const myMainNames = new Set(directRows.map(r => r.name as string));
@@ -120,7 +125,7 @@ export async function bulkSetCharacterFlag(
     ? await admin
         .from('characters')
         .select(selectCols)
-        .eq('guild_id', 'wolfpack')
+        .eq('guild_id', GUILD_TAG)
         .in('main_name', [...myMainNames])
     : { data: [] as Record<string, unknown>[] };
 
@@ -146,7 +151,7 @@ export async function bulkSetCharacterFlag(
   const { error } = await admin
     .from('characters')
     .update({ [flag]: value })
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .filter('name', 'in', inList);
   if (error) return { ok: false, error: error.message };
 

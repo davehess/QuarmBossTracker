@@ -1,6 +1,6 @@
 // test/who-lookup-class-titles.test.js — /who class-title normalization.
 //
-// Hitya 2026-08-19: the /who overlay showed "Warlock" (the level-60
+// The guild lead 2026-08-19: the /who overlay showed "Warlock" (the level-60
 // Necromancer TITLE) as an anon player's class. The de-anon record comes from
 // the bot's who-lookup handler, whose Supabase passes (who_directory /
 // characters) served the stored string raw — history harvested before

@@ -1,20 +1,20 @@
 // test/raid-swap-return.test.js — a character swap ENDS when they log back in.
 //
 // The swap marker exists because the EQ raid window keeps listing people who
-// camped: when one client logs Bwavair out and Bardtholemu in, /raid must park
-// Bwavair as "(swapped to Bardtholemu)" rather than counting a body that isn't
-// there. That part works.
+// camped: when one client logs one character out and another in, /raid must
+// park the first as "(swapped to <name>)" rather than counting a body that
+// isn't there. That part works.
 //
 // What it never did was notice the return. The marker was honoured for a flat
 // six hours, so a character who logged back in on their OWN machine stayed
 // filed under "Not seen / offline" with their raid group stripped.
 //
-// Live case (Hitya, 2026-08-14): Bwavair is Bardtholemu's wife and plays her own
-// cleric; he had played her toon on his client earlier, stamping a legitimate
-// swap at 00:12. At 02:59 she was in Group 2 with her position updating every
-// second, while Bardtholemu was simultaneously in Group 8 at a different loc —
-// which one client cannot do — and /raid still showed her offline. A cleric
-// disappearing from the raid view is the expensive version of this bug.
+// Live case (the guild lead, 2026-08-14): a swap stamped at 00:12 was still
+// being honoured at 02:59, when the swapped-away character was in Group 2 with
+// their position updating every second and the other character was
+// simultaneously in Group 8 at a different loc — which one client cannot do —
+// and /raid still showed the first offline. A cleric disappearing from the raid
+// view is the expensive version of this bug.
 //
 // The discriminator is POSITION, not presence. Zeal's raid stream reads loc off
 // a live `Entity*`, so only someone actually in the zone has one; the raid

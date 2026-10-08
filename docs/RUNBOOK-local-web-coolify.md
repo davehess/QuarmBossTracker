@@ -1,6 +1,10 @@
 # Runbook — a local copy of wolfpack.quest on Unraid, via Coolify
 
-**Decided 2026-08-11 (Hitya):** Coolify in a **VM on Unraid**, and the local site
+> **Overview first:** `TOWER-coolify-and-supabase-backups.md` is the one-page
+> picture of everything on the box, with what is verified vs ⚠ unverified.
+> This file is the step-by-step and the traps.
+
+**Decided 2026-08-11 (the guild lead):** Coolify in a **VM on Unraid**, and the local site
 points at the **local Supabase stack** (`RUNBOOK-unraid-supabase-replica.md`), so
 nothing clicked locally can touch production.
 
@@ -15,7 +19,7 @@ gateway, but they are different hosts so there is no clash.)
 ## Part A — the VM
 
 Unraid → **VMS** → Add VM → **Debian 13 (trixie)**. Not bookworm: Debian 12 hit
-end of regular support in 2026 and is LTS-only now (Hitya spotted it, 2026-08-11)
+end of regular support in 2026 and is LTS-only now (the guild lead spotted it, 2026-08-11)
 — nothing on fire, but a fresh build should start on current stable. A ready-made
 libvirt XML is in the appendix below; paste it into Add VM → **XML View**.
 Settings:
@@ -68,7 +72,7 @@ be marked as **Build Variables**, not just runtime env, or the browser bundle
 ships with them undefined and the site loads but can't reach Supabase.
 
 ```
-NEXT_PUBLIC_SUPABASE_URL=http://192.168.1.5:8000
+NEXT_PUBLIC_SUPABASE_URL=http://<tower-ip>:8000
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<ANON_KEY from the Supabase stack's .env>
 SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY from the same .env>
 NEXT_PUBLIC_SITE_URL=http://<VM-IP>:3000
@@ -90,7 +94,7 @@ setting it, **Redeploy, not Restart**: Docker can only apply port mappings when
 the container is recreated.
 
 **VERIFIED LIVE 2026-08-11:** built in ~5 min on Node 20 with 8 GB, site serving
-at `http://192.168.1.163:3000`. Note the roadmap page renders from static
+at `http://<coolify-vm-ip>:3000`. Note the roadmap page renders from static
 `web/lib/roadmapData.ts`, so it proves the BUILD only — open `/parses` or
 `/boards` to prove the Supabase link end to end.
 
@@ -154,7 +158,7 @@ rewrites the request first. Now `web/lib/request-origin.ts` prefers
 local mirror predates that version, redeploy it before debugging redirects.
 
 ⚠ **`ADDITIONAL_REDIRECT_URLS` is the same trap that broke beta sign-in**
-(Hitya, 2026-08-10). `SignInButton` sends `redirectTo = window.location.origin +
+(guild lead, 2026-08-10). `SignInButton` sends `redirectTo = window.location.origin +
 '/auth/callback'`, and GoTrue **silently ignores a redirectTo that is not on the
 allow list and uses SITE_URL instead** — nothing errors, sign-in just never takes.
 
@@ -162,7 +166,7 @@ allow list and uses SITE_URL instead** — nothing errors, sign-in just never ta
 
 Discord Developer Portal → your existing app → OAuth2 → Redirects → **Add**:
 ```
-http://192.168.1.5:8000/auth/v1/callback
+http://<tower-ip>:8000/auth/v1/callback
 ```
 That is the Supabase GATEWAY's address, not the website's — Discord talks to
 GoTrue, which then bounces the user back to the site. Keep every existing redirect
@@ -259,8 +263,9 @@ someone happens to open the mirror — which defeats the canary in G1.
 
 ## Appendix — VM definition (Unraid → VMS → Add VM → XML View)
 
-Generate a FRESH `uuid` and `mac` if you ever build a second one; duplicates
-break libvirt. `br0` is the load-bearing line — the default `virbr0` NATs the VM
+The `uuid` and `mac` are placeholders — generate both before pasting
+(`uuidgen`; any locally-administered MAC starting `52:54:00:`). Duplicates break
+libvirt, and the real ones belong on the box, not in this public repo. `br0` is the load-bearing line — the default `virbr0` NATs the VM
 and makes both Coolify and the site unreachable from your desktop. SeaBIOS rather
 than OVMF on purpose: no nvram file to go wrong on a headless server VM.
 
@@ -289,7 +294,7 @@ runbook is unchanged.
 ```xml
 <domain type='kvm'>
   <name>Coolify</name>
-  <uuid>5031ece5-48b6-4779-8201-4c20a96573c7</uuid>
+  <uuid>REPLACE-WITH-OUTPUT-OF-uuidgen</uuid>
   <description>Coolify host — runs the local copy of wolfpack.quest</description>
   <metadata>
     <vmtemplate xmlns="unraid" name="Debian" icon="debian.png" os="debian"/>
@@ -357,7 +362,7 @@ runbook is unchanged.
     <!-- br0 = its own IP on your LAN, which Coolify and the site need.
          The default virbr0 would NAT it and make both unreachable. -->
     <interface type='bridge'>
-      <mac address='52:54:00:72:1e:a5'/>
+      <mac address='52:54:00:XX:XX:XX'/>
       <source bridge='br0'/>
       <model type='virtio-net'/>
     </interface>

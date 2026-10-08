@@ -235,15 +235,15 @@ describe('_diRankCandidates — who we are willing to name', () => {
 
   it('breaks ties on mana, highest first — 500 mana is not nothing', () => {
     const c = chain(now);
-    c.slots[5].mana = 20;    // Emma
-    c.slots[6].mana = 95;    // Aimey
+    c.slots[5].mana = 20;    // A member
+    c.slots[6].mana = 95;    // A member
     const out = _diRankCandidates(c, ctx(now));
     expect(out.names[0]).toBe('Aimey');
   });
 
   it('prefers EXACT (Mimic) mana over the percentage shouted in the chain call', () => {
     const c = chain(now);
-    c.slots[5].mana = 95;    // Emma shouted 95% two beats ago
+    c.slots[5].mana = 95;    // A member shouted 95% two beats ago
     c.slots[6].mana = 50;
     const out = _diRankCandidates(c, ctx(now, {
       // ...but her Mimic reports 12% right now.
@@ -341,7 +341,7 @@ describe('trackDiFired — end to end through the real chain tracker', () => {
     expect(fired.names.length).toBeGreaterThanOrEqual(1);
     expect(fired.names.length).toBeLessThanOrEqual(2);
 
-    // Two names + the resolution protocol (Hitya 2026-08-11): the cleric who
+    // Two names + the resolution protocol (the guild lead, 2026-08-11): the cleric who
     // takes it calls it on voice — the cue rides the callout itself.
     expect(fired.tts).toBe('D I down. ' + fired.names.join(' or ') + ' — caster call it.');
     // Exactly one fire pushed, on the existing trigger-overlay surface (no new

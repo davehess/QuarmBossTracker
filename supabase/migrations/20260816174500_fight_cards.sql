@@ -1,4 +1,4 @@
--- Fight Cards (task #43 — the Quartermaster's original concept, Hitya
+-- Fight Cards (task #43 — the Quartermaster's original concept, the guild lead
 -- 2026-08-16: a per-fight readiness card — comp needed, kit present, tactics
 -- armed and correct, pipeline alive). docs/DESIGN-fight-cards.md.
 --

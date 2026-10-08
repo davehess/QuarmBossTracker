@@ -1,8 +1,60 @@
 # Zeal Named-Pipe Protocol — complete field reference
 
+> ⚠ **Forward note (2026-08-31).** Five identity keys are proposed upstream and
+> are **not in any released Zeal** — `spawn_id` on raid/group/player, plus
+> `target_id` and `pet_id` on player. See `docs/upstream/zeal-spawn-id/`. Do NOT
+> document them here as if they exist; add a row per key only once a build
+> carrying them ships, and keep the agent's parser treating all five as
+> optional so older Zeal versions keep working.
+
+## ⚠ What a spawn id actually IS (measured 2026-08-31)
+
+Read this before building anything on spawn ids. Every statement below was
+measured on a live client with `/tag` (which broadcasts the same
+`Entity::SpawnId` the pipe carries), not inferred from source.
+
+**A spawn id is a slot in the ZONE's entity table, not an identity.**
+
+Three observations of one character, `Yarrow`, and its corpse:
+
+| event | own id | corpse id |
+|---|---|---|
+| alive, before dying | **4425** | — |
+| died → returned to bind (a zone load) | **985** | 4425 |
+| zoned out and back, **no death** | **3158** | 4425 |
+
+What that shows:
+
+1. **You get a new id every time you ENTER a zone.** 985 → 3158 happened with
+   no death involved at all — a plain zone out and back. Death looked like the
+   cause of 4425 → 985 only because returning to bind is itself a zone load.
+2. **An entity already resident in the zone keeps its slot.** The corpse held
+   4425 across both events, including a zone reload.
+3. **The id follows the corpse, not the person.** With the character running
+   around as 3158, targeting their own corpse still reported `target_id` 4425.
+
+Consequences worth planning around:
+
+- **Never cache name→id across a zone.** Not for raiders, not for mobs. The id
+  is valid only for the zone session it was observed in. Name remains the
+  durable key for a character.
+- **An id does not tell you alive from dead.** The pipe carries no spawn *type*
+  (`Entity::Type` exists at `0x00A8`, `SPAWN_TYPE_x`, but PR #229 does not emit
+  it), so a consumer's only signal is the display name's `'s corpse` suffix.
+- **Within a single fight this is exactly what we want** — which is the whole
+  point of the feature. Nobody zones mid-pull, ids are stable for the duration,
+  and the id stays put across the kill so damage attributed to it does not
+  scatter at the moment of death.
+- `raid[]` and `group[]` re-resolve by NAME every poll
+  (`entity_manager->Get(member.Name)`), so those ids self-correct after a zone
+  without a consumer doing anything.
+- ⚠ Not separated: whether a death WITHOUT a zone load (an in-zone rez) also
+  changes your id. Low stakes, since the caching rule above covers it either
+  way.
+
 Assembled 2026-07-08 from CoastalRedwood/Zeal `named_pipe.cpp` (the
 `LabelNames` / `GaugeNames` maps) cross-checked against live side-by-side
-captures (Canopy the druid, Manamana the cleric — dashboard char-info dump vs
+captures (a druid and a cleric — dashboard char-info dump vs
 the in-game stats window). **The label/gauge ids are NOT Zeal inventions and
 are not documented in Zeal's repo** — they are the classic EQ client UI
 "EQType" ids from the original UI XML system. Zeal iterates its fixed maps,
@@ -26,7 +78,7 @@ source, not inferred.
 | 2    | gauge  | array of `{ type: <gauge id>, value (per-mille 0-1000), text }` | self/target/pet/group HP absorbed; full dump kept |
 | 3    | player | `{ zone, location: {x,y,z}, heading, autoattack }` | **all four now absorbed** (loc+heading added 1.7.0) |
 | 4    | custom | `{ text }` — output of the in-game **`/pipe <string>`** command | recent ring per character; future in-game→Mimic command hook |
-| 5    | raid   | per-member `{ name, class, level, group, rank, loc, heading }` + verbose `{ hp_current, hp_max, zone_id }` | agent → `raid_roster` (name/class/level/group/rank + hp%); verbose HP now preferred over gauge cross-ref |
+| 5    | raid   | per-member `{ name, class, level, group, rank, loc, heading }` + verbose `{ hp_current, hp_max, zone_id }` | agent → `raid_roster` (name/class/level/group/rank + hp%); verbose HP now preferred over gauge cross-ref. `rank` is TEXT: `"Raid Leader"`, `"Group Leader"` or empty, not `2`/`1` (measured 2026-10-01; `utils/raidGroups.js` `isRaidLeader`) |
 | 6    | group  | per-member `{ name, loc, heading }` + verbose `{ hp_current, hp_max, class, level, zone_id }` | absorbed to snapshot + explorer (1.7.0) |
 
 ### Settings & cadence (Zeal ini `[Zeal]`, set in-game)
@@ -58,8 +110,8 @@ explorer shows Y, X, Z to match what players read in EQ).
 | 3   | Class | display string ("Druid") |
 | 4   | Deity | |
 | 5-11 | STR / STA / DEX / AGI / WIS / INT / CHA | note DEX=7, AGI=8 (client order, not UI window order) |
-| 12  | Poison resist | confirmed distinct values (Manamana 76) |
-| 13  | Disease resist | (Manamana 66) |
+| 12  | Poison resist | confirmed distinct values (a member 76) |
+| 13  | Disease resist | (a member 66) |
 | 14  | Fire resist | (171) |
 | 15  | Cold resist | (169) |
 | 16  | Magic resist | (97) |
@@ -67,7 +119,7 @@ explorer shows Y, X, Z to match what players read in EQ).
 | 18  | **HP max** | |
 | 19  | HP % | integer percent (gauge 1 gives per-mille) |
 | 20  | Mana % | integer percent — **no raw mana here** |
-| 21  | Endurance % | drains when overweight (Canopy 0 at 135/108 wt) |
+| 21  | Endurance % | drains when overweight (a member 0 at 135/108 wt) |
 | 22  | AC ("CurrentMitigation") | |
 | 23  | ATK ("CurrentOffense") | |
 | 24  | Weight current | |

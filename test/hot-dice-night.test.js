@@ -46,7 +46,7 @@ describe('mergeRollSetRows dedup', () => {
 });
 
 describe('computeHotDiceNight', () => {
-  // 6 contested sets, Uilnayar tops 3 of them (50%).
+  // 6 contested sets, a member tops 3 of them (50%).
   const uiWins = (o) => set(o, 0, 100, [{ name: 'Uilnayar', value: 95 }, { name: 'Grobnar', value: 30 }]);
   const grWins = (o) => set(o, 0, 100, [{ name: 'Grobnar', value: 88 }, { name: 'Shavimo', value: 12 }]);
   const shWins = (o) => set(o, 0, 100, [{ name: 'Shavimo', value: 77 }, { name: 'Peopleslayer', value: 5 }]);
@@ -62,7 +62,7 @@ describe('computeHotDiceNight', () => {
   });
 
   it('returns null below the ≥5 contested floor', () => {
-    const rows = [uiWins(0), uiWins(20), uiWins(40), uiWins(60)];  // 4 contested, all Uilnayar
+    const rows = [uiWins(0), uiWins(20), uiWins(40), uiWins(60)];  // 4 contested, all a member
     expect(computeHotDiceNight(rows)).toBeNull();
   });
 

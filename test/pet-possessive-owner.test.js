@@ -1,7 +1,7 @@
 // test/pet-possessive-owner.test.js — a possessive pet name credits its owner
 // on EVERY client, not just the owner's own.
 //
-// Shavimo's Warder counted in the parse HE sent (56.6K "+Pets") and vanished
+// A member's Warder counted in the parse HE sent (56.6K "+Pets") and vanished
 // from every other client's copy of the same fight (35.8K, no pets). Same shape
 // for Wabumkin and Kravenn. Cause: the possessive-name shortcut that exists to
 // rescue Beastlord Warders — whose "My leader is X" line fires once at summon
@@ -9,7 +9,7 @@
 // when the possessive matched the READER'S own character.
 //
 // "Shavimo`s Warder" is server truth about ownership regardless of who is
-// reading the line, so it should credit Shavimo on anyone's machine.
+// reading the line, so it should credit a member on anyone's machine.
 //
 // The guards matter as much as the fix: a possessive is not proof of a PLAYER
 // ("a gnoll`s pet"), and vision eyes have their own choke point that this

@@ -1,6 +1,6 @@
 // The Resource use readout has to agree with Task Manager.
 //
-// Uilnayar checked it against Task Manager twice, and was right both times.
+// A member checked it against Task Manager twice, and was right both times.
 //
 // ROUND 1 — 1267 MB vs 460.7. The card summed `workingSetSize`, which counts
 // pages SHARED between processes once per process. Every Chromium renderer maps
@@ -96,7 +96,7 @@ describe('memory basis', () => {
   });
 
   it('the total lands ON Task Manager, not 1.7x over it', () => {
-    // Hitya's third measurement: five Mimic processes, 274 MB reported
+    // The guild lead's third measurement: five Mimic processes, 274 MB reported
     // against Task Manager's 161.
     const priv = [102, 79, 46, 25, 22];                   // committed, what we printed
     const res  = [33.8, 32.1, 35.9, 29.5, 15.8];          // Task Manager's rows
@@ -114,7 +114,7 @@ describe('the working-set query does not become the cost it measures', () => {
 
   it('does NOTHING unless the user opted in', () => {
     // "I'd rather not take up extra cycles all the time just to be right and
-    // match Task Manager" (Hitya 2026-08-04). Default off; the free number
+    // match Task Manager" (the guild lead, 2026-08-04). Default off; the free number
     // plus an explanation of the difference is the shipped behaviour.
     expect(fn).toMatch(/if \(!cfg\.exactMemory\) \{ _wsPrivate\.byPid = new Map\(\); return; \}/);
     // …and the opt-out must DROP the snapshot, or stale resident numbers would
@@ -124,7 +124,7 @@ describe('the working-set query does not become the cost it measures', () => {
 
   it('does not run at all once the Resource use window is closed', () => {
     // "when we close that resource use window make sure we're not matching task
-    // manager still and querying for the exact in the background" (Hitya
+    // manager still and querying for the exact in the background" (the guild lead
     // 2026-08-04). Today the only caller is that window's own 2s poll, so it
     // already stops — but that is the RENDERER's behaviour, and a background
     // PowerShell loop should not rest on it.
@@ -233,7 +233,8 @@ describe('_windowLabelsByPid', () => {
       const resourcesWindow = ${extra.resources ? '__win(' + extra.resources + ')' : 'null'};
     `;
     void win;
-    const h = evalBlock(prelude + sliceBlock(src, 'function _windowLabelsByPid() {', '\n}'), ['_windowLabelsByPid']);
+    const h = evalBlock(prelude + sliceBlock(src, 'const _OVERLAY_NAMES = {', '\n};') + '\n'
+      + sliceBlock(src, 'function _windowLabelsByPid() {', '\n}'), ['_windowLabelsByPid']);
     return Object.fromEntries(h._windowLabelsByPid());
   }
 
@@ -241,7 +242,7 @@ describe('_windowLabelsByPid', () => {
     expect(labels({
       cfg: { showHud: true, showCharm: true },
       overlays: [{ key: 'hud', flag: 'showHud', pid: 11 }, { key: 'charm', flag: 'showCharm', pid: 12 }],
-    })).toEqual({ 11: 'DPS HUD', 12: 'Charm tracker' });
+    })).toEqual({ 11: 'DPS/Tank Meter', 12: 'Charm tracker' });
   });
 
   it('calls out an overlay that is ALIVE while switched off', () => {
@@ -250,14 +251,14 @@ describe('_windowLabelsByPid', () => {
     expect(labels({
       cfg: { showHud: false },
       overlays: [{ key: 'hud', flag: 'showHud', pid: 11 }],
-    })).toEqual({ 11: 'DPS HUD (switched OFF)' });
+    })).toEqual({ 11: 'DPS/Tank Meter (switched OFF)' });
   });
 
   it('skips overlays that have no window', () => {
     expect(labels({
       cfg: { showHud: true },
       overlays: [{ key: 'hud', flag: 'showHud', pid: 11 }, { key: 'charm', flag: 'showCharm', pid: 0 }],
-    })).toEqual({ 11: 'DPS HUD' });
+    })).toEqual({ 11: 'DPS/Tank Meter' });
   });
 
   it('names the non-overlay windows too', () => {
@@ -276,16 +277,16 @@ describe('_windowLabelsByPid', () => {
     expect(labels({
       cfg: { showHud: true, showPets: true },
       overlays: [{ key: 'hud', flag: 'showHud', pid: 9 }, { key: 'pets', flag: 'showPets', pid: 9 }],
-    })).toEqual({ 9: 'DPS HUD + Pet tracker' });
+    })).toEqual({ 9: 'DPS/Tank Meter + Pet tracker' });
   });
 
   it('every lifecycle key has a human name', () => {
     // A missing entry falls back to the raw key ('chchain'), which is the kind
     // of thing that ships unnoticed.
-    const names = sliceBlock(src, '  const NAMES = {', '\n  };');
+    const names = sliceBlock(src, 'const _OVERLAY_NAMES = {', '\n};');
     const table = new Function('return ' + names.slice(names.indexOf('{')))();
     const keys = [...src.matchAll(/\{ key: '([a-zA-Z]+)',\s+flag:/g)].map(m => m[1]);
-    expect(keys.length).toBe(16);   // 15 overlays + the Dock
+    expect(keys.length).toBe(18);   // 17 overlays (Timers canvas, 2026-09-29) + the Dock
     for (const k of keys) expect(table[k], `${k} has no display name`).toBeTruthy();
   });
 });

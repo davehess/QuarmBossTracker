@@ -1,13 +1,13 @@
 # EPIC — the self-host setup wizard
 
-**Status: PLANNING TARGET, not scheduled** (Hitya, 2026-08-12). Nothing here is
+**Status: PLANNING TARGET, not scheduled** (guild lead, 2026-08-12). Nothing here is
 built. This file exists so that design and infrastructure decisions have
 somewhere to land *as they are made*, instead of being reconstructed later from
 runbooks written for one specific box.
 
 > *"Ideally we have a walkthrough wizard that's able to guide through setting
 > this up. That's an epic for another time, but every design and infrastructure
-> decision moving forward should write to that planning."* — Hitya, 2026-08-12
+> decision moving forward should write to that planning."* — the guild lead, 2026-08-12
 
 **The standing rule that comes with it:** any decision that changes how the
 platform is deployed, what it stores, or what it costs to run gets a line in
@@ -47,7 +47,7 @@ these. Each step must *verify*, and say what it verified.
 ## 2. The cost decision the wizard has to surface
 
 **This is the reason self-hosting matters, and it is a spectrum, not a switch**
-(Hitya, 2026-08-12). Hosted Supabase bills on storage and egress, which is why
+(guild lead, 2026-08-12). Hosted Supabase bills on storage and egress, which is why
 production prunes: `buff_casts` is swept to 7 days because it reached 118 MB,
 and every live consumer only reads 3 hours back. On-prem has no such pressure.
 
@@ -70,13 +70,232 @@ something neither pure option does: production stays small and cheap while the
 local box answers questions the 3-hour window never can — slow uptime across an
 expansion, threat patterns over months.
 
+### 2a. Free tier vs paid — what another guild should actually expect
+
+⚠ **Wolf Pack runs PAID on both layers, and a lot of this repo's reasoning
+silently assumes it.** Measured 2026-09-01, so a reader can tell which numbers
+are ours and which are theirs:
+
+| Layer | What we run | Measured usage |
+|---|---|---|
+| Supabase | **Pro** ($25/mo) | DB **1.72 GB of 8 GB** (21%) |
+| Railway | **Paid** — Hobby or Pro | avg **0.128 GB RAM · 0.032 vCPU**, peak 0.70 GB / 0.69 vCPU |
+| Vercel | Hobby | — |
+
+(The Railway tier is Hobby-or-Pro rather than known: the service's 8 vCPU / 8 GB
+per-service limits are impossible on Free's 1 vCPU / 0.5 GB or Trial's 2 / 1, but
+the Management API does not expose the subscription. Dashboard-only.)
+
+**Can another guild run this free? Per layer, with the reason:**
+
+| Layer | Free tier gives | Verdict |
+|---|---|---|
+| **Supabase Free** | 500 MB DB · 5 GB egress/mo · 1 GB storage · **project pauses after 7 days idle** · 2 free projects per owner | **Viable only briefly, and only with retention tuned down** — see below |
+| **Railway Free** | 1 replica · **0.5 GB RAM** · 1 vCPU · $1 credit/mo | **No.** The bot's observed peak RSS is **0.70 GB**, over the ceiling. Hobby ($5/mo, $5 usage included) fits with room — our measured draw is ≈ **$1.92/mo** at Railway's $10/GB + $20/vCPU |
+| **Vercel Hobby** | free | **Yes** for a guild site. ⚠ Hobby is non-commercial under Vercel's ToS; a guild qualifies, a paid service would not |
+
+**So the honest hosted floor is ≈ $30/mo** ($25 Supabase Pro + $5 Railway Hobby),
+against $0-plus-electricity fully on-prem. Railway Free is ruled out on memory
+regardless of how small the guild is; Supabase Free is the interesting one.
+
+**Why Supabase Free is tighter than it looks — and this is the number to give
+people.** 500 MB total, and a fresh deployment spends **119 MB on the `eqemu_*`
+catalog before a single raid** (that mirror is the same size for everyone; it is
+shared EQ reference data, not guild data). That leaves **~380 MB of real
+headroom.**
+
+Then measure what fills it. Ours, by table:
+
+| Table | Size | Span | Retention |
+|---|---|---|---|
+| `encounter_threat_snapshots` | **920 MB** | 61 days | 30d sweep coded — **not working**, see §3 |
+| `chat_messages` | 214 MB | 913 days | none, deliberate (guild history) |
+| `who_observations` | 131 MB | 1026 days | 60d raw + latest-sighting |
+| `buff_casts` | 53 MB | 8 days | 7d sweep, **working** |
+| `target_observations` | 53 MB | 28 days | — |
+
+⚠ **`encounter_threat_snapshots` accretes ~15 MB/day and is 57% of our whole
+database.** Two consequences the wizard has to carry:
+
+1. On Supabase Free it consumes the entire 380 MB of headroom in **under four
+   weeks** unpruned. Even with the intended 30-day sweep working it settles
+   around **450 MB** — still more than a Free project can hold. **The 30-day
+   threat retention is sized for a paid deployment and must not be the default
+   the wizard offers a free one.** A free deployment wants ~7 days (≈105 MB), or
+   the `threat_snapshot` stream shed off entirely (`flag_shed_threat_snapshot`)
+   — it is already in the sheddable set precisely because it is re-derivable.
+2. This is the general shape: **the ephemeral high-volume streams, not the
+   durable guild data, are what fill a small database.** `chat_messages` carries
+   two and a half YEARS of guild history in 214 MB; threat telemetry carries two
+   months in 920 MB. A wizard sizing a deployment should ask about retention
+   windows per stream, not about guild size.
+
+**And the meter is not what people assume.** Neither Supabase nor Railway meters
+REQUESTS on any plan. Supabase bills Egress (250 GB/mo on Pro, 5 GB Free) and
+Database Size; Railway bills RAM/CPU-minutes and egress. So upload frequency is
+close to free, while **poll cadences, wide `select`s and un-cached refreshes are
+the actual bill** — a self-hoster tuning for cost should tighten the read side
+and leave the ingest streams alone.
+
+⚠ **Two numbers nobody has read, both dashboard-only:** Supabase's **Spend Cap**
+setting (with it ON an overage means read-only mode and 402s, not a charge — very
+different failure for a raid night) and current egress against the 250 GB. The
+Management API exposes neither. Do not quote an egress figure until someone does.
+
 ## 3. Decisions already made that the wizard must carry
-- **2026-08-16 — sentinel tiers split by deployment** (`docs/DESIGN-sentinel.md`): freshness invariants run next to the LIVE DB (hosted: the bot; on-prem: the box itself); heavy analytical invariants run on the backup replica (hosted: Hitya's Unraid docker alongside the Supabase backup; on-prem: same DB, so the tiers collapse). The wizard should ship the battery file as config, not code.
+- **2026-08-16 — sentinel tiers split by deployment** (`docs/DESIGN-sentinel.md`): freshness invariants run next to the LIVE DB (hosted: the bot; on-prem: the box itself); heavy analytical invariants run on the backup replica (hosted: the guild lead's Unraid docker alongside the Supabase backup; on-prem: same DB, so the tiers collapse). The wizard should ship the battery file as config, not code.
+- **2026-09-27 — guild video goes on YouTube, not our storage** (`DECISIONS-2026-09-21.md` §61): the Aten Ha Ra film is hosted on YouTube and `/film` embeds it, so large media costs the platform no storage or egress (the two masters are 440 MB). The links are data (bot_kv `film_youtube`), never in the repo. The wizard must not assume a media bucket; if a guild wants members-only clips later, that is a private Supabase Storage bucket with signed links, sized against the storage and egress lines in §2.
+- **2026-09-28 — that media bucket now exists, as long-term per-character storage** (`DECISIONS-2026-09-21.md` §62): private bucket `guild-media` + table `guild_media`, no policies, served through server-signed links, **kept indefinitely with no pruning**. Ours holds 3.3 GB (the film's stills, takes, clips and outtakes; the 1080p masters stay on YouTube), which fits inside Pro's included 100 GB of storage. Reads cost egress, so pages sign one batch per render and load the rest on a click. For the wizard: this is optional per guild, its size is whatever the guild puts in, and on an on-prem box it is just disk. A guild on the free tier (1 GB of storage) could not hold a set this size.
+- **2026-09-28 — the PoP checklist stores one small row per hand tick** (`DECISIONS-2026-09-21.md` §65): table `pop_guide_ticks` (character, item key, when), no policies, written only by the web after an ownership check, kept with no pruning. Tens of bytes a row, about 46 items a character at most, so it never matters for size on any tier. The checklist items are code (`web/lib/popGuide.ts`), era-specific to PoP; another guild on a different era gets an empty table and a list it would rewrite.
+
+- **2026-10-05 — the spectator map caches zone maps per zone, fetched at run time** (`DECISIONS-2026-09-21.md` §160): table `zone_map_lines`, one row per zone asked for (~170 KB; ~30 MB if all 180 Quarm-era zones are opened), no pruning, service role only. Two outbound sources at run time: EQEmu/maps on GitHub (GPLv2+, the server collision meshes, sliced into walls) and Zeal's public repo for Brewall's lines. Brewall's lines carry no stated licence; we serve them only behind the Discord-gated sign-in and never commit them. A guild copying this must make its own call on that layer, or turn it off and keep the generated walls. The page polls every 3 s per open viewer (a small one-row-per-raider SQL call), so its cost scales with how many people watch a raid, not with the raid.
+- **2026-10-06 — always-on duties get one dedicated box; gaming PCs only help** (`DECISIONS-2026-09-21.md` §167). The local assistant, announcer voices, speech-to-text and the raid voice bot need a box that is always on, wired and never gamed on; a GPU in a gaming PC is unavailable exactly when the raid needs it (the game holds its memory). Gaming PCs run a small worker that takes picture jobs from a queue only when free (no game running, idle, GPU free), the larger-memory card first. Nothing reaches into the house: workers pull. The wizard asks which box is the home and lets any number of helpers join.
+- **2026-10-06 — the raid screen's live read comes from the bot host, not the website host** (`DECISIONS-2026-09-21.md` §166). `/screen` polls every 3 s per viewer. On Vercel Hobby (1M function invocations a month, then a 30-day wait) one 60-viewer raid night costs ~600k. The bot already keeps the raid's positions in memory, so it serves `GET /api/screen/live` against a 2-hour HMAC ticket the website mints. The wizard sets one shared secret, `SCREEN_TOKEN_SECRET`, on both hosts, plus `SCREEN_LIVE_URL` (website) and `SCREEN_ALLOWED_ORIGINS` (bot). Without them the page falls back to polling the website, which is fine for a small guild or a paid website plan. A Discord Activity version of the screen (`DESIGN-raid-screen-activity.md`) needs that guild's own verified Discord app: unverified Activities launch only in servers under 25 members, and verification ties the app to the owner's ID.
+- **2026-10-06 — a new guild gets ONE Discord bot that does both jobs** (the guild lead: *"for future guilds the same discord bot should do both"*). The wizard creates one application and invites it with the full permission set in `README.md` → Required Bot Permissions (`2252135193504768`; `2252684949318657` if the raid screen is a Discord Activity). Wolf Pack's two applications are history, not the pattern. What a shared token needs before the wizard can offer it: (1) one place registers slash commands — today both `index.js` (`applicationGuildCommands`, bulk PUT) and `apps/bristlebane` bulk-overwrite the guild's commands, so on one token each would delete the other's; (2) each process answers only its own interactions (both receive all of them); (3) one voice connection per server, so callouts and recording share it — Bristlebane owns voice and the timer bot's own `utils/voice.js` path goes. Folding Bristlebane into the bot process meets all three at once, but then the bot needs the on-prem box (recordings) or a disk.
+- **2026-10-05 — Bristlebane, the raid-voice bot, runs on the on-prem box** (`DECISIONS-2026-09-21.md` §166): a second Discord application and a second container (`apps/bristlebane`, a Coolify app built from the repo's Dockerfile), NOT on the bot's host. It needs only outbound access to Discord, a `BOT_API_KEY` matching the bot's `BRISTLEBANE_API_KEY`, and a persistent `/data` volume for the consent list and the opted-in members' voice files (raw Opus, roughly 30–90 MB a raid night at our size). Those files are never put in hosted Supabase: an on-prem disk is free, hosted storage and egress are not. A guild without an always-on box can skip Bristlebane entirely; nothing else depends on it.
+- **2026-10-05 — how each raider looks is kept per raid night** (§166): table `raid_night_appearance` (tens of rows a night, kilobytes), an ARCHIVE table on the on-prem copy like `raid_track_minutes`. The catalog gains `eqemu_items.idfile/material/color/light` and `eqemu_zone` sky/fog/clip columns from the same weekly dump.
+- **2026-10-05 — raid positions are recorded for replay and kept** (`DECISIONS-2026-09-21.md` §161): table `raid_track_minutes`, one row per minute while six or more raiders are placed, ~2–4 MB a full 50-raider night, ~0.5 GB a year. The guild lead's call: keep every raid in hosted Supabase until storage becomes an issue, and keep a permanent copy on the on-prem archive (an ARCHIVE table in `scripts/lib/archive-merge.sql`, which also creates it there). Turning on `RAID_TRACK_RETENTION_DAYS` later deletes only what the archive's watermark says it holds. A guild without an archive box has only the hosted copy, so its retention choice is a straight storage-bill choice. The bot folds the roster uploads it already receives, in memory, so recording adds one write a minute and no extra reads during a raid beyond one zone lookup per minute.
+- **2026-10-04 — the meter's fight history lives on each player's PC, 100 fights for 7 days** (`DECISIONS-2026-09-21.md` §153): `logsync.fights.json` next to the agent, about 0.7 MB at most. Nothing server-side, so it costs no hosting on any tier; the 7-day and 100-fight limits are agent constants, not a hosting decision.
+- **2026-09-29 — Mimic has an alpha release channel as well as beta and stable** (`DECISIONS-2026-09-21.md` §81): an `alpha` branch builds onto ONE rolling GitHub release (tag `mimic-alpha`) that alpha installs read by its fixed download address, because GitHub's release feed lists only 10 releases. Costs nothing extra to host (one release's files, replaced each build) but one Windows CI build per alpha push. For the wizard: the release repo's owner/name is baked into Mimic (`_ALPHA_FEED`, `_GITHUB_FEED`, `package.json` publish), so a guild running its own fork must change all three; a guild that never tests ahead can simply never create `alpha`.
+
+- **2026-09-29 — overlay sets are local first, with a database copy (planned)** (`DECISIONS-2026-09-21.md` §83; 3.0 plan R20): each raider's overlay sets live in a file on their own machine and work with no server; a copy per Discord account goes to a database table for moving between computers and for sharing. Small JSON per set (a few kB), kept until deleted. For the wizard: a guild with no database still gets working overlays, only no backup or sharing.
+
+- **2026-10-04 — Discord setup moves onto the website (direction; options pending)** (`DECISIONS-2026-09-21.md`
+  §148): the guild lead wants the bot's Discord setup — which channel or thread each card goes to, checking the
+  bot's permissions, the scheduled jobs — to be an officer page on wolfpack.quest instead of env vars and
+  Discord commands. For the wizard this is the same screen: a new guild picks its channels and sees the
+  permission check there, rather than editing Railway variables. Whatever lands must keep working when the
+  web is down: the bot reads the stored choice, and the env var stays as an override.
 
 Append here as decisions land. Each entry: the choice, why, and what the wizard
 must therefore ask or verify.
 
+### Third-party API citizenship (outbound call budgets)
+- **2026-08-25 — every third-party API the platform calls gets an outbound
+  budget at its HTTP primitives** (the Moncs/OpenDKP incident: one uncached
+  7s dashboard poll = 1,678 calls / 1.1 GB in an afternoon on someone ELSE'S
+  AWS bill, and our IP blocked). The pattern (see `utils/opendkp.js`):
+  per-service kill switch (`OPENDKP_HALT`), sliding per-minute budget
+  (`OPENDKP_MAX_CALLS_PER_MIN`, default 60, 0=off), 429/Retry-After cooldown,
+  and a fan-in cache so N clients cost one upstream call
+  (`_panelAuctions` in `index.js`). All of it env-tunable because the right
+  numbers differ per deployment: hosted-OpenDKP guilds are spending the
+  provider's money (budget LOW, cache LONG); a guild self-hosting OpenDKP on
+  its own box can turn the budget off. The wizard must ask which OpenDKP the
+  guild uses and set `OPENDKP_MAX_CALLS_PER_MIN` + cache TTLs accordingly,
+  and it must carry the inbound admission budgets (#73,
+  `budget_<kind>_per_min`) as the same knob pointing the other direction —
+  sizing a deployment means setting BOTH tables.
+- **2026-08-27 — a "refresh everything" pass is scheduled against the DOMAIN'S
+  clock, never a rolling timer.** the guild lead, looking at 140 MB/day of audits:
+  *"we don't need a full download that often, just before a raid. three times a
+  week"* — and an hour later, *"once per week then until we have the new version
+  that has the since tag."* Any endpoint with no `since` filter forces a choice
+  between a cheap incremental read and a periodic full re-read that heals gaps;
+  the full one should land where the data actually moves, and **how often is a
+  negotiation with the upstream operator, not a constant.** Ours is
+  `OPENDKP_LIST_FULL_SWEEP_DAYS` (default `0` = Sunday) at
+  `_FULL_SWEEP_HOUR_ET` (18). **The wizard must ask for the guild's raid nights
+  and write them here, not default to 24h**: a rolling interval fires at
+  whatever hour the process last booted, which for us was mid-raid.
+  ⚠ **And the max-age safety net must be derived from the schedule, not typed
+  next to it.** Ours was 96h under a three-a-week cadence; the moment the
+  cadence went weekly (a 168h gap) that net would have fired every fourth day
+  and silently restored the old volume. A net tighter than the schedule *is*
+  the schedule. The wizard should compute it from the chosen days, and any
+  hand-written value needs a test asserting the relationship rather than the
+  number.
+- **2026-08-27 — cadence state that is process-local must not make a redeploy
+  expensive.** The same sweep marker lives in a `Map`, so "no marker → sweep"
+  meant a full download per boot; `main` takes 12–42 pushes a day and that
+  per-deploy walk turned out to be MOST of the remaining bill (measured: three
+  deploys inside ten minutes, 17 calls / 6.2 MB apiece). A cold process now
+  adopts the current anchor rather than sweeping. Generalises to any deployment
+  whose platform restarts on push — which is all of the PaaS options the wizard
+  offers.
+
+### Catalog fan-out to clients (item catalog, 2026-08-30)
+
+**Decision: the item list is pushed to every agent as an ETag'd catalog it
+caches on disk, NOT queried per keystroke.** the guild lead asked what it would cost
+before agreeing to it, so the numbers are the decision:
+
+| Universe | Rows | Raw | Gzipped |
+|---|---|---|---|
+| Every item in the catalog | 26,972 | 865 kB | ~295 kB |
+| **Everything any NPC can drop** (shipped) | **11,099** | **380 kB** | **~130 kB** |
+| Only what our tracked bosses drop | 3,191 | — | — |
+| Only what this guild has ever seen | 1,700 | 54 kB | ~19 kB |
+
+Gzip ratio 2.93× measured on a real 250-name sample; the full payload does
+better (a 32 kB window understates 380 kB of repetitive armour-set names).
+
+- **Fleet cost ≈ 2 MB/week.** ~16 PLAYERS (not 178 characters — the fleet is
+  counted in players), source moves only on the weekly `sync-quarm.yml`, so each
+  agent downloads once a week and 304s otherwise (~200 bytes).
+- **Supabase cost is set by the TTL, and that is the only expensive knob.** The
+  bot builds the catalog once and serves it from memory, so clients never reach
+  the database. At the spell catalog's 1h TTL a full miss cycle re-reads 380 kB
+  24×/day (~9 MB/day); at **12h** it is twice (~760 kB/day). ⚠ Do not lower it —
+  the source table changes weekly.
+- **Client cost:** 380 kB on disk, ~1.5 MB resident. Irrelevant next to Electron.
+
+⚠ **The universe is "everything droppable", deliberately not "everything our
+bosses drop".** Guild lead: include Planes of Power so people can build a wishlist
+before the 2026-10-01 unlock. Only **12 PoP bosses** are registered in
+`bosses_local` (against 407 Luclin) because that board is built out AFTER
+unlock, so a boss-driven universe reached **113 of 1,212** PoP items. Keying on
+the drop table needs no boss registration and cannot go stale when `/addboss`
+runs later. A self-hosting guild inherits this: their picker works for content
+they have not started tracking yet.
+
+⚠ **There was nothing to save — this ENABLES a feature.** Before it, adding a
+wishlist item was one `ilike` with `limit=2`, so you had to type the name almost
+exactly or it failed; there was no item typeahead anywhere. The wizard should
+present this as a feature cost, not an optimisation.
+
+**Web does NOT get a local copy.** `/api/search` already does server-side
+`ilike` on `eqemu_items`; a browser pulling 130 kB to avoid a 20 ms query is the
+wrong trade. The local copy exists for Mimic, which has to work mid-raid without
+waiting on the network.
+
+### Auction bid details (added 2026-08-30)
+
+The auctions list is winners-only, so full bid histories come from the
+per-auction detail endpoint: **at most `OPENDKP_BIDS_PER_PASS` (default 10,
+0 = off) detail calls per auctions-sync pass, and each auction pays that call
+exactly once per lifetime** (`bids_synced_at` marker — a closed auction's bids
+are immutable). Newest-first, so it self-backfills history as a trickle behind
+normal passes rather than as a sweep. Steady state ≈ one call per closed
+auction ≈ 15–25 per raid night. A self-host deployment inherits the same knob
+and the same never-refetch guarantee.
+
 ### Storage & retention
+- **2026-09-01 — retention defaults are PLAN-DEPENDENT and must be asked, not
+  assumed.** Our 30-day `encounter_threat_snapshots` window was chosen against
+  an 8 GB Pro database; on a 500 MB Free project the same window alone exceeds
+  the whole plan. The wizard must size each stream's retention from the target
+  plan's database ceiling, and should default a free deployment to ~7 days on
+  the ephemeral telemetry streams (or shed them). Corollary found the same day:
+  a retention sweep whose predicate has no index is a seq scan that the client's
+  10s abort kills silently — **every retention window the wizard sets needs a
+  matching index, and a sweep that reports how many rows it actually removed.**
+  A sweep that fails quietly looks exactly like a sweep that had nothing to do.
+- **2026-09-22 — an aggregate is a one-way door; store the EVENT if a window
+  will ever be wanted.** `faction_standing` kept only running counters, so when
+  the guild lead asked for "last N days worth" the answer was that 749,753
+  recorded hits could not be split by date at all — the detail had reached the
+  bot and been discarded on the way in. `faction_hits` now keeps one row per
+  event (~851/day guild-wide, ~310k rows and tens of MB a year — two orders of
+  magnitude under the threat-snapshot table, and it carries the `ts`-leading
+  index the rule above demands *before* any sweep exists). The wizard-level
+  lesson is the ordering, not the table: **a counter can always be derived from
+  events, never the reverse**, so any stream where someone might later ask "how
+  much this month" should land as events first and roll up second. ⚠ And the
+  cost of getting it backwards is not symmetrical — the aggregate history here
+  is unrecoverable from the database, and is only rebuildable because the
+  RAIDERS still hold their own logs and a backfill replays them. A deployment
+  that had pruned its logs would have lost it outright.
 - **Local is an ARCHIVE, not a mirror** (2026-08-12). `refresh-local-archive.sh`
   merges each nightly dump instead of restoring with `--clean`, so rows
   production prunes survive locally forever. The wizard must ask *"do you want
@@ -94,6 +313,11 @@ must therefore ask or verify.
   and friends, `0` disables). A self-hoster with cheap storage may want them
   disabled entirely — the wizard should offer that rather than leaving the
   hosted-tier defaults in place.
+- **`xp_events` keeps 30 days** (2026-10-02, `XP_EVENTS_RETENTION_DAYS`; DECISIONS
+  §127). One row per experience line per uploader — a few thousand a day for our
+  fleet, more in a heavy XP week — carrying the group's names, so it is a privacy
+  window as much as a storage one. A guild that wants season-long XP trends wants
+  it longer; the wizard should ask, and say the rows name group members.
 - **Encounter collection is OPEN — volume scales with member farming**
   (2026-08-20). Since bot 3.1.52 every exactly-matched mob persists encounters
   (first kills are sacred); one member's overnight farm session wrote 336
@@ -105,6 +329,26 @@ must therefore ask or verify.
   raid-day bucket (matches the web's `dayKey`). That is OUR raid timezone — a
   guild setting the wizard must parameterize (same knob as the raid schedule
   and the deploy freeze).
+- **The nightly backup is an egress cost on a hosted project, and the wizard
+  should say so** (2026-09-04, `TOWER-coolify-and-supabase-backups.md` §2). A
+  `pg_dump` moves table data, not indexes: ours is ~1.1 GB a night out of a
+  1.83 GB database, ~33 GB a month, ~13% of Pro's 250 GB. A guild on a Free
+  project (5 GB egress) cannot afford a nightly full dump at all. The lever is
+  a lean nightly (`--exclude-table-data=` the largest ephemeral table) with a
+  full dump weekly — an option the script does not implement yet.
+- **Uncurated-mob collection is a SWITCH now, and the wizard should default it
+  OFF for a new guild** (2026-09-04). The open-collection decision above was
+  measured: in the 30 days to 2026-09-04, **5,789 of 5,969 encounters (97%)
+  were auto-registered farm trash**, ~170 MB across the encounter tables in 18
+  days (threat snapshots ~124 MB of it, rollups ~18 MB, events ~12 MB,
+  contributions ~9 MB, players ~5 MB) — about 9 MB/day, all of it below the
+  display filters. Bot env `TRACK_UNCURATED_MOBS=0` gates it at ingest (no
+  self-registration, no persistence on auto-registered rows; curated bosses
+  and the review's trash tally are untouched; a loot-lockout promotion still
+  curates a row). Tuning `flag_skip_uncurated_mobs=1` flips it live. We keep it
+  ON — first kills in new content are the reason it exists — but that is a
+  Pro-plan choice, and on a Free project the same 9 MB/day is the whole
+  database in under two months.
 
 - **Crash dumps NEVER leave the machine** (2026-08-12). Zeal writes
   `crashes/<ts>.zip` (minidump + `crash_reason.txt`); the agent uploads only the
@@ -115,6 +359,16 @@ must therefore ask or verify.
   standing preference, both default OFF), because today it is an environment
   variable and that is why 393 reports have exactly TWO uploaders.
   Design: `docs/DESIGN-crash-review.md`.
+- **2026-09-26 — feedback screenshots are the platform's FIRST object storage.**
+  A private Supabase Storage bucket, `feedback-screenshots` (5 MB per file,
+  JPEG/PNG/WebP, no policies, so service-role only; migration
+  `20260927003234`), paths in `feedback.screenshot_paths`. Up to three per report,
+  shrunk client-side to ≤1600 px (web) or ≤1920 px (Mimic) JPEGs, so a few hundred
+  KB each. The wizard has to create the bucket (a migration does it on Supabase;
+  an on-prem Postgres has no Storage API, so a self-hosted box needs either
+  Supabase Storage in its stack or a filesystem fallback in `utils/feedbackShots.js`,
+  which does not exist yet). Cost at our volume is negligible against Pro's
+  100 GB; there is no retention window, same as the feedback rows.
 
 ### Database
 - **The repo alone cannot build the schema** (2026-08-12): 182/193 migrations
@@ -158,6 +412,29 @@ must therefore ask or verify.
   not listed and substitutes `SITE_URL`; nothing errors. The wizard must
   round-trip an actual sign-in, not just write the config.
 
+- **A no-Discord door exists and carries deployment-shaped choices
+  (2026-08-24 — Discord's phone-verification wall).**
+  Officer-issued invites (`site_access_invites`, service-role only) let a
+  member set username+password on `/auth/claim`; the account is created
+  pre-confirmed as `<username>@<login domain>` and stamped onto
+  `wolfpack_members.user_id` — the same binding OAuth writes. What the wizard
+  must handle:
+  - **The login domain is a per-deployment value.** Production hardcodes
+    `login.wolfpack.quest` in `web/app/auth/claim/page.tsx` AND
+    `web/components/PasswordSignIn.tsx` (two constants that must agree). The
+    wizard should template it — any never-mailed domain the deployer controls
+    conceptually; it exists only inside GoTrue.
+  - **Supabase Auth "Email" provider must be ENABLED** (dashboard-only; no
+    MCP/API surface — same shape as the redirect-URL step). "Allow new users
+    to sign up" must stay ON (first-time Discord OAuth counts as a signup);
+    "Confirm email" state is irrelevant (invites pre-confirm via admin API).
+  - **No SMTP anywhere by design** — password reset is an officer re-invite.
+    A deployment wanting real email reset is an optional extension with its
+    own SMTP config, not a default the wizard should demand.
+  - **`ALLOWED_ROLE_NAMES` is enforced at claim time** (the flow's sign-in
+    moment) — one more consumer of that env var to keep in parity across
+    environments.
+
 ### Hosting & deployment
 - **Env vars are per environment on Vercel**, and a Production-only value leaves
   preview deployments rendering fine while server-side paths fail.
@@ -168,6 +445,34 @@ must therefore ask or verify.
 - **Coolify's `Ports Exposes` is metadata; `Ports Mappings` publishes.**
 - **`next build` needs ~8 GB**; 4 GB is OOM-killed during type-checking with no
   error in the log.
+- **2026-09-23 — deathroll announcements are an optional channel**
+  (`DEATHROLL_CHANNEL_ID`, bot 3.1.142). Unset, games are still recorded for
+  /fun and nothing posts. Ours points at the general chat channel; the wizard
+  should ask, not assume, since "which channel gets fun chatter" is a
+  per-guild taste.
+
+### Assistant (Lord Mobsincamp, 2026-09-12)
+- **The assistant's name is a per-deployment value.** `ASSISTANT_NAME`
+  (default `Lord Mobsincamp`) is read by web and bot; the wizard asks "What is
+  your guild's assistant called?" and writes it to both. Never hardcode the
+  name in copy — placeholder, answer card and any Discord command all read it.
+- **Three modes, chosen by the deployer:** `ASSISTANT_MODE=off|hosted|local`.
+  `hosted` answers through a hosted model via the bot (cents per question, no
+  hardware); `local` needs an OpenAI-compatible endpoint (`ASSISTANT_MODEL_URL`,
+  a LAN address, never committed) — for Wolf Pack that is a P40 in Tower.
+  All-on-prem deployments (shape 2) are `local` or `off`; shape 1 is `hosted`
+  or `off`.
+- **The assistant reads the archive tier, not production.** In the hybrid
+  shape (3) that is the on-prem copy; in shape 2 it IS the main DB; in shape 1
+  there is no archive and the tools read production with the retention the
+  deployer chose. Freshness in shape 3 depends on how the copy is fed: nightly
+  dump (a day stale) or logical replication (seconds — needs a direct
+  connection; on Supabase the IPv4 add-on).
+- **Reads may fail over to the archive tier; writes never do.** Agents hold
+  uploads in their durable queue through an outage; the archive is fed one way.
+  A deployment that wants read failover must verify auth JWTs locally
+  (`SUPABASE_JWT_SECRET`) or the failover serves nobody. Design:
+  `DESIGN-lord-mobsincamp.md` §6.
 
 ### Design & UI
 - **One visual language across four surfaces** (2026-08-12). The same twelve hex
@@ -184,6 +489,65 @@ must therefore ask or verify.
   lowers that ceiling. Anything that can match more must page
   (`web/lib/supabase-paged.ts`). A self-hoster changing `max-rows` changes
   behaviour everywhere, which is itself a reason to page rather than configure.
+- **2026-10-04 — every read is cap-safe, whatever `max-rows` is** (`DECISIONS-2026-09-21.md` §155).
+  The cap also cuts one-call `.range(0, N)`, set-returning RPCs and views. So reads page over a unique
+  ORDER BY, sum in SQL, or return one jsonb value. Nine migrations added the RPCs behind that; all are
+  `security invoker`, `service_role` only. The pages page in steps of 1,000 (`PGRST_MAX_ROWS`), so a box
+  with a LOWER `max-rows` would cut every page short. Set it to 1,000 or above. A higher value only
+  costs a few extra requests.
+- **2026-09-23 — remote operator access to the on-prem box goes over Tailscale,
+  not open ports** (`docs/DECISIONS-2026-09-21.md` §9). Our cloud sessions join the
+  tailnet with a tagged, ephemeral key and reach exactly two ports: the Supabase
+  pooler (the database container itself publishes nothing) and the Coolify API.
+  They use a read-only role that cannot read tells or chat. The wizard should
+  offer this as an optional step, not assume it: it needs a Tailscale account, a
+  policy edit (the default allow-all grant must be narrowed to
+  `autogroup:member` first, or a tagged device reaches everything), and an auth
+  key that expires, so someone has to rotate it.
+
+### Threat data retention (2026-09-23)
+- **Raw threat snapshots are disposable only after they are summarised.** Each
+  settled fight's curve and deaths are stored in `encounter_threat_graph`
+  (~150 bytes per fight-row; 2.4 MB for our first 17k fights, against ~1.4 GB
+  of raw snapshots). Deleting raw rows requires BOTH that summary and, for us,
+  the on-prem archive watermark. A deployment with no archive box needs a
+  different gate — our rule is "only delete what Tower holds", and a
+  single-host install has no Tower. The wizard must ask, not assume.
+- The 30-day raw retention and the 7-day thinning are **our paid-plan
+  defaults**; an on-prem deployment can keep raw snapshots forever for the price
+  of disk.
+
+### PvP deaths (2026-09-26)
+- **Every PvP death broadcast is stored, whoever is on either side** (`pvp_deaths`), so
+  /pvp can group fights between other guilds as well as ours. It is about 1,300 rows a
+  month on Project Quarm, a few MB a year, with no pruning.
+- It only exists on a PvP server. A guild on a blue server has no broadcasts, and the
+  wizard can leave the PvP pieces out entirely.
+- `pvp_kills` (Wolf Pack on one side) stays as it is; the leaderboard reads it.
+
+### Mob info kept on members' machines (2026-09-30)
+- **Target Info's catalog data is built per zone on the bot and kept on each member's
+  disk** (`/api/agent/mob-pack`, DECISIONS §114). The bot builds a zone once a week
+  (about 10 database lookups per mob name, three at a time) and stores it in `bot_kv`,
+  roughly 0.3–1 MB per zone. Each Mimic keeps the Planes of Power and every zone it
+  visits in `mobinfo-cache/`, up to 80 MB.
+- The cost lands as database reads during the weekly build and bot egress when a
+  member first downloads a zone (gzipped, about a fifth of the size). After that, a
+  daily revalidation is a 304. On an on-prem box the build reads are free.
+- The pinned list (zone ids 200–223) is ours. The wizard should derive it from
+  whatever expansion the guild is heading into, not copy it.
+
+### Public catalogs and installers that carry them (2026-10-01)
+- **The bot serves the spell, clicky and item catalogs without sign-in**
+  (`/api/public/catalog/*`, DECISIONS §118), and every Mimic build fetches them into the
+  installer. It costs bot egress per build and per anyone who calls it (about 1 MB each,
+  served from memory, no database read). The data is the public `eqemu_*` mirror, so a
+  guild's own deployment exposes nothing new by keeping the route.
+- The build script points at OUR bot by default (`WOLFPACK_CATALOG_URL` overrides it). A
+  guild building its own Mimic must point it at its own bot, or its installers ship our
+  snapshot.
+- Local mode (no token) sends nothing to the guild server, so an install can be handed to
+  people outside the guild. eqmimic.quest is ours; the wizard should not assume it.
 
 ## 4. Open questions for whoever builds it
 
@@ -196,3 +560,84 @@ must therefore ask or verify.
 - **Where does the eqemu catalog come from?** Unresolved and load-bearing.
 - **How much does it own vs check?** Writing `.env` files is easy; the value is
   in verifying each layer and naming the failure.
+
+### Guild kit — the config split, and the wizard's shape (2026-09-18)
+- **2026-09-18 — a guild's "own bits" split into a committed `guild/config.json`
+  + generated `guild/discord.json`, versus the platform secret store.** Measured
+  against `.env.example`: of 114 variables, **75 are Discord identifiers that
+  were never secrets** and **11 are real secrets**. Identifiers belong in a
+  committed file (their repo then describes their deployment); the ~11 secrets
+  stay in `.env` / Railway / Vercel and are referenced by name. The test for
+  "config vs code" is the guild lead's own: *"their own style and format"* —
+  if two guilds would legitimately differ and neither is wrong, it is config.
+  Contract landed as `guild/config.example.json` + `guild/README.md`; design in
+  `docs/DESIGN-guild-kit.md`. **The wizard must therefore write two files and
+  one secret store, never one env file** — and resolve every value env → file →
+  fallback so env keeps winning for us.
+- **2026-09-18 — channel passwords are the one "their bit" that must not be in
+  the committed config.** They ride `TAG_CHANNEL_SPEC` / `OFFICER_CHANNEL_SPEC`
+  as secrets; `config.json` carries the channel *names*. Same line `CLAUDE.md`
+  draws for our own repo. The wizard asks for the password once and writes it
+  to the secret store only.
+- **2026-09-18 — safety-critical values keep a hardcoded fallback under the
+  config.** The officer-chat privacy filter derives its channel name from
+  config AND keeps the compiled pattern, so a mis-set name cannot switch a
+  protection off. The wizard verifies the name it wrote matches the pattern it
+  compiled.
+- **2026-09-18 — wizard shape: a CLI engine (picked by the guild lead the same
+  day, with fork as the default repo shape, palette as a semantic set, and the
+  hosted path stubbed to "talk to us").**
+  Three options costed in `DESIGN-guild-kit.md` §4. The engine must run on-prem
+  (it is the only thing that can reach a LAN) and provision the Discord layout
+  itself — the ~30-id ceremony is `DESIGN-external-tenancy.md`'s #1 give-up
+  point and the provisioner is the wizard's whole value. The hosted path is the
+  same engine behind a web skin, Stage 5 only, stubbed to "talk to us" until
+  then. GitHub-native's *repo shape* (fork + `sync-upstream.yml` that never
+  touches `guild/`) is adopted regardless.
+- **2026-09-18 — AI-assist is `TENANT.md` + `tenant.json` + `wolfpack doctor`,
+  vendor-neutral.** The same thing `CLAUDE.md` is for us, generated for their
+  build. `doctor` reads config, the manifest and health endpoints — never
+  `.env`, never member tables — so its bundle cannot leak by construction (the
+  tenant-data policy, `DECISIONS-2026-09-18.md` §3, applied to support).
+- **2026-09-18 — the wizard sizes for the FREE tiers first (the guild lead's
+  answer to "do we charge": *"if they would size the environment for the free
+  levels of railway, supabase, and vercel"*).** A **free-tier profile** is the S
+  size: retention windows derived from the tier's storage rather than copied
+  from ours (our 30-day threat retention is a PAID default — §2a), features that
+  cannot fit switched off, and honesty where free is impossible — Railway Free
+  cannot run the bot, so S runs it on the guild's own box via Docker or names
+  the smallest paid tier; Vercel Hobby is fine for a guild and not for anything
+  paid. **The wizard must compute retention from the chosen tier and show the
+  ceiling before provisioning**, the same way §2 says it must show cost.
+- **2026-09-18 — t-shirt sizes, all offered at once.** S = bot + Mimic on free
+  tiers; M = + the web app on the guild's own domain; L = everything. The wizard
+  asks size first and derives the rest; nothing is held back from a size that
+  can pay for it.
+- **2026-09-18 — ownership: whatever the wizard sets up is in the guild's name.**
+  Billing, server, and **domain** — the guild owns its domain even when we host
+  (we take DNS delegation, never the registrar), because the exit promise
+  (encrypted handover at term end) is impossible if the host owns the name. A
+  subdomain under ours is the zero-setup start; migration to their own domain is
+  a supported path the wizard must know how to do.
+- **2026-09-18 — the competitive components are gated twice.** PvP /who
+  collection and PvP timers sit behind `features.pvp`; the anon-override
+  (who-lookup de-anonymisation) additionally requires a generated
+  `ALLIANCE_CODE` secret. The wizard never enables `pvp` by default and never
+  generates the code — that is an officer action after an alliance exists.
+- **2026-09-18 — design for merges and for shutdown.** The guild lead's
+  estimate is ~9 months of viability for large guilds; expect tenants to merge,
+  rosters to shrink to a quarter, raid cadence to drop, and the server to end.
+  The wizard's export must be complete enough to stand as the guild's archive
+  on its own, and a **tenant merge** (two rosters, two DKP histories, two sets
+  of anchors → one) is a real operation the tenancy design does not yet have.
+- **2026-09-29 — who counts as the raid is ours, hardcoded.** `/pop` counts
+  raiders by OpenDKP rank (Pack Leader, Officer, Raid Pack, Recruit), raid alts
+  by `Raid Alt`, level 60 and up (`web/lib/popRoster.ts`, DECISIONS
+  2026-09-21 §100). Another guild's rank names and floor will differ, so both
+  are config for the wizard, not constants.
+- **2026-09-29 — on Vercel Hobby, count the branches that build the site.**
+  Hobby allows 100 deployments a day and every push to every branch spends
+  one, a skipped build included. Our `web/vercel.json` builds main and beta
+  only (DECISIONS 2026-09-21 §101). A guild that adds sync-merged channel
+  branches, as we did with alpha, multiplies its pushes; the wizard should
+  write the same allow-list, not Vercel's default of every branch.

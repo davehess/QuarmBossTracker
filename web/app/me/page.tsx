@@ -36,7 +36,24 @@ import KeysUpload from './KeysUpload';
 import SpellbookUpload from './SpellbookUpload';
 import SuspectedCharacters, { type Suspect } from './SuspectedCharacters';
 import { selectAll } from '@/lib/selectAll';
+import {
+  fetchLiveStateRows, fetchFloorAndCoverage, fetchCharAggs, fetchScrapView, EMPTY_AGG,
+  type CharAgg, type ScrapView,
+} from '@/lib/capSafeReads';
+import { LIST_MIN_LEVEL, frontTierOf, tierOf } from '@/lib/listableChars';
 import MeCharacterCards, { type MeCard } from './MeCharacterCards';
+import { dayKey, RAID_TZ } from '@/lib/format';
+import { zonedDayRangeUtc } from '@/lib/raidReview';
+import {
+  windowStart, buildNights, nightNames, nightLabel,
+  attendedAlpha, ATTENDED, type NightRaid, type NightTick,
+} from '@/lib/raidHeatmap';
+import { type NightChip } from '@/components/RaidHeatmap';
+import { type StripNight } from '@/components/RaidNightsStrips';
+import AttendanceSection from './AttendanceSection';
+import { cookies } from 'next/headers';
+import { pickRaidLayout, RAID_LAYOUT_COOKIE } from '@/lib/raidLayout';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,9 +71,9 @@ type CharRow = {
   tell_relay:         boolean | null;
   tell_dm:            boolean | null;
   show_inventory_publicly: boolean | null;
+  show_quests_publicly:    boolean | null;
+  hidden_from_lists:       boolean | null;
 };
-
-type SkillBucket = { hits: number; dmg: number };
 
 type CharStats = {
   encounterCount: number;
@@ -114,16 +131,13 @@ type LiveState = {
 async function loadLiveState(charNames: string[]): Promise<Map<string, LiveState>> {
   const out = new Map<string, LiveState>();
   if (charNames.length === 0) return out;
-  const admin = supabaseAdmin();
-  // The table holds one row per active character (small) — fetch the guild's
-  // rows and match case-insensitively, since the PK stores the name as the
-  // agent reported it.
-  const { data } = await admin
-    .from('character_live_state')
-    .select('character, zone_name, buff_count, buffs, self_hp_pct, updated_at')
-    .eq('guild_id', 'wolfpack');
+  // The table holds a row for EVERY character any agent has reported (1,500+),
+  // so fetching "the guild's rows" returned the first 1,000 in heap order and
+  // none of the recently-updated ones were in them. Ask for this member's
+  // names (ilike-equality: the PK stores the name as the agent reported it).
+  const data = await fetchLiveStateRows(supabaseAdmin(), charNames);
   const wanted = new Set(charNames.map(n => n.toLowerCase()));
-  for (const r of (data ?? []) as any[]) {
+  for (const r of data as any[]) {
     const key = String(r.character || '').toLowerCase();
     if (!wanted.has(key)) continue;
     out.set(key, {
@@ -168,8 +182,8 @@ async function loadOwnedCharacters(userId: string): Promise<{ discordId: string 
   // household.
   const { data: allChars } = await admin
     .from('characters')
-    .select('name, main_name, class, race, rank, active, quarmy_url, opendkp_id, discord_id, exclude_from_stats, exclude_inventory, tell_relay, tell_dm, show_inventory_publicly')
-    .eq('guild_id', 'wolfpack');
+    .select('name, main_name, class, race, rank, active, quarmy_url, opendkp_id, discord_id, exclude_from_stats, exclude_inventory, tell_relay, tell_dm, show_inventory_publicly, show_quests_publicly, hidden_from_lists')
+    .eq('guild_id', GUILD_TAG);
   const all = (allChars ?? []) as (CharRow & { discord_id: string | null })[];
 
   // 1) Anchored characters — directly linked to ANY discord_id in the household.
@@ -202,28 +216,15 @@ type CoverageRow = { encounters_total: number | null; encounters_with_detail: nu
 // member_since effectively never moves), it's cached server-side for 30 min so
 // page loads normally skip the aggregation entirely. Cached as entry ARRAYS
 // (unstable_cache JSON-serializes — Maps don't survive); Maps rebuilt outside.
+//
+// ⚠ The map must be COMPLETE: the views hold 1,570 and 3,237 rows, and a
+// `.limit(5000)` returned 1,000 of each, so 36% / 69% of characters were
+// missing for 30 minutes at a time. Paging them is no answer (every page
+// re-runs the whole-guild aggregation), so each comes back as ONE jsonb value
+// (me_floor_json / me_coverage_json) — see fetchFloorAndCoverage. It throws on
+// an RPC error, and unstable_cache does not store a throw.
 const _loadFloorAndCoverageCached = unstable_cache(
-  async (): Promise<{
-    floors: [string, FloorRow][];
-    coverage: [string, CoverageRow][];
-  }> => {
-    const admin = supabaseAdmin();
-    const floors: [string, FloorRow][] = [];
-    const coverage: [string, CoverageRow][] = [];
-    const [{ data: floorRows }, { data: covRows }] = await Promise.all([
-      admin.from('character_data_floor').select('character_name, member_since, floor_source').limit(5000),
-      admin.from('character_rollup_coverage').select('character_name, encounters_total, encounters_with_detail, encounters_resubmittable').limit(5000),
-    ]);
-    for (const r of (floorRows ?? []) as (FloorRow & { character_name: string | null })[]) {
-      if (r.character_name) floors.push([r.character_name.toLowerCase(), { member_since: r.member_since, floor_source: r.floor_source }]);
-    }
-    for (const r of (covRows ?? []) as (CoverageRow & { character_name: string | null })[]) {
-      if (r.character_name) coverage.push([r.character_name.toLowerCase(), {
-        encounters_total: r.encounters_total, encounters_with_detail: r.encounters_with_detail, encounters_resubmittable: r.encounters_resubmittable,
-      }]);
-    }
-    return { floors, coverage };
-  },
+  async () => fetchFloorAndCoverage(supabaseAdmin()),
   ['me-floor-coverage'],
   { revalidate: 1800 },
 );
@@ -231,164 +232,99 @@ async function loadFloorAndCoverage(): Promise<{
   floors: Map<string, FloorRow>;
   coverage: Map<string, CoverageRow>;
 }> {
-  const { floors, coverage } = await _loadFloorAndCoverageCached();
-  return { floors: new Map(floors), coverage: new Map(coverage) };
+  try {
+    const { floors, coverage } = await _loadFloorAndCoverageCached();
+    return { floors: new Map(floors), coverage: new Map(coverage) };
+  } catch {
+    return { floors: new Map(), coverage: new Map() };   // the cards render without the data-floor line
+  }
 }
 
-async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRow: CoverageRow | null): Promise<CharStats> {
+// Everything /me needs per character that can be asked for ONCE per account.
+// The guild lead, 2026-09-13: "when the page loads fresh i get a huge lag spike." The
+// page ran a dozen queries per character, and an account can hold 46 of them
+// (mains, alts, mules) — ~550 PostgREST round trips a load, two of them a
+// 385 ms chat count each. Now: chat counts, best-known levels, loot, wishlist
+// and PvP tallies come back for the whole family in one query apiece, and the
+// per-character fan-out below runs only for names that have any parse,
+// upload or rollup row at all (37 of the guild lead's 46 have none).
+type LootRow = { item_name: string | null; dkp: number | null; raid_date: string | null; raid_name: string | null };
+type FamilyPrefetch = {
+  active:   Set<string>;                                              // lower-cased names with something to fetch
+  chat:     Map<string, { total: number; recent: number }>;           // by lower-cased speaker
+  loot:     Map<string, LootRow[]>;
+  wishlist: Map<string, number>;
+  pvp:      Map<string, { kills: number; deaths: number; assists: number }>;
+  stats:    Map<string, CharAgg>;                                     // parse / upload / rollup aggregates, by lower-cased name
+};
+
+async function loadFamilyPrefetch(names: string[]): Promise<FamilyPrefetch> {
+  const fam: FamilyPrefetch = { active: new Set(), chat: new Map(), loot: new Map(), wishlist: new Map(), pvp: new Map(), stats: new Map() };
+  if (names.length === 0) return fam;
   const admin = supabaseAdmin();
   const since30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const nameLower = name.toLowerCase();
-
-  const [
-    { data: parseRows },
-    { data: contribRows },
-    chat30Res,
-    chatAllRes,
-    pvpKillsRes,
-    pvpDeathsRes,
-    pvpAssistsRes,
-    lootRes,
-    wishlistRes,
-    { data: rollupRows },
-  ] = await Promise.all([
-    admin
-      .from('encounter_players')
-      .select('encounter_id, total_damage, dps')
-      .eq('character_name', name)
-      .limit(5000),
-    admin
-      .from('contributions')
-      .select('encounter_id, created_at, source, agent_version, has_ability_detail')
-      .eq('contributor_character', name)
-      .order('created_at', { ascending: false })
-      .limit(500),
-    admin
-      .from('chat_messages')
-      .select('id', { count: 'exact', head: true })
-      .eq('speaker', name)
-      .gte('ts', since30),
-    admin
-      .from('chat_messages')
-      .select('id', { count: 'exact', head: true })
-      .eq('speaker', name),
-    admin
-      .from('pvp_kills')
-      .select('id', { count: 'exact', head: true })
-      .ilike('killer', name),
-    admin
-      .from('pvp_kills')
-      .select('id', { count: 'exact', head: true })
-      .ilike('victim', name),
-    // PvP assists — credited to the assister on someone else's kill
-    // (Hitya 2026-06-24: "the /me page should also list assists").
-    admin
-      .from('pvp_assists')
-      .select('id', { count: 'exact', head: true })
-      .ilike('assister', name),
+  const lower = (v: unknown) => String(v ?? '').toLowerCase();
+  const bump = (key: string, field: 'kills' | 'deaths' | 'assists') => {
+    const cur = fam.pvp.get(key) ?? { kills: 0, deaths: 0, assists: 0 };
+    cur[field] += 1;
+    fam.pvp.set(key, cur);
+  };
+  const [activeRes, chatRes, lootRows, wishRes, killRes, deathRes, assistRes, stats] = await Promise.all([
+    admin.rpc('me_active_names', { p_names: names }),
+    admin.rpc('me_chat_counts', { p_names: names, p_since: since30 }),
     // Loot from the OpenDKP mirror (the bot's loot_drops table is unused —
     // auction-award wiring is stubbed). opendkp_loot_recent resolves the
     // winner to a character name and carries the DKP spent + item + date.
-    admin
+    // Paged: a family's loot can pass PostgREST's 1000-row cap.
+    selectAll<LootRow & { character_name: string }>((from, to) => admin
       .from('opendkp_loot_recent')
-      .select('item_name, dkp, raid_date, raid_name')
-      .eq('character_name', name),
-    admin
-      .from('wishlists')
-      .select('id', { count: 'exact', head: true })
-      .eq('character_name', name),
-    // Per-encounter verb rollups. Sum locally — typical char has at most ~hundreds
-    // of rows, fine to aggregate in JS. by_skill is the jsonb bag per the
-    // migration; total_hits / total_damage / self_attack_count are scalar.
-    admin
-      .from('encounter_combat_rollup')
-      .select('total_hits, total_damage, self_attack_count, by_skill')
-      .eq('character_name', name)
-      .limit(5000),
-    // NOTE: character_data_floor + character_rollup_coverage are no longer
-    // queried here — they're whole-guild-aggregating views (see
-    // loadFloorAndCoverage) prefetched once for the family and passed in.
+      .select('character_name, item_name, dkp, raid_date, raid_name')
+      .in('character_name', names)
+      .order('raid_date', { ascending: false })
+      .range(from, to)).catch(() => [] as (LootRow & { character_name: string })[]),
+    admin.from('wishlists').select('character_name').in('character_name', names).limit(1000),
+    // PvP tallies — case-insensitive on purpose (the broadcast names are not
+    // canonicalised). Assists are credited to the assister on someone else's
+    // kill (the guild lead, 2026-06-24: "the /me page should also list assists").
+    admin.from('pvp_kills').select('killer').ilikeAnyOf('killer', names).limit(1000),
+    admin.from('pvp_kills').select('victim').ilikeAnyOf('victim', names).limit(1000),
+    admin.from('pvp_assists').select('assister').ilikeAnyOf('assister', names).limit(1000),
+    // Parse / upload / rollup aggregates for the whole family, summed in SQL:
+    // the per-character reads these replace (.limit(5000) / .limit(500) /
+    // .limit(5000)) were capped at 1,000 rows, and the heaviest raider has
+    // 3,807 / 4,036 / 3,914.
+    fetchCharAggs(admin, names),
   ]);
-
-  const parses = (parseRows ?? []) as { encounter_id: string; total_damage: number | null; dps: number | null }[];
-  const totalDamage = parses.reduce((s, r) => s + (r.total_damage || 0), 0);
-  let topDmg = 0, topId: string | null = null;
-  for (const p of parses) {
-    if ((p.total_damage || 0) > topDmg) { topDmg = p.total_damage || 0; topId = p.encounter_id; }
+  fam.stats = stats;
+  for (const r of (activeRes.data ?? []) as { name: string }[]) fam.active.add(lower(r.name));
+  for (const r of (chatRes.data ?? []) as { speaker: string; total: number; recent: number }[]) {
+    fam.chat.set(lower(r.speaker), { total: Number(r.total) || 0, recent: Number(r.recent) || 0 });
   }
-
-  // Recent encounters — join encounter_players to encounters for npc_id +
-  // started_at. PostgREST doesn't traverse without a declared FK, so a
-  // second targeted lookup.
-  let recentEncounters: CharStats['recentEncounters'] = [];
-  if (parses.length > 0) {
-    // Limit to most recent 30 contributions to keep the join cheap.
-    const lastIds = Array.from(new Set(parses.map(p => p.encounter_id))).slice(0, 60);
-    const { data: encRows } = await admin
-      .from('encounters')
-      .select('id, started_at, npc_id')
-      .in('id', lastIds)
-      .order('started_at', { ascending: false })
-      .limit(10);
-    const npcIds = (encRows ?? []).map((e: any) => e.npc_id).filter((x: any) => x != null);
-    const { data: npcRows } = npcIds.length
-      ? await admin.from('eqemu_npc_types').select('id, name').in('id', npcIds)
-      : { data: [] };
-    const npcName = new Map<number, string>(((npcRows ?? []) as { id: number; name: string }[]).map(n => [n.id, n.name.replace(/_/g,' ').replace(/^#/,'')]));
-    const dmgByEnc = new Map<string, { dmg: number; dps: number }>();
-    for (const p of parses) {
-      const existing = dmgByEnc.get(p.encounter_id);
-      if (!existing || (p.total_damage || 0) > existing.dmg) {
-        dmgByEnc.set(p.encounter_id, { dmg: p.total_damage || 0, dps: p.dps || 0 });
-      }
-    }
-    recentEncounters = ((encRows ?? []) as { id: string; started_at: string; npc_id: number | null }[]).map(e => ({
-      id: e.id,
-      npc_name: e.npc_id != null ? (npcName.get(e.npc_id) ?? null) : null,
-      started_at: e.started_at,
-      damage: dmgByEnc.get(e.id)?.dmg ?? 0,
-      dps:    dmgByEnc.get(e.id)?.dps ?? 0,
-    }));
+  for (const r of lootRows) {
+    const key = lower(r.character_name);
+    const list = fam.loot.get(key) ?? [];
+    list.push({ item_name: r.item_name, dkp: r.dkp, raid_date: r.raid_date, raid_name: r.raid_name });
+    fam.loot.set(key, list);
   }
+  for (const r of (wishRes.data ?? []) as { character_name: string }[]) {
+    const key = lower(r.character_name);
+    fam.wishlist.set(key, (fam.wishlist.get(key) ?? 0) + 1);
+  }
+  for (const r of (killRes.data   ?? []) as { killer: string }[])   bump(lower(r.killer),   'kills');
+  for (const r of (deathRes.data  ?? []) as { victim: string }[])   bump(lower(r.victim),   'deaths');
+  for (const r of (assistRes.data ?? []) as { assister: string }[]) bump(lower(r.assister), 'assists');
+  return fam;
+}
 
-  const contribs = (contribRows ?? []) as { encounter_id: string; created_at: string; source: string | null; agent_version: string | null; has_ability_detail: boolean | null }[];
-  const lootRows = (lootRes.data ?? []) as { item_name: string | null; dkp: number | null; raid_date: string | null; raid_name: string | null }[];
+async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRow: CoverageRow | null, fam: FamilyPrefetch): Promise<CharStats> {
+  const admin = supabaseAdmin();
+  const nameLower = name.toLowerCase();
+
+  const chat     = fam.chat.get(nameLower)     ?? { total: 0, recent: 0 };
+  const lootRows = fam.loot.get(nameLower)     ?? [];
+  const pvp      = fam.pvp.get(nameLower)      ?? { kills: 0, deaths: 0, assists: 0 };
+  const wishlistCount = fam.wishlist.get(nameLower) ?? 0;
   const dkpSpent = lootRows.reduce((s, r) => s + (r.dkp || 0), 0);
-
-  // ── Aggregate the per-ability rollups ──────────────────────────────────────
-  // Each row: { total_hits, total_damage, self_attack_count, by_skill: jsonb }.
-  // by_skill is { <skill>: {hits, dmg} } already in the agent's bucket shape.
-  // We sum across the character's encounters; topSkills is the top 5 by dmg.
-  const rollups = (rollupRows ?? []) as {
-    total_hits: number | null;
-    total_damage: number | null;
-    self_attack_count: number | null;
-    by_skill: Record<string, SkillBucket> | null;
-  }[];
-  let rollupHits = 0, rollupDamage = 0, selfAttackCount = 0;
-  const skillTotals = new Map<string, SkillBucket>();
-  for (const r of rollups) {
-    rollupHits      += r.total_hits        || 0;
-    rollupDamage    += r.total_damage      || 0;
-    selfAttackCount += r.self_attack_count || 0;
-    if (r.by_skill && typeof r.by_skill === 'object') {
-      for (const [skill, b] of Object.entries(r.by_skill)) {
-        const existing = skillTotals.get(skill) ?? { hits: 0, dmg: 0 };
-        existing.hits += Number(b?.hits) || 0;
-        existing.dmg  += Number(b?.dmg)  || 0;
-        skillTotals.set(skill, existing);
-      }
-    }
-  }
-  const topSkills = Array.from(skillTotals.entries())
-    .map(([skill, b]) => ({ skill, hits: b.hits, dmg: b.dmg }))
-    .sort((a, b) => b.dmg - a.dmg)
-    .slice(0, 5);
-
-  // Most recent agent version this character uploaded under. Pre-2.5.39
-  // contributions have null agent_version, so we look for the latest non-null.
-  const latestAgentVersion = contribs.find(c => c.agent_version)?.agent_version ?? null;
-
   const floor = (floorRow ?? null) as { member_since: string | null; floor_source: string | null } | null;
   const coverage = (coverageRow ?? null) as {
     encounters_total: number | null;
@@ -396,27 +332,74 @@ async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRo
     encounters_resubmittable: number | null;
   } | null;
 
+  // Nothing parsed, uploaded or rolled up under this name — every per-character
+  // query below would come back empty, so don't send them. Mules and parked
+  // alts land here.
+  if (!fam.active.has(nameLower)) {
+    return {
+      encounterCount: 0, totalDamage: 0, topDmg: 0, topEncounterId: null, recentEncounters: [],
+      uploadCount: 0, lastUpload: null, latestAgentVersion: null,
+      chat30: chat.recent, chatAll: chat.total,
+      pvpKills: pvp.kills, pvpDeaths: pvp.deaths, pvpAssists: pvp.assists,
+      lootCount: lootRows.length, dkpSpent, wishlistCount,
+      rollupHits: 0, rollupDamage: 0, selfAttackCount: 0, topSkills: [],
+      encountersWithDetail:    coverage?.encounters_with_detail   ?? 0,
+      encountersResubmittable: coverage?.encounters_resubmittable ?? 0,
+      memberSince: floor?.member_since ?? null,
+      floorSource: (floor?.floor_source as CharStats['floorSource']) ?? null,
+    };
+  }
+
+  // The parse / upload / rollup numbers were summed HERE from three per-character
+  // reads (encounter_players .limit(5000), contributions .limit(500),
+  // encounter_combat_rollup .limit(5000)) — each silently capped at 1,000 rows
+  // (500 for uploads), so a heavy raider's encounter count, totals, top fight,
+  // upload count and top skills described only a slice of their history. They
+  // now come from me_char_stats, summed in SQL for the whole family at once
+  // (see loadFamilyPrefetch). NOTE: character_data_floor +
+  // character_rollup_coverage are likewise not queried here — they're
+  // whole-guild-aggregating views (see loadFloorAndCoverage).
+  const agg = fam.stats.get(nameLower) ?? { name, ...EMPTY_AGG };
+
+  // Recent encounters (the 10 newest, picked in SQL) — only the boss names
+  // still need a lookup; PostgREST doesn't traverse without a declared FK.
+  let recentEncounters: CharStats['recentEncounters'] = [];
+  if (agg.recent.length > 0) {
+    const npcIds = agg.recent.map(e => e.npc_id).filter((x): x is number => x != null);
+    const { data: npcRows } = npcIds.length
+      ? await admin.from('eqemu_npc_types').select('id, name').in('id', npcIds)
+      : { data: [] };
+    const npcName = new Map<number, string>(((npcRows ?? []) as { id: number; name: string }[]).map(n => [n.id, n.name.replace(/_/g,' ').replace(/^#/,'')]));
+    recentEncounters = agg.recent.map(e => ({
+      id: e.id,
+      npc_name: e.npc_id != null ? (npcName.get(e.npc_id) ?? null) : null,
+      started_at: e.started_at as string,
+      damage: e.damage,
+      dps:    e.dps,
+    }));
+  }
+
   return {
-    encounterCount: new Set(parses.map(p => p.encounter_id)).size,
-    totalDamage,
-    topDmg,
-    topEncounterId: topId,
+    encounterCount: agg.encounter_count,
+    totalDamage: agg.total_damage,
+    topDmg: agg.top_damage,
+    topEncounterId: agg.top_encounter_id,
     recentEncounters,
-    uploadCount: contribs.length,
-    lastUpload: contribs[0]?.created_at ?? null,
-    latestAgentVersion,
-    chat30:  chat30Res.count ?? 0,
-    chatAll: chatAllRes.count ?? 0,
-    pvpKills: pvpKillsRes.count ?? 0,
-    pvpDeaths: pvpDeathsRes.count ?? 0,
-    pvpAssists: pvpAssistsRes.count ?? 0,
+    uploadCount: agg.upload_count,
+    lastUpload: agg.last_upload,
+    latestAgentVersion: agg.latest_agent_version,
+    chat30:  chat.recent,
+    chatAll: chat.total,
+    pvpKills: pvp.kills,
+    pvpDeaths: pvp.deaths,
+    pvpAssists: pvp.assists,
     lootCount: lootRows.length,
     dkpSpent,
-    wishlistCount: wishlistRes.count ?? 0,
-    rollupHits,
-    rollupDamage,
-    selfAttackCount,
-    topSkills,
+    wishlistCount,
+    rollupHits: agg.rollup_hits,
+    rollupDamage: agg.rollup_damage,
+    selfAttackCount: agg.self_attack_count,
+    topSkills: agg.top_skills,
     encountersWithDetail:    coverage?.encounters_with_detail   ?? 0,
     encountersResubmittable: coverage?.encounters_resubmittable ?? 0,
     memberSince: floor?.member_since ?? null,
@@ -437,7 +420,7 @@ async function loadCharStats(name: string, floorRow: FloorRow | null, coverageRo
 // Best-known level per character. Two signals:
 //   (a) who_observations.level — /who history (highest level we've ever seen).
 //   (b) character_spellbook.spell_level — a scribed L60 spell IS proof of L60,
-//       independent of /who staleness (Hitya 2026-06-23: Canopy's /who
+//       independent of /who staleness (the guild lead, 2026-06-23: a member's /who
 //       cache held an L57 row but her spellbook proves L60).
 // Compute the max client-side. who_observations has tons of NULL-level rows
 // (anonymous /who hides level) and a chained PostgREST .not('level','is',null)
@@ -448,70 +431,147 @@ async function loadCharLevels(charNames: string[]): Promise<Map<string, number>>
   const out = new Map<string, number>();
   if (charNames.length === 0) return out;
   const admin = supabaseAdmin();
-  await Promise.all(charNames.map(async (name) => {
-    const [whoRes, bookRes] = await Promise.all([
-      admin.from('who_observations')
-        .select('level')
-        .ilike('character', name)
-        .gte('level', 1)         // implies NOT NULL and dodges the NULLS-FIRST sort trap
-        .limit(500),
-      admin.from('character_spellbook')
-        .select('spell_level')
-        .ilike('character_name', name)
-        .gte('spell_level', 1)
-        .limit(1000),
-    ]);
-    let best = 0;
-    for (const r of (whoRes.data ?? []) as { level: number | null }[]) {
-      if (typeof r.level === 'number' && r.level > best) best = r.level;
-    }
-    for (const r of (bookRes.data ?? []) as { spell_level: number | null }[]) {
-      if (typeof r.spell_level === 'number' && r.spell_level > best) best = r.spell_level;
-    }
-    if (best > 0) out.set(name.toLowerCase(), best);
-  }));
+  // One call for the whole family — the max over both signals is taken in SQL
+  // (me_levels), which also sidesteps the NULLS-FIRST sort trap the old
+  // per-character pair worked around. Two queries × 46 characters, one of them
+  // an 82 ms spellbook scan, was part of the fresh-load spike.
+  const { data } = await admin.rpc('me_levels', { p_names: charNames });
+  for (const r of (data ?? []) as { name: string; level: number }[]) {
+    const lvl = Number(r.level) || 0;
+    if (lvl > 0) out.set(String(r.name).toLowerCase(), lvl);
+  }
   return out;
 }
 
-async function loadSyncHeartbeats(charNames: string[]): Promise<Map<string, { lastUpload: string; agentVersion: string | null }>> {
+// "Last seen" is the freshest upload on ANY stream — Mimic streams faction,
+// inventory, chat, live state and more while the last fight is a memory, so
+// keying the banner on the encounter endpoint alone read "isn't syncing" with
+// Mimic running (the guild lead, 2026-09-04: "the parser was syncing message is wrong,
+// mimic is on"). The last fight upload is kept separately for the sub-line.
+type Heartbeat = { lastSeen: string; lastFight: string | null; agentVersion: string | null };
+async function loadSyncHeartbeats(charNames: string[]): Promise<Map<string, Heartbeat>> {
   if (charNames.length === 0) return new Map();
   const admin = supabaseAdmin();
-  const out = new Map<string, { lastUpload: string; agentVersion: string | null }>();
-  await Promise.all(charNames.map(async (name) => {
-    const { data } = await admin
-      .from('agent_upload_stats')
-      .select('last_uploaded_at, agent_version')
-      .ilike('character', name)
-      .eq('endpoint', 'encounter')
-      .maybeSingle();
-    if (data?.last_uploaded_at) out.set(name, { lastUpload: data.last_uploaded_at, agentVersion: data.agent_version });
-  }));
+  type StatRow = { character: string | null; endpoint: string | null; last_uploaded_at: string | null; agent_version: string | null };
+  // One read for the whole family; ilike without wildcards is case-insensitive
+  // equality, which is what the per-name lookup did before.
+  const rows = await selectAll<StatRow>((from, to) => admin
+    .from('agent_upload_stats')
+    .select('character, endpoint, last_uploaded_at, agent_version')
+    .or(charNames.map(n => `character.ilike.${n.replace(/[^A-Za-z]/g, '')}`).filter(s => s.length > 'character.ilike.'.length).join(','))
+    .order('character').order('endpoint')
+    .range(from, to));
+  const wanted = new Map(charNames.map(n => [n.toLowerCase(), n]));
+  const out = new Map<string, Heartbeat>();
+  for (const r of rows) {
+    const name = wanted.get(String(r.character || '').toLowerCase());
+    if (!name || !r.last_uploaded_at) continue;
+    const at = new Date(r.last_uploaded_at).toISOString();
+    const cur = out.get(name) ?? { lastSeen: at, lastFight: null, agentVersion: r.agent_version };
+    if (at >= cur.lastSeen) { cur.lastSeen = at; cur.agentVersion = r.agent_version ?? cur.agentVersion; }
+    if (r.endpoint === 'encounter' && (!cur.lastFight || at > cur.lastFight)) cur.lastFight = at;
+    out.set(name, cur);
+  }
   return out;
 }
 
 // ── "The Scrap" — friendly damage competition (last 30 days) ────────────────
-// Server-side leaderboard via the scrap_damage_leaderboard RPC (cap-immune).
-// We surface the viewer's best-ranked character, the rival directly above
-// them, and the current Top Dog — a personal nudge rather than another table.
-type ScrapRow = { character_name: string; total_damage: number; best_dps: number; encounters: number };
-type ScrapView = {
-  contenders: number;
-  top:   ScrapRow & { rank: number };
-  me:    (ScrapRow & { rank: number }) | null;
-  rival: (ScrapRow & { rank: number }) | null;
+// Ranked in SQL by scrap_leaderboard_view (the ScrapView type is in
+// lib/capSafeReads). We surface the viewer's best-ranked character, the rival
+// directly above them, and the current Top Dog — a personal nudge rather than
+// another table.
+// ⚠ NOT "cap-immune": scrap_damage_leaderboard is a set-returning function, so
+// PostgREST capped it at 1,000 rows. 1,106 characters were on the board over 30
+// days, so contenders read 1,000 and the 106 lowest ranks got no card. The view
+// function ranks over all of them and returns one jsonb value.
+// ── Raid attendance heatmap (the guild lead, 2026-09-03) ──────────────────────────────
+// "add in raid attendance on a person's /me … with mouse over on dates and
+// raid names and links to the raids". One cell per OFFICIAL raid night (bonus
+// rows dropped, the night taken from the raid's name — lib/raidHeatmap) over
+// the last 60 days; gold when ANY of the member's characters was in ANY of the
+// night's ticks, brighter the more of the night they stayed; an outline when a
+// raid was held without them. The family union matters — a person is one
+// person, and their alt-night attendance counts exactly like their main's.
+//
+// 60 days, not a year (the guild lead, 2026-09-04: "/me is slow to load now … load the
+// last 60 days by default") — the year is on /raidhistory for anyone who wants
+// it. Two narrow tick reads — ids only, no attendee arrays — because this page
+// is per-member and the arrays are the wide part. The overlap filter does the
+// membership test server-side; the `<> '{}'` filter drops sync-gap ticks the
+// same way /admin/attendance does (verified live 2026-09-03).
+const ATTENDANCE_DAYS = 60;
+type FamilyAttendance = {
+  chips: NightChip[];
+  strips: StripNight[];
+  held60: number;
+  attended60: number;
+  held30: number;
+  attended30: number;
 };
+
+async function loadFamilyAttendance(names: string[]): Promise<FamilyAttendance | null> {
+  if (names.length === 0) return null;
+  const admin = supabaseAdmin();
+  const todayKey = dayKey(new Date().toISOString(), RAID_TZ);
+  const since60 = windowStart(todayKey, ATTENDANCE_DAYS);
+  const since30 = windowStart(todayKey, 30);
+  const { startIso } = zonedDayRangeUtc(since60, RAID_TZ);
+
+  const raids = await selectAll<NightRaid>((from, to) => admin
+    .from('opendkp_raids')
+    .select('raid_id, ts, name')
+    .gte('ts', startIso)
+    .order('raid_id')
+    .range(from, to));
+  if (raids.length === 0) return null;
+  const raidIds = raids.map(r => r.raid_id);
+
+  const [heldTicks, myTicks] = await Promise.all([
+    selectAll<NightTick>((from, to) => admin
+      .from('opendkp_ticks')
+      .select('raid_id, tick_id')
+      .in('raid_id', raidIds)
+      .neq('attendees', '{}')
+      .order('tick_id')
+      .range(from, to)),
+    selectAll<NightTick>((from, to) => admin
+      .from('opendkp_ticks')
+      .select('raid_id, tick_id')
+      .in('raid_id', raidIds)
+      .overlaps('attendees', names)
+      .order('tick_id')
+      .range(from, to)),
+  ]);
+
+  // Raids exist but no held ticks came back (a failed read throws, and the
+  // caller hides the section) — hide it rather than draw a year of "missed".
+  // A wrong grid is worse than no grid.
+  if (heldTicks.length === 0) return null;
+  const nights = buildNights(raids, heldTicks);
+  const mine = new Set(myTicks.map(t => t.tick_id));
+
+  const chips: NightChip[] = [];
+  const strips: StripNight[] = [];
+  let held60 = 0, attended60 = 0, held30 = 0, attended30 = 0;
+  for (const n of nights.values()) {
+    if (n.tickIds.length === 0) continue;   // a raid row with no captured ticks is a sync gap, not a night
+    if (n.date < since60) continue;         // the name-date rule can pull a raid a day past the query edge
+    const got = n.tickIds.filter(id => mine.has(id)).length;
+    if (n.date >= since60) { held60 += 1; if (got > 0) attended60 += 1; }
+    if (n.date >= since30) { held30 += 1; if (got > 0) attended30 += 1; }
+    const status = got > 0 ? `You were in ${got} of ${n.tickIds.length} ticks` : 'Missed';
+    const look = { date: n.date, color: ATTENDED, alpha: got > 0 ? attendedAlpha(got, n.tickIds.length) : undefined, outline: got === 0, href: `/raid/review/${n.date}` };
+    chips.push({ ...look, lines: [nightLabel(n.date), ...nightNames(n), status] });
+    strips.push({ ...look, name: nightNames(n).join(' · ') || '(unnamed)', figure: got > 0 ? `${got}/${n.tickIds.length}` : 'missed' });
+  }
+  chips.sort((a, b) => a.date.localeCompare(b.date));
+  return { chips, strips, held60, attended60, held30, attended30 };
+}
+
 async function loadScrap(myNames: string[]): Promise<ScrapView | null> {
   try {
-    const sb = supabaseAdmin();
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    const { data } = await sb.rpc('scrap_damage_leaderboard', { p_since: since });
-    const rows = (data ?? []) as ScrapRow[];
-    if (rows.length === 0) return null;
-    const ranked = rows.map((r, i) => ({ ...r, rank: i + 1 }));
-    const mine = new Set(myNames.map(n => n.toLowerCase()));
-    const me = ranked.find(r => mine.has(r.character_name.toLowerCase())) || null;
-    const rival = me && me.rank > 1 ? ranked[me.rank - 2] : null;
-    return { contenders: ranked.length, top: ranked[0], me, rival };
+    return await fetchScrapView(supabaseAdmin(), myNames, since);
   } catch { return null; }
 }
 
@@ -549,7 +609,7 @@ async function loadSuspectedCharacters(discordId: string | null): Promise<Suspec
 
   // Paginated — a .limit() above 1000 does NOT lift PostgREST's silent cap
   // (test/db-read-discipline.test.js ratchets on this), and a member with many
-  // boxed characters can exceed it across endpoints.
+  // A member's several characters can exceed it across endpoints.
   const ups = await selectAll<{ character: string; last_uploaded_at: string | null }>(
     (from, to) => admin
       .from('agent_upload_stats')
@@ -570,7 +630,7 @@ async function loadSuspectedCharacters(discordId: string | null): Promise<Suspec
   const { data: rows } = await admin
     .from('characters')
     .select('name, discord_id, link_ignored, deleted')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .in('name', names);
   const known = new Map<string, { discord_id: string | null; link_ignored: boolean | null; deleted: boolean | null }>();
   for (const r of (rows ?? []) as { name: string; discord_id: string | null; link_ignored: boolean | null; deleted: boolean | null }[]) {
@@ -606,7 +666,8 @@ async function loadSuspectedCharacters(discordId: string | null): Promise<Suspec
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export default async function MePage() {
+export default async function MePage({ searchParams }: { searchParams?: Promise<{ layout?: string }> }) {
+  const layout = pickRaidLayout((await searchParams)?.layout, (await cookies()).get(RAID_LAYOUT_COOKIE)?.value);
   const supabase = supabaseServer();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/auth/signin?next=/me');
@@ -614,7 +675,9 @@ export default async function MePage() {
   const tz = await userTz();
 
   const { discordId, nickname, chars: allChars } = await loadOwnedCharacters(user.id);
-  const suspects = await loadSuspectedCharacters(discordId);
+  // Optional sections: selectAll throws on a failed page (2026-10-04), and a
+  // timed-out side panel must not take the whole page down with it.
+  const suspects = await loadSuspectedCharacters(discordId).catch(() => [] as Suspect[]);
 
   // Honor the per-character data opt-out (characters.exclude_from_stats). We
   // still surface excluded chars in a small footer so the owner can see + flip
@@ -625,21 +688,25 @@ export default async function MePage() {
   // The floor + coverage views aggregate the WHOLE guild on every call, so we
   // fetch them ONCE here (not per-character) and overlap with the scrap
   // leaderboard. This is the fix for /me crawling for members with many alts.
-  const [scrap, { floors, coverage }] = await Promise.all([
-    chars.length > 0 ? loadScrap(chars.map(c => c.name)) : Promise.resolve(null),
+  const names = chars.map(c => c.name);
+  const [scrap, { floors, coverage }, attendance, fam] = await Promise.all([
+    chars.length > 0 ? loadScrap(names) : Promise.resolve(null),
     loadFloorAndCoverage(),
+    loadFamilyAttendance(names).catch(() => null),
+    loadFamilyPrefetch(names),
   ]);
 
-  // Build per-character stats in parallel
+  // Build per-character stats in parallel — only names with something to
+  // fetch actually query (see loadCharStats).
   const stats = await Promise.all(chars.map(c =>
-    loadCharStats(c.name, floors.get(c.name.toLowerCase()) ?? null, coverage.get(c.name.toLowerCase()) ?? null)
+    loadCharStats(c.name, floors.get(c.name.toLowerCase()) ?? null, coverage.get(c.name.toLowerCase()) ?? null, fam)
       .then(s => [c.name, s] as const)));
   const byName = new Map(stats);
 
   // Live state + best-known level per owned character.
   const [liveState, levelByName] = await Promise.all([
     loadLiveState(chars.map(c => c.name)),
-    loadCharLevels(chars.map(c => c.name)),
+    loadCharLevels(allChars.map(c => c.name)),
   ]);
 
   // Default card order: highest level first (the member's mains/raiders float
@@ -661,24 +728,68 @@ export default async function MePage() {
 
   // Sync heartbeat: most recent agent upload per owned character. Drives the
   // top-of-page "syncing now / stale / no upload" banner.
-  const heartbeats = await loadSyncHeartbeats(allChars.map(c => c.name));
+  const heartbeats = await loadSyncHeartbeats(allChars.map(c => c.name)).catch(() => new Map<string, Heartbeat>());
   const now = Date.now();
   const liveThresholdMs    = 10 * 60 * 1000;     // ≤10 min ago = syncing
   const recentThresholdMs  =  6 * 60 * 60 * 1000; // ≤6h = "recent"
-  type SyncRow = { name: string; status: 'live' | 'recent' | 'stale' | 'never'; lastUpload: string | null; agentVersion: string | null };
+  type SyncRow = { name: string; status: 'live' | 'recent' | 'stale' | 'never'; lastSeen: string | null; lastFight: string | null; agentVersion: string | null };
   const syncRows: SyncRow[] = allChars.map(c => {
     const hb = heartbeats.get(c.name);
-    if (!hb) return { name: c.name, status: 'never', lastUpload: null, agentVersion: null };
-    const age = now - new Date(hb.lastUpload).getTime();
+    if (!hb) return { name: c.name, status: 'never', lastSeen: null, lastFight: null, agentVersion: null };
+    const age = now - new Date(hb.lastSeen).getTime();
     const status: SyncRow['status'] =
       age <= liveThresholdMs   ? 'live'
       : age <= recentThresholdMs ? 'recent'
       : 'stale';
-    return { name: c.name, status, lastUpload: hb.lastUpload, agentVersion: hb.agentVersion };
+    return { name: c.name, status, lastSeen: hb.lastSeen, lastFight: hb.lastFight, agentVersion: hb.agentVersion };
   });
   const liveCount   = syncRows.filter(r => r.status === 'live').length;
   const recentCount = syncRows.filter(r => r.status === 'recent').length;
-  const everSynced  = syncRows.filter(r => r.lastUpload).length;
+  const everSynced  = syncRows.filter(r => r.lastSeen).length;
+  // Most recently seen first; the never-uploaded go behind a disclosure
+  // (the guild lead, 2026-09-04: "anyone that has no uploads should be grouped into a
+  // collapsed section … sort by how recently it was seen").
+  const seenRows  = syncRows.filter(r => r.lastSeen).sort((a, b) => b.lastSeen!.localeCompare(a.lastSeen!) || a.name.localeCompare(b.name));
+  const neverRows = syncRows.filter(r => !r.lastSeen).sort((a, b) => a.name.localeCompare(b.name));
+  // Only characters touched in the last 3 months show up front; the rest wait in
+  // a collapsed section (the guild lead, 2026-09-29: "we should really just show
+  // things that have been touched in the last 3 months and then a collapsed
+  // section with more"). Touched = any upload, or a live-state snapshot.
+  const RECENT_MS = 90 * 24 * 60 * 60 * 1000;
+  const lastTouched = (name: string): number => Math.max(
+    heartbeats.get(name) ? Date.parse(heartbeats.get(name)!.lastSeen) : 0,
+    Date.parse(liveState.get(name.toLowerCase())?.updatedAt ?? '') || 0,
+  );
+  const anyRecent = allChars.some(c => now - lastTouched(c.name) <= RECENT_MS);
+  // Nobody touched lately → show everything rather than an empty section.
+  const isRecent = (name: string) => !anyRecent || now - lastTouched(name) <= RECENT_MS;
+  // Where each character sits, by tier (web/lib/listableChars.ts). Moved, not removed:
+  //   owner   — hidden by its owner: its own collapsed "Hidden by you" section, where it can be unhidden
+  //             (the guild lead, 2026-10-03: "make it so I can hide these characters from anything but
+  //             account inventory");
+  //   unknown — no known level: a collapsed "no known level" section ("put any unknown characters into a
+  //             minimized area");
+  //   more    — Traders and characters under level 46, whatever their last upload ("all of my traders and
+  //             mule characters destroy my views anywhere we display all of our logs"), and anything not
+  //             touched in 3 months: the collapsed "more" section;
+  //   front   — the rest.
+  // The best tier with anyone in it is the front tier, as `anyRecent` does for recency, so the front is
+  // never empty (a new account whose characters are all unknown still shows them).
+  const tierByName = new Map(allChars.map(c => [c.name, tierOf({
+    rank: c.rank, level: levelByName.get(c.name.toLowerCase()), hidden: c.hidden_from_lists,
+  })] as const));
+  const frontTier = frontTierOf(tierByName.values());
+  const placeByName = new Map(allChars.map(c => {
+    const t = tierByName.get(c.name);
+    const place: MeCard['place'] = c.hidden_from_lists ? 'owner'
+      : t === frontTier ? (isRecent(c.name) ? 'front' : 'more')
+      : t === 'unknown' ? 'unknown' : 'more';
+    return [c.name, place] as const;
+  }));
+  const isFront = (name: string) => placeByName.get(name) === 'front';
+  const recentSeenRows = seenRows.filter(r => isFront(r.name));
+  const olderRows = [...seenRows.filter(r => !isFront(r.name)), ...neverRows];
+  const mostRecentSeen = seenRows[0]?.lastSeen ?? null;
 
   // Page-level aggregates
   const agg = {
@@ -697,30 +808,34 @@ export default async function MePage() {
   // members see immediately whether their parser is transmitting before they
   // wonder why their stats are empty.
   let bannerColor: 'green'|'orange'|'red'|'dim' = 'dim';
-  let bannerHeadline = 'Your parser isn\'t syncing.';
-  let bannerSub = 'Run the local parser to start streaming.';
+  let bannerHeadline = 'Mimic isn\'t connected.';
+  let bannerSub = 'Launch Mimic (or Parser.bat) to start streaming.';
   if (allChars.length === 0) {
     bannerColor = 'dim';
     bannerHeadline = 'No characters linked yet.';
     bannerSub      = 'Link one below to start syncing.';
   } else if (liveCount > 0) {
     bannerColor = 'green';
+    const live = seenRows.filter(r => r.status === 'live');
     bannerHeadline = liveCount === 1
-      ? `Parser is syncing for ${syncRows.find(r => r.status === 'live')!.name}.`
-      : `Parser is syncing for ${liveCount} characters.`;
-    bannerSub = 'Live in the last 10 minutes.';
+      ? `Mimic is connected on ${live[0].name}.`
+      : `Mimic is connected on ${liveCount} characters.`;
+    const lastFight = live.map(r => r.lastFight).filter((x): x is string => !!x).sort().pop() ?? null;
+    bannerSub = lastFight
+      ? `Streaming in the last 10 minutes · last fight uploaded ${relTime(lastFight)}.`
+      : 'Streaming in the last 10 minutes · no fight uploaded yet this session.';
   } else if (recentCount > 0) {
     bannerColor = 'orange';
-    bannerHeadline = 'Parser was syncing earlier today but isn\'t right now.';
-    bannerSub      = 'Re-launch Parser.bat if you want to keep streaming.';
+    bannerHeadline = 'Mimic was connected earlier today but isn\'t right now.';
+    bannerSub      = `Last seen ${relTime(mostRecentSeen)}. Launch Mimic (or Parser.bat) to keep streaming.`;
   } else if (everSynced > 0) {
     bannerColor = 'orange';
-    bannerHeadline = 'Parser is offline.';
-    bannerSub      = 'Last upload was hours+ ago. Re-launch Parser.bat to resume.';
+    bannerHeadline = 'Mimic is offline.';
+    bannerSub      = `Last seen ${relTime(mostRecentSeen)}. Launch Mimic (or Parser.bat) to resume.`;
   } else {
     bannerColor = 'red';
-    bannerHeadline = 'No parser uploads recorded for your characters.';
-    bannerSub      = 'Make sure the local agent is running — see /parsehelp in Discord.';
+    bannerHeadline = 'No uploads recorded for your characters.';
+    bannerSub      = 'Make sure Mimic is running — see /parsehelp in Discord.';
   }
   const bannerBorderClass =
     bannerColor === 'green'  ? 'border-green/60'   :
@@ -808,6 +923,8 @@ export default async function MePage() {
               tellRelay={!!c.tell_relay}
               tellDm={c.tell_dm !== false}
               showInventoryPublicly={!!c.show_inventory_publicly}
+              showQuestsPublicly={!!c.show_quests_publicly}
+              hiddenFromLists={!!c.hidden_from_lists}
             />
             <Link href={`/character/${encodeURIComponent(c.name)}`} className="text-blue hover:underline">public page →</Link>
             <Link href={`/character/${encodeURIComponent(c.name)}/quests`} className="text-blue hover:underline">quests →</Link>
@@ -820,7 +937,7 @@ export default async function MePage() {
               <a href={`https://wolfpack.opendkp.com/#/characters/${c.opendkp_id}`} target="_blank" rel="noreferrer" className="text-blue hover:underline">opendkp →</a>
             )}
           </div>
-          {/* Uploads on their own line (Hitya 2026-06-24: "lets put the
+          {/* Uploads on their own line (the guild lead, 2026-06-24: "lets put the
               uploads on a new line"). */}
           <div className="flex items-center gap-2 flex-wrap sm:justify-end">
             <InventoryUpload character={c.name} />
@@ -960,7 +1077,7 @@ export default async function MePage() {
       </div>
     );
 
-    return { name: c.name, level, header, summary: buffsZonePanel, details } as MeCard;
+    return { name: c.name, level, header, summary: buffsZonePanel, details, place: placeByName.get(c.name) ?? 'front' } as MeCard;
   });
 
   return (
@@ -991,26 +1108,20 @@ export default async function MePage() {
               </a>
             </div>
           </div>
-          {syncRows.length > 0 && (
+          {recentSeenRows.length > 0 && (
             <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 text-xs">
-              {syncRows.map(r => (
-                <div key={r.name} className="flex items-center justify-between gap-2 bg-bg border border-border/60 rounded px-2 py-1.5">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <span aria-hidden className={
-                      r.status === 'live'   ? 'text-green'    :
-                      r.status === 'recent' ? 'text-orange'   :
-                      r.status === 'stale'  ? 'text-orange/70' : 'text-dim/60'
-                    }>●</span>
-                    <span className="text-text truncate">{r.name}</span>
-                  </div>
-                  <div className="text-[10px] text-dim whitespace-nowrap">
-                    {r.status === 'never'
-                      ? 'no uploads'
-                      : <>{relTime(r.lastUpload)}{r.agentVersion && <span className="text-dim/70"> · v{r.agentVersion}</span>}</>}
-                  </div>
-                </div>
-              ))}
+              {recentSeenRows.map(r => <SyncCard key={r.name} {...r} />)}
             </div>
+          )}
+          {olderRows.length > 0 && (
+            <details className="mt-2 text-xs">
+              <summary className="cursor-pointer select-none text-dim hover:text-text">
+                {olderRows.length} more character{olderRows.length === 1 ? '' : 's'} · not played in 3 months, never uploaded, a trader, under level {LIST_MIN_LEVEL}, no known level or hidden by you
+              </summary>
+              <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
+                {olderRows.map(r => <SyncCard key={r.name} {...r} />)}
+              </div>
+            </details>
           )}
         </section>
       )}
@@ -1076,6 +1187,8 @@ export default async function MePage() {
         )}
       </section>
 
+      {attendance && <AttendanceSection initial={layout} attendance={attendance} />}
+
       {scrap && scrap.me && (() => {
         const { me, rival, top, contenders } = scrap;
         const isTopDog = me!.rank === 1;
@@ -1127,7 +1240,7 @@ export default async function MePage() {
               </div>
             </div>
             <p className="text-dim text-[11px] mt-3">
-              Ranked by total damage parsed in the last 30 days. Tanking &amp; healing categories coming once we persist those stats.
+              Ranked by total damage in raid fights (seven or more of us on the mob) over the last 30 days. Tanking &amp; healing categories coming once we persist those stats.
             </p>
           </section>
         );
@@ -1147,6 +1260,8 @@ export default async function MePage() {
                   tellRelay={!!c.tell_relay}
                   tellDm={c.tell_dm !== false}
                   showInventoryPublicly={!!c.show_inventory_publicly}
+                  showQuestsPublicly={!!c.show_quests_publicly}
+                  hiddenFromLists={!!c.hidden_from_lists}
                 />
               </li>
             ))}
@@ -1163,6 +1278,31 @@ export default async function MePage() {
   );
 }
 
+function SyncCard({ name, status, lastSeen, lastFight, agentVersion }: {
+  name: string; status: 'live' | 'recent' | 'stale' | 'never'; lastSeen: string | null; lastFight: string | null; agentVersion: string | null;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 bg-bg border border-border/60 rounded px-2 py-1.5">
+      <div className="flex items-center gap-1.5 min-w-0">
+        <span aria-hidden className={
+          status === 'live'   ? 'text-green'    :
+          status === 'recent' ? 'text-orange'   :
+          status === 'stale'  ? 'text-orange/70' : 'text-dim/60'
+        }>●</span>
+        <span className="text-text truncate">{name}</span>
+      </div>
+      <div className="text-[10px] text-dim whitespace-nowrap"
+           title={lastFight ? `Last fight uploaded ${relTime(lastFight)}` : undefined}>
+        {status === 'never'
+          ? 'no uploads'
+          : <>{relTime(lastSeen)}{agentVersion && <span className="text-dim/70"> · v{agentVersion}</span>}</>}
+      </div>
+    </div>
+  );
+}
+
+// Attendance reads as a RATE first — "83" next to "of 151 held" read as a
+// count, which is exactly the wrong number to skim (2026-09-04).
 function Stat({ label, value, color = 'text-text', compact = false }: { label: string; value: number; color?: string; compact?: boolean }) {
   const formatted = compact && value >= 1000
     ? value >= 1_000_000

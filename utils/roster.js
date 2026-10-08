@@ -160,13 +160,22 @@ function addCharacterEntry({ name, race, charClass, dkpUrl = null, quarmyUrl = n
 }
 
 // Re-saves both active and inactive rosters to their Discord threads.
-async function saveRosters(client) {
+//
+// ⚠ `reason` is not decoration. The importer label used to be the hardcoded
+// string 'quarmy update' for EVERY caller, so a roster rewrite triggered by
+// `/register` announced itself in Discord as a quarmy import — and when the
+// guild lead asked "why is this updating every minute?" (2026-09-22) the
+// footer actively pointed at the wrong command. Nothing logged either, so
+// there was no way to tell which of the two callers had fired.
+// Pass what actually caused it, and say so in the log.
+async function saveRosters(client, reason = 'roster update') {
   const activeId   = process.env.ROSTER_ACTIVE_THREAD_ID;
   const inactiveId = process.env.ROSTER_INACTIVE_THREAD_ID;
   const now = new Date();
+  console.log(`[roster] saveRosters → rewriting both threads (reason=${reason})`);
   await Promise.all([
-    activeId   ? saveRosterToThread(client, _active,   activeId,   ACTIVE_TITLE,   ACTIVE_MEMBERS_TITLE,   ACTIVE_DATA_TITLE,   'quarmy update', now) : Promise.resolve(),
-    inactiveId ? saveRosterToThread(client, _inactive, inactiveId, INACTIVE_TITLE, INACTIVE_MEMBERS_TITLE, INACTIVE_DATA_TITLE, 'quarmy update', now) : Promise.resolve(),
+    activeId   ? saveRosterToThread(client, _active,   activeId,   ACTIVE_TITLE,   ACTIVE_MEMBERS_TITLE,   ACTIVE_DATA_TITLE,   reason, now) : Promise.resolve(),
+    inactiveId ? saveRosterToThread(client, _inactive, inactiveId, INACTIVE_TITLE, INACTIVE_MEMBERS_TITLE, INACTIVE_DATA_TITLE, reason, now) : Promise.resolve(),
   ]);
 }
 
@@ -261,6 +270,48 @@ function processOpenDkpExport(rawArray) {
       addTo(withLinks(c.Name, { n: c.Name, r: c.Race, c: c.Class, a: [] }, c.CharacterId), c.Active === 1);
     }
     // UNKNOWN rank orphans: already in unknowns list, skip display
+  }
+
+  // ⚠ CHARACTERS THE EXPORT DOES NOT MENTION ARE KEPT (the guild lead,
+  // 2026-09-22: "traders and non-raid Alts don't need to be in opendkp, only
+  // in our db"). Everything above is rebuilt FROM the export, so a character
+  // that was never created upstream is absent from the result — and
+  // `/rosterimport` then writes that result over the threads. Without this
+  // pass, registering a trader locally and running an import would delete
+  // them, silently, with no error anywhere.
+  //
+  // This keeps EVERY absent name, not a flagged subset. The flagged version
+  // that shipped first was justified as protection against upstream deletions,
+  // and the guild lead was right that this invents a case we do not have:
+  // leaving the raid sets `Active = 0`, which routes a character to the
+  // INACTIVE roster — they stay in the export either way. Absence would mean a
+  // hard delete, which has never happened here. So the flag was machinery for
+  // a scenario that does not occur, and it is gone.
+  // ⚠ The real consequence, stated plainly so nobody is surprised by it:
+  // `/rosterimport` can no longer REMOVE anyone. It adds and updates. If a
+  // truncated or wrong export is ever imported, the roster survives rather
+  // than being emptied — which is the safer failure, but it does mean a
+  // genuine upstream deletion would have to be removed by hand.
+  const seen = new Set();
+  for (const bucket of [active, inactive]) {
+    for (const e of bucket) {
+      seen.add(e.n.toLowerCase());
+      for (const a of (e.a || [])) seen.add(a.n.toLowerCase());
+    }
+  }
+  for (const [key, val] of _lookup) {
+    if (seen.has(key)) continue;
+    const entry = { n: val.name, r: val.race, c: val.class };
+    if (val.quarmyUrl) entry.q = val.quarmyUrl;
+    if (val.dkpUrl)    entry.d = val.dkpUrl;
+    // Keep them in the bucket they were already in — an absent character that
+    // was inactive must not be promoted to active by surviving an import.
+    const bucket = val.active ? active : inactive;
+    const mainEntry = val.mainName
+      ? bucket.find(m => m.n.toLowerCase() === String(val.mainName).toLowerCase() && !m._alt)
+      : null;
+    if (mainEntry) { (mainEntry.a = mainEntry.a || []).push(entry); }
+    else           { bucket.push({ ...entry, a: [], ...(val.mainName ? { _alt: true } : {}) }); }
   }
 
   return { active, inactive, unknowns };

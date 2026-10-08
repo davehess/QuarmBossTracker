@@ -14,6 +14,15 @@ import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import WpDbLink from '@/components/WpDbLink';
 
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'Loadouts',
+  description:
+    'What everyone is actually wearing. Saved gear sets and inventory snapshots across the guild.',
+};
+
 // Sample query to validate the table chain — once inventories are uploading
 // this becomes the real source. Filters to actual weapons (damage and delay
 // both > 0) — without those filters the view returns charm items, focus

@@ -1,0 +1,257 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "What happens to one line of your log",
+    "subtitle": "From the game writing it to the guild seeing it",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1076,
+      840
+    ],
+    "views": [
+      {
+        "id": "privacy",
+        "label": "What never leaves",
+        "focus": [
+          "logfile",
+          "filter",
+          "dropped",
+          "trackers"
+        ],
+        "note": "The filter runs on raw bytes before the parser sees a line, so private channels are discarded rather than parsed and withheld."
+      },
+      {
+        "id": "local",
+        "label": "What you see instantly",
+        "focus": [
+          "pipe",
+          "trackers",
+          "overlays"
+        ],
+        "note": "Overlays render off local trackers with no round trip. Nothing you see about your own client depends on the network."
+      },
+      {
+        "id": "shared",
+        "label": "What the guild sees",
+        "focus": [
+          "queue",
+          "bot",
+          "db",
+          "discord"
+        ],
+        "note": "Shareable events go through a durable queue that survives restarts, then merge with every other raider's view of the same fight."
+      }
+    ]
+  },
+  "stages": [
+    {
+      "label": "The game writes"
+    },
+    {
+      "label": "Privacy filter"
+    },
+    {
+      "label": "Your machine"
+    },
+    {
+      "label": "Transit and ingest"
+    },
+    {
+      "label": "Where it lands"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "logfile",
+      "type": "external",
+      "label": "EQ log file",
+      "sublabel": "a line at a time",
+      "stage": 0,
+      "row": 2,
+      "tag": "authoritative"
+    },
+    {
+      "id": "pipe",
+      "type": "external",
+      "label": "Zeal pipe",
+      "sublabel": "gauges, fast",
+      "stage": 0,
+      "row": 0,
+      "tag": "no identity"
+    },
+    {
+      "id": "filter",
+      "type": "security",
+      "label": "Byte filter",
+      "sublabel": "before parsing",
+      "stage": 1,
+      "row": 2,
+      "tag": "opt-out aware"
+    },
+    {
+      "id": "dropped",
+      "type": "external",
+      "label": "Never uploaded",
+      "sublabel": "officer, tells, group",
+      "stage": 1,
+      "row": 4,
+      "tag": "discarded"
+    },
+    {
+      "id": "trackers",
+      "type": "backend",
+      "label": "Trackers",
+      "sublabel": "charm, threat, buff",
+      "stage": 2,
+      "row": 1,
+      "tag": "in memory"
+    },
+    {
+      "id": "overlays",
+      "type": "frontend",
+      "label": "Your overlays",
+      "sublabel": "15 windows",
+      "stage": 2,
+      "row": 3,
+      "tag": "local only"
+    },
+    {
+      "id": "queue",
+      "type": "messagebus",
+      "label": "Durable queue",
+      "sublabel": "survives restart",
+      "stage": 3,
+      "row": 0,
+      "tag": "retry, backoff"
+    },
+    {
+      "id": "bot",
+      "type": "backend",
+      "label": "Bot ingest",
+      "sublabel": "budgeted",
+      "stage": 3,
+      "row": 2,
+      "tag": "bearer auth"
+    },
+    {
+      "id": "db",
+      "type": "database",
+      "label": "Merged parse",
+      "sublabel": "one card per fight",
+      "stage": 4,
+      "row": 1,
+      "tag": "max per player"
+    },
+    {
+      "id": "discord",
+      "type": "messagebus",
+      "label": "Discord",
+      "sublabel": "boards, alerts",
+      "stage": 4,
+      "row": 3,
+      "tag": "projection"
+    }
+  ],
+  "flows": [
+    {
+      "from": "logfile",
+      "to": "filter",
+      "label": "raw lines",
+      "classification": "unread",
+      "variant": "emphasis",
+      "route": "straight"
+    },
+    {
+      "from": "filter",
+      "to": "dropped",
+      "label": "private channels",
+      "classification": "dropped",
+      "variant": "security",
+      "route": "vertical-channel"
+    },
+    {
+      "from": "filter",
+      "to": "trackers",
+      "classification": "parsed",
+      "variant": "emphasis",
+      "route": "vertical-channel",
+      "label": "kept"
+    },
+    {
+      "from": "pipe",
+      "to": "trackers",
+      "label": "health, target",
+      "classification": "live",
+      "variant": "default",
+      "route": "vertical-channel"
+    },
+    {
+      "from": "trackers",
+      "to": "overlays",
+      "label": "no round trip",
+      "classification": "instant",
+      "variant": "emphasis",
+      "route": "vertical-channel"
+    },
+    {
+      "from": "trackers",
+      "to": "queue",
+      "label": "shareable only",
+      "classification": "consented",
+      "variant": "default",
+      "route": "vertical-channel"
+    },
+    {
+      "from": "queue",
+      "to": "bot",
+      "label": "retries",
+      "classification": "at-least-once",
+      "variant": "emphasis",
+      "route": "straight",
+      "labelDy": 34
+    },
+    {
+      "from": "bot",
+      "to": "db",
+      "label": "merge",
+      "classification": "deduped",
+      "variant": "emphasis",
+      "route": "vertical-channel"
+    },
+    {
+      "from": "bot",
+      "to": "discord",
+      "label": "post",
+      "classification": "deferred",
+      "variant": "default",
+      "route": "vertical-channel"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Dropped, not withheld",
+      "items": [
+        "The filter matches bytes before the parser runs",
+        "Officer chat, tells and group are never in memory to leak"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "One fight, every viewpoint",
+      "items": [
+        "Each raider uploads only what their own client saw",
+        "The merge keeps the maximum per player, so nobody double-counts"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "The queue is the reason nothing is lost",
+      "items": [
+        "Every upload persists to disk before it is sent",
+        "A dead network delays a parse; it does not lose one"
+      ]
+    }
+  ]
+}

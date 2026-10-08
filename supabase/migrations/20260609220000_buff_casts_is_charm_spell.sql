@@ -5,7 +5,7 @@
 -- produce a row for them. The agent's _recordCharmSpellOnTarget()
 -- synthesizes a buff_casts entry on every charm land instead, and the
 -- new /api/agent/target-buffs endpoint surfaces them to OTHER Mimic
--- users targeting the same charmed mob (so they see "Allure (Hopeya)"
+-- users targeting the same charmed mob (so they see "Allure (Sorvane)"
 -- on their Mob Info with a live countdown).
 --
 -- is_charm_spell lets receivers force good = 0 (debuff section)

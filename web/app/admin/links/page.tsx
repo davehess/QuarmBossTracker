@@ -6,9 +6,9 @@
 // us as far as the OpenDKP `discord` field, which most members leave blank.
 //
 // We infer ownership from wolfpack_members.nickname / global_name, which
-// many members already use to list their roster (e.g. "Abrahms/Canniball/
-// Fischer", "Ang/Ness/Hass/Catt/Shuttle", "Antero | Person | HotG"). Two
-// passes:
+// many members already use to list their roster — the shapes we see are
+// slash-separated ("Main/Alt/Alt"), short-form runs ("Ang/Ness/Hass/Catt"),
+// and pipe-separated ("Main | Person | Guild"). Two passes:
 //   1) Direct token match — character name appears as a /, |, comma, hyphen,
 //      or space-separated token of nickname or global_name.
 //   2) Main-name fallback — character is an alt whose main_name matches.
@@ -21,11 +21,15 @@ import Link from 'next/link';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
-import { isOfficer } from '@/lib/officer';
+import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 import OpenDkpRegisterRow from './OpenDkpRegisterRow';
 import UnregisteredTable from './UnregisteredTable';
 import MainCombobox from './MainCombobox';
+import { authorizeMimicForMember } from './mimic-link-actions';
+import { createSiteAccessInvite } from './site-access-actions';
+import { loadAgentUploadStats, loadWhoForNames } from '@/lib/adminReads';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -118,8 +122,8 @@ function isSelfPinChar(c: Character): boolean {
 }
 
 // Pick the member's REAL main from a same-uploader cluster. The old default
-// (alphabetically-first "home" family) picked "Bonebro" for Hitya's cluster
-// purely because B < C < H — it carries the discord_id but isn't the main.
+// (alphabetically-first "home" family) picked whichever family root sorted
+// first — it carries the discord_id but isn't the main.
 // Prefer, in order: the home family whose name IS the member's Discord
 // identity (nickname / global_name), then the highest guild rank, then a
 // self-pinned main (an officer already declared it a main), then alpha.
@@ -158,9 +162,9 @@ async function setLink(formData: FormData) {
   if (!name) return;
   const admin = supabaseAdmin();
   if (!discordId) {
-    await admin.from('characters').update({ discord_id: null }).eq('guild_id', 'wolfpack').eq('name', name);
+    await admin.from('characters').update({ discord_id: null }).eq('guild_id', GUILD_TAG).eq('name', name);
   } else {
-    await admin.from('characters').update({ discord_id: discordId }).eq('guild_id', 'wolfpack').eq('name', name);
+    await admin.from('characters').update({ discord_id: discordId }).eq('guild_id', GUILD_TAG).eq('name', name);
   }
   revalidatePath('/admin/links');
 }
@@ -178,7 +182,7 @@ async function setLinkIgnored(formData: FormData) {
   await supabaseAdmin()
     .from('characters')
     .update({ link_ignored: ignored })
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .eq('name', name);
   revalidatePath('/admin/links');
 }
@@ -189,7 +193,7 @@ async function applyAllAutoMatches() {
   if (!ok) redirect('/?error=admin_required');
   const admin = supabaseAdmin();
   const [{ data: chars }, { data: members }] = await Promise.all([
-    admin.from('characters').select('guild_id, name, main_name, main_name_override, class, rank, active, discord_id, link_ignored, opendkp_id').eq('guild_id', 'wolfpack'),
+    admin.from('characters').select('guild_id, name, main_name, main_name_override, class, rank, active, discord_id, link_ignored, opendkp_id').eq('guild_id', GUILD_TAG),
     admin.from('wolfpack_members').select('discord_id, nickname, global_name').eq('is_member', true),
   ]);
   const ix = buildTokenIndex((members ?? []) as Member[]);
@@ -203,7 +207,7 @@ async function applyAllAutoMatches() {
   }
   // No batch upsert helper — issue parallel updates (small set, 100ish).
   await Promise.all(updates.map(u =>
-    admin.from('characters').update({ discord_id: u.discord_id }).eq('guild_id', 'wolfpack').eq('name', u.name)
+    admin.from('characters').update({ discord_id: u.discord_id }).eq('guild_id', GUILD_TAG).eq('name', u.name)
   ));
   revalidatePath('/admin/links');
 }
@@ -228,7 +232,7 @@ async function setFamilyLink(formData: FormData) {
   if (!main) {
     await admin.from('characters')
       .update({ main_name_override: null })
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .ilike('name', name);
     revalidatePath('/admin/links');
     return;
@@ -240,7 +244,7 @@ async function setFamilyLink(formData: FormData) {
   const { data: targetRows } = await admin
     .from('characters')
     .select('name, main_name')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('name', main)
     .limit(1);
   const target = (targetRows ?? [])[0] as { name: string; main_name: string | null } | undefined;
@@ -250,7 +254,7 @@ async function setFamilyLink(formData: FormData) {
   // The character itself + anything currently rooted at it (its alts).
   await admin.from('characters')
     .update({ main_name_override: target.name, main_name: target.name })
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .neq('name', target.name)
     .or(`name.ilike.${name},main_name.ilike.${name}`);
   revalidatePath('/admin/links');
@@ -271,7 +275,7 @@ async function _linkOneUnder(
   const { data: targetRows } = await admin
     .from('characters')
     .select('name, main_name')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('name', mainName)
     .limit(1);
   const target = (targetRows ?? [])[0] as { name: string; main_name: string | null } | undefined;
@@ -279,13 +283,13 @@ async function _linkOneUnder(
   if ((target.main_name || target.name).toLowerCase() === name.toLowerCase()) return;   // cycle guard
   await admin.from('characters')
     .update({ main_name_override: target.name, main_name: target.name })
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .neq('name', target.name)
     .or(`name.ilike.${name},main_name.ilike.${name}`);
 }
 
 // Bulk "confirm these are all one family" — folds every family root the
-// officer selected under a single main in one action (Hitya 2026-07-05:
+// officer selected under a single main in one action (the guild lead, 2026-07-05:
 // "needs a way to confirm these are all part of the same family/main").
 // `names` is a comma-joined list of the cluster's HOME family roots (the ones
 // that carry this Discord account); the chosen main is skipped. Deliberately
@@ -309,7 +313,7 @@ async function setFamilyLinkBulk(formData: FormData) {
 }
 
 // "Remove linkage" — declare a character a standalone main, NOT an alt of
-// anyone (Hitya 2026-06-22: "Luter is his own person"). Sets main_name =
+// anyone (the guild lead, 2026-06-22 — a character who is nobody's alt). Sets main_name =
 // name and main_name_override = name (self-pin) so the character (a) stops
 // rendering as someone else's alt immediately and (b) survives the next
 // OpenDKP sync re-parenting them. The self-pin is deliberate here — unlike
@@ -327,7 +331,7 @@ async function makeOwnMain(formData: FormData) {
   await supabaseAdmin()
     .from('characters')
     .update({ main_name: name, main_name_override: name })
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('name', name);
   revalidatePath('/admin/links');
   revalidatePath('/admin/agents');
@@ -354,7 +358,7 @@ async function clearSelfPinnedOverrides() {
   const { data: rows } = await admin
     .from('characters')
     .select('name, main_name, main_name_override')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .not('main_name_override', 'is', null);
   const selfPinned = ((rows ?? []) as { name: string; main_name: string | null; main_name_override: string }[])
     .filter(r => {
@@ -366,7 +370,7 @@ async function clearSelfPinnedOverrides() {
   if (selfPinned.length > 0) {
     await admin.from('characters')
       .update({ main_name_override: null })
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .in('name', selfPinned);
   }
   revalidatePath('/admin/links');
@@ -391,7 +395,7 @@ async function resolveMainName(admin: ReturnType<typeof supabaseAdmin>, discordI
   const { data } = await admin
     .from('characters')
     .select('name, main_name')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .eq('discord_id', discordId);
   const rows = (data ?? []) as { name: string; main_name: string | null }[];
   const main = rows.find(c => !c.main_name || c.main_name.toLowerCase() === c.name.toLowerCase());
@@ -422,17 +426,17 @@ async function approveLinkRequest(formData: FormData) {
   const { data: existing } = await admin
     .from('characters')
     .select('name')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .ilike('name', req.character_name)
     .limit(1);
   if (Array.isArray(existing) && existing.length > 0) {
     await admin.from('characters')
       .update({ discord_id: req.requester_discord_id, main_name: mainName, active: true })
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .ilike('name', req.character_name);
   } else {
     await admin.from('characters').insert({
-      guild_id: 'wolfpack',
+      guild_id: GUILD_TAG,
       name: req.character_name,
       discord_id: req.requester_discord_id,
       main_name: mainName,
@@ -446,7 +450,7 @@ async function approveLinkRequest(formData: FormData) {
   if (mainName) {
     await admin.from('characters')
       .update({ main_name_override: mainName })
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .ilike('name', req.character_name);
   }
 
@@ -483,19 +487,20 @@ async function dismissLinkRequest(formData: FormData) {
 export default async function AdminLinksPage({
   searchParams,
 }: {
-  searchParams: Promise<{ show?: string }>;
+  searchParams: Promise<{ show?: string; mlok?: string; mlerr?: string; sitok?: string; sifor?: string; sierr?: string }>;
 }) {
-  const { show } = await searchParams;
+  await requireOfficer();
+  const { show, mlok, mlerr, sitok, sifor, sierr } = await searchParams;
   const showInactive = show === 'inactive' || show === 'all';
   const showLinked   = show === 'linked'   || show === 'all';
   const showIgnored  = show === 'ignored'  || show === 'all';
 
   const admin = supabaseAdmin();
-  const [{ data: chars }, { data: members }, { data: reqs }, { data: uploads }, { data: whoRows }, { data: registerReqs }] = await Promise.all([
+  const [{ data: chars }, { data: members }, { data: reqs }, uploads, { data: whoRows }, { data: registerReqs }] = await Promise.all([
     admin
       .from('characters')
       .select('guild_id, name, main_name, main_name_override, class, rank, active, discord_id, link_ignored, opendkp_id')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .order('active', { ascending: false })
       .order('name'),
     admin
@@ -506,25 +511,27 @@ export default async function AdminLinksPage({
     admin
       .from('character_link_requests')
       .select('id, character_name, requester_discord_id, requester_name, source, created_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .eq('status', 'pending')
       .order('created_at', { ascending: true }),
-    admin
-      .from('agent_upload_stats')
-      .select('character, uploaded_by_discord_id, last_uploaded_at')
-      .not('uploaded_by_discord_id', 'is', null)
-      .not('character', 'is', null)
-      .limit(3000),
+    // Every uploader row, paged: the old `.limit(3000)` was cut at PostgREST's 1,000-row
+    // response cap, so on 1,721 stat rows (1,682 with an uploader) about a fifth of the
+    // characters never reached the same-uploader and unregistered lists.
+    loadAgentUploadStats<{ character: string | null; uploaded_by_discord_id: string | null; last_uploaded_at: string | null }>(
+      admin,
+      'character, uploaded_by_discord_id, last_uploaded_at',
+      q => q.not('uploaded_by_discord_id', 'is', null).not('character', 'is', null),
+    ),
     admin
       .from('who_observations')
       .select('character, level, class, observed_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .order('observed_at', { ascending: false })
       .limit(3000),
     admin
       .from('opendkp_register_requests')
       .select('id, name, status, error, requested_by_discord_id, opendkp_id, created_at, processed_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .order('created_at', { ascending: false })
       .limit(100),
   ]);
@@ -578,7 +585,7 @@ export default async function AdminLinksPage({
     //   • Non-home families an officer marked "Not an alt" (override === self)
     //     — they've been reviewed, the row in the cluster was spurious.
     //   • Raid Packs — anyone Raid Pack is a main and doesn't need linking
-    //     anywhere (Hitya 2026-06-23). Hiding them keeps the cluster
+    //     anywhere (the guild lead, 2026-06-23). Hiding them keeps the cluster
     //     focused on the actual decisions: Raid Alts that should be folded
     //     under a Raid Pack root.
     // Home stays so the cluster still anchors visually. If fewer than 2
@@ -612,12 +619,12 @@ export default async function AdminLinksPage({
   // every same-uploader row. A "main" = a character whose name equals
   // (main_name || name) — i.e. the family root. Pre-fix the row's
   // dropdown only listed OTHER families IN THE SAME CLUSTER, which
-  // wasn't enough when a character (Luter, Borowhay, Bardtholemu)
-  // showed up in three different officers' clusters because their own
-  // Mimic isn't authenticated and several other players' installs tail their log.
-  // Officers need to be able to link that row to a main OUTSIDE the
-  // current cluster — Bardtholemu to themselves (he IS a main),
-  // Luter to whichever real owner he is. Hitya 2026-06-21.
+  // wasn't enough when a character showed up in three different officers'
+  // clusters because their own Mimic isn't authenticated and several other
+  // players' installs tail their log. Officers need to be able to link that
+  // row to a main OUTSIDE the current cluster — a character who IS a main
+  // back to themselves, an alt to whichever real owner it belongs to.
+  // (the guild lead, 2026-06-21.)
   const allMains = [...new Set(
     allChars
       .map(c => ((c.main_name && c.main_name.trim()) || c.name).trim())
@@ -653,9 +660,9 @@ export default async function AdminLinksPage({
   // Per-uploader family-root resolution: for each Discord ID that uploads
   // unregistered characters, find which OpenDKP family (= main_name cluster)
   // their existing characters live under, and pick the most-populous one
-  // as the parent. Hitya's box uploads Hitya/Bonebro/Canopy + a handful of
-  // alts — OpenDKP has the whole family rooted at Canopy, so Canopy wins
-  // and new alts land under it. Multi-main accounts pick the largest
+  // as the parent. One box can upload several family roots plus a handful of
+  // alts — OpenDKP roots the whole lot at one of them, so that one wins and
+  // new alts land under it. Multi-main accounts pick the largest
   // cluster; officer can re-parent via the family-link section after the
   // fact if it's wrong.
   const parentByDid = new Map<string, { name: string; opendkpId: number | null }>();
@@ -710,24 +717,21 @@ export default async function AdminLinksPage({
   }
 
   // Targeted /who level fill — the recency-windowed whoRows above misses
-  // characters last /who'd outside the most-recent 3000 observations, which
-  // is exactly the long-tail alt case (Uilmuley/Sanamar showed "?"). For
-  // every unregistered name still missing a level, look it up directly by
+  // characters last /who'd outside its window (the newest 1,000 observations:
+  // that query's `.limit(3000)` is cut at PostgREST's 1,000-row response cap),
+  // which is exactly the long-tail alt case (rarely-played alts showed "?").
+  // For every unregistered name still missing a level, look it up directly by
   // name across ALL of who_observations (bounded to the candidate set) and
   // keep the highest level + most recent class seen — including the owner's
-  // own /who when their Mimic captured it (Hitya 2026-06-22).
+  // own /who when their Mimic captured it (the guild lead, 2026-06-22).
+  // Paged and chunked by name (loadWhoForNames): its old `.limit(5000)` was the
+  // same silent cut — 635 rows today, so it held, but the alt list only grows.
   {
     const needLevel = unregistered.filter(u => u.level == null).map(u => u.name);
     if (needLevel.length > 0) {
-      const { data: targetedWho } = await admin
-        .from('who_observations')
-        .select('character, level, class, observed_at')
-        .eq('guild_id', 'wolfpack')
-        .in('character', needLevel)
-        .order('observed_at', { ascending: false })
-        .limit(5000);
+      const targetedWho = await loadWhoForNames(admin, GUILD_TAG, needLevel);
       const best = new Map<string, { level: number | null; cls: string | null }>();
-      for (const w of (targetedWho ?? []) as { character: string; level: number | null; class: string | null }[]) {
+      for (const w of targetedWho) {
         const k = (w.character || '').toLowerCase();
         const cur = best.get(k);
         const lvl = (w.level != null && (cur?.level == null || w.level > cur.level)) ? w.level : (cur?.level ?? null);
@@ -761,7 +765,7 @@ export default async function AdminLinksPage({
 
   // Recent OpenDKP register-queue rows — surface who requested each one and
   // whether the bot succeeded, so a failed/stuck registration is visible
-  // (Hitya 2026-06-22 "whoever made the updates... should be shown").
+  // (the guild lead, 2026-06-22 "whoever made the updates... should be shown").
   type RegisterReq = {
     id: string; name: string; status: string; error: string | null;
     requested_by_discord_id: string | null; opendkp_id: number | null;
@@ -804,6 +808,133 @@ export default async function AdminLinksPage({
       <div className="text-sm flex items-center gap-2">
         <Link href="/admin" className="text-blue hover:underline">← back to admin</Link>
       </div>
+
+      {/* Officer-assisted Mimic linking — the path for members Discord blocks
+          from OAuth (unverified accounts can't complete consent, so the
+          member-side /auth/mimic-link page can never work for them). The
+          member reads Mimic's code to an officer; the officer attests the
+          identity here. Trust model + audit trail: mimic-link-actions.ts. */}
+      <section className="bg-panel border border-border rounded-lg p-6">
+        <h2 className="text-xl text-gold mb-1">🖥 Link a Mimic without Discord sign-in</h2>
+        <p className="text-sm text-dim leading-6 max-w-3xl">
+          For members whose Discord account can&apos;t authorize the website (the
+          &ldquo;verify your account&rdquo; wall). Have them open Mimic → <b className="text-text">Sign in
+          to Wolf Pack</b> — it shows a short code with a 10-minute timer. Enter that code
+          here and pick who it belongs to. You are vouching for the identity; every use is
+          recorded against your name.
+        </p>
+        {mlok && (
+          <p className="mt-3 text-sm text-green">
+            {mlok === 'already' ? '✓ That code was already authorized — Mimic should be signed in.'
+              : '✓ Linked. Their Mimic picks it up within a couple of seconds.'}
+          </p>
+        )}
+        {mlerr && (
+          <p className="mt-3 text-sm text-red">
+            {({
+              invalid_code:  'That code doesn\u2019t look right — it\u2019s the short code Mimic shows.',
+              pick_member:   'Pick the member the code belongs to.',
+              not_member:    'That person isn\u2019t on the current member list.',
+              unknown_code:  'No matching code — expired (10-minute window) or mistyped.',
+              expired:       'That code expired. Have them click \u201CSign in to Wolf Pack\u201D again for a fresh one.',
+              update_failed: 'Couldn\u2019t save the link (database error). Try again in a moment.',
+            } as Record<string, string>)[mlerr] || `Error: ${mlerr}`}
+          </p>
+        )}
+        <form action={authorizeMimicForMember} className="mt-4 flex flex-wrap items-end gap-3">
+          <label className="text-sm">
+            <span className="block text-dim text-xs mb-1">Code from their Mimic</span>
+            <input
+              name="user_code"
+              required
+              autoComplete="off"
+              placeholder="e.g. 7KQ2WV"
+              className="bg-bg border border-border rounded px-3 py-2 w-40 uppercase tracking-widest"
+            />
+          </label>
+          <label className="text-sm">
+            <span className="block text-dim text-xs mb-1">Belongs to</span>
+            <select
+              name="member_discord_id"
+              required
+              defaultValue=""
+              className="bg-bg border border-border rounded px-3 py-2 min-w-[16rem]"
+            >
+              <option value="" disabled>— pick the member —</option>
+              {memberList.map(m => (
+                <option key={m.discord_id} value={m.discord_id}>
+                  {m.nickname || m.global_name || m.discord_id}
+                  {m.nickname && m.global_name && m.nickname !== m.global_name ? ` (${m.global_name})` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="submit"
+            className="bg-accent hover:bg-blue text-white text-sm rounded px-4 py-2"
+          >
+            Authorize link
+          </button>
+        </form>
+      </section>
+
+      {/* Officer-issued SITE-ACCESS invites — the no-Discord path for the
+          website itself (Lacunanight: wants site access, not Mimic, and
+          Discord's phone-verification wall blocks OAuth). The invite link
+          leads to /auth/claim where the member picks a username + password
+          bound to their member identity. A re-invite for the same member
+          doubles as the password reset. Trust model: site-access-actions.ts. */}
+      <section className="bg-panel border border-border rounded-lg p-6">
+        <h2 className="text-xl text-gold mb-1">🔑 Site access without Discord sign-in</h2>
+        <p className="text-sm text-dim leading-6 max-w-3xl">
+          For members whose Discord account can&apos;t authorize the website. Pick the member,
+          generate the invite, and DM them the link — it&apos;s single-use, expires in 7 days,
+          and lets them choose a username + password. Sending them a <b className="text-text">new</b>{' '}
+          invite later resets their password.
+        </p>
+        {sitok && (
+          <div className="mt-3 text-sm">
+            <p className="text-green">✓ Invite created for <b>{sifor}</b> — DM them this link:</p>
+            <code className="block mt-2 bg-bg border border-border rounded px-3 py-2 text-xs break-all select-all">
+              https://wolfpack.quest/auth/claim?token={sitok}
+            </code>
+          </div>
+        )}
+        {sierr && (
+          <p className="mt-3 text-sm text-red">
+            {({
+              pick_member:   'Pick the member to invite.',
+              not_member:    'That person isn\u2019t on the current member list.',
+              insert_failed: 'Couldn\u2019t create the invite (database error). Try again in a moment.',
+            } as Record<string, string>)[sierr] || `Error: ${sierr}`}
+          </p>
+        )}
+        <form action={createSiteAccessInvite} className="mt-4 flex flex-wrap items-end gap-3">
+          <label className="text-sm">
+            <span className="block text-dim text-xs mb-1">Member</span>
+            <select
+              name="member_discord_id"
+              required
+              defaultValue=""
+              className="bg-bg border border-border rounded px-3 py-2 min-w-[16rem]"
+            >
+              <option value="" disabled>— pick the member —</option>
+              {memberList.map(m => (
+                <option key={m.discord_id} value={m.discord_id}>
+                  {m.nickname || m.global_name || m.discord_id}
+                  {m.nickname && m.global_name && m.nickname !== m.global_name ? ` (${m.global_name})` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="submit"
+            className="bg-accent hover:bg-blue text-white text-sm rounded px-4 py-2"
+          >
+            Generate invite link
+          </button>
+        </form>
+      </section>
 
       <section className="bg-panel border border-border rounded-lg p-6">
         <h2 className="text-xl text-gold mb-1">🔗 Character → Discord links</h2>
@@ -944,7 +1075,7 @@ export default async function AdminLinksPage({
                   {/* Bulk "these are all one person" confirm — folds every
                       home family (proven to carry THIS Discord account) under
                       one main in a single click, instead of clicking Link on
-                      each of Bonebro / Canopy / … one at a time. Scoped to
+                      each family root one at a time. Scoped to
                       home families only: a cluster member who's actually
                       someone else's toon (different discord_id) is never swept
                       in and stays a per-row decision below. */}
@@ -967,7 +1098,7 @@ export default async function AdminLinksPage({
                       // they were auto-stamped by the linker as a no-op
                       // "pin to default" so OpenDKP wouldn't re-parent the
                       // row. Showing them as "override" misled officers
-                      // (Hitya 2026-06-21 — every HOME row was rendering
+                      // (the guild lead, 2026-06-21 — every HOME row was rendering
                       // with a gold "override" tag that looked like a
                       // contradiction). Now only flag the GENUINE case:
                       // override points to a name DIFFERENT from the
@@ -983,9 +1114,9 @@ export default async function AdminLinksPage({
                       const ovrConflict = !!ovr && !isSelfPin && f.isHome;
                       const ovrMoves    = !!ovr && !isSelfPin && !f.isHome;
                       // OpenDKP's view of who this character is parented
-                      // under — surfaces "(Shavimo in OpenDKP)" next to
-                      // Gnomistakes when OpenDKP has Gnomistakes rooted
-                      // under Shavimo (Hitya 2026-06-23). main_name is
+                      // under — surfaces "(<parent> in OpenDKP)" next to a
+                      // character whom OpenDKP has rooted under someone else
+                      // (the guild lead, 2026-06-23). main_name is
                       // set by the OpenDKP sync from ParentId, so if it
                       // differs from the row's own name AND we have the
                       // parent's OpenDKP id, link out to that character
@@ -1016,10 +1147,10 @@ export default async function AdminLinksPage({
                               </span>
                             )
                           )}
-                          {/* HOME label removed 2026-06-21 (Hitya) — it
+                          {/* HOME label removed 2026-06-21 (the guild lead) — it
                               fired on every family whose root carried the
                               uploader's discord_id, which meant clusters
-                              like Hitya's painted three identical green
+                              carrying three families painted three identical green
                               HOME chips and the label conveyed no usable
                               signal. The cluster header already names the
                               uploader, so "this family is the uploader's"
@@ -1032,10 +1163,9 @@ export default async function AdminLinksPage({
                         </div>
                         {/* Link form now appears on every row, including the
                             former HOME ones — officers may want to re-parent
-                            a family root to a different main (the Bonebro/
-                            Canopy/Hitya case, where one Discord owns three
-                            mains in the roster and you want to consolidate
-                            them). The autocomplete spans every main on the
+                            a family root to a different main — one Discord
+                            account can own three mains in the roster and you
+                            want to consolidate them. The autocomplete spans every main on the
                             roster, not just the cluster's siblings. */}
                         {(
                           <form action={setFamilyLink} className="flex items-center gap-1.5">
@@ -1061,8 +1191,9 @@ export default async function AdminLinksPage({
                         )}
                         {/* "Not an alt" — declare this character their own
                             standalone main so they stop showing as an alt
-                            candidate under this uploader (Hitya 2026-06-22:
-                            "Luter is his own person"). Pins main_name to self
+                            candidate under this uploader (the guild lead,
+                            2026-06-22 — a character who is nobody's alt).
+                            Pins main_name to self
                             so it sticks through the OpenDKP sync. */}
                         <form action={makeOwnMain}>
                           <input type="hidden" name="name" value={f.main.name} />

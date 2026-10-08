@@ -1,6 +1,6 @@
 -- ui_snapshots.machine_name — WHICH computer a UI backup came from.
 --
--- Hitya 2026-08-09, mid-migration to a spare raid machine: "we should list the
+-- The guild lead 2026-08-09, mid-migration to a spare raid machine: "we should list the
 -- source as the computer name on the restores". The restore picker showed only
 -- a timestamp, resolution and file count, so with several machines backing up
 -- the same character there was no way to tell the good box's backup from the

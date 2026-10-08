@@ -1,4 +1,4 @@
-// /admin/notices — compose "Mimic Mail" broadcasts (Hitya 2026-07-07:
+// /admin/notices — compose "Mimic Mail" broadcasts (the guild lead, 2026-07-07:
 // "a communications channel to notify users of critical elements, regardless
 // of mimic version moving forward").
 //
@@ -12,8 +12,9 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
-import { isOfficer } from '@/lib/officer';
+import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,7 +46,7 @@ async function createNotice(formData: FormData) {
   if (!title || !body) return;
   const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
   await supabaseAdmin().from('mimic_notices').insert({
-    guild_id: 'wolfpack',
+    guild_id: GUILD_TAG,
     title,
     body,
     severity,
@@ -66,10 +67,11 @@ async function deactivateNotice(formData: FormData) {
 }
 
 export default async function NoticesAdminPage() {
+  await requireOfficer();
   const { data } = await supabaseAdmin()
     .from('mimic_notices')
     .select('*')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .order('id', { ascending: false })
     .limit(30);
   const rows = (data ?? []) as NoticeRow[];

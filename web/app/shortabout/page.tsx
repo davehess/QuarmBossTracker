@@ -1,4 +1,4 @@
-// /shortabout — the two-minute version of /about (Hitya 2026-08-09).
+// /shortabout — the two-minute version of /about (the guild lead, 2026-08-09).
 //
 // One scrolling story: the bot appears, the agent starts feeding it, the
 // database grows between them, the chest swallows the agent (that is Mimic),

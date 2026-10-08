@@ -28,13 +28,13 @@
   /* Trigger timing feedback row — three buttons below the flashed text so the
      person who just heard the callout can say whether the timing was right.
      Persists ~8s after the flash so the operator has time to click without
-     forcing the alert to linger. (Uilnayar 2026-06-26 — v1.1.2.)
+     forcing the alert to linger. (a member, 2026-06-26 — v1.1.2.)
      Stacked in a column UNDER the alert (was position:absolute bottom:14%,
      which floated the buttons right on top of the flashed text — 2026-07-09).
      The row's height is ALWAYS reserved (visibility, not display) so the
      alert text sits at the same spot whether or not a vote is offered —
      appearing buttons must never shove the callout around mid-fight
-     ("include the buttons in the default spacing", Uilnayar 2026-07-09). */
+     ("include the buttons in the default spacing", a member 2026-07-09). */
   /* --timers-space keeps the centred callout column OFF the timer stack. The
      column is centred by the body flexbox, so a bottom margin lifts its
      content by HALF the margin — hence twice the stack height, set from JS
@@ -43,6 +43,8 @@
      written over by it (docs/DESIGN-trigger-overlay-v2.md §3b). */
   #alertcol{display:flex; flex-direction:column; align-items:center; gap:10px;
     margin-bottom:var(--timers-space,0px)}
+  /* Timers at the top (⇅): push the column DOWN off the stack instead. */
+  body.timers-topdown #alertcol{margin-bottom:0;margin-top:var(--timers-space,0px)}
   #feedback{display:flex; visibility:hidden; gap:8px; align-items:center; pointer-events:auto;}
   #feedback.show{visibility:visible}
   .fb-btn{
@@ -55,6 +57,8 @@
   .fb-btn.voted{ opacity:0.45; cursor:default; pointer-events:none }
   .fb-btn.earlier:hover{ background:rgba(240,165,45,0.55); border-color:#f0a52d }
   .fb-btn.good:hover{    background:rgba(86,211,100,0.55); border-color:#56d364 }
+  .fb-btn.off{ padding:5px 7px }
+  .fb-btn.off:hover{     background:rgba(110,118,129,0.55); border-color:#6e7681 }
   .fb-btn.late:hover{    background:rgba(248,113,113,0.55); border-color:#f87171 }
   #fbThanks{display:none; font-size:11px; color:#8b949e; text-shadow:0 1px 2px #000; margin-left:6px}
   #fbThanks.show{display:inline}
@@ -110,7 +114,7 @@
      _activeTimers map.
 
      BOTTOM-ANCHORED, GROWING UPWARD (docs/DESIGN-trigger-overlay-v2.md §3,
-     Hitya 2026-08-10 after Ssra): "the middle of the screen is crucial area
+     the guild lead 2026-08-10 after Ssra): "the middle of the screen is crucial area
      for positioning, but that whole line of timers was awful to compete
      with." A persistent countdown must never camp centre-screen, and a
      growing stack must never creep into the play area — so the stack hangs
@@ -129,6 +133,15 @@
     /* Safety valve only — the row cap is the real bound. */
     max-height:calc(100vh - 42px);overflow-y:auto;overflow-x:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace}
+  /* ⇅ Timers start at the TOP (a member, 2026-09-27: "an option to start the
+     timers at the top, and go down with successive triggers to track, instead
+     of always starting at the bottom of window and growing up"). The stack
+     hangs off the top edge, below the ✥ / 🗑 / ✕ gutter, and reads down; the
+     "+N more" tail lands at the bottom. main.js turns grow-upward OFF for this
+     window when the option is switched on, so the top edge stays put on screen
+     and the first timer never moves as more arrive. */
+  body.timers-topdown #timers{top:34px;bottom:auto;flex-direction:column}
+  body.setup.timers-topdown #timers{top:58px}
   /* "+N more" overflow tail — dimmer than a real row so it reads as a count,
      not a countdown. Sits at the top of the stack (furthest from the anchor). */
   .timer-row.timer-more{justify-content:center;color:#8b949e;font-size:11px;
@@ -165,6 +178,16 @@
     animation:timer-warn-pulse 0.5s ease-in-out infinite}
   .timer-row.warn .timer-remain{color:#ffae6e}
   .timer-row.warn .timer-bar{background:linear-gradient(to right,#ff8a65,#ff5252)}
+  /* EQLogParser-style filled bar (a bard, 2026-09-26: "something like this is
+     what im trying to find"). The bar IS the row's background, in the row's
+     own colour, draining to the left. Only rows that carry a bar_color draw
+     this way — today the agent's timer-bar switches (Recharm tick, lulls, your
+     spells on mobs); trigger countdowns keep the 2px strip above. */
+  .timer-row.fill{border-left-color:var(--fill)}
+  .timer-row.fill .timer-bar{top:0;height:auto;z-index:0;background:var(--fill);opacity:.55}
+  .timer-row.fill.warn .timer-bar{background:var(--fill)}
+  .timer-row.fill > span{position:relative;z-index:1}
+  .timer-row.fill .timer-remain{color:#fff}
   @keyframes timer-warn-pulse{
     0%,100%{box-shadow:0 0 0 0 rgba(255,138,101,0)}
     50%    {box-shadow:0 0 0 2px rgba(255,138,101,0.7), 0 0 12px rgba(255,82,82,0.6)}
@@ -173,7 +196,7 @@
      row stays out of the way; the ✕ re-enables pointer-events AND uses the
      hover-interact handshake so the click lands even while the whole overlay
      is locked. #107 gave this only to loot-auction chips; #207 gives it to
-     EVERY countdown — "this is annoying and no way to clear it" (Hitya, live
+     EVERY countdown — "this is annoying and no way to clear it" (the guild lead, live
      on Ssra) was the overlay's top complaint. */
   .timer-row .timer-x{flex-shrink:0;width:16px;height:16px;display:flex;
     align-items:center;justify-content:center;border-radius:3px;margin-left:2px;
@@ -212,6 +235,31 @@
     font-size:11px;line-height:1;cursor:move;opacity:0.4;transition:opacity .12s}
   #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
   body.setup #move-btn{top:30px}
+
+  /* ── Timers canvas part (?part=timers | ?part=callouts) ─────────────────
+     The Timers canvas (canvas.html) loads this page once per panel and shows
+     ONE region of it: the countdown stack, or the callout column. The panel
+     is the window here, so the window chrome goes, and --part-scale (set by
+     the canvas) is the panel's text size. The stack still hangs off the
+     panel's bottom edge (or its top, per panel). */
+  body.part #move-btn, body.part #clear-btn, body.part #hide-btn,
+  body.part #drag-controls, body.part #setupbar{display:none !important}
+  body.part-timers #alertcol, body.part-timers #placeholder{display:none !important}
+  body.part-callouts #timers{display:none !important}
+  body.part #timers{top:auto;bottom:4px;left:4px;right:auto;max-height:none;overflow:hidden;
+    width:calc((100vw - 8px) / var(--part-scale,1));
+    transform:scale(var(--part-scale,1));transform-origin:left bottom}
+  body.part.timers-topdown #timers{top:4px;bottom:auto;transform-origin:left top}
+  body.part-callouts #alertcol{margin:0 !important;transform:scale(var(--part-scale,1))}
+  /* The callout column sits on the panel's BOTTOM edge, not its middle (the guild lead, 2026-10-05:
+     "the earlier button no longer works"). Centred, a column taller than the panel spills out of
+     both ends and the vote row, second from the bottom, is the first thing cut off, so a panel
+     sized to the callout line had no « Earlier at all. Pinned to the bottom, an overflow cuts
+     the top of a long callout instead and the row stays clickable. */
+  body.part-callouts{align-items:flex-end}
+  body.part-callouts #alertcol{transform-origin:50% 100%}
+  body.part-callouts #sticky:empty{display:none}
+  body.part-callouts.part-edit #placeholder{display:block}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
@@ -234,12 +282,29 @@
       <button class="fb-btn earlier" data-dir="earlier" title="The actual event happened BEFORE the trigger fired — push the trigger earlier next time.">« Earlier</button>
       <button class="fb-btn good" data-dir="good" title="Timing was right.">✓ Good!</button>
       <button class="fb-btn late" data-dir="too_early" title="The trigger fired BEFORE the actual event — delay the trigger next time.">» Too early</button>
+      <button class="fb-btn off" data-dir="off" title="Stop asking — no timing votes after callouts, and nothing about callout timing is sent. Turn it back on in the dashboard, Triggers tab, Timing votes.">🔕</button>
       <span id="fbThanks">thanks — recorded.</span>
     </div>
     <div id="sticky"></div>
   </div>
   <div id="timers"></div>
 <script>
+  // ── Timers canvas part ─────────────────────────────────────────────────────
+  // ?part=timers  — the countdown stack only, holding the rows the canvas routes
+  //                 to ?panel=<id> (window.parent.wpCanvasRoute). Display only:
+  //                 no fires, no pre-end warnings, no sound.
+  // ?part=callouts — the callout column only: flashes, votes, pinned callouts.
+  //                 Shows what is said; never says it.
+  // The VOICE stays in the trigger window, which main keeps running hidden
+  // while the canvas is on, so exactly one page speaks every callout.
+  var _partQs = new URLSearchParams(location.search);
+  var PART  = (_partQs.get('part') === 'timers' || _partQs.get('part') === 'callouts') ? _partQs.get('part') : null;
+  var PANEL = _partQs.get('panel') || null;
+  if (PART) { document.body.classList.add('part'); document.body.classList.add('part-' + PART); }
+  // The voice window, while the canvas shows the visuals: speak and sound only,
+  // so a pinned callout is not also pinned (and later reported expired) here.
+  var _visualElsewhere = false;
+
   let PORT = 7779;
   window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
   window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
@@ -354,22 +419,39 @@
   const el = document.getElementById('alert');
   let hideTimer = null;
 
-  // Respect the user's "Trigger alerts (TTS)" toggle + Quiet mode. This window
-  // is only HIDDEN (not destroyed) when alerts are off, and a hidden window's
-  // script keeps running — so without this gate it would still SPEAK out loud
-  // even though nothing is visible. main pushes status on every change.
+  // Respect the user's "Trigger alerts" toggle. This window is only HIDDEN (not
+  // destroyed) when alerts are off, and a hidden window's script keeps running —
+  // so without this gate it would still SPEAK out loud even though nothing is
+  // visible. main pushes status on every change.
+  //
+  // ⚠ Mute ("Mute Mimic" / tray Quiet mode) is NOT this gate, and must not be.
+  // It used to be: this read `enableTriggerTts && !quietMode`, left over from
+  // when Quiet mode HID overlays. Quiet mode became sound-only, speak() and
+  // playSound() learned to check isMuted(), and this line was never updated —
+  // so muting also stopped every trigger alert from SHOWING, the opposite of
+  // what the setting promises ("overlays still show"; a member, 2026-09-23:
+  // "which one works and which doesn't?"). Mute is enforced where sound is
+  // made, and nowhere else.
   let alertsEnabled = true;
-  // Blind callouts (v1.1.9) are safety alerts the user explicitly opted into by
-  // clicking a blind clicky (or by being blinded) — they fire even when regular
-  // trigger TTS is OFF, but still go silent under Quiet mode. Track quietMode
-  // separately so the blind path can gate on just that.
-  let quietMode = false;
   function applyTtsStatus(s){
-    alertsEnabled = !!(s && s.enableTriggerTts && !s.quietMode);
-    quietMode = !!(s && s.quietMode);
+    alertsEnabled = !!(s && s.enableTriggerTts);
+    _visualElsewhere = !PART && !!(s && s.canvasOwnsTriggers);
   }
   if (window.mimic && window.mimic.getStatus) window.mimic.getStatus().then(applyTtsStatus).catch(function(){});
   if (window.mimic && window.mimic.onStatus)  window.mimic.onStatus(applyTtsStatus);
+  // main's pushes reach a window's top frame only, so a callouts part inside
+  // the canvas re-reads the switch itself.
+  if (PART === 'callouts' && window.mimic && window.mimic.getStatus) {
+    setInterval(function(){ window.mimic.getStatus().then(applyTtsStatus).catch(function(){}); }, 5000);
+  }
+  // ⇅ Timers start at the top (right-click menu): the stack hangs off the top
+  // edge and reads down instead of rising from the bottom.
+  function applyTimersOrder(s){
+    if (PART) return;   // a canvas panel carries its own anchor
+    document.body.classList.toggle('timers-topdown', !!(s && s.triggerTimersTopDown));
+  }
+  if (window.mimic && window.mimic.getStatus) window.mimic.getStatus().then(applyTimersOrder).catch(function(){});
+  if (window.mimic && window.mimic.onStatus)  window.mimic.onStatus(applyTimersOrder);
 
   // #120 — report whether the speech engine actually PRODUCED audio, not just
   // that we asked it to. On a machine where Chromium's user-activation gate is
@@ -412,7 +494,7 @@
   // newest callout always won and cut off whatever was mid-sentence. In a busy
   // fight that is exactly backwards for the one callout a cleric cannot afford
   // to miss: "if there's another TTS going off when the callout is supposed to
-  // go off for the CH chain, it's missing that callout" (Hitya, live
+  // go off for the CH chain, it's missing that callout" (the guild lead, live
   // 2026-08-13). The CH GO was being clipped by whatever fired a moment later.
   //
   // Now: nothing interrupts anything of equal-or-higher priority. CH GO
@@ -426,10 +508,16 @@
     var t = String((meta && meta.trigger) || '');
     // A missed CH beat wipes the raid; everything else can wait 2 seconds.
     if (/^CH GO$/i.test(t)) return 2;
+    // Nor does a late "Enrage soon" (the guild lead, 2026-10-05: "goes off WAY too late").
+    if (/^Enrage soon$/i.test(t)) return 2;
     return 1;
   }
 
+  // Mute (Settings → "Mute Mimic"): the fire still flashes; only sound stops.
+  function _wpMutedNow(){ try { return !!(window.mimic && window.mimic.isMuted && window.mimic.isMuted()); } catch (e) { return false; } }
   function speak(text, meta){
+    if (PART) return;   // a canvas panel shows; the trigger window speaks
+    if (_wpMutedNow()) return;
     if (!window.speechSynthesis){ reportPlayback('error', 'no speechSynthesis API', meta); return; }
     var item = { text: text, meta: meta, prio: _speakPriority(meta), at: Date.now() };
     if (!_speakingUtt){ _speakNow(item); return; }
@@ -492,7 +580,8 @@
     }
   }
   function playSound(url){
-    if(!url) return;
+    if(!url || _wpMutedNow()) return;
+    if (PART) return;   // a canvas panel shows; the trigger window plays
     try{ const a = new Audio(url); a.volume = 0.9; a.play().catch(()=>{}); }catch(e){}
   }
   function flash(text){
@@ -504,13 +593,35 @@
 
   // Trigger timing feedback — show the three vote buttons after each fire.
   // The most-recent trigger is stored so the buttons know which one to vote on.
-  // (Uilnayar 2026-06-26 — v1.1.2.) Buttons are hover-interactive while shown
+  // (a member, 2026-06-26 — v1.1.2.) Buttons are hover-interactive while shown
   // so the click registers — they're inside the click-through overlay otherwise.
   let _lastFireTs = 0;
   let _lastTrigger = null;
   const fbWrap   = document.getElementById('feedback');
   const fbThanks = document.getElementById('fbThanks');
+  // Timing votes can be switched off (the guild lead, 2026-10-01: "Need to be able to opt out for
+  // tts timing feedback"): the dashboard's Timing votes switch, or 🔕 on this row. The agent keeps
+  // the setting and drops any feedback while it is off; this only decides whether to ask.
+  let _votesOn = true;
+  function readVotePref(){
+    fetch('http://127.0.0.1:' + PORT + '/api/callout-prefs')
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(j){ if (j && typeof j.timingFeedback === 'boolean') _votesOn = j.timingFeedback; })
+      .catch(function(){});
+  }
+  setTimeout(readVotePref, 1500);
+  setInterval(readVotePref, 30000);
+  function stopAsking(){
+    _votesOn = false;
+    fbWrap.classList.remove('show');
+    try { window.mimic.overlayHoverInteractive(false); } catch (e) {}
+    fetch('http://127.0.0.1:' + PORT + '/api/callout-prefs', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ timingFeedback: false }),
+    }).catch(function(){});
+  }
   function showFeedback(t){
+    if (!_votesOn) return;
     // Reset button visual state (un-grey if a previous fire was voted on).
     fbWrap.querySelectorAll('.fb-btn').forEach(b => b.classList.remove('voted'));
     fbThanks.classList.remove('show');
@@ -530,8 +641,11 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           direction,
-          trigger_id:   _lastTrigger.id   || null,
-          trigger_name: _lastTrigger.text || _lastTrigger.label || _lastTrigger.name || _lastTrigger.tts || '(unknown)',
+          // A fire carries trigger_id + trigger (its name); .text is the shown line, which for a
+          // built-in like "Enrage soon" changes every fire ("⚠ <mob> at 12% — …"), so votes never
+          // added up under one name. Same order as reportCalloutFeedback.
+          trigger_id:   _lastTrigger.trigger_id || _lastTrigger.id || null,
+          trigger_name: _lastTrigger.trigger || _lastTrigger.text || _lastTrigger.label || _lastTrigger.name || _lastTrigger.tts || '(unknown)',
           fired_at:     new Date(_lastFireTs).toISOString(),
         }),
       });
@@ -547,7 +661,9 @@
     // through to EQ.
     b.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch(e){} });
     b.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch(e){} });
-    b.addEventListener('click', function(){ castVote(b.getAttribute('data-dir')); });
+    b.addEventListener('click', function(){
+      if (b.getAttribute('data-dir') === 'off') stopAsking(); else castVote(b.getAttribute('data-dir'));
+    });
   });
 
   // Sticky critical callouts (#76). A fire flagged `sticky` pins a row that
@@ -606,6 +722,7 @@
       span.textContent = (t.rehearsal ? '🧪 ' : '📌 ') + (t.text || t.tts || 'Alert');
       const x = document.createElement('span');
       x.className = 'sk-x';
+      x.setAttribute('data-wp-interact', '');   // as the countdown ✕: the preload's document-level arm covers it
       x.textContent = '✕';
       x.title = 'Dismiss this pinned callout';
       row.appendChild(span);
@@ -631,14 +748,18 @@
   }
 
   function fire(t){
+    // The instant charm break belongs to the Charm overlay, which speaks it
+    // (agent _pushCharmBreakInstant); here it would be a second voice.
+    if (t && t.charm) return;
     // Gate the whole alert (flash + speak + sound) on the user's preference —
-    // when alerts/TTS are off or Quiet mode is on, this hidden window must stay
-    // silent rather than narrate fires nobody can see.
+    // when trigger alerts are off, this hidden window must stay silent rather
+    // than narrate fires nobody can see. Mute is NOT checked here: under Mute
+    // the alert still flashes, and speak()/playSound() stay quiet.
     if (!alertsEnabled) return;
     // Overlay text is written to be SEEN: it leads with an emoji and uses
     // punctuation as visual separators. Speech synthesis reads all of that
     // aloud - a leading U+26A1 becomes "high voltage", and "D.I. FIRED - {tank}
-    // saved" gains a spoken dash (Hitya, 2026-08-13: preview said "HIGH VOLTAGE
+    // saved" gains a spoken dash (Rethlan, 2026-08-13: preview said "HIGH VOLTAGE
     // D. I. Fired Tank Saved"). An explicit `tts` still wins untouched; this
     // only cleans the FALLBACK, where we are reusing display text as speech.
     const spoken = t.tts || _speakable(t.text) || t.label || 'Trigger';
@@ -649,25 +770,26 @@
     // no-op for existing triggers.
     // Rehearsal fires (real REHEARSE, #76) speak the true callout but carry a
     // 🧪 badge on the flash so the user knows it was a test drive.
-    if (!t.audioOnly) flash((t.rehearsal ? '🧪 ' : '') + (t.text || t.label || spoken));
+    const visual = !t.audioOnly && !_visualElsewhere;
+    if (visual) flash((t.rehearsal ? '🧪 ' : '') + (t.text || t.label || spoken));
     // #136 raid callout allow-list: the agent sets mute=true on a guild/relayed
     // fire outside the critical categories — it still flashes (visibility), but
     // stays silent so the raid-wide TTS only voices the high-value callouts.
     if (!t.mute) speak(spoken, { trigger: t.trigger || t.text || t.label || spoken, rehearsal: !!t.rehearsal });
     playSound(t.sound);
-    if (!t.audioOnly) showFeedback(t);
-    if (t.sticky) pinSticky(t);
+    if (visual) showFeedback(t);
+    if (t.sticky && !_visualElsewhere) pinSticky(t);
   }
 
   // Blind-mode callouts (v1.1.9). Separate from fire(): these fire even when
-  // regular trigger TTS is off (they're the alerts the user asked for when
-  // blinded), gated only on Quiet mode. Self-hits flash red + pulse; the other
-  // kinds reuse the normal amber flash. No feedback buttons (not a trigger).
+  // regular trigger alerts are off (they're the alerts the user asked for when
+  // blinded). Under Mute they still flash and speak() stays quiet — the same
+  // rule as fire(). Self-hits flash red + pulse; the other kinds reuse the
+  // normal amber flash. No feedback buttons (not a trigger).
   function fireBlind(e){
-    if (quietMode) return;
     const danger = e.kind === 'blind_selfhit';
     el.classList.toggle('blindwarn', danger);
-    flash(e.text || e.tts || 'Blind');
+    if (!_visualElsewhere) flash(e.text || e.tts || 'Blind');
     speak(e.tts || e.text || 'Blind', { trigger: 'blind:' + (e.kind || 'alert'), rehearsal: false });
     // Clear the danger styling after the flash window so the next normal flash
     // isn't tinted red.
@@ -736,7 +858,7 @@
     try { refreshClearButton(); } catch(e){}
   }
   // 🗑 title-bar clear-all — countdowns AND pinned callouts in one click.
-  // "this is annoying and no way to clear it" (Hitya, live on Ssra): before
+  // "this is annoying and no way to clear it" (Rethlan, live on Ssra): before
   // this the only escape was hiding the whole overlay.
   function clearAllCallouts(){
     for (const [id, n] of timerNodes){
@@ -808,9 +930,66 @@
   function splitVisible(list){
     const loot = [], rest = [];
     for (const t of list) ((t.kind === 'loot') ? loot : rest).push(t);
-    const shown = rest.slice(0, MAX_TIMER_ROWS);
+    // A canvas panel holds as many rows as its height fits, keeping the last
+    // slot for "+N more" when it overflows — the raider sized it, so the
+    // panel's edge is the cap, not a fixed six.
+    const cap = PART === 'timers' ? _partRowCap() : MAX_TIMER_ROWS;
+    const shown = rest.slice(0, (PART === 'timers' && rest.length > cap) ? Math.max(1, cap - 1) : cap);
     return { visible: loot.concat(shown), hidden: rest.length - shown.length };
   }
+  function _partScale(){
+    var s = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--part-scale'));
+    return (s > 0) ? s : 1;
+  }
+  // Rows that fit the panel: its height in unscaled px over one row plus the 3px gap.
+  function _partRowCap(){
+    var first = timersEl.querySelector('.timer-row:not(.timer-more)');
+    var rowH = (first && first.offsetHeight) || 24;
+    return Math.max(1, Math.floor(((window.innerHeight - 8) / _partScale() + 3) / (rowH + 3)));
+  }
+  // The canvas routes each countdown to one panel (parent.wpCanvasRoute); a
+  // part shows only its own. Standalone, or with no router, everything shows.
+  function _partWants(t){
+    if (PART !== 'timers') return true;
+    try {
+      var route = window.parent && window.parent.wpCanvasRoute;
+      return (typeof route === 'function') ? route(t) === PANEL : true;
+    } catch (e) { return true; }
+  }
+  // Sample rows while the canvas is being arranged, so an empty panel still
+  // shows the shape of what will land in it. Marked TEST by the row style.
+  var _partSample = false;
+  window.wpPartSample = function(on){ _partSample = !!on; };
+  var _SAMPLE_TIMERS = [
+    { id: 'sample|recharm', target: 'a cragbeast queen', effect: 'Recharm tick', duration_sec: 6, cycle_ms: 6000, bar_color: '#a371f7', group: 'charm', pinned: true },
+    { id: 'sample|charm', target: 'a cragbeast queen', effect: "Solon's Bewitching Bravura", duration_sec: 60, bar_color: '#1f6feb', group: 'charm' },
+    { id: 'sample|lull', target: 'a sarnak conscript', effect: 'Wake of Tranquility', duration_sec: 48, bar_color: '#1f6feb', group: 'lull' },
+    { id: 'sample|slow', target: 'an elder thought horror', effect: "Turgur's Insects", duration_sec: 150, group: 'trigger' },
+    { id: 'sample|tash', target: 'an elder thought horror', effect: 'Tashania', duration_sec: 120, group: 'trigger' },
+    { id: 'sample|tick', target: null, effect: 'Server tick', duration_sec: 6, cycle_ms: 6000, bar_color: '#58a6ff', group: 'tick', pinned: true },
+    { id: 'sample|spell', target: 'a sarnak conscript', effect: 'Malosini', duration_sec: 90, group: 'spell' },
+    { id: 'sample|loot', target: null, effect: 'Bid: Cloak of Flames', duration_sec: 90, kind: 'loot', group: 'loot' },
+  ];
+  // One of every group the canvas offers, plus one for each timer the panel
+  // claims by name (window.parent.wpCanvasPanelNames), so a 🧪 test shows every
+  // kind of row that will land in it. Routing (_partWants) keeps each where it goes.
+  function _sampleTimers(){
+    var now = Date.now();
+    var list = _SAMPLE_TIMERS.slice();
+    try {
+      var names = (window.parent && typeof window.parent.wpCanvasPanelNames === 'function') ? window.parent.wpCanvasPanelNames(PANEL) : [];
+      (names || []).forEach(function(n){
+        if (list.some(function(s){ return String(s.effect).toLowerCase() === n; })) return;
+        list.push({ id: 'sample|name|' + n, target: 'a test mob', effect: n, duration_sec: 45, group: 'trigger' });
+      });
+    } catch (e) { /* standalone */ }
+    return list.map(function(s){
+      var d = s.duration_sec * 1000;
+      return Object.assign({}, s, { remaining_ms: d - (now % d), test: true });
+    });
+  }
+  // 🧪 on a callouts panel: one sample callout, shown and never spoken (a part never speaks).
+  window.wpPartFlash = function(text){ if (PART) flash(text); };
   let _moreRow = null;
   function overflowRow(n){
     if (!_moreRow){
@@ -823,7 +1002,7 @@
   }
   function renderTimers(serverTimers){
     const seen = new Set();
-    const list = collapseTimers(serverTimers).filter(function(t){ return !_isDismissed(t.id); });
+    const list = collapseTimers(serverTimers).filter(function(t){ return !_isDismissed(t.id) && _partWants(t); });
     for (const t of list){
       seen.add(t.id);
       let n = timerNodes.get(t.id);
@@ -847,6 +1026,10 @@
         {
           const x = document.createElement('span');
           x.className = 'timer-x';
+          // A clickable <span> needs data-wp-interact so the preload's document-level arm (re-asserted every
+          // 150 ms) covers it too, not only the one mouseenter below; in a Canvas panel that iframe arm is the
+          // dependable path (the guild lead, 2026-10-06: "I can't click on these x's either").
+          x.setAttribute('data-wp-interact', '');
           x.textContent = '✕';
           x.title = 'Dismiss this countdown (yours only)';
           x.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch(e){} });
@@ -890,6 +1073,14 @@
                   : (t.warning_ms > 0 && t.warn_text
                       ? [{ at_ms: t.warning_ms, text: t.warn_text, tts: true }] : []);
       if (t.bar_color) n.bar_color = t.bar_color;
+      if (t.bar_color && n.fillColor !== t.bar_color && /^#[0-9a-f]{3,8}$/i.test(t.bar_color)){
+        n.fillColor = t.bar_color;
+        n.row.classList.add('fill');
+        n.row.style.setProperty('--fill', t.bar_color);
+      }
+      // A cyclic row (the 6s recharm tick) wraps in paintTimers instead of
+      // expiring and popping back in on the next poll.
+      n.cycle_ms = t.cycle_ms > 0 ? t.cycle_ms : 0;
       n.pinned = !!t.pinned;
     }
     // Drop any rows the server stopped reporting (ended early or cleared).
@@ -923,7 +1114,11 @@
     const now = Date.now();
     let painted = 0;
     for (const [id, n] of timerNodes){
-      const remMs = n.ends_at_local - now;
+      let remMs = n.ends_at_local - now;
+      if (remMs <= 0 && n.cycle_ms > 0){
+        n.ends_at_local += Math.ceil(-remMs / n.cycle_ms + 1e-9) * n.cycle_ms;
+        remMs = n.ends_at_local - now;
+      }
       if (remMs <= 0){ n.row.remove(); timerNodes.delete(id); continue; }
       n.remain.textContent = fmtRemain(remMs);
       // Progress bar: width drops linearly from 100% at fire to 0% at expiry.
@@ -936,7 +1131,9 @@
       // Pre-end warning callout: fire once when the countdown crosses into the
       // warning window. Reset the latch if the timer restarts (remaining climbs
       // back above the threshold) so a re-pulled timer warns again.
-      if (n.warnings && n.warnings.length){
+      // (A canvas timers panel never warns: the callouts panel and the voice
+      // window already do, from their own copy of the stack.)
+      if (PART !== 'timers' && n.warnings && n.warnings.length){
         // One latch PER threshold, so 10s and 4s both fire. A latch resets when
         // the countdown climbs back above its threshold, so a restarted timer
         // warns again — same re-arm rule as the single latch this replaces.
@@ -950,8 +1147,9 @@
           fire({ text: w.text, tts: (w.tts === false ? null : w.text) });
         }
       }
-      // Last 5s → amber accent + background + pulse to drag the eye.
-      if (remMs < 5000) n.row.classList.add('warn');
+      // Last 5s → amber accent + background + pulse to drag the eye. Never on
+      // a cyclic row: a 6s cycle would pulse five seconds in every six.
+      if (remMs < 5000 && !n.cycle_ms) n.row.classList.add('warn');
       else              n.row.classList.remove('warn');
       painted++;
     }
@@ -1059,11 +1257,20 @@
     }
   } catch(e){}
 
+  // A canvas part reads the slim /api/timers (the same three fields) — one
+  // page per panel must not each parse the whole state. An agent without it
+  // answers 404, and the part falls back to /api/state for good.
+  var _partSlim = !!PART;
   async function tick(){
     try{
-      const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
+      let r = await fetch('http://127.0.0.1:'+PORT+(_partSlim ? '/api/timers' : '/api/state'),{cache:'no-store'});
+      if (_partSlim && r.status === 404){
+        _partSlim = false;
+        r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
+      }
       const s = await r.json();
-      renderTimers(s.activeTimers);
+      renderTimers((PART === 'timers' && _partSample) ? (s.activeTimers || []).concat(_sampleTimers()) : s.activeTimers);
+      if (PART === 'timers') return;   // display only: fires belong to the other pages
       const fires = (s.recentTriggerFires || []).slice().sort((a,b)=>(a.ts||0)-(b.ts||0));
       if (!primed){
         // On first poll, don't replay the existing backlog — just set the cursor.
@@ -1088,6 +1295,27 @@
     }catch(e){ /* agent not up yet */ }
   }
   tick(); setInterval(tick, 700);
+  // Fires the moment they happen (agent 3.7.27+): a long-poll the agent answers
+  // as soon as a trigger fires, instead of waiting for the next 700 ms tick
+  // (the guild's co-leader, 2026-09-26: the charm break "seems to be about a
+  // second off"). tick() still runs for the timers and as the fallback; both
+  // advance the same lastTs, so a fire is spoken once. An older agent answers
+  // 404 and this loop simply stops.
+  (async function waitFires(){
+    if (PART === 'timers') return;
+    for (;;) {
+      if (!primed) { await new Promise(function(r){ setTimeout(r, 300); }); continue; }
+      try {
+        const r = await fetch('http://127.0.0.1:'+PORT+'/api/fires/wait?after=' + encodeURIComponent(lastTs), {cache:'no-store'});
+        if (r.status === 404) return;
+        const j = await r.json();
+        const fires = (j.fires || []).slice().sort((a,b)=>(a.ts||0)-(b.ts||0));
+        for (const f of fires){
+          if ((f.ts||0) > lastTs){ lastTs = f.ts; fire(f); }
+        }
+      } catch(e){ await new Promise(function(r){ setTimeout(r, 1000); }); }
+    }
+  })();
   // Independent paint loop @ 10Hz so the on-screen countdown text + bar
   // tween between server polls. Cheap — only touches DOM nodes that exist.
   setInterval(paintTimers, 100);

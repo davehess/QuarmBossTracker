@@ -1,5 +1,5 @@
 // Fight event-log assembly (docs/DESIGN-fight-timeline.md, 2026-08-16 §2 —
-// Hitya's second-round review of /parses/d951b081): pure so the folding and
+// The guild lead's second-round review of /parses/d951b081): pure so the folding and
 // filtering are testable, because every failure here renders as a plausible
 // list. The three measured problems on that card:
 //   • 67 of 126 events were stamped BEFORE the encounter's started_at (the
@@ -50,7 +50,7 @@ export function isNoiseCallout(label: string): boolean {
  * Windowed fold: a row absorbs a later event with the same (kind, label,
  * detail) when the gap since that row's LAST occurrence is within windowMs —
  * even when other labels interleave. Consecutive-only folding fell apart the
- * moment two rampage targets alternated ("→ Moash / → Timberowl / → Moash…"),
+ * moment two rampage targets alternated ("→ Cindral / → Zarrin / → Cindral…"),
  * which is exactly what trash waves produce. Each distinct target keeps its
  * own row, so the handover story survives; the spam does not.
  */

@@ -16,6 +16,7 @@ import { revalidatePath } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
+import { GUILD_TAG } from '@/lib/guild';
 import {
   parseInventory, characterFromInventoryFilename, claimVerdict,
   type ParsedInvRow,
@@ -29,7 +30,7 @@ async function ownsOrOfficer(characterName: string): Promise<{ ok: boolean; offi
   const admin = supabaseAdmin();
   const [{ data: me }, { data: ch }] = await Promise.all([
     admin.from('wolfpack_members').select('discord_id').eq('user_id', user.id).maybeSingle(),
-    admin.from('characters').select('discord_id').eq('guild_id', 'wolfpack').ilike('name', characterName).maybeSingle(),
+    admin.from('characters').select('discord_id').eq('guild_id', GUILD_TAG).ilike('name', characterName).maybeSingle(),
   ]);
   if (me?.discord_id && ch?.discord_id && me.discord_id === ch.discord_id) {
     return { ok: true, officer: false };
@@ -52,7 +53,7 @@ export async function uploadInventory(characterName: string, rawText: string): P
   // Resolve canonical character name casing from the roster (so the
   // unique-by-lower index keys consistently).
   const { data: ch } = await admin
-    .from('characters').select('name').eq('guild_id', 'wolfpack').ilike('name', name).maybeSingle();
+    .from('characters').select('name').eq('guild_id', GUILD_TAG).ilike('name', name).maybeSingle();
   const canonical = ch?.name || name;
 
   const wrote = await writeInventory(canonical, rows);
@@ -69,10 +70,10 @@ export async function uploadInventory(characterName: string, rawText: string): P
 async function writeInventory(canonical: string, rows: ParsedInvRow[]): Promise<{ error?: string }> {
   const admin = supabaseAdmin();
   await admin.from('character_inventory')
-    .delete().eq('guild_id', 'wolfpack').ilike('character_name', canonical);
+    .delete().eq('guild_id', GUILD_TAG).ilike('character_name', canonical);
   const now = new Date().toISOString();
   const payload = rows.map(r => ({
-    guild_id: 'wolfpack',
+    guild_id: GUILD_TAG,
     character_name: canonical,
     slot_label: r.slot_label,
     item_id: r.item_id,
@@ -87,13 +88,13 @@ async function writeInventory(canonical: string, rows: ParsedInvRow[]): Promise<
   return {};
 }
 
-// ── Multi-file mule upload (Hitya 2026-08-14) ───────────────────────────────
+// ── Multi-file mule upload (the guild lead, 2026-08-14) ───────────────────────────────
 // "Can you make it so that anyone can upload additional inventory files from
 // the /me page and have it bring in their other characters/mules?"
 //
 // The per-character upload above cannot do this: it is gated on the character
 // ALREADY existing in `characters` with your discord_id, which is exactly what
-// a bank mule is not. Pyxil's (Archanistsells, Lavenderna, Pyxtrade…) exist
+// a bank mule is not. A member's (Archanistsells, Lavenderna, Pyxtrade…) exist
 // only as files on her disk — no logs, no /who sighting, no OpenDKP row — so
 // the FILE is the only evidence they exist and its NAME the only claim of
 // whose they are.
@@ -140,7 +141,7 @@ export async function uploadMuleInventories(
   // rather than stranding it as its own root.
   const { data: mine } = await admin
     .from('characters').select('name, main_name, discord_id')
-    .eq('guild_id', 'wolfpack').in('discord_id', [...household]).limit(50);
+    .eq('guild_id', GUILD_TAG).in('discord_id', [...household]).limit(50);
   const familyMain = ((mine ?? []) as { name: string; main_name: string | null }[])
     .map(c => c.main_name || c.name).find(Boolean) || null;
 
@@ -174,7 +175,7 @@ export async function uploadMuleInventories(
 
     const { data: existing } = await admin
       .from('characters').select('name, discord_id, opendkp_id')
-      .eq('guild_id', 'wolfpack').ilike('name', character).maybeSingle();
+      .eq('guild_id', GUILD_TAG).ilike('name', character).maybeSingle();
     const verdict = claimVerdict(existing ?? null, household);
     if (verdict.action === 'refuse') {
       results.push({ file: fileName, character, ok: false, error: verdict.reason });
@@ -187,7 +188,7 @@ export async function uploadMuleInventories(
       // for a character that entered the roster through the site rather than
       // through OpenDKP or a log sighting.
       const { error } = await admin.from('characters').insert({
-        guild_id: 'wolfpack',
+        guild_id: GUILD_TAG,
         name: canonical,
         discord_id: me.discord_id,
         main_name: familyMain,
@@ -208,7 +209,7 @@ export async function uploadMuleInventories(
           registered_via_web_at: new Date().toISOString(),
           registered_via_web_by_discord_id: me.discord_id,
         })
-        .eq('guild_id', 'wolfpack').ilike('name', canonical);
+        .eq('guild_id', GUILD_TAG).ilike('name', canonical);
       if (error) { results.push({ file: fileName, character, ok: false, error: error.message }); continue; }
     }
 

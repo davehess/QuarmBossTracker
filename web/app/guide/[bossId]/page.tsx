@@ -29,10 +29,9 @@ import {
   bucketEncounters, killStats, attributeLoot,
   type CatalogRow, type GuideEncounter, type DropRow, type AwardRow,
 } from '@/lib/raidGuide';
+import { loadAwardsForItems, loadDropperCounts } from '@/lib/fullReads';
 
 export const dynamic = 'force-dynamic';
-
-const POP_UNLOCK_MS = Date.parse('2026-10-01T00:00:00Z');
 
 type BoardRow  = { boss_id: string; name: string | null; zone: string | null; expansion: string | null; timer_hours: number | null; emoji: string | null; pqdi_url: string | null };
 type LocalRow  = { npc_id: number; internal_id: string; zone_short: string | null; strat_notes: string | null; path_notes: string | null; timer_hours_override: number | null };
@@ -55,11 +54,10 @@ async function load(bossId: string) {
 
   const displayName = board?.name || local?.internal_id || bossId;
   const expansion   = board?.expansion || null;
-  const locked      = expansion === 'PoP' && Date.now() < POP_UNLOCK_MS;
   const npcId       = local?.npc_id ?? null;
 
   const base = {
-    bossId, board, local, displayName, expansion, locked, npcId,
+    bossId, board, local, displayName, expansion, npcId,
     catalog: null as ReturnType<typeof resolveCatalogRow>,
     keyedRow: null as CatalogRow | null,
     encounters: [] as EncFull[],
@@ -68,8 +66,7 @@ async function load(bossId: string) {
     awards: [] as AwardRow[],
     spawns: [] as SpawnRow[],
   };
-  // PoP stays locked: identity + authored only, no generated blocks.
-  if (locked || npcId == null) return base;
+  if (npcId == null) return base;
 
   // The catalog row encounters are keyed to, plus every same-name sibling —
   // the #171 pick-and-merge inputs. Fetch the keyed row first so we know the
@@ -115,18 +112,17 @@ async function load(bossId: string) {
 
   if (drops.length) {
     const ids = [...new Set(drops.map(d => d.item_id))];
-    const [countRes, awardRes] = await Promise.all([
-      sb.from('eqemu_npc_drops').select('item_id, npc_id').in('item_id', ids).limit(5000),
-      sb.from('opendkp_loot').select('item_name, character_name, dkp').in('item_name', [...new Set(drops.map(d => d.item_name))]).limit(3000),
+    // How many DISTINCT npcs drop each item, counted in SQL (item_dropper_counts).
+    // This used to read every (item, npc) row — 24,108 for one boss, 53 of the 132
+    // curated bosses over 1,000 — and PostgREST's silent cap kept 1,000, so items
+    // that are on a dozen tables read as sole-source and carried someone else's
+    // DKP. Awards are PAGED for the same reason (the biggest boss is 602 rows today).
+    const [dropperCounts, awards] = await Promise.all([
+      loadDropperCounts(sb, ids),
+      loadAwardsForItems(sb, [...new Set(drops.map(d => d.item_name))]),
     ]);
-    const counts = new Map<number, Set<number>>();
-    for (const r of ((countRes.data as { item_id: number; npc_id: number }[] | null) ?? [])) {
-      const s = counts.get(r.item_id) || new Set<number>();
-      s.add(r.npc_id);
-      counts.set(r.item_id, s);
-    }
-    base.dropperCounts = new Map([...counts].map(([k, v]) => [k, v.size]));
-    base.awards = ((awardRes.data as AwardRow[] | null) ?? []);
+    base.dropperCounts = dropperCounts;
+    base.awards = awards;
   }
 
   base.spawns = (((spawnRes.data as unknown as { eqemu_spawn2: SpawnRow }[] | null) ?? [])
@@ -181,11 +177,6 @@ export default async function BossGuide({ params }: { params: Promise<{ bossId: 
         </div>
       </div>
 
-      {d.locked && (
-        <section className="bg-panel border border-border rounded-lg p-4 text-sm text-dim">
-          🔒 Planes of Power is locked until 2026-10-01. This page will fill in once we can fight it.
-        </section>
-      )}
 
       {/* #171 provenance — a shell catalog row silently renders a fictional boss. */}
       {d.catalog?.usedFallbackRow && (
@@ -299,7 +290,7 @@ export default async function BossGuide({ params }: { params: Promise<{ bossId: 
             <Stat label="CR" value={cat.cr != null ? String(cat.cr) : '—'} />
             <Stat label="DR / PR" value={`${cat.dr ?? '—'} / ${cat.pr ?? '—'}`} accent={(cat.pr ?? 0) >= 500 ? 'text-red' : undefined} />
           </div>
-          {/* Hitya 2026-08-19 (Emperor Ssraeshza): "Tash is unresistable. Same
+          {/* the guild lead 2026-08-19 (Emperor Ssraeshza): "Tash is unresistable. Same
               with Malo. Slow is a disease slow." Corroborated by the spell
               mirror: the Tash line + top-rank Malo/Mala are resist_type 0
               (unresistable); the lesser Malosi/Malosini are magic and DO
@@ -378,7 +369,7 @@ export default async function BossGuide({ params }: { params: Promise<{ bossId: 
         </section>
       )}
 
-      {!d.locked && stats.engagements === 0 && (
+      {stats.engagements === 0 && (
         <section className="bg-panel border border-border rounded-lg p-4 text-sm text-dim">
           No fights recorded here yet. The page fills itself in the first time we kill it with an agent running.
         </section>

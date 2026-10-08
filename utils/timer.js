@@ -112,6 +112,18 @@ function parseTimeString(str) {
   return ms > 0 ? ms : null;
 }
 
+// A "short-timer" boss respawns so often (the guild instance named in Bastion of
+// Thunder, 3 h) that a 30-minute warning, a "spawned" post and a permanent seat
+// in the "spawning in 24h" card would fire all night. Those bosses stay on the
+// board and in Active Cooldowns but are kept off the alert surfaces
+// (the guild lead, 2026-10-05). The cut is 6 h — well under the 18 h Classic
+// bosses, which keep their alerts.
+const SHORT_TIMER_MAX_HOURS = 6;
+function isShortTimerBoss(boss) {
+  const h = Number(boss && boss.timerHours);
+  return Number.isFinite(h) && h > 0 && h <= SHORT_TIMER_MAX_HOURS;
+}
+
 module.exports = {
   calcNextSpawn,
   formatDuration,
@@ -120,4 +132,6 @@ module.exports = {
   discordAbsoluteTime,
   statusEmoji,
   parseTimeString,
+  isShortTimerBoss,
+  SHORT_TIMER_MAX_HOURS,
 };

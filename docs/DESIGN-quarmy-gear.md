@@ -41,7 +41,7 @@ blanks. Same agent-side gate as `exclude_from_stats`.
 ## Source shape — CONFIRMED 2026-06-10 (v1 SHIPPED)
 
 The owner supplied the page source + three real export files
-(Hitya/monk, Manamana/cleric, Melting/bard). Two viable feeds:
+(the guild lead/monk, a member/cleric, a member/bard). Two viable feeds:
 
 1. **The local export file `<Name>Quarmy.txt`** (in the EQ folder; the same
    file members feed to quarmy.com — its "verified" badge means "imported

@@ -3,7 +3,7 @@
 // THE BUG THIS EXISTS TO PREVENT (measured 2026-08-04): the agent matches
 // trigger patterns against the RAW log line, which carries the EQ timestamp:
 //
-//   [Sun Aug 02 21:10:01 2026] Uilnayar looks somewhat dimwitted.
+//   [Sun Aug 02 21:10:01 2026] Bellwick looks somewhat dimwitted.
 //
 // Patterns compile with flags 'i' and NO 'm' (`_applyGuildTriggersResponse` in
 // the agent), so `^` anchors to the start of that whole string — not to the
@@ -23,7 +23,7 @@
 //
 // WHY NOT just strip the `^`: the `{s}` placeholder expands to a class that
 // INCLUDES SPACE (`[\w'`\ -]+?`). Unanchored, the engine's leftmost match starts
-// at the space after `]` and captures " Uilnayar" — with a leading space. That
+// at the space after `]` and captures " Bellwick" — with a leading space. That
 // silently corrupts every name-keyed consumer downstream (TTS, the charm-pet
 // suppression check, require_raid_member). Anchoring past the timestamp and
 // consuming the separator with `\s+` hands back a clean name.

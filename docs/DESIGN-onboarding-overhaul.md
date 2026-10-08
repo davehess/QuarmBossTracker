@@ -1,7 +1,7 @@
 # Design — Onboarding overhaul: a "New Here?" walkthrough on web + Discord
 
-Status: **proposal, awaiting Hitya sign-off.** Design only — no feature code has
-been written. Trigger: Hitya, 2026-07-31 09:38 — *"our /onboarding really needs
+Status: **proposal, awaiting the guild lead sign-off.** Design only — no feature code has
+been written. Trigger: the guild lead, 2026-07-31 09:38 — *"our /onboarding really needs
 an overhaul. We're likely going to want some screenshots in there, or a 'New
 Here?' guided walkthrough on the website and the discord."*
 
@@ -11,6 +11,80 @@ web walkthrough, screenshots, progress tracking). The **Mimic first-run gate**
 queued separately under `[#86] role-aware first-raid mode (+[#53])` in
 `docs/DESIGN-platform-queue.md:138`. This design *links to* that flow and treats it as
 one checklist step; it does not absorb or redesign it.
+
+---
+
+## 2026-10-03 refresh — what is broken today, and three options (awaiting the guild lead's pick)
+
+The guild lead, 2026-10-03, with two phone screenshots of the shared onboarding thread: *"the onboarding
+command needs an overhaul"*. Re-mapped from `main` at bot 3.1.194 / stable Mimic 2.7.8. The rest of this doc
+(July 31) predates `/start` (live since 2026-08-28) and its line numbers are stale; this section supersedes
+its current-state map.
+
+**Broken or wrong right now (fixed by whichever option is picked):**
+- "Set up the parser" card (`utils/onboarding.js` `buildParseOverviewEmbed`):
+  - "Wolf Pack Mimic v1.0.0" is a hardcoded string. The live resolver `utils/mimicReleases.js`
+    `getMimicDownloadUrls()` exists and `/parsehelp` already uses it.
+  - The Mimic link renders as raw text, because Discord refuses a masked link whose label is a URL.
+  - The WolfPackParser.zip link 404s: no release since 2026-05-31 carries it.
+  - It says "paste your /token value". The real first run is **Sign in with Discord**: a 6-character code
+    confirmed at wolfpack.quest/auth/mimic-link. A token is only an Advanced fallback, and a brand-new joiner
+    usually cannot run `/token` (role gate plus the 6-hourly member sync).
+- Welcome card (`buildWelcomeEmbed`):
+  - It tells newcomers to "click its button on the board" to log a kill. Agents record kills themselves, and
+    board buttons need the Pack Member role.
+  - It never links `/start`, the live, current install walkthrough.
+- The organizer button tells members to use `/announce`, which needs an officer role. There is no organizer
+  role.
+- When a joiner's DMs are closed, the welcome posts into the SHARED `ONBOARDING_THREAD_ID` thread with an
+  @mention. That adds them to the thread, and live buttons pile up there (the "99" badge).
+- `maybeShowWelcome` re-shows the full welcome after slash commands, gated on volatile `state.json`
+  (`seenWelcome`) rather than `member_onboarding_state`.
+- The agent-release DM (`announceAgentReleaseIfNew`) fired 8 times between 2026-09-24 and 10-03:
+  - `data/agent_release_notes.json` stops at agent 2.4.19, so 3.x members get only "Re-launch Parser.bat";
+  - the button is the dead zip, and the text names port 7777 (Mimic uses 7779);
+  - Mimic updates itself anyway.
+- The Quick Start card in the thread is an officer command reference a newcomer cannot run.
+- `/raidbosshelp` lists about 30 of 88 commands (no `/dkp`, `/wishlist`, `/who`, `/feedback`) and still
+  promotes EQLogParser paste.
+- No test asserts on any of this copy, so there is no guard today. Constraints on a rewrite:
+  - `test/thread-anchor.test.js` needs the `postOrEditCard(thread, {` wiring kept.
+  - `test/start-page.test.js` ties `/parsehelp`'s step labels to `/start`.
+
+**Must not be hardcoded:**
+- the installer version (use `/mimic?direct=1` or `getMimicDownloadUrls()`);
+- agent, bot and web versions;
+- role names (`getAllowedRoles()`);
+- channel names;
+- raid days and hours (no formal raids until 2026-10-14; link Discord events instead).
+
+**The options** (costs as build / maintenance / runtime / change):
+
+| | A. Doorway card | B. Paged walkthrough in Discord | C. Checklist that ticks itself |
+|---|---|---|---|
+| What the member sees | One short card: a two-line welcome, **▶ Start here → wolfpack.quest/start**, the privacy line, then buttons: ⬇ Get Mimic (live installer link), 📖 Setup steps (`/parsehelp`), ⚔ PvP pings, 🔕 | The welcome is page 1 of 5 with Next/Back: Welcome + privacy → Get Mimic → Sign in, EQ folder, logging → Your characters + /me → Raids + PoP | A card of 5 lines, each ✅ or ⬜ from data we already hold: Mimic signed in, first upload, characters linked, site sign-in, PoP flags recorded. `/onboarding` re-draws it; each ⬜ carries its one link |
+| Build | ~2 h | ~half a day (reuses `/parsehelp`'s pager) | ~1 day (queries, card, tests) |
+| Maintenance | Lowest: the install steps live only on `/start` | Medium: a second copy of the steps beside `/start` (the `/start` test limits drift) | Medium: a signal can lie (a linked Mimic ≠ installed) |
+| Runtime | Nil | Nil | A few small reads per view |
+| Change | Cheap: edit `/start` | Medium: two places | Highest: each line is tied to a data signal |
+
+Recommended: **A** now. It removes every broken fact, and the steps stay current because they live on one
+page. C belongs on `/start` (the web) later, not in Discord.
+
+**Ships with any option:**
+- the live installer link;
+- Sign in with Discord, no token;
+- Parser.bat out of every newcomer surface;
+- the privacy line kept above the fold (`/privacy` + `/me`);
+- organizer copy pointing at what a member can actually use (`/suggest`, event sign-ups);
+- the Quick Start card rewritten to match;
+- no more per-joiner posts into the shared thread;
+- the welcome gate moved off `state.json`;
+- the dead `handleWelcome*` code deleted;
+- `/raidbosshelp` filled in.
+
+**Open for the guild lead:** (1) A, B or C. (2) The agent-release DMs: stop them (Mimic updates itself;
+recommended) or keep them pointing at the Mimic installer.
 
 ---
 
@@ -184,7 +258,7 @@ we're in here.
 
 | Surface | File | State |
 |---|---|---|
-| Landing `/` | `web/app/page.tsx` | Already carries **"🗺 New here? See the whole platform on one page →"** (`:57`) — the exact phrase Hitya used. It points at `/platform`. |
+| Landing `/` | `web/app/page.tsx` | Already carries **"🗺 New here? See the whole platform on one page →"** (`:57`) — the exact phrase the guild lead used. It points at `/platform`. |
 | `/platform` | `web/app/platform/page.tsx` | A **showcase**, not a walkthrough: hero, stat strip, architecture mindmap, drill-down branch cards, evolution timeline, privacy section (`:100-110`). Public, no auth. Answers *"what is all of this?"* — never *"what do I do first?"*. |
 | Nav | `web/components/Nav.tsx:7-22` | 15 links + Me/Admin. **No Start / Getting-started entry.** |
 | Header | `web/app/layout.tsx:62-98` | Three download CTAs (Mimic stable / Beta / Linux) sit under the wordmark on every page — good; a first-timer can't miss the installer. |
@@ -273,7 +347,7 @@ web/lib/onboardingSteps.ts       ← the ONLY place step copy lives
   coupling, and the bot degrades to "here's the link" rather than breaking.
   *(Alternative if we'd rather not add a cross-service dependency: keep the
   Discord copy deliberately tiny — hook + link + buttons only, as v1 proposes —
-  so there is almost nothing to drift. Hitya's call; the v1 slim card makes the
+  so there is almost nothing to drift. The guild lead's call; the v1 slim card makes the
   fetch optional.)*
 
 ### Surface 1 — Discord: the card slims down
@@ -403,7 +477,7 @@ that only exists in web markup would silently vanish in Discord.
 
 #### Shot list
 
-**Needs Hitya or a local Windows session** (live EQ + Mimic + Discord required;
+**Needs the guild lead or a local Windows session** (live EQ + Mimic + Discord required;
 a cloud session cannot produce these):
 
 | # | File | Shot | Annotate |
@@ -416,11 +490,11 @@ a cloud session cannot produce these):
 | 6 | `06-discord-board.png` | `#raid-mobs` `/board` — cooldown card + Spawning in 24h | arrow at a kill button |
 | 7 | `07-discord-parsecard.png` | An auto-parse card in the Parses Log thread | arrow at the 🔗 wolfpack.quest link |
 
-⚠ Shots 4 and 7 contain **real character names**. Decide with Hitya whether to
+⚠ Shots 4 and 7 contain **real character names**. Decide with the guild lead whether to
 use the existing obfuscation helper (`web/lib/obfuscate.ts`) or to ship them as-is
 with named raiders' okay — `docs/PRIVACY.md` is the standard we hold others to.
 
-**Capturable without Hitya** — these are public, unauthenticated wolfpack.quest
+**Capturable without the guild lead** — these are public, unauthenticated wolfpack.quest
 pages, so a cloud session with the Playwright MCP can screenshot them headlessly:
 
 | # | File | Shot |
@@ -428,7 +502,7 @@ pages, so a cloud session with the Playwright MCP can screenshot them headlessly
 | 8 | `08-web-platform.png` | `/platform` mindmap |
 | 9 | `09-web-privacy.png` | `/privacy`, framed on the "Is it a keylogger?" section |
 
-**Needs a signed-in session** (Discord OAuth gate — Hitya, or any member with a
+**Needs a signed-in session** (Discord OAuth gate — the guild lead, or any member with a
 browser; not a cloud session):
 
 | # | File | Shot | Annotate |
@@ -511,7 +585,7 @@ can switch paths at any time — the filter is a URL param, not a commitment.
   path-specific steps and the persona-targeted screenshots.
 - **Guided Discord sequence**: on persona pick, the bot opens a private thread
   (or DM chain) that walks the steps one message at a time and **advances when
-  the signal flips** — "✅ Saw your first upload from Hitya. Next: …", driven by
+  the signal flips** — "✅ Saw your first upload from the guild lead. Next: …", driven by
   the same check functions. This is the piece that makes Discord feel guided
   rather than linked-away-from, and it's only worth building once the signals
   are proven correct on the web page.
@@ -537,7 +611,7 @@ can switch paths at any time — the filter is a URL param, not a commitment.
 
 ---
 
-## Open questions for Hitya
+## Open questions for the guild lead
 
 1. **Tone.** The current card is earnest-and-explanatory; `/platform` is
    confident marketing; `/privacy` is warm and disarming (*"a rough night is

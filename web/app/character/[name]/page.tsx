@@ -6,6 +6,7 @@
 // the canonical character name.
 
 import Link from 'next/link';
+import type { Metadata } from 'next';
 import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
@@ -14,6 +15,7 @@ import { userTz } from '@/lib/timezone';
 import { eraForTimestamp } from '@/lib/eras';
 import { classDisplay } from '@/lib/class-titles';
 import LootBrowser, { type LootCategory, type LootEntry } from '@/components/LootBrowser';
+import CharacterGallery from '@/components/CharacterGallery';
 import {
   loadFamily,
   loadEraTimeline,
@@ -22,20 +24,11 @@ import {
   type FamilyMember,
   type EraSummary,
 } from '@/lib/character-family';
+import { fetchParseSummary, type ParseSummary } from '@/lib/capSafeReads';
 
 export const dynamic = 'force-dynamic';
 
 type WhoObs   = { character: string; class: string | null; race: string | null; level: number | null; guild_name: string | null; observed_at: string };
-type ParseRow = {
-  encounter_id: string;
-  character_name: string;
-  total_damage: number;
-  dps: number;
-  duration_sec: number | null;
-  rank: number | null;
-  has_pets: boolean | null;
-  encounters: { id: string; started_at: string; duration_sec: number | null; zone_short: string | null; eqemu_npc_types: { name: string } | null } | null;
-};
 type LootRow      = {
   item_name: string; dkp: number; raid_name: string; raid_date: string;
   game_item_id: number | null;
@@ -96,17 +89,12 @@ async function load(name: string) {
 
     const displayName = char?.name || decoded;
 
-    // 2. Parses — every encounter_players row, joined to its encounter for boss/zone/time.
-    const { data: parseRowsRaw } = await sb
-      .from('encounter_players')
-      .select(`
-        encounter_id, character_name, total_damage, dps, duration_sec, rank, has_pets,
-        encounters!inner ( id, started_at, duration_sec, zone_short, eqemu_npc_types ( name ) )
-      `)
-      .eq('character_name', displayName)
-      .order('total_damage', { ascending: false })
-      .limit(10000);
-    const parses = (parseRowsRaw as unknown as ParseRow[]) ?? [];
+    // 2. Parses — count, total, best fight, the 30 newest and first-seen,
+    // summed in SQL. This used to pull every encounter_players row
+    // (`.limit(10000)`), which PostgREST capped at the top 1,000 by damage: 38
+    // characters have more (max 3,807), so their totals were short and the
+    // "recent parses" list could not see their newest weak fights.
+    const parseSummary = await fetchParseSummary(sb, displayName);
 
     // 3. Loot — every opendkp_loot row this character has won. We need
     // eqemu_items to classify weapon vs armor server-side, but
@@ -167,7 +155,7 @@ async function load(name: string) {
     return {
       displayName,
       who,
-      parses,
+      parseSummary,
       loot,
       lootEnriched,
       attendance,
@@ -181,7 +169,7 @@ async function load(name: string) {
     return {
       displayName: '',
       who: null as WhoObs | null,
-      parses: [] as ParseRow[],
+      parseSummary: { count: 0, totalDamage: 0, firstStarted: null, best: null, recent: [] } as ParseSummary,
       loot: [] as LootRow[],
       lootEnriched: [] as LootEntry[],
       attendance: null as AttendanceRow | null,
@@ -192,6 +180,19 @@ async function load(name: string) {
       error: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+// The character name is already in the route, so this needs no query at all —
+// the unfurl goes from "WolfPack.quest" to the character being linked for free.
+export async function generateMetadata({ params }: { params: Promise<{ name: string }> }): Promise<Metadata> {
+  const { name } = await params;
+  const clean = decodeURIComponent(name || '').trim().replace(/[^A-Za-z]/g, '').slice(0, 24);
+  if (!clean) return {};
+  const display = clean.charAt(0).toUpperCase() + clean.slice(1).toLowerCase();
+  return {
+    title: display,
+    description: `${display} on WolfPack.quest — gear, inventory, spells, factions and parse history.`,
+  };
 }
 
 export default async function CharacterPage({ params }: { params: Promise<{ name: string }> }) {
@@ -225,26 +226,22 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
   // characters table) or a family link, so it still renders correctly.
   const hasFootprint =
     !!data.who ||
-    data.parses.length > 0 ||
+    data.parseSummary.count > 0 ||
     data.loot.length > 0 ||
     !!data.attendance ||
     data.family.length > 0;
   if (!hasFootprint) notFound();
 
-  const { displayName, who, parses, loot, lootEnriched, attendance, family, familyRoot, timeline, familyAgg } = data;
+  const { displayName, who, parseSummary, loot, lootEnriched, attendance, family, familyRoot, timeline, familyAgg } = data;
 
-  // Aggregates
-  const totalParses = parses.length;
-  const totalDamage = parses.reduce((s, p) => s + (p.total_damage || 0), 0);
-  const bestParse = parses.length > 0
-    ? parses.reduce((b, p) => (p.total_damage > b.total_damage ? p : b))
-    : null;
+  // Aggregates (parse count / total / best / newest-30 come summed from SQL)
+  const totalParses = parseSummary.count;
+  const totalDamage = parseSummary.totalDamage;
+  const bestParse = parseSummary.best;
   const totalLootSpent = loot.reduce((s, l) => s + (l.dkp || 0), 0);
 
-  // Group parses by night → boss for the activity list (top 30 most recent)
-  const recentParses = [...parses].sort(
-    (a, b) => new Date(b.encounters?.started_at || 0).getTime() - new Date(a.encounters?.started_at || 0).getTime(),
-  ).slice(0, 30);
+  // The activity list: the 30 most recent parses (already newest-first).
+  const recentParses = parseSummary.recent;
 
   const showsMainBadge = isMain(family, displayName);
   const altFamily = family.filter(m => m.name.toLowerCase() !== displayName.toLowerCase());
@@ -252,10 +249,8 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
   // THIS character's own first appearance (not the family's). Prefer its first
   // raid tick; fall back to its earliest recorded parse so alts that never tick
   // still show something.
-  const charParseStarts = parses.map(p => p.encounters?.started_at).filter(Boolean) as string[];
   const charFirstSeen: string | null =
-    attendance?.first_attended ||
-    (charParseStarts.length ? charParseStarts.reduce((a, b) => (a < b ? a : b)) : null);
+    attendance?.first_attended || parseSummary.firstStarted;
   // Filter timeline to only eras the family was actually active. "No activity"
   // pre-Classic etc. just clutters the timeline.
   const visibleTimeline = timeline.filter(e => e.raidsAttended > 0 || e.dkpSpent > 0 || e.itemsWon > 0);
@@ -346,6 +341,9 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
           <Stat label="Last raid"  value={attendance?.last_attended  ? new Date(attendance.last_attended).toLocaleDateString()  : '—'} />
         </div>
       </section>
+
+      {/* Gallery (2026-09-28): this character's pictures and clips; nothing renders without any. */}
+      <CharacterGallery name={displayName} />
 
       {/* All-character aggregate strip — only shown when there's more than one
           character. The first three stats are totals across every character;

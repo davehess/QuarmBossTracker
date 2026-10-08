@@ -27,6 +27,16 @@
   .clsPick{margin-left:auto;margin-right:30px;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;
     border-radius:3px;font-size:10px;padding:1px 4px;font-family:inherit;cursor:pointer;}
   .clsPick:focus{outline:1px solid #58a6ff}
+  /* By buff | By group switch (the guild lead, 2026-10-04: "we should be grouping people for
+     buffs ... treat that like the buff queue as well"). Its own row under the title: the title
+     row is already full at the default 330px width. The right margin keeps it clear of the ✕
+     gutter like the picker above. Selected state is the same blue as the picker's focus ring. */
+  .vsw{display:flex;gap:3px;margin:0 30px 4px 0}
+  .vbtn{background:#0d1117;color:#8b949e;border:1px solid #30363d;border-radius:3px;
+    font-size:10px;line-height:1.2;padding:1px 6px;font-family:inherit;cursor:pointer}
+  .vbtn:hover{color:#c9d1d9}
+  .vbtn:focus-visible{outline:1px solid #58a6ff}
+  .vbtn.on{background:rgba(88,166,255,0.15);border-color:#58a6ff;color:#79c0ff}
   /* Two stacked sections — buff queue on top, debuff queue below. Each section
      has its own header chip and row list. */
   .sec{margin-bottom:6px}
@@ -96,7 +106,27 @@
   .casting .who{color:#79c0ff;font-weight:600}
   .casting .sp{color:#c9d1d9}
   .casting .t{color:#6e7681;font-variant-numeric:tabular-nums}
+  /* Raid groups. A group buff lands on the CASTER'S OWN group in this era, so a line reads
+     "Haste ×4 → <caster in that group>: <spell>"; green = someone in the group can cast it,
+     orange = nobody in the group can, so single-target it or move a caster. Static colours,
+     no motion. .gline doubles as the cluster header inside a By-buff bucket. */
+  .gblk{margin:3px 0 4px}
+  .ghdr{display:flex;align-items:baseline;gap:5px;padding:2px 4px;font-size:10px;
+    background:rgba(88,166,255,0.07);border-radius:3px;margin-bottom:2px}
+  .ghdr .gl{color:#79c0ff;font-weight:600}
+  .ghdr .gct{color:#6e7681;font-variant-numeric:tabular-nums}
+  .ghdr .gme{color:#7ee787;font-size:9px}
+  .gline{font-size:9px;color:#c9d1d9;padding:0 5px 1px;line-height:1.35;text-shadow:0 1px 2px #000}
+  .gline .gl{color:#79c0ff;font-weight:600}
+  .gline .gb{color:#e6edf3;font-weight:600}
+  .gline .gcast{color:#7ee787}
+  .gline .gno{color:#ffa657}
+  .gmore{cursor:pointer;color:#6e7681;font-size:9px;padding:1px 5px}
+  .gmore:hover{color:#c9d1d9}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:6px 4px;font-style:italic}
+  /* Two or more raids at once: which one these queues are for. */
+  .raids-note{font-size:10px;color:#8b949e;padding:1px 4px 3px;text-shadow:0 1px 2px #000}
+  .raids-note .n{color:#ffa657}
   /* drag/lock/setup chrome — same pattern as the other overlays. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
   body.unlocked #drag-controls{display:flex}
@@ -133,6 +163,32 @@
   #lag-btn:hover{opacity:1;color:#fde68a;border-color:#fde68a}
   #lag-btn.active{opacity:1;color:#86efac;border-color:#86efac;
     background:rgba(34,197,94,0.12)}
+  /* ▭ Mini — option B "Two-column ledger" (the guild vote, 2026-09-17). These
+     classes only exist in the mini markup, so full mode is untouched. ✨ buffs
+     hold the left column and 🩸 cures the right, fixed, so a category is
+     always in the same place. The label row is as tall as the ✥/✕ corner
+     buttons, so no chip ever sits under one. The title row (class picker,
+     lag?) hides in mini: the picked class still filters, and changing it is
+     a full-mode job. */
+  .mledger{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 8px}
+  .mcol{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0}
+  .mlab{height:22px;line-height:22px;font-size:9px;color:#6e7681;letter-spacing:0.06em;text-transform:uppercase}
+  .mcol.mb .mlab{padding-left:22px}
+  .mchip{display:inline-flex;align-items:center;gap:4px;max-width:100%;box-sizing:border-box;padding:0 6px;
+    border:1px solid #30363d;border-radius:3px;background:rgba(255,255,255,0.04);color:#c9d1d9;
+    font-family:inherit;font-size:10px;line-height:16px;white-space:nowrap;cursor:pointer;text-shadow:0 1px 2px #000}
+  .mchip b{color:#fff}
+  .mchip.cure{border-color:rgba(248,81,73,0.5)}
+  .mchip.cure b{color:#fca5a5}
+  .mchip.on{border-color:#a371f7;background:#2a1d3d;color:#d2a8ff}
+  .mnone{color:#6e7681;font-size:10px}
+  .mexp{display:flex;flex-wrap:wrap;gap:2px 10px;margin-top:4px;padding:2px 0 2px 6px;
+    border-left:1px solid #a371f7;font-size:10px;text-shadow:0 1px 2px #000}
+  .mexp .grp{color:#6e7681;font-variant-numeric:tabular-nums}
+  /* The busiest group on a buff line ("Haste 5 · G3×3"). Rides the shared .wp-mini-num rule (never
+     shrinks) so the category name gives way first and the chip is no wider than its column. */
+  .mchip .mtop{color:#6e7681;font-variant-numeric:tabular-nums}
+  body.wp-mini #empty{padding:4px 24px}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay">✥</button>
@@ -147,7 +203,7 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title">
+    <div class="title wp-mini-hide">
       <span id="conn" class="conn bad">○</span>
       <span>🛡 Buff queue</span>
       <select id="clsPick" class="clsPick" title="The class you're buffing as. Auto follows whichever character you're logged in as; pick a class to override.">
@@ -157,6 +213,10 @@
         <option>Ranger</option><option>Beastlord</option><option>Magician</option>
       </select>
       <button id="lag-btn" style="margin-right:30px" title="Buff queue feeling stale? Click to log it AND switch to fast refresh for 60s.">lag?</button>
+    </div>
+    <div class="vsw wp-mini-hide">
+      <button id="viewBuff" type="button" class="vbtn on" title="One list per buff line, people clustered by raid group">By buff</button>
+      <button id="viewGroup" type="button" class="vbtn" title="One block per raid group: what it is missing, who in the group can cast it">By group</button>
     </div>
     <div id="body"></div>
     <div id="empty">no raid roster yet — start any Mimic in raid and the queue fills in within seconds</div>
@@ -258,6 +318,29 @@
       tick();    // refresh immediately so the user sees the new queue
     });
   }
+
+  // By buff | By group (the guild lead, 2026-10-04). A per-viewer convenience, so localStorage;
+  // absent or unreadable = By buff, which is what this overlay always was. Mini ignores it.
+  var _view = 'buff';
+  try { _view = localStorage.getItem('wp:bq:view') === 'group' ? 'group' : 'buff'; } catch (e) {}
+  var viewBtns = { buff: document.getElementById('viewBuff'), group: document.getElementById('viewGroup') };
+  function _paintView(){ Object.keys(viewBtns).forEach(function(k){ if (viewBtns[k]) viewBtns[k].classList.toggle('on', k === _view); }); }
+  function setView(v){
+    _view = v === 'group' ? 'group' : 'buff';
+    try { localStorage.setItem('wp:bq:view', _view); } catch (e) {}
+    _paintView();
+    if (_lastPayload) render(_lastPayload);   // now, not on the next poll
+  }
+  Object.keys(viewBtns).forEach(function(k){
+    var b = viewBtns[k]; if (!b) return;
+    b.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    b.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    b.addEventListener('click', function(){ setView(k); });
+  });
+  _paintView();
+  // The logged-in character, lowercase ('' = unknown), for "my group first". Learned from /api/state's
+  // activeCharacter, the way the other overlays learn it; see tick().
+  var _selfName = '', _selfAt = 0;
 
   // "Buffs feel laggy" button. POST to local agent → drops the agent's
   // BUFF_QUEUE_TTL into 500ms-snappy mode for 60s AND forwards the click to
@@ -472,6 +555,97 @@
     var o = {}; for (var k in r) o[k] = r[k]; o.curses = vis; return o;
   }
 
+  // ── Raid groups (the guild lead, 2026-10-04: "we should be grouping people for buffs ... treat
+  // that like the buff queue as well"). In this era a GROUP buff lands on the CASTER'S OWN group, so
+  // the useful call-out is per group: who is missing a line, and who IN that group can cast it.
+  // payload.groups comes from the bot (raid mode, a bot new enough to send it). An older bot sends
+  // none, and the groups are derived from the queue rows instead: no casters, and no claim about them.
+  // A raid group is 1-12; the roster's "no group" value is unverified, so null/0/negative/>12 all read
+  // as ungrouped. Everything here is pure (the page's own state comes in as arguments) so a poll that
+  // changed nothing renders the same bytes.
+  function _grpNum(g){
+    var n = (g == null || g === '') ? NaN : Number(g);
+    return (n >= 1 && n <= 12 && n === Math.floor(n)) ? n : null;
+  }
+  function _grpLabel(g){ return g == null ? 'ungrouped' : 'G' + g; }
+  // The buffer's own group first, then by number, ungrouped last.
+  function _grpCmp(a, b, mine){
+    var ra = a == null ? 2 : (a === mine ? 0 : 1), rb = b == null ? 2 : (b === mine ? 0 : 1);
+    return (ra - rb) || ((a || 0) - (b || 0));
+  }
+  // The busiest numbered group among rows, for the mini chip ("Haste 5 · G3×3"); a tie goes to the
+  // lower group. Ungrouped rows do not count.
+  function _topGroup(rows){
+    var n = {}, best = null;
+    for (var i = 0; i < rows.length; i++) { var g = _grpNum(rows[i].group); if (g != null) n[g] = (n[g] || 0) + 1; }
+    for (var k in n) {
+      var g2 = Number(k);
+      if (best == null || n[k] > best.n || (n[k] === best.n && g2 < best.group)) best = { group: g2, n: n[k] };
+    }
+    return best;
+  }
+  // Which class group-casts a line, mirrored from the bot's GROUP_SPELLS for the "no enchanter in G3"
+  // text (a caster-less line carries no class of its own). Keys are the bot's line keys.
+  var _GRP_CLS = { 'hp:A': 'cleric', 'hp:B': 'cleric', 'hp:C': 'shaman/paladin', haste: 'enchanter', manaRegen: 'enchanter',
+                   runSpeed: 'druid/shaman', attack: 'ranger', ds: 'druid/magician', resists: 'druid/enchanter' };
+  var _SEV = { red: 0, orange: 1, yellow: 2 };
+  // A groups member carries name/class/missing/inferred; the queue row of the same raider adds the
+  // severity tier, range flag and in-flight casts that renderRow draws.
+  function _withQueueFields(m, q){
+    var o = {}; for (var k in m) o[k] = m[k];
+    if (q) { o.tier = q.tier; o.out_of_range = q.out_of_range; o.casting = q.casting; }
+    return o;
+  }
+  // → { blocks: [{ group, size, rows, lines }], mine, derived }. `size` is the group's head count
+  // (bot) or the people in the queue (derived); `rows` the people to draw; `lines` one per missing
+  // buff line ({ key, label, missing: [names], casters: [{ name, class, spell }] } — no `casters`
+  // when derived). `self` is the lowercase logged-in character or ''; `mine` is its group, or null.
+  function _groupsFor(payload, self){
+    var bq = (payload && payload.buff_queue) || [];
+    var src = (payload && Array.isArray(payload.groups) && payload.groups.length) ? payload.groups : null;
+    var blocks = [], mine = null, i, j;
+    if (src) {
+      // The bot names the requester's group itself (`self_group`, bot 3.1.195+); the name match below is
+      // the fallback when it is missing.
+      if (payload.self_group != null) mine = _grpNum(payload.self_group);
+      var byName = {};
+      for (i = 0; i < bq.length; i++) if (bq[i] && bq[i].name) byName[String(bq[i].name).toLowerCase()] = bq[i];
+      for (i = 0; i < src.length; i++) {
+        var g = src[i]; if (!g) continue;
+        var gn = _grpNum(g.group), mem = g.members || [], rows = [];
+        for (j = 0; j < mem.length; j++) {
+          var m = mem[j]; if (!m || !m.name) continue;
+          if (mine == null && self && String(m.name).toLowerCase() === self) mine = gn;
+          if (m.missing && m.missing.length) rows.push(_withQueueFields(m, byName[String(m.name).toLowerCase()]));
+        }
+        rows.sort(function(a, b){ var x = _SEV[a.tier], y = _SEV[b.tier]; return (x == null ? 3 : x) - (y == null ? 3 : y); });
+        var lines = g.lines || [];
+        if (!rows.length && !lines.length) continue;       // nothing missing in this group
+        blocks.push({ group: gn, size: mem.length, rows: rows, lines: lines });
+      }
+    } else {
+      var ix = {}, lix = {};
+      for (i = 0; i < bq.length; i++) {
+        var r = bq[i]; if (!r || !r.name) continue;
+        var rg = _grpNum(r.group), bk = rg == null ? 'n' : rg;
+        var b = ix[bk];
+        if (!b) { b = ix[bk] = { group: rg, size: 0, rows: [], lines: [] }; blocks.push(b); }
+        b.size++; b.rows.push(r);
+        if (self && String(r.name).toLowerCase() === self) mine = rg;
+        var labels = (r.missing && r.missing.length) ? r.missing : ['Other'];
+        for (j = 0; j < labels.length; j++) {
+          var lk = bk + '|' + labels[j];
+          var ln = lix[lk];
+          if (!ln) { ln = lix[lk] = { label: labels[j], missing: [] }; b.lines.push(ln); }
+          ln.missing.push(r.name);
+        }
+      }
+      blocks.forEach(function(blk){ blk.lines.sort(function(a, b){ return b.missing.length - a.missing.length; }); });
+    }
+    blocks.sort(function(a, b){ return _grpCmp(a.group, b.group, mine); });
+    return { blocks: blocks, mine: mine, derived: !src };
+  }
+
   function renderRow(r, kind){
     var groupLbl = r.group != null ? ('G' + r.group) : '';
     var cls = kind === 'd' ? 'd' : kind === 'burst' ? 'burst' : tierClass(r.tier);
@@ -523,7 +697,7 @@
       }
       line += '<span class="curse">'+chips+'</span>';
     } else if (kind === 'burst') {
-      // Already carrying the burst buff → countdown instead of damage (Hitya
+      // Already carrying the burst buff → countdown instead of damage (the guild lead
       // 2026-08-19: "should have timers left on feral avatar targets") so the
       // shaman/BL times the recast instead of the row vanishing.
       if (r.carrying) {
@@ -544,6 +718,75 @@
     line += castingRow(r.casting);
     return line;
   }
+  // The "who can cast it" tail of a group line: "→ Corvale: Vallon's Quickening" when someone IN the
+  // group can group-cast it; with `warn`, "→ no enchanter in G3" when nobody can (the line then has to
+  // be single-targeted, or someone moved). Nothing when the bot sent no casters (derived), for the
+  // ungrouped (no group to cast into) or for a line whose class we do not know.
+  function _calloutHtml(ln, grp, warn){
+    if (!ln || grp == null || !Array.isArray(ln.casters)) return '';
+    if (ln.casters.length) {
+      var bits = ln.casters.slice(0, 2).map(function(c){ return esc(c.name) + (c.spell ? ': ' + esc(c.spell) : ''); });
+      return ' <span class="gcast">→ ' + bits.join(' · ') + (ln.casters.length > 2 ? ' +' + (ln.casters.length - 2) : '') + '</span>';
+    }
+    // Prefer the bot's own `classes` for the line (bot 3.1.195+); the local map is the fallback for older bots.
+    var cls = warn ? ((Array.isArray(ln.classes) && ln.classes.length) ? ln.classes.join('/') : _GRP_CLS[ln.key]) : null;
+    return cls ? ' <span class="gno">→ no ' + esc(cls) + ' in ' + esc(_grpLabel(grp)) + '</span>' : '';
+  }
+  function _lineFor(G, group, label){
+    var want = String(label).toLowerCase();
+    for (var i = 0; i < G.blocks.length; i++) {
+      if (G.blocks[i].group !== group) continue;
+      var ls = G.blocks[i].lines;
+      for (var j = 0; j < ls.length; j++) if (String(ls[j].label).toLowerCase() === want) return ls[j];
+    }
+    return null;
+  }
+  // The rows inside ONE open By-buff bucket, clustered by raid group: a "G3 ×4 → Corvale: Vallon's
+  // Quickening" line, then that group's rows (the rows keep their class, tier colour, in-flight casts
+  // and range dimming, so a cleric still sees someone is already casting on a target). When no row has
+  // a group at all (a party, no raid roster) it is the plain list, as it always was.
+  function bucketRowsHtml(label, rows, G){
+    var cl = [], ix = {}, any = false, i, h = '';
+    for (i = 0; i < rows.length; i++) {
+      var g = _grpNum(rows[i].group), k = g == null ? 'n' : g;
+      if (!ix[k]) { ix[k] = { group: g, rows: [] }; cl.push(ix[k]); }
+      ix[k].rows.push(rows[i]);
+      if (g != null) any = true;
+    }
+    if (!any) { for (i = 0; i < rows.length; i++) h += renderRow(rows[i], 'b'); return h; }
+    cl.sort(function(a, b){ return _grpCmp(a.group, b.group, G.mine); });
+    for (i = 0; i < cl.length; i++) {
+      var c = cl[i];
+      h += '<div class="gline"><span class="gl">' + esc(_grpLabel(c.group)) + '</span> <span class="gb">×' + c.rows.length + '</span>'
+         + _calloutHtml(_lineFor(G, c.group, label), c.group, false) + '</div>';
+      for (var ri = 0; ri < c.rows.length; ri++) h += renderRow(c.rows[ri], 'b');
+    }
+    return h;
+  }
+  // The By-group view: one compact block per raid group. Header "G3 6" (head count), one line per
+  // missing buff line, then the people with their gaps — the first GRP_ROWS, the rest behind a
+  // "+N more" toggle that persists in the same wp:bq:collapsed store as the By-buff buckets (keys
+  // "grp:<n>", which no buff label can collide with; collapsed unless explicitly false).
+  var GRP_ROWS = 3;
+  function groupBlocksHtml(G){
+    var h = '';
+    for (var bi = 0; bi < G.blocks.length; bi++) {
+      var b = G.blocks[bi], key = 'grp:' + (b.group == null ? 'none' : b.group);
+      h += '<div class="gblk"><div class="ghdr"><span class="gl">' + esc(_grpLabel(b.group)) + '</span><span class="gct">' + b.size + '</span>'
+         + (G.mine != null && b.group === G.mine ? '<span class="gme">you</span>' : '') + '</div>';
+      for (var li = 0; li < b.lines.length; li++) {
+        var ln = b.lines[li];
+        h += '<div class="gline"><span class="gb">' + esc(ln.label) + ' ×' + (ln.missing || []).length + '</span>' + _calloutHtml(ln, b.group, true) + '</div>';
+      }
+      var open = _collapsed[key] === false;
+      var show = open ? b.rows : b.rows.slice(0, GRP_ROWS);
+      for (var ri = 0; ri < show.length; ri++) h += renderRow(show[ri], 'b');
+      // data-wp-interact: a <div> is not a control to the preload's hover handshake (see .cathdr below).
+      if (b.rows.length > GRP_ROWS) h += '<div class="gmore" data-wp-interact data-cat="' + key + '">' + (open ? '▾ fewer' : '▸ +' + (b.rows.length - GRP_ROWS) + ' more') + '</div>';
+      h += '</div>';
+    }
+    return h;
+  }
   // Build the queue sections HTML from a payload. Split out from render() so the
   // surgical-dismiss handler (#67) can recompute the byte-stability cache without
   // touching the DOM. Dismissed debuff chips are suppressed here.
@@ -554,7 +797,7 @@
     // section header so the bot can pick the right ability name.
     var burst = (payload && (payload.feral_queue || payload.savagery_queue)) || [];
     var burstLabel = (payload && payload.burst_label) || null;
-    // Section filters from the dashboard's "Buff queue options" card (Hitya
+    // Section filters from the dashboard's "Buff queue options" card (the guild lead
     // 2026-08-19: "debuff / feral only"). Absent field = show (older agent).
     var sec = (payload && payload.sections) || {};
     var html = '';
@@ -573,7 +816,16 @@
       for (var di = 0; di < dqVis.length; di++) html += renderRow(dqVis[di], 'd');
       html += '</div>';
     }
-    if (sec.buffs !== false && bq.length) {
+    // By group (the guild lead, 2026-10-04): the same queue, one block per raid group. The By-buff
+    // path below is the original, unchanged except for the group clusters in an open bucket.
+    var gview = _view === 'group';
+    var G = sec.buffs !== false ? _groupsFor(payload, _selfName) : null;
+    if (sec.buffs !== false && gview && G.blocks.length) {
+      var gPeople = 0;
+      for (var gi = 0; gi < G.blocks.length; gi++) gPeople += G.blocks[gi].rows.length;
+      html += '<div class="sec buffs"><div class="hdr"><span class="lab">🛡 Buff queue</span><span class="ct">'+gPeople+'</span><span class="hint">by group · caster = someone in that group</span></div>'
+            + groupBlocksHtml(G) + '</div>';
+    } else if (sec.buffs !== false && !gview && bq.length) {
       var hint = bufferClass ? ('severity-first · gaps a '+esc(bufferClass)+' can fix') : 'pick a class to filter';
       html += '<div class="sec buffs"><div class="hdr"><span class="lab">🛡 Buff queue</span><span class="ct">'+bq.length+'</span><span class="hint">'+hint+'</span></div>';
       // Group by buff line: a raider missing two categories appears under
@@ -594,7 +846,7 @@
       for (var ci = 0; ci < catOrder.length; ci++) {
         var label = catOrder[ci];
         var rowsC = byCat[label];
-        // Collapsed by DEFAULT (Hitya 2026-08-19: "buff queue is off the page
+        // Collapsed by DEFAULT (the guild lead, 2026-08-19: "buff queue is off the page
         // - needs to collapse buff types down groups"): a mid-raid queue with
         // every section expanded is a wall. Absent = collapsed; an explicit
         // false (the user expanded it) persists their choice.
@@ -607,17 +859,19 @@
           if (rowsC.length > 3) nms += ' +' + (rowsC.length - 3);
           preview = '<span style="color:#8b949e;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px">'+esc(nms)+'</span>';
         }
+        // data-wp-interact: a header is a <div>, which the preload's hover
+        // handshake did not count as a control, so on a locked overlay the
+        // click went to EQ and the cursor stayed hidden behind the panel
+        // (the guild lead, 2026-10-02: "can't click it").
         html += '<div class="cat">'
-              +   '<div class="cathdr" data-cat="'+esc(label)+'" style="display:flex;align-items:baseline;gap:5px;cursor:pointer;padding:2px 4px;font-size:10px;color:#79c0ff;background:rgba(88,166,255,0.07);border-radius:3px;margin:3px 0 2px">'
+              +   '<div class="cathdr" data-wp-interact data-cat="'+esc(label)+'" style="display:flex;align-items:baseline;gap:5px;cursor:pointer;padding:2px 4px;font-size:10px;color:#79c0ff;background:rgba(88,166,255,0.07);border-radius:3px;margin:3px 0 2px">'
               +     '<span style="font-size:9px">'+(isCollapsed ? '▸' : '▾')+'</span>'
               +     '<span style="font-weight:600">'+esc(label)+'</span>'
               +     '<span style="color:#6e7681;font-variant-numeric:tabular-nums">'+rowsC.length+'</span>'
               +     preview
               +     (mem ? '<span style="margin-left:auto;color:#7ee787;font-size:9px" title="You cast '+esc(mem)+' this session — likely still on a gem">🔮 '+esc(mem)+'</span>' : '')
               +   '</div>';
-        if (!isCollapsed) {
-          for (var ri = 0; ri < rowsC.length; ri++) html += renderRow(rowsC[ri], 'b');
-        }
+        if (!isCollapsed) html += bucketRowsHtml(label, rowsC, G);
         html += '</div>';
       }
       html += '</div>';
@@ -626,6 +880,76 @@
       html += '<div class="sec burst"><div class="hdr"><span class="lab">⚡ '+esc(burstLabel)+' queue</span><span class="ct">'+burst.length+'</span><span class="hint">damage descending · tonight\'s session</span></div>';
       for (var i = 0; i < burst.length; i++) html += renderRow(burst[i], 'burst');
       html += '</div>';
+    }
+    return html;
+  }
+  // ▭ Mini — option B "Two-column ledger" (the guild vote, 2026-09-17: "Too
+  // much information to minimize. Instead show how many characters need each
+  // buff type or cure; click a category to expand who needs it and which
+  // group they are in"). Same payload as buildHtml, after the same #67
+  // dismissals and section filters. Counts are CHARACTERS: two poisons on one
+  // raider is one Poison; a raider missing Haste and HP counts once in each.
+  // Buff categories keep the queue's own order (first appearance, as the full
+  // view's sections do) and an empty `missing` is Other, as it is there. Cures
+  // take the bot's priority, curse → blind → poison → disease; a cure the bot
+  // did not name (older bots send none) is Other, last.
+  var _miniOpen = null;      // 'b:<category>' | 'c:<cure>' — one open at a time
+  var MINI_CURES = ['curse', 'blind', 'poison', 'disease'];
+  function miniToggle(key){ _miniOpen = (_miniOpen === key) ? null : key; }
+  function miniLedger(payload){
+    var bq = (payload && payload.buff_queue) || [];
+    var dq = (payload && payload.debuff_queue) || [];
+    var sec = (payload && payload.sections) || {};
+    var buffs = [], cures = [], byKey = {};
+    function add(list, key, label, r){
+      var c = byKey[key];
+      if (!c) { c = byKey[key] = { key: key, label: label, who: [], seen: {} }; list.push(c); }
+      var id = String(r.name).toLowerCase();
+      if (!c.seen[id]) { c.seen[id] = true; c.who.push(r); }
+    }
+    if (sec.buffs !== false) {
+      for (var i = 0; i < bq.length; i++) {
+        var labels = (bq[i].missing && bq[i].missing.length) ? bq[i].missing : ['Other'];
+        for (var j = 0; j < labels.length; j++) add(buffs, 'b:' + labels[j], labels[j], bq[i]);
+      }
+    }
+    // The busiest group per buff line (the guild lead, 2026-10-04); cures have no group story.
+    for (var t = 0; t < buffs.length; t++) buffs[t].top = _topGroup(buffs[t].who);
+    if (sec.debuffs !== false) {
+      for (var k = 0; k < dq.length; k++) {
+        var rv = _rowVisibleCurses(dq[k]);
+        var cs = rv.curses || [];
+        for (var m = 0; m < cs.length; m++) {
+          var fam = MINI_CURES.indexOf(cs[m].cure) >= 0 ? cs[m].cure : 'other';
+          add(cures, 'c:' + fam, fam.charAt(0).toUpperCase() + fam.slice(1), rv);
+        }
+      }
+      var cureRank = function(c){ var n = MINI_CURES.indexOf(c.key.slice(2)); return n < 0 ? 99 : n; };
+      cures.sort(function(a, b){ return cureRank(a) - cureRank(b); });
+    }
+    return { buffs: buffs, cures: cures };
+  }
+  function buildMiniHtml(payload){
+    var L = miniLedger(payload);
+    if (!L.buffs.length && !L.cures.length) return '';
+    var open = null;
+    function col(cls, lab, list, cure){
+      var h = '<div class="mcol ' + cls + '"><div class="mlab">' + lab + '</div>';
+      if (!list.length) h += '<span class="mnone">—</span>';
+      for (var i = 0; i < list.length; i++) {
+        var c = list[i], on = c.key === _miniOpen;
+        if (on) open = c;
+        h += '<button type="button" class="mchip' + (cure ? ' cure' : '') + (on ? ' on' : '') + '" data-mcat="' + esc(c.key) + '">'
+           +   '<span class="wp-mini-name">' + esc(c.label) + '</span> <b class="wp-mini-num">' + c.who.length + '</b>'
+           +   (c.top ? ' <span class="wp-mini-num mtop">· G' + c.top.group + '×' + c.top.n + '</span>' : '') + '</button>';
+      }
+      return h + '</div>';
+    }
+    var html = '<div class="mledger">' + col('mb', '✨ buff', L.buffs, false) + col('mc', '🩸 cure', L.cures, true) + '</div>';
+    if (open) {
+      html += '<div class="mexp">' + open.who.map(function(r){
+        return '<span>' + esc(r.name) + (r.group != null ? ' <span class="grp">G' + esc(r.group) + '</span>' : '') + '</span>';
+      }).join('') + '</div>';
     }
     return html;
   }
@@ -642,13 +966,24 @@
     // Forget dismissed chips the server no longer reports (so a re-land re-shows)
     // before deciding what's visible.
     reconcileDismissed(dq);
-    var html = buildHtml(payload);
+    var html = document.body.classList.contains('wp-mini') ? buildMiniHtml(payload) : buildHtml(payload);
+    // Two or more raids at once (the bot names them only then): the queues are your raid's; say
+    // whose. Not in mini mode, which has no room for it.
+    var raids = (payload && Array.isArray(payload.raids) && payload.raids.length > 1) ? payload.raids : null;
+    if (html && raids && !document.body.classList.contains('wp-mini')) {
+      var mine = null;
+      for (var ri = 0; ri < raids.length; ri++) if (raids[ri] && raids[ri].mine) mine = raids[ri];
+      html = '<div class="raids-note"><span class="n">⚔ ' + esc(raids.length) + ' raids at once</span>'
+           + (mine ? ' · yours: 👑 ' + esc(mine.leader) + ' (' + esc(mine.size) + ')' : '') + '</div>' + html;
+    }
     if (!html) {
       // Nothing to show — either no roster or everything is covered/dismissed.
       if (body.__wpHtml !== '') { body.innerHTML = ''; body.__wpHtml = ''; _autoFit(); }
       empty.style.display = '';
       var noun = groupMode ? 'group' : 'raid';
-      empty.textContent = bufferClass
+      empty.textContent = (payload && payload.local_only)
+        ? 'guild feature: it needs your raid\'s Mimics, so sign in to use it'
+        : bufferClass
         ? ('no gaps a '+bufferClass+' can fix right now — every '+(groupMode ? 'tracked groupmate' : 'Mimic-running raider')+' is covered')
         : ('no '+noun+' roster yet — start any Mimic in '+noun+' and the queue fills in within seconds');
       return;
@@ -668,7 +1003,8 @@
   // toggle is instant instead of waiting for the next tick.
   var _lastPayload = null;
   document.getElementById('body').addEventListener('click', function(ev){
-    var hdr = ev.target && ev.target.closest ? ev.target.closest('.cathdr') : null;
+    // .gmore is the By-group block's "+N more" toggle; it keeps its own data-cat ("grp:<n>").
+    var hdr = ev.target && ev.target.closest ? ev.target.closest('.cathdr, .gmore') : null;
     if (!hdr) return;
     var label = hdr.getAttribute('data-cat');
     if (!label) return;
@@ -679,12 +1015,49 @@
     _saveCollapsed();
     if (_lastPayload) render(_lastPayload);
   });
+  // ▭ Mini chips: a click opens that category's names, or closes it if it is
+  // the one open. The open key lives in _miniOpen, not the DOM, so each
+  // repaint rebuilds it. Chips are rebuilt as counts move, so the hover
+  // handshake is delegated, as the ✓ cured button's is.
+  (function(){
+    var bodyEl = document.getElementById('body');
+    bodyEl.addEventListener('click', function(ev){
+      var chip = ev.target && ev.target.closest ? ev.target.closest('.mchip') : null;
+      if (!chip) return;
+      miniToggle(chip.getAttribute('data-mcat'));
+      if (_lastPayload) render(_lastPayload);
+    });
+    function hover(e, on){
+      var chip = e.target && e.target.closest ? e.target.closest('.mchip') : null;
+      // Crossing between a chip and its own label or count is not leaving it.
+      if (!chip || (e.relatedTarget && chip.contains(e.relatedTarget))) return;
+      try { window.mimic.overlayHoverInteractive(on); } catch (er) {}
+    }
+    bodyEl.addEventListener('mouseover', function(e){ hover(e, true); });
+    bodyEl.addEventListener('mouseout', function(e){ hover(e, false); });
+  })();
+  // A mini flip repaints from the last payload now, not on the next poll.
+  // render() fits when the HTML changes; the explicit fit covers a flip that
+  // changes only the hidden title (an empty queue).
+  window.addEventListener('wp-mini-change', function(){ if (_lastPayload) render(_lastPayload); _autoFit(); });
 
+  // Who "I" am, for "my group first": /api/state names the active EQ character, the way the other
+  // overlays learn it. It is the agent's whole state, so only when the bot sent groups (there is
+  // nothing to order otherwise) and at most every ~6s; a failed read keeps the last name.
+  async function _refreshSelf(){
+    _selfAt = Date.now();
+    try {
+      var r = await fetch('http://127.0.0.1:'+PORT+'/api/state', { cache: 'no-store' });
+      var st = await r.json();
+      _selfName = (st && st.activeCharacter) ? String(st.activeCharacter).toLowerCase() : '';
+    } catch (e) {}
+  }
   async function tick(){
     try {
       var qs = bufferClass ? '?class=' + encodeURIComponent(bufferClass) : '';
       var r = await fetch('http://127.0.0.1:'+PORT+'/api/buff-queue'+qs, { cache: 'no-store' });
       var s = await r.json();
+      if (s && Array.isArray(s.groups) && s.self_group == null && Date.now() - _selfAt > 6000) await _refreshSelf();
       document.getElementById('conn').className = 'conn ok';
       document.getElementById('conn').textContent = '●';
       // Auto mode: show which class it resolved to ("Auto (Druid)") so the

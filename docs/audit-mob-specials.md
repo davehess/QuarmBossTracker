@@ -81,7 +81,7 @@ names, **1,457** same-name clusters (size > 1).
 
 The overlay's live path normalizes a target name and looks it up. Today that's
 one row via `&limit=1` — which is why a placeholder or wrong variant wins. The
-correct rule, per Hitya (2026-07-25): *"display the higher-level version, the one
+correct rule, per the guild lead (2026-07-25): *"display the higher-level version, the one
 with more variants, as the warning; the placeholders that had almost none were
 wrong and are not a good warning."*
 

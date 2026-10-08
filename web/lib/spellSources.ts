@@ -1,5 +1,5 @@
 // web/lib/spellSources.ts — grouping behind the spellbook "where from"
-// dropdowns and the zone-by-zone shopping list (Hitya 2026-08-18: "say where
+// dropdowns and the zone-by-zone shopping list (the guild lead, 2026-08-18: "say where
 // it's from in a dropdown … then a shopping list mode where you can go zone
 // by zone for ones that are only in a certain place").
 //
@@ -48,11 +48,36 @@ export function groupSources(rows: SourceRow[]): Map<number, ItemSources> {
   return byItem;
 }
 
+// Where a vendor stands, per zone: npc id → zone_short → { y, x }, from the
+// spawnentry → spawn2 join. Drives the 📍 /map Y X copy (the guild lead,
+// 2026-09-28). One point per NPC per zone, lowest spawn2 id first.
+export type VendorSpots = Record<number, Record<string, { y: number; x: number }>>;
+
+export function vendorSpots(
+  entries: { npc_id: number; spawngroup_id: number }[],
+  points: { id: number; spawngroup_id: number; zone_short: string | null; x: number; y: number }[],
+): VendorSpots {
+  const npcsByGroup = new Map<number, number[]>();
+  for (const e of entries) npcsByGroup.set(e.spawngroup_id, [...(npcsByGroup.get(e.spawngroup_id) ?? []), e.npc_id]);
+  const out: VendorSpots = {};
+  for (const p of [...points].sort((a, b) => a.id - b.id)) {
+    if (!p.zone_short) continue;
+    for (const npc of npcsByGroup.get(p.spawngroup_id) ?? []) {
+      const byZone = (out[npc] ??= {});
+      byZone[p.zone_short] ??= { y: Math.round(p.y), x: Math.round(p.x) };
+    }
+  }
+  return out;
+}
+
+// /loc prints Y first, and Zeal's /map takes it in the same order.
+export const spotCommand = (s: { y: number; x: number }) => `/map ${s.y} ${s.x}`;
+
 export type ShoppingSpell = {
   spellName: string;
   level: number | null;
   pop: boolean;
-  vendors: string[];        // vendor names IN THIS ZONE
+  vendors: { npcId: number | null; name: string }[];  // vendors IN THIS ZONE
   onlyHere: boolean;        // this zone is the spell's only vendor zone
   heldBy: string[];
 };
@@ -94,7 +119,7 @@ export function shoppingList(missing: MissingForShopping[], sources: Map<number,
         spellName: m.spell_name,
         level: m.scribe_level,
         pop: m.pop,
-        vendors: merchants.filter(v => v.zones.some(z => z.short === short)).map(v => v.name),
+        vendors: merchants.filter(v => v.zones.some(z => z.short === short)).map(v => ({ npcId: v.npcId, name: v.name })),
         onlyHere,
         heldBy: m.held_by,
       });

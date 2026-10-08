@@ -1,6 +1,6 @@
 -- Per-character loot lockouts, and whether they came from one of OUR kills.
 --
--- Hitya 2026-08-21: "several raiders have spent time with Breakfast Club doing
+-- The guild lead 2026-08-21: "several raiders have spent time with Breakfast Club doing
 -- raids on alts. we need to remain vigilant about these not being included, but
 -- also capture loot lockouts for raid mobs when they don't occur with our
 -- guild — put those into another admin section."

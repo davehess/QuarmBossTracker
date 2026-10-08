@@ -2,21 +2,25 @@
 //
 //  1. FOREIGN RAIDS — a Wolf Pack member pugging ANOTHER guild's raid uploads
 //     the fight via their agent, so it lands on our parses even though almost
-//     no one in it is a Pack member (Hitya 2026-06-29: "Ikibob attended a
+//     no one in it is a Pack member (the guild lead, 2026-06-29: "a member attended a
 //     morning Kael raid with a different guild and it all showed up").
 //     Encounters with <1/3 roster members (10+ raid) are already auto-hidden
 //     from /parses; this page surfaces the whole majority-non-member band so an
 //     officer can Mark Non-Guild (permanent) or Clear (it really was ours).
 //
-//  2. DOUBLE-BOXING — one person's two characters BOTH dealing damage in the
-//     same fight (both actively swinging, not one parked). Surfaced for review;
-//     not auto-actioned.
+//  2. ONE MEMBER, TWO CHARACTERS — both dealing damage in the same fight (both
+//     actively swinging, not one parked). Surfaced for review; not auto-actioned.
+//     ⚠ Describe this only as characters. Keep the naming literal.
 //
-// Auth + officer gate handled by /admin/layout.tsx.
+// Officer-only: requireOfficer() first, like every admin page.
 import { supabaseAdmin } from '@/lib/supabase';
+import { requireOfficer } from '@/lib/officer';
 import { userTz } from '@/lib/timezone';
 import { fmtTime, dayKey, dayLabel, fmtDmg, cleanBossName } from '@/lib/format';
 import { classifyEncounter, clearClassification } from '@/app/parses/actions';
+import { curatedNpcIds } from '@/lib/bossFilter';
+import { loadAnomalyWindow, loadOffHoursEncounters, loadPlayersForEncounters } from '@/lib/adminReads';
+import { GUILD_TAG } from '@/lib/guild';
 import {
   guildShare, isReviewForeign, startedInRaidWindow, OFFHOURS_MIN_PLAYERS,
   REVIEW_FOREIGN_MAX_MEMBER_FRAC, AUTO_FOREIGN_MAX_MEMBER_FRAC, AUTO_FOREIGN_MIN_PLAYERS,
@@ -36,9 +40,8 @@ type Enc = {
 type CharRow = { name: string; discord_id: string | null; main_name: string | null };
 
 const LOOKBACK_DAYS = 21;
-const ROW_LIMIT = 500;
 
-// Family key for boxing: discord_id wins (the strongest "same person" signal),
+// Family key for grouping a member's characters: discord_id wins (the strongest "same person" signal),
 // else the main-name chain, else the name itself. Lowercased.
 function buildFamilyKey(chars: CharRow[]): Map<string, string> {
   const keyOf = new Map<string, string>();
@@ -51,22 +54,18 @@ function buildFamilyKey(chars: CharRow[]): Map<string, string> {
   return keyOf;
 }
 
-async function load() {
+async function load(curated: number[]) {
   const sb = supabaseAdmin();
   const sinceIso = new Date(Date.now() - LOOKBACK_DAYS * 86400 * 1000).toISOString();
-  const [{ data: encs }, { data: chars }] = await Promise.all([
-    sb.from('encounters')
-      .select(`id, started_at, classification, total_damage,
-               eqemu_npc_types ( name ),
-               encounter_players ( character_name, total_damage )`)
-      .gt('total_damage', 0)
-      .gte('started_at', sinceIso)
-      .order('started_at', { ascending: false })
-      .limit(ROW_LIMIT),
-    sb.from('characters').select('name, discord_id, main_name').eq('guild_id', 'wolfpack'),
+  // Curated bosses only, then paged. The old window was the newest 500 of EVERY encounter —
+  // 14,516 rows in 21 days, 97% farm trash — so it covered about 20 hours, not 21 days, and the
+  // limit sat under PostgREST's 1,000-row response cap besides. 114 curated kills are in the window.
+  const [encs, { data: chars }] = await Promise.all([
+    loadAnomalyWindow<Enc>(sb, sinceIso, curated),
+    sb.from('characters').select('name, discord_id, main_name').eq('guild_id', GUILD_TAG),
   ]);
   return {
-    encs: (encs as unknown as Enc[]) ?? [],
+    encs,
     chars: (chars as CharRow[]) ?? [],
   };
 }
@@ -77,6 +76,8 @@ async function load() {
 // queries instead of one fat one — the encounter list carries no players (that
 // join is what makes the main query heavy), and players are fetched only for
 // the handful that actually fall outside the window.
+// Curated bosses only (see load()): 949 kills since April against 24,921 rows of everything,
+// which the old `.limit(4000)` read as the newest 1,000.
 const OFFHOURS_SINCE = '2026-04-01T00:00:00Z';
 const OFFHOURS_MAX = 150;
 
@@ -85,15 +86,9 @@ type OffEnc = {
   npc_id: number | null; eqemu_npc_types: { name: string } | null;
 };
 
-async function loadOffHours() {
+async function loadOffHours(curated: number[]) {
   const sb = supabaseAdmin();
-  const { data: all } = await sb.from('encounters')
-    .select('id, started_at, classification, npc_id, eqemu_npc_types ( name )')
-    .gt('total_damage', 0)
-    .gte('started_at', OFFHOURS_SINCE)
-    .order('started_at', { ascending: false })
-    .limit(4000);
-  const encs = (all as unknown as OffEnc[]) ?? [];
+  const encs = await loadOffHoursEncounters<OffEnc>(sb, OFFHOURS_SINCE, curated);
 
   // Which mobs do we kill ON raid nights? A boss with a raid-night history that
   // turns up at 09:00 Saturday is the pug case; a boss the guild also clears
@@ -107,23 +102,22 @@ async function loadOffHours() {
   const outside = encs.filter(e => !startedInRaidWindow(e.started_at));
   const ids = outside.slice(0, OFFHOURS_MAX * 3).map(e => e.id);
   const players = new Map<string, EncPlayer[]>();
-  // Chunked: a very long `in` list is what turns a fast query into a timeout.
-  for (let i = 0; i < ids.length; i += 60) {
-    const { data } = await sb.from('encounter_players')
-      .select('encounter_id, character_name, total_damage')
-      .in('encounter_id', ids.slice(i, i + 60));
-    for (const r of (data ?? []) as { encounter_id: string; character_name: string; total_damage: number }[]) {
-      const arr = players.get(r.encounter_id) ?? [];
-      arr.push({ character_name: r.character_name, total_damage: r.total_damage });
-      players.set(r.encounter_id, arr);
-    }
+  // Chunked: a very long `in` list is what turns a fast query into a timeout. And each chunk is
+  // itself paged — 60 boss kills is 1,200-3,000 player rows, so an unpaged chunk came back at
+  // 1,000 and the roster share of the later kills was computed from a fraction of their players.
+  for (const r of await loadPlayersForEncounters(sb, ids)) {
+    const arr = players.get(r.encounter_id) ?? [];
+    arr.push({ character_name: r.character_name, total_damage: r.total_damage });
+    players.set(r.encounter_id, arr);
   }
   return { outside, players, inWindowByNpc };
 }
 
 export default async function AnomaliesPage() {
-  const { encs, chars } = await load();
-  const off = await loadOffHours();
+  await requireOfficer();
+  const curated = await curatedNpcIds(supabaseAdmin());
+  const { encs, chars } = await load(curated);
+  const off = await loadOffHours(curated);
   const tz = await userTz();
   const roster = new Set<string>(chars.map(c => (c.name || '').toLowerCase()).filter(Boolean));
   const familyKey = buildFamilyKey(chars);
@@ -163,9 +157,9 @@ export default async function AnomaliesPage() {
     .slice(0, OFFHOURS_MAX);
   const offPending = offHours.filter(x => !x.e.classification).length;
 
-  // ── Double-boxing — a family with 2+ characters both dealing damage ─────────
-  type BoxHit = { e: Enc; family: string; chars: { name: string; dmg: number }[] };
-  const boxing: BoxHit[] = [];
+  // ── One member, 2+ characters both dealing damage in one fight ─────────────
+  type MultiCharHit = { e: Enc; family: string; chars: { name: string; dmg: number }[] };
+  const multiChar: MultiCharHit[] = [];
   for (const e of encs) {
     const byFam = new Map<string, { name: string; dmg: number }[]>();
     for (const p of (e.encounter_players ?? [])) {
@@ -179,12 +173,12 @@ export default async function AnomaliesPage() {
     }
     for (const [k, arr] of byFam) {
       if (arr.length >= 2) {
-        boxing.push({ e, family: familyDisplay.get(k) || arr[0].name, chars: arr.sort((a, b) => b.dmg - a.dmg) });
+        multiChar.push({ e, family: familyDisplay.get(k) || arr[0].name, chars: arr.sort((a, b) => b.dmg - a.dmg) });
       }
     }
   }
-  boxing.sort((a, b) => +new Date(b.e.started_at) - +new Date(a.e.started_at));
-  const boxingTop = boxing.slice(0, 80);
+  multiChar.sort((a, b) => +new Date(b.e.started_at) - +new Date(a.e.started_at));
+  const multiCharTop = multiChar.slice(0, 80);
 
   const pct = (f: number) => `${Math.round(f * 100)}%`;
 
@@ -198,6 +192,8 @@ export default async function AnomaliesPage() {
           <code>/parses</code> when fewer than {pct(AUTO_FOREIGN_MAX_MEMBER_FRAC)} of a{' '}
           {AUTO_FOREIGN_MIN_PLAYERS}+ raid are on the roster. Everything in the majority-non-member
           band (&lt;{pct(REVIEW_FOREIGN_MAX_MEMBER_FRAC)} members) is listed below to confirm or clear.
+          Boss kills only — the bosses on the curated kill-card list, the same ones <code>/parses</code>{' '}
+          shows. Farm trash is collected but never reviewed here.
         </p>
       </section>
 
@@ -210,7 +206,7 @@ export default async function AnomaliesPage() {
           )}
         </h3>
         <p className="text-xs text-dim leading-5 mb-3">
-          Every {OFFHOURS_MIN_PLAYERS}+ player kill since April that started outside
+          Every {OFFHOURS_MIN_PLAYERS}+ player boss kill since April that started outside
           Sun/Wed/Thu 19:30–00:30 ET. <b className="text-orange">Raid-night mob</b> means the
           guild also kills it during raids — those at a low roster share are the pug case and
           sort first. Off-night clears like The Va`Dyn run 80–100% roster and sort last;
@@ -278,7 +274,7 @@ export default async function AnomaliesPage() {
           Likely non-guild raids · {foreign.length}
         </h3>
         {foreign.length === 0 ? (
-          <p className="text-xs text-dim italic">No majority-non-member raids in the last {LOOKBACK_DAYS} days.</p>
+          <p className="text-xs text-dim italic">No majority-non-member boss raids in the last {LOOKBACK_DAYS} days.</p>
         ) : (
           <div className="space-y-2">
             {foreign.map(({ e, share }) => {
@@ -338,20 +334,20 @@ export default async function AnomaliesPage() {
         )}
       </section>
 
-      {/* Double-boxing */}
+      {/* One member, two characters */}
       <section className="bg-panel border border-border rounded-lg p-4">
         <h3 className="text-sm text-blue uppercase tracking-wide mb-1">
-          Possible double-boxing · {boxingTop.length}
+          One member, two characters · {multiCharTop.length}
         </h3>
         <p className="text-[11px] text-dim mb-3">
-          One person&apos;s characters BOTH dealing damage in the same fight (both swinging, not one
-          parked). Often legit two-boxing — surfaced for awareness, not auto-actioned.
+          One member&apos;s characters both dealing damage in the same boss fight (both swinging, not one
+          parked). Usually entirely normal — surfaced for awareness, not auto-actioned.
         </p>
-        {boxingTop.length === 0 ? (
-          <p className="text-xs text-dim italic">No two-character-active fights in the last {LOOKBACK_DAYS} days.</p>
+        {multiCharTop.length === 0 ? (
+          <p className="text-xs text-dim italic">No two-character-active boss fights in the last {LOOKBACK_DAYS} days.</p>
         ) : (
           <div className="space-y-1.5">
-            {boxingTop.map(({ e, family, chars: cs }, i) => (
+            {multiCharTop.map(({ e, family, chars: cs }, i) => (
               <div key={`${e.id}-${i}`} className="border border-border/50 rounded px-2.5 py-1.5 text-xs flex items-baseline justify-between gap-2">
                 <span className="min-w-0">
                   <span className="text-text font-medium">{family}</span>

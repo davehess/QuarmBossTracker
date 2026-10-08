@@ -1,7 +1,7 @@
 # The Queue — framework, ordering, and the story (post-audit)
 
 *Written 2026-07-17, the morning after the raid-night live-ops session. This is
-the reviewable queue Hitya asked for: every open workstream (task board #71–#90
+the reviewable queue the guild lead asked for: every open workstream (task board #71–#90
 plus carried items), ordered into waves, grounded in a code-level audit of the
 agent, bot, shell, and update machinery. Numbers below are receipt-backed by
 that audit (4 investigator passes + adversarial verification) — corrected
@@ -88,7 +88,7 @@ feel. This is the narrative for Discord posts, not just engineering order:
 
 ---
 
-## Agreed execution order (2026-07-17, Hitya's call)
+## Agreed execution order (2026-07-17, the guild lead's call)
 
 **Chunk 2 → 0 → 1 → R → 3 → 4 → 5.** Survive-success safeguards lead; the
 weekend keystones (0.2 Saturday graduation, 0.3 Sunday capture) are
@@ -241,7 +241,7 @@ pieces as they're ready. Ordering *within* the thread:
 | R.4 | [#93] Raid composition template + planned-vs-actual matcher | RaidHelper-fed archetype groups → readiness + role-gap deltas at pull time. | — |
 | R.5 | [#91] Off-night NBG roll capture (Fri/alt-raid) | Write-only parse of `/random` + `/rs` awards, link REUSED roll sessions. The one piece gated on a **Friday go/no-go**. | — |
 
-**Epic resolver [#96] is OUT of the priority set.** Hitya confirmed epics are
+**Epic resolver [#96] is OUT of the priority set.** the guild lead confirmed epics are
 trivial in this era (early-game, anyone who fills the Google-Sheet tracker gets
 one), so the loot-rule epic tiebreak ladder is vestigial. The logic is captured
 in the task for the day a genuinely-contested epic drop appears; until then it
@@ -252,7 +252,7 @@ Raid Night Review [#80] (Wave 5) and any seating/attendance surface; R.3/R.4
 are the concrete first payloads of "big brother **helping**" [#77]; R.5 seeds
 the Monday alt-raid review [#90].
 
-## Decision points for Hitya
+## Decision points for the guild lead
 1. Friday: go/no-go on the Sunday write-only roll+loot capture (0.3) **and** the
    off-night NBG roll capture (R.5 / [#91]) — same capture machinery, same call.
 2. Saturday: confirm the stable graduation after beta soak (0.2).

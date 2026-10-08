@@ -1,6 +1,6 @@
 // #194 — two mobs with one name, told apart by where their tanks stand.
 //
-// THE ASK (Hitya 2026-08-04): "having zero traction on the [Zeal spawn_id]
+// THE ASK (the guild lead, 2026-08-04): "having zero traction on the [Zeal spawn_id]
 // suggestion, we need to make end routes. given the location data we have with
 // tanks, with just one person in the raid having zeal and mimic running, we
 // should be able to figure out where mobs are being tanked and try to figure
@@ -29,7 +29,7 @@ const { _extHeadingPoint, _extPosCluster, _extBindInstances, _extAttributeDebuff
   sliceBlock(src, 'function _extHeadingPoint(m, reach, scale) {', '\n}') + '\n'
   + sliceBlock(src, 'function _extPosCluster(engaged, units, hOpts) {', '\n}') + '\n'
   + sliceBlock(src, 'function _extBindInstances(hpClusters, posInstances) {', '\n}') + '\n'
-  + sliceBlock(src, 'function _extAttributeDebuffs(debuffEntries, rows, observerInfo, hpTol) {', '\n}'),
+  + sliceBlock(src, 'function _extAttributeDebuffs(debuffEntries, rows, observerInfo, hpTol, spawnOfRaider) {', '\n}'),
   ['_extHeadingPoint', '_extPosCluster', '_extBindInstances', '_extAttributeDebuffs'],
 );
 
@@ -291,7 +291,7 @@ describe('two adds, same capitalized name, tanked apart', () => {
 //
 // "if we have 4 of the same mob and 4 tanks with zeal actively targeting each
 // one 25+ units away we could perhaps serialize them by the tank that way"
-// (Hitya 2026-08-05). Four tanks tag four same-name mobs in the tag
+// (the guild lead, 2026-08-05). Four tanks tag four same-name mobs in the tag
 // channel; one Mimic harvests the claims; the bot serializes by tank. This
 // runs the shipped clusterByHp + position + bind + attribution chain over
 // exactly that shape.
@@ -386,8 +386,10 @@ describe('Zeal /tag integration (spawn ids through chat)', () => {
     expect(src).toMatch(/if \(!prev \|\| sinceMs > prev\.sinceMs\)/);
   });
 
-  it('a tag welds ONLY when its text names the row tank — no guessed pinning', () => {
-    expect(src).toMatch(/const target = rows\.find\(c => !c\._tag && \(c\.tanks \|\| \[\]\)\.some\(t2 =>/);
+  // Since 2026-09-24 a tag also welds by SPAWN ID — proven, not guessed — and
+  // that path is exercised by running _extPlaceTags in ext-target-tags.test.js.
+  it('a tag welds by spawn id or when its text names the row tank — no guessed pinning', () => {
+    expect(src).toMatch(/target = rows\.find\(c => !c\._tag && \(c\.tanks \|\| \[\]\)\.some\(t2 =>/);
     expect(src).toMatch(/textLower\.includes\(String\(t2\)\.toLowerCase\(\)\)/);
   });
 
@@ -438,7 +440,8 @@ describe('handler wiring', () => {
 
   it('the select carries loc + observed_tanks, and the roster loc ride-along exists', () => {
     expect(src).toMatch(/incoming_mob,incoming_mob_since,loc_x,loc_y,loc_z,observed_tanks,zeal_tags,updated_at/);
-    expect(src).toMatch(/supabase\.select\('raid_roster',[\s\S]{0,200}loc_at=gte\./);
+    // paged: one row per (uploader, name) is ~1,000 at peak, PostgREST's silent cap
+    expect(src).toMatch(/supabase\.selectAllPaged\('raid_roster',[\s\S]{0,200}loc_at=gte\./);
   });
 
   it('a pos-split row recomputes HP from its own raiders', () => {

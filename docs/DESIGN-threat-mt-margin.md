@@ -1,12 +1,12 @@
 # Threat meter — show the margin to the MT, and who is closing
 
-From Hitya, 2026-08-10 (Emperor Ssraeshza): *"This is what the aggro looked like
-when Currygoat told everyone to back off when he was struggling on Hate and
-threat… Wabumkin was high on the meter, primarily because he was so high on
-damage. Others like Damyu and Meditate were gaining quickly."*
+From the guild lead, 2026-08-10 (Emperor Ssraeshza): *"This is what the aggro looked like
+when a member told everyone to back off when he was struggling on Hate and
+threat… a member was high on the meter, primarily because he was so high on
+damage. Others like a member and a member were gaining quickly."*
 
-The screenshot: **Wabumkin 120k, Currygoat 108k**, Damyu 102k, Meditate 82k.
-Currygoat is the MT. A DPS is 11% ABOVE the tank and two more are closing — and
+The screenshot: **a member 120k, a member 108k**, a member 102k, a member 82k.
+a member is the MT. A DPS is 11% ABOVE the tank and two more are closing — and
 the meter says none of that. It shows eight rows sorted by absolute threat.
 
 ## What the model already gets right
@@ -20,20 +20,20 @@ series, not just a current value. The ordering called this fight correctly.
 
 ## The four things missing
 
-1. **The MT is not marked.** Nothing on the meter says Currygoat is the tank.
+1. **The MT is not marked.** Nothing on the meter says a member is the tank.
    The row accent only means "you are #1", which is shown to whoever is looking
    — but the person who has to act is the DPS on top, not the tank. MT identity
    is already resolvable (`recentTankHits` mob→player connects feeds MT
    resolution; the Command Center already prints `MAIN TANK — CURRYGOAT`).
 2. **No margin.** "120k" is meaningless alone; "**+11% over MT**" is the number
    that decides whether to stop attacking.
-3. **No closing rate.** *"Damyu and Meditate were gaining quickly"* is exactly
+3. **No closing rate.** *"a member and a member were gaining quickly"* is exactly
    what the 6s snapshot series can compute — slope per player, projected
-   crossover: *"Damyu passes MT in ~18s at this rate."* That is the warning that
+   crossover: *"a member passes MT in ~18s at this rate."* That is the warning that
    arrives early enough to matter, rather than after the swap.
 4. **The warning goes to the wrong person.** A DPS who is closing should get the
    callout on THEIR screen ("BACK OFF — 104% of MT"), not require the tank to
-   notice and shout. Currygoat having to call it out on voice is the failure.
+   notice and shout. a member having to call it out on voice is the failure.
 
 ## Proposal
 
@@ -49,9 +49,9 @@ series, not just a current value. The ordering called this fight correctly.
 
 ## The enrage window is the real feature
 
-Hitya, with the mechanic that makes this urgent: *"it was about at 14-10 percent
+The guild lead, with the mechanic that makes this urgent: *"it was about at 14-10 percent
 on a mob that Enrages and will turn on the raid and possibly kill a bunch of
-them. And Currygoat needs to turn off attack at 8% for enrage meaning people
+them. And a member needs to turn off attack at 8% for enrage meaning people
 would surpass him, turn the boss, and then everyone takes return hits on
 enrage."*
 
@@ -92,12 +92,12 @@ post-fight review can see who was climbing during the window.
 
 ## The model has no hate REDUCERS at all
 
-Hitya: *"We aren't currently counting Ancient Greater Concussion as far as I can
-tell on threat reduction, but Wabumkin should have been lower because of it."*
+Guild lead: *"We aren't currently counting Ancient Greater Concussion as far as I can
+tell on threat reduction, but a member should have been lower because of it."*
 
 Correct — `threatBy` only ever adds (swing / proc / spell / heal). There is no
 subtraction anywhere, so every hate-shedding tool in the raid is invisible to the
-meter. **Wabumkin is a Wizard**, so the concussion line is exactly his tool.
+meter. **a member is a Wizard**, so the concussion line is exactly his tool.
 
 Grounded from `eqemu_spells` — **SPA 92 is hate reduction**, negative base = hate
 removed, and the whole family is small enough to hardcode like `SLOW_MAGNITUDES`:
@@ -124,7 +124,7 @@ unknown rather than guessing an owner.
 ### ⚠ Scale check — modelling this alone would NOT have explained that screenshot
 
 Be honest about the arithmetic before promising it fixes anything. At the
-catalog's flat **−600**, against Wabumkin's **120k**, one Ancient: Greater
+catalog's flat **−600**, against a member's **120k**, one Ancient: Greater
 Concussion is **~0.5%**. Ten casts is still ~5%. It does not close an 11k gap to
 the MT.
 
@@ -158,5 +158,5 @@ not just a reducer added.
   cross-client merge helps but does not make it complete.
 
 Given those, the margin display is worth shipping before the spoken warning:
-seeing "+11% over MT" would have told Wabumkin what Currygoat had to say out
+seeing "+11% over MT" would have told a member what a member had to say out
 loud, without risking a false alarm mid-fight.

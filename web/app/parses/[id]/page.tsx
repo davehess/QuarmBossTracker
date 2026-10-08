@@ -7,6 +7,7 @@
 // whole night here.
 
 import Link from 'next/link';
+import type { Metadata } from 'next';
 import WpDbLink from '@/components/WpDbLink';
 import { notFound, redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
@@ -19,7 +20,10 @@ import { ClassificationChip } from '@/components/KillCard';
 import { FightEventLog } from '@/components/FightEventLog';
 import { DamageCurve } from '@/components/DamageCurve';
 import { buildFightCurve, observedHpSeries } from '@/lib/fightCurve';
+import { selectAll } from '@/lib/selectAll';
+import { loadAgentVersionsAround, loadEncounterEvents } from '@/lib/fullReads';
 import { classifyEncounter, clearClassification, markDeathIntentional, unmarkDeathIntentional } from '../actions';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -83,13 +87,13 @@ type RawHealer    = {
   firstHealAt?: number;
   lastHealAt?: number;
   // Per-recipient heal totals — agent v3.1.69+. Lets the heal panel show
-  // "Ashieron 320k · Moash 180k" instead of a bare name list.
+  // "Corvale 320k · Cindral 180k" instead of a bare name list.
   byTarget?: Record<string, number>;
   // Heal-spell cast counts from the uploader's own log — agent v3.1.69+.
   // EQ only shows the spell name on the caster's "You begin casting X" line
   // (bystanders get "X begins to cast a spell"), so this is populated ONLY
   // on the healer whose name equals the contribution's uploader.
-  // (Hitya 2026-06-25: "x CHs and other heal types".)
+  // (the guild lead, 2026-06-25: "x CHs and other heal types".)
   spells?: Record<string, number>;
 };
 // CH-chain gap analysis on the primary tank — agent fills in when it saw at
@@ -192,10 +196,19 @@ async function load(id: string) {
     // expand first. 5s buckets: finer than the 3.5-6.4s capture cadence buys
     // nothing but noise.
     // Failure here must never take the parse page down; the curve is additive.
+    // ⚠ PAGED, because PostgREST's 1000-row cap applies to an RPC exactly as it
+    // does to a select — and it truncates SILENTLY (the guild lead, 2026-09-06: "this
+    // parse appears to be split in half for the damage over the fight bar").
+    // Measured on 57f45a22: the function returns 1,846 rows totalling 1,198,871
+    // damage across 340s — the mob's full 1.2M health bar — and the unpaged call
+    // delivered the first 1,000, which sum to 663,568 and stop at 195s. The
+    // chart drew exactly that and looked like a fight that ended halfway. Rows
+    // per bucket scale with raid size, so this only bites the big fights.
+    // The function's own ORDER BY (t_sec, char_name) makes range paging stable.
     let timelineRows: any[] = [];
     try {
-      const { data: tl } = await sb.rpc('encounter_timeline', { p_encounter_id: id, p_step_sec: 5 });
-      timelineRows = Array.isArray(tl) ? tl : [];
+      timelineRows = await selectAll<any>((from, to) =>
+        sb.rpc('encounter_timeline', { p_encounter_id: id, p_step_sec: 5 }).range(from, to));
     } catch { timelineRows = []; }
     if (encErr || !enc) return { error: encErr?.message || 'not found' };
 
@@ -207,35 +220,27 @@ async function load(id: string) {
 
     // Per-fight timeline events (#98) — raid-wide events (rampage/enrage) +
     // trigger fires (incl. Death Touch). Uploaded by every observer; deduped
-    // at read below (same as deaths).
-    const { data: rawEvents } = await sb
-      .from('encounter_events')
-      .select('at, kind, subtype, actor, label')
-      .eq('encounter_id', id)
-      .order('at', { ascending: true });
+    // at read below (same as deaths). PAGED: 11 encounters carry more than 1,000
+    // events (max 1,941), and an unpaged read kept the first 1,000 of the fight.
+    const rawEvents = await loadEncounterEvents<TimelineEventRow>(sb, id);
 
     // "Current at the time" baseline — the highest agent_version seen across
     // ANY contribution uploaded within ±7 days of this encounter's started_at.
     // Anyone uploading on an older version while peers were on a newer one
     // was demonstrably stale at the time, regardless of today's latest. We do
     // a windowed query (not lifetime-MAX) so an encounter from 2025 isn't
-    // judged against 2026 versions.
+    // judged against 2026 versions. The window holds ~21,000 contribution rows
+    // and `.range(0, 9999)` returned 1,000 of them (PostgREST's silent cap), which
+    // left the newest version out: uploaders on 3.7.75 read as current while peers
+    // were on 3.7.78. SQL now returns just the DISTINCT versions (49 in that
+    // window) and the compare below picks the highest.
     let latestAtTime: string | null = null;
     if (enc?.started_at) {
       const t = new Date((enc as { started_at: string }).started_at).getTime();
       const lo = new Date(t - 7 * 86400_000).toISOString();
       const hi = new Date(t + 7 * 86400_000).toISOString();
-      const { data: peers } = await sb
-        .from('contributions')
-        .select('agent_version')
-        .gte('created_at', lo)
-        .lte('created_at', hi)
-        .not('agent_version', 'is', null)
-        .range(0, 9999);
-      for (const r of (peers ?? []) as { agent_version: string | null }[]) {
-        if (r.agent_version && cmpVer(r.agent_version, latestAtTime) > 0) {
-          latestAtTime = r.agent_version;
-        }
+      for (const v of await loadAgentVersionsAround(sb, lo, hi)) {
+        if (cmpVer(v, latestAtTime) > 0) latestAtTime = v;
       }
     }
 
@@ -319,7 +324,7 @@ async function load(id: string) {
     // in the by-class roll-up instead of inflating "Unknown".
     const petSet = new Set<string>();
     {
-      const { data: pets } = await sb.from('pet_names').select('name').eq('guild_id', 'wolfpack');
+      const { data: pets } = await sb.from('pet_names').select('name').eq('guild_id', GUILD_TAG);
       for (const p of (pets ?? []) as { name: string }[]) petSet.add(p.name.toLowerCase());
     }
 
@@ -347,7 +352,7 @@ async function load(id: string) {
       const { data: rules } = await sb
         .from('intentional_death_rules')
         .select('character_name')
-        .eq('guild_id', 'wolfpack')
+        .eq('guild_id', GUILD_TAG)
         .eq('npc_id', encTyped.npc_id)
         .eq('active', true);
       for (const r of (rules ?? []) as { character_name: string }[]) {
@@ -375,6 +380,39 @@ async function load(id: string) {
   }
 }
 
+// A parse link is the single most-pasted URL in the guild's Discord, and it used
+// to unfurl as "WolfPack.quest" with the site-wide description — identical for
+// every fight anyone had ever linked. Name the boss and the night instead.
+//
+// ⚠ Its own narrow query on purpose. load() above pulls the full encounter with
+// every player row; calling that here would double the heaviest read on the site
+// for a string. Supabase calls are not request-deduped the way fetch() is.
+//
+// ⚠ Fails soft to the inherited metadata. An unfurl is never worth a 500 on the
+// page itself, and this runs for logged-out crawlers too.
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
+  try {
+    const { id } = await params;
+    const { data } = await supabaseAdmin()
+      .from('encounters')
+      .select('started_at, duration_sec, total_dps, eqemu_npc_types ( name )')
+      .eq('id', id)
+      .maybeSingle();
+    if (!data) return {};
+    const boss = cleanBossName((data as { eqemu_npc_types?: { name?: string } }).eqemu_npc_types?.name);
+    if (!boss) return {};
+    const when = data.started_at
+      ? new Date(data.started_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      : null;
+    const dps = Number(data.total_dps) > 0 ? `${Math.round(Number(data.total_dps)).toLocaleString()} raid DPS` : null;
+    const secs = Number(data.duration_sec) > 0 ? `${Math.round(Number(data.duration_sec))}s` : null;
+    return {
+      title: boss,
+      description: [`Wolf Pack parse — ${boss}`, when, secs, dps].filter(Boolean).join(' · '),
+    };
+  } catch { return {}; }
+}
+
 export default async function EncounterDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const { data: { user } } = await supabaseServer().auth.getUser();
@@ -399,7 +437,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
   const curve = (timelineRows && timelineRows.length)
     ? buildFightCurve(timelineRows, 5)
     : null;
-  // Class per contributor — the chart stacks BY CLASS now (Hitya 2026-08-16),
+  // Class per contributor — the chart stacks BY CLASS now (the guild lead, 2026-08-16),
   // so every name in the unfolded series needs its class, not just the top-7
   // bands. Unknowns stay null; the grouping labels them 'Unknown'.
   const classOf: Record<string, string | null> = {};
@@ -451,10 +489,10 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
   // names that any SINGLE contributor reported dying 2+ times — a real player
   // can only die once per encounter (corpses don't respawn mid-fight), so a
   // repeat death from one machine's view means it's an NPC namesake getting
-  // mis-attributed (Hitya 2026-06-25: 30+ phantom "Syphon" deaths in
-  // Ssra because "Syphon" is both an SK player and a Quarm-custom NPC; the
+  // mis-attributed (the guild lead, 2026-06-25: 30+ phantom "Varnok" deaths in
+  // Ssra because "Varnok" is both an SK player and a Quarm-custom NPC; the
   // agent's confirmedPlayer check matched the player and credited every
-  // NPC-Syphon kill to him). One agent's view is enough to discredit the
+  // NPC kill of that name to the player). One agent's view is enough to discredit the
   // name across the whole fight.
   const phantomNames = new Set<string>();
   for (const c of contribs) {
@@ -472,7 +510,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
   // sorted by (name, ts) and drop any within DEATH_DEDUP_MS of the last KEPT
   // death for that name. Cross-parser skew (a few seconds) collapses; a genuine
   // rez-and-die-again (well beyond the window) stays a separate row.
-  // (Hitya 2026-07-14: 4× Xobobab / 3× Currygoat on one Aten Ha Ra kill.)
+  // (the guild lead, 2026-07-14: 4× Xobobab / 3× a member on one Aten Ha Ra kill.)
   const DEATH_DEDUP_MS = 30_000;
   const collected: RawDeath[] = [];
   for (const c of contribs) {
@@ -519,7 +557,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
     .filter(e => e.kind === 'raid_event')
     // Subtype colors the row dot (#105); actor names whose event it was — many
     // callouts are personal to one character, and naming them is the first
-    // step toward the future per-type toggles (Hitya 2026-08-16).
+    // step toward the future per-type toggles (the guild lead, 2026-08-16).
     .map(e => ({ at: e.at, label: e.label || e.subtype || 'event', kind: 'raid_event' as const, subtype: e.subtype, actor: e.actor }));
   const fireEvents = tlKept
     .filter(e => e.kind === 'fire')
@@ -819,7 +857,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
         </div>
       </section>
 
-      {/* Damage curve — Hitya's napkin sketch (docs/DESIGN-fight-timeline.md),
+      {/* Damage curve — the guild lead's napkin sketch (docs/DESIGN-fight-timeline.md),
           reshaped by his 2026-08-16 review: stacked by CLASS with right-edge
           percents, drill into a class for per-character percents, hover
           highlighting, and honest "nobody taking hits" gaps on the MT strip.
@@ -839,7 +877,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
       )}
 
       {/* Fight timeline (#98) as a collapsible LIST — deaths + raid-wide
-          events + which callouts fired, in order, with names (Hitya
+          events + which callouts fired, in order, with names (the guild lead
           2026-08-16: the marker view was "useless in this format"; /raid/review
           keeps the marker chart where wipe-spotting is the job). */}
       {(deaths.length > 0 || raidEvents.length > 0 || fireEvents.length > 0) && (
@@ -1248,7 +1286,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
               // "Complete Heal" (the real Cleric spell, no "ing") never
               // matched here before — only the "Complete Healing" item-click
               // spelling did — so a cleric's own CH casts always fell through
-              // to the raw unabbreviated name (Hitya 2026-07-02 confirmed
+              // to the raw unabbreviated name (the guild lead, 2026-07-02 confirmed
               // via Supabase: zero rows have ever shown ANY "Complete Heal"
               // spelling, across the whole database — the label bug masked
               // whether that's "nobody's cast it" or "it's mislabeled," but
@@ -1370,7 +1408,7 @@ export default async function EncounterDetailPage({ params }: { params: Promise<
                       ) : null}
                     </div>
                   ) : null}
-                  {/* Officer-only (Hitya 2026-07-02: "can we start showing
+                  {/* Officer-only (the guild lead, 2026-07-02: "can we start showing
                       CHs cast per fight just for admins?"). The data has
                       existed since v3.1.69 but was visible to every signed-in
                       raider — gating it here, not by removing the data from

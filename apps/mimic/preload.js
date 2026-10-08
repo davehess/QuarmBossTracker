@@ -1,5 +1,5 @@
 // Preload — minimal contextBridge surface. No nodeIntegration in renderers.
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 // ── Am I a window, or a pane inside the Dock? ───────────────────────────────
 // The dock (dock.html) hosts overlays as same-origin <iframe>s in ONE window,
@@ -67,7 +67,9 @@ let _wpHoverArmed = false;
 let _wpIsOverlayDoc = null;
 function _wpOverlayDoc() {
   if (_wpIsOverlayDoc === null && document.body) {
-    _wpIsOverlayDoc = !!document.getElementById('move-btn');
+    // The Timers canvas has no ✥ of its own (it is the screen; its panels
+    // move), so it says it is an overlay with body[data-wp-overlay].
+    _wpIsOverlayDoc = !!document.getElementById('move-btn') || document.body.hasAttribute('data-wp-overlay');
   }
   return _wpIsOverlayDoc === true;
 }
@@ -103,7 +105,7 @@ document.addEventListener('mouseout', function (ev) {
   if (!ev.relatedTarget && _wpHoverArmed) { _wpHoverArmed = false; _hoverOff(); }
 }, { capture: true, passive: true });
 
-// ── Solid backdrop (Uilnayar 2026-07-10) ────────────────────────────────────
+// ── Solid backdrop (a member, 2026-07-10) ────────────────────────────────────
 // One injected rule + a body class = every overlay gets a toggleable opaque
 // plate with zero per-HTML changes. Main pushes 'wp-backdrop' on toggle; the
 // load-time pull covers windows created after the last push. Gated to overlay
@@ -114,7 +116,7 @@ ipcRenderer.on('wp-backdrop', function (_e, on) {
 // Live overlay zoom → --wp-zoom CSS var, pushed by main on every scale apply
 // and tween step. Feeds the counter-zoom rules injected below that keep the
 // setup bar at one painted size spanning the window width no matter the
-// overlay's scale (Hitya 2026-08-19: "the actual slider sizing shouldn't
+// overlay's scale (the guild lead, 2026-08-19: "the actual slider sizing shouldn't
 // change on the overlays — it should be the width of the window").
 ipcRenderer.on('wp-zoom', function (_e, z) {
   try {
@@ -122,7 +124,7 @@ ipcRenderer.on('wp-zoom', function (_e, z) {
     if (document.documentElement) document.documentElement.style.setProperty('--wp-zoom', String(v));
   } catch (e) {}
 });
-// ── Overlay color themes (Uilnayar 2026-07-11: "alternative color schemes
+// ── Overlay color themes (a member, 2026-07-11: "alternative color schemes
 // for people that prefer brighter colors") ─────────────────────────────────
 // One body-level CSS filter per theme restyles EVERY overlay at once with
 // zero per-page changes. 'light' uses the invert+hue-rotate(180) pair so
@@ -133,26 +135,145 @@ const _WP_THEME_CSS =
   'body.wp-theme-light{filter:invert(1) hue-rotate(180deg) contrast(1.15) brightness(1.03)}' +
   'body.wp-theme-bright{filter:brightness(1.2) saturate(1.3)}' +
   'body.wp-theme-soft{filter:saturate(0.7) brightness(1.08)}' +
-  'body.wp-theme-contrast{filter:contrast(1.3) saturate(1.1) brightness(1.05)}';
-const _WP_THEME_LABELS = { 'default': 'Wolf (dark)', light: 'Light', bright: 'Vivid', soft: 'Muted', contrast: 'High contrast' };
+  'body.wp-theme-contrast{filter:contrast(1.3) saturate(1.1) brightness(1.05)}' +
+  'body.wp-theme-deutan{filter:url(#wp-cvd-deutan)}' +
+  'body.wp-theme-protan{filter:url(#wp-cvd-protan)}' +
+  'body.wp-theme-tritan{filter:url(#wp-cvd-tritan)}';
+// Colour-blind themes (the guild lead, 2026-09-24: "Add the colorblind color
+// schemes to themes as well"). Same one-filter-per-theme idea, but a colour
+// MATRIX rather than a CSS shorthand: each moves the platform's own semantic
+// colours apart for that kind of colour vision — danger vs healthy (red /
+// green), warning vs OK (orange / green), danger vs warning, a proc vs a
+// plain hit, mana vs health. Fitted, not the textbook daltonize: that one
+// merged red into orange for tritan and gold into green for deutan. Every row
+// sums to 1, so greys (and the text) stay grey; no colour goes dark enough to
+// vanish on a dark overlay. How they were fitted and scored:
+// docs/DECISIONS-2026-09-21.md §18; test/overlay-themes-cvd.test.js holds them to it.
+const _WP_CVD_MATRICES = {
+  deutan: '0.678 0.6 -0.278 0 0  -0.132 1.253 -0.121 0 0  -0.6 0.196 1.404 0 0  0 0 0 1 0',
+  protan: '0.951 0.092 -0.043 0 0  -0.112 1.331 -0.219 0 0  0.6 -0.293 0.693 0 0  0 0 0 1 0',
+  tritan: '1.172 -0.6 0.428 0 0  -0.4 2 -0.6 0 0  -0.048 0.368 0.68 0 0  0 0 0 1 0',
+};
+const _WP_THEME_LABELS = { 'default': 'Wolf (dark)', light: 'Light', bright: 'Vivid', soft: 'Muted', contrast: 'High contrast',
+  deutan: 'Deuteranopia (red-green)', protan: 'Protanopia (red-green)', tritan: 'Tritanopia (blue-yellow)' };
+// The matrices live in an SVG the filters point at — once per document.
+function _wpCvdDefs() {
+  if (document.getElementById('wp-cvd-defs')) return;
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('id', 'wp-cvd-defs');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('style', 'position:absolute;width:0;height:0;overflow:hidden');
+  const defs = document.createElementNS(ns, 'defs');
+  for (const k of Object.keys(_WP_CVD_MATRICES)) {
+    const f = document.createElementNS(ns, 'filter');
+    f.setAttribute('id', 'wp-cvd-' + k);
+    f.setAttribute('color-interpolation-filters', 'sRGB');
+    const m = document.createElementNS(ns, 'feColorMatrix');
+    m.setAttribute('type', 'matrix');
+    m.setAttribute('values', _WP_CVD_MATRICES[k]);
+    f.appendChild(m);
+    defs.appendChild(f);
+  }
+  svg.appendChild(defs);
+  document.body.appendChild(svg);
+}
 function _wpApplyTheme(theme) {
   try {
     if (!_wpOverlayDoc()) return;
     const cl = document.body.classList;
     for (const c of [...cl]) if (c.indexOf('wp-theme-') === 0) cl.remove(c);
+    if (_WP_CVD_MATRICES[theme]) _wpCvdDefs();
     if (theme && theme !== 'default') cl.add('wp-theme-' + theme);
   } catch (e) {}
 }
 ipcRenderer.on('wp-theme', function (_e, theme) { _wpApplyTheme(theme); });
+
+// ── ▭ Mini mode — the shared half ──────────────────────────────────────────
+// Each overlay owns its OWN `body.wp-mini` rules (the rendition the guild voted
+// for at wolfpack.quest/mimic/mini). What lives here is only what is identical
+// everywhere, so the muscle memory carries between overlays exactly as the
+// right-click menu does:
+//   • the bar is 4px and keeps the tank overlay's 50/25 green/amber/red steps;
+//   • ✥ and ✕ stay where they are and fade, and hover brings them back — they
+//     must not MOVE between modes or the click target shifts under the cursor;
+//   • a name gives way before a number does. Mid-fight the digits are the
+//     payload and the name is context, so names ellipsize and numbers never
+//     shrink (`wp-mini-name` / `wp-mini-num`).
+// Overlays opt in by tagging their markup with these classes; nothing here
+// restyles an overlay that has not.
+const _WP_MINI_CSS =
+  'body.wp-mini{--wp-mini-bar-h:4px}' +
+  // Chrome fades rather than hides: a mini overlay is still draggable and
+  // closable, and a control that vanishes reads as a control that is gone.
+  'body.wp-mini #move-btn,body.wp-mini #hide-btn{opacity:0.12;transition:opacity 0.12s ease}' +
+  'body.wp-mini:hover #move-btn,body.wp-mini:hover #hide-btn{opacity:1}' +
+  'body.wp-mini .wp-mini-hide{display:none !important}' +
+  'body.wp-mini .wp-mini-bar{height:var(--wp-mini-bar-h) !important;border-radius:2px}' +
+  'body.wp-mini .wp-mini-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}' +
+  'body.wp-mini .wp-mini-num{flex:0 0 auto;font-variant-numeric:tabular-nums}' +
+  // Density: a mini overlay earns its name on height, not on hiding data.
+  'body.wp-mini #wrap{padding:2px 4px}' +
+  'body.wp-mini h1,body.wp-mini h2{display:none}';
+function _wpApplyMini(on) {
+  try {
+    if (!_wpOverlayDoc()) return;
+    document.body.classList.toggle('wp-mini', !!on);
+    // Overlays that lay out from JS (bar widths, row counts) need a nudge, and
+    // a mode flip changes the height every auto-height caller reads. Cheap,
+    // and far less brittle than each overlay wiring its own observer.
+    try { window.dispatchEvent(new Event('wp-mini-change')); } catch (e) {}
+    try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+  } catch (e) {}
+}
+ipcRenderer.on('wp-mini', function (_e, p) { _wpApplyMini(p && p.mini); });
+
+// ── Opacity — the whole overlay (2.7.1; main's applyOverlayOpacity) ──────────
+// Everything the overlay SHOWS fades, its background with it; what you use to
+// set it does not — the setup bar, the right-click menu, the corner ✥ ✕ and
+// the banners stay solid, or at 15% the slider would vanish under your cursor.
+// One rule for every overlay, keyed on those ids rather than on each page's
+// own container (the DPS HUD and trigger alerts have no #wrap).
+const _WP_OPACITY_CSS =
+  'body>:not(#move-btn):not(#hide-btn):not(#clear-btn):not(#drag-controls):not(#setupbar)' +
+  ':not(#wpResizeMenu):not(#mimic-conn-banner):not(#mimic-update-banner):not(#wp-cvd-defs):not(script):not(style)' +
+  '{opacity:var(--wp-content-alpha,1)}';
+ipcRenderer.on('content-alpha', function (_e, v) {
+  const a = (typeof v === 'number' && v >= 0.15 && v <= 1) ? v : 1;
+  try { document.documentElement.style.setProperty('--wp-content-alpha', String(a)); } catch (e) {}
+  // The setup bar's own slider shows what is saved (each page starts it at 100%).
+  try {
+    const s = document.getElementById('opacitySlider'), t = document.getElementById('opacityVal');
+    if (s && document.activeElement !== s) s.value = String(a);
+    if (t && document.activeElement !== s) t.textContent = Math.round(a * 100) + '%';
+  } catch (e) {}
+});
+
+// Mute (Settings → "Mute Mimic", cfg.quietMode): main broadcasts one boolean
+// on every config save; read once at load so a freshly created overlay starts
+// right. Renderers ask window.mimic.isMuted() before speaking or playing.
+let _wpMuted = false;
+ipcRenderer.on('wp-mute', function (_e, on) { _wpMuted = !!on; });
+try { ipcRenderer.invoke('get-config').then(function (c) { if (c) _wpMuted = !!c.quietMode; }).catch(function () {}); } catch (e) { void e; }
 document.addEventListener('DOMContentLoaded', function () {
   try {
     const st = document.createElement('style');
-    st.textContent = 'body.wp-backdrop #wrap{background:rgb(8 10 14 / var(--bg-alpha,0.92)) !important;border-radius:8px}'
-      + 'body.wp-backdrop:not(:has(#wrap)){background:rgb(8 10 14 / var(--bg-alpha,0.92)) !important;border-radius:8px}'
+    // The backdrop is a near-OPAQUE plate: at least 0.92, or the card alpha if that is set higher. It used
+    // to take the card alpha itself (var(--bg-alpha,0.92)), and every overlay defines --bg-alpha, so the
+    // 0.92 never applied and "Background: ON" only darkened the tint at the same see-through level
+    // (the guild lead, 2026-09-26, on Melody over bright grass: "the background doesn't work").
+    st.textContent = 'body.wp-backdrop #wrap{background:rgb(8 10 14 / max(var(--bg-alpha,0.92), 0.92)) !important;border-radius:8px}'
+      // (on <body> itself, so the opacity fade of its children cannot reach
+      // it — the overlay's opacity is folded into the alpha instead)
+      + 'body.wp-backdrop:not(:has(#wrap)):not(:has(#screenBtn)){background:rgb(8 10 14 / calc(max(var(--bg-alpha,0.92), 0.92) * var(--wp-content-alpha,1))) !important;border-radius:8px}'
+      // The Timers canvas is a screen-sized window, so a plate on its <body> blacked out the whole screen
+      // (the guild lead, 2026-09-29: "background on the timer canvas just makes the whole screen dark").
+      // There each panel gets the plate instead. #screenBtn is the canvas's own toolbar button.
+      + 'body.wp-backdrop:has(#screenBtn) #panels > .panel:not(.off){background:rgb(8 10 14 / max(var(--bg-alpha,0.92), 0.92));border-radius:6px}'
       // Setup strip must survive narrow windows: wrap onto a second row
       // instead of pushing the Done button past the right edge.
       + '#setupbar{flex-wrap:wrap;row-gap:4px}#setupbar input[type=range]{min-width:60px}'
-      // Counter-zoom for the setup chrome (Hitya 2026-08-19): the bar keeps
+      // Counter-zoom for the setup chrome (the guild lead, 2026-08-19): the bar keeps
       // ONE painted size at every overlay scale and spans the full window
       // width. --wp-zoom is pushed by main on every scale apply/tween step;
       // width × z then scale(1/z) cancels the page zoom exactly. The drag
@@ -177,16 +298,23 @@ document.addEventListener('DOMContentLoaded', function () {
         +   'transform:scale(calc(1 / var(--wp-zoom,1)));transform-origin:top left}'
         + 'body.setup:has(#drag-controls) #wrap{margin-top:calc(102px / var(--wp-zoom,1))}'
         + 'body.setup:has(#drag-controls) #move-btn,body.setup:has(#drag-controls) #hide-btn{display:none}')
-      + _WP_THEME_CSS;
+      + _WP_THEME_CSS
+      + _WP_MINI_CSS
+      + (WP_IS_DOCKED ? '' : _WP_OPACITY_CSS);
     document.head.appendChild(st);
     ipcRenderer.invoke('wp-overlay-menu-state').then(function (s) {
       if (s && s.backdrop && _wpOverlayDoc()) document.body.classList.add('wp-backdrop');
       if (s && s.theme) _wpApplyTheme(s.theme);
+      // Mini is PULLED at load, not only pushed. A window created while its
+      // mini flag was already on (re-enabled from the tray, restored after a
+      // crash, or simply opened later) would otherwise come up full size and
+      // silently contradict its own setting.
+      if (s && s.miniCapable && s.mini) _wpApplyMini(true);
     }).catch(function () {});
   } catch (e) {}
 });
 
-// ── Per-overlay size slider (Hitya 2026-08-19: "a slider on the overlays
+// ── Per-overlay size slider (the guild lead, 2026-08-19: "a slider on the overlays
 // page and one on each individual one") ─────────────────────────────────────
 // Injected into every overlay's existing #setupbar (next to its opacity
 // slider) so each overlay gets a "size" control with zero per-HTML changes.
@@ -222,7 +350,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
     // Label follows the drag; the scale itself applies on RELEASE ('change')
     // — applying mid-drag rescales this very setup bar and yanks the thumb
-    // out from under the cursor (Hitya 2026-08-19). Keyboard steps fire
+    // out from under the cursor (the guild lead, 2026-08-19). Keyboard steps fire
     // 'change' per press, so arrow keys still apply immediately; main glides
     // the window to the new size.
     slider.addEventListener('input', function () {
@@ -239,7 +367,7 @@ document.addEventListener('DOMContentLoaded', function () {
     });
     // Own full-width row (order:99 sorts it after Done without touching DOM
     // order) — inline the four controls and narrow overlays wrap the setup
-    // bar into a jumble of half-rows (Hitya 2026-08-19, setup-ALL screenshot).
+    // bar into a jumble of half-rows (the guild lead, 2026-08-19, setup-ALL screenshot).
     // Row 1 stays "🛠 Setup · opacity · Done"; row 2 is "size · slider · % · ↺".
     const row = document.createElement('span');
     row.style.cssText = 'display:flex;align-items:center;gap:8px;flex-basis:100%;min-width:0;order:99';
@@ -285,11 +413,21 @@ function _buildOverlayMenu(onClose, state) {
     return b;
   };
   // "Setup ALL" first — the most-used entry sits at the top.
-  menu.appendChild(mkItem('🛠 Setup ALL overlays', '#2a3d57', () => ipcRenderer.invoke('set-setup-mode', true)));
-  menu.appendChild(mkItem('🛠 Setup THIS overlay',  '#3d2a57', () => ipcRenderer.invoke('set-setup-mode-this', true)));
-  // Visibility + layout actions (Uilnayar 2026-07-10). `state` comes from
+  // Both keep the window as tall as the menu made it: the setup bar needs the room.
+  menu.appendChild(mkItem('🛠 Setup ALL overlays', '#2a3d57', () => { _wpMenuKeepRoom = true; return ipcRenderer.invoke('set-setup-mode', true); }));
+  menu.appendChild(mkItem('🛠 Setup THIS overlay',  '#3d2a57', () => { _wpMenuKeepRoom = true; return ipcRenderer.invoke('set-setup-mode-this', true); }));
+  // Visibility + layout actions (a member, 2026-07-10). `state` comes from
   // main's wp-overlay-menu-state so the toggles show their current value.
   const st = state || {};
+  // ▭ / 📌 — mini mode. Built ONLY for the nine overlays that have a mini
+  // rendition (main's _MINI_KEYS sets miniCapable); offering the row on an
+  // overlay whose CSS has no mini rules would be a switch that does nothing.
+  if (st.miniCapable) {
+    menu.appendChild(mkItem('▭ Mini mode: ' + (st.mini ? 'ON' : 'off') + ' (this overlay)', '#1f4f47',
+      () => ipcRenderer.invoke('wp-mini-toggle')));
+    menu.appendChild(mkItem('📌 Keep mini on restore: ' + (st.miniPinned ? 'ON' : 'off'), '#4a3a1f',
+      () => ipcRenderer.invoke('wp-mini-pin-toggle')));
+  }
   menu.appendChild(mkItem('👁 Hide this overlay', '#6b2130', () => ipcRenderer.invoke('hide-overlay')));
   menu.appendChild(mkItem('🌫 Background: ' + (st.backdrop ? 'ON' : 'off') + ' (this overlay)', '#3a3320',
     () => ipcRenderer.invoke('wp-backdrop-toggle')));
@@ -297,18 +435,32 @@ function _buildOverlayMenu(onClose, state) {
   // (Extended Target etc.): the list grows UP instead of running off-screen.
   menu.appendChild(mkItem('⬆ Grow upward: ' + (st.growUp ? 'ON' : 'off') + ' (this overlay)', '#20374a',
     () => ipcRenderer.invoke('wp-growup-toggle')));
+  // A height dragged to is kept as a floor (main's "Height floor"); this is the
+  // way back to an overlay exactly as tall as what it shows.
+  menu.appendChild(mkItem('↕ Fit height to content', '#20374a',
+    () => ipcRenderer.invoke('overlay-fit-height')));
+  // Trigger overlay only: which edge the timer stack starts from.
+  if (st.key === 'trigger') {
+    menu.appendChild(mkItem('⇅ Timers start at: ' + (st.timersTopDown ? 'TOP (list grows down)' : 'bottom (list grows up)'), '#20374a',
+      () => ipcRenderer.invoke('wp-timers-order-toggle')));
+  }
   // Color theme — cycles Wolf (dark) → Light → Vivid → Muted → High contrast
+  // → the three colour-blind ones
   // and applies to ALL overlays at once. Click repeatedly to step through.
   menu.appendChild(mkItem('🎨 Theme: ' + (_WP_THEME_LABELS[st.theme || 'default'] || st.theme) + ' (all overlays)', '#3a2440',
     () => ipcRenderer.invoke('wp-theme-cycle')));
   menu.appendChild(mkItem('✨ Auto-arrange overlays', '#20503a',
     () => ipcRenderer.invoke('auto-arrange-overlays')));
+  // 🖥 One row per other screen, only when there is one (main's _otherScreensFor).
+  (st.screens || []).forEach(function (s) {
+    menu.appendChild(mkItem('🖥 Move to ' + s.label, '#1f3a57', () => ipcRenderer.invoke('wp-move-to-display', s.id)));
+  });
   // Thin divider before the size presets so the menu reads "actions / sizes".
   const sep = document.createElement('div');
   sep.style.cssText = 'height:1px;background:rgba(255,255,255,0.08);margin:3px 0';
   menu.appendChild(sep);
   [['xs','XS · 200px wide'], ['sm','S · 260px'], ['md','M · 320px'],
-   ['lg','L · 400px'],       ['xl','XL · 500px']].forEach(([key, label]) => {
+   ['lg','L · 420px'],       ['xl','XL · 500px']].forEach(([key, label]) => {
     menu.appendChild(mkItem(label, '#1f6feb', () => ipcRenderer.invoke('overlay-resize-preset', key)));
   });
   document.body.appendChild(menu);
@@ -318,14 +470,17 @@ function _buildOverlayMenu(onClose, state) {
 // Chrome-menu open state. While the menu is open, the page's auto-fit calls
 // are SUPPRESSED — overlays that re-fit every poll tick (Target Info, CH
 // chain, /who…) were shrinking the window right back down while the menu was
-// still open, clipping it to the first two items (Uilnayar 2026-07-11). The
+// still open, clipping it to the first two items (a member, 2026-07-11). The
 // deferred fit runs once on close so the window snaps back to content size.
 let _wpMenuOpen = false;
 let _wpMenuOpenAt = 0;             // #159: when suppression began — bounds the pause
 let _wpMenuCleanupFn = null;
 let _wpMenuSuppressedFit = null;   // wrap element from a suppressed fit
 let _wpMenuSuppressedRawH = null;  // raw height from a suppressed overlayAutoHeight
+let _wpMenuKeepRoom = false;       // a Setup entry was picked: keep the height the menu borrowed
 let _wpPageUsesAutoFit = false;    // page opted into auto-height at least once
+let _wpLastFitWasRaw = false;      // which call the page used last: overlayAutoHeight(h) or autoFitOverlay(el)
+let _wpLastRawH = null;            // …and the raw height it passed, for main's 'wp-refit' to replay
 let _wpLastFitEl = null;           // #159: last explicitly-measured element — the
                                    // menu-close replay must never fall back to
                                    // document.body (height:100% → measures the
@@ -347,6 +502,7 @@ function _menuFitPaused() {
 function _overlayAutoHeightRaw(h) {
   if (WP_IS_DOCKED) return Promise.resolve(true);   // see _autoFitOverlay
   try {
+    _wpLastFitWasRaw = true; _wpLastRawH = h;
     if (_menuFitPaused()) { _wpMenuSuppressedRawH = h; return Promise.resolve(true); }
     return ipcRenderer.invoke('overlay-auto-height', h);
   } catch (e) { return Promise.resolve(false); }
@@ -377,7 +533,12 @@ function _attachOverlayMenu(moveBtn) {
 
 function _openOverlayMenu(state) {
   // Re-open while one is up: tear the old one down cleanly first.
-  if (_wpMenuCleanupFn) { try { _wpMenuCleanupFn(); } catch (e) {} }
+  // (That close hands the menu's borrowed height back, and this menu needs it
+  // again: borrow it once more, after the give-back, in the same IPC order.)
+  if (_wpMenuCleanupFn) {
+    try { _wpMenuCleanupFn(); } catch (e) {}
+    try { ipcRenderer.invoke('overlay-ensure-min-height', 420); } catch (e) {}
+  }
   _wpMenuOpen = true;
   _wpMenuOpenAt = Date.now();
   let closed = false;
@@ -394,8 +555,14 @@ function _openOverlayMenu(state) {
     try { window.removeEventListener('blur', onBlur); } catch (e) {}
     try { if (menu.parentNode) menu.remove(); } catch (e) {}
     _hoverOff();
-    // Give the window its height back — ensure-min-height grew it and fits
-    // were suppressed while open. Only for pages that use auto-height.
+    // Give the window its height back — ensure-min-height grew it. Main hands
+    // back what it borrowed FIRST (every page, fitting or not: an idle page
+    // that only asks for a height when its HTML changes never re-fits, so the
+    // window used to stay 420 tall and be saved that way), then the replays
+    // below re-fit to content for pages that do. Setup entries keep the room.
+    const keepRoom = _wpMenuKeepRoom; _wpMenuKeepRoom = false;
+    try { ipcRenderer.invoke('overlay-menu-closed', keepRoom); } catch (e) {}
+    // Fits were suppressed while open. Only for pages that use auto-height.
     if (_wpPageUsesAutoFit) { try { _autoFitOverlay(_wpMenuSuppressedFit || undefined); } catch (e) {} }
     _wpMenuSuppressedFit = null;
     if (_wpMenuSuppressedRawH != null) {
@@ -434,6 +601,7 @@ function _autoFitOverlay(wrapEl) {
   if (WP_IS_DOCKED) return;
   try {
     _wpPageUsesAutoFit = true;
+    _wpLastFitWasRaw = false;
     if (wrapEl) _wpLastFitEl = wrapEl;
     // Chrome menu open → defer; the menu's close handler replays the fit.
     // Bounded (#159): a stuck menu flag can pause fits at most MENU_FIT_PAUSE_MS.
@@ -442,7 +610,7 @@ function _autoFitOverlay(wrapEl) {
     // body is height:100% on every overlay — measuring it returns the current
     // WINDOW height, so a body-fallback fit (e.g. the menu-close replay with no
     // suppressed element) re-asserts a menu-grown 420px window instead of
-    // shrinking back to content (Hitya's full-height DPS-HUD backdrop).
+    // shrinking back to content (the guild lead's full-height DPS-HUD backdrop).
     const w = wrapEl || _wpLastFitEl || document.getElementById('wrap') || document.body;
     if (!w) return;
     const h = (w.scrollHeight || 0) + 12;
@@ -450,17 +618,34 @@ function _autoFitOverlay(wrapEl) {
   } catch (e) {}
 }
 
+// Main sets or clears an overlay's height floor (a drag set it, ↕ Fit height to
+// content cleared it) and needs ONE fresh fit to move the window. Most pages only
+// report a height when their HTML changes (Command Center and Target Info at rest,
+// pets, melody), so this replays whichever call the page used last, through the
+// same gates: the open-menu hold and the dock opt-out still apply.
+ipcRenderer.on('wp-refit', function () {
+  try {
+    if (_wpLastFitWasRaw) { if (_wpLastRawH != null) _overlayAutoHeightRaw(_wpLastRawH); }
+    else if (_wpPageUsesAutoFit) _autoFitOverlay();
+  } catch (e) {}
+});
+
 contextBridge.exposeInMainWorld('mimic', {
   // This computer's hostname — a plain string, resolved once here because the
   // renderer has no Node access. UI Studio uses it to mark which cloud backups
   // came from the machine you are sitting at.
   machineName:         (() => { try { return require('os').hostname(); } catch { return ''; } })(),
-  openSettings:        ()         => ipcRenderer.invoke('open-settings'),
+  // section: open scrolled to that part of Settings ('zeal').
+  openSettings:        (section)  => ipcRenderer.invoke('open-settings', section),
+  onSettingsGoto:      (cb)       => ipcRenderer.on('settings-goto', (_e, section) => cb(section)),
+  // ⏻ Quit Mimic from the dashboard — the tray's Quit ('quit-app').
+  quitApp:             ()         => ipcRenderer.invoke('quit-app'),
   // Resource use in its own window — the dashboard's "what does Mimic cost?"
   // link calls this, same as the tray entry.
   openResources:       ()         => ipcRenderer.invoke('open-resources'),
   createPanelOverlay:  (panelKey) => ipcRenderer.invoke('create-panel-overlay', panelKey),
   getConfig:     () => ipcRenderer.invoke('get-config'),
+  isMuted:       () => _wpMuted,
   saveConfig:    (cfg) => ipcRenderer.invoke('save-config', cfg),
   getAgentPort:  () => ipcRenderer.invoke('get-agent-port'),
   eqSetupForMe:  () => ipcRenderer.invoke('eq-setup-for-me'),
@@ -481,20 +666,44 @@ contextBridge.exposeInMainWorld('mimic', {
   // User-facing toggles.
   setQuietMode:    (on)   => ipcRenderer.invoke('set-quiet-mode', !!on),
   setTellsMode:    (mode) => ipcRenderer.invoke('set-tells-mode', mode),
+  setLocalOnly:    (on)   => ipcRenderer.invoke('set-local-only', !!on),   // local mode: nothing online, no setup nag
   setOverlaysLocked: (on) => ipcRenderer.invoke('set-overlays-locked', !!on),
   // Toggle a named built-in overlay (hud/trigger/charm/pet/mobinfo) on/off from
   // the dashboard's Overlays tab. Returns the updated status snapshot.
   toggleOverlay:   (name) => ipcRenderer.invoke('toggle-overlay', name),
-  // Crash-report sharing, so the dashboard's Info tab can flip the same
+  // Crash-report sharing, so the dashboard's Diagnostics tab can flip the same
   // cfg.crashReports the tray menu owns. One setting, two ways to reach it.
   toggleCrashReports: (on) => ipcRenderer.invoke('toggle-crash-reports', !!on),
   setOverlayTheme: (t)    => ipcRenderer.invoke('wp-theme-set', t),
   autoArrangeNow:  ()     => ipcRenderer.invoke('auto-arrange-overlays'),
   rescueOverlays:  ()     => ipcRenderer.invoke('rescue-overlays'),
   setAllOpacity:   (v)    => ipcRenderer.invoke('wp-opacity-all', v),
+  setAllBgAlpha:   (v)    => ipcRenderer.invoke('wp-bg-alpha-all', v),
   toggleBackdrops: ()     => ipcRenderer.invoke('wp-backdrop-toggle-all'),
+  // ▭ Mini mode, for the dashboard's Overlays tab. Tray↔dashboard parity
+  // (CLAUDE.md): the right-click menu's two rows and the Ctrl+Shift+M hotkey
+  // all reach the SAME internals through main's _setOverlayMini, never a
+  // parallel path.
+  setOverlayMini:  (n, on) => ipcRenderer.invoke('wp-mini-set', n, on),
+  setOverlayMiniPin: (n, on) => ipcRenderer.invoke('wp-mini-pin-set', n, !!on),
+  toggleMiniAll:   ()     => ipcRenderer.invoke('wp-mini-all'),
+  // ⌨ While the dashboard captures a hotkey, Mimic lets go of the keys it holds
+  // (so they arrive) and returns them — [{ id, accel }] — to check a clash.
+  hotkeyCapture:   (on)   => ipcRenderer.invoke('hotkey-capture', !!on),
   markOnboarded:   ()     => ipcRenderer.invoke('mark-onboarded'),
   openDashboard:   ()     => ipcRenderer.invoke('open-dashboard'),
+  // ✨ Setup walkthrough (welcome.html, layout 'a' or 'b') and its relay for the two agent
+  // POSTs it makes: 'import' old logs, 'backfill' the main's log.
+  openWelcome:     (v)    => ipcRenderer.invoke('open-welcome', v === 'b' ? 'b' : 'a'),
+  welcomeOptin:    (action, paths) => ipcRenderer.invoke('welcome-optin', action, paths),
+  // Main / alt · Inventory only · Hide completely (2026-10-06). characterModes: the website's family merged
+  // with this PC's characters. setCharacterMode: the one call that makes a choice — the engine asks
+  // wolfpack.quest and saves it, and main keeps the don't-transmit list (the log gate) in step.
+  characterModes:   ()                => ipcRenderer.invoke('character-modes-get'),
+  setCharacterMode: (character, mode) => ipcRenderer.invoke('character-mode-set', String(character || ''), String(mode || '')),
+  // 📸 Feedback screenshots: every display as JPEG data URLs, the asking window
+  // faded out for the shot (main.js 'capture-screens'). [{ name, dataUrl }].
+  captureScreens:  ()     => ipcRenderer.invoke('capture-screens'),
   openExternal:    (url)  => ipcRenderer.invoke('open-external', url),
   openZealCapture: ()     => ipcRenderer.invoke('open-zeal-capture'),
   // Zeal auto-updater (CoastalRedwood/Zeal). status is local-only; checkUpdate
@@ -518,13 +727,16 @@ contextBridge.exposeInMainWorld('mimic', {
   zealStatus:        ()   => ipcRenderer.invoke('zeal-status'),
   zealCheckUpdate:   ()   => ipcRenderer.invoke('zeal-check-update'),
   zealInstallUpdate: ()   => ipcRenderer.invoke('zeal-install-update'),
+  zealSetSource:     (s)  => ipcRenderer.invoke('zeal-set-source', s),   // 'official' | 'test'
   // Custom UI packs (Nillipuss etc.): list is local; check hits GitHub;
-  // install downloads the pack into uifiles/<name>/; applyOption copies an
-  // Options/ layout up into the pack folder.
+  // install downloads the pack into uifiles/<name>/; setOptions makes the
+  // ticked Options/ layouts the ones on (prepare fetches the pack's default
+  // files once, for a pack installed before Mimic kept them).
   uiPacksList:       ()          => ipcRenderer.invoke('ui-packs-list'),
   uiPackCheck:       (id)        => ipcRenderer.invoke('ui-pack-check', id),
   uiPackInstall:     (id)        => ipcRenderer.invoke('ui-pack-install', id),
-  uiPackApplyOption: (id, opt)   => ipcRenderer.invoke('ui-pack-apply-option', id, opt),
+  uiPackPrepare:     (id)        => ipcRenderer.invoke('ui-pack-prepare', id),
+  uiPackSetOptions:  (id, ids)   => ipcRenderer.invoke('ui-pack-set-options', id, ids),
 
   // Overlay lock state — main pushes this to overlay renderers so they can
   // show/hide their drag handle.
@@ -537,10 +749,10 @@ contextBridge.exposeInMainWorld('mimic', {
   // ✥ move icon. Doesn't flip the global setupMode.
   setSetupModeThis: (on)          => ipcRenderer.invoke('set-setup-mode-this', on === undefined ? true : !!on),
   setOverlayOpacity:(key, value) => ipcRenderer.invoke('set-overlay-opacity', key, value),
-  // Global overlay scale (50%–200%) — Fittir's-5K-monitor knob in Settings.
+  // Global overlay scale (50%–200%) — a member's-5K-monitor knob in Settings.
   setOverlayScale:  (value)       => ipcRenderer.invoke('set-overlay-scale', value),
   getOverlayScale:  ()            => ipcRenderer.invoke('get-overlay-scale'),
-  // Tray-parity controls for the dashboard Overlays tab (Hitya 2026-08-19).
+  // Tray-parity controls for the dashboard Overlays tab (the guild lead, 2026-08-19).
   hideAllToggle:      ()     => ipcRenderer.invoke('hide-all-toggle'),
   charProfilesEnable: (on)   => ipcRenderer.invoke('char-profiles-enable', !!on),
   charProfileSave:    ()     => ipcRenderer.invoke('char-profile-save'),
@@ -559,6 +771,10 @@ contextBridge.exposeInMainWorld('mimic', {
   // Renderer reports its content height; main resizes the window to fit so
   // multi-card overlays (charm, pets, /who) grow with their content.
   overlayAutoHeight: (h) => _overlayAutoHeightRaw(h),
+  // Size/place this overlay's own window ({ width, height, x?, y?, center? }),
+  // clamped to its display. The Me overlay's HUD layout uses it; a docked pane
+  // has no window of its own to move.
+  overlaySetBounds: (b) => (WP_IS_DOCKED ? Promise.resolve(false) : ipcRenderer.invoke('overlay-set-bounds', b)),
   // (overlayResizePreset / overlayEnsureMinHeight bridge wrappers deleted
   // 2026-07-09 — no overlay ever called them; the shared chrome below invokes
   // the 'overlay-resize-preset' / 'overlay-ensure-min-height' IPC directly.)
@@ -581,6 +797,16 @@ contextBridge.exposeInMainWorld('mimic', {
     ? ipcRenderer.invoke('dock-set', _wpDockKey(), false)
     : ipcRenderer.invoke('hide-overlay')),
 
+  // ── Timers canvas (canvas.html) ───────────────────────────────────────────
+  // canvasState() → { res, layout, edit, displays }; canvasSave(layout) stores
+  // it for the screen's resolution; canvasEdit(on) is the tray's "Arrange";
+  // onCanvasEdit hears it flip from anywhere.
+  canvasState:       ()       => ipcRenderer.invoke('canvas-state'),
+  canvasSave:        (layout) => ipcRenderer.invoke('canvas-save', layout),
+  canvasEdit:        (on)     => ipcRenderer.invoke('canvas-edit', !!on),
+  canvasNextDisplay: ()       => ipcRenderer.invoke('canvas-next-display'),
+  onCanvasEdit:      (cb)     => ipcRenderer.on('canvas-edit', (_e, on) => cb(!!on)),
+
   // ── Dock ──────────────────────────────────────────────────────────────────
   // dock.html only. dockState() returns { keys, cols, catalog }; dockSet()
   // adds/removes a pane; dockCols() cycles the column count. All three return
@@ -595,7 +821,7 @@ contextBridge.exposeInMainWorld('mimic', {
   // The dock reports its own content height; main resizes the window, keeping
   // the BOTTOM edge fixed when grow-upward is on.
   dockAutoHeight: (h)         => ipcRenderer.invoke('dock-auto-height', h),
-  // Named dock layouts + rename (Hitya 2026-08-19).
+  // Named dock layouts + rename (the guild lead, 2026-08-19).
   dockLayoutSave:   (name) => ipcRenderer.invoke('dock-layout-save', name),
   dockLayoutLoad:   (name) => ipcRenderer.invoke('dock-layout-load', name),
   dockLayoutDelete: (name) => ipcRenderer.invoke('dock-layout-delete', name),
@@ -608,6 +834,14 @@ contextBridge.exposeInMainWorld('mimic', {
   // EQ install discovery + folder picker for the multi-folder UI.
   findEqInstalls: () => ipcRenderer.invoke('find-eq-installs'),
   pickEqDir:      () => ipcRenderer.invoke('pick-eq-dir'),
+  // Old-log importer (the guild lead, 2026-09-13): the native pickers, and the real
+  // path of a File dropped on the dashboard — a plain browser never gets one;
+  // Electron does, through webUtils (31+; `file.path` for anything older).
+  pickLogBackups: (kind) => ipcRenderer.invoke('pick-log-backups', kind),
+  pathForFile:    (file) => {
+    try { if (webUtils && typeof webUtils.getPathForFile === 'function') return webUtils.getPathForFile(file) || null; } catch (_) { /* fall through */ }
+    return (file && file.path) || null;
+  },
   listEqCharacters: () => ipcRenderer.invoke('list-eq-characters'),
 
   // UI Studio — capture / restore EQ ini files (windows, hotkeys, chat
@@ -616,7 +850,8 @@ contextBridge.exposeInMainWorld('mimic', {
   uiStudioListDisplays:   ()        => ipcRenderer.invoke('ui-studio-list-displays'),
   uiStudioIsEqRunning:    ()        => ipcRenderer.invoke('ui-studio-eq-running'),
   // Background deferred save — applied by the main process when the character
-  // logs out (survives closing UI Studio + a Mimic restart).
+  // logs out (survives closing UI Studio + a Mimic restart). params carries
+  // `edits` (key edits, as uiStudioWriteEdits), never whole file texts.
   uiStudioDeferSave:      (params)  => ipcRenderer.invoke('ui-studio-defer-save', params),
   uiStudioPendingList:    ()        => ipcRenderer.invoke('ui-studio-pending-list'),
   uiStudioCancelDefer:    (params)  => ipcRenderer.invoke('ui-studio-cancel-defer', params),
@@ -630,6 +865,10 @@ contextBridge.exposeInMainWorld('mimic', {
   // text map; write takes the edited map and persists with .bak backups.
   uiStudioReadBundle:     (character, eqDir) => ipcRenderer.invoke('ui-studio-read-bundle', character, eqDir),
   uiStudioWriteBundle:    (eqDir, bundle, opts) => ipcRenderer.invoke('ui-studio-write-bundle', eqDir, bundle, opts),
+  // Save's key-level write: edits = [{ file, section, key, value }] applied to
+  // each file as it is on disk NOW — only those keys change. Window layout goes
+  // through this (and the deferred save queues the same edits), not the bundle.
+  uiStudioWriteEdits:     (eqDir, edits, opts) => ipcRenderer.invoke('ui-studio-write-edits', eqDir, edits, opts),
   // Open the standalone UI Studio editor window from the dashboard's nav.
   openUiStudio:           ()                 => ipcRenderer.invoke('open-ui-studio'),
   // Bundled PvP rotation templates (Dirge Team 6™ etc.) — list by class,
@@ -663,6 +902,12 @@ contextBridge.exposeInMainWorld('mimic', {
   // Updates.
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   revertToStable:  () => ipcRenderer.invoke('revert-to-stable'),
+  // ⤴ beta (dashboard, stable builds): { optedIn, available } / confirm + join or leave.
+  getBetaChannel:  ()   => ipcRenderer.invoke('get-beta-channel'),
+  setBetaChannel:  (on) => ipcRenderer.invoke('set-beta-channel', !!on),
+  // α alpha (dashboard, any build): { optedIn, running, available } / confirm + join or leave.
+  getAlphaChannel: ()   => ipcRenderer.invoke('get-alpha-channel'),
+  setAlphaChannel: (on) => ipcRenderer.invoke('set-alpha-channel', !!on),
 
   // Diagnostics.
   getAgentLogTail: (lines) => ipcRenderer.invoke('get-agent-log-tail', lines),
@@ -683,7 +928,7 @@ contextBridge.exposeInMainWorld('mimic', {
 // dashboard was the ONLY http page Mimic loaded, so "protocol is http" meant
 // "this is the dashboard". #65 broke that assumption by serving real overlays
 // from the agent so they ride agent hot-swaps — and the Command Center then
-// picked up a ⚙ that opened Mimic Settings from inside a raid overlay (Hitya,
+// picked up a ⚙ that opened Mimic Settings from inside a raid overlay (the guild lead,
 // 2026-08-13). Those overlays ship their own chrome per the parity checklist
 // (✥ move, ✕ hide, right-click resize/Setup), so injected chrome is not just
 // redundant, it is a second way to do the same thing that looks like a bug.
@@ -824,10 +1069,21 @@ if (location.protocol === 'http:' && !_isAgentServedOverlay) {
       'padding:4px 12px', 'cursor:pointer', 'font-size:12px',
     ].join(';'));
     connectBtn.onclick = () => { try { ipcRenderer.invoke('open-settings'); } catch (e) {} };
+    // Local mode as a choice: overlays and your own triggers keep working and nothing goes online; this
+    // only stops Mimic asking (setup counts as finished). Same IPC as setup's "run local-only".
+    const localBtn = document.createElement('button');
+    localBtn.textContent = 'Stay local-only';
+    localBtn.title = 'Keep using the overlays with nothing sent online. Sign in any time from Settings.';
+    localBtn.setAttribute('style', [
+      'background:transparent', 'color:#f6c365', 'border:1px solid #6b5320', 'border-radius:5px',
+      'padding:3px 10px', 'cursor:pointer', 'font-size:12px',
+    ].join(';'));
+    localBtn.onclick = () => { try { ipcRenderer.invoke('set-local-only', true); } catch (e) {} };
     const msg = document.createElement('span');
     msg.innerHTML = '⚠ <b>Not connected</b> — no Wolf Pack token set, so your parses aren\'t being shared. Paste your <code>/token</code> to fix.';
     banner.appendChild(msg);
     banner.appendChild(connectBtn);
+    banner.appendChild(localBtn);
     document.body.appendChild(banner);
 
     // "Update ready" banner — replaces the naggy OS pop-up. Shows when a Mimic
@@ -872,14 +1128,14 @@ if (location.protocol === 'http:' && !_isAgentServedOverlay) {
       gear.style.top = (updOn && connOn) ? '74px' : (updOn || connOn) ? '50px' : '10px';
     };
     const refreshBanner = (s) => {
-      banner.style.display = (s && s.localOnly) ? 'flex' : 'none';
+      banner.style.display = (s && s.localOnly && !s.localModeChosen) ? 'flex' : 'none';
       if (s && s.updatePending && !_updDismissed) {
         // Wording matters here: since 2.3.0 the update applies when you close
         // EVERQUEST (autoInstallOnAppQuit still covers a Mimic quit as well),
         // and nobody quits Mimic — that was the whole reason the EQ-close path
         // was built. Telling a raider "close Mimic" sends them to do the one
         // thing they never do, and makes a working auto-update look broken
-        // (Uilnayar, 2026-08-04: "it did not update in place").
+        // (a member, 2026-08-04: "it did not update in place").
         updMsg.innerHTML = '⬆ <b>Mimic v' + String(s.updatePending).replace(/[<>&]/g, '') + ' is ready.</b> Nothing to do — it installs by itself next time you close EverQuest. Or restart now:';
         upd.style.display = 'flex';
       } else {

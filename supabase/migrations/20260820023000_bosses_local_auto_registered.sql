@@ -1,4 +1,4 @@
--- #47 follow-up (Hitya 2026-08-19: "THESE are not the right parses to display
+-- #47 follow-up (the guild lead, 2026-08-19: "THESE are not the right parses to display
 -- here for nonbosses"): bot 3.1.52's self-registration opened bosses_local to
 -- any exact eqemu name match so first kills can never be dropped — but that
 -- also means farm/raid trash now persists encounters, and wolfpack.quest

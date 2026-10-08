@@ -1,6 +1,6 @@
 // commands/preraid.js — the officer-chat pre-raid checklist.
 //
-// Hitya 2026-08-21: "let's build an admin-facing officer-chat pre-raid
+// The guild lead 2026-08-21: "let's build an admin-facing officer-chat pre-raid
 // checklist, active mimics, class shortages below our average, lockouts, other
 // pertinent details."
 //
@@ -63,9 +63,11 @@ async function gather(client) {
 
   // ── our own average, from raid_roster (what actually showed up) ───────────
   const since = new Date(now - CLASS_AVG_NIGHTS * 8 * 24 * 3600_000).toISOString();
+  // Ordered on the key left once guild_id is pinned (uploader, name): `name` alone
+  // repeats once per uploading agent, and ties let a page boundary skip rows.
   const rosterRows = await supabase.selectAllPaged('raid_roster',
     `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(since)}` +
-    `&select=name,class,captured_at`, 'name').catch(() => null) || [];
+    `&select=name,class,captured_at`, 'uploaded_by_discord_id,name').catch(() => null) || [];
   // Bucket by raid NIGHT (ET date), then average the per-night class counts.
   const perNight = new Map();
   for (const r of rosterRows) {
@@ -124,9 +126,11 @@ async function gather(client) {
   });
 
   // ── lockouts ─────────────────────────────────────────────────────────────
+  // (character, boss_key) is the key once guild_id is pinned; `character` alone
+  // has one row per boss, so its ties could drop a raider's lockout at a boundary.
   const lockRows = await supabase.selectAllPaged('character_lockouts',
     `guild_id=eq.${encodeURIComponent(guildId)}&expires_at=gt.${encodeURIComponent(new Date(now).toISOString())}` +
-    `&select=character,boss_key,expires_at,ours`, 'character').catch(() => null) || [];
+    `&select=character,boss_key,expires_at,ours`, 'character,boss_key').catch(() => null) || [];
   const charRows = await supabase.selectAllPaged('characters',
     `guild_id=eq.${encodeURIComponent(guildId)}&select=name,main_name`, 'name').catch(() => null) || [];
   const kindByName = new Map();
@@ -242,7 +246,7 @@ async function postPreRaidChecklist(client) {
 }
 
 // ── Midday member-facing post ─────────────────────────────────────────────
-// Hitya 2026-08-21: "post the raid info midday to our channel." Re-surfaces the
+// The guild lead 2026-08-21: "post the raid info midday to our channel." Re-surfaces the
 // header block the officers already typed into the signup post (muster point,
 // lead, window, loot, ticks) plus who's signed and which classes are still
 // wanted. Deliberately NOT the officer checklist: no Mimic coverage, no

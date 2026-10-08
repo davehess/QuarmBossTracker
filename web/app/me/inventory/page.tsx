@@ -21,6 +21,7 @@ import { ownedCharacters } from '@/lib/ownedCharacters';
 import InventoryExplorer, { type InvItem, type LocGroup } from './InventoryExplorer';
 import { selectAll } from '@/lib/selectAll';
 import { clusterSharedBanks } from '@/lib/sharedBank';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'My inventory — Wolf Pack' };
@@ -68,18 +69,18 @@ export default async function MyInventoryPage() {
     const admin = supabaseAdmin();
     // Paginated: an active player's family is 2,238 rows today and PostgREST
     // silently caps a single response at 1000 (lib/selectAll.ts) — .limit(50000)
-    // never raised it. Hitya 2026-08-05: "inventory rows for an account looks
+    // never raised it. The guild lead 2026-08-05: "inventory rows for an account looks
     // to be capped at 1000".
     const rows = await selectAll<InvRow>((from, to) => admin
       .from('character_inventory')
       .select('character_name, slot_label, item_id, item_name, quantity, observed_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .in('character_name', charNames)
       .order('character_name').order('slot_label')
       .range(from, to));
     rowCount = rows.length;
 
-    // Shared-bank dedup (Hitya 2026-08-20). The shared bank is ACCOUNT-level:
+    // Shared-bank dedup (the guild lead, 2026-08-20). The shared bank is ACCOUNT-level:
     // every character on a game account reads the SAME physical bank, so
     // summing their rows counted one stack once per character (ten characters
     // each reporting SharedBank6-Slot9 = Words of the Spectre x3).

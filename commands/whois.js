@@ -9,6 +9,7 @@
 const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
 const { getWhoEntry } = require('../utils/state');
 const { getCharacter } = require('../utils/roster');
+const { isGuildMember, MEMBERS_ONLY } = require('../utils/roles');
 
 function fmtIso(iso) {
   if (!iso) return '—';
@@ -26,6 +27,7 @@ module.exports = {
     ),
 
   async execute(interaction) {
+    if (!isGuildMember(interaction)) return interaction.reply({ flags: MessageFlags.Ephemeral, content: MEMBERS_ONLY });
     const name = interaction.options.getString('character', true).trim();
     const who  = getWhoEntry(name);
     const char = getCharacter(name);

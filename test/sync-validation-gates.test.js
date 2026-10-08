@@ -104,6 +104,11 @@ describe('gate behaviour', () => {
   it('runs the gates BEFORE recording sync_state as a good run', () => {
     // Otherwise a failed import still writes "last good sync" and the next run
     // skips it as unchanged.
-    expect(src.indexOf('VALIDATION FAILED')).toBeLessThan(src.indexOf('Record sync_meta'));
+    // ⚠ Anchored to the actual write, not the "Record sync_meta" comment above
+    // it (2026-08-30 sweep): the write could move above validation while the
+    // comment stayed put, and this ordering check would not notice.
+    const write = src.indexOf("await sb('/sync_meta'");
+    expect(write).toBeGreaterThan(-1);
+    expect(src.indexOf('VALIDATION FAILED')).toBeLessThan(write);
   });
 });

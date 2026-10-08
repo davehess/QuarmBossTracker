@@ -8,8 +8,8 @@ import type { NextRequest } from 'next/server';
  * On Vercel that is invisible, because its proxy rewrites the request before
  * Next sees it. Anywhere else — a container, a LAN mirror — it evaluates to
  * `http://localhost:3000`, so sign-in and sign-out both completed successfully
- * and then dumped the user on localhost (found on the Unraid mirror at
- * 192.168.1.163:3000, 2026-08-11).
+ * and then dumped the user on localhost (found on a self-hosted mirror at
+ * <lan-ip>:3000, 2026-08-11).
  *
  * Preference order:
  *   1. `x-forwarded-host` — set by any proxy in front, including Vercel's

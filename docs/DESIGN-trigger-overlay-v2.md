@@ -1,6 +1,6 @@
 # Trigger overlay v2 — slow labels, one row per mob, and a mute/feedback loop
 
-Spec from Hitya, 2026-08-10 (post-Ssra). The trigger overlay is *"that area is
+Spec from the guild lead, 2026-08-10 (post-Ssra). The trigger overlay is *"that area is
 critical, the most critical on the page"* — this doc is the plan for it.
 
 Grounding for everything below: `eqemu_spells` SPA-11 sweep (79 detrimental
@@ -57,7 +57,7 @@ Two separate causes, one already fixed:
   keys carried each observer's own raw log line (and therefore their clock), so N
   raiders watching one event produced N distinct keys. Keys are now built from
   semantic captures, and the bot resolves fire timestamps to true time before
-  dedup — the clock-skew involvement Hitya asked for. Tests:
+  dedup — the clock-skew involvement the guild lead asked for. Tests:
   `test/relay-clock-skew.test.js`, `test/relay-true-time.test.js`.
 
 **Still to do:** a hard invariant at RENDER time — at most one slow row per mob,
@@ -79,7 +79,7 @@ Rows currently squish and overlap the game behind them. Requirements:
 
 ## 3b. The screen is already full — where the timers may and may not go
 
-From two live Ssra screenshots (Hitya, 2026-08-10). Everything up at once:
+From two live Ssra screenshots (guild lead, 2026-08-10). Everything up at once:
 
 | Region | Occupant |
 |---|---|
@@ -130,7 +130,7 @@ with the other overlay prefs; applies to the alert overlay only.
 
 ## 6. The mute / correct / edit loop — an EVERYONE workflow
 
-Hitya, 2026-08-10: *"i need the mute wrong button to be an everyone workflow. no
+The guild lead, 2026-08-10: *"i need the mute wrong button to be an everyone workflow. no
 one of us can do it best, and suggestions on what's wrong need to come in. if
 it's wrong, we should add it in as a queue item. Something marked wrong that we
 could play back would be ideal. Hear the TTS fire while watching the fight

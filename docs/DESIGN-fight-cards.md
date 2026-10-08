@@ -1,6 +1,6 @@
 # DESIGN — Fight Cards (the Quartermaster's original concept)
 
-**Hitya, 2026-08-16:** *"that was the original thought process behind the
+**The guild lead, 2026-08-16:** *"that was the original thought process behind the
 quartermaster. conceptually it was a checklist for each of the fights to make
 sure that we had the player composition that we needed, and a review of the
 tactics that keep us from wasting time and wiping."*
@@ -28,12 +28,12 @@ The ST melee dance (this session): Ventani's **Freezing Breath** identified
 from the mirrored `eqemu_npc_spells` lists, its texts verified in
 `eqemu_spells` (845), its **cycle measured at ~15s (12–17s jitter) from our
 own 2026-08-07 Ventani kill** (encounter `92ce667c`, 14 casts), and the
-trigger pair upgraded to Hitya's spec: timer 15s re-anchored on every breath,
+trigger pair upgraded to the guild lead's spec: timer 15s re-anchored on every breath,
 **"Melee out" at T-3s, "A O E" on the actual land**, 4s cooldown — sized to
 absorb one breath's ~1–2s burst of lines and nothing more, since a match
 during cooldown is fully suppressed (no announce, no timer re-anchor).
 
-**The tank is the metronome (Hitya, 2026-08-16): "the tank never dodges is a
+**The tank is the metronome (guild lead, 2026-08-16): "the tank never dodges is a
 key factor. the tank gets all of these debuffs because they don't move."**
 Two consequences, one structural and one tactical:
 
@@ -53,12 +53,12 @@ Two consequences, one structural and one tactical:
 | Nanzata | Lava Breath (fire) | −500 + **a dispel on every breath** — the MT's buffs strip repeatedly; long buffs on the MT mid-fight are wasted, defensives can vanish |
 | Tukaarak + Ventani | Mesmerizing Breath (magic) | 18s **silence** cloud — a healer standing in it cannot cast |
 
-**The LoS hail probe (Hitya, 2026-08-16):** for every warder EXCEPT Ventani,
+**The LoS hail probe (guild lead, 2026-08-16):** for every warder EXCEPT Ventani,
 *"if you can't see the main tank, you don't get hit by the cast"* — and the
 raid's probe for it is a `/hail` at the MT: **a bare `You say, 'Hail'` (no
-name) means no line of sight → safe**; `You say, 'Hail, Malthur'` means
+name) means no line of sight → safe**; `You say, 'Hail, Rasmere'` means
 you're in the AoE's world. Two personal-scope triggers denote it in `guild_triggers`, **both disabled —
-Hitya deferred them 2026-08-16** ("let's not do those triggers for now, but
+The guild lead deferred them 2026-08-16** ("let's not do those triggers for now, but
 denote them for the future"). Patterns are compiler-verified with negatives
 and the notes carry the full tactic; enabling is one toggle each.
 Personal scope is deliberate: line of sight is per-player, and relaying one
@@ -71,9 +71,9 @@ per fight before the pull — and every cell came from `eqemu_spells` effect
 ids, not memory.
 
 **Second worked example — Caustic Mist (Vyzh`dra the Cursed, Ssra), same
-format on Hitya's ask (2026-08-16).** First pick was WRONG and the correction
+format on the guild lead's ask (2026-08-16).** First pick was WRONG and the correction
 is part of the example: I armed Mass Insanity (the AoE charm — it looked like
-the obvious dance), and Hitya corrected it: *"Caustic Mist is the one we want
+the obvious dance), and the guild lead corrected it: *"Caustic Mist is the one we want
 to avoid."* The data can tell you what a spell DOES; only the raid knows
 which one the tactic is about — that judgment is exactly what the fight
 card's officer-authored tactics column encodes. The dance now sits on
@@ -131,7 +131,7 @@ That is the repeatable recipe a fight card automates per boss:
 ## Explicitly deferred
 
 - The **write-path drill** (synthetic encounter through the whole chain,
-  DESIGN-75-golden-log § "The drill") stays disabled until Hitya signs off —
+  DESIGN-75-golden-log § "The drill") stays disabled until the guild lead signs off —
   today's `/preraiddrill` is the read-only half, from inside production.
 - Auto-generating dance triggers for the whole breath family: the recipe
   above works for all 18, but each needs its cycle measured from a real kill

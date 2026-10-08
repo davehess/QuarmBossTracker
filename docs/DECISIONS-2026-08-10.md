@@ -2,7 +2,7 @@
 
 ## Tank-buster callout moved from "as it happens" to a prep sequence
 
-**The call (Hitya, post-Ssra):** the Emperor tank buster needs a warning at
+**The call (the guild lead, post-Ssra):** the Emperor tank buster needs a warning at
 **10s** ("big heals and spell shields") and at **4s** ("start curse cures") —
 not a single announcement when it lands.
 
@@ -10,8 +10,8 @@ not a single announcement when it lands.
 be in flight ~10s out so they land *into* the hit, spellshields have to be up
 before it, and curse cures started at 5/4/3s strip the curse the instant it
 lands so the follow-up heal is fully effective. A callout at T-0 is too late for
-every one of those. On the wipe pull Bardtholemu — who normally calls this
-verbally — was busy stabilising after Lenolshot died, so the raid got nothing.
+every one of those. On the wipe pull a member — who normally calls this
+verbally — was busy stabilising after a member died, so the raid got nothing.
 **That is the case automation exists for: the raid leader is a single point of
 failure and is least available exactly when the raid most needs the call.**
 
@@ -52,7 +52,7 @@ fires before 4s.
 
 ### 1. The Emperor casts TWO things, and the second explains the threat problem
 
-Hitya spotted a second spell. It is not a spell — it is a **melee attack proc**:
+The guild lead spotted a second spell. It is not a spell — it is a **melee attack proc**:
 `eqemu_npc_spells.attack_proc = 2981`, `proc_chance = 4`.
 
 **Diminutive Stature** (2981), unresistable: **SPA 64 spin stun + SPA 114 −95%
@@ -61,7 +61,7 @@ whoever he is meleeing, i.e. the main tank.
 
 So the tank absorbs **two aggro wipes**: a guaranteed −95% every 60s from Rage of
 Ssraeshza, plus a random −95% on 4% of swings. That is the mechanical reason dps
-passes the tank, and it confirms Luter's "the tank is getting spin stun proc'd on
+passes the tank, and it confirms a member's "the tank is getting spin stun proc'd on
 a lot" — SPA 64 *is* that stun.
 
 Settled at the same time: **the buster has no healing component.** SPA 114 is
@@ -100,7 +100,7 @@ door.
 
 ### 3. Playbooks belong on wolfpack.quest, not in a chat artifact
 
-Hitya: *"where are these artifacts getting placed? our point is to have these
+Guild lead: *"where are these artifacts getting placed? our point is to have these
 things in our Wolfpack quest."* Correct — Claude artifacts live on claude.ai and
 are fine for drafting, wrong as a destination.
 
@@ -115,7 +115,7 @@ doc or a chat page.**
 
 ## RULE: when `main` gets something, `beta` gets it too
 
-**The call (Hitya, 2026-08-10):** beta must track main continuously, not be
+**The call (guild lead, 2026-08-10):** beta must track main continuously, not be
 re-synced at graduations.
 
 **Why.** Re-syncing by hand was already the documented practice and it still did
@@ -152,7 +152,7 @@ deletions are present on beta.
 
 ## Boss zone audit — `bosses_local.zone_short` had drifted from the repo seed
 
-**Reported (Hitya):** `/parses` filed Galiel Spirithoof under *Plane of Mischief*.
+**Reported (the guild lead):** `/parses` filed Galiel Spirithoof under *Plane of Mischief*.
 
 **It is Plane of Growth**, and the error was in the database, not the page.
 `bosses_local.zone_short` said `mischiefplane`; `data/bosses.json` — the seed —
@@ -212,7 +212,7 @@ group by b.internal_id, b.zone_short, z.short_name;
 
 ## RULE: shipping updates the docs at both gates (2026-08-11)
 
-**The call (Hitya):** *"implementation of a feature or fix must update that
+**The call (the guild lead):** *"implementation of a feature or fix must update that
 documentation once it graduates to beta, and upon shipping to main it needs to
 be updated again with the stable release version."*
 
@@ -227,16 +227,16 @@ confidently wrong answers for every future session. Landed in `CLAUDE.md`
 
 | Item | State |
 |---|---|
-| **#204–#207 implementations** | Four Opus agents dispatched 2026-08-11 (DI callout, group-HP death watcher, instant-mechanic capture, callout overlay UX) — review + integrate to beta; only #207 is testable by Hitya without a raid |
+| **#204–#207 implementations** | Four Opus agents dispatched 2026-08-11 (DI callout, group-HP death watcher, instant-mechanic capture, callout overlay UX) — review + integrate to beta; only #207 is testable by the guild lead without a raid |
 | **Dead-trigger risk FLIPPED** | 3.5.54+ compiler revives `^`-anchored rows as the fleet updates to 2.3.5 — expect surprise callouts Wednesday; re-audit the 37 before/at the raid (`STATUS.md`, reconciled entry) |
 | **Task #27 unblocked** | Restore the 8 muted trash triggers once raiders are on 2.3.5; TTS stays off unless asked |
-| **Buff/debuff queue + CH DDR** | Open questions walked through with Hitya 2026-08-11 — answers pending |
+| **Buff/debuff queue + CH DDR** | Open questions walked through with the guild lead 2026-08-11 — answers pending |
 | **Kill switches untested** | Unchanged — never pulled in the field |
 | **Timer-warning sweep** | Which timer triggers have a duration but no `timer_warnings`? Emperor's was a blank field |
 | **PR #78** | CLOSED 2026-08-11 (diff had become the 2.3.6 park — merging would have cut an accidental stable) |
 | **PoP unlock checklist** | + settle bertoxxulous / aerin_dar / agnarr zones against PQDI |
 
-## Buff/debuff queue: anyone resolves, ephemeral store (Hitya, 2026-08-11)
+## Buff/debuff queue: anyone resolves, ephemeral store (guild lead, 2026-08-11)
 
 The two questions that were still live in `DESIGN-buff-debuff-queue.md`:
 **anyone can resolve** a queue item (everyone-workflow philosophy — a wrong
@@ -246,7 +246,7 @@ shape — no table, no migration). The other three questions were overtaken by
 shipped code and are marked so in the design doc. Remaining build: the shared
 manual layer + one-click resolve on the existing auto queues.
 
-## DI callout: Hitya's four calls (2026-08-11)
+## DI callout: the guild lead's four calls (2026-08-11)
 
 X OR Y when both are ready and neither is about to CH; clerics only (druids
 cannot DI); when the Mimic-running clerics are known-not-ready, rely on the
@@ -256,7 +256,7 @@ voice. Points 1–3 were confirmed as already shipped in 3.5.59's ranker; point 
 landed in 3.5.60 as the "— caster call it" cue on the TTS and overlay text.
 Full mapping in `DESIGN-di-callout.md` §7.
 
-## CH chain: show both claimants + ORDER CONFLICT; cast bar right-to-left, blue (Hitya, 2026-08-11)
+## CH chain: show both claimants + ORDER CONFLICT; cast bar right-to-left, blue (guild lead, 2026-08-11)
 
 Two calls, both shipped in agent 3.5.61:
 
@@ -273,7 +273,7 @@ timers around it and read as one of them. It now runs the other way in its own
 color: one glance tells a cast from a countdown. GO stays green (green = go);
 an interrupted cast stays red-and-frozen, inheriting the right anchor so it
 reads as the same bar, stopped.
-## Unraid Supabase: backup first, then dev sandbox (Hitya, 2026-08-11)
+## Unraid Supabase: backup first, then dev sandbox (guild lead, 2026-08-11)
 
 Not the live replica. Ordering matters twice over: the nightly `pg_dump` needs
 only the SESSION pooler (IPv4 — the replication path's IPv6/IPv4-add-on caveat
@@ -298,7 +298,7 @@ the healthcheck, is the acceptance test; (3) the backup script pinned a
 dump. Also: Studio's project ref follows `POOLER_TENANT_ID` (`/project/wolfpack`,
 not `/project/default`), and `docker cp` of `latest.dump` copies the symlink.
 
-## Local wolfpack.quest: Coolify in a VM, pointed at the LOCAL Supabase (Hitya, 2026-08-11)
+## Local wolfpack.quest: Coolify in a VM, pointed at the LOCAL Supabase (guild lead, 2026-08-11)
 
 Two calls. **Coolify runs in an Unraid VM**, not on bare Unraid — its installer
 wants systemd and the Docker daemon, and its proxy wants ports 80/443, which
@@ -343,7 +343,7 @@ Rule recorded in CLAUDE.md.
 
 ## Self-hosting: the repo could not rebuild its own schema (measured 2026-08-12)
 
-Goal from Hitya: let another guild run this without the hosting bill, and drop
+Goal from Guild lead: let another guild run this without the hosting bill, and drop
 our own monthly fees. Tonight's Unraid work had already proven the two hard
 layers (self-hosted Supabase; the web app outside Vercel) and the bot was already
 containerized — so the open question was the database, which
@@ -366,7 +366,7 @@ its other 23 statements instead of aborting on one missing function.
 
 Deliberately kept OUT of `supabase/migrations/`: landing them there needs
 timestamps older than the migrations referencing them, which rewrites applied
-history on a project where the tables already exist. **Open call for Hitya:**
+history on a project where the tables already exist. **Open call for the guild lead:**
 commit them as real migrations / squash to a baseline, or keep bootstrap as the
 fresh-install path. The six tables are created EMPTY — per-guild data, never ours.
 
@@ -394,10 +394,10 @@ looks is indistinguishable from automation that does not run.** Applies equally
 to the mirror's autodeploy poller and the nightly backup — both already log, and
 both need somewhere the log is actually read.
 
-## CH conflict rows: one line per claimant (Hitya, live test 2026-08-12)
+## CH conflict rows: one line per claimant (the guild lead, live test 2026-08-12)
 
 An impromptu test of the 3.5.61 ORDER CONFLICT work showed the merged row was
-half a fix: `002 | Mcdorf / Stupidric… | 54% | NEXT` truncated both names and,
+half a fix: `002 | Norwood / Stupidric… | 54% | NEXT` truncated both names and,
 worse, drove ONE cast bar for TWO clerics — the display told you the slot was
 contested but not what either of them was actually doing, which is the thing you
 need mid-chain. Agent 3.5.62 renders one row per claimant, each with its own cast
@@ -431,7 +431,7 @@ and worth building: a check that compares the newest file in
 
 ## PostgREST's 1000-row cap was silently wrong across the site (2026-08-12)
 
-Hitya asked whether rolls were limited to 1000 looted items. They were — and so
+The guild lead asked whether rolls were limited to 1000 looted items. They were — and so
 was a lot else. `.limit(N)` only lowers PostgREST's `max-rows`, never raises it,
 so every query matching more than ~1000 rows returned the first 1000 with no
 error and no flag. The failure mode is the dangerous one: not an empty page, but
@@ -454,7 +454,7 @@ count first. The general lesson is worth keeping: **an ORM-shaped API that caps
 silently makes truncation indistinguishable from a complete answer**, and the
 only defence is measuring the table, not reading the code.
 
-## The local box keeps history production discards (Hitya, 2026-08-12)
+## The local box keeps history production discards (guild lead, 2026-08-12)
 
 *"local should not lose any history"* — so `refresh-local-archive.sh` replaces
 `refresh-local-sandbox.sh`. The old script restored with `--clean`, which meant
@@ -510,9 +510,9 @@ rather than from EverQuest. That may still be correct — the audience reads par
 tables and it matches the agent dashboard — but it is a guild-lead call, not a
 refactor to slip into an unrelated change.
 
-## Crash review: consent in Mimic, dumps stay local (Hitya, 2026-08-12)
+## Crash review: consent in Mimic, dumps stay local (guild lead, 2026-08-12)
 
-Prompted by Razek crashing twice while zoning. Three findings, in order of
+Prompted by a member crashing twice while zoning. Three findings, in order of
 usefulness.
 
 **His crash was never captured.** Crash upload is gated on

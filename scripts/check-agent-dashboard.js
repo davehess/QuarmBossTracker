@@ -25,6 +25,59 @@ const path = require('path');
 const AGENT = path.join(__dirname, '..', 'packages', 'wolfpack-logsync', 'index.js');
 const COMMAND_FILE = path.join(__dirname, '..', 'apps', 'mimic', 'command.html');
 
+// WEB_HTML must be the machine-generated fold of dashboard.html — the file is
+// authoritative (Decision #3 slice, 2026-08-30). A hand-edit to the literal,
+// or an unsynced edit to the .html, both land here as a byte diff.
+function checkDashboardDrift() {
+  const { buildLiteral, literalRegion, HTML } = require('./sync-dashboard-embed.js');
+  const src = fs.readFileSync(AGENT, 'utf8');
+  const region = literalRegion(src);
+  if (!region) { console.error('✗ WEB_HTML literal not found'); return 1; }
+  const expected = buildLiteral(fs.readFileSync(HTML, 'utf8'));
+  const actual = src.slice(region[0], region[1]);
+  if (expected === actual) {
+    console.log(`✓ WEB_HTML matches dashboard.html fold (${actual.length} literal chars)`);
+    return 0;
+  }
+  const at = firstDiff(expected, actual);
+  console.error(`✗ WEB_HTML has DRIFTED from dashboard.html (first diff at literal offset ${at}).`);
+  console.error('  If you edited dashboard.html:      npm run sync:dashboard');
+  console.error('  If you edited the literal by hand: revert — dashboard.html is authoritative.');
+  return 1;
+}
+
+// ── Eaten-backslash detector ────────────────────────────────────────────────
+// The old hand-escaped WEB_HTML literal ate backslashes, and the survivors sat
+// in the shipped dashboard for months looking like valid code. Found 2026-08-30
+// by a raid-night report — an officer's RaidTick file gave "No attendees in
+// that source" because `/^file:(d+)$/` matches a literal "d", never "file:0".
+// The same sweep found `.split(/s+/)` twice (which silently defeated the
+// wp-* class preservation its own comment describes) and `/^✥s*/`.
+//
+// A lost backslash is INVISIBLE in review and never throws: `d+`, `s*` and `w+`
+// are all valid regex, they just match the wrong thing. So it is checked
+// mechanically instead. Only the character classes that read as ordinary
+// letters are flagged (d s w D S W) and only when followed by a quantifier —
+// that is the shape that is always a mistake, and it keeps the check free of
+// judgement calls about legitimate literal letters.
+const EATEN_BACKSLASH = /(^|[^\\])[dswDSW][+*{]/;
+function checkEatenBackslashes(html, label) {
+  let bad = 0;
+  const lines = html.split('\n');
+  lines.forEach((line, i) => {
+    if (line.length > 2000) return;   // data: URIs — no code lives there
+    for (const m of line.matchAll(/\/((?:[^/\\\n[]|\\.|\[(?:[^\]\\]|\\.)*\])+)\/[gimsuy]*/g)) {
+      if (!EATEN_BACKSLASH.test(m[1])) continue;
+      bad++;
+      console.error(`\u2717 ${label}:${i + 1} regex ${m[0]} looks like it lost a backslash.`);
+      console.error(`    ${line.trim().slice(0, 160)}`);
+      console.error('    → a bare d/s/w before a quantifier matches the LETTER, not the class.');
+    }
+  });
+  if (!bad) console.log(`\u2713 no eaten backslashes in ${label} regex literals`);
+  return bad;
+}
+
 function loadEmbeds() {
   let code = fs.readFileSync(AGENT, 'utf8');
   // Prevent the agent from actually starting when we _compile() it.
@@ -80,6 +133,44 @@ function checkScripts(html, label) {
   return failed;
 }
 
+// Two top-level `function` declarations sharing one name are legal JavaScript
+// and silently resolve to the LAST one. In an 8900-line single-scope dashboard
+// that is a live hazard, and it shipped: a seconds formatter named _wpDur was
+// added above a pre-existing MILLISECONDS formatter of the same name, so every
+// buff on the Buffs tab rendered 1/1000 of its real time — Girdle of Karana's
+// 56 minutes read "3s" (the guild lead, 2026-09-02, screenshot against the in-game buff
+// window). Nothing threw, nothing looked broken, and the numbers were plausible
+// enough to read past.
+//
+// Cheap to detect, so detect it: a redeclaration is never intentional here.
+function checkDuplicateFunctions(html, label) {
+  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(x => x[1]);
+  const seen = new Map();          // name → first line number
+  const dupes = [];
+  scripts.forEach((body) => {
+    const lines = body.split('\n');
+    lines.forEach((line, i) => {
+      // Top-level declarations only (column 0) — a nested helper is properly
+      // scoped and shadowing it is a normal thing to do.
+      const m = /^function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/.exec(line);
+      if (!m) return;
+      const name = m[1];
+      if (seen.has(name)) dupes.push({ name, first: seen.get(name), again: i + 1 });
+      else seen.set(name, i + 1);
+    });
+  });
+  if (dupes.length) {
+    for (const d of dupes) {
+      console.error(`✗ ${label}: function ${d.name}() is declared twice (line ${d.first} and line ${d.again}).`);
+      console.error('    The LAST declaration silently wins. Rename one — this is how the Buffs tab');
+      console.error('    got a milliseconds formatter and showed every buff at 1/1000 of its real time.');
+    }
+    return dupes.length;
+  }
+  console.log(`✓ no duplicate top-level function declarations in ${label} (${seen.size} functions)`);
+  return 0;
+}
+
 function main() {
   let html, embeds;
   try {
@@ -89,6 +180,8 @@ function main() {
     console.error('✗ Could not load WEB_HTML from the agent:', err.message);
     process.exit(1);
   }
+
+  if (checkDuplicateFunctions(html, 'WEB_HTML')) process.exit(1);
 
   if (typeof html !== 'string' || !html.includes('<!DOCTYPE html>')) {
     console.error('✗ WEB_HTML did not resolve to a dashboard HTML string.');
@@ -155,7 +248,7 @@ function main() {
     process.exit(1);
   }
 
-  // RULE (Hitya 2026-07-08, after the 1.7.0-beta.2 Zeal-pipe collapse):
+  // RULE (the guild lead, 2026-07-08, after the 1.7.0-beta.2 Zeal-pipe collapse):
   // every <details> the dashboard emits MUST persist its open state through
   // the wpKeep store — section repaints (and PARENT-section repaints, which
   // destroy nested placeholders before their own render runs) reset plain
@@ -222,7 +315,20 @@ function main() {
     process.exit(1);
   }
 
-  console.log('\nAll dashboard script blocks parse cleanly; all <details> carry wpKeep; COMMAND_HTML in sync. ✅');
+  if (checkDashboardDrift() > 0) process.exit(1);
+
+  const dashText = fs.readFileSync(require('./sync-dashboard-embed.js').HTML, 'utf8');
+  const eaten = checkEatenBackslashes(dashText, 'dashboard.html')
+              + checkEatenBackslashes(file, 'command.html');
+  if (eaten > 0) {
+    console.error(`\n${eaten} regex literal(s) missing a backslash — fix before shipping.`);
+    process.exit(1);
+  }
+
+  console.log('\nAll dashboard script blocks parse cleanly; all <details> carry wpKeep; COMMAND_HTML and WEB_HTML in sync. ✅');
 }
 
-main();
+// Guarded so tests can require the detector without running the whole check.
+if (require.main === module) main();
+
+module.exports = { checkEatenBackslashes, EATEN_BACKSLASH };

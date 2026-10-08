@@ -328,7 +328,7 @@ non-destructive banner:
 
 ```
 ⚠ This note was written on 2026-06-10, when the median kill was 12:44.
-  It is now 8:10 (17 fights since). — Hitya · [mark reviewed] [edit]
+  It is now 8:10 (17 fights since). — raid leader · [mark reviewed] [edit]
 ```
 
 Mechanism: `boss_guide_notes` stores `facts_at_write jsonb` — a snapshot of the
@@ -354,7 +354,7 @@ it lands in the audit thread.
 Sometimes the officer is right and the data is misleading (the median includes
 three nights we were undermanned). So a note may carry an optional
 `overrides jsonb` — e.g. `{"target_kill_time_sec": 480}` — and the generated
-block renders **both**: `median 12:44 · target 8:00 (Hitya)`. The override never
+block renders **both**: `median 12:44 · target 8:00 (set by an officer)`. The override never
 replaces the observation; it annotates it. This kills the main reason people
 otherwise want to edit generated text.
 
@@ -653,12 +653,12 @@ should explain.
 | | |
 |---|---|
 | Biggest single hit observed | **5,187** |
-| Main tank on the last recorded fight | **Peopleslayer** (Warrior) |
+| Main tank on the last recorded fight | **a member** (Warrior) |
 | Damage taken by that tank | **7,156,505** over **14,388** connects ≈ **497/hit** |
 | Catalog melee range (row 162491) | 283 – 904 |
 
-Other raiders who have taken Emperor damage in a recorded fight: Lenolshot
-(469,511), Hoden (405,819), Abrahms (305,547), Hawkner (174,317).
+Other raiders who have taken Emperor damage in a recorded fight: a member
+(469,511), a member (405,819), a member (305,547), a member (174,317).
 
 *Single-uploader field — only the tank's own agent reports `defenders`, so this
 is one observer's view, not a merged count. NPC rows in the raw array (the boss
@@ -745,10 +745,10 @@ us, he is a long boss.
 
 | Who | Class | Deaths |
 |---|---|---|
-| Fungalfist | Shaman | 2 |
-| Jabouti | Shaman | 2 |
-| Hawkner | Paladin | 1 |
-| Kabanab · Lenolshot · Rorschach | — | 1 each |
+| a member | Shaman | 2 |
+| a member | Shaman | 2 |
+| a member | Paladin | 1 |
+| Kabanab · a member · a member | — | 1 each |
 
 *Coverage caveat, shown on the page: **no contribution carried a `deaths` field
 before 2026-07-01**, so this counts July onward only. Older fights are blank,
@@ -835,10 +835,10 @@ median so a raid leader can see where the night actually goes.
 **Public?** No. Same reasoning as wpqdi (`DESIGN-wpqdi.md` decision 1): the
 Guide contains named deaths, named DKP prices, and attendance-shaped data, and
 keeping one gate means no public-RLS work and no second stripped surface. If
-Hitya wants a recruiting-facing subset later, it is a separate read-only render
+The guild lead wants a recruiting-facing subset later, it is a separate read-only render
 of blocks 1/3/10 only.
 
-**Naming/route is Hitya's call.** The roadmap already ships the title *"The
+**Naming/route is the guild lead's call.** The roadmap already ships the title *"The
 living Wolf Pack Raid Guide"* to members (`roadmapData.ts:1118`). `/guide` vs
 `/raid/guide` vs `/pack-guide` — propose, do not decide (CLAUDE.md: release
 names are the guild lead's).
@@ -957,7 +957,7 @@ and `ƒ /guide/[bossId]`. No agent/Mimic surface is touched, so no
 - No attendance / seating logic — that is #92's `member_attendance_metrics`.
 - No PoP content before `2026-10-01`.
 
-**Open questions for Hitya**
+**Open questions for the guild lead**
 1. **Route + name.** `/guide` vs `/raid/guide`? The member-facing title is
    already "The living Wolf Pack Raid Guide".
 2. **Who may author?** Officers only, or any Pack Member with an officer

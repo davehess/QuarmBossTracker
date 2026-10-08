@@ -1,4 +1,4 @@
--- Adoption metrics views (/admin/adoption — the PM funnel Hitya asked for,
+-- Adoption metrics views (/admin/adoption — the PM funnel the guild lead asked for,
 -- 2026-08-18). Two tiny pre-aggregations so the page reads hundreds of rows,
 -- not the whole contributions table, and the db-read ratchet stays honest.
 -- security_invoker so the base tables' RLS applies to whoever queries.

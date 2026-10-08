@@ -17,11 +17,21 @@ import { isOfficer } from '@/lib/officer';
 import { selectAll } from '@/lib/selectAll';
 import RollAdmin from './RollAdmin';
 import { userTz, fmtShort, fmtDateOnly, DEFAULT_TZ } from '@/lib/timezone';
+
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'Roll nights',
+  description:
+    'Off-night NBG roll results — what dropped and who took it home.',
+};
 import {
   mergeRollSets, applyRollOverrides, attributeLoot, looterDiffersFromWinners, nightKey,
   rollBreakdown,
   type RollSetRow, type LootedRow, type RollSession,
 } from '@/lib/rolls';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,15 +50,15 @@ export default async function RollsPage() {
   const [rollRows, lootRows, funRes, ovRes, officer] = await Promise.all([
     selectAll<RollSetRow>((from, to) => sb.from('roll_sets')
       .select('roll_from, roll_to, item, qty, zone, rolls, started_at, last_at, uploaded_by_discord_id')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .gte('started_at', sinceIso)
-      .order('started_at', { ascending: false })
+      .order('started_at', { ascending: false }).order('id', { ascending: false })
       .range(from, to)),
     selectAll<LootedRow>((from, to) => sb.from('looted_items')
       .select('looter_character, item_name, zone, looted_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .gte('looted_at', sinceIso)
-      .order('looted_at', { ascending: false })
+      .order('looted_at', { ascending: false }).order('id', { ascending: false })
       .range(from, to)),
     sb.from('fun_events')
       .select('event_type, caster, event_ts, raw_text')
@@ -58,7 +68,7 @@ export default async function RollsPage() {
       .limit(2000),
     sb.from('roll_set_overrides')
       .select('roll_from, roll_to, started_at, hidden, item, edited_by_name')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .gte('started_at', sinceIso)
       .limit(2000),
     isOfficer(user.id),
@@ -223,7 +233,7 @@ export default async function RollsPage() {
   );
 }
 
-// Winner(s) up top, and a drop-down for everyone else who rolled (Hitya,
+// Winner(s) up top, and a drop-down for everyone else who rolled (the guild lead,
 // 2026-08-14: "a drop-down to open up lower rolls on the page and see who else
 // rolled").
 //

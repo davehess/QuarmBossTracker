@@ -1,7 +1,7 @@
 // test/kneel-test-guard.test.js — the junk-landing guard counts the CATALOG,
 // not the survivors.
 //
-// Hitya, 2026-08-16: "for beta, I'm still seeing kneel test on the target
+// The guild lead, 2026-08-16: "for beta, I'm still seeing kneel test on the target
 // info." The server was clean (0 buff_casts rows — the bot's ingest filter
 // works); the phantom was LOCAL. Root cause: "is struck by a sudden force."
 // is shared by 33 catalog spells, but the junk guard counted distinct names

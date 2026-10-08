@@ -4,9 +4,9 @@
 // `opendkp_loot` mirrors itself automatically. `loot_observations` — what Mob
 // Info reads for "N× won" — was written ONLY by an officer typing
 // /backfillopendkploot. Somebody last ran it 2026-06-04, so by 2026-08-14 the
-// Loot tab was missing 758 awards across 28 raids: Kazmodon won Silver Band of
+// Loot tab was missing 758 awards across 28 raids: a member won Silver Band of
 // Secrets at raid 98561 for 150 DKP and the item still read as never dropped
-// (Hitya: "are we missing rows of loot drops?").
+// (The guild lead: "are we missing rows of loot drops?").
 //
 // The half worth testing hardest is the ID reconciliation. OpenDKP carries two
 // ids per award and they are NOT interchangeable — measured over the 283 rows

@@ -1,0 +1,52 @@
+name: "Request from a guild"
+description: "Your guild wants to run this, wants a hand setting it up, or wants to ask about managed hosting."
+title: "[guild] "
+labels: ["guild-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for looking. Two things before you fill this in:
+        - **This is a public page.** Don't paste passwords, tokens, channel join strings, or anything from your members' tells or logs.
+        - **Running it yourself is free** for your own guild under the license (`docs/LICENSING.md`). Managed hosting is a conversation — this form starts it.
+  - type: input
+    id: guild
+    attributes:
+      label: Guild
+      placeholder: "Your guild's name and the server you raid on"
+    validations:
+      required: true
+  - type: dropdown
+    id: want
+    attributes:
+      label: What are you after?
+      options:
+        - We want to run it ourselves and got stuck
+        - We want to run it ourselves and have a question before starting
+        - We'd like to ask about managed hosting
+        - We'd like an alliance arrangement (shared competitive features)
+        - Something else
+    validations:
+      required: true
+  - type: dropdown
+    id: size
+    attributes:
+      label: Which size are you thinking about?
+      description: "S = Discord bot + parsing + the Mimic client. M = S plus the website on your own domain. L = everything."
+      options:
+        - S — bot + parsing + Mimic
+        - M — plus the website on our own domain
+        - L — everything
+        - Not sure yet
+  - type: textarea
+    id: details
+    attributes:
+      label: Tell us about it
+      description: "What you've tried, where you are in docs/SELFHOSTING.md, what you're hoping for. Plain words are fine."
+    validations:
+      required: true
+  - type: input
+    id: contact
+    attributes:
+      label: How should we reach you? (optional)
+      description: "Leave blank and we'll reply here on the issue. A Discord handle here is public — your call."

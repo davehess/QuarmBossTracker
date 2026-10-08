@@ -172,7 +172,7 @@ export type RollLine = { name: string; value: number; reroll: boolean; isWinner:
 
 /**
  * Every roll in a session, highest first, with the winning roll(s) marked —
- * what the "who else rolled" drop-down shows (Hitya, 2026-08-14).
+ * what the "who else rolled" drop-down shows (the guild lead, 2026-08-14).
  *
  * Two things it gets right that a plain sort would not:
  *  • **Re-rolls are kept and flagged, never dropped.** A re-roll can't win, but

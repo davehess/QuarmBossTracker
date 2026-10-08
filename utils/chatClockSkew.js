@@ -1,6 +1,6 @@
 // utils/chatClockSkew.js — clock skew measured from a line everybody saw.
 //
-// THE IDEA (Hitya, 2026-08-14): "we could figure it out from any guild or raid
+// THE IDEA (the guild lead, 2026-08-14): "we could figure it out from any guild or raid
 // chat message, some zeal tag, anything everyone or many people see."
 //
 // A `/gu` line is broadcast by the EQ server to every client at once. Each

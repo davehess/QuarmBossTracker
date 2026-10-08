@@ -12,6 +12,10 @@ data/historical_chat.jsonl
 
 # Dependencies
 node_modules/
+# A worktree that borrows another checkout's dependencies links them in as a symlink, which the
+# trailing-slash pattern above does not match (a symlink is not a directory to git). One got
+# committed to beta on 2026-10-03; this keeps it from happening again.
+node_modules
 
 # Raid tick exports
 raid-tick-*.txt
@@ -24,10 +28,23 @@ npm-debug.log*
 # committed for the parser regression net to mean anything.
 !test/fixtures/golden/*.log
 package-lock.json
+# …except Bristlebane's: its Dockerfile runs `npm ci`, which needs the lockfile in the repo.
+!apps/bristlebane/package-lock.json
 dist/
 packages/wolfpack-logsync/logsync.stats.json
+# A user's own imported/authored triggers — local state that happens to live
+# in the package dir (STATS_FILE anchors it there). Never commit someone's set.
+packages/wolfpack-logsync/personal_triggers.json
+packages/wolfpack-logsync/logsync.queue.json
+packages/wolfpack-logsync/logsync.item-catalog.json
 packages/wolfpack-logsync/logsync.optin.json
 packages/wolfpack-logsync/logsync.session.json
+# The DPS meter's History (agent 2026-10-04): named raiders and their damage, machine-local.
+packages/wolfpack-logsync/logsync.fights.json
+packages/wolfpack-logsync/logsync.fights.json.tmp
+# My parses "My logs" (agent 2026-10-07): this PC's own fights, machine-local.
+packages/wolfpack-logsync/logsync.myfights.json
+packages/wolfpack-logsync/logsync.myfights.json.tmp
 packages/wolfpack-logsync/logsync.pid.json
 # Durable upload queue + pet/buff state. Same machine-local runtime class as the
 # four above, but they were missing from this list — so merely REQUIRING the
@@ -35,7 +52,10 @@ packages/wolfpack-logsync/logsync.pid.json
 # show up as untracked. They carry real guild data (queued trigger fires with
 # raider names, observed buff landings), so they must never be committed.
 packages/wolfpack-logsync/logsync.queue.json
+packages/wolfpack-logsync/logsync.item-catalog.json
 packages/wolfpack-logsync/logsync.pet-state.json
+# Target Info's zone packs (agent 3.7.55, DECISIONS §114). Catalog data, but a local cache.
+packages/wolfpack-logsync/mobinfo-cache/
 # Loot-bidding local state. `beta` has ignored these since agent 3.3.100 and
 # main never picked them up — the entries were added on the branch the feature
 # was built on and no graduation carried a .gitignore. logsync.opendkp.json is
@@ -55,3 +75,15 @@ gemini-image-*.png
 
 # Agent-tool git worktrees (transient per-session workspaces for subagents)
 .claude/worktrees/
+
+# Impeccable review captures and generated comps — evidence for a review round,
+# not source. The findings live in the commit message and DESIGN.md.
+.impeccable/review/
+.impeccable/mocks/
+
+# Rendered output of scripts/zeal-adoption-poster.html — the GENERATOR is
+# committed, the PNG is derived and ~900KB. Re-render it, do not track it.
+zeal-update-why.png
+
+# graphify code graph — regenerate with scripts/graphify.sh (2026-09-13); ~15 MB json, never committed
+graphify-out/

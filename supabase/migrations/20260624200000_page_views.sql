@@ -1,9 +1,9 @@
--- page_views — lightweight analytics for /admin/analytics (Hitya 2026-06-24:
+-- page_views — lightweight analytics for /admin/analytics (the guild lead, 2026-06-24:
 -- "an admin page to see which pages are getting the most use"). Logged from
 -- web/middleware.ts on every authenticated page request, fire-and-forget so
 -- the request itself is never blocked.
 --
--- We store both the raw `path` (so /character/Hitya/quests is queryable) and a
+-- We store both the raw `path` (so /character/<name>/quests is queryable) and a
 -- normalized `route` template (where /character/[name]/quests groups all
 -- character pages). Route normalization happens at insert time in the edge
 -- middleware so the table can aggregate cheaply.

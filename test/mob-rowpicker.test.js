@@ -3,7 +3,7 @@
 // The endpoint (`GET /api/agent/mob-info`, index.js) used to fetch ONE
 // eqemu_npc_types row with `&limit=1` and no ORDER BY, so PostgREST's arbitrary
 // row order decided which of a name's many bodies a raider saw. utils/mobSpecials
-// now owns the rule from docs/audit-mob-specials.md §"The fix" (Hitya, 2026-07-25):
+// now owns the rule from docs/audit-mob-specials.md §"The fix" (the guild lead, 2026-07-25):
 // all rows → split real vs placeholder → prefer the requester's zone → primary is
 // the highest-level REAL row → flags are the UNION across real rows only.
 //
@@ -95,7 +95,14 @@ const LEGACY_LABELS = {
   20: 'Immune Magic', 21: 'Immune Fleeing', 23: 'Immune Non-Magical',
   27: 'Immune Feign Death', 28: 'Immune Taunt', 31: 'Immune Pacify',
 };
+// Labels the shipped decoder emitted that the Quarm numbering RETIRES (FB-54,
+// 2026-10-06): Project Quarm's enum has no Quad Attack — code 7 is Dual Wield.
+// Everything else in LEGACY_LABELS is unchanged and still pinned below.
+const RETIRED_LEGACY_LABELS = ['Quad Attack'];
 function legacyDecode(special_abilities, npcspecialattks) {
+  return legacyDecodeRaw(special_abilities, npcspecialattks).filter((l) => !RETIRED_LEGACY_LABELS.includes(l));
+}
+function legacyDecodeRaw(special_abilities, npcspecialattks) {
   const out = [];
   if (special_abilities) {
     for (const part of String(special_abilities).split('^')) {
@@ -196,8 +203,11 @@ describe('#171 (a2) the legacy label set survives on EVERY real catalog fixture'
     }
   });
 
-  it('adds only codes 22/26/36/37/39/44/46 — the set docs/audit-mob-specials.md confirms', () => {
-    const CONFIRMED = new Set([22, 26, 36, 37, 39, 44, 46].map((c) => ms.MOB_SPECIAL_CODES[c].label));
+  // 44 and 46 were in this set until FB-54 (2026-10-06): on Quarm they are Use
+  // Warrior Skills / No Loitering, not the immunities the old table named. 50
+  // (Reverse Slow) is the Quarm addition.
+  it('adds only codes 22/26/36/37/39/50 — #171\'s confirmed set minus the two Quarm retires, plus Reverse Slow', () => {
+    const CONFIRMED = new Set([22, 26, 36, 37, 39, 50].map((c) => ms.MOB_SPECIAL_CODES[c].label));
     for (const row of ALL_FIXTURES) {
       const legacy = new Set(legacyDecode(row.special_abilities, row.npcspecialattks));
       for (const label of ms.decodeSpecialLabels(row.special_abilities, row.npcspecialattks)) {
@@ -206,10 +216,10 @@ describe('#171 (a2) the legacy label set survives on EVERY real catalog fixture'
     }
   });
 
-  it('the shown-code set is exactly legacy + the seven confirmed additions', () => {
+  it('the shown-code set is exactly legacy (minus 7) + the confirmed additions + Reverse Slow', () => {
     const shown = Object.keys(ms.MOB_SPECIAL_CODES)
       .filter((c) => ms.MOB_SPECIAL_CODES[c].show).map(Number).sort((a, b) => a - b);
-    const expected = [...ms.LEGACY_DECODED_CODES, 22, 26, 36, 37, 39, 44, 46].sort((a, b) => a - b);
+    const expected = [...ms.LEGACY_DECODED_CODES.filter((c) => c !== 7), 22, 26, 36, 37, 39, 50].sort((a, b) => a - b);
     expect(shown).toEqual(expected);
   });
 });
@@ -435,7 +445,9 @@ describe('#171 the shipped endpoint uses the shared picker (not a stale copy)', 
   });
 
   it('the handler calls pickAndMergeMobRows with the #141 zone id', () => {
-    expect(SRC).toContain('mobSpecials.pickAndMergeMobRows(rows, { zoneId: reqZoneId })');
+    // Rows pass through the case filter first (2026-09-23 — same-name bodies
+    // that differ in capitalisation; test/mobinfo-case-variants.test.js).
+    expect(SRC).toContain('mobSpecials.pickAndMergeMobRows(_mobRowsForCase(rows, caseKey), { zoneId: reqZoneId })');
   });
 
   it('the mob payload carries the merged specials + movement fields', () => {

@@ -1,7 +1,7 @@
 # DESIGN — capturing instant boss mechanics (#206)
 
 *Written 2026-08-04 (overnight design pass). **Step 1 built 2026-08-11** — see
-§0. This is the write-up of the discard audit Hitya asked for on 2026-08-03.*
+§0. This is the write-up of the discard audit the guild lead asked for on 2026-08-03.*
 
 ## 0. What shipped (2026-08-11) — and where it differs from this spec
 
@@ -250,7 +250,7 @@ from sp join eqemu_spells sl on sl.id = sp.spellid;
 Re-run it after any expansion unlock — the gap grows with the boss list, and
 **PoP unlocks 2026-10-01**.
 
-## 7. Open questions for Hitya
+## 7. Open questions for the guild lead
 
 - **Record-only first, or go straight to callouts?** Recording is safe, cheap,
   and makes the callout question answerable with evidence instead of opinion.

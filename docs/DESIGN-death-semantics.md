@@ -8,7 +8,7 @@ like a death can be a feign, a tactical corpse-drop, a rez cycle, or a genuine
 wipe contributor — and the raid cares about those very differently. This note is
 the one place that distinction is written down.
 
-Driven by a 2026-08-03 review with Uilnayar that started from "Syko died 15 times
+Driven by a 2026-08-03 review with a member that started from "a member died 15 times
 in a 12-minute fight" and ended up rewriting what we believe a death is.
 
 ---
@@ -106,7 +106,7 @@ self-death within a 60s window.
 
 ## 3. Tactical deaths — the rogue corpse pull (DESIGN)
 
-**Source: Uilnayar, 2026-08-03.** Some pulls *require* a death. This is a
+**Source: a member, 2026-08-03.** Some pulls *require* a death. This is a
 deliberate, skilled manoeuvre, and the platform currently records it as a
 failure.
 
@@ -168,7 +168,7 @@ Add a `death_kind` to the stored record rather than filtering at read time:
 
 ### The corpse's two clocks
 
-**Source: Uilnayar, 2026-08-03.** Considering (`/con`) a corpse reports its exact
+**Source: a member, 2026-08-03.** Considering (`/con`) a corpse reports its exact
 decay timer. There are **two independent clocks**, and conflating them would
 produce a wrong callout at the worst moment:
 
@@ -215,8 +215,8 @@ rez window is not.
 
 ## 3a. Bind location — a death's cost is variable (DESIGN)
 
-**Source: Uilnayar, 2026-08-03.** *"during Wednesday's raid at Vex Thal, Hitya
-and Rockin (and others) are bound right outside. it is less than 5-10 seconds to
+**Source: a member, 2026-08-03.** *"during Wednesday's raid at Vex Thal, the guild lead
+and a member (and others) are bound right outside. it is less than 5-10 seconds to
 run back into the zone instance to jump back into a fight."*
 
 This reframes the metric. **"Died" is not the cost — time out of the fight is.**
@@ -258,7 +258,7 @@ With bind points known:
 - We see the bind *cast*, not the bind *state*. A character bound before they
   ever ran Mimic has no observation, and we must show "unknown" rather than
   guess.
-- Anomalies are expected and that is fine. Per Hitya: *"there are always going
+- Anomalies are expected and that is fine. Per Guild lead: *"there are always going
   to be anomalies to our logic, but we can recognize those."* The design goal is
   a labelled estimate that is usually right and visibly uncertain when it is not
   — never a confident number.
@@ -279,7 +279,7 @@ raid handles best.
 
 ## 4. Group HP as a death signal (DESIGN)
 
-**Source: Uilnayar, 2026-08-03.** *"the group containing the person that dies
+**Source: a member, 2026-08-03.** *"the group containing the person that dies
 will have their health go to zero on the zeal pipe, and they would essentially
 leave the zone."*
 

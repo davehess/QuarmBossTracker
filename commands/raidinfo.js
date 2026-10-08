@@ -1,6 +1,6 @@
 // commands/raidinfo.js — post tonight's raid info to the raid channel on
 // demand. The same embed the bot posts automatically at midday on raid days
-// (Hitya 2026-08-21: "post the raid info midday to our channel").
+// (the guild lead, 2026-08-21: "post the raid info midday to our channel").
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { hasAllowedRole, allowedRolesList } = require('../utils/roles');
 

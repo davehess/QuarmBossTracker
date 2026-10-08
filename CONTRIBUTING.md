@@ -193,6 +193,37 @@ they're how we keep the raid's data spine safe, not a knock on the work.
 
 ---
 
+## 9. Licensing — what happens to your contribution
+
+The platform is **open source under AGPL-3.0-or-later** (`LICENSE`; the
+plain-language version is `docs/LICENSING.md`). Any guild may run, modify, fork
+and self-host it, free. The one obligation is AGPL **§13**: modify it, let people
+use your version over a network, and you must offer them your source.
+
+There is no CLA to sign. **Opening a pull request is the agreement.** By
+submitting a contribution you confirm that:
+
+1. **You have the right to contribute it** — it is your own work, or you are
+   permitted to contribute it on these terms.
+2. **It is licensed the same way as the rest** — AGPL-3.0-or-later.
+3. **You grant the Licensor the right to relicense it.** A perpetual,
+   worldwide, irrevocable, royalty-free right to license your contribution
+   under other terms as well. This is what keeps the commercial-license option
+   available for anyone who wants to host a modified version without §13's
+   source obligation; without it, every outside contribution would carve a hole
+   in that option and each would need chasing down individually. It does not
+   take anything away from you — your contribution stays AGPL for everyone,
+   including you.
+4. **You keep your authorship.** Credit stays in the git history and, where
+   the project records it, in the release notes. The Licensor will not strip
+   attribution from your work.
+
+If you self-host and improve it — a database port, a performance fix, platform
+compatibility — **send it upstream.** Where your fork serves people over a
+network, §13 already requires you to offer them the source; a pull request here
+is the version of that which actually helps the next guild, instead of a tarball
+nobody finds.
+
 ## Quick reference
 
 ```
@@ -211,5 +242,6 @@ agent/Mimic changes → branch from beta,  PR into beta
 Read next: `CLAUDE.md` (architecture + rules) · `docs/STATUS.md` (the queue) ·
 `docs/HOW-ITS-BUILT.md` (what already exists) ·
 [wolfpack.quest/roadmap](https://wolfpack.quest/roadmap) (shipped + next, in
-plain language) · `docs/PRIVACY.md` (privacy) · `docs/DESIGN-platform-queue.md`
+plain language) · `docs/PRIVACY.md` (privacy) · `docs/LICENSING.md` (what you
+may do with it, and what happens to your PR) · `docs/DESIGN-platform-queue.md`
 (the plan). Questions on a specific item — ask an officer before you build.

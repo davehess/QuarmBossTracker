@@ -13,18 +13,193 @@
 //   OPENDKP_POOL_ID          — DKP pool ID (default 5 = SoL)
 //   OPENDKP_API_URL          — base URL for the OpenDKP REST API (default: https://api.opendkp.com)
 //   OPENDKP_CLIENT_NAME      — client/guild slug in OpenDKP (default: wolfpack)
+//   OPENDKP_HALT             — set to 1 to stop ALL outbound OpenDKP traffic
+//                              (see the halt switch below)
 
 const https = require('https');
 
+// ── HALT SWITCH ─────────────────────────────────────────────────────────────
+// OPENDKP_HALT=1 stops EVERY outbound request to OpenDKP — background syncs,
+// the register-queue drain, and on-demand slash commands alike.
+//
+// Why this exists (2026-08-25): OpenDKP's owner posted that API Gateway
+// requests had "skyrocketed", pushing his infrastructure bill past $200 for
+// the month, and asked anyone running automation to make contact. Wolf Pack
+// runs the heaviest automation we know of against that API — the 30-minute
+// background sync alone can issue ~50 raid-detail calls per pass, plus
+// characters, raids list, auctions, audits and adjustments, and the register
+// queue polls every 20s. Whether or not we are the cause, the right move
+// while a third party is paying real money and asking questions is to stop
+// first and measure second (The guild lead: "can you halt all traffic to opendkp").
+//
+// Deliberately at the two HTTP primitives rather than at each of the ~25
+// endpoint wrappers or the loop schedulers: a halt that lives at the choke
+// point cannot be bypassed by a caller nobody remembered to gate.
+//
+// Set OPENDKP_HALT=0 (or remove it) to resume. Nothing is destroyed and no
+// credential is touched, so resuming is one env var and a restart.
+// TWO halts, deliberately. The env var needs a Railway redeploy (~90s); the
+// runtime flag is pushed in from the 60s overlay_tuning refresh in index.js, so
+// an officer can stop the fleet from /admin/overlays with NO deploy at all.
+// That mattered on 2026-08-26: we asked OpenDKP's owner to unblock our IP on
+// the promise that we could stop again quickly, and "quickly" cannot mean a
+// build. Either one halts; only clearing BOTH resumes.
+let _runtimeHalt = false;
+function setRuntimeHalt(on) { _runtimeHalt = !!on; }
+function opendkpHalted() {
+  if (_runtimeHalt) return true;
+  const v = String(process.env.OPENDKP_HALT || '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
+const HALT_ERROR = 'OpenDKP traffic halted locally (OPENDKP_HALT). '
+  + 'Set OPENDKP_HALT=0 on the bot service to resume.';
+
+// One log line per minute, not per blocked call — a halted 20s queue would
+// otherwise write 4,300 lines a day and bury everything else.
+let _lastHaltLog = 0;
+function _logHalt(where) {
+  const now = Date.now();
+  if (now - _lastHaltLog < 60_000) return;
+  _lastHaltLog = now;
+  console.warn(`[opendkp] HALTED — ${where} blocked by OPENDKP_HALT. `
+    + 'No requests are reaching OpenDKP. Unset to resume.');
+}
+
+// ── Outbound governor ─────────────────────────────────────────────────────────
+// 2026-08-25 (Moncs incident): the dashboard's uncached 7s auction poll put
+// 1,678 calls / 1.1 GB on OpenDKP's API Gateway in one afternoon, from ONE
+// open dashboard. Caching upstream fixes the known caller — this governor is
+// the guarantee that no FUTURE caller can do it again, and the ready position
+// for the rate limiting Moncs is likely to add. Same placement philosophy as
+// the halt: at the two primitives, where it cannot be bypassed.
+//
+//   • Sliding-window budget: OPENDKP_MAX_CALLS_PER_MIN (default 60, 0 = off).
+//     Over budget → local reject; every caller is already fail-open.
+//   • HTTP 429 → global cooldown honoring Retry-After (default 30s). While
+//     cooling down, calls reject locally instead of hammering the API.
+const _callTimes = [];   // epoch ms of calls in the last 60s
+let _cooldownUntil = 0;  // set by a 429's Retry-After
+let _lastBudgetLog = 0;
+
+function _budgetPerMin() {
+  const n = Number(process.env.OPENDKP_MAX_CALLS_PER_MIN);
+  return Number.isFinite(n) && n >= 0 ? n : 60;
+}
+
+// Returns null when the call may proceed (and records it), else an Error.
+function _admitCall(where) {
+  const now = Date.now();
+  if (now < _cooldownUntil) {
+    return new Error(`OpenDKP cooling down after HTTP 429 — retry in ${Math.ceil((_cooldownUntil - now) / 1000)}s`);
+  }
+  const budget = _budgetPerMin();
+  if (budget > 0) {
+    while (_callTimes.length && _callTimes[0] <= now - 60_000) _callTimes.shift();
+    if (_callTimes.length >= budget) {
+      if (now - _lastBudgetLog >= 60_000) {
+        _lastBudgetLog = now;
+        console.warn(`[opendkp] outbound budget hit — ${where} rejected locally `
+          + `(${_callTimes.length}/${budget} calls in the last 60s; OPENDKP_MAX_CALLS_PER_MIN to tune)`);
+      }
+      return new Error(`OpenDKP outbound budget exceeded (${budget}/min) — call rejected locally`);
+    }
+    _callTimes.push(now);
+  }
+  return null;
+}
+
+// ── Public call counter ─────────────────────────────────────────────────────
+// Feeds wolfpack.quest/opendkp, which is open-access so OpenDKP's owner can
+// watch our volume himself rather than take our word for it.
+//
+// Aggregated in memory and flushed once a minute. A row per call would be the
+// very write-amplification pattern that caused this incident — writing our
+// apology in the same handwriting as the offence.
+//
+// Endpoints are NORMALIZED to the shape his API Gateway groups by
+// (`/clients/{client}/auctions/{id}/bids`), so the page can be read straight
+// across against his own log table instead of needing a translation step.
+function _normalizeEndpoint(pathname, hostname) {
+  // AWS Cognito is OUR identity provider, not OpenDKP. Counting its calls is
+  // useful (a token storm is still a bug of ours) but showing them as OpenDKP
+  // traffic OVERSTATES what we send him — the one direction a page built to
+  // regain trust must never be wrong in. Labelled so the page can separate it.
+  if (/cognito-idp/i.test(String(hostname || ''))) return 'cognito:InitiateAuth (our auth — not OpenDKP)';
+  return String(pathname || '')
+    .split('?')[0]
+    .replace(/\/clients\/[^/]+/i, '/clients/{client}')
+    .replace(/\/\d+(?=\/|$)/g, '/{id}')
+    || '/';
+}
+
+const _stats = new Map();   // "minuteISO|endpoint|method" -> row
+function _bucket(pathname, method, hostname) {
+  const minute = new Date(Math.floor(Date.now() / 60000) * 60000).toISOString();
+  const endpoint = _normalizeEndpoint(pathname, hostname);
+  const key = `${minute}|${endpoint}|${method}`;
+  let r = _stats.get(key);
+  if (!r) { r = { minute, endpoint, method, calls: 0, bytes: 0, errors: 0, blocked: 0 }; _stats.set(key, r); }
+  return r;
+}
+function noteCall(pathname, method, { bytes = 0, error = false, blocked = false, hostname = '' } = {}) {
+  const r = _bucket(pathname, method, hostname);
+  if (blocked) { r.blocked++; return; }   // refused locally — never left the box
+  r.calls++;
+  r.bytes += Number(bytes) || 0;
+  if (error) r.errors++;
+}
+
+// Flush everything except the minute still filling, so a bucket is written once
+// and never rewritten — the same insert-only discipline the audits sync learned.
+let _flushing = false;
+async function flushCallStats(force = false) {
+  if (_flushing || _stats.size === 0) return { flushed: 0 };
+  const cutoff = new Date(Math.floor(Date.now() / 60000) * 60000).toISOString();
+  const ready = [..._stats.entries()].filter(([, r]) => force || r.minute < cutoff);
+  if (ready.length === 0) return { flushed: 0 };
+  _flushing = true;
+  try {
+    const supabase = require('./supabase');
+    if (!supabase.isEnabled()) return { flushed: 0 };
+    await supabase.upsert('opendkp_call_stats', ready.map(([, r]) => r), 'minute,endpoint,method');
+    for (const [k] of ready) _stats.delete(k);
+    return { flushed: ready.length };
+  } catch {
+    return { flushed: 0 };            // fail-open: counters are never worth an outage
+  } finally { _flushing = false; }
+}
+
+function _noteRateLimited(res) {
+  if (res?.statusCode !== 429) return;
+  const ra = Number(res.headers?.['retry-after']);
+  const waitMs = (Number.isFinite(ra) && ra > 0 ? Math.min(ra, 300) : 30) * 1000;
+  _cooldownUntil = Date.now() + waitMs;
+  console.warn(`[opendkp] HTTP 429 from OpenDKP — backing off all calls for ${waitMs / 1000}s`);
+}
+
+// A LOCAL refusal is not an upstream failure, and conflating the two arms
+// backoffs for outages that never happened. Tagged so getAuthToken can tell
+// "we declined to send this" from "Cognito rejected us".
+function _refusal(msg) { const e = new Error(msg); e.localRefusal = true; return e; }
+
 function _post(options, body) {
+  const _m = options.method || 'POST';
+  if (opendkpHalted()) {
+    _logHalt('write');
+    noteCall(options.path, _m, { blocked: true, hostname: options.hostname });
+    return Promise.reject(_refusal(HALT_ERROR));
+  }
+  const denied = _admitCall('write');
+  if (denied) { denied.localRefusal = true; noteCall(options.path, _m, { blocked: true, hostname: options.hostname }); return Promise.reject(denied); }
   return new Promise((resolve, reject) => {
     const req = https.request(options, (res) => {
       let data = '';
       res.on('data', c => (data += c));
       res.on('end', () => {
+        noteCall(options.path, _m, { bytes: Buffer.byteLength(data), error: res.statusCode >= 400, hostname: options.hostname });
         let parsed;
         try { parsed = JSON.parse(data); } catch { parsed = data; }
-        if (res.statusCode >= 400) reject(new Error(`HTTP ${res.statusCode}: ${JSON.stringify(parsed)}`));
+        if (res.statusCode >= 400) { _noteRateLimited(res); reject(new Error(`HTTP ${res.statusCode}: ${JSON.stringify(parsed)}`)); }
         else resolve(parsed);
       });
     });
@@ -35,14 +210,22 @@ function _post(options, body) {
 }
 
 function _get(options) {
+  if (opendkpHalted()) {
+    _logHalt('read');
+    noteCall(options.path, 'GET', { blocked: true, hostname: options.hostname });
+    return Promise.reject(_refusal(HALT_ERROR));
+  }
+  const denied = _admitCall('read');
+  if (denied) { denied.localRefusal = true; noteCall(options.path, 'GET', { blocked: true, hostname: options.hostname }); return Promise.reject(denied); }
   return new Promise((resolve, reject) => {
     https.get(options, (res) => {
       let data = '';
       res.on('data', c => (data += c));
       res.on('end', () => {
+        noteCall(options.path, 'GET', { bytes: Buffer.byteLength(data), error: res.statusCode >= 400, hostname: options.hostname });
         let parsed;
         try { parsed = JSON.parse(data); } catch { parsed = data; }
-        if (res.statusCode >= 400) reject(new Error(`HTTP ${res.statusCode}: ${JSON.stringify(parsed)}`));
+        if (res.statusCode >= 400) { _noteRateLimited(res); reject(new Error(`HTTP ${res.statusCode}: ${JSON.stringify(parsed)}`)); }
         else resolve(parsed);
       });
     }).on('error', reject);
@@ -52,8 +235,30 @@ function _get(options) {
 // ── Cognito auth (cached) ─────────────────────────────────────────────────────
 let _token = null, _tokenExpiry = 0;
 
+let _authFailUntil = 0;
 async function getAuthToken() {
   if (_token && Date.now() < _tokenExpiry) return _token;
+  // Every endpoint wrapper calls this FIRST, so a failing token turns one
+  // retrying caller into an auth storm — and because a local refusal fails
+  // without touching the network, it spins at CPU speed rather than network
+  // speed (measured: ~106/min during the 2026-08-26 halt). Back off so the
+  // failure costs one attempt per window, not one per caller.
+  if (Date.now() < _authFailUntil) throw new Error('OpenDKP auth backing off after a recent failure');
+  try {
+    return await _getAuthTokenUncached();
+  } catch (e) {
+    // Do NOT back off on our OWN refusal. A halted or budget-capped call never
+    // reaches Cognito, so there is nothing to back off from — and arming it
+    // here made the halt's error read "auth backing off" for 15s after the
+    // halt was cleared, which is a confusing thing to hand an operator who is
+    // trying to work out whether the switch took. (Caught by
+    // test/opendkp-halt.test.js, which asserts BOTH wrappers say "halted".)
+    if (!e || !e.localRefusal) _authFailUntil = Date.now() + 15_000;
+    throw e;
+  }
+}
+
+async function _getAuthTokenUncached() {
 
   // OpenDKP's Cognito user pool authenticates against the USERNAME field, not
   // the email address.  OPENDKP_USERNAME is the preferred env var; we still
@@ -166,7 +371,7 @@ async function createCharacter(payload) {
 // OPENDKP_CLIENT_ID read token — it's the client's internal id, constant per
 // OpenDKP client and present on every character row. We cache it (env override
 // first, then read it off any character row, then a known fallback) so linking
-// never needs a manual config step. Hitya 2026-06-23.
+// never needs a manual config step. The guild lead 2026-06-23.
 let _openDkpClientHash = null;
 async function _resolveClientHash() {
   if (_openDkpClientHash) return _openDkpClientHash;
@@ -190,7 +395,7 @@ async function _resolveClientHash() {
 // establish the link (confirmed 2026-06-23 — newly created chars came up
 // un-parented), so this separate call is required. Body shape captured from
 // the OpenDKP UI:  { ParentId: "<id>", ChildId: <id>, ClientId: "<hash>" }.
-// No follow-up save is needed (confirmed by Uilnayar).
+// No follow-up save is needed (confirmed by a member).
 async function linkCharacter(parentId, childId) {
   const clientId = await _resolveClientHash();
   const headers  = await _bearerHeaders(true);
@@ -282,6 +487,16 @@ async function getAuctions(page = 1) {
   const headers = await _bearerHeaders();
   const p = page > 1 ? `?page=${page}` : '';
   return _get({ ..._clientUrl('/auctions' + p), headers });
+}
+
+// GET /clients/{name}/auctions/active — "Get Active Auctions" in OpenDKP's own
+// Postman doc. Returns ONLY currently-open auctions, which is all the live
+// bidding panel ever needed — the full /auctions list we polled instead is the
+// entire settled history (~665 KB per response, measured by OpenDKP's owner,
+// 2026-08-25). Same shape family as /auctions; each auction carries Bids[].
+async function getActiveAuctions() {
+  const headers = await _bearerHeaders();
+  return _get({ ..._clientUrl('/auctions/active'), headers });
 }
 
 // PUT /clients/{name}/auctions/{auctionId}/bids — submit a bid on an active auction.
@@ -395,9 +610,67 @@ async function deleteAuction(auctionId) {
 // bearer path; getRaids/getRaid now match.
 //
 // GET /clients/{name}/raids — all raids (summary, no ticks detail)
-async function getRaids() {
+// GET /clients/{name}/raids[?count=N] — raid summary list.
+//
+// `count` is DOCUMENTED (OpenDKP's own Postman collection: `/raids?count=10`)
+// and we were not using it: every pass pulled all 412 raids, ~90 KB a call.
+// Raids are append-only in practice — an old raid's summary does not change —
+// so the routine pass only needs the newest few. A periodic UNCOUNTED fetch
+// still heals anything edited upstream, and the #110 audit reconcile is the
+// second net under that.
+// Unwrap a list payload to its rows. OpenDKP wraps list responses
+// inconsistently — /auctions and /audits both do, /raids at least sometimes
+// does — so every consumer that assumed a bare array was one shape change away
+// from breaking. Returns the raw value untouched when no rows can be found, so
+// a genuine failure still reaches the caller's guard instead of looking like an
+// empty list.
+function _listRows(raw) {
+  if (Array.isArray(raw)) return raw;
+  for (const k of ['Results', 'Raids', 'Items', 'data']) {
+    if (Array.isArray(raw?.[k])) return raw[k];
+  }
+  return raw;
+}
+
+// GET /clients/{name}/raids — ALWAYS returns rows, not a wrapper.
+//
+// ⚠ The unwrap lives HERE, not in one caller. 2026-08-28: syncRaidsList was
+// taught to unwrap and started working again, while getMostRecentRaid — which
+// still demanded a bare array — kept returning null. That is the loot bug:
+// null raid → `linkRaidId = 0` → auctions posted against NO raid, which is
+// what "the raid bot didn't select the raid properly" actually looked like.
+// Fixing one call site and leaving the other is how a bug survives its own fix.
+async function getRaids(opts = {}) {
   const headers = await _bearerHeaders();
-  return _get({ ..._clientUrl('/raids'), headers });
+  const n = Number(opts.count);
+  const q = Number.isInteger(n) && n > 0 ? `?count=${n}` : '';
+  return _listRows(await _get({ ..._clientUrl('/raids' + q), headers }));
+}
+
+// GET /clients/{name}/dkp — the authoritative standings array (Models[]).
+//
+// ⚠ THIS IS THE CALL MONCS CAUGHT (2026-08-27): "Do you purposefully call /dkp
+// once a minute?" It used to be made by every member's Mimic, DIRECTLY to
+// api.opendkp.com, once a minute each — bypassing this module entirely, so it
+// never appeared in our call counter, was not covered by the outbound governor,
+// and scaled linearly with how many people had Mimic open.
+//
+// It lives here now so that it CANNOT do that again: one call for the whole
+// guild, through _get, which means the counter sees it, the per-minute budget
+// caps it, and OPENDKP_HALT stops it instantly. Agents read the result from the
+// bot. See docs/DESIGN-agent-third-party-calls.md.
+//
+// The hosted multi-tenant API serves each legacy /beta/<res> lambda under
+// /clients/<name>/<res>; the DKP summary lambda's legacy path is /beta/dkp.
+// /summary is a documented fallback for older instances.
+async function getStandings() {
+  const headers = await _bearerHeaders();
+  for (const route of ['/dkp', '/summary']) {
+    const j = await _get({ ..._clientUrl(route), headers });
+    const models = Array.isArray(j) ? j : (j && Array.isArray(j.Models)) ? j.Models : null;
+    if (models && models.length) return models;
+  }
+  return null;
 }
 
 // GET /clients/{name}/raids/:id — single raid with full Ticks + Items
@@ -413,12 +686,60 @@ async function getRaid(raidId) {
 // post if there's no raid at all).
 //
 // Returns null when the API returns no raids.
+// The raid a loot post should charge against.
+//
+// ⚠ ORDER BY RaidId, NOT Timestamp. Reported mid-raid 2026-08-27: "the raid bot
+// didn't select the raid properly when i'm posting loot tonight". Two reasons
+// the old `sort by Timestamp desc` picks wrong, both measured against our
+// 413-raid mirror:
+//
+//  1. `Timestamp` is a DATE an officer types, and it drifts from reality — the
+//     raid named "8-23-26 Vex Thal" carries a timestamp of 8-22. A raid created
+//     tonight with yesterday's date sorts BELOW yesterday's raid and loses.
+//  2. **Ten raids share a timestamp with another raid** (9 separate dates —
+//     a main raid and an alt raid on one night, a re-created raid). On those,
+//     the comparator returns 0 and the winner is decided by OpenDKP's array
+//     order, which for the sibling /auctions endpoint we PROVED is not
+//     newest-first. So it was a coin flip.
+//
+// RaidId is server-assigned and monotonic; id order and timestamp order
+// disagree on 10 of 413 rows, and the id is the one that is right.
+//
+// ⚠ Future-dated raids are excluded rather than trusted: an officer staging
+// next week's raid would otherwise become "most recent" and silently collect
+// tonight's loot. Anything dated more than a day out is not tonight.
+function _pickCurrentRaid(raids, nowMs = Date.now()) {
+  const rows = Array.isArray(raids) ? raids : [];
+  const horizon = nowMs + 36 * 3600 * 1000;
+  const usable = rows.filter(r => {
+    if (!r || !Number.isFinite(Number(r.RaidId))) return false;
+    const t = Date.parse(r.Timestamp || '');
+    return !Number.isFinite(t) || t <= horizon;   // undated rows stay eligible
+  });
+  if (usable.length === 0) return null;
+  return [...usable].sort((a, b) => Number(b.RaidId) - Number(a.RaidId))[0];
+}
+
+// How stale the picked raid looks, so callers can warn instead of silently
+// charging the wrong night. Raid timestamps are date-only (noon UTC), so a
+// raid created for TODAY reads as ~12h old by mid-raid — the threshold has to
+// clear that or every normal post would warn.
+function _raidLooksStale(raid, nowMs = Date.now()) {
+  const t = Date.parse(raid?.Timestamp || '');
+  if (!Number.isFinite(t)) return false;
+  return (nowMs - t) > 36 * 3600 * 1000;
+}
+
 async function getMostRecentRaid() {
   const raids = await getRaids();
   if (!Array.isArray(raids) || raids.length === 0) return null;
-  return [...raids].sort((a, b) =>
-    new Date(b.Timestamp || 0) - new Date(a.Timestamp || 0)
-  )[0];
+  const picked = _pickCurrentRaid(raids);
+  if (picked && _raidLooksStale(picked)) {
+    console.warn(`[opendkp] most-recent raid #${picked.RaidId} "${picked.Name}" is dated`
+      + ` ${picked.Timestamp} — more than 36h old. Loot linked to it will charge the WRONG raid.`
+      + ' Has tonight\'s raid been created in OpenDKP?');
+  }
+  return picked;
 }
 
 // ── Audits + Adjustments ──────────────────────────────────────────────────────
@@ -487,7 +808,7 @@ async function updateRaid(payload) {
 //     "Items":      [{
 //       "ItemId":         17005,
 //       "ItemName":       "Backpack",
-//       "CharacterName":  "Hitya",       (NB: name not id — server resolves)
+//       "CharacterName":  "Rethlan",       (NB: name not id — server resolves)
 //       "Dkp":            1,
 //       "Notes":          "free-form",
 //       "GameItemId":     17005
@@ -515,9 +836,11 @@ async function updateRaidById(raidId, raidObject) {
 }
 
 module.exports = {
+  getStandings, _pickCurrentRaid, _raidLooksStale, _listRows,
+  opendkpHalted, setRuntimeHalt, noteCall, flushCallStats, _normalizeEndpoint,
   getRaids, getRaid, createRaid, updateRaid, updateRaidById, getMostRecentRaid,
   getCharacters, createCharacter, linkCharacter,
-  createAuctions, getAuctions, getAuction, restoreAuction, deleteAuction,
+  createAuctions, getAuctions, getActiveAuctions, getAuction, restoreAuction, deleteAuction,
   submitBid, cancelBid, extendAuctions, endAuctions,
   getAudits, getAdjustments,
 };

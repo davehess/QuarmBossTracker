@@ -70,7 +70,7 @@ function _resolveCharNameFromInteraction(interaction) {
   const direct  = getCharacter(display);
   if (direct) return direct.name;
 
-  // Try removing common suffixes (e.g. "Hitya | Officer" → "Hitya")
+  // Try removing common suffixes (e.g. "Rethlan | Officer" → "Rethlan")
   const cleaned = display.split(/[\s|,(\-]/)[0]?.trim();
   if (cleaned && cleaned !== display) {
     const c = getCharacter(cleaned);

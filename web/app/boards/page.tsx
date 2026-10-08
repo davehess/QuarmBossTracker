@@ -13,6 +13,15 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { userTz, fmtAbs } from '@/lib/timezone';
 import ExpansionSection from './ExpansionSection';
 
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'Boss timers',
+  description:
+    'Spawn windows and cooldowns for every tracked raid target, mirrored from the Discord boards.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type BoardRow = {

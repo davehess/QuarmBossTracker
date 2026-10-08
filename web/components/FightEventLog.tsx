@@ -1,5 +1,5 @@
 // FightEventLog — the fight's deaths, raid-wide events, and callout fires as a
-// collapsible chronological LIST (Hitya 2026-08-16: "The fight timeline view
+// collapsible chronological LIST (the guild lead, 2026-08-16: "The fight timeline view
 // with Raid Events are useless in this format… Open up an arrow down to see
 // the names of those events/tts/etc.", and the second round the same night:
 // better look, no personal-range callouts, no 0:00 wall).
@@ -13,7 +13,7 @@
 // file only renders. Server component on purpose: <details>/<summary> gives
 // the arrow-down without client JS.
 //
-// FUTURE (Hitya): per-type/per-callout toggles to hide the ones personal to
+// FUTURE (the guild lead): per-type/per-callout toggles to hide the ones personal to
 // one character. Needs client state; when it lands this goes 'use client' and
 // the folded rows become the toggle rows. docs/DESIGN-fight-timeline.md.
 

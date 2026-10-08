@@ -10,13 +10,14 @@
 //   - **Log mode**: when a day is selected, render the chat scrollback for
 //     that day with the active filters. Up to ROW_LIMIT lines.
 //
-// Filters can stack: ?speaker=Hitya&year=2025&month=8 will show Hitya's
-// August 2025 days with message counts; ?speaker=Hitya alone shows which
+// Filters can stack: ?speaker=the guild lead&year=2025&month=8 will show the guild lead's
+// August 2025 days with message counts; ?speaker=the guild lead alone shows which
 // years they were active. Date input is replaced by the breadcrumb +
 // drilldown — quicker than guessing at a date.
 
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
+import { requireOfficer } from '@/lib/officer';
 import { dayLabel } from '@/lib/format';
 import { loadItemCatalog, linkifyItems, type ItemCatalog } from '@/lib/item-link';
 import { userTz } from '@/lib/timezone';
@@ -394,6 +395,7 @@ export default async function AdminChatPage({
 }: {
   searchParams: Promise<Params>;
 }) {
+  await requireOfficer();
   const p = await searchParams;
   const tz = await userTz();
   const year  = p.year  ? parseInt(p.year,  10) : null;
@@ -492,8 +494,12 @@ export default async function AdminChatPage({
 
   // Item catalog — only fetched (and cached for an hour) when we're about to
   // render an actual chat log. Browse/bucket views don't need it.
+  // A failed catalog read throws and is not cached (lib/item-link.ts); the log still renders, unlinked.
   const itemCatalog: ItemCatalog = inLogMode
-    ? await loadItemCatalog(supabaseAdmin())
+    ? await loadItemCatalog(supabaseAdmin()).catch((err): ItemCatalog => {
+        console.error('[admin/chat] item catalog unavailable, rendering the log without item links:', err);
+        return new Map();
+      })
     : new Map();
 
   // Group log by speaker for the "by speaker" toggle? Future. For v1, just

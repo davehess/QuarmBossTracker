@@ -16,7 +16,7 @@
      same across overlays. Same margin-right:28px clears the ✕ hide
      button at the top-right. */
   .tabs{display:flex;gap:2px;margin-left:6px;margin-right:28px;align-items:center}
-  /* Compact on purpose (Hitya 2026-08-16, from a live History screenshot:
+  /* Compact on purpose (the guild lead, 2026-08-16, from a live History screenshot:
      "These buttons are too large") — the strip competes with parse rows for
      a narrow overlay's space, so it stays a size DOWN from the row text. */
   .tab{background:rgba(255,255,255,0.05);color:#9aa4ad;border:1px solid rgba(255,255,255,0.10);
@@ -24,17 +24,32 @@
   .tab:hover{color:#fff;border-color:#a371f7}
   .tab.on{background:#2a1d3d;color:#d2a8ff;border-color:#a371f7}
   .tab .beta{font-size:8px;color:#1f1300;background:#f0b429;border-radius:2px;padding:0 3px;margin-left:3px;font-weight:600}
+  /* DPS over Tank, one column (the guild lead, 2026-09-25: "stack DPS and Tank
+     on top of each other and make more horizontal room") — the boss name
+     was wrapping to two lines beside a one-row strip. */
+  .tabstack,.ctlstack{display:flex;flex-direction:column;gap:1px}
+  .tabstack .tab,.ctlstack > .tab{text-align:center;line-height:12px}
+  /* History sits under the row count, not beside DPS/Tank — that is what
+     gets a name like "Blood of Ssraeshza" back onto one line at ~320px. */
+  .ctlstack{margin-left:auto}
+  .ctlstack .rowcfg{margin-left:0}
+  .title > .tabs{margin-left:4px}
+  /* The header is two rows tall now; the name and 📋 sit on its middle. */
+  .title{align-items:center}
+  /* 📋 alone — the "/rs" label made the button wider than the name it
+     sat beside. The tooltip still says what it copies. */
+  #copyRs{padding:0 3px;margin-left:2px}
   .boss{font-size:12px;color:#f6c365;margin:4px 0 6px}
   ul{list-style:none;margin:0;padding:0}
   /* EQLogParser-style row: rank · name · %% · Damage · DPS · Sec. Grid columns
      are sized so the right-aligned numbers stack cleanly even when the name
      wraps narrow. */
-  li{display:grid;grid-template-columns:1.1em minmax(0,1fr) 38px 50px 42px 32px;
+  li{display:grid;grid-template-columns:24px minmax(0,1fr) 38px 50px 42px 32px;
      gap:6px;align-items:baseline;font-size:11px;padding:1px 0}
   /* Observed ("what THIS machine saw") is its own column, not a parenthetical
      tucked under the guild number. Inline it wrapped onto a second line and
      doubled the height of every row for a value most people ignore — a lot of
-     dead space on a window that is usually wide (Hitya 2026-08-13).
+     dead space on a window that is usually wide (the guild lead, 2026-08-13).
      Hidden below 400px so a narrow HUD keeps the compact 6-column layout; the
      value is not lost there, the inline fallback still renders. */
   li .obs, .colhdr .obs{display:none}
@@ -46,6 +61,28 @@
   li .dps{color:#58a6ff;text-align:right;font-variant-numeric:tabular-nums}
   li .sec{color:#6b7280;text-align:right;font-variant-numeric:tabular-nums;font-size:10px}
   li.me .n{color:#f6c365;font-weight:600}
+  /* Your row stands out as a whole band, not just a gold name (the guild lead,
+     2026-09-27: "always highlight it so its easier to see"). */
+  #deeps li.me{background:rgba(246,195,101,0.13);box-shadow:inset 3px 0 0 #f6c365;border-radius:2px}
+  /* A thin bar under each name: their share, drawn against the top row so the
+     differences read at a glance (a raw share of a 50-person raid tops out near
+     7% of the width). The % column still says the real share. */
+  #deeps li.pbrow{position:relative;padding-bottom:4px}
+  #deeps li .pb{position:absolute;left:30px;right:0;bottom:1px;height:2px;background:rgba(255,255,255,0.06);border-radius:1px}
+  #deeps li .pb i{display:block;height:100%;background:rgba(88,166,255,0.6);border-radius:1px}
+  #deeps li.tkrow .pb i{background:rgba(248,81,73,0.65)}
+  #deeps li.me .pb i{background:#f6c365}
+  /* +pet (the guild lead, 2026-09-29): the pet's share is the end of the bar
+     in the pet colour, and "+pet" wears the same colour, so player and pet read
+     apart at a glance. Clicking +pet opens a line per pet: name, damage, spawn
+     id. The pet orange is the dashboard's 🐾 colour. Must stay after the three
+     rules above: same specificity, so the last one wins. */
+  #deeps li .pb{display:flex}
+  #deeps li .pb i{flex:none}
+  #deeps li .pb i.pet{background:#f0883e}
+  #deeps .petx{color:#f0883e;font-size:9px;cursor:pointer}
+  #deeps li.petline{display:block;padding:0 0 1px 30px;font-size:10px;color:#f0883e;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #deeps li.petline .pid{color:#8b949e}
   /* Your row when it fell below the visible cutoff and got appended — a dashed
      rule separates it from the contiguous top-N above. */
   li.me-extra{border-top:1px dashed rgba(110,118,129,0.35);margin-top:1px;padding-top:2px}
@@ -59,7 +96,7 @@
   .rowcfg{display:flex;align-items:center;gap:1px;margin-left:auto}
   .rowsn{font-size:9px;color:#9aa4ad;min-width:15px;text-align:center;font-variant-numeric:tabular-nums}
   .maxhit{font-size:9px;color:#f87171;font-weight:500;margin-left:4px}
-  .colhdr{display:grid;grid-template-columns:1.1em minmax(0,1fr) 38px 50px 42px 32px;
+  .colhdr{display:grid;grid-template-columns:24px minmax(0,1fr) 38px 50px 42px 32px;
      gap:6px;font-size:9px;color:#6b7280;letter-spacing:0.05em;
      text-transform:uppercase;padding:2px 0 1px;border-bottom:1px solid rgba(110,118,129,0.18);margin-bottom:2px}
   .colhdr .r,.colhdr .p,.colhdr .d,.colhdr .obs,.colhdr .dps,.colhdr .sec{text-align:right}
@@ -68,15 +105,43 @@
      wins. It originally sat ABOVE .colhdr and the 6-column base silently
      overrode the 7-column one: the rows widened, the header did not, SEC wrapped
      to a second line and every header label sat one column right of its data
-     (Hitya, live 2026-08-13). */
-  @media (min-width: 400px){
-    li{grid-template-columns:1.1em minmax(0,1fr) 38px 50px 46px 42px 32px}
-    .colhdr{grid-template-columns:1.1em minmax(0,1fr) 38px 50px 46px 42px 32px}
+     (the guild lead, live 2026-08-13).
+     It asks how wide the SCOREBOARD is, not the window: 370px of board is a
+     400px window with nothing beside it, and History's fight list takes room
+     beside it — so History drops to the compact columns until the window is
+     wide enough for both. */
+  .board{container:board / inline-size}
+  @container board (min-width: 370px){
+    /* Rank is 24px, not 1.1em: two-digit ranks spilled left out of an em-wide
+       column, into the highlighted row's gold edge (and em differs between the
+       9px header and the 11px rows, so px keeps the two in line). */
+    li{grid-template-columns:24px minmax(0,1fr) 38px 50px 46px 42px 32px}
+    .colhdr{grid-template-columns:24px minmax(0,1fr) 38px 50px 46px 42px 32px}
     li .obs, .colhdr .obs{display:block;text-align:right}
     li .obs{color:#8b949e;font-variant-numeric:tabular-nums;font-size:10px}
     li.total .obs{color:#8b949e;font-weight:600}
     .obs-inline{display:none}   /* lives in its own column up here */
   }
+  /* History's fight list, right of the scoreboard: newest on top, the one on
+     screen marked the way the selected tab is. Only in History mode. */
+  .histlist{display:none}
+  body.hist .histwrap{display:grid;grid-template-columns:minmax(0,1fr) 112px;gap:8px;align-items:start}
+  /* 100 fights are kept now, ~34px each: the list scrolls inside the board's height instead of
+     growing the window past the screen (the hover handshake on #histList makes the wheel work
+     while the overlay is locked). */
+  body.hist .histlist{display:block;border-left:1px solid rgba(110,118,129,0.25);padding-left:6px;
+    max-height:320px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+  body.hist .histwrap:has(> .histlist:empty){display:block}   /* no fights yet: no empty column */
+  body.hist .histlist:empty{display:none}
+  .histlist > li{display:block;padding:0;margin:0 0 2px}
+  .hitem{display:block;width:100%;text-align:left;background:rgba(255,255,255,0.03);color:#c9d1d9;
+    border:1px solid rgba(255,255,255,0.08);border-radius:3px;padding:2px 5px;cursor:pointer;font-family:inherit}
+  .hitem:hover{border-color:#a371f7}
+  .hitem.on{background:#2a1d3d;border-color:#a371f7}
+  .hitem .hb{display:block;font-size:10px;color:#f6c365;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hitem .hm{display:block;font-size:9px;color:#8b949e;font-variant-numeric:tabular-nums}
+  .hitem .hs-synced{color:#56d364}
+  .hitem .hs-local{color:#d29922}
   .dim{color:#6b7280;font-size:10px}
   .conn{font-size:9px}
   .conn.ok{color:#56d364}
@@ -134,6 +199,55 @@
     background:rgba(14,17,22,0.6);color:#6b7280;border:1px solid rgba(110,118,129,0.3);
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
   #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
+  /* ▭ Mini — option B "Me and my neighbours" (the guild vote, 2026-09-17).
+     Three rows: the player I am chasing, me, the player chasing me. Every
+     rule is scoped to body.wp-mini, so full mode is exactly what it was. */
+  body.wp-mini .hud{padding:3px 6px}
+  /* ✥ and ✕ keep their corners in mini; the title row sits between them so
+     the /rs copy can never slide under ✕. */
+  body.wp-mini .title{padding:0 16px}
+  /* History's fight list is a picker, and mini has no room to pick in. */
+  body.wp-mini .histwrap{display:block}
+  body.wp-mini .histlist{display:none}
+  body.wp-mini #deeps li.mrow{grid-template-columns:3ch minmax(0,1fr) auto;gap:1px 6px;align-items:center;padding:1px 0}
+  body.wp-mini #deeps li.mrow .r{font-size:10px}
+  body.wp-mini #deeps li.mrow .v{text-align:right;white-space:nowrap}
+  body.wp-mini #deeps li.mrow .v .dps{font-size:10px}
+  .mbar{grid-column:2 / -1;background:rgba(255,255,255,0.08);overflow:hidden}
+  .mbar i{display:block;height:100%;background:#a371f7}
+  /* The tab strip is hidden in mini, so the bar says which tab this is:
+     red on Tank, where the number is damage TAKEN. */
+  li.mrow.tk .mbar i{background:#f85149}
+  /* History and Trend side by side under the row stepper; the stepper centres over them. */
+  .tabrow{display:flex;gap:2px}
+  .tabrow .tab{flex:1;text-align:center;line-height:12px}
+  .ctlstack .rowcfg{justify-content:center}
+  /* ── Trend: my damage per fight (the guild lead, 2026-10-06) ─────────────────
+     Purple is this meter's own accent (.tab.on), so the line, the fill and the bars all use it and
+     Taken is told apart by its label, not by a warning red. The page is only as tall as what it
+     holds (autoFitOverlay), and the sparkline is built at the pixel width the window has, so a wider
+     S/M/L preset draws a wider line. Not in mini, which keeps the scoreboard. */
+  .trend{display:none}
+  body.trendmode:not(.wp-mini) .trend{display:block}
+  body.trendmode:not(.wp-mini) .histwrap{display:none}
+  .tctl{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:3px 0 5px}
+  .tgrp{display:flex;gap:2px}
+  .tbig{display:flex;align-items:baseline;gap:5px;line-height:1.1}
+  .tbig b{font-size:22px;font-weight:600;color:#d2a8ff;font-variant-numeric:tabular-nums}
+  .tbig .tu{font-size:10px;color:#9aa4ad}
+  .tsub{font-size:10px;color:#8b949e;margin:1px 0 3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tsvg{display:block;width:100%;height:auto;overflow:visible}
+  .tnone{color:#8b949e;font-size:11px;padding:6px 0}
+  .trows{margin-top:5px}
+  .trow{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;width:100%;box-sizing:border-box;
+    text-align:left;background:transparent;border:0;border-radius:2px;color:#c9d1d9;font:inherit;font-size:11px;
+    padding:1px 2px 4px;cursor:pointer}
+  .trow:hover{background:rgba(163,113,247,0.10)}
+  .trow .tn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .trow .tv{color:#d2a8ff;font-variant-numeric:tabular-nums}
+  .trow .tb{position:absolute;left:2px;right:2px;bottom:1px;height:2px;background:rgba(255,255,255,0.06);border-radius:1px}
+  .trow .tb i{display:block;height:100%;background:rgba(163,113,247,0.6);border-radius:1px}
+  .trow.new .tb i{background:#a371f7}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
@@ -156,40 +270,63 @@
       <!-- 📋 → /rs — one-click copy of this fight's parse as an EQLogParser-
            convention line the guild recognizes (bot re-ingests it as a
            chat-extracted parse via utils/parseEqLog.js). Sits right of the
-           boss name and grows leftward into the flex gap so its "✓ copied"
-           feedback never reaches the ✕ gutter at the top-right. Shown on the
-           DPS tab only; hidden until a fight has damage to copy. -->
+           boss name as a bare 📋 (✓ for two seconds after a copy), so it
+           never reaches the ✕ gutter at the top-right. Shown on the DPS tab
+           only; hidden until a fight has damage to copy. -->
       <button id="copyRs" class="tab" type="button" style="display:none;white-space:nowrap"
-              title="Copy this fight's parse — paste on your /rs line in game">📋 /rs</button>
+              title="Copy this fight's parse — paste on your /rs line in game">📋</button>
       <!-- DPS / Tank tab toggle — same surface EQLogParser exposes. DPS reads
            perPlayer[].dmg from the active encounter; Tank reads incoming damage
            (perPlayer[].took) so you can see who's eating the boss melee in
            real time. -->
-      <span class="rowcfg">
-        <button id="rowsDown" class="tab" type="button" title="Show fewer rows">−</button>
-        <span id="rowsN" class="rowsn">10</span>
-        <button id="rowsUp" class="tab" type="button" title="Show more rows">+</button>
+      <!-- Two stacked columns, so the header is two rows tall and the boss
+           name gets the width: [− N +] over [History], then [DPS] over [Tank]. -->
+      <span class="ctlstack wp-mini-hide">
+        <span class="rowcfg">
+          <button id="rowsDown" class="tab" type="button" title="Show fewer rows">−</button>
+          <span id="rowsN" class="rowsn">10</span>
+          <button id="rowsUp" class="tab" type="button" title="Show more rows">+</button>
+        </span>
+        <!-- History and Trend share the row under the stepper. Trend is YOUR damage per fight as a
+             line (the guild lead, 2026-10-06), read from the same fight ring History lists. -->
+        <span class="tabrow">
+          <button id="tabHist" class="tab"    type="button"
+                  title="The guild's numbers for the last few mobs, once every client has reported">History</button>
+          <button id="tabTrend" class="tab"   type="button"
+                  title="Your own damage per fight, tonight or over 7 days, as a line">Trend</button>
+        </span>
       </span>
-      <span class="tabs">
-        <button id="tabDps"  class="tab on" type="button">DPS</button>
-        <button id="tabTank" class="tab"    type="button">Tank</button>
-        <button id="tabHist" class="tab"    type="button"
-                title="The guild's numbers for the last few mobs, once every client has reported">History</button>
-      </span>
-      <!-- History pager — which of the last few fights is on screen. Hidden
-           outside History mode; the buttons are separate from the tab strip
-           because they change WHAT you're looking at, not HOW. -->
-      <span class="tabs" id="histNav" style="display:none">
-        <button id="histPrev" class="tab" type="button" title="Older fight">◀</button>
-        <span id="histWhich" class="rowsn">1/1</span>
-        <button id="histNext" class="tab" type="button" title="Newer fight">▶</button>
+      <span class="tabs wp-mini-hide">
+        <span class="tabstack">
+          <button id="tabDps"  class="tab on" type="button">DPS</button>
+          <button id="tabTank" class="tab"    type="button">Tank</button>
+        </span>
       </span>
     </div>
-    <div id="colhdr" class="colhdr" style="display:none">
-      <span class="r">#</span><span>Name</span><span class="p">%</span><span class="d" id="colD">Damage</span><span class="obs" id="colObs" title="What YOUR machine saw of this fight">Obs</span><span class="dps" id="colDps">DPS</span><span class="sec">Sec</span>
+    <!-- History: the scoreboard on the left, the fights to pick from on the
+         right (the guild lead, 2026-09-24: "History should give us a list of the
+         fights to choose from on the right side"). It replaced a ◀ 1/6 ▶ pager
+         in the title row, which also gave that crowded row its width back. -->
+    <div class="histwrap">
+      <div class="board">
+        <div id="colhdr" class="colhdr wp-mini-hide" style="display:none">
+          <span class="r">#</span><span>Name</span><span class="p">%</span><span class="d" id="colD">Damage</span><span class="obs" id="colObs" title="What YOUR machine saw of this fight">Obs</span><span class="dps" id="colDps">DPS</span><span class="sec">Sec</span>
+        </div>
+        <ul id="deeps"></ul>
+        <div class="dim" id="empty">waiting for combat…</div>
+      </div>
+      <ul id="histList" class="histlist"></ul>
     </div>
-    <ul id="deeps"></ul>
-    <div class="dim" id="empty">waiting for combat…</div>
+    <!-- Trend: my damage per fight, drawn from the same ring History lists. The toggles are real
+         <button>s (the preload arms every button on a locked overlay) and live below the title row,
+         clear of the ✕ gutter; the body is rewritten only when its HTML changes. -->
+    <div id="trend" class="trend">
+      <div class="tctl">
+        <span class="tgrp"><button id="trTonight" class="tab on" type="button" title="Fights since 6am">tonight</button><button id="trWeek" class="tab" type="button" title="Every fight in the last 7 days">7 d</button></span>
+        <span id="trField" class="tgrp" style="display:none"><button id="trDealt" class="tab on" type="button" title="Damage you dealt, per second">Dealt</button><button id="trTaken" class="tab" type="button" title="Damage you took, per second">Taken</button></span>
+      </div>
+      <div id="trendBody"></div>
+    </div>
   </div>
 <script>
   // Poll the agent's /api/state and render the top damage + current boss. The
@@ -332,24 +469,27 @@
   var TAB_MODE = 'dps';
   try {
     var saved = localStorage.getItem(TAB_MODE_KEY);
-    if (saved === 'dps' || saved === 'tank' || saved === 'history') TAB_MODE = saved;
+    if (saved === 'dps' || saved === 'tank' || saved === 'history' || saved === 'trend') TAB_MODE = saved;
   } catch (e) {}
   var tabDpsBtn  = document.getElementById('tabDps');
   var tabTankBtn = document.getElementById('tabTank');
   var tabHistBtn = document.getElementById('tabHist');
+  var tabTrendBtn = document.getElementById('tabTrend');
   // Which of the last few fights History is showing. 0 = most recent. Not
   // persisted: after a restart "the fight I was looking at" no longer means
   // anything, and the history ring itself lives in the agent's memory.
   var HIST_IDX = 0;
-  function _setTab(mode) {
+  // `idx` is a ring index (newest first): a Trend row opens History on the fight it drew.
+  function _setTab(mode, idx) {
     TAB_MODE = mode;
-    if (mode === 'history') HIST_IDX = 0;    // always open on the latest kill
+    if (mode === 'history') HIST_IDX = idx > 0 ? idx : 0;    // otherwise always open on the latest kill
     try { localStorage.setItem(TAB_MODE_KEY, mode); } catch (e) {}
     if (tabDpsBtn)  tabDpsBtn .classList.toggle('on', mode === 'dps');
     if (tabTankBtn) tabTankBtn.classList.toggle('on', mode === 'tank');
     if (tabHistBtn) tabHistBtn.classList.toggle('on', mode === 'history');
-    var nav = document.getElementById('histNav');
-    if (nav) nav.style.display = (mode === 'history') ? '' : 'none';
+    if (tabTrendBtn) tabTrendBtn.classList.toggle('on', mode === 'trend');
+    document.body.classList.toggle('trendmode', mode === 'trend');   // shows the Trend panel in place of the board
+    document.body.classList.toggle('hist', mode === 'history');   // shows the fight list
     var hdr = document.getElementById('boss-name');
     // The title prefix gets a Tank flag so it's obvious you're not on DPS.
     if (hdr && hdr.dataset) hdr.dataset.tabMode = mode;
@@ -362,17 +502,21 @@
     if (TAB_MODE === 'tank' && tabTankBtn) tabTankBtn.classList.add('on');
     if (TAB_MODE === 'history') {
       if (tabHistBtn) tabHistBtn.classList.add('on');
-      var _nav0 = document.getElementById('histNav');
-      if (_nav0) _nav0.style.display = '';
+      document.body.classList.add('hist');
+    }
+    if (TAB_MODE === 'trend') {
+      if (tabTrendBtn) tabTrendBtn.classList.add('on');
+      document.body.classList.add('trendmode');
     }
   }
   // Hover-interact handshake — when the overlay is LOCKED (click-through),
   // mouse events pass through to EQ. Flip the window interactive while the
   // cursor is over a tab so the click lands. Same fix the Mob Info tabs
   // needed ("Tank button doesn't do anything" = this exact failure mode).
-  var histPrevBtn = document.getElementById('histPrev');
-  var histNextBtn = document.getElementById('histNext');
-  [tabDpsBtn, tabTankBtn, tabHistBtn, histPrevBtn, histNextBtn].forEach(function(btn){
+  // The fight list is one element with a delegated click, so the handshake
+  // covers every row it will ever hold — rows are rebuilt as fights end.
+  var histListEl = document.getElementById('histList');
+  [tabDpsBtn, tabTankBtn, tabHistBtn, histListEl].forEach(function(btn){
     if (!btn) return;
     btn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
     btn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
@@ -380,9 +524,92 @@
   if (tabDpsBtn)  tabDpsBtn .addEventListener('click', function(){ _setTab('dps'); });
   if (tabTankBtn) tabTankBtn.addEventListener('click', function(){ _setTab('tank'); });
   if (tabHistBtn) tabHistBtn.addEventListener('click', function(){ _setTab('history'); });
-  // ◀ is OLDER, so it walks the index UP — the ring is newest-first.
-  if (histPrevBtn) histPrevBtn.addEventListener('click', function(){ HIST_IDX++; tick().catch(function(){}); });
-  if (histNextBtn) histNextBtn.addEventListener('click', function(){ HIST_IDX = Math.max(0, HIST_IDX - 1); tick().catch(function(){}); });
+  if (tabTrendBtn) tabTrendBtn.addEventListener('click', function(){ _setTab('trend'); });
+  // A row's index is its place in the ring, newest first (0 = the last kill).
+  if (histListEl) histListEl.addEventListener('click', function(e){
+    var b = e.target && e.target.closest ? e.target.closest('.hitem') : null;
+    if (!b) return;
+    HIST_IDX = parseInt(b.getAttribute('data-i'), 10) || 0;
+    tick().catch(function(){});
+  });
+  // +pet opens its owner's pets underneath (the guild lead, 2026-09-29). Owners
+  // are kept by lowercase name, so the choice survives the rows being rebuilt
+  // every second. The window turns interactive only while the cursor is on a
+  // +pet — the rest of the scoreboard stays click-through to EverQuest — and the
+  // toggle runs on mousedown: a row can be rebuilt between press and release,
+  // which would swallow a click.
+  var _petOpen = new Set();
+  var deepsEl = document.getElementById('deeps');
+  var _onPetx = function(el){ return !!(el && el.closest && el.closest('.petx')); };
+  if (deepsEl) {
+    deepsEl.addEventListener('mouseover', function(e){
+      if (_onPetx(e.target)) { try { window.mimic.overlayHoverInteractive(true); } catch (x) {} }
+    });
+    deepsEl.addEventListener('mouseout', function(e){
+      if (_onPetx(e.target) && !_onPetx(e.relatedTarget)) { try { window.mimic.overlayHoverInteractive(false); } catch (x) {} }
+    });
+    deepsEl.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (x) {} });
+    deepsEl.addEventListener('mousedown', function(e){
+      var b = e.target && e.target.closest ? e.target.closest('.petx') : null;
+      if (!b) return;
+      e.preventDefault(); e.stopPropagation();
+      var k = b.getAttribute('data-owner');
+      if (_petOpen.has(k)) _petOpen.delete(k); else _petOpen.add(k);
+      tick().catch(function(){});
+    });
+  }
+  // One row of the fight list: the mob, then how long it took and how long
+  // ago it ended; "…" while the guild's numbers are still settling.
+  function histItemHtml(h, i, on, nowMs) {
+    var d = h.durationSec || 0;
+    var dur = d ? Math.floor(d / 60) + ':' + String(d % 60).padStart(2, '0') : '—';
+    var ago = h.endedMs ? Math.max(0, Math.round((nowMs - h.endedMs) / 60000)) : null;
+    var agoTxt = ago == null ? '' : (ago < 1 ? ' · now' : (ago < 60 ? ' · ' + ago + 'm ago' : ' · ' + Math.floor(ago / 60) + 'h ago'));
+    // Where the fight stands (the guild lead, 2026-10-02: "History should be much
+    // longer and specific if it's local or synced"): synced = the guild's merged
+    // numbers came back; sent = uploaded, still waiting on them; local = it never
+    // left this machine (not signed in, or the character is excluded from stats). Settled with no
+    // guild rows is a restored fight the guild could no longer be asked about: this machine's view.
+    var st = h.settled ? (h.players && h.players.length ? 'synced' : 'local') : (h.upload === 'local' ? 'local' : 'sent');
+    var stTitle = st === 'synced' ? 'guild numbers in (' + (h.uploaders || 0) + ' clients)'
+      : (st === 'local' ? (h.upload === 'local' ? 'this machine only, never uploaded' : 'this machine\'s view — the guild numbers did not come back')
+        : 'uploaded, guild numbers still settling');
+    return '<li><button type="button" class="hitem' + (on ? ' on' : '') + '" data-i="' + i + '"'
+      + ' title="' + esc(h.boss) + ' — ' + stTitle + '">'
+      + '<span class="hb">' + esc(h.boss) + (st === 'sent' ? ' …' : '') + '</span>'
+      + '<span class="hm">' + dur + agoTxt + ' · <span class="hs-' + st + '">' + st + '</span></span></button></li>';
+  }
+
+  // ▭ Mini — option B "Me and my neighbours" (the guild vote, 2026-09-17:
+  // "Mini focuses on the user directly"). The player just above me, me, and
+  // the player just below, from whichever tab was last picked: the race is
+  // the point of a meter. At the top of the board that is me and the two
+  // below; at the bottom, the two above and me. With no row of my own (no
+  // damage dealt or taken yet) it is the top three, so a mini is never blank
+  // while a fight is on.
+  function miniWindow(allRows, me) {
+    var lc = me ? String(me).toLowerCase() : null;
+    var i = lc ? allRows.findIndex(function(r){ return String(r[0]).toLowerCase() === lc; }) : -1;
+    var start = i < 0 ? 0 : Math.max(0, Math.min(i - 1, allRows.length - 3));
+    return allRows.slice(start, start + 3);
+  }
+  // One mini row: rank, name, total, @rate, then a share-of-raid bar under
+  // the name. "me" reuses the full board's li.me highlight.
+  function miniRowsHtml(rows, me, totalDmg, secs, tank) {
+    var lc = me ? String(me).toLowerCase() : null;
+    return rows.map(function(row){
+      var d = row[1];
+      var pct = totalDmg > 0 ? Math.min(100, (d / totalDmg) * 100) : 0;
+      var isMe = !!lc && String(row[0]).toLowerCase() === lc;
+      return '<li class="mrow' + (isMe ? ' me' : '') + (tank ? ' tk' : '') + '">'
+        + '<span class="r">#' + row[4] + '</span>'
+        + '<span class="n wp-mini-name" title="' + esc(row[0]) + '">' + esc(row[0]) + '</span>'
+        + '<span class="v wp-mini-num"><span class="d">' + fmt(d) + '</span> <span class="dps">@'
+        +   fmt(secs > 0 ? Math.round(d / secs) : 0) + '</span></span>'
+        + '<span class="mbar wp-mini-bar"><i style="width:' + pct.toFixed(1) + '%"></i></span>'
+        + '</li>';
+    }).join('');
+  }
 
   // Visible-row count — how many names the scoreboard shows (you're always
   // shown on top of this; see the render). Persisted so a restart keeps it.
@@ -423,8 +650,8 @@
       var line = (TAB_MODE === 'history') ? _histParseLine : _lastParseLine;
       if (!line) return;
       var done = function(){
-        copyRsBtn.textContent = '✓ copied — paste in /rs';
-        setTimeout(function(){ try { copyRsBtn.textContent = '📋 /rs'; } catch (e) {} }, 2200);
+        copyRsBtn.textContent = '✓';
+        setTimeout(function(){ try { copyRsBtn.textContent = '📋'; } catch (e) {} }, 2200);
       };
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -438,6 +665,162 @@
     });
   }
 
+  function _foldPetsIntoOwners(allRows){
+      // Fold an owned pet INTO its owner. "a member`s warder should be added
+      // to a member's damage and have a little (+pet) next to their name"
+      // (the guild lead, live 2026-08-13) — a pet is not a raider, it is part of what
+      // its owner brought.
+      //
+      // This also has to happen BEFORE the guild merge below, and that is the
+      // part that bites: bot 3.1.43 rolls pets into their owner server-side,
+      // so the guild figure ALREADY includes the warder. Left unfolded here,
+      // the pet was counted inside the owner's guild number AND kept its own
+      // local row (the merge only ever ADDS, so a local-only row survives) —
+      // the same damage on screen twice. Folding first makes both sides mean
+      // the same thing: owner + their pets.
+      //
+      // Charm pets with no proven owner (index 6) are deliberately NOT folded
+      // — nobody gets credited for a charm we cannot attribute, so they keep
+      // their own "(charmed)" row exactly as before.
+      //
+      // ⚠ THE OWNER MAY HAVE NO ROW OF THEIR OWN, AND THAT IS THE NORMAL CASE
+      // FOR A CHARMER (the guild lead, live 2026-09-02: "it looks like when Chad
+      // charmed him it attributed to him, but it should be the other way
+      // around as Chad +pet"). An enchanter running a charm pet often does
+      // little or no direct damage, so they never appear in perPlayer at all
+      // — and the fold below used to require an existing owner row, so the
+      // pet kept its own "Vkjor (Ithren)" line instead. That reads as if
+      // the PET were the raider, which is backwards: the damage is what
+      // A member brought. So we CREATE the owner's row when it is missing
+      // and fold into that.
+      var _byName = new Map();
+      allRows.forEach(function(r){ _byName.set(String(r[0]).toLowerCase(), r); });
+      var _synth = [];
+      allRows.forEach(function(r){
+        if (!r[3]) return;                                   // not an owned pet
+        var ok = String(r[3]).toLowerCase();
+        if (_byName.has(ok)) return;                         // owner already on the meter
+        // Same tuple shape as the map above, zeroed: name, dmg, tookMax,
+        // pet_owner(null — an owner is not itself a pet), _, _, pet_charm.
+        var row = [String(r[3]), 0, 0, null, 0, 0, false];
+        _byName.set(ok, row);
+        _synth.push(row);
+      });
+      if (_synth.length) allRows = allRows.concat(_synth);
+      var _folded = [];
+      allRows.forEach(function(r){
+        var owner = r[3] && _byName.get(String(r[3]).toLowerCase());
+        if (!owner || owner === r) { _folded.push(r); return; }
+        owner[1] += (r[1] || 0);
+        owner[2]  = Math.max(owner[2] || 0, r[2] || 0);
+        owner[8]  = true;                       // index 8 = absorbed a pet → "+pet"
+                                                // (7 is localDmg once the guild merge runs)
+        // index 10 = the pets folded in, kept apart for the bar's pet share and
+        // the +pet line (index 9 is the pet row's own spawn id).
+        (owner[10] = owner[10] || []).push({ name: String(r[0]), v: r[1] || 0, id: r[9] || null });
+      });
+    return _folded.sort(function(a,b){ return (b[1]||0)-(a[1]||0); });
+  }
+
+  // The rows for ONE History fight, in the live board's tuple shape
+  // [name, dmg, tookMax, petOwner, rank, extra, petCharm, localDmg, +pet, spawnId, pets].
+  //
+  // The guild lead, 2026-10-04: History must "correctly attribute pet data to owners". It never did:
+  // this machine's rows skipped _foldPetsIntoOwners, so an owned pet read as a raider of its own — and
+  // once the guild's numbers came back the pet was counted TWICE, because the bot has already rolled it
+  // into its owner (who = pet_owner || name, bot _handleAgentLiveDamage): 1009 on a 909 fight.
+  //   • this machine's view runs the same filter and the same fold as the live board, so an owner reads
+  //     "Owner 400 +pet" in both places;
+  //   • settled, the guild's players replace it — but a guild row that is a pet whose owner we KNOW is
+  //     never a row of its own: its damage is in the owner's number, the guild's if the owner is listed
+  //     and ours if not. (The bot can only fold a pet when the uploading client knew the owner; a reading
+  //     that did not leaves the pet as a raider upstream, which is how it reaches us here.)
+  //   • an UNOWNED pet keeps its "(pet)" / "(charmed)" label, and so stays off the /rs line.
+  // Nothing in here reads the clock, so the board stays byte-stable from tick to tick.
+  function _histRows(HIST) {
+    var rows = (HIST.local || []).map(function(p){
+      return [p.character, p.dmg || 0, 0, p.pet_owner || null, 0, 0,
+              p.pet_charm || (p.pet_summoned ? 'pet' : false), undefined, false, p.pet_spawn_id || null];
+    }).filter(function(x){ return x[0] && (!/\s/.test(x[0]) || x[3] || x[6]) && x[1] > 0; });
+    var petNames = new Set();
+    rows.forEach(function(r){ if (r[3]) petNames.add(String(r[0]).toLowerCase()); });
+    var local = _foldPetsIntoOwners(rows);
+    local.forEach(function(r){ r[7] = r[1]; });                  // what THIS machine saw, pets included
+    if (!(Array.isArray(HIST.players) && HIST.players.length)) return local;
+    var localBy = new Map(local.map(function(r){ return [String(r[0]).toLowerCase(), r]; }));
+    var merged = [];
+    HIST.players.forEach(function(p){
+      var k = String(p.character).toLowerCase();
+      if (petNames.has(k)) return;
+      var loc = localBy.get(k);
+      merged.push([p.character, p.dmg || 0, 0, null, 0, 0, loc ? loc[6] : false,
+                   loc ? loc[1] : 0, loc ? loc[8] : false, loc ? loc[9] : null, loc ? loc[10] : undefined]);
+    });
+    // Anyone we saw but the guild has not reported keeps their local number
+    // rather than vanishing - the merge only ever ADDS.
+    var seen = new Set(merged.map(function(m){ return String(m[0]).toLowerCase(); }));
+    local.forEach(function(r){
+      if (!seen.has(String(r[0]).toLowerCase())) merged.push(r);
+    });
+    return merged.sort(function(a,b){ return (b[1]||0) - (a[1]||0); });
+  }
+
+  // ── The /rs parse line (📋) ─────────────────────────────────────────────────
+  // FB-22: the copied line left pets out of the current fight altogether and, from History, did not
+  // say whose they were. Both copies now build from rows that have been through _foldPetsIntoOwners,
+  // so a pet's damage is in its owner's number exactly as the board's row shows it, and the owner is
+  // marked the way EQLogParser marks one — "Owner +Pets = 4.59K@148 in 31s" — which the bot's parser
+  // reads back as the owner plus a pets flag (utils/parseEqLog.js hasPets).
+  // Raiders only on the line: a pet nobody owns ("(pet)" / "(charmed)") or a mob is not a raider and
+  // would not round-trip; its damage is still in the header total, as before.
+  function _rsRaiders(rows) {
+    return rows
+      .filter(function(x){ return x[0] && !x[3] && !x[6] && !/\s/.test(String(x[0])) && x[1] > 0; })
+      .slice(0, 10);
+  }
+  // rows: board tuples ([name, dmg, _, petOwner, _, _, petCharm, _, +pet]) already folded, biggest first.
+  // null when there is nothing a raid could be told.
+  function _rsLine(boss, secs, totalDmg, rows) {
+    var real = _rsRaiders(rows);
+    if (!real.length || !(totalDmg > 0) || !(secs > 0)) return null;
+    return '/rs ' + boss + ' in ' + secs + 's, ' + pnumK(totalDmg)
+      + ' Damage @' + pnum(Math.round(totalDmg / secs)) + ', '
+      + real.map(function(x, i){
+          return (i + 1) + '. ' + x[0] + (x[8] ? ' +Pets' : '') + ' = ' + pnum(x[1]) + '@'
+               + pnum(Math.round(x[1] / secs)) + ' in ' + secs + 's';
+        }).join(' | ');
+  }
+  // The live fight as folded damage rows, whichever tab is showing — a "/rs parse" is always a DAMAGE
+  // parse. Same row shape and keep-filter as the DPS board's own mapping in tick().
+  function _liveRsRows(perPlayer) {
+    var rows = Object.entries(perPlayer || {})
+      .map(function(e){
+        var t = e[1] || {};
+        return [e[0], t.dmg || 0, 0, t.pet_owner || null, 0, 0, t.pet_charm || (t.pet_summoned ? 'pet' : false),
+                undefined, false, t.pet_spawn_id || null];
+      })
+      .filter(function(x){ return x[0] && (!/\s/.test(x[0]) || x[3] || x[6]) && x[1] > 0; });
+    return _foldPetsIntoOwners(rows);
+  }
+
+  // ── Poll loop ───────────────────────────────────────────────────────────────
+  // The History fights come from their own endpoint, asked for only while that tab is on screen: the
+  // ring holds up to 100 and used to ride every /api/state poll (1–2 Hz, every overlay). `rev` is the
+  // last one seen, so an unchanged ring answers in a few bytes. An agent from before the route (a 404)
+  // still sends the whole ring in the state; any other failed read keeps what was last seen.
+  var _histRing = { rev: null, fights: [] };
+  async function _histFights(s){
+    try {
+      var r = await fetch('http://127.0.0.1:'+PORT+'/api/fight-history' + (_histRing.rev ? '?rev=' + encodeURIComponent(_histRing.rev) : ''), {cache:'no-store'});
+      if (r.ok) {
+        var j = await r.json();
+        if (j && Array.isArray(j.fights)) _histRing = { rev: j.rev || null, fights: j.fights };
+        return _histRing.fights;
+      }
+      if (r.status === 404 && Array.isArray(s.fightHistory)) return s.fightHistory;
+    } catch (e) { /* keep what was last seen */ }
+    return _histRing.fights;
+  }
   async function tick(){
     try{
       const r = await fetch('http://127.0.0.1:'+PORT+'/api/state',{cache:'no-store'});
@@ -463,30 +846,42 @@
       // defender — so trash pulls still name what's being fought.
       var boss = (et && (et.bossName || et.targetName)) || s.currentBoss || (s.lastEncounter && s.lastEncounter.bossName) || null;
       // ── History mode ───────────────────────────────────────────────────────
-      // The guild-combined number moved here (Hitya 2026-08-14): mid-fight it
+      // The guild-combined number moved here (the guild lead, 2026-08-14): mid-fight it
       // has fewer than three independent readings, so the bot's corroboration
       // estimator falls back to max and a client with a skewed clock or a
       // double-counted hit sets the number for everybody. Post-fight, once the
       // stragglers' uploads have drained, the same estimator lands within ~1%.
       // So the fix is about WHEN the number is shown, not whether it works.
-      var HISTLIST = Array.isArray(s.fightHistory) ? s.fightHistory : [];
+      var HISTLIST = [];
       var HIST = null;
+      // The one place the ring is read. Trend draws from it too (it is the same fights), so it asks
+      // here, with the same revision, and only while it is on screen: a mini keeps the scoreboard.
+      var _trendShown = TAB_MODE === 'trend' && !document.body.classList.contains('wp-mini');
+      if (TAB_MODE === 'history' || _trendShown) {
+        HISTLIST = await _histFights(s);
+      }
       if (TAB_MODE === 'history') {
         if (HIST_IDX > HISTLIST.length - 1) HIST_IDX = Math.max(0, HISTLIST.length - 1);
         HIST = HISTLIST[HIST_IDX] || null;
         if (HIST) boss = HIST.boss;
-        var whichEl = document.getElementById('histWhich');
-        if (whichEl) whichEl.textContent = HISTLIST.length ? (HIST_IDX + 1) + '/' + HISTLIST.length : '—';
-        if (histPrevBtn) histPrevBtn.disabled = (HIST_IDX >= HISTLIST.length - 1);
-        if (histNextBtn) histNextBtn.disabled = (HIST_IDX <= 0);
+        if (histListEl) {
+          var _hNow = Date.now();
+          var listHtml = HISTLIST.map(function(h, i){ return histItemHtml(h, i, i === HIST_IDX, _hNow); }).join('');
+          // 100 rows scroll (see .histlist): a rewrite must not throw you back to the top.
+          if (histListEl.__wpHtml !== listHtml) {
+            var _hTop = histListEl.scrollTop;
+            histListEl.innerHTML = listHtml; histListEl.__wpHtml = listHtml;
+            histListEl.scrollTop = _hTop;
+          }
+        }
       }
       document.getElementById('boss-name').textContent = boss ? boss : 'Damage — this fight';
       // Tell the user when an OTHER character's fight is being hidden, so the
       // empty meter isn't mysterious. Updates the empty-state in-place.
       // Empty-state copy. When the agent picked another character's encounter
       // (another watched character's log has a more-recent update), name
-      // the FOCUSED character so the user sees "waiting on Melting's combat"
-      // instead of the unhelpful "fight in progress on Timberowl". Once the
+      // the FOCUSED character so the user sees "waiting on Ambriel's combat"
+      // instead of the unhelpful "fight in progress on Zarrin". Once the
       // agent ships per-character encounter tracking (agent 3.0.71+), this
       // branch should rarely fire — the overlay prefers the focused
       // character's encounter directly.
@@ -520,38 +915,14 @@
         // Index 6 = pet_charm: a charm mob with no live owner proof — kept on
         // the meter (someone's charm is doing that damage) but labeled
         // "(charmed)" instead of crediting a possibly-stale owner.
+        // …and 'pet' there = a summoned pet whose owner nobody has named yet
+        // (FB-35): labelled "(pet)" so it never reads as a raider.
         allRows = Object.entries(pp)
-          .map(([name, t]) => [name, (t && t[field]) || 0, (t && t.tookMax) || 0, (t && t.pet_owner) || null, 0, 0, (t && t.pet_charm) || false])
+          .map(([name, t]) => [name, (t && t[field]) || 0, (t && t.tookMax) || 0, (t && t.pet_owner) || null, 0, 0, (t && t.pet_charm) || (t && t.pet_summoned ? 'pet' : false),
+                               undefined, false, (t && t.pet_spawn_id) || null])
           .filter(x => x[0] && (!/\s/.test(x[0]) || x[3] || x[6]) && x[1] > 0)
           .sort((a,b)=>(b[1]||0)-(a[1]||0));
-        // Fold an owned pet INTO its owner. "Shavimo`s warder should be added
-        // to Shavimo's damage and have a little (+pet) next to their name"
-        // (Hitya, live 2026-08-13) — a pet is not a raider, it is part of what
-        // its owner brought.
-        //
-        // This also has to happen BEFORE the guild merge below, and that is the
-        // part that bites: bot 3.1.43 rolls pets into their owner server-side,
-        // so the guild figure ALREADY includes the warder. Left unfolded here,
-        // the pet was counted inside the owner's guild number AND kept its own
-        // local row (the merge only ever ADDS, so a local-only row survives) —
-        // the same damage on screen twice. Folding first makes both sides mean
-        // the same thing: owner + their pets.
-        //
-        // Charm pets with no proven owner (index 6) are deliberately NOT folded
-        // — nobody gets credited for a charm we cannot attribute, so they keep
-        // their own "(charmed)" row exactly as before.
-        var _byName = new Map();
-        allRows.forEach(function(r){ _byName.set(String(r[0]).toLowerCase(), r); });
-        var _folded = [];
-        allRows.forEach(function(r){
-          var owner = r[3] && _byName.get(String(r[3]).toLowerCase());
-          if (!owner || owner === r) { _folded.push(r); return; }
-          owner[1] += (r[1] || 0);
-          owner[2]  = Math.max(owner[2] || 0, r[2] || 0);
-          owner[8]  = true;                       // index 8 = absorbed a pet → "+pet"
-                                                  // (7 is localDmg once the guild merge runs)
-        });
-        allRows = _folded.sort(function(a,b){ return (b[1]||0)-(a[1]||0); });
+        allRows = _foldPetsIntoOwners(allRows);
       }
       // % is scored against the FULL fight total (every witnessed player), so
       // the visible top-N sums to <100% just like EQLogParser — and the footer
@@ -560,7 +931,7 @@
       // The guild number is the HEADLINE and this machine's own figure moves
       // into parentheses, because the measurement that motivated this was that
       // the worst local view saw 0.1-8.3% of a fight. A row reading
-      // "Wabumkin 164k (0)" is the whole point: he did that damage and this
+      // "Dunstan 164k (0)" is the whole point: he did that damage and this
       // client saw none of it, which a local-only meter can never tell you.
       //
       // ⚠ HISTORY TAB ONLY as of 2026-08-14 — deliberately NOT live.
@@ -568,39 +939,20 @@
       // here. Mid-fight the bot has fewer than three independent readings of
       // most players, so `_corroboratedDamage` falls back to max and one client
       // with a skewed clock or a doubled hit sets the number for the whole
-      // raid. Hitya, watching it happen: "the overcount from time skew and
+      // raid. The guild lead, watching it happen: "the overcount from time skew and
       // whatnot is too much to account for in a live stat review and it is
       // legitimately doubling damage." Do not re-point this at s.guildDamage
       // without solving the settling problem first.
-      var GUILD = null, localBy = null;
+      var GUILD = null;
       try {
-        if (HIST && Array.isArray(HIST.players) && HIST.players.length) {
-          GUILD = HIST;
+        if (HIST) {
           // The history entry carries its own local view — the live encounter
           // has moved on to another mob by now, so allRows is the WRONG fight.
-          var histLocal = (HIST.local || []).map(function(p){
-            return [p.character, p.dmg || 0, 0, p.pet_owner || null, 0, 0, false, p.dmg || 0, false];
-          });
-          localBy = new Map(histLocal.map(function(r){ return [String(r[0]).toLowerCase(), r]; }));
-          var merged = HIST.players.map(function(p){
-            var loc = localBy.get(String(p.character).toLowerCase());
-            // [name, guildDmg, tookMax, petOwner, rank, extra, petCharm, localDmg, hasPet]
-            return [p.character, p.dmg || 0, 0, loc ? loc[3] : null,
-                    0, 0, false, loc ? loc[1] : 0, false];
-          });
-          // Anyone we saw but the guild has not reported keeps their local
-          // number rather than vanishing - the merge only ever ADDS.
-          var seen = new Set(merged.map(function(m){ return String(m[0]).toLowerCase(); }));
-          histLocal.forEach(function(r){
-            if (!seen.has(String(r[0]).toLowerCase())) merged.push(r);
-          });
-          allRows = merged.sort(function(a,b){ return (b[1]||0) - (a[1]||0); });
-        } else if (HIST) {
-          // Kill recorded, guild numbers not back yet (or the bot is too old to
-          // serve them). Show what this machine saw rather than an empty tab.
-          allRows = (HIST.local || []).map(function(p){
-            return [p.character, p.dmg || 0, 0, p.pet_owner || null, 0, 0, false, p.dmg || 0, false];
-          }).sort(function(a,b){ return (b[1]||0) - (a[1]||0); });
+          // _histRows builds it (pets folded, as the live board does) and, settled,
+          // merges the guild's numbers over it; before that, or with a bot too old to
+          // serve them, it is what this machine saw rather than an empty tab.
+          allRows = _histRows(HIST);
+          if (HIST && Array.isArray(HIST.players) && HIST.players.length) GUILD = HIST;
         } else if (TAB_MODE === 'history') {
           allRows = [];
         }
@@ -608,14 +960,23 @@
 
       const totalDmg = allRows.reduce((s, r) => s + r[1], 0);
       allRows.forEach(function(r, i){ r[4] = i + 1; });            // true rank
-      const me = s.character || s.uploaderCharacter || s.self || null;
+      // Who "you" are. /api/state names you as activeCharacter, and the live
+      // fight carries its uploader; the three older keys are never sent, so on
+      // them alone the highlight and your always-shown row never happened (the
+      // overlay catalog's finding 1, 2026-09-27). Kept last as fallbacks.
+      const me = s.activeCharacter || (s.currentEncounterThreat && s.currentEncounterThreat.uploader)
+        || s.character || s.uploaderCharacter || s.self || null;
       let rows = allRows.slice(0, ROW_LIMIT);
       // Always show YOU — if your row fell below the visible cutoff, append it
       // with its REAL rank so you can always see where you stand.
       if (me && !rows.some(function(r){ return String(r[0]).toLowerCase() === me.toLowerCase(); })) {
         var meRow = allRows.find(function(r){ return String(r[0]).toLowerCase() === me.toLowerCase(); });
         if (meRow) { meRow = meRow.slice(); meRow[5] = true; rows = rows.concat([meRow]); }
+        // Nothing from you this fight: still show your row, at zero, so you can
+        // see the meter knows who you are (the guild lead, 2026-09-27).
+        else if (allRows.length) rows = rows.concat([[me, 0, 0, null, '—', true, false, 0, false]]);
       }
+      const topDmg = allRows.length ? (allRows[0][1] || 0) : 0;      // bar scale: the top row is a full bar
       const startedAt = et && et.startedAt ? new Date(et.startedAt).getTime() : 0;
       const flushedAt = et && et.flushedAt;
       const nowMs = Date.now();
@@ -635,8 +996,9 @@
       // when a fight has data and never clear it, so the button stays copyable
       // after the mob dies. Format the bot expects:
       //   <Boss> in <s>s, <total>K Damage @<dps>, 1. <Name> = <d>@<dps> in <s>s | 2. …
+      // …and an owner whose number carries a pet reads "<Name> +Pets = …" (see _rsLine).
       try {
-        // History copy (Hitya 2026-08-16: "in history there's no copy
+        // History copy (the guild lead, 2026-08-16: "in history there's no copy
         // button"): build the line from the rows being BROWSED — allRows is
         // already the guild-merged view of THAT fight and secs is ITS
         // duration, so header and rows can never splice two fights. Rebuilt
@@ -644,41 +1006,18 @@
         // can't leave the previous fight's line copyable.
         _histParseLine = null;
         if (HIST && boss && secs > 0 && allRows.length && totalDmg > 0) {
-          var histReal = allRows
-            .filter(function(x){ return x[0] && !x[3] && !x[6] && !/\s/.test(String(x[0])) && x[1] > 0; })
-            .slice(0, 10);
-          if (histReal.length) {
-            _histParseLine = '/rs ' + boss + ' in ' + secs + 's, ' + pnumK(totalDmg)
-              + ' Damage @' + pnum(Math.round(totalDmg / secs)) + ', '
-              + histReal.map(function(x, i){
-                  return (i + 1) + '. ' + x[0] + ' = ' + pnum(x[1]) + '@'
-                       + pnum(Math.round(x[1] / secs)) + ' in ' + secs + 's';
-                }).join(' | ');
-          }
+          _histParseLine = _rsLine(boss, secs, totalDmg, allRows);
         }
         // ⚠ `!HIST` is load-bearing: on the History tab `boss` and `secs`
         // describe the fight being BROWSED while et.perPlayer is still the live
         // one, so building the LIVE line here would splice one fight's rows onto
         // another fight's header — and that line gets pasted into /rs.
         if (!HIST && et && et.perPlayer && boss && secs > 0) {
-          var dmgAll = Object.entries(et.perPlayer)
-            .map(function(e){ var t = e[1]; return [e[0], (t && t.dmg) || 0, (t && t.pet_owner) || null, (t && t.pet_charm) || false]; })
-            .filter(function(x){ return x[0] && (!/\s/.test(x[0]) || x[2] || x[3]) && x[1] > 0; });
-          if (dmgAll.length) {
-            var fullTotal = dmgAll.reduce(function(a, x){ return a + x[1]; }, 0);
-            var realp = dmgAll
-              .filter(function(x){ return !x[2] && !/\s/.test(x[0]); })
-              .sort(function(a, b){ return b[1] - a[1]; })
-              .slice(0, 10);
-            if (fullTotal > 0 && realp.length) {
-              _lastParseLine = '/rs ' + boss + ' in ' + secs + 's, ' + pnumK(fullTotal)
-                + ' Damage @' + pnum(Math.round(fullTotal / secs)) + ', '
-                + realp.map(function(x, i){
-                    return (i + 1) + '. ' + x[0] + ' = ' + pnum(x[1]) + '@'
-                         + pnum(Math.round(x[1] / secs)) + ' in ' + secs + 's';
-                  }).join(' | ');
-            }
-          }
+          // FB-22: pets fold into their owners (the charmer who never swung gets a line too) before
+          // the line is built; it used to drop every pet row and keep only their sum in the header.
+          var liveRs = _liveRsRows(et.perPlayer);
+          var liveRsLine = _rsLine(boss, secs, liveRs.reduce(function(a, x){ return a + x[1]; }, 0), liveRs);
+          if (liveRsLine) _lastParseLine = liveRsLine;
         }
       } catch (e) {}
       if (copyRsBtn) copyRsBtn.style.display =
@@ -691,17 +1030,23 @@
         var dps = secs > 0 ? Math.round(d / secs) : 0;
         var isMe = me && n.toLowerCase() === me.toLowerCase();
         // Pet rows carry their owner in dim parens — same convention as the
-        // Mob Info "Allure (Hopeya)" charm label. Charm mobs with no live
+        // Mob Info "Allure (Sorvane)" charm label. Charm mobs with no live
         // owner proof say "(charmed)" — same-name charm pets can't be told
         // apart (no spawn id), so the meter never guesses a specific raider.
         // Owner absorbed a pet's damage — mark it so the number is explainable.
+        var pets = (row[8] && Array.isArray(row[10])) ? row[10] : null;
+        var petSum = pets ? pets.reduce(function(a, p){ return a + (p.v || 0); }, 0) : 0;
+        var petKey = String(n).toLowerCase();
+        var petOpen = !!(pets && _petOpen.has(petKey));
         var petHtml = row[8]
-          ? ' <span style="color:#8b949e;font-size:9px" title="includes this player\'s pet damage">+pet</span>'
+          ? ' <span class="petx" data-owner="' + esc(petKey) + '" title="Includes this player\'s pet damage: the orange end of the bar. Click for the pet\'s name, damage and spawn id; click again to close.">+pet</span>'
           : '';
         var ownerHtml = petOwner
           ? ' <span style="color:#8b949e;font-size:9px;font-style:italic">(' + esc(petOwner) + ')</span>'
-          : (petCharm
-            ? ' <span style="color:#8b949e;font-size:9px;font-style:italic" title="Someone\'s charm pet — same-named mobs can\'t be told apart, so no single raider gets the credit">(charmed)</span>'
+          : (petCharm === 'pet'
+            ? ' <span style="color:#8b949e;font-size:9px;font-style:italic" title="Someone\'s summoned pet — its owner has not typed /pet leader where a Mimic could see it, so it is not credited yet">(pet)</span>'
+            : petCharm
+            ? ' <span style="color:#8b949e;font-size:9px;font-style:italic" title="Someone\'s charmed pet — pets with the same name as other mobs can\'t be credited to one raider">(charmed)</span>'
             : '');
         // In Tank mode, show the biggest single hit absorbed under the
         // row name as a small subscript — "max 4.1K" makes spike-tank
@@ -711,10 +1056,20 @@
         var maxHitHtml = (TAB_MODE === 'tank' && mx > 0)
           ? ' <span class="maxhit" title="biggest single hit absorbed">·' + fmt(mx) + '</span>'
           : '';
-        var cls = (isMe ? 'me' : '') + (extra ? ' me-extra' : '');
+        var cls = 'pbrow' + (TAB_MODE === 'tank' ? ' tkrow' : '') + (isMe ? ' me' : '') + (extra ? ' me-extra' : '');
         var _obsDiffers = !!(GUILD && row[7] !== undefined && row[7] !== d);
-        return '<li' + (cls.trim() ? ' class="' + cls.trim() + '"' : '') + '>'
-             + '<span class="r">' + rank + '.</span>'
+        var barW = topDmg > 0 ? Math.min(100, (d / topDmg) * 100) : 0;
+        var petW = (petSum > 0 && d > 0) ? barW * Math.min(1, petSum / d) : 0;
+        // One line per pet under its owner once +pet is clicked. The spawn id is
+        // there when it is provable (the agent's _petSpawnIdFor), else "unknown".
+        var petLines = petOpen ? pets.slice().sort(function(a, b){ return (b.v || 0) - (a.v || 0); }).map(function(p){
+          return '<li class="petline">↳ ' + esc(p.name) + ' · ' + fmt(p.v || 0)
+            + (d > 0 ? ' (' + Math.round((p.v || 0) / d * 100) + '% of ' + esc(n) + '\'s)' : '')
+            + ' · <span class="pid"' + (p.id ? '' : ' title="Known once the owner runs Zeal 1.4.6 or newer with Mimic and the pet has said \'My leader is\', or when someone tags or targets it"')
+            + '>' + (p.id ? 'spawn id ' + p.id : 'spawn id unknown') + '</span></li>';
+        }).join('') : '';
+        return '<li class="' + cls + '">'
+             + '<span class="r">' + (typeof rank === 'number' ? rank + '.' : rank) + '</span>'
              + '<span class="n">' + esc(n) + petHtml + ownerHtml + maxHitHtml + '</span>'
              + '<span class="p">' + fmtPct(pct) + '</span>'
              + '<span class="d">' + fmt(d)
@@ -728,7 +1083,9 @@
              + '<span class="obs">' + (_obsDiffers ? fmt(row[7]) : '') + '</span>'
              + '<span class="dps">' + fmt(dps) + '</span>'
              + '<span class="sec">' + (secs > 0 ? secs : '—') + '</span>'
-             + '</li>';
+             + '<span class="pb"><i style="width:' + (barW - petW).toFixed(1) + '%"></i>'
+               + (petW > 0 ? '<i class="pet" style="width:' + petW.toFixed(1) + '%"></i>' : '') + '</span>'
+             + '</li>' + petLines;
       }).join('');
       // Mob-total footer — EQLogParser's bottom line: <mob> · total · total DPS ·
       // duration, scored over EVERY witnessed player this fight.
@@ -747,16 +1104,26 @@
              + '<span class="sec">' + (secs > 0 ? secs : '—') + '</span>'
              + '</li>';
       }
+      // ▭ Mini swaps only the rows; the byte-stability guard and the fit
+      // below then run exactly as they do in full mode.
+      if (document.body.classList.contains('wp-mini')) {
+        // Mini keeps you in its three rows too: at zero when you did nothing yet.
+        var miniRows = (me && allRows.length && !allRows.some(function(r){ return String(r[0]).toLowerCase() === me.toLowerCase(); }))
+          ? allRows.concat([[me, 0, 0, null, '—', true, false, 0, false]]) : allRows;
+        bodyHtml = miniRowsHtml(miniWindow(miniRows, me), me, totalDmg, secs, TAB_MODE === 'tank');
+      }
       // Byte-stability guard (2026-07-07 review): identical HTML -> skip the
       // innerHTML re-layout.
       if (ul.__wpHtml !== bodyHtml) {
         ul.innerHTML = bodyHtml;
         ul.__wpHtml = bodyHtml;
       }
+      // Trend stands in for the board: the fights read above, for the same "me" the board highlights.
+      if (_trendShown) { try { _trendPaint(HISTLIST, me); } catch (e) { /* the board's tick must outlive a bad entry */ } }
       // #159: request the fit EVERY tick, not only when the scoreboard HTML
       // changed — a chrome-menu-grown window (ensure-min-height 420) or a stuck
       // menu-suppression flag otherwise parks the backdrop tall forever with no
-      // recovery path on quiet ticks (Hitya field report, full-height backdrop
+      // recovery path on quiet ticks (the guild lead field report, full-height backdrop
       // under a 2-row meter). main.js's 4px/12px hysteresis absorbs the no-ops,
       // so the extra localhost IPC is one small int per poll.
       try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.querySelector('.hud')); } catch (e) {}
@@ -775,13 +1142,173 @@
       var hdrEl = document.getElementById('boss-name');
       if (hdrEl && TAB_MODE === 'history' && HIST) {
         hdrEl.textContent = HIST.boss + (HIST.settled
-          ? ' · ' + (HIST.uploaders || 0) + ' clients'
+          ? (GUILD ? ' · ' + (HIST.uploaders || 0) + ' clients' : ' · this machine')   // settled with no guild rows: a restored fight the bot could no longer be asked about
           : ' · settling…');
       }
     }catch(e){
       const c=document.getElementById('conn'); c.className='conn bad'; c.textContent='○';
     }
   }
+  // ── Trend: my damage per fight, as a line ───────────────────────────────────
+  // The guild lead, 2026-10-06: "B" of the three ways to see your own DPS across fights, as a view on this
+  // meter. It reads the ring History reads (tick() asks for it once, with the same revision, while either
+  // tab is open) and draws only what this machine saw of YOU.
+  //   • "me" is the name the board highlights (tick's `me`), kept from the last time it was known so
+  //     alt-tabbing out of EQ for a minute does not blank the line.
+  //   • a fight is credited to me by the agent's own rule (_meNoteFight): the row named me, plus any pet
+  //     whose pet_owner is me — the same fold the board does.
+  //   • DPS is the fight's damage over the fight's own seconds; a fight I did no damage in is not a point.
+  //   • the big number is damage ÷ seconds over every shown fight, which is the HUD's "tonight avg"
+  //     (the agent's avg_dps), not the mean of the dots.
+  //   • "tonight" cuts at 6am local, as the agent's _meNightKey does.
+  // ── Trend: the pure parts (begin) ──
+  var TREND_COL = '#a371f7';
+  var TREND_ROWS = 8;
+  var TREND_WEEK_MS = 7 * 24 * 3600 * 1000;
+  function _trendNightKey(ms) {
+    var d = new Date(ms - 6 * 3600 * 1000);
+    return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+  }
+  // What one ring entry credits to `lc` (a lowercase name): their own row and their pets' rows.
+  function _trendMine(h, lc) {
+    var out = { dmg: 0, took: 0 };
+    if (!lc) return out;
+    ((h && h.local) || []).forEach(function (p) {
+      if (!p || String(p.pet_owner || p.character || '').toLowerCase() !== lc) return;
+      out.dmg += Number(p.dmg) || 0;
+      out.took += Number(p.took) || 0;
+    });
+    return out;
+  }
+  // Does any fight in the ring carry damage taken for me? An agent from before `took` was kept has none.
+  function _trendHasTook(ring, me) {
+    var lc = me ? String(me).toLowerCase() : '';
+    return (ring || []).some(function (h) { return _trendMine(h, lc).took > 0; });
+  }
+  // The points to draw, oldest first, plus what the big number and the line under it say. `i` is the
+  // fight's place in the ring (newest first), which is how a row opens it in History.
+  function _trendSeries(ring, me, field, range, now) {
+    var lc = me ? String(me).toLowerCase() : '', key = _trendNightKey(now), pts = [];
+    (ring || []).forEach(function (h, i) {
+      var end = (h && Number(h.endedMs)) || 0, secs = (h && Number(h.durationSec)) || 0;
+      if (!lc || !end || secs <= 0) return;
+      if (range === 'week' ? now - end > TREND_WEEK_MS : _trendNightKey(end) !== key) return;
+      var tot = _trendMine(h, lc)[field === 'took' ? 'took' : 'dmg'];
+      if (!(tot > 0)) return;
+      pts.push({ t: end, v: tot / secs, total: tot, secs: secs, label: String(h.boss || 'fight'), i: i });
+    });
+    pts.sort(function (a, b) { return a.t - b.t; });
+    var sumTot = 0, sumSecs = 0, best = null;
+    pts.forEach(function (p) { sumTot += p.total; sumSecs += p.secs; if (!best || p.v >= best.v) best = p; });
+    return { points: pts, n: pts.length, avg: sumSecs ? sumTot / sumSecs : 0, best: best };
+  }
+  // The sparkline: an area under a 2px line, every point a dot with its own tooltip, the last one
+  // emphasised. Zero is the floor, so a flat line reads as flat. Built at the pixel width it will be
+  // shown at, so nothing is stretched.
+  function _trendSvg(points, w, h, unit) {
+    var n = points.length;
+    if (!n) return '';
+    var pad = 6, top = 5, bot = 3, max = 1;
+    points.forEach(function (p) { if (p.v > max) max = p.v; });
+    var X = function (i) { return n > 1 ? pad + i * (w - 2 * pad) / (n - 1) : w / 2; };
+    var Y = function (v) { return h - bot - (v / max) * (h - top - bot); };
+    var xy = points.map(function (p, i) { return X(i).toFixed(1) + ',' + Y(p.v).toFixed(1); });
+    var s = '<svg class="tsvg" viewBox="0 0 ' + w + ' ' + h + '" width="' + w + '" height="' + h + '" role="img" aria-label="'
+      + esc(n + (n === 1 ? ' fight' : ' fights') + ', ' + unit + ' per fight') + '">';
+    if (n > 1) {
+      s += '<path d="M' + X(0).toFixed(1) + ',' + h + ' L' + xy.join(' L') + ' L' + X(n - 1).toFixed(1) + ',' + h + ' Z" fill="' + TREND_COL + '" fill-opacity="0.16" stroke="none"/>'
+        + '<polyline points="' + xy.join(' ') + '" fill="none" stroke="' + TREND_COL + '" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>';
+    }
+    points.forEach(function (p, i) {
+      var last = i === n - 1, c = xy[i].split(',');
+      s += '<g class="tpt"><title>' + esc(p.label) + ' · ' + fmt(p.v) + ' ' + unit + '</title>'
+        + '<circle class="' + (last ? 'tdot last' : 'tdot') + '" cx="' + c[0] + '" cy="' + c[1] + '" r="' + (last ? 3.5 : 2) + '" fill="' + TREND_COL + '"'
+        + (last ? ' stroke="#0e1116" stroke-width="1.5"' : ' fill-opacity="0.55"') + '/>'
+        + '<circle cx="' + c[0] + '" cy="' + c[1] + '" r="7" fill="transparent"/></g>';
+    });
+    return s + '</svg>';
+  }
+  function _trendEmpty(field, range, hasMe) {
+    if (!hasMe) return 'Waiting for your character…';
+    var tk = field === 'took';
+    return range === 'week' ? (tk ? 'No damage taken in the last 7 days.' : 'No fights in the last 7 days.')
+                            : (tk ? 'No damage taken yet tonight.' : 'No fights yet tonight.');
+  }
+  // The panel's body: the big average, "N fights · best X (Boss)", the line, then the newest fights as
+  // rows (boss, my number, a thin bar against the best). Nothing in it reads the clock, so it is
+  // byte-stable from tick to tick and the page only rewrites it when a fight lands.
+  function _trendHtml(sr, o) {
+    var tk = o.field === 'took', unit = tk ? 'dtps' : 'dps';
+    if (!sr.n) return '<div class="tnone">' + esc(o.empty) + '</div>';
+    var w = o.w || 280, h = Math.max(44, Math.min(96, Math.round(w * 0.2)));
+    var head = '<div class="tbig"><b>' + fmt(sr.avg) + '</b><span class="tu">avg ' + unit + '</span></div>'
+      + '<div class="tsub">' + sr.n + (sr.n === 1 ? ' fight' : ' fights') + ' · ' + (tk ? 'peak ' : 'best ') + fmt(sr.best.v) + ' (' + esc(sr.best.label) + ')</div>';
+    var rows = sr.points.slice(-TREND_ROWS).reverse().map(function (p, k) {
+      return '<button type="button" class="trow' + (k === 0 ? ' new' : '') + '" data-i="' + p.i + '" title="' + esc(p.label) + ' — open in History">'
+        + '<span class="tn">' + esc(p.label) + '</span><span class="tv">' + fmt(p.v) + '</span>'
+        + '<span class="tb"><i style="width:' + Math.min(100, p.v / sr.best.v * 100).toFixed(1) + '%"></i></span></button>';
+    }).join('');
+    return head + _trendSvg(sr.points, w, h, unit) + '<div class="trows">' + rows + '</div>';
+  }
+  // ── Trend: the pure parts (end) ──
+
+  // The page half: which range and which side are shown (remembered the way the tab is, in localStorage),
+  // the toggles, and the paint. Dealt / Taken only appears once the ring has damage taken for me.
+  var TREND_RANGE_KEY = 'wp.trendRange', TREND_FIELD_KEY = 'wp.trendField';
+  var TREND_RANGE = 'tonight', TREND_FIELD = 'dmg';
+  try {
+    if (localStorage.getItem(TREND_RANGE_KEY) === 'week') TREND_RANGE = 'week';
+    if (localStorage.getItem(TREND_FIELD_KEY) === 'took') TREND_FIELD = 'took';
+  } catch (e) {}
+  var _trendMe = null;
+  var trendBodyEl  = document.getElementById('trendBody');
+  var trendFieldEl = document.getElementById('trField');
+  var trTonightBtn = document.getElementById('trTonight');
+  var trWeekBtn    = document.getElementById('trWeek');
+  var trDealtBtn   = document.getElementById('trDealt');
+  var trTakenBtn   = document.getElementById('trTaken');
+  function _trendSet(isRange, val) {
+    if (isRange) TREND_RANGE = val === 'week' ? 'week' : 'tonight';
+    else TREND_FIELD = val === 'took' ? 'took' : 'dmg';
+    try { localStorage.setItem(isRange ? TREND_RANGE_KEY : TREND_FIELD_KEY, isRange ? TREND_RANGE : TREND_FIELD); } catch (e) {}
+    tick().catch(function(){});
+  }
+  [[trTonightBtn, true, 'tonight'], [trWeekBtn, true, 'week'], [trDealtBtn, false, 'dmg'], [trTakenBtn, false, 'took']].forEach(function(b){
+    if (!b[0]) return;
+    b[0].addEventListener('click', function(){ _trendSet(b[1], b[2]); });
+  });
+  // Locked overlays are click-through: the toggles and the tab are armed the way the other tabs are
+  // (the preload arms every <button> as well, including the rows below).
+  [tabTrendBtn, trTonightBtn, trWeekBtn, trDealtBtn, trTakenBtn].forEach(function(btn){
+    if (!btn) return;
+    btn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    btn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+  });
+  // A row opens its fight in History: the ring index it carries is the one History selects by.
+  if (trendBodyEl) trendBodyEl.addEventListener('click', function(e){
+    var b = e.target && e.target.closest ? e.target.closest('.trow') : null;
+    if (b) _setTab('history', parseInt(b.getAttribute('data-i'), 10) || 0);
+  });
+  function _trendPaint(ring, me) {
+    if (me) _trendMe = me;
+    var who = me || _trendMe;
+    var hasTook = _trendHasTook(ring, who);
+    var field = (TREND_FIELD === 'took' && hasTook) ? 'took' : 'dmg';
+    if (trendFieldEl) trendFieldEl.style.display = hasTook ? '' : 'none';
+    if (trTonightBtn) trTonightBtn.classList.toggle('on', TREND_RANGE === 'tonight');
+    if (trWeekBtn)    trWeekBtn   .classList.toggle('on', TREND_RANGE === 'week');
+    if (trDealtBtn)   trDealtBtn  .classList.toggle('on', field === 'dmg');
+    if (trTakenBtn)   trTakenBtn  .classList.toggle('on', field === 'took');
+    var sr = _trendSeries(ring, who, field, TREND_RANGE, Date.now());
+    var html = _trendHtml(sr, { field: field, w: (trendBodyEl && trendBodyEl.clientWidth) || 280, empty: _trendEmpty(field, TREND_RANGE, !!who) });
+    if (trendBodyEl && trendBodyEl.__wpHtml !== html) { trendBodyEl.innerHTML = html; trendBodyEl.__wpHtml = html; }
+    var hdr = document.getElementById('boss-name');
+    if (hdr) hdr.textContent = field === 'took' ? 'My damage taken' : 'My DPS';
+  }
+
+  // ▭ A mini flip repaints now, not on the next poll; tick() ends in the
+  // auto-fit, so the window height follows the new rows.
+  window.addEventListener('wp-mini-change', function(){ tick().catch(function(){}); });
   tick(); setInterval(tick, 1000);
 </script>
 </body></html>

@@ -1,4 +1,4 @@
-// Staged raid-attendance tick capture (Hitya 2026-08-06).
+// Staged raid-attendance tick capture (the guild lead, 2026-08-06).
 //
 // "can we put in the automatic raid tick capture (without submission) at
 // 830/930/1030/1130" — following "sometimes we will take the 'last tick' before
@@ -79,7 +79,7 @@ describe('rosterUnion — who was there', () => {
 
   it('unions across agents so one partial view cannot drop a raider', () => {
     // This is the feature's reason to exist. Agent B just zoned and only sees
-    // half the raid; Hitya must still be on the tick.
+    // half the raid; the guild lead must still be on the tick.
     const rows = [
       row('Uilnayar', 'A'), row('Hitya', 'A'), row('Fawx', 'A'),
       row('Uilnayar', 'B'), row('Fawx', 'B'),

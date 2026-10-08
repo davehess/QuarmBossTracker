@@ -244,8 +244,10 @@ export function TourLauncher() {
       onClick={() => window.dispatchEvent(new Event('wp-tour-start'))}
       className="px-2.5 py-1 rounded border border-border bg-panel text-xs sm:text-sm text-text hover:bg-[#21262d] transition-colors whitespace-nowrap"
       title="Take the guided walkthrough — every stop is your own data. Re-run it any time."
+      aria-label="Take the guided tour"
     >
-      ✨ Tour
+      {/* The word only when the bar can afford it — see SiteHeader's fit note. */}
+      <span aria-hidden>✨</span><span className="hidden min-[1800px]:inline"> Tour</span>
     </button>
   );
 }

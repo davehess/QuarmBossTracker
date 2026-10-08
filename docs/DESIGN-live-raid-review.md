@@ -1,6 +1,6 @@
 # Live Raid Night Review — design
 
-*Hitya, 2026-08-02: "can we build out the raid review as the raid is happening?
+*the guild lead, 2026-08-02: "can we build out the raid review as the raid is happening?
 I would like to include that timeline view we have on parses as well as the
 totals on trash mobs killed."*
 
@@ -182,7 +182,7 @@ The bot tallies non-boss kills off the upload stream:
 `bot_kv` already exists (migration `20260713050000`), is service-role-only, is
 the documented home for "small bits of bot state that MUST survive Railway
 restarts", and is readable by the web review (which already uses
-`supabaseAdmin()`). That gets the feature to Hitya **tonight with no
+`supabaseAdmin()`). That gets the feature to the guild lead **tonight with no
 migration**, which is the whole point.
 
 **Proposed follow-up — NOT applied, for the coordinator to decide.** A real

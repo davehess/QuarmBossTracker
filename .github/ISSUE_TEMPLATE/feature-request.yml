@@ -1,0 +1,41 @@
+name: "Feature request"
+description: "Something the bot, the site, the dashboard or a Mimic overlay should do — or do differently."
+title: "[request] "
+labels: ["feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The roadmap at https://wolfpack.quest/roadmap lists what's shipped and what's queued — worth a look first.
+        **Public page:** no passwords, no tells, no other people's names.
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where does this live?
+      options:
+        - A Mimic overlay (in-game)
+        - The Mimic dashboard or Settings
+        - The website (wolfpack.quest)
+        - The Discord bot
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: today
+    attributes:
+      label: What happens today
+      description: "What you see or have to do now. A screenshot helps — check it for names first."
+    validations:
+      required: true
+  - type: textarea
+    id: want
+    attributes:
+      label: What you want instead
+      description: "Describe the outcome for a raider, not the implementation. 'Show X when Y' beats 'add a flag.'"
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it matters on a raid night
+      description: "Who it helps and when. One sentence is fine."

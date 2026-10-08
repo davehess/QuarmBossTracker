@@ -10,10 +10,11 @@
 //
 // Preferences persist to localStorage (per Discord account), so the page
 // remembers your layout without a server round-trip. Zero deps — drag-and-drop
-// is the native HTML5 API. (Hitya 2026-06-23: "select which toons to
+// is the native HTML5 API. (the guild lead, 2026-06-23: "select which toons to
 // display, order, minimize to header+buffs/zone, drag to reorder.")
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { LIST_MIN_LEVEL } from '@/lib/listableChars';
 
 export type MeCard = {
   name: string;
@@ -21,6 +22,10 @@ export type MeCard = {
   header: React.ReactNode;   // always shown
   summary: React.ReactNode;  // buffs/zone — shown when collapsed
   details: React.ReactNode;  // full panel grid — shown when expanded
+  // Where the card sits (the server decides, web/lib/listableChars.ts tiers). front is open on the page;
+  // the rest are collapsed: more = not touched in 3 months, a trader or under 46; unknown = no known level;
+  // owner = hidden by the owner, whose card header carries the Unhide switch.
+  place: 'front' | 'more' | 'unknown' | 'owner';
 };
 
 type Prefs = { order: string[]; hidden: string[]; collapsed: string[] };
@@ -154,7 +159,28 @@ export default function MeCharacterCards({ items, storageKey }: { items: MeCard[
         </div>
       )}
 
-      {visible.map(name => {
+      {visible.filter(n => byName.get(n)!.place === 'front').map(renderCard)}
+
+      {(['more', 'unknown', 'owner'] as const).map(place => {
+        const names = visible.filter(n => byName.get(n)!.place === place);
+        if (names.length === 0) return null;
+        return (
+          <details key={place} className="bg-panel/40 border border-border/60 rounded-lg min-w-0 max-w-full">
+            <summary className="cursor-pointer select-none px-4 py-2 text-xs text-dim hover:text-text">
+              {place === 'more' && <>{names.length} more · not played in 3 months, a trader or under level {LIST_MIN_LEVEL}</>}
+              {place === 'unknown' && <>{names.length} character{names.length === 1 ? '' : 's'} with no known level — upload a spellbook or get {names.length === 1 ? 'it' : 'them'} seen in /who to place {names.length === 1 ? 'it' : 'them'}</>}
+              {place === 'owner' && <>Hidden by you ({names.length}) · shown only in account inventory; use Unhide on a card to bring it back</>}
+            </summary>
+            <div className="space-y-4 p-2">
+              {names.map(renderCard)}
+            </div>
+          </details>
+        );
+      })}
+    </div>
+  );
+
+  function renderCard(name: string) {
         const card = byName.get(name)!;
         const isCollapsed = collapsed.has(name);
         return (
@@ -191,7 +217,5 @@ export default function MeCharacterCards({ items, storageKey }: { items: MeCard[
             </div>
           </section>
         );
-      })}
-    </div>
-  );
+  }
 }

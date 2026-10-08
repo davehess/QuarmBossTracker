@@ -55,3 +55,37 @@ export function sliceArrayLiteral(src, declMarker) {
   // eslint-disable-next-line no-new-func
   return new Function('return ' + text)();
 }
+
+// ── Comment stripping ───────────────────────────────────────────────────────
+// A text assertion on source matches COMMENTS too, and this repo's comments
+// are good enough to satisfy them: they quote reporters, name removed code,
+// and describe the exact behavior under test. Five assertions were caught
+// passing (or failing) on a comment during 2026-08-28..30 — see CLAUDE.md
+// "comments satisfy text assertions". Strip before matching.
+//
+// Whole-line comments only, on purpose: a //-anywhere strip eats https://
+// inside string literals and corrupts the source being asserted on.
+// ⚠ Do NOT strip a source you also sliceBlock with comment anchors — the
+// anchors are comments; strip only the string you hand to toMatch/toContain.
+//
+// ⚠⚠ ORDER IS LOAD-BEARING, and the other order was shipping (found 2026-08-30).
+// Stripping BLOCK comments first let a `/*` that lives inside a LINE comment
+// open a real block comment that ran to the next `*/` anywhere in the file.
+// Two of them in index.js — the glob in `// See supabase/migrations/*_target_
+// observations.sql` and the path in `// ... live under /clients/{name}/*` —
+// between them swallowed 1,652 lines and 66,804 characters of REAL CODE.
+// Every assertion over those ranges was reading a file with 6.7% of it
+// missing, and the dangerous direction is silent: a `not.toMatch` over deleted
+// code passes for free. Line comments go first, so a `/*` inside one is gone
+// before anything looks for block comments.
+//
+// Block comments are then matched in two SAFE shapes only — one that cannot
+// cross a line, and one that must both start and end on its own line — rather
+// than the unbounded lazy match that caused this. A `/*` in a string literal
+// therefore cannot run away either.
+export const stripJs  = (s) => s
+  .replace(/^[ \t]*\/\/.*$/gm, '')
+  .replace(/\/\*(?!\*?\/)[^\n]*?\*\//g, '')
+  .replace(/^[ \t]*\/\*[\s\S]*?\*\/[ \t]*$/gm, '');
+export const stripSql = (s) => s.replace(/^[ \t]*--.*$/gm, '');
+export const stripCss = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '');

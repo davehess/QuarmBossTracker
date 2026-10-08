@@ -1,12 +1,12 @@
 // test/mule-inventory-upload.test.js — bringing in characters nothing else can see.
 //
-// Hitya, 2026-08-14: "can you make it so that anyone can upload additional
+// The guild lead, 2026-08-14: "can you make it so that anyone can upload additional
 // inventory files from the /me page and have it bring in their other
 // characters/mules?"
 //
 // The existing per-character 🎒 upload cannot: it is gated on the character
 // ALREADY being in `characters` AND already linked to your discord_id, which is
-// exactly what a mule is not. Pyxil's bank toons (Archanistsells, Lavenderna,
+// exactly what a mule is not. A member's bank toons (Archanistsells, Lavenderna,
 // Pyxtrade…) have no logs, no /who sighting and no OpenDKP row — Mimic only
 // knows they exist from per-character ini files in C:\TAKPv22. The inventory
 // file is the only thing that carries both the data AND the identity.
@@ -59,7 +59,7 @@ describe('working out whose file this is', () => {
   });
 
   it('refuses anything that is not a plausible EQ name', () => {
-    // EQ names are letters only — no digits, no spaces (the "Atlasius2 is a
+    // EQ names are letters only — no digits, no spaces (the "a member2 is a
     // backup file, not a person" finding). Guessing here creates a junk
     // character row that someone then has to delete.
     for (const f of [
@@ -102,7 +102,7 @@ describe('who may claim a character', () => {
   });
 
   it('claims ANY unclaimed character, OpenDKP row or not', () => {
-    // ⚠ Deliberately widened (Hitya, 2026-08-14). The first cut refused when
+    // ⚠ Deliberately widened (the guild lead, 2026-08-14). The first cut refused when
     // the row carried an opendkp_id, reasoning that it meant a real member who
     // had not linked Discord. Overruled: "Being in the guild should not be a
     // limiter for someone making a new character and trying to use the

@@ -1,0 +1,248 @@
+diff --git a/README.md b/README.md
+index c4bd3a9..68b5759 100644
+--- a/README.md
++++ b/README.md
+@@ -827,6 +827,21 @@ stream describes a target or pet with only a name and an HP per-mille value.
+ 
+ `target_id` and `pet_id` are omitted entirely when there is no target or no pet.
+ 
++#### Target of target
++The `player` message also carries the assist candidate for your current target,
++from the same sources `/assistbar` draws from (see that command):
++
++- `target_of_target` - who your target last hit (assist semantics)
++- `target_hit_by` - who last hit your target (defend semantics)
++
++Each is an object `{ "id": <spawn id>, "name": "<name>", "authoritative": <bool> }`.
++`authoritative` is true when the value came from the server's reply to `/assist`
++(which requires the bar to be enabled, though it need not be visible) and false
++when it was inferred from damage packets. `name` is omitted when the entity is
++gone or a corpse; each key is omitted when there is no fresh candidate. Damage
++inference runs whenever a pipe client is attached, so the bar does not have to
++be turned on for these to appear.
++
+ ---
+ ### Tick Timer
+ 
+diff --git a/Zeal/assist_target.cpp b/Zeal/assist_target.cpp
+index 70e763e..9694de6 100644
+--- a/Zeal/assist_target.cpp
++++ b/Zeal/assist_target.cpp
+@@ -12,6 +12,7 @@
+ #include "game_functions.h"
+ #include "game_packets.h"
+ #include "hook_wrapper.h"
++#include "named_pipe.h"
+ #include "string_util.h"
+ #include "zeal.h"
+ 
+@@ -27,7 +28,7 @@ AssistTarget::AssistTarget(ZealService *zeal) {
+   // Track all visible combat: build attacker -> victim and victim -> attacker maps from OP_Damage.
+   zeal->callbacks->AddPacket(
+       [this](UINT opcode, char *buffer, UINT len) {
+-        if (!setting_enabled.get()) return false;  // Off: the module does nothing at all.
++        if (!IsActive()) return false;  // Bar off and no pipe consumer: the module does nothing at all.
+         if (opcode == Zeal::Packets::Damage && len >= sizeof(Zeal::Packets::Damage_Struct))
+           HandleDamagePacket(reinterpret_cast<Zeal::Packets::Damage_Struct *>(buffer));
+         return false;  // Never swallow damage packets.
+@@ -39,7 +40,7 @@ AssistTarget::AssistTarget(ZealService *zeal) {
+   // the client does not retarget us.
+   zeal->callbacks->AddPacket(
+       [this](UINT opcode, char *buffer, UINT len) {
+-        if (!setting_enabled.get()) return false;  // Off: no recording and no swallowing at all.
++        if (!IsActive()) return false;  // Bar off and no pipe consumer: no recording, no swallowing.
+         if (opcode == Zeal::Packets::Assist && len >= sizeof(Zeal::Packets::EntityId_Struct)) {
+           auto pkt = reinterpret_cast<Zeal::Packets::EntityId_Struct *>(buffer);
+           const DWORD now = GetTickCount();
+@@ -96,8 +97,9 @@ void AssistTarget::Clean() {
+ }
+ 
+ void AssistTarget::HandleDamagePacket(const Zeal::Packets::Damage_Struct *dmg) {
+-  // With the bar off nobody consumes this data: stay fully idle (no map churn, no log spam).
+-  if (!setting_enabled.get()) return;
++  // With the bar off and no pipe consumer nobody reads this data: stay fully idle (no map
++  // churn, no log spam).
++  if (!IsActive()) return;
+   if (!dmg || dmg->target == 0 || dmg->source == 0) return;
+   const DWORD now = GetTickCount();
+   victim_of[dmg->source] = {dmg->target, now};  // attacker -> most recent victim it damaged.
+@@ -142,6 +144,56 @@ void AssistTarget::FireAssistRequest(bool suppress_retarget) {
+   do_assist_fn(self, "");
+ }
+ 
++bool AssistTarget::IsActive() const {
++  if (setting_enabled.get()) return true;
++  const auto *zeal = ZealService::get_instance();
++  return zeal && zeal->pipe && zeal->pipe->is_connected();
++}
++
++Zeal::GameStructures::Entity *AssistTarget::LookupLiveEntity(WORD id) {
++  if (!id) return nullptr;
++  auto entity = Zeal::Game::get_entity_by_id(id);
++  if (entity && (entity->StructType != 0x03 || entity->Type == Zeal::GameEnums::NPCCorpse ||
++                 entity->Type == Zeal::GameEnums::PlayerCorpse))
++    return nullptr;
++  return entity;
++}
++
++AssistTarget::Candidate AssistTarget::ResolveCandidate(WORD target_id, DWORD now, bool defend,
++                                                       bool use_assist_reply) const {
++  Candidate out;
++  if (!target_id) return out;
++  const DWORD window = static_cast<DWORD>(setting_window_ms.get());
++  DWORD candidate_ts = 0;
++
++  // Source A: damage inference (who the target last hit / who last hit the target).
++  const auto &map = defend ? hit_by : victim_of;
++  auto it = map.find(target_id);
++  if (it != map.end()) {
++    const DWORD age = now - it->second.timestamp_ms;
++    if (age <= window && it->second.timestamp_ms > candidate_ts) {
++      out.id = it->second.other_id;
++      out.authoritative = false;
++      candidate_ts = it->second.timestamp_ms;
++    }
++  }
++
++  // Source B: authoritative OP_Assist response. Fresh for the damage window, or longer when
++  // auto-refresh is on so the bar stays up between polls.
++  if (use_assist_reply && assist_response_time != 0) {
++    const DWORD assist_window = setting_auto_refresh.get()
++                                    ? std::max(window, static_cast<DWORD>(setting_refresh_interval_ms.get()) + 5000)
++                                    : window;
++    const DWORD age = now - assist_response_time;
++    if (age <= assist_window && assist_response_time > candidate_ts) {
++      out.id = assist_response_id;
++      out.authoritative = true;
++      candidate_ts = assist_response_time;
++    }
++  }
++  return out;
++}
++
+ // Sprite fonts available under uifiles/zeal/fonts (arial_NN).
+ static bool IsAvailableFontSize(int size) {
+   for (const int s : {8, 9, 10, 12, 14, 16, 20, 24, 28, 32})
+@@ -189,41 +241,10 @@ void AssistTarget::CallbackRender() {
+     tracked_target_id = 0;  // Self/no target: the next real retarget fires again from scratch.
+   }
+ 
+-  // Pick the freshest candidate from either source.
+-  WORD candidate_id = 0;
+-  DWORD candidate_ts = 0;
+-  if (have_target) {
+-    const DWORD window = static_cast<DWORD>(setting_window_ms.get());
+-
+-    // Source A: damage inference (who my target last hit / who last hit my target).
+-    auto &map = (setting_mode.get() == 1) ? hit_by : victim_of;
+-    auto it = map.find(target->SpawnId);
+-    if (it != map.end()) {
+-      const DWORD age = now - it->second.timestamp_ms;
+-      if (age <= window && it->second.timestamp_ms > candidate_ts) {
+-        candidate_id = it->second.other_id;
+-        candidate_ts = it->second.timestamp_ms;
+-      }
+-    }
+-
+-    // Source B: authoritative OP_Assist response. Fresh for the damage window, or longer when
+-    // auto-refresh is on so the bar stays up between polls.
+-    if (assist_response_time != 0) {
+-      const DWORD assist_window = setting_auto_refresh.get()
+-                                      ? std::max(window, static_cast<DWORD>(setting_refresh_interval_ms.get()) + 5000)
+-                                      : window;
+-      const DWORD age = now - assist_response_time;
+-      if (age <= assist_window && assist_response_time > candidate_ts) {
+-        candidate_id = assist_response_id;
+-        candidate_ts = assist_response_time;
+-      }
+-    }
+-  }
+-
+-  auto entity = (have_target && candidate_id) ? Zeal::Game::get_entity_by_id(candidate_id) : nullptr;
+-  if (entity && (entity->StructType != 0x03 ||
+-                 entity->Type == Zeal::GameEnums::NPCCorpse || entity->Type == Zeal::GameEnums::PlayerCorpse))
+-    entity = nullptr;
++  // Pick the freshest candidate from either source — shared with the named pipe (ResolveCandidate).
++  const Candidate candidate =
++      have_target ? ResolveCandidate(target->SpawnId, now, setting_mode.get() == 1) : Candidate{};
++  auto entity = LookupLiveEntity(candidate.id);
+ 
+   LoadBitmapFont();
+   if (!bitmap_font || !bitmap_font->is_valid()) return;
+diff --git a/Zeal/assist_target.h b/Zeal/assist_target.h
+index 10499d1..253e929 100644
+--- a/Zeal/assist_target.h
++++ b/Zeal/assist_target.h
+@@ -41,6 +41,29 @@ class AssistTarget {
+   // Poll interval in ms (clamped to [5000, 60000]).
+   ZealSetting<int> setting_refresh_interval_ms = {10000, "AssistBar", "RefreshIntervalMs"};
+ 
++  // ── Consumer surface (named pipe) ─────────────────────────────────────────
++  // The candidate for `target_id`, resolved from the same two sources the bar
++  // draws from, without touching render or drag state. `defend` selects hit_by
++  // (who last hit the target) instead of victim_of (who the target last hit).
++  // `use_assist_reply` lets the OP_Assist answer compete: it answers "who is my
++  // target on", so a consumer asking who HIT the target passes false; the bar
++  // keeps its existing behaviour and lets it compete in both modes. id == 0
++  // means no fresh candidate. Cheap; safe to call every frame from the main loop.
++  struct Candidate {
++    WORD id = 0;
++    bool authoritative = false;  // The fresher source was the OP_Assist reply, not damage inference.
++  };
++  Candidate ResolveCandidate(WORD target_id, DWORD now, bool defend, bool use_assist_reply = true) const;
++
++  // The entity behind a candidate id, or nullptr when it is gone or a corpse —
++  // the same filter the bar applies before drawing.
++  static Zeal::GameStructures::Entity *LookupLiveEntity(WORD id);
++
++  // True when anything consumes this module's data: the bar, or a named-pipe
++  // client. The packet hooks stay idle when this is false, so a user who never
++  // enabled the bar pays nothing unless a pipe consumer is attached.
++  bool IsActive() const;
++
+   // Internal callback use only.
+   bool HandleLMouseUp(short x, short y);
+ 
+diff --git a/Zeal/named_pipe.cpp b/Zeal/named_pipe.cpp
+index f6069f1..03f00b3 100644
+--- a/Zeal/named_pipe.cpp
++++ b/Zeal/named_pipe.cpp
+@@ -5,6 +5,7 @@
+ 
+ #include <thread>
+ 
++#include "assist_target.h"
+ #include "callbacks.h"
+ #include "chat.h"
+ #include "commands.h"
+@@ -317,6 +318,30 @@ void NamedPipe::main_loop() {
+       if (target) player_data["target_id"] = target->SpawnId;
+       const auto *actor_info = Zeal::Game::get_self()->ActorInfo;
+       if (actor_info && actor_info->PetID > 0) player_data["pet_id"] = actor_info->PetID;
++      // Target of target, from the /assistbar module: the assist candidate for
++      // the current target, resolved from the same sources the bar draws from —
++      // damage inference whenever a pipe client is attached, plus the OP_Assist
++      // reply when the bar is enabled (it need not be shown for this). Both
++      // directions are emitted so a consumer does not depend on the bar's mode:
++      //   target_of_target - who the target last hit (assist semantics)
++      //   target_hit_by    - who last hit the target (defend semantics)
++      // Each is {id, name, authoritative}; `name` is omitted when the entity is
++      // gone or a corpse, and the whole key is omitted when there is no fresh
++      // candidate, like target_id / pet_id above.
++      const auto *assist_target = ZealService::get_instance()->assist_target.get();
++      if (target && assist_target) {
++        const DWORD now = GetTickCount();
++        auto emit = [&](const char *key, const AssistTarget::Candidate &c) {
++          if (!c.id) return;
++          nlohmann::json j = nlohmann::json::object();
++          j["id"] = c.id;
++          if (const auto *e = AssistTarget::LookupLiveEntity(c.id)) j["name"] = e->Name;
++          j["authoritative"] = c.authoritative;
++          player_data[key] = j;
++        };
++        emit("target_of_target", assist_target->ResolveCandidate(target->SpawnId, now, false, true));
++        emit("target_hit_by", assist_target->ResolveCandidate(target->SpawnId, now, true, false));
++      }
+       // nlohmann::json data = { {"zone", Zeal::Game::get_self()->ZoneId}, {"location",
+       // Zeal::Game::get_self()->Position.toJson() }, {"heading", Zeal::Game::get_self()->Heading}, {"autoattack",
+       // (bool)(*(BYTE*)0x7f6ffe)} };

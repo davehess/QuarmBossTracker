@@ -1,5 +1,5 @@
 // /admin/overlays — live tuning knobs for Mimic overlays + the bot's Extended
-// Target aggregation, WITHOUT a redeploy or Mimic release (Hitya
+// Target aggregation, WITHOUT a redeploy or Mimic release (the guild lead
 // 2026-07-06: "we need to be able to make more of these configuration changes
 // to overlays without a full redeployment").
 //
@@ -16,8 +16,9 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
-import { isOfficer } from '@/lib/officer';
+import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -125,12 +126,26 @@ const FLAGS: Flag[] = [
     desc: 'Drops encrypted EQ ini-file snapshot uploads. Backups pause; nothing live is affected. Emergency use only.' },
   { key: 'flag_shed_tells', label: 'Shed: tell relay', danger: true,
     desc: 'Drops the opt-in tell-history relay. Emergency use only.' },
+  { key: 'flag_skip_uncurated_mobs', label: 'Stop tracking uncurated mobs (farm trash)',
+    desc: 'Ingest gate for encounter collection. Since bot 3.1.52 every exactly-matched mob persists an encounter so a first kill is never lost — which made collection scale with member farming: 97% of the encounters written in the 30 days to 2026-09-04 were uncurated trash (~9 MB/day across the encounter tables, threat snapshots most of it). Checked: the bot stops self-registering new mobs and stops persisting encounters on already auto-registered rows; curated bosses are untouched, the "Trash cleared" tally on the review still runs off the upload stream, and a mob the server hands a loot lockout for is promoted to curated and starts persisting. Unchecked: the TRACK_UNCURATED_MOBS env default (on for us). Takes effect within ~60s.' },
 ];
 const FLAG_KEYS = new Set(FLAGS.map(f => f.key));
 
 // Version floor is a NUMBER control (not a 0/1 flag) that lives in the same
 // Kill-switches section. Empty = unset. Handled specially in save/render.
 const VERSION_FLOOR_KEY = 'min_agent_ver_num';
+// /tag channel join specs (agent 3.6.33). The ONLY home of the password: it
+// rides the tuning poll into each raider's LOCAL dashboard at render time and
+// is never in source, a log, or an upload. These are STRINGS — every other
+// control on this page saves a number, and a first cut put them in FLAGS,
+// where "checked" saves as 1 and a typed password could never have been stored.
+const TEXT_KEYS = [
+  { key: 'tag_channel_spec', label: '🏷 Tag channel join spec (raid)',
+    hint: 'Full \u201cZtwolfpacktag:<password>\u201d. Overrides the bot\u2019s TAG_CHANNEL_SPEC env var. Raiders\u2019 \u201cSet up EQ for me\u201d writes it into ChannelAutoJoin. Clear to fall back to env.' },
+  { key: 'officer_channel_spec', label: '🏷 Officer channel join spec',
+    hint: 'Full \u201cname:password\u201d for officer chat. Overrides OFFICER_CHANNEL_SPEC. Written only for signed-in officers. Clear to fall back to env.' },
+] as const;
+const TEXT_KEY_SET = new Set<string>(TEXT_KEYS.map(t => t.key));
 
 // ── Per-class default overlay sets (pretty-place phase 2) ────────────────────
 // Which overlays a FRESH Mimic install turns on for each class. Stored in
@@ -140,7 +155,7 @@ const VERSION_FLOOR_KEY = 'min_agent_ver_num';
 // customized install, then auto-arranges. Existing users are never touched.
 // Keys here MUST match Mimic's toggle-overlay names.
 const OVERLAY_KEYS: { key: string; label: string }[] = [
-  { key: 'hud',       label: 'DPS HUD' },
+  { key: 'hud',       label: 'DPS/Tank Meter' },
   { key: 'trigger',   label: 'Trigger alerts' },
   { key: 'charm',     label: 'Charm tracker' },
   { key: 'pet',       label: 'Pet tracker' },
@@ -175,16 +190,16 @@ async function saveOverlayTuning(formData: FormData) {
   // Preserve any keys this form doesn't manage (out-of-band overrides, future
   // flags) so a Save never silently wipes them — the old wholesale rebuild did.
   const { data: existingRow } = await sb
-    .from('overlay_tuning').select('tuning').eq('guild_id', 'wolfpack').maybeSingle();
+    .from('overlay_tuning').select('tuning').eq('guild_id', GUILD_TAG).maybeSingle();
   const existing = (existingRow?.tuning as Record<string, number>) ?? {};
 
   // Only non-empty, in-range numbers become overrides; everything else is
   // omitted so the compiled default applies. Clamp instead of reject — an
   // officer nudging a slider mid-raid should never lose the save to a typo.
-  const tuning: Record<string, number> = {};
+  const tuning: Record<string, number | string> = {};
   for (const [k, v] of Object.entries(existing)) {
-    // passthrough unknown keys, but the version floor is managed below (not a knob/flag)
-    if (!ALL_KNOB_KEYS.has(k) && !FLAG_KEYS.has(k) && k !== VERSION_FLOOR_KEY) tuning[k] = v;
+    // passthrough unknown keys; the version floor and the text keys are managed below
+    if (!ALL_KNOB_KEYS.has(k) && !FLAG_KEYS.has(k) && k !== VERSION_FLOOR_KEY && !TEXT_KEY_SET.has(k)) tuning[k] = v;
   }
   for (const k of ALL_KNOBS) {
     const raw = String(formData.get(k.key) ?? '').trim();
@@ -196,6 +211,12 @@ async function saveOverlayTuning(formData: FormData) {
   // Kill switches: checked → 1 (on); unchecked → key omitted (bot reads as off).
   for (const f of FLAGS) {
     if (formData.get(f.key) != null) tuning[f.key] = 1;
+  }
+  // Text tuning (tag channel specs): a non-empty trimmed string is stored as-is;
+  // empty → omitted, which clears it. Bounded so a paste can't bloat the map.
+  for (const t of TEXT_KEYS) {
+    const raw = String(formData.get(t.key) ?? '').trim();
+    if (raw) tuning[t.key] = raw.slice(0, 120);
   }
   // Version floor (#74): a bare integer. Empty/0/non-numeric → omitted (unset =
   // no floor). The bot stands down any agent whose numeric version is below it.
@@ -211,7 +232,7 @@ async function saveOverlayTuning(formData: FormData) {
   await sb
     .from('overlay_tuning')
     .upsert({
-      guild_id: 'wolfpack',
+      guild_id: GUILD_TAG,
       tuning,
       updated_by_discord_id: (user.app_metadata?.provider_id || meta.provider_id || null) as string | null,
       updated_by_name: display,
@@ -244,7 +265,7 @@ async function saveClassSets(formData: FormData) {
   await supabaseAdmin()
     .from('overlay_tuning')
     .upsert({
-      guild_id: 'wolfpack',
+      guild_id: GUILD_TAG,
       class_sets: classSets,
       updated_by_discord_id: (user.app_metadata?.provider_id || meta.provider_id || null) as string | null,
       updated_by_name: display,
@@ -255,11 +276,12 @@ async function saveClassSets(formData: FormData) {
 }
 
 export default async function OverlayTuningPage() {
+  await requireOfficer();
   const sb = supabaseAdmin();
   const { data } = await sb
     .from('overlay_tuning')
     .select('*')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .maybeSingle();
 
   const tuning: Record<string, number> = (data?.tuning as Record<string, number>) ?? {};
@@ -377,6 +399,20 @@ export default async function OverlayTuningPage() {
                 placeholder="unset"
                 className="w-32 bg-bg border border-border rounded px-3 py-1.5 text-sm text-text font-mono"
               />
+              {TEXT_KEYS.map(t => (
+                <label key={t.key} className="block mt-3">
+                  <div className="text-xs text-text">{t.label} <code className="text-[10px] text-dim">{t.key}</code></div>
+                  <input
+                    type="text"
+                    name={t.key}
+                    autoComplete="off"
+                    spellCheck={false}
+                    defaultValue={typeof tuning[t.key] === 'string' ? tuning[t.key] : ''}
+                    className="mt-1 w-full max-w-md bg-bg border border-border rounded px-2 py-1 text-sm text-text font-mono"
+                  />
+                  <div className="text-[10px] text-dim mt-0.5">{t.hint}</div>
+                </label>
+              ))}
               <p className="text-xs text-dim leading-5 mt-1">
                 Fleet version floor (#74). Enter the numeric form of a version — <b>major×10000 + minor×100 + patch</b>,
                 e.g. agent <b>3.3.85 → 30385</b>. Any agent below the floor pauses uploads exactly like the kill switch

@@ -1,6 +1,6 @@
 // test/roll-item-line.test.js — naming the item a /random range is for.
 //
-// Hitya, 2026-08-14: "These rolls didn't get consolidated to loot in the
+// The guild lead, 2026-08-14: "These rolls didn't get consolidated to loot in the
 // website but did on here" — eleven roll sessions on the /rolls page, every one
 // of them "unlabeled roll" with an empty LOOTED BY column, while the Command
 // Center showed the same four ranges live.
@@ -11,7 +11,7 @@
 //
 // The roll caller had used commas:
 //
-//     [G] [Canopy]: Black Tear 111 , Platinum Tear 222 , Poison Tear 333, Runed Tear 444
+//     [G] [a member]: Black Tear 111 , Platinum Tear 222 , Poison Tear 333, Runed Tear 444
 //
 // so no label was ever captured, and because attributeLoot() early-returns on a
 // null item, the missing NAME is also what emptied the LOOTED BY column. One

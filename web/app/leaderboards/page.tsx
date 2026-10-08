@@ -15,6 +15,17 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { fmtDmg, fmtDuration, fmtDkp, cleanBossName } from '@/lib/format';
 import WindowPicker from '@/components/WindowPicker';
 import { resolveWindow, windowCaveat, type ResolvedWindow } from '@/lib/timeWindow';
+import { curatedNpcIds } from '@/lib/bossFilter';
+import { loadLootSpend } from '@/lib/fullReads';
+
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'Leaderboards',
+  description:
+    'Guild-wide top tables — biggest parses, best tanking, most healing, and who shows up.',
+};
 
 export const dynamic = 'force-dynamic';
 
@@ -36,9 +47,25 @@ type AttendanceRow = {
 
 type LootSpend = { character_name: string; total_dkp: number; items: number };
 
-async function load(w: ResolvedWindow) {
+// The single-encounter board ranks CURATED bosses only, and only parses the
+// median merge produced (the guild lead, 2026-09-04: "Leaderboards should only count
+// bosses, not trash. Many of parses are severely inflated from the time
+// offset issues we had where people were being double or triple counted").
+// The doubling was the old merge rule — max damage per player across
+// uploaders, so one over-counting parser won every row — replaced by the
+// median on 2026-07-14 (migration 20260714160000). Older rows cannot be
+// re-merged: every pre-cutover multi-uploader encounter has had its raw parses
+// pruned (checked 2026-09-04: 427 of 427). So they are hidden by default and
+// shown, flagged, only on request. The duration guard drops the other
+// inflation shape — one parser that never split a fight and reported a
+// two-hour "encounter".
+const MEDIAN_MERGE_CUTOVER = '2026-07-14T00:00:00Z';
+const MAX_SINGLE_FIGHT_SEC = 45 * 60;
+
+async function load(w: ResolvedWindow, legacy: boolean) {
   const sb = supabaseAdmin();
   const since = w.sinceIso;
+  const curated = await curatedNpcIds(sb);
 
   // 1. Top damage parses in the window — pull encounter_players joined with
   // encounters. Sorted desc, cut to top 30 to keep payload reasonable.
@@ -54,10 +81,13 @@ async function load(w: ResolvedWindow) {
     // the 2026-08-08 corrupted foreign upload put an impossible 868k single-
     // fight row at #1 before this filter existed.
     .is('encounters.classification', null)
+    .in('encounters.npc_id', curated)
+    .or(`duration_sec.is.null,duration_sec.lte.${MAX_SINGLE_FIGHT_SEC}`)
     .gt('total_damage', 0)
     .order('total_damage', { ascending: false })
     .limit(30);
-  if (since) dmgQuery = dmgQuery.gte('encounters.started_at', since);
+  const floor = legacy ? since : (since && since > MEDIAN_MERGE_CUTOVER ? since : MEDIAN_MERGE_CUTOVER);
+  if (floor) dmgQuery = dmgQuery.gte('encounters.started_at', floor);
   const { data: dmgRaw } = await dmgQuery;
   const topDamage = (dmgRaw as unknown as TopDamageRow[]) ?? [];
 
@@ -69,41 +99,27 @@ async function load(w: ResolvedWindow) {
     .limit(20);
   const attendance = (attendanceRaw as AttendanceRow[]) ?? [];
 
-  // 3. Loot spend: aggregate from opendkp_loot_recent by character. Postgres
-  // does the heavy lifting via a single fetch + JS sum since the view doesn't
-  // expose a per-character rollup natively. NOTE: the view itself is a
+  // 3. Loot spend: summed per character IN SQL (leaderboard_loot_spend over
+  // opendkp_loot_recent), top 20. The old fetch-and-sum read 1,000 of the
+  // view's 9,251 lifetime rows — PostgREST's silent cap — so the board ranked
+  // the first 1,000 awards, not the guild's spend. NOTE: the view itself is a
   // "recent" sync window — long lookbacks under-count (caveat shown in UI).
-  let lootQuery = sb
-    .from('opendkp_loot_recent')
-    .select('character_name, dkp');
-  if (since) lootQuery = lootQuery.gte('raid_date', since.slice(0, 10));
-  const { data: lootRaw } = await lootQuery;
-  const lootByChar = new Map<string, { total_dkp: number; items: number }>();
-  for (const r of (lootRaw ?? []) as { character_name: string; dkp: number }[]) {
-    const k = r.character_name;
-    const existing = lootByChar.get(k) || { total_dkp: 0, items: 0 };
-    existing.total_dkp += r.dkp || 0;
-    existing.items     += 1;
-    lootByChar.set(k, existing);
-  }
-  const lootSpend: LootSpend[] = [...lootByChar.entries()]
-    .map(([character_name, v]) => ({ character_name, total_dkp: v.total_dkp, items: v.items }))
-    .sort((a, b) => b.total_dkp - a.total_dkp)
-    .slice(0, 20);
+  const lootSpend: LootSpend[] = await loadLootSpend(sb, since ? since.slice(0, 10) : null, 20);
 
   return { topDamage, attendance, lootSpend };
 }
 
 export default async function LeaderboardsPage(
-  { searchParams }: { searchParams: Promise<{ w?: string }> },
+  { searchParams }: { searchParams: Promise<{ w?: string; legacy?: string }> },
 ) {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/leaderboards');
 
-  const { w: wParam } = await searchParams;
+  const { w: wParam, legacy: legacyParam } = await searchParams;
   const w = resolveWindow(wParam, '30d');
+  const legacy = legacyParam === '1';
   const caveat = windowCaveat('parses', w) ?? windowCaveat('loot', w);
-  const { topDamage, attendance, lootSpend } = await load(w);
+  const { topDamage, attendance, lootSpend } = await load(w, legacy);
 
   return (
     <div className="space-y-6">
@@ -127,6 +143,16 @@ export default async function LeaderboardsPage(
           <span>Top damage — single encounter</span>
           <span className="text-dim text-xs">· top 30 in the window</span>
         </h3>
+        <p className="text-[11px] text-dim mb-2">
+          Curated bosses only. Fights over 45 minutes are left out (a parse that never split is not one fight).
+          {legacy ? (
+            <> <span className="text-orange">⚠ Including parses from before Jul 14, 2026</span> &mdash; merged by the old max-per-player rule, one
+            over-counting uploader could double them. <Link href={`/leaderboards?w=${w.key}`} className="text-blue hover:underline">Hide them</Link>.</>
+          ) : (
+            <> Parses from before Jul 14, 2026 are hidden: they were merged by max across uploaders and one over-counting parser could
+            double a row. <Link href={`/leaderboards?w=${w.key}&legacy=1`} className="text-blue hover:underline">Show them anyway</Link>.</>
+          )}
+        </p>
         <table className="w-full text-xs">
           <thead className="text-dim text-left">
             <tr className="border-b border-border">

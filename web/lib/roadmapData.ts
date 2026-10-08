@@ -19,7 +19,7 @@ export type RoadmapFeature = {
 };
 
 // ── Release log — the member-facing changelog. NEWEST FIRST. ─────────────────
-// RULE (Hitya 2026-07-08): EVERY release updates this list. Call out the
+// RULE (the guild lead, 2026-07-08): EVERY release updates this list. Call out the
 // version, give a SIMPLIFIED plain-language line per headline feature, and put
 // the bug fixes at the bottom of that release. Keep it human — this is what a
 // raider reads, not a git log. (Technical detail lives in the component
@@ -36,6 +36,2527 @@ export type Release = {
 };
 
 export const releases: Release[] = [
+  {
+    key: 'pets-clickies-repeat-2026-10-07',
+    title: 'Pets on the meter, two rows of clickies, guild triggers that repeat',
+    version: 'Agent 3.7.100 beta · Web 1.8.116 · Bot 3.1.219',
+    date: '2026-10-07',
+    channel: 'beta',
+    headline: 'Another raider\'s charm pet counts for its owner, the HUD fits more clickies, and officers can make a guild timer repeat. Most of it came from member reports.',
+    features: [
+      { name: 'Two rows of clickies', blurb: 'The HUD ring shows a second row of clickies inside the first, so up to seven picks fit. Switch back to one row under ⚙ → Items.' },
+      { name: 'Charm pets on the meter', blurb: 'Once a charmed pet says who its leader is (its owner types /pet leader), its damage counts for that raider on your DPS meter instead of showing as "(charmed)". (FB-52)' },
+      { name: 'Copy counts pets', blurb: 'The 📋 copy adds each pet\'s damage to its owner\'s line, marked "+Pets", for the current fight and for History. (FB-22)' },
+      { name: 'Mana and Endurance', blurb: 'The HUD builder has separate Mana and Endurance switches, each with its own size. (FB-12)' },
+      { name: 'Guild triggers that repeat', blurb: 'Officers can give a guild trigger a countdown, a warning before it ends and a repeat, right on the triggers page. (FB-31)' },
+    ],
+    fixes: [
+      'Unticking the speaker on a Suggested alert now really silences it, and "charm break" is said once instead of twice. (FB-21)',
+      'Dashboard cards popped out as their own windows reopen at the size and place you left them.',
+      'Reports fixed on the beta now always show as "on beta", and the people who sent them hear about it.',
+    ],
+  },
+  {
+    key: 'mimic-2-7-9-2026-10-07',
+    title: 'Mimic 2.7.9',
+    version: 'Mimic 2.7.9 · Agent 3.7.96 · Web 1.8.112',
+    date: '2026-10-07',
+    headline: 'Everything from the beta since 2.7.8 reaches every raider, and much of it started as a member\'s suggestion. Thank you to everyone who sends one.',
+    features: [
+      { name: 'My parses', blurb: 'A new tab in Mimic\'s main window with your own DPS, fight by fight, over a day, a week, 30 or 90 days or the expansion. Search a mob, pick a zone, group by raid night, or switch to My logs for only what your own PC recorded. The DPS/Tank Meter gets a Trend tab for tonight and this week. (A member\'s request.)' },
+      { name: 'Lag meter', blurb: 'On the Diagnostics tab: your router and the Quarm server side by side, so you can tell home lag from server lag. Nothing leaves your PC. (A member\'s request.)' },
+      { name: 'Reverse Slow', blurb: 'Mobs that turn a slow into a haste get a red warning in Target Info and on the HUD, and Mimic tells you to stop slowing. (Suggested by a member, FB-54.)' },
+      { name: 'Raid tools', blurb: 'The Command Center shows who has hailed the flag NPC after a flag boss dies. The buff queue has a By group view. A Buff blocks tab builds block and allow sets with Quarm\'s commands.' },
+      { name: 'Your characters', blurb: 'Setup asks how each character shows: Main / alt, Inventory only, or Hide completely. It is the same switch as My Stats on wolfpack.quest, and you can change it later on the dashboard.' },
+      { name: 'Target Info and the HUD', blurb: 'A Faction tab with the mob\'s faction and who will come to its aid. The HUD counts your procs and stun or aggro spells on the mob, adds your gear\'s damage shield, and warns "Enrage soon" at 12%.' },
+      { name: 'Meter History and the PoP overlay', blurb: 'History counts real damage, puts pets under their owners and keeps 100 fights (suggested by a member, FB-22). The PoP overlay lists every quest step in the order the NPC needs it.' },
+    ],
+    fixes: [
+      'If EverQuest stops writing your log, Mimic says so, and "Archive log & start fresh" starts a new one without deleting anything.',
+      '"Rest in Peace" no longer fires for a named NPC when you are not in a raid.',
+      'The ✕ on timers and pinned callouts should now take clicks while overlays are locked.',
+      'Thirteen older member reports whose fixes had already reached you are now marked done, and each sender gets a thank-you message.',
+    ],
+  },
+  {
+    key: 'my-logs-char-modes-2026-10-07',
+    title: 'Your own logs, and how each character shows',
+    version: 'Agent 3.7.96 beta · Web 1.8.111 · Bot 3.1.214',
+    date: '2026-10-07',
+    channel: 'beta',
+    headline: 'Explore your parses by mob, zone and night, from the guild\'s record or straight from your own logs, and choose in Mimic how each of your characters shows.',
+    features: [
+      { name: 'Search, zones and By day', blurb: 'On wolfpack.quest/me/parses and in Mimic\'s My parses tab: type a mob name (suggestions come up as you type), pick a zone, or switch on By day to see each raid night with its fight count, average and best. Clear puts it all back.' },
+      { name: 'Guild or My logs', blurb: 'In Mimic\'s My parses tab, Guild shows the guild\'s merged parses of your fights. My logs shows what your own PC recorded from your own log, with no sign-in needed. Mimic starts keeping that record the day you update.' },
+      { name: 'Main / alt, Inventory only, Hide completely', blurb: 'Mimic\'s setup now asks how each character should show. Inventory only keeps a mule\'s bags in your account inventory and leaves it out of every list and chart. Hide completely does that and Mimic stops reading its log. It is the same switch as My Stats on wolfpack.quest, so changing it on one changes the other. You can change it any time on the Mimic dashboard.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'long-bids-2026-10-06',
+    title: 'Long-term bidding leaves your timers',
+    version: 'Agent 3.7.92 · Web 1.8.109 · Bot 3.1.212',
+    date: '2026-10-06',
+    headline: 'Auctions that run for weeks no longer fill the timers window and the Command Center.',
+    features: [
+      { name: 'My parses: mains and real alts', blurb: 'The character row on wolfpack.quest/me/parses shows the characters you actually fight on. Ones you hid on My Stats ("Hide from lists"), traders, and ones with no fights in 30 days sit behind "+N more". "All" leaves hidden characters out.' },
+    ],
+    fixes: [
+      'Mobs that get faster when you slow them ("Reverse Slow" on PQDI) are now flagged in red on their wolfpack.quest/db page and in Mimic\'s Target Info, so you know not to slow them. Their other abilities also read correctly now: the old list had a few wrong, such as showing "Uses Warrior Skills" as "Immune Ranged Attacks".',
+      'Long-term bidding (auctions set to run longer than six hours) no longer shows as a countdown in the timers window or a row in the Command Center. You still bid on them in the Loot bidding window. Every Mimic picks this up by itself.',
+    ],
+  },
+  {
+    key: 'my-parses-2026-10-06',
+    title: 'Your parses over time',
+    version: 'Web 1.8.107 · Bot 3.1.210',
+    date: '2026-10-06',
+    headline: 'A chart of your own DPS, fight by fight, over a day, a week, a month or longer.',
+    features: [
+      { name: 'wolfpack.quest/me/parses', blurb: 'One dot per fight and a line for each raid night\'s average. Pick 1 day, 1 week, 30 or 90 days, this expansion or all time; bosses only or every fight; all your characters or one. The table under it shows how each fight compares with your usual on that boss. Numbers start 14 July 2026. It is new, so it is marked [beta].' },
+      { name: 'Coming to Mimic', blurb: 'The same chart as a My parses tab in Mimic\'s main window, and a Trend view on the DPS/Tank Meter for tonight and this week, arrive in the Mimic beta.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'raid-screen-2026-10-06',
+    title: 'The raid screen',
+    version: 'Web 1.8.106 · Bot 3.1.209',
+    date: '2026-10-06',
+    headline: 'One page the whole raid can keep open on a second monitor or a phone, and the raid leader decides what it shows.',
+    features: [
+      { name: 'wolfpack.quest/screen', blurb: 'Map, Slides, Loot or Overview. Map is the live raid on the zone map. Slides are the raid leader\'s own notes for the next fight. Loot shows what was awarded and picked up tonight. Overview shows who is where by group and class, tonight\'s boss kills and the next spawns. When an officer switches it, everyone\'s page follows within a few seconds, and "Driving:" says who. Members only. It is new, so it is marked [beta].' },
+      { name: 'Bristlebane links it', blurb: 'When Bristlebane joins the raid channel, its notice can carry a link to the raid screen.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'bristlebane-looks-2026-10-05',
+    title: 'Bristlebane joins the raid, and the raid remembers how we looked',
+    version: 'Bot 3.1.208 · Web 1.8.104',
+    date: '2026-10-05',
+    headline: 'A new raid-voice bot, Bristlebane, is ready to join the raid channel when a raid starts, and each raid night now keeps what every character looked like next to where they stood.',
+    features: [
+      { name: 'Bristlebane', blurb: 'A second guild bot that joins the raid voice channel by itself when a raid is on and leaves when it ends. It records the voices only of people who ask it to: /bristlebane optin. /bristlebane optout stops and deletes tonight\'s recording of you, /bristlebane forget deletes all of it, and /bristlebane status says where you stand. It says so in raid chat when it joins. Coming next: it takes over the spoken callouts and loot calls.' },
+      { name: 'How we looked', blurb: 'Once a raid night (and every hour after), each raider\'s race and worn armor and weapons are kept next to the raid\'s positions, so a raid can one day be re-created with characters that look like us. The item catalog now knows what each piece of gear looks like, and each zone\'s sky and fog colours.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'kills-not-ours-2026-10-05',
+    title: 'Only our own kills start a timer',
+    version: 'Bot 3.1.207 · Web 1.8.103',
+    date: '2026-10-05',
+    headline: 'A boss killed in the PvP instance or out in the open world no longer starts our board timer.',
+    features: [
+      { name: 'Where was this kill?', blurb: 'Before a kill starts a timer, the bot checks where it happened. If the PvP kill broadcast for that boss shows up, or someone in the fight had their PvP flag on, it was the PvP instance. If most of the people fighting were not in the guild, or a /who one of them took shows another guild in the zone, it was the open world. A kill by one or two people with nothing else to go on starts no timer either. The parse is still kept, marked live or PvP the way an officer would mark it, so it no longer counts as a guild kill.' },
+    ],
+    fixes: [
+      'Lord of Ire kills in the PvP instance were starting our Plane of Hate timer.',
+      'After a bot restart, the board no longer brings back a timer from a kill that was not ours.',
+    ],
+  },
+  {
+    key: 'hail-board-2026-10-05',
+    title: 'Who still has to hail',
+    version: 'Agent 3.7.89 beta · Bot 3.1.206',
+    date: '2026-10-05',
+    channel: 'beta',
+    headline: 'After a flag boss dies, the Command Center shows who in the raid has hailed the flag NPC and who still has to.',
+    features: [
+      { name: 'Hail board', blurb: 'The Command Center lists everyone at the kill under "still to hail" or "hailed", with the time left before the NPC leaves. People who already have that flag are left off. A hail you make or see moves a name across by itself, and anyone can tap a name to mark it. Everyone sees the same list.' },
+    ],
+    fixes: [
+      '"Rest in Peace" no longer fires for a named mob with a one-word name (like the Bastion of Thunder wolves) when you are grouped instead of raiding.',
+    ],
+  },
+  {
+    key: 'pop-named-timers-2026-10-05',
+    title: 'Planes of Power named on the board',
+    version: 'Bot 3.1.204 · Web 1.8.102',
+    date: '2026-10-05',
+    headline: 'The Bastion of Thunder named (3 hours) and the 24-hour named in each Planes of Power zone have timers on the board.',
+    features: [
+      { name: 'Named timers', blurb: 'Bastion of Thunder\'s eight named are on a 3-hour timer, and the named Quarm moved to 24 hours in Crypt of Decay, Plane of Disease, Innovation, Justice, Nightmare and Valor are on the board too, each under its own zone. A kill starts the timer.' },
+      { name: 'Back-up time on the button', blurb: 'For a timer of a day or less, the button says when the boss is back up (for example "up 9:42p" Eastern) instead of the day it died. The 3-hour named do not post spawn alerts.' },
+    ],
+    fixes: [
+      'Trash with a boss\'s name inside its own (like "a tortured soul" for Ture) no longer counts as that boss\'s kill.',
+    ],
+  },
+  {
+    key: 'log-archive-enrage-2026-10-05',
+    title: 'Start a fresh log, and an earlier enrage warning',
+    version: 'Agent 3.7.88 beta · Web 1.8.102',
+    date: '2026-10-05',
+    channel: 'beta',
+    headline: 'One click moves a stuck EverQuest log aside, and "Enrage soon" warns at 12%.',
+    features: [
+      { name: 'Archive log & start fresh', blurb: 'When EverQuest stops writing your log, Mimic now says so at the top of its dashboard, with a button that moves the old log into a LogArchive folder (nothing is deleted) and starts an empty one. Then type /log off and /log on in game. The button is also on the Info tab, one per character.' },
+      { name: 'Enrage soon at 12%', blurb: 'The spoken warning now comes at 12% instead of 10%, and it is spoken ahead of any other callout instead of waiting its turn. The red zone on the HUD covers the last 12% to match.' },
+    ],
+    fixes: [
+      'The "your log has gone quiet" warning from the last beta never appeared on screen; it does now.',
+      'Earlier / Good / Too early votes on a callout are filed under the callout\'s name, so votes on one callout add up.',
+      'With the Canvas on, the « Earlier / ✓ Good / » Too early buttons stay inside a small callouts panel and can be clicked again.',
+      'Buff blocks: renaming a set keeps what you type (the tab used to refresh under the Name box and throw it away).',
+      'UI Studio: Save changes only the windows you moved, in your layout file as it is now. Bag spots and anything else EverQuest saved since you opened UI Studio are no longer put back, and "save after logout" adds your changes to EverQuest\'s own save instead of replacing it.',
+      'HUD: the small low-health arc at the top left only warns about group and raid members. Your XP and AA bars and spell cooldowns no longer show up there.',
+      'HUD: above the damage shield on the right of the ring, ⚡ counts your procs on the mob you are fighting and ✦ your stun and aggro spells that landed on it. Both start over on the next mob.',
+    ],
+  },
+  {
+    key: 'lag-meter-2026-10-05',
+    title: 'Lag meter',
+    version: 'Agent 3.7.83 beta · Web 1.8.101',
+    date: '2026-10-05',
+    channel: 'beta',
+    headline: 'Mimic shows whether your lag is your home network or past it.',
+    features: [
+      { name: 'Connection card', blurb: 'On the Diagnostics tab: two lines over the last ten minutes, your router and the Quarm server, pinged once a second, with lost packets marked and fights shaded. If your router line spikes, it is your Wi-Fi or home network; if only the server line does, it is your internet provider or the server. Copy summary gives you a short paragraph to paste in Discord. It stays on your PC and you can switch it off.' },
+      { name: 'Tick overlay', blurb: 'One line, “📶 Quarm 48 ms · 0% loss”, amber or red when it is bad.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'log-silent-2026-10-05',
+    title: 'When EverQuest stops logging',
+    version: 'Agent 3.7.81 beta',
+    date: '2026-10-05',
+    channel: 'beta',
+    headline: 'Mimic notices when EverQuest stops writing your log, and bug reports carry the newest part of it.',
+    features: [
+      { name: 'Silent log check', blurb: 'If Zeal says you are in game but your log has had no new lines for five minutes, Mimic notes it in its own log: EverQuest has stopped logging (/log switches it) or is writing to another folder. Without a log there is no damage meter, no rolls and no triggers, so this is the first thing to check. A warning on screen comes next.' },
+    ],
+    fixes: [
+      'A bug report with a busy log attached sent the oldest part of the hour and cut off the newest.',
+      'Mimic could stop reading a log without saying so if a file read never finished; it now notices within 15 seconds and keeps reading.',
+    ],
+  },
+  {
+    key: 'spectator-2026-10-05',
+    title: 'Spectator',
+    version: 'Web 1.8.98',
+    date: '2026-10-05',
+    headline: 'A new page shows the raid on the zone map, live.',
+    features: [
+      { name: 'Spectator [beta]', blurb: 'Raid › Spectator shows where everyone in the raid is standing right now, on the zone’s map: Brewall’s map lines underneath, every raider as a dot in their class colour with the way they face, and the group roster beside it. Positions come from the raiders running Mimic and refresh every few seconds. Switch to walls generated from the server’s own zone geometry, pick a floor, zoom, or fit the raid or the whole zone.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'worn-ds-2026-10-04',
+    title: 'Your gear’s damage shield',
+    version: 'Bot 3.1.202 · Web 1.8.97 · Agent 3.7.80 beta',
+    date: '2026-10-04',
+    channel: 'beta',
+    headline: 'The HUD’s DS badge adds the shield from your gear on top of your shield spell.',
+    features: [
+      { name: 'DS badge', blurb: 'A Talisman of Vah Kerrath (+8) or Shroud of Eternity (+5) adds to a damage shield spell, so a 10-point shield with the Talisman reads 18, as it hits. Gear adds nothing on its own, so without a shield spell the badge reads as before. In the beta Mimic; it reads your gear from /output inventory or your Quarmy export.' },
+    ],
+    fixes: [
+      'The DS badge left out the shield from worn gear.',
+    ],
+  },
+  {
+    key: 'encounter-tonight-2026-10-04',
+    title: '/encounter tonight is back',
+    version: 'Bot 3.1.201 · Web 1.8.96',
+    date: '2026-10-04',
+    headline: 'The Discord list of the day’s fights works again.',
+    features: [],
+    fixes: [
+      '/encounter tonight failed with an error on any day that had a fight. It now lists them, each with the short id /encounter view takes.',
+    ],
+  },
+  {
+    key: 'row-cap-2026-10-04',
+    title: 'The whole night, every time',
+    version: 'Bot 3.1.198 · Web 1.8.95',
+    date: '2026-10-04',
+    headline: 'Pages and overlays that quietly stopped after 1,000 rows now read everything.',
+    features: [
+      { name: 'Raid tools', blurb: 'The buff queue, Extended Target debuffs, the raid review’s slows and callouts, and Mimic’s damage panel see the whole raid, not its last few minutes.' },
+      { name: 'DKP and loot', blurb: 'Your DKP balance, bid history, and the loot and roll windows count every tick and every roll.' },
+      { name: 'Your pages', blurb: '/me, your tells, character pages, /pop, /guide, /parses, /leaderboards and /quartermaster show complete numbers. The heaviest raiders were seeing about a quarter of their fights.' },
+    ],
+    fixes: [
+      'The buff queue could show an earlier Aegolism as missing on a busy night.',
+      'The /guide kill counts were about a third of the real number, and /leaderboards named the wrong top DKP spender.',
+      '/pop spell needs left out 29 characters.',
+      '/quartermaster could skip some items and list others twice.',
+    ],
+  },
+  {
+    key: 'ui-backups-2026-10-04',
+    title: 'Whose backup is this?',
+    version: 'Bot 3.1.197 · Web 1.8.94 · Mimic beta',
+    date: '2026-10-04',
+    headline: 'Mimic’s UI backups list only shows the character you opened it for, and can tell you what is in each backup.',
+    features: [
+      { name: '📄 Files', blurb: 'Settings → UI backups → Backups → 📄 Files lists every file in a backup and what it is: window layout, hotbuttons and socials, bandolier, spell sets, game and Zeal settings. In the beta Mimic.' },
+    ],
+    fixes: [
+      'The Backups list under one character showed every character on your account, with no name on the rows, so Restore could pick another character’s backup.',
+    ],
+  },
+  {
+    key: 'fun-crash-card-2026-10-04',
+    title: 'Raid crashes only',
+    version: 'Web 1.8.93',
+    date: '2026-10-04',
+    headline: 'The “Raids since Peopleslayer crashed” card on /fun only counts crashes during real raids now.',
+    features: [
+      { name: 'Real raids only', blurb: 'A raid is one the officers logged in DKP, and a crash only counts if it happened during one. A Saturday group night or an afternoon disconnect no longer resets the count.' },
+      { name: '“It was a /quit”', blurb: 'A /quit looks just like a crash to everyone else. Peopleslayer (or an officer) can now mark one as a /quit and it stops counting.' },
+    ],
+    fixes: [
+      'The card counted any day he fought something as a raid, and only read his first 1,000 fights.',
+      'The date of the last crash showed the next day for an evening crash.',
+    ],
+  },
+  {
+    key: 'meter-history-2026-10-04',
+    title: 'Meter history you can trust',
+    version: 'Agent 3.7.78 · Mimic beta',
+    channel: 'beta',
+    date: '2026-10-04',
+    headline: 'The DPS meter’s History now shows the damage people actually did, with pets counted under their owners, and keeps your last 100 fights.',
+    features: [
+      { name: '100 fights, kept for a week', blurb: 'History keeps your last 100 fights instead of 30, and they are still there after you restart Mimic.' },
+      { name: 'Pets under their owners', blurb: 'Pet damage in History counts toward its owner, just like the live meter, and is never counted twice.' },
+    ],
+    fixes: [
+      'History added up threat instead of damage, so a tank’s taunts and resisted spells could put them at the top of a fight.',
+      'A charmed pet whose charm broke before the kill disappeared from the meter, taking its damage with it.',
+      'Zoning in the middle of a fight dropped you from that fight’s History.',
+      'Pets that could not be tied to an owner were pasted into the /rs line as if they were raiders.',
+    ],
+  },
+  {
+    key: 'pop-overlay-round-2026-10-04',
+    title: 'PoP overlay: trials, short steps, text size',
+    version: 'Web 1.8.91 · Mimic beta',
+    channel: 'beta',
+    date: '2026-10-04',
+    headline: 'The PoP overlay is easier to read: each Justice trial has its own section, steps start with one line, and the window stops jumping.',
+    features: [
+      { name: 'Each Justice trial on its own', blurb: 'Lashing, Execution, Stoning, Torture, Hanging and Flame each show their own Tribunal location, what to say, the boss and the Mark.' },
+      { name: 'One line first', blurb: 'The long steps now open with a one-line summary; the full text is one click away under More.' },
+      { name: 'Text size', blurb: 'An Aa button makes the words bigger or smaller without moving the window.' },
+      { name: 'Stays put', blurb: 'The window keeps its height and scrolls, instead of resizing on every step. Drag the bottom edge to set the height, double-click it to fit.' },
+    ],
+    fixes: [
+      'The mouse pointer now shows over the overlay, and clicks on its links and folds no longer fall through to the game.',
+    ],
+  },
+  {
+    key: 'who-levels-2026-10-04',
+    title: 'Levels for /anon guildmates',
+    version: 'Bot 3.1.196 · Agent 3.7.76',
+    channel: 'beta',
+    date: '2026-10-04',
+    headline: 'The /who overlay no longer leaves a blank level next to guildmates who are /anon.',
+    features: [
+      { name: 'Their own level, not an old one', blurb: 'A guildmate running Mimic shows the level their Mimic reports, so it stays right after they level up.' },
+      { name: 'Straight from the raid window', blurb: 'In the beta Mimic, anyone in your raid shows the exact level your raid window has. Group mates do too when they have /pipeverbose on.' },
+      { name: 'Target Info agrees', blurb: 'Targeting one of them shows that level with no “last seen” tag.' },
+    ],
+    fixes: [
+      'An /anon guildmate whose class was known no longer shows a class with no level.',
+    ],
+  },
+  {
+    key: 'buffs-by-group-2026-10-04',
+    title: 'Buffs by raid group',
+    version: 'Bot 3.1.195 · Mimic beta',
+    channel: 'beta',
+    date: '2026-10-04',
+    headline: 'The buff queue now knows which group is short on what, and who in that group can group-cast it.',
+    features: [
+      { name: 'Who in your group can cast it', blurb: 'A group buff only lands on the caster’s own group, so the queue names the caster in that group (“Haste ×4 → your enchanter: Vallon’s Quickening”), or says nobody there can.' },
+      { name: 'By buff or by group', blurb: 'The buff queue overlay in the beta Mimic has a switch: by buff, or one block per raid group with yours first.' },
+      { name: 'Two layouts to try on the website', blurb: 'The buffs page on the beta site has group cards and buff lines to compare.' },
+    ],
+    fixes: [
+      'Group buffs like Marzin’s Mark, Focus of the Seventh, Vallon’s Quickening and Spirit of Bih`Li no longer show as missing.',
+    ],
+  },
+  {
+    key: 'pop-guide-order-2026-10-03',
+    title: 'The PoP guide, step by step in order',
+    version: 'Web 1.8.88',
+    date: '2026-10-03',
+    headline: 'Every PoP guide step now lists what to hail, say and hand in, in the order the NPC needs it.',
+    features: [
+      { name: 'One numbered list per step', blurb: 'Hails, the words to say, hand-ins and what you get back, in order — including lines you say twice, like “continue” to Askr the Lost, and ones you repeat until you get a new answer.' },
+      { name: 'Zone-ins that finish a flag', blurb: 'Where clicking a portal, door or shrine is what actually flags you (the Bastion of Thunder shrine, the Halls of Honor, the Lair of Terris Thule and more), the step ends with it, marked in gold.' },
+      { name: 'Flags where the game sets them', blurb: 'The Justice flag is now the Mavuin hail, and the Bastion of Thunder flag is the shrine click after Askr — ticking Askr alone no longer counts as flagged.' },
+    ],
+    fixes: [
+      'The elemental gods’ items come from the Essence of Fire, Air, Water and Earth, not a Planar Projection.',
+    ],
+  },
+  {
+    key: 'pop-loot-flags-2026-10-03',
+    title: 'Loot counts as PoP flag proof',
+    version: 'Web 1.8.87',
+    date: '2026-10-03',
+    headline: 'If you looted something in a plane, the PoP page counts you as flagged for it.',
+    features: [
+      { name: 'Looted there, flagged there', blurb: 'A character who looted an item inside a plane — or holds a NO DROP item that only drops in one — gets that plane’s flags on the PoP page as a purple ✓.' },
+      { name: 'The checklist ticks itself', blurb: 'The PoP guide ticks those steps for you too, marked “looted there”.' },
+      { name: 'Proof order', blurb: 'Mimic’s flag (green ✓) and a /who sighting (blue ✓) still show first; purple means the loot is the only proof.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'pop-self-flags-2026-10-03',
+    title: 'Tick your own PoP flags',
+    version: 'Web 1.8.86',
+    date: '2026-10-03',
+    headline: 'You can mark your own characters’ Planes of Power flags on the PoP page, no Mimic needed.',
+    features: [
+      { name: 'Tick your own flags', blurb: 'On the PoP page’s Matrix and My Characters, tap a gate on one of your characters to mark it as yours. It shows as a gold ☑ — your word — and counts in the chart and the planner. Tap again to take it back.' },
+      { name: 'One checklist', blurb: 'A tick on the PoP guide counts on the PoP page, and a tick on the PoP page shows on the guide.' },
+      { name: 'Proof still wins', blurb: 'A flag Mimic recorded (green ✓) or a /who sighting proved (blue ✓) shows that proof instead of your tick.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'pop-pages-live-2026-10-03',
+    title: 'The PoP pages and your character lists',
+    version: 'Web 1.8.85',
+    date: '2026-10-03',
+    headline: 'The Planes of Power pages get the words to say for every flag, flags proven by /who, and character lists without your traders and mules.',
+    features: [
+      { name: 'PoP guide', blurb: 'Every flag step now has the exact words to say and the hand-ins, taken from the server’s own quest scripts, with more steps added for the cipher, the Zek notes, Fire and Time.' },
+      { name: 'Flags from /who', blurb: 'If a /who shows you inside a plane, the PoP page counts the flags that plane needs, marked as seen by /who.' },
+      { name: 'Tidier character lists', blurb: 'Traders and characters under 46 step aside on the PoP pages and your character page; characters nobody has a level for fold away; “Show all” brings them back.' },
+      { name: 'Hide from lists', blurb: 'A new switch on your character page hides a character everywhere except your account inventory. Unhide it from the “Hidden by you” section.' },
+    ],
+    fixes: [
+      'The spellbook picker on the PoP page now lists every one of your characters, grouped, so a mule can always get a spellbook uploaded.',
+    ],
+  },
+  {
+    key: 'extra-pop-spells-2026-10-03',
+    title: 'Extra PoP spells, for officers',
+    version: 'Web 1.8.84',
+    date: '2026-10-03',
+    headline: 'Officers get a list of Planes of Power spell scrolls someone is carrying but already knows, with who needs each one.',
+    features: [
+      { name: 'Extra PoP spells [beta]', blurb: 'A trainer reward scroll in your bags whose spell you have already scribed shows up for officers, next to who still needs it in first-dibs order. It works from your inventory and spellbook exports.' },
+    ],
+    fixes: [
+      'On a phone, the PoP page’s “Submit a spellbook” row ran off the screen and made the whole page scroll sideways. It wraps now.',
+      'Uploading a spellbook for an alt said “not your character” when the alt was only linked through your main. It goes through now.',
+    ],
+  },
+  {
+    key: 'new-pages-beta-tag-2026-10-03',
+    title: 'Two new pages, marked [beta]',
+    version: 'Web 1.8.81',
+    date: '2026-10-03',
+    headline: 'New pages now go live straight away with a [beta] tag at the top, so you know they are still being shaped.',
+    features: [
+      { name: 'Zeal tag icons', blurb: 'Every guild’s banner and icon for Zeal tags, the keys to type, and picture files to download. Two layouts to compare: one page, or a page per guild.' },
+      { name: 'Tradeskill recipes', blurb: 'A page for each combine: what goes in, what it goes in, what comes out, and what a failure keeps.' },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'mimic-2-7-7-2026-10-02',
+    title: 'Mimic 2.7.7',
+    version: 'Mimic 2.7.7 · Agent 3.7.71 · Web 1.8.80',
+    date: '2026-10-02',
+    headline: 'Everything from the beta since 2.7.6 reaches every raider, and the website stops saying Planes of Power is locked.',
+    features: [
+      { name: 'Planes of Power', blurb: 'Flags are named the way the flag NPCs and the Seer say them. Target Info keeps mob info on your machine, so PoP zones load at once. The website’s raid guide, spells and AA pages treat PoP as open.' },
+      { name: 'Raid tools', blurb: 'The main assist’s target sits on top of Extended Target. Loot auctions get timers. A new loot call with the same numbers starts new rolls. Two raids at once: each window says whose raid it shows.' },
+      { name: 'HUD and meters', blurb: 'The DPS/Tank Meter splits back-to-back fights. Damage shield shows OFF under Mark of the Plague Lords. Bards get a Boastful Bellow timer. Clicky charges are counted.' },
+      { name: 'Target Info', blurb: 'A targeted player’s known timers show: disciplines, Lay on Hands, Harm Touch, Feign Death.' },
+      { name: 'Triggers', blurb: 'Fifteen more one-click suggestions, four old ones that never fired now do, and a resist alert names the mob. Trigger timing votes can be switched off.' },
+      { name: 'PvP', blurb: 'Every Rallos Zek line is read: deaths to a mob, a death with no worthy foe, fleeing the battlefield, and the newer kill line.' },
+      { name: 'Threat meter', blurb: 'Concussion counts, Jolt has the right values, and zoning clears your hate.' },
+      { name: 'Zeal', blurb: 'Zeal can be installed from the guild’s test build, and updating it no longer piles up copies of unchanged files.' },
+    ],
+    fixes: [
+      'Updating Mimic while EverQuest is running no longer opens the Mimic window over the game: it waits in the tray.',
+      'Buff queue section headers can be clicked with overlays locked.',
+      'Zeal update notices link straight to the place you update it; the feedback form no longer clears itself; an overlay keeps its size after reopening.',
+    ],
+  },
+  {
+    key: 'xanamech-glory-lines-2026-10-02',
+    title: 'Xanamech off the board, every Rallos Zek line read',
+    version: 'Bot 3.1.191 · Web 1.8.78 · Agent 3.7.71 beta',
+    date: '2026-10-02',
+    headline: 'The board drops a boss the server no longer locks, and #pvp catches up with how Rallos Zek announces deaths now.',
+    features: [
+      {
+        name: 'Xanamech off the timer board',
+        blurb: 'Since the October 1 patch Xanamech has no lockout, so his 72-hour timer is gone from the board and the website. A kill of him says "no lockout" in raid chat.',
+      },
+      {
+        name: 'Every Rallos Zek line in #pvp',
+        blurb: 'Deaths to an NPC post again, deaths with no worthy foe and players fleeing the battlefield post too, and the newer worthy-kill line counts as a kill. When the line names a guild, that guild is used.',
+      },
+    ],
+    fixes: [
+      'About 170 Rallos Zek lines since the PoP patch were never read. The beta Mimic reads all of them; run Opt-in Logs after updating to send the missed ones.',
+    ],
+  },
+  {
+    key: 'pop-corpse-dm-2026-10-02',
+    title: 'Corpse DM knows PoP corpses move',
+    version: 'Bot 3.1.190 · Web 1.8.77',
+    date: '2026-10-02',
+    headline: 'Since the October 2 server patch a Planes of Power corpse moves after an hour, and your corpse DM now says when and where.',
+    features: [
+      {
+        name: 'When your corpse moves',
+        blurb: 'Die in a Planes of Power zone and the DM shows the time your corpse will move: to the Plane of Tranquility graveyard from a guild instance, or to that zone\'s graveyard in the open world. In the Plane of Justice it also says a failed trial\'s corpse goes to the Tribunal.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'more-suggested-triggers-2026-10-02',
+    title: 'More suggested triggers',
+    version: 'Bot 3.1.189 · Web 1.8.76 · Agent 3.7.70 beta',
+    date: '2026-10-02',
+    headline: 'Fifteen more one-click triggers in Mimic\'s Triggers tab, and four old ones that never fired now do.',
+    features: [
+      {
+        name: 'Feign Death',
+        blurb: 'An alert when your Feign Death fails, and when a spell breaks it. Another monk failing next to you does not set it off.',
+      },
+      {
+        name: 'Resists that name the mob',
+        blurb: 'A resist now reads "RESISTED: Tashanian — a gnoll warlord". The game never says which mob, so Mimic uses the one you were targeting when you started the cast.',
+      },
+      {
+        name: 'Immunities',
+        blurb: 'Alerts when your target is immune to slow, snare or stun, or cannot be mezzed or charmed, each naming the mob.',
+      },
+      {
+        name: 'Your crowd control wearing off',
+        blurb: 'Your mez wearing off, with the spell\'s name; your slow, root or snare wearing off; your fear wearing off.',
+      },
+      {
+        name: 'Casting and pulling',
+        blurb: 'Out of range, no line of sight, not enough mana, invisibility starting to fade, and being silenced.',
+      },
+    ],
+    fixes: [
+      '"You are snared", "You are mezzed", "You are feared" and "Your cast was interrupted" waited for words the game never prints, so they never went off. They now go off. If you had ticked them, they update by themselves.',
+    ],
+  },
+  {
+    key: 'ds-off-bellow-2026-10-02',
+    title: 'Damage shield off, Boastful Bellow timer',
+    version: 'Bot 3.1.188 · Web 1.8.75 · Agent 3.7.69 beta',
+    date: '2026-10-02',
+    headline: 'The HUD and Tank window show when Mark of the Plague Lords has switched your damage shield off, and bards get a Boastful Bellow timer.',
+    features: [
+      {
+        name: 'Damage shield off',
+        blurb: 'While Mark of the Plague Lords is on you, no shield you wear does anything and every hit a mob lands on you heals it 50. The HUD\'s shield button turns red and reads DS OFF with the time left, and the Tank window names the debuff.',
+      },
+      {
+        name: 'Boastful Bellow timer',
+        blurb: 'Bards with the AA get an 18-second Boastful Bellow cooldown on the HUD once they use it, and can switch on a Boastful Bellow timer bar in the Triggers tab. Another bard\'s bellow on your mob does not start yours.',
+      },
+    ],
+    fixes: [
+      'The HUD showed your normal damage shield number while Mark of the Plague Lords had turned it off.',
+    ],
+  },
+  {
+    key: 'hud-batch-2026-10-02',
+    title: 'Enrage at 10%, auction timers, clicky counters',
+    version: 'Bot 3.1.187 · Web 1.8.74 · Agent 3.7.68 beta',
+    date: '2026-10-02',
+    headline: 'The HUD warns of enrage earlier, shows rampage and low-health raiders, counts your clicky charges, and every loot auction gets its own timer.',
+    features: [
+      {
+        name: 'Enrage at 10%',
+        blurb: 'Mimic says "Enrage soon" as your target reaches 10% (it was 8%, too late to step back), and the red on the HUD goes away once the enrage is over.',
+      },
+      {
+        name: 'Rampage and low-health raiders on the HUD',
+        blurb: 'The rampage target shows as a thin bar beside the tank\'s at the top right; raiders at 25% health or less show at the top left, lowest first.',
+      },
+      {
+        name: 'Clicky counters',
+        blurb: 'The HUD lists your clicky items with the charges left, counting down each time you click one. Mimic reads your Quarmy export or /output inventory, whichever is newer.',
+      },
+      {
+        name: 'Damage shield look',
+        blurb: 'Your damage shield number on the HUD is wrapped in green thorns for a druid shield and glowing lava for a magician\'s.',
+      },
+      {
+        name: 'A timer for every loot auction',
+        blurb: 'Each open auction gets its own timer and a line in the Command Center. A late bid that extends an auction moves its timer too.',
+      },
+      {
+        name: 'The main assist on Extended Target',
+        blurb: 'When raid chat names a main assist, their target goes to the top of Extended Target, marked MA.',
+      },
+      {
+        name: 'Experience tracking starts',
+        blurb: 'Mimic now records each experience gain with where you were, who you were grouped with, what you killed and whether an XP potion was up, so we can compare groups and camps.',
+      },
+      {
+        name: 'DPS/Tank Meter',
+        blurb: 'The DPS HUD has a new name. Its History keeps your last 30 fights, even after a restart, and says whether each one was only on your computer, sent, or has the guild\'s numbers.',
+      },
+    ],
+    fixes: [
+      'Two kills of the same mob back to back showed as one long fight on the DPS/Tank Meter.',
+      'A second pull of the same mob soon after the first was missing from History.',
+    ],
+    channel: 'beta',
+  },
+  {
+    key: 'player-timers-2026-10-02',
+    title: 'Their timers on Target Info',
+    version: 'Bot 3.1.185 · Web 1.8.71 · Agent 3.7.66 beta',
+    date: '2026-10-02',
+    headline: 'Target another player and Target Info shows when their discipline, Mend, Lay on Hands, Harm Touch and Area Taunt are ready.',
+    features: [
+      {
+        name: 'Their timers, while you target them',
+        blurb: 'A row under their health bar: ✓ when a timer is ready, otherwise the time left, with ~ when it is an estimate. The timers come from their own Mimic, and a discipline you watched someone start shows even if they do not run Mimic.',
+      },
+      {
+        name: 'Area Taunt and other AAs',
+        blurb: 'Press an AA before it is ready and Mimic learns exactly when it will be. Add /pipe at to your Area Taunt hotkey and Mimic times every use after that.',
+      },
+      {
+        name: 'Zeal updates, one click away',
+        blurb: 'The Zeal update notice now opens Settings right at the Zeal install button, and the dashboard notice has a button that does the same.',
+      },
+    ],
+    fixes: [
+      'An overlay you sized with its own slider came back at normal size after closing and reopening it (Target Info, Extended Target, CH chain, PoP raids).',
+      'Send feedback on the dashboard lost what you had typed whenever a kill was recorded.',
+    ],
+    channel: 'beta',
+  },
+  {
+    key: 'two-raids-2026-10-02',
+    title: 'Two raids at once',
+    version: 'Bot 3.1.184 · Web 1.8.70 · Agent 3.7.65 beta',
+    date: '2026-10-02',
+    headline: 'When the guild runs two raids at the same time, each one keeps its own raid page, buff queue and target list.',
+    features: [
+      {
+        name: 'One tab per raid',
+        blurb: 'wolfpack.quest/raid says how many raids are running and gives each its own tab, named for its leader. Your tab stays put when the other raid grows.',
+      },
+      {
+        name: 'Your raid’s queue and targets',
+        blurb: 'The buff queue and Extended Target show your own raid, even when the other raid is in the same zone. On the beta Mimic they, the Command Center and the dashboard’s Raid tab also say “⚔ 2 raids at once” and whose raid you are looking at.',
+      },
+    ],
+    fixes: [
+      'Two raids used to merge into one as soon as someone moved from one to the other.',
+      'The raid page now marks the 👑 raid leader and ⭐ group leaders; it never recognised them before.',
+    ],
+  },
+  {
+    key: 'agent-3-7-63-who-zone-2026-10-01',
+    title: 'Agent 3.7.63',
+    version: 'Agent 3.7.63',
+    date: '2026-10-01',
+    headline: 'A plain /who now tells the guild site which zone everyone in it is in.',
+    features: [],
+    fixes: [
+      'A plain /who (the one without “all”) sent its names with no zone, so the site could not tell who was in your zone. Mimic now sends the zone named on the /who’s last line.',
+    ],
+  },
+  {
+    key: 'agent-3-7-61-timing-votes-2026-10-01',
+    title: 'Agent 3.7.61',
+    version: 'Agent 3.7.61 · Mimic 2.7.7 beta',
+    date: '2026-10-01',
+    channel: 'beta',
+    headline: 'You can turn off the timing buttons that show up after a callout.',
+    features: [
+      {
+        name: 'Timing votes, off if you like',
+        blurb: 'Press 🔕 next to « Earlier / ✓ Good! / » Too early, or untick Timing votes on the dashboard’s Triggers tab. The buttons stop showing, and nothing about how you reacted to callouts is sent. Tick it again to help tune the guild’s callouts.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'pop-flags-2026-10-01',
+    title: 'PoP flags that fill in',
+    version: 'Agent 3.7.59 · Bot 3.1.182 · Web 1.8.65',
+    date: '2026-10-01',
+    headline: 'Your Planes of Power flags now land on the PoP page as you earn them, and the gates match Quarm’s.',
+    features: [
+      {
+        name: 'Every flag named',
+        blurb: 'Mimic reads what the flag NPC tells you just before “You have received a character flag!”, so each flag is recorded by name: Mavuin, the Tribunal, the projections, Maelin, all of them.',
+      },
+      {
+        name: 'Ask the Seer',
+        blurb: 'Sit down by Seer Mal Nae`Shi in the Plane of Knowledge and say “guided meditation”. Mimic records every flag she lists for you, including ones you earned before today.',
+      },
+      {
+        name: 'Justice marks',
+        blurb: 'The PoP page shows which trial marks each character holds: Execution, Flame, Hanging, Lashing, Stoning and Torture.',
+      },
+      {
+        name: 'Quarm’s real gates',
+        blurb: 'The chart now uses the server’s own portal rules. Storms needs the Justice flag like Valor, Torment needs both Tranquility thank-yous, and there is no level bypass.',
+      },
+    ],
+    fixes: [
+      'The PoP page showed everyone able to enter the Plane of Storms. It now needs the Justice flag.',
+      'No flag had been recorded since PoP opened. They are now, and Elder Poxbourne’s flag (worded differently) is caught too.',
+      'Target Info’s Quest tab showed Askr the Lost’s hand-ins but not what he says. His whole conversation shows now, and the bag and medallion hand-ins say they give a character flag.',
+    ],
+  },
+  {
+    key: 'agent-3-7-58-local-mode-2026-10-01',
+    title: 'Mimic on your own',
+    version: 'Agent 3.7.58 · Mimic 2.7.7 beta · Web 1.8.64',
+    date: '2026-10-01',
+    channel: 'beta',
+    headline: 'Friends outside the guild can use Mimic just for the overlays, with nothing sent to our server.',
+    features: [
+      {
+        name: 'Local mode',
+        blurb: 'Choose “Run local-only” in setup, or “Stay local-only” on the banner, and Mimic stops asking you to sign in. Your meter, triggers, timers, and charm and pet trackers work from your own log, and nothing about your play leaves your PC.',
+      },
+      {
+        name: 'Spell and item lists come with the installer',
+        blurb: 'Spell timers, buff names and clicky cast times work on a fresh install before you sign in, or without signing in at all.',
+      },
+    ],
+    fixes: [
+      'Buff queue and Extended Target said “loading” forever when you were not signed in. They now say they need sign-in.',
+    ],
+  },
+  {
+    key: 'mimic-zeal-test-build-2026-10-01',
+    title: 'Try the next Zeal early',
+    version: 'Mimic 2.7.7 beta · Web 1.8.63',
+    date: '2026-10-01',
+    channel: 'beta',
+    headline: 'Mimic can install the guild’s Zeal test build, so testers get the new tag marks without building anything.',
+    features: [
+      {
+        name: 'Zeal test build in Settings',
+        blurb: 'Settings → Zeal now lets you pick Official Zeal or the Test build: the current Zeal plus the tag changes we are testing (shapes, pictures, corpses, tags that survive zoning). Mimic offers each new test build as it comes out. Pick Official and install to go back.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'agent-3-7-57-2026-10-01',
+    title: 'Threat for the non-tanks',
+    version: 'Agent 3.7.57 · Mimic 2.7.7 beta · Web 1.8.62',
+    date: '2026-10-01',
+    channel: 'beta',
+    headline: 'The threat meter counts what wizards and evacuations do to your hate, so you can see how close you are to pulling.',
+    features: [
+      {
+        name: 'Concussion on the threat meter',
+        blurb: 'A wizard’s Concussion and Ancient: Greater Concussion now drop their own row by the right amount. A resisted one still counts, because it still lowers your hate; one that fizzles or gets interrupted does not.',
+      },
+      {
+        name: 'Zoning clears your hate',
+        blurb: 'Zoning out or being evacuated takes you and your pet off every mob’s hate list in game, and now on your meter too. Your damage stays on the DPS meter.',
+      },
+    ],
+    fixes: [
+      'Jolt and Cinder Jolt took off the wrong amount of hate on the meter. They now match the spells.',
+      'An enchanter’s Voice of Quellious dropped their own threat meter, though it is a mana buff. It no longer does.',
+      'Updating Zeal from Mimic left a backup copy beside every file it did not change, such as the target rings. It no longer does, and the copies earlier updates left are cleaned up.',
+    ],
+  },
+  {
+    key: 'agent-3-7-56-2026-10-01',
+    title: 'New loot, new rolls',
+    version: 'Agent 3.7.56 · Web 1.8.61',
+    date: '2026-10-01',
+    channel: 'beta',
+    headline: 'A new batch of loot that reuses the same roll numbers now starts fresh rolls under the new item names.',
+    features: [],
+    fixes: [
+      'When a second loot call reused the same roll numbers a few minutes after the first, the Rolls card and the Command Center added the new rolls to the old items and flagged anyone who rolled in both as re-rolling. A new call for a different item now starts its own rolls, and the old ones show as closed.',
+    ],
+  },
+  {
+    key: 'agent-3-7-55-2026-09-30',
+    title: 'Target Info from your own machine',
+    version: 'Agent 3.7.55 · Bot 3.1.179 · Web 1.8.60',
+    date: '2026-09-30',
+    channel: 'beta',
+    headline: 'Target Info keeps mob details on your computer, so a mob in a zone you know shows straight away.',
+    features: [
+      {
+        name: 'Mob details kept on your machine',
+        blurb: 'Every Planes of Power zone is saved ahead of time, and any zone you visit is saved when you arrive. Target Info then shows stats, loot and spells without waiting on the guild server, even after a restart or an update.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'mimic-2-7-6-2026-09-30',
+    title: 'Mimic 2.7.6',
+    version: 'Mimic 2.7.6 · agent 3.7.54 · Web 1.8.59',
+    date: '2026-09-30',
+    headline: 'Planes of Power triggers for every zone, and guild triggers can now hear what raid NPCs say and shout.',
+    features: [
+      {
+        name: 'Planes of Power triggers',
+        blurb: 'Guild triggers for every PoP zone: a bar until each boss spell can land again, an alert when a curse, disease or poison lands on you, callouts for scripted events like trial starts, Coirnav’s minion calls and Quarm’s heads, and boss stat cards (level, resists, CH timing). The triggers themselves arrive without an update.',
+      },
+      {
+        name: 'Triggers hear NPCs',
+        blurb: 'Triggers can react to what raid NPCs say and shout, like the Tribunal starting a trial or a boss calling its adds. What players say, tell or shout still never reaches a trigger. The privacy page lists the exceptions.',
+      },
+      {
+        name: 'Ring of Fire',
+        blurb: 'Acrylia Caverns: a bar to the first wave and to each of the first three bosses (one every 10 waves), a callout when the ring resets, and one when a possessed priest lands a Complete Heal.',
+      },
+    ],
+    fixes: [
+      'An update could be blocked with “active fight in progress” while you were standing still. It no longer is.',
+    ],
+  },
+  {
+    key: 'mimic-2-7-5-2026-09-30',
+    title: 'Mimic 2.7.5',
+    version: 'Mimic 2.7.5 · agent 3.7.52 · Web 1.8.57',
+    date: '2026-09-30',
+    headline: 'Glory-worthy PvP kills are recorded, the Canvas puts every timer where you want it, and Mimic asks before moving overlays when your screens change.',
+    features: [
+      {
+        name: 'Canvas',
+        blurb: 'Turn it on from Overlays. The callouts, the timers and the charm timers each become a panel you drag and size on their own. The ✥ on each panel moves it even while overlays are locked.',
+      },
+      {
+        name: 'A new Overlays page',
+        blurb: 'Your saved layouts as tiles, what is on screen now, an Add drawer of overlays, and every hotkey in one format, with clashes in red.',
+      },
+      {
+        name: 'Screens and Rescue',
+        blurb: 'When a monitor goes away or comes back, Mimic asks before moving anything and can put everything back. Overlays stay on the screen they were on. Rescue brings back only the overlays you cannot reach, and the ✥ right-click menu can move one to your other screen.',
+      },
+      {
+        name: 'Pets and triggers',
+        blurb: 'Pets count under their owner on the damage meter (owners type /pet leader once a night), and the pet’s share shows on the bar. Suggested triggers can be turned on for one character only.',
+      },
+      {
+        name: 'Bards, Target Info, Extended Target',
+        blurb: 'A bard’s charm gets the right length and says “recharm pet” at 4 seconds. The Quest tab warns before a hand-in that makes the person vanish, spawns a mob or costs faction. Same-name mobs on Extended Target each show their own debuffs.',
+      },
+      {
+        name: 'Smaller things',
+        blurb: 'UI Studio moves Zeal’s raid bars and assist bar. The /who overlay has a Zone column. The Command Center’s 📋 copies a deathroll as one chat line.',
+      },
+    ],
+    fixes: [
+      'A PvP kill that earned Rallosian Glory was never recorded. It is now; run Opt-in Logs over any night since September 28 with a Glory kill to get it back.',
+      'An overlay set to XS came back wider after a restart; it now stays XS.',
+      'The slow callout says “Ree slow”, not “Reh slow”.',
+      'A mob you killed stayed on the HUD’s hit totals for 90 seconds; it now leaves after 10.',
+      'The per-character Save layout button now finds your character and says whether it saved.',
+      'Charm callouts no longer cut off other trigger speech, and an update never installs while the Mimic window is open.',
+    ],
+  },
+  {
+    key: 'feedback-38-42-2026-09-30',
+    title: 'Five reports answered',
+    version: 'Bot 3.1.178 · Web 1.8.56 · Mimic beta',
+    date: '2026-09-30',
+    channel: 'beta',
+    headline: 'Extended Target keeps same-name mobs’ debuffs apart, the slow callout says “Ree slow”, and an XS overlay stays XS.',
+    features: [
+      {
+        name: 'Debuffs on the right mob',
+        blurb: 'When two mobs share a name, Extended Target shows each slow or tash on the mob it landed on, going by the mob number the caster’s Mimic saw.',
+      },
+    ],
+    fixes: [
+      'The slow callout said “Reh slow”; it now says “Ree slow”. The words on screen still say reslow.',
+      'A mob you killed stayed on the HUD’s hit totals for 90 seconds; it now leaves after 10.',
+      'An overlay set to XS came back wider the next time Mimic started; it now stays XS.',
+      'Raiders on a boss like Trakanon were getting a PvP assist for the boss kill. The bot no longer counts those, and the old ones are removed.',
+      'A PvP kill that earned Rallosian Glory was never recorded, because Mimic only knew the “no worthy conquest” wording. The beta Mimic now records it; run Opt-in Logs over a night with a Glory kill to get it back.',
+    ],
+  },
+  {
+    key: 'me-recent-characters-2026-09-29',
+    title: 'Web 1.8.54',
+    version: 'Web 1.8.54',
+    date: '2026-09-29',
+    headline: '/me shows the characters you played in the last 3 months first; the rest fold into a “more” section.',
+    features: [
+      {
+        name: 'Recent characters first',
+        blurb: 'Your character cards and the Mimic sync list show only characters with an upload in the last 3 months. Older ones, and ones that never uploaded, sit in a collapsed section you can open.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'pop-planner-mains-alts-2026-09-29',
+    title: 'Web 1.8.50–1.8.53',
+    version: 'Web 1.8.53',
+    date: '2026-09-29',
+    headline: 'The PoP page counts the raid roster: raiders on Mains, raiders and raid alts on All characters.',
+    features: [
+      {
+        name: 'Only the raid roster',
+        blurb: 'Raiders (Pack Leader, Officer, Raid Pack, Recruit) and raid alts, active and level 60 or higher. Traders, inactive characters and other guilds are left out.',
+      },
+      {
+        name: 'Mains, or mains (alts)',
+        blurb: 'On Mains every count is raiders. On All characters the planner shows raiders with raid alts in brackets, ranked by raiders.',
+      },
+    ],
+    fixes: [
+      'The PoP page could only ever read the first 1,000 flag rows, so real flags would never have shown once PoP opened. It now reads them all, and counts the unmapped rows instead of listing other guilds’ characters.',
+      'Opening a PoP page link while signed out lost the rest of the link after sign-in; you now land on the view the link named.',
+    ],
+  },
+  {
+    key: 'pop-guide-essences-2026-09-29',
+    title: 'Web 1.8.49',
+    version: 'Web 1.8.49',
+    date: '2026-09-29',
+    headline: 'The PoP checklist has the Essences of Power quest, from the Nightmare escort to your pick of five rewards.',
+    features: [
+      {
+        name: 'Part one: the Nightmare escort',
+        blurb: 'At night in game, say “Quellious be my guide” by the big tree near the waterfall and keep Aid Eino alive through four waves and The Dreamkeeper. The checklist lists every wave and has the spot to /map. One strand drops, so it is one Tiny Gold Fist per run.',
+      },
+      {
+        name: 'Part two: the four essences',
+        blurb: 'With the Fist, Councilwoman Kerasha gives you a Sacred Bowl. Fill it with the Essence of Fire, Wind, Water and Earth from the four elemental gods, and trade the result for the Jade Hoop of Speed, or hand it back for the coin purse, cord, mace or ring.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'pop-guide-justice-bot-2026-09-29',
+    title: 'Web 1.8.48 · Bot 3.1.176',
+    version: 'Web 1.8.48 · Bot 3.1.176',
+    date: '2026-09-29',
+    headline: 'The PoP checklist’s Justice and Bastion of Thunder steps now match what the server actually does.',
+    features: [
+      {
+        name: 'Bastion of Thunder, step by step',
+        blurb: 'Askr the Lost is three hand-ins: one storm giant head, a bag of three giant parts, and a meld of two medallions from different camps. The checklist lists every word to say to him. Then you click the shrine in the middle of Storms, which needs your Justice flag too.',
+      },
+      {
+        name: 'Agnarr’s tower',
+        blurb: 'The Symbol of Torden is required, one per raid, and the checklist says who drops its parts. A new step covers the two Askr stops inside the tower before you reach Agnarr.',
+      },
+      {
+        name: 'The Seventh Hammer',
+        blurb: 'An optional step: with all six Marks, tell a Tribunal “knowledge” for The Mark of Justice.',
+      },
+    ],
+    fixes: [
+      'Justice: the Tribunal only checks that you carry a Mark. Nobody takes it, and one trial win drops six Marks.',
+      'Justice: the second Tribunal location is inside the Seventh Hammer’s room, so it is gone from the list.',
+      'The “Talisman of Thunderous Foyer” is a flag you get from the Storms shrine, not a keyring item.',
+      'Flags from the Keeper of Sorrows, Mithaniel Marr, Coirnav, Fennin Ro, Xegony, the Arbitor of Earth and the Rathe Council now tick your checklist when Mimic sees them.',
+    ],
+  },
+  {
+    key: 'screens-zeal-bars-2026-09-29',
+    title: 'Mimic 2.7.5 beta',
+    version: 'Mimic 2.7.5 beta',
+    date: '2026-09-29',
+    channel: 'beta',
+    headline: 'Pull a monitor’s plug and your overlays wait for you instead of scattering.',
+    features: [
+      {
+        name: 'Screens changed? Mimic asks',
+        blurb: 'When a monitor goes away or turns, Mimic offers to move the overlays that were on it, each at the same spot. Ones that sat with EverQuest follow EverQuest; ones on your other screen go to another screen you still have. When the monitor comes back, it offers to put everything back where it was.',
+      },
+      {
+        name: 'Overlays on a second monitor stay there',
+        blurb: 'Auto-arrange tidies each screen on its own, so overlays you keep on a second monitor are no longer pulled onto the game. This works whether EverQuest runs full screen or in a window.',
+      },
+      {
+        name: 'Mimic knows where EverQuest is',
+        blurb: 'It now finds the EverQuest window itself, so Auto-arrange and the Timers canvas land on the right screen, even when the game runs in a window.',
+      },
+      {
+        name: 'Zeal’s raid bars and assist bar in UI Studio',
+        blurb: 'Move the /raidbars box and the /assistbar in UI Studio like any other window. Auto-arrange keeps overlays off them.',
+      },
+      {
+        name: 'A Mimic 3.0 alpha, for testers',
+        blurb: 'The new overlay builder gets tried out on an alpha before it reaches the beta. Testers join with the α alpha button at the top of the dashboard, or from the tray, and can leave the same way.',
+      },
+      {
+        name: 'Suggested triggers, per character',
+        blurb: 'The Suggested triggers panel has a “For:” picker. Turn a trigger on for one character and it only fires on that character’s log; turn it off for one and it stays on for the rest.',
+      },
+      {
+        name: 'See how much was the pet',
+        blurb: 'On the DPS HUD, “+pet” and the end of a raider’s bar are orange, so you can see their pet’s share. Click “+pet” for a line with the pet’s name, its damage and its spawn id.',
+      },
+    ],
+    fixes: [
+      'Summoned pets on the DPS meter are named as pets, not raiders. When anyone in the raid saw the pet’s “My leader is …” line, the pet is credited to its owner on every Mimic; otherwise it is marked (pet) and left out of the parse you copy to /rs.',
+      'Changing monitors no longer throws overlays onto your main screen at default spots.',
+      'Rescue only brings back overlays you cannot reach, each to its own spot. It no longer piles every overlay into one corner or rearranges the ones you placed, and it asks before moving overlays from your other screen.',
+    ],
+  },
+  {
+    key: 'timers-canvas-2026-09-29',
+    title: 'Agent 3.7.42',
+    version: 'Agent 3.7.42',
+    date: '2026-09-29',
+    channel: 'beta',
+    headline: 'Put every timer where you want it: the Timers canvas.',
+    features: [
+      {
+        name: 'Timers canvas',
+        blurb: 'Turn it on from the tray or the Overlays page. The callouts, the timers and the charm timers become separate panels you drag anywhere on the screen and size one by one.',
+      },
+      {
+        name: 'Your own timer panels',
+        blurb: 'Add a panel and choose what it shows: charm timers, lulls, your spells on mobs, the server tick, or one debuff by name. Whatever it takes leaves the main timers panel.',
+      },
+      {
+        name: 'Same voice as before',
+        blurb: 'Callouts are still spoken once, exactly as they were. The canvas only changes where you read them.',
+      },
+    ],
+    fixes: [
+      'The Save layout button on the dashboard now says whether it saved, and for which character.',
+    ],
+  },
+  {
+    key: 'quest-bard-charm-2026-09-29',
+    title: 'Agent 3.7.40',
+    version: 'Agent 3.7.40 · Bot 3.1.171',
+    date: '2026-09-29',
+    channel: 'beta',
+    headline: 'Quest tab warns before a hand-in goes wrong, and bard charms get their callouts.',
+    features: [
+      {
+        name: 'Quest tab warnings',
+        blurb: 'Target Info’s Quest tab marks anything that despawns the NPC, spawns a mob, or costs faction. Hand-ins read GIVE and GET, every faction change shows in green or red, and what the NPC says folds away until you open it.',
+      },
+      {
+        name: 'Quarm’s own quests',
+        blurb: 'Hand-ins that only Quarm has now show up, read from its own quest scripts, and ones that may not exist here are marked.',
+      },
+      {
+        name: '“Recharm pet” for bards',
+        blurb: 'The Charm tracker knows you are a bard from the game itself, tracks named mobs you charm, and says “recharm pet” with 4 seconds left.',
+      },
+    ],
+    fixes: [
+      'A clicky cast on your pet, like Spirit of Wolf from a sword, now shows on the pet with a timer.',
+      '“Save layout” no longer sticks on “no active character yet”.',
+      'The REMOVE button on a broken charm is readable, and charm callouts no longer cut off trigger speech.',
+    ],
+  },
+  {
+    key: 'who-zone-2026-09-29',
+    title: 'Agent 3.7.38',
+    version: 'Agent 3.7.38',
+    date: '2026-09-29',
+    channel: 'beta',
+    headline: 'The /who overlay can show which zone each player is in.',
+    features: [
+      {
+        name: 'A Zone column on /who',
+        blurb: 'Press ZONE in the /who overlay’s title bar to show or hide it; Mimic remembers your choice. After a /who all you see where everyone is; after a plain /who, everyone shows your zone. Recently gone players keep the zone they were last seen in.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'mimic-274-2026-09-28',
+    title: 'Mimic 2.7.4',
+    version: 'Mimic 2.7.4 · Agent 3.7.37',
+    date: '2026-09-28',
+    headline: 'UI pack layouts: tick what you want, then press Apply.',
+    features: [
+      {
+        name: 'An Apply button for UI pack layouts',
+        blurb: 'Tick the layouts you want and press Apply; nothing changes until you do, and it tells you how many changes are waiting. Untick all clears the boxes.',
+      },
+    ],
+    fixes: [
+      'If an earlier Mimic had applied a UI pack layout, almost every layout box was greyed out and Bank - Default layout could not be ticked. Only layouts that really change the same window block each other now.',
+    ],
+  },
+  {
+    key: 'seer-sit-2026-09-28',
+    title: 'Web 1.8.36',
+    version: 'Web 1.8.36 · Bot 3.1.167',
+    date: '2026-09-28',
+    headline: 'The Seer only listens while you sit, and the checklist now says so.',
+    features: [],
+    fixes: [
+      'Seer Mal Nae`Shi answers “guided meditation” and “unlock my memories” only while you are sitting. Her lines on the PoP checklist now come with a /sit button first. If she says no recent events spark a memory, you have nothing new to unlock yet.',
+    ],
+  },
+  {
+    key: 'willamina-chain-2026-09-28',
+    title: 'Web 1.8.35',
+    version: 'Web 1.8.35',
+    date: '2026-09-28',
+    headline: 'The PoP checklist shows Willamina’s whole errand chain, starting where you actually start: Agrakath Theric.',
+    features: [
+      {
+        name: 'Start at Agrakath Theric',
+        blurb: 'Willamina’s Needles runs through ten NPCs in the Plane of Knowledge, and all of it hangs on one book lying upstairs in the library. The step now opens at Agrakath, who wants that book, with /say and /map for him and /map to the book.',
+      },
+      {
+        name: 'Every hand-in, in order',
+        blurb: 'Open “Hand-ins” to see who takes what and what they give back, each with /map, from Agrakath back to Willamina. The story of who sends you where is there too, folded away, if you want it.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'mimic-273-2026-09-28',
+    title: 'Mimic 2.7.3',
+    version: 'Mimic 2.7.3 · Agent 3.7.37 · Bot 3.1.168',
+    date: '2026-09-28',
+    headline: 'Target an NPC and see what to say to it, what it wants, who to see next, and what it sells.',
+    features: [
+      {
+        name: 'F/Q/V on Target Info',
+        blurb: 'The Factions tab is now F/Q/V: Faction, Quest and Vendor. Quest lists every word the NPC answers to with a /say button and its reply, the hand-in and its reward, and who to talk to next with a /map button. If the NPC only listens while you sit, it says so and gives you a /sit button. Vendor appears only for merchants and lists what they sell.',
+      },
+      {
+        name: 'UI pack layouts are checkboxes',
+        blurb: 'Custom UI packs start with nothing extra switched on. Tick any mix of the pack’s layouts; two that change the same window can’t both be on, and the box tells you which window. Unticking puts the pack’s own window back, and an update keeps your ticks.',
+      },
+      {
+        name: 'Rallos Zek kills count',
+        blurb: 'The new PvP kill message from the Planes of Power patch is read, so those kills reach #pvp and the kill boards like any other.',
+      },
+      {
+        name: 'Your row on the DPS meter',
+        blurb: 'Your own row always shows, even at zero, and stands out; every row has a thin bar against the top damage.',
+      },
+      {
+        name: 'Buffs and debuffs fade on the mob’s own tick',
+        blurb: 'Spells on a mob now run out on that mob’s tick, not the server’s, so the timers match what you see in game.',
+      },
+      {
+        name: 'Faster charm breaks and timers from the top',
+        blurb: 'A charm break is called the moment the line appears. Trigger countdowns can start at the top of the window: right-click the trigger overlay.',
+      },
+    ],
+    fixes: [
+      'A UI pack update no longer puts the pack’s big all-bags bank back over the normal bank you picked.',
+    ],
+  },
+  {
+    key: 'npc-tells-2026-09-28',
+    title: 'Bot 3.1.165',
+    version: 'Web 1.8.33 · Bot 3.1.165',
+    date: '2026-09-28',
+    headline: 'Quest NPCs no longer arrive as tells.',
+    features: [],
+    fixes: [
+      'Some quest NPCs, like Grand Librarian Maelin in the Plane of Knowledge library, print their lines the way a tell looks. Those lines were sent to you as Discord DMs and listed with your tells. They are not any more, and the ones already stored are gone. Real tells from players are untouched.',
+    ],
+  },
+  {
+    key: 'spells-map-2026-09-28',
+    title: 'Web 1.8.32',
+    version: 'Web 1.8.32',
+    date: '2026-09-28',
+    headline: 'Missing spells: every vendor is a link, with a 📍 that copies where they stand.',
+    features: [
+      {
+        name: 'Click a vendor, see the NPC',
+        blurb: 'On your Missing spells page, every vendor and every mob that drops a spell opens its own page: where it spawns, what it drops, its faction.',
+      },
+      {
+        name: '📍 next to every vendor',
+        blurb: 'Click it to copy /map with the vendor’s location in that zone, then paste it into EQ. Works in the By-level list and the Shopping list.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'pop-checklist-2026-09-28',
+    title: 'Web 1.8.31',
+    version: 'Web 1.8.31',
+    date: '2026-09-28',
+    headline: 'A Planes of Power checklist: every step, who to talk to, where they stand, and what to say.',
+    features: [
+      {
+        name: 'Your PoP checklist',
+        blurb: 'PoP → My checklist. Start here, the Plane of Knowledge quests you can do now, your spells, then every flag tier by tier in the order you need them. Each step says whether it is solo, group or raid work, and whether it is a must-have.',
+      },
+      {
+        name: 'Tick it off per character',
+        blurb: 'Your ticks are saved for each of your characters. Any flag Mimic has already seen you earn ticks itself.',
+      },
+      {
+        name: 'Copy, paste, go',
+        blurb: 'Every NPC you have to reach has a copy button for /map with their location, and everything you have to say has a copy button for /say. Paste it into EQ.',
+      },
+      {
+        name: 'Item cards',
+        blurb: 'Hover any item a step mentions to see its card.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'film-making-of-2026-09-28',
+    title: 'Web 1.8.30',
+    version: 'Web 1.8.30 · Bot 3.1.162',
+    date: '2026-09-28',
+    headline: 'How the Aten Ha Ra film was made, and a gallery on every character page.',
+    features: [
+      {
+        name: 'Find your raider',
+        blurb: 'The top of Stats → Film → “How it was made”: type a name or pick a class, click a raider, and see every picture and animation of them, how the song says their name and when each take sings it.',
+      },
+      {
+        name: 'The whole story',
+        blurb: 'Below that, chapter by chapter: the song and its lyric sheet, the first pictures, the action shots, every animation take, the four-armed queen, the classes, the rough cuts and the outtakes. Open anything to play it, save it, or read the prompt that made it.',
+      },
+      {
+        name: 'A gallery on your character page',
+        blurb: 'Your character’s pictures and clips now sit on their character page, kept for good. The film’s are in there already.',
+      },
+      {
+        name: 'The film page',
+        blurb: 'Both takes of the film, on Stats → Film. They play as soon as the YouTube links are in.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'charm-break-instant-2026-09-27',
+    title: 'Agent 3.7.34',
+    version: 'Agent 3.7.34 · Bot 3.1.161 · Web 1.8.29',
+    date: '2026-09-27',
+    channel: 'beta',
+    headline: 'Charm break is called the instant it happens.',
+    features: [
+      {
+        name: 'Instant charm break',
+        blurb: 'The Charm overlay calls “charm break” the moment the line hits your log, instead of up to a second or two later. Keep the Charm overlay on to hear it.',
+      },
+      {
+        name: 'Timers can start at the top',
+        blurb: 'Right-click the trigger overlay and pick “Timers start at: TOP”. New timers then stack downward from the top instead of rising from the bottom.',
+      },
+      {
+        name: 'Timers end on the mob’s own tick',
+        blurb: 'Once Mimic has learned a mob’s tick, from a DoT ticking on it or a charm break, its timers end on that beat. A ⏱ on the bar shows it.',
+      },
+      {
+        name: 'Feedback gets an answer',
+        blurb: 'Reports sent from Mimic can now be acknowledged by an officer in Discord, and you get a DM when one is.',
+      },
+    ],
+    fixes: [
+      'A report sent from Mimic could show up twice in the feedback channel.',
+    ],
+  },
+  {
+    key: 'mimic-2-7-2-2026-09-27',
+    title: 'Mimic 2.7.2',
+    version: 'Mimic 2.7.2 · Agent 3.7.31 · Bot 3.1.158 · Web 1.8.28',
+    date: '2026-09-27',
+    headline: 'Stable: PvP credit for guildmates, the Tick overlay, timer bars, the /who window, screenshots in feedback.',
+    features: [
+      {
+        name: 'For Sunday night',
+        blurb: 'Mimic has a small surprise ready for the last scheduled Vex Thal raid. You will know it when it happens.',
+      },
+      {
+        name: 'PvP assists for guildmates who don’t run Mimic',
+        blurb: 'If anyone running Mimic sees a guildmate hit, slow, snare, root, mez or DoT a player who then dies to someone else, that guildmate gets the assist. Four minutes, not two. Re-run a log in Opt-in Logs and past nights count too; #pvp gets one note per parse, never a flood.',
+      },
+      {
+        name: 'Tick overlay',
+        blurb: 'The server tick in its own window, one countdown per character, plus your charmed mob’s own tick. Bars or dials. It replaces Zeal health, which sits one click down along with how far your PC’s clock is off.',
+      },
+      {
+        name: 'Timer bars in the trigger window',
+        blurb: 'Recharm tick, Pacify/Calm, your own spells on mobs, the Server tick — EQLogParser style. Triggers → Suggested → Timer bars.',
+      },
+      {
+        name: '/who window, feedback screenshots, Settings drafts',
+        blurb: 'The /who window keeps its size, scrolls, filters by class or guild and sorts. Feedback takes 📸 or pasted pictures. Settings keeps a draft and asks before closing unsaved. A ⤴ beta button next to Check for update; ⏻ Quit on the dashboard.',
+      },
+      {
+        name: 'On the site',
+        blurb: '/pvp gets a Day window and a “Following Discord now” list of who is PvP-flagged. The beta fight pages show fight sizes: Zek v allies, by guild.',
+      },
+    ],
+    fixes: [
+      'Right-clicking the tray icon sometimes did nothing; ending Mimic from Task Manager could wipe your settings.',
+      '“Rampage on you” never fired; unticked triggers still fired; trigger alerts spoke late.',
+      'A mid-fight stall at the end of a fight; the mob-tick countdown stuck on the Charm window.',
+    ],
+  },
+  {
+    key: 'tick-overlay-2026-09-27',
+    title: 'Agent 3.7.31',
+    version: 'Agent 3.7.31 · Web 1.8.25',
+    date: '2026-09-27',
+    channel: 'beta',
+    headline: 'The server tick gets its own window.',
+    features: [
+      {
+        name: 'Tick overlay',
+        blurb: 'The HUD’s server tick as a window you can put anywhere: one countdown per character on Zeal, plus your charmed mob’s own tick while you have a charm.',
+      },
+      {
+        name: 'Bars or dials',
+        blurb: 'Two looks to try on beta. Switch with the ◯ / ▭ button and tell us which one stays.',
+      },
+      {
+        name: 'Zeal health and your clock, one click down',
+        blurb: 'It replaces the Zeal health window. Click the 📡 line for the full Zeal check and how far your PC’s clock is off.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'pvp-guildmate-assists-2026-09-27',
+    title: 'Agent 3.7.30',
+    version: 'Agent 3.7.30 · Bot 3.1.156 · Web 1.8.24',
+    date: '2026-09-27',
+    channel: 'beta',
+    headline: 'PvP assists count for guildmates who don’t run Mimic.',
+    features: [
+      {
+        name: 'Assists for everyone we see',
+        blurb: 'If anyone running Mimic sees a guildmate hit a player who then dies to someone else, that guildmate gets the assist. Before, only your own Mimic could give you one.',
+      },
+      {
+        name: 'Debuffs count',
+        blurb: 'A slow, snare, root, mez or DoT that lands on them counts too. Mimic works out who cast it from when each player started casting.',
+      },
+      {
+        name: 'Four minutes, not two',
+        blurb: 'Your hit or debuff counts if they die within 4 minutes of it.',
+      },
+      {
+        name: 'Old nights too',
+        blurb: 'Re-run a log in Opt-in Logs and past PvP nights get the same credit.',
+      },
+      {
+        name: 'One note per log, not a flood',
+        blurb: 'When your Opt-in Logs parse finishes, #pvp gets a single note: how many new kills and assists it found, totalled for each guildmate. Old kills never post one by one.',
+      },
+    ],
+    fixes: [
+      'The same assist seen by several raiders is counted once, and posts once.',
+      'A kill replayed from an old log no longer counts twice when another raider already recorded it.',
+    ],
+  },
+  {
+    key: 'coleader-batch-2026-09-26',
+    title: 'Mimic 2.7.2-beta',
+    version: 'Mimic 2.7.2-beta · Agent 3.7.28 · Web 1.8.22',
+    date: '2026-09-26',
+    channel: 'beta',
+    headline: 'The tray menu always opens, settings survive a force-close, and alerts speak sooner.',
+    features: [
+      {
+        name: 'A /who window you can size',
+        blurb: 'It keeps the height you give it and the list scrolls. Filter by class or guild like EQ’s tracking window, and sort by name, class, level or guild.',
+      },
+      {
+        name: 'Screenshots in feedback',
+        blurb: '📸 photographs your screen with EQ and your overlays, or paste a picture with Ctrl+V. You see each one before it sends.',
+      },
+      {
+        name: 'Two ticks on the Charm window',
+        blurb: 'The server tick and your charmed mob’s own tick, side by side. The mob’s is learned from a DoT ticking on it or a charm break.',
+      },
+      {
+        name: 'Server tick as a timer bar',
+        blurb: 'The HUD’s 6-second server tick as its own bar in the trigger window: Triggers, Suggested, Timer bars.',
+      },
+      {
+        name: 'Settings keeps a draft',
+        blurb: 'What you change is kept as you go. Close without saving and it asks first; open it later and your changes come back.',
+      },
+      {
+        name: 'Join the beta from the dashboard',
+        blurb: 'A ⤴ beta button next to Check for update, no tray menu needed. Mimic asks first, and ↩ stable takes you back any time.',
+      },
+    ],
+    fixes: [
+      'Right-clicking the tray icon sometimes did nothing. It opens every time now, and the dashboard has a ⏻ Quit button too.',
+      'Ending Mimic from Task Manager could wipe all your settings. They survive now.',
+      'Trigger alerts, like “Your charm broke”, speak much sooner after the line hits your log.',
+    ],
+  },
+  {
+    key: 'feedback-screenshots-2026-09-26',
+    title: 'Bot 3.1.154',
+    version: 'Bot 3.1.154 · Web 1.8.20',
+    date: '2026-09-26',
+    headline: 'Feedback and suggestions take screenshots.',
+    features: [
+      {
+        name: 'Show us, don’t just tell us',
+        blurb: 'The feedback form and the roadmap’s “submit here” boxes take up to three screenshots: press 📷 or paste one with Ctrl+V. You need to be signed in. The officers see them in their inbox and in Discord.',
+      },
+      {
+        name: 'Discord /feedback keeps its picture',
+        blurb: 'A screenshot attached to /feedback in Discord is saved for good now. Before, its link stopped working after a while.',
+      },
+    ],
+    fixes: [
+      'Feedback sent from Mimic no longer shows up twice in the feedback thread.',
+    ],
+  },
+  {
+    key: 'timer-bars-2026-09-26',
+    title: 'Agent 3.7.24',
+    version: 'Mimic 2.7.2-beta · Agent 3.7.24 · Web 1.8.19',
+    date: '2026-09-26',
+    channel: 'beta',
+    headline: 'Timer bars like EQLogParser’s, right in the trigger alert window.',
+    features: [
+      {
+        name: 'Recharm tick',
+        blurb: 'A countdown to your charmed pet’s next break check, every 6 seconds, pinned at the bottom of the trigger window.',
+      },
+      {
+        name: 'Lull and spell timers',
+        blurb: 'Pacify, Calm and Harmony timers on the mobs you lulled. Optionally, a bar for every spell you land on a mob that lasts 30 seconds or more: Tash, slows, mez and the rest. Only your own casts.',
+      },
+      {
+        name: 'Turn them on',
+        blurb: 'Dashboard → Triggers → Suggested → Timer bars. Each one is a single tick box.',
+      },
+      {
+        name: 'Charm break, instantly',
+        blurb: 'A new Suggested alert, "Your charm broke", speaks the moment it happens, with no Charm window needed.',
+      },
+    ],
+    fixes: [
+      '"Rampage on you" never fired. It does now.',
+      'A personal trigger you untick or park now stays quiet.',
+      'Personal triggers that name your character now fire after Mimic restarts.',
+      'Saving your trigger list no longer strips the warnings from imported EQLogParser triggers.',
+      'Deleting a Suggested alert from your personal list no longer leaves it stuck on.',
+      'The Charm window’s "next mob tick" countdown counts down again.',
+    ],
+  },
+  {
+    key: 'dirge-nuke-2026-09-26',
+    title: 'Agent 3.7.22',
+    version: 'Mimic 2.7.2-beta · Agent 3.7.22 · Web 1.8.18',
+    date: '2026-09-26',
+    channel: 'beta',
+    headline: 'Bards get the DIRGE TACTICAL NUKE board on the Melody overlay.',
+    features: [
+      {
+        name: 'Get set, in order',
+        blurb: 'Flip the DIRGE switch on Melody and six steps check off as you sing them: Harmonize, Selo’s, Guardian Rhythms, Psalm of Mystic Shielding, Niv’s (Breath of Harmony) and Amplification last. When they are all checked, the control board slides out and the cover over the key flips up.',
+      },
+      {
+        name: 'Turn the key, one button per Dirge',
+        blurb: 'Pop Puretone Discipline and the key turns, revealing a numbered button for every Dirge your mana holds, 800 each. Each one fills while you sing it and goes dark when its mana is spent. The count sits by the switch, and a DISC key in the corner shows when Puretone is up. Watch it run at wolfpack.quest/mimic/dirge.',
+      },
+    ],
+    fixes: [
+      'The Melody overlay no longer freezes for a moment between songs.',
+    ],
+  },
+  {
+    key: 'overlay-background-2026-09-26',
+    title: 'Mimic 2.7.2-beta',
+    version: 'Mimic 2.7.2-beta · Web 1.8.14',
+    date: '2026-09-26',
+    channel: 'beta',
+    headline: 'The Background button on your overlays works again, and Melody is easier to read over bright ground.',
+    features: [
+      {
+        name: 'Melody, readable on grass',
+        blurb: 'The Amplification, Resonance, Selo’s, Niv’s and Nature’s Melody lines have a dark edge and a lighter colour, so they stand out over bright zones.',
+      },
+    ],
+    fixes: [
+      'Turning an overlay’s Background on now puts a dark plate behind it. Before, it only changed the tint and stayed see-through.',
+    ],
+  },
+  {
+    key: 'corpse-dm-2026-09-26',
+    title: 'Bot 3.1.151 · Agent 3.7.21',
+    version: 'Bot 3.1.151 · Mimic 2.7.2-beta · Agent 3.7.21 · Web 1.8.13',
+    date: '2026-09-26',
+    channel: 'beta',
+    headline: 'Die, and Discord tells you where your corpse is.',
+    features: [
+      {
+        name: 'Your corpse, by DM',
+        blurb: 'When your character dies, Mimic sends you a Discord DM: the zone, the time, and your corpse’s location in the numbers /loc shows. It waits until the death is real, so a feign never sends one.',
+      },
+      {
+        name: 'Only yours, never a flood',
+        blurb: 'It comes from your own Mimic and only for your own characters, and at most six an hour. Beta Mimic first.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'who-target-2026-09-26',
+    title: 'Agent 3.7.19 – 3.7.20',
+    version: 'Mimic 2.7.2-beta · Agent 3.7.20 · Web 1.8.12',
+    date: '2026-09-26',
+    channel: 'beta',
+    headline: 'Click a player and they go to the top of the /who overlay, with their guild under their name. And a Zek only mode.',
+    features: [
+      {
+        name: 'Zek only',
+        blurb: 'A ZEK button on the /who overlay shows just the Zek players in your /who, and how many out of the total. Click it again for everyone. It remembers your choice.',
+      },
+      {
+        name: 'Who is that?',
+        blurb: 'Target any player and the /who overlay puts them on top: name, class and level, and their guild on the line underneath. Handy in a raid shared with other guilds.',
+      },
+      {
+        name: 'Even when they are /anon',
+        blurb: 'If their /who hides it, the guild and class come from the last time anyone saw them, shown in italics so you know it is history. It works before you have run a /who at all.',
+      },
+    ],
+    fixes: [
+      'A player showing <Zek> in /who is now flagged ZEK like an /anon one, not only when they hide it.',
+    ],
+  },
+  {
+    key: 'hud-tracking-2026-09-26',
+    title: 'Agent 3.7.18',
+    version: 'Mimic 2.7.2-beta · Agent 3.7.18 · Web 1.8.9',
+    date: '2026-09-26',
+    channel: 'beta',
+    headline: 'Tracking on the HUD: eight arrows round the ring, and the one toward the mob you are tracking lights up.',
+    features: [
+      {
+        name: 'Tracking arrows',
+        blurb: 'Rangers, druids and bards tracking a mob see the game’s own direction on the HUD: straight ahead, ahead and to the left or right, to the side, behind and to the side, or behind you. The matching arrow lights gold. A member’s idea.',
+      },
+      {
+        name: 'Your choice in the builder',
+        blurb: 'The HUD’s ⚙ builder has a new Tracking section: show all eight arrows with the lit one bright, or only the lit one, and make them bigger or smaller.',
+      },
+      {
+        name: 'Old directions dim',
+        blurb: 'The game only says a new direction when it changes, so one it hasn’t repeated for 15 seconds dims: you may have turned since. Losing the track or changing zone clears it.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'web-1.8.8-2026-09-25',
+    title: 'Web 1.8.8',
+    version: 'Web 1.8.8',
+    date: '2026-09-25',
+    headline: 'Your quests and your inventory are shared separately now, and the quest page knows every zone that needs a key.',
+    features: [
+      {
+        name: 'Two sharing switches',
+        blurb: 'On /me, "Quest page" and "Inventory page" are separate. If your quest page is public but your inventory is not, members see your quest progress, keys and completed quests, but not your inventory lists.',
+      },
+      {
+        name: 'Keys worked out from your loot',
+        blurb: 'The quest page knows all five zones that need a key at the door (Veeshan’s Peak, Sleeper’s Tomb, Howling Stones, Sebilis and Vex Thal) and works out which keys you have from NO DROP loot that only drops inside.',
+      },
+    ],
+    fixes: [
+      'The old "Quests: public" switch also made your inventory and spellbook public. Characters that had it on keep their quest page public, and their inventory page is now private. Turn it back on from /me if you want it shared.',
+      'Items that are also quest rewards somewhere else no longer count as proof of a key.',
+    ],
+  },
+  {
+    key: 'web-1.8.6-2026-09-25',
+    title: 'Web 1.8.6',
+    version: 'Web 1.8.6',
+    date: '2026-09-25',
+    headline: 'The privacy page, rewritten: what Mimic, the bot and the website really collect, who can see it, and how long we keep it — including what we are still fixing.',
+    features: [
+      {
+        name: 'Checked against the code',
+        blurb: 'Every line was checked against what the software actually does today. It covers what Mimic reads and changes on your PC, what it sends by default and what only when you turn it on, and what other raiders’ Mimic records about you.',
+      },
+      {
+        name: 'What your switches really do',
+        blurb: 'Each opt-out on /me and in Mimic now shows what it does and what it doesn’t, how long each kind of data is kept, and every outside service that handles it.',
+      },
+    ],
+    fixes: [
+      'The old page said tells were never uploaded, that nothing was sent unless you opted in, and that your position was only sent during raids. None of that was accurate, and the new page says what really happens.',
+      'The Linux download link (wolfpack.quest/mimic/linux, and the Linux button on /start) sent you to the general releases page instead of the Linux build. It finds the Linux build again.',
+    ],
+  },
+  {
+    key: 'mimic-2.7.1-2026-09-24',
+    title: 'Mimic 2.7.1 · Agent 3.7.16',
+    version: 'Mimic 2.7.1 · Agent 3.7.16 · Web 1.8.3',
+    date: '2026-09-24',
+    headline: 'The HUD: your own character in a ring round the middle of your screen — plus mini mode, colour-blind themes and a hotkey for every overlay.',
+    features: [
+      {
+        name: 'The HUD',
+        blurb: 'A ring round your character: health, mana or endurance, the server tick and your swing timer, your cooldowns, and your target — its name on its health bar, who it is hitting, its level, class, resists and whether it is slowed. Your hits and the hits on you run up either side, a round at a time, older rounds folding into the fight total; procs show in purple. Pick what it shows with ⚙, saved per character. Prefer a panel? Pick Box. It also pops up by itself when you are blinded.',
+      },
+      {
+        name: 'Mini mode',
+        blurb: 'Nine overlays now have the small version the guild voted for — Tank, Target Info, CH chain, Charm, Extended Target, Pet, the DPS meter, PoP raids and the Buff queue. Right-click an overlay, use the Mini column on the Overlays page, or press Ctrl+Shift+M for all of them; 📌 keeps one small when the rest come back.',
+      },
+      {
+        name: 'Colour-blind themes',
+        blurb: 'Deuteranopia, Protanopia and Tritanopia, on the Overlays page under Theme. Each keeps danger, healthy and warning colours easy to tell apart for that kind of colour vision.',
+      },
+      {
+        name: 'A hotkey for every overlay',
+        blurb: 'Give any overlay its own show/hide key on the Overlays page. If the key is already taken — by Mimic or by another program — it now says so.',
+      },
+      {
+        name: 'Target Info knows more',
+        blurb: 'A Shadow Knight mob shows whether it still has its Harm Touch, and how long until it is back. A player target shows their class and level from /who. Mob mana counts the drains that land on it, and a PvP target keeps a tally of what you drained.',
+      },
+      {
+        name: 'Opacity that fades the whole overlay',
+        blurb: 'The opacity slider now fades everything an overlay shows; its background has its own slider beside the backgrounds button. The Overlays page is in two columns with the list in A–Z order.',
+      },
+      {
+        name: 'Also',
+        blurb: 'DPS History lists your recent fights to pick from; a finished deathroll is one line in Rolls and the Command Center.',
+      },
+    ],
+    fixes: [
+      'Setting a hotkey that another program or Mimic already used did nothing at all.',
+      'The opacity slider in an overlay’s setup bar only changed the background, so on some overlays it seemed to do nothing.',
+      'Mini mode did nothing — the small versions had never been built.',
+      'The L size cut off the edge of the DPS window; it is now 420 px wide.',
+    ],
+  },
+  {
+    key: 'pqdi-links-2026-09-24',
+    title: 'Web 1.8.2',
+    version: 'Web 1.8.2',
+    date: '2026-09-24',
+    headline: 'PQDI links from your inventory open again.',
+    features: [],
+    fixes: [
+      'Item names on the inventory pages, and the PQDI link in the item hover card, pointed at an address PQDI does not answer on, so they never loaded. They now open the item on PQDI.',
+      'An item we have no details for used to offer a PQDI search link that led nowhere. It now searches our own database by name.',
+    ],
+  },
+  {
+    key: 'deathrolls-2026-09-24',
+    title: 'Bot 3.1.143 · Web 1.8.1',
+    version: 'Bot 3.1.143 · Web 1.8.1 · Mimic 2.7.1-beta',
+    date: '2026-09-24',
+    headline: 'Deathrolls are tracked: who lost, who won, and a post in #wlfpck-general when someone hits 0.',
+    features: [
+      {
+        name: 'Deathrolls',
+        blurb: 'Roll /random N, the next player rolls /random whatever you got, and the first to hit 0 loses. The bot now spots a finished game on its own and posts it: “Aldenmar lost a deathroll to Brackwyn — 32,000 → 0 in 11 rolls.” Anyone running Mimic nearby is enough.',
+      },
+      {
+        name: 'A Deathrolls card on the Fun page',
+        blurb: 'Games played, the latest result, everyone’s wins and losses, and the records: the biggest starting range and the longest game.',
+      },
+      {
+        name: 'One line per game in Mimic (beta)',
+        blurb: 'The Rolls card and the Command Center show a deathroll as a single line instead of a dozen separate rolls — with whose turn it is while it’s going. Click it to see every roll.',
+      },
+    ],
+    fixes: [
+      'Extended Target no longer stacks a tag for every mob you already killed. During a trash clear it showed six “▲ KILL” chips for one live mob; each different tag now shows once.',
+      'When your Zeal knows which mob you are targeting, that mob’s tag now sits on its own row in Extended Target instead of in the list underneath.',
+    ],
+  },
+  {
+    key: 'mimic-2-7-0-stable-2026-09-23',
+    title: 'Mimic 2.7.0',
+    version: 'Mimic 2.7.0 · Agent 3.7.0 · Web 1.8.0',
+    date: '2026-09-23',
+    headline: 'Ten days of beta go stable: Target Info names what a mob just cast, callouts say who they are about, and Mute finally just mutes.',
+    features: [
+      {
+        name: 'Target Info: what did it just cast?',
+        blurb: 'EverQuest never names a mob’s spell. Target Info now works it out from the message the spell prints when it lands — on you or on anyone else — and names it. A new Factions tab shows what killing the mob does to your standing before you pull, and mobs with mana get an estimated mana bar (the ⚡ button turns it on and off).',
+      },
+      {
+        name: 'Callouts that say who they are about',
+        blurb: 'Slow callouts name the mob, with its spawn number when your Zeal target confirms it. Callouts about your own character always say “You”, even when another raider relayed them.',
+      },
+      {
+        name: 'Mute mutes, and nothing else',
+        blurb: 'Mute and Quiet mode silence the voices but leave trigger alerts on screen, and Quiet mode from the tray now silences the CH chain and charm voices too. “No overlays” is in the tray, and the tray’s overlay list is in A–Z order.',
+      },
+      {
+        name: 'Extended Target minds your group',
+        blurb: 'Outside a raid it shows only your own group’s mobs and hurt players, not every group in the zone. In a raid it is raid-wide, as before.',
+      },
+      {
+        name: 'Settings and the dashboard have more room',
+        blurb: 'Settings spreads into columns when maximized, and its Save button floats in the corner only when something changed. On the dashboard, Reload and mail moved up beside the Settings gear, and Tour and Feedback sit at the bottom of the left menu.',
+      },
+      {
+        name: 'Warnings that point at the real problem',
+        blurb: 'The Logsync tab warns when your EverQuest log has grown huge and walks you through archiving it. The setup checklist says “EverQuest isn’t running” first instead of sending you off to fix things that aren’t broken. If a crash was a graphics driver reset, the crash review tells you where to get dgVoodoo2 and which two files to copy.',
+      },
+    ],
+    fixes: [
+      'Enrage callouts had gone silent, and the suggested “Mob is enraged” trigger could never fire. Both work now.',
+      'The Tank overlay was missing most damage shield returns. It now counts them all.',
+      'Two different mobs with the same name no longer merge in Target Info — “a Shissar acolyte” (Warrior) and “A Shissar Acolyte” (Wizard) each show as themselves, and Plane of Hate’s revenants show both classes.',
+      'Target Info’s “last cast” sticks to the mob you are looking at and clears itself, and HP and mana show a tenth (4.7k, not 5k).',
+      'One mob could appear on Extended Target as several rows, and its title bar crushed into the buttons. Both fixed.',
+      'Bankers and merchants no longer send their greetings to your Discord tells, and tells on the dashboard read from whoever spoke.',
+      'The Buffs tab no longer calls a buff “permanent” just because the game sent no timer — Eye of Zomm lasts about 30 seconds.',
+    ],
+  },
+  {
+    key: 'callouts-and-overlays-2026-09-23',
+    title: 'Agent 3.6.55 · Bot 3.1.139',
+    version: 'Mimic 2.6.9-beta · Agent 3.6.55 · Bot 3.1.139 · Web 1.7.47',
+    date: '2026-09-23',
+    channel: 'beta',
+    headline: 'Callouts that say what they mean: enrage speaks again, slows name their mob, and Mute no longer hides your alerts.',
+    features: [
+      {
+        name: 'Slow callouts name the mob',
+        blurb: '“Slowed A Plagued Soriz #4745 — Turgur’s Insects” instead of just the spell. The number is the mob’s spawn id, shown only when your Zeal target confirms it. Fading and dropped slows name the mob the same way.',
+      },
+      {
+        name: 'Extended Target minds your group outside a raid',
+        blurb: 'Two groups working the same zone no longer see each other’s mobs and hurt players. In a raid it is raid-wide, exactly as before.',
+      },
+      {
+        name: '“No overlays” in the tray',
+        blurb: 'The same switch as “Don’t show any overlays” in Settings, one click away. The tray’s Overlays list is now in alphabetical order too.',
+      },
+      {
+        name: 'Settings spreads into columns when maximized',
+        blurb: 'A maximized Settings window lays its sections side by side instead of one long scroll. A section is never split between two columns.',
+      },
+    ],
+    fixes: [
+      'Enrage callouts had gone silent: the raid callout filter never had enrage on its list. They speak again.',
+      'The Tank overlay was missing most damage shield returns and could show a single hit for a whole fight. It now counts them all.',
+      'Mute hid trigger alerts instead of just silencing them. Alerts now stay on screen while muted. Quiet mode from the tray also silences the CH chain and charm voices now — before, those only went quiet after saving Settings.',
+      'One mob could show on Extended Target as several rows (“#1/3, #2/3, #3/3”) when the raiders’ Zeal all agreed it was one mob. Now it is one row.',
+      'Extended Target’s title bar no longer crushes the title into the buttons; the off-tank count sits under the online count.',
+      'Slow and Divine Intervention callouts no longer fire twice. And switching off a guild trigger now takes effect for everyone within two minutes — before, it kept firing until Mimic restarted.',
+      'The suggested “Mob is enraged” trigger now matches what the game prints. It could never fire before.',
+    ],
+  },
+  {
+    key: 'faction-recency-window-2026-09-22',
+    title: 'Faction page: what you have been working on lately',
+    version: 'Web 1.7.46 · Bot 3.1.131',
+    date: '2026-09-22',
+    headline: 'Filter your faction page down to what you have actually hit recently.',
+    features: [
+      {
+        name: 'Last hit within 7 / 30 / 90 days',
+        blurb: 'Your faction page lists everything you have ever touched, which buries the handful you are actually grinding. Pick a window and it shows only the factions hit in that time. “Any time” is still the default, so nothing changes unless you ask it to.',
+      },
+      {
+        name: 'We now keep each faction hit, not just the running total',
+        blurb: 'Until today only the totals were stored — 3,891 hits was a single number with no dates behind it. Every hit is now recorded as it happens, so a future version can show what a week actually moved. It only knows about hits from today onward, but re-importing your old logs fills in the history.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'target-info-factions-and-mana-2026-09-22',
+    title: 'Target Info: factions, and what that mob just cast',
+    version: 'Mimic 2.6.9-beta \u00b7 Agent 3.6.50 \u00b7 Bot 3.1.130',
+    date: '2026-09-22',
+    channel: 'beta',
+    headline: 'Target Info now names the spell a mob just cast, and shows what killing it does to your faction.',
+    features: [
+      {
+        name: 'What did it just cast?',
+        blurb: 'EverQuest never tells you \u2014 a mob\u2019s cast shows up as \u201cbegins to cast a spell\u201d and nothing more. Target Info now works it out from the message the spell prints when it lands, and names it. If several of that mob\u2019s spells print the same message, it says so with a question mark rather than guessing at you.',
+      },
+      {
+        name: 'Factions tab',
+        blurb: 'What killing this mob does to your standing, before you pull it. Kill the Royal Scribe in Icewell and you are down 50 with the Dain and the Coldain, and up 25 with King Tormax.',
+      },
+      {
+        name: 'A mana bar for mobs',
+        blurb: 'For mobs that have a mana pool, an estimate of what is left \u2014 full when you engage, less every time we can name something it cast. It is a floor, not a readout: a resisted or interrupted cast still costs it mana and says nothing. The \u26a1 button turns the bar on and off.',
+      },
+    ],
+    fixes: [
+      'The mob mana bar had never actually appeared \u2014 it was waiting on a number the server was not sending.',
+    ],
+  },
+  {
+    key: 'web-1-7-44-nav-and-times-2026-09-21',
+    title: 'Web 1.7.44',
+    version: 'Web 1.7.44',
+    date: '2026-09-21',
+    headline: 'The top menus open again, and the death times line up.',
+    features: [],
+    fixes: [
+      'The Raid, Stats and Prep menus at the top of the site did nothing on a full-width window — the button lit up and the arrow turned, but no menu appeared. It was being cut off by the bar above it. They open normally again; the narrow-window Menu button was never affected.',
+      'On a raid night review, times after 10pm wrapped onto a second line and knocked the list of deaths out of alignment. The column is wider now.',
+      'The officer agents page listed only beta builds when betas had been coming fast, hiding the current stable release. It now always shows the last two stable releases as well.',
+    ],
+  },
+  {
+    key: 'mimic-2-6-8-stable-2026-09-13',
+    title: 'Mimic 2.6.8',
+    version: 'Mimic 2.6.8 \u00b7 Agent 3.6.42',
+    date: '2026-09-13',
+    headline: 'Old logs from anywhere on your PC, an honest damage-shield card, and quiet mode split in two.',
+    features: [
+      {
+        name: 'Import old logs',
+        blurb: 'Keep log backups on another drive or from a previous PC? Add the folder or the files from the Dashboard\u2019s Setup card, or drop them on the Logsync tab, and backfill your history from them. Read once, never tailed. First-run setup asks about them too.',
+      },
+      {
+        name: 'Setup buttons up top',
+        blurb: 'Set up for me, the Windows Defender exclusion, Zeal install and the clock fix now sit at the top of the Setup card, with the two new import buttons beside them.',
+      },
+      {
+        name: 'Mute Mimic, or hide everything',
+        blurb: 'Quiet mode now means mute: no voice, no sounds, overlays stay. A separate switch hides every overlay for people who display with another parser.',
+      },
+      {
+        name: 'A spot for who your target is on',
+        blurb: 'Once the next Zeal carries it, Extended Target shows who each mob is on straight from the game.',
+      },
+    ],
+    fixes: [
+      'The Tank overlay\u2019s damage-shield card counted other people\u2019s procs as your shield. It now counts only hits the log names as a shield, or that your known DS buffs vouch for.',
+      'UI Studio: resizing a window now sticks. The Zeal item windows that kept coming back huge stay at the size you set.',
+      'Logsync lists logs from every EverQuest folder you have added, not just the first.',
+    ],
+  },
+  {
+    key: 'bot-3-1-125-relay-scope-2026-09-11',
+    title: 'Bot 3.1.125',
+    version: 'Bot 3.1.125',
+    date: '2026-09-11',
+    headline: 'Guild callouts stop leaking between zones, for real this time.',
+    features: [],
+    fixes: [
+      '\u201cShaman Slow\u201d and the other guild-wide callouts were meant to reach you only during a raid or from the zone you are in. The check had a hole and never stopped anything, so a slow landed in Ssraeshza could speak on your screen in Vex Thal.',
+      'Now a callout relays raid-wide while you are in a raid (raid night, or your Mimic is uploading a raid roster) and otherwise only from your own zone. If either side cannot be placed outside a raid, it stays quiet.',
+    ],
+  },
+  {
+    key: 'mimic-2-6-8-beta-quiet-mode-split-2026-09-11',
+    title: 'Mimic 2.6.8 beta',
+    version: 'Mimic 2.6.8 beta \u00b7 Agent 3.6.40',
+    date: '2026-09-12',
+    channel: 'beta',
+    headline: 'Quiet mode now mutes, a separate switch hides overlays, and Extended Target is ready for Zeal\u2019s target of target.',
+    features: [
+      {
+        name: 'A spot for who your target is on',
+        blurb: 'Once the next Zeal carries it, the Extended Target overlay shows who each mob is on straight from the game: a 🎯 when it is the server\u2019s own answer, an arrow when Zeal worked it out from damage, and a ⚔ for who last hit the mob. Until then the arrows keep coming from your combat log as they do today.',
+      },
+      {
+        name: 'Mute Mimic',
+        blurb: 'Quiet mode now means mute: no voice callouts, no sounds. Your overlays keep showing.',
+      },
+      {
+        name: 'Don\u2019t show any overlays',
+        blurb: 'A new switch in Settings for people who use EQLogParser or another parser for the display. Mimic keeps uploading either way, and voice still plays unless you also mute.',
+      },
+    ],
+    fixes: [
+      'Quiet mode used to hide every overlay and not actually silence anything, because callouts speak from a hidden window. Both switches now do exactly what they say.',
+      'On the vote page, you can remove a pick by tapping it again.',
+      'A Zeal \u201cno target\u201d reading no longer shows up as target number 0.',
+    ],
+  },
+  {
+    key: 'web-1-7-31-mini-mode-vote-2026-09-11',
+    title: 'Pick the Mimic mini modes',
+    version: 'Web 1.7.31',
+    date: '2026-09-11',
+    headline: 'Every overlay is getting a smaller version \u2014 you choose which one.',
+    features: [
+      {
+        name: 'wolfpack.quest/mimic/mini',
+        blurb: 'Each overlay shown as it is today next to three smaller versions, all moving, with our own raiders and the Kaas Thox fight from Sep 10 in them. Vote for the one you would raid with, change your mind any time, and leave a note under each one.',
+      },
+      {
+        name: 'One spot per member',
+        blurb: 'A ballot at the bottom shows who has picked what, so nobody\u2019s voice gets lost.',
+      },
+      {
+        name: 'With or without the new Zeal',
+        blurb: 'A switch shows how each overlay behaves on Zeal 1.4.6 versus older Zeal \u2014 same-name mobs are the big difference.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'mimic-2-6-7-setup-buttons-2026-09-11',
+    title: 'Mimic 2.6.7',
+    version: 'Mimic 2.6.7 \u00b7 Agent 3.6.37',
+    date: '2026-09-11',
+    headline: 'Puts the Setup buttons back.',
+    features: [],
+    fixes: [
+      'The Setup page lost its buttons in 2.6.6 \u2014 Set up for me, the Defender exceptions, Check / install Zeal and the clock fix all vanished, along with the rows beneath Zeal. They are back.',
+      'The Setup page also tells you when overlays are switched off because Quiet mode is on, which otherwise looks exactly like the overlays being broken.',
+    ],
+  },
+  {
+    key: 'mimic-2-6-6-stable-2026-09-10',
+    title: 'Mimic 2.6.6',
+    version: 'Mimic 2.6.6 \u00b7 Agent 3.6.35',
+    date: '2026-09-10',
+    headline: 'Seven rounds of beta go stable: buff timers that tell the truth, a setup page that names the real problem, and faction hits that say which mob caused them.',
+    features: [
+      {
+        name: 'The setup page tells you what is actually wrong',
+        blurb: 'It used to say \u201cinstall Zeal\u201d whether or not Zeal was there. Now it checks: if Zeal is installed but nothing is coming through, it asks whether you are running EverQuest in compatibility mode or as administrator \u2014 the two things that actually cause it. And a new line warns you if Windows will not let Mimic write to your EverQuest folder, which is what silently breaks Zeal installs and UI backups.',
+      },
+      {
+        name: 'Your buffs say what they are doing for you',
+        blurb: 'Each buff on the Buffs tab now lists its real effects, with a summary under each character totalling everything their buffs are giving them.',
+      },
+      {
+        name: 'Faction hits name the mob that caused them',
+        blurb: 'A faction change now says which kill produced it, so you can tell what is moving your standing instead of guessing.',
+      },
+      {
+        name: 'Set up for me handles /tag',
+        blurb: 'The one-click setup now writes the nameplate tag settings and the channel autojoin line as well, so tagging works without hand-editing two ini files.',
+      },
+    ],
+    fixes: [
+      'Buff timers were showing a thousandth of the real time \u2014 a buff with an hour left read as seconds.',
+      'A character no longer shows as having used another character\u2019s Defensive.',
+      'A charmed pet\u2019s damage folds into the charmer on the meter, even when the charmer never swung.',
+      'UI Studio stopped drawing every window twice.',
+    ],
+  },
+  {
+    key: 'event-threads-by-zone-2026-09-07',
+    title: 'Bot 3.1.124',
+    version: 'Web 1.7.26 \u00b7 Bot 3.1.124',
+    date: '2026-09-07',
+    headline: 'Two events on one night each get their own kills.',
+    features: [],
+    fixes: [
+      'Kill cards land in the thread for the zone they happened in, not whichever event started nearest the clock \u2014 a Seru mini and a Ring War running together no longer share each other\u2019s kills.',
+      'The parse page\u2019s damage-over-the-fight chart draws the whole fight again on big raids; it used to stop partway through.',
+      'Hovering a menu category no longer collapses the whole top bar to \u201cMenu\u201d on desktop.',
+      'Mob Info shows every debuff on your target again for clients whose Zeal reports spawn ids.',
+    ],
+  },
+  {
+    key: 'attendance-strips-or-blocks-2026-09-04c',
+    title: 'Web 1.7.24',
+    version: 'Web 1.7.24',
+    date: '2026-09-04',
+    headline: 'Attendance comes in two layouts you pick once: strips (the default) or month blocks.',
+    features: [
+      {
+        name: 'Strips or blocks, your choice',
+        blurb: 'On /me and Raid history, a Strips / Blocks switch. Strips list each week with the raid\u2019s name and count read straight off the row, no hovering; blocks tile each month as day squares. Your pick is remembered in this browser.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'month-blocks-early-nights-2026-09-04b',
+    title: 'Web 1.7.22',
+    version: 'Web 1.7.22',
+    date: '2026-09-04',
+    headline: 'Attendance as month blocks, raid reviews for every night since 2024, mechanics grouped by boss, and an honest leaderboard.',
+    features: [
+      {
+        name: 'Attendance you can read on a phone',
+        blurb: 'Both attendance views are now month blocks of day squares \u2014 weekday, date, and on Raid history the raider count \u2014 that stack on a phone and tile on a desktop.',
+      },
+      {
+        name: 'Every raid night has a review page',
+        blurb: 'Nights from before the parser existed now appear in the review list with the raid\u2019s name, and each night opens with who came, by class, and where. The kills timeline still needs a parse; the raid name says what was on the menu.',
+      },
+      {
+        name: 'Death Touch and mechanics, by boss',
+        blurb: 'The review groups each fire under the fight it landed in, folds repeats, and names anyone who died within seconds of it.',
+      },
+      {
+        name: 'Leaderboards count bosses, not trash',
+        blurb: 'Trash and farm mobs are off the board, fights over 45 minutes are left out, and parses from before mid-July \u2014 when one over-counting parser could double a row \u2014 are hidden unless you ask for them.',
+      },
+    ],
+    fixes: [
+      'The /me banner no longer says the parser is off while Mimic is running \u2014 it watches every stream, not just fights.',
+      'Characters with no uploads are tucked behind a collapsed row; the rest sort by when they were last seen.',
+    ],
+  },
+  {
+    key: 'official-nights-and-trash-gate-2026-09-04',
+    title: 'Web 1.7.21 \u00b7 Bot 3.1.122',
+    version: 'Web 1.7.21 \u00b7 Bot 3.1.122',
+    date: '2026-09-04',
+    headline: 'The attendance grids show only real raid nights on the guild\u2019s raid days, the raid review shows bosses instead of farm trash, and officers can switch off tracking of uncurated mobs.',
+    features: [
+      {
+        name: 'Only official raid nights',
+        blurb: 'First-time-kill bonuses, sign-up bonuses and the DKP market no longer show up as raids. A raid an officer set up the evening before now lands on the night it was named for instead of the day before, so nothing sits on a Tuesday or Saturday row any more.',
+      },
+      {
+        name: 'Raid-day rows',
+        blurb: 'Both grids draw just Sunday, Wednesday and Thursday \u2014 and any other day that actually had a raid. Your /me grid now covers the last 60 days and reads as a percentage first; the full year is on Raid history.',
+      },
+      {
+        name: 'Raid review: bosses, not farm trash',
+        blurb: 'A night\u2019s kills timeline lists curated bosses only. Someone\u2019s Saturday Ssra farm no longer shows as \u201c470 kills\u201d \u2014 trash stays in its own \u201cTrash cleared\u201d line, and a night that was only farming is not a raid night.',
+      },
+      {
+        name: 'Officers can stop tracking uncurated mobs',
+        blurb: 'A new switch under Admin \u2192 Overlays stops the bot recording fights against mobs nobody has curated as a boss. Curated bosses are unaffected. It exists mainly for other guilds running the platform who do not want the volume.',
+      },
+    ],
+    fixes: [
+      '/me loads faster \u2014 the attendance grid reads two months of ticks instead of a year.',
+    ],
+  },
+  {
+    key: 'raid-attendance-heatmap-2026-09-03',
+    title: 'Web 1.7.19',
+    version: 'Web 1.7.19',
+    date: '2026-09-03',
+    headline: 'Your raid attendance as a year-long grid on /me, and a guild-wide Raid history page that shows how full every night was.',
+    features: [
+      {
+        name: 'Raid attendance on /me',
+        blurb: 'A grid of the last year, one square per raid night, across all your characters. Gold means you were there \u2014 brighter the more of the night you stayed \u2014 and an outline is a raid you missed. Hover a square for the date and the raid, click it to open that night\u2019s review.',
+      },
+      {
+        name: 'Raid history',
+        blurb: 'The same grid for the whole guild under Stats \u2192 Raid history: every night coloured from red at half a raid, through orange, to green at a full one, with a list of each night, its raid, and how many raiders came.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'pacify-and-see-invis-2026-09-02',
+    title: 'Knowing what is safe to walk past',
+    version: 'Mimic 2.6.5 \u00b7 Bot 3.1.115',
+    date: '2026-09-02',
+    headline: 'Mob Info now tracks pacify and lull with a countdown, and tells you whether invis will actually hide you from what you are looking at.',
+    features: [
+      {
+        name: 'Pacify and lull get their own line, with a timer',
+        blurb: 'Anything that lowers a mob\u2019s aggro now sits at the top of Mob Info on its own row, above the mob\u2019s buffs and your debuffs, counting down. The game never prints a message when one wears off, so that countdown is the only warning you get \u2014 it turns red and says WORE OFF the moment it lapses.',
+      },
+      {
+        name: 'Harmony finally shows up at all',
+        blurb: 'Harmony, Harmony of Nature and Lull Animal print nothing in anybody\u2019s log, not even the caster\u2019s, so until now a druid pull left no trace. Mimic now times them from your own cast and shares that with the rest of the raid, so everyone can see it.',
+      },
+      {
+        name: 'Harmony is marked as what it is',
+        blurb: 'It is flagged AE, because it lands on nearby mobs too, and the row says plainly that it only shrinks the aggro radius \u2014 the mob will still come for you if you stand on top of it. A Pacify will not. Those two used to look identical on screen.',
+      },
+      {
+        name: 'No timer on a mob that cannot be pacified',
+        blurb: 'Plenty of mobs simply ignore the whole lull line \u2014 nearly everything in Plane of Sky, for one. Mimic knows which ones and stays quiet rather than showing you a countdown that was never real.',
+      },
+      {
+        name: 'Mob Info says whether invis will hide you',
+        blurb: 'A chip on the mob when your invis will not work on it \u2014 and it picks the right one for what you are looking at: Invis versus Undead on undead, ordinary invis on everything else. It also flags the rare mobs that see through a rogue\u2019s Shroud of Stealth.',
+      },
+    ],
+    fixes: [
+      'A timer that came from your own cast rather than a confirmed landing is now marked, so you know which ones to trust.',
+      'A mob with an invis warning and no special attacks used to show no chips at all.',
+    ],
+  },
+  {
+    key: 'mimic-feedback-buffs-2026-09-02',
+    title: 'Send feedback without leaving Mimic',
+    version: 'Mimic 2.6.4 \u00b7 Bot 3.1.113',
+    date: '2026-09-02',
+    headline: 'Report a bug from inside Mimic and bring your log with it, see every buff your characters are carrying in one place, and stop losing the top of the page when you scroll.',
+    features: [
+      {
+        name: 'A Feedback button, in the top bar and the tray',
+        blurb: 'Report a bug or suggest an idea and it goes straight to the officers. You no longer have to remember where the form lives.',
+      },
+      {
+        name: 'A bug report can bring your log with it',
+        blurb: 'Tick the box and pick the last 15, 30 or 60 minutes. Chat, tells, group and /who are stripped out before it leaves your machine \u2014 you see the exact slice and how many private lines were removed before you send it. Your character name, zones, spells and combat lines stay, because that is what makes a bug reproducible.',
+      },
+      {
+        name: 'A Buffs tab',
+        blurb: 'Every buff your characters are carrying, with time remaining, and a table of how long each buff actually lasts for you.',
+      },
+      {
+        name: 'Your own buff duration, measured rather than guessed',
+        blurb: 'How much longer your buffs really run than the spell book says. It waits until it has seen enough of your own buffs to be sure, and says so plainly instead of showing a number it made up.',
+      },
+      {
+        name: 'The top bar stays put',
+        blurb: 'Tour, Panels and Feedback moved up there, so they are always in reach no matter how far down the page you are.',
+      },
+      {
+        name: 'Engine is now called Setup',
+        blurb: 'And it opens itself when something still needs doing, instead of sitting closed while you wonder why nothing works.',
+      },
+      {
+        name: 'Two mobs with the same name can be told apart',
+        blurb: 'If your client supports it. Their health, debuffs and who is casting on them stop being mixed together. Nothing changes for anyone else until the client update is out.',
+      },
+    ],
+    fixes: [
+      'Guild callouts like \u201cShaman Slow\u201d no longer fire when someone else lands one in another zone. Outside raid hours you only hear callouts from your own zone.',
+      'A mob you killed leaves the Extended Target list straight away instead of lingering.',
+      'Raid tick files pick up their attendees again.',
+      'Panels you hide on the dashboard stay hidden.',
+      'The first few tabs stop sliding under the header when you scroll.',
+      'Discipline reuse timers on the Command Center, and second place shows in the loot bidding area.',
+    ],
+  },
+  {
+    key: 'site-chrome-2026-09-02',
+    title: 'Links to the site finally look like something',
+    version: 'Web 1.7.9',
+    date: '2026-09-02',
+    headline: 'The site had no icon and no link preview. Paste a page into Discord now and it shows a proper card with the Mimic chest on it.',
+    features: [
+      {
+        name: 'Link previews in Discord',
+        blurb: 'Every link anyone shared used to unfurl as one line of text with no picture and the same description, whatever page it was. Parse links now name the boss, the night and the raid DPS; character links name the character; the rest say what the page actually is.',
+      },
+      {
+        name: 'The site has an icon',
+        blurb: 'The Mimic chest, in your browser tab and on your phone home screen if you save it there. There was supposed to be one all along \u2014 it pointed at a file nobody had ever added.',
+      },
+      {
+        name: 'Pages tell you they are loading',
+        blurb: 'Tapping through to parses, the raid board or the roster used to sit on the old page with no sign anything was happening. Seventeen pages now show a skeleton while they fetch.',
+      },
+    ],
+    fixes: [
+      'A page that fails now says so, with a reference you can paste in Discord, instead of a blank screen.',
+    ],
+  },
+  {
+    key: 'extended-target-ids-2026-09-01',
+    title: 'Telling two mobs of the same name apart',
+    version: 'Bot 3.1.107 \u00b7 Web 1.7.7 \u00b7 Mimic beta',
+    date: '2026-09-01',
+    headline: 'The Extended Target list has always had to guess which of two identically-named mobs it was looking at. On a patched client it no longer guesses \u2014 and the officer board now shows who is running one.',
+    features: [
+      {
+        name: 'Two mobs with the same name are now separate rows',
+        blurb: 'When several raiders are on different mobs that share a name, the list used to tell them apart by health, which fails the moment two of them sit at the same health. Where the game client can say which mob is which, it now says so \u2014 the row shows the mob\u2019s own number in green instead of the amber asterisk that warns you the debuffs might belong to the other one.',
+      },
+      {
+        name: 'Everyone else is unaffected',
+        blurb: 'This needs a change to Zeal that has not been released yet, so today nothing on the board looks different. When a raider updates, their rows start separating on their own \u2014 there is nothing to turn on and nothing to configure.',
+      },
+      {
+        name: 'Officers can see who has it',
+        blurb: 'The agent page now shows which version of Zeal each raider is running, and \u2014 separately \u2014 whether their client has actually sent us one of those mob numbers. Those are two different questions: a patched client reports the same version as an unpatched one, so the only honest answer is whether it has actually done it.',
+      },
+    ],
+    fixes: [
+      'Until the change is out, tagging a mob still works as the accurate way to tell two of them apart.',
+    ],
+  },
+  {
+    key: 'raid-night-2026-08-30b',
+    title: 'End the raid when it ends, and a top bar that fits',
+    version: 'Bot 3.1.104 \u00b7 Web 1.7.6 \u00b7 Mimic beta',
+    date: '2026-08-30',
+    headline: 'The rest of Sunday\u2019s reports \u2014 the signed-in top bar, the raid tick upload, your discipline timer, and a way to tell the bot the night is over.',
+    features: [
+      {
+        name: 'End raid button',
+        blurb: 'Officers and leaders get an End raid button on the attendance posts in the raid night thread. Press it and no more attendance ticks are taken for the night \u2014 which is what short nights needed, since the ticks otherwise keep firing until 11:30. Pressed it too early? There is a Reopen button.',
+      },
+      {
+        name: 'The top bar fits again when you are signed in',
+        blurb: 'Signing in added the search box and your account chip, and the bar had nowhere left to put the menu \u2014 so every link stacked into a tall column down the middle. It now measures itself: it stays one row where there is room, and folds into the Menu button where there is not.',
+      },
+      {
+        name: 'Raid tick files work again',
+        blurb: 'Picking an exported raid tick file in Mimic and choosing a slot said "No attendees in that source", even though it listed everyone correctly. Pasting the same list in by hand worked. Fixed.',
+      },
+      {
+        name: 'Your discipline timer',
+        blurb: 'The Command Center now counts down your discipline reuse timer, so you can see when you can use another one. Yours only \u2014 the game only ever tells you about your own.',
+      },
+    ],
+    fixes: [
+      'The search box no longer overlaps the clock in the top bar.',
+      'Panels you hide on the Mimic dashboard stay hidden instead of coming back a couple of seconds later.',
+    ],
+  },
+  {
+    key: 'loot-page-2026-08-30',
+    title: 'Second place, an archive of its own, and loot that shows up on time',
+    version: 'Bot 3.1.103 \u00b7 Mimic beta',
+    date: '2026-08-30',
+    headline: 'A raid night\u2019s worth of Loot tab reports, fixed together \u2014 the runner-up figures were wrong, second place was hiding, past items were in the way, and loot took too long to appear.',
+    features: [
+      {
+        name: 'Second place is a column now',
+        blurb: 'It used to be tiny grey text tucked under the last winning bid, which is why nobody could find it. It now sits in its own column next to the item, the same way it does in your misses list.',
+      },
+      {
+        name: 'The runner-up numbers are right',
+        blurb: 'Second place was reading the wrong bid when several people bid the same amount \u2014 Thorny Chain Sleeves showed 10 when it was 5, Bone Chill Shield showed 20 when it was 7. It now reads the real placings.',
+      },
+      {
+        name: 'Loot won is its own area',
+        blurb: 'Everything your characters have won moved out of the bidding list into its own searchable area underneath, so the bidding list stays about what is up right now and what you have lost. It has its own show/hide, so you can look through your wins without putting your wishlist on screen.',
+      },
+      {
+        name: 'Loot appears as soon as it is posted',
+        blurb: 'When an officer opened bidding, your Loot tab could take up to two minutes to notice \u2014 the same length as the bidding window itself, so an item could come and go before you ever saw it. It now shows up on the next refresh.',
+      },
+    ],
+    fixes: [
+      'Divine Intervention no longer shows up as a Divine Aura timer \u2014 it is a ten minute buff, not an eighteen second one, and it was making the DA timer look broken.',
+      'Names on the rez board keep their capitals, and your pets stay off it.',
+      'Searching your won items now matches the expansion as well as the item and character.',
+    ],
+  },
+  {
+    key: 'bot-3-1-99',
+    title: 'The misses list gets its missing bids',
+    version: 'Bot 3.1.99',
+    date: '2026-08-30',
+    headline: 'Almost every losing bid was invisible to the Loot tab \u2014 the mirror only ever saw winners. It now backfills the full bid list for every auction.',
+    features: [
+      {
+        name: 'Losing bids are finally recorded',
+        blurb: 'The DKP site\u2019s auction list only tells us who won. The bot now fetches each auction\u2019s full bid history \u2014 once per auction, ever \u2014 so the items you bid on and lost actually show up, with the real runner-up numbers.',
+      },
+      {
+        name: 'Your characters get their right names back',
+        blurb: 'Rows that showed a blank character now name the alt that bid, and an alt that WON an item no longer shows the whole account as having missed it.',
+      },
+    ],
+    fixes: [
+      'A tie for the winning bid no longer shows a blank second place.',
+      'The backfill works newest-first, so recent misses fill in over the first day and older history follows.',
+    ],
+  },
+  {
+    key: 'bot-3-1-97',
+    title: 'Loot you bid on and lost, per character',
+    version: 'Bot 3.1.97',
+    date: '2026-08-29',
+    headline: 'The Loot tab was hiding almost everything you have bid on and lost. It now tracks it per character, the way items actually work.',
+    features: [
+      {
+        name: 'An item only leaves your list when THAT character gets it',
+        blurb: 'Before, if any of your characters had ever looted an item, it disappeared from everyone\u2019s list \u2014 so an alt picking up a cloak erased your main\u2019s near-miss on it. Items belong to a character, and the list now works the same way.',
+      },
+      {
+        name: 'Each character gets its own row',
+        blurb: 'If two of your characters both bid on the same item, you see both, each with its own last bid.',
+      },
+      {
+        name: 'Past items are searchable',
+        blurb: 'Search your won items by name or character to see which of your characters has one.',
+      },
+    ],
+    fixes: [
+      'Measured on one real account: 20 items bid on and lost, 19 of them hidden. One row was showing.',
+    ],
+  },
+  {
+    key: 'agent-3-6-6',
+    title: 'Undo an import',
+    version: 'Agent 3.6.6',
+    date: '2026-08-29',
+    channel: 'beta',
+    headline: 'Imported a big trigger pack and regretted it? You can now clear them out in one go instead of one at a time.',
+    features: [
+      {
+        name: 'Select and delete in bulk',
+        blurb: 'Tick the ones you want, or hit All, then delete them together \u2014 or wipe every personal trigger with one button. Your guild triggers are never touched.',
+      },
+      {
+        name: 'Park for review instead of deleting',
+        blurb: 'Switches the selected triggers off but keeps them, so the noise stops now and you can sort out which ones you actually wanted later.',
+      },
+      {
+        name: 'It tells you which triggers did not survive the import',
+        blurb: 'A trigger whose pattern will not compile has always been quietly skipped, so importing 200 could leave you 193 with no explanation. The list now names each one and says what was wrong with it.',
+      },
+    ],
+    fixes: [
+      'A trigger that watches health instead of chat text is no longer labelled "bad pattern". It never had a text pattern to begin with \u2014 that was the only kind of trigger that label could appear on.',
+    ],
+  },
+  {
+    key: 'web-1-7-0',
+    title: 'The platform map, read top down',
+    version: 'Web 1.7.0',
+    date: '2026-08-28',
+    headline: 'The map now reads top to bottom \u2014 the website at the top, and everything that feeds it standing underneath in columns.',
+    features: [
+      {
+        name: 'Top down, not a wheel',
+        blurb: 'wolfpack.quest sits at the top. The desktop app, the log agent, the Discord bot, the database and the release machinery line up beneath it in the order things actually flow.',
+      },
+      {
+        name: 'Hover a column to see what is in it',
+        blurb: 'Point at any column and it lists everything that piece does. On a phone there is no hovering, so the lists are simply open.',
+      },
+      {
+        name: 'It fits a phone now',
+        blurb: 'The old map was one fixed-size drawing you had to drag sideways to read. This one reflows, so the whole thing is on screen at any size.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'web-1-6-0',
+    title: 'Getting started, step by step',
+    version: 'Web 1.6.1',
+    date: '2026-08-28',
+    headline: 'A new page walks you through installing miMIC click by click, and the front page now points straight at it.',
+    features: [
+      {
+        name: '\u201cRun with us.\u201d',
+        blurb: 'The front page has one thing to click now, and it goes to the walkthrough.',
+      },
+      {
+        name: 'Five steps, with the buttons named',
+        blurb: 'Download, sign in with Discord, point it at your EverQuest folder, let it set the game up for you, open the dashboard. Every button is named exactly as it appears on your screen, and the three downloads \u2014 Windows, beta, Steam Deck \u2014 are one click each.',
+      },
+      {
+        name: 'What to do when it does not work',
+        blurb: 'The three things that have actually gone wrong for people, each with the symptom that tells them apart. The compatibility-mode one is first, because a popular crash-reduction checklist recommends the exact setting that breaks it.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'web-1-5-0',
+    title: 'One top bar that folds',
+    version: 'Web 1.5.1',
+    date: '2026-08-28',
+    headline: 'The top of the site is now a single bar that folds itself down as soon as you scroll, and folds the same way on a phone.',
+    features: [
+      {
+        name: 'One bar, and it gets out of the way',
+        blurb: 'Downloads on the left, the page categories in the middle, the clock and your account on the right. Scroll down and it collapses to a single strip that follows you: the miMIC icon, the beta and Linux buttons, a Menu, and sign in.',
+      },
+      {
+        name: 'Menu holds everything that folded away',
+        blurb: 'Nothing was removed to make room. When the bar is folded \u2014 scrolled down, or on a phone \u2014 every page is under Menu, sorted into Raid, Stats and Prep.',
+      },
+      {
+        name: 'The three downloads are symbols now',
+        blurb: 'A download arrow for the normal download, \u03b2 for the beta build, and a penguin for Linux and Steam Deck. When the bar is full they keep their names next to them.',
+      },
+      {
+        name: 'The clock shows your timezone',
+        blurb: 'A clock and three letters \u2014 EDT, PST, GMT \u2014 instead of a long dropdown. Tap it to change zone exactly as before.',
+      },
+    ],
+    fixes: [
+      'The platform map on a phone now says it can be dragged sideways, and needs less dragging to read.',
+    ],
+  },
+  {
+    key: 'web-1-4-1',
+    title: 'A new front page',
+    version: 'Web 1.4.5',
+    date: '2026-08-28',
+    headline: 'The front page opens on the pack coming out of the dark, and the row of buttons underneath is now four doors instead of twenty.',
+    features: [
+      {
+        name: 'The pack arrives out of the dark',
+        blurb: 'Eyes first, in the black \u2014 hers, then the ones behind her. Her face comes into focus, then the rest of the pack, each one a little further back and a little darker. Nothing is see-through: the wolves in front cover the ones behind them, the way bodies do.',
+      },
+      {
+        name: 'Four doors instead of twenty',
+        blurb: 'Everything is now under Raid, Stats, Prep, or your own /me page \u2014 and /me is always there, signed in or not. Raid is what you touch during one (buffs, boards, rolls); Prep is what you do beforehand (the guide, the database, quartermaster, /who). Hover one on a desktop, or tap it on a phone, and the pages inside open up underneath. Nothing was removed \u2014 it just stopped all being on screen at once.',
+      },
+      {
+        name: 'Less clutter above the page on a phone',
+        blurb: 'The bar at the top of the site took up most of a phone screen before you saw anything. It is roughly half that now \u2014 nothing was removed, the buttons just stopped wrapping onto extra lines.',
+      },
+      {
+        name: 'The beta notice can be put away',
+        blurb: 'On the beta site, the orange bar now has an \u00d7. It shrinks to a thin strip that still says BETA, with an arrow to bring it back, and it stays put away until you say otherwise.',
+      },
+      {
+        name: 'The rest of the page waits its turn',
+        blurb: 'The wolves arrive first, on their own, and everything else fades in a beat later.',
+      },
+      {
+        name: 'Set to stay still if you asked it to',
+        blurb: 'If your computer or phone is set to reduce motion, the whole scene is simply there when the page loads, fully lit, with nothing moving.',
+      },
+    ],
+    fixes: [
+      'The eyes now light up inside the eye itself. They had been glowing behind the artwork, which put the light in the brow instead.',
+      'The wolves no longer show through each other. Only the pale part of the drawing was solid, so every dark line was a gap you could see the next wolf through.',
+      'On a phone the page no longer slides sideways. The pack runs wider than the screen on purpose, and it is now cropped at the edge instead of dragging the page with it.',
+    ],
+  },
+  {
+    key: 'mimic-2-6-2',
+    title: 'A Loot tab, and Mimic stops phoning the DKP site',
+    version: 'Mimic 2.6.2 · Agent 3.6.2 · Bot 3.1.88 · Web 1.2.2',
+    date: '2026-08-27',
+    headline: 'Bidding and rolls now share one Loot tab, and your copy of Mimic no longer contacts the DKP site directly at all.',
+    features: [
+      {
+        name: 'New 💰 Loot tab',
+        blurb: 'Bidding was on the Dashboard and rolls were buried in Stats — two ways of handing out the same drop, on two different screens. They are one tab now, with the live auction at the top.',
+      },
+      {
+        name: 'Mimic no longer contacts the DKP site',
+        blurb: 'Your DKP balance now comes from our bot, which looks it up once for the whole guild instead of every raider\u2019s PC asking separately. Same number, and the DKP site sees one visitor instead of one per person online.',
+      },
+      {
+        name: 'Loot is only checked when loot is happening',
+        blurb: 'During raids, or whenever you have the Loot tab open. A dashboard left open on another tab all week no longer checks for auctions in the background.',
+      },
+      {
+        name: 'Your balance is checked live during raids, and read from our own records the rest of the time',
+        blurb: 'DKP only moves when a tick lands, and ticks only happen while raiding — so that is the only time the number needs checking against the DKP site. Between raids the panel shows the figure from our own database, which is the same number.',
+      },
+    ],
+    fixes: [
+      'Inside a raid the balance refreshes faster once an auction is actually open, rather than on a fixed timer — which also means it picks up loot posted off trash mobs, not just named ones.',
+    ],
+  },
+  {
+    key: 'mimic-2-6-1',
+    title: 'Mimic asks the DKP site far less often',
+    version: 'Mimic 2.6.1 · Agent 3.6.1 · Web 1.2.0',
+    date: '2026-08-27',
+    headline: 'The loot panel was checking your DKP balance every single minute. Now it checks every ten, and stops entirely when you are not looking at it.',
+    features: [
+      {
+        name: 'Your DKP balance updates every ten minutes instead of every minute',
+        blurb: 'The number in the loot panel comes from the DKP site itself, and Mimic was asking for the full standings list once a minute for as long as it was open. DKP only moves when a bid settles, so ten minutes is still fresher than bidding needs — and it is a tenth of the requests.',
+      },
+      {
+        name: 'Nothing is fetched while the dashboard is hidden',
+        blurb: 'Minimise the dashboard or switch to another window and the balance check stops until you come back.',
+      },
+    ],
+    fixes: [
+      'The DKP site owner spotted this on his side before we did, because these requests went straight from your PC to the DKP site and never touched our bot — so they were missing from our own traffic counter. The counter page now says so.',
+    ],
+  },
+  {
+    key: 'web-1-1-98',
+    title: 'A public counter for our OpenDKP traffic',
+    version: 'Web 1.1.98 · Bot 3.1.73',
+    date: '2026-08-26',
+    headline: 'Anyone can now watch exactly what we send the DKP site — including the person who pays for it.',
+    features: [
+      {
+        name: 'wolfpack.quest/opendkp',
+        blurb: 'A live counter of every request our bot makes to OpenDKP, open to anyone with the link and no sign-in needed. It shows calls per endpoint, data returned, and whether we are currently paused.',
+      },
+      {
+        name: 'A pause button that works in under a minute',
+        blurb: 'Officers can stop all DKP traffic from the admin page and it takes effect within 60 seconds, with no code deploy — so if anything looks wrong we can stop first and work it out after.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'web-1-1-97',
+    title: 'My Characters on the PoP page',
+    version: 'Web 1.1.97',
+    date: '2026-08-26',
+    headline: 'The PoP page can now show your whole roster in one place — alts included, since flagging isn’t just a main’s job.',
+    features: [
+      {
+        name: 'My Characters tab',
+        blurb: 'A new tab on /pop lists every character linked to your account — mains and alts alike — with their zone access and PoP spells still needed side by side.',
+      },
+      {
+        name: 'Guild views now default to mains',
+        blurb: 'The chart, matrix, planner, and spell-needs table default to showing mains, with a one-click toggle to widen to every character when you want the fuller picture.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'web-1-1-96',
+    title: 'Parchment math, from the source',
+    version: 'Web 1.1.96',
+    date: '2026-08-25',
+    headline: 'The PoP spell matrix now reads the actual turn-in quests instead of guessing from spell levels \u2014 thanks to a member catching the overcount on night one.',
+    features: [
+      {
+        name: 'Counts you can plan around',
+        blurb: 'Each class trainer hands out a hand-picked list per parchment, and the matrix now shows exactly those lists. A new Other column shows spells you still need that your own turn-ins can\u2019t award \u2014 research spells, or another class\u2019s tradeable scroll \u2014 instead of quietly miscounting them.',
+      },
+      {
+        name: 'Bards exist now',
+        blurb: 'Bard rewards are Songs, not Spells, and the old filter dropped every one of them. The needs list and the matrix now cover bards like everyone else.',
+      },
+    ],
+    fixes: [
+      'Spell-page PoP badges name the parchment from the real quest lists; a spell your trainer can\u2019t award says so instead of showing the wrong parchment.',
+    ],
+  },
+  {
+    key: 'web-1-1-94',
+    title: 'A door that isn\u2019t Discord',
+    version: 'Web 1.1.94',
+    date: '2026-08-24',
+    headline: 'Members who can\u2019t get past Discord\u2019s sign-in checks can now use the whole site with a username and password.',
+    features: [
+      {
+        name: 'Officer invite \u2192 username + password',
+        blurb: 'If Discord\u2019s \u201cverify your account\u201d wall blocks you from signing in, an officer can send you a personal invite link. Open it, pick a username and password, and you\u2019re in \u2014 parses, raid pages, your characters, everything, same as everyone else. Forgot the password later? A fresh invite from an officer doubles as the reset.',
+      },
+    ],
+    fixes: [],
+  },
+  {
+    key: 'web-1-1-93',
+    title: 'Mimic without the Discord wall',
+    version: 'Bot 3.1.70 \u00b7 Web 1.1.93',
+    date: '2026-08-24',
+    headline: 'Members whose Discord account can\u2019t authorize the website can now get Mimic signed in with an officer\u2019s help.',
+    features: [
+      {
+        name: 'Officer-assisted Mimic sign-in',
+        blurb: 'If Discord shows you the \u201cverify your account\u201d wall when signing in, you\u2019re no longer stuck. Open Mimic, click Sign in to Wolf Pack, and read the short code it shows to an officer \u2014 they enter it on the site, pick your name, and your Mimic links up with your real identity. Uploads, parses and your character pages all work.',
+      },
+    ],
+    fixes: [],
+  },
   {
     key: 'web-1-1-92',
     title: 'How this gets built',
@@ -477,7 +2998,7 @@ export const releases: Release[] = [
     date: '2026-08-10',
     headline: 'Everything from the Ssra raid, now on the stable release — timers that stop stacking up, countdowns that agree with each other, and overlays that admit when they are not sure instead of guessing.',
     features: [
-      { name: '\u{23F1} A re-slow resets the bar instead of adding another one', blurb: 'Every timer trigger was starting a brand new row each time it fired, so a trash pull buried the overlay in near-identical lines — and killing the mob could not clear them. Slows, snares and the rest now reuse one bar per mob, the row is labelled with the mob’s name, and killing it clears the bar. Reported by Hitya mid-raid.' },
+      { name: '\u{23F1} A re-slow resets the bar instead of adding another one', blurb: 'Every timer trigger was starting a brand new row each time it fired, so a trash pull buried the overlay in near-identical lines — and killing the mob could not clear them. Slows, snares and the rest now reuse one bar per mob, the row is labelled with the mob’s name, and killing it clears the bar. Reported by the guild lead mid-raid.' },
       { name: '\u{1F551} Shared callouts run on your clock, not the sender’s', blurb: 'When someone else’s trigger fires and gets passed to the raid it used to carry the time THEIR computer thought it was. PCs drift — three of ours are between 14 and 56 seconds out. A sender running slow had their callouts thrown away as "too old" before anyone heard them; a sender running fast had the callout arrive and then sit silent. Every countdown started from a shared trigger was wrong by that same gap. That difference is now measured and taken out on arrival.' },
       { name: '\u{1F507} A death callout you hear once', blurb: 'Two people watching the same death each announced it, because the "have we already said this" check included their own log line — and two PCs never write that line identically. Shared callouts also respect the trigger’s cooldown now; they previously ignored it entirely.' },
       { name: '\u{1F40C} The slow badge stops naming a spell it cannot know', blurb: 'Eleven different spells print the exact same message when they land, and a Willsapper proc (35%) was being reported as a shaman Turgur’s Insects (75%) — the same message, the same duration, less than half the actual slow. When we cannot tell which one landed the badge now just says SLOWED, with the possibilities in the tooltip. A slow we can actually identify still shows its real strength.' },
@@ -497,7 +3018,7 @@ export const releases: Release[] = [
     channel: 'beta',
     headline: 'Timer triggers piled up a fresh row on every single fire, and when a callout was shared with the raid it was timed off the sender’s PC clock instead of yours — so no two people saw the same number.',
     features: [
-      { name: '\u{1F5D3} A re-slow resets the bar instead of adding another one', blurb: 'Every timer trigger was starting a brand new row each time it fired, so a Ssra trash pull buried the overlay in near-identical lines — and killing the mob could not clear them. The cause was the countdown quietly using the whole log line, timestamp included, as the name of the timer, which made every fire look like a different mob. Slows, snares and the rest now reuse one bar per mob, the row is labelled with the mob’s name rather than the raw line, and killing it clears the bar. Reported by Hitya mid-raid.' },
+      { name: '\u{1F5D3} A re-slow resets the bar instead of adding another one', blurb: 'Every timer trigger was starting a brand new row each time it fired, so a Ssra trash pull buried the overlay in near-identical lines — and killing the mob could not clear them. The cause was the countdown quietly using the whole log line, timestamp included, as the name of the timer, which made every fire look like a different mob. Slows, snares and the rest now reuse one bar per mob, the row is labelled with the mob’s name rather than the raw line, and killing it clears the bar. Reported by the guild lead mid-raid.' },
       { name: '\u{1F551} Shared callouts run on YOUR clock, not the sender’s', blurb: 'When someone else’s trigger fires and gets passed to the rest of the raid, it carries the time their computer thought it was. PCs drift — three of ours are between 14 and 56 seconds out and getting worse by a couple of seconds a day — and everyone receiving it was doing the maths against their own clock. A sender running slow had their callouts thrown away as "too old" before anyone heard them; a sender running fast had the callout arrive on time and then sit silent for as long as their clock was ahead; and every countdown started from a shared trigger was wrong by that same gap, warnings included. The difference is now measured and taken out on arrival, so the bar you see matches the bar next to you.' },
       { name: '\u{1F507} A death callout you hear once', blurb: 'Two people watching the same death each announced it, because the check for "we have already said this" included their own log line — and two PCs never write that line identically. It now compares the parts that actually describe the event, so the raid hears it once. Shared callouts also respect the trigger’s cooldown now; they previously ignored it entirely, which is why turning the cooldown up never helped.' },
     ],
@@ -523,9 +3044,9 @@ export const releases: Release[] = [
     date: '2026-08-09',
     headline: 'Gear you had already won kept showing up as gear you still wanted — and the alt list threw away what you typed into it.',
     features: [
-      { name: '\u{1F3C6} Your wins are no longer forgotten past the hundredth one', blurb: 'The panel only ever checked your hundred most recent awards when working out what you had won, and it sorted them by when our copy of OpenDKP last refreshed rather than by when you actually won them — so which hundred it looked at was close to random and shifted every week. If you have more than a hundred pieces of loot, the rest came back as “bid on but not yet won” and as recent misses. It now reads your whole award history, and your wins list is in the order you won them. This one is already live for everyone. Reported by Hitya.' },
+      { name: '\u{1F3C6} Your wins are no longer forgotten past the hundredth one', blurb: 'The panel only ever checked your hundred most recent awards when working out what you had won, and it sorted them by when our copy of OpenDKP last refreshed rather than by when you actually won them — so which hundred it looked at was close to random and shifted every week. If you have more than a hundred pieces of loot, the rest came back as “bid on but not yet won” and as recent misses. It now reads your whole award history, and your wins list is in the order you won them. This one is already live for everyone. Reported by the guild lead.' },
       { name: '\u{1F464} Your characters come from OpenDKP now', blurb: 'You should not have to type your own main and alts — OpenDKP already knows them. They fill in on their own when you sign in, and any character OpenDKP knows about that your list is missing gets added. Anything you typed yourself stays put, and there is a button to replace your list with OpenDKP’s outright if you would rather start clean.' },
-      { name: '\u{1F576} Your loot history stays hidden until you ask for it', blurb: 'The wishlist, misses and wins now start closed behind a “show my loot history” button, and close again every time the dashboard loads. People share their screen during raids, and a wishlist on display tells everyone else exactly what you are saving for. Suggested by Hitya.' },
+      { name: '\u{1F576} Your loot history stays hidden until you ask for it', blurb: 'The wishlist, misses and wins now start closed behind a “show my loot history” button, and close again every time the dashboard loads. People share their screen during raids, and a wishlist on display tells everyone else exactly what you are saving for. Suggested by the guild lead.' },
       { name: '✕ Take anything off the list', blurb: 'Every wishlist and miss row has an ✕ to hide it — useful for the items the panel guessed at from your old bids that you have no interest in any more. A “restore all” link brings them back, so a mis-click costs you nothing. This is only on your own PC; nothing is sent anywhere.' },
       { name: '\u{1F5D3} The list opens on the current expansion', blurb: 'Instead of every item you have ever bid on going back to Classic, the expansion filter starts on the one being raided now — worked out from your newest award, so it moves on by itself when the next expansion opens. If that would leave you with an empty list it shows everything instead.' },
     ],
@@ -540,8 +3061,8 @@ export const releases: Release[] = [
     date: '2026-08-08',
     headline: 'When two mobs share a name, nothing the game hands us can tell them apart — except a /tag. Marking a mob quietly carries a hidden ID that is the only thing separating one “a decaying skeleton” from the other four, and this release makes that work properly.',
     features: [
-      { name: '\u{1F3F7} Tagging is how we tell identical mobs apart — but check two settings', blurb: 'Live in The Deep we separated seventeen simultaneous “an elder thought horror” purely from tags. That only works if your tag actually reaches the log, and two Zeal options silently stop it. “Suppress tag msgs” drops the message entirely, and “Prettyprint tag msgs” rewrites it and throws away the ID — leaving just the name we already had. In both cases the arrow still appears over the mob, so it looks like it worked when nobody received it. Turn both OFF. Mimic’s tag card now warns you if either is on, and tells you when the game’s chat limit ate a tag so you know to send it again. Found by Hitya in live testing.' },
-      { name: '\u{1F5C2} Huge logs tidy themselves up', blurb: 'A log file over 500 MB gets moved into a LogArchive folder once you have stopped playing that character, and EverQuest starts a fresh one. Nothing is ever deleted — your old logs stay on your disk and can still be used to fill in past raids. There is a card on the dashboard showing what is about to be archived and a one-click off switch. Suggested by Ashieron.' },
+      { name: '\u{1F3F7} Tagging is how we tell identical mobs apart — but check two settings', blurb: 'Live in The Deep we separated seventeen simultaneous “an elder thought horror” purely from tags. That only works if your tag actually reaches the log, and two Zeal options silently stop it. “Suppress tag msgs” drops the message entirely, and “Prettyprint tag msgs” rewrites it and throws away the ID — leaving just the name we already had. In both cases the arrow still appears over the mob, so it looks like it worked when nobody received it. Turn both OFF. Mimic’s tag card now warns you if either is on, and tells you when the game’s chat limit ate a tag so you know to send it again. Found by the guild lead in live testing.' },
+      { name: '\u{1F5C2} Huge logs tidy themselves up', blurb: 'A log file over 500 MB gets moved into a LogArchive folder once you have stopped playing that character, and EverQuest starts a fresh one. Nothing is ever deleted — your old logs stay on your disk and can still be used to fill in past raids. There is a card on the dashboard showing what is about to be archived and a one-click off switch. Suggested by a member.' },
       { name: '⏱ Timers can warn you more than once', blurb: 'A tank buster can now call out at ten seconds AND at four, instead of forcing a choice. A timer can also read its length straight out of the game text when a mob announces its own timing, one trigger can run several separate countdowns at once (one per mez target, say), and abilities with only a recast — Feign Death, Lay on Hands — can finally show a bar telling you when they are back. Triggers you already wrote keep working exactly as they did.' },
       { name: '\u{1F4E5} Imported GINA and EQLogParser triggers actually fire', blurb: 'Most triggers imported from those tools were silently dead on arrival — they loaded, looked fine in the list, and never fired. Several separate faults in how their patterns were read have been fixed, GINA trigger packages (.gtp) now import at all, and a GINA timer arrives as a real countdown instead of muting the trigger for its duration.' },
     ],
@@ -554,7 +3075,7 @@ export const releases: Release[] = [
       'Re-tagging a mob wiped out the record of who had tagged it before you.',
       'Replaying an old log to test a trigger never showed the countdown bar, so a perfectly good timer looked broken.',
       'A trigger that began with a mob or player name — like the Razor Fang callout — was picking up the date and time stamped at the front of every log line as part of the name. The callout read the timestamp out loud, and any timer keyed to that name started a brand new bar on every single fire instead of reusing one.',
-      'If another program had already claimed Ctrl+Shift+H — Microsoft Edge is a common culprit — the hide-all-overlays hotkey did nothing at all and every overlay just looked broken. The tray menu now says when the hotkey is blocked so you can use the menu instead. Found by Hitya.',
+      'If another program had already claimed Ctrl+Shift+H — Microsoft Edge is a common culprit — the hide-all-overlays hotkey did nothing at all and every overlay just looked broken. The tray menu now says when the hotkey is blocked so you can use the menu instead. Found by the guild lead.',
     ],
   },
   {
@@ -564,7 +3085,7 @@ export const releases: Release[] = [
     date: '2026-08-08',
     headline: 'Attendance was measured against every raid tick the guild has ever held — including the years before you were in it.',
     features: [
-      { name: '\u{1F4CA} Measured against raids you could actually have attended', blurb: 'Your percentage now counts only the ticks since you joined, for every window, which is what OpenDKP has always shown. Everyone who joined after the guild’s early days was being under-reported, and the newer you were the worse it looked — exactly backwards for a number used to spot who needs a nudge. Long-standing members barely move; genuinely low attendance stays low. Spotted by Hitya, who pointed out that Gonner has never missed a tick while the page showed him at 64%.' },
+      { name: '\u{1F4CA} Measured against raids you could actually have attended', blurb: 'Your percentage now counts only the ticks since you joined, for every window, which is what OpenDKP has always shown. Everyone who joined after the guild’s early days was being under-reported, and the newer you were the worse it looked — exactly backwards for a number used to spot who needs a nudge. Long-standing members barely move; genuinely low attendance stays low. Spotted by the guild lead, who pointed out that a member who has never missed a tick was showing at 64%.' },
     ],
     fixes: [],
   },
@@ -575,13 +3096,13 @@ export const releases: Release[] = [
     date: '2026-08-07',
     headline: 'Everything the beta testers have been running for the last few weeks, now on the stable channel for the whole guild — three raid-floor corrections and a sign-in that no longer fails in silence.',
     features: [
-      { name: '\u{1F6E1} Harmshield counts on Rampage', blurb: 'The rampage warning only ever recognised Divine Aura. A monk who popped Harmshield still showed as a normal target, and the raid kept spending heals on someone who could not be hurt — that is exactly how Syko’s went unnoticed. Harmshield now lights the gold bar alongside DA. Defensive and Weapon Shield deliberately stay off it: they reduce damage, they do not make you immune.' },
-      { name: '\u{1F49A} Your healers show their real class', blurb: 'The Command Center listed Brynnja and Denniker as Cleric and Druid at the same time, flickering between the two. Anyone in the CH chain was being called a Cleric, but druids take chain slots too and shamans turn up as well. Being in the chain now proves you are chain healing and nothing more — the class shown is the real one.' },
+      { name: '\u{1F6E1} Harmshield counts on Rampage', blurb: 'The rampage warning only ever recognised Divine Aura. A monk who popped Harmshield still showed as a normal target, and the raid kept spending heals on someone who could not be hurt — that is exactly how one went unnoticed. Harmshield now lights the gold bar alongside DA. Defensive and Weapon Shield deliberately stay off it: they reduce damage, they do not make you immune.' },
+      { name: '\u{1F49A} Your healers show their real class', blurb: 'The Command Center listed two of our healers as Cleric and Druid at the same time, flickering between the two. Anyone in the CH chain was being called a Cleric, but druids take chain slots too and shamans turn up as well. Being in the chain now proves you are chain healing and nothing more — the class shown is the real one.' },
       { name: '\u{1F3F7} A tag lasts the whole fight', blurb: 'Marking a mob with /tag used to expire after two minutes. On Thall Va Xakra the tag six people had caught aged out at 32% boss health, halfway through the pull, taking the only thing that told the two spawns apart with it. Tags now hold for ten minutes. Appending with +tag also records both taggers rather than only the last one.' },
     ],
     fixes: [
       'The Command Center raid panel blinked between a full 45-raider board and "No raid roster flowing yet". A single slow or empty poll was enough to wipe the whole list; it now keeps the last good roster through a blip.',
-      'Divine Intervention could show as ready for someone nobody was observing — Fargan read as up when he was not. An unobserved DI now reads as unknown instead of ready.',
+      'Divine Intervention could show as ready for someone nobody was observing — one raider’s read as up when it was not. An unobserved DI now reads as unknown instead of ready.',
       'Clicking Discord sign-in in Settings did nothing whatsoever if your default browser failed to open, with no tab and no error. Seen on Firefox. The failure is now reported with the link shown so you can open it yourself.',
     ],
   },
@@ -592,7 +3113,7 @@ export const releases: Release[] = [
     date: '2026-08-06',
     headline: 'Some deaths are the strat. The raid review kept filing them under "what to work on" \u2014 and it was landing on the third line of the thread besides.',
     features: [
-      { name: '\u{1F480} Mark a death as on purpose', blurb: 'Officers can mark a character as dying deliberately on a specific boss. Fawx and Dant make a corpse on Kaas Thox Xi Ans Dyek every single week, so it is set once from that fight\u2019s parse page and holds every week after \u2014 no re-marking. Those two are already set. The death is never hidden: it still counts in the night\u2019s total and still shows in the deaths list, it just stops being listed as a mistake, and the header says how many were on purpose.' },
+      { name: '\u{1F480} Mark a death as on purpose', blurb: 'Officers can mark a character as dying deliberately on a specific boss. Two of our raiders make a corpse on Kaas Thox Xi Ans Dyek every single week, so it is set once from that fight\u2019s parse page and holds every week after \u2014 no re-marking. Those two are already set. The death is never hidden: it still counts in the night\u2019s total and still shows in the deaths list, it just stops being listed as a mistake, and the header says how many were on purpose.' },
       { name: '\u{1F4D3} The review sits at the top of the thread', blurb: 'The night\u2019s thread now holds its first two spots the moment it opens, and the review moves into one of them instead of posting under whatever landed first. The second spot is there for nights when the review runs long, and is cleaned up when it is not needed.' },
     ],
     fixes: [],
@@ -682,7 +3203,7 @@ export const releases: Release[] = [
     date: '2026-08-04',
     headline: 'The Tunare counter showed 0 and sat in the "waiting on data" pile, while 83 invocations were recorded and the most recent was July 31st.',
     features: [
-      { name: '🌿 The count is back', blurb: 'Naggato\'s family has 83 Tunare invocations on record. The card had been quietly reporting none of them.' },
+      { name: '🌿 The count is back', blurb: 'One member alone has 83 Tunare invocations on record. The card had been quietly reporting none of them.' },
     ],
     fixes: [
       'The card fetched its number in a way that returns an error object instead of throwing, and the error was never checked — so "the query did not answer" looked exactly like "nobody has ever mentioned Tunare". A failure now says so instead of showing a zero.',
@@ -793,7 +3314,7 @@ export const releases: Release[] = [
     ],
     fixes: [
       'If someone had played on your computer, the CH chain would call THEIR slot number at you forever — a leftover log file made them permanently "you".',
-      'CH callouts written with brackets, like "004 CH < Dongru >", never registered a heal target on anybody\'s client.',
+      'CH callouts written with brackets, like "004 CH < Rethlan >", never registered a heal target on anybody\'s client.',
       'Zeal occasionally reports a negative HP percent, which could make the off-heal list rank a dead target above a genuinely hurt raider.',
       'Per-fight damage curves are sampled every 6 seconds instead of 18, and officers can change that mid-raid without a release.',
     ],
@@ -1002,7 +3523,7 @@ export const releases: Release[] = [
     date: '2026-07-23',
     headline: 'Twelve items, one day, all from the field-report queue: everything the Wednesday raid surfaced plus the most-requested overlay upgrades — targeting info that keeps up with the fight, slow timers, AoE dance callouts, and a pile of quality-of-life fixes.',
     features: [
-      { name: '🎯 Extended Target V2', blurb: 'Every mob row can now show who the mob is beating on (→ Hawkner), the raid\'s observed DPS into it, and a time-to-live estimate that only appears when the HP trend is real — never a garbage guess. Same-name mobs get honest bookkeeping under the hood (deaths + HP continuity), so a fresh "a temple guard" no longer inherits the last one\'s debuffs.' },
+      { name: '🎯 Extended Target V2', blurb: 'Every mob row can now show who the mob is beating on (→ Rethlan), the raid\'s observed DPS into it, and a time-to-live estimate that only appears when the HP trend is real — never a garbage guess. Same-name mobs get honest bookkeeping under the hood (deaths + HP continuity), so a fresh "a temple guard" no longer inherits the last one\'s debuffs.' },
       { name: '🐌 Slow status on the target', blurb: 'Target Info shows an amber badge when your target is slowed — spell, %, caster when known, and a countdown. Slows don\'t stack, so it always shows the STRONGEST active slow (a weaker cast can\'t hide a better one), with "Slowed" / "Slow dropped — reslow" callouts for your current target. Magnitudes are pulled from the server data, not guessed.' },
       { name: '🏃 AoE dance callouts', blurb: 'First target: Vyzh`dra the Cursed\'s Caustic Mist. When the AE fires you hear "DPS IN" and a countdown arms to the next one, warning "DPS OUT" just before it — same machinery as the Emperor tank-buster timer, and it re-syncs on every observed AE.' },
       { name: '⚡ Target HP that keeps up', blurb: 'Your own target\'s HP now reads straight from the Zeal gauge — about half a second from game to overlay, down from several seconds when it detoured through the server aggregate.' },
@@ -1525,7 +4046,7 @@ export const releases: Release[] = [
     date: '2026-07-08',
     headline: 'A new account-wide inventory on /me: the total count of every item across all your characters, and exactly who’s holding it.',
     features: [
-      { name: 'Account inventory (/me → 🎒)', blurb: 'One list of every item across all your characters, with a running total and the per-character breakdown — “3 total: Bowvendor ×2 (shared bank), Manamana ×1 (bags)”. Items sitting in your shared bank are tagged, since any of your characters can pull them.' },
+      { name: 'Account inventory (/me → 🎒)', blurb: 'One list of every item across all your characters, with a running total and the per-character breakdown — “3 total: Aldenmar ×2 (shared bank), Corvale ×1 (bags)”. Items sitting in your shared bank are tagged, since any of your characters can pull them.' },
       { name: 'Filters + include/exclude', blurb: 'Filter by Weapon / Armor / Tradeskill / No-Drop / Spell, search by name, and toggle which characters or which places (equipped / bags / bank / shared bank) to count — totals recompute live. It’s private to you, built from your /outputfile inventory uploads.' },
     ],
     fixes: [],
@@ -1579,7 +4100,7 @@ export const releases: Release[] = [
     ],
     fixes: [
       'Guild chat stopped posting under the wrong character name after someone swaps characters mid-raid (and the bot now edits an already-posted line to the right name within seconds).',
-      'The /fun dirge and Lord of Ire cards now fold alts into their main and drop stray log-file names — no more mystery raiders like “Ashaiya.”',
+      'The /fun dirge and Lord of Ire cards now fold alts into their main and drop stray log-file names — no more mystery raiders named after a stray file.',
       'The /fun “What’s new” box is collapsed by default so the counters are front-and-center.',
     ],
   },
@@ -1723,7 +4244,7 @@ export const sprintItems: SprintItem[] = [
   { num: '#112', title: 'The chat-blackout fix', phase: 'Election field round', cx: 'M', aspects: ['bot', 'agent'], note: 'Guild chat went dark for 8 hours when a logged-out reporter stayed elected. Reporters now must prove they SEE chat.' },
   { num: '#115', title: 'Officer reporter panel: see, swap, include', phase: 'Election field round', cx: 'M', aspects: ['agent', 'bot'], note: 'The live fleet, who is elected for what, and one-click overrides — in Mimic\'s Admin tab.' },
   { num: '#118', title: 'Kill switches inside Mimic + fleet versions', phase: 'Election field round', cx: 'M', aspects: ['agent', 'bot'], note: 'Every emergency toggle one click away mid-raid, with a typed confirm on the big red one.' },
-  { num: '#119', title: 'Liveness across all your characters', phase: 'Election field round', cx: 'M', aspects: ['agent', 'bot'], note: 'Playing an alt counts — the fleet shows "Canopy (Hitya)" and the wolf follows whoever is actually online.' },
+  { num: '#119', title: 'Liveness across all your characters', phase: 'Election field round', cx: 'M', aspects: ['agent', 'bot'], note: 'Playing an alt counts — the fleet shows "Aldenmar (Brackwyn)" — the character, then its main — and the wolf follows whoever is actually online.' },
   { num: '#108', title: 'Loot bidding from Mimic (BETA)', phase: 'Loot & DKP', cx: 'L', aspects: ['agent', 'bot', 'data'], note: 'Log into OpenDKP once, see open auctions with last-winner context, and place sealed bids without alt-tabbing.' },
   { num: '#121', title: 'Bidding v2: misses table, DKP, auction links', phase: 'Loot & DKP', cx: 'L', aspects: ['agent', 'bot', 'web'], note: 'What you lost, what it went for, what you\'d bid next time, and whether you can afford it — one full-width table.' },
   { num: '#110', title: 'OpenDKP deletions now propagate', phase: 'Loot & DKP', cx: 'M', aspects: ['bot', 'data'], note: 'Deleted a test award in OpenDKP? It leaves wolfpack.quest within one sync instead of haunting the loot page.' },
@@ -1786,13 +4307,40 @@ export type QueueItem = {
 export const queueItems: QueueItem[] = [
   // ── Quick wins ─────────────────────────────────────────────────────────
   {
+    key: 'overlay-click-fixes',
+    num: '#210',
+    title: 'Two clicks that reach the game, and a CH row that lies',
+    summary: 'On a locked overlay, the category headers in the full Buff queue and the dismiss ✕ on each pet in the full Pet list pass the click through to EverQuest instead of doing their job. Separately, the full CH chain shows an interrupted heal red for four seconds, then turns it back to a blue "casting" bar as if the heal were still coming. All three are small, well-understood fixes — good first contributions.',
+    effort: 'quick',
+    components: ['Mimic'],
+    status: 'open — a good first contribution',
+  },
+  {
+    key: 'mini-mode-gaps',
+    num: '#209',
+    title: 'Mini mode: the three missing numbers',
+    summary: 'The nine mini overlays shipped in Mimic 2.7.1, but three show less than the guild voted for because the data is not there yet: Target Info has no ROOT timer (the engine does not mark roots), the Pet mini shows its haste buff by name instead of its percentage, and the Charm mini has no magic-resist number.',
+    effort: 'quick',
+    components: ['Mimic', 'Agent'],
+    status: 'open — the pet haste % is the quickest',
+  },
+  {
+    key: 'hud-skills',
+    num: '#211',
+    title: 'More skills on the HUD',
+    summary: 'The HUD tracks each class\'s key cooldowns — combat ability, discipline, Mend, Feign Death, Lay on Hands, Harm Touch and more. Tell us what else you want on it and we will add them class by class.',
+    effort: 'quick',
+    components: ['Agent', 'Mimic'],
+    needs: 'The skills, abilities or clickies you want tracked on the HUD — and, if you know it, how its use shows up in your log.',
+  },
+  {
     key: 'dead-triggers',
     num: '#190',
-    title: '30 silent callouts wake up',
-    summary: 'An audit found 30 of our 102 guild triggers can never fire — a pattern-anchoring bug that the rehearsal tool accidentally hid. Each gets fixed against a real log line in one reviewed batch (waking 30 callouts mid-raid-week unreviewed is its own hazard), and the rehearsal tool gets fixed so this can\'t hide again.',
+    title: 'Silent callouts: count them again',
+    summary: 'An audit found about 30 guild triggers that could never fire, from a pattern-anchoring bug. The engine now repairs that bug when it loads a trigger, so most of them quietly fire again. What is left is counting which ones are genuinely still dead, and deciding as one reviewed batch which should be armed — waking dozens of callouts mid-raid-week without a review is its own hazard.',
     effort: 'quick',
     components: ['Bot', 'Database'],
-    status: 'audited — the list is in hand',
+    status: 'the engine fix shipped — the re-count is next',
     needs: 'Real log lines for any boss emote or callout you rely on — each fixed trigger gets verified against one before it re-arms.',
   },
   {
@@ -1802,6 +4350,7 @@ export const queueItems: QueueItem[] = [
     summary: 'A Zeal weight reading (130/180) was sneaking into the data as if it were health. The displays are already guarded; this fixes the source so garbage never lands in the database at all, and rampage victims not running Mimic show what the raid collectively knows about their HP.',
     effort: 'quick',
     components: ['Mimic', 'Agent'],
+    status: 'displays guarded — the fix at the source is open',
   },
   {
     key: 'parse-log-dedup',
@@ -1828,6 +4377,7 @@ export const queueItems: QueueItem[] = [
     summary: 'The Emperor tank-buster now has two working detection paths (the rebuilt guild trigger and the built-in countdown). Verify they don\'t both fire on the same cast.',
     effort: 'quick',
     components: ['Agent', 'Database'],
+    status: 'the built-in countdown shipped — the check is open',
     needs: 'A raid-night observation from the next Emperor pull: did the tank-buster callout fire once or twice per cast?',
   },
   // ── Medium builds ──────────────────────────────────────────────────────
@@ -1835,19 +4385,19 @@ export const queueItems: QueueItem[] = [
     key: 'onboarding-v1',
     num: '#192',
     title: 'New Here? — the start-to-raiding checklist',
-    summary: 'A slimmer Discord welcome card plus a /start page that checks off the steps it can already prove — signed in, Mimic uploading, first parse recorded. The guided tours that just shipped are step one of this design.',
+    summary: 'A slimmer Discord welcome card plus a /start page that checks off the steps it can already prove — signed in, Mimic uploading, first parse recorded.',
     effort: 'medium',
     components: ['Bot', 'Web'],
-    status: 'design ready',
+    status: 'the /start walkthrough shipped — auto check-off and the slim welcome card are left',
   },
   {
     key: 'serialization-p1',
     num: '#56',
     title: 'Two same-named mobs, two cards',
-    summary: 'When two "a crypt guardian" die back to back, their damage currently knits into one card. Phase one separates two instances using the HP tracks we already record — no client update needed.',
+    summary: 'When two "a crypt guardian" die back to back, their damage can knit into one card. Raiders on Zeal 1.4.6 or newer now send each mob\'s own id, which keeps them apart; this is the fallback for older Zeal, separating two instances using the HP tracks we already record.',
     effort: 'medium',
     components: ['Bot'],
-    status: 'design ready',
+    status: 'partly overtaken — Zeal 1.4.6 spawn ids cover current clients',
   },
   {
     key: 'aoe-burn-windows',
@@ -1856,14 +4406,6 @@ export const queueItems: QueueItem[] = [
     summary: 'Detect the raid\'s AoE burn phases from the data instead of the manual /parseaoe ritual, and put the results on the fight page.',
     effort: 'medium',
     components: ['Bot', 'Web'],
-  },
-  {
-    key: 'golden-log-ci',
-    num: '#75',
-    title: 'The golden log — a replayable raid for testing',
-    summary: 'A recorded raid night that every parser change replays before it ships, so "did this break charm tracking?" gets answered by a machine instead of a raid. Doubles as the pre-raid drill.',
-    effort: 'medium',
-    components: ['Agent'],
   },
   {
     key: 'first-raid-mode',
@@ -1880,14 +4422,16 @@ export const queueItems: QueueItem[] = [
     summary: 'The "how do I fix X mid-raid" knowledge, written down and wired to buttons — one officer surface instead of knowledge living in three heads.',
     effort: 'medium',
     components: ['Web', 'Bot'],
+    status: 'phase one (the officer console page) shipped — the bot-side buttons are next',
   },
   {
     key: 'opendkp-auctions',
     num: '#68–70',
     title: 'Finish the OpenDKP wiring',
-    summary: 'Auction creation is already captured; bids and awards still happen on the OpenDKP site. Wire the rest so loot night never leaves Discord.',
+    summary: 'Auction creation is already captured, and bidding from inside Mimic shipped; posting auctions and awarding them still happen on the OpenDKP site. Wire the rest so loot night never leaves Discord.',
     effort: 'medium',
     components: ['Bot'],
+    status: 'bidding from Mimic shipped — posting and awarding are left',
   },
   {
     key: 'deck-graduation',
@@ -1901,45 +4445,20 @@ export const queueItems: QueueItem[] = [
     key: 'fight-page-v2',
     num: '#199',
     title: 'Fight pages, EQL-Meter style',
-    summary: 'Adopt the presentation Hitya flagged from eqlmeter.com for our own fight pages: a damage-over-time chart, melee/DoT/spell mix bars, and the per-ability breakdown per player. Phase one renders from data we already store (the per-verb rollups); phase two adds a small time-bucket series and crit/miss counts to agent uploads for the chart and accuracy stats. The look is theirs; the data and cross-client pipeline stay ours.',
+    summary: 'Adopt the presentation the guild lead flagged from eqlmeter.com for our own fight pages: a damage-over-time chart, melee/DoT/spell mix bars, and the per-ability breakdown per player. Phase one renders from data we already store (the per-verb rollups); phase two adds a small time-bucket series and crit/miss counts to agent uploads for the chart and accuracy stats. The look is theirs; the data and cross-client pipeline stay ours.',
     effort: 'medium',
     components: ['Web', 'Agent', 'Bot'],
-    status: 'scoped 2026-08-02 — phase one is web-only',
+    status: 'the damage-over-time chart shipped — the mix bars and per-ability breakdown (web-only) are next',
   },
   // ── Big rocks ──────────────────────────────────────────────────────────
-  {
-    key: 'zeal-spawn-id',
-    num: '#193',
-    title: 'The spawn-id ask — exact mob identity',
-    summary: 'One additive field in Zeal\'s data pipe would give every mob a unique id — ending same-name ambiguity forever: charm credit to the right charmer, debuff timers per mob, multi-pull cards that never merge. The upstream request is drafted with implementation sketch; once it lands, a chain of workarounds on this list simply gets deleted.',
-    effort: 'large',
-    components: ['Upstream', 'Agent', 'Mimic', 'Bot'],
-    status: 'request drafted — the unlock for everything below it',
-  },
   {
     key: 'serialization-p2',
     num: '#194',
     title: 'Many same-named mobs, all separate',
-    summary: 'Beyond two instances: cluster the raiders fighting each copy by position ("a tanked mob is a mob standing on a tank") to keep three-plus same-named mobs apart. Honest caveat: spawn-id upstream makes most of this unnecessary.',
+    summary: 'Keep three-plus same-named mobs apart everywhere — callouts, debuff timers, fight cards. Zeal 1.4.6 now sends each mob\'s own id, so this is mostly finishing the job in every place that still goes by name, plus a position-based fallback for raiders on older Zeal.',
     effort: 'large',
     components: ['Agent', 'Bot'],
-    status: 'design ready',
-  },
-  {
-    key: 'raid-night-review',
-    num: '#80',
-    title: 'Raid Night Review, automatic',
-    summary: 'The morning-after writeup — kills, wipes, standout parses, loot, attendance — generated from the night\'s data and posted to that night\'s thread.',
-    effort: 'large',
-    components: ['Bot', 'Web'],
-  },
-  {
-    key: 'raid-guide',
-    num: '#81',
-    title: 'The living Wolf Pack Raid Guide',
-    summary: 'Per-boss pages seeded from our own playbooks, real parses, and what the callouts already know — a guide that updates itself because the raids feed it.',
-    effort: 'large',
-    components: ['Web'],
+    status: 'first phases shipped — spawn ids do most of the rest',
   },
   {
     key: 'ui-studio-web',
@@ -1948,6 +4467,7 @@ export const queueItems: QueueItem[] = [
     summary: 'View and edit your EQ interface layouts from the browser, with automatic cloud backups of your UI and settings files — restore a blown-up layout from any machine.',
     effort: 'large',
     components: ['Web', 'Agent'],
+    status: 'macros and staged edits on /me/ui shipped — the layout editor and automatic backups are left',
   },
   {
     key: 'me-advisors',
@@ -1956,6 +4476,7 @@ export const queueItems: QueueItem[] = [
     summary: 'Spells you\'re missing at your level, tradeskill next-steps, faction runs worth doing — computed from your own uploads against the game data we already mirror.',
     effort: 'large',
     components: ['Web', 'Database'],
+    status: 'the missing-spells advisor shipped — tradeskill and faction are left',
   },
   {
     key: 'multi-raid',

@@ -1,5 +1,5 @@
 // test/fight-events.test.js — the fight event-log assembly, pinned to the
-// three measured problems on /parses/d951b081 (2026-08-16, Hitya's review):
+// three measured problems on /parses/d951b081 (2026-08-16, the guild lead's review):
 // the 0:00 wall (67 pre-start events clamped), the Too Far family shown as
 // callouts, and "(copy)" duplicates + alternating rampage targets defeating
 // the fold.

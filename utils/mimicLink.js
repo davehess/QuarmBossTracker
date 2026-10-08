@@ -134,7 +134,7 @@ async function handlePoll(req, res) {
   const deviceCode = String(payload.device_code);
   const rows = await supabase.select(
     'mimic_link_codes',
-    `device_code=eq.${encodeURIComponent(deviceCode)}&select=user_code,expires_at,authorized_at,authorized_user_id,authorized_discord_id,agent_version&limit=1`,
+    `device_code=eq.${encodeURIComponent(deviceCode)}&select=user_code,expires_at,authorized_at,authorized_user_id,authorized_discord_id,agent_version,authorized_via,authorized_by_discord_id&limit=1`,
   ).catch(() => null);
   const row = Array.isArray(rows) ? rows[0] : null;
   if (!row) {
@@ -164,6 +164,12 @@ async function handlePoll(req, res) {
     user_id:       row.authorized_user_id || null,
     discord_id:    row.authorized_discord_id,
     agent_version: row.agent_version || null,
+    // Durable audit: the link-code row is deleted right below, so HOW this
+    // session came to exist survives only here. 'officer' means an officer
+    // attested the identity on /admin/links (the OAuth-blocked path, e.g.
+    // Discord's unverified-account wall); absent/'self' is the normal flow.
+    linked_via:           row.authorized_via || (row.authorized_user_id ? 'self' : null),
+    linked_by_discord_id: row.authorized_by_discord_id || null,
   }]).catch(() => null);
   if (!Array.isArray(insertSession) || !insertSession[0]) {
     res.writeHead(500, { 'Content-Type': 'application/json' });

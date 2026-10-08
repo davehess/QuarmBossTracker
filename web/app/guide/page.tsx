@@ -12,7 +12,16 @@ import { redirect } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { fmtDuration } from '@/lib/format';
-import { median } from '@/lib/raidGuide';
+import { loadGuideKillRollup } from '@/lib/fullReads';
+
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'Raid guide',
+  description:
+    'How Wolf Pack does each fight — positioning, assignments and callouts, written by the people who run them.',
+};
 
 export const dynamic = 'force-dynamic';
 
@@ -25,60 +34,48 @@ const EXPANSION_META: Record<string, { label: string; accent: string }> = {
   PoP:     { label: '🔥 Planes of Power',   accent: 'border-red/60'    },
 };
 
-// PoP is locked until 2026-10-01 (utils/config.js isPopLocked) — locked bosses
-// list, but generate nothing. Mirrors the boards' posture.
-const POP_UNLOCK_MS = Date.parse('2026-10-01T00:00:00Z');
-
 type BoardRow = {
   boss_id: string; name: string | null; zone: string | null;
   expansion: string | null; emoji: string | null;
 };
 type LocalRow = { npc_id: number; internal_id: string; strat_notes: string | null };
-type EncRow   = { npc_id: number; duration_sec: number | null; total_damage: number | null; ended_at: string | null; classification: string | null };
 
 type GuideIndexRow = {
   bossId: string; name: string; zone: string | null; emoji: string | null;
   expansion: string; npcId: number | null;
-  kills: number; medianDurationSec: number | null; hasNotes: boolean; locked: boolean;
+  kills: number; medianDurationSec: number | null; hasNotes: boolean;
 };
 
 async function load(): Promise<{ rows: GuideIndexRow[]; error: string | null }> {
   try {
     const sb = supabaseAdmin();
-    const popLocked = Date.now() < POP_UNLOCK_MS;
 
-    const [boardRes, localRes, encRes] = await Promise.all([
+    // Kills and median kill time come from guide_kill_rollup, which counts in SQL
+    // over EVERY encounter. The page used to pull `.limit(20000)` encounter rows
+    // and count them here, but PostgREST hands back 1,000 of the 27,948, so every
+    // boss's kills were understated about 2.6x. bosses_local is read for the curated
+    // rows only (auto_registered = false: 132 of 1,729, the rest are first-kill
+    // self-registrations the boards never name), which also keeps it under the cap.
+    const [boardRes, localRes, rollup] = await Promise.all([
       sb.from('bot_boards').select('boss_id, name, zone, expansion, emoji'),
-      sb.from('bosses_local').select('npc_id, internal_id, strat_notes'),
-      sb.from('encounters')
-        .select('npc_id, duration_sec, total_damage, ended_at, classification')
-        .gt('total_damage', 0)
-        .limit(20000),
+      sb.from('bosses_local').select('npc_id, internal_id, strat_notes').eq('auto_registered', false),
+      loadGuideKillRollup(sb),
     ]);
     if (boardRes.error) return { rows: [], error: boardRes.error.message };
 
     const boards = (boardRes.data ?? []) as BoardRow[];
     const locals = (localRes.data ?? []) as LocalRow[];
-    const encs   = (encRes.data ?? []) as EncRow[];
 
     const localByInternal = new Map(locals.map(l => [l.internal_id, l]));
-    const byNpc = new Map<number, EncRow[]>();
-    for (const e of encs) {
-      if (e.npc_id == null || e.classification || e.ended_at == null) continue;
-      const arr = byNpc.get(e.npc_id) || [];
-      arr.push(e);
-      byNpc.set(e.npc_id, arr);
-    }
+    const rollupByNpc = new Map(rollup.map(r => [r.npc_id, r]));
 
     const rows: GuideIndexRow[] = boards.map((b) => {
       const local = localByInternal.get(b.boss_id) || null;
       const expansion = b.expansion || 'Classic';
-      const locked = popLocked && expansion === 'PoP';
-      const fights = (!locked && local) ? (byNpc.get(local.npc_id) ?? []) : [];
-      // Index-level floor: half the median damage. The per-boss page uses the
-      // stronger catalog-HP floor (see raidGuide.bucketEncounters).
-      const medDmg = median(fights.map(f => f.total_damage)) ?? 0;
-      const complete = fights.filter(f => (f.total_damage || 0) >= medDmg * 0.5);
+      // Index-level floor: half the median damage, applied in the rollup. The
+      // per-boss page uses the stronger catalog-HP floor (see
+      // raidGuide.bucketEncounters).
+      const roll = local ? rollupByNpc.get(local.npc_id) : undefined;
       return {
         bossId: b.boss_id,
         name: b.name || b.boss_id,
@@ -86,10 +83,9 @@ async function load(): Promise<{ rows: GuideIndexRow[]; error: string | null }> 
         emoji: b.emoji,
         expansion,
         npcId: local?.npc_id ?? null,
-        kills: complete.length,
-        medianDurationSec: median(complete.map(f => f.duration_sec)),
+        kills: roll?.kills ?? 0,
+        medianDurationSec: roll?.median_duration_sec ?? null,
         hasNotes: !!(local?.strat_notes && local.strat_notes.trim()),
-        locked,
       };
     });
 
@@ -159,12 +155,11 @@ export default async function GuideIndex() {
                 </thead>
                 <tbody>
                   {section.map((r) => (
-                    <tr key={r.bossId} className={`border-b border-border/30 hover:bg-[#1a212c] ${r.locked ? 'opacity-50' : ''}`}>
+                    <tr key={r.bossId} className="border-b border-border/30 hover:bg-[#1a212c]">
                       <td className="py-1 pr-2 text-text">
                         <Link href={`/guide/${encodeURIComponent(r.bossId)}`} className="hover:text-blue hover:underline">
                           {r.emoji ? `${r.emoji} ` : ''}{r.name}
                         </Link>
-                        {r.locked && <span className="text-dim ml-1" title="PoP is locked until 2026-10-01">🔒</span>}
                       </td>
                       <td className="py-1 pr-2 text-dim hidden sm:table-cell">{r.zone || '—'}</td>
                       <td className="py-1 pr-2 text-right text-dim tabular-nums">{r.kills || '—'}</td>

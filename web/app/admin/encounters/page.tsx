@@ -28,8 +28,11 @@ import Link from 'next/link';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
-import { isOfficer } from '@/lib/officer';
+import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
+import { selectAll } from '@/lib/selectAll';
+import { loadEncounterGap, hasMissingDamage, GAP_HARD_CAP } from '@/lib/adminReads';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,6 +57,8 @@ type EncounterRow = {
   // guild-membership set (who_observations is /who-all data full of Zek
   // PvPers + other guilds — only Wolf Pack members can re-run logs for us).
   // Excludes characters already in encounter_players and any exclude_from_stats.
+  // Computed only for rows whose damage is MISSING (hasMissingDamage) — see
+  // encounter_gap_audit; every other row carries [].
   backfill_candidates: string[];
   // Subset of backfill_candidates that already have a pending/acked backfill
   // request for this window — so the UI can mark them "already pinged" instead
@@ -68,17 +73,25 @@ type EncounterRow = {
 // (Zek PvPers, other guilds, passers-by) into the backfill candidate list.
 const RAID_RANKS = new Set(['Raid Pack', 'Raid Alt', 'Officer', 'Pack Leader']);
 async function loadGuildMemberNames(admin: ReturnType<typeof supabaseAdmin>): Promise<Set<string>> {
-  const [charsRes, membersRes] = await Promise.all([
-    admin.from('characters').select('name, rank, discord_id, deleted').range(0, 9999),
-    admin.from('wolfpack_members').select('discord_id, is_member').range(0, 9999),
+  // selectAll, not .range(0, 9999): one range call is still cut at PostgREST's 1,000-row
+  // response cap (556 characters today, so this was a latent cut, not a live one).
+  const [chars, members] = await Promise.all([
+    selectAll<any>((from, to) => admin.from('characters')
+      .select('name, rank, discord_id, deleted')
+      .order('guild_id').order('name')
+      .range(from, to)),
+    selectAll<any>((from, to) => admin.from('wolfpack_members')
+      .select('discord_id, is_member')
+      .order('discord_id')
+      .range(from, to)),
   ]);
   const memberDiscord = new Set(
-    (membersRes.data ?? [])
+    members
       .filter((m: any) => m.is_member === true)
       .map((m: any) => String(m.discord_id)),
   );
   const names = new Set<string>();
-  for (const c of (charsRes.data ?? []) as any[]) {
+  for (const c of chars as any[]) {
     if (c.deleted || !c.name) continue;
     const isMember = c.discord_id && memberDiscord.has(String(c.discord_id));
     const raidRank = c.rank && RAID_RANKS.has(String(c.rank));
@@ -92,151 +105,57 @@ type DuplicateCluster = {
   primaryId: string;         // the row everything else should fold into
 };
 
-async function loadEncounters(sinceIso: string): Promise<EncounterRow[]> {
-  // PostgREST can't do the LEFT JOIN to eqemu_npc_types cleanly without a
-  // foreign-key relationship; one execute_sql round-trip is simpler here.
-  // But we don't have a server-side raw SQL helper in web/lib, so two queries.
-  // Cap raised to 5000 (was 200) — at 200 the audit silently hid everything
-  // older than ~the last week of activity, so users couldn't see issues older
-  // than that. PostgREST's default 1000-row cap requires an explicit range
-  // to lift, so we set it here.
+async function loadEncounters(sinceIso: string): Promise<{ rows: EncounterRow[]; truncated: boolean; error: string | null }> {
+  // The encounters, their catalog name + HP, the contributions / players counts and the backfill
+  // candidates all come from ONE database function, encounter_gap_audit, paged 1,000 rows at a
+  // time (lib/adminReads.ts loadEncounterGap). This used to be five reads that each believed a
+  // big `.range(0, N)` lifts PostgREST's 1,000-row response cap — it does not: a 7-day window is
+  // 5,949 encounters and the page showed the newest 1,000, with contributions and players read as
+  // at most 1,000 rows of 12,651 and 31,087. A child set that thin reads as "nobody was in this
+  // fight", so the gaps and the backfill candidates were wrong as well as the list short.
   const admin = supabaseAdmin();
-  const { data: encs } = await admin
-    .from('encounters')
-    .select('id, npc_id, zone_short, started_at, duration_sec, total_damage, total_dps, data_incomplete, data_incomplete_reason')
-    .gte('started_at', sinceIso)
-    .order('started_at', { ascending: false })
-    .range(0, 4999);
 
-  // eqemu_npc_types has ~14k rows and Supabase caps unfiltered selects at 1000
-  // by default, so a plain .select('id,name,hp') silently dropped every NPC
-  // with id > ~1000 (basically all instance bosses) — boss column rendered
-  // "npc <id>" and the HP% column said "no HP catalog" for everything. Filter
-  // the lookup to ONLY the npc_ids present in this batch.
-  const uniqueNpcIds = Array.from(new Set(
-    ((encs ?? []) as { npc_id: number | null }[])
-      .map(e => e.npc_id)
-      .filter((id): id is number => id != null),
-  ));
-  const { data: npcRows } = uniqueNpcIds.length > 0
-    ? await admin.from('eqemu_npc_types').select('id, name, hp').in('id', uniqueNpcIds)
-    : { data: [] };
-  const npcById = new Map<number, { name: string; hp: number | null }>();
-  for (const n of (npcRows ?? []) as { id: number; name: string; hp: number | null }[]) {
-    npcById.set(n.id, { name: n.name, hp: n.hp });
-  }
-
-  // Pull contrib/player counts AND the actual player rosters in bulk so we
-  // can both render counts AND compute the gap (= candidates not in
-  // encounter_players for each encounter).
-  const ids = (encs ?? []).map((e: any) => e.id);
-  // Explicit range — PostgREST's default 1000-row cap would silently truncate
-  // contributions / encounter_players counts when many encounters are loaded.
-  const [contribCounts, playerRows] = await Promise.all([
-    admin.from('contributions').select('encounter_id').in('encounter_id', ids).range(0, 49999),
-    admin.from('encounter_players').select('encounter_id, character_name').in('encounter_id', ids).range(0, 99999),
+  // Candidates are Wolf Pack members only, minus anyone who opted out of stats. The membership
+  // predicate lives here (loadGuildMemberNames); the function takes the resulting names.
+  const [excludedRows, guildNames, pendingRows] = await Promise.all([
+    selectAll<{ name: string }>((from, to) => admin
+      .from('characters').select('name').eq('exclude_from_stats', true)
+      .order('guild_id').order('name')
+      .range(from, to)),
+    loadGuildMemberNames(admin),
+    // Already-filed requests — so the UI can grey out who's already been
+    // pinged for this window instead of silently re-offering them.
+    selectAll<{ character: string; scope: any }>((from, to) => admin
+      .from('agent_backfill_requests')
+      .select('character, scope')
+      .in('status', ['pending', 'acked'])
+      .order('id')
+      .range(from, to)),
   ]);
-  const contribByEnc = new Map<string, number>();
-  for (const r of (contribCounts.data ?? []) as { encounter_id: string }[]) {
-    contribByEnc.set(r.encounter_id, (contribByEnc.get(r.encounter_id) ?? 0) + 1);
-  }
-  const playersByEnc = new Map<string, Set<string>>();
-  for (const r of (playerRows.data ?? []) as { encounter_id: string; character_name: string }[]) {
-    const set = playersByEnc.get(r.encounter_id) ?? new Set<string>();
-    set.add(r.character_name);
-    playersByEnc.set(r.encounter_id, set);
+  const excludedSet = new Set(excludedRows.map(r => String(r.name)));
+  const names = Array.from(guildNames).filter(n => !excludedSet.has(n));
+  const gap = await loadEncounterGap(admin, sinceIso, names);
+
+  // Pending requests keyed by the start_iso they were filed against — the
+  // backfill form posts the encounter's started_at verbatim as
+  // scope.start_iso, so an exact-string match re-associates them.
+  const pendingByStart = new Map<string, Set<string>>();
+  for (const r of pendingRows) {
+    const si = r?.scope?.start_iso ? String(r.scope.start_iso) : '';
+    if (!si || !r.character) continue;
+    const set = pendingByStart.get(si) ?? new Set<string>();
+    set.add(String(r.character));
+    pendingByStart.set(si, set);
   }
 
-  // ── Backfill candidates ───────────────────────────────────────────────
-  // For each encounter we want a list of characters who were likely THERE
-  // (so re-running the agent over their old logs could fill the gap) but
-  // who aren't already in encounter_players. Sources:
-  //   - raid_roster.captured_at within ±15 min of started_at (strongest)
-  //   - who_observations.observed_at within ±15 min of started_at (broader)
-  // Minus encounter_players, minus characters.exclude_from_stats, then
-  // INTERSECTED with guild membership — who_observations is /who-all data so
-  // it's full of Zek PvPers / other guilds / random passers-by who can't and
-  // won't re-run logs for us. Only Wolf Pack members belong in this list.
-  const candByEnc = new Map<string, Set<string>>();
-  const pendingByEnc = new Map<string, Set<string>>();
-  if ((encs ?? []).length > 0) {
-    const starts = (encs ?? []).map((e: any) => e.started_at).filter((s: string | null) => !!s);
-    if (starts.length > 0) {
-      const minStart = new Date(Math.min(...starts.map((s: string) => new Date(s).getTime())) - 15 * 60 * 1000).toISOString();
-      const maxStart = new Date(Math.max(...starts.map((s: string) => new Date(s).getTime())) + 15 * 60 * 1000).toISOString();
-      // PostgREST will silently cap selects — explicit range to be safe.
-      const [rosterRes, whoRes, excludedRes, guildNames, pendingRes] = await Promise.all([
-        admin
-          .from('raid_roster')
-          .select('name, captured_at')
-          .gte('captured_at', minStart)
-          .lte('captured_at', maxStart)
-          .range(0, 9999),
-        admin
-          .from('who_observations')
-          .select('character, observed_at')
-          .gte('observed_at', minStart)
-          .lte('observed_at', maxStart)
-          .range(0, 9999),
-        admin.from('characters').select('name').eq('exclude_from_stats', true).range(0, 999),
-        loadGuildMemberNames(admin),
-        // Already-filed requests — so the UI can grey out who's already been
-        // pinged for this window instead of silently re-offering them.
-        admin
-          .from('agent_backfill_requests')
-          .select('character, scope')
-          .in('status', ['pending', 'acked'])
-          .range(0, 9999),
-      ]);
-      const excludedSet = new Set((excludedRes.data ?? []).map((r: any) => String(r.name)));
-      // Pending requests keyed by the start_iso they were filed against — the
-      // backfill form posts the encounter's started_at verbatim as
-      // scope.start_iso, so an exact-string match re-associates them.
-      const pendingByStart = new Map<string, Set<string>>();
-      for (const r of (pendingRes.data ?? []) as any[]) {
-        const si = r?.scope?.start_iso ? String(r.scope.start_iso) : '';
-        if (!si || !r.character) continue;
-        const set = pendingByStart.get(si) ?? new Set<string>();
-        set.add(String(r.character));
-        pendingByStart.set(si, set);
-      }
-      // Bucket roster + who sightings into 15-min windows around each encounter.
-      const WINDOW_MS = 15 * 60 * 1000;
-      const sightings: Array<{ name: string; at: number }> = [];
-      for (const r of (rosterRes.data ?? []) as any[]) {
-        if (r.name && r.captured_at) sightings.push({ name: r.name, at: new Date(r.captured_at).getTime() });
-      }
-      for (const r of (whoRes.data ?? []) as any[]) {
-        if (r.character && r.observed_at) sightings.push({ name: r.character, at: new Date(r.observed_at).getTime() });
-      }
-      for (const e of (encs ?? []) as any[]) {
-        if (!e.started_at) continue;
-        const t0 = new Date(e.started_at).getTime();
-        const present = playersByEnc.get(e.id) ?? new Set<string>();
-        const cands = new Set<string>();
-        for (const s of sightings) {
-          if (Math.abs(s.at - t0) > WINDOW_MS) continue;
-          if (present.has(s.name)) continue;
-          if (excludedSet.has(s.name)) continue;
-          if (!guildNames.has(s.name)) continue;   // Wolf Pack members only
-          cands.add(s.name);
-        }
-        candByEnc.set(e.id, cands);
-        pendingByEnc.set(e.id, pendingByStart.get(String(e.started_at)) ?? new Set<string>());
-      }
-    }
-  }
-
-  return (encs ?? []).map((e: any) => {
-    const npc = e.npc_id != null ? npcById.get(e.npc_id) : null;
-    const cands = candByEnc.get(e.id);
-    const pend = pendingByEnc.get(e.id);
-    const candList = cands ? Array.from(cands).sort() : [];
+  const rows = gap.rows.map((e): EncounterRow => {
+    const pend = pendingByStart.get(String(e.started_at));
+    const candList = [...(e.candidates ?? [])].sort();
     return {
       id: e.id,
       npc_id: e.npc_id,
-      npc_name: npc?.name?.replace(/_/g, ' ').replace(/^#/, '') ?? null,
-      expected_hp: npc?.hp ?? null,
+      npc_name: e.npc_name?.replace(/_/g, ' ').replace(/^#/, '') ?? null,
+      expected_hp: e.expected_hp ?? null,
       zone_short: e.zone_short,
       started_at: e.started_at,
       duration_sec: e.duration_sec,
@@ -244,12 +163,13 @@ async function loadEncounters(sinceIso: string): Promise<EncounterRow[]> {
       total_dps: e.total_dps,
       data_incomplete: e.data_incomplete ?? false,
       data_incomplete_reason: e.data_incomplete_reason,
-      contribs: contribByEnc.get(e.id) ?? 0,
-      players: (playersByEnc.get(e.id) ?? new Set()).size,
+      contribs: e.contribs,
+      players: e.players,
       backfill_candidates: candList,
       pending_backfill: pend ? candList.filter(n => pend.has(n)) : [],
     };
   });
+  return { rows, truncated: gap.truncated, error: gap.error?.message ?? null };
 }
 
 // Encounters of the same npc_id whose started_at chain together within
@@ -440,7 +360,7 @@ async function fileBackfillRequest(formData: FormData) {
   // request for this window.
   await Promise.all(characters.map(async (character) => {
     await admin.from('agent_backfill_requests').insert({
-      guild_id: 'wolfpack',
+      guild_id: GUILD_TAG,
       character,
       requested_by_discord_id: requestedByDiscordId,
       requested_by_name: requestedByName,
@@ -482,6 +402,7 @@ export default async function AdminEncountersPage({
 }: {
   searchParams: Promise<{ days?: string; show?: string }>;
 }) {
+  await requireOfficer();
   const { days: daysParam, show } = await searchParams;
   const days = Math.max(1, Math.min(90, parseInt(daysParam || '7', 10) || 7));
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
@@ -490,7 +411,7 @@ export default async function AdminEncountersPage({
   // need to dig into (raid scripted bosses, novel mobs, broken sync).
   const showReviewable = show === 'reviewable';
 
-  const allRows = await loadEncounters(since.toISOString());
+  const { rows: allRows, truncated, error: loadError } = await loadEncounters(since.toISOString());
   const dupeClusters = findDuplicateClusters(allRows);
   // "duplicate rows" = every clustered row beyond the one keeper.
   const dupeRowCount = dupeClusters.reduce((n, c) => n + c.members.length - 1, 0);
@@ -521,13 +442,18 @@ export default async function AdminEncountersPage({
         <h2 className="text-xl text-gold mb-1">⚔️ Encounter audit</h2>
         <p className="text-sm text-dim leading-6">
           Every encounter the bot has stored, with HP-vs-damage health, duplicate
-          detection, and merge / mark-incomplete / request-backfill actions.
+          detection, and merge / mark-incomplete / request-backfill actions. Rows with
+          missing damage (none, under 75% of the catalog HP, or marked incomplete) list the
+          guild members seen nearby who are not in the parse.
         </p>
+        {loadError && (
+          <p className="text-xs text-red mt-3">⚠ The audit did not load completely: {loadError}</p>
+        )}
         <div className="grid grid-cols-2 sm:grid-cols-7 gap-3 mt-4 text-xs">
           <Stat
-            label={stats.total >= 5000 ? 'Encounters (cap hit)' : 'Encounters'}
+            label={truncated ? `Encounters (newest ${GAP_HARD_CAP.toLocaleString()} — pick fewer days)` : 'Encounters'}
             value={stats.total}
-            color={stats.total >= 5000 ? 'text-orange' : 'text-text'}
+            color={truncated ? 'text-orange' : 'text-text'}
           />
           <Stat label="Reviewable"     value={stats.reviewable} color="text-purple" />
           <Stat label="Zero damage"    value={stats.zero}  color="text-red-400" />
@@ -729,7 +655,9 @@ export default async function AdminEncountersPage({
                           ) : (
                             <input
                               name="character"
-                              placeholder="character to ping (no candidates found)"
+                              placeholder={hasMissingDamage(r)
+                                ? 'character to ping (no candidates found)'
+                                : 'character to ping (likely-there names are listed on rows with missing damage)'}
                               className="bg-bg border border-border rounded px-2 py-0.5 text-xs w-full"
                             />
                           )}

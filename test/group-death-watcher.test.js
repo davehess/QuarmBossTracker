@@ -56,8 +56,18 @@ globalThis._clearDeath = (name) => {
   cleared.push(String(name || ''));
   globalThis._deadSince.delete(String(name || '').toLowerCase());
 };
+// _deadAt joined the registry on 2026-08-30 when the map value gained a shape
+// ({ at, display }) so the needs-rez board could stop rendering the lowercased
+// key. The slice calls it as a free identifier, so the harness supplies it —
+// shape-tolerant, exactly like the real one.
+globalThis._deadAt = (k) => {
+  const v = globalThis._deadSince.get(String(k || '').toLowerCase());
+  if (v == null) return null;
+  const at = typeof v === 'object' ? v.at : v;
+  return Number.isFinite(at) ? at : null;
+};
 globalThis._isDead = (k, now) => {
-  const t = globalThis._deadSince.get(String(k || '').toLowerCase());
+  const t = globalThis._deadAt(k);
   return t != null && ((now || Date.now()) - t) <= DEAD_FORGET_MS;
 };
 
@@ -354,7 +364,12 @@ describe('end to end against the real death registry', () => {
     agent._noteGroupHpFromState('Hitya', { gauges: [{ slot: 11, hp_pct: 0, text: 'Zzwatchertest' }] }, now - 8000);
     agent._noteGroupHpFromState('Hitya', { gauges: [{ slot: 11, hp_pct: 0, text: 'Zzwatchertest' }] }, now - 5000);
     expect(agent._isDead('zzwatchertest', now)).toBe(true);
-    expect(agent._deadNamesSnapshot(now).some(r => r.name === 'zzwatchertest')).toBe(true);
+    // key is the lowercase match key; name is the spelling the board renders
+    // (the watcher saw "Zzwatchertest" on the gauge). Asserting r.name ===
+    // lowercase here was encoding the needs-rez casing bug, fixed 2026-08-30.
+    const row = agent._deadNamesSnapshot(now).find(r => r.key === 'zzwatchertest');
+    expect(row).toBeTruthy();
+    expect(row.name).toBe('Zzwatchertest');
     agent._clearDeath('Zzwatchertest');
   });
 

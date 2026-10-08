@@ -1,7 +1,7 @@
 # Wolf Pack EQ Platform — Claude Code Handoff
 
 A guild platform for Wolf Pack on Project Quarm (EverQuest emu), grown from a
-Discord raid-timer bot into four independently-versioned components in one
+Discord raid-timer bot into five independently-versioned components in one
 monorepo. This file is the authoritative architectural map; `README.md` is the
 user-facing setup guide + command reference. When they conflict, this file wins.
 
@@ -11,15 +11,41 @@ user-facing setup guide + command reference. When they conflict, this file wins.
 | **Web** (`wolfpack.quest`) | `web/` (Next.js 14) | Vercel, auto-deploys on push to `main` | `main` |
 | **Agent** (`wolfpack-logsync`) | `packages/wolfpack-logsync/` (single-file Node, zero deps) | End-user machines — bundled inside Mimic, or standalone via `Parser.bat` | bundled with Mimic; CLI zip via `release-parser.yml` |
 | **Mimic** (Electron desktop) | `apps/mimic/` | End-user Windows machines, auto-updates via electron-updater | `release-mimic.yml` on version bump (`main` = stable channel, `beta` = beta channel) |
+| **Bristlebane** (raid-voice bot, its own Discord app) | `apps/bristlebane/` (Node 22, own lockfile + Dockerfile) | Tower, a Coolify app (Dockerfile, base dir `/apps/bristlebane`) | `main`; redeployed in Coolify (no auto-deploy — the poller only follows the web mirror) |
 
 **Versions live in each component's `package.json` — nowhere else.** Do NOT
 maintain version numbers in this file or in README.md. (We used to keep a
 version table here; it caused repeated merge conflicts between `main` and
-`beta` and drifted constantly. `git log --oneline -5` + the four package.json
+`beta` and drifted constantly. `git log --oneline -5` + the five package.json
 files are the source of truth.)
 
 Other fixed facts: Node 20, discord.js v14, Supabase project
 `zhtoekwakucbckvatfky`, guild `DISCORD_GUILD_ID=1168893924329402420`.
+
+### Working rule — reply shape: TLDR, details, numbered to-do (guild lead, 2026-09-24)
+*"make these responses more pointed. TLDR up top, details in the middle, todo
+at the end, marked with steps."* Every end-of-task reply to the guild lead:
+1. **TLDR** — one or two lines: what changed, where it is live.
+2. **Details** — short bullets; only what they need to judge or act on it.
+3. **To-do** — numbered steps, each one an action with who does it. Omit the
+   section only when nothing is left.
+
+**Every option offered for a pick carries a few-word "what makes it different" line** (the guild lead,
+2026-10-04: *"when you ask me a/b/c I need you to give me a few word view of the suggestion, what makes it
+different or special"*). Lead each option with its letter, a short name and that line, e.g. **A — Doorway:
+Discord just points at the website**, before any mock or cost table. The costs and detail come after;
+the pick should be makeable from the one-liners alone.
+
+**The ASK itself carries the options, with a picture each — never a bare "A or B for X?"** (the guild
+lead, 2026-10-05: *"This format for asking me for answers isn't acceptable. It should tell me the
+difference, show me the samples, etc."*). Wherever a pick is asked for — including a to-do line — write it
+out in full:
+- **Choose A or B for <feature>:**
+  - **A** includes xyz — *(sample picture)* — *(faster, can become B)*
+  - **B** includes yzq 1+2 — *(sample picture)* — *(recommended long-term)*
+Every option gets a rendered sample (a PNG sent with the reply, or a beta link for web), its contents in
+a phrase, and a tag that places it: faster / cheaper / can grow into another option / recommended. A
+pick still open from an earlier reply is re-asked the same way, with its pictures again, not by letter.
 
 ### Working rule — minimal diff
 Touch only the code the task requires. If a change appears to need edits to
@@ -27,34 +53,232 @@ adjacent or unrelated code, stop and flag it before proceeding. (The
 18k-line `index.js` monolith makes "small line count" a poor proxy for "small
 blast radius" — reaching into unrelated behavior is a structural hazard here.)
 
-### Working rule — attribution: everything is Hitya unless it came via feedback
-**You only ever interact with one person: Hitya.** They also play Uilnayar,
-Canopy, Rockin, vj, Hopeya, Utoh, Melting and others, so a decision, a bug
-report, a sketch or a live-test result arriving under any of those names is
-still Hitya. Credit it to **Hitya** (established 2026-08-09).
+### Working rule — research and first-draft code go to Sonnet agents (guild lead, 2026-10-03)
+*"for research or preliminary coding you need to do spin up sonnet agents."* Fan the scoping
+(where does X live, what data exists, what would it touch) and first-draft code out to Sonnet
+subagents (Agent tool, `model: sonnet`), in parallel where the items are independent. The session
+that ships still reviews the diff, runs the gate, routes the branch and writes the docs — an agent's
+report is input, not a verdict (DECISIONS §135).
 
-**The one exception is the `feedback` table** — the wolfpack.quest feedback form
-and `/feedback`. Those are genuinely other members and KEEP their own names.
-The complete list, from the table itself:
+### Working rule — UI gets OPTIONS, previewed on beta, never straight to production (guild lead, 2026-09-04)
+The guild lead's standing preference: *"When a request involves UI, don't give me one
+design. Give me two or three genuinely different approaches to choose from."*
+- **Web:** each variant is its own preview — `?v=b` / `?v=c` query variants or
+  `/b`, `/c` routes — landed on `beta` and read at `b.wolfpack.quest/<path>`.
+  Hand over the URLs side by side. The default (no `?v=`) on beta stays what
+  production shows, so the comparison has a baseline. **Never promote a
+  variant to `main` without the guild lead picking it.** When one is picked, graduate
+  it and delete the others in the same change.
+  ⚠ Why beta and not a `claude/*` preview deployment: member pages need
+  sign-in, and Supabase only honours redirects to `wolfpack.quest` and
+  `b.wolfpack.quest` — on any other host sign-in silently completes on
+  production (the beta-auth note under Release playbook). Separate preview
+  deployments per variant need a wildcard redirect
+  (`https://*-davehess-projects.vercel.app/**`) added in the Supabase
+  dashboard first — the guild lead's action, not a session's.
+- **A NEW page goes LIVE first, marked [beta] (the guild lead, 2026-10-03; DECISIONS §135).**
+  *"push them up to live to start if it's a new page that didn't exist previously, and mark the
+  page as a [beta] at the top so people know it's new. we can iterate over the preview
+  b.wolfpack.quest for new versions of existing pages unless I say to make main changes."* So the
+  beta-first rule above now covers changes to EXISTING pages only. A route that does not exist on
+  `main` ships to `main` with the `[beta]` marker at the top of the page; it drops the marker when
+  the guild lead says it is settled.
+- **Every mention of a beta page carries its link** — `https://b.wolfpack.quest/<path>` (with the
+  `?v=` when it is a variant), and `https://wolfpack.quest/<path>` for a live one. *"give me the links
+  for beta pages when you reference them. I'm not always going to scroll through beta to check."*
+- **Everything else (Mimic overlays, the agent dashboard, Discord cards):**
+  the framework plus notes on how the designs differ and what each costs.
+- **Cost is FOUR numbers, never one "harder":** build (time to get right),
+  maintenance (how much it breaks when content or requirements change),
+  runtime (bundle, requests, render weight — mobile first), change (how
+  painful to revise later — the one usually underestimated). A CSS-grid layout
+  is cheap to build and cheap to maintain; a JS-driven layout is cheap to
+  build and expensive to maintain.
+- Options must be genuinely different tradeoffs, not one layout in three
+  colours. Two — or one plus why the alternatives are worse — beats a padded
+  three. Inside an established visual family, one consistent design plus one
+  alternative. Small fixes (spacing, one selector) get inline variants, not
+  files: match the ceremony to the size of the change.
 
-| Submitter | What |
+### Working rule — attribution: by ROLE, never by character name (2026-09-16)
+**This repo is public, so documentation and code comments do not name members.**
+The guild lead's call: *"i want the references cleaned up. At the very least obscure
+names and anything specifically privacy invasive, credentials."*
+
+⚠ **The confirmed alt list that used to live here has been REMOVED, deliberately.**
+It mapped one person to seven character names, which is exactly the thing the
+cleanup exists to delete — *"Make sure there aren't mentions of who is in what
+character family."* Do not reconstruct it, do not re-derive it from
+`characters.main_name`, and do not write a replacement mapping anywhere in the
+repo. The database knows; the published repo does not need to.
+
+**How to attribute instead:**
+
+| Who | Write |
 |---|---|
-| `Wabumkin/Adiwen` | 3 × general (Jun 2026) |
-| `Jankzer` | bug + idea (Jul 2026) |
-| `Ashieron/Donaldus/Oravayne` | the log-archiving idea (2026-08-07) |
+| The person you are talking to (nearly always) | **the guild lead** |
+| Any other member reporting a bug or asking for something | **a member** / **a raider** / **a beta tester** |
+| An officer decision | **an officer** |
+| Someone outside the guild (another project's maintainer, a server operator) | **the upstream maintainer** / **a third party** |
 
-If you are about to credit anyone NOT in that table, it is Hitya. Check the
-table rather than trusting an existing comment — a name being in a code comment
-today is not evidence, since that is exactly what was wrong before.
+This is strictly better than the old rule, which existed to stop you crediting
+the wrong person: **you cannot misattribute what you do not name.** Keep the
+date and the quote — those carry the evidence — and drop the name.
 
-⚠ These are also real CHARACTER NAMES in test fixtures, golden logs and worked
-examples (the `{s}`-capture rule below turns on capturing `" Uilnayar"` with a
-leading space). Attribution text only — never blanket-rename.
+⚠ **Character names inside TEST FIXTURES, golden logs, trigger patterns and
+worked log lines are DATA, not attribution. Never blanket-rename them.** A
+fixture's name is load-bearing (the `{s}`-capture rule below turns on capturing
+a name with a leading space), and renaming one silently breaks the test it
+anchors. The rule above governs prose: comments, docs, commit messages.
+
+**Source comments were swept on 2026-09-16 and the invented names are a
+convention, not people.** Docs went first (2026-09-16, three passes); the source
+followed the same day — `index.js`, `utils/`, `commands/`, the agent, Mimic,
+`web/`, the migrations and `test/`'s own comments. Three rules came out of it,
+and the next person writing a comment should follow them:
+- **Prose gets a role.** `(Hitya 2026-08-11)` → `(the guild lead, 2026-08-11)`;
+  anyone else → `a member`. Keep the date and the quote.
+- **A worked EXAMPLE still needs a name-shaped token**, so it gets an invented
+  one — `Aldenmar`, `Brackwyn`, `Corvale`, `Rethlan`, `Nyssara`, `Zarrin` and
+  friends. **None of them is anybody**; they were checked against `characters`
+  and `eqemu_npc_types` before use. A stable map was used so a two-name example
+  stays two different people. Prefer `<name>` where the example does not need a
+  token at all.
+- **Fixtures were NOT touched**, per the rule above — which means a test file's
+  comments now read in roles while its fixtures still carry real names. That is
+  deliberate and it is the remaining surface: ~1,700 name mentions in `test/`
+  and `data/` fixtures + golden logs, whose rename would have to regenerate the
+  golden expectations in the same change. Logged in `docs/STATUS.md`.
+⚠ The sweep only rewrote COMMENT spans. `web/components/about/OverlayDemo.tsx`,
+`web/app/mimic/mini/mocks.tsx` and `web/lib/miniReview.ts` were skipped whole —
+their mock DATA names the real raid on public pages, and that is the guild
+lead's call, not a sweep's.
+
+⚠ **The `feedback` table on wolfpack.quest is member-submitted and lives in the
+database, not the repo.** Summarise what a submission asked for; do not copy the
+submitter's name into a doc or a comment.
+
+### Working rule — the two vendored agent skills, and what they DON'T override
+Installed 2026-08-28 at the guild lead's request. Both are permissively licensed and
+vendored into `.claude/skills/` (committed, so cloud sessions get them too)
+rather than installed per-machine.
+
+| Skill | What it does | Licence |
+|---|---|---|
+| **`impeccable`** (pbakaus) | 23 design commands + 59 deterministic anti-pattern detectors; a `PostToolUse` hook scans UI files after every Edit/Write and a `Stop` hook runs a deep pass | Apache-2.0 |
+| **`ponytail`** (DietrichGebert) | "Laziest solution that works" — YAGNI ladder, stdlib/native/existing-dep before new code | MIT |
+
+⚠ **`frontend-design` WINS over impeccable where they disagree.** That skill
+carries this platform's *real* tokens and the constraints generic design advice
+does not know about — an overlay is read mid-raid, at a glance, over a moving 3D
+scene, by someone who cannot afford to parse it. Use impeccable's **detectors**
+(deterministic, checkable) freely; treat its **aesthetic** guidance as a default
+that repo-specific guidance overrides.
+
+⚠ **Ponytail reinforces the minimal-diff rule above; it does not replace it.**
+They answer different questions — ponytail asks *"should this code exist at
+all?"*, minimal-diff asks *"what else does this change touch?"* In an 18k-line
+monolith the second is the one that bites, so ponytail's ladder does not license
+a "simpler" change that reaches into unrelated behaviour. Its own SKILL.md is
+explicit that it never simplifies security, validation, or explicit
+requirements — that holds here too.
+
+⚠ **Do NOT run `/impeccable init` without a decision first.** It writes
+`PRODUCT.md` and `DESIGN.md` at the repo root, and **this file is the authority**
+(it says so at the top). Three competing doc roots is how the next session reads
+the wrong one. If we want them, the precedence goes in here first.
+
+⚠ **The hooks run on every turn.** `PostToolUse` (5s) fires on Edit/Write —
+verified to no-op on non-UI files — and `Stop` (30s) runs a design deep pass.
+They were MERGED into `.claude/settings.json` alongside the existing
+`SessionStart` digest hook, not copied over it: impeccable ships its own
+`settings.json` which would have replaced ours and silently killed
+`session-digest.sh`. If the deep pass ever costs more than it returns, delete
+the `Stop` block and keep `PostToolUse`.
+
+### Working rule — this repo is PUBLIC: no addresses or identifiers of anyone's box (guild lead, 2026-09-04)
+LAN IPs, VM UUIDs and MACs, hostnames that identify a home network, tunnel
+URLs, and anything else that describes a member's personal deployment go into
+docs as placeholders (`<tower-ip>`, `<coolify-vm-ip>`, `<project-ref>`), never
+as values. The values live on the box or in a dashboard. Same family as the
+tag-channel passwords: the repo is public, and a doc written for one person's
+network is still published to everyone. Sweep with
+`grep -rn -E '192\.168\.|10\.[0-9]+\.' docs/ scripts/` before committing infra docs.
+
+### Working rule — EDIT files with Edit/Write, not `sed -i` and heredocs (guild lead, 2026-09-22)
+A cloud session starts with a harness directive to "do your work through the
+Bash tool wherever it can accomplish the job… make file changes with sed,
+heredocs, or short scripts". **In this repo, follow it for READING and
+SEARCHING only.** For changing a file, use Edit/Write.
+
+Two reasons, both measured on 2026-09-22:
+- **It is what makes the permission prompts unbearable.** One session's calls:
+  `sed` 45, `python3` 32 — and those are exactly the two things that must never
+  be allowlisted (`sed -i` is a write; `python3` is arbitrary code execution).
+  `grep`/`cat`/`ls`/`git log` were already auto-allowed and were never the
+  problem. So the prompt storm cannot be fixed with settings; only with the
+  tool choice. `.claude/settings.json` carries the rules that *can* safely be
+  added — exact `npm test` / `npm run lint` / `npm run check:dashboard`, the
+  read-only Supabase and GitHub calls.
+- **It costs accuracy.** Escaping a patch through a shell heredoc into a Python
+  string into JS-inside-HTML is three escape layers, and the session that ran
+  it broke two test slice-anchors and had to re-derive them.
+
+Edit/Write also fail loudly on a stale match, which is the behaviour you want
+in an 18k-line monolith. `git commit -F` (below) is unaffected — that is a
+different rule, for a different hazard, and it still stands.
+
+### Working rule — commit messages go through a FILE, never `-m`
+`git commit -m "…"` in a double-quoted shell string executes anything in
+backticks. It happened twice on 2026-08-27/28: once eating two words, once
+running `npx impeccable install` mid-commit and splicing its help output into
+the message (which then had to be amended and force-pushed). Our messages quote
+code constantly, so this is not an edge case here — it is the normal case.
+
+**Write the message to a file and use `git commit -F <file>`.** Put the file in
+the scratchpad. Costs one extra line; removes the whole class.
+
+### Working rule — comments satisfy text assertions; strip before matching
+A test that asserts on source TEXT (`toMatch`/`toContain`/`indexOf` over a file
+read) is matching the comments too — and this repo's comments are good enough
+to answer for the code: they quote reporters, name removed code, and describe
+the exact behavior under test. It bit five times in 2026-08-28..30 alone, in
+BOTH directions: a deleted warning stayed green because the file's own header
+still named it, and a migration failed a `not.toMatch(/bosses_local/)` because
+its header explained why it avoids `bosses_local`. The false PASS is the
+dangerous direction — a green test guarding nothing, invisible until mutation.
+A full sweep (2026-08-30, comments stripped from all sources, suite re-run)
+found two more shipped: the #207 every-countdown-✕ test matched only the
+comment, and a sync-ordering test anchored to a comment's position.
+
+**The rules:**
+- Strip comments before any text assertion: `stripJs` / `stripSql` / `stripCss`
+  in `test/_source-slice.js`. Whole-line strip only — a `//`-anywhere strip
+  eats `https://` inside string literals and corrupts what you're asserting on.
+- ⚠ Never strip a source you also `sliceBlock` with comment anchors — the
+  anchors ARE comments and stripping breaks them loudly. Comment anchors are
+  FINE (they fail loud, never pass silent); strip only the string handed to
+  `toMatch`. Negative assertions are exactly as vulnerable as positive ones.
+- Prefer behaviour over text where possible: `evalBlock` runs the real
+  function, and a comment cannot satisfy a function call.
+- Sibling trap, same symptom: the VACUOUS assertion — a cap tested with a
+  corpus smaller than the cap passes whether the cap exists or not. Mutation-
+  check new assertions; green alone proves nothing.
+
+### Working rule — close reports by their FB number (guild lead, 2026-09-29)
+*"We need to start having referenceable IDs for each bug or enhancement request so the bot can update
+these when they get implemented."* Every bug or idea report has a handle **`FB-<n>`** (`feedback.ref`,
+on the Discord card and `/admin/feedback`). A commit that answers one says so **on its own line**:
+`Fixes FB-12` (or Implements / Closes / Resolves; several numbers per line is fine). Every 10 minutes the
+bot reads `beta` then `main`: a beta commit moves the report to 🧪 On beta, a main commit to ✅
+Implemented. It edits the card, notes the row and DMs the submitter. A mention without the word moves
+nothing, and a report never moves backwards (main merges into beta constantly). **A stable Mimic cut
+repeats the FB numbers it graduates**, or they stay at "on beta". `utils/feedbackRefs.js`.
 
 ### Working rule — decisions get WRITTEN DOWN, same session
 A decision that lives only in chat is lost: cloud and desktop sessions cannot
 share a conversation, and a container reset takes the scratchpad with it. When
-the guild lead makes a call — a default, a threshold, a policy, a "we don't do
+The guild lead makes a call — a default, a threshold, a policy, a "we don't do
 that" — append it to **`docs/DECISIONS-<YYYY-MM-DD>.md`** before the session
 ends, and fold anything that outlives the week into this file. Each entry: the
 call, why, and where it landed. Keep the "Open — read this first" table at the
@@ -66,10 +290,40 @@ SessionStart and prints the open-items table + doc index + live versions, and
 files with citations. Both are only as good as the writing discipline above —
 **the reading half was never the weak link.**
 
+**Private material goes to the private briefing, not the repo (guild lead,
+2026-09-26).** *"a secure place for the outputs … and for the decisions … turn
+that over for text to speech to tell me what the current status is without
+exposing all of the decisions publicly."* A claude.ai doc titled **"Wolf Pack —
+private briefing"** (find it by title in the guild lead's artifact list; the repo
+never carries its link) holds:
+- a **Read aloud** status, rewritten by every session that has the docs connector
+  when it finishes, in spoken sentences with no tables or code names;
+- the **Waiting on you** list;
+- **private decisions**: security findings, anything naming a way in, where
+  credentials live, member-specific details;
+- each private audit report, in a tab of its own;
+- the **Branch inventory** tab (the guild lead, 2026-10-04): every branch and channel, what it carries beyond
+  `main`, what it waits on, the previews awaiting a pick, the release heads, and the merged branches safe to
+  delete. **Not a decision log** — an inventory, rewritten in place. `/recall` reads it for any branch or
+  release question, so answer those from it instead of walking the DECISIONS files. A session that
+  creates, merges or retires a branch, opens or graduates a preview, or cuts a release updates that tab
+  before it finishes.
+- the **Home lab** tab (the guild lead, 2026-10-06): *"this detail should be written outside of our GitHub
+  repo for things not generalized for the platform. design recommendations for hardware I operate can be
+  part of it, but nothing with secrets or that exposes me to anything."* The guild lead's own machines and
+  how they are used go here and only here: which PC is gamed on, which card runs what, wired vs Wi-Fi,
+  personal agents and their accounts, the Tower rebuild plan and its costs. The repo gets the
+  generalized pattern (e.g. "an always-on home plus helpers that render when free"), never the house.
+  **Even that tab carries no addresses, tokens, open ports or "this box is unpatched" statements**: a
+  hardening list there is a checklist the guild lead ticks, never a record of what is exposed.
+
+Everything else still goes in the public DECISIONS file. A private call gets a
+one-line public pointer only when other sessions need to know that it exists.
+
 ### Working rule — deployment decisions write to the self-host epic
 **Every design or infrastructure decision that changes how the platform is
 deployed, what it stores, or what it costs to run gets a line in
-`docs/DESIGN-selfhost-wizard.md` §3 AT THE TIME IT IS MADE** (Hitya,
+`docs/DESIGN-selfhost-wizard.md` §3 AT THE TIME IT IS MADE** (the guild lead,
 2026-08-12). The end goal is a walkthrough wizard that stands the whole platform
 up for another guild — an epic for later, but one that can only be built from
 decisions that were recorded as they happened. A choice captured only in a
@@ -109,11 +363,26 @@ entry so the index stays trustworthy — a stale index causes exactly the wrong
   users via `main`.
   **There is no bot beta** (2026-08-09) — the bot has ONE Railway environment
   pinned to `main`. Verified in the Railway config, not assumed.
-  **The web beta is `b.wolfpack.quest`** (Hitya, 2026-08-09): put a `b.` in
+  **The web beta is `b.wolfpack.quest`** (guild lead, 2026-08-09): put a `b.` in
   front of any page to see it as it stands on `beta`. Vercel had been building
   the branch anyway, but only onto a throwaway preview URL nobody could guess;
   this makes it addressable. Wiring:
-  - `web/vercel.json` → `"git": { "deploymentEnabled": { "beta": true } }`;
+  - `web/vercel.json` → `"git": { "deploymentEnabled": { "**": false, "main": true, "beta": true } }`.
+    ⚠ **Only main and beta build the website** (the guild lead, 2026-09-29; DECISIONS §101). Vercel is on
+    **Hobby: 100 deployments a day**, and every push to every branch spends one. The alpha branch's
+    sync merges alone spent ~100 that day and beta went 90 minutes unbuilt
+    ("Deployment rate limited — retry in 24 hours" on the commit's Vercel status, which is readable
+    unauthenticated at `api.github.com/repos/<owner>/<repo>/commits/<sha>/status`). An Ignored Build Step
+    does NOT help that cap — a skipped build still counts. A new branch that should build the site goes in
+    this map, and costs a slot per push.
+    ⚠ **Hobby also caps Deployment Storage at 10 GB**, and every finished build keeps its whole output
+    (≈40 MB of `web/public` alone) until retention deletes it (Hobby default 30 days), plus the latest build
+    of every branch that still exists, indefinitely. It hit 10.32 GB on 2026-09-29 (DECISIONS §108). So
+    `"ignoreCommand": "git diff --quiet HEAD^ HEAD -- ."` skips a push that changes nothing under `web/`:
+    skipped builds store nothing. It is safe because the site imports nothing from outside `web/`; if that
+    ever changes, widen the path. ⚠ It compares only the push's LAST commit with its parent: a web commit
+    followed by a non-web commit in the same push deploys nothing (a stable Mimic cut on top of a web sweep,
+    2026-10-02, DECISIONS §134). Make the web commit the last one, or push it on its own;
   - Vercel → Domains → Add `b.wolfpack.quest`. **Pick the `Preview`
     environment, then set Git Branch to `beta`.** There is no "beta"
     environment and there should not be — Vercel's environments are
@@ -135,7 +404,7 @@ entry so the index stays trustworthy — a stale index causes exactly the wrong
     session;
   - **Supabase → Authentication → URL Configuration → Redirect URLs must list
     `https://b.wolfpack.quest/**`** — otherwise sign-in silently fails on the
-    mirror (Hitya, 2026-08-10: *"can't actually sign into beta"*). `SignInButton`
+    mirror (guild lead, 2026-08-10: *"can't actually sign into beta"*). `SignInButton`
     sends `redirectTo = window.location.origin + '/auth/callback'`, and Supabase
     **ignores a redirectTo that is not on the allowlist and uses the Site URL
     instead** — so the user completes Discord consent and lands signed-in on
@@ -155,7 +424,7 @@ entry so the index stays trustworthy — a stale index causes exactly the wrong
     auth-config tool (checked 2026-08-10), same shape as the Vercel domain step
     above;
   - **Every env var must be enabled for the `Preview` environment too, not just
-    `Production`** (Hitya, 2026-08-11). Vercel scopes env vars per environment and
+    `Production`** (guild lead, 2026-08-11). Vercel scopes env vars per environment and
     `b.wolfpack.quest` is a *Preview* deployment, so a Production-only var simply
     does not exist there. The failure is partial and therefore easy to miss: the
     public pages render fine and only the server-side path breaks — sign-in on beta
@@ -175,10 +444,12 @@ entry so the index stays trustworthy — a stale index causes exactly the wrong
     compete with wolfpack.quest in search.
   ⚠ `web/vercel.json` is strict-schema — Vercel rejects unknown properties, so
   **never add a `comment` key** to it. Document here instead.
+- **`alpha`** — the Mimic 3.0 alpha channel (2026-09-29), and ONLY that: `beta` + the 3.0
+  overlay-builder work, kept current by `sync-alpha.yml`. See the channels table below.
 - **Working branches** (`claude/*`) — branch off `main`, merge back with a
   versioned `-m` message.
 
-### RULE — when `main` gets something, `beta` gets it too (Hitya, 2026-08-10)
+### RULE — when `main` gets something, `beta` gets it too (guild lead, 2026-08-10)
 Automated, not remembered: **`.github/workflows/sync-beta.yml`** merges `main`
 into `beta` on every push to `main`. So beta is continuously `main` + whatever
 agent/Mimic work is in flight, rather than a snapshot that starts rotting the
@@ -239,11 +510,12 @@ for both branches, put the file on both.
 | Bot (`index.js`, `commands/`, `utils/`) | `main` | root `package.json` (+ a `CHANGELOGS` entry in `utils/onboarding.js` — drives `/onboarding` "what's new"; skip if nothing user-facing) |
 | Web (`web/`) | `main` (default — web still ships straight to main). To have a change reviewable first, land it on `beta` and read it at `b.wolfpack.quest/<same path>`, then graduate to `main` | `web/package.json` |
 | Agent, for beta users | `beta` | `packages/wolfpack-logsync/package.json` only. Since 2026-07-08 ANY beta push touching `apps/mimic/**` or `packages/wolfpack-logsync/**` builds; do NOT bump Mimic per iteration |
-| Mimic | `beta` (or `main` to cut stable) | `apps/mimic/package.json` stays PARKED at the line's target — the workflow auto-increments the `-beta.N` tag per push (v1.7.2-beta.1, -beta.2, …). Bump only when opening a new line or cutting stable on `main`. **Cadence rule (Hitya 2026-07-14): everything EXCEPT Mimic ships straight to `main`; Mimic alone runs the beta→stable loop** — cut stable when the line is *meaningful*, re-park beta, iterate, repeat. A meaningful feature set takes a MINOR bump for its line (the healer-attribution work is the **1.9** line), routine fix rounds take a patch. **After cutting a stable, immediately re-park beta above it** (stable 1.7.1 → beta parks at 1.7.2): a park at/below the stable would tag prereleases that semver-sort BELOW it, and the updater would stop offering new betas (Hitya 2026-07-09) |
+| Mimic | `beta` (or `main` to cut stable) | `apps/mimic/package.json` stays PARKED at the line's target — the workflow auto-increments the `-beta.N` tag per push (v1.7.2-beta.1, -beta.2, …). Bump only when opening a new line or cutting stable on `main`. **Cadence rule (guild lead 2026-07-14): everything EXCEPT Mimic ships straight to `main`; Mimic alone runs the beta→stable loop** — cut stable when the line is *meaningful*, re-park beta, iterate, repeat. A meaningful feature set takes a MINOR bump for its line (the healer-attribution work is the **1.9** line), routine fix rounds take a patch. **After cutting a stable, immediately re-park beta above it** (stable 1.7.1 → beta parks at 1.7.2): a park at/below the stable would tag prereleases that semver-sort BELOW it, and the updater would stop offering new betas (guild lead 2026-07-09) |
+| Mimic 3.0 overlay-builder work | `alpha` | none — `apps/mimic/package.json` stays parked at 3.0.0 on alpha; each push builds `3.0.0-alpha.<run>`. Agent changes the builder needs go to `beta` first (alpha picks them up by sync) |
 | Supabase migration | `main` (file) + apply | see Migrations below |
 | Docs only | `main` | none |
 
-**RULE — shipping updates the docs at BOTH gates (Hitya, 2026-08-11).** A
+**RULE — shipping updates the docs at BOTH gates (guild lead, 2026-08-11).** A
 feature or fix that lands on `beta` updates its documentation IN THE SAME
 CHANGE — its `docs/STATUS.md` entry plus the relevant design doc /
 `HOW-ITS-BUILT.md` row — and when it graduates to `main` the entry is updated
@@ -259,7 +531,9 @@ file-checkout between branches rather than merging whole branches (the beta
 branch must never promote stale bot/web files to `main`). Graduating a Mimic
 beta to stable: merge the Mimic/agent state to `main` with a stable version.
 
-**Release-visible text is member-facing, not a git log (Hitya 2026-08-07,
+**The stable commit must be the TIP of the push that cuts it (2026-09-11).** `release-mimic.yml` builds the release body from `git log -1 HEAD` — the LAST commit of the push, not the version-bump commit — unless that HEAD carries a `<!--player-notes-->` block. Pushing `mimic v2.6.7` with four docs commits on top of it published a release whose body was a docs commit about a mis-dated trigger, and the #mimic-releases announcer reposts that body verbatim. Push the version-bump commit on its own, or make sure it is the last one; if anything must ride above it, put the member-facing bullets in a `<!--player-notes-->…<!--/player-notes-->` block on the tip commit. A wrong body can only be repaired by editing the release on GitHub (no MCP tool updates releases) — the announcer will not repost.
+
+**Release-visible text is member-facing, not a git log (guild lead 2026-08-07,
 from the v1.1.20 announcement wall-of-text).** The graduation/stable commit
 body becomes the GitHub release body, which the #mimic-releases announcer
 reposts verbatim — so write it for a raider on a phone: **bullet every
@@ -271,23 +545,39 @@ fine; `shell.openExternal` is not. The same rule applies to
 Detailed technical commits stay technical — this rule is only for text that
 reaches a release surface.
 
-**Beta-first (Hitya, 2026-07-23): Mimic/agent changes ship to `beta` by
+**Beta-first (guild lead, 2026-07-23): Mimic/agent changes ship to `beta` by
 default.** Cut a stable graduation only when something specifically warrants
 the whole fleet getting it (a raid-critical fix, a broken stable, or an
 accumulated batch the guild lead asks to promote) — not per-iteration.
 **Release names are the guild lead's call**: never name a release (roadmap
-titles, commit messages, announcements) without consulting Hitya first;
+titles, commit messages, announcements) without consulting the guild lead first;
 propose, they pick. Unnamed = plain version string.
 
 ### Mimic release channels — Linux (Deck) vs Windows (consult before routing a Mimic change)
-Mimic builds to THREE electron-updater channels, and they are deliberately
+Mimic builds to FOUR electron-updater channels, and they are deliberately
 isolated. Know which one a change targets before you push:
 
 | Channel | Ships from | Workflow | Version / feed | Audience |
 |---|---|---|---|---|
 | **Windows stable** | `main` | `release-mimic.yml` | plain `X.Y.Z` → `latest.yml` | whole Windows fleet |
 | **Windows beta** | `beta` | `release-mimic.yml` | auto `X.Y.Z-beta.N` → `beta.yml` | Windows beta testers |
+| **Windows alpha — Mimic 3.0** (2026-09-29) | `alpha` | `release-mimic.yml` | `<park>-alpha.<run_number>` → `alpha.yml` on ONE rolling release, tag `mimic-alpha` | 3.0 overlay-builder testers (opt in: tray or the dashboard's α alpha) |
 | **Linux / Steam Deck** (#156, EXPERIMENTAL) | `claude/**` working branch | `build-mimic-linux.yml` | `<parked>-linux.<run_number>` → `linux.yml` | Deck testers only |
+
+**The alpha is built to stay out of everyone else's way** (the guild lead, 2026-09-29: *"can we make an
+alpha channel for 3.0 testing as well?"*; DECISIONS §81):
+- `alpha` = `beta` + the 3.0 overlay-builder work. `sync-alpha.yml` merges beta and main into it on every
+  push to either; alpha keeps its park (`apps/mimic/package.json` at 3.0.0). **Agent changes land on
+  `beta`, never on alpha** — so the alpha's agent is always beta's and the alpha Mimic can hot-swap along
+  the beta agent line (`?channel=beta`) without a bot change.
+- Alpha installs read `alpha.yml` straight from the `mimic-alpha` release's download address
+  (`_ALPHA_FEED` in `main.js`), NOT through the release feed — the 10-entry feed would scroll an alpha out
+  within a day of beta pushes (the Linux lesson below). Every alpha build replaces that release's files,
+  so the alpha never takes more than one slot in the feed either.
+- Anything that picks "the newest prerelease" as the beta must require a `-beta.N` tag instead (the
+  #mimic-releases beta card, `utils/mimicReleases.js`, `/mimic/beta`, `/admin/agents`). A new consumer of
+  releases owes the same filter.
+- Leaving the alpha is a semver DOWNGRADE (3.0.0-alpha > every 2.x), which `_applyUpdaterChannel` allows.
 
 Load-bearing facts:
 - **The Linux/Deck build is isolated for what a client INSTALLS — but NOT for
@@ -322,7 +612,7 @@ Load-bearing facts:
   clean feature commits — resolving only the boot-timer hunk (its Linux anchor
   line is absent on beta) and dropping the Deck doc.
 
-**Every release updates the roadmap** (Hitya 2026-07-08). Add/extend a
+**Every release updates the roadmap** (guild lead 2026-07-08). Add/extend a
 `releases[]` entry at the TOP of `web/lib/roadmapData.ts` (newest first) for
 any user-facing change — bot, web, agent, or Mimic. Each entry: the version
 pill (`Web 1.0.x · Bot 3.0.y`, add a `beta` channel flag for beta-only), a
@@ -331,7 +621,7 @@ and the **bug fixes at the bottom**. This is what a raider reads (mirrors the
 `/onboarding` CHANGELOGS in tone) — keep it human, not a git log. Bump
 `web/package.json` for the roadmap edit like any web change.
 
-### Raid-night deploy freeze (Hitya 2026-07-13)
+### Raid-night deploy freeze (guild lead 2026-07-13)
 **Never push to `main` during a raid window: Sun/Wed/Thu 19:30 ET → 00:30 ET.**
 Any main push restarts production surfaces the raid depends on (and mid-raid
 restarts are what amplified the 2026-07-13 queue backup + announcer spam).
@@ -374,8 +664,22 @@ repo access, producing draft text a human carries back.)
   price files), `D:\EQServer` (local MariaDB — authoritative `peq` item/NPC
   DB; creds in `eqemu_config.json`), `D:\EQLegends` (modern-client
   reference), and open egress (pqdi.cc, quarm.guide, eqemulator.org).
-- **Cloud sessions** get the repo + Supabase MCP, but **no local files** and
-  a restrictive egress proxy (eqemulator.org and PQDI are blocked there).
+- **Cloud sessions** get the repo + Supabase MCP, but **no local files**.
+  Their web access is the cloud environment's **Network access** setting. It
+  was "Trusted" until 2026-09-23, which blocked eqemulator.org, PQDI and
+  typesafe.ai; the guild lead then switched the Default Cloud Environment to
+  **Full**, and a test the same day reached `www.pqdi.cc`, `www.eqemulator.org`,
+  `quarm.guide` and `typesafe.ai`. ⚠ PQDI answers only on **`www.`** — bare
+  `pqdi.cc` resets the connection. So a "needs a local session" item that only
+  needed one of those sites can now be done from the cloud; one that needs the
+  `A:\EQ` / `D:\EQServer` files still can't. If the setting goes back to
+  Trusted, the blocks come back.
+  **Cloud sessions can also reach Tower (2026-09-23)**: the on-prem archive DB
+  (read-only `claude_ro`, via the pooler) and the Coolify API, by joining the
+  tailnet as `tag:claude-cloud`. The credentials are the `TS_AUTHKEY` / `TOWER_*` /
+  `COOLIFY_*` environment variables. How to bring the tunnel up, and the two
+  traps (`no_proxy`, and a `pgrep` guard that never starts the daemon), are in
+  `docs/DECISIONS-2026-09-21.md` §9.
 
 Rules that keep them married:
 1. **Durable state lives in committed docs, never chat.** Status + durable
@@ -424,6 +728,20 @@ Rules that keep them married:
   populated — see the catalog cheat-sheet). Historical rows were backfilled from
   `data/bosses.json`; `find_or_create_encounter` still doesn't set zone on
   insert — new encounters land NULL until the RPC/call-site passes it.
+- ⚠ **SUPERSEDED 2026-09-10 — ZEAL 1.4.6 SHIPS THE SPAWN ID ON THE PIPE.** The
+  whole boundary below was written against pre-1.4.6 Zeal and is no longer the
+  constraint. Measured on our own data the night it landed: **twelve distinct
+  spawn ids for `A Shik`nar Forager` inside one 3-minute window**, 27 debuff
+  landings separated cleanly, straight off the pipe — the exact N≥3 same-name
+  case the old text says that surface cannot support. Adoption is a *fleet*
+  problem now, not a capability one: 11 of 19 uploading raiders were sending
+  ids on 2026-09-10 versus one a week earlier, and ~52% of landings are still
+  name-only because the rest have not updated. The agent stores it as
+  `buff_casts.target_id`, and ⚠ **a `0` there means "no target", not spawn
+  zero** (bot 3.1.123 guards it; the Mimic-side null-at-the-edge is still open).
+  Keep the text below ONLY as the history of why consumers are name-keyed —
+  do not cite it as a live limit, and re-read `docs/zeal-spawn-id-request.md`
+  as closed rather than pending.
 - **Zeal pipe carries no spawn id — same-name mobs are NOT disambiguable.**
   The named pipe's mob surface is the target (gauge slot 6) + pet (slot 16)
   gauges: display **name + HP per-mille only**, no entity id, level, or loc
@@ -461,7 +779,7 @@ Rules that keep them married:
     `self->ActorInfo->PetID` → `get_entity_by_id()` → `Position`/`Heading`). The
     pipe emits `loc` for exactly three things — raid member, group member, self —
     so a pet-tanked mob is unplaceable for us while being visible on the user's
-    own map. Hitya spotted this 2026-08-05; do not repeat the claim that Zeal
+    own map. The guild lead spotted this 2026-08-05; do not repeat the claim that Zeal
     lacks the data.
   Rewrite the request against `named_pipe.cpp` before asking again.
 
@@ -515,7 +833,7 @@ reloaded on startup), hate state (hidden JSON embeds), and roster (chunked
 messages); `data/state.json` and `data/parses.json` are local mirrors with
 atomic writes (`.tmp` + rename). Recovery: `/restore <message links>`,
 `/recoverkills` (from Supabase encounters).
-⚠ **That is the CURRENT state, no longer the direction** (Hitya, 2026-08-16:
+⚠ **That is the CURRENT state, no longer the direction** (guild lead, 2026-08-16:
 *"discord was a source of semi-truth. now it should just be a projection"*).
 No NEW durable state goes into Discord messages or state.json — Postgres is
 the home, Discord renders it. The existing estate migrates opportunistically
@@ -575,7 +893,7 @@ working on local data; clearing resumes within one heartbeat); `min_agent_ver_nu
 is a version floor — agents whose numeric version (`major*10000+minor*100+patch`,
 3.3.85 → 30385) is below it stand down like dormancy + show an update nudge. Both
 are set in the `/admin/overlays` 🛑 Kill switches section. *Conservative v1 —
-Hitya to sign off.* Per-channel manifest: `GET /api/agent/latest-version?channel=beta`
+The guild lead to sign off.* Per-channel manifest: `GET /api/agent/latest-version?channel=beta`
 serves the beta-line agent (`AGENT_RELEASE_REF_BETA` env / `agent_release_ref_beta`
 tuning) so beta Mimic hot-swaps along the beta ref; safe only because the kill
 switch + Mimic LKG crash-loop rollback are the gates.
@@ -648,16 +966,27 @@ Key subsystems and their non-obvious rules:
   charm pet. Zeal gauge conditions (`target_hp_pct` etc.) fire without a log
   line.
 
-### ⚠ Dashboard escape hazard — ALWAYS check after editing `WEB_HTML`
-The entire agent dashboard (HTML + browser `<script>`) lives in ONE backtick
-template literal. Two escape layers apply; one mis-escaped char renders the
-whole localhost page blank with an `Uncaught SyntaxError`:
-- browser-JS newlines → write `\\n` (a bare `\n` becomes a real newline)
-- apostrophes in single-quoted browser strings → write `\\'`
-- client-side backslashes → write `\\\\`
+### Dashboard authoring — edit `dashboard.html`, NEVER the `WEB_HTML` literal
+**The agent dashboard is authored in `packages/wolfpack-logsync/dashboard.html`**
+(Decision #3's first slice, `docs/ARCHITECT-REBUILD-2026-08-16.md`, shipped
+agent 3.6.9). `npm run sync:dashboard` folds it into the generated `WEB_HTML`
+literal — the shipped artifact is still ONE committed `index.js`, so the fleet's
+raw-fetch update chain is untouched. Agent-side interpolations are written as
+`{{WP:expr}}` (e.g. `{{WP:AGENT_VERSION}}`) — everything between `{{WP:` and
+`}}` becomes CODE inside the agent; `${}` in the .html is page content and is
+escaped. `check:dashboard` fails the build on any drift, in either direction
+(unsynced .html edit, or a hand-edit to the literal).
 
-We shipped this bug twice. After ANY change to that template run
-**`npm run check:dashboard`** (also runs in `release-parser.yml`).
+This retired the escape-hazard class: the old hand-escaped template literal
+blanked the whole page on one bad character and shipped that way twice
+(v2.4.25 bare `\n`, v2.4.27 bare `\'`), then bit twice more in review
+2026-08-29..30 (a bare `\n`; a backtick inside a COMMENT terminating the
+literal). All escaping is now mechanical (`\`→`\\` · backtick→escaped ·
+`${`→`\${`), and the three historical killers were authored naively into
+`dashboard.html` and served byte-correct as the ship-time proof
+(`test/dashboard-embed.test.js`). `command.html` keeps its own stricter
+verbatim scheme (`sync-command-embed.js`) — it BANS the special characters
+instead of escaping them; don't unify the two without reading both headers.
 
 ### Dashboard rendering rules
 `morphInto`/`setSectionHTML` is plain `innerHTML` with byte-level
@@ -697,7 +1026,7 @@ no fix beyond the workaround. Details in `zealPipe.js` header. Note the friction
 `detectEqDir()` intentionally supports in-EQ-folder installs for *log* detection,
 which can steer users into the layout that breaks *Zeal* detection.
 
-⚠ **Field issue (n=1, Chadivarius, 2026-08-13) — WINDOWS XP COMPATIBILITY MODE
+⚠ **Field issue (n=1, a member, 2026-08-13) — WINDOWS XP COMPATIBILITY MODE
 ON `eqgame.exe` BREAKS THE ZEAL PIPE.** Symptom: the agent log churns
 `[zeal] disconnected from \\.\pipe\zeal_<pid> (EPERM)` every poll forever, so no
 Zeal data ever arrives. **Fix: untick "Run this program in compatibility mode
@@ -706,7 +1035,7 @@ nothing else changed.
 - **`EPERM` is the tell**: libuv maps Win32 `ERROR_ACCESS_DENIED` (5) → `EPERM`,
   so Windows is actively *refusing* the open. That is a different failure from
   the 2026-06-12 case above (`ENOENT`, no pipe at all) and from the 2026-07-05
-  Jankzer case (connects, then the server instantly closes — no error code).
+  a member case (connects, then the server instantly closes — no error code).
   Three distinct causes, three distinct log signatures; read the code before
   guessing which one a report is.
 - **The mechanism is NOT confirmed** — do not invent one. Compat mode does not
@@ -719,21 +1048,53 @@ nothing else changed.
   — which the guild points people at — recommends XP SP2 compatibility mode as
   item 8, so every raider who followed it is a candidate. Ask about compat mode
   FIRST on any `EPERM` report.
-- **Elevation is still a real cause of pipe failures** (Jankzer), just not this
+- **Elevation is still a real cause of pipe failures** (a member), just not this
   one — the admin checkbox was confirmed unticked here. Both live on the same
   Compatibility tab, so check them separately rather than treating them as one
   setting.
 
 Overlays (each an `.html` file): DPS HUD (`overlay.html`, DPS/Tank tabs),
 Trigger alerts + countdown timers (`triggers.html`), Charm tracker, Pet
-tracker, Mob Info (Stats/Loot/Spells tabs), Buff queue, /who, Melody, Zeal
-health (diagnostic), plus Settings, UI Studio, loading.
+tracker, Mob Info (Stats/Loot/Spells tabs), Buff queue, /who, Melody, Tick
+(`zealhealth.html`, key `zeal` — server + charm ticks; the old Zeal health
+check and the clock offset sit behind its status line), HUD (`me.html`, key `me` — the player's own panel, reads
+`/api/me`; the HUD ring built from parts via its ⚙ builder, plus layouts A
+and C, on beta), Timers canvas (`canvas.html`, key `canvas`, beta — see below), plus
+Settings, UI Studio, loading.
 
-### RULE — tray ↔ dashboard parity (Hitya, 2026-08-19)
+**The Timers canvas is the one overlay that breaks the window rules, on purpose** (the guild lead
+picked it 2026-09-29 as the first piece of 3.0; DECISIONS §79). It is screen-sized, so: click-through
+ALWAYS, unlocked included (`applyOverlayInteractivity` + the hover-restore special-case it); never
+force-shown by setup/unlock (`_overlayWanted` — it is an alternative home for the trigger visuals, so
+forcing it would show every timer twice); skipped by rescue and auto-arrange. Its panels are
+`triggers.html?part=…` in iframes, which never speak — the trigger window stays alive hidden as the
+ONE voice. A new panel type must keep all three of those true. Every panel also gets the always-on ✥
+(the guild lead, 2026-09-29: *"a move button on them which should be there at all times"*; §87) — it is
+the only part of a locked panel on the hover handshake, so the window stays click-through.
+
+**Screens changing never moves an overlay without a yes** (the guild lead, 2026-09-29: *"if I kick the
+power out of my monitor it moves everything to a different screen and I have to rearrange it"*;
+DECISIONS §80). Positions are remembered per screen setup (`cfg.overlayLayoutBySig`); display events go
+to `_onDisplaysChanged`, which asks "put them back" or "bring them to EQ's screen". Do not wire a
+display event straight to a mover again. Where EQ is comes from `_eqWindowGeometry()` (PowerShell +
+user32, on demand, cached) — never poll it.
+**An overlay keeps its side** (the guild lead, 2026-09-29: *"folks might want these overlays on a second
+monitor, it's up to us to know if they're on the same or a different monitor. or both"*; §80a): anything
+that moves overlays — auto-arrange, the screen-change question, 🧲 Rescue — keeps an overlay on EverQuest's
+screen or on another screen, whichever it was on. Rescue brings back only LOST overlays (middle on no screen,
+or under half of it on one), each to its own spot, re-arranges nothing, and asks before touching ones on
+another screen (the guild lead, 2026-09-29: *"it puts them all into one spot which is dreadfully annoying"*;
+§82). An overlay you can see whose ✥ hangs past an edge is nudged just far enough to grab, never relocated —
+*"only brings the overlays that were missing from the screen, not the ones that are already arranged"* (§89;
+the HUD ring's ✥ sits under the ring, not top-left). And
+overlays do NOT need a windowed EQ: a second screen works with any mode; only EQ's own screen under
+exclusive fullscreen is the problem case.
+
+### RULE — tray ↔ dashboard parity (guild lead, 2026-08-19)
 **"Anything that's available from the taskbar should be available from the
 dashboard as well."** A control that exists only in the tray menu is a control
 people forget exists (the per-character layout saves sat tray-only from v1.2
-until Hitya met them tonight). When adding a tray item, put its equivalent on
+until the guild lead met them tonight). When adding a tray item, put its equivalent on
 the dashboard's Overlays tab (or Settings) in the same change, driving the
 SAME internals — never a parallel path. Remaining tray-only items are a
 queued audit in `docs/STATUS.md`.
@@ -750,7 +1111,10 @@ missing Overlays-tab row):
 3. **hover-interact handshake** (`overlayHoverInteractive(true/false)` on
    mouseenter/leave) on EVERY clickable control — locked overlays are
    click-through (`setIgnoreMouseEvents(true,{forward:true})`), so without
-   the handshake clicks fall through to EQ ("the button does nothing");
+   the handshake clicks fall through to EQ ("the button does nothing").
+   The preload arms it for `button, a, input, select, textarea, [role=button]`
+   on its own; a clickable `<div>`/`<span>` needs `data-wp-interact` (the buff
+   queue's section headers lacked it, 2026-10-02, FB-49);
 4. a row in the dashboard's `WP_OVERLAY_ROWS` + its key in
    `wpRefreshOverlayToggles` + a case in the `toggle-overlay` IPC;
 5. visibility via its `apply*Visibility()` fn (unlocked override, quiet
@@ -770,7 +1134,9 @@ click — reserve a ~30px right gutter).
 
 Next.js 14 App Router + Supabase Auth (Discord OAuth). Two sign-in gates:
 guild membership + role membership (role IDs from `wolfpack_roles`, synced by
-the bot). Sessions via HTTP-only cookies refreshed in `middleware.ts`.
+the bot). Sessions via the `@supabase/ssr` auth cookies (its defaults — the
+2026-09-25 audit found the old "HTTP-only" claim here was wrong), refreshed in
+`middleware.ts`.
 
 Routes: public landing + auth; member surfaces (`/me` — tells, buffs/zone,
 characters, stats; `/parses`, `/raid`, `/buffs`, `/who`, `/pvp`, `/boards`,
@@ -788,6 +1154,70 @@ sessions fresh without re-rendering (and visually flashing) the whole list.
 ---
 
 ## Supabase
+
+**Plan: Pro (verified 2026-09-01 via the Management API).** Not
+the free tier — several code comments and archived docs still say "free tier" and
+are stale; correct them when you touch them rather than propagating the claim.
+
+⚠ **There is NO per-request quota on any Supabase plan.** "How many calls can we
+afford?" has no numeric answer, and designing around a call budget is designing
+around a limit that does not exist. The metered items are:
+
+| Item | Pro includes | Over |
+|---|---|---|
+| **Database size** | 8 GB / project | $0.125/GB/mo |
+| **Egress** (unified: DB + auth + storage + realtime) | 250 GB/mo | $0.09/GB |
+| Storage | 100 GB | $0.021/GB |
+| MAU | 100k | — |
+| Compute | $10 credit ≈ one Micro instance | ~$10/mo per extra project |
+
+Consequences that keep being got backwards:
+- **Writes are nearly free; READS cost egress.** Egress is data leaving Supabase,
+  so an upload stream's frequency is cheap while a poll cadence, a wide `select`,
+  or an un-cached overlay refresh is what actually bills. Tighten the read side
+  first.
+- **Database size is the one that only ever grows**, which is the real reason
+  `buff_casts` prunes to 7 days and why the row-per-upload `agent_uploads` log
+  was retired — not a call cap. Measured 2026-09-22: **2.39 GB of 8 GB (30%)**,
+  up from 1.72 GB on 2026-09-01 — **+39% in three weeks, and 72% of that
+  growth is the one broken sweep below**. Trend table + headroom projection in
+  `docs/COSTS.md` §3a; re-measure there rather than trusting this line.
+- ⚠ **Spend Cap is dashboard-only and unread.** On Pro with the cap ON, exceeding
+  a quota means *restrictions* (read-only, 402s), not charges. Nobody has checked
+  which way it is set; the Management API does not expose it. Check before
+  assuming an overage would merely cost money.
+- ⚠ **Actual egress usage is also dashboard-only** — the MCP cannot read it, so
+  "we are at X% of 250 GB" has never been measured. Do not quote a number.
+
+**The bot's Railway box is not the constraint either, and it is also PAID.**
+7-day average (2026-09-01): **0.4% of its 8-vCPU limit, 1.6% of 8 GB RAM**,
+peaking at 8.7% CPU — about **$1.92/mo** of resources at Railway's $10/GB +
+$20/vCPU. Railway bills compute + egress, also with no request cap. (Hobby or
+Pro; the 8 vCPU / 8 GB service limits rule out Free's 1/0.5 and Trial's 2/1, but
+the API does not expose the tier.)
+
+⚠ **Both layers are paid, and much of this repo's reasoning silently assumes it.**
+When writing anything another guild might follow, say which numbers are ours.
+The free-vs-paid split — what Supabase Free and Railway Free actually afford, why
+Railway Free cannot run the bot at all (0.5 GB ceiling vs our 0.70 GB peak), and
+why our 30-day threat retention is a PAID default — lives in
+`docs/DESIGN-selfhost-wizard.md` §2a. Keep it there, not here.
+
+⚠ **`encounter_threat_snapshots` is 1,414 MB — 58% of the whole database — and
+its 30-day sweep has never worked.** The predicate `snapshot_at < cutoff` has no
+usable index (the only ones with `snapshot_at` lead on other columns or are
+partial), so the nightly DELETE seq-scans the table, blows the client's 10s
+AbortController, and the catch logs a warning.
+**Re-measured 2026-09-22 and it is getting worse, not holding:** 1,190,281 rows,
+of which **746,964 (62.8%) sit past retention**, oldest **2026-07-02** — 82 days
+old under a 30-day policy. On 2026-09-01 the same measurement was 448k stale
+rows at 52%, so it has added ~299k stale rows in three weeks.
+**This one table is 72% of all database growth** (+494 MB of the +690 MB the
+database gained in that period, ~23 MB/day of ~33). Fixing the sweep reclaims
+**~890 MB immediately**, putting the database *below* where it stood on
+2026-09-01. Still unfixed; see `docs/DECISIONS-2026-09-01.md` and the trend
+table in `docs/COSTS.md` §3a.
+
 
 Tier 1 `eqemu_*` mirrors (zone/items/npc_types/spells/loot tree/spawn —
 weekly sync via `sync-quarm.yml`; the `spawn*` tables ARE populated as of
@@ -827,7 +1257,34 @@ RLS: Tier 1 readable by `anon`+`authenticated`; guild tables
 
 ## Domain policies (load-bearing — don't re-derive)
 
-**Raid lockouts are ENGAGE locks, not loot locks (Hitya, 2026-08-21).** A
+**Harmony is NOT Pacify — the lull line splits on behaviour, not just duration
+(guild lead, 2026-09-02).** Both are SPA 30 "aggro reduction" and it is tempting to
+treat the family as one thing. Two facts make that wrong, and one of them is a
+safety fact:
+- **Pacify** (and Lull/Soothe/Calm/Pacification/Harmony of Nature, `targettype`
+  5, single) — the mob **will not attack even if you are colliding with it**.
+- **Harmony** and **Wake of Tranquility** (`targettype` **8, targeted AE**) —
+  only SHRINK the aggro radius, so the mob **still aggros if you stand very
+  close**, and the spell lands on **nearby mobs too**, not just your target.
+So never write UI copy, a trigger, or a doc that turns either into "safe to pull
+past" — that is the caller's judgement and it differs per spell. Anything that
+tracks one mob's pacify is also under-reporting an AE cast by construction.
+⚠ **Unresistable is not the same as unstoppable.** Harmony is `resist_type 0`,
+yet it simply does not work on many mobs — and the reason is **per-MOB, not
+per-zone**: EQEmu NPC special ability **31 = Immune Pacify**, which the bot
+already decodes onto the `mob-info` row and the Mob Info overlay already chips.
+**Plane of Sky is the case to remember** (guild lead, 2026-09-02): it is
+`cast_outdoor = 1` in `eqemu_zone` — flagged outdoors, so the usual
+"Harmony needs outdoors" heuristic says it should work — and **116 of its 118
+NPCs carry ability 31**. So never reason about the lull line from zone type;
+read ability 31. `_pacifyImmuneKnown()` in the agent is the shared answer.
+⚠ It ALSO fails on a too-high-level mob, with a message we have not captured, so
+that failure stays undetectable and a synthesized timer can still be a phantom.
+The ask is filed in `docs/STATUS.md`; **do not invent the string.**
+⚠ `Atone` is SPA 30 but instant (`buffduration`/formula 0) — it can never carry
+a timer.
+
+**Raid lockouts are ENGAGE locks, not loot locks (guild lead, 2026-08-21).** A
 character with an active lockout on a raid mob **cannot fight it at all** — on
 engage the server *teleports them out of the zone*. They can't participate and
 can't loot. It is **per character**, so it is normally an ALT that carries one
@@ -858,7 +1315,12 @@ dedups so re-submissions attach instead of duplicating.
 
 **Stat visibility scopes.** Every log-derived stat declares `PRIVATE` (owner's
 `/me` only) / `ANON` (nameless aggregates) / `GUILD` (named, signed-in
-members). Excluded characters never contribute or display.
+members). ⚠ `exclude_from_stats` stops the character's OWN agent uploading
+and hides it on `/me`, the raid review and the quartermaster — it does NOT stop
+other raiders' agents observing it, and those rows still store and display by
+name (the guild lead, 2026-08-13; `index.js` near the ingest comment that
+cites that date). The public `/privacy` page says so; don't write "excluded
+characters never contribute or display" again (it was here until 2026-09-25).
 
 **Guild trigger shapes.** Default to the portable shape (`text_overlay` +
 `tts`, trigger-level `timer_duration_sec`, `warning_seconds/_text`) — fires on
@@ -878,7 +1340,7 @@ The line is `[Sun Aug 02 21:10:01 2026] <message>`, and patterns compile with
 flags `i` and **no `m`**, so `^` anchors before the TIMESTAMP, not before the
 message. `^{s} yawns\.$` can never fire. Write it unanchored, or anchor as
 `^\[.+?\]\s+`. **Do NOT "fix" one by deleting the `^`** — `{s}` expands to a
-class that includes space, so an unanchored pattern captures `" Uilnayar"` with
+class that includes space, so an unanchored pattern captures `" Aramil"` with
 a leading space and corrupts every name-keyed consumer. `/admin/triggers` now
 normalizes on save (`web/lib/triggerPattern.ts`) and flags existing dead rows,
 but **37 of 109 enabled triggers are still dead in the table** — measured
@@ -896,17 +1358,17 @@ damage shields to the tank — keep `contributions.raw_parse->source` distinct
 (`eqlogparser_send_to_eq` / `local_agent_v1` / `chat_extracted`) so agent data
 wins when both exist.
 
-**Fleet adoption is counted in PLAYERS, never characters** (Hitya,
-2026-08-16: "character counts mean almost nothing"). Players each play several
-characters distinctly (3–12 watched logs), so `agent_upload_stats` rows
-inflate ~10×: the "178
-characters on 3.5.80" fleet was 16 players. The honest stat: distinct
+**Fleet adoption is counted in PLAYERS, never characters** (the guild lead,
+2026-08-16: "character counts mean almost nothing"). `agent_upload_stats` is
+keyed per CHARACTER while an install is keyed per person, so counting its rows
+counts characters rather than people and overstates adoption by roughly an
+order of magnitude. The honest stat: distinct
 `uploaded_by_discord_id`, each counted at their most-recent upload's version.
 Any adoption gate, graduation argument, or sentinel invariant that counts the
 fleet counts players.
 
 **Raid schedule:** Sun/Wed/Thu 8pm–midnight Eastern — the default window for
-any "should have been there" computation. **Since 2026-08-16 (Hitya, live):
+any "should have been there" computation. **Since 2026-08-16 (the guild lead, live):
 alt raids and Seru+misc nights run 3 ticks / 2 hours (8–10pm ET), until
 Planes of Power**; other nights keep the full window. Tick math needs no
 change — RA is distinct-ticks ÷ total-ticks and never assumes a per-night
@@ -926,6 +1388,7 @@ TODO, abandoned, folly; retired queues live in `docs/archive/`). Ordered plan:
 `docs/MIMIC.md` / `docs/MIMIC_AGENT.md`, `docs/opendkp-capture-playbook.md`,
 `docs/code-signing.md` (CLOSED 2026-07-14 — SignPath declined: user base too small; installers stay unsigned unless another provider appears), `docs/PRIVACY.md`.
 Headline items parked for later: UI Studio web viewer/editor on `/me/ui` +
-automatic UI/eqclient.ini cloud backups; OpenDKP auction wiring (creation
-captured, bid/award endpoints not); guild timeline; chat→parse extraction;
+automatic UI/eqclient.ini cloud backups; OpenDKP change feed / scoped service
+credential (every write endpoint is captured and wired in `utils/opendkp.js` — the
+asks live in `docs/DESIGN-opendkp-audit-cursor.md`, unsent); guild timeline; chat→parse extraction;
 spells/tradeskill/faction advisors on `/me`; long-haul storage partitioning.

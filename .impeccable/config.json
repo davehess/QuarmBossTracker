@@ -1,0 +1,52 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "apps/mimic/mobinfo.html"
+        ],
+        "createdAt": "2026-09-22T17:19:31.043Z",
+        "reason": "Repo design authority overrides: .claude/skills/frontend-design says mid-raid overlays are read in peripheral vision and 'density beats whitespace — a raider needs eight rows visible'. The 9/10/11/12/13px scale is a deliberately compressed ladder for a small always-on-top window over a 3D scene; a 1.25 ratio would cost rows. CLAUDE.md: impeccable's DETECTORS are used freely, its AESTHETIC guidance is a default that repo-specific guidance overrides."
+      },
+      {
+        "rule": "layout-transition",
+        "value": "*",
+        "files": [
+          "apps/mimic/mobinfo.html"
+        ],
+        "createdAt": "2026-09-22T21:09:53.564Z",
+        "reason": "Domain-appropriate motion, plus a measured no-op. These are HP/mana/buff bars: the thing being animated IS a length, which is the rule's own sanctioned-exception category. Measured 2026-09-22: the panel already rebuilds via innerHTML and forces a synchronous layout via scrollHeight every 500ms, so the bars' contribution is a rounding error and converting to scaleX would change no perceivable frame while touching five overlays' call sites. The guild lead confirmed the Tank overlay's equivalent bar transition is load-bearing information ('the HP bar's transition pre/post heal is important to know where it will land the tank'), so a blanket family-wide conversion was explicitly abandoned rather than deferred. Revisit only if someone reports real overlay stutter."
+      },
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "web/app/pvp/page.tsx"
+        ],
+        "createdAt": "2026-09-26T09:08:55.546Z"
+      },
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "apps/mimic/triggers.html"
+        ],
+        "createdAt": "2026-10-05T15:42:20.005Z",
+        "reason": "Repo rule (CLAUDE.md: frontend-design wins over impeccable aesthetics): the timer row's left bar is each trigger's own bar_color (guild_triggers.bar_color, GINA-style rows since 2026-06-03), a functional colour code read mid-raid"
+      },
+      {
+        "rule": "dark-glow",
+        "value": "*",
+        "files": [
+          "apps/mimic/triggers.html"
+        ],
+        "createdAt": "2026-10-05T15:42:20.097Z",
+        "reason": "Repo rule (CLAUDE.md: overlays are read mid-raid over a moving 3D scene; frontend-design wins): the #alert halo is a legibility shadow behind the callout text, not decoration"
+      }
+    ]
+  }
+}

@@ -1,8 +1,8 @@
 {
   "name": "quarm-raid-timer-bot",
-  "version": "3.1.69",
+  "version": "3.1.214",
   "description": "Discord bot for tracking Project Quarm instanced raid boss spawn timers, multi-perspective parse aggregation, and DKP loot distribution",
-  "license": "BSD-3-Clause",
+  "license": "AGPL-3.0-or-later",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -13,7 +13,10 @@
     "golden:check": "node scripts/update-golden.js --check",
     "drill": "node scripts/preraid-drill.js",
     "lint": "eslint index.js commands utils packages/wolfpack-logsync/index.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "sync:dashboard": "node scripts/sync-dashboard-embed.js",
+    "sync:pop-quests": "node scripts/sync-pop-quests.js",
+    "graphify": "bash scripts/graphify.sh"
   },
   "engines": {
     "node": ">=18.0.0"

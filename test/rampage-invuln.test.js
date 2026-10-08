@@ -1,12 +1,12 @@
 // Rampage invulnerability mark — three sources, and the one that needs nothing.
 //
-// Hitya 2026-08-05, mid-raid: "we didn't see Syko's DA and we wasted heals
+// The guild lead 2026-08-05, mid-raid: "we didn't see a member's DA and we wasted heals
 // on him as he was Rampage", and separately "we need to include Harmshield into
 // the Rampage DA mark".
 //
-// Why Syko was invisible: BOTH existing sources need the tank to have set
+// Why a member was invisible: BOTH existing sources need the tank to have set
 // something up. `_findDA` reads the target's uploaded BUFF list (needs Mimic
-// uploading live-state — Syko was installing Zeal that night), and
+// uploading live-state — a member was installing Zeal that night), and
 // `_daBroadcastForName` reads a /rsay announce macro (his raid chat has none).
 // Neither could ever have fired.
 //
@@ -41,6 +41,10 @@ function harness() {
     sliceBlock(src, 'const _PROT_ACTIVE_SECS   =', '\nconst _daBroadcasts = new Map();'),
     sliceBlock(src, 'const _INVULN_OBSERVED_TTL_MS', '  return { name: \'Invuln\', seconds: null, critical: false, observed: true };\n}'),
     sliceBlock(src, 'function _recordProt(key, name, kind, atMs, up, secs) {', '\n}'),
+    // The class gate the tracker calls (2026-09-02). Sliced for real rather
+    // than stubbed: a stub would let this suite pass while the shipped gate
+    // suppressed the very announces these tests assert on.
+    sliceBlock(src, 'const _PROT_CLASS_LOCK = { Defensive:', '\n}'),
     sliceBlock(src, 'function trackDaBroadcastLine(line, character) {', '\n}'),
     sliceBlock(src, 'function _daBroadcastForName(name, greenSecs) {', '  return best;\n}'),
   ];
@@ -49,6 +53,11 @@ function harness() {
   const prelude = sliceBlock(src, 'const _CH_SPEAKER_RX = ', '\n') + `
     const DA_BROADCAST_TTL_MS = 30000;
     function parseEqTimestamp() { return new Date(); }
+    // No /who data in this harness, so the class gate fails open — which is
+    // exactly the production behaviour for an un-/who'd tank, and is what
+    // these Harmshield/Defensive announces should hit.
+    const whoData = new Map();
+    function normalizeClass(c){ return c; }
   `;
   // eslint-disable-next-line no-new-func
   return new Function(prelude + blocks.join('\n')

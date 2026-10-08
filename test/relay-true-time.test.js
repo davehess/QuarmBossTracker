@@ -1,7 +1,7 @@
 // test/relay-true-time.test.js — the bot resolves a relayed fire's timestamp to
 // TRUE time at ingest, and dedups cross-agent fires on that resolved time.
 //
-// Context (2026-08-10 Ssra, Hitya: "the clock skew was VERY apparent for the TTS
+// Context (2026-08-10 Ssra, The guild lead: "the clock skew was VERY apparent for the TTS
 // timers"): a relayed fire's `fired_at_ms` is the EQ log-line time as the SENDING
 // machine's clock wrote it. Installs have been measured 14s, 42s and 56s off and
 // drifting ~1.5-3 s/day. Receivers time their staleness gate, their TTS delay and

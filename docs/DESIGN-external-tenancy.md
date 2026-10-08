@@ -5,7 +5,7 @@ against `origin/main` @ `13fb678`. Every number below was verified against the
 live Supabase project (`zhtoekwakucbckvatfky`) or the repo; where something is
 unverified it says so in bold.*
 
-**Hitya's ask (verbatim):** *"I would like to Enable other guilds to use miMIC
+**The guild lead's ask (verbatim):** *"I would like to Enable other guilds to use miMIC
 either hosted themselves or with me. We have a fairly complex deployment, i'm
 curious how much people could put this together in their own instances. Can you
 start a process for external deployment, or tenant deployment within our
@@ -66,7 +66,7 @@ that's actually fine — it's the *shared-process* variant that's expensive.
    the guild runs bot + web + their own Supabase, but points `eqemu_*` reads at
    our shared catalog. Needs a one-command bootstrap (`/setup` doing what the
    README's ten manual steps do) and a schema-squash migration.
-4. **Only then**, if there is demand and Hitya wants the hosting business,
+4. **Only then**, if there is demand and the guild lead wants the hosting business,
    do real multi-tenancy — and do it as **bot-process-per-guild against a
    schema-per-tenant Supabase**, not one shared bot with row-level tenancy.
 
@@ -152,7 +152,7 @@ It has a `guild_id` column, and every row says `'wolfpack'`. That column is a
 is a server-wide census — name, level, race, class, guild, guild rank, zone,
 anon flag, GM flag, timestamped to the minute. Combined with `who_overrides` it
 de-anonymizes players who are deliberately anonymous. On a PvP-enabled server
-that is exactly the "advantage" Hitya means.
+that is exactly the "advantage" the guild lead means.
 
 Related tables in the carve-out: `who_overrides`, `pvp_kills` (528),
 `pvp_boss_kills` (381), `pvp_assists` (54), `pvp_quake`, `hate_kills` (27).
@@ -251,7 +251,7 @@ policy.** Concretely:
 
 One caveat to flag honestly: **a hosted tenant's agents still run the same
 parser**, so if we ever ingest their `/who` uploads into a shared table we'd be
-*receiving* their intelligence. That is a trust question for Hitya (§10), not a
+*receiving* their intelligence. That is a trust question for the guild lead (§10), not a
 technical one — but the default should be that we don't collect it.
 
 ---
@@ -499,7 +499,7 @@ tenants(
 )
 ```
 
-Joining flow: Hitya invites the bot to their Discord → the bot sees an unknown
+Joining flow: the guild lead invites the bot to their Discord → the bot sees an unknown
 `guild.id` → creates a `tenants` row in `status='trial'` → an officer runs
 `/setup` (§4.5 item 1) → anchors land in `tenants.anchors`. That is a genuinely
 nice onboarding *if* `/setup` exists, and impossible without it.
@@ -514,7 +514,7 @@ breaks if we try:
 | `process.env.SUPABASE_GUILD_ID` at ~40 sites | Every write stamps one tenant. Must become a per-request/per-interaction lookup. This is the core refactor and it touches `utils/supabase.js`, `index.js`, and 12+ util modules. |
 | Every `process.env.<ANCHOR>_ID` | One process cannot hold five guilds' thread IDs in env. Must become `tenants.anchors`. |
 | `requireAgentAuth` | Returns `{discord_id, role_names, is_officer}` with **no tenant**. Every ingest handler would need `identity.guild_id`, sourced from a tenant column on `mimic_sessions`. |
-| In-memory state | `state.channelSlots`, `state.petOwners`, `_reporterRegistry`, `_extHurtSince`, `_mtLiveStateByName`, `_sessionCache`, `_chGradeCall` state, the trash tally, the raid-review debounce — **all global singletons keyed by name, not by guild.** Two guilds with a raider named "Fargan" collide. This is a large, diffuse, easy-to-get-subtly-wrong refactor across a 15k-line file. |
+| In-memory state | `state.channelSlots`, `state.petOwners`, `_reporterRegistry`, `_extHurtSince`, `_mtLiveStateByName`, `_sessionCache`, `_chGradeCall` state, the trash tally, the raid-review debounce — **all global singletons keyed by name, not by guild.** Two guilds with a raider named "a member" collide. This is a large, diffuse, easy-to-get-subtly-wrong refactor across a 15k-line file. |
 | Background jobs | Spawn checker, midnight chain (TZ-aware — per tenant!), member sync, chat GC, reporter elections all assume one guild and one timezone. |
 | `data/state.json`, `data/parses.json` | Single-file local mirrors. |
 | Load-shed + control plane | `overlay_tuning` already has `guild_id` — good. But `flag_agent_kill` etc. would need to be tenant-scoped or one officer pauses everyone's fleet. |
@@ -590,7 +590,7 @@ suppressed for tenants.
   incident history (the 2026-07-13 queue backup, the beta-channel atom-feed
   outage, the raid-freeze rule) shows this platform needs an operator who
   understands it. Hosting N guilds means N raid nights a week where someone
-  pages Hitya. **This is the real cost of Model B and it is not technical.**
+  pages the guild lead. **This is the real cost of Model B and it is not technical.**
 - **Abuse.** `/api/mimic-link/start` is unauthenticated (rate-limited 10/10min/IP).
   Payload limits are 256 KB chat / 10 MB encounter. Budgets exist per uploader ×
   kind. A hostile tenant could still fill storage — see §1.1.
@@ -622,7 +622,7 @@ suppressed for tenants.
 - The carve-out is enforced by *not having credentials*, which is unbreakable.
 - We still own the two things that make the platform special: **the curated
   catalog and the Mimic client.**
-- It's reversible into Model B later if Hitya decides hosting is a business.
+- It's reversible into Model B later if the guild lead decides hosting is a business.
 
 **What it needs** (this is the whole engineering bill):
 1. `/setup` — the anchor ceremony as one command (§4.5 item 1)
@@ -678,7 +678,7 @@ So the answer to "is one Mimic binary serving multiple guilds feasible?" is
 ### 7.3 Recommendation
 
 **One binary, multi-guild, our branding.** Mimic stays "Wolf Pack Mimic" (or gets
-a neutral name if Hitya wants — that's a naming call and per `CLAUDE.md` naming
+a neutral name if the guild lead wants — that's a naming call and per `CLAUDE.md` naming
 is the guild lead's call). It gains:
 
 - a **first-run "which guild?" step** that sets `botUrl` from a short list or a
@@ -743,7 +743,7 @@ Stage 1 commit us to nothing.**
   the pilot second.
 - **Exit criterion:** they complete it in under 5 hours with ≤3 questions.
 
-### Stage 5 — Hosted tenancy (only if Hitya wants the business)
+### Stage 5 — Hosted tenancy (only if the guild lead wants the business)
 - `tenants` table, schema-per-tenant, bot-process-per-guild, tenant `/admin`
   scoping, storage retention (see §1.1 — this becomes mandatory, not optional).
 - **Gate:** at least two guilds who completed Stage 4 and asked to be hosted.
@@ -775,7 +775,7 @@ fact: Mimic does honor the bot-supplied `verification_url` (§7.2), and
 
 ---
 
-## 10. Open questions for Hitya
+## 10. Open questions for the guild lead
 
 **Business**
 1. **Do we charge?** If hosting costs ~400 MB/mo/guild of Postgres plus a
@@ -810,6 +810,21 @@ fact: Mimic does honor the bot-supplied `verification_url` (§7.2), and
 10. **What's the first move?** My recommendation is **Stage 0 (publish the
     catalog) + Stage 1 (split the PvP data)** — because both are worth doing on
     their own merits and neither commits us to being anyone's host.
+
+### Answers — 2026-09-18 (the guild lead; full text in `DECISIONS-2026-09-18.md` §8)
+
+| Q | Answer, in one line | Landed |
+|---|---|---|
+| 1 | Not "do we charge" — **the wizard sizes for the free tiers** (S profile); Railway Free cannot run the bot, so S runs it on the guild's box | wizard doc §3; kit §4 |
+| 2 | **~9 months of viability for large guilds**; merges, quarter-size rosters, fewer raids, possible shutdown. Export and portability outrank hosting | DECISIONS §8.2 |
+| 3 | **Gate the competitive parts** (PvP /who, PvP timers); commercial = managed hosting + best-effort requests, no timelines, no SLA, fee covers infra + time | `TERMS-hosted.md` |
+| 4 | Yes, stated up front; a guild's observations are its own; **cross-tenant data is untrusted** | `TERMS-hosted.md` §5; `PRIVACY.md` |
+| 5 | Monthly, paid in advance; **non-renewal → encrypted export handed over at term end** | `TERMS-hosted.md` §6 |
+| 6 | **No** ingestion; a per-person "be known" presence opt-in noted for later, not built | DECISIONS §8.6 |
+| 7 | Code ships; **anon-override needs `features.pvp` AND a generated alliance code** | kit §3; wizard doc §3 |
+| 8 | **T-shirt sizes S/M/L, all offered at once**; whatever we set up is in the guild's name; **the guild owns its domain even when we host** | kit §4; `TERMS-hosted.md` §7 |
+| 9 | Mimic stays Mimic; per-tenant display rename is fine | kit `wording.mimicName` |
+| 10 | **Terms first**, then the spin-off path, then instructions for other guilds | `TERMS-hosted.md` drafted; slices follow |
 
 ---
 

@@ -10,7 +10,7 @@ adds a source of evidence that doesn't come from log text at all.*
 > before extending it — it records what was built, what was deliberately left,
 > and one guard that is NOT in the design above.
 
-**The ask (Hitya, 2026-08-03):**
+**The ask (guild lead, 2026-08-03):**
 
 > also for deaths, when we are in the raid the group containing the person that
 > dies will have their health go to zero on the zeal pipe, and they would
@@ -126,7 +126,7 @@ Using the vocabulary from `DESIGN-death-semantics.md`:
 
 ### The bind-point wrinkle
 
-Uilnayar, 2026-08-03: at Vex Thal people bind right outside, so a death is a
+a member, 2026-08-03: at Vex Thal people bind right outside, so a death is a
 **5–10 second** round trip. So `zone_changed` away-and-back inside ~15s is a
 *positive* death indicator, not a "they left" one — and a `reappeared` event
 close behind a `zone_changed` should **strengthen** the death inference, not
@@ -153,9 +153,9 @@ kinds ≈ **150 rows a night**. Nothing.
 3. Correlation in the death-semantics layer; surface a `death_source` chip on the
    parse card so a reader can see *why* we believe a death.
 4. Only then consider using it to auto-correct history — and see the standing
-   rule in `STATUS.md` #200/#201: history rewrites are Hitya's call.
+   rule in `STATUS.md` #200/#201: history rewrites are the guild lead's call.
 
-## 7. Open questions for Hitya
+## 7. Open questions for the guild lead
 
 - **Is `/pipeverbose on` something we can just ask for in Mimic's setup flow?**
   It's a client-global Zeal setting and it's the difference between seeing your

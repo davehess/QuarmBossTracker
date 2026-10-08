@@ -140,6 +140,19 @@ function recordKill(bossId, timerHours, killedBy, killedAtOverride) {
   return state.bosses[bossId];
 }
 
+// Anything that must react to a recorded kill, whichever path recorded it (board button, /kill, the agent's
+// kill relay, the encounter upload, /sll): register here instead of adding a line to every call site. Exported
+// `recordKill` is the wrapper below; the function above is left exactly as it was.
+const _killListeners = [];
+function onKillRecorded(fn) { _killListeners.push(fn); }
+function recordKillNotifying(bossId, timerHours, killedBy, killedAtOverride) {
+  const entry = recordKill(bossId, timerHours, killedBy, killedAtOverride);
+  for (const fn of _killListeners) {
+    try { Promise.resolve(fn({ bossId, killedAt: entry.killedAt, killedBy })).catch(() => {}); } catch { /* a listener never fails a kill */ }
+  }
+  return entry;
+}
+
 function overrideTimer(bossId, nextSpawn) {
   const state = loadState();
   if (!state.bosses[bossId]) return false;
@@ -739,7 +752,7 @@ function getPetOwners() { return loadState().petOwners || {}; }
 // Declaration order is meaningful: the LAST entry is the most recently
 // declared owner. A re-declaration moves the owner to the tail with a fresh
 // timestamp — the encounter fold uses `at` to find owners with a CURRENT
-// claim on a charm-cycled name (Hitya 2026-07-31: same-named charm pets are
+// claim on a charm-cycled name (the guild lead, 2026-07-31: same-named charm pets are
 // indistinguishable until Zeal ships spawn ids, so damage splits equally
 // among this-fight claimants, never the whole night's history).
 function _petDeclare(list, owner, at) {
@@ -766,7 +779,19 @@ function setPetOwner(pet, owner) {
   s.petOwners[key] = _petDeclare(_petNormalise(s.petOwners[key]), owner);
   saveState(s);
 }
-function clearPetOwners() { const s = loadState(); s.petOwners = {}; saveState(s); }
+function clearPetOwners() { const s = loadState(); s.petOwners = {}; s.petSpawnIds = {}; saveState(s); }
+// Pet spawn ids, pooled beside the owners: petNameLower → { id, at }. Only an
+// owner's own Mimic uploads one (its Zeal's pet_id), and an id belongs to one
+// zone instance and one summon, so the reader drops old ones by `at`. The DPS
+// HUD's +pet line shows it (the guild lead, 2026-09-29).
+function addPetSpawnIds(map) {
+  if (!map || Object.keys(map).length === 0) return;
+  const s = loadState();
+  if (!s.petSpawnIds) s.petSpawnIds = {};
+  for (const [pet, id] of Object.entries(map)) s.petSpawnIds[pet.toLowerCase()] = { id, at: Date.now() };
+  saveState(s);
+}
+function getPetSpawnIds() { return loadState().petSpawnIds || {}; }
 
 // whoData is a persistent map of every character we've seen in any /who output
 // uploaded by an agent. Used by /whois, /markzek, and the /parsestats embed to
@@ -1041,7 +1066,8 @@ function getBoardMessages()  { return []; }
 function saveBoardMessages() {}
 
 module.exports = {
-  recordKill, overrideTimer, clearKill, getBossState, getAllState, restoreBossState,
+  recordKill: recordKillNotifying, onKillRecorded,
+  overrideTimer, clearKill, getBossState, getAllState, restoreBossState,
   getExpansionBoard, saveExpansionBoard,
   getChannelSlots,
   getSummaryMessageId, setSummaryMessageId,
@@ -1088,6 +1114,7 @@ getParseLeaderboardMsgId, setParseLeaderboardMsgId,
   getLastAnnouncedAgentVersion, setLastAnnouncedAgentVersion,
   recordAgentUpload, getAgentActivity, clearAgentActivity,
   getPetOwners, addPetOwners, setPetOwner, clearPetOwners,
+  addPetSpawnIds, getPetSpawnIds,
   petOwnerEntries: _petNormalise,
   getWhoData, getWhoEntry, mergeWhoData, setZekFlag, setGuildOverride, clearWhoData,
   applyKnownZekTips, applyWhoOverrides,

@@ -53,7 +53,7 @@ async function _tonight(interaction) {
     const pct = Math.round((e.completeness_score || 0) * 100);
     return (
       `${_fmtTimestamp(e.started_at)} **${e.boss_name || `NPC ${e.npc_id}`}** ` +
-      `· \`${e.id.slice(0, 8)}\` ` +
+      `· \`${e.encounter_id.slice(0, 8)}\` ` +
       `· ${_fmtDuration(e.duration_sec)} ` +
       `· ${e.contributor_count || 0}👥 ` +
       `· ${pct}% complete \`${_fmtBar(e.completeness_score)}\``
@@ -176,16 +176,30 @@ async function _mine(interaction) {
   const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
   const dayEnd   = new Date(dayStart); dayEnd.setDate(dayEnd.getDate() + 1);
 
-  // Find encounters where this character appears in encounter_players
-  const myRows = await supabase.select(
-    'encounter_players',
-    `character_name=eq.${encodeURIComponent(rosterChar.name)}&select=encounter_id,total_damage,dps,rank&order=rank.asc`
-  );
-  const myEncounterIds = (myRows || []).map(r => r.encounter_id);
-
   // Get all of tonight's encounters
   const tonight = await supabase.getTonightEncounters(new Date());
   const tonightIds = (tonight || []).map(e => e.encounter_id);
+
+  // Find tonight's encounters where this character appears in encounter_players.
+  // Scoped to tonight's ids: a top raider has 2,775–3,807 rows in this table
+  // across every raid, and the unscoped read by name returned the first 1,000 by
+  // rank — whichever nights those were, not necessarily tonight's. 150 ids per
+  // request keeps the URL short, and a character has one row per encounter, so a
+  // chunk can never reach PostgREST's 1,000-row cap (limit=150 says so).
+  const myRows = [];
+  for (let i = 0; i < tonightIds.length; i += 150) {
+    const rows = await supabase.select(
+      'encounter_players',
+      `character_name=eq.${encodeURIComponent(rosterChar.name)}` +
+      `&encounter_id=in.(${tonightIds.slice(i, i + 150).join(',')})` +
+      `&select=encounter_id,total_damage,dps,rank&order=rank.asc&limit=150`
+    );
+    if (!Array.isArray(rows)) {
+      return interaction.editReply({ content: '⚠️ Could not read your encounters just now — try again in a minute.' });
+    }
+    myRows.push(...rows);
+  }
+  const myEncounterIds = myRows.map(r => r.encounter_id);
 
   const inIds  = tonightIds.filter(id => myEncounterIds.includes(id));
   const outIds = tonightIds.filter(id => !myEncounterIds.includes(id));

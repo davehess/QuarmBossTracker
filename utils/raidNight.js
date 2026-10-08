@@ -17,7 +17,7 @@
 // auto-created night thread and an officer-run `/raidnight` thread agree on the
 // name byte-for-byte and adopt each other instead of racing to create twins.
 //
-// ── v2 (Hitya 2026-07-31) ───────────────────────────────────────────────────
+// ── v2 (the guild lead, 2026-07-31) ───────────────────────────────────────────────────
 // Three things changed after the first night in the field:
 //
 // 1. WRONG CHANNEL. v1's parent chain was
@@ -146,7 +146,7 @@ function eventThreadName(ev) {
   return `🎲 ${title} — ${labelForMs(nightAnchorMs(ev?.startMs))}`;
 }
 
-// ── Volume knob (Hitya 2026-07-31) ───────────────────────────────────────────
+// ── Volume knob (the guild lead, 2026-07-31) ───────────────────────────────────────────
 // Night one flooded the thread with 1-player/1-second trash cards ("an eternal
 // golem, 16 dmg"). A card reaches the night/event thread when it is a KNOWN
 // BOSS, or when it clears both floors. The canonical '📊 Parse Log' record and
@@ -297,7 +297,7 @@ async function _resolve(client, plan) {
   _remember(key, thread.id);
   console.log(`[raid-night] opened ${kind} thread "${name}" (${thread.id}) in ${parent.id} · ${plan.why}`);
 
-  // Hold the top of the thread for the night's review (R3, Uilnayar
+  // Hold the top of the thread for the night's review (R3, a member
   // 2026-08-06 — "/raidreview posted to the third line"). Discord orders by
   // post time and cannot move a message, so first-in-thread is a one-shot
   // opportunity that exists ONLY here, before the first parse card lands.
@@ -327,10 +327,15 @@ let _eventsMod = null;
 function _events() { return _eventsMod || (_eventsMod = require('./raidEvents')); }
 function _setEventsModule(m) { _eventsMod = m; }
 
-async function planFor(client, ts) {
+// `zoneId` — the kill's eqemu zone id when the caller knows it. It only matters
+// when two events' windows overlap (the guild lead, 2026-09-07: a Seru mini and a Ring
+// War on the same night, every kill landing by the clock rather than by where
+// it happened); see raidEvents.pickEventAt for the rule.
+async function planFor(client, ts, zoneId = null) {
   const at = Number.isFinite(ts) ? ts : Date.now();
   let ev = null;
-  try { ev = await _events().activeEventAt(client, at); } catch { ev = null; }
+  try { ev = await _events().activeEventAt(client, at, zoneId); } catch { ev = null; }
+  const zoneNote = Number.isFinite(Number(zoneId)) && Number(zoneId) > 0 ? ` · kill in zone ${Number(zoneId)}` : '';
 
   if (ev) {
     if (ev.kind === 'event') {
@@ -339,7 +344,8 @@ async function planFor(client, ts) {
         key:   `evt_${String(ev.id).replace(/\W+/g, '_')}`,
         name:  eventThreadName(ev),
         nightKey: nightKey(ev.startMs),
-        why:   `event window ${new Date(ev.window.fromMs).toISOString()} → ${new Date(ev.window.untilMs).toISOString()}`,
+        why:   `event window ${new Date(ev.window.fromMs).toISOString()} → ${new Date(ev.window.untilMs).toISOString()}`
+               + (ev.zoneIds?.length ? ` · event zones ${ev.zoneIds.join(',')}` : '') + zoneNote,
         event: ev,
       };
     }
@@ -350,7 +356,7 @@ async function planFor(client, ts) {
       key:   nightKey(ev.startMs),
       name:  '🗡️ Raid Night — ' + nightLabel(ev.startMs),
       nightKey: nightKey(ev.startMs),
-      why:   `raid event "${ev.title}" window ${new Date(ev.window.fromMs).toISOString()} → ${new Date(ev.window.untilMs).toISOString()}`,
+      why:   `raid event "${ev.title}" window ${new Date(ev.window.fromMs).toISOString()} → ${new Date(ev.window.untilMs).toISOString()}` + zoneNote,
       event: ev,
     };
   }
@@ -374,11 +380,11 @@ async function planFor(client, ts) {
  * (and kind null) when the feature is off, nothing is scheduled, or Discord
  * refused. ALWAYS best-effort: every caller must have a fallback destination.
  */
-async function getRaidNightTarget(client, ts) {
+async function getRaidNightTarget(client, ts, zoneId = null) {
   const none = { thread: null, kind: null, event: null };
   if (!raidNightThreadsEnabled() || !client) return none;
 
-  const plan = await planFor(client, ts).catch(() => null);
+  const plan = await planFor(client, ts, zoneId).catch(() => null);
   if (!plan) return none;
   const { key } = plan;
 

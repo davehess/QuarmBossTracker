@@ -1,5 +1,5 @@
 // test/retrigger.test.js — /retrigger's pure input parsing + the shared nudge
-// card it re-posts (Hitya 2026-08-18). The Discord plumbing (fetch/edit/send)
+// card it re-posts (the guild lead, 2026-08-18). The Discord plumbing (fetch/edit/send)
 // is thin; what must never regress is reading the window and target inputs
 // and the card coming out of the SAME builder the ThreadCreate listener uses.
 //

@@ -7,7 +7,7 @@
 > living doc, not a changelog (see `CHANGELOGS` in `utils/onboarding.js` for
 > what actually shipped).
 
-## 1. Extended Target — "Pull Tracker" (Hitya 2026-07-03)
+## 1. Extended Target — "Pull Tracker" (guild lead 2026-07-03)
 
 **The ask:** watch incoming adds approach camp — ideally with an ETA, and a
 visual of the target list where mobs "glide" up as more raiders pick them up,
@@ -37,7 +37,7 @@ climb the list" experience — `raider_count` per target, already sorted by
 that count (`index.js`'s `_handleAgentExtendedTarget`, most-targeted first).
 The only gap is that today's render is a plain repaint: a mob's row jumps to
 its new position with no motion, so a raider watching the overlay (per
-Hitya: "we tend to watch another screen where all the mobs are being
+Guild lead: "we tend to watch another screen where all the mobs are being
 fought") can miss the actual moment more people start hitting it. Fix is a
 pure animation change — FLIP technique (record each row's bounding rect
 before the re-render, then animate the transform delta after) — no backend
@@ -99,7 +99,7 @@ Already tracked as a pending item from the Phase B-1 per-character
 *visibility* profile work (`_CHAR_PROFILE_FLAGS`/`_CHAR_PROFILE_WINDOWS` in
 `main.js` — currently visibility-only; position and opacity were explicitly
 deferred as "B-2 follow-up... carry screen-signature + on-screen validation
-complexity"). Re-raised directly by Uilnayar (2026-07-03): playing two
+complexity"). Re-raised directly by a member (2026-07-03): playing two
 different characters in one session needs two different overlay layouts,
 and switching between them currently loses position/opacity even though
 visibility already swaps automatically.

@@ -5,8 +5,8 @@
 -- per-fight timelines, and the web Deaths list. A death that happened is never
 -- hidden — it is only excluded from the "things to fix" tally.
 --
--- Real case (Hitya, guild lead, 2026-08-06): Fawx and Dant both "make a
--- corpse on purpose" with Kaas Thox Xi Ans Dyek every single week (a known
+-- Real case (the guild lead, 2026-08-06): two rogues both "make a corpse on
+-- purpose" with Kaas Thox Xi Ans Dyek every single week (a known
 -- rogue corpse-drag strat). Because it happens EVERY TIME for the same
 -- (character, boss) pair, a per-death toggle would have officers re-marking the
 -- same two rogues on the same boss forever — the wrong shape. This is a

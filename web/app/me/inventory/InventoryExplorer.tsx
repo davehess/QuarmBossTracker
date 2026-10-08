@@ -122,7 +122,7 @@ export default function InventoryExplorer(
               <tr key={it.key} className="hover:bg-[#1a212c]">
                 <td className="py-1.5 px-3">
                   {it.item_id
-                    ? <a href={`https://pqdi.cc/item/${it.item_id}`} target="_blank" rel="noreferrer" className="text-text hover:text-blue hover:underline">{it.name}</a>
+                    ? <a href={`https://www.pqdi.cc/item/${it.item_id}`} target="_blank" rel="noreferrer" className="text-text hover:text-blue hover:underline">{it.name}</a>
                     : <span className="text-text">{it.name}</span>}
                   {it.item_id ? <WpDbLink kind="item" id={it.item_id} /> : null}
                   {hasShared && <span className="ml-1.5 text-[10px] text-purple" title="In your shared bank — any of your characters can pull it">🏦 shared</span>}

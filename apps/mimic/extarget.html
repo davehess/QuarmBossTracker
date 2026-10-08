@@ -8,7 +8,7 @@
      a ★ on named/unique mobs, and a * caveat on non-unique names (the pipe has
      no spawn id, so same-name mobs are only told apart when their HP differs).
      Players/pets missing >15% HP for >10s fold in as "needs attention" rows.
-     (Uilnayar 2026-06-29.) */
+     (a member, 2026-06-29.) */
   /* --bg-alpha: card-surface alpha, driven by slider via main → preload
      'bg-alpha' IPC. 1.0 = opaque (EQ hidden). Text stays bright at every value. */
   :root{ --bg-alpha:0.5; }
@@ -21,6 +21,16 @@
   .head .icon{flex-shrink:0}
   .head .ttl{color:#f6c365;font-weight:600;flex:1;min-width:0}
   .head .cnt{color:#9aa4ad;font-size:10px;font-variant-numeric:tabular-nums;flex-shrink:0}
+  /* Stacked, right-aligned: "4 online" over "🛡 2 off-tanked". On one line the
+     pair grew until it squeezed the title into two lines (a member, 2026-09-23). */
+  .head .cnt{display:flex;flex-direction:column;align-items:flex-end;line-height:1.2;white-space:nowrap}
+  /* Title + two labelled toggles + the count need ~355px; a typical overlay
+     gives the header ~280. Below that the toggles drop to their icon (tooltip +
+     on/off colour unchanged) so the title stops being crushed onto them. The
+     title may still take two lines, but never overlaps. */
+  .head .ttl{min-width:min-content}
+  @media (max-width: 379px){ .head .offtank-btn .bl{display:none} }
+  @media (max-width: 319px){ .head{gap:4px} }
   .head .conn{font-size:11px;flex-shrink:0}
   .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
   .rows{display:flex;flex-direction:column;gap:3px;background:rgb(0 0 0 / var(--bg-alpha));
@@ -60,6 +70,9 @@
     box-shadow:0 0 6px rgba(240,180,41,0.5)}
   /* The non-unique asterisk — amber, help cursor; tooltip explains the caveat. */
   .row .amb{color:#f0b429;font-weight:700;cursor:help;margin-left:2px}
+  /* Reads as settled, not as a warning: the amber asterisk means "this might be
+     the wrong mob", so its replacement must not borrow that colour. */
+  .row .known{color:#6fb98f;font-size:9px;cursor:help;margin-left:3px;font-variant-numeric:tabular-nums}
   .row .dup{color:#9aa4ad;font-size:9px;margin-left:3px;font-variant-numeric:tabular-nums}
   /* #194 — which tank this same-name instance is melee'ing. The label that
      finally tells two "Thall Va Xakra" apart on screen. */
@@ -101,7 +114,7 @@
      Surfaced from combat-log "who's hitting whom" (incoming_mob), NOT the
      Zeal target gauge, so it can show even with zero direct targeters —
      cyan accent + a shield badge instead of the raider-count number.
-     Uilnayar 2026-07-04: "there will always be mobs that we don't want to
+     A member 2026-07-04: "there will always be mobs that we don't want to
      injure but we will off tank." */
   .row.offtank{border-left-color:#5fd0c9}
   .row .ct.offtank-ct{color:#5fd0c9;font-size:13px}
@@ -128,11 +141,14 @@
   .row .mobx>span{white-space:nowrap}
   .row .mobx .vic{color:#c9b389;font-weight:600;overflow:hidden;text-overflow:ellipsis;min-width:0}
   .row .mobx .vic .arrow{color:#6e7681;font-weight:400;margin-right:2px}
+  .row .mobx .vic.auth{color:#7ee787}
+  .row .mobx .hitby{color:#f0b429;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .row .mobx .hitby .arrow{color:#6e7681;margin-right:2px}
   .row .mobx .mdps{color:#8fb7d6;font-variant-numeric:tabular-nums;flex-shrink:0}
   .row .mobx .mttl{color:#d69a9a;font-variant-numeric:tabular-nums;flex-shrink:0}
   /* Per-row hide ✕ — sits right next to the target name and is ALWAYS
      visible (it was hover-only at the row's far edge, which on a locked
-     click-through overlay meant effectively invisible — Uilnayar
+     click-through overlay meant effectively invisible — a member
      2026-07-15: "the X isn't very visible, it should be next to the
      target name"). Dim by default, red on hover. */
   .row .rowhide{margin-left:5px;color:#8b949e;cursor:pointer;font-size:10px;flex-shrink:0;
@@ -140,13 +156,35 @@
   .row:hover .rowhide{opacity:0.9}
   .row .rowhide:hover{color:#f87171;opacity:1}
   /* Who's targeting this — the raiders on each target, dim full-width line
-     under the row (Uilnayar 2026-07-15: "Extended Target should show who is
+     under the row (a member, 2026-07-15: "Extended Target should show who is
      targeting which target"). */
   .row .who{grid-column:1 / -1;color:#9aa4ad;font-size:9px;line-height:1.4;
     padding-left:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
     text-shadow:0 1px 2px #000}
   .row .who .arrow{color:#6e7681;margin-right:2px}
   .foot .unhide{color:#5fd0c9;cursor:pointer;text-decoration:underline;margin-left:6px}
+  /* ▭ Mini — the guild vote (closed 2026-09-17) picked option A, "CC letters +
+     count". One line per row, built by miniRowHtml(): HP%, the 4px bar, then
+     name → who it is hitting, SLOW / MEZ as one-letter pills and every other
+     debuff folded into ·N. Bars stay per-row (each tail is its own width), so
+     nothing here tries to line them up. Full mode never emits .mrow. */
+  body.wp-mini .rows{gap:2px;padding:3px 4px}
+  body.wp-mini .row.mrow{grid-template-columns:4ch minmax(25%,1fr) minmax(0,max-content);
+    gap:5px;padding:1px 4px}
+  /* The first row sits under the fixed ✕; keep its pills out from under it so
+     a hover for their tooltip never lands on "hide overlay". */
+  body.wp-mini .rows>.row.mrow:first-child{padding-right:18px}
+  body.wp-mini .row.mrow .bar{grid-column:auto;margin-top:0}
+  body.wp-mini .row.mrow .mtail{display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden}
+  body.wp-mini .row.mrow .amb,body.wp-mini .row.mrow .dup{flex-shrink:0;margin-left:0}
+  body.wp-mini .row.mrow .vic{color:#c9b389;font-weight:600;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;min-width:0;flex:0 1 auto}
+  body.wp-mini .row.mrow .vic.auth{color:#7ee787}
+  body.wp-mini .row.mrow .vic.none{color:#6e7681;font-weight:400}
+  body.wp-mini .row.mrow .vic .arrow{color:#6e7681;font-weight:400;margin-right:2px}
+  body.wp-mini .row.mrow .cc-badge{margin-left:0}
+  body.wp-mini .row.mrow .cc-badge.more{background:rgba(255,255,255,0.08);color:#9aa4ad;
+    border:1px solid rgba(255,255,255,0.16);font-weight:600;cursor:help}
   #empty{color:rgba(255,255,255,0.5);font-size:11px;text-shadow:0 1px 2px #000;padding:4px 0;text-align:center;font-style:italic}
   .foot{margin-top:4px;font-size:8px;color:#6e7681;padding:0 4px;line-height:1.3}
   .foot b{color:#f0b429;font-weight:700}
@@ -190,12 +228,12 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="head">
+    <div class="head wp-mini-hide">
       <span id="conn" class="conn bad">○</span>
       <span class="icon">🎯</span>
       <span class="ttl">Extended Target</span>
-      <button type="button" class="offtank-btn" id="offtankBtn" title="Show mobs held by an off-tank at full health that nobody's targeting (Emperor-style adds)">🛡 off-tanks</button>
-      <button type="button" class="offtank-btn" id="playersBtn" title="Show players/pets that raiders are targeting or that folded in as hurt (off by default — they clutter the mob list)">👥 players</button>
+      <button type="button" class="offtank-btn" id="offtankBtn" title="Show mobs held by an off-tank at full health that nobody's targeting (Emperor-style adds)">🛡<span class="bl"> off-tanks</span></button>
+      <button type="button" class="offtank-btn" id="playersBtn" title="Show players/pets that raiders are targeting or that folded in as hurt (off by default — they clutter the mob list)">👥<span class="bl"> players</span></button>
       <span class="cnt" id="cnt"></span>
     </div>
     <div id="rows" class="rows"></div>
@@ -291,8 +329,18 @@
     if (!t || (t.kind || 'npc') !== 'npc') return '';
     var parts = '';
     if (t.mob_victim) {
-      parts += '<span class="vic" title="This mob is meleeing ' + esc(t.mob_victim) + ' (from the local combat log)">'
-             +   '<span class="arrow">→</span>' + esc(t.mob_victim) + '</span>';
+      // Where the answer came from: Zeal's /assist reply (🎯 — the server's own
+      // word), Zeal's damage packets, or this client's combat log. The first two
+      // exist only on a Zeal that carries the drafted target-of-target change.
+      var vsrc = t.mob_victim_source || 'log';
+      var vtitle = vsrc === 'zeal_assist' ? 'This mob is on ' + esc(t.mob_victim) + ' (Zeal: the server\'s /assist reply)'
+                 : vsrc === 'zeal_damage' ? 'This mob is meleeing ' + esc(t.mob_victim) + ' (Zeal: damage packets)'
+                 : 'This mob is meleeing ' + esc(t.mob_victim) + ' (from the local combat log)';
+      parts += '<span class="vic' + (vsrc === 'zeal_assist' ? ' auth' : '') + '" title="' + vtitle + '">'
+             +   '<span class="arrow">' + (vsrc === 'zeal_assist' ? '🎯' : '→') + '</span>' + esc(t.mob_victim) + '</span>';
+    }
+    if (t.mob_hit_by) {
+      parts += '<span class="hitby" title="Who last hit this mob (Zeal: damage packets)"><span class="arrow">⚔</span>' + esc(t.mob_hit_by) + '</span>';
     }
     if (t.mob_dps != null) {
       parts += '<span class="mdps" title="Raid damage per second on this mob (as observed locally)">' + fmtK(t.mob_dps) + '/s</span>';
@@ -367,7 +415,7 @@
   function debuffBlock(debuffs, label){
     if (!debuffs || !debuffs.length) return '';
     var s = '<div class="debuffs">';
-    if (label) s += '<span class="chip pool-lbl" title="Same-name mobs share one name on the Zeal pipe, so these debuffs can\'t be pinned to a specific one — shown pooled for the group.">' + esc(label) + '</span>';
+    if (label) s += '<span class="chip pool-lbl" title="Multiple mobs here share the same name, so Mimic can\'t tell which one has which debuff — shown combined for the group.">' + esc(label) + '</span>';
     for (var i = 0; i < debuffs.length; i++) {
       var d = debuffs[i];
       var rem = (d.remaining_secs != null) ? '<span class="rem">' + d.remaining_secs + 's</span>' : '';
@@ -425,7 +473,16 @@
     // #143 — MEZ / SLOW pills right next to the name (shown even for pooled
     // same-name rows; classification is over this row's own debuffs).
     nm += ccBadges(t.debuffs);
-    if (t.ambiguous) nm += '<span class="amb" title="Non-unique name — same-name mobs share a name on the Zeal pipe, so buffs/debuffs here may be from a different mob of the same name. Split out below by HP when health differs.">*</span>';
+    // The asterisk is a WARNING: this row's debuffs may belong to a different
+    // mob of the same name, because the pipe could not tell them apart. When
+    // the client gave us a spawn id that warning is simply false — we know
+    // which mob this is — so the row shows the id instead of the caveat.
+    // Zeal PR #229; null on every released Zeal, so most rows still warn.
+    if (t.id_proven) {
+      nm += '<span class="known" title="A distinct mob, confirmed by its spawn id from the game client — not inferred from health. Debuffs on this row belong to this mob.">#' + esc(t.spawn_id != null ? t.spawn_id : '?') + '</span>';
+    } else if (t.ambiguous) {
+      nm += '<span class="amb" title="Non-unique name — another mob with this same name may be alive too, so buffs/debuffs shown here could belong to either one. Split out below by HP when health differs.">*</span>';
+    }
     if (t.dup_index) nm += '<span class="dup">#' + t.dup_index + '/' + (t.same_name_count || '?') + '</span>';
     // #194 — the bot's position clustering names the tank(s) each same-name
     // instance is hitting. THE disambiguator: "#1 @ Grabthar" vs "#2 @ Borim".
@@ -434,6 +491,10 @@
     }
     // #194 — the in-game Zeal /tag, welded to this instance by the bot.
     if (t.tag_text || t.tag_shape) nm += ztagHtml(t.tag_text, t.tag_shape);
+    // The main assist's target, pinned to the top by the bot (the guild lead,
+    // 2026-10-02: "when someone is declared as main assist in raid chat, their
+    // target should be at the top of the extended target list").
+    if (t.ma_target) nm += '<span class="tank-tag" style="color:#d29922" title="The main assist is on this one">MA</span>';
     if (kind === 'pet' && t.owner) nm += '<span class="owner">(' + esc(t.owner) + ')</span>';
     if (t.hurt) nm += '<span class="warn">⚠ ' + (t.hurt_secs || 0) + 's</span>';
     if (t.off_tank) {
@@ -460,7 +521,7 @@
     var bw = (t.hp_pct != null ? Math.max(0, Math.min(100, t.hp_pct)) : 0);
     // Debuff chips. Suppressed for members of a same-name group — the pipe
     // can't attribute a debuff to a SPECIFIC same-name mob, so showing them
-    // divided per row is false precision (Uilnayar 2026-07-13). The group's
+    // divided per row is false precision (a member, 2026-07-13). The group's
     // debuffs render once, pooled, in debuffBlock() below.
     var deb = suppressDeb ? '' : debuffBlock(t.debuffs);
     // #194 — tags the bot could not weld to a specific instance: shown once,
@@ -476,7 +537,7 @@
       deb += tp + '</div>';
     }
     // Who's targeting this — the bot already ships the names (raiders[]);
-    // show up to 4 + "+N", full list on the row tooltip (Uilnayar
+    // show up to 4 + "+N", full list on the row tooltip (a member
     // 2026-07-15: "should show who is targeting which target").
     var raiders = Array.isArray(t.raiders) ? t.raiders.filter(Boolean) : [];
     var whoLine = '';
@@ -506,6 +567,60 @@
       +  '</div>';
   }
 
+  // ▭ Mini — the guild vote (closed 2026-09-17) picked option A, "CC letters +
+  // count", after the guild lead reported mini mode did nothing (2026-09-24).
+  // Still every row, in today's order and with today's same-name split, but one
+  // line each: HP%, bar, name (+ the * caveat / #n split), → who the mob is
+  // hitting or —, then SLOW and MEZ as the one-letter pills S / M — they change
+  // what a raider does next — and every OTHER debuff folded into one ·N whose
+  // tooltip lists them. The row's own tooltip carries the full list; nothing
+  // expands. The per-row ✕ and the header toggles stay a full-mode affair.
+  function _isMini(){ try { return document.body.classList.contains('wp-mini'); } catch (e) { return false; } }
+  // Mini bars step at 50/25 like the tank overlay — the rule every mini shares
+  // (preload.js _WP_MINI_CSS), so a colour means the same thing on each one.
+  // Full mode keeps its own 60/30.
+  function miniTier(h){ if (h == null) return 'unk'; if (h <= 25) return 'lo'; if (h <= 50) return 'mid'; return 'hi'; }
+  function _debuffLabel(d){
+    return String((d && d.name) || '?') + (d && d.attributed === false ? '?' : '')
+      + (d && d.remaining_secs != null ? ' ' + fmtDur(d.remaining_secs) : '');
+  }
+  function miniRowHtml(t){
+    var kind = t.kind || 'npc';
+    var tier = miniTier(t.hp_pct);
+    var rowCls = 'row mrow ' + kind + ((kind === 'npc' && t.is_named) ? ' named' : '') + (t.hurt ? ' hurt' : '')
+      + (t.off_tank ? ' offtank' : '') + (t.stale ? ' stale' : '');
+    var tail = '<span class="nm wp-mini-name">' + esc(t.name) + '</span>';
+    if (!t.id_proven && t.ambiguous) {
+      tail += '<span class="amb" title="Non-unique name — another mob with this name may be alive too, so the debuffs counted here could belong to either.">*</span>';
+    }
+    if (t.dup_index) tail += '<span class="dup">#' + t.dup_index + '/' + (t.same_name_count || '?') + '</span>';
+    if (kind === 'npc') {
+      if (t.mob_victim) {
+        var auth = (t.mob_victim_source === 'zeal_assist');
+        tail += '<span class="vic' + (auth ? ' auth' : '') + '" title="This mob is on ' + esc(t.mob_victim) + '">'
+              +   '<span class="arrow">→</span>' + esc(t.mob_victim) + '</span>';
+      } else {
+        tail += '<span class="vic none" title="Not seen hitting anyone yet"><span class="arrow">→</span>—</span>';
+      }
+    }
+    var ds = Array.isArray(t.debuffs) ? t.debuffs : [];
+    // Same classifier and tooltips as the full pills — only the label shrinks.
+    tail += ccBadges(ds).replace('>MEZ</span>', '>M</span>').replace('>SLOW</span>', '>S</span>');
+    var rest = ds.filter(function(d){ var k = _normDebuff(d && d.name); return !MEZ_DEBUFFS.has(k) && !SLOW_DEBUFFS.has(k); });
+    if (rest.length) tail += '<span class="cc-badge more" title="' + esc(rest.map(_debuffLabel).join(', ')) + '">·' + rest.length + '</span>';
+    var raiders = Array.isArray(t.raiders) ? t.raiders.filter(Boolean) : [];
+    var ct = (t.raider_count != null ? t.raider_count : 0);
+    var title = (t.off_tank && !t.raider_count) ? 'held by an off-tank, not targeted'
+      : (ct + ' raider' + (ct === 1 ? '' : 's') + ' targeting' + (raiders.length ? ': ' + raiders.join(', ') : ''));
+    if (ds.length) title += ' — debuffs: ' + ds.map(_debuffLabel).join(', ');
+    var bw = (t.hp_pct != null ? Math.max(0, Math.min(100, t.hp_pct)) : 0);
+    return '<div class="' + rowCls + '" data-k="' + esc(rowKey(t)) + '" title="' + esc(title) + '">'
+      +    '<span class="hp ' + tier + ' wp-mini-num">' + (t.hp_pct != null ? Math.round(t.hp_pct) + '%' : '—') + '</span>'
+      +    '<div class="bar wp-mini-bar"><div class="fill ' + tier + '" style="width:' + bw + '%"></div></div>'
+      +    '<span class="mtail">' + tail + '</span>'
+      +  '</div>';
+  }
+
   // "Show off-tanks" toggle — pure off-tank rows (a mob held by an
   // off-tank, zero direct targeters — Emperor-style adds) are hidden by
   // default since it's a niche need; the quiet "N off-tanked" hint next to
@@ -528,7 +643,7 @@
 
   // "Show players/pets" toggle — player/pet entries (a raider targeting a
   // friendly, or a hurt pet folding in) clutter the mob list and are hidden by
-  // default (Uilnayar 2026-07-15: "remove or hide entries that are not
+  // default (a member, 2026-07-15: "remove or hide entries that are not
   // targeted — often these are players or pets"). Persisted like the off-tank
   // toggle.
   var _showPlayers = localStorage.getItem('wp_ext_show_players') === '1';
@@ -582,24 +697,45 @@
       return true;
     });
     var offTankCount = (payload && payload.off_tank_count) || 0;
+    // Outside a raid the agent scopes the board to YOUR group (scope 'group'),
+    // so the count is your group, not the zone's online raiders.
+    var groupScope = !!(payload && payload.scope === 'group');
+    // Two or more raids at once (the bot names them only then): this list is your raid's, and the
+    // first count line says whose raid that is.
+    var raids = (payload && Array.isArray(payload.raids) && payload.raids.length > 1) ? payload.raids : null;
+    var myRaid = null;
+    if (raids) for (var ri = 0; ri < raids.length; ri++) if (raids[ri] && raids[ri].mine) myRaid = raids[ri];
+    // Header count: one line per fact, stacked — never side by side.
+    function cntHtml(withOnline){
+      var h = '';
+      if (raids) h += '<span title="' + esc(raids.length) + ' raids at once. These targets are your raid&#39;s.">'
+                   + '<span style="color:#ffa657">⚔ ' + esc(raids.length) + ' raids</span>'
+                   + (myRaid ? ' · 👑 ' + esc(myRaid.leader) : '') + '</span>';
+      if (withOnline && payload && payload.online != null) h += '<span>' + esc(payload.online) + (groupScope ? ' in group' : ' online') + '</span>';
+      if (!_showOffTank && offTankCount) h += '<span>🛡 ' + esc(offTankCount) + ' off-tanked</span>';
+      // Who the raid named main assist, and (when known) what they are on.
+      var ma = payload && payload.main_assist;
+      if (ma && ma.name) h += '<span style="color:#d29922" title="Main assist, named in raid chat by ' + esc(ma.declared_by || 'a raider') + '">MA ' + esc(ma.name) + '</span>';
+      return h;
+    }
     if (!targets.length) {
       rowsEl.innerHTML = '';
       emptyEl.style.display = 'block';
-      emptyEl.textContent = (payload && payload.loading) ? 'loading…'
-        : (all.length ? 'no directly-targeted mobs — toggle 🛡 off-tanks to see ' + offTankCount + ' held' : 'waiting for raid targets…');
-      cntEl.textContent = (!_showOffTank && offTankCount) ? '🛡 ' + offTankCount + ' off-tanked' : '';
+      emptyEl.textContent = (payload && payload.local_only) ? 'guild feature: it needs your raid\'s Mimics, so sign in to use it'
+        : (payload && payload.loading) ? 'loading…'
+        : (all.length ? 'no directly-targeted mobs — toggle 🛡 off-tanks to see ' + offTankCount + ' held'
+                      : (groupScope ? 'waiting for group targets…' : 'waiting for raid targets…'));
+      cntEl.innerHTML = cntHtml(false);
       footEl.style.display = 'none';
       try { window.mimic && window.mimic.autoFitOverlay && window.mimic.autoFitOverlay(document.getElementById('wrap')); } catch (e) {}
       return;
     }
     emptyEl.style.display = 'none';
-    var cntTxt = (payload.online != null ? payload.online + ' online' : '');
-    if (!_showOffTank && offTankCount) cntTxt += (cntTxt ? ' · ' : '') + '🛡 ' + offTankCount + ' off-tanked';
-    cntEl.textContent = cntTxt;
+    cntEl.innerHTML = cntHtml(true);
     var html = '';
     var anyAmb = false;
     // Group same-name mobs (ambiguous / same_name_count>1) so their debuffs
-    // pool into ONE block instead of being falsely divided per row (Uilnayar
+    // pool into ONE block instead of being falsely divided per row (a member
     // 2026-07-13). HP rows stay per-mob (HP is reliable per target). Members
     // render together at the first member's sort position; other kinds render
     // normally.
@@ -611,19 +747,29 @@
       }
     }
     var renderedGroup = {};
+    var mini = _isMini();
     for (var i = 0; i < targets.length; i++) {
       var t = targets[i];
-      if (t.ambiguous) anyAmb = true;
+      // An id-proven row shows no asterisk, so it must not summon the footnote
+      // that explains one — a legend for a symbol that is not on screen reads
+      // as a warning about rows that are actually certain.
+      if (t.ambiguous && !t.id_proven) anyAmb = true;
       var grp = groupsByName[t.name];
       if (grp && grp.length > 1) {
         if (renderedGroup[t.name]) continue;   // group already emitted
         renderedGroup[t.name] = true;
+        // Mini keeps the group's ORDER but not its pooled chip block: one line
+        // per mob, and each line's * already says its debuffs may be shared.
+        if (mini) { for (var jm = 0; jm < grp.length; jm++) html += miniRowHtml(grp[jm]); continue; }
         // #194 — when the bot's position clustering labeled the instances
         // (any row carries tanks), debuffs arrive PER INSTANCE and render on
         // their own rows; unplaceable ones come pre-dimmed (attributed:false).
         // Pooling was only ever the honest fallback for "can't tell which".
+        // Rows split by SPAWN ID are attributed too (FB-39, the guild lead, 2026-09-30: "the spawnids
+        // are varied and the buffs should have been associated but they weren't"): the bot places each
+        // landing by the id the Mimic that saw it reported, and dims the ones it cannot place.
         var attributed = false;
-        for (var aj = 0; aj < grp.length; aj++) { if (grp[aj].tanks && grp[aj].tanks.length) { attributed = true; break; } }
+        for (var aj = 0; aj < grp.length; aj++) { if ((grp[aj].tanks && grp[aj].tanks.length) || grp[aj].id_proven) { attributed = true; break; } }
         if (attributed) {
           for (var j2 = 0; j2 < grp.length; j2++) html += rowHtml(grp[j2], false);
         } else {
@@ -632,13 +778,13 @@
           if (pooled.length) html += debuffBlock(pooled, 'on one of these ' + grp.length + ':').replace('<div class="debuffs">', '<div class="debuffs" data-k="pool:' + esc(t.name) + '">');
         }
       } else {
-        html += rowHtml(t, false);
+        html += mini ? miniRowHtml(t) : rowHtml(t, false);
       }
     }
     // Byte-stability guard (2026-07-07 review): identical HTML -> skip the
     // innerHTML re-layout AND the autofit IPC round-trip.
     if (rowsEl.__wpHtml !== html) {
-      // FLIP reorder animation (Uilnayar #7): rows glide to their new sort
+      // FLIP reorder animation (a member #7): rows glide to their new sort
       // position when raider-count changes instead of jumping. Capture each
       // keyed child's top BEFORE the swap, then translate it from there to 0.
       // Node identity is lost across innerHTML, but position is keyed by
@@ -684,6 +830,13 @@
       _hidden.clear(); _saveHidden(); render(_lastPayload);
     });
   }
+
+  // ▭ Mini flipped (preload's _wpApplyMini): rebuild from the last payload now
+  // rather than on the next 2s poll. With rows up, the two renditions never
+  // emit the same HTML, so render()'s byte-stability guard lets the rewrite
+  // through and its autoFitOverlay refits the height after the new rows are in;
+  // with none, the empty branch refits unconditionally.
+  window.addEventListener('wp-mini-change', function(){ render(_lastPayload); });
 
   async function tick(){
     try {

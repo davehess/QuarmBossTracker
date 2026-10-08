@@ -153,7 +153,7 @@
     <span class="sep"></span>
     <button id="inspectSocialsBtn" class="secondary" title="Open the Hotbar/Socials inspector — see what's actually in your Sock_/Socials_ INI files">Hotbar Pages…</button>
     <button id="spellSetsBtn" class="secondary" title="Bulk-swap a song/spell across ALL your spell sets — pick the old spell + the new one, replace everywhere, save (with a .bak backup)">🎵 Spell Sets…</button>
-    <button id="captureBtn"        class="secondary" title="Heuristic-parse your Sock_/Socials_ INIs into a draft PvP template JSON in your EQ folder — review + share">Capture PvP draft</button>
+    <button id="captureBtn"        class="secondary" title="Scan your saved hotkeys/socials for a PvP layout draft you can review and share (writes a file into your EQ folder)">Capture PvP draft</button>
     <button id="cloudBackupBtn"    class="secondary" title="Upload encrypted backup of your UI ini files to the bot (existing capture flow)">☁ Backup</button>
     <button id="cloudRestoreBtn"   class="secondary" title="Pull a cloud backup into the editor — rescale it to this machine's monitor, then Save. Use this to deploy your layout on a new computer.">📥 Restore</button>
     <span id="status"></span>
@@ -339,6 +339,9 @@
   // keys NOT present (e.g. a brand-new XPos<targetRes> block) are INSERTED
   // right after the section header. Inserting is what lets us add a widescreen
   // resolution block without disturbing the user's original-resolution layout.
+  // ⚠ Save no longer goes through here (2026-10-05): it rebuilt WHOLE files from
+  // the load-time copy. Save sends key edits and main applies them to the file
+  // as it is on disk (_buildSaveEdits; main.js _applyUiKeyEdits).
   function emitIni(parsed, edits){
     // edits: { sectionName → { "XPos3840x1600": N, "YPos3840x1600": N, Width, Height } }
     var lines = parsed.lines.slice();
@@ -411,6 +414,60 @@
       else if (props.XPos != null) { x = props.XPos; y = props.YPos; used = ''; }
     }
     return { x: x, y: y, used: used };
+  }
+
+  // ── Zeal's own bars (/raidbars, /assistbar) ──────────────────────────────
+  // The guild lead, 2026-09-29: "we need to account for /raidbars and /assistbar in
+  // uistudio as well, as parts of zeal." They are not EQ windows, so they carry
+  // no XPos<res>: Zeal keeps them in zeal.ini as screen pixels at the game's
+  // resolution — [RaidBars] Left/Top plus Right/Bottom (0 = the bars may run to
+  // the screen edge), [AssistBar] Left/Top with a size that follows FontSize.
+  // Positions remap to the target resolution like every window; sizes are
+  // pixels. The raid bars' box can be sized here (Right/Bottom); the assist bar
+  // cannot (its size is its text), so it is shown at an estimate. main.js's
+  // _zealBarRects reads them the same way for auto-arrange.
+  function _zealBarWindows(parsed, srcW, srcH, fxX, fxY){
+    var out = [];
+    var num = function(v, d){ var n = parseInt(v, 10); return isFinite(n) ? n : d; };
+    var on = function(v){ return /^(true|1)$/i.test(String(v == null ? '' : v).trim()); };
+    function mk(s, bar, label, x, y, w, h, extra, contents){
+      var X = Math.round(x * fxX), Y = Math.round(y * fxY);
+      var o = { section: s.name, label: label, kind: 'zeal', category: 'zeal', zealBar: bar,
+        contents: contents, props: s.props, hasWH: false, srcSuffix: '', chatMeta: null, xmlMax: null,
+        x: X, y: Y, w: w, h: h, origX: X, origY: Y, origW: w, origH: h };
+      for (var k in extra) o[k] = extra[k];
+      return o;
+    }
+    for (var i = 0; i < parsed.sections.length; i++) {
+      var s = parsed.sections[i], p = s.props || {};
+      if (/^raidbars$/i.test(s.name)) {
+        var L = num(p.Left, 5), T = num(p.Top, 5), R = num(p.Right, 0), B = num(p.Bottom, 0);
+        var toR = !(R > L), toB = !(B > T);
+        out.push(mk(s, 'raidbars', '🐺 Raid bars (/raidbars)' + (on(p.Enabled) ? '' : ' · off'),
+          L, T, Math.max(16, (toR ? srcW : R) - L), Math.max(16, (toB ? srcH : B) - T),
+          { toEdgeR: toR, toEdgeB: toB },
+          [{ label: 'Kept in', value: 'zeal.ini [RaidBars]' },
+           { label: 'Box', value: (toR || toB) ? 'runs to the screen edge until you size it here' : 'set by /raidbars position' }]));
+      } else if (/^assistbar$/i.test(s.name)) {
+        var fs = num(p.FontSize, 16);
+        out.push(mk(s, 'assistbar', '🐺 Assist bar (/assistbar)' + (on(p.Enabled) ? '' : ' · off'),
+          num(p.Left, 5), num(p.Top, 30), Math.round(fs * 11), Math.round(fs * 2) + 4,
+          { fixedSize: true },
+          [{ label: 'Kept in', value: 'zeal.ini [AssistBar]' },
+           { label: 'Size', value: 'follows its font size (' + fs + ') — shown here as an estimate' }]));
+      }
+    }
+    return out;
+  }
+  // What Save writes back for a Zeal bar: Left/Top always; the raid bars' box
+  // edge only where it had one or was sized here (0 keeps "to the edge").
+  function _zealBarEdits(w){
+    var e = { Left: w.x, Top: w.y };
+    if (w.zealBar === 'raidbars') {
+      if (!w.toEdgeR || w.sizeEdited) e.Right = w.x + w.w;
+      if (!w.toEdgeB || w.sizeEdited) e.Bottom = w.y + w.h;
+    }
+    return e;
   }
 
   // ── Load + rescale ───────────────────────────────────────────────────────
@@ -617,6 +674,56 @@
       '; window positions will be adapted, sizes preserved';
   }
 
+  // ── One window, one row ───────────────────────────────────────────────────
+  // The guild lead, 2026-09-02: "UI studio shows multiple copies of several chats and
+  // windows." The bundle is deliberately several files — the enumerated
+  // per-character inis plus a catch-all for any other .ini belonging to this
+  // character (server-suffix variants, /loadskin leftovers, machine
+  // migrations). More than one of them can carry the SAME [Section] with its
+  // own geometry, and the parse loop pushes every one, so the canvas drew two
+  // of everything: 258 windows for a file holding ~129.
+  //
+  // ⚠ THE COSMETIC HALF IS NOT THE DANGEROUS HALF. EQ reads exactly ONE of
+  // these files for window geometry. Dragging a duplicate was a coin flip over
+  // whether the edit landed in the file the client actually reads — and when it
+  // lost, Save reported success and nothing moved in game. That is the same
+  // silent-no-op class as the filename-case trap documented in _readUiBundle.
+  //
+  // Rank the files, keep one row per section, and REPORT what was shadowed.
+  // Never silently drop: a window the user was looking for and cannot find is
+  // its own bug report. Save is unaffected — it writes each surviving window
+  // back to its own file, so a shadowed file is simply left as it was.
+  function _fileRank(fn, character){
+    var f = String(fn || '').toLowerCase();
+    var c = String(character || '').toLowerCase();
+    if (f === 'ui_' + c + '_pq.proj.ini') return 0;   // what EQ reads on Quarm
+    if (/^ui_/.test(f))                   return 1;   // another UI_ variant
+    if (f === c + '_pq.proj.ini')          return 2;   // per-char client ini
+    return 3;
+  }
+  function _dedupeWindows(windows, character){
+    var bySection = {}, shadowed = [];
+    for (var i = 0; i < windows.length; i++) {
+      var w = windows[i], prev = bySection[w.section];
+      if (!prev) { bySection[w.section] = w; continue; }
+      // Lower rank wins; a tie keeps the one already seen (bundle file order).
+      if (_fileRank(w.file, character) < _fileRank(prev.file, character)) {
+        bySection[w.section] = w; shadowed.push(prev);
+      } else {
+        shadowed.push(w);
+      }
+    }
+    var kept = [];
+    for (var k = 0; k < windows.length; k++) {
+      if (bySection[windows[k].section] === windows[k]) kept.push(windows[k]);
+    }
+    var shadowFiles = {};
+    for (var j = 0; j < shadowed.length; j++) {
+      shadowFiles[shadowed[j].file] = (shadowFiles[shadowed[j].file] || 0) + 1;
+    }
+    return { kept: kept, shadowed: shadowed.length, shadowFiles: shadowFiles };
+  }
+
   // Parse + rescale + render whatever is currently in STATE.bundle. Shared by
   // the local "Load + Rescale" path and the cloud "Restore from backup" path —
   // both end up with a { filename → text } bundle, so the only difference is
@@ -662,7 +769,9 @@
         if (isNaN(x) || isNaN(y)) continue;
         // Dimensions: bare Width/Height (real Quarm key), then legacy Size.cx/cy.
         // Windows with no size entry use EQ's default size — we DON'T fabricate
-        // a Width/Height for them on save (could pin an auto-sizing window).
+        // a Width/Height for them on save (could pin an auto-sizing window)
+        // UNLESS the user resizes the window here (sizeEdited, set by the
+        // drag handle and the W/H fields): that IS the ask to pin it.
         var rawW = s.props.Width  != null ? s.props.Width  : s.props['Size.cx'];
         var rawH = s.props.Height != null ? s.props.Height : s.props['Size.cy'];
         var hasWH = (rawW != null && rawH != null);
@@ -727,7 +836,7 @@
         if (xmlMax && !hasWH && xmlMax.cx > 0 && xmlMax.cy > 0) {
           // No size in the INI — fall back to the skin XML's design size purely
           // so the window still renders. XML sizes are absolute pixels (NOT
-          // resolution-scaled), and this is render-only: _buildSaveBundle never
+          // resolution-scaled), and this is render-only: _buildSaveEdits never
           // writes a Width/Height for a window whose INI had none. Windows that
           // DO carry an INI size keep it VERBATIM — we no longer clamp them to an
           // fx-scaled XML cap (that clamp was the other half of the #146 shrink:
@@ -751,7 +860,17 @@
           origX: x, origY: y, origW: w, origH: h,
         });
       }
+      if (/^zeal\.ini$/i.test(fname)) {
+        _zealBarWindows(parsed, STATE.srcW, STATE.srcH, fxX, fxY).forEach(function(zw){
+          zw.id = 'w' + (seq++); zw.file = fname;
+          STATE.windows.push(zw);
+        });
+      }
     }
+    var _dedup = _dedupeWindows(STATE.windows, STATE.character);
+    STATE.windows     = _dedup.kept;
+    STATE.shadowed    = _dedup.shadowed;
+    STATE.shadowFiles = _dedup.shadowFiles;
     STATE.autoSwitched = autoSwitched;
     if (STATE.windows.length === 0) {
       // Window-position data lives in EQ's UI_<char>_pq.proj.ini. Quarm has no
@@ -789,6 +908,14 @@
       }
       var _warn = _resMismatchWarning(STATE.srcW, STATE.srcH, STATE.tgtW, STATE.tgtH);
       if (_warn) msg += ' · ' + _warn;
+      // Duplicates are worth naming, not hiding: the user needs to know a
+      // second file exists, and which one is being written.
+      if (STATE.shadowed) {
+        var _sf = Object.keys(STATE.shadowFiles || {});
+        msg += ' · ' + STATE.shadowed + ' duplicate' + (STATE.shadowed === 1 ? '' : 's') +
+               ' hidden from ' + _sf.join(', ') +
+               ' (EQ reads only one file; Save writes the one shown and leaves the other alone)';
+      }
       setStatus(msg, 'ok');
     }
     buildFilterPanel();
@@ -804,7 +931,7 @@
   // hide the high-count clutter (the ~50 bag windows + transient popups) and
   // show the persistent HUD + chat. `on` is the default-visible flag.
   var FILTER_CATEGORIES = [
-    { key:'zeal',    label:'🐺 Zeal',          on:true,  test:function(n){ return /^zeal/i.test(n); } },
+    { key:'zeal',    label:'🐺 Zeal',          on:true,  test:function(n){ return /^zeal|^raidbars$|^assistbar$/i.test(n); } },
     { key:'chat',    label:'💬 Chat',          on:true,  test:function(n){ return /chat/i.test(n); } },
     // Per-sender Tell windows — assigned via ChatManager (DefaultChannel 3),
     // NOT by name (they're named "Chat 11" etc. like real chats). test:false
@@ -818,7 +945,7 @@
     // windows that don't exist on this emu (mail, barter, tribute,
     // marketplace, mercenaries…). EQ still writes position sections for all
     // of them, which is why they appeared on the stage as arrangeable
-    // windows (Uilnayar 2026-07-06: "plenty of windows that show up in the
+    // windows (a member, 2026-07-06: "plenty of windows that show up in the
     // UI studio that are not displayed during the game"). Default OFF —
     // toggle the category on if you really need to move one. Extend the
     // pattern as more are reported.
@@ -1137,7 +1264,7 @@
             + 'style="left:' + sx + 'px;top:' + sy + 'px;width:' + sw + 'px;height:' + sh + 'px;">'
             + '<span class="lbl">' + escapeHtml(lbl) + '</span>'
             + '<span class="sz">' + w.w + '×' + w.h + '</span>'
-            + (STATE.selected === i ? '<div class="grip se" data-grip="se"></div>' : '')
+            + (STATE.selected === i && !w.fixedSize ? '<div class="grip se" data-grip="se"></div>' : '')
             + '</div>';
     }
     stage.innerHTML = html;
@@ -1178,6 +1305,7 @@
     } else if (DRAG.mode === 'resize-se') {
       w.w = Math.max(16, Math.round(DRAG.origW + dx));
       w.h = Math.max(16, Math.round(DRAG.origH + dy));
+      w.sizeEdited = true;
     }
     // Snap-to-edges of other windows + screen edges (10px tolerance in
     // world coords). Only on move, not resize.
@@ -1233,10 +1361,15 @@
     document.getElementById('fY').value = w.y;
     document.getElementById('fW').value = w.w;
     document.getElementById('fH').value = w.h;
+    // The assist bar's size is its text: nothing to type here.
+    document.getElementById('fW').disabled = !!w.fixedSize;
+    document.getElementById('fH').disabled = !!w.fixedSize;
     var meta = 'File: <b>' + escapeHtml(w.file) + '</b>'
              + '<br>Section: <b>' + escapeHtml(w.section) + '</b>'
-             + '<br>Read from: <b>' + escapeHtml(w.srcSuffix ? w.srcSuffix + ' block' : 'bare XPos/YPos') + '</b>'
-             + (w.hasWH ? '' : '<br><span style="color:#8b949e">auto-size (no Width/Height written)</span>')
+             + '<br>Read from: <b>' + escapeHtml(w.zealBar ? 'Left/Top (Zeal screen pixels)' : (w.srcSuffix ? w.srcSuffix + ' block' : 'bare XPos/YPos')) + '</b>'
+             + (w.hasWH ? '' : (w.sizeEdited
+                  ? '<br><span style="color:#56d364">size pinned — Save writes Width/Height</span>'
+                  : '<br><span style="color:#8b949e">auto-size (no Width/Height in the ini) — resize it here to pin one</span>'))
              + '<br>Original: ' + w.origX + ',' + w.origY + ' ' + w.origW + '×' + w.origH;
     if (w.contents && w.contents.length > 0) {
       meta += '<hr style="border:none;border-top:1px solid #30363d;margin:8px 0">'
@@ -1255,8 +1388,9 @@
       var w = STATE.windows[STATE.selected];
       var v = parseInt(this.value, 10) || 0;
       if (id === 'fX') w.x = v; else if (id === 'fY') w.y = v;
-      else if (id === 'fW') w.w = v; else if (id === 'fH') w.h = v;
+      else if (id === 'fW') { w.w = v; w.sizeEdited = true; } else if (id === 'fH') { w.h = v; w.sizeEdited = true; }
       renderStage();
+      updateSidePanel();
     });
   });
 
@@ -1269,32 +1403,69 @@
     for (var i = 0; i < STATE.windows.length; i++) {
       var w = STATE.windows[i];
       w.x = w.origX; w.y = w.origY; w.w = w.origW; w.h = w.origH;
+      w.sizeEdited = false;
     }
     renderStage();
     setStatus('reset to last load', 'ok');
   });
-  // Build the { filename → new text } bundle for the current edits, writing
-  // into the TARGET resolution's suffix block (XPos<W>x<H>); emitIni inserts
-  // the block if absent, leaving other-resolution blocks intact.
-  function _buildSaveBundle(){
+  // What Save sends: KEY EDITS, [{ file, section, key, value }], not file texts
+  // (the guild lead, 2026-10-05: "A for UI Studio"). Save used to rebuild whole
+  // files from the copy read at Load, for every window, so positions EQ had
+  // saved since — the ~50 bag windows the stage hides, a window moved in game —
+  // were put back, and a save after logout overwrote EQ's own on-camp save.
+  // Main now applies these to each file as it is on disk at write time (and as
+  // EQ left it, for the deferred save), changing only the keys named.
+  //
+  // Default: only a window the user changed in this session — moved, or sized.
+  // Two cases write EVERY window instead, because there the editor, not the
+  // disk, is the layout (a window left out would have no place in the block):
+  //   cloud   the bundle came from a cloud backup (📥 Restore), not this
+  //           machine's files, so unchanged here is not unchanged on disk;
+  //   rescale the block written (Target) is not the block the positions were
+  //           read from (Source) — a layout rescaled to a new monitor must
+  //           place every window.
+  function _writeAllReason(tgtSuffix){
+    if (STATE.fromCloud) return 'cloud';
+    var srcSuffix = STATE.srcSuffix || (STATE.srcW + 'x' + STATE.srcH);
+    if (srcSuffix !== tgtSuffix) return 'rescale';
+    return '';
+  }
+  function _sizeChanged(w){
+    return !!(w.sizeEdited || (w.hasWH && (w.w !== w.origW || w.h !== w.origH)));
+  }
+  function _windowChanged(w){
+    return w.x !== w.origX || w.y !== w.origY || _sizeChanged(w);
+  }
+  // Writes into the TARGET resolution's suffix block (XPos<W>x<H>); main adds
+  // the keys when absent and leaves other-resolution blocks alone.
+  function _buildSaveEdits(){
     var tgtSuffix = STATE.tgtW + 'x' + STATE.tgtH;
-    var edits = {};
+    var all = _writeAllReason(tgtSuffix);
+    var edits = [], files = {}, nWin = 0;
     for (var i = 0; i < STATE.windows.length; i++) {
       var w = STATE.windows[i];
-      if (!edits[w.file]) edits[w.file] = {};
-      var e = {};
-      e['XPos' + tgtSuffix] = w.x;
-      e['YPos' + tgtSuffix] = w.y;
-      if (w.hasWH) { e.Width = w.w; e.Height = w.h; }   // never fabricate a size
-      edits[w.file][w.section] = e;
+      if (!all && !_windowChanged(w)) continue;
+      var kv;
+      if (w.zealBar) kv = _zealBarEdits(w);
+      else {
+        kv = {};
+        kv['XPos' + tgtSuffix] = w.x;
+        kv['YPos' + tgtSuffix] = w.y;
+        // Never fabricate a size for a window the ini left auto-sizing — but a
+        // window the user RESIZED here gets one, or the resize is a silent no-op:
+        // A member + the guild lead, 2026-09-13, the Zeal item windows "defaulting to huge
+        // tooltips" every time — their ini sections carried no Width/Height, so
+        // every 100×200 set here was dropped on Save while the same edit on a
+        // character whose ini had the keys stuck.
+        // Changed-only mode writes a size only when the size changed; a window
+        // that was merely moved keeps whatever size EQ has for it now.
+        if (all ? (w.hasWH || w.sizeEdited) : _sizeChanged(w)) { kv.Width = w.w; kv.Height = w.h; }
+      }
+      for (var k in kv) edits.push({ file: w.file, section: w.section, key: k, value: kv[k] });
+      files[w.file] = true;
+      nWin++;
     }
-    var newBundle = {};
-    for (var fname in edits) {
-      var parsed = STATE.bundle[fname + '__parsed'];
-      if (!parsed) continue;
-      newBundle[fname] = emitIni(parsed, edits[fname]);
-    }
-    return { newBundle: newBundle, tgtSuffix: tgtSuffix };
+    return { edits: edits, tgtSuffix: tgtSuffix, files: Object.keys(files), windows: nWin, all: all };
   }
 
   // Is this character currently logged in? We ask the agent's Zeal state — a
@@ -1308,9 +1479,10 @@
     } catch (e) { return null; }   // null = unknown (agent not reachable)
   }
 
-  async function _writeBundle(newBundle, tgtSuffix, opts){
+  async function _writeEdits(built, opts){
     var deferred = opts && opts.deferred;
-    var res = await window.mimic.uiStudioWriteBundle(STATE.eqDir, newBundle, deferred ? { backupTag: 'eq' } : null);
+    var tgtSuffix = built.tgtSuffix;
+    var res = await window.mimic.uiStudioWriteEdits(STATE.eqDir, built.edits, deferred ? { backupTag: 'eq' } : null);
     if (!res || !res.ok) { setStatus('save failed: ' + (res && res.error ? res.error : 'unknown'), 'err'); return false; }
     var resWarn = '';
     try {
@@ -1320,12 +1492,16 @@
           ' — set Target to that (🖥 Detect) or EQ reads a different block';
       }
     } catch (e2) {}
+    // A file that is gone from the EQ folder is skipped, never re-created.
+    var gone = (res.missing && res.missing.length) ? ' · ⚠ not found, skipped: ' + res.missing.join(', ') : '';
+    var bad = resWarn || gone;
+    var nFiles = (res.written || []).length;
     if (deferred) {
-      setStatus('✅ applied ' + Object.keys(newBundle).length + ' file(s) now that ' + STATE.character +
-        ' logged out — EQ\'s last copy backed up as .bak-eq. Log back in to see it.' + resWarn, resWarn ? 'err' : 'ok');
+      setStatus('✅ applied ' + nFiles + ' file(s) now that ' + STATE.character +
+        ' logged out — EQ\'s last copy backed up as .bak-eq. Log back in to see it.' + gone + resWarn, bad ? 'err' : 'ok');
     } else {
-      setStatus('saved ' + Object.keys(newBundle).length + ' file(s) · wrote ' + tgtSuffix +
-        ' block · log the character in to apply (EQ reads positions at login)' + resWarn, resWarn ? 'err' : 'ok');
+      setStatus('saved ' + nFiles + ' file(s) · ' + built.windows + ' window(s) · wrote ' + tgtSuffix +
+        ' block · log the character in to apply (EQ reads positions at login)' + gone + resWarn, bad ? 'err' : 'ok');
     }
     return true;
   }
@@ -1340,9 +1516,11 @@
     var b = document.getElementById('deferBanner'); if (b) b.style.display = 'none';
     if (!silent) setStatus('scheduled save cancelled', 'ok');
   }
-  async function _queueDefer(newBundle, tgtSuffix){
+  async function _queueDefer(built){
+    // The queue holds the KEY EDITS, not file texts: they are merged into the
+    // file as EQ leaves it on logout, so EQ's own save is never overwritten.
     var res = await window.mimic.uiStudioDeferSave({
-      character: STATE.character, eqDir: STATE.eqDir, bundle: newBundle, tgtSuffix: tgtSuffix,
+      character: STATE.character, eqDir: STATE.eqDir, edits: built.edits, tgtSuffix: built.tgtSuffix,
     }).catch(function(e){ return { ok: false, error: e && e.message }; });
     if (!res || !res.ok) { setStatus('could not schedule: ' + (res && res.error ? res.error : 'unknown'), 'err'); return; }
     _showDeferBanner();
@@ -1489,9 +1667,37 @@
     var nn=document.getElementById('ssNew'); if (nn) nn.addEventListener('input', _ssRefreshPreview);
   })();
 
+  // A cloud backup loaded into the editor (📥 Restore) is a deliberate restore, often onto a new PC
+  // where the files may not exist yet: it keeps writing WHOLE files from the backup, rescaled, as
+  // before. Only while the character is logged out — EQ would overwrite it on camp, and a restore
+  // is not something to run unattended after logout, so there is no scheduling here.
+  async function _saveCloudRestore(built){
+    if (await _isCharActiveInZeal(STATE.character.toLowerCase())) {
+      setStatus('log ' + STATE.character + ' out (or close EverQuest) first: restoring a backup replaces the files, and EQ would write over them when you camp', 'err');
+      return;
+    }
+    var per = {};
+    for (var i = 0; i < built.edits.length; i++) {
+      var e = built.edits[i];
+      ((per[e.file] = per[e.file] || {})[e.section] = per[e.file][e.section] || {})[e.key] = e.value;
+    }
+    var texts = {};
+    for (var fname in per) {
+      var parsed = STATE.bundle[fname + '__parsed'];
+      if (parsed) texts[fname] = emitIni(parsed, per[fname]);
+    }
+    setStatus('restoring…');
+    var res = await window.mimic.uiStudioWriteBundle(STATE.eqDir, texts, null).catch(function(err){ return { ok: false, error: String(err) }; });
+    if (!res || !res.ok) { setStatus('restore failed: ' + (res && res.error ? res.error : 'unknown'), 'err'); return; }
+    setStatus('restored ' + Object.keys(texts).length + ' file(s) from the backup · wrote ' + built.tgtSuffix +
+      ' block · log the character in to apply (each replaced file was backed up as .bak)', 'ok');
+  }
+
   document.getElementById('saveBtn').addEventListener('click', async function(){
     if (!STATE.character || !STATE.eqDir) { setStatus('nothing to save', 'err'); return; }
-    var built = _buildSaveBundle();
+    var built = _buildSaveEdits();
+    if (STATE.fromCloud) { try { await _saveCloudRestore(built); } catch (e) { setStatus('restore failed: ' + e.message, 'err'); } return; }
+    if (!built.edits.length) { setStatus('nothing to save — no window was moved or resized since Load', 'ok'); return; }
     // Is the character logged in right now? If so, a plain Save won't apply
     // (EQ keeps the layout in memory, ignores it on a skin reload, and
     // overwrites the file on the next camp/zone/quit). Offer to schedule.
@@ -1505,10 +1711,10 @@
         'OK  = schedule it: apply automatically when ' + STATE.character + ' logs out\n' +
         '         (recommended — runs in the background; you can close UI Studio)\n' +
         'Cancel = save right now anyway');
-      if (schedule) { _queueDefer(built.newBundle, built.tgtSuffix); return; }
+      if (schedule) { _queueDefer(built); return; }
     }
     setStatus('saving…');
-    try { await _writeBundle(built.newBundle, built.tgtSuffix, { deferred: false }); }
+    try { await _writeEdits(built, { deferred: false }); }
     catch (e) { setStatus('save failed: ' + e.message, 'err'); }
   });
   document.getElementById('deferCancel').addEventListener('click', function(){ _cancelDefer(false); });
@@ -1671,7 +1877,7 @@
     openSocialsInspector(res);
   });
 
-  // ── Macro suggestion catalog (Uilnayar 2026-07-06) ────────────────────────
+  // ── Macro suggestion catalog (a member, 2026-07-06) ────────────────────────
   // Seeded from the raid's REAL callout macros observed in raid chat — the
   // same line shapes the agent's CH-chain / DA-broadcast / healer-mana
   // trackers parse — plus clicky templates (incl. the bard stopsong→click→

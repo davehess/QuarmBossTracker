@@ -1,6 +1,6 @@
 // Data behind /ai — how this platform is built and maintained by AI sessions.
 //
-// Hitya 2026-08-23: "publish all of this detail to wolfpack.quest/ai … it
+// The guild lead 2026-08-23: "publish all of this detail to wolfpack.quest/ai … it
 // should be human and agent readable … any agentic workflow could review that
 // page and understand our methodology for developing and maintaining this
 // without GitHub access, but if the agent has GitHub access it could see the
@@ -93,13 +93,13 @@ export const PRINCIPLES: Principle[] = [
   {
     id: 'attribution',
     title: 'Attribution is explicit',
-    rule: 'Every request in this repo comes from one person under several character names; credit them all to that person. The one exception is the feedback table, whose submitters are other members and keep their own names.',
+    rule: 'Documentation and code comments credit people by ROLE, never by character name. The repository is public, so it records what was decided and why, not who plays what.',
     because:
-      'Character names are also real fixtures in tests and golden logs. Guessing attribution from a name in a code comment is what produced the wrong credits this rule replaced.',
-    adopted: '2026-08-09',
+      'An earlier rule kept a list mapping characters to people so that credit landed correctly. It was wrong for three weeks in both directions, and it was the wrong shape anyway: a public repository has no reason to publish who is who. Naming nobody cannot misattribute anybody.',
+    adopted: '2026-09-16',
     milestone: 'm-attribution',
     sourceDoc: 'CLAUDE.md',
-    quote: 'everything is Hitya',
+    quote: 'attribution: by ROLE, never by character name',
   },
   {
     id: 'raid-freeze',

@@ -385,7 +385,7 @@ Real fixture (`GINA_FromJemi.gtp`):
 ```
 pattern : ^{c} begins watching the time.
 ours    : ^(?<s>[\w'` -]+?) begins watching the time.
-          -> fires for "Grokii begins…" AND "Melting begins…" AND every other player
+          -> fires for "Grokii begins…" AND "Bexley begins…" AND every other player
 theirs  : ^Grokii begins watching the time.
           -> fires only for you
 ```
@@ -1066,13 +1066,13 @@ the dashboard list with a badge. A silently-missing trigger is the worse failure
 | 1 | `^Your (Charm\|Beguile\|Allure\|Boltran\`s Agacerie) spell has worn off of (.*).` | `^(?:\[[^\]]{1,40}\]\s+)?Your (…) spell has worn off of (.*).` | `Your Allure spell has worn off of a stone golem.` | match; `${2} broke charm!` → **"a stone golem broke charm!"** |
 | 2 | `^{s1} has become ENRAGED.` | `^(?:\[…\]\s+)?(?<s1>.+?) has become ENRAGED.` | `Aten Ha Ra has become ENRAGED.` | `{s1:"Aten Ha Ra"}`; `Enraged: {s1}` → **"Enraged: Aten Ha Ra"** |
 | 3 | `^{s1} tells the raid{s2}assist{s3}(me\|on\|assist){s4}` | `^(?:\[…\]\s+)?(?<s1>.+?) tells the raid(?<s2>.+?)assist(?<s3>.+?)(me\|on\|assist)(?<s4>.+?)` | `Grokii tells the raid,  'assist on Aten Ha Ra'` | `{s1:"Grokii", s2:",  '"}`; `Assist {s1}` → **"Assist Grokii"** |
-| 4 | `^{s} won the need roll on {n} items.` | `^(?:\[…\]\s+)?(?<s>.+?) won the need roll on (?<n>\d+) items.` | `Melting won the need roll on 2 items.` | `{s:"Melting", n:"2"}`; `{s} won {n} — line: {L}` → **"Melting won 2 — line: [Tue …] Melting won the need roll on 2 items."** |
-| 5 | `^{c} begins watching the time.` (character = `Grokii`) | `^(?:\[…\]\s+)?Grokii begins watching the time.` | `Grokii begins…` / `Melting begins…` | **match / NO match** |
+| 4 | `^{s} won the need roll on {n} items.` | `^(?:\[…\]\s+)?(?<s>.+?) won the need roll on (?<n>\d+) items.` | `Bexley won the need roll on 2 items.` | `{s:"Bexley", n:"2"}`; `{s} won {n} — line: {L}` → **"Bexley won 2 — line: [Tue …] Bexley won the need roll on 2 items."** |
+| 5 | `^{c} begins watching the time.` (character = `Grokii`) | `^(?:\[…\]\s+)?Grokii begins watching the time.` | `Grokii begins…` / `Bexley begins…` | **match / NO match** |
 | 6 | `^(?!(?:zotmule)(?!\w))(?<seller>[A-Za-z]*) auctions, \'(?i:WTS\|selling).*(?<item>(?i:blade of earth)).*\'` | `…(?:WTS\|selling)…(?<item>(?:blade of earth))…` (flags `i`) | `Ferrin auctions, 'WTS Blade of Earth 20k'` | `{seller:"Ferrin", item:"Blade of Earth"}`; `${seller} is selling ${item}` → **"Ferrin is selling Blade of Earth"** |
 | 7 | `^(?<mob>.+) (?<action>\w+) YOU for {N>=50000} points of damage.` | `…(?<n>\d+) points…` + cond `n >= 50000` | `Aten Ha Ra kicks YOU for 61000 …` / `… for 900 …` | **fires / suppressed**; `{n}: ${mob} -> ${action}` → **"61000: Aten Ha Ra -> kicks"** |
-| 8 | EQLP CH-chain with `\k<letter>` | unchanged (JS native) | `Hopeya tells the raid,  '002 CH Hitya'` | `{caster:"Hopeya", chainnum:"002", target:"Hitya"}` — **pq-companion imports this disabled** |
+| 8 | EQLP CH-chain with `\k<letter>` | unchanged (JS native) | `Dalwin tells the raid,  '002 CH Dunmore'` | `{caster:"Dalwin", chainnum:"002", target:"Dunmore"}` — **pq-companion imports this disabled** |
 | 9 | `^You have become better at ([A-Za-z ]*)! \(([0-9]{1,3})\)` | `{1,3}` untouched | `You have become better at Baking! (121)` | `${1}: ${2}` → **"Baking: 121"** |
-| 10 | `\]\s+(?<victim>[A-Za-z]+) has been slain by` (legacy Wolfpack idiom) | **unchanged** | `Hitya has been slain by Aten Ha Ra` | `{victim:"Hitya"}`; `RIP {victim}` → **"RIP Hitya"** (no regression) |
+| 10 | `\]\s+(?<victim>[A-Za-z]+) has been slain by` (legacy Wolfpack idiom) | **unchanged** | `Dunmore has been slain by Aten Ha Ra` | `{victim:"Dunmore"}`; `RIP {victim}` → **"RIP Dunmore"** (no regression) |
 
 Regression vectors to add alongside: an existing personal trigger using bare `{s}`
 (must still produce group `s`), a Zeal-condition trigger with an empty pattern

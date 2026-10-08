@@ -1,55 +1,193 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useEffect, useRef, useState } from 'react';
 
-// Feedback moved up to the header's account row (root layout) per user
-// request — keep the primary nav to destinations.
-const links = [
-  { href: '/',              label: 'Home' },
-  { href: '/boards',        label: 'Boards' },
-  { href: '/roster',        label: 'Roster' },
-  { href: '/parses',        label: 'Parses' },
-  { href: '/db',            label: '📚 Database' },
-  { href: '/guide',         label: '📖 Raid Guide' },
-  { href: '/buffs',         label: 'Buffs' },
-  { href: '/quartermaster', label: '🧰 Quartermaster' },
-  { href: '/raid',          label: 'Raid' },
-  { href: '/who',           label: '/who' },
-  { href: '/pvp',           label: 'PvP' },
-  { href: '/pop',           label: '🌀 PoP Flags (Preview)' },
-  { href: '/leaderboards',  label: 'Ranks' },
-  { href: '/rolls',         label: '🎲 Rolls' },
-  { href: '/fun',           label: '🎉 Fun' },
-  { href: '/roadmap',       label: '🗺️ Roadmap' },
+// Four top-level categories (the guild lead, 2026-08-28). Sixteen chips wrapped to three
+// rows on desktop and six on a phone, which pushed the page's whole first
+// viewport below the fold. Everything is still one click away — the difference
+// is that you now choose a category first.
+//
+// Grouping is a judgment call: Raid is what you touch DURING one, Stats is what
+// happened, Prep is what you do beforehand. The guild lead has ruled on three so far —
+// Buffs is Raid; Quartermaster and /who are Prep (2026-08-28). Say so if a
+// destination is filed wrong; nothing here is load-bearing beyond the label.
+export type Item = { href: string; label: string };
+export type Group = { id: string; label: string; items: Item[] };
+
+// ⚠ Exported: the compact header's Menu renders the SAME array. Two copies of
+// the site's navigation is how one of them goes stale.
+export const GROUPS: Group[] = [
+  {
+    id: 'raid', label: 'Raid',
+    items: [
+      { href: '/raid',          label: 'Raid HQ' },
+      { href: '/boards',        label: 'Spawn boards' },
+      { href: '/buffs',         label: 'Buffs' },
+      { href: '/spectator',     label: 'Spectator' },
+      { href: '/screen',        label: 'Raid screen' },
+      { href: '/rolls',         label: 'Rolls' },
+    ],
+  },
+  {
+    id: 'stats', label: 'Stats',
+    items: [
+      { href: '/parses',       label: 'Parses' },
+      { href: '/leaderboards', label: 'Ranks' },
+      { href: '/pvp',          label: 'PvP' },
+      { href: '/roster',       label: 'Roster' },
+      { href: '/raidhistory',  label: 'Raid history' },
+      { href: '/fun',          label: 'Fun' },
+      { href: '/film',         label: 'Film' },
+    ],
+  },
+  {
+    id: 'prep', label: 'Prep',
+    items: [
+      { href: '/start',         label: 'Getting started' },
+      { href: '/guide',         label: 'Raid guide' },
+      { href: '/db',            label: 'Database' },
+      { href: '/quartermaster', label: 'Quartermaster' },
+      { href: '/who',           label: '/who' },
+      { href: '/pop',           label: 'PoP flags' },
+      { href: '/roadmap',       label: 'Roadmap' },
+    ],
+  },
 ];
 
-// showAdmin / showMe are computed server-side in the root layout (signed-in
-// users see "Me"; officers see "Admin") so non-targets never see the link.
+// Tighter horizontal padding below sm: five top-level chips wrapped to two
+// rows at 360px, which cost 36px of a phone's first viewport (measured
+// 2026-08-28). Vertical padding is untouched — these are tap targets.
+const chip =
+  'px-2 sm:px-3 py-1.5 rounded border text-xs sm:text-sm transition-colors whitespace-nowrap';
+const chipIdle   = 'bg-panel border-border text-text hover:bg-[#21262d]';
+const chipActive = 'bg-accent border-accent text-white';
+
 export default function Nav({ showAdmin = false, showMe = false }: { showAdmin?: boolean; showMe?: boolean }) {
   const path = usePathname();
-  const allLinks = [...links];
-  if (showMe)    allLinks.push({ href: '/test-server', label: '🧪 Test server' });
-  if (showMe)    allLinks.push({ href: '/me',    label: '👤 Me'    });
-  if (showAdmin) allLinks.push({ href: '/admin', label: '🛡️ Admin' });
+  const [open, setOpen] = useState<string | null>(null);
+  const wrap = useRef<HTMLDivElement>(null);
+
+  // ⚠ Hover and tap fight each other, and both directions were live bugs until
+  // the real page was driven in both profiles:
+  //   · hover device — mouseenter opens, and the click after it toggled it SHUT
+  //   · touch device — a tap emits COMPATIBILITY mouse events, so mouseenter
+  //     opened the group and the same tap's click toggled it shut. Guarding
+  //     mouseenter was not enough: onFocus was a FOURTH way in, and a tap
+  //     focuses the button, so the click still arrived with the group already
+  //     open and closed it. onFocus-to-open is gone — keyboard users get the
+  //     same click every other user gets (Enter/Space fires it), which is the
+  //     ordinary disclosure pattern and leaves exactly two entry points.
+  // So hover only opens where hover actually exists, and click only toggles
+  // where it does not. Neither reads wrong from the source; both are obvious
+  // the moment you drive it.
+  const [canHover, setCanHover] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia('(hover: hover) and (pointer: fine)');
+    const sync = () => setCanHover(mq.matches);
+    sync();
+    mq.addEventListener('change', sync);
+    return () => mq.removeEventListener('change', sync);
+  }, []);
+
+  const inGroup = (g: Group) => g.items.some(i => path === i.href || path?.startsWith(i.href + '/'));
+
+  // Pointer devices open on hover; touch has no hover, so a tap toggles. Both
+  // paths set the same state — there is no hover-only route to any link.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(null); };
+    const onDown = (e: MouseEvent) => {
+      if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(null);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onDown);
+    return () => { document.removeEventListener('keydown', onKey); document.removeEventListener('mousedown', onDown); };
+  }, [open]);
+
+  // Navigating closes the panel; without this it survives the route change.
+  useEffect(() => { setOpen(null); }, [path]);
+
+  const shown = GROUPS.find(g => g.id === open);
+
   return (
-    <nav className="flex flex-wrap gap-1.5 sm:gap-2 -mx-1 px-1 overflow-x-auto">
-      {allLinks.map(({ href, label }) => {
-        const active = path === href || (href !== '/' && path?.startsWith(href));
-        return (
-          <Link
-            key={href}
-            href={href}
-            className={[
-              'px-2.5 sm:px-3 py-1 sm:py-1.5 rounded border text-xs sm:text-sm transition-colors whitespace-nowrap',
-              active
-                ? 'bg-accent border-accent text-white'
-                : 'bg-panel border-border text-text hover:bg-[#21262d]',
-            ].join(' ')}
-          >
-            {label}
-          </Link>
-        );
-      })}
-    </nav>
+    <div ref={wrap} className="relative" onMouseLeave={() => { if (canHover) setOpen(null); }}>
+      {/* ⚠ NOWRAP, deliberately (the guild lead, 2026-08-30: "Top nav is broken when you
+          log in on desktop in chrome"). This row is only ever the header's
+          middle group, and its container can be squeezed thin by a wide
+          right-hand block — signed in that block gains the search box, Tour,
+          Admin and the account chip. While this wrapped, "squeezed thin" came
+          out as every chip on its own line: a 10-row vertical stack down the
+          middle of the bar. Not fitting is now a measurable overflow instead,
+          which SiteHeader reads to fold the whole bar into its compact shape —
+          the outcome the design already had for "not enough room". The
+          revealed row below still wraps; it has the full width to itself. */}
+      <nav className="flex flex-nowrap items-center gap-1.5 sm:gap-2">
+        <Link href="/" className={`${chip} ${path === '/' ? chipActive : chipIdle}`}>Home</Link>
+
+        {GROUPS.map(g => {
+          const on = open === g.id;
+          return (
+            <button
+              key={g.id}
+              type="button"
+              aria-expanded={on}
+              aria-controls={`nav-${g.id}`}
+              onClick={() => setOpen(on && !canHover ? null : g.id)}
+              onMouseEnter={() => { if (canHover) setOpen(g.id); }}
+              className={`${chip} ${on || inGroup(g) ? chipActive : chipIdle} inline-flex items-center gap-1.5`}
+            >
+              {g.label}
+              <svg viewBox="0 0 10 6" width="9" height="6" aria-hidden="true"
+                   className={`transition-transform ${on ? 'rotate-180' : ''}`}>
+                <path d="M1 1.2 5 4.8 9 1.2" fill="none" stroke="currentColor" strokeWidth="1.4"
+                      strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          );
+        })}
+
+        {/* ⚠ Always rendered. The brief is four top-level doors — Raid, Stats,
+            Prep and /me (the guild lead) — and gating this one on `showMe` quietly made
+            it three for every signed-out visitor, which is how it went missing.
+            /me redirects to `/auth/signin?next=/me` on its own, so a signed-out
+            click lands on sign-in and comes back here rather than dead-ending;
+            for a prospective member it is the invitation, not a broken link. */}
+        <Link href="/me" className={`${chip} ${path?.startsWith('/me') ? chipActive : chipIdle}`}>/me</Link>
+        {showAdmin && <Link href="/admin" className={`${chip} ${path?.startsWith('/admin') ? chipActive : chipIdle}`}>Admin</Link>}
+        {/* ⚠ Test server MOVED to the header's utility chips (2026-08-30). The
+            brief here is four top-level doors — Raid, Stats, Prep and /me — and
+            this was a fifth that only signed-in members saw, which is both off
+            brief and exactly the 95px that stopped the signed-in bar fitting. */}
+      </nav>
+
+      {/* The revealed row. On hover devices it FLOATS under the chips (the guild lead,
+          2026-09-13: "the top design jumps around when hovering, it needs to
+          stay in place") — in flow it grew the header by a row on every
+          mouseover and pushed the whole page down and back. On touch there is
+          no hover, a tap opens it, and it stays in flow so it can never cover a
+          phone's first viewport. Anchored flush to the row (no top margin) so
+          the pointer never crosses a gap that would fire the wrap's mouseleave.
+          ⚠ data-nav-revealed is READ BY SiteHeader's fit measurement. Either
+          way this row can widen the header row's scrollWidth (Prep has seven
+          links) — so without that marker, hovering a category folded the whole
+          bar to "Menu" and the fold hysteresis kept it there. See measure(). */}
+      {shown && (
+        <div id={`nav-${shown.id}`} data-nav-revealed=""
+             className={`flex flex-wrap gap-1.5 sm:gap-2 ${canHover
+               ? 'absolute left-0 top-full z-40 w-max max-w-[min(92vw,52rem)] rounded-b-md border border-border bg-bg/95 p-2 backdrop-blur'
+               : 'mt-1.5 border-t border-border/60 pt-2'}`}>
+          {shown.items.map(i => {
+            const active = path === i.href || path?.startsWith(i.href + '/');
+            return (
+              <Link key={i.href} href={i.href}
+                    className={`${chip} ${active ? chipActive : chipIdle}`}>
+                {i.label}
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }

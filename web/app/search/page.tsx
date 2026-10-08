@@ -1,6 +1,6 @@
 // /search — full results page for the site-wide search box. Hitting Enter in
 // the header search navigates here (the dropdown is the quick-pick; this is
-// the "show me everything" view). Hitya 2026-06-23.
+// the "show me everything" view). The guild lead 2026-06-23.
 //
 // Sections:
 //   • Encounters — when the query matches an NPC name, every parse of that NPC
@@ -14,6 +14,16 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { userTz, fmtAbs } from '@/lib/timezone';
 import { fmtDmg, fmtDuration, cleanBossName } from '@/lib/format';
+import { GUILD_TAG } from '@/lib/guild';
+
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'Search',
+  description:
+    'Search characters, items, spells and NPCs across the site.',
+};
 
 export const dynamic = 'force-dynamic';
 
@@ -124,7 +134,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
   const WHO_THRESHOLD = 10;
   const [encounters, charsRes, itemsRes, spellsRes, npcsRes] = await Promise.all([
     loadEncountersForNpc(sb, q),
-    sb.from('characters').select('name, class, main_name').eq('guild_id', 'wolfpack').ilike('name', like).limit(30),
+    sb.from('characters').select('name, class, main_name').eq('guild_id', GUILD_TAG).ilike('name', like).limit(30),
     sb.from('eqemu_items').select('id, name').ilike('name', like).limit(30),
     sb.from('eqemu_spells').select('id, name').ilike('name', like).limit(30),
     // EQEmu underscores mob names — match that form too so "Lord Nagafen" hits.

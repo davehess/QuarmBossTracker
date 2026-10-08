@@ -1,9 +1,9 @@
 # Death awareness across the overlays, and a rez queue
 
-From Hitya, 2026-08-10 (Emperor Ssraeshza, the wipe sequence after Hawkner died):
+From the guild lead, 2026-08-10 (Emperor Ssraeshza, the wipe sequence after a member died):
 
-> *"Hawkner is already dead but we still list him as the tank on the extended
-> target window… Hawkner's still showing up as an off-heal candidate, at 32% HP.
+> *"a member is already dead but we still list him as the tank on the extended
+> target window… a member's still showing up as an off-heal candidate, at 32% HP.
 > He should have a tombstone next to his name. Command center could use rezzes
 > needed that loses its targets when they take the rez, and if a rezzer is using
 > mimic and starts casting a rez while targetting that corpse we should be able
@@ -22,7 +22,7 @@ Confirmed for the off-heal list, which has no death check of any kind
 
 1. still has hits inside `offheal_window_sec`, so they survive the `byTank` build;
 2. passes the letters-only real-raider name gate;
-3. resolves an HP% from their **last** snapshot — 32% for Hawkner;
+3. resolves an HP% from their **last** snapshot — 32% for a member;
 4. `32 < offheal_hurt_pct`, so they are published as someone to heal.
 
 **This is compounded by the stale-HP defect** in
@@ -34,7 +34,7 @@ looked plausible enough to publish.
 
 ### Corpses are a free death signal we already parse
 
-The Extended Target targeter list showed **`Atlasius's corpse`** among the
+The Extended Target targeter list showed **`Elowen's corpse`** among the
 raiders targeting the boss. Corpses cannot target anything — that entry is a
 corpse entity carrying the target it held at death.
 
@@ -58,7 +58,7 @@ raiders:
 | Extended Target targeters | lists `X's corpse` | filter corpses, show the living count honestly |
 | Anywhere a raider is named | no indicator | **tombstone marker** next to the name |
 
-Hitya asked specifically for the tombstone rather than removal in some places —
+The guild lead asked specifically for the tombstone rather than removal in some places —
 a dead tank should be *visibly* dead, not silently absent, because "who died"
 is itself the information during a wipe.
 
@@ -74,7 +74,7 @@ Buildable on rails that already exist:
   already carries casts between clients, and the threat snapshot already carries
   each uploader's own Zeal target (`target_name`, added 2026-08-04). A rezzer
   running Mimic who targets a corpse and starts casting gives us both halves:
-  who is casting, and on whom. Render as a line under the corpse: *"Uilnayar
+  who is casting, and on whom. Render as a line under the corpse: *"a member
   casting Reviviscence"*.
 - **Clearing on accept** — the rez landing is observable; failing that, the
   player reappearing alive in raid roster / live-state clears them.

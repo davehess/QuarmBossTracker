@@ -1,0 +1,113 @@
+# Upstream PR: expose spawn ids on the named pipe
+
+## ✅ FILED 2026-08-31 — https://github.com/CoastalRedwood/Zeal/pull/229
+
+Open, awaiting review. Everything below is the record of how it was built and
+submitted; the steps are kept because a follow-up PR (the target-bar half of
+#218, or a rebase if this goes stale) will follow the same path.
+
+⚠ **We cannot watch it from here.** This repo's GitHub tooling is scoped to
+`davehess/quarmbosstracker`, so review comments on `CoastalRedwood/Zeal` will
+not reach a session automatically — the guild lead needs to relay them.
+
+Everything needed to open this on
+[CoastalRedwood/Zeal](https://github.com/CoastalRedwood/Zeal). The two commits
+are in `0001-*.patch` and `0002-*.patch` in this directory, based on `a5f5cbf`
+(ZEAL_VERSION 1.4.5).
+
+**To submit** (from a fork, by a human with a GitHub account on it):
+
+```
+git clone https://github.com/<you>/Zeal.git && cd Zeal
+git remote add upstream https://github.com/CoastalRedwood/Zeal.git
+git fetch upstream && git checkout -b pipe-spawn-id upstream/main
+git am /path/to/0001-*.patch /path/to/0002-*.patch
+git push -u origin pipe-spawn-id
+```
+
+### ⚠ Set your git identity BEFORE pushing
+
+`git am` takes the author from the patch file, not from your git config. The
+patches are stamped `davehess <davehess@users.noreply.github.com>` so that a
+forgotten step still produces something correct and leak-free — but set it to
+whatever you actually want on a permanent public commit:
+
+```
+git config user.name "Your Name"
+git config user.email "you@example.com"
+git rebase HEAD~2 --exec "git commit --amend --no-edit --reset-author"
+git log -2 --format='%an <%ae>'
+```
+
+`git config` without `--global` scopes this to the clone. To avoid publishing a
+real address, GitHub Settings -> Emails -> "Keep my email addresses private"
+gives you `<id>+<user>@users.noreply.github.com`, which still links commits to
+your account.
+
+Then open the PR with the title and body below.
+
+---
+
+## Testing it with a local build
+
+The PR's weak point is that it is unverified. Zeal builds locally with **Visual
+Studio 2022 Community (free), `Release` + `x86`** — that is all the README asks
+for. Output is `Release\Zeal.asi`; nothing else in the release zip changes, so
+only that one file needs swapping in the EQ folder (back up the existing one).
+
+Then `node scripts/zeal-pipe-peek.js` from this repo reads the live pipe and
+says whether the build carries the patch. It reuses `apps/mimic/zealPipe.js`
+rather than reimplementing the reader — the pipe is a stream of CONCATENATED
+JSON objects whose payload is double-encoded as a string, and a hand-rolled
+reader gets both wrong and reports a false negative.
+
+Verdict rule: `player.spawn_id` is emitted unconditionally, so it alone decides.
+`target_id` and `pet_id` are omitted by design with no target / no pet, so their
+absence is never evidence. Exit 0 carries it, 1 does not, 2 could not tell.
+
+⚠ **Report the result on the PR either way.** "Built it, ran it, here are the
+ids" is the single thing most likely to move a maintainer, and if it does NOT
+work that is worth knowing before they spend review time on it.
+
+## ⚠ Read first: this implements an EXISTING open issue
+
+[#218](https://github.com/CoastalRedwood/Zeal/issues/218) (open since
+2026-06-29, `derekwolfson`) asks for exactly this, and its author is running the
+same `/tag` hotkey workaround we are. Verified same field, not merely similar:
+the `156` in their `ZEALTAG | this | Lookout Reloen | 156` is `Entity::SpawnId`
+(`nameplate.cpp:960`), which is what the patch emits as `target_id`.
+
+That changes the submission in three ways, all already reflected in the body:
+
+- it opens by naming #218 and uses **`Refs #218`, never `Closes`** — #218 also
+  asks for a native target-bar display, which we do NOT implement, and
+  auto-closing it would drop that half;
+- the "why" leads with two independent tool authors hitting the same wall,
+  which is a stronger argument than ours alone;
+- after the PR is open, post `issue-218-comment.md` on #218 with the PR number
+  filled in. That links the two and notifies its author.
+
+## Title and body
+
+⚠ ONE COPY of each, so they cannot drift apart:
+
+- **`pr-title.txt`** — paste into the PR title field.
+- **`pr-body.md`** — paste the whole file into the PR description field.
+
+`test/upstream-zeal-pr.test.js` checks `pr-body.md` against the patch: same set
+of keys, the line count the diff actually has, purely additive, and the
+not-compiled note still present.
+
+---
+
+## Notes for us (not part of the PR)
+
+- Our own consumer changes wait until this is merged and released. The agent's
+  pipe parser should treat all five keys as optional — Zeal versions without
+  them will keep working, and `docs/zeal-pipe-protocol.md` needs a row per key
+  once a build carrying them exists.
+- `docs/zeal-tag-spawn-id-collision.md` is a **separate** upstream ask (tags are
+  applied by id and ignore the name they were sent). Do not bundle them; that
+  one is a bug report, this one is a feature.
+- If this is declined, the fallback stays what it is today: operator-driven
+  `/tag` for the few mobs that matter, layered over position/HP clustering.

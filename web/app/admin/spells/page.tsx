@@ -4,7 +4,7 @@
 // inventory: who's holding it, the classes that can use it, and which
 // spellbook-uploaded characters of those classes are still missing it. This
 // is the distribution side of the spell exchange — "we collect these on raids,
-// get them to the people who need them" (Hitya 2026-06-23).
+// get them to the people who need them" (the guild lead, 2026-06-23).
 //
 // Gated by the /admin layout (officer only). Backed by the
 // guild_held_spell_needs() RPC (migration 20260624020000_spell_exchange.sql).
@@ -12,6 +12,9 @@
 import Link from 'next/link';
 import WpDbLink from '@/components/WpDbLink';
 import { supabaseAdmin } from '@/lib/supabase';
+import { requireOfficer } from '@/lib/officer';
+import { loadHeldSpellNeeds } from '@/lib/adminReads';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,9 +38,11 @@ function classTags(mask: number): string {
 }
 
 export default async function AdminSpellsPage() {
+  await requireOfficer();
   const sb = supabaseAdmin();
-  const { data, error } = await sb.rpc('guild_held_spell_needs', { p_guild_id: 'wolfpack' });
-  const rows = (data ?? []) as HeldSpell[];
+  // Paged: the function returns a row per held scroll (555 today) and PostgREST cuts a response
+  // at 1,000 rows without an error. It orders by spell_name, unique per row, so paging is stable.
+  const { rows, error } = await loadHeldSpellNeeds<HeldSpell>(sb, GUILD_TAG);
 
   // Surface the ones someone actually needs first.
   const withNeeders = rows.filter(r => r.needers.length > 0)
@@ -104,7 +109,7 @@ function SpellTable({ rows, highlightNeeders }: { rows: HeldSpell[]; highlightNe
           <tr key={r.spell_name}>
             <td className="py-1.5 pr-3 text-text">
               {r.scroll_item_id
-                ? <a href={`https://pqdi.cc/item/${r.scroll_item_id}`} target="_blank" rel="noreferrer" className="text-text hover:text-blue hover:underline">{r.spell_name}</a>
+                ? <a href={`https://www.pqdi.cc/item/${r.scroll_item_id}`} target="_blank" rel="noreferrer" className="text-text hover:text-blue hover:underline">{r.spell_name}</a>
                 : r.spell_name}
               {r.scroll_item_id ? <WpDbLink kind="item" id={r.scroll_item_id} /> : null}
             </td>

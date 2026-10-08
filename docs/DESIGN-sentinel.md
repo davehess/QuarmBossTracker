@@ -1,6 +1,6 @@
 # DESIGN — the Data Sentinel (continuous ingest review, raid-aware)
 
-**The ask (Hitya, 2026-08-16):** *"I think it would be helpful for me to
+**The ask (guild lead, 2026-08-16):** *"I think it would be helpful for me to
 implement something like this to continuously review the data coming into the
 database, especially during raids and as a way to review the live test cases
 you write up during implementation"* — pointing at
@@ -101,7 +101,7 @@ tonight (2026-08-16):**
 | `encounters_null_zone` | find_or_create doesn't set zone on insert (scope boundary in CLAUDE.md) | **0** in 30d |
 | `dead_enabled_triggers` — enabled triggers with zero fires in 14d of recent_fires | the 37-of-109 dead-trigger discovery | 107 enabled (join to fires = the check) |
 | `clock_skew_outliers` — uploader offset > 10 min | the doubled live damage that killed combined-DPS | (per-raid) |
-| `chat_rewrite_pairs` — near-duplicate chat rows, same text stripped of punctuation, different speaker, ±5s | the open Hawkner/Syko mystery | (bounded to raid window) |
+| `chat_rewrite_pairs` — near-duplicate chat rows, same text stripped of punctuation, different speaker, ±5s | the open a member/a member mystery | (bounded to raid window) |
 | `duplicate_projection_posts` — same review/summary posted >1× per night | bot 3.1.8's eleven raid reviews | (bot_kv migration made this rare; sensor keeps it honest) |
 | `queue_depth` — agent durable-queue depth via upload stats | the 2026-07-13 mid-raid queue backup | (per-raid) |
 
@@ -132,9 +132,9 @@ the deployment. This institutionalizes the loot-fold lesson ("did the deploy
 work is a different question from do the tests pass") as a standing mechanism
 instead of a memory.
 
-## 3b. Placement addendum — the Unraid replica (Hitya, 2026-08-16)
+## 3b. Placement addendum — the Unraid replica (guild lead, 2026-08-16)
 
-Hitya: *"I like the idea of one running on the backup local DB alongside it in
+Guild lead: *"I like the idea of one running on the backup local DB alongside it in
 my unraids docker."* That slots in cleanly as a SECOND sentinel tier, not a
 replacement for the bot's:
 
@@ -163,6 +163,6 @@ replacement for the bot's:
   test, and a brand-new periodic subsystem deployed hours before it would
   contaminate the one experiment we most want clean. Land Monday.
 
-**Needs Hitya's word:** the officer-thread surface (which thread; severity
+**Needs the guild lead's word:** the officer-thread surface (which thread; severity
 threshold for posting) and the go to build. The battery seeds are listed
 above; edits welcome.

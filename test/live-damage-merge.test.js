@@ -81,7 +81,7 @@ describe('the shipped handler still merges the way this models', () => {
 
   it('no longer lets a client win by identity', () => {
     // 3.1.43 gave the player's own client the last word. EQLogParser ground
-    // truth killed that: Hitya's own client said 118,192 against a true 59,504.
+    // truth killed that: the guild lead's own client said 118,192 against a true 59,504.
     expect(handler, 'self-preference was disproven by ground truth').not.toMatch(/selfRep/);
   });
 
@@ -96,7 +96,7 @@ describe('the shipped handler still merges the way this models', () => {
 
   it('does NOT filter excluded characters on read', () => {
     // exclude_from_stats is enforced upload-side; filtering here would hide a
-    // player from observers who legitimately saw them (Hitya, 2026-08-13).
+    // player from observers who legitimately saw them (the guild lead, 2026-08-13).
     expect(handler).not.toMatch(/exclude_from_stats/);
   });
 
@@ -166,7 +166,7 @@ describe('merge arithmetic', () => {
   });
 
   it('rejects a lone outlier no other client corroborates', () => {
-    // Real readings for Atlasius on Va Xi Aten Ha Ra. EQLogParser truth: 99,979.
+    // Real readings for a member on Va Xi Aten Ha Ra. EQLogParser truth: 99,979.
     const vals = [250060,224976,179076,145985,115538,101015,100407,100230,99789,99537,97893,78615,38555,15995];
     expect(corroborated(vals)).toBe(101015);          // within 1% of truth
     expect(Math.max(...vals)).toBe(250060);           // what max would have shipped

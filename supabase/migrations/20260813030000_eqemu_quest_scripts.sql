@@ -1,4 +1,4 @@
--- Mob scripts, mirrored per zone (2026-08-13, Hitya: "can our DB copy also
+-- Mob scripts, mirrored per zone (2026-08-13, The guild lead: "can our DB copy also
 -- include the zone lists and in those zone lists the scripts for the mobs").
 --
 -- The zone list itself was already here (eqemu_zone, 192 rows). The SCRIPTS

@@ -3,7 +3,7 @@
 //
 // "Foreign raid": a guildie pugging ANOTHER guild's raid uploads the fight via
 // their agent, so it lands on Wolf Pack's parses even though almost no one in
-// it is a Pack member (Hitya 2026-06-29: "Ikibob attended a morning Kael
+// it is a Pack member (the guild lead, 2026-06-29: "a member attended a morning Kael
 // raid with a different guild and it all showed up on Wolfpack quest").
 //
 // Membership signal: presence in the `characters` roster (the OpenDKP mirror +
@@ -70,13 +70,13 @@ export function isReviewForeign(share: GuildShare): boolean {
 }
 
 // ── Off-hours raid-target kills ─────────────────────────────────────────────
-// Hitya 2026-08-09, after two morning pug raids landed on our board with
+// The guild lead 2026-08-09, after two morning pug raids landed on our board with
 // inflated rosters: *"That's outside of our raid window on a current era mob.
 // you can assume that those are not us."*
 //
 // Deliberately a REVIEW queue, not an auto-hide. Measured before building: 51
 // current-era fights since April start outside the window, and most are
-// genuinely ours — off-night Praesertum/Akheva runs at 70–100% roster. Hitya:
+// genuinely ours — off-night Praesertum/Akheva runs at 70–100% roster. The guild lead:
 // *"Some smaller fights can be done with less people on a different timeframe
 // (The Va`Dyn in Akheva Ruins comes to mind). Most of the fights that we do
 // during our raids should be off limits and shouldn't count us."*

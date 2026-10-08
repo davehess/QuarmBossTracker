@@ -2,7 +2,7 @@
 // (SOURCE-SLICE fidelity tier: the decision functions are sliced out of
 // commands/raidnight.js, so edits to the real code are exercised here).
 //
-// The bug this pins (Hitya 2026-08-20, "why was this posted? it hasn't
+// The bug this pins (the guild lead, 2026-08-20, "why was this posted? it hasn't
 // happened yet!"): /announce opened the parse session AT ANNOUNCE TIME
 // whenever none was active. Announcing tomorrow's event just after midnight —
 // right after the midnight chain cleared Wednesday's session — turned the

@@ -9,7 +9,9 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
+import { loadRoster } from '@/lib/roster';
 import WhoTable, { type WhoRow } from './WhoTable';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,15 +49,15 @@ async function loadRows(): Promise<{ rows: WhoRow[]; totalInDb: number | null }>
   // honor it; the Supabase REST gateway silently caps any single response at
   // its `max-rows` (1000 by default), so a "Druids only" filter was scoping
   // to the top-1000 by last_seen and silently missing the rest of the
-  // catalog (~7700 rows on the wire today). Hitya caught it 2026-06-21
+  // catalog (~7700 rows on the wire today). The guild lead caught it 2026-06-21
   // ("76 shown · 1,000 loaded · 8,738 in catalog" → are these 76 in the
   // 1k or the 8.7k? — they were in the 1k). Loop with .range() now until
   // we drain.
   // One round trip via who_directory_json() (jsonb_agg — a single value, so
   // the PostgREST max-rows cap doesn't apply; migration 20260709060000). The
   // old ~9 sequential .range() pages made page load pay ~9 RTTs. Ordering by
-  // the unique character_key is preserved inside the RPC (see the Nosfearatu
-  // duplicate-row bug, 2026-06-22); the range-loop remains only as a fallback
+  // the unique character_key is preserved inside the RPC (see the duplicate-row
+  // pagination bug, 2026-06-22); the range-loop remains only as a fallback
   // if the RPC is ever missing.
   let allRows: DirRow[] = [];
   const { data: agg, error: rpcError } = await admin.rpc('who_directory_json');
@@ -94,7 +96,7 @@ async function loadRows(): Promise<{ rows: WhoRow[]; totalInDb: number | null }>
   const { data: ov } = await admin
     .from('who_overrides')
     .select('character, class, is_zek, set_by_name, updated_at')
-    .eq('guild_id', 'wolfpack');
+    .eq('guild_id', GUILD_TAG);
   const overrides = new Map<string, OverrideRow>();
   for (const o of (ov ?? []) as OverrideRow[]) {
     overrides.set(o.character.toLowerCase(), o);
@@ -104,14 +106,11 @@ async function loadRows(): Promise<{ rows: WhoRow[]; totalInDb: number | null }>
   // in the (very common) case where a Wolf Pack member's /who was always /anon
   // so we never observed a class. Used as a fallback below the observed class.
   // ALSO pull opendkp_id so the table can deep-link Wolf Pack member names to
-  // their OpenDKP character page for easy edits (Hitya 2026-06-21).
-  const { data: chars } = await admin
-    .from('characters')
-    .select('name, class, opendkp_id')
-    .eq('guild_id', 'wolfpack');
+  // their OpenDKP character page for easy edits (the guild lead, 2026-06-21).
+  const chars = await loadRoster();   // the shared, paged roster read (web/lib/roster.ts)
   const rosterClassByName = new Map<string, string>();
   const opendkpIdByName  = new Map<string, number>();
-  for (const c of (chars ?? []) as { name: string; class: string | null; opendkp_id: number | null }[]) {
+  for (const c of chars) {
     if (!c.name) continue;
     const k = c.name.toLowerCase();
     if (c.class) rosterClassByName.set(k, c.class);
@@ -181,7 +180,7 @@ export default async function WhoPage() {
     : `${rows.length.toLocaleString()} total`;
 
   // The catalog breakdown now lives INSIDE WhoTable so it tracks the active
-  // filters (Hitya 2026-06-22 — "the breakdown should take into account the
+  // filters (the guild lead, 2026-06-22 — "the breakdown should take into account the
   // filtering we're doing below"). Page just hands WhoTable the full row set.
   return (
     <div className="space-y-4">

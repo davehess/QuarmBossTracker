@@ -2,7 +2,7 @@
 /**
  * Derive character lockouts from a confirmed raid-boss kill.
  *
- * Hitya 2026-08-22, pointing at a Ventani parse Taeya had uploaded from a
+ * The guild lead 2026-08-22, pointing at a Ventani parse a member had uploaded from a
  * non-guild raid: "taeya reported this Ventani kill so they should have a
  * lockout."
  *
@@ -104,7 +104,7 @@ const MIN_PLAYERS_TO_JUDGE = 3;
  *
  *   true  — bound to one of our raid nights, OR most of the named players are
  *           on our roster. The second clause exists because a raid night is
- *           not the only thing we run: Hitya 2026-08-22, on the Friday classic
+ *           not the only thing we run: the guild lead 2026-08-22, on the Friday classic
  *           kills this first shipped as foreign — "Friday was a guild rolling
  *           event, so internal, but still a lockout." An internal event off
  *           the calendar is ours; only the roster share can tell us that.
@@ -136,6 +136,10 @@ function classifyOurs({ inRaidNight, inRaidWindow, memberFrac, playerCount } = {
  * @param {boolean}  [a.inRaidWindow] kill time falls in a scheduled raid window
  * @param {Set|Array} [a.roster]     lowercased guild character names, for the
  *                                   guild-event test in classifyOurs
+ * @param {string}   [a.killVerdict] utils/killContext.js's verdict. 'pvp' or 'live'
+ *                                   means the fight was in someone else's instance:
+ *                                   the lockout is still real (the character was
+ *                                   there), but it is not OUR kill — ours=false.
  * @param {string}   [a.guildId]
  * @param {string}   [a.encounterId]
  * @param {string}   [a.observedBy]  the uploading character
@@ -144,10 +148,13 @@ function classifyOurs({ inRaidNight, inRaidWindow, memberFrac, playerCount } = {
  */
 function buildKillLockouts({
   boss, killedAtMs, participants,
-  inRaidNight, inRaidWindow, roster,
+  inRaidNight, inRaidWindow, roster, killVerdict,
   guildId, encounterId, observedBy, observedAtMs,
 } = {}) {
   if (!boss || !boss.id || !boss.name) return [];
+  // A respawn-only named (bosses.json `lockout: false` — the PoP named Quarm moved to 3 h / 24 h
+  // respawns on 2026-10-05, notes naming no lockout) carries a board timer, not an engage lock.
+  if (boss.lockout === false) return [];
   const hours = Number(boss.timerHours);
   if (!Number.isFinite(hours) || hours <= 0 || hours > MAX_TIMER_HOURS) return [];
   if (!Number.isFinite(killedAtMs) || killedAtMs <= 0) return [];
@@ -159,7 +166,7 @@ function buildKillLockouts({
   // this table, so drop it here rather than making each reader filter.
   if (expiresAt <= (Number.isFinite(observedAtMs) ? observedAtMs : Date.now())) return [];
 
-  const ours = classifyOurs({
+  const ours = (killVerdict === 'pvp' || killVerdict === 'live') ? false : classifyOurs({
     inRaidNight, inRaidWindow,
     memberFrac: memberFraction(participants, roster),
     playerCount: participants.length,

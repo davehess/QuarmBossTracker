@@ -39,7 +39,7 @@ export const ICON_LAST = 1723;
  * 2 of 10 sampled icons matched, which is what chance looks like. Wrong art is
  * worse than no art — it reads as bad DATA rather than a missing picture — so
  * every surface falls back to name-only until the atlas is regenerated
- * (Hitya: "before raid", 2026-08-13).
+ * (The guild lead: "before raid", 2026-08-13).
  *
  * The bug is NOT in this file. Verified about the atlas itself: 1600×1240 =
  * exactly 40×31 cells, 1191 distinct non-blank cells, ZERO duplicates, and the

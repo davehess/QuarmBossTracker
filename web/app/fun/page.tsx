@@ -1,6 +1,6 @@
 // /fun — guild-flavor counters that don't matter for raid optimization but
-// are fun to track. First tenants: Peopleslayer LD counter (from the agent's
-// fun_events stream) and Tunare mentions from Naggato's family (from the
+// are fun to track. First tenants: a member LD counter (from the agent's
+// fun_events stream) and Tunare mentions from a member's family (from the
 // chat_messages table). Future tenants will join as the agent ships their
 // detectors: CotH Pearl (Magician), DI Emerald, Aegolism/Rune Peridot, etc.
 
@@ -12,14 +12,32 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { selectAll } from '@/lib/selectAll';
 import { userTz, fmtAbs } from '@/lib/timezone';
 import { loadNameMap } from '@/lib/roster';
+import { viewerMayMarkQuit } from '@/lib/funLdAuth';
+import { countEvents, ldView, parseLds, raidStreaks, type LdRow } from '@/lib/funLd';
+import { loadRaidDatesAndAttendance } from '@/lib/funLdRaids';
+import QuitButton from './QuitButton';
+import { GUILD_TAG } from '@/lib/guild';
+
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'Fun stats',
+  description:
+    'Guild flavour counters that change nothing and are worth knowing anyway.',
+};
 
 export const dynamic = 'force-dynamic';
 
 // value is `number | string` so cards like "Longest Dire Charm" can show
 // a pre-formatted "4h 23m" string while normal counter cards stay numeric.
 // The renderer calls value.toLocaleString() which works for both.
-type Counter = { label: string; emoji: React.ReactNode; value: number | string; sub?: string | React.ReactNode; href?: string };
+// alwaysLive: a card whose 0 is the joke ("0 raids since he crashed") stays up top instead of dimming.
+type Counter = { label: string; emoji: React.ReactNode; value: number | string; sub?: string | React.ReactNode; href?: string; alwaysLive?: boolean };
 type Sb = ReturnType<typeof supabaseAdmin>;
+// What a card may need to know about the viewer. A promise, so the sections that
+// ignore it cost nothing and the one that needs it does not delay the others.
+type Ctx = { canMarkQuit: Promise<boolean> };
 
 // Each card is an independent SECTION closure; loadCounters runs them ALL
 // CONCURRENTLY and concatenates results in declaration order. This page used
@@ -30,7 +48,7 @@ type Sb = ReturnType<typeof supabaseAdmin>;
 // jsonb rows per load AND silently under-counted past its .limit). Those two
 // now use SQL-side RPCs (fun_tunare_stats / fun_dirge_damage, see the
 // 20260707050000 migration); everything else just runs in parallel.
-const SECTIONS: Array<(sb: Sb, counters: Counter[]) => Promise<void>> = [];
+const SECTIONS: Array<(sb: Sb, counters: Counter[], ctx: Ctx) => Promise<void>> = [];
 
 // Dirge totals — SQL-side aggregate over encounter_combat_rollup's by_skill
 // jsonb (fun_dirge_damage RPC, ~1.2s), cached 10 min: the number only moves
@@ -67,8 +85,8 @@ async function loadKyinen(sb: Sb) {
   return { executions: kyinenExecutions, latest: kyinenLatest, zone: kyinenZone };
 }
 
-SECTIONS.push(async (sb, counters) => {
-  // Peopleslayer LD card — count + damage he logged in fights he was ACTUALLY
+SECTIONS.push(async (sb, counters, ctx) => {
+  // A member LD card — count + damage he logged in fights he was ACTUALLY
   // disconnected during. The joke: he goes linkdead mid-fight and his character
   // keeps swinging. The earlier version summed his total_damage across EVERY
   // encounter that started after his first-ever LD — i.e. essentially his whole
@@ -76,95 +94,97 @@ SECTIONS.push(async (sb, counters) => {
   // we only count an encounter if one of his LD timestamps falls inside that
   // encounter's window [started_at, started_at + duration_sec] — "damage dealt
   // while he was disconnected." Still only his own encounter_players rows.
-  // ── 🔌 Raids since Peopleslayer crashed ──────────────────────────────────
-  // Peopleslayer got a new machine; we flipped the card from "lifetime LD
+  // ── 🔌 Raids since a member crashed ──────────────────────────────────
+  // A member got a new machine; we flipped the card from "lifetime LD
   // count" (the old one — strikethrough'd in the subtitle as a callback) to
   // "raids since the most recent LD", per his own suggestion. Shows the date
   // of the last LD in bold + the zone it happened in (agent v3.1.72+ enriches
   // the event with the zone from Zeal state). Previous-best streak strikes
-  // through when broken — same pattern as the Moash card. (Hitya 2026-06-26.)
+  // through when broken — same pattern as the enrage-death card. (the guild lead, 2026-06-26.)
+  //
+  // Two later rules (the guild lead, 2026-10-04), both in lib/funLd.ts:
+  //  - an LD marked "It was a /quit" is not a crash: it is left out of the last
+  //    LD, the streaks and the lifetime count, and the card says how many were
+  //    forgiven;
+  //  - only an LD DURING A REAL RAID counts ("Saturday wasn't a raid, so it
+  //    doesn't count"), and a real raid is one the officers logged in OpenDKP,
+  //    not a raid_nights row (the bot opens those for any Sun/Wed/Thu evening
+  //    encounter). He attended it when his name is in one of its ticks.
   try {
-    const { data: ldRows, count: ldTotal } = await sb
-      .from('fun_events')
-      .select('event_ts, target', { count: 'exact' })
-      .eq('event_type', 'peopleslayer_ld')
-      .order('event_ts', { ascending: true });
-    const lds = ((ldRows ?? []) as { event_ts: string; target: string | null }[])
-      .map(r => ({ ts: new Date(r.event_ts).getTime(), zone: r.target }))
-      .filter(r => Number.isFinite(r.ts));
+    const [{ data: ldRows }, { raidDates, attended }] = await Promise.all([
+      sb
+        .from('fun_events')
+        .select('id, event_ts, target, detail')
+        .eq('event_type', 'peopleslayer_ld')
+        .order('event_ts', { ascending: true }),
+      loadRaidDatesAndAttendance(sb, 'Peopleslayer'),
+    ]);
+    const { counted: lds, forgivenEvents, mark, undo } = ldView(parseLds((ldRows ?? []) as LdRow[]), raidDates);
+    const canMark = (mark || undo) ? await ctx.canMarkQuit : false;
 
-    // "Raids since" = distinct UTC dates where Peopleslayer parsed an
-    // encounter, from after his most recent LD until today. Each distinct
-    // calendar date counts as one raid he survived without going LD.
-    const fmtDay = (t: number) => new Date(t).toISOString().slice(0, 10);
-    let raidsSince = 0;
-    let prevRecordRaids = 0;
-    if (lds.length > 0) {
-      const lastLdMs = lds[lds.length - 1].ts;
-      const { data: ep } = await sb
-        .from('encounter_players')
-        .select('encounters!inner(started_at)')
-        .ilike('character_name', 'Peopleslayer')
-        .gte('encounters.started_at', new Date(lastLdMs + 60_000).toISOString())
-        .limit(5000);
-      type EpRow = { encounters: { started_at: string } | { started_at: string }[] | null };
-      const sinceDays = new Set<string>();
-      for (const r of (ep ?? []) as unknown as EpRow[]) {
-        const enc = Array.isArray(r.encounters) ? r.encounters[0] : r.encounters;
-        if (!enc?.started_at) continue;
-        sinceDays.add(enc.started_at.slice(0, 10));
-      }
-      raidsSince = sinceDays.size;
+    // "Raids since" = raids he was ticked on after his most recent counted LD.
+    // Previous-best streak: the most raids between two consecutive counted LDs,
+    // the record to beat.
+    const { since: raidsSince, best: prevRecordRaids } = raidStreaks(lds.map(l => l.ts), attended);
 
-      // Previous-best streak — for each consecutive pair of LDs, count distinct
-      // raid dates Peopleslayer parsed between them. The biggest one is the
-      // record to beat. Cheap-and-correct: one extra query covering all gaps.
-      if (lds.length >= 2) {
-        const firstMs = lds[0].ts;
-        const { data: epAll } = await sb
-          .from('encounter_players')
-          .select('encounters!inner(started_at)')
-          .ilike('character_name', 'Peopleslayer')
-          .gte('encounters.started_at', new Date(firstMs - 60_000).toISOString())
-          .lte('encounters.started_at', new Date(lastLdMs + 60_000).toISOString())
-          .limit(8000);
-        const allStarts: number[] = [];
-        for (const r of (epAll ?? []) as unknown as EpRow[]) {
-          const enc = Array.isArray(r.encounters) ? r.encounters[0] : r.encounters;
-          if (!enc?.started_at) continue;
-          const t = new Date(enc.started_at).getTime();
-          if (Number.isFinite(t)) allStarts.push(t);
-        }
-        for (let i = 0; i < lds.length - 1; i++) {
-          const lo = lds[i].ts, hi = lds[i + 1].ts;
-          const days = new Set<string>();
-          for (const t of allStarts) if (t > lo && t < hi) days.add(fmtDay(t));
-          if (days.size > prevRecordRaids) prevRecordRaids = days.size;
-        }
-      }
-    }
+    // The "it was a /quit" links sit beside the Last LD line, for the
+    // character's player and officers only (the server action checks again).
+    const forgivenLine = forgivenEvents > 0 && (
+      <>
+        <br />
+        <span className="text-dim/70">{forgivenEvents} /quit{forgivenEvents === 1 ? '' : 's'} forgiven</span>
+      </>
+    );
+    const undoLink = canMark && undo && (
+      <>
+        {' · '}
+        <QuitButton ts={new Date(undo.ts).toISOString()} undo />
+      </>
+    );
+    const raidsOnlyLine = (
+      <>
+        <br />
+        <span className="text-dim/70">LDs during raids only</span>
+      </>
+    );
 
     if (lds.length === 0) {
       counters.push({
         label: 'Raids since Peopleslayer crashed',
         emoji: '🔌',
         value: '—',
-        sub: 'no LDs on record yet — first one resets the counter and lights the card up.',
+        sub: (
+          <>
+            no LDs during a raid on record yet — first one resets the counter and lights the card up.
+            {undoLink}
+            {raidsOnlyLine}
+            {forgivenLine}
+          </>
+        ),
       });
     } else {
       const lastLd  = lds[lds.length - 1];
       const lastDt  = new Date(lastLd.ts);
-      const lastLbl = lastDt.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+      // Raid time (Eastern), not the server's UTC: a Friday 8:18 pm raid LD must not read "Sat".
+      const lastLbl = lastDt.toLocaleDateString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
       const zoneLbl = lastLd.zone || '—';
       const showPrev = prevRecordRaids > raidsSince;
       counters.push({
         label: 'Raids since Peopleslayer crashed',
         emoji: '🔌',
         value: raidsSince,
+        alwaysLive: true,
         sub: (
           <>
             Last LD: <strong className="text-text">{lastLbl}</strong> in{' '}
             <strong className="text-text">{zoneLbl}</strong>
+            {canMark && mark && (
+              <>
+                {' · '}
+                <QuitButton ts={new Date(mark.ts).toISOString()} />
+              </>
+            )}
+            {undoLink}
             {showPrev && (
               <>
                 {' · '}
@@ -173,8 +193,10 @@ SECTIONS.push(async (sb, counters) => {
             )}
             {' · '}
             <span className="line-through text-dim/60" title="The card used to count his lifetime LDs — flipped now per his suggestion to count raids without an LD.">
-              {(ldTotal ?? 0).toLocaleString()} lifetime LDs
+              {countEvents(lds).toLocaleString()} lifetime LDs
             </span>
+            {raidsOnlyLine}
+            {forgivenLine}
           </>
         ),
       });
@@ -191,9 +213,9 @@ SECTIONS.push(async (sb, counters) => {
 });
 
 SECTIONS.push(async (sb, counters) => {
-  // Tunare mentions from Naggato + alts.
+  // Tunare mentions from a member + alts.
   //
-  // THE BUG (Hitya 2026-08-04, "what happened to our Tunare invocations?"):
+  // THE BUG (the guild lead, 2026-08-04, "what happened to our Tunare invocations?"):
   // this card read 0 while the data was right there — 83 rows, latest
   // 2026-07-31. The reason it read 0 rather than SAYING anything is the shape
   // below: supabase-js does not throw on a failed call, it returns
@@ -215,7 +237,7 @@ SECTIONS.push(async (sb, counters) => {
     const { data: family, error: famErr } = await sb
       .from('characters')
       .select('name')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .or('main_name.eq.Naggato,name.eq.Naggato');
     if (famErr) throw famErr;
     const familyNames = (family ?? []).map((r: { name: string }) => r.name);
@@ -269,9 +291,9 @@ SECTIONS.push(async (sb, counters) => {
 });
 
 SECTIONS.push(async (sb, counters) => {
-  // ── Malthur's Bounty — stacks of food + water distributed. Recipient-side
+  // ── A member's Bounty — stacks of food + water distributed. Recipient-side
   // detector means each member's agent reports what THEY received; summing
-  // approximates total stacks Malthur put out. Plain captured count (the
+  // approximates total stacks a member put out. Plain captured count (the
   // 420 founders' baseline was removed per owner request).
   const MALTHUR_BASELINE = 0;
   try {
@@ -346,8 +368,8 @@ SECTIONS.push(async (sb, counters) => {
   // ── Lord of Ire vanquished — counts every Plane of Hate instance boss kill
   // 🐉 Dragon Punch — monk "Stunning Kick / Force of Disruption" proc card.
   // The proc line "<target> is stricken by the force of a dragon." names only
-  // the TARGET, never the kicker, and is BYSTANDER-VISIBLE — every boxed /
-  // grouped agent sees the same punch and the agent credited its own log owner,
+  // the TARGET, never the kicker, and is BYSTANDER-VISIBLE — every agent in
+  // the group sees the same punch and credited its own log owner,
   // so per-player attribution was both wrong AND over-counted (the same physical
   // punch counted once per watching character). So we anonymize it: count
   // DISTINCT (target, event_ts) — one physical reposition regardless of how many
@@ -359,7 +381,7 @@ SECTIONS.push(async (sb, counters) => {
       (from, to) => sb.from('fun_events')
         .select('target, event_ts')
         .eq('event_type', 'dragon_punch')
-        .order('event_ts', { ascending: true })
+        .order('event_ts', { ascending: true }).order('id', { ascending: true })
         .range(from, to));
     const seen = new Set<string>();
     for (const r of dpRows) {
@@ -392,14 +414,14 @@ SECTIONS.push(async (sb, counters) => {
   // number grows as more bards upload. Cast count is parked until/if a
   // bystander-side "begins singing Dirge of …" detector ships.
   try {
-    const [totals, names] = await Promise.all([getDirgeTotals(), loadNameMap(sb)]);
+    const [totals, names] = await Promise.all([getDirgeTotals(), loadNameMap()]);
     let dirgeDamage = 0;
     let dirgeHits = 0;
     const byBard = new Map<string, number>();
     for (const r of totals) {
       // Drop stray-log ghosts (an old/foreign eqlog_<Name> a member's agent
-      // tailed — e.g. "Ashaiya" — which isn't a roster character), then fold
-      // real alts into their main (Chadivarius → Moash) so the card names and
+      // tailed, which isn't a roster character), then fold
+      // real alts into their main so the card names and
       // total only ever reflect actual Wolf Pack bards. Ghost damage is
       // dropped from the TOTAL too — we don't credit mystery names.
       if (!names.isKnown(r.character_name)) continue;
@@ -448,10 +470,10 @@ SECTIONS.push(async (sb, counters) => {
       sb.from('fun_events')
         .select('caster', { count: 'exact' })
         .eq('event_type', 'lord_of_ire_killed'),
-      loadNameMap(sb),
+      loadNameMap(),
     ]);
-    // Fold alts into their main (Adiwen → Wabumkin, Timberr → Timberowl) so the
-    // card's top-3 matches /fun/lord-of-ire's "By main" list — the outside was
+    // Fold alts into their main so the card's top-3 matches
+    // /fun/lord-of-ire's "By main" list — the outside was
     // showing raw per-character names while the page folded to mains.
     const tally = new Map<string, number>();
     for (const r of (loiRows ?? []) as { caster: string | null }[]) {
@@ -485,7 +507,7 @@ SECTIONS.push(async (sb, counters) => {
 SECTIONS.push(async (sb, counters) => {
   // ── 🤬 Pottymouth award — chat-filter asterisk redactions ────────────────
   // Fires when the bot sees a chat line where EQ's filter scrubbed a word with
-  // asterisks ('f***ing nice'). Sub-text: top 3 offenders. (Hitya 2026-06-26.)
+  // asterisks ('f***ing nice'). Sub-text: top 3 offenders. (the guild lead, 2026-06-26.)
   try {
     const { data: pmRows, count: pmTotal } = await sb
       .from('fun_events')
@@ -515,7 +537,7 @@ SECTIONS.push(async (sb, counters) => {
   // sees a different version per agent. The bot's fuzzy chat dedup catches
   // these and emits a drunkard fun_event on the SECOND distinct variant of
   // one underlying line — meaning at least two agents saw differently-slurred
-  // copies, the signal Uilnayar called out ("really observed when seen by
+  // copies, the signal a member called out ("really observed when seen by
   // multiple people and when a player is the one that says the word").
   try {
     // The exact count was already right; the per-person tally below was not —
@@ -529,7 +551,7 @@ SECTIONS.push(async (sb, counters) => {
       (from, to) => sb.from('fun_events')
         .select('caster')
         .eq('event_type', 'drunkard')
-        .order('event_ts', { ascending: true })
+        .order('event_ts', { ascending: true }).order('id', { ascending: true })
         .range(from, to));
     const tally = new Map<string, number>();
     for (const r of drRows) {
@@ -550,11 +572,11 @@ SECTIONS.push(async (sb, counters) => {
 });
 
 SECTIONS.push(async (sb, counters) => {
-  // ── 💀 Days since Moash died to enrage ───────────────────────────────────
+  // ── 💀 Days since a member died to enrage ───────────────────────────────────
   // Loud-and-tall card with the date bolded + the previous-best streak
   // strikethrough'd when broken. Source: fun_events emitted by the
-  // /enragedeath officer command (Hitya 2026-06-26 — Shavimo's manual
-  // "It has been ~~167~~ 0 days since Moash died to enrage" gag goes live).
+  // /enragedeath officer command (the guild lead, 2026-06-26 — a member's manual
+  // "It has been ~~167~~ 0 days since Cindral died to enrage" gag goes live).
   try {
     const { data: enrageRows } = await sb
       .from('fun_events')
@@ -625,19 +647,23 @@ SECTIONS.push(async (sb, counters) => {
   // isn't stuck at zero before the necro installs.
   const TWITCH_MID = 100;  // mid-tier (Covetous) mana for the point estimate
   try {
-    const [{ data: twRows }, { count: recvCount }] = await Promise.all([
-      sb.from('fun_events').select('caster, reagent_qty').eq('event_type', 'mana_twitch'),
+    // Summed in SQL, one row per caster (fun_caster_tally): a plain select of the events returns
+    // at most 1,000 rows, and mana_twitch is 686 and growing ~8 a day. A failed read throws (selectAll)
+    // and leaves the card out via the catch below; reading it as "no twitches" would be a wrong zero.
+    const [twData, { count: recvCount }] = await Promise.all([
+      selectAll<{ caster: string; events: number; qty: number }>((from, to) =>
+        sb.rpc('fun_caster_tally', { p_event_type: 'mana_twitch' }).range(from, to)),
       sb.from('fun_events').select('*', { count: 'exact', head: true }).eq('event_type', 'mana_twitch_received'),
     ]);
-    const rows = (twRows ?? []) as { caster: string | null; reagent_qty: number | null }[];
     const received = recvCount ?? 0;
     let totalMana = 0;
+    let twitches = 0;
     const byCaster = new Map<string, number>();
-    for (const r of rows) {
-      const mana = Number(r.reagent_qty) || 0;
+    for (const r of twData) {
+      const mana = Number(r.qty) || 0;
       totalMana += mana;
-      const k = r.caster || 'unknown';
-      byCaster.set(k, (byCaster.get(k) ?? 0) + mana);
+      twitches += Number(r.events) || 0;
+      byCaster.set(r.caster, (byCaster.get(r.caster) ?? 0) + mana);
     }
     const top = [...byCaster.entries()].sort((a, b) => b[1] - a[1])[0];
     if (totalMana > 0) {
@@ -645,7 +671,7 @@ SECTIONS.push(async (sb, counters) => {
         label: 'Mana donated to casters',
         emoji: '⚡',
         value: totalMana,
-        sub: `across ${rows.length.toLocaleString()} twitches${top ? ` · top battery: ${top[0]} (${top[1].toLocaleString()} mana)` : ''}${received > 0 ? ` · +${received.toLocaleString()} more seen from the receiving end` : ''}`,
+        sub: `across ${twitches.toLocaleString()} twitches${top ? ` · top battery: ${top[0]} (${top[1].toLocaleString()} mana)` : ''}${received > 0 ? ` · +${received.toLocaleString()} more seen from the receiving end` : ''}`,
       });
     } else if (received > 0) {
       counters.push({
@@ -673,17 +699,21 @@ SECTIONS.push(async (sb, counters) => {
   // when he's not on the agent, but it's inflated by group size, so we never
   // present it AS the cast count — just as coverage / a "feeding the group" note.
   try {
-    const [{ data: mwRows, count: mwTotal }, { count: recourseCount }] = await Promise.all([
-      sb.from('fun_events').select('caster', { count: 'exact' }).eq('event_type', 'mind_wrack_cast'),
+    // The per-caster tally is counted in SQL (fun_caster_tally), not in JS over a plain select, which
+    // stops at 1,000 rows (mind_wrack_cast is 615 and growing). A failed read throws and leaves the card out.
+    const [mwData, { count: recourseCount }] = await Promise.all([
+      selectAll<{ caster: string; events: number }>((from, to) =>
+        sb.rpc('fun_caster_tally', { p_event_type: 'mind_wrack_cast' }).range(from, to)),
       sb.from('fun_events').select('*', { count: 'exact', head: true }).eq('event_type', 'mind_wrack_recourse'),
     ]);
     const tally = new Map<string, number>();
-    for (const r of (mwRows ?? []) as { caster: string | null }[]) {
-      const k = r.caster || 'unknown';
-      tally.set(k, (tally.get(k) ?? 0) + 1);
+    let total = 0;
+    for (const r of mwData) {
+      const n = Number(r.events) || 0;
+      tally.set(r.caster, n);
+      total += n;
     }
     const top = [...tally.entries()].sort((a, b) => b[1] - a[1])[0];
-    const total = mwTotal ?? 0;
     const recourse = recourseCount ?? 0;
     if (total > 0) {
       counters.push({
@@ -730,7 +760,63 @@ SECTIONS.push(async (sb, counters) => {
   } catch (err) { void err; }
 });
 
-async function loadCounters() {
+// ── ☠️ Deathrolls (the guild lead, 2026-09-23) ──────────────────────────────
+// "First one to roll a zero loses - we should track these for fun." The bot
+// finds each game in roll_sets and writes one `deathroll` fun_event (caster =
+// loser, detail = start / rolls / players / winners — index.js
+// _checkDeathrollsNow). Here: games played, the latest result, everyone's
+// wins–losses, and the two records. A game involving a character who opted out
+// of stats is left out whole — excluded characters never contribute or display.
+type DeathrollRow = {
+  event_ts: string;
+  raw_text: string | null;
+  detail: { start?: number; rolls?: number; players?: string[]; winners?: string[]; loser?: string } | null;
+};
+SECTIONS.push(async (sb, counters) => {
+  try {
+    const [{ data }, { data: optedOut }] = await Promise.all([
+      sb.from('fun_events')
+        .select('event_ts, raw_text, detail')
+        .eq('event_type', 'deathroll')
+        .order('event_ts', { ascending: false })
+        .limit(1000),
+      sb.from('characters').select('name').eq('guild_id', GUILD_TAG).eq('exclude_from_stats', true),
+    ]);
+    const excluded = new Set((optedOut ?? []).map((r: { name: string | null }) => (r.name || '').toLowerCase()));
+    const games = ((data ?? []) as DeathrollRow[]).filter(g =>
+      g.detail && (g.detail.players ?? []).every(p => !excluded.has(p.toLowerCase())));
+    const record = new Map<string, { name: string; w: number; l: number }>();
+    const bump = (name: string, k: 'w' | 'l') => {
+      const e = record.get(name.toLowerCase()) ?? { name, w: 0, l: 0 };
+      e[k]++;
+      record.set(name.toLowerCase(), e);
+    };
+    for (const g of games) {
+      if (g.detail?.loser) bump(g.detail.loser, 'l');
+      for (const w of g.detail?.winners ?? []) bump(w, 'w');
+    }
+    const standings = [...record.values()].sort((a, b) => b.w - a.w || a.l - b.l || a.name.localeCompare(b.name));
+    const biggest = Math.max(0, ...games.map(g => Number(g.detail?.start) || 0));
+    const longest = Math.max(0, ...games.map(g => Number(g.detail?.rolls) || 0));
+    counters.push({
+      label: 'Deathrolls — first to roll 0 loses',
+      emoji: '☠️',
+      value: games.length,
+      sub: games.length ? (
+        <>
+          <span className="text-text">{games[0].raw_text}</span>
+          <br />
+          {standings.slice(0, 5).map(s => `${s.name} ${s.w}–${s.l}`).join(' · ')}
+          {standings.length > 5 && <span className="text-dim/70">{` · +${standings.length - 5} more`}</span>}
+          <br />
+          <span className="text-dim/70">Biggest start {biggest.toLocaleString('en-US')} · longest game {longest} rolls</span>
+        </>
+      ) : 'nobody has lost one yet — /random N, the next player rolls /random what you got, first to hit 0 loses',
+    });
+  } catch (err) { void err; }
+});
+
+async function loadCounters(ctx: Ctx) {
   const sb = supabaseAdmin();
   const kyinenP = loadKyinen(sb);
   // All sections in flight at once — page latency ≈ the slowest single
@@ -739,7 +825,7 @@ async function loadCounters() {
   // can never blank the page.
   const results = await Promise.all(SECTIONS.map(async fn => {
     const out: Counter[] = [];
-    try { await fn(sb, out); } catch { /* card omitted */ }
+    try { await fn(sb, out, ctx); } catch { /* card omitted */ }
     return out;
   }));
   return { counters: results.flat(), kyinen: await kyinenP };
@@ -750,15 +836,15 @@ export default async function FunPage() {
   if (!user) redirect('/auth/signin?next=/fun');
 
   const tz = await userTz();
-  const { counters, kyinen } = await loadCounters();
+  const { counters, kyinen } = await loadCounters({ canMarkQuit: viewerMayMarkQuit(user) });
 
   // Bucket cards: "live" ones carry real data; "dormant" ones are still at
   // zero / "—" (detector hasn't fired or nobody's triggered them yet) and
   // get demoted to a dimmer section at the bottom so the live stats lead.
-  // Hitya 2026-06-22 ("any empty fun ones should be moved to the bottom
+  // The guild lead 2026-06-22 ("any empty fun ones should be moved to the bottom
   // section").
-  const isLive = (c: { value: number | string }) =>
-    !(c.value === 0 || c.value === '—');
+  const isLive = (c: { value: number | string; alwaysLive?: boolean }) =>
+    !!c.alwaysLive || !(c.value === 0 || c.value === '—');
   const liveCounters    = counters.filter(isLive);
   const dormantCounters = counters.filter(c => !isLive(c));
 
@@ -779,7 +865,7 @@ export default async function FunPage() {
       {/* What's new tonight — small callout marking the fresh fun cards so
           guildies can laugh at them (and at each other). Hard-coded ledger
           rather than a feed; intentionally short. Update this list as new
-          fun stuff lands and rotate older items out. (Hitya 2026-06-26.) */}
+          fun stuff lands and rotate older items out. (the guild lead, 2026-06-26.) */}
       <details className="bg-panel border border-purple/50 rounded-lg p-4 group">
         <summary className="flex items-center gap-2 cursor-pointer list-none select-none">
           <span aria-hidden className="text-base">🆕</span>
@@ -805,7 +891,7 @@ export default async function FunPage() {
         {liveCounters.map(c => <FunCard key={c.label} c={c} />)}
       </section>
 
-      {/* The Kyinen decree — moved below the live counters (Hitya
+      {/* The Kyinen decree — moved below the live counters (the guild lead
           2026-06-22 "move the decree to the bottom"). Still its own gold
           frame, just no longer hogging the top of the page. */}
       <KyinenExecutionCard
@@ -844,7 +930,7 @@ export default async function FunPage() {
 // One fun counter card. Emoji is absolutely positioned in the top-right so a
 // tall SVG emoji (the Tunare kiss scene) can't push the number down and break
 // vertical alignment with sibling cards in the same grid row — that was the
-// "Tunare Invocations is off" misalignment (Hitya 2026-06-22). Label +
+// "Tunare Invocations is off" misalignment (Rethlan 2026-06-22). Label +
 // number reserve right padding so they never run under the emoji.
 function FunCard({ c }: { c: { label: string; emoji: React.ReactNode; value: number | string; sub?: string | React.ReactNode; href?: string } }) {
   return (
@@ -866,7 +952,7 @@ function FunCard({ c }: { c: { label: string; emoji: React.ReactNode; value: num
 // ── The Kyinen Execution Card ────────────────────────────────────────────────
 // A reserved, rich-person's-picture-frame card commemorating each time the
 // Quarm lead CSR has executed Wolf Pack's longest-tenured player. Detected
-// from pvp_kills (killer=Kyinen, victim=Malthur) — no new agent detector
+// from pvp_kills (killer=Kyinen, victim=a member) — no new agent detector
 // needed; the kill broadcast lands via the standard PvP-channel relay.
 //
 // Visual: double gold frame with inset glow + inline SVG of an actual

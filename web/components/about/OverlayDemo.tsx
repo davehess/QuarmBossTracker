@@ -1,3 +1,12 @@
+// ⚠ NAMES HERE ARE INVENTED AND MUST STAY THAT WAY (2026-09-18).
+//     /about is a PUBLIC page and these mocks are the screenshot source guild
+//     leadership shares outside the guild. They used to render ten real raiders
+//     (53 occurrences) — the open item flagged by the 2026-09-16 sanitization
+//     pass. Swapped to the invented-name convention from that pass: Aldenmar,
+//     Brackwyn, Corvale, Rethlan, Nyssara, Mirenne, Kelbrin, Elowin, Thessaly,
+//     Wyldane. None of them is anybody; they were checked against `characters`
+//     and `eqemu_npc_types` before adoption. Do not "fix" them back to real
+//     names to make the demo feel authentic — that is the bug, not the feature.
 'use client';
 
 // Playable miniatures of three real Mimic overlays, for /about.
@@ -8,25 +17,25 @@
 // black cards, mono type, hard-outlined text (they sit over EQ, so every glyph
 // carries a shadow), the same HP/mana thresholds, the same GO!/DDR chrome.
 //
-// EVERYTHING NAMED HERE IS REAL AND VERIFIED (2026-08-09, Hitya's corrections):
-//   · Peopleslayer is the Warrior main tank — latest recorded max HP 7,935
+// EVERYTHING NAMED HERE IS REAL AND VERIFIED (2026-08-09, Aldenmar's corrections):
+//   · Wyldane is the Warrior main tank — latest recorded max HP 7,935
 //     (character_live_state.self_hp_max)
-//   · Ashieron is a Paladin — which is WHY he eats rampage under Divine Aura;
+//   · Rethlan is a Paladin — which is WHY he eats rampage under Divine Aura;
 //     DA is 3 ticks = 18s (eqemu_spells 207). Latest recorded max HP 6,049.
-//   · Elyas and Brynnja are Druids; Nature's Touch heals 978 (spell 1291)
-//   · The CH chain is the real cleric rotation: Fargan, Uilnayar,
-//     Stupidrichard, Mcdorf, Bwavair. Complete Heal is 7,500.
+//   · Kelbrin and Mirenne are Druids; Nature's Touch heals 978 (spell 1291)
+//   · The CH chain is the real cleric rotation: Brackwyn, Nyssara,
+//     Thessaly, Corvale, Elowin. Complete Heal is 7,500.
 //   · Shei Vinitras (Akheva Ruins) is 650,000 HP in the catalog — she death
 //     touches and rampages, which is why she is the demo target.
-//   · Hitya is a Monk — hence the off-heal candidate row.
+//   · Aldenmar is a Monk — hence the off-heal candidate row.
 // Scripted loops, not random numbers: each demo plays one specific story.
 
 import { useEffect, useRef, useState } from 'react';
 
 const OUTLINE = { textShadow: '-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 1px 2px #000' };
 
-const PS_MAX = 7935;    // Peopleslayer, latest recorded max HP
-const ASH_MAX = 6049;   // Ashieron, latest recorded max HP
+const PS_MAX = 7935;    // Wyldane, latest recorded max HP
+const ASH_MAX = 6049;   // Rethlan, latest recorded max HP
 
 function hpClass(p: number) {
   if (p > 55) return 'from-[#56d364] to-[#56d364]';
@@ -100,7 +109,7 @@ function HealRow({ who, amt, pct, col, landed }: {
   );
 }
 
-/* ── 1 · Tank overlay — Peopleslayer under the CH chain, Ashieron eating
+/* ── 1 · Tank overlay — Wyldane under the CH chain, Rethlan eating
        rampage behind Divine Aura ─────────────────────────────────────────── */
 
 type Heal = { who: string; amt: string; pct: number; col: string; landed?: boolean };
@@ -116,15 +125,15 @@ const NT = (who: string, pct: number, col: string, landed?: boolean): Heal =>
 
 const TANK_SCRIPT: TankBeat[] = [
   { mt: 92, mtHeals: [], ash: 100, da: 16, ashHeals: [] },
-  { mt: 78, mtHeals: [CH('Fargan', 38, '#58a6ff')], ash: 100, da: 14, ashHeals: [] },
-  { mt: 61, mtHeals: [CH('Fargan', 79, '#58a6ff')], ash: 100, da: 12, ashHeals: [] },
-  { mt: 54, mtGhost: 44, mtHeals: [CH('Fargan', 100, '#58a6ff', true), CH('Uilnayar', 26, '#a371f7')], ash: 100, da: 9, ashHeals: [] },
-  { mt: 97, mtHeals: [CH('Uilnayar', 68, '#a371f7')], ash: 100, da: 7, ashHeals: [] },
-  { mt: 88, mtHeals: [CH('Uilnayar', 100, '#a371f7', true)], ash: 100, da: 4, ashHeals: [] },
+  { mt: 78, mtHeals: [CH('Brackwyn', 38, '#58a6ff')], ash: 100, da: 14, ashHeals: [] },
+  { mt: 61, mtHeals: [CH('Brackwyn', 79, '#58a6ff')], ash: 100, da: 12, ashHeals: [] },
+  { mt: 54, mtGhost: 44, mtHeals: [CH('Brackwyn', 100, '#58a6ff', true), CH('Nyssara', 26, '#a371f7')], ash: 100, da: 9, ashHeals: [] },
+  { mt: 97, mtHeals: [CH('Nyssara', 68, '#a371f7')], ash: 100, da: 7, ashHeals: [] },
+  { mt: 88, mtHeals: [CH('Nyssara', 100, '#a371f7', true)], ash: 100, da: 4, ashHeals: [] },
   { mt: 80, mtHeals: [], ash: 100, da: 2, ashHeals: [] },
-  { mt: 74, mtHeals: [CH('Stupidrichard', 30, '#f0b429')], ash: 71, da: null, ashHeals: [NT('Elyas', 52, '#56d364'), NT('Brynnja', 18, '#a371f7')] },
-  { mt: 68, mtHeals: [CH('Stupidrichard', 74, '#f0b429')], ash: 83, da: null, ashHeals: [NT('Elyas', 100, '#56d364', true), NT('Brynnja', 76, '#a371f7')] },
-  { mt: 93, mtHeals: [CH('Stupidrichard', 100, '#f0b429', true)], ash: 97, da: null, ashHeals: [NT('Brynnja', 100, '#a371f7', true)] },
+  { mt: 74, mtHeals: [CH('Thessaly', 30, '#f0b429')], ash: 71, da: null, ashHeals: [NT('Kelbrin', 52, '#56d364'), NT('Mirenne', 18, '#a371f7')] },
+  { mt: 68, mtHeals: [CH('Thessaly', 74, '#f0b429')], ash: 83, da: null, ashHeals: [NT('Kelbrin', 100, '#56d364', true), NT('Mirenne', 76, '#a371f7')] },
+  { mt: 93, mtHeals: [CH('Thessaly', 100, '#f0b429', true)], ash: 97, da: null, ashHeals: [NT('Mirenne', 100, '#a371f7', true)] },
 ];
 
 export function TankOverlayDemo() {
@@ -137,12 +146,12 @@ export function TankOverlayDemo() {
       caption="The tank bar with the CH chain landing on it, and the rampage target riding out the hits under Divine Aura — with the heals already in the air for the moment it drops.">
       <div className="flex items-center gap-2 text-[12px] mb-1.5" style={{ color: '#f8b87b', ...OUTLINE }}>
         <span aria-hidden>🛡</span><span>Tank</span>
-        <span className="text-[11px] text-[#9aa4ad] font-normal">Peopleslayer</span>
+        <span className="text-[11px] text-[#9aa4ad] font-normal">Wyldane</span>
         <span className="ml-auto text-[9px] border border-white/20 rounded px-1 py-px text-[#9aa4ad] tracking-wider">local</span>
       </div>
 
       <div className="text-[10px] uppercase tracking-wider text-[#9aa4ad] mb-1" style={OUTLINE}>
-        Main Tank — Peopleslayer
+        Main Tank — Wyldane
       </div>
       <Bar pct={b.mt} cls={hpClass(b.mt)}>
         {b.mtGhost != null && (
@@ -159,7 +168,7 @@ export function TankOverlayDemo() {
       </div>
 
       <div className="text-[10px] mt-1.5 mb-1" style={OUTLINE}>
-        <span aria-hidden>💀</span> Rampage on <span style={{ color: '#f8b87b' }}>Ashieron</span>
+        <span aria-hidden>💀</span> Rampage on <span style={{ color: '#f8b87b' }}>Rethlan</span>
       </div>
       <Bar
         pct={daUp ? 100 : b.ash}
@@ -186,17 +195,17 @@ export function TankOverlayDemo() {
 /* ── 2 · Command Center — Shei Vinitras, DT clock, healer mana + DI ───────── */
 
 const MANA_ROWS = [
-  { who: 'Bwavair',  cls: 'Cleric', mana: 31 },
-  { who: 'Uilnayar', cls: 'Cleric', mana: 48 },
-  { who: 'Brynnja',  cls: 'Druid',  mana: 58 },
-  { who: 'Fargan',   cls: 'Cleric', mana: 62 },
-  { who: 'Elyas',    cls: 'Druid',  mana: 66 },
-  { who: 'Mcdorf',   cls: 'Cleric', mana: 71 },
+  { who: 'Elowin',  cls: 'Cleric', mana: 31 },
+  { who: 'Nyssara', cls: 'Cleric', mana: 48 },
+  { who: 'Mirenne',  cls: 'Druid',  mana: 58 },
+  { who: 'Brackwyn',   cls: 'Cleric', mana: 62 },
+  { who: 'Kelbrin',    cls: 'Druid',  mana: 66 },
+  { who: 'Corvale',   cls: 'Cleric', mana: 71 },
 ];
 
 export function CommandCenterDemo() {
   const [t, setT] = useState(18);       // death-touch clock
-  const [di, setDi] = useState(41);     // Mcdorf's DI recast
+  const [di, setDi] = useState(41);     // Corvale's DI recast
   const [shei, setShei] = useState(52); // boss % — ticking down from about half
   useEffect(() => {
     const reduced = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -236,7 +245,7 @@ export function CommandCenterDemo() {
         </div>
 
         <div className="rounded-[4px] px-2 py-1 text-[11px] bg-white/[0.04] border border-white/10" style={OUTLINE}>
-          💀 Rampage on <span className="text-[#f8b87b]">Ashieron</span>
+          💀 Rampage on <span className="text-[#f8b87b]">Rethlan</span>
         </div>
 
         {/* HEALER MANA — lowest first, exactly as the real overlay sorts it,
@@ -245,9 +254,9 @@ export function CommandCenterDemo() {
           <div className="flex items-center gap-1.5 flex-wrap text-[10px] uppercase tracking-wider text-[#9aa4ad] mb-1" style={OUTLINE}>
             <span>Healer mana</span>
             <span className="normal-case tracking-normal inline-flex items-center gap-1">
-              <span className="rounded-[3px] border border-[rgba(86,211,100,0.6)] text-[#7ee787] px-1.5 text-[10px]">DI Fargan ✓</span>
-              <span className="rounded-[3px] border border-[rgba(86,211,100,0.6)] text-[#7ee787] px-1.5 text-[10px]">Stupidrichard ✓</span>
-              <span className="rounded-[3px] border border-[rgba(240,180,41,0.6)] text-[#f0b429] px-1.5 text-[10px] tabular-nums">Mcdorf {di}s</span>
+              <span className="rounded-[3px] border border-[rgba(86,211,100,0.6)] text-[#7ee787] px-1.5 text-[10px]">DI Brackwyn ✓</span>
+              <span className="rounded-[3px] border border-[rgba(86,211,100,0.6)] text-[#7ee787] px-1.5 text-[10px]">Thessaly ✓</span>
+              <span className="rounded-[3px] border border-[rgba(240,180,41,0.6)] text-[#f0b429] px-1.5 text-[10px] tabular-nums">Corvale {di}s</span>
             </span>
           </div>
           {MANA_ROWS.map(r => (
@@ -271,14 +280,14 @@ export function CommandCenterDemo() {
 /* ── 3 · CH chain — the five clerics, the GO! call, the DDR grade ─────────── */
 
 const CHAIN = [
-  { n: '01', who: 'Fargan',        mana: 62 },
-  { n: '02', who: 'Uilnayar',      mana: 48 },
-  { n: '03', who: 'Stupidrichard', mana: 78 },
-  { n: '04', who: 'Mcdorf',        mana: 71 },
-  { n: '05', who: 'Bwavair',       mana: 31 },
+  { n: '01', who: 'Brackwyn',        mana: 62 },
+  { n: '02', who: 'Nyssara',      mana: 48 },
+  { n: '03', who: 'Thessaly', mana: 78 },
+  { n: '04', who: 'Corvale',        mana: 71 },
+  { n: '05', who: 'Elowin',       mana: 31 },
 ];
 // Each slot plays: GO! → casting (2 beats) → lands with the DDR grade. 4 phases
-// per slot; the loop walks the whole rotation so Mcdorf's PERFECT comes around.
+// per slot; the loop walks the whole rotation so Corvale's PERFECT comes around.
 const PHASES = 4;
 
 export function ChChainDemo() {
@@ -296,7 +305,7 @@ export function ChChainDemo() {
         <span className="text-[10px] text-[#9aa4ad] font-normal tabular-nums ml-auto">beat {beat}</span>
       </div>
       <div className="text-[10px] text-[#9aa4ad] mb-1.5" style={OUTLINE}>
-        MT <span className="text-[#e6edf3]">Peopleslayer</span> · {PS_MAX.toLocaleString()} max
+        MT <span className="text-[#e6edf3]">Wyldane</span> · {PS_MAX.toLocaleString()} max
       </div>
 
       {CHAIN.map((c, idx) => {
@@ -331,7 +340,7 @@ export function ChChainDemo() {
                 <div className="h-full bg-[#56d364] transition-all duration-700" style={{ width: phase === 1 ? '42%' : '86%' }} />
               </div>
             )}
-            {/* DDR grade sticker (Hitya 2026-07-31) — flashes on the landing. */}
+            {/* DDR grade sticker (Aldenmar 2026-07-31) — flashes on the landing. */}
             {isLanded && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden">
                 <span className="font-black italic text-[13px] tracking-wider"
@@ -349,11 +358,11 @@ export function ChChainDemo() {
         <span className="tabular-nums">in {beat}</span>
       </div>
 
-      {/* Off-heal candidates — Hitya the monk, colored by HP severity. */}
+      {/* Off-heal candidates — Aldenmar the monk, colored by HP severity. */}
       <div className="mt-2 rounded bg-black/40 px-2 py-1.5">
         <div className="text-[9px] uppercase tracking-wider text-[#9aa4ad] mb-0.5" style={OUTLINE}>Off-heal candidates</div>
         <div className="flex items-center gap-2 text-[10px]" style={OUTLINE}>
-          <span className="font-semibold text-[#fca5a5]">Hitya</span>
+          <span className="font-semibold text-[#fca5a5]">Aldenmar</span>
           <span className="text-[#9aa4ad] text-[9px] flex-1">taking single-target damage off-tank</span>
           <span className="font-bold tabular-nums text-[#f0b429]">67%</span>
         </div>

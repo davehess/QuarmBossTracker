@@ -1,4 +1,4 @@
-// Per-page link-preview descriptions (Hitya 2026-07-08: shared links must
+// Per-page link-preview descriptions (the guild lead, 2026-07-08: shared links must
 // unfurl with THAT page's description, not the site-wide one).
 //
 // Served to link-preview crawlers by /api/embed-meta (middleware rewrites
@@ -6,13 +6,19 @@
 // pages). Add an entry when adding a member-facing route; unknown paths fall
 // back to the site default.
 
+import { guildByCode } from './zealIcons';
+
 export const SITE_NAME = 'WolfPack.quest';
 export const DEFAULT_DESCRIPTION =
   'Guild-wide build planner, parse history, and loadout library for Project Quarm.';
 
-const STATIC_META: Record<string, { title: string; description: string }> = {
+// image: an optional picture for the card (a path under web/public), for pages meant to be posted.
+type PageMeta = { title: string; description: string; image?: string };
+
+const STATIC_META: Record<string, PageMeta> = {
   '/':             { title: 'WolfPack.quest', description: DEFAULT_DESCRIPTION },
-  '/pop':          { title: 'PoP Flags (Preview)', description: 'The guild’s road to Quarm — every flag gate by tier, how many raiders hold each flag, who can enter each zone today, and what to raid next to move the most people forward.' },
+  '/pop':          { title: 'PoP Flags', description: 'The guild’s road to Quarm — every flag gate by tier, how many raiders hold each flag, who can enter each zone today, and what to raid next to move the most people forward.' },
+  '/pop/guide':    { title: 'PoP Checklist', description: 'Every Planes of Power step in order — what to say to whom, where they stand, and whether it is solo, group or raid work. Tick it off per character.' },
   '/roster':       { title: 'Raid Roster', description: 'Typical raiders by role and class — 60-day raid attendance from DKP ticks, tanks/healers/DPS grouped, notable alts called out.' },
   '/parses':       { title: 'Boss Kills & Parses', description: 'Per-night kill cards with merged damage parses, loot, and attendance for every raid.' },
   '/boards':       { title: 'Raid Boards', description: 'Instanced boss cooldowns and spawn windows, by expansion — the live raid-target board.' },
@@ -23,19 +29,27 @@ const STATIC_META: Record<string, { title: string; description: string }> = {
   '/pvp/server':   { title: 'Server PvP Top 10', description: 'Server-wide PvP kill leaders on Project Quarm.' },
   '/leaderboards': { title: 'Leaderboards', description: 'Top damage parses, raid attendance, and DKP spent — who’s been crushing it lately.' },
   '/fun':          { title: 'Fun Counters', description: 'The guild record book — running gags, counters, and trophies from the logs.' },
+  '/film':         { title: 'Aten Ha Ra', description: 'The Wolf Pack film of the Aten Ha Ra kill — every raider called by name, in two takes of the song.' },
+  '/film/making':  { title: 'How the film was made', description: 'The Aten Ha Ra film from the inside — find your raider, how every name is sung, every picture and animation take, and the outtakes.', image: '/film/making-of.jpg' },
+  '/raidhistory':  { title: 'Raid History', description: 'Every raid night on one grid, coloured by how full the raid was — red at half, green at full — with the raid name and a link to each night’s review.' },
   '/rolls':        { title: 'Roll Nights', description: 'Off-night NBG loot rolls by raid night — every session, the winning roll, who actually looted each drop, and Hot Dice callouts.' },
   '/me':           { title: 'My Stats', description: 'Your characters, tells, buffs, and personal history — private to you.' },
+  '/me/parses':    { title: '[beta] My parses', description: 'Your own parses on a chart over a day, a week or a month, with your average for each raid night.' },
   '/loadouts':     { title: 'Tank Loadouts', description: 'Bandolier sets across the raid — who runs what weapons and procs.' },
   '/planner':      { title: 'Loadout Planner', description: 'Theory-craft weapon setups from the item database with hate-per-minute estimates.' },
   '/bards':        { title: 'Bard Melodies', description: 'Live bard song rotations across the raid.' },
   '/raid':         { title: 'Live Raid', description: 'The raid right now — who’s in, groups, HP, and buffs, live from Zeal.' },
-  '/mimic':        { title: 'Download Mimic', description: 'Mimic — the Wolf Pack desktop overlay: DPS HUD, triggers, buff queue, and log sync for Project Quarm.' },
+  '/spectator':    { title: '[beta] Spectator', description: 'The raid on a map, live — everyone’s position in the zone they are in, with the zone’s walls underneath.' },
+  '/screen':       { title: '[beta] Raid screen', description: 'One page the whole raid watches — the map, slides, loot or an overview, switched by the raid leader and followed live.' },
+  '/mimic':        { title: 'Download Mimic', description: 'Mimic — the Wolf Pack desktop overlay: DPS/Tank Meter, triggers, buff queue, and log sync for Project Quarm.' },
+  '/mimic/dirge':  { title: 'Dirge Tactical Nuke', description: 'For bards, on the Mimic beta: check off your pre-buffs, lift the cover, turn the Puretone key, and fire one button per Dirge your mana holds. Watch it run.', image: '/mimic/dirge-card.png' },
   '/feedback':     { title: 'Feedback', description: 'Bugs, ideas, kudos — straight to the officer inbox.' },
   '/roadmap':      { title: 'Roadmap', description: 'What’s shipped and what’s next for the Wolf Pack platform.' },
   '/ai':           { title: 'Built with AI', description: 'The working method behind the platform: the rules, the incident behind each one, and a timeline you can scrub.' },
+  '/zeal-icons':   { title: '[beta] Zeal tag icons', description: 'Guild banners and icons for Zeal /tag — the keys to type, and picture files to download.' },
 };
 
-export function metaForPath(rawPath: string): { title: string; description: string } {
+export function metaForPath(rawPath: string): PageMeta {
   const path = (rawPath || '/').replace(/\/+$/, '') || '/';
   const hit = STATIC_META[path];
   if (hit) return hit;
@@ -49,6 +63,11 @@ export function metaForPath(rawPath: string): { title: string; description: stri
   if (m) {
     const name = decodeURIComponent(m[1]);
     return { title: `${name} — Boss`, description: `Kill history, spawn timers, and drops for ${name}.` };
+  }
+  m = path.match(/^\/zeal-icons\/([^/]+)$/);
+  const guild = m ? guildByCode(decodeURIComponent(m[1])) : undefined;
+  if (guild) {
+    return { title: `[beta] ${guild.name} — Zeal tag icon`, description: `${guild.name}'s banner and icon for Zeal /tag: ^B${guild.code}^ and ^I${guild.code}^.` };
   }
   if (/^\/parses\/[^/]+$/.test(path)) {
     return { title: 'Parse Breakdown', description: 'Per-player damage, abilities, and boss-kill comparison for one encounter.' };

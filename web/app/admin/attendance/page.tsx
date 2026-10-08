@@ -29,9 +29,11 @@ import Link from 'next/link';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
-import { isOfficer } from '@/lib/officer';
+import { isOfficer, requireOfficer } from '@/lib/officer';
+import { loadRoster } from '@/lib/roster';
 import { supabaseServer } from '@/lib/supabase-server';
 import { getDemoMode, maybeFake } from '@/lib/obfuscate';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -67,8 +69,8 @@ type CharRow = {
 };
 
 // Ranks that count as "on the raid roster" — what the class summary should
-// count. Excludes Raid Alt (placeholder DKP-tracker characters like
-// Ferdinand / Canopy / Bardtholemu that aren't real people in the slot).
+// count. Excludes Raid Alt — placeholder DKP-tracker characters that aren't
+// real people in the slot.
 const ROSTER_RANKS = new Set(['Raid Pack', 'Officer', 'Pack Leader', 'Recruit']);
 
 type Raid = { raid_id: number; ts: string };
@@ -106,7 +108,7 @@ async function loadTargetsFromDb(raidSize: string): Promise<Record<string, numbe
   const { data } = await admin
     .from('raid_targets')
     .select('class, target')
-    .eq('guild_id', 'wolfpack')
+    .eq('guild_id', GUILD_TAG)
     .eq('raid_size', raidSize);
   if (!data || data.length === 0) return { ...DEFAULT_TARGETS };
   const out: Record<string, number> = {};
@@ -125,6 +127,8 @@ type MetricRow = {
   main_name: string;
   main_class: string | null;
   main_rank: string | null;
+  att_ticks_30d: number | string;
+  last_attended: string | null;
   att_ticks_60d: number | string; ticks_60d: number | string; ra_60d: number | string | null;
   att_ticks_90d: number | string; ticks_90d: number | string; ra_90d: number | string | null;
   att_ticks_lifetime: number | string; ticks_lifetime: number | string; ra_lifetime: number | string | null;
@@ -135,7 +139,7 @@ async function loadFamilyMetrics(): Promise<MetricRow[]> {
   const admin = supabaseAdmin();
   const { data } = await admin
     .from('member_attendance_metrics')
-    .select('main_name, main_class, main_rank, att_ticks_60d, ticks_60d, ra_60d, att_ticks_90d, ticks_90d, ra_90d, att_ticks_lifetime, ticks_lifetime, ra_lifetime, raids_att_lifetime')
+    .select('main_name, main_class, main_rank, att_ticks_30d, last_attended, att_ticks_60d, ticks_60d, ra_60d, att_ticks_90d, ticks_90d, ra_90d, att_ticks_lifetime, ticks_lifetime, ra_lifetime, raids_att_lifetime')
     .not('main_class', 'is', null)
     .order('ra_90d', { ascending: false, nullsFirst: false });
   const rows = (data ?? []) as MetricRow[];
@@ -164,7 +168,7 @@ async function saveTargets(formData: FormData) {
     const raw = formData.get(`target_${cls}`);
     if (raw == null) continue;
     const n = Math.max(0, Math.min(99, parseInt(String(raw), 10) || 0));
-    rows.push({ guild_id: 'wolfpack', raid_size: raidSize, class: cls, target: n, updated_by: actor });
+    rows.push({ guild_id: GUILD_TAG, raid_size: raidSize, class: cls, target: n, updated_by: actor });
   }
   if (rows.length === 0) return;
   const admin = supabaseAdmin();
@@ -178,11 +182,8 @@ async function loadData() {
   const since60 = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
   const since30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-  const [{ data: chars }, { data: raids90 }] = await Promise.all([
-    admin
-      .from('characters')
-      .select('name, class, main_name, active, rank')
-      .eq('guild_id', 'wolfpack'),
+  const [chars, { data: raids90 }] = await Promise.all([
+    loadRoster() as Promise<CharRow[]>,   // the shared, paged roster read (web/lib/roster.ts)
     admin
       .from('opendkp_raids')
       .select('raid_id, ts')
@@ -191,7 +192,7 @@ async function loadData() {
   ]);
 
   const raids = (raids90 ?? []) as Raid[];
-  if (raids.length === 0) return { chars: (chars ?? []) as CharRow[], raids: [], ticks: [], since30, since60, since90 };
+  if (raids.length === 0) return { chars, raids: [], ticks: [], since30, since60, since90 };
 
   const raidIds = raids.map(r => r.raid_id);
   // PostgREST IN() takes paginated chunks; 374 ids is small enough to fit.
@@ -219,7 +220,7 @@ async function loadData() {
   }
 
   return {
-    chars: (chars ?? []) as CharRow[],
+    chars,
     raids,
     raids365: (raids365 ?? []) as Raid[],
     ticks: (ticks ?? []) as Tick[],
@@ -249,7 +250,7 @@ function computeAttendance(args: {
   // window. CRITICAL: only count ticks that actually have attendees — empty-
   // attendee ticks are sync gaps (detail fetched mid-raid before attendance
   // was finalized) and counting them in the denominator credits nobody,
-  // which is what tanked everyone's RA below OpenDKP's numbers (Rorschach
+  // which is what tanked everyone's RA below OpenDKP's numbers (a member
   // read 64% vs OpenDKP's 100%). The bot's _raidNeedsDetail re-fetch backfills
   // those empties over the next sync cycles; until then we simply don't
   // penalize anyone for ticks we failed to capture.
@@ -371,8 +372,9 @@ function raColor(v: number | string | null, threshold: number): string {
 export default async function AdminAttendancePage({
   searchParams,
 }: {
-  searchParams: Promise<{ targets?: string; threshold?: string }>;
+  searchParams: Promise<{ targets?: string; threshold?: string; show?: string }>;
 }) {
+  await requireOfficer();
   const p = await searchParams;
   const raidSize = '60-man';
   // DB targets are the source of truth; ?targets= URL param overrides for
@@ -381,7 +383,30 @@ export default async function AdminAttendancePage({
   const targets = p.targets ? parseTargets(p.targets) : dbTargets;
   const isOverriding = !!p.targets;
   const threshold = p.threshold ? Math.max(0, Math.min(1, parseFloat(p.threshold))) : DEFAULT_THRESHOLD;
+  // ── Active-only by default (the guild lead, 2026-08-28) ──────────────────────────
+  // "if someone falls off of the 30 day list (no ticks in 30 days) they become
+  // inactive. we should filter by default on that page by that stat."
+  // Measured when this shipped: 290 rows, 218 of them with zero ticks in 30
+  // days. The page was 75% people who are not raiding, which is what made a
+  // real signal — a member going inactive after their last tick on 2026-07-22 —
+  // something you had to go looking for rather than something the page told you.
+  const showAll = p.show === 'all';
   const demoMode = getDemoMode();
+
+  // Preserve the other query params when toggling — losing a what-if `targets`
+  // override or a tuned threshold because you clicked "show inactive" is the
+  // kind of small betrayal that makes people stop using a filter.
+  const attendanceHref = (patch: Record<string, string | undefined>) => {
+    const q = new URLSearchParams();
+    if (p.targets) q.set('targets', p.targets);
+    if (p.threshold) q.set('threshold', p.threshold);
+    if (p.show) q.set('show', p.show);
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) q.delete(k); else q.set(k, v);
+    }
+    const qs = q.toString();
+    return qs ? `?${qs}` : '?';
+  };
 
   // Officer check for showing the edit form
   const { data: { user } } = await supabaseServer().auth.getUser();
@@ -408,6 +433,13 @@ export default async function AdminAttendancePage({
 
   // #92 family-aware 60/90/lifetime RA% (from the SQL view).
   const familyMetrics = await loadFamilyMetrics();
+  // ⚠ "Inactive" is defined on TICKS, not on RA%. A returning member can sit at
+  // 0% for a window and still have raided this week; someone at 40% 90d RA can
+  // have stopped a month ago. A member is the case that prompted this — 30%
+  // over 90 days, and not a single tick since 2026-07-22.
+  const activeMetrics   = familyMetrics.filter(m => Number(m.att_ticks_30d) > 0);
+  const inactiveMetrics = familyMetrics.filter(m => Number(m.att_ticks_30d) === 0);
+  const shownMetrics    = showAll ? familyMetrics : activeMetrics;
 
   // Roster-by-class headcount — pulled from characters.rank (Raid Pack /
   // Officer / Pack Leader / Recruit), NOT from attendance. Attendance
@@ -555,15 +587,35 @@ export default async function AdminAttendancePage({
           queue (seating priority, tiebreaks, review cards) reads. */}
       <section className="bg-panel border border-border rounded-lg">
         <h3 className="text-sm text-orange px-4 py-3 border-b border-border flex items-center justify-between flex-wrap gap-2">
-          <span>Family RA% — 60d / 90d / lifetime (main + alts rolled up)</span>
+          <span>
+            Family RA% — 60d / 90d / lifetime (main + alts rolled up)
+            {!showAll && <span className="text-dim font-normal"> · active only</span>}
+          </span>
           <span className="text-[10px] text-dim">
             tick-based · {familyMetrics[0]?.ticks_90d ?? 0} ticks held (90d) · source for #80 review cards
           </span>
         </h3>
-        <div className="px-4 py-2 text-[10px] text-dim">
-          RA% is tick-based (matches OpenDKP&apos;s &quot;30 Day (52/52)&quot;).
-          Attendance counts once per family — a main and its alts collapse into
-          one row (<code>member_attendance_metrics</code> view). Sorted by 90d RA%.
+        <div className="px-4 py-2 text-[10px] text-dim flex items-center justify-between flex-wrap gap-2">
+          <span>
+            RA% is tick-based (matches OpenDKP&apos;s &quot;30 Day (52/52)&quot;).
+            Attendance counts once per family — a main and its alts collapse into
+            one row (<code>member_attendance_metrics</code> view). Sorted by 90d RA%.
+          </span>
+          <span className="whitespace-nowrap">
+            <b className="text-text">{activeMetrics.length}</b> active ·{' '}
+            <b className="text-text">{inactiveMetrics.length}</b> inactive{' '}
+            <Link
+              href={showAll ? attendanceHref({ show: undefined }) : attendanceHref({ show: 'all' })}
+              className="text-orange hover:underline ml-1"
+            >
+              {showAll ? 'hide inactive' : 'show inactive'}
+            </Link>
+          </span>
+        </div>
+        <div className="px-4 pb-2 text-[10px] text-dim">
+          <b className="text-text">Inactive</b> = no ticks in the last 30 days. They are hidden by
+          default — {inactiveMetrics.length} of {familyMetrics.length} rows here have not raided in
+          a month, and burying the people who have makes the page harder to read, not more complete.
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
@@ -578,12 +630,21 @@ export default async function AdminAttendancePage({
               </tr>
             </thead>
             <tbody>
-              {familyMetrics.map(m => (
-                <tr key={m.main_name} className="border-b border-border/40 hover:bg-[#1a212c]">
+              {shownMetrics.map(m => {
+                const inactive = Number(m.att_ticks_30d) === 0;
+                return (
+                <tr key={m.main_name}
+                    className={`border-b border-border/40 hover:bg-[#1a212c] ${inactive ? 'opacity-60' : ''}`}>
                   <td className="px-3 py-1">
                     <Link href={`/character/${encodeURIComponent(m.main_name)}`} className="text-text hover:underline">
                       {maybeFake(demoMode, m.main_name, m.main_class || '')}
                     </Link>
+                    {inactive && (
+                      <span className="ml-2 text-[10px] text-dim"
+                            title={m.last_attended ? `Last tick ${String(m.last_attended).slice(0, 10)}` : 'No ticks recorded'}>
+                        inactive{m.last_attended ? ` · last ${String(m.last_attended).slice(0, 10)}` : ''}
+                      </span>
+                    )}
                   </td>
                   <td className="px-3 py-1 text-dim">{m.main_class}</td>
                   <td className={`px-3 py-1 text-right ${raColor(m.ra_60d, threshold)}`} title={`${m.att_ticks_60d}/${m.ticks_60d} ticks`}>
@@ -597,8 +658,9 @@ export default async function AdminAttendancePage({
                   </td>
                   <td className="px-3 py-1 text-right text-dim">{Number(m.att_ticks_lifetime).toLocaleString()}</td>
                 </tr>
-              ))}
-              {familyMetrics.length === 0 && (
+                );
+              })}
+              {shownMetrics.length === 0 && (
                 <tr><td colSpan={6} className="px-3 py-3 text-dim">No family metrics yet — the view needs OpenDKP ticks + characters mapped.</td></tr>
               )}
             </tbody>

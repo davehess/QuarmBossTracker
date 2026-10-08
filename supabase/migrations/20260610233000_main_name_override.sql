@@ -1,7 +1,7 @@
 -- Officer-set main/alt override.
 --
 -- The only automatic main_name source is OpenDKP ParentId, and DKP admins
--- routinely set rank "Raid Alt" without parenting the character (Adiwen had
+-- routinely set rank "Raid Alt" without parenting the character (a member had
 -- rank Raid Alt but ParentId 0 → its own family, splitting one human into
 -- two "players"/"agents" everywhere main_name drives family grouping). A
 -- manual main_name edit doesn't survive: syncCharacters() re-upserts

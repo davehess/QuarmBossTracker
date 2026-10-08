@@ -1,7 +1,7 @@
 // test/pop-hail-witness.test.js — witnessed hails as PoP flag coverage for
 // raiders who don't run Mimic. SOURCE-SLICE tier.
 //
-// Hitya 2026-08-20: "we need people that don't use mimic to be covered as
+// The guild lead 2026-08-20: "we need people that don't use mimic to be covered as
 // well. When someone Hails a flagging NPC and we see that from a mimic-enabled
 // raider, we should record that as a proper flag."
 //
@@ -48,5 +48,43 @@ describe('parseWitnessedHail', () => {
     const e = parseWitnessedHail("[x] Statlander says, 'Hail, Elder Poxbourne'", 'Hitya');
     expect(e.boss).toBeNull();
     expect(e.source).toBe('hail_witnessed');
+  });
+
+  // The hail board (the guild lead, 2026-10-05): the Planar Projection and the other flag NPCs the
+  // board is built around. Invented hailer names.
+  it('accepts every flag NPC the hail board stands up a window for', () => {
+    const npcs = ['A Planar Projection', 'Planar Projection', 'Tylis Newleaf', 'Giwin Mirakon', 'Nitram Anizok', 'Tarkil Adan'];
+    for (const npc of npcs) {
+      const e = parseWitnessedHail(`[Sun Oct 04 20:10:01 2026] Brackwyn says, 'Hail, ${npc}'`, 'Aldenmar');
+      expect(e, npc).toMatchObject({ character: 'Brackwyn', npc, witness: 'Aldenmar', self: false, source: 'hail_witnessed' });
+    }
+  });
+});
+
+// Your OWN hail prints "You say, ..." in your own log, never "<You> says". Some flag NPCs print no
+// grant line (a Planar Projection can hand a flag over silently), so this is the only evidence the
+// board gets for you.
+describe('parseWitnessedHail — your own hail', () => {
+  it('is attributed to the log\'s character, and says it was your own', () => {
+    const e = parseWitnessedHail("[Sun Oct 04 20:10:01 2026] You say, 'Hail, A Planar Projection'", 'Aldenmar');
+    expect(e).toMatchObject({ character: 'Aldenmar', npc: 'A Planar Projection', witness: 'Aldenmar', self: true, source: 'hail_witnessed' });
+    expect(e.boss).toBeNull();
+  });
+
+  it('takes the same punctuation a witnessed hail does', () => {
+    expect(parseWitnessedHail("[x] You say, 'Hail, Tylis Newleaf!'", 'Aldenmar').npc).toBe('Tylis Newleaf');
+    expect(parseWitnessedHail("[x] You say 'Hail Giwin Mirakon'", 'Aldenmar').npc).toBe('Giwin Mirakon');
+  });
+
+  it('is still only the greeting, and only on /say', () => {
+    expect(parseWitnessedHail("[x] You say, 'we should hail him after'", 'Aldenmar')).toBeNull();
+    expect(parseWitnessedHail("[x] You say to your guild, 'Hail, Mavuin'", 'Aldenmar')).toBeNull();
+    expect(parseWitnessedHail("[x] You shout, 'Hail, Mavuin'", 'Aldenmar')).toBeNull();
+    expect(parseWitnessedHail("[x] You tell your group, 'Hail, Mavuin'", 'Aldenmar')).toBeNull();
+  });
+
+  it('needs a character to be attributed to', () => {
+    expect(parseWitnessedHail("[x] You say, 'Hail, Mavuin'", '')).toBeNull();
+    expect(parseWitnessedHail("[x] You say, 'Hail, Mavuin'", undefined)).toBeNull();
   });
 });

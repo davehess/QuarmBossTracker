@@ -168,10 +168,69 @@ async function _request(path, opts = {}) {
   }
 }
 
+// ── The 1,000-row cap tripwire ───────────────────────────────────────────────
+// PostgREST answers at most 1,000 rows (Supabase's max-rows) with a 200 and no
+// flag, so a read that is quietly truncated looks exactly like a read that
+// found everything. An audit on 2026-10-04 found the cap silently clipping
+// catalogs and scans in production (spell cast times 812 of 2,331, spell-haste
+// foci for ~30% of raiders, the 14-day uploader set 88 names out of 21,509
+// rows) — none of it visible until somebody asked why a number was low.
+//
+// The tripwire is the cheap structural half: a read that comes back with
+// EXACTLY the cap, and that never said how many rows it wanted, is almost
+// certainly truncated — a real table is very rarely exactly 1,000 rows long.
+// A paged read (offset=) and a read with an explicit limit at/under the cap are
+// deliberate: the caller named its bound. It warns ONCE per (table, call-site)
+// per process so a hot path cannot spam, and counts every hit for GET /health.
+const SERVER_MAX_ROWS = 1000;
+const _capHits = { total: 0, sites: new Map() };   // 'table @ file:line' → count
+function _capRisk(queryString) {
+  const q = String(queryString || '');
+  if (/(?:^|&)offset=/.test(q)) return false;
+  const m = /(?:^|&)limit=(\d+)/.exec(q);
+  return !(m && Number(m[1]) <= SERVER_MAX_ROWS);
+}
+// First stack frame outside this file → 'utils/foo.js:123'. Works for the
+// sync part of the stack, which is why select() captures it BEFORE it awaits.
+function _callSite(origin) {
+  const root = require('path').resolve(__dirname, '..');
+  for (const line of String(origin && origin.stack || '').split('\n').slice(1)) {
+    const m = /\(?((?:[A-Za-z]:)?[^()\s]+):(\d+):\d+\)?\s*$/.exec(line);
+    if (!m || /[\\/]utils[\\/]supabase\.js$/.test(m[1]) || m[1].startsWith('node:')) continue;
+    const file = m[1].startsWith(root) ? m[1].slice(root.length + 1) : m[1];
+    return `${file.replace(/\\/g, '/')}:${m[2]}`;
+  }
+  return 'unknown';
+}
+function _noteCapHit(table, origin) {
+  _capHits.total++;
+  const site = _callSite(origin);
+  const key = `${table} @ ${site}`;
+  const n = (_capHits.sites.get(key) || 0) + 1;
+  _capHits.sites.set(key, n);
+  if (n === 1) {
+    console.warn('[supabase] read hit the 1,000-row cap — result is truncated:', table, '@', site,
+      '(page it with selectAllPaged, or aggregate in an RPC)');
+  }
+}
+// Snapshot for GET /health. `truncated_reads` is the total, `sites` the offenders.
+function capStats() {
+  return {
+    truncated_reads: _capHits.total,
+    sites: [...(_capHits.sites)].slice(0, 20).map(([k, count]) => ({ site: k, count })),
+  };
+}
+// Test-only reset, like _resetBreaker.
+function _resetCapStats() { _capHits.total = 0; _capHits.sites.clear(); }
+
 // ── Generic helpers ──────────────────────────────────────────────────────────
 async function select(table, queryString = '') {
   const path = queryString ? `/${table}?${queryString}` : `/${table}`;
-  return _request(path);
+  // Only a read that COULD be truncated pays for the stack capture.
+  const origin = _capRisk(queryString) ? new Error('cap-origin') : null;
+  const rows = await _request(path);
+  if (origin && Array.isArray(rows) && rows.length === SERVER_MAX_ROWS) _noteCapHit(table, origin);
+  return rows;
 }
 
 async function insert(table, rows) {
@@ -230,20 +289,39 @@ async function insertIgnoreDuplicates(table, rows, opts = {}) {
 // Ordered paging is load-bearing: an unordered offset walk can skip or repeat
 // rows between pages (2026-08-05: an unordered 1,149-row pull dropped the 149
 // NEWEST rows and main-detection kept naming the previous main).
+//
+// The order must be UNIQUE over the rows read. Ties let Postgres hand the same
+// row to two pages and skip another (a replay of eqemu_npc_faction_entries,
+// ordered by its non-unique first key, lost 4 of 5,354 rows). `orderCol` is one
+// column or a comma list — `'character,boss_key'` — each ascending unless it
+// carries its own `.desc`; name the table's primary key (or what is left of it
+// once the query has pinned the other columns with `=eq.`).
 const SELECT_ALL_PAGE = 1000;
+const SELECT_ALL_MAX_ROWS = 500_000;
+function _orderParam(orderCol) {
+  return String(orderCol).split(',').map(s => s.trim()).filter(Boolean)
+    .map(c => (/\.(asc|desc)(\.nulls(first|last))?$/i.test(c) ? c : `${c}.asc`)).join(',');
+}
 // `sel` is injectable so the paging rules can be tested without a database.
 async function selectAllPaged(table, baseQuery, orderCol, sel) {
   const fetchPage = sel || ((t, q) => select(t, q));
+  const order = _orderParam(orderCol);
   const out = [];
   for (let offset = 0; ; offset += SELECT_ALL_PAGE) {
-    const q = `${baseQuery}&order=${orderCol}.asc&limit=${SELECT_ALL_PAGE}&offset=${offset}`;
+    const q = `${baseQuery}&order=${order}&limit=${SELECT_ALL_PAGE}&offset=${offset}`;
     const page = await fetchPage(table, q);
     // A failed page is NOT an empty table. Returning [] would read as "no rows
     // exist" and let a caller re-do work against history (the re-fold bug).
     if (!Array.isArray(page)) return null;
     out.push(...page);
     if (page.length < SELECT_ALL_PAGE) return out;
-    if (out.length > 500_000) return out;              // runaway guard
+    if (out.length > SELECT_ALL_MAX_ROWS) {
+      // Runaway guard. It used to return the partial array as if it were whole —
+      // the exact silent truncation this layer exists to kill. Say so, and fail
+      // the read the way a failed page does.
+      console.warn(`[supabase] selectAllPaged(${table}) passed ${SELECT_ALL_MAX_ROWS} rows — runaway guard tripped, read failed (null)`);
+      return null;
+    }
   }
 }
 
@@ -386,7 +464,7 @@ async function claimThreatSnapshots({ encounterId, uploader, startedAtMs, durati
 // raid_nights was designed and never implemented: the table sat empty, nothing
 // wrote it, and encounters.raid_night_id was NULL on all 1,526 rows despite a
 // real FK — so "which raid was this" has always been an ad-hoc time-window join
-// (Hitya 2026-08-03). The history is backfilled by migration
+// (the guild lead, 2026-08-03). The history is backfilled by migration
 // 20260804_backfill_raid_nights_and_link_encounters; this keeps it true going
 // forward.
 //
@@ -521,8 +599,8 @@ async function recordParse({
   // Guard: drop session-blob parses. When a parser uploads an entire raid
   // session as one "encounter" (a 30m–2h duration with everyone who did any
   // damage in the zone), merging it into a real ~3min boss kill drags in
-  // parked alts and passers-by (Hitya 2026-06-23: a 3024s Cazic Thule blob
-  // attributed 2.3k to Hitya, who wasn't in the fight). No single boss fight on
+  // parked alts and passers-by (the guild lead, 2026-06-23: a 3024s Cazic Thule blob
+  // attributed 2.3k to the guild lead, who wasn't in the fight). No single boss fight on
   // Quarm runs past 30 minutes; anything longer is a segmentation failure, not
   // a fight. Drop it before it can find/create or pollute an encounter. The
   // boss respawn timer is unaffected (it rides the separate /bosskill path).
@@ -726,10 +804,16 @@ async function getTonightEncounters(date = new Date()) {
   const guildId = _guildId();
   const query = `guild_id=eq.${guildId}` +
     `&started_at=gte.${dayStart.toISOString()}` +
-    `&started_at=lt.${dayEnd.toISOString()}` +
-    `&order=started_at.desc`;
-  const rows = await select('encounter_completeness', query);
-  return Array.isArray(rows) ? rows : [];
+    `&started_at=lt.${dayEnd.toISOString()}`;
+  // Paged: a raid day holds more than the 1,000-row cap (1,210 encounters on
+  // 2026-09-27, 1,136 on 10-02), so one read dropped the OLDEST fights of the
+  // night. started_at ties are real (parallel pulls), hence encounter_id.
+  const rows = await selectAllPaged('encounter_completeness', query, 'started_at.desc,encounter_id');
+  if (!Array.isArray(rows)) return [];
+  // The night is live while this pages: a new fight shifts a desc walk by one,
+  // which repeats a row at a page boundary. Keep the first of each.
+  const seen = new Set();
+  return rows.filter(r => !seen.has(r.encounter_id) && seen.add(r.encounter_id));
 }
 
 // Mirror one PvP boss kill into Supabase. Called from utils/state.recordPvpKill
@@ -820,6 +904,8 @@ module.exports = {
   isEnabled,
   breakerState,
   _resetBreaker,   // test-only
+  capStats,
+  _resetCapStats,  // test-only
   select, selectAllPaged, insert, insertIgnoreDuplicates, update, upsert, del, rpc,
   getWhoOverrides, upsertWhoOverride,
   applyQuakeToPvpBoardMirror,

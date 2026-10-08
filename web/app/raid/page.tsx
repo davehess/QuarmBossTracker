@@ -26,7 +26,19 @@ import {
   resistTypesFor, isSongBuff, secondaryCategoriesFor, UPGRADE_CHAINS, chainPosition,
   type BuffCategory, type Role, type HpSlotState, type ResistType,
 } from '@/lib/buffs';
-import RaidView, { type RaidRow } from './RaidView';
+import { groupRaids } from '@/lib/raidGroups';
+import { loadActiveBuffCasts } from '@/lib/fullReads';
+import RaidView, { type RaidRow, type RaidTab } from './RaidView';
+import { GUILD_TAG } from '@/lib/guild';
+
+// Per-page metadata so a link pasted into Discord unfurls as what it IS.
+// Without this the page inherits the site-wide description and every
+// shared link reads identically, which is what 68 of them used to do.
+export const metadata = {
+  title: 'Raid',
+  description:
+    "Tonight's raid at a glance: who is on, who is missing buffs, lockouts, and the live board.",
+};
 
 export const dynamic = 'force-dynamic';
 
@@ -140,14 +152,14 @@ export default async function RaidHubPage() {
   const [{ data: liveRows }, { data: charRows }, { data: rosterRows }, { data: memberRow }, { data: mgbRows }, { data: buffCastRows }, { data: ariRow }, { data: manaRows }] = await Promise.all([
     admin.from('character_live_state')
       .select('character, zone_name, self_hp_pct, self_mana_pct, buffs, buff_count, pet_name, pet_hp_pct, pet_buffs, swapped_to, swapped_at, updated_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .order('updated_at', { ascending: false }),
     admin.from('characters')
       .select('name, class, main_name, discord_id')
-      .eq('guild_id', 'wolfpack'),
+      .eq('guild_id', GUILD_TAG),
     admin.from('raid_roster')
       .select('name, class, group_num, level, rank, hp_pct, captured_at, loc_at, uploaded_by_discord_id')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .gte('captured_at', rosterSince),
     // Signed-in user → discord_id so we can find THEIR character in the raid.
     // Lets us auto-pick a default Buffer-mode class (their own class) and
@@ -158,29 +170,28 @@ export default async function RaidHubPage() {
       .maybeSingle(),
     admin.from('character_aas')
       .select('character')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .eq('aa_index', MGB_AA_INDEX)
       .gte('rank', 1),
-    admin.from('buff_casts')
-      .select('target, spell_name, dur_ticks, cast_at')
-      .eq('guild_id', 'wolfpack')
-      .gte('cast_at', buffCastsSince)
-      .order('cast_at', { ascending: false })
-      .limit(3000),
+    // One row per (target, spell): the newest cast that has not run its duration
+    // out, picked IN SQL. Three hours of buff_casts peaks at 14,900 rows and the
+    // old `.limit(3000)` kept the newest 1,000 (PostgREST's silent cap), which hid
+    // 64 of the 230 active pairs and 11 of 92 raiders at the 2026-09-27 peak.
+    loadActiveBuffCasts(admin, buffCastsSince).then(data => ({ data })),
     // Auto-Raid-Invite registry — set by officers via the Discord /ari
     // command, mirrored by the bot to ari_state. The raid-leader banner
     // shows whether ARI is configured and on whom (the password itself
     // stays in Discord; we never render it here).
     admin.from('ari_state')
       .select('character, set_by_name, set_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .maybeSingle(),
     // "% mana" macro self-reports, extracted bot-side from the /gu + /rs chat
     // relay — covers casters NOT running Mimic. Zeal-pipe mana (live-state)
     // wins when fresh; this fills everyone else in.
     admin.from('mana_reports')
       .select('character, pct, reported_at')
-      .eq('guild_id', 'wolfpack')
+      .eq('guild_id', GUILD_TAG)
       .gte('reported_at', manaSince),
   ]);
   // Macro-reported mana by character (lowercased) — merge source #2.
@@ -224,43 +235,18 @@ export default async function RaidHubPage() {
   const liveClean   = ((liveRows ?? []) as LiveStateRow[]).filter(r => !isCorpse(r.character));
   const rosterClean = ((rosterRows ?? []) as RosterRow[]).filter(r => !isCorpse(r.name));
 
-  // ── Concurrent-raid clustering ─────────────────────────────────────────────
-  // raid_roster now holds one SNAPSHOT per uploader (pk guild,uploader,name).
-  // Snapshots sharing any member are the same raid; disjoint snapshots are
-  // separate raids running at once (the Dafeet/Utoh "Raid 2" report). Union-
-  // find over uploaders via shared members → cluster ordinals, biggest first.
-  const snapsByUploader = new Map<string, RosterRow[]>();
-  for (const r of rosterClean) {
-    const up = String(r.uploaded_by_discord_id || '');
-    if (!snapsByUploader.has(up)) snapsByUploader.set(up, []);
-    snapsByUploader.get(up)!.push(r);
-  }
-  const uploaders = [...snapsByUploader.keys()];
-  const clusterOf = new Map<string, number>(uploaders.map((u, i) => [u, i]));
-  const memberFirstUp = new Map<string, string>();
-  for (const [up, rws] of snapsByUploader) {
-    for (const r of rws) {
-      const m = r.name.toLowerCase();
-      const other = memberFirstUp.get(m);
-      if (other == null) { memberFirstUp.set(m, up); continue; }
-      const a = clusterOf.get(up)!, b = clusterOf.get(other)!;
-      if (a !== b) for (const [u2, c] of clusterOf) if (c === a) clusterOf.set(u2, b);
-    }
-  }
-  // Cluster id → ordinal (0-based), ordered by member count desc so "Raid 1"
-  // is the big one. memberRaidIdx: member(lower) → ordinal.
-  const clusterMembers = new Map<number, Set<string>>();
-  for (const [up, rws] of snapsByUploader) {
-    const c = clusterOf.get(up)!;
-    if (!clusterMembers.has(c)) clusterMembers.set(c, new Set());
-    for (const r of rws) clusterMembers.get(c)!.add(r.name.toLowerCase());
-  }
-  const ordered = [...clusterMembers.entries()].sort((a, b) => b[1].size - a[1].size);
-  const ordinalOf = new Map<number, number>(ordered.map(([c], i) => [c, i]));
-  const memberRaidIdx = new Map<string, number>();
-  for (const [c, members] of clusterMembers) {
-    for (const m of members) memberRaidIdx.set(m, ordinalOf.get(c)!);
-  }
+  // ── Two or more raids at once ──────────────────────────────────────────────
+  // Each Mimic's latest upload names its raid leader; uploads naming the same leader are one raid
+  // (web/lib/raidGroups.ts, the bot's utils/raidGroups.js; DECISIONS §124). This replaced clustering
+  // by shared members, which one raider moving between the raids joined into a single raid for 15
+  // minutes (the guild lead, 2026-10-01: two flagging raids, the second an hour after the first).
+  const raidSplit = groupRaids(rosterClean);
+  // A row no live raid claims (they left, or their uploader went quiet) stays with the raid its
+  // uploader is in.
+  const raidKeyFor = (lower: string, rr: RosterRow): string | null =>
+    raidSplit.multi
+      ? (raidSplit.raidForName(lower) ?? raidSplit.raidForUploader(rr.uploaded_by_discord_id))?.key ?? null
+      : null;
 
   // Per-member freshest row across snapshots. The freshest row wins membership
   // (group, rank, level), but HP backfills from the freshest row that actually
@@ -468,12 +454,13 @@ export default async function RaidHubPage() {
   // logged back in, and the swap is over.
   //
   // Without this the marker just sat there for its full 6 hours. Live case
-  // (Hitya, 2026-08-14): Bwavair is Bardtholemu's wife and plays her own cleric;
-  // he had played her toon on HIS client earlier in the night, which stamped a
-  // legitimate swap at 00:12. At 02:59 she was in Group 2 with her position
-  // updating every second — while Bardtholemu was simultaneously in Group 8 at
-  // a different loc, which one client cannot do — and /raid still had her filed
-  // under "Not seen / offline (swapped to Bardtholemu)", missing from her group.
+  // (2026-08-14): a character was played from a second client earlier in the
+  // night, which stamped a legitimate swap at 00:12. By 02:59 that character
+  // was back on its own client, in its own group, with its position updating
+  // every second — while the swapped-to character was at a different loc in a
+  // different group, which a single client cannot produce. The swap was
+  // therefore long dead, yet /raid still filed the live character under
+  // "Not seen / offline (swapped to …)", missing from its group.
   // A cleric vanishing off the raid view is the expensive version of this bug.
   const SWAP_FRESH_MS = 6 * 60 * 60 * 1000;
   // Small grace so the last in-flight sample from just BEFORE the swap can't
@@ -509,7 +496,7 @@ export default async function RaidHubPage() {
     // Non-Mimic raiders use observed buff_casts as the buff list — a group
     // V2 cast (Talisman of Epuration, Aegolism, …) creates one row per
     // target, so if a groupmate's Mimic caught the cast we know what
-    // Arakhan got and when. Marked `inferred:true` so the UI can say
+    // A member got and when. Marked `inferred:true` so the UI can say
     // "from observed casts" rather than pretending it's Zeal-authoritative.
     const inferred = inferredBuffsByName.get(lower) ?? null;
     const buffsForRow: { name: string; ticks: number | null }[] = live?.buffs ?? (
@@ -525,7 +512,7 @@ export default async function RaidHubPage() {
     // different question: is THIS PERSON running Mimic. Conflating them made
     // /raid report 43/43 (100%) on a night when 40 characters across 18
     // accounts had uploaded, because on a well-buffed raid nearly everyone
-    // picks up an inferred buff (Hitya 2026-08-06).
+    // picks up an inferred buff (the guild lead, 2026-08-06).
     const hasAgent = !!live;
     const swappedTo = swapFor(live, lower);
     rows.push({
@@ -534,9 +521,9 @@ export default async function RaidHubPage() {
       className,
       role,
       raidGroup: swappedTo ? null : (rr.group_num ?? null),
-      raidIdx: swappedTo ? null : (memberRaidIdx.get(lower) ?? null),
+      raidKey: swappedTo ? null : raidKeyFor(lower, rr),
       level: rr.level ?? null,
-      rank: rr.rank ?? null,        // '2' raid leader, '1' group leader, else member
+      rank: rr.rank ?? null,        // "Raid Leader" / "Group Leader" from Zeal, else member
       inRaid: !swappedTo,
       swappedTo,
       noAgent,
@@ -584,7 +571,7 @@ export default async function RaidHubPage() {
       className,
       role,
       raidGroup: null,
-      raidIdx: null,
+      raidKey: null,
       level: null,
       rank: null,
       inRaid: false,
@@ -635,17 +622,11 @@ export default async function RaidHubPage() {
     }
   }
 
-  // Tab labels per raid cluster — "Raid 1 — <leader> (N)" when the Zeal rank
-  // marks a leader, else just the ordinal + size.
-  const raidLabels: string[] = ordered.map(([c], i) => {
-    const members = clusterMembers.get(c)!;
-    let leaderName: string | null = null;
-    for (const m of members) {
-      const rr = rosterByName.get(m);
-      if (rr && rr.rank === '2') { leaderName = rr.name; break; }
-    }
-    return 'Raid ' + (i + 1) + (leaderName ? ' — ' + leaderName : '') + ' (' + members.size + ')';
-  });
+  // One tab per raid, keyed by its leader so a tab stays put when the other raid grows past it.
+  // Empty with one raid: no tabs, as before.
+  const raidTabs: RaidTab[] = raidSplit.multi
+    ? raidSplit.raids.map((r, i) => ({ key: r.key, label: 'Raid ' + (i + 1) + ' — ' + r.leader + ' (' + r.size + ')' }))
+    : [];
 
   // The signed-in user's class as they appear in the current raid (if any) —
   // used as the default Buffer-mode class. They can override.
@@ -664,7 +645,7 @@ export default async function RaidHubPage() {
   return (
     <RaidView
       rows={rows}
-      raidLabels={raidLabels}
+      raidTabs={raidTabs}
       myClass={myClass}
       dsValues={dsValues}
       ari={ari}

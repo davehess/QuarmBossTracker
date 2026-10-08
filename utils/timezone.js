@@ -177,6 +177,17 @@ function shortTimestampInTz(date, tz) {
   });
 }
 
+/** Bare clock time e.g. "9:42p" / "12:07a" — no date, no zone suffix. Built from
+ *  formatToParts so it does not depend on the ICU build's AM/PM spacing. */
+function shortClockInTz(date, tz) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz || getDefaultTz(),
+    hour: 'numeric', minute: '2-digit', hour12: true,
+  }).formatToParts(new Date(date));
+  const get = (type) => (parts.find(p => p.type === type) || {}).value || '';
+  return `${get('hour')}:${get('minute')}${get('dayPeriod').charAt(0).toLowerCase()}`;
+}
+
 // ── Raid window detection ──────────────────────────────────────────────────
 // Wolf Pack EQ official raid windows: Sun / Wed / Thu  8:30–11:30 pm EST.
 // Used to tag encounter uploads with `is_raid_window` so analytics can scope
@@ -252,7 +263,7 @@ function nextPvpQuietEnd(tz) {
 
 module.exports = {
   getDefaultTz, msUntilMidnightInTz, nowPartsInTz, partsInTzAt, parseUserTime,
-  formatInDefaultTz, shortTimestampInTz, localToUTC,
+  formatInDefaultTz, shortTimestampInTz, shortClockInTz, localToUTC,
   isInRaidWindow, RAID_DAYS, RAID_WINDOW_START, RAID_WINDOW_END,
   isPvpQuietHours, nextPvpQuietEnd,
 };

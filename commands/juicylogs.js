@@ -60,13 +60,12 @@ module.exports = {
       ].join('\n'));
     }
 
-    // Who's already uploading agent logs? Pull distinct contributor_character
-    // from contributions in the last 14 days as a "covered" set.
+    // Who's already uploading agent logs? The distinct contributor_character
+    // from contributions in the last 14 days is the "covered" set. An RPC, not a
+    // select of every row: the window holds ~21k rows for ~90 names, and a plain
+    // select returns only the first 1,000 of them (PostgREST's silent cap).
     const recentSince = new Date(Date.now() - 14 * 86400 * 1000).toISOString();
-    const contributors = await supabase.select(
-      'contributions',
-      `select=contributor_character&contributor_character=not.is.null&created_at=gte.${recentSince}`
-    );
+    const contributors = await supabase.rpc('recent_contributor_characters', { p_since: recentSince });
     const coveredSet = new Set(
       Array.isArray(contributors) ? contributors.map(c => (c.contributor_character || '').toLowerCase()) : []
     );

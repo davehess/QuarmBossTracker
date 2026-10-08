@@ -7,8 +7,8 @@
 // came in as parses) the board shows everything "Available now" even though
 // the kills are sitting in Supabase.
 //
-// This module reconciles the two: pull recent encounters, map each to a
-// tracked boss, and seed `nextSpawn = killedAt + timerHours`. It's the same
+// This module reconciles the two: pull each tracked boss's newest encounter,
+// and seed `nextSpawn = killedAt + timerHours`. It's the same
 // logic /recoverkills runs by hand, factored out so it can also run
 // automatically on startup + on an interval (self-healing boards).
 //
@@ -76,24 +76,31 @@ async function computeRecoverList(sinceMs) {
   const windowMs = sinceMs || defaultWindowMs(bosses);
   const sinceTs  = new Date(now - windowMs).toISOString();
 
-  const encounters = await supabase.select(
-    'encounters',
-    `started_at=gte.${encodeURIComponent(sinceTs)}&select=id,npc_id,started_at,zone_short&order=started_at.desc&limit=1000`,
-  ).catch(err => { console.warn('[reconcile] encounters select failed:', err?.message); return []; });
-
   const skipped = { notTracked: 0, noTimer: 0, alreadyRespawned: 0, alreadyCurrent: 0 };
+
+  // Map npc_id → tracked boss internal_id via bosses_local. The tracked bosses come FIRST so the
+  // encounter read below can be limited to them: `encounters` holds every named mob the guild has
+  // killed (~790 a day since auto-registration), and PostgREST cuts any response at 1,000 rows, so an
+  // unfiltered newest-first read reached back under a day and saw one of the 128 bosses.
+  const trackedIds = bosses.map(b => b.id).filter(Boolean);
+  const localRows = await supabase.select(
+    'bosses_local',
+    `internal_id=in.${encodeURIComponent('(' + trackedIds.join(',') + ')')}&select=internal_id,npc_id`,
+  ).catch(() => []);
+  const internalByNpc = new Map((Array.isArray(localRows) ? localRows : [])
+    .filter(r => r.npc_id).map(r => [r.npc_id, r.internal_id]));
+  if (internalByNpc.size === 0) return { recoverList: [], skipped, scanned: 0, bosses };
+
+  // The newest encounter per tracked boss, one row each, so the answer cannot outgrow the cap.
+  const encounters = await supabase.rpc('latest_kill_per_npc', {
+    p_guild_id: process.env.SUPABASE_GUILD_ID || 'wolfpack',
+    p_since:    sinceTs,
+    p_npc_ids:  [...internalByNpc.keys()],
+  }).catch(err => { console.warn('[reconcile] encounters select failed:', err?.message); return []; });
+
   if (!Array.isArray(encounters) || encounters.length === 0) {
     return { recoverList: [], skipped, scanned: 0, bosses };
   }
-
-  // Map npc_id → tracked boss internal_id via bosses_local.
-  const npcIds = Array.from(new Set(encounters.map(e => e.npc_id).filter(Boolean)));
-  const inList = '(' + npcIds.join(',') + ')';
-  const localRows = await supabase.select(
-    'bosses_local',
-    `npc_id=in.${encodeURIComponent(inList)}&select=internal_id,npc_id`,
-  ).catch(() => []);
-  const internalByNpc = new Map((Array.isArray(localRows) ? localRows : []).map(r => [r.npc_id, r.internal_id]));
 
   const existing = loadStateBosses();
   const killMap  = {};
@@ -107,7 +114,7 @@ async function computeRecoverList(sinceMs) {
     if (nextSpawn <= now)   { skipped.alreadyRespawned++; continue; }
     const live = existing[bossId];
     if (live?.nextSpawn && live.nextSpawn >= nextSpawn) { skipped.alreadyCurrent++; continue; }
-    // encounters are ordered desc, so the first hit for a boss is its latest kill.
+    // One row per boss (latest_kill_per_npc), so this is already its latest kill.
     if (!killMap[bossId] || killMap[bossId].nextSpawn < nextSpawn) {
       killMap[bossId] = { killedAt, nextSpawn, bossName: boss.name, zone: boss.zone };
     }
@@ -160,7 +167,7 @@ async function reconcileKillsFromSupabase(opts = {}) {
 // ── Engaged-encounter reconcile ─────────────────────────────────────────────
 // The /parses "Engaged now" section keys on encounters.ended_at IS NULL, but
 // nothing populated ended_at — so a fight whose slain line no agent happened to
-// catch lingered as "ENGAGED" forever (Hitya 2026-06-29: "this looks like all
+// catch lingered as "ENGAGED" forever (the guild lead, 2026-06-29: "this looks like all
 // of these mobs are still engaged"). The primary fix is at ingest (a
 // confirmed_kill upload sets ended_at). This sweep keeps the section honest:
 //
@@ -168,11 +175,11 @@ async function reconcileKillsFromSupabase(opts = {}) {
 //      more than STALE_MIN ago is, by definition, not being fought right now —
 //      clear it (set ended_at = fight-end). Agents only upload an encounter
 //      AFTER it concludes (death or idle flush), so a row older than a few
-//      minutes is over (Hitya: "make all the engaged mobs no longer engaged
+//      minutes is over (The guild lead: "make all the engaged mobs no longer engaged
 //      if they aren't currently engaged").
 //   2. RECENT + loot evidence → register the kill early (before STALE_MIN)
 //      when loot was posted for that npc AND there's no same-name ambiguity
-//      (Hitya's earlier rule). Mostly redundant with the confirmed_kill
+//      (the guild lead's earlier rule). Mostly redundant with the confirmed_kill
 //      ingest path, but covers a death no agent flagged.
 //
 // ended_at is set-once via the ended_at=is.null filter, so a precise death time

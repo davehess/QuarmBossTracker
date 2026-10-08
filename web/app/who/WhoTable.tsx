@@ -11,6 +11,7 @@ import { setWhoClass, setWhoZek, deleteWhoCharacter } from './actions';
 import { BASE_CLASSES } from './classes';
 import { normalizeClass } from '@/lib/class-titles';
 import WhoBreakdown from './WhoBreakdown';
+import { GUILD_INGAME_NAME } from '@/lib/guild';
 
 export type WhoRow = {
   character: string;
@@ -69,7 +70,7 @@ export default function WhoTable({ rows: initial, canEdit = false, totalInDb = n
   const router = useRouter();
   // Dedup defensively by character name — the server loader already dedups by
   // character_key, but this is a hard guarantee the table can never render the
-  // same character twice (the Nosfearatu ×8 pagination bug, Uilnayar
+  // same character twice (the duplicate-row pagination bug, a member,
   // 2026-06-22). Also makes the React row key (character) collision-free.
   const [rows, setRows] = useState<WhoRow[]>(() => {
     const seen = new Set<string>();
@@ -90,7 +91,7 @@ export default function WhoTable({ rows: initial, canEdit = false, totalInDb = n
   const [missingClassOnly, setMissingClassOnly] = useState(false);
   const [anonOnly, setAnonOnly] = useState(false);
   // Minimum level — defaults to 50 so the directory leads with raid-relevant
-  // characters and isn't drowned in low-level bazaar mules / alts (Hitya
+  // characters and isn't drowned in low-level bazaar mules / alts (the guild lead
   // 2026-06-22 "by default don't show under level 50"). Rows with an UNKNOWN
   // level (never observed non-anon) are kept regardless — "unknown" isn't
   // "under 50". 0 = show everything.
@@ -154,7 +155,7 @@ export default function WhoTable({ rows: initial, canEdit = false, totalInDb = n
   }, [rows, q, classFilter, zekFilter, missingClassOnly, anonOnly, minLevel, sortKey, sortDir]);
 
   // Catalog breakdown computed from the FILTERED view so it tracks whatever
-  // the filters are narrowing to (Hitya 2026-06-22). By effective class
+  // the filters are narrowing to (the guild lead, 2026-06-22). By effective class
   // (title-folded), and by guild excluding Wolf Pack + the empty bucket.
   const { classBreakdown, guildBreakdown } = useMemo(() => {
     const byClass = new Map<string, number>();
@@ -163,7 +164,7 @@ export default function WhoTable({ rows: initial, canEdit = false, totalInDb = n
       const k = normalizeClass(r.effectiveClass);
       if (k) byClass.set(k, (byClass.get(k) || 0) + 1);
       const g = r.guild ? r.guild.trim() : '';
-      if (g && g !== 'Wolf Pack') byGuild.set(g, (byGuild.get(g) || 0) + 1);
+      if (g && g !== GUILD_INGAME_NAME) byGuild.set(g, (byGuild.get(g) || 0) + 1);
     }
     const sort = (m: Map<string, number>) => [...m.entries()]
       .map(([label, count]) => ({ label, count }))

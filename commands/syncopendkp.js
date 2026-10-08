@@ -21,7 +21,7 @@ module.exports = {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const t0 = Date.now();
-    const res = await runSync({ full }).catch(err => ({ error: err?.message || String(err) }));
+    const res = await runSync({ full, force: true }).catch(err => ({ error: err?.message || String(err) }));
     const took = ((Date.now() - t0) / 1000).toFixed(1);
 
     if (res.error) {

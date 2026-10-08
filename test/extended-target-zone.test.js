@@ -17,14 +17,15 @@ const parseBlock = sliceBlock(SRC, 'let sameZoneOnly = true;', '} catch { /* */ 
 // eslint-disable-next-line no-new-func
 const runParse = new Function('req', `let selfChar = '';\n${parseBlock}\nreturn { selfChar, sameZoneOnly };`);
 
-// The decision: given selfChar, live rows, and sameZoneOnly, produce inScope.
+// The decision: given selfChar, live rows, and sameZoneOnly, produce the zone scope. (With two raids at
+// once the handler then drops the other raid's raiders; that step is test/raid-groups.test.js's.)
 const decisionBlock = sliceBlock(
   SRC,
   'let scopeZone = null;',
-  'const inScope = scopeZone ? live.filter(r => !r.zone_name || r.zone_name === scopeZone) : live;',
+  'const inZone = scopeZone ? live.filter(r => !r.zone_name || r.zone_name === scopeZone) : live;',
 );
 // eslint-disable-next-line no-new-func
-const runDecision = new Function('selfChar', 'live', 'sameZoneOnly', `${decisionBlock}\nreturn { scopeZone, inScope };`);
+const runDecision = new Function('selfChar', 'live', 'sameZoneOnly', `${decisionBlock}\nreturn { scopeZone, inScope: inZone };`);
 
 const names = (rows) => rows.map(r => r.character).sort();
 

@@ -22,7 +22,7 @@
 // disambiguation past 2 simultaneous (target+pet) isn't possible from this
 // data. Upstream ask to add `spawn_id`: docs/zeal-spawn-id-request.md.
 //
-// FIELD ISSUE (n=1, Ashieron, 2026-06-12): if Mimic can't detect Zeal at all,
+// FIELD ISSUE (n=1, a member, 2026-06-12): if Mimic can't detect Zeal at all,
 // reinstalling Mimic OUTSIDE the EQ folder fixes it. This detection is
 // path-independent (tasklist eqgame.exe -> connect pipe by PID), so it's NOT a
 // bug here — the likely cause is environmental: Mimic's files next to
@@ -33,16 +33,36 @@
 // folder installs for log detection, which can steer users into this — revisit
 // a soft install-location warning if more reports land.
 //
-// FIELD ISSUE (n=1, Jankzer, 2026-07-05): the pipe IS found + connected but
+// FIELD ISSUE (n=1, a member, 2026-07-05): the pipe IS found + connected but
 // every connection instantly DROPS (agent log churns "[zeal] disconnected from
 // \\.\pipe\zeal_<pid>" with no error reason = the server closed it), so no
 // data arrives and the health overlay wrongly says "EQ is not running". Cause:
 // EQ running ELEVATED while Mimic runs non-elevated — the named pipe's ACL
 // denies the lower-integrity process. Fix: run Mimic as Administrator to match
-// EQ (or run both non-elevated). Distinguish from the Ashieron case above by
-// the log: Ashieron = never connects (ENOENT / no pipe); this = connects then
+// EQ (or run both non-elevated). Distinguish from the 2026-06-12 case above by
+// the log: that one never connects (ENOENT / no pipe); this one connects then
 // close/end. The EQ-up-but-no-Zeal-data notification (main.js) and the health
 // overlay's "not running" hint both now lead with this fix.
+//
+// CONFIRMED AGAIN (n=2, two members, 2026-09-10) — AND IT TAKES THE
+// OVERLAYS WITH IT, which is the part this note was missing. Same elevation
+// mismatch, but it reached us as three unrelated-looking complaints: no Zeal
+// feed, no overlay visible at all ("hidden/unhidden or docked"), and a Zeal
+// install dying on EPERM. Running Mimic as admin fixed all three in one move.
+// The overlay half is the same Windows rule as the pipe half — a
+// medium-integrity window cannot reliably sit above a high-integrity fullscreen
+// one — and it is the symptom a user notices FIRST, so treat "EQ is running and
+// NO overlay shows" as an elevation mismatch until proven otherwise. He also
+// guessed fullscreen-windowed was the cause, which is the natural wrong answer.
+// ⚠ SHARPEST DIAGNOSTIC DETAIL, recorded verbatim because it narrows this a lot
+// and we have not explained it yet: "I can get em all up when doing the
+// placement mode. and moving/resizing. even the hotkey flip them from on to
+// hidden. but nothing ever makes it to my screen." So the windows exist, render
+// and respond to every control — they are simply never composited above the
+// game. Whatever the mechanism, ANY theory has to survive that: the overlays
+// are not failing to be created, they are failing to be seen.
+// His EQ additionally lived under C:\Program Files (x86), which is what made
+// the install fail separately — see _eqFolderState() in the agent.
 
 'use strict';
 const net  = require('net');

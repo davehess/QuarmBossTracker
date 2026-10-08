@@ -6,7 +6,7 @@ selector — built 2026-08-11**; what shipped and the calls made along the way
 are in §6. Read this before touching `_noteDiCast`, `/api/agent/di-status`,
 `trackDiFired`, or either Divine Intervention guild trigger.*
 
-**The ask (Hitya, 2026-08-03):**
+**The ask (guild lead, 2026-08-03):**
 
 > can you identify if we have the "D.I. fired on \<tank name\>" trigger for
 > divine Intervention? we would like to start building in logic to call that out
@@ -227,7 +227,7 @@ network path is needed.
 5. *Later, only if inventory ever becomes a feed:* emerald evidence as a fourth
    ranking chip. **Never as a filter.**
 
-## 5. Open questions for Hitya
+## 5. Open questions for the guild lead
 
 - **Two names, or three?** Two is the ask. Three covers more of the raid but the
   TTS gets long and "everyone assumes someone else" gets likelier.
@@ -235,8 +235,8 @@ network path is needed.
   only when it fires)? We can see the buff on the MT via `buff_casts` /
   live-state when the MT runs Mimic. That's a "put DI up" callout, which is a
   different — and possibly more valuable — thing than "DI just went off".
-- **The four names in the original ask** (Mcdorf, Stupidrichard, Uilnayar,
-  Fargan) — is that a fixed DI roster we should encode, or was that "these are
+- **The four names in the original ask** (a member, a member, a member,
+  a member) — is that a fixed DI roster we should encode, or was that "these are
   the clerics we had that night"? A configured roster is easy and removes a lot
   of guessing; a hardcoded one rots.
 
@@ -315,7 +315,7 @@ callout id and nothing else — no endpoint, no row. Per `DESIGN-callout-overlay
 exposure count is not a signal.
 
 
-## §7 — Hitya's calls, 2026-08-11 (all four points, against the shipped build)
+## §7 — the guild lead's calls, 2026-08-11 (all four points, against the shipped build)
 
 1. **"X OR Y if both have it ready and aren't getting ready to CH soon"** —
    confirmed as shipped: primary pool is `recent && !busy` (busy = own CH turn
@@ -330,4 +330,4 @@ exposure count is not a signal.
 4. **"The one casting should call it out"** — NEW, added 2026-08-11: the
    selector nominates, a human closes the ambiguity. The callout now ends
    "— caster call it" (TTS and overlay), teaching the protocol every time it
-   fires. The Lenolshot "I got it Curry!" pattern, made standard.
+   fires. The a member "I got it Curry!" pattern, made standard.

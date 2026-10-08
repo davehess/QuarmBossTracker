@@ -331,7 +331,7 @@ async function openSession(thread, channelId, label, tonightParses) {
   });
 }
 
-// ── Deferred parse sessions (Hitya 2026-08-20) ───────────────────────────────
+// ── Deferred parse sessions (the guild lead, 2026-08-20) ───────────────────────────────
 // /announce used to open the parse session AT ANNOUNCE TIME whenever none was
 // active — so announcing tomorrow's event just after midnight turned its thread
 // into "tonight's session home", and the All-Night Leaderboard filled with

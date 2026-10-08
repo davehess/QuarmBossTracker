@@ -1,0 +1,145 @@
+// test/raid-history-page.test.js — the wiring around the raid-attendance
+// heatmaps: /raidhistory, the /me section, the shared grid component, nav and
+// link-preview metadata (the guild lead, 2026-09-03).
+//
+// The pure math is covered by raid-heatmap.test.js. This file is the
+// call-site half: the page reads the right tables the right way (paged, tick
+// gaps dropped, "full" from raid_targets with a fallback), /me unions the
+// family through the overlap filter, every night cell links to its review,
+// and the grid is reachable from the nav. Stripped-source assertions —
+// comments stripped first, because this repo's comments quote the very
+// strings a naive toContain would match.
+//
+// Run: npx vitest run test/raid-history-page.test.js
+
+import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { ROOT, stripJs } from './_source-slice.js';
+
+const read = (...p) => stripJs(fs.readFileSync(path.join(ROOT, 'web', ...p), 'utf8'));
+
+const page  = read('app', 'raidhistory', 'page.tsx');
+const me    = read('app', 'me', 'page.tsx');
+const meAtt = read('app', 'me', 'AttendanceSection.tsx');   // the attendance markup moved here 2026-09-13 (client-side Strips/Blocks)
+const grid  = read('components', 'RaidHeatmap.tsx');
+const nav   = read('components', 'Nav.tsx');
+const meta  = read('lib', 'pageMeta.ts');
+const night = read('app', 'raid', 'review', '[date]', 'page.tsx');
+const index = read('app', 'raid', 'review', 'page.tsx');
+const knobs = read('app', 'admin', 'overlays', 'page.tsx');
+
+describe('/raidhistory reads', () => {
+  it('is member-gated', () => {
+    expect(page).toMatch(/redirect\('\/auth\/signin\?next=\/raidhistory'\)/);
+  });
+
+  it('takes "full" from the 60-man raid_targets row set, with a fallback', () => {
+    expect(page).toMatch(/\.from\('raid_targets'\)[\s\S]{0,200}\.eq\('raid_size', '60-man'\)/);
+    expect(page).toMatch(/return sum > 0 \? sum : DEFAULT_FULL_RAID;/);
+  });
+
+  it('pages both reads and drops sync-gap ticks', () => {
+    expect(page).toMatch(/selectAll<NightRaid>/);
+    expect(page).toMatch(/selectAll<NightTick>/);
+    expect(page).toMatch(/buildNights\(raids, ticks\.filter\(t => Array\.isArray\(t\.attendees\) && t\.attendees\.length > 0\)\)/);
+    expect(page).not.toMatch(/\.limit\(/);
+  });
+
+  it('colours a night by raiders over full and links it to the review', () => {
+    expect(page).toMatch(/color: fillColor\(raiders \/ full\)/);
+    expect(page).toMatch(/href: `\/raid\/review\/\$\{n\.date\}`/);
+    // A raid row with no captured ticks is not a night.
+    expect(page).toMatch(/\.filter\(n => n\.tickIds\.length > 0 && n\.date >= startKey\)/);
+  });
+
+  it('hands the grid one chip per night, raider count on the chip, a summary per month', () => {
+    expect(page).toMatch(/sub: String\(raiders\)/);
+    expect(page).toMatch(/nights=\{chips\} monthSummaries=\{monthSummaries\}/);
+    expect(page).toMatch(/const startKey = windowStart\(todayKey, weeksN \* 7\);/);
+  });
+});
+
+describe('/me section', () => {
+  const loader = me.slice(me.indexOf('async function loadFamilyAttendance('), me.indexOf('async function loadScrap('));
+
+  it('loads the family union through the overlap filter, ids only', () => {
+    expect(me).toMatch(/loadFamilyAttendance\(names\)/);
+    expect(loader).toMatch(/\.overlaps\('attendees', names\)/);
+    // Neither tick read pulls the attendee arrays — that is the wide part.
+    expect(loader.match(/\.select\('raid_id, tick_id'\)/g) ?? []).toHaveLength(2);
+    expect(loader).not.toMatch(/\.select\('raid_id, tick_id, attendees'\)/);
+    expect(loader).toMatch(/\.neq\('attendees', '\{\}'\)/);
+  });
+
+  it('hides itself when the tick read failed rather than drawing a year of misses', () => {
+    expect(loader).toMatch(/if \(heldTicks\.length === 0\) return null;/);
+  });
+
+  it('reads 60 days, not a year, and shows attendance as a RATE first', () => {
+    expect(me).toMatch(/const ATTENDANCE_DAYS = 60;/);
+    expect(loader).toMatch(/const since60 = windowStart\(todayKey, ATTENDANCE_DAYS\);/);
+    expect(meAtt).toMatch(/<AttendanceStat label="Last 60 days" attended=\{attendance\.attended60\} held=\{attendance\.held60\} \/>/);
+    expect(meAtt).toMatch(/\$\{pct\(attended, held\)\}%/);
+  });
+
+  it('a missed night is an outline, an attended one is gold scaled by ticks', () => {
+    expect(loader).toMatch(/outline: got === 0/);
+    expect(loader).toMatch(/alpha: got > 0 \? attendedAlpha\(got, n\.tickIds\.length\) : undefined/);
+    expect(loader).toMatch(/href: `\/raid\/review\/\$\{n\.date\}`/);
+  });
+
+  it('renders the grid and points at the guild page', () => {
+    expect(meAtt).toMatch(/<RaidHeatmap nights=\{attendance\.chips\}/);
+    expect(meAtt).toMatch(/href="\/raidhistory"/);
+  });
+});
+
+describe('RaidHeatmap component', () => {
+  it('is a client component with one fixed tooltip that hides on scroll', () => {
+    expect(grid.trimStart().startsWith("'use client'")).toBe(true);
+    expect(grid).toMatch(/role="tooltip"/);
+    expect(grid).toMatch(/fixed z-50/);
+    expect(grid).toMatch(/addEventListener\('scroll', hide/);
+  });
+
+  it('lays nights out as month blocks of day chips that tile on desktop and stack on a phone', () => {
+    expect(grid).toMatch(/const months = groupByMonth\(nights\);/);
+    expect(grid).toMatch(/grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4/);
+    expect(grid).toMatch(/DAY_SHORT\[weekdayOf\(n\.date\)\]/);
+    expect(grid).toMatch(/Number\(n\.date\.slice\(8, 10\)\)/);
+    expect(grid).toMatch(/monthSummaries\?\.\[m\.month\]/);
+  });
+
+  it('makes every night a real link, reachable by keyboard', () => {
+    expect(grid).toMatch(/<a key=\{n\.date\} href=\{n\.href\}/);
+    expect(grid).toMatch(/onFocus=\{e => show\(e\.currentTarget, n\.lines\)\}/);
+  });
+});
+
+describe('the raid review shows bosses, not farm trash (Hitya, 2026-09-04)', () => {
+  it('both review pages filter to curated npc ids IN THE QUERY', () => {
+    expect(night).toMatch(/const curated = await curatedNpcIds\(sb\);/);
+    expect(night).toMatch(/\.in\('npc_id', curated\)/);
+    expect(index).toMatch(/const curated = await curatedNpcIds\(sb\);/);
+    // The index reads its encounters through the PAGED loader (web/lib/fullReads.ts, the 1,000-row cap),
+    // which carries the in-query filter; the page's job is to hand it the curated ids.
+    expect(index).toMatch(/loadReviewEncounters<EncRow>\(sb, curated, sinceIso\)/);
+    expect(read('lib', 'fullReads.ts')).toMatch(/\.in\('npc_id', curated\)/);
+  });
+
+  it('officers get the live ingest switch on /admin/overlays', () => {
+    expect(knobs).toMatch(/key: 'flag_skip_uncurated_mobs'/);
+  });
+});
+
+describe('reachability', () => {
+  it('sits in the Stats group of the nav', () => {
+    const stats = nav.slice(nav.indexOf("id: 'stats'"), nav.indexOf("id: 'prep'"));
+    expect(stats).toMatch(/\{ href: '\/raidhistory',\s+label: 'Raid history' \}/);
+  });
+
+  it('unfurls with its own description', () => {
+    expect(meta).toMatch(/'\/raidhistory':\s+\{ title: 'Raid History'/);
+  });
+});

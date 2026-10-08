@@ -4,8 +4,14 @@
 // only ever called for the signed-in user's own userId.
 
 import { supabaseAdmin } from '@/lib/supabase';
+import { loadRoster } from '@/lib/roster';
 
-export type OwnedChar = { name: string; main_name: string | null; class: string | null; active: boolean };
+// `rank` and `hidden_from_lists` are here for lists that tuck characters away (web/lib/listableChars.ts);
+// nothing else reads them. This function itself never filters on either: account inventory shows all.
+export type OwnedChar = {
+  name: string; main_name: string | null; class: string | null; active: boolean; rank: string | null;
+  hidden_from_lists: boolean | null;
+};
 
 export async function ownedCharacters(userId: string): Promise<OwnedChar[]> {
   const admin = supabaseAdmin();
@@ -25,17 +31,15 @@ export async function ownedCharacters(userId: string): Promise<OwnedChar[]> {
   household.add(pack.discord_id);
   household.add(root);
 
-  const { data: allChars } = await admin
-    .from('characters')
-    .select('name, main_name, class, active, discord_id')
-    .eq('guild_id', 'wolfpack');
-  const all = (allChars ?? []) as (OwnedChar & { discord_id: string | null })[];
+  // The shared per-request roster read (web/lib/roster.ts), so a page that also
+  // asks for the roster does not read `characters` twice.
+  const all = (await loadRoster()) as (OwnedChar & { discord_id: string | null })[];
 
   const anchored = all.filter(c => c.discord_id && household.has(c.discord_id));
   const roots = new Set(anchored.map(c => (c.main_name || c.name).toLowerCase()));
   if (roots.size === 0) return [];
   return all
     .filter(c => roots.has((c.main_name || c.name).toLowerCase()))
-    .map(({ name, main_name, class: cls, active }) => ({ name, main_name, class: cls, active }))
+    .map(({ name, main_name, class: cls, active, rank, hidden_from_lists }) => ({ name, main_name, class: cls, active, rank, hidden_from_lists }))
     .sort((a, b) => (a.active === b.active ? 0 : a.active ? -1 : 1) || a.name.localeCompare(b.name));
 }

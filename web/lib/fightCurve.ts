@@ -33,7 +33,7 @@ export type FightCurve = {
   mt: MTSegment[];
   everyone: { name: string; total: number }[];  // all contributors, for the search list
   /** Every attributed name with its full cum array — NO top-N fold. The
-   *  class-grouped view (Hitya's 2026-08-16 parse review) needs the long tail
+   *  class-grouped view (the guild lead's 2026-08-16 parse review) needs the long tail
    *  per-name so a class's total is right and its drill-down has every member;
    *  the folded `bands` can't provide either. */
   series: Band[];
@@ -155,7 +155,7 @@ export function buildFightCurve(rows: TimelineRow[], stepSec: number): FightCurv
 
 /**
  * Group the unfolded per-name series by class for the class-level stacked view
- * (Hitya 2026-08-16: right-edge "class + %" labels, drill into a class for the
+ * (the guild lead, 2026-08-16: right-edge "class + %" labels, drill into a class for the
  * same per character). Largest class first; beyond `topN` classes the rest fold
  * into one "N other classes" group that stays drillable — same palette
  * discipline as the character fold (7 hues + one muted overflow, never an 8th).

@@ -4,7 +4,7 @@
 // while the log emote carrying a slow landing says "Diabo Xi Va Temariel".
 // _rampageOnMainTarget compared those two strings raw, so the SLOW LANDED
 // callout was suppressed for the entire instance — a Beastlord slow and a Shaman
-// slow both landed on the boss and nobody heard either (Hitya, live 2026-08-13).
+// slow both landed on the boss and nobody heard either (the guild lead, live 2026-08-13).
 //
 // This is the nastiest shape of bug in this codebase: the debuffs still appeared
 // in Target Info (that path deliberately skips the Zeal name match), so every

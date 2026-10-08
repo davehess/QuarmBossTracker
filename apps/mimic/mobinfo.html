@@ -30,6 +30,14 @@
     border-radius:4px;vertical-align:middle;white-space:nowrap;letter-spacing:.3px}
   .mob .pqdi:hover{background:#3d2a57;border-color:#d2a8ff;color:#e9d5ff}
   .mob .cls{font-size:10px;color:#9b8bb5;margin-left:4px}
+  /* A Shadow Knight mob's Harm Touch: green while it has it, red once used. */
+  .mob .ht{font-size:10px;margin-left:5px;padding:0 4px;border:1px solid currentColor;border-radius:3px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .mob .ht.ok{color:#56d364}
+  .mob .ht.used{color:#f85149}
+  /* A targeted player's known timers (disc, Mend, Lay on Hands, AAs): the HT chip's look. */
+  .mob .cds{display:flex;flex-wrap:wrap;gap:4px;margin:3px 0 1px}
+  .mob .cd{font-size:10px;padding:0 4px;border:1px solid currentColor;border-radius:3px;white-space:nowrap;font-variant-numeric:tabular-nums;color:#f85149}
+  .mob .cd.ok{color:#56d364}
   .mob .zone{font-size:9px;color:#79c0ff;margin-top:1px}
   .mob .sub{font-size:9px;color:#8b949e;margin-top:1px;font-variant-numeric:tabular-nums}
   .hpbar{height:6px;background:rgba(255,255,255,0.13);border-radius:3px;overflow:hidden;margin-top:4px}
@@ -39,6 +47,67 @@
   .manabar{height:5px;background:rgba(255,255,255,0.13);border-radius:3px;overflow:hidden;margin-top:2px}
   .manabar > div{height:100%;background:#5a8af0;transition:width 250ms linear}
   .mob .mana{font-size:9px;color:#79c0ff;margin-top:2px;font-variant-numeric:tabular-nums}
+  /* "est" — the bar is a FLOOR on mana used, never a reading. Quiet on purpose:
+     it is a caveat, not a callout, and screen centre is sacred mid-raid. */
+  .mob .mana .est{font-size:8px;color:#6e7681;border:1px solid rgba(255,255,255,0.14);
+    border-radius:2px;padding:0 3px;margin-left:3px;letter-spacing:0.5px}
+  /* Last observed cast. Gold because it is a fact about the fight, not a
+     warning — red and orange are spoken for. A '?' tier is dimmed instead of
+     hidden: knowing the family still beats silence. */
+  .mob .lastcast{font-size:10px;color:#f0b429;margin-top:3px}
+  .mob .lastcast.guess{color:#b8912a}
+  .mob .lastcast .sn{color:#6e7681;font-size:9px}
+  /* Factions tab — what killing this does to your standing. */
+  .fac{display:flex;align-items:baseline;gap:6px;font-size:10px;padding:1px 0}
+  .fac .fn{flex:1 1 auto;color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fac .fv{font-variant-numeric:tabular-nums;font-weight:600}
+  .fac .up{color:#56d364}
+  .fac .dn{color:#f85149}
+  /* What the mob IS on, who will assist it, what it helps (above the on-kill list). Wraps — the
+     window is small and a zone can hold a dozen helpers. The faction name is the one link; the
+     handshake and the click are wired with the PQDI chip's, below. */
+  .fhead{margin-bottom:3px}
+  .fmeta{font-size:10px;line-height:1.35;padding:1px 0;color:#c9d1d9;overflow-wrap:anywhere}
+  .fmeta .fk{color:#6e7681}
+  .facl{color:#d2a8ff;cursor:pointer;text-decoration:none;border-bottom:1px dotted #a371f7}
+  .facl:hover{color:#e9d5ff;border-bottom-color:#d2a8ff}
+  /* F/Q/V sub-tabs (Faction / Quest / Vendor), the quest rows and their copy chips. */
+  .fqvtabs{display:flex;gap:3px;margin:6px 0 3px}
+  .fqvtab{background:rgba(255,255,255,0.04);color:#9aa4ad;border:1px solid rgba(255,255,255,0.10);
+          border-radius:4px;padding:1px 8px;font-size:10px;cursor:pointer;font-family:inherit}
+  .fqvtab:hover{color:#fff;border-color:#a371f7}
+  .fqvtab.on{background:#2a1d3d;color:#d2a8ff;border-color:#a371f7}
+  .qhead{font-size:9px;color:#6b7280;letter-spacing:0.05em;text-transform:uppercase;margin:6px 0 1px}
+  .qrow{padding:3px 0;border-top:1px solid rgba(110,118,129,0.14);font-size:10px}
+  .qhead + .qrow{border-top:0}
+  .qline{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
+  .qcopy{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:0 5px;
+         font-size:10px;font-family:inherit;cursor:pointer}
+  .qcopy:hover{border-color:#58a6ff}
+  .qcopy.ok{border-color:#56d364;color:#56d364}
+  .qsay{color:#c9d1d9;line-height:1.35;margin-top:1px;font-size:10px}
+  .qsay.alt{color:#8b949e}
+  .qtag{font-size:8.5px;border-radius:3px;padding:0 4px;border:1px solid}
+  .qtag.gate{color:#d29922;border-color:rgba(210,153,34,0.5)}
+  .qtag.flag{color:#56d364;border-color:rgba(86,211,100,0.5)}
+  /* Warnings and item labels (the guild lead, 2026-09-29): ⚠ orange for a despawn or a spawn, red
+     for a faction loss; "needs" blue; "get" gold like the hand-in rewards. */
+  .qtag.warn{color:#ffa657;border-color:rgba(255,166,87,0.55)}
+  .qtag.bad{color:#f85149;border-color:rgba(248,81,73,0.55)}
+  .qtag.need{color:#58a6ff;border-color:rgba(88,166,255,0.5)}
+  .qtag.give{color:#d29922;border-color:rgba(210,153,34,0.5)}
+  .qtoggle{background:none;border:0;color:#8b949e;font-size:10px;font-family:inherit;cursor:pointer;padding:0 2px}
+  .qtoggle:hover{color:#fff}
+  .qlbl{font-size:8.5px;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;flex:0 0 24px}
+  .qget{color:#d29922}
+  .qfac{font-size:9.5px;color:#8b949e;margin-top:1px}
+  .qfac .up{color:#56d364}
+  .qfac .dn{color:#f85149}
+  .qnpc{color:#58a6ff}
+  .qzone{color:#8b949e}
+  .vrow{display:flex;gap:6px;font-size:10px;padding:1px 0}
+  .vrow .vn{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c9d1d9}
+  .vrow .vp{color:#d29922;font-variant-numeric:tabular-nums}
   /* #130 slow status — a distinct compact badge right under the HP header so
      "is it slowed, with what, how long left" reads at a glance (a slow matters
      more than a generic debuff row, so it is NOT buried in the debuff list). */
@@ -51,6 +120,9 @@
   .slowbadge .sm{color:#f0b429}
   .slowbadge .by{color:#c9a227;font-weight:400;font-style:italic;font-size:10px}
   .slowbadge .st2{color:#e6c34a;margin-left:auto}
+  /* FB-54 reverse slow: red, not amber — a slow on this mob hastes it. */
+  .slowbadge.rev{background:rgba(248,81,73,0.16);border-color:rgba(248,81,73,0.6);color:#ff7b72}
+  .slowbadge.rev .sc,.slowbadge.rev .sn,.slowbadge.rev .sm{color:#ff7b72}
   /* observed buffs on the current target (timed from the cast that landed) */
   .tbuffs{margin-top:6px;display:flex;flex-direction:column;gap:3px}
   .tbuffs .hdr{font-size:9px;color:#6b7280;letter-spacing:0.05em;text-transform:uppercase}
@@ -110,6 +182,10 @@
     color:#d2a8ff;border:1px solid #3d2a57}
   .spec .chip.warn{background:#3d1d1d;color:#ffb3b3;border-color:#5a2a2a}
   .spec .chip.imm{background:#1d2a3d;color:#9ecbff;border-color:#2a3d57}
+  /* sight chips — "invis will not hide you". Amber rather than the red warn
+     tone: it defeats a PLAN (a pull, a corpse run), it is not something the mob
+     does to you in a fight, and the two must stay tellable apart at a glance. */
+  .spec .chip.sight{background:#3d2f1d;color:#ffd9a0;border-color:#5a4522}
   #empty{color:rgba(255,255,255,0.5);font-size:12px;text-shadow:0 1px 2px #000;padding:4px 0}
   /* drag/lock/setup chrome — same pattern as the other overlays. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
@@ -137,6 +213,31 @@
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
   #move-btn:hover{opacity:1;color:#a371f7;border-color:#a371f7}
   body.setup #move-btn{top:30px}
+  /* ▭ Mini — "Two rows, draining timers" (the guild vote, closed 2026-09-17:
+     "Mini is mob health plus slow and root timers"). The markup only exists
+     while body.wp-mini is on (miniTargetHtml). The 22px side gutters keep the
+     HP row out from under the corner ✥ ✕, which stay put and fade in mini. */
+  body.wp-mini #empty{padding:1px 22px;font-size:11px}
+  .mini{background:rgb(8 5 16 / var(--bg-alpha));border-radius:6px;padding:2px 22px;display:flex;flex-direction:column;gap:2px}
+  .mini-row{display:flex;align-items:center;gap:5px;min-height:16px;font-size:11px;line-height:1.35;text-shadow:0 1px 2px #000}
+  .mini-pct,.mini-lab{width:4ch;text-align:right;font-weight:700}
+  .mini-pct{color:#56d364}
+  .mini-bar{flex:1 1 48px;min-width:24px;height:4px;background:rgba(255,255,255,0.13);border-radius:2px;overflow:hidden}
+  .mini-bar i{display:block;height:100%;background:#56d364}
+  .mini-row.mid .mini-pct{color:#f0b429} .mini-row.mid .mini-bar i{background:#f0b429}
+  .mini-row.lo .mini-pct{color:#f85149}  .mini-row.lo .mini-bar i{background:#f85149}
+  .mini-row.none .mini-pct{color:#6e7681}
+  .mini-nm{font-weight:700;color:#e9d5ff}
+  /* Timer rows: amber is slow on every overlay (root will be blue #58a6ff). */
+  .mini-row.slow .mini-lab{color:#f0b429;font-size:10px;letter-spacing:.3px}
+  .mini-row.slow .mini-bar i{background:#f0b429}
+  .mini-row.rev .mini-lab{color:#f85149;font-size:10px;letter-spacing:.3px}
+  .mini-row.rev .mini-bar i{background:#f85149}
+  .mini-row.rev .mini-t{color:#ff7b72;font-weight:700}
+  .mini-t{color:#e6edf3}
+  .mini .ht{flex:0 0 auto;font-size:10px;padding:0 4px;border:1px solid currentColor;border-radius:3px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  .mini .ht.ok{color:#56d364}
+  .mini .ht.used{color:#f85149}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
@@ -151,7 +252,7 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title">
+    <div class="title wp-mini-hide">
       <span id="conn" class="conn bad">○</span>
       <span>🎯 Target Info</span>
       <span id="lvlRange" class="lvlRange"></span>
@@ -159,6 +260,9 @@
         <button id="tabStats"  class="tab on" type="button">Stats</button>
         <button id="tabLoot"   class="tab"    type="button">Loot</button>
         <button id="tabSpells" class="tab"    type="button">Spells</button>
+        <button id="tabFactions" class="tab"  type="button" title="Faction · Quest · Vendor">F/Q/V</button>
+        <button id="tabMana" class="tab" type="button"
+                title="Estimated mana bar on/off. OFF shows only the spell the mob was seen casting; ON also subtracts its mana cost from the catalog pool. The estimate is a FLOOR — a resisted or interrupted cast spends mana and prints no message.">&#9889;</button>
       </span>
     </div>
     <div id="body"></div>
@@ -220,8 +324,42 @@
   if (doneBtn) doneBtn.addEventListener("click", function(){ try { document.body.classList.remove("setup"); } catch (e) {} try { if (_setupScope === "this") window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {} _setupScope = null; });
 
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
-  function fmtNum(n){ if (n == null) return '?'; n = +n; if (n >= 1000000) return (n/1000000).toFixed(1)+'M'; if (n >= 1000) return Math.round(n/1000)+'k'; return String(n); }
+  // ⚠ ONE TENTH, and drop it when it is zero (the guild lead, 2026-09-22:
+  // "please include tenths for HP, so it would be 4.7k vs 5k"). Rounding to
+  // whole thousands turned a 4,670 HP raider into "5k / 5k HP · 100%" — a
+  // number that is not only imprecise but actively wrong-looking beside a
+  // client window reading 4670/4670. A 330-point error is a heal.
+  // Trailing ".0" is stripped so a real 5,000 still reads "5k" rather than
+  // "5.0k": the tenth is there to carry information, not decoration.
+  function fmtK(v, unit){
+    var s = v.toFixed(1);
+    if (s.slice(-2) === '.0') s = s.slice(0, -2);
+    return s + unit;
+  }
+  function fmtNum(n){ if (n == null) return '?'; n = +n; if (n >= 1000000) return fmtK(n/1000000, 'M'); if (n >= 1000) return fmtK(n/1000, 'k'); return String(n); }
+  // ── Durations ──────────────────────────────────────────────────────────────
   function fmtSecs(s){ s = Math.max(0, Math.round(s)); if (s >= 3600) return Math.floor(s/3600)+'h'+String(Math.floor((s%3600)/60)).padStart(2,'0'); var m=Math.floor(s/60); return m+':'+String(s-m*60).padStart(2,'0'); }
+  // A targeted player's known timers (the guild lead, 2026-10-02: "When we have a
+  // known timer, for someone's disciplines or mend or area taunt, we should
+  // display those on target info. When we're targeting them"). ✓ when ready,
+  // else the time left; "~" marks an estimate. The agent (_targetPlayerTimers)
+  // names where each came from.
+  var _CD_FROM = { own: 'from your own character', mimic: 'from their Mimic', seen: 'you saw them start it' };
+  function timersLine(list){
+    if (!list || !list.length) return '';
+    var h = '';
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i] || {};
+      if (!c.label) continue;
+      var ready = !(c.ms_left > 0);
+      var tip = esc(c.label) + ' — ' + (_CD_FROM[c.source] || 'from a Mimic');
+      if (c.source === 'seen') tip += c.level_known ? '; the time is estimated from their level' : '; their level is unknown, so this is the longest it can take';
+      else if (c.est) tip += '; the time is an estimate';
+      h += '<span class="cd' + (ready ? ' ok' : '') + '" title="' + tip + '">' + esc(c.label) + ' '
+         + (ready ? '✓' : (c.est ? '~' : '') + fmtSecs(c.ms_left / 1000)) + '</span>';
+    }
+    return h ? '<div class="cds" data-wp-sect="timers">' + h + '</div>' : '';
+  }
   // Short slow name for the badge — "Turgur's Insects" → "Turgur's" (matches the
   // agent's _slowShortName so the badge, the callout, and the debuff row agree).
   function _slowShort(n){ return String(n||'').replace(/\s+(Insects|Deeds|Pace|Sleep)$/i,'').trim() || String(n||''); }
@@ -229,25 +367,54 @@
   // buffs (real remaining time, no original duration → full bar). For mobs /
   // other players they're observed cast-landings (proportional bar).
   // One buff/debuff row.
-  function _tbuffRow(b){
+  function _tbuffRow(b, isPacify){
     var hasRem   = b.remaining_secs != null;
     var hasTotal = hasRem && b.total_secs;
     var pct = hasTotal ? Math.max(0, Math.min(100, (b.remaining_secs / b.total_secs) * 100)) : (hasRem ? 100 : 0);
     // Buff = green, debuff (good===0) = red; unknown remaining = gray.
-    var col = (b.good === 0) ? '#f85149' : (!hasRem ? '#6e7681' : '#56d364');
+    // Pacify is BLUE — deliberately outside the good/bad axis. It is not a buff
+    // on the mob and not a debuff we want it to suffer; it is a pull condition
+    // that is either still true or no longer true.
+    var col = isPacify ? '#79c0ff'
+            : (b.good === 0) ? '#f85149' : (!hasRem ? '#6e7681' : '#56d364');
     // Right-side label: "cur/max · M:SS" when we know the full duration, else M:SS.
     var bt;
     if (hasTotal) bt = Math.max(0, Math.ceil(b.remaining_secs/6)) + '/' + Math.max(1, Math.round(b.total_secs/6)) + ' · ' + fmtSecs(b.remaining_secs);
     else bt = hasRem ? fmtSecs(b.remaining_secs) : '?';
     // Fell off in the last 5 min → solid purple rebuff cue.
-    if (b.fell_off) { col = '#a371f7'; pct = 100; bt = 'fell off'; }
+    // "fell off" is a rebuff cue; for a pacify the same moment means the mob's
+    // aggro radius is back and the pull is no longer safe, so it says so and
+    // stays red rather than borrowing the purple rebuff colour.
+    if (b.fell_off) {
+      if (isPacify) { col = '#f85149'; pct = 100; bt = 'WORE OFF'; }
+      else { col = '#a371f7'; pct = 100; bt = 'fell off'; }
+    }
     // Owner-in-parens: charm-spell entries (Allure, etc.) carry the caster's
     // name so other Mimic users targeting the same charmed mob can see who's
     // running it. Rendered dim/italic to differentiate from the spell name
     // itself.
     var ownerStr = (b.owner) ? ' <span style="color:#8b949e;font-style:italic">(' + esc(b.owner) + ')</span>' : '';
-    var tip = esc(b.name) + (b.owner ? ' · cast by ' + esc(b.owner) : '')
-            + (b.fell_off ? ' · fell off (rebuff)' : (hasRem ? ' · ' + fmtSecs(b.remaining_secs) + ' left' : ' · present'));
+    // Two marks that must survive a glance, because both change what the timer
+    // means: AE (it is on other mobs too, and is the weaker aggro-radius kind)
+    // and ~ (synthesized from our own cast — no landing line exists to confirm).
+    if (isPacify && b.pacify_ae)   ownerStr = ' <span style="color:#79c0ff;font-size:9px">AE</span>' + ownerStr;
+    if (isPacify && b.unconfirmed) ownerStr = ' <span style="color:#8b949e" title="from your cast — unconfirmed">~</span>' + ownerStr;
+    // ⚠ NEVER a blanket "safe to pull past" (the guild lead, 2026-09-02). Pacify means the
+    // mob will not attack even at contact; Harmony only shrinks the aggro
+    // radius and STILL aggros up close, and being AE it is on nearby mobs we
+    // are not showing. The row states the effect and the clock; the pull is the
+    // caller's call, and it differs per spell.
+    var tip;
+    if (isPacify) {
+      tip = esc(b.name) + (b.owner ? ' · cast by ' + esc(b.owner) : '')
+          + (b.fell_off ? ' · WORE OFF — the aggro reduction is gone'
+                        : ' · ' + fmtSecs(b.remaining_secs) + ' left');
+      if (b.pacify_ae) tip += ' · area effect — nearby mobs were hit too, and it only SHRINKS the aggro radius (it still aggros up close)';
+      if (b.unconfirmed) tip += ' · this spell prints no landing line, so this timer is from your cast, not a confirmed land';
+    } else {
+      tip = esc(b.name) + (b.owner ? ' · cast by ' + esc(b.owner) : '')
+          + (b.fell_off ? ' · fell off (rebuff)' : (hasRem ? ' · ' + fmtSecs(b.remaining_secs) + ' left' : ' · present'));
+    }
     return '<div class="tbuff" title="'+tip+'">'
          +    '<span class="bn">'+esc(b.name)+ownerStr+'</span>'
          +    '<div class="bbar"><div style="width:'+pct.toFixed(0)+'%;background:'+col+'"></div></div>'
@@ -256,7 +423,7 @@
   }
   // Render a titled section for a buff list, sorted by time-left ascending
   // (lowest at top; untimed sink to the bottom). Returns '' if the list is empty.
-  function _tbuffSection(hdr, list){
+  function _tbuffSection(hdr, list, isPacify){
     if (!list || !list.length) return '';
     list.sort(function(a, b){
       var ar = (a && a.remaining_secs != null) ? a.remaining_secs : Infinity;
@@ -264,18 +431,31 @@
       return ar - br;
     });
     var rows = '';
-    for (var i=0;i<list.length;i++){ var b = list[i]; if (b && b.name) rows += _tbuffRow(b); }
+    for (var i=0;i<list.length;i++){ var b = list[i]; if (b && b.name) rows += _tbuffRow(b, isPacify); }
     if (!rows) return '';
-    return '<div class="tbuffs"><div class="hdr">'+hdr+'</div>'+rows+'</div>';
+    var sect = isPacify ? 'pacify' : hdr.indexOf('debuffs') === 0 ? 'debuffs' : 'buffs';
+    return '<div class="tbuffs" data-wp-sect="'+sect+'"><div class="hdr">'+hdr+'</div>'+rows+'</div>';
   }
   function renderTargetBuffs(mi){
     var buffs = (mi && Array.isArray(mi.target_buffs)) ? mi.target_buffs.slice() : null;
     if (!buffs || !buffs.length) return '';
-    // Split into Debuffs (good===0) and Buffs (everything else), debuffs first.
-    var debuffs = [], goods = [];
-    for (var i=0;i<buffs.length;i++){ var b = buffs[i]; if (!b || !b.name) continue; if (b.good === 0) debuffs.push(b); else goods.push(b); }
+    // Pacify FIRST, on its own line, then Debuffs (good===0), then Buffs
+    // (the guild lead, 2026-09-02). It is pulled out before the good/bad split because it
+    // is neither — the catalog calls it beneficial (it is, to the mob) but what
+    // the raid needs from it is "is this mob still safe to walk past", which is
+    // the first thing you check and the last thing that should be buried in a
+    // list of the mob's own buffs.
+    var pacified = [], debuffs = [], goods = [];
+    for (var i=0;i<buffs.length;i++){
+      var b = buffs[i]; if (!b || !b.name) continue;
+      if (b.pacified) pacified.push(b);
+      else if (b.good === 0) debuffs.push(b);
+      else goods.push(b);
+    }
     var suffix = (mi && mi.target_is_pc) ? '(live)' : '(observed)';
-    return _tbuffSection('debuffs '+suffix, debuffs) + _tbuffSection('buffs '+suffix, goods);
+    return _tbuffSection('aggro reduced', pacified, true)
+         + _tbuffSection('debuffs '+suffix, debuffs)
+         + _tbuffSection('buffs '+suffix, goods);
   }
   // Cross-client "Casting" section — who is casting what on this target, right
   // now, with a live countdown. Fed by the bot's casting relay; only raiders
@@ -303,12 +483,81 @@
            +  '</div>';
     }
     if (!rows) return '';
-    return '<div class="tbuffs"><div class="hdr">casting</div>'+rows+'</div>';
+    return '<div class="tbuffs" data-wp-sect="casting"><div class="hdr">casting</div>'+rows+'</div>';
   }
   // Special attacks that are dangerous (call out red) vs immunities (blue).
-  var WARN_SPECS = { 'Summon':1,'Enrage':1,'Rampage':1,'Area Rampage':1,'Flurry':1,'Bane':1 };
+  // FB-54: 'Reverse Slow' — a slow on it hastes it — is the one a raid must not miss.
+  var WARN_SPECS = { 'Summon':1,'Enrage':1,'Rampage':1,'Area Rampage':1,'Flurry':1,'Bane':1,
+                     'Reverse Slow — slowing hastes it':1 };
+  function isReverseSlow(mob){
+    if (!mob || !Array.isArray(mob.specials)) return false;
+    for (var i = 0; i < mob.specials.length; i++) if (/^Reverse Slow/.test(mob.specials[i])) return true;
+    return false;
+  }
   function specClass(label){ if (WARN_SPECS[label]) return 'chip warn'; if (label.indexOf('Immune')===0 || label.indexOf('Un')===0) return 'chip imm'; return 'chip'; }
 
+  // Sight chips — "will invis hide me from this?" (the guild lead, 2026-09-02).
+  //
+  // ⚠ THE RAW FLAGS ARE NOT THE ANSWER. Measured over the 18,033-row catalog:
+  //     non-undead           see_invis 11%   see_invis_undead 96%
+  //     UNDEAD (bodytype 3)  see_invis 98%   see_invis_undead 15%
+  // Each flag is signal on exactly ONE side and near-universal on the other, so
+  // chipping both on every mob would put a chip on ~everything and mean nothing.
+  // We show the one that is actually load-bearing for the mob in front of you:
+  //   • undead  → Invis vs Undead is the spell you would use, so ITS flag is
+  //               the warning. (Regular invis is near-useless on undead anyway,
+  //               which is why 98% of them see it — not worth a chip.)
+  //   • living  → regular invis is the spell you would use, so its flag is the
+  //               warning. (IVU never hid you from the living to begin with.)
+  // see_improved_hide is 91 rows catalog-wide — rare enough to always be worth
+  // saying. see_hide is 0 rows today; the branch costs nothing and covers a
+  // future sync that sets one.
+  // A player target's card (2026-09-24). Level says where it came from — an
+  // exact /who or Zeal's raid and group roster (both exact, so no tag), an even con, a con
+  // RANGE (in EverQuest's own con colours), or the last level /who history saw — because
+  // those are different confidences.
+  var CON_COLOURS = { green: '#56d364', lightblue: '#79c0ff', blue: '#4c8dff', white: '#e6edf3', yellow: '#e3b341', red: '#f85149' };
+  var CON_NAMES = { green: 'green', lightblue: 'light blue', blue: 'blue', white: 'even', yellow: 'yellow', red: 'red' };
+  function playerCard(pl){
+    var lvl = '';
+    if (pl.level != null) {
+      lvl = 'level <b>' + pl.level + '</b>' + (pl.level_src === 'who' || pl.level_src === 'zeal' ? '' : pl.level_src === 'con' ? ' <span style="color:#8b949e">(even con)</span>' : ' <span style="color:#8b949e">(last seen)</span>');
+    } else if (pl.level_min != null || pl.level_max != null) {
+      lvl = 'level <b>' + (pl.level_max == null ? pl.level_min + '+' : (pl.level_min === pl.level_max ? pl.level_min : pl.level_min + '–' + pl.level_max)) + '</b>'
+          + (pl.history_level ? ' <span style="color:#8b949e">· last seen ' + pl.history_level + '</span>' : '');
+    }
+    var con = pl.con_colour ? ' <span style="color:' + (CON_COLOURS[pl.con_colour] || '#8b949e') + ';border:1px solid currentColor;border-radius:3px;padding:0 4px;font-size:9px">' + esc(CON_NAMES[pl.con_colour] || pl.con_colour) + ' con</span>' : '';
+    var who = (pl.class ? '<b>' + esc(pl.class) + '</b>' + (pl.class_src === 'history' ? ' <span style="color:#8b949e">(from /who history)</span>' : '') : (pl.anonymous ? 'anonymous' : 'class unknown'))
+            + (lvl ? ' · ' + lvl : '') + con;
+    // A player's level comes from /who, or an even /consider (your own level). No
+    // other con colour gives a player's level: see the agent's _targetPlayerInfo.
+    if (!lvl && !pl.con_colour) who += ' <span style="color:#8b949e">— level unknown until a /who sees them' + (pl.anonymous ? ' out of anonymous' : '') + ' or they con even</span>';
+    var h = '<div class="sub" style="color:#e6edf3">' + who + '</div>';
+    if (pl.guild) h += '<div class="sub">&lt;' + esc(pl.guild) + '&gt;</div>';
+    // PvP: your drains. Full strength on a player, and an upper bound — the
+    // server only takes what they have.
+    if (pl.drain_immune) h += '<div class="sub">bards take no mana drain</div>';
+    else if (pl.no_mana) h += '<div class="sub">no mana to take (' + esc(pl.class) + ')</div>';
+    else if (pl.drained && pl.drained.mana > 0) {
+      h += '<div class="sub" title="Your drains this fight, at full strength. The server only takes what they have, so this is the most it could be.">drained up to <b style="color:#58a6ff">' + fmtNum(pl.drained.mana) + '</b> mana · ' + pl.drained.casts + ' cast' + (pl.drained.casts === 1 ? '' : 's') + '</div>';
+    }
+    return h;
+  }
+  function sightChips(mob){
+    if (!mob) return '';
+    var out = [];
+    function add(txt, tip){ out.push('<span class="chip sight" title="'+esc(tip)+'">'+esc(txt)+'</span>'); }
+    if (mob.undead) {
+      if (mob.see_invis_undead) add('Sees Invis vs Undead', 'Invisibility versus Undead will NOT hide you from this mob. Only 15% of undead see it, so this one is the exception.');
+    } else if (mob.see_invis) {
+      add('Sees Invis', 'Invisibility will NOT hide you from this mob.');
+    }
+    if (mob.see_improved_hide) add('Sees Improved Hide', 'Shroud of Stealth will not hide a rogue from this mob.');
+    else if (mob.see_hide)     add('Sees Hide', 'Hide will not hide a rogue from this mob.');
+    return out.join('');
+  }
+
+  // ── DOM handles + tab state ─────────────────────────────────────────────────
   var bodyEl = document.getElementById('body');
   var emptyEl = document.getElementById('empty');
 
@@ -321,16 +570,50 @@
   var tabStatsBtn  = document.getElementById('tabStats');
   var tabLootBtn   = document.getElementById('tabLoot');
   var tabSpellsBtn = document.getElementById('tabSpells');
-  function _setTab(t){
+  var tabFactionsBtn = document.getElementById('tabFactions');
+  var tabManaBtn   = document.getElementById('tabMana');
+  // The A/B the guild lead asked to compare in beta: OFF is "just tell me what
+  // it cast", ON adds the estimated pool. Per-viewer convenience only, so
+  // localStorage is right — and every read/write is guarded because an overlay
+  // can be opened in contexts where site data is unavailable.
+  var _manaView = true;
+  try { _manaView = window.localStorage.getItem('wpTargetMana') !== 'off'; } catch (e) {}
+  // On the Mimic 3.0 Canvas this page can run several times at once, one copy per piece cut from it
+  // (apps/mimic/sections.js). A piece that only exists on one tab is pinned to it (?wptab=loot); the
+  // other copies share the tab picked on the title bar's piece, through sessionStorage, which the
+  // Canvas window's frames share and a standalone window keeps to itself.
+  var _wpQs = new URLSearchParams((window.location && window.location.search) || '');
+  var _TABS = { stats: 1, loot: 1, spells: 1, factions: 1 };
+  var _pinTab = _TABS[_wpQs.get('wptab')] ? _wpQs.get('wptab') : null;
+  var _shareTab = !_pinTab && _wpQs.get('wpcanvas') === '1';
+  if (_pinTab) _tab = _pinTab;
+  else if (_shareTab) { try { var _st = window.sessionStorage.getItem('wpTargetTab'); if (_TABS[_st]) _tab = _st; } catch (e) {} }
+  function _setTab(t, fromShare){
+    if (_pinTab) t = _pinTab;
     _tab = t;
+    if (_shareTab && !fromShare) { try { window.sessionStorage.setItem('wpTargetTab', t); } catch (e) {} }
     tabStatsBtn .classList.toggle('on', t === 'stats');
     tabLootBtn  .classList.toggle('on', t === 'loot');
     tabSpellsBtn.classList.toggle('on', t === 'spells');
+    if (tabFactionsBtn) tabFactionsBtn.classList.toggle('on', t === 'factions');
+    _renderBody(_lastMi);
+  }
+  function _setManaView(on){
+    _manaView = !!on;
+    if (tabManaBtn) tabManaBtn.classList.toggle('on', _manaView);
+    try { window.localStorage.setItem('wpTargetMana', _manaView ? 'on' : 'off'); } catch (e) {}
     _renderBody(_lastMi);
   }
   tabStatsBtn .addEventListener('click', function(){ _setTab('stats'); });
   tabLootBtn  .addEventListener('click', function(){ _setTab('loot'); });
   tabSpellsBtn.addEventListener('click', function(){ _setTab('spells'); });
+  if (tabFactionsBtn) tabFactionsBtn.addEventListener('click', function(){ _setTab('factions'); });
+  if (tabManaBtn) tabManaBtn.addEventListener('click', function(){ _setManaView(!_manaView); });
+  if (tabManaBtn) tabManaBtn.classList.toggle('on', _manaView);
+  if (_tab !== 'stats') _setTab(_tab, true);
+  if (_shareTab) window.addEventListener('storage', function(ev){
+    if (ev.key === 'wpTargetTab' && _TABS[ev.newValue] && ev.newValue !== _tab) _setTab(ev.newValue, true);
+  });
 
   // #186 — PQDI link (delegated: the header re-renders every poll). Opens the
   // mob's pqdi.cc/npc page in the system browser via the open-external IPC
@@ -339,18 +622,52 @@
   // interactive on hover the click falls straight through to EQ.
   if (bodyEl) {
     bodyEl.addEventListener('click', function(ev){
-      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi') : null;
+      var t = (ev.target && ev.target.closest) ? ev.target : null;
+      if (!t) return;
+      // F/Q/V sub-tabs and the /say + /map copy chips live in the repainted body too.
+      var sub = t.closest('.fqvtab');
+      if (sub) {
+        _fqvSub = sub.getAttribute('data-fqv') || 'quest';
+        try { window.localStorage.setItem('wpTargetFqv', _fqvSub); } catch (e) {}
+        _renderBody(_lastMi);
+        return;
+      }
+      var tog = t.closest('.qtoggle');
+      if (tog) {
+        var qk = tog.getAttribute('data-qk');
+        if (qk) _qOpen[qk] = !_qOpen[qk];
+        _renderBody(_lastMi);
+        return;
+      }
+      var chip = t.closest('.qcopy');
+      if (chip) {
+        _copyText(chip.getAttribute('data-copy') || '');
+        chip.classList.add('ok');
+        chip.textContent = '✓ copied';
+        _copyHoldUntil = Date.now() + 1200;
+        bodyEl.__wpHtml = null;
+        return;
+      }
+      // The faction name on the Faction sub-tab: its wolfpack.quest page, same IPC as the PQDI chip.
+      var fl = t.closest('.facl');
+      if (fl) {
+        ev.preventDefault();
+        var furl = fl.getAttribute('data-facl');
+        if (furl) { try { window.mimic.openExternal(furl); } catch (e) {} }
+        return;
+      }
+      var a = t.closest('.pqdi');
       if (!a) return;
       ev.preventDefault();
       var url = a.getAttribute('data-pqdi');
       if (url) { try { window.mimic.openExternal(url); } catch (e) {} }
     });
     bodyEl.addEventListener('mouseover', function(ev){
-      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi') : null;
+      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .fqvtab, .qcopy, .qtoggle, .facl') : null;
       if (a) { try { window.mimic.overlayHoverInteractive(true); } catch (e) {} }
     });
     bodyEl.addEventListener('mouseout', function(ev){
-      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi') : null;
+      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .fqvtab, .qcopy, .qtoggle, .facl') : null;
       if (a) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} }
     });
   }
@@ -360,7 +677,7 @@
   // the click lands instead of going through. Same pattern the ✕ hide and
   // ✥ move buttons use. Without this, the Loot tab was un-clickable on a
   // locked overlay (the most common reason for "Loot is not clickable").
-  [tabStatsBtn, tabLootBtn, tabSpellsBtn].forEach(function(btn){
+  [tabStatsBtn, tabLootBtn, tabSpellsBtn, tabFactionsBtn, tabManaBtn].forEach(function(btn){
     if (!btn) return;
     btn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
     btn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
@@ -377,6 +694,223 @@
     return 't1';
   }
   function fmtPct(p){ if (p == null) return '?'; if (p >= 99.95) return '100%'; return p.toFixed(p < 10 ? 1 : 0) + '%'; }
+  // What killing this mob does to your standing. Values come from the bot's
+  // mob-info, which reuses the resolver already validated against a real
+  // client log — ⚠ names live in eqemu_faction_list_full because the short
+  // faction_list table is EMPTY in our mirror, and a null name silently drops
+  // the row. Sorted biggest swing first by the bot.
+  //
+  // Above the on-kill list sits the faction the mob IS on, linked to its wolfpack.quest page,
+  // who in this zone will assist it, and which factions it helps (the guild lead, 2026-10-06:
+  // "Faction should say the faction the mob is on and link to the faction page ... Faction
+  // should also list who the creatures will assist"). The bot sends faction_primary
+  // {id,name}, faction_assists [{id,name}], faction_assisted_by [{name,npc_id}] (+ a
+  // faction_assisted_by_more count); an older bot sends none and the tab reads as it did.
+  function renderFactions(mob){
+    var f = mob && mob.factions;
+    var prim = mob && mob.faction_primary;
+    var by = mob && mob.faction_assisted_by;
+    var byMore = Number(mob && mob.faction_assisted_by_more) || 0;
+    var helps = mob && mob.faction_assists;
+    // Names as plain escaped text; a name that repeats (five guards of one kind) is folded to "×5".
+    function nameList(list){
+      var seen = [], count = [];
+      (Array.isArray(list) ? list : []).forEach(function(x){
+        var n = x && x.name ? String(x.name) : '';
+        if (!n) return;
+        var i = seen.indexOf(n);
+        if (i < 0) { seen.push(n); count.push(1); } else count[i]++;
+      });
+      return seen.map(function(n, i){ return esc(n) + (count[i] > 1 ? ' ×' + count[i] : ''); });
+    }
+    var head = '';
+    if (prim && prim.name) {
+      // The id is interpolated into a URL, so only a plain integer makes a link; else the bare name.
+      var link = /^\d+$/.test(String(prim.id))
+        ? '<a class="facl" data-facl="https://wolfpack.quest/db/faction/' + prim.id + '" title="Open this faction on wolfpack.quest (opens your browser)">' + esc(prim.name) + ' ↗</a>'
+        : esc(prim.name);
+      head += '<div class="fmeta"><span class="fk">Faction:</span> ' + link + '</div>';
+    }
+    var byNames = nameList(by);
+    if (byNames.length || byMore > 0) {
+      head += '<div class="fmeta"><span class="fk">Assisted by:</span> ' + byNames.join(', ')
+            + (byMore > 0 ? (byNames.length ? ' ' : '') + '<span class="fk">+' + byMore + ' more</span>' : '') + '</div>';
+    }
+    var helpNames = nameList(helps);
+    if (helpNames.length) head += '<div class="fmeta"><span class="fk">Helps:</span> ' + helpNames.join(', ') + '</div>';
+    if (head) head = '<div class="fhead">' + head + '</div>';
+    if (!f || !f.length) {
+      var none = '<div class="sn" style="font-size:10px;color:#6e7681;padding:2px 0">'
+               + (mob ? (head ? 'No faction change on kill.' : 'No faction change recorded for this mob.') : '') + '</div>';
+      return head ? '<div class="facwrap">' + head + none + '</div>' : none;
+    }
+    var rows = f.map(function(r){
+      var up = Number(r.value) > 0;
+      return '<div class="fac">'
+           +   '<span class="fn">' + esc(r.name) + '</span>'
+           +   '<span class="fv ' + (up ? 'up' : 'dn') + '">' + (up ? '+' : '') + r.value + '</span>'
+           + '</div>';
+    }).join('');
+    return '<div class="facwrap">' + head + '<div class="sn" style="font-size:9px;color:#6e7681;margin-bottom:2px">on kill</div>' + rows + '</div>';
+  }
+
+  // ── F/Q/V: Faction · Quest · Vendor ───────────────────────────────────────
+  // The guild lead, 2026-09-28: "a quest tab on target info that has the quest details for
+  // what to say and copyable /say and /map items for who to talk to next", then "Make it
+  // F/Q/V for Faction, Quests, and Vendor. Don't bother showing Vendor if its not a vendor
+  // mob. Then have sub-tabs underneath that." Quest and Vendor come from the agent's
+  // /api/npc-interact (the bot reads the NPC's quest script), asked for only while this
+  // tab is open. The chosen sub-tab is a per-viewer convenience, so localStorage.
+  var _fqvSub = 'quest';
+  try { _fqvSub = window.localStorage.getItem('wpTargetFqv') || 'quest'; } catch (e) {}
+  var _npc = { id: null, data: null, loading: false, tries: 0, at: 0 };
+  function _loadNpc(id){
+    if (_npc.id !== id) _npc = { id: id, data: null, loading: true, tries: 0, at: 0 };
+    if (!_npc.loading || Date.now() - _npc.at < 1500) return;
+    if (_npc.tries >= 10) { _npc.loading = false; return; }
+    _npc.at = Date.now(); _npc.tries++;
+    fetch('http://127.0.0.1:' + PORT + '/api/npc-interact?id=' + id, { cache: 'no-store' })
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if (_npc.id !== id || !j || j.loading) return;
+        _npc.data = j.npc || null; _npc.loading = false;
+        _renderBody(_lastMi);
+      })
+      .catch(function(){});
+  }
+  function _copyChip(cmd){
+    return '<button type="button" class="qcopy" data-copy="' + esc(cmd) + '" title="Copy, then paste into EQ">' + esc(cmd) + ' &#x29C9;</button>';
+  }
+  function _clip(t, n){ t = String(t || ''); return t.length > n ? t.slice(0, n - 1) + '…' : t; }
+  function _coin(cp){
+    if (cp == null) return '';
+    var p = Math.floor(cp / 1000), g = Math.floor(cp % 1000 / 100), s = Math.floor(cp % 100 / 10), c = cp % 10, out = [];
+    if (p) out.push(p + 'p'); if (g) out.push(g + 'g'); if (s) out.push(s + 's'); if (c) out.push(c + 'c');
+    return out.join(' ') || '0c';
+  }
+  // What the NPC says is folded away until asked for (the guild lead, 2026-09-29: "we should be
+  // collapse the npc text"). Open rows live in a JS map keyed per NPC, never in the DOM, which the
+  // 500ms repaint replaces.
+  var _qOpen = {}, _qOpenFor = null;
+  function _qToggle(key, lines){
+    if (!lines || !lines.length) return '';
+    return '<button type="button" class="qtoggle" data-qk="' + key + '" title="' + (_qOpen[key] ? 'Hide' : 'Show') + ' what the NPC says">'
+         + (_qOpen[key] ? '▾' : '▸') + ' says</button>';
+  }
+  function _qLines(key, lines){
+    if (!_qOpen[key] || !lines || !lines.length) return '';
+    return lines.map(function(r, i){
+      return '<div class="qsay' + (i ? ' alt' : '') + '" title="' + esc(r.text) + '">' + (r.kind === 'emote' ? '* ' : '') + esc(_clip(r.text, 220)) + '</div>';
+    }).join('');
+  }
+  function _qNames(list, n){
+    n = n || 2;
+    var names = (list || []).map(function(x){ return x.name; });
+    return names.slice(0, n).join(', ') + (names.length > n ? ' +' + (names.length - n) : '');
+  }
+  // ⚠ on anything that despawns a mob, spawns one, or costs faction (the guild lead, 2026-09-29).
+  // The full list rides in the title.
+  function _qWarnTags(w, faction){
+    var h = '';
+    if (w && w.despawn) h += ' <span class="qtag warn" title="The NPC leaves after this and comes back on its respawn">⚠ despawns</span>';
+    if (w && w.despawns) h += ' <span class="qtag warn" title="' + esc(w.despawns.map(function(n){ return n.name; }).join(', ')) + '">⚠ despawns ' + esc(_qNames(w.despawns)) + '</span>';
+    if (w && w.spawns) h += ' <span class="qtag warn" title="' + esc(w.spawns.map(function(n){ return n.name; }).join(', ')) + ' — may attack">⚠ spawns ' + esc(_qNames(w.spawns)) + '</span>';
+    if (w && w.spawn_other && !w.spawns) h += ' <span class="qtag warn" title="Puts a mob up">⚠ spawns a mob</span>';
+    var loss = (faction || []).filter(function(f){ return f.delta < 0; });
+    if (loss.length) h += ' <span class="qtag bad" title="' + esc(loss.map(function(f){ return f.name + ' ' + f.delta; }).join(', ')) + '">⚠ faction −</span>';
+    return h;
+  }
+  // Every faction change, gains and losses (the guild lead, 2026-09-29: "we should also track
+  // faction for these quests as well where it makes sense").
+  function _qFaction(faction){
+    if (!faction || !faction.length) return '';
+    return '<div class="qfac">' + faction.map(function(f){
+      return '<span class="' + (f.delta < 0 ? 'dn' : 'up') + '">' + (f.delta > 0 ? '+' : '−') + Math.abs(f.delta) + '</span> ' + esc(f.name);
+    }).join(' · ') + '</div>';
+  }
+  function renderQuest(mob, d){
+    if (!mob || !mob.id) return '<div class="sub">no catalog NPC for this target</div>';
+    if (!d) return '<div class="sub" style="color:#a371f7">' + (_npc.loading ? 'reading the quest script…' : 'nothing on record for this NPC') + '</div>';
+    if (_qOpenFor !== mob.id) { _qOpen = {}; _qOpenFor = mob.id; }
+    var out = '';
+    if (d.say && d.say.length) {
+      out += '<div class="qhead">What to say</div>' + d.say.map(function(b, i){
+        var tags = (b.gated ? ' <span class="qtag gate" title="What it says depends on your flags, items or faction">depends on you</span>' : '')
+                 + (b.flag ? ' <span class="qtag flag" title="This can give you a character flag">flag</span>' : '')
+                 + (b.needs ? ' <span class="qtag need" title="It checks you carry this before it answers">needs ' + esc(_qNames(b.needs)) + '</span>' : '')
+                 + (b.gives ? ' <span class="qtag give" title="' + (b.gives_random ? 'You get one of these' : 'You get this') + '">get ' + (b.gives_random ? 'one of ' : '') + esc(_qNames(b.gives)) + '</span>' : '')
+                 + _qWarnTags(b.warn, b.faction);
+        // Some NPCs answer only while you sit (the Seer; the guild lead, 2026-09-28: "i had to sit
+        // down first"). b.say joins every word a branch needs ("unlock memories"); older bots send
+        // only keywords.
+        var sit = b.sit ? '<span class="qtag gate" title="Answers only while you are sitting">sit first</span>' + _copyChip('/sit') : '';
+        return '<div class="qrow"><div class="qline">' + sit + _copyChip('/say ' + (b.say || b.keywords[0])) + tags
+             + _qToggle('s' + i, b.replies) + '</div>' + _qFaction(b.faction) + _qLines('s' + i, b.replies) + '</div>';
+      }).join('');
+    }
+    if (d.turnins && d.turnins.length) {
+      // Each hand-in says what you give, what you get, and what else it does (the guild lead,
+      // 2026-09-29: "If there are turn-in requirements or you get an item as output from a quest we
+      // should denote that"). Its own words ride behind the toggle; an older bot sends them only
+      // for the whole NPC (d.trade), shown once after the list.
+      var perTurn = d.turnins.some(function(t){ return t.says; });
+      out += '<div class="qhead">Hand in</div>' + d.turnins.map(function(t, i){
+        var ins = t.inputs.map(function(x){ return (x.qty > 1 ? x.qty + '× ' : '') + esc(x.name); }).join(' + ');
+        var gets = t.outputs.length
+          ? (t.random ? 'one of ' : '') + t.outputs.map(function(x){ return esc(x.name); }).join(', ')
+          : '';
+        if (t.exp) gets += (gets ? ' · ' : '') + 'exp';
+        // A ProjectEQ hand-in Quarm's own script does not have (bot 3.1.171) may not work here.
+        var extra = (t.unverified ? ' <span class="qtag gate" title="From ProjectEQ\'s quest scripts. Quarm\'s own script for this NPC has no such hand-in, so it may not work here.">not in Quarm\'s script</span>' : '')
+                  + _qWarnTags(t.warn, t.faction) + _qToggle('t' + i, t.says);
+        return '<div class="qrow">'
+             + '<div class="qline"><span class="qlbl">give</span><span>' + ins + '</span></div>'
+             + '<div class="qline"><span class="qlbl">get</span><span class="qget">' + (gets || '<span class="qzone">nothing listed</span>') + '</span></div>'
+             + (extra ? '<div class="qline">' + extra + '</div>' : '')
+             + _qFaction(t.faction) + _qLines('t' + i, t.says) + '</div>';
+      }).join('');
+      if (!perTurn && d.trade && d.trade.length) {
+        out += '<div class="qline">' + _qToggle('trade', d.trade) + '</div>' + _qLines('trade', d.trade);
+      }
+    }
+    if (d.next && d.next.length) {
+      out += '<div class="qhead">Who to talk to next</div>' + d.next.map(function(n){
+        return '<div class="qrow"><div class="qline"><span class="qnpc">' + esc(n.name) + '</span>'
+             + (n.zone_long ? '<span class="qzone">' + esc(n.zone_long) + '</span>' : '')
+             + (n.y != null && n.x != null ? _copyChip('/map ' + n.y + ' ' + n.x) : '') + '</div></div>';
+      }).join('');
+    }
+    return out || '<div class="sub">' + (d.script ? 'nothing to say to this NPC in its script' : 'no quest script for this NPC') + '</div>';
+  }
+  function renderVendor(d){
+    return '<div class="qhead" title="Base price; what you pay moves with your faction and Charisma">Sells (' + d.vendor.length + ')</div>'
+      + d.vendor.map(function(v){ return '<div class="vrow"><span class="vn">' + esc(v.name) + '</span><span class="vp">' + _coin(v.price) + '</span></div>'; }).join('');
+  }
+  function renderFqv(mob){
+    if (mob && mob.id) _loadNpc(mob.id);
+    var d = (mob && _npc.id === mob.id) ? _npc.data : null;
+    var subs = [['faction', 'Faction'], ['quest', 'Quest']];
+    if (d && d.vendor && d.vendor.length) subs.push(['vendor', 'Vendor']);   // only a vendor mob
+    var sub = subs.some(function(s){ return s[0] === _fqvSub; }) ? _fqvSub : 'quest';
+    var bar = '<div class="fqvtabs">' + subs.map(function(s){
+      return '<button type="button" class="fqvtab' + (s[0] === sub ? ' on' : '') + '" data-fqv="' + s[0] + '">' + s[1] + '</button>';
+    }).join('') + '</div>';
+    return '<div data-wp-sect="fqv">' + bar + (sub === 'faction' ? renderFactions(mob) : sub === 'vendor' ? renderVendor(d) : renderQuest(mob, d)) + '</div>';
+  }
+  // Copy for the /say and /map chips. The chip holds its ✓ for 1.2s: the 500ms repaint
+  // skips while it does, or the confirmation would vanish before anyone saw it.
+  var _copyHoldUntil = 0;
+  function _copyText(text){
+    function fallback(){
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch (e) {} finally { ta.remove(); }
+    }
+    try { navigator.clipboard.writeText(text).catch(fallback); } catch (e) { fallback(); }
+  }
+
+  // ── Loot tab ──────────────────────────────────
   function renderLoot(mob, mi){
     // Distinguish three empty states:
     //   1. We haven't targeted anything yet → nothing to render at all
@@ -429,9 +963,76 @@
     return '<div class="loot">' + rows + '</div>';
   }
 
+  // ── ▭ Mini — "Two rows, draining timers" (the guild vote, closed 2026-09-17:
+  // "Mini is mob health plus slow and root timers"). Row one is the mob's HP
+  // bar and name (and a Shadow Knight mob's HT chip, which is cheap and is the
+  // one thing about it that can kill the tank). Then a SLOW row whose amber bar
+  // drains with the time left — read from bar length in peripheral vision, the
+  // digits are the backup. The row is absent, not empty, while nothing is
+  // landed. ⚠ No ROOT row yet: nothing the overlay receives says a debuff is a
+  // root (the agent flags pacify and slow, not root), and guessing from spell
+  // names is the invented-data failure this repo keeps paying for.
+  function _miniTimerRow(kind, label, rem, total, tip){
+    var pct = (rem != null && total) ? Math.max(0, Math.min(100, rem / total * 100)) : 100;
+    return '<div class="mini-row ' + kind + '" title="' + tip + '">'
+         +   '<span class="mini-lab wp-mini-num">' + label + '</span>'
+         +   '<span class="mini-bar wp-mini-bar"><i style="width:' + pct.toFixed(0) + '%"></i></span>'
+         +   '<span class="mini-t wp-mini-num">' + (rem != null ? fmtSecs(rem) : '?') + '</span>'
+         + '</div>';
+  }
+  function _reverseSlowTip(sl){
+    return 'Reverse slow — a slow on this mob hastes it'
+      + (sl && sl.name ? ' (a slow landed: ' + sl.name + (sl.magnitude && !sl.ambiguous ? ', so it is hasted ~' + sl.magnitude + '%' : ', so it is hasted') + ')' : '')
+      + '. Do not slow it.';
+  }
+  function miniTargetHtml(mi, nm, htChip){
+    var hp = (mi.target_hp_pct != null) ? Math.max(0, Math.min(100, Math.round(mi.target_hp_pct))) : null;
+    // The 50/25 steps every mini bar shares (preload's _WP_MINI_CSS).
+    var band = hp == null ? 'none' : (hp <= 25 ? 'lo' : (hp <= 50 ? 'mid' : 'hi'));
+    var h = '<div class="mini-row ' + band + '">'
+          +   '<span class="mini-pct wp-mini-num">' + (hp == null ? '—' : hp + '%') + '</span>'
+          +   '<span class="mini-bar wp-mini-bar"><i style="width:' + (hp == null ? 0 : hp) + '%"></i></span>'
+          +   '<span class="mini-nm wp-mini-name">' + esc(nm) + '</span>' + (htChip || '')
+          + '</div>';
+    var sl = mi.target_slow;
+    if (isReverseSlow(mi.mob)) {
+      // FB-54: red where the amber slow row would be. The agent records no slow on
+      // these mobs; one that slipped in before the mob's row arrived reads as haste.
+      h += '<div class="mini-row rev" title="' + esc(_reverseSlowTip(sl)) + '">'
+         +   '<span class="mini-lab wp-mini-num">REV</span>'
+         +   '<span class="mini-bar wp-mini-bar"><i style="width:100%"></i></span>'
+         +   '<span class="mini-t wp-mini-num">' + (sl && sl.name ? 'HASTED' : 'DON’T SLOW') + '</span>'
+         + '</div>';
+    } else if (sl && sl.name) {
+      var tip = sl.ambiguous ? 'Slowed — strength unknown: the game prints one message for several slows'
+              : esc(sl.name) + (sl.magnitude ? ' · ' + sl.magnitude + '%' : '') + (sl.caster ? ' · by ' + esc(sl.caster) : '');
+      h += _miniTimerRow('slow', 'SLOW', sl.remaining_secs, sl.total_secs, tip);
+    }
+    return '<div class="mini">' + h + '</div>';
+  }
+
+  // A corpse is named "<owner>'s corpse" — with a backtick or curly apostrophe in some names, and a
+  // number after "corpse" on some builds. The owner, or null for a name that is not a corpse's.
+  function corpseOwner(name){
+    var m = /^(.+?)['`’]s\s+corpse\d*$/i.exec(String(name || '').trim());
+    return m ? m[1] : null;
+  }
+  // Whether the last fight's top-damage list is about THIS corpse (FB-63, a member, 2026-10-07: "I'm
+  // targetting <a player>'s corpse but it shows the last fight data here and its not correct"). It is
+  // only when the corpse is the mob that fight was against, the way a boss you just killed is. Any
+  // other corpse — a raider's, or one from another pull — has no fight of its own to show, and the
+  // list would just be whichever fight is most recent. A corpse is a new spawn, so the name is the link.
+  function lastFightFits(owner, enc){
+    if (!owner || !enc) return false;
+    var norm = function(n){ return String(n == null ? '' : n).toLowerCase().replace(/[`’]/g, "'").replace(/^#/, '').replace(/\s+/g, ' ').trim(); };
+    var o = norm(owner);
+    return !!o && (o === norm(enc.targetName) || o === norm(enc.bossName));
+  }
+
   function _renderBody(mi){
     if (!mi || !mi.target_name) {
       bodyEl.innerHTML = '';
+      bodyEl.__wpHtml = null;
       var lvlElEmpty = document.getElementById('lvlRange'); if (lvlElEmpty) lvlElEmpty.textContent = '';
       emptyEl.style.display = 'block';
       return;
@@ -439,7 +1040,31 @@
     emptyEl.style.display = 'none';
     var mob = mi.mob || null;
     var nm = mob && mob.name ? mob.name : mi.target_name;
-    var cls = mob && mob.class ? ' <span class="cls">(' + esc(mob.class) + ')</span>' : '';
+    var corpseOf = corpseOwner(mi.target_name);   // who the corpse belonged to, or null
+    // Two bodies share this name and differ in CLASS; only the sex tells them
+    // apart in game (the guild lead, 2026-09-15, Plane of Hate's forsaken revenants:
+    // male Magician, female Enchanter). Until Zeal puts the target's sex on
+    // the pipe, show the pair rather than one class as fact.
+    var cls = '';
+    if (mob && mob.class_ambiguous && mob.class_variants && mob.class_variants.length > 1) {
+      var sym = { male: '\u2642', female: '\u2640', neuter: '\u26b2' };
+      cls = ' <span class="cls" title="Two versions of this mob share the name; the sex tells them apart in game">('
+          + mob.class_variants.map(function (v) { return esc(v.class) + (sym[v.gender] ? ' ' + sym[v.gender] : ''); }).join(' / ')
+          + ')</span>';
+    } else if (mob && mob.class) {
+      cls = ' <span class="cls">(' + esc(mob.class) + ')</span>';
+    }
+    // A Shadow Knight mob's Harm Touch (the guild lead, 2026-09-24: "HT with a
+    // checkmark or HT with a red X and a timer"). The agent (_npcHtFor) pins
+    // the landing on this mob when it can; NPC reuse is 40 minutes.
+    var nht = mi.target_npc_ht;
+    var htChip = '';   // kept on its own too: mini shows it beside the name
+    if (nht) {
+      htChip = nht.ready
+        ? ' <span class="ht ok" title="No Harm Touch from this mob seen in the last 40 minutes">HT ✓</span>'
+        : ' <span class="ht used" title="Harm Touch used' + (nht.assigned_later ? ' — landed on you while it was hitting you; pinned on it when you targeted it' : '') + '. NPCs get it back after 40 minutes.">HT ✗ ' + fmtSecs(nht.ready_in_ms / 1000) + '</span>';
+      cls += htChip;
+    }
     // Header strip — always visible regardless of tab so the user always sees
     // who they're targeting + live HP%.
     var hp = (mi.target_hp_pct != null) ? Math.max(0, Math.min(100, mi.target_hp_pct)) : null;
@@ -478,14 +1103,69 @@
       }
       slowBadge = '<div class="slowbadge'+(slAmb ? ' amb' : '')+'" title="'+slTip+'">🐌 '+slCls+'<span class="sn">'+esc(slName)+'</span>'+slMag+slBy+slRem+'</div>';
     }
+    // FB-54: a reverse-slow mob (a slow on it hastes it) gets a red badge in the amber
+    // one's place — "don't slow", or "hasted" when a slow did land.
+    if (isReverseSlow(mob)) {
+      var rsl = mi.target_slow, rsHasted = !!(rsl && rsl.name);
+      var rsMag = (rsHasted && rsl.magnitude && !rsl.ambiguous) ? ' <span class="sm">+' + rsl.magnitude + '%</span>' : '';
+      slowBadge = '<div class="slowbadge rev" title="' + esc(_reverseSlowTip(rsl)) + '">⛔ <span class="sc">REVERSE SLOW</span> '
+                + '<span class="sn">' + (rsHasted ? 'it’s hasted' : 'don’t slow') + '</span>' + rsMag + '</div>';
+    }
+    // ▭ Mini: health and the slow timer only. The header, tabs, resists, mana
+    // and the buff/cast lists are the full overlay's; the title bar hides by CSS.
+    if (document.body.classList.contains('wp-mini')) {
+      bodyEl.innerHTML = miniTargetHtml(mi, nm, htChip);
+      bodyEl.__wpHtml = null;
+      _fitHeight();
+      return;
+    }
     // Mana — comes from eqemu_npc_types.mana via the bot. Render a bar +
     // numeric line for any NPC with non-zero mana. Live tracking (per-cast
     // subtraction + regen) is a follow-up — this is the catalog baseline.
+    // Mana. The bar was a dead 100% stub until 2026-09-22 — the bot never sent
+    // mob.mana, so nothing rendered. It now draws the ESTIMATE: catalog pool
+    // minus the cost of every cast we could NAME (the log never names a mob's
+    // spell; see the agent's _NPC_CAST_RX header for how it is recovered from
+    // the landing message).
+    // ⚠ It is a FLOOR on mana used, not a reading — a resisted or interrupted
+    // cast spends mana silently, 14% of NPC spells print no landing text at
+    // all, and we only see what our own raiders' logs witnessed. The "est"
+    // chip and the tooltip say so; never render this as a plain gauge.
     var manaBar = '';
     var manaLine = '';
-    if (mob && mob.mana && mob.mana > 0) {
-      manaBar = '<div class="manabar"><div style="width:100%"></div></div>';
+    var mn = mi.target_mana;
+    if (_manaView && mn && mn.max > 0) {
+      var mpct = Math.max(0, Math.min(100, mn.pct));
+      // Drains (2026-09-24): Theft of Thought, Mana Sieve, the Torments. An
+      // instant drain on a mob above level 52 is cut by the server (a third,
+      // at most 105, at 55+), and that is already applied to the number.
+      var drainedTxt = mn.drained > 0 ? ' and ' + fmtNum(mn.drained) + ' drained (yours, and timed drains we saw)' : '';
+      manaBar = '<div class="manabar" title="Estimated: ' + fmtNum(mn.cur) + ' of ' + fmtNum(mn.max)
+              + ' — at least ' + fmtNum(mn.spent) + ' spent on casts we could name' + drainedTxt + '. Resisted and interrupted casts cost mana silently, and other players\' instant drains cannot be seen, so the real figure is lower.">'
+              + '<div style="width:' + mpct.toFixed(0) + '%"></div></div>';
+      manaLine = '<div class="mana">' + fmtNum(mn.cur) + ' / ' + fmtNum(mn.max) + ' mana'
+               + (mn.drained > 0 ? ' <span style="color:#8b949e">· −' + fmtNum(mn.drained) + ' drained</span>' : '')
+               + ' <span class="est" title="An estimate, and a floor — see the bar.">est</span></div>';
+    } else if (mob && mob.mana && mob.mana > 0) {
+      // Toggle off, or nothing observed yet: state the pool without implying
+      // we know what is left of it.
       manaLine = '<div class="mana">' + fmtNum(mob.mana) + ' max mana</div>';
+    }
+    // What it was last seen casting — the thing the guild lead actually asked
+    // for ("display the spell he cast that covers his hand with a dull aura").
+    // Shown in BOTH views; a 'guess' is labelled rather than hidden, because
+    // knowing the family is still worth more than silence mid-fight.
+    var lastCast = '';
+    var lc = mi.target_lastcast;
+    if (lc && lc.spell) {
+      var lcAge = Math.max(0, Math.round((Date.now() - lc.atMs) / 1000));
+      var lcSure = lc.confidence === 'guess';
+      lastCast = '<div class="lastcast' + (lcSure ? ' guess' : '') + '" title="'
+               + (lcSure ? 'Several of this mob\'s spells print this same message and the timing did not separate them — the family is right, the tier may not be.'
+                         : 'Named from the message its spell printed when it landed.')
+               + (lc.mana ? ' Costs ' + lc.mana + ' mana.' : '') + '">'
+               + '\u2728 ' + esc(lc.spell) + (lcSure ? '?' : '')
+               + '<span class="sn"> ' + lcAge + 's ago</span></div>';
     }
     var sub = [];
     // Live cur/max for a targeted raider (their own uploaded live-state) — the
@@ -510,7 +1190,9 @@
     }
 
     var tabBody = '';
-    if (_tab === 'loot') {
+    if (_tab === 'factions') {
+      tabBody = renderFqv(mob);
+    } else if (_tab === 'loot') {
       tabBody = renderLoot(mob, mi);
     } else if (_tab === 'spells') {
       // Spells & abilities tab. Two surfaces stacked:
@@ -528,6 +1210,34 @@
         }
       }
       var specBlock = '<div class="spec" style="padding-top:18px">' + (specChips || '<span class="empty" style="color:#6e7681;font-style:italic">no abilities catalogued</span>') + '</div>';
+      // PROCS above the spell lists (the guild lead, 2026-10-07: "Need to see mobs Procs as
+      // well, not just spells"): a proc lands on the tank every fight, a cast list is what
+      // the mob might do. The bot sends procs: [{ kind, spell_id, name, chance, summary }];
+      // an answer cached before the key existed has none, and so does a mob without any, and
+      // both draw nothing at all (no empty heading).
+      var procsBlock = '';
+      if (mob && Array.isArray(mob.procs) && mob.procs.length > 0){
+        var PROC_KIND = { attack: '', range: ' (ranged)', defensive: ' (when hit)' };
+        var procRows = '';
+        for (var pri = 0; pri < mob.procs.length; pri++){
+          var pr = mob.procs[pri] || {};
+          var prName = esc(pr.name || ('Spell #' + pr.spell_id)) + esc(PROC_KIND[pr.kind] || '');
+          var prChance = (pr.chance == null) ? '—' : (Math.round(Number(pr.chance)) + '%');
+          procRows += '<div style="display:grid;grid-template-columns:minmax(0,1fr) 40px minmax(0,1.5fr);gap:6px;padding:1px 0;font-size:10.5px;align-items:baseline">'
+                    +   '<span style="color:#d2a8ff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + prName + '</span>'
+                    +   '<span style="color:#f0b429;text-align:right;font-variant-numeric:tabular-nums">' + prChance + '</span>'
+                    +   '<span style="color:#c9d1d9;font-size:9.5px">' + (pr.summary ? esc(pr.summary) : '—') + '</span>'
+                    + '</div>';
+        }
+        procsBlock = '<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(110,118,129,0.18)">'
+                   +   '<div style="display:grid;grid-template-columns:minmax(0,1fr) 40px minmax(0,1.5fr);gap:6px;font-size:9px;color:#6b7280;letter-spacing:0.05em;text-transform:uppercase;padding:0 0 2px;border-bottom:1px solid rgba(110,118,129,0.12);margin-bottom:2px">'
+                   +     '<span>Procs (' + mob.procs.length + ')</span>'
+                   +     '<span style="text-align:right">Chance</span>'
+                   +     '<span>Effect</span>'
+                   +   '</div>'
+                   +   procRows
+                   + '</div>';
+      }
       var spellsBlock = '';
       if (mob && Array.isArray(mob.spells) && mob.spells.length > 0){
         // Split offensive (good===0 or unknown) from buff (good===1). Buffs
@@ -583,7 +1293,7 @@
       } else {
         spellsBlock = '<div class="sub" style="margin-top:8px;color:#6e7681">no spell list catalogued (npc_spells_id missing or eqemu_npc_spells_entries not yet synced).</div>';
       }
-      tabBody = specBlock + spellsBlock;
+      tabBody = '<div data-wp-sect="spells">' + specBlock + procsBlock + spellsBlock + '</div>';
     } else {
       // resist grid (AC + 5 resists)
       var res = '';
@@ -599,28 +1309,34 @@
         res = '<div class="res">'+res+'</div>';
       }
       var spec = '';
+      var chips = sightChips(mob);          // before the specials: asked before the pull
       if (mob && Array.isArray(mob.specials) && mob.specials.length){
-        var chips='';
         for (var j=0;j<mob.specials.length;j++){ var lab=mob.specials[j]; chips += '<span class="'+specClass(lab)+'">'+esc(lab)+'</span>'; }
-        spec = '<div class="spec">'+chips+'</div>';
       }
+      if (chips) spec = '<div class="spec">'+chips+'</div>';
       var loadingNote = (!mob && mi.loading) ? '<div class="sub" style="color:#a371f7">looking up stats…</div>'
-                       : (!mob ? '<div class="sub">no catalog stats for this target</div>' : '');
+                       : (!mob ? (corpseOf ? '<div class="sub">corpse of ' + esc(corpseOf) + '</div>'
+                                           : '<div class="sub">no catalog stats for this target</div>') : '');
+      // A PLAYER target (the guild lead, 2026-09-24): class and level from /who,
+      // or a level RANGE from your /consider when they are anonymous, and in
+      // PvP what your drains took from them. Replaces "no catalog stats".
+      var pl = mi.target_player;
+      if (pl) loadingNote = playerCard(pl);
       tabBody = res + spec + loadingNote;
     }
-    // Corpse target → splice in the just-finished fight's top-damage
+    // Corpse of the mob the fight was against → splice in that just-finished fight's top-damage
     // scoreboard from /api/state.stats.currentEncounterThreat.perPlayer.
     // Reads the agent's local encounter snapshot (already on the wire for
     // the DPS overlay), so no server round-trip and no version bump
     // needed elsewhere. Top 5 players by total damage; tank bar gets a
-    // taken-damage flag.
-    var isCorpse = (mi.target_name || '').toLowerCase().match(/'s\s+corpse$/);
+    // taken-damage flag. Any other corpse (a player's, an unrelated mob's) gets none (FB-63).
     var lastFight = '';
-    if (isCorpse && mi._enc && mi._enc.perPlayer) {
+    if (lastFightFits(corpseOf, mi._enc) && mi._enc.perPlayer) {
       var pp = mi._enc.perPlayer;
       var names = Object.keys(pp);
       var rows = names
-        .map(function(n){ var v = pp[n] || {}; return { n: n, dmg: (v.swing||0)+(v.proc||0)+(v.spell||0), took: v.took||0 }; })
+        // Raw damage (dmg), not swing+proc+spell — those are threat, and taunts and resists inflate them.
+        .map(function(n){ var v = pp[n] || {}; return { n: n, dmg: v.dmg||0, took: v.took||0 }; })
         .filter(function(r){ return r.dmg > 0 || r.took > 0; })
         .sort(function(a,b){ return b.dmg - a.dmg; })
         .slice(0, 5);
@@ -637,7 +1353,7 @@
                +   '<span style="color:#56d364;text-align:right;font-variant-numeric:tabular-nums">'+dmgTxt+'</span>'
                + '</div>';
         }).join('');
-        lastFight = '<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(110,118,129,0.18)">'
+        lastFight = '<div data-wp-sect="lastfight" style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(110,118,129,0.18)">'
                   +   '<div style="font-size:9px;color:#6b7280;letter-spacing:0.05em;text-transform:uppercase;margin-bottom:3px">last fight (top 5)</div>'
                   +   rowsHtml
                   + '</div>';
@@ -651,7 +1367,7 @@
       var ts = mi.target_slots;
       var bcol = ts.buffs >= ts.buff_max ? '#f0883e' : '#56d364';
       var scol = ts.songs >= ts.song_max ? '#f0883e' : '#56d364';
-      slotLine = '<div class="sub">buffs <span style="color:'+bcol+'">'+ts.buffs+'/'+ts.buff_max+'</span>'
+      slotLine = '<div class="sub" data-wp-sect="slots">buffs <span style="color:'+bcol+'">'+ts.buffs+'/'+ts.buff_max+'</span>'
                + ' · songs <span style="color:'+scol+'">'+ts.songs+'/'+ts.song_max+'</span></div>';
     }
     // #161-P0 — live target-state sections (what's casting on the target + its
@@ -663,22 +1379,33 @@
     // mob.id comes from the bot mob-info catalog row. Only render for real
     // catalog mobs (mob.id present) — corpses / unknown targets get nothing.
     var pqdiChip = (mob && mob.id) ? ' <a class="pqdi" data-pqdi="https://www.pqdi.cc/npc/'+mob.id+'" title="Open this mob on PQDI.cc (opens your browser)">🔗 PQDI</a>' : '';
-    bodyEl.innerHTML = '<div class="mob">'
-      + '<div><span class="nm">'+esc(nm)+'</span>'+cls+pqdiChip+'</div>'
+    var html = '<div class="mob">'
+      + '<div data-wp-sect="name"><span class="nm">'+esc(nm)+'</span>'+cls+pqdiChip+'</div>'
       + (mob && mob.zone ? '<div class="zone">@ '+esc(mob.zone)+'</div>' : '')
-      + (sub.length ? '<div class="sub">'+sub.join(' · ')+'</div>' : '')
+      + (sub.length ? '<div class="sub" data-wp-sect="stats">'+sub.join(' · ')+'</div>' : '')
       + slotLine
       + hpBar
+      + timersLine(mi.target_timers)
       + slowBadge
       + manaBar
       + manaLine
+      + lastCast
       + targetState
       + tabBody
       + lastFight
       + '</div>';
-    // Grow the host window to fit the rendered content so the Loot tab can
-    // show every row without a scrollbar. Skipped when the IPC isn't wired
-    // (dev / old preload).
+    // Unchanged HTML is not set again: every rewrite drops the hover under the cursor and a
+    // copy chip's ✓. While a chip shows ✓ the repaint waits (the click cleared __wpHtml, so
+    // the next paint after the hold goes through).
+    if (Date.now() < _copyHoldUntil || html === bodyEl.__wpHtml) return;
+    bodyEl.innerHTML = html;
+    bodyEl.__wpHtml = html;
+    _fitHeight();
+  }
+  // Grow the host window to fit the rendered content so the Loot tab can
+  // show every row without a scrollbar. Skipped when the IPC isn't wired
+  // (dev / old preload). Shared with mini, whose flip must refit as well.
+  function _fitHeight(){
     try {
       if (window.mimic && window.mimic.overlayAutoHeight) {
         var w = document.getElementById('wrap') || document.body;
@@ -686,6 +1413,13 @@
       }
     } catch (e) {}
   }
+  // Mini flips (preload's _wpApplyMini) repaint from the last poll at once
+  // rather than up to 500ms later, then refit — the no-target path returns
+  // before _renderBody's own fit, and the flip still changes the height there.
+  window.addEventListener('wp-mini-change', function(){
+    _renderBody(_lastMi);
+    _fitHeight();
+  });
 
   async function tick(){
     try {
@@ -696,11 +1430,14 @@
       // Splice the local /api/state.stats.currentEncounterThreat onto the
       // mobInfo blob so corpse-targets can render "Last fight" damage
       // without a server change. The renderer only surfaces it when the
-      // target_name ends in "'s corpse" (i.e., the just-killed mob you're
-      // now standing on for loot).
+      // target is the corpse of the mob that fight was against (the
+      // just-killed mob you're now standing on for loot) — lastFightFits.
+      // (It is top-level in /api/state; this read `s.stats…`, which does not exist, so the "last
+      // fight" scoreboard never showed. Found by the 3.0 Canvas audit, 2026-10-02.)
       var mi = s.mobInfo;
-      if (mi && s.stats && s.stats.currentEncounterThreat) {
-        mi = Object.assign({}, mi, { _enc: s.stats.currentEncounterThreat });
+      var enc = s.currentEncounterThreat || (s.stats && s.stats.currentEncounterThreat) || null;
+      if (mi && enc) {
+        mi = Object.assign({}, mi, { _enc: enc });
       }
       _lastMi = mi;
       _renderBody(_lastMi);

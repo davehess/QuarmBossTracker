@@ -1,6 +1,6 @@
 // commands/lockoutcheck.js — pre-raid lockout briefing to officer chat.
 //
-// Hitya 2026-08-21: "put it into a post in officer chat about characters
+// The guild lead 2026-08-21: "put it into a post in officer chat about characters
 // currently locked out for the upcoming night's raid by zone from the raid
 // planner's event."
 //
@@ -33,9 +33,11 @@ async function buildBriefingEmbed(client) {
   // PostgREST's cap (test/db-read-discipline.test.js ratchets on this), and a
   // truncated briefing would quietly omit blocked raiders, which is the exact
   // failure this feature exists to prevent.
+  // Ordered on (character, boss_key), the key once guild_id is pinned: `character`
+  // alone has one row per boss, and ties let a page boundary drop a lockout.
   const rows = await supabase.selectAllPaged('character_lockouts',
     `guild_id=eq.${encodeURIComponent(guildId)}&expires_at=gt.${encodeURIComponent(nowIso)}` +
-    `&select=character,boss_key,expires_at,ours`, 'character').catch(() => null);
+    `&select=character,boss_key,expires_at,ours`, 'character,boss_key').catch(() => null);
   const lockouts = Array.isArray(rows) ? rows : [];
 
   // main vs alt — a MAIN locked to tonight's target is the surprising case.
@@ -68,7 +70,7 @@ async function buildBriefingEmbed(client) {
   const header = [
     planned.eventTitle ? `**${planned.eventTitle}**` : null,
     // Mains are the verdict — a blocked alt is a swap, a blocked main is a hole
-    // in the raid (Hitya 2026-08-22: "as long as mains are good to go").
+    // in the raid (the guild lead, 2026-08-22: "as long as mains are good to go").
     b.mainsBlocked === 0
       ? (b.altsBlocked
           ? `✅ **All mains clear.** ${b.altsBlocked} alt${b.altsBlocked === 1 ? '' : 's'} blocked — swap and carry on.`

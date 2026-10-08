@@ -4,7 +4,9 @@
 
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
+import { requireOfficer } from '@/lib/officer';
 import { createQuest, addRequiredItem, deleteQuest, deleteItem, toggleActive } from './actions';
+import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,9 +19,10 @@ type Quest = {
 type Item = { id: number; quest_id: number; item_id: number | null; item_name: string; quantity: number; optional: boolean; display_order: number; notes: string | null };
 
 export default async function AdminQuestsPage() {
+  await requireOfficer();
   const sb = supabaseAdmin();
   const [{ data: quests }, { data: items }] = await Promise.all([
-    sb.from('quest_catalog').select('*').eq('guild_id', 'wolfpack').order('display_order'),
+    sb.from('quest_catalog').select('*').eq('guild_id', GUILD_TAG).order('display_order'),
     sb.from('quest_required_item').select('*').order('display_order'),
   ]);
   const itemsByQuest = new Map<number, Item[]>();

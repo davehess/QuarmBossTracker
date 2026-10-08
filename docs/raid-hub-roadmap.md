@@ -76,7 +76,7 @@ buffs that class provides**, ordered by who needs them most:
 If multiple raiders missing the **same** group buff are in **different
 groups**, suggest a temporary regrouping so the buffer can hit them all at
 once:
-> "Move Hopeya, Melting, Hitya into Group 4 — Bardtholemu can hit all 3 with
+> "Move a member, a member, the guild lead into Group 4 — a member can hit all 3 with
 > Songs of the Storyteller in one cast."
 
 The suggestion is officer/raid-leader gated (they have move authority). One-tap

@@ -15,9 +15,12 @@ import Link from 'next/link';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
-import { isOfficer } from '@/lib/officer';
+import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 import { normalizeTriggerPattern, isDeadAnchored } from '@/lib/triggerPattern';
+import { parseTimerFields, timerInputFrom, describeTimer } from '@/lib/triggerTimer';
+import { foldFeedback, loadFeedbackRollup, loadGuildTriggers, type FbAgg } from '@/lib/triggerFeedback';
+import TimerFields from './TimerFields';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,6 +39,11 @@ type TriggerRow = {
   notes: string | null;
   updated_at: string;
   created_by_name: string | null;
+  timer_duration_sec: number | null;
+  warning_seconds: number | null;
+  warning_text: string | null;
+  timer_loop: boolean;
+  timer_loop_max: number | null;
 };
 
 const CATEGORIES = ['callout', 'rampage', 'spawn', 'phase', 'mechanic', 'heal', 'ae', 'misc'];
@@ -74,6 +82,16 @@ async function createOrUpdate(formData: FormData) {
   const sticky = formData.get('sticky') === 'on';
   if (!name || !pattern || !overlayText) return;
 
+  // Countdown / warning / repeat. The form checks the same rules live (TimerFields), so a refusal
+  // here is the backstop for a browser that skipped that; it comes back as a banner, not a silent
+  // no-save. Written as columns, not into `actions`: the agent reads them off the row.
+  const timer = parseTimerFields(timerInputFrom(k => formData.get(k)));
+  if (!timer.ok) {
+    const q = new URLSearchParams({ timer_error: timer.error });
+    if (id) q.set('edit', id);
+    redirect(`/admin/triggers?${q.toString()}`);
+  }
+
   const admin = supabaseAdmin();
   const overlayAction: Record<string, unknown> = { type: 'text_overlay', text: overlayText, color: overlayColor, duration_ms: overlayMs };
   if (sticky) overlayAction.sticky = true;
@@ -85,6 +103,7 @@ async function createOrUpdate(formData: FormData) {
     applies_to_classes: classes,
     notes,
     created_by_name: u!.email || null,
+    ...timer.columns,
   };
   if (id) {
     await admin.from('guild_triggers').update(row).eq('id', id);
@@ -119,6 +138,8 @@ export default async function AdminTriggersPage({
   searchParams: Promise<{
     edit?:         string;
     category?:     string;
+    // Set by createOrUpdate when the countdown / warning / repeat fields failed the save-time check.
+    timer_error?:  string;
     // URL-prefill params — the Mimic dashboard's "↑ Promote" button on a
     // personal trigger row links here with these query params filled in so
     // the form arrives pre-populated. Officer still has to review + click
@@ -133,44 +154,23 @@ export default async function AdminTriggersPage({
     notes?:        string;
   }>;
 }) {
+  await requireOfficer();
   const p = await searchParams;
   const admin = supabaseAdmin();
-  let q: any = admin
-    .from('guild_triggers')
-    .select('id, name, category, enabled, source, pattern, pattern_flags, condition_expr, actions, cooldown_seconds, applies_to_classes, notes, updated_at, created_by_name')
-    .order('category')
-    .order('name');
-  if (p.category) q = q.eq('category', p.category);
-  const { data: rows } = await q;
-  const triggers = (rows ?? []) as TriggerRow[];
+  // Paged (512 triggers today; a plain read stops at 1,000 without saying so).
+  const triggers = await loadGuildTriggers<TriggerRow>(admin,
+    'id, name, category, enabled, source, pattern, pattern_flags, condition_expr, actions, cooldown_seconds, applies_to_classes, notes, updated_at, created_by_name, timer_duration_sec, warning_seconds, warning_text, timer_loop, timer_loop_max',
+    p.category);
 
-  // ── Trigger timing feedback aggregate (Hitya 2026-06-26 — v1.1.3).
+  // ── Trigger timing feedback aggregate (the guild lead, 2026-06-26 — v1.1.3).
   // Last 30 days of votes (« Earlier / ✓ Good! / » Too early) from Mimic's
   // trigger overlay. Group by trigger_name (denormalised at write time so we
   // don't need to join), compute the dominant direction + a confidence so the
   // table can render a clear recommendation chip. Empty-state covered.
+  // Tallied in Postgres: 30 days is ~48k rows, and PostgREST returns at most 1,000 rows per response,
+  // silently, so the old read tallied the newest 1,000 as the whole month.
   const since30 = new Date(Date.now() - 30 * 86400_000).toISOString();
-  const { data: fbRows } = await admin
-    .from('trigger_timing_feedback')
-    .select('trigger_id, trigger_name, direction, voted_at')
-    .gte('voted_at', since30)
-    .order('voted_at', { ascending: false })
-    .limit(5000);
-  type FbRow = { trigger_id: string | null; trigger_name: string; direction: 'earlier' | 'good' | 'too_early'; voted_at: string };
-  const fb = (fbRows ?? []) as FbRow[];
-  type FbAgg = { name: string; total: number; earlier: number; good: number; tooEarly: number; lastVote: string | null; triggerId: string | null };
-  const fbAggMap = new Map<string, FbAgg>();
-  for (const r of fb) {
-    const k = (r.trigger_name || '(unknown)').trim();
-    let a = fbAggMap.get(k);
-    if (!a) { a = { name: k, total: 0, earlier: 0, good: 0, tooEarly: 0, lastVote: null, triggerId: r.trigger_id || null }; fbAggMap.set(k, a); }
-    a.total++;
-    if (r.direction === 'earlier')    a.earlier++;
-    else if (r.direction === 'good')  a.good++;
-    else if (r.direction === 'too_early') a.tooEarly++;
-    if (!a.lastVote || r.voted_at > a.lastVote) a.lastVote = r.voted_at;
-    if (!a.triggerId && r.trigger_id) a.triggerId = r.trigger_id;
-  }
+  const { aggs: fbAll, total: fbTotal } = foldFeedback(await loadFeedbackRollup(admin, since30));
   // Recommendation: dominant direction with a small confidence threshold so a
   // single drive-by vote doesn't flip a trigger to 'too early'. ≥3 votes AND
   // ≥60% dominance flag the recommendation; everything else stays 'mixed'.
@@ -183,8 +183,7 @@ export default async function AdminTriggersPage({
     if (max === a.earlier)  return { label: '« fire earlier', cls: 'text-orange  border-orange/50 bg-orange/10',  help: 'consensus says the actual event happens BEFORE the trigger — push the trigger earlier.' };
     return { label: '» delay', cls: 'text-red-400 border-red-400/50 bg-red-400/10', help: 'consensus says the trigger fires BEFORE the actual event — delay the trigger.' };
   }
-  const fbAggs = [...fbAggMap.values()].sort((a, b) => b.total - a.total).slice(0, 50);
-  const fbTotal = fb.length;
+  const fbAggs = fbAll.slice(0, 50);
 
   const editTarget = p.edit ? triggers.find(t => t.id === p.edit) : null;
   const overlayDefault = editTarget?.actions?.find?.((a: any) => a?.type === 'text_overlay') || {};
@@ -221,12 +220,12 @@ export default async function AdminTriggersPage({
         </div>
       </section>
 
-      {/* Trigger timing feedback — last 30d (Hitya 2026-06-26 — v1.1.3). */}
+      {/* Trigger timing feedback — last 30d (the guild lead, 2026-06-26 — v1.1.3). */}
       <section className="bg-panel border border-purple/40 rounded-lg p-5">
         <div className="flex items-baseline justify-between gap-3 mb-2 flex-wrap">
           <h3 className="text-lg text-purple">🗳 Trigger timing feedback</h3>
           <span className="text-xs text-dim">
-            last 30 days · {fbTotal.toLocaleString()} vote{fbTotal === 1 ? '' : 's'} on {fbAggMap.size.toLocaleString()} trigger{fbAggMap.size === 1 ? '' : 's'}
+            last 30 days · {fbTotal.toLocaleString()} vote{fbTotal === 1 ? '' : 's'} on {fbAll.length.toLocaleString()} trigger{fbAll.length === 1 ? '' : 's'}
           </span>
         </div>
         <p className="text-xs text-dim leading-5 mb-3">
@@ -292,6 +291,11 @@ export default async function AdminTriggersPage({
             ? `✏️ Edit: ${editTarget.name}`
             : (p.name ? `➕ New trigger — promoted from Mimic: ${p.name}` : '➕ New trigger')}
         </h3>
+        {p.timer_error && (
+          <p role="alert" className="mb-3 text-xs text-red-400 border border-red-400/50 bg-red-400/10 rounded px-3 py-2">
+            Not saved — {p.timer_error.slice(0, 300)}
+          </p>
+        )}
         <form action={createOrUpdate} className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
           {editTarget && <input type="hidden" name="id" value={editTarget.id} />}
           <label className="space-y-1">
@@ -344,6 +348,16 @@ export default async function AdminTriggersPage({
               defaultValue={editTarget?.cooldown_seconds ?? (p.cooldown ? parseInt(p.cooldown, 10) : 0)}
               className="w-full bg-bg border border-border rounded px-2 py-1.5" />
           </label>
+          <TimerFields
+            key={editTarget?.id ?? 'new'}
+            defaults={{
+              timer_duration_sec: editTarget?.timer_duration_sec ?? null,
+              warning_seconds:    editTarget?.warning_seconds ?? null,
+              warning_text:       editTarget?.warning_text ?? null,
+              timer_loop:         editTarget?.timer_loop ?? false,
+              timer_loop_max:     editTarget?.timer_loop_max ?? null,
+            }}
+          />
           <label className="flex items-start gap-2 sm:col-span-2 cursor-pointer">
             <input name="sticky" type="checkbox" defaultChecked={!!overlayDefault.sticky} className="mt-0.5" />
             <span className="text-dim leading-5">
@@ -395,6 +409,7 @@ export default async function AdminTriggersPage({
                         <span className="text-dim text-[10px] px-1.5 py-0.5 rounded border border-border">{t.category}</span>
                         {t.cooldown_seconds > 0 && <span className="text-dim text-[10px]">cd {t.cooldown_seconds}s</span>}
                         {ov?.sticky && <span className="text-orange text-[10px] px-1.5 py-0.5 rounded border border-orange/50">📌 sticky</span>}
+                        {describeTimer(t) && <span className="text-blue text-[10px] px-1.5 py-0.5 rounded border border-blue/50">⏱ {describeTimer(t)}</span>}
                         {t.applies_to_classes && t.applies_to_classes.length > 0 && (
                           <span className="text-dim text-[10px]">[{t.applies_to_classes.join(', ')}]</span>
                         )}

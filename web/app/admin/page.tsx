@@ -36,7 +36,7 @@ export default function AdminPage() {
         />
         <Card
           title="🚩 Anomalies"
-          body="Raids that are mostly NOT Wolf Pack members (a guildie pugging another guild — auto-hidden from /parses, confirm or clear here), plus possible double-boxing where one person's two characters were both swinging in the same fight."
+          body="Raids that are mostly NOT Wolf Pack members (a guildie pugging another guild — auto-hidden from /parses, confirm or clear here), plus fights where one member had two characters swinging at once."
           href="/admin/anomalies"
         />
         <Card
@@ -83,6 +83,11 @@ export default function AdminPage() {
           title="📖 Spell exchange"
           body="Every spell scroll sitting in a member's inventory matched to who can use it and hasn't scribed it — the distribution side of raid spell drops. Backed by /me spellbook + inventory uploads."
           href="/admin/spells"
+        />
+        <Card
+          title="📜 Extra PoP spells"
+          body="[beta] Reward scrolls a raider holds but has already scribed, with who still needs the spell in first-dibs order."
+          href="/admin/extra-spells"
         />
         <Card
           title="📜 Audit log"

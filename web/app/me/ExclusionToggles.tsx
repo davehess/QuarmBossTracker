@@ -8,11 +8,21 @@
 // the page. Disabled during the action so a rapid double-click can't fire
 // twice. Semantics differ per flag — exclusion toggles read "EXCLUDED"/"on";
 // the tell-relay toggle reads "ON"/"off" because the meaning is reversed.
+//
+// Sharing is two switches (the guild lead, 2026-09-25: "we should separate out
+// inventory versus quests"): "Quest page" opens /character/<name>/quests,
+// "Inventory page" opens the inventory and spellbook pages. They say "page"
+// so they don't read as the "Inventory: on / EXCLUDED" upload switch.
+//
+// "Hide from lists" (the guild lead, 2026-10-03: "make it so I can hide these characters from anything
+// but account inventory") is display only: the character leaves the character lists on the site and
+// shows only in account inventory. On /me a hidden character sits in a collapsed "Hidden by you"
+// section, and this same switch reads "Unhide" there, so it can always be undone.
 
 import { useTransition, useState } from 'react';
 import { setCharacterExclusion } from './actions';
 
-type Flag = 'exclude_from_stats' | 'exclude_inventory' | 'tell_relay' | 'tell_dm' | 'show_inventory_publicly';
+type Flag = 'exclude_from_stats' | 'exclude_inventory' | 'tell_relay' | 'tell_dm' | 'show_inventory_publicly' | 'show_quests_publicly' | 'hidden_from_lists';
 
 export default function ExclusionToggles({
   character,
@@ -21,6 +31,8 @@ export default function ExclusionToggles({
   tellRelay,
   tellDm,
   showInventoryPublicly,
+  showQuestsPublicly,
+  hiddenFromLists,
 }: {
   character: string;
   excludeFromStats: boolean;
@@ -28,12 +40,16 @@ export default function ExclusionToggles({
   tellRelay: boolean;
   tellDm: boolean;
   showInventoryPublicly: boolean;
+  showQuestsPublicly: boolean;
+  hiddenFromLists: boolean;
 }) {
   const [stats, setStats]         = useState(excludeFromStats);
   const [inventory, setInventory] = useState(excludeInventory);
   const [tells, setTells]         = useState(tellRelay);
   const [dm, setDm]               = useState(tellDm);
-  const [showQuests, setShowQuests] = useState(showInventoryPublicly);
+  const [showQuests, setShowQuests] = useState(showQuestsPublicly);
+  const [showInv, setShowInv]       = useState(showInventoryPublicly);
+  const [hiddenLists, setHiddenLists] = useState(hiddenFromLists);
   const [pending, startTransition] = useTransition();
   const [err, setErr] = useState<string | null>(null);
 
@@ -69,7 +85,7 @@ export default function ExclusionToggles({
         <Toggle
           on={inventory}
           disabled={pending}
-          tooltip="Exclude inventory: don't catalog this character's bank/inventory. The agent has no inventory upload path yet, so this is a forward-looking flag the agent will honor when Mimic's inventory feature lands."
+          tooltip="Exclude inventory: Mimic stops uploading this character's inventory and spellbook exports. It doesn't delete what was already uploaded."
           onLabel="Inventory: EXCLUDED"
           offLabel="Inventory: on"
           variant="warn-when-on"
@@ -100,11 +116,29 @@ export default function ExclusionToggles({
         <Toggle
           on={showQuests}
           disabled={pending}
-          tooltip="Public quest tracker: when ON, anyone signed in can see this character's /character/<name>/quests page (which items they have/need, family hints). OFF (default) keeps it owner + officer only."
-          onLabel="Quests: PUBLIC"
-          offLabel="Quests: private"
+          tooltip="Quest page: when PUBLIC, anyone signed in can see this character's quest tracker — quest progress, keys and completed quests. The detailed inventory lists on it stay hidden unless the inventory page is public too. Private (default) keeps it owner + officers only."
+          onLabel="Quest page: PUBLIC"
+          offLabel="Quest page: private"
           variant="positive-when-on"
-          onChange={(next) => flip('show_inventory_publicly', next, setShowQuests, showQuests)}
+          onChange={(next) => flip('show_quests_publicly', next, setShowQuests, showQuests)}
+        />
+        <Toggle
+          on={showInv}
+          disabled={pending}
+          tooltip="Inventory page: when PUBLIC, anyone signed in can see this character's inventory (bags and bank) and spellbook. Private (default) keeps them owner + officers only."
+          onLabel="Inventory page: PUBLIC"
+          offLabel="Inventory page: private"
+          variant="positive-when-on"
+          onChange={(next) => flip('show_inventory_publicly', next, setShowInv, showInv)}
+        />
+        <Toggle
+          on={hiddenLists}
+          disabled={pending}
+          tooltip="Hide everywhere except account inventory: this character leaves the character lists (the PoP pages, the spellbook picker's main list, this page's cards) and shows only in your account inventory. Nothing is deleted and uploads keep working. Click again to unhide."
+          onLabel="Hidden from lists · Unhide"
+          offLabel="Hide from lists"
+          variant="warn-when-on"
+          onChange={(next) => flip('hidden_from_lists', next, setHiddenLists, hiddenLists)}
         />
       </div>
       {err && <div className="text-red-400">{err}</div>}

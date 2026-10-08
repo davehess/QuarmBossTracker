@@ -1,6 +1,6 @@
 'use client';
 
-// /shortabout's build-up animation, v2 (Hitya 2026-08-09).
+// /shortabout's build-up animation, v2 (the guild lead, 2026-08-09).
 //
 // v1 was a compass rose — nodes flew out ±52% past the stage and clipped off
 // both edges of a phone. This version is a STORY told in place, and nothing
