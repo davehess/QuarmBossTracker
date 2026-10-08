@@ -8124,3 +8124,21 @@ software**, and *"ask people as they set up"*.
 - Cost: overlays use more processor. Member-facing text says "graphics card", never GPU/acceleration.
 - Also told the member: newest driver (clean install), hardware-accelerated GPU scheduling off, windowed or
   borderless EQ, and event 4101 in Event Viewer to confirm the reset.
+
+### 196. Target Info buff bars count down, and the time says how long and who cast it (2026-10-08, Mimic beta `2eb8796e` · bot 3.1.225 · agent beta)
+The guild lead, on a guildmate's card with every buff bar full green: *"This should record how long it was to
+start and not just show all green. it should count down like everything else"*, then *"MOUSING OVER the time
+left should show you how long it lasted and who cast it"*, then *"we should know it since we have the timer and
+the person casting it when they start, the target, the target's group if they're using mimic"*.
+- **Bars** (`mobinfo.html`, `_tbuffSeenTotal`): a live Zeal buff has time left but no length, so the overlay
+  remembers the longest time it has seen per target + buff and draws against it; a refresh raises it, a buff
+  that leaves the list is forgotten.
+- **Hover on the time left:** "Lasts M:SS · M:SS gone · cast by <name>", or "caster unknown (only Mimic users'
+  casts are named)". EverQuest's landing lines never name a caster and `buff_casts` has no caster column.
+- **Caster** (bot): the casting relay now remembers the last caster per target + spell for 3 h (in memory,
+  5000 cap; a restart reads as "unknown", never a wrong name), served as `last_casters` on
+  `/api/agent/target-casts` under the same zone and spawn-id scope as live casts. A GROUP spell (targettype 3 /
+  41) is recorded for every member of the caster's group from the live raid roster (`group_num`), off the reply
+  path. A fizzled or interrupted cast is still recorded (only a failed cure says so).
+- **Length** (agent): when a caster is attached and the buff has no length, the agent fills it from the spell
+  catalog at the era-cap level, never below the time left, so the bar measures against the real duration.
