@@ -120,6 +120,15 @@
   .cm-bar > i{display:block;height:100%}
   .cm-tail{flex:0 1 auto;font-size:11px;color:#c9d1d9}
   .cm-tail b{color:#fff}
+  /* Tick cells (the guild lead, 2026-10-08, "B — Mob tick first"): a number over a 2px line that
+     shrinks over the 6 s cycle. Mob tick is the big one, in its own colour. */
+  .cm-tk{display:flex;flex-direction:column;gap:1px;min-width:26px}
+  .cm-tk.mob{min-width:38px}
+  .cm-tkn{font-size:10px;line-height:1.1;text-align:right;white-space:nowrap}
+  .cm-tk.mob .cm-tkn{font-size:13px;font-weight:bold}
+  .cm-tkl{display:block;height:2px;background:rgba(255,255,255,0.14);border-radius:1px;overflow:hidden}
+  .cm-tkl > u{display:block;height:100%;text-decoration:none}
+  .cm-mr{color:#8b949e;font-size:10px;white-space:nowrap}
   .cm-arr{color:#6e7681}
   .cm-tg{color:#f0883e}
   body.wp-mini #empty{font-size:10px;padding-left:22px}
@@ -363,12 +372,43 @@
     }
     return null;
   }
+  // The pet's magic resist for the mini chip. The #petstats sheet the agent
+  // attaches to the owner's petHealth row is the pet's CURRENT value, signed (a
+  // Tashed charm reads negative), so it wins; the charm row's own `mr` is the
+  // catalog BASE value and is marked approx (shown with a trailing ~). Neither
+  // → null, no chip. Only while charmed, like the target.
+  function charmPetMr(s, p){
+    if (!p || !p.is_active || !p.owner) return null;
+    var own = String(p.owner).toLowerCase(), pet = String(p.pet || '').toLowerCase();
+    var rows = (s && s.petHealth) || [];
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      if (r && String(r.owner || '').toLowerCase() === own && String(r.pet || '').toLowerCase() === pet) {
+        var m = r.sheet && r.sheet.resists ? r.sheet.resists.magic : null;
+        if (m != null && isFinite(Number(m))) return { val: Math.round(Number(m)), approx: false };
+      }
+    }
+    if (p.mr != null && isFinite(Number(p.mr))) return { val: Math.round(Number(p.mr)), approx: true };
+    return null;
+  }
+  // A tick's thin line: full at the start of the 6 s cycle, empty at the tick.
+  function tickLinePct(ms){
+    return ms == null ? 0 : Math.max(0, Math.min(100, (ms / 6000) * 100));
+  }
+  // One tick cell: a number over its 2px countdown line. Unknown → a dash and
+  // an empty line. `rough` is the full card's own "~" (a learned, not exact, tick).
+  function miniTickCell(cls, label, ms, col, rough){
+    return '<span class="cm-tk wp-mini-num ' + cls + '">'
+      + '<span class="cm-tkn" style="color:' + col + '">' + label + ' ' + (ms == null ? '—' : (rough ? '~' : '') + (ms / 1000).toFixed(1)) + '</span>'
+      + '<i class="cm-tkl"><u style="width:' + tickLinePct(ms).toFixed(1) + '%;background:' + col + '"></u></i>'
+      + '</span>';
+  }
   // One two-row block per charm. v carries what the tick loop already worked
   // out, so mini and full can never disagree about the timer: remMs/pct (the
   // duration bar), est (duration guessed — keeps full mode's ~ and grey), and
   // urgent (full mode's own `imminent`, the moment the overlay flashes and
-  // speaks — red here at exactly that moment, never on a guess). No MR: the
-  // charm feed has no resist data for the pet, so the MR slot stays empty.
+  // speaks — red here at exactly that moment, never on a guess). v.mr is the
+  // MR chip from charmPetMr (null → no chip).
   function charmMiniHtml(p, v){
     var hp = (p.pet_hp_pct != null) ? Math.max(0, Math.min(100, p.pet_hp_pct)) : null;
     // The shared mini bar steps (preload _WP_MINI_CSS): 50 / 25.
@@ -378,7 +418,9 @@
       + (hp == null ? '' : '<span class="cm-bar wp-mini-bar"><i style="width:' + hp.toFixed(0) + '%;background:' + hpCol + '"></i></span>')
       + '<span class="cm-tail wp-mini-name"><b>' + esc(p.pet || '?') + '</b>'
       +   (v.target ? ' <span class="cm-arr">→</span> <span class="cm-tg">' + esc(v.target) + '</span>' : '')
-      + '</span></div>';
+      + '</span>'
+      + (v.mr ? '<span class="cm-mr wp-mini-num" title="Pet magic resist' + (v.mr.approx ? ' (catalog base)' : '') + '">MR ' + v.mr.val + (v.mr.approx ? '~' : '') + '</span>' : '')
+      + '</div>';
     var lab, pct, col;
     if (v.broke)             { lab = '⏳ 0:00 recharm'; pct = 0; col = '#f85149'; }
     else if (p.is_dire_charm) { lab = '∞ dire'; pct = 100; col = '#56d364'; }
@@ -387,14 +429,17 @@
       pct = v.pct;
       col = v.urgent ? '#f85149' : (v.est ? '#8b94a3' : '#a371f7');
     }
-    // The two ticks ride row two as numbers — S = server, M = the mob's own
-    // ("?" until learned) — so the voted two-row mini stays two rows.
+    // The two ticks ride row two (the guild lead, 2026-10-08, "B — Mob tick
+    // first"): M = the mob's own, big and in its own colour (NOT the charm bar's
+    // purple, which made it unreadable), S = the server's, smaller and blue.
+    // Each has a 2px line that counts down its 6 s cycle. They are redrawn with
+    // the row on every poll, exactly as the S/M numbers always were.
     var srv = tickLeft(p.server_tick_at, v.now), mob = tickLeft(p.mob_tick_at, v.now);
     var row2 = '<div class="cm-row">'
       + '<span class="cm-lab wp-mini-num" style="color:' + col + '">' + lab + '</span>'
       + '<span class="cm-bar wp-mini-bar"><i style="width:' + pct.toFixed(1) + '%;background:' + col + '"></i></span>'
-      + '<span class="cm-lab wp-mini-num" style="color:' + TICK_SRV + '">S ' + (srv == null ? '—' : (srv / 1000).toFixed(1)) + '</span>'
-      + '<span class="cm-lab wp-mini-num" style="color:' + TICK_MOB + '">M ' + (mob == null ? '?' : (mob / 1000).toFixed(1)) + '</span>'
+      + miniTickCell('mob', 'M', mob, TICK_MOB_MINI, p.mob_tick_half_ms != null && p.mob_tick_half_ms > 350)
+      + miniTickCell('srv', 'S', srv, TICK_SRV, false)
       + '</div>';
     return '<div class="cm" data-key="' + esc(p.key || '') + '">' + row1 + row2 + '</div>';
   }
@@ -403,6 +448,9 @@
   // The agent sends each as the time of one tick boundary; count down on our
   // own clock so the 500 ms poll never shows a stale number. null = unknown.
   var TICK_SRV = '#58a6ff', TICK_MOB = '#a371f7';
+  // Mini only: teal-cyan, clear of the charm bar's purple, the HP greens/amber/red
+  // and the server tick's blue. The full card keeps TICK_MOB.
+  var TICK_MOB_MINI = '#2ee6d6';
   function tickLeft(at, now){
     if (at == null) return null;
     var d = (at - now) % 6000;
@@ -613,7 +661,7 @@
         // Mini: the callouts above have already run — only the drawing differs.
         if (mini) {
           html += charmMiniHtml(p, { broke: broke, remMs: durRemMs, pct: durPct, est: durEst,
-                                     urgent: imminent && !durEst, target: charmPetTarget(s, p), now: now });
+                                     urgent: imminent && !durEst, target: charmPetTarget(s, p), mr: charmPetMr(s, p), now: now });
           continue;
         }
 

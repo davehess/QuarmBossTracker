@@ -16819,6 +16819,19 @@ function _serializeForDashboard() {
         const petBuffs = ownerLower ? petBuffsForOwner(ownerLower) : [];
         const tNow = Date.now();
         const mt = _mobTickFor(info.pet, tNow);
+        // Catalog BASE magic resist for the Charm mini's MR chip, used only when no
+        // #petstats sheet is on the owner's pet row (the live, signed value wins
+        // overlay-side). Same cached mob-info row Target Info reads; a miss starts the
+        // fetch and the chip appears on a later poll. null = unknown.
+        let catalogMr = null;
+        try {
+          if (info.pet) {
+            fetchMobInfo(info.pet, info.owner);
+            const mc = _mobInfoByName.get(_mobInfoCacheKey(info.pet));
+            const v = mc && mc.mob && mc.mob.resists ? mc.mob.resists.mr : null;
+            if (v != null && Number.isFinite(Number(v))) catalogMr = Number(v);
+          }
+        } catch { void 0; }
         arr.push({
           key,
           pet: info.pet,
@@ -16845,6 +16858,7 @@ function _serializeForDashboard() {
           mob_tick_half_ms: mt ? Math.round(mt.half) : null,
           mob_tick_n:       mt ? mt.n : 0,
           mob_tick_src:     mt ? mt.src : null,
+          mr:               catalogMr,
         });
       }
       arr.sort((a, b) => (b.last_tick_at || 0) - (a.last_tick_at || 0));
