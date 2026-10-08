@@ -103,6 +103,10 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ Hail board: flag cap and "leaves in" countdown (bot 3.1.220 on `claude/sharp-lamport-dC0TW`, waiting for the
+  main push; agent 3.7.102 + Mimic on beta; DECISIONS §186).** "Flags: N / 72 used" (seen grants only), a warning
+  when flags left ≤ raiders still to hail, and the clock reads "leaves in m:ss", red in the last 2 minutes. The
+  beta card shows nothing new until the bot half reaches main, except the reworded clock.
 - **⏳ HUD: a second clicky row (Mimic beta, 2026-10-07; DECISIONS §185).** The guild lead: "add a second clicky row to
   the HUD". Row 2 sits one line inside row 1 on the same bottom arc; row 1 fills first, then row 2, and `+N` counts
   only what fits on neither. On by default; ⚙ → Items → "Two clicky rows" goes back to one (exactly today's line).
