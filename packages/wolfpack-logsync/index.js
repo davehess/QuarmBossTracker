@@ -47460,7 +47460,9 @@ const _CALLOUT_ALLOW_CATEGORIES = [
   { cat: 'feign',      rx: /\bfeign(?:ed|ing)?\b|\bFD\s*(?:fail(?:s|ed|ure)?)\b/i },
   // Boss-mechanic countdowns already curated in the built-ins — keep audible
   // even when a guild trigger drives them (e.g. a voice-mark sequence).
-  { cat: 'mechanic',   rx: /\bbuster\b|tank\s*buster|\baoe\b|\bdance\b|\brampage\b|\bch\s*go\b|\bloot\b/i },
+  // \bstampede\b: Plane of Tactics boar stampede callout (2026-10-08), built as a guild trigger whose
+  // speech "Stampede" matched nothing here and so stayed silent.
+  { cat: 'mechanic',   rx: /\bbuster\b|tank\s*buster|\baoe\b|\bdance\b|\brampage\b|\bch\s*go\b|\bloot\b|\bstampede\b/i },
 ];
 // Is this trigger (or relayed fire) allowed to SPEAK under the allow-list? Scans
 // the trigger name, its tags (guild_triggers rows carry `tags`; array or CSV
