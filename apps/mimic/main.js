@@ -1732,11 +1732,14 @@ function _readUiBundle(eqDir, character) {
 async function _isEqRunning() {
   // Linux (Steam Deck): EQ runs as an eqgame.exe process hosted by Wine/Proton;
   // pgrep -f finds it by command line. Lets the EQ-running overlay gate work.
+  // execFile, never exec: through a shell, `pgrep -f eqgame.exe` matched its own `sh -c "pgrep -f
+  // eqgame.exe"` parent, so EQ always read as running (a native-Wine tester, 2026-10-08: "EQ is not
+  // running but says it is" — the Zeal install refused). pgrep leaves out only itself, not its shell.
   if (process.platform === 'linux') {
     return new Promise((resolve) => {
       try {
-        const { exec } = require('child_process');
-        exec('pgrep -f eqgame.exe', { timeout: 5000 }, (err, stdout) => {
+        const { execFile } = require('child_process');
+        execFile('pgrep', ['-f', 'eqgame\\.exe'], { timeout: 5000 }, (err, stdout) => {
           resolve(!err && /\d/.test(stdout || ''));
         });
       } catch { resolve(false); }
@@ -11236,7 +11239,8 @@ ipcMain.handle('zeal-install-update', async () => {
     if (await _isEqRunning()) {
       // A check of THIS PC's processes only (tasklist) — never the bot or another computer you are logged
       // in on (the guild lead, 2026-10-04, updating on a second PC, read it as "you're logged in").
-      return { ok: false, error: 'EverQuest (eqgame.exe) is running on this PC — Zeal.asi is loaded by the game and can\'t be replaced while it\'s open. Close it and try again. Don\'t see a game window? A stuck one may still be running: Task Manager → Details → eqgame.exe → End task.' };
+      return { ok: false, error: 'EverQuest (eqgame.exe) is running on this PC — Zeal.asi is loaded by the game and can\'t be replaced while it\'s open. Close it and try again. Don\'t see a game window? A stuck one may still be running: '
+        + (process.platform === 'linux' ? 'in a terminal, `pgrep -af eqgame` lists it and `pkill -f eqgame.exe` (or `wineserver -k` in its prefix) ends it.' : 'Task Manager → Details → eqgame.exe → End task.') };
     }
     const cfg = loadConfig();
     const res = await zealUpdater.install(eqDir, { source: cfg.zealSource });
