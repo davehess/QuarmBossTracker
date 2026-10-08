@@ -103,6 +103,10 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ Canvas show-when rules (Mimic alpha `d97ae9d7`, 2026-10-07; DECISIONS §187).** Each piece can show only in
+  combat, out of combat, with a target, with an NPC target, in a raid, or for chosen classes; arranging shows all.
+  Follow-ups: an agent `raid_active` and `target.is_npc` signal (beta) to replace the Zeal-raid-window and name
+  heuristics; tune the 8 s combat hold after a real raid.
 - **⏳ Hail board: flag cap and "leaves in" countdown (bot 3.1.220 on `claude/sharp-lamport-dC0TW`, waiting for the
   main push; agent 3.7.102 + Mimic on beta; DECISIONS §186).** "Flags: N / 72 used" (seen grants only), a warning
   when flags left ≤ raiders still to hail, and the clock reads "leaves in m:ss", red in the last 2 minutes. The

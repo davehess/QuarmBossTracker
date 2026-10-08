@@ -1141,6 +1141,14 @@ each window's spot, size and zoom). Test `test/canvas-overlays.test.js`. Alpha o
 - `fitPiece` sizes a piece to its content on a mode change and on ↕ Fit.
 - The canvas counts two clicks itself to open settings; dblclick never gets past the drag shield.
 Tests `test/canvas-pieces.test.js`, `test/timers-canvas.test.js`. Alpha only.
+**Show-when rules (alpha `d97ae9d7`, 2026-10-07, design rule A, DECISIONS §187):** a panel's `when` (`combat`,
+`nocombat`, `target`, `npc`, `raid`; absent = always) and optional `cls` class list, ANDed. A false rule adds class
+`wh` (hidden like `.off`, never writes `off`; `off` wins). Arranging shows everything with a rule badge. Signals,
+no agent change: `/api/me` `combat.live`, `target` (NPC from `level_src` / name shape; an unknown single-word name
+stays visible), `class`; `/api/state.raidPipe` within `RAID_FRESH_MS` 60 s. `COMBAT_HOLD_MS` 8 s hold after combat.
+A missing field fails open ("needs a newer agent" in the ⚙ menu). ⚠ A raid-only piece stays hidden without Zeal
+raid data (the agent cannot tell "no Zeal" from "no raid"); an agent `raid_active` / `target.is_npc` would firm
+both up. Menu row + class picker per piece; the selection bar applies to many. Test `test/canvas-show-when.test.js`.
 **A hotkey per saved Canvas group (alpha, 2026-10-07, DECISIONS §180):** "a Canvas group" is a SAVED group (★ Groups →
 My groups, `cfg.canvasGroups`). Pieces placed from it, or saved as it, are marked in the layout (`layout.named`: the
 live `grp` they share → the saved group's id; `sanitize` keeps only marks that still have pieces).
