@@ -198,6 +198,9 @@
     { id: 'eq',       icon: '🔧', title: 'Set up EverQuest',     kind: 'rec', body: bEq,
       summary: 'Logging on, exports on camp, and the two Windows fixes raiders trip over.',
       lede: 'Three one-click fixes. Each says what it changes before it changes it.' },
+    { id: 'screen',   icon: '🖥️', title: 'Screen flicker',       body: bScreen,
+      summary: 'One question about black screens, so Mimic draws its overlays the safe way for you.',
+      lede: 'A few graphics setups cannot keep up with overlays drawn over a game. One question decides how Mimic draws them.' },
     { id: 'overlays', icon: '🪟', title: 'Overlays',             body: bOverlays,
       summary: 'Pick what floats over EverQuest. Change it any time from the tray.',
       lede: 'Windows that sit over the game. Start with a few — each one can be moved, resized and hidden later.' },
@@ -600,6 +603,28 @@
     q.addEventListener('change', function () { S.cfg.quietMode = q.checked; Promise.resolve(M.setQuietMode(q.checked)).catch(function () {}); });
   }
 
+  // The graphics-card question. Same flag as Settings → "Use the graphics card for overlays"
+  // (cfg.disableGpu); setup never restarts Mimic mid-walkthrough, so a changed answer lands next start.
+  function bScreen(el) {
+    S.visited.add('screen');
+    var off = S.cfg.disableGpu === true;
+    el.innerHTML = '<div class="box"><h3>Has your screen ever gone black, or flickered, while EverQuest and an overlay app were running?</h3>'
+      + '<div class="row" style="margin-top:8px">'
+      + '<button data-a="gpu-on"' + (S.gpuAsked && !off ? ' class="primary"' : '') + '>No — use the graphics card (recommended)</button>'
+      + '<button data-a="gpu-off"' + (S.gpuAsked && off ? ' class="primary"' : '') + '>Yes — draw overlays without the graphics card</button></div>'
+      + (S.gpuNote ? '<div class="note ok">' + esc(S.gpuNote) + '</div>' : '')
+      + '<div class="note dim">Not sure? Skip this. You can change it any time in Settings, or from the tray.</div></div>'
+      + turnsOn(['<b>Without the graphics card</b>, overlays use a little more processor but cannot upset your graphics driver']);
+    function pick(useGpu) {
+      var was = S.cfg.disableGpu === true;
+      S.cfg.disableGpu = !useGpu; S.gpuAsked = true;
+      S.gpuNote = (was !== !useGpu) ? 'Saved. This takes effect the next time Mimic starts.' : 'Saved.';
+      Promise.resolve(M.setGpuDrawing(useGpu, false)).catch(function () {});
+      changed('screen');
+    }
+    wire(el, { 'gpu-on': function () { pick(true); }, 'gpu-off': function () { pick(false); } });
+  }
+
   var ME = [
     ['💬', 'Tells, anywhere',      'Every /tell to any of your characters, on your phone — with a browser alert if you want one.', '/me/tells'],
     ['🎒', 'Every item you own',   'Search bags, bank and shared bank across all your characters. Filled in each time you camp (with Zeal).', '/me/inventory'],
@@ -894,7 +919,7 @@
       getAgentPort: ok(7779), saveConfig: ok(true), relaunchAgent: ok(true), markOnboarded: ok(true), openDashboard: ok(true),
       pickEqDir: ok(null), pickLogBackups: ok([]), zealCheckUpdate: ok({ ok: true, updateAvailable: true, latestTag: 'v1.4.6' }),
       zealInstallUpdate: ok({ ok: true }), eqSetupForMe: ok({ ok: true, folders: [{}] }), defenderAddExclusions: ok({ ok: true }),
-      clockResync: ok({ ok: true }), setQuietMode: ok(true), toggleCrashReports: ok(true), openUiStudio: ok(true), openExternal: ok(true),
+      clockResync: ok({ ok: true }), setQuietMode: ok(true), setGpuDrawing: ok({ ok: true }), toggleCrashReports: ok(true), openUiStudio: ok(true), openExternal: ok(true),
       mimicLinkStart: ok(true), mimicLinkCancel: ok(true), mimicLinkSignOut: ok(true), welcomeOptin: ok({ ok: true, results: [] }),
       characterModes: ok({ ok: true, synced: true, characters: [
         { name: 'Aldenmar', mode: 'show', src: 'site', on_pc: true, log_read: true },

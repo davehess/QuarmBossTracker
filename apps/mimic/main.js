@@ -91,6 +91,16 @@ const BASE_PORT   = 7779; // 7777/7778 left for Parser.bat coexistence
 
 const WOLFPACK_URL    = 'https://wolfpack.quest';
 
+// ── Overlay drawing: graphics card (default) or processor ───────────────────
+// A member's whole screen went black with Windows' "device unplugged / plugged in" sound
+// while Mimic ran: a graphics-driver reset. Every overlay is a transparent always-on-top
+// window composited on the graphics card over EverQuest, which some driver setups do not
+// survive. cfg.disableGpu draws them in software instead. The switch must be thrown before
+// the app is ready, so it reads the saved config straight off disk; a missing or torn file
+// leaves the graphics card on. Changing it takes a restart.
+const _gpuOffAtStart = (() => { try { const raw = _readConfigRaw(); return !!(raw && raw.disableGpu === true); } catch { return false; } })();
+if (_gpuOffAtStart) app.disableHardwareAcceleration();
+
 // Standard webPreferences for every window we open, PLUS a name stamped onto
 // that renderer's own command line.
 //
@@ -296,6 +306,9 @@ function defaultConfig() {
     // map of pack id → last-installed release tag. Same idea as zealInstalledTag
     // but per-pack, since a user can install more than one.
     uiPackTags: {},
+    // Draw overlays on the processor instead of the graphics card. Off = graphics card.
+    // Read before app-ready (see _gpuOffAtStart), so a change needs a restart.
+    disableGpu: false,
   };
 }
 // The config, or the last good copy of it. saveConfig keeps `.bak` (the file as
@@ -7045,6 +7058,7 @@ function currentStatus() {
     localModeChosen: localOnly && !!cfg.localOnly,
     quietMode: !!cfg.quietMode,
     hideOverlays: !!cfg.hideOverlays,
+    useGpu: !cfg.disableGpu,
     tellsMode: cfg.tellsMode || 'off',
     tellsDmPausedUntil: (Number(cfg.tellsDmPausedUntil) || 0) > Date.now() ? Number(cfg.tellsDmPausedUntil) : 0,
     showHud: !!cfg.showHud,
@@ -7255,6 +7269,23 @@ function _quitMimic() {
   quitting = true;
   if (agentProc) { try { agentProc.kill(); } catch {} }
   app.quit();
+}
+// Save the graphics-card choice. It only takes hold at startup, so when the saved choice now differs
+// from what this run started with, `ask` offers the restart (tray, Settings); setup passes ask=false
+// and lets it land the next time Mimic starts.
+function _setGpuDrawing(useGpu, ask) {
+  const cfg = loadConfig(); cfg.disableGpu = !useGpu; saveConfig(cfg);
+  const restartNeeded = cfg.disableGpu !== _gpuOffAtStart;
+  if (restartNeeded && ask) {
+    dialog.showMessageBox({
+      type: 'question', buttons: ['Restart now', 'Later'], defaultId: 0, cancelId: 1,
+      title: 'Restart Mimic',
+      message: useGpu ? 'Mimic will use the graphics card for overlays again.' : 'Mimic will draw overlays without the graphics card.',
+      detail: 'This takes effect when Mimic restarts. Restart now?',
+    }).then((r) => { if (r.response === 0) { app.relaunch(); _quitMimic(); } }).catch(() => {});
+  }
+  pushStatus();
+  return { ok: true, useGpu: !cfg.disableGpu, restartNeeded };
 }
 function _trayFallbackMenu() {
   return Menu.buildFromTemplate([
@@ -7611,6 +7642,8 @@ function buildTrayMenu() {
           pushStatus();
         } },
     ] : []),
+    // Same switch as Settings → "Use the graphics card for overlays" (restarts Mimic).
+    { label: 'Use the graphics card for overlays (restarts Mimic)', type: 'checkbox', checked: s.useGpu !== false, click: (mi) => { _setGpuDrawing(!!mi.checked, true); } },
     { label: 'My /tells  🔒 PRIVATE', submenu: tellsSubmenu },
     { type: 'separator' },
     connectItem,
@@ -9836,6 +9869,8 @@ ipcMain.handle('relaunch-agent', async () => {
   return true;
 });
 ipcMain.handle('get-status', () => currentStatus());
+// "Use the graphics card for overlays" — Settings and setup. `ask` = offer the restart now.
+ipcMain.handle('set-gpu-drawing', (_e, useGpu, ask) => _setGpuDrawing(!!useGpu, !!ask));
 ipcMain.handle('set-quiet-mode', (_e, on) => {
   const cfg = loadConfig(); cfg.quietMode = !!on; saveConfig(cfg);
   _broadcastMute(cfg);   // see the tray's Quiet mode item — same gap
