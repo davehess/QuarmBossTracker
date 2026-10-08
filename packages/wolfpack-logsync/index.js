@@ -43156,14 +43156,51 @@ function fetchTargetCasts(name, selfChar, targetId) {
       res.on('data', c => body += c);
       res.on('end', () => {
         _targetCastsInflight.delete(key);
-        try { const j = JSON.parse(body); _targetCastsByName.set(key, { at: Date.now(), casts: (j && j.casts) || [] }); }
-        catch { _targetCastsByName.set(key, { at: Date.now(), casts: [] }); }
+        // last_casters: who LAST cast each spell on this target (the bot remembers 3h).
+        // Absent from an older bot → [] and no caster is named.
+        try {
+          const j = JSON.parse(body);
+          _targetCastsByName.set(key, { at: Date.now(), casts: (j && j.casts) || [],
+            last_casters: (j && Array.isArray(j.last_casters)) ? j.last_casters : [] });
+        }
+        catch { _targetCastsByName.set(key, { at: Date.now(), casts: [], last_casters: [] }); }
       });
     });
     req.on('error',   () => { _targetCastsInflight.delete(key); });
     req.on('timeout', () => { req.destroy(); _targetCastsInflight.delete(key); });
     req.end();
   } catch { _targetCastsInflight.delete(key); }
+}
+
+// Name the caster of each Target Info effect (the guild lead, 2026-10-08: mousing over the time left
+// "should show you how long it lasted and who cast it"). EverQuest's landing lines never name a
+// caster, so the only source is the bot's cast relay: target-casts' `last_casters` ([{ spell, caster,
+// at_ms }], newest first) remembers who last cast each spell on this target. Matched by spell name,
+// case-insensitive. A buff that already names someone (a charm's `owner`, an earlier `caster`) is left
+// alone. When a caster is attached and the length is unknown, the catalog length fills `total_secs`
+// (_catalogDurationSec: the era-cap level fallback), never below what is left on the timer.
+// Returns a new array; the input rows are not mutated.
+function _attachBuffCasters(buffs, lastCasters) {
+  if (!Array.isArray(buffs) || !buffs.length || !Array.isArray(lastCasters) || !lastCasters.length) return buffs;
+  const norm = (s) => String(s || '').trim().toLowerCase().replace(/`/g, "'");
+  const bySpell = new Map();
+  for (const lc of lastCasters) {
+    if (!lc || !lc.spell || !lc.caster) continue;
+    const k = norm(lc.spell);
+    if (!bySpell.has(k)) bySpell.set(k, lc.caster);   // newest first: the first one wins
+  }
+  if (!bySpell.size) return buffs;
+  return buffs.map((b) => {
+    if (!b || !b.name || b.owner || b.caster) return b;
+    const caster = bySpell.get(norm(b.name));
+    if (!caster) return b;
+    const out = { ...b, caster };
+    if (out.total_secs == null) {
+      const d = _catalogDurationSec(b.name);
+      if (d) out.total_secs = Math.max(d, Number(out.remaining_secs) || 0);
+    }
+    return out;
+  });
 }
 
 // Cross-client target_buffs on the current target — pulled from buff_casts via
@@ -44622,6 +44659,8 @@ function buildMobInfo() {
     // observed occupant of each slot so a stale overwritten buff doesn't linger.
     buffs = _collapseObservedBuffSlots(buffs);
   }
+  // Who cast each effect, from the bot's cast relay (see _attachBuffCasters).
+  buffs = _attachBuffCasters(buffs, ctc ? ctc.last_casters : null);
   // Slot occupancy for PC targets (authoritative via Zeal): the classic
   // buff window holds 15 buff/debuff slots, the song window 6. Null for
   // mobs/unwatched players — we only see observed landings for those.
