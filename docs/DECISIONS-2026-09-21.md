@@ -8229,3 +8229,10 @@ happens?"*
   trigger poll: "Tactics: boar stampede incoming" (pattern `You hear the pounding of hooves\.`, overlay + TTS
   "Stampede", 15 s timer, 120 s cooldown) and "Tactics: next stampede possible" (same line, 40-minute timer, shown
   from 5 minutes out). The 40 minutes is the script's minimum; the real gap can run to 2 hours.
+- **Follow-up, same day: the whole window, shown at once** (the guild lead: *"we should be able to say when a spawn
+  may happen after seeing the stampede go off and give a timer"*; a member's FB-69 asked to record the time of the
+  emote). The first timer hid until its last 5 minutes and said nothing about the far edge. Now two bars start the
+  moment the emote is seen: **"Tactics: stampede window opens"** (40 min, spoken warning at 5 min, ends "Stampede
+  possible now") and **"Tactics: stampede by"** (120 min, text warning at 10 min, ends "Stampede is overdue: Rallos
+  Zek up, or the roll ran long"). Guild-trigger rows only, so they reach raiders on the 2-minute poll with no release.
+  Implements FB-69.
