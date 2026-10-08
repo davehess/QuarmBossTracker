@@ -8292,3 +8292,21 @@ then widened it past PoP.
   kept equal by `test/mob-specials-web-parity.test.js`) pick it up with no Mimic release. No consumer matched the old
   label. A mob without the flag simply has no chip: the absence is the "equips" answer, not a second chip.
 - ⚠ Mimic caches mob info on the player's machine (6 h), so an already-seen mob shows the chip after the cache turns over.
+
+### 204. The Glyphed Rune Word drop list is the board's rule: anyone on it with a spawn over 2 h (2026-10-08, bot 3.1.231 data)
+**The ask** (the guild lead, pasting pqdi item 29132, Glyphed Rune Word, with its 167 droppers): *"Anyone from this list
+should be on that boards page if they have a longer than 2 hour spawn cooldown"*. This replaces the §202 loot guess
+with PQDI's own list for the Planes of Power.
+- **Checked against `eqemu_spawn2`:** of the 167 ids, 53 spawn on a timer over 2 h, 53 on 2 h or less (the trash named of
+  Fire and Water, the Doomfire mobs and so on), and 61 have **no spawn row** (spawned by a zone script, so there is no
+  respawn to read). 44 of the 53 were already on the board (§202 + earlier); **nine were added**: Emmerik Skyfury and
+  Evynd Firestorm (Bastion of Thunder, 6 h), An Undead Inhabitant, A Rabid Wrulon and A Recuso Degenerate (Halls of Honor, 12 h),
+  Lossenmachar and Calebgrothiel (Plane of Air, 4 h), Neffiken, Lord of Kelek`Vor and Gurebk, Lord of Krendic (Plane of Storms, 3 h).
+  260 on the board. The six on 6 h or less are short-timer bosses (§isShortTimerBoss): on the board and in Active
+  Cooldowns, off the spawn alerts, `lockout:false` like their Bastion siblings; the tests that pinned "exactly the eight" now name them.
+- ⚠ **Open: the 61 scripted spawns are NOT on the board**, because their cooldown is unknowable from the catalog. They are the
+  event and boss mobs of the planes: Falto, Ston`Ruak and Jeplak (Storms), Rydda`Dar (Halls of Honor), Rizlona and The Protector of
+  Dresolik (Tower of Solusek Ro), Pherlondien Clawpike, the four Avatars (Wind, Smoke, Mist, Dust) and Melernil, Inlokher, Escalardian
+  (Air), Pwelon / Nrinda / Vamuil (Water), Azobian, Javonn, Reaxnous, Warlord Prollaz, Omni Magus Crato, Chancellors Kirtra and Traxom,
+  Hebabbilys (Fire), and the Earth event set, plus Rallos Zek / Vallon Zek's instance bodies (already on the board by name). They need
+  a kill or a PQDI read to learn the timer.

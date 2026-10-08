@@ -3244,5 +3244,122 @@
     ],
     "emoji": "🏜️",
     "pqdiUrl": "https://www.pqdi.cc/npc/120064"
+  },
+  {
+    "id": "emmerik_skyfury",
+    "name": "Emmerik Skyfury",
+    "zone": "Bastion of Thunder",
+    "expansion": "PoP",
+    "timerHours": 6,
+    "nicknames": [
+      "emmerik"
+    ],
+    "emoji": "⛈️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/209053",
+    "lockout": false
+  },
+  {
+    "id": "evynd_firestorm",
+    "name": "Evynd Firestorm",
+    "zone": "Bastion of Thunder",
+    "expansion": "PoP",
+    "timerHours": 6,
+    "nicknames": [
+      "evynd"
+    ],
+    "emoji": "⛈️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/209054",
+    "lockout": false
+  },
+  {
+    "id": "an_undead_inhabitant",
+    "name": "An Undead Inhabitant",
+    "zone": "Halls of Honor",
+    "expansion": "PoP",
+    "timerHours": 12,
+    "nicknames": [
+      "undead inhabitant"
+    ],
+    "emoji": "🏛️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/211043",
+    "lockout": false
+  },
+  {
+    "id": "a_rabid_wrulon",
+    "name": "A Rabid Wrulon",
+    "zone": "Halls of Honor",
+    "expansion": "PoP",
+    "timerHours": 12,
+    "nicknames": [
+      "rabid wrulon"
+    ],
+    "emoji": "🏛️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/211044",
+    "lockout": false
+  },
+  {
+    "id": "a_recuso_degenerate",
+    "name": "A Recuso Degenerate",
+    "zone": "Halls of Honor",
+    "expansion": "PoP",
+    "timerHours": 12,
+    "nicknames": [
+      "recuso degenerate"
+    ],
+    "emoji": "🏛️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/211045",
+    "lockout": false
+  },
+  {
+    "id": "lossenmachar",
+    "name": "Lossenmachar",
+    "zone": "Plane of Air",
+    "expansion": "PoP",
+    "timerHours": 4,
+    "nicknames": [
+      "lossenmachar"
+    ],
+    "emoji": "🌪️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/215060",
+    "lockout": false
+  },
+  {
+    "id": "calebgrothiel",
+    "name": "Calebgrothiel",
+    "zone": "Plane of Air",
+    "expansion": "PoP",
+    "timerHours": 4,
+    "nicknames": [
+      "calebgrothiel"
+    ],
+    "emoji": "🌪️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/215324",
+    "lockout": false
+  },
+  {
+    "id": "neffiken_lord_of_kelekvor",
+    "name": "Neffiken, Lord of Kelek`Vor",
+    "zone": "Plane of Storms",
+    "expansion": "PoP",
+    "timerHours": 3,
+    "nicknames": [
+      "neffiken"
+    ],
+    "emoji": "⛈️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/210251",
+    "lockout": false
+  },
+  {
+    "id": "gurebk_lord_of_krendic",
+    "name": "Gurebk, Lord of Krendic",
+    "zone": "Plane of Storms",
+    "expansion": "PoP",
+    "timerHours": 3,
+    "nicknames": [
+      "gurebk"
+    ],
+    "emoji": "⛈️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/210332",
+    "lockout": false
   }
 ]
