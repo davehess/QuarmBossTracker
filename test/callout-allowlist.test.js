@@ -117,3 +117,16 @@ describe('#136 allow-list: Feign Death failing speaks (the guild lead, 2026-10-0
     expect(_calloutAllowedToSpeak({ name: 'FD ready', actions: [{ type: 'tts', text: 'FD ready' }] })).toBe(false);
   });
 });
+
+describe('#136 allow-list: the Plane of Tactics stampede callout speaks (2026-10-08)', () => {
+  // The guild trigger "Tactics: boar stampede incoming" speaks "Stampede"; before this it was muted.
+  it('the live stampede trigger is allowed to speak', () => {
+    expect(_calloutAllowedToSpeak({
+      name: 'Tactics: boar stampede incoming',
+      actions: [{ type: 'text_overlay', text: 'STAMPEDE: about 30 boars and a piglet run out from 1200, -300 in ~15 s' }, { type: 'tts', text: 'Stampede' }],
+    })).toBe(true);
+  });
+  it('a word that merely contains it stays muted', () => {
+    expect(_calloutAllowedToSpeak({ name: 'Stampeded herd note', actions: [] })).toBe(false);
+  });
+});
