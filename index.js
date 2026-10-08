@@ -15940,6 +15940,16 @@ async function _npcInteract(npcId) {
         `zone_short=eq.${encodeURIComponent(zone.short_name)}&npc_name=ilike.${encodeURIComponent(display)}&is_encounter=eq.false&select=path,body&limit=1`).catch(() => []);
       script = (Array.isArray(s2) && s2[0]) || null;
     }
+    // Neither: the NPC may be scripted by one of the zone's encounter files (Thelin Poxbourne in the
+    // hedge maze, 2026-10-08), which register say/trade handlers by npc id.
+    if (!script) {
+      const enc = await supabase.select('eqemu_quest_scripts',
+        `zone_short=eq.${encodeURIComponent(zone.short_name)}&is_encounter=eq.true&select=path,body&limit=100`).catch(() => []);
+      for (const f of Array.isArray(enc) ? enc : []) {
+        const body = qd.encounterHandlers(f.body, npcId);
+        if (body) { script = { path: f.path, body }; break; }
+      }
+    }
   }
   const say = script ? qd.parseDialog(script.body) : [];
   const trade = script ? qd.tradeReplies(script.body) : [];
