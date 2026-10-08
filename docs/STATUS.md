@@ -5694,3 +5694,19 @@ The guild lead picked A for all three open choices (DECISIONS-2026-09-21.md §17
 - **Alpha (FB-64):** the HUD ring "as pieces" is one ring of ten arc pieces on the shared circle
   (`fc18eaa1`, new "Ring arc" piece mode). The beta→alpha sync failed twice today on me.html/preload.js;
   it was resolved by hand (`27608cd8`), keeping the alpha's Canvas path in the HUD builder close.
+
+### 🧾 2026-10-08 (evening) — feedback names, /parses week on main, clicky counters (web 1.8.125 · bot 3.1.232)
+Detail and the guild lead's quotes in `DECISIONS-2026-09-21.md` §206.
+- **Done, on main:** `/admin/feedback` "Addressed by" shows the Discord name, not the email; Mimic reports carry the sender's
+  Discord name, not the character they had up (15 stored rows + 1 stored email rewritten); `/parses` opens on 7 days (it was
+  beta-only until now; the parallel-reads rewrite is still beta-only).
+- **Done, on beta (Mimic HUD):** unlimited clickies never show, whatever agent version sends them.
+- **Open — FB-68 (clicky counters):** a zero-cast-time clicky (the Wooly Spider Silk Net, a 3-charge Root) prints no
+  "begins to glow" line, so the agent never counts it. Its outcomes are visible: "Your target resisted the Root spell." and
+  "<mob> adheres to the ground." Plan: count a resist (only ours prints it) and a landing for a clicky whose catalog cast
+  time is 0, skipping a spell the member began casting by hand ("You begin casting <spell>" just before). Agent, beta first.
+- **Open — FB-66 Linux:** the Deck branch has a `_checkEqRunning` Linux branch (pgrep) but `_startEqPolling` still bails on
+  non-win32, so overlays never hide when EQ closes. One-line fix on the Deck branch.
+- **Open — Linux versioning:** a Windows cut does not produce a Linux build. `build-mimic-linux.yml` exists only on the Deck
+  branch and names builds `<parked>-linux.<run>`. Proposal: move it to main/beta, trigger it from `release-mimic` success,
+  keep `prune-linux-releases` at 2 (the 10-entry releases.atom trap).

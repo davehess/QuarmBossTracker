@@ -355,7 +355,9 @@ export default async function ParsesPage(
   const officer = await isOfficer(user.id);
 
   const { w: wParam } = await searchParams;
-  const w = resolveWindow(wParam, '60d');
+  // Opens on the last week (FB-59, a member, 2026-10-07: "defaults to 60 days instead of 7 days, and lags
+  // out when it loads"; the guild lead asked for it on main, 2026-10-08). `?w=60d` is the old window.
+  const w = resolveWindow(wParam, '7d');
   const caveat = windowCaveat('parses', w);
   const { rows: allRows, offcard, zones, loot, attendance, roster, error } = await loadAll(w);
   const zonesById = new Map<number, ZoneRow>(
