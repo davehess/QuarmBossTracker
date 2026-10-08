@@ -717,6 +717,10 @@ next touch one rather than assuming a missing row means a missing doc.
   `deploymentEnabled`. Web 1.8.53 also keeps a `/pop` link's query through sign-in. §101.
 - **⏳ Command Center 📋 on deathrolls (agent 3.7.47, Mimic beta `013e2e0c`) · Target Info even con = your
   level for a player (agent 3.7.48, beta `386cfc99`), 2026-09-29.** §97, §98 (reverses part of §15).
+- **✅ Glyphed Rune Word droppers on a spawn over 2 h are on the boards (bot 3.1.231 data, main 2026-10-08).** Nine added to
+  the 44 already there: Emmerik Skyfury, Evynd Firestorm, three Halls of Honor, Lossenmachar, Calebgrothiel, Neffiken, Gurebk (260
+  on the board). ⏳ 61 scripted event mobs on that list have no spawn row, so no timer; they wait for a kill or a PQDI read.
+  DECISIONS §204.
 - **✅ Target Info shows "Does Not Equip" (bot 3.1.230 · web 1.8.124, main 2026-10-08).** Special-ability code 8 is a chip
   now, about 1 mob in 10; Mimic needs no release (the bot ships the label), cached mob info turns over within 6 h.
   DECISIONS §203.
