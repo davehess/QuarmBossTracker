@@ -36893,6 +36893,17 @@ function _computeLiveness(watchedLogs, now, idleMs) {
   const live_character = last_line_ms < idleMs ? bestChar : null;
   return { last_line_ms, live_character };
 }
+// The names in the played character's Zeal group window, for the bot's group scope (utils/groupScope.js:
+// outside a raid, callouts and Extended Target keep to your group). Fresh Zeal state only: [] = solo,
+// undefined = unknown, which JSON drops so the bot falls back to its zone rule.
+function _heartbeatGroupNames(zealState, character, nowMs) {
+  if (!zealState || !character) return undefined;
+  const want = String(character).toLowerCase();
+  const key = Object.keys(zealState).find(k => k.toLowerCase() === want);
+  const st = key ? zealState[key] : null;
+  if (!st || !Array.isArray(st.group_members) || nowMs - (st.updatedAt || 0) > 60_000) return undefined;
+  return st.group_members.map(m => m && m.name ? String(m.name) : null).filter(Boolean).slice(0, 12);
+}
 function _reporterHeartbeatOnce() {
   const opts = _uploadOpts;
   if (!opts || !opts.botUrl || !opts.token || opts.dryRun) return;
@@ -36923,6 +36934,8 @@ function _reporterHeartbeatOnce() {
       if (Number.isFinite(g)) group_num = g;
     }
   } catch { /* best-effort */ }
+  let group_names;
+  try { group_names = _heartbeatGroupNames(_zealState, live_character || primary, Date.now()); } catch { /* unknown */ }
   try {
     const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/reporter-poll');
     const u   = new URL(url);
@@ -36939,7 +36952,7 @@ function _reporterHeartbeatOnce() {
     // phantom second death (2026-08-02 Seru parse). Rides the existing 20s
     // heartbeat — no new stream, no new timer.
     const _t1 = Date.now();
-    const body = JSON.stringify({ primary_character: primary, zone, group_num, camping: _camping, has_zeal, agent_version: AGENT_VERSION, mimic_version, last_line_ms, live_character, client_now: _t1 });
+    const body = JSON.stringify({ primary_character: primary, zone, group_num, camping: _camping, has_zeal, agent_version: AGENT_VERSION, mimic_version, last_line_ms, live_character, group_names, client_now: _t1 });
     const req = mod.request({
       method: 'POST', hostname: u.hostname, port: u.port, path: u.pathname,
       headers: {

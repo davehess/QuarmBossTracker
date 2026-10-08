@@ -303,7 +303,8 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   (live roster) hears the raid, with two raids a sender stamped `origin_raid` of the other one is dropped; a
   listener not in one hears their GROUP (heartbeat `group_names` against the fire's `origin_group`), else the
   same-zone rule. Extended Target keeps a grouped, raidless player to their group (`scope: 'group'`, no main
-  assist). `flag_disable_groupscope=1` restores the old behaviour. The agent does not send `group_names` yet.
+  assist). `flag_disable_groupscope=1` restores the old behaviour. The agent sends `group_names` from 3.7.103
+  (`_heartbeatGroupNames`, beta).
 - **Tests:** `test/raid-groups.test.js` (both copies, parity), `test/raid-split-agent.test.js` (beta),
   `test/group-scope.test.js` (the raid/group/zone scoping, end to end).
 
