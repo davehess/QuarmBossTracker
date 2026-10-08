@@ -93,7 +93,9 @@ describe('what the card and the submitter see', () => {
 });
 
 // ── The DM (the guild lead, 2026-10-07: "This message to the submitter needs more details than this.") ──
-const LINK = 'https://discord.com/channels/1/2/3';
+const LINK = 'https://discord.com/channels/1/2/3';   // A Discord card link: officers only, so the DM must never carry it.
+const PAGE = 'https://wolfpack.quest/feedback/FB-16';   // The member's own page for report 16.
+const WAY_BACK = 'If it is not fixed for you, reply on that page.';
 const SHA = 'c0ffee0123456789';
 const commitOn = (subject, branch, body = '', sha = SHA) => ({ subject, body, branch, sha });
 const dm = (over = {}) => fr.buildStatusDm({
@@ -194,17 +196,21 @@ describe('the status DM — how to get it, per component and branch', () => {
       commit: commitOn(BATCH_SUBJECT, 'main', BATCH_BODY),
     });
     expect(out).toContain('It is live in Discord now.');
-    expect(out).not.toContain('wolfpack.quest');
+    expect(out).not.toContain('It is live on https://wolfpack.quest');   // The how-to names no page; the report link is separate.
     // …and a line with no stamp falls back to the prefix, which says docs: no page, no promise.
     const nine = fr.buildStatusDm({ ref: 9, category: 'bug', message: 'x', link: LINK, status: 'addressed', commit: commitOn(BATCH_SUBJECT, 'main', BATCH_BODY) });
     expect(nine).toContain('It is live now.');
   });
 
-  it('the card link and the way back close it', () => {
+  it('the report page link and the way back close it, built from the number and never the Discord card', () => {
     const parts = dm().split('\n\n');
-    expect(parts[parts.length - 2]).toBe(`Your card: ${LINK}`);
-    expect(parts[parts.length - 1]).toBe('If it is not fixed for you, reply on the card or file it again from Mimic → Feedback and mention FB-16.');
-    expect(dm({ link: null })).not.toMatch(/Your card/);
+    expect(parts[parts.length - 2]).toBe(`Your report: ${PAGE}`);
+    expect(parts[parts.length - 1]).toBe(WAY_BACK);
+    expect(dm()).not.toContain(LINK);
+    expect(dm()).not.toMatch(/Your card|discord\.com/);
+    expect(dm({ link: null })).toContain(`Your report: ${PAGE}`);   // No card on record still gets the page.
+    expect(dm({ ref: 4 })).toContain('Your report: https://wolfpack.quest/feedback/FB-4\n');
+    expect(dm({ ref: null })).not.toMatch(/Your report/);   // No number, no page to point at.
   });
 
   it('the pieces come in order: their words, what changed, how to get it, the card, the way back', () => {
@@ -332,7 +338,7 @@ describe('the status DM — a ✅ after the 🧪', () => {
     expect(out.split('\n')[0]).toBe('✅ Your bug report FB-16 — "when resize HUD window, it reverts" — is now in the stable release.');
     expect(out).not.toMatch(/What changed/);
     expect(out).toContain('It is in the stable Mimic release; Mimic updates itself on its next launch.');   // Its "-beta.2" is not stable's.
-    expect(out).toContain(`Your card: ${LINK}`);
+    expect(out).toContain(`Your report: ${PAGE}`);
   });
 
   it('…but says it when the main commit is a different one', () => {
@@ -355,15 +361,15 @@ describe('the status DM — a ✅ after the 🧪', () => {
 describe('the status DM — length', () => {
   const hugeLine = 'Fixes FB-16: ' + 'the HUD keeps its size after a resize and then some more words '.repeat(80);
 
-  it('a huge what-changed is cut, and the card link and the way back survive', () => {
+  it('a huge what-changed is cut, and the report link and the way back survive', () => {
     const out = dm({ commit: commitOn('mimic v2.7.1 — x', 'beta', hugeLine) });
     expect(out.length).toBeLessThanOrEqual(1900);
     const changed = out.split('\n\n')[1];
     expect(changed.startsWith('What changed: the HUD keeps its size')).toBe(true);
     expect(changed.endsWith('…')).toBe(true);
     expect(changed.length).toBeLessThanOrEqual(720);
-    expect(out).toContain(`Your card: ${LINK}`);
-    expect(out.endsWith('mention FB-16.')).toBe(true);
+    expect(out).toContain(`Your report: ${PAGE}`);
+    expect(out.endsWith(WAY_BACK)).toBe(true);
   });
 
   it('a long player-notes block drops whole bullets and ends on an ellipsis line', () => {
@@ -376,16 +382,19 @@ describe('the status DM — length', () => {
     expect(out.length).toBeLessThanOrEqual(1900);
   });
 
-  it('a long link leaves what changed less room; the rest of the DM is never the part that is cut', () => {
-    const out = dm({ message: 'word '.repeat(2000), link: 'https://discord.com/channels/1/2/' + '3'.repeat(900), commit: commitOn('mimic v2.7.1 — x', 'beta', hugeLine) });
+  it('a very long message is quoted short; the rest of the DM is never the part that is cut', () => {
+    const out = dm({ message: 'word '.repeat(2000), commit: commitOn('mimic v2.7.1 — x', 'beta', hugeLine) });
     expect(out.length).toBeLessThanOrEqual(1900);
     expect(out).toContain('What changed: the HUD keeps its size');
-    expect(out.endsWith('mention FB-16.')).toBe(true);
+    expect(out.endsWith(WAY_BACK)).toBe(true);
     expect(quoteIn(out).length).toBeLessThanOrEqual(161);
   });
 
-  it('an absurd link cannot push it past the limit either', () => {
-    const out = dm({ link: 'https://discord.com/channels/1/2/' + '3'.repeat(3000), commit: commitOn('mimic v2.7.1 — x', 'beta', hugeLine) });
+  it('a card link passed in, however long, neither appears nor eats the room', () => {
+    const long = 'https://discord.com/channels/1/2/' + '3'.repeat(3000);
+    const out = dm({ link: long, commit: commitOn('mimic v2.7.1 — x', 'beta', hugeLine) });
+    expect(out).toBe(dm({ link: null, commit: commitOn('mimic v2.7.1 — x', 'beta', hugeLine) }));
+    expect(out).not.toContain('discord.com');
     expect(out.length).toBeLessThanOrEqual(1900);
   });
 });
@@ -430,7 +439,8 @@ describe('the scanner passes the commit through to the DM', () => {
     expect(first.content).toContain('click ⤴ beta');
     expect(second.content.split('\n')[0]).toBe('✅ Your bug report FB-16 — "when resize HUD window, it reverts" — is now in the stable release.');
     expect(second.content).toContain('It is in stable Mimic 2.7.10; Mimic updates itself on its next launch.');
-    expect(second.content).toContain(`Your card: ${LINK}`);
+    expect(second.content).toContain(`Your report: ${PAGE}`);
+    expect(second.content).not.toContain(LINK);
     // The row's notes keep one line per move, with the same what-changed text.
     const notes = row.notes.split('\n');
     expect(notes).toHaveLength(2);

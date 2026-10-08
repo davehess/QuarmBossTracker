@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'my-report-afb-2026-10-08',
+    title: 'Your own report page, and feedback without signing in',
+    version: 'Web 1.8.119 · Bot 3.1.223',
+    date: '2026-10-08',
+    headline: 'When a bug or idea you sent moves, the message now links to a page you can actually open, and you can answer there. People without a Wolf Pack sign-in can send feedback too.',
+    features: [
+      { name: 'My report', blurb: 'wolfpack.quest/feedback/FB-12 (your own number) shows what you sent, where it stands and what changed. If it is not fixed for you, reply right there and the officers see it.' },
+      { name: 'Anonymous feedback', blurb: 'Mimic users who are not signed in can send a bug or idea from Mimic; it opens a short form on eqmimic.quest. Links, emails and anything that looks like a password are removed before it is saved. Leave a Discord name if you want a reply.' },
+    ],
+    fixes: [
+      'The "your report moved" message linked to a Discord post only officers could see. It now links to your report page.',
+    ],
+  },
+  {
     key: 'pop-guide-binden-2026-10-08',
     title: 'Web 1.8.118',
     version: 'Web 1.8.118',
