@@ -8323,3 +8323,8 @@ with PQDI's own list for the Planes of Power.
   3.7.107 (hot-swap on main) and beta agent 3.7.111. No trigger row or bot change.
 - ⚠ **Not changed:** the allow-list is a deny-by-default list. Any other guild trigger whose name and text avoid those words is
   still muted on voice. Worth one pass over the live `guild_triggers` for callouts the guild would call critical.
+  Measured the same night: **296 of the 487 enabled guild triggers match no category** (boss "recast" warnings, spell-landed
+  and zone-event callouts for Fire, Air, Water, Torment, Tower of Solusek Ro, Justice and Hedge Maze among them). Muting them
+  is what §136 chose, so that is the guild lead's call, not a bug to fix quietly.
+- **My own slip, same night:** the Plane of Tactics stampede triggers (§200) speak "Stampede" and were silent for the same
+  reason. `\bstampede\b` is now in the `mechanic` category (stable 3.7.108, beta 3.7.112).
