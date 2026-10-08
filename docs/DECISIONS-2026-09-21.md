@@ -8142,3 +8142,20 @@ the person casting it when they start, the target, the target's group if they're
   path. A fizzled or interrupted cast is still recorded (only a failed cure says so).
 - **Length** (agent): when a caster is attached and the buff has no length, the agent fills it from the spell
   catalog at the era-cap level, never below the time left, so the bar measures against the real duration.
+
+### 197. Loot is valued in platinum, totalled per character, over a chosen window (2026-10-08, bot 3.1.226 · Mimic beta)
+The guild lead: *"quantify the loot tab with how much each item is worth and say how much each toon has looted
+equivalently in platinum from what you've seen, and time bound it"*.
+- **Worth = `eqemu_items.price`**, the item's base merchant value (copper; shown as platinum). Not bazaar
+  prices: those live only in trader files on players' PCs. ~90% of looted rows are NO DROP, which can only ever
+  go to a merchant, so the merchant value is the one figure that applies to everything; NO DROP rows are tagged.
+  Measured: 10,738 loots in 7 days by 63 characters, all matched by exact name, ≈223k pp.
+- **Bot** (`utils/lootValue.js`, `_nightLootPanelBody`): server-panel `night-loot` takes `?hours=` 12 / 24 / 168
+  / 720 (anything else → 12, so an old agent sees exactly what it did). Prices by exact `name=in.(…)` (the only
+  indexed lookup; lowest id wins), cached 6 h. Per-looter totals are summed over EVERY row in the window (paged),
+  only the list is capped at 200. Cache 60 s for 12 h, 300 s for longer windows; a partial price read is not
+  cached.
+- **Mimic** (dashboard Loot tab): window chips, a "Totals by character" table, a Value column and an ND tag; an
+  old bot renders exactly as before.
+- **Who looted is not who kept it**: rows are each raider's own "You have looted" line; master-looting and
+  hand-offs mean the looter is often not the owner. Said on the officer page (§198) and in the footnote.

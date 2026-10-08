@@ -7169,10 +7169,17 @@ function _lootCacheSet(k, val, ttlMs = 60_000) { _lootPanelCache.set(k, { val, e
 // Looted rows are fetched 5 min ahead of the window (the card's own slack) so a
 // loot just before a roll resolves still links; buildNightLootPanel trims the
 // displayed list back to the window.
-async function _nightLootPanelBody(supabase, guildId, nowMs = Date.now()) {
+// Value + window (the guild lead, 2026-10-08: "how much each item is worth … how much each toon has
+// looted in platinum … time bound it"): `hours` is 12 / 24 / 168 / 720 (utils/lootValue.js clamps), the
+// roll sessions stay the last 12h whatever the window, and the per-looter totals are summed over EVERY
+// looted row in the window (paged), not the newest 200 the list shows.
+async function _nightLootPanelBody(supabase, guildId, nowMs = Date.now(), hours = 12) {
   const { buildNightLootPanel, NIGHT_LOOT_WINDOW_MS } = require('./utils/rollLoot');
+  const { clampLootHours, lookupItemValues, buildLootValue } = require('./utils/lootValue');
+  hours = clampLootHours(hours);
+  const windowMs = hours * 3600_000;
   const sinceIso = encodeURIComponent(new Date(nowMs - NIGHT_LOOT_WINDOW_MS).toISOString());
-  const slackIso = encodeURIComponent(new Date(nowMs - NIGHT_LOOT_WINDOW_MS - 5 * 60_000).toISOString());
+  const slackIso = encodeURIComponent(new Date(nowMs - windowMs - 5 * 60_000).toISOString());
   const g = encodeURIComponent(guildId);
   // Paged, newest first: a 12h window on a busy loot night holds more than the `limit=400` / `limit=500`
   // these were (1,021 roll sets and 1,070 looted rows in the 12h to 2026-10-03 03:30 UTC), and a cut
@@ -7189,7 +7196,26 @@ async function _nightLootPanelBody(supabase, guildId, nowMs = Date.now()) {
   // a null is not an empty night — throw so the 60s cache never holds a hollow
   // panel and the agent sees an error instead of "nobody looted anything".
   if (!Array.isArray(rollRows) || !Array.isArray(lootedRows)) throw new Error('night-loot: roll_sets / looted_items fetch failed');
-  return buildNightLootPanel(rollRows, lootedRows, { nowMs });
+  // Attribution only needs the 12h the roll sets cover; the list and totals use the whole window.
+  const recentFromMs = nowMs - NIGHT_LOOT_WINDOW_MS - 5 * 60_000;
+  const panel = buildNightLootPanel(rollRows, lootedRows.filter(l => Date.parse(l?.looted_at) >= recentFromMs), { nowMs });
+  const wide = buildNightLootPanel([], lootedRows, { nowMs, windowMs });
+  // Prices are decoration: a failed lookup leaves rows unpriced (and the response uncached), it never
+  // takes the list down.
+  const { values, failed } = await lookupItemValues(supabase, lootedRows.map(l => l?.item_name).filter(Boolean), { nowMs });
+  const money = buildLootValue(lootedRows, values, { nowMs, windowMs });
+  return {
+    ...panel,
+    loot_total: wide.loot_total,
+    loot: wide.loot.map(r => {
+      const v = values.get(r.item) || null;
+      return { ...r, value_cp: v ? v.value_cp : null, nodrop: v ? v.nodrop : null };
+    }),
+    window_hours: hours,
+    window_since: new Date(nowMs - windowMs).toISOString(),
+    ...money,
+    prices_partial: failed,
+  };
 }
 // ── end night-loot panel fetch ──
 
@@ -8038,12 +8064,16 @@ async function _handleAgentServerPanel(req, res) {
       // Mimic Loot tab. One shared cache entry (not per caller): the data is the
       // same for every raider and a room of dashboards polls it. A failed fetch
       // throws to the 500 below and is never cached.
-      const ck = 'night-loot:' + guildId;
+      // ?hours= picks the window (12 / 24 / 168 / 720; an agent that sends none gets the 12h it always had).
+      // One entry per guild AND window; the longer windows read far more rows, so they cache longer.
+      const { clampLootHours, lootWindowLabel } = require('./utils/lootValue');
+      const hours = clampLootHours(url.searchParams.get('hours'));
+      const ck = 'night-loot:' + guildId + ':' + hours;
       const cached = _lootCacheGet(ck);
       if (cached) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(cached); }
-      const body = await _nightLootPanelBody(supabase, guildId);
-      const out = JSON.stringify({ key, scope: 'last 12h', updated_at: new Date().toISOString(), ...body });
-      _lootCacheSet(ck, out);
+      const body = await _nightLootPanelBody(supabase, guildId, Date.now(), hours);
+      const out = JSON.stringify({ key, scope: lootWindowLabel(hours), updated_at: new Date().toISOString(), ...body });
+      if (!body.prices_partial) _lootCacheSet(ck, out, hours > 12 ? 300_000 : 60_000);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       return res.end(out);
     }

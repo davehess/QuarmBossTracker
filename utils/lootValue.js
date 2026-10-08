@@ -1,0 +1,116 @@
+// utils/lootValue.js — what the Mimic Loot tab's "who looted what" list is worth.
+//
+// The guild lead, 2026-10-08: "quantify the loot tab with how much each item is worth and say how
+// much each toon has looted equivalently in platinum from what you've seen, and time bound it."
+//
+// "Worth" is eqemu_items.price — the item's base merchant value in COPPER (1pp = 1000cp). It is the
+// vendor figure the game itself prices an item at, not a bazaar price. eqemu_items.nodrop = true means
+// NO DROP (it can only be sold to a merchant).
+//
+// Three pieces, all pure or injectable so test/night-loot-value.test.js runs the shipped code:
+//   clampLootHours / lootWindowLabel — the window the panel accepts (12h · 24h · 7d · 30d);
+//   lookupItemValues                 — exact-name price lookup, lowest id wins, 6h memory cache;
+//   buildLootValue                   — the per-looter totals over EVERY row in the window.
+
+'use strict';
+
+const LOOT_HOURS = [12, 24, 168, 720];
+const PRICE_TTL_MS = 6 * 3600_000;
+const PRICE_CACHE_MAX = 20_000;
+const NAME_CHUNK = 50;          // names per request: a few KB of URL
+const CHUNK_PARALLEL = 4;
+const TOTALS_CAP = 300;
+
+function clampLootHours(v) {
+  const n = Number(v);
+  return LOOT_HOURS.includes(n) ? n : 12;
+}
+
+function lootWindowLabel(hours) {
+  if (hours === 168) return 'last 7d';
+  if (hours === 720) return 'last 30d';
+  return `last ${hours}h`;
+}
+
+// PostgREST in.() list member: double-quoted so a comma, paren or apostrophe in the name cannot
+// split or end the list; a backslash or double quote inside the name is backslash-escaped.
+function quoteInValue(name) {
+  return '"' + String(name).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
+}
+
+const _cache = new Map();   // name -> { at, v: { value_cp, nodrop } | null }
+
+function _cacheGet(cache, name, nowMs) {
+  const e = cache.get(name);
+  return (e && nowMs - e.at < PRICE_TTL_MS) ? e : null;
+}
+
+// name -> { value_cp, nodrop } for every name found in eqemu_items, null for a name that is not.
+// `failed` is true when any chunk could not be read — those names are absent from the map (not null),
+// so the caller counts them unpriced and knows not to cache the result.
+async function lookupItemValues(supabase, names, { nowMs = Date.now(), cache = _cache } = {}) {
+  const out = new Map();
+  const todo = [];
+  for (const name of new Set(names)) {
+    const e = _cacheGet(cache, name, nowMs);
+    if (e) out.set(name, e.v); else todo.push(name);
+  }
+  const chunks = [];
+  for (let i = 0; i < todo.length; i += NAME_CHUNK) chunks.push(todo.slice(i, i + NAME_CHUNK));
+  let failed = false;
+  let next = 0;
+  async function worker() {
+    while (next < chunks.length) {
+      const chunk = chunks[next++];
+      let rows = null;
+      try {
+        rows = await supabase.selectAllPaged('eqemu_items',
+          `name=in.(${encodeURIComponent(chunk.map(quoteInValue).join(','))})&select=id,name,price,nodrop`, 'id');
+      } catch { rows = null; }
+      if (!Array.isArray(rows)) { failed = true; continue; }
+      // Duplicate names exist across ids: the lowest id is the base item.
+      const best = new Map();
+      for (const r of rows) {
+        if (!r || typeof r.name !== 'string') continue;
+        const cur = best.get(r.name);
+        if (!cur || r.id < cur.id) best.set(r.name, r);
+      }
+      for (const name of chunk) {
+        const r = best.get(name);
+        const v = r ? { value_cp: Number(r.price) || 0, nodrop: r.nodrop == null ? null : !!r.nodrop } : null;
+        out.set(name, v);
+        if (cache.size >= PRICE_CACHE_MAX) cache.clear();
+        cache.set(name, { at: nowMs, v });
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(CHUNK_PARALLEL, chunks.length) }, worker));
+  return { values: out, failed };
+}
+
+// Totals over every looted row in the window (NOT just the displayed newest N). A row counts the same
+// way buildNightLootPanel counts it, so the totals add up to its loot_total.
+function buildLootValue(lootedRows, values, { nowMs = Date.now(), windowMs }) {
+  const since = nowMs - windowMs;
+  const by = new Map();
+  let total = 0, priced = 0, unpriced = 0;
+  for (const l of (Array.isArray(lootedRows) ? lootedRows : [])) {
+    const ms = l?.looted_at ? Date.parse(l.looted_at) : NaN;
+    if (!Number.isFinite(ms) || ms < since || !l?.looter_character || !l?.item_name) continue;
+    const v = values.get(String(l.item_name)) || null;
+    const key = String(l.looter_character).toLowerCase();
+    let t = by.get(key);
+    if (!t) { t = { looter: String(l.looter_character), items: 0, value_cp: 0, nodrop_items: 0 }; by.set(key, t); }
+    t.items++;
+    if (v) { t.value_cp += v.value_cp; total += v.value_cp; priced++; } else unpriced++;
+    if (v && v.nodrop) t.nodrop_items++;
+  }
+  const totals = [...by.values()]
+    .sort((a, b) => b.value_cp - a.value_cp || b.items - a.items || a.looter.localeCompare(b.looter))
+    .slice(0, TOTALS_CAP);
+  return { totals, total_value_cp: total, priced_items: priced, unpriced_items: unpriced };
+}
+
+function _resetPriceCache() { _cache.clear(); }
+
+module.exports = { LOOT_HOURS, clampLootHours, lootWindowLabel, quoteInValue, lookupItemValues, buildLootValue, _resetPriceCache };
