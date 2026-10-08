@@ -42593,6 +42593,9 @@ function _consumeRelayFires(data) {
     _lastRelayFireId = Math.max(_lastRelayFireId, data.next_id);
   }
   for (const fire of (data.fires || [])) {
+    // A zone-timer late join (bot utils/zoneTimers.js) is a countdown that started BEFORE we zoned in, so
+    // it is old by design: it skips the ghost TTL and the fire dedup below and only ever arms a timer.
+    if (fire && fire.late_join === true) { _runLateJoinFire(fire); continue; }
     const fireKey = fire.key || fire.name || '';
     // Our-clock time for this fire — _localFireKeys holds LOCAL stamps from our
     // own fires, so comparing a raw origin stamp against them mis-suppressed
@@ -42859,6 +42862,43 @@ function _runRelayedFire(fire, firedAtLocal) {
   // firedAtLocal is the originator's stamp translated onto OUR clock (see
   // _relayFiredAtLocal) — it drives the speakAt delay and the countdown start.
   _fireTriggerActions(trig, fire.captures || {}, firedAtLocal || fire.fired_at_ms || Date.now(), /*test=*/false, /*isRelay=*/true);
+}
+
+// A zone timer that follows you in (the guild lead, 2026-10-08, on the Plane of Tactics stampede: "if one
+// person had the stampede window it should go to anyone currently in the zone when it opens"). The bot
+// hands a raider who zones in after the emote each countdown of that window that is still running; we
+// arm it from the ORIGINAL fire time, on our clock, so it ends with everyone else's and speaks the
+// trigger's own end text. Nothing else runs: no overlay, no speech — the stampede already happened.
+// Skipped when we already run that trigger's countdown from the same window (we saw the line, a live
+// relay reached us, or the bot handed it again after a restart or a zone hop). A countdown from an OLDER
+// window is replaced: the bot only hands out a window a fresh sighting has not cleared.
+const LATE_JOIN_SAME_WINDOW_MS = 120_000;   // the bot's SAME_WINDOW_MS: two observers of one emote
+function _runLateJoinFire(fire) {
+  if (!fire || !fire.trigger_id) return false;
+  const tid = String(fire.trigger_id);
+  const startedAt = _relayFiredAtLocal(fire);
+  // Our own definition first: it carries end_text, warnings, colour. The bot's fields are the fallback
+  // for a trigger this agent has not loaded yet.
+  const def = (stats.guildTriggers || []).find(g => g && String(g.id) === tid);
+  const durSec = Number(fire.timer_duration_sec) || (def && Number(def.timer_duration_sec)) || 0;
+  const now = Date.now();
+  if (!(durSec > 0) || !Number.isFinite(startedAt) || startedAt + durSec * 1000 <= now) return false;
+  for (const row of _activeTimers.values()) {
+    if (!row || String(row.trigger_id || '') !== tid || !(row.ends_at_ms > now)) continue;
+    if (row.started_at_ms >= startedAt - LATE_JOIN_SAME_WINDOW_MS) {
+      _journalTrigger({ trigger: fire.name || 'zone timer', scope: 'guild_relay', checkpoint: TJ.MATCHED,
+                        stopped: true, reason: 'late join skipped — this countdown is already running' });
+      return false;
+    }
+  }
+  const trig = def
+    ? { ...def, timer_duration_sec: durSec, timer_duration_capture: null, _scope: 'guild_relay' }
+    : { id: tid, name: fire.name || 'zone timer', actions: [], timer_duration_sec: durSec,
+        end_text: fire.end_text || null, cooldown_seconds: fire.cooldown_seconds || 0, _scope: 'guild_relay' };
+  _startTimer(trig, startedAt, false, {});
+  _journalTrigger({ trigger: trig.name, scope: 'guild_relay', checkpoint: TJ.DISPATCHED,
+                    reason: 'late join — zoned in after it started; ' + Math.round((startedAt + durSec * 1000 - now) / 1000) + 's left' });
+  return true;
 }
 
 // Helpers for the relay endpoints. _queueUploadOpts is the canonical
