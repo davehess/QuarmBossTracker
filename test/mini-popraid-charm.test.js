@@ -15,7 +15,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import path from 'node:path';
-import { readSource, ROOT, stripJs, stripCss } from './_source-slice.js';
+import { readSource, ROOT, stripJs, stripCss, AGENT_INDEX } from './_source-slice.js';
 
 const MIMIC = path.join(ROOT, 'apps', 'mimic');
 const charmHtml = readSource(path.join(MIMIC, 'charm.html'));
@@ -164,7 +164,7 @@ describe('charm mini — two rows per charm', () => {
     for (const s of ['BROKE', 'tickbar', 'class="ticks"', 'remove-broken', 'dismiss', 'tick ']) expect(out).not.toContain(s);
     // Server and mob tick ride row two (no Zeal, nothing learned in this fixture).
     expect(out).toContain('>S —</span>');
-    expect(out).toContain('>M ?</span>');
+    expect(out).toContain('>M —</span>');
     const broken = out.slice(out.indexOf('data-key="aldenmar:gnoll"'));
     expect(broken).toContain('style="color:#f85149">⏳ 0:00 recharm</span>');
     expect(broken).toContain('<i style="width:0.0%;background:#f85149">');
@@ -219,6 +219,119 @@ describe('charm mini — two rows per charm', () => {
     const spoken = [];
     await bootCharm({ activeCharacter: 'Aldenmar', charmPets: [pet({ started_at: NOW - 52000 })] }, { mini: true, spoken });
     expect(spoken).toContain('charm breaking');
+  });
+
+  // ── "B — Mob tick first" (the guild lead, 2026-10-08) ──
+  const MOB_COL = '#2ee6d6', SRV_COL = '#58a6ff', CHARM_PURPLE = '#a371f7';
+  const miniOut = async (charm, extra) => (await bootCharm(Object.assign({ activeCharacter: 'Aldenmar', charmPets: [pet(charm)] }, extra), { mini: true })).byId.list.innerHTML;
+  const lineOf = (out, col, label) => {
+    // The tick cell for `label`: its number text and the width of its thin line.
+    const i = out.indexOf('>' + label + ' ');
+    const cell = out.slice(i, out.indexOf('</i>', i));
+    return { text: cell.slice(0, cell.indexOf('</span>')).replace(/^>/, ''), width: (cell.match(/<u style="width:([\d.]+)%;background:([^"]+)"/) || [])[1], col: (cell.match(/background:([^"]+)"/) || [])[1] };
+  };
+
+  it('thin lines count down the 6 s cycle: width = ticks left / 6000, for mob and server alike', async () => {
+    for (const [left, w] of [[6000, '100.0'], [4500, '75.0'], [3000, '50.0'], [1500, '25.0'], [600, '10.0']]) {
+      const out = await miniOut({ mob_tick_at: NOW + left, server_tick_at: NOW + left });
+      expect(lineOf(out, MOB_COL, 'M').width).toBe(w);
+      expect(lineOf(out, SRV_COL, 'S').width).toBe(w);
+    }
+    // A tick time in the past wraps into the next cycle, exactly as the full card's rows do.
+    const wrapped = await miniOut({ mob_tick_at: NOW - 6000 - 1500 });   // -1500 mod 6000 → 4500 left
+    expect(lineOf(wrapped, MOB_COL, 'M').width).toBe('75.0');
+    expect(lineOf(wrapped, MOB_COL, 'M').text).toBe('M 4.5');
+  });
+
+  it('mob tick is the big one in its own colour, never the charm bar\'s purple; server tick stays blue', async () => {
+    const out = await miniOut({ mob_tick_at: NOW + 2300, server_tick_at: NOW + 3100 });
+    const mob = lineOf(out, MOB_COL, 'M'), srv = lineOf(out, SRV_COL, 'S');
+    expect(mob).toMatchObject({ text: 'M 2.3', col: MOB_COL });
+    expect(srv).toMatchObject({ text: 'S 3.1', col: SRV_COL });
+    expect(out).toContain('<span class="cm-tkn" style="color:' + MOB_COL + '">M 2.3</span>');
+    expect(MOB_COL).not.toBe(CHARM_PURPLE);
+    // The only purple left on the card is the charm timer itself (label + bar).
+    expect(count(out, CHARM_PURPLE)).toBe(2);
+    // Big vs small is carried by the modifier class + CSS: mob 13px bold, server smaller.
+    const css = stripCss(charmHtml);
+    expect(css).toContain('.cm-tk.mob .cm-tkn{font-size:13px;font-weight:bold}');
+    expect(css).toContain('.cm-tkn{font-size:10px;');
+    expect(out.indexOf('cm-tk wp-mini-num mob')).toBeLessThan(out.indexOf('cm-tk wp-mini-num srv'));
+  });
+
+  it('the charm timer keeps its own colours beside the new cells (grey estimate, red recharm)', async () => {
+    expect(await miniOut({ duration_sec: null, charm_class: null, started_at: NOW - 55000, mob_tick_at: NOW + 1000 })).toContain('style="color:#8b94a3">⏳ ~0:05</span>');
+    expect(await miniOut({ started_at: NOW - 52000, mob_tick_at: NOW + 1000 })).toContain('style="color:#f85149">⏳ 0:08 recharm</span>');
+  });
+
+  it('an unknown tick shows a dash and an EMPTY line, for each tick on its own', async () => {
+    const none = await miniOut({});
+    expect(lineOf(none, MOB_COL, 'M')).toMatchObject({ text: 'M —', width: '0.0' });
+    expect(lineOf(none, SRV_COL, 'S')).toMatchObject({ text: 'S —', width: '0.0' });
+    expect(none).not.toContain('M ?');
+    const onlySrv = await miniOut({ server_tick_at: NOW + 3000 });
+    expect(lineOf(onlySrv, MOB_COL, 'M').text).toBe('M —');
+    expect(lineOf(onlySrv, SRV_COL, 'S').width).toBe('50.0');
+  });
+
+  it('a learned (rough) mob tick keeps the full card\'s ~; an exact one does not', async () => {
+    expect(lineOf(await miniOut({ mob_tick_at: NOW + 2000, mob_tick_half_ms: 500, mob_tick_src: 'dot' }), MOB_COL, 'M').text).toBe('M ~2.0');
+    expect(lineOf(await miniOut({ mob_tick_at: NOW + 2000, mob_tick_half_ms: 300, mob_tick_src: 'break' }), MOB_COL, 'M').text).toBe('M 2.0');
+    expect(lineOf(await miniOut({ mob_tick_at: NOW + 2000 }), MOB_COL, 'M').text).toBe('M 2.0');
+  });
+
+  describe('MR chip', () => {
+    const chip = (out) => (out.match(/<span class="cm-mr[^>]*>(MR [^<]*)<\/span>/) || [])[1] || null;
+    const sheetRow = (magic, o) => hitting('an elder thought horror', Object.assign({ sheet: { pet: 'a thought horror evoker', resists: { magic, fire: 35, cold: 35, poison: 15, disease: 15 } } }, o));
+
+    it('the petstats sheet wins: live and signed (a Tashed pet reads negative), no ~', async () => {
+      const pos = await miniOut({ mr: 80 }, { petHealth: [sheetRow(35)] });
+      expect(chip(pos)).toBe('MR 35');
+      expect(chip(await miniOut({ mr: 80 }, { petHealth: [sheetRow(-20)] }))).toBe('MR -20');
+    });
+
+    it('with no sheet MR it falls back to the charm row\'s catalog value, marked ~ (base, not current)', async () => {
+      expect(chip(await miniOut({ mr: 80 }, { petHealth: [hitting('a gnoll')] }))).toBe('MR 80~');
+      expect(chip(await miniOut({ mr: 80 }))).toBe('MR 80~');
+      // A sheet with no magic entry does not mask the fallback.
+      expect(chip(await miniOut({ mr: 80 }, { petHealth: [hitting('a gnoll', { sheet: { resists: { fire: 5 } } })] }))).toBe('MR 80~');
+    });
+
+    it('neither source → no chip; zero is a real value, not "missing"', async () => {
+      expect(chip(await miniOut({}))).toBeNull();
+      expect(chip(await miniOut({ mr: null }, { petHealth: [hitting('a gnoll')] }))).toBeNull();
+      expect(chip(await miniOut({ mr: 0 }))).toBe('MR 0~');
+      expect(chip(await miniOut({}, { petHealth: [sheetRow(0)] }))).toBe('MR 0');
+    });
+
+    it('only the charm\'s own pet\'s sheet counts, and only while charmed', async () => {
+      expect(chip(await miniOut({}, { petHealth: [sheetRow(35, { pet: 'a summoned servant' })] }))).toBeNull();
+      expect(chip(await miniOut({ is_active: false, broke_at: NOW - 2000, mr: 80 }, { petHealth: [sheetRow(35)] }))).toBeNull();
+    });
+
+    it('sits on row one AFTER the name, and the name is what ellipsizes (the chip never shrinks)', async () => {
+      const out = await miniOut({ mr: 80 }, { petHealth: [hitting('an elder thought horror')] });
+      const row1 = out.slice(0, out.indexOf('</div>'));
+      expect(row1.indexOf('cm-tg')).toBeLessThan(row1.indexOf('cm-mr'));
+      expect(row1).toContain('class="cm-mr wp-mini-num"');
+      expect(row1).toContain('class="cm-tail wp-mini-name"');
+      expect(count(out, 'class="cm-row"')).toBe(2);   // still two rows
+    });
+
+    it('the agent puts the catalog base MR on the charm row, from the cached mob-info resists', () => {
+      const agent = stripJs(readSource(AGENT_INDEX));
+      const at = agent.indexOf('const mt = _mobTickFor(info.pet, tNow);');
+      const block = agent.slice(at, agent.indexOf('mob_tick_src:', at) + 400);
+      expect(block).toContain('_mobInfoByName.get(_mobInfoCacheKey(info.pet))');
+      expect(block).toContain('mc.mob.resists.mr');
+      expect(block).toMatch(/mr:\s+catalogMr,/);
+    });
+
+    it('full mode never carries the chip', async () => {
+      const full = (await bootCharm({ activeCharacter: 'Aldenmar', charmPets: [pet({ mr: 80 })], petHealth: [sheetRow(35)] })).byId.list.innerHTML;
+      expect(full).toContain('class="charm');
+      expect(full).not.toContain('MR ');
+    });
   });
 
   it('flipping mini repaints in the other rendition and THEN re-measures, both ways', async () => {
