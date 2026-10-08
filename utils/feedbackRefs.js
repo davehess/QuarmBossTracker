@@ -10,6 +10,20 @@
 
 const tag = (ref) => (Number.isInteger(ref) && ref > 0 ? `FB-${ref}` : '');
 
+// The page where a member reads their own report and replies (web/app/feedback/[ref]).
+const reportUrl = (ref) => (tag(ref) ? `https://wolfpack.quest/feedback/${tag(ref)}` : '');
+
+// A member's reply on that page, as the line the bot posts under the report's Discord card. `fromSubmitter`
+// is decided by the caller (author id equals the report's submitter id); anything else is an officer. The
+// body is the member's own text, so it is cut to fit a message; the caller also sends allowedMentions none.
+const REPLY_POST_MAX = 1800;
+function formatReplyPost({ ref, fromSubmitter, body } = {}) {
+  const who = fromSubmitter ? 'the submitter' : 'an officer';
+  let text = String(body || '').trim();
+  if (text.length > REPLY_POST_MAX) text = text.slice(0, REPLY_POST_MAX - 1).trimEnd() + '…';
+  return `💬 Reply from ${who} on ${tag(ref) || 'a report'}: ${text}`;
+}
+
 // Every FB-n a commit message CLOSES, once each, in order: only on a line that also says fixes /
 // implements / closes / resolves ("Fixes FB-29, FB-30", "Implements: FB-31"). A mention alone ("see
 // FB-12", a docs commit quoting the report) moves nothing, or every note about a report would mark it
@@ -266,12 +280,14 @@ function statusNote(status, sha, changed) {
 }
 
 // The whole DM, or null when the status is not one we announce.
-//   { ref, category, message, link }  — the report row (link = its Discord card)
+//   { ref, category, message }        — the report row. The DM links to the member's own page for it
+//                                       (reportUrl), never to the Discord card: only officers can open that
+//                                       (the guild lead, 2026-10-08), so a `link` passed in is ignored.
 //   status                            — 'on_beta' | 'addressed' (what it just became)
 //   prevStatus, betaSha               — optional: a report that was on_beta already got the 🧪 DM, so the ✅
 //                                       one does not repeat "What changed" for the same commit
 //   commit { subject, body, branch, sha }
-function buildStatusDm({ ref, category, message, link, status, prevStatus, betaSha, commit } = {}) {
+function buildStatusDm({ ref, category, message, status, prevStatus, betaSha, commit } = {}) {
   if (status !== 'on_beta' && status !== 'addressed') return null;
   const c = commit || {};
   const beta = (c.branch || (status === 'on_beta' ? 'beta' : 'main')) === 'beta';
@@ -289,8 +305,8 @@ function buildStatusDm({ ref, category, message, link, status, prevStatus, betaS
   const bsha = String(betaSha || '');
   const sameCommit = afterBeta && !!bsha && !!sha && (sha.startsWith(bsha) || bsha.startsWith(sha));
   const how = howToGet(comp, beta, c.subject, info.raw);
-  const card = link ? `Your card: ${link}` : '';
-  const close = `If it is not fixed for you, reply on the card or file it again from Mimic → Feedback and mention ${tag(ref)}.`;
+  const card = reportUrl(ref) ? `Your report: ${reportUrl(ref)}` : '';
+  const close = 'If it is not fixed for you, reply on that page.';
 
   // What changed gets whatever room the rest leaves; the rest never gets cut.
   const rest = [head, how, card, close].filter(Boolean).join('\n\n');
@@ -305,4 +321,4 @@ function buildStatusDm({ ref, category, message, link, status, prevStatus, betaS
   return out.length > DM_MAX ? out.slice(0, DM_MAX - 1) + '…' : out;
 }
 
-module.exports = { tag, refsIn, advance, statusLine, statusNote, buildStatusDm, whatChanged, splitCommit, betaShaFromNotes, STAGE };
+module.exports = { tag, reportUrl, formatReplyPost, refsIn, advance, statusLine, statusNote, buildStatusDm, whatChanged, splitCommit, betaShaFromNotes, STAGE };

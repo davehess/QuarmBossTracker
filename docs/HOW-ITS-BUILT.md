@@ -977,6 +977,19 @@ offering it on "add a dark mode" collects data we asked for and do not need.
 would otherwise wipe a half-typed report.
 Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.test.js` (bot).
 
+### Anonymous feedback (AFB) and the My report page (web 1.8.119 · bot 3.1.223 · agent 3.7.107, 2026-10-08)
+- **Signed out:** the dashboard card's button opens `https://eqmimic.quest/feedback#…` (fragment only). That host
+  is our Vercel project; `web/middleware.ts` + `web/lib/eqmimicHost.ts` route every path there to
+  `web/app/eqmimic/feedback`, `web/app/layout.tsx` drops the chrome. The action cleans with
+  `web/lib/anonFeedbackClean.ts`, rate-limits by a one-day salted hash, writes `anon_feedback` (AFB-n).
+  Officers: `/admin/feedback/anonymous`. Mimic's `open-external` allowlist admits only that one page. §192.
+- **Signed in:** `/feedback/FB-n` (`web/app/feedback/[ref]`, rules in `web/lib/feedbackReport.ts`) for the
+  submitter and officers; replies in `feedback_replies`, relayed by `_feedbackRelayReplies` (index.js) to the
+  card; the status DM links the page. Weekly count-only AFB line: `_afbWeeklyDigest` + `utils/afbDigest.js`. §193.
+- Tests: `test/anon-feedback-clean.test.js`, `test/anon-feedback-surface.test.js`,
+  `test/feedback-replies.test.js`, `test/afb-digest.test.js`, `test/dashboard-feedback-anon-web.test.js` (beta),
+  `test/mimic-open-external-eqmimic.test.js` (beta).
+
 ### Mimic robustness: tray, config, alert speed, Settings drafts (agent 3.7.27, 2026-09-26)
 - **Tray** (`apps/mimic/main.js` createTray / buildTrayMenu): on Windows/macOS, right-click builds
   the menu and `tray.popUpContextMenu` shows it; only Linux uses `setContextMenu`. ⚠ Do not go back to
