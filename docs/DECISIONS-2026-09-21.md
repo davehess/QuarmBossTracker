@@ -7997,4 +7997,8 @@ online · MA …", five mobs targeted from other groups in the same zone) had th
   raider falls back to their Zeal group window. Agent-side only (`_scopeExtToGroup`, `?scope=group`); the main
   assist line stays. **Agent 3.7.105: a chosen Group never falls back to the whole board** (the guild lead, the same
   night, "still showing other groups"): an unknown group shows an empty list that says so, and an ownerless pet
-  row is dropped. Raid keeps failing open as before.
+  row is dropped. Raid keeps failing open as before. **Agent 3.7.106** (the guild lead, grouped and NOT raiding,
+  Group on, still saw the whole raid: "not working"): the group is now read off the group window's F2..F6 HP gauges
+  as well as Zeal's group list (`_zealGroupNames`, also used by the heartbeat's `group_names`), the group window
+  wins over the raid roster, and when the "active" character has no fresh Zeal state the character Zeal is
+  streaming is used (`_zealSelfForScope`).
