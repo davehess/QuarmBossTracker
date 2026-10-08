@@ -2075,6 +2075,47 @@
     "pqdiUrl": ""
   },
   {
+    "id": "glykus_helmir",
+    "name": "Glykus Helmir",
+    "zone": "Plane of Tactics",
+    "expansion": "PoP",
+    "timerHours": 24,
+    "nicknames": [
+      "glykus",
+      "helmir"
+    ],
+    "emoji": "⚔️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/214053",
+    "lockout": false
+  },
+  {
+    "id": "tagrin_maldric",
+    "name": "Tagrin Maldric",
+    "zone": "Plane of Tactics",
+    "expansion": "PoP",
+    "timerHours": 24,
+    "nicknames": [
+      "tagrin",
+      "maldric"
+    ],
+    "emoji": "⚔️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/214054",
+    "lockout": false
+  },
+  {
+    "id": "the_diaku_overseer",
+    "name": "The Diaku Overseer",
+    "zone": "Plane of Tactics",
+    "expansion": "PoP",
+    "timerHours": 24,
+    "nicknames": [
+      "diaku overseer"
+    ],
+    "emoji": "⚔️",
+    "pqdiUrl": "https://www.pqdi.cc/npc/214092",
+    "lockout": false
+  },
+  {
     "id": "quarm",
     "name": "Quarm",
     "zone": "Plane of Time",
