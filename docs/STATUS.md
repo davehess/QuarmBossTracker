@@ -717,6 +717,12 @@ next touch one rather than assuming a missing row means a missing doc.
   `deploymentEnabled`. Web 1.8.53 also keeps a `/pop` link's query through sign-in. §101.
 - **⏳ Command Center 📋 on deathrolls (agent 3.7.47, Mimic beta `013e2e0c`) · Target Info even con = your
   level for a player (agent 3.7.48, beta `386cfc99`), 2026-09-29.** §97, §98 (reverses part of §15).
+- **✅ Anonymous feedback (AFB) on eqmimic.quest (web 1.8.119, main 2026-10-08; Mimic side agent 3.7.107 beta).**
+  Signed-out Mimic users send cleaned, rate-limited reports to `anon_feedback` (AFB-n); officers read them at
+  `/admin/feedback/anonymous`; never acted on automatically, counted weekly. ⏳ eqmimic.quest DNS still points
+  elsewhere (the guild lead). DECISIONS §192.
+- **✅ My report page + replies; status DMs link to it (bot 3.1.223, web 1.8.119, main 2026-10-08).**
+  `/feedback/FB-n` for the submitter and officers; replies relayed to the officer card. DECISIONS §193.
 - **✅ PoP checklist: The Binden Concerrentia (web 1.8.118, main 2026-10-08).** Three optional steps (the
   Small, then Powered Clockwork Talisman, then the Binden), read off the three NPC scripts; eight corrections
   over EQProgression's page, auto-fill from held items. DECISIONS §191.

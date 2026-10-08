@@ -18,6 +18,7 @@
 // isolate alive until the work finishes.
 import { NextResponse, type NextRequest, type NextFetchEvent } from 'next/server';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { isEqmimicHost, EQMIMIC_FEEDBACK_PATH } from './lib/eqmimicHost';
 
 // Routes we never log: API/RSC payloads, auth callbacks, admin pages
 // (officers checking dashboards would dominate the data), the analytics page
@@ -48,6 +49,20 @@ function normalizeRoute(pathname: string): string {
 const PREVIEW_BOT_RX = /discordbot|slackbot|twitterbot|facebookexternalhit|whatsapp|telegrambot|linkedinbot|skypeuripreview|redditbot|mastodon|pinterestbot/i;
 
 export async function middleware(request: NextRequest, event: NextFetchEvent) {
+  // eqmimic.quest (the guild lead, 2026-10-08) serves ONE page, the anonymous feedback form, and no
+  // Wolf Pack page at all. Decided before anything else runs: no session refresh (the form has no
+  // sign-in, and an anonymous visitor's request should touch nothing of ours), no page-view log, no
+  // link-preview rewrite. Every path lands on the form; the query string is dropped so nothing a
+  // caller tacked on rides further. /_next/ assets are not rewritten or the page would have no
+  // scripts (the matcher already skips /_next/static and /_next/image; this covers the rest).
+  if (isEqmimicHost(request.headers.get('host'))) {
+    if (request.nextUrl.pathname.startsWith('/_next/')) return NextResponse.next();
+    const url = request.nextUrl.clone();
+    url.pathname = EQMIMIC_FEEDBACK_PATH;
+    url.search = '';
+    return NextResponse.rewrite(url);
+  }
+
   // Per-page link unfurls (the guild lead, 2026-07-08) — serve crawlers the meta
   // document BEFORE any session work; bots carry no cookies anyway.
   if (request.method === 'GET'

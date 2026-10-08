@@ -548,6 +548,15 @@ and the same never-refetch guarantee.
   snapshot.
 - Local mode (no token) sends nothing to the guild server, so an install can be handed to
   people outside the guild. eqmimic.quest is ours; the wizard should not assume it.
+- **2026-10-08 — anonymous feedback lives on a second domain served by the same web deployment**
+  (`DECISIONS-2026-09-21.md` §192): `eqmimic.quest` is a domain on our Vercel project; middleware sends every
+  path on that host to one form and the layout drops our chrome there. Reports land in `anon_feedback`
+  (AFB-n, service role only), cleaned before storage; a salted IP hash is kept one day for a 5/hour limit
+  (needs `ANON_FEEDBACK_SALT` or `DEMO_OBFUSCATE_SALT` in BOTH Production and Preview). For the wizard: the
+  second domain is optional; a guild without one can serve the same page under `/eqmimic/feedback`.
+- **2026-10-08 — members read their own reports on the site** (§193): `/feedback/FB-n` for the submitter
+  and officers, replies in `feedback_replies` relayed by the bot to the officer card, and a Monday
+  count-only AFB line latched in `bot_kv` (`afb_weekly_digest`). Small rows, no pruning needed on any tier.
 
 ## 4. Open questions for whoever builds it
 

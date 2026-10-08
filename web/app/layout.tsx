@@ -11,6 +11,8 @@ import BetaBanner from '@/components/BetaBanner';
 import BetaLink from '@/components/BetaLink';
 import { getSessionUser } from '@/lib/session';
 import { isOfficer } from '@/lib/officer';
+import { isEqmimicHost } from '@/lib/eqmimicHost';
+import { headers } from 'next/headers';
 
 // b.wolfpack.quest. Set at BUILD time from the branch (see next.config.js), so
 // this is a constant in the bundle rather than a per-request check.
@@ -59,6 +61,22 @@ export const metadata: Metadata = {
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // eqmimic.quest gets a bare shell (the guild lead, 2026-10-08): no Wolf Pack header, search, tour,
+  // sign-in or footer, and no session lookup, because the one page served there is the anonymous
+  // feedback form. Keyed on the Host header; the layout is already per-request (it reads the session
+  // cookie below), so reading a header costs nothing extra.
+  if (isEqmimicHost(headers().get('host'))) {
+    return (
+      <html lang="en">
+        <body className="font-mono">
+          <div className="max-w-2xl mx-auto p-3 sm:p-4">
+            <main>{children}</main>
+          </div>
+        </body>
+      </html>
+    );
+  }
+
   // Officer check runs server-side per request so the Admin nav link only
   // appears for officers. Non-officers never see the link in the source.
   // Signed-in users see "Me" — anonymous visitors don't. Both lookups are
