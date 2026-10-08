@@ -31358,8 +31358,13 @@ function startWebDashboard(port) {
         try { outPayload = _mobTracksObserveExtPayload(outPayload, Date.now()); }
         catch { /* engine must never break the ext-target proxy */ }
         // Outside a raid, only your own group's rows. LAST, so every enricher
-        // above still saw the whole zone.
-        try { outPayload = _scopeExtToGroup(outPayload, selfCharacter, selfSt, _lastRaidPipe && _lastRaidPipe.at, Date.now()); }
+        // above still saw the whole zone. In a raid the overlay's Raid | Group
+        // switch (?scope=group) narrows it to your raid group.
+        try {
+          const wantScope = /[?&]scope=group(?:&|$)/.test(req.url) ? 'group' : 'raid';
+          outPayload = _scopeExtToGroup(outPayload, selfCharacter, selfSt, _lastRaidPipe && _lastRaidPipe.at, Date.now(),
+            wantScope, _lastRaidPipe && _lastRaidPipe.members);
+        }
         catch { /* scoping must never break the proxy — fall back to the zone view */ }
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(outPayload));
@@ -44144,14 +44149,37 @@ function _sampleExtMobHp(payload, nowMs) {
 //
 // Fails open — no Zeal state, stale state, or no group list → unchanged.
 // Solo counts as a group of one.
+//
+// In a raid the board stays raid-wide unless the overlay asks for `want ===
+// 'group'` (the Raid | Group switch in its title bar — the guild lead,
+// 2026-10-08: "seeing the whole raid is often worthwhile, but when grouping it
+// can be annoying"). Then "mine" is the player's RAID group: self plus every
+// raid-roster entry (`raidMembers`, the type-5 list) sharing self's group
+// number. Ungrouped (0) / self absent from the roster → the Zeal group
+// window if fresh, else unchanged (fail open).
 const EXT_RAID_FRESH_MS = 60_000;
-function _scopeExtToGroup(payload, selfCharacter, selfSt, raidSeenAt, nowMs) {
+function _scopeExtToGroup(payload, selfCharacter, selfSt, raidSeenAt, nowMs, want = 'raid', raidMembers = null) {
   if (!payload || !Array.isArray(payload.targets)) return payload;
-  if (raidSeenAt && nowMs - raidSeenAt < EXT_RAID_FRESH_MS) return payload;
-  if (!selfCharacter || !selfSt || !Array.isArray(selfSt.group_members)) return payload;
-  if (nowMs - (selfSt.updatedAt || 0) > 60_000) return payload;
-  const mine = new Set([String(selfCharacter).toLowerCase()]);
-  for (const m of selfSt.group_members) if (m && m.name) mine.add(String(m.name).toLowerCase());
+  const inRaid = !!(raidSeenAt && nowMs - raidSeenAt < EXT_RAID_FRESH_MS);
+  if (inRaid && want !== 'group') return payload;
+  if (!selfCharacter) return payload;
+  const selfLc = String(selfCharacter).toLowerCase();
+  const zealFresh = !!(selfSt && Array.isArray(selfSt.group_members) && nowMs - (selfSt.updatedAt || 0) <= 60_000);
+  const zealGroup = () => selfSt.group_members.map(m => m && m.name);
+  let names = null;
+  if (inRaid) {
+    const roster = Array.isArray(raidMembers) ? raidMembers : [];
+    const grp = (m) => (m && m.group != null && m.group !== '') ? Number.parseInt(m.group, 10) : NaN;
+    const self = roster.find(m => m && m.name && String(m.name).toLowerCase() === selfLc);
+    const g = grp(self);
+    // Groups are 1..12; 0 is the ungrouped bucket (raid_roster 2026-10-08: group 0 held ~2x any real group),
+    // the same rule as utils/buffGroups.js. Ungrouped falls through to the Zeal group window.
+    if (Number.isInteger(g) && g >= 1 && g <= 12) names = roster.filter(m => m && m.name && grp(m) === g).map(m => m.name);
+    else if (zealFresh) names = zealGroup();
+  } else if (zealFresh) names = zealGroup();
+  if (!names) return payload;
+  const mine = new Set([selfLc]);
+  for (const n of names) if (n) mine.add(String(n).toLowerCase());
   const has = (n) => n != null && mine.has(String(typeof n === 'object' ? n.name : n).toLowerCase());
   const any = (arr) => Array.isArray(arr) && arr.some(has);
   const targets = payload.targets.filter(t => {
@@ -44162,7 +44190,7 @@ function _scopeExtToGroup(payload, selfCharacter, selfSt, raidSeenAt, nowMs) {
   });
   const offTank = targets.reduce((n, t) =>
     n + (Array.isArray(t.off_tank_raiders) ? t.off_tank_raiders.filter(has).length : 0), 0);
-  return { ...payload, targets, scope: 'group', online: mine.size,
+  return { ...payload, targets, scope: inRaid ? 'raid_group' : 'group', online: mine.size,
            ...(payload.off_tank_count != null ? { off_tank_count: offTank } : {}) };
 }
 

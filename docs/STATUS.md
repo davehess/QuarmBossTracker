@@ -107,7 +107,8 @@ next touch one rather than assuming a missing row means a missing doc.
   `claude/sharp-lamport-dC0TW`, waiting for the main push; DECISIONS §189).** The guild lead, 2026-10-07: other
   groups' mobs and callouts leaking in. The relay's raid-evening blanket is gone (raid from the live roster, else
   group, else zone); `flag_disable_groupscope=1` restores it. The group half: agent 3.7.103 (beta) sends
-  `group_names` on the reporter heartbeat; stable installs keep the zone rule until the next stable cut.
+  `group_names` on the reporter heartbeat; stable installs keep the zone rule until the next stable cut. In a raid,
+  Extended Target's title-bar **Raid | Group** switch (agent 3.7.104, beta) narrows the board to your raid group.
 
 - **⏳ Canvas show-when rules (Mimic alpha `d97ae9d7`, 2026-10-07; DECISIONS §187).** Each piece can show only in
   combat, out of combat, with a target, with an NPC target, in a raid, or for chosen classes; arranging shows all.
