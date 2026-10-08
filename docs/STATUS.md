@@ -750,6 +750,14 @@ next touch one rather than assuming a missing row means a missing doc.
   replaced the last one. No `?v=` is what production shows. Empty until the bot ledger is live and the two stampede
   rows carry the `zone-timer` tag. `web/lib/zoneTimers.ts`, `web/app/boards/ZoneTimers.tsx`,
   `test/zone-timers-web.test.js`. Link: https://b.wolfpack.quest/boards?v=b
+- **🧪 Sha`s Revenge is a slow; the Planes of Power charms are tracked (agent 3.7.117 beta, 2026-10-08).** A member
+  reported Sha`s Revenge not showing as a slow: spell 3462 (SPA 11 base 35, a 65% slow) was on none of the name-keyed
+  slow lists. Added with Sha's Vengeance (55%) and Sha's Lethargy (30%), in the agent and the Extended Target
+  window. Note that Revenge and Sha's Advantage print the same landing text, so a bystander landing stays ambiguous
+  (self-casts resolve by name). New charms in `CHARM_SPELLS` (all SPA 22 spells with a player class that were missing):
+  enchanter Beckon + Command of Druzzil, druid Command of Tunare, necro Word of Terris + Enslave Death, mage Call of
+  the Arch Mage, bard Call of the Banshee. `test/sha-revenge-and-pop-charms.test.js`. ⚠ Open: enchanter charm
+  warning is a countdown to a 720 s maximum that breaks early at random, so it almost never fires (pick pending).
 - **✅ Officer page `/admin/loot` [beta] — loot by value (web 1.8.120 main, 2026-10-08; paged in 1.8.122).** Note
   that the looter is not always the owner; window, per-character totals; one row per looter + item (count, each,
   row total), 50 a page, sorted on the server; DKP items listed but left out of totals (`loot_value_grouped` +
