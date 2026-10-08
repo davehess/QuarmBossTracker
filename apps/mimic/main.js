@@ -10118,10 +10118,11 @@ ipcMain.handle('char-profile-forget', (_e, name) => {
 // Open an external URL in the OS default browser. Allowlist so a compromised
 // renderer can't open arbitrary links: wolfpack.quest, the GitHub repo, plus
 // the PoP raid overlay's sources — EQProgression guide pages/diagrams and the
-// phase strategy videos on YouTube.
+// phase strategy videos on YouTube. Plus the anonymous feedback form on eqmimic.quest (signed-out installs; the
+// guild lead, 2026-10-08): only that one page, text rides in the # so it never reaches a server log.
 ipcMain.handle('open-external', (_e, url) => {
   if (typeof url !== 'string') return false;
-  const ALLOW = /^https:\/\/(wolfpack\.quest|github\.com\/davehess\/QuarmBossTracker|(www\.)?eqprogression\.com\/|(www\.)?pqdi\.cc\/|(www\.)?youtube\.com\/watch|youtu\.be\/)/i;
+  const ALLOW = /^https:\/\/(wolfpack\.quest|github\.com\/davehess\/QuarmBossTracker|(www\.)?eqprogression\.com\/|(www\.)?pqdi\.cc\/|(www\.)?youtube\.com\/watch|youtu\.be\/|eqmimic\.quest\/feedback(#|$))/i;
   if (!ALLOW.test(url)) {
     appendAgentLog(`[mimic] refused open-external: ${url}\n`);
     return false;

@@ -1464,9 +1464,11 @@ describe('Mimic: the tray item and showDashboardTab', () => {
 
   it('the open-external allow-list was not widened for this: the same hosts as before', () => {
     const re = sliceBlock(MAIN, 'const ALLOW = /', '/i;');
-    for (const host of ['wolfpack\\.quest', 'github\\.com\\/davehess\\/QuarmBossTracker', '(www\\.)?eqprogression\\.com\\/', '(www\\.)?pqdi\\.cc\\/', '(www\\.)?youtube\\.com\\/watch', 'youtu\\.be\\/']) {
+    // The one deliberate widening since (the guild lead, 2026-10-08): the anonymous feedback form, exactly one
+    // page, with or without a # payload (test/mimic-open-external-eqmimic.test.js runs it).
+    for (const host of ['wolfpack\\.quest', 'github\\.com\\/davehess\\/QuarmBossTracker', '(www\\.)?eqprogression\\.com\\/', '(www\\.)?pqdi\\.cc\\/', '(www\\.)?youtube\\.com\\/watch', 'youtu\\.be\\/', 'eqmimic\\.quest\\/feedback(#|$)']) {
       expect(re).toContain(host);
     }
-    expect(re.match(/\|/g)).toHaveLength(5);                  // five separators between the six hosts — none added
+    expect(re.match(/\|/g)).toHaveLength(7);                  // six separators between the seven hosts, plus the one inside (#|$) — none else added
   });
 });
