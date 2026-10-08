@@ -516,6 +516,12 @@ client.once(Events.ClientReady, async (readyClient) => {
   // Reports closed by commits ("Fixes FB-12"): every 10 minutes, two unauthenticated GitHub calls.
   setTimeout(() => _feedbackCommitWatch(readyClient).catch(err => console.warn('[feedback-ref] watch:', err?.message)), 90_000);
   setInterval(() => _feedbackCommitWatch(readyClient).catch(err => console.warn('[feedback-ref] watch:', err?.message)), 10 * 60_000);
+  // Replies members write on wolfpack.quest/feedback/FB-<n> reach the report's card on the same cadence.
+  setTimeout(() => _feedbackRelayReplies(readyClient).catch(err => console.warn('[feedback-reply] relay:', err?.message)), 120_000);
+  setInterval(() => _feedbackRelayReplies(readyClient).catch(err => console.warn('[feedback-reply] relay:', err?.message)), 10 * 60_000);
+  // The weekly anonymous-feedback count (counts only): checked hourly, posts on Monday after 13:00 UTC.
+  setTimeout(() => _afbWeeklyDigest(readyClient).catch(err => console.warn('[afb] digest:', err?.message)), 5 * 60_000);
+  setInterval(() => _afbWeeklyDigest(readyClient).catch(err => console.warn('[afb] digest:', err?.message)), 60 * 60_000);
   // Quarm patch notes mirror (it never throws): a minute after boot, then every 6 hours.
   setTimeout(() => _syncQuarmPatchNotes(), 60_000);
   setInterval(() => _syncQuarmPatchNotes(), 6 * 60 * 60_000);
@@ -19999,6 +20005,77 @@ async function _feedbackCommitWatch(readyClient) {
     await supabase.upsert('bot_kv', [{ guild_id: guildId, key, value: { sha: head }, updated_at: new Date().toISOString() }],
       'guild_id,key').catch(() => {});
   }
+}
+
+// Replies a member (or an officer) wrote on wolfpack.quest/feedback/FB-<n> land in feedback_replies with
+// relayed_at NULL; this posts each one as a reply to the report's card in the #feedback thread, because
+// officers work from the card (the guild lead, 2026-10-08). The row is stamped BEFORE the send, filtered on
+// relayed_at IS NULL, so a failed stamp can never repost every pass (a duplicate is worse than a retry);
+// a failed send puts the stamp back. Fail-soft: a missing table reads as null and the pass just ends.
+async function _feedbackRelayReplies(readyClient) {
+  const threadId = process.env.FEEDBACK_THREAD_ID;
+  const supabase = require('./utils/supabase');
+  if (!threadId || !supabase.isEnabled()) return;
+  const rows = await supabase.select('feedback_replies',
+    'relayed_at=is.null&order=created_at.asc&limit=20&select=id,feedback_id,author_discord_id,body');
+  if (!Array.isArray(rows) || !rows.length) return;
+  const thread = await readyClient.channels.fetch(threadId).catch(() => null);
+  if (!thread) return;
+  const fr = require('./utils/feedbackRefs');
+  for (const r of rows) {
+    try {
+      const found = await supabase.select('feedback',
+        `id=eq.${encodeURIComponent(r.feedback_id)}&select=ref,submitter_discord_id,discord_msg_id&limit=1`);
+      const card = Array.isArray(found) ? found[0] : null;
+      if (!card) continue;
+      const claim = await supabase.update('feedback_replies',
+        `id=eq.${encodeURIComponent(r.id)}&relayed_at=is.null`, { relayed_at: new Date().toISOString() });
+      if (!Array.isArray(claim) || !claim.length) continue;
+      const post = {
+        content: fr.formatReplyPost({ ref: card.ref, fromSubmitter: !!card.submitter_discord_id && r.author_discord_id === card.submitter_discord_id, body: r.body }),
+        allowedMentions: { parse: [] },
+      };
+      if (card.discord_msg_id) post.reply = { messageReference: card.discord_msg_id, failIfNotFound: false };
+      try { await thread.send(post); }
+      catch (err) {
+        await supabase.update('feedback_replies', `id=eq.${encodeURIComponent(r.id)}`, { relayed_at: null }).catch(() => {});
+        throw err;
+      }
+    } catch (err) { console.warn('[feedback-reply] failed for', r.id, err?.message); }
+  }
+}
+
+// Once a week, ONE line in the #feedback thread with counts of anonymous feedback (public.anon_feedback,
+// AFB-<n>): never any report text, and nothing is ever acted on automatically (the guild lead, 2026-10-08:
+// "it should be consistently reviewed"). Checked hourly; due Monday from 13:00 UTC, once per ISO week, the
+// week latched in bot_kv (afb_weekly_digest) so a redeploy cannot post it twice. The latch is written before
+// the post and fails closed: a missed line is cheaper than a repeated one. A table that does not exist yet,
+// or a failed read, skips quietly (a warning, no latch) and the next hour tries again.
+async function _afbWeeklyDigest(readyClient) {
+  const threadId = process.env.FEEDBACK_THREAD_ID;
+  const supabase = require('./utils/supabase');
+  if (!threadId || !supabase.isEnabled()) return 'skipped';
+  const afb = require('./utils/afbDigest');
+  const now = new Date();
+  const guildId = supabase.guildId();
+  const key = 'afb_weekly_digest';
+  const kv = await supabase.select('bot_kv', `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${key}&select=value&limit=1`);
+  if (!Array.isArray(kv)) return 'unknown';
+  if (!afb.isDue(now, kv[0] && kv[0].value ? kv[0].value.week : null)) return 'not-due';
+  // Only the two columns the counts need, and only rows that can count: never the report text.
+  const weekAgo = encodeURIComponent(new Date(new Date(now).getTime() - 7 * 24 * 3600 * 1000).toISOString());
+  const rows = await supabase.select('anon_feedback',
+    `select=submitted_at,status&or=(status.eq.new,submitted_at.gte.${weekAgo})&limit=1000`);
+  if (!Array.isArray(rows)) { console.warn('[afb] anon_feedback not readable; weekly count skipped'); return 'no-table'; }
+  const line = afb.digestLine(afb.countRows(rows, now));
+  const thread = line ? await readyClient.channels.fetch(threadId).catch(() => null) : null;
+  if (line && !thread) return 'no-thread';
+  const latched = await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key, value: { week: afb.weekKey(now), posted: !!line }, updated_at: now.toISOString() }], 'guild_id,key');
+  if (!Array.isArray(latched)) return 'latch-failed';
+  if (!line) return 'quiet';
+  await thread.send({ content: line, allowedMentions: { parse: [] }, flags: MessageFlags.SuppressEmbeds });
+  return 'posted';
 }
 
 // One-shot: the reports still open when FB numbers arrived get theirs on the card, so they can be named

@@ -118,6 +118,16 @@ export default async function AdminFeedbackPage({
     for (const s of signed ?? []) if (s.path && s.signedUrl) shotUrl.set(s.path, s.signedUrl);
   }
 
+  // Replies members wrote on /feedback/FB-<n> (feedback_replies), newest first. A separate read that fails
+  // soft, so the inbox still loads before the table exists; the bot also posts each one under the report's
+  // Discord card.
+  type Reply = { feedback_id: string; author_discord_id: string; body: string; created_at: string };
+  const repliesBy = new Map<string, Reply[]>();
+  const { data: replyRows } = await admin.from('feedback_replies')
+    .select('feedback_id, author_discord_id, body, created_at')
+    .order('created_at', { ascending: false }).limit(1000);
+  for (const x of (replyRows ?? []) as Reply[]) repliesBy.set(x.feedback_id, [...(repliesBy.get(x.feedback_id) ?? []), x]);
+
   // Category list — derived from the rows themselves for the filter dropdown
   const cats = Array.from(new Set(rows.map(r => r.category).filter(Boolean) as string[])).sort();
 
@@ -181,6 +191,7 @@ export default async function AdminFeedbackPage({
         <div className="space-y-3">
           {rows.map(r => {
             const chip = statusChip(r.status);
+            const replies = repliesBy.get(r.id) ?? [];
             return (
               <section key={r.id} className="bg-panel border border-border rounded-lg p-4">
                 <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
@@ -215,6 +226,17 @@ export default async function AdminFeedbackPage({
                 {r.notes && (
                   <div className="text-xs text-dim mt-2 border-l-2 border-border pl-2">
                     <span className="text-orange">notes: </span>{r.notes}
+                  </div>
+                )}
+                {replies.length > 0 && (
+                  <div className="mt-2 text-xs">
+                    <div className="text-blue">{replies.length} {replies.length === 1 ? 'reply' : 'replies'}</div>
+                    {replies.map((x, i) => (
+                      <div key={i} className="border-l-2 border-border pl-2 mt-1">
+                        <span className="text-dim">{x.author_discord_id === r.submitter_discord_id ? 'submitter' : 'officer'} · {fmtTs(x.created_at)}: </span>
+                        <span className="text-text whitespace-pre-wrap break-words">{x.body}</span>
+                      </div>
+                    ))}
                   </div>
                 )}
                 <details className="mt-3 text-xs">
