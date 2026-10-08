@@ -20,6 +20,7 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
 import { userTz } from '@/lib/timezone';
 import { fmtPp } from '@/lib/lootValue';
+import { GUILD_TAG } from '@/lib/guild';
 import LootTable, { type LootRow } from './LootTable';
 
 export const dynamic = 'force-dynamic';
@@ -62,8 +63,8 @@ export default async function AdminLootPage({ searchParams }: { searchParams: Pr
   const [itemsRes, looterRes] = await Promise.all([
     // _v2: each row carries `dkp`, and the per-character value leaves DKP items out (the guild lead, 2026-10-08:
     // "If something has a DKP bid associated with it, don't count that in the totals").
-    sb.rpc('loot_value_items_v2', { p_guild_id: 'wolfpack', p_since: since, p_limit: ITEM_LIMIT }).range(0, ITEM_LIMIT - 1),
-    sb.rpc('loot_value_by_looter_v2', { p_guild_id: 'wolfpack', p_since: since }).range(0, ITEM_LIMIT - 1),   // ~135 looters a month
+    sb.rpc('loot_value_items_v2', { p_guild_id: GUILD_TAG, p_since: since, p_limit: ITEM_LIMIT }).range(0, ITEM_LIMIT - 1),
+    sb.rpc('loot_value_by_looter_v2', { p_guild_id: GUILD_TAG, p_since: since }).range(0, ITEM_LIMIT - 1),   // ~135 looters a month
   ]);
   const items = (itemsRes.data ?? []) as LootRow[];
   const looters = (looterRes.data ?? []) as LooterRow[];

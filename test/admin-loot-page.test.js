@@ -147,13 +147,14 @@ describe('/admin/loot page', () => {
 
   it('reads both _v2 RPCs (DKP-aware) through the service-role client', () => {
     expect(page).toMatch(/supabaseAdmin\(\)/);
-    expect(page).toMatch(/\.rpc\('loot_value_items_v2', \{ p_guild_id: 'wolfpack', p_since: since, p_limit: ITEM_LIMIT \}\)/);
-    expect(page).toMatch(/\.rpc\('loot_value_by_looter_v2', \{ p_guild_id: 'wolfpack', p_since: since \}\)/);
+    expect(page).toMatch(/\.rpc\('loot_value_items_v2', \{ p_guild_id: GUILD_TAG, p_since: since, p_limit: ITEM_LIMIT \}\)/);
+    expect(page).toMatch(/\.rpc\('loot_value_by_looter_v2', \{ p_guild_id: GUILD_TAG, p_since: since \}\)/);
+    expect(page).toMatch(/import \{ GUILD_TAG \} from '@\/lib\/guild';/);
     expect(page).not.toMatch(/\.rpc\('loot_value_items'/);
     // PostgREST cuts every response at 1,000 rows, set-returning functions included: one explicit range.
     expect(page).toMatch(/const ITEM_LIMIT = 1000;/);
     expect(page).toMatch(/p_limit: ITEM_LIMIT \}\)\.range\(0, ITEM_LIMIT - 1\)/);
-    expect(page).toMatch(/loot_value_by_looter_v2', \{ p_guild_id: 'wolfpack', p_since: since \}\)\.range\(0, ITEM_LIMIT - 1\)/);
+    expect(page).toMatch(/loot_value_by_looter_v2', \{ p_guild_id: GUILD_TAG, p_since: since \}\)\.range\(0, ITEM_LIMIT - 1\)/);
   });
 
   it('shows DKP items as listed-but-not-counted (the guild lead: "don\'t count that in the totals")', () => {
