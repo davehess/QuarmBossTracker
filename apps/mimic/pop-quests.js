@@ -2334,6 +2334,149 @@ window.POP_QUESTS = {
          "note": "top of the library elevator"
         }
        ]
+      },
+      {
+       "key": "binden_small",
+       "title": "Optional: the Small Clockwork Talisman (The Binden Concerrentia, part 1)",
+       "who": "group",
+       "detail": "Nobody in this chain checks a flag, a level or a phrase. Loot a Tiny Bottle and Note from a festering rat in the Plane of Justice (10% a kill; they respawn in about 20 minutes) and give it to Jimlok Keylifter in the Plane of Tranquility for the Strange Jeweler’s Schematic. Give that to Tabben Bromal in the Plane of Knowledge: he hands it back with a Small parts kit. In the kit combine Creeping Silk Strands (the piles of bile, goo and flesh in Disease, 8%), Congealed Bile-based Ooze (virulent arachnids and hatchlings in Nightmare, 10%), Size C Spring (corroded and erratic models in Innovation, 8%) and Tri-coated Metal Casing (defective clockworks in Innovation, 8%) for a Sealed Parts Box. Give that to Tabben for the Talisman and a Small Parts Container; keep the container for part two. New over the source page: EQProgression has the silk and the ooze the wrong way round, so the ooze is Nightmare’s and the silk is Disease’s. The Talisman is already a gate (Talisman Gate, 5 charges), but part two uses it up.",
+       "brief": "Optional. Trade a rat’s bottle for a schematic, fill Tabben’s kit with four planar parts, get your first talisman.",
+       "where": [
+        {
+         "npc": "Jimlok Keylifter",
+         "zone": "Plane of Tranquility",
+         "y": -540,
+         "x": -1388
+        },
+        {
+         "npc": "Tabben Bromal",
+         "zone": "Plane of Knowledge",
+         "y": -391,
+         "x": 540,
+         "note": "his tinker’s shop in the Jeral section"
+        }
+       ],
+       "seq": [
+        {
+         "kind": "note",
+         "text": "Nobody here checks a flag or a level. Loot the Tiny Bottle and Note from a festering rat in the Plane of Justice.",
+         "items": [
+          "Tiny Bottle and Note"
+         ],
+         "src": "potranquility/Jimlok_Keylifter.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Jimlok Keylifter",
+         "items": [
+          "Tiny Bottle and Note"
+         ],
+         "src": "potranquility/Jimlok_Keylifter.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Strange Jeweler’s Schematic"
+         ],
+         "src": "potranquility/Jimlok_Keylifter.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Tabben Bromal",
+         "items": [
+          "Strange Jeweler’s Schematic"
+         ],
+         "src": "poknowledge/Tabben_Bromal.lua"
+        },
+        {
+         "kind": "get",
+         "text": "he hands the schematic back",
+         "items": [
+          "Small parts kit",
+          "Strange Jeweler’s Schematic"
+         ],
+         "src": "poknowledge/Tabben_Bromal.lua"
+        },
+        {
+         "kind": "click",
+         "to": "Combine",
+         "text": "in the Small parts kit",
+         "items": [
+          "Creeping Silk Strands",
+          "Congealed Bile-based Ooze",
+          "Size C Spring",
+          "Tri-coated Metal Casing"
+         ],
+         "src": "poknowledge/Tabben_Bromal.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Sealed Parts Box"
+         ],
+         "src": "poknowledge/Tabben_Bromal.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Tabben Bromal",
+         "items": [
+          "Sealed Parts Box"
+         ],
+         "src": "poknowledge/Tabben_Bromal.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Small Clockwork Talisman",
+          "Small Parts Container"
+         ],
+         "src": "poknowledge/Tabben_Bromal.lua"
+        }
+       ],
+       "expect": "Solo once you hold the parts, and the parts are four zones of trash farming: a rat, then Disease, Nightmare and Innovation mobs at 8 to 10% each. Nothing is lore or no drop, so a group can pool them.",
+       "turnIn": [
+        {
+         "to": {
+          "npc": "Jimlok Keylifter",
+          "zone": "Plane of Tranquility",
+          "y": -540,
+          "x": -1388
+         },
+         "give": "Tiny Bottle and Note",
+         "get": "Strange Jeweler’s Schematic"
+        },
+        {
+         "to": {
+          "npc": "Tabben Bromal",
+          "zone": "Plane of Knowledge",
+          "y": -391,
+          "x": 540,
+          "note": "his tinker’s shop in the Jeral section"
+         },
+         "give": "Strange Jeweler’s Schematic",
+         "get": "Small parts kit and the schematic back"
+        },
+        {
+         "to": {
+          "npc": "Tabben Bromal",
+          "zone": "Plane of Knowledge",
+          "y": -391,
+          "x": 540,
+          "note": "his tinker’s shop in the Jeral section"
+         },
+         "give": "Sealed Parts Box (the four parts combined in the kit)",
+         "get": "Small Clockwork Talisman and a Small Parts Container"
+        }
+       ],
+       "back": [
+        {
+         "npc": "Tabben Bromal",
+         "zone": "Plane of Knowledge",
+         "y": -391,
+         "x": 540,
+         "note": "his tinker’s shop in the Jeral section"
+        }
+       ]
       }
      ]
     }
@@ -4074,6 +4217,108 @@ window.POP_QUESTS = {
          "src": "solrotower/player.lua"
         }
        ]
+      },
+      {
+       "key": "binden_powered",
+       "title": "Optional: the Powered Clockwork Talisman (The Binden Concerrentia, part 2)",
+       "who": "group",
+       "detail": "Needs the Small Clockwork Talisman and the Small Parts Container from part one. Gather a Crystalline Carapace (Crystalline and Lucid Arachnae in the Plane of Valor, 8%), a Dense Hammered Casing (the Diaku in the Plane of Tactics, 10%), a Fiery Power Source (protectors and sentries of Ro and sun guardians in the Tower of Solusek Ro, 10%) and Strands of Living Chain (the parylyx spiders in the Plane of Torment, 50%). In the container combine those four and the Small Clockwork Talisman for a Locked Parts Box, and give it to Tabben Bromal for the Powered Talisman (15 charges) and The Talisman Schematic. Saying “ready to write down” to Tabben while you hold the container only makes him read the four parts out. New over the source page: the Tactics casing comes from Diaku, not ogres; the Valor drops are arachnae only; sun guardians drop the power source too; and the chain is 50%, not a sure drop.",
+       "brief": "Optional. Fill Tabben’s container with four more parts and your first talisman, and trade the box for the Powered one.",
+       "says": [
+        {
+         "to": "Tabben Bromal",
+         "text": "ready to write down"
+        }
+       ],
+       "where": [
+        {
+         "npc": "Tabben Bromal",
+         "zone": "Plane of Knowledge",
+         "y": -391,
+         "x": 540,
+         "note": "his tinker’s shop in the Jeral section"
+        }
+       ],
+       "seq": [
+        {
+         "kind": "note",
+         "text": "Keep the Small Parts Container from part one, and the Small Clockwork Talisman: the combine uses it up.",
+         "items": [
+          "Small Parts Container",
+          "Small Clockwork Talisman"
+         ],
+         "src": "poknowledge/Tabben_Bromal.lua"
+        },
+        {
+         "kind": "say",
+         "to": "Tabben Bromal",
+         "text": "ready to write down",
+         "src": "poknowledge/Tabben_Bromal.lua"
+        },
+        {
+         "kind": "note",
+         "text": "Optional: with the container in your bags he only reads the four parts out. The hand-in below needs no phrase.",
+         "src": "poknowledge/Tabben_Bromal.lua"
+        },
+        {
+         "kind": "click",
+         "to": "Combine",
+         "text": "in the Small Parts Container",
+         "items": [
+          "Dense Hammered Casing",
+          "Crystalline Carapace",
+          "Fiery Power Source",
+          "Strands of Living Chain",
+          "Small Clockwork Talisman"
+         ],
+         "src": "poknowledge/Tabben_Bromal.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Locked Parts Box"
+         ],
+         "src": "poknowledge/Tabben_Bromal.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Tabben Bromal",
+         "items": [
+          "Locked Parts Box"
+         ],
+         "src": "poknowledge/Tabben_Bromal.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Powered Clockwork Talisman",
+          "The Talisman Schematic"
+         ],
+         "src": "poknowledge/Tabben_Bromal.lua"
+        }
+       ],
+       "expect": "Solo once you hold the parts. They come from Valor, Tactics, the Tower of Solusek Ro and Torment, so each of those zones’ own entry flags come first. Tabben asks for nothing else and does not take the container.",
+       "turnIn": [
+        {
+         "to": {
+          "npc": "Tabben Bromal",
+          "zone": "Plane of Knowledge",
+          "y": -391,
+          "x": 540,
+          "note": "his tinker’s shop in the Jeral section"
+         },
+         "give": "Locked Parts Box (four parts and the Small Clockwork Talisman, combined in the container)",
+         "get": "Powered Clockwork Talisman and The Talisman Schematic"
+        }
+       ],
+       "back": [
+        {
+         "npc": "Elder Clinka",
+         "zone": "Plane of Tranquility",
+         "y": -384,
+         "x": -1271
+        }
+       ]
       }
      ]
     }
@@ -4379,6 +4624,105 @@ window.POP_QUESTS = {
          },
          "give": "the reward you hold",
          "get": "the next one: Coin Purse, Cord, Mace, Ring, then the Hoop again"
+        }
+       ]
+      },
+      {
+       "key": "binden_final",
+       "title": "Optional: The Binden Concerrentia (part 3)",
+       "who": "group",
+       "detail": "Needs the Powered Clockwork Talisman and The Talisman Schematic from part two. Give the schematic to Elder Clinka in the Plane of Tranquility for a Small Lined Case. In the case combine the Powered Talisman with A Living Fragment of Air (the Temple Guardians in Air, 9%), A Living Fragment of Water (the triloun in the Reef of Coirnav, 9%), A Living Fragment of Fire (the jopal in Fire, 8%) and A Living Fragment of Earth (the Vekerchiki and the Earthcrafted Assassins in Earth, 9%) for a Sealed Lined Case, and give that to Clinka for the Binden. New over the source page: the fragments drop from those mobs, not from mephits. Nothing here is lore or no drop, so unlike the essences there is no loot call: anyone can hold, trade or hand on a fragment. The Binden casts Talisman Gate with no charge limit; EQProgression says it lands you on the good side of the Plane of Knowledge, which our data cannot confirm.",
+       "brief": "Optional. Trade the schematic for a case, fill it with four elemental fragments and the talisman, and trade it back.",
+       "where": [
+        {
+         "npc": "Elder Clinka",
+         "zone": "Plane of Tranquility",
+         "y": -384,
+         "x": -1271
+        }
+       ],
+       "seq": [
+        {
+         "kind": "note",
+         "text": "Keep the Powered Clockwork Talisman and The Talisman Schematic from part two. Elder Clinka checks no flag.",
+         "items": [
+          "Powered Clockwork Talisman",
+          "The Talisman Schematic"
+         ],
+         "src": "potranquility/Elder_Clinka.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Elder Clinka",
+         "items": [
+          "The Talisman Schematic"
+         ],
+         "src": "potranquility/Elder_Clinka.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Small Lined Case"
+         ],
+         "src": "potranquility/Elder_Clinka.lua"
+        },
+        {
+         "kind": "click",
+         "to": "Combine",
+         "text": "in the Small Lined Case",
+         "items": [
+          "A Living Fragment of Air",
+          "A Living Fragment of Earth",
+          "A Living Fragment of Fire",
+          "A Living Fragment of Water",
+          "Powered Clockwork Talisman"
+         ],
+         "src": "potranquility/Elder_Clinka.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "Sealed Lined Case"
+         ],
+         "src": "potranquility/Elder_Clinka.lua"
+        },
+        {
+         "kind": "give",
+         "to": "Elder Clinka",
+         "items": [
+          "Sealed Lined Case"
+         ],
+         "src": "potranquility/Elder_Clinka.lua"
+        },
+        {
+         "kind": "get",
+         "items": [
+          "The Binden Concerrentia"
+         ],
+         "src": "potranquility/Elder_Clinka.lua"
+        }
+       ],
+       "expect": "Solo once you hold the four fragments. They are trash drops in the four elemental planes at 8 to 9%, so a group can farm them in any order; you need each plane’s entry flags, not a boss kill.",
+       "turnIn": [
+        {
+         "to": {
+          "npc": "Elder Clinka",
+          "zone": "Plane of Tranquility",
+          "y": -384,
+          "x": -1271
+         },
+         "give": "The Talisman Schematic",
+         "get": "Small Lined Case"
+        },
+        {
+         "to": {
+          "npc": "Elder Clinka",
+          "zone": "Plane of Tranquility",
+          "y": -384,
+          "x": -1271
+         },
+         "give": "Sealed Lined Case (the four fragments and the Powered Talisman, combined in the case)",
+         "get": "The Binden Concerrentia"
         }
        ]
       }

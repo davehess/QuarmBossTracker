@@ -99,6 +99,23 @@ describe('what fills itself in, and says so', () => {
     expect(STEP_MORE.essences_escort.back[0].npc).toBe('Councilwoman Kerasha');
     expect(STEP_MORE.essences_power.turnIn[0].to.npc).toBe('Councilwoman Kerasha');
   });
+  // The Binden Concerrentia (2026-10-08): each reward is the next part's ingredient, so a LATER item
+  // ticks the earlier parts; the Binden alone ticks all three (the talisman is used up in the combine).
+  it('the Binden chain ticks by the item you hold, and a later item proves the earlier parts', () => {
+    const inv = (...ids) => ({ ...base, inventory: ids.map(item_id => ({ item_id, observed_at: '2026-10-08T00:00:00Z' })) });
+    const keys = (...ids) => ['binden_small', 'binden_powered', 'binden_final'].filter(k => guideEvidence(inv(...ids))[k]);
+    expect(keys(28277)).toEqual([]);                    // the bottle is only an ingredient
+    expect(keys(28284)).toEqual(['binden_small']);      // Small Clockwork Talisman
+    expect(keys(28289)).toEqual(['binden_small']);      // Locked Parts Box: part one done, part two not
+    expect(keys(28290)).toEqual(['binden_small', 'binden_powered']);
+    expect(keys(28291)).toEqual(['binden_powered']);    // the schematic arrives with the Powered talisman
+    expect(keys(28297)).toEqual(['binden_small', 'binden_powered']);   // Sealed Lined Case: one hand-in from done
+    expect(keys(28296)).toEqual(['binden_small', 'binden_powered', 'binden_final']);
+    expect(guideEvidence(inv(28296)).binden_final).toEqual({ source: 'database', what: 'You hold The Binden Concerrentia.', at: '2026-10-08T00:00:00Z' });
+    expect(STEP_MORE.binden_small.back[0].npc).toBe('Tabben Bromal');
+    expect(STEP_MORE.binden_powered.back[0].npc).toBe('Elder Clinka');
+    expect(STEP_MORE.binden_final.turnIn.map(t => t.to.npc)).toEqual(['Elder Clinka', 'Elder Clinka']);
+  });
   it('every held-item rule names a real step, and the page asks for exactly those items', () => {
     for (const key of Object.keys(HELD_ITEM_STEPS)) expect(GUIDE_KEYS.has(key), key).toBe(true);
     expect(AUTO_ITEM_IDS).toContain(9433);

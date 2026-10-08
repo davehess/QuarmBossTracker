@@ -139,6 +139,34 @@ export const STEP_MORE: Record<string, StepMore> = {
     ],
     auto: 'Ticks itself when your last inventory upload holds any of the five rewards.',
   },
+
+  // The Binden Concerrentia: potranquility/Jimlok_Keylifter.lua, poknowledge/Tabben_Bromal.lua, potranquility/Elder_Clinka.lua.
+  binden_small: {
+    expect: 'Solo once you hold the parts, and the parts are four zones of trash farming: a rat, then Disease, Nightmare and Innovation mobs at 8 to 10% each. Nothing is lore or no drop, so a group can pool them.',
+    turnIn: [
+      { to: at('binden_small'), give: '[[Tiny Bottle and Note#28277]]', get: '[[Strange Jeweler’s Schematic#28278]]' },
+      { to: at('binden_small', 1), give: '[[Strange Jeweler’s Schematic#28278]]', get: '[[Small parts kit#17277]] and the schematic back' },
+      { to: at('binden_small', 1), give: '[[Sealed Parts Box#28283]] (the four parts combined in the kit)', get: '[[Small Clockwork Talisman#28284]] and a [[Small Parts Container#17278]]' },
+    ],
+    back: [at('binden_powered')],
+    auto: 'Ticks itself when your last inventory upload holds the Small Clockwork Talisman or anything made from it.',
+  },
+  binden_powered: {
+    expect: 'Solo once you hold the parts. They come from Valor, Tactics, the Tower of Solusek Ro and Torment, so each of those zones’ own entry flags come first. Tabben asks for nothing else and does not take the container.',
+    turnIn: [
+      { to: at('binden_powered'), give: '[[Locked Parts Box#28289]] (four parts and the Small Clockwork Talisman, combined in the container)', get: '[[Powered Clockwork Talisman#28290]] and [[The Talisman Schematic#28291]]' },
+    ],
+    back: [at('binden_final')],
+    auto: 'Ticks itself when your last inventory upload holds the Powered Clockwork Talisman or anything made from it.',
+  },
+  binden_final: {
+    expect: 'Solo once you hold the four fragments. They are trash drops in the four elemental planes at 8 to 9%, so a group can farm them in any order; you need each plane’s entry flags, not a boss kill.',
+    turnIn: [
+      { to: at('binden_final'), give: '[[The Talisman Schematic#28291]]', get: '[[Small Lined Case#17279]]' },
+      { to: at('binden_final'), give: '[[Sealed Lined Case#28297]] (the four fragments and the Powered Talisman, combined in the case)', get: '[[The Binden Concerrentia#28296]]' },
+    ],
+    auto: 'Ticks itself when your last inventory upload holds The Binden Concerrentia.',
+  },
 };
 
 // The short version of every step whose detail runs past 300 characters, plus the Justice trial step
@@ -168,6 +196,9 @@ const BRIEFS: Record<string, string> = {
   pofire_miak: 'Ask Miak about the portal’s destination before you kill Solusek Ro. That gives your first Fire flag.',
   flag_solro_minis: 'Five wings, any order. Kill each boss, then click its flaming cauldron within 30 minutes. Everyone clicks their own.',
   essences_power: 'Optional. Keep the Fist, combine the four gods’ essences in the bowl, then trade the result for a reward.',
+  binden_small: 'Optional. Trade a rat’s bottle for a schematic, fill Tabben’s kit with four planar parts, get your first talisman.',
+  binden_powered: 'Optional. Fill Tabben’s container with four more parts and your first talisman, and trade the box for the Powered one.',
+  binden_final: 'Optional. Trade the schematic for a case, fill it with four elemental fragments and the talisman, and trade it back.',
   time_muon: 'Needs your Zebuxoruk flag and the Quintessence in your bags. Muon takes you up; clicking the time machine is the flag.',
 };
 for (const [key, brief] of Object.entries(BRIEFS)) STEP_MORE[key] = { ...STEP_MORE[key], brief };
