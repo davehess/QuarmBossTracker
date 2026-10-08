@@ -1,6 +1,6 @@
 # RUNBOOK — Project Quarm + Mimic on a Steam Deck, start to raid
 
-**Target: 20 minutes.** The first one took ~3 hours (Hitya, live on a Deck,
+**Target: 20 minutes.** The first one took ~3 hours (the guild lead, live on a Deck,
 2026-08-23) and almost all of that was spent guessing at a graphics failure that
 has exactly two possible causes, each with its own error string. This runbook
 exists so the next install reads the error, looks it up in §4, and fixes it —
@@ -113,7 +113,7 @@ Lutris. `scripts/deck-preflight.sh` reports them too.
 
 ### 3a. On *this* Deck: the known-good file set is already here
 
-**`/home/deck/Downloads/EQ/`** is a copy of **Hitya's working Windows desktop
+**`/home/deck/Downloads/EQ/`** is a copy of **the guild lead's working Windows desktop
 install** (verified 2026-08-23). Not a pristine Quarm download — something
 better: **a file set that is known to work, because it is the one being raided
 on.** Seed a fresh install from it and you skip the download entirely.
@@ -826,7 +826,7 @@ Stages 1–4 and 9 are the Quarm.Guide recipe
 retrieved 2026-08-24.
 
 Stages 5, 6, and the `[VideoMode]` stomp in 7b are **field evidence from a live
-Deck install on 2026-08-23 (Hitya)** — the renderer chain, both error signatures,
+Deck install on 2026-08-23 (the guild lead)** — the renderer chain, both error signatures,
 the Wine-stub log tell, both Bottles traps, the observed prefix-root layout, the
 flatpak GL32 warning, and the known-good desktop client copy at
 `/home/deck/Downloads/EQ/` that both installs were derived from. Stage 8's
