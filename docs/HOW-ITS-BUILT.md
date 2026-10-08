@@ -296,9 +296,16 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   version is a Raids card (`raidsNoteHtml` in `apps/mimic/command.html`): one row per raid with the
   leader and player count, yours first, totals in the collapsible header (§136). The Command Center's guild-wide priest
   mana keeps to this Mimic's raid window while two raids run (`_noteRaidSplit` / `_raidSplitNow`).
-- **Not split yet:** attendance ticks, the trigger relay, `/buffs`, the signup comp matcher, the essence
+- **Not split yet:** attendance ticks, `/buffs`, the signup comp matcher, the essence
   queue, the `dedup_roster` election (§124 lists them).
-- **Tests:** `test/raid-groups.test.js` (both copies, parity), `test/raid-split-agent.test.js` (beta).
+- **Raid, else group, else zone (bot 3.1.222, §189):** `utils/groupScope.js` is the one rule for the trigger relay
+  and Extended Target. The relay no longer keeps everything guild-wide for the raid evening: a listener in a raid
+  (live roster) hears the raid, with two raids a sender stamped `origin_raid` of the other one is dropped; a
+  listener not in one hears their GROUP (heartbeat `group_names` against the fire's `origin_group`), else the
+  same-zone rule. Extended Target keeps a grouped, raidless player to their group (`scope: 'group'`, no main
+  assist). `flag_disable_groupscope=1` restores the old behaviour. The agent does not send `group_names` yet.
+- **Tests:** `test/raid-groups.test.js` (both copies, parity), `test/raid-split-agent.test.js` (beta),
+  `test/group-scope.test.js` (the raid/group/zone scoping, end to end).
 
 ### Loot tab: who looted what, last 12 hours (bot 3.1.192 · agent 3.7.73 beta, 2026-10-03)
 - **Bot:** server-panel key `night-loot` (`_nightLootPanelBody` in `index.js`, `buildNightLootPanel` +
