@@ -717,6 +717,11 @@ next touch one rather than assuming a missing row means a missing doc.
   `deploymentEnabled`. Web 1.8.53 also keeps a `/pop` link's query through sign-in. §101.
 - **⏳ Command Center 📋 on deathrolls (agent 3.7.47, Mimic beta `013e2e0c`) · Target Info even con = your
   level for a player (agent 3.7.48, beta `386cfc99`), 2026-09-29.** §97, §98 (reverses part of §15).
+- **✅ 93 more named mobs on the boards (bot 3.1.228 + 3.1.229 data, main 2026-10-08).** Glykus Helmir, Tagrin Maldric and
+  The Diaku Overseer first (Tactics, 24 h); then every named 18 h+ mob that drops parchments, glyphed rune words or
+  real loot (90: Fire, Air, Earth, Water, Torment, Tower of Solusek Ro, Temple of Marr, Temple of Veeshan, Vex Thal,
+  Growth and more). 251 on the board. ⏳ `/board` once to lay out the extra parts; ⏳ lockout flags unchecked;
+  ⏳ option C (board grows on first kill). DECISIONS §202.
 - **✅ Owned songs no longer listed as missing (FB-67), and the NO DROP tag fixed (web 1.8.123 · bot 3.1.227 ·
   migrations `20261008200000` + `20261008210000`, 2026-10-08).** Names compared without punctuation + 24 scroll
   aliases; a bard went from 27 "missing" to 6. ND tag was inverted on `/admin/loot` and the Mimic Loot tab. ⏳ Same name

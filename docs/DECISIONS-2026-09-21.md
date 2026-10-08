@@ -8258,3 +8258,26 @@ NO DROP" figure noted while building it was this same inversion.
 **FB-68 (resisted clicky should use a charge) is not what the code does**: the counter spends a charge on the
 "begins to glow" line, before any resist, so a resisted click is already counted. The likeliest cause is a click that
 printed no matching glow line. Waiting on a raw log excerpt from the member before changing anything.
+
+### 202. More named mobs on the boards: the rule is "drops parchments, glyphed runes or real loot" (2026-10-08, bot 3.1.228 + 3.1.229 data)
+**The ask** (the guild lead): *"We need to add a bunch of the other mobs to the boards, like Glykus Helmir, and The
+Diaku Overseer. Any of the named mobs with a long respawn timer should be tracked on that page"*, then, on the cut:
+*"any of the ones that drop parchments or glyphed runes, or real loot"*. Picked **A, the PoP sweep** first; the loot rule
+then widened it past PoP.
+- **Glykus Helmir, Tagrin Maldric, The Diaku Overseer** (Plane of Tactics, 24 h, from `eqemu_spawn2`) went on first
+  (3.1.228), same shape as the Plane of Valor 24 h entries (`lockout:false`).
+- **The rule**, run against `eqemu_npc_types` + `eqemu_spawn2` + `eqemu_npc_drops` (3.1.229): a named mob (not `a_` /
+  `an_`), level 45 or more, a spawn timer of 18 h or longer (placeholder timers over ~277 h left out), not already on the
+  board, AND it drops an Ethereal Parchment, a Spectral Parchment or a Glyphed Rune Word (the spell turn-in tiers, §63-64
+  of DECISIONS-2026-08-20), or real loot: a wearable item that is magic or NO DROP, with at least 30k HP for the
+  loot-only ones. 87 named mobs have no loot rows at all; 140 more drop only junk or quest bits; neither group is added.
+- **Result: 90 added, 251 bosses on the board**: Plane of Fire 10, Air 7, Earth 6, Water 5, Torment 5, Innovation 1,
+  Tower of Solusek Ro 5, Temple of Marr 4 (all PoP); Temple of Veeshan 19, Vex Thal 12, Plane of Growth 7, Dragon
+  Necropolis 3, Western Wastes 3, Akheva Ruins 3, Echo Caverns, Grieg's End, Katta Castellum. Timer = the server's spawn
+  timer in hours. Data: `data/bosses.json`, ids by slug, PQDI link by npc id, nicknames only where unique on the board.
+- ⚠ **Not decided:** `lockout` is left unset on the 90 (the board's default, which can create raid lockouts from kills);
+  the 18-30 h ones may have none. And a high-HP named with no drop rows in this mirror (87) could be a gap in the loot
+  tables rather than a mob that drops nothing. Both are for the guild lead's eye on the first kills.
+- Rejected: option B (every named mob, ~180 names, mostly trash-named Vex Thal / Temple of Veeshan) and option C (the
+  board grows itself on a kill; a bot change that only learns a mob after the guild kills it). C is still the better
+  long-term rule and stays an open item.
