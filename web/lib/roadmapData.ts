@@ -37,6 +37,30 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-2-7-10-2026-10-08',
+    title: 'Mimic 2.7.10',
+    version: 'Mimic 2.7.10 · Agent 3.7.106 · Web 1.8.117 · Bot 3.1.222',
+    date: '2026-10-08',
+    headline: 'Your group\'s fight stays your group\'s: callouts and Extended Target keep to your raid, or to your group when you are not in one. Plus two rows of clickies, pets on the meter, and a long list of member reports fixed.',
+    features: [
+      { name: 'Raid | Group switch', blurb: 'Extended Target has a switch at the top. Raid shows everything your raid is on; Group shows only the mobs your group is on. It remembers your pick.' },
+      { name: 'Callouts keep to you', blurb: 'Guild callouts reach your raid while you are in one, and your group when you are not. Other groups in the same zone no longer hear yours, or you theirs.' },
+      { name: 'Clickies on the HUD', blurb: 'Pick which clickies the HUD counts, with a Recharged button (FB-65). Only items with charges are tracked, a second row fits up to seven, and the common ones get short names: Invis Pot, U.Recourse, Invis Mask, Totem.' },
+      { name: 'Pets on the meter', blurb: 'Another raider\'s charm pet counts for its owner once it says who its leader is (FB-52), and the copy button adds each pet\'s damage to its owner (FB-22).' },
+      { name: 'Hail board', blurb: 'The Command Center shows how many flags the flag NPC can still give (72 for most) and counts down to when it leaves.' },
+      { name: 'Trigger manager', blurb: 'Open a trigger\'s settings from the list, add a warning before a timer ends, and make timers repeat. (FB-23, FB-26, FB-30, FB-31)' },
+      { name: 'HUD for every class', blurb: 'A bard\'s mana slot counts Dirges and Fading Memories (FB-56), the AE chip shows only on area songs (FB-57), Mana and Endurance are separate parts (FB-12), and the Box HUD shows procs, stuns and your damage shield (FB-58, FB-60). Target Info lists the mob\'s procs.' },
+    ],
+    fixes: [
+      'Hide all no longer crashes after Target Info closes, and overlays stay off the taskbar. (FB-61)',
+      'An overlay you shrink stays shrunk, and one you resize keeps the height you gave it. (FB-16)',
+      'The CH chain shows Divine Intervention only for clerics who have it memorized and ready. (FB-62)',
+      'Targeting a corpse no longer shows another fight\'s numbers. (FB-63)',
+      '"Charm break" is said once, and unticking the speaker on a Suggested alert really silences it. (FB-21)',
+      'Monk strikes such as Dragon Punch no longer count as procs. (FB-60)',
+    ],
+  },
+  {
     key: 'pets-clickies-repeat-2026-10-07',
     title: 'Pets on the meter, two rows of clickies, guild triggers that repeat',
     version: 'Agent 3.7.100 beta · Web 1.8.116 · Bot 3.1.219',
