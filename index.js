@@ -300,6 +300,7 @@ const { dedupParseDeaths } = require('./utils/parseDeaths');
 const clockOffset = require('./utils/clockOffset');
 const kvLatch = require('./utils/kvLatch');
 const _raidGroups = require('./utils/raidGroups');
+const _groupScope = require('./utils/groupScope');
 const _mainAssist = require('./utils/mainAssist');
 const _mainAssistStore = _mainAssist.createStore();
 const { discordAbsoluteTime, discordRelativeTime, isShortTimerBoss } = require('./utils/timer');
@@ -14124,15 +14125,16 @@ function _keepRaidSplit(split) {
     : '[raids] one raid again');
   return split;
 }
-async function _liveRaidSplit(supabase, guildId) {
-  if (_raidSplitCache.split && Date.now() - _raidSplitCache.at < 5000) return _raidSplitCache.split;
+async function _liveRaidSplit(supabase, guildId, maxAgeMs = 5000) {
+  if (_raidSplitCache.split && Date.now() - _raidSplitCache.at < maxAgeMs) return _raidSplitCache.split;
   const since = new Date(Date.now() - _raidGroups.RAID_LIVE_MS).toISOString();
   // Paged: one row per (uploader, name), ~1,000 at peak. A truncated read drops whole uploaders,
   // and the split reads "one raid" when it cannot see the second.
   const rows = await supabase.selectAllPaged('raid_roster',
     `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(since)}` +
     `&select=name,rank,uploaded_by_discord_id,captured_at`, 'uploaded_by_discord_id.asc,name').catch(() => null);
-  if (!rows) return _raidGroups.groupRaids([]);
+  // `failed` tells groupScope that "no raids" here means "could not look": it keeps today's behaviour.
+  if (!rows) return Object.assign(_raidGroups.groupRaids([]), { failed: true });
   return _keepRaidSplit(_raidGroups.groupRaids(rows));
 }
 
@@ -14269,9 +14271,17 @@ async function _handleAgentExtendedTarget(req, res) {
     // even in the same zone. Raiders in no raid stay (fail open); one raid changes nothing.
     const raidSplit = await _liveRaidSplit(supabase, guildId);
     const myRaid = raidSplit.multi ? raidSplit.raidFor({ discordId: identity.discord_id, character: selfChar }) : null;
-    const inScope = myRaid
+    let inScope = myRaid
       ? inZone.filter(r => { const theirs = raidSplit.raidForName(r.character); return !theirs || theirs === myRaid; })
       : inZone;
+    // Not in a raid: the board is your group's, not the zone's (the guild lead, 2026-10-07: another
+    // group's five mobs on a grouped player's board). In a raid, or with no group known, nothing here.
+    const groupCtx = _groupScope.scopeFor({
+      split: raidSplit, discordId: identity.discord_id, characters: selfChar ? [selfChar.toLowerCase()] : [],
+      group: _groupNamesFor(guildId, identity.discord_id, selfChar), disabled: tn('flag_disable_groupscope', 0) >= 1,
+    });
+    const groupScoped = groupCtx.mode === 'group';
+    if (groupScoped) inScope = inZone.filter(r => groupCtx.names.has(r.character.toLowerCase()));
 
     const raiderNames = new Set(inScope.map(r => r.character.toLowerCase()));
     const petNames = new Set(inScope.filter(r => r.pet_name).map(r => r.pet_name.toLowerCase()));
@@ -14809,9 +14819,12 @@ async function _handleAgentExtendedTarget(req, res) {
     // A main assist declared in raid chat pins their target above that (the guild lead, 2026-10-02;
     // utils/mainAssist.js). Their target is what their own Mimic reports, else the mob their assist
     // macro named in the last 90 s. With no declaration the most-targeted mob stays first.
-    const mainAssist = _mainAssistPin(targets, _mainAssistStore.get(myRaid ? myRaid.key : null, now), inScope);
+    // (A main assist named in raid chat is the raid's: a grouped player outside it does not get one.)
+    const mainAssist = groupScoped ? null
+      : _mainAssistPin(targets, _mainAssistStore.get(myRaid ? myRaid.key : null, now), inScope);
 
     const extOut = { targets, zone: scopeZone || null, online: inScope.length, off_tank_count: offTankCount };
+    if (groupScoped) extOut.scope = 'group';
     if (mainAssist) extOut.main_assist = mainAssist;
     if (raidSplit.multi) extOut.raids = raidSplit.raids.map(r => _raidGroups.raidSummary(r, r === myRaid));
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -18592,6 +18605,9 @@ async function _handleAgentReporterPoll(req, res) {
     // table's "Alt (Main)" label and lets the /who 🐺 key on the alt actually
     // online, not just the reported primary. Older agents omit it → null.
     live_character: payload.live_character ? String(payload.live_character).slice(0, 32) : null,
+    // The names in that character's Zeal group window (agent that sends them, else null = unknown).
+    // Memory only: utils/groupScope.js keeps the relay and Extended Target to your group outside a raid.
+    group_names: Array.isArray(payload.group_names) ? _groupScope.cleanNames(payload.group_names) : null,
   });
 
   const now = Date.now();
@@ -19393,6 +19409,10 @@ async function _handleTriggerRelayPost(req, res) {
   let originZones = [];
   try { originZones = [...await _requesterZones(identity.discord_id)]; }
   catch { originZones = []; }   // unknown → the gate treats it as not local
+  // Which raid and group the sender is in right now, stamped on each fire (utils/groupScope.js).
+  let originStamp = { origin_raid: null, origin_group: null };
+  try { originStamp = await _senderStamp(identity.discord_id); }
+  catch { /* unknown sender → no opinion, the zone rule decides */ }
 
   let accepted = 0;
   for (const f of fires.slice(0, 10)) {
@@ -19437,6 +19457,8 @@ async function _handleTriggerRelayPost(req, res) {
       // ~16 people to update Mimic. Empty when live-state is stale — outside a
       // raid that reads as "not local" (see _relayScopeKeep).
       origin_zones:        originZones,
+      origin_raid:         originStamp.origin_raid,
+      origin_group:        originStamp.origin_group,
     };
     _triggerRelay.entries.push(entry);
     accepted++;
@@ -19458,9 +19480,11 @@ async function _handleTriggerRelayPost(req, res) {
 // ran on every other Mimic within 15s. Someone soloing an alt in East Commons on
 // a Tuesday landed a slow, and the whole guild heard it.
 //
-// The rule: raid-wide while you are in a raid — the scheduled window, OR your
-// own Mimic uploading a raid roster in the last 10 minutes (off-schedule raids)
-// — and same-zone-only otherwise.
+// The rule (2026-10-07, utils/groupScope.js): raid-wide while the live roster
+// puts you in a raid, your own group's when you are not in one and your Mimic
+// reported a group, same-zone-only otherwise. The scheduled-window and 10-minute
+// roster-upload blankets below are now only the kill switch's (flag_disable_groupscope)
+// and the failed-read path's old rule; _relayScopeKeep is the zone rule either way.
 //
 // ⚠ OUTSIDE A RAID, UNKNOWN MEANS NOT LOCAL. The 3.1.111 gate failed open when
 // either side could not be placed, and because the ingest read a payload field
@@ -19514,6 +19538,36 @@ async function _requesterZones(discordId) {
   return out;
 }
 
+// The lowercased names of this account's live characters (the same 2s/5min caches as the zones).
+async function _requesterChars(discordId) {
+  if (!discordId) return [];
+  const [zoneByChar, discordByChar] = await Promise.all([_liveZoneMap(), _charDiscordMap()]);
+  const out = [];
+  for (const charLower of zoneByChar.keys()) if (discordByChar.get(charLower) === discordId) out.push(charLower);
+  return out;
+}
+// Group, raid and kill-switch inputs for one account, all from memory or the caches above.
+// The group comes from the reporter heartbeat (null until an agent sends group_names).
+function _groupNamesFor(guildId, discordId, character) {
+  try { return _groupScope.groupOf(_reporterGuildBook(guildId).get(discordId), Date.now(), character); }
+  catch { return null; }
+}
+async function _groupScopeInputs(discordId) {
+  const supabase = require('./utils/supabase');
+  const guildId = supabase.guildId();
+  let tune = {};
+  try { tune = await _overlayTuningMap(); } catch { /* fail-open: the switch reads off */ }
+  const disabled = Number(tune.flag_disable_groupscope) >= 1 || !supabase.isEnabled();
+  const split = disabled ? null : await _liveRaidSplit(supabase, guildId, 15_000);   // relay polls are frequent: 15s old is fresh enough
+  return { split, disabled, characters: disabled ? [] : await _requesterChars(discordId), group: _groupNamesFor(guildId, discordId, null) };
+}
+// What a fire is stamped with at POST: the sender's raid and group right now.
+async function _senderStamp(discordId) {
+  const inp = await _groupScopeInputs(discordId);
+  if (inp.disabled) return { origin_raid: null, origin_group: null };
+  return _groupScope.stampSender({ split: inp.split, discordId, characters: inp.characters, group: inp.group });
+}
+
 // Accounts whose Mimic uploaded a raid roster in the last 10 minutes — the
 // "I am in a raid right now" signal that keeps the relay raid-wide on an
 // off-schedule night. Newest 500 rows (a few captures of a full raid), cached
@@ -19555,7 +19609,11 @@ function _recentFiresFor(identity, sinceId, lootSinceId = 0, scope = null) {
   const requesterZones = scope ? scope.requesterZones : null;
   const fires = _triggerRelay.entries
     .filter(e => e.id > sinceId && e.uploaded_by !== identity.discord_id)
-    .filter(e => _relayScopeKeep({ inRaidWindow, inRaid, originZones: e.origin_zones, requesterZones }))
+    .filter(e => {
+      // Raid or group first (utils/groupScope.js); no opinion falls through to the zone rule.
+      const v = _groupScope.relayVerdict(scope && scope.group, e);
+      return v !== null ? v : _relayScopeKeep({ inRaidWindow, inRaid, originZones: e.origin_zones, requesterZones });
+    })
     .map(e => ({
       id:                  e.id,
       name:                e.name,
@@ -19580,9 +19638,22 @@ function _recentFiresFor(identity, sinceId, lootSinceId = 0, scope = null) {
 // polls hardest. Off-schedule, the listener's own fresh raid-roster upload is
 // checked next (30s-cached set), and only then the zones.
 async function _relayScopeFor(identity) {
+  const discordId = String((identity && identity.discord_id) || '');
+  // Raid, else group, else zone — decided from the live roster and the heartbeat's group, not the
+  // clock (the guild lead, 2026-10-07). The clock only matters for a listener we cannot place at all.
+  // flag_disable_groupscope=1, a failed roster read or no Supabase falls through to the old rule below.
+  try {
+    const inp = await _groupScopeInputs(discordId);
+    const g = _groupScope.scopeFor({ split: inp.split, discordId, characters: inp.characters, group: inp.group, disabled: inp.disabled });
+    if (g.mode === 'raid') return { inRaidWindow: false, inRaid: true, requesterZones: null, group: g };
+    if (g.mode !== 'legacy') {
+      let zones = new Set();
+      try { zones = await _requesterZones(discordId); } catch { zones = new Set(); }
+      return { inRaidWindow: zones.size === 0 && _inRaidWindowEt(new Date()), inRaid: false, requesterZones: zones, group: g };
+    }
+  } catch { /* fall through to the old rule */ }
   const inRaidWindow = _inRaidWindowEt(new Date());
   if (inRaidWindow) return { inRaidWindow: true, inRaid: true, requesterZones: null };
-  const discordId = String((identity && identity.discord_id) || '');
   let inRaid = false;
   try { inRaid = discordId ? (await _raidUploaderIds()).has(discordId) : false; } catch { inRaid = false; }
   if (inRaid) return { inRaidWindow: false, inRaid: true, requesterZones: null };
