@@ -94,10 +94,12 @@ describe('server action', () => {
   const ACTION = path.join(ROOT, 'web/app/eqmimic/feedback/actions.ts');
   async function loadAction(admin, hdrs = new Headers()) {
     vi.resetModules();
-    const headersId = createRequire(ACTION).resolve('next/headers');
     vi.doMock('@/lib/supabase', () => ({ supabaseAdmin: admin }));
     vi.doMock('@/lib/anonFeedbackClean', async () => await import('../web/lib/anonFeedbackClean.ts'));
-    vi.doMock(headersId, () => ({ headers: () => hdrs }));
+    // CI installs the root packages only, so next/headers resolves nowhere there and the bare id is what the
+    // action asks for; locally it resolves into web/node_modules. Mock both, whichever the import becomes.
+    vi.doMock('next/headers', () => ({ headers: () => hdrs }));
+    try { vi.doMock(createRequire(ACTION).resolve('next/headers'), () => ({ headers: () => hdrs })); } catch { /* CI */ }
     return await import('../web/app/eqmimic/feedback/actions.ts');
   }
   it('a filled honeypot is thanked and dropped without touching the database', async () => {
@@ -181,16 +183,48 @@ describe('host routing', () => {
     expect(branch).not.toMatch(/SiteHeader|GlobalSearch|GuidedTour|AuthBadge|BetaBanner/);
   });
 
-  // Behaviour: run the real middleware against real NextRequests.
-  async function run(url, init = {}) {
+  // Behaviour: run the real middleware. The eqmimic host branch runs first and touches only
+  // NextResponse.next/rewrite and request.nextUrl/headers, so those cases run everywhere against a small
+  // stand-in for next/server (CI installs the root packages only: no Next, no @supabase/ssr there). The
+  // "wolfpack.quest unchanged" case walks the whole middleware and needs the real packages, so it runs where
+  // web/node_modules exists (locally and in the Vercel build).
+  const HAS_NEXT = fs.existsSync(path.join(ROOT, 'web/node_modules/next/server.js'));
+  function fakeNextServer() {
+    class NextRequest {
+      constructor(url, init = {}) {
+        const nu = new URL(url);
+        nu.clone = () => new URL(nu.href);
+        this.url = url; this.method = init.method || 'GET';
+        this.headers = new Headers(init.headers || {}); this.nextUrl = nu;
+      }
+    }
+    const res = (h) => ({ headers: new Headers(h) });
+    return {
+      NextRequest,
+      NextResponse: { next: () => res({ 'x-middleware-next': '1' }), rewrite: (u) => res({ 'x-middleware-rewrite': String(u) }) },
+    };
+  }
+  async function run(url, init = {}, { real = false } = {}) {
     vi.resetModules();
-    // The non-eqmimic path builds a Supabase client; with no auth cookie it never makes a call.
     process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://example.supabase.co';
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||= 'anon-test-key';
-    const { NextRequest } = await import('../web/node_modules/next/server.js');
+    let NextRequest;
+    if (real) {
+      for (const id of ['next/server', '@supabase/ssr']) {
+        vi.doUnmock(id);
+        try { vi.doUnmock(createRequire(path.join(ROOT, 'web/middleware.ts')).resolve(id)); } catch { /* not installed */ }
+      }
+      ({ NextRequest } = await import('../web/node_modules/next/server.js'));
+    } else {
+      const fake = fakeNextServer();
+      vi.doMock('next/server', () => fake);
+      try { vi.doMock(createRequire(path.join(ROOT, 'web/middleware.ts')).resolve('next/server'), () => fake); } catch { /* CI */ }
+      vi.doMock('@supabase/ssr', () => ({ createServerClient: () => { throw new Error('the eqmimic branch must not build a session client'); } }));
+      try { vi.doMock(createRequire(path.join(ROOT, 'web/middleware.ts')).resolve('@supabase/ssr'), () => ({ createServerClient: () => { throw new Error('no session client'); } })); } catch { /* CI */ }
+      NextRequest = fake.NextRequest;
+    }
     const { middleware } = await import('../web/middleware.ts');
-    const req = new NextRequest(url, init);
-    return middleware(req, { waitUntil() {} });
+    return middleware(new NextRequest(url, init), { waitUntil() {} });
   }
   const rewrittenTo = (res) => {
     const to = res.headers.get('x-middleware-rewrite');
@@ -220,14 +254,14 @@ describe('host routing', () => {
     expect(rewrittenTo(res)).toBeNull();
     expect(res.headers.get('x-middleware-next')).toBe('1');
   });
-  it('wolfpack.quest keeps its behaviour: no rewrite to the form, and /eqmimic/feedback is reachable there', async () => {
+  it.skipIf(!HAS_NEXT)('wolfpack.quest keeps its behaviour: no rewrite to the form, and /eqmimic/feedback is reachable there', async () => {
     for (const p of ['/', '/feedback', '/eqmimic/feedback']) {
-      const res = await run('https://wolfpack.quest' + p, { headers: { host: 'wolfpack.quest' } });
+      const res = await run('https://wolfpack.quest' + p, { headers: { host: 'wolfpack.quest' } }, { real: true });
       expect(rewrittenTo(res)).toBeNull();
       expect(res.headers.get('x-middleware-next')).toBe('1');
     }
     // Link-preview bots on the main site still get the embed rewrite.
-    const bot = await run('https://wolfpack.quest/me', { headers: { host: 'wolfpack.quest', 'user-agent': 'Discordbot/2.0' } });
+    const bot = await run('https://wolfpack.quest/me', { headers: { host: 'wolfpack.quest', 'user-agent': 'Discordbot/2.0' } }, { real: true });
     expect(rewrittenTo(bot).pathname).toBe('/api/embed-meta');
   });
 });
