@@ -319,7 +319,8 @@ describe('the board a poller gets', () => {
     const board = await e.hb.getBoard();
     expect(Object.keys(board)).toEqual(['windows']);
     expect(Object.keys(board.windows[0]).sort()).toEqual(
-      ['already_flagged', 'boss_id', 'boss_name', 'expires_at', 'hailed', 'id', 'npc_name', 'opened_at', 'seen_by', 'still', 'zone']);
+      ['already_flagged', 'boss_id', 'boss_name', 'expires_at', 'flag_cap', 'flags_granted', 'flags_left', 'hailed', 'id',
+        'ms_left', 'npc_name', 'opened_at', 'seen_by', 'still', 'zone']);
     expect(board.windows[0].still.every(s => typeof s.name === 'string' && typeof s.prior_missing === 'boolean')).toBe(true);
   });
 
@@ -365,6 +366,86 @@ describe('the board a poller gets', () => {
     const [view] = (await e.hb.getBoard()).windows;
     expect(view.already_flagged).toContain('Zarrin');
     expect(e.fake.truncated).toEqual([]);
+  });
+});
+
+// ── The flag cap and when the NPC leaves ─────────────────────────────────────────────────────────────
+// The guild lead, 2026-10-07: "add the 72-flag cap to the hail board, and the countdown timers for when
+// those mobs disappear". Every number below was read from the NPC's own script in eqemu_quest_scripts the
+// same day: a counter that resets on spawn and rises once per flag granted, a timer that depops the NPC.
+
+describe('the flag cap and the NPC\'s departure', () => {
+  // boss id → [cap in raiders, minutes the NPC stays]. Grummus and Marr declare 72 * 2 because one hail can
+  // tick twice; the Arbitor of Earth has no FLAG_LIMIT but MAX_KEYS = 54.
+  const SCRIPTS = {
+    grummus: [72, 20], bertoxxulous: [72, 20], terris_thule: [72, 20], aerin_dar: [72, 20], saryrn: [72, 20],
+    keeper_of_sorrows: [72, 10], lord_mithaniel_marr: [72, 20], manaetic_behemoth: [72, 10],
+    tallon_zek: [72, 20], vallon_zek: [72, 20], rallos_zek_warlord: [72, 20], solusek_ro: [72, 20],
+    arbitor_of_earth: [54, 20],
+  };
+
+  it('every hail boss carries the cap and the stay its script gives, and no boss is missing from this list', async () => {
+    expect(hailBoard.HAIL_BOSSES.map(b => b.id).sort()).toEqual(Object.keys(SCRIPTS).sort());
+    for (const [id, [cap, minutes]] of Object.entries(SCRIPTS)) {
+      const e = env({ raid_roster: rosterRows(RAID, 'u1') });
+      await e.hb.openWindow({ bossId: id, killedAtMs: KILL });
+      const [view] = (await e.hb.getBoard()).windows;
+      expect(view.flag_cap, id).toBe(cap);
+      expect(view.expires_at, id).toBe(at(minutes));
+      expect(view.ms_left, id).toBe(minutes * MIN - 20_000);
+    }
+  });
+
+  it('a boss whose script states no cap gets none: null, not zero and not a guess', async () => {
+    const row = hailBoard.HAIL_BOSSES.find(b => b.id === 'saryrn');
+    const kept = row.flagCap;
+    try {
+      delete row.flagCap;
+      const e = env({ raid_roster: rosterRows(RAID, 'u1') });
+      await e.hb.openWindow({ bossId: 'saryrn', killedAtMs: KILL });
+      const [view] = (await e.hb.getBoard()).windows;
+      expect(view).toMatchObject({ flag_cap: null, flags_left: null, flags_granted: 0 });
+    } finally { row.flagCap = kept; }
+  });
+
+  it('counts the raiders whose grant landed after the kill — not a witnessed hail, a tap, or a flag held before', async () => {
+    const e = env({ raid_roster: rosterRows(RAID, 'u1') });
+    await e.hb.openWindow({ bossId: 'grummus', killedAtMs: KILL });
+    e.flag('Aldenmar', 'fuirstel_2', 'event', at(-2 * 24 * 60));                   // held since two days ago: no grant here
+    e.flag('Brackwyn', 'fuirstel_2', 'event', at(3));                              // a real flag
+    e.flag('Merrowyn', 'cl_grummus', 'checklist', at(4));                          // a checklist flag counts too
+    e.flag('Corvale', 'hail', 'hail_witnessed', at(5), { npc: 'A Planar Projection' });   // seen: said hail, nothing proven
+    e.flag('Ulric', 'fuirstel_2', 'recital', at(1));                               // the Seer reports state, not a grant
+    const marked = await e.hb.markHailed({ windowId: `grummus:${KILL / 1000}`, name: 'Rethlan', hailed: true, by: 'Aldenmar' });
+    expect(marked.window.hailed.map(h => h.how).sort()).toEqual(['flag', 'flag', 'marked', 'seen']);
+    const [view] = (await e.hb.getBoard()).windows;
+    expect(view).toMatchObject({ flag_cap: 72, flags_granted: 2, flags_left: 70 });
+    expect(marked.window).toMatchObject({ flag_cap: 72, flags_granted: 2, flags_left: 70 });
+  });
+
+  it('flags_left runs down to zero and stops there, however many grants we saw', async () => {
+    // 56 raiders with a letters-only name each (the roster validator), all granted: more than the Arbitor's 54 keys.
+    const names = Array.from({ length: 56 }, (_, i) => 'Raider' + String.fromCharCode(97 + Math.floor(i / 26)) + String.fromCharCode(97 + (i % 26)));
+    const e = env({ raid_roster: rosterRows(names, 'u1') });
+    await e.hb.openWindow({ bossId: 'arbitor_of_earth', killedAtMs: KILL });
+    names.slice(0, 50).forEach((n) => e.flag(n, 'earthb_key_1', 'event', at(2)));
+    expect((await e.hb.getBoard()).windows[0]).toMatchObject({ flag_cap: 54, flags_granted: 50, flags_left: 4 });
+    names.slice(50).forEach((n) => e.flag(n, 'earthb_key_1', 'event', at(3)));
+    e.advance(6_000);
+    expect((await e.hb.getBoard()).windows[0]).toMatchObject({ flag_cap: 54, flags_granted: 56, flags_left: 0 });
+  });
+
+  it('ms_left is read off the clock at each response, not frozen in the five-second cache', async () => {
+    const e = env({ raid_roster: rosterRows(RAID, 'u1') });
+    await e.hb.openWindow({ bossId: 'manaetic_behemoth', killedAtMs: KILL });
+    const first = (await e.hb.getBoard()).windows[0];
+    const queries = e.fake.calls.length;
+    e.advance(2_000);
+    const second = (await e.hb.getBoard()).windows[0];
+    expect(e.fake.calls.length).toBe(queries);                  // still the cached board...
+    expect(first.ms_left).toBe(10 * MIN - 20_000);
+    expect(second.ms_left).toBe(10 * MIN - 22_000);             // ...with a fresh countdown
+    expect(second.expires_at).toBe(first.expires_at);
   });
 });
 

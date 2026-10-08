@@ -33,7 +33,8 @@
 
 const { cleanChar, createCache } = require('./myParses');
 
-const GUILD = 'wolfpack';
+// The deployment's guild tag (SUPABASE_GUILD_ID, else 'wolfpack'). Read once at load: the env is set at boot.
+const GUILD = require('./supabase').guildId();
 const FLAG_COLS = ['hidden_from_lists', 'exclude_from_stats', 'exclude_inventory'];
 
 const MODE_FLAGS = Object.freeze({
@@ -137,7 +138,7 @@ async function setPrefs(supabase, cache, discordId, body) {
 
   const rows = await supabase.update(
     'characters',
-    `guild_id=eq.${GUILD}&name=eq.${encodeURIComponent(stored)}&select=${SELECT_COLS}`,
+    `guild_id=eq.${encodeURIComponent(GUILD)}&name=eq.${encodeURIComponent(stored)}&select=${SELECT_COLS}`,
     parsed.patch,
   );
   if (!Array.isArray(rows)) return UNAVAILABLE;                                  // the write failed
@@ -159,7 +160,7 @@ async function minePrefs(supabase, cache, discordId) {
 
   const rows = await supabase.select(
     'characters',
-    `guild_id=eq.${GUILD}&name=in.${encodeURIComponent(inList(names))}&select=${SELECT_COLS}`,
+    `guild_id=eq.${encodeURIComponent(GUILD)}&name=in.${encodeURIComponent(inList(names))}&select=${SELECT_COLS}`,
   );
   if (!Array.isArray(rows)) return UNAVAILABLE;
 

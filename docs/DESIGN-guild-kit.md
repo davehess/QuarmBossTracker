@@ -292,9 +292,10 @@ their GitHub."*
 |---|---|---|---|
 | **0** | `guild/config.example.json`, `guild/README.md`, this design | — | **done 2026-09-18** |
 | **1a** | `guild/discord.json` fills unset anchor env at boot, refusing secret-shaped keys; `discord.example.json` generated from the code's 44 anchor reads; behaviour test | 2 (partial) | **done 2026-09-18** (bot 3.1.129) |
-| 1b | `config.json` loader; agent + Mimic read `guildLabel` / `webBaseUrl` from the bot manifest | 3 | 1 day |
-| 2 | The de-branding sweep: ~580 sites → config; the seven identifier hardcodes; the officer-filter fallback rule | 3 | 2–3 days (the tenancy doc's own estimate, now with a target) |
-| 3 | The Discord provisioner — layout → `discord.json`. Usable standalone, before a bot exists | 2 | 2–3 days |
+| **1b** | `config.json` loader + the one guild-config helper (`utils/guildConfig.js`: `fillEnv` at boot, typed getters, `ENV_MAP`); the agent/Mimic manifest route is still owed to slice 2 | 3 | **done 2026-10-07** (bot 3.1.215) |
+| **2-prep** | Tag correctness: every bot REST filter follows `SUPABASE_GUILD_ID` (encoded), no `'wolfpack'` literal; a ratchet test pins the inline-fallback count. The eight upstream one-shot announcers (plus the howl-card repair) are gated on the guild tag so a tenant never posts Wolf Pack history. Bristlebane reads the four Discord ids from `guild/discord.json` | 3 | **done 2026-10-07** (bot 3.1.215 · bristlebane 0.1.2) |
+| 2 | The de-branding sweep: ~580 sites → config (the getters exist now; the 11 getter-only env names in `test/guild-config.test.js` are the debt); the seven identifier hardcodes; the officer-filter fallback rule; SQL bootstrap tag substitution; literal Discord ids after a production env check | 3 | 2–3 days (the tenancy doc's own estimate, now with a target) |
+| **3** | The Discord provisioner — `utils/discordProvisioner.js`: the bot builds its own layout from `data/discord-layout.json` at boot (`GUILD_PROVISION=auto`: report on a hand-configured server, create on a virgin one, resume an unfinished build), `/setup discord` for officers (dry run first), `scripts/provision-discord.js` standalone before a bot exists; anchors persist in `bot_kv` and `guild/discord.json` | 2 | **done 2026-10-07** (bot 3.1.215) |
 | 4 | `wolfpack doctor` + `TENANT.md` / `tenant.json` generation | 2 | 1–2 days |
 | 5 | The CLI wizard stringing 1–4, with the on-prem / hosted fork (hosted stubbed) and `sync-upstream.yml` | 4 | 2–3 days |
 | — | **One pilot guild, sat with** — exit: under 5 h, ≤ 3 questions | 4 | 1 week + support |
