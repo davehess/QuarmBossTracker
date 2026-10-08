@@ -19,7 +19,7 @@
  *              a dozen guilds there while our group is in the guild instance (measured 2026-10-05: an
  *              any-uploader rule would have marked 6 of the day's 20 Bastion named kills live, most of
  *              them all-guild groups).
- *   5. unknown 1–2 fighters and none of the above (cannot judge a duo)
+ *   5. unknown 1–2 fighters, not all on our roster, and none of the above (a duo all on our roster is ours)
  *   6. ours    everything else
  *
  * Only `ours` starts a board timer. Every parse is still stored — a non-ours verdict also stamps
@@ -163,9 +163,14 @@ function classifyKillContext(s = {}) {
     }
   }
 
-  // 5 — a duo, and nothing above settled it.
-  if (participants.length < kl.MIN_PLAYERS_TO_JUDGE) {
+  // 5 — a duo, and nothing above settled it. A duo that is all ours is ours (the guild lead, 2026-10-08:
+  // two guildmates' Gaukr and Hreidar kills in Bastion of Thunder never reached the board — "This needs to
+  // stay updated"); rule 4 has already looked for an outsider in their own /who.
+  if (participants.length < kl.MIN_PLAYERS_TO_JUDGE && frac !== 1) {
     return { verdict: 'unknown', reason: `${participants.length} fighter(s) — too few to judge, and no PvP or outsider signal` };
+  }
+  if (participants.length < kl.MIN_PLAYERS_TO_JUDGE) {
+    return { verdict: 'ours', reason: `${participants.length} fighter(s), all on our roster, no PvP or outsider signal` };
   }
 
   return { verdict: 'ours', reason: `${participants.length} fighters, no PvP or outsider signal` };
@@ -206,7 +211,7 @@ async function gatherKillSignals({ supabase, guildId, ourGuild, boss, encounterI
     if (!Array.isArray(rows)) throw new Error(`${what} read failed`);
     return rows;
   };
-  const names = arr(participants);
+  let names = arr(participants);
 
   // The encounter row names the zone the way /who's short form does ("hateplane"), and carries any
   // classification an officer (or an earlier upload of this same kill) already put on it.
@@ -218,6 +223,15 @@ async function gatherKillSignals({ supabase, guildId, ourGuild, boss, encounterI
     if (rows[0]) {
       zoneShort = rows[0].zone_short || null;
       existingClassification = rows[0].classification || null;
+    }
+    // Everyone the merged parse already names, not only this upload's own list: one agent can see a
+    // single fighter in a five-person kill (Laef Windfall, 2026-10-08: 1 in the upload, 5 stored).
+    const players = need(await supabase.select('encounter_players',
+      `encounter_id=eq.${enc(encounterId)}&select=character_name&limit=200`), 'encounter_players');
+    const seen = new Set(names.map(lower));
+    for (const r of players) {
+      const n = r && r.character_name;
+      if (n && !seen.has(lower(n))) { seen.add(lower(n)); names = [...names, n]; }
     }
   }
   const zoneNames = [boss && boss.zone, zoneShort].filter(Boolean);

@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.224': [
+    '**Small-group boss kills start timers again.** A named killed by one or two guildmates (Bastion of Thunder duos, for example) was being skipped as "too few to tell". If everyone in the fight is in the guild and nobody from another guild was seen in the zone, the timer now starts, and it survives a bot restart.',
+  ],
   '3.1.223': [
     '**Your feedback DMs now link to a page you can open.** The old link went to a card in the officers\' channel that members could not see. It now goes to wolfpack.quest/feedback/FB-<number>, where you see your report, where it stands, and can reply if it is not fixed for you. Replies reach the officers in Discord.',
   ],
