@@ -241,6 +241,12 @@
   </div>
   <div class="hint">Polls eqgame.exe every 5s; flips overlays back on when EQ launches. Unchecked = overlays always visible.</div>
 
+  <div class="row">
+    <input id="useGpu" type="checkbox" checked />
+    <label for="useGpu">Use the graphics card for overlays</label>
+  </div>
+  <div class="hint">Turn off if your screen goes black or you hear a device disconnect sound while Mimic runs. Overlays use a little more processor. Restarts Mimic.</div>
+
   <h2>Private — /tells <span class="lock">🔒</span></h2>
   <div class="hint" style="margin-bottom:8px">EQ writes your tells to your log. These never upload to the bot. Display window ships in v0.2; the choice persists now.</div>
   <div class="row"><input type="radio" name="tells" value="off" id="tells_off"><label for="tells_off">Off — ignore tells</label></div>
@@ -734,6 +740,7 @@
     document.getElementById('overlaysUnlocked').checked  = (c.overlaysLocked === false);
     document.getElementById('autoStart').checked         = (c.autoStart !== false);
     document.getElementById('hideOverlaysWhenEqDown').checked = (c.hideOverlaysWhenEqDown !== false);
+    document.getElementById('useGpu').checked            = (c.disableGpu !== true);
     document.getElementById('zealAutoCheck').checked = (c.zealAutoCheck !== false);
     // Overlay scale — its own live IPC, not part of the Save payload.
     try {
@@ -784,6 +791,11 @@
   document.getElementById('overlayScale').addEventListener('change', async (e) => {
     const pct = Math.max(50, Math.min(200, parseInt(e.target.value, 10) || 100));
     try { await window.mimic.setOverlayScale(pct / 100); } catch {}
+  });
+  // Graphics card for overlays — like the scale, its own IPC and NOT part of Save: it only takes
+  // hold at startup, so main saves it and offers the restart.
+  document.getElementById('useGpu').addEventListener('change', async (e) => {
+    try { await window.mimic.setGpuDrawing(e.target.checked, true); } catch {}
   });
 
   // ── Dirty tracking for the floating Save ─────────────────────────────────
