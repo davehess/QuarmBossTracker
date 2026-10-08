@@ -8159,3 +8159,29 @@ equivalently in platinum from what you've seen, and time bound it"*.
   old bot renders exactly as before.
 - **Who looted is not who kept it**: rows are each raider's own "You have looted" line; master-looting and
   hand-offs mean the looter is often not the owner. Said on the officer page (§198) and in the footnote.
+
+### 198. Officer page: loot by value (2026-10-08, web 1.8.120 · migration 20261008170000, applied)
+The guild lead: *"make an admin page with loot, sortable by highest value. note at the top that who looted it is
+not always the person that ends up with it"*.
+- **`/admin/loot` [beta]** (new route → live on main with the marker, §135; officer-gated like its siblings):
+  the note first, then a window (24h · 7d · 30d · 90d, default 7d, `?days=`), a totals-by-character table
+  (items, value, NO DROP count, most valuable item) over EVERY row in the window, and the item list (top 2,000
+  by value) sortable by value (default), time, looter or item.
+- **Two RPCs** (`loot_value_items`, `loot_value_by_looter`; service_role only; exact-name join, lowest id per
+  name): applied on production before the push and run over 90 days (135 looters, 2,000-row list).
+- **Known skew:** merchant prices for Luclin horse bridles are huge (White Ornate Chain Bridle 150,000 pp,
+  Silken Bridles ~60,000 pp), so a looted bridle dominates any total it is in. Shown as-is: it IS the item's
+  merchant value. If that misleads, the next step is a per-item cap or excluding mount items — the guild lead's
+  call.
+- **DKP items are listed but not counted** (the guild lead: *"If something has a DKP bid associated with it, don't
+  count that in the totals"*). `looted_items` carries no auction link, so a looted row is DKP when the same item
+  name had an OpenDKP auction with a winner or a bid within ±6 h, or an OpenDKP award in a raid dated within
+  ±12 h. 30 days: 120 of 24,478 looted rows. The page's per-character value, headline total and "most valuable
+  item" skip them; a DKP column counts them and a DKP tag marks the rows. Migration `20261008180000` adds
+  `loot_value_items_v2` / `loot_value_by_looter_v2` (the page calls these).
+- ⚠ **A `DROP FUNCTION` hung on production on 2026-10-08** — through both `apply_migration` and `execute_sql`,
+  with no lock or other session visible, while a plain `CREATE` returned at once. Hence `_v2` beside the
+  unused v1 pair instead of drop-and-recreate. Left behind by the probing: `public._tmp_probe2_20261008()`
+  (returns 1, unused) — drop it, and the v1 pair, once a DROP works again (try from the Supabase SQL editor).
+- **Mimic's Loot tab (bot 3.1.226) does not yet leave DKP items out** — the same rule belongs in
+  `utils/lootValue.js`; queued.
