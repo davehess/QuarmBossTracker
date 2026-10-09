@@ -3,10 +3,11 @@
 // have an understanding of what each component does as a walk-through ... do you want more hive mind?
 // here's how your guild can implement this".
 //
-// ONE content module, three layouts (web/app/eqmimic/_landing/Layout{A,B,C}.tsx). The layouts decide
-// order and shape; they never carry a sentence of their own, so a fact is corrected in exactly one place.
-// Plain data and strings only: no JSX, no imports. test/eqmimic-landing.test.js reads this file as text
-// and imports it.
+// ONE content module, ONE page (web/app/eqmimic/_landing/Landing.tsx; the guild lead picked the
+// video-first structure on 2026-10-09 and the three layouts were retired). The page decides order and
+// shape; it never carries a sentence of its own, so a fact is corrected in exactly one place.
+// Plain data, strings and a few pure helpers: no JSX, no imports. test/eqmimic-landing.test.js reads
+// this file as text and imports it.
 //
 // ⚠ This repo is PUBLIC. Nothing here names a member, a character, a real id, a token or an address. The
 // one demo guild is invented ("Lantern Watch"). Hosting numbers are the measured ones in docs/COSTS.md.
@@ -40,23 +41,49 @@ export const HERO = {
   line: 'Overlays for Project Quarm: DPS, timers, charm, buffs, triggers and more, drawn over EverQuest, free and open source.',
   primary: 'Download Mimic for Windows',
   primaryNote: 'free · stable · installs for your user only',
-  secondary: 'How it works',
   platformNote:
     'Windows is the supported target. Linux and Steam Deck is experimental: it works for some people and breaks for others.',
   linuxLabel: 'Linux / Steam Deck build (experimental)',
 };
 
-// ─── Highlights (video slots) ───────────────────────────────────────────────────────────────────────
-// TODO(guild lead): clips to come. Set `src` (a path under web/public/ or a hosted file) and optionally
-// `poster` on a card and it becomes a <video controls muted playsInline preload="none">. Until then the
-// card is a "clip coming" placeholder. Nothing external is fetched or embedded.
-export interface Highlight { title: string; caption: string; src?: string; poster?: string }
-export const HIGHLIGHTS: Highlight[] = [
-  { title: 'Clip 1: DPS and threat in a raid', caption: 'The DPS meter and the threat meter during a real pull.' },
-  { title: 'Clip 2: Triggers and timers', caption: 'A trigger fires, speaks, and starts a countdown you can see over the game.' },
-  { title: 'Clip 3: Charm and pets', caption: 'The charm tracker counting the break, with the pet tracker beside it.' },
-  { title: 'Clip 4: The hive mind', caption: 'Buff queue and extended target, fed by every raider in the raid at once.' },
+// ─── Recorded scenarios (the video-first player) ────────────────────────────────────────────────────
+// TODO(guild lead): clips to come. Set `src` (a path under web/public/ or a hosted file), and optionally
+// `poster` and `durationSec`, on a scenario and the big player plays it as a <video controls
+// playsInline preload="none"> (no autoplay). Until then the player shows a "clip coming" placeholder
+// that still names the scenario. Nothing external is fetched or embedded. `slug` is the link:
+// `#clip-<slug>` opens the page on that scenario.
+export interface Scenario { slug: string; title: string; caption: string; src?: string; poster?: string; durationSec?: number }
+export const SCENARIOS: Scenario[] = [
+  { slug: 'dps-threat', title: 'DPS and threat in a raid', caption: 'The DPS meter and the threat meter during a real pull.' },
+  { slug: 'triggers', title: 'Triggers and timers', caption: 'A trigger fires, speaks, and starts a countdown you can see over the game.' },
+  { slug: 'charm-pets', title: 'Charm and pets', caption: 'The charm tracker counting the break, with the pet tracker beside it.' },
+  { slug: 'hive-mind', title: 'Hive mind: buff queue and extended target', caption: 'Fed by every raider in the raid at once.' },
+  { slug: 'zone-timers', title: 'Zone timers: the boar stampede', caption: 'The stampede timer follows you into the zone and counts down on screen.' },
+  { slug: 'setup', title: 'Setting it up in five minutes', caption: 'From download to the first overlay on screen, with no account.' },
 ];
+
+const CLIP_PREFIX = 'clip-';
+export const scenarioHash = (slug: string): string => `#${CLIP_PREFIX}${slug}`;
+
+/** The scenario a URL fragment names, or null when it names none (`#setup`, an empty hash, an unknown slug). */
+export function matchScenario(hash: string, scenarios: readonly Scenario[]): string | null {
+  const h = (hash || '').replace(/^#/, '');
+  if (!h.startsWith(CLIP_PREFIX)) return null;
+  const slug = h.slice(CLIP_PREFIX.length);
+  return scenarios.some(s => s.slug === slug) ? slug : null;
+}
+
+/** What a page opened with this fragment should have selected: the named scenario, else the first. */
+export function scenarioFromHash(hash: string, scenarios: readonly Scenario[]): string {
+  return matchScenario(hash, scenarios) ?? scenarios[0]?.slug ?? '';
+}
+
+/** 95 -> "1:35"; undefined, zero or junk -> '' so the card shows no duration at all. */
+export function formatDuration(sec?: number): string {
+  if (typeof sec !== 'number' || !Number.isFinite(sec) || sec <= 0) return '';
+  const s = Math.round(sec);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
 
 // ─── What each piece does (connection order) ────────────────────────────────────────────────────────
 export interface FlowNode { label: string; sub?: string }
@@ -151,7 +178,9 @@ export const LOCAL_MODE = {
 
 // ─── What you get ───────────────────────────────────────────────────────────────────────────────────
 export type Scope = 'local' | 'guild';
-export interface Overlay { name: string; purpose: string; scope: Scope; note?: string }
+// `still` (an image) and `clip` (a video) are optional slots, paths on this site; a card renders them only
+// when set. Neither is set today.
+export interface Overlay { name: string; purpose: string; scope: Scope; note?: string; still?: string; clip?: string }
 export const OVERLAYS: Overlay[] = [
   { name: 'DPS and Tank meter', purpose: 'Who is doing what, with History and Trend tabs.', scope: 'local' },
   { name: 'Threat meter', purpose: 'How close you are to pulling aggro, with a warning to back off.', scope: 'local' },
@@ -249,28 +278,5 @@ export const DOC_LINKS: { label: string; href: string }[] = [
 
 export const HELP_LINE = 'Questions or want help standing it up?';
 
-// ─── FAQ (layout B) ─────────────────────────────────────────────────────────────────────────────────
-export const FAQ: { q: string; a: string }[] = [
-  { q: 'Do I need a Discord account or a guild?',
-    a: 'No. Choose “Run local-only” on first run. Most overlays work on your own PC with no account.' },
-  { q: 'Why does Windows warn me about the installer?',
-    a: 'Mimic is not code-signed, so SmartScreen and browsers call it uncommon. Choose More info, then Run anyway. The code is open source if you would rather read it first.' },
-  { q: 'Do I need Zeal?',
-    a: 'For the live overlays, yes. Mimic can install and update it for you from Settings. Without it you keep everything that runs from your log.' },
-  { q: 'Where do my logs go?',
-    a: 'They stay on your PC. The agent reads them there and filters private chat there. Only if you sign in to a guild do parsed fights and live status go to that guild’s server.' },
-  { q: 'Does it work on Linux or the Steam Deck?',
-    a: 'There is an experimental build. It works for some people and not others; Windows is the supported target.' },
-  { q: 'Can my guild run its own?',
-    a: 'Yes, and the code is all here, but it is not turnkey: today your guild builds its own Mimic, about a day of work. The hive-mind section lists what is missing.' },
-];
-
-// ─── Section ids (shared by nav and anchors) ────────────────────────────────────────────────────────
-export const SECTIONS = [
-  { id: 'what', label: 'What it is' },
-  { id: 'pieces', label: 'The pieces' },
-  { id: 'setup', label: 'Set it up' },
-  { id: 'overlays', label: 'What you get' },
-  { id: 'privacy', label: 'Privacy' },
-  { id: 'hive', label: 'Hive mind' },
-] as const;
+// The FAQ accordion of the retired ledger layout is gone with it (2026-10-09): every answer is on the page
+// already (local mode, setup, privacy, the hive-mind honest list). It is in git history at the previous commit.

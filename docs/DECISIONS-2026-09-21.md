@@ -8526,3 +8526,23 @@ Daybreak's and this being a fan site; use the language from WolfPack.quest."* Bu
 - **Not done / for the guild lead.** Pick A, B or C and send the clips. DNS for eqmimic.quest still points elsewhere
   (`docs/RUNBOOK-eqmimic-domain.md`). The sticky-nav offset under the Wolf Pack header on the beta host is a guess (header
   measured 51 px on production, the beta banner height was not measured).
+- **Addendum 2026-10-09: the guild lead picked the structure, and it is none of A, B or C.** *"landing page should be a large
+  video page to start, where people can click in and view each recorded scenario. then highlights of the overlays, then
+  setup."* The three layouts were retired in one change (they stay in git history at the commit before it): `LayoutA/B/C.tsx`,
+  the A/B/C switcher, `eqmimicLandingVariant` and the `?v=` handling are gone. `eqmimicLandingTarget` now drops EVERY query
+  parameter (a stale `?v=b` link just shows the page). One page, `web/app/eqmimic/_landing/Landing.tsx`, in this order:
+  compact header (name, pitch, Download, a small `[beta]` badge linking the feedback form) -> the large player with its
+  scenario picker (right column on desktop, a scrollable row of cards on a phone) -> the fan-site notice, directly under the
+  video block -> the overlay gallery (name, purpose, `[local]`/`[guild]`; optional `still`/`clip` slots, rendered only when
+  set) -> standalone setup (six steps, local-mode box, troubleshooting, and the "On your PC" against "Needs a guild server"
+  ledger folded in from the old layout B) -> what each piece does, privacy, "Want more hive mind?" (compact) -> footer with
+  the notice again. The FAQ accordion went with layout B (every answer is on the page already).
+  **Scenarios.** `SCENARIOS` replaces `HIGHLIGHTS` in `web/lib/eqmimicLanding.ts`: `{slug, title, caption, src?, poster?,
+  durationSec?}`; six placeholders (`dps-threat`, `triggers`, `charm-pets`, `hive-mind`, `zone-timers`, `setup`) until the
+  guild lead supplies clips. A click loads the scenario into the big player and sets `#clip-<slug>`; opening the page with that
+  hash preselects it (`scenarioFromHash`, pure and unit-tested; a fragment that names no scenario, like `#setup`, never resets
+  the selection). The player is the only client component; no autoplay, nothing external. Costs: build ~ half a day, maintenance
+  LOW (one layout, one module), runtime one small client component (no new dependency), change LOW (a scenario is one array
+  entry). Tests: `test/eqmimic-landing.test.js` (order, notice placement, scenario shape, hash helpers, the "query dropped"
+  cases that replace the `?v=b|c` ones), `test/anon-feedback-surface.test.js`. Still open: the clips, DNS, and the guild lead
+  saying when `[beta]` can come off.

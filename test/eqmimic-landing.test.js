@@ -2,13 +2,17 @@
 //
 // What this pins:
 //   - the routing function the middleware and these tests share (eqmimicLandingTarget): / and unknown
-//     paths -> the landing page keeping ONLY a valid ?v=, /feedback -> the form (Mimic opens exactly that),
+//     paths -> the landing page with EVERY query parameter dropped, /feedback -> the form (Mimic opens
+//     exactly that),
 //   - the middleware, RUN against a stand-in for next/server, agrees with it,
 //   - the rights notice: the page's words are the wolfpack.quest footer's words, verbatim, so the two
-//     cannot drift; it sits right under the hero in all three layouts and again in the footer,
-//   - the content module is complete (every step list the brief asked for) and public-safe,
-//   - the video slots: a card with `src` renders a <video>, a card without one a placeholder, and
-//     nothing external is embedded.
+//     cannot drift; it sits directly under the video block, before the overlay gallery, and again in the
+//     footer,
+//   - the page order (the guild lead, 2026-10-09: video, then overlay highlights, then setup) and that the
+//     layout variants are gone,
+//   - the scenarios: their shape, the #clip-<slug> hash helpers (run, not read), and that the player
+//     renders a <video> for a scenario with a `src` and a placeholder for one without,
+//   - the content module is complete (every step list the brief asked for) and public-safe.
 //
 // Source-text assertions run over comment-stripped source (CLAUDE.md "comments satisfy text assertions");
 // the mutation checks that proved each one can fail are listed in DECISIONS §209.
@@ -20,7 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, stripJs } from './_source-slice.js';
 import {
-  eqmimicLandingTarget, eqmimicLandingVariant, EQMIMIC_FEEDBACK_PATH, EQMIMIC_LANDING_PATH,
+  eqmimicLandingTarget, EQMIMIC_FEEDBACK_PATH, EQMIMIC_LANDING_PATH,
 } from '../web/lib/eqmimicHost.ts';
 import * as C from '../web/lib/eqmimicLanding.ts';
 
@@ -34,15 +38,15 @@ describe('eqmimicLandingTarget (the routing both the middleware and the page rel
     expect(eqmimicLandingTarget('/', '')).toEqual({ pathname: EQMIMIC_LANDING_PATH, search: '' });
     expect(eqmimicLandingTarget('/index', '')).toEqual({ pathname: EQMIMIC_LANDING_PATH, search: '' });
   });
-  it('/?v=b and /?v=c keep the layout preview', () => {
-    expect(eqmimicLandingTarget('/', '?v=b')).toEqual({ pathname: '/eqmimic', search: '?v=b' });
-    expect(eqmimicLandingTarget('/', 'v=c')).toEqual({ pathname: '/eqmimic', search: '?v=c' });
-    expect(eqmimicLandingTarget('/', '?v=B').search).toBe('?v=b');
+  it('the retired layout switch is dropped like any other query: ?v=b and ?v=c show the one landing page', () => {
+    expect(eqmimicLandingTarget('/', '?v=b')).toEqual({ pathname: '/eqmimic', search: '' });
+    expect(eqmimicLandingTarget('/', 'v=c')).toEqual({ pathname: '/eqmimic', search: '' });
+    expect(eqmimicLandingTarget('/', '?v=B').search).toBe('');
   });
-  it('an unknown v and every other parameter are dropped', () => {
+  it('every query parameter is dropped', () => {
     expect(eqmimicLandingTarget('/', '?v=zzz&utm=1')).toEqual({ pathname: '/eqmimic', search: '' });
     expect(eqmimicLandingTarget('/', '?utm_source=x&token=secret')).toEqual({ pathname: '/eqmimic', search: '' });
-    expect(eqmimicLandingTarget('/', '?v=b&utm=1&token=secret').search).toBe('?v=b');
+    expect(eqmimicLandingTarget('/', '?v=b&utm=1&token=secret').search).toBe('');
     expect(eqmimicLandingTarget('/', '?v=a').search).toBe('');
   });
   it('/feedback -> the form, query dropped (the prefill rides the fragment, which never reaches the server)', () => {
@@ -57,10 +61,11 @@ describe('eqmimicLandingTarget (the routing both the middleware and the page rel
       expect(eqmimicLandingTarget(p, '?token=secret').search, p).toBe('');
     }
   });
-  it('eqmimicLandingVariant accepts only b and c', () => {
-    expect(eqmimicLandingVariant('b')).toBe('b');
-    expect(eqmimicLandingVariant('C')).toBe('c');
-    for (const v of ['a', '', 'bb', 'zzz', null, undefined]) expect(eqmimicLandingVariant(v)).toBeNull();
+  it('the ?v= machinery is gone from the host module, the page and the middleware', () => {
+    expect(code('web/lib/eqmimicHost.ts')).not.toMatch(/eqmimicLandingVariant|URLSearchParams|[?&]v=/);
+    expect(code('web/app/eqmimic/page.tsx')).not.toMatch(/searchParams|eqmimicLandingVariant/);
+    expect(code('web/middleware.ts')).not.toMatch(/eqmimicLandingVariant/);
+    for (const L of ['A', 'B', 'C']) expect(fs.existsSync(path.join(ROOT, `web/app/eqmimic/_landing/Layout${L}.tsx`))).toBe(false);
   });
 });
 
@@ -98,10 +103,10 @@ describe('the middleware, run', () => {
     expect(to.pathname).toBe('/eqmimic');
     expect(to.search).toBe('');
   });
-  it('/?v=b -> the landing page keeping v=b', async () => {
+  it('/?v=b -> the landing page, query dropped (the layout switch is retired)', async () => {
     const to = await run('https://eqmimic.quest/?v=b');
     expect(to.pathname).toBe('/eqmimic');
-    expect(to.search).toBe('?v=b');
+    expect(to.search).toBe('');
   });
   it('/?v=zzz&utm=1 -> the landing page with no parameters', async () => {
     const to = await run('https://www.eqmimic.quest/?v=zzz&utm=1');
@@ -157,18 +162,18 @@ describe('the rights notice', () => {
     const footer = parts.slice(parts.indexOf('export function LandingFooter'));
     expect(footer).toMatch(/<RightsNotice\b/);
   });
-  for (const L of ['A', 'B', 'C']) {
-    it(`layout ${L}: the notice sits right under the hero, before any section, and the footer closes the page`, () => {
-      const src = code(`web/app/eqmimic/_landing/Layout${L}.tsx`);
-      const hero = src.indexOf('<Hero');
-      const notice = src.indexOf('<RightsNotice');
-      const firstSection = src.indexOf('<section');
-      expect(hero).toBeGreaterThan(-1);
-      expect(notice).toBeGreaterThan(hero);
-      expect(notice).toBeLessThan(firstSection);
-      expect(src.indexOf('<LandingFooter')).toBeGreaterThan(src.lastIndexOf('</section>'));
-    });
-  }
+  it('the notice sits directly under the video block, before the overlay gallery, and the footer closes the page', () => {
+    const src = code('web/app/eqmimic/_landing/Landing.tsx');
+    const player = src.indexOf('<ScenarioPlayer');
+    const watchEnd = src.indexOf('</section>', player);
+    const notice = src.indexOf('<RightsNotice');
+    expect(player).toBeGreaterThan(-1);
+    expect(notice).toBeGreaterThan(watchEnd);
+    // Nothing else is rendered between the end of the video block and the notice.
+    expect(src.slice(watchEnd + '</section>'.length, notice).trim()).toBe('');
+    expect(notice).toBeLessThan(src.indexOf('<OverlayGallery'));
+    expect(src.indexOf('<LandingFooter')).toBeGreaterThan(src.lastIndexOf('</section>'));
+  });
 });
 
 describe('the page', () => {
@@ -178,20 +183,17 @@ describe('the page', () => {
     expect(page).toMatch(/robots: \{ index: false, follow: false \}/);
     expect(page).not.toMatch(/getSessionUser|supabase/i);
   });
-  it('picks the layout from ?v= with A as the default', () => {
-    expect(page).toMatch(/variant === 'b' \? <LayoutB[\s\S]*variant === 'c' \? <LayoutC[\s\S]*<LayoutA/);
+  it('renders the one landing, with no layout choice', () => {
+    expect(page).toMatch(/return <Landing ctx=\{ctx\} \/>/);
+    expect(page).not.toMatch(/LayoutA|LayoutB|LayoutC|variant/);
   });
-  for (const L of ['A', 'B', 'C']) {
-    it(`layout ${L} shows the [beta] badge and its own letter`, () => {
-      const src = code(`web/app/eqmimic/_landing/Layout${L}.tsx`);
-      expect(src).toMatch(new RegExp(`<BetaBadge ctx=\\{ctx\\} layout="${L.toLowerCase()}"`));
-    });
-  }
-  it('the badge says what the guild lead asked for and links the feedback form', () => {
+  it('the header carries the [beta] badge linking the feedback form, and the Download button', () => {
     const parts = code('web/app/eqmimic/_landing/Parts.tsx');
-    expect(parts).toMatch(/\[beta\]/);
-    expect(parts).toMatch(/this page is new/);
-    expect(parts).toMatch(/href=\{ctx\.feedback\}/);
+    const header = parts.slice(parts.indexOf('export function Header'), parts.indexOf('export function RightsNotice'));
+    expect(header).toMatch(/<h1[^>]*>\{HERO\.title\}<\/h1>/);
+    expect(header).toMatch(/<a href=\{ctx\.feedback\}[\s\S]*?\[beta\]/);
+    expect(header).toMatch(/this page is new/);
+    expect(header).toMatch(/href=\{ctx\.download\}/);
   });
   it('the download button is the absolute wolfpack.quest address on the eqmimic host', () => {
     expect(C.WOLFPACK_ORIGIN + C.DOWNLOAD_PATH).toBe('https://wolfpack.quest/mimic?direct=1');
@@ -286,33 +288,142 @@ describe('the content module', () => {
   });
 });
 
-describe('the video slots', () => {
-  it('four highlights, each with a title and a caption; src and poster optional strings', () => {
-    expect(C.HIGHLIGHTS).toHaveLength(4);
-    for (const h of C.HIGHLIGHTS) {
-      expect(typeof h.title).toBe('string'); expect(h.title.length).toBeGreaterThan(5);
-      expect(typeof h.caption).toBe('string'); expect(h.caption.length).toBeGreaterThan(10);
-      if ('src' in h && h.src !== undefined) expect(typeof h.src).toBe('string');
-      if ('poster' in h && h.poster !== undefined) expect(typeof h.poster).toBe('string');
-      // Nothing external is embedded: a clip is a path on this site or it is not set.
-      for (const k of ['src', 'poster']) if (h[k]) expect(h[k]).not.toMatch(/^(?:https?:)?\/\//);
-    }
-    expect(C.HIGHLIGHTS[0].title).toBe('Clip 1: DPS and threat in a raid');
+describe('the page order (the guild lead, 2026-10-09: video, then overlay highlights, then setup)', () => {
+  const src = code('web/app/eqmimic/_landing/Landing.tsx');
+  const at = (needle) => { const i = src.indexOf(needle); expect(i, needle).toBeGreaterThan(-1); return i; };
+  it('header, player, notice, overlay gallery, setup, pieces, privacy, hive mind, footer — in that order', () => {
+    const order = ['<Header', '<ScenarioPlayer', '<RightsNotice', '<OverlayGallery', '<SetupSteps', '<Ledger', '<PiecesCompact', '<PrivacyStrip', '<Hive ', '<LandingFooter'].map(at);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
-  it('a clip with a src renders a muted, controlled, lazy <video>; without one, a placeholder', () => {
+  it('the sections carry the ids the page links to', () => {
+    for (const id of ['watch', 'rights', 'overlays', 'setup', 'ledger', 'pieces', 'privacy', 'hive']) expect(src).toContain(`id="${id}"`);
+  });
+  it('the ledger folds in both columns from the retired ledger layout', () => {
     const parts = code('web/app/eqmimic/_landing/Parts.tsx');
-    const clip = parts.slice(parts.indexOf('function Clip'), parts.indexOf('/** `lead` makes'));
-    expect(clip).toMatch(/h\.src \? \(/);
-    expect(clip).toMatch(/<video controls muted playsInline preload="none" poster=\{h\.poster\}/);
-    expect(clip).toMatch(/<source src=\{h\.src\} \/>/);
-    expect(clip).toMatch(/clip coming/);
-    expect(clip).toMatch(/aspect-video/);
-    expect(clip.indexOf('<video')).toBeLessThan(clip.indexOf('clip coming'));
+    expect(parts).toContain('On your PC (free, no account)');
+    expect(parts).toContain('Needs a guild server');
+    expect(parts).toMatch(/scope="local"/);
+    expect(parts).toMatch(/scope="guild"/);
+  });
+  it('ScenarioPlayer is the ONLY client component; the rest of the page stays server-rendered', () => {
+    // (the anonymous form under eqmimic/feedback is a different page with its own client component)
+    const dir = path.join(ROOT, 'web/app/eqmimic/_landing');
+    const files = [...fs.readdirSync(dir).map(f => path.join(dir, f)), path.join(ROOT, 'web/app/eqmimic/page.tsx')];
+    const clients = files.filter(f => /^\s*['"]use client['"]/m.test(fs.readFileSync(f, 'utf8')));
+    expect(clients.map(f => path.basename(f))).toEqual(['ScenarioPlayer.tsx']);
+  });
+});
+
+describe('the scenarios (the big player and its picker)', () => {
+  it('SCENARIOS replaces HIGHLIGHTS, with the six placeholder scenarios in the guild lead’s order', () => {
+    expect(C.HIGHLIGHTS).toBeUndefined();
+    expect(C.SCENARIOS.map(s => s.slug)).toEqual(['dps-threat', 'triggers', 'charm-pets', 'hive-mind', 'zone-timers', 'setup']);
+    expect(C.SCENARIOS.map(s => s.title)).toEqual([
+      'DPS and threat in a raid', 'Triggers and timers', 'Charm and pets',
+      'Hive mind: buff queue and extended target', 'Zone timers: the boar stampede', 'Setting it up in five minutes',
+    ]);
+  });
+  it('each has a unique, link-safe slug, a title and a caption; the optional fields are the right type', () => {
+    const slugs = new Set();
+    for (const s of C.SCENARIOS) {
+      expect(s.slug).toMatch(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+      expect(slugs.has(s.slug), s.slug).toBe(false); slugs.add(s.slug);
+      expect(typeof s.title).toBe('string'); expect(s.title.length).toBeGreaterThan(5);
+      expect(typeof s.caption).toBe('string'); expect(s.caption.length).toBeGreaterThan(10);
+      for (const k of ['src', 'poster']) if (s[k] !== undefined) expect(typeof s[k]).toBe('string');
+      if (s.durationSec !== undefined) expect(s.durationSec).toBeGreaterThan(0);
+      // Nothing external is embedded: a clip is a path on this site or it is not set.
+      for (const k of ['src', 'poster']) if (s[k]) expect(s[k]).not.toMatch(/^(?:https?:)?\/\//);
+    }
+  });
+  it('the placeholders carry no src yet (the guild lead supplies the clips)', () => {
+    for (const s of C.SCENARIOS) expect(s.src, s.slug).toBeUndefined();
+  });
+
+  it('scenarioFromHash: the named scenario, else the first', () => {
+    const S = C.SCENARIOS;
+    expect(C.scenarioFromHash('#clip-charm-pets', S)).toBe('charm-pets');
+    expect(C.scenarioFromHash('clip-setup', S)).toBe('setup');
+    expect(C.scenarioFromHash('#clip-zone-timers', S)).toBe('zone-timers');
+    for (const h of ['', '#', '#setup', '#clip-', '#clip-nope', '#CLIP-triggers', '#clip-triggers-extra', '#overlays', '#xclip-triggers']) {
+      expect(C.scenarioFromHash(h, S), h).toBe(S[0].slug);
+    }
+    expect(C.scenarioFromHash('#clip-setup', [])).toBe('');
+  });
+  it('matchScenario: null (not the first) when the fragment names no scenario, so a click on #setup keeps the selection', () => {
+    expect(C.matchScenario('#clip-triggers', C.SCENARIOS)).toBe('triggers');
+    for (const h of ['', '#setup', '#clip-nope', '#overlays']) expect(C.matchScenario(h, C.SCENARIOS), h).toBeNull();
+  });
+  it('scenarioHash is what scenarioFromHash reads back, for every scenario', () => {
+    for (const s of C.SCENARIOS) {
+      expect(C.scenarioHash(s.slug)).toBe(`#clip-${s.slug}`);
+      expect(C.scenarioFromHash(C.scenarioHash(s.slug), C.SCENARIOS)).toBe(s.slug);
+    }
+  });
+  it('formatDuration: m:ss, and nothing at all when unknown', () => {
+    expect(C.formatDuration(95)).toBe('1:35');
+    expect(C.formatDuration(60)).toBe('1:00');
+    expect(C.formatDuration(9)).toBe('0:09');
+    for (const v of [undefined, 0, -3, NaN, Infinity]) expect(C.formatDuration(v), String(v)).toBe('');
+  });
+
+  const player = code('web/app/eqmimic/_landing/ScenarioPlayer.tsx');
+  it('a scenario with a src renders a controlled, lazy <video> with no autoplay; without one, a placeholder naming it', () => {
+    const stage = player.slice(player.indexOf('function Stage'), player.indexOf('export default function ScenarioPlayer'));
+    expect(stage).toMatch(/s\.src \? \(/);
+    expect(stage).toMatch(/<video key=\{s\.slug\} src=\{s\.src\} poster=\{s\.poster\} controls playsInline preload="none"/);
+    expect(stage).not.toMatch(/autoPlay|autoplay|\bmuted\b/);
+    expect(stage).toMatch(/clip coming/);
+    expect(stage).toMatch(/\{s\.title\}/);
+    expect(stage).toMatch(/aspect-video/);
+    expect(stage.indexOf('<video')).toBeLessThan(stage.indexOf('clip coming'));
+  });
+  it('the picker is a list of <button>s, the selected one aria-current, with a visible focus ring and tap targets of 44px or more', () => {
+    expect(player).toMatch(/<button type="button" onClick=\{\(\) => pick\(s\.slug\)\} aria-current=\{on \? 'true' : undefined\}/);
+    expect(player).toMatch(/focus-visible:outline/);
+    const btn = player.slice(player.indexOf('<button'), player.indexOf('</button>'));
+    const minH = btn.match(/min-h-(\d+)/);
+    expect(minH).not.toBeNull();
+    expect(Number(minH[1]) * 4).toBeGreaterThanOrEqual(44);
+    expect(player).toMatch(/lg:flex-col/);        // a right-hand column on desktop
+    expect(player).toMatch(/overflow-x-auto/);    // a scrollable row on a phone
+  });
+  it('a pick updates the hash, and the page reads it on load and on hashchange — but only a fragment that names a scenario', () => {
+    expect(player).toMatch(/replaceState\(null, '', scenarioHash\(next\)\)/);
+    expect(player).toMatch(/setSlug\(scenarioFromHash\(window\.location\.hash, SCENARIOS\)\)/);
+    expect(player).toMatch(/addEventListener\('hashchange'/);
+    expect(player).toMatch(/const named = matchScenario\(window\.location\.hash, SCENARIOS\);\s*if \(named\) setSlug\(named\);/);
+  });
+  it('the overlay gallery shows a still or a clip only when one is set', () => {
+    const parts = code('web/app/eqmimic/_landing/Parts.tsx');
+    const media = parts.slice(parts.indexOf('function OverlayMedia'), parts.indexOf('/** The overlay gallery'));
+    expect(media).toMatch(/if \(o\.clip\) \{[\s\S]*<video src=\{o\.clip\}[\s\S]*if \(o\.still\) \{[\s\S]*<img src=\{o\.still\}[\s\S]*return null;/);
+    for (const o of C.OVERLAYS) for (const k of ['still', 'clip']) if (o[k] !== undefined) {
+      expect(typeof o[k]).toBe('string');
+      expect(o[k]).not.toMatch(/^(?:https?:)?\/\//);
+    }
+  });
+  it('the overlay cards are tagged [local] or [guild] and the badge text is honest', () => {
+    const parts = code('web/app/eqmimic/_landing/Parts.tsx');
+    expect(parts).toMatch(/scope === 'local'[\s\S]*\[local\][\s\S]*\[guild\]/);
+    const gallery = parts.slice(parts.indexOf('export function OverlayGallery'), parts.indexOf('// ─── The ledger'));
+    expect(gallery).toMatch(/<ScopeBadge scope=\{o\.scope\} \/>/);
+    expect(gallery).toMatch(/\{OVERLAYS\.map\(o =>/);
   });
   it('the landing code fetches and embeds nothing external', () => {
-    for (const rel of ['Parts.tsx', 'LayoutA.tsx', 'LayoutB.tsx', 'LayoutC.tsx']) {
+    for (const rel of ['Parts.tsx', 'Landing.tsx', 'ScenarioPlayer.tsx']) {
       const src = code(`web/app/eqmimic/_landing/${rel}`);
-      expect(src).not.toMatch(/<iframe|<script|\bfetch\(|<img\b|youtube|vimeo/i);
+      expect(src).not.toMatch(/<iframe|<script|\bfetch\(|youtube|vimeo/i);
+    }
+    // The one <img> is the gallery's guarded still; the player and the page have none.
+    expect(player).not.toMatch(/<img\b/);
+    expect(code('web/app/eqmimic/_landing/Landing.tsx')).not.toMatch(/<img\b/);
+    expect(code('web/app/eqmimic/_landing/Parts.tsx').match(/<img\b/g)).toHaveLength(1);
+  });
+  it('the landing source is public-safe: no ids, tokens, addresses or project refs', () => {
+    for (const rel of ['Parts.tsx', 'Landing.tsx', 'ScenarioPlayer.tsx']) {
+      const src = read(`web/app/eqmimic/_landing/${rel}`);
+      expect(src).not.toMatch(/\b\d{17,20}\b|\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b|zhtoekwakucbckvatfky|supabase\.co|eyJ[A-Za-z0-9_-]{10,}/);
     }
   });
 });
