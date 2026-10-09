@@ -264,6 +264,27 @@
   // the "up X:YZ" indicator red as a glanceable recharm-overdue cue. 54s is
   // the canonical bard SBB "you should have recharmed by now" mark.
   var RECHARM_RED_AT_MS = 54000;
+  // Charm aging — NON-bard charms (the guild lead's call, 2026-10-08, "A plus B's
+  // instrumentation, 25 seconds"). An enchanter's charm lasts minutes on paper but
+  // breaks at random on the mob's tick (last 30 days: median 36 s, 117 of 285 under
+  // 30 s), so the max-duration warning almost never fires first. A fixed ELAPSED cue
+  // at 25 s after the land: speak once, then the "up" timer stays red. 25 s is a
+  // guess until the recorded charm lifetimes exist. Bards keep their own cues + 54 s.
+  // The manual "recharm warn at N s" box (N > 0) overrides the 25 s for non-bards.
+  var CHARM_AGING_MS = 25000;
+  // A card whose elapsed is already this far PAST its aging mark is a stale session
+  // (Mimic reopened mid-charm), not a live crossing: mark it done, say nothing.
+  var CHARM_AGING_STALE_MS = 10000;
+  function agingDueMs(isBard, manualSec){ return isBard ? null : (manualSec > 0 ? manualSec * 1000 : CHARM_AGING_MS); }
+  function redAtMs(isBard, manualSec){ var d = agingDueMs(isBard, manualSec); return d == null ? RECHARM_RED_AT_MS : d; }
+  // mem is the per-charm record keyed by p.key, replaced on every new landing
+  // (started_at changes), so the flag re-arms on a re-charm. True exactly once.
+  function agingFired(mem, elapsed, dueMs){
+    if (dueMs == null || mem.aged || elapsed < dueMs) return false;
+    mem.aged = true;
+    return elapsed <= dueMs + CHARM_AGING_STALE_MS;
+  }
+  // END charm aging
   // Mirror of web/lib/buffs.ts shortBuffName — same shorthand the guild reads
   // on /raid + /buffs, just inlined here since charm.html is a standalone
   // localhost page (no module imports). Update both lists together when a new
@@ -427,7 +448,7 @@
     else {
       lab = '⏳ ' + (v.est ? '~' : '') + fmtElapsed(v.remMs) + (v.urgent ? ' recharm' : '');
       pct = v.pct;
-      col = v.urgent ? '#f85149' : (v.est ? '#8b94a3' : '#a371f7');
+      col = (v.urgent || v.aged) ? '#f85149' : (v.est ? '#8b94a3' : '#a371f7');
     }
     // The two ticks ride row two (the guild lead, 2026-10-08, "B — Mob tick
     // first"): M = the mob's own, big and in its own colour (NOT the charm bar's
@@ -656,12 +677,19 @@
             mem.recharmNowWarned = true; warnHit = true;
             speak('recharm pet');
           }
+          // Non-bard aging cue. The manual warn above speaks at the same instant when N > 0,
+          // so only one of them talks; the card flashes either way.
+          if (!p.is_dire_charm && agingFired(mem, elapsed, agingDueMs(isBard, warnAt))) {
+            if (!warnHit) speak('charm aging');
+            warnHit = true;
+          }
         }
+        const redAt = redAtMs(isBard, warnAt);
 
         // Mini: the callouts above have already run — only the drawing differs.
         if (mini) {
           html += charmMiniHtml(p, { broke: broke, remMs: durRemMs, pct: durPct, est: durEst,
-                                     urgent: imminent && !durEst, target: charmPetTarget(s, p), mr: charmPetMr(s, p), now: now });
+                                     urgent: imminent && !durEst, aged: !isBard && elapsed >= redAt, target: charmPetTarget(s, p), mr: charmPetMr(s, p), now: now });
           continue;
         }
 
@@ -697,7 +725,7 @@
           + '<button class="dismiss" data-dismiss="' + esc(p.key || '') + '" title="Dismiss — remove this pet from the tracker">&times;</button>'
           + '<div class="head"><span class="pet">' + esc(p.pet || '?') + badge + '</span>'
           + '<span class="owner">' + esc(p.owner || '') + '</span></div>'
-          + '<div class="meta">tick ' + Math.min(ticks, maxTicks) + '/' + maxTicks + (durEst ? '~' : '') + ' · <span class="up' + (elapsed >= RECHARM_RED_AT_MS ? ' danger' : '') + '">up ' + fmtElapsed(elapsed) + '</span>' + durStr + hpStr + warnLine + '</div>'
+          + '<div class="meta">tick ' + Math.min(ticks, maxTicks) + '/' + maxTicks + (durEst ? '~' : '') + ' · <span class="up' + (elapsed >= redAt ? ' danger' : '') + '">up ' + fmtElapsed(elapsed) + '</span>' + durStr + hpStr + warnLine + '</div>'
           + hpBar
           + tickRowsHtml(p, now)
           + durBar
