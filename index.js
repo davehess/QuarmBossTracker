@@ -294,6 +294,7 @@ const {
 } = require('./utils/killops');
 const { hasAllowedRole, allowedRolesList, hasOfficerRole, officerRolesList, isGuildMember, MEMBERS_ONLY } = require('./utils/roles');
 const mimicLink = require('./utils/mimicLink');
+const { charmSpellName, charmRanFull } = require('./utils/charmSession');
 const popFlagStages = require('./utils/popFlagStages');
 const { EXPANSION_ORDER, getThreadId, getBossExpansion, isPopLocked, isPopEraLocked } = require('./utils/config');
 const { dedupParseDeaths } = require('./utils/parseDeaths');
@@ -22613,6 +22614,8 @@ async function _handleAgentUpload(req, res) {
             is_dire_charm: !!s.is_dire_charm,
             encounter_id:  recParseResult.encounterId,
             end_reason:    s.end_reason || null,
+            spell_name:    charmSpellName(s.spell),
+            ran_full:      charmRanFull(s.ran_full),
             uploaded_by:   character || null,
           }));
           try {
