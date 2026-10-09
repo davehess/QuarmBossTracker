@@ -1331,7 +1331,15 @@ next touch one rather than assuming a missing row means a missing doc.
   flip between windowed and full screen (believed `WindowedMode` — confirm, do not assume), its values in
   each mode, and whether dgVoodoo's config overrides it. `DECISIONS-2026-09-21.md` §80a.
 
-- **⚠ Needs a local session — the pacify FAILURE message (one string).**
+- **✅ CAPTURED 2026-10-09 (agent, on `beta` — not yet on a stable Mimic) — the pacify FAILURE message is
+  `Your target looks unaffected.`** From an in-game screenshot (the guild lead): Pacify on a level-58 mob that is
+  not ability-31 immune printed it twice in red while Target Info kept a Pacify bar. Built as
+  `noteLullUnaffected` (agent): the line is a self line with no target or spell name, so it is attributed to the newest
+  own cast ONLY when that cast is a lull-family spell and the line falls inside cast time + 4 s; it then drops the
+  synthesized/phantom timer for that spell on the cast's target and remembers "unaffected by <spell>" per mob name + zone
+  for the session, shown as a "Pacify: unaffected" chip on Target Info (`target_lull`). Still open and NOT guessed:
+  whether Harmony/Wake of Tranquility (AE) print it once per mob, and whether the line also appears after non-lull
+  spells (it is ignored then). Decision: `DECISIONS-2026-09-21.md` §212. The original ask, kept for history:
   Harmony is `resist_type 0` (unresistable), so the resist branch of
   `notePacifyMiss` can never fire for it — but it still fails against a
   too-high-level mob, and the guild lead confirms *"it will give a message if the mob

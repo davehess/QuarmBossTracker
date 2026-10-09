@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **"Your target looks unaffected." drops the phantom lull timer** (§212) | On `beta`: agent 3.7.124 (`10901c15`), agent + Mimic Target Info | a beta tester casts Pacify at a mob above its level and checks the bar goes and the amber chip shows |
 | **Charm-pet gear is not loot** (§210) | Built on `claude/loot-pet-gear`: migration `20261009030000` (NOT applied), `utils/lootValue.js`, one sentence on `/admin/loot`. `loot_pet_gear_names` ships empty | a session with Supabase access: apply the migration, then route bot + web to `main`. The guild lead: veto the 9 extra rows (§210) or name the pet weapons and haste items so officers can INSERT them |
 | **Charm sessions record spell + ran_full** (§209) | Built on two local branches: bot (`utils/charmSession.js`, migration `20261009010000`, NOT applied) and agent (beta). Inert until both ship | a session with Supabase access: apply the migration FIRST; then route the bot to `main` and the agent to `beta`. After a week of enchanter raids, read per-spell `ran_full` before touching any charm warning |
 | **Stampede timer follows you into the zone** (§208) | Built on a local branch: bot 3.1.233 (`utils/zoneTimers.js`, bot_kv `zone_timer_windows`) + agent 3.7.115 (`_runLateJoinFire`). Inert until the two stampede rows carry the `zone-timer` tag | the guild lead: route the bot to `main` and the agent to `beta`, then run the tag SQL in §208; a raider zones into Tactics after a stampede and checks both countdowns |
@@ -8607,3 +8608,33 @@ off its corpse, and the log's `--You have looted <item>.--` line was stored as o
   sentence about charm-pet gear also says this.
 - Tests: `test/loot-own-pet-bot.test.js` (migration text, strict-boolean ingest, sticky/mixed-batch/column-missing behaviour,
   totals and list, the absent-column read; mutation-checked).
+
+### 212. "Your target looks unaffected." is the too-high-level lull message; it drops the phantom timer (2026-10-09, agent + Mimic Target Info, `beta`)
+**The evidence** (the guild lead, 2026-10-09, in-game screenshot): Pacify on a level-58 mob that is NOT ability-31 immune
+printed `Your target looks unaffected.` in red, twice, while Target Info kept a Pacify bar "56/60 · 5:33". That is the phantom
+timer the Harmony policy in CLAUDE.md predicted, and the string `docs/STATUS.md` had been waiting on. The guild lead's note:
+*"This mob doesn't say if it can or can't be lulled or pacified"*, so the catalog gives no warning before the cast.
+- **The call.** The line carries no target and no spell, so it is attributed to the newest own cast, and only when that cast
+  is a lull-family spell (`_isPacifySpell`, the existing set) and the line falls within the spell's cast time plus 4 seconds
+  (cast time from the spell catalog, capped at 6 s). After any other cast, with no cast, or later, it does nothing to lull state.
+  An invented or broader match was rejected: other spells may print the same words.
+- **What it does.** (a) Withdraws that spell's row from the cast's target (the Zeal target when "You begin casting" printed, a
+  provably different spawn id excepted, an older separate landing left alone), clears the pending revert, and removes the
+  caster's own copy from the not-yet-uploaded `buff_casts` batch. (b) Remembers "unaffected by <spell>, cast at level N" per mob
+  name + zone bucket (the Mob Info cache key) for the session; it is not written to the mob-info zone packs, which are shared
+  catalog data. (c) `buildMobInfo` returns `target_lull`: `{verdict:'immune'}` (ability 31, which always wins),
+  `{verdict:'unaffected', spell, caster_level, at_ms}`, or null.
+- **Target Info.** An amber "Pacify: unaffected" chip on the Stats chip row; the tooltip carries the spell, the level, the time
+  and "too high a level for that spell, or immune. Try a stronger lull." so the row stays byte-stable between polls. The
+  "Immune Pacify" chip already existed (ability 31 on `mob.specials`, blue) and was not duplicated. Unknown draws nothing.
+- **Not built.** A green "Lull OK" (`landed`): the agent only holds landings while they are active, and a landing line is not
+  proof the lull worked (the screenshot's bar was one), so a "worked" verdict would be an invention. Needs a signal first.
+- **Accepted limits.** (1) The mirror already uploaded to other raiders before the line arrived is not retracted (it is
+  withdrawn only if still in the batch; a flush can beat the line). (2) Only the caster's agent sees the line. (3) Not known
+  whether AE lulls print it once per mob. (4) A different, stronger lull cast later is not auto-cleared; the chip names the
+  spell it was learned from.
+- **CLAUDE.md** (Harmony policy) now names the captured string instead of "a message we have not captured".
+- **Shipped:** agent 3.7.124 on `beta` (`10901c15`). Same day, agent 3.7.123: the Loot tab's platinum values always carry one
+  decimal, matching web 1.8.132 (*"we need consistent sig figs on this. either show a decimal or not."*).
+- Tests: `test/lull-unaffected.test.js` (the cast-then-line, non-lull cast, 10 s late, other raiders, immune-wins, zone bucket,
+  the chip, and the call sites; mutation-checked).

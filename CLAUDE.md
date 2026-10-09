@@ -1297,8 +1297,10 @@ already decodes onto the `mob-info` row and the Mob Info overlay already chips.
 "Harmony needs outdoors" heuristic says it should work — and **116 of its 118
 NPCs carry ability 31**. So never reason about the lull line from zone type;
 read ability 31. `_pacifyImmuneKnown()` in the agent is the shared answer.
-⚠ It ALSO fails on a too-high-level mob, with a message we have not captured, so
-that failure stays undetectable and a synthesized timer can still be a phantom.
+⚠ It ALSO fails on a too-high-level mob, with the server message `Your target looks
+unaffected.` (captured 2026-10-09). The agent drops the timer when that line follows
+your own lull cast (`noteLullUnaffected`, DECISIONS-2026-09-21 §212), so a phantom
+remains only where the line never printed or reached another raider first.
 The ask is filed in `docs/STATUS.md`; **do not invent the string.**
 ⚠ `Atone` is SPA 30 but instant (`buffduration`/formula 0) — it can never carry
 a timer.
