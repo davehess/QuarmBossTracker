@@ -22,11 +22,13 @@ zeal/tagicons/*: provenance
 ===========================
 Picture files for Zeal's tag pictures (^I<name>^ with <name>.png or .tga in uifiles/zeal/tagicons).
 
-- EUR.png, EUR.tga: Europa's guild logo. Their guild leader sent it on 2026-09-25 and asked for it
-  to be made into a Zeal tag icon. The file was processed in this repo:
-  - the black background was removed by flood fill from the edges, with enclosed dark areas put
-    back;
-  - it was scaled to 244x256.
+- EUR.png, EUR.tga: Europa's guild logo, the shield with "EUROPA" across it. Their guild leader
+  first sent a logo on 2026-09-25 and asked for it to be made into a Zeal tag icon; the guild lead
+  supplied this version on 2026-10-09 ("Try making this the Europa logo"). Processed in this repo:
+  - the dark background was removed by flood fill from the edges, after closing the shield's
+    outline (11 px) so its dark band and rim stay in; background-coloured shadow within 11 px of
+    the outside was then dropped and the edge feathered by about a pixel;
+  - it was cropped to the shield and scaled to 226x256.
   The TGA is the same pixels as the PNG, 32-bit with alpha. The logo belongs to Europa.
 
 Every picture file here must pass Zeal's own checks: a PNG or true-colour TGA, at most 512 pixels a
