@@ -744,6 +744,11 @@ next touch one rather than assuming a missing row means a missing doc.
 - **✅ Plane of Tactics stampede triggers (guild triggers, live 2026-10-08).** "You hear the pounding of hooves."
   → overlay + "Stampede" + 15 s timer; then a window: "stampede window opens" bar (40 min) and "stampede by" bar
   (120 min), both shown from the emote (FB-69). DECISIONS §200.
+- **🧪 Charm-pet gear is not loot (built on `claude/loot-pet-gear`, 2026-10-09; migration `20261009030000` NOT applied).**
+  Items with any same-name row at negative magic resist (7 names, 152 rows in 90 days) and names an officer lists in
+  `loot_pet_gear_names` (ships empty) leave `/admin/loot` and the Mimic Loot tab's per-looter totals; the Mimic list still
+  shows them. ⏳ Apply the migration, then route bot + web to `main`. ⏳ The guild lead: veto the 9 extra rows (the mr 0
+  Silver Jacinth ring, three -5 pieces) and name the pet weapons and haste items to add. DECISIONS §210.
 - **✅ Officer page `/admin/loot` [beta] — loot by value (web 1.8.120 main, 2026-10-08; paged in 1.8.122).** Note
   that the looter is not always the owner; window, per-character totals; one row per looter + item (count, each,
   row total), 50 a page, sorted on the server; DKP items listed but left out of totals (`loot_value_grouped` +

@@ -116,7 +116,8 @@ export default async function AdminLootPage({ searchParams }: { searchParams: Pr
         <p role="note" className="text-sm text-orange leading-6 border-l-2 border-orange/60 pl-3">
           Who looted an item is not always who ends up with it. Items are often looted by one raider and
           handed to another (master looter, corpse runs, trades). These rows are the &ldquo;You have
-          looted&rdquo; lines each raider&rsquo;s Mimic saw.
+          looted&rdquo; lines each raider&rsquo;s Mimic saw. Gear a charmer hands to a charmed pet (negative
+          magic resist, plus a short officer list) is not counted as loot.
         </p>
         <p className="text-xs text-dim leading-5 mt-3">
           Last <span className="text-text">{windowLabel}</span>:{' '}
