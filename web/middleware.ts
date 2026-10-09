@@ -53,13 +53,13 @@ export async function middleware(request: NextRequest, event: NextFetchEvent) {
   // anonymous feedback form at /feedback (Mimic opens exactly that address) and the landing page for
   // everything else. Decided before anything else runs: no session refresh (neither page has a
   // sign-in, and an anonymous visitor's request should touch nothing of ours), no page-view log, no
-  // link-preview rewrite. eqmimicLandingTarget() picks the page and drops the query string, except
-  // the `v` layout preview on the landing. /_next/ assets are not rewritten or the page would have no
+  // link-preview rewrite. eqmimicLandingTarget() picks the page and drops the whole query string (the
+  // landing page's scenarios are linked by a #clip-<slug> fragment, which never reaches us). /_next/ assets are not rewritten or the page would have no
   // scripts (the matcher already skips /_next/static and /_next/image; this covers the rest).
   if (isEqmimicHost(request.headers.get('host'))) {
     if (request.nextUrl.pathname.startsWith('/_next/')) return NextResponse.next();
     const url = request.nextUrl.clone();
-    const to = eqmimicLandingTarget(request.nextUrl.pathname, request.nextUrl.search);
+    const to = eqmimicLandingTarget(request.nextUrl.pathname);
     url.pathname = to.pathname;
     url.search = to.search;
     return NextResponse.rewrite(url);

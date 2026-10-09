@@ -43,7 +43,7 @@ export const releases: Release[] = [
     date: '2026-10-09',
     headline: 'A new page for anyone new to Mimic: what each piece does, how to set it up on your own, and how a guild runs the shared version.',
     features: [
-      { name: 'Mimic landing page [beta]', blurb: 'Explains Zeal, your log, the agent, Mimic and the guild bot in the order they connect, with the setup steps and a plain note on what stays on your PC. It has three layouts to try with ?v=b and ?v=c, and a fan-site notice that EverQuest belongs to Daybreak.' },
+      { name: 'Mimic landing page [beta]', blurb: 'Explains Zeal, your log, the agent, Mimic and the guild bot in the order they connect, with the setup steps and a plain note on what stays on your PC. It opens on a big video player with a button for each recorded scenario, and carries a fan-site notice that EverQuest belongs to Daybreak.' },
       { name: 'Guild setup guide', blurb: 'A section for guilds that want the shared version: the steps, what it costs to run, and what is not finished yet.' },
     ],
     fixes: [],

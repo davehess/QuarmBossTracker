@@ -95,17 +95,20 @@ names, and the result of each check above. Include anything that looked odd.
 The routing change this section used to defer has been made (branch `claude/eqmimic-landing`, [beta]; check that it is on
 `main` before you rely on the checklist below). On `eqmimic.quest` and `www.eqmimic.quest`:
 
-- `/` (and `/index`, and **every path except `/feedback`**) shows the **landing page** for someone new to Mimic. Only a `?v=b`
-  or `?v=c` query survives (a layout preview); every other parameter is dropped.
+- `/` (and `/index`, and **every path except `/feedback`**) shows the **landing page** for someone new to Mimic (video first; the
+  guild lead picked that structure 2026-10-09 and the three layouts were retired). Every query parameter is dropped; a
+  recorded scenario is linked by a `#clip-<slug>` fragment instead.
 - `/feedback` still shows the **anonymous form**, and `#cat=bug&text=…` still reaches it (Mimic opens exactly that address).
 - The page is `noindex` and carries a `[beta]` badge until the guild lead says it is settled. It is previewed without DNS at
-  `https://wolfpack.quest/eqmimic` and `https://b.wolfpack.quest/eqmimic?v=b`.
+  `https://wolfpack.quest/eqmimic` and `https://b.wolfpack.quest/eqmimic`.
 
 **Verification checklist for the new root behaviour** (replaces the "/ shows the form" lines in step 5 once this is on `main`):
 
-- [ ] `https://eqmimic.quest/` shows the landing page (the "Wolf Pack Mimic" heading, the gold "Fan site notice" block under it),
-      with no Wolf Pack header or sign-in.
-- [ ] `https://eqmimic.quest/?v=b` and `?v=c` show the other two layouts; `?v=zzz` shows layout A.
+- [ ] `https://eqmimic.quest/` shows the landing page (the "Wolf Pack Mimic" heading, the large video player with its scenario
+      picker, the gold "Fan site notice" block directly under it), with no Wolf Pack header or sign-in.
+- [ ] `https://eqmimic.quest/#clip-triggers` opens with the "Triggers and timers" scenario selected; clicking another one
+      changes the address to its `#clip-…`.
+- [ ] `https://eqmimic.quest/?v=b` (or any other query) shows the same single page.
 - [ ] `https://eqmimic.quest/feedback#cat=bug` still shows the form with the bug category preselected.
 - [ ] `https://eqmimic.quest/anything-else` shows the landing page (not the form).
 - [ ] The landing page's Download button opens `https://wolfpack.quest/mimic?direct=1`.

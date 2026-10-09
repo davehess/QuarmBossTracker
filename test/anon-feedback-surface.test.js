@@ -243,8 +243,9 @@ describe('host routing', () => {
     expect(rewrittenTo(form).pathname).toBe(EQMIMIC_FEEDBACK_PATH);
   });
   it('eqmimic.quest: a Wolf Pack path, an admin path and an api path all land on the landing page, query dropped', async () => {
-    for (const p of ['/admin/feedback', '/me', '/api/agent/chat', '/parses/123', '/auth/callback', '/eqmimic/other', '/boss/x']) {
-      const res = await run('https://www.eqmimic.quest' + p + '?token=secret', { headers: { host: 'www.eqmimic.quest' } });
+    // '/?v=b' and '/?v=c' were the layout previews until 2026-10-09; now they are just queries to drop.
+    for (const p of ['/admin/feedback', '/me', '/api/agent/chat', '/parses/123', '/auth/callback', '/eqmimic/other', '/boss/x', '/?v=b', '/?v=c']) {
+      const res = await run('https://www.eqmimic.quest' + p + (p.includes('?') ? '&' : '?') + 'token=secret', { headers: { host: 'www.eqmimic.quest' } });
       const to = rewrittenTo(res);
       expect(to.pathname).toBe(EQMIMIC_LANDING_PATH);
       expect(to.search).toBe('');
