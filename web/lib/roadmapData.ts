@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'eqmimic-landing-2026-10-09',
+    title: 'A front door for Mimic [beta]',
+    version: 'Web 1.8.127',
+    date: '2026-10-09',
+    headline: 'A new page for anyone new to Mimic: what each piece does, how to set it up on your own, and how a guild runs the shared version.',
+    features: [
+      { name: 'Mimic landing page [beta]', blurb: 'Explains Zeal, your log, the agent, Mimic and the guild bot in the order they connect, with the setup steps and a plain note on what stays on your PC. It has three layouts to try with ?v=b and ?v=c, and a fan-site notice that EverQuest belongs to Daybreak.' },
+      { name: 'Guild setup guide', blurb: 'A section for guilds that want the shared version: the steps, what it costs to run, and what is not finished yet.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'mimic-2-8-0-2026-10-08',
     title: 'Mimic 2.8',
     version: 'Mimic 2.8.0 · Agent 3.7.113 · Web 1.8.126',

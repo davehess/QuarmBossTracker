@@ -996,10 +996,21 @@ offering it on "add a dark mode" collects data we asked for and do not need.
 would otherwise wipe a half-typed report.
 Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.test.js` (bot).
 
+### eqmimic.quest landing page (web, 2026-10-09, [beta]; DECISIONS §209)
+- **What:** the page a newcomer to Mimic reads: what it is, the five pieces in connection order (Zeal, the EQ log,
+  the agent, Mimic, the guild bot), standalone setup (local-only), what each overlay needs (local or guild),
+  privacy, and the guild "hive mind" steps with an honest not-finished list. Fan-site rights notice under the hero
+  and in the footer, worded exactly like the wolfpack.quest footer.
+- **Where:** `web/app/eqmimic/page.tsx` (picks the layout from `?v=`), `web/app/eqmimic/_landing/` (`Parts.tsx`
+  shared blocks, `LayoutA/B/C.tsx`), ALL words in `web/lib/eqmimicLanding.ts` (video slots: `HIGHLIGHTS`). Routing:
+  `eqmimicLandingTarget` in `web/lib/eqmimicHost.ts`, used by `web/middleware.ts` (`/` and every unknown path ->
+  landing keeping only `v`; `/feedback` -> the form). Also at `wolfpack.quest/eqmimic` with the full site shell.
+- Tests: `test/eqmimic-landing.test.js`, `test/anon-feedback-surface.test.js` (host routing).
+
 ### Anonymous feedback (AFB) and the My report page (web 1.8.119 · bot 3.1.223 · agent 3.7.107, 2026-10-08)
 - **Signed out:** the dashboard card's button opens `https://eqmimic.quest/feedback#…` (fragment only). That host
-  is our Vercel project; `web/middleware.ts` + `web/lib/eqmimicHost.ts` route every path there to
-  `web/app/eqmimic/feedback`, `web/app/layout.tsx` drops the chrome. The action cleans with
+  is our Vercel project; `web/middleware.ts` + `web/lib/eqmimicHost.ts` route `/feedback` there to
+  `web/app/eqmimic/feedback` (every other path gets the landing page above), `web/app/layout.tsx` drops the chrome. The action cleans with
   `web/lib/anonFeedbackClean.ts`, rate-limits by a one-day salted hash, writes `anon_feedback` (AFB-n).
   Officers: `/admin/feedback/anonymous`. Mimic's `open-external` allowlist admits only that one page. §192.
 - **Signed in:** `/feedback/FB-n` (`web/app/feedback/[ref]`, rules in `web/lib/feedbackReport.ts`) for the

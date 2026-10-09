@@ -3,7 +3,8 @@
 // live in the page, the server action, the middleware and the migration:
 //   - the prefill comes ONLY from the URL fragment (a query string reaches server logs before cleaning),
 //   - the honeypot, the 5-an-hour rate limit, and "the raw text is never logged",
-//   - eqmimic.quest serves the form and no Wolf Pack page, other hosts are untouched,
+//   - eqmimic.quest serves the form (/feedback) and the landing page (everything else), no Wolf Pack
+//     page, other hosts are untouched,
 //   - the table is service-role only.
 //
 // Source-text assertions run over comment-stripped source (CLAUDE.md "comments satisfy text assertions").
@@ -16,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { ROOT, stripJs, stripSql } from './_source-slice.js';
-import { isEqmimicHost, EQMIMIC_FEEDBACK_PATH } from '../web/lib/eqmimicHost.ts';
+import { isEqmimicHost, EQMIMIC_FEEDBACK_PATH, EQMIMIC_LANDING_PATH } from '../web/lib/eqmimicHost.ts';
 
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const code = (rel) => stripJs(read(rel));
@@ -165,8 +166,10 @@ describe('host routing', () => {
     expect(at).toBeLessThan(mw.indexOf('PREVIEW_BOT_RX.test'));
     expect(at).toBeLessThan(mw.indexOf('createServerClient('));
     expect(host).toMatch(/NextResponse\.rewrite\(url\)/);
-    expect(host).toMatch(/url\.pathname = EQMIMIC_FEEDBACK_PATH/);
-    expect(host).toMatch(/url\.search = ''/);
+    // The page is picked by the shared eqmimicLandingTarget (test/eqmimic-landing.test.js runs it).
+    expect(host).toMatch(/eqmimicLandingTarget\(/);
+    expect(host).toMatch(/url\.pathname = to\.pathname/);
+    expect(host).toMatch(/url\.search = to\.search/);
   });
   it('the matcher still lets the eqmimic paths through', () => {
     const matcher = mw.slice(mw.indexOf('matcher:'));
@@ -231,31 +234,33 @@ describe('host routing', () => {
     return to ? new URL(to) : null;
   };
 
-  it('eqmimic.quest: / and /feedback rewrite to the form', async () => {
-    for (const p of ['/', '/feedback']) {
-      const res = await run('https://eqmimic.quest' + p, { headers: { host: 'eqmimic.quest' } });
-      expect(rewrittenTo(res).pathname).toBe(EQMIMIC_FEEDBACK_PATH);
-    }
+  // 2026-10-08 (DECISIONS §209): the root of the host is now the landing page; /feedback stays the form
+  // (Mimic opens exactly that address) and every other path gets the landing page.
+  it('eqmimic.quest: / is the landing page and /feedback is the form', async () => {
+    const root = await run('https://eqmimic.quest/', { headers: { host: 'eqmimic.quest' } });
+    expect(rewrittenTo(root).pathname).toBe(EQMIMIC_LANDING_PATH);
+    const form = await run('https://eqmimic.quest/feedback', { headers: { host: 'eqmimic.quest' } });
+    expect(rewrittenTo(form).pathname).toBe(EQMIMIC_FEEDBACK_PATH);
   });
-  it('eqmimic.quest: a Wolf Pack path, an admin path and an api path all land on the form, query dropped', async () => {
+  it('eqmimic.quest: a Wolf Pack path, an admin path and an api path all land on the landing page, query dropped', async () => {
     for (const p of ['/admin/feedback', '/me', '/api/agent/chat', '/parses/123', '/auth/callback', '/eqmimic/other', '/boss/x']) {
       const res = await run('https://www.eqmimic.quest' + p + '?token=secret', { headers: { host: 'www.eqmimic.quest' } });
       const to = rewrittenTo(res);
-      expect(to.pathname).toBe(EQMIMIC_FEEDBACK_PATH);
+      expect(to.pathname).toBe(EQMIMIC_LANDING_PATH);
       expect(to.search).toBe('');
     }
   });
-  it('eqmimic.quest: link-preview bots get the form, not the Wolf Pack embed card', async () => {
+  it('eqmimic.quest: link-preview bots get the landing page, not the Wolf Pack embed card', async () => {
     const res = await run('https://eqmimic.quest/me', { headers: { host: 'eqmimic.quest', 'user-agent': 'Discordbot/2.0' } });
-    expect(rewrittenTo(res).pathname).toBe(EQMIMIC_FEEDBACK_PATH);
+    expect(rewrittenTo(res).pathname).toBe(EQMIMIC_LANDING_PATH);
   });
   it('eqmimic.quest: /_next assets pass through un-rewritten', async () => {
     const res = await run('https://eqmimic.quest/_next/static/chunks/app.js', { headers: { host: 'eqmimic.quest' } });
     expect(rewrittenTo(res)).toBeNull();
     expect(res.headers.get('x-middleware-next')).toBe('1');
   });
-  it.skipIf(!HAS_NEXT)('wolfpack.quest keeps its behaviour: no rewrite to the form, and /eqmimic/feedback is reachable there', async () => {
-    for (const p of ['/', '/feedback', '/eqmimic/feedback']) {
+  it.skipIf(!HAS_NEXT)('wolfpack.quest keeps its behaviour: no rewrite to the form, and /eqmimic + /eqmimic/feedback are reachable there', async () => {
+    for (const p of ['/', '/feedback', '/eqmimic/feedback', '/eqmimic', '/eqmimic?v=b']) {
       const res = await run('https://wolfpack.quest' + p, { headers: { host: 'wolfpack.quest' } }, { real: true });
       expect(rewrittenTo(res)).toBeNull();
       expect(res.headers.get('x-middleware-next')).toBe('1');
