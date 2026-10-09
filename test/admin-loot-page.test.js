@@ -242,7 +242,7 @@ describe('LootTable (the looter + item list)', () => {
   it('renders value in platinum, a dash when unpriced, and an ND tag for NO DROP', () => {
     const lib = stripJs(readSource(path.join(ROOT, 'web', 'lib', 'lootValue.ts')));
     expect(lib).toMatch(/cp \/ 1000/);
-    expect(lib).toMatch(/maximumFractionDigits: 1/);
+    expect(lib).toMatch(/minimumFractionDigits: 1, maximumFractionDigits: 1/);
     expect(lib).toMatch(/if \(cp == null\) return '—';/);
     expect(table).toMatch(/r\.nodrop &&/);
     expect(table).toContain('>ND</span>');
