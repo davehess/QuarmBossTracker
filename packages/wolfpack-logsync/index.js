@@ -3900,6 +3900,76 @@ function _clearPendingPacifyOnNewCast(charLower, spellLower) {
   const k = String(spellLower || '').replace(/`/g, "'").trim();
   if (k !== pend.key) _pendingPacify.delete(charLower);
 }
+// ── "Your target looks unaffected." (the guild lead, 2026-10-09, in-game screenshot) ──
+// The server's answer to a lull-family cast that did nothing — a mob too high a
+// level for that spell, or immune — and the line the "too-high-level lull" ask in
+// docs/STATUS.md was waiting for. Cast on a level-58 mob that is NOT ability-31
+// immune, Pacify printed it twice in red while Target Info kept a "56/60 · 5:33"
+// Pacify bar: the phantom timer this file's comments predicted.
+//
+// ⚠ The line is a SELF line with no target name and no spell name, and other
+// spells may print it too, so it is attributed ONLY when the newest own cast is a
+// lull-family spell and the line lands inside that cast's window. Anything else
+// does nothing to lull state. The target is the one the cast was aimed at (the
+// Zeal target when "You begin casting" printed).
+const LULL_UNAFFECTED_WINDOW_MS = 4_000;       // after the cast ENDS; cast time is added from the catalog
+const LULL_UNAFFECTED_CAST_CAP_MS = 6_000;     // a bogus catalog cast time must not widen the window
+const _lullUnaffected = new Map();             // _mobInfoCacheKey(name, zone) → { spell, caster_level, at_ms }
+function noteLullUnaffected(line, character) {
+  if (!line || !character || line.indexOf('looks unaffected') === -1) return false;
+  if (!/\]\s+Your target looks unaffected\.\s*$/i.test(line)) return false;
+  const cl = String(character).toLowerCase();
+  const arr = _recentSelfCast.get(cl);
+  const cast = arr && arr.length ? arr[arr.length - 1] : null;
+  if (!cast || !_isPacifySpell(cast.name)) return false;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  const e = _spellByNameLower.get(cast.spellLower.replace(/`/g, "'"));
+  const castMs = e && Number.isFinite(Number(e.cast_ms)) ? Math.min(Math.max(Number(e.cast_ms), 0), LULL_UNAFFECTED_CAST_CAP_MS) : 0;
+  if (atMs < cast.atMs || atMs - cast.atMs > castMs + LULL_UNAFFECTED_WINDOW_MS) return false;
+  const target = cast.target || _zealTargetForChar(cl);
+  if (!target) return false;
+  const key = cast.spellLower.replace(/`/g, "'");
+  // (a) take the phantom timer back — local bar first, then the not-yet-uploaded mirror.
+  const tk = String(target).toLowerCase();
+  const castId = _provableTargetId(character, target);
+  const mp = _buffLandingsByTarget.get(tk);
+  if (mp) {
+    for (const [k, row] of [...mp]) {
+      if (String(k).replace(/`/g, "'") !== key) continue;
+      if (row && row.landed_at != null && row.landed_at < cast.atMs - 1000) continue;   // an older, separate landing
+      if (castId != null && row && row.target_id != null && Number(row.target_id) !== Number(castId)) continue;
+      mp.delete(k);
+    }
+    if (mp.size === 0) _buffLandingsByTarget.delete(tk);
+  }
+  if (typeof buffCastBuffer !== 'undefined' && Array.isArray(buffCastBuffer)) {
+    for (let i = buffCastBuffer.length - 1; i >= 0; i--) {
+      const b = buffCastBuffer[i];
+      if (b && String(b.observer || '').toLowerCase() === cl && String(b.target || '').toLowerCase() === tk
+          && String(b.spell_name || '').toLowerCase().replace(/`/g, "'") === key) buffCastBuffer.splice(i, 1);
+    }
+  }
+  _pendingPacify.delete(cl);
+  // (b) remember it for the session, keyed like the Mob Info cache (name + zone bucket).
+  const st = (typeof _zealState !== 'undefined') ? Object.keys(_zealState).filter(c => String(c).toLowerCase() === cl).map(c => _zealState[c])[0] : null;
+  const zoneId = (st && st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
+  _lullUnaffected.set(_mobInfoCacheKey(target, zoneId), {
+    spell: e ? e.name : cast.name,
+    caster_level: (whoData.get(cl) || {}).level || _assumedCasterLevel(),
+    at_ms: atMs,
+  });
+  if (_lullUnaffected.size > 200) _lullUnaffected.delete(_lullUnaffected.keys().next().value);
+  console.log(`[pacify] ${cast.name} on ${target} — "Your target looks unaffected."; timer dropped, mob marked`);
+  return true;
+}
+// What Target Info shows for the lull line on this mob: ability 31 (known from
+// the catalog) outranks what a cast taught us; unknown is null, never a guess.
+function lullVerdictFor(targetName, zoneId) {
+  if (_pacifyImmuneKnown(targetName) === true) return { verdict: 'immune' };
+  const u = _lullUnaffected.get(_mobInfoCacheKey(targetName, zoneId));
+  return u ? { verdict: 'unaffected', spell: u.spell, caster_level: u.caster_level, at_ms: u.at_ms } : null;
+}
 
 // ── Self-cast capture ────────────────────────────────────────────────────────
 // Every "You begin casting X." — no allowlist. Several pipelines depend on that
@@ -45062,6 +45132,10 @@ function buildMobInfo() {
     // AAs — from your own character, their Mimic, or a disc you saw them start.
     // Null for NPCs and when nothing is known (_targetPlayerTimers).
     target_timers:  _targetPlayerTimers(st, cached, Date.now()),
+    // Lull line on this mob: { verdict: 'immune' } (ability 31) / { verdict:
+    // 'unaffected', spell, caster_level, at_ms } (learned from the server's
+    // message) / null (unknown — the overlay draws nothing).
+    target_lull:    lullVerdictFor(st.target_name, myZoneId),
   };
 }
 
@@ -50331,6 +50405,8 @@ async function main() {
           // landing line exists, so an interrupt/fizzle/resist is the only
           // chance to take the timer back before someone trusts it.
           notePacifyMiss(line, b.character);
+          // "Your target looks unaffected." after a lull cast: same timer, taken back.
+          noteLullUnaffected(line, b.character);
           // A CURE that fizzles/gets interrupted never landed — void the cure
           // the relay above just registered, so the bot doesn't retire a
           // debuff the raider is still carrying.
