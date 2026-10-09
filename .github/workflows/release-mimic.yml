@@ -263,23 +263,26 @@ jobs:
             apps/mimic/dist/*.blockmap
 
       # ── Alpha (trigger 4): replace the rolling release's files in place ──
-      # Old files go first, so the release only ever holds this build (an alpha
-      # install fetches alpha.yml and the exe it names from the same place).
+      # New files go up FIRST and the previous build's are removed only after
+      # (the last step). It used to be the other way round: on 2026-10-08 the
+      # tag push below hit a network reset after the old files were deleted,
+      # the job stopped, and the release was left with no alpha.yml, so every
+      # alpha install failed with "Cannot find channel alpha.yml" (the guild
+      # lead: "it looks like joining alpha is broken"). The tag push now
+      # retries; whatever fails, the previous build stays downloadable.
       # The tag moves to this build's commit so the release page says what it is.
-      - name: Alpha — clear the rolling release
+      - name: Alpha — move the tag
         if: steps.tag.outputs.build == 'true' && steps.tag.outputs.alpha == 'true'
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          if gh release view mimic-alpha >/dev/null 2>&1; then
-            for a in $(gh release view mimic-alpha --json assets --jq '.assets[].name'); do
-              gh release delete-asset mimic-alpha "$a" -y
-            done
-          fi
           git tag -f mimic-alpha "${{ github.sha }}"
-          git push -f origin refs/tags/mimic-alpha
+          ok=0
+          for wait in 2 4 8 16 0; do
+            if git push -f origin refs/tags/mimic-alpha; then ok=1; break; fi
+            [ "$wait" -gt 0 ] && { echo "tag push failed, retrying in ${wait}s"; sleep "$wait"; }
+          done
+          [ "$ok" = 1 ] || { echo "tag push failed 5 times"; exit 1; }
           # electron-builder writes only latest.yml under the github publish
           # provider, whatever the version says (the beta releases carry only
           # latest.yml too; beta installs fall back to it). An alpha install
@@ -301,3 +304,21 @@ jobs:
             apps/mimic/dist/Wolf-Pack-Mimic-Setup-*.exe
             apps/mimic/dist/alpha.yml
             apps/mimic/dist/*.blockmap
+
+      # Only now that this build's files are up: drop every file that is not one
+      # of them (the previous build's installer and blockmap). alpha.yml has the
+      # same name each build, so the upload above already replaced it.
+      - name: Alpha — drop the previous build's files
+        if: steps.tag.outputs.build == 'true' && steps.tag.outputs.alpha == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          keep=" $( (cd apps/mimic/dist && ls -1 Wolf-Pack-Mimic-Setup-*.exe alpha.yml *.blockmap 2>/dev/null || true) | tr "\n" " ") "
+          echo "keeping:$keep"
+          # Never empty the release: without this build's alpha.yml in hand, delete nothing.
+          case "$keep" in *" alpha.yml "*) ;; *) echo "alpha.yml not found locally; leaving every file in place"; exit 0;; esac
+          for a in $(gh release view mimic-alpha --json assets --jq '.assets[].name'); do
+            case "$keep" in *" $a "*) ;; *) gh release delete-asset mimic-alpha "$a" -y || echo "could not delete $a (left in place)";; esac
+          done
