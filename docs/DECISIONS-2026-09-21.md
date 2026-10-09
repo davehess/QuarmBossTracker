@@ -8548,7 +8548,7 @@ Daybreak's and this being a fan site; use the language from WolfPack.quest."* Bu
   cases that replace the `?v=b|c` ones), `test/anon-feedback-surface.test.js`. Still open: the clips, DNS, and the guild lead
   saying when `[beta]` can come off.
 
-### 210. Charm-pet gear is not loot (2026-10-09, bot · web [beta], migration `20261009030000`, NOT applied)
+### 210. Charm-pet gear is not loot (2026-10-09, bot · web [beta], migration `20261009030000`, applied 2026-10-09)
 **The ask** (the guild lead, 2026-10-09, looking at `/admin/loot` "By character"): *"when someone gives their charm pet items,
 they should not be counted as loot. Silver Jacinth ring has negative MR for charming, similar to Rusty Spiked Shoulderpads,
 Adamantium ring, or other pet weapons or haste items."* A charmer loots an item and hands it to the charmed pet; gear with
@@ -8576,3 +8576,34 @@ is not a keep-for-self drop.
   looted); only the totals drop them. Web: one sentence under the `/admin/loot` description so the exclusion is never a mystery.
 - Tests: `test/loot-pet-gear.test.js` (migration text, the JS definition, the panel body end to end; mutation-checked),
   `test/night-loot-value.test.js` (value shape gained `pet_gear`).
+
+### 211. Gear a charmer loots back off their own pet's corpse is not loot (2026-10-09, bot half; agent half on `beta`; migration `20261009050000`, applied 2026-10-09)
+**The ask** (the guild lead, 2026-10-09): *"anything a charmer gives to their pet (and we have the spawn ID) and they loot is not
+counted as loot. It was already theirs."* A charmer hands gear to a charmed pet, the pet dies, the charmer loots the gear back
+off its corpse, and the log's `--You have looted <item>.--` line was stored as ordinary loot.
+- **The call (design "D").** The charmer's OWN agent remembers its pet's spawn id while the pet is alive and sets
+  `from_own_pet: true` on the looted event only when the looter's current Zeal target is that same id, in the same zone, the
+  record is fresh, and the target's name ends in "'s corpse" (conditions and tests on the agent branch). The bot stores the flag;
+  it never infers one. Charm-pet gear by stat (§210) is a separate rule and still applies to everything else.
+- **Accepted limits.** (1) No log line exists when an item is handed to a pet, so nothing marks the hand-over itself.
+  (2) It needs Zeal 1.4.6 or newer with a known pet id; about half the fleet is on it, and without an id the line simply is not
+  flagged (a missed flag counts as loot, as before). (3) The loot target must still be the corpse when the line is written;
+  that is UNTESTED (STATUS: needs a local session), and if it fails the feature flags nothing, never something wrong. (4) Only
+  the charmer's own agent can flag it; another raider's agent that saw the same line cannot (it is self-only in EQ anyway).
+  (5) The raid-screen feed (`/api/screen/feed`) and the Discord rolled-loot card still read `looted_items` unfiltered; only
+  the Mimic Loot tab and `/admin/loot` were asked for.
+- **Where it landed.** `looted_items.from_own_pet boolean not null default false`. `loot_value_rows` gained
+  `and not li.from_own_pet` in its first CTE and kept §210's charm-pet-gear CTE and anti-join; `loot_value_grouped` and
+  `loot_value_by_looter_v3` inherit it. Same signature, `CREATE OR REPLACE`, no DROP.
+- **True is sticky, by construction.** `_handleAgentLooted` accepts only the boolean `true` and writes the key ONLY on a flagged
+  row (two upserts per batch: the flagged rows, then the rest; a PostgREST bulk body fills a key one row omits with NULL).
+  A merge-duplicates upsert updates just the columns in the body, so a re-send without the flag (older agent, restart that
+  lost the pet record) leaves a true alone, and a re-send with it upgrades a false. The same line twice in one batch keeps the flag.
+  Undoing one is a direct UPDATE. If the flagged body fails (the migration is not applied yet) the rows are stored again
+  without the key, i.e. as ordinary loot, never dropped.
+- **Mimic Loot tab.** `_nightLootPanelBody` reads `from_own_pet` and, if that read answers null (no column yet), re-reads
+  without it. Own-pet rows leave the "who looted what" list, the roll attribution and the per-looter value (unlike charm-pet gear,
+  which the list keeps), and `buildLootValue` reports them as `own_pet_items`, like `pet_gear_items`. Web: the one `/admin/loot`
+  sentence about charm-pet gear also says this.
+- Tests: `test/loot-own-pet-bot.test.js` (migration text, strict-boolean ingest, sticky/mixed-batch/column-missing behaviour,
+  totals and list, the absent-column read; mutation-checked).
