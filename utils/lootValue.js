@@ -117,14 +117,17 @@ function isPetGear(itemName, v, petGearNames) {
 
 // Totals over every looted row in the window (NOT just the displayed newest N). A row counts the same
 // way buildNightLootPanel counts it, except charm-pet gear, which is left out of the totals (`pet_gear_items`
-// says how many rows that was) while the list keeps showing it.
+// says how many rows that was) while the list keeps showing it, and a row flagged `from_own_pet` (looted back off
+// the looter's own pet's corpse, the guild lead, 2026-10-09), which is not loot at all: out of the totals AND the
+// list (`own_pet_items` counts them; the panel body removes them before the list is built).
 function buildLootValue(lootedRows, values, { nowMs = Date.now(), windowMs, petGearNames = null }) {
   const since = nowMs - windowMs;
   const by = new Map();
-  let total = 0, priced = 0, unpriced = 0, petGear = 0;
+  let total = 0, priced = 0, unpriced = 0, petGear = 0, ownPet = 0;
   for (const l of (Array.isArray(lootedRows) ? lootedRows : [])) {
     const ms = l?.looted_at ? Date.parse(l.looted_at) : NaN;
     if (!Number.isFinite(ms) || ms < since || !l?.looter_character || !l?.item_name) continue;
+    if (l.from_own_pet === true) { ownPet++; continue; }   // looted back off the looter's own pet's corpse: already theirs
     const v = values.get(String(l.item_name)) || null;
     if (isPetGear(l.item_name, v, petGearNames)) { petGear++; continue; }
     const key = String(l.looter_character).toLowerCase();
@@ -137,7 +140,7 @@ function buildLootValue(lootedRows, values, { nowMs = Date.now(), windowMs, petG
   const totals = [...by.values()]
     .sort((a, b) => b.value_cp - a.value_cp || b.items - a.items || a.looter.localeCompare(b.looter))
     .slice(0, TOTALS_CAP);
-  return { totals, total_value_cp: total, priced_items: priced, unpriced_items: unpriced, pet_gear_items: petGear };
+  return { totals, total_value_cp: total, priced_items: priced, unpriced_items: unpriced, pet_gear_items: petGear, own_pet_items: ownPet };
 }
 
 function _resetPriceCache() { _cache.clear(); }

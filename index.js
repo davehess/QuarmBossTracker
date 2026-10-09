@@ -7225,14 +7225,20 @@ async function _nightLootPanelBody(supabase, guildId, nowMs = Date.now(), hours 
   // Paged, newest first: a 12h window on a busy loot night holds more than the `limit=400` / `limit=500`
   // these were (1,021 roll sets and 1,070 looted rows in the 12h to 2026-10-03 03:30 UTC), and a cut
   // drops the OLDEST rows of the night.
-  const [rollRows, lootedRows] = await Promise.all([
+  // `from_own_pet` (gear looted back off the looter's own charm pet's corpse) is asked for first and dropped from the
+  // select when the read answers null (the column is not there yet): the panel must never go down for it.
+  const lootedSel = (cols) => supabase.selectAllPaged('looted_items',
+    `guild_id=eq.${g}&looted_at=gte.${slackIso}&select=${cols}`, 'looted_at.desc,id');
+  const [rollRows, lootedAll] = await Promise.all([
     supabase.selectAllPaged('roll_sets',
       `guild_id=eq.${g}&started_at=gte.${sinceIso}`
       + `&select=roll_from,roll_to,item,qty,zone,rolls,started_at,last_at`, 'started_at.desc,id'),
-    supabase.selectAllPaged('looted_items',
-      `guild_id=eq.${g}&looted_at=gte.${slackIso}`
-      + `&select=looter_character,item_name,zone,looted_at`, 'looted_at.desc,id'),
+    lootedSel('looter_character,item_name,zone,looted_at,from_own_pet'),
   ]);
+  const lootedFull = Array.isArray(lootedAll) ? lootedAll : await lootedSel('looter_character,item_name,zone,looted_at');
+  // Own-pet loot is not loot at all (the guild lead, 2026-10-09: "It was already theirs"): out of the list, the roll
+  // attribution and the value (buildLootValue counts it in own_pet_items), unlike charm-pet gear, which the list keeps.
+  const lootedRows = Array.isArray(lootedFull) ? lootedFull.filter(l => l?.from_own_pet !== true) : lootedFull;
   // supabase.select / selectAllPaged answer null on ANY failure (timeout, breaker, 4xx/5xx), and
   // a null is not an empty night — throw so the 60s cache never holds a hollow
   // panel and the agent sees an error instead of "nobody looted anything".
@@ -7247,7 +7253,7 @@ async function _nightLootPanelBody(supabase, guildId, nowMs = Date.now(), hours 
     lookupItemValues(supabase, lootedRows.map(l => l?.item_name).filter(Boolean), { nowMs }),
     loadPetGearNames(supabase),     // charm-pet gear is left out of the totals (fails open to the mr < 0 rule)
   ]);
-  const money = buildLootValue(lootedRows, values, { nowMs, windowMs, petGearNames });
+  const money = buildLootValue(lootedFull, values, { nowMs, windowMs, petGearNames });   // the unfiltered rows: it counts own_pet_items
   return {
     ...panel,
     loot_total: wide.loot_total,
@@ -19259,7 +19265,7 @@ async function _handleAgentLooted(req, res) {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const nowIso  = new Date().toISOString();
   const rows = [];
-  const seen = new Set();   // in-batch de-dup on the same conflict key
+  const seen = new Map();   // in-batch de-dup on the same conflict key
   for (const e of events.slice(0, 500)) {
     const item   = e?.item ? String(e.item).trim().slice(0, 64) : '';
     const looter = e?.looter ? String(e.looter).trim().slice(0, 32) : '';
@@ -19268,8 +19274,12 @@ async function _handleAgentLooted(req, res) {
     const looterLower = looter.toLowerCase();
     const atIso = at.toISOString();
     const key = `${looterLower}|${item}|${atIso}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    // `from_own_pet` (the guild lead, 2026-10-09: gear a charmer loots back off their own pet's corpse is not loot) is
+    // honoured only as the boolean true. The key is written ONLY on a flagged row, so an unflagged re-send leaves an
+    // existing true alone (merge-duplicates updates just the columns in the body) and a bot that deploys before the
+    // column exists still stores every ordinary line.
+    const fromOwnPet = e?.from_own_pet === true;
+    if (seen.has(key)) { if (fromOwnPet) seen.get(key).from_own_pet = true; continue; }
     rows.push({
       guild_id:               guildId,
       looter_character:       looter,
@@ -19280,11 +19290,21 @@ async function _handleAgentLooted(req, res) {
       uploaded_by_discord_id: identity.discord_id,
       source:                 'local_agent_v1',
       created_at:             nowIso,
+      ...(fromOwnPet ? { from_own_pet: true } : {}),
     });
+    seen.set(key, rows[rows.length - 1]);
   }
   if (rows.length === 0) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: 0 })); }
   try {
-    await supabase.upsert('looted_items', rows, 'guild_id,looter_lower,item_name,looted_at');
+    // Two upserts, never one mixed batch: PostgREST fills a key one row omits with NULL for the whole bulk body.
+    const ownPet = rows.filter(r => r.from_own_pet === true);
+    const plain  = rows.filter(r => r.from_own_pet !== true);
+    if (plain.length)  await supabase.upsert('looted_items', plain, 'guild_id,looter_lower,item_name,looted_at');
+    // supabase.upsert answers null on ANY failure. A flagged body fails alone when the column is not there yet, so those
+    // rows are stored once more without the key: they count as ordinary loot (how it was before the flag), never lost.
+    if (ownPet.length && !(await supabase.upsert('looted_items', ownPet, 'guild_id,looter_lower,item_name,looted_at'))) {
+      await supabase.upsert('looted_items', ownPet.map(({ from_own_pet, ...r }) => r), 'guild_id,looter_lower,item_name,looted_at');
+    }
     res.writeHead(200);
     res.end(JSON.stringify({ ok: true, stored: rows.length }));
     // A looted line resolves "who actually took it" on the event thread's roll

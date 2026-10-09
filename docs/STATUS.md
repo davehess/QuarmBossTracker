@@ -749,6 +749,13 @@ next touch one rather than assuming a missing row means a missing doc.
   `loot_pet_gear_names` (ships empty) leave `/admin/loot` and the Mimic Loot tab's per-looter totals; the Mimic list still
   shows them. ⏳ Apply the migration, then route bot + web to `main`. ⏳ The guild lead: veto the 9 extra rows (the mr 0
   Silver Jacinth ring, three -5 pieces) and name the pet weapons and haste items to add. DECISIONS §210.
+- **🧪 Gear a charmer loots back off their own pet's corpse is not loot (bot half, built on `claude/loot-own-pet-bot`,
+  2026-10-09; migration `20261009050000` NOT applied).** `looted_items.from_own_pet` (default false, written only when true so a
+  re-send never flips it back); `/admin/loot` (`loot_value_rows`) and the Mimic Loot tab's list, roll attribution and totals leave
+  those rows out, counted in `own_pet_items`. The agent half rides `beta` (`claude/loot-own-pet-agent`) and only flags when the
+  looter's Zeal is 1.4.6+ with a known pet id. ⏳ Apply the migration before or with the bot deploy (before it, an unflagged line
+  stores as always and a flagged one is stored once more without the flag, so it counts as ordinary loot, never lost), then
+  route bot + web to `main` and the agent to `beta`. DECISIONS §211.
 - **✅ Officer page `/admin/loot` [beta] — loot by value (web 1.8.120 main, 2026-10-08; paged in 1.8.122).** Note
   that the looter is not always the owner; window, per-character totals; one row per looter + item (count, each,
   row total), 50 a page, sorted on the server; DKP items listed but left out of totals (`loot_value_grouped` +
@@ -1234,6 +1241,14 @@ next touch one rather than assuming a missing row means a missing doc.
   the matching PDB from the fork's Actions run #1 artifact `zeal_test-all_0a2e25d`, and name the function at
   `eqgame.exe 0x00520EFF`. Answer wanted: is `Zeal.asi` (`handle_entity_destructor`, tag-picture texture release) on
   the crashing thread? If yes, make the destructor pointer-only.
+- **⚠ Needs a local session — one real pet-corpse loot, from the log AND the Zeal pipe (2026-10-09, §211).**
+  The own-pet loot flag assumes the looter's Zeal `target_id` still points at the pet's corpse when the
+  `--You have looted <item>.--` line is written; nobody has seen that. Wanted, from a Zeal 1.4.6+ client with a charmed
+  pet: (1) charm a mob, note its spawn id (`pet_id` on the pipe), let it die, target the corpse and loot one item off it;
+  (2) from the pipe capture, the target `name` text at the moment of the loot (believed `<pet name>'s corpse`, confirm,
+  do not assume) and whether `target_id` still equals the pet's alive id after the loot, the corpse window closing and a
+  second loot; (3) from the log, the exact `looted` line and its timestamp against the capture. If `target_id` clears on
+  loot, the flag never fires and §211's design needs a different anchor.
 - **⚠ Needs a local session — how the Quarm client records windowed vs full screen (2026-09-29).**
   Mimic should know whether EverQuest runs exclusive full screen, so it can warn when an overlay sits on
   EQ's own screen (overlays generally cannot draw over exclusive full screen) and skip the screen-change
