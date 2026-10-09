@@ -185,7 +185,7 @@
   /* sight chips — "invis will not hide you". Amber rather than the red warn
      tone: it defeats a PLAN (a pull, a corpse run), it is not something the mob
      does to you in a fight, and the two must stay tellable apart at a glance. */
-  .spec .chip.sight{background:#3d2f1d;color:#ffd9a0;border-color:#5a4522}
+  .spec .chip.sight, .spec .chip.lullno{background:#3d2f1d;color:#ffd9a0;border-color:#5a4522}
   #empty{color:rgba(255,255,255,0.5);font-size:12px;text-shadow:0 1px 2px #000;padding:4px 0}
   /* drag/lock/setup chrome — same pattern as the other overlays. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
@@ -591,6 +591,17 @@
     if (mob.see_improved_hide) add('Sees Improved Hide', 'Shroud of Stealth will not hide a rogue from this mob.');
     else if (mob.see_hide)     add('Sees Hide', 'Hide will not hide a rogue from this mob.');
     return out.join('');
+  }
+  // The lull line on this mob (agent: mobInfo.target_lull). Only what a cast taught us gets a
+  // chip here — ability 31 already reads "Immune Pacify" off mob.specials, and unknown draws
+  // nothing. The time lives in the tooltip so the section stays byte-stable between polls.
+  function lullChip(lull){
+    if (!lull || lull.verdict !== 'unaffected') return '';
+    var t = new Date(lull.at_ms), pad = function(n){ return (n < 10 ? '0' : '') + n; };
+    var at = pad(t.getHours()) + ':' + pad(t.getMinutes()) + ':' + pad(t.getSeconds());
+    var tip = 'Your ' + (lull.spell || 'lull') + (lull.caster_level ? ' (cast at level ' + lull.caster_level + ')' : '')
+            + " did nothing on this mob ('Your target looks unaffected.' at " + at + '): too high a level for that spell, or immune. Try a stronger lull.';
+    return '<span class="chip lullno" title="'+esc(tip)+'">Pacify: unaffected</span>';
   }
 
   // ── DOM handles + tab state ─────────────────────────────────────────────────
@@ -1345,7 +1356,7 @@
         res = '<div class="res">'+res+'</div>';
       }
       var spec = '';
-      var chips = sightChips(mob);          // before the specials: asked before the pull
+      var chips = sightChips(mob) + lullChip(mi.target_lull);   // before the specials: asked before the pull
       if (mob && Array.isArray(mob.specials) && mob.specials.length){
         for (var j=0;j<mob.specials.length;j++){ var lab=mob.specials[j]; chips += '<span class="'+specClass(lab)+'">'+esc(lab)+'</span>'; }
       }
