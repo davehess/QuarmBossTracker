@@ -103,6 +103,15 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 /pop: class filter + column sort on "PoP spells still need" (web, beta, 2026-10-09; the guild lead: "add sorting
+  and filtering to the pop spells section by class"; preview https://b.wolfpack.quest/pop).** Chips for every class
+  in the rows ("Enchanter 4", "All" clears; several can be on at once) filter BOTH tables, the main one and the
+  no-level fold; every column header (character, class, level, the three turn-ins, Other, Total) sorts, with
+  `aria-sort` and an arrow. Default stays highest level first, ties by name. Server-side links with no new client JS:
+  `?pclass=enc,wiz` `?psort=<column>` `?pdir=asc|desc`, all validated against whitelists and carried by every
+  scope/view/zone link. A line under the heading ("Showing Enchanter · sorted by Total ▲ · clear") appears only when
+  one is active; an empty filter reads "No Enchanter is missing a PoP spell". Pure helpers in
+  `web/lib/popSpellsView.ts`, tested by `test/pop-spells-filter.test.js`. An existing page, so beta only until picked.
 - **🧪 Charm tracker: re-casting a charm that is still running now resets its timer (agent, beta, 2026-10-09; the guild
   lead: "fix the charm re-cast timer bug").** The recast branch asked for `pcSpell.dur || pcSpell.cls`, but the staged
   cast carries `charm_class` / `duration_sec`, so the check never passed and the overlay kept counting from the first

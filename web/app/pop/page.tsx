@@ -43,6 +43,10 @@
 // ?all=1 — My Characters and the spell-needs table leave out Traders, characters under level 46 and
 // characters their owner hid, and fold the ones with no known level into a collapsed area
 // (web/lib/listableChars.ts); this shows all of them inline again. Not a scope: it composes with ?scope and ?view.
+//
+// ?pclass=enc,wiz · ?psort=<column> · ?pdir=asc|desc — the spell-needs table's class filter and column sort
+// (the guild lead, 2026-10-09). Server-side, validated against whitelists in web/lib/popSpellsView.ts, carried by
+// every hrefFor link; unset = every class, highest level first.
 
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
@@ -59,6 +63,10 @@ import {
 import { loadLootSightings, type LootRow } from '@/lib/popLootRows';
 import { SELF_TICK_KEYS, SELF_TICK_TITLE, gateState, proofFor, selfFlagsFromTicks } from '@/lib/popSelfFlags';
 import { POP_TURN_INS, POP_TURN_IN_ORDER, type TurnInKey } from '@/lib/popSpells';
+import {
+  ariaSortFor, classCounts, emptyFilteredText, filterNeeds, nextSort, parsePopSpellView, sortLabel, sortNeeds,
+  toggleClass, viewParams, type SortKey,
+} from '@/lib/popSpellsView';
 import { ownedCharacters } from '@/lib/ownedCharacters';
 import { LIST_MIN_LEVEL, loadHiddenNames, loadLevels, loadTraderNames, partitionTiers } from '@/lib/listableChars';
 import { popRoster, RAIDER_RANKS, RAID_ALT_RANKS, POP_MIN_LEVEL } from '@/lib/popRoster';
@@ -134,9 +142,9 @@ const KIND_ICONS: Record<string, string> = {
 };
 
 export default async function PopFlagsPage(
-  { searchParams }: { searchParams: Promise<{ zone?: string; view?: string; scope?: string; v?: string; demo?: string; all?: string }> },
+  { searchParams }: { searchParams: Promise<{ zone?: string; view?: string; scope?: string; v?: string; demo?: string; all?: string; pclass?: string; psort?: string; pdir?: string }> },
 ) {
-  const { zone: zoneKey, view, scope: scopeParam, v, demo, all: allParam } = await searchParams;
+  const { zone: zoneKey, view, scope: scopeParam, v, demo, all: allParam, pclass: pclassParam, psort: psortParam, pdir: pdirParam } = await searchParams;
   const showAll = allParam === '1';
   const scope: 'mains' | 'all' = scopeParam === 'all' ? 'all' : 'mains';
   const { data: { user } } = await supabaseServer().auth.getUser();
@@ -193,6 +201,13 @@ export default async function PopFlagsPage(
   const scopedSpellNeeds = scope === 'all' ? spellNeeds : spellNeeds.filter(n => n.isMain);
   const unknownNeeds = showAll ? [] : needPart.unknown;
   const scopedUnknownNeeds = scope === 'all' ? unknownNeeds : unknownNeeds.filter(n => n.isMain);
+  // The spell table's class filter and column sort (?pclass / ?psort / ?pdir), applied to BOTH tables. The chips
+  // list the classes in the rows as scoped, before the filter, so a picked class never hides its own siblings.
+  const classChips = classCounts([...scopedSpellNeeds, ...scopedUnknownNeeds]);
+  const presentClasses = classChips.map(c => c.key);
+  const spellView = parsePopSpellView({ pclass: pclassParam, psort: psortParam, pdir: pdirParam }, presentClasses);
+  const shownSpellNeeds = sortNeeds(filterNeeds(scopedSpellNeeds, spellView.classes), spellView.sort, spellView.dir);
+  const shownUnknownNeeds = sortNeeds(filterNeeds(scopedUnknownNeeds, spellView.classes), spellView.sort, spellView.dir);
 
   // My Characters' own spell-needs slice (main + alt, scope-independent) and
   // which of those characters have a spellbook on file at all — lets the
@@ -487,9 +502,15 @@ export default async function PopFlagsPage(
   // Nav + scope-toggle links. Every link preserves the OTHER dimension it
   // doesn't explicitly change — flipping scope while looking at a zone stays
   // on that zone; switching Chart/Matrix keeps whichever scope is set.
-  function hrefFor(overrides: { view?: string | null; zone?: string | null; scope?: string | null; all?: string | null }) {
+  // The spell table's class filter + sort (pclass/psort/pdir) ride along on every link, so scope, view and
+  // zone changes keep them; they are validated above, so these are the page's own values, never raw input.
+  function hrefFor(overrides: {
+    view?: string | null; zone?: string | null; scope?: string | null; all?: string | null;
+    pclass?: string | null; psort?: string | null; pdir?: string | null;
+  }) {
     const next = {
       view: view ?? null, zone: zoneKey ?? null, scope: scope === 'all' ? 'all' : null, all: showAll ? '1' : null,
+      ...viewParams(spellView),
       ...overrides,
     };
     const params = new URLSearchParams();
@@ -497,9 +518,18 @@ export default async function PopFlagsPage(
     if (next.view) params.set('view', next.view);
     if (next.scope) params.set('scope', next.scope);
     if (next.all) params.set('all', next.all);
+    if (next.pclass) params.set('pclass', next.pclass);
+    if (next.psort) params.set('psort', next.psort);
+    if (next.pdir) params.set('pdir', next.pdir);
     const qs = params.toString();
     return '/pop' + (qs ? `?${qs}` : '');
   }
+  // The filter chips and the column headers: same params, and back to the spell table rather than the page top.
+  const spellsHref = (o: { pclass?: string | null; psort?: string | null; pdir?: string | null }) => `${hrefFor(o)}#pop-spells`;
+  const sortHref = (key: SortKey) => {
+    const n = nextSort(spellView, key);
+    return spellsHref({ psort: n.key, pdir: n.dir });
+  };
   const navCls = (active: boolean) =>
     `px-2 py-0.5 rounded border ${active ? 'border-gold text-gold' : 'border-border hover:text-text'}`;
 
@@ -698,25 +728,33 @@ export default async function PopFlagsPage(
   }
 
   // The spell-needs table, once for the listed characters and once inside the "no known level" fold.
+  // A sortable column header: a link (works without JS) with the arrow of the current direction, and aria-sort.
+  function SortTh({ k, className, title }: { k: SortKey; className: string; title?: string }) {
+    const active = spellView.sort === k;
+    return (
+      <th className={className} title={title} aria-sort={ariaSortFor(spellView, k)}>
+        <Link href={sortHref(k)} className={`inline-flex items-center gap-1 py-2 hover:text-text ${active ? 'text-gold' : ''}`}>
+          {sortLabel(k)}
+          <span aria-hidden="true" className={active ? '' : 'text-dim/50'}>{active ? (spellView.dir === 'asc' ? '▲' : '▼') : '↕'}</span>
+        </Link>
+      </th>
+    );
+  }
   function NeedsTable({ rows }: { rows: NeedByChar[] }) {
     return (
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-dim text-xs text-left">
-              <th className="py-1 pr-3">Character</th>
-              <th className="py-1 pr-3">Class</th>
-              <th className="py-1 pr-3 text-right">Level</th>
+              <SortTh k="name" className="pr-3" />
+              <SortTh k="class" className="pr-3" />
+              <SortTh k="level" className="pr-3 text-right" />
               {POP_TURN_IN_ORDER.map(k => (
-                <th key={k} className="py-1 pr-3 text-right" title={POP_TURN_INS[k].blurb}>
-                  {POP_TURN_INS[k].item.replace(' Parchment', '').replace('Glyphed Rune Word', 'Rune Word')}
-                </th>
+                <SortTh key={k} k={k} className="pr-3 text-right" title={POP_TURN_INS[k].blurb} />
               ))}
-              <th className="py-1 pr-3 text-right"
-                  title="Needed, but not awarded by this class's parchment turn-ins — research spells, or another class's tradeable scroll (e.g. necro Destroy Undead rides a cleric 64 scroll).">
-                Other
-              </th>
-              <th className="py-1 pr-3 text-right">Total</th>
+              <SortTh k="other" className="pr-3 text-right"
+                      title="Needed, but not awarded by this class's parchment turn-ins — research spells, or another class's tradeable scroll (e.g. necro Destroy Undead rides a cleric 64 scroll)." />
+              <SortTh k="total" className="pr-3 text-right" />
             </tr>
           </thead>
           <tbody className="divide-y divide-border/50">
@@ -1114,7 +1152,7 @@ export default async function PopFlagsPage(
       )}
 
       {/* ── PoP spells [scope] still need ─────────────────────────────────── */}
-      <section className="bg-panel border border-border rounded-lg p-4">
+      <section id="pop-spells" className="bg-panel border border-border rounded-lg p-4 scroll-mt-4">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
             <h2 className="text-lg text-gold mb-1">
@@ -1153,21 +1191,54 @@ export default async function PopFlagsPage(
           ))}
         </div>
 
-        {scopedSpellNeeds.length === 0 ? (
+        {/* Class filter: links, so it works without JS and a filtered view can be shared. Picking a class toggles it
+            (several can be on at once); "All" clears. Tap targets are 44px. */}
+        {classChips.length > 1 && (
+          <nav aria-label="Filter by class" className="mt-3 flex flex-wrap gap-2 text-xs">
+            <Link href={spellsHref({ pclass: null })} aria-current={spellView.filtered ? undefined : 'true'}
+                  className={`inline-flex items-center min-h-[44px] px-3 ${navCls(!spellView.filtered)}`}>
+              All
+            </Link>
+            {classChips.map(c => {
+              const on = spellView.classes.includes(c.key);
+              const picked = toggleClass(spellView, c.key, presentClasses);
+              return (
+                <Link key={c.key} href={spellsHref({ pclass: picked.length ? picked.join(',') : null })}
+                      aria-current={on ? 'true' : undefined}
+                      className={`inline-flex items-center min-h-[44px] px-3 ${navCls(on)}`}>
+                  {c.label} <span className="ml-1 text-dim">{c.count}</span>
+                </Link>
+              );
+            })}
+          </nav>
+        )}
+        {(spellView.filtered || spellView.sorted) && (
+          <p className="text-xs text-dim mt-2">
+            Showing {spellView.filtered ? classChips.filter(c => spellView.classes.includes(c.key)).map(c => c.label).join(', ') : 'all classes'}
+            {spellView.sorted && <> · sorted by {sortLabel(spellView.sort)} {spellView.dir === 'asc' ? '▲' : '▼'}</>}
+            {' · '}
+            <Link href={spellsHref({ pclass: null, psort: null, pdir: null })} className="underline hover:text-text">clear</Link>
+          </p>
+        )}
+
+        {shownSpellNeeds.length === 0 ? (
           <p className="text-sm text-dim mt-3">
-            Nobody with a submitted spellbook is missing a PoP spell yet — or no spellbooks have been submitted.
+            {spellView.filtered
+              ? `${emptyFilteredText(classChips.filter(c => spellView.classes.includes(c.key)).map(c => c.label))}${shownUnknownNeeds.length ? ' with a known level' : ''}.`
+              : 'Nobody with a submitted spellbook is missing a PoP spell yet — or no spellbooks have been submitted.'}
           </p>
         ) : (
           <div className="mt-3">
-            <NeedsTable rows={scopedSpellNeeds} />
+            <NeedsTable rows={shownSpellNeeds} />
             <p className="text-[11px] text-dim mt-2">
               Hover a count to see the exact spells. <b>Other</b> = needed but not in this class&apos;s turn-in
-              lists (research, or another class&apos;s tradeable scroll). Click a name for their full missing-spell list.
+              lists (research, or another class&apos;s tradeable scroll). Click a name for their full missing-spell list;
+              click a column heading to sort by it.
             </p>
           </div>
         )}
-        {scopedUnknownNeeds.length > 0 && (
-          <div className="mt-3">{noLevelFold(scopedUnknownNeeds.length, <NeedsTable rows={scopedUnknownNeeds} />)}</div>
+        {shownUnknownNeeds.length > 0 && (
+          <div className="mt-3">{noLevelFold(shownUnknownNeeds.length, <NeedsTable rows={shownUnknownNeeds} />)}</div>
         )}
       </section>
 
