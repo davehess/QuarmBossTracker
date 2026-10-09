@@ -9,9 +9,16 @@
 // guild lead, 2026-10-08, looking at the admin loot page: "All of these ND items are not actually no drop".
 // Everything this file returns is in plain polarity: `nodrop: true` = NO DROP.
 //
-// Three pieces, all pure or injectable so test/night-loot-value.test.js runs the shipped code:
+// Charm-pet gear is not loot (the guild lead, 2026-10-09: "when someone gives their charm pet items, they
+// should not be counted as loot"). An item NAME is charm-pet gear when ANY eqemu_items row with that name has
+// mr < 0 (charm pets wear negative magic resist on purpose), or its lower-cased name is in the officer table
+// loot_pet_gear_names. The SQL twin is loot_value_rows (migration 20261009030000). The per-looter VALUE totals
+// leave those rows out; the "who looted what" list (buildNightLootPanel) still shows them.
+//
+// Four pieces, all pure or injectable so test/night-loot-value.test.js runs the shipped code:
 //   clampLootHours / lootWindowLabel — the window the panel accepts (12h · 24h · 7d · 30d);
 //   lookupItemValues                 — exact-name price lookup, lowest id wins, 6h memory cache;
+//   loadPetGearNames                 — the officer name list, fail-open (read failure = empty set);
 //   buildLootValue                   — the per-looter totals over EVERY row in the window.
 
 'use strict';
@@ -67,19 +74,21 @@ async function lookupItemValues(supabase, names, { nowMs = Date.now(), cache = _
       let rows = null;
       try {
         rows = await supabase.selectAllPaged('eqemu_items',
-          `name=in.(${encodeURIComponent(chunk.map(quoteInValue).join(','))})&select=id,name,price,nodrop`, 'id');
+          `name=in.(${encodeURIComponent(chunk.map(quoteInValue).join(','))})&select=id,name,price,nodrop,mr`, 'id');
       } catch { rows = null; }
       if (!Array.isArray(rows)) { failed = true; continue; }
       // Duplicate names exist across ids: the lowest id is the base item.
       const best = new Map();
+      const negMr = new Set();      // names with ANY row at mr < 0 (a same-name row at mr 0 does not rescue it)
       for (const r of rows) {
         if (!r || typeof r.name !== 'string') continue;
+        if (r.mr != null && Number(r.mr) < 0) negMr.add(r.name);
         const cur = best.get(r.name);
         if (!cur || r.id < cur.id) best.set(r.name, r);
       }
       for (const name of chunk) {
         const r = best.get(name);
-        const v = r ? { value_cp: Number(r.price) || 0, nodrop: r.nodrop == null ? null : !r.nodrop } : null;   // inverted column: false = NO DROP
+        const v = r ? { value_cp: Number(r.price) || 0, nodrop: r.nodrop == null ? null : !r.nodrop, pet_gear: negMr.has(name) } : null;   // inverted column: false = NO DROP
         out.set(name, v);
         if (cache.size >= PRICE_CACHE_MAX) cache.clear();
         cache.set(name, { at: nowMs, v });
@@ -90,16 +99,34 @@ async function lookupItemValues(supabase, names, { nowMs = Date.now(), cache = _
   return { values: out, failed };
 }
 
+// The officer list of charm-pet gear names, lower-cased. FAIL OPEN: a failed or malformed read yields an empty
+// set (the mr < 0 rule still applies), it never throws and never blocks the panel.
+async function loadPetGearNames(supabase) {
+  try {
+    const rows = await supabase.selectAllPaged('loot_pet_gear_names', 'select=item_name', 'item_name');
+    if (!Array.isArray(rows)) return new Set();
+    return new Set(rows.map(r => r?.item_name).filter(n => typeof n === 'string' && n).map(n => n.toLowerCase()));
+  } catch { return new Set(); }
+}
+
+// Charm-pet gear: any same-name row at mr < 0 (v.pet_gear, set by lookupItemValues) or a name on the officer list.
+function isPetGear(itemName, v, petGearNames) {
+  if (v && v.pet_gear) return true;
+  return !!petGearNames && petGearNames.has(String(itemName).toLowerCase());
+}
+
 // Totals over every looted row in the window (NOT just the displayed newest N). A row counts the same
-// way buildNightLootPanel counts it, so the totals add up to its loot_total.
-function buildLootValue(lootedRows, values, { nowMs = Date.now(), windowMs }) {
+// way buildNightLootPanel counts it, except charm-pet gear, which is left out of the totals (`pet_gear_items`
+// says how many rows that was) while the list keeps showing it.
+function buildLootValue(lootedRows, values, { nowMs = Date.now(), windowMs, petGearNames = null }) {
   const since = nowMs - windowMs;
   const by = new Map();
-  let total = 0, priced = 0, unpriced = 0;
+  let total = 0, priced = 0, unpriced = 0, petGear = 0;
   for (const l of (Array.isArray(lootedRows) ? lootedRows : [])) {
     const ms = l?.looted_at ? Date.parse(l.looted_at) : NaN;
     if (!Number.isFinite(ms) || ms < since || !l?.looter_character || !l?.item_name) continue;
     const v = values.get(String(l.item_name)) || null;
+    if (isPetGear(l.item_name, v, petGearNames)) { petGear++; continue; }
     const key = String(l.looter_character).toLowerCase();
     let t = by.get(key);
     if (!t) { t = { looter: String(l.looter_character), items: 0, value_cp: 0, nodrop_items: 0 }; by.set(key, t); }
@@ -110,9 +137,9 @@ function buildLootValue(lootedRows, values, { nowMs = Date.now(), windowMs }) {
   const totals = [...by.values()]
     .sort((a, b) => b.value_cp - a.value_cp || b.items - a.items || a.looter.localeCompare(b.looter))
     .slice(0, TOTALS_CAP);
-  return { totals, total_value_cp: total, priced_items: priced, unpriced_items: unpriced };
+  return { totals, total_value_cp: total, priced_items: priced, unpriced_items: unpriced, pet_gear_items: petGear };
 }
 
 function _resetPriceCache() { _cache.clear(); }
 
-module.exports = { LOOT_HOURS, clampLootHours, lootWindowLabel, quoteInValue, lookupItemValues, buildLootValue, _resetPriceCache };
+module.exports = { LOOT_HOURS, clampLootHours, lootWindowLabel, quoteInValue, lookupItemValues, loadPetGearNames, isPetGear, buildLootValue, _resetPriceCache };

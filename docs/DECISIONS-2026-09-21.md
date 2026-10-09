@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Charm-pet gear is not loot** (§210) | Built on `claude/loot-pet-gear`: migration `20261009030000` (NOT applied), `utils/lootValue.js`, one sentence on `/admin/loot`. `loot_pet_gear_names` ships empty | a session with Supabase access: apply the migration, then route bot + web to `main`. The guild lead: veto the 9 extra rows (§210) or name the pet weapons and haste items so officers can INSERT them |
 | **Charm sessions record spell + ran_full** (§209) | Built on two local branches: bot (`utils/charmSession.js`, migration `20261009010000`, NOT applied) and agent (beta). Inert until both ship | a session with Supabase access: apply the migration FIRST; then route the bot to `main` and the agent to `beta`. After a week of enchanter raids, read per-spell `ran_full` before touching any charm warning |
 | **Stampede timer follows you into the zone** (§208) | Built on a local branch: bot 3.1.233 (`utils/zoneTimers.js`, bot_kv `zone_timer_windows`) + agent 3.7.115 (`_runLateJoinFire`). Inert until the two stampede rows carry the `zone-timer` tag | the guild lead: route the bot to `main` and the agent to `beta`, then run the tag SQL in §208; a raider zones into Tactics after a stampede and checks both countdowns |
 | **Callouts + Extended Target keep to your raid or group** (§189) | Live: bot 3.1.222 on `main` (2026-10-08 00:36 ET) and stable Mimic 2.7.10 / agent 3.7.106 with the Raid \| Group switch (§190) | the guild lead: try Group while grouped and say if it still shows other groups; the rest of the separation inventory (loot posts, shared alerts, attendance per raid) waits on picks |
@@ -8546,3 +8547,32 @@ Daybreak's and this being a fan site; use the language from WolfPack.quest."* Bu
   entry). Tests: `test/eqmimic-landing.test.js` (order, notice placement, scenario shape, hash helpers, the "query dropped"
   cases that replace the `?v=b|c` ones), `test/anon-feedback-surface.test.js`. Still open: the clips, DNS, and the guild lead
   saying when `[beta]` can come off.
+
+### 210. Charm-pet gear is not loot (2026-10-09, bot · web [beta], migration `20261009030000`, NOT applied)
+**The ask** (the guild lead, 2026-10-09, looking at `/admin/loot` "By character"): *"when someone gives their charm pet items,
+they should not be counted as loot. Silver Jacinth ring has negative MR for charming, similar to Rusty Spiked Shoulderpads,
+Adamantium ring, or other pet weapons or haste items."* A charmer loots an item and hands it to the charmed pet; gear with
+NEGATIVE magic resist is worn by charm pets on purpose (lower MR keeps the charm on longer), so the log's "has looted" line
+is not a keep-for-self drop.
+- **The call.** An item NAME is charm-pet gear when ANY `eqemu_items` row with that exact name has `mr < 0`, OR its
+  lower-cased name is in the new officer table `loot_pet_gear_names` (`item_name` primary key, `note`, `created_at`; RLS on, no
+  anon/authenticated policy, ships EMPTY). Name-based because `looted_items` carries only the item name.
+- **The data** (90 days to 2026-10-09): 7 looted names have `mr < 0`, 152 of 41,447 rows: Adamantite Band (-10, 61x; the
+  "Adamantium ring"), Rusty Spiked Shoulderpads (-10, 61x), Silver Jacinth Wedding Ring (-7 version id 14696; 20x),
+  Gauntlets of Mortality (-5, 4x), Astral Leggings of the Titans (-5, 3x), Astral Cloak of the Titans (-5, 2x), Greenish Metal
+  Shard (-7, 1x).
+- **Known cost of "any row", the guild lead may veto.** The same-name `mr 0` Silver Jacinth Wedding Ring (id 16792) is also left
+  out (the log carries a name, not an id), and the three -5 pieces (Gauntlets of Mortality, Astral Leggings and Cloak of the
+  Titans) are included: 9 rows in 90 days. If those should count, the fix is to key the rule on the lowest-id row only, or to
+  exempt names; say so and it changes.
+- **Not covered yet:** "pet weapons or haste items" were named but not which. They are not detected by any stat; officers (or a
+  session) add them with `INSERT INTO loot_pet_gear_names (item_name, note) VALUES (...)`. Comparison is case-insensitive.
+- **Where it landed.** SQL: `loot_value_rows` leaves those rows out, decided once per DISTINCT name (a `pet` CTE and an
+  anti-join, so the 90-day window keeps the speed of `20261008190000`); same signature, `CREATE OR REPLACE`, no DROP.
+  `loot_value_grouped` and `loot_value_by_looter_v3` read `loot_value_rows`, so both inherit it untouched. Bot: the Mimic Loot
+  tab's per-looter VALUE totals (`utils/lootValue.js`: `lookupItemValues` now selects `mr`, `loadPetGearNames` reads the table
+  and fails OPEN to the `mr` rule alone, `buildLootValue` skips the rows and reports `pet_gear_items`). The Mimic "who looted
+  what" LIST still shows these items (it is built by `buildNightLootPanel`, a different path, and is the record of what was
+  looted); only the totals drop them. Web: one sentence under the `/admin/loot` description so the exclusion is never a mystery.
+- Tests: `test/loot-pet-gear.test.js` (migration text, the JS definition, the panel body end to end; mutation-checked),
+  `test/night-loot-value.test.js` (value shape gained `pet_gear`).

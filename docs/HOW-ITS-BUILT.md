@@ -318,6 +318,9 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
   `#wpNightLoot` above `#wpLootRolls`; fetched through `/api/server/night-loot` by the Loot IIFE on the
   bidding card's gate, every 30 s; "📦 looted by" on a roll set when the looter is not a winner shown.
 - Tests: `test/night-loot-panel.test.js`, `test/night-loot-section.test.js`. DECISIONS-2026-09-21 §139.
+- **Charm-pet gear is not loot (2026-10-09):** the per-looter value totals (`utils/lootValue.js`) and the web `/admin/loot` RPC
+  base (`loot_value_rows`) leave out names with any `eqemu_items` row at `mr < 0` or listed in `loot_pet_gear_names`; the list
+  keeps showing them. Tests: `test/loot-pet-gear.test.js`. DECISIONS-2026-09-21 §210.
 
 ### Character lists leave out traders and characters under 46 (agent 3.7.73 · web on beta, 2026-10-03)
 - `web/lib/listableChars.ts` (`isListable`, `partitionListable`, `loadLevels` via `me_levels`,
