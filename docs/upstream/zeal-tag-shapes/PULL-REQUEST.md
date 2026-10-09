@@ -1,5 +1,9 @@
 # Zeal PR draft — icon shapes, numbered badges, lettered paws and guild marks for `/tag`
 
+> **Current (2026-10-09):** the branch is ONE commit, `c2a5333`, on Zeal v1.4.8 (`50dc9a4`), squashed from the
+> commits named below with the same code; `0001-tag-icon-shapes.patch` is that commit. The hashes below are history.
+> A local checkout: `git fetch origin && git reset --hard origin/tag-shapes`.
+
 *Drafted 2026-09-25 against Zeal v1.4.7 (`e24a3ed`). Branch **`tag-shapes`** on
 the guild lead's fork (github.com/davehess/zeal/tree/tag-shapes, one commit,
 `3c02f65`); the same change is `0001-tag-icon-shapes.patch` here. **Every command to

@@ -1,6 +1,6 @@
-From aa975e1a026e8a479b0a33feeb4f539c49184ccd Mon Sep 17 00:00:00 2001
+From 7f7c824a622ee5cd04f351a4a6d2fcde1755af46 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
-Date: Fri, 25 Sep 2026 17:56:07 +0000
+Date: Fri, 9 Oct 2026 18:08:11 +0000
 Subject: [PATCH] Allow tagging corpses; keep a mob's pre-death tag off its
  corpse
 
@@ -29,23 +29,23 @@ Claude-Session: https://claude.ai/code/session_01Uq6P6RYLtiKKfy5UWjT7AX
  3 files changed, 31 insertions(+), 11 deletions(-)
 
 diff --git a/README.md b/README.md
-index c4bd3a9..4705716 100644
+index 79929a8..bd1e5ce 100644
 --- a/README.md
 +++ b/README.md
-@@ -678,6 +678,8 @@ Manual editing of the ini file is required to copy from old section to the new s
+@@ -684,6 +684,8 @@ Manual editing of the ini file is required to copy from old section to the new s
  - Requires enabling both Nameplates Zeal fonts and tags (`/tag on`)
  - Tagged NPC nameplates use either the dedicated `Tagged` color or if targeted the `Target` color
  - Tagged nameplates have a matching implicit colored arrow added if `Default tag arrow` is set
 +- Corpses (NPC and player) can be tagged too. A corpse shows only tags set on it after the death, so a
 +  kill marker the mob carried does not linger on its corpse
- - Tags can be set with locally or broadcast through rsay, gsay, or a joined chat channel
-   - `/tag <rsay | gsay | chat | local> <tag_text>`
-   - Note: % replacement commands (%t, %n) aren't supported in `<tag_text>`
+ - Tags can be set locally or broadcast to others through rsay, gsay, or a joined chat channel.
+   - The `rsgs` option will broadcast to rsay if in a raid, else gsay if in a group, else to local (self only). 
+   - `/tag <rsay | gsay | rsgs | chat | local> <tag_text>`
 diff --git a/Zeal/nameplate.cpp b/Zeal/nameplate.cpp
-index 030a79f..09d1adc 100644
+index 9825750..ffe4b95 100644
 --- a/Zeal/nameplate.cpp
 +++ b/Zeal/nameplate.cpp
-@@ -387,9 +387,11 @@ void NamePlate::render_ui() {
+@@ -470,9 +470,11 @@ void NamePlate::render_ui() {
      Vec3 position = entity->ActorInfo->DagHeadPoint->Position;
      position.z += get_nameplate_z_offset(*entity);
  
@@ -59,7 +59,7 @@ index 030a79f..09d1adc 100644
      std::string full_text = add_text_tag ? info.tag_text + info.text : info.text;
      if (setting_health_bars.get() && is_hp_updated(entity)) {
        const char healthbar[4] = {'\n', BitmapFontBase::kStatsBarBackground, BitmapFontBase::kHealthBarValue, 0};
-@@ -416,7 +418,7 @@ void NamePlate::render_ui() {
+@@ -499,7 +501,7 @@ void NamePlate::render_ui() {
      if (!full_text.empty()) sprite_font->queue_string(full_text.c_str(), position, true, nameplate_color);
  
      // If an explicit tag color was set, use that color otherwise use the nameplate color.
@@ -68,7 +68,7 @@ index 030a79f..09d1adc 100644
        auto tag_color = (info.tag_color == TagArrowColor::Nameplate) ? nameplate_color : info.tag_color;
        TagArrows::Shape shape = (tag_color == TagArrowColor::Paw)        ? TagArrows::Shape::Paw
                                 : (tag_color == TagArrowColor::StopSign) ? TagArrows::Shape::Octagon
-@@ -559,7 +561,8 @@ bool NamePlate::handle_SetNameSpriteTint(Zeal::GameStructures::Entity *entity) {
+@@ -642,7 +644,8 @@ bool NamePlate::handle_SetNameSpriteTint(Zeal::GameStructures::Entity *entity) {
    bool is_target = (entity == Zeal::Game::get_target());
    bool is_corpse = (entity->Type >= Zeal::GameEnums::NPCCorpse);
    auto it = zeal_fonts ? nameplate_info_map.find(entity) : nameplate_info_map.end();
@@ -78,7 +78,7 @@ index 030a79f..09d1adc 100644
        (it->second.tag_color == TagArrowColor::Off || it->second.tag_color == TagArrowColor::Nameplate) &&
        !setting_tag_disable_tagged_color.get())
      color_index = ColorIndex::Tagged;
-@@ -790,12 +793,18 @@ void NamePlate::clear_tags() {
+@@ -873,12 +876,18 @@ void NamePlate::clear_tags() {
  
  static constexpr int kMaxTagTextLength = 32;
  
@@ -99,7 +99,7 @@ index 030a79f..09d1adc 100644
  
    if (!target->ActorInfo || !target->ActorInfo->ViewActor_ || !target->ActorInfo->DagHeadPoint) return false;
  
-@@ -825,7 +834,8 @@ bool NamePlate::handle_tag_target(const std::string &target_text) {
+@@ -908,7 +917,8 @@ bool NamePlate::handle_tag_target(const std::string &target_text) {
      // SetNameSpriteState_destructor call but adding it out of paranoia against a stale cache.
      Zeal::GameStructures::Entity *current_ent = Zeal::Game::get_entity_list();
      while (current_ent && current_ent != entry.first) current_ent = current_ent->Next;
@@ -109,7 +109,7 @@ index 030a79f..09d1adc 100644
  
      // There's a substring match but do a secondary exact check also.
      auto split = Zeal::String::split_text(tag_text, kDelimiter);
-@@ -1074,6 +1084,13 @@ bool NamePlate::handle_tag_message(const char *message, bool apply, bool allow_m
+@@ -1164,6 +1174,13 @@ bool NamePlate::handle_tag_message(const char *message, bool apply, bool allow_m
  
    if (!apply) return true;
  
@@ -123,7 +123,7 @@ index 030a79f..09d1adc 100644
    // Convert any characters that are not visible ASCII to ?.
    std::string tag_text = split[1];
    for (char &c : tag_text)
-@@ -1097,12 +1114,12 @@ bool NamePlate::handle_tag_message(const char *message, bool apply, bool allow_m
+@@ -1187,12 +1204,12 @@ bool NamePlate::handle_tag_message(const char *message, bool apply, bool allow_m
    if (erase) it->second.tag_text = "";
  
    // The tag arrow is either enabled explicitly with a specific color (which must be disabled explicitly)
@@ -138,7 +138,7 @@ index 030a79f..09d1adc 100644
                           (tag_text.empty() && it->second.tag_text.empty());
      it->second.tag_color = disable_arrow ? TagArrowColor::Off : TagArrowColor::Nameplate;
    }
-@@ -1117,8 +1134,8 @@ bool NamePlate::handle_tag_message(const char *message, bool apply, bool allow_m
+@@ -1207,8 +1224,8 @@ bool NamePlate::handle_tag_message(const char *message, bool apply, bool allow_m
    tag_text = Zeal::String::trim_and_reduce_spaces(tag_text);  // Cleanup leading/trailing/multiple internal spaces.
  
    // If empty now it was a prefix only command which were handled above (append  / flush are no-ops).
@@ -150,10 +150,10 @@ index 030a79f..09d1adc 100644
    if (flush_others_append || flush_others_no_append)
      for (auto &entry : nameplate_info_map) RemoveTagTextField(tag_text, entry.second.tag_text, entry.second.tag_color);
 diff --git a/Zeal/nameplate.h b/Zeal/nameplate.h
-index 7233a6b..b940401 100644
+index bdeca9b..1def80a 100644
 --- a/Zeal/nameplate.h
 +++ b/Zeal/nameplate.h
-@@ -119,6 +119,7 @@ class NamePlate {
+@@ -125,6 +125,7 @@ class NamePlate {
      std::string tag_text;
      DWORD color;
      DWORD tag_color;

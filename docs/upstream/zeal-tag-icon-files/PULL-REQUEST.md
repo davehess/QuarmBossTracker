@@ -1,5 +1,10 @@
 # Zeal PR draft: tag pictures from a folder (`^I<name>^`)
 
+> **Current (2026-10-09):** the branch is `tag-shapes` (`c2a5333`) plus ONE commit, `9035722`, squashed from the
+> commits named below with the same code; `0001-tag-pictures.patch` is that one commit. Open it after the tag-shapes
+> PR (it uses the guild shapes). The hashes below are history.
+> A local checkout: `git fetch origin && git reset --hard origin/tag-icon-files`.
+
 *Drafted 2026-09-26 on top of the tag-shapes branch (`3c02f65`). Branch **`tag-icon-files`**
 on the guild lead's fork (github.com/davehess/zeal/tree/tag-icon-files), now on Zeal 1.4.8
 (`e8254ec`, 2026-10-01: the `custom` folder, banner pictures and whole-key names were added

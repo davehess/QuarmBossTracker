@@ -1,5 +1,9 @@
 # Zeal PR draft — keep tags through a crash, relog or character switch; ignore tags from other zones
 
+> **Current (2026-10-09):** the branch is ONE commit, `c143cee`, on Zeal v1.4.8 (`50dc9a4`), squashed from the
+> commits named below with the same code; `0001-tag-persistence.patch` is that commit. The hashes below are history.
+> A local checkout: `git fetch origin && git reset --hard origin/tag-persistence`.
+
 *Drafted 2026-09-25 against Zeal v1.4.7 (`e24a3ed`). Branch **`tag-persistence`**
 on the guild lead's fork (github.com/davehess/zeal/tree/tag-persistence, two
 commits: `ca71999`, then `9a3fd09` for player tags, 2026-09-26). The same change is
