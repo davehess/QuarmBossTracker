@@ -8481,3 +8481,48 @@ half only; no warning, no page, no threshold changes here.
   true and a recast never refreshes the charm overlay's timer. The new `ran_full` handling keys off the consumed spell instead,
   so it is not affected.
 - Tests: `test/charm-session-ran-full.test.js` (agent, beta), `test/charm-session-spell-ran-full.test.js` (bot; mutation-checked).
+### 209. eqmimic.quest becomes a landing page for newcomers, with three layouts and a loud rights notice (2026-10-08/09, web [beta])
+**The ask** (the guild lead): *"a landing page for someone that's new to Mimic to be able to deploy it for themselves as
+standalone, have an understanding of what each component does as a walk-through. There should be a section that says: do
+you want more hive mind? here's how your guild can implement this ... I will provide some video that we can clip and have
+some little highlights on the main page ... Make sure there is clear distinction on the page about the rights being
+Daybreak's and this being a fan site; use the language from WolfPack.quest."* Built on branch `claude/eqmimic-landing`
+(not pushed; one commit, so the web commit is the tip for the Vercel ignore step).
+- **Routing changed.** The eqmimic middleware branch used to send EVERY path to the form. Now `eqmimicLandingTarget`
+  (`web/lib/eqmimicHost.ts`, shared by the middleware and the tests): `/feedback` -> the form (Mimic opens exactly
+  `https://eqmimic.quest/feedback#…` and refuses any other address, so that path is not negotiable); `/`, `/index` and
+  every other path -> the landing page, keeping ONLY a `?v=b|c` layout preview, all other parameters dropped. Unknown
+  paths land on the landing page as the safest default (a stray link reads a page, not a form). The branch stays FIRST
+  in the middleware, before the link-preview rewrite and any session client.
+- **The shell lost its width.** The bare eqmimic layout no longer wraps children in `max-w-2xl`; the form page carries its
+  own `mx-auto max-w-2xl` (identical look on the host) and the landing sets a wider one per layout (A 3xl, B 5xl, C 6xl).
+  On wolfpack.quest the form is now centred in its column; nothing else there changed.
+- **Three genuinely different layouts, one content module** (`web/lib/eqmimicLanding.ts`; `?v=`: none = A, `b`, `c`):
+  **A, Walk-through:** one column, a numbered journey, sticky section nav, reads like a guide. **B, Ledger:** a two-column
+  "On your PC (free, no account)" against "Needs a guild server" first, then highlights, privacy strip, an FAQ accordion,
+  the walk-through, hive mind last. **C, Reel-led:** the highlights reel is the hero, an overlay gallery follows, the
+  walk-through and hive steps compressed below. Costs: build ~ a day (shared blocks), maintenance LOW (one module, no
+  layout logic), runtime near zero (server components, no client JS, no new dependency), change LOW until a layout is
+  picked, then delete the other two. When one is picked, graduate it and remove the others in the same change.
+- **The rights notice is the loudest block, not the quietest line.** wolfpack.quest keeps it as the footer's last dim
+  sentence; here it is a gold-bordered "Fan site notice" panel directly under the hero in all three layouts, repeated in the
+  footer, in the wolfpack.quest wording VERBATIM plus one sentence of ours (fan project by a guild, AGPL-3.0-or-later). A
+  test reads `web/app/layout.tsx` and compares the sentence sets so the two cannot drift.
+- **Content calls.** Windows is the supported target, Linux/Deck labelled experimental. Local mode is described as what it is
+  (nothing sent to any guild server; guild-only overlays empty). The guild section carries an "honest list" box: wizard only
+  designed, Mimic's links and branding still hard-coded to wolfpack.quest so a guild builds its own Mimic (about a day),
+  `.env.example` still holds our defaults, no self-serve game-data catalog (~100 MB), no `doctor`. Costs are the measured
+  2026-09 figures (about $30/mo). The one demo guild in the page is invented ("Lantern Watch"); no member, id or address.
+- **Video slots.** `HIGHLIGHTS` (4 cards, `src`/`poster` optional): a card with `src` renders a muted, lazy `<video controls>`,
+  otherwise a "clip coming" placeholder. Nothing external is fetched or embedded. The guild lead supplies the clips.
+- **Metadata.** Title `[beta] Wolf Pack Mimic — a free overlay suite for Project Quarm`, `noindex` like the feedback page. A
+  `[beta]` badge heads each layout ("this page is new — tell us what's missing" -> the form) and a corner switch labels A/B/C.
+- **Tests.** `test/eqmimic-landing.test.js` (new: routing function, middleware run, verbatim notice, placement, content,
+  video slots) and `test/anon-feedback-surface.test.js` (changed ONLY where behaviour deliberately changed: `/` and unknown
+  paths now rewrite to the landing page instead of the form; the "first in the middleware" and layout-ordering assertions are
+  kept; the middleware slice now expects `eqmimicLandingTarget`). Mutation-checked: a changed word in the notice, the notice
+  removed from layout C, the footer notice removed, every query parameter kept, and `muted` removed from the video each
+  turn a test red.
+- **Not done / for the guild lead.** Pick A, B or C and send the clips. DNS for eqmimic.quest still points elsewhere
+  (`docs/RUNBOOK-eqmimic-domain.md`). The sticky-nav offset under the Wolf Pack header on the beta host is a guess (header
+  measured 51 px on production, the beta banner height was not measured).
