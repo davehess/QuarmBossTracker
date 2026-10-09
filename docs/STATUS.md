@@ -5753,3 +5753,17 @@ The guild lead: *"if one person had the stampede window it should go to anyone c
 - **Open:** a timer armed through the normal relay still carries no end text (pre-existing). Web countdown on
   wolfpack.quest/boards is a separate beta change.
 - Tests: `test/zone-timers.test.js`, `test/zone-timers-relay.test.js`, `test/zone-timers-agent.test.js` (mutation-checked).
+
+### 🧾 2026-10-09 — Charm sessions record the spell and whether it ran its course (DECISIONS §209)
+The guild lead: *"A plus B's instrumentation"*, on enchanters' early-break reports. Collecting only; no warning changes.
+- **Why:** last 30 days, enchanter `charm_break` rows have a 36 s median (n = 285) against 6 to 12 minute spells, and carry no
+  spell. The old `duration_sec` is not the charm's length (it reads `lastEvent`, which only combat advances), so it is not
+  usable. The log's "worn off" line prints for a fade and a resist break alike, so `end_reason` is NOT split.
+- **Built (local branches, not pushed):** agent (beta) adds `spell` and `ran_full` (>= 90% of the spell's max, null when
+  unknown) to each charm session; bot adds nullable `charm_sessions.spell_name` / `ran_full` (migration
+  `20261009010000_charm_sessions_spell_ran_full.sql`, NOT applied) and writes them with validation (`utils/charmSession.js`).
+  Older agents write nulls.
+- **Order:** apply the migration before the bot reaches `main`, or every charm-session upsert fails silently.
+- **Open:** after a week of data, read per-spell `ran_full`. A pre-existing dead branch (same-owner recast never refreshes the
+  overlay timer: `pcSpell.dur || pcSpell.cls` tests keys the helper does not return) is noted in §209, not fixed.
+- Tests: `test/charm-session-ran-full.test.js`, `test/charm-session-spell-ran-full.test.js` (mutation-checked).

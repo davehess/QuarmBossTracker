@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Charm sessions record spell + ran_full** (§209) | Built on two local branches: bot (`utils/charmSession.js`, migration `20261009010000`, NOT applied) and agent (beta). Inert until both ship | a session with Supabase access: apply the migration FIRST; then route the bot to `main` and the agent to `beta`. After a week of enchanter raids, read per-spell `ran_full` before touching any charm warning |
 | **Stampede timer follows you into the zone** (§208) | Built on a local branch: bot 3.1.233 (`utils/zoneTimers.js`, bot_kv `zone_timer_windows`) + agent 3.7.115 (`_runLateJoinFire`). Inert until the two stampede rows carry the `zone-timer` tag | the guild lead: route the bot to `main` and the agent to `beta`, then run the tag SQL in §208; a raider zones into Tactics after a stampede and checks both countdowns |
 | **Callouts + Extended Target keep to your raid or group** (§189) | Live: bot 3.1.222 on `main` (2026-10-08 00:36 ET) and stable Mimic 2.7.10 / agent 3.7.106 with the Raid \| Group switch (§190) | the guild lead: try Group while grouped and say if it still shows other groups; the rest of the separation inventory (loot posts, shared alerts, attendance per raid) waits on picks |
 | **Three picks: bard counts, AE chip by spell data, height floor** (§178) | All three built; HUD counts, AE gate and the floor on beta (agent 3.7.98); the catalog's `ae` flag waits on this branch reaching `main` | the guild lead: push this branch to main (after 00:30 ET on a raid night); a bard on beta checks the ring label; a beta tester drags an overlay small and confirms it stays |
@@ -8446,3 +8447,37 @@ everyone** when the latest passes unobserved or a fresh sighting replaces it, an
      and not ('zone-timer' = any(coalesce(tags, '{}'::text[])));
   ```
   It should report `UPDATE 2`. The bot picks the tag up within 2 minutes; no deploy needed after the bot change is live.
+
+### 209. Charm sessions record the spell and whether the charm ran its course (2026-10-09, bot · agent beta · migration `20261009010000`, NOT applied)
+**The ask** (the guild lead, 2026-10-08, *"A plus B's instrumentation"*): enchanters say charms break early, and we could not
+say how long each charm spell lasts when nothing interferes, so the warning cannot be set per spell. This is the collecting
+half only; no warning, no page, no threshold changes here.
+- **The data finding.** Over the last 30 days, enchanter `charm_sessions` rows with `end_reason = 'charm_break'` have a median
+  `duration_sec` of **36 s (n = 285)** against spells that last 6 to 12 minutes. That number cannot be used for per-spell
+  warnings, and two things make it unusable rather than merely noisy: (1) the sessions carry no spell at all; (2) `duration_sec`
+  is the gap between the agent's `lastEvent` at the land and at the break, and `lastEvent` is advanced only by combat events
+  (the charm handlers `return` before the line that sets it), so it measures the time between two fights' last blows, not the
+  charm. The old rows stay as they are; nothing is backfilled or recomputed.
+- **What the log can and cannot say.** `Your charm spell has worn off.` is the spell-fades line: it prints for a natural fade
+  and for a resist break alike. So `end_reason` keeps its two values (`charm_break`, `encounter_flush`) and is NOT split into
+  `expired` / `resisted`; a guess there would put a number on a chart that looks like a measurement.
+- **What is collected instead.** Agent (beta): each session gains `spell` (the staged cast name, lower-cased as in the agent's
+  charm table, null if the cast was not seen) and `ran_full` (lived at least 90% of that spell's max duration, null when
+  unknown). `ran_full` is timed from the land line's and the break line's own timestamps. It is null when the owner recast
+  mid-session (the span covers two spells), when another charmer took the mob (the break line was never seen), and when the
+  encounter flushed short; a flush that already reached 90% is still true. Every existing field and value is untouched.
+- **Bot:** `charm_sessions.spell_name text` and `ran_full boolean`, both nullable, no default, `IF NOT EXISTS`. The upsert
+  writes `spell_name` only when it is a non-empty string of 80 characters or fewer and `ran_full` only when it is a real
+  boolean (`utils/charmSession.js`); an older agent that sends neither writes two nulls, so nothing changes for it. The bot
+  validates no `end_reason` allow-list today, so there was none to extend.
+- **Order matters: apply the migration BEFORE the bot reaches `main`.** The upsert now names both columns; without them every
+  charm-carrying encounter's `charm_sessions` write fails and is swallowed by the catch-warn, the same silent failure that
+  left the table uncreated until 2026-07-13 (migration 20260713123000). The migration is not applied by this change.
+- **Read it as:** per spell, the share of sessions with `ran_full = true` among those with a known spell, and the duration
+  of the true ones. Sessions older than the agent change, and every row from an agent that has not updated, stay null and are
+  simply not in the sample. Do not read null as "broke early".
+- **Found on the way, not fixed (outside this change):** the same-owner recast branch of the charm-land handler tests
+  `pcSpell.dur || pcSpell.cls`, but `_consumePendingCharmSpell` returns `charm_class` / `duration_sec`, so that test is never
+  true and a recast never refreshes the charm overlay's timer. The new `ran_full` handling keys off the consumed spell instead,
+  so it is not affected.
+- Tests: `test/charm-session-ran-full.test.js` (agent, beta), `test/charm-session-spell-ran-full.test.js` (bot; mutation-checked).
