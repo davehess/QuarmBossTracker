@@ -103,6 +103,14 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 Charm tracker: "charm aging" cue for non-bard charms at 25 s (Mimic beta, 2026-10-08; the guild lead: "A plus
+  B's instrumentation, 25 seconds").** An enchanter's charm lasts minutes on paper but breaks at random on the mob's
+  tick (last 30 days: median 36 s, 117 of 285 under 30 s), so the max-duration warning almost never fired first. A
+  non-bard charm now says "charm aging" once, 25 s after it lands, flashes the card, and its "up" timer (full card)
+  or timer bar (mini) is red from then on. Bards are unchanged (their cues, red at 54 s). The manual "recharm warn
+  at N s" box overrides the 25 s for non-bards when N > 0 (one callout, not two). 25 s is a guess until the recorded
+  charm lifetimes exist (**B**, still to build). `apps/mimic/charm.html` (`CHARM_AGING_MS`, `agingDueMs`, `redAtMs`,
+  `agingFired`), test `test/charm-aging.test.js`.
 - **✅ Callouts and Extended Target keep to your raid, or your group outside one (bot 3.1.222 live 2026-10-08;
   stable Mimic 2.7.10 / agent 3.7.106; DECISIONS §189).** The guild lead, 2026-10-07: other groups' mobs and
   callouts leaking in. The relay's raid-evening blanket is gone (raid from the live roster, else group, else zone);
