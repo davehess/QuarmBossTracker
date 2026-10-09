@@ -23,7 +23,7 @@ export const GUILDS: Guild[] = [
   { code: 'MAY', name: 'Mayhem' },
   {
     code: 'EUR', name: 'Europa',
-    pictures: [{ file: 'EUR.png', width: 244, height: 256 }, { file: 'EUR.tga', width: 244, height: 256 }],
+    pictures: [{ file: 'EUR.png', width: 226, height: 256 }, { file: 'EUR.tga', width: 226, height: 256 }],
   },
   { code: 'TRQ', name: 'Tranquility' },
   { code: 'SOW', name: 'Squirrels of War' },
