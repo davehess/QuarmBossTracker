@@ -59,11 +59,20 @@ describe('the alpha build and its branch', () => {
     expect(release).toMatch(/v="\$\{new_version%%-\*\}-alpha\.\$\{\{ github\.run_number \}\}"/);
     expect(release).toMatch(/echo "alpha=true" >> "\$GITHUB_OUTPUT"/);
   });
-  it('publishes an alpha only to the rolling mimic-alpha release, after clearing its old files', () => {
+  it('publishes an alpha only to the rolling mimic-alpha release, uploading before it removes old files', () => {
     const normal = sliceBlock(release, '- name: Publish release with installer', 'apps/mimic/dist/*.blockmap');
     expect(normal).toMatch(/steps\.tag\.outputs\.alpha != 'true'/);
-    const alpha = sliceBlock(release, '- name: Alpha — clear the rolling release', 'apps/mimic/dist/*.blockmap');
-    expect(alpha).toMatch(/gh release delete-asset mimic-alpha/);
+    const alpha = sliceBlock(release, '- name: Alpha — move the tag', 'apps/mimic/dist/*.blockmap');
+    // 2026-10-08: the old files were deleted first, the tag push then died on a network reset, and the
+    // release sat empty ("Cannot find channel alpha.yml"). Nothing may be deleted before the upload.
+    expect(alpha).not.toMatch(/delete-asset/);
+    expect(alpha).toMatch(/for wait in 2 4 8 16 0; do\s*\n\s*if git push -f origin refs\/tags\/mimic-alpha/);
+    const at = release.indexOf('- name: Alpha — drop the previous build');
+    expect(at).toBeGreaterThan(release.indexOf('- name: Alpha — publish to the rolling release'));
+    const drop = release.slice(at);
+    expect(drop).toMatch(/gh release delete-asset mimic-alpha "\$a"/);
+    // it never empties the release: no local alpha.yml, no deletes
+    expect(drop).toMatch(/case "\$keep" in \*" alpha\.yml "\*\) ;; \*\) [^\n]*exit 0;; esac/);
     // electron-builder writes only latest.yml under the github provider; the alpha feed reads
     // alpha.yml with no fallback (the first alpha, v3.0.0-alpha.832, shipped without one).
     expect(alpha).toMatch(/cp apps\/mimic\/dist\/latest\.yml apps\/mimic\/dist\/alpha\.yml/);

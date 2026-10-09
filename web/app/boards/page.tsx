@@ -81,15 +81,13 @@ async function loadZoneTimers(): Promise<ZoneTimers> {
   }
 }
 
-export default async function BoardsPage({ searchParams }: { searchParams: Promise<{ v?: string }> }) {
+export default async function BoardsPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/boards');
 
-  // ?v=b is the zone-timers variant on beta (the guild lead, 2026-10-08); no ?v= is what production shows.
-  const { v } = await searchParams;
-  const zoneTimers = v === 'b' ? await loadZoneTimers() : null;
-
-  const { rows, updatedAt, error } = await loadBoards();
+  // The zone-timers panel is on /boards itself (the guild lead, 2026-10-09, looking at a stampede that was running:
+  // "why isn't this stampede showing? in /boards"). It started as a ?v=b preview and nobody opens that by hand.
+  const [zoneTimers, { rows, updatedAt, error }] = await Promise.all([loadZoneTimers(), loadBoards()]);
   const tz = await userTz();
   if (error) {
     return (
@@ -120,7 +118,7 @@ export default async function BoardsPage({ searchParams }: { searchParams: Promi
 
   return (
     <div className="space-y-6">
-      {zoneTimers && <ZoneTimersPanel timers={zoneTimers} />}
+      <ZoneTimersPanel timers={zoneTimers} />
       <section className="bg-panel border border-border rounded-lg p-6">
         <div className="flex items-baseline justify-between flex-wrap gap-2">
           <h2 className="text-2xl text-gold flex items-center gap-3">

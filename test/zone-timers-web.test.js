@@ -95,9 +95,12 @@ describe('labels and clock', () => {
 describe('the page', () => {
   const src = readFileSync(new URL('../web/app/boards/page.tsx', import.meta.url), 'utf8')
     .split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
-  it('shows the panel only on the ?v=b variant, so production stays as it was', () => {
-    expect(src).toMatch(/v === 'b' \? await loadZoneTimers\(\) : null/);
-    expect(src).toMatch(/\{zoneTimers && <ZoneTimersPanel/);
+  it('shows the panel on /boards itself, not behind a ?v= variant (a running stampede was invisible without it)', () => {
+    expect(src).toMatch(/<ZoneTimersPanel timers=\{zoneTimers\} \/>/);
+    expect(src).not.toMatch(/\bsearchParams\b/);
+    expect(src).not.toMatch(/v === 'b'/);
+    // read in parallel with the boards, so the page is no slower for it
+    expect(src).toMatch(/Promise\.all\(\[loadZoneTimers\(\), loadBoards\(\)\]\)/);
   });
   it('reads the ledger key the bot writes', () => {
     expect(src).toMatch(/\.eq\('key', 'zone_timer_windows'\)/);
