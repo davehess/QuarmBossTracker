@@ -114,6 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Zeal: cursor with the UI hidden (pick B) + PR cleanup** (§213) | Branch `hide-ui-cursor` (`2433493`) pushed and merged into `test-all` (`4014c49`); not compiled here, not run in game. The four tag branches are squashed locally to one commit each on v1.4.8 (trees byte-identical) but NOT pushed: the force-push needs the guild lead's OK, as does deleting the retired `bandolier-chat-filter` and `pipe-spawn-id` branches | the guild lead: (1) Mimic → Settings → Zeal → Test build → Install, run the 9 steps in `docs/upstream/zeal-hide-ui-cursor/PULL-REQUEST.md`; (2) say yes to the squash force-push + the two deletes |
+| **Europa tag picture replaced** (§213) | web 1.8.133 on `beta` (`ba445fa4`): the shield logo as `EUR.png`/`EUR.tga`, 226×256 | the guild lead: look at https://b.wolfpack.quest/zeal-icons; say graduate to main |
 | **"Your target looks unaffected." drops the phantom lull timer** (§212) | On `beta`: agent 3.7.124 (`10901c15`), agent + Mimic Target Info | a beta tester casts Pacify at a mob above its level and checks the bar goes and the amber chip shows |
 | **Charm-pet gear is not loot** (§210) | Built on `claude/loot-pet-gear`: migration `20261009030000` (NOT applied), `utils/lootValue.js`, one sentence on `/admin/loot`. `loot_pet_gear_names` ships empty | a session with Supabase access: apply the migration, then route bot + web to `main`. The guild lead: veto the 9 extra rows (§210) or name the pet weapons and haste items so officers can INSERT them |
 | **Charm sessions record spell + ran_full** (§209) | Built on two local branches: bot (`utils/charmSession.js`, migration `20261009010000`, NOT applied) and agent (beta). Inert until both ship | a session with Supabase access: apply the migration FIRST; then route the bot to `main` and the agent to `beta`. After a week of enchanter raids, read per-spell `ran_full` before touching any charm warning |
@@ -8638,3 +8640,25 @@ timer the Harmony policy in CLAUDE.md predicted, and the string `docs/STATUS.md`
   decimal, matching web 1.8.132 (*"we need consistent sig figs on this. either show a decimal or not."*).
 - Tests: `test/lull-unaffected.test.js` (the cast-then-line, non-lull cast, 10 s late, other raiders, immune-wins, zone bucket,
   the chip, and the call sites; mutation-checked).
+
+### 213. Zeal draws a cursor while the UI is hidden (pick B); the tag PRs are squashed; the Europa logo is replaced (2026-10-09)
+**The pick** (the guild lead, 2026-10-09): *"b, BUILT in hide ui hides the mouse and zeal could show it. we need to finish
+cleaning up these zeal PRs"*. B was "the fork draws the cursor", over A (the fork reports UI state on the pipe and Mimic
+draws one) and C (Mimic watches F10). §13 has why nothing else can bring the game's own cursor back.
+- **Built:** branch `hide-ui-cursor` on the fork, one commit on v1.4.8 (`2433493`), merged into `test-all` (`4014c49`) so
+  Mimic's Test build carries it. A `HideUiCursor` class on `RenderUI` draws a flat white arrow with a black outline at
+  `mouse_client_x/y` when the UI is hidden, in game, not mouse-looking and EverQuest is focused. Setting
+  `ShowCursorWithUiHidden`, on by default; `/uicursor [on|off]`. PR package and the 9-step in-game test:
+  `docs/upstream/zeal-hide-ui-cursor/`. Drafted by a Sonnet agent, reviewed here; clang-format clean; not compiled
+  (no MSVC in a cloud session) and not run in game.
+- **Open in game:** whether the game still updates the mouse position in F10 mode (if not, read `GetCursorPos` instead),
+  and whether the arrow draws above the world (`RenderUI` runs before the game's UI pass).
+- **PR cleanup.** None of the tag branches is open upstream yet. Each was a feature commit plus a "merge main (1.4.8)"
+  commit (and, for tag pictures, two follow-ups). Rebuilt locally as one commit per branch on `50dc9a4`, messages folded
+  together, with trees byte-identical to the pushed branches; `tag-icon-files` stays stacked on `tag-shapes` (it uses the
+  guild shapes). All four pass the repo's own `Zeal/.clang-format`. **Not pushed:** replacing a pushed branch is a
+  force-push, and that waits for the guild lead's yes, as does deleting `bandolier-chat-filter` (merged upstream as #238)
+  and `pipe-spawn-id` (obsolete since Zeal 1.4.6). The old commits stay reachable through `test-all`'s merges.
+- **Europa logo.** *"Try making this the Europa logo"*, with a picture of a wooden shield with "EUROPA" across it. It
+  replaces `web/public/zeal/tagicons/EUR.png`/`.tga` (226×256, transparent); processing in `web/public/zeal/PROVENANCE.txt`.
+  web 1.8.133 on `beta` (`ba445fa4`), an existing page, so beta first: https://b.wolfpack.quest/zeal-icons.
