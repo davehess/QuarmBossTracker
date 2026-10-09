@@ -46,7 +46,9 @@ export const releases: Release[] = [
       { name: 'Mimic landing page [beta]', blurb: 'Explains Zeal, your log, the agent, Mimic and the guild bot in the order they connect, with the setup steps and a plain note on what stays on your PC. It opens on a big video player with a button for each recorded scenario, and carries a fan-site notice that EverQuest belongs to Daybreak.' },
       { name: 'Guild setup guide', blurb: 'A section for guilds that want the shared version: the steps, what it costs to run, and what is not finished yet.' },
     ],
-    fixes: [],
+    fixes: [
+      'Gear a charmer hands to a charmed pet no longer counts as loot in the loot value totals.',
+    ],
   },
   {
     key: 'mimic-2-8-0-2026-10-08',

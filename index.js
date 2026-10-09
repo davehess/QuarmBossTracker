@@ -7216,7 +7216,7 @@ function _lootCacheSet(k, val, ttlMs = 60_000) { _lootPanelCache.set(k, { val, e
 // looted row in the window (paged), not the newest 200 the list shows.
 async function _nightLootPanelBody(supabase, guildId, nowMs = Date.now(), hours = 12) {
   const { buildNightLootPanel, NIGHT_LOOT_WINDOW_MS } = require('./utils/rollLoot');
-  const { clampLootHours, lookupItemValues, buildLootValue } = require('./utils/lootValue');
+  const { clampLootHours, lookupItemValues, loadPetGearNames, buildLootValue } = require('./utils/lootValue');
   hours = clampLootHours(hours);
   const windowMs = hours * 3600_000;
   const sinceIso = encodeURIComponent(new Date(nowMs - NIGHT_LOOT_WINDOW_MS).toISOString());
@@ -7243,8 +7243,11 @@ async function _nightLootPanelBody(supabase, guildId, nowMs = Date.now(), hours 
   const wide = buildNightLootPanel([], lootedRows, { nowMs, windowMs });
   // Prices are decoration: a failed lookup leaves rows unpriced (and the response uncached), it never
   // takes the list down.
-  const { values, failed } = await lookupItemValues(supabase, lootedRows.map(l => l?.item_name).filter(Boolean), { nowMs });
-  const money = buildLootValue(lootedRows, values, { nowMs, windowMs });
+  const [{ values, failed }, petGearNames] = await Promise.all([
+    lookupItemValues(supabase, lootedRows.map(l => l?.item_name).filter(Boolean), { nowMs }),
+    loadPetGearNames(supabase),     // charm-pet gear is left out of the totals (fails open to the mr < 0 rule)
+  ]);
+  const money = buildLootValue(lootedRows, values, { nowMs, windowMs, petGearNames });
   return {
     ...panel,
     loot_total: wide.loot_total,
