@@ -12,6 +12,8 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { userTz, fmtAbs } from '@/lib/timezone';
 import ExpansionSection from './ExpansionSection';
+import ZoneTimersPanel from './ZoneTimers';
+import { parseZoneTimers, type ZoneTimers } from '@/lib/zoneTimers';
 
 // Per-page metadata so a link pasted into Discord unfurls as what it IS.
 // Without this the page inherits the site-wide description and every
@@ -67,11 +69,25 @@ async function loadBoards(): Promise<{ rows: BoardRow[]; updatedAt: string | nul
   }
 }
 
+// The running zone windows (bot_kv `zone_timer_windows`, see lib/zoneTimers.ts). A failed read is an empty panel, never
+// an error page: the boards above it are the page.
+async function loadZoneTimers(): Promise<ZoneTimers> {
+  try {
+    const { data } = await supabaseAdmin()
+      .from('bot_kv').select('value').eq('key', 'zone_timer_windows').limit(1).maybeSingle();
+    return parseZoneTimers((data as { value?: unknown } | null)?.value);
+  } catch {
+    return { windows: [], cleared: [] };
+  }
+}
+
 export default async function BoardsPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/boards');
 
-  const { rows, updatedAt, error } = await loadBoards();
+  // The zone-timers panel is on /boards itself (the guild lead, 2026-10-09, looking at a stampede that was running:
+  // "why isn't this stampede showing? in /boards"). It started as a ?v=b preview and nobody opens that by hand.
+  const [zoneTimers, { rows, updatedAt, error }] = await Promise.all([loadZoneTimers(), loadBoards()]);
   const tz = await userTz();
   if (error) {
     return (
@@ -102,6 +118,7 @@ export default async function BoardsPage() {
 
   return (
     <div className="space-y-6">
+      <ZoneTimersPanel timers={zoneTimers} />
       <section className="bg-panel border border-border rounded-lg p-6">
         <div className="flex items-baseline justify-between flex-wrap gap-2">
           <h2 className="text-2xl text-gold flex items-center gap-3">

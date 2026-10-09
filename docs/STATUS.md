@@ -756,6 +756,22 @@ next touch one rather than assuming a missing row means a missing doc.
   looter's Zeal is 1.4.6+ with a known pet id. ⏳ Apply the migration before or with the bot deploy (before it, an unflagged line
   stores as always and a flagged one is stored once more without the flag, so it counts as ordinary loot, never lost), then
   route bot + web to `main` and the agent to `beta`. DECISIONS §211.
+- **✅ `/boards` zone timers are on the page itself (web 1.8.131 main, 2026-10-09).** The guild lead, looking at a
+  stampede that was running in game: "why isn't this stampede showing? in /boards". The panel was a `?v=b` beta
+  preview, so plain `/boards` never had it. It now shows by default and is read in parallel with the boards. The
+  two entries below are what it graduates.
+- **🧪 `/boards` zone-timers panel, now named and linked (web 1.8.128, 2026-10-09).** The guild lead, from a phone
+  screenshot: "this requires more description: Boar stampede, approximate earliest and latest start timers
+  (observed) and a PQDI link to the piglet." Each window now reads **Boar stampede** (event name from the trigger,
+  `eventInfo` in `web/lib/zoneTimers.ts`), a one-line blurb, **Earliest start** and **Latest start** each as a
+  countdown plus the viewer's own clock time, when the clock was started ("observed"), and a **Stampeding Piglet
+  on PQDI** link (npc 214303). Unknown triggers show under their own name.
+- **🧪 `/boards` zone-timers panel (beta variant `?v=b`, web 1.8.127, 2026-10-08).** Reads the bot's ledger
+  (`bot_kv` `zone_timer_windows`, DECISIONS §208): per running window the zone, "earliest in" / "possible now" and the
+  latest time, "the window has closed, it happened unobserved" once it passes, and a note when a fresh sighting
+  replaced the last one. No `?v=` is what production shows. Empty until the bot ledger is live and the two stampede
+  rows carry the `zone-timer` tag. `web/lib/zoneTimers.ts`, `web/app/boards/ZoneTimers.tsx`,
+  `test/zone-timers-web.test.js`. Link: https://b.wolfpack.quest/boards?v=b
 - **✅ Officer page `/admin/loot` [beta] — loot by value (web 1.8.120 main, 2026-10-08; paged in 1.8.122).** Note
   that the looter is not always the owner; window, per-character totals; one row per looter + item (count, each,
   row total), 50 a page, sorted on the server; DKP items listed but left out of totals (`loot_value_grouped` +

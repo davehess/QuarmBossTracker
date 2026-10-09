@@ -48,6 +48,7 @@ export const releases: Release[] = [
     ],
     fixes: [
       'Gear a charmer hands to a charmed pet no longer counts as loot in the loot value totals.',
+      'The Boards page now shows running zone timers: the Plane of Tactics boar stampede with its earliest and latest start, and a link to the piglet on PQDI.',
     ],
   },
   {
