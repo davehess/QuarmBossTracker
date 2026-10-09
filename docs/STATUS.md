@@ -797,12 +797,14 @@ next touch one rather than assuming a missing row means a missing doc.
   bot 3.1.225 main, agent beta, 2026-10-08).** Caster from the casting relay (Mimic users only), group spells
   to the caster's group; length from the spell catalog once the caster is known. DECISIONS §196.
 - **🧪 [beta] eqmimic.quest landing page: what Mimic is, each piece, standalone setup, "want more hive mind?"
-  (web, branch `claude/eqmimic-landing`, not pushed, 2026-10-09).** Three layouts over one content module, picked by
-  `?v=`: A walk-through `https://wolfpack.quest/eqmimic`, B ledger `https://b.wolfpack.quest/eqmimic?v=b`, C reel-led
-  `https://b.wolfpack.quest/eqmimic?v=c`. The rights notice (Daybreak's, fan site) is the loudest block under the hero
-  and repeats in the footer. The root of eqmimic.quest serves it once DNS points here; `/feedback` stays the form.
-  ⏳ The four video slots hold "clip coming" until the guild lead supplies clips (`HIGHLIGHTS` in
-  `web/lib/eqmimicLanding.ts`); ⏳ the guild lead picks A, B or C. DECISIONS §209.
+  (web, branch `claude/eqmimic-video-first`, not pushed, 2026-10-09).** ONE page, video first (the guild lead picked the
+  structure 2026-10-09; the three layouts and the `?v=` switch were retired): a large player with a scenario picker
+  (`#clip-<slug>` links a scenario), the fan-site notice (Daybreak's) directly under it, the overlay gallery, standalone
+  setup with the "on your PC / needs a guild server" ledger, then pieces, privacy and hive mind. Preview:
+  `https://wolfpack.quest/eqmimic` (and `https://b.wolfpack.quest/eqmimic`). The root of eqmimic.quest serves it once DNS
+  points here; `/feedback` stays the form.
+  ⏳ The six scenarios hold "clip coming" until the guild lead supplies clips (`SCENARIOS` in
+  `web/lib/eqmimicLanding.ts`); ⏳ the `[beta]` marker stays until the guild lead says it is settled. DECISIONS §209.
 - **✅ Anonymous feedback (AFB) on eqmimic.quest (web 1.8.119, main 2026-10-08; Mimic side agent 3.7.107 beta).**
   Signed-out Mimic users send cleaned, rate-limited reports to `anon_feedback` (AFB-n); officers read them at
   `/admin/feedback/anonymous`; never acted on automatically, counted weekly. ⏳ eqmimic.quest DNS still points

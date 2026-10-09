@@ -997,14 +997,17 @@ would otherwise wipe a half-typed report.
 Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.test.js` (bot).
 
 ### eqmimic.quest landing page (web, 2026-10-09, [beta]; DECISIONS §209)
-- **What:** the page a newcomer to Mimic reads: what it is, the five pieces in connection order (Zeal, the EQ log,
-  the agent, Mimic, the guild bot), standalone setup (local-only), what each overlay needs (local or guild),
-  privacy, and the guild "hive mind" steps with an honest not-finished list. Fan-site rights notice under the hero
-  and in the footer, worded exactly like the wolfpack.quest footer.
-- **Where:** `web/app/eqmimic/page.tsx` (picks the layout from `?v=`), `web/app/eqmimic/_landing/` (`Parts.tsx`
-  shared blocks, `LayoutA/B/C.tsx`), ALL words in `web/lib/eqmimicLanding.ts` (video slots: `HIGHLIGHTS`). Routing:
-  `eqmimicLandingTarget` in `web/lib/eqmimicHost.ts`, used by `web/middleware.ts` (`/` and every unknown path ->
-  landing keeping only `v`; `/feedback` -> the form). Also at `wolfpack.quest/eqmimic` with the full site shell.
+- **What:** the page a newcomer to Mimic reads, video first: a large player with a picker of recorded scenarios
+  (placeholders until the clips arrive), then the overlay gallery (each tagged local or guild), standalone setup
+  (local-only) with the on-your-PC / needs-a-guild ledger, the five pieces in connection order (Zeal, the EQ log,
+  the agent, Mimic, the guild bot), privacy, and the guild "hive mind" steps with an honest not-finished list.
+  Fan-site rights notice directly under the video and in the footer, worded exactly like the wolfpack.quest footer.
+- **Where:** `web/app/eqmimic/page.tsx` (metadata + the host-dependent links), `web/app/eqmimic/_landing/`
+  (`Landing.tsx` the one page, video first; `ScenarioPlayer.tsx` the only client component: the big player, the picker and
+  the `#clip-<slug>` hash; `Parts.tsx` the blocks), ALL words in `web/lib/eqmimicLanding.ts` (the clips: `SCENARIOS`,
+  with `scenarioFromHash`). Routing: `eqmimicLandingTarget` in `web/lib/eqmimicHost.ts`, used by `web/middleware.ts`
+  (`/` and every unknown path -> landing, every query parameter dropped; `/feedback` -> the form). Also at
+  `wolfpack.quest/eqmimic` with the full site shell.
 - Tests: `test/eqmimic-landing.test.js`, `test/anon-feedback-surface.test.js` (host routing).
 
 ### Anonymous feedback (AFB) and the My report page (web 1.8.119 · bot 3.1.223 · agent 3.7.107, 2026-10-08)

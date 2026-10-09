@@ -1,16 +1,16 @@
-// The pieces the three eqmimic.quest landing layouts are assembled from (DECISIONS §209). Every sentence
-// comes from web/lib/eqmimicLanding.ts; this file only decides how a block LOOKS. Server components, no
-// client JS: the section nav is plain anchors, the FAQ and the compact piece cards are <details>.
+// The pieces the eqmimic.quest landing page is assembled from (DECISIONS §209). Every sentence comes from
+// web/lib/eqmimicLanding.ts; this file only decides how a block LOOKS. Server components, no client JS
+// (the one client component is ScenarioPlayer.tsx): the compact piece cards are <details>.
 //
 // Colour is semantic here as everywhere (frontend-design): gold is the one action and the one notice,
 // green is "works on your own PC", blue is "needs a guild". Nothing animates except a colour fade, and
 // that is off under prefers-reduced-motion.
 import type { ReactNode } from 'react';
 import {
-  COSTS, DOC_LINKS, FAN_PROJECT_LINE, FAQ, GUIDE_LINK, HELP_LINE, HERO, HIGHLIGHTS, HIVE, HIVE_STEPS,
+  COSTS, DOC_LINKS, FAN_PROJECT_LINE, GUIDE_LINK, HELP_LINE, HERO, HIVE, HIVE_STEPS,
   LOCAL_MODE, NOT_FINISHED, OVERLAYS, PIECES, PRIVACY_BULLETS, PRIVACY_CAVEAT, PRIVACY_URL, REPO_URL,
-  RIGHTS_NOTICE, SECTIONS, SETUP_STEPS, TROUBLESHOOTING,
-  type Highlight, type Overlay, type Piece,
+  RIGHTS_NOTICE, SETUP_STEPS, TROUBLESHOOTING,
+  type Overlay, type Piece,
 } from '@/lib/eqmimicLanding';
 
 /** Links that differ between the eqmimic host and the Wolf Pack host (where /feedback is a different page). */
@@ -20,60 +20,34 @@ export interface Ctx {
   feedback: string;     // the anonymous form
   download: string;
   linux: string;
-  stickyTop: string;    // a tailwind top-* class: below the Wolf Pack header when there is one
 }
 
 const BTN = 'inline-flex min-h-11 items-center justify-center rounded-md border px-4 py-2 text-sm font-semibold no-underline transition-colors motion-reduce:transition-none';
 export const PRIMARY_BTN = `${BTN} border-gold bg-gold text-[#1a1206] hover:bg-[#e0a92c] hover:no-underline`;
-export const GHOST_BTN = `${BTN} border-border bg-panel text-text hover:border-gold hover:no-underline`;
 const EXT = { target: '_blank', rel: 'noreferrer' } as const;
 
-// ─── Top strip: the [beta] badge and the layout tag ─────────────────────────────────────────────────
-export function BetaBadge({ ctx, layout }: { ctx: Ctx; layout: 'a' | 'b' | 'c' }) {
-  const href = (l: 'a' | 'b' | 'c') => (l === 'a' ? ctx.landing : `${ctx.landing}?v=${l}`);
+// ─── Header: compact, so the video starts high on the screen ────────────────────────────────────────
+export function Header({ ctx }: { ctx: Ctx }) {
   return (
-    <div className="mb-5 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-xs">
-      <div role="note" className="inline-flex min-h-11 flex-wrap items-center gap-x-2 rounded-md border border-orange/50 bg-orange/10 px-3 py-1.5 text-orange">
-        <b className="tracking-wider">[beta]</b>
-        <span>
-          this page is new &mdash;{' '}
-          <a href={ctx.feedback} className="underline hover:text-text">tell us what&rsquo;s missing</a>
-        </span>
-      </div>
-      <nav aria-label="Layout preview" className="flex items-center gap-1 text-dim">
-        <span>Layout</span>
-        {(['a', 'b', 'c'] as const).map(l => (
-          <a key={l} href={href(l)} aria-current={l === layout ? 'page' : undefined}
-             className={`inline-flex h-11 w-11 items-center justify-center rounded border uppercase no-underline hover:no-underline ${
-               l === layout ? 'border-gold text-gold' : 'border-border text-dim hover:text-text'}`}>
-            {l}
+    <header className="mb-5">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3">
+          <h1 className="text-2xl leading-tight text-[#f2ede1] sm:text-3xl">{HERO.title}</h1>
+          <a href={ctx.feedback} title="This page is new — tell us what's missing"
+             className="inline-flex min-h-11 items-center rounded-md border border-orange/50 bg-orange/10 px-2.5 text-xs tracking-wider text-orange no-underline hover:text-text hover:no-underline">
+            [beta]<span className="sr-only"> this page is new, tell us what&rsquo;s missing</span>
           </a>
-        ))}
-      </nav>
-    </div>
-  );
-}
-
-// ─── Hero ───────────────────────────────────────────────────────────────────────────────────────────
-export function Hero({ ctx, compact = false, children }: { ctx: Ctx; compact?: boolean; children?: ReactNode }) {
-  return (
-    <header id="what" className="scroll-mt-16">
-      <h1 className={`${compact ? 'text-2xl sm:text-3xl' : 'text-3xl sm:text-5xl'} leading-tight text-[#f2ede1]`}>
-        {HERO.title}
-      </h1>
-      <p className={`mt-3 max-w-[60ch] leading-7 text-text ${compact ? 'text-[0.95rem]' : 'text-base sm:text-lg'}`}>
-        {HERO.line}
-      </p>
-      <div className="mt-5 flex flex-wrap items-center gap-3">
-        <a href={ctx.download} className={PRIMARY_BTN} {...(ctx.eqmimic ? EXT : {})}>{HERO.primary}</a>
-        <a href="#pieces" className={GHOST_BTN}>{HERO.secondary}</a>
-        <span className="text-xs text-dim">{HERO.primaryNote}</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <a href={ctx.download} className={PRIMARY_BTN} {...(ctx.eqmimic ? EXT : {})}>{HERO.primary}</a>
+          <span className="text-xs text-dim">{HERO.primaryNote}</span>
+        </div>
       </div>
-      <p className="mt-3 max-w-[62ch] text-xs leading-5 text-text">
+      <p className="mt-1 max-w-[70ch] text-sm leading-6 text-text sm:text-base">{HERO.line}</p>
+      <p className="mt-1 max-w-[70ch] text-xs leading-5 text-dim">
         {HERO.platformNote}{' '}
         <a href={ctx.linux} {...(ctx.eqmimic ? EXT : {})}>{HERO.linuxLabel}</a>
       </p>
-      {children}
     </header>
   );
 }
@@ -94,71 +68,12 @@ export function RightsNotice({ id }: { id?: string }) {
 }
 
 // ─── Section scaffolding ────────────────────────────────────────────────────────────────────────────
-export function SectionHead({ id, n, title, lead }: { id: string; n?: number; title: string; lead?: string }) {
+export function SectionHead({ id, title, lead, small = false }: { id: string; title: string; lead?: string; small?: boolean }) {
   return (
-    <div id={id} className="scroll-mt-16">
-      <h2 className="flex items-baseline gap-3 text-xl text-[#f2ede1] sm:text-2xl">
-        {n != null && <span className="text-sm text-gold">{String(n).padStart(2, '0')}</span>}
-        {title}
-      </h2>
+    <div id={id} className="scroll-mt-4">
+      <h2 className={`${small ? 'text-lg' : 'text-xl sm:text-2xl'} text-[#f2ede1]`}>{title}</h2>
       {lead && <p className="mt-2 max-w-[64ch] text-sm leading-6 text-text">{lead}</p>}
     </div>
-  );
-}
-
-export function SectionNav({ ctx }: { ctx: Ctx }) {
-  return (
-    <nav aria-label="Sections" className={`sticky ${ctx.stickyTop} z-30 my-6 rounded-md border border-border bg-bg`}>
-      <ul className="flex list-none gap-1 overflow-x-auto p-1">
-        {SECTIONS.map(s => (
-          <li key={s.id} className="shrink-0">
-            <a href={`#${s.id}`}
-               className="inline-flex min-h-11 items-center rounded px-3 text-sm text-text no-underline hover:bg-panel hover:text-gold hover:no-underline">
-              {s.label}
-            </a>
-          </li>
-        ))}
-      </ul>
-    </nav>
-  );
-}
-
-// ─── Highlights: the video slots ────────────────────────────────────────────────────────────────────
-function Clip({ h, i }: { h: Highlight; i: number }) {
-  return (
-    <figure className="m-0">
-      <div className="relative aspect-video w-full overflow-hidden rounded-md border border-border bg-panel">
-        {h.src ? (
-          <video controls muted playsInline preload="none" poster={h.poster} className="h-full w-full bg-bg object-cover">
-            <source src={h.src} />
-          </video>
-        ) : (
-          <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-dim"
-               style={{ backgroundImage: 'repeating-linear-gradient(135deg, rgba(48,54,61,0.35) 0 1px, transparent 1px 12px)' }}>
-            <span aria-hidden className="block h-0 w-0 border-y-[10px] border-l-[16px] border-y-transparent border-l-dim/70" />
-            <span className="text-[11px] uppercase tracking-widest">clip coming</span>
-          </div>
-        )}
-      </div>
-      <figcaption className="mt-2 text-sm leading-5">
-        <span className="text-[#f2ede1]">{h.title}</span>
-        <span className="mt-0.5 block text-xs text-dim">{h.caption}</span>
-      </figcaption>
-      <span className="sr-only">Highlight {i + 1} of {HIGHLIGHTS.length}</span>
-    </figure>
-  );
-}
-
-/** `lead` makes the first clip twice as wide (the reel layout). */
-export function Highlights({ lead = false }: { lead?: boolean }) {
-  return (
-    <ul className={`m-0 grid list-none gap-4 p-0 sm:grid-cols-2 ${lead ? 'lg:grid-cols-3' : 'lg:grid-cols-4'}`}>
-      {HIGHLIGHTS.map((h, i) => (
-        <li key={h.title} className={lead && i === 0 ? 'sm:col-span-2 lg:col-span-3' : ''}>
-          <div className={lead && i === 0 ? 'lg:max-w-4xl' : ''}><Clip h={h} i={i} /></div>
-        </li>
-      ))}
-    </ul>
   );
 }
 
@@ -189,31 +104,10 @@ function PieceBody({ p }: { p: Piece }) {
   );
 }
 
-/** The journey: a trace line down the left with a node per piece, in the order a signal travels. */
-export function Pieces() {
-  return (
-    <ol className="m-0 mt-6 list-none p-0">
-      {PIECES.map((p, i) => (
-        <li key={p.id} className="relative border-l border-border pb-7 pl-7 last:pb-0">
-          <span aria-hidden className={`absolute -left-[7px] top-1.5 h-[13px] w-[13px] rounded-full border-2 bg-bg ${p.guildOnly ? 'border-blue' : 'border-gold'}`} />
-          <h3 className="text-base text-[#f2ede1]">
-            <span className="mr-2 text-xs text-dim">{i + 1}</span>{p.name}
-            <span className="ml-2 text-xs font-normal text-dim">{p.tag}</span>
-          </h3>
-          {p.guildOnly && (
-            <span className="mt-1 inline-block rounded border border-blue/60 px-1.5 text-[11px] text-blue">only if you sign in to a guild</span>
-          )}
-          <div className="mt-2 max-w-[68ch]"><PieceBody p={p} /></div>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-/** The same five pieces, one line each; the paragraph and the diagram open on tap. */
+/** The five pieces in the order a signal travels, one line each; the paragraph and the diagram open on tap. */
 export function PiecesCompact() {
   return (
-    <ul className="m-0 mt-5 grid list-none gap-3 p-0 sm:grid-cols-2 lg:grid-cols-5">
+    <ul className="m-0 mt-4 grid list-none gap-3 p-0 sm:grid-cols-2 lg:grid-cols-5">
       {PIECES.map((p, i) => (
         <li key={p.id} className={`rounded-md border bg-panel p-3 ${p.guildOnly ? 'border-blue/50' : 'border-border'}`}>
           <details>
@@ -286,27 +180,27 @@ export function ScopeBadge({ scope }: { scope: Overlay['scope'] }) {
     : <span className="shrink-0 rounded border border-blue/60 px-1.5 text-[11px] text-blue">[guild]</span>;
 }
 
-export function OverlayList() {
-  return (
-    <ul className="m-0 mt-5 list-none divide-y divide-border rounded-md border border-border bg-panel p-0">
-      {OVERLAYS.map(o => (
-        <li key={o.name} className="flex items-start gap-3 px-3 py-2.5">
-          <ScopeBadge scope={o.scope} />
-          <div className="min-w-0 text-sm leading-5">
-            <span className="text-[#f2ede1]">{o.name}</span>
-            <span className="block text-xs text-dim">{o.purpose}{o.note ? ` (${o.note})` : ''}</span>
-          </div>
-        </li>
-      ))}
-    </ul>
-  );
+/** A card's picture slot: a clip when `clip` is set, else a still when `still` is set, else nothing at all. */
+function OverlayMedia({ o }: { o: Overlay }) {
+  if (o.clip) {
+    return (
+      <video src={o.clip} poster={o.still} controls playsInline preload="none"
+             className="mb-2 aspect-video w-full rounded border border-border bg-bg object-contain" />
+    );
+  }
+  if (o.still) {
+    return <img src={o.still} alt={`${o.name} overlay`} loading="lazy" className="mb-2 aspect-video w-full rounded border border-border bg-bg object-contain" />;
+  }
+  return null;
 }
 
-export function OverlayGrid() {
+/** The overlay gallery: every overlay as a card, tagged [local] or [guild]. */
+export function OverlayGallery() {
   return (
-    <ul className="m-0 mt-5 grid list-none gap-3 p-0 sm:grid-cols-2 lg:grid-cols-3">
+    <ul className="m-0 mt-4 grid list-none gap-3 p-0 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
       {OVERLAYS.map(o => (
         <li key={o.name} className="rounded-md border border-border bg-panel p-3">
+          <OverlayMedia o={o} />
           <div className="flex items-center justify-between gap-2">
             <span className="text-sm text-[#f2ede1]">{o.name}</span>
             <ScopeBadge scope={o.scope} />
@@ -315,6 +209,41 @@ export function OverlayGrid() {
         </li>
       ))}
     </ul>
+  );
+}
+
+// ─── The ledger: what runs on your own PC against what needs a guild server ─────────────────────────
+function LedgerColumn({ title, sub, tone, scope, children }: {
+  title: string; sub: string; tone: 'green' | 'blue'; scope: Overlay['scope']; children?: ReactNode;
+}) {
+  return (
+    <div className={`rounded-md border bg-panel p-4 ${tone === 'green' ? 'border-green/50' : 'border-blue/50'}`}>
+      <h3 className={`text-base ${tone === 'green' ? 'text-green' : 'text-blue'}`}>{title}</h3>
+      <p className="mt-0.5 text-xs text-dim">{sub}</p>
+      <ul className="m-0 mt-3 list-none space-y-2 p-0">
+        {OVERLAYS.filter(o => o.scope === scope).map(o => (
+          <li key={o.name} className="flex items-start gap-3 text-sm leading-5">
+            <ScopeBadge scope={scope} />
+            <span className="min-w-0"><span className="text-[#f2ede1]">{o.name}</span>
+              <span className="block text-xs text-dim">{o.purpose}{o.note ? ` (${o.note})` : ''}</span></span>
+          </li>
+        ))}
+      </ul>
+      {children}
+    </div>
+  );
+}
+
+export function Ledger() {
+  const guildPiece = PIECES.find(p => p.guildOnly);
+  return (
+    <div className="mt-4 grid gap-4 md:grid-cols-2">
+      <LedgerColumn title="On your PC (free, no account)" sub="Download, run local-only, done" tone="green" scope="local" />
+      <LedgerColumn title="Needs a guild server" sub="Only once your guild runs one and you sign in" tone="blue" scope="guild">
+        {guildPiece && <p className="mt-4 border-t border-border pt-3 text-xs leading-5 text-text">{guildPiece.body}</p>}
+        <p className="mt-3 text-xs leading-5 text-dim">In local mode these show &ldquo;needs your raid&rsquo;s Mimics&rdquo; or stay empty. <a href="#hive">How a guild runs one</a>.</p>
+      </LedgerColumn>
+    </div>
   );
 }
 
@@ -328,21 +257,6 @@ export function OverlayKey() {
 }
 
 // ─── Privacy ────────────────────────────────────────────────────────────────────────────────────────
-export function PrivacyList() {
-  return (
-    <div className="mt-4">
-      <ul className="m-0 list-none space-y-2 p-0">
-        {PRIVACY_BULLETS.map(b => (
-          <li key={b} className="flex gap-3 text-sm leading-6 text-text">
-            <span aria-hidden className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-green" />{b}
-          </li>
-        ))}
-      </ul>
-      <PrivacyCaveat />
-    </div>
-  );
-}
-
 export function PrivacyStrip() {
   return (
     <div className="mt-4">
@@ -375,7 +289,7 @@ function Code({ children }: { children: string }) {
   );
 }
 
-export function HiveSteps({ compact = false }: { compact?: boolean }) {
+export function HiveSteps() {
   return (
     <ol className="m-0 mt-5 list-none p-0">
       {HIVE_STEPS.map((s, i) => (
@@ -385,7 +299,7 @@ export function HiveSteps({ compact = false }: { compact?: boolean }) {
           </span>
           <h4 className="text-base text-[#f2ede1]">{s.title}</h4>
           <p className="mt-1 max-w-[66ch] text-sm leading-6 text-text [overflow-wrap:anywhere]">{s.body}</p>
-          {!compact && s.code && <Code>{s.code}</Code>}
+          {s.code && <Code>{s.code}</Code>}
         </li>
       ))}
     </ol>
@@ -438,13 +352,13 @@ export function DocLinks({ ctx }: { ctx: Ctx }) {
   );
 }
 
-export function Hive({ ctx, compact = false }: { ctx: Ctx; compact?: boolean }) {
+export function Hive({ ctx }: { ctx: Ctx }) {
   return (
     <>
       <p className="mt-2 max-w-[66ch] text-sm leading-6 text-text">{HIVE.lead}</p>
-      <h3 className="mt-6 text-lg text-[#f2ede1]">{HIVE.howTitle}</h3>
+      <h3 className="mt-5 text-lg text-[#f2ede1]">{HIVE.howTitle}</h3>
       <p className="mt-1 text-xs text-dim">{HIVE.howNote}</p>
-      <HiveSteps compact={compact} />
+      <HiveSteps />
       <NotFinishedBox />
       <CostsBox />
       <DocLinks ctx={ctx} />
@@ -452,27 +366,10 @@ export function Hive({ ctx, compact = false }: { ctx: Ctx; compact?: boolean }) 
   );
 }
 
-// ─── FAQ ────────────────────────────────────────────────────────────────────────────────────────────
-export function Faq() {
-  return (
-    <div className="mt-4 divide-y divide-border rounded-md border border-border bg-panel">
-      {FAQ.map(f => (
-        <details key={f.q} className="group px-4">
-          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 py-2 text-sm text-[#f2ede1]">
-            {f.q}
-            <span aria-hidden className="text-dim group-open:rotate-45">+</span>
-          </summary>
-          <p className="pb-3 text-sm leading-6 text-text">{f.a}</p>
-        </details>
-      ))}
-    </div>
-  );
-}
-
 // ─── Footer ─────────────────────────────────────────────────────────────────────────────────────────
 export function LandingFooter({ ctx }: { ctx: Ctx }) {
   return (
-    <footer className="mt-14 border-t border-border pt-4">
+    <footer className="mt-12 border-t border-border pt-4">
       <RightsNotice id="rights-footer" />
       <p className="text-xs leading-6 text-dim">
         <a href={ctx.feedback}>Send feedback</a> <span aria-hidden>&middot;</span>{' '}
