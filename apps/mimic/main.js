@@ -8438,6 +8438,18 @@ ipcMain.handle('overlay-set-bounds', (e, b) => {
 // passes the natural content height (scrollHeight of #wrap) — we add a small
 // chrome margin, clamp to the work-area height, and apply only when the
 // delta is meaningful so we don't fight the user mid-drag.
+// Fit-height changes the HEIGHT only, so the width it writes back is held, never re-read each time.
+// It used to send getBounds().width straight back on every content change; on a second screen with a
+// different Windows scaling % that read-back can be off by a pixel, so the width crept a little with every
+// fit (the guild lead, 2026-10-09: a member's Target Info and Extended Target on a smaller second monitor,
+// after turning on fit height). A read within 3 px of the held width is that rounding: keep the held one.
+// Anything further is the user resizing (or a size preset): hold the new width from then on.
+function _fitHeldWidth(win, readW) {
+  const held = win.__wpFitW;
+  if (Number.isFinite(held) && Math.abs(readW - held) <= 3) return held;
+  win.__wpFitW = readW;
+  return readW;
+}
 ipcMain.handle('overlay-auto-height', (e, h) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
@@ -8518,7 +8530,7 @@ ipcMain.handle('overlay-auto-height', (e, h) => {
         appendAgentLog(`[grow-up] ${key} h ${bounds.height}->${target} y ${bounds.y}->${y}${clampedAtTop ? ' CLAMPED-AT-TOP(no room above)' : ''} workAreaY=${disp.workArea.y}\n`);
       }
     }
-    win.setBounds({ x: bounds.x, y, width: bounds.width, height: target });
+    win.setBounds({ x: bounds.x, y, width: _fitHeldWidth(win, bounds.width), height: target });
     return true;
   } catch { return false; }
 });
