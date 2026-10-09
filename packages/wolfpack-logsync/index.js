@@ -7457,6 +7457,42 @@ const lootedBuffer   = [];         // pending { item, looter, zone, atMs }
 let   _lootedUploadHW = 0;         // high-water: last uploaded looted atMs
 const _lootedRecentFp = new Map(); // fp → atMs; drop the same loot re-seen quickly
 
+// Gear a charmer loots back off their OWN pet's corpse is not loot (the guild lead, 2026-10-09: "anything a charmer
+// gives to their pet (and we have the spawn ID) and they loot is not counted as loot. It was already theirs."). The
+// looted line names no corpse and no log line exists for handing an item to a pet, so the only evidence is Zeal's
+// target at the moment of the loot: this character's current target id equals the id its own pet had while alive.
+// _ownPetRecs keeps that id after the pet dies (that is the point): lower-cased character → { id, name, zone, at }.
+// Cleared when the character's zone changes, when they camp, and after _OWN_PET_FRESH_MS. Needs Zeal 1.4.6+ ids; with
+// none, nothing is recorded and nothing is flagged. A guess is worse than a miss, so every condition must hold.
+const _OWN_PET_FRESH_MS = 2 * 3600_000;
+const _OWN_PET_LINE_SLACK_MS = 30_000;
+const _ownPetRecs = new Map();
+function _lootZoneKnown(z) { return z != null && z !== '' && z !== 0 && z !== '0'; }
+function _noteOwnPetForLoot(character, st, nowMs) {
+  const cl = String(character || '').toLowerCase();
+  if (!cl || !st) return;
+  const petName = _petNameForOwner(cl);
+  const id = petName ? _ownPetSpawnId(petName, character) : null;   // the existing guards: gauge names the pet, id is an integer > 0
+  if (id) { _ownPetRecs.set(cl, { id, name: String(petName), zone: _lootZoneKnown(st.zone) ? st.zone : null, at: nowMs }); return; }
+  const rec = _ownPetRecs.get(cl);
+  if (!rec) return;
+  if (nowMs - rec.at >= _OWN_PET_FRESH_MS || (_lootZoneKnown(st.zone) && _lootZoneKnown(rec.zone) && String(st.zone) !== String(rec.zone))) _ownPetRecs.delete(cl);
+}
+// Pure decision: true ONLY when the looter's current target id is the remembered pet id (both positive integers), in the
+// same zone (both known), the record is fresh, the target's name is a corpse, and the loot line is live. `lineMs`
+// (optional) keeps a lagging or replayed tail from being judged against a target that has since changed.
+function _lootFromOwnPet(state, petRec, zone, nowMs, lineMs) {
+  if (!state || !petRec) return false;
+  const tid = state.target_id;
+  if (!Number.isInteger(tid) || tid <= 0) return false;
+  if (!Number.isInteger(petRec.id) || petRec.id <= 0 || tid !== petRec.id) return false;
+  if (!_lootZoneKnown(zone) || !_lootZoneKnown(petRec.zone) || String(zone) !== String(petRec.zone)) return false;
+  if (!Number.isFinite(petRec.at) || !Number.isFinite(nowMs) || nowMs - petRec.at >= _OWN_PET_FRESH_MS || nowMs < petRec.at) return false;
+  if (!/['`’]s corpse\d*$/i.test(String(state.target_name || '').trim())) return false;
+  if (lineMs != null && !(Math.abs(nowMs - lineMs) <= _OWN_PET_LINE_SLACK_MS)) return false;
+  return true;
+}
+
 function trackLootedLine(line, character) {
   if (!line || !character || line.indexOf('You have looted') === -1) return;   // cheap gate
   const m = line.match(_LOOTED_RX);
@@ -7476,15 +7512,17 @@ function trackLootedLine(line, character) {
     const cutoff = Date.now() - 60000;
     for (const [k, v] of _lootedRecentFp) if (v < cutoff) _lootedRecentFp.delete(k);
   }
-  let zone = null;
+  let zone = null, zst = null;
   for (const ch of Object.keys(_zealState || {})) {
-    if (String(ch).toLowerCase() === cl) { zone = _zealState[ch].zone || null; break; }
+    if (String(ch).toLowerCase() === cl) { zst = _zealState[ch]; zone = zst.zone || null; break; }
   }
+  const fromOwnPet = _lootFromOwnPet(zst, _ownPetRecs.get(cl), zone, Date.now(), atMs);
   lootedBuffer.push({
     item:   item.slice(0, 64),
     looter: String(character).slice(0, 32),
     zone:   zone ? String(zone).slice(0, 64) : null,
     atMs,
+    ...(fromOwnPet ? { fromOwnPet: true } : {}),
   });
   if (lootedBuffer.length > 200) lootedBuffer.splice(0, lootedBuffer.length - 200);
 }
@@ -7502,7 +7540,7 @@ function uploadLooted() {
     _lootedUploadHW = Math.max(_lootedUploadHW, ...fresh.map(e => e.atMs));
     enqueueUpload('looted', {
       agent_version: AGENT_VERSION,
-      events: fresh.map(e => ({ item: e.item, looter: e.looter, zone: e.zone, at: new Date(e.atMs).toISOString() })),
+      events: fresh.map(e => ({ item: e.item, looter: e.looter, zone: e.zone, at: new Date(e.atMs).toISOString(), ...(e.fromOwnPet ? { from_own_pet: true } : {}) })),
     });
   }
   // Bound the buffer — drop anything already uploaded or past the 30-min window
@@ -32472,6 +32510,7 @@ function startWebDashboard(port) {
           // A member sat on the Command Center at 18% long after the guild lead had
           // swapped back to the guild lead (live, 2026-08-13).
           _healerManaRoster.delete(_cl);
+          _ownPetRecs.delete(_cl);   // a camped character's spawn ids are gone with the zone
           // Same-client swap: forward "<character> swapped to <X>" to the
           // bot so /raid moves them to "Not in raid (swapped to X)" instead
           // of showing both characters as live raiders. Fire-and-forget on
@@ -32517,6 +32556,7 @@ function startWebDashboard(port) {
           noteSpawnIdSeen(st.spawn_id);
           noteSpawnIdSeen(st.target_id);
           noteSpawnIdSeen(st.pet_id);
+          try { _noteOwnPetForLoot(character, st, Date.now()); } catch (e) { void e; }   // own-pet loot flag: remember the pet's id while it lives
           // #105 — mob self-heal: the Zeal target gauge HP% rising for the same
           // target across frames → a mob_heal timeline tick on the live fight.
           try { _noteMobHealFromState(character, prevState, st); } catch (e) { void e; }
