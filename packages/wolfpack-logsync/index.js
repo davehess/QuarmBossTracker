@@ -24358,7 +24358,8 @@ function _wpNightWindowText(hrs) {
 function wpFmtPP(cp) {
   if (cp == null || !isFinite(cp)) return '—';
   if (cp > 0 && cp < 50) return '&lt;0.1';
-  return (Math.round(cp / 100) / 10).toLocaleString('en-US', { maximumFractionDigits: 1 });
+  // Always one decimal so the column lines up (the guild lead, 2026-10-09: "either show a decimal or not").
+  return (Math.round(cp / 100) / 10).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 function wpNightLootWindowChips() {
   var h = '<div style="display:flex;gap:4px;align-items:center;margin-bottom:6px"><span class="wp-lbl" style="margin-right:2px">Window</span>';
