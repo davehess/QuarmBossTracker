@@ -55,11 +55,11 @@ const CLOAK = ROW('Corvale', 'Cloak of Flames', 54000, true);
 describe('wpFmtPP — copper to platinum', () => {
   const { wpFmtPP } = build();
   it('platinum with up to one decimal, grouped', () => {
-    expect(wpFmtPP(54000)).toBe('54');
+    expect(wpFmtPP(54000)).toBe('54.0');
     expect(wpFmtPP(1500)).toBe('1.5');
     expect(wpFmtPP(250)).toBe('0.3');
     expect(wpFmtPP(1234567)).toBe('1,234.6');
-    expect(wpFmtPP(0)).toBe('0');
+    expect(wpFmtPP(0)).toBe('0.0');
   });
   it('a few copper is "<0.1", and no price is a dash', () => {
     expect(wpFmtPP(25)).toBe('&lt;0.1');
@@ -74,7 +74,7 @@ describe('wpNightLootHtml — values', () => {
   it('adds a Value (pp) column: platinum per row, a dash when the item has no price', () => {
     const html = wpNightLootHtml(BODY([CLOAK, ROW('Aldenmar', 'Mystery Drop', null, null)]));
     expect(html).toContain('<th>Value (pp)</th>');
-    expect(html).toContain('<td class="num">54</td>');
+    expect(html).toContain('<td class="num">54.0</td>');
     expect(html).toContain('<td>Mystery Drop</td><td class="dim">The Overthere</td><td class="num">—</td>');
   });
 
@@ -117,7 +117,7 @@ describe('wpNightLootHtml — totals by character', () => {
     const t = html.slice(html.indexOf('Totals by character'));
     expect(t.indexOf('Aldenmar')).toBeLessThan(t.indexOf('Corvale'));
     expect(t.indexOf('Corvale')).toBeLessThan(t.indexOf('Brackwyn'));
-    expect(html).toContain('<td class="name">Aldenmar</td><td class="num">5</td><td class="num">123</td><td class="num dim">4</td>');
+    expect(html).toContain('<td class="name">Aldenmar</td><td class="num">5</td><td class="num">123.0</td><td class="num dim">4</td>');
     expect(html).toContain('178.5 pp across 9 items');
   });
 
