@@ -1900,6 +1900,16 @@ function _consumePendingCharmSpell(owner, nowMs) {
   _pendingCharmSpell = null;
   return { charm_class: p.cls, duration_sec: p.dur, charm_spell_name: p.name || null };
 }
+// Options for the _bumpCharmTick that re-arms a charm RECAST on a pet we already
+// track. A staged spell (the consume above returned one) is what proves a real
+// recast; a bare pet-ack also tags source:'charm_land' and must leave the tracker
+// alone, or the up-timer would reset on every ack — so no staged spell → null.
+// The keys are _consumePendingCharmSpell's (charm_class / duration_sec); the old
+// inline check read pcSpell.dur / pcSpell.cls, which never exist, so it never bumped.
+function _recastBumpOpts(pcSpell, existing) {
+  if (!pcSpell) return null;
+  return { is_dire_charm: !!(existing && existing.is_dire_charm), ...pcSpell };
+}
 // Non-consuming variant: returns true iff there's a pending charm spell for
 // this owner that hasn't aged out. Used by _reconcileGaugeCharms to ACCEPT
 // a slot-16 pet whose name doesn't match the article-prefix heuristic — i.e.
@@ -9252,9 +9262,8 @@ class EncounterBuilder {
         if (existing && existing.owner === owner) {
           const pcSpell = _consumePendingCharmSpell(owner, startTs);
           if (pcSpell) _charmRefreshed.add(existing);
-          if (pcSpell && (pcSpell.dur || pcSpell.cls)) {
-            _bumpCharmTick(event.pet, owner, 'land', startTs, { is_dire_charm: !!existing.is_dire_charm, ...pcSpell });
-          }
+          const bumpOpts = _recastBumpOpts(pcSpell, existing);
+          if (bumpOpts) _bumpCharmTick(event.pet, owner, 'land', startTs, bumpOpts);
           return;
         }
         // If the existing session is with a different owner, the previous

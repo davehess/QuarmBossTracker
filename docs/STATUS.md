@@ -103,6 +103,14 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 Charm tracker: re-casting a charm that is still running now resets its timer (agent, beta, 2026-10-09; the guild
+  lead: "fix the charm re-cast timer bug").** The recast branch asked for `pcSpell.dur || pcSpell.cls`, but the staged
+  cast carries `charm_class` / `duration_sec`, so the check never passed and the overlay kept counting from the first
+  land. A recast with a seen cast now re-arms the "up" timer, the duration bar and the 25 s "charm aging" cue (the
+  card's memory re-arms when the start time changes), on the full and mini cards alike. The charm session itself
+  continues, so the break still reports "ran full" as unknown. A repeated pet-ack with no cast behind it still leaves the
+  timer alone (it is indistinguishable from a recast we never saw, and re-arming on it would reset the timer every ack).
+  `packages/wolfpack-logsync/index.js` (`_recastBumpOpts`), test `test/charm-recast-refresh.test.js`.
 - **🧪 Charm tracker: "charm aging" cue for non-bard charms at 25 s (Mimic beta, 2026-10-08; the guild lead: "A plus
   B's instrumentation, 25 seconds").** An enchanter's charm lasts minutes on paper but breaks at random on the mob's
   tick (last 30 days: median 36 s, 117 of 285 under 30 s), so the max-duration warning almost never fired first. A
