@@ -760,6 +760,12 @@ next touch one rather than assuming a missing row means a missing doc.
 - **✅ Plane of Tactics stampede triggers (guild triggers, live 2026-10-08).** "You hear the pounding of hooves."
   → overlay + "Stampede" + 15 s timer; then a window: "stampede window opens" bar (40 min) and "stampede by" bar
   (120 min), both shown from the emote (FB-69). DECISIONS §200.
+- **🧪 `/boards` zone-timers panel, now named and linked (web 1.8.128, 2026-10-09).** The guild lead, from a phone
+  screenshot: "this requires more description: Boar stampede, approximate earliest and latest start timers
+  (observed) and a PQDI link to the piglet." Each window now reads **Boar stampede** (event name from the trigger,
+  `eventInfo` in `web/lib/zoneTimers.ts`), a one-line blurb, **Earliest start** and **Latest start** each as a
+  countdown plus the viewer's own clock time, when the clock was started ("observed"), and a **Stampeding Piglet
+  on PQDI** link (npc 214303). Unknown triggers show under their own name.
 - **🧪 `/boards` zone-timers panel (beta variant `?v=b`, web 1.8.127, 2026-10-08).** Reads the bot's ledger
   (`bot_kv` `zone_timer_windows`, DECISIONS §208): per running window the zone, "earliest in" / "possible now" and the
   latest time, "the window has closed, it happened unobserved" once it passes, and a note when a fresh sighting

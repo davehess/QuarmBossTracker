@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { parseZoneTimers, windowStatus, visibleCleared, fmtRemaining, zoneLabel } from '../web/lib/zoneTimers.ts';
+import { parseZoneTimers, windowStatus, visibleCleared, fmtRemaining, zoneLabel, eventInfo, pqdiNpcUrl } from '../web/lib/zoneTimers.ts';
 
 const W = { window_id: 'w1', trigger_name: 'Tactics: stampede window opens', zone: 'potactics', observed_at_ms: 1000, min_at_ms: 2000, max_at_ms: 9000 };
 
@@ -61,6 +61,21 @@ describe('visibleCleared', () => {
       { trigger_name: 'Other', zone: 'potactics', at_ms: 5, reason: 'expired_unobserved' },
     ] });
     expect(visibleCleared(t).map((c) => c.trigger)).toEqual(['Other']);
+  });
+});
+
+describe('eventInfo: what the window is', () => {
+  it('names the stampede windows "Boar stampede" and links the piglet on PQDI', () => {
+    for (const t of ['Tactics: stampede window opens', 'Tactics: stampede by', 'Tactics: boar stampede incoming']) {
+      const e = eventInfo(t);
+      expect(e.title).toBe('Boar stampede');
+      expect(e.blurb).toMatch(/earliest and latest start/);
+      expect(e.pqdi).toEqual({ label: 'Stampeding Piglet', npcId: 214303 });
+    }
+    expect(pqdiNpcUrl(214303)).toBe('https://www.pqdi.cc/npc/214303');
+  });
+  it('shows an unknown trigger under its own name with no blurb and no link', () => {
+    expect(eventInfo('Somewhere: a thing')).toEqual({ title: 'Somewhere: a thing', blurb: null, pqdi: null });
   });
 });
 
