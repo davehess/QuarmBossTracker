@@ -1,5 +1,9 @@
 # Zeal PR draft — tag corpses (and keep a mob's pre-death tag off its corpse)
 
+> **Current (2026-10-09):** the branch is ONE commit, `7f7c824`, on Zeal v1.4.8 (`50dc9a4`), squashed from the
+> commits named below with the same code; `0001-tag-corpses.patch` is that commit. The hashes below are history.
+> A local checkout: `git fetch origin && git reset --hard origin/tag-corpses`.
+
 *Drafted 2026-09-25 against Zeal v1.4.7 (`e24a3ed`). Branch **`tag-corpses`** on the
 guild lead's fork (github.com/davehess/zeal/tree/tag-corpses, one commit, `aa975e1`); the
 same change is `0001-tag-corpses.patch` here. It is merged into `test-all` (`d32bed1`),
