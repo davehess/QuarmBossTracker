@@ -1,0 +1,326 @@
+From 24334930cac802523153307b493cde1a20a0420b Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 9 Oct 2026 18:05:31 +0000
+Subject: [PATCH] Draw an arrow cursor while the UI is hidden (F10)
+
+The client draws its mouse cursor from the window manager's DrawWindows(),
+which is skipped when the UI is hidden (screen mode 3), so the cursor
+disappears even though the mouse still works for clicking mobs in the
+world. The newer eqw.dll also calls SetCursor(NULL) over the game window,
+so the Windows cursor cannot just be re-enabled.
+
+Add a small HideUiCursor class that draws a flat white arrow with a black
+border at the client's mouse position from the RenderUI callback, using
+transformed vertices (no texture asset). Scaled from 20 px at 1080p with
+the screen height. It is only drawn in game, with the UI hidden, while
+the game window has focus and not during right mouse button mouse look.
+
+New setting ShowCursorWithUiHidden ([Zeal] ini section), on by default,
+toggled with /uicursor [on|off]. Documented in the README.
+
+No options window checkbox yet: that needs new XML in both uifiles/zeal
+and uifiles/zeal/big_xml.
+---
+ README.md                 |   7 ++
+ Zeal/Zeal.vcxproj         |   2 +
+ Zeal/Zeal.vcxproj.filters |   6 ++
+ Zeal/hide_ui_cursor.cpp   | 159 ++++++++++++++++++++++++++++++++++++++
+ Zeal/hide_ui_cursor.h     |  24 ++++++
+ Zeal/zeal.cpp             |   2 +
+ Zeal/zeal.h               |   1 +
+ 7 files changed, 201 insertions(+)
+ create mode 100644 Zeal/hide_ui_cursor.cpp
+ create mode 100644 Zeal/hide_ui_cursor.h
+
+diff --git a/README.md b/README.md
+index 79929a8..90f522a 100644
+--- a/README.md
++++ b/README.md
+@@ -532,6 +532,13 @@ ___
+   - **Description:** Supports very simplistic countdown timers from chat parsing triggers.
+      See the [Triggers](#Triggers) section for more details.
+ 
++- `/uicursor`
++  - **Arguments:** `on`, `off` (no argument toggles)
++  - **Description:** Enables (on, the default) or disables drawing an arrow mouse cursor while the UI is hidden (F10).
++     The game stops drawing its own cursor in that mode, so this makes it possible to see where you are clicking.
++     The cursor is not drawn during right mouse button mouse look or when the game window is not in focus.
++     Saved in the ini file as `ShowCursorWithUiHidden` in the `[Zeal]` section.
++
+ - `/uierrors`
+   - **Arguments:** `on`, `off`
+   - **Description:** Sets (on) or clears (off) the enable for showing dialog messages for unknown xml errors.
+diff --git a/Zeal/Zeal.vcxproj b/Zeal/Zeal.vcxproj
+index 1084304..8218f2f 100644
+--- a/Zeal/Zeal.vcxproj
++++ b/Zeal/Zeal.vcxproj
+@@ -83,6 +83,7 @@
+     <ClInclude Include="items.h" />
+     <ClInclude Include="json.hpp" />
+     <ClInclude Include="helm_manager.h" />
++    <ClInclude Include="hide_ui_cursor.h" />
+     <ClInclude Include="music.h" />
+     <ClInclude Include="raid_bars.h" />
+     <ClInclude Include="raid_bars_manage.h" />
+@@ -169,6 +170,7 @@
+     <ClCompile Include="equip_item.cpp" />
+     <ClCompile Include="floating_damage.cpp" />
+     <ClCompile Include="helm_manager.cpp" />
++    <ClCompile Include="hide_ui_cursor.cpp" />
+     <ClCompile Include="items.cpp" />
+     <ClCompile Include="music.cpp" />
+     <ClCompile Include="raid_bars.cpp" />
+diff --git a/Zeal/Zeal.vcxproj.filters b/Zeal/Zeal.vcxproj.filters
+index eda60ee..84eb812 100644
+--- a/Zeal/Zeal.vcxproj.filters
++++ b/Zeal/Zeal.vcxproj.filters
+@@ -240,6 +240,9 @@
+     <ClInclude Include="helm_manager.h">
+       <Filter>Header Files\hooks</Filter>
+     </ClInclude>
++    <ClInclude Include="hide_ui_cursor.h">
++      <Filter>Header Files\other</Filter>
++    </ClInclude>
+     <ClInclude Include="music.h">
+       <Filter>Header Files\hooks</Filter>
+     </ClInclude>
+@@ -479,6 +482,9 @@
+     <ClCompile Include="helm_manager.cpp">
+       <Filter>Source Files\hooks</Filter>
+     </ClCompile>
++    <ClCompile Include="hide_ui_cursor.cpp">
++      <Filter>Source Files\other</Filter>
++    </ClCompile>
+     <ClCompile Include="ui_buff.cpp">
+       <Filter>Source Files\ui</Filter>
+     </ClCompile>
+diff --git a/Zeal/hide_ui_cursor.cpp b/Zeal/hide_ui_cursor.cpp
+new file mode 100644
+index 0000000..7a4e879
+--- /dev/null
++++ b/Zeal/hide_ui_cursor.cpp
+@@ -0,0 +1,159 @@
++#define NOMINMAX
++#include "hide_ui_cursor.h"
++
++#include <algorithm>
++#include <iterator>
++
++#include "callbacks.h"
++#include "commands.h"
++#include "directx.h"
++#include "game_addresses.h"
++#include "game_functions.h"
++#include "string_util.h"
++#include "zeal.h"
++
++namespace {
++
++// The classic pointer shape on a 12 x 19 unit grid with the tip (the click hotspot) at the origin.
++struct Point {
++  float x, y;
++};
++
++constexpr Point kArrowOutline[] = {{0, 0}, {0, 16}, {4, 12}, {7, 18}, {9, 17}, {6, 11}, {11, 11}};
++constexpr int kOutlineCount = sizeof(kArrowOutline) / sizeof(kArrowOutline[0]);
++constexpr float kGridHeight = 19.f;
++
++// The (concave) outline split into triangles by index: the head is a fan from the tip and the tail is a quad.
++constexpr int kFillTriangles[][3] = {{0, 1, 2}, {0, 2, 5}, {0, 5, 6}, {2, 3, 4}, {2, 4, 5}};
++constexpr int kFillTriangleCount = sizeof(kFillTriangles) / sizeof(kFillTriangles[0]);
++
++constexpr float kHeightPixels1080p = 20.f;  // Cursor height at 1080 pixels of screen height.
++constexpr float kMinScale = 0.8f;           // Resolution scale clamps (relative to 1080p).
++constexpr float kMaxScale = 3.f;
++constexpr int16_t kInvalidMouse = 32767;  // The client's marker for an unknown mouse position.
++
++constexpr D3DCOLOR kFillColor = D3DCOLOR_ARGB(255, 255, 255, 255);
++constexpr D3DCOLOR kBorderColor = D3DCOLOR_ARGB(255, 0, 0, 0);
++
++// Screen-space vertex (already transformed, so the client's world / view / projection are not involved).
++struct CursorVertex {
++  static constexpr DWORD kFvfCode = (D3DFVF_XYZRHW | D3DFVF_DIFFUSE);
++
++  float x, y, z, rhw;
++  D3DCOLOR color;
++};
++
++// The EQ window can be in the background with the UI hidden, so only draw for the focused game window.
++bool is_game_window_focused() {
++  HWND hwnd = Zeal::Game::get_game_window();
++  if (!hwnd) return true;  // Unknown, so assume focused rather than never drawing.
++  return ::GetForegroundWindow() == ::GetAncestor(hwnd, GA_ROOT);
++}
++
++}  // namespace
++
++HideUiCursor::HideUiCursor(ZealService *zeal) {
++  zeal->callbacks->AddGeneric([this]() { CallbackRender(); }, callback_type::RenderUI);
++
++  zeal->commands_hook->Add("/uicursor", {}, "Toggles (or sets on / off) drawing a cursor while the UI is hidden (F10).",
++                           [this](std::vector<std::string> &args) {
++                             if (args.size() == 2 && Zeal::String::compare_insensitive(args[1], "on"))
++                               setting_enabled.set(true);
++                             else if (args.size() == 2 && Zeal::String::compare_insensitive(args[1], "off"))
++                               setting_enabled.set(false);
++                             else if (args.size() == 1)
++                               setting_enabled.toggle();
++                             else
++                               Zeal::Game::print_chat("Usage: /uicursor [on|off]");
++                             Zeal::Game::print_chat("Cursor with UI hidden is %s",
++                                                    setting_enabled.get() ? "on" : "off");
++                             return true;
++                           });
++}
++
++// Returns true if the client's own cursor is missing and ours should replace it.
++bool HideUiCursor::ShouldDraw() const {
++  if (!setting_enabled.get() || !Zeal::Game::is_in_game()) return false;
++  if (Zeal::Game::is_gui_visible()) return false;           // The client draws its own cursor with the UI visible.
++  if (*Zeal::Game::is_right_mouse_look_down) return false;  // Mouse look normally hides the cursor.
++  return is_game_window_focused();
++}
++
++void HideUiCursor::CallbackRender() {
++  if (!ShouldDraw()) return;
++
++  const int16_t mouse_x = *Zeal::Game::mouse_client_x;
++  const int16_t mouse_y = *Zeal::Game::mouse_client_y;
++  if (mouse_x == kInvalidMouse || mouse_y == kInvalidMouse) return;
++  if (mouse_x < 0 || mouse_y < 0 || mouse_x >= Zeal::Game::get_screen_resolution_x() ||
++      mouse_y >= Zeal::Game::get_screen_resolution_y())
++    return;
++
++  DrawArrow(static_cast<float>(mouse_x), static_cast<float>(mouse_y));
++}
++
++// Draws the arrow with its tip at (x, y) in game screen pixels.
++void HideUiCursor::DrawArrow(float x, float y) {
++  IDirect3DDevice8 *device = ZealService::get_instance()->dx->GetDevice();
++  if (!device) return;
++
++  // Scale the shape with the screen height so it stays a similar size on high resolution screens.
++  const float screen_x = static_cast<float>(Zeal::Game::get_screen_resolution_x());
++  const float screen_y = static_cast<float>(Zeal::Game::get_screen_resolution_y());
++  const float scale = kHeightPixels1080p * std::clamp(screen_y / 1080.f, kMinScale, kMaxScale) / kGridHeight;
++
++  CursorVertex outline[kOutlineCount];
++  for (int i = 0; i < kOutlineCount; ++i)
++    outline[i] = {x + kArrowOutline[i].x * scale, y + kArrowOutline[i].y * scale, 0.f, 1.f, kBorderColor};
++
++  CursorVertex fill[kFillTriangleCount * 3];
++  for (int i = 0; i < kFillTriangleCount; ++i) {
++    for (int j = 0; j < 3; ++j) {
++      fill[i * 3 + j] = outline[kFillTriangles[i][j]];
++      fill[i * 3 + j].color = kFillColor;
++    }
++  }
++
++  CursorVertex border[kOutlineCount + 1];  // Closed line strip.
++  std::copy(std::begin(outline), std::end(outline), border);
++  border[kOutlineCount] = outline[0];
++
++  // Support temporarily overriding the viewport to full screen mode (same as the bitmap font's full screen mode).
++  D3DVIEWPORT8 original_viewport;
++  device->GetViewport(&original_viewport);
++  const bool modify_viewport =
++      (original_viewport.X || original_viewport.Y || original_viewport.Width != static_cast<DWORD>(screen_x) ||
++       original_viewport.Height != static_cast<DWORD>(screen_y));
++  if (modify_viewport) {
++    D3DVIEWPORT8 viewport = {.X = 0,
++                             .Y = 0,
++                             .Width = static_cast<DWORD>(screen_x),
++                             .Height = static_cast<DWORD>(screen_y),
++                             .MinZ = original_viewport.MinZ,
++                             .MaxZ = original_viewport.MaxZ};
++    device->SetViewport(&viewport);
++  }
++
++  // Configure for opaque 2D drawing.
++  D3DRenderStateStash render_state(*device);
++  render_state.store_and_modify({D3DRS_CULLMODE, D3DCULL_NONE});
++  render_state.store_and_modify({D3DRS_ALPHABLENDENABLE, FALSE});
++  render_state.store_and_modify({D3DRS_ZENABLE, FALSE});  // Rely on render order.
++  render_state.store_and_modify({D3DRS_ZWRITEENABLE, FALSE});
++  render_state.store_and_modify({D3DRS_LIGHTING, FALSE});
++
++  // Use the vertex colors only (there is no texture).
++  D3DTextureStateStash texture_state(*device);
++  texture_state.store_and_modify({D3DTSS_COLOROP, D3DTOP_SELECTARG1});
++  texture_state.store_and_modify({D3DTSS_COLORARG1, D3DTA_DIFFUSE});
++
++  // Note: Not preserving shader, texture, or stream source to avoid reference counting (same as the other renderers).
++  device->SetTexture(0, NULL);
++  device->SetVertexShader(CursorVertex::kFvfCode);
++  device->DrawPrimitiveUP(D3DPT_TRIANGLELIST, kFillTriangleCount, fill, sizeof(CursorVertex));
++  device->DrawPrimitiveUP(D3DPT_LINESTRIP, kOutlineCount, border, sizeof(CursorVertex));
++
++  texture_state.restore_state();
++  render_state.restore_state();
++  if (modify_viewport) device->SetViewport(&original_viewport);
++}
+diff --git a/Zeal/hide_ui_cursor.h b/Zeal/hide_ui_cursor.h
+new file mode 100644
+index 0000000..084ccbe
+--- /dev/null
++++ b/Zeal/hide_ui_cursor.h
+@@ -0,0 +1,24 @@
++#pragma once
++#include <Windows.h>
++
++#include "zeal_settings.h"
++
++// Draws a simple arrow mouse cursor while the UI is hidden (F10). The client draws its cursor as part of the
++// window manager's DrawWindows(), which does not run in the hidden UI mode, so the cursor vanishes even though the
++// mouse still works for clicking on mobs in the world. This class fills that gap with flat colored geometry.
++class HideUiCursor {
++ public:
++  explicit HideUiCursor(class ZealService *zeal);
++  ~HideUiCursor() = default;
++
++  // Disable copy.
++  HideUiCursor(HideUiCursor const &) = delete;
++  HideUiCursor &operator=(HideUiCursor const &) = delete;
++
++  ZealSetting<bool> setting_enabled = {true, "Zeal", "ShowCursorWithUiHidden", false};
++
++ private:
++  void CallbackRender();
++  bool ShouldDraw() const;
++  void DrawArrow(float x, float y);
++};
+diff --git a/Zeal/zeal.cpp b/Zeal/zeal.cpp
+index f6ef22d..79ac8c3 100644
+--- a/Zeal/zeal.cpp
++++ b/Zeal/zeal.cpp
+@@ -32,6 +32,7 @@
+ #include "game_addresses.h"
+ #include "game_str.h"
+ #include "helm_manager.h"
++#include "hide_ui_cursor.h"
+ #include "hook_wrapper.h"
+ #include "io_ini.h"
+ #include "item_display.h"
+@@ -150,6 +151,7 @@ ZealService::ZealService() {
+   // Adds DirectX (and UISkin for resource file paths) dependencies.
+   target_ring = MakeCheckedUnique(TargetRing);
+   floating_damage = MakeCheckedUnique(FloatingDamage);  // Uses target ring method.
++  hide_ui_cursor = MakeCheckedUnique(HideUiCursor);     // Uses dx, callbacks, commands.
+ 
+   // Classes that add more explicit dependencies on the new UI.
+   utils = MakeCheckedUnique(Utils);                 // Uses container manager.
+diff --git a/Zeal/zeal.h b/Zeal/zeal.h
+index 93f2d1a..49d02df 100644
+--- a/Zeal/zeal.h
++++ b/Zeal/zeal.h
+@@ -51,6 +51,7 @@ class ZealService {
+   std::unique_ptr<class GameStr> gamestr_hook = nullptr;
+   std::unique_ptr<class CycleTarget> cycle_target = nullptr;
+   std::unique_ptr<class CameraMods> camera_mods = nullptr;
++  std::unique_ptr<class HideUiCursor> hide_ui_cursor = nullptr;
+   std::unique_ptr<class Raid> raid_hook = nullptr;
+   std::unique_ptr<class Tooltip> tooltips = nullptr;
+   std::unique_ptr<class OutputFile> outputfile = nullptr;
+-- 
+2.43.0
+
