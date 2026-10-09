@@ -77,7 +77,12 @@
   .row .timer.crit{color:#f85149;background:rgba(248,81,73,0.10);border-color:rgba(248,81,73,0.30)}
   .row .icon{display:flex;align-items:center;justify-content:center;
     width:16px;height:16px;font-size:12px;color:#8b949e}
-  .row .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c9d1d9}
+  /* The name cell is a flex row: the song name shrinks with an ellipsis and the AE chip after it never does.
+     The chip used to sit inside the one ellipsised span, so on a long name (Chords of Cessation, Disruptive
+     Discord) it was cut off behind the "…" (the guild lead, 2026-10-09: "not seeing the number of mobs"). */
+  .row .name{display:flex;align-items:center;min-width:0;white-space:nowrap;color:#c9d1d9}
+  .row .name .nm{overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .row .name .aoe{flex-shrink:0}
   /* Casting row — fills the row background left→right as the cast progresses,
      giving the "arrow getting closer" effect the user asked for. */
   .row.casting{background:linear-gradient(to right,
@@ -764,7 +769,7 @@
           }
           rowsHtml += '<div class="' + rowClass + '"' + styleAttr + ' title="' + esc(name) + '">'
                     +   '<span class="icon">' + icon + '</span>'
-                    +   '<span class="name">' + esc(shortSongName(name)) + aoeHtml + '</span>'
+                    +   '<span class="name"><span class="nm">' + esc(shortSongName(name)) + '</span>' + aoeHtml + '</span>'
                     +   countHtml
                     +   timerHtml
                     + '</div>';
