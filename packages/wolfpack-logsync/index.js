@@ -8172,6 +8172,33 @@ function _elapsedSec(fromTs, toTs) {
   return Math.max(0, (b - a) / 1000);
 }
 
+// Did a charm session run (about) its spell's full duration? The log cannot tell a natural fade from a
+// resist break: "Your charm spell has worn off." is the spell-fades line and prints for both, so
+// end_reason stays 'charm_break' and this derived flag carries the answer instead (the guild lead,
+// 2026-10-08, enchanters report early breaks). null = unknown: no spell, no duration, or the session
+// was truncated before it could prove anything. A flush that already reached the threshold is still true.
+// ⚠ Measured from the land line's and the break line's OWN timestamps, never from the session's
+// started_at/ended_at/duration_sec: those take this.lastEvent, which only combat events advance (the
+// charm handlers return before it), so they read the gap between two fights' last blows, not the charm.
+const CHARM_RAN_FULL_FRACTION = 0.9;
+function _charmRanFull(maxSec, durationSec, endReason) {
+  if (!Number.isFinite(maxSec) || maxSec <= 0) return null;
+  if (!Number.isFinite(durationSec)) return null;
+  const full = durationSec >= maxSec * CHARM_RAN_FULL_FRACTION;
+  if (endReason === 'encounter_flush') return full ? true : null;
+  return full;
+}
+// A recast by the same owner refreshes the charm while the session continues, so elapsed-since-first-land
+// says nothing about one spell's duration. Those sessions report ran_full null.
+const _charmRefreshed = new WeakSet();
+const _charmLandMs = new WeakMap();   // session -> the land line's own epoch ms
+function _stampCharmRanFull(sess, endMs) {
+  const landMs = _charmLandMs.get(sess);
+  const elapsed = Number.isFinite(landMs) && Number.isFinite(endMs) ? Math.max(0, (endMs - landMs) / 1000) : null;
+  const max = _charmRefreshed.has(sess) ? null : CHARM_SPELLS.get(sess.spell)?.dur;
+  sess.ran_full = _charmRanFull(max, elapsed, sess.end_reason);
+}
+
 // Damage-shield attribution (the guild lead, 2026-09-13: "These look like 150 dd procs"
 // — every anonymous non-melee hit that landed within a swing of the tank was
 // being credited to them as a shield). Log timestamps are whole seconds, so
@@ -9142,6 +9169,7 @@ class EncounterBuilder {
         open.ended_at = this.lastEvent || open.started_at;
         open.end_reason = 'charm_break';
         open.duration_sec = _elapsedSec(open.started_at, open.ended_at);
+        _stampCharmRanFull(open, Date.parse(event.ts));
         this.charmSessions.push(open);
         this._activeCharms.delete(petKey);
       }
@@ -9223,6 +9251,7 @@ class EncounterBuilder {
         // session from charm to break).
         if (existing && existing.owner === owner) {
           const pcSpell = _consumePendingCharmSpell(owner, startTs);
+          if (pcSpell) _charmRefreshed.add(existing);
           if (pcSpell && (pcSpell.dur || pcSpell.cls)) {
             _bumpCharmTick(event.pet, owner, 'land', startTs, { is_dire_charm: !!existing.is_dire_charm, ...pcSpell });
           }
@@ -9234,7 +9263,7 @@ class EncounterBuilder {
           existing.ended_at = startTs;
           existing.end_reason = 'charm_break';
           existing.duration_sec = _elapsedSec(existing.started_at, startTs);
-          this.charmSessions.push(existing);
+          this.charmSessions.push(existing);   // ran_full stays null: the break line was never seen
         }
         // Was this Dire-Charmed? Match the pending DC flag within 10s by
         // caster name.
@@ -9244,7 +9273,7 @@ class EncounterBuilder {
           && (startTs - this._pendingDireCharm.ts) < 10_000);
         if (isDC) this._pendingDireCharm = null;
         const pcSpell = _consumePendingCharmSpell(owner, startTs) || {};
-        this._activeCharms.set(petKey, {
+        const sessionNew = {
           pet:           event.pet,
           owner,
           started_at:    startTs,
@@ -9254,7 +9283,11 @@ class EncounterBuilder {
           end_reason:    null,
           ended_at:      null,
           duration_sec:  null,
-        });
+          spell:         pcSpell.charm_spell_name ? String(pcSpell.charm_spell_name).toLowerCase() : null,
+          ran_full:      null,
+        };
+        _charmLandMs.set(sessionNew, Date.parse(event.ts));
+        this._activeCharms.set(petKey, sessionNew);
         // Charm landed → that moment is the mob's tick; start the 6s
         // countdown on the global tracker. Pass the dire-charm flag so the
         // charm overlay knows whether to show a duration countdown.
@@ -10902,6 +10935,7 @@ class EncounterBuilder {
             open.ended_at     = open.last_damage_at || this.lastEvent || open.started_at;
             open.end_reason   = open.end_reason || 'encounter_flush';
             open.duration_sec = _elapsedSec(open.started_at, open.ended_at);
+            _stampCharmRanFull(open, _epochMs(open.ended_at));
             all.push(open);
           }
           return all.length > 0 ? all : undefined;
