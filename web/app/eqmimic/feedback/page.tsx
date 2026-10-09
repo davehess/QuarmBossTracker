@@ -1,6 +1,6 @@
 // Anonymous feedback form, served at eqmimic.quest (and /eqmimic/feedback here, for testing).
 // Neutral on purpose (the guild lead, 2026-10-08): no Wolf Pack name or imagery, no sign-in, and
-// middleware.ts sends every path on that host here. Submissions are cleaned and stored as AFB-<n>
+// middleware.ts sends /feedback on that host here (every other path there gets the landing page). Submissions are cleaned and stored as AFB-<n>
 // (see actions.ts + lib/anonFeedbackClean.ts); they never touch the `feedback` table or Discord.
 
 import AnonFeedbackForm from './AnonFeedbackForm';
@@ -20,7 +20,7 @@ export const metadata = {
 
 export default function EqmimicFeedbackPage() {
   return (
-    <div className="space-y-5 py-4">
+    <div className="mx-auto max-w-2xl space-y-5 py-4">
       <div>
         <h1 className="text-2xl text-text">Mimic — send feedback</h1>
         <p className="text-sm text-dim mt-1 leading-6">

@@ -5,6 +5,9 @@ Nothing here needs a password, a token or a card: if a step asks for one, stop a
 
 ## What this is for
 
+> **Superseded in part, 2026-10-09:** the root of the host is now a landing page and only `/feedback` is the form; see "Update
+> 2026-10-09" near the end for the current behaviour and checklist. The text below describes the form-only state.
+
 `eqmimic.quest` is a second, neutral front door on the **same Vercel deployment as wolfpack.quest**. It serves ONE page, the
 anonymous feedback form, and nothing else of the site. The code is already shipped (web 1.8.119): the middleware rewrites
 every path on the `eqmimic.quest` and `www.eqmimic.quest` hosts to `/eqmimic/feedback`, and the layout drops the Wolf Pack
@@ -87,9 +90,29 @@ names, and the result of each check above. Include anything that looked odd.
 - **Rollback:** remove both domains in Vercel (Settings → Domains → Remove), then restore the Porkbun records from the step 1
   list. wolfpack.quest is untouched either way.
 
+## Update 2026-10-09: the root is now a landing page (DECISIONS §209)
+
+The routing change this section used to defer has been made (branch `claude/eqmimic-landing`, [beta]; check that it is on
+`main` before you rely on the checklist below). On `eqmimic.quest` and `www.eqmimic.quest`:
+
+- `/` (and `/index`, and **every path except `/feedback`**) shows the **landing page** for someone new to Mimic. Only a `?v=b`
+  or `?v=c` query survives (a layout preview); every other parameter is dropped.
+- `/feedback` still shows the **anonymous form**, and `#cat=bug&text=…` still reaches it (Mimic opens exactly that address).
+- The page is `noindex` and carries a `[beta]` badge until the guild lead says it is settled. It is previewed without DNS at
+  `https://wolfpack.quest/eqmimic` and `https://b.wolfpack.quest/eqmimic?v=b`.
+
+**Verification checklist for the new root behaviour** (replaces the "/ shows the form" lines in step 5 once this is on `main`):
+
+- [ ] `https://eqmimic.quest/` shows the landing page (the "Wolf Pack Mimic" heading, the gold "Fan site notice" block under it),
+      with no Wolf Pack header or sign-in.
+- [ ] `https://eqmimic.quest/?v=b` and `?v=c` show the other two layouts; `?v=zzz` shows layout A.
+- [ ] `https://eqmimic.quest/feedback#cat=bug` still shows the form with the bug category preselected.
+- [ ] `https://eqmimic.quest/anything-else` shows the landing page (not the form).
+- [ ] The landing page's Download button opens `https://wolfpack.quest/mimic?direct=1`.
+- [ ] `https://wolfpack.quest/` is untouched.
+
 ## Not part of this task (for the guild lead to decide later)
 
-- A marketing/landing page for eqmimic.quest (the demo pages in the `hesstastic` repo) cannot share this domain with the
-  feedback form without a routing change in the web middleware. Until that is decided, the domain serves the form only.
+- The demo pages in the `hesstastic` repo are a separate design and do not share this domain.
 - The Mimic "Send anonymously" button and the officer review page (`/admin/feedback/anonymous`) need nothing more once the
   domain resolves.
