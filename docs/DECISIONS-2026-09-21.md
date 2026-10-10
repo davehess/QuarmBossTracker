@@ -8787,3 +8787,28 @@ findings and mockups others can comment on.
 - **Where it landed:** a claude.ai workshop page (owner-shared, so not linked here) with the findings, three live
   mockups (A radar, B zone board, C tracker) with layer toggles and the three art styles, picks for version / art /
   the three open 2.9 picks, and a notes board. The beta `/spectator` variants are built after the picks.
+
+### 218. The spawn map's controls, its HUD mode, local-first data and mob range rings (2026-10-10)
+**The calls** (the guild lead): *"we should see a mob's longest range attack or spell ring as well emanating from its
+location"*; *"we need to be local on the map with the player and group and raid's zeal pipe location data"*; zoom in
+and out, drag to pan, right-click centres on you, follow-the-player by default as a UI toggle, north-up / heading-up as
+a toggle, and *"a secondary mode that is a more transparent overlay mode like where HUD would be in the middle of the
+screen"*.
+- **Controls (every version, Mimic and web):** wheel zooms around the cursor; drag pans and turns Follow off; right-click
+  centres on you once (Follow stays as the toggle says); Follow defaults ON; the orientation button names the current
+  mode (N-up / Heading-up) and flips it.
+- **Two display modes:** Window (framed, opaque) and HUD (no frame or background; walls only, see-through, sized for the
+  middle of the screen; the title bar and controls show on hover). HUD is a Mimic overlay mode, so it must stay
+  click-through when locked like every overlay (the hover handshake in the parity checklist).
+- **Local first:** in Mimic the map draws you, your group, your raid and your target straight from the local agent's
+  Zeal pipe data, with no server hop and no upload; it works in local mode. The server is needed only for people outside
+  your raid (opt-in sharing) and for the website.
+- **Range rings:** per NPC, the farthest spell in its spell list (`npc_spells` + entries, mirrored) or its ranged attack
+  (special ability 11, decoded in `utils/mobSpecials.js`) as a purple dashed ring, and its widest area-of-effect radius
+  as an orange ring. A worst case, never a prediction. Shown for the target by default, optionally named or all.
+  ⚠ `eqemu_spells` does not mirror `range` / `aoerange` yet: adding them is a migration plus the column list in
+  `scripts/sync-from-eqmac.js` (spells transform) and a forced re-import of `sync-quarm.yml`.
+- **Zeal's map or ours:** asked as a pick (A our own map, recommended; B rings inside Zeal's map via the fork, which needs
+  a weekly data file and lives only in our fork; C our overlay laid over Zeal's map, fragile). Zeal draws its map inside
+  the game, so Mimic cannot add to it from outside.
+- **Where it landed:** the workshop page (version 2) has all of it working on simulated data.
