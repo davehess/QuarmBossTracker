@@ -23,3 +23,7 @@ Take main assist: target yourself, then `/tag chat ^MA^`. Everyone else: `/targe
 - The next step is a build and the cases in `TEST-CASES.md`, including a two-client check that the marker moves.
 
 **Try it:** in the fork's test-all build (https://github.com/davehess/Zeal/releases/tag/test-all-build), `3c4766c` or later.
+
+**Pull request:** _link added when it is filed._
+
+**Testing evidence:** _added after the in-game test run._

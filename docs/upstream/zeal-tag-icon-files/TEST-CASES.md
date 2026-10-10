@@ -41,7 +41,7 @@ Mark each case: `[x]` pass, `[!]` fail (write what you saw under it).
 
 ### 6. The `custom` folder
 - **Steps:** `/tag icons` (it creates `custom` if missing and prints its path). Copy `templates\IMAY.png` into `custom\`, paint on it, `/tag icons`, then `/tag local ^IMAY^Mine`.
-- **Expected:** it lists "MAY (yours)" and your edited icon draws. Repeat with `templates\BMAY.png` and `^BMAY^`: your banner draws. Put a different `MAY.png` in `tagicons\` as well: yours in `custom\` still wins.
+- **Expected:** it lists "MAY (yours)" and your edited icon draws. Repeat with `templates\FMAY.png` and `^FMAY^`: your banner draws. Put a different `MAY.png` in `tagicons\` as well: yours in `custom\` still wins.
 - **Result:** [ ] pass  [ ] fail
 
 ### 7. A whole-key name

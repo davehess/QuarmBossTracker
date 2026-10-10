@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Zeal in-game test run + PoP flags export + `/spellid`** (§227, §229) | `test-all` `035d8a3` (build passed) = PoP flags `b27bb26` (overview + tiers 1–5, once each, kept out of chat) + roleplay guild marks + `spell-id-tooltip` `67cb705` (`/spellid on` puts the spell id on the buff/gem/spellbook info window, off by default). 67 test hotkeys (socials pages 4–10, say + `/log`, works at level 1) log what to look for and the target's spawn id; `tools/evidence.py` on the fork's `showcase` branch turns the log into an EVIDENCE.md per change. Every suggestion post has "Pull request" and "Testing evidence" lines waiting to be filled | the guild lead: (1) install `test-all`, paste the hotkeys, run pages 4–10, send the log + `<name>-PoPFlags.txt`; (2) file the PRs (smallest first, §228). A session: write EVIDENCE.md per change, fill the PR links (posts, showcase JSON `pr_url`) |
 | **Mimic 2.9: spawn map, zone-server directory, live mob dots** (§216) | Called 2026-10-10 as the 2.9 minor line. Research in: `dbg.txt` names the zone server on every zone-in (`Zone addr [<host>:<port>]` + `StartWorldDisplay: <zone>`), and one zone was seen on two ports within an hour, so a port is a per-boot instance token, not a zone id. Design doc written (`docs/DESIGN-mimic-2.9-spawn-map.md`). Hosting needs no plan change (§217); **Picked (§220):** 3D-A on web (from the EQEmu collision mesh), 3D-B in Mimic, routes from our import, Mimic layout C (tracker), tab-target dots, group sharing to the group + recent helpers (30-min grace) | a session: (1) route tables + spell range in the weekly import, (2) web: spawn layer + routes + 3D-A on `/spectator` beta, (3) agent group-position upload + PRIVACY line, (4) Mimic tracker overlay (Window/HUD), (5) the client-zone converter for painted + 3D in Mimic |
 | **Zeal review fixes + guild marks B** (§216) | The guild lead: *"go ahead with the zeal fixes, B for guild marks"*. Pushed 2026-10-10 as fast-forwards: `tag-shapes` `f777d81` (guild marks B + render-state restore + color check), `tag-icon-files` `b20331f` (exception, per-frame, size and chat fixes). Guild marks B = automatic marks from the player's guild, `/tag guildmarks off|tagged|auto`, default `tagged`. `test-all` `59bbfca` merges every tag branch (incl. `tag-persistence` hardening, now `6ab82a9` with a `(std::min)` fix for the Windows `min` macro) and **builds green** (Actions run 38025797523). Restored tags keep their picture and guild mark (save format adds `:<mark>:<picture>` after the color; old files still load) | the guild lead: install the `test-all` build and run the in-game list in §216, plus: zone and relog with a picture tag and a guild-mark tag on, and check both come back |
 | **Every page unfurls with its own name** (§215) | On `main` (web 1.8.135): `pageMeta.ts` covers every route, `pageMetaData.ts` names FB / catalog pages, root OG no longer pinned, `test/page-metadata.test.js` enforces it | the guild lead: post a fresh `/feedback/FB-<n>` link in Discord (it caches per URL) and say whether parses should name their boss |
@@ -9097,3 +9098,138 @@ Harmony, Hide/Sneak for non-rogues).
   Windows build passed, so `tag_arrows.cpp` compiles. Nothing run in game yet. ⚠ The test build's moon key is `^MEZ^`
   (`^M^` no longer draws it); the website's symbol list still says `^M^`, correct for official Zeal and the
   `tag-shapes` PR — decide which the site shows.
+- **Guild flag key is `^F<code>^`, replacing `^B<code>^`** (the guild lead: *"maybe we should make it F<Guild
+  acronym> for Flag"*, then *"instead of b for banner"*, and *"nobody has installed this but me, were safe to
+  proceed"*). `^FWP^` = Wolf Pack's flag; `^F^` alone and `^Fire^` stay the flame (a guild key must name a real code);
+  `^B` is the plain blue arrow again, so an old saved `^BWP^` tag now shows a blue arrow. A flag picture override is
+  `FEUR.png`. Website: beta 1.8.139 (`5e8f67b9`) and `main` 1.8.139 (`2e68c737`) the same day — same version on both
+  so the sync merges. Docs, posts, test cases and showcase changed in the same round; the fork's `tag-shapes`,
+  `tag-icon-files`, `guildicon-draft` and `test-all` get the code change.
+- **Welcome card "Set up parsing" refreshed** (the guild lead: *"this needs to be updated"*): bot 3.1.240 `98512340`.
+
+### 227. Test hotkeys write the evidence; every Zeal post carries PR + evidence lines; PoP flags export added (2026-10-10)
+
+- **In-game testing runs from socials, and the log is the evidence** (the guild lead: *"make me a config file of
+  hotkeys … make them have the test numbers and also output the results so that I can just grab the log"*; then
+  *"you can just have me join a channel"*, and *"/leave 1 5 times in a row to have everything go to channel 1"*).
+  Each test button posts what to look for into a password channel (as `/1`), writes `[id] target=%t id=%tid` with
+  `/log`, then runs the commands; PASS/FAIL are buttons 11/12 on every page. ⚠ A new character cannot talk in a
+  custom channel ("not high enough level or high enough karma"), and the guild lead's real characters have no 7 free
+  socials pages, so the default is now `/say` for the what-to-look-for line and `/log` for the target, PASS/FAIL and
+  notes (`/log NOTE …`); `/log` works at any level. The channel flow stays as an option. 64 buttons on pages 4–10, every
+  fork change plus PoP flags. Generated from one list: `showcase/tools/hotkey-tests.json` + `hotkey-socials.py` on the
+  fork's `showcase` branch (`61f19c6`); `tools/evidence.py` turns the log into one EVIDENCE.md per change, replacing
+  the tester's and any listed character names, and reports tests with no PASS/FAIL. The character-specific .ini and
+  guide stay out of the repo.
+- **Every suggestion post carries a "Pull request" and a "Testing evidence" line** (the guild lead: *"I'm going to make
+  Zeal suggestion threads link to these PRS as well … I'll need to have the testing evidence"*). Placeholders until the
+  PRs are filed and the run is done (`d206a452` here, `61f19c6` on the showcase). Guild emblems rides the tag-shapes
+  PR and mez/slow rides the main-assist PR, and their posts say so.
+- **PoP flags export on /camp** (the guild lead: *"add this in"*, with the suggestion thread 'Zeal "Export data on
+  /camp" option to include a full #POPFLAGS output?'). New fork branch `popflags-export` (`195433e` + include fix
+  `9b0186d`) on Zeal 1.4.8: with "Export data on /camp" on, camping sends `#popflags all` once, keeps 3 seconds of
+  server-coloured reply lines and writes `<name>-PoPFlags.txt`; `/outputfile popflags [name]` does it on demand; one
+  request per 10 seconds. Drafted by a Sonnet agent and reviewed here. The first `test-all` build (`ab95a91`) failed
+  on a missing `callbacks.h` include; `test-all` is now `2c5e006`. Posts and showcase entry:
+  `docs/upstream/zeal-popflags-export/`, `showcase/popflags-export/`.
+- **First in-game run: `#popflags all` is staff-only; the export now sends the overview and tiers 1–5.** The guild lead's
+  test file held one server line, "The all option is restricted to server staff." That proves the camp hook, the colour
+  filter and the file write; the command was wrong. Quarm's `zone/gm_commands/popflags.cpp` (EQMacEmu, public) gives
+  players `#popflags` = overview and `#popflags 1`–`5` = each tier; `all` needs admin 80. Every reply line is White,
+  Lime, Yellow or Red, all kept by the filter. Fork `ef17b00`: six commands one second apart (all scheduled up front,
+  none from inside a delayed callback), file written 3 s after the last, the chat timestamp the run showed on each
+  line removed, 15 s between requests. `test-all` `67bea01`. The test character is new, so its
+  `<Char>_pq.proj.ini` has no `[Socials]` section yet; the hotkey guide now says to paste the whole file, header
+  included, in that case (the format matches existing characters' `PageNButtonM…` socials).
+- **Second run: the camp export spammed the chat** (the guild lead: *"the popflag spam on camp is noticeable"*). Each
+  section printed several times (Tier 4 ×3, Plane of Time ×10). Cause: Zeal's `CallbackManager::invoke_delayed`
+  (`callbacks.cpp:142-149`) fires a callback when `now >= time` but erases it only when `now > time`, and
+  `GetTickCount64` moves in 10–16 ms steps, so a delayed callback runs on every frame inside that step. Fix on our side
+  (popflags `b27bb26`, test-all `593f848`): each send checks its turn and runs once; captured reply lines are cleared
+  from the chat output (the same `msg = ""` suppression nameplate.cpp uses), so they reach the file only; only the four
+  reply colours are taken; sends are 250 ms apart with a 1.5 s tail. ⚠ The `invoke_delayed` bug is upstream and
+  affects any feature that schedules with `AddDelayed`; a one-character fix (erase with `>=`) would make a small,
+  separate upstream PR — not bundled into ours.
+- **Guild marks include /roleplay players** (the guild lead: *"Roleplaying toons still expose their guild, so they
+  should be included"*). Only `/anon` (`AnonymousState == 1`) is skipped now, matching Zeal's own `show_guild` check.
+  tag-shapes `4447114` (amended), merged down to tag-icon-files `ddde80a`, guildicon-draft `605ef22`, test-all
+  `99c7345`.
+
+### 228. The upstream Zeal bar for our PRs: small, modular, off with no cost, existing behaviour untouched (2026-10-10)
+
+- **What the upstream maintainer wants** (relayed by the guild lead, 2026-10-10): *"Preferably your PRs are modular and
+  easy to disable w/out any performance impact (or just small and easy to see they are safe / do not break existing
+  behavior)."* The same note called another contributor's open PRs "minor examples of where the LLM generated code
+  gets clumsy / bloated / repetitive and makes the existing code/functionality harder to maintain."
+- **What that slop looked like** (the guild lead asked us to comb upstream #245 and #236; two Sonnet reviews,
+  verified here against the diffs and 1.4.8):
+  - **#245, tick bar:** the render code reaches into the wrong layer and runs for every nameplate string. It has
+    dead plumbing (`is_self` set, never read), unused locals, tick math copied from `tick.cpp`, and a latent D3D8
+    bug (`DrawPrimitiveUP` resets stream 0 inside the font loop).
+  - **#236, spell effects:** a wrong prefix length drops persisted `replace-classic` entries, and a 256-character
+    single ini value truncates. It also leaves debug `print_chat` in sync loops, a mutex that guards nothing, one
+    switch pasted three times, and nine commits including fixups.
+  - The full notes are a scratchpad deliverable, not committed: they review someone else's work, so the guild lead
+    decides whether to share them.
+- **Our checklist before filing a fork PR** (applies to every branch in §226/§227):
+  1. One squashed commit.
+  2. One setting turns it off, and with it off the hot paths do zero extra work: no per-frame lookups, no
+     allocations.
+  3. Nothing changes for players who never touch the feature.
+  4. No dead code, debug output or review-chatter comments.
+  5. No copied helpers; reuse Zeal's own.
+  6. clang-format clean.
+  7. A README that matches the actual commands.
+- **Size check (code under `Zeal/`, vs each branch's base):**
+
+  | Branch | Lines added | Commits | Files | Notes |
+  |---|---|---|---|---|
+  | spell-id-tooltip | +28 | 2 | | squash to one when filing (§229) |
+  | tag-corpses | +29 | 1 | | |
+  | popflags-export | +121 | 3 | | |
+  | hide-ui-cursor | +194 | 1 | | |
+  | raidlead-draft | +223 | 1 | | |
+  | tag-persistence | +291 | 3 | | |
+  | tag-icon-files | +354 | 4 | | |
+  | guildicon-draft | +454 | 10 | | |
+  | ma-draft | +1175 | 41 | 75 | |
+  | tag-shapes | +1964 | 3 | | mostly geometry tables |
+
+  The last two fail "small" on their face and need splitting or slimming before they go up.
+
+### 229. Zeal: the spell id in spell info windows (`/spellid`), built to the §228 bar (2026-10-10)
+
+- **The ask** (the guild lead): *"add in a bit for zeal to include the spell ID in a spell's tooltip to make it easier
+  to block"*. Blocking a buff (and our `#blockbuff` picker, §157) works by id, and the client never shows one.
+- **What shipped:** fork branch `spell-id-tooltip` (`0a57fba` + README wording `67cb705`; squash to one commit when
+  filing), on Zeal `main` 1.4.8. `/spellid [on|off]` (bare toggles) adds `Spell ID: <id>` as the last line of the spell
+  info window. One `ZealSetting` (`[Zeal] ShowSpellId`, **off by default**) and one helper appended in
+  `UpdateSetSpellText`, on both the enhanced and the stock path; nothing per frame. +32/−1 across `item_display.cpp`,
+  `item_display.h`, README. clang-format clean on every changed line (the file's two existing diffs are upstream's).
+- **Where it shows:** every window that goes through `CItemDisplayWnd::SetSpell` — the buff window, spell gems, the
+  spellbook. **Not** item windows (a scroll in your bags, an item's click effect): those go through `SetItem`. The
+  first README said "scrolls"; corrected before it was filed.
+- **Built:** merged into `test-all` `035d8a3`; GitHub build passed, release `test-all (035d8a3)`. Not run in game.
+- **Docs:** `docs/upstream/zeal-spell-id-tooltip/` (post + 13 test cases), the fork's `showcase` branch
+  (`3e115b6`: poster, banner, index row), hotkey tests `SI1`–`SI3` (page 10, buttons 4–6).
+- **Not done, on purpose:** the item-window path (a scroll's or click effect's spell id). It is a second hook in a
+  different function; add it only if blocking needs it.
+
+### 230. Other guilds' logos become Zeal tag pictures, shipped with the fork's Zeal build (2026-10-10)
+
+- **The ask** (the guild lead): 17 guild logos collected from their Discord servers, *"capture and queue for cutting"*,
+  then *"cut them into icons and banners"*, then *"these are for zeal"*.
+- **Cut:** 16 guilds (Loot & Some Fun sent two logos), each an icon `<CODE>.png` (`^I<CODE>^`; Continuum as
+  `ICON.png`, since Windows reserves `CON`) and a 128x64 banner `F<CODE>.png` (`^F<CODE>^`). The banner is the
+  guild's own name-bearing logo where the art has one, else the icon beside the name in a colour from the logo.
+  All within Zeal's limits (128 px a side, 2:1, 1 MB). Reproducible: `docs/upstream/zeal-guild-icon-refresh/intake/`
+  (`cutlib.py`, one `recipes_*.py` per group, sources, `cut/`, `QUEUE.md`). First drafts by three Sonnet agents, each
+  preview reviewed here.
+- **Shipped in Zeal, not the website:** fork branch `guild-tagicons` (`ad52240`, data only, on `tag-icon-files`, so
+  that branch's upstream PR stays code), merged into `test-all` `e1fde3d` with Europa's picture. Anyone on that build
+  sees them; a player's own picture in `tagicons\custom` still wins; official Zeal shows the built-in shape. The
+  merge kept test-all's tagicons README and fixed two lines in it: the size limit (128, not 512) and the 160 px
+  templates, which must be scaled down to load.
+- **Not done:** the wolfpack.quest gallery does not list them (its test wants each file named exactly the guild
+  code, which `F<CODE>` and `ICON` are not). Weak spots: Intervention and Tranquility came from small sources; the
+  Novae, Zek, Continuum and Tranquility banner names are small; the Eclipse corona has a hard left edge.
