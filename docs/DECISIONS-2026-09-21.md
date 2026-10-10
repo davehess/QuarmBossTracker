@@ -9233,3 +9233,19 @@ Harmony, Hide/Sneak for non-rogues).
 - **Not done:** the wolfpack.quest gallery does not list them (its test wants each file named exactly the guild
   code, which `F<CODE>` and `ICON` are not). Weak spots: Intervention and Tranquility came from small sources; the
   Novae, Zek, Continuum and Tranquility banner names are small; the Eclipse corona has a hard left edge.
+
+### 231. Mimic 2.8.1 stable cut from beta as-is; the beta sync had been failing all evening (2026-10-10)
+
+- **The ask** (the guild lead): *"cut a fresh stable mimic for this evening with the updates for the birthday"*.
+  Nothing named a birthday anywhere (repo, branches, briefing); asked, the guild lead picked **all of beta as-is**.
+- **Shipped:** `main` `d76fedbc` (web 1.8.141, the roadmap entry, pushed alone) then `3200f49b` (Mimic 2.8.1,
+  agent 3.7.127, pushed alone so it is the tip; player notes in the release body). Release `v2.8.1` published
+  23:17 UTC. File-level promotion of `apps/mimic` + `packages/wolfpack-logsync` from beta (byte-identical) plus the 17
+  agent/Mimic tests beta had added or changed; web and bot beta work stays on beta. Graduates FB-72 and FB-73.
+  Gate: dashboard check and lint clean; the suite passed 9,842/9,842 on the second run (the first run had one
+  load-timing failure in `pgrst-cap-bot-reads`, a bot test, which passes alone with and without the promotion).
+- **Beta sync repaired by hand:** `sync-beta.yml` had failed on every main push since 19:33 UTC (conflicts in
+  `web/package.json` and `web/public/zeal/PROVENANCE.txt`), so beta was missing the day's main work. Hand-merged on
+  beta (`483210ef`): `web/package.json` takes main's 1.8.141, PROVENANCE keeps beta's guildicon-draft paragraph;
+  beta's full suite 10,103 passed. Then re-parked at **2.8.2** (`9738bb0c`). A sync failure is loud only in Actions:
+  check its runs before a stable cut.
