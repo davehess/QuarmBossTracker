@@ -8914,3 +8914,19 @@ Harmony, Hide/Sneak for non-rogues).
   A — recommended), C (user words as HUD chips) put to the guild lead; open.
 - **Also found:** `eqemu_spells` stops at id 4678, so Quarm's own spells above it (Mass Group Buff 5228 and others)
   are missing from the mirror — check the weekly import's filter.
+
+### 223. Command Center: quests by zone, tank cooldowns, mana tabs; Feign Death varies by AA, Mend is constant (2026-10-10)
+**The calls** (the guild lead):
+- *"command center can start supporting quest details based on which zones we're in and who needs each step based on
+  what the database knows. collapsed in a section then collapsed more.."* — a Command Center section, two collapse
+  levels (section → quest → steps), driven by the zones the raid/group is in and the per-character progress the
+  database already holds.
+- *"feign death timer is variable and depends on AAs. mend is constant."* — FD reuse follows the monk's Rapid Feign
+  rank (server: 8 s base, 7/6/3 s at ranks 1/2/3 per §222); Mend keeps one fixed timer.
+- *"taunts done via pipe are good to watch for. area taunt timers are worth having on command center along with
+  defensive."* — `/pipe taunt` is the taunt signal (the log line belongs to Area Taunt, §222); the Command Center
+  shows each tank's Area Taunt and Defensive discipline timers.
+- *"other mana users can be displayed as well at casters via tabs by type, healers int and hybrid."* — a mana panel
+  with tabs: Healers (Cleric, Druid, Shaman), Casters/INT (Necromancer, Wizard, Magician, Enchanter), Hybrids.
+- **Status:** scoping with three research agents (quest data + layout, cross-raider cooldown/mana data, Rapid Feign
+  rank source); options and the build follow in this section's update.
