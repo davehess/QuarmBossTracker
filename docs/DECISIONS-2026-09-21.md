@@ -8949,3 +8949,23 @@ Harmony, Hide/Sneak for non-rogues).
     (`pop_flags`, 23.8k rows); item/loot proofs need the web rules (`popGuideAuto.ts`) ported to JS.
   - **Options put to the guild lead:** quests A zone ladder (current zone's quests) vs B who-first grid; tank strip
     A rides `di-status` vs B per-tank poll; mana A class tabs vs B stacked sections. Recommended: A, A, A.
+
+### 224. Pipe presses: ignore repeats inside a running timer, carry target name / spawn id; tags as roles (WPMA, follow) (2026-10-10)
+**The calls** (the guild lead):
+- *"pipe messages sent between timers should be ignored if tied to your timers"* — a `/pipe <word>` that arrives
+  while that ability's own timer is still running does not restart it (the game refused that press).
+- *"...and taking a target name and/or spawn id ... should also help with identification. %t outputs target name in
+  game, we may need one for spawn id."* — `/pipe <word> %t` keys the timer to that mob; a Zeal fork code for the
+  target's spawn id (alongside `%t`) is to be added so same-name mobs separate.
+- *"if you tag something 'foo' and you /target foo it will target the tagged foo target"* — Zeal tags double as a
+  targeting handle. Two role conventions follow:
+  - **Follow:** a raider tags themselves with a follow tag (e.g. `<Name>Follow`) so a slow-moving raider can
+    `/target <tag>` then `/follow` (the guild lead raised it for a specific raider; not named here).
+  - **Main assist `WPMA`:** the tank who holds main assist is tagged `WPMA`; everyone else can `/target WPMA` then
+    `/assist` (or `/assist WPMA`). Taking the job: `/target WPMA`, `/tag chat clear`, `/target <self>`,
+    `/tag chat WPMA` (to be confirmed against Zeal's tag semantics). Mimic should treat the `WPMA`-tagged raider as
+    the declared main assist, latest tag winning, alongside the existing raid-chat declaration.
+- *"even include a specific zeal target for MA. maybe target with 4 arrows pointing at it?"* — a new tag shape for
+  main assist: a target ring with four arrows pointing inward.
+- **Status:** two research agents scoping (Zeal fork: the spawn-id code, `/target`-by-tag semantics, the MA shape as
+  a local draft; agent: the repeat-press guard, the pipe grammar with target name / spawn id, WPMA as the MA signal).
