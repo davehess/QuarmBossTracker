@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Mimic 2.9: spawn map, zone-server directory, live mob dots** (§216) | Called 2026-10-10 as the 2.9 minor line. Research in: `dbg.txt` names the zone server on every zone-in (`Zone addr [<host>:<port>]` + `StartWorldDisplay: <zone>`), and one zone was seen on two ports within an hour, so a port is a per-boot instance token, not a zone id. Design doc written (`docs/DESIGN-mimic-2.9-spawn-map.md`). Hosting needs no plan change (§217); a claude.ai workshop page carries three live mockups (A radar / B zone board / C tracker), the map-art options and the open picks | the guild lead: vote in the workshop (version, map art, 2.9 Picks 1–3); then a session builds the picked versions as `?v=` variants of `/spectator` on beta |
+| **Mimic 2.9: spawn map, zone-server directory, live mob dots** (§216) | Called 2026-10-10 as the 2.9 minor line. Research in: `dbg.txt` names the zone server on every zone-in (`Zone addr [<host>:<port>]` + `StartWorldDisplay: <zone>`), and one zone was seen on two ports within an hour, so a port is a per-boot instance token, not a zone id. Design doc written (`docs/DESIGN-mimic-2.9-spawn-map.md`). Hosting needs no plan change (§217); **Picked (§220):** 3D-A on web (from the EQEmu collision mesh), 3D-B in Mimic, routes from our import, Mimic layout C (tracker), tab-target dots, group sharing to the group + recent helpers (30-min grace) | a session: (1) route tables + spell range in the weekly import, (2) web: spawn layer + routes + 3D-A on `/spectator` beta, (3) agent group-position upload + PRIVACY line, (4) Mimic tracker overlay (Window/HUD), (5) the client-zone converter for painted + 3D in Mimic |
 | **Zeal review fixes + guild marks B** (§216) | The guild lead: *"go ahead with the zeal fixes, B for guild marks"*. Pushed 2026-10-10 as fast-forwards: `tag-shapes` `f777d81` (guild marks B + render-state restore + color check), `tag-icon-files` `b20331f` (exception, per-frame, size and chat fixes). Guild marks B = automatic marks from the player's guild, `/tag guildmarks off|tagged|auto`, default `tagged`. `test-all` `59bbfca` merges every tag branch (incl. `tag-persistence` hardening, now `6ab82a9` with a `(std::min)` fix for the Windows `min` macro) and **builds green** (Actions run 38025797523). Restored tags keep their picture and guild mark (save format adds `:<mark>:<picture>` after the color; old files still load) | the guild lead: install the `test-all` build and run the in-game list in §216, plus: zone and relog with a picture tag and a guild-mark tag on, and check both come back |
 | **Every page unfurls with its own name** (§215) | On `main` (web 1.8.135): `pageMeta.ts` covers every route, `pageMetaData.ts` names FB / catalog pages, root OG no longer pinned, `test/page-metadata.test.js` enforces it | the guild lead: post a fresh `/feedback/FB-<n>` link in Discord (it caches per URL) and say whether parses should name their boss |
 | **Zeal: cursor with the UI hidden (pick B) + PR cleanup** (§213) | Branch `hide-ui-cursor` (`2433493`) pushed and merged into `test-all` (`4014c49`); the GitHub build passed (`zeal_test-all.zip`, 2026-10-09 18:12 UTC), not run in game. The four tag branches are force-pushed as one commit each on v1.4.8 (the guild lead: *"force push github"*): `tag-shapes` `c2a5333`, `tag-persistence` `c143cee`, `tag-corpses` `7f7c824`, `tag-icon-files` `9035722` (on `tag-shapes`). Deleting `bandolier-chat-filter` and `pipe-spawn-id` was refused by the cloud session's git proxy (HTTP 403) | the guild lead: (1) Mimic → Settings → Zeal → Test build → Install, run the 9 steps in `docs/upstream/zeal-hide-ui-cursor/PULL-REQUEST.md`; (2) delete the two branches on GitHub (Branches page → 🗑); (3) re-author each branch and open the PRs |
@@ -8835,3 +8835,41 @@ MacroQuest-community automap page *"for pathing of vex thal"*.
   on the public site; recommended for the web), 3D-B real models converted locally inside Mimic from the player's own
   install (nothing published), 3D-C real models on the website (needs a rights call, or the viewer author's written
   permission), 3D-D embed the viewer (not recommended). Routes: A our Quarm import (recommended), B link out.
+
+### 220. 2.9 spawn map picks; group positions are visible to the group (and its recent helpers) (2026-10-10)
+**The picks** (the guild lead, in the workshop and in chat): **3D-A on the web, 3D-B in Mimic, routes A.** Workshop
+votes: version **C** (tracker: radar + nearby list), map art **B** (painted, Mimic-only) with the note *"combo of painted
+and parchment as options (or no background)"*, map drawn on **our own canvas (A)**, nearby dots **A** (tab-target, works
+on today's Zeal), build for **both** web and Mimic, group sharing **yes**.
+- **How they fit together:**
+  - **Web:** the zone board stays the spectator layout; background choices are none / lines / parchment; 3D-A is
+    the 3D mode. **3D-A is built from the EQEmu collision mesh** (`EQEmu/maps` `base/<zone>.map`, GPL-2.0-or-later),
+    which `/spectator` already fetches and caches (`web/lib/zoneMap/source.ts`). It is the server's real 3D zone
+    shape, shaded with no textures, so it carries no Daybreak art and no new licence question. Brewall lines (no
+    stated licence) stay a flat overlay only.
+  - **Mimic:** version C (radar + nearby list) in Window and HUD modes; backgrounds none / lines / parchment /
+    painted. **Painted (2D) and 3D-B share ONE converter** that reads the player's own client zone files on their
+    machine and never uploads them. It is the largest single build in 2.9, so it ships after the 2D overlay.
+  - **Routes:** our Quarm import (`grid` / `grid_entries`), never another server's (§219).
+- **Group privacy rule — the call** (the guild lead): *"a group's data is already exposed to that user via zeal pipe.
+  display it for any logged in authenticated user that is in that group currently (or was until recently, in case
+  they're dropped from a disconnect or helping with damage/healing outside of the group. like what happens prior to
+  forming a raid or power leveling to help a group get leveled faster"*.
+  - **Who sees a group's positions:** a signed-in member whose character is in that group now, per any member's
+    Zeal group data. Also anyone who was in it within the **grace window**, and anyone **helping** it inside the
+    grace window: healing or buffing a group member, or damaging the group's current target, as seen in a group
+    member's log.
+  - **Grace window default: 30 minutes**, long enough to cover a disconnect and relog or a short power-levelling
+    session. The guild lead may change it.
+  - **What is shown:** only what the pipe already gives each of those people: name, class, level, HP and position.
+    Raid positions keep the existing members-only raid rule.
+  - **Owed before it ships:** group positions (Zeal type 6) are not uploaded yet, only the raid roster (type 5),
+    so the agent needs a group upload. That upload needs a `docs/PRIVACY.md` line and the per-character opt-out
+    honoured (`exclude_from_stats`). The membership check runs on the server; the page never decides it.
+- **XP per hour status** (asked the same day): collection (FB-37 option B) has run since 2026-10-02. 54,647 rows,
+  35 players, 72 characters, 36 zones; raid rows are stored but kept out of group answers. The local XP/AA-per-hour
+  readout is on the HUD (agent `_meRate`). **No board yet** — the week of data the board waited for is now in. A
+  first SQL pass shows bracket 60–64 leading in Plane of Disease, The Deep and Plane of Valor, and level 65 AA/hour
+  leading in Plane of Nightmares and Valor. These are percent-of-level numbers on small samples, not yet the exact
+  total-XP figures `DESIGN-xp-tracking.md` §2 calls for. The four §5 questions are still open (A/B/C; 7 or 30 days;
+  names; raid XP).
