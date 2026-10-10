@@ -2,7 +2,7 @@
 
 # Guild icons and banners, round two
 
-*Fork branch `guildicon-draft` (`d9dd631`, local, stacked on `raidlead-draft`). Status: draft, not compiled with Visual Studio yet.*
+*Fork branch `guildicon-draft` (`dca0b85`, local, stacked on `raidlead-draft`). Status: draft, not compiled with Visual Studio yet.*
 
 ![Every guild's icon beside its new banner](icons-vs-banners.png)
 
@@ -20,7 +20,7 @@ their own. The flag keeps the guild's colour, so colour still tells guilds apart
 - Where the icon's main colour is within 3:1 (the WCAG ratio) of the flag, a thin dark or light rim is drawn behind
   it, so it stays readable without being recoloured. 26 of 30 guilds get a rim.
 - The name uses its own contrast-checked colour. Each guild's line breaks come from a small table, with a hyphenated
-  split for the two longest names (INTER- / VENTION, TRANQ- / UILITY).
+  split for the longest name (INTER- / VENTION); Tranquility uses its short name, TRANQ.
 - The flag colour is unchanged, so the startup check that every guild colour is unique still holds.
 - The largest banner is about 3,700 vertices (The Drift). Meshes are built once and the vertex buffer is sized to
   hold every icon, so nothing new is allocated per frame. A one-line setting (`kBannerStyle`) switches back to logo
