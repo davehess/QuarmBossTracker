@@ -8983,3 +8983,21 @@ Harmony, Hide/Sneak for non-rogues).
 - **Raid-leader handoff** (asked the same day): *"research if we could use a zeal command to give raid leader to
   someone as a guild officer, or if we have a password attached that the user sets for being able to have someone take
   raid lead"* — under research (client/server mechanics, Quarm's rules on automation, security of a shared password).
+- **Zeal fork findings (2026-10-10, local draft `ma-draft` 2c9d691 on top of `test-all` 59bbfca, NOT pushed, not
+  compiled):**
+  - `%t` is the game's own code; Zeal runs its `percent_replacements` first (chat.cpp), and `/pipe`, `/log` and
+    `/assist` all pass through it. The draft adds **`%tid`** (alias `%targetid`) = the target's spawn id, empty with
+    no target. Multi-letter on purpose: Zeal's replace is a case-insensitive regex and native single-letter codes
+    could not be enumerated here, so a clash would be silent.
+  - Tag-based targeting today is `/tag target <text>`: exact, case-sensitive match on the tag's text fields, over
+    visible NPCs and corpses within 250 units, nearest wins. ⚠ **A player cannot carry tag TEXT, only a shape**, so
+    tagging yourself "WPMA" as text would not be targetable. The draft lets plain `/target <text>` try tags first
+    (then falls back to the game's `/target`) and lets `/target ^MA^` match by SHAPE, which works on players.
+  - ⚠ **`/tag chat clear` wipes ALL tags on every receiving client** — it is not a per-sender clear. It must not be
+    part of the "take MA" sequence.
+  - **Main-assist marker:** key `^MA^`, a target ring with four inward arrows (preview sent to the guild lead).
+    Exclusive: a new `^MA^` clears the previous holder. Take MA: `/target <your name>` (or Target Self), then
+    `/tag chat ^MA^`. Everyone else: `/target ^MA^`, then `/assist`. Older clients read `^MA^` as `^M` (the moon).
+  - **Follow** needs no new code: `/tag chat ^PF^` on yourself (paw with an F); followers `/target ^PF^`, `/follow`.
+  - Open: whether the key stays `^MA^` or becomes `^WPMA^` to match the guild's name; Mimic treats the marker holder
+    as the WPMA main assist either way.
