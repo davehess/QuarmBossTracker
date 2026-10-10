@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'hate-own-kills-2026-10-10',
+    title: 'Our Hate kills are ours',
+    version: 'Bot 3.1.242 · Web 1.8.142',
+    date: '2026-10-10',
+    headline: 'A Wolf Pack kill of a Plane of Hate mini-boss is posted as “We killed”, not as a foreign kill.',
+    features: [],
+    fixes: [
+      'Plane of Hate kills by Wolf Pack members were posted as “🩸 Foreign kill” when the Mimic that heard them had not yet seen a guild broadcast that session. They now say “🐺 We killed”, and our instanced kills are still logged.',
+    ],
+  },
+  {
     key: 'mimic-2-8-1-2026-10-10',
     title: 'Mimic 2.8.1',
     version: 'Mimic 2.8.1 · Agent 3.7.127 · Web 1.8.141',
