@@ -8666,3 +8666,19 @@ draws one) and C (Mimic watches F10). §13 has why nothing else can bring the ga
 - **Europa logo.** *"Try making this the Europa logo"*, with a picture of a wooden shield with "EUROPA" across it. It
   replaces `web/public/zeal/tagicons/EUR.png`/`.tga` (226×256, transparent); processing in `web/public/zeal/PROVENANCE.txt`.
   web 1.8.133 on `beta` (`ba445fa4`), an existing page, so beta first: https://b.wolfpack.quest/zeal-icons.
+
+### 214. PoP flags are piecemeal, so the guide gets a "next steps" panel at the top: two previews on beta (2026-10-10)
+**The ask** (the guild lead): *"are we taking piecemeal flags? if so we should put at the top of the guide next steps
+for flags in a consolidated place"*. Yes: each character's flags arrive one at a time from four sources (Mimic's server
+flag lines, /who in a plane, loot from a plane, the owner's ticks), and nothing summed them into "what next".
+- **Built** (web 1.8.134 on `beta`, `ca6631c2`): `web/lib/popNextSteps.ts` (`nextSteps`/`charNextSteps`/`nextCard`,
+  14 progression lines in `NEXT_LINES`, gated by `POP_ZONES.requires` and `GATE_IMPLIES`; a later hand tick is trusted
+  and the steps it skipped are reported, not hidden). Two panels above every layout, only with `?nx=`:
+  **A** (`NextUp.tsx`) the picked character's next 3–5 steps; **B** (`NextTable.tsx`) every listed character × line.
+  https://b.wolfpack.quest/pop/guide?nx=a · https://b.wolfpack.quest/pop/guide?nx=b. No `?nx` = the page as production.
+- **Fixed on the way:** `routeData.ts` read `pop_flags` without excluding witnessed `hail` rows, so a household's
+  1,000-row read could miss real flags (page.tsx already excluded them). Now the same filter.
+- **Known gaps:** three server flags (`fuirstel_5`, `thelin_4`, `hoh_trials`) have no checklist step, so the panel reads
+  them from the raw flags; steps with no flag (the HoH zone-in, the Maelin hails) can only be ticked by hand; the
+  panel shows the state as the page loaded. Drafted by a Sonnet agent, reviewed here; 42 tests, mutation-checked.
+- **Next:** the guild lead picks A, B or both; the pick graduates to main and the `?nx` switch goes.
