@@ -8,7 +8,7 @@ import { selectAll } from '@/lib/selectAll';
 import { GUIDE_ITEMS } from '@/lib/popGuide';
 import { STEP_MORE, stepPlaces } from '@/lib/popGuideMore';
 import { AUTO_ITEM_IDS, guideEvidence } from '@/lib/popGuideAuto';
-import { WHO_ZONE, WHO_ZONE_NAMES, type Sighting } from '@/lib/popWho';
+import { WHO_ZONE, WHO_ZONE_NAMES, flagsFromLoot, flagsFromSightings, type Sighting } from '@/lib/popWho';
 import { loadLootSightings, type LootRow } from '@/lib/popLootRows';
 import type { RouteChar } from './GuideRoute';
 import type { ZoneOutline } from './ZoneMap';
@@ -36,7 +36,9 @@ export async function loadRoute(mine: Owned[]): Promise<{ chars: RouteChar[]; ou
 
   const [ticks, flags, loots, inv, chars, who, live, sights, lootSights, ...outlineList] = await Promise.all([
     names.length ? admin.from('pop_guide_ticks').select('character_name, item_key').eq('guild_id', GUILD_TAG).in('character_name', names) : none,
-    names.length ? admin.from('pop_flags').select('character, flag_key, earned_at').neq('flag_key', 'unmapped')
+    // Real flags only ('unmapped' and the witnessed 'hail' rows are not flags; page.tsx says why the 1,000-row
+    // read must not spend itself on them): the next-steps panel reads these as the flags a character holds.
+    names.length ? admin.from('pop_flags').select('character, flag_key, earned_at').not('flag_key', 'in', '(unmapped,hail)')
       .or(names.map(n => `character.ilike.${n}`).join(',')).order('earned_at', { ascending: true }).limit(1000) : none,
     names.length ? admin.from('looted_items').select('looter_lower, item_name, looted_at').in('looter_lower', lower)
       .ilike('item_name', 'Mark of %').limit(200) : none,
@@ -67,8 +69,9 @@ export async function loadRoute(mine: Owned[]): Promise<{ chars: RouteChar[]; ou
     const w = rows<{ character_key: string; level: number | null; last_seen: string | null }>(who).find(r => r.character_key === lc);
     const seen = (sights as SightRow[]).filter(r => r.character_key === lc);
     const looted = (lootSights as LootRow[]).filter(r => r.character_key === lc);
+    const mimicFlags = rows<{ character: string; flag_key: string; earned_at: string | null }>(flags).filter(r => r.character.toLowerCase() === lc);
     const auto = guideEvidence({
-      flags: rows<{ character: string; flag_key: string; earned_at: string | null }>(flags).filter(r => r.character.toLowerCase() === lc),
+      flags: mimicFlags,
       loots: rows<{ looter_lower: string; item_name: string; looted_at: string | null }>(loots).filter(r => r.looter_lower === lc),
       inventory: meta?.exclude_inventory ? null
         : rows<{ character_name: string; item_id: number; observed_at: string | null }>(inv).filter(r => r.character_name.toLowerCase() === lc),
@@ -91,6 +94,9 @@ export async function loadRoute(mine: Owned[]): Promise<{ chars: RouteChar[]; ou
       isMain: !ch.main_name || ch.main_name.toLowerCase() === lc,
       manual: rows<{ character_name: string; item_key: string }>(ticks).filter(r => r.character_name.toLowerCase() === lc).map(r => r.item_key),
       auto,
+      // Every flag we can show for them, whichever of the four sources it came from: some flags (the
+      // server's own Tranquility steps) have no checklist step, so `auto` alone cannot carry them.
+      flags: [...new Set([...mimicFlags.map(r => r.flag_key), ...flagsFromSightings(seen).keys(), ...flagsFromLoot(looted).keys()])],
       seenIn: [...planes].map(([zone, at]) => ({ zone, at })),
     };
   });

@@ -389,6 +389,18 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
 - Mimic: `apps/mimic/buffqueue.html` By buff | By group (`wp:bq:view`), reads `groups` / `self_group` /
   `classes`, falls back to the queue rows on an older bot. Test: `test/buffqueue-groups.test.js`. §149.
 
+### PoP guide: next steps for flags (`?nx=a` / `?nx=b`, web beta, 2026-10-10)
+- `web/lib/popNextSteps.ts`: `NEXT_LINES` is the one authored table (14 progression lines, each an ordered list of
+  stages of guide step keys); `nextSteps({ done, flags })` returns, per line, `done` / `next` (the earliest stage's open
+  steps) / `blocked` (the flags it waits on and the line that grants each). Prerequisites are NOT restated: a stage's plane
+  gate is `POP_ZONES[].requires` (`popFlags.ts`), a flag's earlier flags are `GATE_IMPLIES` (`popWho.ts`), and a held flag
+  is closed over both (`whoProves`). A later step ticked without an earlier one is trusted; the skipped steps are reported.
+  Optional steps are not on a line. `nextCard` is variant A's payload, `nxMode` the `?nx=` switch.
+- `web/app/pop/guide/page.tsx` builds the panel before the layout switch and drops it into the `?v=b/c` and the default
+  branch; the data is `loadRoute` (`routeData.ts`, which now also returns every flag shown for a character).
+  `NextUp.tsx` (client, follows `?c=`), `NextTable.tsx` (server). Cells and links use the rows' own ids (`guide-<key>`,
+  `route-<key>`); `GuideRoute.tsx` opens the level a `#route-<key>` link points into. Test `test/pop-next-steps.test.js`.
+
 ### PoP guide steps in script order (web 1.8.88, Mimic beta, 2026-10-03)
 - `GuideItem.seq?: Act[]` in `web/lib/popGuide.ts` (the `SEQ` table): hail / say / give / get / kill / click /
   zone / wait / note, with `times`, `until`, `sit`, and `src` (the `eqemu_quest_scripts` path). `seqRows` turns

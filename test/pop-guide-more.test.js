@@ -133,7 +133,8 @@ describe('the page', () => {
   it('reads only the viewer’s characters, skips a hidden inventory, and caches zone outlines for a day', () => {
     expect(data).toMatch(/\.in\('character_name', names\)/);
     expect(data).toMatch(/inventory: meta\?\.exclude_inventory \? null/);
-    expect(data).toMatch(/\.neq\('flag_key', 'unmapped'\)/);
+    // Real flags only: neither the funnel row ('unmapped') nor the witnessed hails ('hail') may spend the 1,000-row read.
+    expect(data).toMatch(/\.not\('flag_key', 'in', '\(unmapped,hail\)'\)/);
     expect(data).toMatch(/\{ revalidate: 86400 \}/);
   });
   it('the map draws EQ’s axes the right way round: +X is west, +Y is north', () => {

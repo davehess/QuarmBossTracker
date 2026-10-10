@@ -103,6 +103,18 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **🧪 /pop/guide: next steps for flags at the top, two previews (web, beta, 2026-10-10; the guild lead: "are we taking
+  piecemeal flags? if so we should put at the top of the guide next steps for flags in a consolidated place").**
+  Yes, piecemeal: a flag reaches a character from Mimic, /who, loot or the owner's tick, and nothing showed what is
+  left. `?nx=a` is a card for the picked character (3 to 5 steps that can be done now, each jumping to its row, a
+  who-you-need chip and a zone chip, and a folded "waiting on something else" list); `?nx=b` is every listed character
+  in a table, one column per progression line, each cell a link to `?c=<name>#<step>`. No `?nx` is the page as production
+  has it. Works with `?v=b` / `?v=c`. Pure rules in `web/lib/popNextSteps.ts` (14 lines, authored once; the gates and
+  prerequisites are read from `POP_ZONES` and `GATE_IMPLIES`), test `test/pop-next-steps.test.js`. Previews:
+  https://b.wolfpack.quest/pop/guide?nx=a and https://b.wolfpack.quest/pop/guide?nx=b. An existing page, so beta only until
+  picked. Gaps found: the server's own Tranquility steps (`fuirstel_5`, `thelin_4`) and `hoh_trials` have no `flag` on
+  their guide steps, so Mimic records them but the checklist row never ticks (the panel reads them as flags); the beta
+  layouts' pop_flags read let witnessed-hail rows crowd out real flags (fixed in the same change).
 - **🧪 /pop: class filter + column sort on "PoP spells still need" (web, beta, 2026-10-09; the guild lead: "add sorting
   and filtering to the pop spells section by class"; preview https://b.wolfpack.quest/pop).** Chips for every class
   in the rows ("Enchanter 4", "All" clears; several can be on at once) filter BOTH tables, the main one and the

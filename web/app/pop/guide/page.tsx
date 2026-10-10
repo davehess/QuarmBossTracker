@@ -14,9 +14,12 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { ownedCharacters } from '@/lib/ownedCharacters';
 import { LIST_MIN_LEVEL, loadLevels, partitionTiers } from '@/lib/listableChars';
 import { guideItemIds } from '@/lib/popGuide';
+import { charNextSteps, nextCard, nxMode } from '@/lib/popNextSteps';
 import { type ItemCard } from '@/app/character/[name]/inventory/ItemHover';
 import GuideChecklist, { type GuideChar } from './GuideChecklist';
 import GuideRoute from './GuideRoute';
+import NextUp from './NextUp';
+import NextTable from './NextTable';
 import { loadRoute } from './routeData';
 import { GUILD_TAG } from '@/lib/guild';
 
@@ -24,9 +27,9 @@ export const dynamic = 'force-dynamic';
 export const metadata = { title: 'PoP Checklist — Wolf Pack' };
 
 export default async function PopGuidePage(
-  { searchParams }: { searchParams: Promise<{ c?: string; v?: string; all?: string }> },
+  { searchParams }: { searchParams: Promise<{ c?: string; v?: string; all?: string; nx?: string }> },
 ) {
-  const { c, v, all } = await searchParams;
+  const { c, v, all, nx } = await searchParams;
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pop/guide');
 
@@ -62,12 +65,39 @@ export default async function PopGuidePage(
     </p>
   );
 
+  // Beta (the guild lead, 2026-10-10: "put at the top of the guide next steps for flags in a consolidated
+  // place"): two panels to pick from, over any of the layouts below. ?nx=a is one character's next few steps
+  // (NextUp.tsx), ?nx=b is every character at once (NextTable.tsx). No ?nx is this page as production has
+  // it: nothing is loaded for it and nothing is drawn. The panels read loadRoute's data, the fullest
+  // done-state we have (Mimic, /who, loot, records, ticks), so with ?v=b/c it is the data the layout already
+  // loaded. Their links jump to the step's row; the row ids differ by layout.
+  const mode = nxMode(nx);
+  const routeLoad = (v === 'b' || v === 'c' || mode) ? loadRoute(mine) : null;
+  const anchorPrefix = (v === 'b' || v === 'c') ? 'route-' : 'guide-';
+  const nxHref = (name: string | null, variant: 'a' | 'b', stepKey?: string) => {
+    const q = new URLSearchParams();
+    if (name) q.set('c', name);
+    if (v === 'b' || v === 'c') q.set('v', v);
+    if (all === '1') q.set('all', '1');
+    q.set('nx', variant);
+    return `/pop/guide?${q}${stepKey ? `#${anchorPrefix}${stepKey}` : ''}`;
+  };
+  const nxChars = mode ? (await routeLoad!).chars : [];
+  const nxRows = nxChars.map(ch => ({ name: ch.name, cls: ch.cls, isMain: ch.isMain, lines: charNextSteps(ch) }));
+  const nxFirst = (nxChars.find(ch => c && ch.name.toLowerCase() === c.toLowerCase()) ?? nxChars.find(ch => ch.isMain) ?? nxChars[0])?.name ?? null;
+  const nxPanel = mode
+    ? (mode === 'a'
+      ? <NextUp chars={nxRows.map(r => ({ name: r.name, cls: r.cls, isMain: r.isMain, card: nextCard(r.lines) }))}
+                initial={nxFirst} anchorPrefix={anchorPrefix} compareHref={nxHref(null, 'b')} />
+      : <NextTable rows={nxRows} hrefFor={(name, key) => nxHref(name, 'b', key)} singleHref={nxHref(nxFirst, 'a')} />)
+    : null;
+
   // Beta (the guild lead, 2026-09-29: "more detail, maps, who to turn things into, expectations and who
   // you will go back to. a sidebar nav with sections"): two layouts to pick from, GuideRoute.tsx. No
   // ?v= is this page as production has it.
   if (v === 'b' || v === 'c') {
     const [{ chars: routeChars, outlines }, { data: routeCards }] = await Promise.all([
-      loadRoute(mine),
+      routeLoad!,
       supabaseAdmin().rpc('item_card_info', { p_item_ids: guideItemIds() }),
     ]);
     const rc: Record<number, ItemCard> = {};
@@ -89,6 +119,7 @@ export default async function PopGuidePage(
           </p>
           {hiddenNote}
         </section>
+        {nxPanel}
         <GuideRoute chars={routeChars} initial={first} cards={rc} outlines={outlines} layout={v} noLevel={noLevel} />
       </div>
     );
@@ -142,6 +173,7 @@ export default async function PopGuidePage(
         </p>
         {hiddenNote}
       </section>
+      {nxPanel}
       <GuideChecklist chars={chars} initial={initial} cards={cards} noLevel={noLevel} />
     </div>
   );
