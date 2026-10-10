@@ -283,7 +283,7 @@ export function metaForPath(rawPath: string): PageMeta {
   m = path.match(/^\/zeal-icons\/([^/]+)$/);
   const guild = m ? guildByCode(safeDecode(m[1])) : undefined;
   if (guild) {
-    return { title: `[beta] ${guild.name} — Zeal tag icon`, description: `${guild.name}'s banner and icon for Zeal /tag: ^B${guild.code}^ and ^I${guild.code}^.` };
+    return { title: `[beta] ${guild.name} — Zeal tag icon`, description: `${guild.name}'s banner and icon for Zeal /tag: ^F${guild.code}^ and ^I${guild.code}^.` };
   }
   if (/^\/parses\/[^/]+$/.test(path)) {
     // Deliberately NOT the boss, date or DPS: a parse is guild data that /parses/<id> hides from a signed-out

@@ -9,7 +9,7 @@ face-on view, 160x160 with a transparent background.
 - icon-<name>.png: the symbol keys (K X A D F T WP M U N H $ E).
 - badge-<n>.png: the numbered badges ^1^ to ^12^.
 - paw-<c>.png: the paw with a letter or digit, ^P<c>^.
-- banner-<CODE>.png and guild-<CODE>.png: each guild's banner ^B<CODE>^ and icon ^I<CODE>^.
+- banner-<CODE>.png and guild-<CODE>.png: each guild's flag (banner) ^F<CODE>^ and icon ^I<CODE>^.
 
 The guild icons are our own drawings, made for each guild's name or theme. No guild's artwork
 was traced for them.

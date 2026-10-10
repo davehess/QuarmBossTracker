@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'zeal-flag-key-2026-10-10',
+    title: 'Guild flags are ^F',
+    version: 'Web 1.8.139',
+    date: '2026-10-10',
+    headline: 'The Zeal tag icons page now gives each guild’s flag as ^F plus the guild’s code, like ^FWP^ for Wolf Pack.',
+    features: [
+      { name: 'F for flag', blurb: 'Copy ^FWP^, ^FEUR^ and so on from the page. ^B is a plain blue arrow again.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'europa-picture-2026-10-10',
     title: 'Europa’s shield works in game',
     version: 'Web 1.8.138',
