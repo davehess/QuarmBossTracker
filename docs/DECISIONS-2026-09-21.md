@@ -9083,4 +9083,10 @@ Harmony, Hide/Sneak for non-rogues).
   use the guild icon's own colours** (*"missing colors from many of these on the inside, please consult the non-banner
   ones"*), with a thin dark or light rim only where the icon's colour fails 3:1 against the flag — **no backing disc**,
   Tranquility included. Commits `30606bc` (names, layouts, wolf) and `30a4eb2` (icon colours, rims) on
-  `guildicon-draft`; INTERVENTION / TRANQUILITY full names in progress.
+  `guildicon-draft`; Intervention as INTER- / VENTION (`d9dd631`); **Tranquility shows TRANQ** (the guild lead:
+  *"make it TRANQ for tranquility"*, `dca0b85`). Website banners on beta: web 1.8.136 / 1.8.137.
+- **Europa's picture file was too big for the fork's tag pictures (found 2026-10-10).** The `tag-icon-files` review
+  fixes (`b20331f`) lowered Zeal's picture limit from 512 to 128 pixels a side, but the site kept offering a 226×256
+  `EUR.png`/`EUR.tga` and still told guilds "512". In game that file is skipped with a chat note and the built-in
+  Europa icon draws instead. Beta (web 1.8.137) ships a 113×128 copy and says 128; `main` still has the old file until
+  the guild lead graduates it.
