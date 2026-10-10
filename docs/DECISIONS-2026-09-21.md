@@ -8875,3 +8875,24 @@ on today's Zeal), build for **both** web and Mimic, group sharing **yes**.
   leading in Plane of Nightmares and Valor. These are percent-of-level numbers on small samples, not yet the exact
   total-XP figures `DESIGN-xp-tracking.md` §2 calls for. The four §5 questions are still open (A/B/C; 7 or 30 days;
   names; raid XP).
+
+### 221. Spawn map: guessed spawn points, click-to-mark, danger badges, per-zone line of sight (2026-10-10)
+**The calls** (the guild lead): *"some zones we will pull mobs but not know their spawn point, only guess. by name or by
+what mob they came with. if we are standing in a spot where there could have been a mob and it's missing, we should be
+able to click on it somehow and mark it. boss mobs or ones that are harder it see invis should have that noted somehow
+easy to see"*; and on line of sight: indoor vs outdoor differs; several outdoor PoP zones did not enforce line of sight
+through walls for years, mostly fixed on this server in the past week; Plane of Hate has collision and pathing around
+walls but does not check line of sight for casting or ranged; with no path, a mob may teleport through walls to reach
+a player or its home point.
+- **Where it landed:** `docs/DESIGN-mimic-2.9-spawn-map.md`, new section "Pulled mobs, missing spawns, dangerous mobs,
+  line of sight". In short: a pulled mob's death is credited to a candidate spawn point by name + spawn group +
+  linked-pull proximity, and left **unassigned with "?" rings** when ambiguous; a player can click a spawn point to
+  mark it empty / killed / up, which starts a respawn **window** (a range, not a time) labelled as a mark, overridden
+  by any observed death; danger badges come from columns we already mirror (`raid_target`, `rare_spawn`,
+  `see_invis`, `see_invis_undead`, `see_hide`, `see_improved_hide`) plus the decoded special abilities.
+- **Line of sight is not in any database** (`eqemu_zone.cast_outdoor` is indoor/outdoor only), so it becomes a small
+  officer-curated table (`zone_los_rules`: spells / ranged / mob warp / notes / verified on), with rows going
+  "unverified" after 30 days. In enforced zones the range rings are clipped by walls using the cached EQEmu collision
+  mesh; in zones like Plane of Hate they are drawn unclipped with a "no LoS" tag, because walls do not protect you.
+- **Not built yet.** These join the 2.9 phases: badges with phase 1, marks + candidate attribution with phase 4,
+  the LoS table + clipped rings after the range-ring columns land in the import.
