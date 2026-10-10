@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Zeal in-game test run + PoP flags export** (§227) | `test-all` `67bea01` = `b187b2d` + `popflags-export` (`ef17b00`; first run showed `#popflags all` is staff-only, now overview + tiers 1–5). 65 test hotkeys (socials pages 4–10, every PR plus PoP flags) post what to look for into a test channel and log the target and spawn id; `tools/evidence.py` on the fork's `showcase` branch turns the log into an EVIDENCE.md per change. Every suggestion post has "Pull request" and "Testing evidence" lines waiting to be filled | the guild lead: (1) install `test-all`, paste the hotkeys, run pages 4–10, send the log + `<name>-PoPFlags.txt`; (2) file the PRs. A session: write EVIDENCE.md per change, fill the PR links (posts, showcase JSON `pr_url`), confirm `#popflags all` and its reply colour from the run |
+| **Zeal in-game test run + PoP flags export + `/spellid`** (§227, §229) | `test-all` `035d8a3` (build passed) = PoP flags `b27bb26` (overview + tiers 1–5, once each, kept out of chat) + roleplay guild marks + `spell-id-tooltip` `67cb705` (`/spellid on` puts the spell id on the buff/gem/spellbook info window, off by default). 67 test hotkeys (socials pages 4–10, say + `/log`, works at level 1) log what to look for and the target's spawn id; `tools/evidence.py` on the fork's `showcase` branch turns the log into an EVIDENCE.md per change. Every suggestion post has "Pull request" and "Testing evidence" lines waiting to be filled | the guild lead: (1) install `test-all`, paste the hotkeys, run pages 4–10, send the log + `<name>-PoPFlags.txt`; (2) file the PRs (smallest first, §228). A session: write EVIDENCE.md per change, fill the PR links (posts, showcase JSON `pr_url`) |
 | **Mimic 2.9: spawn map, zone-server directory, live mob dots** (§216) | Called 2026-10-10 as the 2.9 minor line. Research in: `dbg.txt` names the zone server on every zone-in (`Zone addr [<host>:<port>]` + `StartWorldDisplay: <zone>`), and one zone was seen on two ports within an hour, so a port is a per-boot instance token, not a zone id. Design doc written (`docs/DESIGN-mimic-2.9-spawn-map.md`). Hosting needs no plan change (§217); **Picked (§220):** 3D-A on web (from the EQEmu collision mesh), 3D-B in Mimic, routes from our import, Mimic layout C (tracker), tab-target dots, group sharing to the group + recent helpers (30-min grace) | a session: (1) route tables + spell range in the weekly import, (2) web: spawn layer + routes + 3D-A on `/spectator` beta, (3) agent group-position upload + PRIVACY line, (4) Mimic tracker overlay (Window/HUD), (5) the client-zone converter for painted + 3D in Mimic |
 | **Zeal review fixes + guild marks B** (§216) | The guild lead: *"go ahead with the zeal fixes, B for guild marks"*. Pushed 2026-10-10 as fast-forwards: `tag-shapes` `f777d81` (guild marks B + render-state restore + color check), `tag-icon-files` `b20331f` (exception, per-frame, size and chat fixes). Guild marks B = automatic marks from the player's guild, `/tag guildmarks off|tagged|auto`, default `tagged`. `test-all` `59bbfca` merges every tag branch (incl. `tag-persistence` hardening, now `6ab82a9` with a `(std::min)` fix for the Windows `min` macro) and **builds green** (Actions run 38025797523). Restored tags keep their picture and guild mark (save format adds `:<mark>:<picture>` after the color; old files still load) | the guild lead: install the `test-all` build and run the in-game list in §216, plus: zone and relog with a picture tag and a guild-mark tag on, and check both come back |
 | **Every page unfurls with its own name** (§215) | On `main` (web 1.8.135): `pageMeta.ts` covers every route, `pageMetaData.ts` names FB / catalog pages, root OG no longer pinned, `test/page-metadata.test.js` enforces it | the guild lead: post a fresh `/feedback/FB-<n>` link in Discord (it caches per URL) and say whether parses should name their boss |
@@ -9184,6 +9184,7 @@ Harmony, Hide/Sneak for non-rogues).
 
   | Branch | Lines added | Commits | Files | Notes |
   |---|---|---|---|---|
+  | spell-id-tooltip | +28 | 2 | | squash to one when filing (§229) |
   | tag-corpses | +29 | 1 | | |
   | popflags-export | +121 | 3 | | |
   | hide-ui-cursor | +194 | 1 | | |
@@ -9195,3 +9196,21 @@ Harmony, Hide/Sneak for non-rogues).
   | tag-shapes | +1964 | 3 | | mostly geometry tables |
 
   The last two fail "small" on their face and need splitting or slimming before they go up.
+
+### 229. Zeal: the spell id in spell info windows (`/spellid`), built to the §228 bar (2026-10-10)
+
+- **The ask** (the guild lead): *"add in a bit for zeal to include the spell ID in a spell's tooltip to make it easier
+  to block"*. Blocking a buff (and our `#blockbuff` picker, §157) works by id, and the client never shows one.
+- **What shipped:** fork branch `spell-id-tooltip` (`0a57fba` + README wording `67cb705`; squash to one commit when
+  filing), on Zeal `main` 1.4.8. `/spellid [on|off]` (bare toggles) adds `Spell ID: <id>` as the last line of the spell
+  info window. One `ZealSetting` (`[Zeal] ShowSpellId`, **off by default**) and one helper appended in
+  `UpdateSetSpellText`, on both the enhanced and the stock path; nothing per frame. +32/−1 across `item_display.cpp`,
+  `item_display.h`, README. clang-format clean on every changed line (the file's two existing diffs are upstream's).
+- **Where it shows:** every window that goes through `CItemDisplayWnd::SetSpell` — the buff window, spell gems, the
+  spellbook. **Not** item windows (a scroll in your bags, an item's click effect): those go through `SetItem`. The
+  first README said "scrolls"; corrected before it was filed.
+- **Built:** merged into `test-all` `035d8a3`; GitHub build passed, release `test-all (035d8a3)`. Not run in game.
+- **Docs:** `docs/upstream/zeal-spell-id-tooltip/` (post + 13 test cases), the fork's `showcase` branch
+  (`3e115b6`: poster, banner, index row), hotkey tests `SI1`–`SI3` (page 10, buttons 4–6).
+- **Not done, on purpose:** the item-window path (a scroll's or click effect's spell id). It is a second hook in a
+  different function; add it only if blocking needs it.
