@@ -37,6 +37,7 @@ export type RouteChar = {
   name: string; cls: string | null; isMain: boolean;
   manual: string[];
   auto: Record<string, Evidence>;
+  flags?: string[];   // every catalog flag shown for them, from Mimic, /who and loot (the next-steps panel)
   seenIn: { zone: string; at: string }[];   // gated planes /who has shown them in, earliest first
 };
 
@@ -153,12 +154,18 @@ export default function GuideRoute({ chars, initial, cards, outlines, layout, no
     return () => io.disconnect();
   }, [who, mustOnly, hideDone, charName, open]);
 
-  // A link to #lvl-t2 or #sec-pok opens what it points at.
+  // A link to #lvl-t2, #sec-pok or a step (#route-<key>, from the next-steps panel) opens the level it is in,
+  // on arrival and when the hash changes later.
   useEffect(() => {
-    const id = window.location.hash.slice(1);
-    const lvl = GUIDE_LEVELS.find(l => id === `lvl-${l.key}` || l.sections.some(s => id === `sec-${s}`));
-    if (lvl) goTo(lvl.key, id);
-    // Only on arrival.
+    const openHash = () => {
+      const id = window.location.hash.slice(1);
+      const lvl = GUIDE_LEVELS.find(l => id === `lvl-${l.key}` || l.sections.some(s => id === `sec-${s}`)
+        || GUIDE_ITEMS.some(i => l.sections.includes(i.section) && id === `route-${i.key}`));
+      if (lvl) goTo(lvl.key, id);
+    };
+    openHash();
+    window.addEventListener('hashchange', openHash);
+    return () => window.removeEventListener('hashchange', openHash);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
