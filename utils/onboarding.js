@@ -913,8 +913,11 @@ const PARSER_DOWNLOAD_URL =
 
 // ── Onboarding action rows ────────────────────────────────────────────────────
 // Surfaced when a member clicks "Set up the parser" in the welcome flow. Two
-// recommended paths: Mimic (new default — Electron desktop, v1.0.0+, includes
-// overlay/triggers/charm/tells) and Parser.bat (classic CLI agent, minimal).
+// paths: Mimic (the default desktop app) and Parser.bat (classic CLI agent).
+// No version number here: it went stale at "v1.0.0" while Mimic shipped 2.x
+// (the guild lead, 2026-10-10: "this needs to be updated"). The link text is
+// a label, never the URL itself — Discord shows a masked link whose text is a
+// URL as raw markdown. Steps follow /parsehelp (Discord sign-in, no token).
 const MIMIC_URL = 'https://wolfpack.quest/mimic';
 function buildParseOverviewEmbed() {
   return new EmbedBuilder()
@@ -923,18 +926,17 @@ function buildParseOverviewEmbed() {
     .setDescription('Both share your combat data with the bot so guild stats stay current. Mimic is the all-in-one desktop app (recommended); Parser.bat is the minimal CLI agent.')
     .addFields(
       {
-        name: '⭐ Recommended: Wolf Pack Mimic v1.0.0',
+        name: '⭐ Recommended: Wolf Pack Mimic',
         value:
-          `[**${MIMIC_URL}**](${MIMIC_URL}) — one-click installer, bundles its own Node, no extras to install.\n` +
-          '**Includes:** DPS overlay · trigger TTS · charm tracker · /tells history · Buffs & Zone card · UI layout backup · optional Discord sign-in.\n' +
-          'After install, paste your `/token` value into Settings → Agent token.',
+          `**[Download Mimic](${MIMIC_URL})** — Windows installer, bundles everything, no admin prompt, updates itself.\n` +
+          '**Includes:** DPS/Tank meter · triggers with voice callouts and timers · Target Info (mob stats, spells, loot) · charm, buff and debuff trackers · HUD · Command Center · UI backups.\n' +
+          'First run: **Sign in with Discord** (no token to paste), pick your EverQuest folder, then `/log on` in game. Full walkthrough: `/parsehelp`.',
         inline: false,
       },
       {
         name: '🧱 Minimal: Parser.bat (CLI)',
         value:
-          `[**WolfPackParser.zip**](${PARSER_DOWNLOAD_URL}) — unzip, double-click \`RUN-FIRST-for-Node.js.bat\` once, then \`Parser.bat\` each session.\n` +
-          'Full walkthrough: `/parsehelp`',
+          `**[WolfPackParser.zip](${PARSER_DOWNLOAD_URL})** — uploads only, no overlays. Unzip, double-click \`RUN-FIRST-for-Node.js.bat\` once, then \`Parser.bat\` each session.`,
         inline: false,
       },
     )
