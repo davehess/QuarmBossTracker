@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Zeal in-game test run + PoP flags export** (§227) | `test-all` `2c5e006` = `b187b2d` + `popflags-export` (`9b0186d`). 65 test hotkeys (socials pages 4–10, every PR plus PoP flags) post what to look for into a test channel and log the target and spawn id; `tools/evidence.py` on the fork's `showcase` branch turns the log into an EVIDENCE.md per change. Every suggestion post has "Pull request" and "Testing evidence" lines waiting to be filled | the guild lead: (1) install `test-all`, paste the hotkeys, run pages 4–10, send the log + `<name>-PoPFlags.txt`; (2) file the PRs. A session: write EVIDENCE.md per change, fill the PR links (posts, showcase JSON `pr_url`), confirm `#popflags all` and its reply colour from the run |
 | **Mimic 2.9: spawn map, zone-server directory, live mob dots** (§216) | Called 2026-10-10 as the 2.9 minor line. Research in: `dbg.txt` names the zone server on every zone-in (`Zone addr [<host>:<port>]` + `StartWorldDisplay: <zone>`), and one zone was seen on two ports within an hour, so a port is a per-boot instance token, not a zone id. Design doc written (`docs/DESIGN-mimic-2.9-spawn-map.md`). Hosting needs no plan change (§217); **Picked (§220):** 3D-A on web (from the EQEmu collision mesh), 3D-B in Mimic, routes from our import, Mimic layout C (tracker), tab-target dots, group sharing to the group + recent helpers (30-min grace) | a session: (1) route tables + spell range in the weekly import, (2) web: spawn layer + routes + 3D-A on `/spectator` beta, (3) agent group-position upload + PRIVACY line, (4) Mimic tracker overlay (Window/HUD), (5) the client-zone converter for painted + 3D in Mimic |
 | **Zeal review fixes + guild marks B** (§216) | The guild lead: *"go ahead with the zeal fixes, B for guild marks"*. Pushed 2026-10-10 as fast-forwards: `tag-shapes` `f777d81` (guild marks B + render-state restore + color check), `tag-icon-files` `b20331f` (exception, per-frame, size and chat fixes). Guild marks B = automatic marks from the player's guild, `/tag guildmarks off|tagged|auto`, default `tagged`. `test-all` `59bbfca` merges every tag branch (incl. `tag-persistence` hardening, now `6ab82a9` with a `(std::min)` fix for the Windows `min` macro) and **builds green** (Actions run 38025797523). Restored tags keep their picture and guild mark (save format adds `:<mark>:<picture>` after the color; old files still load) | the guild lead: install the `test-all` build and run the in-game list in §216, plus: zone and relog with a picture tag and a guild-mark tag on, and check both come back |
 | **Every page unfurls with its own name** (§215) | On `main` (web 1.8.135): `pageMeta.ts` covers every route, `pageMetaData.ts` names FB / catalog pages, root OG no longer pinned, `test/page-metadata.test.js` enforces it | the guild lead: post a fresh `/feedback/FB-<n>` link in Discord (it caches per URL) and say whether parses should name their boss |
@@ -9104,3 +9105,28 @@ Harmony, Hide/Sneak for non-rogues).
   `FEUR.png`. Website: beta 1.8.139 (`5e8f67b9`) and `main` 1.8.139 (`2e68c737`) the same day — same version on both
   so the sync merges. Docs, posts, test cases and showcase changed in the same round; the fork's `tag-shapes`,
   `tag-icon-files`, `guildicon-draft` and `test-all` get the code change.
+- **Welcome card "Set up parsing" refreshed** (the guild lead: *"this needs to be updated"*): bot 3.1.240 `98512340`.
+
+### 227. Test hotkeys write the evidence; every Zeal post carries PR + evidence lines; PoP flags export added (2026-10-10)
+
+- **In-game testing runs from socials, and the log is the evidence** (the guild lead: *"make me a config file of
+  hotkeys … make them have the test numbers and also output the results so that I can just grab the log"*; then
+  *"you can just have me join a channel"*, and *"/leave 1 5 times in a row to have everything go to channel 1"*).
+  Each test button posts what to look for into a password channel (as `/1`), writes `[id] target=%t id=%tid` with
+  `/log`, then runs the commands; PASS/FAIL are buttons 11/12 on every page. 65 buttons on socials pages 4–10, every
+  fork change plus PoP flags. Generated from one list: `showcase/tools/hotkey-tests.json` + `hotkey-socials.py` on the
+  fork's `showcase` branch (`61f19c6`); `tools/evidence.py` turns the log into one EVIDENCE.md per change, replacing
+  the tester's and any listed character names, and reports tests with no PASS/FAIL. The character-specific .ini and
+  guide stay out of the repo.
+- **Every suggestion post carries a "Pull request" and a "Testing evidence" line** (the guild lead: *"I'm going to make
+  Zeal suggestion threads link to these PRS as well … I'll need to have the testing evidence"*). Placeholders until the
+  PRs are filed and the run is done (`d206a452` here, `61f19c6` on the showcase). Guild emblems rides the tag-shapes
+  PR and mez/slow rides the main-assist PR, and their posts say so.
+- **PoP flags export on /camp** (the guild lead: *"add this in"*, with the suggestion thread 'Zeal "Export data on
+  /camp" option to include a full #POPFLAGS output?'). New fork branch `popflags-export` (`195433e` + include fix
+  `9b0186d`) on Zeal 1.4.8: with "Export data on /camp" on, camping sends `#popflags all` once, keeps 3 seconds of
+  server-coloured reply lines and writes `<name>-PoPFlags.txt`; `/outputfile popflags [name]` does it on demand; one
+  request per 10 seconds. Drafted by a Sonnet agent and reviewed here. The first `test-all` build (`ab95a91`) failed
+  on a missing `callbacks.h` include; `test-all` is now `2c5e006`. ⚠ Unverified until the run: the real reply text,
+  whether it comes on a colour Zeal keeps, and whether `all` is the right argument. Posts and showcase entry:
+  `docs/upstream/zeal-popflags-export/`, `showcase/popflags-export/`.
