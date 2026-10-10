@@ -49,8 +49,8 @@ so it turns with the text and cannot read backwards.
 **Precedence and fallback:**
 - A picture takes over from a built-in guild icon with the same code. With `EUR.png`,
   `^IEUR^` shows the picture instead of the built-in €.
-- A picture named for a guild's banner key takes over from that banner: `BEUR.png` for
-  `^BEUR^`. Only real guild codes count, so a stray `B<name>.png` changes no banner.
+- A picture named for a guild's banner key takes over from that banner: `FEUR.png` for
+  `^FEUR^`. Only real guild codes count, so a stray `B<name>.png` changes no banner.
 - If the file will not load, the tag draws the built-in shape. For a name that is not a
   guild, it draws a white arrow.
 - A viewer without the file sees the guild's built-in shape, or only the text. Tag

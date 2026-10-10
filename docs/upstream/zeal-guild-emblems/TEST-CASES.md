@@ -18,7 +18,7 @@ Mark each case: `[x]` pass, `[!]` fail (write what you saw under it).
 - **Result:** [ ] pass  [ ] fail
 
 ### 2. Every banner
-- **Steps:** `/tag local ^BWP^BWP Wolf Pack`, then each other `^B<code>^` from `TRY-IN-GAME.md`.
+- **Steps:** `/tag local ^FWP^FWP Wolf Pack`, then each other `^F<code>^` from `TRY-IN-GAME.md`.
 - **Expected:** a swallowtail flag in the guild's own colour with its code on it. Banners were not in the 2026-09-26 screenshots, so look closely at the code lettering for all 30.
 - **Result:** [ ] pass  [ ] fail
 
@@ -28,13 +28,13 @@ Mark each case: `[x]` pass, `[!]` fail (write what you saw under it).
 - **Result:** [ ] pass  [ ] fail
 
 ### 4. Codes in either case
-- **Steps:** `/tag local ^imay^x`, `^iMay^x`, `^bmay^x`.
+- **Steps:** `/tag local ^imay^x`, `^iMay^x`, `^fmay^x`.
 - **Expected:** the Mayhem icon or banner, as for upper case.
 - **Result:** [ ] pass  [ ] fail
 
 ### 5. Keys that look like guild keys but are not
-- **Steps:** `/tag local ^Blue^x`, `^BXYZ^x`, `^BC^x`, `^I^x`.
-- **Expected:** `^Blue^`, `^BXYZ^` and `^BC^` are blue arrows (Breakfast Club's banner is `^BBC^`); `^I^` alone is text only.
+- **Steps:** `/tag local ^Blue^x`, `^FXYZ^x`, `^BC^x`, `^I^x`.
+- **Expected:** `^Blue^` and `^BC^` are blue arrows and `^FXYZ^` is the flame (Breakfast Club's flag is `^FBC^`); `^I^` alone is text only.
 - **Result:** [ ] pass  [ ] fail
 
 ## Automatic guild marks (`/tag guildmarks`)
@@ -52,9 +52,10 @@ Mark each case: `[x]` pass, `[!]` fail (write what you saw under it).
 - **Result:** [ ] pass  [ ] fail
 
 ### 8. /anon and /roleplay players
-- **Setup:** a player with /anon or /roleplay on (ask a guildmate).
+- **Setup:** two guildmates in a listed guild, one with /anon on and one with /roleplay on.
 - **Steps:** look at them in `auto` mode.
-- **Expected:** no mark on them.
+- **Expected:** no mark on the /anon player (their nameplate hides the guild). The /roleplay player gets their
+  guild's mark, because a roleplaying nameplate still shows the guild.
 - **Result:** [ ] pass  [ ] fail
 
 ### 9. Range
@@ -63,9 +64,9 @@ Mark each case: `[x]` pass, `[!]` fail (write what you saw under it).
 - **Result:** [ ] pass  [ ] fail
 
 ### 10. `off` hides other people's guild tags but not plain symbols
-- **Setup:** a second client tags a mob `/tag rsay ^BMAY^x`, another `^E^x`, `^$^x`, `^WP^x`.
+- **Setup:** a second client tags a mob `/tag rsay ^FMAY^x`, another `^E^x`, `^$^x`, `^WP^x`.
 - **Steps:** `/tag guildmarks off`.
-- **Expected:** the `^B...^` and `^I...^` tags are hidden; `^E^`, `^$^` and `^WP^` still show.
+- **Expected:** the `^F...^` and `^I...^` tags are hidden; `^E^`, `^$^` and `^WP^` still show.
 - **Result:** [ ] pass  [ ] fail
 
 ### 11. Back to `tagged`
@@ -93,7 +94,7 @@ Mark each case: `[x]` pass, `[!]` fail (write what you saw under it).
 - **Result:** [ ] pass  [ ] fail
 
 ### 15. Another client on stock Zeal
-- **Steps:** `/tag rsay ^BMAY^x` and `^IMAY^x`.
+- **Steps:** `/tag rsay ^FMAY^x` and `^IMAY^x`.
 - **Expected:** they see a blue arrow and nothing but the text. Auto marks are local to your screen and never sent.
 - **Result:** [ ] pass  [ ] fail
 

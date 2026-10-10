@@ -37,6 +37,53 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-2-8-1-2026-10-10',
+    title: 'Mimic 2.8.1',
+    version: 'Mimic 2.8.1 · Agent 3.7.127 · Web 1.8.141',
+    date: '2026-10-10',
+    headline: 'Charm tracking that keeps up, item links you can click on Target Info, and an option to hide overlays when you are not in EverQuest.',
+    features: [
+      { name: 'Hide overlays when you tab out', blurb: 'An option, off unless you turn it on: when neither EverQuest nor Mimic is in front, overlays hide and Mimic’s hotkeys let go, so typing in Discord or a browser sets nothing off. Callouts still speak. In the tray, Settings and the dashboard.' },
+      { name: 'Item links on Target Info’s Loot tab', blurb: 'Click a dropped item to copy its link and paste it into EverQuest, hover it for its card, or open it on PQDI from the link beside it.' },
+      { name: 'Charm aging', blurb: 'Non-bard charms say “charm aging” once, 25 seconds in, and the timer turns red from then on. Your own warning time still wins.' },
+      { name: 'Charm mini mode', blurb: 'The mob’s tick is a big number of its own, both ticks get a thin countdown line, and the pet’s magic resist shows after its name.' },
+      { name: 'Planes of Power charms and Sha’s Revenge', blurb: 'The Planes of Power charm spells are tracked, and Sha’s Revenge shows as a slow.' },
+      { name: 'Zone timers you walk in on', blurb: 'Zone into Plane of Tactics after the stampede started and you still get its countdown with the time left.' },
+    ],
+    fixes: [
+      'Casting a charm again on the same pet starts the charm timer over.',
+      'Gear you loot back off your own charm pet’s corpse is no longer counted as loot.',
+      '“Your target looks unaffected.” no longer leaves a lull timer running for a lull that did not land.',
+      'The Quest tab shows the NPC standing in your zone when two NPCs share a name.',
+      'Item links in guild and raid chat open the item that was linked.',
+      'Loot tab platinum values always show one decimal.',
+      'The Melody AE mob count shows on long song names again.',
+      '“Fit height to content” no longer changes an overlay’s width.',
+    ],
+  },
+  {
+    key: 'chat-item-links-2026-10-10',
+    title: 'Chat item links open the right item',
+    version: 'Web 1.8.140 · Bot 3.1.241 · Agent 3.7.127',
+    date: '2026-10-10',
+    headline: 'An item linked in guild or raid chat now opens that item on PQDI, not a different one.',
+    features: [],
+    fixes: [
+      'The PQDI link added to an item you linked in guild or raid chat opened the wrong item: Ragebringer opened Sparring Grappler Gloves. Links now open the item that was linked. Links from your own client need the Mimic beta.',
+    ],
+  },
+  {
+    key: 'zeal-flag-key-2026-10-10',
+    title: 'Guild flags are ^F',
+    version: 'Web 1.8.139',
+    date: '2026-10-10',
+    headline: 'The Zeal tag icons page now gives each guild’s flag as ^F plus the guild’s code, like ^FWP^ for Wolf Pack.',
+    features: [
+      { name: 'F for flag', blurb: 'Copy ^FWP^, ^FEUR^ and so on from the page. ^B is a plain blue arrow again.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'europa-picture-2026-10-10',
     title: 'Europa’s shield works in game',
     version: 'Web 1.8.138',

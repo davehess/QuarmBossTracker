@@ -11,7 +11,7 @@ The banner images live on the fork's `showcase` branch (see below). Until that b
 each post will not show.
 
 Fork: https://github.com/davehess/Zeal. Combined test build (every pushed branch merged, GitHub Actions build passed at
-`59bbfca`): https://github.com/davehess/Zeal/releases/tag/test-all-build. Branch heads below are as of 2026-10-10.
+`035d8a3`): https://github.com/davehess/Zeal/releases/tag/test-all-build. Branch heads below are as of 2026-10-10.
 
 ## Index
 
@@ -28,6 +28,8 @@ Fork: https://github.com/davehess/Zeal. Combined test build (every pushed branch
 | Mez and slow keys (`^MEZ^`, `^SLOW^`) | [`zeal-mez-slow-keys`](zeal-mez-slow-keys/) | `ma-draft` (`116d3ed`) | Pushed branch, not filed; compiled by GitHub 2026-10-10, not run in game | Yes (`3c4766c`) | In-game: all cases; breaks `^M^` (the website's symbol list still shows `^M^`) |
 | Auto raid lead, persisted `/ari` | [`zeal-auto-raid-lead`](zeal-auto-raid-lead/) | `raidlead-draft` (`b15b8a2`, on `ma-draft`) | Pushed branch, not filed; compiled by GitHub 2026-10-10, not run in game | Yes (`3c4766c`) | In-game: a two-person raid test |
 | Guild icon and banner refresh | [`zeal-guild-icon-refresh`](zeal-guild-icon-refresh/) | `guildicon-draft` (`dca0b85`, on `ma-draft`) | Pushed branch, not filed; compiled by GitHub 2026-10-10, not run in game; banners show each guild's icon in its own colours plus its full name (DECISIONS §226) | Yes (`3c4766c`) | In-game: all cases |
+| PoP flags saved on `/camp` | [`zeal-popflags-export`](zeal-popflags-export/) | `popflags-export` (`b27bb26`) | Pushed branch, not filed; two in-game runs (DECISIONS §227) | Yes (`593f848`) | In-game: a third run of the fixed build |
+| Spell id in spell info (`/spellid`) | [`zeal-spell-id-tooltip`](zeal-spell-id-tooltip/) | `spell-id-tooltip` (`67cb705`) | Pushed branch, not filed; compiled by GitHub 2026-10-10, not run in game (DECISIONS §229) | Yes (`035d8a3`) | In-game: all cases |
 
 `raidlead-draft` and `guildicon-draft` each sit on `ma-draft` (side by side, not on each other). All three were pushed on
 2026-10-10 and merged into `test-all` (`3c4766c`), whose GitHub build passed.

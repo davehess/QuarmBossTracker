@@ -21,3 +21,7 @@ All multi-letter keys (`WP`, `MA`, `MEZ`, `SLOW`) now live in one table read by 
 - Known breaking point: an existing `^M^` tag stops drawing a moon, so anything that watches for it (our raid tools included) has to learn `^MEZ^`. The cases in `TEST-CASES.md` check the old and new keys side by side.
 
 **Try it:** in the fork's test-all build (https://github.com/davehess/Zeal/releases/tag/test-all-build), `3c4766c` or later.
+
+**Pull request:** the same branch as *Main assist marker and %tid*; link added when it is filed.
+
+**Testing evidence:** _added after the in-game test run._

@@ -5962,3 +5962,13 @@ top level information and the page name. make it a rule"*. Now a standing rule i
   the crawler would publish). Say so if you want them named.
 - **Open:** nobody has seen a production card since this change. Post a fresh `/feedback/FB-<n>` link in Discord after it
   deploys (Discord caches per URL). A new page owes `pageMeta.ts` an entry; the test says so when it is missing.
+
+### 🧾 2026-10-10 — Chat item links decode the id as decimal (bot 3.1.241 · agent 3.7.127 on beta · web 1.8.140)
+An item link is `\x12` + the id as 7 zero-padded DECIMAL digits + the name + `\x12`. Both decoders read 5 of the digits as
+hex (Ragebringer 11057 → 4357), and the old raw-form pattern expected a `\x12` between digits and name that never exists,
+so every link fell through to the "stripped" fallback. Fixed in the agent's `transformEqItemLinks` (beta) and the bot's
+`linkifyEqItems` (main), held to one fixture set (`test/_eq-item-link-fixtures.js`; `eq-item-link.test.js` on main,
+`eq-item-link-agent.test.js` with the agent). `data/pqdi-items.json` had both of its entries wrong (Lucid Shard → 22194,
+Abashi's Rod → 31242). The web has no decoder: it shows the stored link. **Open:** the 57 bad links already stored are
+fixable, staged in `docs/RUNBOOK-pqdi-chat-links.md`, unapplied (the guild lead's yes); the stable fleet keeps writing
+wrong links until the agent reaches stable.

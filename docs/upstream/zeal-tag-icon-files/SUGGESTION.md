@@ -21,3 +21,7 @@ A camera-facing textured square is drawn where a shape would be, using the same 
 - Not yet recorded as run in game: the drawing itself, the orientation card (should never be mirrored or upside down), and whether the game's D3DX supports PNG as well as TGA.
 
 **Try it:** the fork's test-all build, https://github.com/davehess/Zeal/releases/tag/test-all-build, then `TEST-CASES.md`.
+
+**Pull request:** _link added when it is filed._
+
+**Testing evidence:** _added after the in-game test run._

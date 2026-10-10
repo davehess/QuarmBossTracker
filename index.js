@@ -4725,16 +4725,19 @@ async function _handleAgentChat(req, res) {
 
   // EQ item link → PQDI markdown link. Handles both the raw \x12-delimited form
   // and the Discord-stripped form (where 0x12 control chars were eaten upstream,
-  // leaving "0022194A Lucid Shard" — 7 hex chars then an item-cased name).
+  // leaving "0022194A Lucid Shard" — 7 digits then an item-cased name).
   //
-  // The 7-char Quarm blob is <1 version><5 hex item ID><1 flag>. We slice past
-  // the version byte if it looks like 0/1, otherwise we read from offset 0.
-  const EQ_ITEM_LINK_RX     = /\x12([0-9A-Fa-f]{5,})\x12([^\x12]+)\x12/g;
-  const EQ_STRIPPED_LINK_RX = /\b([0-9A-F]{7})((?:A |An |The )?[A-Z][a-z`'\-]+(?: (?:[a-z]{1,3} )*[A-Z][a-z`'\-]+){0,6})\b/g;
+  // A link is \x12 + the item id as 7 zero-padded DECIMAL digits + the name + \x12
+  // (A Lucid Shard, id 22194 → "\x120022194A Lucid Shard\x12"). Same rule as the
+  // agent's transformEqItemLinks; test/eq-item-link.test.js holds it to the
+  // shared fixtures in test/_eq-item-link-fixtures.js.
+  // Until bot 3.1.241 this read 5 of the digits as HEX, so every link pointed at
+  // the wrong item (Ragebringer 11057 → 4357).
+  const EQ_ITEM_LINK_RX     = /\x12(\d{7})([^\x12]+)\x12/g;
+  const EQ_STRIPPED_LINK_RX = /\b(\d{7})((?:A |An |The )?[A-Z][a-z`'\-]+(?: (?:[a-z]{1,3} )*[A-Z][a-z`'\-]+){0,6})\b/g;
   function _itemIdFromBlob(blob) {
-    const startIdx = (blob[0] === '0' || blob[0] === '1') && blob.length >= 6 ? 1 : 0;
-    const id = parseInt(blob.slice(startIdx, startIdx + 5), 16);
-    return (Number.isFinite(id) && id > 0 && id <= 999999) ? id : null;
+    const id = parseInt(blob, 10);
+    return id > 0 ? id : null;
   }
   function linkifyEqItems(text) {
     if (!text) return text;
