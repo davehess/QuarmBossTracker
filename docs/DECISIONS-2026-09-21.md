@@ -9048,3 +9048,16 @@ Harmony, Hide/Sneak for non-rogues).
   auto-handoff sits in that existing precedent; the guild lead may still want a written OK from the Quarm team.
 - **Status:** a Zeal fork draft (persisted ARI, escaped password match, `/autoraidlead`, pipe notices) and the
   Mimic/bot side (ARI card in Discord per leader, raid-leader change on the Command Center) are being drafted.
+- **Drafted (2026-10-10):** Zeal local branch `raidlead-draft` b15b8a2 (on `ma-draft`; not compiled, not pushed):
+  `AutoRaidInvite` / `AutoRaidLead` per character in zeal.ini, plain-string whole-message match (fixes the
+  unescaped-regex bug), `/arl give`, a "raidlead" tell prompt, 10 s rate limit, pipe lines `ARI set|clear`,
+  `ARL on|off`. The handoff sends `OP_RaidInvite` (0x425f) action 20 through Zeal's mapped `send_message`, with a
+  `RaidGeneral_Struct` built from the server source — **must be proven in a two-person raid** before raid use. The raid
+  leader was already on the type-5 pipe (rank "Raid Leader"). Bot/Mimic design: one ARI entry per leader in `bot_kv`
+  (new `utils/ariBoard.js`, replacing the single state.json entry), one edited-in-place Discord message, 20-minute
+  heartbeat, Mimic scrubs any non-on/off `ARL` pipe line to `ARL ***`.
+- **"defaults"** (the guild lead) to the five open questions: a dedicated members-only thread for the ARI list;
+  entries drop 4 h after the last heartbeat; officer-set and Mimic-set entries share one list; `/ari` shows the
+  password to non-officers too; raid-lead changes show on the Command Center only (no Discord post).
+- **Next asked:** suggestion-thread write-ups (what / why / how / how tested) and test cases for every Zeal change,
+  and a referenceable showcase branch in the fork for preview images and posters.
