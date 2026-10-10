@@ -8904,8 +8904,9 @@ Harmony, Hide/Sneak for non-rogues).
 - **Where it landed:** `docs/DESIGN-class-abilities.md` + `docs/data/class-abilities.json` (281 abilities, all 15
   classes). AA reuse comes from Quarm's own `aa_actions` table in the 2026-09-27 dump (77 AAs; it corrected seven
   research values, e.g. Mend Companion 36 min, Divine Resurrection 36 h, Mana Burn 8640 s).
-- **Bugs it found in today's HUD** (fix with the build): the Taunt timer is started by Area Taunt (a plain taunt
-  prints nothing); Hand of Piety starts the Lay on Hands slot (same landing text); Necromancer / Shadow Knight Feign
+- **Bugs it found in today's HUD** (fix with the build) — ⚠ the Taunt claim was WRONG and is withdrawn: the guild
+  lead confirmed in game that a successful Taunt prints "You taunt <mob> to ignore others and attack you!", so the
+  existing Taunt timer is right; `/pipe taunt` adds presses that do not land. The rest stand: Hand of Piety starts the Lay on Hands slot (same landing text); Necromancer / Shadow Knight Feign
   Death is a 15 s spell, not the monk skill; `/pipe` lines are only read while the HUD is open; AA timers must clear
   on "Your ability failed. Timer has been reset."; the monk FD 10 s vs the server's 8 s needs an in-game check.
 - **Lull line closed:** "Your target looks unaffected." is the whole Pacify/Harmony/Lull family's failure (too high
@@ -8928,5 +8929,23 @@ Harmony, Hide/Sneak for non-rogues).
   shows each tank's Area Taunt and Defensive discipline timers.
 - *"other mana users can be displayed as well at casters via tabs by type, healers int and hybrid."* — a mana panel
   with tabs: Healers (Cleric, Druid, Shaman), Casters/INT (Necromancer, Wizard, Magician, Enchanter), Hybrids.
-- **Status:** scoping with three research agents (quest data + layout, cross-raider cooldown/mana data, Rapid Feign
-  rank source); options and the build follow in this section's update.
+- **Also (same day):** *"taunt shows a success message. successful or resisted casts add to hate"* — the §222 Taunt
+  claim is withdrawn (the existing timer is right); the threat meter already credits resisted casts (flat
+  `RESIST_HATE_DEFAULT` 120 + per-spell overrides).
+- **Scoped (three agents, 2026-10-10):**
+  - **Feign Death:** the Quarmy export carries the Rapid Feign rank (AA index 100); the agent parses it in
+    `parseQuarmyExport` but `_quarmyLocalItems` drops it. Client lockout 10 / 9 / 7.5 / 5 s at rank 0–3. Of 8
+    exported monks, 4 are not 3/3 — today's "59+ = 5 s" guess is wrong for them. No export → 10 s. Mend 289 s flat.
+  - **Tank cooldowns:** every Mimic already uploads its own timers (`character_live_state.cooldowns`, incl.
+    `aa:area_taunt` and the disc); only Target Info reads them. Smallest add: a `tank_cooldowns` array on the bot's
+    `/api/agent/di-status` payload every Mimic already polls. Two gaps: `/pipe` is read only inside the HUD build,
+    and timers under 60 s are never uploaded (so `/pipe taunt` never leaves the machine). Stale rows must show stale,
+    not ready (`live_state` is sheddable).
+  - **Mana:** the Zeal raid pipe has no mana for others; exact mana comes only from Mimic raiders' own uploads, plus
+    the chat "N% mana" macros (`mana_reports`). `di-status` filters to Cleric/Druid/Shaman today; widen it for tabs.
+  - **Quests:** the Command Center (`apps/mimic/command.html`, agent `/api/command-center`, collapse store
+    `wp_cmd_collapsed`) gains a section fed by a new bot route `GET /api/agent/quest-needs?zone=&names=` returning
+    quest → steps → `needed_by` with a source (flag / tick / who / loot). v1 covers the 29 PoP flag steps
+    (`pop_flags`, 23.8k rows); item/loot proofs need the web rules (`popGuideAuto.ts`) ported to JS.
+  - **Options put to the guild lead:** quests A zone ladder (current zone's quests) vs B who-first grid; tank strip
+    A rides `di-status` vs B per-tank poll; mana A class tabs vs B stacked sections. Recommended: A, A, A.
