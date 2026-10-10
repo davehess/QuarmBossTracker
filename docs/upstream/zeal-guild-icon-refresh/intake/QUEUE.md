@@ -34,8 +34,10 @@ All 16 guilds are in `cut/` as Zeal tag pictures, PNG and 32-bit TGA, each withi
   reads `I<CODE>`.
 - Banner `^F<CODE>^`: `F<CODE>.png`/`.tga`, 128x64. It is the guild's own name-bearing logo where the art has one;
   otherwise the icon beside the guild's name in a colour from the logo.
-- A player drops the files into `EverQuest\uifiles\zeal\tagicons\custom` and types `/tag icons`. They need the
-  fork's test-all build (tag pictures are not upstream yet). Anyone without the file sees the built-in shape.
+- **They ship with Zeal** (the guild lead, 2026-10-10: *"these are for zeal"*): the PNGs, plus Europa's, are in the
+  fork's `uifiles/zeal/tagicons` on branch `guild-tagicons` (data only, on top of `tag-icon-files`), merged into
+  `test-all`. Anyone on that build sees them; a player's own file in `tagicons\custom` still wins. Players on
+  official Zeal see the built-in shape until tag pictures go upstream.
 
 To redo one: `python3 -I recipes.py cut CODE` (helpers in `cutlib.py`, one recipe per guild in `recipes_*.py`).
 Known weak spots: the Intervention and Tranquility sources were small (soft when scaled); the Novae and Zek banner

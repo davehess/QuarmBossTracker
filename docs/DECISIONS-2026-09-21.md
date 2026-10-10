@@ -9214,3 +9214,22 @@ Harmony, Hide/Sneak for non-rogues).
   (`3e115b6`: poster, banner, index row), hotkey tests `SI1`–`SI3` (page 10, buttons 4–6).
 - **Not done, on purpose:** the item-window path (a scroll's or click effect's spell id). It is a second hook in a
   different function; add it only if blocking needs it.
+
+### 230. Other guilds' logos become Zeal tag pictures, shipped with the fork's Zeal build (2026-10-10)
+
+- **The ask** (the guild lead): 17 guild logos collected from their Discord servers, *"capture and queue for cutting"*,
+  then *"cut them into icons and banners"*, then *"these are for zeal"*.
+- **Cut:** 16 guilds (Loot & Some Fun sent two logos), each an icon `<CODE>.png` (`^I<CODE>^`; Continuum as
+  `ICON.png`, since Windows reserves `CON`) and a 128x64 banner `F<CODE>.png` (`^F<CODE>^`). The banner is the
+  guild's own name-bearing logo where the art has one, else the icon beside the name in a colour from the logo.
+  All within Zeal's limits (128 px a side, 2:1, 1 MB). Reproducible: `docs/upstream/zeal-guild-icon-refresh/intake/`
+  (`cutlib.py`, one `recipes_*.py` per group, sources, `cut/`, `QUEUE.md`). First drafts by three Sonnet agents, each
+  preview reviewed here.
+- **Shipped in Zeal, not the website:** fork branch `guild-tagicons` (`ad52240`, data only, on `tag-icon-files`, so
+  that branch's upstream PR stays code), merged into `test-all` `e1fde3d` with Europa's picture. Anyone on that build
+  sees them; a player's own picture in `tagicons\custom` still wins; official Zeal shows the built-in shape. The
+  merge kept test-all's tagicons README and fixed two lines in it: the size limit (128, not 512) and the 160 px
+  templates, which must be scaled down to load.
+- **Not done:** the wolfpack.quest gallery does not list them (its test wants each file named exactly the guild
+  code, which `F<CODE>` and `ICON` are not). Weak spots: Intervention and Tranquility came from small sources; the
+  Novae, Zek, Continuum and Tranquility banner names are small; the Eclipse corona has a hard left edge.
