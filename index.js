@@ -6297,6 +6297,14 @@ async function _handleAgentBossKill(req, res) {
 //     }, ...
 //   ]
 // }
+// Our own kill: the agent's flag, or the killer's guild is ours. The agent only knows its guild after it
+// has seen a Druzzil broadcast that session, so on its own it labelled members' kills "Foreign kill"
+// (the guild lead, 2026-10-10: "these are not foreign kills").
+function _hateKillIsOwnGuild(k) {
+  const guild = typeof k?.killerGuild === 'string' ? k.killerGuild.trim().toLowerCase() : '';
+  return !!k?.isOwnGuild || (!!guild && guild === WP_GUILD_NAME.toLowerCase());
+}
+
 async function _handleAgentHateKill(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -6332,14 +6340,12 @@ async function _handleAgentHateKill(req, res) {
     const bossName   = k?.boss || 'Hate Mini-Boss';
     const zone       = k?.zone || 'Plane of Hate';
     const instanced  = !!k?.instanced;
-    const isOwnGuild = !!k?.isOwnGuild;
+    const isOwnGuild = _hateKillIsOwnGuild(k);
     const killedAtMs = k?.ts ? Date.parse(k.ts) : Date.now();
 
-    // Defensive — the agent shouldn't send our own instance kills (the
-    // Druzzil /bosskill path already covers those). Drop silently if it
-    // ever does so we don't double-announce.
-    if (isOwnGuild && instanced) continue;
-
+    // Our own instance kills are recorded too, with an informational "We killed" post and no spot picker
+    // (an instance has no open-world spot). This is the only ledger row they get: the Druzzil /bosskill
+    // path feeds the raid boards, not this table.
     const notes = instanced ? 'Instanced' : null;
 
     const row = await hateKills.recordHateKill({
