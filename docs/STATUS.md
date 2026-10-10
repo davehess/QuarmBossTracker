@@ -103,6 +103,15 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ Item card route for Target Info's Loot tab (bot 3.1.238, FB-73, 2026-10-10).** New `GET /api/agent/item-card?id=`
+  (agent auth): one `eqemu_items` row, plus the names of the spells it points at, turned into a compact card
+  `{ id, name, flags, lines }` by `utils/itemCard.js` (slot, damage/delay, AC/HP/mana, stats, resists, class/race, click /
+  proc / focus / worn effects, weight, value; MAGIC / LORE / NO DROP, where `nodrop = false` means NO DROP). Cached 6 h, an
+  unknown item 10 min, a failed read is a 503 and not cached. The Mimic half (hover card, click-to-copy link, PQDI link)
+  is agent 3.7.125 on beta; its hover reads "no card for this item" until this is live. Test `test/item-card.test.js`.
+  ⚠ Not fixed here, found on the way: `_extractItemId` / `transformEqItemLinks` (agent and bot) read the chat item link's id as
+  HEX, but Quarm writes it as 7 decimal digits (`0022194A Lucid Shard` is item 22194), so the PQDI links the relay builds
+  point at the wrong item (Ragebringer 11057 links as 4357).
 - **✅ Callouts and Extended Target keep to your raid, or your group outside one (bot 3.1.222 live 2026-10-08;
   stable Mimic 2.7.10 / agent 3.7.106; DECISIONS §189).** The guild lead, 2026-10-07: other groups' mobs and
   callouts leaking in. The relay's raid-evening blanket is gone (raid from the live roster, else group, else zone);

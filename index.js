@@ -16264,6 +16264,41 @@ async function _handleAgentNpcInteract(req, res) {
   res.end(JSON.stringify(body ? { ok: true, npc: body } : { ok: true, npc: null }));
 }
 
+// GET /api/agent/item-card?id=<item id> — the compact card Target Info shows when a dropped item
+// is hovered (FB-73). Catalog data (the weekly eqemu mirror), so 6h; an unknown item is remembered
+// for 10 minutes. A failed read is a 503 and is never cached.
+const _itemCardCache = new Map();   // itemId → { at, card|null }
+const _ITEM_CARD_TTL_MS = 6 * 60 * 60 * 1000;
+async function _handleAgentItemCard(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  let itemId = NaN;
+  try { itemId = Number(new URL(req.url, 'http://x').searchParams.get('id')); } catch { /* */ }
+  if (!Number.isInteger(itemId) || itemId <= 0) { res.writeHead(400); return res.end(JSON.stringify({ error: 'id required' })); }
+  const itemCard = require('./utils/itemCard');
+  const hit = _itemCardCache.get(itemId);
+  let card;
+  if (hit && Date.now() - hit.at < (hit.card ? _ITEM_CARD_TTL_MS : 10 * 60 * 1000)) {
+    card = hit.card;
+  } else {
+    const supabase = require('./utils/supabase');
+    const rows = await supabase.select('eqemu_items', `id=eq.${itemId}&select=${itemCard.ITEM_CARD_COLUMNS}&limit=1`);
+    if (!Array.isArray(rows)) { res.writeHead(503, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'item catalog unavailable' })); }
+    const row = rows[0] || null;
+    const names = new Map();
+    const spellIds = row ? itemCard.itemCardSpellIds(row) : [];
+    if (spellIds.length) {
+      const sp = await supabase.select('eqemu_spells', `id=in.(${spellIds.join(',')})&select=id,name`);
+      if (Array.isArray(sp)) for (const s of sp) names.set(Number(s.id), s.name);    // a failed read just leaves "spell #id"
+    }
+    card = itemCard.buildItemCard(row, names);
+    if (_itemCardCache.size > 2000) _itemCardCache.clear();
+    _itemCardCache.set(itemId, { at: Date.now(), card });
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, card }));
+}
+
 async function _handleAgentMobInfo(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -23058,6 +23093,16 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentNpcInteract(req, res); }
     catch (err) {
       console.error('[npc-interact] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Target Info's Loot tab: the hovered item's card, by item id (FB-73).
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/item-card')) {
+    try { return await _handleAgentItemCard(req, res); }
+    catch (err) {
+      console.error('[item-card] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
