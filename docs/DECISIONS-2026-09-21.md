@@ -9001,3 +9001,24 @@ Harmony, Hide/Sneak for non-rogues).
   - **Follow** needs no new code: `/tag chat ^PF^` on yourself (paw with an F); followers `/target ^PF^`, `/follow`.
   - Open: whether the key stays `^MA^` or becomes `^WPMA^` to match the guild's name; Mimic treats the marker holder
     as the WPMA main assist either way.
+- **The handle is guild configuration** (the guild lead: *"the one for other guilds may be RaidMA or something else
+  make it configuration but with the stipulation that nobody should have that name in the raid OR of there are any
+  mobs that start with that phrase"*): `main_assist_tag` in `guild/config.json`, Wolf Pack `WPMA`. Because `/target`
+  matches name prefixes, the value is rejected at config time if any NPC name or known character name starts with it,
+  and Mimic warns at raid time if a raid member or a targeted mob does. Measured: `WPMA` / `RaidMA` match nothing;
+  `MA` matches 171 NPC names and 295 players seen in `/who`. Rule + check list in `docs/DESIGN-guild-kit.md` §3.
+- **Raid-leader handoff researched** (`/tmp` notes not kept; summary here):
+  - Server (EQMacEmu): the make-leader button sends `OP_RaidInvite` action 20 and is honoured **only from the current
+    leader** — no officer, GM or password path. When the leader camps, goes linkdead or leaves, leadership passes to
+    the **first other member in the raid list** (only with 3+ remaining), not by rank.
+  - Zeal already has `/raidpromote` (`/rp`, sends Quarm's `#raidpromote`; its README says raid leader, its changelog
+    says group leader — unverified) and a password precedent, `/autoraidinvite <password>`, which invites on a matching
+    tell. The Zeal pipe is output-only, so Mimic cannot send commands into the client.
+  - Both proposed designs (an officer's message or a password making the leader's client promote someone) fail in the
+    case that matters most — a linkdead or AFK leader can run nothing — and put secrets in chat logs. Quarm's posted
+    rules (quarm.guide/about-project-quarm: "If you have to ask if you can do it or not, just don't do it"; "All forms of
+    automation software are not allowed…") make acting on another player's message **not clearly allowed** — treat it
+    as not allowed unless the Quarm team says otherwise in writing.
+  - Options put to the guild lead: A no automation — keep an officer FIRST in the raid list so the server's own
+    handoff lands on them (and/or promote at raid start); B a confirm-first prompt where a human presses a key;
+    C a password auto-promote (copy of `/autoraidinvite`; rules risk). Recommended A.

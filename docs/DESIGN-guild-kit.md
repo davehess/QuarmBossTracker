@@ -145,6 +145,20 @@ comes upstream.
 | channel names; which expansions are locked and until when | the lock logic |
 | sites and APIs: web domain, bot base, OpenDKP host, PQDI | the OpenDKP citizenship budgets (env, per §3 of the wizard doc) |
 | feature flags: pvp, opendkp, web, assistant — `pvp` is **off by default**, and de-anonymising anonymous players additionally needs a generated `ALLIANCE_CODE` secret issued between allied guilds (the guild lead, 2026-09-18) | the features, and the gate itself — identical hosted or self-hosted |
+| the main-assist handle `main_assist_tag` (Wolf Pack: `WPMA`; another guild might use `RaidMA`) — the word raiders type to `/target` the main assist (DECISIONS §224) | the validation rule below, and the Zeal / Mimic plumbing that resolves it to the `^MA^` marker holder |
+
+**`main_assist_tag` must never prefix a real name** (the guild lead, 2026-10-10: *"make it configuration but with
+the stipulation that nobody should have that name in the raid OR of there are any mobs that start with that
+phrase"*). EQ's `/target` matches by name prefix, so a handle that starts any player's or NPC's name would target
+the wrong thing. Validation, case-insensitive, `_` read as a space:
+1. **At config time** (the `doctor` / wizard, and the bot's config loader): reject the value if any
+   `eqemu_npc_types.name` starts with it, or any known character name does (`characters.name`,
+   `who_observations.character`). Measured 2026-10-10: `WPMA` and `RaidMA` match nothing; `MA` matches 171 NPC
+   names and 295 players seen in `/who` — the reason plain `MA` is not allowed.
+2. **At raid time** (Mimic): if anyone in the live raid roster, or a mob on the current target / Extended Target,
+   has a name starting with the handle, show a warning on the Command Center and Extended Target, and keep
+   resolving the main assist by the `^MA^` marker rather than by name.
+Minimum 4 characters; letters only.
 
 Palette is the one to be careful with. The tokens are shared across all four
 surfaces on purpose (`.claude/skills/frontend-design`), and colour is semantic
