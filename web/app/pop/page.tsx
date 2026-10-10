@@ -79,7 +79,10 @@ import { demoEssenceQueue } from '@/lib/essencesQueue';
 import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'PoP Flags — Wolf Pack' };
+export const metadata = {
+  title: 'PoP Flags — Wolf Pack',
+  description: 'Every Planes of Power flag gate by tier, how many raiders hold each flag and who can enter each zone today.',
+};
 
 type FlagRow = { character: string; flag_key: string; earned_at: string; boss: string | null; zone: string | null };
 // flags = recorded + seen + looted + self; seen = the flags only /who proves (a character standing in a gated plane);

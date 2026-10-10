@@ -4,6 +4,11 @@
 import SignInButton from '@/components/SignInButton';
 import PasswordSignIn from '@/components/PasswordSignIn';
 
+export const metadata = {
+  title: 'Sign in',
+  description: 'Sign in to WolfPack.quest with your Discord account.',
+};
+
 export const dynamic = 'force-dynamic';
 
 export default function SignInPage({

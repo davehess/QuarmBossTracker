@@ -34,6 +34,11 @@ import { selectAll } from '@/lib/selectAll';
 import { loadEncounterGap, hasMissingDamage, GAP_HARD_CAP } from '@/lib/adminReads';
 import { GUILD_TAG } from '@/lib/guild';
 
+export const metadata = {
+  title: 'Encounter repair · Admin',
+  description: 'Audit and repair encounters with missing damage, duplicates or the wrong boss.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type EncounterRow = {

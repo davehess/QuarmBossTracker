@@ -43,7 +43,10 @@ import { isCurrentEraName, currentEraNames } from '@/lib/eras';
 import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Loot lockouts — Wolf Pack admin' };
+export const metadata = {
+  title: 'Raid lockouts — Wolf Pack admin',
+  description: 'Which characters hold an active raid lockout, so officers know who cannot fight a boss tonight.',
+};
 
 type Row = {
   character: string; boss_key: string; boss_name: string;

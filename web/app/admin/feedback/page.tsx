@@ -16,6 +16,11 @@ import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 import { SHOT_BUCKET } from '@/lib/feedbackShots';
 
+export const metadata = {
+  title: 'Feedback · Admin',
+  description: 'The officer inbox for bug reports and ideas, with status tracking.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type FeedbackRow = {

@@ -23,6 +23,11 @@ import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 import { GUILD_TAG } from '@/lib/guild';
 
+export const metadata = {
+  title: 'Voice triggers · Admin',
+  description: 'The on/off switch and tunables for the bot’s voice-trigger pipeline.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type VoiceSettingsRow = {

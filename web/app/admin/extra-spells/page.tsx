@@ -20,7 +20,10 @@ import { requireOfficer } from '@/lib/officer';
 import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: '[beta] Extra PoP spells' };
+export const metadata = {
+  title: '[beta] Extra PoP spells',
+  description: 'Planes of Power spell scrolls the guild holds beyond what its own casters need, and who could use them.',
+};
 
 type Needer = { name: string; class: string | null; level: number | null };
 type ExtraScroll = {

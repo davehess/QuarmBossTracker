@@ -22,6 +22,11 @@ import { parseTimerFields, timerInputFrom, describeTimer } from '@/lib/triggerTi
 import { foldFeedback, loadFeedbackRollup, loadGuildTriggers, type FbAgg } from '@/lib/triggerFeedback';
 import TimerFields from './TimerFields';
 
+export const metadata = {
+  title: 'Guild triggers · Admin',
+  description: 'Add, edit and switch off the raid triggers every Mimic install polls.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type TriggerRow = {

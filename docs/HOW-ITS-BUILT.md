@@ -3260,6 +3260,18 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
 
 ## Web features
 
+- **Link previews: every page unfurls with its own name (web 1.8.135, 2026-10-10, DECISIONS §215)**:
+  - **Discord never reads a page's `metadata`.** `web/middleware.ts` rewrites preview crawlers (Discordbot, Slackbot,
+    Twitterbot…) to `/api/embed-meta`, which serves the card from `web/lib/pageMeta.ts` `metaForPath(path)`.
+    A route with no entry there unfurls as the site card.
+  - **`web/lib/pageMeta.ts`** (pure): `STATIC_META`, `ADMIN_TITLES`, the builders (`feedbackMeta`, `entityMeta`,
+    `characterMeta`, `pvpMeta`, `raidReviewMeta`) and `lookupFor(path)`, which names the routes needing one read.
+  - **`web/lib/pageMetaData.ts`**: `metaForPathWithData(path)` does that read (FB-n: `ref, category, status`; catalog
+    pages: one `name`), `pageMetadata(path)` is what a dynamic page's `generateMetadata` returns. Same words in the tab
+    and on the card.
+  - **Root layout** pins no `openGraph.title`/`description`/`url`, so Next fills OG from each page.
+  - **Test:** `test/page-metadata.test.js` walks every `page.tsx`. Rule: `CLAUDE.md`.
+
 - **Zeal tag icons gallery (`/zeal-icons`, live with the `[beta]` tag since web 1.8.81, 2026-10-03; built 2026-09-26)**:
   - **[beta] tag:** `web/components/NewPageTag.tsx`, the marker every new page carries when it
     goes live (DECISIONS §135); the page titles and link previews start with `[beta]` too.

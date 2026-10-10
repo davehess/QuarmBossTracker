@@ -7,6 +7,11 @@ import Link from 'next/link';
 import { loadAdminQueue, type QueueCategory } from '@/lib/admin-queue';
 import { requireOfficer } from '@/lib/officer';
 
+export const metadata = {
+  title: 'Review queue · Admin',
+  description: 'Open items waiting on an officer: chat speakers, unattributed names and other data to review.',
+};
+
 export const dynamic = 'force-dynamic';
 
 function fmtAgo(iso: string | null): string {

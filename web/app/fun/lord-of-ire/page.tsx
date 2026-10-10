@@ -7,6 +7,11 @@ import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 
+export const metadata = {
+  title: 'Lord of Ire',
+  description: 'Every Lord of Ire vanquished, rolled up per main with the alt split underneath.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type MainGroup = {

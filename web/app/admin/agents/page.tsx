@@ -18,6 +18,11 @@ import { requireOfficer } from '@/lib/officer';
 import { selectAll } from '@/lib/selectAll';
 import { GUILD_TAG } from '@/lib/guild';
 
+export const metadata = {
+  title: 'Agent uploaders · Admin',
+  description: 'Who is uploading right now, who has gone stale, and which agent version each raider runs.',
+};
+
 export const dynamic = 'force-dynamic';
 
 // One row per (character, endpoint) — a running counter, not a per-upload log.

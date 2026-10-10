@@ -14,6 +14,11 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
 import { dailyVolume, loadPageViewStats, topViewers } from '@/lib/pageViewStats';
 
+export const metadata = {
+  title: 'Page analytics · Admin',
+  description: 'Which pages members open and how often, from the site’s own page-view log.',
+};
+
 export const dynamic = 'force-dynamic';
 
 const RANGES: { label: string; days: number }[] = [

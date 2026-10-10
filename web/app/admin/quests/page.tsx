@@ -8,6 +8,11 @@ import { requireOfficer } from '@/lib/officer';
 import { createQuest, addRequiredItem, deleteQuest, deleteItem, toggleActive } from './actions';
 import { GUILD_TAG } from '@/lib/guild';
 
+export const metadata = {
+  title: 'Quests · Admin',
+  description: 'Edit the quest catalog and the items each quest requires.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type Quest = {

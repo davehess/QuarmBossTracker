@@ -48,6 +48,13 @@ import LootBlock, { type LootRow } from '@/components/LootBlock';
 import { FightTimeline, type TLEvent } from '@/components/FightTimeline';
 import { GUILD_TAG } from '@/lib/guild';
 
+import { pageMetadata } from '@/lib/pageMetaData';
+
+export async function generateMetadata({ params }: { params: Promise<{ date: string }> }) {
+  const { date } = await params;
+  return pageMetadata(`/raid/review/${encodeURIComponent(date)}`);
+}
+
 export const dynamic = 'force-dynamic';
 
 type PlayerRow = { character_name: string; total_damage: number; rank: number | null };

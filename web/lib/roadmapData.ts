@@ -37,6 +37,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'link-cards-2026-10-10',
+    title: 'Links say what they point to',
+    version: 'Web 1.8.135',
+    date: '2026-10-10',
+    headline: 'A wolfpack.quest link pasted in Discord now shows the name of the page it opens, not the same card for every page.',
+    features: [
+      { name: 'A card for every page', blurb: 'Every page on the site now has its own title and one-line summary in Discord, Slack and other link previews, and in your browser tab.' },
+      { name: 'Report links show their number and status', blurb: 'A feedback link reads like “FB-71 · Bug report · Seen”. Only the number, the kind and where it stands are shown; what was written stays private to the person who sent it and the officers.' },
+      { name: 'Items, spells, NPCs and bosses by name', blurb: 'A link to the item, spell, NPC, faction or boss pages shows its name and what kind of thing it is.' },
+    ],
+    fixes: [
+      'Officer pages now each show their own name in a link preview instead of one shared card.',
+    ],
+  },
+  {
     key: 'eqmimic-landing-2026-10-09',
     title: 'A front door for Mimic [beta]',
     version: 'Web 1.8.127',

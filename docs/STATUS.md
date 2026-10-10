@@ -5916,3 +5916,18 @@ The guild lead: *"A plus B's instrumentation"*, on enchanters' early-break repor
 - **Open:** after a week of data, read per-spell `ran_full`. A pre-existing dead branch (same-owner recast never refreshes the
   overlay timer: `pcSpell.dur || pcSpell.cls` tests keys the helper does not return) is noted in §209, not fixed.
 - Tests: `test/charm-session-ran-full.test.js`, `test/charm-session-spell-ran-full.test.js` (mutation-checked).
+
+### 🧾 2026-10-10 — Every page unfurls with its own name and summary (web 1.8.135, DECISIONS §215)
+The guild lead: *"discord embedded links for the feedback links are generic. all links from our site should include at least
+top level information and the page name. make it a rule"*. Now a standing rule in `CLAUDE.md`, enforced by
+`test/page-metadata.test.js`.
+- **Why the FB-71 card was generic:** Discord's crawler is rewritten by the middleware to `/api/embed-meta`, which serves
+  `metaForPath()` in `web/lib/pageMeta.ts`. A page's own `metadata` never reaches it, and `/feedback/<ref>` had no entry.
+- **Built:** `pageMeta.ts` has an entry or pattern for every route (admin pages unfurl as "<name> · Admin"); new
+  `pageMetaData.ts` does the one small read for FB-n (`ref, category, status` only) and catalog names; every `page.tsx`
+  exports `metadata` or `generateMetadata`; the admin layout is `noindex`; the root layout no longer pins
+  `openGraph.title`/`description`/`url`, so OG follows the page.
+- **Decision for the guild lead:** parse links stay "Parse Breakdown" on the card (the boss, night and DPS are guild data
+  the crawler would publish). Say so if you want them named.
+- **Open:** nobody has seen a production card since this change. Post a fresh `/feedback/FB-<n>` link in Discord after it
+  deploys (Discord caches per URL). A new page owes `pageMeta.ts` an entry; the test says so when it is missing.

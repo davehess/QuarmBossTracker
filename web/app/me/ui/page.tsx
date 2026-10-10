@@ -22,7 +22,10 @@ import { GUILD_TAG } from '@/lib/guild';
 import UiStudioClient, { type CharUiData, type PendingRow, type CommonMacroRow } from './UiStudioClient';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'UI Studio' };
+export const metadata = {
+  title: 'UI Studio',
+  description: 'Your characters’ macros and backed-up UI files, with edits staged for the machine that runs them. Private to you.',
+};
 
 export default async function MeUiPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();

@@ -265,6 +265,25 @@ comment, and a sync-ordering test anchored to a comment's position.
   corpus smaller than the cap passes whether the cap exists or not. Mutation-
   check new assertions; green alone proves nothing.
 
+### Working rule — every page unfurls with its own name and summary (the guild lead, 2026-10-10)
+*"discord embedded links for the feedback links are generic. all links from our site should include at least top
+level information and the page name. make it a rule."* Every route on wolfpack.quest has a real **title** (the page's
+name; for an entity, `<name> · <kind>`) and a **one-sentence description** of what the page is, and the OG tags follow.
+- **Two places, both required.** The page exports `metadata` (or `generateMetadata` for a dynamic route) for the browser
+  tab. And the route is in `web/lib/pageMeta.ts` (`STATIC_META`, a pattern in `metaForPath`, or `ADMIN_TITLES`), because
+  **Discord never reads the page**: the middleware rewrites preview crawlers to `/api/embed-meta`, which serves
+  `metaForPath`. A new page with no `pageMeta.ts` entry unfurls as the site card, whatever it exports. A route that needs
+  a database read to name itself goes in `lookupFor` and `web/lib/pageMetaData.ts`, and its `generateMetadata` calls
+  `pageMetadata()` so the card and the tab agree.
+- **The root layout pins no `openGraph.title`, `description` or `url`.** A pinned root value beats the page's own.
+- **Metadata is PUBLIC.** The crawler is anonymous. A card carries only what a signed-out visitor could already see: the
+  page's name, a catalog name (game data), a number in the URL, a closed-vocabulary status. **Never member-submitted
+  text, a member or character name read from the database, notes, logs, or a parse's boss, night or numbers.** Reads
+  select the fewest columns that name the page (FB-n: `ref, category, status`).
+- `test/page-metadata.test.js` enforces it: it walks every `page.tsx` and fails on a page with no title and description, a
+  dynamic route without `generateMetadata`, a route that still resolves to the site card, a pinned root OG field, or a
+  card read that selects a private column. A new route's sample value goes in its `SAMPLE` map if it needs one.
+
 ### Working rule — close reports by their FB number (guild lead, 2026-09-29)
 *"We need to start having referenceable IDs for each bug or enhancement request so the bot can update
 these when they get implemented."* Every bug or idea report has a handle **`FB-<n>`** (`feedback.ref`,

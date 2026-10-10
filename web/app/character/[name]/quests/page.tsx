@@ -42,6 +42,15 @@ import { EPIC_COMPONENTS, EPIC_ROOT, EPIC_CLASSES_BY_ITEM } from '@/lib/eq-epics
 import { fetchFamilyInventory, fetchDiscoveredQuests, fetchItemsByIds } from '@/lib/capSafeReads';
 import { GUILD_TAG } from '@/lib/guild';
 
+import type { Metadata } from 'next';
+import { characterMeta } from '@/lib/pageMeta';
+
+export async function generateMetadata({ params }: { params: Promise<{ name: string }> }): Promise<Metadata> {
+  const { name } = await params;
+  const { title, description } = characterMeta(name, 'quests');
+  return { title, description };
+}
+
 export const dynamic = 'force-dynamic';
 
 type Quest = {
