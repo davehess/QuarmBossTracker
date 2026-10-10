@@ -7,7 +7,7 @@
 ![All 30 guilds, banner above icon, rendered from the real meshes](../zeal-tag-shapes/guilds.png)
 
 **What**
-Every guild on our list gets a banner (`^B<code>^`, a swallowtail flag with its code on it) and an icon (`^I<code>^`), 30 guilds in all. A new option, `/tag guildmarks auto`, shows each nearby player's own guild icon over their head with nobody having to tag them.
+Every guild on our list gets a banner (`^F<code>^`, a swallowtail flag with its code on it) and an icon (`^I<code>^`), 30 guilds in all. A new option, `/tag guildmarks auto`, shows each nearby player's own guild icon over their head with nobody having to tag them.
 
 **Why**
 Raids mix several guilds, and "who is that, and who are they with" comes up constantly. A mark that appears by itself answers it at a glance, and anyone who prefers a clean screen can turn it off.

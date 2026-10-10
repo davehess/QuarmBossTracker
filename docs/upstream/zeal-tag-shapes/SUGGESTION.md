@@ -13,7 +13,7 @@
 Raid marking needs more distinct symbols than three: kill order, who pulls, who mezzes, who tanks. The upstream maintainer once tried a skull and dropped it because a single flat outline looked wrong.
 
 **How**
-Type the key after the caret, for example `/tag local ^K^Kill`, `^7^`, `^PK^`, `^BEUR^`. `/tag guilds` lists the guild codes. Each shape is a few flat parts built into the same coloured triangle path the arrow uses, so no textures and nothing new to render. The wolf is traced from our site artwork. Keys avoid R, O, Y, G, B, W, P and S on purpose, because an older client reads only the first letter and would draw something that contradicts the new mark. Older clients show a plain arrow or only the text, never a wrong symbol.
+Type the key after the caret, for example `/tag local ^K^Kill`, `^7^`, `^PK^`, `^FEUR^`. `/tag guilds` lists the guild codes. Each shape is a few flat parts built into the same coloured triangle path the arrow uses, so no textures and nothing new to render. The wolf is traced from our site artwork. Keys avoid R, O, Y, G, B, W, P and S on purpose, because an older client reads only the first letter and would draw something that contradicts the new mark. Older clients show a plain arrow or only the text, never a wrong symbol.
 
 **How tested**
 - Off the game with g++: every mesh passes a strip check, and the key reader is extracted verbatim and run against every key, every guild in both cases, and all 126 tag colours being distinct.

@@ -34,7 +34,7 @@ tag persistence + corpse tags + tag pictures); never open a PR from it.*
    is free again.
 8. *"We should try to make a symbol for each of these guilds"*, then, from the
    preview, *"I like the flags, make them B__ for Banner"* and *"I want both"*: every
-   guild on the list, plus Wolf Pack, gets a **banner** (`^B<code>^`) and an **icon**
+   guild on the list, plus Wolf Pack, gets a **banner** (`^F<code>^`) and an **icon**
    (`^I<code>^`), 30 guilds in all (`guilds.png`).
 
 ## What's different about this approach
@@ -77,7 +77,7 @@ eye sockets or teeth.
 | `^E^` | Euro sign | amber `e8a020` | 500 |
 | `^1^` … `^12^` | Numbered badge | white `f0f0f0` (+n) | 138–258 |
 | `^P0^` … `^PZ^` | Paw with a letter or digit | paw green `20c040` (+n) | paw + 100–180 |
-| `^B<code>^` (`^BEUR^`) | A guild's banner: a swallowtail flag in its own colour with the code on it | per guild | 286–526 |
+| `^F<code>^` (`^FEUR^`) | A guild's banner: a swallowtail flag in its own colour with the code on it | per guild | 286–526 |
 | `^I<code>^` (`^IMAY^`) | A guild's icon (27 new; Wolf Pack, Europa and Loot & Some Fun reuse the wolf, € and $) | per guild | 16–1440 |
 
 **How the keys were chosen:**
@@ -101,8 +101,8 @@ eye sockets or teeth.
   a white arrow.
 - **Guild keys** (`B` or `I` plus a code) are read only when the letters up to the
   next `^` are a guild code in `TagShapes::kGuilds`, in either case.
-  - So `^Blue^` and `^BXYZ^` are still blue arrows, and `^BC^` is blue too
-    (Breakfast Club's banner is `^BBC^`).
+  - So `^Blue^` and `^BC^` are still blue arrows, `^FXYZ^` is still the flame, and the old `^BWP^` form is a blue arrow
+    (Breakfast Club's banner is `^FBC^`).
   - On an older client a banner shows as a blue arrow (the `B`), and an icon shows
     only the text (`I` is not a key there).
   - `/tag guilds` lists every code in game.
@@ -209,7 +209,7 @@ more distinct symbols, and this adds four kinds:
     changes meaning is an exact `^WP^`, which was a white arrow.
   - An older client sees `^PK^` as a plain paw.
 - Guild marks, from one table (`TagShapes::kGuilds`: code, name, colours):
-  - `^B<code>^`: a swallowtail banner in the guild's colour with its code on it.
+  - `^F<code>^`: a swallowtail banner in the guild's colour with its code on it.
   - `^I<code>^`: the guild's icon.
   - Read only when the code names a guild, so `^Blue^` is still a blue arrow.
   - `/tag guilds` lists the codes.
@@ -248,7 +248,7 @@ colouring.
 4. `^PK^`, `^P7^`: the paw with K / 7 on its pad, readable from either side;
    `^P^` is still a plain paw.
 5. `^R^`, `^P^`, `^S^`, `^W^`: the arrows, paw and stop sign are unchanged.
-   - Guild marks: `^BEUR^`, `^IMAY^` and `^beur^` draw a guild banner, a guild icon
+   - Guild marks: `^FEUR^`, `^IMAY^` and `^beur^` draw a guild banner, a guild icon
      and the banner again. `^Blue^` and `^BC^` are still blue arrows. `/tag guilds`
      lists all 30 codes.
 6. Many shapes at once, plus a few arrow colours: every shape draws and none

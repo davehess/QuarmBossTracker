@@ -9097,3 +9097,10 @@ Harmony, Hide/Sneak for non-rogues).
   Windows build passed, so `tag_arrows.cpp` compiles. Nothing run in game yet. ⚠ The test build's moon key is `^MEZ^`
   (`^M^` no longer draws it); the website's symbol list still says `^M^`, correct for official Zeal and the
   `tag-shapes` PR — decide which the site shows.
+- **Guild flag key is `^F<code>^`, replacing `^B<code>^`** (the guild lead: *"maybe we should make it F<Guild
+  acronym> for Flag"*, then *"instead of b for banner"*, and *"nobody has installed this but me, were safe to
+  proceed"*). `^FWP^` = Wolf Pack's flag; `^F^` alone and `^Fire^` stay the flame (a guild key must name a real code);
+  `^B` is the plain blue arrow again, so an old saved `^BWP^` tag now shows a blue arrow. A flag picture override is
+  `FEUR.png`. Website: beta 1.8.139 (`5e8f67b9`) and `main` 1.8.139 (`2e68c737`) the same day — same version on both
+  so the sync merges. Docs, posts, test cases and showcase changed in the same round; the fork's `tag-shapes`,
+  `tag-icon-files`, `guildicon-draft` and `test-all` get the code change.

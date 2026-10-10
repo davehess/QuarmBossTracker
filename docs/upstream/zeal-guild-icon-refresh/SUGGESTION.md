@@ -7,7 +7,7 @@
 ![Every guild's icon beside its new banner](icons-vs-banners.png)
 
 **What**
-Guild banners (`^B<code>^`) carry the guild's own icon and its full name instead of three letters. The icon on the
+Guild banners (`^F<code>^`) carry the guild's own icon and its full name instead of three letters. The icon on the
 flag is the same drawing, in the same colours, as that guild's `^I<code>^` icon. Long names sit above and below the
 icon ("HERE / THERE", serpent, "BE / MONSTERS"). The Burnouts icon is now a lit rolled cigarette instead of a match.
 

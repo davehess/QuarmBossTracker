@@ -47,8 +47,8 @@ Mark each case: `[x]` pass, `[!]` fail (write what you saw under it).
 
 ### 6. Keys that must NOT become a new shape
 - **Setup:** one NPC targeted.
-- **Steps:** `/tag local ^Blue^Kill`, `^BXYZ^x`, `^BC^x`, `^W^x`, `^L^x`, `^WPx^x`.
-- **Expected:** `^Blue^`, `^BXYZ^`, `^BC^` a blue arrow; `^W^` and `^WPx^` a white arrow; `^L^` text only (L was the wolf's old key and is free). `^BBC^` is Breakfast Club's banner, `^BC^` is not.
+- **Steps:** `/tag local ^Blue^Kill`, `^FXYZ^x`, `^BC^x`, `^W^x`, `^L^x`, `^WPx^x`.
+- **Expected:** `^Blue^` and `^BC^` a blue arrow; `^FXYZ^` the flame (no guild XYZ, so it falls back to `F`); `^W^` and `^WPx^` a white arrow; `^L^` text only (L was the wolf's old key and is free). `^FBC^` is Breakfast Club's flag, `^BC^` is not, and the old `^BBC^` is now just a blue arrow.
 - **Result:** [ ] pass  [ ] fail
 
 ### 7. `^-^` and clear
@@ -65,12 +65,12 @@ Mark each case: `[x]` pass, `[!]` fail (write what you saw under it).
 
 ### 9. Text cap
 - **Setup:** one NPC targeted.
-- **Steps:** `/tag local ^BHBM^Here There Be Monsters`.
+- **Steps:** `/tag local ^FHBM^Here There Be Monsters`.
 - **Expected:** the label is cut at 32 characters counting the `^key^` (reads "...Be Monster"). The shape still draws.
 - **Result:** [ ] pass  [ ] fail
 
 ### 10. Help text and prettyprint
-- **Steps:** `/tag` with nothing after it. Then `/tag prettyprint on` and `/tag rsay ^7^x`, `/tag rsay ^PK^x`, `/tag rsay ^BEUR^x`.
+- **Steps:** `/tag` with nothing after it. Then `/tag prettyprint on` and `/tag rsay ^7^x`, `/tag rsay ^PK^x`, `/tag rsay ^FEUR^x`.
 - **Expected:** the help lists the new icon, badge, paw, banner and guild lines. Prettyprint reads "(#7)", "(Paw K)", "(Banner EUR)". `/tag tooltip on` shows the shape name in the target window.
 - **Result:** [ ] pass  [ ] fail
 
@@ -78,8 +78,8 @@ Mark each case: `[x]` pass, `[!]` fail (write what you saw under it).
 
 ### 11. A raider on stock Zeal (old client on the other side)
 - **Setup:** two clients, or a raid mate on stock Zeal 1.4.8. You are on the test build.
-- **Steps:** `/tag rsay ^12^x`, `^PK^x`, `^WP^x`, `^BEUR^x`, `^IMAY^x`.
-- **Expected:** on stock Zeal nothing crashes or errors. `^12^` shows only text, `^PK^` a plain paw, `^WP^` a white arrow, `^BEUR^` a blue arrow, `^IMAY^` only text. No contradicting symbol (nothing that looks like a stop sign).
+- **Steps:** `/tag rsay ^12^x`, `^PK^x`, `^WP^x`, `^FEUR^x`, `^IMAY^x`.
+- **Expected:** on stock Zeal nothing crashes or errors. `^12^` shows only text, `^PK^` a plain paw, `^WP^` a white arrow, `^FEUR^` a blue arrow, `^IMAY^` only text. No contradicting symbol (nothing that looks like a stop sign).
 - **Result:** [ ] pass  [ ] fail
 
 ### 12. Target that is not drawn
