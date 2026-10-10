@@ -367,7 +367,38 @@ function pickAndMergeMobRows(rows, opts) {
   };
 }
 
+/**
+ * Which same-name body the Quest tab should read when the pick above is from another zone
+ * (FB-72, a member, 2026-10-10).
+ *
+ * pickAndMergeMobRows prefers a real body ANYWHERE over an in-zone placeholder (immune to melee
+ * and magic), and every talking flag NPC is exactly that. So Giwin Mirakon in the Plane of
+ * Innovation came back as the Plane of Tactics' Giwin (214014, a different script that only
+ * answers "hail") and the Quest tab never showed "test the machine". The same pick sent every
+ * Planar Projection to the Plane of Disease's, Aid Eino in Knowledge to the Nightmare one and
+ * Tylis in Torment to the Tranquility one. The stats pick stays as it is (its tests pin it);
+ * this answers the other question, "whose script is the player talking to".
+ *
+ * `rows` are the case-matched catalog rows for the name, `zoneId` the requester's zone and
+ * `pickedId` the row pickAndMergeMobRows chose. Returns the id of the body standing in that
+ * zone, or null when the pick is already there or the zone has no body of this name (mob.id is
+ * then right). Among several bodies here: the plain name over "#Name" (the placed one, not a
+ * script spawn), then the higher level and HP, then the lower id.
+ */
+function questNpcId(rows, zoneId, pickedId) {
+  const z = Number(zoneId);
+  if (zoneId == null || !Number.isFinite(z) || pickedId == null) return null;
+  if (zoneIdOf(pickedId) === z) return null;
+  const here = (Array.isArray(rows) ? rows : []).filter((r) => r && zoneIdOf(r.id) === z);
+  if (!here.length) return null;
+  const hashed = (r) => (String(r.name || '').startsWith('#') ? 1 : 0);
+  here.sort((a, b) => hashed(a) - hashed(b) || (Number(b.level) || 0) - (Number(a.level) || 0)
+    || (Number(b.hp) || 0) - (Number(a.hp) || 0) || Number(a.id) - Number(b.id));
+  return here[0].id;
+}
+
 module.exports = {
+  questNpcId,
   MOB_SPECIAL_CODES,
   LEGACY_DECODED_CODES,
   NPCSPECIALATTKS_FLAGS,

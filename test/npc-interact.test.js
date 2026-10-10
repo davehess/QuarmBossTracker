@@ -60,7 +60,17 @@ const CATALOG = [
   { id: 202194, name: 'Cavalier_Waut', merchant_id: 202194 },
   { id: 202400, name: 'a_sarnak_thiran', merchant_id: null },     // unnamed mob: never "next"
   { id: 163082, name: 'Some', merchant_id: null },                 // a real NPC in Grieg's End
+  { id: 202500, name: 'A_Planar_Projection', merchant_id: null },  // scripted by <id>.lua only
+  { id: 202501, name: 'Twin_Npc', merchant_id: null },             // has <id>.lua AND <name>.lua
 ];
+
+// potactics/214322.lua, trimmed to its hail branch.
+const PROJECTION = `function event_say(e)
+	if ( e.message:findi("hail") ) then
+		e.other:Message(0, "A Planar Projection tells you, 'Hail, mortal.'");
+	end
+end
+`;
 
 function fakeSupabase(calls) {
   const dec = (s) => decodeURIComponent(s);
@@ -86,6 +96,11 @@ function fakeSupabase(calls) {
         const path = dec(p.get('path') || '');
         if (path === 'eq.poknowledge/Tarerd_Gahar.lua') return [{ path: 'poknowledge/Tarerd_Gahar.lua', body: TARERD }];
         if (path === 'eq.poknowledge/Warden_Aldric.lua') return [{ path: 'poknowledge/Warden_Aldric.lua', body: WARDEN }];
+        // FB-72: a script named for the npc id (the Plane of Tactics' Planar Projections are only
+        // scripted as potactics/214322.lua), and one NPC that has both an id file and a name file.
+        if (path === 'eq.poknowledge/202500.lua') return [{ path: 'poknowledge/202500.lua', body: PROJECTION }];
+        if (path === 'eq.poknowledge/202501.lua') return [{ path: 'poknowledge/202501.lua', body: PROJECTION }];
+        if (path === 'eq.poknowledge/Twin_Npc.lua') return [{ path: 'poknowledge/Twin_Npc.lua', body: TARERD }];
         return [];
       }
       if (table === 'eqemu_faction_list_full') return [{ id: 1504, name: 'Knowledge Seekers' }, { id: 1505, name: 'Dark Reflection' }];
@@ -182,6 +197,20 @@ describe('F/Q/V data for one NPC', () => {
     expect(quarmOnly).toMatchObject({ inputs: [{ id: 15013, name: 'Spell: Complete Healing', qty: 1 }], outputs: [{ id: 15392, name: 'Spell: Resurrection' }] });
     expect(quarmOnly.unverified).toBeUndefined();
     expect(n.turnins).toHaveLength(3);
+  });
+
+  it('reads a script named for the npc id when the name has none (FB-72)', async () => {
+    const { fn } = load();
+    const n = await fn(202500);
+    expect(n.script).toBe('poknowledge/202500.lua');
+    expect(n.say.map((b) => b.say)).toEqual(['hail']);
+  });
+
+  it('the id file wins over the name file, the way the server loads them', async () => {
+    const { fn } = load();
+    const n = await fn(202501);
+    expect(n.script).toBe('poknowledge/202501.lua');
+    expect(n.say.map((b) => b.say)).toEqual(['hail']);   // PROJECTION (the id file), not TARERD's hail + pool
   });
 
   it('an unknown id is null', async () => {
