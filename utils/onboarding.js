@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.241': [
+    '**Item links in guild and raid chat go to the right item.** When you linked an item in game, the PQDI link the relay added pointed at a different item (Ragebringer opened Sparring Grappler Gloves). The links now open the item you linked (needs the Mimic beta for links from your own client).',
+  ],
   '3.1.233': [
     '**The stampede timer follows you into Plane of Tactics.** If you zone in after someone heard the hooves, Mimic picks up the "window opens" and "stampede by" countdowns with the time left, and they call out when they end like everyone else\'s. Nothing is replayed when you arrive, and anyone in the zone who hears the next stampede restarts the clock for everyone (needs the next Mimic update).',
   ],

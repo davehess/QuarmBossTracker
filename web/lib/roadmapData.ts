@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'chat-item-links-2026-10-10',
+    title: 'Chat item links open the right item',
+    version: 'Web 1.8.140 · Bot 3.1.241 · Agent 3.7.127',
+    date: '2026-10-10',
+    headline: 'An item linked in guild or raid chat now opens that item on PQDI, not a different one.',
+    features: [],
+    fixes: [
+      'The PQDI link added to an item you linked in guild or raid chat opened the wrong item: Ragebringer opened Sparring Grappler Gloves. Links now open the item that was linked. Links from your own client need the Mimic beta.',
+    ],
+  },
+  {
     key: 'zeal-flag-key-2026-10-10',
     title: 'Guild flags are ^F',
     version: 'Web 1.8.139',
