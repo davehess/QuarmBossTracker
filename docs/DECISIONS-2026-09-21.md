@@ -114,8 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Mimic 2.9: spawn map, zone-server directory, live mob dots** (§216) | Called 2026-10-10 as the 2.9 minor line. Research in: `dbg.txt` names the zone server on every zone-in (`Zone addr [<host>:<port>]` + `StartWorldDisplay: <zone>`), and one zone was seen on two ports within an hour, so a port is a per-boot instance token, not a zone id. Zeal-pipe and spawn-data research still running | a session: write `docs/DESIGN-mimic-2.9-spawn-map.md` (phases + lettered layout options), then build phase 1 |
-| **Zeal review fixes + guild marks B** (§216) | The guild lead: *"go ahead with the zeal fixes, B for guild marks"*. Fixes being drafted on `tag-shapes`, `tag-icon-files`, `tag-persistence` (new commits, no force); guild marks B = automatic marks from the player's guild, `/tag guildmarks off|tagged|auto`, default `tagged` | a session: review, push, merge into `test-all`, then the guild lead tests the GitHub build |
+| **Mimic 2.9: spawn map, zone-server directory, live mob dots** (§216) | Called 2026-10-10 as the 2.9 minor line. Research in: `dbg.txt` names the zone server on every zone-in (`Zone addr [<host>:<port>]` + `StartWorldDisplay: <zone>`), and one zone was seen on two ports within an hour, so a port is a per-boot instance token, not a zone id. Design doc written (`docs/DESIGN-mimic-2.9-spawn-map.md`). Hosting needs no plan change (§217); a claude.ai workshop page carries three live mockups (A radar / B zone board / C tracker), the map-art options and the open picks | the guild lead: vote in the workshop (version, map art, 2.9 Picks 1–3); then a session builds the picked versions as `?v=` variants of `/spectator` on beta |
+| **Zeal review fixes + guild marks B** (§216) | The guild lead: *"go ahead with the zeal fixes, B for guild marks"*. Pushed 2026-10-10 as fast-forwards: `tag-shapes` `f777d81` (guild marks B + render-state restore + color check), `tag-icon-files` `b20331f` (exception, per-frame, size and chat fixes). Guild marks B = automatic marks from the player's guild, `/tag guildmarks off|tagged|auto`, default `tagged`. Uncompiled until the GitHub build | a session: merge all tag branches into `test-all` (restored tags must keep their picture and guild-mark flag), confirm the build; then the guild lead runs the in-game list in §216 |
 | **Every page unfurls with its own name** (§215) | On `main` (web 1.8.135): `pageMeta.ts` covers every route, `pageMetaData.ts` names FB / catalog pages, root OG no longer pinned, `test/page-metadata.test.js` enforces it | the guild lead: post a fresh `/feedback/FB-<n>` link in Discord (it caches per URL) and say whether parses should name their boss |
 | **Zeal: cursor with the UI hidden (pick B) + PR cleanup** (§213) | Branch `hide-ui-cursor` (`2433493`) pushed and merged into `test-all` (`4014c49`); the GitHub build passed (`zeal_test-all.zip`, 2026-10-09 18:12 UTC), not run in game. The four tag branches are force-pushed as one commit each on v1.4.8 (the guild lead: *"force push github"*): `tag-shapes` `c2a5333`, `tag-persistence` `c143cee`, `tag-corpses` `7f7c824`, `tag-icon-files` `9035722` (on `tag-shapes`). Deleting `bandolier-chat-filter` and `pipe-spawn-id` was refused by the cloud session's git proxy (HTTP 403) | the guild lead: (1) Mimic → Settings → Zeal → Test build → Install, run the 9 steps in `docs/upstream/zeal-hide-ui-cursor/PULL-REQUEST.md`; (2) delete the two branches on GitHub (Branches page → 🗑); (3) re-author each branch and open the PRs |
 | **Europa tag picture replaced** (§213) | web 1.8.133 on `beta` (`ba445fa4`): the shield logo as `EUR.png`/`EUR.tga`, 226×256 | the guild lead: look at https://b.wolfpack.quest/zeal-icons; say graduate to main |
@@ -8748,3 +8748,42 @@ listing zones and groups for guild-instance moderation.
   (`Entity.GuildId`), drawn only on the viewer's screen, never for /anon or /roleplay players, only for guilds in the
   `kGuilds` table, within 150 units, icons not banners. `/tag guildmarks off|tagged|auto`, default `tagged` (no change
   for anyone who does not opt in); `off` also hides marks other raiders tagged.
+- **Landed (2026-10-10):** `tag-shapes` `f777d81` (guild marks B, render-state restore on a failed shape allocation,
+  startup check that tag identity colors are unique) and `tag-icon-files` `b20331f` (per-file `std::exception` catches
+  plus a non-throwing path printer, picture file resolved once per tag instead of per frame, 128 px picture cap, load
+  problems printed after the frame, auto marks use a guild's picture file when present). Both were fast-forward pushes.
+  Nothing outside `tag_shapes.cpp` has been compiled here (no MSVC); the GitHub build of `test-all` is the first real
+  compile. **In-game checks:** (1) `/tag guildmarks` alone prints the mode, "tagged" on a fresh profile; (2) `auto`
+  near listed guilds shows their icons, nothing for unguilded or unlisted guilds; (3) /anon and /roleplay players get
+  none; (4) marks vanish past ~150 units; (5) `off` hides `^B…^`/`^I…^` tags from others but keeps `^E^`, `^$^`, `^WP^`;
+  (6) `tagged` after `auto` drops only the automatic marks; (7) a player tagged with a non-guild shape keeps it in `auto`;
+  (8) frame rate with ~70 players, `auto` vs `tagged`; (9) a non-English picture file name is skipped without a crash;
+  (10) a picture over 128 px prints one skip line after the frame; (11) replacing a picture then `/tag icons` updates a
+  tagged mob without re-tagging; (12) a guild picture file (`<code>.png`) is used by `auto`, and removing it falls back.
+  ⚠ Guild names match `kGuilds` by letters and digits only, so "&" vs "and" will not match; compare `/tag guilds` to
+  the nameplate text. A guild seen before the client loaded its guild list stays unmarked until the next UI reload.
+  Pictures between 129 and 512 px that used to load are now refused.
+
+### 217. More real-time map data needs no plan upgrade; Vercel Hobby is the ceiling to keep the live feed off (2026-10-10)
+**The question** (the guild lead): *"to implement more of this realtime reporting do we need to increase our plan for
+supabase, vercel, or railway"*, plus *"can we build in more visual top-down maps with actual graphics"*, and a page of
+findings and mockups others can comment on.
+- **Supabase Pro: no change.** The spectator positions read is ~6 KB per poll for a full raid (one row per raider from
+  `spectator_positions`); 20 viewers × 3 s × 4 h × 12 raids ≈ 7 GB/month of the 250 GB egress. Live mob dots must NOT
+  be stored in Postgres (database size is the one meter that only grows); keep them in the bot's memory beside the
+  positions. A raid-replay recording is the feature that would cost database size.
+- **Railway: no change.** The live feed is already the bot's in-memory `/api/screen/live` (signed ticket, every 3 s);
+  up to ~70 nearby mobs per uploader adds a few KB.
+- **Vercel Hobby: no change, but it is the ceiling.** Hobby includes 1,000,000 function invocations, 1M CDN requests and
+  4 active CPU-hours a month (vercel.com/docs/plans/hobby, read 2026-10-10), and going over **pauses the feature for 30
+  days** instead of billing. If the bot feed is down and every viewer falls back to the Vercel polls, 20 viewers × 3 s ×
+  4 h × 12 raids ≈ 1.15M calls, over the cap. So: live data stays on the bot, and the fallback stays slow. Whether
+  `SCREEN_LIVE_URL` + `SCREEN_TOKEN_SECRET` are set on Vercel production was NOT confirmed (the env listing a session
+  can read was partial).
+- **Map art options** (A parchment generated from our own walls/floors/spawn density; B real textures rendered from the
+  player's own client files, Mimic-only because the website would be redistributing game art; C one AI-painted map per
+  zone; D community map images, not recommended for licence and coverage). Recommendation: A on the web now, B as a
+  Mimic option later.
+- **Where it landed:** a claude.ai workshop page (owner-shared, so not linked here) with the findings, three live
+  mockups (A radar, B zone board, C tracker) with layer toggles and the three art styles, picks for version / art /
+  the three open 2.9 picks, and a notes board. The beta `/spectator` variants are built after the picks.
