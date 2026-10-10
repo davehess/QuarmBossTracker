@@ -1,7 +1,7 @@
 # Test cases: main assist marker, `%tid`, and `/target` by tag
 
-For the local draft branch `ma-draft` (`206b884`). It is **not compiled with MSVC, not pushed, and not in the
-test-all build**: build it first (the fork's README has the msbuild line) and install the resulting `Zeal.asi`. Cases 1
+For the fork branch `ma-draft` (`206b884`), included in the test-all build (`3c4766c`, compiled by GitHub, **not yet
+run in game**). Install that build's `Zeal.asi` (or Mimic → Settings → Zeal → Test build). Cases 1
 to 3 need one client; 4 to 9 need two clients in one raid.
 
 **Common setup:** `/tag on`. A first build that does not compile is itself a result: note the errors under case 1.

@@ -2,7 +2,7 @@
 
 # Auto raid lead, and `/autoraidinvite` that survives a restart
 
-*Local draft branch `raidlead-draft` on our fork (`b15b8a2`, on top of `ma-draft`). Status: draft, not pushed, not compiled. Needs a two-person raid test before anyone relies on it.*
+*Fork branch `raidlead-draft` (`b15b8a2`, on top of `ma-draft`). Status: draft; in the test-all build, compiled by GitHub, not yet run in game. Needs a two-person raid test before anyone relies on it.*
 
 ![Diagram: leader sets a password, a raid member tells it, checks pass, raid lead moves](diagram.png)
 
@@ -20,4 +20,4 @@ Both passwords live in `zeal.ini` under `AutoRaidInvite` and `AutoRaidLead`. A t
 - Honest status: not compiled and not run in game; reviewed by reading only. The packet layout was built from the server source and must be proven in a two-person raid.
 - Open question for the maintainers: Quarm's rules on automation. This acts on a tell the way `/autoraidinvite` already does, but a written view would help.
 
-**Try it:** not in the fork's test-all build yet (https://github.com/davehess/Zeal/releases/tag/test-all-build). It needs a build of `raidlead-draft`.
+**Try it:** in the fork's test-all build (https://github.com/davehess/Zeal/releases/tag/test-all-build), `3c4766c` or later.

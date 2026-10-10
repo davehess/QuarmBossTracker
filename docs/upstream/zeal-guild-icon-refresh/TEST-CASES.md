@@ -1,8 +1,8 @@
 # Test cases: guild icon and banner refresh
 
-For the fork branch `guildicon-draft` (`dca0b85`). **Not compiled with MSVC, not run in game.**
+For the fork branch `guildicon-draft` (`dca0b85`), in the test-all build (`3c4766c`, compiled by GitHub). **Not run in game.**
 
-**Common setup:** build `guildicon-draft`, install `Zeal.asi`, `/tag on`, target an NPC, use `/tag local`.
+**Common setup:** install the test-all build's `Zeal.asi`, `/tag on`, target an NPC, use `/tag local`.
 References: `icons-vs-banners.png` (each guild's icon beside its banner) and `banners-sheet.png` (old code banner,
 logo only, logo with name).
 
