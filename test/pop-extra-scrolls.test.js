@@ -116,7 +116,7 @@ describe('/admin/extra-spells page', () => {
     const jsx = page.slice(page.indexOf('return ('));
     expect(jsx).toContain('<NewPageTag />');
     expect(jsx.indexOf('<NewPageTag />')).toBeLessThan(jsx.indexOf('<section'));
-    expect(page).toMatch(/export const metadata = \{ title: '\[beta\] Extra PoP spells' \};/);
+    expect(page).toMatch(/export const metadata = \{\s*title: '\[beta\] Extra PoP spells',/);   // now also carries a description (page-metadata.test.js)
   });
 
   it('reads the RPC for the wolfpack guild through the service client', () => {

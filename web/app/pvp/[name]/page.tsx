@@ -23,6 +23,13 @@ import { isOfficer } from '@/lib/officer';
 import { fmtTime, dayKey, dayLabel } from '@/lib/format';
 import { userTz } from '@/lib/timezone';
 
+import { pageMetadata } from '@/lib/pageMetaData';
+
+export async function generateMetadata({ params }: { params: Promise<{ name: string }> }) {
+  const { name } = await params;
+  return pageMetadata(`/pvp/${encodeURIComponent(name)}`);
+}
+
 export const dynamic = 'force-dynamic';
 
 // Officer-only: remove a bogus PvP kill row (mis-parsed broadcast, NPC kill

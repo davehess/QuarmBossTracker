@@ -21,6 +21,14 @@ import {
   CLASS_TAGS, RACE_TAGS, ALL_CLASS_MASK, ALL_RACE_MASK, ERA_LABEL,
 } from '@/lib/itemDecode';
 
+import { pageMetadata } from '@/lib/pageMetaData';
+
+// "Ragebringer · Item": the catalog name and the kind, nothing else (lib/pageMeta.ts, which Discord's card shares).
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  return pageMetadata(`/db/item/${encodeURIComponent(id)}`);
+}
+
 export const dynamic = 'force-dynamic';
 
 type DropRow = { npc_id: number; npc_name: string | null; effective_chance: number | null };

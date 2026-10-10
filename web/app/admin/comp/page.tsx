@@ -11,6 +11,11 @@ import { requireOfficer } from '@/lib/officer';
 import { ARCHETYPES } from '@/lib/comp';
 import CompEditor from './CompEditor';
 
+export const metadata = {
+  title: 'Raid composition · Admin',
+  description: 'Edit the named raid composition templates that sign-ups are checked against.',
+};
+
 export const dynamic = 'force-dynamic';
 
 // Shown when the guild has never saved a template — a runnable starting point,

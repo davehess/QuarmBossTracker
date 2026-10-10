@@ -15,6 +15,11 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
 import { loadHeldSpellNeeds } from '@/lib/adminReads';
 
+export const metadata = {
+  title: 'Spell exchange · Admin',
+  description: 'Which spell scrolls the guild holds, who can use them and who is still missing them.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type HeldSpell = {

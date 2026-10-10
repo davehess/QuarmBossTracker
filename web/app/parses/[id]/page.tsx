@@ -379,6 +379,11 @@ async function load(id: string) {
   }
 }
 
+const PARSE_FALLBACK_META: Metadata = {
+  title: 'Parse Breakdown',
+  description: 'Per-player damage, abilities, and boss-kill comparison for one encounter.',
+};
+
 // A parse link is the single most-pasted URL in the guild's Discord, and it used
 // to unfurl as "WolfPack.quest" with the site-wide description — identical for
 // every fight anyone had ever linked. Name the boss and the night instead.
@@ -388,7 +393,11 @@ async function load(id: string) {
 // for a string. Supabase calls are not request-deduped the way fetch() is.
 //
 // ⚠ Fails soft to the inherited metadata. An unfurl is never worth a 500 on the
-// page itself, and this runs for logged-out crawlers too.
+// page itself, and this runs for logged-out crawlers too. (Fails soft to PARSE_FALLBACK_META above, never to
+// the site title: a parse that cannot be named still says what the page is.)
+//
+// ⚠ This is the browser TAB's title. Discord's card for /parses/<id> is lib/pageMeta.ts, which deliberately
+// stays "Parse Breakdown": the crawler is anonymous and a parse's boss, night and DPS are guild data.
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   try {
     const { id } = await params;
@@ -397,9 +406,9 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
       .select('started_at, duration_sec, total_dps, eqemu_npc_types ( name )')
       .eq('id', id)
       .maybeSingle();
-    if (!data) return {};
+    if (!data) return PARSE_FALLBACK_META;
     const boss = cleanBossName((data as { eqemu_npc_types?: { name?: string } }).eqemu_npc_types?.name);
-    if (!boss) return {};
+    if (!boss) return PARSE_FALLBACK_META;
     const when = data.started_at
       ? new Date(data.started_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
       : null;
@@ -409,7 +418,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
       title: boss,
       description: [`Wolf Pack parse — ${boss}`, when, secs, dps].filter(Boolean).join(' · '),
     };
-  } catch { return {}; }
+  } catch { return PARSE_FALLBACK_META; }
 }
 
 export default async function EncounterDetailPage({ params }: { params: Promise<{ id: string }> }) {

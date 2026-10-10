@@ -24,6 +24,11 @@ import { loadLootRecent, loadReviewEncounters } from '@/lib/fullReads';
 import { buildNights, nightNames, type NightRaid, type NightTick } from '@/lib/raidHeatmap';
 import WindowPicker from '@/components/WindowPicker';
 
+export const metadata = {
+  title: 'Raid night review',
+  description: 'The morning-after list of recent raid nights, each with its full breakdown.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type PlayerRow = { character_name: string; total_damage: number };

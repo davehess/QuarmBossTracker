@@ -30,6 +30,11 @@ import {
 import { RUNBOOKS, type Runbook, type LeverRef } from '@/lib/runbooks';
 import { DriftList, EmergencyPanel } from './ConsoleControls';
 
+export const metadata = {
+  title: 'Officer console · Admin',
+  description: 'Is something wrong right now, and what to do about it: one page for officers.',
+};
+
 export const dynamic = 'force-dynamic';
 
 // ── Data ────────────────────────────────────────────────────────────────────

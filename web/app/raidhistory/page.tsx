@@ -48,6 +48,11 @@ import { pickRaidLayout, RAID_LAYOUT_COOKIE } from '@/lib/raidLayout';
 // The choice lives in the wp_raid_layout cookie; ?layout= overrides it for a
 // shared link. lib/raidLayout.ts decides; RaidLayoutPicker writes the cookie.
 
+export const metadata = {
+  title: 'Raid history',
+  description: 'Every raid night on one grid, coloured by how full the raid was, with a link to each night’s review.',
+};
+
 export const dynamic = 'force-dynamic';
 
 const DEFAULT_WEEKS = 52;

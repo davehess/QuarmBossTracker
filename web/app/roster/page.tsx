@@ -26,7 +26,10 @@ import { loadRoster } from '@/lib/roster';
 import { selectAll } from '@/lib/selectAll';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Roster — Wolf Pack' };
+export const metadata = {
+  title: 'Roster — Wolf Pack',
+  description: 'Typical raiders by role and class, from 60-day raid attendance.',
+};
 
 type CharRow = { name: string; class: string | null; main_name: string | null; active: boolean; rank: string | null };
 type Raid = { raid_id: number; ts: string; name: string | null };

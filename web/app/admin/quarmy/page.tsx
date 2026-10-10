@@ -20,6 +20,11 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 
+export const metadata = {
+  title: 'Quarmy links · Admin',
+  description: 'Bulk-set each character’s Quarmy profile link.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type CharRow = {

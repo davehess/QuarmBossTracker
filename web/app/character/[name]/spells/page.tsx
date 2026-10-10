@@ -30,6 +30,15 @@ import { fetchScrollSources } from '@/lib/capSafeReads';
 import MissingSpellsView from './MissingSpellsView';
 import { poolTierByName, type PoolRow } from '@/lib/popSpells';
 
+import type { Metadata } from 'next';
+import { characterMeta } from '@/lib/pageMeta';
+
+export async function generateMetadata({ params }: { params: Promise<{ name: string }> }): Promise<Metadata> {
+  const { name } = await params;
+  const { title, description } = characterMeta(name, 'spells');
+  return { title, description };
+}
+
 export const dynamic = 'force-dynamic';
 
 type MissingSpell = {

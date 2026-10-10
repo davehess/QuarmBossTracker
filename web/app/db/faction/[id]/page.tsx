@@ -15,6 +15,13 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { deUnderscore } from '@/lib/npcDecode';
 
+import { pageMetadata } from '@/lib/pageMetaData';
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  return pageMetadata(`/db/faction/${encodeURIComponent(id)}`);
+}
+
 export const dynamic = 'force-dynamic';
 
 type Faction = { id: number; name: string; base: number | null; min_cap: number | null; max_cap: number | null };

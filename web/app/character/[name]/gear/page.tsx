@@ -19,6 +19,15 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { isMustEquipClicky, usableByClass, pickSlot, buildClickyMacro } from '@/lib/clicky-macros';
 import { computeRaidKit, MR_FLOOR, UTILITY_KEYS, UTILITY_LABEL, type RaidKitResult } from '@/lib/raidKit';
 
+import type { Metadata } from 'next';
+import { characterMeta } from '@/lib/pageMeta';
+
+export async function generateMetadata({ params }: { params: Promise<{ name: string }> }): Promise<Metadata> {
+  const { name } = await params;
+  const { title, description } = characterMeta(name, 'gear');
+  return { title, description };
+}
+
 export const dynamic = 'force-dynamic';
 
 type GearRow = { loc: string; slot: string; item_id: number; item_name: string; count: number; updated_at: string };

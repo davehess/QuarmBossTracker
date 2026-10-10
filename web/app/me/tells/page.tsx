@@ -18,6 +18,11 @@ import TellsSnoozeControl from './TellsSnoozeControl';
 import { userTz, fmtShort, relTime } from '@/lib/timezone';
 import { fetchTellSummary, EMPTY_TELL_SUMMARY } from '@/lib/capSafeReads';
 
+export const metadata = {
+  title: 'My tells',
+  description: 'Your inbound /tell history. Private to you.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type TellRow = {

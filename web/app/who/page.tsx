@@ -12,6 +12,11 @@ import { isOfficer } from '@/lib/officer';
 import { loadRoster } from '@/lib/roster';
 import WhoTable, { type WhoRow } from './WhoTable';
 
+export const metadata = {
+  title: '/who directory',
+  description: 'Every character sighted in game: class, level, guild and when they were last seen, searchable.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type DirRow = {

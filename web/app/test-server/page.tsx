@@ -11,6 +11,11 @@ import { isOfficer }      from '@/lib/officer';
 import InterestButton, { type InterestRow }  from './InterestButton';
 import Comments,        { type CommentRow }  from './Comments';
 
+export const metadata = {
+  title: 'Practice server proposal',
+  description: 'A proposal for a private practice server: why, what it costs, where to host it, and a place to say you are interested.',
+};
+
 export const dynamic = 'force-dynamic';
 
 // Topic keys + display labels. Keep keys stable — they're persisted on

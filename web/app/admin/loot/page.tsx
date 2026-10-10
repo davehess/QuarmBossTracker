@@ -25,7 +25,10 @@ import { fmtPp } from '@/lib/lootValue';
 import LootTable, { SORTS, type Sort, type LootGroupRow } from './LootTable';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: '[beta] Loot by value — Wolf Pack admin' };
+export const metadata = {
+  title: '[beta] Loot by value — Wolf Pack admin',
+  description: 'What the raid has looted, ranked by value, over a day, a week or longer.',
+};
 
 const WINDOWS = [
   { label: '24h', days: 1 },

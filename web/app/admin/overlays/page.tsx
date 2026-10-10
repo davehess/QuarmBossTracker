@@ -19,6 +19,11 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 
+export const metadata = {
+  title: 'Overlay tuning · Admin',
+  description: 'Live tuning knobs and kill switches for the Mimic overlays, changed without a release.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type Knob = {

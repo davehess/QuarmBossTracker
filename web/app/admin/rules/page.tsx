@@ -8,6 +8,11 @@ import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
 
+export const metadata = {
+  title: 'Guild rules · Admin',
+  description: 'A read-only view of the guild rules ingested from Discord.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type RuleRow = {

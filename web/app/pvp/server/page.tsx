@@ -19,6 +19,11 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { userTz, fmtDateOnly } from '@/lib/timezone';
 import VengeanceList from './VengeanceList';
 
+export const metadata = {
+  title: 'Server PvP top 10',
+  description: 'Server-wide PvP kill leaders on Project Quarm.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type VengeanceRow = {

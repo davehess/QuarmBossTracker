@@ -31,6 +31,15 @@ import { isOfficer } from '@/lib/officer';
 import { type ItemCard } from './ItemHover';
 import InventoryView, { type ViewData, type CellData, type ContainerData } from './InventoryView';
 
+import type { Metadata } from 'next';
+import { characterMeta } from '@/lib/pageMeta';
+
+export async function generateMetadata({ params }: { params: Promise<{ name: string }> }): Promise<Metadata> {
+  const { name } = await params;
+  const { title, description } = characterMeta(name, 'inventory');
+  return { title, description };
+}
+
 export const dynamic = 'force-dynamic';
 
 // Equipped slot order — same flow as the in-game paper-doll, top to bottom.

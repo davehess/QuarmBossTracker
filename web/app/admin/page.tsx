@@ -1,6 +1,11 @@
 // Admin landing — officer-only. Auth + officer gating handled by parent layout.
 import Link from 'next/link';
 
+export const metadata = {
+  title: 'Officer tools · Admin',
+  description: 'The officer tools: attendance, sign-ups, triggers, feedback, members and more.',
+};
+
 export default function AdminPage() {
   return (
     <div className="space-y-6">

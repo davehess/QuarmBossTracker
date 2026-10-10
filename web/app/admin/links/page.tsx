@@ -30,6 +30,11 @@ import { authorizeMimicForMember } from './mimic-link-actions';
 import { createSiteAccessInvite } from './site-access-actions';
 import { loadAgentUploadStats, loadWhoForNames } from '@/lib/adminReads';
 
+export const metadata = {
+  title: 'Character links · Admin',
+  description: 'Link characters to the Discord members who own them, and issue site-access invites.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type Character = {

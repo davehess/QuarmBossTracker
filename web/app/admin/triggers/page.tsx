@@ -20,6 +20,11 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { normalizeTriggerPattern, isDeadAnchored } from '@/lib/triggerPattern';
 import { foldFeedback, loadFeedbackRollup, loadGuildTriggers, type FbAgg } from '@/lib/triggerFeedback';
 
+export const metadata = {
+  title: 'Guild triggers · Admin',
+  description: 'Add, edit and switch off the raid triggers every Mimic install polls.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type TriggerRow = {
