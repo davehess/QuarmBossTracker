@@ -21,5 +21,7 @@ bar under it; it was cropped off before saving (no member names in the repo).
 | 13 | `13-former-glory.png` | Former Glory | gold FG crest | [ ] |
 | 14 | `14-zek.png` | Zek | red/white Z in a ring | [ ] |
 | 15 | `15-axiom.png` | Axiom | gold wordmark with a crystal O | [ ] |
+| 16 | `16-eclipse.png` | Eclipse | eclipsed sun over a copper wordmark | [ ] |
+| 17 | `17-savage.png` | Savage | red brush wordmark on black | [ ] |
 
 Guilds marked `?` need their name from the guild lead before they get a code.
