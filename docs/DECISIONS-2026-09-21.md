@@ -9113,7 +9113,10 @@ Harmony, Hide/Sneak for non-rogues).
   hotkeys … make them have the test numbers and also output the results so that I can just grab the log"*; then
   *"you can just have me join a channel"*, and *"/leave 1 5 times in a row to have everything go to channel 1"*).
   Each test button posts what to look for into a password channel (as `/1`), writes `[id] target=%t id=%tid` with
-  `/log`, then runs the commands; PASS/FAIL are buttons 11/12 on every page. 65 buttons on socials pages 4–10, every
+  `/log`, then runs the commands; PASS/FAIL are buttons 11/12 on every page. ⚠ A new character cannot talk in a
+  custom channel ("not high enough level or high enough karma"), and the guild lead's real characters have no 7 free
+  socials pages, so the default is now `/say` for the what-to-look-for line and `/log` for the target, PASS/FAIL and
+  notes (`/log NOTE …`); `/log` works at any level. The channel flow stays as an option. 64 buttons on pages 4–10, every
   fork change plus PoP flags. Generated from one list: `showcase/tools/hotkey-tests.json` + `hotkey-socials.py` on the
   fork's `showcase` branch (`61f19c6`); `tools/evidence.py` turns the log into one EVIDENCE.md per change, replacing
   the tester's and any listed character names, and reports tests with no PASS/FAIL. The character-specific .ini and
