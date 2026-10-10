@@ -8969,3 +8969,17 @@ Harmony, Hide/Sneak for non-rogues).
   main assist: a target ring with four arrows pointing inward.
 - **Status:** two research agents scoping (Zeal fork: the spawn-id code, `/target`-by-tag semantics, the MA shape as
   a local draft; agent: the repeat-press guard, the pipe grammar with target name / spawn id, WPMA as the MA signal).
+- **WPMA only** (the guild lead): *"WPMA is Wolf Pack Main Assist. if MA we can do that, but the in-game assist may look
+  for someone names MA---- as their name"* — plain `MA` could match a player whose name starts with "Ma", so only
+  `WPMA` counts as the main-assist tag.
+- **Agent design (scoped):** a pipe press inside its own running timer is ignored when it lands earlier than 1.5 s
+  before the timer's end (pipe latency cancels between presses; the server arms at reuse − 1 s); log-line starts
+  always win; AA presses keep the previous press so a refused one cannot teach a too-short reuse. Grammar:
+  `/pipe [cd ]<word> [<mob name>] [<spawn id>]`, longest known word first, a trailing integer is the spawn id only
+  after a name. WPMA is kept by NAME in the agent (outside the 10-minute tag TTL and the zone wipe), newest wins, cleared
+  by `clear` or after 6 h; the bot's `utils/mainAssist.js` gains a tag source beside the raid-chat declaration.
+  ⚠ `docs/PRIVACY.md` never says that the structured tag extract (mob, tag text, tagger) uploads — fix it in this
+  change, with the MA name and pipe-target timers.
+- **Raid-leader handoff** (asked the same day): *"research if we could use a zeal command to give raid leader to
+  someone as a guild officer, or if we have a password attached that the user sets for being able to have someone take
+  raid lead"* — under research (client/server mechanics, Quarm's rules on automation, security of a shared password).
