@@ -2,7 +2,7 @@
 
 # Main assist marker, `%tid`, and `/target` by tag
 
-*Local draft branch `ma-draft` on our fork (`206b884`, three commits on top of the test build). Status: draft, not pushed, not compiled.*
+*Fork branch `ma-draft` (`206b884`). Status: draft; in the test-all build, compiled by GitHub on 2026-10-10, not yet run in game.*
 
 ![The main assist marker, front and turned: crossed swords with a target on the crossing](mainassist-swords.png)
 
@@ -22,4 +22,4 @@ Take main assist: target yourself, then `/tag chat ^MA^`. Everyone else: `/targe
 - The shape file builds clean with g++ and the mesh was previewed off the game (352 vertices, colour checked unique against every other tag).
 - The next step is a build and the cases in `TEST-CASES.md`, including a two-client check that the marker moves.
 
-**Try it:** not in the fork's test-all build yet (https://github.com/davehess/Zeal/releases/tag/test-all-build). It needs a build of `ma-draft`.
+**Try it:** in the fork's test-all build (https://github.com/davehess/Zeal/releases/tag/test-all-build), `3c4766c` or later.

@@ -9088,5 +9088,12 @@ Harmony, Hide/Sneak for non-rogues).
 - **Europa's picture file was too big for the fork's tag pictures (found 2026-10-10).** The `tag-icon-files` review
   fixes (`b20331f`) lowered Zeal's picture limit from 512 to 128 pixels a side, but the site kept offering a 226×256
   `EUR.png`/`EUR.tga` and still told guilds "512". In game that file is skipped with a chat note and the built-in
-  Europa icon draws instead. Beta (web 1.8.137) ships a 113×128 copy and says 128; `main` still has the old file until
-  the guild lead graduates it.
+  Europa icon draws instead. Beta (web 1.8.137) ships a 113×128 copy and says 128. **Graduated to `main`** (the guild
+  lead: *"send the Europa fix to main"*): web 1.8.138 `b8d08da3` — the 10-09 shield logo at 113×128, the 128 rule, a
+  roadmap entry; beta bumped to the same 1.8.138 (`8aba1676`) first so the main→beta sync merges cleanly.
+- **Zeal drafts pushed and in the test build** (the guild lead: *"push"*). `ma-draft` `206b884`, `raidlead-draft`
+  `b15b8a2` and `guildicon-draft` `dca0b85` are on the fork; `raidlead-draft` and `guildicon-draft` each sit on
+  `ma-draft`. `test-all` = previous `59bbfca` + both, merge `3c4766c` (CHANGELOG conflict: both sides kept); the GitHub
+  Windows build passed, so `tag_arrows.cpp` compiles. Nothing run in game yet. ⚠ The test build's moon key is `^MEZ^`
+  (`^M^` no longer draws it); the website's symbol list still says `^M^`, correct for official Zeal and the
+  `tag-shapes` PR — decide which the site shows.

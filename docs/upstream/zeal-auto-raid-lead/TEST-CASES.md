@@ -1,6 +1,6 @@
 # Test cases: `/autoraidlead` and a persistent `/autoraidinvite`
 
-For the local draft branch `raidlead-draft` (`b15b8a2`). **Not compiled with MSVC, not pushed, not run in game.** The
+For the fork branch `raidlead-draft` (`b15b8a2`), in the test-all build (`3c4766c`, compiled by GitHub). **Not run in game.** The
 handoff packet was built from the server source and must be proven in a two-person raid before anyone relies on it. Use
 a throwaway raid and a throwaway password such as `owl7` (the password is stored in plain text in `zeal.ini`).
 
