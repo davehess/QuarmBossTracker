@@ -79,3 +79,50 @@ The Mimic overlay (or second-screen view) can come after phase 1 or 4 — see th
 
 ## Open picks (the guild lead)
 See the reply that introduced this doc; record each pick in DECISIONS and here.
+**Picked 2026-10-10 (DECISIONS §220):** 3D-A on the web from the EQEmu collision mesh; 3D-B + painted art in Mimic
+(one local converter); routes from our own import (`grid` / `grid_entries` confirmed in the Quarm dump, §219);
+Mimic layout C (tracker) in Window and HUD modes; tab-target dots; group sharing to the group and its recent helpers
+(30-minute grace).
+
+## Pulled mobs, missing spawns, dangerous mobs, line of sight (the guild lead, 2026-10-10 — DECISIONS §221)
+
+### A pulled mob's spawn point is a guess, so the map has to say so
+- **Auto-attribution.** When a mob dies away from any spawn point, credit the death to a candidate spawn point:
+  points whose spawn group can produce that NPC name (`spawn2` → `spawnentry` → `npc_types`), nearest to where it
+  was first seen. If it came with other mobs (a linked pull), prefer the candidate set whose points sit together.
+  When more than one candidate is plausible, the death is **unassigned**: candidates show a "?" ring and the timer
+  is not started on any of them.
+- **Click to mark.** Standing where a mob should be and it is gone, the player clicks (Mimic) or taps (web) the
+  spawn point and picks **"Empty since now"**, **"Killed — this one"** (to settle a "?"), or **"Up"**. A marked
+  point starts its respawn window from the mark, drawn as a **range** (earliest–latest, ±variance, PvP ±20%), not a
+  single time, and labelled "marked by you" or "marked by a groupmate". A marking is a hint, never ground truth:
+  a later observed death or sighting overrides it.
+- **Who sees marks:** your own always; your group's under the §220 group rule. Marks never become guild-wide
+  learned respawn data unless an observed death confirms them.
+
+### Dangerous mobs must read at a glance
+- From data we already mirror on `eqemu_npc_types`: `raid_target`, `rare_spawn` (named), `see_invis`,
+  `see_invis_undead`, `see_hide`, `see_improved_hide`, plus special abilities already decoded in
+  `utils/mobSpecials.js` (Summon, Rampage, Immune Pacify, etc.).
+- **Marks on the dot:** raid targets and named get the bold larger dot + name; see-invis gets an **eye** badge
+  (eye with a slash for see-invis-vs-undead only); see-hide/improved-hide a **hood** badge; Summon and Immune Pacify
+  reuse the Mob Info chips. Badges show at every zoom level so a puller can read a camp before walking in.
+
+### Line of sight is per zone, and it is not in any database
+- `eqemu_zone.cast_outdoor` says indoor vs outdoor (it changes Harmony, levitation, mounts), **not** whether the
+  server enforces line of sight. That differs per zone and has changed on this server:
+  - several outdoor PoP zones did not enforce line of sight through walls for years; most of that was fixed on
+    this server in the week before 2026-10-10;
+  - Plane of Hate has player collision and pathing around walls, but **does not check line of sight for casting
+    or ranged attacks**;
+  - when a mob cannot find a path, it may **warp through walls** to reach a player or return home.
+- So the map carries a small **curated zone table** (`zone_los_rules`): `zone_short`, `los_spells` (enforced /
+  not enforced / partial), `los_ranged`, `mob_warp` (yes / no / unknown), `notes`, `verified_on`, `verified_by`
+  (role), edited by officers on the website, readable by members, shipped to Mimic in the bundled data. A row with
+  no `verified_on` in the last 30 days shows as "unverified".
+- **What changes on the map:** in a zone that enforces line of sight, range rings are clipped by walls using the
+  EQEmu collision mesh we already cache (a visibility polygon from the mob), so "can it hit me here" is drawn
+  honestly; in a zone that does not (Plane of Hate), the ring is drawn **unclipped with a hatched edge and a
+  "no LoS" tag**, because walls do not protect you. `mob_warp` adds a "may warp" note on that zone's pathing layer.
+- Quarm's patch notes are mirrored but blank until the Message Content intent is turned on (§158); once on, the
+  LoS rows can cite the patch post.
