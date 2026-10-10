@@ -23,7 +23,7 @@ export const GUILDS: Guild[] = [
   { code: 'MAY', name: 'Mayhem' },
   {
     code: 'EUR', name: 'Europa',
-    pictures: [{ file: 'EUR.png', width: 244, height: 256 }, { file: 'EUR.tga', width: 244, height: 256 }],
+    pictures: [{ file: 'EUR.png', width: 113, height: 128 }, { file: 'EUR.tga', width: 113, height: 128 }],
   },
   { code: 'TRQ', name: 'Tranquility' },
   { code: 'SOW', name: 'Squirrels of War' },
@@ -75,7 +75,7 @@ export const BADGES = Array.from({ length: 12 }, (_, i) => i + 1);
 export const PAW_GLYPHS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
 
 // Zeal's own limits for a picture file (tag_arrows.cpp / nameplate.cpp on the tag-icon-files branch).
-export const PICTURE_RULES = { maxPixels: 512, maxBytes: 1024 * 1024, maxNameLength: 6 };
+export const PICTURE_RULES = { maxPixels: 128, maxBytes: 1024 * 1024, maxNameLength: 6 };
 export const TAGICONS_FOLDER = 'EverQuest\\uifiles\\zeal\\tagicons';
 export const DISCORD_URL = 'https://discord.wolfpack.quest';
 
