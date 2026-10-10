@@ -44,12 +44,20 @@ Every proposed word was checked against the built-ins (`fd`, `feign`, `feign dea
 `eagle strike`, `tiger claw`, `at`, `area taunt`, and the `aa …` / `cd …` / `mimic …` prefixes).
 
 ## Things the research says are wrong today (fix with the build)
-- **Taunt.** A plain `/taunt` prints nothing to the taunter; "You taunt <mob> to ignore others and attack you!" is
-  sent only by the **Area Taunt** AA (once per mob). So the HUD's 5 s Taunt timer is being started by Area Taunt.
-  Taunt must come from `/pipe taunt` only.
+- **Taunt — CORRECTED by the guild lead, 2026-10-10:** a successful Taunt **does** print "You taunt <mob> to ignore
+  others and attack you!" on Quarm (the research read the upstream source and concluded it did not; that was wrong).
+  The HUD's 5 s Taunt timer off that line is right. `/pipe taunt` adds the presses that do not land. The Area Taunt AA
+  prints the same line once per mob it taunts.
+- **Resisted casts still add hate** (the guild lead, 2026-10-10): the threat meter already credits a resisted
+  detrimental spell with a flat proxy (`RESIST_HATE_DEFAULT` 120, per-spell overrides in `RESIST_HATE`), because a
+  resist stops the effect, not the aggro. A later improvement is the spell's real base hate in place of the proxy.
 - **Hand of Piety** lands with "You feel a healing touch.", the same text as Lay on Hands, so a paladin's Hand of
   Piety starts the Lay on Hands slot. Tell them apart by the begin-cast line, or `/pipe hop`.
-- **Feign Death.** The monk skill is 8 s on the server (7/6/3 s with Rapid Feign 1/2/3); Mimic shows 10 s (5 s at
+- **Feign Death — the rank is in the Quarmy export** (AA index 100, Rapid Feign). The client button lockout is the
+  real limit: 10 / 9 / 7.5 / 5 s at Rapid Feign 0 / 1 / 2 / 3 (server: 8 / 7 / 6 / 3 s). Of 8 exported monks, the
+  ranks were 0 (2), 1 (1), 2 (1), 3 (4), so the current "level 59+ = 5 s" guess is wrong for half. Fix:
+  `_quarmyLocalItems` keeps `aas`, `_meSkillSecs` reads index 100; with no export, use 10 s. **Mend is a constant
+  289 s** (no AA changes it on Quarm). Earlier note: the monk skill is 8 s on the server (7/6/3 s with Rapid Feign 1/2/3); Mimic shows 10 s (5 s at
   59+), which may be the client button's own lockout — confirm in game before changing. **Necromancer and Shadow
   Knight Feign Death are spells** (15 s recast; begin-cast line on the press, silent success, "<Name> has fallen to
   the ground." on failure); the `fd` word must use the caster's class.
