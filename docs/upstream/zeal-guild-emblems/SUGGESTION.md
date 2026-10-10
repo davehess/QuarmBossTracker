@@ -13,7 +13,7 @@ Every guild on our list gets a banner (`^F<code>^`, a swallowtail flag with its 
 Raids mix several guilds, and "who is that, and who are they with" comes up constantly. A mark that appears by itself answers it at a glance, and anyone who prefers a clean screen can turn it off.
 
 **How**
-A table of guilds (code and colour) drives both keys, and `/tag guilds` lists the codes. The codes are ours and one table row each to change. The automatic mode reads the guild the client already knows, matches it to the table by letters and digits, and draws on your screen only. It skips /anon and /roleplay players, anyone beyond 150 units, and guilds not in the table. `/tag guildmarks off | tagged | auto`: the default is `tagged`, so nothing changes until someone opts in, and `off` also hides marks other raiders tagged. If a picture file for that guild exists (see the tag pictures change) it is used instead.
+A table of guilds (code and colour) drives both keys, and `/tag guilds` lists the codes. The codes are ours and one table row each to change. The automatic mode reads the guild the client already knows, matches it to the table by letters and digits, and draws on your screen only. It skips /anon players (a /roleplay nameplate still shows its guild, so those players get a mark), anyone beyond 150 units, and guilds not in the table. `/tag guildmarks off | tagged | auto`: the default is `tagged`, so nothing changes until someone opts in, and `off` also hides marks other raiders tagged. If a picture file for that guild exists (see the tag pictures change) it is used instead.
 
 **How tested**
 - Off the game with g++: every banner and icon mesh passes the strip check, and the sheet above is rendered from the real C++ meshes.

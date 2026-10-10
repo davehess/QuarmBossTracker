@@ -52,9 +52,10 @@ Mark each case: `[x]` pass, `[!]` fail (write what you saw under it).
 - **Result:** [ ] pass  [ ] fail
 
 ### 8. /anon and /roleplay players
-- **Setup:** a player with /anon or /roleplay on (ask a guildmate).
+- **Setup:** two guildmates in a listed guild, one with /anon on and one with /roleplay on.
 - **Steps:** look at them in `auto` mode.
-- **Expected:** no mark on them.
+- **Expected:** no mark on the /anon player (their nameplate hides the guild). The /roleplay player gets their
+  guild's mark, because a roleplaying nameplate still shows the guild.
 - **Result:** [ ] pass  [ ] fail
 
 ### 9. Range
