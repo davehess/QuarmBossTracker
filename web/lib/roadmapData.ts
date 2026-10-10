@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'europa-picture-2026-10-10',
+    title: 'Europa’s shield works in game',
+    version: 'Web 1.8.138',
+    date: '2026-10-10',
+    headline: 'The Europa tag picture on the Zeal tag icons page is the new shield logo, at a size Zeal will actually load.',
+    features: [
+      { name: 'The new Europa shield', blurb: 'The download is the wooden shield with “EUROPA” across it, as a PNG and a TGA.' },
+    ],
+    fixes: [
+      'The Europa picture was too big for Zeal’s test build, which only loads tag pictures up to 128 pixels a side, so the game skipped it and showed the plain Europa icon. The page also said 512 pixels; it now says 128.',
+    ],
+  },
+  {
     key: 'link-cards-2026-10-10',
     title: 'Links say what they point to',
     version: 'Web 1.8.135',
