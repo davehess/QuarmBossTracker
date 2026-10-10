@@ -8812,3 +8812,26 @@ screen"*.
   a weekly data file and lives only in our fork; C our overlay laid over Zeal's map, fragile). Zeal draws its map inside
   the game, so Mimic cannot add to it from outside.
 - **Where it landed:** the workshop page (version 2) has all of it working on simulated data.
+
+### 219. Two outside map sites reviewed: a 3D zone viewer and a Vex Thal pathing map — references, not sources (2026-10-10)
+**The ask** (the guild lead): a 3D zone viewer site *"would be an incredible viewpoint for spectator's 3d mode"*, and a
+MacroQuest-community automap page *"for pathing of vex thal"*.
+- **The 3D viewer** (a hobbyist's React + three.js app, "EQ Advanced Map"): orbit / fly / follow cameras over 180 zones
+  incl. the PoP planes. Its zone models are converted client art (Draco-compressed GLB with WebP textures, ~1 MB median,
+  up to ~7 MB, 276 MB for all zones) served from ANOTHER emulator server project's cloud storage; its spawn data is that
+  server's, not Quarm's. **No licence** in either repo and no permission statement for the art. It can be iframed (no
+  X-Frame-Options/CSP) but has no API to feed it our positions; its live mode needs the author's own local exe (whose
+  repo commits TLS key files — do not use). Spawns are placed at `(-y, z, x)`, so /loc mapping looks plausible but is
+  unverified. **Use it as a UX reference only.** It proves ~1–5 MB per zone is practical for real meshes.
+- **The automap page:** Leaflet, server-rendered, Vex Thal = 3,683 wall lines, 353 spawn points, 42 patrol routes with
+  pause times. Data is the modern ProjectEQ database (not Quarm's EQMacEmu fork) plus map-file lines; **no licence or
+  terms published**; other zones sit behind an anti-bot challenge (not bypassed). Do not scrape it.
+- **Patrol routes come from our own import instead:** mirror `grid` (`id, zoneid, type, type2`) and `grid_entries`
+  (`gridid, zoneid, number, x, y, z, heading, pause`) in `scripts/sync-from-eqmac.js` + one migration; draw via
+  `eqemu_spawn2.pathgrid`. ⚠ Unconfirmed that the Quarm dump carries those tables (the upstream repo is outside a cloud
+  session's access and our sync log lists only mirrored tables). ⚠ If it does not, the existing Al'Kabor fallback would
+  silently fill them from a DIFFERENT server's dump — route tables must fail loudly instead, never fall back.
+- **Options put to the guild lead** (workshop page, version 3): 3D-A raised walls from our line maps (no game art, safe
+  on the public site; recommended for the web), 3D-B real models converted locally inside Mimic from the player's own
+  install (nothing published), 3D-C real models on the website (needs a rights call, or the viewer author's written
+  permission), 3D-D embed the viewer (not recommended). Routes: A our Quarm import (recommended), B link out.
