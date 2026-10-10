@@ -112,6 +112,28 @@ next touch one rather than assuming a missing row means a missing doc.
   ⚠ Not fixed here, found on the way: `_extractItemId` / `transformEqItemLinks` (agent and bot) read the chat item link's id as
   HEX, but Quarm writes it as 7 decimal digits (`0022194A Lucid Shard` is item 22194), so the PQDI links the relay builds
   point at the wrong item (Ragebringer 11057 links as 4357).
+- **⏳ Quest tab: steps of the PoP flag chain it left out (bot 3.1.238 on `claude/fb72-quest-tab`, waiting for the
+  main push; Mimic half on `claude/fb72-quest-tab-beta`; FB-72, 2026-10-10).** A member: the Giwin Mirakon inside
+  the Plane of Innovation's factory had no "test the machine" step. Cause, found by running the real parser on the
+  real script: the script was fine, the NPC was wrong. Three catalog bodies share the name; mob-info prefers a real
+  body anywhere over an in-zone one that is immune to melee and magic (which is every talking flag NPC), so
+  Innovation's Giwin came back as Plane of Tactics' (214014, a script that only answers "hail"). The same pick sent
+  8 of the 9 Planar Projection planes to Disease's projection, Aid Eino in Knowledge to the Nightmare one and Tylis in
+  Torment to the Tranquility one. Fix: mob-info adds `quest_id` (`mobSpecials.questNpcId`, the same-name body in the
+  requester's zone, plain name over `#Name`) when its pick is from another zone; Target Info's Quest tab reads it
+  (`mobinfo.html`, beta) and falls back to `id`. `_MOB_PACK_VERSION` 5. Also fixed in the parser (`utils/questDialog.js`):
+  a keyword branch that says nothing but moves, casts, spawns, depops or hands over an item is now listed
+  (Askr's "transport", Tylis's "ready to return", Trydan's "ready", every Essence's "hail": 25 branches in 5,807
+  mirrored scripts, none lost, diffed old parser against new over all of them); the Tribunal's `findi("ready to begin the " .. TRIAL_TEXT[n])` is read as one
+  phrase per trial; and a script named for the npc id (`potactics/214322.lua`: the Tactics Planar Projections, Tallon,
+  Vallon) is read before the name's, as the server does. Left for follow-up: the sibling merge below.
+  **Follow-ups:** (a) a name with a placed body AND a script-spawned `#` body in the same zone (Giwin after the
+  Behemoth, Tylis in Torment, Rizlona's second form) shows only the placed one's script: merge the siblings'
+  branches under one tab, with a "second NPC of this name" tag. (b) The three Planar Projections in Tactics
+  (214322 to 214324) share a name and each has its own script; the tab shows the lowest id. (c) Tratlan Jowyr's
+  "tarerd" reply is spoken by another NPC (`GetMobByNpcTypeID(...):Say`), which the reply reader does not follow.
+  (d) The Faction sub-tab still reads the stats pick (`id`), so it shows Tactics' Giwin faction in Innovation.
+
 - **✅ Callouts and Extended Target keep to your raid, or your group outside one (bot 3.1.222 live 2026-10-08;
   stable Mimic 2.7.10 / agent 3.7.106; DECISIONS §189).** The guild lead, 2026-10-07: other groups' mobs and
   callouts leaking in. The relay's raid-evening blanket is gone (raid from the live roster, else group, else zone);

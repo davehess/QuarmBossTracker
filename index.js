@@ -16039,10 +16039,14 @@ async function _npcInteract(npcId) {
   const zone = Array.isArray(zoneRows) ? zoneRows[0] : null;
   const display = qd.displayName(npc.name);
 
-  // The script: the exact file first (zone folder + catalog name), else by name in the zone.
+  // The script: a file named for the npc id first (the server reads <zone>/<id>.lua before the name's;
+  // the Plane of Tactics' Planar Projections and Zeks are only scripted that way, FB-72), then the
+  // exact file (zone folder + catalog name), else by name in the zone.
   let script = null;
   if (zone) {
-    const s = await supabase.select('eqemu_quest_scripts',
+    const byId = await supabase.select('eqemu_quest_scripts',
+      `path=eq.${encodeURIComponent(`${zone.short_name}/${npcId}.lua`)}&select=path,body&limit=1`).catch(() => []);
+    const s = (Array.isArray(byId) && byId[0]) ? byId : await supabase.select('eqemu_quest_scripts',
       `path=eq.${encodeURIComponent(qd.scriptPath(zone.short_name, npc.name))}&select=path,body&limit=1`).catch(() => []);
     script = (Array.isArray(s) && s[0]) || null;
     if (!script) {
@@ -16663,8 +16667,13 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
         assist = ix ? factionAssist.assistFor(ix, r.id) : null;
       } catch (err) { console.warn('[mob-info] faction assist failed:', err?.message); }
 
+      const questId = mobSpecials.questNpcId(_mobRowsForCase(rows, caseKey), reqZoneId, r.id);
       mob = {
         id:      r.id ?? null,   // #186 eqemu npc id → the overlay's PQDI link (pqdi.cc/npc/<id>)
+        // The body to read the quest script of, when the pick above is from another zone and the
+        // requester's own zone has one of this name (FB-72: Giwin Mirakon in Innovation resolved to
+        // Tactics'). Absent otherwise; the overlay falls back to `id`.
+        ...(questId ? { quest_id: questId } : {}),
         name:    String(r.name || name).replace(/_/g, ' '),
         class:   _MOB_CLASS_NAMES[r.class] || null,
         gender:  _GENDER_NAMES[r.gender] ?? null,
@@ -16766,7 +16775,8 @@ const _MOB_PACK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 //   2 (2026-10-06): faction_primary, faction_assists, faction_assisted_by, faction_assisted_by_more
 //   3 (2026-10-06): special-ability labels in Quarm's numbering (utils/mobSpecials.js), Reverse Slow (FB-54)
 //   4 (2026-10-07): procs [{ kind, spell_id, name, chance, summary }]
-const _MOB_PACK_VERSION = 4;
+//   5 (2026-10-10): quest_id, the same-name body of the requester's zone the Quest tab reads (FB-72)
+const _MOB_PACK_VERSION = 5;
 const _MOB_PACK_PINNED = Array.from({ length: 24 }, (_, i) => 200 + i);
 const _mobPacks = new Map();          // zoneId → { etag, builtAt, body, gz, version }
 const _mobPackQueue = [];             // zone ids waiting to build
