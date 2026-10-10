@@ -16039,10 +16039,14 @@ async function _npcInteract(npcId) {
   const zone = Array.isArray(zoneRows) ? zoneRows[0] : null;
   const display = qd.displayName(npc.name);
 
-  // The script: the exact file first (zone folder + catalog name), else by name in the zone.
+  // The script: a file named for the npc id first (the server reads <zone>/<id>.lua before the name's;
+  // the Plane of Tactics' Planar Projections and Zeks are only scripted that way, FB-72), then the
+  // exact file (zone folder + catalog name), else by name in the zone.
   let script = null;
   if (zone) {
-    const s = await supabase.select('eqemu_quest_scripts',
+    const byId = await supabase.select('eqemu_quest_scripts',
+      `path=eq.${encodeURIComponent(`${zone.short_name}/${npcId}.lua`)}&select=path,body&limit=1`).catch(() => []);
+    const s = (Array.isArray(byId) && byId[0]) ? byId : await supabase.select('eqemu_quest_scripts',
       `path=eq.${encodeURIComponent(qd.scriptPath(zone.short_name, npc.name))}&select=path,body&limit=1`).catch(() => []);
     script = (Array.isArray(s) && s[0]) || null;
     if (!script) {
@@ -16262,6 +16266,41 @@ async function _handleAgentNpcInteract(req, res) {
   }
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(body ? { ok: true, npc: body } : { ok: true, npc: null }));
+}
+
+// GET /api/agent/item-card?id=<item id> — the compact card Target Info shows when a dropped item
+// is hovered (FB-73). Catalog data (the weekly eqemu mirror), so 6h; an unknown item is remembered
+// for 10 minutes. A failed read is a 503 and is never cached.
+const _itemCardCache = new Map();   // itemId → { at, card|null }
+const _ITEM_CARD_TTL_MS = 6 * 60 * 60 * 1000;
+async function _handleAgentItemCard(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  let itemId = NaN;
+  try { itemId = Number(new URL(req.url, 'http://x').searchParams.get('id')); } catch { /* */ }
+  if (!Number.isInteger(itemId) || itemId <= 0) { res.writeHead(400); return res.end(JSON.stringify({ error: 'id required' })); }
+  const itemCard = require('./utils/itemCard');
+  const hit = _itemCardCache.get(itemId);
+  let card;
+  if (hit && Date.now() - hit.at < (hit.card ? _ITEM_CARD_TTL_MS : 10 * 60 * 1000)) {
+    card = hit.card;
+  } else {
+    const supabase = require('./utils/supabase');
+    const rows = await supabase.select('eqemu_items', `id=eq.${itemId}&select=${itemCard.ITEM_CARD_COLUMNS}&limit=1`);
+    if (!Array.isArray(rows)) { res.writeHead(503, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'item catalog unavailable' })); }
+    const row = rows[0] || null;
+    const names = new Map();
+    const spellIds = row ? itemCard.itemCardSpellIds(row) : [];
+    if (spellIds.length) {
+      const sp = await supabase.select('eqemu_spells', `id=in.(${spellIds.join(',')})&select=id,name`);
+      if (Array.isArray(sp)) for (const s of sp) names.set(Number(s.id), s.name);    // a failed read just leaves "spell #id"
+    }
+    card = itemCard.buildItemCard(row, names);
+    if (_itemCardCache.size > 2000) _itemCardCache.clear();
+    _itemCardCache.set(itemId, { at: Date.now(), card });
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, card }));
 }
 
 async function _handleAgentMobInfo(req, res) {
@@ -16628,8 +16667,13 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
         assist = ix ? factionAssist.assistFor(ix, r.id) : null;
       } catch (err) { console.warn('[mob-info] faction assist failed:', err?.message); }
 
+      const questId = mobSpecials.questNpcId(_mobRowsForCase(rows, caseKey), reqZoneId, r.id);
       mob = {
         id:      r.id ?? null,   // #186 eqemu npc id → the overlay's PQDI link (pqdi.cc/npc/<id>)
+        // The body to read the quest script of, when the pick above is from another zone and the
+        // requester's own zone has one of this name (FB-72: Giwin Mirakon in Innovation resolved to
+        // Tactics'). Absent otherwise; the overlay falls back to `id`.
+        ...(questId ? { quest_id: questId } : {}),
         name:    String(r.name || name).replace(/_/g, ' '),
         class:   _MOB_CLASS_NAMES[r.class] || null,
         gender:  _GENDER_NAMES[r.gender] ?? null,
@@ -16731,7 +16775,8 @@ const _MOB_PACK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 //   2 (2026-10-06): faction_primary, faction_assists, faction_assisted_by, faction_assisted_by_more
 //   3 (2026-10-06): special-ability labels in Quarm's numbering (utils/mobSpecials.js), Reverse Slow (FB-54)
 //   4 (2026-10-07): procs [{ kind, spell_id, name, chance, summary }]
-const _MOB_PACK_VERSION = 4;
+//   5 (2026-10-10): quest_id, the same-name body of the requester's zone the Quest tab reads (FB-72)
+const _MOB_PACK_VERSION = 5;
 const _MOB_PACK_PINNED = Array.from({ length: 24 }, (_, i) => 200 + i);
 const _mobPacks = new Map();          // zoneId → { etag, builtAt, body, gz, version }
 const _mobPackQueue = [];             // zone ids waiting to build
@@ -23058,6 +23103,16 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentNpcInteract(req, res); }
     catch (err) {
       console.error('[npc-interact] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Target Info's Loot tab: the hovered item's card, by item id (FB-73).
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/item-card')) {
+    try { return await _handleAgentItemCard(req, res); }
+    catch (err) {
+      console.error('[item-card] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
