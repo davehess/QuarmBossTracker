@@ -1,13 +1,18 @@
 # Test cases: export #popflags on /camp
 
-For the `popflags-export` branch (`ef17b00`) or, once merged there, the fork's test-all build,
+For the `popflags-export` branch (`b27bb26`) or the fork's test-all build (`593f848` or later),
 https://github.com/davehess/Zeal/releases/tag/test-all-build.
 
 **First in-game run (2026-10-10, an earlier build that sent `#popflags all`):** the file was written with the character,
 timestamp and the server's one reply line, "The all option is restricted to server staff." So the camp hook, the capture,
 the colour filter and the file write all worked; the command was wrong. `all` needs server-staff status (the server's
-`zone/gm_commands/popflags.cpp`), so the export now sends `#popflags` (the overview) and `#popflags 1` to `5`, one a
-second. The run also showed the chat timestamp on the saved line, which is now removed. The cases below are for that build.
+`zone/gm_commands/popflags.cpp`), so the export now sends `#popflags` (the overview) and `#popflags 1` to `5`. The run
+also showed the chat timestamp on the saved line, which is now removed.
+
+**Second in-game run (same day):** the full reply came back, but each section printed several times (Tier 4 three
+times, Plane of Time ten) and flooded the chat at camp. Zeal's delayed callbacks can fire on more than one frame, so
+each send now runs exactly once; the reply goes to the file instead of the chat window; the commands go out a quarter
+second apart and the file is written about 3 seconds after the request. The cases below are for that build.
 
 **Common setup:** a character in game, standing in a safe spot, in the Planes of Power era server. Open the EverQuest folder
 to look for `<Name>-PoPFlags.txt`. Delete any old copy before each case. Type `#popflags` and `#popflags 1` to `5` once by
@@ -33,9 +38,10 @@ Mark each case: `[x]` pass, `[!]` fail (write what you saw under it).
 
 ### 3. On-demand command
 - **Setup:** option off or on, standing in game.
-- **Steps:** `/outputfile popflags`, then wait about 8 seconds. Then `/outputfile popflags my_flags` after 15 seconds.
-- **Expected:** a chat line "Requesting #popflags...", the six replies one a second, then "PoP flags saved to: ...". The
-  second run writes `my_flags.txt` instead. `/out popflags` and `/output popflags` work as aliases.
+- **Steps:** `/outputfile popflags`, then wait about 3 seconds. Then `/outputfile popflags my_flags` after 15 seconds.
+- **Expected:** a chat line "Requesting #popflags...", then "PoP flags saved to: ... (N lines)", with none of the
+  reply in the chat window and every section once in the file (no repeats). The second run writes `my_flags.txt`
+  instead. `/out popflags` and `/output popflags` work as aliases.
 - **Result:** [ ] pass  [ ] fail
 
 ### 4. File matches the in-game reply
@@ -55,7 +61,7 @@ Mark each case: `[x]` pass, `[!]` fail (write what you saw under it).
 ### 6. Server does not answer
 - **Setup:** a server or zone where `#popflags` is not available, or send it with the network lagging.
 - **Steps:** `/outputfile popflags`.
-- **Expected:** after about 8 seconds "No reply to #popflags, nothing saved.", no file written, no repeat requests.
+- **Expected:** after about 3 seconds "No reply to #popflags, nothing saved.", no file written, no repeat requests.
 - **Result:** [ ] pass  [ ] fail
 
 ### 7. Two characters in a row
@@ -66,7 +72,7 @@ Mark each case: `[x]` pass, `[!]` fail (write what you saw under it).
 ### 8. Camp cancelled by moving
 - **Steps:** `/camp`, then stand up and walk before the camp finishes.
 - **Expected (by design):** the file is still written, the same as the inventory, spellbook and Quarmy files, which are also
-  written when the camp starts. There is no partial file: it is written once, whole, about 8 seconds after the request.
+  written when the camp starts. There is no partial file: it is written once, whole, about 3 seconds after the request.
 - **Result:** [ ] pass  [ ] fail
 
 ### 9. Pressing camp repeatedly
@@ -103,8 +109,8 @@ Mark each case: `[x]` pass, `[!]` fail (write what you saw under it).
 - **Expected:** the file name carries the host tag like the other exports, for example `<Name>-PoPFlags_<host>.txt`.
 - **Result:** [ ] pass  [ ] fail
 
-### 15. Zoning or logging out inside the 8 seconds
-- **Steps:** `/outputfile popflags`, then zone straight away. Also run it and `/camp` out within 8 seconds.
+### 15. Zoning or logging out inside the 3 seconds
+- **Steps:** `/outputfile popflags`, then zone straight away. Also run it and `/camp` out within 3 seconds.
 - **Expected:** no crash. Commands not yet sent when you leave the game are skipped. The file is written with whatever
   arrived (or nothing if nothing did).
 - **Result:** [ ] pass  [ ] fail
@@ -114,5 +120,5 @@ Mark each case: `[x]` pass, `[!]` fail (write what you saw under it).
 ### 16. Busy raid chat
 - **Setup:** in a raid with heavy combat spam, framerate counter on.
 - **Steps:** `/outputfile popflags`.
-- **Expected:** no visible framerate dip during the 8 seconds, and the file stays small (the capture stops at 400 lines).
+- **Expected:** no visible framerate dip during the 3 seconds, and the file stays small (the capture stops at 400 lines).
 - **Result:** [ ] pass  [ ] fail

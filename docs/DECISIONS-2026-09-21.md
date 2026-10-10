@@ -9141,6 +9141,19 @@ Harmony, Hide/Sneak for non-rogues).
   line removed, 15 s between requests. `test-all` `67bea01`. The test character is new, so its
   `<Char>_pq.proj.ini` has no `[Socials]` section yet; the hotkey guide now says to paste the whole file, header
   included, in that case (the format matches existing characters' `PageNButtonM…` socials).
+- **Second run: the camp export spammed the chat** (the guild lead: *"the popflag spam on camp is noticeable"*). Each
+  section printed several times (Tier 4 ×3, Plane of Time ×10). Cause: Zeal's `CallbackManager::invoke_delayed`
+  (`callbacks.cpp:142-149`) fires a callback when `now >= time` but erases it only when `now > time`, and
+  `GetTickCount64` moves in 10–16 ms steps, so a delayed callback runs on every frame inside that step. Fix on our side
+  (popflags `b27bb26`, test-all `593f848`): each send checks its turn and runs once; captured reply lines are cleared
+  from the chat output (the same `msg = ""` suppression nameplate.cpp uses), so they reach the file only; only the four
+  reply colours are taken; sends are 250 ms apart with a 1.5 s tail. ⚠ The `invoke_delayed` bug is upstream and
+  affects any feature that schedules with `AddDelayed`; a one-character fix (erase with `>=`) would make a small,
+  separate upstream PR — not bundled into ours.
+- **Guild marks include /roleplay players** (the guild lead: *"Roleplaying toons still expose their guild, so they
+  should be included"*). Only `/anon` (`AnonymousState == 1`) is skipped now, matching Zeal's own `show_guild` check.
+  tag-shapes `4447114` (amended), merged down to tag-icon-files `ddde80a`, guildicon-draft `605ef22`, test-all
+  `99c7345`.
 
 ### 228. The upstream Zeal bar for our PRs: small, modular, off with no cost, existing behaviour untouched (2026-10-10)
 
