@@ -39,7 +39,7 @@ function Catalogue() {
 
       <section id="guilds" className="mt-10">
         <h2 className={H2}>Your guild</h2>
-        <p className="mt-1 text-sm text-dim">A banner with your guild&rsquo;s code, and an icon. {GUILDS.length} guilds so far.</p>
+        <p className="mt-1 text-sm text-dim">A banner with your guild&rsquo;s logo and full name, and an icon. {GUILDS.length} guilds so far.</p>
         <ul className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {GUILDS.map(g => (
             <li key={g.code} id={g.code.toLowerCase()}

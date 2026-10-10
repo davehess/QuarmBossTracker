@@ -11,10 +11,17 @@ face-on view, 160x160 with a transparent background.
 - paw-<c>.png: the paw with a letter or digit, ^P<c>^.
 - banner-<CODE>.png and guild-<CODE>.png: each guild's banner ^B<CODE>^ and icon ^I<CODE>^.
 
+The banners (every banner-<CODE>.png) and the Burnouts icon (guild-BRN.png, now a lit cigarette) come
+from the fork's `guildicon-draft` branch instead: a local draft, not yet pushed and not in any Zeal
+build. A banner there is the guild's icon in its own colours with a thin contrast rim, plus the guild's
+full name above and below the logo. Every other file here is unchanged from the tag-shapes branch
+(the export below, run on guildicon-draft, regenerates them identically).
+
 The guild icons are our own drawings, made for each guild's name or theme. No guild's artwork
 was traced for them.
 
-To regenerate after a shape changes, from a checkout of the fork:
+To regenerate after a shape changes, from a checkout of the fork (the `guildicon-draft` branch for
+the banners and guild-BRN.png):
   g++ -std=c++20 -O2 -I<zeal>/Zeal -o dump dump.cpp <zeal>/Zeal/tag_shapes.cpp && ./dump > meshes.json
   python3 export_marks.py meshes.json <zeal>/Zeal/tag_shapes.cpp <zeal>/Zeal/tag_arrows.cpp <web>/public/zeal/marks
 

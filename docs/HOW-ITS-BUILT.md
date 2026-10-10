@@ -3295,7 +3295,9 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
     `tag_shapes.cpp`.
   - **Images:** `public/zeal/marks` (121 PNGs), rendered from the real meshes by
     `docs/upstream/zeal-tag-shapes/preview/export_marks.py`. Provenance is in
-    `public/zeal/PROVENANCE.txt`.
+    `public/zeal/PROVENANCE.txt`. The 30 banners and the Burnouts icon (web 1.8.136, beta)
+    come from the fork's local `guildicon-draft` branch (logo in the guild's colours with a rim, full
+    name around it); `dump.cpp` and `export_marks.py` carry the logo and name colours for that.
   - **Link previews:** `lib/pageMeta.ts` names the gallery and each guild.
   - **Test:** `test/zeal-icons-page.test.js` checks that the page stays public and inert,
     that every named image exists, and that every hosted picture passes Zeal's own checks

@@ -41,7 +41,9 @@ def lighten(color):
     return tuple(c + (255 - c) * 3 // 5 for c in color)
 
 
-def vertex_colors(mesh, color):
+def vertex_colors(mesh, color, logo=None, text=None):
+    """Mirrors TagArrows::AllocateIconShape, including the banner Logo tones (6..9) and LogoText (10).
+    logo and text are the guild banner's BannerLogoRgb / BannerTextRgb (the mesh dump carries them)."""
     lo, hi = mesh["min_z"], mesh["max_z"]
     light = lighten(color)
     front, back = gradient(color, 192, lo, hi), gradient(color, 64, lo, hi, 0.0)
@@ -52,11 +54,35 @@ def vertex_colors(mesh, color):
     shade = tuple(c * 7 // 10 for c in color)
     eye_front, eye_back = gradient(eye, 255, lo, hi, 0.55), gradient(eye, 160, lo, hi, 0.4)
     shade_front, shade_back = gradient(shade, 150, lo, hi), gradient(shade, 50, lo, hi, 0.0)
+    banner = logo is not None
+    if banner:  # The logo is lit over its own height, spread to an icon's 2.6.
+        zs = [v[2] for v in mesh["vertices"] if v[3] in (4, 6, 7, 8, 9)]
+        lmin, lmax = (min(zs), max(zs)) if zs else (0, 1)
+        scale = 2.6 / max(lmax - lmin, 0.1)
+        remap = lambda z: (z - lmin) * scale
+        llight = lighten(logo)
+        lshade = tuple(c * 7 // 10 for c in logo)
+        ldark = tuple(c // 6 for c in logo)
+        L = {6: (gradient(logo, 192, 0, 2.6), gradient(logo, 64, 0, 2.6, 0.0)),
+             8: (gradient(llight, 224, 0, 2.6), gradient(llight, 96, 0, 2.6, 0.0)),
+             9: (gradient(lshade, 150, 0, 2.6), gradient(lshade, 50, 0, 2.6, 0.0))}
+        leye = (gradient(eye, 255, 0, 2.6, 0.55), gradient(eye, 160, 0, 2.6, 0.4))
+        tl = (text[0] * 299 + text[1] * 587 + text[2] * 114) // 1000
+        T = (gradient(text, 255 if tl > 140 else 0, lo, hi), gradient(text, 200 if tl > 140 else 0, lo, hi, 0.0))
     out = []
     for x, y, z, tone in mesh["vertices"]:
         if tone == 3:  # Contrast: dark on a light tag color, light on a dark one.
             tone = 1 if luminance > 140 else 2
-        if tone == 4:
+        if banner and tone == 10:
+            out.append((T[0] if y < 0 else T[1])(z))
+        elif banner and tone == 7:
+            out.append(ldark)
+        elif banner and tone in L:
+            g = L[tone]
+            out.append((g[0] if y < 0 else g[1])(remap(z)))
+        elif banner and tone == 4:
+            out.append((leye[0] if y < 0 else leye[1])(remap(z)))
+        elif tone == 4:
             out.append((eye_front if y < 0 else eye_back)(z))
         elif tone == 5:
             out.append((shade_front if y < 0 else shade_back)(z))
@@ -69,13 +95,13 @@ def vertex_colors(mesh, color):
     return out
 
 
-def render(mesh, color, yaw_deg, size, scale, bg):
+def render(mesh, color, yaw_deg, size, scale, bg, logo=None, text=None):
     ss = 3
     w = h = size * ss
     s = scale * ss
     buf = [bg] * (w * h)
     depth = [1e9] * (w * h)
-    cols = vertex_colors(mesh, color)
+    cols = vertex_colors(mesh, color, logo, text)
     yaw = math.radians(yaw_deg)
     cy, sy = math.cos(yaw), math.sin(yaw)
     pts = []
