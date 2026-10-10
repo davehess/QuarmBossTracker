@@ -8896,3 +8896,21 @@ a player or its home point.
   mesh; in zones like Plane of Hate they are drawn unclipped with a "no LoS" tag, because walls do not protect you.
 - **Not built yet.** These join the 2.9 phases: badges with phase 1, marks + candidate attribution with phase 4,
   the LoS table + clipped rings after the range-ring columns land in the import.
+
+### 222. Every class's active abilities catalogued; a home for `/pipe` commands proposed (2026-10-10)
+**The ask** (the guild lead): the full active ability set for every class (trained skills, AAs, long-recast spells),
+"like we have with monks", and a spot where a `/pipe` line triggers UI for actions with no success message (Pacify,
+Harmony, Hide/Sneak for non-rogues).
+- **Where it landed:** `docs/DESIGN-class-abilities.md` + `docs/data/class-abilities.json` (281 abilities, all 15
+  classes). AA reuse comes from Quarm's own `aa_actions` table in the 2026-09-27 dump (77 AAs; it corrected seven
+  research values, e.g. Mend Companion 36 min, Divine Resurrection 36 h, Mana Burn 8640 s).
+- **Bugs it found in today's HUD** (fix with the build): the Taunt timer is started by Area Taunt (a plain taunt
+  prints nothing); Hand of Piety starts the Lay on Hands slot (same landing text); Necromancer / Shadow Knight Feign
+  Death is a 15 s spell, not the monk skill; `/pipe` lines are only read while the HUD is open; AA timers must clear
+  on "Your ability failed. Timer has been reset."; the monk FD 10 s vs the server's 8 s needs an in-game check.
+- **Lull line closed:** "Your target looks unaffected." is the whole Pacify/Harmony/Lull family's failure (too high
+  level or Immune Pacify; once per mob on an AE cast). Harmony has no success line at all.
+- **Pipe-commands spot:** options A (pipe as a trigger source), B (a Pipe commands card on the Triggers tab, built on
+  A — recommended), C (user words as HUD chips) put to the guild lead; open.
+- **Also found:** `eqemu_spells` stops at id 4678, so Quarm's own spells above it (Mass Group Buff 5228 and others)
+  are missing from the mirror — check the weekly import's filter.
