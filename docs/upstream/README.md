@@ -27,7 +27,7 @@ Fork: https://github.com/davehess/Zeal. Combined test build (every pushed branch
 | Main assist marker, `%tid`, `/target` by tag | [`zeal-main-assist`](zeal-main-assist/) | `ma-draft` (`206b884`) | Local draft, not pushed, not compiled | No | Build, then all cases |
 | Mez and slow keys (`^MEZ^`, `^SLOW^`) | [`zeal-mez-slow-keys`](zeal-mez-slow-keys/) | `ma-draft` (`116d3ed`) | Local draft, not pushed, not compiled | No | Build, then all cases; breaks `^M^` |
 | Auto raid lead, persisted `/ari` | [`zeal-auto-raid-lead`](zeal-auto-raid-lead/) | `raidlead-draft` (`b15b8a2`, on `ma-draft`) | Local draft, not pushed, not compiled | No | Build, then a two-person raid test |
-| Guild icon and banner refresh | [`zeal-guild-icon-refresh`](zeal-guild-icon-refresh/) | `guildicon-draft` (`bbd5fe0`, on `raidlead-draft`) | Local draft, not pushed, not compiled; banners show the logo (L) by default, logo plus name (LN) is a one-line switch | No | Build, then all cases; the guild lead picks L or LN |
+| Guild icon and banner refresh | [`zeal-guild-icon-refresh`](zeal-guild-icon-refresh/) | `guildicon-draft` (`d9dd631`, on `raidlead-draft`) | Local draft, not pushed, not compiled; banners show each guild's icon in its own colours plus its full name (design settled, DECISIONS §226) | No | Build, then all cases |
 
 `ma-draft`, `raidlead-draft` and `guildicon-draft` are stacked: each sits on the one before it, and none is in the test-all build.
 Pushing any of them needs a build and the guild lead's go-ahead first.
