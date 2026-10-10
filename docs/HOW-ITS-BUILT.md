@@ -2165,10 +2165,18 @@ agent's `/api/npc-interact?id=` (only while the tab is open), which proxies the 
 NPC's Lua script (`findi` keywords → `/say` chips with replies, GM branches dropped; an NPC with no script of
 its own is looked up in the zone's encounter files — `questDialog.encounterHandlers` finds the say/trade
 handlers registered for its npc id, by literal or `local` constant — bot 3.1.221, 2026-10-08, Thelin Poxbourne
-in `ponightmare/encounters/Maze.lua`), hand-ins from
+in `ponightmare/encounters/Maze.lua`; a script named for the npc id, `potactics/214322.lua`, is read before the
+name's, bot 3.1.238), hand-ins from
 `scripted_npc_turnins`, who's next from named NPCs the replies mention (with a spawn for `/map Y X`),
 and a merchant's `eqemu_merchantlist`. Vendor shows only when the list is non-empty. Bot 3.1.166, agent
 3.7.37 + Mimic beta; DECISIONS 2026-09-21 §70.
+**Which NPC the tab reads (FB-72, bot 3.1.238, 2026-10-10):** mob-info's stats pick prefers a real body anywhere over
+an in-zone body that is immune to melee and magic, and every talking flag NPC is that, so a same-name NPC in another
+zone won (Innovation's Giwin Mirakon came back as Tactics'). `mobSpecials.questNpcId` names the body in the requester's
+zone, and mob-info carries it as `quest_id` (absent when `id` is already right; zone packs v5); `mobinfo.html` asks
+`/api/npc-interact` for `quest_id || id`. The parser also lists a keyword branch that only acts (moves you, casts,
+spawns, depops, hands over an item) and reads `findi("…" .. TABLE[n])` as one phrase per table line.
+`test/quest-dialog-pop-chain.test.js`.
 **Faction: what the mob is on and who assists it (bot 3.1.211, Mimic beta `0ec3414a`, §172):** mob-info (and the
 zone mob packs, `_MOB_PACK_VERSION` 2) carry `faction_primary {id,name}`, `faction_assists [{id,name}]` and
 `faction_assisted_by [{name,npc_id}]` + `_more`, from `utils/factionAssist.js` (one 6 h catalog index; EQEmu's rule:
