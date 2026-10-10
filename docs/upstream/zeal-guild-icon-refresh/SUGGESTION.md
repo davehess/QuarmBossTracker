@@ -2,7 +2,7 @@
 
 # Guild icons and banners, round two
 
-*Fork branch `guildicon-draft` (`dca0b85`, local, stacked on `raidlead-draft`). Status: draft, not compiled with Visual Studio yet.*
+*Fork branch `guildicon-draft` (`dca0b85`, on `ma-draft`). Status: draft; in the test-all build, compiled by GitHub on 2026-10-10, not yet run in game.*
 
 ![Every guild's icon beside its new banner](icons-vs-banners.png)
 
@@ -29,6 +29,6 @@ their own. The flag keeps the guild's colour, so colour still tells guilds apart
 **How tested**
 - Every banner and the cigarette were rendered off the game from the real meshes, each beside its icon (above).
 - `tag_shapes.cpp` compiles cleanly with `g++ -Wall -Wextra`.
-- `tag_arrows.cpp` (Direct3D) is not compiled yet, and nothing has run in game. Cases are in `TEST-CASES.md`.
+- The whole fork, `tag_arrows.cpp` (Direct3D) included, compiled in the GitHub build of test-all (`3c4766c`); nothing has run in game yet. Cases are in `TEST-CASES.md`.
 
-**Try it:** not in the fork's test-all build yet (https://github.com/davehess/Zeal/releases/tag/test-all-build).
+**Try it:** in the fork's test-all build (https://github.com/davehess/Zeal/releases/tag/test-all-build), `3c4766c` or later.

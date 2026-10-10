@@ -1,7 +1,7 @@
 # Test cases: `^MEZ^` moon and `^SLOW^` hourglass
 
-For the local draft branch `ma-draft` (`116d3ed`, included in `206b884`). **Not compiled with MSVC, not pushed, not in the
-test-all build.** Build it and install `Zeal.asi` first. It changes the moon key from `^M^`, so these cases check the old
+For the fork branch `ma-draft` (`116d3ed`, included in `206b884`), in the test-all build (`3c4766c`, compiled by
+GitHub, **not yet run in game**). Install that build's `Zeal.asi` first. It changes the moon key from `^M^`, so these cases check the old
 and new keys side by side.
 
 **Common setup:** `/tag on`, target an NPC, use `/tag local`. Finish with `/tag clear`.

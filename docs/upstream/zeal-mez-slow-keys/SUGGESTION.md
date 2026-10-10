@@ -2,7 +2,7 @@
 
 # Mez and slow tags: the moon is `^MEZ^`, plus a `^SLOW^` hourglass
 
-*Local draft branch `ma-draft` on our fork (`116d3ed`). Status: draft, not pushed, not compiled. It changes a key from the tag shapes change, so it should land with or after it.*
+*Fork branch `ma-draft` (`116d3ed`). Status: draft; in the test-all build, compiled by GitHub, not yet run in game. It changes a key from the tag shapes change, so it should land with or after it.*
 
 ![The moon (mez) and the new hourglass (slow), front and turned](mez-slow.png)
 
@@ -20,4 +20,4 @@ All multi-letter keys (`WP`, `MA`, `MEZ`, `SLOW`) now live in one table read by 
 - The shape file builds clean with g++ and both meshes were previewed off the game.
 - Known breaking point: an existing `^M^` tag stops drawing a moon, so anything that watches for it (our raid tools included) has to learn `^MEZ^`. The cases in `TEST-CASES.md` check the old and new keys side by side.
 
-**Try it:** not in the fork's test-all build yet (https://github.com/davehess/Zeal/releases/tag/test-all-build). It needs a build of `ma-draft`.
+**Try it:** in the fork's test-all build (https://github.com/davehess/Zeal/releases/tag/test-all-build), `3c4766c` or later.

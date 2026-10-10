@@ -24,13 +24,13 @@ Fork: https://github.com/davehess/Zeal. Combined test build (every pushed branch
 | Cursor while the UI is hidden (F10) | [`zeal-hide-ui-cursor`](zeal-hide-ui-cursor/) | `hide-ui-cursor` (`2433493`) | Pushed branch, not filed; compiled by GitHub, not run in game | Yes | In-game: all cases |
 | Guild banners, icons, automatic guild marks | [`zeal-guild-emblems`](zeal-guild-emblems/) | in `tag-shapes` (`c2a5333` banners and icons, `f777d81` auto marks) | Pushed branch, not filed; icons seen in game 2026-09-26 | Yes | In-game: banners and the 12 auto-mark checks |
 | Spawn ids on the pipe | [`zeal-spawn-id`](zeal-spawn-id/) | `pipe-spawn-id` (obsolete) | **Merged**, upstream PR 229, Zeal 1.4.6 | Yes (1.4.8 base) | Regression checks only |
-| Main assist marker, `%tid`, `/target` by tag | [`zeal-main-assist`](zeal-main-assist/) | `ma-draft` (`206b884`) | Local draft, not pushed, not compiled | No | Build, then all cases |
-| Mez and slow keys (`^MEZ^`, `^SLOW^`) | [`zeal-mez-slow-keys`](zeal-mez-slow-keys/) | `ma-draft` (`116d3ed`) | Local draft, not pushed, not compiled | No | Build, then all cases; breaks `^M^` |
-| Auto raid lead, persisted `/ari` | [`zeal-auto-raid-lead`](zeal-auto-raid-lead/) | `raidlead-draft` (`b15b8a2`, on `ma-draft`) | Local draft, not pushed, not compiled | No | Build, then a two-person raid test |
-| Guild icon and banner refresh | [`zeal-guild-icon-refresh`](zeal-guild-icon-refresh/) | `guildicon-draft` (`d9dd631`, on `raidlead-draft`) | Local draft, not pushed, not compiled; banners show each guild's icon in its own colours plus its full name (design settled, DECISIONS §226) | No | Build, then all cases |
+| Main assist marker, `%tid`, `/target` by tag | [`zeal-main-assist`](zeal-main-assist/) | `ma-draft` (`206b884`) | Pushed branch, not filed; compiled by GitHub 2026-10-10, not run in game | Yes (`3c4766c`) | In-game: all cases |
+| Mez and slow keys (`^MEZ^`, `^SLOW^`) | [`zeal-mez-slow-keys`](zeal-mez-slow-keys/) | `ma-draft` (`116d3ed`) | Pushed branch, not filed; compiled by GitHub 2026-10-10, not run in game | Yes (`3c4766c`) | In-game: all cases; breaks `^M^` (the website's symbol list still shows `^M^`) |
+| Auto raid lead, persisted `/ari` | [`zeal-auto-raid-lead`](zeal-auto-raid-lead/) | `raidlead-draft` (`b15b8a2`, on `ma-draft`) | Pushed branch, not filed; compiled by GitHub 2026-10-10, not run in game | Yes (`3c4766c`) | In-game: a two-person raid test |
+| Guild icon and banner refresh | [`zeal-guild-icon-refresh`](zeal-guild-icon-refresh/) | `guildicon-draft` (`dca0b85`, on `ma-draft`) | Pushed branch, not filed; compiled by GitHub 2026-10-10, not run in game; banners show each guild's icon in its own colours plus its full name (DECISIONS §226) | Yes (`3c4766c`) | In-game: all cases |
 
-`ma-draft`, `raidlead-draft` and `guildicon-draft` are stacked: each sits on the one before it, and none is in the test-all build.
-Pushing any of them needs a build and the guild lead's go-ahead first.
+`raidlead-draft` and `guildicon-draft` each sit on `ma-draft` (side by side, not on each other). All three were pushed on
+2026-10-10 and merged into `test-all` (`3c4766c`), whose GitHub build passed.
 
 Other material in this folder: `zeal-guild-emblems/PROPOSAL.md` (the two guild-mark directions and the pick) and
 `zeal-spawn-id/` (the filing record for PR 229).
