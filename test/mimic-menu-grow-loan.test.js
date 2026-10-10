@@ -28,7 +28,8 @@ const boundsBlock = sliceBlock(MAIN, 'const _boundsSaveTimers = {};', '  _writeB
 const menuBlock = sliceBlock(MAIN, "ipcMain.handle('overlay-ensure-min-height'",
   'height: s.height });\n    return true;\n  } catch { return false; }\n});');
 const presetBlock = sliceBlock(MAIN, "ipcMain.handle('overlay-resize-preset'", '\n});');
-const fitBlock = sliceBlock(MAIN, "ipcMain.handle('overlay-auto-height'", '\n});');
+const fitBlock = sliceBlock(MAIN, 'function _fitHeldWidth(win, readW) {', '\n}') + '\n'
+  + sliceBlock(MAIN, "ipcMain.handle('overlay-auto-height'", '\n});');
 const reapBlock = sliceBlock(MAIN, 'function _reapDisabledOverlays() {', '\n}');
 
 const KEY = 'commandBounds';

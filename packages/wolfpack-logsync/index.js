@@ -628,6 +628,19 @@ const CHARM_SPELLS = new Map([
   // backticks.
   ["tunare's request",  { cls: 'enchanter', dur: 10800, catalogDur: true }],
   ["tunare`s request",  { cls: 'enchanter', dur: 10800, catalogDur: true }],
+  // Planes of Power charms (the guild lead, 2026-10-08: "the new charms for bards and enchanters, druids,
+  // necros, and mages"). Every SPA 22 spell with a player class in eqemu_spells that this table lacked:
+  // enchanter Beckon 3347 / Command of Druzzil 3355 (75 ticks, formula 8), druid Command of Tunare 3445,
+  // necro Word of Terris 3316 and mage Call of the Arch Mage 3484 (205 ticks, formula 10), bard Call of the
+  // Banshee 3371 (10 ticks = 60s) and necro Enslave Death 1629 (5 ticks = 30s). Non-bards are 'enchanter'
+  // like the rest of the table. catalogDur: level-aware from the catalog, the static dur is the L60 fallback.
+  ['beckon',                 { cls: 'enchanter', dur: 420,  catalogDur: true }],
+  ['command of druzzil',     { cls: 'enchanter', dur: 420,  catalogDur: true }],
+  ['command of tunare',      { cls: 'enchanter', dur: 1140, catalogDur: true }],
+  ['word of terris',         { cls: 'enchanter', dur: 1140, catalogDur: true }],
+  ['call of the arch mage',  { cls: 'enchanter', dur: 1140, catalogDur: true }],
+  ['call of the banshee',    { cls: 'bard',      dur: 60 }],
+  ['enslave death',          { cls: 'enchanter', dur: 30 }],
 ]);
 // Level-aware charm duration from the spell catalog, for CHARM_SPELLS entries
 // flagged catalogDur (curated durations stay authoritative for the rest —
@@ -1886,6 +1899,16 @@ function _consumePendingCharmSpell(owner, nowMs) {
   if (p.owner && owner && String(p.owner).toLowerCase() !== String(owner).toLowerCase()) return null;
   _pendingCharmSpell = null;
   return { charm_class: p.cls, duration_sec: p.dur, charm_spell_name: p.name || null };
+}
+// Options for the _bumpCharmTick that re-arms a charm RECAST on a pet we already
+// track. A staged spell (the consume above returned one) is what proves a real
+// recast; a bare pet-ack also tags source:'charm_land' and must leave the tracker
+// alone, or the up-timer would reset on every ack — so no staged spell → null.
+// The keys are _consumePendingCharmSpell's (charm_class / duration_sec); the old
+// inline check read pcSpell.dur / pcSpell.cls, which never exist, so it never bumped.
+function _recastBumpOpts(pcSpell, existing) {
+  if (!pcSpell) return null;
+  return { is_dire_charm: !!(existing && existing.is_dire_charm), ...pcSpell };
 }
 // Non-consuming variant: returns true iff there's a pending charm spell for
 // this owner that hasn't aged out. Used by _reconcileGaugeCharms to ACCEPT
@@ -3876,6 +3899,76 @@ function _clearPendingPacifyOnNewCast(charLower, spellLower) {
   if (!pend) return;
   const k = String(spellLower || '').replace(/`/g, "'").trim();
   if (k !== pend.key) _pendingPacify.delete(charLower);
+}
+// ── "Your target looks unaffected." (the guild lead, 2026-10-09, in-game screenshot) ──
+// The server's answer to a lull-family cast that did nothing — a mob too high a
+// level for that spell, or immune — and the line the "too-high-level lull" ask in
+// docs/STATUS.md was waiting for. Cast on a level-58 mob that is NOT ability-31
+// immune, Pacify printed it twice in red while Target Info kept a "56/60 · 5:33"
+// Pacify bar: the phantom timer this file's comments predicted.
+//
+// ⚠ The line is a SELF line with no target name and no spell name, and other
+// spells may print it too, so it is attributed ONLY when the newest own cast is a
+// lull-family spell and the line lands inside that cast's window. Anything else
+// does nothing to lull state. The target is the one the cast was aimed at (the
+// Zeal target when "You begin casting" printed).
+const LULL_UNAFFECTED_WINDOW_MS = 4_000;       // after the cast ENDS; cast time is added from the catalog
+const LULL_UNAFFECTED_CAST_CAP_MS = 6_000;     // a bogus catalog cast time must not widen the window
+const _lullUnaffected = new Map();             // _mobInfoCacheKey(name, zone) → { spell, caster_level, at_ms }
+function noteLullUnaffected(line, character) {
+  if (!line || !character || line.indexOf('looks unaffected') === -1) return false;
+  if (!/\]\s+Your target looks unaffected\.\s*$/i.test(line)) return false;
+  const cl = String(character).toLowerCase();
+  const arr = _recentSelfCast.get(cl);
+  const cast = arr && arr.length ? arr[arr.length - 1] : null;
+  if (!cast || !_isPacifySpell(cast.name)) return false;
+  const ts = parseEqTimestamp(line);
+  const atMs = ts ? ts.getTime() : Date.now();
+  const e = _spellByNameLower.get(cast.spellLower.replace(/`/g, "'"));
+  const castMs = e && Number.isFinite(Number(e.cast_ms)) ? Math.min(Math.max(Number(e.cast_ms), 0), LULL_UNAFFECTED_CAST_CAP_MS) : 0;
+  if (atMs < cast.atMs || atMs - cast.atMs > castMs + LULL_UNAFFECTED_WINDOW_MS) return false;
+  const target = cast.target || _zealTargetForChar(cl);
+  if (!target) return false;
+  const key = cast.spellLower.replace(/`/g, "'");
+  // (a) take the phantom timer back — local bar first, then the not-yet-uploaded mirror.
+  const tk = String(target).toLowerCase();
+  const castId = _provableTargetId(character, target);
+  const mp = _buffLandingsByTarget.get(tk);
+  if (mp) {
+    for (const [k, row] of [...mp]) {
+      if (String(k).replace(/`/g, "'") !== key) continue;
+      if (row && row.landed_at != null && row.landed_at < cast.atMs - 1000) continue;   // an older, separate landing
+      if (castId != null && row && row.target_id != null && Number(row.target_id) !== Number(castId)) continue;
+      mp.delete(k);
+    }
+    if (mp.size === 0) _buffLandingsByTarget.delete(tk);
+  }
+  if (typeof buffCastBuffer !== 'undefined' && Array.isArray(buffCastBuffer)) {
+    for (let i = buffCastBuffer.length - 1; i >= 0; i--) {
+      const b = buffCastBuffer[i];
+      if (b && String(b.observer || '').toLowerCase() === cl && String(b.target || '').toLowerCase() === tk
+          && String(b.spell_name || '').toLowerCase().replace(/`/g, "'") === key) buffCastBuffer.splice(i, 1);
+    }
+  }
+  _pendingPacify.delete(cl);
+  // (b) remember it for the session, keyed like the Mob Info cache (name + zone bucket).
+  const st = (typeof _zealState !== 'undefined') ? Object.keys(_zealState).filter(c => String(c).toLowerCase() === cl).map(c => _zealState[c])[0] : null;
+  const zoneId = (st && st.zone != null && Number.isFinite(Number(st.zone))) ? Number(st.zone) : null;
+  _lullUnaffected.set(_mobInfoCacheKey(target, zoneId), {
+    spell: e ? e.name : cast.name,
+    caster_level: (whoData.get(cl) || {}).level || _assumedCasterLevel(),
+    at_ms: atMs,
+  });
+  if (_lullUnaffected.size > 200) _lullUnaffected.delete(_lullUnaffected.keys().next().value);
+  console.log(`[pacify] ${cast.name} on ${target} — "Your target looks unaffected."; timer dropped, mob marked`);
+  return true;
+}
+// What Target Info shows for the lull line on this mob: ability 31 (known from
+// the catalog) outranks what a cast taught us; unknown is null, never a guess.
+function lullVerdictFor(targetName, zoneId) {
+  if (_pacifyImmuneKnown(targetName) === true) return { verdict: 'immune' };
+  const u = _lullUnaffected.get(_mobInfoCacheKey(targetName, zoneId));
+  return u ? { verdict: 'unaffected', spell: u.spell, caster_level: u.caster_level, at_ms: u.at_ms } : null;
 }
 
 // ── Self-cast capture ────────────────────────────────────────────────────────
@@ -6754,8 +6847,8 @@ const SLOW_SPELLS = new Set([
   'drowsy', 'walking sleep', "tagar's insects", "togor's insects", "tigir's insects", "turgur's insects", 'cripple',
   // Enchanter
   'languid pace', 'shiftless deeds', 'tepid deeds', 'forlorn deeds',
-  // Beastlord
-  "sha's advantage",
+  // Beastlord (Sha`s Revenge was missing: a 65% slow, spell 3462, a member report 2026-10-08)
+  "sha's advantage", "sha's revenge", "sha's vengeance", "sha's lethargy",
   // Boss tank-busters that are ALSO attack-speed slows (#142). Rage of
   // Ssraeshza (spell 2310, SPA 11 base 10 = −90% attack speed + a 4000 hit)
   // lands on the Emperor's tank; grounded from eqemu_spells.
@@ -6807,8 +6900,11 @@ const SLOW_MAGNITUDES = new Map([
   ["tagar's insects",   50],
   ["tigir's insects",   50],
   ['tepid deeds',       50],
+  ["sha's revenge",     65],
+  ["sha's vengeance",   55],
   ["sha's advantage",   50],
   ['walking sleep',     35],
+  ["sha's lethargy",    30],
   ['languid pace',      30],
   ['drowsy',            25],
 ]);
@@ -6819,7 +6915,7 @@ const SLOW_CLASSES = new Map([
   ["tigir's insects",  'SHM'], ['walking sleep',   'SHM'], ['drowsy',          'SHM'],
   ['forlorn deeds',    'ENC'], ['shiftless deeds', 'ENC'], ['tepid deeds',     'ENC'],
   ['languid pace',     'ENC'],
-  ["sha's advantage",  'BST'],
+  ["sha's advantage",  'BST'], ["sha's revenge",    'BST'], ["sha's vengeance",  'BST'], ["sha's lethargy",   'BST'],
 ]);
 function _slowClass(name) {
   if (!name) return null;
@@ -7431,6 +7527,42 @@ const lootedBuffer   = [];         // pending { item, looter, zone, atMs }
 let   _lootedUploadHW = 0;         // high-water: last uploaded looted atMs
 const _lootedRecentFp = new Map(); // fp → atMs; drop the same loot re-seen quickly
 
+// Gear a charmer loots back off their OWN pet's corpse is not loot (the guild lead, 2026-10-09: "anything a charmer
+// gives to their pet (and we have the spawn ID) and they loot is not counted as loot. It was already theirs."). The
+// looted line names no corpse and no log line exists for handing an item to a pet, so the only evidence is Zeal's
+// target at the moment of the loot: this character's current target id equals the id its own pet had while alive.
+// _ownPetRecs keeps that id after the pet dies (that is the point): lower-cased character → { id, name, zone, at }.
+// Cleared when the character's zone changes, when they camp, and after _OWN_PET_FRESH_MS. Needs Zeal 1.4.6+ ids; with
+// none, nothing is recorded and nothing is flagged. A guess is worse than a miss, so every condition must hold.
+const _OWN_PET_FRESH_MS = 2 * 3600_000;
+const _OWN_PET_LINE_SLACK_MS = 30_000;
+const _ownPetRecs = new Map();
+function _lootZoneKnown(z) { return z != null && z !== '' && z !== 0 && z !== '0'; }
+function _noteOwnPetForLoot(character, st, nowMs) {
+  const cl = String(character || '').toLowerCase();
+  if (!cl || !st) return;
+  const petName = _petNameForOwner(cl);
+  const id = petName ? _ownPetSpawnId(petName, character) : null;   // the existing guards: gauge names the pet, id is an integer > 0
+  if (id) { _ownPetRecs.set(cl, { id, name: String(petName), zone: _lootZoneKnown(st.zone) ? st.zone : null, at: nowMs }); return; }
+  const rec = _ownPetRecs.get(cl);
+  if (!rec) return;
+  if (nowMs - rec.at >= _OWN_PET_FRESH_MS || (_lootZoneKnown(st.zone) && _lootZoneKnown(rec.zone) && String(st.zone) !== String(rec.zone))) _ownPetRecs.delete(cl);
+}
+// Pure decision: true ONLY when the looter's current target id is the remembered pet id (both positive integers), in the
+// same zone (both known), the record is fresh, the target's name is a corpse, and the loot line is live. `lineMs`
+// (optional) keeps a lagging or replayed tail from being judged against a target that has since changed.
+function _lootFromOwnPet(state, petRec, zone, nowMs, lineMs) {
+  if (!state || !petRec) return false;
+  const tid = state.target_id;
+  if (!Number.isInteger(tid) || tid <= 0) return false;
+  if (!Number.isInteger(petRec.id) || petRec.id <= 0 || tid !== petRec.id) return false;
+  if (!_lootZoneKnown(zone) || !_lootZoneKnown(petRec.zone) || String(zone) !== String(petRec.zone)) return false;
+  if (!Number.isFinite(petRec.at) || !Number.isFinite(nowMs) || nowMs - petRec.at >= _OWN_PET_FRESH_MS || nowMs < petRec.at) return false;
+  if (!/['`’]s corpse\d*$/i.test(String(state.target_name || '').trim())) return false;
+  if (lineMs != null && !(Math.abs(nowMs - lineMs) <= _OWN_PET_LINE_SLACK_MS)) return false;
+  return true;
+}
+
 function trackLootedLine(line, character) {
   if (!line || !character || line.indexOf('You have looted') === -1) return;   // cheap gate
   const m = line.match(_LOOTED_RX);
@@ -7450,15 +7582,17 @@ function trackLootedLine(line, character) {
     const cutoff = Date.now() - 60000;
     for (const [k, v] of _lootedRecentFp) if (v < cutoff) _lootedRecentFp.delete(k);
   }
-  let zone = null;
+  let zone = null, zst = null;
   for (const ch of Object.keys(_zealState || {})) {
-    if (String(ch).toLowerCase() === cl) { zone = _zealState[ch].zone || null; break; }
+    if (String(ch).toLowerCase() === cl) { zst = _zealState[ch]; zone = zst.zone || null; break; }
   }
+  const fromOwnPet = _lootFromOwnPet(zst, _ownPetRecs.get(cl), zone, Date.now(), atMs);
   lootedBuffer.push({
     item:   item.slice(0, 64),
     looter: String(character).slice(0, 32),
     zone:   zone ? String(zone).slice(0, 64) : null,
     atMs,
+    ...(fromOwnPet ? { fromOwnPet: true } : {}),
   });
   if (lootedBuffer.length > 200) lootedBuffer.splice(0, lootedBuffer.length - 200);
 }
@@ -7476,7 +7610,7 @@ function uploadLooted() {
     _lootedUploadHW = Math.max(_lootedUploadHW, ...fresh.map(e => e.atMs));
     enqueueUpload('looted', {
       agent_version: AGENT_VERSION,
-      events: fresh.map(e => ({ item: e.item, looter: e.looter, zone: e.zone, at: new Date(e.atMs).toISOString() })),
+      events: fresh.map(e => ({ item: e.item, looter: e.looter, zone: e.zone, at: new Date(e.atMs).toISOString(), ...(e.fromOwnPet ? { from_own_pet: true } : {}) })),
     });
   }
   // Bound the buffer — drop anything already uploaded or past the 30-min window
@@ -8154,6 +8288,33 @@ function _elapsedSec(fromTs, toTs) {
   const a = _epochMs(fromTs), b = _epochMs(toTs);
   if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
   return Math.max(0, (b - a) / 1000);
+}
+
+// Did a charm session run (about) its spell's full duration? The log cannot tell a natural fade from a
+// resist break: "Your charm spell has worn off." is the spell-fades line and prints for both, so
+// end_reason stays 'charm_break' and this derived flag carries the answer instead (the guild lead,
+// 2026-10-08, enchanters report early breaks). null = unknown: no spell, no duration, or the session
+// was truncated before it could prove anything. A flush that already reached the threshold is still true.
+// ⚠ Measured from the land line's and the break line's OWN timestamps, never from the session's
+// started_at/ended_at/duration_sec: those take this.lastEvent, which only combat events advance (the
+// charm handlers return before it), so they read the gap between two fights' last blows, not the charm.
+const CHARM_RAN_FULL_FRACTION = 0.9;
+function _charmRanFull(maxSec, durationSec, endReason) {
+  if (!Number.isFinite(maxSec) || maxSec <= 0) return null;
+  if (!Number.isFinite(durationSec)) return null;
+  const full = durationSec >= maxSec * CHARM_RAN_FULL_FRACTION;
+  if (endReason === 'encounter_flush') return full ? true : null;
+  return full;
+}
+// A recast by the same owner refreshes the charm while the session continues, so elapsed-since-first-land
+// says nothing about one spell's duration. Those sessions report ran_full null.
+const _charmRefreshed = new WeakSet();
+const _charmLandMs = new WeakMap();   // session -> the land line's own epoch ms
+function _stampCharmRanFull(sess, endMs) {
+  const landMs = _charmLandMs.get(sess);
+  const elapsed = Number.isFinite(landMs) && Number.isFinite(endMs) ? Math.max(0, (endMs - landMs) / 1000) : null;
+  const max = _charmRefreshed.has(sess) ? null : CHARM_SPELLS.get(sess.spell)?.dur;
+  sess.ran_full = _charmRanFull(max, elapsed, sess.end_reason);
 }
 
 // Damage-shield attribution (the guild lead, 2026-09-13: "These look like 150 dd procs"
@@ -9126,6 +9287,7 @@ class EncounterBuilder {
         open.ended_at = this.lastEvent || open.started_at;
         open.end_reason = 'charm_break';
         open.duration_sec = _elapsedSec(open.started_at, open.ended_at);
+        _stampCharmRanFull(open, Date.parse(event.ts));
         this.charmSessions.push(open);
         this._activeCharms.delete(petKey);
       }
@@ -9207,9 +9369,9 @@ class EncounterBuilder {
         // session from charm to break).
         if (existing && existing.owner === owner) {
           const pcSpell = _consumePendingCharmSpell(owner, startTs);
-          if (pcSpell && (pcSpell.dur || pcSpell.cls)) {
-            _bumpCharmTick(event.pet, owner, 'land', startTs, { is_dire_charm: !!existing.is_dire_charm, ...pcSpell });
-          }
+          if (pcSpell) _charmRefreshed.add(existing);
+          const bumpOpts = _recastBumpOpts(pcSpell, existing);
+          if (bumpOpts) _bumpCharmTick(event.pet, owner, 'land', startTs, bumpOpts);
           return;
         }
         // If the existing session is with a different owner, the previous
@@ -9218,7 +9380,7 @@ class EncounterBuilder {
           existing.ended_at = startTs;
           existing.end_reason = 'charm_break';
           existing.duration_sec = _elapsedSec(existing.started_at, startTs);
-          this.charmSessions.push(existing);
+          this.charmSessions.push(existing);   // ran_full stays null: the break line was never seen
         }
         // Was this Dire-Charmed? Match the pending DC flag within 10s by
         // caster name.
@@ -9228,7 +9390,7 @@ class EncounterBuilder {
           && (startTs - this._pendingDireCharm.ts) < 10_000);
         if (isDC) this._pendingDireCharm = null;
         const pcSpell = _consumePendingCharmSpell(owner, startTs) || {};
-        this._activeCharms.set(petKey, {
+        const sessionNew = {
           pet:           event.pet,
           owner,
           started_at:    startTs,
@@ -9238,7 +9400,11 @@ class EncounterBuilder {
           end_reason:    null,
           ended_at:      null,
           duration_sec:  null,
-        });
+          spell:         pcSpell.charm_spell_name ? String(pcSpell.charm_spell_name).toLowerCase() : null,
+          ran_full:      null,
+        };
+        _charmLandMs.set(sessionNew, Date.parse(event.ts));
+        this._activeCharms.set(petKey, sessionNew);
         // Charm landed → that moment is the mob's tick; start the 6s
         // countdown on the global tracker. Pass the dire-charm flag so the
         // charm overlay knows whether to show a duration countdown.
@@ -10886,6 +11052,7 @@ class EncounterBuilder {
             open.ended_at     = open.last_damage_at || this.lastEvent || open.started_at;
             open.end_reason   = open.end_reason || 'encounter_flush';
             open.duration_sec = _elapsedSec(open.started_at, open.ended_at);
+            _stampCharmRanFull(open, _epochMs(open.ended_at));
             all.push(open);
           }
           return all.length > 0 ? all : undefined;
@@ -16803,6 +16970,19 @@ function _serializeForDashboard() {
         const petBuffs = ownerLower ? petBuffsForOwner(ownerLower) : [];
         const tNow = Date.now();
         const mt = _mobTickFor(info.pet, tNow);
+        // Catalog BASE magic resist for the Charm mini's MR chip, used only when no
+        // #petstats sheet is on the owner's pet row (the live, signed value wins
+        // overlay-side). Same cached mob-info row Target Info reads; a miss starts the
+        // fetch and the chip appears on a later poll. null = unknown.
+        let catalogMr = null;
+        try {
+          if (info.pet) {
+            fetchMobInfo(info.pet, info.owner);
+            const mc = _mobInfoByName.get(_mobInfoCacheKey(info.pet));
+            const v = mc && mc.mob && mc.mob.resists ? mc.mob.resists.mr : null;
+            if (v != null && Number.isFinite(Number(v))) catalogMr = Number(v);
+          }
+        } catch { void 0; }
         arr.push({
           key,
           pet: info.pet,
@@ -16829,6 +17009,7 @@ function _serializeForDashboard() {
           mob_tick_half_ms: mt ? Math.round(mt.half) : null,
           mob_tick_n:       mt ? mt.n : 0,
           mob_tick_src:     mt ? mt.src : null,
+          mr:               catalogMr,
         });
       }
       arr.sort((a, b) => (b.last_tick_at || 0) - (a.last_tick_at || 0));
@@ -19668,7 +19849,7 @@ function _wpRefreshMimicCfg() {
   try {
     window.mimic.getConfig().then(function (c) {
       if (!c) return;
-      _wpMimicCfg = { quietMode: !!c.quietMode, hideOverlays: !!c.hideOverlays, hideWhenEqDown: c.hideOverlaysWhenEqDown !== false, agentOnly: false };
+      _wpMimicCfg = { quietMode: !!c.quietMode, hideOverlays: !!c.hideOverlays, hideWhenEqDown: c.hideOverlaysWhenEqDown !== false, hideWhenUnfocused: c.hideOverlaysWhenUnfocused === true, agentOnly: false };
       // Agent only is the mode this run STARTED in (a saved-but-not-restarted change is not it yet).
       if (window.mimic.getStatus) window.mimic.getStatus().then(function (st) {
         if (_wpMimicCfg && st) _wpMimicCfg.agentOnly = st.runModeNow === 'agent';
@@ -19805,6 +19986,7 @@ function renderSetupChecks(s) {
        + '<td style="white-space:nowrap;font-weight:600;color:var(--text)">Overlays can show</td>'
        + '<td class="dim" style="font-size:11px">Overlays are on'
        + (_wpMimicCfg.hideWhenEqDown ? ' — they appear once EverQuest is running.' : '.')
+       + (_wpMimicCfg.hideWhenUnfocused ? ' They hide while another app is in front (Overlays tab).' : '')
        + (_wpMimicCfg.quietMode ? ' Sounds and voice are muted (Settings → Mute Mimic).' : '')
        + '</td></tr>';
   }
@@ -22330,6 +22512,12 @@ function renderOverlays(s) {
     + '</div>'
     + '</div>';
   h += '<div id="wpOvHkHint" class="dim" style="font-size:11px;margin-top:6px">Keys: click one, then press Ctrl, Alt or Shift + a key. Backspace clears an overlay&rsquo;s key, Esc cancels. Pick keys EverQuest does not use &mdash; Mimic takes the key away from the game.</div>';
+  // Focus gate (tray parity): same setting as the tray item and Settings. Checked state is
+  // applied after render by wpWireHideHotkey, so this string stays byte-stable.
+  h += '<label class="dim" style="display:flex;align-items:center;gap:8px;font-size:11px;margin-top:6px;cursor:pointer">'
+    +  '<input type="checkbox" id="wpFocusGate" style="cursor:pointer" />'
+    +  '<span><b>Hide overlays + hotkeys when EverQuest/Mimic isn&rsquo;t the active window</b> (Windows, off by default). Typing in a browser or Discord then neither shows overlays nor fires Mimic&rsquo;s keys; spoken callouts keep playing. Unlocking overlays overrides it.</span>'
+    +  '</label>';
   // ⌨ Keys: the all-overlay keys, each beside what it does, in the same keycap
   // as the overlays' own (painted by wpRefreshOverlayHotkeys, which also counts
   // clashes). Mimic registers them globally (registerHideAllHotkey); saving
@@ -22650,6 +22838,17 @@ function wpWireHideHotkey() {
   _wpWireHotkeyRow('wpDmgHotkey', 'damageAlertHotkey', 'damageAlertHotkeyEnabled', 'CommandOrControl+Shift+D');
   _wpWireHotkeyRow('wpMiniHotkey', 'miniHotkey', 'miniHotkeyEnabled', 'CommandOrControl+Shift+M');
   wpWireDamageAlert();
+  // Focus gate checkbox — the SAME save-config path as Settings; main.js starts/stops the watcher.
+  var fgate = document.getElementById('wpFocusGate');
+  if (fgate && window.mimic && window.mimic.getConfig && window.mimic.saveConfig) {
+    if (!fgate.__wpInit) {
+      fgate.__wpInit = true;
+      window.mimic.getConfig().then(function(cfg){ fgate.checked = !!(cfg && cfg.hideOverlaysWhenUnfocused); }).catch(function(){});
+    }
+    _bindOnce(fgate, 'change', function(){
+      try { window.mimic.saveConfig({ hideOverlaysWhenUnfocused: !!fgate.checked }); } catch (e) {}
+    });
+  }
 }
 // 💥 Damage-taken alert ON/OFF button. Same contract as the hotkey rows: read
 // Mimic config, write a one-key patch, repaint. main.js's save-config handler
@@ -24229,7 +24428,8 @@ function _wpNightWindowText(hrs) {
 function wpFmtPP(cp) {
   if (cp == null || !isFinite(cp)) return '—';
   if (cp > 0 && cp < 50) return '&lt;0.1';
-  return (Math.round(cp / 100) / 10).toLocaleString('en-US', { maximumFractionDigits: 1 });
+  // Always one decimal so the column lines up (the guild lead, 2026-10-09: "either show a decimal or not").
+  return (Math.round(cp / 100) / 10).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 function wpNightLootWindowChips() {
   var h = '<div style="display:flex;gap:4px;align-items:center;margin-bottom:6px"><span class="wp-lbl" style="margin-right:2px">Window</span>';
@@ -31922,6 +32122,20 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(hit ? { npc: hit.npc } : { npc: null, loading: true }));
       }
+      // Target Info's Loot tab: the hovered item's card by item id (FB-73). Asked for on hover
+      // only, so rendering a drop table never costs a request.
+      if (req.method === 'GET' && req.url.startsWith('/api/item-card')) {
+        let itemId = NaN;
+        try { itemId = Number(new URL(req.url, 'http://x').searchParams.get('id')); } catch { /* */ }
+        if (!Number.isInteger(itemId) || itemId <= 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'id required' }));
+        }
+        fetchItemCard(itemId);
+        const hit = _itemCardById.get(itemId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(hit ? { card: hit.card } : { card: null, loading: true }));
+      }
       // Browser-side spell lookup. The dashboard fetches this ONCE on load to
       // turn spell names rendered on the resisted / inbound-damage / NPC cast
       // cards into PQDI links. We only ship { lowercaseName: id } (~3.9k * ~30
@@ -32381,6 +32595,7 @@ function startWebDashboard(port) {
           // A member sat on the Command Center at 18% long after the guild lead had
           // swapped back to the guild lead (live, 2026-08-13).
           _healerManaRoster.delete(_cl);
+          _ownPetRecs.delete(_cl);   // a camped character's spawn ids are gone with the zone
           // Same-client swap: forward "<character> swapped to <X>" to the
           // bot so /raid moves them to "Not in raid (swapped to X)" instead
           // of showing both characters as live raiders. Fire-and-forget on
@@ -32426,6 +32641,7 @@ function startWebDashboard(port) {
           noteSpawnIdSeen(st.spawn_id);
           noteSpawnIdSeen(st.target_id);
           noteSpawnIdSeen(st.pet_id);
+          try { _noteOwnPetForLoot(character, st, Date.now()); } catch (e) { void e; }   // own-pet loot flag: remember the pet's id while it lives
           // #105 — mob self-heal: the Zeal target gauge HP% rising for the same
           // target across frames → a mob_heal timeline tick on the live fight.
           try { _noteMobHealFromState(character, prevState, st); } catch (e) { void e; }
@@ -36633,37 +36849,36 @@ function captureUnmatchedPvpKill(line) {
   } catch (e) { void e; }
 }
 
-// EQ in-game item links land in the log as `\x12<hex blob>\x12Item Name\x12`.
-// Quarm's blob format observed in the wild: 7 hex chars = <1 version><5 ID><1 flag>.
-// We extract the item ID and turn the link into a clickable PQDI markdown URL so
-// guildies see "[A Lucid Shard](pqdi)" in Discord instead of "0022194A Lucid Shard"
-// (which is what they'd see if Discord strips the 0x12 delimiters with no transform).
+// EQ in-game item links land in the log as `\x12<7 digits><Item Name>\x12`: the
+// item id as 7 zero-padded DECIMAL digits, then the name, no separator
+// (A Lucid Shard, id 22194 → "\x120022194A Lucid Shard\x12" — the same shape
+// Mimic's Mob Info writes for its copy-a-link paste). We turn the link into a
+// clickable PQDI URL so guildies see "A Lucid Shard <pqdi>" in Discord instead
+// of "0022194A Lucid Shard" (what Discord shows once it strips the 0x12s).
+// Until agent 3.7.127 this read 5 of the digits as HEX, so every link pointed at
+// the wrong item (Ragebringer 11057 → 4357). Same rule as the bot's
+// linkifyEqItems; test/eq-item-link-agent.test.js holds it to the shared
+// fixtures in test/_eq-item-link-fixtures.js.
 //
 // Two passes:
-//   1. \x12-delimited form (raw from the EQ log)  →  markdown link
-//   2. Already-stripped form ("<hex run><Item Name>") in case the delimiters
-//      were lost upstream  →  markdown link
+//   1. \x12-delimited form (raw from the EQ log)  →  link, exact name
+//   2. Already-stripped form ("<7 digits><Item Name>") in case the delimiters
+//      were lost upstream  →  link, name guessed from its casing
 //
 // Item names containing `[`, `]`, `(`, `)` are left alone — those chars would
 // corrupt markdown link syntax. EQ item names don't normally have them.
-const EQ_ITEM_LINK_RX = /\x12([0-9A-Fa-f]{5,})\x12([^\x12]+)\x12/g;
+const EQ_ITEM_LINK_RX = /\x12(\d{7})([^\x12]+)\x12/g;
 
-// Discord-stripped fallback: exactly 7 UPPERCASE hex chars (Quarm's blob length)
-// immediately followed by an item-name-cased phrase. Item names start with an
-// optional article ("A "/"An "/"The ") then a Capital word, optionally followed
-// by more Capital words connected by short lowercase joiners ("of"/"the"/etc.).
+// Discord-stripped fallback: exactly 7 digits immediately followed by an
+// item-name-cased phrase. Item names start with an optional article
+// ("A "/"An "/"The ") then a Capital word, optionally followed by more Capital
+// words connected by short lowercase joiners ("of"/"the"/etc.).
 // Anchored to word boundaries to avoid matching plain numeric chat.
-const EQ_STRIPPED_LINK_RX = /\b([0-9A-F]{7})((?:A |An |The )?[A-Z][a-z`'\-]+(?: (?:[a-z]{1,3} )*[A-Z][a-z`'\-]+){0,6})\b/g;
+const EQ_STRIPPED_LINK_RX = /\b(\d{7})((?:A |An |The )?[A-Z][a-z`'\-]+(?: (?:[a-z]{1,3} )*[A-Z][a-z`'\-]+){0,6})\b/g;
 
 function _extractItemId(blob) {
-  // Quarm format: <1-char version><5-char hex ID><...flags>.
-  // Some emulators omit the version byte (older format: <5-char ID><...>).
-  // If the first char looks like a version digit (0 or 1) and there's room
-  // for a full 5-char ID after it, skip past the version byte.
-  const startIdx = (blob[0] === '0' || blob[0] === '1') && blob.length >= 6 ? 1 : 0;
-  const id = parseInt(blob.slice(startIdx, startIdx + 5), 16);
-  if (!Number.isFinite(id) || id <= 0 || id > 999999) return null;
-  return id;
+  const id = parseInt(blob, 10);
+  return id > 0 ? id : null;
 }
 
 function transformEqItemLinks(text) {
@@ -42593,6 +42808,9 @@ function _consumeRelayFires(data) {
     _lastRelayFireId = Math.max(_lastRelayFireId, data.next_id);
   }
   for (const fire of (data.fires || [])) {
+    // A zone-timer late join (bot utils/zoneTimers.js) is a countdown that started BEFORE we zoned in, so
+    // it is old by design: it skips the ghost TTL and the fire dedup below and only ever arms a timer.
+    if (fire && fire.late_join === true) { _runLateJoinFire(fire); continue; }
     const fireKey = fire.key || fire.name || '';
     // Our-clock time for this fire — _localFireKeys holds LOCAL stamps from our
     // own fires, so comparing a raw origin stamp against them mis-suppressed
@@ -42859,6 +43077,43 @@ function _runRelayedFire(fire, firedAtLocal) {
   // firedAtLocal is the originator's stamp translated onto OUR clock (see
   // _relayFiredAtLocal) — it drives the speakAt delay and the countdown start.
   _fireTriggerActions(trig, fire.captures || {}, firedAtLocal || fire.fired_at_ms || Date.now(), /*test=*/false, /*isRelay=*/true);
+}
+
+// A zone timer that follows you in (the guild lead, 2026-10-08, on the Plane of Tactics stampede: "if one
+// person had the stampede window it should go to anyone currently in the zone when it opens"). The bot
+// hands a raider who zones in after the emote each countdown of that window that is still running; we
+// arm it from the ORIGINAL fire time, on our clock, so it ends with everyone else's and speaks the
+// trigger's own end text. Nothing else runs: no overlay, no speech — the stampede already happened.
+// Skipped when we already run that trigger's countdown from the same window (we saw the line, a live
+// relay reached us, or the bot handed it again after a restart or a zone hop). A countdown from an OLDER
+// window is replaced: the bot only hands out a window a fresh sighting has not cleared.
+const LATE_JOIN_SAME_WINDOW_MS = 120_000;   // the bot's SAME_WINDOW_MS: two observers of one emote
+function _runLateJoinFire(fire) {
+  if (!fire || !fire.trigger_id) return false;
+  const tid = String(fire.trigger_id);
+  const startedAt = _relayFiredAtLocal(fire);
+  // Our own definition first: it carries end_text, warnings, colour. The bot's fields are the fallback
+  // for a trigger this agent has not loaded yet.
+  const def = (stats.guildTriggers || []).find(g => g && String(g.id) === tid);
+  const durSec = Number(fire.timer_duration_sec) || (def && Number(def.timer_duration_sec)) || 0;
+  const now = Date.now();
+  if (!(durSec > 0) || !Number.isFinite(startedAt) || startedAt + durSec * 1000 <= now) return false;
+  for (const row of _activeTimers.values()) {
+    if (!row || String(row.trigger_id || '') !== tid || !(row.ends_at_ms > now)) continue;
+    if (row.started_at_ms >= startedAt - LATE_JOIN_SAME_WINDOW_MS) {
+      _journalTrigger({ trigger: fire.name || 'zone timer', scope: 'guild_relay', checkpoint: TJ.MATCHED,
+                        stopped: true, reason: 'late join skipped — this countdown is already running' });
+      return false;
+    }
+  }
+  const trig = def
+    ? { ...def, timer_duration_sec: durSec, timer_duration_capture: null, _scope: 'guild_relay' }
+    : { id: tid, name: fire.name || 'zone timer', actions: [], timer_duration_sec: durSec,
+        end_text: fire.end_text || null, cooldown_seconds: fire.cooldown_seconds || 0, _scope: 'guild_relay' };
+  _startTimer(trig, startedAt, false, {});
+  _journalTrigger({ trigger: trig.name, scope: 'guild_relay', checkpoint: TJ.DISPATCHED,
+                    reason: 'late join — zoned in after it started; ' + Math.round((startedAt + durSec * 1000 - now) / 1000) + 's left' });
+  return true;
 }
 
 // Helpers for the relay endpoints. _queueUploadOpts is the canonical
@@ -43281,6 +43536,45 @@ function fetchNpcInteract(npcId) {
     req.on('timeout', () => { req.destroy(); _npcInteractInflight.delete(npcId); });
     req.end();
   } catch { _npcInteractInflight.delete(npcId); }
+}
+// Target Info's Loot tab: the item card shown on hover (FB-73). The bot's /api/agent/item-card
+// builds the compact card (name, flags, stat lines); this only relays and remembers it. Catalog
+// data, so 6h; an empty answer (an older bot 404s) is retried after 10 minutes, not pinned.
+const _itemCardById = new Map();         // itemId → { at, card|null }
+const _itemCardInflight = new Set();
+function fetchItemCard(itemId) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;
+  if (_itemCardInflight.has(itemId)) return;
+  const cached = _itemCardById.get(itemId);
+  if (cached && (Date.now() - cached.at) < (cached.card ? MOB_INFO_TTL_MS : 10 * 60 * 1000)) return;
+  _itemCardInflight.add(itemId);
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/item-card') + '?id=' + itemId;
+  const settle = (card) => {
+    _itemCardInflight.delete(itemId);
+    if (_itemCardById.size > 500) _itemCardById.clear();
+    _itemCardById.set(itemId, { at: Date.now(), card });
+  };
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 8000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        if (res.statusCode !== 200) return settle(null);
+        try { const j = JSON.parse(body); settle((j && j.card) ? j.card : null); }
+        catch { settle(null); }
+      });
+    });
+    req.on('error',   () => { _itemCardInflight.delete(itemId); });
+    req.on('timeout', () => { req.destroy(); _itemCardInflight.delete(itemId); });
+    req.end();
+  } catch { _itemCardInflight.delete(itemId); }
 }
 // Cast time (seconds) for a spell from the catalog (cast_ms). Default 4s when
 // the catalog doesn't carry it — a "You begin casting" line implies a real cast.
@@ -44890,6 +45184,10 @@ function buildMobInfo() {
     // AAs — from your own character, their Mimic, or a disc you saw them start.
     // Null for NPCs and when nothing is known (_targetPlayerTimers).
     target_timers:  _targetPlayerTimers(st, cached, Date.now()),
+    // Lull line on this mob: { verdict: 'immune' } (ability 31) / { verdict:
+    // 'unaffected', spell, caster_level, at_ms } (learned from the server's
+    // message) / null (unknown — the overlay draws nothing).
+    target_lull:    lullVerdictFor(st.target_name, myZoneId),
   };
 }
 
@@ -50159,6 +50457,8 @@ async function main() {
           // landing line exists, so an interrupt/fizzle/resist is the only
           // chance to take the timer back before someone trusts it.
           notePacifyMiss(line, b.character);
+          // "Your target looks unaffected." after a lull cast: same timer, taken back.
+          noteLullUnaffected(line, b.character);
           // A CURE that fizzles/gets interrupted never landed — void the cure
           // the relay above just registered, so the bot doesn't retire a
           // debuff the raider is still carrying.

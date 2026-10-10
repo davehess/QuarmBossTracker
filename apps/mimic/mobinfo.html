@@ -176,6 +176,20 @@
   .loot .seen.shared{opacity:0.7}
   .loot .unique{font-size:10px;line-height:1;margin-right:2px;color:#f0b429}
   .loot .empty{font-size:11px;color:#6e7681;font-style:italic;padding:5px 0}
+  /* FB-73 — the item name copies its EQ link, PQDI opens the item, hovering the name shows its card. */
+  .loot button.inm{background:none;border:0;padding:0;margin:0;font:inherit;text-align:left;cursor:pointer;min-width:0}
+  .loot button.inm:hover{color:#fff;text-decoration:underline dotted}
+  .loot button.inm.ok{color:#56d364}
+  .loot .pqdi{flex:none;font-size:8px;font-weight:600;color:#d2a8ff;background:#2a1d3d;text-decoration:none;cursor:pointer;
+    padding:0 4px;border:1px solid #a371f7;border-radius:3px;letter-spacing:.3px}
+  .loot .pqdi:hover{background:#3d2a57;border-color:#d2a8ff;color:#e9d5ff}
+  #itemTip{position:fixed;z-index:50;display:none;pointer-events:none;width:230px;max-width:calc(100vw - 8px);box-sizing:border-box;
+    padding:5px 7px;background:rgb(12 8 22 / .97);border:1px solid #a371f7;border-radius:5px;font-size:10px;line-height:1.35;
+    color:#c9d1d9;text-shadow:none;overflow:hidden}
+  #itemTip .tn{font-size:11px;font-weight:700;color:#e9d5ff;margin-bottom:2px}
+  #itemTip .tl{white-space:normal}
+  #itemTip .tl.fl{color:#f0b429;font-weight:600}
+  #itemTip .te{color:#6e7681;font-style:italic}
   /* special attack chips */
   .spec{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
   .spec .chip{font-size:10px;padding:2px 7px;border-radius:4px;background:#2a1d3d;
@@ -185,7 +199,7 @@
   /* sight chips — "invis will not hide you". Amber rather than the red warn
      tone: it defeats a PLAN (a pull, a corpse run), it is not something the mob
      does to you in a fight, and the two must stay tellable apart at a glance. */
-  .spec .chip.sight{background:#3d2f1d;color:#ffd9a0;border-color:#5a4522}
+  .spec .chip.sight, .spec .chip.lullno{background:#3d2f1d;color:#ffd9a0;border-color:#5a4522}
   #empty{color:rgba(255,255,255,0.5);font-size:12px;text-shadow:0 1px 2px #000;padding:4px 0}
   /* drag/lock/setup chrome — same pattern as the other overlays. */
   #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
@@ -592,6 +606,17 @@
     else if (mob.see_hide)     add('Sees Hide', 'Hide will not hide a rogue from this mob.');
     return out.join('');
   }
+  // The lull line on this mob (agent: mobInfo.target_lull). Only what a cast taught us gets a
+  // chip here — ability 31 already reads "Immune Pacify" off mob.specials, and unknown draws
+  // nothing. The time lives in the tooltip so the section stays byte-stable between polls.
+  function lullChip(lull){
+    if (!lull || lull.verdict !== 'unaffected') return '';
+    var t = new Date(lull.at_ms), pad = function(n){ return (n < 10 ? '0' : '') + n; };
+    var at = pad(t.getHours()) + ':' + pad(t.getMinutes()) + ':' + pad(t.getSeconds());
+    var tip = 'Your ' + (lull.spell || 'lull') + (lull.caster_level ? ' (cast at level ' + lull.caster_level + ')' : '')
+            + " did nothing on this mob ('Your target looks unaffected.' at " + at + '): too high a level for that spell, or immune. Try a stronger lull.';
+    return '<span class="chip lullno" title="'+esc(tip)+'">Pacify: unaffected</span>';
+  }
 
   // ── DOM handles + tab state ─────────────────────────────────────────────────
   var bodyEl = document.getElementById('body');
@@ -675,6 +700,20 @@
         _renderBody(_lastMi);
         return;
       }
+      // FB-73: a dropped item's name copies its EQ item link (the ✓ is held like a copy chip's).
+      var ib = t.closest('.inm');
+      if (ib) {
+        var paste = itemPaste(ib.getAttribute('data-iid'), ib.getAttribute('data-iname'));
+        if (paste) {
+          _copyText(paste);
+          _itemTipHide();
+          ib.classList.add('ok');
+          ib.textContent = '✓ copied';
+          _copyHoldUntil = Date.now() + 1200;
+          bodyEl.__wpHtml = null;
+        }
+        return;
+      }
       var chip = t.closest('.qcopy');
       if (chip) {
         _copyText(chip.getAttribute('data-copy') || '');
@@ -699,12 +738,14 @@
       if (url) { try { window.mimic.openExternal(url); } catch (e) {} }
     });
     bodyEl.addEventListener('mouseover', function(ev){
-      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .fqvtab, .qcopy, .qtoggle, .facl') : null;
+      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .inm, .fqvtab, .qcopy, .qtoggle, .facl') : null;
       if (a) { try { window.mimic.overlayHoverInteractive(true); } catch (e) {} }
+      if (a && a.classList.contains('inm')) _itemTipShow(a);   // FB-73: the item's card
     });
     bodyEl.addEventListener('mouseout', function(ev){
-      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .fqvtab, .qcopy, .qtoggle, .facl') : null;
+      var a = (ev.target && ev.target.closest) ? ev.target.closest('.pqdi, .inm, .fqvtab, .qcopy, .qtoggle, .facl') : null;
       if (a) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} }
+      if (a && a.classList.contains('inm')) _itemTipHide();
     });
   }
   // Hover-interact handshake — when the overlay is LOCKED (click-through),
@@ -800,6 +841,9 @@
   var _fqvSub = 'quest';
   try { _fqvSub = window.localStorage.getItem('wpTargetFqv') || 'quest'; } catch (e) {}
   var _npc = { id: null, data: null, loading: false, tries: 0, at: 0 };
+  // The NPC whose script the Quest tab reads. The bot adds quest_id when its stats pick is a same-name
+  // body from another zone (FB-72: Innovation's Giwin Mirakon came back as Tactics'); otherwise it is id.
+  function _qid(mob){ return mob && (mob.quest_id || mob.id); }
   function _loadNpc(id){
     if (_npc.id !== id) _npc = { id: id, data: null, loading: true, tries: 0, at: 0 };
     if (!_npc.loading || Date.now() - _npc.at < 1500) return;
@@ -867,7 +911,7 @@
   function renderQuest(mob, d){
     if (!mob || !mob.id) return '<div class="sub">no catalog NPC for this target</div>';
     if (!d) return '<div class="sub" style="color:#a371f7">' + (_npc.loading ? 'reading the quest script…' : 'nothing on record for this NPC') + '</div>';
-    if (_qOpenFor !== mob.id) { _qOpen = {}; _qOpenFor = mob.id; }
+    if (_qOpenFor !== _qid(mob)) { _qOpen = {}; _qOpenFor = _qid(mob); }
     var out = '';
     if (d.say && d.say.length) {
       out += '<div class="qhead">What to say</div>' + d.say.map(function(b, i){
@@ -923,8 +967,8 @@
       + d.vendor.map(function(v){ return '<div class="vrow"><span class="vn">' + esc(v.name) + '</span><span class="vp">' + _coin(v.price) + '</span></div>'; }).join('');
   }
   function renderFqv(mob){
-    if (mob && mob.id) _loadNpc(mob.id);
-    var d = (mob && _npc.id === mob.id) ? _npc.data : null;
+    if (mob && mob.id) _loadNpc(_qid(mob));
+    var d = (mob && _npc.id === _qid(mob)) ? _npc.data : null;
     var subs = [['faction', 'Faction'], ['quest', 'Quest']];
     if (d && d.vendor && d.vendor.length) subs.push(['vendor', 'Vendor']);   // only a vendor mob
     var sub = subs.some(function(s){ return s[0] === _fqvSub; }) ? _fqvSub : 'quest';
@@ -944,6 +988,89 @@
       try { document.execCommand('copy'); } catch (e) {} finally { ta.remove(); }
     }
     try { navigator.clipboard.writeText(text).catch(fallback); } catch (e) { fallback(); }
+  }
+
+  // ── FB-73: item links on the Loot tab ─────────────────────────────────────
+  // A member: "Mouse over on the dropped items should show the item's card, and clicking on it
+  // should copy the item paste. put a pqdi link next to it."
+  // The paste is what EverQuest makes of an item link: 0x12, the item id as 7 decimal digits, the
+  // item name, 0x12 (Quarm links carry the DECIMAL id, zero-padded; no space before the name).
+  var ITEM_LINK_ID_DIGITS = 7;
+  function itemPaste(id, name){
+    var n = Math.floor(Number(id));
+    var nm = String(name == null ? '' : name).replace(/[\x00-\x1f]/g, '').trim();
+    if (!isFinite(n) || n <= 0 || !nm) return '';
+    var d = String(n);
+    while (d.length < ITEM_LINK_ID_DIGITS) d = '0' + d;
+    return '\x12' + d + nm + '\x12';
+  }
+  // PQDI answers only on www. (bare pqdi.cc resets the connection).
+  function itemPqdi(id){
+    var n = Math.floor(Number(id));
+    return (isFinite(n) && n > 0) ? 'https://www.pqdi.cc/item/' + n : '';
+  }
+  // The card is fetched on hover, once per item, from the agent (which asks the bot); a render
+  // never fetches. An item with no card (older bot) is retried after a minute.
+  var _itemCards = {};
+  var _tipId = null, _tipName = '', _tipBtn = null, _tipEl = null;
+  function _loadItemCard(id){
+    var c = _itemCards[id];
+    if (c && (c.card || c.loading || Date.now() - c.at < 60000)) return;
+    c = _itemCards[id] = { card: null, loading: true, tries: 0, at: Date.now() };
+    function done(){ c.loading = false; c.at = Date.now(); if (_tipId === id) _itemTipPaint(); }
+    function ask(){
+      c.tries++;
+      fetch('http://127.0.0.1:' + PORT + '/api/item-card?id=' + id, { cache: 'no-store' })
+        .then(function(r){ return r.json(); })
+        .then(function(j){
+          if (j && j.card) { c.card = j.card; done(); }
+          else if (j && j.loading && c.tries < 8) setTimeout(ask, 700);
+          else done();
+        })
+        .catch(done);
+    }
+    ask();
+  }
+  function _itemTipPaint(){
+    if (!_tipEl || _tipId == null) return;
+    var c = _itemCards[_tipId];
+    var h = '<div class="tn">' + esc(c && c.card && c.card.name || _tipName) + '</div>';
+    if (c && c.card && Array.isArray(c.card.lines)) {
+      if (c.card.flags) h += '<div class="tl fl">' + esc(c.card.flags) + '</div>';
+      h += c.card.lines.map(function(l){ return '<div class="tl">' + esc(l) + '</div>'; }).join('');
+    } else if (c && !c.loading) {
+      h += '<div class="te">no card for this item</div>';
+    } else {
+      h += '<div class="te">loading item card…</div>';
+    }
+    _tipEl.innerHTML = h;
+    _itemTipPlace();
+  }
+  // Below the name, or above it when the window ends first; always inside the window.
+  function _itemTipPlace(){
+    if (!_tipEl || !_tipBtn || !_tipBtn.getBoundingClientRect) return;
+    var r = _tipBtn.getBoundingClientRect();
+    var w = _tipEl.offsetWidth, hh = _tipEl.offsetHeight;
+    var top = r.bottom + 2;
+    if (top + hh > window.innerHeight - 2) top = Math.max(2, r.top - hh - 2);
+    var left = Math.min(Math.max(4, r.left), Math.max(4, window.innerWidth - w - 4));
+    _tipEl.style.top = top + 'px'; _tipEl.style.left = left + 'px';
+  }
+  function _itemTipShow(btn){
+    var id = Math.floor(Number(btn.getAttribute('data-iid')));
+    if (!(id > 0)) return;
+    if (!_tipEl) {
+      _tipEl = document.createElement('div'); _tipEl.id = 'itemTip';
+      document.body.appendChild(_tipEl);
+    }
+    _tipId = id; _tipName = btn.getAttribute('data-iname') || ''; _tipBtn = btn;
+    _tipEl.style.display = 'block';
+    _loadItemCard(id);
+    _itemTipPaint();
+  }
+  function _itemTipHide(){
+    _tipId = null; _tipBtn = null;
+    if (_tipEl) _tipEl.style.display = 'none';
   }
 
   // ── Loot tab ──────────────────────────────────
@@ -988,9 +1115,16 @@
       var title = it.name + (it.pct != null ? ' · ' + pctTxt + ' published drop rate' : '')
                 + (unique ? ' · unique to this mob' : (cands > 1 ? ' · also drops from ' + (cands - 1) + ' other NPC(s)' : ''))
                 + (seen > 0 ? ' · won ' + seen + '× by Wolf Pack' : '');
+      // FB-73: a row with an item id gets the copy-link name button + a PQDI link; without one it stays plain.
+      var pq = itemPqdi(it.id);
+      var nameCell = pq
+        ? '<button type="button" class="nm inm" data-iid="' + Math.floor(Number(it.id)) + '" data-iname="' + esc(it.name)
+          + '" title="Click to copy the item link, then paste it into EQ">' + esc(it.name) + '</button>'
+          + '<a class="pqdi" data-pqdi="' + pq + '" title="Open this item on PQDI.cc (opens your browser)">PQDI</a>'
+        : '<span class="nm">' + esc(it.name) + '</span>';
       rows += '<div class="row ' + tier + '" title="' + esc(title) + '">'
             + uniqueChip
-            + '<span class="nm">' + esc(it.name) + '</span>'
+            + nameCell
             + lore
             + seenChip
             + '<span class="pct' + (it.pct >= 50 ? ' high' : '') + '">' + pctTxt + '</span>'
@@ -1345,7 +1479,7 @@
         res = '<div class="res">'+res+'</div>';
       }
       var spec = '';
-      var chips = sightChips(mob);          // before the specials: asked before the pull
+      var chips = sightChips(mob) + lullChip(mi.target_lull);   // before the specials: asked before the pull
       if (mob && Array.isArray(mob.specials) && mob.specials.length){
         for (var j=0;j<mob.specials.length;j++){ var lab=mob.specials[j]; chips += '<span class="'+specClass(lab)+'">'+esc(lab)+'</span>'; }
       }
@@ -1434,6 +1568,7 @@
     // copy chip's ✓. While a chip shows ✓ the repaint waits (the click cleared __wpHtml, so
     // the next paint after the hold goes through).
     if (Date.now() < _copyHoldUntil || html === bodyEl.__wpHtml) return;
+    _itemTipHide();   // the button it hung off is gone (FB-73)
     bodyEl.innerHTML = html;
     bodyEl.__wpHtml = html;
     _fitHeight();
