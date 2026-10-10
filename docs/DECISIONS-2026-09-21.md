@@ -8828,9 +8828,11 @@ MacroQuest-community automap page *"for pathing of vex thal"*.
   terms published**; other zones sit behind an anti-bot challenge (not bypassed). Do not scrape it.
 - **Patrol routes come from our own import instead:** mirror `grid` (`id, zoneid, type, type2`) and `grid_entries`
   (`gridid, zoneid, number, x, y, z, heading, pause`) in `scripts/sync-from-eqmac.js` + one migration; draw via
-  `eqemu_spawn2.pathgrid`. ⚠ Unconfirmed that the Quarm dump carries those tables (the upstream repo is outside a cloud
-  session's access and our sync log lists only mirrored tables). ⚠ If it does not, the existing Al'Kabor fallback would
-  silently fill them from a DIFFERENT server's dump — route tables must fail loudly instead, never fall back.
+  `eqemu_spawn2.pathgrid`. **Confirmed 2026-10-10 by streaming `quarm_2026-09-27-22_44.tar.gz`:** `grid` (`id, zoneid,
+  type, type2`, 22,824 rows) and `grid_entries` (`gridid, zoneid, number, x, y, z, heading, pause, centerpoint`, 711,517
+  rows) are both in the Quarm dump; Vex Thal (zone id 426) has 44 grids / 398 waypoints. `spells_new` carries `range`
+  (default 100) and `aoerange` (default 0) — Pacify 200/0, Harmony 200/40 — so the range-ring columns come from the same
+  dump. ⚠ The Al'Kabor fallback must still never fill route tables: fail loudly if a future dump drops them.
 - **Options put to the guild lead** (workshop page, version 3): 3D-A raised walls from our line maps (no game art, safe
   on the public site; recommended for the web), 3D-B real models converted locally inside Mimic from the player's own
   install (nothing published), 3D-C real models on the website (needs a rights call, or the viewer author's written
