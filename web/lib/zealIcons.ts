@@ -13,7 +13,7 @@ export type Picture = {
 };
 
 export type Guild = {
-  code: string;         // ^B<code>^ banner, ^I<code>^ icon.
+  code: string;         // ^F<code>^ flag (banner), ^I<code>^ icon.
   name: string;
   pictures?: Picture[]; // Downloadable picture files, PNG first.
 };
