@@ -9022,3 +9022,29 @@ Harmony, Hide/Sneak for non-rogues).
   - Options put to the guild lead: A no automation — keep an officer FIRST in the raid list so the server's own
     handoff lands on them (and/or promote at raid start); B a confirm-first prompt where a human presses a key;
     C a password auto-promote (copy of `/autoraidinvite`; rules risk). Recommended A.
+
+### 225. Raid lead: C (password auto-handoff) as a Zeal setting, B as the no-password fallback; `/pipe ARI` posts the invite password to Discord; marker key `^MA^` (2026-10-10)
+**The calls** (the guild lead):
+- *"/raidpromote makes someone a group leader presumably from unassigned making a new group in order from 1 to N where
+  the first open group with no member is."* — so `#raidpromote` is a group-leader tool, not a raid-leader one.
+- *"A is good to know, but we figure that out from Zeal pipes now too. update command center when raid lead changes."*
+  — the raid leader is already visible from the Zeal pipe; the Command Center must update when it changes.
+- *"B is good if there is a password and the person asking to take over raid lead doesn't have the password."* — the
+  confirm-first prompt is the fallback for a request WITHOUT the password.
+- *"C is ideal because we can set it to automatically take raid lead. this would be ideal to be able to set in our
+  zeal in like we so with autojoining channels in eqclient.ini."* — the password auto-handoff, configured persistently
+  in the Zeal ini like channel auto-join.
+- *"may need to accept client only passwords and make sure it doesn't throw an error or crash anyone if the person
+  receiving the request didn't have zeal or doesn't have it up to date OR neither person is a raid lead or officer or
+  anything else."* — the password lives only on the leader's client (never uploaded); every failure path is silent
+  and safe: no Zeal / old Zeal on either side, the receiver not raid leader, the sender not in the raid.
+- *"marker should be MA"* — the main-assist tag key stays `^MA^`.
+- *"a /pipe ARI should update something on our side in discord with/Ari and the Password given. it may not need to
+  overwrite only the current ARI person and password if we're doing more than one raid for something.."* — the
+  auto-invite (ARI) password goes to Discord so raiders can get invited, ONE ENTRY PER LEADER (several raids can run).
+- *"ARI is cleared currently when you restart the client"* — ARI should persist across a client restart.
+- ⚠ **Rules note (recorded, not overriding the call):** §224's research found Quarm's posted rules forbid automation
+  and say "if you have to ask… don't". Zeal already ships `/autoraidinvite`, which acts on a tell the same way, so the
+  auto-handoff sits in that existing precedent; the guild lead may still want a written OK from the Quarm team.
+- **Status:** a Zeal fork draft (persisted ARI, escaped password match, `/autoraidlead`, pipe notices) and the
+  Mimic/bot side (ARI card in Discord per leader, raid-leader change on the Command Center) are being drafted.
