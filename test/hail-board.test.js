@@ -40,7 +40,14 @@ function env(tables = {}, { enabled = true } = {}) {
   const sb = {
     isEnabled: () => enabled,
     select: (...a) => fake.select(...a),
-    selectAllPaged: (...a) => fake.selectAllPaged(...a),
+    // e.failRoster simulates a raid_roster read that times out (decided when the read ends); e.hold (a promise)
+    // parks a raid_roster read until it resolves, a slow Supabase; e.rosterReads counts every attempt.
+    selectAllPaged: (table, ...a) => {
+      if (table !== 'raid_roster') return fake.selectAllPaged(table, ...a);
+      e.rosterReads++;
+      if (!e.hold) return e.failRoster ? Promise.resolve(null) : fake.selectAllPaged(table, ...a);
+      return e.hold.then(() => (e.failRoster ? null : fake.selectAllPaged(table, ...a)));
+    },
     upsert: async (table, rows) => {
       upserts.push({ table, rows: JSON.parse(JSON.stringify(rows)) });
       if (table === 'bot_kv') {
@@ -53,7 +60,7 @@ function env(tables = {}, { enabled = true } = {}) {
       return rows;
     },
   };
-  const e = { tables: t, fake, upserts, clock: KILL + 20_000 };
+  const e = { tables: t, fake, upserts, clock: KILL + 20_000, failRoster: false, rosterReads: 0 };
   e.hb = hailBoard.create({ supabase: sb, guildId: 'g', now: () => e.clock, log: { warn() {} } });
   e.boot = () => hailBoard.create({ supabase: sb, guildId: 'g', now: () => e.clock, log: { warn() {} } });
   e.calls = (table, re) => fake.calls.filter(c => c.table === table && (!re || re.test(c.query))).length;
@@ -160,12 +167,32 @@ describe('a hail boss kill opens a window', () => {
     expect(e.upserts).toHaveLength(0);
   });
 
-  it('falls back to the fight\'s participants when no roster is fresh, and opens nothing when there is nobody', async () => {
+  it('uses the fight\'s participants when no roster is fresh, and still opens (pending) when there is nobody at all', async () => {
+    const none = env();
+    const empty = await none.hb.openWindow({ bossId: 'saryrn', killedAtMs: KILL });
+    expect(empty).toMatchObject({ roster: [], roster_pending: true });
     const e = env();
-    expect(await e.hb.openWindow({ bossId: 'saryrn', killedAtMs: KILL })).toBeNull();
     const w = await e.hb.openWindow({ bossId: 'saryrn', killedAtMs: KILL, participants: ['Aldenmar', 'Brackwyn', 'Aldenmar', 'a bat'] });
     expect(w.roster).toEqual(['Aldenmar', 'Brackwyn']);
     expect(w.uploaders).toEqual([]);
+    expect(w.roster_pending).toBe(true);
+  });
+
+  it('the roster is the snapshot UNION the fight\'s participants, deduped without regard to case', async () => {
+    const e = env({ raid_roster: rosterRows(['Aldenmar', 'Brackwyn', 'Corvale'], 'u1') });
+    const w = await e.hb.openWindow({ bossId: 'grummus', killedAtMs: KILL,
+      participants: ['brackwyn', 'Rethlan', 'Nyssara', 'a bat'] });
+    expect([...w.roster].sort()).toEqual(['Aldenmar', 'Brackwyn', 'Corvale', 'Nyssara', 'Rethlan']);
+    expect(w.roster_pending).toBeUndefined();         // the read worked and found people: nothing to retry
+    expect(w.uploaders).toEqual(['u1']);
+  });
+
+  it('a roster read that fails does not freeze the window: it opens pending with the participants', async () => {
+    const e = env({ raid_roster: rosterRows(RAID, 'u1') });
+    e.failRoster = true;
+    const w = await e.hb.openWindow({ bossId: 'grummus', killedAtMs: KILL, participants: ['Aldenmar'] });
+    expect(w).toMatchObject({ roster: ['Aldenmar'], uploaders: [], roster_pending: true });
+    expect(e.tables.bot_kv[0].value.windows[0].roster_pending).toBe(true);
   });
 
   it('is one window per death: a second report folds in, and the earlier kill time wins', async () => {
@@ -307,6 +334,141 @@ describe('the board sorts every raider from what we already collect', () => {
     e.flag('Corvale', 'hail', 'hail_witnessed', at(3), { npc: 'A Planar Projection' });   // seen, not self-reported
     const [view] = (await e.hb.getBoard()).windows;
     expect(view.seen_by).toBe(3);
+  });
+});
+
+// ── A roster that arrived thin (FB-71) ────────────────────────────────────────────────────────────────
+// A member, 2026-10-10: "The command center did not capture everyone's hails for grummus". 48 raiders hailed
+// and the card showed one name: the post-kill upload burst timed the raid_roster read out, the window froze on
+// the uploader's own player list, and every other hailer was invisible to the board for the whole 20 minutes.
+
+describe('a roster read that failed is retried, and a witnessed hailer is on the board', () => {
+  const POLL = 30_000;
+
+  async function pendingGrummus(extra = {}) {
+    const e = env({ raid_roster: rosterRows(RAID, 'u1'), ...extra });
+    e.failRoster = true;
+    const w = await e.hb.openWindow({ bossId: 'grummus', killedAtMs: KILL, participants: ['Aldenmar'] });
+    e.failRoster = false;
+    return { e, w };
+  }
+  const everyone = (v) => [...v.still.map(s => s.name), ...v.hailed.map(h => h.name), ...v.already_flagged].sort();
+
+  it('a poll after 30 s re-reads the roster, unions the whole raid in, clears pending and persists it', async () => {
+    const { e, w } = await pendingGrummus();
+    expect(e.rosterReads).toBe(1);
+    expect(everyone((await e.hb.getBoard()).windows[0])).toEqual(['Aldenmar']);   // inside the 30 s: still thin
+    e.advance(POLL);
+    const [view] = (await e.hb.getBoard()).windows;
+    expect(e.rosterReads).toBe(2);
+    expect(everyone(view)).toEqual([...RAID].sort());
+    expect(view.seen_by).toBe(1);                                     // the roster's uploader is now counted
+    expect(w.roster_pending).toBeUndefined();
+    const stored = e.tables.bot_kv[0].value.windows[0];
+    expect(stored.roster_pending).toBeUndefined();
+    expect([...stored.roster].sort()).toEqual([...RAID].sort());
+    expect(stored.uploaders).toEqual(['u1']);
+    // Settled: no further roster read however long the window stays open.
+    e.advance(5 * MIN);
+    await e.hb.getBoard();
+    expect(e.rosterReads).toBe(2);
+  });
+
+  it('never retries inside 30 s, never twice at once, and keeps trying every 30 s while the read keeps failing', async () => {
+    const { e } = await pendingGrummus();
+    e.failRoster = true;
+    for (const ms of [5_000, 10_000, 14_000]) { e.advance(ms); await e.hb.getBoard(); }   // 29 s after the open
+    expect(e.rosterReads).toBe(1);
+    e.advance(1_000);
+    await Promise.all([e.hb.getBoard(), e.hb.getBoard(), e.hb.getBoard()]);              // 30 s: one retry for all three
+    expect(e.rosterReads).toBe(2);
+    expect(e.hb._windows()[0].roster_pending).toBe(true);
+    e.advance(29_000); await e.hb.getBoard();
+    expect(e.rosterReads).toBe(2);
+    e.advance(1_000); await e.hb.getBoard();
+    expect(e.rosterReads).toBe(3);
+  });
+
+  it('a slow retry is never doubled: a poll that arrives while it is in flight waits for it', async () => {
+    const { e } = await pendingGrummus();
+    let release; e.hold = new Promise(r => { release = r; });
+    e.advance(POLL);
+    const first = e.hb.getBoard();
+    await flush();
+    expect(e.rosterReads).toBe(2);
+    e.advance(POLL + 1_000);                       // a second poll well past the throttle, the read still parked
+    const second = e.hb.getBoard();
+    await flush();
+    expect(e.rosterReads).toBe(2);
+    e.failRoster = true;                            // the parked read times out: the window is still pending...
+    release();
+    await Promise.all([first, second]);
+    expect(e.hb._windows()[0].roster_pending).toBe(true);
+    expect(e.rosterReads).toBe(2);                  // ...and the second poll did not start a read of its own
+  });
+
+  it('a read that works but finds nobody keeps the window pending; the retry reads only the window\'s own span', async () => {
+    const e = env({ raid_roster: rosterRows(['Staleguy'], 'u9', 40) });
+    await e.hb.openWindow({ bossId: 'grummus', killedAtMs: KILL });
+    expect(e.hb._windows()[0]).toMatchObject({ roster: [], roster_pending: true });
+    e.tables.raid_roster.push(...rosterRows(['Lateguy'], 'u8', -30));
+    e.advance(POLL);
+    await e.hb.getBoard();
+    // Lateguy was captured 30 minutes AFTER the kill, past the NPC's departure: not the raid at the kill.
+    expect(e.hb._windows()[0]).toMatchObject({ roster: [], roster_pending: true });
+    e.tables.raid_roster.push(...rosterRows(['Aldenmar'], 'u1', -5));
+    e.advance(POLL);
+    const [view] = (await e.hb.getBoard()).windows;
+    expect(everyone(view)).toEqual(['Aldenmar']);
+    expect(e.hb._windows()[0].roster_pending).toBeUndefined();
+  });
+
+  it('a hailer the roster missed is added to the board as seen, once, and kept across a restart', async () => {
+    const e = env({ raid_roster: rosterRows(RAID, 'u1') });
+    await e.hb.openWindow({ bossId: 'grummus', killedAtMs: KILL });
+    const npc = { npc: 'A Planar Projection' };
+    e.flag('Quillon', 'hail', 'hail_witnessed', at(3), npc);                         // not on the roster
+    e.flag('Sarnoth', 'hail', 'hail_witnessed', at(3), { npc: 'Seer Mal Nae' });      // a different NPC
+    e.flag('Brindlo', 'hail', 'hail_witnessed', at(-10), npc);                       // before this kill
+    e.flag('Tolvane', 'hail', 'hail_witnessed', at(3), { ...npc, zone: '214' });      // another zone's projection
+    e.flag('Corvale', 'hail', 'hail_witnessed', at(4), npc);                         // already on the roster
+    const [view] = (await e.hb.getBoard()).windows;
+    expect(view.hailed).toEqual([{ name: 'Corvale', how: 'seen' }, { name: 'Quillon', how: 'seen' }]);
+    expect(everyone(view)).toEqual([...RAID, 'Quillon'].sort());
+    e.advance(6_000);
+    expect((await e.hb.getBoard()).windows[0].hailed.map(h => h.name)).toEqual(['Corvale', 'Quillon']);
+    expect(e.hb._windows()[0].roster.filter(n => n === 'Quillon')).toHaveLength(1);
+    await flush();
+    expect(e.tables.bot_kv[0].value.windows[0].roster).toContain('Quillon');
+    const back = (await e.boot().getBoard()).windows[0];
+    expect(back.hailed.map(h => h.name)).toContain('Quillon');
+  });
+
+  it('a witnessed hailer joins the earliest window their hail fits, not every window', async () => {
+    const e = env({ raid_roster: rosterRows(['Aldenmar'], 'u1') });
+    await e.hb.openWindow({ bossId: 'tallon_zek', killedAtMs: KILL });
+    e.advance(3 * MIN);
+    await e.hb.openWindow({ bossId: 'vallon_zek', killedAtMs: KILL + 2 * MIN });
+    e.flag('Quillon', 'hail', 'hail_witnessed', at(2.5), { npc: 'a planar projection', zone: '214' });
+    const by = Object.fromEntries((await e.hb.getBoard()).windows.map(w => [w.boss_id, everyone(w)]));
+    expect(by).toEqual({ tallon_zek: ['Aldenmar', 'Quillon'], vallon_zek: ['Aldenmar'] });
+  });
+
+  it('a pending window with nobody on it asks nothing about raiders, and an idle board makes no read at all', async () => {
+    const e = env();
+    e.failRoster = true;
+    await e.hb.openWindow({ bossId: 'grummus', killedAtMs: KILL });
+    const afterOpen = e.fake.calls.length;
+    const [view] = (await e.hb.getBoard()).windows;
+    expect(view).toMatchObject({ still: [], hailed: [], already_flagged: [] });
+    expect(e.fake.calls.filter(c => c.table === 'pop_flags' && /character=in\./.test(c.query))).toEqual([]);
+    expect(e.fake.calls.length).toBeGreaterThan(afterOpen);          // the one hail read; nothing per-raider
+    // The window ends: no board, no retry, no read of any table, however long the poll goes on.
+    e.advance(21 * MIN);
+    const reads = e.rosterReads, calls = e.fake.calls.length;
+    for (let i = 0; i < 3; i++) { expect(await e.hb.getBoard()).toEqual({ windows: [] }); e.advance(MIN); }
+    expect(e.rosterReads).toBe(reads);
+    expect(e.fake.calls.length).toBe(calls);
   });
 });
 
