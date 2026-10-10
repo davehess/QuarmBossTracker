@@ -32122,6 +32122,20 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify(hit ? { npc: hit.npc } : { npc: null, loading: true }));
       }
+      // Target Info's Loot tab: the hovered item's card by item id (FB-73). Asked for on hover
+      // only, so rendering a drop table never costs a request.
+      if (req.method === 'GET' && req.url.startsWith('/api/item-card')) {
+        let itemId = NaN;
+        try { itemId = Number(new URL(req.url, 'http://x').searchParams.get('id')); } catch { /* */ }
+        if (!Number.isInteger(itemId) || itemId <= 0) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'id required' }));
+        }
+        fetchItemCard(itemId);
+        const hit = _itemCardById.get(itemId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(hit ? { card: hit.card } : { card: null, loading: true }));
+      }
       // Browser-side spell lookup. The dashboard fetches this ONCE on load to
       // turn spell names rendered on the resisted / inbound-damage / NPC cast
       // cards into PQDI links. We only ship { lowercaseName: id } (~3.9k * ~30
@@ -43523,6 +43537,45 @@ function fetchNpcInteract(npcId) {
     req.on('timeout', () => { req.destroy(); _npcInteractInflight.delete(npcId); });
     req.end();
   } catch { _npcInteractInflight.delete(npcId); }
+}
+// Target Info's Loot tab: the item card shown on hover (FB-73). The bot's /api/agent/item-card
+// builds the compact card (name, flags, stat lines); this only relays and remembers it. Catalog
+// data, so 6h; an empty answer (an older bot 404s) is retried after 10 minutes, not pinned.
+const _itemCardById = new Map();         // itemId → { at, card|null }
+const _itemCardInflight = new Set();
+function fetchItemCard(itemId) {
+  const opts = _uploadOpts;
+  if (!opts || !opts.botUrl || !opts.token) return;
+  if (_itemCardInflight.has(itemId)) return;
+  const cached = _itemCardById.get(itemId);
+  if (cached && (Date.now() - cached.at) < (cached.card ? MOB_INFO_TTL_MS : 10 * 60 * 1000)) return;
+  _itemCardInflight.add(itemId);
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/item-card') + '?id=' + itemId;
+  const settle = (card) => {
+    _itemCardInflight.delete(itemId);
+    if (_itemCardById.size > 500) _itemCardById.clear();
+    _itemCardById.set(itemId, { at: Date.now(), card });
+  };
+  try {
+    const u = new URL(url);
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.request({
+      method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search,
+      headers: { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` },
+      timeout: 8000,
+    }, (res) => {
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        if (res.statusCode !== 200) return settle(null);
+        try { const j = JSON.parse(body); settle((j && j.card) ? j.card : null); }
+        catch { settle(null); }
+      });
+    });
+    req.on('error',   () => { _itemCardInflight.delete(itemId); });
+    req.on('timeout', () => { req.destroy(); _itemCardInflight.delete(itemId); });
+    req.end();
+  } catch { _itemCardInflight.delete(itemId); }
 }
 // Cast time (seconds) for a spell from the catalog (cast_ms). Default 4s when
 // the catalog doesn't carry it — a "You begin casting" line implies a real cast.

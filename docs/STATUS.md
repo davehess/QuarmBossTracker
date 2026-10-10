@@ -103,6 +103,18 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ Target Info Loot tab: item card on hover, click to copy the item link, PQDI link (agent 3.7.125, Mimic beta,
+  2026-10-10; FB-73).** A member: hovering a dropped item should show its card, clicking should copy the item paste, and
+  a PQDI link should sit next to it. Each row with an item id now has the name as a button (click copies
+  `0x12` + the id as 7 decimal digits + the name + `0x12`, with a ✓ copied cue), a small PQDI link (`www.pqdi.cc/item/<id>`
+  through the open-external path) and a card on hover (fetched once per item, never on render). The card comes from a NEW
+  bot route `GET /api/agent/item-card` relayed by the agent's `/api/item-card`; **until that route is on `main` the
+  hover reads "no card for this item"** while the copy and PQDI parts already work. Other lists of items not changed:
+  the PoP overlay's boss loot (`apps/mimic/popraid.html`), the Command Center rolls and the dashboard's Loot tab.
+  `apps/mimic/mobinfo.html`, `packages/wolfpack-logsync/index.js` (`fetchItemCard`), test
+  `test/target-info-item-links.test.js`. ⚠ Found on the way: the chat relay's item links decode the id as HEX, but
+  Quarm writes it in DECIMAL, so those PQDI links point at the wrong item (see the bot-side note, not fixed here).
+  Waits on the guild lead pasting a copied link into EQ to confirm the 7-digit form.
 - **🧪 /pop/guide: next steps for flags at the top, two previews (web, beta, 2026-10-10; the guild lead: "are we taking
   piecemeal flags? if so we should put at the top of the guide next steps for flags in a consolidated place").**
   Yes, piecemeal: a flag reaches a character from Mimic, /who, loot or the owner's tick, and nothing showed what is

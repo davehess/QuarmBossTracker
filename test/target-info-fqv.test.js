@@ -136,7 +136,7 @@ describe('the Quest tab folds the NPC text, warns, and labels items', () => {
 describe('a locked overlay still takes the clicks', () => {
   const code = stripJs(html);
   it('the hover handshake covers the sub-tabs, chips and the says toggles', () => {
-    expect(code).toMatch(/closest\('\.pqdi, \.fqvtab, \.qcopy, \.qtoggle, \.facl'\)[^\n]*\n[^\n]*overlayHoverInteractive\(true\)/);
-    expect(code).toMatch(/closest\('\.pqdi, \.fqvtab, \.qcopy, \.qtoggle, \.facl'\)[^\n]*\n[^\n]*overlayHoverInteractive\(false\)/);
+    expect(code).toMatch(/closest\('\.pqdi, \.inm, \.fqvtab, \.qcopy, \.qtoggle, \.facl'\)[^\n]*\n[^\n]*overlayHoverInteractive\(true\)/);
+    expect(code).toMatch(/closest\('\.pqdi, \.inm, \.fqvtab, \.qcopy, \.qtoggle, \.facl'\)[^\n]*\n[^\n]*overlayHoverInteractive\(false\)/);
   });
 });
