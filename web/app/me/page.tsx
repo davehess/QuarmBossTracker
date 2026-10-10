@@ -55,6 +55,11 @@ import { cookies } from 'next/headers';
 import { pickRaidLayout, RAID_LAYOUT_COOKIE } from '@/lib/raidLayout';
 import { GUILD_TAG } from '@/lib/guild';
 
+export const metadata = {
+  title: 'My stats',
+  description: 'Your characters, tells, buffs and personal history. Private to you.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type CharRow = {

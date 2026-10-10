@@ -25,6 +25,7 @@ import {
   type EraSummary,
 } from '@/lib/character-family';
 import { fetchParseSummary, type ParseSummary } from '@/lib/capSafeReads';
+import { characterMeta } from '@/lib/pageMeta';
 
 export const dynamic = 'force-dynamic';
 
@@ -184,15 +185,12 @@ async function load(name: string) {
 
 // The character name is already in the route, so this needs no query at all —
 // the unfurl goes from "WolfPack.quest" to the character being linked for free.
+// Same words as the Discord card (lib/pageMeta.ts characterMeta). Name from the URL only, so a hidden or
+// stats-excluded character leaks nothing the link did not already say.
 export async function generateMetadata({ params }: { params: Promise<{ name: string }> }): Promise<Metadata> {
   const { name } = await params;
-  const clean = decodeURIComponent(name || '').trim().replace(/[^A-Za-z]/g, '').slice(0, 24);
-  if (!clean) return {};
-  const display = clean.charAt(0).toUpperCase() + clean.slice(1).toLowerCase();
-  return {
-    title: display,
-    description: `${display} on WolfPack.quest — gear, inventory, spells, factions and parse history.`,
-  };
+  const { title, description } = characterMeta(name);
+  return { title, description };
 }
 
 export default async function CharacterPage({ params }: { params: Promise<{ name: string }> }) {

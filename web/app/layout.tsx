@@ -40,10 +40,12 @@ export const metadata: Metadata = {
     template: IS_BETA ? '%s · WolfPack.quest (beta)' : '%s · WolfPack.quest',
   },
   description: 'Guild-wide build planner, parse history, and loadout library for Project Quarm.',
+  // ⚠ NO `title`, `description` or `url` here (the guild lead, 2026-10-10: every page unfurls with its own
+  // name and summary). Next fills an empty openGraph.title/description from the page's own `title` and
+  // `description`, but a value pinned at the root WINS over the page's, so every page's og:title read
+  // "WolfPack.quest" and its og:description the site blurb. A pinned `url` made every page claim the home
+  // page as its canonical address. test/page-metadata.test.js fails if any of the three comes back.
   openGraph: {
-    title:       'WolfPack.quest',
-    description: 'Guild-wide build planner, parse history, and loadout library for Project Quarm.',
-    url:         SITE_URL,
     siteName:    'WolfPack.quest',
     type:        'website',
   },

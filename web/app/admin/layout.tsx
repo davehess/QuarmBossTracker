@@ -10,6 +10,10 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { isOfficer } from '@/lib/officer';
 import AdminQueueBanner from './AdminQueueBanner';
 
+// Every officer page stays out of search results (the guild lead, 2026-10-10: every page gets its own title and
+// summary; the officer pages get theirs and keep this). Set once here so a new admin page cannot forget it.
+export const metadata = { robots: { index: false, follow: false } };
+
 export const dynamic = 'force-dynamic';
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {

@@ -22,6 +22,14 @@ import {
 } from '@/lib/itemDecode';
 import { type ItemRecipe, TradeskillsInline, TradeskillsGrouped, INLINE_CAP } from './Tradeskills';
 
+import { pageMetadata } from '@/lib/pageMetaData';
+
+// "Ragebringer · Item": the catalog name and the kind, nothing else (lib/pageMeta.ts, which Discord's card shares).
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  return pageMetadata(`/db/item/${encodeURIComponent(id)}`);
+}
+
 export const dynamic = 'force-dynamic';
 
 // Beta preview (2026-09-24): ?v=b / ?v=c add a Tradeskills section in two

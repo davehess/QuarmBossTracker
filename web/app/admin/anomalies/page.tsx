@@ -27,6 +27,11 @@ import {
   type EncPlayer,
 } from '@/lib/anomalies';
 
+export const metadata = {
+  title: 'Data anomalies · Admin',
+  description: 'Officer review of raids that look foreign and other data-quality problems in the parses.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type Enc = {

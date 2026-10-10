@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Every page unfurls with its own name** (§215) | On `main` (web 1.8.135): `pageMeta.ts` covers every route, `pageMetaData.ts` names FB / catalog pages, root OG no longer pinned, `test/page-metadata.test.js` enforces it | the guild lead: post a fresh `/feedback/FB-<n>` link in Discord (it caches per URL) and say whether parses should name their boss |
 | **Zeal: cursor with the UI hidden (pick B) + PR cleanup** (§213) | Branch `hide-ui-cursor` (`2433493`) pushed and merged into `test-all` (`4014c49`); the GitHub build passed (`zeal_test-all.zip`, 2026-10-09 18:12 UTC), not run in game. The four tag branches are force-pushed as one commit each on v1.4.8 (the guild lead: *"force push github"*): `tag-shapes` `c2a5333`, `tag-persistence` `c143cee`, `tag-corpses` `7f7c824`, `tag-icon-files` `9035722` (on `tag-shapes`). Deleting `bandolier-chat-filter` and `pipe-spawn-id` was refused by the cloud session's git proxy (HTTP 403) | the guild lead: (1) Mimic → Settings → Zeal → Test build → Install, run the 9 steps in `docs/upstream/zeal-hide-ui-cursor/PULL-REQUEST.md`; (2) delete the two branches on GitHub (Branches page → 🗑); (3) re-author each branch and open the PRs |
 | **Europa tag picture replaced** (§213) | web 1.8.133 on `beta` (`ba445fa4`): the shield logo as `EUR.png`/`EUR.tga`, 226×256 | the guild lead: look at https://b.wolfpack.quest/zeal-icons; say graduate to main |
 | **"Your target looks unaffected." drops the phantom lull timer** (§212) | On `beta`: agent 3.7.124 (`10901c15`), agent + Mimic Target Info | a beta tester casts Pacify at a mob above its level and checks the bar goes and the amber chip shows |
@@ -8682,3 +8683,41 @@ flag lines, /who in a plane, loot from a plane, the owner's ticks), and nothing 
   them from the raw flags; steps with no flag (the HoH zone-in, the Maelin hails) can only be ticked by hand; the
   panel shows the state as the page loaded. Drafted by a Sonnet agent, reviewed here; 42 tests, mutation-checked.
 - **Next:** the guild lead picks A, B or both; the pick graduates to main and the `?nx` switch goes.
+
+### 215. Every page unfurls with its own name and summary: a standing rule, and the Discord card was never reading the page (2026-10-10, web)
+**The ask** (the guild lead, looking at Discord's card for `https://wolfpack.quest/feedback/FB-71`, which was the site-wide
+"Guild-wide build planner…" card): *"discord embedded links for the feedback links are generic. all links from our site
+should include at least top level information and the page name. make it a rule"*.
+- **The rule** is in `CLAUDE.md` ("every page unfurls with its own name and summary") and is enforced by
+  `test/page-metadata.test.js`, which walks every `web/app/**/page.tsx`.
+- **The finding that changed the fix:** Discord never reads a page's `metadata`. The middleware rewrites every preview
+  crawler to `/api/embed-meta`, which serves `metaForPath()` in `web/lib/pageMeta.ts` (crawlers cannot sign in, and the
+  pages redirect to sign-in). Confirmed on a local dev server: a bot user agent gets the rewrite, any other anonymous
+  request gets a 307 to `/auth/signin`. So a route missing from `pageMeta.ts` unfurls as the site card whatever its page
+  exports. FB-71 was missing; so were dozens of other routes (every admin page shared one "Officer Tools" card).
+- **Built (web 1.8.135; 1.8.133 and 1.8.134 are taken on `beta`):**
+  - `pageMeta.ts` gets an entry or a pattern for every route, plus pure builders (`feedbackMeta`, `entityMeta`,
+    `characterMeta`, `pvpMeta`, `raidReviewMeta`) and `lookupFor()` naming the routes that need one read.
+  - `pageMetaData.ts` (new) does those reads, one small select each, and `/api/embed-meta` and every dynamic page's
+    `generateMetadata` both call it, so the Discord card and the browser tab cannot disagree.
+  - Every page exports `metadata` (title + one sentence) or, for a dynamic route, `generateMetadata`. The admin layout
+    carries `robots: noindex` once for all officer pages.
+  - The root layout no longer pins `openGraph.title`, `description` or `url`. Next fills an empty OG title/description
+    from the page, but a pinned root value wins over the page's, so every OG/twitter title read "WolfPack.quest" (measured
+    on `/roadmap` before and after: og:title "WolfPack.quest" -> "Roadmap — Wolf Pack EQ · WolfPack.quest").
+- **Privacy calls (the crawler is anonymous, so a card carries only what a signed-out visitor could see):**
+  - `/feedback/FB-n`: `[beta] FB-71 · Bug report · Seen`. Selects `ref, category, status` only; the category and status go
+    through closed vocabularies, so no raw string reaches the card. Never the message, submitter, notes, replies or log.
+    The `[beta]` tag stays while the page wears NewPageTag.
+  - Items, spells, NPCs, factions, recipes, bosses and raid guides: the catalog name and the kind (`Ragebringer · Item`),
+    one `name` column. Game data, not guild data, though the pages behind them need sign-in. The description is the
+    kind's sentence, never stats or drops.
+  - Characters and PvP records: the name comes from the URL alone, no database read, so a hidden or stats-excluded
+    character leaks nothing the link did not already say and a made-up name is not confirmed to exist.
+  - **Parses stay "Parse Breakdown"** on the card. The page's own tab title names the boss, night and DPS, but that is
+    guild data a signed-out visitor cannot see. The guild lead can overrule this; parse ids are UUIDs, not enumerable.
+- **Not verified:** the live Vercel rewrite. On a local dev server the rewrite's query string is ignored by the route (the
+  original query wins), so `/api/embed-meta` was checked by calling it directly with `?path=`. The middleware does emit the
+  right rewrite header. It has served per-page cards on production since July, so this is a dev-server quirk, but nobody
+  has re-checked a production card after this change; Discord caches per URL, so test with a fresh link.
+- **Open:** a `?v=` variant URL or a trailing query is dropped from the card path (the middleware passes the pathname only).

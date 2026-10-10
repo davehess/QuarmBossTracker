@@ -22,6 +22,11 @@ import { dayLabel } from '@/lib/format';
 import { loadItemCatalog, linkifyItems, type ItemCatalog } from '@/lib/item-link';
 import { userTz } from '@/lib/timezone';
 
+export const metadata = {
+  title: 'Chat browser · Admin',
+  description: 'Browse guild and raid chat by year, month and day.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type ChatRow = {

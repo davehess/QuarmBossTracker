@@ -15,15 +15,18 @@ import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import { supabaseAdmin } from '@/lib/supabase';
 import NewPageTag from '@/components/NewPageTag';
+import { pageMetadata } from '@/lib/pageMetaData';
 import { historyOf, parseRefParam, statusWords, replyErrorText, REPLY_MAX } from '@/lib/feedbackReport';
 import { loadViewer, openReport } from './access';
 import { postReply } from './actions';
 
-export const metadata: Metadata = {
-  title: '[beta] My report',
-  description: 'See where your bug report or idea stands, and answer it.',
-  robots: { index: false, follow: false },
-};
+// "[beta] FB-71 · Bug report · Seen": the number, the category and the status in plain words, and nothing of
+// the report itself (the guild lead, 2026-10-10: Discord unfurled every FB link as the site card). The same
+// words ride the Discord card (lib/pageMeta.ts, read by /api/embed-meta); the one database read is there.
+export async function generateMetadata({ params }: { params: { ref: string } }): Promise<Metadata> {
+  const m = await pageMetadata(`/feedback/${encodeURIComponent(params.ref)}`);
+  return { ...m, robots: { index: false, follow: false } };
+}
 
 export const dynamic = 'force-dynamic';
 

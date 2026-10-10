@@ -16,6 +16,11 @@ import { isOfficer, requireOfficer } from '@/lib/officer';
 import { supabaseServer } from '@/lib/supabase-server';
 import { GUILD_TAG } from '@/lib/guild';
 
+export const metadata = {
+  title: 'Mimic Mail · Admin',
+  description: 'Compose notices that reach every Mimic install without a release.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type NoticeRow = {

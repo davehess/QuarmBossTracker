@@ -26,6 +26,11 @@
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 
+export const metadata = {
+  title: 'Site access invite',
+  description: 'Accept a Wolf Pack site-access invite by choosing a username and password.',
+};
+
 export const dynamic = 'force-dynamic';
 
 const LOGIN_DOMAIN = 'login.wolfpack.quest';

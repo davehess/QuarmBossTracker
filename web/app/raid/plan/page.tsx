@@ -27,6 +27,11 @@ import {
 import { createFightCard, updateFightCard, deleteFightCard } from './actions';
 import { GUILD_TAG } from '@/lib/guild';
 
+export const metadata = {
+  title: 'Fight cards',
+  description: 'The pre-raid readiness page: one card per fight with the composition, kit and tactics it needs, and which callouts are armed.',
+};
+
 export const dynamic = 'force-dynamic';
 
 const SUMMARY_CLS: Record<string, string> = {

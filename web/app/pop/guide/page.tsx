@@ -24,7 +24,10 @@ import { loadRoute } from './routeData';
 import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'PoP Checklist — Wolf Pack' };
+export const metadata = {
+  title: 'PoP Checklist — Wolf Pack',
+  description: 'Every Planes of Power step in order, with what to say and where to stand, ticked off per character.',
+};
 
 export default async function PopGuidePage(
   { searchParams }: { searchParams: Promise<{ c?: string; v?: string; all?: string; nx?: string }> },

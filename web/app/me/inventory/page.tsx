@@ -24,7 +24,10 @@ import { clusterSharedBanks } from '@/lib/sharedBank';
 import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'My inventory — Wolf Pack' };
+export const metadata = {
+  title: 'My inventory — Wolf Pack',
+  description: 'Every item across your characters and where it sits, in one searchable list. Private to you.',
+};
 
 type InvRow = { character_name: string; slot_label: string; item_id: number | null; item_name: string; quantity: number | null; observed_at: string | null };
 type ItemMeta = { id: number; damage: number | null; ac: number | null; nodrop: boolean | null; itemtype: number | null; slots: number | null };

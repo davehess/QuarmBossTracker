@@ -7,6 +7,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
+import { pageMetadata } from '@/lib/pageMetaData';
 
 export const dynamic = 'force-static';
 export const revalidate = 3600;
@@ -85,6 +86,11 @@ export async function generateStaticParams() {
   } catch {
     return [];
   }
+}
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  return pageMetadata(`/bards/sets/${encodeURIComponent(id)}`);
 }
 
 export default async function BardSetPage({ params }: { params: Promise<{ id: string }> }) {

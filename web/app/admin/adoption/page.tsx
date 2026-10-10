@@ -31,7 +31,10 @@ import {
 } from '@/lib/adoption';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Adoption — Admin' };
+export const metadata = {
+  title: 'Adoption — Admin',
+  description: 'How many players run the agent and which version each one is on, counted in players, not characters.',
+};
 
 export default async function AdminAdoptionPage() {
   await requireOfficer();

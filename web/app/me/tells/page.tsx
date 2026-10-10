@@ -19,6 +19,11 @@ import { userTz, fmtShort, relTime } from '@/lib/timezone';
 import { fetchTellSummary, EMPTY_TELL_SUMMARY } from '@/lib/capSafeReads';
 import { GUILD_TAG } from '@/lib/guild';
 
+export const metadata = {
+  title: 'My tells',
+  description: 'Your inbound /tell history. Private to you.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type TellRow = {

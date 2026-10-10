@@ -12,6 +12,13 @@ import {
   type SpellRow, decodeSpellEffects, fmtDuration, fmtSeconds, RESIST_NAME, TARGET_NAME,
 } from '@/lib/spellDecode';
 
+import { pageMetadata } from '@/lib/pageMetaData';
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  return pageMetadata(`/db/spell/${encodeURIComponent(id)}`);
+}
+
 export const dynamic = 'force-dynamic';
 
 const SPELL_COLS =

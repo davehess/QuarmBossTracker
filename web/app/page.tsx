@@ -17,6 +17,12 @@ import { curatedNpcIds } from '@/lib/bossFilter';
 import { fmtDmg, fmtTime, dayKey, dayLabel, cleanBossName } from '@/lib/format';
 import { userTz } from '@/lib/timezone';
 
+// The home page IS the site, so its title is the bare site name (no "Home · WolfPack.quest").
+export const metadata = {
+  title: { absolute: 'WolfPack.quest' },
+  description: 'Guild-wide build planner, parse history, and loadout library for Project Quarm.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type RecentRow = {
