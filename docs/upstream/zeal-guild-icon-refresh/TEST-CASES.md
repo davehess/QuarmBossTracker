@@ -1,6 +1,6 @@
 # Test cases: guild icon and banner refresh
 
-For the fork branch `guildicon-draft` (`d9dd631`). **Not compiled with MSVC, not run in game.**
+For the fork branch `guildicon-draft` (`dca0b85`). **Not compiled with MSVC, not run in game.**
 
 **Common setup:** build `guildicon-draft`, install `Zeal.asi`, `/tag on`, target an NPC, use `/tag local`.
 References: `icons-vs-banners.png` (each guild's icon beside its banner) and `banners-sheet.png` (old code banner,
@@ -35,7 +35,7 @@ Mark each case: `[x]` pass, `[!]` fail (write what you saw under it).
 ### 5. Full names
 - **Steps:** tag `^BHBM^x`, `^BMGE^x`, `^BINT^x`, `^BTRQ^x`, `^BSOW^x`.
 - **Expected:** "HERE / THERE" above the serpent and "BE / MONSTERS" below; "MASS" above the mirror and
-  "GROUP / EGO" below; "INTER- / VENTION" and "TRANQ- / UILITY" under their icons; "SQUIRRELS / OF WAR" readable.
+  "GROUP / EGO" below; "INTER- / VENTION" under the ankh; "TRANQ" under the lotus; "SQUIRRELS / OF WAR" readable.
 - **Result:** [ ] pass  [ ] fail
 
 ### 6. Every banner
