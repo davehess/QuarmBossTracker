@@ -118,6 +118,12 @@ next touch one rather than assuming a missing row means a missing doc.
   main push; agent 3.7.102 + Mimic on beta; DECISIONS §186).** "Flags: N / 72 used" (seen grants only), a warning
   when flags left ≤ raiders still to hail, and the clock reads "leaves in m:ss", red in the last 2 minutes. The
   beta card shows nothing new until the bot half reaches main, except the reworded clock.
+- **⏳ Hail board: a thin roster no longer freezes (bot 3.1.237, FB-71, 2026-10-10).** A member reported the
+  Command Center missed most hails for Grummus: the roster read timed out in the post-kill upload burst, the
+  window froze on the uploader's own player list, and 47 of 48 hailers never showed. Now the roster is the
+  raid snapshot plus the fight's players, a failed or empty read opens the window pending and re-reads every
+  30 s, and anyone seen hailing the NPC joins that window's board. Cost while a window is open: one more
+  pop_flags read per 5 s, one raid_roster read per 30 s only while pending. Next: watch the next flag kill.
 - **⏳ HUD: a second clicky row (Mimic beta, 2026-10-07; DECISIONS §185).** The guild lead: "add a second clicky row to
   the HUD". Row 2 sits one line inside row 1 on the same bottom arc; row 1 fills first, then row 2, and `+N` counts
   only what fits on neither. On by default; ⚙ → Items → "Two clicky rows" goes back to one (exactly today's line).
