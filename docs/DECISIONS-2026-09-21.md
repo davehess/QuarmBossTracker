@@ -9061,3 +9061,18 @@ Harmony, Hide/Sneak for non-rogues).
   password to non-officers too; raid-lead changes show on the Command Center only (no Discord post).
 - **Next asked:** suggestion-thread write-ups (what / why / how / how tested) and test cases for every Zeal change,
   and a referenceable showcase branch in the fork for preview images and posters.
+
+### 226. Zeal write-ups, test cases and a showcase branch; a banner on every Zeal PR; Burnouts cigarette and logo banners (2026-10-10)
+- **Asked** (the guild lead): *"start drafting overviews for each zeal PR update for me to post in zeal suggestions
+  threads that read as what, why, how, and how tested. then write me the test cases and help me get this referenceable
+  in a different fork version"*, then *"the banners are for all of the zeal PRs once they're filed"*.
+- **Landed:** `docs/upstream/zeal-<change>/SUGGESTION.md` (≤350 words, banner on top) and `TEST-CASES.md` for 11
+  changes; `docs/upstream/README.md` is the status index. The fork's **`showcase` branch** holds only docs: an index,
+  one folder per change, and per change a 1200×675 poster and a 1280×320 PR header banner rendered from one JSON
+  (`showcase/tools/render-posters.js`). **When a PR is filed:** set `pr_url` and `status` in its JSON, re-run the
+  script, commit — the banner's pill and the index row follow. Spawn ids (upstream PR 229) checked merged 2026-09-01.
+- **Burnouts icon** (the guild lead: *"a burning rolled cigarette instead of match"*) and **guild banners carry the
+  guild's logo** in a colour contrast-checked against the flag (*"have the logo on them that contrasts well"*), with
+  logo + name as a one-line switch (*"could we try putting the names on the flags also?"*). Local branch
+  `guildicon-draft` `bbd5fe0`, not pushed, not compiled with MSVC. Open: the guild lead picks L (logo) or LN (logo +
+  name); the website's banner PNGs change with it and go through beta.
