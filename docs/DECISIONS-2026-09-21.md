@@ -9076,3 +9076,11 @@ Harmony, Hide/Sneak for non-rogues).
   logo + name as a one-line switch (*"could we try putting the names on the flags also?"*). Local branch
   `guildicon-draft` `bbd5fe0`, not pushed, not compiled with MSVC. Open: the guild lead picks L (logo) or LN (logo +
   name); the website's banner PNGs change with it and go through beta.
+- **Settled in review (same day):** names on the flags (LN) is the default, **full names for every guild** (*"keep
+  full names"*, *"fix intervention with its whole name"*, *"full name for tranquillity"*), names may sit above and
+  below the logo (Here There Be Monsters **stacked**: HERE / THERE, serpent, BE / MONSTERS; Mass Group Ego: MASS,
+  mirror, GROUP / EGO). The wolf stays white with black details (*"needs to be closer to the white"*). **Banner logos
+  use the guild icon's own colours** (*"missing colors from many of these on the inside, please consult the non-banner
+  ones"*), with a thin dark or light rim only where the icon's colour fails 3:1 against the flag — **no backing disc**,
+  Tranquility included. Commits `30606bc` (names, layouts, wolf) and `30a4eb2` (icon colours, rims) on
+  `guildicon-draft`; INTERVENTION / TRANQUILITY full names in progress.
