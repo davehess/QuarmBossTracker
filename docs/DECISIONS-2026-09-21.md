@@ -114,6 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Mimic 2.9: spawn map, zone-server directory, live mob dots** (§216) | Called 2026-10-10 as the 2.9 minor line. Research in: `dbg.txt` names the zone server on every zone-in (`Zone addr [<host>:<port>]` + `StartWorldDisplay: <zone>`), and one zone was seen on two ports within an hour, so a port is a per-boot instance token, not a zone id. Zeal-pipe and spawn-data research still running | a session: write `docs/DESIGN-mimic-2.9-spawn-map.md` (phases + lettered layout options), then build phase 1 |
+| **Zeal review fixes + guild marks B** (§216) | The guild lead: *"go ahead with the zeal fixes, B for guild marks"*. Fixes being drafted on `tag-shapes`, `tag-icon-files`, `tag-persistence` (new commits, no force); guild marks B = automatic marks from the player's guild, `/tag guildmarks off|tagged|auto`, default `tagged` | a session: review, push, merge into `test-all`, then the guild lead tests the GitHub build |
 | **Every page unfurls with its own name** (§215) | On `main` (web 1.8.135): `pageMeta.ts` covers every route, `pageMetaData.ts` names FB / catalog pages, root OG no longer pinned, `test/page-metadata.test.js` enforces it | the guild lead: post a fresh `/feedback/FB-<n>` link in Discord (it caches per URL) and say whether parses should name their boss |
 | **Zeal: cursor with the UI hidden (pick B) + PR cleanup** (§213) | Branch `hide-ui-cursor` (`2433493`) pushed and merged into `test-all` (`4014c49`); the GitHub build passed (`zeal_test-all.zip`, 2026-10-09 18:12 UTC), not run in game. The four tag branches are force-pushed as one commit each on v1.4.8 (the guild lead: *"force push github"*): `tag-shapes` `c2a5333`, `tag-persistence` `c143cee`, `tag-corpses` `7f7c824`, `tag-icon-files` `9035722` (on `tag-shapes`). Deleting `bandolier-chat-filter` and `pipe-spawn-id` was refused by the cloud session's git proxy (HTTP 403) | the guild lead: (1) Mimic → Settings → Zeal → Test build → Install, run the 9 steps in `docs/upstream/zeal-hide-ui-cursor/PULL-REQUEST.md`; (2) delete the two branches on GitHub (Branches page → 🗑); (3) re-author each branch and open the PRs |
 | **Europa tag picture replaced** (§213) | web 1.8.133 on `beta` (`ba445fa4`): the shield logo as `EUR.png`/`EUR.tga`, 226×256 | the guild lead: look at https://b.wolfpack.quest/zeal-icons; say graduate to main |
@@ -8721,3 +8723,28 @@ should include at least top level information and the page name. make it a rule"
   right rewrite header. It has served per-page cards on production since July, so this is a dev-server quirk, but nobody
   has re-checked a production card after this change; Discord caches per URL, so test with a fresh link.
 - **Open:** a `?v=` variant URL or a trailing query is dropped from the card path (the middleware passes the pathname only).
+
+### 216. Mimic 2.9 is the spawn-map line; Zeal review fixes go ahead; guild marks are option B (2026-10-10)
+**The call** (the guild lead): a "hearty feature … worth being part of the next minor release numbering 2.9": read `dbg.txt`
+without locking it to build a directory of Quarm zone servers and zones; pull nearby-mob locations from the Zeal pipe
+(reportedly up to 250 units) into our own map with spawn points, pathers, pets, named spawns, the target with a range
+line, aggro radius, learned respawn timers (PvP ±20%) and spawn order after downtime; show it on the spectator map and as a
+Mimic overlay or second-screen view; non-raid opt-in/opt-out position sharing within a group; and a hidden officer view
+listing zones and groups for guild-instance moderation.
+- **`dbg.txt`, from real files** (five copies from members' EQ folders, 2026-10-08): ASCII, CRLF, every line
+  `[<timestamp>]<seq>:<text>`. Each zone-in writes `Zone addr [pq.projectquarm.pq<N>.projectquarm.com:<port>] received...`,
+  then `Zone info received.`, then `StartWorldDisplay: <zone_short>` (plus `_obj`/`_chr`/`_lit` variants to skip);
+  `Starting char select.` and `*** EXITING: I have completed camping.` mark the session edges. The same zone appeared on
+  port 11243 and on port 7312 within twelve minutes, so a port names a running copy of a zone, never the zone itself: the
+  directory is a time-stamped log of (zone_short, host, port, first/last seen). The file also holds install paths
+  (`<drive>:\<folder>\…s3d`) and hardware lines, so only the allow-listed zone lines may ever leave the machine
+  (`docs/PRIVACY.md` gets a line when it ships). Reading it the same way the agent tails eqlog (open-read-close per poll)
+  does not lock it.
+- **Zeal review fixes: go.** The ranked findings (picture-folder crash on a non-English filename, persistence save loop
+  able to throw into the game loop or read a dangling entity, picture memory, per-frame lookups, silent failed saves,
+  the merged build dropping picture tags on restore) are being fixed as new commits on each branch. A raider's remote
+  `clear` keeps wiping the zone's saved tags (unchanged, deliberately).
+- **Guild marks: B.** Players show their guild's mark automatically from the guild the client already knows
+  (`Entity.GuildId`), drawn only on the viewer's screen, never for /anon or /roleplay players, only for guilds in the
+  `kGuilds` table, within 150 units, icons not banners. `/tag guildmarks off|tagged|auto`, default `tagged` (no change
+  for anyone who does not opt in); `off` also hides marks other raiders tagged.
