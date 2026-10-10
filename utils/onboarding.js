@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.242': [
+    '**Our own Plane of Hate kills are no longer "foreign".** A Wolf Pack kill of a Hate mini-boss was posted as "🩸 Foreign kill" whenever the reporting Mimic had not yet heard a guild broadcast that session. It is now posted as "🐺 We killed", and our instanced kills are still logged.',
+  ],
   '3.1.241': [
     '**Item links in guild and raid chat go to the right item.** When you linked an item in game, the PQDI link the relay added pointed at a different item (Ragebringer opened Sparring Grappler Gloves). The links now open the item you linked (needs the Mimic beta for links from your own client).',
   ],
