@@ -36849,37 +36849,36 @@ function captureUnmatchedPvpKill(line) {
   } catch (e) { void e; }
 }
 
-// EQ in-game item links land in the log as `\x12<hex blob>\x12Item Name\x12`.
-// Quarm's blob format observed in the wild: 7 hex chars = <1 version><5 ID><1 flag>.
-// We extract the item ID and turn the link into a clickable PQDI markdown URL so
-// guildies see "[A Lucid Shard](pqdi)" in Discord instead of "0022194A Lucid Shard"
-// (which is what they'd see if Discord strips the 0x12 delimiters with no transform).
+// EQ in-game item links land in the log as `\x12<7 digits><Item Name>\x12`: the
+// item id as 7 zero-padded DECIMAL digits, then the name, no separator
+// (A Lucid Shard, id 22194 → "\x120022194A Lucid Shard\x12" — the same shape
+// Mimic's Mob Info writes for its copy-a-link paste). We turn the link into a
+// clickable PQDI URL so guildies see "A Lucid Shard <pqdi>" in Discord instead
+// of "0022194A Lucid Shard" (what Discord shows once it strips the 0x12s).
+// Until agent 3.7.127 this read 5 of the digits as HEX, so every link pointed at
+// the wrong item (Ragebringer 11057 → 4357). Same rule as the bot's
+// linkifyEqItems; test/eq-item-link-agent.test.js holds it to the shared
+// fixtures in test/_eq-item-link-fixtures.js.
 //
 // Two passes:
-//   1. \x12-delimited form (raw from the EQ log)  →  markdown link
-//   2. Already-stripped form ("<hex run><Item Name>") in case the delimiters
-//      were lost upstream  →  markdown link
+//   1. \x12-delimited form (raw from the EQ log)  →  link, exact name
+//   2. Already-stripped form ("<7 digits><Item Name>") in case the delimiters
+//      were lost upstream  →  link, name guessed from its casing
 //
 // Item names containing `[`, `]`, `(`, `)` are left alone — those chars would
 // corrupt markdown link syntax. EQ item names don't normally have them.
-const EQ_ITEM_LINK_RX = /\x12([0-9A-Fa-f]{5,})\x12([^\x12]+)\x12/g;
+const EQ_ITEM_LINK_RX = /\x12(\d{7})([^\x12]+)\x12/g;
 
-// Discord-stripped fallback: exactly 7 UPPERCASE hex chars (Quarm's blob length)
-// immediately followed by an item-name-cased phrase. Item names start with an
-// optional article ("A "/"An "/"The ") then a Capital word, optionally followed
-// by more Capital words connected by short lowercase joiners ("of"/"the"/etc.).
+// Discord-stripped fallback: exactly 7 digits immediately followed by an
+// item-name-cased phrase. Item names start with an optional article
+// ("A "/"An "/"The ") then a Capital word, optionally followed by more Capital
+// words connected by short lowercase joiners ("of"/"the"/etc.).
 // Anchored to word boundaries to avoid matching plain numeric chat.
-const EQ_STRIPPED_LINK_RX = /\b([0-9A-F]{7})((?:A |An |The )?[A-Z][a-z`'\-]+(?: (?:[a-z]{1,3} )*[A-Z][a-z`'\-]+){0,6})\b/g;
+const EQ_STRIPPED_LINK_RX = /\b(\d{7})((?:A |An |The )?[A-Z][a-z`'\-]+(?: (?:[a-z]{1,3} )*[A-Z][a-z`'\-]+){0,6})\b/g;
 
 function _extractItemId(blob) {
-  // Quarm format: <1-char version><5-char hex ID><...flags>.
-  // Some emulators omit the version byte (older format: <5-char ID><...>).
-  // If the first char looks like a version digit (0 or 1) and there's room
-  // for a full 5-char ID after it, skip past the version byte.
-  const startIdx = (blob[0] === '0' || blob[0] === '1') && blob.length >= 6 ? 1 : 0;
-  const id = parseInt(blob.slice(startIdx, startIdx + 5), 16);
-  if (!Number.isFinite(id) || id <= 0 || id > 999999) return null;
-  return id;
+  const id = parseInt(blob, 10);
+  return id > 0 ? id : null;
 }
 
 function transformEqItemLinks(text) {
