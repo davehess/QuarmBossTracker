@@ -22,3 +22,7 @@ About once a second the live tags are copied to `<character>_tags.txt` in the Ev
 - The in-game checklist (crash, relog, zoning with a tagged player) is written but has not been signed off on the current build.
 
 **Try it:** the fork's test-all build, https://github.com/davehess/Zeal/releases/tag/test-all-build, then follow `TEST-CASES.md`.
+
+**Pull request:** _link added when it is filed._
+
+**Testing evidence:** _added after the in-game test run._

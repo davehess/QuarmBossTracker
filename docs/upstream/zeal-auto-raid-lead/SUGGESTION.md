@@ -21,3 +21,7 @@ Both passwords live in `zeal.ini` under `AutoRaidInvite` and `AutoRaidLead`. A t
 - Open question for the maintainers: Quarm's rules on automation. This acts on a tell the way `/autoraidinvite` already does, but a written view would help.
 
 **Try it:** in the fork's test-all build (https://github.com/davehess/Zeal/releases/tag/test-all-build), `3c4766c` or later.
+
+**Pull request:** _link added when it is filed._
+
+**Testing evidence:** _added after the in-game test run._

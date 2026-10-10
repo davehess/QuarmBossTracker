@@ -23,3 +23,7 @@ A target whose model is not drawn (too far away, not loaded) still cannot be tag
 - Not yet run in game: the pre-death skull staying off the corpse, `/tag target` on a corpse, and a raid-wide corpse tag seen by a second client. Those steps are in `TEST-CASES.md`.
 
 **Try it:** the fork's test-all build, https://github.com/davehess/Zeal/releases/tag/test-all-build, then the "Corpses" section of `TRY-IN-GAME.md` (in `zeal-tag-shapes`).
+
+**Pull request:** _link added when it is filed._
+
+**Testing evidence:** _added after the in-game test run._

@@ -28,7 +28,7 @@ Mark each case: `[x]` pass, `[!]` fail (write what you saw under it).
 - **Result:** [ ] pass  [ ] fail
 
 ### 4. Codes in either case
-- **Steps:** `/tag local ^imay^x`, `^iMay^x`, `^bmay^x`.
+- **Steps:** `/tag local ^imay^x`, `^iMay^x`, `^fmay^x`.
 - **Expected:** the Mayhem icon or banner, as for upper case.
 - **Result:** [ ] pass  [ ] fail
 
@@ -65,7 +65,7 @@ Mark each case: `[x]` pass, `[!]` fail (write what you saw under it).
 ### 10. `off` hides other people's guild tags but not plain symbols
 - **Setup:** a second client tags a mob `/tag rsay ^FMAY^x`, another `^E^x`, `^$^x`, `^WP^x`.
 - **Steps:** `/tag guildmarks off`.
-- **Expected:** the `^B...^` and `^I...^` tags are hidden; `^E^`, `^$^` and `^WP^` still show.
+- **Expected:** the `^F...^` and `^I...^` tags are hidden; `^E^`, `^$^` and `^WP^` still show.
 - **Result:** [ ] pass  [ ] fail
 
 ### 11. Back to `tagged`

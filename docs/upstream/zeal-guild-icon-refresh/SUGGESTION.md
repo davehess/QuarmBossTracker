@@ -31,4 +31,8 @@ their own. The flag keeps the guild's colour, so colour still tells guilds apart
 - `tag_shapes.cpp` compiles cleanly with `g++ -Wall -Wextra`.
 - The whole fork, `tag_arrows.cpp` (Direct3D) included, compiled in the GitHub build of test-all (`3c4766c`); nothing has run in game yet. Cases are in `TEST-CASES.md`.
 
-**Try it:** in the fork's test-all build (https://github.com/davehess/Zeal/releases/tag/test-all-build), `3c4766c` or later.
+**Try it:** in the fork's test-all build (https://github.com/davehess/Zeal/releases/tag/test-all-build), `b187b2d` or later (the first with `^F<code>^` flags).
+
+**Pull request:** _link added when it is filed._
+
+**Testing evidence:** _added after the in-game test run._

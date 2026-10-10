@@ -22,3 +22,7 @@ Type the key after the caret, for example `/tag local ^K^Kill`, `^7^`, `^PK^`, `
 - In game, 2026-09-26: all 13 symbols, the badges, the lettered paws and every guild icon drew correctly, including over other guilds' players. Guild banners were not in those screenshots, and the newer guild-mark option has not been run in game yet.
 
 **Try it:** install the fork's test-all build, https://github.com/davehess/Zeal/releases/tag/test-all-build, then paste the lines from `TRY-IN-GAME.md`.
+
+**Pull request:** _link added when it is filed._
+
+**Testing evidence:** _added after the in-game test run._

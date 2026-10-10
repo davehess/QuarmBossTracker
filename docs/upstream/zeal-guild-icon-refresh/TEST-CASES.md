@@ -63,7 +63,7 @@ Mark each case: `[x]` pass, `[!]` fail (write what you saw under it).
 ## Performance
 
 ### 10. Many banners at once
-- **Steps:** in a busy zone, tag 20 or more NPCs with different `^B..^` keys, including `^FDRF^` (the largest), and
+- **Steps:** in a busy zone, tag 20 or more NPCs with different `^F..^` keys, including `^FDRF^` (the largest), and
   turn the camera around.
 - **Expected:** no frame-rate drop against the same test on the previous build.
 - **Result:** [ ] pass  [ ] fail
