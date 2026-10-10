@@ -848,6 +848,9 @@
   var _fqvSub = 'quest';
   try { _fqvSub = window.localStorage.getItem('wpTargetFqv') || 'quest'; } catch (e) {}
   var _npc = { id: null, data: null, loading: false, tries: 0, at: 0 };
+  // The NPC whose script the Quest tab reads. The bot adds quest_id when its stats pick is a same-name
+  // body from another zone (FB-72: Innovation's Giwin Mirakon came back as Tactics'); otherwise it is id.
+  function _qid(mob){ return mob && (mob.quest_id || mob.id); }
   function _loadNpc(id){
     if (_npc.id !== id) _npc = { id: id, data: null, loading: true, tries: 0, at: 0 };
     if (!_npc.loading || Date.now() - _npc.at < 1500) return;
@@ -915,7 +918,7 @@
   function renderQuest(mob, d){
     if (!mob || !mob.id) return '<div class="sub">no catalog NPC for this target</div>';
     if (!d) return '<div class="sub" style="color:#a371f7">' + (_npc.loading ? 'reading the quest script…' : 'nothing on record for this NPC') + '</div>';
-    if (_qOpenFor !== mob.id) { _qOpen = {}; _qOpenFor = mob.id; }
+    if (_qOpenFor !== _qid(mob)) { _qOpen = {}; _qOpenFor = _qid(mob); }
     var out = '';
     if (d.say && d.say.length) {
       out += '<div class="qhead">What to say</div>' + d.say.map(function(b, i){
@@ -971,8 +974,8 @@
       + d.vendor.map(function(v){ return '<div class="vrow"><span class="vn">' + esc(v.name) + '</span><span class="vp">' + _coin(v.price) + '</span></div>'; }).join('');
   }
   function renderFqv(mob){
-    if (mob && mob.id) _loadNpc(mob.id);
-    var d = (mob && _npc.id === mob.id) ? _npc.data : null;
+    if (mob && mob.id) _loadNpc(_qid(mob));
+    var d = (mob && _npc.id === _qid(mob)) ? _npc.data : null;
     var subs = [['faction', 'Faction'], ['quest', 'Quest']];
     if (d && d.vendor && d.vendor.length) subs.push(['vendor', 'Vendor']);   // only a vendor mob
     var sub = subs.some(function(s){ return s[0] === _fqvSub; }) ? _fqvSub : 'quest';

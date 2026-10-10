@@ -103,6 +103,13 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ Quest tab reads the NPC in your own zone (agent 3.7.126, Mimic beta; bot half 3.1.238 on `claude/fb72-quest-tab`;
+  FB-72, 2026-10-10).** A member: the Giwin Mirakon inside the Plane of Innovation's factory had no "test the machine"
+  step. The bot's stats pick for a name returned the Plane of Tactics' Giwin; it now also sends `quest_id` (the same-name
+  body in your zone) and Target Info's Quest tab asks `/api/npc-interact` for `quest_id || id` (`mobinfo.html`,
+  `test/target-info-fqv.test.js`). **Until the bot half is on `main` the tab behaves as before** (no `quest_id` arrives);
+  nothing breaks in between. Details and follow-ups are in the bot-side STATUS entry.
+
 - **⏳ Target Info Loot tab: item card on hover, click to copy the item link, PQDI link (agent 3.7.125, Mimic beta,
   2026-10-10; FB-73).** A member: hovering a dropped item should show its card, clicking should copy the item paste, and
   a PQDI link should sit next to it. Each row with an item id now has the name as a button (click copies
