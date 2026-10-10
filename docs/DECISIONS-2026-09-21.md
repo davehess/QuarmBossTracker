@@ -9141,3 +9141,44 @@ Harmony, Hide/Sneak for non-rogues).
   line removed, 15 s between requests. `test-all` `67bea01`. The test character is new, so its
   `<Char>_pq.proj.ini` has no `[Socials]` section yet; the hotkey guide now says to paste the whole file, header
   included, in that case (the format matches existing characters' `PageNButtonM…` socials).
+
+### 228. The upstream Zeal bar for our PRs: small, modular, off with no cost, existing behaviour untouched (2026-10-10)
+
+- **What the upstream maintainer wants** (relayed by the guild lead, 2026-10-10): *"Preferably your PRs are modular and
+  easy to disable w/out any performance impact (or just small and easy to see they are safe / do not break existing
+  behavior)."* The same note called another contributor's open PRs "minor examples of where the LLM generated code
+  gets clumsy / bloated / repetitive and makes the existing code/functionality harder to maintain."
+- **What that slop looked like** (the guild lead asked us to comb upstream #245 and #236; two Sonnet reviews,
+  verified here against the diffs and 1.4.8):
+  - **#245, tick bar:** the render code reaches into the wrong layer and runs for every nameplate string. It has
+    dead plumbing (`is_self` set, never read), unused locals, tick math copied from `tick.cpp`, and a latent D3D8
+    bug (`DrawPrimitiveUP` resets stream 0 inside the font loop).
+  - **#236, spell effects:** a wrong prefix length drops persisted `replace-classic` entries, and a 256-character
+    single ini value truncates. It also leaves debug `print_chat` in sync loops, a mutex that guards nothing, one
+    switch pasted three times, and nine commits including fixups.
+  - The full notes are a scratchpad deliverable, not committed: they review someone else's work, so the guild lead
+    decides whether to share them.
+- **Our checklist before filing a fork PR** (applies to every branch in §226/§227):
+  1. One squashed commit.
+  2. One setting turns it off, and with it off the hot paths do zero extra work: no per-frame lookups, no
+     allocations.
+  3. Nothing changes for players who never touch the feature.
+  4. No dead code, debug output or review-chatter comments.
+  5. No copied helpers; reuse Zeal's own.
+  6. clang-format clean.
+  7. A README that matches the actual commands.
+- **Size check (code under `Zeal/`, vs each branch's base):**
+
+  | Branch | Lines added | Commits | Files | Notes |
+  |---|---|---|---|---|
+  | tag-corpses | +29 | 1 | | |
+  | popflags-export | +121 | 3 | | |
+  | hide-ui-cursor | +194 | 1 | | |
+  | raidlead-draft | +223 | 1 | | |
+  | tag-persistence | +291 | 3 | | |
+  | tag-icon-files | +354 | 4 | | |
+  | guildicon-draft | +454 | 10 | | |
+  | ma-draft | +1175 | 41 | 75 | |
+  | tag-shapes | +1964 | 3 | | mostly geometry tables |
+
+  The last two fail "small" on their face and need splitting or slimming before they go up.
