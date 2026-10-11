@@ -11,14 +11,15 @@ The banner images live on the fork's `showcase` branch (see below). Until that b
 each post will not show.
 
 Fork: https://github.com/davehess/Zeal. Combined test build (every pushed branch merged, GitHub Actions build passed at
-`035d8a3`): https://github.com/davehess/Zeal/releases/tag/test-all-build. Branch heads below are as of 2026-10-10.
+`e1fde3d`; `75e85e4` adds the popflags echo fix): https://github.com/davehess/Zeal/releases/tag/test-all-build.
+Branch heads below are as of 2026-10-11.
 
 ## Index
 
 | Change | Folder | Fork branch (head) | Status | In test-all build? | Needs |
 |---|---|---|---|---|---|
 | Tag icons, numbered badges, lettered paws | [`zeal-tag-shapes`](zeal-tag-shapes/) | `tag-shapes` (`f777d81`) | Pushed branch, not filed | Yes | In-game: banners, `/tag help`, old-client view |
-| Tag persistence (crash, relog, switch, other zones) | [`zeal-tag-persistence`](zeal-tag-persistence/) | `tag-persistence` (`6ab82a9`) | Pushed branch, not filed | Yes (as `cbd4f38`; `6ab82a9` adds one `std::min` fix) | In-game: whole checklist |
+| Tag persistence (crash, relog, switch, other zones) | [`zeal-tag-persistence`](zeal-tag-persistence/) | `tag-persistence` (`7bacdd3`, one commit) | Pushed branch, not filed; squashed 2026-10-11, same code as `6ab82a9` | Yes (as `cbd4f38`; the squash adds the `std::min` fix) | In-game: whole checklist |
 | Tag corpses | [`zeal-tag-corpses`](zeal-tag-corpses/) | `tag-corpses` (`7f7c824`) | Pushed branch, not filed; NPC and player corpse tagging tested in game 2026-10-09 | Yes | In-game: the rest of the cases |
 | Tag pictures from a folder | [`zeal-tag-icon-files`](zeal-tag-icon-files/) | `tag-icon-files` (`b20331f`, stacked on `tag-shapes`) | Pushed branch, not filed | Yes | In-game: drawing, orientation, PNG support |
 | Cursor while the UI is hidden (F10) | [`zeal-hide-ui-cursor`](zeal-hide-ui-cursor/) | `hide-ui-cursor` (`2433493`) | Pushed branch, not filed; compiled by GitHub, not run in game | Yes | In-game: all cases |
@@ -28,7 +29,7 @@ Fork: https://github.com/davehess/Zeal. Combined test build (every pushed branch
 | Mez and slow keys (`^MEZ^`, `^SLOW^`) | [`zeal-mez-slow-keys`](zeal-mez-slow-keys/) | `ma-draft` (`116d3ed`) | Pushed branch, not filed; compiled by GitHub 2026-10-10, not run in game | Yes (`3c4766c`) | In-game: all cases; breaks `^M^` (the website's symbol list still shows `^M^`) |
 | Auto raid lead, persisted `/ari` | [`zeal-auto-raid-lead`](zeal-auto-raid-lead/) | `raidlead-draft` (`b15b8a2`, on `ma-draft`) | Pushed branch, not filed; compiled by GitHub 2026-10-10, not run in game | Yes (`3c4766c`) | In-game: a two-person raid test |
 | Guild icon and banner refresh | [`zeal-guild-icon-refresh`](zeal-guild-icon-refresh/) | `guildicon-draft` (`dca0b85`, on `ma-draft`) | Pushed branch, not filed; compiled by GitHub 2026-10-10, not run in game; banners show each guild's icon in its own colours plus its full name (DECISIONS §226) | Yes (`3c4766c`) | In-game: all cases |
-| PoP flags saved on `/camp` | [`zeal-popflags-export`](zeal-popflags-export/) | `popflags-export` (`b27bb26`) | Pushed branch, not filed; two in-game runs (DECISIONS §227) | Yes (`593f848`) | In-game: a third run of the fixed build |
+| PoP flags saved on `/camp` | [`zeal-popflags-export`](zeal-popflags-export/) | `popflags-export` (`80a8de9`) | Pushed branch, not filed; in-game runs showed the six commands as say lines on camp, fixed 2026-10-11 (DECISIONS §235) | Yes (`75e85e4`) | In-game: camp once on the new build; no `#popflags` lines in chat |
 | Spell id in spell info (`/spellid`) | [`zeal-spell-id-tooltip`](zeal-spell-id-tooltip/) | `spell-id-tooltip` (`67cb705`) | Pushed branch, not filed; compiled by GitHub 2026-10-10, not run in game (DECISIONS §229) | Yes (`035d8a3`) | In-game: all cases |
 
 `raidlead-draft` and `guildicon-draft` each sit on `ma-draft` (side by side, not on each other). All three were pushed on
