@@ -3,6 +3,8 @@
 > **Current (2026-10-09):** the branch is ONE commit, `c143cee`, on Zeal v1.4.8 (`50dc9a4`), squashed from the
 > commits named below with the same code; `0001-tag-persistence.patch` is that commit. The hashes below are history.
 > A local checkout: `git fetch origin && git reset --hard origin/tag-persistence`.
+> **2026-10-11:** two fixes sit on top: `cbd4f38` (crash-proofing, fewer writes) and `6ab82a9` (`std::min`).
+> The PR body's **Safety** section covers both. Squash all three commits when filing.
 
 *Drafted 2026-09-25 against Zeal v1.4.7 (`e24a3ed`). Branch **`tag-persistence`**
 on the guild lead's fork (github.com/davehess/zeal/tree/tag-persistence, two
@@ -164,6 +166,27 @@ landed on whatever local mob had that id.
   marks a leaving player as not live, so their return restores the tag rather than
   reading as a clear. A player line in the file is zone `-1`, spawn id `0`.
 - `/tag persist <on | off>`, on by default. README updated.
+
+**Safety**
+
+- The sync runs inside try/catch. A bad path or tag file turns persistence off for
+  the session with one chat line; it never takes down the MainLoop hook. Paths stay
+  `std::filesystem::path` end to end, and a tag file over 1 MB is skipped.
+- The sync walks the game's entity list and looks each entity up in the cache. It
+  never dereferences the cache's keys, and it skips the per-entity work when
+  nothing is tagged or saved.
+- Writes are rare. All live tags refresh their last-seen time together, once every
+  10 minutes. A failed save keeps the dirty flag, retries after 45 s and prints one
+  chat line. Every write, including the one from `clear`, is gated on
+  `/tag persist`.
+- On load, last-seen times are clamped to now. Lines with an empty zone or spawn
+  field, or a colour with no alpha (other than the Off and Nameplate values), are
+  rejected.
+- `NamePlate::initialized` guards `clean_ui()` against running mid-construction:
+  a setting's change callback fires from its constructor, before later members
+  exist.
+- `std::min` is parenthesised, because `nameplate.cpp` includes `Windows.h`
+  without `NOMINMAX`.
 
 Tags broadcast while a client was offline are not recovered — that would need a
 resync request between clients, and chat-channel rate limits make it a separate
