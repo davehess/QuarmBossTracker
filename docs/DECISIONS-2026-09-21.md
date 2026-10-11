@@ -9294,3 +9294,19 @@ Harmony, Hide/Sneak for non-rogues).
   Options went out: **A**, stream the PC (Mimic comes along unchanged); **B**, phone-only, with a Termux agent and
   browser overlays (a small agent change, and only after Winlator boots EverQuest). **Open:** the guild lead
   picks. Recorded in the runbook's last section.
+
+### 235. Zeal fork: tag-persistence squashed; the popflags commands no longer show in chat on camp (2026-10-11)
+
+- **Squash** (the guild lead: *"go ahead and squash these into persistence"*): `tag-persistence` is now ONE
+  commit, `7bacdd3`, on v1.4.8. It has the same tree as the old tip `6ab82a9` (checked with `git diff`), and the
+  message carries the Safety bullets. Force-pushed with a lease on the old tip. Both PR descriptions are
+  paste-ready in `docs/upstream/zeal-tag-persistence/PULL-REQUEST.md` and `docs/upstream/zeal-tag-corpses/`
+  (the corpses one uses upstream's own tag keys).
+- **Popflags echo** (the guild lead, with a screenshot: *"On camp we see these commands"*): all six `#popflags`
+  sends showed as say lines (`[S] [Name]: #popflags 3`, abbreviated chat), although `do_say(true, …)` hides the
+  local echo. While a request is pending, `popflags_capture` now also clears any non-server-colour line containing
+  `#popflags`, and stores nothing from it. `popflags-export` `80a8de9`, merged into `test-all` `75e85e4`.
+  Not yet seen in game: the next camp should show no `#popflags` lines.
+- **Not settled:** why the hidden say still comes back. Either the server echoes the say to the speaker, or the
+  echo patch misses this path. The fix works either way. Other hidden `#` commands (for example `#showhelm`) may
+  show the same echo; nobody has reported it.
