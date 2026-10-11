@@ -3,8 +3,8 @@
 > **Current (2026-10-09):** the branch is ONE commit, `c143cee`, on Zeal v1.4.8 (`50dc9a4`), squashed from the
 > commits named below with the same code; `0001-tag-persistence.patch` is that commit. The hashes below are history.
 > A local checkout: `git fetch origin && git reset --hard origin/tag-persistence`.
-> **2026-10-11:** two fixes sit on top: `cbd4f38` (crash-proofing, fewer writes) and `6ab82a9` (`std::min`).
-> The PR body's **Safety** section covers both. Squash all three commits when filing.
+> **2026-10-11: squashed to ONE commit, `7bacdd3`**, with the same tree as the old tip `6ab82a9` (`c143cee` plus the
+> crash-proofing `cbd4f38` and the `std::min` fix). The PR body's **Safety** section covers both fixes. Ready to file.
 
 *Drafted 2026-09-25 against Zeal v1.4.7 (`e24a3ed`). Branch **`tag-persistence`**
 on the guild lead's fork (github.com/davehess/zeal/tree/tag-persistence, two
