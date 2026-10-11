@@ -9262,3 +9262,28 @@ Harmony, Hide/Sneak for non-rogues).
 - **Fixed first:** the UI-backup and staged-UI-edit routes now answer only to the character's owner (bot 3.1.243,
   `7d93301f`; details in the guild lead's private briefing).
 - **Open:** the guild lead picks between pull-from-my-other-PC, automatic sync and a web hub.
+
+### 233. Better bot voices with KittenTTS 2: pinned (2026-10-11)
+
+- **The ask** (the guild lead): *"maybe we can use kittentts2 to make the voices better for the bots"*, then
+  *"put a pin in this."*
+- **What was found:** KittenTTS 2 is 1.7B parameters (~947 MiB) and needs ~6 GB RAM on CPU. It is Python-only,
+  with 47 voices, voice cloning and its own Stellon Labs licence. It would join the §169 announcer candidates
+  (Kokoro / Chatterbox / Qwen3 on Tower). Today the bot speaks through msedge-tts + `@discordjs/voice` 0.18 (which
+  may have broken under Discord's 2026-03-01 voice-encryption change, unchecked), and Mimic through the browser's
+  `speechSynthesis`.
+- **Pinned, nothing built.** The options put out were: A, a listening test on Tower; B, KittenTTS 2 everywhere;
+  C, keep the §169 plan. When it is unpinned, run `/voicetest` first: if the bot's Discord voice is down, that
+  comes before any voice-quality work.
+
+### 234. EverQuest on an Android phone: the Winlator route, written up as a draft (2026-10-11)
+
+- **The ask** (the guild lead): *"let's get back to getting this to work on mobile"*. This means the Windows
+  client under Winlator, after a third-party build was dropped for the official one.
+- **Landed:** `docs/RUNBOOK-android-winlator.md`. It carries the Deck's working renderer chain across
+  (dgVoodoo `D3D8.dll` + `dgVoodoo.conf` → D3D11 → DXVK → Vulkan, now on Turnip), along with its failure
+  signatures, the `patchme` + working-directory launch, and the FPS cap. Every Winlator-specific step is marked
+  [verify]: a web search found no report of EverQuest under Winlator or its forks.
+- **Scope:** EverQuest + Zeal on the phone. Mimic and log uploads stay on the PC. Streaming from the PC
+  (Moonlight/Sunshine or Steam Link) is the dependable route when the overlays matter.
+- **No device details** go in the runbook or a report (the guild lead's standing "don't post my PII").
