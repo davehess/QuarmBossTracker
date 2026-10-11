@@ -34,6 +34,14 @@ load-bearing.
   first.
 - Samsung phones: **Auto Blocker** refuses sideloaded APKs. Turn it off, install,
   then turn it back on.
+- **Google Play Protect then shows "Unsafe app blocked … built for an older
+  version of Android"** (Android 16, 2026-10-11). This is about the Android
+  version the app was built for, not a malware finding. The plain-text **"Install
+  anyway"** above the green "Got it" button is the way through; "Got it" cancels.
+  If "Install anyway" fails, open Play Store → profile → Play Protect → ⚙ and turn
+  off "Scan apps with Play Protect". Install, then turn it back on.
+- "App not installed" after that usually means another Winlator build is still
+  installed with a different signature. Uninstall it first.
 - On first run Winlator unpacks its system files. Let it finish.
 
 ## 2. Copy the EQ folder over
