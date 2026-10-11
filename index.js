@@ -6628,19 +6628,46 @@ setTimeout(() => { _backfillSocialsIndex().catch(() => {}); }, 90_000);
 // edits for the agent's watched characters. Section allowlist enforced here
 // AND at insert time (web server action): only Socials/HotButtons keys ever
 // reach an agent, so a compromised row can't touch arbitrary ini sections.
+// One person's Discord ids: theirs plus any account merged into the same household (wolfpack_members
+// merged_into_discord_id, the walk /me uses). Gates UI backups and staged UI edits to their owner.
+// Cached 5 minutes; a failed read falls back to just the id itself (narrower, never wider).
+const _householdCache = new Map();
+async function _householdDiscordIds(discordId) {
+  const id = String(discordId || '');
+  if (!id) return new Set();
+  const hit = _householdCache.get(id);
+  if (hit && Date.now() - hit.at < 5 * 60 * 1000) return hit.ids;
+  const ids = new Set([id]);
+  try {
+    const supabase = require('./utils/supabase');
+    const me = await supabase.select('wolfpack_members',
+      `discord_id=eq.${encodeURIComponent(id)}&select=discord_id,merged_into_discord_id&limit=1`);
+    const root = (Array.isArray(me) && me[0]?.merged_into_discord_id) || id;
+    ids.add(String(root));
+    const fam = await supabase.select('wolfpack_members',
+      `or=(discord_id.eq.${encodeURIComponent(root)},merged_into_discord_id.eq.${encodeURIComponent(root)})&select=discord_id`);
+    for (const r of Array.isArray(fam) ? fam : []) if (r?.discord_id) ids.add(String(r.discord_id));
+  } catch { /* narrower set */ }
+  _householdCache.set(id, { at: Date.now(), ids });
+  return ids;
+}
+
 // Assemble pending web-staged UI (socials/hotbutton) edits for a character list.
 // Shared by the standalone GET /ui-pending-edits and the multiplexed GET /poll
 // (#106). Returns { edits } — the section allowlist is enforced here (and again
-// agent-side) so web rows can never touch arbitrary ini keys.
-async function _uiPendingEditsFor(characters) {
+// agent-side) so web rows can never touch arbitrary ini keys. Only the caller's
+// own edits (their household's Discord ids) are returned.
+async function _uiPendingEditsFor(characters, discordId) {
   const supabase = require('./utils/supabase');
   if (!supabase.isEnabled()) return { edits: [], note: 'supabase disabled' };
   const chars = (Array.isArray(characters) ? characters : []).slice(0, 20);
-  if (!chars.length) return { edits: [] };
+  if (!chars.length || !discordId) return { edits: [] };
+  const owners = [...await _householdDiscordIds(discordId)].map(encodeURIComponent).join(',');
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const inList = chars.map(c => `"${c.replace(/"/g, '')}"`).join(',');
   const rows = await supabase.select('ui_pending_edits',
     `guild_id=eq.${encodeURIComponent(guildId)}&status=eq.pending&character=in.(${encodeURIComponent(inList)})` +
+    `&owner_discord_id=in.(${owners})` +
     `&select=id,character,target_file,edits,created_at&order=created_at.asc&limit=50`).catch(() => []);
   const safe = (Array.isArray(rows) ? rows : []).map(r => ({
     ...r,
@@ -6660,7 +6687,7 @@ async function _handleAgentUiPendingEdits(req, res) {
     chars = (new URL(req.url, 'http://x').searchParams.get('characters') || '')
       .split(',').map(s => s.trim()).filter(Boolean).slice(0, 20);
   } catch { /* */ }
-  const data = await _uiPendingEditsFor(chars);
+  const data = await _uiPendingEditsFor(chars, identity.discord_id);
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify(data));
 }
@@ -6680,7 +6707,10 @@ async function _handleAgentUiEditResult(req, res) {
   if (!Number.isFinite(id)) { res.writeHead(400); return res.end(JSON.stringify({ error: 'id required' })); }
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const ok = !!(p && p.ok);
-  await supabase.update('ui_pending_edits', `id=eq.${id}&guild_id=eq.${encodeURIComponent(guildId)}&status=eq.pending`, {
+  // Only the edit's owner (their household) can settle it.
+  const owners = [...await _householdDiscordIds(identity.discord_id)].map(encodeURIComponent).join(',');
+  if (!owners) { res.writeHead(403); return res.end(JSON.stringify({ error: 'not yours' })); }
+  await supabase.update('ui_pending_edits', `id=eq.${id}&guild_id=eq.${encodeURIComponent(guildId)}&status=eq.pending&owner_discord_id=in.(${owners})`, {
     status: ok ? 'applied' : 'failed',
     error: ok ? null : String(p.error || 'apply failed').slice(0, 400),
     applied_at: new Date().toISOString(),
@@ -6688,7 +6718,7 @@ async function _handleAgentUiEditResult(req, res) {
   if (ok) {
     // Merge into the socials index. Group the row's edits by (page,button).
     try {
-      const rows = await supabase.select('ui_pending_edits', `id=eq.${id}&select=character,edits,owner_discord_id&limit=1`);
+      const rows = await supabase.select('ui_pending_edits', `id=eq.${id}&owner_discord_id=in.(${owners})&select=character,edits,owner_discord_id&limit=1`);
       const row = Array.isArray(rows) && rows[0];
       if (row && Array.isArray(row.edits)) {
         const byCell = new Map();
@@ -8721,7 +8751,8 @@ async function _handleAgentUiLayoutList(req, res) {
     ).catch(() => []);
     ownerDiscord = Array.isArray(rootRows) && rootRows[0]?.discord_id || null;
   }
-  if (!ownerDiscord) {
+  // Your own characters only (your household's Discord ids): a backup holds the whole character file.
+  if (!ownerDiscord || !(await _householdDiscordIds(identity.discord_id)).has(String(ownerDiscord))) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ snapshots: [] }));
   }
@@ -8766,7 +8797,9 @@ async function _handleAgentUiLayoutDownload(req, res, snapshotId) {
     ).catch(() => []);
     ownerDiscord = Array.isArray(rootRows) && rootRows[0]?.discord_id || null;
   }
-  if (!ownerDiscord) { res.writeHead(403).end(); return; }
+  if (!ownerDiscord || !(await _householdDiscordIds(identity.discord_id)).has(String(ownerDiscord))) {
+    res.writeHead(403).end(); return;
+  }
 
   const rows = await supabase.select(
     'ui_snapshots',
@@ -20113,7 +20146,7 @@ async function _handleAgentPoll(req, res) {
     out.streams.backfill = await _backfillRequestsFor(chars);
   }
   if (_pollStreamDecision('ui_edits', want, tune, null, null) === 'send') {
-    out.streams.ui_edits = await _uiPendingEditsFor(chars);
+    out.streams.ui_edits = await _uiPendingEditsFor(chars, identity.discord_id);
   }
   // pet_owners (FB-35) — the owners pooled from every raider's uploads, so one
   // "My leader is <Owner>" seen by anyone names that pet on every client's live meter.
