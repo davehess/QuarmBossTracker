@@ -231,8 +231,8 @@ describe('the UI-backup owner lookups follow the tag, both the character row and
     };
     const mimicLink = { requireAgentAuth: async () => ({ discord_id: 'D1' }) };
     // eslint-disable-next-line no-new-func
-    const handler = new Function('require', 'mimicLink', block + '\nreturn _handleAgentUiLayoutList;')(
-      (m) => (m === './utils/supabase' ? supabase : null), mimicLink);
+    const handler = new Function('require', 'mimicLink', '_householdDiscordIds', block + '\nreturn _handleAgentUiLayoutList;')(
+      (m) => (m === './utils/supabase' ? supabase : null), mimicLink, async (id) => new Set([String(id)]));
     const res = { writeHead() { return res; }, end() { return res; } };
     await handler({ url: '/api/agent/ui_layout?character=Brackwyn' }, res);
     return queries.filter(q => q.table === 'characters');
