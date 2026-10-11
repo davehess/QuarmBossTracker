@@ -52,7 +52,7 @@ load-bearing.
 |---|---|---|
 | Wine version | the default | — |
 | Box64 preset | **Stability** (for the first boot only) | then Intermediate, then Performance, once it boots |
-| Graphics driver | **Turnip** (Snapdragon / Adreno) | Vortek |
+| Graphics driver | **Turnip** (Snapdragon / Adreno; Adreno 750 is in the A7xx builds) | a Turnip build labelled "One UI" (Samsung); then the **system** driver; then Vortek |
 | DX wrapper | **DXVK** (default version) | an older DXVK (1.10.x) |
 | Screen size | **1280×720** | — |
 | Audio | default | — |
@@ -121,3 +121,28 @@ Moonlight on the phone with Sunshine on the PC, or Steam Link, runs **the real P
 client**: Mimic, overlays, log uploads, all of it. The costs are a PC that stays
 on, and Wi-Fi/LTE latency. It is the right answer for "play from the couch". The
 Winlator route is for "the PC is not on".
+
+- Sunshine captures the composed desktop (Desktop Duplication), so Mimic's
+  always-on-top overlays should appear in the stream. **[verify]** Run EQ
+  **windowed or borderless**: Desktop Duplication has trouble with
+  exclusive-fullscreen games.
+- Use the native Moonlight Android app. A browser client exists
+  (`moonlight-web-stream`, WebRTC), but it needs HTTPS for keyboard lock and its
+  low-latency path, and nothing confirms it works in mobile Chrome.
+
+## Games in the browser (checked 2026-10-11, not a route)
+
+- **No browser EverQuest client can play Quarm.** EQ Requiem is an archived
+  experiment with its own server, aimed at the RoF2/Titanium clients, not the
+  Mac-era protocol Quarm speaks. LanternEQ is a Unity remake, not a browser
+  client. Quarm's rules also ban unapproved programs that interact with the client
+  (rule 3; approved ones are listed in `#server-files`).
+- **Windows-in-the-browser** (BoxedWine, CheerpX): about 1 fps on 3D games in the
+  reports found. Not playable.
+- **Mimic in a phone browser is possible.** The overlays are plain HTML that poll
+  the agent over HTTP. The agent is OS-neutral Node and could run in Termux,
+  tailing the log Winlator writes to `Download/`. This would need a small agent
+  change: serve the overlay files from the agent itself, and take the port from
+  the page address. Only log-driven panels would work (triggers, timers, the DPS
+  meter); anything fed by Zeal's pipe stays dark, because that pipe lives inside
+  Wine. Not built (DECISIONS §234).

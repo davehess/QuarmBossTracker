@@ -9287,3 +9287,10 @@ Harmony, Hide/Sneak for non-rogues).
 - **Scope:** EverQuest + Zeal on the phone. Mimic and log uploads stay on the PC. Streaming from the PC
   (Moonlight/Sunshine or Steam Link) is the dependable route when the overlays matter.
 - **No device details** go in the runbook or a report (the guild lead's standing "don't post my PII").
+- **Follow-up, the same night:** *"people are running games in browsers now as well, perhaps that's a way forward
+  with mimic in the mix?"* Two research agents:
+  - no browser EverQuest client can reach Quarm, and Windows-in-the-browser runs at about 1 fps;
+  - Mimic's overlays could run in a phone browser against an agent in Termux, log-driven panels only.
+  Options went out: **A**, stream the PC (Mimic comes along unchanged); **B**, phone-only, with a Termux agent and
+  browser overlays (a small agent change, and only after Winlator boots EverQuest). **Open:** the guild lead
+  picks. Recorded in the runbook's last section.
