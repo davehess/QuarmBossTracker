@@ -9249,3 +9249,16 @@ Harmony, Hide/Sneak for non-rogues).
   beta (`483210ef`): `web/package.json` takes main's 1.8.141, PROVENANCE keeps beta's guildicon-draft paragraph;
   beta's full suite 10,103 passed. Then re-parked at **2.8.2** (`9738bb0c`). A sync failure is loud only in Actions:
   check its runs before a stable cut.
+
+### 232. Merging socials across machines: scoped, options out; UI backups now owner-only (2026-10-11)
+
+- **The ask** (the guild lead): *"we should be able to merge socials across machines with the knowledge from today.
+  directly into characters files while making a backup"*.
+- **What exists** (two research agents): Mimic's ☁ backup already uploads each character's whole file set, with the
+  machine's name, and ↩ Restore writes a whole bundle back (refused while EQ runs, `.bak` first). The agent and Mimic
+  both have key-level ini writers that wait for the character to log out (`_applyIniKeyEditsToFile`,
+  `apps/mimic/iniKeyEdits.js`). Missing: a socials-only merge, any `[CustomValid]` handling (§227: a file without
+  `Valid=42` seemed to make the client ignore `[Socials]`), automatic capture, and pruning of `.bak` files.
+- **Fixed first:** the UI-backup and staged-UI-edit routes now answer only to the character's owner (bot 3.1.243,
+  `7d93301f`; details in the guild lead's private briefing).
+- **Open:** the guild lead picks between pull-from-my-other-PC, automatic sync and a web hub.
