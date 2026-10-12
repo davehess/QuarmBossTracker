@@ -9351,3 +9351,35 @@ Harmony, Hide/Sneak for non-rogues).
 - **Freeze slip:** the DECISIONS 236 docs push landed on main at 21:23 ET, inside the Sunday freeze. Railway
   SKIPPED it, and Vercel builds only `web/` changes, so nothing restarted. Check the ET clock before every main
   push on a raid night; the session clock read UTC.
+
+### 238. "What you hear": per-trigger speak / overlay only / off, a 🔇 button on callouts, personal trigger sync (2026-10-12)
+
+- **The ask** (the guild lead): *"fix the categorization for triggers within the guild section so that we can pick
+  ones that we specifically do not want to hear or can just be shown on the trigger overlay. The charm aging. And
+  many other callouts do not have a way to turn them off, such as enrage soon. And it seemed that I was still
+  getting the enrage callouts, even though I had turned it off for my character"*, and *"Personal triggers should
+  be syncable"*.
+- **Why enrage kept speaking:** three separate paths. (a) The built-in "Enrage soon" (12%) had no switch at all.
+  (b) The guild triggers "Enrage (Begin)/(End)" fire and are relayed from every raider's Mimic. (c) The switch the
+  guild lead used turned off only the suggested "ENRAGED — STOP DPS" row, for one character.
+- **Picked B + B, plus a mute button** (*"B and B but then also a mute button on the TTS callouts so people can
+  turn it off"*):
+  - **Controls (agent 3.7.128, beta `791fe4e0`):**
+    - Every callout (guild, personal, built-in) gets Speak / Overlay only / Off, by group (built-in callouts,
+      stat cards, one group per zone from the guild tags, class, other guild, personal) with per-trigger
+      overrides, for everyone or one character.
+    - One checkpoint in `_pushOverlay` covers local AND relayed fires. Timer warnings, blind alerts and
+      charm.html's own lines honour the same rules.
+    - The built-ins finally have switches: Enrage soon, charm break/aging/breaking, recharm, CH GO, DI DOWN, the
+      slow callouts, New Rampage, taking damage, boss countdowns, loot posted, blind.
+    - 🔇 Mute under any spoken callout sets that trigger to overlay only, with undo.
+    - The CH-chain voice is not covered yet.
+  - **Sync (bot 3.1.245, main `428ea8a0`):** an encrypted `personal_trigger_sync` table, household-only,
+    newest 20 pushes kept. Routes: `POST /api/agent/personal-triggers/push`, `GET …/list`, `GET …/pull`. The
+    payload carries the personal triggers AND the "what you hear" rules. The Mimic Push / Pull buttons are the
+    next step on beta.
+- **Found on the way:** the Command Center roll-range fix (§236) had edited `command.html` without re-running
+  `sync-command-embed`, so the agent's embedded copy was stale and `check:dashboard` failed on beta. Re-synced in
+  `791fe4e0`.
+- **Not done, needs a yes:** the 134 stat-card guild triggers are read aloud today because they have no voice
+  line. Making them display-only is a guild-wide data change, offered to the guild lead.

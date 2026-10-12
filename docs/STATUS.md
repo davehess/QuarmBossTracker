@@ -103,6 +103,18 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ "What you hear": speak / overlay only / off for every callout (agent 3.7.128, Mimic beta, DRAFT, uncommitted;
+  the guild lead, 2026-10-12).** *"pick ones that we specifically do not want to hear or can just be shown on the trigger
+  overlay. The charm aging. And many other callouts do not have a way to turn them off, such as enrage soon."* They
+  picked **option B** (group switches first, a per-trigger override inside each group) and asked for *"a mute button on the
+  TTS callouts"*. Rules live in `trigger_rules.json` beside `personal_triggers.json` (`GET/POST /api/trigger-rules`);
+  keys `group:<id>` · `guild:<uuid>` · `personal:<id>` · `builtin:<name>`; resolution trigger+char → trigger+everyone →
+  group+char → group+everyone → speak. ONE checkpoint, `_pushOverlay`, applies it to local and relayed fires alike
+  (off = not pushed, overlay = `mute:true`); the countdown pre-end warnings (triggers.html), blind alerts and
+  charm.html's own lines honour it too. Dashboard: Triggers tab → 🔊 What you hear; a badge on non-speaking rows of the
+  Guild triggers table. Overlay: 🔇 under a spoken callout, "Muted — undo". **Not covered:** chchain.html's voice; a muted
+  countdown keeps its bar (only its callouts change). Tests `test/trigger-rules.test.js`. Detail: `HOW-ITS-BUILT.md`.
+  **Graduation still owes:** the roadmap entry and the stable-version update of this line.
 - **⏳ Quest tab reads the NPC in your own zone (agent 3.7.126, Mimic beta; bot half 3.1.238 on `claude/fb72-quest-tab`;
   FB-72, 2026-10-10).** A member: the Giwin Mirakon inside the Plane of Innovation's factory had no "test the machine"
   step. The bot's stats pick for a name returned the Plane of Tactics' Giwin; it now also sends `quest_id` (the same-name
