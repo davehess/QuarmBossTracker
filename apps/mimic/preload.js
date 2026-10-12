@@ -122,6 +122,52 @@ document.addEventListener('mousemove', function (ev) {
 document.addEventListener('mouseout', function (ev) {
   if (!_wpOverlayDoc()) return;
   if (!ev.relatedTarget && _wpHoverArmed) { _wpHoverArmed = false; _hoverOff(); }
+  if (!ev.relatedTarget) _wpGhostHide();
+}, { capture: true, passive: true });
+
+// ── Stand-in pointer over click-through overlays (the guild lead, 2026-10-12) ──
+// "we should show a mouse when we mouseover the map window, otherwise we lose it
+// behind in the EQ window. the same should apply with any of the overlays."
+// While an overlay is click-through the mouse belongs to EQ, which hides the
+// Windows pointer and draws its own INSIDE its 3D scene — underneath every
+// overlay window. Over a solid part of an overlay (the Map, a backdrop, a
+// panel) that pointer is simply covered. {forward:true} still hands us the
+// mousemove, so we draw an arrow at the same spot. Not drawn: over a control
+// (the window is armed, Windows shows its own pointer), on an unlocked overlay
+// (never click-through), or over see-through parts (EQ's pointer shows there,
+// and two would be worse than one).
+let _wpLocked = true, _wpGhost = null;
+ipcRenderer.on('overlay-locked', function (_e, locked) { _wpLocked = !!locked; if (!_wpLocked) _wpGhostHide(); });
+function _wpGhostHide() { if (_wpGhost) _wpGhost.style.display = 'none'; }
+function _wpAlpha(bg) {
+  const m = /rgba?\(([^)]+)\)/.exec(bg || '');
+  if (!m) return 0;
+  const p = m[1].split(',');
+  return p.length >= 4 ? parseFloat(p[3]) || 0 : 1;
+}
+// Is the point under the cursor painted solid enough to hide EQ's pointer?
+function _wpOverSolid(el) {
+  if (document.body && document.body.classList.contains('wp-backdrop')) return true;
+  while (el && el.nodeType === 1 && el !== document.documentElement) {
+    const tag = el.tagName;
+    if (tag === 'CANVAS' || tag === 'IMG' || tag === 'VIDEO') return true;
+    try { if (_wpAlpha(getComputedStyle(el).backgroundColor) >= 0.35) return true; } catch (e) { return false; }
+    el = el.parentElement;
+  }
+  return false;
+}
+document.addEventListener('mousemove', function (ev) {
+  if (!_wpOverlayDoc()) return;
+  if (!_wpLocked || _wpHoverArmed || !_wpOverSolid(ev.target)) { _wpGhostHide(); return; }
+  if (!_wpGhost) {
+    _wpGhost = document.createElement('div');
+    // On <html>, outside <body>, so the colour themes' body filter never recolours it.
+    _wpGhost.style.cssText = 'position:fixed;left:0;top:0;width:16px;height:22px;pointer-events:none;z-index:2147483647;display:none';
+    _wpGhost.innerHTML = '<svg width="16" height="22" viewBox="0 0 16 22"><path d="M1 1 L1 17 L5 13.2 L8 20 L10.6 18.9 L7.7 12.3 L13 12.3 Z" fill="#fff" stroke="#000" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+    document.documentElement.appendChild(_wpGhost);
+  }
+  _wpGhost.style.transform = 'translate(' + ev.clientX + 'px,' + ev.clientY + 'px)';
+  _wpGhost.style.display = 'block';
 }, { capture: true, passive: true });
 
 // ── Solid backdrop (a member, 2026-07-10) ────────────────────────────────────
