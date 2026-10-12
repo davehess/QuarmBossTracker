@@ -31,6 +31,8 @@ Branch heads below are as of 2026-10-11.
 | Guild icon and banner refresh | [`zeal-guild-icon-refresh`](zeal-guild-icon-refresh/) | `guildicon-draft` (`dca0b85`, on `ma-draft`) | Pushed branch, not filed; compiled by GitHub 2026-10-10, not run in game; banners show each guild's icon in its own colours plus its full name (DECISIONS §226) | Yes (`3c4766c`) | In-game: all cases |
 | PoP flags saved on `/camp` | [`zeal-popflags-export`](zeal-popflags-export/) | `popflags-export` (`80a8de9`) | Pushed branch, not filed; in-game runs showed the six commands as say lines on camp, fixed 2026-10-11 (DECISIONS §235) | Yes (`75e85e4`) | In-game: camp once on the new build; no `#popflags` lines in chat |
 | Spell id in spell info (`/spellid`) | [`zeal-spell-id-tooltip`](zeal-spell-id-tooltip/) | `spell-id-tooltip` (`67cb705`) | Pushed branch, not filed; compiled by GitHub 2026-10-10, not run in game (DECISIONS §229) | Yes (`035d8a3`) | In-game: all cases |
+| Target position past 250 units | [`zeal-target-loc-range`](zeal-target-loc-range/) | `target-loc-range` (`f987701`, TEST ONLY: removes the cap; the ask is a raise to ~450) | Request drafted, not filed (DECISIONS §243) | Yes (`5bcd34a`) | In-game: target at 260–420 units, `target_loc` keeps arriving; rebuild the branch as the 450 change before filing |
+| `/pipedelay` printed 0 | none (one line) | `pipedelay-print` (`53befe7`) | Pushed branch, not filed; printed the setting object instead of its value | Yes (`5bcd34a`) | In-game: `/pipedelay 50` says 50 |
 
 `raidlead-draft` and `guildicon-draft` each sit on `ma-draft` (side by side, not on each other). All three were pushed on
 2026-10-10 and merged into `test-all` (`3c4766c`), whose GitHub build passed.
