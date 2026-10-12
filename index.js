@@ -410,6 +410,8 @@ client.once(Events.ClientReady, async (readyClient) => {
   // loaded (the beta ref resolver awaits the tuning map — unsafe at module top).
   _refreshAgentManifestBeta().catch(() => {});
   try { setInterval(_refreshAgentManifestBeta, AGENT_MANIFEST_REFRESH_MS).unref(); } catch (_) { /* non-fatal */ }
+  // Slow mode (utils/slowMode.js) before any kill is recorded or reconciled: it decides the timer length.
+  await require('./utils/slowMode').loadSlowMode();
   await registerCommands();
   startSpawnChecker(readyClient);
   scheduleMidnightSummary(readyClient);
@@ -6144,6 +6146,41 @@ async function _handleAgentOptinSummary(req, res) {
 // lockout (lower-case names). The guild lead, 2026-10-02, on the Oct 1 patch's
 // "Xanamech has no lockout": take him off the board.
 const _OFF_BOARD_NO_LOCKOUT = new Set(['xanamech nezmirthafen']);
+// POST /api/agent/slow-mode  { state: 'on'|'off', at: <ISO time from the log line>, by?: <character> }
+// An agent reporting the server's own slow-mode message (the guild lead, 2026-10-11). Every raider's agent
+// hears the same line, so it is idempotent — see applyDetectedSlowMode. Only 'off' is sent today.
+async function _handleAgentSlowMode(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 4 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const slowMode = require('./utils/slowMode');
+  const state = payload?.state;
+  const by = typeof payload?.by === 'string' ? payload.by.slice(0, 64) : null;
+  const result = await slowMode.applyDetectedSlowMode(state, Date.parse(payload?.at), by);
+  if (!result.changed && (result.reason === 'bad-state' || result.reason === 'bad-time')) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: result.reason }));
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, changed: !!result.changed, reason: result.reason || null }));
+  if (result.changed) {
+    slowMode.announce(client, state === 'off'
+      ? '🐢 Slow mode ended — Bastion of Thunder named are back on their usual timers. Kills before that moment keep their 18h.'
+      : '🐢 Slow mode is on — second-floor Bastion of Thunder named respawn in 18h.')
+      .catch(() => {});
+  }
+}
+
 async function _handleAgentBossKill(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -6214,8 +6251,8 @@ async function _handleAgentBossKill(req, res) {
 
     if (boss) {
       // Record kill and refresh all tracker cards
-      recordKill(boss.id, boss.timerHours, character, killedAt);
-      const nextSpawn = killedAt + boss.timerHours * 3600000;
+      // The entry's own nextSpawn: a slow-mode kill (utils/slowMode.js) runs longer than boss.timerHours.
+      const nextSpawn = recordKill(boss.id, boss.timerHours, character, killedAt).nextSpawn;
       if (channelId) {
         postKillUpdate(client, channelId, boss.id).catch(e =>
           console.warn('[bosskill] postKillUpdate error:', e?.message));
@@ -11842,6 +11879,7 @@ const _BUDGET_DEFAULTS = {
   historical_chat: { perMin: 120, durable: true },
   buff_casts:      { perMin: 240, durable: true },
   bosskill:        { perMin: 30,  durable: true },
+  slow_mode:       { perMin: 30,  durable: true },
   lockout:         { perMin: 30,  durable: true },
   rolls:           { perMin: 60,  durable: true },
   looted:          { perMin: 60,  durable: true },
@@ -23646,6 +23684,17 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentBossKill(req, res); }
     catch (err) {
       console.error('[bosskill] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Bastion of Thunder slow mode starting/ending, as heard by an agent (utils/slowMode.js)
+  if (req.method === 'POST' && req.url === '/api/agent/slow-mode') {
+    if (await _overBudget('slow_mode', req, res)) return;
+    try { return await _handleAgentSlowMode(req, res); }
+    catch (err) {
+      console.error('[slow-mode] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
