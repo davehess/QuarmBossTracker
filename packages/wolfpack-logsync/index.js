@@ -44392,12 +44392,36 @@ function _mapBestName(point) {
   return _mapPrettyName(npcs[0].name);
 }
 
+// Distance from (px,py) to the segment a-b, in x/y.
+function _mapSegDist(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+  const t = len2 > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0;
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+// Distance from a position to a route's polyline (Infinity for no route / one waypoint). A circular route (type 0)
+// also walks from its last waypoint back to its first.
+function _mapRouteDist(loc, grid) {
+  const pts = grid && Array.isArray(grid.pts) ? grid.pts : null;
+  if (!pts || pts.length < 2) return Infinity;
+  const px = Number(loc.x), py = Number(loc.y);
+  let best = Infinity;
+  const n = Number(grid.type) === 0 && pts.length > 2 ? pts.length : pts.length - 1;
+  for (let i = 0; i < n; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    const d = _mapSegDist(px, py, Number(a[0]), Number(a[1]), Number(b[0]), Number(b[1]));
+    if (d < best) best = d;
+  }
+  return best;
+}
 // Which spawn point did a mob that just died come from? `loc` is where it was FIRST seen (server frame).
 //   assigned   - the nearest point that can produce this name is within 60 units AND clearly the closest
 //                (the next is at least twice as far, or more than 120 away): a timer starts.
 //   unassigned - anything less certain: up to four nearest candidates, drawn "?", NO timer.
 //   none       - no point in the zone can produce this name (a player, a pet, a mob from elsewhere): ignore.
-function _mapAttribute(points, name, loc) {
+// `grids` (optional, the zone payload's { "<gridid>": { type, pts: [[x,y,z,pause], ...] } }): a point that has a route
+// of two or more waypoints is as near as the NEARER of its spawn point and its route, so a walker tab-targeted
+// mid-route still pins to the point it walks from. The same 60 / 2x rule applies to that distance.
+function _mapAttribute(points, name, loc, grids) {
   const want = _mapNormName(name);
   if (!want || !Array.isArray(points)) return { kind: 'none' };
   const cands = points.filter(p => p && Array.isArray(p.npcs) && p.npcs.some(n => n && _mapNormName(n.name) === want));
@@ -44408,7 +44432,11 @@ function _mapAttribute(points, name, loc) {
       ? { kind: 'assigned', point_id: cands[0].id, dist: null }
       : { kind: 'unassigned', candidates: [] };
   }
-  const ranked = cands.map(p => ({ id: p.id, d: _mapDist2(p, here) })).filter(r => Number.isFinite(r.d)).sort((a, b) => a.d - b.d);
+  const ranked = cands.map(p => {
+    const g = p.grid != null && grids ? grids[p.grid] : null;
+    const d = _mapDist2(p, here);
+    return { id: p.id, d: g ? Math.min(d, _mapRouteDist(here, g)) : d };
+  }).filter(r => Number.isFinite(r.d)).sort((a, b) => a.d - b.d);
   if (!ranked.length) return { kind: 'unassigned', candidates: [] };
   const best = ranked[0], next = ranked[1];
   const clear = !next || (next.d > best.d && (next.d >= 2 * best.d || next.d > MAP_ASSIGN_GAP_UNITS));
@@ -44623,7 +44651,7 @@ function _mapTryPin(zone, character, spawnId, name, loc, now) {
   P.tried.delete(spawnId); P.tried.set(spawnId, { x: loc.x, y: loc.y, at: now }); _mapCapMap(P.tried);
   const rec = _mapZones.get(zone);
   if (!rec || !rec.body) return null;
-  const att = _mapAttribute(rec.body.points, name, loc);
+  const att = _mapAttribute(rec.body.points, name, loc, rec.body.grids);
   if (att.kind !== 'assigned') return null;                   // only when certain; a "?" never pins
   const point = rec.byId.get(String(att.point_id));
   if (!point) return null;
@@ -44815,7 +44843,7 @@ function _mapNoteDeath(zone, ev, now) {
   if (ev.spawn_id != null && _mapPins.zone === zone) { _mapPins.m.delete(ev.spawn_id); _mapPins.tried.delete(ev.spawn_id); }
   const att = pin && rec.byId.get(String(pin.point_id))
     ? { kind: 'assigned', point_id: pin.point_id, dist: null, pinned: true }
-    : _mapAttribute(rec.body.points, ev.name, loc);
+    : _mapAttribute(rec.body.points, ev.name, loc, rec.body.grids);
   if (att.kind === 'none') return att;
   _mapRecentDeaths.push({ name, at: now, spawn_id: ev.spawn_id == null ? null : ev.spawn_id, src: ev.src || 'zeal' });
   const at = Number.isFinite(ev.at) ? ev.at : now;
@@ -44901,9 +44929,10 @@ function _mapStatePayload(have, now) {
   const character = _mapActiveCharacter(now);
   const st = character ? _zealState[character] : null;
   const out = { zone: null, long_name: null, zone_id: null, version: null, status: character ? 'ok' : 'no-pipe', local_only: _localOnly(),
-    map: null, points: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], now };
+    map: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], now };
   if (!st) return out;
   out.zone_id = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
+  out.pos_at = Number.isFinite(st.updatedAt) ? st.updatedAt : null;   // when the agent last heard from Mimic: the overlay's "pos NNN ms"
   const zone = _mapZoneShort(st.zone);
   out.zone = zone;
   out.long_name = _zoneName(st.zone);
@@ -44945,7 +44974,7 @@ function _mapStatePayload(have, now) {
   }
   out.version = rec.version;
   out.long_name = rec.body.long_name || out.long_name;
-  if (!have || have !== rec.version) { out.map = rec.body.map || null; out.points = rec.body.points; }
+  if (!have || have !== rec.version) { out.map = rec.body.map || null; out.points = rec.body.points; out.grids = rec.body.grids || null; }
   const zd = _mapZoneDoc(zone);
   if (_mapPrune(zd, rec.body.points, now)) _mapSaveSoon();
   out.timers = Object.values(zd.timers).map(t => Object.assign({}, t, { state: _mapTimerState(t, now) })).sort((a, b) => a.earliest - b.earliest);

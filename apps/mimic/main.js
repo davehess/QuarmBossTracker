@@ -2117,6 +2117,80 @@ function _flushZealStateToAgent() {
     req.write(body); req.end();
   }
 }
+// ── Map direct positions ──
+// The guild lead, 2026-10-12: "still somewhat laggy ... pull directly from EQ rather than waiting for the pipe".
+// Zeal already streams positions (10 Hz at its default PipeDelay); the lag was our own hops: the 300 ms agent flush
+// above, the agent, the overlay's 250 ms poll. While the Map window is up, positions go to it straight over IPC
+// ('map-pos'): at most one send per MAP_DIRECT_MIN_MS, the newest state wins (a send is built from the live
+// snapshot when it fires). Timers, points, routes, seen and pins still come from the agent's /api/map-state poll.
+// ⚠ _mapDirectXY DUPLICATES the agent's _mapServerXY (Zeal's pipe x/y are swapped against the server frame the
+// spawn table uses: server x = pipe y). test/spawn-map.test.js runs both and fails if they ever disagree.
+const MAP_DIRECT_MIN_MS = 50;         // at most one send per this
+const MAP_DIRECT_HEARTBEAT_MS = 500;  // an unchanged state is still re-sent this often, so the overlay knows pushes are alive
+function _mapDirectXY(loc) {
+  const p = _pipeLoc(loc);
+  return p ? { x: p.y, y: p.x, z: p.z } : null;
+}
+function _mapDirectPos(loc, heading) {
+  const s = _mapDirectXY(loc);
+  const h = heading == null ? NaN : Number(heading);
+  return s ? { x: s.x, y: s.y, z: s.z, heading: Number.isFinite(h) ? h : null } : null;
+}
+function _mapDirectMembers(list) {
+  const out = [];
+  for (const m of Array.isArray(list) ? list : []) {
+    const p = m && m.name ? _mapDirectPos(m.loc, m.heading) : null;
+    if (p) out.push(Object.assign({ name: String(m.name) }, p));
+  }
+  return out;
+}
+// deps: { now(), setT(fn, ms), clearT(t), snapshot(character) -> live state | null, active() -> is the Map up, send(payload) }
+function _makeMapDirect(deps) {
+  const st = { character: null, raid: [], lastRun: -Infinity, lastSend: -Infinity, sig: '', timer: null };
+  const run = () => {
+    st.timer = null;
+    const t = deps.now();
+    st.lastRun = t;
+    const snap = st.character ? deps.snapshot(st.character) : null;
+    if (!snap) return;
+    const tp = snap.target_name ? _mapDirectPos(snap.target_loc, null) : null;
+    const p = {
+      character: st.character, zone_id: Number.isFinite(Number(snap.zone)) ? Number(snap.zone) : null,
+      self: _mapDirectPos(snap.loc, snap.heading), group: _mapDirectMembers(snap.group_members), raid: st.raid,
+      target: tp ? Object.assign({ id: snap.target_id == null ? null : snap.target_id, name: String(snap.target_name) }, tp) : null,
+    };
+    const sig = JSON.stringify([p.zone_id, p.self, p.group, p.raid, p.target]);
+    if (sig === st.sig && t - st.lastSend < MAP_DIRECT_HEARTBEAT_MS) return;
+    st.sig = sig; st.lastSend = t; p.at = t;
+    deps.send(p);
+  };
+  return {
+    // Call with every parsed pipe object, after it has been absorbed into the live state.
+    note(obj) {
+      if (!obj) return;
+      const type = String(obj.type);
+      if (type === '3') {                                  // player: self + target
+        if (typeof obj.character === 'string' && obj.character) st.character = obj.character;
+      } else if (type === '5') {                           // raid: [{ name, loc, heading, ... }]
+        if (st.character && obj.character && obj.character !== st.character) return;
+        const inner = _zealParseData(obj);
+        if (Array.isArray(inner)) st.raid = _mapDirectMembers(inner);
+      } else if (type !== '6') return;                     // group rides the snapshot
+      if (!deps.active()) return;
+      const wait = MAP_DIRECT_MIN_MS - (deps.now() - st.lastRun);
+      if (wait <= 0) { if (st.timer) { deps.clearT(st.timer); st.timer = null; } run(); }
+      else if (!st.timer) st.timer = deps.setT(run, wait);
+    },
+  };
+}
+const _mapDirect = _makeMapDirect({
+  now: Date.now, setT: setTimeout, clearT: clearTimeout,
+  snapshot: (character) => { const c = _zealLiveByChar.get(character); return c ? c.snapshot : null; },
+  active: () => _live(mapWindow) && mapWindow.isVisible(),
+  send: (p) => { try { mapWindow.webContents.send('map-pos', p); } catch (e) { void e; } },
+});
+// ── end Map direct positions ──
+
 // Push the "pause Discord tells" deadline to the local agent. The agent stamps
 // it onto subsequent tell uploads (dm_pause_until) so the bot stores the tell
 // but skips the Discord DM. The deadline lives only in the agent process, so we
@@ -2385,6 +2459,7 @@ function startZealCapture() {
         // pid rides along so a character switch on the same client retires
         // the previous character's state (see _zealAbsorb/_retireZealChar).
         try { _zealAbsorb(obj, pid); } catch (e) { void e; }
+        try { _mapDirect.note(obj); } catch (e) { void e; }   // the Map's direct position path (a no-op unless it is up)
       },
     });
     setInterval(_flushZealToAgent, 2000);
