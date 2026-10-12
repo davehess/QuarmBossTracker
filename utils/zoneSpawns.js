@@ -13,6 +13,7 @@
 //   · eqemu_spawnentry paged per chunk of group ids                  → who spawns at each group
 //   · eqemu_npc_types  by id list, chunked                           → name, level, senses, specials
 //   · zone_map_lines   one row, bands/segs/bounds ONLY               → the cached EQEmu wall layer
+//   · eqemu_zone_grids one row, only when a point has a pathgrid     → the pather routes (null if absent)
 //
 // ⚠ NEVER SELECT zone_map_lines.brewall. It is third-party map art with no licence; it is stored for the
 // website's own render and must not leave the website (the guild lead's standing line on the spectator map).
@@ -78,7 +79,7 @@ async function build(supabase, zone, bosses) {
   const longName = zrows[0].long_name || zone;
 
   const spawn2 = await supabase.selectAllPaged('eqemu_spawn2',
-    `zone_short=eq.${encodeURIComponent(zone)}&enabled=eq.true&select=id,spawngroup_id,x,y,z,respawntime,variance`, 'id');
+    `zone_short=eq.${encodeURIComponent(zone)}&enabled=eq.true&select=id,spawngroup_id,x,y,z,respawntime,variance,pathgrid`, 'id');
   if (!Array.isArray(spawn2)) return { status: 503 };
 
   const groupIds = [...new Set(spawn2.map(r => r.spawngroup_id).filter(g => g != null))];
@@ -126,17 +127,38 @@ async function build(supabase, zone, bosses) {
       id: sp.id, x: num(sp.x), y: num(sp.y), z: num(sp.z),
       respawn_s: resp == null || resp >= INSTANCE_SENTINEL_S ? null : resp,
       variance_s: num(sp.variance),
+      grid: num(sp.pathgrid) > 0 ? num(sp.pathgrid) : null,   // 0 = stands still
       npcs: list,
     });
   }
   if (!points.length) return { status: 404 };
+
+  // The routes the pathers walk (eqemu_zone_grids: one jsonb document per zone, see its migration). Only the
+  // grids this zone's points name go out. The routes are decoration: a missing table (before the first
+  // import) or a failed read leaves grids null and the map still answers; a FAILED read is cached briefly
+  // (`degraded`) so a hiccup does not hide the routes for six hours.
+  let grids = null;
+  let degraded = false;
+  const gridIds = [...new Set(points.map(p => p.grid).filter(g => g != null))].sort((a, b) => a - b);
+  if (gridIds.length) {
+    const grows = await supabase.select('eqemu_zone_grids', `zone_short=eq.${encodeURIComponent(zone)}&select=grids&limit=1`);
+    if (!Array.isArray(grows)) degraded = true;
+    else if (grows[0] && grows[0].grids && typeof grows[0].grids === 'object') {
+      const picked = {};
+      for (const id of gridIds) {
+        const g = grows[0].grids[id];
+        if (g && Array.isArray(g.pts) && g.pts.length) picked[id] = { type: g.type, type2: g.type2, pts: g.pts };
+      }
+      if (Object.keys(picked).length) grids = picked;
+    }
+  }
 
   const mrows = await supabase.select('zone_map_lines', `zone_short=eq.${encodeURIComponent(zone)}&select=${MAP_SELECT}&limit=1`);
   if (!Array.isArray(mrows)) return { status: 503 };
   const m = mrows[0];
   const map = m ? { bands: m.bands, segs: m.segs, bounds: m.bounds } : null;
 
-  return { status: 200, payload: { zone, long_name: longName, generated_at: new Date().toISOString(), points, map } };
+  return { status: 200, degraded, payload: { zone, long_name: longName, generated_at: new Date().toISOString(), points, map, grids } };
 }
 
 // A weak validator over the CONTENT (generated_at left out) so a rebuild of unchanged data keeps its ETag
@@ -164,7 +186,7 @@ async function getZoneSpawns(supabase, zoneRaw, bosses, now = Date.now) {
     if (r.status === 404) entry = { at: now(), ttl: EMPTY_TTL_MS, status: 404 };
     else {
       const body = JSON.stringify(r.payload);
-      entry = { at: now(), ttl: TTL_MS, status: 200, body, gz: zlib.gzipSync(body), etag: etagOf(r.payload) };
+      entry = { at: now(), ttl: r.degraded ? EMPTY_TTL_MS : TTL_MS, status: 200, body, gz: zlib.gzipSync(body), etag: etagOf(r.payload) };
     }
     _cache.delete(zone);
     _cache.set(zone, entry);

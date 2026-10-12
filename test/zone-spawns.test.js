@@ -49,10 +49,10 @@ function world() {
   return {
     eqemu_zone: [{ short_name: 'testzone', long_name: 'The Test Zone' }, { short_name: 'emptyzone', long_name: 'Empty' }],
     eqemu_spawn2: [
-      sp(1, 10), sp(2, 11), sp(3, 12), sp(4, 13), sp(5, 14), sp(6, 15),
+      sp(1, 10, { pathgrid: 7 }), sp(2, 11, { pathgrid: 3 }), sp(3, 12, { pathgrid: 0 }), sp(4, 13), sp(5, 14), sp(6, 15),
       sp(7, 16, { respawntime: 1_700_000 }),
-      sp(8, 10, { enabled: false }),                          // disabled: not a point
-      sp(9, 10, { zone_short: 'otherzone' }),                 // another zone
+      sp(8, 10, { enabled: false, pathgrid: 8 }),             // disabled: not a point, and its grid is not sent
+      sp(9, 10, { zone_short: 'otherzone', pathgrid: 99 }),   // another zone
       sp(10, 99),                                             // a group nobody spawns from
       sp(11, 17), sp(12, 18), sp(13, 19), sp(14, 20),
     ],
@@ -83,6 +83,16 @@ function world() {
       zone_short: 'testzone', bands: [-10, 0, 10], segs: [[0, 0, 5, 5, 1]], bounds: { minX: -1, maxX: 1, minY: -1, maxY: 1 },
       brewall: { note: BREWALL_MARK }, generated_at: '2026-10-10T00:00:00Z', source: 'EQEmu/maps (GPLv2+)',
     }],
+    // one document per zone: grids 3 and 7 are walked by testzone's points, 8 only by a disabled point, 9 by nobody
+    eqemu_zone_grids: [
+      { zoneid: 5, zone_short: 'testzone', grids: {
+        3: { type: 3, type2: 0, pts: [[0, 0, 1, 0], [10, 0, 1, 5]] },
+        7: { type: 0, type2: 0, pts: [[1, 1, 2, 0], [2, 2, 2, 0], [3, 3, 2, 30]] },
+        8: { type: 1, type2: 0, pts: [[8, 8, 8, 0]] },
+        9: { type: 1, type2: 0, pts: [[9, 9, 9, 0]] },
+      } },
+      { zoneid: 6, zone_short: 'otherzone', grids: { 99: { type: 3, type2: 0, pts: [[99, 99, 99, 0]] } } },
+    ],
   };
 }
 
@@ -100,13 +110,13 @@ const pointFor = (b, id) => b.points.find(p => p.id === id);
 const npcNamed = (b, name) => b.points.flatMap(p => p.npcs).find(n => n.name === name);
 
 describe('the response shape', () => {
-  it('is the contract: zone, long_name, generated_at, points, map', async () => {
+  it('is the contract: zone, long_name, generated_at, points, map, grids', async () => {
     const b = await body();
-    expect(Object.keys(b)).toEqual(['zone', 'long_name', 'generated_at', 'points', 'map']);
+    expect(Object.keys(b)).toEqual(['zone', 'long_name', 'generated_at', 'points', 'map', 'grids']);
     expect(b.zone).toBe('testzone');
     expect(b.long_name).toBe('The Test Zone');
     expect(Date.parse(b.generated_at)).toBeGreaterThan(0);
-    expect(Object.keys(b.points[0])).toEqual(['id', 'x', 'y', 'z', 'respawn_s', 'variance_s', 'npcs']);
+    expect(Object.keys(b.points[0])).toEqual(['id', 'x', 'y', 'z', 'respawn_s', 'variance_s', 'grid', 'npcs']);
     expect(Object.keys(b.points[0].npcs[0])).toEqual(['name', 'level', 'chance', 'named', 'raid_target', 'badges']);
   });
 
@@ -237,6 +247,127 @@ describe('the map layer', () => {
     const fs = nodeRequire('fs');
     const code = stripJs(fs.readFileSync(nodeRequire.resolve('./utils/zoneSpawns.js'), 'utf8'));
     expect(code).not.toMatch(/brewall/i);
+  });
+});
+
+describe('pather routes (eqemu_zone_grids)', () => {
+  const sync = nodeRequire('./scripts/sync-from-eqmac.js');
+  const gridReads = () => fake.calls.filter(c => c.table === 'eqemu_zone_grids').map(c => c.qs);
+
+  it('a point carries the grid it walks, and null when it stands still', async () => {
+    const b = await body();
+    expect(pointFor(b, 1).grid).toBe(7);
+    expect(pointFor(b, 2).grid).toBe(3);
+    expect(pointFor(b, 3).grid).toBeNull();     // pathgrid 0
+    expect(pointFor(b, 4).grid).toBeNull();     // column absent
+  });
+
+  it('grids holds only the grids this zone\'s points name, waypoints in order', async () => {
+    const b = await body();
+    expect(Object.keys(b.grids)).toEqual(['3', '7']);          // not 8 (disabled point), 9 (nobody), 99 (other zone)
+    expect(b.grids[7]).toEqual({ type: 0, type2: 0, pts: [[1, 1, 2, 0], [2, 2, 2, 0], [3, 3, 2, 30]] });
+    expect(b.grids[3].pts).toEqual([[0, 0, 1, 0], [10, 0, 1, 5]]);
+  });
+
+  it('reads one row of one zone, explicit column, bounded', async () => {
+    await get();
+    const q = gridReads();
+    expect(q).toHaveLength(1);
+    expect(q[0]).toBe('zone_short=eq.testzone&select=grids&limit=1');
+  });
+
+  it('a zone whose points walk no grid does not read the table and answers grids: null', async () => {
+    for (const r of tables.eqemu_spawn2) delete r.pathgrid;
+    const b = await body();
+    expect(b.grids).toBeNull();
+    expect(gridReads()).toHaveLength(0);
+  });
+
+  it('an empty table, or no row for the zone, is still a 200 with grids: null (before the first import)', async () => {
+    tables.eqemu_zone_grids = [];
+    let r = await get();
+    expect(r.status).toBe(200);
+    expect(JSON.parse(r.body).grids).toBeNull();
+    expect(JSON.parse(r.body).points.length).toBeGreaterThan(0);
+    zs._resetCache();
+    tables.eqemu_zone_grids = [{ zoneid: 6, zone_short: 'otherzone', grids: {} }];
+    r = await get();
+    expect(r.status).toBe(200);
+    expect(JSON.parse(r.body).grids).toBeNull();
+  });
+
+  it('a table that is not there answers 200 with grids: null, and is asked again in five minutes, not six hours', async () => {
+    fake = withProjection(makeCapFake({ tables, missing: ['eqemu_zone_grids'] }));
+    let t = 1_000_000;
+    const r = await get('testzone', () => t);
+    expect(r.status).toBe(200);
+    expect(JSON.parse(r.body).grids).toBeNull();
+    const n = fake.calls.length;
+    t += 4 * 60_000;
+    await get('testzone', () => t);
+    expect(fake.calls.length).toBe(n);                          // still cached
+    t += 2 * 60_000;
+    await get('testzone', () => t);
+    expect(fake.calls.length).toBeGreaterThan(n);               // rebuilt after 5 min
+  });
+
+  it('the ETag follows the routes', async () => {
+    const a = (await get()).etag;
+    zs._resetCache();
+    tables.eqemu_zone_grids[0].grids[7].pts[1][0] = 2.5;
+    expect((await get()).etag).not.toBe(a);
+  });
+
+  describe('the sync\'s per-zone document (buildZoneGrids)', () => {
+    const grid = (id, zoneid, type = 3, type2 = 0) => ({ id, zoneid, type, type2 });
+    const wp = (gridid, zoneid, number, x, y, z, pause = 0) => ({ gridid, zoneid, number, x, y, z, pause });
+
+    it('orders waypoints by number and rounds x/y/z to one decimal', () => {
+      const out = sync.buildZoneGrids(
+        [grid(7, 5)],
+        [wp(7, 5, 3, 30.04, 3, 3, 9), wp(7, 5, 1, 12.345, -7.25, 0.06), wp(7, 5, 2, 20, 2, 2)],
+      );
+      expect(out).toEqual({ 5: { 7: { type: 3, type2: 0, pts: [[12.3, -7.2, 0.1, 0], [20, 2, 2, 0], [30, 3, 3, 9]] } } });
+    });
+
+    it('keys by (zone, grid): the same grid id in two zones stays two routes', () => {
+      const out = sync.buildZoneGrids([grid(1, 5, 3), grid(1, 6, 0)], [wp(1, 5, 1, 1, 1, 1), wp(1, 6, 1, 2, 2, 2)]);
+      expect(out[5][1].pts).toEqual([[1, 1, 1, 0]]);
+      expect(out[6][1]).toMatchObject({ type: 0, pts: [[2, 2, 2, 0]] });
+    });
+
+    it('drops a grid with no waypoints, a waypoint with no grid, a bad coordinate, and a zone left empty', () => {
+      const out = sync.buildZoneGrids(
+        [grid(1, 5), grid(2, 5), grid(3, 6)],
+        [wp(1, 5, 1, 1, 1, 1), wp(1, 5, 2, 'x', 1, 1), wp(1, 5, 3, null, 1, 1), wp(9, 5, 1, 4, 4, 4)],
+      );
+      expect(out).toEqual({ 5: { 1: { type: 3, type2: 0, pts: [[1, 1, 1, 0]] } } });
+    });
+
+    it('turns rows into eqemu_zone_grids rows, a zone the mirror lacks keeping a null short name', () => {
+      const rows = sync.zoneGridRows({ 5: { 1: { type: 3, type2: 0, pts: [[1, 1, 1, 0]] } }, 77: { 2: { type: 0, type2: 0, pts: [[2, 2, 2, 0]] } } },
+        new Map([[5, 'testzone']]), '2026-10-12T00:00:00Z');
+      expect(rows.map(r => [r.zoneid, r.zone_short])).toEqual([[5, 'testzone'], [77, null]]);
+      expect(rows[0].updated_at).toBe('2026-10-12T00:00:00Z');
+    });
+
+    it('the dump transforms read the columns by name, whatever their order', () => {
+      expect(sync.TRANSFORMS.grid(['zoneid', 'id', 'type2', 'type'], [5, 7, 0, 3])).toEqual({ id: 7, zoneid: 5, type: 3, type2: 0 });
+      expect(sync.TRANSFORMS.grid_entries(['gridid', 'zoneid', 'number', 'x', 'y', 'z', 'heading', 'pause', 'centerpoint'],
+        [7, 5, 2, 1.5, 2.5, 3.5, 100, 12, 0])).toEqual({ gridid: 7, zoneid: 5, number: 2, x: 1.5, y: 2.5, z: 3.5, pause: 12 });
+      expect(sync.TRANSFORMS.grid_entries(['gridid', 'zoneid'], [7, 5])).toBeNull();
+    });
+
+    it('the run stages the dump tables, never falls back to another server\'s, and upserts the zone rows in small chunks', () => {
+      const fs = nodeRequire('fs');
+      const code = stripJs(fs.readFileSync(nodeRequire.resolve('./scripts/sync-from-eqmac.js'), 'utf8'));
+      expect(code).toMatch(/!seenInPrimary\.has\(t\) && !NO_FALLBACK\.has\(t\)/);
+      expect(code).toMatch(/NO_FALLBACK = new Set\(\['grid', 'grid_entries'\]\)/);
+      expect(code).toMatch(/'eqemu_npc_emotes',\s*'eqemu_zone_grids',\s*\]/);
+      expect(code).toMatch(/dest === 'eqemu_zone_grids' \? 10 : 500/);
+      expect(code).toMatch(/if \(!\(counts\.eqemu_zone_grids > 0\)\) problems\.push/);
+      expect(sync.PK_MAP.eqemu_zone_grids).toEqual(['zoneid']);
+    });
   });
 });
 
