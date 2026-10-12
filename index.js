@@ -11289,9 +11289,11 @@ function _normMobName(n) {
   // like "Vyzh`dra the Exiled's corpse" still resolves to the live NPC row
   // in eqemu_npc_types (otherwise the underscore-collapsed form ends in
   // "_s_corpse" and never matches). Lets the Mob Info overlay keep showing
-  // stats + loot for a freshly-killed mob you're looting from.
+  // stats + loot for a freshly-killed mob you're looting from. The client also
+  // writes it with a backtick ("Laef Windfall`s corpse") and sometimes a number
+  // after "corpse" (the guild lead, 2026-10-12: an empty Loot tab on one).
   return String(n || '').trim().toLowerCase()
-    .replace(/'s\s+corpse$/, '')
+    .replace(/[`'’]s\s+corpse\d*$/, '')
     .replace(/[\s`'’]+/g, '_').replace(/^#/, '');
 }
 // _normMobName with the CASE kept — except the first letter, which is folded
@@ -11303,7 +11305,7 @@ function _normMobName(n) {
 // them differ in class.
 function _mobCaseKey(n) {
   const s = String(n || '').trim()
-    .replace(/'s\s+corpse$/i, '')
+    .replace(/[`'’]s\s+corpse\d*$/i, '')
     .replace(/[\s`'’]+/g, '_').replace(/^#/, '');
   return s.charAt(0).toLowerCase() + s.slice(1);
 }
