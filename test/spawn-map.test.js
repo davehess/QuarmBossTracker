@@ -768,7 +768,7 @@ describe('pather routes', () => {
 
   // Boots the overlay's script against a stub page. Returns its state object S and the stub elements by id.
   // `mimic` is window.mimic (undefined = a plain browser), `store` a localStorage in a plain object.
-  async function bootOverlay({ mimic, store = {}, payload: given } = {}) {
+  async function bootOverlay({ mimic, store = {}, payload: given, winSize } = {}) {
     const script = MAP_HTML.slice(MAP_HTML.indexOf('<script>') + 8, MAP_HTML.lastIndexOf('</script>'));
     const all = {};
     const mkEl = (tag) => {
@@ -799,7 +799,7 @@ describe('pather routes', () => {
       unassigned: [{ id: 'u1', name: 'a decaying skeleton', died_at: T0, candidates: [2, 6] }],
     };
     const fetched = [];
-    const win = { addEventListener() {}, devicePixelRatio: 1, mimic };
+    const win = Object.assign({ addEventListener() {}, devicePixelRatio: 1, mimic }, winSize || {});
     const ls = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
     // eslint-disable-next-line no-new-func
     const S = new Function('window', 'document', 'location', 'fetch', 'localStorage', 'ResizeObserver', 'setInterval', 'clearInterval',
@@ -855,6 +855,24 @@ describe('pather routes', () => {
     expect(base.store['wp-map-side']).toBe('0');
     const again = await bootOverlay({ store: base.store });
     expect(again.all.wrap.classList.contains('noside')).toBe(true);
+  });
+  it('Timers "Widen window" (default) grows/shrinks the window by the list; "Share space" leaves the window alone', async () => {
+    // the guild lead, 2026-10-12: "an option for the timers to slide out and take additional space rather than shrinking the map"
+    const calls = [];
+    const mimic = { overlaySetBounds: (b) => { calls.push(b); return Promise.resolve(true); } };
+    const g = await bootOverlay({ mimic, winSize: { outerWidth: 760, outerHeight: 480 } });
+    expect(g.S.sideMode).toBe('grow');
+    g.all.sideBtn.listeners.click.forEach(f => f());                  // tuck the list in: the window narrows by 216
+    expect(calls.pop()).toEqual({ width: 544, height: 480 });
+    const g2 = await bootOverlay({ mimic, store: g.store, winSize: { outerWidth: 544, outerHeight: 480 } });
+    g2.all.sideBtn.listeners.click.forEach(f => f());                 // slide it out: the window widens back
+    expect(calls.pop()).toEqual({ width: 760, height: 480 });
+    const s = await bootOverlay({ mimic, store: { 'wp-map-side-mode': 'share' }, winSize: { outerWidth: 760, outerHeight: 480 } });
+    expect(s.all.sideModeSel.value).toBe('share');
+    s.all.sideBtn.listeners.click.forEach(f => f());
+    expect(calls.length).toBe(0);                                     // share: no window resize
+    s.all.sideModeSel.value = 'grow'; s.all.sideModeSel.listeners.change.forEach(f => f());
+    expect(s.store['wp-map-side-mode']).toBe('grow');
   });
   it('Spawn height: spawn points further above or below you than the slider are hidden (default: all)', async () => {
     const shown = (all) => all.hits.children.filter(h => !h.hidden).length;

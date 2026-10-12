@@ -113,6 +113,8 @@
     <select id="srcSel"><option value="direct">Direct</option><option value="agent">Agent</option></select>
     <span title="How much the dots are smoothed between position updates. More smoothing looks calmer and lags a little more.">smoothing</span>
     <select id="smoothSel"></select>
+    <span title="What the Timers button does. Widen window: the window grows to the side by the list's width, so the map keeps its size. Share space: the window stays put and the map shrinks to make room.">timers</span>
+    <select id="sideModeSel"><option value="grow">Widen window</option><option value="share">Share space</option></select>
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
@@ -380,6 +382,7 @@
     ver: null, zone: null, points: [], byId: {}, map: null, grids: null, prep: null, p: null, skew: 0, err: false,
     view: { cx: 0, cy: 0, scale: 0.5 }, follow: true, panMode: false, levels: LEVEL_DEFAULT, fit: 'zone', hoverGrid: null,
     spawnLevels: LEVEL_STEPS.length - 1, sideOpen: true,   // spawns: all by default; the timers list starts slid out
+    sideMode: 'grow',   // Timers button: 'grow' widens the window by the list (map keeps its size), 'share' shrinks the map
     timerBy: {}, candBy: {}, seenBy: {}, menuPid: null, drag: null, w: 0, h: 0, fitted: false,
     trk: {}, sideAt: 0,
     src: 'direct', smooth: 'light', direct: null, sampleAt: 0, sampleSrc: '',   // beta tuning knobs + the latest pushed positions
@@ -393,6 +396,7 @@
     var sl = parseInt(lsGet('wp-map-spawn-levels'), 10);
     if (sl >= 0 && sl < LEVEL_STEPS.length) S.spawnLevels = sl;
     S.sideOpen = lsGet('wp-map-side') !== '0';
+    if (lsGet('wp-map-side-mode') === 'share') S.sideMode = 'share';
     if (FIT_MODES.indexOf(fm) >= 0) S.fit = fm;
     if (sr === 'direct' || sr === 'agent') S.src = sr;
     if (Object.prototype.hasOwnProperty.call(SMOOTH_MS, sm)) S.smooth = sm;
@@ -927,15 +931,27 @@
     lsSet('wp-map-spawn-levels', S.spawnLevels); syncSpawns(); renderMap();
   });
   syncSpawns();
-  // The top-right button slides the timers list out and back in; the map pane takes the freed width.
+  // The top-right button slides the timers list out and back in. 'grow' (the guild lead, 2026-10-12: "an option for the
+  // timers to slide out and take additional space rather than shrinking the map") widens or narrows the WINDOW by the
+  // list's width so the map keeps its size; 'share' keeps the window and the map pane takes or gives the width.
+  var SIDE_W = 216;   // #side's 210px + the 6px gap
   var sideBtn = document.getElementById('sideBtn'), wrapEl = document.getElementById('wrap');
+  var sideModeSel = document.getElementById('sideModeSel');
   function syncSide() {
     wrapEl.classList.toggle('noside', !S.sideOpen);
     sideBtn.textContent = S.sideOpen ? 'Timers ▸' : '◂ Timers';
     sideBtn.classList.toggle('on', !S.sideOpen);
+    sideModeSel.value = S.sideMode;
   }
   sideBtn.addEventListener('click', function () {
-    S.sideOpen = !S.sideOpen; lsSet('wp-map-side', S.sideOpen ? 1 : 0); syncSide(); resize();
+    S.sideOpen = !S.sideOpen; lsSet('wp-map-side', S.sideOpen ? 1 : 0); syncSide();
+    var w0 = window.outerWidth || window.innerWidth || 0, h0 = window.outerHeight || window.innerHeight || 0;
+    if (S.sideMode === 'grow' && w0 && h0 && window.mimic && typeof window.mimic.overlaySetBounds === 'function') {
+      window.mimic.overlaySetBounds({ width: w0 + (S.sideOpen ? SIDE_W : -SIDE_W), height: h0 });   // resize follows via the observer
+    } else resize();
+  });
+  sideModeSel.addEventListener('change', function () {
+    S.sideMode = sideModeSel.value === 'share' ? 'share' : 'grow'; lsSet('wp-map-side-mode', S.sideMode);
   });
   syncSide();
   // Beta tuning knobs (setup bar): where positions come from, and how much they are smoothed.
