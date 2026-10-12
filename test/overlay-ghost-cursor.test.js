@@ -37,10 +37,13 @@ describe('stand-in pointer: where EQ\'s own pointer is hidden', () => {
     expect(H._wpAlpha('rgb(13, 17, 23)')).toBe(1);
     expect(H._wpAlpha('transparent')).toBe(0);
   });
-  it('solid: a canvas (the Map), an image, or anything sitting on a background at least 35% opaque', () => {
-    expect(H._wpOverSolid(chain({ tagName: 'CANVAS' }))).toBe(true);
-    expect(H._wpOverSolid(chain({ tagName: 'IMG' }))).toBe(true);
-    expect(H._wpOverSolid(chain({ tagName: 'SPAN' }, { bg: 'rgba(14, 17, 22, 0.6)' }))).toBe(true);   // a panel's text
+  it('solid: anything sitting on a background at least 35% opaque (the Map\'s panel, a panel\'s text)', () => {
+    expect(H._wpOverSolid(chain({ tagName: 'CANVAS' }, { bg: 'rgba(19, 26, 38, 0.9)' }))).toBe(true);   // the Map
+    expect(H._wpOverSolid(chain({ tagName: 'SPAN' }, { bg: 'rgba(14, 17, 22, 0.6)' }))).toBe(true);
+  });
+  it('a bare canvas or picture is NOT solid: the HUD ring is a window-sized canvas over open game (the left-behind arrow, 2026-10-12)', () => {
+    expect(H._wpOverSolid(chain({ tagName: 'CANVAS' }))).toBe(false);
+    expect(H._wpOverSolid(chain({ tagName: 'IMG' }))).toBe(false);
   });
   it('see-through: floating text on a transparent window gets no stand-in (EQ\'s pointer shows there)', () => {
     expect(H._wpOverSolid(chain({ tagName: 'SPAN' }, { bg: 'rgba(0, 0, 0, 0.2)' }, {}))).toBe(false);
@@ -55,5 +58,14 @@ describe('stand-in pointer: where EQ\'s own pointer is hidden', () => {
     expect(js).toMatch(/if \(!ev\.relatedTarget\) _wpGhostHide\(\);/);
     expect(js).toMatch(/pointer-events:none/);
     expect(js).toMatch(/document\.documentElement\.appendChild\(_wpGhost\)/);   // outside <body>: themes never recolour it
+  });
+  it('once the mousemoves stop, it asks main whether the mouse is still over the window and hides when not', () => {
+    const js = stripJs(PRELOAD);
+    expect(js).toMatch(/ipcRenderer\.invoke\('overlay-cursor-inside'\)\.then\(function \(inside\) \{ if \(!inside\) _wpGhostHide\(\); \}, _wpGhostHide\);/);
+    expect(js).toMatch(/_wpGhostWatch\(\);\n\}, \{ capture: true, passive: true \}\);/);
+    const main = stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'main.js')));
+    const h = sliceBlock(main, "ipcMain.handle('overlay-cursor-inside'", '\n});');
+    expect(h).toMatch(/screen\.getCursorScreenPoint\(\), b = win\.getBounds\(\);/);
+    expect(h).toMatch(/p\.x >= b\.x && p\.x < b\.x \+ b\.width && p\.y >= b\.y && p\.y < b\.y \+ b\.height/);
   });
 });

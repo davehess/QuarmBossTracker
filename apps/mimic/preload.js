@@ -126,19 +126,31 @@ function _wpAlpha(bg) {
   const p = m[1].split(',');
   return p.length >= 4 ? parseFloat(p[3]) || 0 : 1;
 }
-// Is the point under the cursor painted solid enough to hide EQ's pointer?
+// Is the point under the cursor painted solid enough to hide EQ's pointer? Only a background colour counts: a
+// <canvas> or picture is usually see-through around what it draws (the HUD ring is a window-sized canvas, and
+// counting it drew a second arrow over open game; 2026-10-12). The Map's dark panel is a CSS background.
 function _wpOverSolid(el) {
   if (document.body && document.body.classList.contains('wp-backdrop')) return true;
   while (el && el.nodeType === 1 && el !== document.documentElement) {
-    const tag = el.tagName;
-    if (tag === 'CANVAS' || tag === 'IMG' || tag === 'VIDEO') return true;
     try { if (_wpAlpha(getComputedStyle(el).backgroundColor) >= 0.35) return true; } catch (e) { return false; }
     el = el.parentElement;
   }
   return false;
 }
+// Leaving a click-through window sends no mouseout, so once the forwarded mousemoves stop, ask main whether the
+// mouse is still over this window and hide the arrow when it is not (it used to stay behind as an artifact).
+let _wpGhostAt = 0, _wpGhostTimer = null;
+function _wpGhostWatch() {
+  if (_wpGhostTimer) return;
+  _wpGhostTimer = setInterval(function () {
+    if (!_wpGhost || _wpGhost.style.display === 'none') { clearInterval(_wpGhostTimer); _wpGhostTimer = null; return; }
+    if (Date.now() - _wpGhostAt < 150) return;   // still moving: the mousemoves keep it right
+    ipcRenderer.invoke('overlay-cursor-inside').then(function (inside) { if (!inside) _wpGhostHide(); }, _wpGhostHide);
+  }, 250);
+}
 document.addEventListener('mousemove', function (ev) {
   if (!_wpOverlayDoc()) return;
+  _wpGhostAt = Date.now();
   if (!_wpLocked || _wpHoverArmed || !_wpOverSolid(ev.target)) { _wpGhostHide(); return; }
   if (!_wpGhost) {
     _wpGhost = document.createElement('div');
@@ -149,6 +161,7 @@ document.addEventListener('mousemove', function (ev) {
   }
   _wpGhost.style.transform = 'translate(' + ev.clientX + 'px,' + ev.clientY + 'px)';
   _wpGhost.style.display = 'block';
+  _wpGhostWatch();
 }, { capture: true, passive: true });
 
 // ── Solid backdrop (a member, 2026-07-10) ────────────────────────────────────
