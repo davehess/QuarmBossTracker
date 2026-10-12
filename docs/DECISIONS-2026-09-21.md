@@ -9409,3 +9409,22 @@ Harmony, Hide/Sneak for non-rogues).
   gets log-line deaths and manual marks only. Not yet run in a real Electron window; heading direction, floor
   picker and dot density are unchecked. Ability badges: a few get a glyph on the dot (see-invis, see-hide,
   summon, pacify-immune, rampage, enrage, flurry, reverse slow); the rest are spelled out in the hover card.
+- **Real-time positions (agent 3.7.131, beta `4bf1ff6e`).** The guild lead: *"local locations should update in
+  real time, location data from me/group/raid"*. Self and group already reached the agent every 300 ms; the
+  raid rode the 2 s pipe batch. Now a waiting raid sample flushes on the 300 ms beat (other pipe types keep
+  2 s), the overlay polls every 250 ms and glides dots between samples (a jump over 200 units snaps). No
+  extra uploads: the raid roster still uploads on a composition change or the 3 s heartbeat only.
+- **Found while testing: two Mimic installs side by side.** The guild lead saw "Not connected" on a stable
+  2.8.1 window while their beta 2.8.2 install was signed in and uploading. Two installs have two settings
+  folders, so only one holds the sign-in. Offered: a warning when a second Mimic is already watching the logs.
+
+### 240. A corpse written with a backtick resolves to its NPC (2026-10-12)
+
+- **The report** (the guild lead, screenshot): Target Info on "Laef Windfall\`s corpse" said "no published
+  drop table", though the NPC has 11 drops. The guild lead suspected the new Zeal corpse code.
+- **Cause:** every name key stripped "'s corpse" with a straight apostrophe only, so a backtick possessive
+  became `laef_windfall_s_corpse` and matched nothing. Whichever client path writes the backtick, the keys
+  must accept it.
+- **Fix:** bot 3.1.247 (main `6654e1cd`, `_normMobName` / `_mobCaseKey`) and agent 3.7.132 (beta `18f247df`:
+  the same two keys plus the "your target died" check) strip backtick, apostrophe and curly apostrophe, and
+  a number after "corpse". Tests: `test/corpse-name-key-bot.test.js`, `test/corpse-name-key-agent.test.js`.
