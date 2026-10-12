@@ -9545,3 +9545,9 @@ Harmony, Hide/Sneak for non-rogues).
   shows its own pointer there), not on unlocked overlays, not over see-through parts (EQ's pointer shows through).
 - **Known edge:** with EQ in the background (alt-tabbed) the Windows pointer is visible too, so the stand-in can show
   beside it over a solid overlay. Untested in game.
+- **First in-game report, same day** (*"mouse drawover in our overlays will sometimes leave an artifact"*, a
+  screenshot of a white arrow left on the HUD ring next to EQ's own pointer). Two causes, both fixed (`f145e562`):
+  leaving a click-through window sends no mouseout, so the arrow stayed; once the mousemoves stop the preload now asks
+  main whether the mouse is still inside the window (`overlay-cursor-inside`) and hides it if not. And a bare
+  `<canvas>` counted as solid, while the HUD ring is a window-sized see-through canvas: only a background colour
+  counts now.
