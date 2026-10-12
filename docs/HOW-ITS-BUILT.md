@@ -2357,6 +2357,15 @@ fetched on arrival in a zone and for the pinned list, revalidated daily,
 evicted after 90 unvisited days or past 80 MB. `fetchMobInfo` checks the pack
 before the network. DECISIONS §114.
 
+### Zone spawn points for the Mimic 2.9 spawn map (`/api/agent/zone-spawns`) — 2026-10-12
+Bot: `utils/zoneSpawns.js` + `_handleAgentZoneSpawns` in `index.js`. `GET ?zone=<short_name>` answers
+the zone's enabled `eqemu_spawn2` points in the SERVER frame (the agent swaps pipe x/y), each with
+the NPCs of its spawn group (name, level, chance, `named`, `raid_target`, `badges`) and the cached
+EQEmu wall layer from `zone_map_lines` (`bands,segs,bounds` only, never `brewall`; `map: null` when
+the website has not cached the zone). Six-hour per-zone cache, weak ETag over the content, 304,
+budget kind `zone_spawns` (30/min, GET, not sheddable). Instance sentinel respawn (1,700,000 s)
+reads `respawn_s: null`. Consumer: the Mimic overlay (`docs/DESIGN-mimic-2.9-spawn-map.md`).
+
 ### Guild trigger packs: PoP and the Ring of Fire (`guild_triggers.source_pack`) — 2026-09-30
 Imported straight into `guild_triggers`, no code: `pop-2026-10` (374 rows —
 recast bars on the server's NPC spell-list recast, boss stat cards, event

@@ -12016,6 +12016,9 @@ const _BUDGET_DEFAULTS = {
   // cached at the agent (5m) and bot (60s) so a healthy client barely calls it;
   // the generous cap only trips a runaway client, which backs off on the 429.
   who_lookup:      { perMin: 120, durable: false, get: true },
+  // Mimic 2.9 spawn map: one GET per zone-in, cached 6h and ETag'd at the bot. Not shed: it is a read
+  // (mob-info and who-lookup are not in _SHED_KINDS either), so over budget is a 429 the agent backs off.
+  zone_spawns:     { perMin: 30,  durable: false, get: true },
   // #106 multiplexed GET poll — one request carries recent_fires + tuning +
   // (at their own cadence) triggers/prefs/backfill/ui_edits. A healthy agent
   // polls ~40/min active, far slower idle/dormant; the generous cap only trips a
@@ -17115,6 +17118,29 @@ async function _handleAgentMobPack(req, res) {
   res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'ETag': pack.etag },
     gzip ? { 'Content-Encoding': 'gzip' } : {}));
   res.end(gzip ? pack.gz : pack.body);
+}
+
+// GET /api/agent/zone-spawns?zone=<short_name> — the Mimic 2.9 spawn map's points (utils/zoneSpawns.js
+// holds the reads, the named rule, the badges and the 6 h per-zone cache). Server frame, ETag'd.
+async function _handleAgentZoneSpawns(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const zoneSpawns = require('./utils/zoneSpawns');
+  const supabase = require('./utils/supabase');
+  const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (!supabase.isEnabled()) return json(503, { error: 'database unavailable' });
+  const r = await zoneSpawns.getZoneSpawns(supabase, new URL(req.url, 'http://x').searchParams.get('zone'), getBosses());
+  if (r.status === 400) return json(400, { error: 'unknown or invalid zone' });
+  if (r.status === 404) return json(404, { error: 'no spawn points for this zone' });
+  if (r.status !== 200) return json(503, { error: 'try again shortly' });
+  if (zoneSpawns.etagMatches(req.headers['if-none-match'], r.etag)) {
+    res.writeHead(304, { 'ETag': r.etag, 'Cache-Control': 'max-age=21600' });
+    return res.end();
+  }
+  const gzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
+  res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'ETag': r.etag, 'Cache-Control': 'max-age=21600' },
+    gzip ? { 'Content-Encoding': 'gzip' } : {}));
+  res.end(gzip ? r.gz : r.body);
 }
 
 // GET /api/agent/who-lookup?names=a,b,c
@@ -23287,6 +23313,16 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentMobPack(req, res); }
     catch (err) {
       console.error('[mob-pack] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/zone-spawns')) {
+    if (await _overBudget('zone_spawns', req, res)) return;
+    try { return await _handleAgentZoneSpawns(req, res); }
+    catch (err) {
+      console.error('[zone-spawns] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
