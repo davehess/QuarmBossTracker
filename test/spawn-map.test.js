@@ -42,6 +42,7 @@ function loadCore({ dir, opts, net }) {
     let _lastRaidPipe = null;
     const _setRaid = (v) => { _lastRaidPipe = v; };
     function _zoneName(id) { return id === 164 ? 'The Deep' : null; }
+    function _eqSetupDirs() { return []; }   // no EQ folder: the local map files are covered by test/map-local-files.test.js
   `;
   // eslint-disable-next-line no-new-func
   const f = new Function('fs', 'path', 'http', 'https', 'zlib', '__dirname', '__tmp', '__opts',

@@ -53,6 +53,7 @@
     border-radius:6px;padding:6px 8px;text-shadow:0 1px 2px #000}
   #zone{font-size:12px;color:#79c0ff;padding-right:26px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #posage{font-size:9px;color:#6e7681;min-height:11px;white-space:nowrap}
+  #wallsrc{font-size:9px;color:#6e7681;min-height:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #setupbar select{font:inherit;font-size:10px;max-width:90px}
   #tgt{font-size:10px;color:#f0883e;min-height:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #lists{flex:1 1 auto;overflow:auto;min-height:0;margin-top:3px}
@@ -113,6 +114,8 @@
     <select id="srcSel"><option value="direct">Direct</option><option value="agent">Agent</option></select>
     <span title="How much the dots are smoothed between position updates. More smoothing looks calmer and lags a little more.">smoothing</span>
     <select id="smoothSel"></select>
+    <span title="Where the walls come from. Auto: the map files in your own EverQuest folder (what Zeal draws) when you have them for this zone, otherwise ours. Ours only: always draw the Wolf Pack walls. Your map files are read on this computer and never sent anywhere.">walls</span>
+    <select id="wallsSel"><option value="auto">Auto</option><option value="ours">Ours only</option></select>
     <span title="What the Timers button does. Widen window: the window grows to the side by the list's width, so the map keeps its size. Share space: the window stays put and the map shrinks to make room.">timers</span>
     <select id="sideModeSel"><option value="grow">Widen window</option><option value="share">Share space</option></select>
     <button id="exitSetupBtn">Done</button>
@@ -128,6 +131,7 @@
         <button class="tb on" id="followBtn" type="button" title="Keep the map centred on you. Dragging the map turns it off.">Follow me</button>
         <button class="tb" id="fitBtn" type="button" title="Fit the view. Click to cycle: zone, group, raid.">Fit zone</button>
         <button class="tb" id="panBtn" type="button" title="Locked overlays let clicks through to EverQuest. Switch this on to drag and zoom the map (the mouse wheel zooms); right-click centres on you.">✋ Pan / zoom</button>
+        <button class="tb on" id="labelsBtn" type="button" title="Names on the map: boss names and room names. Switch off when it gets busy.">Labels: on</button>
         <label class="lv" title="Walls this far above or below you stay bright; the rest fade. Height is in game units: you are about 6 tall, one floor is roughly 30 to 60, so ±100 is about your floor and the ones next to it."><input id="levels" type="range" min="0" max="7" step="1"><span id="levelsVal">Levels</span></label>
         <label class="lv" title="Spawn points this far above or below you are shown; the rest are hidden. Same height units as Levels: ±25 is about your own floor, ±100 a floor or two either way."><input id="spawnLevels" type="range" min="0" max="7" step="1"><span id="spawnVal">Spawn height</span></label>
       </div>
@@ -138,6 +142,7 @@
     <div id="side">
       <div id="zone">Map <span style="color:#6e7681">[beta]</span></div>
       <div id="posage" title="Age of the newest position when drawn, and where it came from."></div>
+      <div id="wallsrc" title="Where the walls on the map come from."></div>
       <div id="tgt"></div>
       <div id="lists" data-wp-interact></div>
       <div id="foot"></div>
@@ -375,6 +380,69 @@
     return m;
   }
   function posAgeText(ageMs, src) { return 'pos ' + Math.max(0, Math.round(ageMs)) + ' ms' + (src ? ' · ' + src : ''); }
+  // Your own map files (the agent's `local_map`, read on this computer and never sent anywhere; the guild lead,
+  // 2026-10-12: "A for outdoor walls"). Their lines are already in the server frame, so they draw like spawn points.
+  // Walls: Auto draws them whenever the zone has any, Ours only never does. Their colours are the map author's,
+  // and most walls are black, so each is lightened toward white (LOCAL_LIGHTEN) to read on the slate background
+  // while keeping the author's distinctions (doors, stairs, water) instead of one flat colour.
+  var LOCAL_LIGHTEN = 0.6;
+  function lightenHex(hex, t) {
+    var m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex));
+    var c = m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [0, 0, 0];
+    return c.map(function (v) { return Math.round(v + (255 - v) * t); });
+  }
+  function useLocalWalls(mode, local) { return mode !== 'ours' && !!local && local.count > 0; }
+  function wallsNote(local) { return local ? 'walls: your map files' : 'walls: Wolf Pack'; }
+  // The agent's local_map -> lines grouped by colour into typed arrays in the SCREEN frame (the same trick as
+  // prepMap), the z of each line's midpoint, the bounds in the server frame, and the labels.
+  function prepLocal(lm) {
+    if (!lm || !Array.isArray(lm.lines)) return null;
+    var key = function (l) { return /^#[0-9a-f]{6}$/i.test(String(l[6])) ? String(l[6]).toLowerCase() : '#000000'; };
+    var groups = {}, order = [], b = null, i, g, l;
+    for (i = 0; i < lm.lines.length; i++) {
+      l = lm.lines[i];
+      if (!Array.isArray(l) || l.length < 6) continue;
+      var k = key(l);
+      g = groups[k];
+      if (!g) { g = groups[k] = { hex: k, n: 0 }; order.push(k); }
+      g.n++;
+    }
+    order.forEach(function (k2) { g = groups[k2]; g.xy = new Float32Array(g.n * 4); g.z = new Float32Array(g.n); g.at = 0; });
+    var count = 0;
+    for (i = 0; i < lm.lines.length; i++) {
+      l = lm.lines[i];
+      if (!Array.isArray(l) || l.length < 6) continue;
+      g = groups[key(l)];
+      var o = g.at * 4;
+      g.xy[o] = -l[0]; g.xy[o + 1] = -l[1]; g.xy[o + 2] = -l[3]; g.xy[o + 3] = -l[4];
+      g.z[g.at++] = (Number(l[2]) + Number(l[5])) / 2;
+      count++;
+      if (!b) b = { minX: l[0], maxX: l[0], minY: l[1], maxY: l[1] };
+      b.minX = Math.min(b.minX, l[0], l[3]); b.maxX = Math.max(b.maxX, l[0], l[3]);
+      b.minY = Math.min(b.minY, l[1], l[4]); b.maxY = Math.max(b.maxY, l[1], l[4]);
+    }
+    var groupsOut = order.map(function (k3) {
+      var c = lightenHex(k3, LOCAL_LIGHTEN), gg = groups[k3];
+      return { xy: gg.xy, z: gg.z, bright: 'rgba(' + c.join(',') + ',0.85)', faded: 'rgba(' + c.join(',') + ',0.25)' };
+    });
+    var labels = (Array.isArray(lm.labels) ? lm.labels : []).filter(function (t) { return Array.isArray(t) && t.length >= 4 && isFinite(t[0]) && isFinite(t[1]) && t[3]; });
+    return { source: lm.source || null, groups: groupsOut, count: count, bounds: b, labels: labels };
+  }
+  // Greedy label placement. Each item is a box {x, y, w, h} (left, top) with a priority; the lowest priority is placed
+  // first, and an item whose box overlaps one already placed is skipped. Returns the placed items.
+  function pickLabels(items) {
+    var sorted = items.slice().sort(function (a, b) { return a.pri - b.pri; });
+    var placed = [];
+    for (var i = 0; i < sorted.length; i++) {
+      var it = sorted[i], hit = false;
+      for (var j = 0; j < placed.length; j++) {
+        var p = placed[j];
+        if (it.x < p.x + p.w + 1 && it.x + it.w + 1 > p.x && it.y < p.y + p.h + 1 && it.y + it.h + 1 > p.y) { hit = true; break; }
+      }
+      if (!hit) placed.push(it);
+    }
+    return placed;
+  }
   // ── end pure helpers ──
 
   // ── state ──
@@ -385,6 +453,7 @@
     sideMode: 'grow',   // Timers button: 'grow' widens the window by the list (map keeps its size), 'share' shrinks the map
     timerBy: {}, candBy: {}, seenBy: {}, menuPid: null, drag: null, w: 0, h: 0, fitted: false,
     trk: {}, sideAt: 0,
+    local: null, localVer: null, walls: 'auto', labels: true,   // the player's own map files (prepLocal), the version held, Walls: Auto|Ours only, the Labels toggle
     src: 'direct', smooth: 'light', direct: null, sampleAt: 0, sampleSrc: '',   // beta tuning knobs + the latest pushed positions
   };
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -397,6 +466,8 @@
     if (sl >= 0 && sl < LEVEL_STEPS.length) S.spawnLevels = sl;
     S.sideOpen = lsGet('wp-map-side') !== '0';
     if (lsGet('wp-map-side-mode') === 'share') S.sideMode = 'share';
+    if (lsGet('wp-map-walls') === 'ours') S.walls = 'ours';
+    if (lsGet('wp-map-labels') === '0') S.labels = false;
     if (FIT_MODES.indexOf(fm) >= 0) S.fit = fm;
     if (sr === 'direct' || sr === 'agent') S.src = sr;
     if (Object.prototype.hasOwnProperty.call(SMOOTH_MS, sm)) S.smooth = sm;
@@ -457,7 +528,9 @@
     }
     return b;
   }
+  function localWalls() { return useLocalWalls(S.walls, S.local); }
   function zoneBounds() {
+    if (localWalls() && S.local.bounds) return S.local.bounds;
     var m = S.map && S.map.bounds;
     if (m && isFinite(m.minX) && m.maxX > m.minX) return m;
     return pointBounds();
@@ -475,11 +548,16 @@
     if (p.zone !== S.zone) {
       S.zone = p.zone; S.fitted = false; S.follow = true; S.trk = {}; zoned = true;
       if (!p.points) { S.points = []; S.byId = {}; S.map = null; S.prep = null; S.grids = null; }
+      S.local = null; S.localVer = null;
       document.getElementById('followBtn').classList.add('on');
     }
+    // Your own map files: sent when the version changed, null with a version = unchanged, null without = none.
+    if (p.local_map) { S.local = prepLocal(p.local_map); S.localVer = S.local ? (p.local_version || null) : null; }
+    else if (!p.local_version) { S.local = null; S.localVer = null; }
     S.ver = p.version || null;
     S.skew = (p.now || Date.now()) - Date.now();
     S.p = p;
+    syncWallNote();
     S.timerBy = {}; S.candBy = {}; S.seenBy = {};
     (p.timers || []).forEach(function (t) { S.timerBy[String(t.point_id)] = t; });
     (p.seen || []).forEach(function (s) { if (!S.timerBy[String(s.point_id)]) S.seenBy[String(s.point_id)] = s; });   // a timer on the point is newer
@@ -552,7 +630,8 @@
   function poll() {
     if (inflight || document.hidden) return;
     inflight = true;
-    var url = 'http://127.0.0.1:' + PORT + '/api/map-state' + (S.ver ? '?have=' + encodeURIComponent(S.ver) : '');
+    var url = 'http://127.0.0.1:' + PORT + '/api/map-state' + (S.ver ? '?have=' + encodeURIComponent(S.ver) : '')
+      + (S.localVer ? (S.ver ? '&' : '?') + 'have_local=' + encodeURIComponent(S.localVer) : '');
     fetch(url).then(function (r) { return r.json(); }).then(function (p) { inflight = false; applyPayload(p); })
       .catch(function () { inflight = false; S.err = true; renderAll(); });
   }
@@ -625,6 +704,52 @@
     ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.strokeText(text, x, y);
     ctx.fillStyle = fill; ctx.fillText(text, x, y);
   }
+  // Labels (the guild lead, 2026-10-12: "display names of the rooms and named bosses in the map"): boss names from our
+  // spawn points, room and zone-line names from your own map files. All go through pickLabels, so a name that would
+  // sit on another is skipped rather than overprinted; raid targets are placed first, then named mobs, then rooms
+  // (closest to you first within each). Names outside the level range fade like the walls and dots do.
+  var LABEL_FONT_BOSS = 'bold 11px ui-monospace,Consolas,monospace';
+  var LABEL_FONT_ROOM = 'italic 10px ui-monospace,Consolas,monospace';
+  var LABEL_ROOM_COLOR = '#c9d9ee';
+  var LABEL_ROOMS_MAX = 400;   // the nearest this many on-screen room names are considered per frame
+  var textW = {}, textWn = 0;
+  function measure(text, font) {
+    var k = font + '|' + text, c = textW[k];
+    if (c == null) {
+      if (++textWn > 4000) { textW = {}; textWn = 1; }
+      ctx.font = font; c = textW[k] = ctx.measureText(text).width;
+    }
+    return c;
+  }
+  function drawLabels(boss, sz, range, w, h) {
+    if (!S.labels) return;
+    var P = S.p, ref;
+    if (P && P.self) { var sd = drawn('self', P.self, Date.now()); ref = { x: sd.x, y: sd.y }; }
+    else ref = { x: -S.view.cx, y: -S.view.cy };
+    var dist = function (x, y) { return Math.hypot(x - ref.x, y - ref.y); };
+    var cands = boss.map(function (c) { c.pri = c.tier * 1e7 + dist(c.wx, c.wy); return c; });
+    var rooms = [];
+    var ll = S.local ? S.local.labels : [];
+    for (var i = 0; i < ll.length; i++) {
+      var q = wpt(ll[i][0], ll[i][1]);
+      if (q[0] < -40 || q[0] > w + 40 || q[1] < -20 || q[1] > h + 20) continue;
+      rooms.push({ text: String(ll[i][3]), x: q[0], y: q[1], z: ll[i][2], col: LABEL_ROOM_COLOR, tier: 2, align: 'center', font: LABEL_FONT_ROOM, pri: 2e7 + dist(ll[i][0], ll[i][1]) });
+    }
+    rooms.sort(function (a, b) { return a.pri - b.pri; });
+    if (rooms.length > LABEL_ROOMS_MAX) rooms.length = LABEL_ROOMS_MAX;
+    cands = cands.concat(rooms);
+    var items = cands.map(function (c) {
+      var tw = measure(c.text, c.font);
+      return { x: c.align === 'center' ? c.x - tw / 2 : c.x, y: c.y - 7, w: tw, h: 14, pri: c.pri, c: c };
+    });
+    var placed = pickLabels(items);
+    for (var j = 0; j < placed.length; j++) {
+      var c2 = placed[j].c, near = inLevelRange(c2.z, sz, range);
+      ctx.globalAlpha = c2.tier < 2 ? (near ? 1 : 0.4) : (near ? 0.95 : 0.3);
+      halo(c2.text, c2.x, c2.y, c2.font, c2.col, c2.align);
+    }
+    ctx.globalAlpha = 1;
+  }
   // animating = called from the frame loop mid-glide (the spawn-dot buttons are then laid out at most every HITS_MS).
   function renderMap(animating) {
     var dpr = window.devicePixelRatio || 1;
@@ -636,8 +761,27 @@
     var v = S.view, w = S.w, h = S.h, now = nowMs();
     var ox = w / 2 - v.cx * v.scale, oy = h / 2 - v.cy * v.scale;
     var sz = selfZ(), range = levelRange();
-    // Walls: the bands within the level range of you bright, the rest faint (a one-floor zone is all bright).
-    if (S.prep) {
+    // Walls. Your own map files when you have them for this zone (Walls: Auto): each line bright when its middle is
+    // within the level range of you, faint otherwise. Else ours below.
+    if (localWalls()) {
+      ctx.lineCap = 'butt'; ctx.lineWidth = 1;
+      var lvOn = !!range && sz != null;
+      for (var lg = 0; lg < S.local.groups.length; lg++) {
+        var G = S.local.groups[lg];
+        for (var pass = 0; pass < (lvOn ? 2 : 1); pass++) {   // 0 = bright, 1 = faint; with no level limit everything is bright
+          ctx.strokeStyle = pass === 0 ? G.bright : G.faded;
+          ctx.beginPath();
+          for (var li = 0, lj = 0; li < G.xy.length; li += 4, lj++) {
+            if (lvOn && inLevelRange(G.z[lj], sz, range) !== (pass === 0)) continue;
+            var lx1 = G.xy[li] * v.scale + ox, ly1 = G.xy[li + 1] * v.scale + oy, lx2 = G.xy[li + 2] * v.scale + ox, ly2 = G.xy[li + 3] * v.scale + oy;
+            if ((lx1 < 0 && lx2 < 0) || (lx1 > w && lx2 > w) || (ly1 < 0 && ly2 < 0) || (ly1 > h && ly2 > h)) continue;
+            ctx.moveTo(lx1, ly1); ctx.lineTo(lx2, ly2);
+          }
+          ctx.stroke();
+        }
+      }
+      ctx.lineCap = 'round';
+    } else if (S.prep) {   // ours: the bands within the level range of you bright, the rest faint (a one-floor zone is all bright)
       ctx.lineCap = 'round';
       for (var b = 0; b < S.prep.gen.length; b++) {
         var bright = S.prep.bands.length <= 1 || inLevelRange(S.prep.bands[b], sz, range);
@@ -654,7 +798,8 @@
       }
     }
     // Spawn dots, and first the pather routes of the visible ones (under the dots).
-    var vis = [], flashOn = Math.floor(now / 450) % 2 === 0, anyFlash = false, srange = spawnRange();
+    var bossC = [];
+    var vis = [], flashOn =Math.floor(now / 450) % 2 === 0, anyFlash = false, srange = spawnRange();
     for (var k = 0; k < S.points.length; k++) {
       var p0 = S.points[k], xy0 = wpt(p0.x, p0.y);
       if (xy0[0] < -30 || xy0[0] > w + 30 || xy0[1] < -30 || xy0[1] > h + 30) continue;
@@ -685,9 +830,11 @@
       var bd = pointBadges(p);
       if (bd) halo(bd, px + r + 3, py - r, '9px ui-monospace,Consolas,monospace', '#e6edf3');
       if (p.grid != null) halo('↻', px - r - 3, py - r, '9px ui-monospace,Consolas,monospace', '#9ecbff', 'right');   // a pather: it walks a route
-      if (kind.named && (kind.raid || v.scale >= 0.12)) halo(bestName(p), px + r + 3, py + r + 3, 'bold 11px ui-monospace,Consolas,monospace', kind.raid ? '#ffa198' : '#f2cc60');
+      // Named and raid-target names are drawn after the loop, at any zoom, through the label placer (bosses first).
+      if (kind.named) bossC.push({ text: bestName(p), x: px + r + 3, y: py + r + 3, z: p.z, wx: p.x, wy: p.y, col: kind.raid ? '#ffa198' : '#f2cc60', tier: kind.raid ? 0 : 1, align: 'left', font: LABEL_FONT_BOSS });
     }
     ctx.globalAlpha = 1;
+    drawLabels(bossC, sz, range, w, h);
     // Group and raid.
     var P = S.p;
     if (P) {
@@ -931,6 +1078,25 @@
     lsSet('wp-map-spawn-levels', S.spawnLevels); syncSpawns(); renderMap();
   });
   syncSpawns();
+  // Labels: boss names and room names on or off (persisted). Walls: Auto | Ours only (setup bar, persisted).
+  var labelsBtn = document.getElementById('labelsBtn'), wallsSel = document.getElementById('wallsSel'), wallSrcEl = document.getElementById('wallsrc');
+  function syncWallNote() {
+    var note = (S.p && S.p.zone) ? wallsNote(localWalls()) : '';
+    wallSrcEl.textContent = note;
+    labelsBtn.textContent = S.labels ? 'Labels: on' : 'Labels: off';
+    labelsBtn.classList.toggle('on', S.labels);
+    labelsBtn.title = 'Names on the map: boss names and room names. Switch off when it gets busy.' + (note ? ' (' + note + ')' : '');
+  }
+  labelsBtn.addEventListener('click', function () {
+    S.labels = !S.labels; lsSet('wp-map-labels', S.labels ? 1 : 0); syncWallNote(); renderMap();
+  });
+  wallsSel.addEventListener('change', function () {
+    S.walls = wallsSel.value === 'ours' ? 'ours' : 'auto'; lsSet('wp-map-walls', S.walls); syncWallNote();
+    if (!S.fitted && S.points.length && !S.follow) fitNow();
+    renderMap();
+  });
+  wallsSel.value = S.walls;
+  syncWallNote();
   // The top-right button slides the timers list out and back in. 'grow' (the guild lead, 2026-10-12: "an option for the
   // timers to slide out and take additional space rather than shrinking the map") widens or narrows the WINDOW by the
   // list's width so the map keeps its size; 'share' keeps the window and the map pane takes or gives the width.
