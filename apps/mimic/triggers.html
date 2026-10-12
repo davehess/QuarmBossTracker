@@ -62,6 +62,20 @@
   .fb-btn.late:hover{    background:rgba(248,113,113,0.55); border-color:#f87171 }
   #fbThanks{display:none; font-size:11px; color:#8b949e; text-shadow:0 1px 2px #000; margin-left:6px}
   #fbThanks.show{display:inline}
+  /* 🔇 Mute (the guild lead, 2026-10-12: "a mute button on the TTS callouts so people can turn it off").
+     Rides the same row as the timing votes: it shows only for a callout that was SPOKEN and carries a
+     rule key, and when timing votes are off the row shows it alone (mute-only). After a click the same
+     button becomes "Muted — undo". It is a real <button>, so the preload's hover handshake covers it. */
+  .mute-btn{
+    display:none; font:600 12px ui-monospace,Menlo,Consolas,monospace;
+    color:#fff; background:rgba(14,17,22,0.85); border:1px solid rgba(255,255,255,0.25);
+    border-radius:4px; padding:5px 10px; cursor:pointer; text-shadow:0 1px 2px #000;
+    transition: background .15s, border-color .15s;
+  }
+  #feedback.canmute .mute-btn{display:inline-block}
+  #feedback.mute-only .fb-btn, #feedback.mute-only #fbThanks{display:none}
+  .mute-btn:hover{ background:rgba(110,118,129,0.55); border-color:#6e7681 }
+  .mute-btn.done{ border-color:#56d364; color:#56d364 }
   /* Sticky critical callouts (#76). A trigger flagged `sticky` pins here and
      stays until the user clicks it away (or a generous ~5min timeout) instead
      of fading with the normal 3.5s flash. Loud red so a life-or-death callout
@@ -283,6 +297,7 @@
       <button class="fb-btn good" data-dir="good" title="Timing was right.">✓ Good!</button>
       <button class="fb-btn late" data-dir="too_early" title="The trigger fired BEFORE the actual event — delay the trigger next time.">» Too early</button>
       <button class="fb-btn off" data-dir="off" title="Stop asking — no timing votes after callouts, and nothing about callout timing is sent. Turn it back on in the dashboard, Triggers tab, Timing votes.">🔕</button>
+      <button id="muteBtn" class="mute-btn" title="Stop saying this callout out loud. It still shows on screen. Undo it from here right after, or any time in the dashboard, Triggers tab, What you hear.">🔇 Mute</button>
       <span id="fbThanks">thanks — recorded.</span>
     </div>
     <div id="sticky"></div>
@@ -666,6 +681,68 @@
     });
   });
 
+  // 🔇 Mute — "What you hear" (the guild lead, 2026-10-12: "a mute button on the TTS callouts so
+  // people can turn it off"). A callout that was SPOKEN and carries a rule key (the agent's
+  // _fireForWeb `rule_key`) offers this button in the row under the banner. Clicking it writes an
+  // overlay-only rule for EVERY character, so the callout keeps flashing and stops being said; the
+  // same button then reads "Muted — undo" and clears the rule. The rule lives in the agent, so a
+  // Canvas callouts panel does the same through its own PORT. Deliberately NOT a .fb-btn: the loop
+  // above sends a timing vote for every button it wires. A real <button>, so the preload's hover
+  // handshake covers it, and it asks for the handshake itself like the vote buttons do.
+  let _muteFire = null;           // the fire the button is currently offered for
+  let _muteUndoKey = null;        // set once muted: the key the undo clears
+  const muteBtn = document.getElementById('muteBtn');
+  function postRule(key, mode){
+    return fetch('http://127.0.0.1:' + PORT + '/api/trigger-rules', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: key, char: '*', mode: mode }),
+    }).then(function(r){ return r.ok; }).catch(function(){ return false; });
+  }
+  function setMuteIdle(t){
+    _muteFire = t || null; _muteUndoKey = null;
+    if (!muteBtn) return;
+    muteBtn.textContent = '🔇 Mute';
+    muteBtn.classList.remove('done');
+    fbWrap.classList.toggle('canmute', !!t);
+  }
+  // Called after showFeedback for a fire drawn on this page. Only a fire that was actually spoken
+  // offers it: a muted / test / replay fire has nothing to silence. With timing votes off the row
+  // shows the mute button alone (showFeedback has already declined to open it).
+  function offerMute(t){
+    const can = !!(t && t.rule_key && !t.mute && !t.test && !t.rehearsal && !t.replay);
+    setMuteIdle(can ? t : null);
+    if (!can) return;
+    fbWrap.classList.toggle('mute-only', !_votesOn);
+    fbWrap.classList.add('show');
+    clearTimeout(offerMute._t);
+    offerMute._t = setTimeout(function(){ if (!_muteUndoKey) fbWrap.classList.remove('show'); }, 8000);
+  }
+  function muteClick(){
+    if (_muteUndoKey){
+      const k = _muteUndoKey;
+      postRule(k, null).then(function(ok){ if (ok) fbWrap.classList.remove('show'); });
+      setMuteIdle(null);
+      return;
+    }
+    const f = _muteFire;
+    if (!f || !f.rule_key) return;
+    postRule(f.rule_key, 'overlay').then(function(ok){
+      if (!ok) return;
+      _muteUndoKey = f.rule_key;
+      muteBtn.textContent = 'Muted — undo';
+      muteBtn.classList.add('done');
+      // Keep the row up long enough to undo, even if the 8 s window was nearly spent.
+      clearTimeout(offerMute._t);
+      clearTimeout(showFeedback._t);
+      offerMute._t = setTimeout(function(){ fbWrap.classList.remove('show'); }, 8000);
+    });
+  }
+  if (muteBtn) {
+    muteBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch(e){} });
+    muteBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch(e){} });
+    muteBtn.addEventListener('click', muteClick);
+  }
+
   // Sticky critical callouts (#76). A fire flagged `sticky` pins a row that
   // stays until dismissed (click) or a generous timeout, rather than fading on
   // the normal 3.5s schedule. Keyed on trigger+text so a repeat refreshes the
@@ -778,6 +855,7 @@
     if (!t.mute) speak(spoken, { trigger: t.trigger || t.text || t.label || spoken, rehearsal: !!t.rehearsal });
     playSound(t.sound);
     if (visual) showFeedback(t);
+    if (visual) offerMute(t);   // "What you hear": 🔇 under a callout that was actually spoken
     if (t.sticky && !_visualElsewhere) pinSticky(t);
   }
 
@@ -790,7 +868,9 @@
     const danger = e.kind === 'blind_selfhit';
     el.classList.toggle('blindwarn', danger);
     if (!_visualElsewhere) flash(e.text || e.tts || 'Blind');
-    speak(e.tts || e.text || 'Blind', { trigger: 'blind:' + (e.kind || 'alert'), rehearsal: false });
+    // "What you hear": the agent marks a blind alert `mute` when the person keeps it overlay-only
+    // (and sends none at all when it is off).
+    if (!e.mute) speak(e.tts || e.text || 'Blind', { trigger: 'blind:' + (e.kind || 'alert'), rehearsal: false });
     // Clear the danger styling after the flash window so the next normal flash
     // isn't tinted red.
     clearTimeout(fireBlind._t);
@@ -1082,6 +1162,10 @@
       // expiring and popping back in on the next poll.
       n.cycle_ms = t.cycle_ms > 0 ? t.cycle_ms : 0;
       n.pinned = !!t.pinned;
+      // "What you hear": the agent's rule for this countdown's trigger. The pre-end warnings are
+      // fired from here, not from the agent, so the rule has to be honoured here too.
+      n.rule_key  = t.rule_key || null;
+      n.rule_mode = t.rule_mode || 'speak';
     }
     // Drop any rows the server stopped reporting (ended early or cleared).
     for (const [id, n] of timerNodes){
@@ -1144,7 +1228,10 @@
           if (remMs > w.at_ms){ n.firedWarns[w.at_ms] = false; continue; }
           if (n.firedWarns[w.at_ms]) continue;
           n.firedWarns[w.at_ms] = true;
-          fire({ text: w.text, tts: (w.tts === false ? null : w.text) });
+          // Off: no warning at all (the countdown bar stays). Overlay only: flash it, say nothing.
+          if (n.rule_mode === 'off') continue;
+          fire({ text: w.text, tts: (w.tts === false ? null : w.text),
+                 mute: n.rule_mode === 'overlay', rule_key: n.rule_key });
         }
       }
       // Last 5s → amber accent + background + pulse to drag the eye. Never on

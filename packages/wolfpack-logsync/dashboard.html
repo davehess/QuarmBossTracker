@@ -228,6 +228,23 @@ button.wp-rerun-stale { position:relative; animation: wp-pulse-glow 1.8s ease-ou
 .trigname { background:none; border:0; padding:0; font:inherit; color:var(--text); cursor:pointer; text-align:left; }
 .trigname:hover { color:var(--blue); text-decoration:underline; }
 .trigname:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+/* Triggers tab, "What you hear" (2026-10-12): the three-way switch on a group header or a row. */
+.rsw { display:inline-flex; gap:0; white-space:nowrap; }
+.rsw button { background:var(--panel); color:var(--dim); border:1px solid var(--border); font:inherit; font-size:11px; padding:2px 8px; cursor:pointer; }
+.rsw button:first-child { border-radius:4px 0 0 4px; }
+.rsw button + button { border-left:0; }
+.rsw button.rst { border-radius:0 4px 4px 0; padding:2px 6px; }
+.rsw button.on { color:var(--text); background:#1f6feb33; border-color:var(--blue); }
+.rsw button.on[data-mode="off"] { background:#da363433; border-color:var(--red); }
+.rsw button.inh { opacity:0.65; }
+.rsw button:focus-visible { outline:2px solid var(--blue); outline-offset:1px; }
+.rnote { color:var(--dim); font-size:10px; margin-left:6px; }
+.rbadge { font-size:9px; margin-left:6px; padding:1px 5px; border-radius:3px; background:rgba(255,255,255,0.06); color:var(--dim); white-space:nowrap; }
+.rbadge.off { color:var(--red); }
+.rgroup > summary { cursor:pointer; display:flex; align-items:center; gap:10px; padding:4px 0; }
+.rgroup > summary .rgl { flex:1; min-width:0; }
+.rgroup > summary::before { content:'▸'; color:var(--dim); }
+.rgroup[open] > summary::before { content:'▾'; }
 .trigdetail > td { background:var(--bg); border-left:2px solid var(--blue); padding:8px 10px; }
 .trigset { display:grid; grid-template-columns:max-content 1fr; gap:3px 14px; font-size:11px; }
 .trigset-k { color:var(--dim); }
@@ -4426,6 +4443,11 @@ function renderTriggers(s) {
   h += '<span id="timingVotesMsg" class="dim" style="font-size:11px"></span>';
   h += '</div>';
 
+  // 🔊 What you hear (the guild lead, 2026-10-12) — speak / overlay only / off for every callout,
+  // by group and per trigger. Its own wp* placeholder, filled by setupTriggerRules below, so the
+  // section HTML here stays byte-stable and the card is not rewritten by a Triggers repaint.
+  h += '<div id="wpTrigRules" class="card wide"></div>';
+
   // Suggested triggers — one-click catalog of pre-tested alerts grouped by
   // category. Toggling the Enable checkbox creates/removes a personal
   // trigger with id "suggested:<template_id>" via /api/triggers/suggested;
@@ -4457,6 +4479,9 @@ function renderTriggers(s) {
   }
   if (window._wpSuggestedTriggers && window._wpSuggestedTriggers.mount) {
     window._wpSuggestedTriggers.mount();
+  }
+  if (window._wpTrigRules && window._wpTrigRules.mount) {
+    window._wpTrigRules.mount();
   }
 }
 
@@ -4506,9 +4531,14 @@ function renderGuildTriggersCard(s) {
       };
       var key = String(t.id || t.name || '');
       var open = !!_wpTrigOpen['g|' + key];
+      // "What you hear" badge: this row's effective mode for the active character, shown only when it
+      // is not the default 'speak' (a 🔊 on ~450 rows would be noise). From s.guildRuleModes.
+      var _rm = (s.guildRuleModes || {})[t.id];
+      var _rbadge = _rm === 'overlay' ? '<span class="rbadge" title="Shown on the trigger overlay, never spoken (What you hear)">👁 overlay only</span>'
+        : _rm === 'off' ? '<span class="rbadge off" title="Turned off: neither shown nor spoken (What you hear)">⛔ off</span>' : '';
       h += '<tr data-trig-key="' + esc(key) + '" style="cursor:pointer"><td>'
         + '<button type="button" class="trigname" data-trig-view="' + esc(key) + '" aria-expanded="' + (open ? 'true' : 'false') + '" style="color:var(--orange)" title="Show this trigger\'s settings">'
-        + (open ? '▾' : '▸') + ' ' + esc(t.name || '?') + '</button></td>' +
+        + (open ? '▾' : '▸') + ' ' + esc(t.name || '?') + '</button>' + _rbadge + '</td>' +
            '<td class="dim">' + esc(t.category || 'callout') + '</td>' +
            '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc((t.pattern || '').slice(0, 80)) + '</code></td>' +
            '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>' +
@@ -12230,6 +12260,136 @@ function wpTrigApplyForm(base, f) {
     if (n !== listEl) { mounted = false; mount(); }
   }
   window._wpSuggestedTriggers = { mount: function(){ remountIfNeeded(); mount(); }, refresh: function(){ return fetchAndRender(); } };
+})();
+
+// ── 🔊 What you hear ─────────────────────────────────────────────────────────
+// (the guild lead, 2026-10-12: "pick ones that we specifically do not want to hear or can just be shown
+// on the trigger overlay … many other callouts do not have a way to turn them off, such as enrage
+// soon.") Option B: a three-way switch per GROUP, then an override per trigger inside it. The agent
+// owns the rules and the grouping (GET/POST /api/trigger-rules); this only draws and posts. Like the
+// Suggested panel it fills a wp* placeholder (#wpTrigRules) the Triggers section emits, so the section
+// HTML stays byte-stable; it repaints only when the answer changed, and every <details> keeps its open
+// state through wpKeep.
+(function setupTriggerRules(){
+  var mounted = false, el = null, lastHtml = '', focusTo = null;
+  var forChar = '';   // '' = every character; a lowercase name = that character only
+  try { forChar = localStorage.getItem('wp:rulesChar') || ''; } catch (e) { void e; }
+  var MODES = [
+    ['speak',   '🔊 Speak',        'Say it out loud and show it'],
+    ['overlay', '👁 Overlay only', 'Show it on the trigger overlay, never say it'],
+    ['off',     '⛔ Off',          'Neither show it nor say it'],
+  ];
+  var FROM = { trigger_all: '(from all characters)', group: '(from group)', group_all: '(from group)', 'default': '(default)' };
+  function switchHtml(key, explicit, effective){
+    var inherited = !explicit;
+    var h = '<span class="rsw" data-rkey="' + esc(key) + '">';
+    for (var i = 0; i < MODES.length; i++) {
+      var m = MODES[i], on = m[0] === effective;
+      h += '<button type="button" data-mode="' + m[0] + '" class="' + (on ? 'on' + (inherited ? ' inh' : '') : '') + '" aria-pressed="' + (on ? 'true' : 'false') + '" title="' + esc(m[2]) + '">' + m[1] + '</button>';
+    }
+    if (explicit) h += '<button type="button" class="rst" data-mode="" title="Clear this setting (go back to inheriting)">↺</button>';
+    return h + '</span>';
+  }
+  function noteHtml(explicit, from, isGroup){
+    if (explicit) return '';
+    if (isGroup) return from === 'trigger_all' ? '<span class="rnote">(from all characters)</span>' : '';
+    return FROM[from] && from !== 'default' ? '<span class="rnote">' + FROM[from] + '</span>' : '';
+  }
+  function pickerHtml(chars){
+    var opts = '<option value="">All characters</option>', seen = false;
+    for (var i = 0; i < chars.length; i++) {
+      var lc = String(chars[i]).toLowerCase();
+      if (lc === forChar) seen = true;
+      opts += '<option value="' + esc(lc) + '"' + (lc === forChar ? ' selected' : '') + '>' + esc(chars[i]) + '</option>';
+    }
+    if (forChar && !seen) opts += '<option value="' + esc(forChar) + '" selected>' + esc(forChar) + '</option>';
+    return '<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim);margin:6px 0">For'
+      + '<select id="wpRulesFor" style="font-family:inherit;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:2px 6px">' + opts + '</select>'
+      + '<span style="font-size:11px">' + (forChar ? 'settings here are for this character only; anything not set follows All characters' : 'settings here apply to every character') + '</span></label>';
+  }
+  function render(j){
+    var groups = (j && j.groups) || [];
+    var h = '<h2>🔊 What you hear <span class="dim" style="font-size:11px;font-weight:normal">(speak it, only show it on the trigger overlay, or turn it off)</span></h2>';
+    h += '<div class="dim" style="font-size:11px">A switch on a group covers everything in it; a trigger\'s own switch wins over its group. Mute Mimic and the raid callout filter still apply on top. A 🔇 on a spoken callout sets the trigger to Overlay only for all characters.</div>';
+    h += pickerHtml((j && j.chars) || []);
+    if (groups.length === 0) h += '<div class="dim" style="font-size:12px">Nothing to list yet.</div>';
+    for (var gi = 0; gi < groups.length; gi++) {
+      var g = groups[gi];
+      h += '<details ' + wpKeep('rules-group|' + g.id) + ' class="rgroup" style="border-top:1px solid var(--border);margin-top:4px"><summary>'
+        + '<span class="rgl"><b>' + esc(g.label) + '</b> <span class="dim" style="font-size:11px">' + g.members.length + '</span></span>'
+        + noteHtml(g.mode, g.from, true) + switchHtml(g.key, g.mode, g.effective) + '</summary>'
+        + '<table style="width:100%;font-size:12px;border-collapse:collapse">';
+      for (var mi = 0; mi < g.members.length; mi++) {
+        var m = g.members[mi];
+        // NOT class="name": that is the character-page link, and a trigger is not a character.
+        h += '<tr><td style="padding:2px 6px 2px 18px">' + esc(m.name) + '</td>'
+          + '<td style="padding:2px 6px;text-align:right;white-space:nowrap">' + noteHtml(m.mode, m.from, false) + ' ' + switchHtml(m.key, m.mode, m.effective) + '</td></tr>';
+      }
+      h += '</table></details>';
+    }
+    return h;
+  }
+  function paint(h){
+    if (!el) return;
+    if (h !== lastHtml) { lastHtml = h; el.innerHTML = h; }
+    var sel = document.getElementById('wpRulesFor');
+    if (sel && !sel._wpBound) {
+      sel._wpBound = true;
+      sel.addEventListener('change', function(){
+        forChar = sel.value || '';
+        try { localStorage.setItem('wp:rulesChar', forChar); } catch (e) { void e; }
+        refresh();
+      });
+    }
+    if (focusTo) {   // a click repainted the card: put the keyboard back on the button it came from
+      var sw = el.querySelectorAll('.rsw');
+      for (var i = 0; i < sw.length; i++) {
+        if (sw[i].getAttribute('data-rkey') !== focusTo.key) continue;
+        var b = sw[i].querySelector('button[data-mode="' + focusTo.mode + '"]') || sw[i].querySelector('button');
+        if (b) { try { b.focus({ preventScroll: true }); } catch (e) { void e; } }
+        break;
+      }
+      focusTo = null;
+    }
+  }
+  async function refresh(){
+    if (!el) return;
+    try {
+      var r = await fetch('/api/trigger-rules?char=' + encodeURIComponent(forChar || '*'));
+      var j = await r.json();
+      paint(render(j));
+    } catch (e) {
+      if (!lastHtml) el.innerHTML = '<div style="color:var(--red);font-size:12px">Could not load What you hear: ' + esc(e && e.message || e) + '</div>';
+    }
+  }
+  async function setRule(key, mode){
+    try {
+      await fetch('/api/trigger-rules', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: key, char: forChar || '*', mode: mode || null }) });
+    } catch (e) { void e; }
+    refresh();
+  }
+  function onClick(e){
+    var b = e.target && e.target.closest ? e.target.closest('.rsw button') : null;
+    if (!b) return;
+    e.preventDefault();   // a switch lives inside a <summary>: it must not also open/close the group
+    var key = b.parentNode.getAttribute('data-rkey');
+    var mode = b.getAttribute('data-mode');
+    focusTo = { key: key, mode: mode || 'speak' };
+    setRule(key, mode);
+  }
+  function mount(){
+    var n = document.getElementById('wpTrigRules');
+    if (!n) { mounted = false; return; }
+    if (mounted && n === el) return;
+    el = n; mounted = true;
+    if (lastHtml) el.innerHTML = lastHtml;   // the section repaint made a fresh empty node: refill before the fetch
+    el.addEventListener('click', onClick);
+    refresh();
+  }
+  // Group membership follows the guild set, which reloads every couple of minutes.
+  setInterval(function(){ if (el && document.body.contains(el) && document.visibilityState === 'visible') refresh(); }, 20000);
+  window._wpTrigRules = { mount: mount, refresh: refresh };
 })();
 
 // ── 💥 My Crits panel ───────────────────────────────────────────────────────
