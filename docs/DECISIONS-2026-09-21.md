@@ -9310,3 +9310,12 @@ Harmony, Hide/Sneak for non-rogues).
 - **Not settled:** why the hidden say still comes back. Either the server echoes the say to the speaker, or the
   echo patch misses this path. The fix works either way. Other hidden `#` commands (for example `#showhelm`) may
   show the same echo; nobody has reported it.
+
+### 236. Command Center rolls show the whole range when it does not start at 0 (2026-10-12)
+
+- **The ask** (the guild lead, with a screenshot): *"Need to see the range if it's not 0 to X"*. A set rolled 999 to
+  999 sat in the Command Center as "999 (Spectral Parchment)", which reads like an ordinary 0 to 999 roll.
+- **Landed:** the set header in `apps/mimic/command.html` prints `from–to` when `from` is not 0 (for example
+  "999–999"); a 0-based set keeps the plain top number. The agent already kept `from` per set, and the agent
+  dashboard and the web /rolls page already printed both ends. Beta `16fb1aaa`, test `test/roll-range-label.test.js`
+  (fails with the fix reverted). Reaches Windows beta testers with the next beta build; stable at the next cut.
