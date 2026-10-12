@@ -764,6 +764,9 @@ contextBridge.exposeInMainWorld('mimic', {
   // surface (EQ hidden) rather than a dimmed window (text + bg fade together).
   // Text colors stay at full brightness; only the card surface alpha changes.
   onBgAlpha:        (cb)         => ipcRenderer.on('bg-alpha', (_e, v) => cb(v)),
+  // Map overlay: your / group / raid / target positions pushed straight from the Zeal pipe (main.js _makeMapDirect),
+  // in the server frame, at most every 50 ms. The Map falls back to the agent's poll when these stop.
+  onMapPos:         (cb)         => ipcRenderer.on('map-pos', (_e, p) => cb(p)),
 
   // Manual overlay drag — replaces the buggy Chromium app-region drag on
   // transparent windows. Renderer mousedown on the ✥ handle calls

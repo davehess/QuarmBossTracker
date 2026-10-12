@@ -24,7 +24,11 @@
     border:1px solid rgba(110,118,129,0.45);font:inherit;font-size:10px;line-height:1;cursor:pointer}
   .tb:hover{color:#fff;border-color:#58a6ff}
   .tb.on{background:rgba(88,166,255,0.35);color:#fff;border-color:#58a6ff}
-  select.tb{padding:0 2px}
+  /* Levels: how far above and below you (in z) the walls, spawn dots and routes stay bright. */
+  .lv{height:18px;padding:0 6px;border-radius:4px;background:rgba(14,17,22,0.7);color:#c9d1d9;display:flex;align-items:center;gap:4px;
+    border:1px solid rgba(110,118,129,0.45);font-size:10px;line-height:1;box-sizing:border-box}
+  .lv input{width:64px;height:10px;margin:0;cursor:pointer}
+  .lv span{min-width:64px}
   #msg{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;
     color:rgba(255,255,255,0.65);font-size:12px;text-shadow:0 1px 2px #000;padding:0 16px;pointer-events:none}
   #card,#menu{position:absolute;z-index:8;background:rgba(14,17,22,0.96);border:1px solid rgba(110,118,129,0.6);
@@ -43,6 +47,8 @@
   #side{flex:0 0 210px;display:flex;flex-direction:column;min-height:0;background:rgb(19 26 38 / var(--bg-alpha));
     border-radius:6px;padding:6px 8px;text-shadow:0 1px 2px #000}
   #zone{font-size:12px;color:#79c0ff;padding-right:26px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #posage{font-size:9px;color:#6e7681;min-height:11px;white-space:nowrap}
+  #setupbar select{font:inherit;font-size:10px;max-width:90px}
   #tgt{font-size:10px;color:#f0883e;min-height:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #lists{flex:1 1 auto;overflow:auto;min-height:0;margin-top:3px}
   .sec{font-size:9px;color:#6e7681;text-transform:uppercase;letter-spacing:.5px;margin:5px 0 2px}
@@ -90,7 +96,7 @@
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner - same on every overlay)">✥</button>
-  <button id="hide-btn" title="Hide the spawn map (turn back on from the tray → Overlays)">✕</button>
+  <button id="hide-btn" title="Hide the Map (turn back on from the tray → Overlays)">✕</button>
   <div id="drag-controls">
     <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
     <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
@@ -98,6 +104,10 @@
   <div id="setupbar">
     <span>🛠 Map</span>
     <span>opacity</span><input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" /><span id="opacityVal">100%</span>
+    <span title="Where your position comes from. Direct is straight from the game; Agent is the slower route through the agent.">position</span>
+    <select id="srcSel"><option value="direct">Direct</option><option value="agent">Agent</option></select>
+    <span title="How much the dots are smoothed between position updates. More smoothing looks calmer and lags a little more.">smoothing</span>
+    <select id="smoothSel"></select>
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
@@ -109,15 +119,16 @@
       </div>
       <div id="tools">
         <button class="tb on" id="followBtn" type="button" title="Keep the map centred on you. Dragging the map turns it off.">Follow me</button>
-        <button class="tb" id="fitBtn" type="button" title="Show the whole zone">Fit zone</button>
+        <button class="tb" id="fitBtn" type="button" title="Fit the view. Click to cycle: zone, group, raid.">Fit zone</button>
         <button class="tb" id="panBtn" type="button" title="Locked overlays let clicks through to EverQuest. Switch this on to drag and zoom the map (the mouse wheel zooms); right-click centres on you.">✋ Pan / zoom</button>
-        <select class="tb" id="floor" title="Which floor is drawn bright"></select>
+        <label class="lv" title="How far above and below you (in z) walls, spawns and routes stay bright. The rest fade."><input id="levels" type="range" min="0" max="7" step="1"><span id="levelsVal">Levels</span></label>
       </div>
       <div id="card"></div>
       <div id="menu"></div>
     </div>
     <div id="side">
       <div id="zone">Map <span style="color:#6e7681">[beta]</span></div>
+      <div id="posage" title="Age of the newest position when drawn, and where it came from."></div>
       <div id="tgt"></div>
       <div id="lists" data-wp-interact></div>
       <div id="foot"></div>
@@ -258,11 +269,37 @@
     npcs.sort(function (a, b) { return rank(b) - rank(a); });
     return String(npcs[0].name).replace(/_/g, ' ').replace(/^[#!~]+/, '');
   }
-  function nearestBand(bands, z) {
-    if (!bands || !bands.length || z == null) return -1;
-    var best = 0;
-    for (var i = 1; i < bands.length; i++) if (Math.abs(bands[i] - z) < Math.abs(bands[best] - z)) best = i;
-    return best;
+  // Levels (the guild lead, 2026-10-12: "a how far to include levels, same with spawns"): walls, spawn dots and
+  // routes within ±N z-units of YOU are drawn bright, the rest faded. 0 = All. Unknown z (yours or the thing's) = in range.
+  var LEVEL_STEPS = [25, 50, 100, 150, 200, 300, 400, 0];
+  var LEVEL_DEFAULT = 2;
+  function levelLabel(i) { var n = LEVEL_STEPS[i]; return n ? 'Levels ±' + n : 'Levels: all'; }
+  function inLevelRange(z, selfZ, range) {
+    if (!range || z == null || selfZ == null) return true;
+    return Math.abs(Number(z) - Number(selfZ)) <= range;
+  }
+  // Fit zone -> Fit group -> Fit raid (one button, click advances). A mode with nobody to fit falls back to the next
+  // sensible one and says so. Raid is you + your group + the raid; group is you + your group.
+  var FIT_MODES = ['zone', 'group', 'raid'];
+  var FIT_LABEL = { zone: 'Fit zone', group: 'Fit group', raid: 'Fit raid' };
+  function nextFitMode(m) { return FIT_MODES[(FIT_MODES.indexOf(m) + 1) % FIT_MODES.length]; }
+  function resolveFit(mode, nGroup, nRaid) {
+    if (mode === 'raid') {
+      if (nRaid > 0) return { use: 'raid', note: '' };
+      return nGroup > 0 ? { use: 'group', note: 'no raid, fitting your group' } : { use: 'zone', note: 'no raid, fitting the zone' };
+    }
+    if (mode === 'group') return nGroup > 0 ? { use: 'group', note: '' } : { use: 'zone', note: 'no group, fitting the zone' };
+    return { use: 'zone', note: '' };
+  }
+  // Bounds around you and `list` (anything with x, y), padded so a tight cluster is not zoomed to a pinpoint.
+  var FIT_MIN_PAD = 120;
+  function membersBounds(self, list) {
+    var all = (self ? [self] : []).concat(list || []).filter(function (m) { return m && isFinite(m.x) && isFinite(m.y) && m.x != null && m.y != null; });
+    if (!all.length) return null;
+    var b = { minX: all[0].x, maxX: all[0].x, minY: all[0].y, maxY: all[0].y };
+    all.forEach(function (m) { b.minX = Math.min(b.minX, m.x); b.maxX = Math.max(b.maxX, m.x); b.minY = Math.min(b.minY, m.y); b.maxY = Math.max(b.maxY, m.y); });
+    var pad = Math.max(FIT_MIN_PAD, Math.max(b.maxX - b.minX, b.maxY - b.minY) * 0.1);
+    return { minX: b.minX - pad, maxX: b.maxX + pad, minY: b.minY - pad, maxY: b.maxY + pad };
   }
   // bounds {minX,maxX,minY,maxY} in the server frame -> a view {cx, cy, scale} in screen-frame coordinates.
   function fitView(b, w, h) {
@@ -271,11 +308,16 @@
     var bw = Math.max(1, x1 - x0), bh = Math.max(1, y1 - y0);
     return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, scale: Math.min(w / bw, h / bh) * 0.92 };
   }
-  // Smooth movement (the guild lead, 2026-10-12: "local locations should update in real time"). Positions arrive in
-  // steps (a poll every POLL_MS); each name keeps a TRACK {from, to, t0, dur, last} and the drawn spot slides from
-  // `from` to `to` over `dur` = how long the last step took to arrive. A step bigger than SNAP_DIST (zoning, a
-  // gate, a different target) is a jump, not a walk: it snaps. All pure: `now` is passed in.
-  var SNAP_DIST = 200, TRK_DEFAULT_MS = 250, TRK_MIN_MS = 100, TRK_MAX_MS = 2500;
+  function targetKey(t) { return 't:' + (t.id != null ? t.id : t.name); }
+  // Smooth movement (the guild lead, 2026-10-12: "local locations should update in real time", then "still somewhat
+  // laggy"). Positions arrive in steps (pushed straight from Mimic, or the agent's poll); each name keeps a TRACK
+  // {from, to, t0, dur} and the drawn spot slides from where it is drawn now to the newest sample over `dur` = the
+  // smoothing window (Off 0 / Light 80 ms / Smooth 250 ms), so the dot is never more than `dur` behind the newest
+  // sample (it used to glide over the LAST interval, i.e. always one interval behind). A step bigger than SNAP_DIST
+  // (zoning, a gate, a different target) is a jump, not a walk: it snaps. All pure: `now` is passed in.
+  var SNAP_DIST = 200;
+  var SMOOTH_MS = { off: 0, light: 80, smooth: 250 };
+  var SMOOTH_LABEL = { off: 'Off', light: 'Light (80 ms)', smooth: 'Smooth (250 ms)' };
   function lerpHeading(a, b, t) {   // the 0-512 wheel, the short way round
     if (a == null) return b;
     if (b == null) return a;
@@ -290,28 +332,59 @@
       z: (a.z == null || b.z == null) ? b.z : a.z + (b.z - a.z) * t, heading: lerpHeading(a.heading, b.heading, t) };
   }
   function samePos(a, b) { return a.x === b.x && a.y === b.y && a.z === b.z && a.heading === b.heading; }
-  function trackAt(tr, now) { return blendPos(tr.from, tr.to, (now - tr.t0) / tr.dur); }
+  function trackAt(tr, now) { return blendPos(tr.from, tr.to, tr.dur > 0 ? (now - tr.t0) / tr.dur : 1); }
   // A new sample for a name. The same sample again changes nothing (the glide goes on); a new one starts a glide
-  // from where the dot is drawn right now, so it never jerks back to the last sample.
-  function trackStep(tr, pos, now) {
+  // of `smoothMs` from where the dot is drawn right now, so it never jerks back to the last sample. 0 = no glide.
+  function trackStep(tr, pos, now, smoothMs) {
     var to = { x: pos.x, y: pos.y, z: pos.z, heading: pos.heading };
-    if (!tr) return { from: to, to: to, t0: now, dur: TRK_DEFAULT_MS, last: now };
+    var dur = smoothMs > 0 ? smoothMs : 0;
+    if (!tr) return { from: to, to: to, t0: now, dur: dur };
     if (samePos(tr.to, to)) return tr;
-    var gap = now - tr.last;
-    return { from: jumped(tr.to, to) ? to : trackAt(tr, now), to: to, t0: now,
-      dur: gap > TRK_MAX_MS ? TRK_DEFAULT_MS : Math.max(TRK_MIN_MS, gap), last: now };
+    return { from: dur > 0 && !jumped(tr.to, to) ? trackAt(tr, now) : to, to: to, t0: now, dur: dur };
   }
   function trackMoving(tr, now) { return now - tr.t0 < tr.dur && !samePos(tr.from, tr.to); }
+  // Direct positions (Mimic pushes them over IPC the moment the pipe reports them). Used while they are fresh and
+  // are about the same character and zone as the agent's poll; otherwise (pushes stopped for DIRECT_STALE_MS,
+  // window.mimic absent, source set to Agent) the poll's positions are used.
+  var DIRECT_STALE_MS = 1000;
+  function useDirect(mode, direct, now, p) {
+    if (mode !== 'direct' || !direct || !direct.p) return false;
+    if (now - direct.at > DIRECT_STALE_MS) return false;
+    var d = direct.p, self = p && p.self;
+    if (self && self.name && d.character && String(d.character).toLowerCase() !== String(self.name).toLowerCase()) return false;
+    if (d.zone_id != null && p && p.zone_id != null && d.zone_id !== p.zone_id) return false;
+    return true;
+  }
+  // A push -> the track keys noteTracks uses ('self', 'g:<name>', 'r:<name>', target key) -> position.
+  function directMap(d) {
+    var m = {};
+    if (d.self) m.self = d.self;
+    (d.group || []).forEach(function (g) { m['g:' + g.name] = g; });
+    (d.raid || []).forEach(function (r) { m['r:' + r.name] = r; });
+    if (d.target && d.target.x != null) m[targetKey(d.target)] = d.target;
+    return m;
+  }
+  function posAgeText(ageMs, src) { return 'pos ' + Math.max(0, Math.round(ageMs)) + ' ms' + (src ? ' · ' + src : ''); }
   // ── end pure helpers ──
 
   // ── state ──
   var S = {
-    ver: null, zone: null, points: [], byId: {}, map: null, prep: null, p: null, skew: 0, err: false,
-    view: { cx: 0, cy: 0, scale: 0.5 }, follow: true, panMode: false, floor: 'auto',
+    ver: null, zone: null, points: [], byId: {}, map: null, grids: null, prep: null, p: null, skew: 0, err: false,
+    view: { cx: 0, cy: 0, scale: 0.5 }, follow: true, panMode: false, levels: LEVEL_DEFAULT, fit: 'zone', hoverGrid: null,
     timerBy: {}, candBy: {}, seenBy: {}, menuPid: null, drag: null, w: 0, h: 0, fitted: false,
     trk: {}, sideAt: 0,
+    src: 'direct', smooth: 'light', direct: null, sampleAt: 0, sampleSrc: '',   // beta tuning knobs + the latest pushed positions
   };
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, String(v)); } catch (e) {} }
   try { var sv = parseFloat(localStorage.getItem('wp-map-scale')); if (sv > 0.02 && sv < 20) S.view.scale = sv; } catch (e) {}
+  (function () {
+    var lv = parseInt(lsGet('wp-map-levels'), 10), fm = lsGet('wp-map-fit'), sr = lsGet('wp-map-src'), sm = lsGet('wp-map-smooth');
+    if (lv >= 0 && lv < LEVEL_STEPS.length) S.levels = lv;
+    if (FIT_MODES.indexOf(fm) >= 0) S.fit = fm;
+    if (sr === 'direct' || sr === 'agent') S.src = sr;
+    if (Object.prototype.hasOwnProperty.call(SMOOTH_MS, sm)) S.smooth = sm;
+  })();
 
   var stage = document.getElementById('stage');
   var cv = document.getElementById('cv');
@@ -320,7 +393,12 @@
   var card = document.getElementById('card');
   var menu = document.getElementById('menu');
   var msgEl = document.getElementById('msg');
-  var floorSel = document.getElementById('floor');
+  var levelsEl = document.getElementById('levels');
+  var levelsVal = document.getElementById('levelsVal');
+  var fitBtn = document.getElementById('fitBtn');
+  var srcSel = document.getElementById('srcSel');
+  var smoothSel = document.getElementById('smoothSel');
+  var posAgeEl = document.getElementById('posage');
   var hitEls = {};
 
   function nowMs() { return Date.now() + S.skew; }
@@ -351,26 +429,8 @@
     return { gen: gen, bands: m.bands };
   }
   function bandsOf() { return S.prep ? S.prep.bands : []; }
-  function activeBand() {
-    var bands = bandsOf();
-    if (bands.length <= 1) return -1;
-    if (S.floor === 'all') return -1;
-    if (S.floor === 'auto') return nearestBand(bands, S.p && S.p.self ? S.p.self.z : null);
-    var n = parseInt(S.floor, 10);
-    return isNaN(n) ? -1 : n;
-  }
-  function buildFloorPicker() {
-    var bands = bandsOf();
-    floorSel.innerHTML = '';
-    floorSel.style.display = bands.length > 1 ? '' : 'none';
-    if (bands.length <= 1) return;
-    var add = function (v, t) { var o = document.createElement('option'); o.value = v; o.textContent = t; floorSel.appendChild(o); };
-    add('auto', 'Floor: nearest you');
-    var order = bands.map(function (z, i) { return i; }).sort(function (a, b) { return bands[b] - bands[a]; });
-    order.forEach(function (i) { add(String(i), 'Floor z ' + Math.round(bands[i])); });
-    add('all', 'Floor: all');
-    floorSel.value = S.floor;
-  }
+  function selfZ() { return S.p && S.p.self && S.p.self.z != null ? Number(S.p.self.z) : null; }
+  function levelRange() { return LEVEL_STEPS[S.levels] || 0; }
   function pointBounds() {
     var b = null;
     for (var i = 0; i < S.points.length; i++) {
@@ -393,12 +453,11 @@
     if (p.points) {
       S.points = p.points; S.byId = {};
       for (var i = 0; i < p.points.length; i++) S.byId[String(p.points[i].id)] = p.points[i];
-      S.map = p.map || null; S.prep = prepMap(S.map);
-      buildFloorPicker();
+      S.map = p.map || null; S.prep = prepMap(S.map); S.grids = p.grids || null;
     }
     if (p.zone !== S.zone) {
       S.zone = p.zone; S.fitted = false; S.follow = true; S.trk = {}; zoned = true;
-      if (!p.points) { S.points = []; S.byId = {}; S.map = null; S.prep = null; buildFloorPicker(); }
+      if (!p.points) { S.points = []; S.byId = {}; S.map = null; S.prep = null; S.grids = null; }
       document.getElementById('followBtn').classList.add('on');
     }
     S.ver = p.version || null;
@@ -419,26 +478,41 @@
     renderMap();
     kickAnim();
   }
-  // Feed this poll's positions to the tracks; a name that is no longer reported loses its dot.
-  function targetKey(t) { return 't:' + (t.id != null ? t.id : t.name); }
+  // Feed the positions to the tracks; a name that is no longer reported loses its dot. Who is in the group / raid and
+  // what you target come from the poll; where they stand comes from the freshest push when there is one.
   function noteTracks(p, now) {
     var keep = {};
+    var dm = useDirect(S.src, S.direct, now, p) ? directMap(S.direct.p) : null;
+    var sm = SMOOTH_MS[S.smooth];
     var put = function (key, m) {
+      if (dm && dm[key]) m = dm[key];
       if (!m || m.x == null || m.y == null) return;
-      keep[key] = 1; S.trk[key] = trackStep(S.trk[key], m, now);
+      keep[key] = 1; S.trk[key] = trackStep(S.trk[key], m, now, sm);
     };
     put('self', p.self);
     (p.group || []).forEach(function (m) { put('g:' + m.name, m); });
     (p.raid || []).forEach(function (m) { put('r:' + m.name, m); });
     if (p.target) put(targetKey(p.target), p.target);
     for (var k in S.trk) if (!keep[k]) delete S.trk[k];
+    // The age readout: when the newest position sample was taken (a push carries Mimic's clock, the poll the agent's).
+    if (dm) { S.sampleAt = S.direct.p.at || now; S.sampleSrc = 'direct'; }
+    else { S.sampleAt = Number(p.pos_at) > 0 ? Number(p.pos_at) : now; S.sampleSrc = 'agent'; }
+  }
+  // A position push from Mimic (preload onMapPos). Only positions: timers, points, routes, seen and pins stay on the poll.
+  function onDirect(d) {
+    if (!d || typeof d !== 'object') return;
+    var now = Date.now();
+    S.direct = { at: now, p: d };
+    if (!S.p || !useDirect(S.src, S.direct, now, S.p)) return;
+    noteTracks(S.p, now);
+    if (anyMoving(now)) kickAnim(); else renderMap(true);
   }
   // Where to draw a reported thing right now: its glide, or the reported spot when it has no track.
   function drawn(key, m, now) { var tr = S.trk[key]; return tr ? trackAt(tr, now) : m; }
   function anyMoving(now) { for (var k in S.trk) if (trackMoving(S.trk[k], now)) return true; return false; }
   // Animation: a frame loop that runs only while something is gliding (no idle CPU), at most ~30 frames a second.
   var raf = 0, lastFrame = 0, lastHits = 0;
-  var FRAME_MS = 33, HITS_MS = 200;
+  var FRAME_MS = 33, HITS_MS = 200, lastAge = 0;
   function frame() {
     raf = 0;
     var now = Date.now();
@@ -481,16 +555,54 @@
     if (!S.fitted && S.points.length && !S.follow) fitNow();
     renderMap();
   }
-  function fitNow() {
-    var b = zoneBounds();
-    if (!b || !S.w) return;
+  // Fit the view to the whole zone (default) or to you + your group / raid. Returns the plan ({use, note}) so the
+  // button can say when it fell back.
+  function fitNow(mode) {
+    var P = S.p || {}, group = P.group || [], raid = P.raid || [];
+    var plan = resolveFit(mode || 'zone', group.length, raid.length);
+    var b = plan.use === 'zone' ? zoneBounds() : membersBounds(P.self, plan.use === 'raid' ? group.concat(raid) : group);
+    if (!b || !S.w) return plan;
     S.view = fitView(b, S.w, S.h); S.fitted = true;
+    return plan;
   }
   function wpt(x, y) {   // server-frame point -> canvas pixels
     var s = toScreen(x, y), v = S.view;
     return [(s.sx - v.cx) * v.scale + S.w / 2, (s.sy - v.cy) * v.scale + S.h / 2];
   }
   var RING = { wait: '#f85149', window: '#f0b429', up: '#56d364' };
+  // Pather routes (zone payload `grids`): a thin dashed line per route a VISIBLE point walks, a tick on every
+  // waypoint where it pauses. A circular route (type 0) closes. Routes of points outside the level range fade like
+  // the dots do; hovering a pather's dot lights its whole route.
+  function routePath(g, pts) {
+    ctx.beginPath();
+    for (var i = 0; i < pts.length; i++) { var q = wpt(pts[i][0], pts[i][1]); if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); }
+    if (Number(g.type) === 0 && pts.length > 2) ctx.closePath();
+  }
+  function drawRoutes(vis, sz, range) {
+    if (!S.grids) return;
+    var seen = {}, list = [];
+    for (var i = 0; i < vis.length; i++) {
+      var gid = vis[i].p.grid;
+      if (gid == null || !S.grids[gid] || !Array.isArray(S.grids[gid].pts) || S.grids[gid].pts.length < 2) continue;
+      var near = inLevelRange(vis[i].p.z, sz, range);
+      if (seen[gid]) { if (near) seen[gid].near = true; continue; }
+      list.push(seen[gid] = { gid: String(gid), near: near });
+    }
+    ctx.lineCap = 'butt';
+    list.forEach(function (it) {
+      var g = S.grids[it.gid], hot = S.hoverGrid === it.gid;
+      ctx.globalAlpha = hot ? 1 : it.near ? 0.7 : 0.25;
+      ctx.setLineDash([4, 4]); ctx.lineWidth = hot ? 1.8 : 1; ctx.strokeStyle = hot ? '#9ecbff' : '#7d8fa8';
+      routePath(g, g.pts); ctx.stroke(); ctx.setLineDash([]);
+      for (var j = 0; j < g.pts.length; j++) {
+        if (!(Number(g.pts[j][3]) > 0)) continue;
+        var a = wpt(g.pts[j][0], g.pts[j][1]), b = g.pts[j ? j - 1 : 1], bq = wpt(b[0], b[1]);
+        var dx = a[0] - bq[0], dy = a[1] - bq[1], len = Math.hypot(dx, dy) || 1, nx = -dy / len * 3.5, ny = dx / len * 3.5;
+        ctx.beginPath(); ctx.moveTo(a[0] - nx, a[1] - ny); ctx.lineTo(a[0] + nx, a[1] + ny); ctx.lineWidth = hot ? 2 : 1.4; ctx.stroke();
+      }
+    });
+    ctx.globalAlpha = 1; ctx.lineCap = 'round';
+  }
   function halo(text, x, y, font, fill, align) {
     ctx.font = font; ctx.textAlign = align || 'left'; ctx.textBaseline = 'middle';
     ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.strokeText(text, x, y);
@@ -506,12 +618,12 @@
     if (S.follow && S.p && S.p.self && !S.drag) { var fs = drawn('self', S.p.self, rt), fv = toScreen(fs.x, fs.y); S.view.cx = fv.sx; S.view.cy = fv.sy; }
     var v = S.view, w = S.w, h = S.h, now = nowMs();
     var ox = w / 2 - v.cx * v.scale, oy = h / 2 - v.cy * v.scale;
-    var sel = activeBand();
-    // Walls: the chosen floor bright, the rest faint (a one-floor zone is all bright).
+    var sz = selfZ(), range = levelRange();
+    // Walls: the bands within the level range of you bright, the rest faint (a one-floor zone is all bright).
     if (S.prep) {
       ctx.lineCap = 'round';
       for (var b = 0; b < S.prep.gen.length; b++) {
-        var bright = sel < 0 || b === sel;
+        var bright = S.prep.bands.length <= 1 || inLevelRange(S.prep.bands[b], sz, range);
         ctx.strokeStyle = bright ? 'rgba(214,230,255,0.95)' : 'rgba(170,195,235,0.35)';
         ctx.lineWidth = bright ? 1.6 : 1;
         var a = S.prep.gen[b];
@@ -524,16 +636,18 @@
         ctx.stroke();
       }
     }
-    // Spawn dots.
+    // Spawn dots, and first the pather routes of the visible ones (under the dots).
     var vis = [], flashOn = Math.floor(now / 450) % 2 === 0, anyFlash = false;
-    var bands = bandsOf();
     for (var k = 0; k < S.points.length; k++) {
-      var p = S.points[k], xy = wpt(p.x, p.y), px = xy[0], py = xy[1];
-      if (px < -30 || px > w + 30 || py < -30 || py > h + 30) continue;
-      vis.push({ p: p, x: px, y: py });
+      var p0 = S.points[k], xy0 = wpt(p0.x, p0.y);
+      if (xy0[0] < -30 || xy0[0] > w + 30 || xy0[1] < -30 || xy0[1] > h + 30) continue;
+      vis.push({ p: p0, x: xy0[0], y: xy0[1] });
+    }
+    drawRoutes(vis, sz, range);
+    for (var vi = 0; vi < vis.length; vi++) {
+      var p = vis[vi].p, px = vis[vi].x, py = vis[vi].y;
       var kind = pointKind(p);
-      var onFloor = sel < 0 || bands.length <= 1 || nearestBand(bands, p.z) === sel;
-      ctx.globalAlpha = onFloor ? 1 : 0.6;
+      ctx.globalAlpha = inLevelRange(p.z, sz, range) ? 1 : 0.4;
       var r = kind.raid ? 6.5 : kind.named ? 5.5 : 4.2;
       var t = S.timerBy[String(p.id)], cand = S.candBy[String(p.id)], sn = S.seenBy[String(p.id)];
       if (sn) {   // up · seen: a solid green ring (the fill is green below)
@@ -552,6 +666,7 @@
       ctx.lineWidth = kind.named ? 1.5 : 1.2; ctx.strokeStyle = '#0d1117'; ctx.stroke();   // a dark outline on every dot
       var bd = pointBadges(p);
       if (bd) halo(bd, px + r + 3, py - r, '9px ui-monospace,Consolas,monospace', '#e6edf3');
+      if (p.grid != null) halo('↻', px - r - 3, py - r, '9px ui-monospace,Consolas,monospace', '#9ecbff', 'right');   // a pather: it walks a route
       if (kind.named && (kind.raid || v.scale >= 0.12)) halo(bestName(p), px + r + 3, py + r + 3, 'bold 11px ui-monospace,Consolas,monospace', kind.raid ? '#ffa198' : '#f2cc60');
     }
     ctx.globalAlpha = 1;
@@ -575,7 +690,7 @@
           var sd = drawn('self', P.self, rt), sq = wpt(sd.x, sd.y);
           ctx.beginPath(); ctx.setLineDash([2, 4]); ctx.moveTo(sq[0], sq[1]); ctx.lineTo(tq[0], tq[1]);
           ctx.lineWidth = 1.5; ctx.strokeStyle = '#f0883e'; ctx.stroke(); ctx.setLineDash([]);
-          if (P.target.dist != null) halo(String(P.target.dist), (sq[0] + tq[0]) / 2, (sq[1] + tq[1]) / 2 - 7, '10px ui-monospace,Consolas,monospace', '#f0883e', 'center');
+          if (P.target.dist != null) halo(String(Math.round(Math.hypot(td.x - sd.x, td.y - sd.y))), (sq[0] + tq[0]) / 2, (sq[1] + tq[1]) / 2 - 7, '10px ui-monospace,Consolas,monospace', '#f0883e', 'center');   // from the drawn spots, so it keeps up with the dots
         }
         // Pinned: a thin line from the target to the spawn point it is tied to.
         var pinPt = P.target.point_id != null ? S.byId[String(P.target.point_id)] : null;
@@ -601,6 +716,7 @@
       }
     }
     if (!animating || rt - lastHits >= HITS_MS) { lastHits = rt; layoutHits(vis); }
+    if (posAgeEl && rt - lastAge >= 200) { lastAge = rt; posAgeEl.textContent = S.sampleAt ? posAgeText(rt - S.sampleAt, S.sampleSrc) : ''; }
     // Flashing rings need a faster repaint than the one-second poll.
     if (anyFlash && !flashTimer) flashTimer = setInterval(function () { if (!document.hidden) renderMap(); }, 450);
     if (!anyFlash && flashTimer) { clearInterval(flashTimer); flashTimer = null; }
@@ -624,8 +740,15 @@
     for (var k in hitEls) if (!used[k]) hitEls[k].hidden = true;
   }
   function hitFor(e) { var t = e.target; return t && t.getAttribute && t.getAttribute('data-pid'); }
-  hitsEl.addEventListener('mouseover', function (e) { var pid = hitFor(e); if (pid) showCard(pid, e); });
-  hitsEl.addEventListener('mouseout', function (e) { if (hitFor(e)) card.style.display = 'none'; });
+  function setHoverGrid(g) { if (S.hoverGrid !== g) { S.hoverGrid = g; renderMap(true); } }
+  hitsEl.addEventListener('mouseover', function (e) {
+    var pid = hitFor(e);
+    if (!pid) return;
+    showCard(pid, e);
+    var pt = S.byId[pid];
+    setHoverGrid(pt && pt.grid != null && S.grids && S.grids[pt.grid] ? String(pt.grid) : null);
+  });
+  hitsEl.addEventListener('mouseout', function (e) { if (hitFor(e)) { card.style.display = 'none'; setHoverGrid(null); } });
   hitsEl.addEventListener('click', function (e) { var pid = hitFor(e); if (pid) { card.style.display = 'none'; openMenu(pid, e); } });
 
   function placeBox(box, e) {
@@ -644,6 +767,7 @@
     card.appendChild(el('div', 'h', bestName(p)));
     var rs = Number(p.respawn_s) || 0, vr = Number(p.variance_s) || 0;
     card.appendChild(el('div', 's', rs && rs < 1000000 ? 'respawn ' + fmtDur(rs * 1000) + (vr ? ' ±' + fmtDur(vr * 1000) : '') : 'no respawn time'));
+    if (p.grid != null) card.appendChild(el('div', 's', '↻ walks a route'));
     (p.npcs || []).slice(0, 8).forEach(function (n) {
       var row = el('div', 'n');
       var l = el('span', null, ''); var nm = el(n.raid_target ? 'b' : 'span', n.raid_target ? 'r' : null, String(n.name || '').replace(/_/g, ' ').replace(/^[#!~]+/, ''));
@@ -744,7 +868,7 @@
     if (S.err) m = 'the agent is not reachable yet…';
     else if (!P) m = 'waiting for the agent…';
     else if (P.status === 'no-pipe') m = 'waiting for Zeal… (log in and zone)';
-    else if (P.status === 'no-zone') m = 'this zone is not on the spawn map yet';
+    else if (P.status === 'no-zone') m = 'this zone is not on the Map yet';
     else if (P.status === 'loading') m = 'loading spawn points for ' + (P.long_name || P.zone) + '…';
     else if (P.status === 'no-points') m = 'no spawn points known for ' + (P.long_name || P.zone);
     else if (P.status === 'no-cache') m = 'local mode: no saved spawn data for ' + (P.long_name || P.zone);
@@ -759,11 +883,38 @@
     if (S.follow && S.p && S.p.self) { var s = toScreen(S.p.self.x, S.p.self.y); S.view.cx = s.sx; S.view.cy = s.sy; }
     renderMap();
   });
-  document.getElementById('fitBtn').addEventListener('click', function () {
-    S.follow = false; document.getElementById('followBtn').classList.remove('on'); fitNow(); renderMap();
+  // One button cycles Fit zone -> Fit group -> Fit raid; the label is the mode just applied. Fitting turns Follow off.
+  function syncFitBtn(note) {
+    fitBtn.textContent = FIT_LABEL[S.fit];
+    fitBtn.title = 'Fit the view to the zone, your group or your raid: click to cycle.' + (note ? ' ' + FIT_LABEL[S.fit] + ': ' + note + '.' : '');
+  }
+  fitBtn.addEventListener('click', function () {
+    S.fit = nextFitMode(S.fit); lsSet('wp-map-fit', S.fit);
+    S.follow = false; document.getElementById('followBtn').classList.remove('on');
+    syncFitBtn(fitNow(S.fit).note); renderMap();
   });
   document.getElementById('panBtn').addEventListener('click', function () { S.panMode = !S.panMode; syncInteract(); });
-  floorSel.addEventListener('change', function () { S.floor = floorSel.value; renderMap(); });
+  function syncLevels() { levelsEl.value = String(S.levels); levelsVal.textContent = levelLabel(S.levels); }
+  levelsEl.max = String(LEVEL_STEPS.length - 1);
+  levelsEl.addEventListener('input', function () {
+    var i = parseInt(levelsEl.value, 10);
+    S.levels = i >= 0 && i < LEVEL_STEPS.length ? i : LEVEL_DEFAULT;
+    lsSet('wp-map-levels', S.levels); syncLevels(); renderMap();
+  });
+  // Beta tuning knobs (setup bar): where positions come from, and how much they are smoothed.
+  function syncKnobs() { srcSel.value = S.src; smoothSel.value = S.smooth; }
+  srcSel.addEventListener('change', function () {
+    S.src = srcSel.value === 'agent' ? 'agent' : 'direct'; lsSet('wp-map-src', S.src);
+    if (S.p) noteTracks(S.p, Date.now());
+    renderMap();
+  });
+  smoothSel.addEventListener('change', function () {
+    S.smooth = Object.prototype.hasOwnProperty.call(SMOOTH_MS, smoothSel.value) ? smoothSel.value : 'light'; lsSet('wp-map-smooth', S.smooth);
+    renderMap();
+  });
+  Object.keys(SMOOTH_LABEL).forEach(function (k) { var o = document.createElement('option'); o.value = k; o.textContent = SMOOTH_LABEL[k]; smoothSel.appendChild(o); });
+  syncLevels(); syncFitBtn(''); syncKnobs();
+  window.mimic && window.mimic.onMapPos && window.mimic.onMapPos(onDirect);
 
   stage.addEventListener('mousedown', function (e) {
     if (e.button !== 0 || e.target.closest('.hit')) return;

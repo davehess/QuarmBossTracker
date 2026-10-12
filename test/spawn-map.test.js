@@ -10,7 +10,7 @@
 //
 // Run: npx vitest run test/spawn-map.test.js
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -26,7 +26,8 @@ const MAIN = readSource(path.join(ROOT, 'apps', 'mimic', 'main.js'));
 const EXPORTS = ['_mapServerXY', '_mapZoneShort', '_mapNormName', '_mapAttribute', '_mapMakeTimer', '_mapTimerState',
   '_mapApplyMark', '_mapNoteDeath', '_mapNoteState', '_mapNoteLogDeath', '_mapStatePayload', '_mapSaveNow', '_mapDoc',
   '_mapZoneDoc', '_mapPrune', '_mapEnsureZone', '_mapPaths', '_zealState', '_setRaid', '_setOpts', 'MAP_ZONE_SHORT',
-  '_mapTryPin', '_mapPinGet', '_mapSync', '_mapSyncStop', '_mapSyncFlush', '_mapSyncPull', '_mapApplyRemote', '_mapLocalEvent'];
+  '_mapTryPin', '_mapPinGet', '_mapSync', '_mapSyncStop', '_mapSyncFlush', '_mapSyncPull', '_mapApplyRemote', '_mapLocalEvent',
+  '_mapSegDist', '_mapRouteDist'];
 
 // Stand the block up over a temp dir and fake network modules.
 function loadCore({ dir, opts, net }) {
@@ -475,7 +476,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, nearestBand, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -521,13 +522,162 @@ describe('the overlay (apps/mimic/map.html)', () => {
     expect(H.pointKind(POINTS[4])).toEqual({ named: true, raid: true });
     expect(H.bestName(POINTS[2])).toBe('Lord Nagafen');
   });
-  it('picks the floor nearest your z, and fits the zone with the north-up flip', () => {
-    expect(H.nearestBand([0, 20, 40], 22)).toBe(1);
-    expect(H.nearestBand([], 5)).toBe(-1);
+  it('fits the zone with the north-up flip', () => {
     const v = H.fitView({ minX: -100, maxX: 300, minY: 0, maxY: 100 }, 400, 200);
     expect(v.cx).toBeCloseTo(-100);   // screen x = -x: the zone's middle x = 100 -> -100
     expect(v.cy).toBeCloseTo(-50);
     expect(v.scale).toBeCloseTo(0.92);
+  });
+
+  // Ask 1: one Fit button cycles zone -> group -> raid; a mode with nobody falls back and says so.
+  describe('the Fit button cycle', () => {
+    it('advances zone -> group -> raid -> zone, and the labels name the mode', () => {
+      expect(H.FIT_MODES).toEqual(['zone', 'group', 'raid']);
+      expect(H.nextFitMode('zone')).toBe('group');
+      expect(H.nextFitMode('group')).toBe('raid');
+      expect(H.nextFitMode('raid')).toBe('zone');
+      expect(H.nextFitMode('nonsense')).toBe('zone');
+      expect(H.FIT_LABEL).toEqual({ zone: 'Fit zone', group: 'Fit group', raid: 'Fit raid' });
+    });
+    it('falls back: raid with no raid -> group, group with no group -> zone, each saying so', () => {
+      expect(H.resolveFit('zone', 0, 0)).toEqual({ use: 'zone', note: '' });
+      expect(H.resolveFit('group', 2, 0)).toEqual({ use: 'group', note: '' });
+      expect(H.resolveFit('group', 0, 5)).toMatchObject({ use: 'zone', note: expect.stringMatching(/no group/) });
+      expect(H.resolveFit('raid', 2, 6)).toEqual({ use: 'raid', note: '' });
+      expect(H.resolveFit('raid', 2, 0)).toMatchObject({ use: 'group', note: expect.stringMatching(/no raid/) });
+      expect(H.resolveFit('raid', 0, 0)).toMatchObject({ use: 'zone', note: expect.stringMatching(/no raid/) });
+    });
+    it('fits you + the members with padding, and never zooms a tight cluster to a pinpoint', () => {
+      const b = H.membersBounds({ x: 0, y: 0 }, [{ x: 1000, y: 500 }, { x: -200, y: 100 }]);
+      expect(b.minX).toBeLessThan(-200); expect(b.maxX).toBeGreaterThan(1000);
+      expect(b.minY).toBeLessThan(0); expect(b.maxY).toBeGreaterThan(500);
+      const tight = H.membersBounds({ x: 10, y: 10 }, [{ x: 10, y: 10 }]);
+      expect(tight.maxX - tight.minX).toBeGreaterThanOrEqual(200);
+      expect(H.membersBounds(null, [])).toBeNull();
+      expect(H.membersBounds(null, [{ x: null, y: 3 }])).toBeNull();   // a member with no position is not a point
+    });
+  });
+
+  // Ask 2: levels +-N of YOUR z replace the floor list; walls (band z) and spawn dots (spawn2 z) share the rule.
+  describe('the level range', () => {
+    it('a thing within +-N of your z is in range (the edge counts), beyond it is not', () => {
+      expect(H.inLevelRange(100, 100, 50)).toBe(true);
+      expect(H.inLevelRange(150, 100, 50)).toBe(true);
+      expect(H.inLevelRange(50, 100, 50)).toBe(true);
+      expect(H.inLevelRange(150.5, 100, 50)).toBe(false);
+      expect(H.inLevelRange(-300, 100, 50)).toBe(false);
+    });
+    it('All (0), an unknown z of yours or of the thing = in range', () => {
+      expect(H.inLevelRange(9999, 0, 0)).toBe(true);
+      expect(H.inLevelRange(9999, null, 50)).toBe(true);
+      expect(H.inLevelRange(9999, undefined, 50)).toBe(true);
+      expect(H.inLevelRange(null, 100, 50)).toBe(true);
+    });
+    it('steps run 25..400 then All, and say so in the label', () => {
+      expect(H.LEVEL_STEPS.slice(0, -1)).toEqual([...H.LEVEL_STEPS.slice(0, -1)].sort((a, b) => a - b));
+      expect(H.LEVEL_STEPS[0]).toBe(25);
+      expect(H.LEVEL_STEPS[H.LEVEL_STEPS.length - 2]).toBe(400);
+      expect(H.LEVEL_STEPS[H.LEVEL_STEPS.length - 1]).toBe(0);
+      expect(H.levelLabel(0)).toBe('Levels ±25');
+      expect(H.levelLabel(H.LEVEL_STEPS.length - 1)).toBe('Levels: all');
+    });
+    it('classifies the test zone: walls by band z, spawns by their own z, from the floor you stand on', () => {
+      const bands = ZONE_BODY.map.bands;   // [0, 20]
+      expect(bands.map(z => H.inLevelRange(z, 0, 10))).toEqual([true, false]);
+      expect(bands.map(z => H.inLevelRange(z, 20, 10))).toEqual([false, true]);
+      expect(POINTS.map(p => H.inLevelRange(p.z, 0, 10))).toEqual([true, true, true, true, false, true]);
+    });
+  });
+
+  // Ask 3 / 4: pather routes ride the zone payload (version-gated like the map) and pin a walker tab-targeted mid-route.
+describe('pather routes', () => {
+  const ROUTE = { type: 3, type2: 0, pts: [[0, 0, 0, 0], [100, 0, 0, 5], [100, 100, 0, 0]] };
+  it('point-to-segment distance: along it, past either end, and a zero-length segment', () => {
+    const { c } = localCore();
+    expect(c._mapSegDist(50, 30, 0, 0, 100, 0)).toBeCloseTo(30);
+    expect(c._mapSegDist(-30, 40, 0, 0, 100, 0)).toBeCloseTo(50);      // past the start: distance to the start
+    expect(c._mapSegDist(130, 40, 0, 0, 100, 0)).toBeCloseTo(50);      // past the end
+    expect(c._mapSegDist(3, 4, 0, 0, 0, 0)).toBeCloseTo(5);
+  });
+  it('route distance is the nearest segment; one waypoint or none is no route; a circular route closes', () => {
+    const { c } = localCore();
+    expect(c._mapRouteDist({ x: 50, y: 5 }, ROUTE)).toBeCloseTo(5);
+    expect(c._mapRouteDist({ x: 95, y: 50 }, ROUTE)).toBeCloseTo(5);
+    expect(c._mapRouteDist({ x: 50, y: 5 }, { type: 3, pts: [[0, 0, 0, 0]] })).toBe(Infinity);
+    expect(c._mapRouteDist({ x: 50, y: 5 }, null)).toBe(Infinity);
+    const loop = { type: 0, pts: [[0, 0, 0, 0], [100, 0, 0, 0], [100, 100, 0, 0]] };
+    // (45,55) sits 7.07 off the closing diagonal (0,0)-(100,100); the open route has no such segment
+    expect(c._mapRouteDist({ x: 45, y: 55 }, loop)).toBeCloseTo(Math.hypot(5, 5), 5);
+    expect(c._mapRouteDist({ x: 45, y: 55 }, { type: 3, pts: loop.pts })).toBeGreaterThan(40);
+  });
+  const walker = (id, x, y, grid) => ({ id, x, y, z: 0, grid, respawn_s: 600, variance_s: 0, npcs: [NPC('a_patrolling_orc')] });
+  it('a walker 40 units off its spawn point but 5 off its route is assigned (without the route it is not)', () => {
+    const { c } = localCore();
+    const pts = [walker(10, 0, 0, 7), walker(11, 2000, 2000, null)];
+    const here = { x: 70, y: 5 };   // 70 from the spawn point (0,0); 5 from the route along y = 0
+    expect(c._mapAttribute(pts, 'a patrolling orc', here).kind).toBe('unassigned');
+    expect(c._mapAttribute(pts, 'a patrolling orc', here, { 7: ROUTE })).toMatchObject({ kind: 'assigned', point_id: 10 });
+    expect(c._mapAttribute(pts, 'a patrolling orc', here, { 7: ROUTE }).dist).toBeCloseTo(5);
+  });
+  it('a walker equidistant from two routes stays "?"', () => {
+    const { c } = localCore();
+    const pts = [walker(10, 0, 0, 7), walker(11, 0, 40, 8)];
+    const grids = { 7: { type: 3, pts: [[0, 0, 0, 0], [100, 0, 0, 0]] }, 8: { type: 3, pts: [[0, 40, 0, 0], [100, 40, 0, 0]] } };
+    const a = c._mapAttribute(pts, 'a patrolling orc', { x: 50, y: 20 }, grids);   // 20 from each route, within the 60 cap
+    expect(a.kind).toBe('unassigned');
+    expect(a.candidates.sort()).toEqual([10, 11]);
+    // ...and the routes are what settle it once one is clearly nearer: 10 vs 30 is 3x (it is 51 vs 58 by spawn point alone)
+    expect(c._mapAttribute(pts, 'a patrolling orc', { x: 50, y: 10 }, grids)).toMatchObject({ kind: 'assigned', point_id: 10 });
+    expect(c._mapAttribute(pts, 'a patrolling orc', { x: 50, y: 10 }).kind).toBe('unassigned');
+  });
+  it('a point whose grid is absent from the payload is judged on its spawn point alone', () => {
+    const { c } = localCore();
+    expect(c._mapAttribute([walker(10, 0, 0, 7)], 'a patrolling orc', { x: 70, y: 5 }, {}).kind).toBe('unassigned');
+    expect(c._mapAttribute([walker(10, 0, 0, 7)], 'a patrolling orc', { x: 5, y: 5 }, null)).toMatchObject({ kind: 'assigned', point_id: 10 });
+  });
+  it('the pin uses the route too: tab-targeting a walker mid-route pins it to its point', () => {
+    const body = Object.assign({}, ZONE_BODY, { points: [walker(10, 0, 0, 7), walker(11, 2000, 2000, null)], grids: { 7: ROUTE } });
+    seedCache(dir, body, Date.now());
+    const net = fakeNet();
+    const c = loadCore({ dir, opts: { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: '' }, net });
+    c._mapEnsureZone('thedeep', 164, Date.now());
+    const pin = c._mapTryPin('thedeep', 'Aldenmar', 31, 'a patrolling orc', { x: 70, y: 5, z: 0 }, Date.now());
+    expect(pin).toMatchObject({ point_id: 10 });
+  });
+  it('the zone payload carries the routes with the points and map, and only when the version changes', () => {
+    const body = Object.assign({}, ZONE_BODY, { grids: { 7: ROUTE } });
+    seedCache(dir, body, T0);
+    const net = fakeNet();
+    const c = loadCore({ dir, opts: { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: '' }, net });
+    c._mapEnsureZone('thedeep', 164, T0);
+    c._zealState.Aldenmar = { zone: 164, updatedAt: T0, loc: { x: 1, y: 2, z: 0 } };
+    const first = c._mapStatePayload('', T0 + 1);
+    expect(first.grids).toEqual({ 7: ROUTE });
+    expect(c._mapStatePayload(first.version, T0 + 2).grids).toBeNull();
+    expect(c._mapStatePayload('thedeep@older', T0 + 3).grids).toEqual({ 7: ROUTE });
+  });
+  it('a zone with no routes sends grids: null', () => {
+    const { c } = localCore();
+    c._zealState.Aldenmar = { zone: 164, updatedAt: T0, loc: { x: 1, y: 2, z: 0 } };
+    expect(c._mapStatePayload('', T0 + 1).grids).toBeNull();
+  });
+  it('the overlay draws the routes of visible points dashed, ticks the pauses, fades by level, lights the hovered one, badges walkers', () => {
+    const js = stripJs(MAP_HTML);
+    expect(js).toMatch(/function drawRoutes\(vis, sz, range\)/);
+    expect(js).toMatch(/drawRoutes\(vis, sz, range\);/);
+    expect(js).toMatch(/ctx\.setLineDash\(\[4, 4\]\); ctx\.lineWidth = hot \? 1\.8 : 1;/);
+    expect(js).toMatch(/if \(!\(Number\(g\.pts\[j\]\[3\]\) > 0\)\) continue;/);
+    expect(js).toMatch(/ctx\.globalAlpha = hot \? 1 : it\.near \? 0\.7 : 0\.25;/);
+    expect(js).toMatch(/S\.hoverGrid = g; renderMap\(true\)/);
+    expect(js).toMatch(/if \(p\.grid != null\) halo\('↻'/);
+    expect(js).toMatch(/S\.grids = p\.grids \|\| null;/);
+  });
+});
+
+  it('the floor list and its code are gone', () => {
+    const js = stripJs(MAP_HTML);
+    expect(MAP_HTML).not.toMatch(/id="floor"/);
+    expect(js).not.toMatch(/buildFloorPicker|activeBand|nearestBand|S\.floor|floorSel/);
   });
 
   // Real-time positions (the guild lead, 2026-10-12: "local locations should update in real time").
@@ -554,34 +704,47 @@ describe('the overlay (apps/mimic/map.html)', () => {
       expect(H.lerpHeading(0, 100, 0.25)).toBeCloseTo(25);
       expect(H.lerpHeading(null, 40, 0.5)).toBe(40);
     });
-    it('a track glides over the time the last step took, and settles on the sample', () => {
-      let tr = H.trackStep(undefined, A, 1000);
+    // The smoothing window replaces "glide over the last interval" (always one interval behind): the dot reaches the
+    // newest sample `smoothMs` after it arrives, however long the gap before it was.
+    it('smoothing Light (80 ms): the dot sits on the newest sample 80 ms after it arrives, and never overshoots', () => {
+      expect(H.SMOOTH_MS).toEqual({ off: 0, light: 80, smooth: 250 });
+      let tr = H.trackStep(undefined, A, 1000, H.SMOOTH_MS.light);
       expect(H.trackMoving(tr, 1000)).toBe(false);          // the first sight of a name has nowhere to glide from
-      tr = H.trackStep(tr, B, 1300);                        // 300ms since the last sample -> a 300ms glide
-      expect(tr.dur).toBe(300);
+      tr = H.trackStep(tr, B, 1300, H.SMOOTH_MS.light);     // however long the silence, the glide is the window
+      expect(tr.dur).toBe(80);
       expect(H.trackAt(tr, 1300).x).toBeCloseTo(0);
-      expect(H.trackAt(tr, 1450).x).toBeCloseTo(50);
-      expect(H.trackAt(tr, 1600)).toEqual(B);
-      expect(H.trackAt(tr, 9000)).toEqual(B);               // never overshoots
-      expect(H.trackMoving(tr, 1450)).toBe(true);
-      expect(H.trackMoving(tr, 1600)).toBe(false);          // an idle map stops asking for frames
+      expect(H.trackAt(tr, 1340).x).toBeCloseTo(50);
+      expect(H.trackAt(tr, 1380)).toEqual(B);               // lag <= 80 ms
+      expect(H.trackAt(tr, 9000)).toEqual(B);
+      expect(H.trackMoving(tr, 1340)).toBe(true);
+      expect(H.trackMoving(tr, 1380)).toBe(false);          // an idle map stops asking for frames
+    });
+    it('smoothing Off draws the newest sample exactly, the moment it arrives', () => {
+      const tr = H.trackStep(H.trackStep(undefined, A, 1000, 0), B, 1100, 0);
+      expect(H.trackAt(tr, 1100)).toEqual(B);
+      expect(H.trackMoving(tr, 1100)).toBe(false);
+      expect(H.trackAt(tr, 1101)).toEqual(B);
+    });
+    it('smoothing Smooth (250 ms) is slower than Light at the same instant', () => {
+      const light = H.trackStep(H.trackStep(undefined, A, 0, 80), B, 100, 80);
+      const smooth = H.trackStep(H.trackStep(undefined, A, 0, 250), B, 100, 250);
+      expect(H.trackAt(smooth, 140).x).toBeLessThan(H.trackAt(light, 140).x);
+      expect(H.trackAt(smooth, 350)).toEqual(B);
     });
     it('the same sample again does not restart the glide; a new one starts from where the dot is drawn', () => {
-      const tr = H.trackStep(H.trackStep(undefined, A, 1000), B, 1300);
-      expect(H.trackStep(tr, B, 1450)).toBe(tr);
+      const tr = H.trackStep(H.trackStep(undefined, A, 1000, 80), B, 1300, 80);
+      expect(H.trackStep(tr, B, 1340, 80)).toBe(tr);
       const C = { x: 100, y: 140, z: 10, heading: 100 };
-      const next = H.trackStep(tr, C, 1450);                // mid-glide: from = the drawn spot, not the old sample
+      const next = H.trackStep(tr, C, 1340, 80);            // mid-glide: from = the drawn spot, not the old sample
       expect(next.from.x).toBeCloseTo(50);
       expect(next.to).toEqual(C);
     });
-    it('a big jump on a track snaps (no glide), and a long silence does not stretch the next glide', () => {
-      let tr = H.trackStep(undefined, A, 0);
+    it('a big jump on a track snaps (no glide)', () => {
+      let tr = H.trackStep(undefined, A, 0, 80);
       const far = { x: 3000, y: 3000, z: 0, heading: 0 };
-      tr = H.trackStep(tr, far, 300);
+      tr = H.trackStep(tr, far, 300, 80);
       expect(H.trackMoving(tr, 300)).toBe(false);
       expect(H.trackAt(tr, 300)).toEqual(far);
-      const back = H.trackStep(tr, { x: 3010, y: 3000, z: 0, heading: 0 }, 60000);   // a minute later
-      expect(back.dur).toBeLessThanOrEqual(500);
     });
     it('polls at 300ms or faster, skips while hidden, keeps the in-flight guard and the have= cache', () => {
       const js = stripJs(MAP_HTML);
@@ -603,7 +766,9 @@ describe('the overlay (apps/mimic/map.html)', () => {
     });
   });
 
-  it('runs: with window.mimic ABSENT it still draws spots, hover-capable buttons and the timer list', async () => {
+  // Boots the overlay's script against a stub page. Returns its state object S and the stub elements by id.
+  // `mimic` is window.mimic (undefined = a plain browser), `store` a localStorage in a plain object.
+  async function bootOverlay({ mimic, store = {}, payload: given } = {}) {
     const script = MAP_HTML.slice(MAP_HTML.indexOf('<script>') + 8, MAP_HTML.lastIndexOf('</script>'));
     const all = {};
     const mkEl = (tag) => {
@@ -625,19 +790,27 @@ describe('the overlay (apps/mimic/map.html)', () => {
     };
     const payload = {
       zone: 'thedeep', long_name: 'The Deep', version: 'thedeep@v', status: 'ok', now: T0, local_only: false,
-      points: POINTS, map: ZONE_BODY.map, self: { x: 90, y: 190, z: 0, heading: 64, name: 'Aldenmar' },
+      points: POINTS.map(p => (p.id === 1 ? Object.assign({}, p, { grid: 7 }) : p)), map: ZONE_BODY.map,
+      grids: { 7: { type: 3, type2: 0, pts: [[0, 0, 0, 0], [100, 0, 0, 5], [100, 100, 0, 0]] } },
+      zone_id: 164, self: { x: 90, y: 190, z: 0, heading: 64, name: 'Aldenmar' },
       group: [{ name: 'Brackwyn', x: 100, y: 180, z: 0 }], raid: [], target: { name: 'a decaying skeleton', x: 110, y: 210, z: 0, dist: 28, point_id: 1 },
       seen: [{ point_id: 2, spawn_id: 812, name: 'a decaying skeleton', at: T0 - 120000, by: 'Corvale' }],
       timers: [{ point_id: 1, name: 'a decaying skeleton', died_at: T0, earliest: T0 + 540000, latest: T0 + 660000, source: 'seen', state: 'wait' }],
       unassigned: [{ id: 'u1', name: 'a decaying skeleton', died_at: T0, candidates: [2, 6] }],
     };
     const fetched = [];
-    const win = { addEventListener() {}, devicePixelRatio: 1, mimic: undefined };
+    const win = { addEventListener() {}, devicePixelRatio: 1, mimic };
+    const ls = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
     // eslint-disable-next-line no-new-func
-    new Function('window', 'document', 'location', 'fetch', 'localStorage', 'ResizeObserver', 'setInterval', 'clearInterval',
-      script)(win, doc, { search: '' }, (u) => { fetched.push(u); return Promise.resolve({ json: () => Promise.resolve(payload) }); },
-      { getItem() { return null; }, setItem() {} }, undefined, () => 1, () => {});
+    const S = new Function('window', 'document', 'location', 'fetch', 'localStorage', 'ResizeObserver', 'setInterval', 'clearInterval',
+      script + '\nreturn S;')(win, doc, { search: '' }, (u) => { fetched.push(u); return Promise.resolve({ json: () => Promise.resolve(given || payload) }); },
+      ls, undefined, () => 1, () => {});
     await tick();
+    return { S, all, fetched, store, payload, doc };
+  }
+
+  it('runs: with window.mimic ABSENT it still draws spots, hover-capable buttons and the timer list', async () => {
+    const { all, fetched } = await bootOverlay();
     expect(fetched[0]).toBe('http://127.0.0.1:7779/api/map-state');
     const hits = all.hits.children;
     expect(hits.length).toBeGreaterThan(0);
@@ -651,6 +824,90 @@ describe('the overlay (apps/mimic/map.html)', () => {
     const seenRow = all.lists.children.find(r => /trow seen/.test(r.className));
     expect(seenRow).toBeTruthy();
     expect(seenRow.children.map(k => k.textContent).join('|')).toMatch(/spawn #812 · by Corvale/);
+  });
+
+  it('the Fit button cycles Fit zone -> Fit group -> Fit raid, turns Follow off, keeps the choice, and says when it fell back', async () => {
+    const { S, all, store } = await bootOverlay();
+    const click = () => all.fitBtn.listeners.click.forEach(f => f.call(all.fitBtn));
+    expect(all.fitBtn.textContent).toBe('Fit zone');
+    expect(S.follow).toBe(true);
+    click();
+    expect(all.fitBtn.textContent).toBe('Fit group'); expect(S.follow).toBe(false); expect(store['wp-map-fit']).toBe('group');
+    expect(all.fitBtn.title).not.toMatch(/no group/);          // the payload has a group member
+    const groupView = Object.assign({}, S.view);
+    click();                                                    // raid: the payload has none, so it falls back to the group
+    expect(all.fitBtn.textContent).toBe('Fit raid'); expect(store['wp-map-fit']).toBe('raid');
+    expect(all.fitBtn.title).toMatch(/no raid, fitting your group/);
+    expect(S.view.scale).toBeCloseTo(groupView.scale);
+    click();
+    expect(all.fitBtn.textContent).toBe('Fit zone');
+    expect(S.view.scale).toBeLessThan(groupView.scale);         // the whole zone is wider than you + one groupmate
+  });
+  it('remembers the fit mode, the level range, the position source and the smoothing across a reload; junk is ignored', async () => {
+    const first = await bootOverlay();
+    first.all.levels.value = '4'; first.all.levels.listeners.input.forEach(f => f());
+    first.all.srcSel.value = 'agent'; first.all.srcSel.listeners.change.forEach(f => f());
+    first.all.smoothSel.value = 'smooth'; first.all.smoothSel.listeners.change.forEach(f => f());
+    first.all.fitBtn.listeners.click.forEach(f => f());
+    expect(first.store).toMatchObject({ 'wp-map-levels': '4', 'wp-map-src': 'agent', 'wp-map-smooth': 'smooth', 'wp-map-fit': 'group' });
+    const again = await bootOverlay({ store: first.store });
+    expect(again.S).toMatchObject({ levels: 4, src: 'agent', smooth: 'smooth', fit: 'group' });
+    expect(again.all.levelsVal.textContent).toBe('Levels ±200');
+    expect(again.all.fitBtn.textContent).toBe('Fit group');
+    const junk = await bootOverlay({ store: { 'wp-map-levels': '99', 'wp-map-fit': 'sideways', 'wp-map-src': 'x', 'wp-map-smooth': 'toString' } });
+    expect(junk.S).toMatchObject({ levels: 2, fit: 'zone', src: 'direct', smooth: 'light' });   // defaults: Direct + Light, +-100
+  });
+
+  // Ask 5-7: positions pushed straight from Mimic, used while fresh, the poll's when they stop.
+  describe('the direct position path', () => {
+    let nowSpy, clock;
+    beforeEach(() => { clock = Date.now(); nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => clock); });
+    afterEach(() => nowSpy.mockRestore());
+    const push = (S, all, win, over) => win.pushPos(Object.assign({ character: 'Aldenmar', zone_id: 164, at: clock - 30,
+      self: { x: 500, y: 600, z: 0, heading: 10 }, group: [{ name: 'Brackwyn', x: 510, y: 610, z: 0, heading: 0 }], raid: [], target: null }, over || {}));
+    async function boot(extra) {
+      const win = { pushPos: null };
+      const mimic = { onMapPos: (cb) => { win.pushPos = cb; } };
+      const r = await bootOverlay(Object.assign({ mimic }, extra || {}));
+      return Object.assign(r, { win });
+    }
+    it('uses a fresh push over the poll (self and group, by name), and reads "pos <age> ms · direct"', async () => {
+      const { S, all, win } = await boot();
+      expect(S.trk.self.to).toMatchObject({ x: 90, y: 190 });         // the poll's, until something is pushed
+      clock += 300; push(S, all, win);                                  // the sample was taken 30 ms before the overlay drew it
+      expect(S.trk.self.to).toMatchObject({ x: 500, y: 600 });
+      expect(S.trk['g:Brackwyn'].to).toMatchObject({ x: 510, y: 610 });
+      expect(S.sampleSrc).toBe('direct');
+      expect(all.posage.textContent).toBe('pos 30 ms · direct');
+    });
+    it('with the source set to Agent a push is kept but not used', async () => {
+      const { S, all, win } = await boot({ store: { 'wp-map-src': 'agent' } });
+      clock += 300; push(S, all, win);
+      expect(S.trk.self.to).toMatchObject({ x: 90, y: 190 });
+      expect(S.sampleSrc).toBe('agent');
+    });
+    it('ignores a push about another character or another zone', async () => {
+      const { S, all, win } = await boot();
+      clock += 100; push(S, all, win, { character: 'Someoneelse' });
+      expect(S.trk.self.to).toMatchObject({ x: 90, y: 190 });
+      push(S, all, win, { zone_id: 7 });
+      expect(S.trk.self.to).toMatchObject({ x: 90, y: 190 });
+    });
+    it('falls back to the poll after 1 s without a push, and for ever with the source set to Agent', async () => {
+      const { S, all, win } = await boot();
+      clock += 100; push(S, all, win);
+      expect(H.DIRECT_STALE_MS).toBe(1000);
+      expect(H.useDirect(S.src, S.direct, clock + 999, S.p)).toBe(true);     // still fresh: the poll's positions are not used
+      expect(H.useDirect(S.src, S.direct, clock + 1001, S.p)).toBe(false);   // silent for over a second: back to the poll
+      expect(H.useDirect('agent', S.direct, clock, S.p)).toBe(false);
+      expect(H.useDirect('direct', null, clock, S.p)).toBe(false);
+    });
+    it('without window.mimic the overlay never has a push and just uses the poll (readout says agent)', async () => {
+      const { S } = await bootOverlay();
+      expect(S.direct).toBeNull();
+      expect(S.trk.self.to).toMatchObject({ x: 90, y: 190 });
+      expect(S.sampleSrc).toBe('agent');
+    });
   });
 });
 
@@ -1016,10 +1273,11 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
       expect(MAP_HTML).toMatch(/#side\{[^}]*background:rgb\(19 26 38 \/ var\(--bg-alpha\)\)/);
       expect(MAP_HTML).not.toMatch(/rgb\(0 0 0 \/ var\(--bg-alpha\)\)/);
     });
-    it('brighter, thicker walls on the active floor; other floors at 0.35; off-floor dots at 0.6; bigger lighter dots with an outline', () => {
+    it('brighter, thicker walls in the level range; the rest at 0.35; out-of-range dots at 0.4; bigger lighter dots with an outline', () => {
       expect(js).toMatch(/ctx\.strokeStyle = bright \? 'rgba\(214,230,255,0\.95\)' : 'rgba\(170,195,235,0\.35\)';/);
       expect(js).toMatch(/ctx\.lineWidth = bright \? 1\.6 : 1;/);
-      expect(js).toMatch(/ctx\.globalAlpha = onFloor \? 1 : 0\.6;/);
+      expect(js).toMatch(/var bright = S\.prep\.bands\.length <= 1 \|\| inLevelRange\(S\.prep\.bands\[b\], sz, range\);/);
+      expect(js).toMatch(/ctx\.globalAlpha = inLevelRange\(p\.z, sz, range\) \? 1 : 0\.4;/);
       expect(js).toMatch(/var r = kind\.raid \? 6\.5 : kind\.named \? 5\.5 : 4\.2;/);
       expect(js).toMatch(/: '#c9d1d9'; ctx\.fill\(\);/);
       expect(js).toMatch(/strokeStyle = '#0d1117'; ctx\.stroke\(\);   \/\/ a dark outline on every dot/);
@@ -1100,5 +1358,84 @@ describe('the Mimic side: every item of the overlay parity checklist', () => {
   });
   it('reads target_loc off the Zeal pipe and passes it on', () => {
     expect(MAIN).toMatch(/s\.target_loc\s*=\s*_pipeLoc\(inner\.target_loc\);/);
+  });
+});
+
+// The Map's direct position path (the guild lead, 2026-10-12: "still somewhat laggy ... pull directly from EQ"):
+// main.js pushes positions straight to the window. The block is sliced and run as shipped.
+describe('the Map direct position path (apps/mimic/main.js -> preload -> map.html)', () => {
+  const block = sliceBlock(MAIN, '// ── Map direct positions ──', 'const _mapDirect = _makeMapDirect({');
+  const parts = sliceBlock(MAIN, 'function _pipeLoc(', '\n}\n') + sliceBlock(MAIN, 'function _zealParseData(', '\n}\n');
+  // eslint-disable-next-line no-new-func
+  const D = new Function(parts + block.replace(/const _mapDirect = _makeMapDirect\(\{$/, '') + '\nreturn { _mapDirectXY, _mapDirectPos, _makeMapDirect, MAP_DIRECT_MIN_MS, MAP_DIRECT_HEARTBEAT_MS };')();
+
+  // A fake clock and timer queue, and a live snapshot the test edits between events.
+  function rig(active = true) {
+    const r = { t: 1000, timers: [], sent: [], snap: null, active };
+    r.setT = (fn, ms) => { const h = { fn, at: r.t + ms }; r.timers.push(h); return h; };
+    r.clearT = (h) => { r.timers = r.timers.filter(x => x !== h); };
+    r.advance = (ms) => { const to = r.t + ms; for (;;) { const nx = r.timers.filter(x => x.at <= to).sort((a, b) => a.at - b.at)[0]; if (!nx) break; r.timers = r.timers.filter(x => x !== nx); r.t = nx.at; nx.fn(); } r.t = to; };
+    r.d = D._makeMapDirect({ now: () => r.t, setT: r.setT, clearT: r.clearT, snapshot: () => r.snap, active: () => r.active, send: (p) => r.sent.push(p) });
+    r.snap = { zone: 164, loc: { x: 10, y: 20, z: 5 }, heading: 128, group_members: [{ name: 'Brackwyn', loc: { x: 1, y: 2, z: 3 }, heading: 0 }], target_name: null };
+    return r;
+  }
+  const player = { type: 3, character: 'Aldenmar' };
+
+  it('the frame swap agrees with the agent: server x = pipe y', () => {
+    const { c } = localCore();
+    for (const loc of [{ x: 10, y: 20, z: 5 }, { x: -3, y: 7 }, { x: 0, y: 0, z: 0 }, { x: 1.5, y: -2.25, z: -9 }, null, { x: 'a', y: 1 }, { x: 1, y: NaN }, 'str']) {
+      expect(D._mapDirectXY(loc), JSON.stringify(loc)).toEqual(c._mapServerXY(loc));
+    }
+  });
+  it('sends at most one update per 50 ms and the LATEST state wins', () => {
+    expect(D.MAP_DIRECT_MIN_MS).toBe(50);
+    const r = rig();
+    r.d.note(player);                                       // t=1000: goes out at once
+    expect(r.sent).toHaveLength(1);
+    expect(r.sent[0]).toMatchObject({ character: 'Aldenmar', zone_id: 164, self: { x: 20, y: 10, z: 5, heading: 128 } });
+    for (const x of [11, 12, 13]) { r.advance(10); r.snap = Object.assign({}, r.snap, { loc: { x, y: 20, z: 5 } }); r.d.note(player); }
+    expect(r.sent).toHaveLength(1);                         // 30 ms in: held back
+    r.advance(19); expect(r.sent).toHaveLength(1);          // 49 ms
+    r.advance(1); expect(r.sent).toHaveLength(2);           // 50 ms: one trailing send...
+    expect(r.sent[1].self.y).toBe(13);                      // ...carrying the newest position, not the first held one
+    r.advance(500);
+    expect(r.sent.filter(p => p.at < 1050)).toHaveLength(1);
+    for (let i = 1; i < r.sent.length; i++) expect(r.sent[i].at - r.sent[i - 1].at).toBeGreaterThanOrEqual(50);
+  });
+  it('an unchanged state is not re-sent every beat, only as a 500 ms heartbeat', () => {
+    expect(D.MAP_DIRECT_HEARTBEAT_MS).toBe(500);
+    const r = rig();
+    r.d.note(player);
+    for (let i = 0; i < 8; i++) { r.advance(60); r.d.note(player); }   // 480 ms of the same position
+    expect(r.sent).toHaveLength(1);
+    r.advance(60); r.d.note(player);
+    expect(r.sent).toHaveLength(2);
+  });
+  it('sends you, your group, the raid (pipe type 5) and the target, all in the server frame', () => {
+    const r = rig();
+    r.snap.target_name = 'a decaying skeleton'; r.snap.target_id = 77; r.snap.target_loc = { x: 7, y: 9, z: 0 };
+    r.d.note(player);
+    r.advance(60);
+    r.d.note({ type: 5, character: 'Aldenmar', data: JSON.stringify([{ name: 'Corvale', loc: { x: 30, y: 40, z: 1 }, heading: 12 }, { name: 'Nolocman' }]) });
+    const p = r.sent[r.sent.length - 1];
+    expect(p.group).toEqual([{ name: 'Brackwyn', x: 2, y: 1, z: 3, heading: 0 }]);
+    expect(p.raid).toEqual([{ name: 'Corvale', x: 40, y: 30, z: 1, heading: 12 }]);
+    expect(p.target).toMatchObject({ id: 77, name: 'a decaying skeleton', x: 9, y: 7 });
+  });
+  it('sends nothing while the Map is not up, and nothing before a player frame names the character', () => {
+    const r = rig(false);
+    r.d.note(player); r.advance(200);
+    expect(r.sent).toHaveLength(0);
+    const r2 = rig();
+    r2.d.note({ type: 6, character: 'Aldenmar', data: '[]' });
+    expect(r2.sent).toHaveLength(0);
+  });
+  it('is wired: after each absorbed pipe event, to the Map window only, exposed on window.mimic', () => {
+    const js = stripJs(MAIN);
+    expect(js).toMatch(/_zealAbsorb\(obj, pid\); \} catch \(e\) \{ void e; \}\s*try \{ _mapDirect\.note\(obj\); \}/);
+    expect(js).toMatch(/active: \(\) => _live\(mapWindow\) && mapWindow\.isVisible\(\)/);
+    expect(js).toMatch(/mapWindow\.webContents\.send\('map-pos', p\)/);
+    expect(stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'preload.js')))).toMatch(/onMapPos:\s+\(cb\)\s+=> ipcRenderer\.on\('map-pos', \(_e, p\) => cb\(p\)\)/);
+    expect(stripJs(MAP_HTML)).toMatch(/window\.mimic && window\.mimic\.onMapPos && window\.mimic\.onMapPos\(onDirect\);/);
   });
 });
