@@ -19,7 +19,12 @@
   .hit{position:absolute;width:18px;height:18px;margin:-9px 0 0 -9px;padding:0;border:0;border-radius:50%;
     background:transparent;cursor:pointer;pointer-events:auto}
   .hit:hover,.hit:focus-visible{outline:1px solid rgba(255,255,255,0.7)}
-  #tools{position:absolute;top:6px;left:30px;right:6px;display:flex;gap:4px;z-index:5;flex-wrap:wrap}
+  #tools{position:absolute;top:6px;left:30px;right:96px;display:flex;gap:4px;z-index:5;flex-wrap:wrap}
+  /* Spawns (the guild lead, 2026-10-12: "put the slider in and out for the spawns with a top right of the map
+     clicky"): a top-right button that slides its own height slider out and back; spawn points outside it are hidden. */
+  #spawnCtl{position:absolute;top:6px;right:6px;z-index:6;display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+  #spawnPanel{display:none}
+  #spawnCtl.open #spawnPanel{display:flex}
   .tb{height:18px;padding:0 6px;border-radius:4px;background:rgba(14,17,22,0.7);color:#c9d1d9;
     border:1px solid rgba(110,118,129,0.45);font:inherit;font-size:10px;line-height:1;cursor:pointer}
   .tb:hover{color:#fff;border-color:#58a6ff}
@@ -90,7 +95,7 @@
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
   #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
   body.setup #move-btn{top:30px}
-  body.setup #tools{top:32px}
+  body.setup #tools,body.setup #spawnCtl{top:32px}
   /* A narrow window (XS is 200 wide) keeps the map and drops the timer list. */
   @media (max-width:420px){ #side{display:none} }
 </style></head>
@@ -121,7 +126,11 @@
         <button class="tb on" id="followBtn" type="button" title="Keep the map centred on you. Dragging the map turns it off.">Follow me</button>
         <button class="tb" id="fitBtn" type="button" title="Fit the view. Click to cycle: zone, group, raid.">Fit zone</button>
         <button class="tb" id="panBtn" type="button" title="Locked overlays let clicks through to EverQuest. Switch this on to drag and zoom the map (the mouse wheel zooms); right-click centres on you.">✋ Pan / zoom</button>
-        <label class="lv" title="How far above and below you (in z) walls, spawns and routes stay bright. The rest fade."><input id="levels" type="range" min="0" max="7" step="1"><span id="levelsVal">Levels</span></label>
+        <label class="lv" title="How far above and below you (in z) walls stay bright. The rest fade."><input id="levels" type="range" min="0" max="7" step="1"><span id="levelsVal">Levels</span></label>
+      </div>
+      <div id="spawnCtl">
+        <button class="tb" id="spawnBtn" type="button" title="Spawn points shown: only those within this height of you. Click to slide the slider out or back in.">Spawns</button>
+        <label class="lv" id="spawnPanel" title="How far above and below you (in z) spawn points are shown. The rest are hidden."><input id="spawnLevels" type="range" min="0" max="7" step="1"></label>
       </div>
       <div id="card"></div>
       <div id="menu"></div>
@@ -274,6 +283,7 @@
   var LEVEL_STEPS = [25, 50, 100, 150, 200, 300, 400, 0];
   var LEVEL_DEFAULT = 2;
   function levelLabel(i) { var n = LEVEL_STEPS[i]; return n ? 'Levels ±' + n : 'Levels: all'; }
+  function spawnLabel(i) { var n = LEVEL_STEPS[i]; return n ? 'Spawns ±' + n : 'Spawns: all'; }
   function inLevelRange(z, selfZ, range) {
     if (!range || z == null || selfZ == null) return true;
     return Math.abs(Number(z) - Number(selfZ)) <= range;
@@ -371,6 +381,7 @@
   var S = {
     ver: null, zone: null, points: [], byId: {}, map: null, grids: null, prep: null, p: null, skew: 0, err: false,
     view: { cx: 0, cy: 0, scale: 0.5 }, follow: true, panMode: false, levels: LEVEL_DEFAULT, fit: 'zone', hoverGrid: null,
+    spawnLevels: LEVEL_STEPS.length - 1, spawnOpen: false,   // spawns: all by default; the slider starts slid in
     timerBy: {}, candBy: {}, seenBy: {}, menuPid: null, drag: null, w: 0, h: 0, fitted: false,
     trk: {}, sideAt: 0,
     src: 'direct', smooth: 'light', direct: null, sampleAt: 0, sampleSrc: '',   // beta tuning knobs + the latest pushed positions
@@ -381,6 +392,9 @@
   (function () {
     var lv = parseInt(lsGet('wp-map-levels'), 10), fm = lsGet('wp-map-fit'), sr = lsGet('wp-map-src'), sm = lsGet('wp-map-smooth');
     if (lv >= 0 && lv < LEVEL_STEPS.length) S.levels = lv;
+    var sl = parseInt(lsGet('wp-map-spawn-levels'), 10);
+    if (sl >= 0 && sl < LEVEL_STEPS.length) S.spawnLevels = sl;
+    S.spawnOpen = lsGet('wp-map-spawn-open') === '1';
     if (FIT_MODES.indexOf(fm) >= 0) S.fit = fm;
     if (sr === 'direct' || sr === 'agent') S.src = sr;
     if (Object.prototype.hasOwnProperty.call(SMOOTH_MS, sm)) S.smooth = sm;
@@ -431,6 +445,7 @@
   function bandsOf() { return S.prep ? S.prep.bands : []; }
   function selfZ() { return S.p && S.p.self && S.p.self.z != null ? Number(S.p.self.z) : null; }
   function levelRange() { return LEVEL_STEPS[S.levels] || 0; }
+  function spawnRange() { return LEVEL_STEPS[S.spawnLevels] || 0; }
   function pointBounds() {
     var b = null;
     for (var i = 0; i < S.points.length; i++) {
@@ -637,10 +652,11 @@
       }
     }
     // Spawn dots, and first the pather routes of the visible ones (under the dots).
-    var vis = [], flashOn = Math.floor(now / 450) % 2 === 0, anyFlash = false;
+    var vis = [], flashOn = Math.floor(now / 450) % 2 === 0, anyFlash = false, srange = spawnRange();
     for (var k = 0; k < S.points.length; k++) {
       var p0 = S.points[k], xy0 = wpt(p0.x, p0.y);
       if (xy0[0] < -30 || xy0[0] > w + 30 || xy0[1] < -30 || xy0[1] > h + 30) continue;
+      if (!inLevelRange(p0.z, sz, srange)) continue;   // outside the Spawns slider: hidden (dot, route and click target)
       vis.push({ p: p0, x: xy0[0], y: xy0[1] });
     }
     drawRoutes(vis, sz, range);
@@ -901,6 +917,21 @@
     S.levels = i >= 0 && i < LEVEL_STEPS.length ? i : LEVEL_DEFAULT;
     lsSet('wp-map-levels', S.levels); syncLevels(); renderMap();
   });
+  // Spawns: the top-right button slides its slider out and back in; the button always shows the current range.
+  var spawnCtl = document.getElementById('spawnCtl'), spawnBtn = document.getElementById('spawnBtn');
+  var spawnEl = document.getElementById('spawnLevels');
+  function syncSpawns() {
+    spawnEl.max = String(LEVEL_STEPS.length - 1); spawnEl.value = String(S.spawnLevels);
+    spawnBtn.textContent = spawnLabel(S.spawnLevels) + (S.spawnOpen ? ' ▴' : ' ▾');
+    spawnBtn.classList.toggle('on', S.spawnOpen); spawnCtl.classList.toggle('open', S.spawnOpen);
+  }
+  spawnBtn.addEventListener('click', function () { S.spawnOpen = !S.spawnOpen; lsSet('wp-map-spawn-open', S.spawnOpen ? 1 : 0); syncSpawns(); });
+  spawnEl.addEventListener('input', function () {
+    var i = parseInt(spawnEl.value, 10);
+    S.spawnLevels = i >= 0 && i < LEVEL_STEPS.length ? i : LEVEL_STEPS.length - 1;
+    lsSet('wp-map-spawn-levels', S.spawnLevels); syncSpawns(); renderMap();
+  });
+  syncSpawns();
   // Beta tuning knobs (setup bar): where positions come from, and how much they are smoothed.
   function syncKnobs() { srcSel.value = S.src; smoothSel.value = S.smooth; }
   srcSel.addEventListener('change', function () {
