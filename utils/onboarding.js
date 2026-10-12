@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.248': [
+    'The bot can now share the Mimic spawn map between members, so everyone with the map open in a zone sees the same respawn timers (Mimic beta, coming next).',
+  ],
   '3.1.246': [
     'The bot now serves zone spawn points to Mimic for the coming map overlay.',
   ],

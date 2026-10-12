@@ -12021,6 +12021,9 @@ const _BUDGET_DEFAULTS = {
   // Mimic 2.9 spawn map: one GET per zone-in, cached 6h and ETag'd at the bot. Not shed: it is a read
   // (mob-info and who-lookup are not in _SHED_KINDS either), so over budget is a 429 the agent backs off.
   zone_spawns:     { perMin: 30,  durable: false, get: true },
+  // Mimic Spawn map sync (GET poll + POST push share it). A poll every few seconds per open map is ~20/min;
+  // over budget is a 429 the agent backs off on (get:true applies to both verbs).
+  map_sync:        { perMin: 60,  durable: false, get: true },
   // #106 multiplexed GET poll — one request carries recent_fires + tuning +
   // (at their own cadence) triggers/prefs/backfill/ui_edits. A healthy agent
   // polls ~40/min active, far slower idle/dormant; the generous cap only trips a
@@ -17143,6 +17146,84 @@ async function _handleAgentZoneSpawns(req, res) {
   res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'ETag': r.etag, 'Cache-Control': 'max-age=21600' },
     gzip ? { 'Content-Encoding': 'gzip' } : {}));
   res.end(gzip ? r.gz : r.body);
+}
+
+// POST/GET /api/agent/map-sync — the Mimic Spawn map's synced spawn-point events (the guild lead,
+// 2026-10-12). The agent pushes CERTAIN attributions (utils/mapSync.js validates; a bad event is dropped,
+// a bad body or zone is a 400) and pulls everyone else's, so a zone's respawn timers match across the
+// guild. Table: map_spawn_events (service role). Guild-wide per zone; a zone's rows past 24 h go on each push.
+const _MAP_SYNC_WINDOW_MS = 8 * 60 * 60 * 1000;   // default and maximum look-back of a GET
+const _MAP_SYNC_CACHE_MS = 3000;                  // many agents poll the same zone
+const _MAP_SYNC_LIMIT = 500;
+const _mapSyncCache = new Map();                  // zone -> { at, events: newest-last, last 8 h }
+function _mapSyncGuildId() { return process.env.DISCORD_GUILD_ID || require('./utils/supabase').guildId(); }
+
+async function _handleAgentMapSyncPost(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const mapSync = require('./utils/mapSync');
+  const supabase = require('./utils/supabase');
+  const got = await _ptsReadBody(req, 64 * 1024);
+  if (got.tooBig) return _ptsJson(res, 413, { error: 'payload too large' });
+  if (got.error) return _ptsJson(res, 400, { error: 'read failed' });
+  let body; try { body = JSON.parse(got.text); } catch { return _ptsJson(res, 400, { error: 'invalid json' }); }
+  const v = mapSync.validateEvents(body, Date.now());
+  if (v.error) return _ptsJson(res, 400, { error: v.error });
+  if (!v.events.length) return _ptsJson(res, 200, { ok: true, stored: 0 });
+  if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'database unavailable' });
+
+  const guildId = _mapSyncGuildId();
+  const written = await supabase.insert('map_spawn_events', v.events.map(e => ({
+    guild_id: guildId, zone: v.zone, point_id: e.point_id, kind: e.kind, spawn_id: e.spawn_id,
+    npc_name: e.name, at: new Date(e.at).toISOString(), by_character: v.character,
+    by_discord_id: String(identity.discord_id),
+  }))).catch(err => { console.error('[map-sync] insert failed:', err?.message || err); return null; });
+  if (!Array.isArray(written)) return _ptsJson(res, 503, { error: 'try again shortly' });
+  _mapSyncCache.delete(v.zone);
+
+  // Retention: this zone's rows past 24 h. Best-effort — never fails the push.
+  try {
+    const cutoff = new Date(Date.now() - mapSync.MAX_AGE_MS).toISOString();
+    await supabase.del('map_spawn_events',
+      `guild_id=eq.${encodeURIComponent(guildId)}&zone=eq.${v.zone}&at=lt.${encodeURIComponent(cutoff)}`);
+  } catch (err) { console.warn('[map-sync] prune failed:', err?.message); }
+  return _ptsJson(res, 200, { ok: true, stored: written.length });
+}
+
+async function _handleAgentMapSyncGet(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const mapSync = require('./utils/mapSync');
+  const supabase = require('./utils/supabase');
+  const sp = new URL(req.url, 'http://x').searchParams;
+  const zone = sp.get('zone') || '';
+  if (!mapSync.ZONE_RE.test(zone)) return _ptsJson(res, 400, { error: 'invalid zone' });
+  if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'database unavailable' });
+  const now = Date.now();
+  const floor = now - _MAP_SYNC_WINDOW_MS;
+  const sinceRaw = Number(sp.get('since'));
+  const since = Number.isFinite(sinceRaw) && sinceRaw > floor ? sinceRaw : floor;
+
+  let hit = _mapSyncCache.get(zone);
+  if (!hit || now - hit.at > _MAP_SYNC_CACHE_MS) {
+    // Newest 500 of the last 8 h, then flipped so the reply reads newest-last. One cached read per zone;
+    // every agent's own `since` is applied to it in memory.
+    const rows = await supabase.select('map_spawn_events',
+      `guild_id=eq.${encodeURIComponent(_mapSyncGuildId())}&zone=eq.${zone}` +
+      `&at=gt.${encodeURIComponent(new Date(floor).toISOString())}` +
+      `&select=id,point_id,kind,spawn_id,npc_name,at,by_character&order=at.desc,id.desc&limit=${_MAP_SYNC_LIMIT}`,
+    ).catch(() => null);
+    if (!Array.isArray(rows)) return _ptsJson(res, 503, { error: 'try again shortly' });
+    hit = { at: now, events: rows.reverse().map(r => ({
+      id: r.id, point_id: r.point_id, kind: r.kind, spawn_id: r.spawn_id, name: r.npc_name,
+      at: Date.parse(r.at), by: r.by_character,
+    })) };
+    if (_mapSyncCache.size >= 100) {
+      for (const [z, c] of _mapSyncCache) if (now - c.at > _MAP_SYNC_CACHE_MS) _mapSyncCache.delete(z);
+    }
+    _mapSyncCache.set(zone, hit);
+  }
+  return _ptsJson(res, 200, { zone, now, events: hit.events.filter(e => e.at > since) });
 }
 
 // GET /api/agent/who-lookup?names=a,b,c
@@ -23325,6 +23406,16 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentZoneSpawns(req, res); }
     catch (err) {
       console.error('[zone-spawns] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if ((req.method === 'GET' || req.method === 'POST') && req.url.split('?')[0] === '/api/agent/map-sync') {
+    if (await _overBudget('map_sync', req, res)) return;
+    try { return await (req.method === 'POST' ? _handleAgentMapSyncPost : _handleAgentMapSyncGet)(req, res); }
+    catch (err) {
+      console.error('[map-sync] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
