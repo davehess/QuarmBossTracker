@@ -6688,6 +6688,16 @@ async function _householdDiscordIds(discordId) {
   _householdCache.set(id, { at: Date.now(), ids });
   return ids;
 }
+// The household's ROOT id (merged_into_discord_id, else the id itself) — who owns rows the household shares.
+async function _householdRootDiscordId(discordId) {
+  const id = String(discordId || '');
+  if (!id) return '';
+  try {
+    const me = await require('./utils/supabase').select('wolfpack_members',
+      `discord_id=eq.${encodeURIComponent(id)}&select=discord_id,merged_into_discord_id&limit=1`);
+    return String((Array.isArray(me) && me[0]?.merged_into_discord_id) || id);
+  } catch { return id; }
+}
 
 // Assemble pending web-staged UI (socials/hotbutton) edits for a character list.
 // Shared by the standalone GET /ui-pending-edits and the multiplexed GET /poll
@@ -8869,6 +8879,118 @@ async function _handleAgentUiLayoutDownload(req, res, snapshotId) {
     files: parsed.files || {},
   }));
 }
+
+// ── Personal trigger sync (the guild lead, 2026-10-12: "Personal triggers should be syncable") ──
+// Push / Pull buttons like UI backups: a Mimic pushes its personal triggers + per-user "what you hear"
+// rules as ONE AES-256-GCM blob (bidCrypto, same key as ui_snapshots); another PC of the same household
+// pulls it. Visible to the owner's household only (merged alts included), service-role table, newest 20
+// pushes kept per owner. Shapes are checked in utils/personalTriggerSync.js. The agent half refuses to
+// call these in local mode; the bot has no local mode to check.
+function _ptsReadBody(req, max) {
+  return new Promise((resolve) => {
+    if (parseInt(req.headers?.['content-length'], 10) > max) return resolve({ tooBig: true });
+    const chunks = []; let n = 0; let tooBig = false;
+    req.on('data', (c) => { if (tooBig) return; n += c.length; if (n > max) { tooBig = true; chunks.length = 0; return; } chunks.push(c); });
+    req.on('end',   () => resolve(tooBig ? { tooBig } : { text: Buffer.concat(chunks).toString('utf8') }));
+    req.on('error', () => resolve({ error: true }));
+  });
+}
+function _ptsJson(res, code, obj) {
+  res.writeHead(code, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify(obj));
+}
+
+// POST /api/agent/personal-triggers/push { triggers: [...], rules: {...}, machine_name?, agent_version? }
+async function _handlePersonalTriggersPush(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const sync = require('./utils/personalTriggerSync');
+  const got = await _ptsReadBody(req, sync.MAX_BODY_BYTES);
+  if (got.tooBig) return _ptsJson(res, 413, { error: `payload too large (max ${sync.MAX_BODY_BYTES / 1024} KB)` });
+  if (got.error) return _ptsJson(res, 400, { error: 'read failed' });
+  let body; try { body = JSON.parse(got.text); } catch { return _ptsJson(res, 400, { error: 'invalid json' }); }
+  const v = sync.validatePush(body);
+  if (!v.ok) return _ptsJson(res, 400, { error: v.error });
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'supabase disabled' });
+  const { encryptBlob, isEncryptionEnabled } = require('./utils/bidCrypto');
+  if (!isEncryptionEnabled()) return _ptsJson(res, 503, { error: 'WISHLIST_BID_KEY not configured on the bot — cannot encrypt' });
+  const enc = encryptBlob(JSON.stringify({ triggers: v.triggers, rules: v.rules, schema: 1 }));
+  if (!enc) return _ptsJson(res, 500, { error: 'encryption failed' });
+
+  const guildId = supabase.guildId();
+  const owner = await _householdRootDiscordId(identity.discord_id);
+  const written = await supabase.insert('personal_trigger_sync', [{
+    owner_discord_id:     owner,
+    guild_id:             guildId,
+    payload_enc:          enc,
+    trigger_count:        v.triggers.length,
+    rule_count:           Object.keys(v.rules).length,
+    machine_name:         (body.machine_name || null) && String(body.machine_name).trim().slice(0, 64),
+    agent_version:        (body.agent_version || null) && String(body.agent_version).slice(0, 32),
+    pushed_by_discord_id: String(identity.discord_id),
+  }]).catch(err => { console.error('[personal-triggers] insert failed:', err?.message || err); return null; });
+  if (!Array.isArray(written) || written.length === 0) return _ptsJson(res, 500, { error: 'insert failed' });
+
+  // Bounded history: drop this owner's rows past the newest N. Best-effort — never fails the push.
+  try {
+    const old = await supabase.select('personal_trigger_sync',
+      `guild_id=eq.${encodeURIComponent(guildId)}&owner_discord_id=eq.${encodeURIComponent(owner)}` +
+      `&select=id&order=created_at.desc&offset=${sync.KEEP_PER_OWNER}&limit=200`);
+    const ids = (Array.isArray(old) ? old : []).map(r => String(r.id)).filter(i => /^[0-9a-f-]{36}$/i.test(i));
+    if (ids.length) await supabase.del('personal_trigger_sync', `id=in.(${ids.join(',')})`);
+  } catch (err) { console.warn('[personal-triggers] prune failed:', err?.message); }
+
+  const row = written[0];
+  return _ptsJson(res, 200, { ok: true, id: row.id, created_at: row.created_at || new Date().toISOString(),
+    trigger_count: v.triggers.length, rule_count: Object.keys(v.rules).length });
+}
+
+// GET /api/agent/personal-triggers/list — the household's newest pushes, no payload.
+async function _handlePersonalTriggersList(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'supabase disabled' });
+  const owners = [...await _householdDiscordIds(identity.discord_id)].map(encodeURIComponent).join(',');
+  const rows = await supabase.select('personal_trigger_sync',
+    `guild_id=eq.${encodeURIComponent(supabase.guildId())}&owner_discord_id=in.(${owners})` +
+    `&select=id,created_at,machine_name,trigger_count,rule_count,agent_version&order=created_at.desc&limit=20`,
+  ).catch(() => []);
+  return _ptsJson(res, 200, { pushes: Array.isArray(rows) ? rows : [] });
+}
+
+// GET /api/agent/personal-triggers/pull?id=<uuid> — decrypted { triggers, rules }; no id = the newest.
+async function _handlePersonalTriggersPull(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'supabase disabled' });
+  const id = (new URL(req.url, 'http://x').searchParams.get('id') || '').trim();
+  if (id && !/^[0-9a-f-]{36}$/i.test(id)) return _ptsJson(res, 400, { error: 'invalid id' });
+
+  const household = await _householdDiscordIds(identity.discord_id);
+  const guildId = encodeURIComponent(supabase.guildId());
+  const cols = 'id,owner_discord_id,payload_enc,machine_name,agent_version,created_at';
+  const q = id
+    ? `id=eq.${id}&guild_id=eq.${guildId}&select=${cols}&limit=1`
+    : `guild_id=eq.${guildId}&owner_discord_id=in.(${[...household].map(encodeURIComponent).join(',')})` +
+      `&select=${cols}&order=created_at.desc&limit=1`;
+  const rows = await supabase.select('personal_trigger_sync', q).catch(() => []);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row) return _ptsJson(res, 404, { error: 'nothing pushed yet' });
+  // Your household's pushes only: a row id alone is not enough.
+  if (!household.has(String(row.owner_discord_id))) return _ptsJson(res, 403, { error: 'not yours' });
+
+  const { decryptBlob } = require('./utils/bidCrypto');
+  const plaintext = decryptBlob(row.payload_enc);
+  if (!plaintext) return _ptsJson(res, 500, { error: 'decryption failed' });
+  let parsed; try { parsed = JSON.parse(plaintext); } catch { return _ptsJson(res, 500, { error: 'payload malformed' }); }
+  return _ptsJson(res, 200, { id: row.id, created_at: row.created_at, machine_name: row.machine_name,
+    agent_version: row.agent_version, triggers: parsed.triggers || [], rules: parsed.rules || {} });
+}
+// ── end personal trigger sync ──
 
 // Looks up CharacterId + Rank from OpenDKP roster and forwards as a bid.
 // Returns the OpenDKP response (or a 4xx if the input is bad).
@@ -11880,6 +12002,7 @@ const _BUDGET_DEFAULTS = {
   buff_casts:      { perMin: 240, durable: true },
   bosskill:        { perMin: 30,  durable: true },
   slow_mode:       { perMin: 30,  durable: true },
+  personal_trigger_sync: { perMin: 10, durable: true },   // Push/Pull buttons (list + pull share it)
   lockout:         { perMin: 30,  durable: true },
   rolls:           { perMin: 60,  durable: true },
   looted:          { perMin: 60,  durable: true },
@@ -23934,6 +24057,24 @@ const httpServer = http.createServer(async (req, res) => {
         console.error('[ui_layout download] handler error:', err);
         res.writeHead(500).end();
         return;
+      }
+    }
+  }
+
+  // Personal trigger sync — Push / Pull buttons (household-only, encrypted). Not sheddable: a
+  // button press that 200-acks without storing would tell the member it worked.
+  if (req.url.startsWith('/api/agent/personal-triggers/')) {
+    const route = req.url.split('?')[0].slice('/api/agent/personal-triggers/'.length);
+    const handler = (req.method === 'POST' && route === 'push') ? _handlePersonalTriggersPush
+      : (req.method === 'GET' && route === 'list') ? _handlePersonalTriggersList
+      : (req.method === 'GET' && route === 'pull') ? _handlePersonalTriggersPull : null;
+    if (handler) {
+      if (await _overBudget('personal_trigger_sync', req, res)) return;
+      try { return await handler(req, res); }
+      catch (err) {
+        console.error('[personal-triggers] handler error:', err);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'internal error' }));
       }
     }
   }

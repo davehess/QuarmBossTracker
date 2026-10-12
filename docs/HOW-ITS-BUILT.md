@@ -1796,6 +1796,14 @@ aggregates macros on ≥`COMMON_MACRO_MIN_CHARS` (3) distinct characters into
 (Socials/HotButtons allowlist); `POST /api/agent/ui-edit-result` marks
 applied/failed and merges applied edits back into the index.
 
+### Personal trigger sync (bot half; Mimic buttons are the agent half, beta)
+`personal_trigger_sync` (service-role-only, append-only, newest 20 per owner) holds one
+AES-256-GCM blob per Push (`{triggers, rules, schema:1}` via `encryptBlob`) owned by the
+household root. `POST /api/agent/personal-triggers/push`, `GET .../list`, `GET .../pull?id=`
+(`_handlePersonalTriggers*` in `index.js`; shape checks in `utils/personalTriggerSync.js`).
+Pull and list are gated by `_householdDiscordIds`; budget kind `personal_trigger_sync` (10/min),
+deliberately not sheddable. Tests: `test/personal-trigger-sync.test.js`.
+
 ### Voice triggers
 Guild triggers with `voice` actions make the bot join
 `RAID_VOICE_CHANNEL_ID` and speak via Edge TTS (no key), volume/skip rules
