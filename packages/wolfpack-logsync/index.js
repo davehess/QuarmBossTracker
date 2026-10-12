@@ -44327,6 +44327,10 @@ const _mapPaths = {
   set cache(v) { this._c = v; },
   get timers() { return this._t || path.join(path.dirname(STATS_FILE), 'map_timers.json'); },
   set timers(v) { this._t = v; },
+  // Brewall's maps downloaded from Zeal's repo (see "Brewall maps"); null switches the download and the source off.
+  _b: undefined,
+  get brewall() { return this._b === undefined ? path.join(__dirname, 'brewall-maps') : this._b; },
+  set brewall(v) { this._b = v; },
 };
 const MAP_ASSIGN_MAX_UNITS   = 60;                  // a death is credited to a point only within this of where the mob was first seen
 const MAP_ASSIGN_GAP_UNITS   = 120;                 // ...and the next point is at least twice as far, or beyond this
@@ -44605,8 +44609,13 @@ function _mapLocalFor(short, now) {
   if (hit && now - hit.at < MAP_LOCAL_RECHECK_MS) return hit.data;
   const found = [];
   let sig = '';
-  for (const dir of _eqSetupDirs()) {
-    for (const s of MAP_LOCAL_SOURCES) {
+  // Brewall's maps from Zeal's repo come first (the guild lead, 2026-10-12: "we should use the brewall maps"), then the
+  // player's own folders. The Brewall folder is only READ here; "Brewall maps" below is what fills it.
+  const roots = [];
+  if (_mapPaths.brewall) roots.push({ dir: _mapPaths.brewall, s: { source: 'brewall', dir: '', extras: 1 } });
+  for (const dir of _eqSetupDirs()) for (const s of MAP_LOCAL_SOURCES) roots.push({ dir, s });
+  for (const { dir, s } of roots) {
+    {
       const names = [short + '.txt'];
       for (let i = 1; i <= s.extras; i++) names.push(short + '_' + i + '.txt');
       const present = [];
@@ -44639,6 +44648,70 @@ function _mapLocalFor(short, now) {
   return data;
 }
 // ── end Local map files ──
+
+// ── Brewall maps: the walls Zeal draws, fetched from Zeal's own repo ────────────────────────────────────────
+// The guild lead, 2026-10-12: "we should use the brewall maps then", after Zeal's in-game map of Plane of Tactics
+// showed each floor in its own colour and the stairs, and the player's own map pack had neither. Zeal compiles
+// Brewall's maps (eqmaps.info, plus the projectmiragulmaps label layers) into its DLL, so they are not on disk to
+// read; Zeal's public repo keeps the same text files under Zeal/zone_map_src/map_files. The first time the Map shows a
+// zone, that zone's two files are fetched from there into brewall-maps/ next to the agent, and "Local map files" reads
+// that folder first. We host and send nothing: plain GETs to GitHub, nothing about the player in them, and the
+// files never leave this machine afterwards (the reader's rules apply to them like any other map folder).
+const MAP_BREWALL_BASE      = 'https://raw.githubusercontent.com/CoastalRedwood/Zeal/main/Zeal/zone_map_src/map_files/';
+const MAP_BREWALL_PARTS     = ['', '_1'];                    // the walls, and the label layer (the repo has no _2+)
+const MAP_BREWALL_RETRY_MS  = 10 * 60 * 1000;                // after a network failure
+const MAP_BREWALL_NONE_MS   = 7 * 24 * 3600 * 1000;          // after a 404: Zeal has no map for that zone
+const MAP_BREWALL_MAX_BYTES = 5 * 1024 * 1024;
+const _mapBrewall = new Map();   // short -> { inflight, retryAt }
+const _mapBrewallNet = {         // one GET -> { status, text }; status 0 = network failure. Swapped out by tests.
+  get(url) {
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (v) => { if (!done) { done = true; resolve(v); } };
+      const rq = https.get(url, { timeout: 15000, headers: { 'User-Agent': 'wolfpack-logsync' } }, (r) => {
+        if (r.statusCode !== 200) { r.resume(); return finish({ status: r.statusCode || 0 }); }
+        const chunks = []; let n = 0;
+        r.on('data', (c) => { n += c.length; if (n > MAP_BREWALL_MAX_BYTES) { rq.destroy(); finish({ status: 0 }); } else chunks.push(c); });
+        r.on('end', () => finish({ status: 200, text: Buffer.concat(chunks).toString('utf8') }));
+        r.on('error', () => finish({ status: 0 }));
+      });
+      rq.on('timeout', () => { rq.destroy(); finish({ status: 0 }); });
+      rq.on('error', () => finish({ status: 0 }));
+    });
+  },
+};
+// Start fetching a zone's files when they are not on disk yet. Never blocks: the reader picks them up on a later poll.
+function _mapBrewallEnsure(short, now) {
+  const dir = _mapPaths.brewall;
+  if (!dir || !short || !/^[a-z0-9_]{1,32}$/i.test(short)) return;
+  const st = _mapBrewall.get(short);
+  if (st && (st.inflight || now < st.retryAt)) return;
+  try { if (fs.statSync(path.join(dir, short + '.txt')).isFile()) { _mapBrewall.set(short, { inflight: false, retryAt: Infinity }); return; } } catch { /* not yet */ }
+  try {   // a 404 earlier: Zeal has no map for this zone; ask again in a week
+    const none = fs.statSync(path.join(dir, short + '.none'));
+    if (now - none.mtimeMs < MAP_BREWALL_NONE_MS) { _mapBrewall.set(short, { inflight: false, retryAt: none.mtimeMs + MAP_BREWALL_NONE_MS }); return; }
+  } catch { /* no marker */ }
+  const rec = { inflight: true, retryAt: 0 };
+  _mapBrewall.set(short, rec);
+  (async () => {
+    try {
+      const got = [];
+      for (const part of MAP_BREWALL_PARTS) got.push(await _mapBrewallNet.get(MAP_BREWALL_BASE + short + part + '.txt'));
+      fs.mkdirSync(dir, { recursive: true });
+      if (got[0].status === 404) { fs.writeFileSync(path.join(dir, short + '.none'), ''); rec.retryAt = Date.now() + MAP_BREWALL_NONE_MS; return; }
+      // Anything but a clean 200 / 404 on every part: try the whole zone again later rather than keep half of it.
+      if (got.some(g => g.status !== 200 && g.status !== 404)) { rec.retryAt = Date.now() + MAP_BREWALL_RETRY_MS; return; }
+      const put = (name, text) => { const f = path.join(dir, name); fs.writeFileSync(f + '.tmp', text); fs.renameSync(f + '.tmp', f); };
+      for (let i = 1; i < MAP_BREWALL_PARTS.length; i++) if (got[i].status === 200) put(short + MAP_BREWALL_PARTS[i] + '.txt', got[i].text);
+      put(short + '.txt', got[0].text);   // last: the walls file is what marks the zone as done
+      rec.retryAt = Infinity;
+    } catch (e) {
+      rec.retryAt = Date.now() + MAP_BREWALL_RETRY_MS;
+      console.warn('[map] brewall maps:', e && e.message);
+    } finally { rec.inflight = false; }
+  })();
+}
+// ── end Brewall maps ──
 
 // ── Zone data: disk first, the bot second ───────────────────────────────────────────────────────
 const _mapZones = new Map();   // short -> { short, body, byId, etag, fetchedAt, retryAt, none, inflight }
@@ -45075,6 +45148,7 @@ function _mapStatePayload(have, now, haveLocal) {
   }
   if (!zone) { out.status = 'no-zone'; return out; }
   try {   // before the spawn data: the walls draw even in a zone we hold no points for
+    _mapBrewallEnsure(zone, now);   // first visit to a zone: fetch Brewall's map for it (see "Brewall maps")
     const lm = _mapLocalFor(zone, now);
     out.local_version = lm ? lm.version : null;
     if (lm && haveLocal !== lm.version) out.local_map = { source: lm.source, lines: lm.lines, labels: lm.labels };

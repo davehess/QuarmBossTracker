@@ -60,6 +60,7 @@ function loadCore({ opts, net }) {
   const c = f(fs, path, net.http, net.https, zlib, dir, dir, opts, eqDirs);
   c._mapPaths.cache = path.join(dir, 'zone-spawns-cache');
   c._mapPaths.timers = path.join(dir, 'map_timers.json');
+  c._mapPaths.brewall = null;   // no Brewall download unless a test asks for one
   cores.push(c);
   return c;
 }
@@ -197,6 +198,87 @@ describe('the frame: a map file stores the NEGATED world x and y; server = (-x, 
   });
   it('the block names where the rule came from', () => {
     expect(LOCAL).toMatch(/web\/lib\/zoneMap\/brewall\.ts/);
+  });
+});
+
+describe('Brewall maps from Zeal\'s repo: fetched once per zone, read first', () => {
+  const EXP2 = EXPORTS.concat(['_mapBrewallEnsure', '_mapBrewallNet', 'MAP_BREWALL_BASE']);
+  function brewallCore(answer) {
+    seedZone([]);
+    const prelude = `
+      const STATS_FILE = path.join(__tmp, 'logsync.stats.json');
+      let _uploadOpts = __opts;
+      function _localOnly() { return !!(_uploadOpts && !_uploadOpts.token); }
+      function _controlStandDown() { return { down: false }; }
+      const AGENT_VERSION = 'test';
+      const _zealState = {};
+      let _lastRaidPipe = null;
+      function _zoneName(id) { return id === 164 ? 'The Deep' : null; }
+      function _eqSetupDirs() { return __eq; }
+    `;
+    const net = fakeNet();
+    // eslint-disable-next-line no-new-func
+    const f = new Function('fs', 'path', 'http', 'https', 'zlib', '__dirname', '__tmp', '__opts', '__eq',
+      prelude + '\n' + CORE + `\nreturn { ${EXP2.join(', ')} };`);
+    const c = f(fs, path, net.http, net.https, zlib, dir, dir, { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: '' }, eqDirs);
+    c._mapPaths.cache = path.join(dir, 'zone-spawns-cache');
+    c._mapPaths.timers = path.join(dir, 'map_timers.json');
+    c._mapPaths.brewall = path.join(dir, 'brewall-maps');
+    cores.push(c);
+    const asked = [];
+    c._mapBrewallNet.get = (url) => { asked.push(url); return Promise.resolve(answer(url)); };
+    return { c, asked, net };
+  }
+  const BW_WALLS = 'L 10, 20, 0, 110, 20, 0, 178, 102, 255\nL 110, 20, 0, 110, 120, 0, 150, 150, 150';
+  const BW_LABELS = 'P 10, 20, 0, 0, 0, 0, 3, Stairs_Up';
+
+  it('the first map-state for a zone fetches <zone>.txt and <zone>_1.txt from Zeal\'s repo; the next poll draws them, ahead of map_files', async () => {
+    const { c, asked, net } = brewallCore(u => (u.endsWith('thedeep.txt') ? { status: 200, text: BW_WALLS } : { status: 200, text: BW_LABELS }));
+    put('map_files', 'thedeep.txt', WALLS);
+    c._zealState.Aldenmar = { zone: 164, updatedAt: 1e18, loc: { x: 0, y: 0, z: 0 } };
+    expect(c._mapStatePayload('', T0, '').local_map.source).toBe('map_files');   // nothing downloaded yet
+    await tick();
+    expect(asked).toEqual([c.MAP_BREWALL_BASE + 'thedeep.txt', c.MAP_BREWALL_BASE + 'thedeep_1.txt']);
+    expect(c.MAP_BREWALL_BASE).toMatch(/^https:\/\/raw\.githubusercontent\.com\/CoastalRedwood\/Zeal\/main\/Zeal\/zone_map_src\/map_files\/$/);
+    const p = c._mapStatePayload('', T0 + 6000, '');
+    expect(p.local_map.source).toBe('brewall');
+    expect(p.local_map.lines.map(l => l[6])).toEqual(['#b266ff', '#969696']);
+    expect(p.local_map.labels.map(l => l[3])).toEqual(['Stairs Up']);
+    c._mapStatePayload('', T0 + 12000, '');
+    expect(asked).toHaveLength(2);                                            // on disk now: never fetched again
+    expect(net.calls).toHaveLength(0);                                        // and nothing went to our server
+  });
+  it('a 404 (Zeal has no map for the zone) is remembered for a week; a network failure retries after 10 minutes, keeping nothing half-done', async () => {
+    let mode = 404;
+    const { c, asked } = brewallCore(() => (mode === 404 ? { status: 404 } : { status: 0 }));
+    c._mapBrewallEnsure('thedeep', T0);
+    await tick();
+    expect(fs.existsSync(path.join(dir, 'brewall-maps', 'thedeep.none'))).toBe(true);
+    c._mapBrewallEnsure('thedeep', T0 + 60000);
+    expect(asked).toHaveLength(2);
+    mode = 0;
+    c._mapBrewallEnsure('otherzone', T0);
+    await tick();
+    expect(asked).toHaveLength(4);
+    expect(fs.existsSync(path.join(dir, 'brewall-maps', 'otherzone.txt'))).toBe(false);
+    c._mapBrewallEnsure('otherzone', Date.now() + 60000);
+    expect(asked).toHaveLength(4);                                            // inside the retry wait
+    c._mapBrewallEnsure('otherzone', Date.now() + 11 * 60000);
+    await tick();
+    expect(asked).toHaveLength(6);
+  });
+  it('refuses a zone name that is not a plain short name, and does nothing when switched off', () => {
+    const { c, asked } = brewallCore(() => ({ status: 200, text: BW_WALLS }));
+    c._mapBrewallEnsure('../etc', T0);
+    c._mapBrewallEnsure('thedeep/x', T0);
+    c._mapPaths.brewall = null;
+    c._mapBrewallEnsure('thedeep', T0);
+    expect(asked).toHaveLength(0);
+  });
+  it('the download block only GETs from that address and sends nothing about the player', () => {
+    const block = stripJs(sliceBlock(AGENT, '// ── Brewall maps', '// ── end Brewall maps ──'));
+    expect(block).not.toMatch(/_uploadOpts|token|Authorization|_zealState|character|botUrl|method:\s*'POST'|\.write\(/);
+    expect(block.match(/https\.\w+\(/g)).toEqual(['https.get(']);
   });
 });
 
@@ -364,12 +446,16 @@ describe('NEVER leaves the machine (the art has no licence for us to redistribut
 describe('the overlay: pure helpers', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { lightenHex, useLocalWalls, wallsNote, prepLocal, pickLabels, LOCAL_LIGHTEN };')();
+  const H = new Function(helpers + '\nreturn { wallColor, useLocalWalls, wallsNote, prepLocal, pickLabels };')();
 
-  it('lightens a colour toward white so black walls read on the slate background', () => {
-    expect(H.lightenHex('#000000', H.LOCAL_LIGHTEN)).toEqual([153, 153, 153]);
-    expect(H.lightenHex('#ff0000', H.LOCAL_LIGHTEN)).toEqual([255, 153, 153]);
-    expect(H.lightenHex('junk', 0.6)).toEqual([153, 153, 153]);
+  it('lifts colours only as far as they need to read, keeping Brewall\'s floor colours apart', () => {
+    expect(H.wallColor('#000000')).toEqual([140, 140, 140]);                 // black walls: mid grey
+    expect(H.wallColor('#969696')).toEqual([208, 208, 208]);                 // grey stairs: lighter than the walls
+    expect(H.wallColor('junk')).toEqual([140, 140, 140]);
+    expect(H.wallColor('#00cc00')).toEqual([0, 255, 0]);                     // green floor stays green
+    expect(H.wallColor('#b266ff')).toEqual([178, 102, 255]);                 // purple floor already reads: unchanged
+    const red = H.wallColor('#7f0000');
+    expect(red[0]).toBe(255); expect(red[1]).toBe(red[2]); expect(red[1]).toBeLessThan(140);   // dark red -> red, not pink-grey
   });
   it('Walls: Auto uses the local lines when there are any; Ours only never does', () => {
     const local = H.prepLocal({ source: 'maps', lines: [[0, 0, 0, 10, 10, 0, '#000000']], labels: [] });
@@ -378,6 +464,8 @@ describe('the overlay: pure helpers', () => {
     expect(H.useLocalWalls('auto', null)).toBe(false);
     expect(H.useLocalWalls('auto', H.prepLocal({ source: 'maps', lines: [], labels: [[1, 2, 3, 'Hall', '#000000']] }))).toBe(false);   // labels alone are not walls
     expect(H.wallsNote(true)).toBe('walls: your map files');
+    expect(H.wallsNote({ source: 'map_files' })).toBe('walls: your map files');
+    expect(H.wallsNote({ source: 'brewall' })).toBe("walls: Brewall (Zeal's maps)");
     expect(H.wallsNote(false)).toBe('walls: Wolf Pack');
   });
   it('prepLocal groups lines by colour into the screen frame, with the middle z of each and the server-frame bounds', () => {
@@ -408,7 +496,7 @@ describe('the overlay (apps/mimic/map.html) drawing', () => {
     { id: 3, x: 1000, y: 1000, z: 0, respawn_s: 1200, variance_s: 0, npcs: [NPC('Lord_Nagafen', { named: true })] },
     { id: 5, x: -3000, y: -3000, z: 0, respawn_s: 3600, variance_s: 360, npcs: [NPC('Brackwyn_the_Pale', { raid_target: true, named: true })] },
   ];
-  const BRIGHT = 'rgba(153,153,153,0.85)', FADED = 'rgba(153,153,153,0.25)', OURS_BRIGHT = 'rgba(214,230,255,0.95)';
+  const BRIGHT = 'rgba(140,140,140,0.85)', FADED = 'rgba(140,140,140,0.25)', OURS_BRIGHT = 'rgba(214,230,255,0.95)';
   const LOCAL_MAP = {
     source: 'map_files',
     lines: [[0, 0, 0, 400, 0, 0, '#000000'], [0, 0, 500, 400, 0, 500, '#000000']],   // one at your height, one 500 above
