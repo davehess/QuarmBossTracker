@@ -57,6 +57,7 @@ const PAIRS = [
   ['commandWindow',   'createCommandOverlay'],
   ['popRaidWindow',   'createPopRaidOverlay'],
   ['meWindow',        'createMeOverlay'],
+  ['mapWindow',       'createMapOverlay'],   // the spawn map (Mimic 2.9, beta)
   // The Timers canvas (2026-09-29) is the one entry setup / unlock do NOT
   // conjure: it is an alternative home for the trigger overlay's visuals, so
   // placing everything would show every timer twice. See PLACED below.

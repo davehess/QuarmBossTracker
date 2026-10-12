@@ -4596,6 +4596,7 @@ var WP_OVERLAY_ROWS = [
   ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
   ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
   ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline, and Boastful Bellow once a bard uses it), your target\'s name on top of its bar with who it is hitting above that, its level, class, resists and slow state curved inside, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 10% if it enrages (gone once the enrage ends), damage in beside your health and out on the right, hugging the ring: the mob\'s running total, then older rounds as one number each and the newest rounds hit by hit, procs in purple (older rounds slide into the total; after the fight it stays, dim, until the next), your damage shield the same way with its per-hit button (red DS OFF with the time left while Mark of the Plague Lords or another shield-cancelling debuff is on you), a ✗ on a failed Feign Death, and your class numbers. Pick Box or the HUD ring in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
+  ['map',     'Spawn map [beta]',    'The zone from above, north up: walls, every spawn point as a dot (named and raid targets bold, danger badges for see-invisible, see-hide, summon), you as an arrow, your group, raid and target. Respawn timers run as a window (earliest to latest) coloured red / yellow / green, flashing when a spawn just became possible; a mob you saw die starts its own, or click a dot and mark it Killed, Empty or Up. A death that could be one of several spawn points shows "?" rings and starts no timer until you settle it. Timers list on the right, soonest first. Needs Zeal 1.4.8 for your target\'s position. Drag and the wheel pan and zoom (switch on the hand button while locked), Follow me is on by default, Fit zone shows it all, a floor picker appears in multi-level zones. Your positions stay on this machine.'],
 ];
 
 // One line per overlay for the Overlays tab's list and Add cards (option C, the
@@ -4620,6 +4621,7 @@ var WP_OVERLAY_BLURB = {
   command:   'Raid board: boss, MT, rampage, enrage, healer mana.',
   popraid:   'Encounter slides, callouts, drops, shared checklist.',
   me:        'Your character: HP, mana, ticks, cooldowns, target.',
+  map:       'Zone map: spawn points, respawn timers, group, target.',
 };
 
 // Overlays-table row key → Mimic's mini key (main.js _MINI_KEYS). Only the
@@ -4690,7 +4692,7 @@ function renderOverlays(s) {
     // Nor the HUD ring (the guild lead, 2026-09-24: "HUD doesn't make sense to
     // dock") — it is a square round the character; main's catalog agrees.
     // The Canvas covers the screen and is a host itself.
-    var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas')
+    var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas' || key === 'map')
       ? ''
       : '<button type="button" class="wp-ov-dock" data-ov="' + key + '">…</button>';
     // ▭ Mini mode (the guild lead, 2026-09-24: "I don't see any of the
@@ -5482,11 +5484,11 @@ function wpRefreshOverlayToggles() {
     var cfgP = window.mimic.getConfig ? window.mimic.getConfig().catch(function(){ return {}; }) : Promise.resolve({});
     Promise.all([window.mimic.getStatus(), cfgP]).then(function(res){
       var st = res[0] || {}, cfg = res[1] || {};
-      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid, me: !!st.showMe, canvas: !!st.showCanvas };
+      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid, me: !!st.showMe, map: !!st.showMap, canvas: !!st.showCanvas };
       // Which cfg flag each row reads, so a HIDDEN row can be told from an OFF
       // one. Hide-all writes every flag false, so without the snapshot the two
       // are indistinguishable here (the guild lead, 2026-08-04).
-      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid', me: 'showMe', canvas: 'showCanvas' };
+      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid', me: 'showMe', map: 'showMap', canvas: 'showCanvas' };
       var hidPrev = (st.hideAllActive && st.hideAllPrev) ? st.hideAllPrev : null;
       var hidCount = 0, nListed = 0, nOff = 0;
       var dockedList = Array.isArray(st.dockedOverlays) ? st.dockedOverlays : [];

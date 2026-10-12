@@ -162,6 +162,7 @@ let extTargetWindow = null;
 let commandWindow = null;
 let popRaidWindow = null;
 let meWindow = null;
+let mapWindow = null;       // the spawn map (Mimic 2.9, beta) - map.html, key 'map', cfg.showMap
 let canvasWindow = null;    // the Timers canvas — one screen-sized window of placed panels
 let _canvasArrange = false; // arranging it from the tray / dashboard (not persisted)
 let uiStudioWindow = null;
@@ -1287,6 +1288,7 @@ function _boundsKeyForWindow(win) {
   if (win === commandWindow) return 'commandBounds';
   if (win === popRaidWindow) return 'popRaidBounds';
   if (win === meWindow) return 'meBounds';
+  if (win === mapWindow) return 'mapBounds';
   for (const [panelKey, w] of panelOverlays.entries()) {
     if (w === win) return 'panelBounds_' + panelKey;
   }
@@ -1678,6 +1680,12 @@ const _zealLiveByChar = new Map();   // character → { snapshot, dirty, pid, la
 function _pipeSpawnId(v) {
   return (typeof v === 'number' && Number.isFinite(v) && v > 0) ? Math.trunc(v) : null;
 }
+// A {x, y, z} position off the pipe (Zeal's own order, NOT the server frame: the agent swaps it), or null.
+function _pipeLoc(v) {
+  if (!v || typeof v !== 'object') return null;
+  const x = Number(v.x), y = Number(v.y), z = Number(v.z);
+  return (Number.isFinite(x) && Number.isFinite(y)) ? { x, y, z: Number.isFinite(z) ? z : 0 } : null;
+}
 // A {id, name, authoritative} candidate off the pipe — the target-of-target
 // keys the drafted Zeal change emits (docs/zeal-tot-pipe.patch). Absent on
 // every released Zeal, so null is the normal case and nothing downstream may
@@ -1832,6 +1840,11 @@ function _zealAbsorb(obj, pid) {
       s.spawn_id  = _pipeSpawnId(inner.spawn_id);
       s.target_id = _pipeSpawnId(inner.target_id);
       s.pet_id    = _pipeSpawnId(inner.pet_id);
+      // Zeal 1.4.8: the target's position (only within 250 units - server policy) and kind (0 player, 1 NPC,
+      // 2 NPC corpse, 3 player corpse). Omitted with the target, so both are nulled when absent, like the ids.
+      // Feeds the spawn map (agent _mapNoteState); a pre-1.4.8 Zeal just leaves them null.
+      s.target_loc  = _pipeLoc(inner.target_loc);
+      s.target_type = (typeof inner.target_type === 'number' && Number.isFinite(inner.target_type)) ? inner.target_type : null;
       // Target of target (drafted Zeal change, docs/zeal-tot-pipe.patch):
       // {id, name, authoritative} for who my target last hit, and who last hit
       // my target. Omitted upstream when there is no fresh candidate, so both
@@ -2528,7 +2541,7 @@ function _pollBlindState() {
 const _CHAR_PROFILE_FLAGS = [
   'showHud', 'enableTriggerTts', 'showCharm', 'showPets', 'showMobInfo',
   'showBuffQueue', 'showWho', 'showMelody', 'showZeal', 'showThreat', 'showChChain',
-  'showExtTarget', 'showCanvas',
+  'showExtTarget', 'showCanvas', 'showMap',
 ];
 // flag → (live-window getter, creator) so apply can materialize a window for an
 // overlay the profile turns on. Getters (not captured refs) read the current
@@ -2547,6 +2560,7 @@ const _CHAR_PROFILE_WINDOWS = [
   { flag: 'showExtTarget',    get: () => extTargetWindow, create: () => createExtTargetOverlay() },
   { flag: 'showChChain',      get: () => chChainWindow,   create: () => createChChainOverlay() },
   { flag: 'showCanvas',       get: () => canvasWindow,    create: () => createCanvasWindow() },
+  { flag: 'showMap',          get: () => mapWindow,       create: () => createMapOverlay() },
 ];
 let _activeCharName = null;     // last activeCharacter seen on /api/state (display)
 let _lastProfileChar = null;    // last char we applied a profile for (change-gate)
@@ -3792,7 +3806,7 @@ const _OVERLAY_NAMES = {
   pets: 'Pet tracker', mobinfo: 'Mob Info', buffQueue: 'Buff queue',
   who: '/who', melody: 'Melody', zeal: 'Tick', threat: 'Threat meter',
   chchain: 'CH chain', tank: 'Tank HUD', exttarget: 'Extended target',
-  command: 'Command center', popraid: 'PoP raids', me: 'HUD', canvas: 'Canvas',
+  command: 'Command center', popraid: 'PoP raids', me: 'HUD', canvas: 'Canvas', map: 'Spawn map',
 };
 function _rescueSort(entries, displays, targetId) {
   const inside = (r, x, y) => x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
@@ -3927,7 +3941,7 @@ async function _rescueOverlays() {
   // Overlays with NO window at all (disabled via ✕/tray, or gated off) can't
   // be rescued — name them in the log so "still missing X" has an answer:
   // it needs re-enabling from tray → Overlays, not another rescue.
-  const KNOWN = ['hud', 'trigger', 'charm', 'pets', 'mobinfo', 'buffQueue', 'who', 'melody', 'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me'];
+  const KNOWN = ['hud', 'trigger', 'charm', 'pets', 'mobinfo', 'buffQueue', 'who', 'melody', 'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me', 'map'];
   const missing = KNOWN.filter(k => !present.has(k));
   try { applyAllVisibility(); } catch { /* best effort */ }
   appendAgentLog(`[rescue] home display ${disp.id} (${disp.size.width}x${disp.size.height}) · lost ${sorted.lost.length} [${sorted.lost.map(e => e.key).join(', ')}]`
@@ -4121,6 +4135,7 @@ function _overlayEntries() {
   if (commandWindow && !commandWindow.isDestroyed()) out.push(['command', commandWindow]);
   if (popRaidWindow && !popRaidWindow.isDestroyed()) out.push(['popraid', popRaidWindow]);
   if (meWindow && !meWindow.isDestroyed()) out.push(['me', meWindow]);
+  if (mapWindow && !mapWindow.isDestroyed()) out.push(['map', mapWindow]);
   if (canvasWindow && !canvasWindow.isDestroyed()) out.push(['canvas', canvasWindow]);
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
@@ -6283,6 +6298,41 @@ function applyMeVisibility() {
   if (shouldShow) meWindow.showInactive(); else meWindow.hide();
 }
 
+// Spawn map (Mimic 2.9, beta; the guild lead, 2026-10-12: "2d overlay on beta with spawn timer tracking").
+// Layout C, the tracker: the zone map with spawn dots, you / group / raid / target, and the active respawn
+// timers beside it. Reads the agent's /api/map-state once a second. Opt-in (default off), not dockable (a
+// pane cannot hold a pannable map), and click-through when locked except its buttons, dots and rows.
+function createMapOverlay() {
+  if (_agentOnly()) return;
+  const b = _resolveBounds('mapBounds', 'mapBoundsSig', { x: 60, y: 120, width: 760, height: 480 });
+  mapWindow = new BrowserWindow({
+    title: 'Wolf Pack miMIC — Spawn map overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: _OVERLAY_MIN_W, minHeight: 140,   // narrow: map.html drops its timer list below ~420px
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: _wpPrefs('Map'),
+  });
+  mapWindow.setAlwaysOnTop(true, 'screen-saver');
+  mapWindow.setVisibleOnAllWorkspaces(true);
+  mapWindow.loadFile('map.html');
+  mapWindow.on('moved',  () => _persistBounds('mapBounds', mapWindow));
+  mapWindow.on('resize', () => _persistBounds('mapBounds', mapWindow));
+  mapWindow.once('ready-to-show', () => {
+    mapWindow.webContents.send('agent-port', agentPort);
+    applyMapVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(mapWindow, 'map');
+  });
+}
+function applyMapVisibility() {
+  if (!_live(mapWindow)) return;
+  const cfg = loadConfig();
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
+  const shouldShow = unlocked || (cfg.showMap && !cfg.hideOverlays && _eqGateOk(cfg));
+  if (shouldShow) mapWindow.showInactive(); else mapWindow.hide();
+}
+
 // Mob Info — current target's catalog stats (HP/AC/resists/special attacks).
 function createMobInfoOverlay() {
   if (_agentOnly()) return;
@@ -6759,6 +6809,7 @@ const _OVERLAY_WINDOWS = [
   { key: 'command',   flag: 'showCommand',      get: () => commandWindow,   create: createCommandOverlay,      drop: () => { commandWindow = null; } },
   { key: 'popraid',   flag: 'showPopRaid',      get: () => popRaidWindow,   create: createPopRaidOverlay,      drop: () => { popRaidWindow = null; } },
   { key: 'me',        flag: 'showMe',           get: () => meWindow,        create: createMeOverlay,           drop: () => { meWindow = null; } },
+  { key: 'map',       flag: 'showMap',          get: () => mapWindow,       create: createMapOverlay,          drop: () => { mapWindow = null; } },
   { key: 'canvas',    flag: 'showCanvas',       get: () => canvasWindow,    create: createCanvasWindow,        drop: () => { canvasWindow = null; } },
 ];
 
@@ -7061,6 +7112,7 @@ function applyAllVisibility() {
   applyCommandVisibility();
   applyPopRaidVisibility();
   applyMeVisibility();
+  applyMapVisibility();
   applyCanvasVisibility();
   _reapDisabledOverlays();
 }
@@ -7125,7 +7177,7 @@ const _HIDEALL_FLAGS = [
   'showHud', 'showTriggerOverlay', 'showCharm', 'showPets', 'showMobInfo',
   'showBuffQueue', 'showWho', 'showMelody', 'showZeal', 'showThreat',
   'showChChain', 'showTank', 'showExtTarget', 'showCommand', 'showPopRaid',
-  'showMe', 'showCanvas',
+  'showMe', 'showCanvas', 'showMap',
 ];
 function toggleHideAllOverlays() {
   if (_agentOnly()) return;   // nothing on screen to hide, and it would rewrite the saved overlay flags
@@ -7217,7 +7269,7 @@ let _registeredMiniAccel = null;
 // defaults: a global shortcut takes its key away from EverQuest, so nobody gets
 // one they did not ask for.
 const _OVERLAY_HOTKEY_KEYS = ['dock', 'hud', 'trigger', 'charm', 'pet', 'mobinfo', 'buffQueue', 'who', 'melody',
-  'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me', 'canvas'];
+  'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me', 'map', 'canvas'];
 let _registeredOverlayAccels = {};   // overlay key → accelerator bound right now
 let _blockedOverlayAccels = {};      // overlay key → accelerator the OS refused
 let _hotkeyQuiet = false;            // true while the focus gate re-registers: no failure logs, blocked state untouched
@@ -7673,6 +7725,7 @@ function currentStatus() {
     showCommand: !!cfg.showCommand,
     showPopRaid: !!cfg.showPopRaid,
     showMe: !!cfg.showMe,
+    showMap: !!cfg.showMap,
     // Timers canvas. canvasOwnsTriggers tells the (hidden) trigger window to
     // speak only, so a pinned callout lives in one place.
     showCanvas: !!cfg.showCanvas,
@@ -8048,6 +8101,11 @@ function buildTrayMenu() {
     { label: 'HUD (your HP, mana, timers, cooldowns, target)', type: 'checkbox', checked: s.showMe, enabled: !s.hideOverlays, click: (mi) => {
         const cfg = loadConfig(); cfg.showMe = mi.checked; saveConfig(cfg);
         if (mi.checked && !meWindow) createMeOverlay(); else applyMeVisibility(); _reapDisabledOverlays();
+        pushStatus();
+      } },
+    { label: 'Spawn map (zone map, spawn timers) [beta]', type: 'checkbox', checked: !!s.showMap, enabled: !s.hideOverlays, click: (mi) => {
+        const cfg = loadConfig(); cfg.showMap = mi.checked; saveConfig(cfg);
+        if (mi.checked && !mapWindow) createMapOverlay(); else applyMapVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     // Timers canvas — same internals as the dashboard row (_toggleOverlay /
@@ -9308,6 +9366,10 @@ function _toggleOverlay(name) {
       cfg.showMe = !cfg.showMe; saveConfig(cfg);
       if (cfg.showMe && !meWindow) createMeOverlay(); else applyMeVisibility();
       break;
+    case 'map':
+      cfg.showMap = !cfg.showMap; saveConfig(cfg);
+      if (cfg.showMap && !mapWindow) createMapOverlay(); else applyMapVisibility();
+      break;
     case 'dock':
       // The Dock itself (the guild lead, 2026-08-19: "Dock isn't available from the
       // built in overlays page"). Mirrors the tray's ◫ Dock checkbox exactly.
@@ -9427,7 +9489,7 @@ const _WP_THEMES = ['default', 'light', 'bright', 'soft', 'contrast', 'deutan', 
 // Global opacity — one slider on the dashboard drives every overlay. Writes
 // cfg.overlayOpacity for ALL known keys (so windows opened later inherit it)
 // and re-applies to the live set.
-const _ALL_OVERLAY_KEYS = ['hud','trigger','charm','pets','mobinfo','buffQueue','who','melody','zeal','threat','chchain','tank','exttarget','command','popraid','me'];
+const _ALL_OVERLAY_KEYS = ['hud','trigger','charm','pets','mobinfo','buffQueue','who','melody','zeal','threat','chchain','tank','exttarget','command','popraid','me','map'];
 // `field` is overlayOpacity (the whole overlay) or overlayBgAlpha (its
 // background) — see applyOverlayOpacity for the split.
 function _setOpacityAll(field, v) {
@@ -10006,6 +10068,9 @@ ipcMain.handle('hide-overlay', (e) => {
     } else if (win === meWindow) {
       cfg.showMe = false; saveConfig(cfg);
       try { meWindow.hide(); } catch {}
+    } else if (win === mapWindow) {
+      cfg.showMap = false; saveConfig(cfg);
+      try { mapWindow.hide(); } catch {}
     } else if (win === canvasWindow) {
       // Turning the canvas off gives the timers and callouts back to the
       // trigger overlay — same as the tray / dashboard switch.
@@ -10481,7 +10546,9 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     if (merged.showCommand      && !commandWindow)   createCommandOverlay();
     if (merged.showPopRaid      && !popRaidWindow)   createPopRaidOverlay();
     if (merged.showMe           && !meWindow)        createMeOverlay();
+    if (merged.showMap          && !mapWindow)       createMapOverlay();
   } catch (e) { void e; }
+  applyMapVisibility();
   applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyTankVisibility(); applyExtTargetVisibility(); applyCommandVisibility(); applyPopRaidVisibility(); applyMeVisibility(); applyOverlayInteractivity();
   // An overlay living on the Timers canvas must not also open as a window.
   try { _reapDisabledOverlays(); } catch { /* never break a save */ }
