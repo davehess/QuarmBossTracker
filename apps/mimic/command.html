@@ -781,7 +781,9 @@
               continue;
             }
             var winners = (rs.winners || []).map(function(w){ return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
-            html += '<div class="row roll-row"><span class="nm"><b>' + rs.to + '</b>'
+            // A range that does not start at 0 shows in full (the guild lead, 2026-10-12: a "999" set
+            // that was really 999 to 999 read like an ordinary 0 to 999 roll).
+            html += '<div class="row roll-row"><span class="nm"><b>' + (rs.from ? rs.from + '–' : '') + rs.to + '</b>'
                  +    (rs.item ? ' (' + esc(rs.item) + (rs.qty ? ' ×' + rs.qty : '') + ')' : '')
                  +    ' — <span style="color:#f0c419">' + (winners || '—') + '</span></span>'
                  +    '<span class="rollMore" data-roll-key="' + esc(rid) + '" title="'
