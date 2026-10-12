@@ -478,7 +478,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -539,6 +539,51 @@ describe('the overlay (apps/mimic/map.html)', () => {
     expect(H.upOn(2, null, { 2: { name: 'a decaying skeleton', spawn_id: 812 } })).toEqual({ name: 'a decaying skeleton', spawn_id: 812 });
     expect(H.upOn(1, P, {})).toBeNull();
     expect(H.upNpc(POINTS[2], { name: 'a bat' })).toBeNull();
+  });
+
+  describe('⚙ Map settings', () => {
+    it('defaults: everything shown, no icon off, and the Default scheme is exactly the colours the map drew before', () => {
+      const d = H.mapCfgDefaults();
+      expect(Object.values(d.show).every(Boolean)).toBe(true);
+      expect(Object.keys(d.show).length).toBe(H.CFG_SHOW.length);
+      expect(d.glyphsOff).toEqual({});
+      expect(d).toMatchObject({ scheme: 'default', wallMode: 'map', bgA: null, text: 1 });
+      expect(d.col).toMatchObject({ route: '#39c5cf', routeTarget: '#7ee787', dot: '#c9d1d9', named: '#f2cc60', raidTarget: '#ff7b72',
+        up: '#56d364', ringWait: '#f85149', ringWindow: '#f0b429', ringUp: '#56d364', candidate: '#d2a8ff', glyph: '#e6edf3',
+        pather: '#9ecbff', bossLabel: '#f2cc60', raidLabel: '#ffa198', upLabel: '#7ee787', room: '#c9d9ee', you: '#58a6ff',
+        target: '#f0883e', pinLine: '#7ee787', group: '#56d364', raid: '#a371f7', bg: '#131a26' });
+      expect(H.hexA(d.col.oursWall, 0.95)).toBe('rgba(214,230,255,0.95)');   // the old wall colour, byte for byte
+      // every scheme sets every colour row the panel shows, plus the background
+      for (const s of Object.values(H.MAP_SCHEMES)) for (const [k] of H.CFG_COLS.concat([['bg']])) expect(s[k]).toMatch(/^#[0-9a-f]{6}$/);
+    });
+    it('a saved object is merged key by key; bad values and unknown keys are dropped', () => {
+      const c = H.mergeMapCfg({ show: { walls: false, routes: 'no', bogus: false }, glyphsOff: { '👁': true, 'x': true },
+        col: { route: '#ABCDEF', dot: 'red', evil: '#000000' }, scheme: 'cb', wallMode: 'one', bgA: 0.3, text: 1.44 });
+      expect(c.show.walls).toBe(false);
+      expect(c.show.routes).toBe(true);
+      expect(c.show.bogus).toBeUndefined();
+      expect(c.glyphsOff).toEqual({ '👁': true });
+      expect(c.col.route).toBe('#abcdef');
+      expect(c.col.dot).toBe('#c9d1d9');
+      expect(c.col.evil).toBeUndefined();
+      expect(c).toMatchObject({ scheme: 'cb', wallMode: 'one', bgA: 0.3, text: 1.4 });
+      expect(H.mergeMapCfg({ bgA: 7, text: 9, scheme: 'nope', wallMode: 'x' })).toMatchObject({ bgA: null, text: 1, scheme: 'default', wallMode: 'map' });
+      expect(H.mergeMapCfg(null)).toEqual(H.mapCfgDefaults());
+    });
+    it('a scheme replaces every colour; the colour-blind one never pairs red with green for a meaning', () => {
+      const c = H.applyScheme(H.mapCfgDefaults(), 'cb');
+      expect(c.scheme).toBe('cb');
+      expect(c.col).toEqual(H.MAP_SCHEMES.cb);
+      expect(c.col.up).not.toBe(c.col.ringWait);
+      expect(c.col.ringUp).toBe('#56b4e9');                                   // up is sky blue, not green
+      expect(H.applyScheme(H.mapCfgDefaults(), 'nope').scheme).toBe('default');
+    });
+    it('switching an icon off removes just that icon from a spawn point', () => {
+      const p = { npcs: [{ name: 'x', badges: ['eye', 'summon', 'rampage'] }] };
+      expect(H.pointBadges(p)).toBe('👁↯⚔');
+      expect(H.pointBadges(p, { '↯': true })).toBe('👁⚔');
+      expect(H.pointBadges(p, { '👁': true, '↯': true, '⚔': true })).toBe('');
+    });
   });
   it('fits the zone with the north-up flip', () => {
     const v = H.fitView({ minX: -100, maxX: 300, minY: 0, maxY: 100 }, 400, 200);
@@ -684,11 +729,12 @@ describe('pather routes', () => {
     expect(js).toMatch(/function drawRoutes\(sz, range, srange, targetGrid\)/);
     expect(js).toMatch(/var list = routeList\(S\.points, sz, range, srange, targetGrid\);/);   // every point, not the visible ones
     expect(js).toMatch(/ctx\.setLineDash\(tgt \? \[7, 3\] : \[4, 4\]\);/);
-    expect(js).toMatch(/ctx\.strokeStyle = tgt \? ROUTE_TARGET : hot \? ROUTE_HOT : ROUTE_COLOR;/);
+    expect(js).toMatch(/ctx\.strokeStyle = tgt \? S\.cfg\.col\.routeTarget : hot \? ROUTE_HOT : S\.cfg\.col\.route;/);
+    expect(js).toMatch(/if \(SH\.routes\) drawRoutes\(/);
     expect(js).toMatch(/if \(!\(Number\(g\.pts\[j\]\[3\]\) > 0\)\) continue;/);
     expect(js).toMatch(/ctx\.globalAlpha = hot \|\| tgt \? 1 : it\.near \? 0\.75 : 0\.25;/);
     expect(js).toMatch(/S\.hoverGrid = g; renderMap\(true\)/);
-    expect(js).toMatch(/if \(p\.grid != null\) halo\('↻'/);
+    expect(js).toMatch(/if \(p\.grid != null && SH\.pather\) halo\('↻'/);
     expect(js).toMatch(/S\.grids = p\.grids \|\| null;/);
   });
 });
@@ -777,7 +823,7 @@ describe('pather routes', () => {
       const js = stripJs(MAP_HTML);
       expect(js).toMatch(/function kickAnim\(\)[\s\S]{0,200}?if \(anyMoving\(Date\.now\(\)\)\) raf = requestAnimationFrame\(frame\);/);
       expect(js).toMatch(/for \(var k in S\.trk\) if \(!keep\[k\]\) delete S\.trk\[k\];/);
-      expect(js).toMatch(/if \(!animating \|\| rt - lastHits >= HITS_MS\) \{ lastHits = rt; layoutHits\(vis\); \}/);
+      expect(js).toMatch(/if \(!animating \|\| rt - lastHits >= HITS_MS\) \{ lastHits = rt; layoutHits\(SH\.dots \? vis : \[\]\); \}/);
       expect(Number(/\bHITS_MS = (\d+)/.exec(js)[1])).toBeGreaterThanOrEqual(200);
       // Follow me rides the drawn spot of you, and the flashing ring still has its own timer
       expect(js).toMatch(/if \(S\.follow && S\.p && S\.p\.self && !S\.drag\) \{ var fs = drawn\('self'/);
@@ -874,6 +920,46 @@ describe('pather routes', () => {
     expect(base.store['wp-map-side']).toBe('0');
     const again = await bootOverlay({ store: base.store });
     expect(again.all.wrap.classList.contains('noside')).toBe(true);
+  });
+  it('⚙ opens the Map settings; a switch, an icon and a colour are saved and survive a restart; Reset puts it all back', async () => {
+    // the guild lead, 2026-10-12: "a config section for the map that pops up similar to the hud's"
+    const base = await bootOverlay();
+    base.all.cfg.hidden = true;                                                // the markup's `hidden` attribute
+    base.all.cfgBtn.listeners.click.forEach(f => f());
+    expect(base.all.cfg.hidden).toBe(false);
+    expect(base.all.cfgBtn.classList.contains('on')).toBe(true);
+    const showRows = base.all.cfgShow.children, glyphRows = base.all.cfgGlyphs.children, colRows = base.all.cfgCols.children;
+    expect(showRows).toHaveLength(19);
+    expect(glyphRows).toHaveLength(9);
+    expect(colRows).toHaveLength(23);
+    const walls = showRows[0].children[0];                                     // Walls
+    walls.checked = false; walls.listeners.change.forEach(f => f());
+    const eye = glyphRows[0].children[0];                                      // 👁
+    eye.checked = false; eye.listeners.change.forEach(f => f());
+    const routeCol = colRows[2].children[1];                                   // Walker routes
+    routeCol.value = '#ff00ff'; routeCol.listeners.input.forEach(f => f());
+    const saved = JSON.parse(base.store['wp-map-cfg']);
+    expect(saved.show.walls).toBe(false);
+    expect(saved.glyphsOff).toEqual({ '👁': true });
+    expect(saved.col.route).toBe('#ff00ff');
+    expect(saved.scheme).toBe('custom');                                       // editing a colour leaves the preset
+    const again = await bootOverlay({ store: base.store });
+    expect(again.S.cfg.show.walls).toBe(false);
+    expect(again.S.cfg.col.route).toBe('#ff00ff');
+    again.all.cfgReset.listeners.click.forEach(f => f());
+    expect(JSON.parse(again.store['wp-map-cfg']).show.walls).toBe(true);
+    expect(again.S.cfg.col.route).toBe('#39c5cf');
+    again.all.cfgClose.listeners.click.forEach(f => f());
+    expect(again.all.cfg.hidden).toBe(true);
+  });
+  it('the Levels and Spawn height sliders live in the settings panel; Labels stays a toolbar button', () => {
+    const tools = sliceBlock(MAP_HTML, '<div id="tools">', '</div>');
+    expect(tools).toMatch(/id="labelsBtn"/);
+    expect(tools).toMatch(/id="cfgBtn"/);
+    expect(tools).not.toMatch(/id="levels"|id="spawnLevels"/);
+    const panel = sliceBlock(MAP_HTML, '<div id="cfg" hidden data-wp-interact>', '<div class="foot">');
+    expect(panel).toMatch(/id="levels"/);
+    expect(panel).toMatch(/id="spawnLevels"/);
   });
   it('Timers "Widen window" (default) grows/shrinks the window by the list; "Share space" leaves the window alone', async () => {
     // the guild lead, 2026-10-12: "an option for the timers to slide out and take additional space rather than shrinking the map"
@@ -1333,28 +1419,29 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
       expect(new Function(helpers + '\nreturn seenText;')()({ at: T0 - 120000, spawn_id: 812, by: 'Corvale' }, T0)).toBe('seen alive 2m ago · spawn #812 · by Corvale');
       expect(new Function(helpers + '\nreturn seenText;')()({ at: T0 - 120000, spawn_id: null, by: null }, T0)).toBe('seen alive 2m ago');
     });
-    it('a dark slate background instead of black (the panes keep the opacity slider)', () => {
-      expect(MAP_HTML).toMatch(/#mapPane\{[^}]*background:rgb\(19 26 38 \/ var\(--bg-alpha\)\)/);
-      expect(MAP_HTML).toMatch(/#side\{[^}]*background:rgb\(19 26 38 \/ var\(--bg-alpha\)\)/);
+    it('a dark slate background instead of black (the panes keep the opacity slider unless ⚙ sets its own strength)', () => {
+      expect(MAP_HTML).toMatch(/#mapPane\{[^}]*background:rgb\(var\(--map-bg, 19 26 38\) \/ var\(--map-bg-a, var\(--bg-alpha\)\)\)/);
+      expect(MAP_HTML).toMatch(/#side\{[^}]*background:rgb\(var\(--map-bg, 19 26 38\) \/ var\(--map-bg-a, var\(--bg-alpha\)\)\)/);
       expect(MAP_HTML).not.toMatch(/rgb\(0 0 0 \/ var\(--bg-alpha\)\)/);
+      expect(js).toMatch(/if \(S\.cfg\.bgA == null\) root\.removeProperty\('--map-bg-a'\);/);   // off = follow Mimic's slider
     });
     it('brighter, thicker walls in the level range; the rest at 0.35; out-of-range dots at 0.4; bigger lighter dots with an outline', () => {
-      expect(js).toMatch(/ctx\.strokeStyle = bright \? 'rgba\(214,230,255,0\.95\)' : 'rgba\(170,195,235,0\.35\)';/);
+      expect(js).toMatch(/ctx\.strokeStyle = hexA\(oneWall \? CO\.wall : CO\.oursWall, bright \? 0\.95 : 0\.35\);/);
       expect(js).toMatch(/ctx\.lineWidth = bright \? 1\.6 : 1;/);
       expect(js).toMatch(/var bright = S\.prep\.bands\.length <= 1 \|\| inLevelRange\(S\.prep\.bands\[b\], sz, range\);/);
       expect(js).toMatch(/ctx\.globalAlpha = inLevelRange\(p\.z, sz, range\) \? 1 : 0\.4;/);
       expect(js).toMatch(/var r = kind\.raid \? 6\.5 : kind\.named \? 5\.5 : 4\.2;/);
-      expect(js).toMatch(/: '#c9d1d9'; ctx\.fill\(\);/);
+      expect(js).toMatch(/: CO\.dot; ctx\.fill\(\);/);
       expect(js).toMatch(/strokeStyle = '#0d1117'; ctx\.stroke\(\);   \/\/ a dark outline on every dot/);
     });
-    it('keeps the red / yellow / green rings, and draws seen points with a solid green ring and fill', () => {
+    it('keeps the red / yellow / green rings, and draws seen points with a solid ring and fill in the "up" colour', () => {
       expect(js).toMatch(/var RING = \{ wait: '#f85149', window: '#f0b429', up: '#56d364' \};/);
-      expect(js).toMatch(/if \(sn\) \{[^}]*ctx\.arc\(px, py, r \+ 3\.5[^}]*strokeStyle = '#56d364'; ctx\.stroke\(\);\s*\} else if \(t\) \{/);
-      expect(js).toMatch(/ctx\.fillStyle = sn \? '#56d364'/);
+      expect(js).toMatch(/if \(sn\) \{[^}]*ctx\.arc\(px, py, r \+ 3\.5[^}]*strokeStyle = CO\.up; ctx\.stroke\(\);\s*\} else if \(t && SH\.timers\) \{/);
+      expect(js).toMatch(/ctx\.fillStyle = sn \? CO\.up/);
       expect(js).toMatch(/card\.appendChild\(el\('div', 't', 'up · ' \+ seenText\(sn, nowMs\(\)\)\)\)/);
     });
     it('draws a thin line from a pinned target to its spawn point, and says "→ pinned" in the header', () => {
-      expect(js).toMatch(/var pinPt = P\.target\.point_id != null \? S\.byId\[String\(P\.target\.point_id\)\] : null;\s*if \(pinPt\) \{\s*var pq = wpt\(pinPt\.x, pinPt\.y\);\s*ctx\.beginPath\(\); ctx\.moveTo\(tq\[0\], tq\[1\]\); ctx\.lineTo\(pq\[0\], pq\[1\]\);\s*ctx\.lineWidth = 1;/);
+      expect(js).toMatch(/var pinPt = P\.target\.point_id != null \? S\.byId\[String\(P\.target\.point_id\)\] : null;\s*if \(pinPt && SH\.pinLine\) \{\s*var pq = wpt\(pinPt\.x, pinPt\.y\);\s*ctx\.beginPath\(\); ctx\.moveTo\(tq\[0\], tq\[1\]\); ctx\.lineTo\(pq\[0\], pq\[1\]\);\s*ctx\.lineWidth = 1;/);
       expect(js).toMatch(/\(P\.target\.point_id != null \? ' → pinned' : ''\)/);
     });
     it('the menu gets a Clear timer button only where there is a timer or a sighting', () => {

@@ -10,7 +10,30 @@
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
   #wrap{position:absolute;inset:0;display:flex;gap:6px}
   body.setup #wrap{top:26px}
-  #mapPane{position:relative;flex:1 1 auto;min-width:0;background:rgb(19 26 38 / var(--bg-alpha));border-radius:6px;overflow:hidden}
+  /* Background: colour and strength from ⚙ Map settings (--map-bg / --map-bg-a); unset = Mimic's own background slider. */
+  #mapPane{position:relative;flex:1 1 auto;min-width:0;background:rgb(var(--map-bg, 19 26 38) / var(--map-bg-a, var(--bg-alpha)));border-radius:6px;overflow:hidden}
+  /* ⚙ Map settings: a panel over the map's right side, like the HUD's builder (sticky head, groups, ↺ per row). */
+  #cfg{position:absolute;top:0;right:0;bottom:0;width:236px;max-width:100%;box-sizing:border-box;z-index:20;overflow-y:auto;overflow-x:hidden;
+    background:rgba(13,17,23,0.97);border-left:1px solid rgba(110,118,129,0.5);padding:0 8px 8px;font-size:10.5px;color:#c9d1d9;text-shadow:none}
+  #cfg[hidden]{display:none}
+  #cfg::-webkit-scrollbar{width:10px}
+  #cfg::-webkit-scrollbar-thumb{background:#484f58;border-radius:5px;border:2px solid rgba(13,17,23,0.95)}
+  #cfg .chead{position:sticky;top:0;z-index:1;background:rgba(13,17,23,0.99);padding:7px 0 5px;border-bottom:1px solid rgba(110,118,129,0.4);
+    display:flex;align-items:center;gap:6px;font-size:12px}
+  #cfg .chead .sp{flex:1}
+  #cfg .grp{margin:9px 0 3px;color:#8b949e;text-transform:uppercase;font-size:9.5px;letter-spacing:.5px}
+  #cfg .row{display:flex;align-items:center;gap:6px;padding:1.5px 0}
+  #cfg .row .bl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #cfg label.row{cursor:pointer}
+  #cfg input[type=checkbox]{margin:0;accent-color:#58a6ff;cursor:pointer}
+  #cfg input[type=range]{width:86px;margin:0;accent-color:#58a6ff;cursor:ew-resize}
+  #cfg input[type=color]{width:26px;height:16px;padding:0;border:1px solid rgba(110,118,129,0.6);border-radius:3px;background:none;cursor:pointer}
+  #cfg select,#cfg button{background:rgba(22,27,34,.9);color:#c9d1d9;border:1px solid rgba(110,118,129,0.5);border-radius:4px;font:inherit;font-size:10px;padding:1px 6px;cursor:pointer}
+  #cfg button:hover,#cfg select:hover{border-color:#58a6ff;color:#fff}
+  #cfg .rs{flex:none;width:20px;padding:0;line-height:15px;color:#8b949e}
+  #cfg .gl{width:20px;text-align:center;flex:none}
+  #cfg .val{flex:none;min-width:58px;text-align:right;color:#8b949e}
+  #cfg .foot{margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:6px;color:#6e7681;font-size:9.5px}
   #stage{position:absolute;inset:0}
   #cv{position:absolute;inset:0;width:100%;height:100%;display:block}
   #hits{position:absolute;inset:0;pointer-events:none}
@@ -49,7 +72,7 @@
     background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.18);color:#e6edf3;font:inherit;font-size:11px;cursor:pointer}
   #menu button:hover{border-color:#58a6ff;background:rgba(88,166,255,0.2)}
   #menu .x{color:#8b949e;margin-top:4px}
-  #side{flex:0 0 210px;display:flex;flex-direction:column;min-height:0;background:rgb(19 26 38 / var(--bg-alpha));
+  #side{flex:0 0 210px;display:flex;flex-direction:column;min-height:0;background:rgb(var(--map-bg, 19 26 38) / var(--map-bg-a, var(--bg-alpha)));
     border-radius:6px;padding:6px 8px;text-shadow:0 1px 2px #000}
   #zone{font-size:12px;color:#79c0ff;padding-right:26px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #posage{font-size:9px;color:#6e7681;min-height:11px;white-space:nowrap}
@@ -132,10 +155,31 @@
         <button class="tb" id="fitBtn" type="button" title="Fit the view. Click to cycle: zone, group, raid.">Fit zone</button>
         <button class="tb" id="panBtn" type="button" title="Locked overlays let clicks through to EverQuest. Switch this on to drag and zoom the map (the mouse wheel zooms); right-click centres on you.">✋ Pan / zoom</button>
         <button class="tb on" id="labelsBtn" type="button" title="Names on the map: boss names and room names. Switch off when it gets busy.">Labels: on</button>
-        <label class="lv" title="Walls this far above or below you stay bright; the rest fade. Height is in game units: you are about 6 tall, one floor is roughly 30 to 60, so ±100 is about your floor and the ones next to it."><input id="levels" type="range" min="0" max="7" step="1"><span id="levelsVal">Levels</span></label>
-        <label class="lv" title="Spawn points this far above or below you are shown; the rest are hidden. Same height units as Levels: ±25 is about your own floor, ±100 a floor or two either way."><input id="spawnLevels" type="range" min="0" max="7" step="1"><span id="spawnVal">Spawn height</span></label>
+        <button class="tb" id="cfgBtn" type="button" title="Map settings: what is drawn, the height ranges, the ability icons, colours and the background">⚙</button>
       </div>
       <button class="tb" id="sideBtn" type="button" title="Slide the respawn timers list in or out. Slid in, the map takes the whole width.">Timers ▸</button>
+      <!-- ⚙ Map settings (the guild lead, 2026-10-12: "a config section for the map that pops up similar to the hud's").
+           Rows are built in JS from CFG_SHOW / CFG_GLYPHS / CFG_COLS; data-wp-interact arms the click-through window. -->
+      <div id="cfg" hidden data-wp-interact>
+        <div class="chead"><b>Map settings</b><span class="sp"></span><button id="cfgClose" type="button" title="Close">✕</button></div>
+        <div class="grp">Heights</div>
+        <label class="row" title="Walls this far above or below you stay bright; the rest fade. Height is in game units: you are about 6 tall, one floor is roughly 30 to 60, so ±100 is about your floor and the ones next to it."><span class="bl" id="levelsVal">Levels</span><input id="levels" type="range" min="0" max="7" step="1"></label>
+        <label class="row" title="Spawn points this far above or below you are shown; the rest are hidden. Same height units as Levels: ±25 is about your own floor, ±100 a floor or two either way."><span class="bl" id="spawnVal">Spawn height</span><input id="spawnLevels" type="range" min="0" max="7" step="1"></label>
+        <div class="grp">Show</div>
+        <div id="cfgShow"></div>
+        <div class="grp">Ability icons on spawn points</div>
+        <div id="cfgGlyphs"></div>
+        <div class="grp">Colours</div>
+        <div class="row"><span class="bl">Scheme</span><select id="cfgScheme"><option value="default">Default</option><option value="contrast">High contrast</option><option value="cb">Colour-blind safe</option><option value="custom">Custom</option></select></div>
+        <label class="row" title="Map's own: each line keeps the colour its map file gives it (Brewall colours each floor and the stairs). One colour: every wall line in the colour below."><span class="bl">Wall colours</span><select id="cfgWallMode"><option value="map">Map's own</option><option value="one">One colour</option></select></label>
+        <div id="cfgCols"></div>
+        <div class="grp">Background</div>
+        <div class="row"><span class="bl">Colour</span><input type="color" id="cfgBg"><button class="rs" type="button" id="cfgBgRs" title="Back to the scheme's colour">↺</button></div>
+        <label class="row" title="Off: the background follows Mimic's own background slider (setup bar)."><input type="checkbox" id="cfgBgOwn"><span class="bl">Own strength</span><input type="range" id="cfgBgA" min="0" max="1" step="0.05"></label>
+        <div class="grp">Text</div>
+        <label class="row"><span class="bl">Label size</span><input type="range" id="cfgText" min="0.7" max="1.8" step="0.1"><span class="val" id="cfgTextVal"></span></label>
+        <div class="foot"><span>Saved on this computer.</span><button id="cfgReset" type="button">Reset to default</button></div>
+      </div>
       <div id="card"></div>
       <div id="menu"></div>
     </div>
@@ -279,12 +323,13 @@
     return null;
   }
   function upLabel(up) { return String(up.name).replace(/_/g, ' ').replace(/^[#!~]+/, '') + (up.spawn_id != null ? ' #' + up.spawn_id : ''); }
-  function pointBadges(p) {
+  // `off` (optional): glyphs switched off in ⚙ Map settings, as { '👁': true, … }.
+  function pointBadges(p, off) {
     var seen = {}, out = [];
     var npcs = (p && p.npcs) || [];
     for (var i = 0; i < npcs.length; i++) {
       var bs = npcs[i] && npcs[i].badges || [];
-      for (var j = 0; j < bs.length; j++) { var g = badgeGlyph(bs[j]); if (g && !seen[g]) { seen[g] = 1; out.push(g); } }
+      for (var j = 0; j < bs.length; j++) { var g = badgeGlyph(bs[j]); if (g && !seen[g] && !(off && off[g])) { seen[g] = 1; out.push(g); } }
     }
     return out.slice(0, 4).join('');
   }
@@ -470,6 +515,77 @@
     }
     return placed;
   }
+  // ⚙ Map settings (the guild lead, 2026-10-12: "a config section for the map that pops up similar to the hud's where we
+  // can toggle on or off different bits … turn off individual icons if necessary. background config and color schemas
+  // for each label/element"). One object, saved as JSON under 'wp-map-cfg'; renderMap reads it for every switch and
+  // colour. The Default scheme is exactly what the map drew before the panel existed.
+  var CFG_SHOW = [
+    ['walls', 'Walls'], ['rooms', 'Room names'], ['bosses', 'Boss names'], ['upLabel', 'Known mob: name + spawn id'],
+    ['dots', 'Spawn points'], ['abilities', 'Ability icons'], ['pather', 'Walker mark ↻'], ['routes', 'Walker routes'],
+    ['timers', 'Respawn timer rings'], ['candidates', '"?" maybe-died rings'],
+    ['you', 'You'], ['target', 'Target ring'], ['targetLine', 'Line to target'], ['distance', 'Distance to target'],
+    ['pinLine', 'Target → its spawn point'], ['group', 'Group'], ['groupNames', 'Group names'], ['raid', 'Raid'], ['raidNames', 'Raid names'],
+  ];
+  var CFG_GLYPHS = [
+    ['👁', 'Sees invisible'], ['👁ᵤ', 'Sees invisible to undead'], ['🥷', 'Sees through hide'], ['↯', 'Summons'],
+    ['☮', 'Cannot be lulled'], ['⚔', 'Rampage'], ['💢', 'Enrage'], ['≋', 'Flurry'], ['⇅', 'Reverse slow'],
+  ];
+  var CFG_COLS = [
+    ['wall', 'Walls (one colour)'], ['oursWall', 'Walls (Wolf Pack)'], ['route', 'Walker routes'], ['routeTarget', 'Targeted walker route'],
+    ['dot', 'Spawn point'], ['named', 'Named spawn'], ['raidTarget', 'Raid target'], ['up', 'Up / seen'],
+    ['ringWait', 'Timer: not yet'], ['ringWindow', 'Timer: window open'], ['ringUp', 'Timer: up'], ['candidate', '"?" ring'],
+    ['glyph', 'Ability icons'], ['pather', 'Walker mark'], ['bossLabel', 'Boss name'], ['raidLabel', 'Raid target name'],
+    ['upLabel', 'Known mob name'], ['room', 'Room names'], ['you', 'You'], ['target', 'Target'], ['pinLine', 'Target → spawn line'],
+    ['group', 'Group'], ['raid', 'Raid'],
+  ];
+  var MAP_SCHEMES = {
+    default: { wall: '#c8d6ea', oursWall: '#d6e6ff', route: '#39c5cf', routeTarget: '#7ee787', dot: '#c9d1d9', named: '#f2cc60',
+      raidTarget: '#ff7b72', up: '#56d364', ringWait: '#f85149', ringWindow: '#f0b429', ringUp: '#56d364', candidate: '#d2a8ff',
+      glyph: '#e6edf3', pather: '#9ecbff', bossLabel: '#f2cc60', raidLabel: '#ffa198', upLabel: '#7ee787', room: '#c9d9ee',
+      you: '#58a6ff', target: '#f0883e', pinLine: '#7ee787', group: '#56d364', raid: '#a371f7', bg: '#131a26' },
+    contrast: { wall: '#ffffff', oursWall: '#ffffff', route: '#00e5ff', routeTarget: '#00ff66', dot: '#ffffff', named: '#ffd700',
+      raidTarget: '#ff3b30', up: '#00ff66', ringWait: '#ff3b30', ringWindow: '#ffcc00', ringUp: '#00ff66', candidate: '#e040fb',
+      glyph: '#ffffff', pather: '#00e5ff', bossLabel: '#ffd700', raidLabel: '#ff6b6b', upLabel: '#00ff66', room: '#ffffff',
+      you: '#00b0ff', target: '#ff9100', pinLine: '#00ff66', group: '#00ff66', raid: '#e040fb', bg: '#000000' },
+    // Okabe–Ito: no red/green pair carries a meaning (up is sky blue, "not yet" vermillion, the window yellow).
+    cb: { wall: '#d9d9d9', oursWall: '#e0e0e0', route: '#56b4e9', routeTarget: '#f0e442', dot: '#d9d9d9', named: '#e69f00',
+      raidTarget: '#d55e00', up: '#56b4e9', ringWait: '#d55e00', ringWindow: '#f0e442', ringUp: '#56b4e9', candidate: '#cc79a7',
+      glyph: '#ffffff', pather: '#56b4e9', bossLabel: '#e69f00', raidLabel: '#d55e00', upLabel: '#56b4e9', room: '#d9d9d9',
+      you: '#009e73', target: '#e69f00', pinLine: '#f0e442', group: '#009e73', raid: '#cc79a7', bg: '#14171c' },
+  };
+  var HEX_RE = /^#[0-9a-f]{6}$/i;
+  function mapCfgDefaults() {
+    var show = {}, col = {}, k;
+    for (var i = 0; i < CFG_SHOW.length; i++) show[CFG_SHOW[i][0]] = true;
+    for (k in MAP_SCHEMES.default) col[k] = MAP_SCHEMES.default[k];
+    return { show: show, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'map', bgA: null, text: 1 };
+  }
+  // A saved settings object -> a complete, valid one. Unknown keys and bad values are dropped, never trusted.
+  function mergeMapCfg(saved) {
+    var c = mapCfgDefaults(), k, i;
+    if (!saved || typeof saved !== 'object') return c;
+    if (saved.show) for (k in c.show) if (typeof saved.show[k] === 'boolean') c.show[k] = saved.show[k];
+    if (saved.glyphsOff) for (i = 0; i < CFG_GLYPHS.length; i++) if (saved.glyphsOff[CFG_GLYPHS[i][0]] === true) c.glyphsOff[CFG_GLYPHS[i][0]] = true;
+    if (saved.col) for (k in c.col) if (HEX_RE.test(String(saved.col[k]))) c.col[k] = String(saved.col[k]).toLowerCase();
+    if (MAP_SCHEMES[saved.scheme] || saved.scheme === 'custom') c.scheme = saved.scheme;
+    if (saved.wallMode === 'one') c.wallMode = 'one';
+    if (typeof saved.bgA === 'number' && saved.bgA >= 0 && saved.bgA <= 1) c.bgA = saved.bgA;
+    if (typeof saved.text === 'number' && saved.text >= 0.7 && saved.text <= 1.8) c.text = Math.round(saved.text * 10) / 10;
+    return c;
+  }
+  // Picking a scheme replaces every colour; editing one colour afterwards makes the scheme "custom".
+  function applyScheme(c, name) {
+    var s = MAP_SCHEMES[name];
+    if (!s) return c;
+    for (var k in s) c.col[k] = s[k];
+    c.scheme = name;
+    return c;
+  }
+  function hexRgb(hex) {
+    var m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex));
+    return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [255, 255, 255];
+  }
+  function hexA(hex, a) { return 'rgba(' + hexRgb(hex).join(',') + ',' + a + ')'; }
   // ── end pure helpers ──
 
   // ── state ──
@@ -499,6 +615,17 @@
     if (sr === 'direct' || sr === 'agent') S.src = sr;
     if (Object.prototype.hasOwnProperty.call(SMOOTH_MS, sm)) S.smooth = sm;
   })();
+  S.cfg = (function () { try { return mergeMapCfg(JSON.parse(lsGet('wp-map-cfg') || 'null')); } catch (e) { return mapCfgDefaults(); } })();
+  function saveCfg() { lsSet('wp-map-cfg', JSON.stringify(S.cfg)); }
+  // The background: its colour always from the settings; its strength from them only when "Own strength" is on.
+  function applyCfgCss() {
+    var root = document.documentElement.style;
+    try {
+      root.setProperty('--map-bg', hexRgb(S.cfg.col.bg).join(' '));
+      if (S.cfg.bgA == null) root.removeProperty('--map-bg-a'); else root.setProperty('--map-bg-a', String(S.cfg.bgA));
+    } catch (e) {}
+  }
+  applyCfgCss();
 
   var stage = document.getElementById('stage');
   var cv = document.getElementById('cv');
@@ -705,7 +832,7 @@
   // walker's route crosses the view long after its point has left it (the guild lead, 2026-10-12: "pathing disappears
   // when close enough in zooming"). Cyan, so a route never reads as a wall or a Brewall floor colour; the pather you
   // have targeted (pinned to its point) is drawn green, on top, at any spawn height.
-  var ROUTE_COLOR = '#39c5cf', ROUTE_HOT = '#9ecbff', ROUTE_TARGET = '#7ee787';
+  var ROUTE_HOT = '#9ecbff';   // the route and targeted-route colours are in ⚙ Map settings (S.cfg.col)
   function routeList(points, sz, range, srange, targetGrid) {
     var seen = {}, list = [];
     for (var i = 0; i < points.length; i++) {
@@ -727,7 +854,7 @@
       var g = S.grids[it.gid], hot = S.hoverGrid === it.gid, tgt = it.gid === targetGrid;
       ctx.globalAlpha = hot || tgt ? 1 : it.near ? 0.75 : 0.25;
       ctx.setLineDash(tgt ? [7, 3] : [4, 4]); ctx.lineWidth = tgt ? 2.2 : hot ? 1.8 : 1.2;
-      ctx.strokeStyle = tgt ? ROUTE_TARGET : hot ? ROUTE_HOT : ROUTE_COLOR;
+      ctx.strokeStyle = tgt ? S.cfg.col.routeTarget : hot ? ROUTE_HOT : S.cfg.col.route;
       routePath(g, g.pts); ctx.stroke(); ctx.setLineDash([]);
       for (var j = 0; j < g.pts.length; j++) {
         if (!(Number(g.pts[j][3]) > 0)) continue;
@@ -747,9 +874,12 @@
   // spawn points, room and zone-line names from your own map files. All go through pickLabels, so a name that would
   // sit on another is skipped rather than overprinted; raid targets are placed first, then named mobs, then rooms
   // (closest to you first within each). Names outside the level range fade like the walls and dots do.
-  var LABEL_FONT_BOSS = 'bold 11px ui-monospace,Consolas,monospace';
-  var LABEL_FONT_ROOM = 'italic 10px ui-monospace,Consolas,monospace';
-  var LABEL_ROOM_COLOR = '#c9d9ee';
+  // Fonts at ⚙ → Label size (1 = the sizes the map always used: boss 11, room 10, icons and names 9, distance 10).
+  var LABEL_PX = { boss: 11, room: 10, small: 9, dist: 10 };
+  function labelFont(kind) {
+    var px = Math.round(LABEL_PX[kind] * (S.cfg.text || 1));
+    return (kind === 'boss' ? 'bold ' : kind === 'room' ? 'italic ' : '') + px + 'px ui-monospace,Consolas,monospace';
+  }
   var LABEL_ROOMS_MAX = 400;   // the nearest this many on-screen room names are considered per frame
   var textW = {}, textWn = 0;
   function measure(text, font) {
@@ -769,11 +899,12 @@
     var dist = function (x, y) { return Math.hypot(x - ref.x, y - ref.y); };
     var cands = boss.map(function (c) { c.pri = c.tier * 1e7 + dist(c.wx, c.wy); return c; });
     var rooms = [];
-    var ll = S.local && S.labels ? S.local.labels : [];
+    var ll = S.local && S.labels && S.cfg.show.rooms ? S.local.labels : [];
+    var roomFont = labelFont('room'), roomCol = S.cfg.col.room;
     for (var i = 0; i < ll.length; i++) {
       var q = wpt(ll[i][0], ll[i][1]);
       if (q[0] < -40 || q[0] > w + 40 || q[1] < -20 || q[1] > h + 20) continue;
-      rooms.push({ text: String(ll[i][3]), x: q[0], y: q[1], z: ll[i][2], col: LABEL_ROOM_COLOR, tier: 2, align: 'center', font: LABEL_FONT_ROOM, pri: 2e7 + dist(ll[i][0], ll[i][1]) });
+      rooms.push({ text: String(ll[i][3]), x: q[0], y: q[1], z: ll[i][2], col: roomCol, tier: 2, align: 'center', font: roomFont, pri: 2e7 + dist(ll[i][0], ll[i][1]) });
     }
     rooms.sort(function (a, b) { return a.pri - b.pri; });
     if (rooms.length > LABEL_ROOMS_MAX) rooms.length = LABEL_ROOMS_MAX;
@@ -801,15 +932,18 @@
     var v = S.view, w = S.w, h = S.h, now = nowMs();
     var ox = w / 2 - v.cx * v.scale, oy = h / 2 - v.cy * v.scale;
     var sz = selfZ(), range = levelRange();
+    var C = S.cfg, SH = C.show, CO = C.col;   // ⚙ Map settings: what is drawn, and in which colours
+    var oneWall = C.wallMode === 'one';
     // Walls. Your own map files when you have them for this zone (Walls: Auto): each line bright when its middle is
     // within the level range of you, faint otherwise. Else ours below.
-    if (localWalls()) {
+    if (!SH.walls) { /* switched off in ⚙ */ }
+    else if (localWalls()) {
       ctx.lineCap = 'butt'; ctx.lineWidth = 1;
       var lvOn = !!range && sz != null;
       for (var lg = 0; lg < S.local.groups.length; lg++) {
         var G = S.local.groups[lg];
         for (var pass = 0; pass < (lvOn ? 2 : 1); pass++) {   // 0 = bright, 1 = faint; with no level limit everything is bright
-          ctx.strokeStyle = pass === 0 ? G.bright : G.faded;
+          ctx.strokeStyle = oneWall ? hexA(CO.wall, pass === 0 ? 0.85 : 0.25) : (pass === 0 ? G.bright : G.faded);
           ctx.beginPath();
           for (var li = 0, lj = 0; li < G.xy.length; li += 4, lj++) {
             if (lvOn && inLevelRange(G.z[lj], sz, range) !== (pass === 0)) continue;
@@ -825,7 +959,7 @@
       ctx.lineCap = 'round';
       for (var b = 0; b < S.prep.gen.length; b++) {
         var bright = S.prep.bands.length <= 1 || inLevelRange(S.prep.bands[b], sz, range);
-        ctx.strokeStyle = bright ? 'rgba(214,230,255,0.95)' : 'rgba(170,195,235,0.35)';
+        ctx.strokeStyle = hexA(oneWall ? CO.wall : CO.oursWall, bright ? 0.95 : 0.35);
         ctx.lineWidth = bright ? 1.6 : 1;
         var a = S.prep.gen[b];
         ctx.beginPath();
@@ -847,7 +981,9 @@
       vis.push({ p: p0, x: xy0[0], y: xy0[1] });
     }
     var tPt = S.p && S.p.target && S.p.target.point_id != null ? S.byId[String(S.p.target.point_id)] : null;
-    drawRoutes(sz, range, srange, tPt && tPt.grid != null ? String(tPt.grid) : null);
+    if (SH.routes) drawRoutes(sz, range, srange, tPt && tPt.grid != null ? String(tPt.grid) : null);
+    var fontBoss = labelFont('boss'), fontSmall = labelFont('small');
+    var ringOf = { wait: CO.ringWait, window: CO.ringWindow, up: CO.ringUp };
     for (var vi = 0; vi < vis.length; vi++) {
       var p = vis[vi].p, px = vis[vi].x, py = vis[vi].y;
       var kind = pointKind(p);
@@ -856,64 +992,68 @@
       var t = S.timerBy[String(p.id)], cand = S.candBy[String(p.id)], sn = S.seenBy[String(p.id)];
       var up = upOn(p.id, S.p, S.seenBy), un = upNpc(p, up);
       if (up && !sn) sn = up;   // your pinned target is alive on this point now, before the next poll says so
-      if (sn) {   // up · seen: a solid green ring (the fill is green below)
-        ctx.beginPath(); ctx.arc(px, py, r + 3.5, 0, 6.2832); ctx.lineWidth = 2.4; ctx.strokeStyle = '#56d364'; ctx.stroke();
-      } else if (t) {
-        var st = timerState(t, now);
-        var col = st === 'flash' ? (flashOn ? '#ffd866' : '#ffffff') : RING[st];
-        if (st === 'flash') anyFlash = true;
-        ctx.beginPath(); ctx.arc(px, py, r + 3.5, 0, 6.2832); ctx.lineWidth = 2.4; ctx.strokeStyle = col; ctx.stroke();
-      } else if (cand && cand.length) {
-        ctx.beginPath(); ctx.setLineDash([3, 2]); ctx.arc(px, py, r + 3.5, 0, 6.2832); ctx.lineWidth = 1.8; ctx.strokeStyle = '#d2a8ff'; ctx.stroke(); ctx.setLineDash([]);
-        halo('?', px, py - r - 8, 'bold 11px ui-monospace,Consolas,monospace', '#d2a8ff', 'center');
+      if (SH.dots) {
+        if (sn) {   // up · seen: a solid ring (the fill matches below)
+          ctx.beginPath(); ctx.arc(px, py, r + 3.5, 0, 6.2832); ctx.lineWidth = 2.4; ctx.strokeStyle = CO.up; ctx.stroke();
+        } else if (t && SH.timers) {
+          var st = timerState(t, now);
+          var col = st === 'flash' ? (flashOn ? '#ffd866' : '#ffffff') : (ringOf[st] || RING[st]);
+          if (st === 'flash') anyFlash = true;
+          ctx.beginPath(); ctx.arc(px, py, r + 3.5, 0, 6.2832); ctx.lineWidth = 2.4; ctx.strokeStyle = col; ctx.stroke();
+        } else if (cand && cand.length && SH.candidates) {
+          ctx.beginPath(); ctx.setLineDash([3, 2]); ctx.arc(px, py, r + 3.5, 0, 6.2832); ctx.lineWidth = 1.8; ctx.strokeStyle = CO.candidate; ctx.stroke(); ctx.setLineDash([]);
+          halo('?', px, py - r - 8, 'bold 11px ui-monospace,Consolas,monospace', CO.candidate, 'center');
+        }
+        ctx.beginPath(); ctx.arc(px, py, r, 0, 6.2832);
+        ctx.fillStyle = sn ? CO.up : kind.raid ? CO.raidTarget : kind.named ? CO.named : CO.dot; ctx.fill();
+        ctx.lineWidth = kind.named ? 1.5 : 1.2; ctx.strokeStyle = '#0d1117'; ctx.stroke();   // a dark outline on every dot
+        var bd = SH.abilities ? pointBadges(un ? { npcs: [un] } : p, C.glyphsOff) : '';   // a known mob: its own symbols only
+        if (bd) halo(bd, px + r + 3, py - r, fontSmall, CO.glyph);
+        if (p.grid != null && SH.pather) halo('↻', px - r - 3, py - r, fontSmall, CO.pather, 'right');   // a pather: it walks a route
       }
-      ctx.beginPath(); ctx.arc(px, py, r, 0, 6.2832);
-      ctx.fillStyle = sn ? '#56d364' : kind.raid ? '#ff7b72' : kind.named ? '#f2cc60' : '#c9d1d9'; ctx.fill();
-      ctx.lineWidth = kind.named ? 1.5 : 1.2; ctx.strokeStyle = '#0d1117'; ctx.stroke();   // a dark outline on every dot
-      var bd = pointBadges(un ? { npcs: [un] } : p);   // a known mob: its own symbols, not every mob that can spawn here
-      if (bd) halo(bd, px + r + 3, py - r, '9px ui-monospace,Consolas,monospace', '#e6edf3');
-      if (p.grid != null) halo('↻', px - r - 3, py - r, '9px ui-monospace,Consolas,monospace', '#9ecbff', 'right');   // a pather: it walks a route
       // Named and raid-target names are drawn after the loop, at any zoom, through the label placer (bosses first).
       // A known mob's name + spawn id goes ahead of everything (tier -1).
-      if (up) bossC.push({ text: upLabel(up), x: px + r + 3, y: py + r + 3, z: p.z, wx: p.x, wy: p.y, col: '#7ee787', tier: -1, align: 'left', font: LABEL_FONT_BOSS });
-      else if (kind.named) bossC.push({ text: bestName(p), x: px + r + 3, y: py + r + 3, z: p.z, wx: p.x, wy: p.y, col: kind.raid ? '#ffa198' : '#f2cc60', tier: kind.raid ? 0 : 1, align: 'left', font: LABEL_FONT_BOSS });
+      if (up && SH.upLabel) bossC.push({ text: upLabel(up), x: px + r + 3, y: py + r + 3, z: p.z, wx: p.x, wy: p.y, col: CO.upLabel, tier: -1, align: 'left', font: fontBoss });
+      else if (kind.named && SH.bosses) bossC.push({ text: bestName(p), x: px + r + 3, y: py + r + 3, z: p.z, wx: p.x, wy: p.y, col: kind.raid ? CO.raidLabel : CO.bossLabel, tier: kind.raid ? 0 : 1, align: 'left', font: fontBoss });
     }
     ctx.globalAlpha = 1;
     drawLabels(bossC, sz, range, w, h);
     // Group and raid.
     var P = S.p;
     if (P) {
-      var dotsOf = function (list, color, rad, pre) {
+      var dotsOf = function (list, color, rad, pre, names) {
         for (var i = 0; i < (list || []).length; i++) {
           var m = list[i], dm = drawn(pre + m.name, m, rt), q = wpt(dm.x, dm.y);
           if (q[0] < -20 || q[0] > w + 20 || q[1] < -20 || q[1] > h + 20) continue;
           ctx.beginPath(); ctx.arc(q[0], q[1], rad, 0, 6.2832); ctx.fillStyle = color; ctx.fill(); ctx.lineWidth = 1; ctx.strokeStyle = '#0d1117'; ctx.stroke();
-          if (v.scale >= 0.4) halo(m.name, q[0] + rad + 3, q[1], '9px ui-monospace,Consolas,monospace', color);
+          if (names && v.scale >= 0.4) halo(m.name, q[0] + rad + 3, q[1], fontSmall, color);
         }
       };
-      dotsOf(P.raid, '#a371f7', 3, 'r:');
-      dotsOf(P.group, '#56d364', 4, 'g:');
+      if (SH.raid) dotsOf(P.raid, CO.raid, 3, 'r:', SH.raidNames);
+      if (SH.group) dotsOf(P.group, CO.group, 4, 'g:', SH.groupNames);
       // Target: a ring and a dotted line from you.
       if (P.target && P.target.x != null) {
         var td = drawn(targetKey(P.target), P.target, rt), tq = wpt(td.x, td.y);
-        if (P.self) {
+        if (P.self && SH.targetLine) {
           var sd = drawn('self', P.self, rt), sq = wpt(sd.x, sd.y);
           ctx.beginPath(); ctx.setLineDash([2, 4]); ctx.moveTo(sq[0], sq[1]); ctx.lineTo(tq[0], tq[1]);
-          ctx.lineWidth = 1.5; ctx.strokeStyle = '#f0883e'; ctx.stroke(); ctx.setLineDash([]);
-          if (P.target.dist != null) halo(String(Math.round(Math.hypot(td.x - sd.x, td.y - sd.y))), (sq[0] + tq[0]) / 2, (sq[1] + tq[1]) / 2 - 7, '10px ui-monospace,Consolas,monospace', '#f0883e', 'center');   // from the drawn spots, so it keeps up with the dots
+          ctx.lineWidth = 1.5; ctx.strokeStyle = CO.target; ctx.stroke(); ctx.setLineDash([]);
+          if (P.target.dist != null && SH.distance) halo(String(Math.round(Math.hypot(td.x - sd.x, td.y - sd.y))), (sq[0] + tq[0]) / 2, (sq[1] + tq[1]) / 2 - 7, labelFont('dist'), CO.target, 'center');   // from the drawn spots, so it keeps up with the dots
         }
         // Pinned: a thin line from the target to the spawn point it is tied to.
         var pinPt = P.target.point_id != null ? S.byId[String(P.target.point_id)] : null;
-        if (pinPt) {
+        if (pinPt && SH.pinLine) {
           var pq = wpt(pinPt.x, pinPt.y);
           ctx.beginPath(); ctx.moveTo(tq[0], tq[1]); ctx.lineTo(pq[0], pq[1]);
-          ctx.lineWidth = 1; ctx.strokeStyle = '#7ee787'; ctx.stroke();
+          ctx.lineWidth = 1; ctx.strokeStyle = CO.pinLine; ctx.stroke();
         }
-        ctx.beginPath(); ctx.arc(tq[0], tq[1], 6, 0, 6.2832); ctx.lineWidth = 2; ctx.strokeStyle = '#f0883e'; ctx.stroke();
-        ctx.beginPath(); ctx.arc(tq[0], tq[1], 2, 0, 6.2832); ctx.fillStyle = '#f0883e'; ctx.fill();
+        if (SH.target) {
+          ctx.beginPath(); ctx.arc(tq[0], tq[1], 6, 0, 6.2832); ctx.lineWidth = 2; ctx.strokeStyle = CO.target; ctx.stroke();
+          ctx.beginPath(); ctx.arc(tq[0], tq[1], 2, 0, 6.2832); ctx.fillStyle = CO.target; ctx.fill();
+        }
       }
       // You: an arrow by heading.
-      if (P.self) {
+      if (P.self && SH.you) {
         var md = drawn('self', P.self, rt), me = wpt(md.x, md.y);
         var hv = md.heading != null ? headingVec(md.heading) : { dx: 0, dy: -1 };
         var nx = -hv.dy, ny = hv.dx;
@@ -922,10 +1062,10 @@
         ctx.lineTo(me[0] - hv.dx * 6 + nx * 5.5, me[1] - hv.dy * 6 + ny * 5.5);
         ctx.lineTo(me[0] - hv.dx * 3, me[1] - hv.dy * 3);
         ctx.lineTo(me[0] - hv.dx * 6 - nx * 5.5, me[1] - hv.dy * 6 - ny * 5.5);
-        ctx.closePath(); ctx.fillStyle = '#58a6ff'; ctx.fill(); ctx.lineWidth = 1.2; ctx.strokeStyle = '#ffffff'; ctx.stroke();
+        ctx.closePath(); ctx.fillStyle = CO.you; ctx.fill(); ctx.lineWidth = 1.2; ctx.strokeStyle = '#ffffff'; ctx.stroke();
       }
     }
-    if (!animating || rt - lastHits >= HITS_MS) { lastHits = rt; layoutHits(vis); }
+    if (!animating || rt - lastHits >= HITS_MS) { lastHits = rt; layoutHits(SH.dots ? vis : []); }   // hidden points take no clicks
     if (posAgeEl && rt - lastAge >= 200) { lastAge = rt; posAgeEl.textContent = S.sampleAt ? posAgeText(rt - S.sampleAt, S.sampleSrc) : ''; }
     // Flashing rings need a faster repaint than the one-second poll.
     if (anyFlash && !flashTimer) flashTimer = setInterval(function () { if (!document.hidden) renderMap(); }, 450);
@@ -1147,6 +1287,82 @@
   });
   wallsSel.value = S.walls;
   syncWallNote();
+  // ⚙ Map settings: built from CFG_SHOW / CFG_GLYPHS / CFG_COLS on first open, saved on every change.
+  var cfgEl = document.getElementById('cfg'), cfgBtn = document.getElementById('cfgBtn');
+  function cfgCommit() { saveCfg(); applyCfgCss(); renderMap(); }
+  function cfgCheckRow(parent, checked, labelNodes, onChange) {
+    var lab = el('label', 'row'), cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = !!checked;
+    cb.addEventListener('change', function () { onChange(cb.checked); cfgCommit(); });
+    lab.appendChild(cb);
+    labelNodes.forEach(function (n) { lab.appendChild(n); });
+    parent.appendChild(lab);
+  }
+  function buildCfg() {
+    var C = S.cfg;
+    var showEl = document.getElementById('cfgShow'); showEl.innerHTML = '';
+    CFG_SHOW.forEach(function (it) {
+      cfgCheckRow(showEl, C.show[it[0]], [el('span', 'bl', it[1])], function (on) { C.show[it[0]] = on; });
+    });
+    var glEl = document.getElementById('cfgGlyphs'); glEl.innerHTML = '';
+    CFG_GLYPHS.forEach(function (g) {
+      cfgCheckRow(glEl, !C.glyphsOff[g[0]], [el('span', 'gl', g[0]), el('span', 'bl', g[1])], function (on) {
+        if (on) delete C.glyphsOff[g[0]]; else C.glyphsOff[g[0]] = true;
+      });
+    });
+    var schemeSel = document.getElementById('cfgScheme');
+    schemeSel.value = C.scheme;
+    var colEl = document.getElementById('cfgCols'); colEl.innerHTML = '';
+    var base = function () { return MAP_SCHEMES[C.scheme] || MAP_SCHEMES.default; };
+    var colorRow = function (parent, key, labelText) {
+      var row = el('div', 'row'), inp = document.createElement('input'), rs = el('button', 'rs', '↺');
+      inp.type = 'color'; inp.value = C.col[key]; rs.type = 'button'; rs.title = 'Back to the scheme\'s colour';
+      inp.addEventListener('input', function () {
+        C.col[key] = inp.value.toLowerCase();
+        if (C.col[key] !== base()[key]) { C.scheme = 'custom'; schemeSel.value = 'custom'; }
+        cfgCommit();
+      });
+      rs.addEventListener('click', function () { C.col[key] = base()[key]; inp.value = C.col[key]; cfgCommit(); });
+      row.appendChild(el('span', 'bl', labelText)); row.appendChild(inp); row.appendChild(rs);
+      parent.appendChild(row);
+      return inp;
+    };
+    CFG_COLS.forEach(function (it) { colorRow(colEl, it[0], it[1]); });
+    var wm = document.getElementById('cfgWallMode'); wm.value = C.wallMode;
+    var bg = document.getElementById('cfgBg'); bg.value = C.col.bg;
+    var bgOwn = document.getElementById('cfgBgOwn'), bgA = document.getElementById('cfgBgA');
+    bgOwn.checked = C.bgA != null; bgA.value = String(C.bgA != null ? C.bgA : 0.55); bgA.disabled = C.bgA == null;
+    var tx = document.getElementById('cfgText'), txv = document.getElementById('cfgTextVal');
+    tx.value = String(C.text); txv.textContent = Math.round(C.text * 100) + '%';
+  }
+  // The fixed controls are wired once; buildCfg only refreshes their values.
+  document.getElementById('cfgScheme').addEventListener('change', function (e) {
+    if (MAP_SCHEMES[e.target.value]) { applyScheme(S.cfg, e.target.value); buildCfg(); cfgCommit(); }
+    else { S.cfg.scheme = 'custom'; saveCfg(); }
+  });
+  document.getElementById('cfgWallMode').addEventListener('change', function (e) { S.cfg.wallMode = e.target.value === 'one' ? 'one' : 'map'; cfgCommit(); });
+  document.getElementById('cfgBg').addEventListener('input', function (e) { S.cfg.col.bg = String(e.target.value).toLowerCase(); cfgCommit(); });
+  document.getElementById('cfgBgRs').addEventListener('click', function () {
+    S.cfg.col.bg = (MAP_SCHEMES[S.cfg.scheme] || MAP_SCHEMES.default).bg; document.getElementById('cfgBg').value = S.cfg.col.bg; cfgCommit();
+  });
+  document.getElementById('cfgBgOwn').addEventListener('change', function (e) {
+    var bgA = document.getElementById('cfgBgA');
+    S.cfg.bgA = e.target.checked ? parseFloat(bgA.value) : null; bgA.disabled = !e.target.checked; cfgCommit();
+  });
+  document.getElementById('cfgBgA').addEventListener('input', function (e) { if (S.cfg.bgA != null) { S.cfg.bgA = parseFloat(e.target.value); cfgCommit(); } });
+  document.getElementById('cfgText').addEventListener('input', function (e) {
+    S.cfg.text = Math.round(parseFloat(e.target.value) * 10) / 10;
+    document.getElementById('cfgTextVal').textContent = Math.round(S.cfg.text * 100) + '%';
+    cfgCommit();
+  });
+  document.getElementById('cfgReset').addEventListener('click', function () { S.cfg = mapCfgDefaults(); buildCfg(); cfgCommit(); });
+  var cfgBuilt = false;
+  function setCfgOpen(open) {
+    if (open && !cfgBuilt) { buildCfg(); cfgBuilt = true; }
+    cfgEl.hidden = !open; cfgBtn.classList.toggle('on', open);
+  }
+  cfgBtn.addEventListener('click', function () { setCfgOpen(cfgEl.hidden); });
+  document.getElementById('cfgClose').addEventListener('click', function () { setCfgOpen(false); });
   // The top-right button slides the timers list out and back in. 'grow' (the guild lead, 2026-10-12: "an option for the
   // timers to slide out and take additional space rather than shrinking the map") widens or narrows the WINDOW by the
   // list's width so the map keeps its size; 'share' keeps the window and the map pane takes or gives the width.
