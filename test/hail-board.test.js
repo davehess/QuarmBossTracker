@@ -673,7 +673,8 @@ describe('every recorded kill reaches the listeners', () => {
   const wrapper = sliceBlock(stateSrc, 'const _killListeners = [];', '  return entry;\n}');
   const load = (recordKill) =>
     // eslint-disable-next-line no-new-func
-    new Function('recordKill', `${wrapper}\nreturn { onKillRecorded, recordKillNotifying };`)(recordKill);
+    // slowMode: the wrapper also applies the slow-mode timer (test/slow-mode.test.js); here it changes nothing.
+    new Function('recordKill', 'slowMode', `${wrapper}\nreturn { onKillRecorded, recordKillNotifying };`)(recordKill, { timerHoursForKill: (id, h) => h });
 
   it('hands each listener the boss, the kill time and the killer, and returns the record untouched', () => {
     const entry = { killedAt: 1234, nextSpawn: 9999, killedBy: 'x' };

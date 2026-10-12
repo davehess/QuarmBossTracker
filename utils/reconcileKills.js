@@ -110,7 +110,8 @@ async function computeRecoverList(sinceMs) {
     const boss = bossById[bossId];
     if (!boss?.timerHours)  { skipped.noTimer++;    continue; }
     const killedAt  = new Date(enc.started_at).getTime();
-    const nextSpawn = killedAt + boss.timerHours * 3600000;
+    // A slow-mode kill runs longer than timerHours (utils/slowMode.js) — this rebuild bypasses recordKill.
+    const nextSpawn = killedAt + require('./slowMode').effectiveTimerHours(boss, boss.timerHours, killedAt) * 3600000;
     if (nextSpawn <= now)   { skipped.alreadyRespawned++; continue; }
     const live = existing[bossId];
     if (live?.nextSpawn && live.nextSpawn >= nextSpawn) { skipped.alreadyCurrent++; continue; }

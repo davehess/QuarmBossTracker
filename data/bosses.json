@@ -1763,6 +1763,7 @@
     "zone": "Bastion of Thunder",
     "expansion": "PoP",
     "timerHours": 3,
+    "slowModeHours": 18,
     "nicknames": [
       "auliffe",
       "chaoswind"
@@ -1777,6 +1778,7 @@
     "zone": "Bastion of Thunder",
     "expansion": "PoP",
     "timerHours": 3,
+    "slowModeHours": 18,
     "nicknames": [
       "brynju",
       "thunderclap"
@@ -1791,6 +1793,7 @@
     "zone": "Bastion of Thunder",
     "expansion": "PoP",
     "timerHours": 3,
+    "slowModeHours": 18,
     "nicknames": [
       "kuanbyr",
       "hailstorm"
@@ -1805,6 +1808,7 @@
     "zone": "Bastion of Thunder",
     "expansion": "PoP",
     "timerHours": 3,
+    "slowModeHours": 18,
     "nicknames": [
       "eindride",
       "icestorm"
