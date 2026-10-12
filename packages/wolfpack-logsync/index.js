@@ -44534,6 +44534,112 @@ function _mapPrune(zdoc, points, now) {
   return changed;
 }
 
+// ── Local map files: the player's OWN map folder, read here, drawn here, never sent anywhere ────────────────
+// The guild lead, 2026-10-12: "A for outdoor walls sounds fine". Our wall layer (the zone payload's `map`) is
+// horizontal slices of the collision mesh, which draws an open or hilly zone as cliff edges only. Zeal draws the
+// map files in the EQ folder instead (Zeal/zone_map.cpp: <EQ>/map_files/<short>.txt plus <short>_1..10.txt), so those
+// are read here and ours are the fallback.
+// ⚠ NEVER LEAVES THE MACHINE. That art is third-party (Brewall-derived) with no licence for us to redistribute;
+// reading the player's own copy locally is the whole point. So this block touches no network module, no upload
+// option, no disk cache and no sync queue, and the only reader is _mapStatePayload (answering localhost only).
+// test/map-local-files.test.js pins all of that.
+// FRAME: a map file stores the NEGATED world x and y (z as-is), so server = (-file_x, -file_y, z). Derived from
+// web/lib/zoneMap/brewall.ts (parseBrewallMaps), which measured it on 2026-10-05 against the EQEmu wall lines of
+// three zones; it is the frame eqemu_spawn2 and the wall slices use, so the overlay draws these lines exactly like
+// its spawn points (screen = -server). Re-checked 2026-10-12 on a real map pack: a boss label at file (1406, 489)
+// sits at eqemu_spawn2 (-1405, -488). Pipe positions are the other swap (_mapServerXY), already applied by now.
+// Line formats, as Zeal's parser reads them:
+//   L x0, y0, z0, x1, y1, z1, r, g, b
+//   P x, y, z, r, g, b, size, label        (underscores stand for spaces)
+const MAP_LOCAL_MAX_LINES  = 200000;                // lines parsed per zone, all files together
+const MAP_LOCAL_MAX_LABELS = 5000;
+const MAP_LOCAL_MAX_BYTES  = 5 * 1024 * 1024;       // a file bigger than this is skipped
+const MAP_LOCAL_RECHECK_MS = 5000;                  // the files are re-stat'ed at most this often per zone
+const MAP_LOCAL_KEEP_ZONES = 2;
+const MAP_LOCAL_SOURCES = [
+  { source: 'map_files', dir: 'map_files', extras: 10 },   // Zeal's folder
+  { source: 'maps',      dir: 'maps',      extras: 3 },    // the classic client's
+];
+// A bare Number() would read a blank field as 0 and turn a junk row into a line at the origin.
+const _MAP_NUM_RE = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
+const _mapFileNum = (s) => (_MAP_NUM_RE.test(String(s).trim()) ? Number(s) : NaN);
+// THE transform: a map file's (x, y, z) -> the server frame. Whole units, never -0.
+function _mapFileToServer(fx, fy, fz) {
+  return { x: Math.round(-fx) || 0, y: Math.round(-fy) || 0, z: Math.round(fz) || 0 };
+}
+const _mapHex = (r, g, b) => '#' + [r, g, b].map(c => Math.min(255, Math.max(0, Math.round(c) || 0)).toString(16).padStart(2, '0')).join('');
+// Lines and labels out of the text of a zone's files. Anything that does not parse is skipped, never fatal.
+function _mapParseLocalFiles(texts) {
+  const lines = [], labels = [];
+  for (const text of texts) {
+    for (const raw of String(text).split(/\r\n|\r|\n/)) {
+      if (lines.length >= MAP_LOCAL_MAX_LINES && labels.length >= MAP_LOCAL_MAX_LABELS) return { lines, labels };
+      const row = raw.trimStart();
+      const kind = row[0];
+      if (kind !== 'L' && kind !== 'P') continue;
+      const f = row.slice(1).split(',');
+      if (kind === 'L') {
+        if (f.length < 9 || lines.length >= MAP_LOCAL_MAX_LINES) continue;
+        const v = f.slice(0, 9).map(_mapFileNum);
+        if (v.some(Number.isNaN)) continue;
+        const a = _mapFileToServer(v[0], v[1], v[2]), b = _mapFileToServer(v[3], v[4], v[5]);
+        lines.push([a.x, a.y, a.z, b.x, b.y, b.z, _mapHex(v[6], v[7], v[8])]);
+      } else {
+        if (f.length < 8 || labels.length >= MAP_LOCAL_MAX_LABELS) continue;
+        const v = f.slice(0, 6).map(_mapFileNum);
+        if (v.some(Number.isNaN)) continue;
+        const label = f.slice(7).join(',').replace(/_/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+        if (!label) continue;
+        const p = _mapFileToServer(v[0], v[1], v[2]);
+        labels.push([p.x, p.y, p.z, label, _mapHex(v[3], v[4], v[5])]);
+      }
+    }
+  }
+  return { lines, labels };
+}
+const _mapLocal = new Map();   // short -> { at, sig, data: { version, source, lines, labels } | null }
+// The zone's local map, or null when the player has no map files for it. Re-read when a file's size or mtime changes.
+function _mapLocalFor(short, now) {
+  if (!short || !/^[a-z0-9_]{1,32}$/i.test(short)) return null;
+  const hit = _mapLocal.get(short);
+  if (hit && now - hit.at < MAP_LOCAL_RECHECK_MS) return hit.data;
+  const found = [];
+  let sig = '';
+  for (const dir of _eqSetupDirs()) {
+    for (const s of MAP_LOCAL_SOURCES) {
+      const names = [short + '.txt'];
+      for (let i = 1; i <= s.extras; i++) names.push(short + '_' + i + '.txt');
+      const present = [];
+      for (const n of names) {
+        const file = path.join(dir, s.dir, n);
+        try { const st = fs.statSync(file); if (st.isFile()) { present.push({ file, size: st.size, mtime: st.mtimeMs }); sig += file + ':' + st.size + ':' + st.mtimeMs + ';'; } } catch { /* not there */ }
+      }
+      if (present.length) found.push({ source: s.source, present });
+    }
+  }
+  if (hit && hit.sig === sig) { hit.at = now; return hit.data; }
+  let data = null, labelsOnly = null;
+  for (const c of found) {
+    const texts = [];
+    for (const f of c.present) {
+      if (f.size > MAP_LOCAL_MAX_BYTES) continue;
+      try { texts.push(fs.readFileSync(f.file, 'utf8')); } catch { /* unreadable: skip it */ }
+    }
+    const parsed = _mapParseLocalFiles(texts);
+    if (!parsed.lines.length && !parsed.labels.length) continue;
+    const newest = Math.max(...c.present.map(f => f.mtime));
+    const d = { version: short + '@' + c.source + ':' + Math.floor(newest / 1000) + ':' + c.present.reduce((n, f) => n + f.size, 0), source: c.source, lines: parsed.lines, labels: parsed.labels };
+    if (parsed.lines.length) { data = d; break; }   // the first source that draws walls wins
+    if (!labelsOnly) labelsOnly = d;
+  }
+  data = data || labelsOnly;
+  _mapLocal.delete(short);
+  _mapLocal.set(short, { at: now, sig, data });
+  while (_mapLocal.size > MAP_LOCAL_KEEP_ZONES) _mapLocal.delete(_mapLocal.keys().next().value);
+  return data;
+}
+// ── end Local map files ──
+
 // ── Zone data: disk first, the bot second ───────────────────────────────────────────────────────
 const _mapZones = new Map();   // short -> { short, body, byId, etag, fetchedAt, retryAt, none, inflight }
 function _mapIndexBody(rec) {
@@ -44925,11 +45031,13 @@ function _mapActiveCharacter(now) {
 const _mapPos = (loc, heading) => { const s = _mapServerXY(loc); return s ? { x: s.x, y: s.y, z: s.z, heading: Number.isFinite(Number(heading)) ? Number(heading) : null } : null; };
 // `have` is the "<zone>@<generated_at>" the caller already holds: when it still matches, the (large) map and
 // points come back null and the overlay keeps what it has.
-function _mapStatePayload(have, now) {
+// `haveLocal` is the same idea for the player's own map files (see "Local map files"): local_version says what is
+// on disk now (null = none), and local_map carries the lines and labels only when that differs from `haveLocal`.
+function _mapStatePayload(have, now, haveLocal) {
   const character = _mapActiveCharacter(now);
   const st = character ? _zealState[character] : null;
   const out = { zone: null, long_name: null, zone_id: null, version: null, status: character ? 'ok' : 'no-pipe', local_only: _localOnly(),
-    map: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], now };
+    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], now };
   if (!st) return out;
   out.zone_id = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
   out.pos_at = Number.isFinite(st.updatedAt) ? st.updatedAt : null;   // when the agent last heard from Mimic: the overlay's "pos NNN ms"
@@ -44966,6 +45074,11 @@ function _mapStatePayload(have, now) {
     if (pin) out.target.point_id = pin.point_id;
   }
   if (!zone) { out.status = 'no-zone'; return out; }
+  try {   // before the spawn data: the walls draw even in a zone we hold no points for
+    const lm = _mapLocalFor(zone, now);
+    out.local_version = lm ? lm.version : null;
+    if (lm && haveLocal !== lm.version) out.local_map = { source: lm.source, lines: lm.lines, labels: lm.labels };
+  } catch (e) { console.warn('[map] local map files:', e && e.message); }
   const rec = _mapEnsureZone(zone, out.zone_id, now);
   if (!rec) {
     const r = _mapZoneRec(zone);
@@ -45046,9 +45159,9 @@ function _mapNoteLogDeath(deadName, character, lineMs, now) {
 function _handleMapState(req, res) {
   const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
   if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
-  let have = '';
-  try { have = new URL(req.url, 'http://127.0.0.1').searchParams.get('have') || ''; } catch { void 0; }
-  try { send(200, _mapStatePayload(have, Date.now())); }
+  let have = '', haveLocal = '';
+  try { const q = new URL(req.url, 'http://127.0.0.1').searchParams; have = q.get('have') || ''; haveLocal = q.get('have_local') || ''; } catch { void 0; }
+  try { send(200, _mapStatePayload(have, Date.now(), haveLocal)); }
   catch (e) { console.error('[api/map-state]', e && (e.stack || e.message || e)); send(500, { error: 'map state failed' }); }
 }
 // POST /api/map-mark { zone?, point_id, kind: 'killed'|'empty'|'up'|'clear' } - the overlay's click menu.
