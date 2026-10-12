@@ -71,10 +71,10 @@ describe('every window goes through it', () => {
       .not.toMatch(/webPreferences: \{ preload: path\.join\(__dirname, 'preload\.js'\)/);
   });
 
-  it('names all twenty-three windows, with no duplicates', () => {
+  it('names all twenty-four windows, with no duplicates', () => {
     const names = [...src.matchAll(/webPreferences: _wpPrefs\((?:'([^']+)'|([^,)]+))/g)]
       .map(m => m[1] || m[2].trim());
-    expect(names).toHaveLength(23);   // + Timers canvas (2026-09-29)
+    expect(names).toHaveLength(24);   // + Timers canvas (2026-09-29), + Spawn map (2026-10-12)
     // Panel overlays are named from their runtime key, so that one is an
     // expression rather than a literal.
     const literals = names.filter(n => !n.includes('panelKey'));

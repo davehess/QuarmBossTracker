@@ -51,7 +51,7 @@ describe('the render: every overlay once in the list and once in Add, each with 
   const h = render({});
 
   it('each WP_OVERLAY_ROWS key has exactly one row and one Add card, both hidden until painted', () => {
-    expect(rowKeys).toHaveLength(18);
+    expect(rowKeys).toHaveLength(19);
     for (const k of rowKeys) {
       expect(count(h, 'data-ovrow="' + k + '"'), k).toBe(1);
       expect(count(h, 'data-ovadd="' + k + '"'), k).toBe(1);

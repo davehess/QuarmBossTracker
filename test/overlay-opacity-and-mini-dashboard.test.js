@@ -109,7 +109,7 @@ describe('the HUD ring is not dockable', () => {
     const catalog = stripJs(sliceBlock(mainRaw, 'const _DOCK_CATALOG = [', '\n];'));
     expect(catalog).not.toMatch(/key: 'me'/);
     expect(catalog).toMatch(/key: 'mobinfo'/);                        // the others stay
-    expect(stripJs(dash)).toContain("var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas')");
+    expect(stripJs(dash)).toContain("var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas' || key === 'map')");
   });
   it('a HUD that was docked gets its own window back — as undocking it would have', () => {
     // loadConfig reads through _readConfigRaw (the torn-file fallback, 2026-09-26), so both ride along.

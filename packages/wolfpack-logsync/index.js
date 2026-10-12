@@ -22432,6 +22432,7 @@ var WP_OVERLAY_ROWS = [
   ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
   ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
   ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline, and Boastful Bellow once a bard uses it), your target\\'s name on top of its bar with who it is hitting above that, its level, class, resists and slow state curved inside, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 10% if it enrages (gone once the enrage ends), damage in beside your health and out on the right, hugging the ring: the mob\\'s running total, then older rounds as one number each and the newest rounds hit by hit, procs in purple (older rounds slide into the total; after the fight it stays, dim, until the next), your damage shield the same way with its per-hit button (red DS OFF with the time left while Mark of the Plague Lords or another shield-cancelling debuff is on you), a ✗ on a failed Feign Death, and your class numbers. Pick Box or the HUD ring in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
+  ['map',     'Spawn map [beta]',    'The zone from above, north up: walls, every spawn point as a dot (named and raid targets bold, danger badges for see-invisible, see-hide, summon), you as an arrow, your group, raid and target. Respawn timers run as a window (earliest to latest) coloured red / yellow / green, flashing when a spawn just became possible; a mob you saw die starts its own, or click a dot and mark it Killed, Empty or Up. A death that could be one of several spawn points shows "?" rings and starts no timer until you settle it. Timers list on the right, soonest first. Needs Zeal 1.4.8 for your target\\'s position. Drag and the wheel pan and zoom (switch on the hand button while locked), Follow me is on by default, Fit zone shows it all, a floor picker appears in multi-level zones. Your positions stay on this machine.'],
 ];
 
 // One line per overlay for the Overlays tab's list and Add cards (option C, the
@@ -22456,6 +22457,7 @@ var WP_OVERLAY_BLURB = {
   command:   'Raid board: boss, MT, rampage, enrage, healer mana.',
   popraid:   'Encounter slides, callouts, drops, shared checklist.',
   me:        'Your character: HP, mana, ticks, cooldowns, target.',
+  map:       'Zone map: spawn points, respawn timers, group, target.',
 };
 
 // Overlays-table row key → Mimic's mini key (main.js _MINI_KEYS). Only the
@@ -22526,7 +22528,7 @@ function renderOverlays(s) {
     // Nor the HUD ring (the guild lead, 2026-09-24: "HUD doesn't make sense to
     // dock") — it is a square round the character; main's catalog agrees.
     // The Canvas covers the screen and is a host itself.
-    var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas')
+    var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas' || key === 'map')
       ? ''
       : '<button type="button" class="wp-ov-dock" data-ov="' + key + '">…</button>';
     // ▭ Mini mode (the guild lead, 2026-09-24: "I don't see any of the
@@ -23318,11 +23320,11 @@ function wpRefreshOverlayToggles() {
     var cfgP = window.mimic.getConfig ? window.mimic.getConfig().catch(function(){ return {}; }) : Promise.resolve({});
     Promise.all([window.mimic.getStatus(), cfgP]).then(function(res){
       var st = res[0] || {}, cfg = res[1] || {};
-      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid, me: !!st.showMe, canvas: !!st.showCanvas };
+      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid, me: !!st.showMe, map: !!st.showMap, canvas: !!st.showCanvas };
       // Which cfg flag each row reads, so a HIDDEN row can be told from an OFF
       // one. Hide-all writes every flag false, so without the snapshot the two
       // are indistinguishable here (the guild lead, 2026-08-04).
-      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid', me: 'showMe', canvas: 'showCanvas' };
+      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid', me: 'showMe', map: 'showMap', canvas: 'showCanvas' };
       var hidPrev = (st.hideAllActive && st.hideAllPrev) ? st.hideAllPrev : null;
       var hidCount = 0, nListed = 0, nOff = 0;
       var dockedList = Array.isArray(st.dockedOverlays) ? st.dockedOverlays : [];
@@ -31949,6 +31951,9 @@ function startWebDashboard(port) {
       }
       // Command Center tap on a name in the hail board — marks (or unmarks) it hailed for the whole raid.
       if (req.url === '/api/hail-mark' && req.method === 'POST') return _handleHailMark(req, res);
+      // Spawn map overlay (map.html): positions + zone spawn points + timers in one poll, and its click-to-mark.
+      if (req.url && req.url.split('?')[0] === '/api/map-state' && req.method === 'GET') return _handleMapState(req, res);
+      if (req.url === '/api/map-mark' && req.method === 'POST') return _handleMapMark(req, res);
       // "What you hear" — per-person rules for every callout (the guild lead, 2026-10-12).
       if (req.url && req.url.split('?')[0] === '/api/trigger-rules' && (req.method === 'GET' || req.method === 'POST')) return _handleTriggerRules(req, res);
       // Personal trigger sync — Push / Pull between this household's PCs (2026-10-12).
@@ -32972,6 +32977,8 @@ function startWebDashboard(port) {
           try { _noteMobHealFromState(character, prevState, st); } catch (e) { void e; }
           // The fight's mob seen dead in the target window: split the DPS/Tank Meter's fight there.
           try { _noteMobDeathFromState(character, prevState, st); } catch (e) { void e; }
+          // Spawn map: first sightings off target_loc, and a mob seen dead starts its respawn window.
+          try { _mapNoteState(character, prevState, _zealState[character], Date.now()); } catch (e) { void e; }
           // #205 — group member HP hitting (and holding) zero is death evidence
           // that owes nothing to the log text. Feeds the death registry.
           try { _noteGroupHpFromState(character, st, Date.now()); } catch (e) { void e; }
@@ -44293,6 +44300,518 @@ function fetchMobInfo(name, selfChar, zoneId) {
   } catch { _mobInfoInflight.delete(key); }
 }
 
+// ── Spawn map core (Mimic 2.9, first build: the 2D tracker overlay) ─────────────────────────────
+// The guild lead, 2026-10-12: "2d overlay on beta with spawn timer tracking". Picks: DECISIONS §218 (controls,
+// local first), §220 (layout C, tab-target dots), §221 (guessed spawn points, click-to-mark, danger badges);
+// design in docs/DESIGN-mimic-2.9-spawn-map.md. apps/mimic/map.html draws it; this block is everything it reads.
+//   • Zone data: GET <bot>/api/agent/zone-spawns?zone=<short> (spawn points + the NPCs each can produce + the
+//     wall map), ETag'd, kept on disk in zone-spawns-cache/ beside mobinfo-cache/, local first like the mob
+//     packs: a cached zone costs no request, and in local mode (no token) NOTHING is ever requested.
+//   • Positions are LOCAL ONLY: your own, your group's (Zeal type 6) and your raid's (type 5) off the pipe you
+//     already see, plus your target's (Zeal 1.4.8 target_loc, within 250). Nothing here is uploaded.
+//   • Deaths become respawn timers (map_timers.json, keyed by zone). A death is credited to a spawn point by
+//     NAME and by where the mob was FIRST seen; when that is ambiguous it stays "unassigned" with up to four
+//     candidate points (drawn "?") and starts no timer. A click can settle it ("Killed - this one").
+// ⚠ FRAMES: Zeal's pipe loc is {x,y,z} in /loc order, which is SWAPPED against the server frame the spawn
+// table and the wall map use: server x = pipe y, server y = pipe x (measured 2026-10-04, web/lib/spectator.ts
+// serverXY). Everything this block emits is already in the server frame; the overlay draws it as
+// screen_x = -x, screen_y = -y (north up, spectator.ts toScreen). Convert at the edge, once: _mapServerXY.
+// (Read on use, not at load: test/mob-pack-agent.test.js slices a range of this file that this block sits inside.)
+const _mapPaths = {
+  _c: null, _t: null,
+  get cache() { return this._c || path.join(__dirname, 'zone-spawns-cache'); },
+  set cache(v) { this._c = v; },
+  get timers() { return this._t || path.join(path.dirname(STATS_FILE), 'map_timers.json'); },
+  set timers(v) { this._t = v; },
+};
+const MAP_ASSIGN_MAX_UNITS   = 60;                  // a death is credited to a point only within this of where the mob was first seen
+const MAP_ASSIGN_GAP_UNITS   = 120;                 // ...and the next point is at least twice as far, or beyond this
+const MAP_MAX_CANDIDATES     = 4;                   // "?" rings on an unassigned death
+const MAP_TIMER_KEEP_MS      = 10 * 60 * 1000;      // a timer stays this long past the end of its window
+const MAP_FLASH_MS           = 15 * 1000;           // "just became possible": flash this long after the window opens
+const MAP_SIGHT_KEEP_MS      = 60 * 60 * 1000;
+const MAP_SIGHT_MAX          = 128;
+const MAP_UNASSIGNED_MAX     = 24;
+const MAP_UNASSIGNED_KEEP_MS = 2 * 60 * 60 * 1000;
+const MAP_REVALIDATE_MS      = 24 * 60 * 60 * 1000; // a held zone is re-checked with its ETag once a day
+const MAP_NONE_RETRY_MS      = 6 * 60 * 60 * 1000;  // the bot has no points for the zone (404)
+const MAP_FAIL_RETRY_MS      = 10 * 60 * 1000;
+const MAP_INSTANCE_SENTINEL_S = 1_000_000;          // the 1,700,000 s rows are instance sentinels, not respawns
+const MAP_ZONE_SHORT = Object.fromEntries(('1:qeynos,2:qeynos2,3:qrg,4:qeytoqrg,5:highpass,6:highkeep,8:freportn,9:freportw,10:freporte,11:runnyeye,12:qey2hh1,13:northkarana,14:southkarana,15:eastkarana,16:beholder,17:blackburrow,18:paw,19:rivervale,20:kithicor,21:commons,22:ecommons,23:erudnint,24:erudnext,25:nektulos,26:cshome,27:lavastorm,28:nektropos,29:halas,30:everfrost,31:soldunga,32:soldungb,33:misty,34:nro,35:sro,36:befallen,37:oasis,38:tox,39:hole,40:neriaka,41:neriakb,42:neriakc,43:neriakd,44:najena,45:qcat,46:innothule,47:feerrott,48:cazicthule,49:oggok,50:rathemtn,51:lakerathe,52:grobb,53:aviak,54:gfaydark,55:akanon,56:steamfont,57:lfaydark,58:crushbone,59:mistmoore,60:kaladima,61:felwithea,62:felwitheb,63:unrest,64:kedge,65:guktop,66:gukbottom,67:kaladimb,68:butcher,69:oot,70:cauldron,71:airplane,72:fearplane,73:permafrost,74:kerraridge,75:paineel,76:hateplane,77:arena,78:fieldofbone,79:warslikswood,80:soltemple,81:droga,82:cabwest,83:swampofnohope,84:firiona,85:lakeofillomen,86:dreadlands,87:burningwood,88:kaesora,89:sebilis,90:citymist,91:skyfire,92:frontiermtns,93:overthere,94:emeraldjungle,95:trakanon,96:timorous,97:kurn,98:erudsxing,100:stonebrunt,101:warrens,102:karnor,103:chardok,104:dalnir,105:charasis,106:cabeast,107:nurga,108:veeshan,109:veksar,110:iceclad,111:frozenshadow,112:velketor,113:kael,114:skyshrine,115:thurgadina,116:eastwastes,117:cobaltscar,118:greatdivide,119:wakening,120:westwastes,121:crystal,123:necropolis,124:templeveeshan,125:sirens,126:mischiefplane,127:growthplane,128:sleeper,129:thurgadinb,130:erudsxing2,150:shadowhaven,151:bazaar,152:nexus,153:echo,154:acrylia,155:sharvahl,156:paludal,157:fungusgrove,158:vexthal,159:sseru,160:katta,161:netherbian,162:ssratemple,163:griegsend,164:thedeep,165:shadeweaver,166:hollowshade,167:grimling,168:mseru,169:letalis,170:twilight,171:thegrey,172:tenebrous,173:maiden,174:dawnshroud,175:scarlet,176:umbral,179:akheva,180:arena2,181:jaggedpine,200:codecay,201:pojustice,202:poknowledge,203:potranquility,204:ponightmare,205:podisease,206:poinnovation,207:potorment,208:povalor,209:bothunder,210:postorms,211:hohonora,212:solrotower,213:powar,214:potactics,215:poair,216:powater,217:pofire,218:poeartha,219:potimea,220:hohonorb,221:nightmareb,222:poearthb,223:potimeb')
+  .split(',').map(kv => { const i = kv.indexOf(':'); return [kv.slice(0, i), kv.slice(i + 1)]; }));   // eqemu_zone.zone_id -> short_name, read from the table 2026-10-12
+
+function _mapZoneShort(zoneId) {
+  const n = Number(zoneId);
+  return Number.isFinite(n) && n > 0 ? (MAP_ZONE_SHORT[n] || null) : null;
+}
+// Zeal pipe {x,y,z} -> the server frame. THE swap: see the FRAMES note above.
+function _mapServerXY(loc) {
+  if (!loc || typeof loc !== 'object') return null;
+  const px = Number(loc.x), py = Number(loc.y), pz = Number(loc.z);
+  if (!Number.isFinite(px) || !Number.isFinite(py)) return null;
+  return { x: py, y: px, z: Number.isFinite(pz) ? pz : 0 };
+}
+// One spelling for a mob name from any source: the catalog (a_decaying_skeleton, Vyzh`dra), the log
+// ("A decaying skeleton"), the pipe, a corpse ("a decaying skeleton's corpse"). Case-insensitive, underscores
+// as spaces, a trailing duplicate-number dropped.
+function _mapNormName(n) {
+  return String(n == null ? '' : n).toLowerCase()
+    .replace(/_/g, ' ')
+    .replace(/[`'’]s\s+corpse\d*$/, '')
+    .replace(/[`'’]/g, '')
+    .replace(/^[#!~]+/, '')
+    .replace(/(?<=[a-z])\d+$/, '')
+    .replace(/\s+/g, ' ').trim();
+}
+const _mapDist2 = (a, b) => Math.hypot(Number(a.x) - Number(b.x), Number(a.y) - Number(b.y));
+function _mapPrettyName(n) { return String(n == null ? '' : n).replace(/_/g, ' ').replace(/^[#!~]+/, '').trim(); }
+// The name a point is "about": a named / raid target first, else the commonest.
+function _mapBestName(point) {
+  const npcs = (point && Array.isArray(point.npcs)) ? point.npcs.filter(n => n && n.name) : [];
+  if (!npcs.length) return null;
+  const rank = (n) => (n.raid_target ? 3 : n.named ? 2 : 0) * 1000 + (Number(n.chance) || 0);
+  npcs.sort((a, b) => rank(b) - rank(a));
+  return _mapPrettyName(npcs[0].name);
+}
+
+// Which spawn point did a mob that just died come from? `loc` is where it was FIRST seen (server frame).
+//   assigned   - the nearest point that can produce this name is within 60 units AND clearly the closest
+//                (the next is at least twice as far, or more than 120 away): a timer starts.
+//   unassigned - anything less certain: up to four nearest candidates, drawn "?", NO timer.
+//   none       - no point in the zone can produce this name (a player, a pet, a mob from elsewhere): ignore.
+function _mapAttribute(points, name, loc) {
+  const want = _mapNormName(name);
+  if (!want || !Array.isArray(points)) return { kind: 'none' };
+  const cands = points.filter(p => p && Array.isArray(p.npcs) && p.npcs.some(n => n && _mapNormName(n.name) === want));
+  if (!cands.length) return { kind: 'none' };
+  const here = loc && Number.isFinite(Number(loc.x)) && Number.isFinite(Number(loc.y)) ? loc : null;
+  if (!here) {
+    return cands.length === 1
+      ? { kind: 'assigned', point_id: cands[0].id, dist: null }
+      : { kind: 'unassigned', candidates: [] };
+  }
+  const ranked = cands.map(p => ({ id: p.id, d: _mapDist2(p, here) })).filter(r => Number.isFinite(r.d)).sort((a, b) => a.d - b.d);
+  if (!ranked.length) return { kind: 'unassigned', candidates: [] };
+  const best = ranked[0], next = ranked[1];
+  const clear = !next || (next.d > best.d && (next.d >= 2 * best.d || next.d > MAP_ASSIGN_GAP_UNITS));
+  if (best.d <= MAP_ASSIGN_MAX_UNITS && clear) return { kind: 'assigned', point_id: best.id, dist: best.d };
+  return { kind: 'unassigned', candidates: ranked.slice(0, MAP_MAX_CANDIDATES).map(r => r.id) };
+}
+
+// The respawn WINDOW from a death time: respawn +/- variance, as a range and never a single time.
+// null for a point with no usable respawn (the 1,700,000 s instance sentinel).
+function _mapMakeTimer(point, diedAt, source, name) {
+  const r = Number(point && point.respawn_s), v = Math.max(0, Number(point && point.variance_s) || 0);
+  if (!(r > 0) || r >= MAP_INSTANCE_SENTINEL_S || !Number.isFinite(diedAt)) return null;
+  return {
+    point_id: point.id, name: name || _mapBestName(point), died_at: diedAt,
+    earliest: diedAt + Math.max(0, r - v) * 1000, latest: diedAt + (r + v) * 1000, source,
+  };
+}
+// wait = not yet (red) | flash = it just became possible | window = inside the window (yellow) | up = past it (green)
+function _mapTimerState(t, now) {
+  if (now < t.earliest) return 'wait';
+  if (now - t.earliest < MAP_FLASH_MS) return 'flash';
+  if (now >= t.latest) return 'up';
+  return 'window';
+}
+
+// ── map_timers.json: { version, zones: { <short>: { timers: {<point_id>: timer}, unassigned: [...], sightings: {<spawn_id>: ...} } } }
+let _mapDocCache = null;
+let _mapSaveTimer = null;
+let _mapUidSeq = 0;
+function _mapDoc() {
+  if (_mapDocCache) return _mapDocCache;
+  let d = null;
+  try { d = JSON.parse(fs.readFileSync(_mapPaths.timers, 'utf8')); } catch { d = null; }
+  if (!d || typeof d !== 'object' || !d.zones || typeof d.zones !== 'object') d = { version: 1, zones: {} };
+  _mapDocCache = d;
+  return d;
+}
+function _mapZoneDoc(zone) {
+  const z = _mapDoc().zones;
+  const e = z[zone] || (z[zone] = {});
+  if (!e.timers || typeof e.timers !== 'object') e.timers = {};
+  if (!Array.isArray(e.unassigned)) e.unassigned = [];
+  if (!e.sightings || typeof e.sightings !== 'object') e.sightings = {};
+  return e;
+}
+function _mapSaveNow() {
+  if (_mapSaveTimer) { clearTimeout(_mapSaveTimer); _mapSaveTimer = null; }
+  if (!_mapDocCache) return false;
+  try {
+    fs.mkdirSync(path.dirname(_mapPaths.timers), { recursive: true });
+    fs.writeFileSync(_mapPaths.timers + '.tmp', JSON.stringify(_mapDocCache));
+    fs.renameSync(_mapPaths.timers + '.tmp', _mapPaths.timers);
+    return true;
+  } catch (e) { console.warn('[map] save failed:', e && e.message); return false; }
+}
+function _mapSaveSoon() {
+  if (_mapSaveTimer) return;
+  _mapSaveTimer = setTimeout(() => { _mapSaveTimer = null; _mapSaveNow(); }, 2000);
+  if (_mapSaveTimer.unref) _mapSaveTimer.unref();
+}
+// Drop what has run out: timers 10 minutes past the end of their window, sightings an hour old, an unassigned
+// death once every candidate has certainly respawned (+10 minutes; two hours when the zone data is not loaded).
+function _mapPrune(zdoc, points, now) {
+  let changed = false;
+  for (const [k, t] of Object.entries(zdoc.timers)) {
+    if (!t || !(now <= t.latest + MAP_TIMER_KEEP_MS)) { delete zdoc.timers[k]; changed = true; }
+  }
+  const byId = new Map((points || []).map(p => [String(p.id), p]));
+  const keepU = zdoc.unassigned.filter(u => {
+    if (!u || !Number.isFinite(u.died_at)) return false;
+    let span = MAP_UNASSIGNED_KEEP_MS;
+    if (byId.size && Array.isArray(u.candidates) && u.candidates.length) {
+      span = 0;
+      for (const id of u.candidates) {
+        const p = byId.get(String(id));
+        if (p) span = Math.max(span, (Number(p.respawn_s) + (Number(p.variance_s) || 0)) * 1000);
+      }
+      if (!(span > 0) || span >= MAP_INSTANCE_SENTINEL_S * 1000) span = MAP_UNASSIGNED_KEEP_MS;
+      span += MAP_TIMER_KEEP_MS;
+    }
+    return now - u.died_at <= span;
+  }).slice(-MAP_UNASSIGNED_MAX);
+  if (keepU.length !== zdoc.unassigned.length) { zdoc.unassigned = keepU; changed = true; }
+  const sights = Object.entries(zdoc.sightings).filter(([, s]) => s && now - (s.last_at || s.at || 0) <= MAP_SIGHT_KEEP_MS);
+  if (sights.length > MAP_SIGHT_MAX) sights.sort((a, b) => (b[1].last_at || 0) - (a[1].last_at || 0)).length = MAP_SIGHT_MAX;
+  if (sights.length !== Object.keys(zdoc.sightings).length) { zdoc.sightings = Object.fromEntries(sights); changed = true; }
+  return changed;
+}
+
+// ── Zone data: disk first, the bot second ───────────────────────────────────────────────────────
+const _mapZones = new Map();   // short -> { short, body, byId, etag, fetchedAt, retryAt, none, inflight }
+function _mapIndexBody(rec) {
+  rec.byId = new Map(((rec.body && rec.body.points) || []).map(p => [String(p.id), p]));
+  rec.version = rec.body ? (rec.body.zone || rec.short) + '@' + (rec.body.generated_at || '') : null;
+}
+function _mapZoneRec(short) {
+  let rec = _mapZones.get(short);
+  if (rec) return rec;
+  rec = { short, body: null, byId: new Map(), etag: null, fetchedAt: 0, retryAt: 0, none: false, inflight: false, version: null };
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(_mapPaths.cache, short + '.json'), 'utf8'));
+    if (j && j.body && Array.isArray(j.body.points)) { rec.body = j.body; rec.etag = j.etag || null; rec.fetchedAt = Number(j.fetched_at) || 0; _mapIndexBody(rec); }
+  } catch { /* not cached yet */ }
+  _mapZones.set(short, rec);
+  return rec;
+}
+// May this machine ask the bot at all? Local mode (no token) never does: the disk cache is all it has.
+function _mapFetchAllowed() {
+  if (_localOnly()) return false;
+  const o = _uploadOpts;
+  if (!o || !o.botUrl || !o.token) return false;
+  try { if (typeof _controlStandDown === 'function' && _controlStandDown().down) return false; } catch { /* fail open */ }
+  return true;
+}
+function _mapGetZone(short, zoneId, etag, done) {
+  const opts = _uploadOpts;
+  const url = opts.botUrl.replace(/\/encounter(\?.*)?$/, '/zone-spawns')
+    + '?zone=' + encodeURIComponent(short) + (zoneId != null ? '&zone_id=' + encodeURIComponent(zoneId) : '');
+  const u = new URL(url);
+  const mod = u.protocol === 'https:' ? https : http;
+  const headers = { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}`, 'Accept-Encoding': 'gzip' };
+  if (etag) headers['If-None-Match'] = etag;
+  const req = mod.request({ method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search, headers, timeout: 30000 }, (res) => {
+    const chunks = [];
+    res.on('data', c => chunks.push(c));
+    res.on('end', () => {
+      try {
+        let buf = Buffer.concat(chunks);
+        if (/gzip/i.test(String(res.headers['content-encoding'] || '')) && buf.length) buf = zlib.gunzipSync(buf);
+        done(null, res.statusCode, buf, res.headers.etag || null);
+      } catch (e) { done(e); }
+    });
+  });
+  req.on('error',   (e) => done(e));
+  req.on('timeout', () => { req.destroy(); done(new Error('timeout')); });
+  req.end();
+}
+function _mapFetchZone(rec, zoneId, now) {
+  if (rec.inflight) return;
+  rec.inflight = true;
+  let finished = false;
+  try {
+    _mapGetZone(rec.short, zoneId, rec.body ? rec.etag : null, (err, status, buf, etag) => {
+      if (finished) return;
+      finished = true;
+      rec.inflight = false;
+      const t = Date.now();
+      try {
+        if (err || !(status === 200 || status === 304 || status === 404)) { rec.retryAt = t + MAP_FAIL_RETRY_MS; return; }
+        if (status === 404) { rec.none = true; rec.retryAt = t + MAP_NONE_RETRY_MS; return; }
+        rec.none = false; rec.retryAt = 0;
+        if (status === 304) {
+          rec.fetchedAt = t;
+          if (rec.body) {
+            const file = path.join(_mapPaths.cache, rec.short + '.json');
+            fs.writeFileSync(file + '.tmp', JSON.stringify({ etag: rec.etag, fetched_at: t, body: rec.body }));
+            fs.renameSync(file + '.tmp', file);
+          }
+          return;
+        }
+        const body = JSON.parse(buf.toString('utf8'));
+        if (!body || !Array.isArray(body.points)) throw new Error('no points');
+        rec.body = body; rec.etag = etag; rec.fetchedAt = t; _mapIndexBody(rec);
+        fs.mkdirSync(_mapPaths.cache, { recursive: true });
+        const file = path.join(_mapPaths.cache, rec.short + '.json');
+        fs.writeFileSync(file + '.tmp', JSON.stringify({ etag, fetched_at: t, body }));
+        fs.renameSync(file + '.tmp', file);
+      } catch (e) { rec.retryAt = t + MAP_FAIL_RETRY_MS; console.warn(`[map] zone ${rec.short}:`, e && e.message); }
+    });
+  } catch { rec.inflight = false; }
+}
+// The zone's data if we hold any (disk or fetched); starts a fetch when one is due and allowed.
+function _mapEnsureZone(short, zoneId, now) {
+  const rec = _mapZoneRec(short);
+  const due = !rec.body || (now - rec.fetchedAt) >= MAP_REVALIDATE_MS;
+  if (due && !rec.inflight && now >= rec.retryAt && _mapFetchAllowed()) _mapFetchZone(rec, zoneId, now);
+  return rec.body ? rec : null;
+}
+
+// ── Sightings and deaths ────────────────────────────────────────────────────────────────────────
+// First sighting: a target with a spawn id and a position. The FIRST position is the one that counts - a
+// pulled mob walks to you, and where it stood when you first tabbed to it is nearest its spawn point.
+function _mapNoteSighting(zone, spawnId, name, loc, now) {
+  if (!(spawnId > 0) || !name || !loc) return;
+  const zd = _mapZoneDoc(zone);
+  const key = String(spawnId);
+  const s = zd.sightings[key];
+  const nm = _mapNormName(name);
+  if (s && _mapNormName(s.name) === nm) { s.last_loc = { x: loc.x, y: loc.y, z: loc.z }; s.last_at = now; return; }
+  zd.sightings[key] = { spawn_id: spawnId, name: _mapPrettyName(name), first_loc: { x: loc.x, y: loc.y, z: loc.z }, at: now, last_loc: { x: loc.x, y: loc.y, z: loc.z }, last_at: now };
+  _mapSaveSoon();
+}
+// The same death reaches us twice (the target window and the log line, from every log on the machine).
+const _mapRecentDeaths = [];   // { name, at, spawn_id, src }
+function _mapDeathIsDup(name, spawnId, src, now) {
+  for (let i = _mapRecentDeaths.length - 1; i >= 0; i--) {
+    const e = _mapRecentDeaths[i];
+    if (now - e.at > 120000) { _mapRecentDeaths.splice(i, 1); continue; }
+    if (spawnId != null && e.spawn_id === spawnId && e.name === name) return true;
+    if (e.name !== name) continue;
+    if (spawnId != null && e.spawn_id != null && e.spawn_id !== spawnId) continue;   // two different mobs
+    if (now - e.at <= (e.src === src ? 2000 : 6000)) return true;
+  }
+  return false;
+}
+// A mob died. `at` is epoch ms. `loc` is the best position we have for it (server frame): its first sighting,
+// else where its target window last placed it, else where YOU stood (loc_source says which).
+// Returns { kind: 'assigned'|'unassigned'|'none'|'dup'|'nodata', ... }.
+function _mapNoteDeath(zone, ev, now) {
+  const rec = _mapZones.get(zone);
+  if (!rec || !rec.body) return { kind: 'nodata' };
+  const name = _mapNormName(ev.name);
+  if (!name) return { kind: 'none' };
+  if (_mapDeathIsDup(name, ev.spawn_id == null ? null : ev.spawn_id, ev.src || 'zeal', now)) return { kind: 'dup' };
+  const zd = _mapZoneDoc(zone);
+  let loc = null, locSource = null;
+  const sight = ev.spawn_id != null ? zd.sightings[String(ev.spawn_id)] : null;
+  if (sight && _mapNormName(sight.name) === name) { loc = sight.first_loc; locSource = 'first_seen'; }
+  else if (ev.loc) { loc = ev.loc; locSource = ev.loc_source || 'target'; }
+  if (sight) delete zd.sightings[String(ev.spawn_id)];
+  const att = _mapAttribute(rec.body.points, ev.name, loc);
+  if (att.kind === 'none') return att;
+  _mapRecentDeaths.push({ name, at: now, spawn_id: ev.spawn_id == null ? null : ev.spawn_id, src: ev.src || 'zeal' });
+  const at = Number.isFinite(ev.at) ? ev.at : now;
+  if (att.kind === 'assigned') {
+    const point = rec.byId.get(String(att.point_id));
+    const timer = _mapMakeTimer(point, at, 'seen', _mapPrettyName(ev.name));
+    if (timer) zd.timers[String(att.point_id)] = timer;          // an observed death overrides a mark
+    _mapSaveSoon();
+    return { kind: 'assigned', point_id: att.point_id, timer };
+  }
+  const u = { id: 'u' + (++_mapUidSeq) + '-' + at.toString(36), name: _mapPrettyName(ev.name), died_at: at,
+    candidates: att.candidates, loc_source: locSource, spawn_id: ev.spawn_id == null ? null : ev.spawn_id };
+  zd.unassigned.push(u);
+  if (zd.unassigned.length > MAP_UNASSIGNED_MAX) zd.unassigned.splice(0, zd.unassigned.length - MAP_UNASSIGNED_MAX);
+  _mapSaveSoon();
+  return { kind: 'unassigned', unassigned: u };
+}
+
+// Click-to-mark. kind: killed | empty | up. A mark is a hint, never ground truth: a later observed death
+// overrides it (_mapNoteDeath above writes over the timer).
+function _mapApplyMark(zone, mark, now) {
+  const rec = _mapZones.get(zone);
+  if (!rec || !rec.body) return { ok: false, error: 'no spawn data for this zone' };
+  const kind = String(mark && mark.kind || '');
+  if (kind !== 'killed' && kind !== 'empty' && kind !== 'up') return { ok: false, error: 'kind must be killed, empty or up' };
+  const pid = String(mark && mark.point_id);
+  const point = rec.byId.get(pid);
+  if (!point) return { ok: false, error: 'unknown spawn point' };
+  const zd = _mapZoneDoc(zone);
+  if (kind === 'up') {
+    // It is standing there: no timer, and it is no longer a candidate for any unassigned death.
+    delete zd.timers[pid];
+    // (A death left with no candidate at all because of this click is dropped; one that never had any stays.)
+    zd.unassigned = zd.unassigned.filter(u => {
+      const before = (u.candidates || []).length;
+      u.candidates = (u.candidates || []).filter(c => String(c) !== pid);
+      return !(before > 0 && u.candidates.length === 0);
+    });
+    _mapSaveSoon();
+    return { ok: true, cleared: true };
+  }
+  let diedAt = now, name = _mapBestName(point), settled = false;
+  if (kind === 'killed') {
+    // "Killed - this one" settles the newest unassigned death that listed this point, onto this point.
+    let hit = -1;
+    zd.unassigned.forEach((u, i) => { if ((u.candidates || []).some(c => String(c) === pid) && (hit < 0 || u.died_at >= zd.unassigned[hit].died_at)) hit = i; });
+    if (hit >= 0) { const u = zd.unassigned.splice(hit, 1)[0]; diedAt = u.died_at; name = u.name || name; settled = true; }
+  }
+  const timer = _mapMakeTimer(point, diedAt, 'marked', name);
+  if (!timer) return { ok: false, error: 'this spawn point has no respawn time' };
+  zd.timers[pid] = timer;
+  _mapSaveSoon();
+  return { ok: true, timer, settled };
+}
+
+// ── What the overlay reads ──────────────────────────────────────────────────────────────────────
+// The character whose pipe is live right now (the freshest within a minute): that is the one on screen.
+function _mapActiveCharacter(now) {
+  let best = null, ts = 0;
+  for (const ch of Object.keys(_zealState || {})) {
+    const u = (_zealState[ch] && _zealState[ch].updatedAt) || 0;
+    if (u > ts && now - u < 60000) { ts = u; best = ch; }
+  }
+  return best;
+}
+const _mapPos = (loc, heading) => { const s = _mapServerXY(loc); return s ? { x: s.x, y: s.y, z: s.z, heading: Number.isFinite(Number(heading)) ? Number(heading) : null } : null; };
+// `have` is the "<zone>@<generated_at>" the caller already holds: when it still matches, the (large) map and
+// points come back null and the overlay keeps what it has.
+function _mapStatePayload(have, now) {
+  const character = _mapActiveCharacter(now);
+  const st = character ? _zealState[character] : null;
+  const out = { zone: null, long_name: null, zone_id: null, version: null, status: character ? 'ok' : 'no-pipe', local_only: _localOnly(),
+    map: null, points: null, self: null, group: [], raid: [], target: null, timers: [], unassigned: [], now };
+  if (!st) return out;
+  out.zone_id = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
+  const zone = _mapZoneShort(st.zone);
+  out.zone = zone;
+  out.long_name = _zoneName(st.zone);
+  const self = _mapPos(st.loc, st.heading);
+  if (self) out.self = Object.assign({ name: character }, self);
+  const me = String(character).toLowerCase();
+  const seen = new Set([me]);
+  for (const m of (Array.isArray(st.group_members) ? st.group_members : [])) {
+    const p = m && m.name ? _mapPos(m.loc, m.heading) : null;
+    if (!p || seen.has(String(m.name).toLowerCase())) continue;
+    seen.add(String(m.name).toLowerCase());
+    out.group.push(Object.assign({ name: String(m.name), class: m.class != null ? String(m.class) : null }, p));
+  }
+  const rp = (typeof _lastRaidPipe !== 'undefined' && _lastRaidPipe && now - _lastRaidPipe.at < 20000) ? _lastRaidPipe : null;
+  for (const m of (rp ? rp.members : [])) {
+    if (!m || !m.name || seen.has(String(m.name).toLowerCase())) continue;
+    const p = _mapPos({ x: m.loc_x, y: m.loc_y, z: m.loc_z }, m.heading);
+    if (!p) continue;
+    seen.add(String(m.name).toLowerCase());
+    out.raid.push(Object.assign({ name: String(m.name), class: m.class != null ? String(m.class) : null }, p));
+  }
+  if (st.target_name) {
+    const tp = _mapPos(st.target_loc, null);
+    out.target = { name: String(st.target_name), id: Number.isFinite(st.target_id) ? st.target_id : null,
+      hp_pct: Number.isFinite(st.target_hp_pct) ? st.target_hp_pct : null,
+      x: tp ? tp.x : null, y: tp ? tp.y : null, z: tp ? tp.z : null,
+      dist: tp && self ? Math.round(_mapDist2(tp, self)) : null };
+  }
+  if (!zone) { out.status = 'no-zone'; return out; }
+  const rec = _mapEnsureZone(zone, out.zone_id, now);
+  if (!rec) {
+    const r = _mapZoneRec(zone);
+    out.status = r.none ? 'no-points' : (_mapFetchAllowed() ? 'loading' : 'no-cache');
+    return out;
+  }
+  out.version = rec.version;
+  out.long_name = rec.body.long_name || out.long_name;
+  if (!have || have !== rec.version) { out.map = rec.body.map || null; out.points = rec.body.points; }
+  const zd = _mapZoneDoc(zone);
+  if (_mapPrune(zd, rec.body.points, now)) _mapSaveSoon();
+  out.timers = Object.values(zd.timers).map(t => Object.assign({}, t, { state: _mapTimerState(t, now) })).sort((a, b) => a.earliest - b.earliest);
+  out.unassigned = zd.unassigned.map(u => ({ id: u.id, name: u.name, died_at: u.died_at, candidates: u.candidates || [] }));
+  return out;
+}
+
+// Zeal state hooks. Called with every /api/zeal-state frame (prev = the last one for that character).
+function _mapNoteState(character, prev, next, now) {
+  const zone = _mapZoneShort(next && next.zone);
+  if (!zone) return;
+  _mapEnsureZone(zone, next.zone, now);
+  const tl = _mapServerXY(next.target_loc);
+  const isNpc = next.target_type == null || next.target_type === 1;
+  if (isNpc && tl && next.target_id > 0 && next.target_name && !/'s\s+corpse\d*$/i.test(String(next.target_name))) {
+    _mapNoteSighting(zone, next.target_id, next.target_name, tl, now);
+  }
+  // The mob in your target window died: its name became "<name>'s corpse", or its bar went to 0 under the same name.
+  if (!prev || !prev.target_name || !next.target_name) return;
+  const pn = String(prev.target_name).replace(/^#/, '').trim();
+  const nn = String(next.target_name).replace(/^#/, '').trim();
+  const base = nn.replace(/[`'’]s\s+corpse\d*$/i, '');
+  const becameCorpse = base !== nn && base.toLowerCase() === pn.toLowerCase();
+  const hitZero = pn.toLowerCase() === nn.toLowerCase() && typeof prev.target_hp_pct === 'number' && prev.target_hp_pct > 0 && next.target_hp_pct === 0;
+  if (!becameCorpse && !hitZero) return;
+  if (prev.target_type != null && prev.target_type !== 1) return;   // a player (or a pet corpse) going down is not a spawn
+  const id = next.target_id > 0 ? next.target_id : (prev.target_id > 0 ? prev.target_id : null);
+  const loc = _mapServerXY(next.target_loc) || _mapServerXY(prev.target_loc) || _mapServerXY(next.loc);
+  _mapNoteDeath(zone, { name: base, spawn_id: id, loc, loc_source: _mapServerXY(next.target_loc) || _mapServerXY(prev.target_loc) ? 'target' : 'self', at: now, src: 'zeal' }, now);
+}
+// "<Mob> has been slain by <killer>!" / "You have slain <Mob>!" from a log the agent is tailing right now.
+// Ignored for old lines (a --since backfill replays months of them). The name comes from _deadMobNameFromLine.
+function _mapNoteLogDeath(deadName, character, lineMs, now) {
+  if (!deadName || /^you$/i.test(deadName)) return;
+  if (Number.isFinite(lineMs) && now - lineMs > 60000) return;
+  const cl = String(character || '').toLowerCase();
+  let st = null;
+  for (const ch of Object.keys(_zealState || {})) if (ch.toLowerCase() === cl) { st = _zealState[ch]; break; }
+  if (!st || now - (st.updatedAt || 0) > 60000) return;
+  const zone = _mapZoneShort(st.zone);
+  if (!zone) return;
+  const want = _mapNormName(deadName);
+  // The mob in this character's target window, when it is the one named: its id and position are exact.
+  let id = null, loc = null, src = 'self';
+  if (st.target_name && _mapNormName(st.target_name) === want && st.target_id > 0) {
+    id = st.target_id;
+    loc = _mapServerXY(st.target_loc); if (loc) src = 'target';
+  }
+  if (!loc) {
+    // Else the only mob of that name we have seen and not seen die; else where you stand (approximate).
+    const zd = _mapZoneDoc(zone);
+    const hits = Object.values(zd.sightings).filter(s => s && _mapNormName(s.name) === want);
+    if (hits.length === 1) { id = hits[0].spawn_id; loc = hits[0].first_loc; src = 'first_seen'; }
+    else loc = _mapServerXY(st.loc);
+  }
+  _mapNoteDeath(zone, { name: deadName, spawn_id: id, loc, loc_source: src, at: Number.isFinite(lineMs) ? Math.min(lineMs, now) : now, src: 'log' }, now);
+}
+// ── end Spawn map core ──
+
+// GET /api/map-state[?have=<zone>@<generated_at>] - everything map.html draws, in one call a second.
+function _handleMapState(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let have = '';
+  try { have = new URL(req.url, 'http://127.0.0.1').searchParams.get('have') || ''; } catch { void 0; }
+  try { send(200, _mapStatePayload(have, Date.now())); }
+  catch (e) { console.error('[api/map-state]', e && (e.stack || e.message || e)); send(500, { error: 'map state failed' }); }
+}
+// POST /api/map-mark { zone?, point_id, kind: 'killed'|'empty'|'up' } - the overlay's click menu.
+async function _handleMapMark(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 2048)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { error: 'bad body' }); }
+  const now = Date.now();
+  const ch = _mapActiveCharacter(now);
+  const live = ch ? _mapZoneShort(_zealState[ch].zone) : null;
+  const zone = b && b.zone ? String(b.zone).slice(0, 40) : live;
+  if (!zone) return send(400, { error: 'no zone' });
+  if (live && zone !== live) return send(409, { error: 'that is not the zone you are in' });
+  if (!b || b.point_id == null) return send(400, { error: 'point_id is required' });
+  const r = _mapApplyMark(zone, { point_id: b.point_id, kind: b.kind }, now);
+  send(r.ok ? 200 : 400, r);
+}
+// A timer written in the last two seconds is flushed on the way out.
+process.on('exit', () => { try { if (_mapSaveTimer) _mapSaveNow(); } catch { void 0; } });
+
 // Target Info F/Q/V: the bot's /api/agent/npc-interact by npc id (the guild lead,
 // 2026-09-28). Catalog data, so 6h; an empty answer is retried after 10 minutes rather
 // than pinned (fetchMobInfo's 6h null is the trap this avoids).
@@ -51459,6 +51978,12 @@ async function main() {
         // Ssraeshza dies → 2:10 cycle, "Paladin DA NOW" at 2:00). Both key off the
         // same slain/death line. Local-only, live tail.
         try { _cancelTimersOnMobDeath(line); } catch { /* never let a bad line break the tail */ }
+        // Spawn map: the same slain/died line starts that spawn point's respawn window. Live lines only
+        // (a --since backfill replays old ones; _mapNoteLogDeath drops anything over a minute old).
+        try {
+          const _mapDead = _deadMobNameFromLine(line);
+          if (_mapDead) { const _ts = parseEqTimestamp(line); _mapNoteLogDeath(_mapDead, b.character, _ts ? _ts.getTime() : NaN, Date.now()); }
+        } catch { /* never let a bad line break the tail */ }
         // #205 — "<Name> dies." is the FEIGN emote (never a death; see
         // test/feign-death-not-a-death.test.js). Nothing else in the agent
         // records that a feign happened, and the group-HP death watcher needs
