@@ -4465,6 +4465,12 @@ function renderTriggers(s) {
   h += '<div id="trigEditorPanel"></div>';
   h += '</div>';
 
+  // 🔄 Sync between your PCs (the guild lead, 2026-10-12: "Push and Pull buttons, like UI backups").
+  // Its own wp* placeholder, filled by setupTriggerSync below; the pushes list is fetched only when
+  // Pull is clicked, so nothing here changes between polls. data-local is the only thing baked in
+  // (no linked account: the card says so and makes no request).
+  h += '<div id="wpTrigSync" class="card wide"' + (s.localOnly ? ' data-local="1"' : '') + '></div>';
+
   // Guild triggers — read-only (managed in wolfpack.quest/admin/triggers). Its own wp* placeholder,
   // filled by renderGuildTriggersCard: opening a row repaints just this card, so the Add form's
   // half-typed text and the Replay inputs above are not wiped by it (FB-30).
@@ -4482,6 +4488,9 @@ function renderTriggers(s) {
   }
   if (window._wpTrigRules && window._wpTrigRules.mount) {
     window._wpTrigRules.mount();
+  }
+  if (window._wpTrigSync && window._wpTrigSync.mount) {
+    window._wpTrigSync.mount();
   }
 }
 
@@ -12390,6 +12399,141 @@ function wpTrigApplyForm(base, f) {
   // Group membership follows the guild set, which reloads every couple of minutes.
   setInterval(function(){ if (el && document.body.contains(el) && document.visibilityState === 'visible') refresh(); }, 20000);
   window._wpTrigRules = { mount: mount, refresh: refresh };
+})();
+
+// ── 🔄 Sync between your PCs ─────────────────────────────────────────────────
+// (the guild lead, 2026-10-12: "Push and Pull buttons, like UI backups".) Push sends this PC's personal
+// triggers + the What you hear settings to your account; Pull on another PC lists your pushes and
+// merges one in, or replaces what is here (a backup of both files is made first). The agent does the
+// work (POST /api/trigger-sync/push, GET .../list, POST .../pull); this draws and posts. It fills the
+// #wpTrigSync placeholder the Triggers section emits. Nothing is fetched until a button is clicked, so
+// the card never changes between polls. In local mode (no linked account) it shows one line and
+// makes no request.
+(function setupTriggerSync(){
+  var mounted = false, el = null, lastHtml = '';
+  var busy = false, msg = '', msgBad = false;
+  var panel = null;                 // null = closed · 'loading' · { error } · { pushes: [...] }
+  var pickId = '', pickMode = 'merge';
+  function localMode(){ return !!(el && el.getAttribute('data-local')); }
+  function when(iso){
+    var d = new Date(iso);
+    return isNaN(d.getTime()) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+  function plural(n, w){ return n + ' ' + w + (n === 1 ? '' : 's'); }
+  function panelHtml(){
+    if (!panel) return '';
+    var h = '<div style="border:1px solid var(--border);border-radius:5px;padding:8px;margin-top:8px">';
+    if (panel === 'loading') return h + '<span class="dim" style="font-size:12px">Loading your pushes…</span></div>';
+    if (panel.error) return h + '<span style="color:var(--red);font-size:12px">' + esc(panel.error) + '</span></div>';
+    if (!panel.pushes.length) return h + '<span class="dim" style="font-size:12px">Nothing has been pushed yet. Push from the PC that has the triggers, then Pull here.</span></div>';
+    h += '<div class="dim" style="font-size:11px;margin-bottom:4px">Pick a push (newest first):</div>';
+    for (var i = 0; i < panel.pushes.length; i++) {
+      var p = panel.pushes[i];
+      h += '<label style="display:flex;gap:8px;align-items:baseline;font-size:12px;padding:2px 0;cursor:pointer">'
+        + '<input type="radio" name="wpTsPick" value="' + esc(p.id) + '"' + (p.id === pickId ? ' checked' : '') + '>'
+        + '<span><b>' + esc(p.machine_name || 'a PC') + '</b> <span class="dim">' + esc(when(p.created_at)) + ' &middot; '
+        + plural(Number(p.trigger_count) || 0, 'trigger') + ', ' + plural(Number(p.rule_count) || 0, 'setting')
+        + (p.agent_version ? ' &middot; v' + esc(p.agent_version) : '') + '</span></span></label>';
+    }
+    h += '<div style="margin-top:8px;font-size:12px">'
+      + '<label style="display:block;cursor:pointer"><input type="radio" name="wpTsMode" value="merge"' + (pickMode === 'merge' ? ' checked' : '') + '> <b>Merge</b> '
+      + '<span class="dim">add and update, keep what is only on this PC</span></label>'
+      + '<label style="display:block;cursor:pointer"><input type="radio" name="wpTsMode" value="replace"' + (pickMode === 'replace' ? ' checked' : '') + '> <b>Replace</b> '
+      + '<span class="dim">this PC\'s triggers and settings become exactly that push</span></label></div>'
+      + '<div style="margin-top:8px"><button type="button" class="wp-btn pri" data-ts="go"' + (busy ? ' disabled' : '') + '>Pull selected</button> '
+      + '<button type="button" class="wp-btn ghost" data-ts="close">Cancel</button></div>';
+    return h + '</div>';
+  }
+  function render(){
+    var h = '<h2>🔄 Sync between your PCs <span class="dim" style="font-size:11px;font-weight:normal">(personal triggers and What you hear)</span></h2>';
+    if (localMode()) return h + '<div class="dim" style="font-size:12px">Sync needs a linked Wolf Pack account.</div>';
+    h += '<div class="dim" style="font-size:11px;margin-bottom:6px">Push saves this PC\'s personal triggers and your What you hear settings to your account. On another PC, Pull brings them in. Guild triggers are not part of it. A pull backs up both files here first, and triggers that post to Discord arrive switched off.</div>';
+    h += '<button type="button" class="wp-btn pri" data-ts="push"' + (busy ? ' disabled' : '') + '>⬆ Push to my account</button> '
+      + '<button type="button" class="wp-btn" data-ts="pull"' + (busy ? ' disabled' : '') + '>⬇ Pull…</button>';
+    if (msg) h += ' <span style="font-size:12px;color:' + (msgBad ? 'var(--red)' : 'var(--text)') + '">' + esc(msg) + '</span>';
+    return h + panelHtml();
+  }
+  function paint(){
+    if (!el) return;
+    var h = render();
+    if (h !== lastHtml) { lastHtml = h; el.innerHTML = h; }
+  }
+  function say(text, bad){ msg = text; msgBad = !!bad; paint(); }
+  async function post(path, body){
+    var r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+    return r.json();
+  }
+  function why(j){ return (j && j.error) ? j.error + (j.status ? ' (' + j.status + ')' : '') : 'something went wrong'; }
+  async function doPush(){
+    busy = true; panel = null; say('Pushing…', false);
+    try {
+      var j = await post('/api/trigger-sync/push');
+      busy = false;
+      if (j && j.ok) say('Pushed ' + plural(Number(j.trigger_count) || 0, 'trigger') + ' and ' + plural(Number(j.rule_count) || 0, 'setting') + ' at ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + '.', false);
+      else say('Push failed: ' + why(j), true);
+    } catch (e) { busy = false; say('Push failed: ' + (e && e.message || e), true); }
+  }
+  async function openPull(){
+    if (panel) { panel = null; paint(); return; }
+    panel = 'loading'; msg = ''; paint();
+    try {
+      var r = await fetch('/api/trigger-sync/list');
+      var j = await r.json();
+      if (j && j.ok) { panel = { pushes: j.pushes || [] }; pickId = panel.pushes.length ? panel.pushes[0].id : ''; }
+      else panel = { error: 'Could not list your pushes: ' + why(j) };
+    } catch (e) { panel = { error: 'Could not list your pushes: ' + (e && e.message || e) }; }
+    paint();
+  }
+  async function doPull(){
+    var p = null;
+    for (var i = 0; panel && panel.pushes && i < panel.pushes.length; i++) if (panel.pushes[i].id === pickId) p = panel.pushes[i];
+    if (!p) { say('Pick a push first.', true); return; }
+    var q = pickMode === 'replace'
+      ? 'REPLACE this PC\'s personal triggers and What you hear settings with the push from ' + (p.machine_name || 'that PC') + '?\n\nTriggers only on this PC will be removed. Both files are backed up first.'
+      : 'Merge the push from ' + (p.machine_name || 'that PC') + ' (' + plural(Number(p.trigger_count) || 0, 'trigger') + ') into this PC?\n\nMatching triggers are overwritten with the pulled version; triggers only here are kept. Both files are backed up first.';
+    if (!confirm(q)) return;
+    busy = true; panel = null; say('Pulling…', false);
+    try {
+      var j = await post('/api/trigger-sync/pull', { id: p.id, mode: pickMode });
+      busy = false;
+      if (j && j.ok) {
+        var t = (j.mode === 'replace' ? 'Replaced: ' : 'Merged: ') + j.added + ' added, ' + j.updated + ' updated, '
+          + (j.mode === 'replace' ? j.removed + ' removed' : j.kept + ' kept here only') + '; '
+          + plural(j.rules_changed || 0, 'setting') + ' changed.';
+        if (j.discord_off) t += ' ' + plural(j.discord_off, 'trigger') + ' that post to Discord arrived switched off.';
+        if (j.skipped) t += ' ' + plural(j.skipped, 'trigger') + ' could not be loaded.';
+        say(t + ' Your old files were backed up.', false);
+        if (window._wpTrigEditor && window._wpTrigEditor.refreshList) window._wpTrigEditor.refreshList();
+        if (window._wpSuggestedTriggers && window._wpSuggestedTriggers.refresh) window._wpSuggestedTriggers.refresh();
+        if (window._wpTrigRules && window._wpTrigRules.refresh) window._wpTrigRules.refresh();
+      } else say('Pull failed: ' + why(j), true);
+    } catch (e) { busy = false; say('Pull failed: ' + (e && e.message || e), true); }
+  }
+  function onClick(e){
+    var b = e.target && e.target.closest ? e.target.closest('button[data-ts]') : null;
+    if (!b || busy) return;
+    var a = b.getAttribute('data-ts');
+    if (a === 'push') doPush();
+    else if (a === 'pull') openPull();
+    else if (a === 'go') doPull();
+    else if (a === 'close') { panel = null; paint(); }
+  }
+  function onChange(e){
+    var t = e.target;
+    if (!t || t.tagName !== 'INPUT') return;
+    if (t.name === 'wpTsPick') pickId = t.value;
+    else if (t.name === 'wpTsMode') pickMode = t.value === 'replace' ? 'replace' : 'merge';
+  }
+  function mount(){
+    var n = document.getElementById('wpTrigSync');
+    if (!n) { mounted = false; return; }
+    if (mounted && n === el) return;
+    el = n; mounted = true; lastHtml = '';   // a section repaint made a fresh empty node: always refill
+    el.addEventListener('click', onClick);
+    el.addEventListener('change', onChange);
+    paint();
+  }
+  window._wpTrigSync = { mount: mount };
 })();
 
 // ── 💥 My Crits panel ───────────────────────────────────────────────────────
