@@ -5950,3 +5950,13 @@ so every link fell through to the "stripped" fallback. Fixed in the agent's `tra
 Abashi's Rod → 31242). The web has no decoder: it shows the stored link. **Open:** the 57 bad links already stored are
 fixable, staged in `docs/RUNBOOK-pqdi-chat-links.md`, unapplied (the guild lead's yes); the stable fleet keeps writing
 wrong links until the agent reaches stable.
+
+### 🧾 2026-10-12 — Spawn map overlay, first build: 2D tracker with respawn timers (agent 3.7.130 · Mimic beta `79bafcf1` + bot 3.1.246 `dd8a9cb4`, DECISIONS §216 / §220 / §239)
+The guild lead: *"2d overlay on beta with spawn timer tracking"*. `apps/mimic/map.html` (key `map`, `cfg.showMap`, default off, [beta])
+is layout C (the tracker): walls and spawn dots on the left, the active respawn windows on the right. The agent reads the zone's
+spawn points from `GET /api/agent/zone-spawns?zone=<short>` (ETag, kept in `zone-spawns-cache/`, never requested in local mode),
+your / group / raid / target positions off the Zeal pipe, and keeps `map_timers.json`. A death seen by the target window or the log
+is credited to a spawn point by name and first-seen position (within 60 units and twice as close as the next, else a "?" with up to
+four candidates and no timer); a click marks Killed / Empty / Up. The bot route is live (bot 3.1.246; never serves the Brewall layer). **Open:** `target_loc` needs Zeal 1.4.8 (fleet reports 1.4.7), so until then sightings are empty and
+only marks and log-line deaths start timers; the floor picker, badges and `?` rings are unchecked against a real zone; Window/HUD mode,
+3D, painted art, routes, line of sight and group upload are not built. Test: `test/spawn-map.test.js`.

@@ -9383,3 +9383,29 @@ Harmony, Hide/Sneak for non-rogues).
   `791fe4e0`.
 - **Not done, needs a yes:** the 134 stat-card guild triggers are read aloud today because they have no voice
   line. Making them display-only is a guild-wide data change, offered to the guild lead.
+
+### 239. Mimic 2.9 spawn map, first cut: a 2D Map overlay with respawn windows (2026-10-12)
+
+- **The ask** (the guild lead): *"2d overlay on beta with spawn timer tracking"*. The first piece of the 2.9
+  line (§216, §220), layout C (tracker), before any 3D.
+- **Shipped:**
+  - **Bot 3.1.246 (main `dd8a9cb4`):** `GET /api/agent/zone-spawns?zone=<short>` serves the zone's placed
+    spawn points (spawn2 + spawnentry + npc_types: coords, respawn, variance, the NPCs each can spawn with
+    chance, level, named / raid flags and ability badges) plus the EQEmu wall layer. ETag / 304, 6 h cache.
+    **The Brewall layer is never selected** (the map read is exactly `bands,segs,bounds`; a test fails if that
+    changes). Brewall stays on the website only.
+  - **Agent 3.7.130 + Mimic (beta `79bafcf1`):** a "Map" overlay, off by default, all six parity items.
+    Walls, spawn dots, your position, Follow / Fit / pan / zoom / floors. Zone data is cached on disk; local
+    mode never asks the bot.
+- **How a kill lands on a spawn point** (the rule a later session must not loosen without asking):
+  - The death comes from the Zeal target turning to a corpse or 0 HP, or the slain log line (lines older than a
+    minute are ignored).
+  - The point is picked from where that spawn id was FIRST seen, not where it died: the nearest point that can
+    spawn that name, if it is within 60 units and the next one is at least twice as far (or past 120).
+  - Anything less certain is drawn as "?" on up to four candidates and starts **no timer**. "Killed — this one"
+    settles it. A guessed timer that is wrong is worse than none.
+  - The timer is a window, never a time: respawn ± variance. Green waiting, yellow can be up, red/flash overdue.
+- **Known gaps:** sightings need Zeal 1.4.8's `target_loc` (the fleet mostly reports 1.4.7), so older Zeal
+  gets log-line deaths and manual marks only. Not yet run in a real Electron window; heading direction, floor
+  picker and dot density are unchecked. Ability badges: a few get a glyph on the dot (see-invis, see-hide,
+  summon, pacify-immune, rampage, enrage, flurry, reverse slow); the rest are spelled out in the hover card.
