@@ -9465,3 +9465,22 @@ Harmony, Hide/Sneak for non-rogues).
   the weekly sync. Recommended A now plus B's precompute. Waiting on the guild lead.
 - **Also from today's dump inventory:** `eqemu_spawn2` holds 43,655 rows against 48,739 in the dump; spawn
   conditions, spell range/class columns and that gap are the recommended next mirror additions (waiting on a pick).
+
+### 242. Map overlay walls: the player's own map files (A), room and boss names (2026-10-12)
+
+- **Pick** (the guild lead): *"A for outdoor walls sounds fine, please display names of the rooms and named bosses in
+  the map"*. Then supplied a "Good's Maps" pack (566 zones, Zeal-compatible `L`/`P` files, dated 2023-11, **no licence
+  file**).
+- **Shipped:** agent 3.7.135 (beta `2cfbf9fd`). The agent reads `<EQ>/map_files/<zone>.txt` + `_1`…`_10` (Zeal's
+  path) then `<EQ>/maps/<zone>.txt` + `_1`…`_3`, from every EQ folder Mimic knows (`_eqSetupDirs`), and the Map draws
+  those walls and labels; zones without a file fall back to our EQEmu slices. Frame **server = (−file_x, −file_y,
+  z)**, no swap — derived from `web/lib/zoneMap/brewall.ts` and checked against the real pack (a Plane of Tranquility
+  merchant label vs its `eqemu_spawn2` row, within 2 units). Named / raid-target spawn points are labelled at any zoom;
+  greedy collision avoidance, bosses first; a Labels toggle; "Walls: Auto / Ours only" in the setup bar.
+- **Rule kept:** map-file content never leaves the player's machine — not uploaded, not synced, not in the repo
+  (synthetic test fixtures only); `test/map-local-files.test.js` pins it. We do not host or redistribute the pack;
+  sharing it with members by hand is the guild lead's call.
+- **Also shipped today on the Map (beta, Mimic-only):** the top-right **Timers** button slides the timers list in and
+  out (`8f44b741`), with **Widen window** (default — the window grows by the list's 216 px, the map keeps its size) or
+  **Share space** (`b076d8a2`); a "Spawn height ±N" filter in the toolbar (game height units; ±25 ≈ your floor).
+- **Offered, not built:** a Mimic button that installs a map-pack zip the player picks into `map_files`.
