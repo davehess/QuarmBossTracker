@@ -9428,3 +9428,40 @@ Harmony, Hide/Sneak for non-rogues).
 - **Fix:** bot 3.1.247 (main `6654e1cd`, `_normMobName` / `_mobCaseKey`) and agent 3.7.132 (beta `18f247df`:
   the same two keys plus the "your target died" check) strip backtick, apostrophe and curly apostrophe, and
   a number after "corpse". Tests: `test/corpse-name-key-bot.test.js`, `test/corpse-name-key-agent.test.js`.
+
+### 241. Map overlay round two: the name, tab-target pins, guild-shared timers, walker routes, low-lag positions (2026-10-12)
+
+- **Name** (the guild lead): *"just call it Map overlay, not spawn map"*. User-facing text says **Map**; the code key stays
+  `map` and the agent block keeps its "Spawn map core" anchor.
+- **Pins** (*"need the tab targetting to set the specific mob in a synced way on the map once it's certain"*):
+  targeting a live NPC pins its spawn id to a point ONLY when `_mapAttribute` is certain (≤60 units, the next point
+  ≥2× or >120). A pin is sticky (a pulled mob stays pinned), name-guarded (the server reuses spawn ids), spent on
+  death. Agent 3.7.133 (beta `20cb464d`).
+- **Shared timers — guild-wide per zone** (my default, offered to the guild lead to change): bot 3.1.248 (main
+  `1f3f5e67`), table `map_spawn_events` (service role only, 24 h retention, pruned on push), `POST/GET
+  /api/agent/map-sync`. Only certain events are shared (pinned sightings, assigned deaths, manual marks); a "?" never
+  leaves the machine; local mode never syncs. **Known ceiling:** two guild raids in two instances of one zone see each
+  other's events.
+- **Pather routes** (*"did we find their path data?"*): bot 3.1.249 (main `1ffcdf75`) mirrors the Quarm dump's
+  `grid` / `grid_entries` as ONE jsonb row per zone in `eqemu_zone_grids` (410 rows, 8 MB — a plain 711k-row table
+  would have cost far more). The Al'Kabor fallback is barred for routes. First import run by hand 2026-10-12.
+  Agent 3.7.134 (beta `31777156`) draws routes and measures a walker's distance to its route, so targeting it
+  mid-route pins it.
+- **Lag** (*"are we able to pull directly from EQ rather than waiting for the pipe?"*): no — we do not read the game
+  client's memory; Zeal is the sanctioned surface and already streams at 10 Hz (PipeDelay 100). The lag was our own
+  hops. Agent 3.7.134: Mimic pushes positions straight to the Map window (≤20/s, only while it is visible), a short
+  smoothing window instead of a glide one interval behind, and beta knobs (Position Direct/Agent, Smoothing
+  Off/Light/Smooth, a "pos N ms" readout) in the setup bar.
+- **Fit + levels** (*"Fit Zone … should also have fit group or fit raid … a how far to include levels, same with
+  spawns"*): one button cycles Fit zone → group → raid; "Levels ±N" (default ±100) replaces the floor list for walls
+  AND spawn dots.
+- **Zeal `/pipedelay` always printed 0** — a print bug (the setting object passed to `%i`), the value WAS applied.
+  Upstream 1.4.8 has it too. Fork branch `pipedelay-print` (`53befe7`), merged into `test-all` (`d42dee6`); a
+  one-line upstream PR candidate.
+- **Open — outdoor walls:** Plane of Tranquility drew no walls. Our wall layer is horizontal slices of the collision
+  mesh, and an open hilly zone gets one slice that catches only cliff edges; Justice, Valor, Torment and Sol Ro Tower
+  have no rows at all until the website first renders them. Offered: **A** read the player's own map files locally
+  (what Zeal draws, nothing published) with our slices as fallback; **B** better slicing + precompute every zone in
+  the weekly sync. Recommended A now plus B's precompute. Waiting on the guild lead.
+- **Also from today's dump inventory:** `eqemu_spawn2` holds 43,655 rows against 48,739 in the dump; spawn
+  conditions, spell range/class columns and that gap are the recommended next mirror additions (waiting on a pick).
