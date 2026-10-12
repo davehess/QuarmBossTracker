@@ -2386,6 +2386,12 @@ function startZealCapture() {
     });
     setInterval(_flushZealToAgent, 2000);
     setInterval(_flushZealStateToAgent, 300);   // gauge-condition snapshots
+    // Raid positions (pipe type 5) ride the 2s batch above, so the spawn map's raid dots would step every 2s
+    // while self and group move at 300ms (the guild lead, 2026-10-12: "local locations should update in real
+    // time"). A waiting type-5 sample is flushed on the same 300ms beat; every other type keeps the 2s cadence
+    // (they ride along only when a raid sample forces a flush). Each flush clears sampledTypes, so it IS the
+    // "a raid sample is waiting" flag. The agent's roster UPLOAD stays gated by its composition hash + heartbeat.
+    setInterval(() => { if (_zealPending.sampledTypes.has('5')) _flushZealToAgent(); }, 300);
     // Idle sweep — covers sitting at character select: the pipe stays open
     // (same pid) but the camped character stops streaming. After 2 minutes
     // of silence, retire it so overlays clear instead of showing the last
