@@ -43434,7 +43434,7 @@ function _noteMobDeathFromState(character, prev, next) {
   if (!character || !prev || !next || !prev.target_name || !next.target_name) return;
   const pn = String(prev.target_name).replace(/^#/, '').trim();
   const nn = String(next.target_name).replace(/^#/, '').trim();
-  const base = nn.replace(/'s\s+corpse\d*$/i, '');
+  const base = nn.replace(/[`'’]s\s+corpse\d*$/i, '');
   const becameCorpse = base !== nn && base.toLowerCase() === pn.toLowerCase();
   const hitZero = pn.toLowerCase() === nn.toLowerCase()
     && typeof prev.target_hp_pct === 'number' && prev.target_hp_pct > 0 && next.target_hp_pct === 0;
@@ -44046,9 +44046,12 @@ function _normMobNameAgent(n) {
   // Strip the "'s corpse" suffix so the Mob Info cache key matches the live
   // NPC row for a freshly-killed mob you're looting from. Without this,
   // Vyzh`dra's corpse normalizes to vyzh_dra_the_exiled_s_corpse and the
-  // bot's catalog lookup never hits the actual npc_types row.
+  // bot's catalog lookup never hits the actual npc_types row. The client also
+  // writes it with a backtick ("Laef Windfall`s corpse") and sometimes a number
+  // after "corpse"; a straight-apostrophe-only strip showed an empty Loot tab
+  // on those (the guild lead, 2026-10-12).
   return String(n || '').trim().toLowerCase()
-    .replace(/'s\s+corpse$/, '')
+    .replace(/[`'’]s\s+corpse\d*$/, '')
     .replace(/[\s`'’]+/g, '_').replace(/^#/, '');
 }
 // The bot's _mobCaseKey, mirrored: case kept after the first letter, which is
@@ -44057,7 +44060,7 @@ function _normMobNameAgent(n) {
 // Warrior, `A_Shissar_Acolyte` a Wizard (the guild lead, 2026-09-23).
 function _mobCaseKey(n) {
   const s = String(n || '').trim()
-    .replace(/'s\s+corpse$/i, '')
+    .replace(/[`'’]s\s+corpse\d*$/i, '')
     .replace(/[\s`'’]+/g, '_').replace(/^#/, '');
   return s.charAt(0).toLowerCase() + s.slice(1);
 }
