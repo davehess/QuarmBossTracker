@@ -2042,6 +2042,17 @@ Dashboard → Triggers tab (`dashboard.html`; never the `WEB_HTML` literal).
 - **Guild list** is its own card, `#wpGuildTriggers` (`renderGuildTriggersCard`, after `renderTriggers` in
   `_sections`), so opening a row repaints that card and not the Add form. Read-only; the footer links
   `wolfpack.quest/admin/triggers?edit=<id>`. **Copy to personal** now carries the guild warning and repeat.
+- **What you hear (agent 3.7.128, 2026-10-12).** Per-person speak / overlay-only / off for every callout. Rules:
+  `trigger_rules.json` beside `personal_triggers.json`, `GET/POST /api/trigger-rules` (the write is `_localOriginOk`-gated).
+  Engine in `index.js` just above `_pushOverlay` (`_resolveRule`, `_computeRuleGroups`, `_applyTriggerRule`,
+  `BUILTIN_CALLOUTS`, `RULE_ZONE_NAMES`). Groups: built-ins, stat cards, one per zone tag, class, other guild, personal.
+  Built-in keys: `enrage_soon charm_break charm_aging charm_breaking recharm ch_go di_down reverse_slow slow_landed
+  slow_dropped slow_fading new_rampage taking_damage timer_callout loot_post blind`. A built-in fire site passes
+  `rule_key:` to `_pushOverlay`; a guild/personal fire gets it from `_fireTriggerActions`. Surfaces beyond the
+  checkpoint: timer warnings (`rule_mode` on `_activeTimersSnapshot` rows, read in `paintTimers`), blind events
+  (`mute`), `charm.html` (`builtinRuleModes` on `/api/state`, looked up by phrase in `speak()`). UI: `#wpTrigRules`
+  (`setupTriggerRules` in `dashboard.html`), `guildRuleModes` badge, `#muteBtn` / `offerMute` in `triggers.html`.
+  Not covered: `chchain.html`'s voice. Test `test/trigger-rules.test.js`.
 - **Warning (FB-26).** `warning_seconds` + `warning_text` (+ `warning_tts:false` for flash-only) on the personal row;
   `_timerWarnings` (agent) turns them into the overlay's `warnings` list, the same code a guild row goes through.
   `warning_*` and `timer_loop*` are in `PERSONAL_CARRY_FIELDS`, or the whole-list save strips them.
