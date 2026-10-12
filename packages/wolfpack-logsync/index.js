@@ -22301,6 +22301,12 @@ function renderTriggers(s) {
   h += '<div id="trigEditorPanel"></div>';
   h += '</div>';
 
+  // 🔄 Sync between your PCs (the guild lead, 2026-10-12: "Push and Pull buttons, like UI backups").
+  // Its own wp* placeholder, filled by setupTriggerSync below; the pushes list is fetched only when
+  // Pull is clicked, so nothing here changes between polls. data-local is the only thing baked in
+  // (no linked account: the card says so and makes no request).
+  h += '<div id="wpTrigSync" class="card wide"' + (s.localOnly ? ' data-local="1"' : '') + '></div>';
+
   // Guild triggers — read-only (managed in wolfpack.quest/admin/triggers). Its own wp* placeholder,
   // filled by renderGuildTriggersCard: opening a row repaints just this card, so the Add form's
   // half-typed text and the Replay inputs above are not wiped by it (FB-30).
@@ -22318,6 +22324,9 @@ function renderTriggers(s) {
   }
   if (window._wpTrigRules && window._wpTrigRules.mount) {
     window._wpTrigRules.mount();
+  }
+  if (window._wpTrigSync && window._wpTrigSync.mount) {
+    window._wpTrigSync.mount();
   }
 }
 
@@ -30228,6 +30237,141 @@ function wpTrigApplyForm(base, f) {
   window._wpTrigRules = { mount: mount, refresh: refresh };
 })();
 
+// ── 🔄 Sync between your PCs ─────────────────────────────────────────────────
+// (the guild lead, 2026-10-12: "Push and Pull buttons, like UI backups".) Push sends this PC's personal
+// triggers + the What you hear settings to your account; Pull on another PC lists your pushes and
+// merges one in, or replaces what is here (a backup of both files is made first). The agent does the
+// work (POST /api/trigger-sync/push, GET .../list, POST .../pull); this draws and posts. It fills the
+// #wpTrigSync placeholder the Triggers section emits. Nothing is fetched until a button is clicked, so
+// the card never changes between polls. In local mode (no linked account) it shows one line and
+// makes no request.
+(function setupTriggerSync(){
+  var mounted = false, el = null, lastHtml = '';
+  var busy = false, msg = '', msgBad = false;
+  var panel = null;                 // null = closed · 'loading' · { error } · { pushes: [...] }
+  var pickId = '', pickMode = 'merge';
+  function localMode(){ return !!(el && el.getAttribute('data-local')); }
+  function when(iso){
+    var d = new Date(iso);
+    return isNaN(d.getTime()) ? '' : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+  function plural(n, w){ return n + ' ' + w + (n === 1 ? '' : 's'); }
+  function panelHtml(){
+    if (!panel) return '';
+    var h = '<div style="border:1px solid var(--border);border-radius:5px;padding:8px;margin-top:8px">';
+    if (panel === 'loading') return h + '<span class="dim" style="font-size:12px">Loading your pushes…</span></div>';
+    if (panel.error) return h + '<span style="color:var(--red);font-size:12px">' + esc(panel.error) + '</span></div>';
+    if (!panel.pushes.length) return h + '<span class="dim" style="font-size:12px">Nothing has been pushed yet. Push from the PC that has the triggers, then Pull here.</span></div>';
+    h += '<div class="dim" style="font-size:11px;margin-bottom:4px">Pick a push (newest first):</div>';
+    for (var i = 0; i < panel.pushes.length; i++) {
+      var p = panel.pushes[i];
+      h += '<label style="display:flex;gap:8px;align-items:baseline;font-size:12px;padding:2px 0;cursor:pointer">'
+        + '<input type="radio" name="wpTsPick" value="' + esc(p.id) + '"' + (p.id === pickId ? ' checked' : '') + '>'
+        + '<span><b>' + esc(p.machine_name || 'a PC') + '</b> <span class="dim">' + esc(when(p.created_at)) + ' &middot; '
+        + plural(Number(p.trigger_count) || 0, 'trigger') + ', ' + plural(Number(p.rule_count) || 0, 'setting')
+        + (p.agent_version ? ' &middot; v' + esc(p.agent_version) : '') + '</span></span></label>';
+    }
+    h += '<div style="margin-top:8px;font-size:12px">'
+      + '<label style="display:block;cursor:pointer"><input type="radio" name="wpTsMode" value="merge"' + (pickMode === 'merge' ? ' checked' : '') + '> <b>Merge</b> '
+      + '<span class="dim">add and update, keep what is only on this PC</span></label>'
+      + '<label style="display:block;cursor:pointer"><input type="radio" name="wpTsMode" value="replace"' + (pickMode === 'replace' ? ' checked' : '') + '> <b>Replace</b> '
+      + '<span class="dim">this PC\\'s triggers and settings become exactly that push</span></label></div>'
+      + '<div style="margin-top:8px"><button type="button" class="wp-btn pri" data-ts="go"' + (busy ? ' disabled' : '') + '>Pull selected</button> '
+      + '<button type="button" class="wp-btn ghost" data-ts="close">Cancel</button></div>';
+    return h + '</div>';
+  }
+  function render(){
+    var h = '<h2>🔄 Sync between your PCs <span class="dim" style="font-size:11px;font-weight:normal">(personal triggers and What you hear)</span></h2>';
+    if (localMode()) return h + '<div class="dim" style="font-size:12px">Sync needs a linked Wolf Pack account.</div>';
+    h += '<div class="dim" style="font-size:11px;margin-bottom:6px">Push saves this PC\\'s personal triggers and your What you hear settings to your account. On another PC, Pull brings them in. Guild triggers are not part of it. A pull backs up both files here first, and triggers that post to Discord arrive switched off.</div>';
+    h += '<button type="button" class="wp-btn pri" data-ts="push"' + (busy ? ' disabled' : '') + '>⬆ Push to my account</button> '
+      + '<button type="button" class="wp-btn" data-ts="pull"' + (busy ? ' disabled' : '') + '>⬇ Pull…</button>';
+    if (msg) h += ' <span style="font-size:12px;color:' + (msgBad ? 'var(--red)' : 'var(--text)') + '">' + esc(msg) + '</span>';
+    return h + panelHtml();
+  }
+  function paint(){
+    if (!el) return;
+    var h = render();
+    if (h !== lastHtml) { lastHtml = h; el.innerHTML = h; }
+  }
+  function say(text, bad){ msg = text; msgBad = !!bad; paint(); }
+  async function post(path, body){
+    var r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+    return r.json();
+  }
+  function why(j){ return (j && j.error) ? j.error + (j.status ? ' (' + j.status + ')' : '') : 'something went wrong'; }
+  async function doPush(){
+    busy = true; panel = null; say('Pushing…', false);
+    try {
+      var j = await post('/api/trigger-sync/push');
+      busy = false;
+      if (j && j.ok) say('Pushed ' + plural(Number(j.trigger_count) || 0, 'trigger') + ' and ' + plural(Number(j.rule_count) || 0, 'setting') + ' at ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + '.', false);
+      else say('Push failed: ' + why(j), true);
+    } catch (e) { busy = false; say('Push failed: ' + (e && e.message || e), true); }
+  }
+  async function openPull(){
+    if (panel) { panel = null; paint(); return; }
+    panel = 'loading'; msg = ''; paint();
+    try {
+      var r = await fetch('/api/trigger-sync/list');
+      var j = await r.json();
+      if (j && j.ok) { panel = { pushes: j.pushes || [] }; pickId = panel.pushes.length ? panel.pushes[0].id : ''; }
+      else panel = { error: 'Could not list your pushes: ' + why(j) };
+    } catch (e) { panel = { error: 'Could not list your pushes: ' + (e && e.message || e) }; }
+    paint();
+  }
+  async function doPull(){
+    var p = null;
+    for (var i = 0; panel && panel.pushes && i < panel.pushes.length; i++) if (panel.pushes[i].id === pickId) p = panel.pushes[i];
+    if (!p) { say('Pick a push first.', true); return; }
+    var q = pickMode === 'replace'
+      ? 'REPLACE this PC\\'s personal triggers and What you hear settings with the push from ' + (p.machine_name || 'that PC') + '?\\n\\nTriggers only on this PC will be removed. Both files are backed up first.'
+      : 'Merge the push from ' + (p.machine_name || 'that PC') + ' (' + plural(Number(p.trigger_count) || 0, 'trigger') + ') into this PC?\\n\\nMatching triggers are overwritten with the pulled version; triggers only here are kept. Both files are backed up first.';
+    if (!confirm(q)) return;
+    busy = true; panel = null; say('Pulling…', false);
+    try {
+      var j = await post('/api/trigger-sync/pull', { id: p.id, mode: pickMode });
+      busy = false;
+      if (j && j.ok) {
+        var t = (j.mode === 'replace' ? 'Replaced: ' : 'Merged: ') + j.added + ' added, ' + j.updated + ' updated, '
+          + (j.mode === 'replace' ? j.removed + ' removed' : j.kept + ' kept here only') + '; '
+          + plural(j.rules_changed || 0, 'setting') + ' changed.';
+        if (j.discord_off) t += ' ' + plural(j.discord_off, 'trigger') + ' that post to Discord arrived switched off.';
+        if (j.skipped) t += ' ' + plural(j.skipped, 'trigger') + ' could not be loaded.';
+        say(t + ' Your old files were backed up.', false);
+        if (window._wpTrigEditor && window._wpTrigEditor.refreshList) window._wpTrigEditor.refreshList();
+        if (window._wpSuggestedTriggers && window._wpSuggestedTriggers.refresh) window._wpSuggestedTriggers.refresh();
+        if (window._wpTrigRules && window._wpTrigRules.refresh) window._wpTrigRules.refresh();
+      } else say('Pull failed: ' + why(j), true);
+    } catch (e) { busy = false; say('Pull failed: ' + (e && e.message || e), true); }
+  }
+  function onClick(e){
+    var b = e.target && e.target.closest ? e.target.closest('button[data-ts]') : null;
+    if (!b || busy) return;
+    var a = b.getAttribute('data-ts');
+    if (a === 'push') doPush();
+    else if (a === 'pull') openPull();
+    else if (a === 'go') doPull();
+    else if (a === 'close') { panel = null; paint(); }
+  }
+  function onChange(e){
+    var t = e.target;
+    if (!t || t.tagName !== 'INPUT') return;
+    if (t.name === 'wpTsPick') pickId = t.value;
+    else if (t.name === 'wpTsMode') pickMode = t.value === 'replace' ? 'replace' : 'merge';
+  }
+  function mount(){
+    var n = document.getElementById('wpTrigSync');
+    if (!n) { mounted = false; return; }
+    if (mounted && n === el) return;
+    el = n; mounted = true; lastHtml = '';   // a section repaint made a fresh empty node: always refill
+    el.addEventListener('click', onClick);
+    el.addEventListener('change', onChange);
+    paint();
+  }
+  window._wpTrigSync = { mount: mount };
+})();
+
 // ── 💥 My Crits panel ───────────────────────────────────────────────────────
 // The operator's own melee + spell criticals this session, per box. Rendered in
 // the main section loop into the stable #wpCritsCard placeholder (in renderDash)
@@ -31807,6 +31951,8 @@ function startWebDashboard(port) {
       if (req.url === '/api/hail-mark' && req.method === 'POST') return _handleHailMark(req, res);
       // "What you hear" — per-person rules for every callout (the guild lead, 2026-10-12).
       if (req.url && req.url.split('?')[0] === '/api/trigger-rules' && (req.method === 'GET' || req.method === 'POST')) return _handleTriggerRules(req, res);
+      // Personal trigger sync — Push / Pull between this household's PCs (2026-10-12).
+      if (req.url && req.url.startsWith('/api/trigger-sync/')) return _handleTriggerSync(req, res);
       // Command Center ✕ on a needs-rez row — clears it for the WHOLE raid.
       // Local state drops immediately so the click feels instant; the relay
       // rides the durable upload queue, and every other Command Center drops
@@ -33155,60 +33301,7 @@ function startWebDashboard(port) {
         let payload;
         try { payload = JSON.parse(body); }
         catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid json' })); }
-        const incoming = Array.isArray(payload?.triggers) ? payload.triggers : [];
-        const compiled = [];
-        const errors = [];
-        const ZEAL_FIELDS = ['target_hp_pct', 'self_hp_pct', 'group_min_hp_pct'];
-        const ZEAL_OPS    = ['<', '<=', '>', '>=', '=='];
-        for (const t of incoming) {
-          // A trigger is valid if it has a log pattern OR a zeal_condition.
-          // Pure-Zeal triggers (HP thresholds) carry no text pattern.
-          const hasPattern = t && typeof t.pattern === 'string' && t.pattern.trim();
-          let zealCond = null;
-          if (t && t.zeal_condition && ZEAL_FIELDS.includes(t.zeal_condition.field)
-              && ZEAL_OPS.includes(t.zeal_condition.op)
-              && t.zeal_condition.value != null && !isNaN(Number(t.zeal_condition.value))) {
-            zealCond = {
-              field: t.zeal_condition.field,
-              op:    t.zeal_condition.op,
-              value: Math.max(0, Math.min(100, Number(t.zeal_condition.value))),
-            };
-          }
-          const builtinTimer = t && BUILTIN_TIMER_KINDS.has(t.builtin_timer) ? t.builtin_timer : null;
-          const catalogMatch = !hasPattern && t ? _normCatalogMatch(t.catalog_match) : null;
-          if (!hasPattern && !zealCond && !builtinTimer && !catalogMatch) continue;
-          // Defaults — keep the row shape consistent with what loadPersonalTriggers expects.
-          const row = {
-            id:            t.id || ('p_' + Math.random().toString(36).slice(2, 10)),
-            name:          String(t.name || '').slice(0, 100) || 'untitled',
-            pattern:       hasPattern ? String(t.pattern).slice(0, 1000) : '',
-            pattern_flags: String(t.pattern_flags || 'i').slice(0, 6),
-            use_regex:     t.use_regex !== false,
-            enabled:       t.enabled !== false,
-            cooldown_seconds: Math.max(0, Math.min(3600, parseInt(t.cooldown_seconds, 10) || 0)),
-            timer_duration_sec: Math.max(0, Math.min(3600, parseInt(t.timer_duration_sec, 10) || 0)),
-            end_early_pattern: t.end_early_pattern ? String(t.end_early_pattern).slice(0, 1000) : null,
-            end_use_regex:     t.end_use_regex !== false,
-            // Gauge-condition trigger (fires off live Zeal state, not a log
-            // line). Null for ordinary text triggers.
-            zeal_condition:    zealCond,
-            actions:       Array.isArray(t.actions) ? t.actions.slice(0, 5) : [{
-              type: 'text_overlay',
-              text: String(t.overlay_text || t.name || 'TRIGGER').slice(0, 200),
-              color: String(t.overlay_color || 'red').slice(0, 20),
-              duration_ms: Math.max(500, Math.min(60000, parseInt(t.overlay_ms, 10) || 5000)),
-            }],
-          };
-          if (builtinTimer) { row.builtin_timer = builtinTimer; row.actions = []; }
-          // Every save from the dashboard sends the WHOLE list back through
-          // here, and this rebuild used to keep only the fields above — so
-          // ticking any one row off quietly stripped the countdown warnings,
-          // end text, bar colour and pin from every EQLogParser import in the
-          // list. Carry the fields _startTimer and _compileExcludes read.
-          for (const k of PERSONAL_CARRY_FIELDS) if (t[k] != null) row[k] = t[k];
-          try { compiled.push(_compilePersonalTrigger(row)); }
-          catch (err) { errors.push({ name: row.name, error: err.message }); }
-        }
+        const { compiled, errors } = _normalizeIncomingPersonal(Array.isArray(payload?.triggers) ? payload.triggers : []);
         _personalTriggers = compiled;
         savePersonalTriggers();
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -41718,6 +41811,66 @@ function savePersonalTriggers() {
   }
 }
 
+// Rebuild + compile a list of incoming personal-trigger rows. The body of POST /api/personal-triggers,
+// moved here unchanged so a trigger-sync pull runs the very same clamps and compile
+// (the guild lead, 2026-10-12: sync "like UI backups"). → { compiled, errors }.
+function _normalizeIncomingPersonal(incoming) {
+  const compiled = [];
+  const errors = [];
+  const ZEAL_FIELDS = ['target_hp_pct', 'self_hp_pct', 'group_min_hp_pct'];
+  const ZEAL_OPS    = ['<', '<=', '>', '>=', '=='];
+  for (const t of incoming) {
+    // A trigger is valid if it has a log pattern OR a zeal_condition.
+    // Pure-Zeal triggers (HP thresholds) carry no text pattern.
+    const hasPattern = t && typeof t.pattern === 'string' && t.pattern.trim();
+    let zealCond = null;
+    if (t && t.zeal_condition && ZEAL_FIELDS.includes(t.zeal_condition.field)
+        && ZEAL_OPS.includes(t.zeal_condition.op)
+        && t.zeal_condition.value != null && !isNaN(Number(t.zeal_condition.value))) {
+      zealCond = {
+        field: t.zeal_condition.field,
+        op:    t.zeal_condition.op,
+        value: Math.max(0, Math.min(100, Number(t.zeal_condition.value))),
+      };
+    }
+    const builtinTimer = t && BUILTIN_TIMER_KINDS.has(t.builtin_timer) ? t.builtin_timer : null;
+    const catalogMatch = !hasPattern && t ? _normCatalogMatch(t.catalog_match) : null;
+    if (!hasPattern && !zealCond && !builtinTimer && !catalogMatch) continue;
+    // Defaults — keep the row shape consistent with what loadPersonalTriggers expects.
+    const row = {
+      id:            t.id || ('p_' + Math.random().toString(36).slice(2, 10)),
+      name:          String(t.name || '').slice(0, 100) || 'untitled',
+      pattern:       hasPattern ? String(t.pattern).slice(0, 1000) : '',
+      pattern_flags: String(t.pattern_flags || 'i').slice(0, 6),
+      use_regex:     t.use_regex !== false,
+      enabled:       t.enabled !== false,
+      cooldown_seconds: Math.max(0, Math.min(3600, parseInt(t.cooldown_seconds, 10) || 0)),
+      timer_duration_sec: Math.max(0, Math.min(3600, parseInt(t.timer_duration_sec, 10) || 0)),
+      end_early_pattern: t.end_early_pattern ? String(t.end_early_pattern).slice(0, 1000) : null,
+      end_use_regex:     t.end_use_regex !== false,
+      // Gauge-condition trigger (fires off live Zeal state, not a log
+      // line). Null for ordinary text triggers.
+      zeal_condition:    zealCond,
+      actions:       Array.isArray(t.actions) ? t.actions.slice(0, 5) : [{
+        type: 'text_overlay',
+        text: String(t.overlay_text || t.name || 'TRIGGER').slice(0, 200),
+        color: String(t.overlay_color || 'red').slice(0, 20),
+        duration_ms: Math.max(500, Math.min(60000, parseInt(t.overlay_ms, 10) || 5000)),
+      }],
+    };
+    if (builtinTimer) { row.builtin_timer = builtinTimer; row.actions = []; }
+    // Every save from the dashboard sends the WHOLE list back through
+    // here, and this rebuild used to keep only the fields above — so
+    // ticking any one row off quietly stripped the countdown warnings,
+    // end text, bar colour and pin from every EQLogParser import in the
+    // list. Carry the fields _startTimer and _compileExcludes read.
+    for (const k of PERSONAL_CARRY_FIELDS) if (t[k] != null) row[k] = t[k];
+    try { compiled.push(_compilePersonalTrigger(row)); }
+    catch (err) { errors.push({ name: row.name, error: err.message }); }
+  }
+  return { compiled, errors };
+}
+
 // Serialize for /api/personal-triggers — strip non-JSONable internals plus
 // the precompiled _regex object. Add a `valid` boolean so the dashboard can
 // flag rows whose pattern won't compile.
@@ -42607,6 +42760,189 @@ async function _handleTriggerRules(req, res) {
   scheduleRender();
   send(out.ok ? 200 : 400, out);
 }
+
+// ── Personal trigger sync — the agent half (the guild lead, 2026-10-12: "Push and Pull buttons, like UI
+// backups"). Push sends this PC's personal triggers + "what you hear" rules to the bot, which keeps them
+// encrypted for the household; Pull on another PC fetches one and merges it in, or replaces the lot.
+// Local mode (no token) never calls out: the dashboard shows one dim line instead. The bot's routes are
+// /api/agent/personal-triggers/{push,list,pull}; the dashboard talks to /api/trigger-sync/* below.
+const TRIGGER_SYNC_KEEP_BACKUPS = 3;
+const TRIGGER_SYNC_LOCAL_MSG = 'Sync needs a linked Wolf Pack account.';
+const _TS_RULE_KEY_RX = /^(group|guild|personal|builtin):.{1,200}$/;
+// A trigger row as plain JSON: every `_`-prefixed key (compiled regex, scope...) dropped, as the bot does too.
+function _tsPlain(t) {
+  const o = {};
+  for (const [k, v] of Object.entries(t || {})) if (!k.startsWith('_')) o[k] = v;
+  return o;
+}
+function _tsCanon(v) {
+  return JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x))
+    ? Object.fromEntries(Object.keys(x).sort().map(key => [key, x[key]])) : x);
+}
+// A pulled row arrives with its Discord posts switched off (DECISIONS §91): a `discord` action gets
+// enabled:false (the fire loop skips it), a voice action's `discord:true` broadcast flag goes false so the
+// row still speaks here. → { row, off } with off = whether anything was switched.
+function _tsSwitchOffDiscord(t) {
+  let off = false;
+  const actions = (Array.isArray(t.actions) ? t.actions : []).map(a => {
+    if (a && a.type === 'discord' && a.enabled !== false) { off = true; return { ...a, enabled: false }; }
+    if (a && a.discord) { off = true; return { ...a, discord: false }; }
+    return a;
+  });
+  return { row: off ? { ...t, actions } : t, off };
+}
+// Which local row each pulled row lands on: the same id first (across the whole pull), then the same
+// lowercase name among the local rows still unclaimed. → { match[j] = local index or -1, claimed }.
+function _tsPlanMatches(local, pulled) {
+  const idOf = (t) => (t && typeof t.id === 'string' ? t.id : '');
+  const nameOf = (t) => String((t && t.name) || '').trim().toLowerCase();
+  const match = pulled.map(() => -1);
+  const claimed = new Set();
+  const byId = new Map();
+  local.forEach((t, i) => { const id = idOf(t); if (id && !byId.has(id)) byId.set(id, i); });
+  pulled.forEach((p, j) => {
+    const i = byId.get(idOf(p));
+    if (i !== undefined && !claimed.has(i)) { claimed.add(i); match[j] = i; }
+  });
+  pulled.forEach((p, j) => {
+    const n = nameOf(p);
+    if (match[j] >= 0 || !n) return;
+    const i = local.findIndex((t, k) => !claimed.has(k) && nameOf(t) === n);
+    if (i >= 0) { claimed.add(i); match[j] = i; }
+  });
+  return { match, claimed };
+}
+// local and pulled are compiled rows. merge: a match is REPLACED by the pulled row (pulled wins, in
+// place), new pulled rows are appended, local-only rows stay. replace: the pulled list, nothing else.
+// A match whose plain content is identical counts as unchanged, not updated.
+function _tsMergeTriggers(local, pulled, mode) {
+  const { match, claimed } = _tsPlanMatches(local, pulled);
+  const out = mode === 'replace' ? pulled.slice() : local.slice();
+  let added = 0, updated = 0, unchanged = 0;
+  pulled.forEach((p, j) => {
+    const i = match[j];
+    if (i < 0) { added++; if (mode !== 'replace') out.push(p); return; }
+    if (_tsCanon(_tsPlain(local[i])) === _tsCanon(_tsPlain(p))) unchanged++; else updated++;
+    if (mode !== 'replace') out[i] = p;
+  });
+  const leftover = local.length - claimed.size;
+  return { list: out, added, updated, unchanged, kept: mode === 'replace' ? 0 : leftover, removed: mode === 'replace' ? leftover : 0 };
+}
+// Pulled rules → only well-formed ones (a known key shape, a real mode), characters lowercased.
+function _tsCleanRules(raw) {
+  const clean = _cleanRules({ rules: raw });
+  const out = {};
+  let n = 0;
+  for (const [k, v] of Object.entries(clean)) { if (_TS_RULE_KEY_RX.test(k) && n < 4000) { out[k] = v; n++; } }
+  return out;
+}
+// → { next, changed }: merge lays pulled cells over the current ones; replace IS the pulled rules. `changed`
+// counts the (key, character) cells that end up added, different, or (replace) gone.
+function _tsMergeRules(cur, pulled, mode) {
+  const next = {};
+  if (mode !== 'replace') for (const [k, v] of Object.entries(cur)) next[k] = { ...v };
+  for (const [k, v] of Object.entries(pulled)) next[k] = { ...(next[k] || {}), ...v };
+  let changed = 0;
+  for (const k of new Set([...Object.keys(cur), ...Object.keys(next)])) {
+    const a = cur[k] || {}, b = next[k] || {};
+    for (const ch of new Set([...Object.keys(a), ...Object.keys(b)])) if (a[ch] !== b[ch]) changed++;
+  }
+  return { next, changed };
+}
+// One copy of each local file before a pull touches it, then only the newest KEEP of each stay.
+// The stamp sorts as time. → { ok, made: [file names] }; a copy that fails stops the pull.
+function _tsBackupLocal(dir, nowMs = Date.now()) {
+  const stamp = new Date(nowMs).toISOString().replace(/[:.]/g, '-');
+  const made = [];
+  try {
+    for (const base of ['personal_triggers.json', 'trigger_rules.json']) {
+      const src = path.join(dir, base);
+      if (!fs.existsSync(src)) continue;
+      fs.copyFileSync(src, `${src}.bak-${stamp}`);
+      made.push(`${base}.bak-${stamp}`);
+      const old = fs.readdirSync(dir).filter(f => f.startsWith(base + '.bak-')).sort().reverse();
+      for (const f of old.slice(TRIGGER_SYNC_KEEP_BACKUPS)) { try { fs.unlinkSync(path.join(dir, f)); } catch { void 0; } }
+    }
+    return { ok: true, made };
+  } catch (err) { return { ok: false, made, error: String(err && err.message || err) }; }
+}
+// Apply a pulled { triggers, rules } to this PC. mode 'merge' | 'replace'. Nothing is written until the
+// backup is made; the new list is compiled by the same code a dashboard save runs.
+function _applyTriggerPull(pulled, mode, dir = path.dirname(STATS_FILE || '')) {
+  if (mode !== 'merge' && mode !== 'replace') return { ok: false, error: 'bad mode' };
+  if (!pulled || !Array.isArray(pulled.triggers) || !pulled.rules || typeof pulled.rules !== 'object') return { ok: false, error: 'unexpected reply from the server' };
+  let discordOff = 0;
+  const raw = pulled.triggers.slice(0, 2000).filter(t => t && typeof t === 'object' && !Array.isArray(t)).map(t => {
+    const s = _tsSwitchOffDiscord(_tsPlain(t));
+    if (s.off) discordOff++;
+    return s.row;
+  });
+  const { compiled } = _normalizeIncomingPersonal(raw);
+  if (mode === 'replace' && raw.length && !compiled.length) return { ok: false, error: 'none of the pulled triggers would load; nothing was replaced' };
+  const bk = _tsBackupLocal(dir);
+  if (!bk.ok) return { ok: false, error: 'could not back up your files first: ' + bk.error };
+  const m =_tsMergeTriggers(_personalTriggers, compiled, mode);
+  const r = _tsMergeRules(_triggerRules, _tsCleanRules(pulled.rules), mode);
+  _personalTriggers = m.list;
+  if (!savePersonalTriggers()) return { ok: false, error: 'could not save your triggers' };
+  for (const k of Object.keys(_triggerRules)) delete _triggerRules[k];
+  Object.assign(_triggerRules, r.next);
+  const rulesSaved = saveTriggerRules();
+  _stateJsonCache = { at: 0, body: null };   // /api/state carries the effective modes
+  scheduleRender();
+  return { ok: true, mode, added: m.added, updated: m.updated, unchanged: m.unchanged, kept: m.kept, removed: m.removed,
+    rules_changed: r.changed, discord_off: discordOff, skipped: raw.length - compiled.length, rules_saved: rulesSaved, backups: bk.made };
+}
+// One call to the bot. Local mode (or no bot address) makes NO request. Bot errors come back as
+// { ok:false, status, error } with the bot's own words; a dead network is status 0.
+async function _tsCall(method, route, body) {
+  if (_localOnly() || !_canAskGuildForFights()) return { ok: false, status: 0, local: true, error: TRIGGER_SYNC_LOCAL_MSG };
+  try {
+    const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+    const headers = { ..._characterPrefsHeaders() };
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const r = await fetch(base + '/personal-triggers/' + route, {
+      method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(15_000),
+    });
+    const j = await r.json().catch(() => null);
+    if (!r.ok) return { ok: false, status: r.status, error: String((j && j.error) || ('the server answered ' + r.status)) };
+    return { ok: true, data: j || {} };
+  } catch { return { ok: false, status: 0, error: 'could not reach the Wolf Pack server' }; }
+}
+async function _triggerSyncPush() {
+  const out = await _tsCall('POST', 'push', {
+    triggers: _personalTriggers.map(_tsPlain), rules: _triggerRules,
+    machine_name: os.hostname(), agent_version: AGENT_VERSION,
+  });
+  return out.ok ? { ok: true, ...out.data } : out;
+}
+async function _triggerSyncList() {
+  const out = await _tsCall('GET', 'list');
+  return out.ok ? { ok: true, pushes: Array.isArray(out.data.pushes) ? out.data.pushes : [] } : out;
+}
+async function _triggerSyncPull(b, dir) {   // `dir`: tests only; the default is the agent's state dir
+  const mode = b && b.mode;
+  if (mode !== 'merge' && mode !== 'replace') return { ok: false, status: 0, error: 'bad mode' };
+  const id = b && b.id != null ? String(b.id).trim() : '';
+  if (id && !/^[0-9a-f-]{36}$/i.test(id)) return { ok: false, status: 0, error: 'bad id' };
+  const got = await _tsCall('GET', 'pull' + (id ? '?id=' + encodeURIComponent(id) : ''));
+  if (!got.ok) return got;
+  const done = _applyTriggerPull(got.data, mode, dir);
+  return done.ok ? done : { ok: false, status: 0, error: done.error };
+}
+// GET list · POST push · POST pull. The two writes are refused for a browser page that is not one of ours.
+async function _handleTriggerSync(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
+  const route = String(req.url || '').split('?')[0].slice('/api/trigger-sync/'.length);
+  if (req.method === 'GET' && route === 'list') { const o = await _triggerSyncList(); return send(o.ok ? 200 : 400, o); }
+  if (req.method !== 'POST' || (route !== 'push' && route !== 'pull')) return send(404, { ok: false, error: 'not found' });
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = {};
+  try { b = JSON.parse((await _readBody(req, 4096)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { ok: false, error: 'bad body' }); }
+  const o = route === 'push' ? await _triggerSyncPush() : await _triggerSyncPull(b);
+  send(o.ok ? 200 : 400, o);
+}
+// ── end personal trigger sync (agent half) ──
 
 // Recent overlay queue — surfaced on /api/state for the dashboard to render.
 // Cap at 20 so a runaway trigger can't OOM us.
@@ -48662,7 +48998,7 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       else _dispatched = true;
       console.log(`[trigger${test ? (t._rehearsal ? ':rehearsal' : ':test') : ':' + (t._scope || '?')}] ${t.name} → ${text}`);
       scheduleRender();
-    } else if (a.type === 'discord' && !test) {
+    } else if (a.type === 'discord' && !test && a.enabled !== false) {   // enabled:false = a synced row's post, switched off
       // Broadcast this fire to a text Discord channel via the bot. Test fires
       // stay local. `key` dedups across every raider's agent (default
       // name+message). Default mode is 'post'; setting `voice: true` swaps to
@@ -51421,6 +51757,8 @@ module.exports = {
   // "What you hear" (2026-10-12) — exported for test/trigger-rules.test.js.
   _triggerRules, _resolveRule, _computeRuleGroups, _triggerRulesPayload, _setTriggerRule, _cleanRules,
   _ruleKeyOf, _ruleGroupOfGuild, _applyTriggerRule, _builtinRuleModes, _guildRuleModes,
+  // Personal trigger sync (agent half) — exported for test/personal-trigger-sync-agent.test.js.
+  _applyTriggerPull, _triggerSyncPush, _triggerSyncList, _triggerSyncPull, _tsBackupLocal,
   _runRelayedFire, _pushBlindEvent, _blindEvents, _maybeAnnounceDamageTaken,
   _applyGuildTriggersResponse,
   _setGuildTriggersForTest: (arr) => { stats.guildTriggers = arr; stats.guildTriggersVersion = null; },

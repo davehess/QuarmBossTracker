@@ -193,11 +193,13 @@ describe('warning N seconds before the end — personal and guild alike', () => 
   it('the whole-list save carries the warning, its speak flag, and the repeat settings', async () => {
     const handler = sliceBlock(agentSrc, "if (req.url === '/api/personal-triggers' && req.method === 'POST') {",
       'stored: compiled.length, errors }));\n      }');
+    // The route hands its rows to _normalizeIncomingPersonal (shared with the trigger-sync pull): slice it in beside it.
+    const normalize = sliceBlock(agentSrc, 'function _normalizeIncomingPersonal(incoming) {', '  return { compiled, errors };\n}');
     async function post(triggers) {
       const res = { writeHead() {}, end(b) { this.body = b; return b; } };
       const run = new Function('req', 'res', '_readBody', '_compilePersonalTrigger', 'savePersonalTriggers',
         'BUILTIN_TIMER_KINDS', 'PERSONAL_CARRY_FIELDS', '_normCatalogMatch', 'ctx',
-        'let _personalTriggers; return (async () => { ' + handler + ' })().then(() => { ctx.out = _personalTriggers; });');
+        'let _personalTriggers; ' + normalize + '\nreturn (async () => { ' + handler + ' })().then(() => { ctx.out = _personalTriggers; });');
       const ctx = {};
       await run({ url: '/api/personal-triggers', method: 'POST' }, res, async () => JSON.stringify({ triggers }),
         (t) => ({ ...t }), () => true, new Set(), agent.PERSONAL_CARRY_FIELDS, agent._normCatalogMatch, ctx);

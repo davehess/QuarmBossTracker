@@ -303,11 +303,13 @@ describe('the dashboard\'s whole-list save keeps what an EQLogParser import carr
   const src = readSource(AGENT_INDEX);
   const handler = sliceBlock(src, "if (req.url === '/api/personal-triggers' && req.method === 'POST') {",
     'stored: compiled.length, errors }));\n      }');
+  // The route hands its rows to _normalizeIncomingPersonal (shared with the trigger-sync pull): slice it in beside it.
+  const normalize = sliceBlock(src, 'function _normalizeIncomingPersonal(incoming) {', '  return { compiled, errors };\n}');
   async function post(triggers) {
     const res = { writeHead() {}, end(b) { this.body = b; return b; } };
     const run = new Function('req', 'res', '_readBody', '_compilePersonalTrigger', 'savePersonalTriggers',
       'BUILTIN_TIMER_KINDS', 'PERSONAL_CARRY_FIELDS', '_normCatalogMatch', 'ctx',
-      'let _personalTriggers; return (async () => { ' + handler + ' })().then(() => { ctx.out = _personalTriggers; });');
+      'let _personalTriggers; ' + normalize + '\nreturn (async () => { ' + handler + ' })().then(() => { ctx.out = _personalTriggers; });');
     const ctx = {};
     await run({ url: '/api/personal-triggers', method: 'POST' }, res, async () => JSON.stringify({ triggers }),
       (t) => ({ ...t }), () => true, new Set(['recharm_tick', 'lull', 'my_spells']), agent.PERSONAL_CARRY_FIELDS,
