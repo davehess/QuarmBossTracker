@@ -47,7 +47,7 @@ describe('triggers.html: Mute silences, it does not hide (run, not read)', () =>
     function _wpMutedNow(){ return muted; }
     function speak(x){ if (_wpMutedNow()) return; calls.push('speak'); }
     function playSound(u){ if (!u || _wpMutedNow()) return; calls.push('sound'); }
-    function showFeedback(){} function pinSticky(){} function _speakable(s){ return s; }
+    function showFeedback(){} function offerMute(){} function pinSticky(){} function _speakable(s){ return s; }
     ${cut('  let alertsEnabled = true;')}
     ${cut('  function fire(t){')}
     ${cut('  function fireBlind(e){')}

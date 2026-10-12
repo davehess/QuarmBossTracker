@@ -143,7 +143,7 @@ describe('triggers.html as a canvas part', () => {
     const h = new Function(`
       const calls = []; var PART = null, _visualElsewhere = false;
       function flash(){ calls.push('flash'); } function speak(){ calls.push('speak'); }
-      function playSound(){} function showFeedback(){ calls.push('votes'); } function pinSticky(){ calls.push('pin'); }
+      function playSound(){} function showFeedback(){ calls.push('votes'); } function offerMute(){} function pinSticky(){ calls.push('pin'); }
       function _speakable(s){ return s; }
       ${cut('  let alertsEnabled = true;')}
       ${cut('  function fire(t){')}

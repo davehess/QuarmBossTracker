@@ -4752,7 +4752,11 @@ const _BLIND_SELFHIT_RX = /\bYOURSELF\b.*\bpoints of damage\b/i;
 // { ts, kind, text, tts }. Capped; the overlay dedupes on ts.
 const _blindEvents = [];
 function _pushBlindEvent(kind, text, tts, atMs) {
-  _blindEvents.push({ ts: atMs || Date.now(), kind, text, tts: tts || text });
+  // "What you hear": off = no event at all; overlay = flash it, `mute` keeps triggers.html quiet.
+  // (typeof guard: test harnesses evaluate this function on its own, without the rules block.)
+  const ruleMode = typeof _ruleModeNow === 'function' ? _ruleModeNow('builtin:blind') : 'speak';
+  if (ruleMode === 'off') return;
+  _blindEvents.push({ ts: atMs || Date.now(), kind, text, tts: tts || text, mute: ruleMode === 'overlay' });
   if (_blindEvents.length > 40) _blindEvents.splice(0, _blindEvents.length - 40);
 }
 // Every blinding spell's own landing and fade text, from the catalog (bot
@@ -6210,6 +6214,7 @@ function _maybeAnnounceChGo(c, atMs) {
     firedAt:     Date.now(),
     trigger:     'CH GO',
     scope:       'guild',
+    rule_key:    'builtin:ch_go',
     test:        false,
   });
   scheduleRender();
@@ -6423,6 +6428,7 @@ function trackDiFired(line) {
     firedAt:     Date.now(),
     trigger:     'DI DOWN',
     scope:       'guild',
+    rule_key:    'builtin:di_down',
     test:        false,
   });
   scheduleRender();
@@ -7057,6 +7063,7 @@ function _announceReverseSlow(mob) {
     firedAt:     Date.now(),
     trigger:     'Reverse slow',
     scope:       'slow',
+    rule_key:    'builtin:reverse_slow',
     test:        false,
   });
 }
@@ -7160,6 +7167,7 @@ function _announceSlowLand(best, mob) {
     firedAt:     Date.now(),
     trigger:     'Slow landed',
     scope:       'slow',
+    rule_key:    'builtin:slow_landed',
     test:        false,
   });
 }
@@ -7175,6 +7183,7 @@ function _announceSlowDrop(name, mob) {
     firedAt:     Date.now(),
     trigger:     'Slow dropped',
     scope:       'slow',
+    rule_key:    'builtin:slow_dropped',
     test:        false,
   });
 }
@@ -7226,7 +7235,7 @@ function _tickSlowCallouts() {
         _pushOverlay({ text: '🐌 Slow fading ' + (mob ? 'on ' + mob + ' ' : '') + '— re-slow soon (' + _slowShortName(best.name) + ')',
                        tts: 'Ree slow soon.', color: 'amber', duration_ms: 5000,
                        shownAt: Date.now(), firedAt: Date.now(),
-                       trigger: 'Slow fading', scope: 'slow', test: false });
+                       trigger: 'Slow fading', scope: 'slow', rule_key: 'builtin:slow_fading', test: false });
       }
       continue;
     }
@@ -14668,6 +14677,7 @@ function _tickEnrageWarn(nowMs) {
     firedAt:     nowMs,
     trigger:     'Enrage soon',
     scope:       'enrage',
+    rule_key:    'builtin:enrage_soon',
     test:        false,
   });
 }
@@ -17696,6 +17706,11 @@ function _serializeForDashboard() {
       void _regex; void _scope;
       return rest;
     }),
+    // "What you hear" — effective modes for the active character, non-speak only. The guild map
+    // badges the Guild triggers table; the built-in map lets charm.html, which speaks its own
+    // lines, honour the same rules.
+    guildRuleModes:      _guildRuleModes(),
+    builtinRuleModes:    _builtinRuleModes(),
     personalTriggerCount: (_personalTriggers || []).length,
     // Trigger checkpoint journal (#76) — newest first, capped, for the Triggers
     // tab diagnostic card. Pure in-memory; never persisted or uploaded.
@@ -18049,6 +18064,23 @@ button.wp-rerun-stale { position:relative; animation: wp-pulse-glow 1.8s ease-ou
 .trigname { background:none; border:0; padding:0; font:inherit; color:var(--text); cursor:pointer; text-align:left; }
 .trigname:hover { color:var(--blue); text-decoration:underline; }
 .trigname:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+/* Triggers tab, "What you hear" (2026-10-12): the three-way switch on a group header or a row. */
+.rsw { display:inline-flex; gap:0; white-space:nowrap; }
+.rsw button { background:var(--panel); color:var(--dim); border:1px solid var(--border); font:inherit; font-size:11px; padding:2px 8px; cursor:pointer; }
+.rsw button:first-child { border-radius:4px 0 0 4px; }
+.rsw button + button { border-left:0; }
+.rsw button.rst { border-radius:0 4px 4px 0; padding:2px 6px; }
+.rsw button.on { color:var(--text); background:#1f6feb33; border-color:var(--blue); }
+.rsw button.on[data-mode="off"] { background:#da363433; border-color:var(--red); }
+.rsw button.inh { opacity:0.65; }
+.rsw button:focus-visible { outline:2px solid var(--blue); outline-offset:1px; }
+.rnote { color:var(--dim); font-size:10px; margin-left:6px; }
+.rbadge { font-size:9px; margin-left:6px; padding:1px 5px; border-radius:3px; background:rgba(255,255,255,0.06); color:var(--dim); white-space:nowrap; }
+.rbadge.off { color:var(--red); }
+.rgroup > summary { cursor:pointer; display:flex; align-items:center; gap:10px; padding:4px 0; }
+.rgroup > summary .rgl { flex:1; min-width:0; }
+.rgroup > summary::before { content:'▸'; color:var(--dim); }
+.rgroup[open] > summary::before { content:'▾'; }
 .trigdetail > td { background:var(--bg); border-left:2px solid var(--blue); padding:8px 10px; }
 .trigset { display:grid; grid-template-columns:max-content 1fr; gap:3px 14px; font-size:11px; }
 .trigset-k { color:var(--dim); }
@@ -22247,6 +22279,11 @@ function renderTriggers(s) {
   h += '<span id="timingVotesMsg" class="dim" style="font-size:11px"></span>';
   h += '</div>';
 
+  // 🔊 What you hear (the guild lead, 2026-10-12) — speak / overlay only / off for every callout,
+  // by group and per trigger. Its own wp* placeholder, filled by setupTriggerRules below, so the
+  // section HTML here stays byte-stable and the card is not rewritten by a Triggers repaint.
+  h += '<div id="wpTrigRules" class="card wide"></div>';
+
   // Suggested triggers — one-click catalog of pre-tested alerts grouped by
   // category. Toggling the Enable checkbox creates/removes a personal
   // trigger with id "suggested:<template_id>" via /api/triggers/suggested;
@@ -22278,6 +22315,9 @@ function renderTriggers(s) {
   }
   if (window._wpSuggestedTriggers && window._wpSuggestedTriggers.mount) {
     window._wpSuggestedTriggers.mount();
+  }
+  if (window._wpTrigRules && window._wpTrigRules.mount) {
+    window._wpTrigRules.mount();
   }
 }
 
@@ -22327,9 +22367,14 @@ function renderGuildTriggersCard(s) {
       };
       var key = String(t.id || t.name || '');
       var open = !!_wpTrigOpen['g|' + key];
+      // "What you hear" badge: this row's effective mode for the active character, shown only when it
+      // is not the default 'speak' (a 🔊 on ~450 rows would be noise). From s.guildRuleModes.
+      var _rm = (s.guildRuleModes || {})[t.id];
+      var _rbadge = _rm === 'overlay' ? '<span class="rbadge" title="Shown on the trigger overlay, never spoken (What you hear)">👁 overlay only</span>'
+        : _rm === 'off' ? '<span class="rbadge off" title="Turned off: neither shown nor spoken (What you hear)">⛔ off</span>' : '';
       h += '<tr data-trig-key="' + esc(key) + '" style="cursor:pointer"><td>'
         + '<button type="button" class="trigname" data-trig-view="' + esc(key) + '" aria-expanded="' + (open ? 'true' : 'false') + '" style="color:var(--orange)" title="Show this trigger\\'s settings">'
-        + (open ? '▾' : '▸') + ' ' + esc(t.name || '?') + '</button></td>' +
+        + (open ? '▾' : '▸') + ' ' + esc(t.name || '?') + '</button>' + _rbadge + '</td>' +
            '<td class="dim">' + esc(t.category || 'callout') + '</td>' +
            '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc((t.pattern || '').slice(0, 80)) + '</code></td>' +
            '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>' +
@@ -30053,6 +30098,136 @@ function wpTrigApplyForm(base, f) {
   window._wpSuggestedTriggers = { mount: function(){ remountIfNeeded(); mount(); }, refresh: function(){ return fetchAndRender(); } };
 })();
 
+// ── 🔊 What you hear ─────────────────────────────────────────────────────────
+// (the guild lead, 2026-10-12: "pick ones that we specifically do not want to hear or can just be shown
+// on the trigger overlay … many other callouts do not have a way to turn them off, such as enrage
+// soon.") Option B: a three-way switch per GROUP, then an override per trigger inside it. The agent
+// owns the rules and the grouping (GET/POST /api/trigger-rules); this only draws and posts. Like the
+// Suggested panel it fills a wp* placeholder (#wpTrigRules) the Triggers section emits, so the section
+// HTML stays byte-stable; it repaints only when the answer changed, and every <details> keeps its open
+// state through wpKeep.
+(function setupTriggerRules(){
+  var mounted = false, el = null, lastHtml = '', focusTo = null;
+  var forChar = '';   // '' = every character; a lowercase name = that character only
+  try { forChar = localStorage.getItem('wp:rulesChar') || ''; } catch (e) { void e; }
+  var MODES = [
+    ['speak',   '🔊 Speak',        'Say it out loud and show it'],
+    ['overlay', '👁 Overlay only', 'Show it on the trigger overlay, never say it'],
+    ['off',     '⛔ Off',          'Neither show it nor say it'],
+  ];
+  var FROM = { trigger_all: '(from all characters)', group: '(from group)', group_all: '(from group)', 'default': '(default)' };
+  function switchHtml(key, explicit, effective){
+    var inherited = !explicit;
+    var h = '<span class="rsw" data-rkey="' + esc(key) + '">';
+    for (var i = 0; i < MODES.length; i++) {
+      var m = MODES[i], on = m[0] === effective;
+      h += '<button type="button" data-mode="' + m[0] + '" class="' + (on ? 'on' + (inherited ? ' inh' : '') : '') + '" aria-pressed="' + (on ? 'true' : 'false') + '" title="' + esc(m[2]) + '">' + m[1] + '</button>';
+    }
+    if (explicit) h += '<button type="button" class="rst" data-mode="" title="Clear this setting (go back to inheriting)">↺</button>';
+    return h + '</span>';
+  }
+  function noteHtml(explicit, from, isGroup){
+    if (explicit) return '';
+    if (isGroup) return from === 'trigger_all' ? '<span class="rnote">(from all characters)</span>' : '';
+    return FROM[from] && from !== 'default' ? '<span class="rnote">' + FROM[from] + '</span>' : '';
+  }
+  function pickerHtml(chars){
+    var opts = '<option value="">All characters</option>', seen = false;
+    for (var i = 0; i < chars.length; i++) {
+      var lc = String(chars[i]).toLowerCase();
+      if (lc === forChar) seen = true;
+      opts += '<option value="' + esc(lc) + '"' + (lc === forChar ? ' selected' : '') + '>' + esc(chars[i]) + '</option>';
+    }
+    if (forChar && !seen) opts += '<option value="' + esc(forChar) + '" selected>' + esc(forChar) + '</option>';
+    return '<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim);margin:6px 0">For'
+      + '<select id="wpRulesFor" style="font-family:inherit;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:2px 6px">' + opts + '</select>'
+      + '<span style="font-size:11px">' + (forChar ? 'settings here are for this character only; anything not set follows All characters' : 'settings here apply to every character') + '</span></label>';
+  }
+  function render(j){
+    var groups = (j && j.groups) || [];
+    var h = '<h2>🔊 What you hear <span class="dim" style="font-size:11px;font-weight:normal">(speak it, only show it on the trigger overlay, or turn it off)</span></h2>';
+    h += '<div class="dim" style="font-size:11px">A switch on a group covers everything in it; a trigger\\'s own switch wins over its group. Mute Mimic and the raid callout filter still apply on top. A 🔇 on a spoken callout sets the trigger to Overlay only for all characters.</div>';
+    h += pickerHtml((j && j.chars) || []);
+    if (groups.length === 0) h += '<div class="dim" style="font-size:12px">Nothing to list yet.</div>';
+    for (var gi = 0; gi < groups.length; gi++) {
+      var g = groups[gi];
+      h += '<details ' + wpKeep('rules-group|' + g.id) + ' class="rgroup" style="border-top:1px solid var(--border);margin-top:4px"><summary>'
+        + '<span class="rgl"><b>' + esc(g.label) + '</b> <span class="dim" style="font-size:11px">' + g.members.length + '</span></span>'
+        + noteHtml(g.mode, g.from, true) + switchHtml(g.key, g.mode, g.effective) + '</summary>'
+        + '<table style="width:100%;font-size:12px;border-collapse:collapse">';
+      for (var mi = 0; mi < g.members.length; mi++) {
+        var m = g.members[mi];
+        // NOT class="name": that is the character-page link, and a trigger is not a character.
+        h += '<tr><td style="padding:2px 6px 2px 18px">' + esc(m.name) + '</td>'
+          + '<td style="padding:2px 6px;text-align:right;white-space:nowrap">' + noteHtml(m.mode, m.from, false) + ' ' + switchHtml(m.key, m.mode, m.effective) + '</td></tr>';
+      }
+      h += '</table></details>';
+    }
+    return h;
+  }
+  function paint(h){
+    if (!el) return;
+    if (h !== lastHtml) { lastHtml = h; el.innerHTML = h; }
+    var sel = document.getElementById('wpRulesFor');
+    if (sel && !sel._wpBound) {
+      sel._wpBound = true;
+      sel.addEventListener('change', function(){
+        forChar = sel.value || '';
+        try { localStorage.setItem('wp:rulesChar', forChar); } catch (e) { void e; }
+        refresh();
+      });
+    }
+    if (focusTo) {   // a click repainted the card: put the keyboard back on the button it came from
+      var sw = el.querySelectorAll('.rsw');
+      for (var i = 0; i < sw.length; i++) {
+        if (sw[i].getAttribute('data-rkey') !== focusTo.key) continue;
+        var b = sw[i].querySelector('button[data-mode="' + focusTo.mode + '"]') || sw[i].querySelector('button');
+        if (b) { try { b.focus({ preventScroll: true }); } catch (e) { void e; } }
+        break;
+      }
+      focusTo = null;
+    }
+  }
+  async function refresh(){
+    if (!el) return;
+    try {
+      var r = await fetch('/api/trigger-rules?char=' + encodeURIComponent(forChar || '*'));
+      var j = await r.json();
+      paint(render(j));
+    } catch (e) {
+      if (!lastHtml) el.innerHTML = '<div style="color:var(--red);font-size:12px">Could not load What you hear: ' + esc(e && e.message || e) + '</div>';
+    }
+  }
+  async function setRule(key, mode){
+    try {
+      await fetch('/api/trigger-rules', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: key, char: forChar || '*', mode: mode || null }) });
+    } catch (e) { void e; }
+    refresh();
+  }
+  function onClick(e){
+    var b = e.target && e.target.closest ? e.target.closest('.rsw button') : null;
+    if (!b) return;
+    e.preventDefault();   // a switch lives inside a <summary>: it must not also open/close the group
+    var key = b.parentNode.getAttribute('data-rkey');
+    var mode = b.getAttribute('data-mode');
+    focusTo = { key: key, mode: mode || 'speak' };
+    setRule(key, mode);
+  }
+  function mount(){
+    var n = document.getElementById('wpTrigRules');
+    if (!n) { mounted = false; return; }
+    if (mounted && n === el) return;
+    el = n; mounted = true;
+    if (lastHtml) el.innerHTML = lastHtml;   // the section repaint made a fresh empty node: refill before the fetch
+    el.addEventListener('click', onClick);
+    refresh();
+  }
+  // Group membership follows the guild set, which reloads every couple of minutes.
+  setInterval(function(){ if (el && document.body.contains(el) && document.visibilityState === 'visible') refresh(); }, 20000);
+  window._wpTrigRules = { mount: mount, refresh: refresh };
+})();
+
 // ── 💥 My Crits panel ───────────────────────────────────────────────────────
 // The operator's own melee + spell criticals this session, per box. Rendered in
 // the main section loop into the stable #wpCritsCard placeholder (in renderDash)
@@ -30962,7 +31137,9 @@ const COMMAND_HTML = `<!doctype html>
               continue;
             }
             var winners = (rs.winners || []).map(function(w){ return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
-            html += '<div class="row roll-row"><span class="nm"><b>' + rs.to + '</b>'
+            // A range that does not start at 0 shows in full (the guild lead, 2026-10-12: a "999" set
+            // that was really 999 to 999 read like an ordinary 0 to 999 roll).
+            html += '<div class="row roll-row"><span class="nm"><b>' + (rs.from ? rs.from + '–' : '') + rs.to + '</b>'
                  +    (rs.item ? ' (' + esc(rs.item) + (rs.qty ? ' ×' + rs.qty : '') + ')' : '')
                  +    ' — <span style="color:#f0c419">' + (winners || '—') + '</span></span>'
                  +    '<span class="rollMore" data-roll-key="' + esc(rid) + '" title="'
@@ -31628,6 +31805,8 @@ function startWebDashboard(port) {
       }
       // Command Center tap on a name in the hail board — marks (or unmarks) it hailed for the whole raid.
       if (req.url === '/api/hail-mark' && req.method === 'POST') return _handleHailMark(req, res);
+      // "What you hear" — per-person rules for every callout (the guild lead, 2026-10-12).
+      if (req.url && req.url.split('?')[0] === '/api/trigger-rules' && (req.method === 'GET' || req.method === 'POST')) return _handleTriggerRules(req, res);
       // Command Center ✕ on a needs-rez row — clears it for the WHOLE raid.
       // Local state drops immediately so the click feels instant; the relay
       // rides the durable upload queue, and every other Command Center drops
@@ -41358,7 +41537,9 @@ function _applyGuildTriggersResponse(resp) {
                         // scope=guild_relay and buried the checkpoint journal.
                         // Only 'personal' suppresses the relay - class_specific
                         // and broadcast still fan out, which is what they mean.
-                        _scope: t.default_scope === 'personal' ? 'personal' : 'guild' });
+                        _scope: t.default_scope === 'personal' ? 'personal' : 'guild',
+                        // "What you hear": a guild row is keyed by its id even when its scope is personal.
+                        _ruleKey: t.id ? 'guild:' + t.id : null });
       } catch (err) {
         console.warn(`[guild-triggers] bad pattern "${t.name}":`, err.message);
       }
@@ -42160,13 +42341,283 @@ const _triggerLastFire = new Map();
 // Per-trigger fire count — GINA's {COUNTER} template token. Resets on restart
 // by design (a session-scoped tally, matching GINA's behavior).
 const _triggerFireCounts = new Map();
+// ── "What you hear": per-person rules for every callout (the guild lead, 2026-10-12) ──────────
+// *"We need to overall fix the categorization for triggers within the guild section so that we can
+// pick ones that we specifically do not want to hear or can just be shown on the trigger overlay.
+// The charm aging. And many other callouts do not have a way to turn them off, such as enrage
+// soon."* — group switches first, a per-trigger override inside each group (option B).
+//
+// Every callout funnels through _pushOverlay, so ONE checkpoint applies the rule there:
+//   speak   — unchanged;  overlay — flash it, never say it (mute:true);  off — not pushed at all.
+// It holds for a callout fired from this machine's own log AND for one relayed from another
+// raider: the receiver applies ITS OWN rules. Mute Mimic and the raid callout allow-list still
+// apply on top. A test / rehearsal / replay fire bypasses the rules, so a preview still plays.
+//
+// Keys:  group:<groupId> · guild:<uuid> · personal:<id> · builtin:<name>
+// File:  trigger_rules.json beside personal_triggers.json —
+//        { version:1, rules:{ "<key>":{ "*":mode, "<charLower>":mode } } }
+// Resolution, first hit wins: the trigger for the character, the trigger for everyone ('*'), the
+// group for the character, the group for everyone, then 'speak'.
+const TRIGGER_RULE_MODES = ['speak', 'overlay', 'off'];
+// Built-in callouts that have no row in any trigger table. `key` is the stable handle.
+const BUILTIN_CALLOUTS = [
+  { key: 'enrage_soon',    label: 'Enrage soon' },
+  { key: 'charm_break',    label: 'Charm break' },
+  { key: 'charm_aging',    label: 'Charm aging (25 seconds up)' },
+  { key: 'charm_breaking', label: 'Charm breaking (30 seconds left)' },
+  { key: 'recharm',        label: 'Recharm pet' },
+  { key: 'ch_go',          label: 'CH chain GO' },
+  { key: 'di_down',        label: 'Divine Intervention down' },
+  { key: 'reverse_slow',   label: 'Reverse slow warning' },
+  { key: 'slow_landed',    label: 'Slow landed' },
+  { key: 'slow_dropped',   label: 'Slow dropped' },
+  { key: 'slow_fading',    label: 'Slow fading' },
+  { key: 'new_rampage',    label: 'New rampage' },
+  { key: 'taking_damage',  label: 'Taking damage' },
+  { key: 'timer_callout',  label: 'Boss timer callouts' },
+  { key: 'loot_post',      label: 'Loot posted' },
+  { key: 'blind',          label: 'Blind alerts' },
+];
+// Zone short names that appear in guild_triggers.tags, with a readable group label. The second
+// Plane of Earth tag folds into the first so the two share one group.
+const RULE_ZONE_NAMES = {
+  potime: 'Plane of Time', pojustice: 'Plane of Justice', pofire: 'Plane of Fire', poair: 'Plane of Air',
+  powater: 'Plane of Water', poeartha: 'Plane of Earth', poearthb: 'Plane of Earth', postorms: 'Plane of Storms',
+  podisease: 'Plane of Disease', ponightmare: 'Plane of Nightmares', poinnovation: 'Plane of Innovation',
+  povalor: 'Plane of Valor', potorment: 'Torment, the Plane of Pain', potactics: 'Drunder, the Fortress of Zek',
+  bothunder: 'Bastion of Thunder', codecay: 'The Crypt of Decay', solrotower: 'Tower of Solusek Ro',
+  hohonora: 'Halls of Honor', hohonorb: 'Temple of Marr', acrylia: 'Acrylia Caverns',
+  nightmareb: 'The Lair of Terris Thule',
+};
+const RULE_ZONE_ALIAS = { poearthb: 'poeartha' };
+const RULE_STATCARD_RX = /\s[—–-]\s*stat card\s*$/i;
+const _triggerRules = {};          // key → { '*': mode, '<charLower>': mode }  (mutated in place)
+let _ruleCharCtx = '';             // whose log line is being evaluated right now (set around a local fire)
+
+function _triggerRulesPath() {
+  const dir = path.dirname(STATS_FILE || '');
+  return dir ? path.join(dir, 'trigger_rules.json') : null;
+}
+function _cleanRules(raw) {
+  const out = {};
+  const src = (raw && typeof raw === 'object' && raw.rules && typeof raw.rules === 'object') ? raw.rules : {};
+  for (const [key, per] of Object.entries(src)) {
+    if (!per || typeof per !== 'object') continue;
+    const row = {};
+    for (const [ch, mode] of Object.entries(per)) { if (TRIGGER_RULE_MODES.includes(mode)) row[String(ch).toLowerCase()] = mode; }
+    if (Object.keys(row).length) out[String(key)] = row;
+  }
+  return out;
+}
+function loadTriggerRules() {
+  try {
+    const p = _triggerRulesPath();
+    if (!p || !fs.existsSync(p)) return;
+    const next = _cleanRules(JSON.parse(fs.readFileSync(p, 'utf8')));
+    for (const k of Object.keys(_triggerRules)) delete _triggerRules[k];
+    Object.assign(_triggerRules, next);
+  } catch (err) { console.warn('[trigger-rules] load failed:', err.message); }
+}
+// Atomic like savePersonalTriggers: .tmp + rename, so a crash mid-write cannot corrupt the file.
+function saveTriggerRules() {
+  try {
+    const p = _triggerRulesPath();
+    if (!p) return false;
+    const tmp = p + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify({ version: 1, rules: _triggerRules }, null, 2));
+    fs.renameSync(tmp, p);
+    return true;
+  } catch (err) { console.warn('[trigger-rules] save failed:', err.message); return false; }
+}
+// The character a rule is read for when the fire has none of its own: the one whose Zeal reported
+// last (the EQ window in front), else whoever is playing, else the first watched log. Lowercase.
+function _ruleActiveChar() {
+  try {
+    const now = Date.now();
+    let best = null, bestTs = 0;
+    for (const ch of Object.keys(_zealState || {})) {
+      const ts = (_zealState[ch] && _zealState[ch].updatedAt) || 0;
+      if (ts > bestTs && (now - ts) < 60_000) { bestTs = ts; best = ch; }
+    }
+    if (best) return String(best).toLowerCase();
+    const playing = _playingCharactersLc(now);
+    if (playing.length) return playing[0];
+    const w = _watchedCharacters();
+    return w.length ? String(w[0]).toLowerCase() : '';
+  } catch { return ''; }
+}
+function _ruleZoneOf(tags) {
+  const list = Array.isArray(tags) ? tags : (typeof tags === 'string' ? tags.split(',') : []);
+  for (const t of list) {
+    const k = String(t || '').trim().toLowerCase();
+    if (RULE_ZONE_NAMES[k]) return RULE_ZONE_ALIAS[k] || k;
+  }
+  return null;
+}
+// The group a GUILD trigger row belongs to: stat cards, then its zone, then class, then the rest.
+function _ruleGroupOfGuild(t) {
+  if (!t) return 'guild_other';
+  if (RULE_STATCARD_RX.test(String(t.name || ''))) return 'statcards';
+  const z = _ruleZoneOf(t.tags);
+  if (z) return 'zone:' + z;
+  if (String(t.category || '').toLowerCase() === 'class') return 'class';
+  return 'guild_other';
+}
+// The rule key of a trigger object, or null when it has none (an unknown relayed shape).
+function _ruleKeyOf(t) {
+  if (!t) return null;
+  if (t._ruleKey) return t._ruleKey;
+  if (t._scope === 'personal') { const id = t.id || t.name; return id ? 'personal:' + id : null; }
+  if (t.id) return 'guild:' + t.id;
+  if (/^new rampage$/i.test(String(t.name || ''))) return 'builtin:new_rampage';   // relayed from another raider
+  return null;
+}
+function _ruleGroupOfKey(key) {
+  const k = String(key || '');
+  if (k.startsWith('builtin:'))  return 'builtin';
+  if (k.startsWith('personal:')) return 'personal';
+  if (k.startsWith('guild:')) {
+    const id = k.slice(6);
+    const t = (stats.guildTriggers || []).find(g => g && String(g.id) === id);
+    return t ? _ruleGroupOfGuild(t) : 'guild_other';
+  }
+  return null;
+}
+// → { mode, from } with from = trigger | trigger_all | group | group_all | default. charLc '' = the
+// everyone view (character steps skipped).
+function _resolveRule(key, groupId, charLc) {
+  const one = (k, c) => { const r = _triggerRules[k]; return r && TRIGGER_RULE_MODES.includes(r[c]) ? r[c] : null; };
+  let m;
+  if (charLc && (m = one(key, charLc))) return { mode: m, from: 'trigger' };
+  if ((m = one(key, '*')))              return { mode: m, from: charLc ? 'trigger_all' : 'trigger' };
+  if (groupId) {
+    if (charLc && (m = one('group:' + groupId, charLc))) return { mode: m, from: 'group' };
+    if ((m = one('group:' + groupId, '*')))              return { mode: m, from: charLc ? 'group_all' : 'group' };
+  }
+  return { mode: 'speak', from: 'default' };
+}
+function _ruleModeNow(key, charLc) {
+  if (!key || !Object.keys(_triggerRules).length) return 'speak';
+  return _resolveRule(key, _ruleGroupOfKey(key), String(charLc || _ruleActiveChar() || '').toLowerCase()).mode;
+}
+// false = drop the fire; true = push it (with mute:true when the rule says overlay-only).
+function _applyTriggerRule(o) {
+  if (!o || !o.rule_key || o.test || o.rehearsal || o.replay) return true;
+  const mode = _ruleModeNow(o.rule_key, o.rule_char);
+  if (mode === 'off') return false;
+  if (mode === 'overlay') o.mute = true;
+  return true;
+}
+// Effective modes for the active character, non-speak only (the default needs no entry). The
+// built-in map rides /api/state so charm.html, which speaks its own lines, can honour the same rules.
+function _builtinRuleModes() {
+  const out = {};
+  if (!Object.keys(_triggerRules).length) return out;
+  const c = _ruleActiveChar();
+  for (const b of BUILTIN_CALLOUTS) {
+    const m = _resolveRule('builtin:' + b.key, 'builtin', c).mode;
+    if (m !== 'speak') out[b.key] = m;
+  }
+  return out;
+}
+function _guildRuleModes() {
+  const out = {};
+  if (!Object.keys(_triggerRules).length) return out;
+  const c = _ruleActiveChar();
+  for (const t of (stats.guildTriggers || [])) {
+    if (!t || !t.id) continue;
+    const m = _resolveRule('guild:' + t.id, _ruleGroupOfGuild(t), c).mode;
+    if (m !== 'speak') out[t.id] = m;
+  }
+  return out;
+}
+// The group list the dashboard draws: built-ins, stat cards, one per zone, class, other guild,
+// personal. Empty groups are left out. Each member carries its key and display name.
+function _computeRuleGroups() {
+  const groups = new Map();
+  const add = (id, label, key, name) => {
+    if (!groups.has(id)) groups.set(id, { id, label, members: [] });
+    groups.get(id).members.push({ key, name });
+  };
+  for (const b of BUILTIN_CALLOUTS) add('builtin', 'Built-in callouts', 'builtin:' + b.key, b.label);
+  for (const t of (stats.guildTriggers || [])) {
+    if (!t || !t.id) continue;
+    const gid = _ruleGroupOfGuild(t);
+    const label = gid === 'statcards' ? 'Stat cards' : gid === 'class' ? 'Class'
+                : gid === 'guild_other' ? 'Other guild' : RULE_ZONE_NAMES[gid.slice(5)];
+    add(gid, label, 'guild:' + t.id, String(t.name || '?'));
+  }
+  for (const t of (_personalTriggers || [])) {
+    const id = t && (t.id || t.name);
+    if (id) add('personal', 'Personal', 'personal:' + id, String(t.name || id));
+  }
+  const rank = (id) => id === 'builtin' ? 0 : id === 'statcards' ? 1 : id.startsWith('zone:') ? 2 : id === 'class' ? 3 : id === 'guild_other' ? 4 : 5;
+  return [...groups.values()].sort((a, b) => rank(a.id) - rank(b.id) || a.label.localeCompare(b.label));
+}
+// GET body: the rules plus the group list, each group and member carrying its explicit mode for
+// `charLc` ('' = everyone), the effective mode and where that came from.
+function _triggerRulesPayload(charLc) {
+  const c = String(charLc || '').toLowerCase();
+  const scope = c || '*';
+  const explicit = (k) => { const r = _triggerRules[k]; return r && r[scope] ? r[scope] : null; };
+  const groups = _computeRuleGroups().map(g => {
+    const gr = _resolveRule('group:' + g.id, null, c);
+    return {
+      id: g.id, label: g.label, key: 'group:' + g.id,
+      mode: explicit('group:' + g.id), effective: gr.mode, from: gr.from,
+      members: g.members.map(m => {
+        const r = _resolveRule(m.key, g.id, c);
+        return { key: m.key, name: m.name, mode: explicit(m.key), effective: r.mode, from: r.from };
+      }),
+    };
+  });
+  return { ok: true, version: 1, char: c, chars: _watchedCharacters(), rules: _triggerRules, groups };
+}
+// POST { key, char?: '*' | name, mode } — mode null clears the rule.
+function _setTriggerRule(b) {
+  const key = b && typeof b.key === 'string' ? b.key.trim() : '';
+  if (!/^(group|guild|personal|builtin):.{1,200}$/.test(key)) return { ok: false, error: 'bad key' };
+  if (key.startsWith('builtin:') && !BUILTIN_CALLOUTS.some(x => 'builtin:' + x.key === key)) return { ok: false, error: 'unknown built-in' };
+  const mode = b.mode == null ? null : b.mode;
+  if (mode !== null && !TRIGGER_RULE_MODES.includes(mode)) return { ok: false, error: 'bad mode' };
+  const ch = b.char == null || b.char === '' ? '*' : String(b.char).trim().toLowerCase();
+  if (ch !== '*' && !/^[^\x00-\x1f]{1,40}$/.test(ch)) return { ok: false, error: 'bad character' };
+  if (mode === null) {
+    if (_triggerRules[key]) { delete _triggerRules[key][ch]; if (!Object.keys(_triggerRules[key]).length) delete _triggerRules[key]; }
+  } else {
+    if (!_triggerRules[key] && Object.keys(_triggerRules).length >= 4000) return { ok: false, error: 'too many rules' };
+    (_triggerRules[key] || (_triggerRules[key] = {}))[ch] = mode;
+  }
+  if (!saveTriggerRules()) return { ok: false, error: 'could not save' };
+  _stateJsonCache = { at: 0, body: null };   // /api/state carries the effective modes
+  return { ok: true, key, char: ch, mode };
+}
+// GET/POST /api/trigger-rules. A write is refused for a browser page that is not one of ours.
+async function _handleTriggerRules(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
+  if (req.method === 'GET') {
+    let c = '';
+    try { c = new URL(req.url, 'http://127.0.0.1').searchParams.get('char') || ''; } catch { c = ''; }
+    return send(200, _triggerRulesPayload(c === '*' ? '' : c));
+  }
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 4096)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { ok: false, error: 'bad body' }); }
+  const out = _setTriggerRule(b);
+  scheduleRender();
+  send(out.ok ? 200 : 400, out);
+}
+
 // Recent overlay queue — surfaced on /api/state for the dashboard to render.
 // Cap at 20 so a runaway trigger can't OOM us.
 const _activeOverlays = [];
+// Returns false when a "What you hear" rule dropped the fire.
 function _pushOverlay(o) {
+  try { if (!_applyTriggerRule(o)) return false; } catch { /* a rules fault must never silence a callout */ }
   _activeOverlays.unshift(o);
   if (_activeOverlays.length > 20) _activeOverlays.length = 20;
   _wakeFireWaitersSoon();
+  return true;
 }
 
 // The charm break, the moment its log line is read (the guild lead, 2026-09-27:
@@ -42195,7 +42646,8 @@ function _pushCharmBreakInstant(petKey, petName, own, lineMs, now = Date.now(), 
     text: 'CHARM BREAK', tts: 'charm break', trigger: 'charm break', color: 'red', duration_ms: 3000,
     firedAt: now, shownAt: now,
     charm: true, charm_key: petKey, charm_pet: petName || petKey,
-    charm_spoken: !!(sug && sug.enabled !== false && _triggerOnFor(sug, charLc) && _suggestedHasTts(sug)),
+    rule_key: 'builtin:charm_break', rule_char: charLc || '',
+    charm_spoken:!!(sug && sug.enabled !== false && _triggerOnFor(sug, charLc) && _suggestedHasTts(sug)),
   });
   return true;
 }
@@ -42220,6 +42672,8 @@ function _fireForWeb(o) {
     // #136 raid callout allow-list muted this fire — triggers.html flashes
     // it but does not speak it.
     mute:    !!o.mute,
+    // "What you hear" — the key its rule is stored under, so the overlay's 🔇 can mute it.
+    rule_key: o.rule_key || null,
     // The inverse: speak it but do NOT flash it or ask for a timing vote.
     // Set by the damage-taken alert, whose cadence would otherwise camp the
     // shared centre flash and clobber other callouts on it.
@@ -42353,6 +42807,7 @@ function _announceRampage(target, tsMs) {
     tts:     ttsText,
     trigger: 'rampage',
     scope:   'guild',
+    rule_key: 'builtin:new_rampage',
     firedAt: now,
     test:    false,
   });
@@ -42450,6 +42905,8 @@ function _maybeAnnounceDamageTaken(ev, character, nowMs) {
     tts:     'Taking damage',
     trigger: 'damage taken',
     scope:   'personal',
+    rule_key: 'builtin:taking_damage',
+    rule_char: character ? String(character).toLowerCase() : '',
     firedAt: now,
     test:    false,
     // AUDIO ONLY — the ask was an audio alert, and at a 5s cadence the shared
@@ -46518,6 +46975,10 @@ function _startTimer(t, tsMs, isTest, captures) {
     // attributed to the trigger rather than to the composite timer id (which
     // carries the captures). Nothing else reads it.
     trigger_id:     t.id || null,
+    // "What you hear": the rule key, so the overlay can honour it for the pre-end warnings it
+    // speaks itself (they never pass through _pushOverlay).
+    // (typeof guard: test harnesses evaluate _startTimer on its own, without the rules block.)
+    rule_key:       typeof _ruleKeyOf === 'function' ? _ruleKeyOf(t) : null,
     captures:       captures && typeof captures === 'object' ? { ...captures } : null,
     scope:          t._scope || 'unknown',
     test:           !!isTest,
@@ -46647,6 +47108,7 @@ function _armBossCountdown(opts) {
       tts:     opts.fireText,
       trigger: (opts.label || 'timer') + ' — ' + opts.boss,
       scope:   'guild',
+      rule_key: 'builtin:timer_callout',
       firedAt: now,
       test:    false,
     });
@@ -46659,6 +47121,7 @@ function _armBossCountdown(opts) {
     warning_text:       opts.warnText || null,
     actions:            [{ color: opts.color || 'red' }],
     _scope:             'guild',
+    _ruleKey:           'builtin:timer_callout',
   }, now, false, { target: opts.boss });
 }
 
@@ -47115,7 +47578,11 @@ function _activeTimersSnapshot() {
     // the last 30s"). Filtered HERE rather than in the overlay so an older
     // bundled triggers.html gets the behaviour without a Mimic update.
     if (t.show_at_ms > 0 && (t.ends_at_ms - now) > t.show_at_ms) continue;
+    // Test timers bypass the rules, like every other test fire.
+    const _rm = (t.rule_key && !t.test) ? _ruleModeNow(t.rule_key) : 'speak';
     out.push({
+      rule_key:     t.rule_key || null,
+      rule_mode:    _rm,
       id:           t.id,
       name:         t.name,
       target:       t.target || null,   // GINA-style row prefix (boss/mob)
@@ -47508,6 +47975,7 @@ function _announceLootPost(items, durSec) {
     firedAt:     Date.now(),
     trigger:     'Loot auction',
     scope:       'loot',
+    rule_key:    'builtin:loot_post',
     test:        false,
   });
 }
@@ -47886,7 +48354,10 @@ function evaluateTriggersAgainstLine(line, tsMs, fileChar) {
       }
     }
     _triggerLastFire.set(t.id || t.name, tsMs);
-    _fireTriggerActions(t, captures, tsMs, false);
+    // Whose line fired it, for the "What you hear" rules (_fireTriggerActions reads it synchronously).
+    _ruleCharCtx = String(fileChar || '').toLowerCase();
+    try { _fireTriggerActions(t, captures, tsMs, false); }
+    finally { _ruleCharCtx = ''; }
   }
 }
 
@@ -48077,6 +48548,12 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
     && _optinState.calloutAllowlist !== false
     && _calloutScopeGated(t._scope)
     && !_calloutAllowedToSpeak(t);
+  // "What you hear": the key this trigger's rule is stored under, and whose rule applies —
+  // the character whose log line fired it, or (relayed, so no log line of ours) the active one.
+  // _pushOverlay applies it. Captured here so a voice mark that speaks later still uses it.
+  const _ruleKey  = _ruleKeyOf(t);
+  const _ruleChar = isRelay ? '' : _ruleCharCtx;
+  let _ruledOff = false;
   // Trigger-level roster gate. The require_raid_member field lives on
   // individual actions (so a single trigger can have one filtered + one
   // unfiltered action), but the trigger-level countdown timer is a single
@@ -48157,6 +48634,8 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
         trigger_id:  t.id || null,   // #207 — attribution for a dismissal
         scope:       t._scope || (test ? 'test' : 'personal'),
         test:        !!test,
+        rule_key:    _ruleKey,
+        rule_char:   _ruleChar,
       };
       if (ttsText) overlay.tts = ttsText;
       // #136 — allow-list muted this guild/relay fire: it still flashes, but
@@ -48179,8 +48658,8 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       // too — an overlay that only knows the older flag still shows it as a
       // rehearsal, never as a live callout).
       if (t._replay) overlay.replay = true;
-      _pushOverlay(overlay);
-      _dispatched = true;
+      if (_pushOverlay(overlay) === false) _ruledOff = true;
+      else _dispatched = true;
       console.log(`[trigger${test ? (t._rehearsal ? ':rehearsal' : ':test') : ':' + (t._scope || '?')}] ${t.name} → ${text}`);
       scheduleRender();
     } else if (a.type === 'discord' && !test) {
@@ -48255,6 +48734,8 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
             scope:       t._scope || 'personal',
             test:        false,
             mute:        _calloutMuted,
+            rule_key:    _ruleKey,
+            rule_char:   _ruleChar,
           });
           scheduleRender();
           console.log('[trigger:voice:' + (t._scope || '?') + '] ' + t.name + ' → ' + msg);
@@ -48331,7 +48812,7 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       rehearsal: !!t._rehearsal,
       checkpoint: cp,
       stopped:   cp < TJ.DISPATCHED,
-      reason:    _actionsBuilt === 0 ? 'no actions on trigger' : null,
+      reason:    _actionsBuilt === 0 ? 'no actions on trigger' : (_ruledOff && !_dispatched ? 'turned off in What you hear' : null),
     });
   }
 }
@@ -49835,6 +50316,7 @@ async function main() {
     // Guild triggers: load on startup (after watchedLogs is populated) and
     // refresh every 10 min. Personal triggers load once from local disk.
     loadPersonalTriggers();
+    loadTriggerRules();   // "What you hear" — beside personal_triggers.json
     setTimeout(() => pollGuildTriggers({ botUrl, token }), 12_000);
     // Poll every 2 min so a newly added/edited guild trigger reaches raiders in
     // ~2 min instead of 10. Cheap: the version-gate above skips the recompile
@@ -50936,6 +51418,12 @@ module.exports = {
   // +pet spawn ids on the DPS HUD — exported for their test.
   _petSpawnIdFor, _ownPetSpawnId, _guildPetIds, _zealTagsForTest: _zealTags,
   _uploadQueueLenForTest: () => _uploadQueue.length,
+  // "What you hear" (2026-10-12) — exported for test/trigger-rules.test.js.
+  _triggerRules, _resolveRule, _computeRuleGroups, _triggerRulesPayload, _setTriggerRule, _cleanRules,
+  _ruleKeyOf, _ruleGroupOfGuild, _applyTriggerRule, _builtinRuleModes, _guildRuleModes,
+  _runRelayedFire, _pushBlindEvent, _blindEvents, _maybeAnnounceDamageTaken,
+  _applyGuildTriggersResponse,
+  _setGuildTriggersForTest: (arr) => { stats.guildTriggers = arr; stats.guildTriggersVersion = null; },
 };
 
 if (require.main === module) {
