@@ -262,6 +262,23 @@
     return (bs || []).filter(function (b) { return !badgeGlyph(b) && !/raid/.test(b); })
       .map(function (b) { return String(b).replace(/_/g, ' '); }).join(', ');
   }
+  // Which mob is up on a point, when we know it (the guild lead, 2026-10-12: "targetting needs to update the symbols …
+  // display spawn ID and pick which name it is"): your pinned target first, then a sighting (yours or the guild's).
+  function upOn(pid, P, seenBy) {
+    var k = String(pid);
+    if (P && P.target && P.target.point_id != null && String(P.target.point_id) === k) return { name: P.target.name, spawn_id: P.target.id != null ? P.target.id : null };
+    var sn = seenBy && seenBy[k];
+    return sn && sn.name ? { name: sn.name, spawn_id: sn.spawn_id != null ? sn.spawn_id : null } : null;
+  }
+  function npcKey(s) { return String(s || '').replace(/_/g, ' ').replace(/^[#!~]+/, '').replace(/\d+$/, '').trim().toLowerCase(); }
+  // The point's npc row for that mob (null when the name is not in its spawn group: the label still shows the name).
+  function upNpc(p, up) {
+    if (!up) return null;
+    var k = npcKey(up.name), npcs = (p && p.npcs) || [];
+    for (var i = 0; i < npcs.length; i++) if (npcs[i] && npcKey(npcs[i].name) === k) return npcs[i];
+    return null;
+  }
+  function upLabel(up) { return String(up.name).replace(/_/g, ' ').replace(/^[#!~]+/, '') + (up.spawn_id != null ? ' #' + up.spawn_id : ''); }
   function pointBadges(p) {
     var seen = {}, out = [];
     var npcs = (p && p.npcs) || [];
@@ -722,14 +739,15 @@
     return c;
   }
   function drawLabels(boss, sz, range, w, h) {
-    if (!S.labels) return;
+    if (!S.labels) boss = boss.filter(function (c) { return c.tier < 0; });   // Labels off still names the mob that is up
+    if (!boss.length && !S.labels) return;
     var P = S.p, ref;
     if (P && P.self) { var sd = drawn('self', P.self, Date.now()); ref = { x: sd.x, y: sd.y }; }
     else ref = { x: -S.view.cx, y: -S.view.cy };
     var dist = function (x, y) { return Math.hypot(x - ref.x, y - ref.y); };
     var cands = boss.map(function (c) { c.pri = c.tier * 1e7 + dist(c.wx, c.wy); return c; });
     var rooms = [];
-    var ll = S.local ? S.local.labels : [];
+    var ll = S.local && S.labels ? S.local.labels : [];
     for (var i = 0; i < ll.length; i++) {
       var q = wpt(ll[i][0], ll[i][1]);
       if (q[0] < -40 || q[0] > w + 40 || q[1] < -20 || q[1] > h + 20) continue;
@@ -813,6 +831,8 @@
       ctx.globalAlpha = inLevelRange(p.z, sz, range) ? 1 : 0.4;
       var r = kind.raid ? 6.5 : kind.named ? 5.5 : 4.2;
       var t = S.timerBy[String(p.id)], cand = S.candBy[String(p.id)], sn = S.seenBy[String(p.id)];
+      var up = upOn(p.id, S.p, S.seenBy), un = upNpc(p, up);
+      if (up && !sn) sn = up;   // your pinned target is alive on this point now, before the next poll says so
       if (sn) {   // up · seen: a solid green ring (the fill is green below)
         ctx.beginPath(); ctx.arc(px, py, r + 3.5, 0, 6.2832); ctx.lineWidth = 2.4; ctx.strokeStyle = '#56d364'; ctx.stroke();
       } else if (t) {
@@ -827,11 +847,13 @@
       ctx.beginPath(); ctx.arc(px, py, r, 0, 6.2832);
       ctx.fillStyle = sn ? '#56d364' : kind.raid ? '#ff7b72' : kind.named ? '#f2cc60' : '#c9d1d9'; ctx.fill();
       ctx.lineWidth = kind.named ? 1.5 : 1.2; ctx.strokeStyle = '#0d1117'; ctx.stroke();   // a dark outline on every dot
-      var bd = pointBadges(p);
+      var bd = pointBadges(un ? { npcs: [un] } : p);   // a known mob: its own symbols, not every mob that can spawn here
       if (bd) halo(bd, px + r + 3, py - r, '9px ui-monospace,Consolas,monospace', '#e6edf3');
       if (p.grid != null) halo('↻', px - r - 3, py - r, '9px ui-monospace,Consolas,monospace', '#9ecbff', 'right');   // a pather: it walks a route
       // Named and raid-target names are drawn after the loop, at any zoom, through the label placer (bosses first).
-      if (kind.named) bossC.push({ text: bestName(p), x: px + r + 3, y: py + r + 3, z: p.z, wx: p.x, wy: p.y, col: kind.raid ? '#ffa198' : '#f2cc60', tier: kind.raid ? 0 : 1, align: 'left', font: LABEL_FONT_BOSS });
+      // A known mob's name + spawn id goes ahead of everything (tier -1).
+      if (up) bossC.push({ text: upLabel(up), x: px + r + 3, y: py + r + 3, z: p.z, wx: p.x, wy: p.y, col: '#7ee787', tier: -1, align: 'left', font: LABEL_FONT_BOSS });
+      else if (kind.named) bossC.push({ text: bestName(p), x: px + r + 3, y: py + r + 3, z: p.z, wx: p.x, wy: p.y, col: kind.raid ? '#ffa198' : '#f2cc60', tier: kind.raid ? 0 : 1, align: 'left', font: LABEL_FONT_BOSS });
     }
     ctx.globalAlpha = 1;
     drawLabels(bossC, sz, range, w, h);
@@ -929,12 +951,17 @@
     var p = S.byId[pid];
     if (!p) return;
     card.innerHTML = '';
-    card.appendChild(el('div', 'h', bestName(p)));
+    var up = upOn(pid, S.p, S.seenBy), un = upNpc(p, up);
+    card.appendChild(el('div', 'h', up ? upLabel(up) : bestName(p)));
     var rs = Number(p.respawn_s) || 0, vr = Number(p.variance_s) || 0;
     card.appendChild(el('div', 's', rs && rs < 1000000 ? 'respawn ' + fmtDur(rs * 1000) + (vr ? ' ±' + fmtDur(vr * 1000) : '') : 'no respawn time'));
     if (p.grid != null) card.appendChild(el('div', 's', '↻ walks a route'));
-    (p.npcs || []).slice(0, 8).forEach(function (n) {
+    // The mob that is up goes first, marked ▶ in green; the rest are what else can spawn here.
+    var npcList = (p.npcs || []).slice();
+    if (un) npcList = [un].concat(npcList.filter(function (n) { return n !== un; }));
+    npcList.slice(0, 8).forEach(function (n) {
       var row = el('div', 'n');
+      if (n === un) { row.style.color = '#7ee787'; row.appendChild(document.createTextNode('▶ ')); }
       var l = el('span', null, ''); var nm = el(n.raid_target ? 'b' : 'span', n.raid_target ? 'r' : null, String(n.name || '').replace(/_/g, ' ').replace(/^[#!~]+/, ''));
       if (n.named && !n.raid_target) nm = el('b', null, nm.textContent);
       l.appendChild(nm);

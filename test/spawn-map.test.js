@@ -477,7 +477,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -522,6 +522,22 @@ describe('the overlay (apps/mimic/map.html)', () => {
     expect(H.pointKind(POINTS[2])).toEqual({ named: true, raid: false });
     expect(H.pointKind(POINTS[4])).toEqual({ named: true, raid: true });
     expect(H.bestName(POINTS[2])).toBe('Lord Nagafen');
+  });
+  it('a known mob on a point: its own name, spawn id and symbols, not every mob that can spawn there', () => {
+    const P = { target: { name: 'a decaying skeleton', id: 152, point_id: 3 } };
+    const up = H.upOn(3, P, {});
+    expect(up).toEqual({ name: 'a decaying skeleton', spawn_id: 152 });
+    expect(H.upLabel(up)).toBe('a decaying skeleton #152');
+    const un = H.upNpc(POINTS[2], up);
+    expect(un.name).toBe('a_decaying_skeleton');
+    expect(H.pointBadges({ npcs: [un] })).toBe('');               // the skeleton has no eye; the point as a whole does
+    expect(H.pointBadges(POINTS[2])).toBe('👁');
+    expect(H.upNpc(POINTS[2], { name: 'Lord Nagafen' }).named).toBe(true);
+    // the pinned target wins over a guild sighting; a sighting alone still names the point; nothing known = null
+    expect(H.upOn(3, P, { 3: { name: 'Lord Nagafen', spawn_id: 9 } }).spawn_id).toBe(152);
+    expect(H.upOn(2, null, { 2: { name: 'a decaying skeleton', spawn_id: 812 } })).toEqual({ name: 'a decaying skeleton', spawn_id: 812 });
+    expect(H.upOn(1, P, {})).toBeNull();
+    expect(H.upNpc(POINTS[2], { name: 'a bat' })).toBeNull();
   });
   it('fits the zone with the north-up flip', () => {
     const v = H.fitView({ minX: -100, maxX: 300, minY: 0, maxY: 100 }, 400, 200);
