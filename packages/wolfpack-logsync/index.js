@@ -22432,7 +22432,7 @@ var WP_OVERLAY_ROWS = [
   ['command', 'Command Center',      'One-window raid board: boss/MT/rampage/enrage/Death Touch (same data as Tank HUD), plus raid-wide DA/invuln status and healer mana parsed from raid-chat macros, plus Curse/Cure alerts from the buff queue. Reads /api/command-center.'],
   ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
   ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline, and Boastful Bellow once a bard uses it), your target\\'s name on top of its bar with who it is hitting above that, its level, class, resists and slow state curved inside, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 10% if it enrages (gone once the enrage ends), damage in beside your health and out on the right, hugging the ring: the mob\\'s running total, then older rounds as one number each and the newest rounds hit by hit, procs in purple (older rounds slide into the total; after the fight it stays, dim, until the next), your damage shield the same way with its per-hit button (red DS OFF with the time left while Mark of the Plague Lords or another shield-cancelling debuff is on you), a ✗ on a failed Feign Death, and your class numbers. Pick Box or the HUD ring in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
-  ['map',     'Spawn map [beta]',    'The zone from above, north up: walls, every spawn point as a dot (named and raid targets bold, danger badges for see-invisible, see-hide, summon), you as an arrow, your group, raid and target. Respawn timers run as a window (earliest to latest) coloured red / yellow / green, flashing when a spawn just became possible; a mob you saw die starts its own, or click a dot and mark it Killed, Empty or Up. A death that could be one of several spawn points shows "?" rings and starts no timer until you settle it. Timers list on the right, soonest first. Needs Zeal 1.4.8 for your target\\'s position. Drag and the wheel pan and zoom (switch on the hand button while locked), Follow me is on by default, Fit zone shows it all, a floor picker appears in multi-level zones. Your positions stay on this machine.'],
+  ['map',     'Map [beta]','The zone from above, north up: walls, every spawn point as a dot (named and raid targets bold, danger badges for see-invisible, see-hide, summon), you as an arrow, your group, raid and target. Respawn timers run as a window (earliest to latest) coloured red / yellow / green, flashing when a spawn just became possible; a mob you saw die starts its own, or click a dot and mark it Killed, Empty or Up. A death that could be one of several spawn points shows "?" rings and starts no timer until you settle it. Timers list on the right, soonest first. Needs Zeal 1.4.8 for your target\\'s position. Drag and the wheel pan and zoom (switch on the hand button while locked), Follow me is on by default, Fit zone shows it all, a floor picker appears in multi-level zones. Your positions stay on this machine.'],
 ];
 
 // One line per overlay for the Overlays tab's list and Add cards (option C, the
@@ -44311,7 +44311,8 @@ function fetchMobInfo(name, selfChar, zoneId) {
 //     wall map), ETag'd, kept on disk in zone-spawns-cache/ beside mobinfo-cache/, local first like the mob
 //     packs: a cached zone costs no request, and in local mode (no token) NOTHING is ever requested.
 //   • Positions are LOCAL ONLY: your own, your group's (Zeal type 6) and your raid's (type 5) off the pipe you
-//     already see, plus your target's (Zeal 1.4.8 target_loc, within 250). Nothing here is uploaded.
+//     already see, plus your target's (Zeal 1.4.8 target_loc, within 250). No position is uploaded:
+//     only certain spawn-point events (seen / died / marks) go to the guild, see "Guild sync" below.
 //   • Deaths become respawn timers (map_timers.json, keyed by zone). A death is credited to a spawn point by
 //     NAME and by where the mob was FIRST seen; when that is ambiguous it stays "unassigned" with up to four
 //     candidate points (drawn "?") and starts no timer. A click can settle it ("Killed - this one").
@@ -44340,6 +44341,20 @@ const MAP_REVALIDATE_MS      = 24 * 60 * 60 * 1000; // a held zone is re-checked
 const MAP_NONE_RETRY_MS      = 6 * 60 * 60 * 1000;  // the bot has no points for the zone (404)
 const MAP_FAIL_RETRY_MS      = 10 * 60 * 1000;
 const MAP_INSTANCE_SENTINEL_S = 1_000_000;          // the 1,700,000 s rows are instance sentinels, not respawns
+// Pinning and guild sync (the guild lead, 2026-10-12: "need the tab targetting to set the specific mob in a synced
+// way on the map once it's certain"). A live mob that tab-targets to ONE point is pinned there for good.
+const MAP_PIN_MAX            = 500;                 // pinned spawn ids kept (oldest out); cleared on a zone change
+const MAP_PIN_RETRY_MS       = 1000;                // an unpinned mob is re-checked at most this often...
+const MAP_PIN_RETRY_UNITS    = 20;                  // ...unless it moved this far since the last try
+const MAP_SEEN_KEEP_MS       = 30 * 60 * 1000;      // "seen alive" sightings older than this are not shown
+const MAP_LAST_KEEP_MS       = 24 * 60 * 60 * 1000;
+const MAP_SYNC_FLUSH_MS      = 3000;                // pushes are batched: at most one POST per this
+const MAP_SYNC_BATCH         = 50;                  // events per POST
+const MAP_SYNC_PULL_MS       = 10 * 1000;
+const MAP_SYNC_BACKOFF_MS    = 10 * 60 * 1000;      // the bot answered 404: not deployed yet, ask again later
+const MAP_SYNC_TIMEOUT_MS    = 8000;
+const MAP_SYNC_QUEUE_MAX     = 200;
+const MAP_CORPSE_RE          = /[`'’]s\s+corpse\d*$/i;
 const MAP_ZONE_SHORT = Object.fromEntries(('1:qeynos,2:qeynos2,3:qrg,4:qeytoqrg,5:highpass,6:highkeep,8:freportn,9:freportw,10:freporte,11:runnyeye,12:qey2hh1,13:northkarana,14:southkarana,15:eastkarana,16:beholder,17:blackburrow,18:paw,19:rivervale,20:kithicor,21:commons,22:ecommons,23:erudnint,24:erudnext,25:nektulos,26:cshome,27:lavastorm,28:nektropos,29:halas,30:everfrost,31:soldunga,32:soldungb,33:misty,34:nro,35:sro,36:befallen,37:oasis,38:tox,39:hole,40:neriaka,41:neriakb,42:neriakc,43:neriakd,44:najena,45:qcat,46:innothule,47:feerrott,48:cazicthule,49:oggok,50:rathemtn,51:lakerathe,52:grobb,53:aviak,54:gfaydark,55:akanon,56:steamfont,57:lfaydark,58:crushbone,59:mistmoore,60:kaladima,61:felwithea,62:felwitheb,63:unrest,64:kedge,65:guktop,66:gukbottom,67:kaladimb,68:butcher,69:oot,70:cauldron,71:airplane,72:fearplane,73:permafrost,74:kerraridge,75:paineel,76:hateplane,77:arena,78:fieldofbone,79:warslikswood,80:soltemple,81:droga,82:cabwest,83:swampofnohope,84:firiona,85:lakeofillomen,86:dreadlands,87:burningwood,88:kaesora,89:sebilis,90:citymist,91:skyfire,92:frontiermtns,93:overthere,94:emeraldjungle,95:trakanon,96:timorous,97:kurn,98:erudsxing,100:stonebrunt,101:warrens,102:karnor,103:chardok,104:dalnir,105:charasis,106:cabeast,107:nurga,108:veeshan,109:veksar,110:iceclad,111:frozenshadow,112:velketor,113:kael,114:skyshrine,115:thurgadina,116:eastwastes,117:cobaltscar,118:greatdivide,119:wakening,120:westwastes,121:crystal,123:necropolis,124:templeveeshan,125:sirens,126:mischiefplane,127:growthplane,128:sleeper,129:thurgadinb,130:erudsxing2,150:shadowhaven,151:bazaar,152:nexus,153:echo,154:acrylia,155:sharvahl,156:paludal,157:fungusgrove,158:vexthal,159:sseru,160:katta,161:netherbian,162:ssratemple,163:griegsend,164:thedeep,165:shadeweaver,166:hollowshade,167:grimling,168:mseru,169:letalis,170:twilight,171:thegrey,172:tenebrous,173:maiden,174:dawnshroud,175:scarlet,176:umbral,179:akheva,180:arena2,181:jaggedpine,200:codecay,201:pojustice,202:poknowledge,203:potranquility,204:ponightmare,205:podisease,206:poinnovation,207:potorment,208:povalor,209:bothunder,210:postorms,211:hohonora,212:solrotower,213:powar,214:potactics,215:poair,216:powater,217:pofire,218:poeartha,219:potimea,220:hohonorb,221:nightmareb,222:poearthb,223:potimeb')
   .split(',').map(kv => { const i = kv.indexOf(':'); return [kv.slice(0, i), kv.slice(i + 1)]; }));   // eqemu_zone.zone_id -> short_name, read from the table 2026-10-12
 
@@ -44437,6 +44452,8 @@ function _mapZoneDoc(zone) {
   if (!e.timers || typeof e.timers !== 'object') e.timers = {};
   if (!Array.isArray(e.unassigned)) e.unassigned = [];
   if (!e.sightings || typeof e.sightings !== 'object') e.sightings = {};
+  if (!e.seen || typeof e.seen !== 'object') e.seen = {};   // <point_id>: a pinned mob seen alive there
+  if (!e.last || typeof e.last !== 'object') e.last = {};   // <point_id>: `at` of the newest event applied (local or guild) - newer wins
   return e;
 }
 function _mapSaveNow() {
@@ -44480,6 +44497,12 @@ function _mapPrune(zdoc, points, now) {
   const sights = Object.entries(zdoc.sightings).filter(([, s]) => s && now - (s.last_at || s.at || 0) <= MAP_SIGHT_KEEP_MS);
   if (sights.length > MAP_SIGHT_MAX) sights.sort((a, b) => (b[1].last_at || 0) - (a[1].last_at || 0)).length = MAP_SIGHT_MAX;
   if (sights.length !== Object.keys(zdoc.sightings).length) { zdoc.sightings = Object.fromEntries(sights); changed = true; }
+  for (const [k, s] of Object.entries(zdoc.seen || {})) {
+    if (!s || !(now - s.at <= MAP_SEEN_KEEP_MS)) { delete zdoc.seen[k]; changed = true; }
+  }
+  for (const [k, at] of Object.entries(zdoc.last || {})) {
+    if (!(now - at <= MAP_LAST_KEEP_MS)) { delete zdoc.last[k]; changed = true; }
+  }
   return changed;
 }
 
@@ -44573,6 +44596,179 @@ function _mapEnsureZone(short, zoneId, now) {
   return rec.body ? rec : null;
 }
 
+// ── Pins: a live mob tied to its spawn point ────────────────────────────────────────────────────
+// Mobs are pulled before they die, so "where it died" is a poor clue ("4 possible spawn points"). The moment a
+// LIVE mob in your target window sits at exactly one point (_mapAttribute says 'assigned'), it is pinned there by
+// its spawn id: later samples are not re-checked, and its death credits that point wherever it dies. Spawn ids are
+// reused by the server, so a pin is dropped when its mob dies and only counts for the same name. In memory only.
+const _mapPins = { zone: null, m: new Map(), tried: new Map() };   // m: spawn id -> { point_id, name }; tried: spawn id -> { x, y, at }
+function _mapPinsFor(zone) {
+  if (_mapPins.zone !== zone) { _mapPins.zone = zone; _mapPins.m.clear(); _mapPins.tried.clear(); }
+  return _mapPins;
+}
+function _mapPinGet(zone, spawnId, name) {
+  if (_mapPins.zone !== zone || !(spawnId > 0)) return null;
+  const p = _mapPins.m.get(spawnId);
+  if (!p) return null;
+  if (name != null && _mapNormName(name) !== p.name) return null;
+  return p;
+}
+function _mapCapMap(m) { while (m.size > MAP_PIN_MAX) m.delete(m.keys().next().value); }
+// `loc` is the mob's position now (server frame). Returns the pin when this call made one.
+function _mapTryPin(zone, character, spawnId, name, loc, now) {
+  if (_mapPinGet(zone, spawnId, name)) return null;           // already pinned: a mob that wanders after being pinned stays pinned
+  const P = _mapPinsFor(zone);
+  const prev = P.tried.get(spawnId);
+  if (prev && now - prev.at < MAP_PIN_RETRY_MS && _mapDist2(prev, loc) < MAP_PIN_RETRY_UNITS) return null;
+  P.tried.delete(spawnId); P.tried.set(spawnId, { x: loc.x, y: loc.y, at: now }); _mapCapMap(P.tried);
+  const rec = _mapZones.get(zone);
+  if (!rec || !rec.body) return null;
+  const att = _mapAttribute(rec.body.points, name, loc);
+  if (att.kind !== 'assigned') return null;                   // only when certain; a "?" never pins
+  const point = rec.byId.get(String(att.point_id));
+  if (!point) return null;
+  P.m.delete(spawnId); P.m.set(spawnId, { point_id: point.id, name: _mapNormName(name) }); _mapCapMap(P.m);
+  const zd = _mapZoneDoc(zone), pid = String(point.id);
+  const old = zd.seen[pid];
+  if (!(old && old.spawn_id === spawnId)) {
+    delete zd.timers[pid];                                    // it is standing there: whatever timer ran on this point was wrong
+    zd.seen[pid] = { point_id: point.id, spawn_id: spawnId, name: _mapPrettyName(name), at: now };
+    _mapLocalEvent(zone, zd, character, { point_id: point.id, kind: 'seen', spawn_id: spawnId, name: _mapPrettyName(name), at: now }, now);
+    _mapSaveSoon();
+  }
+  return { point_id: point.id };
+}
+
+// ── Guild sync: only CERTAIN events leave the machine, only through /api/agent/map-sync ────────────
+// Push: pinned sightings ("seen"), assigned deaths ("died") and your own marks (died / empty / up / clear), batched
+// (one POST per 3 s, 50 events). Never a "?" candidate. Pull: only while the overlay is polling /api/map-state
+// (the pull starts from that request and from nothing else, so a closed or hidden map stops it), every 10 s, for
+// events newer than the last one seen. Ephemeral on purpose: no durable queue, a failed POST is dropped. A 404
+// means the bot does not have the route yet: nothing is asked of it for 10 minutes, and nothing is shown.
+// Same URL derivation, bearer, timeout and _mapFetchAllowed() gate as _mapGetZone: local mode never syncs.
+const _mapSync = { q: [], flushTimer: null, backoffUntil: 0, pulling: false, pullAt: 0, pullZone: null, since: {}, keys: new Set() };
+const _mapSyncKey = (zone, e) => zone + '|' + e.point_id + '|' + e.kind + '|' + (e.spawn_id == null ? '' : e.spawn_id) + '|' + e.at;
+function _mapSyncRemember(key) { if (_mapSync.keys.size > 4000) _mapSync.keys.clear(); _mapSync.keys.add(key); }
+function _mapSyncStop() {
+  if (_mapSync.flushTimer) { clearTimeout(_mapSync.flushTimer); _mapSync.flushTimer = null; }
+  _mapSync.q.length = 0;
+}
+function _mapSyncSchedule() {
+  if (_mapSync.flushTimer) return;
+  _mapSync.flushTimer = setTimeout(() => { _mapSync.flushTimer = null; _mapSyncFlush(Date.now()); }, MAP_SYNC_FLUSH_MS);
+  if (_mapSync.flushTimer.unref) _mapSync.flushTimer.unref();
+}
+// A local event: it stamps the point (newer wins), is remembered so its own echo from the bot is skipped, and is
+// queued for the guild when this machine may talk to the bot.
+function _mapLocalEvent(zone, zd, character, ev, now) {
+  const e = { point_id: ev.point_id, kind: ev.kind, spawn_id: ev.spawn_id > 0 ? ev.spawn_id : null,
+    name: ev.name ? String(ev.name).slice(0, 80) : null, at: ev.at };
+  const pid = String(e.point_id);
+  zd.last[pid] = Math.max(zd.last[pid] || 0, e.at);
+  _mapSyncRemember(_mapSyncKey(zone, e));
+  if (!_mapFetchAllowed()) return;
+  const ch = character || _mapActiveCharacter(now);
+  if (!ch) return;
+  if (_mapSync.q.length >= MAP_SYNC_QUEUE_MAX) _mapSync.q.shift();
+  _mapSync.q.push({ zone, character: String(ch), ev: e });
+  _mapSyncSchedule();
+}
+function _mapSyncRequest(method, query, bodyObj, done) {
+  let finished = false;
+  const fin = (err, status, buf) => { if (finished) return; finished = true; done(err, status, buf); };
+  try {
+    const opts = _uploadOpts;
+    const u = new URL(opts.botUrl.replace(/\/encounter(\?.*)?$/, '/map-sync') + query);
+    const mod = u.protocol === 'https:' ? https : http;
+    const headers = { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` };
+    let payload = null;
+    if (bodyObj) { payload = Buffer.from(JSON.stringify(bodyObj)); headers['Content-Type'] = 'application/json'; headers['Content-Length'] = payload.length; }
+    const req = mod.request({ method, hostname: u.hostname, port: u.port, path: u.pathname + u.search, headers, timeout: MAP_SYNC_TIMEOUT_MS }, (res) => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => fin(null, res.statusCode, Buffer.concat(chunks)));
+    });
+    req.on('error',   (e) => fin(e));
+    req.on('timeout', () => { req.destroy(); fin(new Error('timeout')); });
+    req.end(payload || undefined);
+  } catch (e) { fin(e); }
+}
+// Send the oldest batch (one zone + character, up to 50). Returns true when a POST went out.
+function _mapSyncFlush(now) {
+  const q = _mapSync.q;
+  if (!q.length) return false;
+  if (!_mapFetchAllowed() || now < _mapSync.backoffUntil) { q.length = 0; return false; }
+  const first = q[0], batch = [];
+  for (let i = 0; i < q.length && batch.length < MAP_SYNC_BATCH;) {
+    if (q[i].zone === first.zone && q[i].character === first.character) batch.push(q.splice(i, 1)[0].ev); else i++;
+  }
+  if (q.length) _mapSyncSchedule();
+  _mapSyncRequest('POST', '', { zone: first.zone, character: first.character, events: batch }, (err, status) => {
+    if (!err && status === 404) _mapSync.backoffUntil = now + MAP_SYNC_BACKOFF_MS;
+  });
+  return true;
+}
+// Started by a /api/map-state request (see _mapStatePayload). Returns true when a GET went out.
+function _mapSyncPull(zone, now) {
+  if (!_mapFetchAllowed() || now < _mapSync.backoffUntil || _mapSync.pulling) return false;
+  if (_mapSync.pullZone === zone && now - _mapSync.pullAt < MAP_SYNC_PULL_MS) return false;
+  const rec = _mapZones.get(zone);
+  if (!rec || !rec.body) return false;
+  _mapSync.pulling = true; _mapSync.pullAt = now; _mapSync.pullZone = zone;
+  _mapSyncRequest('GET', '?zone=' + encodeURIComponent(zone) + '&since=' + (_mapSync.since[zone] || 0), null, (err, status, buf) => {
+    _mapSync.pulling = false;
+    if (err) return;
+    if (status === 404) { _mapSync.backoffUntil = now + MAP_SYNC_BACKOFF_MS; return; }
+    if (status !== 200) return;
+    try {
+      const j = JSON.parse(buf.toString('utf8'));
+      if (j && Array.isArray(j.events)) _mapApplyRemote(zone, j.events, Date.now());
+    } catch { /* an unreadable answer is ignored; the next pull asks again */ }
+  });
+  return true;
+}
+// Fold the guild's events into this machine's timers. Oldest first; an event for a point is applied only when it is
+// NEWER than the newest thing already applied there (local or remote) - so a remote death overrides an older local
+// state and a newer local one wins over an older remote. Repeats (the same point, kind, spawn id and time) and our
+// own echoes are skipped. Returns how many changed anything.
+function _mapApplyRemote(zone, events, now) {
+  const rec = _mapZones.get(zone);
+  if (!rec || !rec.body || !Array.isArray(events)) return 0;
+  const zd = _mapZoneDoc(zone);
+  const list = events.filter(e => e && e.point_id != null && typeof e.kind === 'string' && Number.isFinite(Number(e.at)))
+    .slice(0, 500).sort((a, b) => Number(a.at) - Number(b.at));
+  let applied = 0, maxAt = _mapSync.since[zone] || 0;
+  for (const raw of list) {
+    const at = Number(raw.at);
+    if (at > now + 60000) continue;                              // from the future: a clock we cannot trust
+    if (at > maxAt) maxAt = at;
+    const e = { point_id: raw.point_id, kind: String(raw.kind), spawn_id: Number(raw.spawn_id) > 0 ? Number(raw.spawn_id) : null,
+      name: raw.name ? String(raw.name).slice(0, 80) : null, at };
+    const key = _mapSyncKey(zone, e);
+    if (_mapSync.keys.has(key)) continue;
+    _mapSyncRemember(key);
+    const pid = String(e.point_id), point = rec.byId.get(pid);
+    if (!point || !(at > (zd.last[pid] || 0))) continue;
+    const by = raw.by ? String(raw.by).slice(0, 40) : null;
+    if (e.kind === 'died' || e.kind === 'empty') {
+      const timer = _mapMakeTimer(point, at, e.kind === 'died' ? 'seen' : 'marked', e.name ? _mapPrettyName(e.name) : null);
+      if (timer) { if (by) timer.by = by; zd.timers[pid] = timer; } else delete zd.timers[pid];
+      delete zd.seen[pid];
+    } else if (e.kind === 'seen') {
+      delete zd.timers[pid];
+      zd.seen[pid] = { point_id: point.id, spawn_id: e.spawn_id, name: e.name ? _mapPrettyName(e.name) : _mapBestName(point), at, by };
+    } else if (e.kind === 'up') {
+      delete zd.timers[pid];
+    } else if (e.kind === 'clear') {
+      delete zd.timers[pid]; delete zd.seen[pid];
+    } else continue;
+    zd.last[pid] = at; applied++;
+  }
+  _mapSync.since[zone] = maxAt;
+  if (applied) _mapSaveSoon();
+  return applied;
+}
+
 // ── Sightings and deaths ────────────────────────────────────────────────────────────────────────
 // First sighting: a target with a spawn id and a position. The FIRST position is the one that counts - a
 // pulled mob walks to you, and where it stood when you first tabbed to it is nearest its spawn point.
@@ -44614,7 +44810,12 @@ function _mapNoteDeath(zone, ev, now) {
   if (sight && _mapNormName(sight.name) === name) { loc = sight.first_loc; locSource = 'first_seen'; }
   else if (ev.loc) { loc = ev.loc; locSource = ev.loc_source || 'target'; }
   if (sight) delete zd.sightings[String(ev.spawn_id)];
-  const att = _mapAttribute(rec.body.points, ev.name, loc);
+  // A pinned mob dies on its own point wherever it was pulled to. The pin is spent either way (ids get reused).
+  const pin = ev.spawn_id != null ? _mapPinGet(zone, ev.spawn_id, ev.name) : null;
+  if (ev.spawn_id != null && _mapPins.zone === zone) { _mapPins.m.delete(ev.spawn_id); _mapPins.tried.delete(ev.spawn_id); }
+  const att = pin && rec.byId.get(String(pin.point_id))
+    ? { kind: 'assigned', point_id: pin.point_id, dist: null, pinned: true }
+    : _mapAttribute(rec.body.points, ev.name, loc);
   if (att.kind === 'none') return att;
   _mapRecentDeaths.push({ name, at: now, spawn_id: ev.spawn_id == null ? null : ev.spawn_id, src: ev.src || 'zeal' });
   const at = Number.isFinite(ev.at) ? ev.at : now;
@@ -44622,8 +44823,10 @@ function _mapNoteDeath(zone, ev, now) {
     const point = rec.byId.get(String(att.point_id));
     const timer = _mapMakeTimer(point, at, 'seen', _mapPrettyName(ev.name));
     if (timer) zd.timers[String(att.point_id)] = timer;          // an observed death overrides a mark
+    delete zd.seen[String(att.point_id)];                         // dead now, no longer "seen alive"
+    if (timer) _mapLocalEvent(zone, zd, ev.character, { point_id: att.point_id, kind: 'died', spawn_id: ev.spawn_id, name: _mapPrettyName(ev.name), at }, now);
     _mapSaveSoon();
-    return { kind: 'assigned', point_id: att.point_id, timer };
+    return { kind: 'assigned', point_id: att.point_id, timer, pinned: !!att.pinned };
   }
   const u = { id: 'u' + (++_mapUidSeq) + '-' + at.toString(36), name: _mapPrettyName(ev.name), died_at: at,
     candidates: att.candidates, loc_source: locSource, spawn_id: ev.spawn_id == null ? null : ev.spawn_id };
@@ -44635,18 +44838,27 @@ function _mapNoteDeath(zone, ev, now) {
 
 // Click-to-mark. kind: killed | empty | up. A mark is a hint, never ground truth: a later observed death
 // overrides it (_mapNoteDeath above writes over the timer).
-function _mapApplyMark(zone, mark, now) {
+function _mapApplyMark(zone, mark, now, character) {
   const rec = _mapZones.get(zone);
   if (!rec || !rec.body) return { ok: false, error: 'no spawn data for this zone' };
   const kind = String(mark && mark.kind || '');
-  if (kind !== 'killed' && kind !== 'empty' && kind !== 'up') return { ok: false, error: 'kind must be killed, empty or up' };
+  if (kind !== 'killed' && kind !== 'empty' && kind !== 'up' && kind !== 'clear') return { ok: false, error: 'kind must be killed, empty, up or clear' };
   const pid = String(mark && mark.point_id);
   const point = rec.byId.get(pid);
   if (!point) return { ok: false, error: 'unknown spawn point' };
   const zd = _mapZoneDoc(zone);
+  const send = (k, spawnId, name, at) => _mapLocalEvent(zone, zd, character, { point_id: point.id, kind: k, spawn_id: spawnId, name, at }, now);
+  if (kind === 'clear') {
+    // Drop the timer and any "seen alive" on this point.
+    delete zd.timers[pid]; delete zd.seen[pid];
+    send('clear', null, null, now);
+    _mapSaveSoon();
+    return { ok: true, cleared: true };
+  }
   if (kind === 'up') {
     // It is standing there: no timer, and it is no longer a candidate for any unassigned death.
     delete zd.timers[pid];
+    send('up', null, null, now);
     // (A death left with no candidate at all because of this click is dropped; one that never had any stays.)
     zd.unassigned = zd.unassigned.filter(u => {
       const before = (u.candidates || []).length;
@@ -44656,16 +44868,18 @@ function _mapApplyMark(zone, mark, now) {
     _mapSaveSoon();
     return { ok: true, cleared: true };
   }
-  let diedAt = now, name = _mapBestName(point), settled = false;
+  let diedAt = now, name = _mapBestName(point), settled = false, spawnId = null;
   if (kind === 'killed') {
     // "Killed - this one" settles the newest unassigned death that listed this point, onto this point.
     let hit = -1;
     zd.unassigned.forEach((u, i) => { if ((u.candidates || []).some(c => String(c) === pid) && (hit < 0 || u.died_at >= zd.unassigned[hit].died_at)) hit = i; });
-    if (hit >= 0) { const u = zd.unassigned.splice(hit, 1)[0]; diedAt = u.died_at; name = u.name || name; settled = true; }
+    if (hit >= 0) { const u = zd.unassigned.splice(hit, 1)[0]; diedAt = u.died_at; name = u.name || name; settled = true; spawnId = u.spawn_id; }
   }
   const timer = _mapMakeTimer(point, diedAt, 'marked', name);
   if (!timer) return { ok: false, error: 'this spawn point has no respawn time' };
   zd.timers[pid] = timer;
+  delete zd.seen[pid];
+  send(kind === 'killed' ? 'died' : 'empty', spawnId, name, diedAt);
   _mapSaveSoon();
   return { ok: true, timer, settled };
 }
@@ -44687,7 +44901,7 @@ function _mapStatePayload(have, now) {
   const character = _mapActiveCharacter(now);
   const st = character ? _zealState[character] : null;
   const out = { zone: null, long_name: null, zone_id: null, version: null, status: character ? 'ok' : 'no-pipe', local_only: _localOnly(),
-    map: null, points: null, self: null, group: [], raid: [], target: null, timers: [], unassigned: [], now };
+    map: null, points: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], now };
   if (!st) return out;
   out.zone_id = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
   const zone = _mapZoneShort(st.zone);
@@ -44716,7 +44930,11 @@ function _mapStatePayload(have, now) {
     out.target = { name: String(st.target_name), id: Number.isFinite(st.target_id) ? st.target_id : null,
       hp_pct: Number.isFinite(st.target_hp_pct) ? st.target_hp_pct : null,
       x: tp ? tp.x : null, y: tp ? tp.y : null, z: tp ? tp.z : null,
-      dist: tp && self ? Math.round(_mapDist2(tp, self)) : null };
+      dist: tp && self ? Math.round(_mapDist2(tp, self)) : null,
+      point_id: null };
+    // Pinned (see "Pins"): the spawn point this live target is tied to, for the overlay's line and "→ pinned".
+    const pin = zone ? _mapPinGet(zone, out.target.id, st.target_name) : null;
+    if (pin) out.target.point_id = pin.point_id;
   }
   if (!zone) { out.status = 'no-zone'; return out; }
   const rec = _mapEnsureZone(zone, out.zone_id, now);
@@ -44732,6 +44950,12 @@ function _mapStatePayload(have, now) {
   if (_mapPrune(zd, rec.body.points, now)) _mapSaveSoon();
   out.timers = Object.values(zd.timers).map(t => Object.assign({}, t, { state: _mapTimerState(t, now) })).sort((a, b) => a.earliest - b.earliest);
   out.unassigned = zd.unassigned.map(u => ({ id: u.id, name: u.name, died_at: u.died_at, candidates: u.candidates || [] }));
+  // Seen alive in the last 30 minutes with no later death on that point (yours or the guild's).
+  out.seen = Object.values(zd.seen)
+    .filter(s => s && now - s.at <= MAP_SEEN_KEEP_MS && !(zd.timers[String(s.point_id)] && zd.timers[String(s.point_id)].died_at >= s.at))
+    .map(s => ({ point_id: s.point_id, spawn_id: s.spawn_id == null ? null : s.spawn_id, name: s.name, at: s.at, by: s.by || null }))
+    .sort((a, b) => b.at - a.at);
+  _mapSyncPull(zone, now);   // the guild's events, while this overlay is polling (no poll, no pull)
   return out;
 }
 
@@ -44742,8 +44966,10 @@ function _mapNoteState(character, prev, next, now) {
   _mapEnsureZone(zone, next.zone, now);
   const tl = _mapServerXY(next.target_loc);
   const isNpc = next.target_type == null || next.target_type === 1;
-  if (isNpc && tl && next.target_id > 0 && next.target_name && !/'s\s+corpse\d*$/i.test(String(next.target_name))) {
+  if (isNpc && tl && next.target_id > 0 && next.target_name && !MAP_CORPSE_RE.test(String(next.target_name))) {
     _mapNoteSighting(zone, next.target_id, next.target_name, tl, now);
+    // A LIVE mob standing at exactly one point is pinned there (and synced as "seen"); see "Pins".
+    if (Number(next.target_hp_pct) > 0) _mapTryPin(zone, character, next.target_id, next.target_name, tl, now);
   }
   // The mob in your target window died: its name became "<name>'s corpse", or its bar went to 0 under the same name.
   if (!prev || !prev.target_name || !next.target_name) return;
@@ -44756,7 +44982,7 @@ function _mapNoteState(character, prev, next, now) {
   if (prev.target_type != null && prev.target_type !== 1) return;   // a player (or a pet corpse) going down is not a spawn
   const id = next.target_id > 0 ? next.target_id : (prev.target_id > 0 ? prev.target_id : null);
   const loc = _mapServerXY(next.target_loc) || _mapServerXY(prev.target_loc) || _mapServerXY(next.loc);
-  _mapNoteDeath(zone, { name: base, spawn_id: id, loc, loc_source: _mapServerXY(next.target_loc) || _mapServerXY(prev.target_loc) ? 'target' : 'self', at: now, src: 'zeal' }, now);
+  _mapNoteDeath(zone, { name: base, spawn_id: id, loc, loc_source: _mapServerXY(next.target_loc) || _mapServerXY(prev.target_loc) ? 'target' : 'self', at: now, src: 'zeal', character }, now);
 }
 // "<Mob> has been slain by <killer>!" / "You have slain <Mob>!" from a log the agent is tailing right now.
 // Ignored for old lines (a --since backfill replays months of them). The name comes from _deadMobNameFromLine.
@@ -44783,7 +45009,7 @@ function _mapNoteLogDeath(deadName, character, lineMs, now) {
     if (hits.length === 1) { id = hits[0].spawn_id; loc = hits[0].first_loc; src = 'first_seen'; }
     else loc = _mapServerXY(st.loc);
   }
-  _mapNoteDeath(zone, { name: deadName, spawn_id: id, loc, loc_source: src, at: Number.isFinite(lineMs) ? Math.min(lineMs, now) : now, src: 'log' }, now);
+  _mapNoteDeath(zone, { name: deadName, spawn_id: id, loc, loc_source: src, at: Number.isFinite(lineMs) ? Math.min(lineMs, now) : now, src: 'log', character }, now);
 }
 // ── end Spawn map core ──
 
@@ -44796,7 +45022,7 @@ function _handleMapState(req, res) {
   try { send(200, _mapStatePayload(have, Date.now())); }
   catch (e) { console.error('[api/map-state]', e && (e.stack || e.message || e)); send(500, { error: 'map state failed' }); }
 }
-// POST /api/map-mark { zone?, point_id, kind: 'killed'|'empty'|'up' } - the overlay's click menu.
+// POST /api/map-mark { zone?, point_id, kind: 'killed'|'empty'|'up'|'clear' } - the overlay's click menu.
 async function _handleMapMark(req, res) {
   const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
   if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
@@ -44809,7 +45035,7 @@ async function _handleMapMark(req, res) {
   if (!zone) return send(400, { error: 'no zone' });
   if (live && zone !== live) return send(409, { error: 'that is not the zone you are in' });
   if (!b || b.point_id == null) return send(400, { error: 'point_id is required' });
-  const r = _mapApplyMark(zone, { point_id: b.point_id, kind: b.kind }, now);
+  const r = _mapApplyMark(zone, { point_id: b.point_id, kind: b.kind }, now, ch);
   send(r.ok ? 200 : 400, r);
 }
 // A timer written in the last two seconds is flushed on the way out.

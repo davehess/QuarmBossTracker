@@ -3812,7 +3812,7 @@ const _OVERLAY_NAMES = {
   pets: 'Pet tracker', mobinfo: 'Mob Info', buffQueue: 'Buff queue',
   who: '/who', melody: 'Melody', zeal: 'Tick', threat: 'Threat meter',
   chchain: 'CH chain', tank: 'Tank HUD', exttarget: 'Extended target',
-  command: 'Command center', popraid: 'PoP raids', me: 'HUD', canvas: 'Canvas', map: 'Spawn map',
+  command: 'Command center', popraid: 'PoP raids', me: 'HUD', canvas: 'Canvas', map: 'Map',
 };
 function _rescueSort(entries, displays, targetId) {
   const inside = (r, x, y) => x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
@@ -6312,7 +6312,7 @@ function createMapOverlay() {
   if (_agentOnly()) return;
   const b = _resolveBounds('mapBounds', 'mapBoundsSig', { x: 60, y: 120, width: 760, height: 480 });
   mapWindow = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Spawn map overlay',
+    title: 'Wolf Pack miMIC — Map overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 140,   // narrow: map.html drops its timer list below ~420px
     frame: false, transparent: true, resizable: true,
@@ -8109,7 +8109,7 @@ function buildTrayMenu() {
         if (mi.checked && !meWindow) createMeOverlay(); else applyMeVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
-    { label: 'Spawn map (zone map, spawn timers) [beta]', type: 'checkbox', checked: !!s.showMap, enabled: !s.hideOverlays, click: (mi) => {
+    { label: 'Map (zone map, spawn timers) [beta]', type: 'checkbox', checked: !!s.showMap, enabled: !s.hideOverlays, click: (mi) => {
         const cfg = loadConfig(); cfg.showMap = mi.checked; saveConfig(cfg);
         if (mi.checked && !mapWindow) createMapOverlay(); else applyMapVisibility(); _reapDisabledOverlays();
         pushStatus();
