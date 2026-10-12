@@ -9499,3 +9499,15 @@ Harmony, Hide/Sneak for non-rogues).
   2026-09-27 Quarm dump: archery is bow + arrow range (82 bows reach 251–300 and 66 reach 301–400 with a 150 arrow,
   the best 400–420); the Wizard and Magician bolt line is 300; Flare 400, Fade 350; crowd control is 200 and unaffected.
   Long-range utility (Summon Corpse, Call of the Hero, Yonder) is deliberately left out of the ask. Not filed.
+
+### 244. Map: a known mob shows its own name, spawn id and symbols (2026-10-12, Mimic beta `37607ac3`)
+
+- **Ask** (the guild lead, with a Plane of Tactics screenshot): *"targetting needs to update the symbols. it does not,
+  and it also needs to display spawn ID and pick which name it is."* The pin worked; the point kept drawing the
+  symbols of every mob in its spawn group and named nothing.
+- **Shipped:** when the Map knows which mob is up on a point (your pinned target first, else a sighting by you or the
+  guild), the point draws only that mob's symbols, is labelled `<name> #<spawn id>` in green ahead of every other
+  label (also with Labels off), goes green the moment you target it, and the hover card leads with that mob marked ▶.
+  Room names now follow the Labels switch too. Overlay-only (`apps/mimic/map.html`); no agent change.
+- **Earlier the same day, a Plane of Tranquility screenshot looked "awful"**: that install was on a Mimic before the
+  map-file walls (§242). Updating fixed it; zones without the player's own map file still fall back to our sparse walls.
