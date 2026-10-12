@@ -16,7 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { EventEmitter } from 'node:events';
-import { readSource, sliceBlock, AGENT_INDEX, ROOT } from './_source-slice.js';
+import { readSource, sliceBlock, stripJs, AGENT_INDEX, ROOT } from './_source-slice.js';
 
 const AGENT = readSource(AGENT_INDEX);
 const CORE = sliceBlock(AGENT, '// ── Spawn map core (Mimic 2.9', '// ── end Spawn map core ──');
@@ -472,7 +472,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, nearestBand, fitView, FLASH_MS };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, nearestBand, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -525,6 +525,79 @@ describe('the overlay (apps/mimic/map.html)', () => {
     expect(v.cx).toBeCloseTo(-100);   // screen x = -x: the zone's middle x = 100 -> -100
     expect(v.cy).toBeCloseTo(-50);
     expect(v.scale).toBeCloseTo(0.92);
+  });
+
+  // Real-time positions (the guild lead, 2026-10-12: "local locations should update in real time").
+  describe('smooth movement', () => {
+    const A = { x: 0, y: 0, z: 0, heading: 0 }, B = { x: 100, y: 40, z: 10, heading: 100 };
+    it('blends: the midpoint is halfway, t past 1 clamps to the end, t below 0 or NaN stays at the start', () => {
+      const m = H.blendPos(A, B, 0.5);
+      expect(m.x).toBeCloseTo(50); expect(m.y).toBeCloseTo(20); expect(m.z).toBeCloseTo(5); expect(m.heading).toBeCloseTo(50);
+      expect(H.blendPos(A, B, 1.7)).toEqual(B);
+      expect(H.blendPos(A, B, -3)).toEqual(A);
+      expect(H.blendPos(A, B, NaN)).toEqual(A);
+    });
+    it('snaps rather than slides when the step is bigger than SNAP_DIST (a zone line, a gate)', () => {
+      expect(H.SNAP_DIST).toBeGreaterThanOrEqual(150);
+      expect(H.SNAP_DIST).toBeLessThanOrEqual(250);
+      const far = { x: 5000, y: 0, z: 0, heading: 0 };
+      expect(H.blendPos(A, far, 0.5)).toEqual(far);
+      const edge = { x: H.SNAP_DIST - 1, y: 0, z: 0, heading: 0 };
+      expect(H.blendPos(A, edge, 0.5).x).toBeCloseTo((H.SNAP_DIST - 1) / 2);
+    });
+    it('heading turns the short way round the 0-512 wheel', () => {
+      expect(H.lerpHeading(500, 12, 0.5)).toBeCloseTo(0);   // 500 -> 12 is 24 across the seam, not 488 back
+      expect(H.lerpHeading(12, 500, 0.5)).toBeCloseTo(0);
+      expect(H.lerpHeading(0, 100, 0.25)).toBeCloseTo(25);
+      expect(H.lerpHeading(null, 40, 0.5)).toBe(40);
+    });
+    it('a track glides over the time the last step took, and settles on the sample', () => {
+      let tr = H.trackStep(undefined, A, 1000);
+      expect(H.trackMoving(tr, 1000)).toBe(false);          // the first sight of a name has nowhere to glide from
+      tr = H.trackStep(tr, B, 1300);                        // 300ms since the last sample -> a 300ms glide
+      expect(tr.dur).toBe(300);
+      expect(H.trackAt(tr, 1300).x).toBeCloseTo(0);
+      expect(H.trackAt(tr, 1450).x).toBeCloseTo(50);
+      expect(H.trackAt(tr, 1600)).toEqual(B);
+      expect(H.trackAt(tr, 9000)).toEqual(B);               // never overshoots
+      expect(H.trackMoving(tr, 1450)).toBe(true);
+      expect(H.trackMoving(tr, 1600)).toBe(false);          // an idle map stops asking for frames
+    });
+    it('the same sample again does not restart the glide; a new one starts from where the dot is drawn', () => {
+      const tr = H.trackStep(H.trackStep(undefined, A, 1000), B, 1300);
+      expect(H.trackStep(tr, B, 1450)).toBe(tr);
+      const C = { x: 100, y: 140, z: 10, heading: 100 };
+      const next = H.trackStep(tr, C, 1450);                // mid-glide: from = the drawn spot, not the old sample
+      expect(next.from.x).toBeCloseTo(50);
+      expect(next.to).toEqual(C);
+    });
+    it('a big jump on a track snaps (no glide), and a long silence does not stretch the next glide', () => {
+      let tr = H.trackStep(undefined, A, 0);
+      const far = { x: 3000, y: 3000, z: 0, heading: 0 };
+      tr = H.trackStep(tr, far, 300);
+      expect(H.trackMoving(tr, 300)).toBe(false);
+      expect(H.trackAt(tr, 300)).toEqual(far);
+      const back = H.trackStep(tr, { x: 3010, y: 3000, z: 0, heading: 0 }, 60000);   // a minute later
+      expect(back.dur).toBeLessThanOrEqual(500);
+    });
+    it('polls at 300ms or faster, skips while hidden, keeps the in-flight guard and the have= cache', () => {
+      const js = stripJs(MAP_HTML);
+      const ms = /var POLL_MS = (\d+);/.exec(js);
+      expect(ms && Number(ms[1])).toBeLessThanOrEqual(300);
+      expect(js).toMatch(/setInterval\(poll, POLL_MS\)/);
+      expect(js).toMatch(/function poll\(\) \{\s*if \(inflight \|\| document\.hidden\) return;/);
+      expect(js).toMatch(/'\?have=' \+ encodeURIComponent\(S\.ver\)/);
+    });
+    it('animates on requestAnimationFrame only while something moves, drops vanished names, and throttles the hit buttons', () => {
+      const js = stripJs(MAP_HTML);
+      expect(js).toMatch(/function kickAnim\(\)[\s\S]{0,200}?if \(anyMoving\(Date\.now\(\)\)\) raf = requestAnimationFrame\(frame\);/);
+      expect(js).toMatch(/for \(var k in S\.trk\) if \(!keep\[k\]\) delete S\.trk\[k\];/);
+      expect(js).toMatch(/if \(!animating \|\| rt - lastHits >= HITS_MS\) \{ lastHits = rt; layoutHits\(vis\); \}/);
+      expect(Number(/\bHITS_MS = (\d+)/.exec(js)[1])).toBeGreaterThanOrEqual(200);
+      // Follow me rides the drawn spot of you, and the flashing ring still has its own timer
+      expect(js).toMatch(/if \(S\.follow && S\.p && S\.p\.self && !S\.drag\) \{ var fs = drawn\('self'/);
+      expect(js).toMatch(/flashTimer = setInterval\(/);
+    });
   });
 
   it('runs: with window.mimic ABSENT it still draws spots, hover-capable buttons and the timer list', async () => {
@@ -620,6 +693,15 @@ describe('the Mimic side: every item of the overlay parity checklist', () => {
   it('the 760x480 default size and the window is not dockable', () => {
     expect(fnBody('createMapOverlay')).toMatch(/width: 760, height: 480/);
     expect(sliceBlock(MAIN, 'const _DOCK_CATALOG = [', '\n];')).not.toMatch(/key: 'map'/);
+  });
+  it('raid positions (pipe type 5) are forwarded on the 300ms beat, not only the 2s batch', () => {
+    const js = stripJs(MAIN);
+    expect(js).toMatch(/setInterval\(_flushZealToAgent, 2000\);/);   // every other type keeps its cadence
+    const m = /setInterval\(\(\) => \{ if \(_zealPending\.sampledTypes\.has\('5'\)\) _flushZealToAgent\(\); \}, (\d+)\);/.exec(js);
+    expect(m && Number(m[1])).toBeLessThanOrEqual(300);
+    // the flag it reads is real: every flush clears sampledTypes, and onEvent sets it per type
+    expect(sliceBlock(js, 'function _flushZealToAgent() {', '\n}\n')).toMatch(/_zealPending\.sampledTypes\.clear\(\)/);
+    expect(js).toMatch(/_zealPending\.sampledTypes\.add\(type\)/);
   });
   it('reads target_loc off the Zeal pipe and passes it on', () => {
     expect(MAIN).toMatch(/s\.target_loc\s*=\s*_pipeLoc\(inner\.target_loc\);/);
