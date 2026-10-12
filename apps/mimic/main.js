@@ -9322,6 +9322,17 @@ ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
   } catch {}
   return true;
 });
+// Is the mouse still over the asking overlay's window? The preload's stand-in pointer asks when its forwarded
+// mousemoves stop: leaving a click-through window sends no mouseout, so without this the arrow stayed behind
+// (the guild lead, 2026-10-12: "mouse drawover in our overlays will sometimes leave an artifact in the overlay").
+ipcMain.handle('overlay-cursor-inside', (e) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (!win || win.isDestroyed() || !win.isVisible()) return false;
+    const p = screen.getCursorScreenPoint(), b = win.getBounds();
+    return p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + b.height;
+  } catch { return false; }
+});
 
 // Toggle a named built-in overlay on/off from the dashboard's Overlays tab.
 // Mirrors the tray checkboxes: flips the cfg pref, creates the window on first
