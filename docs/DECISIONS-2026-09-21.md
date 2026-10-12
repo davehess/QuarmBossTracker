@@ -9484,3 +9484,18 @@ Harmony, Hide/Sneak for non-rogues).
   out (`8f44b741`), with **Widen window** (default — the window grows by the list's 216 px, the map keeps its size) or
   **Share space** (`b076d8a2`); a "Spawn height ±N" filter in the toolbar (game height units; ±25 ≈ your floor).
 - **Offered, not built:** a Mimic button that installs a map-pack zip the player picks into `map_files`.
+
+### 243. Target position past 250: removed in the test build, a raised limit asked upstream (2026-10-12)
+
+- **Ask** (the guild lead): *"remove the 250 hard cap on range - it should be longer because certain spells and range
+  attacks can be longer like 500"*, then *"Grab me a list of the spells and ranged attacks above 250 range for an
+  upstream request, but remove it for beta so i can see the line beyond 250"*.
+- **Where the cap lives:** Zeal itself, not us. Zeal 1.4.8's pipe sends `target_loc` only within 250 units
+  (`named_pipe.cpp`, added with upstream #239 as a server-policy limit). The Map overlay draws whatever arrives.
+- **Test build only:** fork branch `target-loc-range` (`f987701`) drops the check, marked in the source as never for
+  upstream; merged into `test-all` (`5bcd34a`, which also carries the `/pipedelay` print fix `53befe7`). Live players on
+  release Zeal still stop at 250.
+- **Upstream ask: raise to ~450, not remove** — `docs/upstream/zeal-target-loc-range/SUGGESTION.md`. Evidence from the
+  2026-09-27 Quarm dump: archery is bow + arrow range (82 bows reach 251–300 and 66 reach 301–400 with a 150 arrow,
+  the best 400–420); the Wizard and Magician bolt line is 300; Flare 400, Fade 350; crowd control is 200 and unaffected.
+  Long-range utility (Summon Corpse, Call of the Hero, Yonder) is deliberately left out of the ask. Not filed.
