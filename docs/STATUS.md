@@ -103,6 +103,74 @@ next touch one rather than assuming a missing row means a missing doc.
 
 ## The work ledger
 
+- **⏳ "What you hear": speak / overlay only / off for every callout (agent 3.7.128, Mimic beta, DRAFT, uncommitted;
+  the guild lead, 2026-10-12).** *"pick ones that we specifically do not want to hear or can just be shown on the trigger
+  overlay. The charm aging. And many other callouts do not have a way to turn them off, such as enrage soon."* They
+  picked **option B** (group switches first, a per-trigger override inside each group) and asked for *"a mute button on the
+  TTS callouts"*. Rules live in `trigger_rules.json` beside `personal_triggers.json` (`GET/POST /api/trigger-rules`);
+  keys `group:<id>` · `guild:<uuid>` · `personal:<id>` · `builtin:<name>`; resolution trigger+char → trigger+everyone →
+  group+char → group+everyone → speak. ONE checkpoint, `_pushOverlay`, applies it to local and relayed fires alike
+  (off = not pushed, overlay = `mute:true`); the countdown pre-end warnings (triggers.html), blind alerts and
+  charm.html's own lines honour it too. Dashboard: Triggers tab → 🔊 What you hear; a badge on non-speaking rows of the
+  Guild triggers table. Overlay: 🔇 under a spoken callout, "Muted — undo". **Not covered:** chchain.html's voice; a muted
+  countdown keeps its bar (only its callouts change). Tests `test/trigger-rules.test.js`. Detail: `HOW-ITS-BUILT.md`.
+  **Graduation still owes:** the roadmap entry and the stable-version update of this line.
+- **⏳ Quest tab reads the NPC in your own zone (agent 3.7.126, Mimic beta; bot half 3.1.238 on `claude/fb72-quest-tab`;
+  FB-72, 2026-10-10).** A member: the Giwin Mirakon inside the Plane of Innovation's factory had no "test the machine"
+  step. The bot's stats pick for a name returned the Plane of Tactics' Giwin; it now also sends `quest_id` (the same-name
+  body in your zone) and Target Info's Quest tab asks `/api/npc-interact` for `quest_id || id` (`mobinfo.html`,
+  `test/target-info-fqv.test.js`). **Until the bot half is on `main` the tab behaves as before** (no `quest_id` arrives);
+  nothing breaks in between. Details and follow-ups are in the bot-side STATUS entry.
+
+- **⏳ Target Info Loot tab: item card on hover, click to copy the item link, PQDI link (agent 3.7.125, Mimic beta,
+  2026-10-10; FB-73).** A member: hovering a dropped item should show its card, clicking should copy the item paste, and
+  a PQDI link should sit next to it. Each row with an item id now has the name as a button (click copies
+  `0x12` + the id as 7 decimal digits + the name + `0x12`, with a ✓ copied cue), a small PQDI link (`www.pqdi.cc/item/<id>`
+  through the open-external path) and a card on hover (fetched once per item, never on render). The card comes from a NEW
+  bot route `GET /api/agent/item-card` relayed by the agent's `/api/item-card`; **until that route is on `main` the
+  hover reads "no card for this item"** while the copy and PQDI parts already work. Other lists of items not changed:
+  the PoP overlay's boss loot (`apps/mimic/popraid.html`), the Command Center rolls and the dashboard's Loot tab.
+  `apps/mimic/mobinfo.html`, `packages/wolfpack-logsync/index.js` (`fetchItemCard`), test
+  `test/target-info-item-links.test.js`. ⚠ Found on the way: the chat relay's item links decode the id as HEX, but
+  Quarm writes it in DECIMAL, so those PQDI links point at the wrong item (see the bot-side note, not fixed here).
+  Waits on the guild lead pasting a copied link into EQ to confirm the 7-digit form.
+- **🧪 /pop/guide: next steps for flags at the top, two previews (web, beta, 2026-10-10; the guild lead: "are we taking
+  piecemeal flags? if so we should put at the top of the guide next steps for flags in a consolidated place").**
+  Yes, piecemeal: a flag reaches a character from Mimic, /who, loot or the owner's tick, and nothing showed what is
+  left. `?nx=a` is a card for the picked character (3 to 5 steps that can be done now, each jumping to its row, a
+  who-you-need chip and a zone chip, and a folded "waiting on something else" list); `?nx=b` is every listed character
+  in a table, one column per progression line, each cell a link to `?c=<name>#<step>`. No `?nx` is the page as production
+  has it. Works with `?v=b` / `?v=c`. Pure rules in `web/lib/popNextSteps.ts` (14 lines, authored once; the gates and
+  prerequisites are read from `POP_ZONES` and `GATE_IMPLIES`), test `test/pop-next-steps.test.js`. Previews:
+  https://b.wolfpack.quest/pop/guide?nx=a and https://b.wolfpack.quest/pop/guide?nx=b. An existing page, so beta only until
+  picked. Gaps found: the server's own Tranquility steps (`fuirstel_5`, `thelin_4`) and `hoh_trials` have no `flag` on
+  their guide steps, so Mimic records them but the checklist row never ticks (the panel reads them as flags); the beta
+  layouts' pop_flags read let witnessed-hail rows crowd out real flags (fixed in the same change).
+- **🧪 /pop: class filter + column sort on "PoP spells still need" (web, beta, 2026-10-09; the guild lead: "add sorting
+  and filtering to the pop spells section by class"; preview https://b.wolfpack.quest/pop).** Chips for every class
+  in the rows ("Enchanter 4", "All" clears; several can be on at once) filter BOTH tables, the main one and the
+  no-level fold; every column header (character, class, level, the three turn-ins, Other, Total) sorts, with
+  `aria-sort` and an arrow. Default stays highest level first, ties by name. Server-side links with no new client JS:
+  `?pclass=enc,wiz` `?psort=<column>` `?pdir=asc|desc`, all validated against whitelists and carried by every
+  scope/view/zone link. A line under the heading ("Showing Enchanter · sorted by Total ▲ · clear") appears only when
+  one is active; an empty filter reads "No Enchanter is missing a PoP spell". Pure helpers in
+  `web/lib/popSpellsView.ts`, tested by `test/pop-spells-filter.test.js`. An existing page, so beta only until picked.
+- **🧪 Charm tracker: re-casting a charm that is still running now resets its timer (agent, beta, 2026-10-09; the guild
+  lead: "fix the charm re-cast timer bug").** The recast branch asked for `pcSpell.dur || pcSpell.cls`, but the staged
+  cast carries `charm_class` / `duration_sec`, so the check never passed and the overlay kept counting from the first
+  land. A recast with a seen cast now re-arms the "up" timer, the duration bar and the 25 s "charm aging" cue (the
+  card's memory re-arms when the start time changes), on the full and mini cards alike. The charm session itself
+  continues, so the break still reports "ran full" as unknown. A repeated pet-ack with no cast behind it still leaves the
+  timer alone (it is indistinguishable from a recast we never saw, and re-arming on it would reset the timer every ack).
+  `packages/wolfpack-logsync/index.js` (`_recastBumpOpts`), test `test/charm-recast-refresh.test.js`.
+- **🧪 Charm tracker: "charm aging" cue for non-bard charms at 25 s (Mimic beta, 2026-10-08; the guild lead: "A plus
+  B's instrumentation, 25 seconds").** An enchanter's charm lasts minutes on paper but breaks at random on the mob's
+  tick (last 30 days: median 36 s, 117 of 285 under 30 s), so the max-duration warning almost never fired first. A
+  non-bard charm now says "charm aging" once, 25 s after it lands, flashes the card, and its "up" timer (full card)
+  or timer bar (mini) is red from then on. Bards are unchanged (their cues, red at 54 s). The manual "recharm warn
+  at N s" box overrides the 25 s for non-bards when N > 0 (one callout, not two). 25 s is a guess until the recorded
+  charm lifetimes exist (**B**, still to build). `apps/mimic/charm.html` (`CHARM_AGING_MS`, `agingDueMs`, `redAtMs`,
+  `agingFired`), test `test/charm-aging.test.js`.
 - **⏳ Item card route for Target Info's Loot tab (bot 3.1.238, FB-73, 2026-10-10).** New `GET /api/agent/item-card?id=`
   (agent auth): one `eqemu_items` row, plus the names of the spells it points at, turned into a compact card
   `{ id, name, flags, lines }` by `utils/itemCard.js` (slot, damage/delay, AC/HP/mana, stats, resists, class/race, click /
