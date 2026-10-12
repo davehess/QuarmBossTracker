@@ -20,11 +20,11 @@
     background:transparent;cursor:pointer;pointer-events:auto}
   .hit:hover,.hit:focus-visible{outline:1px solid rgba(255,255,255,0.7)}
   #tools{position:absolute;top:6px;left:30px;right:96px;display:flex;gap:4px;z-index:5;flex-wrap:wrap}
-  /* Spawns (the guild lead, 2026-10-12: "put the slider in and out for the spawns with a top right of the map
-     clicky"): a top-right button that slides its own height slider out and back; spawn points outside it are hidden. */
-  #spawnCtl{position:absolute;top:6px;right:6px;z-index:6;display:flex;flex-direction:column;align-items:flex-end;gap:3px}
-  #spawnPanel{display:none}
-  #spawnCtl.open #spawnPanel{display:flex}
+  /* The timers list slides in and out (the guild lead, 2026-10-12: "slide the spawn timers in and out. So that it could
+     take up less space if we weren't focused on that"): a top-right button on the map; slid in, the map takes the width. */
+  #sideBtn{position:absolute;top:6px;right:6px;z-index:6}
+  #wrap.noside #side{display:none}
+  #wrap.noside #sideBtn{right:30px}   /* slid in, the map's top-right is the window's: keep clear of the ✕ */
   .tb{height:18px;padding:0 6px;border-radius:4px;background:rgba(14,17,22,0.7);color:#c9d1d9;
     border:1px solid rgba(110,118,129,0.45);font:inherit;font-size:10px;line-height:1;cursor:pointer}
   .tb:hover{color:#fff;border-color:#58a6ff}
@@ -95,7 +95,7 @@
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
   #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
   body.setup #move-btn{top:30px}
-  body.setup #tools,body.setup #spawnCtl{top:32px}
+  body.setup #tools,body.setup #sideBtn{top:32px}
   /* A narrow window (XS is 200 wide) keeps the map and drops the timer list. */
   @media (max-width:420px){ #side{display:none} }
 </style></head>
@@ -126,12 +126,10 @@
         <button class="tb on" id="followBtn" type="button" title="Keep the map centred on you. Dragging the map turns it off.">Follow me</button>
         <button class="tb" id="fitBtn" type="button" title="Fit the view. Click to cycle: zone, group, raid.">Fit zone</button>
         <button class="tb" id="panBtn" type="button" title="Locked overlays let clicks through to EverQuest. Switch this on to drag and zoom the map (the mouse wheel zooms); right-click centres on you.">✋ Pan / zoom</button>
-        <label class="lv" title="How far above and below you (in z) walls stay bright. The rest fade."><input id="levels" type="range" min="0" max="7" step="1"><span id="levelsVal">Levels</span></label>
+        <label class="lv" title="Walls this far above or below you stay bright; the rest fade. Height is in game units: you are about 6 tall, one floor is roughly 30 to 60, so ±100 is about your floor and the ones next to it."><input id="levels" type="range" min="0" max="7" step="1"><span id="levelsVal">Levels</span></label>
+        <label class="lv" title="Spawn points this far above or below you are shown; the rest are hidden. Same height units as Levels: ±25 is about your own floor, ±100 a floor or two either way."><input id="spawnLevels" type="range" min="0" max="7" step="1"><span id="spawnVal">Spawn height</span></label>
       </div>
-      <div id="spawnCtl">
-        <button class="tb" id="spawnBtn" type="button" title="Spawn points shown: only those within this height of you. Click to slide the slider out or back in.">Spawns</button>
-        <label class="lv" id="spawnPanel" title="How far above and below you (in z) spawn points are shown. The rest are hidden."><input id="spawnLevels" type="range" min="0" max="7" step="1"></label>
-      </div>
+      <button class="tb" id="sideBtn" type="button" title="Slide the respawn timers list in or out. Slid in, the map takes the whole width.">Timers ▸</button>
       <div id="card"></div>
       <div id="menu"></div>
     </div>
@@ -283,7 +281,7 @@
   var LEVEL_STEPS = [25, 50, 100, 150, 200, 300, 400, 0];
   var LEVEL_DEFAULT = 2;
   function levelLabel(i) { var n = LEVEL_STEPS[i]; return n ? 'Levels ±' + n : 'Levels: all'; }
-  function spawnLabel(i) { var n = LEVEL_STEPS[i]; return n ? 'Spawns ±' + n : 'Spawns: all'; }
+  function spawnLabel(i) { var n = LEVEL_STEPS[i]; return n ? 'Spawn height ±' + n : 'Spawn height: all'; }
   function inLevelRange(z, selfZ, range) {
     if (!range || z == null || selfZ == null) return true;
     return Math.abs(Number(z) - Number(selfZ)) <= range;
@@ -381,7 +379,7 @@
   var S = {
     ver: null, zone: null, points: [], byId: {}, map: null, grids: null, prep: null, p: null, skew: 0, err: false,
     view: { cx: 0, cy: 0, scale: 0.5 }, follow: true, panMode: false, levels: LEVEL_DEFAULT, fit: 'zone', hoverGrid: null,
-    spawnLevels: LEVEL_STEPS.length - 1, spawnOpen: false,   // spawns: all by default; the slider starts slid in
+    spawnLevels: LEVEL_STEPS.length - 1, sideOpen: true,   // spawns: all by default; the timers list starts slid out
     timerBy: {}, candBy: {}, seenBy: {}, menuPid: null, drag: null, w: 0, h: 0, fitted: false,
     trk: {}, sideAt: 0,
     src: 'direct', smooth: 'light', direct: null, sampleAt: 0, sampleSrc: '',   // beta tuning knobs + the latest pushed positions
@@ -394,7 +392,7 @@
     if (lv >= 0 && lv < LEVEL_STEPS.length) S.levels = lv;
     var sl = parseInt(lsGet('wp-map-spawn-levels'), 10);
     if (sl >= 0 && sl < LEVEL_STEPS.length) S.spawnLevels = sl;
-    S.spawnOpen = lsGet('wp-map-spawn-open') === '1';
+    S.sideOpen = lsGet('wp-map-side') !== '0';
     if (FIT_MODES.indexOf(fm) >= 0) S.fit = fm;
     if (sr === 'direct' || sr === 'agent') S.src = sr;
     if (Object.prototype.hasOwnProperty.call(SMOOTH_MS, sm)) S.smooth = sm;
@@ -917,21 +915,29 @@
     S.levels = i >= 0 && i < LEVEL_STEPS.length ? i : LEVEL_DEFAULT;
     lsSet('wp-map-levels', S.levels); syncLevels(); renderMap();
   });
-  // Spawns: the top-right button slides its slider out and back in; the button always shows the current range.
-  var spawnCtl = document.getElementById('spawnCtl'), spawnBtn = document.getElementById('spawnBtn');
-  var spawnEl = document.getElementById('spawnLevels');
+  // Spawn height: spawn points further above or below you than this are hidden (default: all).
+  var spawnEl = document.getElementById('spawnLevels'), spawnVal = document.getElementById('spawnVal');
   function syncSpawns() {
     spawnEl.max = String(LEVEL_STEPS.length - 1); spawnEl.value = String(S.spawnLevels);
-    spawnBtn.textContent = spawnLabel(S.spawnLevels) + (S.spawnOpen ? ' ▴' : ' ▾');
-    spawnBtn.classList.toggle('on', S.spawnOpen); spawnCtl.classList.toggle('open', S.spawnOpen);
+    spawnVal.textContent = spawnLabel(S.spawnLevels);
   }
-  spawnBtn.addEventListener('click', function () { S.spawnOpen = !S.spawnOpen; lsSet('wp-map-spawn-open', S.spawnOpen ? 1 : 0); syncSpawns(); });
   spawnEl.addEventListener('input', function () {
     var i = parseInt(spawnEl.value, 10);
     S.spawnLevels = i >= 0 && i < LEVEL_STEPS.length ? i : LEVEL_STEPS.length - 1;
     lsSet('wp-map-spawn-levels', S.spawnLevels); syncSpawns(); renderMap();
   });
   syncSpawns();
+  // The top-right button slides the timers list out and back in; the map pane takes the freed width.
+  var sideBtn = document.getElementById('sideBtn'), wrapEl = document.getElementById('wrap');
+  function syncSide() {
+    wrapEl.classList.toggle('noside', !S.sideOpen);
+    sideBtn.textContent = S.sideOpen ? 'Timers ▸' : '◂ Timers';
+    sideBtn.classList.toggle('on', !S.sideOpen);
+  }
+  sideBtn.addEventListener('click', function () {
+    S.sideOpen = !S.sideOpen; lsSet('wp-map-side', S.sideOpen ? 1 : 0); syncSide(); resize();
+  });
+  syncSide();
   // Beta tuning knobs (setup bar): where positions come from, and how much they are smoothed.
   function syncKnobs() { srcSel.value = S.src; smoothSel.value = S.smooth; }
   srcSel.addEventListener('change', function () {

@@ -843,22 +843,29 @@ describe('pather routes', () => {
     expect(all.fitBtn.textContent).toBe('Fit zone');
     expect(S.view.scale).toBeLessThan(groupView.scale);         // the whole zone is wider than you + one groupmate
   });
-  it('Spawns: the top-right button slides its slider out and in, and spawn points outside its range are hidden', async () => {
-    // the guild lead, 2026-10-12: "put the slider in and out for the spawns with a top right of the map clicky"
+  it('the top-right Timers button slides the timers list in and out; the choice is remembered', async () => {
+    // the guild lead, 2026-10-12: "slide the spawn timers in and out. So that it could take up less space"
+    const base = await bootOverlay();
+    expect(base.S.sideOpen).toBe(true);                              // default: the list is out
+    expect(base.all.wrap.classList.contains('noside')).toBe(false);
+    expect(base.all.sideBtn.textContent).toBe('Timers ▸');
+    base.all.sideBtn.listeners.click.forEach(f => f());
+    expect(base.all.wrap.classList.contains('noside')).toBe(true);
+    expect(base.all.sideBtn.textContent).toBe('◂ Timers');
+    expect(base.store['wp-map-side']).toBe('0');
+    const again = await bootOverlay({ store: base.store });
+    expect(again.all.wrap.classList.contains('noside')).toBe(true);
+  });
+  it('Spawn height: spawn points further above or below you than the slider are hidden (default: all)', async () => {
     const shown = (all) => all.hits.children.filter(h => !h.hidden).length;
     const base = await bootOverlay();
     expect(base.S.spawnLevels).toBe(7);                              // default: all spawns
-    expect(base.all.spawnBtn.textContent).toBe('Spawns: all ▾');
-    expect(base.all.spawnCtl.classList.contains('open')).toBe(false);
-    base.all.spawnBtn.listeners.click.forEach(f => f());
-    expect(base.all.spawnCtl.classList.contains('open')).toBe(true);
-    expect(base.all.spawnBtn.textContent).toBe('Spawns: all ▴');
-    expect(base.store['wp-map-spawn-open']).toBe('1');
+    expect(base.all.spawnVal.textContent).toBe('Spawn height: all');
     const all = shown(base.all);
     // Lift one point 500 above you and narrow the range to +-25: it disappears, the rest stay.
     const high = Object.assign({}, base.payload, { points: base.payload.points.map((p, i) => (i === 0 ? Object.assign({}, p, { z: 500 }) : p)) });
     const narrow = await bootOverlay({ store: { 'wp-map-spawn-levels': '0' }, payload: high });
-    expect(narrow.all.spawnBtn.textContent).toBe('Spawns ±25 ▾');
+    expect(narrow.all.spawnVal.textContent).toBe('Spawn height ±25');
     expect(shown(narrow.all)).toBe(all - 1);
     narrow.all.spawnLevels.value = '7'; narrow.all.spawnLevels.listeners.input.forEach(f => f());
     expect(narrow.store['wp-map-spawn-levels']).toBe('7');
