@@ -9319,3 +9319,35 @@ Harmony, Hide/Sneak for non-rogues).
   "999–999"); a 0-based set keeps the plain top number. The agent already kept `from` per set, and the agent
   dashboard and the web /rolls page already printed both ends. Beta `16fb1aaa`, test `test/roll-range-label.test.js`
   (fails with the fix reverted). Reaches Windows beta testers with the next beta build; stable at the next cut.
+
+### 237. Raid night 2026-10-11: spectator HP, Bastion of Thunder slow mode, a logout crash, a freeze slip
+
+- **Spectator HP** (the guild lead: *"Spectator keeps only showing one group's HP then showing everyone else"*).
+  Measured live: 8 of 21 uploaders send HP for the whole raid, 13 only for their own group. `spectator_positions`
+  read `hp_pct` off whichever row won the position, so the column flipped with the last writer. HP now comes from
+  the freshest non-null reading in the same 30 s window (migration `20261012013000_spectator_positions_hp`). It is
+  DB-only (restarts nothing), so it was applied through MCP mid-raid; live check 45 of 45 with HP. The file landed
+  after the freeze.
+- **Slow mode** (the guild lead: *"When we kill mobs in 'slowmode' it sets the spawn for those to 18 hours"*, then
+  *"Just the second floor BOT named tonight, not the first floor ones"*; picked C, a switch now plus auto-detect).
+  - The second-floor named are picked by spawn height in `eqemu_spawn2` (z ≈ 1,470 to 2,330): Auliffe Chaoswind,
+    Brynju Thunderclap, Kuanbyr Hailstorm and Eindride Icestorm get `slowModeHours: 18`. The first floor
+    (z ≈ -1,400: Gaukr, Hreidar, Laef, Oreen) keeps 3 h.
+  - The switch lives in `bot_kv` (`slow_mode`) and is judged by each kill's own time. One rule at the
+    `recordKill` wrapper plus the boot/6h reconcile. Officers flip it with `/slowmode`; it turns itself off after
+    8 h.
+  - The server's end-of-slow-mode guild line (*"Druzzil Ro tells the guild, 'A ripple passes through your guild's
+    thread of time. … Time has returned to its natural pace…'"*) turns it off via `POST /api/agent/slow-mode`.
+    The agent side is still to come on beta. The STARTING line has not been captured, so nothing turns it on
+    automatically yet; the guild lead was asked for it.
+  - Tonight's window (20:13 ET from guild chat, to 21:43:36 ET from the end line) is stored in `bot_kv`, so the
+    startup rebuild gives tonight's second-floor kills (Auliffe, Brynju, Kuanbyr) their 18 h without hand edits.
+    Bot 3.1.244.
+- **Logout crash** (Zeal test-all `e1fde3d`, 9 s after camping): a minidump walk puts it inside the client's own
+  world teardown. dpvs.dll called through a garbage pointer under `CDisplay::StopWorldDisplay`, with no Zeal frame
+  on the stack. About 85% not a Zeal bug. The one Zeal path in that teardown is the nameplate font sprite swap
+  (long-standing, in official Zeal too). Next step only if it recurs: a night with Zeal nameplate fonts off, and
+  a richer minidump (`MiniDumpWithIndirectlyReferencedMemory`) on the test-all build if the guild lead wants it.
+- **Freeze slip:** the DECISIONS 236 docs push landed on main at 21:23 ET, inside the Sunday freeze. Railway
+  SKIPPED it, and Vercel builds only `web/` changes, so nothing restarted. Check the ET clock before every main
+  push on a raid night; the session clock read UTC.

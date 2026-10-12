@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.244': [
+    '**Bastion of Thunder slow mode gets the right timers.** While the server is in slow mode, the four second-floor named (Auliffe, Brynju, Kuanbyr and Eindride) respawn after 18 hours instead of 3, and their timers on the board now say so with a "🐢 slow mode" tag. An officer turns it on with `/slowmode on` (it switches itself off after 8 hours), and it also turns off by itself when the server announces that time has returned to normal (needs the Mimic beta). First-floor named keep their usual timers.',
+  ],
   '3.1.242': [
     '**Our own Plane of Hate kills are no longer "foreign".** A Wolf Pack kill of a Hate mini-boss was posted as "🩸 Foreign kill" whenever the reporting Mimic had not yet heard a guild broadcast that session. It is now posted as "🐺 We killed", and our instanced kills are still logged.',
   ],

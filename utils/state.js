@@ -5,6 +5,7 @@
 const fs   = require('fs');
 const path = require('path');
 const { normalizeClass } = require('./classTitles');
+const slowMode = require('./slowMode');
 const STATE_FILE = path.join(__dirname, '../data/state.json');
 
 function _empty() {
@@ -145,8 +146,12 @@ function recordKill(bossId, timerHours, killedBy, killedAtOverride) {
 // `recordKill` is the wrapper below; the function above is left exactly as it was.
 const _killListeners = [];
 function onKillRecorded(fn) { _killListeners.push(fn); }
+// This wrapper is also the ONE place the Bastion of Thunder slow-mode timer applies (the guild lead,
+// 2026-10-11): every kill path calls this exported `recordKill`, so the rule lives here once, judged by
+// the kill's own timestamp. utils/slowMode.js has the rule and the officer switch.
 function recordKillNotifying(bossId, timerHours, killedBy, killedAtOverride) {
-  const entry = recordKill(bossId, timerHours, killedBy, killedAtOverride);
+  const killedAt = killedAtOverride || Date.now();
+  const entry = recordKill(bossId, slowMode.timerHoursForKill(bossId, timerHours, killedAt), killedBy, killedAt);
   for (const fn of _killListeners) {
     try { Promise.resolve(fn({ bossId, killedAt: entry.killedAt, killedBy })).catch(() => {}); } catch { /* a listener never fails a kill */ }
   }
