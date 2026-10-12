@@ -7,11 +7,11 @@
 
 **Why.** At 250 the target position disappears exactly when you are attacking from range:
 
-- **Archery.** A shot's range is the bow's range plus the arrow's range (plus a small size adjustment). No single item
-  is over 250, but the sum is: with a 150-range arrow, 82 bows reach 251–300 and 66 reach 301–400. The best bows
-  (Bow of Storms, Bow of Shadows, Bow of Doom, Warmaster's Recurved Longbow, Blessed Faydark Thunderbolt) reach
-  **400–420** before the size adjustment. A ranger pulling at full range loses their target's position for the last
-  150+ units of the shot.
+- **Archery.** A shot's range is the bow's range plus the arrow's range (plus a small size adjustment). The best bows
+  (Bow of Storms, Bow of Shadows, Bow of Doom, Warmaster's Recurved Longbow, Blessed Faydark Thunderbolt) are range
+  **250 on their own**, and a common arrow adds 150 (the longest adds 170), so a shot from them reaches **400–420**
+  before the size adjustment. Across all bows, with a 150 arrow, 82 reach 251–300 and 66 reach 301–400. A ranger
+  pulling at full range loses their target's position for the last 150+ units of the shot.
 - **Nukes.** The Wizard and Magician bolt line is range **300**: Frost Bolt (WIZ 1), Fire Bolt (WIZ 8), Lightning
   Bolt (WIZ 16), Flame Bolt (MAG 8), Bolt of Flame (MAG 20), Cinder Bolt (MAG 34), Lava Bolt (MAG 49), Scars of
   Sigil (MAG 54), Seeking Flame of Seukor (MAG 59), Firebolt of Tallon (MAG 61).
