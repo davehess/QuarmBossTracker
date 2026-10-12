@@ -114,7 +114,7 @@
     <select id="srcSel"><option value="direct">Direct</option><option value="agent">Agent</option></select>
     <span title="How much the dots are smoothed between position updates. More smoothing looks calmer and lags a little more.">smoothing</span>
     <select id="smoothSel"></select>
-    <span title="Where the walls come from. Auto: the map files in your own EverQuest folder (what Zeal draws) when you have them for this zone, otherwise ours. Ours only: always draw the Wolf Pack walls. Your map files are read on this computer and never sent anywhere.">walls</span>
+    <span title="Where the walls come from. Auto: Brewall's maps, the ones Zeal draws in game (fetched from Zeal's repo the first time you enter a zone and kept on this computer), then the map files in your own EverQuest folder, otherwise ours. Ours only: always draw the Wolf Pack walls. Map files are never sent anywhere.">walls</span>
     <select id="wallsSel"><option value="auto">Auto</option><option value="ours">Ours only</option></select>
     <span title="What the Timers button does. Widen window: the window grows to the side by the list's width, so the map keeps its size. Share space: the window stays put and the map shrinks to make room.">timers</span>
     <select id="sideModeSel"><option value="grow">Widen window</option><option value="share">Share space</option></select>
@@ -399,17 +399,27 @@
   function posAgeText(ageMs, src) { return 'pos ' + Math.max(0, Math.round(ageMs)) + ' ms' + (src ? ' · ' + src : ''); }
   // Your own map files (the agent's `local_map`, read on this computer and never sent anywhere; the guild lead,
   // 2026-10-12: "A for outdoor walls"). Their lines are already in the server frame, so they draw like spawn points.
-  // Walls: Auto draws them whenever the zone has any, Ours only never does. Their colours are the map author's,
-  // and most walls are black, so each is lightened toward white (LOCAL_LIGHTEN) to read on the slate background
-  // while keeping the author's distinctions (doors, stairs, water) instead of one flat colour.
-  var LOCAL_LIGHTEN = 0.6;
-  function lightenHex(hex, t) {
+  // Walls: Auto draws them whenever the zone has any, Ours only never does. Their colours are the map author's
+  // (Brewall's maps colour each floor and the stairs differently), lifted just enough to read on the dark background:
+  // greys keep their order (black walls -> mid grey, grey stairs -> light grey), and a coloured line is brightened
+  // at its own hue instead of being washed toward white (the guild lead, 2026-10-12: "we need some differentiation in
+  // colors"; the first cut lightened every colour 60% toward white, which turned all of them grey).
+  var WALL_MIN_LUMA = 0.55;
+  function wallColor(hex) {
     var m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex));
     var c = m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [0, 0, 0];
+    var mx = Math.max(c[0], c[1], c[2]), mn = Math.min(c[0], c[1], c[2]);
+    if (mx - mn <= 40) return c.map(function (v) { return Math.min(255, Math.round(140 + v * 0.45)); });
+    c = c.map(function (v) { return v * 255 / mx; });
+    var l = (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255, t = l < WALL_MIN_LUMA ? (WALL_MIN_LUMA - l) / (1 - l) : 0;
     return c.map(function (v) { return Math.round(v + (255 - v) * t); });
   }
   function useLocalWalls(mode, local) { return mode !== 'ours' && !!local && local.count > 0; }
-  function wallsNote(local) { return local ? 'walls: your map files' : 'walls: Wolf Pack'; }
+  // `local` is the prepped local map in use (or anything truthy for "a local map"), falsy for ours.
+  function wallsNote(local) {
+    if (!local) return 'walls: Wolf Pack';
+    return local.source === 'brewall' ? "walls: Brewall (Zeal's maps)" : 'walls: your map files';
+  }
   // The agent's local_map -> lines grouped by colour into typed arrays in the SCREEN frame (the same trick as
   // prepMap), the z of each line's midpoint, the bounds in the server frame, and the labels.
   function prepLocal(lm) {
@@ -439,7 +449,7 @@
       b.minY = Math.min(b.minY, l[1], l[4]); b.maxY = Math.max(b.maxY, l[1], l[4]);
     }
     var groupsOut = order.map(function (k3) {
-      var c = lightenHex(k3, LOCAL_LIGHTEN), gg = groups[k3];
+      var c = wallColor(k3), gg = groups[k3];
       return { xy: gg.xy, z: gg.z, bright: 'rgba(' + c.join(',') + ',0.85)', faded: 'rgba(' + c.join(',') + ',0.25)' };
     });
     var labels = (Array.isArray(lm.labels) ? lm.labels : []).filter(function (t) { return Array.isArray(t) && t.length >= 4 && isFinite(t[0]) && isFinite(t[1]) && t[3]; });
@@ -691,21 +701,33 @@
     for (var i = 0; i < pts.length; i++) { var q = wpt(pts[i][0], pts[i][1]); if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); }
     if (Number(g.type) === 0 && pts.length > 2) ctx.closePath();
   }
-  function drawRoutes(vis, sz, range) {
-    if (!S.grids) return;
+  // Routes of every pather inside the Spawn height range, whether or not its spawn point is on screen: zoomed in, a
+  // walker's route crosses the view long after its point has left it (the guild lead, 2026-10-12: "pathing disappears
+  // when close enough in zooming"). Cyan, so a route never reads as a wall or a Brewall floor colour; the pather you
+  // have targeted (pinned to its point) is drawn green, on top, at any spawn height.
+  var ROUTE_COLOR = '#39c5cf', ROUTE_HOT = '#9ecbff', ROUTE_TARGET = '#7ee787';
+  function routeList(points, sz, range, srange, targetGrid) {
     var seen = {}, list = [];
-    for (var i = 0; i < vis.length; i++) {
-      var gid = vis[i].p.grid;
+    for (var i = 0; i < points.length; i++) {
+      var p = points[i], gid = p.grid;
       if (gid == null || !S.grids[gid] || !Array.isArray(S.grids[gid].pts) || S.grids[gid].pts.length < 2) continue;
-      var near = inLevelRange(vis[i].p.z, sz, range);
-      if (seen[gid]) { if (near) seen[gid].near = true; continue; }
-      list.push(seen[gid] = { gid: String(gid), near: near });
+      var key = String(gid);
+      if (key !== targetGrid && !inLevelRange(p.z, sz, srange)) continue;
+      var near = inLevelRange(p.z, sz, range);
+      if (seen[key]) { if (near) seen[key].near = true; continue; }
+      list.push(seen[key] = { gid: key, near: near });
     }
+    return list.sort(function (a, b) { return (a.gid === targetGrid) - (b.gid === targetGrid); });   // targeted last = on top
+  }
+  function drawRoutes(sz, range, srange, targetGrid) {
+    if (!S.grids) return;
+    var list = routeList(S.points, sz, range, srange, targetGrid);
     ctx.lineCap = 'butt';
     list.forEach(function (it) {
-      var g = S.grids[it.gid], hot = S.hoverGrid === it.gid;
-      ctx.globalAlpha = hot ? 1 : it.near ? 0.7 : 0.25;
-      ctx.setLineDash([4, 4]); ctx.lineWidth = hot ? 1.8 : 1; ctx.strokeStyle = hot ? '#9ecbff' : '#7d8fa8';
+      var g = S.grids[it.gid], hot = S.hoverGrid === it.gid, tgt = it.gid === targetGrid;
+      ctx.globalAlpha = hot || tgt ? 1 : it.near ? 0.75 : 0.25;
+      ctx.setLineDash(tgt ? [7, 3] : [4, 4]); ctx.lineWidth = tgt ? 2.2 : hot ? 1.8 : 1.2;
+      ctx.strokeStyle = tgt ? ROUTE_TARGET : hot ? ROUTE_HOT : ROUTE_COLOR;
       routePath(g, g.pts); ctx.stroke(); ctx.setLineDash([]);
       for (var j = 0; j < g.pts.length; j++) {
         if (!(Number(g.pts[j][3]) > 0)) continue;
@@ -815,7 +837,7 @@
         ctx.stroke();
       }
     }
-    // Spawn dots, and first the pather routes of the visible ones (under the dots).
+    // Spawn dots, and first the pather routes (under the dots; every route in range, not only visible points').
     var bossC = [];
     var vis = [], flashOn =Math.floor(now / 450) % 2 === 0, anyFlash = false, srange = spawnRange();
     for (var k = 0; k < S.points.length; k++) {
@@ -824,7 +846,8 @@
       if (!inLevelRange(p0.z, sz, srange)) continue;   // outside the Spawns slider: hidden (dot, route and click target)
       vis.push({ p: p0, x: xy0[0], y: xy0[1] });
     }
-    drawRoutes(vis, sz, range);
+    var tPt = S.p && S.p.target && S.p.target.point_id != null ? S.byId[String(S.p.target.point_id)] : null;
+    drawRoutes(sz, range, srange, tPt && tPt.grid != null ? String(tPt.grid) : null);
     for (var vi = 0; vi < vis.length; vi++) {
       var p = vis[vi].p, px = vis[vi].x, py = vis[vi].y;
       var kind = pointKind(p);
@@ -1108,7 +1131,7 @@
   // Labels: boss names and room names on or off (persisted). Walls: Auto | Ours only (setup bar, persisted).
   var labelsBtn = document.getElementById('labelsBtn'), wallsSel = document.getElementById('wallsSel'), wallSrcEl = document.getElementById('wallsrc');
   function syncWallNote() {
-    var note = (S.p && S.p.zone) ? wallsNote(localWalls()) : '';
+    var note = (S.p && S.p.zone) ? wallsNote(localWalls() ? S.local : null) : '';
     wallSrcEl.textContent = note;
     labelsBtn.textContent = S.labels ? 'Labels: on' : 'Labels: off';
     labelsBtn.classList.toggle('on', S.labels);

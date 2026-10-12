@@ -50,6 +50,7 @@ function loadCore({ dir, opts, net }) {
   const c = f(fs, path, net.http, net.https, zlib, dir, dir, opts);
   c._mapPaths.cache = path.join(dir, 'zone-spawns-cache');
   c._mapPaths.timers = path.join(dir, 'map_timers.json');
+  c._mapPaths.brewall = null;   // no Brewall download in these tests (test/map-local-files.test.js covers it)
   cores.push(c);
   return c;
 }
@@ -678,13 +679,14 @@ describe('pather routes', () => {
     c._zealState.Aldenmar = { zone: 164, updatedAt: T0, loc: { x: 1, y: 2, z: 0 } };
     expect(c._mapStatePayload('', T0 + 1).grids).toBeNull();
   });
-  it('the overlay draws the routes of visible points dashed, ticks the pauses, fades by level, lights the hovered one, badges walkers', () => {
+  it('the overlay draws the routes dashed in their own colour, ticks the pauses, fades by level, lights the hovered one, badges walkers', () => {
     const js = stripJs(MAP_HTML);
-    expect(js).toMatch(/function drawRoutes\(vis, sz, range\)/);
-    expect(js).toMatch(/drawRoutes\(vis, sz, range\);/);
-    expect(js).toMatch(/ctx\.setLineDash\(\[4, 4\]\); ctx\.lineWidth = hot \? 1\.8 : 1;/);
+    expect(js).toMatch(/function drawRoutes\(sz, range, srange, targetGrid\)/);
+    expect(js).toMatch(/var list = routeList\(S\.points, sz, range, srange, targetGrid\);/);   // every point, not the visible ones
+    expect(js).toMatch(/ctx\.setLineDash\(tgt \? \[7, 3\] : \[4, 4\]\);/);
+    expect(js).toMatch(/ctx\.strokeStyle = tgt \? ROUTE_TARGET : hot \? ROUTE_HOT : ROUTE_COLOR;/);
     expect(js).toMatch(/if \(!\(Number\(g\.pts\[j\]\[3\]\) > 0\)\) continue;/);
-    expect(js).toMatch(/ctx\.globalAlpha = hot \? 1 : it\.near \? 0\.7 : 0\.25;/);
+    expect(js).toMatch(/ctx\.globalAlpha = hot \|\| tgt \? 1 : it\.near \? 0\.75 : 0\.25;/);
     expect(js).toMatch(/S\.hoverGrid = g; renderMap\(true\)/);
     expect(js).toMatch(/if \(p\.grid != null\) halo\('↻'/);
     expect(js).toMatch(/S\.grids = p\.grids \|\| null;/);
