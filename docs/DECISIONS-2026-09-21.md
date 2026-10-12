@@ -9511,3 +9511,37 @@ Harmony, Hide/Sneak for non-rogues).
   Room names now follow the Labels switch too. Overlay-only (`apps/mimic/map.html`); no agent change.
 - **Earlier the same day, a Plane of Tranquility screenshot looked "awful"**: that install was on a Mimic before the
   map-file walls (§242). Updating fixed it; zones without the player's own map file still fall back to our sparse walls.
+
+### 245. Map walls: Brewall's maps from Zeal's repo; routes at any zoom; colours kept apart (2026-10-12, agent 3.7.136 beta `1c39c995`)
+
+- **Report** (the guild lead, with a Plane of Tactics screenshot next to Zeal's own map): *"Pathing disappears when
+  close enough in zooming. We need some differentiation in colors as well, pathing should be a different color, we
+  could use the colors in the brewall maps, but we also don't see stairs like we do in the zeal maps. We should try to
+  figure out which pather it is when highlighted and highlight that path green as well."* Then: *"we should use the
+  brewall maps then"*.
+- **Why the stairs were missing:** the player's own pack (§242) has Tactics in black, dark green and a few reds only.
+  Zeal's in-game map is Brewall's (eqmaps.info, plus the projectmiragulmaps label layers), compiled into the DLL;
+  the same text files sit in Zeal's public repo (`CoastalRedwood/Zeal`, `Zeal/zone_map_src/map_files`). Brewall's
+  Tactics has green and purple floors, grey stair hatching, brown and red: exactly the screenshot.
+- **Shipped:** the agent fetches a zone's `<zone>.txt` + `<zone>_1.txt` from there the first time the Map shows it,
+  keeps them in `brewall-maps/`, and reads that folder ahead of `map_files` / `maps`. Plain GETs, nothing about the
+  player; a 404 is remembered a week, a failure retried after 10 minutes. Checked live from a session: Tactics came
+  back with 2,715 lines, 51 labels and Brewall's seven colours. We host nothing.
+- **Colours:** the old 60%-toward-white lift turned every colour grey. Now greys keep their order (black walls mid
+  grey, grey stairs lighter) and a coloured line is brightened at its own hue.
+- **Routes:** were drawn only for pathers whose spawn point was on screen, so zooming in dropped them. Now every route
+  inside the Spawn height range is drawn, in cyan (not a wall colour), and the pather you have targeted (pinned) is
+  green, on top, at any spawn height.
+- **Not done:** a choice to prefer the player's own pack over Brewall's (Brewall wins whenever it exists).
+
+### 246. A mouse pointer over every locked overlay (2026-10-12, Mimic beta `11a42051`)
+
+- **Ask** (the guild lead): *"we should show a mouse when we mouseover the map window, otherwise we lose it behind in
+  the EQ window. the same should apply with any of the overlays."*
+- **Why:** a locked overlay is click-through, so the mouse belongs to EQ, which hides the Windows pointer and draws its
+  own inside the game scene, underneath every overlay window.
+- **Shipped** (shared preload, so every overlay at once): a stand-in arrow at the mouse position over SOLID parts of a
+  locked overlay (canvas, image, a background ≥35% opaque, or the solid-backdrop setting). Not over controls (Windows
+  shows its own pointer there), not on unlocked overlays, not over see-through parts (EQ's pointer shows through).
+- **Known edge:** with EQ in the background (alt-tabbed) the Windows pointer is visible too, so the stand-in can show
+  beside it over a solid overlay. Untested in game.

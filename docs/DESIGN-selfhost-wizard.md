@@ -557,6 +557,12 @@ and the same never-refetch guarantee.
 - **2026-10-08 — members read their own reports on the site** (§193): `/feedback/FB-n` for the submitter
   and officers, replies in `feedback_replies` relayed by the bot to the officer card, and a Monday
   count-only AFB line latched in `bot_kv` (`afb_weekly_digest`). Small rows, no pruning needed on any tier.
+- **2026-10-12 — the Map's walls are Brewall's maps, fetched by each agent from Zeal's public repo**
+  (`DECISIONS-2026-09-21.md` §245): the first time a player's Map shows a zone, their agent GETs that zone's
+  two files from `raw.githubusercontent.com/CoastalRedwood/Zeal/.../map_files/` into `brewall-maps/` next to
+  the agent (≈0.1–1 MB a zone, kept). No cost to any server of ours; we host none of it. For the wizard: the
+  source address is a constant in the agent (`MAP_BREWALL_BASE`); a guild on another server whose zones Zeal
+  does not cover would point it elsewhere or switch it off (`_mapPaths.brewall = null`).
 
 ## 4. Open questions for whoever builds it
 
