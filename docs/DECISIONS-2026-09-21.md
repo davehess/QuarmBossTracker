@@ -9551,3 +9551,17 @@ Harmony, Hide/Sneak for non-rogues).
   main whether the mouse is still inside the window (`overlay-cursor-inside`) and hides it if not. And a bare
   `<canvas>` counted as solid, while the HUD ring is a window-sized see-through canvas: only a background colour
   counts now.
+
+### 247. Map ⚙ settings panel (2026-10-12, Mimic beta `92fcd318`)
+
+- **Ask** (the guild lead): *"give me a config section for the map that pops up similar to the hud's where we can
+  toggle on or off different bits, same with spawn height and levels and whatnot, labels can stay as a button. turn
+  off individual icons if necessary. background config and color schemas for each label/element."*
+- **Built** as one design inside the HUD builder's family (sticky head, groups, ↺ per row), not as options: the ask
+  named its model. A ⚙ in the Map toolbar opens a panel over the map's right side with the Levels and Spawn height
+  sliders (moved out of the toolbar; Labels stays a button), 19 show/hide switches, the nine ability icons one by one,
+  three colour schemes (Default = the previous colours exactly, High contrast, Colour-blind safe on Okabe–Ito) plus a
+  picker per element (23), wall colours "map's own" or one colour, background colour + optional own strength, and
+  label size 70–180%. One JSON object in the overlay's localStorage (`wp-map-cfg`), validated key by key on load.
+- **Not done:** per-character settings (the HUD's are per character; the Map's are per computer), and an
+  alternative layout (e.g. a floating palette) — say if the panel over the map is in the way.
