@@ -4698,3 +4698,14 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
 - **Same-name mob serial tracks (#56)** — the serialization design in
   `docs/DESIGN-dedup-and-mob-serialization.md` (separator-only, K-invariant,
   rampage/riposte correction).
+
+### Spawn map — zone map with respawn timers (agent 3.7.130 · Mimic beta, 2026-10-12, §218/§220/§221)
+- **Overlay:** `apps/mimic/map.html` (key `map`, `cfg.showMap`, `createMapOverlay` / `applyMapVisibility`, not dockable, default 760x480).
+  Canvas map (walls per floor, spawn dots, you as an arrow, group, raid, target with a dotted line) beside a timer list; the dots are
+  real `<button data-wp-interact>`s, so click-to-mark works on a locked window; "Pan / zoom" is a switch because a map you can drag
+  would otherwise eat every click that should reach EverQuest. Polls `GET /api/map-state` each second.
+- **Agent:** the "Spawn map core" block in `packages/wolfpack-logsync/index.js` (`_mapStatePayload`, `_mapNoteState`, `_mapNoteLogDeath`,
+  `_mapAttribute`, `_mapApplyMark`, `_handleMapState`, `_handleMapMark`). Zone data from the bot's `zone-spawns`, disk first
+  (`zone-spawns-cache/`); timers in `map_timers.json`. Zeal pipe x/y are swapped against the server frame (`_mapServerXY`).
+  Mimic's pipe handler now also carries `target_loc` / `target_type` (Zeal 1.4.8).
+- Test: `test/spawn-map.test.js`. Design: `docs/DESIGN-mimic-2.9-spawn-map.md`.
