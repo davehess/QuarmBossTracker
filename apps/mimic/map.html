@@ -10,7 +10,7 @@
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
   #wrap{position:absolute;inset:0;display:flex;gap:6px}
   body.setup #wrap{top:26px}
-  #mapPane{position:relative;flex:1 1 auto;min-width:0;background:rgb(0 0 0 / var(--bg-alpha));border-radius:6px;overflow:hidden}
+  #mapPane{position:relative;flex:1 1 auto;min-width:0;background:rgb(19 26 38 / var(--bg-alpha));border-radius:6px;overflow:hidden}
   #stage{position:absolute;inset:0}
   #cv{position:absolute;inset:0;width:100%;height:100%;display:block}
   #hits{position:absolute;inset:0;pointer-events:none}
@@ -40,7 +40,7 @@
     background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.18);color:#e6edf3;font:inherit;font-size:11px;cursor:pointer}
   #menu button:hover{border-color:#58a6ff;background:rgba(88,166,255,0.2)}
   #menu .x{color:#8b949e;margin-top:4px}
-  #side{flex:0 0 210px;display:flex;flex-direction:column;min-height:0;background:rgb(0 0 0 / var(--bg-alpha));
+  #side{flex:0 0 210px;display:flex;flex-direction:column;min-height:0;background:rgb(19 26 38 / var(--bg-alpha));
     border-radius:6px;padding:6px 8px;text-shadow:0 1px 2px #000}
   #zone{font-size:12px;color:#79c0ff;padding-right:26px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #tgt{font-size:10px;color:#f0883e;min-height:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -56,6 +56,7 @@
   .trow.flash{border-left-color:#f0b429;background:rgba(240,180,41,0.22)} .trow.flash .tm{color:#ffd866;font-weight:bold}
   .trow.up{border-left-color:#56d364} .trow.up .tm{color:#56d364;font-weight:bold}
   .trow.q{border-left-color:#d2a8ff} .trow.q .tm{color:#d2a8ff}
+  .trow.seen{border-left-color:#56d364;background:rgba(86,211,100,0.12)} .trow.seen .tm{color:#56d364}
   #empty{color:rgba(255,255,255,0.45);font-size:10px;padding:2px 4px}
   #foot{font-size:9px;color:#6e7681;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   /* drag/lock/setup - same pattern as the other overlays. */
@@ -95,7 +96,7 @@
     <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
   </div>
   <div id="setupbar">
-    <span>🛠 Spawn map</span>
+    <span>🛠 Map</span>
     <span>opacity</span><input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" /><span id="opacityVal">100%</span>
     <button id="exitSetupBtn">Done</button>
   </div>
@@ -116,7 +117,7 @@
       <div id="menu"></div>
     </div>
     <div id="side">
-      <div id="zone">Spawn map <span style="color:#6e7681">[beta]</span></div>
+      <div id="zone">Map <span style="color:#6e7681">[beta]</span></div>
       <div id="tgt"></div>
       <div id="lists" data-wp-interact></div>
       <div id="foot"></div>
@@ -212,6 +213,10 @@
     if (st === 'wait') return 'up in ' + fmtDur(t.earliest - now) + '–' + fmtDur(t.latest - now);
     return 'up now–' + fmtDur(t.latest - now);
   }
+  // "Up · seen": a pinned mob was seen alive on a point. Hover words: "seen alive 2m ago · spawn #812 · by Corvale".
+  function seenText(s, now) {
+    return 'seen alive ' + fmtDur(now - s.at) + ' ago' + (s.spawn_id != null ? ' · spawn #' + s.spawn_id : '') + (s.by ? ' · by ' + s.by : '');
+  }
   // A badge from the bot -> a tiny glyph. Unknown ones still show (first letter), so a new badge is never silent.
   function badgeGlyph(b) {
     var k = String(b || '').toLowerCase();
@@ -303,7 +308,7 @@
   var S = {
     ver: null, zone: null, points: [], byId: {}, map: null, prep: null, p: null, skew: 0, err: false,
     view: { cx: 0, cy: 0, scale: 0.5 }, follow: true, panMode: false, floor: 'auto',
-    timerBy: {}, candBy: {}, menuPid: null, drag: null, w: 0, h: 0, fitted: false,
+    timerBy: {}, candBy: {}, seenBy: {}, menuPid: null, drag: null, w: 0, h: 0, fitted: false,
     trk: {}, sideAt: 0,
   };
   try { var sv = parseFloat(localStorage.getItem('wp-map-scale')); if (sv > 0.02 && sv < 20) S.view.scale = sv; } catch (e) {}
@@ -399,8 +404,9 @@
     S.ver = p.version || null;
     S.skew = (p.now || Date.now()) - Date.now();
     S.p = p;
-    S.timerBy = {}; S.candBy = {};
+    S.timerBy = {}; S.candBy = {}; S.seenBy = {};
     (p.timers || []).forEach(function (t) { S.timerBy[String(t.point_id)] = t; });
+    (p.seen || []).forEach(function (s) { if (!S.timerBy[String(s.point_id)]) S.seenBy[String(s.point_id)] = s; });   // a timer on the point is newer
     (p.unassigned || []).forEach(function (u) { (u.candidates || []).forEach(function (c) { (S.candBy[String(c)] = S.candBy[String(c)] || []).push(u); }); });
     if (S.follow && p.self) { var s = toScreen(p.self.x, p.self.y); S.view.cx = s.sx; S.view.cy = s.sy; }
     else if (!S.follow && !S.fitted && S.points.length) fitNow();
@@ -506,8 +512,8 @@
       ctx.lineCap = 'round';
       for (var b = 0; b < S.prep.gen.length; b++) {
         var bright = sel < 0 || b === sel;
-        ctx.strokeStyle = bright ? 'rgba(150,180,220,0.8)' : 'rgba(150,180,220,0.13)';
-        ctx.lineWidth = bright ? 1.2 : 1;
+        ctx.strokeStyle = bright ? 'rgba(214,230,255,0.95)' : 'rgba(170,195,235,0.35)';
+        ctx.lineWidth = bright ? 1.6 : 1;
         var a = S.prep.gen[b];
         ctx.beginPath();
         for (var i = 0; i < a.length; i += 4) {
@@ -527,10 +533,12 @@
       vis.push({ p: p, x: px, y: py });
       var kind = pointKind(p);
       var onFloor = sel < 0 || bands.length <= 1 || nearestBand(bands, p.z) === sel;
-      ctx.globalAlpha = onFloor ? 1 : 0.3;
-      var r = kind.raid ? 6.5 : kind.named ? 5.5 : 3.2;
-      var t = S.timerBy[String(p.id)], cand = S.candBy[String(p.id)];
-      if (t) {
+      ctx.globalAlpha = onFloor ? 1 : 0.6;
+      var r = kind.raid ? 6.5 : kind.named ? 5.5 : 4.2;
+      var t = S.timerBy[String(p.id)], cand = S.candBy[String(p.id)], sn = S.seenBy[String(p.id)];
+      if (sn) {   // up · seen: a solid green ring (the fill is green below)
+        ctx.beginPath(); ctx.arc(px, py, r + 3.5, 0, 6.2832); ctx.lineWidth = 2.4; ctx.strokeStyle = '#56d364'; ctx.stroke();
+      } else if (t) {
         var st = timerState(t, now);
         var col = st === 'flash' ? (flashOn ? '#ffd866' : '#ffffff') : RING[st];
         if (st === 'flash') anyFlash = true;
@@ -540,8 +548,8 @@
         halo('?', px, py - r - 8, 'bold 11px ui-monospace,Consolas,monospace', '#d2a8ff', 'center');
       }
       ctx.beginPath(); ctx.arc(px, py, r, 0, 6.2832);
-      ctx.fillStyle = kind.raid ? '#ff7b72' : kind.named ? '#f2cc60' : '#8b949e'; ctx.fill();
-      if (kind.named) { ctx.lineWidth = 1.5; ctx.strokeStyle = '#0d1117'; ctx.stroke(); }
+      ctx.fillStyle = sn ? '#56d364' : kind.raid ? '#ff7b72' : kind.named ? '#f2cc60' : '#c9d1d9'; ctx.fill();
+      ctx.lineWidth = kind.named ? 1.5 : 1.2; ctx.strokeStyle = '#0d1117'; ctx.stroke();   // a dark outline on every dot
       var bd = pointBadges(p);
       if (bd) halo(bd, px + r + 3, py - r, '9px ui-monospace,Consolas,monospace', '#e6edf3');
       if (kind.named && (kind.raid || v.scale >= 0.12)) halo(bestName(p), px + r + 3, py + r + 3, 'bold 11px ui-monospace,Consolas,monospace', kind.raid ? '#ffa198' : '#f2cc60');
@@ -568,6 +576,13 @@
           ctx.beginPath(); ctx.setLineDash([2, 4]); ctx.moveTo(sq[0], sq[1]); ctx.lineTo(tq[0], tq[1]);
           ctx.lineWidth = 1.5; ctx.strokeStyle = '#f0883e'; ctx.stroke(); ctx.setLineDash([]);
           if (P.target.dist != null) halo(String(P.target.dist), (sq[0] + tq[0]) / 2, (sq[1] + tq[1]) / 2 - 7, '10px ui-monospace,Consolas,monospace', '#f0883e', 'center');
+        }
+        // Pinned: a thin line from the target to the spawn point it is tied to.
+        var pinPt = P.target.point_id != null ? S.byId[String(P.target.point_id)] : null;
+        if (pinPt) {
+          var pq = wpt(pinPt.x, pinPt.y);
+          ctx.beginPath(); ctx.moveTo(tq[0], tq[1]); ctx.lineTo(pq[0], pq[1]);
+          ctx.lineWidth = 1; ctx.strokeStyle = '#7ee787'; ctx.stroke();
         }
         ctx.beginPath(); ctx.arc(tq[0], tq[1], 6, 0, 6.2832); ctx.lineWidth = 2; ctx.strokeStyle = '#f0883e'; ctx.stroke();
         ctx.beginPath(); ctx.arc(tq[0], tq[1], 2, 0, 6.2832); ctx.fillStyle = '#f0883e'; ctx.fill();
@@ -645,8 +660,9 @@
       if (words) card.appendChild(el('div', 's', words));
     });
     if ((p.npcs || []).length > 8) card.appendChild(el('div', 's', '+' + ((p.npcs || []).length - 8) + ' more'));
-    var t = S.timerBy[pid];
-    if (t) card.appendChild(el('div', 't', timerText(t, nowMs()) + ' · ' + t.source));
+    var t = S.timerBy[pid], sn = S.seenBy[pid];
+    if (t) card.appendChild(el('div', 't', timerText(t, nowMs()) + ' · ' + t.source + (t.by ? ' · by ' + t.by : '')));
+    else if (sn) card.appendChild(el('div', 't', 'up · ' + seenText(sn, nowMs())));
     else if (S.candBy[pid]) card.appendChild(el('div', 't', '? a death may have been here — click to settle it'));
     placeBox(card, e);
   }
@@ -664,7 +680,8 @@
     mk('Killed — this one', 'killed');
     mk('Empty since now', 'empty');
     mk('Up', 'up');
-    var x = el('button', 'x', 'Close'); x.type = 'button'; x.setAttribute('data-wp-interact', '');
+    if (S.timerBy[pid] || S.seenBy[pid]) mk('Clear timer', 'clear');
+    var x =el('button', 'x', 'Close'); x.type = 'button'; x.setAttribute('data-wp-interact', '');
     x.addEventListener('click', closeMenu); menu.appendChild(x);
     placeBox(menu, e);
   }
@@ -673,9 +690,9 @@
   // ── side list ──
   function renderSide() {
     var P = S.p, now = nowMs();
-    document.getElementById('zone').textContent = (P && (P.long_name || P.zone)) ? (P.long_name || P.zone) : 'Spawn map';
+    document.getElementById('zone').textContent = (P && (P.long_name || P.zone)) ? (P.long_name || P.zone) : 'Map';
     var tg = document.getElementById('tgt');
-    if (P && P.target) tg.textContent = '◎ ' + P.target.name + (P.target.dist != null ? ' · ' + P.target.dist : (P.target.x == null ? ' · no position' : ''));
+    if (P && P.target) tg.textContent = '◎ ' + P.target.name + (P.target.dist != null ? ' · ' + P.target.dist : (P.target.x == null ? ' · no position' : '')) + (P.target.point_id != null ? ' → pinned' : '');
     else tg.textContent = '';
     var box = document.getElementById('lists');
     box.innerHTML = '';
@@ -684,11 +701,22 @@
     timers.forEach(function (t) {
       var r = el('div', 'trow ' + timerState(t, now)); r.setAttribute('data-wp-interact', '');
       r.appendChild(el('span', 'nm', t.name || 'spawn')); r.appendChild(el('span', 'tm', timerText(t, now)));
-      r.appendChild(el('span', 'src', t.source === 'marked' ? 'marked' : 'seen'));
+      r.appendChild(el('span', 'src', (t.source === 'marked' ? 'marked' : 'seen') + (t.by ? ' · by ' + t.by : '')));
       r.addEventListener('click', function () { centreOn(S.byId[String(t.point_id)]); });
       box.appendChild(r);
     });
     if (!timers.length) box.appendChild(el('div', null, 'no timers yet — a kill you see starts one, or click a dot')).id = 'empty';
+    var seenList = ((P && P.seen) || []).filter(function (s) { return !S.timerBy[String(s.point_id)]; });
+    if (seenList.length) {
+      box.appendChild(el('div', 'sec', 'Up · seen (' + seenList.length + ')'));
+      seenList.forEach(function (s) {
+        var r = el('div', 'trow seen'); r.setAttribute('data-wp-interact', '');
+        r.appendChild(el('span', 'nm', s.name || 'a mob')); r.appendChild(el('span', 'tm', fmtDur(now - s.at) + ' ago'));
+        r.appendChild(el('span', 'src', (s.spawn_id != null ? 'spawn #' + s.spawn_id : 'pinned') + (s.by ? ' · by ' + s.by : '')));
+        r.addEventListener('click', function () { centreOn(S.byId[String(s.point_id)]); });
+        box.appendChild(r);
+      });
+    }
     var un = (P && P.unassigned) || [];
     if (un.length) {
       box.appendChild(el('div', 'sec', 'Not pinned down (?)'));

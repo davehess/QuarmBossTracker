@@ -25,7 +25,8 @@ const MAIN = readSource(path.join(ROOT, 'apps', 'mimic', 'main.js'));
 
 const EXPORTS = ['_mapServerXY', '_mapZoneShort', '_mapNormName', '_mapAttribute', '_mapMakeTimer', '_mapTimerState',
   '_mapApplyMark', '_mapNoteDeath', '_mapNoteState', '_mapNoteLogDeath', '_mapStatePayload', '_mapSaveNow', '_mapDoc',
-  '_mapZoneDoc', '_mapPrune', '_mapEnsureZone', '_mapPaths', '_zealState', '_setRaid', '_setOpts', 'MAP_ZONE_SHORT'];
+  '_mapZoneDoc', '_mapPrune', '_mapEnsureZone', '_mapPaths', '_zealState', '_setRaid', '_setOpts', 'MAP_ZONE_SHORT',
+  '_mapTryPin', '_mapPinGet', '_mapSync', '_mapSyncStop', '_mapSyncFlush', '_mapSyncPull', '_mapApplyRemote', '_mapLocalEvent'];
 
 // Stand the block up over a temp dir and fake network modules.
 function loadCore({ dir, opts, net }) {
@@ -59,7 +60,8 @@ function fakeNet(responder) {
       calls.push(o);
       const req = {
         on() { return req; }, destroy() {},
-        end() {
+        end(body) {
+          o.__body = body ? Buffer.from(body).toString('utf8') : null;   // what a POST sent
           setImmediate(() => {
             const r = responder ? responder(o) : { status: 500 };
             const res = new EventEmitter();
@@ -98,7 +100,7 @@ let dir;
 const cores = [];
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'spawnmap-')); });
 afterEach(() => {
-  for (const k of cores.splice(0)) { try { k._mapSaveNow(); } catch { /* nothing to flush */ } }   // also clears the debounce timer
+  for (const k of cores.splice(0)) { try { k._mapSaveNow(); k._mapSyncStop(); } catch { /* nothing to flush */ } }   // also clears the debounce timers
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -445,14 +447,15 @@ describe('zone data: disk first, the bot second, local mode never', () => {
     let c = loadCore({ dir, opts: live(), net });
     c._zealState.Aldenmar = { zone: 164, updatedAt: Date.now(), loc: { x: 1, y: 1, z: 0 } };
     expect(c._mapStatePayload('', Date.now()).points).toHaveLength(6);
-    expect(net.calls).toHaveLength(0);
+    expect(net.calls.filter(k => /zone-spawns/.test(k.path))).toHaveLength(0);   // (the guild-sync pull is a different route)
     seedCache(dir, ZONE_BODY, Date.now() - 25 * 3600000);
     net = fakeNet(() => ({ status: 304 }));
     c = loadCore({ dir, opts: live(), net });
     c._zealState.Aldenmar = { zone: 164, updatedAt: Date.now(), loc: { x: 1, y: 1, z: 0 } };
     expect(c._mapStatePayload('', Date.now()).points).toHaveLength(6);   // served from disk while it revalidates
-    expect(net.calls).toHaveLength(1);
-    expect(net.calls[0].headers['If-None-Match']).toBe('"v1"');
+    const zcalls = net.calls.filter(k => /zone-spawns/.test(k.path));
+    expect(zcalls).toHaveLength(1);
+    expect(zcalls[0].headers['If-None-Match']).toBe('"v1"');
     await tick();
     expect(c._mapStatePayload('', Date.now()).points).toHaveLength(6);
     expect(JSON.parse(fs.readFileSync(path.join(dir, 'zone-spawns-cache', 'thedeep.json'), 'utf8')).fetched_at).toBeGreaterThan(Date.now() - 5000);
@@ -472,7 +475,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, nearestBand, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, nearestBand, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -623,7 +626,8 @@ describe('the overlay (apps/mimic/map.html)', () => {
     const payload = {
       zone: 'thedeep', long_name: 'The Deep', version: 'thedeep@v', status: 'ok', now: T0, local_only: false,
       points: POINTS, map: ZONE_BODY.map, self: { x: 90, y: 190, z: 0, heading: 64, name: 'Aldenmar' },
-      group: [{ name: 'Brackwyn', x: 100, y: 180, z: 0 }], raid: [], target: { name: 'a decaying skeleton', x: 110, y: 210, z: 0, dist: 28 },
+      group: [{ name: 'Brackwyn', x: 100, y: 180, z: 0 }], raid: [], target: { name: 'a decaying skeleton', x: 110, y: 210, z: 0, dist: 28, point_id: 1 },
+      seen: [{ point_id: 2, spawn_id: 812, name: 'a decaying skeleton', at: T0 - 120000, by: 'Corvale' }],
       timers: [{ point_id: 1, name: 'a decaying skeleton', died_at: T0, earliest: T0 + 540000, latest: T0 + 660000, source: 'seen', state: 'wait' }],
       unassigned: [{ id: 'u1', name: 'a decaying skeleton', died_at: T0, candidates: [2, 6] }],
     };
@@ -642,6 +646,397 @@ describe('the overlay (apps/mimic/map.html)', () => {
     expect(all.zone.textContent).toBe('The Deep');
     // a second poll asks with the version it holds
     expect(all.msg.style.display).toBe('none');
+    // a pinned target says so, and a seen-alive point gets its own row (with who saw it, when a guildmate did)
+    expect(all.tgt.textContent).toMatch(/→ pinned$/);
+    const seenRow = all.lists.children.find(r => /trow seen/.test(r.className));
+    expect(seenRow).toBeTruthy();
+    expect(seenRow.children.map(k => k.textContent).join('|')).toMatch(/spawn #812 · by Corvale/);
+  });
+});
+
+// Pinning and the guild sync (the guild lead, 2026-10-12: "need the tab targetting to set the specific mob in a synced
+// way on the map once it's certain"). Mutation-checked one by one: see the notes on each describe.
+describe('pinning a live target to its spawn point, and the guild sync', () => {
+  const LIVE = { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: 'tok' };
+  const sloc = (x, y) => ({ x: y, y: x, z: 0 });   // a server-frame spot -> the Zeal pipe frame (x and y swapped)
+  const tgt = (id, hp, x, y, extra) => Object.assign({ zone: 164, updatedAt: T0, loc: { x: 0, y: 0, z: 0 }, target_type: 1,
+    target_name: 'a decaying skeleton', target_id: id, target_hp_pct: hp, target_loc: sloc(x, y) }, extra || {});
+  // A core linked to the bot (token set), the zone already on disk and fresh, Aldenmar playing in The Deep.
+  function liveCore(responder) {
+    seedCache(dir, ZONE_BODY, Date.now());
+    const net = fakeNet(responder || (() => ({ status: 200, body: { ok: true, stored: 1 } })));
+    const c = loadCore({ dir, opts: LIVE, net });
+    c._mapEnsureZone('thedeep', 164, Date.now());
+    c._zealState.Aldenmar = { zone: 164, updatedAt: 1e18, loc: { x: 0, y: 0, z: 0 } };
+    return { c, net };
+  }
+  const queued = (c) => c._mapSync.q.map(k => k.ev);
+  const watch = (c, s) => { c._zealState.Aldenmar = Object.assign({}, s, { updatedAt: 1e18 }); };
+
+  describe('the pin: only when certain', () => {
+    it('a live NPC at exactly one point is pinned, recorded as seen alive, and the payload says so', () => {
+      const { c } = liveCore(); const N = Date.now();
+      const s = tgt(9, 100, 105, 202);
+      c._mapNoteState('Aldenmar', null, s, N);
+      expect(c._mapPinGet('thedeep', 9)).toMatchObject({ point_id: 1 });
+      watch(c, s);
+      const p = c._mapStatePayload('', N + 1000);
+      expect(p.seen).toEqual([{ point_id: 1, spawn_id: 9, name: 'a decaying skeleton', at: N, by: null }]);
+      expect(p.target.point_id).toBe(1);
+    });
+    it('an ambiguous spot pins nothing: no pin, no seen, no target.point_id, nothing queued', () => {
+      const { c } = liveCore(); const N = Date.now();
+      const s = tgt(9, 100, 125, 200);   // 25 from p1 and 25 from p6: a tie
+      c._mapNoteState('Aldenmar', null, s, N);
+      expect(c._mapPinGet('thedeep', 9)).toBeNull();
+      watch(c, s);
+      const p = c._mapStatePayload('', N + 1000);
+      expect(p.seen).toEqual([]);
+      expect(p.target.point_id).toBeNull();
+      expect(queued(c)).toEqual([]);
+    });
+    it('not a corpse (backtick, apostrophe or curly), not a mob at 0%, not a player, not a name no point makes', () => {
+      const { c } = liveCore(); const N = Date.now();
+      let id = 20;
+      for (const name of ["a decaying skeleton's corpse", 'a decaying skeleton`s corpse', 'a decaying skeleton’s corpse']) {
+        c._mapNoteState('Aldenmar', null, tgt(++id, 100, 105, 202, { target_name: name }), N);
+      }
+      c._mapNoteState('Aldenmar', null, tgt(++id, 0, 105, 202), N);
+      c._mapNoteState('Aldenmar', null, tgt(++id, null, 105, 202), N);
+      c._mapNoteState('Aldenmar', null, tgt(++id, 100, 105, 202, { target_type: 0 }), N);
+      c._mapNoteState('Aldenmar', null, tgt(++id, 100, 105, 202, { target_name: 'Brackwyn' }), N);
+      c._mapNoteState('Aldenmar', null, tgt(0, 100, 105, 202), N);
+      for (let i = 20; i <= id; i++) expect(c._mapPinGet('thedeep', i), String(i)).toBeNull();
+      expect(queued(c)).toEqual([]);
+    });
+    it('once pinned it stays pinned: a pulled mob that wanders to another point is not re-pinned', () => {
+      const { c } = liveCore(); const N = Date.now();
+      c._mapNoteState('Aldenmar', null, tgt(9, 100, 105, 202), N);
+      c._mapNoteState('Aldenmar', null, tgt(9, 60, 5, 5), N + 5000);
+      c._mapNoteState('Aldenmar', null, tgt(9, 50, 400, 200), N + 6000);   // exactly on p2
+      expect(c._mapPinGet('thedeep', 9)).toMatchObject({ point_id: 1 });
+      expect(queued(c).filter(e => e.kind === 'seen')).toHaveLength(1);    // and told the guild once
+    });
+    it('while NOT pinned it keeps looking: first seen pulled away (a tie), later at a point -> pinned then', () => {
+      const { c } = liveCore(); const N = Date.now();
+      c._mapNoteState('Aldenmar', null, tgt(9, 100, 125, 200), N);
+      expect(c._mapPinGet('thedeep', 9)).toBeNull();
+      c._mapNoteState('Aldenmar', null, tgt(9, 100, 105, 202), N + 3000);
+      expect(c._mapPinGet('thedeep', 9)).toMatchObject({ point_id: 1 });
+    });
+    it('a zone change clears the pins, and the pin table is bounded', () => {
+      const { c } = liveCore(); const N = Date.now();
+      c._mapNoteState('Aldenmar', null, tgt(9, 100, 105, 202), N);
+      expect(c._mapPinGet('thedeep', 9)).not.toBeNull();
+      c._mapTryPin('otherzone', 'Aldenmar', 77, 'a decaying skeleton', { x: 105, y: 202 }, N);   // (no data for it: nothing pinned, but the table moves zones)
+      expect(c._mapPinGet('thedeep', 9)).toBeNull();
+      for (let i = 1; i <= 600; i++) c._mapTryPin('thedeep', 'Aldenmar', 1000 + i, 'a decaying skeleton', { x: 105, y: 202 }, N + i);
+      expect(c._mapPinGet('thedeep', 1001)).toBeNull();     // the oldest went
+      expect(c._mapPinGet('thedeep', 1600)).not.toBeNull();
+    });
+  });
+
+  describe('a death after a pull lands on the pinned point', () => {
+    // First tabbed in a tie between two points (where "where it was first seen" cannot say), then it walks over its
+    // own point and is pinned there, then it is pulled to the fighting spot and dies.
+    const pinThenPull = (c, N, farX, farY) => {
+      c._mapNoteState('Aldenmar', null, tgt(9, 100, 125, 200), N);
+      c._mapNoteState('Aldenmar', null, tgt(9, 90, 105, 202), N + 3000);
+      expect(c._mapPinGet('thedeep', 9)).toMatchObject({ point_id: 1 });
+      const pulled = tgt(9, 40, farX, farY);
+      c._mapNoteState('Aldenmar', null, pulled, N + 5000);
+      return pulled;
+    };
+    it('target window (corpse): the timer starts on the pinned point, nothing is left as "?"', () => {
+      const { c } = liveCore(); const N = Date.now();
+      const pulled = pinThenPull(c, N, 250, 200);   // dies where a tie of points makes it ambiguous
+      const dead = tgt(9, 0, 250, 200, { target_name: "a decaying skeleton's corpse", target_type: 2 });
+      c._mapNoteState('Aldenmar', pulled, dead, N + 9000);
+      watch(c, dead);
+      const p = c._mapStatePayload('', N + 10000);
+      expect(p.timers).toEqual([expect.objectContaining({ point_id: 1, source: 'seen', died_at: N + 9000 })]);
+      expect(p.timers[0].by).toBeUndefined();   // a local timer carries no "by"
+      expect(p.unassigned).toEqual([]);
+      expect(p.seen).toEqual([]);               // dead now, no longer seen alive
+    });
+    it('the baseline: the same pull with no pin is a "?" with up to four candidates', () => {
+      const { c } = liveCore(); const N = Date.now();
+      const first = tgt(9, 100, 125, 200);       // first tabbed in the tie, pulled away without ever standing at a point
+      c._mapNoteState('Aldenmar', null, first, N);
+      const dead = tgt(9, 0, 250, 200, { target_name: "a decaying skeleton's corpse", target_type: 2 });
+      c._mapNoteState('Aldenmar', first, dead, N + 9000);
+      watch(c, dead);
+      const p = c._mapStatePayload('', N + 10000);
+      expect(p.timers).toEqual([]);
+      expect(p.unassigned).toHaveLength(1);
+      expect(queued(c).filter(e => e.kind === 'died')).toEqual([]);   // a "?" is never sent
+    });
+    it('the log line ("has been slain") reaches the same point through the target window\'s spawn id', () => {
+      const { c } = liveCore(); const N = Date.now();
+      pinThenPull(c, N, 250, 200);
+      c._zealState.Aldenmar = tgt(9, 5, 250, 200, { updatedAt: N + 8000 });
+      c._mapNoteLogDeath('a decaying skeleton', 'Aldenmar', N + 8500, N + 9000);
+      watch(c, c._zealState.Aldenmar);
+      const p = c._mapStatePayload('', N + 10000);
+      expect(p.timers).toEqual([expect.objectContaining({ point_id: 1, source: 'seen' })]);
+      expect(p.unassigned).toEqual([]);
+    });
+    it('the pin only counts for the same name (spawn ids are reused), and a death spends it', () => {
+      const { c } = liveCore(); const N = Date.now();
+      c._mapNoteState('Aldenmar', null, tgt(9, 100, 105, 202), N);
+      // a different mob under the same id
+      expect(c._mapNoteDeath('thedeep', { name: 'Aldenmar the Pale', spawn_id: 9, loc: { x: 0, y: 0 }, at: N, src: 'zeal' }, N).kind).toBe('unassigned');
+      // that death spent the pin: the skeleton with id 9 is an ordinary death now
+      expect(c._mapPinGet('thedeep', 9)).toBeNull();
+      expect(c._mapNoteDeath('thedeep', { name: 'a decaying skeleton', spawn_id: 9, loc: { x: 250, y: 200 }, at: N + 300000, src: 'zeal' }, N + 300000).kind).toBe('unassigned');
+    });
+    it('a mob seen alive replaces a running timer on its point, and a death removes the "seen"', () => {
+      const { c } = liveCore(); const N = Date.now();
+      c._mapApplyMark('thedeep', { point_id: 1, kind: 'empty' }, N - 1000);
+      expect(c._mapStatePayload('', N).timers).toHaveLength(1);
+      c._mapNoteState('Aldenmar', null, tgt(9, 100, 105, 202), N);
+      let p = c._mapStatePayload('', N + 1);
+      expect(p.timers).toEqual([]);
+      expect(p.seen).toHaveLength(1);
+      c._mapNoteDeath('thedeep', { name: 'a decaying skeleton', spawn_id: 9, loc: { x: 5, y: 5 }, at: N + 20000, src: 'zeal' }, N + 20000);
+      p = c._mapStatePayload('', N + 21000);
+      expect(p.seen).toEqual([]);
+      expect(p.timers).toEqual([expect.objectContaining({ point_id: 1, died_at: N + 20000 })]);
+    });
+    it('"seen alive" is shown for 30 minutes and no longer', () => {
+      const { c } = liveCore(); const N = Date.now();
+      c._mapNoteState('Aldenmar', null, tgt(9, 100, 105, 202), N);
+      expect(c._mapStatePayload('', N + 29 * 60000).seen).toHaveLength(1);
+      expect(c._mapStatePayload('', N + 31 * 60000).seen).toEqual([]);
+    });
+  });
+
+  describe('what is queued for the guild: only the certain events', () => {
+    it('a pinned sighting is "seen", an assigned death is "died", a "?" is never queued', () => {
+      const { c } = liveCore(); const N = Date.now();
+      c._mapNoteState('Aldenmar', null, tgt(9, 100, 105, 202), N);
+      expect(queued(c)).toEqual([{ point_id: 1, kind: 'seen', spawn_id: 9, name: 'a decaying skeleton', at: N }]);
+      c._mapNoteDeath('thedeep', { name: 'a decaying skeleton', spawn_id: 9, loc: { x: 250, y: 200 }, at: N + 4000, src: 'zeal' }, N + 4000);   // pinned: certain
+      expect(queued(c).pop()).toEqual({ point_id: 1, kind: 'died', spawn_id: 9, name: 'a decaying skeleton', at: N + 4000 });
+      const before = queued(c).length;
+      c._mapNoteDeath('thedeep', { name: 'a decaying skeleton', spawn_id: 11, loc: { x: 250, y: 200 }, at: N + 90000, src: 'zeal' }, N + 90000);   // a tie: "?"
+      expect(queued(c)).toHaveLength(before);
+      expect(c._mapSync.q.every(k => k.zone === 'thedeep' && k.character === 'Aldenmar')).toBe(true);
+    });
+    it('marks queue the right kinds: Killed -> died, Empty -> empty, Up -> up, Clear -> clear', () => {
+      const { c } = liveCore(); const N = Date.now();
+      c._mapApplyMark('thedeep', { point_id: 1, kind: 'killed' }, N, 'Aldenmar');
+      c._mapApplyMark('thedeep', { point_id: 2, kind: 'empty' }, N + 1, 'Aldenmar');
+      c._mapApplyMark('thedeep', { point_id: 2, kind: 'up' }, N + 2, 'Aldenmar');
+      c._mapApplyMark('thedeep', { point_id: 1, kind: 'clear' }, N + 3, 'Aldenmar');
+      expect(queued(c).map(e => [e.point_id, e.kind, e.at])).toEqual([[1, 'died', N], [2, 'empty', N + 1], [2, 'up', N + 2], [1, 'clear', N + 3]]);
+      expect(c._mapStatePayload('', N + 4).timers).toEqual([]);   // clear dropped the timer Killed started
+    });
+    it('a death on a point with no respawn time (the instance sentinel) has no timer, so nothing is sent', () => {
+      const { c } = liveCore(); const N = Date.now();
+      expect(c._mapNoteDeath('thedeep', { name: 'a bat', spawn_id: 3, loc: { x: 5000, y: 0 }, at: N, src: 'zeal' }, N).kind).toBe('assigned');
+      expect(queued(c)).toEqual([]);
+    });
+    it('Killed on a "?" settles it and sends the death time and spawn id of that death', () => {
+      const { c } = liveCore(); const N = Date.now();
+      c._mapNoteDeath('thedeep', { name: 'a decaying skeleton', spawn_id: 7, loc: { x: 250, y: 200 }, at: N - 5000, src: 'zeal' }, N - 5000);
+      expect(queued(c)).toEqual([]);
+      c._mapApplyMark('thedeep', { point_id: 2, kind: 'killed' }, N, 'Aldenmar');
+      expect(queued(c)).toEqual([{ point_id: 2, kind: 'died', spawn_id: 7, name: 'a decaying skeleton', at: N - 5000 }]);
+    });
+    it('is batched, not per event: nothing is sent at once, a timer is armed, and a POST carries at most 50', () => {
+      const { c, net } = liveCore(); const N = Date.now();
+      const zd = c._mapZoneDoc('thedeep');
+      for (let i = 0; i < 120; i++) c._mapLocalEvent('thedeep', zd, 'Aldenmar', { point_id: 1, kind: 'seen', spawn_id: 100 + i, name: 'a decaying skeleton', at: N + i }, N);
+      expect(net.calls).toHaveLength(0);
+      expect(c._mapSync.flushTimer).toBeTruthy();
+      expect(c._mapSyncFlush(N + 3000)).toBe(true);
+      expect(c._mapSyncFlush(N + 6000)).toBe(true);
+      expect(c._mapSyncFlush(N + 9000)).toBe(true);
+      expect(c._mapSyncFlush(N + 12000)).toBe(false);
+      const bodies = net.calls.map(k => JSON.parse(k.__body));
+      expect(bodies.map(b => b.events.length)).toEqual([50, 50, 20]);
+      expect(net.calls[0]).toMatchObject({ method: 'POST', path: '/api/agent/map-sync' });
+      expect(net.calls[0].headers.Authorization).toBe('Bearer tok');
+      expect(bodies[0]).toMatchObject({ zone: 'thedeep', character: 'Aldenmar' });
+      expect(bodies[0].events[0]).toEqual({ point_id: 1, kind: 'seen', spawn_id: 100, name: 'a decaying skeleton', at: N });
+    });
+    it('LOCAL MODE (no token) queues nothing, sends nothing, pulls nothing', () => {
+      const { c, net } = localCore(); const N = Date.now();
+      c._mapNoteState('Aldenmar', null, tgt(9, 100, 105, 202), N);
+      c._mapApplyMark('thedeep', { point_id: 2, kind: 'empty' }, N, 'Aldenmar');
+      c._mapNoteDeath('thedeep', { name: 'a decaying skeleton', spawn_id: 9, loc: { x: 100, y: 200 }, at: N + 1, src: 'zeal' }, N + 1);
+      expect(c._mapSync.q).toEqual([]);
+      expect(c._mapSync.flushTimer).toBeNull();
+      expect(c._mapSyncFlush(N)).toBe(false);
+      expect(c._mapSyncPull('thedeep', N)).toBe(false);
+      c._mapStatePayload('', N);
+      expect(net.calls).toHaveLength(0);
+    });
+    it('local mode still pins and shows "seen alive" - the sync is an add-on, not a requirement', () => {
+      const { c } = localCore(); const N = Date.now();
+      const s = tgt(9, 100, 105, 202);
+      c._mapNoteState('Aldenmar', null, s, N);
+      watch(c, s);
+      const p = c._mapStatePayload('', N + 1);
+      expect(p.seen).toHaveLength(1);
+      expect(p.target.point_id).toBe(1);
+    });
+  });
+
+  describe('pulling the guild\'s events: only while the overlay polls', () => {
+    it('is started by a /api/map-state request and nothing else, every 10 s, with since = the newest event seen', async () => {
+      const N = Date.now();
+      const evs = [{ id: 1, point_id: 2, kind: 'died', spawn_id: 5, name: 'a decaying skeleton', at: N - 5000, by: 'Brackwyn' }];
+      const { c, net } = liveCore((o) => /map-sync/.test(o.path) ? { status: 200, body: { zone: 'thedeep', now: N, events: evs } } : { status: 500 });
+      await tick();
+      expect(net.calls).toHaveLength(0);                         // nobody is polling: nothing is asked
+      c._mapStatePayload('', N);
+      expect(net.calls).toHaveLength(1);
+      expect(net.calls[0]).toMatchObject({ method: 'GET', path: '/api/agent/map-sync?zone=thedeep&since=0' });
+      expect(net.calls[0].headers.Authorization).toBe('Bearer tok');
+      c._mapStatePayload('', N + 200);
+      c._mapStatePayload('', N + 9000);
+      expect(net.calls).toHaveLength(1);                         // one in flight, then the 10 s gate
+      await tick();
+      expect(c._mapStatePayload('', N + 9500).timers).toEqual([expect.objectContaining({ point_id: 2, by: 'Brackwyn', source: 'seen', died_at: N - 5000 })]);
+      expect(net.calls).toHaveLength(1);
+      c._mapStatePayload('', N + 10000);
+      expect(net.calls).toHaveLength(2);
+      expect(net.calls[1].path).toBe('/api/agent/map-sync?zone=thedeep&since=' + (N - 5000));
+    });
+    it('a 404 (the bot does not have the route yet) backs off 10 minutes, with no error shown, for pulls and pushes', async () => {
+      const { c, net } = liveCore(() => ({ status: 404 })); const N = Date.now();
+      c._mapStatePayload('', N);
+      await tick();
+      const p = c._mapStatePayload('', N + 11000);
+      expect(p.status).toBe('ok');
+      expect(net.calls).toHaveLength(1);
+      c._mapStatePayload('', N + 599000);
+      expect(net.calls).toHaveLength(1);
+      c._mapStatePayload('', N + 600001);
+      expect(net.calls).toHaveLength(2);
+      // a push: the first POST learns it, the next events are dropped quietly for the same ten minutes
+      const { c: k, net: n2 } = liveCore(() => ({ status: 404 }));
+      const zd = k._mapZoneDoc('thedeep');
+      k._mapLocalEvent('thedeep', zd, 'Aldenmar', { point_id: 1, kind: 'empty', at: N }, N);
+      expect(k._mapSyncFlush(N)).toBe(true);
+      await tick();
+      k._mapLocalEvent('thedeep', zd, 'Aldenmar', { point_id: 1, kind: 'empty', at: N + 1 }, N + 1);
+      expect(k._mapSyncFlush(N + 1000)).toBe(false);
+      expect(n2.calls).toHaveLength(1);
+      expect(k._mapSync.q).toEqual([]);
+    });
+    it('an error or a bad answer is ignored (the next poll asks again after the gate)', async () => {
+      const { c, net } = liveCore(() => ({ status: 200, body: 'not json {' })); const N = Date.now();
+      c._mapStatePayload('', N);
+      await tick();
+      expect(c._mapStatePayload('', N + 10000).status).toBe('ok');
+      expect(net.calls).toHaveLength(2);
+    });
+  });
+
+  describe('merging the guild\'s events into the timers', () => {
+    let c;
+    beforeEach(() => { ({ c } = localCore()); });
+    const NOWR = T0 + 60000;
+    const ev = (o) => Object.assign({ point_id: 1, kind: 'died', spawn_id: 5, name: 'a decaying skeleton', at: T0 + 1000, by: 'Brackwyn' }, o);
+    const state = () => c._mapStatePayload('', NOWR);
+
+    it('a remote death starts a timer tagged with who saw it; the same event again changes nothing', () => {
+      expect(c._mapApplyRemote('thedeep', [ev()], NOWR)).toBe(1);
+      expect(state().timers).toEqual([expect.objectContaining({ point_id: 1, by: 'Brackwyn', source: 'seen', died_at: T0 + 1000, earliest: T0 + 1000 + 540000 })]);
+      expect(c._mapApplyRemote('thedeep', [ev()], NOWR)).toBe(0);
+      expect(c._mapApplyRemote('thedeep', [ev({ by: 'Corvale' })], NOWR)).toBe(0);   // a repeat is the same event whoever relays it
+      expect(state().timers[0].by).toBe('Brackwyn');
+    });
+    it('a remote death overrides an older local state', () => {
+      c._mapApplyMark('thedeep', { point_id: 1, kind: 'empty' }, T0);
+      expect(c._mapApplyRemote('thedeep', [ev({ at: T0 + 20000 })], NOWR)).toBe(1);
+      expect(state().timers[0]).toMatchObject({ source: 'seen', died_at: T0 + 20000, by: 'Brackwyn' });
+    });
+    it('a newer local event wins over an older remote one (a mark, and an Up)', () => {
+      c._mapApplyMark('thedeep', { point_id: 2, kind: 'empty' }, T0 + 10000);
+      expect(c._mapApplyRemote('thedeep', [ev({ point_id: 2, at: T0 + 5000 })], NOWR)).toBe(0);
+      expect(state().timers[0]).toMatchObject({ point_id: 2, source: 'marked' });
+      c._mapApplyMark('thedeep', { point_id: 2, kind: 'up' }, T0 + 30000);
+      expect(c._mapApplyRemote('thedeep', [ev({ point_id: 2, at: T0 + 20000, spawn_id: 6 })], NOWR)).toBe(0);
+      expect(state().timers).toEqual([]);
+    });
+    it('a newer local DEATH wins over an older remote one', () => {
+      c._mapNoteDeath('thedeep', { name: 'a decaying skeleton', spawn_id: 3, loc: { x: 100, y: 200 }, at: T0 + 40000, src: 'zeal' }, T0 + 40000);
+      expect(c._mapApplyRemote('thedeep', [ev({ at: T0 + 30000 })], NOWR)).toBe(0);
+      expect(state().timers[0]).toMatchObject({ died_at: T0 + 40000 });
+      expect(state().timers[0].by).toBeUndefined();
+    });
+    it('seen / empty / up / clear from the guild, each only when newer', () => {
+      c._mapApplyRemote('thedeep', [ev({ point_id: 3, kind: 'seen', at: T0 + 1000, by: 'Corvale' })], NOWR);
+      expect(state().seen).toEqual([{ point_id: 3, spawn_id: 5, name: 'a decaying skeleton', at: T0 + 1000, by: 'Corvale' }]);
+      c._mapApplyRemote('thedeep', [ev({ point_id: 3, kind: 'died', at: T0 + 2000 })], NOWR);
+      expect(state().seen).toEqual([]);
+      expect(state().timers).toEqual([expect.objectContaining({ point_id: 3, by: 'Brackwyn' })]);
+      c._mapApplyRemote('thedeep', [ev({ point_id: 3, kind: 'seen', at: T0 + 3000, by: 'Corvale' })], NOWR);
+      expect(state().timers).toEqual([]);                       // seen alive after the death: the timer was wrong
+      expect(state().seen).toHaveLength(1);
+      c._mapApplyRemote('thedeep', [ev({ point_id: 3, kind: 'clear', at: T0 + 2500 })], NOWR);   // older than the sighting: ignored
+      expect(state().seen).toHaveLength(1);
+      c._mapApplyRemote('thedeep', [ev({ point_id: 3, kind: 'clear', at: T0 + 4000 })], NOWR);
+      expect(state().seen).toEqual([]);
+      c._mapApplyRemote('thedeep', [ev({ point_id: 5, kind: 'empty', at: T0 + 5000, name: null })], NOWR);
+      expect(state().timers[0]).toMatchObject({ point_id: 5, source: 'marked', by: 'Brackwyn', name: 'Aldenmar the Pale' });
+      c._mapApplyRemote('thedeep', [ev({ point_id: 5, kind: 'up', at: T0 + 6000 })], NOWR);
+      expect(state().timers).toEqual([]);
+    });
+    it('oldest first: a batch with a late older death cannot beat the newer one, and `since` follows the newest', () => {
+      expect(c._mapApplyRemote('thedeep', [ev({ at: T0 + 9000, spawn_id: 2 }), ev({ at: T0 + 3000 })], NOWR)).toBe(2);
+      expect(state().timers[0].died_at).toBe(T0 + 9000);
+      expect(c._mapSync.since.thedeep).toBe(T0 + 9000);
+    });
+    it('our own events echoed back by the bot are skipped', () => {
+      const { c: k } = liveCore(); const N = Date.now();
+      k._mapNoteState('Aldenmar', null, tgt(9, 100, 105, 202), N);
+      const mine = queued(k)[0];
+      expect(k._mapApplyRemote('thedeep', [Object.assign({ id: 1, by: 'Aldenmar' }, mine)], N + 1000)).toBe(0);
+    });
+    it('a future-dated event, an unknown point and an unknown kind change nothing', () => {
+      expect(c._mapApplyRemote('thedeep', [ev({ at: NOWR + 120000 }), ev({ point_id: 999 }), ev({ kind: 'explode' }), ev({ at: 'soon' }), null], NOWR)).toBe(0);
+      expect(state().timers).toEqual([]);
+    });
+  });
+
+  describe('the overlay: contrast, "up · seen" and the pinned line', () => {
+    const js = stripJs(MAP_HTML);
+    const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
+    it('hover words: seen alive <ago> · spawn #<id>, and by <name> when a guildmate saw it', () => {
+      expect(new Function(helpers + '\nreturn seenText;')()({ at: T0 - 120000, spawn_id: 812, by: 'Corvale' }, T0)).toBe('seen alive 2m ago · spawn #812 · by Corvale');
+      expect(new Function(helpers + '\nreturn seenText;')()({ at: T0 - 120000, spawn_id: null, by: null }, T0)).toBe('seen alive 2m ago');
+    });
+    it('a dark slate background instead of black (the panes keep the opacity slider)', () => {
+      expect(MAP_HTML).toMatch(/#mapPane\{[^}]*background:rgb\(19 26 38 \/ var\(--bg-alpha\)\)/);
+      expect(MAP_HTML).toMatch(/#side\{[^}]*background:rgb\(19 26 38 \/ var\(--bg-alpha\)\)/);
+      expect(MAP_HTML).not.toMatch(/rgb\(0 0 0 \/ var\(--bg-alpha\)\)/);
+    });
+    it('brighter, thicker walls on the active floor; other floors at 0.35; off-floor dots at 0.6; bigger lighter dots with an outline', () => {
+      expect(js).toMatch(/ctx\.strokeStyle = bright \? 'rgba\(214,230,255,0\.95\)' : 'rgba\(170,195,235,0\.35\)';/);
+      expect(js).toMatch(/ctx\.lineWidth = bright \? 1\.6 : 1;/);
+      expect(js).toMatch(/ctx\.globalAlpha = onFloor \? 1 : 0\.6;/);
+      expect(js).toMatch(/var r = kind\.raid \? 6\.5 : kind\.named \? 5\.5 : 4\.2;/);
+      expect(js).toMatch(/: '#c9d1d9'; ctx\.fill\(\);/);
+      expect(js).toMatch(/strokeStyle = '#0d1117'; ctx\.stroke\(\);   \/\/ a dark outline on every dot/);
+    });
+    it('keeps the red / yellow / green rings, and draws seen points with a solid green ring and fill', () => {
+      expect(js).toMatch(/var RING = \{ wait: '#f85149', window: '#f0b429', up: '#56d364' \};/);
+      expect(js).toMatch(/if \(sn\) \{[^}]*ctx\.arc\(px, py, r \+ 3\.5[^}]*strokeStyle = '#56d364'; ctx\.stroke\(\);\s*\} else if \(t\) \{/);
+      expect(js).toMatch(/ctx\.fillStyle = sn \? '#56d364'/);
+      expect(js).toMatch(/card\.appendChild\(el\('div', 't', 'up · ' \+ seenText\(sn, nowMs\(\)\)\)\)/);
+    });
+    it('draws a thin line from a pinned target to its spawn point, and says "→ pinned" in the header', () => {
+      expect(js).toMatch(/var pinPt = P\.target\.point_id != null \? S\.byId\[String\(P\.target\.point_id\)\] : null;\s*if \(pinPt\) \{\s*var pq = wpt\(pinPt\.x, pinPt\.y\);\s*ctx\.beginPath\(\); ctx\.moveTo\(tq\[0\], tq\[1\]\); ctx\.lineTo\(pq\[0\], pq\[1\]\);\s*ctx\.lineWidth = 1;/);
+      expect(js).toMatch(/\(P\.target\.point_id != null \? ' → pinned' : ''\)/);
+    });
+    it('the menu gets a Clear timer button only where there is a timer or a sighting', () => {
+      expect(js).toMatch(/if \(S\.timerBy\[pid\] \|\| S\.seenBy\[pid\]\) mk\('Clear timer', 'clear'\);/);
+    });
   });
 });
 
@@ -667,7 +1062,7 @@ describe('the Mimic side: every item of the overlay parity checklist', () => {
   });
   it('4. dashboard row + status flag + toggle-overlay case', () => {
     const dash = readSource(path.join(ROOT, 'packages', 'wolfpack-logsync', 'dashboard.html'));
-    expect(dash).toMatch(/\['map',\s+'Spawn map \[beta\]'/);
+    expect(dash).toMatch(/\['map',\s+'Map \[beta\]'/);
     expect(dash).toMatch(/map: !!st\.showMap/);
     expect(dash).toMatch(/map: 'showMap'/);
     expect(MAIN).toMatch(/case 'map':\s*cfg\.showMap = !cfg\.showMap; saveConfig\(cfg\);/);
@@ -686,7 +1081,7 @@ describe('the Mimic side: every item of the overlay parity checklist', () => {
     expect(fnBody('_overlayEntries')).toMatch(/out\.push\(\['map', mapWindow\]\)/);
   });
   it('the tray item exists with the dashboard row (tray <-> dashboard parity), default off, and has a hotkey slot', () => {
-    expect(MAIN).toMatch(/label: 'Spawn map \(zone map, spawn timers\) \[beta\]', type: 'checkbox', checked: !!s\.showMap/);
+    expect(MAIN).toMatch(/label: 'Map \(zone map, spawn timers\) \[beta\]', type: 'checkbox', checked: !!s\.showMap/);
     expect(sliceBlock(MAIN, 'const _OVERLAY_HOTKEY_KEYS = [', '];')).toMatch(/'map'/);
     expect(MAIN).not.toMatch(/showMap: true/);   // opt-in
   });
