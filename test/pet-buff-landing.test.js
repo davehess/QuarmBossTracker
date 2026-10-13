@@ -119,6 +119,8 @@ const PRELUDE = `
   let _debuffLandingBySuffix = new Map();
   function _savePetStateSoon() {}
   function _noteDiCast() {}
+  function _quarmyLocalItems() {}
+  function _lootZoneKnown(z) { return z != null && z !== '' && z !== 0 && z !== '0'; }
   function _charmDurationSec(_n, d) { return d; }
   // #119 pet-buff diagnostic ring — the REAL implementation (not a stub) so the
   // fixture can assert recordPetBuffLanding records attribution outcomes.
@@ -136,7 +138,7 @@ const EXPORTS = [
   '_reconcilePetIdentity', '_lastPetByOwner', '_lastPetIdByOwner', '_petIdForOwner',
   '_petOwnerByName', '_isTrackedBuffName',
   '_zealState', '_spellByNameLower', '_petBuffLandings', '_petHealthByOwner',
-  '_recentSelfCast', '_petBuffDiagRing',
+  '_recentSelfCast', '_petBuffDiagRing', '_suspendedMinionRank',
 ];
 
 function buildAgent() {
@@ -497,6 +499,38 @@ describe('pet identity by spawn id', () => {
     // A stale name map would fire a SECOND wipe on the next poll.
     expect(A._lastPetByOwner.get('hitya')).toBe('an orc warrior');
     expect(A._lastPetIdByOwner.get('hitya')).toBe(1820);
+  });
+
+  // A spawn id is per ZONE: zoning gives the same pet a new one (a member, 2026-10-13: the pet "loses buffs when it
+  // zones" on our tracker). And Suspended Minion (the guild lead, 2026-10-13): rank 2 keeps the buffs, rank 1 brings
+  // back a fresh pet with none.
+  describe('zoning and Suspended Minion', () => {
+    const setPetIn = (A, owner, name, petId, zone) => {
+      A._zealState[owner] = { pet_name: name, pet_id: petId, zone, gauges: [{ slot: 16, text: name, hp_pct: 90 }] };
+    };
+    const zoneThenReturn = (rank, { zoneTo = 71, nameTo = 'Gabobab' } = {}) => {
+      const A = buildAgent();
+      if (rank != null) A._suspendedMinionRank.set('aldenmar', rank);
+      setPetIn(A, 'aldenmar', 'Gabobab', 1817, 71);
+      A._reconcilePetIdentity('aldenmar');
+      seedBuff(A, 'aldenmar');
+      setPetIn(A, 'aldenmar', nameTo, 402, zoneTo);
+      A._reconcilePetIdentity('aldenmar');
+      return hasBuffs(A, 'aldenmar');
+    };
+    it('keeps the buffs when the owner zoned and the pet came along with a new id', () => {
+      expect(zoneThenReturn(null, { zoneTo: 72 })).toBe(true);
+    });
+    it('a different-named pet after a zone is still a new pet', () => {
+      expect(zoneThenReturn(null, { zoneTo: 72, nameTo: 'Kabeker' })).toBe(false);
+    });
+    it('same zone, new id, same name: kept at Suspended Minion 2', () => {
+      expect(zoneThenReturn(2)).toBe(true);
+    });
+    it('same zone, new id, same name: dropped at Suspended Minion 1 or with no rank known', () => {
+      expect(zoneThenReturn(1)).toBe(false);
+      expect(zoneThenReturn(null)).toBe(false);
+    });
   });
 
   it('resolves the id only for the owner’s own character', () => {
