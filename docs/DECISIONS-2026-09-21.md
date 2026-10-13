@@ -9615,3 +9615,9 @@ Harmony, Hide/Sneak for non-rogues).
   3 h from death (#288). Not known: which line, if any, the client prints on entering a guild, guild-slow, live or PvP
   copy, and whether trash respawn changes in those copies. Waiting on the guild lead's capture before any timer
   changes.
+- **Facts added the same day** (the guild lead): *"if one guild instance is slow mode they all are for us"* — slow mode
+  is guild-wide, not per zone, so the bot's one `slow_mode` switch is the right shape for every copy we own. And
+  *"people will sometimes go in other guild instances, like breakfast club. they must be in a raid to join those"* —
+  so a member in another guild's copy is always in that guild's raid. Consequences: the raid/group scoping (§248)
+  already keeps their sightings and timers out of ours (different raid); a copy can be labelled "another guild's"
+  when the member's raid is mostly not ours; our slow mode never applies to someone in another guild's copy.
