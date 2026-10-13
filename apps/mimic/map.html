@@ -187,7 +187,7 @@
         <div id="cfgGlyphs"></div>
         <div class="grp">Colours</div>
         <div class="row"><span class="bl">Scheme</span><select id="cfgScheme"><option value="default">Default</option><option value="contrast">High contrast</option><option value="cb">Colour-blind safe</option><option value="custom">Custom</option></select></div>
-        <label class="row" title="Map's own: each line keeps the colour its map file gives it (Brewall colours each floor and the stairs). One colour: every wall line in the colour below."><span class="bl">Wall colours</span><select id="cfgWallMode"><option value="map">Map's own</option><option value="one">One colour</option></select></label>
+        <label class="row" title="Brewall layers: your floor in the wall colour, the floors above and below you in Brewall's layer colours (orange, green, cyan up; pink, purple down), as eqmaps.info's mapping standard draws them. A Brewall map file keeps its own colours. Map's own: each line keeps the colour its map file gives it. One colour: every wall line in the colour below."><span class="bl">Wall colours</span><select id="cfgWallMode"><option value="layers">Brewall layers</option><option value="map">Map's own</option><option value="one">One colour</option></select></label>
         <div id="cfgCols"></div>
         <div class="grp">Background</div>
         <div class="row"><span class="bl">Colour</span><input type="color" id="cfgBg"><button class="rs" type="button" id="cfgBgRs" title="Back to the scheme's colour">↺</button></div>
@@ -457,12 +457,17 @@
     for (var i = 0; i < npcs.length; i++) { if (npcs[i] && npcs[i].raid_target) raid = true; if (npcs[i] && npcs[i].named) named = true; }
     return { named: named || raid, raid: raid };
   }
-  function bestName(p) {
+  // The npc row a point is "about": a raid target first, then a named, then the commonest (bestName's choice).
+  function namedNpc(p) {
     var npcs = ((p && p.npcs) || []).filter(function (n) { return n && n.name; });
-    if (!npcs.length) return 'spawn point';
+    if (!npcs.length) return null;
     var rank = function (n) { return (n.raid_target ? 3 : n.named ? 2 : 0) * 1000 + (Number(n.chance) || 0); };
     npcs.sort(function (a, b) { return rank(b) - rank(a); });
-    return String(npcs[0].name).replace(/_/g, ' ').replace(/^[#!~]+/, '');
+    return npcs[0];
+  }
+  function bestName(p) {
+    var n = namedNpc(p);
+    return n ? String(n.name).replace(/_/g, ' ').replace(/^[#!~]+/, '') : 'spawn point';
   }
   // Levels (the guild lead, 2026-10-12: "a how far to include levels, same with spawns"): walls, spawn dots and
   // routes within ±N z-units of YOU are drawn bright, the rest faded. 0 = All. Unknown z (yours or the thing's) = in range.
@@ -561,16 +566,89 @@
     return m;
   }
   function posAgeText(ageMs, src) { return 'pos ' + Math.max(0, Math.round(ageMs)) + ' ms' + (src ? ' · ' + src : ''); }
-  // The target's walked path: a breadcrumb every TRAIL_STEP units it moves, the last TRAIL_MS of them, kept per target
-  // (a new target starts a new trail). Returns the trail to keep.
-  var TRAIL_STEP = 4, TRAIL_MS = 180000, TRAIL_MAX = 120;
+  // A mob's walked path: a breadcrumb every TRAIL_STEP units it moves while it is your target. Kept per mob (spawn id)
+  // for the time you are in the zone, so targeting it again shows the whole path seen so far (the guild lead,
+  // 2026-10-13: "keep that segment as part of that mob's path if we don't stop targetting it. If we target it again
+  // we should see that path"). Returns the trail to keep.
+  var TRAIL_STEP = 4, TRAIL_MAX = 600, TRAILS_MAX = 40;
   function trailStep(tr, key, x, y, now) {
     if (x == null || y == null) return tr;
-    if (!tr || tr.key !== key) tr = { key: key, pts: [] };
+    if (!tr || tr.key !== key) tr = { key: key, pts: [], legs: [] };
     var last = tr.pts[tr.pts.length - 1];
     if (!last || Math.hypot(x - last.x, y - last.y) >= TRAIL_STEP) tr.pts.push({ x: x, y: y, t: now });
-    while (tr.pts.length > TRAIL_MAX || (tr.pts.length && now - tr.pts[0].t > TRAIL_MS)) tr.pts.shift();
+    while (tr.pts.length > TRAIL_MAX) tr.pts.shift();
     return tr;
+  }
+  // On a random-wander route the mob walks straight from one waypoint to another. From where it is and the way its
+  // last few breadcrumbs point, the waypoint ahead (the one most nearly straight on) and the one behind: the leg it is
+  // walking. Indices into the route's points, or null when nothing lines up within ~20 degrees.
+  var LEG_COS = Math.cos(20 * Math.PI / 180);
+  function wanderLeg(gpts, pos, dir) {
+    var len = Math.hypot(dir.x, dir.y);
+    if (!gpts || !gpts.length || !(len > 0)) return null;
+    var ux = dir.x / len, uy = dir.y / len, ahead = -1, behind = -1, bestA = Infinity, bestB = Infinity;
+    for (var i = 0; i < gpts.length; i++) {
+      var dx = gpts[i][0] - pos.x, dy = gpts[i][1] - pos.y, d = Math.hypot(dx, dy);
+      if (!(d > 1)) continue;
+      var c = (dx * ux + dy * uy) / d;
+      if (c >= LEG_COS && d < bestA) { bestA = d; ahead = i; }
+      if (c <= -LEG_COS && d < bestB) { bestB = d; behind = i; }
+    }
+    return ahead >= 0 && behind >= 0 ? { prev: behind, next: ahead } : null;
+  }
+  // Record the leg the trail's latest stretch lies on (a new one only when it changes), so the path keeps the
+  // waypoint-to-waypoint legs the mob was seen walking.
+  function noteWanderLeg(tr, gpts) {
+    if (!tr || tr.pts.length < 2) return;
+    var last = tr.pts[tr.pts.length - 1], from = null;
+    for (var i = tr.pts.length - 2; i >= 0; i--) { if (Math.hypot(last.x - tr.pts[i].x, last.y - tr.pts[i].y) >= 10) { from = tr.pts[i]; break; } }
+    if (!from) return;
+    var leg = wanderLeg(gpts, last, { x: last.x - from.x, y: last.y - from.y });
+    if (!leg) return;
+    var top = tr.legs[tr.legs.length - 1];
+    if (!top || top.prev !== leg.prev || top.next !== leg.next) tr.legs.push(leg);
+  }
+  // EverQuest's con colour for a mob of level `lvl` against yours (the agent's _levelCon and _CON_BRACKETS, same
+  // table): for ⚙ → Mob names in con colour (the guild lead, 2026-10-13: "be able to set the names of these mobs to
+  // conn color"). null when either level is unknown.
+  var CON_BRACKETS = [[7, -4, null], [8, -5, -4], [12, -6, -4], [16, -7, -5], [20, -8, -6], [24, -9, -7], [28, -10, -8],
+    [30, -11, -9], [32, -12, -9], [36, -13, -10], [40, -14, -11], [44, -16, -12], [48, -17, -13], [52, -18, -14],
+    [54, -19, -15], [56, -20, -15], [60, -21, -16], [61, -19, -14], [62, -17, -12], [9999, -16, -11]];
+  var CON_HEX = { green: '#3fdc4f', lightblue: '#5fd7ff', blue: '#4c8dff', white: '#ffffff', yellow: '#ffe14a', red: '#ff4d4d' };
+  function levelCon(my, lvl) {
+    my = Number(my); lvl = Number(lvl);
+    if (!(my > 0) || !(lvl > 0)) return null;
+    var diff = lvl - my;
+    if (diff === 0) return 'white';
+    if (diff >= 1 && diff <= 2) return 'yellow';
+    if (diff >= 3) return 'red';
+    var b = CON_BRACKETS[0];
+    for (var i = 0; i < CON_BRACKETS.length; i++) if (my <= CON_BRACKETS[i][0]) { b = CON_BRACKETS[i]; break; }
+    if (diff <= b[1]) return 'green';
+    if (b[2] != null && diff <= b[2]) return 'lightblue';
+    return 'blue';
+  }
+  // Brewall's layer colours (eqmaps.info mapping standards, "#Layers in Zone"; the guild lead, 2026-10-13: "Default
+  // colors should probably be the same as the Brewall ones"): floors above yours Layer 2…7, below Layer 8…11, yours
+  // the "Main" layer (null here: it keeps our wall colour, since Brewall's black main would vanish on a dark map).
+  // `bands` are the wall bands' heights, b the band to colour, sz your height.
+  var BREWALL_UP = ['#ffa866', '#cc6600', '#66ff66', '#00cc00', '#66ffff', '#00cccc'];
+  var BREWALL_DOWN = ['#ff66ff', '#cc00cc', '#b266ff', '#6600cc'];
+  function brewallLayer(bands, b, sz) {
+    if (!bands || bands.length <= 1 || sz == null || !isFinite(Number(sz))) return null;
+    var order = bands.map(function (z, i) { return i; }).sort(function (i, j) { return bands[i] - bands[j]; });
+    var mine = 0, best = Infinity;
+    for (var i = 0; i < bands.length; i++) { var d = Math.abs(bands[i] - sz); if (d < best) { best = d; mine = i; } }
+    var off = order.indexOf(b) - order.indexOf(mine);
+    if (off === 0) return null;
+    return off > 0 ? BREWALL_UP[Math.min(off, BREWALL_UP.length) - 1] : BREWALL_DOWN[Math.min(-off, BREWALL_DOWN.length) - 1];
+  }
+  // A colour between two #rrggbb colours, t from 0 (a) to 1 (b).
+  function mixHex(a, b, t) {
+    function ch(h, i) { return parseInt(h.slice(1 + i * 2, 3 + i * 2), 16); }
+    var out = '#';
+    for (var i = 0; i < 3; i++) { var v = Math.round(ch(a, i) + (ch(b, i) - ch(a, i)) * t); out += (v < 16 ? '0' : '') + v.toString(16); }
+    return out;
   }
   // A server-frame point as EverQuest's /loc prints it: Y first, then X.
   function locText(x, y) { return Math.round(y) + ', ' + Math.round(x); }
@@ -669,7 +747,7 @@
     ['timers', 'Respawn timer rings'], ['candidates', '"?" maybe-died rings'], ['aggro', 'Aggro rings (◯)'],
     ['you', 'You'], ['target', 'Target ring'], ['targetLine', 'Line to target'], ['distance', 'Distance to target'],
     ['targetName', 'Target name'], ['tot', 'Target\'s target (assist bar)'],
-    ['pinLine', 'Target → its spawn point'], ['trail', 'Target\'s walked path'], ['group', 'Group'], ['groupNames', 'Group names'], ['raid', 'Raid'], ['raidNames', 'Raid names'],
+    ['pinLine', 'Target → its spawn point'], ['trail', 'Target\'s walked path'], ['conNames', 'Mob names in con colour'], ['group', 'Group'], ['groupNames', 'Group names'], ['raid', 'Raid'], ['raidNames', 'Raid names'],
   ];
   var CFG_GLYPHS = [
     ['👁', 'Sees invisible'], ['👁ᵤ', 'Sees invisible to undead'], ['🥷', 'Sees through hide'], ['↯', 'Summons'],
@@ -704,8 +782,11 @@
     var show = {}, col = {}, k;
     for (var i = 0; i < CFG_SHOW.length; i++) show[CFG_SHOW[i][0]] = true;
     show.aggro = false;   // aggro rings: off until switched on (the ◯ toolbar button)
+    show.conNames = false;   // names keep their own colours until you ask for con colours
     for (k in MAP_SCHEMES.default) col[k] = MAP_SCHEMES.default[k];
-    return { show: show, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'map', bgA: null, text: 1 };
+    // wallMode 'layers' (Brewall's floor colours) is the default since 2026-10-13; wallV marks a save made after that,
+    // so an older save's 'map' (never chosen, it was the old default) moves to 'layers' and a newer one is kept.
+    return { show: show, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1 };
   }
   // A saved settings object -> a complete, valid one. Unknown keys and bad values are dropped, never trusted.
   function mergeMapCfg(saved) {
@@ -715,7 +796,7 @@
     if (saved.glyphsOff) for (i = 0; i < CFG_GLYPHS.length; i++) if (saved.glyphsOff[CFG_GLYPHS[i][0]] === true) c.glyphsOff[CFG_GLYPHS[i][0]] = true;
     if (saved.col) for (k in c.col) if (HEX_RE.test(String(saved.col[k]))) c.col[k] = String(saved.col[k]).toLowerCase();
     if (MAP_SCHEMES[saved.scheme] || saved.scheme === 'custom') c.scheme = saved.scheme;
-    if (saved.wallMode === 'one') c.wallMode = 'one';
+    if (saved.wallMode === 'one' || saved.wallMode === 'layers' || (saved.wallMode === 'map' && saved.wallV === 2)) c.wallMode = saved.wallMode;
     if (typeof saved.bgA === 'number' && saved.bgA >= 0 && saved.bgA <= 1) c.bgA = saved.bgA;
     if (typeof saved.text === 'number' && saved.text >= 0.7 && saved.text <= 1.8) c.text = Math.round(saved.text * 10) / 10;
     return c;
@@ -751,7 +832,7 @@
 
   // ── state ──
   var S = {
-    ver: null, zone: null, points: [], byId: {}, map: null, grids: null, prep: null, p: null, skew: 0, err: false,
+    ver: null, zone: null, points: [], byId: {}, map: null, grids: null, prep: null, p: null, skew: 0, err: false, trails: {},
     view: { cx: 0, cy: 0, scale: 0.5 }, follow: true, panMode: false, levels: LEVEL_DEFAULT, fit: 'zone', hoverGrid: null,
     spawnLevels: LEVEL_STEPS.length - 1, sideOpen: true,   // spawns: all by default; the timers list starts slid out
     sideMode: 'grow',   // Timers button: 'grow' widens the window by the list (map keeps its size), 'share' shrinks the map
@@ -862,7 +943,7 @@
       S.facs = p.factions || null;   // the zone's primary factions, sent with the points (see aggroKind)
     }
     if (p.zone !== S.zone) {
-      S.zone = p.zone; S.fitted = false; S.follow = true; S.trk = {}; zoned = true;
+      S.zone = p.zone; S.fitted = false; S.follow = true; S.trk = {}; S.trails = {}; zoned = true;
       if (!p.points) { S.points = []; S.byId = {}; S.map = null; S.prep = null; S.grids = null; S.facs = null; }
       S.local = null; S.localVer = null;
       document.getElementById('followBtn').classList.add('on');
@@ -1078,15 +1159,26 @@
       ctx.strokeStyle = hexA(c, 0.5); ctx.stroke(); ctx.setLineDash([]);
     }
   }
-  // The trail (trailStep), from oldest (faint) to the target's drawn spot `head`, and an arrowhead pointing the way its
-  // last few breadcrumbs went, so a walker shows where it is going.
-  function drawTrail(tr, head, now, colour) {
+  // The trail (trailStep): a gradient from the spawn-point colour at its oldest end (where we first saw it; on a full
+  // loop, the furthest point back) to the target colour at the mob, the waypoint legs it was seen walking (dashed, in
+  // the targeted-route colour), and an arrowhead the way its last few breadcrumbs went.
+  function drawTrail(tr, head, now, colour, originColour, grid, legColour) {
     if (!tr || tr.pts.length < 2) return;
-    ctx.lineWidth = 2; ctx.lineCap = 'round';
+    if (grid && tr.legs && tr.legs.length) {
+      ctx.setLineDash([6, 4]); ctx.lineWidth = 1.6; ctx.strokeStyle = legColour; ctx.globalAlpha = 0.85;
+      for (var l = 0; l < tr.legs.length; l++) {
+        var pa = grid.pts[tr.legs[l].prev], pb = grid.pts[tr.legs[l].next];
+        if (!pa || !pb) continue;
+        var la = wpt(pa[0], pa[1]), lb = wpt(pb[0], pb[1]);
+        ctx.beginPath(); ctx.moveTo(la[0], la[1]); ctx.lineTo(lb[0], lb[1]); ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+    ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.globalAlpha = 0.9;
+    var n = tr.pts.length - 1;
     for (var i = 1; i < tr.pts.length; i++) {
-      var a = wpt(tr.pts[i - 1].x, tr.pts[i - 1].y), b = i === tr.pts.length - 1 ? head : wpt(tr.pts[i].x, tr.pts[i].y);
-      ctx.globalAlpha = 0.15 + 0.7 * Math.max(0, 1 - (now - tr.pts[i].t) / TRAIL_MS);
-      ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.strokeStyle = colour; ctx.stroke();
+      var a = wpt(tr.pts[i - 1].x, tr.pts[i - 1].y), b = i === n ? head : wpt(tr.pts[i].x, tr.pts[i].y);
+      ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.strokeStyle = mixHex(originColour, colour, i / n); ctx.stroke();
     }
     var from = wpt(tr.pts[Math.max(0, tr.pts.length - 4)].x, tr.pts[Math.max(0, tr.pts.length - 4)].y);
     var dx = head[0] - from[0], dy = head[1] - from[1], len = Math.hypot(dx, dy);
@@ -1194,7 +1286,8 @@
       ctx.lineCap = 'round';
       for (var b = 0; b < S.prep.gen.length; b++) {
         var bright = S.prep.bands.length <= 1 || inLevelRange(S.prep.bands[b], sz, range);
-        ctx.strokeStyle = hexA(oneWall ? CO.wall : CO.oursWall, bright ? 0.95 : 0.35);
+        var layerCol = C.wallMode === 'layers' ? brewallLayer(S.prep.bands, b, sz) : null;
+        ctx.strokeStyle = hexA(layerCol || (oneWall ? CO.wall : CO.oursWall), bright ? 0.95 : 0.35);
         ctx.lineWidth = bright ? 1.6 : 1;
         var a = S.prep.gen[b];
         ctx.beginPath();
@@ -1209,14 +1302,20 @@
     // Spawn dots, and first the pather routes (under the dots; every route in range, not only visible points').
     var bossC = [];
     var vis = [], flashOn =Math.floor(now / 450) % 2 === 0, anyFlash = false, srange = spawnRange();
+    // Your target's own spawn point shows at any height (the guild lead, 2026-10-13: "Going above a spawn point should
+    // still show you the spawn point of the creature that's targetted").
+    var tgtPid = S.p && S.p.target && S.p.target.point_id != null ? String(S.p.target.point_id) : null;
     for (var k = 0; k < S.points.length; k++) {
       var p0 = S.points[k], xy0 = wpt(p0.x, p0.y);
       if (xy0[0] < -30 || xy0[0] > w + 30 || xy0[1] < -30 || xy0[1] > h + 30) continue;
-      if (!inLevelRange(p0.z, sz, srange)) continue;   // outside the Spawns slider: hidden (dot, route and click target)
+      if (!inLevelRange(p0.z, sz, srange) && String(p0.id) !== tgtPid) continue;   // outside the Spawns slider: hidden (dot, route and click target)
       vis.push({ p: p0, x: xy0[0], y: xy0[1] });
     }
     if (SH.routes) drawRoutes(sz, range, srange, routeTarget(S.p && S.p.target, S.points, S.grids, S.byId));
     var fontBoss = labelFont('boss'), fontSmall = labelFont('small');
+    // ⚙ → Mob names in con colour: a name's colour from its level against yours (null = the normal label colour).
+    var myLvl = S.p && S.p.me ? S.p.me.level : null;
+    var conCol = function (n) { var c = SH.conNames && n ? levelCon(myLvl, n.level) : null; return c ? CON_HEX[c] : null; };
     var ringOf = { wait: CO.ringWait, window: CO.ringWindow, up: CO.ringUp };
     // Aggro rings (◯), under the dots: each point's aggro radius in game units, scaled with the map. Not drawn while
     // the point is on a "not yet" timer (nothing there to aggro), nor when the ring would be a speck.
@@ -1259,8 +1358,8 @@
       }
       // Named and raid-target names are drawn after the loop, at any zoom, through the label placer (bosses first).
       // A known mob's name + spawn id goes ahead of everything (tier -1).
-      if (up && SH.upLabel) bossC.push({ text: upLabel(up), x: px + r + 3, y: py + r + 3, z: p.z, wx: p.x, wy: p.y, col: CO.upLabel, tier: -1, align: 'left', font: fontBoss });
-      else if (kind.named && SH.bosses) bossC.push({ text: bestName(p), x: px + r + 3, y: py + r + 3, z: p.z, wx: p.x, wy: p.y, col: kind.raid ? CO.raidLabel : CO.bossLabel, tier: kind.raid ? 0 : 1, align: 'left', font: fontBoss });
+      if (up && SH.upLabel) bossC.push({ text: upLabel(up), x: px + r + 3, y: py + r + 3, z: p.z, wx: p.x, wy: p.y, col: conCol(un) || CO.upLabel, tier: -1, align: 'left', font: fontBoss });
+      else if (kind.named && SH.bosses) bossC.push({ text: bestName(p), x: px + r + 3, y: py + r + 3, z: p.z, wx: p.x, wy: p.y, col: conCol(namedNpc(p)) || (kind.raid ? CO.raidLabel : CO.bossLabel), tier: kind.raid ? 0 : 1, align: 'left', font: fontBoss });
     }
     ctx.globalAlpha = 1;
     drawLabels(bossC, sz, range, w, h);
@@ -1289,8 +1388,13 @@
         // The path we have watched it walk, and where it is heading (the guild lead, 2026-10-13: "Can we show the path
         // that we observed a mob walking towards?"): its positions since you targeted it, fading with age, and an
         // arrow down its last stretch of movement.
-        S.trail = trailStep(S.trail, targetKey(P.target), P.target.x, P.target.y, rt);
-        if (SH.trail) drawTrail(S.trail, tq, rt, CO.target);
+        var tKey = targetKey(P.target), tTrail = trailStep(S.trails[tKey], tKey, P.target.x, P.target.y, rt);
+        if (!S.trails[tKey]) { var tKeys = Object.keys(S.trails); if (tKeys.length >= TRAILS_MAX) delete S.trails[tKeys[0]]; }
+        S.trails[tKey] = tTrail;
+        var tGid = routeTarget(P.target, S.points, S.grids, S.byId), tGrid = tGid && S.grids ? S.grids[tGid] : null;
+        if (!(tGrid && RANDOM_WANDER[Number(tGrid.type)])) tGrid = null;
+        if (tGrid && tTrail) noteWanderLeg(tTrail, tGrid.pts);
+        if (SH.trail) drawTrail(tTrail, tq, rt, CO.target, CO.dot, tGrid, CO.routeTarget);
         if (SH.aggro) {
           var tnpc = targetNpc(P.target, S.points, S.byId);
           if (tnpc) aggroRing(tq[0], tq[1], aggroRadius(null, tnpc), assistRadius(null, tnpc), aggroKind(null, tnpc, P.cons, S.facs, P.me));
@@ -1325,7 +1429,7 @@
         var totTxt = tot ? '→ ' + tot.name + (tm && tm.who === 'you' ? ' (you)' : '') : '';
         if (nameTxt || totTxt) {
           var lf = labelFont('boss'), lx = tq[0] + 9, ly = tq[1] - 10;
-          if (nameTxt) { halo(nameTxt, lx, ly, lf, CO.target); lx += measure(nameTxt + ' ', lf); }
+          if (nameTxt) { halo(nameTxt, lx, ly, lf, conCol(targetNpc(P.target, S.points, S.byId)) || CO.target); lx += measure(nameTxt + ' ', lf); }
           if (totTxt) halo(totTxt, lx, ly, lf, CO.tot);
         }
       }
@@ -1658,7 +1762,9 @@
     if (MAP_SCHEMES[e.target.value]) { applyScheme(S.cfg, e.target.value); buildCfg(); cfgCommit(); }
     else { S.cfg.scheme = 'custom'; saveCfg(); }
   });
-  document.getElementById('cfgWallMode').addEventListener('change', function (e) { S.cfg.wallMode = e.target.value === 'one' ? 'one' : 'map'; cfgCommit(); });
+  document.getElementById('cfgWallMode').addEventListener('change', function (e) {
+    var v = e.target.value; S.cfg.wallMode = v === 'one' || v === 'layers' ? v : 'map'; cfgCommit();
+  });
   document.getElementById('cfgBg').addEventListener('input', function (e) { S.cfg.col.bg = String(e.target.value).toLowerCase(); cfgCommit(); });
   document.getElementById('cfgBgRs').addEventListener('click', function () {
     S.cfg.col.bg = (MAP_SCHEMES[S.cfg.scheme] || MAP_SCHEMES.default).bg; document.getElementById('cfgBg').value = S.cfg.col.bg; cfgCommit();
