@@ -9671,3 +9671,13 @@ Harmony, Hide/Sneak for non-rogues).
   follow-up. Option B (departures lock automatically) stays open.
 - **Officer brief** (for the officers, kept outside the repo): a claude.ai doc, "Member lockout — officer brief".
 - Security findings made while scoping this went to the private briefing, not here.
+
+### 253. Map: ⚙ settings open beside the map, in the Timers slot (2026-10-13, Mimic beta `ad97bd27`)
+
+- **The ask** (the guild lead): *"in the map overlay the customization should open up to a new section to the side
+  where the timers would be so you can update the map at the same time"* (with a screenshot of the settings panel
+  covering the map's right side).
+- **Shipped:** the settings are a column of their own, the same width as the Timers list, beside the map. With the list
+  out, the settings take its place and the Timers button brings the list back; with the list slid in, opening the
+  settings opens the slot the way the Timers button does (the window widens, or the map shrinks in "share space") and
+  closing gives it back. `apps/mimic/map.html` (`setCfgOpen`, `slotOpen`, `slotChanged`).
