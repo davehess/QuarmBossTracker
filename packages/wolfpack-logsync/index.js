@@ -33043,6 +33043,14 @@ function startWebDashboard(port) {
             if (newCasting.length > 4 && /[a-zA-Z]/.test(newCasting)) {
               _bumpBardMelody(character, newCasting, Date.now(),
                 { kind: (/^bard$/i.test(String(_classOf(character) || '')) || /singing/i.test(newCasting)) ? 'song' : 'spell' });
+              // ...and, during a /melody, it is the only "you cast this" the agent will get: Quarm logs no "You begin
+              // singing X." for melody-queued songs, so their landing line ("A gnoll appears at ease.") never matched
+              // a cast and Target Info never showed them (the guild lead, 2026-10-13: "Pacify songs like Silent Song
+              // of Quelius should show on the target info"). Stand in for the missing line, like the clicky one below.
+              const _mel = _bardMelody.get(String(character).toLowerCase());
+              if (_mel && _mel.melodyActive) {
+                try { noteSelfCast('[] You begin singing ' + newCasting + '.', character); } catch (e) { void e; }
+              }
             }
           }
           try { _evaluateZealConditions(character, Date.now()); } catch (e) { void e; }
