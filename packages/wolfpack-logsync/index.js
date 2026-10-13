@@ -45160,7 +45160,16 @@ function _mapStatePayload(have, now, haveLocal) {
       hp_pct: Number.isFinite(st.target_hp_pct) ? st.target_hp_pct : null,
       x: tp ? tp.x : null, y: tp ? tp.y : null, z: tp ? tp.z : null,
       dist: tp && self ? Math.round(_mapDist2(tp, self)) : null,
-      point_id: null };
+      point_id: null,
+      // Zeal's EntityTypes (0 player, 1 NPC, 2/3 corpses) and the target's own target - the assist bar's ToT - so the
+      // Map can name a player target and draw who it is on (the guild lead, 2026-10-13: "pvp targeting should work as
+      // well, where it shows who were targeting and who they're targeting"). Both are what the client already shows.
+      type: Number.isFinite(Number(st.target_type)) ? Number(st.target_type) : null,
+      tot: null };
+    const tt = st.target_of_target;   // same shape _pipeCandidateOf reads: { id, name }
+    const ttId = tt && typeof tt === 'object' ? Math.trunc(Number(tt.id)) : 0;
+    const ttName = tt && typeof tt.name === 'string' ? tt.name.trim().slice(0, 64) : '';
+    if (ttId > 0 && ttName && ttId !== out.target.id) out.target.tot = { id: ttId, name: ttName };
     // Pinned (see "Pins"): the spawn point this live target is tied to, for the overlay's line and "→ pinned".
     const pin = zone ? _mapPinGet(zone, out.target.id, st.target_name) : null;
     if (pin) out.target.point_id = pin.point_id;

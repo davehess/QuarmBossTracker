@@ -524,6 +524,7 @@
     ['dots', 'Spawn points'], ['abilities', 'Ability icons'], ['pather', 'Walker mark ↻'], ['routes', 'Walker routes'],
     ['timers', 'Respawn timer rings'], ['candidates', '"?" maybe-died rings'],
     ['you', 'You'], ['target', 'Target ring'], ['targetLine', 'Line to target'], ['distance', 'Distance to target'],
+    ['targetName', 'Target name'], ['tot', 'Target\'s target (assist bar)'],
     ['pinLine', 'Target → its spawn point'], ['group', 'Group'], ['groupNames', 'Group names'], ['raid', 'Raid'], ['raidNames', 'Raid names'],
   ];
   var CFG_GLYPHS = [
@@ -535,23 +536,23 @@
     ['dot', 'Spawn point'], ['named', 'Named spawn'], ['raidTarget', 'Raid target'], ['up', 'Up / seen'],
     ['ringWait', 'Timer: not yet'], ['ringWindow', 'Timer: window open'], ['ringUp', 'Timer: up'], ['candidate', '"?" ring'],
     ['glyph', 'Ability icons'], ['pather', 'Walker mark'], ['bossLabel', 'Boss name'], ['raidLabel', 'Raid target name'],
-    ['upLabel', 'Known mob name'], ['room', 'Room names'], ['you', 'You'], ['target', 'Target'], ['pinLine', 'Target → spawn line'],
+    ['upLabel', 'Known mob name'], ['room', 'Room names'], ['you', 'You'], ['target', 'Target'], ['tot', 'Target\'s target'], ['pinLine', 'Target → spawn line'],
     ['group', 'Group'], ['raid', 'Raid'],
   ];
   var MAP_SCHEMES = {
     default: { wall: '#c8d6ea', oursWall: '#d6e6ff', route: '#39c5cf', routeTarget: '#7ee787', dot: '#c9d1d9', named: '#f2cc60',
       raidTarget: '#ff7b72', up: '#56d364', ringWait: '#f85149', ringWindow: '#f0b429', ringUp: '#56d364', candidate: '#d2a8ff',
       glyph: '#e6edf3', pather: '#9ecbff', bossLabel: '#f2cc60', raidLabel: '#ffa198', upLabel: '#7ee787', room: '#c9d9ee',
-      you: '#58a6ff', target: '#f0883e', pinLine: '#7ee787', group: '#56d364', raid: '#a371f7', bg: '#131a26' },
+      you: '#58a6ff', target: '#f0883e', tot: '#f778ba', pinLine: '#7ee787', group: '#56d364', raid: '#a371f7', bg: '#131a26' },
     contrast: { wall: '#ffffff', oursWall: '#ffffff', route: '#00e5ff', routeTarget: '#00ff66', dot: '#ffffff', named: '#ffd700',
       raidTarget: '#ff3b30', up: '#00ff66', ringWait: '#ff3b30', ringWindow: '#ffcc00', ringUp: '#00ff66', candidate: '#e040fb',
       glyph: '#ffffff', pather: '#00e5ff', bossLabel: '#ffd700', raidLabel: '#ff6b6b', upLabel: '#00ff66', room: '#ffffff',
-      you: '#00b0ff', target: '#ff9100', pinLine: '#00ff66', group: '#00ff66', raid: '#e040fb', bg: '#000000' },
+      you: '#00b0ff', target: '#ff9100', tot: '#ff4fd8', pinLine: '#00ff66', group: '#00ff66', raid: '#e040fb', bg: '#000000' },
     // Okabe–Ito: no red/green pair carries a meaning (up is sky blue, "not yet" vermillion, the window yellow).
     cb: { wall: '#d9d9d9', oursWall: '#e0e0e0', route: '#56b4e9', routeTarget: '#f0e442', dot: '#d9d9d9', named: '#e69f00',
       raidTarget: '#d55e00', up: '#56b4e9', ringWait: '#d55e00', ringWindow: '#f0e442', ringUp: '#56b4e9', candidate: '#cc79a7',
       glyph: '#ffffff', pather: '#56b4e9', bossLabel: '#e69f00', raidLabel: '#d55e00', upLabel: '#56b4e9', room: '#d9d9d9',
-      you: '#009e73', target: '#e69f00', pinLine: '#f0e442', group: '#009e73', raid: '#cc79a7', bg: '#14171c' },
+      you: '#009e73', target: '#e69f00', tot: '#cc79a7', pinLine: '#f0e442', group: '#009e73', raid: '#cc79a7', bg: '#14171c' },
   };
   var HEX_RE = /^#[0-9a-f]{6}$/i;
   function mapCfgDefaults() {
@@ -586,6 +587,20 @@
     return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [255, 255, 255];
   }
   function hexA(hex, a) { return 'rgba(' + hexRgb(hex).join(',') + ',' + a + ')'; }
+  // The target's target (Zeal's assist bar ToT) among the people the Map can place: you, your group, your raid
+  // (the guild lead, 2026-10-13: "pvp targeting should work as well, where it shows who were targeting and who
+  // they're targeting"). Returns { key, m, who } for drawn(key, m, …), or null when they are not on the map.
+  function totMember(P, name) {
+    var k = String(name || '').toLowerCase();
+    if (!k || !P) return null;
+    if (P.self && String(P.self.name || '').toLowerCase() === k) return { key: 'self', m: P.self, who: 'you' };
+    var lists = [['g:', P.group, 'group'], ['r:', P.raid, 'raid']];
+    for (var i = 0; i < lists.length; i++) {
+      var L = lists[i][1] || [];
+      for (var j = 0; j < L.length; j++) if (L[j] && String(L[j].name || '').toLowerCase() === k) return { key: lists[i][0] + L[j].name, m: L[j], who: lists[i][2] };
+    }
+    return null;
+  }
   // ── end pure helpers ──
 
   // ── state ──
@@ -1051,6 +1066,27 @@
           ctx.beginPath(); ctx.arc(tq[0], tq[1], 6, 0, 6.2832); ctx.lineWidth = 2; ctx.strokeStyle = CO.target; ctx.stroke();
           ctx.beginPath(); ctx.arc(tq[0], tq[1], 2, 0, 6.2832); ctx.fillStyle = CO.target; ctx.fill();
         }
+        // Who your target is on (Zeal's assist bar ToT): a dashed arrow to them when the Map can place them (you, your
+        // group, your raid), and "Name → Their target" beside the ring. A pinned NPC already has its name on its point.
+        var tot = SH.tot && P.target.tot ? P.target.tot : null, tm = tot ? totMember(P, tot.name) : null;
+        if (tm) {
+          var od = drawn(tm.key, tm.m, rt), oq = wpt(od.x, od.y);
+          var ddx = oq[0] - tq[0], ddy = oq[1] - tq[1], dl = Math.hypot(ddx, ddy);
+          if (dl > 12) {
+            var ux = ddx / dl, uy = ddy / dl, ex = oq[0] - ux * 7, ey = oq[1] - uy * 7;
+            ctx.beginPath(); ctx.setLineDash([5, 3]); ctx.moveTo(tq[0] + ux * 7, tq[1] + uy * 7); ctx.lineTo(ex, ey);
+            ctx.lineWidth = 1.6; ctx.strokeStyle = CO.tot; ctx.stroke(); ctx.setLineDash([]);
+            ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(ex - ux * 6 - uy * 3.5, ey - uy * 6 + ux * 3.5); ctx.lineTo(ex - ux * 6 + uy * 3.5, ey - uy * 6 - ux * 3.5);
+            ctx.closePath(); ctx.fillStyle = CO.tot; ctx.fill();
+          }
+        }
+        var nameTxt = SH.targetName && P.target.point_id == null ? String(P.target.name).replace(/_/g, ' ').replace(/^#/, '') : '';
+        var totTxt = tot ? '→ ' + tot.name + (tm && tm.who === 'you' ? ' (you)' : '') : '';
+        if (nameTxt || totTxt) {
+          var lf = labelFont('boss'), lx = tq[0] + 9, ly = tq[1] - 10;
+          if (nameTxt) { halo(nameTxt, lx, ly, lf, CO.target); lx += measure(nameTxt + ' ', lf); }
+          if (totTxt) halo(totTxt, lx, ly, lf, CO.tot);
+        }
       }
       // You: an arrow by heading.
       if (P.self && SH.you) {
@@ -1171,7 +1207,7 @@
     var P = S.p, now = nowMs();
     document.getElementById('zone').textContent = (P && (P.long_name || P.zone)) ? (P.long_name || P.zone) : 'Map';
     var tg = document.getElementById('tgt');
-    if (P && P.target) tg.textContent = '◎ ' + P.target.name + (P.target.dist != null ? ' · ' + P.target.dist : (P.target.x == null ? ' · no position' : '')) + (P.target.point_id != null ? ' → pinned' : '');
+    if (P && P.target) tg.textContent = '◎ ' + P.target.name + (P.target.dist != null ? ' · ' + P.target.dist : (P.target.x == null ? ' · no position' : '')) + (P.target.point_id != null ? ' → pinned' : '') + (P.target.tot ? ' · on ' + P.target.tot.name : '');
     else tg.textContent = '';
     var box = document.getElementById('lists');
     box.innerHTML = '';
