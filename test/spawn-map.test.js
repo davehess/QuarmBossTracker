@@ -501,7 +501,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -579,6 +579,27 @@ describe('the overlay (apps/mimic/map.html)', () => {
       expect(H.hexA(d.col.oursWall, 0.95)).toBe('rgba(214,230,255,0.95)');   // the old wall colour, byte for byte
       // every scheme sets every colour row the panel shows, plus the background
       for (const s of Object.values(H.MAP_SCHEMES)) for (const [k] of H.CFG_COLS.concat([['bg']])) expect(s[k]).toMatch(/^#[0-9a-f]{6}$/);
+    });
+    it('the target\'s route: pinned = its point\'s; walking = the nearest route its name walks; none otherwise (2026-10-13)', () => {
+      // the guild lead: "this mob is going across the map and not on a path line. Ideally it would highlight the path line"
+      const grids = { 1: { type: 8, pts: [[0, 0, 0, 0], [100, 0, 0, 0]] }, 2: { type: 8, pts: [[1000, 1000, 0, 0], [1100, 1000, 0, 0]] }, 3: { type: 3, pts: [[0, 50, 0, 0], [50, 50, 0, 0]] } };
+      const golem = { name: 'A_Crystalline_Golem' };
+      const points = [{ id: 1, grid: 1, npcs: [golem] }, { id: 2, grid: 2, npcs: [golem] }, { id: 3, grid: 3, npcs: [{ name: 'a_spider' }] }, { id: 4, grid: null, npcs: [golem] }];
+      const byId = Object.fromEntries(points.map(p => [String(p.id), p]));
+      expect(H.routeTarget({ name: 'A Crystalline Golem', x: 1050, y: 1020 }, points, grids, byId)).toBe('2');   // nearest of its two
+      expect(H.routeTarget({ name: 'A Crystalline Golem', x: 40, y: 10 }, points, grids, byId)).toBe('1');
+      expect(H.routeTarget({ name: 'a spider', x: 1050, y: 1020, point_id: 3 }, points, grids, byId)).toBe('3');  // pinned wins
+      expect(H.routeTarget({ name: 'a golem', point_id: 4 }, points, grids, byId)).toBeNull();                    // pinned to a static point
+      expect(H.routeTarget({ name: 'a gnoll', x: 0, y: 0 }, points, grids, byId)).toBeNull();                     // walks no route
+      expect(H.routeTarget({ name: 'A Crystalline Golem', x: 0, y: 0 }, points, null, byId)).toBeNull();
+      expect(H.routeTarget(null, points, grids, byId)).toBeNull();
+      const js = stripJs(MAP_HTML);
+      expect(js).toMatch(/if \(SH\.routes\) drawRoutes\(sz, range, srange, routeTarget\(S\.p && S\.p\.target, S\.points, S\.grids, S\.byId\)\);/);
+      // random wanderers draw their waypoints only, never a line through the list in order
+      expect(js).toMatch(/var RANDOM_WANDER = \{ 1: 1, 2: 1, 5: 1, 7: 1, 8: 1 \};/);
+      const draw = js.slice(js.indexOf('function drawRoutes('), js.indexOf('function halo('));
+      expect(draw.indexOf('if (RANDOM_WANDER[Number(g.type)])')).toBeGreaterThan(-1);
+      expect(draw.indexOf('if (RANDOM_WANDER[Number(g.type)])')).toBeLessThan(draw.indexOf('routePath(g, g.pts)'));
     });
     it('aggro rings: the up mob\'s own radius, else the widest that can spawn there; sentinels and gaps ignored (2026-10-13)', () => {
       // the guild lead: "add aggro rings onto the map, make a circle icon on the main screen"
