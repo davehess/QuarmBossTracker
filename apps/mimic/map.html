@@ -47,6 +47,10 @@
     background:transparent;cursor:pointer;pointer-events:auto}
   .hit:hover,.hit:focus-visible{outline:1px solid rgba(255,255,255,0.7)}
   #tools{position:absolute;top:6px;left:30px;right:96px;display:flex;gap:4px;z-index:5;flex-wrap:wrap}
+  /* Where you are, how fast, and where the cursor is, in /loc order (the guild lead, 2026-10-13, Zeal's map as the model). */
+  #locBar{position:absolute;top:28px;left:30px;z-index:4;font-size:10px;line-height:1.35;color:#e6edf3;pointer-events:none;
+    text-shadow:0 0 3px #000,0 0 2px #000;font-variant-numeric:tabular-nums}
+  #locBar .cur{color:#f2cc60}
   /* The timers list slides in and out (the guild lead, 2026-10-12: "slide the spawn timers in and out. So that it could
      take up less space if we weren't focused on that"): a top-right button on the map; slid in, the map takes the width. */
   #sideBtn{position:absolute;top:6px;right:6px;z-index:6}
@@ -153,12 +157,14 @@
         <canvas id="cv"></canvas>
         <div id="hits"></div>
         <div id="msg">waiting for the agent…</div>
+        <div id="locBar"></div>
       </div>
       <div id="tools">
         <button class="tb on" id="followBtn" type="button" title="Keep the map centred on you. Dragging the map turns it off.">Follow me</button>
         <button class="tb" id="fitBtn" type="button" title="Fit the view. Click to cycle: zone, group, raid.">Fit zone</button>
         <button class="tb" id="panBtn" type="button" title="Locked overlays let clicks through to EverQuest. Switch this on to drag and zoom the map (the mouse wheel zooms); right-click centres on you.">✋ Pan / zoom</button>
         <button class="tb on" id="labelsBtn" type="button" title="Names on the map: boss names and room names. Switch off when it gets busy.">Labels: on</button>
+        <button class="tb on" id="dotsBtn" type="button" title="Spawn points: show or hide the spawn dots (the same switch as ⚙ → Spawn points).">•</button>
         <button class="tb" id="aggroBtn" type="button" title="Aggro rings: how close you can get to each spawn before it aggros (its aggro radius). Red: KOS to you, or not conned yet. Yellow: you conned it dubious or better, but it has a faction. Green: no faction, aggros nobody. Dashed: how far it comes to help a friend (social aggro). Your target carries its own rings. Points on a running respawn timer have no ring.">◯</button>
         <button class="tb" id="cfgBtn" type="button" title="Map settings: what is drawn, the height ranges, the ability icons, colours and the background">⚙</button>
       </div>
@@ -515,6 +521,20 @@
     return m;
   }
   function posAgeText(ageMs, src) { return 'pos ' + Math.max(0, Math.round(ageMs)) + ' ms' + (src ? ' · ' + src : ''); }
+  // A server-frame point as EverQuest's /loc prints it: Y first, then X.
+  function locText(x, y) { return Math.round(y) + ', ' + Math.round(x); }
+  // The canvas pixel under the cursor back to the server frame (wpt run backwards; toScreen is its own inverse).
+  function screenToServer(px, py, view, w, h) {
+    return { x: -((px - w / 2) / view.scale + view.cx), y: -((py - h / 2) / view.scale + view.cy) };
+  }
+  // Your speed in game units a second, over the samples of the last ~1.5 s (null until there is a full second).
+  // ponytail: units/s, not Zeal's "% of normal run": the pipe sends no speed and we have no measured base yet.
+  var SPEED_WINDOW_MS = 1500;
+  function speedOf(hist) {
+    if (!hist || hist.length < 2) return null;
+    var a = hist[0], b = hist[hist.length - 1], dt = b.t - a.t;
+    return dt >= 1000 ? Math.hypot(b.x - a.x, b.y - a.y) / dt * 1000 : null;
+  }
   // Your own map files (the agent's `local_map`, read on this computer and never sent anywhere; the guild lead,
   // 2026-10-12: "A for outdoor walls"). Their lines are already in the server frame, so they draw like spawn points.
   // Walls: Auto draws them whenever the zone has any, Ours only never does. Their colours are the map author's
@@ -852,6 +872,29 @@
   // Animation: a frame loop that runs only while something is gliding (no idle CPU), at most ~30 frames a second.
   var raf = 0, lastFrame = 0, lastHits = 0;
   var FRAME_MS = 33, HITS_MS = 200, lastAge = 0;
+  // Top-left readout (the guild lead, 2026-10-13, pointing at Zeal's map: "the run speed and the current player location
+  // coordinates in the top left ... as well as the mouseover coordinates where the player's cursor is"). /loc order.
+  var locBarEl = document.getElementById('locBar'), lastLoc = 0, spdHist = [], cursorLoc = null;
+  function updateLocBar(rt) {
+    var me = S.p && S.p.self, line = '';
+    if (me && me.x != null) {
+      var d = drawn('self', me, rt);
+      spdHist.push({ t: rt, x: d.x, y: d.y });
+      while (spdHist.length > 2 && rt - spdHist[1].t >= SPEED_WINDOW_MS) spdHist.shift();
+      var sp = speedOf(spdHist);
+      line = locText(d.x, d.y) + (sp != null ? ' · ' + Math.round(sp) + ' u/s' : '');
+    } else spdHist = [];
+    locBarEl.textContent = line;
+    if (cursorLoc) locBarEl.appendChild(el('div', 'cur', '(' + locText(cursorLoc.x, cursorLoc.y) + ')'));
+  }
+  // Locked, the window is click-through but still hears the mouse ({forward:true}), so this works without Pan.
+  document.addEventListener('mousemove', function (e) {
+    var r = cv.getBoundingClientRect();
+    var inside = e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom;
+    cursorLoc = inside && S.view ? screenToServer(e.clientX - r.left, e.clientY - r.top, S.view, S.w, S.h) : null;
+    updateLocBar(Date.now());
+  }, { passive: true });
+  document.addEventListener('mouseout', function (e) { if (!e.relatedTarget) { cursorLoc = null; updateLocBar(Date.now()); } });
   function frame() {
     raf = 0;
     var now = Date.now();
@@ -1223,6 +1266,7 @@
     }
     if (!animating || rt - lastHits >= HITS_MS) { lastHits = rt; layoutHits(SH.dots ? vis : []); }   // hidden points take no clicks
     if (posAgeEl && rt - lastAge >= 200) { lastAge = rt; posAgeEl.textContent = S.sampleAt ? posAgeText(rt - S.sampleAt, S.sampleSrc) : ''; }
+    if (rt - lastLoc >= 200) { lastLoc = rt; updateLocBar(rt); }
     // Flashing rings need a faster repaint than the one-second poll.
     if (anyFlash && !flashTimer) flashTimer = setInterval(function () { if (!document.hidden) renderMap(); }, 450);
     if (!anyFlash && flashTimer) { clearInterval(flashTimer); flashTimer = null; }
@@ -1462,7 +1506,7 @@
   syncWallNote();
   // ⚙ Map settings: built from CFG_SHOW / CFG_GLYPHS / CFG_COLS on first open, saved on every change.
   var cfgEl = document.getElementById('cfg'), cfgBtn = document.getElementById('cfgBtn');
-  function cfgCommit() { saveCfg(); applyCfgCss(); syncAggroBtn(); renderMap(); }
+  function cfgCommit() { saveCfg(); applyCfgCss(); syncAggroBtn(); syncDotsBtn(); renderMap(); }
   // ◯ on the toolbar (the guild lead, 2026-10-13: "add aggro rings onto the map, make a circle icon on the main
   // screen"): the same switch as ⚙ → Show → Aggro rings.
   var aggroBtn = document.getElementById('aggroBtn');
@@ -1473,6 +1517,16 @@
     cfgCommit();
   });
   syncAggroBtn();
+  // • on the toolbar: spawn points on and off (the guild lead, 2026-10-13: "a quick-button on the top nav of our map next
+  // to the circles"), the same switch as ⚙ → Spawn points.
+  var dotsBtn = document.getElementById('dotsBtn');
+  function syncDotsBtn() { dotsBtn.classList.toggle('on', S.cfg.show.dots !== false); }
+  dotsBtn.addEventListener('click', function () {
+    S.cfg.show.dots = S.cfg.show.dots === false;
+    if (cfgBuilt) buildCfg();
+    cfgCommit();
+  });
+  syncDotsBtn();
   function cfgCheckRow(parent, checked, labelNodes, onChange) {
     var lab = el('label', 'row'), cb = document.createElement('input');
     cb.type = 'checkbox'; cb.checked = !!checked;
