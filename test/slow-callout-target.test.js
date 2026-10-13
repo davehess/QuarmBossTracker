@@ -19,6 +19,7 @@ function build(zeal) {
     const pushed = [];
     function _pushOverlay(o) { pushed.push(o); }
     ${sliceBlock(src, 'function _normMobNameAgent(n) {', '\n}')}
+    ${sliceBlock(src, 'const SLOW_CALLOUT_NAMES = new Map([', 'trim()) || null;\n}')}
     ${sliceBlock(src, 'function _slowShortName(name) {', '\n}')}
     ${sliceBlock(src, 'function _slowCalloutMob(display, targetLower) {', '\n}')}
     ${sliceBlock(src, 'function _announceSlowLand(best, mob) {', '\n}')}
