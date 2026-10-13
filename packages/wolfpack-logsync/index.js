@@ -44350,6 +44350,9 @@ const MAP_INSTANCE_SENTINEL_S = 1_000_000;          // the 1,700,000 s rows are 
 const MAP_PIN_MAX            = 500;                 // pinned spawn ids kept (oldest out); cleared on a zone change
 const MAP_PIN_RETRY_MS       = 1000;                // an unpinned mob is re-checked at most this often...
 const MAP_PIN_RETRY_UNITS    = 20;                  // ...unless it moved this far since the last try
+const MAP_PIN_ON_SPOT_UNITS  = 8;                   // a mob this close to its point is standing on its spawn spot
+const MAP_PIN_STILL_UNITS    = 3;                   // otherwise it must hold within this many units...
+const MAP_PIN_STILL_MS       = 1500;                // ...for this long before it is tied to a point
 const MAP_SEEN_KEEP_MS       = 30 * 60 * 1000;      // "seen alive" sightings older than this are not shown
 const MAP_LAST_KEEP_MS       = 24 * 60 * 60 * 1000;
 const MAP_SYNC_FLUSH_MS      = 3000;                // pushes are batched: at most one POST per this
@@ -44808,10 +44811,24 @@ function _mapEnsureZone(short, zoneId, now) {
 // LIVE mob in your target window sits at exactly one point (_mapAttribute says 'assigned'), it is pinned there by
 // its spawn id: later samples are not re-checked, and its death credits that point wherever it dies. Spawn ids are
 // reused by the server, so a pin is dropped when its mob dies and only counts for the same name. In memory only.
-const _mapPins = { zone: null, m: new Map(), tried: new Map() };   // m: spawn id -> { point_id, name }; tried: spawn id -> { x, y, at }
+// Only an UNPULLED mob is pinned (the guild lead, 2026-10-13: "if a mob is stationary, not aggroed … and is in the
+// spot where it would typically spawn we can make that educated guess and associate it"): no target of its own on
+// Zeal's assist bar, and either standing on the point (MAP_PIN_ON_SPOT_UNITS) or holding still for MAP_PIN_STILL_MS.
+// A walker (a point with a route) may be moving. A mob running at someone through another same-name point is not
+// pinned there any more.
+const _mapPins = { zone: null, m: new Map(), tried: new Map(), still: new Map() };   // still: spawn id -> { x, y, since }
 function _mapPinsFor(zone) {
-  if (_mapPins.zone !== zone) { _mapPins.zone = zone; _mapPins.m.clear(); _mapPins.tried.clear(); }
+  if (_mapPins.zone !== zone) { _mapPins.zone = zone; _mapPins.m.clear(); _mapPins.tried.clear(); _mapPins.still.clear(); }
   return _mapPins;
+}
+// How long this mob has held its ground (ms), from successive target samples.
+function _mapStillFor(zone, spawnId, loc, now) {
+  const P = _mapPinsFor(zone), s = P.still.get(spawnId);
+  if (!s || _mapDist2(s, loc) > MAP_PIN_STILL_UNITS) {
+    P.still.delete(spawnId); P.still.set(spawnId, { x: loc.x, y: loc.y, since: now }); _mapCapMap(P.still);
+    return 0;
+  }
+  return now - s.since;
 }
 function _mapPinGet(zone, spawnId, name) {
   if (_mapPins.zone !== zone || !(spawnId > 0)) return null;
@@ -44822,8 +44839,10 @@ function _mapPinGet(zone, spawnId, name) {
 }
 function _mapCapMap(m) { while (m.size > MAP_PIN_MAX) m.delete(m.keys().next().value); }
 // `loc` is the mob's position now (server frame). Returns the pin when this call made one.
-function _mapTryPin(zone, character, spawnId, name, loc, now) {
+// `opts.aggro`: the mob has a target of its own (pulled) - never pinned. `opts.stillMs`: how long it has held still.
+function _mapTryPin(zone, character, spawnId, name, loc, now, opts) {
   if (_mapPinGet(zone, spawnId, name)) return null;           // already pinned: a mob that wanders after being pinned stays pinned
+  if (opts && opts.aggro) return null;                        // pulled: it is not where it spawned
   const P = _mapPinsFor(zone);
   const prev = P.tried.get(spawnId);
   if (prev && now - prev.at < MAP_PIN_RETRY_MS && _mapDist2(prev, loc) < MAP_PIN_RETRY_UNITS) return null;
@@ -44834,6 +44853,10 @@ function _mapTryPin(zone, character, spawnId, name, loc, now) {
   if (att.kind !== 'assigned') return null;                   // only when certain; a "?" never pins
   const point = rec.byId.get(String(att.point_id));
   if (!point) return null;
+  // On its spot, or holding still, or a walker on its route; otherwise try again on a later sample.
+  const onSpot = _mapDist2(point, loc) <= MAP_PIN_ON_SPOT_UNITS;
+  const still = opts && Number(opts.stillMs) >= MAP_PIN_STILL_MS;
+  if (opts && !onSpot && !still && point.grid == null) { P.tried.delete(spawnId); return null; }
   P.m.delete(spawnId); P.m.set(spawnId, { point_id: point.id, name: _mapNormName(name) }); _mapCapMap(P.m);
   const zd = _mapZoneDoc(zone), pid = String(point.id);
   const old = zd.seen[pid];
@@ -45212,8 +45235,13 @@ function _mapNoteState(character, prev, next, now) {
   const isNpc = next.target_type == null || next.target_type === 1;
   if (isNpc && tl && next.target_id > 0 && next.target_name && !MAP_CORPSE_RE.test(String(next.target_name))) {
     _mapNoteSighting(zone, next.target_id, next.target_name, tl, now);
-    // A LIVE mob standing at exactly one point is pinned there (and synced as "seen"); see "Pins".
-    if (Number(next.target_hp_pct) > 0) _mapTryPin(zone, character, next.target_id, next.target_name, tl, now);
+    // A LIVE, UNPULLED mob standing at exactly one point is pinned there (and synced as "seen"); see "Pins".
+    if (Number(next.target_hp_pct) > 0) {
+      const tt = next.target_of_target;
+      const aggro = !!(tt && typeof tt === 'object' && Number(tt.id) > 0);   // it has a target: it is pulled
+      _mapTryPin(zone, character, next.target_id, next.target_name, tl, now,
+        { aggro, stillMs: _mapStillFor(zone, next.target_id, tl, now) });
+    }
   }
   // The mob in your target window died: its name became "<name>'s corpse", or its bar went to 0 under the same name.
   if (!prev || !prev.target_name || !next.target_name) return;

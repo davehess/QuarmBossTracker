@@ -1106,6 +1106,32 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
     expect(c._mapStatePayload('', N + 3).target.tot).toBeNull();
   });
 
+  describe('the pin: only an unpulled mob on its spot (the guild lead, 2026-10-13)', () => {
+    it('a pulled mob (it has a target of its own) is never pinned, even standing on a point', () => {
+      const { c } = liveCore(); const N = Date.now();
+      const s = tgt(9, 100, 105, 202, { target_of_target: { id: 3, name: 'Aldenmar' } });
+      c._mapNoteState('Aldenmar', null, s, N);
+      watch(c, s);
+      expect(c._mapStatePayload('', N + 1).target.point_id).toBeNull();
+      expect(c._mapStatePayload('', N + 1).seen).toEqual([]);
+    });
+    it('off its spot (15 units) it is pinned only after holding still for 1.5 s; a moving one never is', () => {
+      const { c } = liveCore(); const N = Date.now();
+      const off = tgt(10, 100, 85, 200);
+      c._mapNoteState('Aldenmar', null, off, N);
+      watch(c, off);
+      expect(c._mapStatePayload('', N + 1).target.point_id).toBeNull();          // just seen
+      c._mapNoteState('Aldenmar', off, off, N + 1700);
+      expect(c._mapStatePayload('', N + 1701).target.point_id).toBe(1);          // held still: tied to point 1
+      for (let i = 0; i < 6; i++) {                                               // another one walking 6 units every 0.5 s
+        const w = tgt(12, 100, 85, 196 + i * 6);
+        c._mapNoteState('Aldenmar', null, w, N + 2000 + i * 500);
+        watch(c, w);
+        expect(c._mapStatePayload('', N + 2001 + i * 500).target.point_id).toBeNull();
+      }
+    });
+  });
+
   describe('the pin: only when certain', () => {
     it('a live NPC at exactly one point is pinned, recorded as seen alive, and the payload says so', () => {
       const { c } = liveCore(); const N = Date.now();
