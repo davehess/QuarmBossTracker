@@ -159,7 +159,7 @@
         <button class="tb" id="fitBtn" type="button" title="Fit the view. Click to cycle: zone, group, raid.">Fit zone</button>
         <button class="tb" id="panBtn" type="button" title="Locked overlays let clicks through to EverQuest. Switch this on to drag and zoom the map (the mouse wheel zooms); right-click centres on you.">✋ Pan / zoom</button>
         <button class="tb on" id="labelsBtn" type="button" title="Names on the map: boss names and room names. Switch off when it gets busy.">Labels: on</button>
-        <button class="tb" id="aggroBtn" type="button" title="Aggro rings: how close you can get to each spawn before it aggros (its aggro radius). Points on a running respawn timer have no ring.">◯</button>
+        <button class="tb" id="aggroBtn" type="button" title="Aggro rings: how close you can get to each spawn before it aggros (its aggro radius). Red: KOS to you, or not conned yet. Yellow: you conned it dubious or better, but it has a faction. Green: no faction, aggros nobody. Dashed: how far it comes to help a friend (social aggro). Your target carries its own rings. Points on a running respawn timer have no ring.">◯</button>
         <button class="tb" id="cfgBtn" type="button" title="Map settings: what is drawn, the height ranges, the ability icons, colours and the background">⚙</button>
       </div>
       <button class="tb" id="sideBtn" type="button" title="Slide the respawn timers list in or out. Slid in, the map takes the whole width.">Timers ▸</button>
@@ -337,6 +337,45 @@
     var best = 0, npcs = (p && p.npcs) || [];
     for (var i = 0; i < npcs.length; i++) best = Math.max(best, ok(npcs[i]));
     return best;
+  }
+  // Social aggro: how far it comes to help a friend in a fight (assistradius), the same way. A mob with no faction has
+  // nobody to help. 0 = unknown or none.
+  function assistRadius(p, un) {
+    function ok(n) { var a = n && Number(n.fac) > 0 ? Number(n.assist) : 0; return a > 0 && a <= AGGRO_MAX ? a : 0; }
+    if (un) return ok(un);
+    var best = 0, npcs = (p && p.npcs) || [];
+    for (var i = 0; i < npcs.length; i++) best = Math.max(best, ok(npcs[i]));
+    return best;
+  }
+  // Whom the ring is a danger to (the guild lead, 2026-10-13: "Green if it's not aggro to anyone, yellow if it could be
+  // KOS to some but is not to the player"). 'none': no faction, so it aggros nobody (assumed until a con says
+  // otherwise). 'safe': it has a faction, and your last /consider of it was dubious or better (it may still be KOS to
+  // a groupmate). 'kos': you conned it threatening or scowling, or nobody has conned it yet (the cautious reading).
+  // cons = the agent's { mob name lower-case: rank 0 scowls … 8 ally }. A point with no known mob up takes its worst.
+  var AGGRO_RANK = { none: 0, safe: 1, kos: 2 };
+  function aggroKind(p, un, cons) {
+    function one(n) {
+      var c = cons ? cons[npcKey(n.name)] : undefined;
+      if (typeof c === 'number') return c <= 1 ? 'kos' : Number(n.fac) > 0 ? 'safe' : 'none';
+      return n.fac === 0 ? 'none' : 'kos';
+    }
+    if (un) return one(un);
+    var worst = null, npcs = (p && p.npcs) || [];
+    for (var i = 0; i < npcs.length; i++) { if (!npcs[i]) continue; var k = one(npcs[i]); if (!worst || AGGRO_RANK[k] > AGGRO_RANK[worst]) worst = k; }
+    return worst || 'kos';
+  }
+  // Your target's npc row, so its rings go with it wherever it walks (the guild lead, 2026-10-13: "This pather does
+  // not have his aggro radius drawn"): its pinned point's row, else the first spawn point's row with its name.
+  function targetNpc(t, points, byId) {
+    if (!t || !t.name) return null;
+    var pp = t.point_id != null && byId ? byId[String(t.point_id)] : null, n = pp ? upNpc(pp, t) : null;
+    if (n) return n;
+    var k = npcKey(t.name);
+    for (var i = 0; i < points.length; i++) {
+      var npcs = points[i].npcs || [];
+      for (var j = 0; j < npcs.length; j++) if (npcs[j] && npcKey(npcs[j].name) === k) return npcs[j];
+    }
+    return null;
   }
   // The route to light for your target (the guild lead, 2026-10-13: "this mob is going across the map and not on a path
   // line. Ideally it would highlight the path line"). Pinned to a point: that point's route. Not pinned (a walker that
@@ -568,23 +607,24 @@
   var CFG_COLS = [
     ['wall', 'Walls (one colour)'], ['oursWall', 'Walls (Wolf Pack)'], ['route', 'Walker routes'], ['routeTarget', 'Targeted walker route'],
     ['dot', 'Spawn point'], ['named', 'Named spawn'], ['raidTarget', 'Raid target'], ['up', 'Up / seen'],
-    ['ringWait', 'Timer: not yet'], ['ringWindow', 'Timer: window open'], ['ringUp', 'Timer: up'], ['candidate', '"?" ring'], ['aggro', 'Aggro rings'],
+    ['ringWait', 'Timer: not yet'], ['ringWindow', 'Timer: window open'], ['ringUp', 'Timer: up'], ['candidate', '"?" ring'], ['aggro', 'Aggro: KOS to you / unknown'],
+    ['aggroSafe', 'Aggro: not to you'], ['aggroNone', 'Aggro: nobody'],
     ['glyph', 'Ability icons'], ['pather', 'Walker mark'], ['bossLabel', 'Boss name'], ['raidLabel', 'Raid target name'],
     ['upLabel', 'Known mob name'], ['room', 'Room names'], ['you', 'You'], ['target', 'Target'], ['tot', 'Target\'s target'], ['pinLine', 'Target → spawn line'],
     ['group', 'Group'], ['raid', 'Raid'],
   ];
   var MAP_SCHEMES = {
     default: { wall: '#c8d6ea', oursWall: '#d6e6ff', route: '#39c5cf', routeTarget: '#7ee787', dot: '#c9d1d9', named: '#f2cc60',
-      raidTarget: '#ff7b72', up: '#56d364', ringWait: '#f85149', ringWindow: '#f0b429', ringUp: '#56d364', candidate: '#d2a8ff', aggro: '#e5534b',
+      raidTarget: '#ff7b72', up: '#56d364', ringWait: '#f85149', ringWindow: '#f0b429', ringUp: '#56d364', candidate: '#d2a8ff', aggro: '#e5534b', aggroSafe: '#e3b341', aggroNone: '#56d364',
       glyph: '#e6edf3', pather: '#9ecbff', bossLabel: '#f2cc60', raidLabel: '#ffa198', upLabel: '#7ee787', room: '#c9d9ee',
       you: '#58a6ff', target: '#f0883e', tot: '#f778ba', pinLine: '#7ee787', group: '#56d364', raid: '#a371f7', bg: '#131a26' },
     contrast: { wall: '#ffffff', oursWall: '#ffffff', route: '#00e5ff', routeTarget: '#00ff66', dot: '#ffffff', named: '#ffd700',
-      raidTarget: '#ff3b30', up: '#00ff66', ringWait: '#ff3b30', ringWindow: '#ffcc00', ringUp: '#00ff66', candidate: '#e040fb', aggro: '#ff3b30',
+      raidTarget: '#ff3b30', up: '#00ff66', ringWait: '#ff3b30', ringWindow: '#ffcc00', ringUp: '#00ff66', candidate: '#e040fb', aggro: '#ff3b30', aggroSafe: '#ffcc00', aggroNone: '#00ff66',
       glyph: '#ffffff', pather: '#00e5ff', bossLabel: '#ffd700', raidLabel: '#ff6b6b', upLabel: '#00ff66', room: '#ffffff',
       you: '#00b0ff', target: '#ff9100', tot: '#ff4fd8', pinLine: '#00ff66', group: '#00ff66', raid: '#e040fb', bg: '#000000' },
     // Okabe–Ito: no red/green pair carries a meaning (up is sky blue, "not yet" vermillion, the window yellow).
     cb: { wall: '#d9d9d9', oursWall: '#e0e0e0', route: '#56b4e9', routeTarget: '#f0e442', dot: '#d9d9d9', named: '#e69f00',
-      raidTarget: '#d55e00', up: '#56b4e9', ringWait: '#d55e00', ringWindow: '#f0e442', ringUp: '#56b4e9', candidate: '#cc79a7', aggro: '#d55e00',
+      raidTarget: '#d55e00', up: '#56b4e9', ringWait: '#d55e00', ringWindow: '#f0e442', ringUp: '#56b4e9', candidate: '#cc79a7', aggro: '#d55e00', aggroSafe: '#f0e442', aggroNone: '#56b4e9',
       glyph: '#ffffff', pather: '#56b4e9', bossLabel: '#e69f00', raidLabel: '#d55e00', upLabel: '#56b4e9', room: '#d9d9d9',
       you: '#009e73', target: '#e69f00', tot: '#cc79a7', pinLine: '#f0e442', group: '#009e73', raid: '#cc79a7', bg: '#14171c' },
   };
@@ -928,6 +968,21 @@
     });
     ctx.globalAlpha = 1; ctx.lineCap = 'round';
   }
+  // One mob's rings at (x, y) px: the aggro radius solid, in the colour of whom it is a danger to (aggroKind), and the
+  // social (assist) radius dashed, drawn only when it differs from the aggro one (equal, the solid edge stands for both).
+  var AGGRO_COL = { none: 'aggroNone', safe: 'aggroSafe', kos: 'aggro' };
+  function aggroRing(x, y, ar, as, kind) {
+    var c = S.cfg.col[AGGRO_COL[kind]] || S.cfg.col.aggro, sc = S.view.scale;
+    ctx.lineWidth = 1;
+    if (ar * sc >= 4) {
+      ctx.beginPath(); ctx.arc(x, y, ar * sc, 0, 6.2832);
+      ctx.fillStyle = hexA(c, 0.07); ctx.fill(); ctx.strokeStyle = hexA(c, 0.6); ctx.stroke();
+    }
+    if (as > 0 && as !== ar && as * sc >= 4) {
+      ctx.beginPath(); ctx.setLineDash([5, 4]); ctx.arc(x, y, as * sc, 0, 6.2832);
+      ctx.strokeStyle = hexA(c, 0.5); ctx.stroke(); ctx.setLineDash([]);
+    }
+  }
   function halo(text, x, y, font, fill, align) {
     ctx.font = font; ctx.textAlign = align || 'left'; ctx.textBaseline = 'middle';
     ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.strokeText(text, x, y);
@@ -1049,17 +1104,12 @@
     // Aggro rings (◯), under the dots: each point's aggro radius in game units, scaled with the map. Not drawn while
     // the point is on a "not yet" timer (nothing there to aggro), nor when the ring would be a speck.
     if (SH.aggro) {
-      ctx.lineWidth = 1;
       for (var ai = 0; ai < vis.length; ai++) {
         var ap = vis[ai].p, at = S.timerBy[String(ap.id)];
         if (at && timerState(at, now) === 'wait') continue;
-        var ar = aggroRadius(ap, upNpc(ap, upOn(ap.id, S.p, S.seenBy)));
-        var arPx = ar * v.scale;
-        if (!(arPx >= 4)) continue;
+        var aun = upNpc(ap, upOn(ap.id, S.p, S.seenBy));
         ctx.globalAlpha = inLevelRange(ap.z, sz, range) ? 1 : 0.4;
-        ctx.beginPath(); ctx.arc(vis[ai].x, vis[ai].y, arPx, 0, 6.2832);
-        ctx.fillStyle = hexA(CO.aggro, 0.07); ctx.fill();
-        ctx.strokeStyle = hexA(CO.aggro, 0.6); ctx.stroke();
+        aggroRing(vis[ai].x, vis[ai].y, aggroRadius(ap, aun), assistRadius(ap, aun), aggroKind(ap, aun, S.p && S.p.cons));
       }
       ctx.globalAlpha = 1;
     }
@@ -1118,6 +1168,11 @@
           ctx.beginPath(); ctx.setLineDash([2, 4]); ctx.moveTo(sq[0], sq[1]); ctx.lineTo(tq[0], tq[1]);
           ctx.lineWidth = 1.5; ctx.strokeStyle = CO.target; ctx.stroke(); ctx.setLineDash([]);
           if (P.target.dist != null && SH.distance) halo(String(Math.round(Math.hypot(td.x - sd.x, td.y - sd.y))), (sq[0] + tq[0]) / 2, (sq[1] + tq[1]) / 2 - 7, labelFont('dist'), CO.target, 'center');   // from the drawn spots, so it keeps up with the dots
+        }
+        // Its own rings, wherever it has walked (a pather's spawn-point ring stays behind at the point).
+        if (SH.aggro) {
+          var tnpc = targetNpc(P.target, S.points, S.byId);
+          if (tnpc) aggroRing(tq[0], tq[1], aggroRadius(null, tnpc), assistRadius(null, tnpc), aggroKind(null, tnpc, P.cons));
         }
         // Pinned: a thin line from the target to the spawn point it is tied to.
         var pinPt = P.target.point_id != null ? S.byId[String(P.target.point_id)] : null;

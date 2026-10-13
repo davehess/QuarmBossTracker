@@ -44812,11 +44812,12 @@ function _mapFetchZone(rec, zoneId, now) {
 // The zone's data if we hold any (disk or fetched); starts a fetch when one is due and allowed.
 function _mapEnsureZone(short, zoneId, now) {
   const rec = _mapZoneRec(short);
-  // A zone cached before bot 3.1.252 carries no aggro radius on its NPCs (the Map's aggro rings, 2026-10-13): re-check
-  // it early instead of waiting out the day, at most every 10 minutes while the radius is still missing. (It was once
-  // per run at first, and a check that landed on the old bot during its deploy left the rings off until a restart.)
+  // A zone cached before bot 3.1.253 carries no faction (nor, before 3.1.252, aggro radius) on its NPCs (the Map's
+  // aggro rings, 2026-10-13): re-check it early instead of waiting out the day, at most every 10 minutes while the
+  // field is still missing. (It was once per run at first, and a check that landed on the old bot during its deploy
+  // left the rings off until a restart.)
   const p0 = rec.body && Array.isArray(rec.body.points) ? rec.body.points[0] : null;
-  const noAggro = !!(p0 && Array.isArray(p0.npcs) && p0.npcs[0] && !('aggro' in p0.npcs[0]))
+  const noAggro = !!(p0 && Array.isArray(p0.npcs) && p0.npcs[0] && !('fac' in p0.npcs[0]))
     && now - (rec.aggroAskedAt || 0) >= MAP_FAIL_RETRY_MS;
   const due = !rec.body || noAggro || (now - rec.fetchedAt) >= MAP_REVALIDATE_MS;
   if (due && !rec.inflight && now >= rec.retryAt && _mapFetchAllowed()) {
@@ -45298,6 +45299,30 @@ const _mapPos = (loc, heading) => { const s = _mapServerXY(loc); return s ? { x:
 // points come back null and the overlay keeps what it has.
 // `haveLocal` is the same idea for the player's own map files (see "Local map files"): local_version says what is
 // on disk now (null = none), and local_map carries the lines and labels only when that differs from `haveLocal`.
+// The Map's aggro-ring colour (the guild lead, 2026-10-13: "solidify it once we have the mob targetted and know its
+// exact faction"): your latest faction con per mob name, EVERY tier (CON_STANDINGS). Unlike the faction upload, the
+// hostile tiers count here: a mob that scowls at you mid-fight is KOS to you right then, and the next calm con
+// corrects it.
+const _mapConByName = new Map();   // charLower|mobLower → { rank, at }
+function _mapNoteCon(line, character, now) {
+  if (!line || !character || line.indexOf(' you') === -1) return;
+  const m = line.match(_CON_RX);
+  if (!m) return;
+  const mob = m[1].trim();
+  if (!mob || mob.length > 64 || /['"‘’]/.test(mob) || /\b(?:says|tells|shouts|auctions)\b/i.test(mob)) return;
+  const entry = CON_STANDINGS.find(([p]) => p === m[2].toLowerCase());
+  if (!entry) return;
+  const key = String(character).toLowerCase() + '|' + mob.toLowerCase();
+  _mapConByName.delete(key);
+  _mapConByName.set(key, { rank: entry[2], at: now || Date.now() });
+  if (_mapConByName.size > 500) _mapConByName.delete(_mapConByName.keys().next().value);
+}
+// { mobLower: rank } for one character, six hours like the level con (conLevelFor).
+function _mapConsFor(character, now) {
+  const pre = String(character || '').toLowerCase() + '|', out = {};
+  for (const [k, v] of _mapConByName) if (k.startsWith(pre) && now - v.at <= 6 * 3_600_000) out[k.slice(pre.length)] = v.rank;
+  return out;
+}
 function _mapStatePayload(have, now, haveLocal) {
   const character = _mapActiveCharacter(now);
   const st = character ? _zealState[character] : null;
@@ -45310,6 +45335,7 @@ function _mapStatePayload(have, now, haveLocal) {
   out.zone = zone;
   out.long_name = _zoneName(st.zone);
   try { out.copy = _mapCopyInfo(zone, now); } catch { out.copy = null; }   // which copy of the zone (see "Zone copies")
+  out.cons = _mapConsFor(character, now);   // your faction cons by mob name: { 'a small tree frog': 2 } (0 scowls … 8 ally)
   const self = _mapPos(st.loc, st.heading);
   if (self) out.self = Object.assign({ name: character }, self);
   const me = String(character).toLowerCase();
@@ -52410,6 +52436,7 @@ async function main() {
         if (conFacEvt && !_sourceExcluded) factionBuffer.push(conFacEvt);
         // …and its level phrase (Target Info's player level / range).
         try { noteConsiderLevel(line, b.character); } catch (e) { void e; }
+        try { _mapNoteCon(line, b.character); } catch (e) { void e; }   // …and its faction tier (the Map's aggro-ring colour)
         const pfEvt = parsePopFlagLine(line, b.character);
         if (pfEvt && !_sourceExcluded) popFlagBuffer.push(pfEvt);
         // A hail, yours or one you witnessed: the Command Center's hail board (the guild lead,
