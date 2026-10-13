@@ -2585,6 +2585,250 @@ function recordPetCombat(ev, character) {
   _savePetStateSoon();
 }
 
+// ── Your own timers pause while you are logged out (the guild lead, 2026-10-13) ───────────────────
+// "My buffs on my pet and myself should pause if I log out. When I log back in I should have a lot more time on
+// this. And these should be synced to the database so if I logged on from a different machine or if my
+// installation failed I would still have those buff timers. Conversely, if I logged back in to reclaim a
+// charmed pet or kill a buffed/debuffed mob those timers should continue to tick while the server is online."
+//
+// What EverQuest does: effects on YOUR character and on your SUMMONED pet do not tick while you are logged out.
+// A charmed pet breaks on logout (it is an NPC again) and an NPC's buffs/debuffs keep ticking on the server.
+// Zeal already reports the client's own remaining ticks after login, so self buffs from the pipe are right; the
+// wrong ones are the LOG-DERIVED timers (_petBuffLandings, and _buffLandingsByTarget under your own name and your
+// summoned pet's name), which count wall-clock time. So: remember when each character's log last spoke, and when
+// "Welcome to EverQuest!" shows up after a gap, push the still-running entries forward by that gap.
+const _lastLineMs = new Map();           // charLower → EQ-timestamp ms of that character's latest log line (every raw line)
+const OWN_LOGOUT_GAP_MS = 60_000;        // a quieter log than this, with no live Zeal, means logged out
+const _ownNameByLower = new Map();       // charLower → the cased name (the bot wants the real spelling)
+let _lastLineSavedAt = 0;
+// Is this owner's Zeal feed alive? Mimic deletes the entry on logout; a stale one counts as gone too.
+function _ownerZealLive(ownerLower) {
+  for (const ch of Object.keys(_zealState)) {
+    if (String(ch).toLowerCase() !== ownerLower) continue;
+    const st = _zealState[ch];
+    if (st && !(st.updatedAt && Date.now() - st.updatedAt > OWN_LOGOUT_GAP_MS)) return true;
+  }
+  return false;
+}
+// The clock a logged-out owner's own timers are frozen at (their last log line), or null while they are online
+// or we have never seen their log. Entries compute "remaining" against this instead of now, so nothing prunes
+// a paused timer while its owner is away.
+function _ownFrozenAt(ownerLower) {
+  const last = _lastLineMs.get(ownerLower);
+  if (!last || Date.now() - last < OWN_LOGOUT_GAP_MS) return null;
+  return _ownerZealLive(ownerLower) ? null : last;
+}
+// A charmed pet breaks on logout and its buffs keep ticking, so it is never frozen. Told apart by the charm
+// tracker or a charm-spell entry on the pet (rawCharm: the keys a disk load is about to restore).
+function _isCharmPet(petLower, rawCharm) {
+  if (!petLower) return false;
+  if (rawCharm && rawCharm.has(petLower)) return true;
+  if (_charmTickTracker.has(petLower)) return true;
+  const mp = _buffLandingsByTarget.get(petLower);
+  if (mp) for (const b of mp.values()) if (b && b.is_charm_spell) return true;
+  return false;
+}
+// The frozen clock for the owner's pet-keyed store (_petBuffLandings): their own, unless the pet is a charm pet.
+function _petFrozenAt(ownerLower, rawCharm) {
+  const f = _ownFrozenAt(ownerLower);
+  if (f == null) return null;
+  return _isCharmPet(_lastPetByOwner.get(ownerLower), rawCharm) ? null : f;
+}
+// The frozen clock for a _buffLandingsByTarget key: the owner's own name, or their summoned pet's name. Any
+// other key is an NPC (or someone else) and keeps ticking, so it gets null.
+function _clockForTarget(keyLower, rawCharm) {
+  if (_lastLineMs.has(keyLower)) return _ownFrozenAt(keyLower);
+  for (const [o, p] of _lastPetByOwner) if (p === keyLower) return _petFrozenAt(o, rawCharm);
+  return null;
+}
+// Login after a gap: push every still-running entry forward by the time spent away. Returns how many moved.
+function _resumeOwnTimers(ownerLower, offlineSince, gapMs) {
+  const petLower = _lastPetByOwner.get(ownerLower) || null;
+  const charm = !!petLower && _isCharmPet(petLower);
+  let moved = 0;
+  const shift = (mp) => {
+    if (!mp) return;
+    for (const b of mp.values()) {
+      if (!b || b.worn_off_at) continue;
+      const landed = Number(b.landed_at) || 0;
+      // Only what was still running when the log went quiet: an expired entry is not revived.
+      if (landed + (Number(b.dur_ticks) || 0) * 6000 <= offlineSince) continue;
+      b.landed_at = landed + gapMs;
+      moved++;
+    }
+  };
+  shift(_buffLandingsByTarget.get(ownerLower));
+  if (!charm) {
+    shift(_petBuffLandings.get(ownerLower));
+    if (petLower) shift(_buffLandingsByTarget.get(petLower));
+  }
+  // The pet's spawn id after a login is new, in the SAME zone: _reconcilePetIdentity would read that as a new pet
+  // and wipe the buffs we just kept. The name check still catches a genuinely different pet.
+  _lastPetIdByOwner.delete(ownerLower);
+  _lastPetZoneByOwner.delete(ownerLower);
+  const mins = Math.round(gapMs / 60000);
+  console.log(`[pet] ${ownerLower} was offline ${mins >= 120 ? Math.floor(mins / 60) + 'h' : mins + 'm'} — paused their own and their pet's buff timers`
+    + (charm ? ' (charmed pet left alone — it kept ticking)' : ''));
+  _savePetStateSoon();
+  _queueOwnTimers(ownerLower);
+  return moved;
+}
+// Every raw line of a watched character's log passes here before any filter drops it (the tail callback), so the
+// "last time this log spoke" clock sees the lines the privacy filter never lets any further.
+const _WELCOME_RX = /\]\s+Welcome to EverQuest!/;
+function _noteOwnRawLine(line, character) {
+  if (!line || !character) return;
+  const ts = parseEqTimestamp(line);
+  if (!ts) return;
+  const T = ts.getTime();
+  const cl = String(character).toLowerCase();
+  if (_ownNameByLower.get(cl) !== character) _ownNameByLower.set(cl, character);
+  const prev = _lastLineMs.get(cl);
+  const welcome = line.indexOf('Welcome to EverQuest!') !== -1 && _WELCOME_RX.test(line);
+  // Before the clock moves: has this character any local history at all?
+  if (!_ownRestoreTried.has(cl)) _ownRestoreOnFirstSight(character, prev != null, welcome ? T : null);
+  else if (welcome && prev == null) { const f = _ownRestoreInflight.get(cl); if (f) f.welcomeMs = T; }
+  if (prev == null || T > prev) {
+    _lastLineMs.set(cl, T);
+    // Persist the clock, but not on every line: once a minute, and only when there is a timer to protect.
+    const nowMs = Date.now();
+    if (nowMs - _lastLineSavedAt >= 60_000 && (_petBuffLandings.size || _buffLandingsByTarget.size)) {
+      _lastLineSavedAt = nowMs;
+      _savePetStateSoon();
+    }
+  }
+  if (welcome && prev != null && T - prev >= OWN_LOGOUT_GAP_MS) _resumeOwnTimers(cl, prev, T - prev);
+}
+
+// ── Own timers in the database (so another PC, or a reinstall, has them) ─────────────────────────────
+// POST/GET <bot>/api/agent/own-timers. Same gates as every other agent call: local mode / no token / dry run /
+// the control-plane stand-down send nothing, and a character set to exclude_from_stats sends and fetches nothing.
+// Fail open everywhere: a miss costs the other-PC copy, never the local timers.
+const _ownTimersSentAt = new Map();      // charLower → last send ms
+const _ownTimersTimer = new Map();       // charLower → pending debounce timer
+const OWN_TIMERS_DEBOUNCE_MS = 60_000;
+const OWN_TIMERS_MAX_BUFFS = 40;
+function _ownTimersAllowed(character) {
+  return !!(_uploadOpts && !_uploadOpts.dryRun && _mapFetchAllowed() && shouldUploadForCharacter(character));
+}
+function _ownTimersHeaders() {
+  return { 'Authorization': 'Bearer ' + _uploadOpts.token, 'User-Agent': 'wolfpack-logsync/' + AGENT_VERSION };
+}
+// The body: the pet's buffs that are not worn off and still running at the reference clock (frozen while the
+// owner is away, now otherwise). A charmed pet's are not sent: they are not paused, and a copy restored on
+// another PC would be shifted as if they were.
+function _ownTimersPayload(ownerLower, refMs) {
+  const pet = _lastPetByOwner.get(ownerLower) || null;
+  const charm = _isCharmPet(pet);
+  const ref = refMs != null ? refMs : (_petFrozenAt(ownerLower) ?? Date.now());
+  const buffs = [];
+  const mp = charm ? null : _petBuffLandings.get(ownerLower);
+  if (mp) {
+    for (const b of mp.values()) {
+      if (!b || b.worn_off_at || !b.name) continue;
+      const durMs = (Number(b.dur_ticks) || 0) * 6000, landed = Number(b.landed_at) || 0;
+      if (!(durMs > 0) || !(landed > 0) || landed + durMs <= ref) continue;
+      buffs.push({ name: String(b.name).slice(0, 80), dur_ticks: Math.round(Number(b.dur_ticks)),
+        dur_formula: Number(b.dur_formula) || 0, landed_at: Math.round(landed) });
+      if (buffs.length >= OWN_TIMERS_MAX_BUFFS) break;
+    }
+  }
+  return {
+    character: _ownNameByLower.get(ownerLower) || ownerLower,
+    pet_name: charm ? null : pet,
+    last_line_ms: _lastLineMs.get(ownerLower) || null,
+    pet_buffs: buffs,
+  };
+}
+async function _postOwnTimers(ownerLower, refMs) {
+  const body = _ownTimersPayload(ownerLower, refMs);     // built before the first await: the state at the call
+  if (!_ownTimersAllowed(body.character)) return;
+  _ownTimersSentAt.set(ownerLower, Date.now());
+  try {
+    const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+    await fetch(base + '/own-timers', {
+      method: 'POST',
+      headers: { ..._ownTimersHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(8_000),
+    });
+  } catch { /* fail open — the local timers are unaffected */ }
+}
+// Send after a pet buff lands, after a resume, when the pet set is wiped; once a minute per owner at most.
+// `urgent` (the logout) skips the wait: that upload carries the clock the next login measures its gap from.
+function _queueOwnTimers(ownerLower, { urgent = false, refMs = null } = {}) {
+  if (!ownerLower || !_ownTimersAllowed(_ownNameByLower.get(ownerLower) || ownerLower)) return;
+  if (urgent) {
+    const t = _ownTimersTimer.get(ownerLower);
+    if (t) { clearTimeout(t); _ownTimersTimer.delete(ownerLower); }
+    _postOwnTimers(ownerLower, refMs);
+    return;
+  }
+  if (_ownTimersTimer.has(ownerLower)) return;           // the pending send reads the state when it fires
+  const wait = Math.max(2_000, (_ownTimersSentAt.get(ownerLower) || 0) + OWN_TIMERS_DEBOUNCE_MS - Date.now());
+  const t = setTimeout(() => { _ownTimersTimer.delete(ownerLower); _postOwnTimers(ownerLower); }, wait);
+  if (t.unref) t.unref();
+  _ownTimersTimer.set(ownerLower, t);
+}
+async function _fetchOwnTimers(character) {
+  try {
+    const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+    const r = await fetch(base + '/own-timers?character=' + encodeURIComponent(character),
+      { headers: _ownTimersHeaders(), signal: AbortSignal.timeout(8_000) });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j && j.ok && j.timers && typeof j.timers === 'object' ? j.timers : null;
+  } catch { return null; }
+}
+// Fold a stored copy into what this PC has. Never overwrites a local entry, and never attaches a stored pet's
+// buffs to a different pet.
+function _mergeOwnTimers(ownerLower, t) {
+  const last = Number(t.last_line_ms);
+  if (Number.isFinite(last) && last > 0 && !_lastLineMs.has(ownerLower)) _lastLineMs.set(ownerLower, last);
+  const dbPet = typeof t.pet_name === 'string' && t.pet_name ? t.pet_name.toLowerCase() : null;
+  const livePet = _lastPetByOwner.get(ownerLower) || (_petNameForOwner(ownerLower) || '').toLowerCase() || null;
+  if (dbPet && !_lastPetByOwner.get(ownerLower) && !livePet) _lastPetByOwner.set(ownerLower, dbPet);
+  if (dbPet && livePet && dbPet !== livePet) return 0;
+  let mp = _petBuffLandings.get(ownerLower), added = 0;
+  const ref = Number.isFinite(last) && last > 0 ? last : Date.now();
+  for (const b of (Array.isArray(t.pet_buffs) ? t.pet_buffs : []).slice(0, OWN_TIMERS_MAX_BUFFS)) {
+    if (!b || typeof b.name !== 'string' || !b.name) continue;
+    const key = b.name.toLowerCase(), ticks = Number(b.dur_ticks), landed = Number(b.landed_at);
+    if (!(ticks > 0) || !(landed > 0)) continue;
+    if (landed + ticks * 6000 + FELL_OFF_LINGER_MS <= ref) continue;
+    if (mp && mp.has(key)) continue;
+    if (!mp) { mp = new Map(); _petBuffLandings.set(ownerLower, mp); }
+    mp.set(key, { name: b.name, dur_ticks: ticks, dur_formula: Number(b.dur_formula) || 0, landed_at: landed });
+    added++;
+  }
+  if (added) _savePetStateSoon();
+  return added;
+}
+// Once per character per run, the first time this PC sees them with nothing of their own on disk: ask the bot
+// what it has. When the line that triggered it was the Welcome line, the resume waits for the answer (the gap is
+// measured from the STORED clock). Returns a promise for tests; callers do not await it.
+const _ownRestoreTried = new Set();
+const _ownRestoreInflight = new Map();   // charLower → { welcomeMs }
+function _ownRestoreOnFirstSight(character, hadLastLine, welcomeMs) {
+  const cl = String(character || '').toLowerCase();
+  if (!cl || _ownRestoreTried.has(cl)) return Promise.resolve();
+  _ownRestoreTried.add(cl);
+  if (_ownNameByLower.get(cl) !== character) _ownNameByLower.set(cl, character);
+  const have = _petBuffLandings.get(cl);
+  if (hadLastLine || (have && have.size) || !_ownTimersAllowed(character)) return Promise.resolve();
+  const slot = { welcomeMs: welcomeMs || null };
+  _ownRestoreInflight.set(cl, slot);
+  return _fetchOwnTimers(character).then((t) => {
+    _ownRestoreInflight.delete(cl);
+    if (!t) return;
+    _mergeOwnTimers(cl, t);
+    const last = Number(t.last_line_ms);
+    if (slot.welcomeMs && Number.isFinite(last) && last > 0 && slot.welcomeMs - last >= OWN_LOGOUT_GAP_MS) {
+      _resumeOwnTimers(cl, last, slot.welcomeMs - last);
+    }
+  }).catch(() => { _ownRestoreInflight.delete(cl); });
+}
+
 // ── Pet-state persistence (disk) ─────────────────────────────────────────────
 // Survives agent restarts + LD reconnects: the agent loses in-memory pet state
 // every restart, but the pet itself usually still has its buffs (pets persist
@@ -2615,6 +2859,10 @@ function _savePetStateSoon() {
         buffLandingsByTarget: [..._buffLandingsByTarget.entries()].map(([k, v]) => [k, [...v.entries()]]),
         petStatsByOwner: [..._petStatsByOwner.entries()],
         petSheetByOwner: [..._petSheetByOwner.entries()],
+        // Your own timers pause while you are logged out: when each log last spoke, and which pet is whose, so a
+        // restart (or a login after one) still knows how long you were away and whose pet is whose.
+        lastLineMs: [..._lastLineMs.entries()],
+        ownPets: [..._lastPetByOwner.entries()].filter(([, v]) => typeof v === 'string' && v),
       };
       const out = JSON.stringify(data);
       fs.writeFileSync(PET_STATE_FILE + '.tmp', out);
@@ -2623,11 +2871,24 @@ function _savePetStateSoon() {
   }, PET_STATE_SAVE_DEBOUNCE_MS);
 }
 
-function _loadPetStateFromDisk() {
+function _loadPetStateFromDisk(file = PET_STATE_FILE) {
   try {
-    if (!fs.existsSync(PET_STATE_FILE)) return;
-    const raw = JSON.parse(fs.readFileSync(PET_STATE_FILE, 'utf8'));
+    if (!fs.existsSync(file)) return;
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
     const now = Date.now();
+    // The pause clocks first: the prunes below measure a logged-out owner's timers against their last log line,
+    // not against now (a 2-hour logout must not read as 2 hours of buff time spent).
+    if (Array.isArray(raw.lastLineMs)) {
+      for (const [k, v] of raw.lastLineMs) if (typeof k === 'string' && Number.isFinite(v) && v > 0) _lastLineMs.set(k, v);
+    }
+    if (Array.isArray(raw.ownPets)) {
+      for (const [k, v] of raw.ownPets) if (typeof k === 'string' && typeof v === 'string' && v && !_lastPetByOwner.get(k)) _lastPetByOwner.set(k, v);
+    }
+    // Pets whose target entries are about to be restored with a charm spell on them: never frozen.
+    const rawCharm = new Set();
+    if (Array.isArray(raw.buffLandingsByTarget)) {
+      for (const [k, arr] of raw.buffLandingsByTarget) if (typeof k === 'string' && (arr || []).some(([, bv]) => bv && bv.is_charm_spell)) rawCharm.add(k);
+    }
     if (Array.isArray(raw.petHealthByOwner)) {
       for (const [k, v] of raw.petHealthByOwner) {
         if (!v || typeof v !== 'object') continue;
@@ -2643,11 +2904,13 @@ function _loadPetStateFromDisk() {
     if (Array.isArray(raw.petBuffLandings)) {
       for (const [k, arr] of raw.petBuffLandings) {
         const mp = new Map();
+        // A logged-out owner's pet timers are paused: measure against their last log line, not now.
+        const refNow = _petFrozenAt(k, rawCharm) ?? now;
         for (const [bk, bv] of (arr || [])) {
           // Drop landings past their duration + the 5-min fell-off linger, so a
           // just-expired buff still shows its purple rebuff cue after a restart.
           const durSecs = (Number(bv.dur_ticks) || 0) * 6;
-          if (durSecs > 0 && (now - (bv.landed_at || 0)) > durSecs * 1000 + FELL_OFF_LINGER_MS) continue;
+          if (durSecs > 0 && (refNow - (bv.landed_at || 0)) > durSecs * 1000 + FELL_OFF_LINGER_MS) continue;
           mp.set(bk, bv);
         }
         if (mp.size) _petBuffLandings.set(k, mp);
@@ -2656,12 +2919,14 @@ function _loadPetStateFromDisk() {
     if (Array.isArray(raw.buffLandingsByTarget)) {
       for (const [k, arr] of raw.buffLandingsByTarget) {
         const mp = new Map();
+        // Your own name and your summoned pet's are frozen while you are away; an NPC's (or a charm pet's) is not.
+        const refNow = _clockForTarget(k, rawCharm) ?? now;
         for (const [bk, bv] of (arr || [])) {
           // Same prune as pet landings: duration + the 5-min fell-off linger, so
           // Mob Info keeps the purple rebuff cue across a restart but never shows
           // a stale countdown beyond that.
           const durSecs = (Number(bv.dur_ticks) || 0) * 6;
-          if (durSecs > 0 && (now - (bv.landed_at || 0)) > durSecs * 1000 + FELL_OFF_LINGER_MS) continue;
+          if (durSecs > 0 && (refNow - (bv.landed_at || 0)) > durSecs * 1000 + FELL_OFF_LINGER_MS) continue;
           mp.set(bk, bv);
         }
         if (mp.size) _buffLandingsByTarget.set(k, mp);
@@ -2969,6 +3234,11 @@ function recordPetBuffLanding(bcEvt) {
     spell: bcEvt.spell_name, target: bcEvt.target, owner, dur_ticks: durTicks,
     reason: null,
   });
+  // Whose pet this is, from the land itself: the pause-on-logout rules need the name even when no overlay has
+  // polled petBuffsForOwner yet. Only fills a gap; _reconcilePetIdentity stays the one that changes it.
+  if (!_lastPetByOwner.get(owner)) _lastPetByOwner.set(owner, String(bcEvt.target).toLowerCase());
+  // typeof-guarded (here and in the two below): the source-slice tests lift these functions out without the helpers.
+  if (typeof _queueOwnTimers === 'function') _queueOwnTimers(owner);
   _savePetStateSoon();
 }
 
@@ -3168,6 +3438,7 @@ function _reconcilePetIdentity(ownerLower) {
       _lastPetByOwner.set(ownerLower, String(_petNameForOwner(ownerLower) || '').toLowerCase() || undefined);
       console.log(`[pet] ${ownerLower}'s pet changed by spawn id ${prevId} → ${petId} — dropped the previous pet's buffs`);
       _savePetStateSoon();
+      if (typeof _queueOwnTimers === 'function') _queueOwnTimers(ownerLower);
       return;
     }
   }
@@ -3183,11 +3454,15 @@ function _reconcilePetIdentity(ownerLower) {
   _petHealthByOwner.delete(ownerLower);
   console.log(`[pet] ${ownerLower}'s pet changed ${prev} → ${petLower} — dropped the previous pet's buffs`);
   _savePetStateSoon();
+  if (typeof _queueOwnTimers === 'function') _queueOwnTimers(ownerLower);
 }
 function petBuffsForOwner(ownerLower) {
   if (!ownerLower) return [];
   _reconcilePetIdentity(ownerLower);
   const now = Date.now();
+  // A logged-out owner's summoned pet is paused: compute its timers (and what may be pruned) against their last
+  // log line, so nothing is deleted or counted down while they are away. A charm pet is never frozen.
+  const lnow = (typeof _petFrozenAt === 'function' ? _petFrozenAt(ownerLower) : null) ?? now;
   const byName = new Map();
   const rep = _petHealthByOwner.get(ownerLower);
   if (rep && (now - (rep.last_seen_at || 0)) <= PET_HEALTH_TTL_MS) {
@@ -3215,7 +3490,7 @@ function petBuffsForOwner(ownerLower) {
   if (lm) {
     for (const [k, b] of lm) {
       const durSecs = (Number(b.dur_ticks) || 0) * 6;
-      let rem = durSecs - (now - (b.landed_at || now)) / 1000;
+      let rem = durSecs - (lnow - (b.landed_at || lnow)) / 1000;
       let fellOff = false;
       // HoTs (regen category) get a 6s (one-tick) linger; everything else gets
       // the 5-min rebuff cue. HoTs are short and re-applied frequently — a
@@ -3227,7 +3502,7 @@ function petBuffsForOwner(ownerLower) {
       const _shortFx = ((Number(b && b.dur_ticks) || 0) * 6) > 0 && ((Number(b && b.dur_ticks) || 0) * 6) < 60;
       const lingerMs = (_isHotBuff(b && b.name) || _shortFx) ? 6_000 : FELL_OFF_LINGER_MS;
       if (b.worn_off_at) {                                   // explicit "worn off"
-        if (now - b.worn_off_at > lingerMs) { lm.delete(k); continue; }
+        if (lnow - b.worn_off_at > lingerMs) { lm.delete(k); continue; }
         fellOff = true; rem = 0;
       } else if (rem <= 0) {                                 // natural expiry
         if (rem < -(lingerMs / 1000)) { lm.delete(k); continue; }
@@ -3632,7 +3907,9 @@ function targetBuffsFor(targetLower, wantId) {
   if (!targetLower) return [];
   const mp = _buffLandingsByTarget.get(targetLower);
   if (!mp) return [];
-  const now = Date.now();
+  // The owner's own name and their summoned pet's are paused while they are logged out (computed against their
+  // last log line, never pruned meanwhile). Typeof-guarded: the source-slice tests lift this function out alone.
+  const now = (typeof _clockForTarget === 'function' ? _clockForTarget(targetLower) : null) ?? Date.now();
   const out = [];
   for (const [k, b] of mp) {
     // Same name, provably a different spawn → someone else's debuff. Never
@@ -33034,6 +33311,13 @@ function startWebDashboard(port) {
         // last target — without this, _currentTargetState() keeps returning
         // the stale entry forever ("shows Kelbrin after switching characters").
         if (character && payload?.disconnected === true) {
+          // Logout: store the pet timers with the log's last-line clock NOW, so a login on another PC measures its gap
+          // from the moment you left (an upload made when a buff landed would carry an older clock).
+          try {
+            const _ol = character.toLowerCase();
+            _ownNameByLower.set(_ol, character);
+            _queueOwnTimers(_ol, { urgent: true, refMs: _lastLineMs.get(_ol) || null });
+          } catch (e) { void e; }
           delete _zealState[character];
           // A camped/logged-off character's charm pet despawns with them. Drop
           // any charm session they owned so it doesn't dangle with a stale
@@ -33091,6 +33375,9 @@ function startWebDashboard(port) {
           const prevCasting = (prevState.casting || '').trim();
           const newCasting  = (st.casting || '').trim();
           _zealState[character] = { ...st, updatedAt: Date.now() };
+          // First sight of this character on this PC: fetch any stored pet timers (once per run; no-op when the
+          // log already gave us local history).
+          try { _ownRestoreOnFirstSight(character, _lastLineMs.has(String(character).toLowerCase()), null); } catch (e) { void e; }
           // Zeal PR #229 capability latch. Latched HERE, where the ids
           // actually arrive off the pipe, and NOT at the live-state upload:
           // that upload is change-signature gated, so a capable client can hand
@@ -52501,6 +52788,9 @@ async function main() {
       let _pendingSelfHail = null;   // #176 { target, atMs } — set on OUR own hail
       await tailFile(b.logPath, line => {
         if (watched) { watched.lastSeen = Date.now(); }
+        // Your own timers pause while you are logged out: the earliest point every raw line passes, before any
+        // privacy filter drops it, with the character known. Keeps "when did this log last speak" and spots the login.
+        try { _noteOwnRawLine(line, b.character); } catch (e) { void e; }
         // #176 — record OUR outgoing hail so a matching npc response can be trusted
         // as addressed to US (a bystander never emits "You say, 'Hail'").
         if (!_hailFound && line.indexOf('You say') !== -1) {
@@ -53238,6 +53528,10 @@ module.exports = {
   _isMezSpell, noteMyMezWornOff,
   _bumpCharmTick, _reconcileGaugeCharms, _classOf,
   _petBuffLandings, _npcCasterLevelFor, _npcCastStarts, _charmMobId,
+  // Your own timers pause while you are logged out (2026-10-13) — exported for test/own-timers-pause.test.js.
+  _lastLineMs, _lastPetByOwner, _lastPetIdByOwner, _lastPetZoneByOwner, _ownFrozenAt, _resumeOwnTimers, _noteOwnRawLine,
+  _ownTimersPayload, _ownRestoreOnFirstSight, _loadPetStateFromDisk, petBuffsForOwner, targetBuffsFor,
+  _resetOwnRestoreForTest: () => { _ownRestoreTried.clear(); _ownRestoreInflight.clear(); },
   _mobTicks, _dotLastHit, _noteMobTick, _noteDotTickLine, _mobTickFor, _serverTickAtFor,
   _clearNameObservations,
   _waitForFires, _pushOverlay, _tailDelayMs,
