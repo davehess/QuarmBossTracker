@@ -505,7 +505,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, trailStep, wanderLeg, noteWanderLeg, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH, legArrow, LEG_ARROW_AT, classifyTrail, homeOf, homeDist, noteKills, trailShown, KILLS_FADE, TRAIL_COL, nearPack, followOffNow, labelMode, routeTwins, headingRay, toolDock, toolBox };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, trailStep, wanderLeg, noteWanderLeg, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH, legArrow, LEG_ARROW_AT, classifyTrail, homeOf, homeDist, noteKills, trailShown, KILLS_FADE, TRAIL_COL, nearPack, followOffNow, labelMode, routeTwins, headingRay, toolDock, toolBox, nextFollow, spawnDistance };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -1036,7 +1036,8 @@ describe('pather routes', () => {
       expect(js).toMatch(/if \(!animating \|\| rt - lastHits >= HITS_MS\) \{ lastHits = rt; layoutHits\(SH\.dots \? vis : \[\]\); \}/);
       expect(Number(/\bHITS_MS = (\d+)/.exec(js)[1])).toBeGreaterThanOrEqual(200);
       // Follow me rides the drawn spot of you, and the flashing ring still has its own timer
-      expect(js).toMatch(/if \(S\.follow && S\.p && S\.p\.self && !S\.drag\) followTo\(drawn\('self'/);
+      expect(js).toMatch(/if \(S\.follow && S\.p && !S\.drag\) followTo\(followSubject\(rt\)\);/);
+      expect(js).toMatch(/return P\.self \? drawn\('self', P\.self, rt\) : null;/);
       expect(js).toMatch(/flashTimer = setInterval\(/);
     });
   });
@@ -1361,7 +1362,18 @@ describe('pather routes', () => {
     expect(H.toolBox('left', 0, 40, 200, 800, 600, 6)).toEqual({ left: 6, top: 30 });  // clear of the ✥
     expect(H.toolBox('right', 1, 40, 200, 800, 600, 6)).toEqual({ left: 754, top: 394 });
     expect(H.toolBox('bottom', 0.5, 300, 24, 800, 600, 6)).toEqual({ left: 250, top: 570 });
+    // "if we're using something like Solidarity of Vision could we have a 'Follow Target' mode"; "give me the distance
+    // from a mob's spawn point if it's known"
+    expect(H.nextFollow(false, 'me', true)).toEqual({ follow: true, who: 'me' });
+    expect(H.nextFollow(true, 'me', true)).toEqual({ follow: true, who: 'target' });
+    expect(H.nextFollow(true, 'me', false)).toEqual({ follow: false, who: 'me' });      // no target on the map: straight to off
+    expect(H.nextFollow(true, 'target', true)).toEqual({ follow: false, who: 'me' });
+    const pin = { id: 9, x: 100, y: 100 };
+    expect(H.spawnDistance({ x: 130, y: 140 }, pin, [pin])).toBe(50);
+    expect(H.spawnDistance({ x: 130, y: 140 }, pin, [pin, { id: 10 }])).toBeNull();     // a shared route: which point is a guess
+    expect(H.spawnDistance({ x: 130, y: 140 }, null, null)).toBeNull();
     const js = stripJs(MAP_HTML);
+    expect(js).toMatch(/if \(S\.follow && S\.p && !S\.drag\) followTo\(followSubject\(rt\)\);/);
     expect(js).toMatch(/if \(!\(e\.buttons & 1\)\) \{ endToolDrag\(\); return; \}/);
     expect(js).toMatch(/var twins = routeTwins\(pinPt, S\.points\);/);
     expect(MAP_HTML).toMatch(/<button class="tb grip" id="toolsGrip" type="button"/);

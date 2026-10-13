@@ -725,6 +725,19 @@
     var x = cl(t * (w - bw), edge === 'top' ? 30 : 6, w - bw - (edge === 'top' ? 96 : 6));
     return edge === 'top' ? { left: x, top: top0 } : { left: x, top: h - bh - 6 };
   }
+  // The Follow button's next state on a click: off → you → your target (only when one is on the map) → off.
+  function nextFollow(on, who, hasTarget) {
+    if (!on) return { follow: true, who: 'me' };
+    if (who !== 'target' && hasTarget) return { follow: true, who: 'target' };
+    return { follow: false, who: 'me' };
+  }
+  // How far your target stands from its spawn point, in game units: null when its point is not known, or is one of
+  // several on a shared route (which one is a guess). For mobs that gate or leash home past a range (the guild lead,
+  // 2026-10-13: "give me the distance from a mob's spawn point if it's known").
+  function spawnDistance(t, pin, twins) {
+    if (!t || t.x == null || !pin || (twins && twins.length > 1)) return null;
+    return Math.round(Math.hypot(t.x - pin.x, t.y - pin.y));
+  }
   // The Labels button's saved value ('1' / '0' were saved before 2026-10-13's all / targets / off).
   function labelMode(v) { return v === '0' || v === 0 || v === false ? 'off' : v === 'targets' || v === 'off' ? v : 'all'; }
   // The crumbs of the trail's current stretch (since its last break).
@@ -1035,7 +1048,7 @@
     timerBy: {}, candBy: {}, seenBy: {}, menuPid: null, drag: null, w: 0, h: 0, fitted: false,
     trk: {}, sideAt: 0,
     local: null, localVer: null, walls: 'auto', labels: 'all',   // the player's own map files (prepLocal), the version held, Walls: Auto|Ours only, Labels all|targets|off
-    followOff: { x: 0, y: 0 }, followLock: false, pointTrails: {}, kills: 0, killSeen: {},   // Follow me's screen spot + lock; killed mobs' paths (see noteKills)
+    followOff: { x: 0, y: 0 }, followLock: false, followWho: 'me', pointTrails: {}, kills: 0, killSeen: {},   // Follow me's screen spot + lock; killed mobs' paths (see noteKills)
     src: 'direct', smooth: 'light', direct: null, sampleAt: 0, sampleSrc: '',   // beta tuning knobs + the latest pushed positions
   };
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -1159,7 +1172,7 @@
     noteKills(p, S.trails, S);
     (p.seen || []).forEach(function (s) { if (!S.timerBy[String(s.point_id)]) S.seenBy[String(s.point_id)] = s; });   // a timer on the point is newer
     (p.unassigned || []).forEach(function (u) { (u.candidates || []).forEach(function (c) { (S.candBy[String(c)] = S.candBy[String(c)] || []).push(u); }); });
-    if (S.follow && p.self) followTo(p.self);
+    if (S.follow && (p.self || p.target)) followTo(followSubject(Date.now()));
     else if (!S.follow && !S.fitted && S.points.length) fitNow();
     noteTracks(p, Date.now());
     // The side list is rebuilt from scratch, so at the poll rate it would eat a click between mousedown and mouseup;
@@ -1298,13 +1311,24 @@
   // always follow the player even if they pan"). S.followOff is your offset from the middle in screen pixels, so a
   // zoom keeps you on the same spot; with the lock (right-click), dragging the map moves that spot instead of
   // switching Follow off.
-  function followTo(me) { var s = toScreen(me.x, me.y), o = S.followOff || { x: 0, y: 0 }, v = S.view; v.cx = s.sx - o.x / v.scale; v.cy = s.sy - o.y / v.scale; }
+  function followTo(me) { if (!me) return; var s = toScreen(me.x, me.y), o = S.followOff || { x: 0, y: 0 }, v = S.view; v.cx = s.sx - o.x / v.scale; v.cy = s.sy - o.y / v.scale; }
+  // What Follow rides: you, or your target (the guild lead, 2026-10-13: "if we're using something like Solidarity of
+  // Vision could we have a 'Follow Target' mode"). Follow target with no target placed falls back to you. Drawn
+  // positions, so the view glides with the dot.
+  function followSubject(rt) {
+    var P = S.p;
+    if (!P) return null;
+    if (S.followWho === 'target' && P.target && P.target.x != null) return drawn(targetKey(P.target), P.target, rt);
+    return P.self ? drawn('self', P.self, rt) : null;
+  }
   function syncFollowBtn() {
     var b = document.getElementById('followBtn');
     b.classList.toggle('on', !!S.follow);
-    b.textContent = 'Follow me' + (S.followLock ? ' 🔒' : '');
-    b.title = S.followLock ? 'Locked: the map always moves with you, even while you drag it (dragging moves where you sit on screen). Right-click to unlock.'
-      : 'Keep the map moving with you, wherever you sit on screen. Dragging the map turns it off. Right-click to lock it on.';
+    var who = S.follow && S.followWho === 'target' ? 'target' : 'me';
+    b.textContent = 'Follow ' + who + (S.followLock ? ' 🔒' : '');
+    b.title = 'Click: Follow me → Follow target (e.g. while you see through it with Solidarity of Vision) → off. '
+      + (S.followLock ? 'Locked: the map always moves with it, even while you drag (dragging moves where it sits on screen). Right-click to unlock.'
+        : 'It keeps its spot on screen; dragging the map turns Follow off. Right-click to lock it on.');
   }
   function wpt(x, y) {   // server-frame point -> canvas pixels
     var s = toScreen(x, y), v = S.view;
@@ -1519,7 +1543,7 @@
     ctx.clearRect(0, 0, S.w, S.h);
     var rt = Date.now();
     // Follow me: the view rides the DRAWN position of you, so the map glides with you instead of stepping per poll.
-    if (S.follow && S.p && S.p.self && !S.drag) followTo(drawn('self', S.p.self, rt));
+    if (S.follow && S.p && !S.drag) followTo(followSubject(rt));
     var v = S.view, w = S.w, h = S.h, now = nowMs();
     var ox = w / 2 - v.cx * v.scale, oy = h / 2 - v.cy * v.scale;
     var sz = selfZ(), range = levelRange();
@@ -1746,7 +1770,11 @@
         }
         // Its spawn group, and how many points share its route ("povalor golem roamers · 5 points").
         var tsg = SH.targetName && S.labels !== 'off' ? targetSpawnGroup(P.target, S.points, S.byId, S.sgs, tGid) : null;
-        if (tsg) halo(tsg.name + ' · ' + tsg.points + (tsg.points === 1 ? ' point' : ' points'), tq[0] + 9, tq[1] + 6, labelFont('small'), CO.target);
+        // ...and how far it is from its spawn point when that is known (spawnDistance).
+        var sdist = SH.targetName && S.labels !== 'off' ? spawnDistance(P.target, pinPt, pinPt ? routeTwins(pinPt, S.points) : null) : null;
+        var subTxt = [tsg ? tsg.name + ' · ' + tsg.points + (tsg.points === 1 ? ' point' : ' points') : '', sdist != null ? sdist + ' from spawn' : '']
+          .filter(Boolean).join(' · ');
+        if (subTxt) halo(subTxt, tq[0] + 9, tq[1] + 6, labelFont('small'), CO.target);
       }
       // You: an arrow by heading.
       if (P.self && SH.you) {
@@ -1928,7 +1956,8 @@
     if (!p) return;
     var s = toScreen(p.x, p.y);
     S.view.cx = s.sx; S.view.cy = s.sy;
-    if (S.followLock && S.p && S.p.self) S.followOff = followOffNow(S.p.self, S.view, S.w, S.h);   // locked: keep following
+    var fs0 = followSubject(Date.now());
+    if (S.followLock && fs0) S.followOff = followOffNow(fs0, S.view, S.w, S.h);   // locked: keep following
     else { S.follow = false; syncFollowBtn(); }
     renderMap();
   }
@@ -1948,16 +1977,20 @@
   function renderAll() { message(); renderSide(); renderMap(); }
 
   // ── controls ──
+  // A click steps Follow me → Follow target (when you have one on the map) → off.
   document.getElementById('followBtn').addEventListener('click', function () {
-    S.follow = !S.follow;
+    var hasTarget = !!(S.p && S.p.target && S.p.target.x != null);
+    var next = nextFollow(S.follow, S.followWho, hasTarget);
+    S.follow = next.follow; S.followWho = next.who;
     if (!S.follow) { S.followLock = false; lsSet('wp-map-follow-lock', 0); }   // off is off, lock included
-    if (S.follow && S.p && S.p.self) { S.followOff = followOffNow(S.p.self, S.view, S.w, S.h); followTo(S.p.self); }
+    var fs1 = S.follow ? followSubject(Date.now()) : null;
+    if (fs1) { S.followOff = followOffNow(fs1, S.view, S.w, S.h); followTo(fs1); }
     syncFollowBtn(); renderMap();
   });
   document.getElementById('followBtn').addEventListener('contextmenu', function (e) {
     e.preventDefault();
     S.followLock = !S.followLock; lsSet('wp-map-follow-lock', S.followLock ? 1 : 0);
-    if (S.followLock && !S.follow) { S.follow = true; if (S.p && S.p.self) S.followOff = followOffNow(S.p.self, S.view, S.w, S.h); }
+    if (S.followLock && !S.follow) { S.follow = true; var fs2 = followSubject(Date.now()); if (fs2) S.followOff = followOffNow(fs2, S.view, S.w, S.h); }
     syncFollowBtn(); renderMap();
   });
   // ⠿ moves the button bar (toolDock / toolBox); where it locks is saved as { edge, t }.
@@ -2008,7 +2041,8 @@
   fitBtn.addEventListener('click', function () {
     S.fit = nextFitMode(S.fit); lsSet('wp-map-fit', S.fit);
     var plan = fitNow(S.fit);
-    if (S.followLock && S.p && S.p.self) S.followOff = followOffNow(S.p.self, S.view, S.w, S.h);   // locked: keep following
+    var fs3 = followSubject(Date.now());
+    if (S.followLock && fs3) S.followOff = followOffNow(fs3, S.view, S.w, S.h);   // locked: keep following
     else S.follow = false;
     syncFollowBtn(); syncFitBtn(plan.note); renderMap();
   });
@@ -2222,7 +2256,8 @@
     if (!d.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
     if (!d.moved) { d.moved = true; document.body.classList.add('dragging'); if (!S.followLock) { S.follow = false; syncFollowBtn(); } }
     S.view.cx = d.cx - dx / S.view.scale; S.view.cy = d.cy - dy / S.view.scale;
-    if (S.follow && S.followLock && S.p && S.p.self) { var fm = drawn('self', S.p.self, Date.now()), fsv = toScreen(fm.x, fm.y); S.followOff = { x: (fsv.sx - S.view.cx) * S.view.scale, y: (fsv.sy - S.view.cy) * S.view.scale }; }
+    var fm = S.follow && S.followLock ? followSubject(Date.now()) : null;
+    if (fm) { var fsv = toScreen(fm.x, fm.y); S.followOff = { x: (fsv.sx - S.view.cx) * S.view.scale, y: (fsv.sy - S.view.cy) * S.view.scale }; }
     renderMap();
   });
   document.addEventListener('mouseup', function () {
