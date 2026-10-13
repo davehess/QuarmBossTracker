@@ -338,6 +338,24 @@
     for (var i = 0; i < npcs.length; i++) best = Math.max(best, ok(npcs[i]));
     return best;
   }
+  // The route to light for your target (the guild lead, 2026-10-13: "this mob is going across the map and not on a path
+  // line. Ideally it would highlight the path line"). Pinned to a point: that point's route. Not pinned (a walker that
+  // left its point before you targeted it): of the routes its name walks, the one with a waypoint nearest the mob.
+  // null = none (a mob that walks no route, or no route data).
+  function routeTarget(t, points, grids, byId) {
+    if (!t || !grids) return null;
+    if (t.point_id != null) { var pp = byId && byId[String(t.point_id)]; return pp && pp.grid != null && grids[pp.grid] ? String(pp.grid) : null; }
+    var k = npcKey(t.name), best = null, bestD = Infinity;
+    if (!k) return null;
+    for (var i = 0; i < points.length; i++) {
+      var p = points[i], g = p.grid != null ? grids[p.grid] : null;
+      if (!g || !Array.isArray(g.pts) || !(p.npcs || []).some(function (n) { return n && npcKey(n.name) === k; })) continue;
+      var d = 0;
+      if (t.x != null) { d = Infinity; for (var j = 0; j < g.pts.length; j++) d = Math.min(d, Math.hypot(g.pts[j][0] - t.x, g.pts[j][1] - t.y)); }
+      if (d < bestD) { bestD = d; best = String(p.grid); }
+    }
+    return best;
+  }
   function upLabel(up) { return String(up.name).replace(/_/g, ' ').replace(/^[#!~]+/, '') + (up.spawn_id != null ? ' #' + up.spawn_id : ''); }
   // `off` (optional): glyphs switched off in ⚙ Map settings, as { '👁': true, … }.
   function pointBadges(p, off) {
@@ -863,8 +881,12 @@
   // Routes of every pather inside the Spawn height range, whether or not its spawn point is on screen: zoomed in, a
   // walker's route crosses the view long after its point has left it (the guild lead, 2026-10-12: "pathing disappears
   // when close enough in zooming"). Cyan, so a route never reads as a wall or a Brewall floor colour; the pather you
-  // have targeted (pinned to its point) is drawn green, on top, at any spawn height.
+  // have targeted (pinned, or walking: routeTarget) is drawn green, on top, at any spawn height.
   var ROUTE_HOT = '#9ecbff';   // the route and targeted-route colours are in ⚙ Map settings (S.cfg.col)
+  // Random wanderers (EQEmu grid types 1 Random10, 2 Random, 5 Rand5LoS, 7 CenterPoint, 8 RandomCenterPoint) walk
+  // straight to a random waypoint, not along the list, so a line through the list in order is a path nobody walks:
+  // those draw as waypoint diamonds only (the guild lead, 2026-10-13, a golem in Plane of Valor crossing the drawn line).
+  var RANDOM_WANDER = { 1: 1, 2: 1, 5: 1, 7: 1, 8: 1 };
   function routeList(points, sz, range, srange, targetGrid) {
     var seen = {}, list = [];
     for (var i = 0; i < points.length; i++) {
@@ -887,6 +909,15 @@
       ctx.globalAlpha = hot || tgt ? 1 : it.near ? 0.75 : 0.25;
       ctx.setLineDash(tgt ? [7, 3] : [4, 4]); ctx.lineWidth = tgt ? 2.2 : hot ? 1.8 : 1.2;
       ctx.strokeStyle = tgt ? S.cfg.col.routeTarget : hot ? ROUTE_HOT : S.cfg.col.route;
+      if (RANDOM_WANDER[Number(g.type)]) {
+        var dr = tgt ? 3.5 : hot ? 3 : 2.2;
+        ctx.setLineDash([]); ctx.fillStyle = ctx.strokeStyle;
+        for (var wi = 0; wi < g.pts.length; wi++) {
+          var wq = wpt(g.pts[wi][0], g.pts[wi][1]);
+          ctx.beginPath(); ctx.moveTo(wq[0], wq[1] - dr); ctx.lineTo(wq[0] + dr, wq[1]); ctx.lineTo(wq[0], wq[1] + dr); ctx.lineTo(wq[0] - dr, wq[1]); ctx.closePath(); ctx.fill();
+        }
+        return;
+      }
       routePath(g, g.pts); ctx.stroke(); ctx.setLineDash([]);
       for (var j = 0; j < g.pts.length; j++) {
         if (!(Number(g.pts[j][3]) > 0)) continue;
@@ -1012,8 +1043,7 @@
       if (!inLevelRange(p0.z, sz, srange)) continue;   // outside the Spawns slider: hidden (dot, route and click target)
       vis.push({ p: p0, x: xy0[0], y: xy0[1] });
     }
-    var tPt = S.p && S.p.target && S.p.target.point_id != null ? S.byId[String(S.p.target.point_id)] : null;
-    if (SH.routes) drawRoutes(sz, range, srange, tPt && tPt.grid != null ? String(tPt.grid) : null);
+    if (SH.routes) drawRoutes(sz, range, srange, routeTarget(S.p && S.p.target, S.points, S.grids, S.byId));
     var fontBoss = labelFont('boss'), fontSmall = labelFont('small');
     var ringOf = { wait: CO.ringWait, window: CO.ringWindow, up: CO.ringUp };
     // Aggro rings (◯), under the dots: each point's aggro radius in game units, scaled with the map. Not drawn while
