@@ -493,9 +493,19 @@
     return { use: 'zone', note: '' };
   }
   // Bounds around you and `list` (anything with x, y), padded so a tight cluster is not zoomed to a pinpoint.
-  var FIT_MIN_PAD = 120;
+  // Stragglers do not stretch it: with you known, anyone further than FIT_NEAR and three times the middle distance of
+  // the others is left out (the guild lead, 2026-10-13: "In plane of valor fit raid or fit group just zooms out to the
+  // whole zone, rather than coming in fairly" - one raider parked at the zone-in is the whole zone).
+  var FIT_MIN_PAD = 120, FIT_NEAR = 400;
+  function nearPack(self, list) {
+    var ok = (list || []).filter(function (m) { return m && m.x != null && m.y != null && isFinite(m.x) && isFinite(m.y); });
+    if (!self || ok.length < 2) return ok;
+    var ds = ok.map(function (m) { return Math.hypot(m.x - self.x, m.y - self.y); }).sort(function (a, b) { return a - b; });
+    var cut = Math.max(FIT_NEAR, 3 * ds[Math.floor(ds.length / 2)]);
+    return ok.filter(function (m) { return Math.hypot(m.x - self.x, m.y - self.y) <= cut; });
+  }
   function membersBounds(self, list) {
-    var all = (self ? [self] : []).concat(list || []).filter(function (m) { return m && isFinite(m.x) && isFinite(m.y) && m.x != null && m.y != null; });
+    var all = (self ? [self] : []).concat(nearPack(self, list)).filter(function (m) { return m && isFinite(m.x) && isFinite(m.y) && m.x != null && m.y != null; });
     if (!all.length) return null;
     var b = { minX: all[0].x, maxX: all[0].x, minY: all[0].y, maxY: all[0].y };
     all.forEach(function (m) { b.minX = Math.min(b.minX, m.x); b.maxX = Math.max(b.maxX, m.x); b.minY = Math.min(b.minY, m.y); b.maxY = Math.max(b.maxY, m.y); });
@@ -583,9 +593,93 @@
       tr.pts.push(c);
     }
     tr.seen = now;
-    while (tr.pts.length > TRAIL_MAX) tr.pts.shift();
+    while (tr.pts.length > TRAIL_MAX) { tr.pts.shift(); if (tr.cls) tr.cls--; }
     return tr;
   }
+  // What the mob is doing at each crumb (the guild lead, 2026-10-13: "The point that the mob leaves its spawn or its
+  // path it should be glowing RED, then when it appears to be walking back towards its home base it should be
+  // redish-orange. Pathing can be yellow"): 'path' within OFF_PATH of its route (or HOME_R of its spawn point when it
+  // walks none), 'away' off it and getting further, 'back' off it and closing in. The crumb where it first stepped off
+  // is marked `leave`. `home` = homeOf(...); null = nothing known, everything reads as pathing.
+  var TRAIL_COL = { path: '#ffd23f', away: '#ff3b30', back: '#ff7a33' };
+  // Random wanderers (EQEmu grid types 1 Random10, 2 Random, 5 Rand5LoS, 7 CenterPoint, 8 RandomCenterPoint) walk
+  // straight to a random waypoint, not along the list, so a line through the list in order is a path nobody walks:
+  // those draw as waypoint diamonds only (the guild lead, 2026-10-13, a golem in Plane of Valor crossing the drawn line).
+  var RANDOM_WANDER = { 1: 1, 2: 1, 5: 1, 7: 1, 8: 1 };
+  var OFF_PATH = 30, HOME_R = 40, HOME_PAIRS_MAX = 40;
+  function segDist(px, py, ax, ay, bx, by) {
+    var dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy, t = l2 > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2)) : 0;
+    return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+  }
+  function homeOf(grid, gid, point) {
+    if (grid && Array.isArray(grid.pts) && grid.pts.length >= 2) return { key: 'g' + gid, pts: grid.pts, rnd: !!RANDOM_WANDER[Number(grid.type)], loop: Number(grid.type) === 0 };
+    if (point) return { key: 'p' + point.id, x: point.x, y: point.y };
+    return null;
+  }
+  // How far a spot is from the mob's home: its spawn point, or the nearest stretch of its route. A random wanderer
+  // can walk straight between any two waypoints, so every pair counts (only the waypoints themselves past
+  // HOME_PAIRS_MAX of them).
+  function homeDist(c, home) {
+    if (!home.pts) return Math.hypot(c.x - home.x, c.y - home.y);
+    var g = home.pts, n = g.length, d = Infinity, i, j;
+    if (home.rnd && n > HOME_PAIRS_MAX) { for (i = 0; i < n; i++) d = Math.min(d, Math.hypot(c.x - g[i][0], c.y - g[i][1])); return d; }
+    for (i = 0; i < n; i++) {
+      if (home.rnd) { for (j = i + 1; j < n; j++) d = Math.min(d, segDist(c.x, c.y, g[i][0], g[i][1], g[j][0], g[j][1])); }
+      else if (i + 1 < n || (home.loop && n > 2)) { var b = g[(i + 1) % n]; d = Math.min(d, segDist(c.x, c.y, g[i][0], g[i][1], b[0], b[1])); }
+    }
+    return d;
+  }
+  // Classify the crumbs not done yet (all again when the home changed). Each crumb is classified once.
+  function classifyTrail(tr, home) {
+    if (!tr) return;
+    var key = home ? home.key : '';
+    if (tr.homeKey !== key) { tr.homeKey = key; tr.cls = 0; }
+    for (var i = tr.cls || 0; i < tr.pts.length; i++) {
+      var c = tr.pts[i], prev = i > 0 && !c.brk ? tr.pts[i - 1] : null;
+      c.leave = false;
+      if (!home) { c.st = 'path'; continue; }
+      c.d = homeDist(c, home);
+      if (c.d <= (home.pts ? OFF_PATH : HOME_R)) c.st = 'path';
+      else if (!prev || prev.st === 'path') { c.st = 'away'; c.leave = !!prev; }
+      else if (prev.st === 'away') c.st = c.d < prev.d - 1 ? 'back' : 'away';
+      else c.st = c.d > prev.d + 3 ? 'away' : 'back';
+    }
+    tr.cls = tr.pts.length;
+  }
+  // Killed mobs' paths (the guild lead, 2026-10-13: "mob's pathing should be faded when it's killed, and it should
+  // disappear after a few kills. It can come back as a faded path for that same spawn point the next time the mob is
+  // targetted from that same spawn point"). A kill = a new death timer on a spawn point (S.kills counts them); the
+  // trail of that point's mob is marked dead at that count, drawn faded until KILLS_FADE more kills, and kept as the
+  // point's last path (S.pointTrails) to show faded under the next mob you target from that point.
+  var KILLS_FADE = 3;
+  function noteKills(p, trails, st) {
+    var ts = (p && p.timers) || [], fresh = [];
+    ts.forEach(function (t) {
+      if (t == null || t.point_id == null || !(t.died_at > 0)) return;
+      var k = t.point_id + '@' + t.died_at;
+      if (st.killSeen[k]) return;
+      st.killSeen[k] = 1;
+      if (st.killPrimed) fresh.push(t);
+    });
+    st.killPrimed = true;   // the timers already there when the zone loaded are not kills you just saw
+    fresh.forEach(function (t) {
+      st.kills++;
+      for (var key in trails) {
+        var tr = trails[key];
+        if (tr && tr.dead == null && tr.pid === String(t.point_id) && tr.pts.length && t.died_at >= tr.pts[0].t - 5000) { tr.dead = st.kills; st.pointTrails[tr.pid] = tr; }
+      }
+    });
+  }
+  function trailShown(tr, kills) { return tr && tr.dead != null && kills - tr.dead < KILLS_FADE; }
+  // Follow me: your offset from the middle in screen pixels, kept when you are on screen (inside a 20 px margin),
+  // else 0 (the middle). See followTo.
+  function followOffNow(me, view, w, h) {
+    if (!me) return { x: 0, y: 0 };
+    var s = toScreen(me.x, me.y), ox = (s.sx - view.cx) * view.scale, oy = (s.sy - view.cy) * view.scale;
+    return Math.abs(ox) <= w / 2 - 20 && Math.abs(oy) <= h / 2 - 20 ? { x: ox, y: oy } : { x: 0, y: 0 };
+  }
+  // The Labels button's saved value ('1' / '0' were saved before 2026-10-13's all / targets / off).
+  function labelMode(v) { return v === '0' || v === 0 || v === false ? 'off' : v === 'targets' || v === 'off' ? v : 'all'; }
   // The crumbs of the trail's current stretch (since its last break).
   function trailStretch(tr) {
     if (!tr || !tr.pts.length) return [];
@@ -704,13 +798,6 @@
     var off = order.indexOf(b) - order.indexOf(mine);
     if (off === 0) return null;
     return off > 0 ? BREWALL_UP[Math.min(off, BREWALL_UP.length) - 1] : BREWALL_DOWN[Math.min(-off, BREWALL_DOWN.length) - 1];
-  }
-  // A colour between two #rrggbb colours, t from 0 (a) to 1 (b).
-  function mixHex(a, b, t) {
-    function ch(h, i) { return parseInt(h.slice(1 + i * 2, 3 + i * 2), 16); }
-    var out = '#';
-    for (var i = 0; i < 3; i++) { var v = Math.round(ch(a, i) + (ch(b, i) - ch(a, i)) * t); out += (v < 16 ? '0' : '') + v.toString(16); }
-    return out;
   }
   // A server-frame point as EverQuest's /loc prints it: Y first, then X.
   function locText(x, y) { return Math.round(y) + ', ' + Math.round(x); }
@@ -900,7 +987,8 @@
     sideMode: 'grow',   // Timers button: 'grow' widens the window by the list (map keeps its size), 'share' shrinks the map
     timerBy: {}, candBy: {}, seenBy: {}, menuPid: null, drag: null, w: 0, h: 0, fitted: false,
     trk: {}, sideAt: 0,
-    local: null, localVer: null, walls: 'auto', labels: true,   // the player's own map files (prepLocal), the version held, Walls: Auto|Ours only, the Labels toggle
+    local: null, localVer: null, walls: 'auto', labels: 'all',   // the player's own map files (prepLocal), the version held, Walls: Auto|Ours only, Labels all|targets|off
+    followOff: { x: 0, y: 0 }, followLock: false, pointTrails: {}, kills: 0, killSeen: {},   // Follow me's screen spot + lock; killed mobs' paths (see noteKills)
     src: 'direct', smooth: 'light', direct: null, sampleAt: 0, sampleSrc: '',   // beta tuning knobs + the latest pushed positions
   };
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -914,7 +1002,8 @@
     S.sideOpen = lsGet('wp-map-side') !== '0';
     if (lsGet('wp-map-side-mode') === 'share') S.sideMode = 'share';
     if (lsGet('wp-map-walls') === 'ours') S.walls = 'ours';
-    if (lsGet('wp-map-labels') === '0') S.labels = false;
+    S.labels = labelMode(lsGet('wp-map-labels'));
+    S.followLock = lsGet('wp-map-follow-lock') === '1';
     if (FIT_MODES.indexOf(fm) >= 0) S.fit = fm;
     if (sr === 'direct' || sr === 'agent') S.src = sr;
     if (Object.prototype.hasOwnProperty.call(SMOOTH_MS, sm)) S.smooth = sm;
@@ -1006,7 +1095,7 @@
       S.sgs = p.spawngroups || null;   // spawn group names by id (points carry `sg`; see targetSpawnGroup)
     }
     if (p.zone !== S.zone) {
-      S.zone = p.zone; S.fitted = false; S.follow = true; S.trk = {}; S.trails = {}; zoned = true;
+      S.zone = p.zone; S.fitted = false; S.follow = true; S.followOff = { x: 0, y: 0 }; S.trk = {}; S.trails = {}; S.pointTrails = {}; S.kills = 0; S.killSeen = {}; S.killPrimed = false; zoned = true;
       if (!p.points) { S.points = []; S.byId = {}; S.map = null; S.prep = null; S.grids = null; S.facs = null; S.sgs = null; }
       S.local = null; S.localVer = null;
       document.getElementById('followBtn').classList.add('on');
@@ -1020,9 +1109,10 @@
     syncWallNote();
     S.timerBy = {}; S.candBy = {}; S.seenBy = {};
     (p.timers || []).forEach(function (t) { S.timerBy[String(t.point_id)] = t; });
+    noteKills(p, S.trails, S);
     (p.seen || []).forEach(function (s) { if (!S.timerBy[String(s.point_id)]) S.seenBy[String(s.point_id)] = s; });   // a timer on the point is newer
     (p.unassigned || []).forEach(function (u) { (u.candidates || []).forEach(function (c) { (S.candBy[String(c)] = S.candBy[String(c)] || []).push(u); }); });
-    if (S.follow && p.self) { var s = toScreen(p.self.x, p.self.y); S.view.cx = s.sx; S.view.cy = s.sy; }
+    if (S.follow && p.self) followTo(p.self);
     else if (!S.follow && !S.fitted && S.points.length) fitNow();
     noteTracks(p, Date.now());
     // The side list is rebuilt from scratch, so at the poll rate it would eat a click between mousedown and mouseup;
@@ -1145,11 +1235,27 @@
   // button can say when it fell back.
   function fitNow(mode) {
     var P = S.p || {}, group = P.group || [], raid = P.raid || [];
+    // In a raid there is no ordinary group: your group is the raiders in your raid group (agent 3.7.150 sends `grp`).
+    if (!group.length && P.my_grp != null) group = raid.filter(function (r) { return r.grp != null && String(r.grp) === String(P.my_grp); });
     var plan = resolveFit(mode || 'zone', group.length, raid.length);
     var b = plan.use === 'zone' ? zoneBounds() : membersBounds(P.self, plan.use === 'raid' ? group.concat(raid) : group);
     if (!b || !S.w) return plan;
     S.view = fitView(b, S.w, S.h); S.fitted = true;
     return plan;
+  }
+  // Follow me keeps you where you are on screen and moves the map under you, instead of snapping you to the middle
+  // (the guild lead, 2026-10-13: "Follow me doesn't need to center the map on the player, it could just make it move in
+  // place with the player locked where they feel like it. right clicking the follow me can lock it so that it will
+  // always follow the player even if they pan"). S.followOff is your offset from the middle in screen pixels, so a
+  // zoom keeps you on the same spot; with the lock (right-click), dragging the map moves that spot instead of
+  // switching Follow off.
+  function followTo(me) { var s = toScreen(me.x, me.y), o = S.followOff || { x: 0, y: 0 }, v = S.view; v.cx = s.sx - o.x / v.scale; v.cy = s.sy - o.y / v.scale; }
+  function syncFollowBtn() {
+    var b = document.getElementById('followBtn');
+    b.classList.toggle('on', !!S.follow);
+    b.textContent = 'Follow me' + (S.followLock ? ' 🔒' : '');
+    b.title = S.followLock ? 'Locked: the map always moves with you, even while you drag it (dragging moves where you sit on screen). Right-click to unlock.'
+      : 'Keep the map moving with you, wherever you sit on screen. Dragging the map turns it off. Right-click to lock it on.';
   }
   function wpt(x, y) {   // server-frame point -> canvas pixels
     var s = toScreen(x, y), v = S.view;
@@ -1169,10 +1275,7 @@
   // when close enough in zooming"). Cyan, so a route never reads as a wall or a Brewall floor colour; the pather you
   // have targeted (pinned, or walking: routeTarget) is drawn green, on top, at any spawn height.
   var ROUTE_HOT = '#9ecbff';   // the route and targeted-route colours are in ⚙ Map settings (S.cfg.col)
-  // Random wanderers (EQEmu grid types 1 Random10, 2 Random, 5 Rand5LoS, 7 CenterPoint, 8 RandomCenterPoint) walk
-  // straight to a random waypoint, not along the list, so a line through the list in order is a path nobody walks:
-  // those draw as waypoint diamonds only (the guild lead, 2026-10-13, a golem in Plane of Valor crossing the drawn line).
-  var RANDOM_WANDER = { 1: 1, 2: 1, 5: 1, 7: 1, 8: 1 };
+  // (Random wanderers draw as waypoint diamonds only: RANDOM_WANDER, with the pure helpers.)
   function routeList(points, sz, range, srange, targetGrid) {
     var seen = {}, list = [];
     for (var i = 0; i < points.length; i++) {
@@ -1186,9 +1289,10 @@
     }
     return list.sort(function (a, b) { return (a.gid === targetGrid) - (b.gid === targetGrid); });   // targeted last = on top
   }
-  function drawRoutes(sz, range, srange, targetGrid) {
+  function drawRoutes(sz, range, srange, targetGrid, onlyTarget) {
     if (!S.grids) return;
     var list = routeList(S.points, sz, range, srange, targetGrid);
+    if (onlyTarget) list = list.filter(function (it) { return it.gid === targetGrid; });
     ctx.lineCap = 'butt';
     list.forEach(function (it) {
       var g = S.grids[it.gid], hot = S.hoverGrid === it.gid, tgt = it.gid === targetGrid;
@@ -1245,13 +1349,16 @@
       ctx.strokeStyle = hexA(c, 0.5); ctx.stroke(); ctx.setLineDash([]);
     }
   }
-  // The trail (trailStep): a gradient from the spawn-point colour at its oldest end (where we first saw it; on a full
-  // loop, the furthest point back) to the target colour at the mob, the waypoint legs it was seen walking (dashed, in
-  // the targeted-route colour), and an arrowhead the way its last few breadcrumbs went.
-  function drawTrail(tr, head, now, colour, originColour, grid, legColour) {
+  // The trail (trailStep): each stretch in the colour of what the mob was doing (classifyTrail: yellow pathing, red off
+  // its home, reddish-orange walking back), a glowing red spot where it stepped off, the waypoint legs it was seen
+  // walking (dashed, in the targeted-route colour), and an arrowhead the way its last few breadcrumbs went.
+  // head = where the mob is drawn now (null for a killed mob's path: its last crumb); alpha < 1 = a faded path.
+  function drawTrail(tr, head, grid, legColour, alpha) {
     if (!tr || tr.pts.length < 2) return;
+    var A = alpha == null ? 1 : alpha, last = tr.pts[tr.pts.length - 1];
+    if (!head) head = wpt(last.x, last.y);
     if (grid && tr.legs && tr.legs.length) {
-      ctx.setLineDash([6, 4]); ctx.lineWidth = 1.8; ctx.strokeStyle = legColour; ctx.globalAlpha = 1;
+      ctx.setLineDash([6, 4]); ctx.lineWidth = 1.8; ctx.strokeStyle = legColour; ctx.globalAlpha = A;
       for (var l = 0; l < tr.legs.length; l++) {
         var pa = grid.pts[tr.legs[l].prev], pb = grid.pts[tr.legs[l].next];
         if (!pa || !pb) continue;
@@ -1262,24 +1369,31 @@
       ctx.setLineDash([]);
     }
     // The whole trail stays readable end to end (the guild lead, 2026-10-13: "We shouldn't have the path trail off to
-    // nothing, i want to see it"): a dark casing under every stretch first, then the colour at full strength, so its
-    // spawn-colour end never melts into a light floor.
-    var n = tr.pts.length - 1, segs = [];
+    // nothing, i want to see it"): a dark casing under every stretch first, then the colour at full strength, so a light
+    // floor never swallows any of it.
+    var n = tr.pts.length - 1, segs = [], leaves = [];
     for (var i = 1; i < tr.pts.length; i++) {
+      if (tr.pts[i].leave) leaves.push(wpt(tr.pts[i].x, tr.pts[i].y));
       if (tr.pts[i].brk) continue;   // a gap: never bridged with a straight line
-      segs.push([wpt(tr.pts[i - 1].x, tr.pts[i - 1].y), i === n ? head : wpt(tr.pts[i].x, tr.pts[i].y), i / n]);
+      segs.push([wpt(tr.pts[i - 1].x, tr.pts[i - 1].y), i === n ? head : wpt(tr.pts[i].x, tr.pts[i].y), TRAIL_COL[tr.pts[i].st] || TRAIL_COL.path]);
     }
-    ctx.lineCap = 'round'; ctx.globalAlpha = 1; ctx.lineWidth = 4.5; ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.lineCap = 'round'; ctx.globalAlpha = A; ctx.lineWidth = 4.5; ctx.strokeStyle = 'rgba(0,0,0,0.55)';
     ctx.beginPath();
     segs.forEach(function (s) { ctx.moveTo(s[0][0], s[0][1]); ctx.lineTo(s[1][0], s[1][1]); });
     ctx.stroke();
     ctx.lineWidth = 2.4;
-    segs.forEach(function (s) { ctx.beginPath(); ctx.moveTo(s[0][0], s[0][1]); ctx.lineTo(s[1][0], s[1][1]); ctx.strokeStyle = mixHex(originColour, colour, s[2]); ctx.stroke(); });
+    segs.forEach(function (s) { ctx.beginPath(); ctx.moveTo(s[0][0], s[0][1]); ctx.lineTo(s[1][0], s[1][1]); ctx.strokeStyle = s[2]; ctx.stroke(); });
+    leaves.forEach(function (q) {   // where it left its home: a red glow
+      var gl = ctx.createRadialGradient(q[0], q[1], 0, q[0], q[1], 11);
+      gl.addColorStop(0, 'rgba(255,59,48,0.95)'); gl.addColorStop(0.45, 'rgba(255,59,48,0.45)'); gl.addColorStop(1, 'rgba(255,59,48,0)');
+      ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(q[0], q[1], 11, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = TRAIL_COL.away; ctx.beginPath(); ctx.arc(q[0], q[1], 3, 0, 6.2832); ctx.fill();
+    });
     var from = wpt(tr.pts[Math.max(0, tr.pts.length - 4)].x, tr.pts[Math.max(0, tr.pts.length - 4)].y);
     var dx = head[0] - from[0], dy = head[1] - from[1], len = Math.hypot(dx, dy);
-    if (len >= 6) {
+    if (len >= 6 && tr.dead == null) {
       var ux = dx / len, uy = dy / len, tip = [head[0] + ux * 16, head[1] + uy * 16];
-      ctx.globalAlpha = 0.9; ctx.fillStyle = colour; ctx.beginPath();
+      ctx.globalAlpha = 0.9 * A; ctx.fillStyle = TRAIL_COL[last.st] || TRAIL_COL.path; ctx.beginPath();
       ctx.moveTo(tip[0], tip[1]);
       ctx.lineTo(tip[0] - ux * 8 - uy * 5, tip[1] - uy * 8 + ux * 5);
       ctx.lineTo(tip[0] - ux * 8 + uy * 5, tip[1] - uy * 8 - ux * 5);
@@ -1312,16 +1426,22 @@
     }
     return c;
   }
+  // S.labels: 'all' | 'targets' (only your target's name) | 'off' (no names at all; the mob circles still draw) — the
+  // guild lead, 2026-10-13: "Labels on/off should be labels all/targets/off and show the mob circles but not the labels
+  // if turned off".
+  var LABEL_MODES = ['all', 'targets', 'off'];
+  var LABEL_TEXT = { all: 'Labels: all', targets: 'Labels: targets', off: 'Labels: off' };
   function drawLabels(boss, sz, range, w, h) {
-    if (!S.labels) boss = boss.filter(function (c) { return c.tier < 0; });   // Labels off still names the mob that is up
-    if (!boss.length && !S.labels) return;
+    if (S.labels === 'off') return;
+    if (S.labels === 'targets') boss = boss.filter(function (c) { return c.tgt; });
+    if (!boss.length && S.labels !== 'all') return;
     var P = S.p, ref;
     if (P && P.self) { var sd = drawn('self', P.self, Date.now()); ref = { x: sd.x, y: sd.y }; }
     else ref = { x: -S.view.cx, y: -S.view.cy };
     var dist = function (x, y) { return Math.hypot(x - ref.x, y - ref.y); };
     var cands = boss.map(function (c) { c.pri = c.tier * 1e7 + dist(c.wx, c.wy); return c; });
     var rooms = [];
-    var ll = S.local && S.labels && S.cfg.show.rooms ? S.local.labels : [];
+    var ll = S.local && S.labels === 'all' && S.cfg.show.rooms ? S.local.labels : [];
     var roomFont = labelFont('room'), roomCol = S.cfg.col.room;
     for (var i = 0; i < ll.length; i++) {
       var q = wpt(ll[i][0], ll[i][1]);
@@ -1350,7 +1470,7 @@
     ctx.clearRect(0, 0, S.w, S.h);
     var rt = Date.now();
     // Follow me: the view rides the DRAWN position of you, so the map glides with you instead of stepping per poll.
-    if (S.follow && S.p && S.p.self && !S.drag) { var fs = drawn('self', S.p.self, rt), fv = toScreen(fs.x, fs.y); S.view.cx = fv.sx; S.view.cy = fv.sy; }
+    if (S.follow && S.p && S.p.self && !S.drag) followTo(drawn('self', S.p.self, rt));
     var v = S.view, w = S.w, h = S.h, now = nowMs();
     var ox = w / 2 - v.cx * v.scale, oy = h / 2 - v.cy * v.scale;
     var sz = selfZ(), range = levelRange();
@@ -1406,7 +1526,9 @@
       if (!inLevelRange(p0.z, sz, srange) && String(p0.id) !== tgtPid) continue;   // outside the Spawns slider: hidden (dot, route and click target)
       vis.push({ p: p0, x: xy0[0], y: xy0[1] });
     }
-    if (SH.routes) drawRoutes(sz, range, srange, routeTarget(S.p && S.p.target, S.points, S.grids, S.byId));
+    // Spawn points hidden (•) hides the route markers with them, all but your target's own route (the guild lead,
+    // 2026-10-13: "Hiding spawns should also hide the pathing markers").
+    if (SH.routes) drawRoutes(sz, range, srange, routeTarget(S.p && S.p.target, S.points, S.grids, S.byId), !SH.dots);
     var fontBoss = labelFont('boss'), fontSmall = labelFont('small');
     // ⚙ → Mob names in con colour: a name's colour from its level against yours (null = the normal label colour).
     var myLvl = S.p && S.p.me ? S.p.me.level : null;
@@ -1453,7 +1575,8 @@
       }
       // Named and raid-target names are drawn after the loop, at any zoom, through the label placer (bosses first).
       // A known mob's name + spawn id goes ahead of everything (tier -1).
-      if (up && SH.upLabel) bossC.push({ text: upLabel(up), x: px + r + 3, y: py + r + 3, z: p.z, wx: p.x, wy: p.y, col: conCol(un) || CO.upLabel, tier: -1, align: 'left', font: fontBoss });
+      if (up && SH.upLabel) bossC.push({ text: upLabel(up), x: px + r + 3, y: py + r + 3, z: p.z, wx: p.x, wy: p.y, col: conCol(un) || CO.upLabel, tier: -1, align: 'left', font: fontBoss,
+        tgt: !!(S.p && S.p.target && (String(S.p.target.point_id) === String(p.id) || (up.spawn_id != null && up.spawn_id === S.p.target.id))) });
       else if (kind.named && SH.bosses) bossC.push({ text: bestName(p), x: px + r + 3, y: py + r + 3, z: p.z, wx: p.x, wy: p.y, col: conCol(namedNpc(p)) || (kind.raid ? CO.raidLabel : CO.bossLabel), tier: kind.raid ? 0 : 1, align: 'left', font: fontBoss });
     }
     ctx.globalAlpha = 1;
@@ -1471,6 +1594,8 @@
       };
       if (SH.raid) dotsOf(P.raid, CO.raid, 3, 'r:', SH.raidNames);
       if (SH.group) dotsOf(P.group, CO.group, 4, 'g:', SH.groupNames);
+      // Killed mobs' paths, faded, until KILLS_FADE more kills (noteKills).
+      if (SH.trail) for (var dk in S.trails) { if (trailShown(S.trails[dk], S.kills) && !(P.target && dk === targetKey(P.target))) drawTrail(S.trails[dk], null, null, null, 0.3); }
       // Target: a ring and a dotted line from you.
       if (P.target && P.target.x != null) {
         var td = drawn(targetKey(P.target), P.target, rt), tq = wpt(td.x, td.y);
@@ -1487,10 +1612,18 @@
         if (!S.trails[tKey]) { var tKeys = Object.keys(S.trails); if (tKeys.length >= TRAILS_MAX) delete S.trails[tKeys[0]]; }
         S.trails[tKey] = tTrail;
         var tGid = routeTarget(P.target, S.points, S.grids, S.byId), tGrid = tGid && S.grids ? S.grids[tGid] : null;
+        var hGrid = tGrid, hPt = P.target.point_id != null ? S.byId[String(P.target.point_id)] : null;
         if (!(tGrid && RANDOM_WANDER[Number(tGrid.type)])) tGrid = null;
         var walked = tGrid && tTrail ? noteWanderLeg(tTrail, tGrid.pts) : null;
         if (walked) postLeg(tGid, walked);
-        if (SH.trail) drawTrail(tTrail, tq, rt, CO.target, CO.dot, tGrid, CO.routeTarget);
+        if (tTrail && P.target.point_id != null) tTrail.pid = String(P.target.point_id);
+        classifyTrail(tTrail, homeOf(hGrid, tGid, hPt));
+        // Dead on screen already (its corpse, or 0 HP): faded now, before the death timer arrives.
+        if (tTrail && tTrail.dead == null && (P.target.hp_pct === 0 || /'s corpse$/i.test(String(P.target.name)))) { tTrail.dead = S.kills; if (tTrail.pid) S.pointTrails[tTrail.pid] = tTrail; }
+        // The last path seen from this spawn point, faded under the mob you have now.
+        var arch = tTrail && tTrail.pid ? S.pointTrails[tTrail.pid] : null;
+        if (SH.trail && arch && arch !== tTrail) drawTrail(arch, null, null, null, 0.3);
+        if (SH.trail) drawTrail(tTrail, tq, tGrid, CO.routeTarget, tTrail && tTrail.dead != null ? 0.35 : 1);
         // The leg it is on now, drawn whole and bright from the waypoint it left to the one ahead, with how long it
         // has to go at its pace (the guild lead, 2026-10-13: "I expected to see the whole extrapolated dashed line and
         // the pace of the mob going towards that point").
@@ -1535,15 +1668,15 @@
           }
         }
         // (with its spawn id, the way a pinned one is labelled on its point: a roamer not pinned yet still says which it is)
-        var nameTxt = SH.targetName && P.target.point_id == null ? String(P.target.name).replace(/_/g, ' ').replace(/^#/, '') + (P.target.id != null ? ' #' + P.target.id : '') : '';
-        var totTxt = tot ? '→ ' + tot.name + (tm && tm.who === 'you' ? ' (you)' : '') : '';
+        var nameTxt = SH.targetName && S.labels !== 'off' && P.target.point_id == null ? String(P.target.name).replace(/_/g, ' ').replace(/^#/, '') + (P.target.id != null ? ' #' + P.target.id : '') : '';
+        var totTxt = tot && S.labels !== 'off' ? '→ ' + tot.name + (tm && tm.who === 'you' ? ' (you)' : '') : '';
         if (nameTxt || totTxt) {
           var lf = labelFont('boss'), lx = tq[0] + 9, ly = tq[1] - 10;
           if (nameTxt) { halo(nameTxt, lx, ly, lf, conCol(targetNpc(P.target, S.points, S.byId)) || CO.target); lx += measure(nameTxt + ' ', lf); }
           if (totTxt) halo(totTxt, lx, ly, lf, CO.tot);
         }
         // Its spawn group, and how many points share its route ("povalor golem roamers · 5 points").
-        var tsg = SH.targetName ? targetSpawnGroup(P.target, S.points, S.byId, S.sgs, tGid) : null;
+        var tsg = SH.targetName && S.labels !== 'off' ? targetSpawnGroup(P.target, S.points, S.byId, S.sgs, tGid) : null;
         if (tsg) halo(tsg.name + ' · ' + tsg.points + (tsg.points === 1 ? ' point' : ' points'), tq[0] + 9, tq[1] + 6, labelFont('small'), CO.target);
       }
       // You: an arrow by heading.
@@ -1725,8 +1858,9 @@
   function centreOn(p) {
     if (!p) return;
     var s = toScreen(p.x, p.y);
-    S.follow = false; document.getElementById('followBtn').classList.remove('on');
     S.view.cx = s.sx; S.view.cy = s.sy;
+    if (S.followLock && S.p && S.p.self) S.followOff = followOffNow(S.p.self, S.view, S.w, S.h);   // locked: keep following
+    else { S.follow = false; syncFollowBtn(); }
     renderMap();
   }
 
@@ -1746,9 +1880,16 @@
 
   // ── controls ──
   document.getElementById('followBtn').addEventListener('click', function () {
-    S.follow = !S.follow; this.classList.toggle('on', S.follow);
-    if (S.follow && S.p && S.p.self) { var s = toScreen(S.p.self.x, S.p.self.y); S.view.cx = s.sx; S.view.cy = s.sy; }
-    renderMap();
+    S.follow = !S.follow;
+    if (!S.follow) { S.followLock = false; lsSet('wp-map-follow-lock', 0); }   // off is off, lock included
+    if (S.follow && S.p && S.p.self) { S.followOff = followOffNow(S.p.self, S.view, S.w, S.h); followTo(S.p.self); }
+    syncFollowBtn(); renderMap();
+  });
+  document.getElementById('followBtn').addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+    S.followLock = !S.followLock; lsSet('wp-map-follow-lock', S.followLock ? 1 : 0);
+    if (S.followLock && !S.follow) { S.follow = true; if (S.p && S.p.self) S.followOff = followOffNow(S.p.self, S.view, S.w, S.h); }
+    syncFollowBtn(); renderMap();
   });
   // One button cycles Fit zone -> Fit group -> Fit raid; the label is the mode just applied. Fitting turns Follow off.
   function syncFitBtn(note) {
@@ -1757,8 +1898,10 @@
   }
   fitBtn.addEventListener('click', function () {
     S.fit = nextFitMode(S.fit); lsSet('wp-map-fit', S.fit);
-    S.follow = false; document.getElementById('followBtn').classList.remove('on');
-    syncFitBtn(fitNow(S.fit).note); renderMap();
+    var plan = fitNow(S.fit);
+    if (S.followLock && S.p && S.p.self) S.followOff = followOffNow(S.p.self, S.view, S.w, S.h);   // locked: keep following
+    else S.follow = false;
+    syncFollowBtn(); syncFitBtn(plan.note); renderMap();
   });
   document.getElementById('panBtn').addEventListener('click', function () {
     if (S.panDragged) { S.panDragged = false; return; }   // that was a drag from the button, not a click
@@ -1788,12 +1931,12 @@
   function syncWallNote() {
     var note = (S.p && S.p.zone) ? wallsNote(localWalls() ? S.local : null) : '';
     wallSrcEl.textContent = note;
-    labelsBtn.textContent = S.labels ? 'Labels: on' : 'Labels: off';
-    labelsBtn.classList.toggle('on', S.labels);
+    labelsBtn.textContent = LABEL_TEXT[S.labels];
+    labelsBtn.classList.toggle('on', S.labels !== 'off');
     labelsBtn.title = 'Names on the map: boss names and room names. Switch off when it gets busy.' + (note ? ' (' + note + ')' : '');
   }
   labelsBtn.addEventListener('click', function () {
-    S.labels = !S.labels; lsSet('wp-map-labels', S.labels ? 1 : 0); syncWallNote(); renderMap();
+    S.labels = LABEL_MODES[(LABEL_MODES.indexOf(S.labels) + 1) % LABEL_MODES.length]; lsSet('wp-map-labels', S.labels); syncWallNote(); renderMap();
   });
   wallsSel.addEventListener('change', function () {
     S.walls = wallsSel.value === 'ours' ? 'ours' : 'auto'; lsSet('wp-map-walls', S.walls); syncWallNote();
@@ -1953,7 +2096,7 @@
     renderMap();
   });
   Object.keys(SMOOTH_LABEL).forEach(function (k) { var o = document.createElement('option'); o.value = k; o.textContent = SMOOTH_LABEL[k]; smoothSel.appendChild(o); });
-  syncLevels(); syncFitBtn(''); syncKnobs();
+  syncLevels(); syncFitBtn(''); syncKnobs(); syncFollowBtn();
   window.mimic && window.mimic.onMapPos && window.mimic.onMapPos(onDirect);
 
   stage.addEventListener('mousedown', function (e) {
@@ -1968,8 +2111,9 @@
     if (d.btn && !(e.buttons & 1)) { S.drag = null; document.body.classList.remove('dragging'); return; }
     var dx = e.clientX - d.x, dy = e.clientY - d.y;
     if (!d.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
-    if (!d.moved) { d.moved = true; document.body.classList.add('dragging'); S.follow = false; document.getElementById('followBtn').classList.remove('on'); }
+    if (!d.moved) { d.moved = true; document.body.classList.add('dragging'); if (!S.followLock) { S.follow = false; syncFollowBtn(); } }
     S.view.cx = d.cx - dx / S.view.scale; S.view.cy = d.cy - dy / S.view.scale;
+    if (S.follow && S.followLock && S.p && S.p.self) { var fm = drawn('self', S.p.self, Date.now()), fsv = toScreen(fm.x, fm.y); S.followOff = { x: (fsv.sx - S.view.cx) * S.view.scale, y: (fsv.sy - S.view.cy) * S.view.scale }; }
     renderMap();
   });
   document.addEventListener('mouseup', function () {

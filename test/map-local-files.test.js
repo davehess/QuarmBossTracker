@@ -621,22 +621,33 @@ describe('the overlay (apps/mimic/map.html) drawing', () => {
     expect(r.text).not.toContain('Lord Nagafen');
     expect(r.text).toContain('Brackwyn the Pale');
   });
-  it('the Labels button hides all names, shows its state, and is remembered', async () => {
+  it('the Labels button cycles all / targets / off, shows its state, and is remembered (2026-10-13)', async () => {
+    // the guild lead: "Labels on/off should be labels all/targets/off and show the mob circles but not the labels if
+    // turned off"
     const a = await boot({ store: wide() });
-    expect(a.all.labelsBtn.textContent).toBe('Labels: on');
+    expect(a.all.labelsBtn.textContent).toBe('Labels: all');
+    expect(a.redraw().text).toContain('Echo Hall');
+    click(a.all.labelsBtn);
+    expect(a.all.labelsBtn.textContent).toBe('Labels: targets');
+    expect(a.store['wp-map-labels']).toBe('targets');
+    const t = a.redraw();
+    expect(t.text).not.toContain('Echo Hall');                // no room names
+    expect(t.text).not.toContain('Lord Nagafen');             // no boss names: only your target's
     click(a.all.labelsBtn);
     expect(a.all.labelsBtn.textContent).toBe('Labels: off');
-    expect(a.store['wp-map-labels']).toBe('0');
+    expect(a.store['wp-map-labels']).toBe('off');
     const r = a.redraw();
     expect(r.text).not.toContain('Echo Hall');
     expect(r.text).not.toContain('Lord Nagafen');
     const again = await boot({ store: a.store });
-    expect(again.S.labels).toBe(false);
+    expect(again.S.labels).toBe('off');
     expect(again.all.labelsBtn.textContent).toBe('Labels: off');
     expect(again.redraw().text).not.toContain('Echo Hall');
     click(again.all.labelsBtn);
-    expect(again.store['wp-map-labels']).toBe('1');
+    expect(again.store['wp-map-labels']).toBe('all');
     expect(again.redraw().text).toContain('Echo Hall');
+    const old = await boot({ store: Object.assign(wide(), { 'wp-map-labels': '0' }) });   // saved before the three-way
+    expect(old.S.labels).toBe('off');
   });
   it('asks the agent for the local map only when it holds none: have_local rides the poll once it has one', async () => {
     const a = await boot({ store: wide() });

@@ -505,7 +505,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, trailStep, wanderLeg, noteWanderLeg, mixHex, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH, legArrow, LEG_ARROW_AT };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, trailStep, wanderLeg, noteWanderLeg, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH, legArrow, LEG_ARROW_AT, classifyTrail, homeOf, homeDist, noteKills, trailShown, KILLS_FADE, TRAIL_COL, nearPack, followOffNow, labelMode };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -599,7 +599,7 @@ describe('the overlay (apps/mimic/map.html)', () => {
       expect(H.routeTarget({ name: 'A Crystalline Golem', x: 0, y: 0 }, points, null, byId)).toBeNull();
       expect(H.routeTarget(null, points, grids, byId)).toBeNull();
       const js = stripJs(MAP_HTML);
-      expect(js).toMatch(/if \(SH\.routes\) drawRoutes\(sz, range, srange, routeTarget\(S\.p && S\.p\.target, S\.points, S\.grids, S\.byId\)\);/);
+      expect(js).toMatch(/if \(SH\.routes\) drawRoutes\(sz, range, srange, routeTarget\(S\.p && S\.p\.target, S\.points, S\.grids, S\.byId\), !SH\.dots\);/);
       // random wanderers draw their waypoints only, never a line through the list in order
       expect(js).toMatch(/var RANDOM_WANDER = \{ 1: 1, 2: 1, 5: 1, 7: 1, 8: 1 \};/);
       const draw = js.slice(js.indexOf('function drawRoutes('), js.indexOf('function halo('));
@@ -936,7 +936,7 @@ describe('pather routes', () => {
   });
   it('the overlay draws the routes dashed in their own colour, ticks the pauses, fades by level, lights the hovered one, badges walkers', () => {
     const js = stripJs(MAP_HTML);
-    expect(js).toMatch(/function drawRoutes\(sz, range, srange, targetGrid\)/);
+    expect(js).toMatch(/function drawRoutes\(sz, range, srange, targetGrid, onlyTarget\)/);
     expect(js).toMatch(/var list = routeList\(S\.points, sz, range, srange, targetGrid\);/);   // every point, not the visible ones
     expect(js).toMatch(/ctx\.setLineDash\(tgt \? \[7, 3\] : \[4, 4\]\);/);
     expect(js).toMatch(/ctx\.strokeStyle = tgt \? S\.cfg\.col\.routeTarget : hot \? ROUTE_HOT : S\.cfg\.col\.route;/);
@@ -1036,7 +1036,7 @@ describe('pather routes', () => {
       expect(js).toMatch(/if \(!animating \|\| rt - lastHits >= HITS_MS\) \{ lastHits = rt; layoutHits\(SH\.dots \? vis : \[\]\); \}/);
       expect(Number(/\bHITS_MS = (\d+)/.exec(js)[1])).toBeGreaterThanOrEqual(200);
       // Follow me rides the drawn spot of you, and the flashing ring still has its own timer
-      expect(js).toMatch(/if \(S\.follow && S\.p && S\.p\.self && !S\.drag\) \{ var fs = drawn\('self'/);
+      expect(js).toMatch(/if \(S\.follow && S\.p && S\.p\.self && !S\.drag\) followTo\(drawn\('self'/);
       expect(js).toMatch(/flashTimer = setInterval\(/);
     });
   });
@@ -1228,7 +1228,7 @@ describe('pather routes', () => {
     const js = stripJs(MAP_HTML);
     expect(js).toMatch(/if \(S\.panDragged\) \{ S\.panDragged = false; return; \}/);   // a drag is not a click
     expect(js).toMatch(/if \(d\.btn && !\(e\.buttons & 1\)\)/);                          // a lost mouseup ends it
-    expect(js).toMatch(/if \(SH\.trail\) drawTrail\(tTrail, tq, rt, CO\.target, CO\.dot, tGrid, CO\.routeTarget\);/);
+    expect(js).toMatch(/if \(SH\.trail\) drawTrail\(tTrail, tq, tGrid, CO\.routeTarget, /);
   });
   it('a roamer\'s leg is confirmed when it reaches the far waypoint; a tab-away gap breaks the trail; its pace; its spawn group (2026-10-13)', () => {
     // the guild lead: "Tabbing between two pathing mobs, i expected to see the whole extrapolated dashed line and the
@@ -1273,6 +1273,71 @@ describe('pather routes', () => {
     expect(js).toMatch(/var learned = S\.p && S\.p\.legs \? S\.p\.legs\[it\.gid\] : null/);
     expect(js).toMatch(/if \(tr\.pts\[i\]\.brk\) continue;/);
   });
+  it('the trail says what the mob was doing: yellow pathing, red off its home with a glow where it left, reddish-orange walking back (2026-10-13)', () => {
+    // the guild lead: "The point that the mob leaves its spawn or its path it should be glowing RED, then when it appears
+    // to be walking back towards its home base it should be redish-orange. Pathing can be yellow."
+    const grid = { type: 3, pts: [[0, 0], [200, 0]] };
+    const home = H.homeOf(grid, 7, null);
+    expect(home).toMatchObject({ key: 'g7', rnd: false });
+    const tr = { pts: [[50, 0], [100, 5], [110, 60], [120, 120], [115, 80], [105, 20], [150, 2]].map(([x, y], i) => ({ x, y, t: i })), legs: [] };
+    H.classifyTrail(tr, home);
+    expect(tr.pts.map(c => c.st)).toEqual(['path', 'path', 'away', 'away', 'back', 'path', 'path']);
+    expect(tr.pts.map(c => !!c.leave)).toEqual([false, false, true, false, false, false, false]);   // where it stepped off
+    expect(H.TRAIL_COL).toMatchObject({ path: '#ffd23f', away: '#ff3b30', back: '#ff7a33' });
+    // A random wanderer may walk between ANY two waypoints: a spot on the 0→2 diagonal is on its path.
+    const rnd = H.homeOf({ type: 8, pts: [[0, 0], [100, 0], [100, 100]] }, 9, null);
+    expect(H.homeDist({ x: 50, y: 50 }, rnd)).toBeCloseTo(0, 5);
+    expect(H.homeDist({ x: 50, y: 50 }, H.homeOf({ type: 3, pts: [[0, 0], [100, 0], [100, 100]] }, 9, null))).toBe(50);   // in order: not
+    // No route: its spawn point is home.
+    const ph = H.homeOf(null, null, { id: 4, x: 0, y: 0 });
+    const st = { pts: [{ x: 0, y: 10, t: 0 }, { x: 0, y: 80, t: 1 }], legs: [] };
+    H.classifyTrail(st, ph);
+    expect(st.pts.map(c => c.st)).toEqual(['path', 'away']);
+    H.classifyTrail(st, null);                                                        // home lost: everything reads as pathing
+    expect(st.pts.map(c => c.st)).toEqual(['path', 'path']);
+  });
+  it('a killed mob\'s path fades, drops out after a few more kills, and comes back faded for the next mob from its spawn point (2026-10-13)', () => {
+    // the guild lead: "mob's pathing should be faded when it's killed, and it should disappear after a few kills. It
+    // can come back as a faded path for that same spawn point the next time the mob is targetted from that same spawn point"
+    const st = { kills: 0, killSeen: {}, killPrimed: false, pointTrails: {} };
+    const trA = { pid: '11', pts: [{ x: 0, y: 0, t: 1000 }, { x: 10, y: 0, t: 2000 }], legs: [] };
+    const trails = { 't:5': trA };
+    H.noteKills({ timers: [{ point_id: 99, died_at: 500 }] }, trails, st);            // already there when the zone loaded
+    expect(st.kills).toBe(0);
+    H.noteKills({ timers: [{ point_id: 99, died_at: 500 }, { point_id: 11, died_at: 3000 }] }, trails, st);
+    expect(st.kills).toBe(1);
+    expect(trA.dead).toBe(1);
+    expect(st.pointTrails['11']).toBe(trA);                                           // kept for its spawn point
+    expect(H.trailShown(trA, st.kills)).toBe(true);
+    H.noteKills({ timers: [{ point_id: 11, died_at: 3000 }] }, trails, st);           // the same death again: not a new kill
+    expect(st.kills).toBe(1);
+    for (let k = 0; k < H.KILLS_FADE; k++) H.noteKills({ timers: [{ point_id: 50 + k, died_at: 4000 + k }] }, trails, st);
+    expect(H.trailShown(trA, st.kills)).toBe(false);                                  // gone after a few more kills
+    expect(st.pointTrails['11']).toBe(trA);                                           // ...but still there for that point
+    const js = stripJs(MAP_HTML);
+    expect(js).toMatch(/if \(SH\.trail && arch && arch !== tTrail\) drawTrail\(arch, null, null, null, 0\.3\);/);
+    expect(js).toMatch(/drawTrail\(tTrail, tq, tGrid, CO\.routeTarget, tTrail && tTrail\.dead != null \? 0\.35 : 1\);/);
+  });
+  it('Fit leaves stragglers out; Follow keeps your spot on screen; spawns hidden hide the routes; labels all / targets / off (2026-10-13)', () => {
+    // the guild lead: "In plane of valor fit raid or fit group just zooms out to the whole zone"; "Follow me doesn't
+    // need to center the map on the player ... right clicking the follow me can lock it"; "Hiding spawns should also
+    // hide the pathing markers"
+    const me = { x: 0, y: 0 };
+    const pack = [{ x: 30, y: 0 }, { x: 0, y: 40 }, { x: -20, y: 10 }, { x: 5000, y: 5000 }];
+    expect(H.nearPack(me, pack)).toHaveLength(3);                                     // the one at the zone-in is left out
+    expect(H.membersBounds(me, pack).maxX).toBeLessThan(1000);
+    expect(H.nearPack(me, [{ x: 300, y: 0 }, { x: 0, y: 350 }])).toHaveLength(2);    // within FIT_NEAR: kept
+    const view = { cx: 0, cy: 0, scale: 1 }, s = H.toScreen(10, 20);
+    view.cx = s.sx - 50; view.cy = s.sy + 30;                                         // you sit 50 px right, 30 px up
+    expect(H.followOffNow({ x: 10, y: 20 }, view, 400, 300)).toEqual({ x: 50, y: -30 });
+    expect(H.followOffNow({ x: 10, y: 20 }, { cx: s.sx - 1000, cy: s.sy, scale: 1 }, 400, 300)).toEqual({ x: 0, y: 0 });   // off screen: the middle
+    expect(H.labelMode('1')).toBe('all'); expect(H.labelMode('0')).toBe('off'); expect(H.labelMode('targets')).toBe('targets');
+    const js = stripJs(MAP_HTML);
+    expect(js).toMatch(/drawRoutes\(sz, range, srange, routeTarget\(S\.p && S\.p\.target, S\.points, S\.grids, S\.byId\), !SH\.dots\);/);
+    expect(js).toMatch(/if \(onlyTarget\) list = list\.filter\(function \(it\) \{ return it\.gid === targetGrid; \}\);/);
+    expect(js).toMatch(/addEventListener\('contextmenu', function \(e\) \{\s*e\.preventDefault\(\);\s*S\.followLock = !S\.followLock;/);
+    expect(js).toMatch(/if \(!group\.length && P\.my_grp != null\) group = raid\.filter/);
+  });
   it('the walked path keeps the waypoint legs it was seen on, fades from spawn colour to target colour; con colours; Brewall layers; your target\'s point at any height (2026-10-13)', () => {
     // the guild lead: "extrapolate the previous point and the next point from the 'random path' ... a gradient along
     // all of the lines to the origin ... set the names of these mobs to conn color ... Default colors should probably
@@ -1285,7 +1350,6 @@ describe('pather routes', () => {
     const tr = { pts: [{ x: 10, y: 0 }, { x: 30, y: 0 }, { x: 50, y: 0 }], legs: [] };
     expect(H.noteWanderLeg(tr, g)).toBeNull(); expect(H.noteWanderLeg(tr, g)).toBeNull();   // not there yet
     expect(tr.legs).toEqual([{ prev: 0, next: 1 }]);                                       // the same leg is kept once
-    expect(H.mixHex('#000000', '#ffffff', 0.5)).toBe('#808080');
     expect(H.levelCon(60, 60)).toBe('white');
     expect(H.levelCon(60, 62)).toBe('yellow');
     expect(H.levelCon(60, 63)).toBe('red');
