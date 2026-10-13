@@ -9584,3 +9584,14 @@ Harmony, Hide/Sneak for non-rogues).
   Next step: the guild lead's Resource Monitor check (Network → eqgame.exe → remote port, open world vs instance).
 - **New idea, not built:** pull grouping — a graph of neighbouring spawn points so that when several mobs come at once
   their likely points are suggested on the Map and linked from Extended Target (options in the reply).
+
+### 249. Map: player targets named, and who your target is on (2026-10-13, agent 3.7.138 beta `90b10749`)
+
+- **Ask** (the guild lead): *"pvp targeting should work as well, where it shows who were targeting and who they're
+  targeting from /assistbar ToT from zeal"*.
+- **Shipped:** the map payload's target carries Zeal's target type and its `target_of_target` (the field the HUD
+  already reads). The Map labels the target ring "Name → Their target" (name only when the target is not already
+  pinned to a spawn point) and draws a dashed arrow from the target to its target when that is you, your group or your
+  raid; anyone else gets the name only — their position is not on the pipe. A player target is never pinned to a spawn
+  point (pins stay NPC-only). Two ⚙ switches (Target name, Target's target) and a colour in each scheme.
+- **Limit, unchanged:** the target's own position still arrives only within 250 units on release Zeal (§243).
