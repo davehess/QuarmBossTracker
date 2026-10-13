@@ -9872,7 +9872,9 @@ Harmony, Hide/Sneak for non-rogues).
 
 ### 268. A pet keeps its buffs across a zone, and after Suspended Minion 2 (2026-10-13, agent 3.7.154 beta `c7599927`)
 
-- **The report** (a member, relayed by the guild lead): their pet loses its buffs on our tracker when it zones.
+- **The report** (FB-77, a member): *"Pets lose their buffs on their pet overlay (and timers) when zoning."* Its log:
+  Visions of Grandeur on an enchanter animation, a zone, then `/pet health` still listing the buff. Closed by the
+  beta test commit `4de9185e` (`Fixes FB-77`).
 - **The rule** (the guild lead): *"when you suspend with your second level of the AA it keeps its buffs. When you
   suspend with 1 it removes the buffs and you get back a fresh pet with no timers."*
 - **Cause:** `_reconcilePetIdentity` dropped a pet's buffs whenever its Zeal spawn id changed (added for same-named
