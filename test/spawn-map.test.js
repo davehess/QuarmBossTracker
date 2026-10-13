@@ -505,7 +505,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, trailStep, wanderLeg, noteWanderLeg, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH, legArrow, LEG_ARROW_AT, classifyTrail, homeOf, homeDist, noteKills, trailShown, KILLS_FADE, TRAIL_COL, nearPack, followOffNow, labelMode, routeTwins, headingRay, toolDock, toolBox, nextFollow, spawnDistance, GATE_RANGE };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, trailStep, wanderLeg, noteWanderLeg, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH, legArrow, LEG_ARROW_AT, classifyTrail, homeOf, homeDist, noteKills, trailShown, KILLS_FADE, TRAIL_COL, nearPack, followOffNow, labelMode, routeTwins, headingRay, toolDock, toolBox, nextFollow, spawnDistance, GATE_RANGE, inkStyle, INK_DEFAULT };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -569,6 +569,22 @@ describe('the overlay (apps/mimic/map.html)', () => {
   });
 
   describe('⚙ Map settings', () => {
+    // Line strength (the guild lead, 2026-10-13: lines and spawns hard to see over the game with no background).
+    it('Line strength: 1 is exactly the old look, the default is Strong, and saves are clamped', () => {
+      expect(H.inkStyle(1)).toEqual({ line: 1, dot: 1, casing: 0, ringFill: 0.07, ringLine: 0.6, ringW: 1, faint: 0.25 });
+      const s = H.inkStyle(H.INK_DEFAULT);
+      expect(H.INK_DEFAULT).toBe(1.75);
+      expect(s.line).toBe(1.75);
+      expect(s.casing).toBeGreaterThan(0);                    // walls and routes get a dark edge
+      expect(s.dot).toBeGreaterThan(1);
+      expect(s.ringLine).toBeGreaterThan(0.6);
+      expect(H.inkStyle(9)).toEqual(H.inkStyle(3));           // out of range clamps
+      expect(H.inkStyle(3).ringLine).toBe(1);
+      expect(H.mapCfgDefaults().ink).toBe(1.75);
+      expect(H.mergeMapCfg({ ink: 2.6 }).ink).toBe(2.5);      // quarter steps
+      expect(H.mergeMapCfg({ ink: 7 }).ink).toBe(1.75);       // a bad save falls back to the default
+      expect(H.mergeMapCfg({ ink: 1 }).ink).toBe(1);          // Normal is kept
+    });
     it('defaults: everything shown except the aggro rings, no icon off, and the Default scheme is exactly the colours the map drew before', () => {
       const d = H.mapCfgDefaults();
       expect(Object.entries(d.show).filter(([k]) => k !== 'aggro' && k !== 'conNames').every(([, v]) => v)).toBe(true);
@@ -942,7 +958,7 @@ describe('pather routes', () => {
     expect(js).toMatch(/ctx\.strokeStyle = tgt \? S\.cfg\.col\.routeTarget : hot \? ROUTE_HOT : S\.cfg\.col\.route;/);
     expect(js).toMatch(/if \(SH\.routes\) drawRoutes\(/);
     expect(js).toMatch(/if \(!\(Number\(g\.pts\[j\]\[3\]\) > 0\)\) continue;/);
-    expect(js).toMatch(/ctx\.globalAlpha = hot \|\| tgt \? 1 : targetGrid \? \(it\.near \? 0\.3 : 0\.12\) : it\.near \? 0\.75 : 0\.25;/);
+    expect(js).toMatch(/ctx\.globalAlpha = hot \|\| tgt \? 1 : Math\.min\(1, \(targetGrid \? \(it\.near \? 0\.3 : 0\.12\) : it\.near \? 0\.75 : 0\.25\) \* \(0\.6 \+ 0\.4 \* RK\)\);/);
     expect(js).toMatch(/S\.hoverGrid = g; renderMap\(true\)/);
     expect(js).toMatch(/if \(p\.grid != null && SH\.pather\) halo\('↻'/);
     expect(js).toMatch(/S\.grids = p\.grids \|\| null;/);
@@ -1270,7 +1286,7 @@ describe('pather routes', () => {
     expect(js).toMatch(/if \(Number\(lg\[3\]\) > 0\) fillArrow\(legArrow\(lqa, lqb, LEG_ARROW_AT/);
     expect(js).toMatch(/if \(Number\(lg\[4\]\) > 0\) fillArrow\(legArrow\(lqb, lqa, LEG_ARROW_AT/);
     expect(js).toMatch(/if \(walked\) postLeg\(tGid, walked\);/);
-    expect(js).toMatch(/ctx\.globalAlpha = hot \|\| tgt \? 1 : targetGrid \? \(it\.near \? 0\.3 : 0\.12\) : it\.near \? 0\.75 : 0\.25;/);
+    expect(js).toMatch(/ctx\.globalAlpha = hot \|\| tgt \? 1 : Math\.min\(1, \(targetGrid \? \(it\.near \? 0\.3 : 0\.12\) : it\.near \? 0\.75 : 0\.25\) \* \(0\.6 \+ 0\.4 \* RK\)\);/);
     expect(js).toMatch(/var learned = S\.p && S\.p\.legs \? S\.p\.legs\[it\.gid\] : null/);
     expect(js).toMatch(/if \(tr\.pts\[i\]\.brk\) continue;/);
   });
@@ -2056,11 +2072,11 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
       expect(js).toMatch(/if \(S\.cfg\.bgA == null\) root\.removeProperty\('--map-bg-a'\);/);   // off = follow Mimic's slider
     });
     it('brighter, thicker walls in the level range; the rest at 0.35; out-of-range dots at 0.4; bigger lighter dots with an outline', () => {
-      expect(js).toMatch(/ctx\.strokeStyle = hexA\(layerCol \|\| \(oneWall \? CO\.wall : CO\.oursWall\), bright \? 0\.95 : 0\.35\);/);
-      expect(js).toMatch(/ctx\.lineWidth = bright \? 1\.6 : 1;/);
+      expect(js).toMatch(/var oursStyle = hexA\(layerCol \|\| \(oneWall \? CO\.wall : CO\.oursWall\), bright \? 0\.95 : Math\.max\(0\.35, I\.faint\)\);/);
+      expect(js).toMatch(/strokeWall\(oursStyle, \(bright \? 1\.6 : 1\) \* I\.line, bright \? I\.casing : I\.casing \/ 2\);/);
       expect(js).toMatch(/var bright = S\.prep\.bands\.length <= 1 \|\| inLevelRange\(S\.prep\.bands\[b\], sz, range\);/);
       expect(js).toMatch(/ctx\.globalAlpha = inLevelRange\(p\.z, sz, range\) \? 1 : 0\.4;/);
-      expect(js).toMatch(/var r = kind\.raid \? 6\.5 : kind\.named \? 5\.5 : 4\.2;/);
+      expect(js).toMatch(/var r = \(kind\.raid \? 6\.5 : kind\.named \? 5\.5 : 4\.2\) \* I\.dot;/);
       expect(js).toMatch(/: CO\.dot; ctx\.fill\(\);/);
       expect(js).toMatch(/strokeStyle = '#0d1117'; ctx\.stroke\(\);   \/\/ a dark outline on every dot/);
     });
