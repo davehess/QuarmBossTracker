@@ -35,6 +35,7 @@ own screenshots; treat each row as "shipped, needs an in-game look" until it is 
 | Match patterns to spawn points and spawn groups (PQDI's spawngroup pages as the model) | Each point carries its spawn group; the target shows "povalor golem roamers · 5 points" | bot 3.1.255 `86fd8bc2`, agent 3.7.148 `ba58a0d8` |
 | *"Hiding spawns should also hide the pathing markers"* | • off hides the route markers too, except your target's own route | agent 3.7.150 |
 | Spawn points quick button next to ◯ | • toolbar button = ⚙ → Spawn points | §260 |
+| *"timers were updated for the named in here to 3 hours not 6"* (Bastion of Thunder) | The spawn mirror still says 6 h; a point whose mob is on the boss board (`lockout: false`) now takes the board's hours. A wrong spawn time is fixed on the board, not the map | §267, bot 3.1.256 `be3aeb4e` |
 
 ### Aggro and faction
 | Ask | What shipped | Where |
