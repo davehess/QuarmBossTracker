@@ -275,8 +275,8 @@ const _WP_MINI_CSS =
   'body.wp-mini{--wp-mini-bar-h:4px}' +
   // Chrome fades rather than hides: a mini overlay is still draggable and
   // closable, and a control that vanishes reads as a control that is gone.
-  'body.wp-mini #move-btn,body.wp-mini #hide-btn{opacity:0.12;transition:opacity 0.12s ease}' +
-  'body.wp-mini:hover #move-btn,body.wp-mini:hover #hide-btn{opacity:1}' +
+  'body.wp-mini #move-btn,body.wp-mini #hide-btn,body.wp-mini #wp-grip{opacity:0.12;transition:opacity 0.12s ease}' +
+  'body.wp-mini:hover #move-btn,body.wp-mini:hover #hide-btn,body.wp-mini:hover #wp-grip{opacity:1}' +
   'body.wp-mini .wp-mini-hide{display:none !important}' +
   'body.wp-mini .wp-mini-bar{height:var(--wp-mini-bar-h) !important;border-radius:2px}' +
   'body.wp-mini .wp-mini-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}' +
@@ -304,7 +304,7 @@ ipcRenderer.on('wp-mini', function (_e, p) { _wpApplyMini(p && p.mini); });
 // One rule for every overlay, keyed on those ids rather than on each page's
 // own container (the DPS HUD and trigger alerts have no #wrap).
 const _WP_OPACITY_CSS =
-  'body>:not(#move-btn):not(#hide-btn):not(#clear-btn):not(#drag-controls):not(#setupbar)' +
+  'body>:not(#move-btn):not(#hide-btn):not(#clear-btn):not(#drag-controls):not(#setupbar):not(#wp-grip)' +
   ':not(#wpResizeMenu):not(#mimic-conn-banner):not(#mimic-update-banner):not(#wp-cvd-defs):not(script):not(style)' +
   '{opacity:var(--wp-content-alpha,1)}';
 ipcRenderer.on('content-alpha', function (_e, v) {
@@ -316,6 +316,39 @@ ipcRenderer.on('content-alpha', function (_e, v) {
     if (s && document.activeElement !== s) s.value = String(a);
     if (t && document.activeElement !== s) t.textContent = Math.round(a * 100) + '%';
   } catch (e) {}
+});
+
+// ── ◢ Resize corner (the guild lead, 2026-10-13: "Map needs a resize drag corner at the bottom right, as do all
+// of the windows, to resize without having to setup") ──────────────────────────────────────────────────────────
+// Every overlay window with the ✥ chrome gets one, locked or not; main's _startWindowResize does the sizing (the
+// same 60 fps cursor session as a ✥ drag). data-wp-interact arms the click-through window under it. Not on a
+// docked pane (the dock is one window), the Canvas (screen-sized; its panels have their own) or the HUD (the
+// ring sizes its own window around the screen centre).
+document.addEventListener('DOMContentLoaded', function () {
+  try {
+    if (WP_IS_DOCKED || !document.getElementById('move-btn') || _wpDockKey() === 'me') return;
+    const st = document.createElement('style');
+    st.textContent = '#wp-grip{position:fixed;right:0;bottom:0;width:14px;height:14px;z-index:2147483000;cursor:nwse-resize;'
+      + 'opacity:0.45;background:linear-gradient(135deg,transparent 0 55%,rgba(230,237,243,.85) 55% 62%,transparent 62% 72%,'
+      + 'rgba(230,237,243,.85) 72% 79%,transparent 79% 89%,rgba(230,237,243,.85) 89% 96%,transparent 96%)}'
+      + '#wp-grip:hover{opacity:1}';
+    document.head.appendChild(st);
+    const g = document.createElement('div');
+    g.id = 'wp-grip';
+    g.setAttribute('data-wp-interact', '');
+    g.title = 'Drag to resize';
+    g.addEventListener('mousedown', function (ev) {
+      if (ev.button !== 0) return;
+      ev.preventDefault(); ev.stopPropagation();
+      ipcRenderer.invoke('overlay-resize-start');
+      const end = function () {
+        document.removeEventListener('mouseup', end, true);
+        ipcRenderer.invoke('overlay-drag-end');
+      };
+      document.addEventListener('mouseup', end, true);
+    });
+    document.body.appendChild(g);
+  } catch (e) { void e; }
 });
 
 // Mute (Settings → "Mute Mimic", cfg.quietMode): main broadcasts one boolean
