@@ -485,7 +485,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -549,9 +549,10 @@ describe('the overlay (apps/mimic/map.html)', () => {
   });
 
   describe('⚙ Map settings', () => {
-    it('defaults: everything shown, no icon off, and the Default scheme is exactly the colours the map drew before', () => {
+    it('defaults: everything shown except the aggro rings, no icon off, and the Default scheme is exactly the colours the map drew before', () => {
       const d = H.mapCfgDefaults();
-      expect(Object.values(d.show).every(Boolean)).toBe(true);
+      expect(Object.entries(d.show).filter(([k]) => k !== 'aggro').every(([, v]) => v)).toBe(true);
+      expect(d.show.aggro).toBe(false);                                         // off until the ◯ button turns them on
       expect(Object.keys(d.show).length).toBe(H.CFG_SHOW.length);
       expect(d.glyphsOff).toEqual({});
       expect(d).toMatchObject({ scheme: 'default', wallMode: 'map', bgA: null, text: 1 });
@@ -562,6 +563,18 @@ describe('the overlay (apps/mimic/map.html)', () => {
       expect(H.hexA(d.col.oursWall, 0.95)).toBe('rgba(214,230,255,0.95)');   // the old wall colour, byte for byte
       // every scheme sets every colour row the panel shows, plus the background
       for (const s of Object.values(H.MAP_SCHEMES)) for (const [k] of H.CFG_COLS.concat([['bg']])) expect(s[k]).toMatch(/^#[0-9a-f]{6}$/);
+    });
+    it('aggro rings: the up mob\'s own radius, else the widest that can spawn there; sentinels and gaps ignored (2026-10-13)', () => {
+      // the guild lead: "add aggro rings onto the map, make a circle icon on the main screen"
+      const p = { npcs: [{ name: 'a_skeleton', aggro: 40 }, { name: 'Lord_Rax', aggro: 90 }, { name: 'a_bat', aggro: 10000 }, { name: 'x', aggro: null }] };
+      expect(H.aggroRadius(p, null)).toBe(90);                                  // cautious: the widest real one
+      expect(H.aggroRadius(p, p.npcs[0])).toBe(40);                             // the mob that is up there now
+      expect(H.aggroRadius(p, p.npcs[2])).toBe(90);                             // its 10000 is a sentinel: fall back
+      expect(H.aggroRadius({ npcs: [{ aggro: null }] }, null)).toBe(0);         // an old zone cache: no radius, no ring
+      const js = stripJs(MAP_HTML);
+      expect(js).toMatch(/if \(at && timerState\(at, now\) === 'wait'\) continue;/);   // nothing up there: no ring
+      expect(js).toMatch(/if \(!\(arPx >= 4\)\) continue;/);
+      expect(MAP_HTML).toMatch(/<button class="tb" id="aggroBtn" type="button"[^>]*>◯<\/button>/);
     });
     it('a saved object is merged key by key; bad values and unknown keys are dropped', () => {
       const c = H.mergeMapCfg({ show: { walls: false, routes: 'no', bogus: false }, glyphsOff: { '👁': true, 'x': true },
@@ -947,9 +960,9 @@ describe('pather routes', () => {
     expect(base.all.cfg.hidden).toBe(false);
     expect(base.all.cfgBtn.classList.contains('on')).toBe(true);
     const showRows = base.all.cfgShow.children, glyphRows = base.all.cfgGlyphs.children, colRows = base.all.cfgCols.children;
-    expect(showRows).toHaveLength(21);
+    expect(showRows).toHaveLength(22);
     expect(glyphRows).toHaveLength(9);
-    expect(colRows).toHaveLength(24);
+    expect(colRows).toHaveLength(25);
     const walls = showRows[0].children[0];                                     // Walls
     walls.checked = false; walls.listeners.change.forEach(f => f());
     const eye = glyphRows[0].children[0];                                      // 👁
@@ -969,6 +982,19 @@ describe('pather routes', () => {
     expect(again.S.cfg.col.route).toBe('#39c5cf');
     again.all.cfgClose.listeners.click.forEach(f => f());
     expect(again.all.cfg.hidden).toBe(true);
+  });
+  it('◯ on the toolbar turns the aggro rings on and off, saved, the same switch as ⚙ → Aggro rings', async () => {
+    const base = await bootOverlay();
+    expect(base.S.cfg.show.aggro).toBe(false);
+    expect(base.all.aggroBtn.classList.contains('on')).toBe(false);
+    base.all.aggroBtn.listeners.click.forEach(f => f());
+    expect(base.S.cfg.show.aggro).toBe(true);
+    expect(base.all.aggroBtn.classList.contains('on')).toBe(true);
+    expect(JSON.parse(base.store['wp-map-cfg']).show.aggro).toBe(true);
+    const again = await bootOverlay({ store: base.store });
+    expect(again.all.aggroBtn.classList.contains('on')).toBe(true);           // remembered
+    again.all.aggroBtn.listeners.click.forEach(f => f());
+    expect(again.S.cfg.show.aggro).toBe(false);
   });
   it('the Levels and Spawn height sliders live in the settings panel; Labels stays a toolbar button', () => {
     const tools = sliceBlock(MAP_HTML, '<div id="tools">', '</div>');
