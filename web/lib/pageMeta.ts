@@ -82,6 +82,7 @@ const STATIC_META: Record<string, PageMeta> = {
   '/me/tells':     { title: 'My tells', description: 'Your inbound /tell history. Private to you.' },
   '/me/ui':        { title: 'UI Studio', description: 'Your characters’ macros and backed-up UI files, with edits staged for the machine that runs them. Private to you.' },
   '/mimic/mini':   { title: 'Mimic mini mode', description: 'Every overlay in a version that takes less room: see the three renditions, vote for the one you would raid with, and say why.' },
+  '/mimic/map':    { title: '[beta] The Map — Mimic 2.9, the Cartography Release', description: 'How to use the Mimic Map, from opening it to reading a roamer’s path and respawn timers, and exactly what it remembers on your computer.' },
   '/mimic/beta':   { title: 'Download Mimic beta', description: 'The Mimic beta channel: fixes land here first, for testers who want them early.' },
   '/mimic/linux':  { title: 'Download Mimic for Linux', description: 'Mimic for Linux and the Steam Deck (experimental): the Wolf Pack desktop overlay and log sync.' },
   '/auth/signin':  { title: 'Sign in', description: 'Sign in to WolfPack.quest with your Discord account.' },
