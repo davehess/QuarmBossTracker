@@ -1146,6 +1146,9 @@ export default async function MePage({ searchParams }: { searchParams?: Promise<
             <Link href="/me/inventory" className="text-blue hover:underline text-sm whitespace-nowrap">
               🎒 Account inventory →
             </Link>
+            <Link href="/me/accounts" className="text-blue hover:underline text-sm whitespace-nowrap">
+              🗂 Game accounts →
+            </Link>
             <Link href="/me/tells" className="text-blue hover:underline text-sm whitespace-nowrap">
               📬 Inbound /tell →
             </Link>

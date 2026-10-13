@@ -49,6 +49,7 @@ const STATIC_META: Record<string, PageMeta> = {
   '/rolls':        { title: 'Roll Nights', description: 'Off-night NBG loot rolls by raid night — every session, the winning roll, who actually looted each drop, and Hot Dice callouts.' },
   '/me':           { title: 'My Stats', description: 'Your characters, tells, buffs, and personal history — private to you.' },
   '/me/parses':    { title: '[beta] My parses', description: 'Your own parses on a chart over a day, a week or a month, with your average for each raid night.' },
+  '/me/accounts':  { title: '[beta] Game accounts', description: 'Which of your characters are on which EverQuest game account. Private to you.' },
   '/loadouts':     { title: 'Tank Loadouts', description: 'Bandolier sets across the raid — who runs what weapons and procs.' },
   '/planner':      { title: 'Loadout Planner', description: 'Theory-craft weapon setups from the item database with hate-per-minute estimates.' },
   '/bards':        { title: 'Bard Melodies', description: 'Live bard song rotations across the raid.' },

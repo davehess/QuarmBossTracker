@@ -37,6 +37,17 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'game-accounts-2026-10-13',
+    title: 'Game accounts',
+    version: 'Web 1.8.145',
+    date: '2026-10-13',
+    headline: 'Sort your characters into the game accounts they live on, so a shared-bank item counts once.',
+    features: [
+      { name: 'Game accounts [beta]', blurb: 'On your page, under Game accounts: drag each character onto Account 1 to 10 (or use Move to… on a phone). Name an account if you like. Eight characters to an account. Moving a character keeps a note of where it came from, for a #charactertransfer.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'hate-own-kills-2026-10-10',
     title: 'Our Hate kills are ours',
     version: 'Bot 3.1.242 · Web 1.8.142',
