@@ -37,6 +37,27 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'mimic-2-9-0-2026-10-13',
+    title: 'Mimic 2.9 — the Cartography Release',
+    version: 'Mimic 2.9.0 · Agent 3.7.156 · Web 1.8.146',
+    date: '2026-10-13',
+    headline: 'The Map: the zone from above, every spawn point and its respawn timer, and the paths roamers really walk. How to use it: wolfpack.quest/mimic/map.',
+    features: [
+      { name: 'The Map', blurb: 'A new overlay. You, your group and your raid move on it live, on your own EverQuest map files. Every spot a mob can spawn, who spawns there, and a respawn timer after a kill.' },
+      { name: 'Aggro rings', blurb: 'Coloured by whether that mob would come for you (your race, class, deity, illusion and con), with a dashed ring for how far it runs to help a friend.' },
+      { name: 'Roamer paths', blurb: 'The Map learns the paths roamers walk and keeps them. Your target’s path lights up: yellow while it paths, red where it left its spot, orange walking back, with arrows and a dashed line ahead.' },
+      { name: 'Follow me / Follow target', blurb: 'The map moves with you (or your target) and keeps you where you put yourself; right-click to lock it. Shows your target’s distance from its spawn, and when it is far enough to gate at low health.' },
+      { name: 'What it remembers', blurb: 'Learned paths and respawn timers are kept on your computer between sessions; respawn timers are shared with your raid or group. Your own map files never leave your computer.' },
+      { name: 'Buffs that wait for you', blurb: 'Your own and your pet’s buffs pause while you are logged out, and are kept for you if you change computers. Pets keep their buffs when you zone.' },
+      { name: 'Mez and charm on the timers', blurb: 'Every mez and charm you cast, bard songs included, at any length. Songs from /melody show on Target Info, so pacify songs do too.' },
+      { name: 'Overlays', blurb: 'Brighten under the mouse and fade back, like EverQuest windows. A resize corner on every overlay. Stuck tooltips close after 3 seconds. Other apps can cover them unless you set one to stay on top.' },
+    ],
+    fixes: [
+      'Pets lost their buffs on the Pet overlay and timers when you zoned. They keep them now, and after Suspended Minion rank 2.',
+      'Charming the same mob again after a break no longer wipes what is on it.',
+    ],
+  },
+  {
     key: 'game-accounts-2026-10-13',
     title: 'Game accounts',
     version: 'Web 1.8.145',
