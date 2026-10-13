@@ -9889,3 +9889,23 @@ Harmony, Hide/Sneak for non-rogues).
   reconciles. No suspend log line is used: we have not captured Quarm's wording, so none is invented.
 - **Confirm in game:** the agent log prints `[pet] … kept its buffs` on the new path, and `dropped the previous pet's
   buffs` on the old one.
+
+### 269. A charm land keeps what is on the mob; an NPC's cast is timed at its level (2026-10-13, agent 3.7.155 beta `2bb282ec`)
+
+- **The call** (the guild lead): *"Charm landing should not clear buffs and debuffs if we have the timers and know the
+  focus effects and the AAs of the caster. If it is done via an NPC we treat it as that level mob's cast timer."*
+- **Shipped:**
+  - Re-charming the same spawn after a break keeps the pet's buffs (the charm tracker remembers the spawn id).
+    Another spawn of the same name, or no id, still starts clean: a same-named mob cannot be ruled out.
+  - A pre-charm debuff proven by spawn id to be on this mob carries over at any age while its timer runs. One proven
+    on another spawn never does. An unproven one keeps the 60 s window (the razorfiend case in the code comment).
+  - A landing an NPC provably cast (it began casting inside 15 s and the spell is in its own list, one known level)
+    is timed at that NPC's level instead of the era cap of 65.
+- **Not shipped, and why: the caster's duration focus and AAs.** We apply neither today. Item focus is computable:
+  `eqemu_items.focus_effect` → the Extended Enhancement line (SPA 128, +15%, with a max spell level), read off the
+  caster's Quarmy-exported gear. AA duration is not: `eqemu_aa_effects` has one row per AA and no rank, so Spell
+  Casting Reinforcement's per-rank values cannot be read from our data, and its effect id collides with another AA.
+  Both only stretch BENEFICIAL spells, so pre-charm debuffs are unaffected; buffs cast on the pet after the charm are
+  where it shows (they read as falling off early). Next step needs a verified per-rank table (EQMacEmu source or a
+  measured Zeal remaining-ticks reading, which the agent already records per character in `buffDurationFactorFor`).
+- **Test:** `test/charm-keeps-buffs.test.js`.
