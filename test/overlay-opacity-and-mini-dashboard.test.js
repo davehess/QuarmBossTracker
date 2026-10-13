@@ -89,7 +89,7 @@ describe('dashboard: mini mode on the Overlays page', () => {
     // Option C (2026-09-29): the switch and the 📌 sit in the row's controls under On screen now.
     const code = stripJs(dash);
     expect(code).toContain("? '<button type=\"button\" class=\"wp-ov-mini\" data-mini=\"' + miniKey + '\">…</button>'");
-    expect(code).toContain("+ '<span class=\"wp-ovctl\">' + dockCell + miniCell + '</span>'");
+    expect(code).toContain("+ '<span class=\"wp-ovctl\">' + topCell + dockCell + miniCell + '</span>'");   // 🔝 Stay on top leads (2026-10-13)
   });
 
   it('the switch, the pin and Minimize ALL drive Mimic\'s own mini internals', () => {
@@ -110,7 +110,7 @@ describe('the HUD ring is not dockable', () => {
     const catalog = stripJs(sliceBlock(mainRaw, 'const _DOCK_CATALOG = [', '\n];'));
     expect(catalog).not.toMatch(/key: 'me'/);
     expect(catalog).toMatch(/key: 'mobinfo'/);                        // the others stay
-    expect(stripJs(dash)).toContain("var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas' || key === 'map')");
+    expect(stripJs(dash)).toContain("var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas' || key === 'map' || key === 'maptimers')");
   });
   it('a HUD that was docked gets its own window back — as undocking it would have', () => {
     // loadConfig reads through _readConfigRaw (the torn-file fallback, 2026-09-26), so both ride along.

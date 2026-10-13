@@ -129,7 +129,7 @@ button.wp-key:hover { border-color:var(--blue); }
 @media (max-width: 1200px) { .wp-ovsplit { grid-template-columns:minmax(0, 1fr); } }
 .wp-ovlist, .wp-ovdrawer { background:var(--bg); border:1px solid var(--border); border-radius:6px; min-width:0; }
 /* Fixed key and control columns, so the keys line up down the list. */
-.wp-ovli { display:grid; grid-template-columns:12px minmax(0, 1fr) minmax(104px, auto) 166px 40px; gap:8px; align-items:center; padding:5px 10px; border-top:1px solid var(--border); font-size:12px; }
+.wp-ovli { display:grid; grid-template-columns:12px minmax(0, 1fr) minmax(104px, auto) 204px 40px; gap:8px; align-items:center; padding:5px 10px; border-top:1px solid var(--border); font-size:12px; }
 .wp-ovli.hd { border-top:0; background:#0b0f15; padding-top:4px; padding-bottom:4px; }
 .wp-ovli[hidden], .wp-ovcard[hidden] { display:none; }
 .wp-ovli .sub { display:block; color:var(--dim); font-size:10.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -173,6 +173,11 @@ button.wp-key:hover { border-color:var(--blue); }
 .wp-ov-pin { background:#21262d; border:1px solid var(--border); border-radius:5px; padding:2px 5px; font-size:11px; cursor:pointer; opacity:0.35; filter:grayscale(1); }
 .wp-ov-pin:hover { opacity:0.8; }
 .wp-ov-pin.on { opacity:1; filter:none; border-color:#d29922; }
+/* 🔝 Stay on top: dim until chosen, like the 📌. Shown only where overlays follow EverQuest's z-order (Windows, option on). */
+.wp-ov-top { background:#21262d; border:1px solid var(--border); border-radius:5px; padding:2px 5px; font-size:11px; cursor:pointer; opacity:0.35; filter:grayscale(1); }
+.wp-ov-top[hidden] { display:none; }
+.wp-ov-top:hover { opacity:0.8; }
+.wp-ov-top.on { opacity:1; filter:none; border-color:#56d364; }
 .nav-quest { margin-left:auto; padding:5px 12px; border:1px solid var(--border); border-radius:6px; background:var(--panel); color:var(--blue); text-decoration:none; font-size:12px; font-family:inherit; }
 .nav-quest:hover { background:#30363d; border-color:var(--blue) }
 .section { display:none } .section.active { display:block }
@@ -4597,6 +4602,7 @@ var WP_OVERLAY_ROWS = [
   ['popraid', 'PoP raids',           'Planes of Power / PoTime encounter slideshow: callouts, guide stats + live drop table, raid-wide shared objective checkboxes, EQProgression diagrams + phase videos, and a flag button that reports guide-vs-Quarm anomalies to the officers.'],
   ['me',      'HUD',                 'Your own character: HP, mana or endurance, the server tick and your swing timer, your cooldowns (combat ability, Mend, Feign Death, Taunt, Lay on Hands, Harm Touch, discipline, and Boastful Bellow once a bard uses it), your target\'s name on top of its bar with who it is hitting above that, its level, class, resists and slow state curved inside, F/R badges if it flurries or rampages, a mark at 97% if it summons and at the last 10% if it enrages (gone once the enrage ends), damage in beside your health and out on the right, hugging the ring: the mob\'s running total, then older rounds as one number each and the newest rounds hit by hit, procs in purple (older rounds slide into the total; after the fight it stays, dim, until the next), your damage shield the same way with its per-hit button (red DS OFF with the time left while Mark of the Plague Lords or another shield-cancelling debuff is on you), a ✗ on a failed Feign Death, and your class numbers. Pick Box or the HUD ring in its corner; ⚙ chooses which parts the HUD shows, their text size and how thick the lines are, saved per character. Comes up by itself when you are blinded. Tip: add /pipe fd to your Feign Death hotkey — a feign that works prints nothing, so this is how the HUD sees it.'],
   ['map',     'Map [beta]','The zone from above, north up: walls, every spawn point as a dot (named and raid targets bold, danger badges for see-invisible, see-hide, summon), you as an arrow, your group, raid and target. Respawn timers run as a window (earliest to latest) coloured red / yellow / green, flashing when a spawn just became possible; a mob you saw die starts its own, or click a dot and mark it Killed, Empty or Up. A death that could be one of several spawn points shows "?" rings and starts no timer until you settle it. Timers list on the right, soonest first. Needs Zeal 1.4.8 for your target\'s position. Drag and the wheel pan and zoom (switch on the hand button while locked), Follow me is on by default, Fit zone shows it all, a floor picker appears in multi-level zones. Your positions stay on this machine.'],
+  ['maptimers', 'Map timers [beta]', 'The Map\'s respawn-timers list as a window of its own: move it anywhere on the screen and lock it in place. Right-click the Map\'s Timers button to pop it out; its ✕ puts the list back in the Map. Click a timer to centre the Map on that spawn point.'],
 ];
 
 // One line per overlay for the Overlays tab's list and Add cards (option C, the
@@ -4622,6 +4628,7 @@ var WP_OVERLAY_BLURB = {
   popraid:   'Encounter slides, callouts, drops, shared checklist.',
   me:        'Your character: HP, mana, ticks, cooldowns, target.',
   map:       'Zone map: spawn points, respawn timers, group, target.',
+  maptimers: 'The Map\'s respawn timers in a window of their own.',
 };
 
 // Overlays-table row key → Mimic's mini key (main.js _MINI_KEYS). Only the
@@ -4692,7 +4699,7 @@ function renderOverlays(s) {
     // Nor the HUD ring (the guild lead, 2026-09-24: "HUD doesn't make sense to
     // dock") — it is a square round the character; main's catalog agrees.
     // The Canvas covers the screen and is a host itself.
-    var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas' || key === 'map')
+    var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas' || key === 'map' || key === 'maptimers')
       ? ''
       : '<button type="button" class="wp-ov-dock" data-ov="' + key + '">…</button>';
     // ▭ Mini mode (the guild lead, 2026-09-24: "I don't see any of the
@@ -4703,6 +4710,10 @@ function renderOverlays(s) {
       ? '<button type="button" class="wp-ov-mini" data-mini="' + miniKey + '">…</button>'
         + '<button type="button" class="wp-ov-pin" data-mini="' + miniKey + '" title="Keep it mini when Minimize ALL restores the rest">📌</button>'
       : '';
+    // 🔝 Stay on top (the guild lead, 2026-10-13: "Other apps should be able to draw over the overlays automatically,
+    // unless specifically set to stay on top"): the same switch as the overlay's right-click menu. The dashboard's
+    // 'pet' row is Mimic's 'pets'. Hidden until wpRefreshOverlayToggles sees the follow-EQ behaviour is live here.
+    var topCell = '<button type="button" class="wp-ov-top" data-ov="' + (key === 'pet' ? 'pets' : key) + '" hidden>🔝</button>';
     // ⌨ Its own show/hide key (the guild lead, 2026-09-24: "Each overlay
     // should get its own hotkey config as well") — one keycap, in the row and
     // on the card, painted post-render by wpRefreshOverlayHotkeys.
@@ -4711,7 +4722,7 @@ function renderOverlays(s) {
       + '<span class="wp-ovdot">●</span>'
       + '<span class="wp-ovnm" title="' + esc(desc) + '">' + label + '<span class="sub"><span class="wp-ovst"></span>' + blurb + '</span></span>'
       + keyCap
-      + '<span class="wp-ovctl">' + dockCell + miniCell + '</span>'
+      + '<span class="wp-ovctl">' + topCell + dockCell + miniCell + '</span>'
       + '<button type="button" class="wp-ov-toggle" data-ov="' + key + '">✕</button>'
       + '</div>';
     ovAdd += '<div class="wp-ovcard" data-ovadd="' + key + '" hidden>'
@@ -4737,6 +4748,11 @@ function renderOverlays(s) {
   h += '<label class="dim" style="display:flex;align-items:center;gap:8px;font-size:11px;margin-top:6px;cursor:pointer">'
     +  '<input type="checkbox" id="wpFocusGate" style="cursor:pointer" />'
     +  '<span><b>Hide overlays + hotkeys when EverQuest/Mimic isn&rsquo;t the active window</b> (Windows, off by default). Typing in a browser or Discord then neither shows overlays nor fires Mimic&rsquo;s keys; spoken callouts keep playing. Unlocking overlays overrides it.</span>'
+    +  '</label>';
+  // Z-order (the guild lead, 2026-10-13): same setting as Settings and the tray. Checked state applied by wpWireHideHotkey.
+  h += '<label class="dim" style="display:flex;align-items:center;gap:8px;font-size:11px;margin-top:6px;cursor:pointer">'
+    +  '<input type="checkbox" id="wpFollowEq" style="cursor:pointer" />'
+    +  '<span><b>Other apps can draw over the overlays when EverQuest isn&rsquo;t the active window</b> (Windows, on by default). Overlays drop under a browser or Paint and come back on top when EverQuest or Mimic is active; the <b>&#128285;</b> on an overlay&rsquo;s row (or in its right-click menu) keeps that one on top always. Overlays you are placing always stay on top. Off: every overlay stays on top of everything.</span>'
     +  '</label>';
   // ⌨ Keys: the all-overlay keys, each beside what it does, in the same keycap
   // as the overlays' own (painted by wpRefreshOverlayHotkeys, which also counts
@@ -5076,6 +5092,17 @@ function wpWireHideHotkey() {
     }
     _bindOnce(fgate, 'change', function(){
       try { window.mimic.saveConfig({ hideOverlaysWhenUnfocused: !!fgate.checked }); } catch (e) {}
+    });
+  }
+  // Overlays follow EverQuest's z-order checkbox - the SAME save-config path as Settings and the tray.
+  var fEq = document.getElementById('wpFollowEq');
+  if (fEq && window.mimic && window.mimic.getConfig && window.mimic.saveConfig) {
+    if (!fEq.__wpInit) {
+      fEq.__wpInit = true;
+      window.mimic.getConfig().then(function(cfg){ fEq.checked = !(cfg && cfg.overlaysFollowEq === false); }).catch(function(){});
+    }
+    _bindOnce(fEq, 'change', function(){
+      try { window.mimic.saveConfig({ overlaysFollowEq: !!fEq.checked }).then(function(){ wpRefreshOverlayToggles(); }).catch(function(){}); } catch (e) {}
     });
   }
 }
@@ -5493,11 +5520,11 @@ function wpRefreshOverlayToggles() {
     var cfgP = window.mimic.getConfig ? window.mimic.getConfig().catch(function(){ return {}; }) : Promise.resolve({});
     Promise.all([window.mimic.getStatus(), cfgP]).then(function(res){
       var st = res[0] || {}, cfg = res[1] || {};
-      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid, me: !!st.showMe, map: !!st.showMap, canvas: !!st.showCanvas };
+      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid, me: !!st.showMe, map: !!st.showMap, maptimers: !!st.showMapTimers, canvas: !!st.showCanvas };
       // Which cfg flag each row reads, so a HIDDEN row can be told from an OFF
       // one. Hide-all writes every flag false, so without the snapshot the two
       // are indistinguishable here (the guild lead, 2026-08-04).
-      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid', me: 'showMe', map: 'showMap', canvas: 'showCanvas' };
+      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid', me: 'showMe', map: 'showMap', maptimers: 'showMapTimers', canvas: 'showCanvas' };
       var hidPrev = (st.hideAllActive && st.hideAllPrev) ? st.hideAllPrev : null;
       var hidCount = 0, nListed = 0, nOff = 0;
       var dockedList = Array.isArray(st.dockedOverlays) ? st.dockedOverlays : [];
@@ -5588,6 +5615,16 @@ function wpRefreshOverlayToggles() {
         var pk = pbs[pi2].getAttribute('data-mini');
         pbs[pi2].className = 'wp-ov-pin' + (pinMap[pk] ? ' on' : '');
       }
+      // 🔝 Stay on top: shown only where overlays follow EverQuest's z-order (Windows, "other apps can draw over" on).
+      var topMap = st.stayOnTop || {}, topLive = !!st.zOrderFollows;
+      var tps = document.querySelectorAll('.wp-ov-top');
+      for (var ti = 0; ti < tps.length; ti++) {
+        var tk = tps[ti].getAttribute('data-ov'), tOn = !!topMap[tk];
+        tps[ti].hidden = !topLive;
+        tps[ti].className = 'wp-ov-top' + (tOn ? ' on' : '');
+        tps[ti].title = tOn ? 'Stays on top of every app. Click to let other apps draw over it when EverQuest is not the active window.'
+          : 'Other apps can draw over it when EverQuest is not the active window. Click to keep it on top always.';
+      }
       var maBtn = document.getElementById('wpOvMiniAllBtn');
       if (maBtn) maBtn.textContent = st.miniAllActive ? '▭ Restore overlays (undo minimize-all)' : '▭ Minimize all now';
 
@@ -5662,6 +5699,12 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
     var mn = (t && t.closest) ? t.closest('.wp-ov-mini') : null;
     if (mn && window.mimic && window.mimic.setOverlayMini) {
       window.mimic.setOverlayMini(mn.getAttribute('data-mini'), !mn.classList.contains('on'))
+        .then(function(){ wpRefreshOverlayToggles(); }).catch(function(){});
+      return;
+    }
+    var tp = (t && t.closest) ? t.closest('.wp-ov-top') : null;
+    if (tp && window.mimic && window.mimic.setOverlayStayOnTop) {
+      window.mimic.setOverlayStayOnTop(tp.getAttribute('data-ov'), !tp.classList.contains('on'))
         .then(function(){ wpRefreshOverlayToggles(); }).catch(function(){});
       return;
     }

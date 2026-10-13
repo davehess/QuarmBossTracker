@@ -136,6 +136,15 @@
   body.setup #tools,body.setup #sideBtn{top:32px}
   /* A narrow window (XS is 200 wide) keeps the map and drops the timer list. */
   @media (max-width:420px){ #side{display:none} }
+  /* The Timers button popped the list out into its own window (right-click it): this window keeps the map and the button
+     (it docks the list back); the list itself lives in the pop-out. Same 30px clearance as a slid-in list: the ✕ is there. */
+  #wrap.popped #side{display:none}
+  #wrap.popped:not(.cfgopen) #sideBtn{right:30px}
+  /* ?part=timers: the pop-out window. This same page with only the list showing - no map pane, toolbar or settings - and
+     the list filling the window. !important beats the slid-in / narrow-window / settings rules above. */
+  body.part-timers #mapPane, body.part-timers #cfg{display:none !important}
+  body.part-timers #side{display:flex !important;flex:1 1 auto}
+  body.part-timers #setupbar select, body.part-timers #setupbar span[title]{display:none}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner - same on every overlay)">✥</button>
@@ -214,6 +223,11 @@
 <script>
   let PORT = 7779;
   try { const q = new URLSearchParams(location.search).get('port'); if (q) PORT = parseInt(q, 10) || PORT; } catch (e) {}
+  // ?part=timers: this is the Timers pop-out (main.js createMapTimersOverlay), the Map's respawn list in a window of its
+  // own. Everything below is the Map's own code - the poll, applyPayload, renderSide; only the map pane is switched off.
+  var PART_TIMERS = false;
+  try { PART_TIMERS = new URLSearchParams(location.search).get('part') === 'timers'; } catch (e) {}
+  if (PART_TIMERS) document.body.classList.add('part-timers');
   window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
   window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
 
@@ -225,6 +239,7 @@
   var lockBtn = document.getElementById('lock-btn');
   if (lockBtn) lockBtn.addEventListener('click', function(){ try { window.mimic.setOverlaysLocked(true); } catch (e) {} });
   var hideBtn = document.getElementById('hide-btn');
+  if (hideBtn && PART_TIMERS) hideBtn.title = 'Put the timers back in the Map';
   if (hideBtn) {
     hideBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
     hideBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
@@ -1157,7 +1172,7 @@
     if (p.points) {
       S.points = p.points; S.byId = {};
       for (var i = 0; i < p.points.length; i++) S.byId[String(p.points[i].id)] = p.points[i];
-      S.map = p.map || null; S.prep = prepMap(S.map); S.grids = p.grids || null;
+      S.map = p.map || null; S.prep = PART_TIMERS ? null : prepMap(S.map); S.grids = p.grids || null;   // the pop-out draws no walls
       S.facs = p.factions || null;   // the zone's primary factions, sent with the points (see aggroKind)
       S.sgs = p.spawngroups || null;   // spawn group names by id (points carry `sg`; see targetSpawnGroup)
     }
@@ -1168,7 +1183,7 @@
       document.getElementById('followBtn').classList.add('on');
     }
     // Your own map files: sent when the version changed, null with a version = unchanged, null without = none.
-    if (p.local_map) { S.local = prepLocal(p.local_map); S.localVer = S.local ? (p.local_version || null) : null; }
+    if (p.local_map) { S.local = PART_TIMERS ? null : prepLocal(p.local_map); S.localVer = (S.local || PART_TIMERS) ? (p.local_version || null) : null; }
     else if (!p.local_version) { S.local = null; S.localVer = null; }
     S.ver = p.version || null;
     S.skew = (p.now || Date.now()) - Date.now();
@@ -1262,11 +1277,12 @@
     kickAnim();
   }
   function kickAnim() {
-    if (raf || document.hidden || typeof requestAnimationFrame !== 'function') return;
+    if (PART_TIMERS || raf || document.hidden || typeof requestAnimationFrame !== 'function') return;
     if (anyMoving(Date.now())) raf = requestAnimationFrame(frame);
   }
   document.addEventListener('visibilitychange', function () { if (!document.hidden) { poll(); kickAnim(); } });
   var POLL_MS = 250;   // positions: Mimic hands the agent a fresh snapshot every 300ms (self/group/raid/target)
+  if (PART_TIMERS) POLL_MS = 500;   // the pop-out's list only needs the clock tick
   var inflight = false;
   function poll() {
     if (inflight || document.hidden) return;
@@ -1545,6 +1561,7 @@
   }
   // animating = called from the frame loop mid-glide (the spawn-dot buttons are then laid out at most every HITS_MS).
   function renderMap(animating) {
+    if (PART_TIMERS) return;   // the pop-out has no map pane to draw
     var dpr = window.devicePixelRatio || 1;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, S.w, S.h);
@@ -1961,6 +1978,8 @@
   }
   function centreOn(p) {
     if (!p) return;
+    // The pop-out has no map: a click on a row asks the Map window (main.js 'map-centre') to centre on the point.
+    if (PART_TIMERS) { try { window.mimic.mapCentreOn(p.id); } catch (e) {} return; }
     var s = toScreen(p.x, p.y);
     S.view.cx = s.sx; S.view.cy = s.sy;
     var fs0 = followSubject(Date.now());
@@ -2207,13 +2226,16 @@
   var sideModeSel = document.getElementById('sideModeSel');
   function syncSide() {
     wrapEl.classList.toggle('noside', !S.sideOpen);
-    sideBtn.textContent = S.sideOpen ? 'Timers ▸' : '◂ Timers';
-    sideBtn.classList.toggle('on', !S.sideOpen);
+    wrapEl.classList.toggle('popped', !!S.popped);
+    sideBtn.textContent = S.popped ? 'Timers ⧉' : (S.sideOpen ? 'Timers ▸' : '◂ Timers');
+    sideBtn.classList.toggle('on', S.popped || !S.sideOpen);
+    sideBtn.title = S.popped ? 'The timers list is in its own window. Click (or right-click) to put it back in the Map.'
+      : 'Slide the respawn timers list in or out. Slid in, the map takes the whole width. Right-click to pop it out into a window of its own.';
     sideModeSel.value = S.sideMode;
   }
-  // Is the side slot showing anything (the Timers list or the settings)?
+  // Is the side slot showing anything (the Timers list or the settings)? A popped-out list is not in the slot.
   function cfgOpen() { return wrapEl.classList.contains('cfgopen'); }
-  function slotOpen() { return S.sideOpen || cfgOpen(); }
+  function slotOpen() { return (S.sideOpen && !S.popped) || cfgOpen(); }
   function slotChanged(before) {
     var after = slotOpen();
     var w0 = window.outerWidth || window.innerWidth || 0, h0 = window.outerHeight || window.innerHeight || 0;
@@ -2221,7 +2243,25 @@
       window.mimic.overlaySetBounds({ width: w0 + (after ? SIDE_W : -SIDE_W), height: h0 });   // resize follows via the observer
     } else resize();
   }
+  // The list popped out into its own window (main.js createMapTimersOverlay; the guild lead, 2026-10-13: "Right clicking on
+  // the timers clickout should allow you to pop it out and drag it around"). While it is out the Map hides its own list and,
+  // in 'grow' mode, gives the list's width back to the desktop; ✕ on the pop-out (or this button) puts it back. `quiet` is
+  // the first pull at load: the window was saved at the size it had without the list, so it must not shrink twice.
+  function setPopped(on, quiet) {
+    if (PART_TIMERS) return;
+    on = !!on;
+    if (on === !!S.popped) return;
+    var before = slotOpen();
+    S.popped = on; syncSide();
+    if (quiet) resize(); else slotChanged(before);
+  }
+  function popTimers(on) { try { window.mimic.mapTimersPop(!!on); } catch (e) {} }
+  sideBtn.addEventListener('contextmenu', function (e) { e.preventDefault(); popTimers(!S.popped); });
+  window.mimic && window.mimic.onMapTimersPopped && window.mimic.onMapTimersPopped(function (on) { setPopped(on, false); });
+  window.mimic && window.mimic.getMapTimersPopped && window.mimic.getMapTimersPopped().then(function (on) { setPopped(on, true); }).catch(function () {});
+  window.mimic && window.mimic.onMapCentre && window.mimic.onMapCentre(function (id) { if (!PART_TIMERS) centreOn(S.byId[String(id)]); });
   sideBtn.addEventListener('click', function () {
+    if (S.popped) { popTimers(false); return; }   // out in its own window: the button brings it back
     var before = slotOpen();
     if (cfgOpen()) {   // settings in the slot: the button brings the list back in their place
       cfgEl.hidden = true; cfgBtn.classList.remove('on'); wrapEl.classList.remove('cfgopen');
