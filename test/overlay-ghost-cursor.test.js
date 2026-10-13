@@ -10,9 +10,12 @@ import { readSource, sliceBlock, stripJs, evalBlock, ROOT } from './_source-slic
 
 const PRELOAD = readSource(path.join(ROOT, 'apps', 'mimic', 'preload.js'));
 
-function load(backdrop = false) {
+// canvas = the Canvas window: a #panels host whose <body> says data-wp-overlay.
+function load(backdrop = false, canvas = false) {
   const src = sliceBlock(PRELOAD, 'function _wpAlpha(bg) {', '\n}') + '\n' + sliceBlock(PRELOAD, 'function _wpOverSolid(el) {', '\n}');
-  const prelude = `const document = { documentElement: { nodeType: 1 }, body: { classList: { contains: (c) => c === 'wp-backdrop' && ${backdrop} } } };
+  const prelude = `const document = { documentElement: { nodeType: 1 },
+      getElementById: (id) => (${canvas} && id === 'panels') ? {} : null,
+      body: { hasAttribute: (a) => ${canvas} && a === 'data-wp-overlay', classList: { contains: (c) => c === 'wp-backdrop' && ${backdrop} } } };
     const getComputedStyle = (el) => ({ backgroundColor: el.bg || 'rgba(0, 0, 0, 0)' });\n`;
   return evalBlock(prelude + src, ['_wpAlpha', '_wpOverSolid']);
 }
@@ -53,11 +56,37 @@ describe('stand-in pointer: where EQ\'s own pointer is hidden', () => {
   });
   it('is drawn only while locked, never over an armed control, and hidden when the pointer leaves', () => {
     const js = stripJs(PRELOAD);
-    expect(js).toMatch(/if \(!_wpLocked \|\| _wpHoverArmed \|\| !_wpOverSolid\(ev\.target\)\) \{ _wpGhostHide\(\); return; \}/);
+    expect(js).toMatch(/if \(!_wpPointerOn \|\| _wpPointerNever \|\| !_wpLocked \|\| _wpHoverArmed \|\| !_wpOverSolid\(ev\.target\)\) \{ _wpGhostHide\(\); return; \}/);
     expect(js).toMatch(/ipcRenderer\.on\('overlay-locked', function \(_e, locked\) \{ _wpLocked = !!locked;/);
     expect(js).toMatch(/if \(!ev\.relatedTarget\) _wpGhostHide\(\);/);
     expect(js).toMatch(/pointer-events:none/);
     expect(js).toMatch(/document\.documentElement\.appendChild\(_wpGhost\)/);   // outside <body>: themes never recolour it
+  });
+  // The guild lead, 2026-10-13: "make mouse over configurable, and remove it from the HUD. for Canvas it should only
+  // show over the elements".
+  it('Canvas: only over a panel, never the open screen between panels (backdrop on or off)', () => {
+    const panel = (extra) => chain(Object.assign({ tagName: 'SPAN', closest: () => ({}) }, extra || {}));
+    const open = (extra) => chain(Object.assign({ tagName: 'DIV', closest: () => null }, extra || {}));
+    const C = load(false, true), CB = load(true, true);
+    expect(C._wpOverSolid(open({ bg: 'rgba(0, 0, 0, 0.9)' }))).toBe(false);
+    expect(CB._wpOverSolid(open())).toBe(false);                 // the backdrop plates the panels, not the screen
+    expect(CB._wpOverSolid(panel())).toBe(true);
+    expect(C._wpOverSolid(panel({ bg: 'rgba(8, 10, 14, 0.9)' }))).toBe(true);
+    expect(stripJs(PRELOAD)).toMatch(/el\.closest\('#panels > \.panel'\)/);
+  });
+  it('never on the HUD; one switch for every overlay, pulled at load and pushed live to every frame', () => {
+    const js = stripJs(PRELOAD);
+    expect(js).toMatch(/const _wpPointerNever = _wpDockKey\(\) === 'me';/);
+    expect(js).toMatch(/ipcRenderer\.on\('wp-pointer', function \(_e, on\) \{ _wpPointerOn = on !== false; if \(!_wpPointerOn\) _wpGhostHide\(\); \}\);/);
+    expect(js).toMatch(/if \(s && s\.pointer === false\) _wpPointerOn = false;/);
+    const main = stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'main.js')));
+    expect(main).toMatch(/pointer: cfg\.standInPointer !== false,/);
+    expect(main).toMatch(/for \(const f of frames\) \{ try \{ f\.send\('wp-pointer', on\); \}/);   // the Canvas's panel frames too
+    expect(main).toMatch(/if \(incoming && Object\.prototype\.hasOwnProperty\.call\(incoming, 'standInPointer'\)\) _broadcastPointer\(merged\);/);
+    expect(main).toMatch(/label: 'Show a mouse pointer over overlays', type: 'checkbox', checked: loadConfig\(\)\.standInPointer !== false/);   // tray
+    const dash = readSource(path.join(ROOT, 'packages', 'wolfpack-logsync', 'dashboard.html'));
+    expect(dash).toMatch(/<input id="wpStandInPointer" type="checkbox" checked/);                  // dashboard parity
+    expect(dash).toMatch(/window\.mimic\.saveConfig\(\{ standInPointer: !!sipEl\.checked \}\)/);
   });
   it('once the mousemoves stop, it asks main whether the mouse is still over the window and hides when not', () => {
     const js = stripJs(PRELOAD);

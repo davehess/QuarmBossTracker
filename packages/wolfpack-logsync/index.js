@@ -22630,6 +22630,7 @@ function renderOverlays(s) {
     +   '<span class="wp-kcell"><span class="dim">colour-blind:</span>' + CVD_THEMES.map(themePick).join('') + '</span>'
     +   '<label><input id="wpScaleGlide" type="checkbox" checked style="cursor:pointer" /> Smooth slider &mdash; overlays glide to their new size when you let go (off: they snap instantly)</label>'
     +   '<label><input id="wpScaleDock" type="checkbox" style="cursor:pointer" /> Scale the dock too (off: the dock stays at 100% and keeps its own size)</label>'
+    +   '<label title="EverQuest draws its pointer under the overlays, so it vanishes behind a solid one; this draws one on top. Never on the HUD; on the Canvas only over its panels. Same switch as the tray menu."><input id="wpStandInPointer" type="checkbox" checked style="cursor:pointer" /> Show a mouse pointer over overlays &mdash; EverQuest&rsquo;s own pointer hides behind them</label>'
     +   '<span class="dim">Opacity, Background and Size set every overlay at once &mdash; fine-tune one with the sliders in its setup bar. Size runs 50%&ndash;200% for high-DPI screens.</span>'
     + '</div></details>'
     + '</div>';
@@ -22862,6 +22863,8 @@ function wpWireHideHotkey() {
       if (window.mimic.getConfig) window.mimic.getConfig().then(function(cfg){
         if (ascGlide) ascGlide.checked = !(cfg && cfg.overlayScaleGlide === false);
         if (ascDock)  ascDock.checked  = !!(cfg && cfg.overlayScaleDock);
+        var sip = document.getElementById('wpStandInPointer');
+        if (sip) sip.checked = !(cfg && cfg.standInPointer === false);
       }).catch(function(){});
     }
     _bindOnce(asc, 'input', function(){
@@ -22869,6 +22872,12 @@ function wpWireHideHotkey() {
       if (ascv) ascv.textContent = pct + '%';
     });
     _bindOnce(asc, 'change', _ascApply);
+    // Stand-in mouse pointer over overlays (the guild lead, 2026-10-13: "make mouse over configurable"). Same
+    // cfg.standInPointer as the tray item; main's save-config pushes it to every overlay and its frames.
+    var sipEl = document.getElementById('wpStandInPointer');
+    if (sipEl && window.mimic.saveConfig) _bindOnce(sipEl, 'change', function(){
+      try { window.mimic.saveConfig({ standInPointer: !!sipEl.checked }); } catch (e) {}
+    });
     if (ascGlide && window.mimic.saveConfig) _bindOnce(ascGlide, 'change', function(){
       try { window.mimic.saveConfig({ overlayScaleGlide: !!ascGlide.checked }); } catch (e) {}
     });
