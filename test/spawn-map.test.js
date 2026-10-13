@@ -28,7 +28,7 @@ const EXPORTS = ['_mapServerXY', '_mapZoneShort', '_mapNormName', '_mapAttribute
   '_mapZoneDoc', '_mapPrune', '_mapEnsureZone', '_mapPaths', '_zealState', '_setRaid', '_setOpts', 'MAP_ZONE_SHORT',
   '_mapTryPin', '_mapPinGet', '_mapSync', '_mapSyncStop', '_mapSyncFlush', '_mapSyncPull', '_mapApplyRemote', '_mapLocalEvent',
   '_mapSegDist', '_mapRouteDist', '_mapCopy', '_mapCopyNoteWho', '_mapCurrentCopy', '_mapCopyInfo', 'whoData',
-  '_mapNoteCon', '_mapConsFor'];
+  '_mapNoteCon', '_mapConsFor', '_mapMe', '_mapQuarmyIds'];
 // The agent's real /consider tiers, for _mapNoteCon (they live outside the map core).
 const CON_DEFS = AGENT.slice(AGENT.indexOf('const CON_STANDINGS = ['), AGENT.indexOf('\n', AGENT.indexOf('const _CON_RX = ')));
 
@@ -95,7 +95,7 @@ const dbgZoneIn = (ts, port, zone) => [
 
 // A small zone in the SERVER frame. skel: three skeleton points, two of them 150 apart (p1, p6) so the
 // "clearly closer" rule has something to bite on. Zone id 164 = thedeep.
-const NPC = (name, extra) => Object.assign({ name, level: 50, chance: 100, named: false, raid_target: false, badges: [], aggro: 60, fac: 1, assist: null }, extra || {});
+const NPC = (name, extra) => Object.assign({ name, level: 50, chance: 100, named: false, raid_target: false, badges: [], aggro: 60, fac: 1, assist: null, pf: 0 }, extra || {});
 const POINTS = [
   { id: 1, x: 100, y: 200, z: 0, respawn_s: 600, variance_s: 60, npcs: [NPC('a_decaying_skeleton')] },
   { id: 2, x: 400, y: 200, z: 0, respawn_s: 600, variance_s: 60, npcs: [NPC('a_decaying_skeleton')] },
@@ -457,7 +457,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
   });
   it('a zone cached before the aggro radius existed is re-checked early, at most every 10 minutes, never in a loop (2026-10-13)', async () => {
     const old = JSON.parse(JSON.stringify(ZONE_BODY));
-    for (const p of old.points) for (const n of p.npcs) { delete n.aggro; delete n.fac; }
+    for (const p of old.points) for (const n of p.npcs) { delete n.aggro; delete n.fac; delete n.pf; }
     seedCache(dir, old, Date.now() - 1000);                                    // fresh by age, but no aggro / faction
     const net = fakeNet(() => ({ status: 304 }));                              // an older bot: nothing new
     const c = loadCore({ dir, opts: live(), net });
@@ -632,10 +632,49 @@ describe('the overlay (apps/mimic/map.html)', () => {
       const js = stripJs(MAP_HTML);
       expect(js).toMatch(/if \(as > 0 && as !== ar && as \* sc >= 4\) \{/);
       expect(js).toMatch(/ctx\.setLineDash\(\[5, 4\]\); ctx\.arc\(x, y, as \* sc/);
-      expect(js).toMatch(/if \(tnpc\) aggroRing\(tq\[0\], tq\[1\], aggroRadius\(null, tnpc\), assistRadius\(null, tnpc\), aggroKind\(null, tnpc, P\.cons\)\);/);
-      expect(js).toMatch(/aggroKind\(ap, aun, S\.p && S\.p\.cons\)/);
+      expect(js).toMatch(/if \(tnpc\) aggroRing\(tq\[0\], tq\[1\], aggroRadius\(null, tnpc\), assistRadius\(null, tnpc\), aggroKind\(null, tnpc, P\.cons, S\.facs, P\.me\)\);/);
+      expect(js).toMatch(/aggroKind\(ap, aun, S\.p && S\.p\.cons, S\.facs, S\.p && S\.p\.me\)/);
       // an unpinned target's label carries its spawn id
       expect(js).toMatch(/\+ \(P\.target\.id != null \? ' #' \+ P\.target\.id : ''\) : '';/);
+    });
+    it('ring colour from the faction maths: Tranquility green, Valor green unless a non-player illusion, cons and unknowns (2026-10-13)', () => {
+      // the guild lead: "the mobs in Plane of Tranquility should be green because they are indifferent to everyone ...
+      // if someone has a non-player illusion on it should switch them to red immediately"
+      const valorMods = Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 128, 130].map(r => ['r' + r, 1000]));
+      const facs = {
+        900: { base: 0, min_cap: 0, max_cap: 0, see_illusion: true, mods: {}, kos: 'never' },                 // Tranquility
+        901: { base: -1000, min_cap: -2000, max_cap: 2000, see_illusion: false, mods: valorMods, kos: 'never' },  // Valor
+        902: { base: 0, see_illusion: false, mods: { r6: -1000 }, kos: 'some' },                               // hates Dark Elves
+        903: { base: -1500, see_illusion: false, mods: {}, kos: 'always' },
+      };
+      const n = (pf, name) => ({ name: name || 'a_mob', fac: 7, pf });
+      const me = { race: 1, cls: 1, deity: 396, illusion: null };
+      expect(H.aggroKind(null, n(900), {}, facs, me)).toBe('none');
+      expect(H.aggroKind(null, n(900), {}, facs, Object.assign({}, me, { illusion: 60 }))).toBe('none');   // sees through
+      expect(H.aggroKind(null, n(901), {}, facs, me)).toBe('none');
+      expect(H.aggroKind(null, n(901), {}, facs, Object.assign({}, me, { illusion: 60 }))).toBe('kos');    // Skeleton
+      expect(H.aggroKind(null, n(901), {}, facs, Object.assign({}, me, { illusion: -1 }))).toBe('kos');    // unnamed shape
+      expect(H.aggroKind(null, n(901), {}, facs, Object.assign({}, me, { illusion: 6 }))).toBe('none');    // Dark Elf: a player race
+      expect(H.aggroKind(null, n(901, 'a_valorous_guard'), { 'a valorous guard': 4 }, facs, Object.assign({}, me, { illusion: 60 }))).toBe('kos');   // a con before the illusion loses
+      expect(H.aggroKind(null, n(902), {}, facs, me)).toBe('safe');                                        // a Human: yellow
+      expect(H.aggroKind(null, n(902), {}, facs, Object.assign({}, me, { race: 6 }))).toBe('kos');
+      expect(H.aggroKind(null, n(902), {}, facs, Object.assign({}, me, { race: null }))).toBe('kos');      // race unknown: could be
+      expect(H.aggroKind(null, n(902, 'an_elf_hater'), { 'an elf hater': 3 }, facs, Object.assign({}, me, { race: null }))).toBe('safe');   // your con settles it
+      expect(H.aggroKind(null, n(903), {}, facs, me)).toBe('kos');
+      expect(H.aggroKind(null, n(900, 'a_monk'), { 'a monk': 0 }, facs, me)).toBe('kos');                 // you made it hate you
+    });
+    it('the agent says who you are: class and deity from Zeal, race from /who or Quarmy, the illusion from your buffs', () => {
+      const { c } = localCore();
+      const st = { charInfo: [{ id: 3, value: 'Shadow Knight' }, { id: 4, value: 'Innoruuk' }], buffs: [{ name: 'Illusion: Skeleton' }] };
+      c.whoData.set('aldenmar', { race: 'Dark Elf' });
+      expect(c._mapMe('Aldenmar', st)).toEqual({ race: 6, cls: 5, deity: 206, illusion: 60 });
+      expect(c._mapMe('Aldenmar', { charInfo: [], buffs: [{ name: 'Illusion: Fire Elemental Lord' }] }).illusion).toBe(-1);
+      expect(c._mapMe('Aldenmar', { buffs: [{ name: 'Greater Wolf Form' }] }).illusion).toBe(42);
+      expect(c._mapMe('Aldenmar', { buffs: [{ name: 'Spirit of Wolf' }] }).illusion).toBeNull();
+      c._mapQuarmyIds.set('brackwyn', { race_id: 128, class_id: 10, deity_id: 203 });
+      expect(c._mapMe('Brackwyn', {})).toEqual({ race: 128, cls: 10, deity: 203, illusion: null });
+      expect(stripJs(AGENT)).toMatch(/out\.factions = rec\.body\.factions \|\| null;/);
+      expect(stripJs(AGENT)).toMatch(/out\.me = _mapMe\(character, st\);/);
     });
     it('the agent keeps your latest faction con per mob, every tier, for six hours, per character', () => {
       const { c } = localCore();

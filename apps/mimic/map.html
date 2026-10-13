@@ -165,7 +165,7 @@
         <button class="tb" id="panBtn" type="button" title="Locked overlays let clicks through to EverQuest. Switch this on to drag and zoom the map (the mouse wheel zooms); right-click centres on you.">✋ Pan / zoom</button>
         <button class="tb on" id="labelsBtn" type="button" title="Names on the map: boss names and room names. Switch off when it gets busy.">Labels: on</button>
         <button class="tb on" id="dotsBtn" type="button" title="Spawn points: show or hide the spawn dots (the same switch as ⚙ → Spawn points).">•</button>
-        <button class="tb" id="aggroBtn" type="button" title="Aggro rings: how close you can get to each spawn before it aggros (its aggro radius). Red: KOS to you, or not conned yet. Yellow: you conned it dubious or better, but it has a faction. Green: no faction, aggros nobody. Dashed: how far it comes to help a friend (social aggro). Your target carries its own rings. Points on a running respawn timer have no ring.">◯</button>
+        <button class="tb" id="aggroBtn" type="button" title="Aggro rings: how close you can get to each spawn before it aggros (its aggro radius). Red: KOS to you (from its faction, your race, class and deity, your con, or an illusion it does not see through). Yellow: not KOS to you, but KOS to some players. Green: KOS to nobody. Dashed: how far it comes to help a friend (social aggro). Your target carries its own rings. Points on a running respawn timer have no ring.">◯</button>
         <button class="tb" id="cfgBtn" type="button" title="Map settings: what is drawn, the height ranges, the ability icons, colours and the background">⚙</button>
       </div>
       <button class="tb" id="sideBtn" type="button" title="Slide the respawn timers list in or out. Slid in, the map takes the whole width.">Timers ▸</button>
@@ -358,10 +358,49 @@
   // otherwise). 'safe': it has a faction, and your last /consider of it was dubious or better (it may still be KOS to
   // a groupmate). 'kos': you conned it threatening or scowling, or nobody has conned it yet (the cautious reading).
   // cons = the agent's { mob name lower-case: rank 0 scowls … 8 ally }. A point with no known mob up takes its worst.
+  // Since bot 3.1.254 each NPC also names its primary faction (pf) and the zone payload carries that faction (facs:
+  // base, caps, race/class/deity mods, kos = never/some/always), and the agent says who you are (me: race, cls, deity,
+  // illusion), so the colour comes from the faction maths (the guild lead, 2026-10-13: "the mobs in Plane of
+  // Tranquility should be green because they are indifferent to everyone ... if someone has a non-player illusion on
+  // it should switch them to red immediately"):
+  //   · an illusion that faction does not see through: the maths with the illusion's race wins, even over a con taken
+  //     before it (an illusion we do not name, -1, has no race mod at all);
+  //   · else your con of that mob (it includes what you have earned);
+  //   · else the maths for you, an unknown race / class / deity spreading over every player choice.
+  // KOS for you → red; not KOS and the faction is never KOS to anyone → green; else yellow. Unsure → red.
+  // ⚠ The maths is utils/factionCon.js (bot) and web/lib/factionCon.ts (site) again; keep the three in step.
   var AGGRO_RANK = { none: 0, safe: 1, kos: 2 };
-  function aggroKind(p, un, cons) {
+  var FC_RACES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 128, 130];
+  var FC_CLASSES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+  var FC_DEITIES = [201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 396];
+  function fcIsKos(v) { return v < -700; }
+  function fcRange(f, who) {
+    function mod(code) { var m = f.mods ? Number(f.mods[code]) : 0; return isFinite(m) ? m : 0; }
+    function cap(v) { var lo = Number(f.min_cap) || 0, hi = Number(f.max_cap) || 0; return (lo || hi) ? Math.max(lo, Math.min(hi, v)) : v; }
+    var w = who || {}, lo = Number(f.base) || 0, hi = lo;
+    [['r', w.race, FC_RACES], ['c', w.cls, FC_CLASSES], ['d', w.deity, FC_DEITIES]].forEach(function (d) {
+      if (d[1] != null) { var m = mod(d[0] + d[1]); lo += m; hi += m; return; }
+      var a = Infinity, b = -Infinity;
+      for (var i = 0; i < d[2].length; i++) { var x = mod(d[0] + d[2][i]); if (x < a) a = x; if (x > b) b = x; }
+      lo += a; hi += b;
+    });
+    return [cap(lo), cap(hi)];
+  }
+  function aggroKind(p, un, cons, facs, me) {
+    function fromMaths(f, who) {
+      var r = fcRange(f, who);
+      if (fcIsKos(r[0])) return 'kos';                 // KOS for you, or it could be and we cannot tell
+      return f.kos === 'never' ? 'none' : 'safe';
+    }
     function one(n) {
       var c = cons ? cons[npcKey(n.name)] : undefined;
+      var f = facs && n.pf ? facs[n.pf] : null;
+      if (f) {
+        var m = me || {};
+        if (m.illusion != null && !f.see_illusion) return fromMaths(f, { race: m.illusion, cls: m.cls, deity: m.deity });
+        if (typeof c === 'number') return c <= 1 ? 'kos' : f.kos === 'never' ? 'none' : 'safe';
+        return fromMaths(f, m);
+      }
       if (typeof c === 'number') return c <= 1 ? 'kos' : Number(n.fac) > 0 ? 'safe' : 'none';
       return n.fac === 0 ? 'none' : 'kos';
     }
@@ -808,10 +847,11 @@
       S.points = p.points; S.byId = {};
       for (var i = 0; i < p.points.length; i++) S.byId[String(p.points[i].id)] = p.points[i];
       S.map = p.map || null; S.prep = prepMap(S.map); S.grids = p.grids || null;
+      S.facs = p.factions || null;   // the zone's primary factions, sent with the points (see aggroKind)
     }
     if (p.zone !== S.zone) {
       S.zone = p.zone; S.fitted = false; S.follow = true; S.trk = {}; zoned = true;
-      if (!p.points) { S.points = []; S.byId = {}; S.map = null; S.prep = null; S.grids = null; }
+      if (!p.points) { S.points = []; S.byId = {}; S.map = null; S.prep = null; S.grids = null; S.facs = null; }
       S.local = null; S.localVer = null;
       document.getElementById('followBtn').classList.add('on');
     }
@@ -1152,7 +1192,7 @@
         if (at && timerState(at, now) === 'wait') continue;
         var aun = upNpc(ap, upOn(ap.id, S.p, S.seenBy));
         ctx.globalAlpha = inLevelRange(ap.z, sz, range) ? 1 : 0.4;
-        aggroRing(vis[ai].x, vis[ai].y, aggroRadius(ap, aun), assistRadius(ap, aun), aggroKind(ap, aun, S.p && S.p.cons));
+        aggroRing(vis[ai].x, vis[ai].y, aggroRadius(ap, aun), assistRadius(ap, aun), aggroKind(ap, aun, S.p && S.p.cons, S.facs, S.p && S.p.me));
       }
       ctx.globalAlpha = 1;
     }
@@ -1215,7 +1255,7 @@
         // Its own rings, wherever it has walked (a pather's spawn-point ring stays behind at the point).
         if (SH.aggro) {
           var tnpc = targetNpc(P.target, S.points, S.byId);
-          if (tnpc) aggroRing(tq[0], tq[1], aggroRadius(null, tnpc), assistRadius(null, tnpc), aggroKind(null, tnpc, P.cons));
+          if (tnpc) aggroRing(tq[0], tq[1], aggroRadius(null, tnpc), assistRadius(null, tnpc), aggroKind(null, tnpc, P.cons, S.facs, P.me));
         }
         // Pinned: a thin line from the target to the spawn point it is tied to.
         var pinPt = P.target.point_id != null ? S.byId[String(P.target.point_id)] : null;
