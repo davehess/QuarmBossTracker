@@ -9952,3 +9952,16 @@ Harmony, Hide/Sneak for non-rogues).
   screenshot was the old single-link 0.75 match splitting a group whose snapshots were weeks apart (0.84 / 0.73 /
   0.64 pairwise).
 - **Later, not now:** paste a character-select screenshot to fill an account.
+
+### 272. Mimic 2.9.0, the Cartography Release, and the Map training page (2026-10-13, stable `700dc1f9`, web 1.8.146 `7d1e179a`)
+
+- **The call** (the guild lead): *"push out a new minor release as 2.9, the Cartography Release, focused on the map.
+  add a training page on the map to send out to the users, give me some samples ... simple terms please, but talk
+  about persistence."* The release name is the guild lead's.
+- **Shipped:** Mimic 2.9.0 stable (agent 3.7.156) graduated from beta: `apps/mimic`, `packages/wolfpack-logsync` and
+  their 27 tests; the website and bot work on beta stays there. Beta re-parked at 2.9.1 (`8255c70a`). Release body
+  from the `player-notes` block; `Fixes FB-77` repeated so FB-77 moves to Implemented.
+- **Training page** `/mimic/map` [beta], two samples: Guided tour (default, eight lessons) and Cheat sheet (`?v=b`).
+  The persistence claims were each checked against the code. One correction to what we had been saying: respawn
+  timers are not only local, they are shared with your raid or group (never "?" guesses, never positions).
+- **Open:** the guild lead picks a sample; the other is deleted in the same change.
