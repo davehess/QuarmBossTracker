@@ -9704,3 +9704,36 @@ Harmony, Hide/Sneak for non-rogues).
   remembered), the same as ⚙ → Show → Aggro rings, with its own colour in every scheme. A zone cached before today is
   re-checked once early so the rings show without waiting out the daily revalidation.
 - **Not done:** assist radius (only 1,834 NPCs have one; the server default covers the rest, which we do not know).
+  *Done in §257, drawn only where the database has one.*
+
+### 256. Map routes: random wanderers draw as waypoints; a walking target lights its route (2026-10-13, Mimic beta `c2d68090`)
+
+- **The ask** (the guild lead, with screenshots of a golem in Plane of Valor crossing the drawn line): *"this mob is
+  going across the map and not on a path line. Ideally it would highlight the path line."*
+- **Why it crossed the line:** its grid (Plane of Valor grid 1) is EQEmu wander type 8, RandomCenterPoint. Types 1, 2,
+  5, 7 and 8 walk straight to a random waypoint, so a line through the waypoint list in order was a path nobody walks.
+- **Shipped:** those types draw as waypoint diamonds only; the ordered types (0 circular, 3 patrol, 4/6 one-way) keep
+  the dashed line. An unpinned target (a walker that left its point before you targeted it) now lights the route its
+  name walks: of the routes its spawn points use, the one with a waypoint nearest the mob. A pinned target keeps its
+  point's route. The guild lead's follow-up screenshots confirm the green diamonds on the golem's grid.
+
+### 257. Aggro rings coloured by faction and your con, a dashed social ring, and a ring on your target (2026-10-13, bot 3.1.253 `46303546`, agent 3.7.144 beta `c1fd5534`)
+
+- **The ask** (the guild lead): *"This tree frog is dubious, we should have a different color for him … faction matters
+  here but for mobs with no faction we could make the assumption that they will not aggro, and solidify it once we
+  have the mob targetted and know its exact faction … Green if it's not aggro to anyone, yellow if it could be KOS to
+  some but is not to the player. Then a dashed line for social aggro distance"*, and *"This pather does not have his
+  aggro radius drawn"* (its ring sat at its spawn point while it walked).
+- **Data:** the bot's zone data adds each NPC's `fac` (`npc_faction_id`, 0 = none: 2,113 of 18,033 NPCs) and `assist`
+  (`assistradius`, 0 → null). Quarm's data carries generic factions by name ("Beta Dubious" for the frog, "Beta KOS"
+  for the golem), but a real faction's KOS-ness depends on the player's own standing, so the con decides.
+- **Agent:** keeps your latest /consider per mob name, EVERY tier including the hostile ones the faction upload drops
+  (a mob scowling at you mid-fight is KOS to you right then; the next calm con corrects it), six hours, per character;
+  sent with the map state as `cons`.
+- **Map:** green = no faction (assumed never aggros, until a con says otherwise); yellow = has a faction and your last
+  con was dubious or better; red = conned threatening/scowling, or not conned yet (the cautious reading, and every
+  NPC of a zone cached before today). A point with no known mob up takes its worst NPC. The dashed ring is the assist
+  radius, drawn only when it differs from the aggro radius. Your target carries its own rings at its live position.
+  Three new colours per scheme (colour-blind: blue / yellow / vermillion).
+- **Not done:** con lines are matched by name, so two same-name mobs on different factions share a colour; no spawn id
+  rides a /consider line.
