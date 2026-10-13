@@ -7211,6 +7211,9 @@ const SLOW_SPELLS = new Set([
   'languid pace', 'shiftless deeds', 'tepid deeds', 'forlorn deeds',
   // Beastlord (Sha`s Revenge was missing: a 65% slow, spell 3462, a member report 2026-10-08)
   "sha's advantage", "sha's revenge", "sha's vengeance", "sha's lethargy",
+  // Bard (Requiem of Time, spell 3066: SPA 11 max 45 = a 55% slow; lands as "<mob>'s rhythm slows.", its own line.
+  // The guild lead, 2026-10-13: "Requiem of Time is a slow as well, call out Bard Slow (55%)")
+  'requiem of time',
   // Boss tank-busters that are ALSO attack-speed slows (#142). Rage of
   // Ssraeshza (spell 2310, SPA 11 base 10 = −90% attack speed + a 4000 hit)
   // lands on the Emperor's tank; grounded from eqemu_spells.
@@ -7264,6 +7267,7 @@ const SLOW_MAGNITUDES = new Map([
   ['tepid deeds',       50],
   ["sha's revenge",     65],
   ["sha's vengeance",   55],
+  ['requiem of time',   55],
   ["sha's advantage",   50],
   ['walking sleep',     35],
   ["sha's lethargy",    30],
@@ -7278,6 +7282,7 @@ const SLOW_CLASSES = new Map([
   ['forlorn deeds',    'ENC'], ['shiftless deeds', 'ENC'], ['tepid deeds',     'ENC'],
   ['languid pace',     'ENC'],
   ["sha's advantage",  'BST'], ["sha's revenge",    'BST'], ["sha's vengeance",  'BST'], ["sha's lethargy",   'BST'],
+  ['requiem of time',  'BRD'],
 ]);
 function _slowClass(name) {
   if (!name) return null;
@@ -7287,8 +7292,18 @@ function _slowMagnitude(name) {
   if (!name) return 0;
   return SLOW_MAGNITUDES.get(String(name).toLowerCase().replace(/`/g, "'").trim()) || 0;
 }
+// What a callout calls a slow when its spell name means little to the raid: "Bard Slow (55%)" rather than
+// "Requiem of Time 55%" (the guild lead, 2026-10-13). Everything else keeps its own name.
+const SLOW_CALLOUT_NAMES = new Map([
+  ['requiem of time', 'Bard Slow'],
+]);
+function _slowCalloutName(name) {
+  return SLOW_CALLOUT_NAMES.get(String(name || '').toLowerCase().replace(/`/g, "'").trim()) || null;
+}
 // A slow's SHORT spoken name — "Turgur's Insects" → "Turgur's" — for the TTS.
 function _slowShortName(name) {
+  const alias = _slowCalloutName(name);
+  if (alias) return alias;
   return String(name || '').replace(/\s+(insects|deeds|pace|sleep)$/i, '').trim() || String(name || '');
 }
 // Active slows observed per target: targetLower → Map<spellLower,
@@ -7512,10 +7527,11 @@ function _slowCalloutMob(display, targetLower) {
   return name + (ids.size === 1 ? ' #' + [...ids][0] : '');
 }
 function _announceSlowLand(best, mob) {
-  const magTxt    = best.magnitude ? ' ' + best.magnitude + '%' : '';
+  const alias     = _slowCalloutName(best.name);
+  const magTxt    = best.magnitude ? (alias ? ' (' + best.magnitude + '%)' : ' ' + best.magnitude + '%') : '';
   const casterTxt = best.caster ? ' · ' + best.caster : '';
   _pushOverlay({
-    text:        '🐌 Slowed ' + (mob ? mob + ' ' : '') + '— ' + best.name + magTxt + casterTxt,
+    text:        '🐌 Slowed ' + (mob ? mob + ' ' : '') + '— ' + (alias || best.name) + magTxt + casterTxt,
     tts:         'Slowed. ' + _slowShortName(best.name),
     color:       'amber',
     duration_ms: 5000,
