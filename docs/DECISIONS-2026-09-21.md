@@ -9692,3 +9692,15 @@ Harmony, Hide/Sneak for non-rogues).
   (`me.html`). On the Canvas only over a panel, never the open screen between panels, backdrop on or off
   (`_wpOverSolid` in `apps/mimic/preload.js`).
 - **Not done:** a per-overlay switch. Say if one overlay besides the HUD should never show it.
+
+### 255. Map aggro rings with a ◯ toolbar button (2026-10-13, bot 3.1.252 `f7dc2bba`, Mimic beta `97bad067`, agent 3.7.142 beta)
+
+- **The ask** (the guild lead): *"add aggro rings onto the map, make a circle icon on the main screen."*
+- **Shipped:** the bot's zone data now carries each NPC's `aggro` radius (`eqemu_npc_types.aggroradius`, game units;
+  17,054 of 18,033 NPCs have one, median 60; 0 → null). The Map draws a ring per spawn point, scaled with the map and
+  under the dots: the up mob's own radius when one is known there, else the widest of who can spawn there (cautious).
+  No ring while the point is on a "not yet" respawn timer, none when it would be under 4 px, and values past 1000 (the
+  database's "whole zone" sentinels, up to 10000) are ignored. ◯ on the toolbar is the switch (off by default,
+  remembered), the same as ⚙ → Show → Aggro rings, with its own colour in every scheme. A zone cached before today is
+  re-checked once early so the rings show without waiting out the daily revalidation.
+- **Not done:** assist radius (only 1,834 NPCs have one; the server default covers the rest, which we do not know).
