@@ -9804,3 +9804,20 @@ Harmony, Hide/Sneak for non-rogues).
 - **Shipped:** your target's positions since you targeted it (three minutes, fading) with an arrowhead down its last
   stretch (⚙ → Target's walked path); "Own strength" renamed Opacity and moved to the top of Map settings; the wheel
   over Pan / zoom zooms and a drag from it pans, both while locked, a plain click still toggles Pan.
+
+### 263. Map: two roamers on one route, your target's point at any height, kept walked paths, con-colour names, Brewall layer walls (2026-10-13, agent 3.7.147 on beta `0f7a48ce`)
+
+- **The ask** (the guild lead): *"Going above a spawn point should still show you the spawn point of the creature
+  that's targetted. This is attributing both of these pathers to the same spawn point."* Then: keep the extrapolated
+  previous/next waypoint of a random path as part of that mob's path while targeted, show it again on a re-target,
+  graded from the target colour back to the origin; names in con colour as an override; *"Default colors should
+  probably be the same as the Brewall ones"* (eqmaps.info mapping standards).
+- **Shipped:** a spawn point already held by another pinned mob loses a tie on a shared wander route, so two roamers
+  get two points; the target's point draws at any height; walked paths are kept per mob (up to 40 mobs) and redrawn on
+  re-target, with each random-wander leg drawn dashed from the waypoint it left to the one it heads for, and a gradient
+  from the target colour to the spawn-point colour; ⚙ → "Mob names in con colour" (off by default, the agent now sends
+  your level); walls default to Brewall's layer colours above (Layer 2–7) and below (Layer 8–11) your floor, your own
+  floor keeps our wall colour because Brewall's black "Main" vanishes on a dark map. A saved "map" wall mode migrates.
+- **Still open, options given in chat:** Target Info map tab + history ✕ + search, map buttons on other overlays,
+  raiders' zones on the Map, and a Planes of Power era atlas (continents and planes, click down into any zone). The
+  guild lead supplied a PoP-era world atlas picture as the layout reference; it is not ours to commit.
