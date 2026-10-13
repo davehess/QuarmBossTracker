@@ -478,7 +478,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -577,6 +577,17 @@ describe('the overlay (apps/mimic/map.html)', () => {
       expect(c.col.up).not.toBe(c.col.ringWait);
       expect(c.col.ringUp).toBe('#56b4e9');                                   // up is sky blue, not green
       expect(H.applyScheme(H.mapCfgDefaults(), 'nope').scheme).toBe('default');
+    });
+    it('the target\'s target (assist bar ToT) is placed when it is you, your group or your raid; anyone else gets a name only', () => {
+      // the guild lead, 2026-10-13: "pvp targeting should work as well, where it shows who were targeting and who they're targeting"
+      const P = { self: { name: 'Aldenmar', x: 0, y: 0 }, group: [{ name: 'Brackwyn', x: 1, y: 1 }], raid: [{ name: 'Corvale', x: 2, y: 2 }] };
+      expect(H.totMember(P, 'aldenmar')).toMatchObject({ key: 'self', who: 'you' });
+      expect(H.totMember(P, 'Brackwyn')).toMatchObject({ key: 'g:Brackwyn', who: 'group' });
+      expect(H.totMember(P, 'Corvale')).toMatchObject({ key: 'r:Corvale', who: 'raid' });
+      expect(H.totMember(P, 'Rethlan')).toBeNull();
+      expect(H.totMember(null, 'Brackwyn')).toBeNull();
+      expect(H.mapCfgDefaults().show).toMatchObject({ targetName: true, tot: true });
+      expect(H.MAP_SCHEMES.default.tot).toBe('#f778ba');
     });
     it('switching an icon off removes just that icon from a spawn point', () => {
       const p = { npcs: [{ name: 'x', badges: ['eye', 'summon', 'rampage'] }] };
@@ -929,9 +940,9 @@ describe('pather routes', () => {
     expect(base.all.cfg.hidden).toBe(false);
     expect(base.all.cfgBtn.classList.contains('on')).toBe(true);
     const showRows = base.all.cfgShow.children, glyphRows = base.all.cfgGlyphs.children, colRows = base.all.cfgCols.children;
-    expect(showRows).toHaveLength(19);
+    expect(showRows).toHaveLength(21);
     expect(glyphRows).toHaveLength(9);
-    expect(colRows).toHaveLength(23);
+    expect(colRows).toHaveLength(24);
     const walls = showRows[0].children[0];                                     // Walls
     walls.checked = false; walls.listeners.change.forEach(f => f());
     const eye = glyphRows[0].children[0];                                      // 👁
@@ -1081,6 +1092,19 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
   }
   const queued = (c) => c._mapSync.q.map(k => k.ev);
   const watch = (c, s) => { c._zealState.Aldenmar = Object.assign({}, s, { updatedAt: 1e18 }); };
+
+  it('a player target: its type and its own target (the assist bar ToT) reach the Map; a player is never pinned to a spawn point', () => {
+    const { c } = liveCore(); const N = Date.now();
+    const s = tgt(44, 80, 105, 202, { target_type: 0, target_name: 'Rethlan', target_of_target: { id: 7, name: 'Aldenmar' } });
+    c._mapNoteState('Aldenmar', null, s, N);
+    watch(c, s);
+    const t = c._mapStatePayload('', N + 1).target;
+    expect(t).toMatchObject({ name: 'Rethlan', type: 0, tot: { id: 7, name: 'Aldenmar' }, point_id: null });
+    watch(c, Object.assign({}, s, { target_of_target: { id: 44, name: 'Rethlan' } }));   // on itself: nothing to draw
+    expect(c._mapStatePayload('', N + 2).target.tot).toBeNull();
+    watch(c, Object.assign({}, s, { target_of_target: { id: 0, name: '' } }));
+    expect(c._mapStatePayload('', N + 3).target.tot).toBeNull();
+  });
 
   describe('the pin: only when certain', () => {
     it('a live NPC at exactly one point is pinned, recorded as seen alive, and the payload says so', () => {
