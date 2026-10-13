@@ -79,6 +79,16 @@ function world() {
       npc(1013, 'Sharp_Eyes', { see_improved_hide: true }),
       npc(1014, 'Nasty_One', { special_abilities: '1,1^31,1^3,1^50,1^24,1' }),
     ],
+    // every fixture NPC is on npc_faction 1430 (primary 479, KOS) except the pup (no faction)
+    eqemu_npc_faction: [{ id: 1430, name: 'Beta KOS', primaryfaction: 479, ignore_primary_assist: 0 }],
+    eqemu_faction_list_full: [
+      { id: 479, name: 'Beta_KOS', base: -1500, see_illusion: 0, min_cap: -2000, max_cap: 2000 },
+      { id: 686, name: 'Beta Dubious', base: -1000, see_illusion: 0, min_cap: -2000, max_cap: 2000 },   // nobody's primary here
+    ],
+    eqemu_faction_list_mod: [
+      { id: 1, faction_id: 479, mod: 2000, mod_name: 'r6' }, { id: 2, faction_id: 479, mod: 0, mod_name: 'c1' },
+      { id: 3, faction_id: 686, mod: 1000, mod_name: 'r1' },
+    ],
     zone_map_lines: [{
       zone_short: 'testzone', bands: [-10, 0, 10], segs: [[0, 0, 5, 5, 1]], bounds: { minX: -1, maxX: 1, minY: -1, maxY: 1 },
       brewall: { note: BREWALL_MARK }, generated_at: '2026-10-10T00:00:00Z', source: 'EQEmu/maps (GPLv2+)',
@@ -110,14 +120,33 @@ const pointFor = (b, id) => b.points.find(p => p.id === id);
 const npcNamed = (b, name) => b.points.flatMap(p => p.npcs).find(n => n.name === name);
 
 describe('the response shape', () => {
-  it('is the contract: zone, long_name, generated_at, points, map, grids', async () => {
+  it('is the contract: zone, long_name, generated_at, points, map, grids, factions', async () => {
     const b = await body();
-    expect(Object.keys(b)).toEqual(['zone', 'long_name', 'generated_at', 'points', 'map', 'grids']);
+    expect(Object.keys(b)).toEqual(['zone', 'long_name', 'generated_at', 'points', 'map', 'grids', 'factions']);
     expect(b.zone).toBe('testzone');
     expect(b.long_name).toBe('The Test Zone');
     expect(Date.parse(b.generated_at)).toBeGreaterThan(0);
     expect(Object.keys(b.points[0])).toEqual(['id', 'x', 'y', 'z', 'respawn_s', 'variance_s', 'grid', 'npcs']);
-    expect(Object.keys(b.points[0].npcs[0])).toEqual(['name', 'level', 'chance', 'named', 'raid_target', 'badges', 'aggro', 'fac', 'assist']);
+    expect(Object.keys(b.points[0].npcs[0])).toEqual(['name', 'level', 'chance', 'named', 'raid_target', 'badges', 'aggro', 'fac', 'assist', 'pf']);
+  });
+
+  it('carries each NPC\'s primary faction and only those factions, with base, caps, mods and KOS class (2026-10-13)', async () => {
+    // the guild lead: "the mobs in Plane of Tranquility should be green because they are indifferent to everyone"
+    const b = await body();
+    expect(npcNamed(b, 'Lord Rax').pf).toBe(479);
+    expect(npcNamed(b, 'a gnoll pup').pf).toBe(0);                       // no faction
+    expect(Object.keys(b.factions)).toEqual(['479']);                    // 686 is nobody's primary here
+    expect(b.factions[479]).toEqual({ name: 'Beta KOS', base: -1500, see_illusion: false, min_cap: -2000, max_cap: 2000,
+      mods: { r6: 2000 }, kos: 'some' });                                // a 0 mod is not sent; a Dark Elf is spared
+  });
+  it('a failed faction read leaves factions null and the map still answers, cached briefly', async () => {
+    const inner = fake.select;
+    fake.select = async (t, q) => (t === 'eqemu_faction_list_full' ? null : inner(t, q));
+    const r = await get();
+    expect(r.status).toBe(200);
+    const b = JSON.parse(r.body);
+    expect(b.factions).toBeNull();
+    expect(npcNamed(b, 'Lord Rax').pf).toBe(0);
   });
 
   it('carries each NPC\'s faction (0 = none) and social assist radius (0 or missing = null) for the ring colours (2026-10-13)', async () => {
