@@ -1199,7 +1199,8 @@
             ctx.closePath(); ctx.fillStyle = CO.tot; ctx.fill();
           }
         }
-        var nameTxt = SH.targetName && P.target.point_id == null ? String(P.target.name).replace(/_/g, ' ').replace(/^#/, '') : '';
+        // (with its spawn id, the way a pinned one is labelled on its point: a roamer not pinned yet still says which it is)
+        var nameTxt = SH.targetName && P.target.point_id == null ? String(P.target.name).replace(/_/g, ' ').replace(/^#/, '') + (P.target.id != null ? ' #' + P.target.id : '') : '';
         var totTxt = tot ? '→ ' + tot.name + (tm && tm.who === 'you' ? ' (you)' : '') : '';
         if (nameTxt || totTxt) {
           var lf = labelFont('boss'), lx = tq[0] + 9, ly = tq[1] - 10;
