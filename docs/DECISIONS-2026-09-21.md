@@ -9869,3 +9869,21 @@ Harmony, Hide/Sneak for non-rogues).
   `lockout: false` (there the hours ARE the respawn; on a lockout boss they are the lockout). An instanced point stays
   null. So the board is now the override for any spawn time the mirror has wrong: fix the board entry, not the map.
   Test: `test/zone-spawns.test.js` (mutation-checked both ways).
+
+### 268. A pet keeps its buffs across a zone, and after Suspended Minion 2 (2026-10-13, agent 3.7.154 beta `c7599927`)
+
+- **The report** (a member, relayed by the guild lead): their pet loses its buffs on our tracker when it zones.
+- **The rule** (the guild lead): *"when you suspend with your second level of the AA it keeps its buffs. When you
+  suspend with 1 it removes the buffs and you get back a fresh pet with no timers."*
+- **Cause:** `_reconcilePetIdentity` dropped a pet's buffs whenever its Zeal spawn id changed (added for same-named
+  re-charms, 2026-08-31). A spawn id is a slot in the zone's entity table, so every zone gave the same pet a new
+  id. It only bit on Zeal builds that send `pet_id`.
+- **Fix:** a new id after the owner zoned keeps the buffs. In the same zone (an unsuspended pet) the buffs are kept
+  only at Suspended Minion rank 2, read from the owner's Quarmy export (eqmac AA 176 = `eqemu_altadv_vars` skill 526).
+  Rank 1, or no export: fresh pet, as before. A different pet name is still a new pet. Test:
+  `test/pet-buff-landing.test.js`.
+- **Known edges:** rank 1 + suspend + zone + unsuspend keeps buffs it should not (indistinguishable from a zone). At
+  rank 2, re-charming a same-named mob in the same zone keeps the old buffs until `/pet health` or the charm-land clear
+  reconciles. No suspend log line is used: we have not captured Quarm's wording, so none is invented.
+- **Confirm in game:** the agent log prints `[pet] … kept its buffs` on the new path, and `dropped the previous pet's
+  buffs` on the old one.
