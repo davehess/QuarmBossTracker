@@ -412,6 +412,8 @@ client.once(Events.ClientReady, async (readyClient) => {
   try { setInterval(_refreshAgentManifestBeta, AGENT_MANIFEST_REFRESH_MS).unref(); } catch (_) { /* non-fatal */ }
   // Slow mode (utils/slowMode.js) before any kill is recorded or reconciled: it decides the timer length.
   await require('./utils/slowMode').loadSlowMode();
+  // Member lockout (utils/memberLockout.js): load the set before interactions and agent calls are judged by it.
+  require('./utils/memberLockout').start();
   await registerCommands();
   startSpawnChecker(readyClient);
   scheduleMidnightSummary(readyClient);
@@ -1154,6 +1156,16 @@ async function registerCommands() {
 
 // ── Interactions ───────────────────────────────────────────────────────────
 client.on(Events.InteractionCreate, async (interaction) => {
+  // Member lockout (utils/memberLockout.js): a locked member gets nothing from the bot, whatever roles they hold.
+  if (require('./utils/memberLockout').isLocked(interaction.user?.id)) {
+    try {
+      if (interaction.isAutocomplete()) await interaction.respond([]).catch(() => {});
+      else if (interaction.isRepliable?.()) {
+        await interaction.reply({ flags: MessageFlags.Ephemeral, content: 'Your access to the guild tools is paused. Ask an officer if you think this is a mistake.' }).catch(() => {});
+      }
+    } catch (_) { /* a failed reply must never throw out of the handler */ }
+    return;
+  }
   if (interaction.isAutocomplete()) {
     const cmd = client.commands.get(interaction.commandName);
     if (cmd?.autocomplete) { try { await cmd.autocomplete(interaction); } catch (e) { console.error(e); } }

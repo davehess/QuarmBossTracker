@@ -25,6 +25,7 @@
 
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
+import { isLockedOut } from '@/lib/lockout';
 
 export const metadata = {
   title: 'Site access invite',
@@ -72,6 +73,12 @@ async function claimInvite(formData: FormData) {
     .eq('is_member', true)
     .maybeSingle();
   if (!member) redirect(`${back}&error=not_member`);
+
+  // Member lockout (the guild lead, 2026-10-13): a paused member cannot mint or reset a password account
+  // either. This flow never opens a session, so there is nothing to sign out; just refuse.
+  if (await isLockedOut({ id: member!.user_id ?? undefined, user_metadata: { discord_id: member!.discord_id } })) {
+    redirect('/auth/paused');
+  }
 
   // Mirror of the OAuth callback's ALLOWED_ROLE_NAMES gate — claim time is
   // this flow's sign-in time.
@@ -169,6 +176,9 @@ export default async function ClaimPage({
     .select('nickname, global_name, user_id')
     .eq('discord_id', invite.member_discord_id)
     .maybeSingle();
+  if (await isLockedOut({ id: member?.user_id ?? undefined, user_metadata: { discord_id: invite.member_discord_id } })) {
+    redirect('/auth/paused');
+  }
   const displayName = member?.nickname || member?.global_name || 'you';
   const isReset = !!member?.user_id;
   const errorMsg = searchParams.error ? (ERRORS[searchParams.error] || `Error: ${searchParams.error}`) : null;

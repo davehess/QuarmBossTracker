@@ -29,6 +29,10 @@ const { SlashCommandBuilder, MessageFlags, EmbedBuilder, ActionRowBuilder, Butto
 const { hasAllowedRole, allowedRolesList, hasOfficerRole, officerRolesList } = require('../utils/roles');
 const mimicLink = require('../utils/mimicLink');
 const supabase  = require('../utils/supabase');
+const memberLockout = require('../utils/memberLockout');
+
+const LOCKED_SELF  = 'Your access to the guild tools is paused. Ask an officer.';
+const LOCKED_OTHER = 'That member\'s access is paused.';
 
 
 async function _lookupWolfpackMember(discordId) {
@@ -113,6 +117,9 @@ async function handleTokenMint(interaction) {
       content: `❌ Guild members only. Required roles: ${allowedRolesList()}`,
     });
   }
+  if (memberLockout.isLocked(interaction.user.id)) {
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: LOCKED_SELF });
+  }
   const member = await _lookupWolfpackMember(interaction.user.id);
   if (!member) {
     return interaction.reply({
@@ -191,6 +198,9 @@ async function _handleOfficerMintFor(interaction, target) {
   }
   if (target.bot) {
     return interaction.reply({ flags: MessageFlags.Ephemeral, content: '❌ Bots don\'t get Parser tokens.' });
+  }
+  if (memberLockout.isLocked(target.id)) {
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: LOCKED_OTHER });
   }
   const member = await _lookupWolfpackMember(target.id);
   if (!member) {

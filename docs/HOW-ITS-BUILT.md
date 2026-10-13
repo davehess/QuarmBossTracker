@@ -114,6 +114,18 @@ writes.
   metadata and resets instead of creating). Sign-in form lives below the
   Discord button (`PasswordSignIn.tsx`). Later-OAuth merge story + dashboard
   prerequisite (Email provider enabled): `docs/DECISIONS-2026-08-24.md`.
+- **Member lockout** (bot 3.1.251 · web 1.8.143, 2026-10-13, DECISIONS §252):
+  an officer pauses a member out of OUR tools whatever Discord roles they hold.
+  One row in `member_lockouts` (service role only; active = no `until` or a
+  future one) is the whole switch, written on `/admin/access` [beta]
+  (`web/app/admin/access/actions.ts`: officer-only, never yourself, revokes the
+  member's `mimic_sessions`, `audit_log` `member_lockout`/`member_unlock`).
+  Readers: the bot's `utils/memberLockout.js` (20 s poll, sync `isLocked`) gates
+  `mimicLink._resolveSessionToken` (outside the 5-min token cache), new links
+  (`handlePoll` → `expired`, `mintSessionForUser`, `/token`) and the top of the
+  `InteractionCreate` handler; the site's `web/lib/lockout.ts` (20 s per-isolate
+  cache, fails open) gates `middleware.ts` (sign out → `/auth/paused`, `/api/`
+  → 403), the OAuth callback and `/auth/claim`. Discord itself is untouched.
 - **Character ownership** (who may see/edit a character's private data): the
   household+family walk — `wolfpack_members.user_id → discord_id` (+
   `merged_into_discord_id` aliases) → `characters.discord_id` anchors →
