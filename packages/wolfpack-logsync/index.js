@@ -31965,6 +31965,7 @@ function startWebDashboard(port) {
       // Spawn map overlay (map.html): positions + zone spawn points + timers in one poll, and its click-to-mark.
       if (req.url && req.url.split('?')[0] === '/api/map-state' && req.method === 'GET') return _handleMapState(req, res);
       if (req.url === '/api/map-mark' && req.method === 'POST') return _handleMapMark(req, res);
+      if (req.url === '/api/map-leg' && req.method === 'POST') return _handleMapLeg(req, res);
       // "What you hear" — per-person rules for every callout (the guild lead, 2026-10-12).
       if (req.url && req.url.split('?')[0] === '/api/trigger-rules' && (req.method === 'GET' || req.method === 'POST')) return _handleTriggerRules(req, res);
       // Personal trigger sync — Push / Pull between this household's PCs (2026-10-12).
@@ -44370,6 +44371,7 @@ const MAP_PIN_STILL_UNITS    = 3;                   // otherwise it must hold wi
 const MAP_PIN_STILL_MS       = 1500;                // ...for this long before it is tied to a point
 const MAP_SEEN_KEEP_MS       = 30 * 60 * 1000;      // "seen alive" sightings older than this are not shown
 const MAP_LAST_KEEP_MS       = 24 * 60 * 60 * 1000;
+const MAP_LEGS_MAX           = 3000;                // learned wander legs kept per zone (the oldest-seen go first)
 const MAP_SYNC_FLUSH_MS      = 3000;                // pushes are batched: at most one POST per this
 const MAP_SYNC_BATCH         = 50;                  // events per POST
 const MAP_SYNC_PULL_MS       = 10 * 1000;
@@ -44524,6 +44526,7 @@ function _mapZoneDoc(zone) {
   if (!e.sightings || typeof e.sightings !== 'object') e.sightings = {};
   if (!e.seen || typeof e.seen !== 'object') e.seen = {};   // <point_id>: a pinned mob seen alive there
   if (!e.last || typeof e.last !== 'object') e.last = {};   // <point_id>: `at` of the newest event applied (local or guild) - newer wins
+  if (!e.legs || typeof e.legs !== 'object') e.legs = {};   // <grid>: { "<a>-<b>": { n, at } } wander legs seen walked (_mapNoteLeg)
   return e;
 }
 function _mapSaveNow() {
@@ -45310,6 +45313,32 @@ function _mapApplyMark(zone, mark, now, character) {
   return { ok: true, timer, settled };
 }
 
+// A random wanderer seen walking from waypoint `a` to waypoint `b` of route `grid` (the Map works the leg out from its
+// target's breadcrumbs). Kept per zone with a count, so the legs a route's mobs really walk build up into its path and
+// the common ones stand out from a one-off misread (the guild lead, 2026-10-13: "If we find the line segment between
+// two of these points we should keep it, and build the full path ... keep these patterns and see if they persist as a
+// common one"). Stored undirected; never expires (the routes do not change), capped at MAP_LEGS_MAX per zone.
+function _mapNoteLeg(zone, grid, a, b, now) {
+  const rec = _mapZones.get(zone);
+  const g = rec && rec.body && rec.body.grids ? rec.body.grids[String(grid)] : null;
+  a = Number(a); b = Number(b);
+  if (!g || !Array.isArray(g.pts)) return { ok: false, error: 'unknown route' };
+  if (!Number.isInteger(a) || !Number.isInteger(b) || a === b || a < 0 || b < 0 || a >= g.pts.length || b >= g.pts.length) return { ok: false, error: 'bad waypoints' };
+  const zd = _mapZoneDoc(zone);
+  const legs = zd.legs[String(grid)] || (zd.legs[String(grid)] = {});
+  const key = Math.min(a, b) + '-' + Math.max(a, b);
+  const l = legs[key] || (legs[key] = { n: 0, at: now });
+  l.n += 1; l.at = now;
+  const all = [];
+  for (const [gid, ls] of Object.entries(zd.legs)) for (const [k, v] of Object.entries(ls)) all.push([gid, k, v && v.at || 0]);
+  if (all.length > MAP_LEGS_MAX) {
+    all.sort((x, y) => x[2] - y[2]);
+    for (const [gid, k] of all.slice(0, all.length - MAP_LEGS_MAX)) { delete zd.legs[gid][k]; if (!Object.keys(zd.legs[gid]).length) delete zd.legs[gid]; }
+  }
+  _mapSaveSoon();
+  return { ok: true, n: l.n };
+}
+
 // ── What the overlay reads ──────────────────────────────────────────────────────────────────────
 // The character whose pipe is live right now (the freshest within a minute): that is the one on screen.
 function _mapActiveCharacter(now) {
@@ -45462,6 +45491,7 @@ function _mapStatePayload(have, now, haveLocal) {
   if (!have || have !== rec.version) {
     out.map = rec.body.map || null; out.points = rec.body.points; out.grids = rec.body.grids || null;
     out.factions = rec.body.factions || null;   // the zone's primary factions (bot 3.1.254): base, caps, race/class/deity mods
+    out.spawngroups = rec.body.spawngroups || null;   // spawn group names by id (bot 3.1.255; points carry `sg`)
   }
   try { out.me = _mapMe(character, st); } catch { out.me = null; }
   const zd = _mapZoneDoc(zone);
@@ -45473,6 +45503,9 @@ function _mapStatePayload(have, now, haveLocal) {
     .filter(s => s && now - s.at <= MAP_SEEN_KEEP_MS && !(zd.timers[String(s.point_id)] && zd.timers[String(s.point_id)].died_at >= s.at))
     .map(s => ({ point_id: s.point_id, spawn_id: s.spawn_id == null ? null : s.spawn_id, name: s.name, at: s.at, by: s.by || null }))
     .sort((a, b) => b.at - a.at);
+  // Learned wander legs per route: { <grid>: [[a, b, times seen], ...] } (_mapNoteLeg).
+  out.legs = {};
+  for (const [gid, ls] of Object.entries(zd.legs)) out.legs[gid] = Object.entries(ls).map(([k, v]) => { const [a, b] = k.split('-').map(Number); return [a, b, v.n]; });
   _mapSyncPull(zone, now);   // the guild's events, while this overlay is polling (no poll, no pull)
   return out;
 }
@@ -45559,6 +45592,21 @@ async function _handleMapMark(req, res) {
   if (live && zone !== live) return send(409, { error: 'that is not the zone you are in' });
   if (!b || b.point_id == null) return send(400, { error: 'point_id is required' });
   const r = _mapApplyMark(zone, { point_id: b.point_id, kind: b.kind }, now, ch);
+  send(r.ok ? 200 : 400, r);
+}
+// POST /api/map-leg { zone, grid, a, b } - a wander leg the overlay saw its target walk (_mapNoteLeg).
+async function _handleMapLeg(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 1024)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { error: 'bad body' }); }
+  const now = Date.now();
+  const ch = _mapActiveCharacter(now);
+  const live = ch ? _mapZoneShort(_zealState[ch].zone) : null;
+  const zone = b && b.zone ? String(b.zone).slice(0, 40) : live;
+  if (!zone) return send(400, { error: 'no zone' });
+  if (live && zone !== live) return send(409, { error: 'that is not the zone you are in' });
+  const r = _mapNoteLeg(zone, b && b.grid, b && b.a, b && b.b, now);
   send(r.ok ? 200 : 400, r);
 }
 // A timer written in the last two seconds is flushed on the way out.
