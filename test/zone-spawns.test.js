@@ -37,7 +37,7 @@ function withProjection(fake) {
 
 const npc = (id, name, extra = {}) => ({
   id, name, level: 50, raid_target: false, see_invis: false, see_invis_undead: false, see_hide: false,
-  see_improved_hide: false, special_abilities: null, npcspecialattks: null, ...extra,
+  see_improved_hide: false, special_abilities: null, npcspecialattks: null, aggroradius: 70, ...extra,
 });
 const sp = (id, group, extra = {}) => ({
   id, spawngroup_id: group, zone_short: 'testzone', x: id * 10, y: -id * 10, z: 5.5,
@@ -67,7 +67,7 @@ function world() {
       se(17, 1011), se(18, 1012), se(19, 1013), se(20, 1014),
     ],
     eqemu_npc_types: [
-      npc(1001, 'a_gnoll_pup', { level: 5 }),
+      npc(1001, 'a_gnoll_pup', { level: 5, aggroradius: 0 }),
       npc(1002, 'a_decaying_skeleton'), npc(1003, 'Bonecrusher_Rax'), npc(1004, 'an_old_ghoul'),
       npc(1005, 'Lord_Rax', { raid_target: true }),
       npc(1006, '#Magi_Rokyl'),
@@ -117,7 +117,14 @@ describe('the response shape', () => {
     expect(b.long_name).toBe('The Test Zone');
     expect(Date.parse(b.generated_at)).toBeGreaterThan(0);
     expect(Object.keys(b.points[0])).toEqual(['id', 'x', 'y', 'z', 'respawn_s', 'variance_s', 'grid', 'npcs']);
-    expect(Object.keys(b.points[0].npcs[0])).toEqual(['name', 'level', 'chance', 'named', 'raid_target', 'badges']);
+    expect(Object.keys(b.points[0].npcs[0])).toEqual(['name', 'level', 'chance', 'named', 'raid_target', 'badges', 'aggro']);
+  });
+
+  it('carries each NPC\'s aggro radius for the Map\'s aggro rings; 0 or missing is null (2026-10-13)', async () => {
+    const b = await body();
+    expect(npcNamed(b, 'a gnoll pup').aggro).toBeNull();                 // aggroradius 0
+    expect(npcNamed(b, 'Lord Rax').aggro).toBe(70);
+    expect(b.points.flatMap(p => p.npcs).filter(n => n.aggro === 70).length).toBeGreaterThan(5);
   });
 
   it('keeps the server frame (spawn2 x/y as stored) and only enabled points of THIS zone', async () => {
