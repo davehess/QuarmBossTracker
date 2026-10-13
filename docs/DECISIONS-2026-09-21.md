@@ -10018,3 +10018,24 @@ Harmony, Hide/Sneak for non-rogues).
 - **Not added (not asked):** the other bard slows, Selo's Consonant Chain (40%) and the two Largo's bindings (35%).
   Both Largo's share one land line, so they would read as "slowed" without a name. Also still missing from the raid
   review: the four Beastlord slows, which the agent and Extended Target have carried since 2026-10-08.
+
+### 277. /pop shows every character-flag step, and the Grummus gap was eligibility, not the hail (2026-10-13, web beta `471f7c69`)
+
+- **The trigger:** a raider asked which mains still needed Grummus, and the page could not say. The data showed
+  41 raiders at the Oct 10 kill, Mimic users witnessed 48 characters hailing the projection, yet only 5 got the
+  visible flag. 14 of the rest had Mimic on and Adler done.
+- **What the server's script says** (podisease/A_Planar_Projection.lua + lua_modules/projection_eligibility.lua):
+  a projection flags only the raid (or group) that got the kill, and refuses everyone else silently (the refusal
+  goes to GMs only). An eligible hail with fuirstel 1 prints the Milyk line and the flag; without it, a checklist
+  flag. The Crypt of Decay key (`grummus`) is set on every eligible hail with NO chat line. So "no line in the
+  log" never means "no Crypt access", and "hailed but no flag" most likely means "not in the kill-credit raid".
+  Unconfirmed until those raiders do the Seer meditation.
+- **The call** (the guild lead): *"update the entire page with all of the character flag steps required, not
+  just the main ones"*. Shipped: `web/lib/popSteps.ts` lists every step the server keeps per zone card, read
+  off the scripts (pre-kill hails, silent steps, the Tranquility return trips, Maelin's steps, the five Sol Ro
+  wings, Miak's pre-flag); `stepsHeld` expands a series. Cards show holders, ☑ owner-tick-only, ⏳ checklist
+  waiting on the Seer, 🔇 silent step; `/pop?zone=` lists who can enter and still needs each step.
+- **Found on the way:** the Sol Ro projection checks all five wing cauldrons, Miak's pre-flag AND zeks 7 (the
+  Rallos Zek step) before it opens Doomfire; Aerin`Dar's projection flags only holders of the Justice flag.
+- **Backfill answer:** Opt-in Logs and `--since` read flag grants, checklist lines, Seer recitals and witnessed
+  hails, the same as live.
