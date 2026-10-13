@@ -44779,7 +44779,9 @@ const MAP_SIGHT_KEEP_MS      = 60 * 60 * 1000;
 const MAP_SIGHT_MAX          = 128;
 const MAP_UNASSIGNED_MAX     = 24;
 const MAP_UNASSIGNED_KEEP_MS = 2 * 60 * 60 * 1000;
-const MAP_REVALIDATE_MS      = 24 * 60 * 60 * 1000; // a held zone is re-checked with its ETag once a day
+// A held zone is re-checked with its ETag every hour (a 304 when nothing changed, so it costs a header). It was once a
+// day, and a respawn fixed on the boss board took up to a day to reach the Map (the guild lead, 2026-10-13).
+const MAP_REVALIDATE_MS      = 60 * 60 * 1000;
 const MAP_NONE_RETRY_MS      = 6 * 60 * 60 * 1000;  // the bot has no points for the zone (404)
 const MAP_FAIL_RETRY_MS      = 10 * 60 * 1000;
 const MAP_INSTANCE_SENTINEL_S = 1_000_000;          // the 1,700,000 s rows are instance sentinels, not respawns
@@ -44968,12 +44970,17 @@ function _mapSaveSoon() {
 }
 // Drop what has run out: timers 10 minutes past the end of their window, sightings an hour old, an unassigned
 // death once every candidate has certainly respawned (+10 minutes; two hours when the zone data is not loaded).
+// A timer's window is first re-worked from its death time and the point's CURRENT respawn, so a kill counted while
+// the zone data still said 6 h follows the data once it says 3 h (the guild lead, 2026-10-13, the Bastion of Thunder
+// named: "Still has the wrong timers").
 function _mapPrune(zdoc, points, now) {
   let changed = false;
+  const byId = new Map((points || []).map(p => [String(p.id), p]));
   for (const [k, t] of Object.entries(zdoc.timers)) {
+    const fresh = t && byId.size ? _mapMakeTimer(byId.get(String(t.point_id)), t.died_at, t.source, t.name) : null;
+    if (fresh && (fresh.earliest !== t.earliest || fresh.latest !== t.latest)) { t.earliest = fresh.earliest; t.latest = fresh.latest; changed = true; }
     if (!t || !(now <= t.latest + MAP_TIMER_KEEP_MS)) { delete zdoc.timers[k]; changed = true; }
   }
-  const byId = new Map((points || []).map(p => [String(p.id), p]));
   const keepU = zdoc.unassigned.filter(u => {
     if (!u || !Number.isFinite(u.died_at)) return false;
     let span = MAP_UNASSIGNED_KEEP_MS;

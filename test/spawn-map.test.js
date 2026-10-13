@@ -266,6 +266,23 @@ describe('the respawn window and its colour', () => {
     k._mapPrune(zd, POINTS, T0 + 660000 + 600001);
     expect(Object.keys(zd.timers)).toEqual([]);
   });
+  it('a timer follows its point\'s respawn when the zone data changes (2026-10-13)', () => {
+    // the guild lead, Bastion of Thunder named, killed while the cached zone data still said 6 h: "Still has the
+    // wrong timers". The window is re-worked from the death time and the point's current respawn.
+    const { c: k } = localCore();
+    k._mapNoteDeath('thedeep', { name: 'a decaying skeleton', spawn_id: 5, loc: { x: 100, y: 200 }, at: T0, src: 'zeal' }, T0);
+    const zd = k._mapZoneDoc('thedeep');
+    const long = POINTS.map(p => p.id === 1 ? Object.assign({}, p, { respawn_s: 21600, variance_s: 0 }) : p);
+    k._mapPrune(zd, long, T0 + 1000);
+    expect(zd.timers['1'].earliest).toBe(T0 + 21600000);                  // 6 h while the data says 6 h
+    const short = POINTS.map(p => p.id === 1 ? Object.assign({}, p, { respawn_s: 10800, variance_s: 0 }) : p);
+    k._mapPrune(zd, short, T0 + 2000);
+    expect(zd.timers['1'].earliest).toBe(T0 + 10800000);                  // 3 h once it says 3 h
+    expect(zd.timers['1'].latest).toBe(T0 + 10800000);
+    expect(zd.timers['1'].died_at).toBe(T0);                              // the death time is never moved
+    k._mapPrune(zd, [], T0 + 3000);                                       // no zone data: left as it was
+    expect(zd.timers['1'].earliest).toBe(T0 + 10800000);
+  });
 });
 
 describe('deaths, "?" candidates and marks', () => {
