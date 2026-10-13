@@ -9595,3 +9595,23 @@ Harmony, Hide/Sneak for non-rogues).
   raid; anyone else gets the name only — their position is not on the pipe. A player target is never pinned to a spawn
   point (pins stay NPC-only). Two ⚙ switches (Target name, Target's target) and a colour in each scheme.
 - **Limit, unchanged:** the target's own position still arrives only within 250 units on release Zeal (§243).
+
+### 250. Pull grouping: A picked; unpulled-on-its-spot pin rule shipped; copies and slow mode in timers (2026-10-13, agent 3.7.139 beta `fcb6b310`)
+
+- **Pick: A** (suggestions only) for pull grouping, with the guild lead's refinements: pulls are not one group —
+  *"typically monks, rogues, bards, some Shadowknights. paladins and rangers may get an initial tag also"*.
+- **Shipped now — the pin rule** (*"if a mob is stationary, not aggroed (no assist currently when pulled) and is in
+  the spot where it would typically spawn we can make that educated guess and associate it"*): a live target is tied
+  to its point only when it has no target of its own on Zeal's assist bar AND stands on the point (≤ 8 units) or has
+  held still within 3 units for 1.5 s; walkers may move. Before, a mob running at someone through another same-name
+  point could be pinned there. Candidates are still only points whose spawn list holds the name.
+- **Designed, next to build — pull suggestions:** for each Extended Target mob not tied to a point, the candidate points
+  are those with its name in their spawn list, not holding another live mob, not under a running "not yet" timer, near
+  a raid member of a puller class (MNK, ROG, BRD, SHD, PAL, RNG) when the mob first appeared. Shown as dashed "?" on
+  the Map and "probably from …" on its Extended Target row; never shared or timed until confirmed.
+- **Asked, needs data — copies and timers** (*"spawn timers need to take into account the slowmode for instance or
+  variability if in PVP"*; *"start referencing if people are in guild/guild-slow in raid/live/pvp"*). Known: slow mode
+  (§237) is 18 h vs 3 h for the second-floor Bastion of Thunder named; PvP timers vary ±20%; guild-instance bosses are
+  3 h from death (#288). Not known: which line, if any, the client prints on entering a guild, guild-slow, live or PvP
+  copy, and whether trash respawn changes in those copies. Waiting on the guild lead's capture before any timer
+  changes.
