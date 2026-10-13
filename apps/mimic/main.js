@@ -8213,6 +8213,12 @@ function buildTrayMenu() {
         applyOverlayInteractivity();
         pushStatus();
       } },
+    // Stand-in mouse pointer over locked overlays (cfg.standInPointer, default on; the guild lead, 2026-10-13:
+    // "make mouse over configurable"). Same setting as the dashboard's Overlays tab → More….
+    { label: 'Show a mouse pointer over overlays', type: 'checkbox', checked: loadConfig().standInPointer !== false, click: (mi) => {
+        const cfg = loadConfig(); cfg.standInPointer = !!mi.checked; saveConfig(cfg);
+        _broadcastPointer(cfg);
+      } },
     // Setup mode — shows every overlay at once with opacity sliders so the
     // user can place + dial them all in a single pass.
     { label: setupMode ? '🛠 Exit setup mode' : '🛠 Setup mode — place all overlays',
@@ -9562,6 +9568,7 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
     screens: key && key !== 'canvas' ? _otherScreensFor(win) : [],
     backdrop: key ? !!((cfg.overlayBackdrop || {})[key]) : false,
     arrangeOnShow: !!cfg.autoArrangeOnShow,
+    pointer: cfg.standInPointer !== false,   // the stand-in mouse pointer switch (preload _wpPointerOn)
     growUp: _growUpSetting(cfg, key),
     timersTopDown: !!cfg.triggerTimersTopDown,
     theme: cfg.overlayTheme || 'default',
@@ -10575,6 +10582,18 @@ function _broadcastMute(cfg) {
     try { win.webContents.send('wp-mute', muted); } catch { /* mid-close */ }
   }
 }
+// The stand-in pointer switch (cfg.standInPointer, default on) to every overlay AND its frames: the Canvas and the
+// dock draw their panels in iframes, which run the preload too, and webContents.send reaches only the top frame.
+function _broadcastPointer(cfg) {
+  const on = !(cfg && cfg.standInPointer === false);
+  for (const [, win] of _overlayEntries()) {
+    try {
+      const frames = win.webContents.mainFrame ? win.webContents.mainFrame.framesInSubtree : [];
+      if (frames && frames.length) for (const f of frames) { try { f.send('wp-pointer', on); } catch { /* frame gone */ } }
+      else win.webContents.send('wp-pointer', on);
+    } catch { /* mid-close */ }
+  }
+}
 
 ipcMain.handle('save-config', async (_e, incoming) => {
   const merged = Object.assign(loadConfig(), incoming || {});
@@ -10594,6 +10613,7 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   }
   saveConfig(merged);
   _broadcastMute(merged);
+  if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'standInPointer')) _broadcastPointer(merged);
   // Re-bind the global hotkeys if the user changed any binding OR enable
   // flag (2026-07-12: backdropHotkey saves were ignored until restart —
   // only hideAllHotkey was in this condition).

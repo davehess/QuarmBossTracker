@@ -136,8 +136,14 @@ document.addEventListener('mouseout', function (ev) {
 // (the window is armed, Windows shows its own pointer), on an unlocked overlay
 // (never click-through), or over see-through parts (EQ's pointer shows there,
 // and two would be worse than one).
-let _wpLocked = true, _wpGhost = null;
+// The guild lead, 2026-10-13: "make mouse over configurable, and remove it from the HUD. for Canvas it should only
+// show over the elements". So: one switch for every overlay (cfg.standInPointer, default on: tray + dashboard
+// Overlays tab → More…), never on the HUD (me.html), and on the Canvas only over a panel, never the open screen
+// between them (each panel's own frame draws the arrow over its content).
+let _wpLocked = true, _wpGhost = null, _wpPointerOn = true;
+const _wpPointerNever = _wpDockKey() === 'me';
 ipcRenderer.on('overlay-locked', function (_e, locked) { _wpLocked = !!locked; if (!_wpLocked) _wpGhostHide(); });
+ipcRenderer.on('wp-pointer', function (_e, on) { _wpPointerOn = on !== false; if (!_wpPointerOn) _wpGhostHide(); });
 function _wpGhostHide() { if (_wpGhost) _wpGhost.style.display = 'none'; }
 function _wpAlpha(bg) {
   const m = /rgba?\(([^)]+)\)/.exec(bg || '');
@@ -149,6 +155,10 @@ function _wpAlpha(bg) {
 // <canvas> or picture is usually see-through around what it draws (the HUD ring is a window-sized canvas, and
 // counting it drew a second arrow over open game; 2026-10-12). The Map's dark panel is a CSS background.
 function _wpOverSolid(el) {
+  // The Canvas is screen-sized: only its panels count, not the screen between them.
+  if (document.getElementById('panels') && document.body && document.body.hasAttribute('data-wp-overlay')) {
+    if (!(el && el.closest && el.closest('#panels > .panel'))) return false;
+  }
   if (document.body && document.body.classList.contains('wp-backdrop')) return true;
   while (el && el.nodeType === 1 && el !== document.documentElement) {
     try { if (_wpAlpha(getComputedStyle(el).backgroundColor) >= 0.35) return true; } catch (e) { return false; }
@@ -170,7 +180,7 @@ function _wpGhostWatch() {
 document.addEventListener('mousemove', function (ev) {
   if (!_wpOverlayDoc()) return;
   _wpGhostAt = Date.now();
-  if (!_wpLocked || _wpHoverArmed || !_wpOverSolid(ev.target)) { _wpGhostHide(); return; }
+  if (!_wpPointerOn || _wpPointerNever || !_wpLocked || _wpHoverArmed || !_wpOverSolid(ev.target)) { _wpGhostHide(); return; }
   if (!_wpGhost) {
     _wpGhost = document.createElement('div');
     // On <html>, outside <body>, so the colour themes' body filter never recolours it.
@@ -381,6 +391,7 @@ document.addEventListener('DOMContentLoaded', function () {
       + (WP_IS_DOCKED ? '' : _WP_OPACITY_CSS);
     document.head.appendChild(st);
     ipcRenderer.invoke('wp-overlay-menu-state').then(function (s) {
+      if (s && s.pointer === false) _wpPointerOn = false;   // the stand-in pointer switch, pulled at load
       if (s && s.backdrop && _wpOverlayDoc()) document.body.classList.add('wp-backdrop');
       if (s && s.theme) _wpApplyTheme(s.theme);
       // Mini is PULLED at load, not only pushed. A window created while its
