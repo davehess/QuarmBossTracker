@@ -505,7 +505,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, trailStep, wanderLeg, noteWanderLeg, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH, legArrow, LEG_ARROW_AT, classifyTrail, homeOf, homeDist, noteKills, trailShown, KILLS_FADE, TRAIL_COL, nearPack, followOffNow, labelMode };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, trailStep, wanderLeg, noteWanderLeg, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH, legArrow, LEG_ARROW_AT, classifyTrail, homeOf, homeDist, noteKills, trailShown, KILLS_FADE, TRAIL_COL, nearPack, followOffNow, labelMode, routeTwins, headingRay, toolDock, toolBox };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -1338,6 +1338,34 @@ describe('pather routes', () => {
     expect(js).toMatch(/addEventListener\('contextmenu', function \(e\) \{\s*e\.preventDefault\(\);\s*S\.followLock = !S\.followLock;/);
     expect(js).toMatch(/if \(!group\.length && P\.my_grp != null\) group = raid\.filter/);
   });
+  it('a dashed heading line ahead of the mob; a shared-route pin is drawn to every point on the route; the button bar locks to an edge, upright on the sides (2026-10-13)', () => {
+    // the guild lead: "Why don't we see the purple line i drew ... as a dashed line of where the mob should be moving
+    // towards if it continues the current path?"; "Why is this non-pathing mob being targetted to a different spawn?";
+    // "The buttons for the map should be draggable separate from the whole window and lock onto a part of the window,
+    // also have a vertical mode"
+    let tr = null;
+    for (let i = 0; i < 5; i++) tr = H.trailStep(tr, 't:1', i * 6, i * 8, i * 500);    // heading (0.6, 0.8)
+    const hr = H.headingRay(tr, 10);
+    expect(hr.ux).toBeCloseTo(0.6, 5); expect(hr.uy).toBeCloseTo(0.8, 5);
+    expect(H.headingRay(H.trailStep(null, 't:2', 0, 0, 0), 10)).toBeNull();            // standing still: none
+    const golem = n => ({ name: n });
+    const pts = [{ id: 1, grid: 1, npcs: [golem('A Crystalline Golem')] }, { id: 2, grid: 1, npcs: [golem('A Crystalline Golem')] },
+      { id: 3, grid: 1, npcs: [golem('a gnoll')] }, { id: 4, grid: null, npcs: [golem('A Crystalline Golem')] }];
+    expect(H.routeTwins(pts[0], pts).map(p => p.id)).toEqual([1, 2]);                // its route's golems, not the gnoll
+    expect(H.routeTwins(pts[3], pts).map(p => p.id)).toEqual([4]);                   // a point with no route: itself
+    expect(H.toolDock(10, 200, 800, 600)).toBe('left');
+    expect(H.toolDock(400, 590, 800, 600)).toBe('bottom');
+    expect(H.toolDock(790, 300, 800, 600)).toBe('right');
+    expect(H.toolDock(400, 5, 800, 600)).toBe('top');
+    expect(H.toolBox('top', 0, 300, 24, 800, 600, 6)).toEqual({ left: 30, top: 6 });   // where it always sat
+    expect(H.toolBox('left', 0, 40, 200, 800, 600, 6)).toEqual({ left: 6, top: 30 });  // clear of the ✥
+    expect(H.toolBox('right', 1, 40, 200, 800, 600, 6)).toEqual({ left: 754, top: 394 });
+    expect(H.toolBox('bottom', 0.5, 300, 24, 800, 600, 6)).toEqual({ left: 250, top: 570 });
+    const js = stripJs(MAP_HTML);
+    expect(js).toMatch(/if \(!\(e\.buttons & 1\)\) \{ endToolDrag\(\); return; \}/);
+    expect(js).toMatch(/var twins = routeTwins\(pinPt, S\.points\);/);
+    expect(MAP_HTML).toMatch(/<button class="tb grip" id="toolsGrip" type="button"/);
+  });
   it('the walked path keeps the waypoint legs it was seen on, fades from spawn colour to target colour; con colours; Brewall layers; your target\'s point at any height (2026-10-13)', () => {
     // the guild lead: "extrapolate the previous point and the next point from the 'random path' ... a gradient along
     // all of the lines to the origin ... set the names of these mobs to conn color ... Default colors should probably
@@ -2029,7 +2057,8 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
       expect(js).toMatch(/card\.appendChild\(el\('div', 't', 'up · ' \+ seenText\(sn, nowMs\(\)\)\)\)/);
     });
     it('draws a thin line from a pinned target to its spawn point, and says "→ pinned" in the header', () => {
-      expect(js).toMatch(/var pinPt = P\.target\.point_id != null \? S\.byId\[String\(P\.target\.point_id\)\] : null;\s*if \(pinPt && SH\.pinLine\) \{\s*var pq = wpt\(pinPt\.x, pinPt\.y\);\s*ctx\.beginPath\(\); ctx\.moveTo\(tq\[0\], tq\[1\]\); ctx\.lineTo\(pq\[0\], pq\[1\]\);\s*ctx\.lineWidth = 1;/);
+      expect(js).toMatch(/var pinPt = P\.target\.point_id != null \? S\.byId\[String\(P\.target\.point_id\)\] : null;\s*if \(pinPt && SH\.pinLine\) \{\s*var twins = routeTwins\(pinPt, S\.points\);/);
+      expect(js).toMatch(/var pq = wpt\(tp\.x, tp\.y\);\s*ctx\.beginPath\(\); ctx\.moveTo\(tq\[0\], tq\[1\]\); ctx\.lineTo\(pq\[0\], pq\[1\]\); ctx\.stroke\(\);/);
       expect(js).toMatch(/\(P\.target\.point_id != null \? ' → pinned' : ''\)/);
     });
     it('the menu gets a Clear timer button only where there is a timer or a sighting', () => {
