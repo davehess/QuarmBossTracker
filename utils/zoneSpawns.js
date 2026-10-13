@@ -14,6 +14,8 @@
 //   · eqemu_npc_types  by id list, chunked                           → name, level, senses, specials
 //   · zone_map_lines   one row, bands/segs/bounds ONLY               → the cached EQEmu wall layer
 //   · eqemu_zone_grids one row, only when a point has a pathgrid     → the pather routes (null if absent)
+//   · eqemu_npc_faction / eqemu_faction_list_full / eqemu_faction_list_mod, by id list → each NPC's primary
+//     faction and its base + race / class / deity mods (`factions`, null if a read fails)
 //
 // ⚠ NEVER SELECT zone_map_lines.brewall. It is third-party map art with no licence; it is stored for the
 // website's own render and must not leave the website (the guild lead's standing line on the spectator map).
@@ -23,6 +25,7 @@
 const crypto = require('crypto');
 const zlib = require('zlib');
 const mobSpecials = require('./mobSpecials');
+const { kosClass } = require('./factionCon');
 
 const ZONE_RE = /^[a-z0-9_]{1,32}$/;
 const MAP_SELECT = 'bands,segs,bounds';
@@ -102,6 +105,40 @@ async function build(supabase, zone, bosses) {
     for (const r of rows) npcs.set(r.id, r);
   }
 
+  // Each NPC's PRIMARY faction (the one it cons and aggros by) with that faction's starting values and race / class /
+  // deity modifiers, so the Map can tell whom a mob is KOS to (utils/factionCon.js; the guild lead, 2026-10-13: "the
+  // mobs in Plane of Tranquility should be green because they are indifferent to everyone"). Decoration like the
+  // routes below: a failed read leaves factions null, is cached briefly (`degraded`), and the map still answers.
+  let degraded = false;
+  let factions = null;
+  const pfOf = new Map();   // npc_faction_id → primary faction id
+  const nfIds = [...new Set([...npcs.values()].map(n => num(n.npc_faction_id)).filter(v => v > 0))];
+  if (nfIds.length) {
+    let ok = true;
+    for (const ids of chunks(nfIds, CHUNK)) {
+      const rows = await supabase.select('eqemu_npc_faction', `id=in.(${ids.join(',')})&select=id,primaryfaction&limit=${CHUNK}`);
+      if (!Array.isArray(rows)) { ok = false; break; }
+      for (const r of rows) if (num(r.primaryfaction) > 0) pfOf.set(r.id, num(r.primaryfaction));
+    }
+    const pfIds = [...new Set(pfOf.values())];
+    if (ok && pfIds.length) {
+      factions = {};
+      for (const ids of chunks(pfIds, CHUNK)) {
+        const fl = await supabase.select('eqemu_faction_list_full',
+          `id=in.(${ids.join(',')})&select=id,name,base,see_illusion,min_cap,max_cap&limit=${CHUNK}`);
+        const fm = await supabase.selectAllPaged('eqemu_faction_list_mod', `faction_id=in.(${ids.join(',')})&select=id,faction_id,mod,mod_name`, 'id');
+        if (!Array.isArray(fl) || !Array.isArray(fm)) { ok = false; break; }
+        for (const f of fl) {
+          factions[f.id] = { name: cleanName(f.name), base: num(f.base) || 0, see_illusion: !!Number(f.see_illusion),
+            min_cap: num(f.min_cap) || 0, max_cap: num(f.max_cap) || 0, mods: {} };
+        }
+        for (const m of fm) { const f = factions[m.faction_id]; if (f && m.mod_name && Number(m.mod)) f.mods[m.mod_name] = Number(m.mod); }
+      }
+      if (ok) for (const id of Object.keys(factions)) factions[id].kos = kosClass(factions[id]);
+    }
+    if (!ok) { degraded = true; factions = null; pfOf.clear(); }
+  }
+
   const bossNames = new Set((bosses || []).map(b => String(b && b.name || '').toLowerCase()).filter(Boolean));
   const points = [];
   for (const sp of [...spawn2].sort((a, b) => a.id - b.id)) {
@@ -126,6 +163,7 @@ async function build(supabase, zone, bosses) {
         // friend (assistradius; 0 / missing = null). The ring's colour and its dashed social ring (2026-10-13).
         fac: num(npc.npc_faction_id) > 0 ? num(npc.npc_faction_id) : 0,
         assist: num(npc.assistradius) > 0 ? num(npc.assistradius) : null,
+        pf: pfOf.get(num(npc.npc_faction_id)) || 0,   // its primary faction: a key into the body's `factions`
       });
     }
     if (!list.length) continue;   // a point nobody spawns at is not a point
@@ -145,7 +183,6 @@ async function build(supabase, zone, bosses) {
   // import) or a failed read leaves grids null and the map still answers; a FAILED read is cached briefly
   // (`degraded`) so a hiccup does not hide the routes for six hours.
   let grids = null;
-  let degraded = false;
   const gridIds = [...new Set(points.map(p => p.grid).filter(g => g != null))].sort((a, b) => a - b);
   if (gridIds.length) {
     const grows = await supabase.select('eqemu_zone_grids', `zone_short=eq.${encodeURIComponent(zone)}&select=grids&limit=1`);
@@ -165,7 +202,7 @@ async function build(supabase, zone, bosses) {
   const m = mrows[0];
   const map = m ? { bands: m.bands, segs: m.segs, bounds: m.bounds } : null;
 
-  return { status: 200, degraded, payload: { zone, long_name: longName, generated_at: new Date().toISOString(), points, map, grids } };
+  return { status: 200, degraded, payload: { zone, long_name: longName, generated_at: new Date().toISOString(), points, map, grids, factions } };
 }
 
 // A weak validator over the CONTENT (generated_at left out) so a rebuild of unchanged data keeps its ETag
