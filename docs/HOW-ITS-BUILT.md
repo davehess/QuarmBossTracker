@@ -4688,4 +4688,5 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   `_mapAttribute`, `_mapApplyMark`, `_handleMapState`, `_handleMapMark`). Zone data from the bot's `zone-spawns`, disk first
   (`zone-spawns-cache/`); timers in `map_timers.json`. Zeal pipe x/y are swapped against the server frame (`_mapServerXY`).
   Mimic's pipe handler now also carries `target_loc` / `target_type` (Zeal 1.4.8).
-- Test: `test/spawn-map.test.js`. Design: `docs/DESIGN-mimic-2.9-spawn-map.md`.
+- Test: `test/spawn-map.test.js`. Design: `docs/DESIGN-mimic-2.9-spawn-map.md`. Every refinement since (asks, what
+  shipped, what is open): `docs/MAP-REFINEMENTS.md`.
