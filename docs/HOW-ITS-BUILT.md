@@ -3773,6 +3773,14 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
   whole-bank-hash view (`shared_bank_groups`) was tried and dropped the same
   day; see `DECISIONS-2026-08-20.md`. The Quartermaster deliberately does NOT
   dedup (per-character reachability).
+- **Game accounts (web 1.8.145, 2026-10-13, `/me/accounts` [beta])** — the owner
+  drags characters onto Account 1–10 (renameable, 8 per account; a "Move to…"
+  select for phones). `game_accounts` + `character_accounts` (membership HISTORY:
+  a move closes the old row and opens a new one, so a `#charactertransfer` shows
+  as "moved from Account 2 on …"). Service-role only; rules in
+  `web/lib/gameAccounts.ts`, test `test/game-accounts.test.js`. The owner's
+  placement beats the shared-bank guess above; a login-account source is planned.
+  DECISIONS §271.
 - **Inventory auto-upload (agent 3.5.94, beta, 2026-08-20)** —
   `scanInventoryUploads` in the agent watches `<Char>-Inventory.txt` beside
   its quarmy/spellbook siblings (same prefs gate, fingerprint + checksum
