@@ -650,6 +650,12 @@ function _buildOverlayMenu(onClose, state) {
       () => ipcRenderer.invoke('wp-mini-pin-toggle')));
   }
   menu.appendChild(mkItem('👁 Hide this overlay', '#6b2130', () => ipcRenderer.invoke('hide-overlay')));
+  // Windows: overlays sit under other apps while EverQuest isn't focused (main's _applyOverlayZ); this keeps THIS one on top
+  // always. Built only where that follow-EQ behaviour is live, so it is never a switch that does nothing.
+  if (st.zFollows) {
+    menu.appendChild(mkItem('🔝 Stay on top: ' + (st.stayOnTop ? 'ON' : 'off') + ' (this overlay)', '#2f3a1f',
+      () => ipcRenderer.invoke('wp-stay-on-top-toggle')));
+  }
   menu.appendChild(mkItem('🌫 Background: ' + (st.backdrop ? 'ON' : 'off') + ' (this overlay)', '#3a3320',
     () => ipcRenderer.invoke('wp-backdrop-toggle')));
   // Bottom-anchored auto-height — for overlays parked near the bottom edge
@@ -908,6 +914,9 @@ contextBridge.exposeInMainWorld('mimic', {
   setAllOpacity:   (v)    => ipcRenderer.invoke('wp-opacity-all', v),
   setAllBgAlpha:   (v)    => ipcRenderer.invoke('wp-bg-alpha-all', v),
   toggleBackdrops: ()     => ipcRenderer.invoke('wp-backdrop-toggle-all'),
+  // 🔝 Stay on top (Windows: overlays otherwise sit under other apps while EverQuest isn't focused). The dashboard row
+  // and the right-click menu's row reach the same main-side writer, _setStayOnTop.
+  setOverlayStayOnTop: (key, on) => ipcRenderer.invoke('wp-stay-on-top-set', key, !!on),
   // ▭ Mini mode, for the dashboard's Overlays tab. Tray↔dashboard parity
   // (CLAUDE.md): the right-click menu's two rows and the Ctrl+Shift+M hotkey
   // all reach the SAME internals through main's _setOverlayMini, never a
@@ -988,6 +997,14 @@ contextBridge.exposeInMainWorld('mimic', {
   // Map overlay: your / group / raid / target positions pushed straight from the Zeal pipe (main.js _makeMapDirect),
   // in the server frame, at most every 50 ms. The Map falls back to the agent's poll when these stop.
   onMapPos:         (cb)         => ipcRenderer.on('map-pos', (_e, p) => cb(p)),
+  // Map timers pop-out (the guild lead, 2026-10-13): the Map's respawn list in a window of its own (map.html?part=timers).
+  // mapTimersPop(on) is the right-click on the Timers button / the button while popped; getMapTimersPopped + onMapTimersPopped
+  // tell the Map whether its own list is out; the pop-out's row click asks the Map to centre on a spawn point.
+  mapTimersPop:       (on)         => ipcRenderer.invoke('map-timers-pop', !!on),
+  getMapTimersPopped: ()           => ipcRenderer.invoke('map-timers-popped'),
+  onMapTimersPopped:  (cb)         => ipcRenderer.on('map-timers-popped', (_e, on) => cb(!!on)),
+  mapCentreOn:        (pointId)    => ipcRenderer.send('map-centre', pointId),
+  onMapCentre:        (cb)         => ipcRenderer.on('map-centre', (_e, id) => cb(id)),
 
   // Manual overlay drag — replaces the buggy Chromium app-region drag on
   // transparent windows. Renderer mousedown on the ✥ handle calls

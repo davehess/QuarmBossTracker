@@ -286,7 +286,7 @@ describe('_windowLabelsByPid', () => {
     const names = sliceBlock(src, 'const _OVERLAY_NAMES = {', '\n};');
     const table = new Function('return ' + names.slice(names.indexOf('{')))();
     const keys = [...src.matchAll(/\{ key: '([a-zA-Z]+)',\s+flag:/g)].map(m => m[1]);
-    expect(keys.length).toBe(19);   // 18 overlays (Timers canvas 2026-09-29, spawn map 2026-10-12) + the Dock
+    expect(keys.length).toBe(20);   // 19 overlays (Timers canvas 2026-09-29, spawn map 2026-10-12, its timers pop-out 2026-10-13) + the Dock
     for (const k of keys) expect(table[k], `${k} has no display name`).toBeTruthy();
   });
 });
