@@ -60,6 +60,7 @@ own screenshots; treat each row as "shipped, needs an in-game look" until it is 
 | *"mob's pathing should be faded when it's killed, and it should disappear after a few kills. It can come back as a faded path for that same spawn point the next time"* | A killed mob's path fades, drops out after 3 more kills, and shows faded under the next mob you target from that point (this session only) | agent 3.7.150 |
 | *"Why don't we see the purple line i drew … as a dashed line of where the mob should be moving towards if it continues the current path?"* | The ahead-leg only drew when a waypoint lined up within 20°. Now a dashed heading line runs on ahead of a walking target (about 15 s of its pace) whenever no waypoint leg is ahead | Mimic `791cb572` |
 | Tabbing away and back | A gap of 2.5 s+ breaks the trail: no straight line across it, no heading read across it | agent 3.7.148 |
+| *"These mobs in a swarm are showing that they're on a bunch of paths that they're not, so we need to ignore when a mob is aggroed and has a circular path chasing a bard"* | A path is learned only from a mob that never had a target of its own while watched, and only when it walked the leg nearly straight. While your target is chasing someone, no "leg to the next waypoint"; its heading line shows instead. Paths already learned from earlier chases stay | §274, agent 3.7.158 `fd50adc5` |
 
 ### View, controls, window
 | Ask | What shipped | Where |
