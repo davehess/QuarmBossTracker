@@ -44934,21 +44934,40 @@ function _mapSyncPull(zone, now) {
   });
   return true;
 }
+// Whose map events you take (the guild lead, 2026-10-13, option C: "A now, B later"): your raid, or your group when
+// you are not in a raid, plus yourself. Zeal sends the zone id but no instance id, so the open world, our guild copy
+// and the PvP copy of a zone all looked like one; a raid or group is nearly always in one copy. B (the zone
+// server's port from Zeal) would key copies exactly and is not built yet. Solo, nobody else's events apply.
+// Lower-cased names.
+function _mapPartyNames(now) {
+  const names = new Set();
+  const character = _mapActiveCharacter(now);
+  if (character) names.add(String(character).toLowerCase());
+  const st = character ? _zealState[character] : null;
+  const rp = (typeof _lastRaidPipe !== 'undefined' && _lastRaidPipe && now - _lastRaidPipe.at < 20000) ? _lastRaidPipe : null;
+  const raid = rp && Array.isArray(rp.members) ? rp.members.filter(m => m && m.name) : [];
+  const list = raid.length ? raid : (st && Array.isArray(st.group_members) ? st.group_members.filter(m => m && m.name) : []);
+  for (const m of list) names.add(String(m.name).toLowerCase());
+  return names;
+}
 // Fold the guild's events into this machine's timers. Oldest first; an event for a point is applied only when it is
 // NEWER than the newest thing already applied there (local or remote) - so a remote death overrides an older local
 // state and a newer local one wins over an older remote. Repeats (the same point, kind, spawn id and time) and our
-// own echoes are skipped. Returns how many changed anything.
+// own echoes are skipped. Only events seen by someone in YOUR raid (or your group outside a raid) are applied; see
+// _mapPartyNames. Returns how many changed anything.
 function _mapApplyRemote(zone, events, now) {
   const rec = _mapZones.get(zone);
   if (!rec || !rec.body || !Array.isArray(events)) return 0;
   const zd = _mapZoneDoc(zone);
   const list = events.filter(e => e && e.point_id != null && typeof e.kind === 'string' && Number.isFinite(Number(e.at)))
     .slice(0, 500).sort((a, b) => Number(a.at) - Number(b.at));
+  const party = _mapPartyNames(now);
   let applied = 0, maxAt = _mapSync.since[zone] || 0;
   for (const raw of list) {
     const at = Number(raw.at);
     if (at > now + 60000) continue;                              // from the future: a clock we cannot trust
     if (at > maxAt) maxAt = at;
+    if (!raw.by || !party.has(String(raw.by).toLowerCase())) continue;   // not your raid / group: likely another copy of the zone
     const e = { point_id: raw.point_id, kind: String(raw.kind), spawn_id: Number(raw.spawn_id) > 0 ? Number(raw.spawn_id) : null,
       name: raw.name ? String(raw.name).slice(0, 80) : null, at };
     const key = _mapSyncKey(zone, e);

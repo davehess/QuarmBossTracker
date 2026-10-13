@@ -1075,7 +1075,8 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
     const net = fakeNet(responder || (() => ({ status: 200, body: { ok: true, stored: 1 } })));
     const c = loadCore({ dir, opts: LIVE, net });
     c._mapEnsureZone('thedeep', 164, Date.now());
-    c._zealState.Aldenmar = { zone: 164, updatedAt: 1e18, loc: { x: 0, y: 0, z: 0 } };
+    // grouped with the two guildmates whose events the tests send (only your raid / group's events apply)
+    c._zealState.Aldenmar = { zone: 164, updatedAt: 1e18, loc: { x: 0, y: 0, z: 0 }, group_members: [{ name: 'Brackwyn' }, { name: 'Corvale' }] };
     return { c, net };
   }
   const queued = (c) => c._mapSync.q.map(k => k.ev);
@@ -1346,7 +1347,10 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
 
   describe('merging the guild\'s events into the timers', () => {
     let c;
-    beforeEach(() => { ({ c } = localCore()); });
+    beforeEach(() => {
+      ({ c } = localCore());
+      c._zealState.Aldenmar.group_members = [{ name: 'Brackwyn' }, { name: 'Corvale' }];   // events come from the group
+    });
     const NOWR = T0 + 60000;
     const ev = (o) => Object.assign({ point_id: 1, kind: 'died', spawn_id: 5, name: 'a decaying skeleton', at: T0 + 1000, by: 'Brackwyn' }, o);
     const state = () => c._mapStatePayload('', NOWR);
@@ -1405,6 +1409,18 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
       k._mapNoteState('Aldenmar', null, tgt(9, 100, 105, 202), N);
       const mine = queued(k)[0];
       expect(k._mapApplyRemote('thedeep', [Object.assign({ id: 1, by: 'Aldenmar' }, mine)], N + 1000)).toBe(0);
+    });
+    it('only your raid (or your group outside a raid) is heard: Zeal has no instance id, a raid is one copy of the zone', () => {
+      // the guild lead, 2026-10-13: option C - raid/group scoping now, the zone server port later
+      expect(c._mapApplyRemote('thedeep', [ev({ by: 'Rethlan' })], NOWR)).toBe(0);             // a guildmate outside the group
+      expect(c._mapApplyRemote('thedeep', [ev({ by: null, at: T0 + 2000 })], NOWR)).toBe(0);   // nobody named: not trusted
+      expect(state().timers).toEqual([]);
+      c._setRaid({ at: NOWR, members: [{ name: 'Aldenmar' }, { name: 'Rethlan' }] });             // in a raid, the raid replaces the group
+      expect(c._mapApplyRemote('thedeep', [ev({ by: 'rethlan', at: T0 + 3000 })], NOWR)).toBe(1);   // case does not matter
+      expect(c._mapApplyRemote('thedeep', [ev({ point_id: 2, by: 'Brackwyn', at: T0 + 4000 })], NOWR)).toBe(0);
+      c._setRaid(null);
+      c._zealState.Aldenmar.group_members = [];                                                     // solo: only your own
+      expect(c._mapApplyRemote('thedeep', [ev({ point_id: 3, by: 'Brackwyn', at: T0 + 5000 })], NOWR)).toBe(0);
     });
     it('a future-dated event, an unknown point and an unknown kind change nothing', () => {
       expect(c._mapApplyRemote('thedeep', [ev({ at: NOWR + 120000 }), ev({ point_id: 999 }), ev({ kind: 'explode' }), ev({ at: 'soon' }), null], NOWR)).toBe(0);
