@@ -91,7 +91,7 @@ const dbgZoneIn = (ts, port, zone) => [
 
 // A small zone in the SERVER frame. skel: three skeleton points, two of them 150 apart (p1, p6) so the
 // "clearly closer" rule has something to bite on. Zone id 164 = thedeep.
-const NPC = (name, extra) => Object.assign({ name, level: 50, chance: 100, named: false, raid_target: false, badges: [] }, extra || {});
+const NPC = (name, extra) => Object.assign({ name, level: 50, chance: 100, named: false, raid_target: false, badges: [], aggro: 60 }, extra || {});
 const POINTS = [
   { id: 1, x: 100, y: 200, z: 0, respawn_s: 600, variance_s: 60, npcs: [NPC('a_decaying_skeleton')] },
   { id: 2, x: 400, y: 200, z: 0, respawn_s: 600, variance_s: 60, npcs: [NPC('a_decaying_skeleton')] },
@@ -450,6 +450,19 @@ describe('zone data: disk first, the bot second, local mode never', () => {
     const saved = JSON.parse(fs.readFileSync(path.join(dir, 'zone-spawns-cache', 'thedeep.json'), 'utf8'));
     expect(saved.etag).toBe('"abc"');
     expect(saved.body.zone).toBe('thedeep');
+  });
+  it('a zone cached before the aggro radius existed is re-checked once early, never in a loop (2026-10-13)', async () => {
+    const old = JSON.parse(JSON.stringify(ZONE_BODY));
+    for (const p of old.points) for (const n of p.npcs) delete n.aggro;
+    seedCache(dir, old, Date.now() - 1000);                                    // fresh by age, but no aggro
+    const net = fakeNet(() => ({ status: 304 }));                              // an older bot: nothing new
+    const c = loadCore({ dir, opts: live(), net });
+    c._zealState.Aldenmar = { zone: 164, updatedAt: Date.now(), loc: { x: 1, y: 1, z: 0 } };
+    c._mapStatePayload('', Date.now());
+    expect(net.calls.filter(k => /zone-spawns/.test(k.path))).toHaveLength(1);
+    await tick();
+    c._mapStatePayload('', Date.now()); c._mapStatePayload('', Date.now());
+    expect(net.calls.filter(k => /zone-spawns/.test(k.path))).toHaveLength(1);   // asked once this run, not again
   });
   it('a fresh cached zone costs no request; a day-old one is re-checked with its ETag and a 304 keeps it', async () => {
     seedCache(dir, ZONE_BODY, Date.now() - 1000);
