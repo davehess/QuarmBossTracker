@@ -1762,9 +1762,13 @@ function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
   else if (atMs != null) { const d = new Date(atMs).getTime(); ts = isFinite(d) ? d : Date.now(); }
   else ts = Date.now();
   const prev = _charmTickTracker.get(k);
+  // The charmed mob's spawn id, when it can be proven (you charm your target; or Zeal's pet gauge already names it).
+  // Kept across a break, so the next land can tell "the same mob again" from "another mob with the same name".
+  const landId = eventKind === 'land' ? _charmMobId(owner, pet) : null;
   _charmTickTracker.set(k, {
     pet,
     owner: owner || null,
+    pet_id: landId != null ? landId : (prev ? (prev.pet_id != null ? prev.pet_id : null) : null),
     last_tick_at: ts,
     last_event: eventKind,         // 'land' or 'break'
     is_active: eventKind === 'land',
@@ -1823,12 +1827,17 @@ function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
     // owner-keyed pet buffs so we don't inherit them onto a same-named
     // new mob. A re-cast for refresh on the same active charm preserves
     // (prev.is_active && prev.last_event === 'land').
+    // The guild lead, 2026-10-13: "Charm landing should not clear buffs and debuffs if we have the timers." A re-charm
+    // of the SAME mob after a break (the bard/enchanter cycle) keeps everything on it in game, so it keeps it here:
+    // proven by spawn id when both lands carried one. Without ids a broken charm still starts clean, because a
+    // same-named different mob is indistinguishable (the razorfiend case below).
     const refreshingSamePet = !!(prev && prev.is_active && prev.last_event === 'land');
-    if (!refreshingSamePet) {
+    const sameMobAgain = !!(prev && prev.pet_id != null && landId != null && prev.pet_id === landId);
+    if (!refreshingSamePet && !sameMobAgain) {
       const m = _petBuffLandings.get(String(owner).toLowerCase());
       if (m && m.size) { m.clear(); _savePetStateSoon(); }
     }
-    _captureTargetBuffsOnCharm(pet, owner);
+    _captureTargetBuffsOnCharm(pet, owner, landId);
   }
 }
 // Copy any active (not-expired, not-worn-off) entries from
@@ -1845,8 +1854,21 @@ function _bumpCharmTick(pet, owner, eventKind, atMs, opts) {
 // was never cast on it. The "debuff then charm" sequence is a few seconds
 // in practice; cap the lookback at PRE_CHARM_DEBUFF_WINDOW_SEC so older
 // entries from the same target key can't ride along.
+// ⚠ The window only guards the UNPROVEN case. A landing whose spawn id matches the charmed mob's is on THIS mob, so it
+// rides over at any age while its timer runs (the guild lead, 2026-10-13: charm should not clear what we have timers
+// for). A landing proven to be on a DIFFERENT spawn never rides.
 const PRE_CHARM_DEBUFF_WINDOW_SEC = 60;
-function _captureTargetBuffsOnCharm(pet, owner) {
+// Spawn id of the mob just charmed: the charmer's target (you charm what you target), else Zeal's pet gauge when it
+// already names this pet. null = unknown.
+function _charmMobId(owner, pet) {
+  if (!owner || !pet) return null;
+  const tid = _provableTargetId(owner, pet);
+  if (tid != null) return tid;
+  const ol = String(owner).toLowerCase();
+  const pn = _petNameForOwner(ol);
+  return (pn && String(pn).toLowerCase() === String(pet).toLowerCase()) ? _petIdForOwner(ol) : null;
+}
+function _captureTargetBuffsOnCharm(pet, owner, petId) {
   if (!pet || !owner) return;
   const petLower   = String(pet).toLowerCase();
   const ownerLower = String(owner).toLowerCase();
@@ -1861,7 +1883,9 @@ function _captureTargetBuffsOnCharm(pet, owner) {
     if (!b || !b.name) continue;
     if (b.worn_off_at) continue;                          // already gone
     const landedMs = b.landed_at || 0;
-    if (landedMs < windowFloorMs) continue;               // older than the pre-charm window — different mob, same name
+    const idKnown = petId != null && b.target_id != null;
+    if (idKnown && Number(b.target_id) !== Number(petId)) continue;   // proven: another spawn of the same name
+    if (!idKnown && landedMs < windowFloorMs) continue;   // unproven and older than the window — maybe a different mob
     const durSecs = (Number(b.dur_ticks) || 0) * 6;
     if (durSecs > 0 && (now - landedMs) / 1000 > durSecs) continue;   // expired
     // Don't clobber a more-recent pet-side entry for the same spell.
@@ -1881,6 +1905,8 @@ function _captureTargetBuffsOnCharm(pet, owner) {
       dur_ticks:   b.dur_ticks,
       dur_formula: b.dur_formula,
       landed_at:   landedMs,
+      target_id:   b.target_id != null ? b.target_id : null,
+      cast_by:     b.cast_by || null,
     });
     captured++;
   }
@@ -3535,7 +3561,9 @@ function recordTargetBuffLanding(bcEvt) {
   // Aegolism/KEI were unaffected, which is why this stayed hidden.) Order:
   //   1. our own pet → the owner cast it; use the owner's /who level
   //   2. genuine self-buff (we cast it AND we are the target) → own level
-  //   3. everything else (raid buffs, all debuffs) → the era cap; the land
+  //   3. an NPC provably cast it (began casting just before, and the spell is
+  //      in its own list) → that NPC's level (the guild lead, 2026-10-13)
+  //   4. everything else (raid buffs, all debuffs) → the era cap; the land
   //      line never names the caster, and _assumedCasterLevel() already
   //      tracks the PoP unlock (60 → 65).
   let lvl;
@@ -3544,9 +3572,11 @@ function recordTargetBuffLanding(bcEvt) {
     lvl = (whoData.get(petOwner) || {}).level || _assumedCasterLevel();
   } else {
     const obs = String((bcEvt && bcEvt.observer) || '').toLowerCase();
+    const landMs = bcEvt && bcEvt.cast_at ? Date.parse(bcEvt.cast_at) : Date.now();
     lvl = (bcEvt && bcEvt._selfCast && obs && obs === k)
       ? ((whoData.get(k) || {}).level || _assumedCasterLevel())
-      : _assumedCasterLevel();
+      : (bcEvt && bcEvt._selfCast) ? _assumedCasterLevel()
+      : (_npcCasterLevelFor(bcEvt && bcEvt.spell_name, landMs) || _assumedCasterLevel());
   }
   const newKey = String(bcEvt.spell_name).toLowerCase();
   // Slot-based overwrite (same logic as recordPetBuffLanding) — a new buff in
@@ -4294,6 +4324,25 @@ function _npcCasterFor(landMs, preferName) {
     if (lead < bestLead) { best = c; bestLead = lead; }
   }
   return best ? { caster: best.caster, leadMs: bestLead } : null;
+}
+// The level of the NPC that cast `spellName`, when one can be named (the guild lead, 2026-10-13: "If it is done via an
+// NPC we treat it as that level mob's cast timer"): a mob that began casting inside the window AND has this spell in
+// its own spell list, with one known level. The nearest such cast wins. null = no NPC provably cast it.
+function _npcCasterLevelFor(spellName, landMs) {
+  const want = String(spellName || '').toLowerCase().replace(/`/g, "'");
+  if (!want) return null;
+  let best = null, bestLead = Infinity;
+  for (const c of _npcCastStarts) {
+    const lead = landMs - c.atMs;
+    if (lead < 0 || lead > _NPC_CAST_WINDOW_MS || lead >= bestLead) continue;
+    const lvl = _knownLevelOf(c.caster);
+    if (!lvl) continue;
+    const mob = _npcMobInfoFor(c.caster);
+    if (!mob || !Array.isArray(mob.spells)) continue;
+    if (!mob.spells.some(s => s && String(s.name || '').toLowerCase().replace(/`/g, "'") === want)) continue;
+    best = lvl; bestLead = lead;
+  }
+  return best;
 }
 
 // ⚠ EQ log timestamps are WHOLE SECONDS. Cast time splits 151 of the 185
@@ -53188,6 +53237,7 @@ module.exports = {
   _builtinTimerRows, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget, _meSkillCds,
   _isMezSpell, noteMyMezWornOff,
   _bumpCharmTick, _reconcileGaugeCharms, _classOf,
+  _petBuffLandings, _npcCasterLevelFor, _npcCastStarts, _charmMobId,
   _mobTicks, _dotLastHit, _noteMobTick, _noteDotTickLine, _mobTickFor, _serverTickAtFor,
   _clearNameObservations,
   _waitForFires, _pushOverlay, _tailDelayMs,
