@@ -9681,3 +9681,14 @@ Harmony, Hide/Sneak for non-rogues).
   out, the settings take its place and the Timers button brings the list back; with the list slid in, opening the
   settings opens the slot the way the Timers button does (the window widens, or the map shrinks in "share space") and
   closing gives it back. `apps/mimic/map.html` (`setCfgOpen`, `slotOpen`, `slotChanged`).
+
+### 254. Mouse pointer over overlays: a switch, never on the HUD, Canvas panels only (2026-10-13, agent 3.7.141 beta `2c22540d`)
+
+- **The ask** (the guild lead): *"make mouse over configurable, and remove it from the HUD. for Canvas it should only
+  show over the elements."*
+- **Shipped:** one switch for every overlay, `cfg.standInPointer` (default on), in the tray ("Show a mouse pointer over
+  overlays") and the dashboard's Overlays tab → More… (tray ↔ dashboard parity). Main pushes it live to every overlay
+  and to each frame inside it (the Canvas's panels are iframes); overlays pull it at load. Never drawn on the HUD
+  (`me.html`). On the Canvas only over a panel, never the open screen between panels, backdrop on or off
+  (`_wpOverSolid` in `apps/mimic/preload.js`).
+- **Not done:** a per-overlay switch. Say if one overlay besides the HUD should never show it.
