@@ -451,18 +451,21 @@ describe('zone data: disk first, the bot second, local mode never', () => {
     expect(saved.etag).toBe('"abc"');
     expect(saved.body.zone).toBe('thedeep');
   });
-  it('a zone cached before the aggro radius existed is re-checked once early, never in a loop (2026-10-13)', async () => {
+  it('a zone cached before the aggro radius existed is re-checked early, at most every 10 minutes, never in a loop (2026-10-13)', async () => {
     const old = JSON.parse(JSON.stringify(ZONE_BODY));
     for (const p of old.points) for (const n of p.npcs) delete n.aggro;
     seedCache(dir, old, Date.now() - 1000);                                    // fresh by age, but no aggro
     const net = fakeNet(() => ({ status: 304 }));                              // an older bot: nothing new
     const c = loadCore({ dir, opts: live(), net });
-    c._zealState.Aldenmar = { zone: 164, updatedAt: Date.now(), loc: { x: 1, y: 1, z: 0 } };
+    c._zealState.Aldenmar = { zone: 164, updatedAt: 1e18, loc: { x: 1, y: 1, z: 0 } };   // never stale
     c._mapStatePayload('', Date.now());
     expect(net.calls.filter(k => /zone-spawns/.test(k.path))).toHaveLength(1);
     await tick();
     c._mapStatePayload('', Date.now()); c._mapStatePayload('', Date.now());
-    expect(net.calls.filter(k => /zone-spawns/.test(k.path))).toHaveLength(1);   // asked once this run, not again
+    expect(net.calls.filter(k => /zone-spawns/.test(k.path))).toHaveLength(1);   // not again within 10 minutes
+    // A check that landed on the old bot mid-deploy (the guild lead's "no ring drawn") is retried, not given up on.
+    c._mapStatePayload('', Date.now() + 11 * 60 * 1000);
+    expect(net.calls.filter(k => /zone-spawns/.test(k.path))).toHaveLength(2);
   });
   it('a fresh cached zone costs no request; a day-old one is re-checked with its ETag and a 304 keeps it', async () => {
     seedCache(dir, ZONE_BODY, Date.now() - 1000);

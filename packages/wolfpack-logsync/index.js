@@ -44813,12 +44813,14 @@ function _mapFetchZone(rec, zoneId, now) {
 function _mapEnsureZone(short, zoneId, now) {
   const rec = _mapZoneRec(short);
   // A zone cached before bot 3.1.252 carries no aggro radius on its NPCs (the Map's aggro rings, 2026-10-13): re-check
-  // it once early instead of waiting out the day. Once per zone per run, so an older bot can never cause a loop.
+  // it early instead of waiting out the day, at most every 10 minutes while the radius is still missing. (It was once
+  // per run at first, and a check that landed on the old bot during its deploy left the rings off until a restart.)
   const p0 = rec.body && Array.isArray(rec.body.points) ? rec.body.points[0] : null;
-  const noAggro = !!(p0 && Array.isArray(p0.npcs) && p0.npcs[0] && !('aggro' in p0.npcs[0])) && !rec.aggroAsked;
+  const noAggro = !!(p0 && Array.isArray(p0.npcs) && p0.npcs[0] && !('aggro' in p0.npcs[0]))
+    && now - (rec.aggroAskedAt || 0) >= MAP_FAIL_RETRY_MS;
   const due = !rec.body || noAggro || (now - rec.fetchedAt) >= MAP_REVALIDATE_MS;
   if (due && !rec.inflight && now >= rec.retryAt && _mapFetchAllowed()) {
-    if (noAggro) rec.aggroAsked = true;
+    if (noAggro) rec.aggroAskedAt = now;
     _mapFetchZone(rec, zoneId, now);
   }
   return rec.body ? rec : null;
