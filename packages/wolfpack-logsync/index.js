@@ -3088,6 +3088,25 @@ const _lastPetByOwner = new Map();   // ownerLower → last confidently-seen pet
 // the name map because the two disagree in exactly the case that matters: a
 // same-named re-charm changes the id and not the name.
 const _lastPetIdByOwner = new Map();
+// ownerLower → the Zeal zone the pet's spawn id was last seen in. A spawn id is a slot in the ZONE's entity table,
+// so zoning hands the same pet a new id: that is not a new pet (a member, 2026-10-13: their pet "losing buffs when it
+// zones" on our tracker while it kept them in game).
+const _lastPetZoneByOwner = new Map();
+// Suspended Minion (eqemu_altadv_vars skill 526, eqmac id 176 = the Quarmy export's AA index, 2 ranks). The guild
+// lead, 2026-10-13: "when you suspend with your second level of the AA it keeps its buffs. When you suspend with 1 it
+// removes the buffs and you get back a fresh pet with no timers." ownerLower → rank, from the owner's Quarmy export.
+const SUSPENDED_MINION_AA = 176;
+const _suspendedMinionRank = new Map();
+function _suspendedMinionRankFor(ownerLower) {
+  try { _quarmyLocalItems(ownerLower); } catch (e) { void e; }   // parses the export (30 s cache) → fills the map
+  return _suspendedMinionRank.get(ownerLower) || 0;
+}
+function _ownerZone(ownerLower) {
+  for (const ch of Object.keys(_zealState)) {
+    if (String(ch).toLowerCase() === ownerLower) return _zealState[ch] ? _zealState[ch].zone : null;
+  }
+  return null;
+}
 function _reconcilePetIdentity(ownerLower) {
   // ── Spawn id: exact, and closes the gap the name check cannot see ─────────
   // Re-charming a DIFFERENT mob with the SAME name was invisible here
@@ -3105,8 +3124,19 @@ function _reconcilePetIdentity(ownerLower) {
   const petId = _petIdForOwner(ownerLower);
   if (petId != null) {
     const prevId = _lastPetIdByOwner.get(ownerLower);
+    const zone = _ownerZone(ownerLower), prevZone = _lastPetZoneByOwner.get(ownerLower);
     _lastPetIdByOwner.set(ownerLower, petId);
-    if (prevId != null && prevId !== petId) {
+    if (_lootZoneKnown(zone)) _lastPetZoneByOwner.set(ownerLower, zone);
+    // A new id is NOT a new pet when (a) the owner zoned (every id is reassigned), or (b) the owner has Suspended
+    // Minion 2 (an unsuspended pet keeps its buffs at rank 2). Either way the name check below still runs, so a pet
+    // with a different name is still a new pet. Rank 1 or an unknown rank keeps the old behaviour: a fresh pet with no
+    // buffs. ⚠ At rank 2 a same-named re-charm in the same zone keeps the old buffs (the charm path clears on a fresh
+    // charm land, and /pet health still reconciles).
+    const zoned = _lootZoneKnown(zone) && _lootZoneKnown(prevZone) && String(zone) !== String(prevZone);
+    const keeps = zoned || _suspendedMinionRankFor(ownerLower) >= 2;
+    if (prevId != null && prevId !== petId && keeps) {
+      console.log(`[pet] ${ownerLower}'s pet spawn id ${prevId} → ${petId} ${zoned ? 'after a zone' : 'after Suspended Minion 2'} — kept its buffs`);
+    } else if (prevId != null && prevId !== petId) {
       _petBuffLandings.delete(ownerLower);
       _petHealthByOwner.delete(ownerLower);
       _lastPetByOwner.set(ownerLower, String(_petNameForOwner(ownerLower) || '').toLowerCase() || undefined);
@@ -35302,6 +35332,8 @@ function parseQuarmyExport(text) {
   // The Map's faction maths needs race and deity, which Zeal does not send: keep this export's (_mapMe).
   if (out.profile && out.profile.name) {
     _mapQuarmyIds.set(out.profile.name.toLowerCase(), { race_id: out.profile.race_id, class_id: out.profile.class_id, deity_id: out.profile.deity_id });
+    const sm = out.aas.find(a => a.index === SUSPENDED_MINION_AA);
+    _suspendedMinionRank.set(out.profile.name.toLowerCase(), sm ? sm.rank : 0);   // pet buffs after an unsuspend
   }
   return out;
 }
