@@ -91,8 +91,32 @@ own screenshots; treat each row as "shipped, needs an in-game look" until it is 
 | 6 | **Learned paths shared across raiders** (*"see if they persist as a common one"*) | Local only today (each install learns its own) | a later call: upload legs to the bot so every raider and the website map start with the guild's learned paths. A storage decision → `docs/DESIGN-selfhost-wizard.md` §3 when made |
 | 7 | **Killed paths across restarts** | Session only (the per-point last path is in memory) | persist alongside the learned legs if wanted |
 | 8 | The tooltip refresh (one real mouse move at the same spot) and the mouse-over fade | Not seen in game (Electron could not be run in the cloud session) | the guild lead: hover a ✥ for 3 s on a locked overlay; mouse over an overlay and away |
-| 9 | **Follow target**: *"if we're using something like Solidarity of Vision could we have a 'Follow Target' mode"* | Building next | Follow cycles you → your target |
-| 10 | **Distance from its spawn point**, and when a mob that far out will gate: *"give me the distance from a mob's spawn point if it's known, as mobs at a certain range with the ability to gate will"* | Distance: building next. Gate/leash rule: being researched from the server source | show the distance under the target; add the gate/leash range once the rule is confirmed (not guessed) |
+| 9 | **Follow target**: *"if we're using something like Solidarity of Vision could we have a 'Follow Target' mode"* | **Shipped** (Mimic `183da82b`): Follow cycles me → target → off | — |
+| 10 | **Distance from its spawn point**, and the gate range: *"give me the distance from a mob's spawn point if it's known, as mobs at a certain range with the ability to gate will"* | **Shipped** (Mimic `183da82b`, `97fd2722`): "N from spawn" under the target (3D; not for a shared route), and past 200 "past gate range (can gate ≤15% HP)" | the zone-era check and *which* mobs have Gate need data we do not mirror (see §4) |
+| 11 | **Overlays under other apps**: *"Other apps should be able to draw over the overlays automatically, unless specifically set to stay on top"* | Drafting | overlays drop behind other apps when EverQuest is not in front; per-overlay Stay on top |
+| 12 | **Timers pop-out**: *"Right clicking on the timers clickout should allow you to pop it out and drag it around"* | Drafting (same as #1) | its own overlay window, back into the Map when closed |
+| 13 | *"We can afford to show the character's name"* (HUD box) | **Shipped** (Mimic `97fd2722`): the name is never cut; level/class give way | — |
+
+## 4. Gate and leash, from Quarm's server source (researched 2026-10-13)
+
+From EQMacEmu (`SecretsOTheP/EQMacEmu`, `master`, read 2026-10-13; line numbers as of that day, not pinned). Quarm's live
+server may differ from that repo; treat these as the code's rules, not observed behaviour.
+
+- **Gate** (`zone/mob_ai.cpp`, the escape branch, ~192–201): an NPC casts Gate (spell 36) only when **all** hold: a
+  `SpellType_Escape` (16) entry in its spell list; no roam box; not a pet; HP **≤ 15%**; **not a classic-era zone** (and not
+  Fear / Hate); **3D distance from its spawn point > 200**; then a **50% roll** per AI check (~0.75–2 s), 5 s cooldown after a
+  cast. Modern EQEmu differs (20%, 75-unit near-bind rule, no roll): do not use its numbers.
+- **Leash / tether** (special abilities **32 Leash**, **33 Tether**, same ids as modern EQEmu here): checked only while the
+  NPC has a target, **2D** distance from spawn past `param0` (0 = its aggro radius, which defaults to 70). Tether warps it
+  home; Leash warps home, heals to full, strips buffs, wipes hate.
+- **PvP instances**: every NPC leashes at **300** (`Quarm:PVPMobLeashUnits`), except Vex Thal, Great Divide, Eastern Wastes,
+  Fear, Growth, Air, Hate and Ssraeshza.
+- **Quest scripts** add bespoke leashes: e.g. Plane of Valor's Aerin`Dar warps home outside a box (Z > 120, Y < 2100 or
+  > 2880); Vhaksiz the Shade (Plane of Nightmare) resets past 155 units (3D); Nagafen, Vox and Lord Inquisitor Seru use
+  boxes.
+- **What the Map needs to go further**: the zone's era (add `expansion` to the bot's zone-spawns body), each NPC's
+  `special_abilities` leash/tether params (check the `eqemu_npc_types` mirror carries them), and whether its spell list
+  holds an escape spell (`npc_spells_entries` is not mirrored). Until then the Map says "can gate", never "will".
 
 ## 3. How it fits together (for the next session)
 
