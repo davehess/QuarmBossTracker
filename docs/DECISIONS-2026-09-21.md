@@ -10005,3 +10005,16 @@ Harmony, Hide/Sneak for non-rogues).
   loaded, a timer is left as it was.
 - **Rule for later:** a stored timer is a death time plus the point's CURRENT respawn, never a frozen window. A fix
   to a respawn on the board reaches the Map within an hour, for kills already counted too.
+
+### 276. Requiem of Time is a slow, called out as "Bard Slow (55%)" (2026-10-13, agent 3.7.160 beta `34657c5c`)
+
+- **The call** (the guild lead, with the spell window): *"Requiem of Time is a slow as well, call out Bard Slow
+  (55%)"*. It was on none of the slow lists, so it had no badge, no timeline mark and no callouts.
+- **Grounded:** spell 3066, SPA 11 max 45 = 55%. Its land line, "<mob>'s rhythm slows.", is its own, so a
+  bystander knows which slow landed.
+- **Shipped:** the agent's three slow tables (badge "BRD SLOW 55%"), Mimic Extended Target's copy, and the raid
+  review's list. Callouts name it "Bard Slow": "Slowed <mob> — Bard Slow (55%)", spoken "Slowed. Bard Slow".
+  Every other slow keeps its spell name.
+- **Not added (not asked):** the other bard slows, Selo's Consonant Chain (40%) and the two Largo's bindings (35%).
+  Both Largo's share one land line, so they would read as "slowed" without a name. Also still missing from the raid
+  review: the four Beastlord slows, which the agent and Extended Target have carried since 2026-10-08.
