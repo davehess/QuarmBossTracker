@@ -5,7 +5,7 @@
 // 'member_unlock'). See web/lib/lockout.ts and app/admin/access/actions.ts.
 import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
-import { requireOfficer } from '@/lib/officer';
+import { requireOfficer, roleNamesAreOfficer } from '@/lib/officer';
 import { isActiveRow } from '@/lib/lockout';
 import { selectAll } from '@/lib/selectAll';
 import NewPageTag from '@/components/NewPageTag';
@@ -18,7 +18,7 @@ export const metadata = {
 
 export const dynamic = 'force-dynamic';
 
-type Member = { discord_id: string; nickname: string | null; global_name: string | null };
+type Member = { discord_id: string; nickname: string | null; global_name: string | null; role_names?: string[] | null };
 type Lock = { discord_id: string; reason: string | null; locked_by_discord_id: string; locked_at: string; until: string | null };
 
 function label(m: Member | undefined, fallback: string): string {
@@ -38,6 +38,7 @@ const ERRORS: Record<string, string> = {
   reason_required: 'A reason is required, so the next officer knows why.',
   reason_long:     'Keep the reason to 200 characters.',
   self:            'You cannot lock yourself out.',
+  officer:         'Officers cannot be locked out.',
   bad_date:        'The end date must be a day in the future.',
   not_member:      'That person is not on the current member list.',
   lock_failed:     'Could not save the lockout (database error). Try again in a moment.',
@@ -58,7 +59,7 @@ export default async function AccessPage({
     admin.from('member_lockouts').select('discord_id, reason, locked_by_discord_id, locked_at, until').order('locked_at', { ascending: false }).limit(500),
     selectAll<Member>((from, to) => admin
       .from('wolfpack_members')
-      .select('discord_id, nickname, global_name')
+      .select('discord_id, nickname, global_name, role_names')
       .eq('is_member', true)
       .order('discord_id')
       .range(from, to)),
@@ -76,7 +77,7 @@ export default async function AccessPage({
   }
 
   const pickable = members
-    .filter(m => !lockedIds.has(m.discord_id))
+    .filter(m => !lockedIds.has(m.discord_id) && !roleNamesAreOfficer(m.role_names))   // officers cannot be locked out
     .sort((a, b) => label(a, a.discord_id).toLowerCase().localeCompare(label(b, b.discord_id).toLowerCase()));
 
   return (
@@ -89,7 +90,8 @@ export default async function AccessPage({
         <p className="text-sm text-dim leading-6">
           Lock a member out of our tools whatever Discord roles they hold: the website signs them out and shows
           a paused page, their Mimic stops being served and their sessions are revoked, and the bot declines
-          their commands. Discord itself is untouched. A lock lifts when you unlock it, or at its end date.
+          their commands. Discord itself is untouched. Officers cannot be locked out. A lock lifts when you unlock it,
+          or at its end date.
           Changes reach Mimic and the bot within about 20 seconds.
         </p>
         {ok && (

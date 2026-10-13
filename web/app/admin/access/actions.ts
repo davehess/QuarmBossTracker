@@ -8,7 +8,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
-import { requireOfficer } from '@/lib/officer';
+import { requireOfficer, roleNamesAreOfficer } from '@/lib/officer';
 
 const PAGE = '/admin/access';
 const REASON_MAX = 200;
@@ -63,11 +63,13 @@ export async function lockMember(formData: FormData) {
   const admin = supabaseAdmin();
   const { data: target } = await admin
     .from('wolfpack_members')
-    .select('discord_id, user_id, nickname, global_name')
+    .select('discord_id, user_id, nickname, global_name, role_names')
     .eq('discord_id', discordId)
     .eq('is_member', true)
     .maybeSingle();
   if (!target) redirect(`${PAGE}?err=not_member`);
+  // Officers cannot be locked out (the guild lead, 2026-10-13: "officers can't lock out other officers").
+  if (roleNamesAreOfficer(target!.role_names)) redirect(`${PAGE}?err=officer`);
 
   const now = new Date().toISOString();
   const { error: lockErr } = await admin.from('member_lockouts').upsert({
