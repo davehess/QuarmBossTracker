@@ -1290,6 +1290,26 @@ describe('pather routes', () => {
     expect(js).toMatch(/var learned = S\.p && S\.p\.legs \? S\.p\.legs\[it\.gid\] : null/);
     expect(js).toMatch(/if \(tr\.pts\[i\]\.brk\) continue;/);
   });
+  it('a chasing mob teaches no leg: not while it has a target, not on a curving chase (2026-10-13)', () => {
+    // the guild lead, a swarm kited by a bard drawn across a dozen paths: "we need to ignore when a mob is aggroed
+    // and has a circular path chasing a bard"
+    const g = [[0, 0], [100, 0], [100, 100]];
+    const walk = (aggroAt) => {
+      let tr = null;
+      for (let x = 10; x <= 90; x += 10) tr = H.trailStep(tr, 't:9', x, 0, x * 100, x === aggroAt);
+      return H.noteWanderLeg(tr, g);
+    };
+    expect(walk(null)).toEqual({ prev: 0, next: 1, done: true });   // a straight, unpulled walk is still learned
+    expect(walk(60)).toBeNull();                                    // it had a target partway along: not learned
+    expect(walk(10)).toBeNull();                                    // ... from the first step
+    // A chase: it heads at waypoint 1, loops round the bard, and comes back across it. No target-of-target here
+    // (an older Zeal), so the curve alone has to reject it.
+    let tr = null, t = 0;
+    for (let x = 10; x <= 50; x += 10) tr = H.trailStep(tr, 't:9', x, 0, (t += 1000));
+    for (const [x, y] of [[70, 25], [55, 50], [35, 35], [45, 10], [60, 3], [75, 1], [90, 0]]) tr = H.trailStep(tr, 't:9', x, y, (t += 1000));
+    expect(H.noteWanderLeg(tr, g)).toBeNull();
+    expect(tr.legs[tr.legs.length - 1].done).toBe(true);           // and it is not tried again
+  });
   it('the trail says what the mob was doing: yellow pathing, red off its home with a glow where it left, reddish-orange walking back (2026-10-13)', () => {
     // the guild lead: "The point that the mob leaves its spawn or its path it should be glowing RED, then when it appears
     // to be walking back towards its home base it should be redish-orange. Pathing can be yellow."

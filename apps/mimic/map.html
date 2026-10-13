@@ -605,10 +605,13 @@
   // we should see that path"). Returns the trail to keep.
   // A crumb laid after more than TRAIL_GAP_MS without one (you tabbed away and back) starts a new stretch (`brk`):
   // it is not joined to the last one by a straight line, and the heading is never read across the gap.
+  // `aggro`: the mob has a target of its own right now (Zeal's assist bar ToT), so it is chasing someone, not walking
+  // its route; remembered as `agAt` so a leg walked through it is never learned (noteWanderLeg).
   var TRAIL_STEP = 4, TRAIL_MAX = 600, TRAILS_MAX = 40, TRAIL_GAP_MS = 2500;
-  function trailStep(tr, key, x, y, now) {
+  function trailStep(tr, key, x, y, now, aggro) {
     if (x == null || y == null) return tr;
     if (!tr || tr.key !== key) tr = { key: key, pts: [], legs: [], seen: now };
+    if (aggro) tr.agAt = now;
     var last = tr.pts[tr.pts.length - 1];
     if (!last || Math.hypot(x - last.x, y - last.y) >= TRAIL_STEP) {
       var c = { x: x, y: y, t: now };
@@ -802,7 +805,20 @@
   // Record the leg the trail's latest stretch lies on (a new one only when it changes), so the path keeps the
   // waypoint-to-waypoint legs the mob was seen walking. Returns the leg once the mob ARRIVES at its far waypoint
   // (within LEG_REACH): a walked leg, confirmed, which the caller keeps for good (/api/map-leg). null otherwise.
-  var LEG_REACH = 12;
+  // A leg is learned only if the mob WALKED it (the guild lead, 2026-10-13, a swarm kited by a bard drawn across a
+  // dozen paths it never walks: "ignore when a mob is aggroed and has a circular path chasing a bard"): never from a
+  // mob that has had a target of its own while you watched it (`agAt`: pulled, so it is chasing or walking home), and
+  // only when its last leg-length of walking (at least half the leg seen) was close to a straight line: straight-line
+  // distance at least LEG_STRAIGHT of the distance walked. A chase that sweeps past a waypoint fails both; the
+  // straight-line test also covers a Zeal that sends no target-of-target.
+  var LEG_REACH = 12, LEG_STRAIGHT = 0.8;
+  function legWalked(tr, s, a, b) {
+    if (tr.agAt != null) return false;
+    var len = Math.hypot(b[0] - a[0], b[1] - a[1]), walked = 0, i = s.length - 1;
+    while (i > 0 && walked < len) { walked += Math.hypot(s[i].x - s[i - 1].x, s[i].y - s[i - 1].y); i--; }
+    var end = s[s.length - 1];
+    return walked >= len * 0.5 && Math.hypot(end.x - s[i].x, end.y - s[i].y) >= LEG_STRAIGHT * walked;
+  }
   function noteWanderLeg(tr, gpts) {
     var s = trailStretch(tr);
     if (s.length < 2) return null;
@@ -814,7 +830,7 @@
       if (leg && (!top || top.prev !== leg.prev || top.next !== leg.next)) tr.legs.push(top = leg);
     }
     var np = top && gpts[top.next];
-    if (top && !top.done && np && Math.hypot(np[0] - last.x, np[1] - last.y) <= LEG_REACH) { top.done = true; return top; }
+    if (top && !top.done && np && Math.hypot(np[0] - last.x, np[1] - last.y) <= LEG_REACH) { top.done = true; return legWalked(tr, s, gpts[top.prev], np) ? top : null; }
     return null;
   }
   // An arrowhead on the line from screen point a to b, its tip `t` of the way along (0.6: the guild lead, 2026-10-13,
@@ -1731,7 +1747,8 @@
         // The path we have watched it walk, and where it is heading (the guild lead, 2026-10-13: "Can we show the path
         // that we observed a mob walking towards?"): its positions since you targeted it, fading with age, and an
         // arrow down its last stretch of movement.
-        var tKey = targetKey(P.target), tTrail = trailStep(S.trails[tKey], tKey, P.target.x, P.target.y, rt);
+        var tAggro = !!P.target.tot && P.target.type !== 0;   // an NPC with a target of its own: chasing, not walking
+        var tKey = targetKey(P.target), tTrail = trailStep(S.trails[tKey], tKey, P.target.x, P.target.y, rt, tAggro);
         if (!S.trails[tKey]) { var tKeys = Object.keys(S.trails); if (tKeys.length >= TRAILS_MAX) delete S.trails[tKeys[0]]; }
         S.trails[tKey] = tTrail;
         var tGid = routeTarget(P.target, S.points, S.grids, S.byId), tGrid = tGid && S.grids ? S.grids[tGid] : null;
@@ -1751,7 +1768,7 @@
         // has to go at its pace (the guild lead, 2026-10-13: "I expected to see the whole extrapolated dashed line and
         // the pace of the mob going towards that point").
         var cur = tGrid && tTrail && tTrail.legs.length ? tTrail.legs[tTrail.legs.length - 1] : null;
-        if (SH.trail && cur && !cur.done && tGrid.pts[cur.prev] && tGrid.pts[cur.next]) {
+        if (SH.trail && cur && !cur.done && !tAggro && tGrid.pts[cur.prev] && tGrid.pts[cur.next]) {
           var cp = tGrid.pts[cur.prev], cn = tGrid.pts[cur.next], cpq = wpt(cp[0], cp[1]), cnq = wpt(cn[0], cn[1]);
           ctx.globalAlpha = 0.45; ctx.lineWidth = 1.6; ctx.strokeStyle = CO.target;
           ctx.beginPath(); ctx.moveTo(cpq[0], cpq[1]); ctx.lineTo(tq[0], tq[1]); ctx.stroke();
@@ -1763,7 +1780,7 @@
         }
         // No waypoint lined up ahead (or no route at all): a dashed line on along its heading while it walks, about
         // 15 seconds of its pace (150 to 800 units), in the colour of what it is doing (headingRay).
-        if (SH.trail && tTrail && tTrail.dead == null && !(cur && !cur.done)) {
+        if (SH.trail && tTrail && tTrail.dead == null && !(cur && !cur.done && !tAggro)) {
           var hr = headingRay(tTrail, 10), hs = trailSpeed(tTrail, rt, 3000);
           if (hr && hs > 0) {
             var hl = Math.min(800, Math.max(150, hs * 15)), he = wpt(P.target.x + hr.ux * hl, P.target.y + hr.uy * hl);
