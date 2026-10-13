@@ -86,6 +86,7 @@ const STATIC_META: Record<string, PageMeta> = {
   '/auth/signin':  { title: 'Sign in', description: 'Sign in to WolfPack.quest with your Discord account.' },
   '/auth/mimic-link': { title: 'Link Mimic', description: 'Link the Mimic desktop app to your Discord account with the six-character code it shows.' },
   '/auth/claim':   { title: 'Site access invite', description: 'Accept a Wolf Pack site-access invite by choosing a username and password.' },
+  '/auth/paused':  { title: 'Access paused', description: 'Your access to the Wolf Pack guild tools is paused. Ask an officer if you think this is a mistake.' },
 };
 
 // Officer pages. The name of an admin page is not a secret (the repo is public), so each unfurls as
@@ -94,6 +95,7 @@ const STATIC_META: Record<string, PageMeta> = {
 const ADMIN_DESCRIPTION = 'A Wolf Pack officer page. Officer sign-in required.';
 const ADMIN_TITLES: Record<string, string> = {
   '/admin':                    'Officer tools',
+  '/admin/access':             '[beta] Member access',
   '/admin/adoption':           'Adoption',
   '/admin/agents':             'Agent uploaders',
   '/admin/analytics':          'Page analytics',

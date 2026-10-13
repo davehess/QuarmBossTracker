@@ -55,6 +55,11 @@ export default function AdminPage() {
           href="/admin/members"
         />
         <Card
+          title="🚫 Member access"
+          body="[beta] Lock a member out of the website, Mimic and the bot's commands whatever Discord roles they hold, with a reason and an optional end date; their Mimic sessions are revoked. Unlock here too."
+          href="/admin/access"
+        />
+        <Card
           title="👁 /who directory"
           body="Every character ever seen in a /who — sortable, filterable. Now a member-readable page; officers get inline class fill-in for /anon rows + Zek flagging. Edits persist to who_overrides."
           href="/who"
