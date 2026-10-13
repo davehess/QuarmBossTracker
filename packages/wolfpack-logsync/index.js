@@ -42316,6 +42316,9 @@ const SUGGESTED_TRIGGERS = [
     builtin_timer: 'lull', no_tts: true },
   { id: 'timer_my_spells', category: 'timer', label: 'Every spell you land on a mob (30s or longer)',
     builtin_timer: 'my_spells', no_tts: true },
+  // The guild lead, 2026-10-13: "a mez you cast should end up on the timers, same for charm".
+  { id: 'timer_mez', category: 'timer', label: 'Mez and charm you cast (any length, bard songs included)',
+    builtin_timer: 'mez', no_tts: true },
   // The co-leader again, 2026-09-26: "The server tick function within the HUD
   // thing is awesome, but would be even better if it could be broken out … as a
   // standalone timer". The same Zeal gauge-24 tick the HUD draws, as a bar.
@@ -49177,6 +49180,31 @@ function _builtinTimerKindsOn() {
   }
   return on;
 }
+// A mesmerize (the catalog's `cc` kinds carry 'mez', the same source the mez-off trigger reads). The guild lead,
+// 2026-10-13: "a mez you cast should end up on the timers, same for charm" — a bard's 18s mez songs never passed the
+// 30s minimum below, so they get their own row kind with none.
+function _isMezSpell(name) {
+  if (!name) return false;
+  const k = String(name).toLowerCase();
+  const e = _spellByNameLower.get(k) || _spellByNameLower.get(k.replace(/'/g, '`'));
+  return !!(e && Array.isArray(e.cc) && e.cc.includes('mez'));
+}
+// "Your <spell> spell has worn off." for a mez you cast: that timer ends now (its newest landing by you).
+function noteMyMezWornOff(line, character) {
+  if (!line || !character || line.indexOf('spell has worn off') === -1) return;
+  const m = line.match(/\]\s+Your\s+(.+?)\s+spell has worn off\.\s*$/i);
+  if (!m || /^pet's\s/i.test(m[1]) || !_isMezSpell(m[1])) return;
+  const want = m[1].trim().toLowerCase().replace(/`/g, "'"), me = String(character).toLowerCase();
+  let best = null;
+  for (const mp of _buffLandingsByTarget.values()) {
+    for (const b of mp.values()) {
+      if (!b || b.worn_off_at || String(b.cast_by || '').toLowerCase() !== me) continue;
+      if (String(b.name || '').toLowerCase().replace(/`/g, "'") !== want) continue;
+      if (!best || (Number(b.landed_at) || 0) > (Number(best.landed_at) || 0)) best = b;
+    }
+  }
+  if (best) best.worn_off_at = Date.now();
+}
 function _builtinTimerRows(now) {
   const on = _builtinTimerKindsOn();
   if (on.size === 0) { _builtinTimerHidden.clear(); return []; }
@@ -49227,7 +49255,7 @@ function _builtinTimerRows(now) {
              remaining_ms: left, duration_sec: c.secs, bar_color: '#d29922', group: 'spell' });
     }
   }
-  if (on.has('lull') || on.has('my_spells')) {
+  if (on.has('lull') || on.has('my_spells') || on.has('mez') || on.has('recharm_tick')) {
     for (const [tk, mp] of _buffLandingsByTarget) {
       for (const [sk, b] of mp) {
         const by = b && (b.cast_by || b.owner);
@@ -49240,11 +49268,18 @@ function _builtinTimerRows(now) {
         const remMs = fade ? fade.at - now : 0;
         if (!(remMs > 0)) continue;
         const longEnough = on.has('my_spells') && totalSec >= BUILTIN_TIMER_MIN_SPELL_SEC;
-        if (!(_isPacifySpell(b.name) ? (on.has('lull') || longEnough) : longEnough)) continue;
+        // A mez or a charm you cast shows at any length (bard songs are 18s): with its own switch (Mez you cast), or
+        // any of the switches a crowd-controller already has on — lulls, every spell you land, the recharm tick.
+        const isCharm = CHARM_SPELLS.has(String(b.name || '').toLowerCase());
+        const isMez = !isCharm && _isMezSpell(b.name);
+        const ccOn = on.has('mez') || on.has('lull') || on.has('my_spells');
+        const shown = isCharm ? (on.has('recharm_tick') || on.has('my_spells') || on.has('mez'))
+                    : isMez ? ccOn
+                    : _isPacifySpell(b.name) ? (on.has('lull') || longEnough) : longEnough;
+        if (!shown) continue;
         // group: which Timers-canvas panel claims the row (a charm spell sits
-        // with the recharm tick, a lull with the lulls, the rest are spells).
-        const group = CHARM_SPELLS.has(String(b.name || '').toLowerCase()) ? 'charm'
-                    : _isPacifySpell(b.name) ? 'lull' : 'spell';
+        // with the recharm tick, a lull with the lulls, a mez with the mezzes, the rest are spells).
+        const group = isCharm ? 'charm' : isMez ? 'mez' : _isPacifySpell(b.name) ? 'lull' : 'spell';
         push({ id: 'bt|spell|' + tk + '|' + sk + '|' + b.landed_at, name: mob + ' - ' + b.name,
                target: mob, effect: b.name + (b.unconfirmed ? '?' : '') + (fade.snapped ? ' ⏱' : ''),
                remaining_ms: remMs, duration_sec: totalSec, bar_color: '#1f6feb', tick_snapped: fade.snapped, group });
@@ -52686,6 +52721,7 @@ async function main() {
         if (!_sourceExcluded) { noteNpcCastStart(line); noteNpcLanding(line); }
         // "Your pet's <X> spell has worn off." → drop it from the pet's buffs.
         if (!_sourceExcluded) notePetBuffWornOff(line, b.character);
+        if (!_sourceExcluded) { try { noteMyMezWornOff(line, b.character); } catch (e) { void e; } }
         // Prefer the cast-correlated resolution (our own cast); fall back to the
         // tracked-buff index match for buffs we only witnessed as a bystander.
         const bcEvt = (!_sourceExcluded ? resolveSelfCastLanding(line, b.character) : null)
@@ -53118,6 +53154,7 @@ module.exports = {
   _setSpellCatalogForTest: (entries) => { _spellByNameLower = new Map((entries || []).map(e => [String(e.name).toLowerCase(), e])); },
   _recompilePersonalTriggersForChars, _evaluateZealConditions,
   _builtinTimerRows, _builtinTimerHidden, _charmTickTracker, _buffLandingsByTarget, _meSkillCds,
+  _isMezSpell, noteMyMezWornOff,
   _bumpCharmTick, _reconcileGaugeCharms, _classOf,
   _mobTicks, _dotLastHit, _noteMobTick, _noteDotTickLine, _mobTickFor, _serverTickAtFor,
   _clearNameObservations,

@@ -293,6 +293,32 @@ describe('timer bars', () => {
     expect(agent._builtinTimerRows(now + 1).map(r => r.effect)).toEqual(['Pacify']);
     expect(agent._builtinTimerHidden.has(row.id)).toBe(false);                             // pruned
   });
+  it('a mez or a charm you cast shows at any length, on its own switch or a crowd-control one, and a mez ends on "worn off" (2026-10-13)', () => {
+    // the guild lead: "a mez you cast should end up on the timers, same for charm"
+    const now = Date.now();
+    agent._setSpellCatalogForTest([
+      { name: 'Dreams of Terris', cc: ['mez'] }, { name: 'Tashania', cc: [] }, { name: 'Pacify', cc: [] },
+      { name: 'Chant of Battle', cc: [] },
+    ]);
+    seedLandings(now);
+    const mp = agent._buffLandingsByTarget.get('a soriz skeleton');
+    mp.set('dreams of terris', { name: 'Dreams of Terris', dur_ticks: 3, landed_at: now, cast_by: ME, target_name: 'A Soriz Skeleton' });
+    mp.set("solon's song of the sirens", { name: "Solon's Song of the Sirens", dur_ticks: 3, landed_at: now, cast_by: ME, target_name: 'A Soriz Skeleton' });
+    expect(agent._isMezSpell('Dreams of Terris')).toBe(true);
+    expect(agent._isMezSpell('Tashania')).toBe(false);
+    on('timer_mez');
+    const rows = agent._builtinTimerRows(now);
+    expect(rows.map(r => r.effect).sort()).toEqual(['Dreams of Terris', "Solon's Song of the Sirens"]);   // 18s each: no 30s minimum
+    expect(rows.find(r => r.effect === 'Dreams of Terris')).toMatchObject({ group: 'mez', remaining_ms: 18_000 });
+    expect(rows.find(r => r.effect !== 'Dreams of Terris').group).toBe('charm');
+    on('timer_lull');                                                        // a lull user sees their mezzes too
+    expect(agent._builtinTimerRows(now).map(r => r.effect).sort()).toEqual(['Dreams of Terris', 'Pacify']);
+    on('timer_mez');
+    agent.noteMyMezWornOff('[Tue Oct 13 02:30:00 2026] Your Dreams of Terris spell has worn off.', ME);
+    expect(agent._builtinTimerRows(now).map(r => r.effect)).toEqual(["Solon's Song of the Sirens"]);
+    agent.noteMyMezWornOff('[Tue Oct 13 02:30:00 2026] Your Tashania spell has worn off.', ME);   // not a mez: untouched
+    expect(mp.get('tashania').worn_off_at).toBeUndefined();
+  });
   it('rides the same snapshot the trigger overlay polls', () => {
     const now = Date.now(); seedLandings(now); on('timer_lull');
     expect(agent._activeTimersSnapshot().some(r => r.kind === 'builtin' && r.effect === 'Pacify')).toBe(true);
