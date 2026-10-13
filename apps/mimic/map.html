@@ -194,6 +194,7 @@
         <div class="chead"><b>Map settings</b><span class="sp"></span><button id="cfgClose" type="button" title="Close">✕</button></div>
         <!-- Opacity first (the guild lead, 2026-10-13: "Own strength should say opacity in the options and should be right at the top"). -->
         <label class="row" title="How see-through the map's background is. Off: it follows Mimic's own background slider (setup bar)."><input type="checkbox" id="cfgBgOwn"><span class="bl">Opacity</span><input type="range" id="cfgBgA" min="0" max="1" step="0.05"></label>
+        <label class="row" title="How bold the map's lines, rings and dots are. Normal is the thin look; Strong and Max thicken walls and routes, give them a dark edge, and make rings and dots stronger so they read over the game."><span class="bl">Line strength</span><input type="range" id="cfgInk" min="1" max="3" step="0.25"><span class="val" id="cfgInkVal"></span></label>
         <div class="grp">Heights</div>
         <label class="row" title="Walls this far above or below you stay bright; the rest fade. Height is in game units: you are about 6 tall, one floor is roughly 30 to 60, so ±100 is about your floor and the ones next to it."><span class="bl" id="levelsVal">Levels</span><input id="levels" type="range" min="0" max="7" step="1"></label>
         <label class="row" title="Spawn points this far above or below you are shown; the rest are hidden. Same height units as Levels: ±25 is about your own floor, ±100 a floor or two either way."><span class="bl" id="spawnVal">Spawn height</span><input id="spawnLevels" type="range" min="0" max="7" step="1"></label>
@@ -1017,7 +1018,25 @@
     for (k in MAP_SCHEMES.default) col[k] = MAP_SCHEMES.default[k];
     // wallMode 'layers' (Brewall's floor colours) is the default since 2026-10-13; wallV marks a save made after that,
     // so an older save's 'map' (never chosen, it was the old default) moves to 'layers' and a newer one is kept.
-    return { show: show, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1 };
+    return { show: show, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1, ink: INK_DEFAULT };
+  }
+  // ⚙ → Line strength (the guild lead, 2026-10-13, over the game with Opacity full and no background: "make the maps
+  // and spawns more intense for how defined the lines and whatnot are ... its difficult to see"). One number, 1 to 3:
+  // 1 draws exactly what the Map drew before; above it walls, routes and rings get thicker and stronger, dots grow, and
+  // walls and routes get a dark casing so they read over a busy scene. Strong (1.75) is the default.
+  var INK_MIN = 1, INK_MAX = 3, INK_DEFAULT = 1.75;
+  function inkStyle(k) {
+    k = Math.min(INK_MAX, Math.max(INK_MIN, Number(k) || INK_DEFAULT));
+    var s = k - 1;
+    return {
+      line: k,                                   // line widths multiply by this
+      dot: 1 + s * 0.35,                         // spawn and raid/group dot radius
+      casing: Math.min(0.75, s * 0.5),           // the dark outline under walls and routes (0 = none)
+      ringFill: Math.min(0.22, 0.07 * k),        // aggro ring fill
+      ringLine: Math.min(1, 0.6 + s * 0.25),     // aggro ring outline
+      ringW: 1 + s * 0.6,                        // aggro ring outline width
+      faint: Math.min(0.6, 0.25 + s * 0.15),     // walls off your floor
+    };
   }
   // A saved settings object -> a complete, valid one. Unknown keys and bad values are dropped, never trusted.
   function mergeMapCfg(saved) {
@@ -1030,6 +1049,7 @@
     if (saved.wallMode === 'one' || saved.wallMode === 'layers' || (saved.wallMode === 'map' && saved.wallV === 2)) c.wallMode = saved.wallMode;
     if (typeof saved.bgA === 'number' && saved.bgA >= 0 && saved.bgA <= 1) c.bgA = saved.bgA;
     if (typeof saved.text === 'number' && saved.text >= 0.7 && saved.text <= 1.8) c.text = Math.round(saved.text * 10) / 10;
+    if (typeof saved.ink === 'number' && saved.ink >= INK_MIN && saved.ink <= INK_MAX) c.ink = Math.round(saved.ink * 4) / 4;
     return c;
   }
   // Picking a scheme replaces every colour; editing one colour afterwards makes the scheme "custom".
@@ -1390,11 +1410,12 @@
     var list = routeList(S.points, sz, range, srange, targetGrid);
     if (onlyTarget) list = list.filter(function (it) { return it.gid === targetGrid; });
     ctx.lineCap = 'butt';
+    var RK = inkStyle(S.cfg.ink).line;   // ⚙ → Line strength: thicker, and the background routes a little stronger
     list.forEach(function (it) {
       var g = S.grids[it.gid], hot = S.hoverGrid === it.gid, tgt = it.gid === targetGrid;
       // With a targeted walker, every other route steps back (the guild lead, 2026-10-13: "the other ones should fade").
-      ctx.globalAlpha = hot || tgt ? 1 : targetGrid ? (it.near ? 0.3 : 0.12) : it.near ? 0.75 : 0.25;
-      ctx.setLineDash(tgt ? [7, 3] : [4, 4]); ctx.lineWidth = tgt ? 2.2 : hot ? 1.8 : 1.2;
+      ctx.globalAlpha = hot || tgt ? 1 : Math.min(1, (targetGrid ? (it.near ? 0.3 : 0.12) : it.near ? 0.75 : 0.25) * (0.6 + 0.4 * RK));
+      ctx.setLineDash(tgt ? [7, 3] : [4, 4]); ctx.lineWidth = (tgt ? 2.2 : hot ? 1.8 : 1.2) * RK;
       ctx.strokeStyle = tgt ? S.cfg.col.routeTarget : hot ? ROUTE_HOT : S.cfg.col.route;
       if (RANDOM_WANDER[Number(g.type)]) {
         // The legs its mobs have been seen walking, waypoint to waypoint (learned, kept by the agent): solid once seen
@@ -1434,15 +1455,15 @@
   // social (assist) radius dashed, drawn only when it differs from the aggro one (equal, the solid edge stands for both).
   var AGGRO_COL = { none: 'aggroNone', safe: 'aggroSafe', kos: 'aggro' };
   function aggroRing(x, y, ar, as, kind) {
-    var c = S.cfg.col[AGGRO_COL[kind]] || S.cfg.col.aggro, sc = S.view.scale;
-    ctx.lineWidth = 1;
+    var c = S.cfg.col[AGGRO_COL[kind]] || S.cfg.col.aggro, sc = S.view.scale, I = inkStyle(S.cfg.ink);
+    ctx.lineWidth = I.ringW;
     if (ar * sc >= 4) {
       ctx.beginPath(); ctx.arc(x, y, ar * sc, 0, 6.2832);
-      ctx.fillStyle = hexA(c, 0.07); ctx.fill(); ctx.strokeStyle = hexA(c, 0.6); ctx.stroke();
+      ctx.fillStyle = hexA(c, I.ringFill); ctx.fill(); ctx.strokeStyle = hexA(c, I.ringLine); ctx.stroke();
     }
     if (as > 0 && as !== ar && as * sc >= 4) {
       ctx.beginPath(); ctx.setLineDash([5, 4]); ctx.arc(x, y, as * sc, 0, 6.2832);
-      ctx.strokeStyle = hexA(c, 0.5); ctx.stroke(); ctx.setLineDash([]);
+      ctx.strokeStyle = hexA(c, I.ringLine - 0.1); ctx.stroke(); ctx.setLineDash([]);
     }
   }
   // The trail (trailStep): each stretch in the colour of what the mob was doing (classifyTrail: yellow pathing, red off
@@ -1572,17 +1593,23 @@
     var ox = w / 2 - v.cx * v.scale, oy = h / 2 - v.cy * v.scale;
     var sz = selfZ(), range = levelRange();
     var C = S.cfg, SH = C.show, CO = C.col;   // ⚙ Map settings: what is drawn, and in which colours
+    var I = inkStyle(C.ink);                  // ⚙ → Line strength
     var oneWall = C.wallMode === 'one';
+    // A wall pass: the dark casing first (over a busy game scene the coloured line alone gets lost), then the line.
+    var strokeWall = function (style, width, casing) {
+      if (casing > 0) { ctx.strokeStyle = 'rgba(0,0,0,' + casing + ')'; ctx.lineWidth = width + 2; ctx.stroke(); }
+      ctx.strokeStyle = style; ctx.lineWidth = width; ctx.stroke();
+    };
     // Walls. Your own map files when you have them for this zone (Walls: Auto): each line bright when its middle is
     // within the level range of you, faint otherwise. Else ours below.
     if (!SH.walls) { /* switched off in ⚙ */ }
     else if (localWalls()) {
-      ctx.lineCap = 'butt'; ctx.lineWidth = 1;
+      ctx.lineCap = 'butt';
       var lvOn = !!range && sz != null;
       for (var lg = 0; lg < S.local.groups.length; lg++) {
         var G = S.local.groups[lg];
         for (var pass = 0; pass < (lvOn ? 2 : 1); pass++) {   // 0 = bright, 1 = faint; with no level limit everything is bright
-          ctx.strokeStyle = oneWall ? hexA(CO.wall, pass === 0 ? 0.85 : 0.25) : (pass === 0 ? G.bright : G.faded);
+          var wallStyle = oneWall ? hexA(CO.wall, pass === 0 ? 0.85 : I.faint) : (pass === 0 ? G.bright : G.faded);
           ctx.beginPath();
           for (var li = 0, lj = 0; li < G.xy.length; li += 4, lj++) {
             if (lvOn && inLevelRange(G.z[lj], sz, range) !== (pass === 0)) continue;
@@ -1590,7 +1617,7 @@
             if ((lx1 < 0 && lx2 < 0) || (lx1 > w && lx2 > w) || (ly1 < 0 && ly2 < 0) || (ly1 > h && ly2 > h)) continue;
             ctx.moveTo(lx1, ly1); ctx.lineTo(lx2, ly2);
           }
-          ctx.stroke();
+          strokeWall(wallStyle, pass === 0 ? I.line : Math.max(1, I.line * 0.7), pass === 0 ? I.casing : I.casing / 2);
         }
       }
       ctx.lineCap = 'round';
@@ -1599,8 +1626,7 @@
       for (var b = 0; b < S.prep.gen.length; b++) {
         var bright = S.prep.bands.length <= 1 || inLevelRange(S.prep.bands[b], sz, range);
         var layerCol = C.wallMode === 'layers' ? brewallLayer(S.prep.bands, b, sz) : null;
-        ctx.strokeStyle = hexA(layerCol || (oneWall ? CO.wall : CO.oursWall), bright ? 0.95 : 0.35);
-        ctx.lineWidth = bright ? 1.6 : 1;
+        var oursStyle = hexA(layerCol || (oneWall ? CO.wall : CO.oursWall), bright ? 0.95 : Math.max(0.35, I.faint));
         var a = S.prep.gen[b];
         ctx.beginPath();
         for (var i = 0; i < a.length; i += 4) {
@@ -1608,7 +1634,7 @@
           if ((x1 < 0 && x2 < 0) || (x1 > w && x2 > w) || (y1 < 0 && y2 < 0) || (y1 > h && y2 > h)) continue;
           ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
         }
-        ctx.stroke();
+        strokeWall(oursStyle, (bright ? 1.6 : 1) * I.line, bright ? I.casing : I.casing / 2);
       }
     }
     // Spawn dots, and first the pather routes (under the dots; every route in range, not only visible points').
@@ -1647,7 +1673,7 @@
       var p = vis[vi].p, px = vis[vi].x, py = vis[vi].y;
       var kind = pointKind(p);
       ctx.globalAlpha = inLevelRange(p.z, sz, range) ? 1 : 0.4;
-      var r = kind.raid ? 6.5 : kind.named ? 5.5 : 4.2;
+      var r = (kind.raid ? 6.5 : kind.named ? 5.5 : 4.2) * I.dot;
       var t = S.timerBy[String(p.id)], cand = S.candBy[String(p.id)], sn = S.seenBy[String(p.id)];
       var up = upOn(p.id, S.p, S.seenBy), un = upNpc(p, up);
       if (up && !sn) sn = up;   // your pinned target is alive on this point now, before the next poll says so
@@ -1689,8 +1715,8 @@
           if (names && v.scale >= 0.4) halo(m.name, q[0] + rad + 3, q[1], fontSmall, color);
         }
       };
-      if (SH.raid) dotsOf(P.raid, CO.raid, 3, 'r:', SH.raidNames);
-      if (SH.group) dotsOf(P.group, CO.group, 4, 'g:', SH.groupNames);
+      if (SH.raid) dotsOf(P.raid, CO.raid, 3 * I.dot, 'r:', SH.raidNames);
+      if (SH.group) dotsOf(P.group, CO.group, 4 * I.dot, 'g:', SH.groupNames);
       // Killed mobs' paths, faded, until KILLS_FADE more kills (noteKills).
       if (SH.trail) for (var dk in S.trails) { if (trailShown(S.trails[dk], S.kills) && !(P.target && dk === targetKey(P.target))) drawTrail(S.trails[dk], null, null, null, 0.3); }
       // Target: a ring and a dotted line from you.
@@ -2181,7 +2207,10 @@
     bgOwn.checked = C.bgA != null; bgA.value = String(C.bgA != null ? C.bgA : 0.55); bgA.disabled = C.bgA == null;
     var tx = document.getElementById('cfgText'), txv = document.getElementById('cfgTextVal');
     tx.value = String(C.text); txv.textContent = Math.round(C.text * 100) + '%';
+    document.getElementById('cfgInk').value = String(C.ink);
+    document.getElementById('cfgInkVal').textContent = inkWord(C.ink);
   }
+  function inkWord(k) { return k <= 1 ? 'Normal' : k >= INK_MAX ? 'Max' : k >= 1.75 ? 'Strong' : 'Medium'; }
   // The fixed controls are wired once; buildCfg only refreshes their values.
   document.getElementById('cfgScheme').addEventListener('change', function (e) {
     if (MAP_SCHEMES[e.target.value]) { applyScheme(S.cfg, e.target.value); buildCfg(); cfgCommit(); }
@@ -2202,6 +2231,11 @@
   document.getElementById('cfgText').addEventListener('input', function (e) {
     S.cfg.text = Math.round(parseFloat(e.target.value) * 10) / 10;
     document.getElementById('cfgTextVal').textContent = Math.round(S.cfg.text * 100) + '%';
+    cfgCommit();
+  });
+  document.getElementById('cfgInk').addEventListener('input', function (e) {
+    S.cfg.ink = Math.round(parseFloat(e.target.value) * 4) / 4;
+    document.getElementById('cfgInkVal').textContent = inkWord(S.cfg.ink);
     cfgCommit();
   });
   document.getElementById('cfgReset').addEventListener('click', function () { S.cfg = mapCfgDefaults(); buildCfg(); cfgCommit(); });

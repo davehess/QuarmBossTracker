@@ -6,7 +6,7 @@
 // if the target has room. The reason the page exists: the shared bank belongs to the account, so
 // /me/inventory has to know who shares one before it can count a shared stack once.
 //
-// Everything here takes the database client and the owner as arguments, and imports nothing at run time. The
+// Everything here takes the database client and the owner as arguments, and imports only the guild tag. The
 // callers (the /me/accounts page and its server actions) resolve the signed-in person and the characters they
 // own (ownedCharacters), which keeps the rules testable against a fake client.
 //
@@ -14,10 +14,12 @@
 // account_id is never updated in place. Owner key = the household ROOT Discord id, so merged members share
 // their accounts the way they share their characters.
 
+import { GUILD_TAG } from './guild';
+
 export const MAX_ACCOUNTS = 10;
 export const MAX_PER_ACCOUNT = 8;
 export const LABEL_MAX = 40;
-const GUILD = 'wolfpack';
+const GUILD = GUILD_TAG;
 
 // The slice of the Supabase client this file uses (kept loose so tests can hand in a fake).
 export type Db = { from(table: string): any };
