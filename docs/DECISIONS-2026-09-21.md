@@ -9978,3 +9978,17 @@ Harmony, Hide/Sneak for non-rogues).
   exactly, and the test pins that.
 - Also fixed on beta: `web/lib/gameAccounts.ts` read the guild by a quoted literal, which the guild kit's no-literal
   tests on beta rejected once the accounts page synced over from main. It now reads `GUILD_TAG`.
+
+### 274. The Map learns a path only from a mob that is walking, never from one chasing someone (2026-10-13, agent 3.7.158 beta `fd50adc5`)
+
+- **The report** (the guild lead, with a screenshot of a swarm kited by a bard): *"These mobs in a swarm are showing
+  that they're on a bunch of paths that they're not, so we need to ignore when a mob is aggroed and has a circular
+  path chasing a bard"*.
+- **Cause:** a random-wander leg was learned whenever the target headed at a waypoint and reached it. A chase sweeps
+  through waypoints constantly, so each pass was saved as a walked leg (and twice-seen legs draw solid).
+- **Rule now:** a leg is learned only if (1) the mob never had a target of its own while you watched it (Zeal's
+  target-of-target), and (2) its last leg-length of walking was nearly straight (straight-line distance at least 0.8
+  of the distance walked, and at least half the leg seen). (2) also covers a Zeal that sends no target-of-target.
+  While the target is chasing, the "leg to the next waypoint + seconds" is not drawn.
+- **Not done:** legs already learned from earlier chases stay in the local `map_timers.json`. Clearing them needs a
+  "forget learned paths" control, offered to the guild lead rather than built.
