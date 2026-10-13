@@ -505,7 +505,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, trailStep, wanderLeg, noteWanderLeg, mixHex, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, trailStep, wanderLeg, noteWanderLeg, mixHex, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH, legArrow, LEG_ARROW_AT };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -922,9 +922,9 @@ describe('pather routes', () => {
     expect(c._mapNoteLeg('thedeep', 7, 1, 1, T0)).toMatchObject({ ok: false });
     expect(c._mapNoteLeg('thedeep', 9, 0, 1, T0)).toMatchObject({ ok: false });        // no such route
     const p = c._mapStatePayload('', T0 + 3);
-    expect(p.legs).toEqual({ 7: [[0, 1, 2], [1, 2, 1]] });
+    expect(p.legs).toEqual({ 7: [[0, 1, 2, 1, 1], [1, 2, 1, 1, 0]] });                  // 0-1 walked each way once
     expect(p.spawngroups).toEqual({ 41: 'thedeep orc roamers' });
-    expect(c._mapStatePayload(p.version, T0 + 4).legs).toEqual({ 7: [[0, 1, 2], [1, 2, 1]] });   // legs every poll
+    expect(c._mapStatePayload(p.version, T0 + 4).legs).toEqual({ 7: [[0, 1, 2, 1, 1], [1, 2, 1, 1, 0]] });   // legs every poll
     expect(c._mapSaveNow()).toBe(true);
     const c2 = loadCore({ dir, opts: { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: '' }, net });
     expect(c2._mapZoneDoc('thedeep').legs[7]['0-1'].n).toBe(2);                         // kept across a restart
@@ -1259,7 +1259,15 @@ describe('pather routes', () => {
     expect(H.targetSpawnGroup({ name: 'A Crystalline Golem' }, pts, byId, sgs, 5)).toEqual({ name: 'povalor golem roamers', points: 2 });
     expect(H.targetSpawnGroup({ name: 'A Crystalline Golem', point_id: 3 }, pts, byId, sgs, null)).toEqual({ name: 'povalor A Crystalline Golem18', points: 1 });
     expect(H.targetSpawnGroup({ name: 'A Crystalline Golem' }, pts, byId, null, 5)).toBeNull();   // an older bot: no names
+    // "show that with an arrow 60% between the previous point and the next on that line segment"
+    const ar = H.legArrow([0, 0], [100, 0], H.LEG_ARROW_AT, 7);
+    expect(ar[0]).toEqual([60, 0]);                                                   // tip 60% along, toward b
+    expect(ar[1][0]).toBeLessThan(60); expect(ar[2][0]).toBeLessThan(60);             // barbs behind the tip
+    expect(H.legArrow([100, 0], [0, 0], H.LEG_ARROW_AT, 7)[0]).toEqual([40, 0]);      // walked back: its own arrow
+    expect(H.legArrow([0, 0], [5, 0], 0.6, 7)).toBeNull();                            // too short to carry one
     const js = stripJs(MAP_HTML);
+    expect(js).toMatch(/if \(Number\(lg\[3\]\) > 0\) fillArrow\(legArrow\(lqa, lqb, LEG_ARROW_AT/);
+    expect(js).toMatch(/if \(Number\(lg\[4\]\) > 0\) fillArrow\(legArrow\(lqb, lqa, LEG_ARROW_AT/);
     expect(js).toMatch(/if \(walked\) postLeg\(tGid, walked\);/);
     expect(js).toMatch(/ctx\.globalAlpha = hot \|\| tgt \? 1 : targetGrid \? \(it\.near \? 0\.3 : 0\.12\) : it\.near \? 0\.75 : 0\.25;/);
     expect(js).toMatch(/var learned = S\.p && S\.p\.legs \? S\.p\.legs\[it\.gid\] : null/);
