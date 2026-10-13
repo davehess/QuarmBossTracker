@@ -505,7 +505,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, trailStep, TRAIL_MS };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, trailStep, wanderLeg, noteWanderLeg, mixHex, levelCon, brewallLayer, namedNpc };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -571,11 +571,12 @@ describe('the overlay (apps/mimic/map.html)', () => {
   describe('⚙ Map settings', () => {
     it('defaults: everything shown except the aggro rings, no icon off, and the Default scheme is exactly the colours the map drew before', () => {
       const d = H.mapCfgDefaults();
-      expect(Object.entries(d.show).filter(([k]) => k !== 'aggro').every(([, v]) => v)).toBe(true);
+      expect(Object.entries(d.show).filter(([k]) => k !== 'aggro' && k !== 'conNames').every(([, v]) => v)).toBe(true);
       expect(d.show.aggro).toBe(false);                                         // off until the ◯ button turns them on
+      expect(d.show.conNames).toBe(false);                                      // names keep their colours until asked
       expect(Object.keys(d.show).length).toBe(H.CFG_SHOW.length);
       expect(d.glyphsOff).toEqual({});
-      expect(d).toMatchObject({ scheme: 'default', wallMode: 'map', bgA: null, text: 1 });
+      expect(d).toMatchObject({ scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1 });   // Brewall layers by default
       expect(d.col).toMatchObject({ route: '#39c5cf', routeTarget: '#7ee787', dot: '#c9d1d9', named: '#f2cc60', raidTarget: '#ff7b72',
         up: '#56d364', ringWait: '#f85149', ringWindow: '#f0b429', ringUp: '#56d364', candidate: '#d2a8ff', glyph: '#e6edf3',
         pather: '#9ecbff', bossLabel: '#f2cc60', raidLabel: '#ffa198', upLabel: '#7ee787', room: '#c9d9ee', you: '#58a6ff',
@@ -667,12 +668,12 @@ describe('the overlay (apps/mimic/map.html)', () => {
       const { c } = localCore();
       const st = { charInfo: [{ id: 3, value: 'Shadow Knight' }, { id: 4, value: 'Innoruuk' }], buffs: [{ name: 'Illusion: Skeleton' }] };
       c.whoData.set('aldenmar', { race: 'Dark Elf' });
-      expect(c._mapMe('Aldenmar', st)).toEqual({ race: 6, cls: 5, deity: 206, illusion: 60 });
+      expect(c._mapMe('Aldenmar', st)).toEqual({ level: null, race: 6, cls: 5, deity: 206, illusion: 60 });   // level: _levelOf (outside this slice)
       expect(c._mapMe('Aldenmar', { charInfo: [], buffs: [{ name: 'Illusion: Fire Elemental Lord' }] }).illusion).toBe(-1);
       expect(c._mapMe('Aldenmar', { buffs: [{ name: 'Greater Wolf Form' }] }).illusion).toBe(42);
       expect(c._mapMe('Aldenmar', { buffs: [{ name: 'Spirit of Wolf' }] }).illusion).toBeNull();
       c._mapQuarmyIds.set('brackwyn', { race_id: 128, class_id: 10, deity_id: 203 });
-      expect(c._mapMe('Brackwyn', {})).toEqual({ race: 128, cls: 10, deity: 203, illusion: null });
+      expect(c._mapMe('Brackwyn', {})).toEqual({ level: null, race: 128, cls: 10, deity: 203, illusion: null });
       expect(stripJs(AGENT)).toMatch(/out\.factions = rec\.body\.factions \|\| null;/);
       expect(stripJs(AGENT)).toMatch(/out\.me = _mapMe\(character, st\);/);
     });
@@ -712,7 +713,9 @@ describe('the overlay (apps/mimic/map.html)', () => {
       expect(c.col.dot).toBe('#c9d1d9');
       expect(c.col.evil).toBeUndefined();
       expect(c).toMatchObject({ scheme: 'cb', wallMode: 'one', bgA: 0.3, text: 1.4 });
-      expect(H.mergeMapCfg({ bgA: 7, text: 9, scheme: 'nope', wallMode: 'x' })).toMatchObject({ bgA: null, text: 1, scheme: 'default', wallMode: 'map' });
+      expect(H.mergeMapCfg({ bgA: 7, text: 9, scheme: 'nope', wallMode: 'x' })).toMatchObject({ bgA: null, text: 1, scheme: 'default', wallMode: 'layers' });
+      expect(H.mergeMapCfg({ wallMode: 'map' }).wallMode).toBe('layers');              // an old save's 'map' was only the old default
+      expect(H.mergeMapCfg({ wallMode: 'map', wallV: 2 }).wallMode).toBe('map');      // chosen after the change: kept
       expect(H.mergeMapCfg(null)).toEqual(H.mapCfgDefaults());
     });
     it('a scheme replaces every colour; the colour-blind one never pairs red with green for a meaning', () => {
@@ -854,6 +857,16 @@ describe('pather routes', () => {
     const b = c._mapAttribute(pts, 'a patrolling orc', { x: 350, y: 60 }, { 1: wander });
     expect(b.kind).toBe('unassigned');
     expect(b.candidates).toEqual(expect.arrayContaining([11, 12]));                // 10 still folds into its twin 12
+  });
+  it('two roamers on one route land on two points: a twin already pinned to another mob goes last (2026-10-13)', () => {
+    // the guild lead: "This is attributing both of these pathers to the same spawn point"
+    const { c } = localCore();
+    const wander = { type: 8, pts: [[0, 0, 0, 0], [400, 0, 0, 0], [400, 300, 0, 0], [0, 300, 0, 0]] };
+    const pts = [walker(10, 0, 0, 1), walker(11, 400, 0, 1), walker(12, 400, 300, 1)];
+    expect(c._mapAttribute(pts, 'a patrolling orc', { x: 350, y: 60 }, { 1: wander }, new Set(['11']))).toMatchObject({ kind: 'assigned', point_id: 12 });
+    expect(c._mapAttribute(pts, 'a patrolling orc', { x: 350, y: 60 }, { 1: wander }, new Set(['11', '12']))).toMatchObject({ kind: 'assigned', point_id: 10 });
+    expect(c._mapAttribute(pts, 'a patrolling orc', { x: 350, y: 60 }, { 1: wander }, new Set(['10', '11', '12']))).toMatchObject({ kind: 'assigned', point_id: 11 });   // all taken: nearest still
+    expect(stripJs(AGENT)).toMatch(/for \(const \[sid, pin\] of P\.m\) if \(sid !== spawnId\) taken\.add\(String\(pin\.point_id\)\);/);
   });
   it('a walker equidistant from two routes stays "?"', () => {
     const { c } = localCore();
@@ -1102,7 +1115,7 @@ describe('pather routes', () => {
     expect(base.all.cfg.hidden).toBe(false);
     expect(base.all.cfgBtn.classList.contains('on')).toBe(true);
     const showRows = base.all.cfgShow.children, glyphRows = base.all.cfgGlyphs.children, colRows = base.all.cfgCols.children;
-    expect(showRows).toHaveLength(23);
+    expect(showRows).toHaveLength(24);
     expect(glyphRows).toHaveLength(9);
     expect(colRows).toHaveLength(27);
     const walls = showRows[0].children[0];                                     // Walls
@@ -1179,8 +1192,8 @@ describe('pather routes', () => {
     tr = H.trailStep(tr, 't:5', 2, 0, 100);                   // under a step: not a new crumb
     tr = H.trailStep(tr, 't:5', 10, 0, 200);
     expect(tr.pts.map(p => p.x)).toEqual([0, 10]);
-    expect(H.trailStep(tr, 't:6', 50, 50, 300).pts).toHaveLength(1);   // a new target starts a new trail
-    expect(H.trailStep(tr, 't:5', 30, 0, 200 + H.TRAIL_MS + 1).pts.map(p => p.x)).toEqual([30]);   // old crumbs age out
+    expect(H.trailStep(null, 't:6', 50, 50, 300).pts).toHaveLength(1);   // a new mob starts its own trail
+    expect(H.trailStep(tr, 't:5', 30, 0, 200 + 3600000).pts.map(p => p.x)).toEqual([0, 10, 30]);   // kept while in the zone
     const base = await bootOverlay();
     const scale0 = base.S.view.scale;
     base.all.panBtn.listeners.wheel.forEach(f => f({ deltaY: -200, preventDefault() {} }));
@@ -1191,7 +1204,39 @@ describe('pather routes', () => {
     const js = stripJs(MAP_HTML);
     expect(js).toMatch(/if \(S\.panDragged\) \{ S\.panDragged = false; return; \}/);   // a drag is not a click
     expect(js).toMatch(/if \(d\.btn && !\(e\.buttons & 1\)\)/);                          // a lost mouseup ends it
-    expect(js).toMatch(/if \(SH\.trail\) drawTrail\(S\.trail, tq, rt, CO\.target\);/);
+    expect(js).toMatch(/if \(SH\.trail\) drawTrail\(tTrail, tq, rt, CO\.target, CO\.dot, tGrid, CO\.routeTarget\);/);
+  });
+  it('the walked path keeps the waypoint legs it was seen on, fades from spawn colour to target colour; con colours; Brewall layers; your target\'s point at any height (2026-10-13)', () => {
+    // the guild lead: "extrapolate the previous point and the next point from the 'random path' ... a gradient along
+    // all of the lines to the origin ... set the names of these mobs to conn color ... Default colors should probably
+    // be the same as the Brewall ones ... Going above a spawn point should still show you the spawn point of the
+    // creature that's targetted"
+    const g = [[0, 0], [100, 0], [100, 100], [0, 100], [-100, 0]];
+    expect(H.wanderLeg(g, { x: 50, y: 0 }, { x: 1, y: 0 })).toEqual({ prev: 0, next: 1 });   // walking 0 → 1
+    expect(H.wanderLeg(g, { x: 50, y: 0 }, { x: -1, y: 0 })).toEqual({ prev: 1, next: 0 });
+    expect(H.wanderLeg(g, { x: 50, y: 0 }, { x: 0, y: 1 })).toBeNull();                    // nothing straight ahead
+    const tr = { pts: [{ x: 10, y: 0 }, { x: 30, y: 0 }, { x: 50, y: 0 }], legs: [] };
+    H.noteWanderLeg(tr, g); H.noteWanderLeg(tr, g);
+    expect(tr.legs).toEqual([{ prev: 0, next: 1 }]);                                       // the same leg is kept once
+    expect(H.mixHex('#000000', '#ffffff', 0.5)).toBe('#808080');
+    expect(H.levelCon(60, 60)).toBe('white');
+    expect(H.levelCon(60, 62)).toBe('yellow');
+    expect(H.levelCon(60, 63)).toBe('red');
+    expect(H.levelCon(60, 39)).toBe('green');                                              // 60's green cut is -21
+    expect(H.levelCon(60, 40)).toBe('lightblue');
+    expect(H.levelCon(60, 50)).toBe('blue');
+    expect(H.levelCon(null, 50)).toBeNull();
+    const bands = [100, 0, -100, 200];
+    expect(H.brewallLayer(bands, 1, 5)).toBeNull();                                        // your floor: the wall colour
+    expect(H.brewallLayer(bands, 0, 5)).toBe('#ffa866');                                   // one up: Layer 2
+    expect(H.brewallLayer(bands, 3, 5)).toBe('#cc6600');                                   // two up: Layer 3
+    expect(H.brewallLayer(bands, 2, 5)).toBe('#ff66ff');                                   // one down: Layer 8
+    expect(H.brewallLayer([0], 0, 5)).toBeNull();
+    expect(H.namedNpc({ npcs: [{ name: 'a_rat', chance: 90 }, { name: 'Boss', named: true, chance: 10 }] }).name).toBe('Boss');
+    const js = stripJs(MAP_HTML);
+    expect(js).toMatch(/if \(!inLevelRange\(p0\.z, sz, srange\) && String\(p0\.id\) !== tgtPid\) continue;/);
+    expect(js).toMatch(/col: conCol\(un\) \|\| CO\.upLabel/);
+    expect(js).toMatch(/var layerCol = C\.wallMode === 'layers' \? brewallLayer\(S\.prep\.bands, b, sz\) : null;/);
   });
   it('the Levels and Spawn height sliders live in the settings panel; Labels stays a toolbar button', () => {
     const tools = sliceBlock(MAP_HTML, '<div id="tools">', '</div>');
@@ -1256,10 +1301,13 @@ describe('pather routes', () => {
     expect(base.all.spawnVal.textContent).toBe('Spawn height: all');
     const all = shown(base.all);
     // Lift one point 500 above you and narrow the range to +-25: it disappears, the rest stay.
-    const high = Object.assign({}, base.payload, { points: base.payload.points.map((p, i) => (i === 0 ? Object.assign({}, p, { z: 500 }) : p)) });
+    // (point 2: point 1 is the payload target's own spawn point, which shows at any height)
+    const high = Object.assign({}, base.payload, { points: base.payload.points.map((p, i) => (i === 1 ? Object.assign({}, p, { z: 500 }) : p)) });
     const narrow = await bootOverlay({ store: { 'wp-map-spawn-levels': '0' }, payload: high });
     expect(narrow.all.spawnVal.textContent).toBe('Spawn height ±25');
     expect(shown(narrow.all)).toBe(all - 1);
+    const tgtHigh = Object.assign({}, base.payload, { points: base.payload.points.map((p, i) => (i === 0 ? Object.assign({}, p, { z: 500 }) : p)) });
+    expect(shown((await bootOverlay({ store: { 'wp-map-spawn-levels': '0' }, payload: tgtHigh })).all)).toBe(all);   // your target's point stays
     narrow.all.spawnLevels.value = '7'; narrow.all.spawnLevels.listeners.input.forEach(f => f());
     expect(narrow.store['wp-map-spawn-levels']).toBe('7');
     expect(shown(narrow.all)).toBe(all);
@@ -1835,7 +1883,7 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
       expect(js).toMatch(/if \(S\.cfg\.bgA == null\) root\.removeProperty\('--map-bg-a'\);/);   // off = follow Mimic's slider
     });
     it('brighter, thicker walls in the level range; the rest at 0.35; out-of-range dots at 0.4; bigger lighter dots with an outline', () => {
-      expect(js).toMatch(/ctx\.strokeStyle = hexA\(oneWall \? CO\.wall : CO\.oursWall, bright \? 0\.95 : 0\.35\);/);
+      expect(js).toMatch(/ctx\.strokeStyle = hexA\(layerCol \|\| \(oneWall \? CO\.wall : CO\.oursWall\), bright \? 0\.95 : 0\.35\);/);
       expect(js).toMatch(/ctx\.lineWidth = bright \? 1\.6 : 1;/);
       expect(js).toMatch(/var bright = S\.prep\.bands\.length <= 1 \|\| inLevelRange\(S\.prep\.bands\[b\], sz, range\);/);
       expect(js).toMatch(/ctx\.globalAlpha = inLevelRange\(p\.z, sz, range\) \? 1 : 0\.4;/);

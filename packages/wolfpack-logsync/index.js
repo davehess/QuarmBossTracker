@@ -44452,7 +44452,7 @@ function _mapRouteDist(loc, grid) {
 // `grids` (optional, the zone payload's { "<gridid>": { type, pts: [[x,y,z,pause], ...] } }): a point that has a route
 // of two or more waypoints is as near as the NEARER of its spawn point and its route, so a walker tab-targeted
 // mid-route still pins to the point it walks from. The same 60 / 2x rule applies to that distance.
-function _mapAttribute(points, name, loc, grids) {
+function _mapAttribute(points, name, loc, grids, taken) {
   const want = _mapNormName(name);
   if (!want || !Array.isArray(points)) return { kind: 'none' };
   const cands = points.filter(p => p && Array.isArray(p.npcs) && p.npcs.some(n => n && _mapNormName(n.name) === want));
@@ -44466,13 +44466,18 @@ function _mapAttribute(points, name, loc, grids) {
   // Route twins: points that walk ONE shared route with the same respawn (Plane of Valor's golems: five points on
   // grid 1) tie on route distance, and no position can break that. It need not be broken: whichever of them the mob
   // came from, its route and its timer are the same, so the twins count as one candidate, the nearest spawn spot.
+  // `taken` (optional Set of point ids already pinned to ANOTHER live mob): among twins, a free point goes first, so
+  // two golems on one route land on two points, not one (the guild lead, 2026-10-13: "This is attributing both of
+  // these pathers to the same spawn point").
   const twins = new Set();
+  const isTaken = (id) => !!(taken && taken.has(String(id)));
   const ranked = cands.map(p => {
     const g = p.grid != null && grids ? grids[p.grid] : null;
     const d = _mapDist2(p, here);
     return { id: p.id, d: g ? Math.min(d, _mapRouteDist(here, g)) : d, spot: d,
              twin: g ? p.grid + '|' + p.respawn_s + '|' + p.variance_s : null };
-  }).filter(r => Number.isFinite(r.d)).sort((a, b) => a.d - b.d || a.spot - b.spot)
+  }).filter(r => Number.isFinite(r.d))
+    .sort((a, b) => a.d - b.d || (a.twin && a.twin === b.twin ? isTaken(a.id) - isTaken(b.id) : 0) || a.spot - b.spot)
     .filter(r => !r.twin || (!twins.has(r.twin) && twins.add(r.twin)));
   if (!ranked.length) return { kind: 'unassigned', candidates: [] };
   const best = ranked[0], next = ranked[1];
@@ -44889,7 +44894,9 @@ function _mapTryPin(zone, character, spawnId, name, loc, now, opts) {
   P.tried.delete(spawnId); P.tried.set(spawnId, { x: loc.x, y: loc.y, at: now }); _mapCapMap(P.tried);
   const rec = _mapZones.get(zone);
   if (!rec || !rec.body) return null;
-  const att = _mapAttribute(rec.body.points, name, loc, rec.body.grids);
+  const taken = new Set();
+  for (const [sid, pin] of P.m) if (sid !== spawnId) taken.add(String(pin.point_id));
+  const att = _mapAttribute(rec.body.points, name, loc, rec.body.grids, taken);
   if (att.kind !== 'assigned') return null;                   // only when certain; a "?" never pins
   const point = rec.byId.get(String(att.point_id));
   if (!point) return null;
@@ -45360,6 +45367,7 @@ function _mapMe(character, st) {
     if (MAP_ILLUSION_FORMS[low]) { illusion = MAP_ILLUSION_FORMS[low]; break; }
   }
   return {
+    level: (typeof _levelOf === 'function' ? _levelOf(character) : null) || null,   // for the Map's con-colour names
     race: _mapIdOf(MAP_RACE_IDS, w.race) || q.race_id || null,
     cls: _mapIdOf(MAP_CLASS_IDS, label(3) || w.class) || q.class_id || null,
     deity: _mapIdOf(MAP_DEITY_IDS, label(4)) || q.deity_id || null,
@@ -45455,7 +45463,7 @@ function _mapStatePayload(have, now, haveLocal) {
     out.map = rec.body.map || null; out.points = rec.body.points; out.grids = rec.body.grids || null;
     out.factions = rec.body.factions || null;   // the zone's primary factions (bot 3.1.254): base, caps, race/class/deity mods
   }
-  out.me = _mapMe(character, st);
+  try { out.me = _mapMe(character, st); } catch { out.me = null; }
   const zd = _mapZoneDoc(zone);
   if (_mapPrune(zd, rec.body.points, now)) _mapSaveSoon();
   out.timers = Object.values(zd.timers).map(t => Object.assign({}, t, { state: _mapTimerState(t, now) })).sort((a, b) => a.earliest - b.earliest);
