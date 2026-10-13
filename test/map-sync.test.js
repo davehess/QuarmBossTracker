@@ -28,9 +28,16 @@ describe('validateEvents', () => {
     expect(r.zone).toBe('lavastorm');
     expect(r.character).toBe('Aldenmar');
     expect(r.events).toEqual([
-      { point_id: 17, kind: 'died', spawn_id: 4321, name: 'a gnoll pup', at: NOW - 1000 },
-      { point_id: 17, kind: 'seen', spawn_id: null, name: null, at: NOW - 1000 },
+      { point_id: 17, kind: 'died', spawn_id: 4321, name: 'a gnoll pup', at: NOW - 1000, inst: null },
+      { point_id: 17, kind: 'seen', spawn_id: null, name: null, at: NOW - 1000, inst: null },
     ]);
+  });
+
+  it('keeps a well-formed zone copy (host:port) and nulls a malformed one without dropping the event', () => {
+    const H = 'pq.projectquarm.pq3.projectquarm.com';
+    const r = validateEvents(body([ev({ inst: H + ':7312' }), ev({ inst: H }), ev({ inst: 'a b:1' }), ev({ inst: 7312 }),
+      ev({ inst: 'x'.repeat(101) + ':1' })]), NOW);
+    expect(r.events.map(e => e.inst)).toEqual([H + ':7312', null, null, null, null]);
   });
 
   it('accepts all five kinds', () => {
@@ -99,7 +106,7 @@ describe('the map-sync routes (source text, comments stripped)', () => {
     expect(SRC).toContain('async function _handleAgentMapSyncGet');
     const m = /supabase\.select\('map_spawn_events'[\s\S]*?\)\.catch/.exec(getHandler);
     expect(m).not.toBeNull();
-    expect(m[0]).toContain('&select=id,point_id,kind,spawn_id,npc_name,at,by_character&');
+    expect(m[0]).toContain('&select=id,point_id,kind,spawn_id,npc_name,at,by_character,inst&');
     expect(m[0]).not.toMatch(/select=\*/);
     expect(m[0]).toMatch(/&limit=\$\{_MAP_SYNC_LIMIT\}/);
     expect(SRC).toMatch(/const _MAP_SYNC_LIMIT = 500;/);
@@ -132,5 +139,10 @@ describe('the migration', () => {
     expect(sql).toMatch(/revoke all on public\.map_spawn_events from anon, authenticated/);
     expect(sql).not.toMatch(/create policy/i);
     expect(sql).toMatch(/'seen', 'died', 'empty', 'up', 'clear'/);
+  });
+  it('the zone-copy column is added idempotently, and the push stores it', () => {
+    const add = stripSql(readSource(path.join(ROOT, 'supabase', 'migrations', '20261013013000_map_spawn_events_inst.sql')));
+    expect(add).toMatch(/alter table public\.map_spawn_events add column if not exists inst text;/);
+    expect(stripJs(readSource(BOT_INDEX))).toMatch(/by_discord_id: String\(identity\.discord_id\), inst: e\.inst,/);
   });
 });
