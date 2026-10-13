@@ -1343,6 +1343,32 @@ function _startWindowDrag(win, persistKey) {
     }, 16);  // ~60fps
   } catch {}
 }
+// The ◢ corner grip (preload.js), locked or not (the guild lead, 2026-10-13: "Map needs a resize drag corner at the
+// bottom right, as do all of the windows, to resize without having to setup"). Same session as a ✥ drag, so
+// _stopWindowDrag ends it, persists the bounds and restores focusability; the top-left stays put and the size follows
+// the cursor, kept inside the window's screen. Each step goes through _noteUserResize, so on a fit-height overlay the
+// height you drag to becomes its floor, exactly like a native edge drag in setup.
+function _startWindowResize(win) {
+  if (!win || win.isDestroyed()) return;
+  _startWindowDrag(win);
+  if (!_dragSession) return;
+  clearInterval(_dragSession.interval);
+  const s = _dragSession, c0 = screen.getCursorScreenPoint(), b0 = win.getBounds();
+  s.interval = setInterval(() => {
+    if (!_dragSession) return;
+    if (s.win.isDestroyed() || Date.now() - s.startedAt > 30_000) { _stopWindowDrag(); return; }
+    try {
+      const cur = screen.getCursorScreenPoint(), wa = screen.getDisplayMatching(b0).workArea;
+      const nb = {
+        x: b0.x, y: b0.y,
+        width:  Math.max(120, Math.min(wa.x + wa.width - b0.x,  b0.width  + cur.x - c0.x)),
+        height: Math.max(60,  Math.min(wa.y + wa.height - b0.y, b0.height + cur.y - c0.y)),
+      };
+      _noteUserResize(s.win, nb);
+      s.win.setBounds(nb);
+    } catch {}
+  }, 16);
+}
 
 // ── UI Studio — capture & restore EQ ini files ──────────────────────────────
 // Bundles every relevant ini file for a character (plus the global
@@ -8948,6 +8974,14 @@ ipcMain.handle('overlay-drag-start', (e) => {
   return true;
 });
 ipcMain.handle('overlay-drag-end', () => { _stopWindowDrag(); return true; });
+ipcMain.handle('overlay-resize-start', (e) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (win) win.__wpPreMenuBounds = null;
+    _startWindowResize(win);
+  } catch {}
+  return true;
+});
 
 // An overlay sizes and places its OWN window (2026-09-24): the Me overlay's
 // HUD layout wraps the centre of the screen, so it needs a large window
