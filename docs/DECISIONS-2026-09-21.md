@@ -9909,3 +9909,24 @@ Harmony, Hide/Sneak for non-rogues).
   where it shows (they read as falling off early). Next step needs a verified per-rank table (EQMacEmu source or a
   measured Zeal remaining-ticks reading, which the agent already records per character in `buffDurationFactorFor`).
 - **Test:** `test/charm-keeps-buffs.test.js`.
+
+### 270. Your own and your pet's buff timers pause while you are logged out, and live in the database (2026-10-13, agent 3.7.156 beta `deaf08e1`, bot 3.1.257 main `e7fe036c`)
+
+- **The call** (the guild lead): *"My buffs on my pet and myself should pause if I log out … synced to the database so
+  if I logged on from a different machine or if my installation failed I would still have those buff timers.
+  Conversely, if I logged back in to reclaim a charmed pet or kill a buffed/debuffed mob those timers should continue
+  to tick while the server is online."*
+- **Self buffs needed nothing:** after login Zeal reports the client's own remaining ticks. The log-derived timers were
+  the wrong ones: the pet's (`_petBuffLandings`) and the entries under your own and your summoned pet's name.
+- **Pause:** the agent remembers each character's last log line. "Welcome to EverQuest!" after a gap of a minute or
+  more moves every still-running own/summoned-pet entry forward by the gap. A charmed pet and every NPC key keep
+  ticking; an expired or worn-off entry is never revived. While logged out nothing prunes those entries (they read
+  against the frozen clock), across an agent restart too. The pet's new spawn id after login is not a new pet.
+- **Database:** `POST/GET /api/agent/own-timers`, one `bot_kv` row per character (`own_timers:<name>`, service-role
+  only, no migration), same ownership rule as `/character-prefs`. Sent after a pet buff lands, after a resume, on a
+  wipe and at logout; a PC that has never seen the character pulls it on first sight. Local mode, dry run and
+  `exclude_from_stats` send nothing. Self-host note: a few hundred bytes per character, one row each.
+- **Known edges:** no Welcome line seen (agent off at login) → nothing shifts; a standalone agent with no Zeal and a
+  quiet log reads as offline until the next line; the Timers canvas still counts own spells on the wall clock while
+  logged out (it catches up at the resume).
+- **Tests:** `test/own-timers-pause.test.js`, `test/own-timers-endpoint.test.js`.
