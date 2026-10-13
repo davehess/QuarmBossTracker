@@ -734,10 +734,17 @@
   // How far your target stands from its spawn point, in game units: null when its point is not known, or is one of
   // several on a shared route (which one is a guess). For mobs that gate or leash home past a range (the guild lead,
   // 2026-10-13: "give me the distance from a mob's spawn point if it's known").
+  // 3D when both heights are known: the server's gate rule measures 3D (EQMacEmu zone/mob_ai.cpp, the escape branch:
+  // DistanceSquared(spawn point, position) > 40000).
   function spawnDistance(t, pin, twins) {
     if (!t || t.x == null || !pin || (twins && twins.length > 1)) return null;
-    return Math.round(Math.hypot(t.x - pin.x, t.y - pin.y));
+    var dz = t.z != null && pin.z != null && isFinite(t.z) && isFinite(pin.z) ? t.z - pin.z : 0;
+    return Math.round(Math.sqrt((t.x - pin.x) * (t.x - pin.x) + (t.y - pin.y) * (t.y - pin.y) + dz * dz));
   }
+  // Past this many units from its spawn point a mob that has Gate in its spell list can gate home once it is at 15% HP
+  // or less, outside classic-era zones and unless it roams a box (Quarm's server source; a 50% roll each AI check).
+  // Whether a given mob HAS Gate is not in our data yet, so the Map says "can gate", never "will".
+  var GATE_RANGE = 200;
   // The Labels button's saved value ('1' / '0' were saved before 2026-10-13's all / targets / off).
   function labelMode(v) { return v === '0' || v === 0 || v === false ? 'off' : v === 'targets' || v === 'off' ? v : 'all'; }
   // The crumbs of the trail's current stretch (since its last break).
@@ -1772,7 +1779,7 @@
         var tsg = SH.targetName && S.labels !== 'off' ? targetSpawnGroup(P.target, S.points, S.byId, S.sgs, tGid) : null;
         // ...and how far it is from its spawn point when that is known (spawnDistance).
         var sdist = SH.targetName && S.labels !== 'off' ? spawnDistance(P.target, pinPt, pinPt ? routeTwins(pinPt, S.points) : null) : null;
-        var subTxt = [tsg ? tsg.name + ' · ' + tsg.points + (tsg.points === 1 ? ' point' : ' points') : '', sdist != null ? sdist + ' from spawn' : '']
+        var subTxt = [tsg ? tsg.name + ' · ' + tsg.points + (tsg.points === 1 ? ' point' : ' points') : '', sdist != null ? sdist + ' from spawn' + (sdist > GATE_RANGE ? ' · past gate range (can gate ≤15% HP)' : '') : '']
           .filter(Boolean).join(' · ');
         if (subTxt) halo(subTxt, tq[0] + 9, tq[1] + 6, labelFont('small'), CO.target);
       }
