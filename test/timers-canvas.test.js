@@ -176,7 +176,8 @@ describe('the agent side', () => {
   it('stamps the group a panel claims on every timer row', () => {
     expect(code).toMatch(/effect: 'Recharm tick'[\s\S]{0,200}group: 'charm' \}\);/);
     expect(code).toMatch(/effect: 'Server tick',[\s\S]{0,200}group: 'tick' \}\);/);
-    expect(code).toMatch(/const group = CHARM_SPELLS\.has\(String\(b\.name \|\| ''\)\.toLowerCase\(\)\) \? 'charm'\s*: _isPacifySpell\(b\.name\) \? 'lull' : 'spell';/);
+    expect(code).toMatch(/const isCharm = CHARM_SPELLS\.has\(String\(b\.name \|\| ''\)\.toLowerCase\(\)\);/);
+    expect(code).toMatch(/const group = isCharm \? 'charm' : isMez \? 'mez' : _isPacifySpell\(b\.name\) \? 'lull' : 'spell';/);
     expect(code).toMatch(/group:\s+t\.kind === 'loot' \? 'loot' : 'trigger',/);
   });
 });
