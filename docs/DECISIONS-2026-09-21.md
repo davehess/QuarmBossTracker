@@ -9965,3 +9965,16 @@ Harmony, Hide/Sneak for non-rogues).
   The persistence claims were each checked against the code. One correction to what we had been saying: respawn
   timers are not only local, they are shared with your raid or group (never "?" guesses, never positions).
 - **Open:** the guild lead picks a sample; the other is deleted in the same change.
+
+### 273. Map Line strength: one dial for how hard the lines and dots draw, Strong by default (2026-10-13, agent 3.7.157 beta `c04db4ea`)
+
+- **The ask** (the guild lead, with an in-game screenshot): *"Can we make the maps and spawns more intense for how
+  defined the lines and whatnot are? this is opacity full on the window and off for background and its difficult to
+  see"*. Opacity was already full, so the fix is weight, not alpha.
+- **Shipped:** `inkStyle(k)` in `map.html`, k from 1 to 3. It scales wall and route width, puts a dark edge under walls
+  and routes, grows spawn, raid and group dots, and strengthens the aggro rings and the faint off-floor walls.
+  ⚙ → **Line strength** (Normal / Medium / Strong / Max) sits under Opacity and saves with the map settings.
+- **Default is Strong (1.75)**, so the change reaches everyone without a setting; Normal (1) reproduces the old drawing
+  exactly, and the test pins that.
+- Also fixed on beta: `web/lib/gameAccounts.ts` read the guild by a quoted literal, which the guild kit's no-literal
+  tests on beta rejected once the accounts page synced over from main. It now reads `GUILD_TAG`.
