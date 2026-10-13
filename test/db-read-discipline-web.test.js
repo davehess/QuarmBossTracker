@@ -569,6 +569,7 @@ const UNIQUE_KEYS = {
   eqemu_items: [['id']],
   eqemu_npc_types: [['id']],
   eqemu_faction_list_full: [['id']],
+  eqemu_npc_faction: [['id']],
   eqemu_npc_faction_entries: [['npc_faction_id', 'faction_id']],
   adoption_uploader_days: [['discord_id', 'day']],
   encounter_upload_counts: [['encounter_id']],
