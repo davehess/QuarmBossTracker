@@ -72,6 +72,7 @@ own screenshots; treat each row as "shipped, needs an in-game look" until it is 
 | *"Follow me doesn't need to center the map on the player … right clicking the follow me can lock it"* | Follow keeps you where you sit on screen; right-click locks it (🔒), so dragging moves your spot instead of switching Follow off | agent 3.7.150 |
 | *"In plane of valor fit raid or fit group just zooms out to the whole zone"* | Fit leaves out anyone far from the pack (over 400 units and 3× the middle distance); inside a raid, Fit group uses your raid group (the agent sends raid group numbers) | agent 3.7.150 |
 | *"The buttons for the map should be draggable separate from the whole window and lock onto a part of the window, also have a vertical mode"* | ⠿ grip drags the bar; let go near an edge and it locks there; left / right edges stand it upright; remembered | Mimic `791cb572` |
+| *"Can we make the maps and spawns more intense for how defined the lines and whatnot are? this is opacity full on the window and off for background and its difficult to see"* | ⚙ → Line strength (Normal / Medium / Strong / Max, under Opacity): thicker walls and routes with a dark edge, bigger spawn and raid dots, stronger aggro rings and off-floor walls. Strong is the new default; Normal is the old look exactly | §273, agent 3.7.157 `c04db4ea` |
 
 ### Not the Map, but asked in the same nights
 | Ask | What shipped | Where |
