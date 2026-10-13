@@ -101,6 +101,82 @@ function _wpIsInteractive(el) {
   }
   return false;
 }
+
+// ── Stuck tooltips fade (the guild lead, 2026-10-13: "Sometimes tooltips get stuck on the screen, we need that to
+// fade after a few seconds (3 seconds to start)") ───────────────────────────────────────────────────────────────
+// The tooltips are Chromium's native ones, from title="…". A click-through overlay never sees the mouse LEAVE, so the
+// tooltip it opened stays up. TOOLTIP_HIDE_MS after the cursor last moved on a titled element its title moves into
+// data-wp-title (so the tooltip text is empty) and main is asked for one real mouse move at the same spot —
+// 'tooltip-refresh' — which makes Blink recompute the tooltip and closes the native window. The title comes back when
+// the cursor leaves that element. "3 seconds to start": raise or lower the constant when the guild lead says.
+// Registered BEFORE the hover handshake below on purpose: the refresh move is ours, not the user's, so it is
+// swallowed here and cannot arm the window, brighten it or draw the stand-in pointer.
+const TOOLTIP_HIDE_MS = 3000;
+let _wpTipEl = null, _wpTipTimer = null, _wpTipX = 0, _wpTipY = 0, _wpTipSynth = null;
+function _wpTitledAncestor(el) {
+  while (el && el.nodeType === 1) {
+    if (el.hasAttribute('title')) return el.getAttribute('title') ? el : null;   // the nearest title is the one shown
+    el = el.parentElement;
+  }
+  return null;
+}
+// Give the title back. If page code set a NEW title while ours was away, theirs wins and the stash is dropped.
+function _wpTipRestore(el) {
+  if (!el || !el.hasAttribute || !el.hasAttribute('data-wp-title')) return;
+  try {
+    if (!el.getAttribute('title')) el.setAttribute('title', el.getAttribute('data-wp-title'));
+    el.removeAttribute('data-wp-title');
+  } catch (e) {}
+}
+function _wpTipFire() {
+  _wpTipTimer = null;
+  const el = _wpTipEl;
+  if (!el || !el.isConnected || !el.hasAttribute('title')) return;
+  const t = el.getAttribute('title');
+  if (!t) return;
+  el.setAttribute('data-wp-title', t);
+  el.removeAttribute('title');
+  // The point in the TOP page's own pixels: a pane in the dock reports its own, and main adds the zoom.
+  let x = _wpTipX, y = _wpTipY;
+  try {
+    for (let w = window; w !== w.top && w.frameElement; w = w.parent) {
+      const r = w.frameElement.getBoundingClientRect(); x += r.left; y += r.top;
+    }
+  } catch (e) {}
+  _wpTipSynth = { x: _wpTipX, y: _wpTipY, until: Date.now() + 400 };
+  try { ipcRenderer.send('tooltip-refresh', { x: x, y: y }); } catch (e) {}
+}
+function _wpTipTrack(titled) {
+  if (titled === _wpTipEl) return;
+  if (_wpTipTimer) { clearTimeout(_wpTipTimer); _wpTipTimer = null; }
+  _wpTipRestore(_wpTipEl);
+  _wpTipEl = titled;
+  if (titled) _wpTipTimer = setTimeout(_wpTipFire, TOOLTIP_HIDE_MS);
+}
+document.addEventListener('mouseover', function (ev) {
+  if (!_wpOverlayDoc()) return;
+  // Still inside the element whose title is stashed (its children have none): stay quiet until the cursor leaves it.
+  if (_wpTipEl && _wpTipEl.hasAttribute('data-wp-title') && _wpTipEl.contains(ev.target)) return;
+  _wpTipTrack(_wpTitledAncestor(ev.target));
+}, { capture: true, passive: true });
+// Straight off the window (relatedTarget null): the title must not stay stashed.
+document.addEventListener('mouseout', function (ev) {
+  if (!_wpOverlayDoc() || ev.relatedTarget) return;
+  _wpTipTrack(null);
+}, { capture: true, passive: true });
+document.addEventListener('mousemove', function (ev) {
+  if (!_wpOverlayDoc()) return;
+  const s = _wpTipSynth;
+  if (s && Date.now() < s.until && ev.clientX === s.x && ev.clientY === s.y) {
+    _wpTipSynth = null;
+    ev.stopImmediatePropagation();   // our own refresh move: nobody else should treat it as the user's hand
+    return;
+  }
+  _wpTipX = ev.clientX; _wpTipY = ev.clientY;
+  // Settling is what counts: each move on a titled element starts the countdown again.
+  if (_wpTipEl && _wpTipTimer) { clearTimeout(_wpTipTimer); _wpTipTimer = setTimeout(_wpTipFire, TOOLTIP_HIDE_MS); }
+}, { capture: true, passive: true });
+
 let _wpLastAssert = 0;
 document.addEventListener('mousemove', function (ev) {
   if (!_wpOverlayDoc()) return;
@@ -335,6 +411,26 @@ ipcRenderer.on('content-alpha', function (_e, v) {
     if (s && document.activeElement !== s) s.value = String(a);
     if (t && document.activeElement !== s) t.textContent = Math.round(a * 100) + '%';
   } catch (e) {}
+});
+
+// ── Mouse-over opacity (the guild lead, 2026-10-13; main.js "Mouse-over opacity" owns the settings, the cursor poll
+// and the fade) ─────────────────────────────────────────────────────────────────────────────────────────────────────
+// Forwarded mousemoves tell main the cursor is over THIS overlay (a ping at most every 200 ms; main treats a repeat
+// as nothing). Main sends back 'wp-hover-alpha' — the opacity to show right now — and it lands on the same
+// --wp-content-alpha variable the normal opacity uses, without touching the setup bar's slider. The Canvas is
+// screen-sized and never brightens (main refuses it too; this only saves the traffic).
+let _wpHoverPingAt = 0;
+document.addEventListener('mousemove', function () {
+  if (!_wpOverlayDoc()) return;
+  if (document.getElementById('panels') && document.body.hasAttribute('data-wp-overlay')) return;
+  const now = Date.now();
+  if (now - _wpHoverPingAt < 200) return;
+  _wpHoverPingAt = now;
+  try { ipcRenderer.send('overlay-hover-ping'); } catch (e) {}
+}, { capture: true, passive: true });
+ipcRenderer.on('wp-hover-alpha', function (_e, v) {
+  const a = (typeof v === 'number' && v >= 0.15 && v <= 1) ? v : 1;
+  try { document.documentElement.style.setProperty('--wp-content-alpha', String(a)); } catch (e) {}
 });
 
 // ── ◢ Resize corner (the guild lead, 2026-10-13: "Map needs a resize drag corner at the bottom right, as do all

@@ -93,7 +93,9 @@ describe('stand-in pointer: where EQ\'s own pointer is hidden', () => {
     expect(js).toMatch(/ipcRenderer\.invoke\('overlay-cursor-inside'\)\.then\(function \(inside\) \{ if \(!inside\) _wpGhostHide\(\); \}, _wpGhostHide\);/);
     expect(js).toMatch(/_wpGhostWatch\(\);\n\}, \{ capture: true, passive: true \}\);/);
     const main = stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'main.js')));
-    const h = sliceBlock(main, "ipcMain.handle('overlay-cursor-inside'", '\n});');
+    // The cursor test is one shared helper (mouse-over opacity polls with it too); the handler only asks it.
+    expect(main).toContain("ipcMain.handle('overlay-cursor-inside', (e) => _cursorInsideWindow(BrowserWindow.fromWebContents(e.sender)));");
+    const h = sliceBlock(main, 'function _cursorInsideWindow(win) {', '\n}\n');
     expect(h).toMatch(/screen\.getCursorScreenPoint\(\), b = win\.getBounds\(\);/);
     expect(h).toMatch(/p\.x >= b\.x && p\.x < b\.x \+ b\.width && p\.y >= b\.y && p\.y < b\.y \+ b\.height/);
   });

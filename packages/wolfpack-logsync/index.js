@@ -45450,11 +45450,16 @@ function _mapStatePayload(have, now, haveLocal) {
   }
   const rp = (typeof _lastRaidPipe !== 'undefined' && _lastRaidPipe && now - _lastRaidPipe.at < 20000) ? _lastRaidPipe : null;
   for (const m of (rp ? rp.members : [])) {
-    if (!m || !m.name || seen.has(String(m.name).toLowerCase())) continue;
+    if (!m || !m.name) continue;
+    // Your raid group number, so Fit group works inside a raid (there is no ordinary group there; the guild lead,
+    // 2026-10-13: "fit raid or fit group just zooms out to the whole zone"). "0" = ungrouped.
+    if (String(m.name).toLowerCase() === me && m.group != null && String(m.group) !== '0') out.my_grp = String(m.group);
+    if (seen.has(String(m.name).toLowerCase())) continue;
     const p = _mapPos({ x: m.loc_x, y: m.loc_y, z: m.loc_z }, m.heading);
     if (!p) continue;
     seen.add(String(m.name).toLowerCase());
-    out.raid.push(Object.assign({ name: String(m.name), class: m.class != null ? String(m.class) : null }, p));
+    out.raid.push(Object.assign({ name: String(m.name), class: m.class != null ? String(m.class) : null,
+      grp: m.group != null && String(m.group) !== '0' ? String(m.group) : null }, p));
   }
   if (st.target_name) {
     const tp = _mapPos(st.target_loc, null);
