@@ -162,7 +162,7 @@
       <div id="tools">
         <button class="tb on" id="followBtn" type="button" title="Keep the map centred on you. Dragging the map turns it off.">Follow me</button>
         <button class="tb" id="fitBtn" type="button" title="Fit the view. Click to cycle: zone, group, raid.">Fit zone</button>
-        <button class="tb" id="panBtn" type="button" title="Locked overlays let clicks through to EverQuest. Switch this on to drag and zoom the map (the mouse wheel zooms); right-click centres on you.">✋ Pan / zoom</button>
+        <button class="tb" id="panBtn" type="button" title="Over this button: the mouse wheel zooms, and dragging it pans the map, locked or not. A click switches Pan on, so the whole map drags and zooms; right-click centres on you.">✋ Pan / zoom</button>
         <button class="tb on" id="labelsBtn" type="button" title="Names on the map: boss names and room names. Switch off when it gets busy.">Labels: on</button>
         <button class="tb on" id="dotsBtn" type="button" title="Spawn points: show or hide the spawn dots (the same switch as ⚙ → Spawn points).">•</button>
         <button class="tb" id="aggroBtn" type="button" title="Aggro rings: how close you can get to each spawn before it aggros (its aggro radius). Red: KOS to you (from its faction, your race, class and deity, your con, or an illusion it does not see through). Yellow: not KOS to you, but KOS to some players. Green: KOS to nobody. Dashed: how far it comes to help a friend (social aggro). Your target carries its own rings. Points on a running respawn timer have no ring.">◯</button>
@@ -176,6 +176,8 @@
            Rows are built in JS from CFG_SHOW / CFG_GLYPHS / CFG_COLS; data-wp-interact arms the click-through window. -->
       <div id="cfg" hidden data-wp-interact>
         <div class="chead"><b>Map settings</b><span class="sp"></span><button id="cfgClose" type="button" title="Close">✕</button></div>
+        <!-- Opacity first (the guild lead, 2026-10-13: "Own strength should say opacity in the options and should be right at the top"). -->
+        <label class="row" title="How see-through the map's background is. Off: it follows Mimic's own background slider (setup bar)."><input type="checkbox" id="cfgBgOwn"><span class="bl">Opacity</span><input type="range" id="cfgBgA" min="0" max="1" step="0.05"></label>
         <div class="grp">Heights</div>
         <label class="row" title="Walls this far above or below you stay bright; the rest fade. Height is in game units: you are about 6 tall, one floor is roughly 30 to 60, so ±100 is about your floor and the ones next to it."><span class="bl" id="levelsVal">Levels</span><input id="levels" type="range" min="0" max="7" step="1"></label>
         <label class="row" title="Spawn points this far above or below you are shown; the rest are hidden. Same height units as Levels: ±25 is about your own floor, ±100 a floor or two either way."><span class="bl" id="spawnVal">Spawn height</span><input id="spawnLevels" type="range" min="0" max="7" step="1"></label>
@@ -189,7 +191,6 @@
         <div id="cfgCols"></div>
         <div class="grp">Background</div>
         <div class="row"><span class="bl">Colour</span><input type="color" id="cfgBg"><button class="rs" type="button" id="cfgBgRs" title="Back to the scheme's colour">↺</button></div>
-        <label class="row" title="Off: the background follows Mimic's own background slider (setup bar)."><input type="checkbox" id="cfgBgOwn"><span class="bl">Own strength</span><input type="range" id="cfgBgA" min="0" max="1" step="0.05"></label>
         <div class="grp">Text</div>
         <label class="row"><span class="bl">Label size</span><input type="range" id="cfgText" min="0.7" max="1.8" step="0.1"><span class="val" id="cfgTextVal"></span></label>
         <div class="foot"><span>Saved on this computer.</span><button id="cfgReset" type="button">Reset to default</button></div>
@@ -560,6 +561,17 @@
     return m;
   }
   function posAgeText(ageMs, src) { return 'pos ' + Math.max(0, Math.round(ageMs)) + ' ms' + (src ? ' · ' + src : ''); }
+  // The target's walked path: a breadcrumb every TRAIL_STEP units it moves, the last TRAIL_MS of them, kept per target
+  // (a new target starts a new trail). Returns the trail to keep.
+  var TRAIL_STEP = 4, TRAIL_MS = 180000, TRAIL_MAX = 120;
+  function trailStep(tr, key, x, y, now) {
+    if (x == null || y == null) return tr;
+    if (!tr || tr.key !== key) tr = { key: key, pts: [] };
+    var last = tr.pts[tr.pts.length - 1];
+    if (!last || Math.hypot(x - last.x, y - last.y) >= TRAIL_STEP) tr.pts.push({ x: x, y: y, t: now });
+    while (tr.pts.length > TRAIL_MAX || (tr.pts.length && now - tr.pts[0].t > TRAIL_MS)) tr.pts.shift();
+    return tr;
+  }
   // A server-frame point as EverQuest's /loc prints it: Y first, then X.
   function locText(x, y) { return Math.round(y) + ', ' + Math.round(x); }
   // The canvas pixel under the cursor back to the server frame (wpt run backwards; toScreen is its own inverse).
@@ -657,7 +669,7 @@
     ['timers', 'Respawn timer rings'], ['candidates', '"?" maybe-died rings'], ['aggro', 'Aggro rings (◯)'],
     ['you', 'You'], ['target', 'Target ring'], ['targetLine', 'Line to target'], ['distance', 'Distance to target'],
     ['targetName', 'Target name'], ['tot', 'Target\'s target (assist bar)'],
-    ['pinLine', 'Target → its spawn point'], ['group', 'Group'], ['groupNames', 'Group names'], ['raid', 'Raid'], ['raidNames', 'Raid names'],
+    ['pinLine', 'Target → its spawn point'], ['trail', 'Target\'s walked path'], ['group', 'Group'], ['groupNames', 'Group names'], ['raid', 'Raid'], ['raidNames', 'Raid names'],
   ];
   var CFG_GLYPHS = [
     ['👁', 'Sees invisible'], ['👁ᵤ', 'Sees invisible to undead'], ['🥷', 'Sees through hide'], ['↯', 'Summons'],
@@ -766,7 +778,7 @@
   })();
   S.cfg = (function () { try { return mergeMapCfg(JSON.parse(lsGet('wp-map-cfg') || 'null')); } catch (e) { return mapCfgDefaults(); } })();
   function saveCfg() { lsSet('wp-map-cfg', JSON.stringify(S.cfg)); }
-  // The background: its colour always from the settings; its strength from them only when "Own strength" is on.
+  // The background: its colour always from the settings; its strength from them only when the Opacity box is ticked.
   function applyCfgCss() {
     var root = document.documentElement.style;
     try {
@@ -1066,6 +1078,28 @@
       ctx.strokeStyle = hexA(c, 0.5); ctx.stroke(); ctx.setLineDash([]);
     }
   }
+  // The trail (trailStep), from oldest (faint) to the target's drawn spot `head`, and an arrowhead pointing the way its
+  // last few breadcrumbs went, so a walker shows where it is going.
+  function drawTrail(tr, head, now, colour) {
+    if (!tr || tr.pts.length < 2) return;
+    ctx.lineWidth = 2; ctx.lineCap = 'round';
+    for (var i = 1; i < tr.pts.length; i++) {
+      var a = wpt(tr.pts[i - 1].x, tr.pts[i - 1].y), b = i === tr.pts.length - 1 ? head : wpt(tr.pts[i].x, tr.pts[i].y);
+      ctx.globalAlpha = 0.15 + 0.7 * Math.max(0, 1 - (now - tr.pts[i].t) / TRAIL_MS);
+      ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.strokeStyle = colour; ctx.stroke();
+    }
+    var from = wpt(tr.pts[Math.max(0, tr.pts.length - 4)].x, tr.pts[Math.max(0, tr.pts.length - 4)].y);
+    var dx = head[0] - from[0], dy = head[1] - from[1], len = Math.hypot(dx, dy);
+    if (len >= 6) {
+      var ux = dx / len, uy = dy / len, tip = [head[0] + ux * 16, head[1] + uy * 16];
+      ctx.globalAlpha = 0.9; ctx.fillStyle = colour; ctx.beginPath();
+      ctx.moveTo(tip[0], tip[1]);
+      ctx.lineTo(tip[0] - ux * 8 - uy * 5, tip[1] - uy * 8 + ux * 5);
+      ctx.lineTo(tip[0] - ux * 8 + uy * 5, tip[1] - uy * 8 - ux * 5);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
   function halo(text, x, y, font, fill, align) {
     ctx.font = font; ctx.textAlign = align || 'left'; ctx.textBaseline = 'middle';
     ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.strokeText(text, x, y);
@@ -1252,7 +1286,11 @@
           ctx.lineWidth = 1.5; ctx.strokeStyle = CO.target; ctx.stroke(); ctx.setLineDash([]);
           if (P.target.dist != null && SH.distance) halo(String(Math.round(Math.hypot(td.x - sd.x, td.y - sd.y))), (sq[0] + tq[0]) / 2, (sq[1] + tq[1]) / 2 - 7, labelFont('dist'), CO.target, 'center');   // from the drawn spots, so it keeps up with the dots
         }
-        // Its own rings, wherever it has walked (a pather's spawn-point ring stays behind at the point).
+        // The path we have watched it walk, and where it is heading (the guild lead, 2026-10-13: "Can we show the path
+        // that we observed a mob walking towards?"): its positions since you targeted it, fading with age, and an
+        // arrow down its last stretch of movement.
+        S.trail = trailStep(S.trail, targetKey(P.target), P.target.x, P.target.y, rt);
+        if (SH.trail) drawTrail(S.trail, tq, rt, CO.target);
         if (SH.aggro) {
           var tnpc = targetNpc(P.target, S.points, S.byId);
           if (tnpc) aggroRing(tq[0], tq[1], aggroRadius(null, tnpc), assistRadius(null, tnpc), aggroKind(null, tnpc, P.cons, S.facs, P.me));
@@ -1505,7 +1543,10 @@
     S.follow = false; document.getElementById('followBtn').classList.remove('on');
     syncFitBtn(fitNow(S.fit).note); renderMap();
   });
-  document.getElementById('panBtn').addEventListener('click', function () { S.panMode = !S.panMode; syncInteract(); });
+  document.getElementById('panBtn').addEventListener('click', function () {
+    if (S.panDragged) { S.panDragged = false; return; }   // that was a drag from the button, not a click
+    S.panMode = !S.panMode; syncInteract();
+  });
   function syncLevels() { levelsEl.value = String(S.levels); levelsVal.textContent = levelLabel(S.levels); }
   levelsEl.max = String(LEVEL_STEPS.length - 1);
   levelsEl.addEventListener('input', function () {
@@ -1703,25 +1744,44 @@
   });
   document.addEventListener('mousemove', function (e) {
     var d = S.drag; if (!d) return;
+    // A drag started on the Pan / zoom button can lose its mouseup to EverQuest once the cursor leaves the button
+    // (the window goes click-through again): no button held means it is over.
+    if (d.btn && !(e.buttons & 1)) { S.drag = null; document.body.classList.remove('dragging'); return; }
     var dx = e.clientX - d.x, dy = e.clientY - d.y;
     if (!d.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
     if (!d.moved) { d.moved = true; document.body.classList.add('dragging'); S.follow = false; document.getElementById('followBtn').classList.remove('on'); }
     S.view.cx = d.cx - dx / S.view.scale; S.view.cy = d.cy - dy / S.view.scale;
     renderMap();
   });
-  document.addEventListener('mouseup', function () { if (S.drag) { S.drag = null; document.body.classList.remove('dragging'); renderMap(); } });
-  stage.addEventListener('wheel', function (e) {
-    e.preventDefault();
-    var v = S.view, f = Math.exp(-e.deltaY * 0.0015), ns = Math.max(0.02, Math.min(20, v.scale * f));
-    if (!S.follow) {   // around the cursor; while following, around you
-      var r = stage.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  document.addEventListener('mouseup', function () {
+    if (S.drag) { S.panDragged = !!(S.drag.btn && S.drag.moved); S.drag = null; document.body.classList.remove('dragging'); renderMap(); }
+  });
+  // Zoom by a wheel step: around (mx, my) on the canvas, or the middle when there is no point (the button).
+  function zoomBy(deltaY, mx, my) {
+    var v = S.view, f = Math.exp(-deltaY * 0.0015), ns = Math.max(0.02, Math.min(20, v.scale * f));
+    if (!S.follow && mx != null) {   // around the cursor; while following, around you
       var wx = (mx - S.w / 2) / v.scale + v.cx, wy = (my - S.h / 2) / v.scale + v.cy;
       v.cx = wx - (mx - S.w / 2) / ns; v.cy = wy - (my - S.h / 2) / ns;
     }
     v.scale = ns;
     try { localStorage.setItem('wp-map-scale', String(ns)); } catch (err) {}
     renderMap();
+  }
+  stage.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    var r = stage.getBoundingClientRect();
+    zoomBy(e.deltaY, e.clientX - r.left, e.clientY - r.top);
   }, { passive: false });
+  // The Pan / zoom button itself (the guild lead, 2026-10-13: "if you mouse over pan /zoom you should be able to zoom in
+  // and out, and if you click and drag on that button we should pan"): the wheel over it zooms, a drag from it pans,
+  // both with the map still locked; a plain click still switches Pan mode.
+  var panBtnEl = document.getElementById('panBtn');
+  panBtnEl.addEventListener('wheel', function (e) { e.preventDefault(); zoomBy(e.deltaY, null, null); }, { passive: false });
+  panBtnEl.addEventListener('mousedown', function (e) {
+    if (e.button !== 0) return;
+    closeMenu();
+    S.drag = { x: e.clientX, y: e.clientY, cx: S.view.cx, cy: S.view.cy, moved: false, btn: true };
+  });
   stage.addEventListener('contextmenu', function (e) {   // right-click: centre on you, once
     e.preventDefault();
     if (S.p && S.p.self) { var s = toScreen(S.p.self.x, S.p.self.y); S.view.cx = s.sx; S.view.cy = s.sy; renderMap(); }

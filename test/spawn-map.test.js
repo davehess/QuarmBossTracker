@@ -505,7 +505,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, trailStep, TRAIL_MS };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -1102,7 +1102,7 @@ describe('pather routes', () => {
     expect(base.all.cfg.hidden).toBe(false);
     expect(base.all.cfgBtn.classList.contains('on')).toBe(true);
     const showRows = base.all.cfgShow.children, glyphRows = base.all.cfgGlyphs.children, colRows = base.all.cfgCols.children;
-    expect(showRows).toHaveLength(22);
+    expect(showRows).toHaveLength(23);
     expect(glyphRows).toHaveLength(9);
     expect(colRows).toHaveLength(27);
     const walls = showRows[0].children[0];                                     // Walls
@@ -1166,6 +1166,32 @@ describe('pather routes', () => {
     expect(H.speedOf([{ t: 0, x: 0, y: 0 }, { t: 500, x: 30, y: 40 }])).toBeNull();   // under a second: not yet
     expect(H.speedOf([{ t: 0, x: 0, y: 0 }, { t: 1000, x: 30, y: 40 }])).toBeCloseTo(50);
     expect(MAP_HTML).toMatch(/<div id="locBar"><\/div>/);
+  });
+  it('Opacity heads the settings; the walked-path trail; the Pan / zoom button zooms on the wheel and pans on a drag (2026-10-13)', async () => {
+    // the guild lead: "Own strength should say opacity in the options and should be right at the top"; "Can we show the
+    // path that we observed a mob walking towards?"; "if you mouse over pan /zoom you should be able to zoom in and
+    // out, and if you click and drag on that button we should pan"
+    const cfg = sliceBlock(MAP_HTML, '<div id="cfg"', '<div id="side">');
+    expect(cfg.indexOf('<span class="bl">Opacity</span>')).toBeGreaterThan(-1);
+    expect(cfg.indexOf('<span class="bl">Opacity</span>')).toBeLessThan(cfg.indexOf('Heights'));
+    expect(MAP_HTML).not.toMatch(/class="bl">Own strength/);
+    let tr = H.trailStep(null, 't:5', 0, 0, 0);
+    tr = H.trailStep(tr, 't:5', 2, 0, 100);                   // under a step: not a new crumb
+    tr = H.trailStep(tr, 't:5', 10, 0, 200);
+    expect(tr.pts.map(p => p.x)).toEqual([0, 10]);
+    expect(H.trailStep(tr, 't:6', 50, 50, 300).pts).toHaveLength(1);   // a new target starts a new trail
+    expect(H.trailStep(tr, 't:5', 30, 0, 200 + H.TRAIL_MS + 1).pts.map(p => p.x)).toEqual([30]);   // old crumbs age out
+    const base = await bootOverlay();
+    const scale0 = base.S.view.scale;
+    base.all.panBtn.listeners.wheel.forEach(f => f({ deltaY: -200, preventDefault() {} }));
+    expect(base.S.view.scale).toBeGreaterThan(scale0);
+    expect(base.S.panMode).toBeFalsy();                      // zooming does not switch Pan on
+    base.all.panBtn.listeners.mousedown.forEach(f => f({ button: 0, clientX: 100, clientY: 100 }));
+    expect(base.S.drag && base.S.drag.btn).toBe(true);
+    const js = stripJs(MAP_HTML);
+    expect(js).toMatch(/if \(S\.panDragged\) \{ S\.panDragged = false; return; \}/);   // a drag is not a click
+    expect(js).toMatch(/if \(d\.btn && !\(e\.buttons & 1\)\)/);                          // a lost mouseup ends it
+    expect(js).toMatch(/if \(SH\.trail\) drawTrail\(S\.trail, tq, rt, CO\.target\);/);
   });
   it('the Levels and Spawn height sliders live in the settings panel; Labels stays a toolbar button', () => {
     const tools = sliceBlock(MAP_HTML, '<div id="tools">', '</div>');
