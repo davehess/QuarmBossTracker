@@ -44418,10 +44418,19 @@ function _mapSegDist(px, py, ax, ay, bx, by) {
 }
 // Distance from a position to a route's polyline (Infinity for no route / one waypoint). A circular route (type 0)
 // also walks from its last waypoint back to its first.
+// A random wanderer (EQEmu grid types 1, 2, 5, 7, 8) walks straight to a random waypoint, so it can be anywhere among
+// its waypoints: its distance is to their bounding box, 0 inside (the guild lead, 2026-10-13: "roamers are not
+// capturing their spawn ids on the map"). ponytail: a box, not the hull; a hull if an L-shaped grid ever mis-pins.
+const MAP_RANDOM_WANDER = new Set([1, 2, 5, 7, 8]);
 function _mapRouteDist(loc, grid) {
   const pts = grid && Array.isArray(grid.pts) ? grid.pts : null;
   if (!pts || pts.length < 2) return Infinity;
   const px = Number(loc.x), py = Number(loc.y);
+  if (MAP_RANDOM_WANDER.has(Number(grid.type))) {
+    const xs = pts.map(q => Number(q[0])), ys = pts.map(q => Number(q[1]));
+    const dx = Math.max(Math.min(...xs) - px, 0, px - Math.max(...xs)), dy = Math.max(Math.min(...ys) - py, 0, py - Math.max(...ys));
+    return Math.hypot(dx, dy);
+  }
   let best = Infinity;
   const n = Number(grid.type) === 0 && pts.length > 2 ? pts.length : pts.length - 1;
   for (let i = 0; i < n; i++) {
@@ -44450,11 +44459,17 @@ function _mapAttribute(points, name, loc, grids) {
       ? { kind: 'assigned', point_id: cands[0].id, dist: null }
       : { kind: 'unassigned', candidates: [] };
   }
+  // Route twins: points that walk ONE shared route with the same respawn (Plane of Valor's golems: five points on
+  // grid 1) tie on route distance, and no position can break that. It need not be broken: whichever of them the mob
+  // came from, its route and its timer are the same, so the twins count as one candidate, the nearest spawn spot.
+  const twins = new Set();
   const ranked = cands.map(p => {
     const g = p.grid != null && grids ? grids[p.grid] : null;
     const d = _mapDist2(p, here);
-    return { id: p.id, d: g ? Math.min(d, _mapRouteDist(here, g)) : d };
-  }).filter(r => Number.isFinite(r.d)).sort((a, b) => a.d - b.d);
+    return { id: p.id, d: g ? Math.min(d, _mapRouteDist(here, g)) : d, spot: d,
+             twin: g ? p.grid + '|' + p.respawn_s + '|' + p.variance_s : null };
+  }).filter(r => Number.isFinite(r.d)).sort((a, b) => a.d - b.d || a.spot - b.spot)
+    .filter(r => !r.twin || (!twins.has(r.twin) && twins.add(r.twin)));
   if (!ranked.length) return { kind: 'unassigned', candidates: [] };
   const best = ranked[0], next = ranked[1];
   const clear = !next || (next.d > best.d && (next.d >= 2 * best.d || next.d > MAP_ASSIGN_GAP_UNITS));

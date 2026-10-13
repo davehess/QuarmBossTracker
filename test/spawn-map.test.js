@@ -634,6 +634,8 @@ describe('the overlay (apps/mimic/map.html)', () => {
       expect(js).toMatch(/ctx\.setLineDash\(\[5, 4\]\); ctx\.arc\(x, y, as \* sc/);
       expect(js).toMatch(/if \(tnpc\) aggroRing\(tq\[0\], tq\[1\], aggroRadius\(null, tnpc\), assistRadius\(null, tnpc\), aggroKind\(null, tnpc, P\.cons\)\);/);
       expect(js).toMatch(/aggroKind\(ap, aun, S\.p && S\.p\.cons\)/);
+      // an unpinned target's label carries its spawn id
+      expect(js).toMatch(/\+ \(P\.target\.id != null \? ' #' \+ P\.target\.id : ''\) : '';/);
     });
     it('the agent keeps your latest faction con per mob, every tier, for six hours, per character', () => {
       const { c } = localCore();
@@ -796,6 +798,23 @@ describe('pather routes', () => {
     expect(c._mapAttribute(pts, 'a patrolling orc', here).kind).toBe('unassigned');
     expect(c._mapAttribute(pts, 'a patrolling orc', here, { 7: ROUTE })).toMatchObject({ kind: 'assigned', point_id: 10 });
     expect(c._mapAttribute(pts, 'a patrolling orc', here, { 7: ROUTE }).dist).toBeCloseTo(5);
+  });
+  it('roamers: a random wanderer is anywhere among its waypoints, and route twins pin to the nearest spot (2026-10-13)', () => {
+    // the guild lead: "roamers are not capturing their spawn ids on the map" (Plane of Valor's golems: five spawn
+    // points, one shared type-8 grid)
+    const { c } = localCore();
+    const wander = { type: 8, pts: [[0, 0, 0, 0], [400, 0, 0, 0], [400, 300, 0, 0], [0, 300, 0, 0]] };
+    expect(c._mapRouteDist({ x: 200, y: 150 }, wander)).toBe(0);                  // mid-field, far from every edge
+    expect(c._mapRouteDist({ x: 200, y: 150 }, { type: 3, pts: wander.pts })).toBe(150);   // a patrol is on its line
+    expect(c._mapRouteDist({ x: 430, y: 340 }, wander)).toBeCloseTo(50);
+    const pts = [walker(10, 0, 0, 1), walker(11, 400, 0, 1), walker(12, 400, 300, 1), walker(13, 2000, 2000, null)];
+    const a = c._mapAttribute(pts, 'a patrolling orc', { x: 350, y: 60 }, { 1: wander });
+    expect(a).toMatchObject({ kind: 'assigned', point_id: 11 });                   // the twins' nearest spawn spot
+    // twins only when the respawn matches too: a different timer is a different answer, so it stays "?"
+    pts[1].respawn_s = 1200;
+    const b = c._mapAttribute(pts, 'a patrolling orc', { x: 350, y: 60 }, { 1: wander });
+    expect(b.kind).toBe('unassigned');
+    expect(b.candidates).toEqual(expect.arrayContaining([11, 12]));                // 10 still folds into its twin 12
   });
   it('a walker equidistant from two routes stays "?"', () => {
     const { c } = localCore();
