@@ -45329,6 +45329,9 @@ function _mapNoteLeg(zone, grid, a, b, now) {
   const key = Math.min(a, b) + '-' + Math.max(a, b);
   const l = legs[key] || (legs[key] = { n: 0, at: now });
   l.n += 1; l.at = now;
+  // Which way it went: f = low waypoint to high, r = back (the guild lead, 2026-10-13: "it traced back from one spot
+  // back to the previous, so we should show that with an arrow").
+  if (a < b) l.f = (l.f || 0) + 1; else l.r = (l.r || 0) + 1;
   const all = [];
   for (const [gid, ls] of Object.entries(zd.legs)) for (const [k, v] of Object.entries(ls)) all.push([gid, k, v && v.at || 0]);
   if (all.length > MAP_LEGS_MAX) {
@@ -45503,9 +45506,9 @@ function _mapStatePayload(have, now, haveLocal) {
     .filter(s => s && now - s.at <= MAP_SEEN_KEEP_MS && !(zd.timers[String(s.point_id)] && zd.timers[String(s.point_id)].died_at >= s.at))
     .map(s => ({ point_id: s.point_id, spawn_id: s.spawn_id == null ? null : s.spawn_id, name: s.name, at: s.at, by: s.by || null }))
     .sort((a, b) => b.at - a.at);
-  // Learned wander legs per route: { <grid>: [[a, b, times seen], ...] } (_mapNoteLeg).
+  // Learned wander legs per route: { <grid>: [[a, b, times seen, a→b, b→a], ...] } with a < b (_mapNoteLeg).
   out.legs = {};
-  for (const [gid, ls] of Object.entries(zd.legs)) out.legs[gid] = Object.entries(ls).map(([k, v]) => { const [a, b] = k.split('-').map(Number); return [a, b, v.n]; });
+  for (const [gid, ls] of Object.entries(zd.legs)) out.legs[gid] = Object.entries(ls).map(([k, v]) => { const [a, b] = k.split('-').map(Number); return [a, b, v.n, v.f || 0, v.r || 0]; });
   _mapSyncPull(zone, now);   // the guild's events, while this overlay is polling (no poll, no pull)
   return out;
 }

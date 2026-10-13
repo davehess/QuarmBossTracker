@@ -640,6 +640,20 @@
     if (top && !top.done && np && Math.hypot(np[0] - last.x, np[1] - last.y) <= LEG_REACH) { top.done = true; return top; }
     return null;
   }
+  // An arrowhead on the line from screen point a to b, its tip `t` of the way along (0.6: the guild lead, 2026-10-13,
+  // "it traced back from one spot back to the previous, so we should show that with an arrow 60% between the previous
+  // point and the next on that line segment"), pointing at b. [tip, left, right] or null for a line too short to carry it.
+  var LEG_ARROW_AT = 0.6;
+  function legArrow(a, b, t, size) {
+    var dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy);
+    if (!(len >= size * 2)) return null;
+    var ux = dx / len, uy = dy / len, tip = [a[0] + dx * t, a[1] + dy * t];
+    return [tip, [tip[0] - ux * size - uy * size * 0.6, tip[1] - uy * size + ux * size * 0.6], [tip[0] - ux * size + uy * size * 0.6, tip[1] - uy * size - ux * size * 0.6]];
+  }
+  function fillArrow(ar) {
+    if (!ar) return;
+    ctx.beginPath(); ctx.moveTo(ar[0][0], ar[0][1]); ctx.lineTo(ar[1][0], ar[1][1]); ctx.lineTo(ar[2][0], ar[2][1]); ctx.closePath(); ctx.fill();
+  }
   // The spawn group your target belongs to, and how many spawn points share its route (the guild lead, 2026-10-13:
   // "match them up to specific spawn points and spawn groups"): its pinned point's group, else the group of the
   // points on route `gid` that spawn its name. { name, points } or null (no group names from the bot yet).
@@ -1193,6 +1207,9 @@
           ctx.globalAlpha = base * (ln >= 2 ? 0.9 : 0.55);
           ctx.setLineDash(ln >= 2 ? [] : [3, 4]); ctx.lineWidth = (tgt ? 1.6 : 1) + Math.min(ln, 5) * 0.3;
           ctx.beginPath(); ctx.moveTo(lqa[0], lqa[1]); ctx.lineTo(lqb[0], lqb[1]); ctx.stroke();
+          ctx.setLineDash([]); ctx.fillStyle = ctx.strokeStyle;   // which way it was walked: an arrow each way seen
+          if (Number(lg[3]) > 0) fillArrow(legArrow(lqa, lqb, LEG_ARROW_AT, tgt ? 7 : 5));
+          if (Number(lg[4]) > 0) fillArrow(legArrow(lqb, lqa, LEG_ARROW_AT, tgt ? 7 : 5));
         }
         ctx.globalAlpha = base;
         var dr = tgt ? 3.5 : hot ? 3 : 2.2;
@@ -1240,6 +1257,7 @@
         if (!pa || !pb) continue;
         var la = wpt(pa[0], pa[1]), lb = wpt(pb[0], pb[1]);
         ctx.beginPath(); ctx.moveTo(la[0], la[1]); ctx.lineTo(lb[0], lb[1]); ctx.stroke();
+        ctx.setLineDash([]); ctx.fillStyle = legColour; fillArrow(legArrow(la, lb, LEG_ARROW_AT, 7)); ctx.setLineDash([6, 4]);
       }
       ctx.setLineDash([]);
     }
