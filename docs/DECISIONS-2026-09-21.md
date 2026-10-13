@@ -9850,3 +9850,22 @@ Harmony, Hide/Sneak for non-rogues).
   song, not only pacifies. Test: `test/melody-song-landing.test.js`.
 - **Left:** the song lasts 12 s (+6 s linger); if a pulse does not re-print its landing line the row may flap. Not seen
   in game yet.
+
+### 266. A mez or charm you cast goes on the timers at any length (2026-10-13, agent 3.7.153 beta `2f4504b5`)
+
+- **The ask** (the guild lead, bard melody screenshot): *"a mez you cast should end up on the timers, same for charm."*
+- **Cause:** the built-in spell timers drop anything under 30 s, and a bard mez (Dreams of Terris) is 18 s.
+- **Fix:** mez (catalog `cc` includes `mez`) and charm spells you cast show at any length. Mez gets its own group
+  ("Mezzes" on the Canvas), charm keeps its own, and a new suggested-timer switch "Mez and charm you cast" turns them
+  on. "Your X spell has worn off." ends a mez bar early. Tests: `test/timer-bars-and-trigger-fixes.test.js`.
+
+### 267. The Map takes the boss board's respawn over the spawn mirror's (2026-10-13, bot 3.1.256 main)
+
+- **The ask** (the guild lead, Bastion of Thunder Map timers at "up in 5h35m"): *"timers were updated for the named in
+  here to 3 hours not 6"*.
+- **Cause:** `eqemu_spawn2.respawntime` is still 21600 s for every BoT named. The weekly eqemu dump lags the live
+  server's change. `data/bosses.json` already said 3 h (and 6 h for Emmerik and Evynd).
+- **Fix:** `utils/zoneSpawns.js` uses the board's `timerHours` for a point whose NPC is on the board with
+  `lockout: false` (there the hours ARE the respawn; on a lockout boss they are the lockout). An instanced point stays
+  null. So the board is now the override for any spawn time the mirror has wrong: fix the board entry, not the map.
+  Test: `test/zone-spawns.test.js` (mutation-checked both ways).

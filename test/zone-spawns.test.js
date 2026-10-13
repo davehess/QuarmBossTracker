@@ -293,6 +293,21 @@ describe('the instance sentinel respawn', () => {
   });
 });
 
+describe('the boss board\'s respawn beats the mirror\'s (the guild lead, 2026-10-13: BoT named went to 3 h)', () => {
+  const board = [
+    { name: 'Magi Rokyl', timerHours: 3, lockout: false },        // a respawn timer: wins over spawn2's 600
+    { name: 'Fippy Darkpaw', timerHours: 66 },                    // a lockout boss: its hours are the lockout
+    { name: 'Zone Event Mob', timerHours: 3, lockout: false },    // an instanced point stays null
+  ];
+  it('uses timerHours only for lockout: false entries, and never on an instanced point', async () => {
+    const b = JSON.parse((await zs.getZoneSpawns(fake, 'testzone', board)).body);
+    expect(pointFor(b, 4).respawn_s).toBe(10800);
+    expect(pointFor(b, 5).respawn_s).toBe(600);
+    expect(pointFor(b, 7).respawn_s).toBeNull();
+    expect(pointFor(b, 1).respawn_s).toBe(600);
+  });
+});
+
 describe('the map layer', () => {
   it('asks for bands, segs and bounds and nothing else — never brewall, never *', async () => {
     await get();
