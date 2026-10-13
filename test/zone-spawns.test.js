@@ -56,6 +56,11 @@ function world() {
       sp(10, 99),                                             // a group nobody spawns from
       sp(11, 17), sp(12, 18), sp(13, 19), sp(14, 20),
     ],
+    // group 11 is a roamers group (underscores in the stored name); 99 has no row, so it is simply unnamed
+    eqemu_spawngroup: [
+      { id: 10, name: 'testzone_gnoll_pups' }, { id: 11, name: 'testzone_skeleton_roamers' }, { id: 12, name: '' },
+      { id: 500, name: 'otherzone_not_ours' },
+    ],
     eqemu_spawnentry: [
       se(10, 1001),
       se(11, 1002, 70), se(11, 1003, 20), se(11, 1004, 10),
@@ -122,11 +127,11 @@ const npcNamed = (b, name) => b.points.flatMap(p => p.npcs).find(n => n.name ===
 describe('the response shape', () => {
   it('is the contract: zone, long_name, generated_at, points, map, grids, factions', async () => {
     const b = await body();
-    expect(Object.keys(b)).toEqual(['zone', 'long_name', 'generated_at', 'points', 'map', 'grids', 'factions']);
+    expect(Object.keys(b)).toEqual(['zone', 'long_name', 'generated_at', 'points', 'map', 'grids', 'factions', 'spawngroups']);
     expect(b.zone).toBe('testzone');
     expect(b.long_name).toBe('The Test Zone');
     expect(Date.parse(b.generated_at)).toBeGreaterThan(0);
-    expect(Object.keys(b.points[0])).toEqual(['id', 'x', 'y', 'z', 'respawn_s', 'variance_s', 'grid', 'npcs']);
+    expect(Object.keys(b.points[0])).toEqual(['id', 'x', 'y', 'z', 'respawn_s', 'variance_s', 'grid', 'sg', 'npcs']);
     expect(Object.keys(b.points[0].npcs[0])).toEqual(['name', 'level', 'chance', 'named', 'raid_target', 'badges', 'aggro', 'fac', 'assist', 'pf']);
   });
 
@@ -147,6 +152,32 @@ describe('the response shape', () => {
     const b = JSON.parse(r.body);
     expect(b.factions).toBeNull();
     expect(npcNamed(b, 'Lord Rax').pf).toBe(0);
+  });
+
+  it('carries each point\'s spawn group and the names of only the groups the points use, cleaned (2026-10-13)', async () => {
+    // the guild lead: "match them up to specific spawn points and spawn groups"
+    const b = await body();
+    expect(pointFor(b, 2).sg).toBe(11);
+    expect(pointFor(b, 1).sg).toBe(10);
+    expect(b.spawngroups[11]).toBe('testzone skeleton roamers');
+    expect(b.spawngroups[10]).toBe('testzone gnoll pups');
+    expect(b.spawngroups[12]).toBeUndefined();                           // an empty name is no name
+    expect(b.spawngroups[500]).toBeUndefined();                          // a group no point of this zone uses
+    expect(fake.calls.filter(c => c.table === 'eqemu_spawngroup').map(c => c.qs)[0]).toMatch(/^id=in\.\(10,11,12,/);
+  });
+  it('a failed spawn group read leaves spawngroups null and the map still answers, cached briefly (2026-10-13)', async () => {
+    const inner = fake.select;
+    fake.select = async (t, q) => (t === 'eqemu_spawngroup' ? null : inner(t, q));
+    let t = 1_000_000;
+    const r = await get('testzone', () => t);
+    expect(r.status).toBe(200);
+    const b = JSON.parse(r.body);
+    expect(b.spawngroups).toBeNull();
+    expect(pointFor(b, 2).sg).toBe(11);                                  // the id still rides on the point
+    const n = fake.calls.length;
+    t += 6 * 60_000;                                                     // degraded: asked again after five minutes
+    await get('testzone', () => t);
+    expect(fake.calls.length).toBeGreaterThan(n);
   });
 
   it('carries each NPC\'s faction (0 = none) and social assist radius (0 or missing = null) for the ring colours (2026-10-13)', async () => {

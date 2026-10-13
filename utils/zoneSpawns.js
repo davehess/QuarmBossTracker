@@ -14,6 +14,7 @@
 //   · eqemu_npc_types  by id list, chunked                           → name, level, senses, specials
 //   · zone_map_lines   one row, bands/segs/bounds ONLY               → the cached EQEmu wall layer
 //   · eqemu_zone_grids one row, only when a point has a pathgrid     → the pather routes (null if absent)
+//   · eqemu_spawngroup by id list, chunked → the name of each spawn group a point uses (`spawngroups`, null if a read fails)
 //   · eqemu_npc_faction / eqemu_faction_list_full / eqemu_faction_list_mod, by id list → each NPC's primary
 //     faction and its base + race / class / deity mods (`factions`, null if a read fails)
 //
@@ -173,6 +174,7 @@ async function build(supabase, zone, bosses) {
       respawn_s: resp == null || resp >= INSTANCE_SENTINEL_S ? null : resp,
       variance_s: num(sp.variance),
       grid: num(sp.pathgrid) > 0 ? num(sp.pathgrid) : null,   // 0 = stands still
+      sg: num(sp.spawngroup_id),   // its spawn group: a key into the body's `spawngroups`
       npcs: list,
     });
   }
@@ -197,12 +199,30 @@ async function build(supabase, zone, bosses) {
     }
   }
 
+  // The spawn groups' names (eqemu_spawngroup), so the Map can say "povalor golem roamers" for a roaming mob (the
+  // guild lead, 2026-10-13: "match them up to specific spawn points and spawn groups"). Only the groups the points
+  // use go out. Decoration like the routes and factions: a failed read leaves spawngroups null, is cached briefly
+  // (`degraded`), and the map still answers.
+  let spawngroups = null;
+  const sgIds = [...new Set(points.map(p => p.sg).filter(g => g != null))].sort((a, b) => a - b);
+  if (sgIds.length) {
+    const picked = {};
+    let ok = true;
+    for (const ids of chunks(sgIds, CHUNK)) {
+      const rows = await supabase.select('eqemu_spawngroup', `id=in.(${ids.join(',')})&select=id,name&limit=${CHUNK}`);
+      if (!Array.isArray(rows)) { ok = false; break; }
+      for (const r of rows) { const n = String(r.name || '').replace(/_/g, ' ').trim(); if (n) picked[r.id] = n; }
+    }
+    if (!ok) degraded = true;
+    else if (Object.keys(picked).length) spawngroups = picked;
+  }
+
   const mrows = await supabase.select('zone_map_lines', `zone_short=eq.${encodeURIComponent(zone)}&select=${MAP_SELECT}&limit=1`);
   if (!Array.isArray(mrows)) return { status: 503 };
   const m = mrows[0];
   const map = m ? { bands: m.bands, segs: m.segs, bounds: m.bounds } : null;
 
-  return { status: 200, degraded, payload: { zone, long_name: longName, generated_at: new Date().toISOString(), points, map, grids, factions } };
+  return { status: 200, degraded, payload: { zone, long_name: longName, generated_at: new Date().toISOString(), points, map, grids, factions, spawngroups } };
 }
 
 // A weak validator over the CONTENT (generated_at left out) so a rebuild of unchanged data keeps its ETag
