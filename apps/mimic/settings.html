@@ -217,6 +217,19 @@
   </div>
   <div class="hint">Scales the text and controls of every overlay — 50% to 200%. Made for high-DPI screens (a 5K monitor renders overlays tiny at 100%). Applies instantly as you drag. This same slider lives on the dashboard's Overlays tab, and every overlay has its own "size" slider in its setup bar (right-click ✥ → Setup THIS overlay) that overrides the global for just that overlay.</div>
 
+  <div class="row" style="align-items:center;gap:8px">
+    <label for="hoverOpacity">Mouse-over opacity</label>
+    <input id="hoverOpacity" type="range" min="0" max="100" step="5" value="100" style="flex:1;cursor:pointer" />
+    <span id="hoverOpacityVal" style="min-width:44px;text-align:right;color:#8b949e">100%</span>
+  </div>
+  <div class="row" style="align-items:center;gap:8px">
+    <label for="hoverFadeDelay">Fade delay (seconds)</label>
+    <input id="hoverFadeDelay" type="number" min="0" max="60" step="0.5" value="5" style="width:70px" />
+    <label for="hoverFadeDur" style="margin-left:12px">Fade duration (seconds)</label>
+    <input id="hoverFadeDur" type="number" min="0" max="30" step="0.5" value="2" style="width:70px" />
+  </div>
+  <div class="hint">Works like EverQuest's own window fade. While your mouse is over an overlay it shows at the mouse-over opacity; after you move away it waits the fade delay, then fades over the fade duration back to that overlay's own opacity (its setup-bar Opacity slider is the "fade-to" value). Drag the slider to 10% or less for Off. It only ever brightens an overlay, never dims it. Applies instantly.</div>
+
   <div class="row">
     <input id="autoStart" type="checkbox" />
     <label for="autoStart">Start Mimic with Windows</label>
@@ -749,6 +762,15 @@
       document.getElementById('overlayScale').value = String(pct);
       document.getElementById('overlayScaleVal').textContent = pct + '%';
     } catch {}
+    // Mouse-over opacity — live too (its own saveConfig below), so it is not part of Save's payload.
+    {
+      const h = (typeof c.hoverOpacity === 'number') ? c.hoverOpacity : (c.hoverOpacity === undefined ? 1 : 0);
+      const pct = Math.round(h * 100);
+      document.getElementById('hoverOpacity').value = String(pct);
+      document.getElementById('hoverOpacityVal').textContent = pct < 15 ? 'Off' : pct + '%';
+      document.getElementById('hoverFadeDelay').value = String(typeof c.hoverFadeDelay === 'number' ? c.hoverFadeDelay : 5);
+      document.getElementById('hoverFadeDur').value = String(typeof c.hoverFadeDur === 'number' ? c.hoverFadeDur : 2);
+    }
     _renderZealStatus();
     _renderUiPacks();
     const tm = c.tellsMode || 'off';
@@ -791,6 +813,24 @@
   document.getElementById('overlayScale').addEventListener('change', async (e) => {
     const pct = Math.max(50, Math.min(200, parseInt(e.target.value, 10) || 100));
     try { await window.mimic.setOverlayScale(pct / 100); } catch {}
+  });
+  // Mouse-over opacity (cfg.hoverOpacity / hoverFadeDelay / hoverFadeDur): label follows the drag, the value is
+  // saved on release. Straight to main's save-config, NOT through Save — it applies live, like the scale above.
+  document.getElementById('hoverOpacity').addEventListener('input', (e) => {
+    const pct = Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0));
+    document.getElementById('hoverOpacityVal').textContent = pct < 15 ? 'Off' : pct + '%';
+  });
+  document.getElementById('hoverOpacity').addEventListener('change', async (e) => {
+    const pct = Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0));
+    try { await window.mimic.saveConfig({ hoverOpacity: pct < 15 ? 0 : pct / 100 }); } catch {}
+  });
+  [['hoverFadeDelay', 60, 5], ['hoverFadeDur', 30, 2]].forEach(([id, max, dflt]) => {
+    document.getElementById(id).addEventListener('change', async (e) => {
+      const v = parseFloat(e.target.value);
+      const val = Number.isFinite(v) ? Math.max(0, Math.min(max, v)) : dflt;
+      e.target.value = String(val);
+      try { await window.mimic.saveConfig({ [id]: val }); } catch {}
+    });
   });
   // Graphics card for overlays — like the scale, its own IPC and NOT part of Save: it only takes
   // hold at startup, so main saves it and offers the restart.

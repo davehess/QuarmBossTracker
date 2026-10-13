@@ -4080,10 +4080,121 @@ function applyOverlayOpacity(win, key) {
   // Scale rides the same lifecycle (every window's ready-to-show + every
   // change broadcast), so ONE hook covers all overlays incl. future ones.
   applyOverlayScale(win, key);
+  _hoverReapply(win, key);   // a changed normal opacity cancels a fade that was heading for the old one
 }
 function applyAllOverlayOpacities() {
   for (const [key, win] of _overlayEntries()) applyOverlayOpacity(win, key);
 }
+
+// ── Mouse-over opacity (the guild lead, 2026-10-13: "could we add mouse-over for showing opacity on an
+// overlay?"; modelled on EverQuest's own Options → Display: Window Transparency / Fade Delay / Fade Duration /
+// Fade-to Transparency) ─────────────────────────────────────────────────────────────────────────────────────
+// While the cursor is over an overlay it shows at cfg.hoverOpacity (default 100%). When the cursor leaves it holds
+// that for cfg.hoverFadeDelay seconds (default 5), then fades over cfg.hoverFadeDur seconds (default 2) down to the
+// overlay's OWN opacity (cfg.overlayOpacity[k] — EQ's "Fade-to Transparency", so there is no second fade-to value).
+// Coming back during the hold or the fade jumps straight to full. It only ever BRIGHTENS: a mouse-over opacity at or
+// below the overlay's own does nothing. 0 / null turns the whole thing off.
+// How: the preload pings 'overlay-hover-ping' (throttled) from its forwarded mousemoves; main owns the rest — it
+// polls the cursor against the window (a click-through window gets no mouseout) and drives the fade with a timer,
+// pushing each step to the renderer as 'wp-hover-alpha', which sets the SAME --wp-content-alpha variable the normal
+// opacity does (the setup-bar slider is left alone). Only a CSS variable moves: a hidden overlay is never shown.
+const _HOVER_FADE_STEP_MS = 33;       // ~30 fps
+const _HOVER_MIN_HOLD_MS = 250;       // a flicker guard, so a 0 s fade delay does not blink on a button hop
+function _hoverSettings(cfg) {
+  const num = (v, lo, hi, d) => (typeof v === 'number' && Number.isFinite(v)) ? Math.max(lo, Math.min(hi, v)) : d;
+  const a = (cfg && cfg.hoverOpacity !== undefined) ? cfg.hoverOpacity : 1;
+  const on = typeof a === 'number' && a >= 0.15 && a <= 1;
+  return {
+    on,
+    alpha: on ? a : 1,
+    delayMs: Math.round(num(cfg && cfg.hoverFadeDelay, 0, 60, 5) * 1000),
+    durMs: Math.round(num(cfg && cfg.hoverFadeDur, 0, 30, 2) * 1000),
+  };
+}
+// One step of the fade: linear from the mouse-over opacity `hi` down to the overlay's own `lo`.
+function _hoverFadeAlpha(hi, lo, elapsedMs, durMs) {
+  if (!(durMs > 0) || elapsedMs >= durMs) return lo;
+  if (elapsedMs <= 0) return hi;
+  return hi + (lo - hi) * (elapsedMs / durMs);
+}
+const _wpHover = new WeakMap();   // window → { key, phase: 'inside' | 'hold' | 'fade', poll, hold, fade }
+function _hoverSend(win, a) {
+  try { if (win && !win.isDestroyed()) win.webContents.send('wp-hover-alpha', a); } catch { /* mid-close */ }
+}
+function _hoverStop(win) {
+  const st = _wpHover.get(win);
+  if (!st) return;
+  clearInterval(st.poll); clearTimeout(st.hold); clearInterval(st.fade);
+  _wpHover.delete(win);
+}
+function _hoverLeave(win) {
+  const st = _wpHover.get(win);
+  if (!st || st.phase !== 'inside') return;
+  clearInterval(st.poll); st.poll = null;
+  st.phase = 'hold';
+  st.hold = setTimeout(() => _hoverFade(win), Math.max(_HOVER_MIN_HOLD_MS, _hoverSettings(loadConfig()).delayMs));
+}
+function _hoverFade(win) {
+  const st = _wpHover.get(win);
+  if (!st || st.phase !== 'hold') return;
+  if (win.isDestroyed()) { _hoverStop(win); return; }
+  const s = _hoverSettings(loadConfig());
+  const normal = _opacityMaps(loadConfig()).content(st.key);   // read once: a change mid-fade cancels it (_hoverReapply)
+  // Hidden (hide-all, quiet mode, EQ down): there is nothing to animate — land on the normal value.
+  if (!s.on || s.alpha <= normal) { _hoverSend(win, normal); _hoverStop(win); return; }
+  st.phase = 'fade';
+  const t0 = Date.now();
+  const step = () => {
+    if (win.isDestroyed()) { _hoverStop(win); return; }
+    const el = Date.now() - t0;
+    if (el >= s.durMs || !win.isVisible()) { _hoverSend(win, normal); _hoverStop(win); return; }
+    _hoverSend(win, _hoverFadeAlpha(s.alpha, normal, el, s.durMs));
+  };
+  st.fade = setInterval(step, _HOVER_FADE_STEP_MS);
+  step();
+}
+function _hoverEnter(win, key) {
+  if (!win || win.isDestroyed() || key === 'canvas') return;
+  const st0 = _wpHover.get(win);
+  if (st0 && st0.phase === 'inside') return;   // a ping from a cursor that never left
+  const cfg = loadConfig();
+  const s = _hoverSettings(cfg);
+  // Setup mode shows the overlay's own opacity while you set it, so it never brightens there.
+  const quiet = setupMode || _inSingleSetup(win);
+  const normal = _opacityMaps(cfg).content(key);
+  _hoverStop(win);
+  if (!s.on || quiet || s.alpha <= normal) { if (st0) _hoverSend(win, normal); return; }
+  const st = { key, phase: 'inside', poll: null, hold: null, fade: null };
+  _wpHover.set(win, st);
+  _hoverSend(win, s.alpha);
+  st.poll = setInterval(() => {
+    if (win.isDestroyed()) { _hoverStop(win); return; }
+    if (!_cursorInsideWindow(win)) _hoverLeave(win);
+  }, 100);
+}
+// The normal opacity (or the window) just changed under a hover. Cursor still over the overlay: show the new
+// state at once. Holding or fading: the normal value has just been sent, so only the timers need to go.
+function _hoverReapply(win, key) {
+  const st = _wpHover.get(win);
+  if (!st) return;
+  if (st.phase === 'inside') {
+    const s = _hoverSettings(loadConfig());
+    if (s.on && s.alpha > _opacityMaps(loadConfig()).content(key)) { _hoverSend(win, s.alpha); return; }
+  }
+  _hoverStop(win);
+}
+// Settings changed (on/off, mouse-over opacity, delay, duration): drop every hover in flight and put each overlay
+// back at its own opacity; the next mouse move brings a hover back under the new numbers.
+function _hoverSettingsChanged() {
+  for (const [key, win] of _overlayEntries()) { _hoverStop(win); applyOverlayOpacity(win, key); }
+}
+ipcMain.on('overlay-hover-ping', (e) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const hit = win && _overlayEntries().find(([, w]) => w === win);
+    if (hit) _hoverEnter(win, hit[0]);
+  } catch { /* a ping must never throw into main */ }
+});
 
 // ── Overlay scale (a member's 5K monitor — the guild lead 2026-08-18) ───────────────────
 // zoomFactor scales all CSS px content, so no per-overlay HTML changes; window
@@ -8967,13 +9078,35 @@ ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
 // Is the mouse still over the asking overlay's window? The preload's stand-in pointer asks when its forwarded
 // mousemoves stop: leaving a click-through window sends no mouseout, so without this the arrow stayed behind
 // (the guild lead, 2026-10-12: "mouse drawover in our overlays will sometimes leave an artifact in the overlay").
-ipcMain.handle('overlay-cursor-inside', (e) => {
+function _cursorInsideWindow(win) {
   try {
-    const win = BrowserWindow.fromWebContents(e.sender);
     if (!win || win.isDestroyed() || !win.isVisible()) return false;
     const p = screen.getCursorScreenPoint(), b = win.getBounds();
     return p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + b.height;
   } catch { return false; }
+}
+ipcMain.handle('overlay-cursor-inside', (e) => _cursorInsideWindow(BrowserWindow.fromWebContents(e.sender)));
+
+// A tooltip stuck on screen (the guild lead, 2026-10-13: "Sometimes tooltips get stuck on the screen, we need that
+// to fade after a few seconds"). The preload empties the stuck title after TOOLTIP_HIDE_MS and asks for one real
+// mouse move at the last cursor spot: Blink recomputes the tooltip from the (now empty) title and the native
+// tooltip closes. Coordinates arrive in CSS pixels of the page; sendInputEvent wants the view's own pixels, so the
+// overlay's zoom (the size slider is a zoom factor) multiplies them back.
+function _tooltipPoint(p, zoom) {
+  const x = p && p.x, y = p && p.y;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;   // strict: null and '5' are refused, not turned into 0 and 5
+  const z = (Number.isFinite(zoom) && zoom > 0) ? zoom : 1;
+  return { x: Math.round(x * z), y: Math.round(y * z) };
+}
+ipcMain.on('tooltip-refresh', (e, p) => {
+  try {
+    const wc = e.sender;
+    if (!wc || wc.isDestroyed()) return;
+    const win = BrowserWindow.fromWebContents(wc);
+    if (!win || !_overlayEntries().some(([, w]) => w === win)) return;
+    const pt = _tooltipPoint(p, wc.getZoomFactor());
+    if (pt) wc.sendInputEvent({ type: 'mouseMove', x: pt.x, y: pt.y });
+  } catch { /* a destroyed window mid-send */ }
 });
 
 // Toggle a named built-in overlay on/off from the dashboard's Overlays tab.
@@ -10148,6 +10281,9 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   saveConfig(merged);
   _broadcastMute(merged);
   if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'standInPointer')) _broadcastPointer(merged);
+  if (incoming && ['hoverOpacity', 'hoverFadeDelay', 'hoverFadeDur'].some(k => Object.prototype.hasOwnProperty.call(incoming, k))) {
+    try { _hoverSettingsChanged(); } catch {}
+  }
   // Re-bind the global hotkeys if the user changed any binding OR enable
   // flag (2026-07-12: backdropHotkey saves were ignored until restart —
   // only hideAllHotkey was in this condition).

@@ -23,8 +23,9 @@ function loadOpacity(cfg) {
   const block = sliceBlock(mainRaw, 'function _opacityMaps(cfg) {', '\n}\n')
     + sliceBlock(mainRaw, 'function applyOverlayOpacity(win, key) {', '\n}\n');
   // eslint-disable-next-line no-new-func
-  const mod = new Function('loadConfig', 'saveConfig', 'applyOverlayScale',
-    block + '\nreturn { _opacityMaps, applyOverlayOpacity };')(() => cfg, (c) => saved.push(JSON.parse(JSON.stringify(c))), () => {});
+  // _hoverReapply (mouse-over opacity, test/mimic-tooltip-hover.test.js) is a no-op here: no hover in flight.
+  const mod = new Function('loadConfig', 'saveConfig', 'applyOverlayScale', '_hoverReapply',
+    block + '\nreturn { _opacityMaps, applyOverlayOpacity };')(() => cfg, (c) => saved.push(JSON.parse(JSON.stringify(c))), () => {}, () => {});
   const win = { isDestroyed: () => false, setOpacity: () => {}, webContents: { send: (ch, v) => sent.push([ch, v]) } };
   return { mod, saved, sent, win };
 }
