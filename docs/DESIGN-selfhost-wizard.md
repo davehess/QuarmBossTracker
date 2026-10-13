@@ -568,6 +568,10 @@ and the same never-refetch guarantee.
   comes from the player's own EverQuest `dbg.txt`, and the agent reads only its zone-in lines. For the wizard, it
   assumes a server whose client writes `Zone addr [host:port]`, as Quarm's does. Elsewhere the column stays null and
   the raid/group rule (§248) still scopes sharing.
+- **2026-10-13 — member lockout is one small table plus a 20 s poll per reader** (`DECISIONS-2026-09-21.md` §252):
+  `member_lockouts` holds a handful of rows; the bot re-reads it every 20 s (about 4,300 tiny reads a day) and each
+  website Edge isolate at most every 20 s while signed-in traffic flows. Negligible on any plan. The wizard needs
+  nothing guild-specific here beyond who counts as an officer.
 
 ## 4. Open questions for whoever builds it
 

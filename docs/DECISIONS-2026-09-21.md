@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Member lockout** (§252) | Live: `/admin/access` [beta], bot 3.1.251, web 1.8.143. Untested against a real member | the guild lead: (1) lock a test or alt account, confirm Mimic, the site and a bot command all refuse it within 30 s, then unlock; (2) say whether officers may lock other officers |
 | **Map target-of-target never fires on real Zeal** (§251) | Zeal's `/assistbar` (1.4.7) knows it, but the pipe export was only our unsent draft, so the Map's ToT arrow and the pin rule's "not aggroed" check fail open. Ported onto current Zeal main as fork branch `tot-pipe` (`21f41f3`, local only: the push was refused by this session's permissions) | the guild lead: push `tot-pipe` to the fork (or allow it), then say whether it joins `test-all` for an in-game check |
 | **Zeal in-game test run + PoP flags export + `/spellid`** (§227, §229) | `test-all` `035d8a3` (build passed) = PoP flags `b27bb26` (overview + tiers 1–5, once each, kept out of chat) + roleplay guild marks + `spell-id-tooltip` `67cb705` (`/spellid on` puts the spell id on the buff/gem/spellbook info window, off by default). 67 test hotkeys (socials pages 4–10, say + `/log`, works at level 1) log what to look for and the target's spawn id; `tools/evidence.py` on the fork's `showcase` branch turns the log into an EVIDENCE.md per change. Every suggestion post has "Pull request" and "Testing evidence" lines waiting to be filled | the guild lead: (1) install `test-all`, paste the hotkeys, run pages 4–10, send the log + `<name>-PoPFlags.txt`; (2) file the PRs (smallest first, §228). A session: write EVIDENCE.md per change, fill the PR links (posts, showcase JSON `pr_url`) |
 | **Mimic 2.9: spawn map, zone-server directory, live mob dots** (§216) | Called 2026-10-10 as the 2.9 minor line. Research in: `dbg.txt` names the zone server on every zone-in (`Zone addr [<host>:<port>]` + `StartWorldDisplay: <zone>`), and one zone was seen on two ports within an hour, so a port is a per-boot instance token, not a zone id. Design doc written (`docs/DESIGN-mimic-2.9-spawn-map.md`). Hosting needs no plan change (§217); **Picked (§220):** 3D-A on web (from the EQEmu collision mesh), 3D-B in Mimic, routes from our import, Mimic layout C (tracker), tab-target dots, group sharing to the group + recent helpers (30-min grace) | a session: (1) route tables + spell range in the weekly import, (2) web: spawn layer + routes + 3D-A on `/spectator` beta, (3) agent group-position upload + PRIVACY line, (4) Mimic tracker overlay (Window/HUD), (5) the client-zone converter for painted + 3D in Mimic |
@@ -9649,3 +9650,21 @@ Harmony, Hide/Sneak for non-rogues).
   and no longer applying. Both fail open (no arrow; the on-spot/still test still guards the pin). Ported to current Zeal
   main as fork branch `tot-pipe` (`21f41f3`, +123/−39 across `assist_target.*`, `named_pipe.cpp`, README; not compiled,
   reviewed by reading). The push to the fork was refused by this session's permission check: the guild lead's step.
+
+### 252. Member lockout: officers pause a member out of our tools whatever their Discord roles (2026-10-13, bot 3.1.251, web 1.8.143)
+
+- **The ask** (the guild lead): *"I need an admin page to lock out members despite discord roles and invalidate mimic
+  sessions."* Picked **A** (a lock switch an officer sets and lifts) over B (also follow Discord departures
+  automatically) and C (a revoke button only): *"A seems the most straightforward."*
+- **Shipped:** `member_lockouts` (one row per locked member, optional end date; migration `20261013030000`, applied).
+  `/admin/access` [beta] locks and unlocks, revokes the member's Mimic sessions and logs both to `audit_log`. The bot
+  (20 s refresh) refuses their Mimic token, new Mimic links and every Discord command or button; the website signs
+  them out and refuses sign-in. Discord roles and channels are untouched; their data stays. Map in `HOW-ITS-BUILT.md`
+  (Identity & auth).
+- **Rules set:** officers only; nobody can lock themselves; a reason is required. Open for the guild lead: whether one
+  officer may lock another (the first build allows it).
+- **Not done:** Mimic still shows nothing when its token is refused (it just stops uploading quietly), so a locked
+  member sees "paused" only on the website and in Discord. A Mimic-side "you have been signed out" message is a beta
+  follow-up. Option B (departures lock automatically) stays open.
+- **Officer brief** (for the officers, kept outside the repo): a claude.ai doc, "Member lockout — officer brief".
+- Security findings made while scoping this went to the private briefing, not here.
