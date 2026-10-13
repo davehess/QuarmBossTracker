@@ -1292,6 +1292,10 @@
     }
     var foot = document.getElementById('foot');
     foot.textContent = P && P.local_only ? 'local mode — cached zones only' : (S.points.length ? S.points.length + ' spawn points' : '');
+    // ◯ on but the zone data carries no aggro radius (cached before the bot sent it): say so instead of drawing nothing.
+    if (S.cfg.show.aggro && S.points.length && !S.points.some(function (p) { return aggroRadius(p, null) > 0; })) {
+      foot.textContent += ' · ◯ no aggro radius in this zone\'s data yet (refreshing)';
+    }
   }
   function centreOn(p) {
     if (!p) return;
