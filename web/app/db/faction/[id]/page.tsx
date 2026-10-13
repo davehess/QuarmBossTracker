@@ -14,6 +14,7 @@ import { redirect, notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase';
 import { supabaseServer } from '@/lib/supabase-server';
 import { deUnderscore } from '@/lib/npcDecode';
+import FactionB from './FactionB';
 
 import { pageMetadata } from '@/lib/pageMetaData';
 
@@ -32,13 +33,20 @@ type TurninRow = {
   faction_changes: { faction_id: number; delta: number }[] | null;
 };
 
-export default async function DbFactionPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function DbFactionPage({ params, searchParams }: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ v?: string }>;
+}) {
   const { id } = await params;
   const factionId = Number(id);
   if (!Number.isInteger(factionId) || factionId <= 0) notFound();
 
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect(`/auth/signin?next=/db/faction/${factionId}`);
+
+  // ?v=b — the variant (the guild lead, 2026-10-13). No ?v= is the page below, unchanged.
+  const { v } = await searchParams;
+  if (v === 'b') return <FactionB factionId={factionId} userId={user.id} />;
 
   const sb = supabaseAdmin();
   const { data: facData } = await sb.from('eqemu_faction_list_full')
