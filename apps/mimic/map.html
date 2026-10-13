@@ -47,6 +47,12 @@
     background:transparent;cursor:pointer;pointer-events:auto}
   .hit:hover,.hit:focus-visible{outline:1px solid rgba(255,255,255,0.7)}
   #tools{position:absolute;top:6px;left:30px;right:96px;display:flex;gap:4px;z-index:5;flex-wrap:wrap}
+  /* The buttons move (the guild lead, 2026-10-13: "The buttons for the map should be draggable separate from the whole
+     window and lock onto a part of the window, also have a vertical mode"): ⠿ drags them, an edge holds them (toolDock),
+     the left and right edges stand them upright. */
+  #tools.v{flex-direction:column;flex-wrap:nowrap;align-items:stretch}
+  #tools .grip{cursor:grab;padding:0 4px;letter-spacing:-1px}
+  #tools.moving{opacity:0.85}
   /* Where you are, how fast, and where the cursor is, in /loc order (the guild lead, 2026-10-13, Zeal's map as the model). */
   #locBar{position:absolute;top:28px;left:30px;z-index:4;font-size:10px;line-height:1.35;color:#e6edf3;pointer-events:none;
     text-shadow:0 0 3px #000,0 0 2px #000;font-variant-numeric:tabular-nums}
@@ -160,6 +166,7 @@
         <div id="locBar"></div>
       </div>
       <div id="tools">
+        <button class="tb grip" id="toolsGrip" type="button" title="Drag the buttons anywhere on the map; let go near an edge and they lock to it (on the left or right edge they stand upright).">⠿</button>
         <button class="tb on" id="followBtn" type="button" title="Keep the map centred on you. Dragging the map turns it off.">Follow me</button>
         <button class="tb" id="fitBtn" type="button" title="Fit the view. Click to cycle: zone, group, raid.">Fit zone</button>
         <button class="tb" id="panBtn" type="button" title="Over this button: the mouse wheel zooms, and dragging it pans the map, locked or not. A click switches Pan on, so the whole map drags and zooms; right-click centres on you.">✋ Pan / zoom</button>
@@ -671,12 +678,52 @@
     });
   }
   function trailShown(tr, kills) { return tr && tr.dead != null && kills - tr.dead < KILLS_FADE; }
+  // The points that walk the same route as `p` and spawn the same mob (p included); [p] when it walks none.
+  function routeTwins(p, points) {
+    if (!p || p.grid == null) return p ? [p] : [];
+    var names = (p.npcs || []).map(function (n) { return npcKey(n && n.name); });
+    return (points || []).filter(function (q) {
+      return q === p || (q.grid === p.grid && (q.npcs || []).some(function (n) { return names.indexOf(npcKey(n && n.name)) >= 0; }));
+    });
+  }
+  // The way the mob is heading, from its latest stretch (crumbs at least `minLen` apart): a unit vector, or null when
+  // it has not moved that far. Drawn as a dashed line ahead of it (the guild lead, 2026-10-13, drawing one: "Why don't
+  // we see the purple line i drew ... as a dashed line of where the mob should be moving towards if it continues the
+  // current path?").
+  function headingRay(tr, minLen) {
+    var s = trailStretch(tr);
+    if (s.length < 2) return null;
+    var last = s[s.length - 1];
+    for (var i = s.length - 2; i >= 0; i--) {
+      var dx = last.x - s[i].x, dy = last.y - s[i].y, d = Math.hypot(dx, dy);
+      if (d >= (minLen || 10)) return { ux: dx / d, uy: dy / d };
+    }
+    return null;
+  }
   // Follow me: your offset from the middle in screen pixels, kept when you are on screen (inside a 20 px margin),
   // else 0 (the middle). See followTo.
   function followOffNow(me, view, w, h) {
     if (!me) return { x: 0, y: 0 };
     var s = toScreen(me.x, me.y), ox = (s.sx - view.cx) * view.scale, oy = (s.sy - view.cy) * view.scale;
     return Math.abs(ox) <= w / 2 - 20 && Math.abs(oy) <= h / 2 - 20 ? { x: ox, y: oy } : { x: 0, y: 0 };
+  }
+  // Where the map's buttons lock when let go at (cx, cy), their middle, in a w × h map: the nearest edge. The spot
+  // along it (t, 0 to 1) is the caller's to work out from where the bar stands.
+  function toolDock(cx, cy, w, h) {
+    var d = { top: cy, bottom: h - cy, left: cx, right: w - cx }, edge = 'top';
+    for (var k in d) if (d[k] < d[edge]) edge = k;
+    return edge;
+  }
+  // The bar's box on an edge: `t` along it, `bw` × `bh` the bar, `w` × `h` the map, `top0` the first free pixel at the
+  // top (the ✥ and the setup bar). Left and right keep clear of the ✥ above; the top keeps clear of the Timers button.
+  function toolBox(edge, t, bw, bh, w, h, top0) {
+    var cl = function (v, lo, hi) { return Math.max(lo, Math.min(Math.max(lo, hi), v)); };
+    if (edge === 'left' || edge === 'right') {
+      var y = cl(t * (h - bh), top0 + 24, h - bh - 6);
+      return edge === 'left' ? { left: 6, top: y } : { left: w - bw - 6, top: y };
+    }
+    var x = cl(t * (w - bw), edge === 'top' ? 30 : 6, w - bw - (edge === 'top' ? 96 : 6));
+    return edge === 'top' ? { left: x, top: top0 } : { left: x, top: h - bh - 6 };
   }
   // The Labels button's saved value ('1' / '0' were saved before 2026-10-13's all / targets / off).
   function labelMode(v) { return v === '0' || v === 0 || v === false ? 'off' : v === 'targets' || v === 'off' ? v : 'all'; }
@@ -1171,6 +1218,7 @@
       line = locText(d.x, d.y) + (sp != null ? ' · ' + Math.round(sp) + ' u/s' : '');
     } else spdHist = [];
     locBarEl.textContent = line;
+    locBarEl.style.fontSize = Math.round(10 * (S.cfg.text || 1)) + 'px';   // follows ⚙ → Label size (the guild lead, 2026-10-13: "Location and speed should have scaling as well")
     if (cursorLoc) locBarEl.appendChild(el('div', 'cur', '(' + locText(cursorLoc.x, cursorLoc.y) + ')'));
   }
   // Locked, the window is click-through but still hears the mouse ({forward:true}), so this works without Pan.
@@ -1229,6 +1277,7 @@
     S.w = Math.max(1, Math.floor(r.width)); S.h = Math.max(1, Math.floor(r.height));
     cv.width = Math.floor(S.w * dpr); cv.height = Math.floor(S.h * dpr);
     if (!S.fitted && S.points.length && !S.follow) fitNow();
+    placeTools();
     renderMap();
   }
   // Fit the view to the whole zone (default) or to you + your group / raid. Returns the plan ({use, note}) so the
@@ -1638,16 +1687,36 @@
           var spd = trailSpeed(tTrail, rt, 3000);
           if (spd > 0) halo(Math.max(1, Math.round(Math.hypot(cn[0] - P.target.x, cn[1] - P.target.y) / spd)) + 's', cnq[0] + 7, cnq[1] - 8, labelFont('dist'), CO.target);
         }
+        // No waypoint lined up ahead (or no route at all): a dashed line on along its heading while it walks, about
+        // 15 seconds of its pace (150 to 800 units), in the colour of what it is doing (headingRay).
+        if (SH.trail && tTrail && tTrail.dead == null && !(cur && !cur.done)) {
+          var hr = headingRay(tTrail, 10), hs = trailSpeed(tTrail, rt, 3000);
+          if (hr && hs > 0) {
+            var hl = Math.min(800, Math.max(150, hs * 15)), he = wpt(P.target.x + hr.ux * hl, P.target.y + hr.uy * hl);
+            ctx.globalAlpha = 0.8; ctx.setLineDash([6, 6]); ctx.lineWidth = 1.8;
+            ctx.strokeStyle = TRAIL_COL[tTrail.pts[tTrail.pts.length - 1].st] || TRAIL_COL.path;
+            ctx.beginPath(); ctx.moveTo(tq[0], tq[1]); ctx.lineTo(he[0], he[1]); ctx.stroke();
+            ctx.setLineDash([]); ctx.globalAlpha = 1;
+          }
+        }
         if (SH.aggro) {
           var tnpc = targetNpc(P.target, S.points, S.byId);
           if (tnpc) aggroRing(tq[0], tq[1], aggroRadius(null, tnpc), assistRadius(null, tnpc), aggroKind(null, tnpc, P.cons, S.facs, P.me));
         }
-        // Pinned: a thin line from the target to the spawn point it is tied to.
+        // Pinned: a thin line from the target to the spawn point it is tied to. A point that shares its route with
+        // others (route twins, e.g. Plane of Valor's five golem roamers) is a guess between them: faint dashed lines
+        // to every one of them instead of one confident line (the guild lead, 2026-10-13: "Why is this non-pathing mob
+        // being targetted to a different spawn?").
         var pinPt = P.target.point_id != null ? S.byId[String(P.target.point_id)] : null;
         if (pinPt && SH.pinLine) {
-          var pq = wpt(pinPt.x, pinPt.y);
-          ctx.beginPath(); ctx.moveTo(tq[0], tq[1]); ctx.lineTo(pq[0], pq[1]);
-          ctx.lineWidth = 1; ctx.strokeStyle = CO.pinLine; ctx.stroke();
+          var twins = routeTwins(pinPt, S.points);
+          ctx.lineWidth = 1; ctx.strokeStyle = CO.pinLine;
+          if (twins.length > 1) { ctx.globalAlpha = 0.45; ctx.setLineDash([2, 4]); }
+          (twins.length > 1 ? twins : [pinPt]).forEach(function (tp) {
+            var pq = wpt(tp.x, tp.y);
+            ctx.beginPath(); ctx.moveTo(tq[0], tq[1]); ctx.lineTo(pq[0], pq[1]); ctx.stroke();
+          });
+          ctx.setLineDash([]); ctx.globalAlpha = 1;
         }
         if (SH.target) {
           ctx.beginPath(); ctx.arc(tq[0], tq[1], 6, 0, 6.2832); ctx.lineWidth = 2; ctx.strokeStyle = CO.target; ctx.stroke();
@@ -1891,6 +1960,46 @@
     if (S.followLock && !S.follow) { S.follow = true; if (S.p && S.p.self) S.followOff = followOffNow(S.p.self, S.view, S.w, S.h); }
     syncFollowBtn(); renderMap();
   });
+  // ⠿ moves the button bar (toolDock / toolBox); where it locks is saved as { edge, t }.
+  var toolsEl = document.getElementById('tools'), gripEl = document.getElementById('toolsGrip'), paneEl = document.getElementById('mapPane');
+  S.toolPos = (function () {
+    try { var v = JSON.parse(lsGet('wp-map-tools') || 'null'); if (v && ['top', 'bottom', 'left', 'right'].indexOf(v.edge) >= 0 && isFinite(v.t)) return v; } catch (e) {}
+    return { edge: 'top', t: 0 };
+  })();
+  function placeTools() {
+    if (!toolsEl || !S.toolPos || S.toolDrag) return;
+    var d = S.toolPos, W = paneEl.clientWidth, H = paneEl.clientHeight, vert = d.edge === 'left' || d.edge === 'right';
+    var top0 = document.body.classList.contains('setup') ? 32 : 6;
+    toolsEl.classList.toggle('v', vert);
+    toolsEl.style.right = 'auto';
+    toolsEl.style.maxWidth = vert ? '' : Math.max(120, W - (d.edge === 'top' ? 126 : 12)) + 'px';
+    var b = toolBox(d.edge, d.t, toolsEl.offsetWidth, toolsEl.offsetHeight, W, H, top0);
+    toolsEl.style.left = b.left + 'px'; toolsEl.style.top = b.top + 'px';
+    locBarEl.style.top = (d.edge === 'top' ? b.top + toolsEl.offsetHeight + 4 : top0) + 'px';   // the readout sits under a top bar
+  }
+  function endToolDrag() {
+    if (!S.toolDrag) return;
+    S.toolDrag = null; toolsEl.classList.remove('moving');
+    var W = paneEl.clientWidth, H = paneEl.clientHeight, x = toolsEl.offsetLeft, y = toolsEl.offsetTop, bw = toolsEl.offsetWidth, bh = toolsEl.offsetHeight;
+    var edge = toolDock(x + bw / 2, y + bh / 2, W, H), vert = edge === 'left' || edge === 'right';
+    var t = vert ? (y + bh / 2) / Math.max(1, H) : x / Math.max(1, W - bw);
+    S.toolPos = { edge: edge, t: Math.max(0, Math.min(1, t)) };
+    lsSet('wp-map-tools', JSON.stringify(S.toolPos)); placeTools();
+  }
+  gripEl.addEventListener('mousedown', function (e) {
+    if (e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation();
+    var r = toolsEl.getBoundingClientRect(), pr = paneEl.getBoundingClientRect();
+    S.toolDrag = { dx: e.clientX - r.left, dy: e.clientY - r.top, pl: pr.left, pt: pr.top };
+    toolsEl.classList.add('moving');
+  });
+  document.addEventListener('mousemove', function (e) {
+    var d = S.toolDrag;
+    if (!d) return;
+    if (!(e.buttons & 1)) { endToolDrag(); return; }   // its mouseup went to EverQuest (the window went click-through)
+    toolsEl.style.left = (e.clientX - d.pl - d.dx) + 'px'; toolsEl.style.top = (e.clientY - d.pt - d.dy) + 'px';
+  });
+  document.addEventListener('mouseup', endToolDrag);
   // One button cycles Fit zone -> Fit group -> Fit raid; the label is the mode just applied. Fitting turns Follow off.
   function syncFitBtn(note) {
     fitBtn.textContent = FIT_LABEL[S.fit];
@@ -2096,7 +2205,7 @@
     renderMap();
   });
   Object.keys(SMOOTH_LABEL).forEach(function (k) { var o = document.createElement('option'); o.value = k; o.textContent = SMOOTH_LABEL[k]; smoothSel.appendChild(o); });
-  syncLevels(); syncFitBtn(''); syncKnobs(); syncFollowBtn();
+  syncLevels(); syncFitBtn(''); syncKnobs(); syncFollowBtn(); placeTools();
   window.mimic && window.mimic.onMapPos && window.mimic.onMapPos(onDirect);
 
   stage.addEventListener('mousedown', function (e) {
