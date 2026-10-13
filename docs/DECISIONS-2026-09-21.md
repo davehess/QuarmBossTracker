@@ -9565,3 +9565,22 @@ Harmony, Hide/Sneak for non-rogues).
   label size 70–180%. One JSON object in the overlay's localStorage (`wp-map-cfg`), validated key by key on load.
 - **Not done:** per-character settings (the HUD's are per character; the Map's are per computer), and an
   alternative layout (e.g. a floating palette) — say if the panel over the map is in the way.
+
+### 248. Map sharing: judged fair; scoped to your raid / group; zone-server port researched (2026-10-13, agent 3.7.137 beta `2e912ca1`)
+
+- **The ShowEQ question** (raised by members): the guild lead's call — sharing sightings and timers is *"fair and no
+  different from typical callouts or other tool timers for spawns"*; the difference is only the logic placing a mob at
+  its point at pull time. Sharing stays on. Recorded against it: upstream Zeal's own comment on the 250-unit
+  `target_loc` cap reads *"(server policy), so this can't be used to locate spawns across a zone"*
+  (`Zeal/named_pipe.cpp`, #239). The test build's cap removal (§243) is still in `test-all`; whether to pull it is open.
+- **Pick: C** (A now, B later). **A shipped:** a guild map event is applied only when its sender is in your raid, or
+  your group outside a raid (`_mapPartyNames`); solo, only your own. Zeal sends a zone id but no instance id, so the
+  open world, our copy and the PvP copy of a zone shared one stream; a raid is one copy.
+- **B researched, not built** (a Sonnet agent over Zeal `origin/main` and EQMacEmu): Zeal exports no zone-server address
+  and no client offset for it is known. In EQMacEmu each zone process gets its own client port, world sends it in
+  `OP_ZoneServerInfo` (`ZoneServerInfo_Struct { ip[128]; port }`), and ports are **recycled** when a zone process
+  closes, so a port identifies a copy only while it runs. The public EQMacEmu source shows **no instance support**:
+  Quarm's instances are a server-side addition we cannot read, so whether a copy gets its own port is unverified.
+  Next step: the guild lead's Resource Monitor check (Network → eqgame.exe → remote port, open world vs instance).
+- **New idea, not built:** pull grouping — a graph of neighbouring spawn points so that when several mobs come at once
+  their likely points are suggested on the Map and linked from Extended Target (options in the reply).
