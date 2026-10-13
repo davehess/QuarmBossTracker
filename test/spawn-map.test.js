@@ -28,7 +28,7 @@ const EXPORTS = ['_mapServerXY', '_mapZoneShort', '_mapNormName', '_mapAttribute
   '_mapZoneDoc', '_mapPrune', '_mapEnsureZone', '_mapPaths', '_zealState', '_setRaid', '_setOpts', 'MAP_ZONE_SHORT',
   '_mapTryPin', '_mapPinGet', '_mapSync', '_mapSyncStop', '_mapSyncFlush', '_mapSyncPull', '_mapApplyRemote', '_mapLocalEvent',
   '_mapSegDist', '_mapRouteDist', '_mapCopy', '_mapCopyNoteWho', '_mapCurrentCopy', '_mapCopyInfo', 'whoData',
-  '_mapNoteCon', '_mapConsFor', '_mapMe', '_mapQuarmyIds'];
+  '_mapNoteCon', '_mapConsFor', '_mapMe', '_mapQuarmyIds', '_mapNoteLeg'];
 // The agent's real /consider tiers, for _mapNoteCon (they live outside the map core).
 const CON_DEFS = AGENT.slice(AGENT.indexOf('const CON_STANDINGS = ['), AGENT.indexOf('\n', AGENT.indexOf('const _CON_RX = ')));
 
@@ -505,7 +505,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, trailStep, wanderLeg, noteWanderLeg, mixHex, levelCon, brewallLayer, namedNpc };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, trailStep, wanderLeg, noteWanderLeg, mixHex, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -905,6 +905,30 @@ describe('pather routes', () => {
     expect(c._mapStatePayload(first.version, T0 + 2).grids).toBeNull();
     expect(c._mapStatePayload('thedeep@older', T0 + 3).grids).toEqual({ 7: ROUTE });
   });
+  it('walked wander legs are kept per route with a count, undirected, and ride every payload; spawn group names ride with the points (2026-10-13)', () => {
+    // the guild lead: "If we find the line segment between two of these points we should keep it, and build the full
+    // path ... keep these patterns and see if they persist as a common one, then match them up to specific spawn points
+    // and spawn groups"
+    const body = Object.assign({}, ZONE_BODY, { grids: { 7: ROUTE }, spawngroups: { 41: 'thedeep orc roamers' } });
+    seedCache(dir, body, T0);
+    const net = fakeNet();
+    const c = loadCore({ dir, opts: { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: '' }, net });
+    c._mapEnsureZone('thedeep', 164, T0);
+    c._zealState.Aldenmar = { zone: 164, updatedAt: T0, loc: { x: 1, y: 2, z: 0 } };
+    expect(c._mapNoteLeg('thedeep', 7, 0, 1, T0)).toEqual({ ok: true, n: 1 });
+    expect(c._mapNoteLeg('thedeep', 7, 1, 0, T0 + 1)).toEqual({ ok: true, n: 2 });    // the same leg walked back
+    expect(c._mapNoteLeg('thedeep', 7, 1, 2, T0 + 2)).toEqual({ ok: true, n: 1 });
+    expect(c._mapNoteLeg('thedeep', 7, 0, 3, T0)).toMatchObject({ ok: false });        // no waypoint 3
+    expect(c._mapNoteLeg('thedeep', 7, 1, 1, T0)).toMatchObject({ ok: false });
+    expect(c._mapNoteLeg('thedeep', 9, 0, 1, T0)).toMatchObject({ ok: false });        // no such route
+    const p = c._mapStatePayload('', T0 + 3);
+    expect(p.legs).toEqual({ 7: [[0, 1, 2], [1, 2, 1]] });
+    expect(p.spawngroups).toEqual({ 41: 'thedeep orc roamers' });
+    expect(c._mapStatePayload(p.version, T0 + 4).legs).toEqual({ 7: [[0, 1, 2], [1, 2, 1]] });   // legs every poll
+    expect(c._mapSaveNow()).toBe(true);
+    const c2 = loadCore({ dir, opts: { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: '' }, net });
+    expect(c2._mapZoneDoc('thedeep').legs[7]['0-1'].n).toBe(2);                         // kept across a restart
+  });
   it('a zone with no routes sends grids: null', () => {
     const { c } = localCore();
     c._zealState.Aldenmar = { zone: 164, updatedAt: T0, loc: { x: 1, y: 2, z: 0 } };
@@ -918,7 +942,7 @@ describe('pather routes', () => {
     expect(js).toMatch(/ctx\.strokeStyle = tgt \? S\.cfg\.col\.routeTarget : hot \? ROUTE_HOT : S\.cfg\.col\.route;/);
     expect(js).toMatch(/if \(SH\.routes\) drawRoutes\(/);
     expect(js).toMatch(/if \(!\(Number\(g\.pts\[j\]\[3\]\) > 0\)\) continue;/);
-    expect(js).toMatch(/ctx\.globalAlpha = hot \|\| tgt \? 1 : it\.near \? 0\.75 : 0\.25;/);
+    expect(js).toMatch(/ctx\.globalAlpha = hot \|\| tgt \? 1 : targetGrid \? \(it\.near \? 0\.3 : 0\.12\) : it\.near \? 0\.75 : 0\.25;/);
     expect(js).toMatch(/S\.hoverGrid = g; renderMap\(true\)/);
     expect(js).toMatch(/if \(p\.grid != null && SH\.pather\) halo\('↻'/);
     expect(js).toMatch(/S\.grids = p\.grids \|\| null;/);
@@ -1206,6 +1230,41 @@ describe('pather routes', () => {
     expect(js).toMatch(/if \(d\.btn && !\(e\.buttons & 1\)\)/);                          // a lost mouseup ends it
     expect(js).toMatch(/if \(SH\.trail\) drawTrail\(tTrail, tq, rt, CO\.target, CO\.dot, tGrid, CO\.routeTarget\);/);
   });
+  it('a roamer\'s leg is confirmed when it reaches the far waypoint; a tab-away gap breaks the trail; its pace; its spawn group (2026-10-13)', () => {
+    // the guild lead: "Tabbing between two pathing mobs, i expected to see the whole extrapolated dashed line and the
+    // pace of the mob going towards that point ... If we find the line segment between two of these points we should
+    // keep it ... It should highlight the whole path of that mob, and the other ones should fade"
+    const g = [[0, 0], [100, 0], [100, 100]];
+    let tr = null;
+    for (let x = 10; x <= 80; x += 10) tr = H.trailStep(tr, 't:9', x, 0, x * 100);   // 10 units / s along 0 → 1
+    expect(H.noteWanderLeg(tr, g)).toBeNull();                                       // 20 short of waypoint 1
+    expect(H.trailSpeed(tr, 8000, 3000)).toBeCloseTo(10, 5);
+    expect(H.trailSpeed(tr, 8000 + 5000, 3000)).toBe(0);                             // no new crumb for 5 s: stopped
+    tr = H.trailStep(tr, 't:9', 90, 0, 9000);
+    expect(H.noteWanderLeg(tr, g)).toEqual({ prev: 0, next: 1, done: true });        // within LEG_REACH of waypoint 1
+    expect(H.noteWanderLeg(tr, g)).toBeNull();                                       // reported once
+    // Tabbed away for a minute: the next crumb starts a new stretch; no heading or pace is read across the gap.
+    tr = H.trailStep(tr, 't:9', 100, 60, 70000);
+    expect(tr.pts[tr.pts.length - 1].brk).toBe(true);
+    expect(H.trailStretch(tr)).toHaveLength(1);
+    expect(H.trailSpeed(tr, 70000, 3000)).toBeNull();
+    expect(H.noteWanderLeg(tr, g)).toBeNull();
+    const pts = [
+      { id: 1, x: 0, y: 0, grid: 5, sg: 41, npcs: [{ name: 'A Crystalline Golem' }] },
+      { id: 2, x: 50, y: 0, grid: 5, sg: 41, npcs: [{ name: 'A Crystalline Golem' }] },
+      { id: 3, x: 900, y: 0, grid: 6, sg: 42, npcs: [{ name: 'A Crystalline Golem' }] },
+      { id: 4, x: 0, y: 50, grid: 5, sg: 43, npcs: [{ name: 'a gnoll' }] }];
+    const byId = Object.fromEntries(pts.map(p => [String(p.id), p]));
+    const sgs = { 41: 'povalor golem roamers', 42: 'povalor A Crystalline Golem18' };
+    expect(H.targetSpawnGroup({ name: 'A Crystalline Golem' }, pts, byId, sgs, 5)).toEqual({ name: 'povalor golem roamers', points: 2 });
+    expect(H.targetSpawnGroup({ name: 'A Crystalline Golem', point_id: 3 }, pts, byId, sgs, null)).toEqual({ name: 'povalor A Crystalline Golem18', points: 1 });
+    expect(H.targetSpawnGroup({ name: 'A Crystalline Golem' }, pts, byId, null, 5)).toBeNull();   // an older bot: no names
+    const js = stripJs(MAP_HTML);
+    expect(js).toMatch(/if \(walked\) postLeg\(tGid, walked\);/);
+    expect(js).toMatch(/ctx\.globalAlpha = hot \|\| tgt \? 1 : targetGrid \? \(it\.near \? 0\.3 : 0\.12\) : it\.near \? 0\.75 : 0\.25;/);
+    expect(js).toMatch(/var learned = S\.p && S\.p\.legs \? S\.p\.legs\[it\.gid\] : null/);
+    expect(js).toMatch(/if \(tr\.pts\[i\]\.brk\) continue;/);
+  });
   it('the walked path keeps the waypoint legs it was seen on, fades from spawn colour to target colour; con colours; Brewall layers; your target\'s point at any height (2026-10-13)', () => {
     // the guild lead: "extrapolate the previous point and the next point from the 'random path' ... a gradient along
     // all of the lines to the origin ... set the names of these mobs to conn color ... Default colors should probably
@@ -1216,7 +1275,7 @@ describe('pather routes', () => {
     expect(H.wanderLeg(g, { x: 50, y: 0 }, { x: -1, y: 0 })).toEqual({ prev: 1, next: 0 });
     expect(H.wanderLeg(g, { x: 50, y: 0 }, { x: 0, y: 1 })).toBeNull();                    // nothing straight ahead
     const tr = { pts: [{ x: 10, y: 0 }, { x: 30, y: 0 }, { x: 50, y: 0 }], legs: [] };
-    H.noteWanderLeg(tr, g); H.noteWanderLeg(tr, g);
+    expect(H.noteWanderLeg(tr, g)).toBeNull(); expect(H.noteWanderLeg(tr, g)).toBeNull();   // not there yet
     expect(tr.legs).toEqual([{ prev: 0, next: 1 }]);                                       // the same leg is kept once
     expect(H.mixHex('#000000', '#ffffff', 0.5)).toBe('#808080');
     expect(H.levelCon(60, 60)).toBe('white');

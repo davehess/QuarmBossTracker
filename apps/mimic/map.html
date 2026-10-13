@@ -570,14 +570,40 @@
   // for the time you are in the zone, so targeting it again shows the whole path seen so far (the guild lead,
   // 2026-10-13: "keep that segment as part of that mob's path if we don't stop targetting it. If we target it again
   // we should see that path"). Returns the trail to keep.
-  var TRAIL_STEP = 4, TRAIL_MAX = 600, TRAILS_MAX = 40;
+  // A crumb laid after more than TRAIL_GAP_MS without one (you tabbed away and back) starts a new stretch (`brk`):
+  // it is not joined to the last one by a straight line, and the heading is never read across the gap.
+  var TRAIL_STEP = 4, TRAIL_MAX = 600, TRAILS_MAX = 40, TRAIL_GAP_MS = 2500;
   function trailStep(tr, key, x, y, now) {
     if (x == null || y == null) return tr;
-    if (!tr || tr.key !== key) tr = { key: key, pts: [], legs: [] };
+    if (!tr || tr.key !== key) tr = { key: key, pts: [], legs: [], seen: now };
     var last = tr.pts[tr.pts.length - 1];
-    if (!last || Math.hypot(x - last.x, y - last.y) >= TRAIL_STEP) tr.pts.push({ x: x, y: y, t: now });
+    if (!last || Math.hypot(x - last.x, y - last.y) >= TRAIL_STEP) {
+      var c = { x: x, y: y, t: now };
+      if (last && now - (tr.seen != null ? tr.seen : last.t) > TRAIL_GAP_MS) c.brk = true;
+      tr.pts.push(c);
+    }
+    tr.seen = now;
     while (tr.pts.length > TRAIL_MAX) tr.pts.shift();
     return tr;
+  }
+  // The crumbs of the trail's current stretch (since its last break).
+  function trailStretch(tr) {
+    if (!tr || !tr.pts.length) return [];
+    var i = tr.pts.length - 1;
+    while (i > 0 && !tr.pts[i].brk) i--;
+    return tr.pts.slice(i);
+  }
+  // How fast the mob is walking, in game units a second, over the last `spanMs` of its current stretch (null when it
+  // has not moved far enough to tell). The pace for "how long to the next waypoint".
+  function trailSpeed(tr, now, spanMs) {
+    var s = trailStretch(tr), span = spanMs || 3000;
+    if (s.length < 2) return null;
+    var last = s[s.length - 1], i = s.length - 1, d = 0;
+    while (i > 0 && last.t - s[i - 1].t <= span) { d += Math.hypot(s[i].x - s[i - 1].x, s[i].y - s[i - 1].y); i--; }
+    var dt = (last.t - s[i].t) / 1000;
+    if (!(dt >= 0.4) || !(d >= 6)) return null;
+    if (now - last.t > 1500) return 0;   // no new crumb for a while: it has stopped
+    return d / dt;
   }
   // On a random-wander route the mob walks straight from one waypoint to another. From where it is and the way its
   // last few breadcrumbs point, the waypoint ahead (the one most nearly straight on) and the one behind: the leg it is
@@ -597,16 +623,38 @@
     return ahead >= 0 && behind >= 0 ? { prev: behind, next: ahead } : null;
   }
   // Record the leg the trail's latest stretch lies on (a new one only when it changes), so the path keeps the
-  // waypoint-to-waypoint legs the mob was seen walking.
+  // waypoint-to-waypoint legs the mob was seen walking. Returns the leg once the mob ARRIVES at its far waypoint
+  // (within LEG_REACH): a walked leg, confirmed, which the caller keeps for good (/api/map-leg). null otherwise.
+  var LEG_REACH = 12;
   function noteWanderLeg(tr, gpts) {
-    if (!tr || tr.pts.length < 2) return;
-    var last = tr.pts[tr.pts.length - 1], from = null;
-    for (var i = tr.pts.length - 2; i >= 0; i--) { if (Math.hypot(last.x - tr.pts[i].x, last.y - tr.pts[i].y) >= 10) { from = tr.pts[i]; break; } }
-    if (!from) return;
-    var leg = wanderLeg(gpts, last, { x: last.x - from.x, y: last.y - from.y });
-    if (!leg) return;
+    var s = trailStretch(tr);
+    if (s.length < 2) return null;
+    var last = s[s.length - 1], from = null;
+    for (var i = s.length - 2; i >= 0; i--) { if (Math.hypot(last.x - s[i].x, last.y - s[i].y) >= 10) { from = s[i]; break; } }
     var top = tr.legs[tr.legs.length - 1];
-    if (!top || top.prev !== leg.prev || top.next !== leg.next) tr.legs.push(leg);
+    if (from) {
+      var leg = wanderLeg(gpts, last, { x: last.x - from.x, y: last.y - from.y });
+      if (leg && (!top || top.prev !== leg.prev || top.next !== leg.next)) tr.legs.push(top = leg);
+    }
+    var np = top && gpts[top.next];
+    if (top && !top.done && np && Math.hypot(np[0] - last.x, np[1] - last.y) <= LEG_REACH) { top.done = true; return top; }
+    return null;
+  }
+  // The spawn group your target belongs to, and how many spawn points share its route (the guild lead, 2026-10-13:
+  // "match them up to specific spawn points and spawn groups"): its pinned point's group, else the group of the
+  // points on route `gid` that spawn its name. { name, points } or null (no group names from the bot yet).
+  function targetSpawnGroup(t, points, byId, sgs, gid) {
+    if (!t || !sgs) return null;
+    var pin = t.point_id != null && byId ? byId[String(t.point_id)] : null, k = npcKey(t.name), sg = pin ? pin.sg : null, n = 0;
+    for (var i = 0; i < (points || []).length; i++) {
+      var p = points[i];
+      var mine = gid != null ? String(p.grid) === String(gid) && (p.npcs || []).some(function (x) { return x && npcKey(x.name) === k; }) : (sg != null && p.sg === sg);
+      if (!mine) continue;
+      n++;
+      if (sg == null && p.sg != null) sg = p.sg;
+    }
+    var name = sg != null ? sgs[sg] : null;
+    return name ? { name: name, points: Math.max(n, 1) } : null;
   }
   // EverQuest's con colour for a mob of level `lvl` against yours (the agent's _levelCon and _CON_BRACKETS, same
   // table): for ⚙ → Mob names in con colour (the guild lead, 2026-10-13: "be able to set the names of these mobs to
@@ -941,10 +989,11 @@
       for (var i = 0; i < p.points.length; i++) S.byId[String(p.points[i].id)] = p.points[i];
       S.map = p.map || null; S.prep = prepMap(S.map); S.grids = p.grids || null;
       S.facs = p.factions || null;   // the zone's primary factions, sent with the points (see aggroKind)
+      S.sgs = p.spawngroups || null;   // spawn group names by id (points carry `sg`; see targetSpawnGroup)
     }
     if (p.zone !== S.zone) {
       S.zone = p.zone; S.fitted = false; S.follow = true; S.trk = {}; S.trails = {}; zoned = true;
-      if (!p.points) { S.points = []; S.byId = {}; S.map = null; S.prep = null; S.grids = null; S.facs = null; }
+      if (!p.points) { S.points = []; S.byId = {}; S.map = null; S.prep = null; S.grids = null; S.facs = null; S.sgs = null; }
       S.local = null; S.localVer = null;
       document.getElementById('followBtn').classList.add('on');
     }
@@ -1061,6 +1110,13 @@
     fetch('http://127.0.0.1:' + PORT + '/api/map-mark', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ zone: zone, point_id: pid, kind: kind }) }).then(function () { S.sideAt = 0; poll(); }).catch(function () {});
   }
+  // A wander leg your target was seen walking end to end: the agent keeps it with a count (_mapNoteLeg).
+  function postLeg(gid, leg) {
+    var zone = S.p && S.p.zone;
+    if (!zone || gid == null) return;
+    fetch('http://127.0.0.1:' + PORT + '/api/map-leg', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ zone: zone, grid: gid, a: leg.prev, b: leg.next }) }).catch(function () {});
+  }
 
   // ── drawing ──
   function resize() {
@@ -1122,10 +1178,23 @@
     ctx.lineCap = 'butt';
     list.forEach(function (it) {
       var g = S.grids[it.gid], hot = S.hoverGrid === it.gid, tgt = it.gid === targetGrid;
-      ctx.globalAlpha = hot || tgt ? 1 : it.near ? 0.75 : 0.25;
+      // With a targeted walker, every other route steps back (the guild lead, 2026-10-13: "the other ones should fade").
+      ctx.globalAlpha = hot || tgt ? 1 : targetGrid ? (it.near ? 0.3 : 0.12) : it.near ? 0.75 : 0.25;
       ctx.setLineDash(tgt ? [7, 3] : [4, 4]); ctx.lineWidth = tgt ? 2.2 : hot ? 1.8 : 1.2;
       ctx.strokeStyle = tgt ? S.cfg.col.routeTarget : hot ? ROUTE_HOT : S.cfg.col.route;
       if (RANDOM_WANDER[Number(g.type)]) {
+        // The legs its mobs have been seen walking, waypoint to waypoint (learned, kept by the agent): solid once seen
+        // twice or more, thicker the more often, dashed when seen only once.
+        var learned = S.p && S.p.legs ? S.p.legs[it.gid] : null, base = ctx.globalAlpha;
+        for (var li = 0; learned && li < learned.length; li++) {
+          var lg = learned[li], la = g.pts[lg[0]], lb = g.pts[lg[1]], ln = Number(lg[2]) || 1;
+          if (!la || !lb) continue;
+          var lqa = wpt(la[0], la[1]), lqb = wpt(lb[0], lb[1]);
+          ctx.globalAlpha = base * (ln >= 2 ? 0.9 : 0.55);
+          ctx.setLineDash(ln >= 2 ? [] : [3, 4]); ctx.lineWidth = (tgt ? 1.6 : 1) + Math.min(ln, 5) * 0.3;
+          ctx.beginPath(); ctx.moveTo(lqa[0], lqa[1]); ctx.lineTo(lqb[0], lqb[1]); ctx.stroke();
+        }
+        ctx.globalAlpha = base;
         var dr = tgt ? 3.5 : hot ? 3 : 2.2;
         ctx.setLineDash([]); ctx.fillStyle = ctx.strokeStyle;
         for (var wi = 0; wi < g.pts.length; wi++) {
@@ -1177,6 +1246,7 @@
     ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.globalAlpha = 0.9;
     var n = tr.pts.length - 1;
     for (var i = 1; i < tr.pts.length; i++) {
+      if (tr.pts[i].brk) continue;   // a gap: never bridged with a straight line
       var a = wpt(tr.pts[i - 1].x, tr.pts[i - 1].y), b = i === n ? head : wpt(tr.pts[i].x, tr.pts[i].y);
       ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.strokeStyle = mixHex(originColour, colour, i / n); ctx.stroke();
     }
@@ -1393,8 +1463,23 @@
         S.trails[tKey] = tTrail;
         var tGid = routeTarget(P.target, S.points, S.grids, S.byId), tGrid = tGid && S.grids ? S.grids[tGid] : null;
         if (!(tGrid && RANDOM_WANDER[Number(tGrid.type)])) tGrid = null;
-        if (tGrid && tTrail) noteWanderLeg(tTrail, tGrid.pts);
+        var walked = tGrid && tTrail ? noteWanderLeg(tTrail, tGrid.pts) : null;
+        if (walked) postLeg(tGid, walked);
         if (SH.trail) drawTrail(tTrail, tq, rt, CO.target, CO.dot, tGrid, CO.routeTarget);
+        // The leg it is on now, drawn whole and bright from the waypoint it left to the one ahead, with how long it
+        // has to go at its pace (the guild lead, 2026-10-13: "I expected to see the whole extrapolated dashed line and
+        // the pace of the mob going towards that point").
+        var cur = tGrid && tTrail && tTrail.legs.length ? tTrail.legs[tTrail.legs.length - 1] : null;
+        if (SH.trail && cur && !cur.done && tGrid.pts[cur.prev] && tGrid.pts[cur.next]) {
+          var cp = tGrid.pts[cur.prev], cn = tGrid.pts[cur.next], cpq = wpt(cp[0], cp[1]), cnq = wpt(cn[0], cn[1]);
+          ctx.globalAlpha = 0.45; ctx.lineWidth = 1.6; ctx.strokeStyle = CO.target;
+          ctx.beginPath(); ctx.moveTo(cpq[0], cpq[1]); ctx.lineTo(tq[0], tq[1]); ctx.stroke();
+          ctx.globalAlpha = 0.95; ctx.lineWidth = 2.2; ctx.setLineDash([8, 5]);
+          ctx.beginPath(); ctx.moveTo(tq[0], tq[1]); ctx.lineTo(cnq[0], cnq[1]); ctx.stroke(); ctx.setLineDash([]);
+          ctx.beginPath(); ctx.arc(cnq[0], cnq[1], 4.5, 0, 6.2832); ctx.lineWidth = 1.6; ctx.stroke(); ctx.globalAlpha = 1;
+          var spd = trailSpeed(tTrail, rt, 3000);
+          if (spd > 0) halo(Math.max(1, Math.round(Math.hypot(cn[0] - P.target.x, cn[1] - P.target.y) / spd)) + 's', cnq[0] + 7, cnq[1] - 8, labelFont('dist'), CO.target);
+        }
         if (SH.aggro) {
           var tnpc = targetNpc(P.target, S.points, S.byId);
           if (tnpc) aggroRing(tq[0], tq[1], aggroRadius(null, tnpc), assistRadius(null, tnpc), aggroKind(null, tnpc, P.cons, S.facs, P.me));
@@ -1432,6 +1517,9 @@
           if (nameTxt) { halo(nameTxt, lx, ly, lf, conCol(targetNpc(P.target, S.points, S.byId)) || CO.target); lx += measure(nameTxt + ' ', lf); }
           if (totTxt) halo(totTxt, lx, ly, lf, CO.tot);
         }
+        // Its spawn group, and how many points share its route ("povalor golem roamers · 5 points").
+        var tsg = SH.targetName ? targetSpawnGroup(P.target, S.points, S.byId, S.sgs, tGid) : null;
+        if (tsg) halo(tsg.name + ' · ' + tsg.points + (tsg.points === 1 ? ' point' : ' points'), tq[0] + 9, tq[1] + 6, labelFont('small'), CO.target);
       }
       // You: an arrow by heading.
       if (P.self && SH.you) {
