@@ -9737,3 +9737,27 @@ Harmony, Hide/Sneak for non-rogues).
   Three new colours per scheme (colour-blind: blue / yellow / vermillion).
 - **Not done:** con lines are matched by name, so two same-name mobs on different factions share a colour; no spawn id
   rides a /consider line.
+
+### 258. ◢ Resize corner on every overlay window, no setup needed (2026-10-13, Mimic beta `dbb007b2`)
+
+- **The ask** (the guild lead): *"Map needs a resize drag corner at the bottom right, as do all of the windows, to
+  resize without having to setup."*
+- **Shipped:** the shared preload adds a small grip to the bottom-right of every overlay window that has the ✥ chrome,
+  locked or not (`data-wp-interact`, so a click-through window arms under it). Main's `_startWindowResize` reuses the
+  ✥ drag session: the top-left stays put, the size follows the cursor inside its screen, `_stopWindowDrag` saves the
+  bounds, and each step goes through `_noteUserResize`, so a fit-height overlay keeps the dragged height as its floor.
+- **Left out on purpose:** docked panes (the dock is one window), the Canvas (screen-sized; its panels resize
+  themselves) and the HUD ring (it sizes its own window around the screen centre).
+
+### 259. Roamers pin to their spawn point: route twins and random-wander distance (2026-10-13, agent 3.7.145 beta `37518472`)
+
+- **The ask** (the guild lead): *"roamers are not capturing their spawn ids on the map, or tags."* Read as: a roaming
+  mob never got pinned, so it never showed its `#id` or its name label on its point.
+- **Why:** Plane of Valor's golem spawn group has five spawn points that all walk grid 1. A walking golem was the same
+  route distance from all five, and `_mapAttribute` only pins on a clear winner, so it never pinned. Grid 1 is also a
+  random wanderer (type 8), so distance to a line through its waypoints in order was wrong anyway.
+- **Shipped:** points that share a route AND the same respawn and variance count as one candidate (the nearest spawn
+  spot). Whichever of them the mob came from, the route and the timer are the same. A random wanderer's distance is to
+  its waypoints' bounding box (0 inside). The Map's label for an unpinned target now carries its spawn id.
+- **Kept honest:** twins with a different respawn are still a "?". A box, not a hull: an L-shaped wander grid could
+  over-claim its empty corner (marked `ponytail:` in the code).
