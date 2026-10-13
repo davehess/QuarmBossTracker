@@ -27,7 +27,10 @@ const EXPORTS = ['_mapServerXY', '_mapZoneShort', '_mapNormName', '_mapAttribute
   '_mapApplyMark', '_mapNoteDeath', '_mapNoteState', '_mapNoteLogDeath', '_mapStatePayload', '_mapSaveNow', '_mapDoc',
   '_mapZoneDoc', '_mapPrune', '_mapEnsureZone', '_mapPaths', '_zealState', '_setRaid', '_setOpts', 'MAP_ZONE_SHORT',
   '_mapTryPin', '_mapPinGet', '_mapSync', '_mapSyncStop', '_mapSyncFlush', '_mapSyncPull', '_mapApplyRemote', '_mapLocalEvent',
-  '_mapSegDist', '_mapRouteDist', '_mapCopy', '_mapCopyNoteWho', '_mapCurrentCopy', '_mapCopyInfo', 'whoData'];
+  '_mapSegDist', '_mapRouteDist', '_mapCopy', '_mapCopyNoteWho', '_mapCurrentCopy', '_mapCopyInfo', 'whoData',
+  '_mapNoteCon', '_mapConsFor'];
+// The agent's real /consider tiers, for _mapNoteCon (they live outside the map core).
+const CON_DEFS = AGENT.slice(AGENT.indexOf('const CON_STANDINGS = ['), AGENT.indexOf('\n', AGENT.indexOf('const _CON_RX = ')));
 
 // Stand the block up over a temp dir and fake network modules.
 function loadCore({ dir, opts, net }) {
@@ -44,6 +47,7 @@ function loadCore({ dir, opts, net }) {
     function _zoneName(id) { return id === 164 ? 'The Deep' : null; }
     function _eqSetupDirs() { return []; }   // no EQ folder: the local map files are covered by test/map-local-files.test.js
     const whoData = new Map();               // the agent's /who registry (lower-cased name -> { guild, ... })
+    ${CON_DEFS}
   `;
   // eslint-disable-next-line no-new-func
   const f = new Function('fs', 'path', 'http', 'https', 'zlib', '__dirname', '__tmp', '__opts',
@@ -91,7 +95,7 @@ const dbgZoneIn = (ts, port, zone) => [
 
 // A small zone in the SERVER frame. skel: three skeleton points, two of them 150 apart (p1, p6) so the
 // "clearly closer" rule has something to bite on. Zone id 164 = thedeep.
-const NPC = (name, extra) => Object.assign({ name, level: 50, chance: 100, named: false, raid_target: false, badges: [], aggro: 60 }, extra || {});
+const NPC = (name, extra) => Object.assign({ name, level: 50, chance: 100, named: false, raid_target: false, badges: [], aggro: 60, fac: 1, assist: null }, extra || {});
 const POINTS = [
   { id: 1, x: 100, y: 200, z: 0, respawn_s: 600, variance_s: 60, npcs: [NPC('a_decaying_skeleton')] },
   { id: 2, x: 400, y: 200, z: 0, respawn_s: 600, variance_s: 60, npcs: [NPC('a_decaying_skeleton')] },
@@ -453,8 +457,8 @@ describe('zone data: disk first, the bot second, local mode never', () => {
   });
   it('a zone cached before the aggro radius existed is re-checked early, at most every 10 minutes, never in a loop (2026-10-13)', async () => {
     const old = JSON.parse(JSON.stringify(ZONE_BODY));
-    for (const p of old.points) for (const n of p.npcs) delete n.aggro;
-    seedCache(dir, old, Date.now() - 1000);                                    // fresh by age, but no aggro
+    for (const p of old.points) for (const n of p.npcs) { delete n.aggro; delete n.fac; }
+    seedCache(dir, old, Date.now() - 1000);                                    // fresh by age, but no aggro / faction
     const net = fakeNet(() => ({ status: 304 }));                              // an older bot: nothing new
     const c = loadCore({ dir, opts: live(), net });
     c._zealState.Aldenmar = { zone: 164, updatedAt: 1e18, loc: { x: 1, y: 1, z: 0 } };   // never stale
@@ -501,7 +505,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -601,6 +605,49 @@ describe('the overlay (apps/mimic/map.html)', () => {
       expect(draw.indexOf('if (RANDOM_WANDER[Number(g.type)])')).toBeGreaterThan(-1);
       expect(draw.indexOf('if (RANDOM_WANDER[Number(g.type)])')).toBeLessThan(draw.indexOf('routePath(g, g.pts)'));
     });
+    it('aggro ring colour: green no faction, yellow conned not-KOS, red KOS or not conned; dashed social ring; target rings (2026-10-13)', () => {
+      // the guild lead: "Green if it's not aggro to anyone, yellow if it could be KOS to some but is not to the player.
+      // Then a dashed line for social aggro distance" — and "This pather does not have his aggro radius drawn"
+      const frog = { name: 'a_small_tree_frog', fac: 1429, aggro: 100, assist: null };
+      const rat = { name: 'a_rat', fac: 0, aggro: 30, assist: 50 };
+      const golem = { name: 'A_Crystalline_Golem', fac: 1430, aggro: 100, assist: 75 };
+      const old = { name: 'a_bat', aggro: 40 };                                  // a zone cached before the faction field
+      expect(H.aggroKind(null, rat, {})).toBe('none');                          // no faction: aggros nobody
+      expect(H.aggroKind(null, frog, {})).toBe('kos');                          // has one, not conned yet: cautious
+      expect(H.aggroKind(null, frog, { 'a small tree frog': 2 })).toBe('safe'); // "glowers at you dubiously"
+      expect(H.aggroKind(null, golem, { 'a crystalline golem': 0 })).toBe('kos');   // scowls
+      expect(H.aggroKind(null, golem, { 'a crystalline golem': 1 })).toBe('kos');   // threatening
+      expect(H.aggroKind(null, rat, { 'a rat': 0 })).toBe('kos');               // a con overrules the no-faction guess
+      expect(H.aggroKind(null, old, {})).toBe('kos');
+      expect(H.aggroKind({ npcs: [rat, frog] }, null, { 'a small tree frog': 2 })).toBe('safe');   // the point's worst
+      expect(H.aggroKind({ npcs: [rat] }, null, null)).toBe('none');
+      expect(H.aggroKind({ npcs: [] }, null, null)).toBe('kos');
+      expect(H.assistRadius(null, golem)).toBe(75);
+      expect(H.assistRadius(null, rat)).toBe(0);                                // nobody to help without a faction
+      expect(H.assistRadius({ npcs: [frog, golem] }, null)).toBe(75);
+      const pts = [{ id: 1, npcs: [frog] }, { id: 2, npcs: [golem] }];
+      const byId = { 1: pts[0], 2: pts[1] };
+      expect(H.targetNpc({ name: 'A Crystalline Golem' }, pts, byId)).toBe(golem);   // walked off its point: by name
+      expect(H.targetNpc({ name: 'a gnoll' }, pts, byId)).toBeNull();
+      const js = stripJs(MAP_HTML);
+      expect(js).toMatch(/if \(as > 0 && as !== ar && as \* sc >= 4\) \{/);
+      expect(js).toMatch(/ctx\.setLineDash\(\[5, 4\]\); ctx\.arc\(x, y, as \* sc/);
+      expect(js).toMatch(/if \(tnpc\) aggroRing\(tq\[0\], tq\[1\], aggroRadius\(null, tnpc\), assistRadius\(null, tnpc\), aggroKind\(null, tnpc, P\.cons\)\);/);
+      expect(js).toMatch(/aggroKind\(ap, aun, S\.p && S\.p\.cons\)/);
+    });
+    it('the agent keeps your latest faction con per mob, every tier, for six hours, per character', () => {
+      const { c } = localCore();
+      const T = 1e12;
+      c._mapNoteCon('[Tue Oct 13 00:59:17 2026] a small tree frog glowers at you dubiously -- You could probably win this fight.', 'Aldenmar', T);
+      c._mapNoteCon('[Tue Oct 13 00:58:55 2026] An Undead Vassal scowls at you, ready to attack -- it appears to be quite formidable.', 'Aldenmar', T);
+      c._mapNoteCon("[Tue Oct 13 00:58:56 2026] Brackwyn tells the group, 'a rat scowls at you, ready to attack'", 'Aldenmar', T);
+      expect(c._mapConsFor('Aldenmar', T + 1000)).toEqual({ 'a small tree frog': 2, 'an undead vassal': 0 });
+      expect(c._mapConsFor('Brackwyn', T + 1000)).toEqual({});
+      expect(c._mapConsFor('Aldenmar', T + 7 * 3_600_000)).toEqual({});
+      const AG = stripJs(AGENT);
+      expect(AG).toMatch(/try \{ _mapNoteCon\(line, b\.character\); \} catch \(e\) \{ void e; \}/);
+      expect(AG).toMatch(/out\.cons = _mapConsFor\(character, now\);/);
+    });
     it('aggro rings: the up mob\'s own radius, else the widest that can spawn there; sentinels and gaps ignored (2026-10-13)', () => {
       // the guild lead: "add aggro rings onto the map, make a circle icon on the main screen"
       const p = { npcs: [{ name: 'a_skeleton', aggro: 40 }, { name: 'Lord_Rax', aggro: 90 }, { name: 'a_bat', aggro: 10000 }, { name: 'x', aggro: null }] };
@@ -610,7 +657,7 @@ describe('the overlay (apps/mimic/map.html)', () => {
       expect(H.aggroRadius({ npcs: [{ aggro: null }] }, null)).toBe(0);         // an old zone cache: no radius, no ring
       const js = stripJs(MAP_HTML);
       expect(js).toMatch(/if \(at && timerState\(at, now\) === 'wait'\) continue;/);   // nothing up there: no ring
-      expect(js).toMatch(/if \(!\(arPx >= 4\)\) continue;/);
+      expect(js).toMatch(/if \(ar \* sc >= 4\) \{/);                               // no ring that would be a speck
       expect(MAP_HTML).toMatch(/<button class="tb" id="aggroBtn" type="button"[^>]*>◯<\/button>/);
     });
     it('a saved object is merged key by key; bad values and unknown keys are dropped', () => {
@@ -999,7 +1046,7 @@ describe('pather routes', () => {
     const showRows = base.all.cfgShow.children, glyphRows = base.all.cfgGlyphs.children, colRows = base.all.cfgCols.children;
     expect(showRows).toHaveLength(22);
     expect(glyphRows).toHaveLength(9);
-    expect(colRows).toHaveLength(25);
+    expect(colRows).toHaveLength(27);
     const walls = showRows[0].children[0];                                     // Walls
     walls.checked = false; walls.listeners.change.forEach(f => f());
     const eye = glyphRows[0].children[0];                                      // 👁
