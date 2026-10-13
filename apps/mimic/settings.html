@@ -217,6 +217,19 @@
   </div>
   <div class="hint">Scales the text and controls of every overlay — 50% to 200%. Made for high-DPI screens (a 5K monitor renders overlays tiny at 100%). Applies instantly as you drag. This same slider lives on the dashboard's Overlays tab, and every overlay has its own "size" slider in its setup bar (right-click ✥ → Setup THIS overlay) that overrides the global for just that overlay.</div>
 
+  <div class="row" style="align-items:center;gap:8px">
+    <label for="hoverOpacity">Mouse-over opacity</label>
+    <input id="hoverOpacity" type="range" min="0" max="100" step="5" value="100" style="flex:1;cursor:pointer" />
+    <span id="hoverOpacityVal" style="min-width:44px;text-align:right;color:#8b949e">100%</span>
+  </div>
+  <div class="row" style="align-items:center;gap:8px">
+    <label for="hoverFadeDelay">Fade delay (seconds)</label>
+    <input id="hoverFadeDelay" type="number" min="0" max="60" step="0.5" value="5" style="width:70px" />
+    <label for="hoverFadeDur" style="margin-left:12px">Fade duration (seconds)</label>
+    <input id="hoverFadeDur" type="number" min="0" max="30" step="0.5" value="2" style="width:70px" />
+  </div>
+  <div class="hint">Works like EverQuest's own window fade. While your mouse is over an overlay it shows at the mouse-over opacity; after you move away it waits the fade delay, then fades over the fade duration back to that overlay's own opacity (its setup-bar Opacity slider is the "fade-to" value). Drag the slider to 10% or less for Off. It only ever brightens an overlay, never dims it. Applies instantly.</div>
+
   <div class="row">
     <input id="autoStart" type="checkbox" />
     <label for="autoStart">Start Mimic with Windows</label>
@@ -234,6 +247,12 @@
     <label for="hideOverlaysWhenUnfocused">Hide overlays + hotkeys when EverQuest/Mimic isn't focused (Windows)</label>
   </div>
   <div class="hint">Off by default. While neither EverQuest nor a Mimic window is the active window (you are typing in a browser or Discord), overlays hide and Mimic's global hotkeys are released, so nothing pops up over what you are doing and Mimic's keys stay out of your way. Spoken callouts keep playing. Unlocking overlays or setup mode overrides it.</div>
+
+  <div class="row">
+    <input id="overlaysFollowEq" type="checkbox" />
+    <label for="overlaysFollowEq">Let other apps draw over the overlays when EverQuest isn't focused (Windows)</label>
+  </div>
+  <div class="hint">On by default. While neither EverQuest nor a Mimic window is the active window, overlays drop under a browser, Paint or anything else you are using, and come back on top the moment EverQuest is active again. To keep one overlay on top of everything, right-click its ✥ and pick Stay on top (or use the 🔝 on its row in the dashboard's Overlays tab). Overlays you are placing always stay on top. Unchecked: every overlay stays on top of everything, as before.</div>
 
   <div class="row">
     <input id="useGpu" type="checkbox" checked />
@@ -739,6 +758,7 @@
     document.getElementById('autoStart').checked         = (c.autoStart !== false);
     document.getElementById('hideOverlaysWhenEqDown').checked = (c.hideOverlaysWhenEqDown !== false);
     document.getElementById('hideOverlaysWhenUnfocused').checked = (c.hideOverlaysWhenUnfocused === true);
+    document.getElementById('overlaysFollowEq').checked  = (c.overlaysFollowEq !== false);
     document.getElementById('useGpu').checked            = (c.disableGpu !== true);
     document.getElementById(c.runMode === 'agent' ? 'runMode_agent' : 'runMode_full').checked = true;
     document.getElementById('zealAutoCheck').checked = (c.zealAutoCheck !== false);
@@ -749,6 +769,15 @@
       document.getElementById('overlayScale').value = String(pct);
       document.getElementById('overlayScaleVal').textContent = pct + '%';
     } catch {}
+    // Mouse-over opacity — live too (its own saveConfig below), so it is not part of Save's payload.
+    {
+      const h = (typeof c.hoverOpacity === 'number') ? c.hoverOpacity : (c.hoverOpacity === undefined ? 1 : 0);
+      const pct = Math.round(h * 100);
+      document.getElementById('hoverOpacity').value = String(pct);
+      document.getElementById('hoverOpacityVal').textContent = pct < 15 ? 'Off' : pct + '%';
+      document.getElementById('hoverFadeDelay').value = String(typeof c.hoverFadeDelay === 'number' ? c.hoverFadeDelay : 5);
+      document.getElementById('hoverFadeDur').value = String(typeof c.hoverFadeDur === 'number' ? c.hoverFadeDur : 2);
+    }
     _renderZealStatus();
     _renderUiPacks();
     const tm = c.tellsMode || 'off';
@@ -792,6 +821,24 @@
     const pct = Math.max(50, Math.min(200, parseInt(e.target.value, 10) || 100));
     try { await window.mimic.setOverlayScale(pct / 100); } catch {}
   });
+  // Mouse-over opacity (cfg.hoverOpacity / hoverFadeDelay / hoverFadeDur): label follows the drag, the value is
+  // saved on release. Straight to main's save-config, NOT through Save — it applies live, like the scale above.
+  document.getElementById('hoverOpacity').addEventListener('input', (e) => {
+    const pct = Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0));
+    document.getElementById('hoverOpacityVal').textContent = pct < 15 ? 'Off' : pct + '%';
+  });
+  document.getElementById('hoverOpacity').addEventListener('change', async (e) => {
+    const pct = Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0));
+    try { await window.mimic.saveConfig({ hoverOpacity: pct < 15 ? 0 : pct / 100 }); } catch {}
+  });
+  [['hoverFadeDelay', 60, 5], ['hoverFadeDur', 30, 2]].forEach(([id, max, dflt]) => {
+    document.getElementById(id).addEventListener('change', async (e) => {
+      const v = parseFloat(e.target.value);
+      const val = Number.isFinite(v) ? Math.max(0, Math.min(max, v)) : dflt;
+      e.target.value = String(val);
+      try { await window.mimic.saveConfig({ [id]: val }); } catch {}
+    });
+  });
   // Graphics card for overlays — like the scale, its own IPC and NOT part of Save: it only takes
   // hold at startup, so main saves it and offers the restart.
   document.getElementById('useGpu').addEventListener('change', async (e) => {
@@ -834,6 +881,7 @@
         autoStart:              document.getElementById('autoStart').checked,
         hideOverlaysWhenEqDown: document.getElementById('hideOverlaysWhenEqDown').checked,
         hideOverlaysWhenUnfocused: document.getElementById('hideOverlaysWhenUnfocused').checked,
+        overlaysFollowEq:       document.getElementById('overlaysFollowEq').checked,
         zealAutoCheck:          document.getElementById('zealAutoCheck').checked,
       });
     } catch (e) { return null; }
@@ -890,7 +938,7 @@
     const radio = document.querySelector('input[name=tells][value="' + String(f.tellsMode || 'off').replace(/"/g, '') + '"]');
     if (radio) radio.checked = true;
     for (const id of ['quietMode', 'hideOverlays', 'showHud', 'enableTriggerTts', 'overlaysUnlocked',
-                      'autoStart', 'hideOverlaysWhenEqDown', 'hideOverlaysWhenUnfocused', 'zealAutoCheck']) {
+                      'autoStart', 'hideOverlaysWhenEqDown', 'hideOverlaysWhenUnfocused', 'overlaysFollowEq', 'zealAutoCheck']) {
       if (typeof f[id] === 'boolean') document.getElementById(id).checked = f[id];
     }
     _refreshDirty();
@@ -984,6 +1032,7 @@
         autoStart:                document.getElementById('autoStart').checked,
         hideOverlaysWhenEqDown:   document.getElementById('hideOverlaysWhenEqDown').checked,
         hideOverlaysWhenUnfocused: document.getElementById('hideOverlaysWhenUnfocused').checked,
+        overlaysFollowEq:         document.getElementById('overlaysFollowEq').checked,
         zealAutoCheck:            document.getElementById('zealAutoCheck').checked,
       };
       if (tokenInput) payload.token = tokenInput;

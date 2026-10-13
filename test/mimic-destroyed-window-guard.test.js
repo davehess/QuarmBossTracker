@@ -72,13 +72,13 @@ describe('_live()', () => {
 });
 
 describe('every apply*Visibility refuses to drive a destroyed window', () => {
-  it('finds all eighteen overlay apply functions (the discovery is not vacuous)', () => {
-    expect(applyFns).toHaveLength(18);
+  it('finds all twenty overlay apply functions (the discovery is not vacuous)', () => {
+    expect(applyFns).toHaveLength(20);   // + the spawn map (2026-10-12), + its timers pop-out (2026-10-13)
     const vars = applyFns.map(f => windowVarOf(f).v);
     for (const [f, v] of applyFns.map((f, i) => [f, vars[i]])) {
       expect(v, `${f} should drive a *Window binding with showInactive()`).toBeTruthy();
     }
-    expect(new Set(vars).size, 'one binding per apply function').toBe(18);
+    expect(new Set(vars).size, 'one binding per apply function').toBe(20);
   });
 
   // setupMode on  -> the show branch; off with everything false -> the hide
@@ -157,8 +157,8 @@ describe('no function reaches into an overlay window without checking it is aliv
     units.push(cur);
   }
 
-  it('sees all eighteen overlay bindings', () => {
-    expect(overlayVars).toHaveLength(18);
+  it('sees all twenty overlay bindings', () => {
+    expect(overlayVars).toHaveLength(20);
   });
 
   it('every member access outside a creator is guarded', () => {

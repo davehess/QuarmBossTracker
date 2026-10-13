@@ -29,8 +29,10 @@
   .card{background:rgb(13 17 23 / var(--bg-alpha));border:1px solid rgb(48 54 61 / 0.8);border-radius:6px;
     padding:6px 8px;text-shadow:0 1px 2px #000}
   .title{display:flex;align-items:center;gap:6px;font-size:12px;min-height:20px;padding-left:22px;padding-right:26px}
-  .title .nm{color:var(--blue);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .title .cl{color:var(--dim);font-size:11px;white-space:nowrap}
+  /* The name is never cut short (the guild lead, 2026-10-13: "We can afford to show the character's name"); the level and
+     class give way first. */
+  .title .nm{color:var(--blue);font-weight:700;white-space:nowrap;flex:none}
+  .title .cl{color:var(--dim);font-size:11px;white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
   .title .sp{flex:1}
   .conn{font-size:10px} .conn.ok{color:var(--green)} .conn.bad{color:var(--dim)}
   #picker{display:inline-flex;border:1px solid var(--border);border-radius:4px;overflow:hidden;flex:none}

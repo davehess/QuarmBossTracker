@@ -162,6 +162,8 @@ let extTargetWindow = null;
 let commandWindow = null;
 let popRaidWindow = null;
 let meWindow = null;
+let mapWindow = null;       // the spawn map (Mimic 2.9, beta) - map.html, key 'map', cfg.showMap
+let mapTimersWindow = null; // the Map's respawn-timers list popped out - map.html?part=timers, key 'maptimers', cfg.showMapTimers
 let canvasWindow = null;    // the Timers canvas — one screen-sized window of placed panels
 let _canvasArrange = false; // arranging it from the tray / dashboard (not persisted)
 let uiStudioWindow = null;
@@ -304,6 +306,12 @@ function defaultConfig() {
     // "hide overlays and dampen hotkeys when EQ focus or Mimic focus is lost").
     // Default OFF, Windows only. Unlocking / setup mode overrides it.
     hideOverlaysWhenUnfocused: false,
+    // Overlays drop UNDER other apps while neither EverQuest nor a Mimic window is the foreground application, and
+    // come back on top when EQ does (the guild lead, 2026-10-13: "Other apps should be able to draw over the
+    // overlays automatically, unless specifically set to stay on top"). Windows only. Default ON; false = every
+    // overlay always on top, as before. cfg.stayOnTop[<overlay key>] = true keeps ONE overlay on top regardless.
+    overlaysFollowEq: true,
+    stayOnTop: {},
     // Diagnostic: dump every raw Zeal pipe object to zeal-raw.ndjson (userData).
     // Off by default — it's a "show me exactly what the pipe sends" capture for
     // protocol work, not something a normal user needs running. Toggled from the
@@ -1287,6 +1295,8 @@ function _boundsKeyForWindow(win) {
   if (win === commandWindow) return 'commandBounds';
   if (win === popRaidWindow) return 'popRaidBounds';
   if (win === meWindow) return 'meBounds';
+  if (win === mapWindow) return 'mapBounds';
+  if (win === mapTimersWindow) return 'mapTimersBounds';
   for (const [panelKey, w] of panelOverlays.entries()) {
     if (w === win) return 'panelBounds_' + panelKey;
   }
@@ -1340,6 +1350,32 @@ function _startWindowDrag(win, persistKey) {
       } catch {}
     }, 16);  // ~60fps
   } catch {}
+}
+// The ◢ corner grip (preload.js), locked or not (the guild lead, 2026-10-13: "Map needs a resize drag corner at the
+// bottom right, as do all of the windows, to resize without having to setup"). Same session as a ✥ drag, so
+// _stopWindowDrag ends it, persists the bounds and restores focusability; the top-left stays put and the size follows
+// the cursor, kept inside the window's screen. Each step goes through _noteUserResize, so on a fit-height overlay the
+// height you drag to becomes its floor, exactly like a native edge drag in setup.
+function _startWindowResize(win) {
+  if (!win || win.isDestroyed()) return;
+  _startWindowDrag(win);
+  if (!_dragSession) return;
+  clearInterval(_dragSession.interval);
+  const s = _dragSession, c0 = screen.getCursorScreenPoint(), b0 = win.getBounds();
+  s.interval = setInterval(() => {
+    if (!_dragSession) return;
+    if (s.win.isDestroyed() || Date.now() - s.startedAt > 30_000) { _stopWindowDrag(); return; }
+    try {
+      const cur = screen.getCursorScreenPoint(), wa = screen.getDisplayMatching(b0).workArea;
+      const nb = {
+        x: b0.x, y: b0.y,
+        width:  Math.max(120, Math.min(wa.x + wa.width - b0.x,  b0.width  + cur.x - c0.x)),
+        height: Math.max(60,  Math.min(wa.y + wa.height - b0.y, b0.height + cur.y - c0.y)),
+      };
+      _noteUserResize(s.win, nb);
+      s.win.setBounds(nb);
+    } catch {}
+  }, 16);
 }
 
 // ── UI Studio — capture & restore EQ ini files ──────────────────────────────
@@ -1678,6 +1714,12 @@ const _zealLiveByChar = new Map();   // character → { snapshot, dirty, pid, la
 function _pipeSpawnId(v) {
   return (typeof v === 'number' && Number.isFinite(v) && v > 0) ? Math.trunc(v) : null;
 }
+// A {x, y, z} position off the pipe (Zeal's own order, NOT the server frame: the agent swaps it), or null.
+function _pipeLoc(v) {
+  if (!v || typeof v !== 'object') return null;
+  const x = Number(v.x), y = Number(v.y), z = Number(v.z);
+  return (Number.isFinite(x) && Number.isFinite(y)) ? { x, y, z: Number.isFinite(z) ? z : 0 } : null;
+}
 // A {id, name, authoritative} candidate off the pipe — the target-of-target
 // keys the drafted Zeal change emits (docs/zeal-tot-pipe.patch). Absent on
 // every released Zeal, so null is the normal case and nothing downstream may
@@ -1832,6 +1874,11 @@ function _zealAbsorb(obj, pid) {
       s.spawn_id  = _pipeSpawnId(inner.spawn_id);
       s.target_id = _pipeSpawnId(inner.target_id);
       s.pet_id    = _pipeSpawnId(inner.pet_id);
+      // Zeal 1.4.8: the target's position (only within 250 units - server policy) and kind (0 player, 1 NPC,
+      // 2 NPC corpse, 3 player corpse). Omitted with the target, so both are nulled when absent, like the ids.
+      // Feeds the spawn map (agent _mapNoteState); a pre-1.4.8 Zeal just leaves them null.
+      s.target_loc  = _pipeLoc(inner.target_loc);
+      s.target_type = (typeof inner.target_type === 'number' && Number.isFinite(inner.target_type)) ? inner.target_type : null;
       // Target of target (drafted Zeal change, docs/zeal-tot-pipe.patch):
       // {id, name, authoritative} for who my target last hit, and who last hit
       // my target. Omitted upstream when there is no fresh candidate, so both
@@ -2101,6 +2148,80 @@ function _flushZealStateToAgent() {
     req.write(body); req.end();
   }
 }
+// ── Map direct positions ──
+// The guild lead, 2026-10-12: "still somewhat laggy ... pull directly from EQ rather than waiting for the pipe".
+// Zeal already streams positions (10 Hz at its default PipeDelay); the lag was our own hops: the 300 ms agent flush
+// above, the agent, the overlay's 250 ms poll. While the Map window is up, positions go to it straight over IPC
+// ('map-pos'): at most one send per MAP_DIRECT_MIN_MS, the newest state wins (a send is built from the live
+// snapshot when it fires). Timers, points, routes, seen and pins still come from the agent's /api/map-state poll.
+// ⚠ _mapDirectXY DUPLICATES the agent's _mapServerXY (Zeal's pipe x/y are swapped against the server frame the
+// spawn table uses: server x = pipe y). test/spawn-map.test.js runs both and fails if they ever disagree.
+const MAP_DIRECT_MIN_MS = 50;         // at most one send per this
+const MAP_DIRECT_HEARTBEAT_MS = 500;  // an unchanged state is still re-sent this often, so the overlay knows pushes are alive
+function _mapDirectXY(loc) {
+  const p = _pipeLoc(loc);
+  return p ? { x: p.y, y: p.x, z: p.z } : null;
+}
+function _mapDirectPos(loc, heading) {
+  const s = _mapDirectXY(loc);
+  const h = heading == null ? NaN : Number(heading);
+  return s ? { x: s.x, y: s.y, z: s.z, heading: Number.isFinite(h) ? h : null } : null;
+}
+function _mapDirectMembers(list) {
+  const out = [];
+  for (const m of Array.isArray(list) ? list : []) {
+    const p = m && m.name ? _mapDirectPos(m.loc, m.heading) : null;
+    if (p) out.push(Object.assign({ name: String(m.name) }, p));
+  }
+  return out;
+}
+// deps: { now(), setT(fn, ms), clearT(t), snapshot(character) -> live state | null, active() -> is the Map up, send(payload) }
+function _makeMapDirect(deps) {
+  const st = { character: null, raid: [], lastRun: -Infinity, lastSend: -Infinity, sig: '', timer: null };
+  const run = () => {
+    st.timer = null;
+    const t = deps.now();
+    st.lastRun = t;
+    const snap = st.character ? deps.snapshot(st.character) : null;
+    if (!snap) return;
+    const tp = snap.target_name ? _mapDirectPos(snap.target_loc, null) : null;
+    const p = {
+      character: st.character, zone_id: Number.isFinite(Number(snap.zone)) ? Number(snap.zone) : null,
+      self: _mapDirectPos(snap.loc, snap.heading), group: _mapDirectMembers(snap.group_members), raid: st.raid,
+      target: tp ? Object.assign({ id: snap.target_id == null ? null : snap.target_id, name: String(snap.target_name) }, tp) : null,
+    };
+    const sig = JSON.stringify([p.zone_id, p.self, p.group, p.raid, p.target]);
+    if (sig === st.sig && t - st.lastSend < MAP_DIRECT_HEARTBEAT_MS) return;
+    st.sig = sig; st.lastSend = t; p.at = t;
+    deps.send(p);
+  };
+  return {
+    // Call with every parsed pipe object, after it has been absorbed into the live state.
+    note(obj) {
+      if (!obj) return;
+      const type = String(obj.type);
+      if (type === '3') {                                  // player: self + target
+        if (typeof obj.character === 'string' && obj.character) st.character = obj.character;
+      } else if (type === '5') {                           // raid: [{ name, loc, heading, ... }]
+        if (st.character && obj.character && obj.character !== st.character) return;
+        const inner = _zealParseData(obj);
+        if (Array.isArray(inner)) st.raid = _mapDirectMembers(inner);
+      } else if (type !== '6') return;                     // group rides the snapshot
+      if (!deps.active()) return;
+      const wait = MAP_DIRECT_MIN_MS - (deps.now() - st.lastRun);
+      if (wait <= 0) { if (st.timer) { deps.clearT(st.timer); st.timer = null; } run(); }
+      else if (!st.timer) st.timer = deps.setT(run, wait);
+    },
+  };
+}
+const _mapDirect = _makeMapDirect({
+  now: Date.now, setT: setTimeout, clearT: clearTimeout,
+  snapshot: (character) => { const c = _zealLiveByChar.get(character); return c ? c.snapshot : null; },
+  active: () => _live(mapWindow) && mapWindow.isVisible(),
+  send: (p) => { try { mapWindow.webContents.send('map-pos', p); } catch (e) { void e; } },
+});
+// ── end Map direct positions ──
+
 // Push the "pause Discord tells" deadline to the local agent. The agent stamps
 // it onto subsequent tell uploads (dm_pause_until) so the bot stores the tell
 // but skips the Discord DM. The deadline lives only in the agent process, so we
@@ -2369,10 +2490,17 @@ function startZealCapture() {
         // pid rides along so a character switch on the same client retires
         // the previous character's state (see _zealAbsorb/_retireZealChar).
         try { _zealAbsorb(obj, pid); } catch (e) { void e; }
+        try { _mapDirect.note(obj); } catch (e) { void e; }   // the Map's direct position path (a no-op unless it is up)
       },
     });
     setInterval(_flushZealToAgent, 2000);
     setInterval(_flushZealStateToAgent, 300);   // gauge-condition snapshots
+    // Raid positions (pipe type 5) ride the 2s batch above, so the spawn map's raid dots would step every 2s
+    // while self and group move at 300ms (the guild lead, 2026-10-12: "local locations should update in real
+    // time"). A waiting type-5 sample is flushed on the same 300ms beat; every other type keeps the 2s cadence
+    // (they ride along only when a raid sample forces a flush). Each flush clears sampledTypes, so it IS the
+    // "a raid sample is waiting" flag. The agent's roster UPLOAD stays gated by its composition hash + heartbeat.
+    setInterval(() => { if (_zealPending.sampledTypes.has('5')) _flushZealToAgent(); }, 300);
     // Idle sweep — covers sitting at character select: the pipe stays open
     // (same pid) but the camped character stops streaming. After 2 minutes
     // of silence, retire it so overlays clear instead of showing the last
@@ -2523,7 +2651,7 @@ function _pollBlindState() {
 const _CHAR_PROFILE_FLAGS = [
   'showHud', 'enableTriggerTts', 'showCharm', 'showPets', 'showMobInfo',
   'showBuffQueue', 'showWho', 'showMelody', 'showZeal', 'showThreat', 'showChChain',
-  'showExtTarget', 'showCanvas',
+  'showExtTarget', 'showCanvas', 'showMap',
 ];
 // flag → (live-window getter, creator) so apply can materialize a window for an
 // overlay the profile turns on. Getters (not captured refs) read the current
@@ -2542,6 +2670,7 @@ const _CHAR_PROFILE_WINDOWS = [
   { flag: 'showExtTarget',    get: () => extTargetWindow, create: () => createExtTargetOverlay() },
   { flag: 'showChChain',      get: () => chChainWindow,   create: () => createChChainOverlay() },
   { flag: 'showCanvas',       get: () => canvasWindow,    create: () => createCanvasWindow() },
+  { flag: 'showMap',          get: () => mapWindow,       create: () => createMapOverlay() },
 ];
 let _activeCharName = null;     // last activeCharacter seen on /api/state (display)
 let _lastProfileChar = null;    // last char we applied a profile for (change-gate)
@@ -3302,12 +3431,13 @@ const _EQ_GEOM_PS = [
   'Get-Process eqgame -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | ForEach-Object {',
   '  $h = $_.MainWindowHandle; $r = New-Object WpEqWin+RECT; $c = New-Object WpEqWin+RECT; $p = New-Object WpEqWin+POINT',
   '  [void][WpEqWin]::GetWindowRect($h, [ref]$r); [void][WpEqWin]::GetClientRect($h, [ref]$c); [void][WpEqWin]::ClientToScreen($h, [ref]$p)',
-  '  "EQWIN|$($_.Id)|$($r.L)|$($r.T)|$($r.R)|$($r.B)|$($p.X)|$($p.Y)|$($c.R)|$($c.B)|$([int][WpEqWin]::IsIconic($h))"',
+  '  "EQWIN|$($_.Id)|$($r.L)|$($r.T)|$($r.R)|$($r.B)|$($p.X)|$($p.Y)|$($c.R)|$($c.B)|$([int][WpEqWin]::IsIconic($h))|$($h.ToInt64())"',
   '}',
 ].join('\n');
 let _eqGeom = { at: 0, wins: [], inFlight: null };
-// "EQWIN|pid|left|top|right|bottom|clientX|clientY|clientW|clientH|minimized" →
-// { pid, window, client, minimized }, in physical pixels.
+// "EQWIN|pid|left|top|right|bottom|clientX|clientY|clientW|clientH|minimized|hwnd" →
+// { pid, window, client, minimized, hwnd? }, in physical pixels. The window handle rides last and is optional
+// (the overlays' z-order tucks them above EverQuest's window, _tuckAboveEq): a line without it parses as before.
 function _parseEqGeom(text) {
   const out = [];
   for (const line of String(text || '').split(/\r?\n/)) {
@@ -3316,8 +3446,11 @@ function _parseEqGeom(text) {
     const n = f.slice(1, 11).map(Number);
     if (!n.every(Number.isFinite)) continue;
     const [pid, l, t, r, b, cx, cy, cw, ch, iconic] = n;
-    out.push({ pid, window: { x: l, y: t, width: r - l, height: b - t },
-      client: { x: cx, y: cy, width: cw, height: ch }, minimized: iconic === 1 });
+    const w = { pid, window: { x: l, y: t, width: r - l, height: b - t },
+      client: { x: cx, y: cy, width: cw, height: ch }, minimized: iconic === 1 };
+    const hw = Number(f[11]);
+    if (f.length > 11 && Number.isFinite(hw) && hw > 0) w.hwnd = hw;
+    out.push(w);
   }
   return out;
 }
@@ -3575,7 +3708,7 @@ const _OVERLAY_NAMES = {
   pets: 'Pet tracker', mobinfo: 'Mob Info', buffQueue: 'Buff queue',
   who: '/who', melody: 'Melody', zeal: 'Tick', threat: 'Threat meter',
   chchain: 'CH chain', tank: 'Tank HUD', exttarget: 'Extended target',
-  command: 'Command center', popraid: 'PoP raids', me: 'HUD', canvas: 'Canvas',
+  command: 'Command center', popraid: 'PoP raids', me: 'HUD', canvas: 'Canvas', map: 'Map', maptimers: 'Map timers',
 };
 function _rescueSort(entries, displays, targetId) {
   const inside = (r, x, y) => x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
@@ -3710,7 +3843,7 @@ async function _rescueOverlays() {
   // Overlays with NO window at all (disabled via ✕/tray, or gated off) can't
   // be rescued — name them in the log so "still missing X" has an answer:
   // it needs re-enabling from tray → Overlays, not another rescue.
-  const KNOWN = ['hud', 'trigger', 'charm', 'pets', 'mobinfo', 'buffQueue', 'who', 'melody', 'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me'];
+  const KNOWN = ['hud', 'trigger', 'charm', 'pets', 'mobinfo', 'buffQueue', 'who', 'melody', 'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me', 'map', 'maptimers'];
   const missing = KNOWN.filter(k => !present.has(k));
   try { applyAllVisibility(); } catch { /* best effort */ }
   appendAgentLog(`[rescue] home display ${disp.id} (${disp.size.width}x${disp.size.height}) · lost ${sorted.lost.length} [${sorted.lost.map(e => e.key).join(', ')}]`
@@ -3904,6 +4037,8 @@ function _overlayEntries() {
   if (commandWindow && !commandWindow.isDestroyed()) out.push(['command', commandWindow]);
   if (popRaidWindow && !popRaidWindow.isDestroyed()) out.push(['popraid', popRaidWindow]);
   if (meWindow && !meWindow.isDestroyed()) out.push(['me', meWindow]);
+  if (mapWindow && !mapWindow.isDestroyed()) out.push(['map', mapWindow]);
+  if (mapTimersWindow && !mapTimersWindow.isDestroyed()) out.push(['maptimers', mapTimersWindow]);
   if (canvasWindow && !canvasWindow.isDestroyed()) out.push(['canvas', canvasWindow]);
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
@@ -3958,10 +4093,121 @@ function applyOverlayOpacity(win, key) {
   // Scale rides the same lifecycle (every window's ready-to-show + every
   // change broadcast), so ONE hook covers all overlays incl. future ones.
   applyOverlayScale(win, key);
+  _hoverReapply(win, key);   // a changed normal opacity cancels a fade that was heading for the old one
 }
 function applyAllOverlayOpacities() {
   for (const [key, win] of _overlayEntries()) applyOverlayOpacity(win, key);
 }
+
+// ── Mouse-over opacity (the guild lead, 2026-10-13: "could we add mouse-over for showing opacity on an
+// overlay?"; modelled on EverQuest's own Options → Display: Window Transparency / Fade Delay / Fade Duration /
+// Fade-to Transparency) ─────────────────────────────────────────────────────────────────────────────────────
+// While the cursor is over an overlay it shows at cfg.hoverOpacity (default 100%). When the cursor leaves it holds
+// that for cfg.hoverFadeDelay seconds (default 5), then fades over cfg.hoverFadeDur seconds (default 2) down to the
+// overlay's OWN opacity (cfg.overlayOpacity[k] — EQ's "Fade-to Transparency", so there is no second fade-to value).
+// Coming back during the hold or the fade jumps straight to full. It only ever BRIGHTENS: a mouse-over opacity at or
+// below the overlay's own does nothing. 0 / null turns the whole thing off.
+// How: the preload pings 'overlay-hover-ping' (throttled) from its forwarded mousemoves; main owns the rest — it
+// polls the cursor against the window (a click-through window gets no mouseout) and drives the fade with a timer,
+// pushing each step to the renderer as 'wp-hover-alpha', which sets the SAME --wp-content-alpha variable the normal
+// opacity does (the setup-bar slider is left alone). Only a CSS variable moves: a hidden overlay is never shown.
+const _HOVER_FADE_STEP_MS = 33;       // ~30 fps
+const _HOVER_MIN_HOLD_MS = 250;       // a flicker guard, so a 0 s fade delay does not blink on a button hop
+function _hoverSettings(cfg) {
+  const num = (v, lo, hi, d) => (typeof v === 'number' && Number.isFinite(v)) ? Math.max(lo, Math.min(hi, v)) : d;
+  const a = (cfg && cfg.hoverOpacity !== undefined) ? cfg.hoverOpacity : 1;
+  const on = typeof a === 'number' && a >= 0.15 && a <= 1;
+  return {
+    on,
+    alpha: on ? a : 1,
+    delayMs: Math.round(num(cfg && cfg.hoverFadeDelay, 0, 60, 5) * 1000),
+    durMs: Math.round(num(cfg && cfg.hoverFadeDur, 0, 30, 2) * 1000),
+  };
+}
+// One step of the fade: linear from the mouse-over opacity `hi` down to the overlay's own `lo`.
+function _hoverFadeAlpha(hi, lo, elapsedMs, durMs) {
+  if (!(durMs > 0) || elapsedMs >= durMs) return lo;
+  if (elapsedMs <= 0) return hi;
+  return hi + (lo - hi) * (elapsedMs / durMs);
+}
+const _wpHover = new WeakMap();   // window → { key, phase: 'inside' | 'hold' | 'fade', poll, hold, fade }
+function _hoverSend(win, a) {
+  try { if (win && !win.isDestroyed()) win.webContents.send('wp-hover-alpha', a); } catch { /* mid-close */ }
+}
+function _hoverStop(win) {
+  const st = _wpHover.get(win);
+  if (!st) return;
+  clearInterval(st.poll); clearTimeout(st.hold); clearInterval(st.fade);
+  _wpHover.delete(win);
+}
+function _hoverLeave(win) {
+  const st = _wpHover.get(win);
+  if (!st || st.phase !== 'inside') return;
+  clearInterval(st.poll); st.poll = null;
+  st.phase = 'hold';
+  st.hold = setTimeout(() => _hoverFade(win), Math.max(_HOVER_MIN_HOLD_MS, _hoverSettings(loadConfig()).delayMs));
+}
+function _hoverFade(win) {
+  const st = _wpHover.get(win);
+  if (!st || st.phase !== 'hold') return;
+  if (win.isDestroyed()) { _hoverStop(win); return; }
+  const s = _hoverSettings(loadConfig());
+  const normal = _opacityMaps(loadConfig()).content(st.key);   // read once: a change mid-fade cancels it (_hoverReapply)
+  // Hidden (hide-all, quiet mode, EQ down): there is nothing to animate — land on the normal value.
+  if (!s.on || s.alpha <= normal) { _hoverSend(win, normal); _hoverStop(win); return; }
+  st.phase = 'fade';
+  const t0 = Date.now();
+  const step = () => {
+    if (win.isDestroyed()) { _hoverStop(win); return; }
+    const el = Date.now() - t0;
+    if (el >= s.durMs || !win.isVisible()) { _hoverSend(win, normal); _hoverStop(win); return; }
+    _hoverSend(win, _hoverFadeAlpha(s.alpha, normal, el, s.durMs));
+  };
+  st.fade = setInterval(step, _HOVER_FADE_STEP_MS);
+  step();
+}
+function _hoverEnter(win, key) {
+  if (!win || win.isDestroyed() || key === 'canvas') return;
+  const st0 = _wpHover.get(win);
+  if (st0 && st0.phase === 'inside') return;   // a ping from a cursor that never left
+  const cfg = loadConfig();
+  const s = _hoverSettings(cfg);
+  // Setup mode shows the overlay's own opacity while you set it, so it never brightens there.
+  const quiet = setupMode || _inSingleSetup(win);
+  const normal = _opacityMaps(cfg).content(key);
+  _hoverStop(win);
+  if (!s.on || quiet || s.alpha <= normal) { if (st0) _hoverSend(win, normal); return; }
+  const st = { key, phase: 'inside', poll: null, hold: null, fade: null };
+  _wpHover.set(win, st);
+  _hoverSend(win, s.alpha);
+  st.poll = setInterval(() => {
+    if (win.isDestroyed()) { _hoverStop(win); return; }
+    if (!_cursorInsideWindow(win)) _hoverLeave(win);
+  }, 100);
+}
+// The normal opacity (or the window) just changed under a hover. Cursor still over the overlay: show the new
+// state at once. Holding or fading: the normal value has just been sent, so only the timers need to go.
+function _hoverReapply(win, key) {
+  const st = _wpHover.get(win);
+  if (!st) return;
+  if (st.phase === 'inside') {
+    const s = _hoverSettings(loadConfig());
+    if (s.on && s.alpha > _opacityMaps(loadConfig()).content(key)) { _hoverSend(win, s.alpha); return; }
+  }
+  _hoverStop(win);
+}
+// Settings changed (on/off, mouse-over opacity, delay, duration): drop every hover in flight and put each overlay
+// back at its own opacity; the next mouse move brings a hover back under the new numbers.
+function _hoverSettingsChanged() {
+  for (const [key, win] of _overlayEntries()) { _hoverStop(win); applyOverlayOpacity(win, key); }
+}
+ipcMain.on('overlay-hover-ping', (e) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    const hit = win && _overlayEntries().find(([, w]) => w === win);
+    if (hit) _hoverEnter(win, hit[0]);
+  } catch { /* a ping must never throw into main */ }
+});
 
 // ── Overlay scale (a member's 5K monitor — the guild lead 2026-08-18) ───────────────────
 // zoomFactor scales all CSS px content, so no per-overlay HTML changes; window
@@ -4438,6 +4684,8 @@ function applyOverlayInteractivity() {
       win.webContents.send('setup-mode', { active: setupMode, overlayKey: key });
     } catch {}
   }
+  // Setup / unlocked overlays stay on top; locking again lets them follow EverQuest's z-order.
+  try { _applyOverlayZ(); } catch (e) { void e; }
 }
 
 // Master setup-mode toggle. ON: force-show every overlay (DPS HUD, trigger,
@@ -5721,9 +5969,94 @@ function _makeFocusDebouncer(onFlip, ms) {
 }
 const _focusDeb = _makeFocusDebouncer((ok) => {
   _focusOk = ok;
-  try { applyAllVisibility(); } catch (e) { void e; }   // also re-syncs the hotkeys
-  try { pushStatus(); } catch (e) { void e; }
+  let hides = false;
+  try { hides = _focusGateOn(loadConfig(), process.platform); } catch (e) { void e; }
+  if (hides) {
+    try { applyAllVisibility(); } catch (e) { void e; }   // also re-syncs the hotkeys (and re-applies the z-order)
+    try { pushStatus(); } catch (e) { void e; }
+  } else {
+    // The hiding gate is off: only the z-order cares (overlays drop under / come back over other apps), and a whole
+    // visibility pass + tray rebuild on every alt-tab would be cost for nothing.
+    try { _applyOverlayZ(); } catch (e) { void e; }
+  }
 }, FOCUS_LOST_DEBOUNCE_MS);
+
+// ── Overlays follow EverQuest's z-order (the guild lead, 2026-10-13) ────────
+// "Other apps should be able to draw over the overlays automatically, unless specifically set to stay on top."
+// Every overlay used to sit at the 'screen-saver' always-on-top level, so Paint or a browser could never cover one.
+// Now, on Windows, while neither EverQuest nor a Mimic window is the foreground application the overlays drop to the
+// normal level (and are tucked just above EverQuest's own window, so another app in front of EQ covers them); the
+// moment EQ or Mimic is foreground again they go back on top. It rides the focus watcher above - ONE resident
+// PowerShell that prints the foreground pid when it changes - and the same _focusClassify verdict, debounced the same
+// 600 ms, so it adds no process and no polling of its own. Each overlay can opt out (cfg.stayOnTop[key] = true: the
+// right-click menu's "Stay on top" and the dashboard Overlays row), and cfg.overlaysFollowEq = false is the
+// kill-switch that restores today's always-on-top for all of them. Setup / unlocked overlays always stay on top, or
+// the thing you are dragging would slide under the browser you are reading the instructions in.
+function _overlaysFollowEqOn(cfg, platform) {
+  return platform === 'win32' && !!cfg && cfg.overlaysFollowEq !== false;
+}
+// The watcher is wanted for either feature; _focusGateOn alone still decides the HIDING (see _focusPass).
+function _focusWatcherWanted(cfg, platform) {
+  return _focusGateOn(cfg, platform) || _overlaysFollowEqOn(cfg, platform);
+}
+// Should this overlay be at the always-on-top level right now? `inSetup` = setup mode, unlocked, or this window's own
+// "Setup THIS". `focusOk` = _focusOk (true when EQ/Mimic is foreground, or the watcher cannot tell).
+function _overlayWantsTop(cfg, key, platform, inSetup, focusOk) {
+  if (!_overlaysFollowEqOn(cfg, platform)) return true;
+  if (inSetup) return true;
+  if (cfg.stayOnTop && cfg.stayOnTop[key] === true) return true;
+  return !!focusOk;
+}
+// What was last applied to a window (absent = created always-on-top, so true).
+const _zApplied = new WeakMap();
+// EverQuest's window handle, from the last geometry read (_eqWindowGeometry carries it). null = unknown.
+function _eqHwndNow() {
+  const live = (_eqGeom.wins || []).filter(w => w.hwnd && !w.minimized && (!_eqPids.size || _eqPids.has(w.pid)));
+  return live.length ? live[0].hwnd : null;
+}
+// Put a just-dropped overlay directly above EverQuest's window. Needed because setAlwaysOnTop(false) leaves a window at
+// the TOP of the normal band - over Paint or a browser that is in front of EQ. Directly above EQ it is covered by
+// anything in front of EQ and still covers EQ itself. Returns whether it could.
+function _tuckAboveEq(win) {
+  const hwnd = _eqHwndNow();
+  if (!hwnd || !_live(win)) return false;
+  try { win.moveAbove('window:' + hwnd + ':0'); return true; } catch (e) { void e; return false; }
+}
+// Bring every VISIBLE overlay (or just `onlyWin`) to the level it should be at. Idempotent - only a change touches a
+// window - and never changes visibility: a hidden overlay is left alone and caught by its 'show' event.
+function _applyOverlayZ(onlyWin) {
+  if (process.platform !== 'win32') return;
+  let cfg; try { cfg = loadConfig(); } catch (e) { void e; return; }
+  for (const [key, win] of _overlayEntries()) {
+    if (onlyWin && win !== onlyWin) continue;
+    if (!_live(win) || !win.isVisible()) continue;
+    const inSetup = setupMode || cfg.overlaysLocked === false || _inSingleSetup(win);
+    const want = _overlayWantsTop(cfg, key, process.platform, inSetup, _focusOk);
+    const have = _zApplied.has(win) ? _zApplied.get(win) : true;
+    if (want === have) continue;
+    _zApplied.set(win, want);
+    try {
+      if (want) { win.setAlwaysOnTop(true, 'screen-saver'); continue; }
+      win.setAlwaysOnTop(false);
+      if (!_tuckAboveEq(win)) {   // EQ's handle not read yet: read it once, then tuck whatever is still dropped
+        // (5 s, not 60: a handle that failed above may be EQ's last run - re-read it rather than trust the cache.)
+        _eqWindowGeometry(5 * 1000).then(() => { if (_zApplied.get(win) === false) _tuckAboveEq(win); }).catch(() => {});
+      }
+    } catch (e) { void e; }
+  }
+}
+// Per-overlay "Stay on top". One writer for the right-click menu and the dashboard row (tray ↔ dashboard parity).
+function _setStayOnTop(key, on) {
+  if (typeof key !== 'string' || !key) return false;
+  const cfg = loadConfig();
+  const map = (cfg.stayOnTop && typeof cfg.stayOnTop === 'object') ? Object.assign({}, cfg.stayOnTop) : {};   // a copy: never mutate a shared default
+  if (on) map[key] = true; else delete map[key];
+  cfg.stayOnTop = map;
+  saveConfig(cfg);
+  _applyOverlayZ();
+  try { pushStatus(); } catch (e) { void e; }
+  return !!on;
+}
 function _focusOwnPids() {
   const s = new Set([process.pid]);
   try { for (const m of app.getAppMetrics()) s.add(m.pid); } catch (e) { void e; }
@@ -5755,6 +6088,8 @@ function _startFocusWatcher() {
     const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand',
       Buffer.from(_focusScript(process.pid), 'utf16le').toString('base64')], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     _focusProc = child;
+    // Read EverQuest's window handle now, so the first time the overlays drop they can be tucked above EQ at once.
+    try { if (_overlaysFollowEqOn(loadConfig(), process.platform)) _eqWindowGeometry(60 * 1000).catch(() => {}); } catch (e) { void e; }
     let buf = '';
     child.stdout.on('data', (chunk) => {
       buf += chunk.toString();
@@ -5782,9 +6117,10 @@ function _stopFocusWatcher() {
 // passes follow, and the dashboard hears about it.
 function _onFocusGateOptionChanged() {
   let on = false;
-  try { on = _focusGateOn(loadConfig(), process.platform); } catch (e) { void e; }
+  try { on = _focusWatcherWanted(loadConfig(), process.platform); } catch (e) { void e; }
   if (on) { _focusFailLogged = false; _startFocusWatcher(); } else _stopFocusWatcher();
   try { applyAllVisibility(); } catch (e) { void e; }
+  try { _applyOverlayZ(); } catch (e) { void e; }   // follow-EQ switched off (or stay-on-top changed): raise / drop to match
   try { pushStatus(); } catch (e) { void e; }
 }
 function applyOverlayVisibility() {
@@ -6065,6 +6401,109 @@ function applyMeVisibility() {
   const shouldShow = unlocked || _blindForceOpen('me') || (cfg.showMe && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) meWindow.showInactive(); else meWindow.hide();
 }
+
+// Spawn map (Mimic 2.9, beta; the guild lead, 2026-10-12: "2d overlay on beta with spawn timer tracking").
+// Layout C, the tracker: the zone map with spawn dots, you / group / raid / target, and the active respawn
+// timers beside it. Reads the agent's /api/map-state once a second. Opt-in (default off), not dockable (a
+// pane cannot hold a pannable map), and click-through when locked except its buttons, dots and rows.
+function createMapOverlay() {
+  if (_agentOnly()) return;
+  const b = _resolveBounds('mapBounds', 'mapBoundsSig', { x: 60, y: 120, width: 760, height: 480 });
+  mapWindow = new BrowserWindow({
+    title: 'Wolf Pack miMIC — Map overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: _OVERLAY_MIN_W, minHeight: 140,   // narrow: map.html drops its timer list below ~420px
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: _wpPrefs('Map'),
+  });
+  mapWindow.setAlwaysOnTop(true, 'screen-saver');
+  mapWindow.setVisibleOnAllWorkspaces(true);
+  mapWindow.loadFile('map.html');
+  mapWindow.on('moved',  () => _persistBounds('mapBounds', mapWindow));
+  mapWindow.on('resize', () => _persistBounds('mapBounds', mapWindow));
+  mapWindow.once('ready-to-show', () => {
+    mapWindow.webContents.send('agent-port', agentPort);
+    applyMapVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(mapWindow, 'map');
+  });
+}
+function applyMapVisibility() {
+  if (!_live(mapWindow)) return;
+  const cfg = loadConfig();
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
+  const shouldShow = unlocked || (cfg.showMap && !cfg.hideOverlays && _eqGateOk(cfg));
+  if (shouldShow) mapWindow.showInactive(); else mapWindow.hide();
+}
+
+// The Map's respawn-timers list popped out into its own window (the guild lead, 2026-10-13: "Right clicking on the
+// timers clickout should allow you to pop it out and drag it around"; earlier the same night: "Same with timers,
+// detachable and moveable across the screen and locked into place"). It is map.html itself with ?part=timers, which
+// shows only the side list and polls /api/map-state exactly as the Map does (one copy of the list code, like the
+// Timers canvas's triggers.html?part=... panels). While cfg.showMapTimers is on the Map hides its own list
+// (_syncMapTimersPopped tells it); the pop-out's ✕ flips the flag off and the list is back in the Map. A normal
+// overlay otherwise: ✥, ✕, hover handshake, setup, opacity, lock, hide-all, EQ gate, z-order.
+function createMapTimersOverlay() {
+  if (_agentOnly()) return;
+  let def = { x: 840, y: 120, width: 240, height: 360 };
+  if (_live(mapWindow)) {   // first time: beside the Map, at its top-right
+    try { const mb = mapWindow.getBounds(); def = { x: mb.x + mb.width + 8, y: mb.y, width: 240, height: Math.max(140, Math.min(mb.height, 360)) }; } catch (e) { void e; }
+  }
+  const b = _resolveBounds('mapTimersBounds', 'mapTimersBoundsSig', def);
+  mapTimersWindow = new BrowserWindow({
+    title: 'Wolf Pack miMIC — Map timers overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: _OVERLAY_MIN_W, minHeight: 100,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: _wpPrefs('MapTimers'),
+  });
+  mapTimersWindow.setAlwaysOnTop(true, 'screen-saver');
+  mapTimersWindow.setVisibleOnAllWorkspaces(true);
+  mapTimersWindow.loadFile('map.html', { query: { part: 'timers' } });
+  mapTimersWindow.on('moved',  () => _persistBounds('mapTimersBounds', mapTimersWindow));
+  mapTimersWindow.on('resize', () => _persistBounds('mapTimersBounds', mapTimersWindow));
+  mapTimersWindow.once('ready-to-show', () => {
+    mapTimersWindow.webContents.send('agent-port', agentPort);
+    applyMapTimersVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(mapTimersWindow, 'maptimers');
+  });
+}
+function applyMapTimersVisibility() {
+  if (!_live(mapTimersWindow)) return;
+  const cfg = loadConfig();
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
+  const shouldShow = unlocked || (cfg.showMapTimers && !cfg.hideOverlays && _eqGateOk(cfg));
+  if (shouldShow) mapTimersWindow.showInactive(); else mapTimersWindow.hide();
+}
+// Tell the Map whether its list lives in the pop-out. Idempotent (only a change, or force, is sent), so
+// pushStatus - which every flag flip ends with - can call it.
+let _mapTimersPoppedSent = null;
+function _syncMapTimersPopped(force) {
+  let on = false;
+  try { on = !_agentOnly() && !!loadConfig().showMapTimers; } catch (e) { void e; }
+  if (!force && on === _mapTimersPoppedSent) return;
+  _mapTimersPoppedSent = on;
+  if (_live(mapWindow)) { try { mapWindow.webContents.send('map-timers-popped', on); } catch (e) { void e; } }
+}
+// Pop the list out (on) or put it back (off) - the Map's right-click on Timers, and its Timers button while popped.
+// The same internals as the tray / dashboard switch: the flag, the window, visibility, the reaper, the status push.
+function _setMapTimersPopped(on) {
+  const cfg = loadConfig();
+  cfg.showMapTimers = !!on; saveConfig(cfg);
+  if (cfg.showMapTimers && !mapTimersWindow) createMapTimersOverlay(); else applyMapTimersVisibility();
+  _reapDisabledOverlays();
+  pushStatus();
+  return !!cfg.showMapTimers;
+}
+ipcMain.handle('map-timers-pop', (_e, on) => _setMapTimersPopped(!!on));
+ipcMain.handle('map-timers-popped', () => { try { return !_agentOnly() && !!loadConfig().showMapTimers; } catch (e) { return false; } });
+// A click on a timer row in the pop-out centres the Map on that spawn point (the pop-out has no map of its own).
+ipcMain.on('map-centre', (_e, pointId) => {
+  if (_live(mapWindow)) { try { mapWindow.webContents.send('map-centre', pointId); } catch (e) { void e; } }
+});
 
 // Mob Info — current target's catalog stats (HP/AC/resists/special attacks).
 function createMobInfoOverlay() {
@@ -6542,6 +6981,8 @@ const _OVERLAY_WINDOWS = [
   { key: 'command',   flag: 'showCommand',      get: () => commandWindow,   create: createCommandOverlay,      drop: () => { commandWindow = null; } },
   { key: 'popraid',   flag: 'showPopRaid',      get: () => popRaidWindow,   create: createPopRaidOverlay,      drop: () => { popRaidWindow = null; } },
   { key: 'me',        flag: 'showMe',           get: () => meWindow,        create: createMeOverlay,           drop: () => { meWindow = null; } },
+  { key: 'map',       flag: 'showMap',          get: () => mapWindow,       create: createMapOverlay,          drop: () => { mapWindow = null; } },
+  { key: 'maptimers', flag: 'showMapTimers',    get: () => mapTimersWindow, create: createMapTimersOverlay,    drop: () => { mapTimersWindow = null; } },
   { key: 'canvas',    flag: 'showCanvas',       get: () => canvasWindow,    create: createCanvasWindow,        drop: () => { canvasWindow = null; } },
 ];
 
@@ -6801,8 +7242,11 @@ function applyAllVisibility() {
   applyCommandVisibility();
   applyPopRaidVisibility();
   applyMeVisibility();
+  applyMapVisibility();
   applyCanvasVisibility();
+  applyMapTimersVisibility();
   _reapDisabledOverlays();
+  try { _applyOverlayZ(); } catch (e) { void e; }   // a window just shown takes the level the foreground calls for
 }
 
 // Every window we build reports here the moment it is constructed, so no
@@ -6812,6 +7256,9 @@ app.on('browser-window-created', (_e, win) => {
   // A hand-dragged height becomes that overlay's floor (see "Height floor" above).
   // Windows that are not overlays resolve no bounds key and fall straight through.
   try { win.on('will-resize', (_ev, newBounds) => _noteUserResize(win, newBounds)); } catch (e) { void e; }
+  // Overlays follow EverQuest's z-order: a window that comes up (or comes back from hide) while another app is in front
+  // must not appear on top of it. Non-overlays resolve no entry and fall straight through.
+  try { win.on('show', () => { try { _applyOverlayZ(win); } catch (e) { void e; } }); } catch (e) { void e; }
 });
 
 // ── Hide-all-overlays toggle ────────────────────────────────────────────────
@@ -6865,7 +7312,7 @@ const _HIDEALL_FLAGS = [
   'showHud', 'showTriggerOverlay', 'showCharm', 'showPets', 'showMobInfo',
   'showBuffQueue', 'showWho', 'showMelody', 'showZeal', 'showThreat',
   'showChChain', 'showTank', 'showExtTarget', 'showCommand', 'showPopRaid',
-  'showMe', 'showCanvas',
+  'showMe', 'showCanvas', 'showMap', 'showMapTimers',
 ];
 function toggleHideAllOverlays() {
   if (_agentOnly()) return;   // nothing on screen to hide, and it would rewrite the saved overlay flags
@@ -6955,7 +7402,7 @@ let _registeredMiniAccel = null;
 // the dashboard's ON/OFF button does. No defaults: a global shortcut takes its
 // key away from EverQuest, so nobody gets one they did not ask for.
 const _OVERLAY_HOTKEY_KEYS = ['dock', 'hud', 'trigger', 'charm', 'pet', 'mobinfo', 'buffQueue', 'who', 'melody',
-  'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me', 'canvas'];
+  'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me', 'map', 'maptimers', 'canvas'];
 let _registeredOverlayAccels = {};   // overlay key → accelerator bound right now
 let _blockedOverlayAccels = {};      // overlay key → accelerator the OS refused
 let _hotkeyQuiet = false;            // true while the focus gate re-registers: no failure logs, blocked state untouched
@@ -7280,6 +7727,8 @@ function currentStatus() {
     showCommand: !!cfg.showCommand,
     showPopRaid: !!cfg.showPopRaid,
     showMe: !!cfg.showMe,
+    showMap: !!cfg.showMap,
+    showMapTimers: !!cfg.showMapTimers,
     // Timers canvas. canvasOwnsTriggers tells the (hidden) trigger window to
     // speak only, so a pinned callout lives in one place.
     showCanvas: !!cfg.showCanvas,
@@ -7294,6 +7743,10 @@ function currentStatus() {
     hideOverlaysWhenUnfocused: cfg.hideOverlaysWhenUnfocused === true,
     focusGateOn: _focusGateOn(cfg, process.platform),
     focusOk: !!_focusOk,
+    // Overlays follow EverQuest's z-order (Windows): the switch, whether it is live on this machine, and which overlays opt out.
+    overlaysFollowEq: cfg.overlaysFollowEq !== false,
+    zOrderFollows: _overlaysFollowEqOn(cfg, process.platform),
+    stayOnTop: (cfg.stayOnTop && typeof cfg.stayOnTop === 'object') ? Object.assign({}, cfg.stayOnTop) : {},
     // Hide-all flips every show* flag to false, which makes "I turned this off"
     // and "the hotkey hid this" look identical everywhere — the dashboard, the
     // tray, this payload (a member, 2026-08-04: "we should be able to see in the
@@ -7353,6 +7806,7 @@ function pushStatus() {
   if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send('status', s);
   if (tray) tray.setToolTip(tooltipFor(s));
   buildTrayMenu();
+  try { _syncMapTimersPopped(); } catch (e) { void e; }   // the Map hides its own list while the pop-out is on
 }
 function tooltipFor(s) {
   const v = `v${app.getVersion()}`;
@@ -7657,6 +8111,14 @@ function buildTrayMenu() {
         if (mi.checked && !meWindow) createMeOverlay(); else applyMeVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
+    { label: 'Map (zone map, spawn timers) [beta]', type: 'checkbox', checked: !!s.showMap, enabled: !s.hideOverlays, click: (mi) => {
+        const cfg = loadConfig(); cfg.showMap = mi.checked; saveConfig(cfg);
+        if (mi.checked && !mapWindow) createMapOverlay(); else applyMapVisibility(); _reapDisabledOverlays();
+        pushStatus();
+      } },
+    { label: '  ↳ Map timers list as its own window [beta]', type: 'checkbox', checked: !!s.showMapTimers, enabled: !s.hideOverlays, click: (mi) => {
+        _setMapTimersPopped(mi.checked);
+      } },
     // Timers canvas — same internals as the dashboard row (_toggleOverlay /
     // _setCanvasArrange), per the tray ↔ dashboard parity rule.
     { label: 'Canvas (place callouts + timer panels anywhere)', type: 'checkbox', checked: !!s.showCanvas, enabled: !s.hideOverlays, click: () => {
@@ -7679,6 +8141,12 @@ function buildTrayMenu() {
         const cfg = loadConfig(); cfg.overlaysLocked = !mi.checked; saveConfig(cfg);
         applyOverlayInteractivity();
         pushStatus();
+      } },
+    // Stand-in mouse pointer over locked overlays (cfg.standInPointer, default on; the guild lead, 2026-10-13:
+    // "make mouse over configurable"). Same setting as the dashboard's Overlays tab → More….
+    { label: 'Show a mouse pointer over overlays', type: 'checkbox', checked: loadConfig().standInPointer !== false, click: (mi) => {
+        const cfg = loadConfig(); cfg.standInPointer = !!mi.checked; saveConfig(cfg);
+        _broadcastPointer(cfg);
       } },
     // Setup mode — shows every overlay at once with opacity sliders so the
     // user can place + dial them all in a single pass.
@@ -7865,6 +8333,11 @@ function buildTrayMenu() {
       // Same switch as Settings and the dashboard's Overlays tab (all land in _onFocusGateOptionChanged).
       { label: 'Hide overlays + hotkeys when EverQuest/Mimic isn\'t focused', type: 'checkbox', checked: !!s.hideOverlaysWhenUnfocused, visible: !agentOnly, click: (mi) => {
           const cfg = loadConfig(); cfg.hideOverlaysWhenUnfocused = !!mi.checked; saveConfig(cfg);
+          _onFocusGateOptionChanged();
+        } },
+      // Same switch as Settings and the dashboard's Overlays tab; per-overlay "Stay on top" is in each overlay's right-click menu.
+      { label: 'Other apps can draw over overlays when EverQuest isn\'t focused', type: 'checkbox', checked: s.overlaysFollowEq !== false, visible: !agentOnly && process.platform === 'win32', click: (mi) => {
+          const cfg = loadConfig(); cfg.overlaysFollowEq = !!mi.checked; saveConfig(cfg);
           _onFocusGateOptionChanged();
         } },
     ] : []),
@@ -8405,6 +8878,14 @@ ipcMain.handle('overlay-drag-start', (e) => {
   return true;
 });
 ipcMain.handle('overlay-drag-end', () => { _stopWindowDrag(); return true; });
+ipcMain.handle('overlay-resize-start', (e) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (win) win.__wpPreMenuBounds = null;
+    _startWindowResize(win);
+  } catch {}
+  return true;
+});
 
 // An overlay sizes and places its OWN window (2026-09-24): the Me overlay's
 // HUD layout wraps the centre of the screen, so it needs a large window
@@ -8785,6 +9266,39 @@ ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
   } catch {}
   return true;
 });
+// Is the mouse still over the asking overlay's window? The preload's stand-in pointer asks when its forwarded
+// mousemoves stop: leaving a click-through window sends no mouseout, so without this the arrow stayed behind
+// (the guild lead, 2026-10-12: "mouse drawover in our overlays will sometimes leave an artifact in the overlay").
+function _cursorInsideWindow(win) {
+  try {
+    if (!win || win.isDestroyed() || !win.isVisible()) return false;
+    const p = screen.getCursorScreenPoint(), b = win.getBounds();
+    return p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + b.height;
+  } catch { return false; }
+}
+ipcMain.handle('overlay-cursor-inside', (e) => _cursorInsideWindow(BrowserWindow.fromWebContents(e.sender)));
+
+// A tooltip stuck on screen (the guild lead, 2026-10-13: "Sometimes tooltips get stuck on the screen, we need that
+// to fade after a few seconds"). The preload empties the stuck title after TOOLTIP_HIDE_MS and asks for one real
+// mouse move at the last cursor spot: Blink recomputes the tooltip from the (now empty) title and the native
+// tooltip closes. Coordinates arrive in CSS pixels of the page; sendInputEvent wants the view's own pixels, so the
+// overlay's zoom (the size slider is a zoom factor) multiplies them back.
+function _tooltipPoint(p, zoom) {
+  const x = p && p.x, y = p && p.y;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;   // strict: null and '5' are refused, not turned into 0 and 5
+  const z = (Number.isFinite(zoom) && zoom > 0) ? zoom : 1;
+  return { x: Math.round(x * z), y: Math.round(y * z) };
+}
+ipcMain.on('tooltip-refresh', (e, p) => {
+  try {
+    const wc = e.sender;
+    if (!wc || wc.isDestroyed()) return;
+    const win = BrowserWindow.fromWebContents(wc);
+    if (!win || !_overlayEntries().some(([, w]) => w === win)) return;
+    const pt = _tooltipPoint(p, wc.getZoomFactor());
+    if (pt) wc.sendInputEvent({ type: 'mouseMove', x: pt.x, y: pt.y });
+  } catch { /* a destroyed window mid-send */ }
+});
 
 // Toggle a named built-in overlay on/off from the dashboard's Overlays tab.
 // Mirrors the tray checkboxes: flips the cfg pref, creates the window on first
@@ -8910,6 +9424,14 @@ function _toggleOverlay(name) {
       cfg.showMe = !cfg.showMe; saveConfig(cfg);
       if (cfg.showMe && !meWindow) createMeOverlay(); else applyMeVisibility();
       break;
+    case 'map':
+      cfg.showMap = !cfg.showMap; saveConfig(cfg);
+      if (cfg.showMap && !mapWindow) createMapOverlay(); else applyMapVisibility();
+      break;
+    case 'maptimers':
+      cfg.showMapTimers = !cfg.showMapTimers; saveConfig(cfg);
+      if (cfg.showMapTimers && !mapTimersWindow) createMapTimersOverlay(); else applyMapTimersVisibility();
+      break;
     case 'dock':
       // The Dock itself (the guild lead, 2026-08-19: "Dock isn't available from the
       // built in overlays page"). Mirrors the tray's ◫ Dock checkbox exactly.
@@ -9010,6 +9532,7 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
     screens: key && key !== 'canvas' ? _otherScreensFor(win) : [],
     backdrop: key ? !!((cfg.overlayBackdrop || {})[key]) : false,
     arrangeOnShow: !!cfg.autoArrangeOnShow,
+    pointer: cfg.standInPointer !== false,   // the stand-in mouse pointer switch (preload _wpPointerOn)
     growUp: _growUpSetting(cfg, key),
     timersTopDown: !!cfg.triggerTimersTopDown,
     theme: cfg.overlayTheme || 'default',
@@ -9018,8 +9541,21 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
     miniCapable: !!key && _MINI_KEYS.includes(key),
     mini: _miniSetting(cfg, key),
     miniPinned: _miniPinSetting(cfg, key),
+    // "Stay on top" is offered only where it does something: Windows with follow-EQ on.
+    zFollows: _overlaysFollowEqOn(cfg, process.platform),
+    stayOnTop: !!(key && cfg.stayOnTop && cfg.stayOnTop[key] === true),
   };
 });
+// Right-click → "Stay on top" for THIS overlay, and the dashboard row's button (wp-stay-on-top-set): one writer.
+ipcMain.handle('wp-stay-on-top-toggle', (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  let key = null;
+  for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
+  if (!key) return false;
+  const cur = !!(loadConfig().stayOnTop || {})[key];
+  return _setStayOnTop(key, !cur);
+});
+ipcMain.handle('wp-stay-on-top-set', (_e, key, on) => _setStayOnTop(String(key || ''), !!on));
 // Overlay color theme — one global setting for every overlay window, applied
 // renderer-side as a body-level CSS filter (see preload _WP_THEME_CSS). The
 // chrome-menu item cycles through the list; new windows pick the theme up
@@ -9029,7 +9565,7 @@ const _WP_THEMES = ['default', 'light', 'bright', 'soft', 'contrast', 'deutan', 
 // Global opacity — one slider on the dashboard drives every overlay. Writes
 // cfg.overlayOpacity for ALL known keys (so windows opened later inherit it)
 // and re-applies to the live set.
-const _ALL_OVERLAY_KEYS = ['hud','trigger','charm','pets','mobinfo','buffQueue','who','melody','zeal','threat','chchain','tank','exttarget','command','popraid','me'];
+const _ALL_OVERLAY_KEYS = ['hud','trigger','charm','pets','mobinfo','buffQueue','who','melody','zeal','threat','chchain','tank','exttarget','command','popraid','me','map','maptimers'];
 // `field` is overlayOpacity (the whole overlay) or overlayBgAlpha (its
 // background) — see applyOverlayOpacity for the split.
 function _setOpacityAll(field, v) {
@@ -9506,6 +10042,13 @@ ipcMain.handle('hide-overlay', (e) => {
     } else if (win === meWindow) {
       cfg.showMe = false; saveConfig(cfg);
       try { meWindow.hide(); } catch {}
+    } else if (win === mapWindow) {
+      cfg.showMap = false; saveConfig(cfg);
+      try { mapWindow.hide(); } catch {}
+    } else if (win === mapTimersWindow) {
+      // ✕ on the pop-out puts the list back in the Map (pushStatus below tells it).
+      cfg.showMapTimers = false; saveConfig(cfg);
+      try { mapTimersWindow.hide(); } catch {}
     } else if (win === canvasWindow) {
       // Turning the canvas off gives the timers and callouts back to the
       // trigger overlay — same as the tray / dashboard switch.
@@ -9918,6 +10461,18 @@ function _broadcastMute(cfg) {
     try { win.webContents.send('wp-mute', muted); } catch { /* mid-close */ }
   }
 }
+// The stand-in pointer switch (cfg.standInPointer, default on) to every overlay AND its frames: the Canvas and the
+// dock draw their panels in iframes, which run the preload too, and webContents.send reaches only the top frame.
+function _broadcastPointer(cfg) {
+  const on = !(cfg && cfg.standInPointer === false);
+  for (const [, win] of _overlayEntries()) {
+    try {
+      const frames = win.webContents.mainFrame ? win.webContents.mainFrame.framesInSubtree : [];
+      if (frames && frames.length) for (const f of frames) { try { f.send('wp-pointer', on); } catch { /* frame gone */ } }
+      else win.webContents.send('wp-pointer', on);
+    } catch { /* mid-close */ }
+  }
+}
 
 ipcMain.handle('save-config', async (_e, incoming) => {
   const merged = Object.assign(loadConfig(), incoming || {});
@@ -9937,6 +10492,10 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   }
   saveConfig(merged);
   _broadcastMute(merged);
+  if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'standInPointer')) _broadcastPointer(merged);
+  if (incoming && ['hoverOpacity', 'hoverFadeDelay', 'hoverFadeDur'].some(k => Object.prototype.hasOwnProperty.call(incoming, k))) {
+    try { _hoverSettingsChanged(); } catch {}
+  }
   // Re-bind the global hotkeys if the user changed any binding OR enable
   // flag (2026-07-12: backdropHotkey saves were ignored until restart —
   // only hideAllHotkey was in this condition).
@@ -9947,7 +10506,9 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   }
   // The focus gate (Settings checkbox / dashboard toggle): start or stop the
   // watcher and re-run visibility + hotkeys. Turning it off lifts a hold too.
-  if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'hideOverlaysWhenUnfocused')) {
+  if (incoming && (Object.prototype.hasOwnProperty.call(incoming, 'hideOverlaysWhenUnfocused')
+      || Object.prototype.hasOwnProperty.call(incoming, 'overlaysFollowEq')
+      || Object.prototype.hasOwnProperty.call(incoming, 'stayOnTop'))) {
     try { _onFocusGateOptionChanged(); } catch {}
   }
   // 💥 Damage-taken alert flipped from the dashboard Overlays tab — route it
@@ -9981,7 +10542,11 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     if (merged.showCommand      && !commandWindow)   createCommandOverlay();
     if (merged.showPopRaid      && !popRaidWindow)   createPopRaidOverlay();
     if (merged.showMe           && !meWindow)        createMeOverlay();
+    if (merged.showMap          && !mapWindow)       createMapOverlay();
+    if (merged.showMapTimers    && !mapTimersWindow) createMapTimersOverlay();
   } catch (e) { void e; }
+  applyMapVisibility();
+  applyMapTimersVisibility();
   applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyTankVisibility(); applyExtTargetVisibility(); applyCommandVisibility(); applyPopRaidVisibility(); applyMeVisibility(); applyOverlayInteractivity();
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
   // on Windows this writes/removes the HKCU\…\Run registry entry via
@@ -10257,6 +10822,7 @@ function _exitSingleSetup(win) {
       win.webContents.send('overlay-locked', locked);
       win.webContents.send('setup-mode', { active: false, overlayKey: key, scope: 'this' });
     } catch {}
+    try { _applyOverlayZ(win); } catch {}
     return true;
   } catch { return false; }
 }
@@ -10293,6 +10859,7 @@ ipcMain.handle('set-setup-mode-this', (e, on) => {
         win.webContents.send('overlay-locked', locked);
         win.webContents.send('setup-mode', { active: false, overlayKey: key, scope: 'this' });
       } catch {}
+      try { _applyOverlayZ(win); } catch {}
       return true;
     }
     // Unlock + show JUST this window; keep the others' state intact.
@@ -10301,6 +10868,7 @@ ipcMain.handle('set-setup-mode-this', (e, on) => {
     win.setIgnoreMouseEvents(false);
     win.setResizable(true);
     try { win.showInactive(); } catch {}
+    try { _applyOverlayZ(win); } catch {}   // being set up: it stays on top whatever the foreground is
     try {
       win.webContents.send('overlay-locked', false);
       win.webContents.send('setup-mode', { active: true, overlayKey: key, scope: 'this' });
@@ -11483,7 +12051,7 @@ app.whenReady().then(async () => {
 
   // Focus gate watcher, when the option is on (default off). After the hotkeys
   // so a gate that closes finds them registered and releases them.
-  try { if (_focusGateOn(loadConfig(), process.platform)) _startFocusWatcher(); } catch (e) { void e; }
+  try { if (_focusWatcherWanted(loadConfig(), process.platform)) _startFocusWatcher(); } catch (e) { void e; }
 });
 
 app.on('window-all-closed', () => { /* stay alive in tray */ });

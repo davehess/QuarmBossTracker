@@ -82,6 +82,82 @@ function _wpIsInteractive(el) {
   }
   return false;
 }
+
+// ── Stuck tooltips fade (the guild lead, 2026-10-13: "Sometimes tooltips get stuck on the screen, we need that to
+// fade after a few seconds (3 seconds to start)") ───────────────────────────────────────────────────────────────
+// The tooltips are Chromium's native ones, from title="…". A click-through overlay never sees the mouse LEAVE, so the
+// tooltip it opened stays up. TOOLTIP_HIDE_MS after the cursor last moved on a titled element its title moves into
+// data-wp-title (so the tooltip text is empty) and main is asked for one real mouse move at the same spot —
+// 'tooltip-refresh' — which makes Blink recompute the tooltip and closes the native window. The title comes back when
+// the cursor leaves that element. "3 seconds to start": raise or lower the constant when the guild lead says.
+// Registered BEFORE the hover handshake below on purpose: the refresh move is ours, not the user's, so it is
+// swallowed here and cannot arm the window, brighten it or draw the stand-in pointer.
+const TOOLTIP_HIDE_MS = 3000;
+let _wpTipEl = null, _wpTipTimer = null, _wpTipX = 0, _wpTipY = 0, _wpTipSynth = null;
+function _wpTitledAncestor(el) {
+  while (el && el.nodeType === 1) {
+    if (el.hasAttribute('title')) return el.getAttribute('title') ? el : null;   // the nearest title is the one shown
+    el = el.parentElement;
+  }
+  return null;
+}
+// Give the title back. If page code set a NEW title while ours was away, theirs wins and the stash is dropped.
+function _wpTipRestore(el) {
+  if (!el || !el.hasAttribute || !el.hasAttribute('data-wp-title')) return;
+  try {
+    if (!el.getAttribute('title')) el.setAttribute('title', el.getAttribute('data-wp-title'));
+    el.removeAttribute('data-wp-title');
+  } catch (e) {}
+}
+function _wpTipFire() {
+  _wpTipTimer = null;
+  const el = _wpTipEl;
+  if (!el || !el.isConnected || !el.hasAttribute('title')) return;
+  const t = el.getAttribute('title');
+  if (!t) return;
+  el.setAttribute('data-wp-title', t);
+  el.removeAttribute('title');
+  // The point in the TOP page's own pixels: a pane in the dock reports its own, and main adds the zoom.
+  let x = _wpTipX, y = _wpTipY;
+  try {
+    for (let w = window; w !== w.top && w.frameElement; w = w.parent) {
+      const r = w.frameElement.getBoundingClientRect(); x += r.left; y += r.top;
+    }
+  } catch (e) {}
+  _wpTipSynth = { x: _wpTipX, y: _wpTipY, until: Date.now() + 400 };
+  try { ipcRenderer.send('tooltip-refresh', { x: x, y: y }); } catch (e) {}
+}
+function _wpTipTrack(titled) {
+  if (titled === _wpTipEl) return;
+  if (_wpTipTimer) { clearTimeout(_wpTipTimer); _wpTipTimer = null; }
+  _wpTipRestore(_wpTipEl);
+  _wpTipEl = titled;
+  if (titled) _wpTipTimer = setTimeout(_wpTipFire, TOOLTIP_HIDE_MS);
+}
+document.addEventListener('mouseover', function (ev) {
+  if (!_wpOverlayDoc()) return;
+  // Still inside the element whose title is stashed (its children have none): stay quiet until the cursor leaves it.
+  if (_wpTipEl && _wpTipEl.hasAttribute('data-wp-title') && _wpTipEl.contains(ev.target)) return;
+  _wpTipTrack(_wpTitledAncestor(ev.target));
+}, { capture: true, passive: true });
+// Straight off the window (relatedTarget null): the title must not stay stashed.
+document.addEventListener('mouseout', function (ev) {
+  if (!_wpOverlayDoc() || ev.relatedTarget) return;
+  _wpTipTrack(null);
+}, { capture: true, passive: true });
+document.addEventListener('mousemove', function (ev) {
+  if (!_wpOverlayDoc()) return;
+  const s = _wpTipSynth;
+  if (s && Date.now() < s.until && ev.clientX === s.x && ev.clientY === s.y) {
+    _wpTipSynth = null;
+    ev.stopImmediatePropagation();   // our own refresh move: nobody else should treat it as the user's hand
+    return;
+  }
+  _wpTipX = ev.clientX; _wpTipY = ev.clientY;
+  // Settling is what counts: each move on a titled element starts the countdown again.
+  if (_wpTipEl && _wpTipTimer) { clearTimeout(_wpTipTimer); _wpTipTimer = setTimeout(_wpTipFire, TOOLTIP_HIDE_MS); }
+}, { capture: true, passive: true });
+
 let _wpLastAssert = 0;
 document.addEventListener('mousemove', function (ev) {
   if (!_wpOverlayDoc()) return;
@@ -103,6 +179,75 @@ document.addEventListener('mousemove', function (ev) {
 document.addEventListener('mouseout', function (ev) {
   if (!_wpOverlayDoc()) return;
   if (!ev.relatedTarget && _wpHoverArmed) { _wpHoverArmed = false; _hoverOff(); }
+  if (!ev.relatedTarget) _wpGhostHide();
+}, { capture: true, passive: true });
+
+// ── Stand-in pointer over click-through overlays (the guild lead, 2026-10-12) ──
+// "we should show a mouse when we mouseover the map window, otherwise we lose it
+// behind in the EQ window. the same should apply with any of the overlays."
+// While an overlay is click-through the mouse belongs to EQ, which hides the
+// Windows pointer and draws its own INSIDE its 3D scene — underneath every
+// overlay window. Over a solid part of an overlay (the Map, a backdrop, a
+// panel) that pointer is simply covered. {forward:true} still hands us the
+// mousemove, so we draw an arrow at the same spot. Not drawn: over a control
+// (the window is armed, Windows shows its own pointer), on an unlocked overlay
+// (never click-through), or over see-through parts (EQ's pointer shows there,
+// and two would be worse than one).
+// The guild lead, 2026-10-13: "make mouse over configurable, and remove it from the HUD. for Canvas it should only
+// show over the elements". So: one switch for every overlay (cfg.standInPointer, default on: tray + dashboard
+// Overlays tab → More…), never on the HUD (me.html), and on the Canvas only over a panel, never the open screen
+// between them (each panel's own frame draws the arrow over its content).
+let _wpLocked = true, _wpGhost = null, _wpPointerOn = true;
+const _wpPointerNever = _wpDockKey() === 'me';
+ipcRenderer.on('overlay-locked', function (_e, locked) { _wpLocked = !!locked; if (!_wpLocked) _wpGhostHide(); });
+ipcRenderer.on('wp-pointer', function (_e, on) { _wpPointerOn = on !== false; if (!_wpPointerOn) _wpGhostHide(); });
+function _wpGhostHide() { if (_wpGhost) _wpGhost.style.display = 'none'; }
+function _wpAlpha(bg) {
+  const m = /rgba?\(([^)]+)\)/.exec(bg || '');
+  if (!m) return 0;
+  const p = m[1].split(',');
+  return p.length >= 4 ? parseFloat(p[3]) || 0 : 1;
+}
+// Is the point under the cursor painted solid enough to hide EQ's pointer? Only a background colour counts: a
+// <canvas> or picture is usually see-through around what it draws (the HUD ring is a window-sized canvas, and
+// counting it drew a second arrow over open game; 2026-10-12). The Map's dark panel is a CSS background.
+function _wpOverSolid(el) {
+  // The Canvas is screen-sized: only its panels count, not the screen between them.
+  if (document.getElementById('panels') && document.body && document.body.hasAttribute('data-wp-overlay')) {
+    if (!(el && el.closest && el.closest('#panels > .panel'))) return false;
+  }
+  if (document.body && document.body.classList.contains('wp-backdrop')) return true;
+  while (el && el.nodeType === 1 && el !== document.documentElement) {
+    try { if (_wpAlpha(getComputedStyle(el).backgroundColor) >= 0.35) return true; } catch (e) { return false; }
+    el = el.parentElement;
+  }
+  return false;
+}
+// Leaving a click-through window sends no mouseout, so once the forwarded mousemoves stop, ask main whether the
+// mouse is still over this window and hide the arrow when it is not (it used to stay behind as an artifact).
+let _wpGhostAt = 0, _wpGhostTimer = null;
+function _wpGhostWatch() {
+  if (_wpGhostTimer) return;
+  _wpGhostTimer = setInterval(function () {
+    if (!_wpGhost || _wpGhost.style.display === 'none') { clearInterval(_wpGhostTimer); _wpGhostTimer = null; return; }
+    if (Date.now() - _wpGhostAt < 150) return;   // still moving: the mousemoves keep it right
+    ipcRenderer.invoke('overlay-cursor-inside').then(function (inside) { if (!inside) _wpGhostHide(); }, _wpGhostHide);
+  }, 250);
+}
+document.addEventListener('mousemove', function (ev) {
+  if (!_wpOverlayDoc()) return;
+  _wpGhostAt = Date.now();
+  if (!_wpPointerOn || _wpPointerNever || !_wpLocked || _wpHoverArmed || !_wpOverSolid(ev.target)) { _wpGhostHide(); return; }
+  if (!_wpGhost) {
+    _wpGhost = document.createElement('div');
+    // On <html>, outside <body>, so the colour themes' body filter never recolours it.
+    _wpGhost.style.cssText = 'position:fixed;left:0;top:0;width:16px;height:22px;pointer-events:none;z-index:2147483647;display:none';
+    _wpGhost.innerHTML = '<svg width="16" height="22" viewBox="0 0 16 22"><path d="M1 1 L1 17 L5 13.2 L8 20 L10.6 18.9 L7.7 12.3 L13 12.3 Z" fill="#fff" stroke="#000" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+    document.documentElement.appendChild(_wpGhost);
+  }
+  _wpGhost.style.transform = 'translate(' + ev.clientX + 'px,' + ev.clientY + 'px)';
+  _wpGhost.style.display = 'block';
+  _wpGhostWatch();
 }, { capture: true, passive: true });
 
 // ── Solid backdrop (a member, 2026-07-10) ────────────────────────────────────
@@ -206,8 +351,8 @@ const _WP_MINI_CSS =
   'body.wp-mini{--wp-mini-bar-h:4px}' +
   // Chrome fades rather than hides: a mini overlay is still draggable and
   // closable, and a control that vanishes reads as a control that is gone.
-  'body.wp-mini #move-btn,body.wp-mini #hide-btn{opacity:0.12;transition:opacity 0.12s ease}' +
-  'body.wp-mini:hover #move-btn,body.wp-mini:hover #hide-btn{opacity:1}' +
+  'body.wp-mini #move-btn,body.wp-mini #hide-btn,body.wp-mini #wp-grip{opacity:0.12;transition:opacity 0.12s ease}' +
+  'body.wp-mini:hover #move-btn,body.wp-mini:hover #hide-btn,body.wp-mini:hover #wp-grip{opacity:1}' +
   'body.wp-mini .wp-mini-hide{display:none !important}' +
   'body.wp-mini .wp-mini-bar{height:var(--wp-mini-bar-h) !important;border-radius:2px}' +
   'body.wp-mini .wp-mini-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}' +
@@ -235,7 +380,7 @@ ipcRenderer.on('wp-mini', function (_e, p) { _wpApplyMini(p && p.mini); });
 // One rule for every overlay, keyed on those ids rather than on each page's
 // own container (the DPS HUD and trigger alerts have no #wrap).
 const _WP_OPACITY_CSS =
-  'body>:not(#move-btn):not(#hide-btn):not(#clear-btn):not(#drag-controls):not(#setupbar)' +
+  'body>:not(#move-btn):not(#hide-btn):not(#clear-btn):not(#drag-controls):not(#setupbar):not(#wp-grip)' +
   ':not(#wpResizeMenu):not(#mimic-conn-banner):not(#mimic-update-banner):not(#wp-cvd-defs):not(script):not(style)' +
   '{opacity:var(--wp-content-alpha,1)}';
 ipcRenderer.on('content-alpha', function (_e, v) {
@@ -247,6 +392,59 @@ ipcRenderer.on('content-alpha', function (_e, v) {
     if (s && document.activeElement !== s) s.value = String(a);
     if (t && document.activeElement !== s) t.textContent = Math.round(a * 100) + '%';
   } catch (e) {}
+});
+
+// ── Mouse-over opacity (the guild lead, 2026-10-13; main.js "Mouse-over opacity" owns the settings, the cursor poll
+// and the fade) ─────────────────────────────────────────────────────────────────────────────────────────────────────
+// Forwarded mousemoves tell main the cursor is over THIS overlay (a ping at most every 200 ms; main treats a repeat
+// as nothing). Main sends back 'wp-hover-alpha' — the opacity to show right now — and it lands on the same
+// --wp-content-alpha variable the normal opacity uses, without touching the setup bar's slider. The Canvas is
+// screen-sized and never brightens (main refuses it too; this only saves the traffic).
+let _wpHoverPingAt = 0;
+document.addEventListener('mousemove', function () {
+  if (!_wpOverlayDoc()) return;
+  if (document.getElementById('panels') && document.body.hasAttribute('data-wp-overlay')) return;
+  const now = Date.now();
+  if (now - _wpHoverPingAt < 200) return;
+  _wpHoverPingAt = now;
+  try { ipcRenderer.send('overlay-hover-ping'); } catch (e) {}
+}, { capture: true, passive: true });
+ipcRenderer.on('wp-hover-alpha', function (_e, v) {
+  const a = (typeof v === 'number' && v >= 0.15 && v <= 1) ? v : 1;
+  try { document.documentElement.style.setProperty('--wp-content-alpha', String(a)); } catch (e) {}
+});
+
+// ── ◢ Resize corner (the guild lead, 2026-10-13: "Map needs a resize drag corner at the bottom right, as do all
+// of the windows, to resize without having to setup") ──────────────────────────────────────────────────────────
+// Every overlay window with the ✥ chrome gets one, locked or not; main's _startWindowResize does the sizing (the
+// same 60 fps cursor session as a ✥ drag). data-wp-interact arms the click-through window under it. Not on a
+// docked pane (the dock is one window), the Canvas (screen-sized; its panels have their own) or the HUD (the
+// ring sizes its own window around the screen centre).
+document.addEventListener('DOMContentLoaded', function () {
+  try {
+    if (WP_IS_DOCKED || !document.getElementById('move-btn') || _wpDockKey() === 'me') return;
+    const st = document.createElement('style');
+    st.textContent = '#wp-grip{position:fixed;right:0;bottom:0;width:14px;height:14px;z-index:2147483000;cursor:nwse-resize;'
+      + 'opacity:0.45;background:linear-gradient(135deg,transparent 0 55%,rgba(230,237,243,.85) 55% 62%,transparent 62% 72%,'
+      + 'rgba(230,237,243,.85) 72% 79%,transparent 79% 89%,rgba(230,237,243,.85) 89% 96%,transparent 96%)}'
+      + '#wp-grip:hover{opacity:1}';
+    document.head.appendChild(st);
+    const g = document.createElement('div');
+    g.id = 'wp-grip';
+    g.setAttribute('data-wp-interact', '');
+    g.title = 'Drag to resize';
+    g.addEventListener('mousedown', function (ev) {
+      if (ev.button !== 0) return;
+      ev.preventDefault(); ev.stopPropagation();
+      ipcRenderer.invoke('overlay-resize-start');
+      const end = function () {
+        document.removeEventListener('mouseup', end, true);
+        ipcRenderer.invoke('overlay-drag-end');
+      };
+      document.addEventListener('mouseup', end, true);
+    });
+    document.body.appendChild(g);
+  } catch (e) { void e; }
 });
 
 // Mute (Settings → "Mute Mimic", cfg.quietMode): main broadcasts one boolean
@@ -303,6 +501,7 @@ document.addEventListener('DOMContentLoaded', function () {
       + (WP_IS_DOCKED ? '' : _WP_OPACITY_CSS);
     document.head.appendChild(st);
     ipcRenderer.invoke('wp-overlay-menu-state').then(function (s) {
+      if (s && s.pointer === false) _wpPointerOn = false;   // the stand-in pointer switch, pulled at load
       if (s && s.backdrop && _wpOverlayDoc()) document.body.classList.add('wp-backdrop');
       if (s && s.theme) _wpApplyTheme(s.theme);
       // Mini is PULLED at load, not only pushed. A window created while its
@@ -429,6 +628,12 @@ function _buildOverlayMenu(onClose, state) {
       () => ipcRenderer.invoke('wp-mini-pin-toggle')));
   }
   menu.appendChild(mkItem('👁 Hide this overlay', '#6b2130', () => ipcRenderer.invoke('hide-overlay')));
+  // Windows: overlays sit under other apps while EverQuest isn't focused (main's _applyOverlayZ); this keeps THIS one on top
+  // always. Built only where that follow-EQ behaviour is live, so it is never a switch that does nothing.
+  if (st.zFollows) {
+    menu.appendChild(mkItem('🔝 Stay on top: ' + (st.stayOnTop ? 'ON' : 'off') + ' (this overlay)', '#2f3a1f',
+      () => ipcRenderer.invoke('wp-stay-on-top-toggle')));
+  }
   menu.appendChild(mkItem('🌫 Background: ' + (st.backdrop ? 'ON' : 'off') + ' (this overlay)', '#3a3320',
     () => ipcRenderer.invoke('wp-backdrop-toggle')));
   // Bottom-anchored auto-height — for overlays parked near the bottom edge
@@ -687,6 +892,9 @@ contextBridge.exposeInMainWorld('mimic', {
   setAllOpacity:   (v)    => ipcRenderer.invoke('wp-opacity-all', v),
   setAllBgAlpha:   (v)    => ipcRenderer.invoke('wp-bg-alpha-all', v),
   toggleBackdrops: ()     => ipcRenderer.invoke('wp-backdrop-toggle-all'),
+  // 🔝 Stay on top (Windows: overlays otherwise sit under other apps while EverQuest isn't focused). The dashboard row
+  // and the right-click menu's row reach the same main-side writer, _setStayOnTop.
+  setOverlayStayOnTop: (key, on) => ipcRenderer.invoke('wp-stay-on-top-set', key, !!on),
   // ▭ Mini mode, for the dashboard's Overlays tab. Tray↔dashboard parity
   // (CLAUDE.md): the right-click menu's two rows and the Ctrl+Shift+M hotkey
   // all reach the SAME internals through main's _setOverlayMini, never a
@@ -764,6 +972,17 @@ contextBridge.exposeInMainWorld('mimic', {
   // surface (EQ hidden) rather than a dimmed window (text + bg fade together).
   // Text colors stay at full brightness; only the card surface alpha changes.
   onBgAlpha:        (cb)         => ipcRenderer.on('bg-alpha', (_e, v) => cb(v)),
+  // Map overlay: your / group / raid / target positions pushed straight from the Zeal pipe (main.js _makeMapDirect),
+  // in the server frame, at most every 50 ms. The Map falls back to the agent's poll when these stop.
+  onMapPos:         (cb)         => ipcRenderer.on('map-pos', (_e, p) => cb(p)),
+  // Map timers pop-out (the guild lead, 2026-10-13): the Map's respawn list in a window of its own (map.html?part=timers).
+  // mapTimersPop(on) is the right-click on the Timers button / the button while popped; getMapTimersPopped + onMapTimersPopped
+  // tell the Map whether its own list is out; the pop-out's row click asks the Map to centre on a spawn point.
+  mapTimersPop:       (on)         => ipcRenderer.invoke('map-timers-pop', !!on),
+  getMapTimersPopped: ()           => ipcRenderer.invoke('map-timers-popped'),
+  onMapTimersPopped:  (cb)         => ipcRenderer.on('map-timers-popped', (_e, on) => cb(!!on)),
+  mapCentreOn:        (pointId)    => ipcRenderer.send('map-centre', pointId),
+  onMapCentre:        (cb)         => ipcRenderer.on('map-centre', (_e, id) => cb(id)),
 
   // Manual overlay drag — replaces the buggy Chromium app-region drag on
   // transparent windows. Renderer mousedown on the ✥ handle calls
