@@ -12,13 +12,17 @@
   body.setup #wrap{top:26px}
   /* Background: colour and strength from ⚙ Map settings (--map-bg / --map-bg-a); unset = Mimic's own background slider. */
   #mapPane{position:relative;flex:1 1 auto;min-width:0;background:rgb(var(--map-bg, 19 26 38) / var(--map-bg-a, var(--bg-alpha)));border-radius:6px;overflow:hidden}
-  /* ⚙ Map settings: a panel over the map's right side, like the HUD's builder (sticky head, groups, ↺ per row). */
-  #cfg{position:absolute;top:0;right:0;bottom:0;width:236px;max-width:100%;box-sizing:border-box;z-index:20;overflow-y:auto;overflow-x:hidden;
-    background:rgba(13,17,23,0.97);border-left:1px solid rgba(110,118,129,0.5);padding:0 8px 8px;font-size:10.5px;color:#c9d1d9;text-shadow:none}
+  /* ⚙ Map settings, like the HUD's builder (sticky head, groups, ↺ per row). It opens in the side column where the
+     Timers list sits, so the whole map stays in view while you change it (the guild lead, 2026-10-13: "the
+     customization should open up to a new section to the side where the timers would be so you can update the map at
+     the same time"). Same width as the list, so it takes the list's slot; see setCfgOpen. */
+  #cfg{flex:0 0 210px;box-sizing:border-box;min-height:0;overflow-y:auto;overflow-x:hidden;border-radius:6px;
+    background:rgba(13,17,23,0.97);border:1px solid rgba(110,118,129,0.5);padding:0 8px 8px;font-size:10.5px;color:#c9d1d9;text-shadow:none}
   #cfg[hidden]{display:none}
+  #wrap.cfgopen #side{display:none}
   #cfg::-webkit-scrollbar{width:10px}
   #cfg::-webkit-scrollbar-thumb{background:#484f58;border-radius:5px;border:2px solid rgba(13,17,23,0.95)}
-  #cfg .chead{position:sticky;top:0;z-index:1;background:rgba(13,17,23,0.99);padding:7px 0 5px;border-bottom:1px solid rgba(110,118,129,0.4);
+  #cfg .chead{position:sticky;top:0;z-index:1;background:rgba(13,17,23,0.99);padding:7px 26px 5px 0;border-bottom:1px solid rgba(110,118,129,0.4);
     display:flex;align-items:center;gap:6px;font-size:12px}
   #cfg .chead .sp{flex:1}
   #cfg .grp{margin:9px 0 3px;color:#8b949e;text-transform:uppercase;font-size:9.5px;letter-spacing:.5px}
@@ -47,7 +51,7 @@
      take up less space if we weren't focused on that"): a top-right button on the map; slid in, the map takes the width. */
   #sideBtn{position:absolute;top:6px;right:6px;z-index:6}
   #wrap.noside #side{display:none}
-  #wrap.noside #sideBtn{right:30px}   /* slid in, the map's top-right is the window's: keep clear of the ✕ */
+  #wrap.noside:not(.cfgopen) #sideBtn{right:30px}   /* slid in, the map's top-right is the window's: keep clear of the ✕ */
   .tb{height:18px;padding:0 6px;border-radius:4px;background:rgba(14,17,22,0.7);color:#c9d1d9;
     border:1px solid rgba(110,118,129,0.45);font:inherit;font-size:10px;line-height:1;cursor:pointer}
   .tb:hover{color:#fff;border-color:#58a6ff}
@@ -158,6 +162,9 @@
         <button class="tb" id="cfgBtn" type="button" title="Map settings: what is drawn, the height ranges, the ability icons, colours and the background">⚙</button>
       </div>
       <button class="tb" id="sideBtn" type="button" title="Slide the respawn timers list in or out. Slid in, the map takes the whole width.">Timers ▸</button>
+      <div id="card"></div>
+      <div id="menu"></div>
+    </div>
       <!-- ⚙ Map settings (the guild lead, 2026-10-12: "a config section for the map that pops up similar to the hud's").
            Rows are built in JS from CFG_SHOW / CFG_GLYPHS / CFG_COLS; data-wp-interact arms the click-through window. -->
       <div id="cfg" hidden data-wp-interact>
@@ -180,9 +187,6 @@
         <label class="row"><span class="bl">Label size</span><input type="range" id="cfgText" min="0.7" max="1.8" step="0.1"><span class="val" id="cfgTextVal"></span></label>
         <div class="foot"><span>Saved on this computer.</span><button id="cfgReset" type="button">Reset to default</button></div>
       </div>
-      <div id="card"></div>
-      <div id="menu"></div>
-    </div>
     <div id="side">
       <div id="zone">Map <span style="color:#6e7681">[beta]</span></div>
       <div id="posage" title="Age of the newest position when drawn, and where it came from."></div>
@@ -1405,17 +1409,23 @@
     cfgCommit();
   });
   document.getElementById('cfgReset').addEventListener('click', function () { S.cfg = mapCfgDefaults(); buildCfg(); cfgCommit(); });
+  // ⚙ opens the settings in the side slot, where the Timers list sits (the list steps aside while they are open), so the
+  // map stays fully in view while it changes. If the list was slid in, the slot opens the same way the Timers button
+  // opens it: the window widens ('grow') or the map gives up the width ('share'); closing gives it back.
   var cfgBuilt = false;
   function setCfgOpen(open) {
     if (open && !cfgBuilt) { buildCfg(); cfgBuilt = true; }
+    var before = slotOpen();
     cfgEl.hidden = !open; cfgBtn.classList.toggle('on', open);
+    wrapEl.classList.toggle('cfgopen', open);
+    slotChanged(before);
   }
-  cfgBtn.addEventListener('click', function () { setCfgOpen(cfgEl.hidden); });
+  cfgBtn.addEventListener('click', function () { setCfgOpen(!cfgOpen()); });
   document.getElementById('cfgClose').addEventListener('click', function () { setCfgOpen(false); });
   // The top-right button slides the timers list out and back in. 'grow' (the guild lead, 2026-10-12: "an option for the
   // timers to slide out and take additional space rather than shrinking the map") widens or narrows the WINDOW by the
   // list's width so the map keeps its size; 'share' keeps the window and the map pane takes or gives the width.
-  var SIDE_W = 216;   // #side's 210px + the 6px gap
+  var SIDE_W = 216;   // #side's 210px + the 6px gap (the settings panel is the same width)
   var sideBtn = document.getElementById('sideBtn'), wrapEl = document.getElementById('wrap');
   var sideModeSel = document.getElementById('sideModeSel');
   function syncSide() {
@@ -1424,12 +1434,24 @@
     sideBtn.classList.toggle('on', !S.sideOpen);
     sideModeSel.value = S.sideMode;
   }
-  sideBtn.addEventListener('click', function () {
-    S.sideOpen = !S.sideOpen; lsSet('wp-map-side', S.sideOpen ? 1 : 0); syncSide();
+  // Is the side slot showing anything (the Timers list or the settings)?
+  function cfgOpen() { return wrapEl.classList.contains('cfgopen'); }
+  function slotOpen() { return S.sideOpen || cfgOpen(); }
+  function slotChanged(before) {
+    var after = slotOpen();
     var w0 = window.outerWidth || window.innerWidth || 0, h0 = window.outerHeight || window.innerHeight || 0;
-    if (S.sideMode === 'grow' && w0 && h0 && window.mimic && typeof window.mimic.overlaySetBounds === 'function') {
-      window.mimic.overlaySetBounds({ width: w0 + (S.sideOpen ? SIDE_W : -SIDE_W), height: h0 });   // resize follows via the observer
+    if (before !== after && S.sideMode === 'grow' && w0 && h0 && window.mimic && typeof window.mimic.overlaySetBounds === 'function') {
+      window.mimic.overlaySetBounds({ width: w0 + (after ? SIDE_W : -SIDE_W), height: h0 });   // resize follows via the observer
     } else resize();
+  }
+  sideBtn.addEventListener('click', function () {
+    var before = slotOpen();
+    if (cfgOpen()) {   // settings in the slot: the button brings the list back in their place
+      cfgEl.hidden = true; cfgBtn.classList.remove('on'); wrapEl.classList.remove('cfgopen');
+      S.sideOpen = true;
+    } else S.sideOpen = !S.sideOpen;
+    lsSet('wp-map-side', S.sideOpen ? 1 : 0); syncSide();
+    slotChanged(before);
   });
   sideModeSel.addEventListener('change', function () {
     S.sideMode = sideModeSel.value === 'share' ? 'share' : 'grow'; lsSet('wp-map-side-mode', S.sideMode);

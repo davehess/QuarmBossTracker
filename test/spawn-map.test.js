@@ -16,7 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { EventEmitter } from 'node:events';
-import { readSource, sliceBlock, stripJs, AGENT_INDEX, ROOT } from './_source-slice.js';
+import { readSource, sliceBlock, stripJs, stripCss, AGENT_INDEX, ROOT } from './_source-slice.js';
 
 const AGENT = readSource(AGENT_INDEX);
 const CORE = sliceBlock(AGENT, '// ── Spawn map core (Mimic 2.9', '// ── end Spawn map core ──');
@@ -996,6 +996,35 @@ describe('pather routes', () => {
     expect(calls.length).toBe(0);                                     // share: no window resize
     s.all.sideModeSel.value = 'grow'; s.all.sideModeSel.listeners.change.forEach(f => f());
     expect(s.store['wp-map-side-mode']).toBe('grow');
+  });
+  it('⚙ opens the settings in the Timers slot beside the map, not over it (the guild lead, 2026-10-13)', async () => {
+    // "the customization should open up to a new section to the side where the timers would be so you can update the
+    // map at the same time"
+    const calls = [];
+    const mimic = { overlaySetBounds: (b) => { calls.push(b); return Promise.resolve(true); } };
+    // the list is out: the settings take its slot, the window stays the same size
+    const a = await bootOverlay({ mimic, winSize: { outerWidth: 760, outerHeight: 480 } });
+    a.all.cfgBtn.listeners.click.forEach(f => f());
+    expect(a.all.wrap.classList.contains('cfgopen')).toBe(true);
+    expect(a.all.cfg.hidden).toBe(false);
+    expect(calls.length).toBe(0);
+    a.all.sideBtn.listeners.click.forEach(f => f());                  // Timers while the settings are open: the list comes back
+    expect(a.all.wrap.classList.contains('cfgopen')).toBe(false);
+    expect(a.all.cfg.hidden).toBe(true);
+    expect(a.S.sideOpen).toBe(true);
+    expect(calls.length).toBe(0);
+    // the list is slid in ('grow'): opening the settings widens the window by the slot, closing gives it back
+    const b = await bootOverlay({ mimic, store: { 'wp-map-side': '0' }, winSize: { outerWidth: 544, outerHeight: 480 } });
+    b.all.cfgBtn.listeners.click.forEach(f => f());
+    expect(calls.pop()).toEqual({ width: 760, height: 480 });
+    b.all.cfgClose.listeners.click.forEach(f => f());
+    expect(calls.pop()).toEqual({ width: 328, height: 480 });          // 544 - 216 (the mock window does not resize)
+    // markup: the panel is a column of #wrap after the map pane, not inside it; the side list hides while it is open
+    const css = stripCss(MAP_HTML);
+    expect(css).toMatch(/#cfg\{flex:0 0 210px;/);
+    expect(css).toMatch(/#wrap\.cfgopen #side\{display:none\}/);
+    expect(MAP_HTML.indexOf('<div id="cfg" hidden data-wp-interact>')).toBeGreaterThan(MAP_HTML.indexOf('<div id="menu"></div>'));
+    expect(MAP_HTML.indexOf('<div id="cfg" hidden data-wp-interact>')).toBeLessThan(MAP_HTML.indexOf('<div id="side">'));
   });
   it('Spawn height: spawn points further above or below you than the slider are hidden (default: all)', async () => {
     const shown = (all) => all.hits.children.filter(h => !h.hidden).length;
