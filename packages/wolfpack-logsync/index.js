@@ -35247,6 +35247,10 @@ function parseQuarmyExport(text) {
       if (Number.isFinite(idx) && Number.isFinite(rank) && rank > 0) out.aas.push({ index: idx, rank });
     }
   }
+  // The Map's faction maths needs race and deity, which Zeal does not send: keep this export's (_mapMe).
+  if (out.profile && out.profile.name) {
+    _mapQuarmyIds.set(out.profile.name.toLowerCase(), { race_id: out.profile.race_id, class_id: out.profile.class_id, deity_id: out.profile.deity_id });
+  }
   return out;
 }
 
@@ -44827,12 +44831,12 @@ function _mapFetchZone(rec, zoneId, now) {
 // The zone's data if we hold any (disk or fetched); starts a fetch when one is due and allowed.
 function _mapEnsureZone(short, zoneId, now) {
   const rec = _mapZoneRec(short);
-  // A zone cached before bot 3.1.253 carries no faction (nor, before 3.1.252, aggro radius) on its NPCs (the Map's
-  // aggro rings, 2026-10-13): re-check it early instead of waiting out the day, at most every 10 minutes while the
-  // field is still missing. (It was once per run at first, and a check that landed on the old bot during its deploy
-  // left the rings off until a restart.)
+  // A zone cached before bot 3.1.254 carries no primary faction (`pf`; nor, before 3.1.252/253, aggro radius or
+  // faction) on its NPCs (the Map's aggro rings, 2026-10-13): re-check it early instead of waiting out the day, at
+  // most every 10 minutes while the field is still missing. (It was once per run at first, and a check that landed on
+  // the old bot during its deploy left the rings off until a restart.)
   const p0 = rec.body && Array.isArray(rec.body.points) ? rec.body.points[0] : null;
-  const noAggro = !!(p0 && Array.isArray(p0.npcs) && p0.npcs[0] && !('fac' in p0.npcs[0]))
+  const noAggro = !!(p0 && Array.isArray(p0.npcs) && p0.npcs[0] && !('pf' in p0.npcs[0]))
     && now - (rec.aggroAskedAt || 0) >= MAP_FAIL_RETRY_MS;
   const due = !rec.body || noAggro || (now - rec.fetchedAt) >= MAP_REVALIDATE_MS;
   if (due && !rec.inflight && now >= rec.retryAt && _mapFetchAllowed()) {
@@ -45319,6 +45323,49 @@ const _mapPos = (loc, heading) => { const s = _mapServerXY(loc); return s ? { x:
 // hostile tiers count here: a mob that scowls at you mid-fight is KOS to you right then, and the next calm con
 // corrects it.
 const _mapConByName = new Map();   // charLower|mobLower → { rank, at }
+// Who you are, for the faction maths (the guild lead, 2026-10-13: "if someone has a non-player illusion on it should
+// switch them to red immediately"): race, class and deity ids the way eqemu_faction_list_mod names them (r<id> /
+// c<id> / d<id>), and the race an illusion makes you. Class and deity from Zeal's labels 3 and 4, race from a /who of
+// you, each falling back to your last Quarmy export. illusion: a race id, -1 for a non-player shape we do not name
+// (no race mod at all), null for none.
+const _mapQuarmyIds = new Map();   // charLower → { race_id, class_id, deity_id } (parseQuarmyExport)
+const MAP_RACE_IDS = { human: 1, barbarian: 2, erudite: 3, 'wood elf': 4, 'high elf': 5, 'dark elf': 6, 'half elf': 7,
+  'half-elf': 7, dwarf: 8, troll: 9, ogre: 10, halfling: 11, gnome: 12, iksar: 128, 'vah shir': 130, werewolf: 14,
+  froglok: 26, wolf: 42, bear: 43, imp: 46, skeleton: 60, elemental: 75, scarecrow: 82, spectre: 85, 'eye of zomm': 108,
+  'wolf elemental': 120, 'iksar skeleton': 161 };
+const MAP_CLASS_IDS = { warrior: 1, cleric: 2, paladin: 3, ranger: 4, 'shadow knight': 5, shadowknight: 5, druid: 6, monk: 7,
+  bard: 8, rogue: 9, shaman: 10, necromancer: 11, wizard: 12, magician: 13, enchanter: 14, beastlord: 15 };
+const MAP_DEITY_IDS = { bertoxxulous: 201, 'brell serilis': 202, 'cazic thule': 203, 'erollisi marr': 204, bristlebane: 205,
+  innoruuk: 206, karana: 207, 'mithaniel marr': 208, prexus: 209, quellious: 210, 'rallos zek': 211, 'rodcet nife': 212,
+  'solusek ro': 213, 'the tribunal': 214, tribunal: 214, tunare: 215, veeshan: 216, agnostic: 396 };
+const MAP_ILLUSION_FORMS = { 'wolf form': 42, 'greater wolf form': 42 };   // the druid wolf forms change your race too
+function _mapIdOf(table, v) {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  if (Number.isInteger(n) && n > 0) return n;
+  const k = String(v).trim().toLowerCase();
+  return table[k] != null ? table[k] : null;
+}
+function _mapMe(character, st) {
+  const cl = String(character || '').toLowerCase();
+  const q = _mapQuarmyIds.get(cl) || {};
+  const w = whoData.get(cl) || {};
+  const ci = Array.isArray(st && st.charInfo) ? st.charInfo : [];
+  const label = (id) => { const h = ci.find(x => x && x.id === id && x.value); return h ? h.value : null; };
+  let illusion = null;
+  for (const b of (st && Array.isArray(st.buffs) ? st.buffs : [])) {
+    const low = String(b && b.name || '').trim().toLowerCase();
+    const m = /^illusion:\s*(.+)$/.exec(low);
+    if (m) { illusion = MAP_RACE_IDS[m[1].trim()] || -1; break; }
+    if (MAP_ILLUSION_FORMS[low]) { illusion = MAP_ILLUSION_FORMS[low]; break; }
+  }
+  return {
+    race: _mapIdOf(MAP_RACE_IDS, w.race) || q.race_id || null,
+    cls: _mapIdOf(MAP_CLASS_IDS, label(3) || w.class) || q.class_id || null,
+    deity: _mapIdOf(MAP_DEITY_IDS, label(4)) || q.deity_id || null,
+    illusion,
+  };
+}
 function _mapNoteCon(line, character, now) {
   if (!line || !character || line.indexOf(' you') === -1) return;
   const m = line.match(_CON_RX);
@@ -45404,7 +45451,11 @@ function _mapStatePayload(have, now, haveLocal) {
   }
   out.version = rec.version;
   out.long_name = rec.body.long_name || out.long_name;
-  if (!have || have !== rec.version) { out.map = rec.body.map || null; out.points = rec.body.points; out.grids = rec.body.grids || null; }
+  if (!have || have !== rec.version) {
+    out.map = rec.body.map || null; out.points = rec.body.points; out.grids = rec.body.grids || null;
+    out.factions = rec.body.factions || null;   // the zone's primary factions (bot 3.1.254): base, caps, race/class/deity mods
+  }
+  out.me = _mapMe(character, st);
   const zd = _mapZoneDoc(zone);
   if (_mapPrune(zd, rec.body.points, now)) _mapSaveSoon();
   out.timers = Object.values(zd.timers).map(t => Object.assign({}, t, { state: _mapTimerState(t, now) })).sort((a, b) => a.earliest - b.earliest);
