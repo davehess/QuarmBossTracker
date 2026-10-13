@@ -9992,3 +9992,16 @@ Harmony, Hide/Sneak for non-rogues).
   While the target is chasing, the "leg to the next waypoint + seconds" is not drawn.
 - **Not done:** legs already learned from earlier chases stay in the local `map_timers.json`. Clearing them needs a
   "forget learned paths" control, offered to the guild lead rather than built.
+
+### 275. A corrected respawn reaches every running Map timer within the hour (2026-10-13, agent 3.7.159 beta `25c9d7ed`)
+
+- **The report** (the guild lead, a screenshot of the Bastion of Thunder named still counting ~6 h): *"Still has the
+  wrong timers"*. §267's bot fix was live (07:32 UTC) and correct; Oreen Wavecrasher died at 14:22 UTC and still ran
+  6 h.
+- **Cause, two parts, both in the agent:** (1) each Mimic re-checked its cached zone data once a day, so a copy taken
+  before the fix kept 6 h; (2) a timer's window was worked out once at the death and stored.
+- **Now:** the zone copy is re-checked hourly (a 304 when nothing changed), and every pass re-works each running
+  timer's window from its death time and the point's current respawn. The death time never moves; with no zone data
+  loaded, a timer is left as it was.
+- **Rule for later:** a stored timer is a death time plus the point's CURRENT respawn, never a frozen window. A fix
+  to a respawn on the board reaches the Map within an hour, for kills already counted too.
