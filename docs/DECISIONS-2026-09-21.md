@@ -9761,3 +9761,46 @@ Harmony, Hide/Sneak for non-rogues).
   its waypoints' bounding box (0 inside). The Map's label for an unpinned target now carries its spawn id.
 - **Kept honest:** twins with a different respawn are still a "?". A box, not a hull: an L-shaped wander grid could
   over-claim its empty corner (marked `ponytail:` in the code).
+
+### 260. Map readout: your /loc, speed and the cursor's /loc; a • spawn-points button (2026-10-13, Mimic beta `d3dff52b`)
+
+- **The ask** (the guild lead, pointing at Zeal's map): *"the run speed and the current player location coordinates in
+  the top left ... as well as the mouseover coordinates where the player's cursor is. Showing/hiding spawnpoints should
+  be a quick-button on the top nav of our map next to the circles."*
+- **Shipped:** top-left of the Map, in /loc order (Y, X): your location, your speed, and the cursor's location while
+  it is over the map (works locked: the window still hears the mouse). • next to ◯ is ⚙ → Spawn points.
+- **Speed is game units a second, not Zeal's "% of normal run".** The pipe sends no speed and we have no measured
+  base run speed to divide by. One unbuffed run timed on the Map would give the base, and then % is a one-line change.
+
+### 261. Faction maths for the Map and the faction page (2026-10-13, bot 3.1.254 `12b7e20d`, agent 3.7.146 beta `546f20df`, web 1.8.145 beta `ca336d28`)
+
+- **The ask** (the guild lead): Plane of Tranquility's mobs are indifferent to everyone, so green. Plane of Valor gives
+  every player race +1000 on a -1000 base, so a NON-player illusion (no race mod) makes them scowl: *"If someone has a
+  non-player illusion on it should switch them to red immediately."* And on the faction page: modifiers by name and
+  grouped, your characters' default and current standing, raise / lower lists, and faction colours (*"never KOS by
+  default ... green, the ones that can be KOS by default could be orange, the ones that are always KOS should be
+  red"*).
+- **The maths** (one module, three copies kept in step by tests: `utils/factionCon.js`, `web/lib/factionCon.ts`, the
+  Map's own): default value = base + race mod + class mod + deity mod (`eqemu_faction_list_mod` `r<id>/c<id>/d<id>`),
+  held to the caps only when a cap is set (0/0 = no cap). Con tiers are EQEmu's `CalculateFaction` bands (ally 1100,
+  warmly 750, kindly 500, amiably 100, indifferent 0, apprehensive -100, dubious -700, threatening -999, else scowls).
+  **KOS = below -700** (threatening attacks on a roll, scowls always). Never / some / always KOS = the range over all
+  14 player races x 15 classes x 17 deities.
+- **Map:** the bot sends each NPC's primary faction (`pf`) and the zone's factions; the agent sends who you are
+  (class and deity from Zeal labels 3 and 4, race from a /who of you or your last Quarmy export, an illusion from your
+  buffs). Order: an illusion the faction does not see through wins (even over an older con); else your con (it
+  includes earned faction); else the maths for you, an unknown dimension spreading over every player choice. Red when
+  you are or could be KOS; green when the faction is never KOS to anyone; else yellow.
+- **Website:** https://b.wolfpack.quest/db/faction/1655?v=b on beta, the default view untouched until a pick.
+- **Not done:** the Map knows your race only from a /who of yourself or a Quarmy export; Zeal sends no race. An
+  illusion we do not name counts as no race at all. Faction-coloured links elsewhere on the site (the one internal link
+  is on /db/npc) wait for the pick.
+
+### 262. Map: the target's walked path, Opacity first, zoom and pan from the Pan / zoom button (2026-10-13, Mimic beta `d646bdd4`)
+
+- **The ask** (the guild lead): *"Can we show the path that we observed a mob walking towards? Own strength should say
+  opacity in the options and should be right at the top. If you mouse over pan /zoom you should be able to zoom in and
+  out, and if you click and drag on that button we should pan."*
+- **Shipped:** your target's positions since you targeted it (three minutes, fading) with an arrowhead down its last
+  stretch (⚙ → Target's walked path); "Own strength" renamed Opacity and moved to the top of Map settings; the wheel
+  over Pan / zoom zooms and a drag from it pans, both while locked, a plain click still toggles Pan.
