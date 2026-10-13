@@ -27,7 +27,7 @@ const EXPORTS = ['_mapServerXY', '_mapZoneShort', '_mapNormName', '_mapAttribute
   '_mapApplyMark', '_mapNoteDeath', '_mapNoteState', '_mapNoteLogDeath', '_mapStatePayload', '_mapSaveNow', '_mapDoc',
   '_mapZoneDoc', '_mapPrune', '_mapEnsureZone', '_mapPaths', '_zealState', '_setRaid', '_setOpts', 'MAP_ZONE_SHORT',
   '_mapTryPin', '_mapPinGet', '_mapSync', '_mapSyncStop', '_mapSyncFlush', '_mapSyncPull', '_mapApplyRemote', '_mapLocalEvent',
-  '_mapSegDist', '_mapRouteDist'];
+  '_mapSegDist', '_mapRouteDist', '_mapCopy', '_mapCopyNoteWho', '_mapCurrentCopy', '_mapCopyInfo', 'whoData'];
 
 // Stand the block up over a temp dir and fake network modules.
 function loadCore({ dir, opts, net }) {
@@ -43,6 +43,7 @@ function loadCore({ dir, opts, net }) {
     const _setRaid = (v) => { _lastRaidPipe = v; };
     function _zoneName(id) { return id === 164 ? 'The Deep' : null; }
     function _eqSetupDirs() { return []; }   // no EQ folder: the local map files are covered by test/map-local-files.test.js
+    const whoData = new Map();               // the agent's /who registry (lower-cased name -> { guild, ... })
   `;
   // eslint-disable-next-line no-new-func
   const f = new Function('fs', 'path', 'http', 'https', 'zlib', '__dirname', '__tmp', '__opts',
@@ -81,6 +82,12 @@ function fakeNet(responder) {
   return { http: mod, https: mod, calls };
 }
 const tick = () => new Promise(r => setImmediate(() => setImmediate(r)));
+// One zone-in as EverQuest writes it to dbg.txt (shape from members' real files, docs/DESIGN-mimic-2.9-spawn-map.md).
+const dbgZoneIn = (ts, port, zone) => [
+  `[${ts}]00521:Zone addr [pq.projectquarm.pq3.projectquarm.com:${port}] received...`,
+  `[${ts}]00522:Zone info received.`,
+  `[${ts}]00523:         StartWorldDisplay: ${zone}`,
+].join('\r\n') + '\r\n';
 
 // A small zone in the SERVER frame. skel: three skeleton points, two of them 150 apart (p1, p6) so the
 // "clearly closer" rule has something to bite on. Zone id 164 = thedeep.
@@ -1475,6 +1482,90 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
     it('a future-dated event, an unknown point and an unknown kind change nothing', () => {
       expect(c._mapApplyRemote('thedeep', [ev({ at: NOWR + 120000 }), ev({ point_id: 999 }), ev({ kind: 'explode' }), ev({ at: 'soon' }), null], NOWR)).toBe(0);
       expect(state().timers).toEqual([]);
+    });
+    it('with the zone copy known (dbg.txt): same copy from anyone, a different copy never, unknown falls back to the party', () => {
+      fs.writeFileSync(path.join(dir, 'dbg.txt'), dbgZoneIn('Mon Oct 12 16:00:00 2026', 7312, 'thedeep'));
+      c._mapCopy.dirs = () => [dir];
+      const H = 'pq.projectquarm.pq3.projectquarm.com';
+      expect(c._mapApplyRemote('thedeep', [ev({ point_id: 1, by: 'Zarrin', inst: H + ':7312' })], NOWR)).toBe(1);    // not in the party, same copy
+      expect(c._mapApplyRemote('thedeep', [ev({ point_id: 2, by: 'Brackwyn', inst: H + ':11243' })], NOWR)).toBe(0); // the party, another copy
+      expect(c._mapApplyRemote('thedeep', [ev({ point_id: 3, by: 'Brackwyn' })], NOWR)).toBe(1);                       // an old agent: no copy sent
+      expect(c._mapApplyRemote('thedeep', [ev({ point_id: 6, by: 'Zarrin' })], NOWR)).toBe(0);
+    });
+  });
+
+  describe('zone copies: the zone server port (dbg.txt) and the /who check', () => {
+    const H = 'pq.projectquarm.pq3.projectquarm.com';
+    const file = () => path.join(dir, 'dbg.txt');
+    let c;
+    beforeEach(() => { ({ c } = localCore()); c._mapCopy.dirs = () => [dir]; });
+    const at = (s) => Date.parse('Mon Oct 12 ' + s + ' 2026');
+    const who = (names, startedAt) => c._mapCopyNoteWho({ names: new Set(names), startedAt, complete: true }, startedAt + 500);
+
+    it('reads only the zone lines: host, port, zone and time; skips the _chr/_lit loads and every other line', () => {
+      fs.writeFileSync(file(), [
+        '[Mon Oct 12 16:00:00 2026]00001:Path C:\\EverQuest\\ and a GPU line that must never be read',
+        dbgZoneIn('Mon Oct 12 16:00:01 2026', 11243, 'thedeep').trimEnd(),
+        '[Mon Oct 12 16:00:03 2026]00004:         StartWorldDisplay: thedeep_chr2',
+      ].join('\r\n') + '\r\n');
+      expect(c._mapCurrentCopy('thedeep', at('16:00:05'))).toEqual({ zone: 'thedeep', host: H, port: 11243, token: H + ':11243', at: at('16:00:01') });
+      expect(c._mapCurrentCopy('potranquility', at('16:00:05'))).toBeNull();   // another zone: no copy claimed
+    });
+    it('follows the file: a new zone-in moves the copy (ports are reused, so the time is part of the copy), char select clears it', () => {
+      fs.writeFileSync(file(), dbgZoneIn('Mon Oct 12 16:00:00 2026', 11243, 'thedeep'));
+      expect(c._mapCurrentCopy('thedeep', at('16:00:05')).port).toBe(11243);
+      fs.appendFileSync(file(), dbgZoneIn('Mon Oct 12 16:12:00 2026', 7312, 'thedeep'));
+      expect(c._mapCurrentCopy('thedeep', at('16:12:05')).port).toBe(7312);
+      fs.appendFileSync(file(), '[Mon Oct 12 16:20:00 2026]00090:Starting char select.\r\n');
+      expect(c._mapCurrentCopy('thedeep', at('16:20:05'))).toBeNull();
+    });
+    it('a client that starts a new dbg.txt (smaller file) is read from the top', () => {
+      fs.writeFileSync(file(), dbgZoneIn('Mon Oct 12 16:00:00 2026', 11243, 'thedeep') + 'x'.repeat(4000) + '\r\n');
+      expect(c._mapCurrentCopy('thedeep', at('16:00:05')).port).toBe(11243);
+      fs.writeFileSync(file(), dbgZoneIn('Mon Oct 12 17:00:00 2026', 7293, 'thedeep'));
+      expect(c._mapCurrentCopy('thedeep', at('17:00:05')).port).toBe(7293);
+    });
+    it('/who: anyone outside our guild and the raid/group makes the copy open (live or PvP), and it stays open', () => {
+      fs.writeFileSync(file(), dbgZoneIn('Mon Oct 12 16:00:00 2026', 7312, 'thedeep'));
+      c._zealState.Aldenmar.group_members = [{ name: 'Nyssara' }];
+      c.whoData.set('aldenmar', { guild: 'Wolf Pack' });
+      c.whoData.set('brackwyn', { guild: 'Wolf Pack' });
+      c.whoData.set('nyssara', { guild: 'Breakfast Club' });     // grouped: not an outsider
+      c.whoData.set('zarrin', { guild: 'Some Other Guild' });
+      const N = at('16:05:00');
+      expect(c._mapCopyInfo('thedeep', N)).toMatchObject({ port: 7312, kind: null });
+      who(['aldenmar', 'brackwyn', 'nyssara'], N);
+      expect(c._mapCopyInfo('thedeep', N + 1000)).toMatchObject({ kind: 'closed', outsiders: 0 });
+      who(['aldenmar', 'brackwyn', 'zarrin'], N + 2000);
+      expect(c._mapCopyInfo('thedeep', N + 3000)).toMatchObject({ kind: 'open', outsiders: 1 });
+      who(['aldenmar', 'brackwyn'], N + 4000);                    // a later quiet /who does not close it again
+      expect(c._mapCopyInfo('thedeep', N + 5000).kind).toBe('open');
+      expect(c._mapStatePayload('', N + 6000).copy).toMatchObject({ port: 7312, kind: 'open' });
+    });
+    it('/who says nothing when it predates the zone-in, or when our own guild is not known yet', () => {
+      fs.writeFileSync(file(), dbgZoneIn('Mon Oct 12 16:00:00 2026', 7312, 'thedeep'));
+      c.whoData.set('zarrin', { guild: 'Some Other Guild' });
+      who(['aldenmar', 'zarrin'], at('16:05:00'));                // our guild unknown
+      expect(c._mapCopyInfo('thedeep', at('16:05:01')).kind).toBeNull();
+      c.whoData.set('aldenmar', { guild: 'Wolf Pack' });
+      who(['aldenmar', 'zarrin'], at('15:50:00'));                // before this zone-in
+      expect(c._mapCopyInfo('thedeep', at('16:05:02')).kind).toBeNull();
+    });
+    it('a synced event carries the copy it happened in', () => {
+      fs.writeFileSync(file(), dbgZoneIn('Mon Oct 12 16:00:00 2026', 7312, 'thedeep'));
+      const zd = c._mapZoneDoc('thedeep');
+      c._setOpts({ botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: 'tok' });
+      c._mapLocalEvent('thedeep', zd, 'Aldenmar', { point_id: 1, kind: 'died', spawn_id: 5, name: 'a decaying skeleton', at: at('16:05:00') }, at('16:05:00'));
+      expect(c._mapSync.q.map(k => k.ev.inst)).toEqual([H + ':7312']);
+      c._mapSyncStop();
+    });
+    it('the overlay shows the port and the /who verdict beside the zone name', () => {
+      const js = stripJs(MAP_HTML);
+      expect(js).toMatch(/function copyLabel\(c\)/);
+      expect(js).toMatch(/cp = copyLabel\(P && P\.copy\)/);
+      expect(js).toMatch(/c\.kind === 'open' \? 'live \/ PvP'/);
+      // and the agent's /who footer feeds the check
+      expect(stripJs(AGENT)).toMatch(/if \(zone\) \{ try \{ _mapCopyNoteWho\(_whoRun, Date\.now\(\)\); \} catch/);
     });
   });
 
