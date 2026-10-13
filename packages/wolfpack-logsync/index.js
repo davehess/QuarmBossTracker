@@ -7993,6 +7993,8 @@ function applyWhoLine(line) {
         if (w) { w.zone = zone.toLowerCase(); _whoZoneDirty = true; }
       }
     }
+    // The Map: does this copy of the zone hold anyone outside our guild and raid? (see "Zone copies")
+    if (zone) { try { _mapCopyNoteWho(_whoRun, Date.now()); } catch { /* never break /who */ } }
   }
 }
 function _noteWhoRunName(name) {
@@ -44869,6 +44871,127 @@ function _mapTryPin(zone, character, spawnId, name, loc, now, opts) {
   return { point_id: point.id };
 }
 
+// ── Zone copies: which running copy of the zone you are in (dbg.txt), and whether it is open (/who) ─────────
+// The guild lead, 2026-10-13: "we can see the different zones in the debug file ... with port numbers. if a /who
+// reveals anyone in the zone that's not in our guild and not in our raid, we are in live or PVP."
+//   • EverQuest writes <EQ>/dbg.txt. Each zone-in logs `Zone addr [<host>:<port>] received...` and then
+//     `StartWorldDisplay: <zone_short>` (the `_chr`/`_lit`/`_obj` loads after it are skipped). host:port names ONE
+//     running copy of a zone while it runs. Ports come from a pool and are reused (Plane of Tranquility went
+//     11243 → 7312 within twelve minutes, docs/DESIGN-mimic-2.9-spawn-map.md), so a token is good only while that
+//     copy is up and is never a lasting zone id.
+//   • Read the way eqlog is tailed: open, read only the new bytes, close, so it cannot block EverQuest.
+//     ⚠ The file also holds install paths and hardware lines. Only the three line shapes below are parsed, and only
+//     host, port, zone and time are kept. The token rides on synced map events, and nothing else leaves the machine.
+//   • Open or closed: after you zone in, a plain /who (its footer names the zone) that lists anyone who is in neither
+//     our guild (their /who tag, or the tag last seen on them, since /anon hides it) nor your raid/group means an open
+//     copy: the live zone or PvP. That sticks for the copy. A /who of only guild and raid is "closed so far": our
+//     instance, or another guild's raid instance we were brought into. A quiet live zone looks the same.
+const MAP_COPY_POLL_MS    = 2000;
+const MAP_COPY_TAIL_BYTES = 256 * 1024;        // a first look reads only the end of the file
+const MAP_COPY_READ_MAX   = 1024 * 1024;       // and no read is ever bigger than this
+const MAP_COPY_PAIR_MS    = 5 * 60 * 1000;     // a zone name further than this from its address is not paired
+const MAP_COPY_WHO_MAX    = 64;
+const MAP_COPY_ADDR_RE    = /^\[([^\]]+)\]\d*:\s*Zone addr \[([A-Za-z0-9.-]{1,100}):(\d{1,5})\] received/;
+const MAP_COPY_ZONE_RE    = /^\[([^\]]+)\]\d*:\s*StartWorldDisplay: ([a-z0-9]{2,32})\s*$/;
+const MAP_COPY_CHARSEL_RE = /^\[[^\]]+\]\d*:\s*Starting char select/;
+// dirs: tests point it at a temp folder; null = the EQ folders the agent already knows (_eqSetupDirs).
+const _mapCopy = { dirs: null, files: new Map(), polledAt: 0, who: new Map() };
+function _mapCopyLine(rec, line) {
+  let m = MAP_COPY_ADDR_RE.exec(line);
+  if (m) {
+    const at = Date.parse(m[1]);
+    rec.addr = { host: m[2].toLowerCase(), port: Number(m[3]), at: Number.isFinite(at) ? at : null };
+    return;
+  }
+  m = MAP_COPY_ZONE_RE.exec(line);
+  if (m) {
+    if (!rec.addr || m[2] === 'objects' || m[2] === 'lights') return;
+    const at = Date.parse(m[1]);
+    const a = rec.addr;
+    rec.addr = null;
+    if (Number.isFinite(at) && a.at != null && Math.abs(at - a.at) > MAP_COPY_PAIR_MS) return;
+    rec.cur = { zone: m[2], host: a.host, port: a.port, token: a.host + ':' + a.port, at: Number.isFinite(at) ? at : a.at };
+    return;
+  }
+  if (MAP_COPY_CHARSEL_RE.test(line)) { rec.cur = null; rec.addr = null; }
+}
+function _mapCopyPoll(now) {
+  if (now - _mapCopy.polledAt < MAP_COPY_POLL_MS) return;
+  _mapCopy.polledAt = now;
+  let dirs = [];
+  try { dirs = (_mapCopy.dirs ? _mapCopy.dirs() : _eqSetupDirs()) || []; } catch { dirs = []; }
+  for (const dir of dirs) {
+    const file = path.join(dir, 'dbg.txt');
+    let st;
+    try { st = fs.statSync(file); } catch { _mapCopy.files.delete(file); continue; }
+    let rec = _mapCopy.files.get(file);
+    if (!rec || (rec.ino && st.ino && rec.ino !== st.ino) || st.size < rec.off) {   // first look, or the client began a new file
+      const fresh = !rec;
+      rec = { off: fresh ? Math.max(0, st.size - MAP_COPY_TAIL_BYTES) : 0, rest: '', addr: null, cur: null, ino: st.ino || 0, cut: fresh };
+      _mapCopy.files.set(file, rec);
+    }
+    if (st.size === rec.off) continue;
+    const start = Math.max(rec.off, st.size - MAP_COPY_READ_MAX);
+    const cut = start > 0 && (rec.cut || start > rec.off);   // the first line read starts mid-line
+    rec.cut = false;
+    const buf = Buffer.alloc(st.size - start);
+    let fd = null, ok = false;
+    try { fd = fs.openSync(file, 'r'); fs.readSync(fd, buf, 0, buf.length, start); ok = true; }
+    catch { /* busy or gone: try again on the next poll */ }
+    finally { if (fd != null) { try { fs.closeSync(fd); } catch { /* ignore */ } } }
+    if (!ok) continue;
+    const lines = ((start > rec.off ? '' : rec.rest) + buf.toString('latin1')).split(/\r?\n/);
+    rec.off = st.size;
+    rec.rest = lines.pop().slice(-4096);
+    if (cut) lines.shift();
+    for (const line of lines) _mapCopyLine(rec, line);
+  }
+}
+// The copy you are in now: the newest zone-in for this zone across the EQ folders, or null when dbg.txt never said.
+function _mapCurrentCopy(zone, now) {
+  if (!zone) return null;
+  _mapCopyPoll(now);
+  let best = null;
+  for (const rec of _mapCopy.files.values()) {
+    if (rec.cur && rec.cur.zone === zone && (!best || rec.cur.at > best.at)) best = rec.cur;
+  }
+  return best;
+}
+const _mapCopyKey = (c) => c.token + '@' + c.at;
+// Called by applyWhoLine when a /who footer names a zone (a plain /who: everyone listed is in your zone).
+function _mapCopyNoteWho(run, now) {
+  if (!run || !run.names || !run.names.size) return;
+  const character = _mapActiveCharacter(now);
+  const st = character ? _zealState[character] : null;
+  const copy = st ? _mapCurrentCopy(_mapZoneShort(st.zone), now) : null;
+  if (!copy || !(Number(run.startedAt) >= copy.at - 1000)) return;   // a /who from before this zone-in says nothing about it
+  const wd = typeof whoData !== 'undefined' ? whoData : null;
+  const me = String(character).toLowerCase();
+  const guildOf = (k) => { const w = wd && wd.get(k); return w && w.guild ? String(w.guild).toLowerCase() : null; };
+  const ours = guildOf(me);
+  if (!ours) return;   // our own guild is not known yet: a /who that lists you, or /guildstatus, teaches it
+  const party = _mapPartyNames(now);
+  let outsiders = 0, listed = 0;
+  for (const k of run.names) {
+    if (k === me) continue;
+    listed++;
+    if (guildOf(k) !== ours && !party.has(k)) outsiders++;
+  }
+  const key = _mapCopyKey(copy), prev = _mapCopy.who.get(key);
+  if (!prev && _mapCopy.who.size >= MAP_COPY_WHO_MAX) _mapCopy.who.delete(_mapCopy.who.keys().next().value);
+  _mapCopy.who.set(key, { open: outsiders > 0 || !!(prev && prev.open), outsiders: Math.max(outsiders, prev ? prev.outsiders : 0),
+    listed, at: now });
+}
+// What the overlay shows: { host, port, since, kind: 'open' | 'closed' | null, outsiders, who_at }.
+function _mapCopyInfo(zone, now) {
+  const c = _mapCurrentCopy(zone, now);
+  if (!c) return null;
+  const w = _mapCopy.who.get(_mapCopyKey(c));
+  return { host: c.host, port: c.port, since: c.at, kind: w ? (w.open ? 'open' : 'closed') : null,
+    outsiders: w ? w.outsiders : 0, who_at: w ? w.at : null };
+}
+// ── end Zone copies ──
+
 // ── Guild sync: only CERTAIN events leave the machine, only through /api/agent/map-sync ────────────
 // Push: pinned sightings ("seen"), assigned deaths ("died") and your own marks (died / empty / up / clear), batched
 // (one POST per 3 s, 50 events). Never a "?" candidate. Pull: only while the overlay is polling /api/map-state
@@ -44893,6 +45016,8 @@ function _mapSyncSchedule() {
 function _mapLocalEvent(zone, zd, character, ev, now) {
   const e = { point_id: ev.point_id, kind: ev.kind, spawn_id: ev.spawn_id > 0 ? ev.spawn_id : null,
     name: ev.name ? String(ev.name).slice(0, 80) : null, at: ev.at };
+  const copy = _mapCurrentCopy(zone, now);
+  if (copy) e.inst = copy.token;   // the copy it happened in (see "Zone copies"); a bot without the column drops it
   const pid = String(e.point_id);
   zd.last[pid] = Math.max(zd.last[pid] || 0, e.at);
   _mapSyncRemember(_mapSyncKey(zone, e));
@@ -44976,8 +45101,10 @@ function _mapPartyNames(now) {
 // Fold the guild's events into this machine's timers. Oldest first; an event for a point is applied only when it is
 // NEWER than the newest thing already applied there (local or remote) - so a remote death overrides an older local
 // state and a newer local one wins over an older remote. Repeats (the same point, kind, spawn id and time) and our
-// own echoes are skipped. Only events seen by someone in YOUR raid (or your group outside a raid) are applied; see
-// _mapPartyNames. Returns how many changed anything.
+// own echoes are skipped. Which events count: from the same copy of the zone when both sides know it (dbg.txt, see
+// "Zone copies"), otherwise only those seen by someone in YOUR raid (or your group outside a raid; _mapPartyNames).
+// ponytail: a port is reused once its copy shuts down, so an event from an earlier copy on the same port within the
+// 8 h pull window would match. Rare; key on the copy's first-seen time too if it ever shows. Returns how many changed anything.
 function _mapApplyRemote(zone, events, now) {
   const rec = _mapZones.get(zone);
   if (!rec || !rec.body || !Array.isArray(events)) return 0;
@@ -44985,12 +45112,17 @@ function _mapApplyRemote(zone, events, now) {
   const list = events.filter(e => e && e.point_id != null && typeof e.kind === 'string' && Number.isFinite(Number(e.at)))
     .slice(0, 500).sort((a, b) => Number(a.at) - Number(b.at));
   const party = _mapPartyNames(now);
+  const mine = _mapCurrentCopy(zone, now);
   let applied = 0, maxAt = _mapSync.since[zone] || 0;
   for (const raw of list) {
     const at = Number(raw.at);
     if (at > now + 60000) continue;                              // from the future: a clock we cannot trust
     if (at > maxAt) maxAt = at;
-    if (!raw.by || !party.has(String(raw.by).toLowerCase())) continue;   // not your raid / group: likely another copy of the zone
+    // Same copy of the zone (both sides read dbg.txt): take it from anyone. A different copy: never, even from your
+    // raid. Either side not knowing: your raid / group, as before (see _mapPartyNames).
+    const inst = typeof raw.inst === 'string' ? raw.inst : null;
+    if (inst && mine) { if (inst !== mine.token) continue; }
+    else if (!raw.by || !party.has(String(raw.by).toLowerCase())) continue;
     const e = { point_id: raw.point_id, kind: String(raw.kind), spawn_id: Number(raw.spawn_id) > 0 ? Number(raw.spawn_id) : null,
       name: raw.name ? String(raw.name).slice(0, 80) : null, at };
     const key = _mapSyncKey(zone, e);
@@ -45152,13 +45284,14 @@ function _mapStatePayload(have, now, haveLocal) {
   const character = _mapActiveCharacter(now);
   const st = character ? _zealState[character] : null;
   const out = { zone: null, long_name: null, zone_id: null, version: null, status: character ? 'ok' : 'no-pipe', local_only: _localOnly(),
-    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], now };
+    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], copy: null, now };
   if (!st) return out;
   out.zone_id = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
   out.pos_at = Number.isFinite(st.updatedAt) ? st.updatedAt : null;   // when the agent last heard from Mimic: the overlay's "pos NNN ms"
   const zone = _mapZoneShort(st.zone);
   out.zone = zone;
   out.long_name = _zoneName(st.zone);
+  try { out.copy = _mapCopyInfo(zone, now); } catch { out.copy = null; }   // which copy of the zone (see "Zone copies")
   const self = _mapPos(st.loc, st.heading);
   if (self) out.self = Object.assign({ name: character }, self);
   const me = String(character).toLowerCase();

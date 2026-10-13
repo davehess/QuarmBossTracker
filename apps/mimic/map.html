@@ -1202,10 +1202,23 @@
   }
   function closeMenu() { S.menuPid = null; menu.style.display = 'none'; }
 
+  // Which copy of the zone you are in (agent "Zone copies": the zone server's port from dbg.txt, and a /who check).
+  // open = /who listed someone outside the guild and raid: the live zone or PvP. closed = only guild and raid so far.
+  function copyLabel(c) {
+    if (!c || !c.port) return null;
+    var kind = c.kind === 'open' ? 'live / PvP' : c.kind === 'closed' ? 'guild + raid only' : '/who to check';
+    var title = 'Zone server port ' + c.port + ' (from EverQuest\'s dbg.txt). Map events are shared only with people in the same copy. ' +
+      (c.kind === 'open' ? c.outsiders + ' in /who outside our guild and raid: the live zone or PvP.'
+        : c.kind === 'closed' ? 'Your last /who here listed only our guild and raid: our instance, or a raid instance we joined (a quiet live zone looks the same).'
+        : 'Type /who here to tell an instance from the live zone.');
+    return { text: ':' + c.port + ' ' + kind, title: title };
+  }
   // ── side list ──
   function renderSide() {
     var P = S.p, now = nowMs();
-    document.getElementById('zone').textContent = (P && (P.long_name || P.zone)) ? (P.long_name || P.zone) : 'Map';
+    var zEl = document.getElementById('zone'), cp = copyLabel(P && P.copy);
+    zEl.textContent = ((P && (P.long_name || P.zone)) ? (P.long_name || P.zone) : 'Map') + (cp ? ' · ' + cp.text : '');
+    zEl.title = cp ? cp.title : '';
     var tg = document.getElementById('tgt');
     if (P && P.target) tg.textContent = '◎ ' + P.target.name + (P.target.dist != null ? ' · ' + P.target.dist : (P.target.x == null ? ' · no position' : '')) + (P.target.point_id != null ? ' → pinned' : '') + (P.target.tot ? ' · on ' + P.target.tot.name : '');
     else tg.textContent = '';
