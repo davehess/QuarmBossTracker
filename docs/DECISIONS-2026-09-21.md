@@ -9838,3 +9838,15 @@ Harmony, Hide/Sneak for non-rogues).
 - **Open** (ledger §2): detachable timers window, the PoP-era atlas, Target Info map tab + search, map buttons on other
   overlays, raiders' zones, sharing learned paths across raiders, Follow target, distance from spawn + the gate/leash
   rule (researching).
+
+### 265. Songs sung from /melody count as cast, so their landings reach Target Info (2026-10-13, agent 3.7.152 beta `133a2548`)
+
+- **The ask** (the guild lead): *"Pacify songs like Silent Song of Quelius should show on the target info."*
+- **Cause:** Quarm logs no "You begin singing X." for songs queued by `/melody`, and `resolveSelfCastLanding` only
+  attributes a landing ("A gnoll appears at ease.") to a cast it saw. Silent Song of Quellious (3361) was already a
+  known pacify and Target Info already draws pacifies (blue "aggro reduced"); the cast was the missing link.
+- **Fix:** during an active `/melody`, Zeal's casting label changing to a song is recorded as that cast (a
+  `'[] You begin singing X.'` stand-in through `noteSelfCast`, the shape the clicky path already uses). Every melody
+  song, not only pacifies. Test: `test/melody-song-landing.test.js`.
+- **Left:** the song lasts 12 s (+6 s linger); if a pulse does not re-print its landing line the row may flap. Not seen
+  in game yet.
