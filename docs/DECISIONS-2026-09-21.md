@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Map target-of-target never fires on real Zeal** (§251) | Zeal's `/assistbar` (1.4.7) knows it, but the pipe export was only our unsent draft, so the Map's ToT arrow and the pin rule's "not aggroed" check fail open. Ported onto current Zeal main as fork branch `tot-pipe` (`21f41f3`, local only: the push was refused by this session's permissions) | the guild lead: push `tot-pipe` to the fork (or allow it), then say whether it joins `test-all` for an in-game check |
 | **Zeal in-game test run + PoP flags export + `/spellid`** (§227, §229) | `test-all` `035d8a3` (build passed) = PoP flags `b27bb26` (overview + tiers 1–5, once each, kept out of chat) + roleplay guild marks + `spell-id-tooltip` `67cb705` (`/spellid on` puts the spell id on the buff/gem/spellbook info window, off by default). 67 test hotkeys (socials pages 4–10, say + `/log`, works at level 1) log what to look for and the target's spawn id; `tools/evidence.py` on the fork's `showcase` branch turns the log into an EVIDENCE.md per change. Every suggestion post has "Pull request" and "Testing evidence" lines waiting to be filled | the guild lead: (1) install `test-all`, paste the hotkeys, run pages 4–10, send the log + `<name>-PoPFlags.txt`; (2) file the PRs (smallest first, §228). A session: write EVIDENCE.md per change, fill the PR links (posts, showcase JSON `pr_url`) |
 | **Mimic 2.9: spawn map, zone-server directory, live mob dots** (§216) | Called 2026-10-10 as the 2.9 minor line. Research in: `dbg.txt` names the zone server on every zone-in (`Zone addr [<host>:<port>]` + `StartWorldDisplay: <zone>`), and one zone was seen on two ports within an hour, so a port is a per-boot instance token, not a zone id. Design doc written (`docs/DESIGN-mimic-2.9-spawn-map.md`). Hosting needs no plan change (§217); **Picked (§220):** 3D-A on web (from the EQEmu collision mesh), 3D-B in Mimic, routes from our import, Mimic layout C (tracker), tab-target dots, group sharing to the group + recent helpers (30-min grace) | a session: (1) route tables + spell range in the weekly import, (2) web: spawn layer + routes + 3D-A on `/spectator` beta, (3) agent group-position upload + PRIVACY line, (4) Mimic tracker overlay (Window/HUD), (5) the client-zone converter for painted + 3D in Mimic |
 | **Zeal review fixes + guild marks B** (§216) | The guild lead: *"go ahead with the zeal fixes, B for guild marks"*. Pushed 2026-10-10 as fast-forwards: `tag-shapes` `f777d81` (guild marks B + render-state restore + color check), `tag-icon-files` `b20331f` (exception, per-frame, size and chat fixes). Guild marks B = automatic marks from the player's guild, `/tag guildmarks off|tagged|auto`, default `tagged`. `test-all` `59bbfca` merges every tag branch (incl. `tag-persistence` hardening, now `6ab82a9` with a `(std::min)` fix for the Windows `min` macro) and **builds green** (Actions run 38025797523). Restored tags keep their picture and guild mark (save format adds `:<mark>:<picture>` after the color; old files still load) | the guild lead: install the `test-all` build and run the in-game list in §216, plus: zone and relog with a picture tag and a guild-mark tag on, and check both come back |
@@ -9621,3 +9622,30 @@ Harmony, Hide/Sneak for non-rogues).
   so a member in another guild's copy is always in that guild's raid. Consequences: the raid/group scoping (§248)
   already keeps their sightings and timers out of ours (different raid); a copy can be labelled "another guild's"
   when the member's raid is mostly not ours; our slow mode never applies to someone in another guild's copy.
+
+### 251. Zone copies: the zone server port from dbg.txt, and the /who live/PvP check (2026-10-13, agent 3.7.140 beta `bcc6f1d6`, bot 3.1.250)
+
+- **The ask** (the guild lead): *"we can see the different zones in the debug file we reviewed earlier in this session
+  with port numbers. if a /who reveals anyone in the zone that's not in our guild and not in our raid, we are in live
+  or PVP."* This builds phase 3 of `DESIGN-mimic-2.9-spawn-map.md` (option B of §248's "A now, B later").
+- **dbg.txt reader (agent):** tails `<EQ>/dbg.txt` the way eqlog is tailed. It parses only `Zone addr [<host>:<port>]
+  received`, `StartWorldDisplay: <zone>` (not the `_chr`/`_lit`/`_obj` loads) and `Starting char select`, and keeps
+  host, port, zone and time. ⚠ The file also holds install paths and hardware lines: those are never kept or sent.
+  A port names one running copy and is reused after it shuts down, so a copy is host:port plus its zone-in time.
+- **/who check (agent):** after the zone-in, a plain /who (its footer names the zone) listing anyone who is in neither
+  our guild (their tag, or the tag last seen on them, since /anon hides it) nor the raid/group marks the copy
+  **open: the live zone or PvP**, for the life of that copy. Only guild + raid = "closed so far": our instance, or a
+  raid instance we were brought into. A quiet live zone looks the same, so "closed" is never proof. Our own guild
+  comes from a /who that lists you, or /guildstatus.
+- **Sync by copy:** each synced map event carries `inst` (host:port; `map_spawn_events.inst`, migration
+  `20261013013000`, applied). An event from the same copy is taken from anyone; one from another copy never, even from
+  your raid; when either side does not know its copy, §248's raid/group rule stays. Known ceiling: a port reused for a
+  new copy of the same zone inside the 8 h pull window would match.
+- **Map header:** `<zone> · :<port> live / PvP | guild + raid only | /who to check`, with a tooltip saying why.
+- **Not done:** slow mode and PvP ±20% in Map timers (slow mode is not served to agents yet, and trash respawn in slow
+  copies is still unknown); telling PvP from live (nothing on the agent says which); pull suggestions (§250, next).
+- **Found on the way:** Map target-of-target (3.7.138) and the pin rule's "not aggroed" check (3.7.139) read
+  `target_of_target`, which no released Zeal sends. The pipe export was our draft `docs/zeal-tot-pipe.patch`, never sent
+  and no longer applying. Both fail open (no arrow; the on-spot/still test still guards the pin). Ported to current Zeal
+  main as fork branch `tot-pipe` (`21f41f3`, +123/−39 across `assist_target.*`, `named_pipe.cpp`, README; not compiled,
+  reviewed by reading). The push to the fork was refused by this session's permission check: the guild lead's step.

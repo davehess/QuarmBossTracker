@@ -17176,7 +17176,7 @@ async function _handleAgentMapSyncPost(req, res) {
   const written = await supabase.insert('map_spawn_events', v.events.map(e => ({
     guild_id: guildId, zone: v.zone, point_id: e.point_id, kind: e.kind, spawn_id: e.spawn_id,
     npc_name: e.name, at: new Date(e.at).toISOString(), by_character: v.character,
-    by_discord_id: String(identity.discord_id),
+    by_discord_id: String(identity.discord_id), inst: e.inst,
   }))).catch(err => { console.error('[map-sync] insert failed:', err?.message || err); return null; });
   if (!Array.isArray(written)) return _ptsJson(res, 503, { error: 'try again shortly' });
   _mapSyncCache.delete(v.zone);
@@ -17211,12 +17211,12 @@ async function _handleAgentMapSyncGet(req, res) {
     const rows = await supabase.select('map_spawn_events',
       `guild_id=eq.${encodeURIComponent(_mapSyncGuildId())}&zone=eq.${zone}` +
       `&at=gt.${encodeURIComponent(new Date(floor).toISOString())}` +
-      `&select=id,point_id,kind,spawn_id,npc_name,at,by_character&order=at.desc,id.desc&limit=${_MAP_SYNC_LIMIT}`,
+      `&select=id,point_id,kind,spawn_id,npc_name,at,by_character,inst&order=at.desc,id.desc&limit=${_MAP_SYNC_LIMIT}`,
     ).catch(() => null);
     if (!Array.isArray(rows)) return _ptsJson(res, 503, { error: 'try again shortly' });
     hit = { at: now, events: rows.reverse().map(r => ({
       id: r.id, point_id: r.point_id, kind: r.kind, spawn_id: r.spawn_id, name: r.npc_name,
-      at: Date.parse(r.at), by: r.by_character,
+      at: Date.parse(r.at), by: r.by_character, inst: r.inst || null,   // the zone copy (agent 3.7.140+), or null
     })) };
     if (_mapSyncCache.size >= 100) {
       for (const [z, c] of _mapSyncCache) if (now - c.at > _MAP_SYNC_CACHE_MS) _mapSyncCache.delete(z);

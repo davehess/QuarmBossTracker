@@ -563,6 +563,11 @@ and the same never-refetch guarantee.
   the agent (≈0.1–1 MB a zone, kept). No cost to any server of ours; we host none of it. For the wizard: the
   source address is a constant in the agent (`MAP_BREWALL_BASE`); a guild on another server whose zones Zeal
   does not cover would point it elsewhere or switch it off (`_mapPaths.brewall = null`).
+- **2026-10-13 — synced Map events carry the zone copy (`map_spawn_events.inst`, host:port)** (`DECISIONS-2026-09-21.md`
+  §251): one nullable text column on a table that already prunes at 24 h, so no growth worth counting. The value
+  comes from the player's own EverQuest `dbg.txt`, and the agent reads only its zone-in lines. For the wizard, it
+  assumes a server whose client writes `Zone addr [host:port]`, as Quarm's does. Elsewhere the column stays null and
+  the raid/group rule (§248) still scopes sharing.
 
 ## 4. Open questions for whoever builds it
 
