@@ -505,7 +505,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -1098,6 +1098,35 @@ describe('pather routes', () => {
     expect(again.all.aggroBtn.classList.contains('on')).toBe(true);           // remembered
     again.all.aggroBtn.listeners.click.forEach(f => f());
     expect(again.S.cfg.show.aggro).toBe(false);
+  });
+  it('• on the toolbar hides and shows the spawn points, saved, the same switch as ⚙ → Spawn points (2026-10-13)', async () => {
+    // the guild lead: "Showing/hiding spawnpoints should be a quick-button on the top nav of our map next to the circles"
+    const base = await bootOverlay();
+    expect(base.all.dotsBtn.classList.contains('on')).toBe(true);
+    base.all.dotsBtn.listeners.click.forEach(f => f());
+    expect(base.S.cfg.show.dots).toBe(false);
+    expect(base.all.dotsBtn.classList.contains('on')).toBe(false);
+    expect(JSON.parse(base.store['wp-map-cfg']).show.dots).toBe(false);
+    const again = await bootOverlay({ store: base.store });
+    expect(again.all.dotsBtn.classList.contains('on')).toBe(false);
+    again.all.dotsBtn.listeners.click.forEach(f => f());
+    expect(again.S.cfg.show.dots).toBe(true);
+    const tools = sliceBlock(MAP_HTML, '<div id="tools">', '</div>');
+    expect(tools.indexOf('id="dotsBtn"')).toBeLessThan(tools.indexOf('id="aggroBtn"'));   // next to ◯
+  });
+  it('the readout: /loc order, the cursor back to the server frame, speed over a full second (2026-10-13)', () => {
+    // the guild lead: "the run speed and the current player location coordinates in the top left ... as well as the
+    // mouseover coordinates where the player's cursor is"
+    expect(H.locText(65.4, 28.2)).toBe('28, 65');                                // Y first, like /loc
+    const view = { cx: 10, cy: -20, scale: 2 }, w = 400, h = 300;
+    for (const [x, y] of [[0, 0], [123, -45], [-300, 77]]) {                    // round trip through wpt's maths
+      const s = H.toScreen(x, y), px = (s.sx - view.cx) * view.scale + w / 2, py = (s.sy - view.cy) * view.scale + h / 2;
+      const back = H.screenToServer(px, py, view, w, h);
+      expect(back.x).toBeCloseTo(x); expect(back.y).toBeCloseTo(y);
+    }
+    expect(H.speedOf([{ t: 0, x: 0, y: 0 }, { t: 500, x: 30, y: 40 }])).toBeNull();   // under a second: not yet
+    expect(H.speedOf([{ t: 0, x: 0, y: 0 }, { t: 1000, x: 30, y: 40 }])).toBeCloseTo(50);
+    expect(MAP_HTML).toMatch(/<div id="locBar"><\/div>/);
   });
   it('the Levels and Spawn height sliders live in the settings panel; Labels stays a toolbar button', () => {
     const tools = sliceBlock(MAP_HTML, '<div id="tools">', '</div>');
