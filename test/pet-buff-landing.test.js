@@ -531,6 +531,19 @@ describe('pet identity by spawn id', () => {
       expect(zoneThenReturn(1)).toBe(false);
       expect(zoneThenReturn(null)).toBe(false);
     });
+    // FB-77, as reported: Visions of Grandeur on an enchanter's animation, then a zone (Tranquility → Knowledge).
+    // After the zone /pet health still listed the buff; the Pet overlay had lost it and its timer.
+    it('FB-77: the animation keeps Visions of Grandeur, with its timer, through the zone', () => {
+      const A = buildAgent();
+      setPetIn(A, 'aldenmar', 'Zonantik', 1817, 203);
+      A._reconcilePetIdentity('aldenmar');
+      A._petBuffLandings.set('aldenmar', new Map([['visions of grandeur',
+        { name: 'Visions of Grandeur', dur_ticks: 70, landed_at: Date.now() - 11_000 }]]));
+      setPetIn(A, 'aldenmar', 'Zonantik', 52, 202);
+      const vog = A.petBuffsForOwner('aldenmar').find(b => b.name === 'Visions of Grandeur');
+      expect(vog).toBeTruthy();
+      expect(vog.remaining_secs).toBeGreaterThan(400);
+    });
   });
 
   it('resolves the id only for the owner’s own character', () => {
