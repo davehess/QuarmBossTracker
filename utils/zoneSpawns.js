@@ -33,7 +33,7 @@ const TTL_MS = 6 * 60 * 60 * 1000;       // the mirror syncs weekly; six hours i
 const EMPTY_TTL_MS = 5 * 60 * 1000;      // a zone with no points is re-asked in five minutes, not six hours
 const CACHE_MAX = 200;                   // zones kept (~0.5 MB each at the worst); far past what a guild visits
 
-const NPC_SELECT = 'id,name,level,raid_target,see_invis,see_invis_undead,see_hide,see_improved_hide,special_abilities,npcspecialattks,aggroradius';
+const NPC_SELECT = 'id,name,level,raid_target,see_invis,see_invis_undead,see_hide,see_improved_hide,special_abilities,npcspecialattks,aggroradius,assistradius,npc_faction_id';
 const ARTICLE_RE = /^(a|an|the)\s/i;
 
 // "Gram_Dunnar" / "#The_Final_Arbiter" → "Gram Dunnar" / "The Final Arbiter" (utils/supabase.js npcDisplayName).
@@ -122,6 +122,10 @@ async function build(supabase, zone, bosses) {
         // How close you can get before it aggros, in game units (eqemu_npc_types.aggroradius; median 60). The Map's
         // aggro rings (the guild lead, 2026-10-13). 0 / missing = null: the server then falls back to its default.
         aggro: num(npc.aggroradius) > 0 ? num(npc.aggroradius) : null,
+        // Its faction (eqemu_npc_types.npc_faction_id; 0 = none, so it aggros nobody) and how far it comes to help a
+        // friend (assistradius; 0 / missing = null). The ring's colour and its dashed social ring (2026-10-13).
+        fac: num(npc.npc_faction_id) > 0 ? num(npc.npc_faction_id) : 0,
+        assist: num(npc.assistradius) > 0 ? num(npc.assistradius) : null,
       });
     }
     if (!list.length) continue;   // a point nobody spawns at is not a point
