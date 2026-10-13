@@ -210,6 +210,17 @@ describe('the officer actions', () => {
     expect(act).toMatch(/const REASON_MAX = 200;/);
   });
 
+  it('lock: officers cannot be locked out (refused before the row is written), and the picker leaves them out', () => {
+    const refuse = lock.search(/if \(roleNamesAreOfficer\(target!\.role_names\)\) redirect\(`\$\{PAGE\}\?err=officer`\)/);
+    expect(refuse).toBeGreaterThan(-1);
+    expect(refuse).toBeLessThan(lock.indexOf(".from('member_lockouts').upsert("));
+    expect(lock).toMatch(/\.select\('discord_id, user_id, nickname, global_name, role_names'\)/);
+    const page = src('web/app/admin/access/page.tsx');
+    expect(page).toMatch(/\.filter\(m => !lockedIds\.has\(m\.discord_id\) && !roleNamesAreOfficer\(m\.role_names\)\)/);
+    const off = src('web/lib/officer.ts');
+    expect(off).toMatch(/export function roleNamesAreOfficer\(names: unknown\): boolean \{\n\s*if \(!Array\.isArray\(names\)\) return false;\n\s*const allow = new Set\(_officerNames\(\)\);\n\s*return names\.some/);
+  });
+
   it('lock: upserts the row with the member user id and who locked, clears expired rows', () => {
     expect(lock).toMatch(/from\('member_lockouts'\)\.upsert\(\{[^}]*discord_id:[^}]*user_id:[^}]*reason,[^}]*locked_by_discord_id: actor!\.discordId[^}]*until,/s);
     expect(lock).toMatch(/from\('member_lockouts'\)\.delete\(\)\.not\('until', 'is', null\)\.lt\('until', now\)/);
