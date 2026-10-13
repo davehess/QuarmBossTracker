@@ -141,6 +141,14 @@ async function build(supabase, zone, bosses) {
   }
 
   const bossNames = new Set((bosses || []).map(b => String(b && b.name || '').toLowerCase()).filter(Boolean));
+  // The board's respawn beats the mirror's (the guild lead, 2026-10-13: the Bastion of Thunder named went to 3 hours
+  // and the Map still counted 6, because eqemu_spawn2 lags the server). Only a board entry with `lockout: false`:
+  // there timerHours IS the respawn; on a lockout boss it is the lockout, not when it comes back.
+  const boardRespawn = new Map();
+  for (const b of bosses || []) {
+    const h = Number(b && b.timerHours);
+    if (b && b.lockout === false && b.name && h > 0) boardRespawn.set(String(b.name).toLowerCase(), Math.round(h * 3600));
+  }
   const points = [];
   for (const sp of [...spawn2].sort((a, b) => a.id - b.id)) {
     const entries = (entriesByGroup.get(sp.spawngroup_id) || [])
@@ -168,10 +176,12 @@ async function build(supabase, zone, bosses) {
       });
     }
     if (!list.length) continue;   // a point nobody spawns at is not a point
-    const resp = num(sp.respawntime);
+    const mirrored = num(sp.respawntime);
+    const onBoard = list.map(n => boardRespawn.get(n.name.toLowerCase())).find(s => s != null);
+    const resp = mirrored == null || mirrored >= INSTANCE_SENTINEL_S ? null : (onBoard != null ? onBoard : mirrored);
     points.push({
       id: sp.id, x: num(sp.x), y: num(sp.y), z: num(sp.z),
-      respawn_s: resp == null || resp >= INSTANCE_SENTINEL_S ? null : resp,
+      respawn_s: resp,
       variance_s: num(sp.variance),
       grid: num(sp.pathgrid) > 0 ? num(sp.pathgrid) : null,   // 0 = stands still
       sg: num(sp.spawngroup_id),   // its spawn group: a key into the body's `spawngroups`
