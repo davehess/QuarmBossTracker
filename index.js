@@ -17693,6 +17693,35 @@ async function _handleAgentCharacterPrefsSet(req, res) {
   return _sendPrefsResult(res, out);
 }
 
+// POST + GET /api/agent/own-timers — a player's own pet/self buff timers, kept in bot_kv (the guild lead,
+// 2026-10-13: timers "synced to the database so if I logged on from a different machine or if my installation
+// failed I would still have those buff timers"). Same ownership rule as POST /character-prefs (a character in the
+// caller's family, else 403); the rules and the contract live in utils/ownTimers.js. Not sheddable: it is tiny
+// and it is restore data, so there is no flag_shed_ kind and no _SHED_KINDS entry.
+const ownTimers = require('./utils/ownTimers');
+async function _handleAgentOwnTimersSet(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > ownTimers.MAX_BODY_BYTES) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+  return _sendPrefsResult(res, await ownTimers.saveTimers(
+    require('./utils/supabase'), _ownedCharsCache, String(identity.discord_id || ''), payload));
+}
+async function _handleAgentOwnTimersGet(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  return _sendPrefsResult(res, await ownTimers.loadTimers(
+    require('./utils/supabase'), _ownedCharsCache, String(identity.discord_id || ''), url.searchParams.get('character') || ''));
+}
+
 // POST /api/agent/live-state
 //
 // Snapshot of what each watched character is currently carrying + where, from
@@ -23605,6 +23634,24 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentCharacterPrefsSet(req, res); }
     catch (err) {
       console.error('[character-prefs set] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/own-timers')) {
+    try { return await _handleAgentOwnTimersGet(req, res); }
+    catch (err) {
+      console.error('[own-timers] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/own-timers') {
+    try { return await _handleAgentOwnTimersSet(req, res); }
+    catch (err) {
+      console.error('[own-timers set] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
