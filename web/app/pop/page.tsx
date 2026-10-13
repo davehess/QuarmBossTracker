@@ -25,6 +25,13 @@
 // sighting there proves (pop_loot_sightings + flagsFromLoot in web/lib/popWho.ts), shown as a purple ✓.
 // Proof precedence, strongest first: Mimic > /who > loot > the owner's tick.
 //
+// Every step, not just the catalog grants (the guild lead, 2026-10-13: "update the entire page with all of the
+// character flag steps required, not just the main ones"): each zone card lists POP_STEPS[zone] from
+// web/lib/popSteps.ts, in order. A count is everyone whose held flags PROVE the step (stepsHeld expands a series,
+// so zeks_7 also counts zeks_1..6); ☑ is the holders who have it only by their owner's tick; ⏳ is a kill waiting
+// on the step before it (the checklist flag is held, the step is not); 🔇 marks a step the server prints no line
+// for. The zone view adds a Steps list: who can enter the zone and still needs each one.
+//
 // Views: default = chart + planner · ?zone=<key> = who's in/missing ·
 // ?view=matrix = roster × zone table · ?view=mine = the signed-in member's
 // own characters (mains AND alts — see the scope note below).
@@ -57,6 +64,7 @@ import {
   POP_ZONES, POP_ZONE_BY_KEY, POP_FLAGS, POP_FLAG_DEFS, TIER_LABELS, TIER_COLORS, JUSTICE_MARKS, MARK_OF_JUSTICE,
   zoneAccess, missingFor, type PopNode,
 } from '@/lib/popFlags';
+import { POP_STEPS, stepsHeld } from '@/lib/popSteps';
 import {
   WHO_ZONE_NAMES, flagsFromLoot, flagsFromSightings, lootText, seenText, type LootProof, type Sighting, type WhoProof,
 } from '@/lib/popWho';
@@ -141,7 +149,7 @@ function groupNeeds(rows: SpellNeed[]): NeedByChar[] {
 }
 
 const KIND_ICONS: Record<string, string> = {
-  kill: '⚔', trial: '🏛', quest: '📜', event: '✨', loot: '🎁',
+  kill: '⚔', trial: '🏛', quest: '📜', event: '✨', loot: '🎁', hail: '💬', touch: '✋',
 };
 
 export default async function PopFlagsPage(
@@ -444,6 +452,22 @@ export default async function PopFlagsPage(
   // Justice marks held across the scoped roster, one count per trial.
   const markCount = new Map<string, number>();
   for (const c of scopedChars) for (const t of marksOf(c.name)) markCount.set(t, (markCount.get(t) ?? 0) + 1);
+  // Each character's proven steps, expanded once: everything held, and everything held WITHOUT the owner's
+  // ticks, so a step only a tick proves can be told from one Mimic, /who or loot saw.
+  const stepsOf = new Map<string, Set<string>>();
+  const stepsSeenOf = new Map<string, Set<string>>();
+  for (const c of scopedChars) {
+    const k = c.name.toLowerCase();
+    stepsOf.set(k, stepsHeld(c.flags));
+    stepsSeenOf.set(k, stepsHeld([...c.flags].filter(f => !c.self.has(f))));
+  }
+  const holdsStep = (c: CharFlags, key: string) => stepsOf.get(c.name.toLowerCase())?.has(key) ?? false;
+  const stepHolders = (key: string) => scopedChars.filter(c => holdsStep(c, key)).length;
+  const stepSelfOnly = (key: string) =>
+    scopedChars.filter(c => holdsStep(c, key) && !(stepsSeenOf.get(c.name.toLowerCase())?.has(key))).length;
+  // Killed it before the step that comes first: the checklist flag is held, the step is not.
+  const stepWaiting = (key: string, checklist: string) =>
+    scopedChars.filter(c => c.flags.has(checklist) && !holdsStep(c, key)).length;
   const eligibleCount = new Map<string, number>();
   const eligibleChars = new Map<string, CharFlags[]>();
   for (const z of POP_ZONES) {
@@ -645,7 +669,29 @@ export default async function PopFlagsPage(
           </div>
         )}
         <ul className="space-y-0.5">
-          {z.grants.map(f => {
+          {POP_STEPS[z.key] ? POP_STEPS[z.key].map(s => {
+            const n = stepHolders(s.key);
+            const selfOnly = stepSelfOnly(s.key);
+            const waiting = s.checklist ? stepWaiting(s.key, s.checklist) : 0;
+            return (
+              <li key={s.key} className="text-xs flex items-center justify-between gap-2" title={s.note}>
+                <span className="text-dim">
+                  {KIND_ICONS[s.how] ?? KIND_ICONS.event} {s.label}
+                  {s.where && <span className="text-dim/60"> · {s.where}</span>}
+                  {s.silent && <span title="The server prints no flag line for this step; only the Seer's guided meditation shows it"> 🔇</span>}
+                </span>
+                <span className="text-[11px] whitespace-nowrap">
+                  <span className={n > 0 ? 'text-green' : 'text-dim'}>👤 {n}</span>
+                  {selfOnly > 0 && (
+                    <span className="text-gold" title={`${selfOnly} of them ticked by their owners on the site, not seen by Mimic or /who`}> ☑{selfOnly}</span>
+                  )}
+                  {waiting > 0 && (
+                    <span className="text-orange" title="Killed it before the step that comes first: the Seer's 'unlock memories' turns this into the flag once that step is done"> ⏳{waiting}</span>
+                  )}
+                </span>
+              </li>
+            );
+          }) : z.grants.map(f => {
             const def = POP_FLAGS[f];
             const n = flagCount.get(f) ?? 0;
             return (
@@ -917,6 +963,37 @@ export default async function PopFlagsPage(
               </ul>
             </div>
           </div>
+          {POP_STEPS[selected.key] && (
+            <div className="mt-4 border-t border-border pt-3">
+              <div className="text-xs text-dim mb-2">Steps</div>
+              <ul className="space-y-2 text-sm">
+                {POP_STEPS[selected.key].map(s => {
+                  const need = (eligibleChars.get(selected.key) ?? []).filter(c => !holdsStep(c, s.key));
+                  return (
+                    <li key={s.key} title={s.note}>
+                      <div className="text-xs">
+                        <span className="text-text">{KIND_ICONS[s.how] ?? KIND_ICONS.event} {s.label}</span>
+                        {s.where && <span className="text-dim"> · {s.where}</span>}
+                        {s.silent && <span title="The server prints no flag line for this step; only the Seer's guided meditation shows it"> 🔇</span>}
+                        <span className={stepHolders(s.key) > 0 ? 'text-green' : 'text-dim'}> · 👤 {stepHolders(s.key)}</span>
+                      </div>
+                      {need.length > 0 && (
+                        <div className="text-xs text-dim pl-4">
+                          still need it ({need.length}):{' '}
+                          {need.map((c, i) => (
+                            <span key={c.name}>
+                              {i > 0 && ', '}
+                              <Link href={`/character/${encodeURIComponent(c.name)}`} className="hover:underline">{c.name}</Link>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
         </section>
       ) : view === 'matrix' ? (
         // ── Roster × zone matrix (secondary view) ─────────────────────────────
