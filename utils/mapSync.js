@@ -9,12 +9,14 @@
 // event never costs the rest of the batch. More than MAX_EVENTS events is a 400, not a silent cap: the
 // client contract is "at most 50 per POST", so a larger batch is a client bug worth seeing.
 //
-// ponytail: guild-wide per zone, no instance id. Two guild raids in different instances of the same zone
-// would see each other's events. Accepted ceiling until the client can name an instance.
+// Stored guild-wide per zone. Since agent 3.7.140 an event may carry `inst`, the zone server's host:port from the
+// player's dbg.txt (2026-10-13). The AGENT uses it to take events only from its own copy of the zone. The bot just
+// keeps and returns it; one that is missing or malformed is stored as null, never a 400.
 
 'use strict';
 
 const ZONE_RE = /^[a-z0-9_]{2,32}$/;
+const INST_RE = /^[a-z0-9.-]{1,100}:\d{1,5}$/;
 const KINDS = new Set(['seen', 'died', 'empty', 'up', 'clear']);
 const MAX_EVENTS = 50;
 const MAX_FUTURE_MS = 10 * 60 * 1000;
@@ -48,7 +50,8 @@ function validateEvents(body, now = Date.now()) {
     if (at > now + MAX_FUTURE_MS || at < now - MAX_AGE_MS) continue;
     // A spawn id of 0 means "no target" on the Zeal pipe, not spawn zero (CLAUDE.md, bot 3.1.123).
     const spawnId = Number.isInteger(e.spawn_id) && e.spawn_id > 0 && e.spawn_id <= INT4_MAX ? e.spawn_id : null;
-    events.push({ point_id: e.point_id, kind: e.kind, spawn_id: spawnId, name: cleanText(e.name), at });
+    const inst = typeof e.inst === 'string' && INST_RE.test(e.inst) ? e.inst : null;
+    events.push({ point_id: e.point_id, kind: e.kind, spawn_id: spawnId, name: cleanText(e.name), at, inst });
   }
   return { zone: body.zone, character, events, dropped: body.events.length - events.length };
 }

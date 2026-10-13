@@ -69,7 +69,7 @@ record: `DECISIONS-2026-09-21.md` §216. Earlier groundwork this builds on: `DES
 |---|---|---|---|
 | 1 | **Static spawn layer**: dots for every spawn point, named emphasis, hover card (name/level/respawn), ordered side list, aggro-radius rings toggle | data we have; one route + a canvas layer | web (`/spectator`, `/screen`) |
 | 2 | **Pather routes**: mirror `grid` / `grid_entries`, dashed route lines | sync edit + migration | bot sync + web |
-| 3 | **Zone-server log** from `dbg.txt`: `instance_token` on every upload that keys by zone | agent reader (allow-list) + a small table | agent (beta) + bot |
+| 3 | **Zone-server log** from `dbg.txt`: `instance_token` on every upload that keys by zone. **Built for the Map** (agent 3.7.140, bot 3.1.250, DECISIONS §251): host:port per zone-in, `inst` on synced map events (`map_spawn_events.inst`), a /who open/closed check; other uploads not yet keyed | agent reader (allow-list) + a small table | agent (beta) + bot |
 | 4 | **Live from today's pipe**: your target as a dot with a dotted line and range; each target you tab through is placed at its spawn point and marked up; deaths you see start the cooldown (green/yellow/red/flash), tick outline from the death time | agent reads Zeal 1.4.8 target fields; spawn observations table | agent (beta) + bot + web |
 | 5 | **Nearby list from our Zeal fork** (if picked): every mob within range as a live dot, pathers on their line, pets as a paw | fork message type 7 + agent | Zeal fork + agent |
 | 6 | **Learning**: respawn from observed deaths (PvP ±20%), spawn order after downtime | phase 4/5 observations accumulated | bot + web |
