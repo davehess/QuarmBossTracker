@@ -2978,7 +2978,11 @@ Command Center's `auctions`. Extended Target: `ma_target` row mark + `main_assis
 header. XP events: `_xpNoteRawLine` → `xp_events` (bot `/api/agent/xp-events`).
 
 DPS HUD (`overlay.html` — DPS / Tank / **History** tabs; DPS+Tank are this
-machine's own observations, History is the guild's settled numbers for the last
+machine's own observations. **Per-row seconds** (agent 3.7.171, beta `a79291e6`, DECISIONS §313): each DPS row's
+Sec/DPS is its own first→last damage (`EncounterBuilder.add` stamps `firstMs`/`lastMs`; `_publishLiveThreat`
+publishes `spans` BESIDE `perPlayer`, never inside it, so the threat-snapshot upload does not grow; History rows
+carry `first_ms`/`last_ms`; overlay `_rowSecs` / `_rowTiming`). Total row, Tank tab and span-less rows keep fight time,
+ History is the guild's settled numbers for the last
 6 mobs with a ◀ ▶ pager. Agent 3.5.80 moved the guild-combined merge OFF the
 live view: mid-fight the bot has under three readings per player so its
 corroboration estimator falls back to max and doubles people. `_recordFightHistory`
