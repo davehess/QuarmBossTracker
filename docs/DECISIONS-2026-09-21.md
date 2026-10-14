@@ -10066,3 +10066,17 @@ Harmony, Hide/Sneak for non-rogues).
   It widens the beta-link rule (§135) to every page. Landed in CLAUDE.md under the UI working rule.
 - **Also asked:** *"this stuff can also go on /screen"*: the raid plan on https://wolfpack.quest/screen.
   Options offered the same night; the pick is open.
+
+### 280. Recorded raid positions also refine the raid-guide paths (2026-10-13)
+
+- **The call** (the guild lead): *"are we tracking everyone's positions through the raid so I can replay it on the
+  map? we should be ... storing those as we discussed previous, so we can refine the path for these raid
+  guides"*. A second use for §161's recorder: the paths drawn on https://wolfpack.quest/pop/raid should come
+  from where the raid actually walked, not only from the scripts' coordinates.
+- **Measured the same night:** `raid_track_minutes` holds 1,964 minutes (5.5 MB) from 2026-10-06 on, every day,
+  with the sweep off. Wednesday's target zones already have earlier minutes: Innovation 193, Nightmare 136,
+  Disease 115, the Lair 15, Valor 15.
+- **Still not built:** the replay viewer (§161's A/B/C look is unpicked; the previews promised for after
+  2026-10-07 never landed) and any path learned from the recordings. Tower's permanent copy is still the open
+  STATUS item (its merge script is not a git checkout).
+- Options for both offered the same night; the picks are open.
