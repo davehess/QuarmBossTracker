@@ -10132,3 +10132,19 @@ Harmony, Hide/Sneak for non-rogues).
   injuries and deaths; engagement order; feed these into gold splits for fast fights and into what Lord
   Mobsincamp looks for. Recording is on (§161, §280); the analysis is not built.
 - Research fanned out to Sonnet agents the same night; results and options follow in the session's reply.
+
+### 284. Announcers stay quiet in a fight; post-kill comparisons; Map rings for mez, pacify and harmony (2026-10-13)
+
+- **In-fight rule (the guild lead):** *"don't interrupt the fight unless there's a critical thing, like less than 1
+  minute left on a non bard slow"*. Applies to every announcer persona (miMIC, Bristlebane, Lord Mobsincamp):
+  nothing spoken or posted during a fight except a critical alert. The worked example: a slow from a non-bard
+  (shaman, enchanter, beastlord) with under a minute left on the boss. Bard slows are not critical (bards
+  re-apply constantly).
+- **Post-kill comparisons (asked):** mine the guild's earlier kills (Grummus and the rest) for stats an announcer
+  can say after a kill, e.g. how much faster than last time. Research handed to a Sonnet agent the same night.
+- **Map overlay rings (the guild lead):** *"add zzz's if it's mezzed, if it's truly pacified make the circle light
+  pink and have it fill in the outside like a clock wipe more red until the pacify wears off. bard pacify is much
+  shorter. druid harmony is still red on the inside at the lowered range, since it doesn't make aggro radius 0
+  like pacify"*. Follows the Harmony-is-not-Pacify policy (CLAUDE.md): pacify family (targettype 5) = pink, will
+  not aggro; Harmony / Wake of Tranquility (targettype 8) = still red inside at the reduced radius. Durations come
+  from each spell, so bard lulls run shorter on their own. Drafting on beta (agent + map.html).
