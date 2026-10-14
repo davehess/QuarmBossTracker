@@ -37,6 +37,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-8-155-2026-10-14',
+    title: 'The PoP checklist in sections',
+    version: 'Web 1.8.155',
+    date: '2026-10-14',
+    channel: 'beta',
+    headline: 'The PoP checklist is now a short list of closed sections: one for each tier and one for the Plane of Knowledge, with a list on the side to jump between them.',
+    features: [
+      { name: 'Tiers and Knowledge', blurb: 'Tier One to Tier Four and the Plane of Time each open to their planes, and the Plane of Knowledge (the flag fixers, the Traveler’s Manual, the Knowledge quests and your spells) has its own section after them. The Seer box stays at the very top.' },
+      { name: 'Progress on every line', blurb: 'Every section and plane says how many of its steps are done, and shows a ▶ next marker when the Seer text you pasted points at a step inside it.' },
+      { name: 'Jump list', blurb: 'On a wide screen the list sits beside the steps; on a phone it is a drop-down at the top. One click opens a section and takes you to it, the arrow beside it opens or closes it, and Expand all / Collapse all do the lot.' },
+      { name: 'Links that open the right place', blurb: 'The address changes as you jump (for example #tier-2-valor), so you can send a link to a plane, and the back button steps through where you were. “Show in checklist” on a Seer next step opens the tier and plane first.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-8-154-2026-10-14',
     title: 'Paste what the Seer says',
     version: 'Web 1.8.154',
