@@ -1091,6 +1091,13 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   until its ⚙ switch, and has its own 300-line ring (`_meleeRing`) so a fight cannot push chat out; not in ⏱ history. Each window
   has its own text settings (`chatPrefs.win[<main|group id>]`: font size, spacing, timestamps, tags), merged per window in main's
   `chat-prefs-set` (whitelisted, clamped).
+  **Round 5 (agent 3.7.175 · Mimic beta `0d4d33bd`, §320):** Spells `[SP]` and Skills `[SK]` groups (gates `spells`/`skills`, off by
+  default, 300-line `_spellRing`/`_skillRing`, one seq cursor via `_chatExtraRings`), classified by `classifySpellLine` /
+  `classifySkillLine` over `parseEvent`, `resolveSelfCastLanding` + the landing parsers, the catalog's you/fades text, `_CAST_FAIL_RX`,
+  `_ME_SKILL_LINES` / `_ME_DISCS`; only skill-ups and non-damage skill results got a new pattern list (`CHAT_SKILL_TEXT_RXS`, several
+  shapes unverified against a real Quarm log). Ownership: Melee takes every swing, disciplines are Skills only, chat is classified first.
+  Melee lines carry `cat` (mine / on_me / others, pets via `_petOwnerByName`) + `miss`; `chatPrefs.meleeShow` filters them and
+  `--c-melee-*` / `--c-spell` / `--c-skill` colour them.
 - **Seer paste on /pop/guide** (web 1.8.154 · beta, §304): `web/app/pop/guide/SeerPaste.tsx` (collapsed `<details>` atop all guide
   layouts); reader `web/lib/popRecital.ts` (`parseRecital`, `heldClosure`, `zoneViews`, `recitalRows`; table copied from
   `utils/popFlagStages.js`, parity-tested); guide join `web/lib/popGuideSeer.ts` (`STEP_GUIDE`, `guideStepsProven`); save
@@ -3067,7 +3074,11 @@ of the screen — the centre is reserved for the momentary flash
 match: `_GROW_UP_DEFAULT_KEYS` in `main.js` makes `trigger` grow-up **by
 default**, and every reader (resize path, chrome-menu checkbox, ⬆ toggle) goes
 through the one `_growUpSetting(cfg, key)` helper so an explicit choice wins in
-both directions. `--timers-space` (set from `measureWanted`) lifts the centred
+both directions. **Top corner grip** (Mimic beta `ac73bace`, 2026-10-14, DECISIONS §321): while grow-up is
+on, the preload injects `#wp-grip-top` (12 px, `nesw-resize`, `data-wp-interact`) into every ✥ overlay
+(`_wpApplyGrowUp`, live via `wp-growup` pushes) and steps the ✕ 8 px left (`body.wp-growup #hide-btn`);
+`overlay-resize-up-start` → `_startWindowResizeUp`, math in the pure `_resizeUpBounds` (left + bottom fixed,
+clamped to the work area, min 120×60 or the window's own minimum). Test: `test/overlay-growup-grip.test.js`. `--timers-space` (set from `measureWanted`) lifts the centred
 `#alertcol` clear of the stack — flex centring halves a bottom margin, hence
 twice the stack height. **Opt-in top anchor (agent 3.7.34, beta):** right-click →
 "⇅ Timers start at: TOP" sets `cfg.triggerTimersTopDown`; `applyTimersOrder` adds
