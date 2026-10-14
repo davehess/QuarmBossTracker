@@ -1005,6 +1005,7 @@ export default async function PopFlagsPage(
                     className={navCls(matrixView || mineView)}>Matrix</Link>
             </span>
             <Link href="/pop/guide" className={navCls(false)}>☑ My checklist</Link>
+            <Link href="/pop/latest" className={navCls(false)}>Latest flags (try the new view)</Link>
           </span>
         </div>
       </section>

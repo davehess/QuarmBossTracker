@@ -153,8 +153,10 @@ export function groupByStep(rows: LatestRow[], windowSecs = MOMENT_SECS): StepGr
 
 // The last LATEST_DAYS of verified rows for the guild. pop_flags is a big table, so the read is paged
 // (selectAll) and ordered on a unique key; the window keeps it small.
-export async function loadLatestFlagRows(sb: SupabaseClient, nowMs = Date.now()): Promise<LatestRow[]> {
-  const since = new Date(nowMs - LATEST_DAYS * 86_400_000).toISOString();
+// `days` is additive (the /pop/latest page reads a longer history to tell a repeated recital from news); the
+// default is the strip's own window.
+export async function loadLatestFlagRows(sb: SupabaseClient, nowMs = Date.now(), days = LATEST_DAYS): Promise<LatestRow[]> {
+  const since = new Date(nowMs - days * 86_400_000).toISOString();
   return selectAll<LatestRow>((from, to) => sb.from('pop_flags')
     .select('character, flag_key, zone, source, earned_at')
     .eq('guild_id', GUILD_TAG)
@@ -178,9 +180,9 @@ export function listableRows(
 }
 
 export async function latestFlagsFor(
-  sb: SupabaseClient, traders: Set<string>, hidden: Set<string>, nowMs = Date.now(),
+  sb: SupabaseClient, traders: Set<string>, hidden: Set<string>, nowMs = Date.now(), days = LATEST_DAYS,
 ): Promise<LatestRow[]> {
-  const rows = await loadLatestFlagRows(sb, nowMs);
+  const rows = await loadLatestFlagRows(sb, nowMs, days);
   const levels = await loadLevels(sb, [...new Set(rows.map(r => r.character))]);
   return listableRows(rows, traders, hidden, levels);
 }

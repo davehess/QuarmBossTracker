@@ -557,6 +557,7 @@ const UNIQUE_KEYS = {
   character_lockouts: [['character', 'boss_key']],
   fun_events: [['id']],
   pop_flags: [['id']],
+  raid_roster: [['uploaded_by_discord_id', 'name']],   // pkey (guild_id, uploaded_by_discord_id, name), 20260611210000; /pop/latest pages it
   pop_guide_ticks: [['character_name', 'item_key']],
   looted_items: [['id']],
   roll_sets: [['id']],

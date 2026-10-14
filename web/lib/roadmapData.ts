@@ -37,6 +37,24 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-8-157-2026-10-14',
+    title: 'Latest flags, in step order',
+    version: 'Web 1.8.157',
+    date: '2026-10-14',
+    channel: 'beta',
+    headline: 'A new page for the newest Planes of Power flags: a stream where raiders who flagged together are one row, cards in the order the steps unlock, and who in the raid still needs them.',
+    features: [
+      { name: 'Stream', blurb: 'The newest confirmed flags first. When a whole raid earns the same steps, that is one row with everyone’s name in A to Z order, and the list opens when it is long. A repeated Seer recital shows only what was new.' },
+      { name: 'Who still needs it', blurb: 'While a raid is live, each row can open to the raiders in it who do not have those steps yet.' },
+      { name: 'By stage', blurb: 'Cards in the order the steps unlock, like Hail Adroha, then the hedge event, then the Lair, then Terris Thule. Each step names who earned it and what it unlocks. Open by default, and you can fold it away.' },
+      { name: 'Filters', blurb: 'Last 24 hours, 3 days or 7 days, mains or all characters, and names in A to Z order or latest first.' },
+    ],
+    fixes: [
+      'The same recital no longer shows up twice a few minutes apart.',
+      'Each step shows the plane it belongs to, not the plane where the Seer happened to be standing.',
+    ],
+  },
+  {
     key: 'web-1-8-156-2026-10-14',
     title: 'PoP Flags starts on your characters',
     version: 'Web 1.8.156',
