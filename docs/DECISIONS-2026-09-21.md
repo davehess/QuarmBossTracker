@@ -139,7 +139,7 @@ is ephemeral. It is a desktop-session job.
 | **Mimic 2.7.9 stable + member-report sweep** (§176) | Stable `40af051a` (agent 3.7.96), beta re-parked 2.7.10. 13 older member reports closed with their senders DMed, plus FB-43; 23 stay open (partial / not done / unclear / alpha, listed in §176) | a session: the open member reports, starting with the partials (FB-22, FB-26, FB-3, FB-37); the guild lead: pick the four B/C web previews still on beta |
 | **Main / alt · Inventory only · Hide completely** (§175) | Bot 3.1.214 live; agent 3.7.96, stable in Mimic 2.7.9: the choice in setup and on the dashboard's Me card, Hide completely also stops this PC reading the log | the guild lead: should Inventory only also stop that character's fight uploads? |
 | **My parses: explore + Guild / My logs** (§174) | Live: search, zone, By day on `/me/parses` (web 1.8.110 · bot 3.1.213, `my_parse_series_v2`); the same in Mimic plus Guild / My logs, stable in Mimic 2.7.9 | a session with confirmation: drop the old `my_parse_series` |
-| **Reverse Slow + Quarm ability numbering** (§173, FB-54) | Bot 3.1.212 + web 1.8.109 live: the chip, corrected labels; Mimic warnings stable in 2.7.9 (agent 3.7.94+) | the guild lead: add `slow_mitigation` to the mirror? |
+| **Reverse Slow + Quarm ability numbering** (§173, FB-54) | Bot 3.1.212 + web 1.8.109 live: the chip, corrected labels; Mimic warnings stable in 2.7.9 (agent 3.7.94+); `slow_mitigation` now in the mirror (§290) | a session: show slow mitigation on Target Info / mob-info (not wired yet) |
 | **Target Info: faction + who assists** (§172) | Bot 3.1.211 on main; the Faction sub-tab on Mimic beta | the guild lead: target a Plane of Justice mob on the beta and check Faction / Assisted by |
 | **Long-term bidding out of the timers** (§171) | Stable hot-swap agent 3.7.92 (`f5850e89`), beta 3.7.93: auctions set to run over 6 h get no timer and no Command Center row; bidding unchanged. The ✕ on timer chips: hardened (`cf817067`), stable in Mimic 2.7.9 | the guild lead: retest a ✕ with overlays locked and say which window if it still fails |
 | **My parses over time** (§170) | Live: `/me/parses` [beta] (web 1.8.108) + `/api/agent/my-parses` (bot 3.1.210), one function `my_parse_series`; mules and traders fold behind "+N more". On beta (agent 3.7.91+): Mimic's My parses tab + tray item and the meter's Trend view | the guild lead: (1) add the 29 missing PoP bosses to the boss list? (2) link `/me/parses` from `/me` (a change to an existing page, so beta first)? Members: try the beta tab and Trend |
@@ -10215,3 +10215,22 @@ Harmony, Hide/Sneak for non-rogues).
   lot of after 1pm est today"* (Wednesday 2026-10-14). Generation runs on V5 (§288). This session prepares the
   production pack first: character reference sheet prompts, a storyboard tied to the pre-raid monologues,
   per-shot image and LTX prompts, and the job list.
+
+### 290. A mob's swing speed, stats and look are in the mirror (2026-10-14)
+
+- **The ask (the guild lead):** *"mob attack speed is in the data on PQDI. I presume we have all of the info for
+  each mob in the database, including model and what it [looks like]"*. We had race, gender, texture and size,
+  but not the rest: `scripts/sync-from-eqmac.js` picks upstream columns by name and never named them.
+- **What landed:** migration `20261014040000_npc_types_combat_and_look` (applied to production via MCP; the same
+  file is committed) adds 35 columns to `eqemu_npc_types`: `attack_delay` (tenths of a second per round), the
+  seven stats (`_INT` is stored as `int_stat`), `atk`, `accuracy`, `avoidance`, `slow_mitigation`, the regen
+  rates, `see_sneak`, `npc_aggro`, and the look (helm, face, armour textures, tint, held-weapon models, light).
+  The sync picks them up, and `test/sync-npc-sheet-columns.test.js` guards both ways a column goes silently
+  missing. A dump without a column leaves it null; it never nulls a stored value.
+- **Verified:** the forced sync (run 38502496697, `force=true`, because the unchanged dump sha would otherwise
+  skip) filled all 18,033 rows. Grummus reads attack_delay 18 and see_sneak true, which matches PQDI.
+- **Read off it for tonight:** Mujaki swings every 1.0 s, the fastest of the night. Prototypes IX and XI and
+  Terris Thule have slow_mitigation 75, so a quarter of a slow lands. This closes the §173 question of whether
+  `slow_mitigation` goes in the mirror. Nothing reads the new columns yet: Target Info and the mob-info route
+  are the next consumers.
+- **Self-host note:** additive columns on a table that is already mirrored; no storage cost worth a §3 line.
