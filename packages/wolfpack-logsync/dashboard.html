@@ -4453,6 +4453,11 @@ function renderTriggers(s) {
   // section HTML here stays byte-stable and the card is not rewritten by a Triggers repaint.
   h += '<div id="wpTrigRules" class="card wide"></div>';
 
+  // 🔊 Sounds and 🗣 Voice & names (the guild lead, 2026-10-14) — each its own wp* placeholder, filled by
+  // setupSounds / setupVoiceNames below, so this section's HTML stays byte-stable.
+  h += '<div id="wpSounds" class="card wide"></div>';
+  h += '<div id="wpVoice" class="card wide"></div>';
+
   // Suggested triggers — one-click catalog of pre-tested alerts grouped by
   // category. Toggling the Enable checkbox creates/removes a personal
   // trigger with id "suggested:<template_id>" via /api/triggers/suggested;
@@ -4494,6 +4499,12 @@ function renderTriggers(s) {
   if (window._wpTrigRules && window._wpTrigRules.mount) {
     window._wpTrigRules.mount();
   }
+  if (window._wpSounds && window._wpSounds.mount) {
+    window._wpSounds.mount();
+  }
+  if (window._wpVoiceNames && window._wpVoiceNames.mount) {
+    window._wpVoiceNames.mount();
+  }
   if (window._wpTrigSync && window._wpTrigSync.mount) {
     window._wpTrigSync.mount();
   }
@@ -4505,6 +4516,8 @@ function renderTriggers(s) {
 function renderGuildTriggersCard(s) {
   var el = document.getElementById('wpGuildTriggers');
   if (!el) return;   // Triggers tab not painted yet
+  // The sound list a row's "My sound" box needs arrives once, a moment after the first paint: draw again then.
+  if (!window._wpSndAsked) { window._wpSndAsked = true; WPSounds.load().then(function () { if (window.__wpLastState) renderGuildTriggersCard(window.__wpLastState); }); }
   var gt = s.guildTriggers || [];
   var h = '<h2>🛡️ Guild triggers <span class="dim" style="font-size:11px;font-weight:normal">(read-only: click one to see its settings; officers edit on wolfpack.quest/admin/triggers)</span></h2>';
   if (gt.length === 0) {
@@ -4542,6 +4555,9 @@ function renderGuildTriggersCard(s) {
         warn_tts: _w ? _w.tts : true,
         timer_loop: t.timer_loop === true,
         timer_loop_max: t.timer_loop_max || 0,
+        sound: _act.sound || '',
+        sound_volume: _act.sound_volume != null ? _act.sound_volume : null,
+        sound_mode: _act.sound_mode || '',
       };
       var key = String(t.id || t.name || '');
       var open = !!_wpTrigOpen['g|' + key];
@@ -4550,6 +4566,9 @@ function renderGuildTriggersCard(s) {
       var _rm = (s.guildRuleModes || {})[t.id];
       var _rbadge = _rm === 'overlay' ? '<span class="rbadge" title="Shown on the trigger overlay, never spoken (What you hear)">👁 overlay only</span>'
         : _rm === 'off' ? '<span class="rbadge off" title="Turned off: neither shown nor spoken (What you hear)">⛔ off</span>' : '';
+      // 🔊 this PC's own sound for the row, if the member picked one (kept off-guild, see Sounds)
+      var _ov = (s.soundOverrides || {})[t.id];
+      if (_ov && _ov.sound) _rbadge += '<span class="rbadge" title="Your own sound for this guild trigger, on this PC only">🔊 ' + esc(String(_ov.sound).replace(/^custom:/i, '').replace(/^https?:.*/i, 'web sound')) + '</span>';
       h += '<tr data-trig-key="' + esc(key) + '" style="cursor:pointer"><td>'
         + '<button type="button" class="trigname" data-trig-view="' + esc(key) + '" aria-expanded="' + (open ? 'true' : 'false') + '" style="color:var(--orange)" title="Show this trigger\'s settings">'
         + (open ? '▾' : '▸') + ' ' + esc(t.name || '?') + '</button>' + _rbadge + '</td>' +
@@ -4557,7 +4576,7 @@ function renderGuildTriggersCard(s) {
            '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc((t.pattern || '').slice(0, 80)) + '</code></td>' +
            '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>' +
            '<td><button type="button" data-trig-copy="' + esc(JSON.stringify(_copy)) + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;white-space:nowrap" title="Copy this guild trigger to your own list so you can customize it without changing the guild\'s version">⎘ Copy to personal</button></td></tr>';
-      if (open) h += '<tr class="trigdetail"><td colspan="5">' + wpTrigSettingsHtml(t, 'guild') + '</td></tr>';
+      if (open) h += '<tr class="trigdetail"><td colspan="5">' + wpTrigSettingsHtml(t, 'guild') + wpSoundOverrideHtml(t, _ov) + '</td></tr>';
     }
     h += '</table>';
   }
@@ -4592,6 +4611,7 @@ var WP_OVERLAY_ROWS = [
   ['mobinfo', 'Target Info',         'Current target: HP, AC, resists, special attacks, drop table — and, for a Shadow Knight mob, whether it still has its Harm Touch.'],
   ['buffQueue','Buff queue',         'Raid/group buff + debuff/cure queue with severity sort; pick a class to focus. Fills non-Mimic raiders from observed casts.'],
   ['who',     '/who',                'Latest /who in zone + recently-gone; anon rows de-anon\'d from history.'],
+  ['chat',    'Chat [beta]',         'Your chat in a window of its own, off the EverQuest screen if you like: one feed, colour-coded by channel, with a chip for each (Guild, Raid, Say, OOC/Shout, Auction, NPC) to show or hide it. Tells appear when Settings has Tells on Local or Synced. Group, Officer and custom channels are hidden until you switch them on in the window\'s ⚙. Lines stay on this PC in memory, are never uploaded, and are gone when Mimic restarts. Works in local mode.'],
   ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
   ['zeal',    'Tick',                'Server tick countdown for each character on Zeal, plus your charmed mob\'s own tick. Bars or dials. Click the status line for the Zeal health check and this PC\'s clock offset.'],
   ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. Aggro AAs like Disruptive Persecution and de-aggro spells like Concussion count via a CAST_HATE map; zoning clears your hate.'],
@@ -4618,6 +4638,7 @@ var WP_OVERLAY_BLURB = {
   mobinfo:   'HP, resists, special attacks, drops, Harm Touch.',
   buffQueue: 'Buffs, debuffs and cures the raid needs, by severity.',
   who:       'Latest /who in zone, recently gone.',
+  chat:      'Your chat in its own window, a chip per channel.',
   melody:    'Bard twist queue with cast bar and buff windows.',
   zeal:      'Server tick for each character, plus your charm tick.',
   threat:    'Per-fight aggro, stacked by swing, proc and heal.',
@@ -4680,6 +4701,7 @@ function renderOverlays(s) {
     + '<button type="button" class="wp-ov-act wp-btn" data-act="lock" id="wpOvLockBtn">…</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="arrange" title="Arranging only ever runs when you click it — never automatically.">✨ Auto-arrange now</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="rescue" title="Lost an overlay off the edge of a screen? Brings back only the overlays you cannot reach, each to a free spot on the screen this window is on; nothing else moves. Overlays sitting on another screen come too only if you say yes. That screen becomes the overlays\' home for future arranges.">🧲 Rescue to this screen</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="mapMode" id="wpOvMapModeBtn" title="The Map as a window you place, or laid over EverQuest and click-through so you play straight through it (it keeps clear of your UI windows). The same switch as the Map&rsquo;s own toolbar button and the tray.">…</button>'
     + '</span>'
     + '</div>';
   // On screen now | Add. Every overlay is written into BOTH — a row in the list
@@ -4699,7 +4721,7 @@ function renderOverlays(s) {
     // Nor the HUD ring (the guild lead, 2026-09-24: "HUD doesn't make sense to
     // dock") — it is a square round the character; main's catalog agrees.
     // The Canvas covers the screen and is a host itself.
-    var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas' || key === 'map' || key === 'maptimers')
+    var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas' || key === 'map' || key === 'maptimers' || key === 'chat')
       ? ''
       : '<button type="button" class="wp-ov-dock" data-ov="' + key + '">…</button>';
     // ▭ Mini mode (the guild lead, 2026-09-24: "I don't see any of the
@@ -5520,11 +5542,11 @@ function wpRefreshOverlayToggles() {
     var cfgP = window.mimic.getConfig ? window.mimic.getConfig().catch(function(){ return {}; }) : Promise.resolve({});
     Promise.all([window.mimic.getStatus(), cfgP]).then(function(res){
       var st = res[0] || {}, cfg = res[1] || {};
-      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid, me: !!st.showMe, map: !!st.showMap, maptimers: !!st.showMapTimers, canvas: !!st.showCanvas };
+      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, chat: !!st.showChat, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid, me: !!st.showMe, map: !!st.showMap, maptimers: !!st.showMapTimers, canvas: !!st.showCanvas };
       // Which cfg flag each row reads, so a HIDDEN row can be told from an OFF
       // one. Hide-all writes every flag false, so without the snapshot the two
       // are indistinguishable here (the guild lead, 2026-08-04).
-      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid', me: 'showMe', map: 'showMap', maptimers: 'showMapTimers', canvas: 'showCanvas' };
+      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', chat: 'showChat', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid', me: 'showMe', map: 'showMap', maptimers: 'showMapTimers', canvas: 'showCanvas' };
       var hidPrev = (st.hideAllActive && st.hideAllPrev) ? st.hideAllPrev : null;
       var hidCount = 0, nListed = 0, nOff = 0;
       var dockedList = Array.isArray(st.dockedOverlays) ? st.dockedOverlays : [];
@@ -5600,6 +5622,12 @@ function wpRefreshOverlayToggles() {
       if (arBtn) {
         arBtn.textContent = st.canvasArrange ? '✓ Done arranging' : '✏ Arrange on screen';
         arBtn.className = 'wp-ov-act wp-btn pri' + (st.canvasArrange ? ' on' : '');
+      }
+      // 🗺 Map: Window ↔ Full, as the tray item and the Map's own button. An older Mimic does not report it: no button.
+      var mmBtn = document.getElementById('wpOvMapModeBtn');
+      if (mmBtn) {
+        mmBtn.style.display = st.mapMode ? '' : 'none';
+        mmBtn.textContent = st.mapMode === 'full' ? '🗺 Map: Full screen — back to a window' : '🗺 Map: window — go full screen';
       }
       // ▭ Mini: each capable row's switch and 📌, and the Minimize ALL button.
       var miniMap = st.overlayMini || {}, pinMap = st.overlayMiniPinned || {};
@@ -5744,6 +5772,14 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
           setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
         }).catch(function(){});
       } else if (a === 'canvasArrange' && window.mimic.setSetupMode) window.mimic.setSetupMode(true);
+      // Same setter as the tray item and the Map's own button.
+      if (a === 'mapMode' && window.mimic.setMapMode) {
+        window.mimic.getStatus().then(function(st){
+          return window.mimic.setMapMode(st && st.mapMode === 'full' ? 'window' : 'full');
+        }).then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      }
       if (a === 'miniall' && window.mimic.toggleMiniAll) {
         window.mimic.toggleMiniAll().then(function(){
           setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
@@ -6671,6 +6707,39 @@ function _wpDeathrollHtml(e) {
   return h + '</table></details>';
 }
 
+// 🤝 A tie at the top of a roll set (the guild lead, 2026-10-14: "if two toons roll the same number on a
+// roll it should trigger a deathroll and highlight the tie"). The agent decides it once (rollSetTies,
+// carried as rset.tie / rset.lower_ties); these only draw it. Orange, bordered and spelled out, so it
+// reads without the colour. The header names the tied rolls instead of one arbitrary winner and, once
+// the deathroll is over, names its winner. The prompt says who starts and on which range.
+function _wpRollTieChip(label) {
+  return '<span style="color:var(--orange);border:1px solid var(--orange);border-radius:3px;padding:0 4px;font-weight:700">'
+    + label + '</span>';
+}
+function _wpRollWhoHtml(rset) {
+  var t = rset && rset.tie;
+  if (!t) return (rset.winners || []).map(function (w) { return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+  var chip = _wpRollTieChip('TIE ' + Number(t.value));
+  if (t.state === 'done') return chip + ' <span style="color:var(--gold,#f0c419)">' + (t.winners || []).map(esc).join(', ') + '</span> won the deathroll';
+  return chip + ' ' + (t.names || []).map(esc).join(' · ');
+}
+function _wpRollTiePrompt(rset) {
+  var t = rset && rset.tie;
+  if (!t) return '';
+  var msg;
+  if (t.state === 'done') msg = 'Deathroll over: ' + (t.winners || []).map(esc).join(', ') + ' wins' + ((t.out || []).length ? ' · ' + t.out.map(esc).join(', ') + ' hit 0' : '');
+  else if (t.state === 'live') msg = 'Deathroll going: ' + (t.next && t.next.name ? esc(t.next.name) + ' rolls' : 'next roll') + ' /random ' + (t.next ? t.next.to : t.value);
+  else msg = 'Tie → deathroll: ' + esc(t.starter) + ' starts with /random ' + t.value;
+  return '<div style="border-left:3px solid var(--orange);padding:2px 8px;margin:4px 0;font-weight:600">' + msg + '</div>';
+}
+function _wpRollRowMark(rset, rr) {
+  if (!rset || rr.reroll) return '';
+  var t = rset.tie;
+  if (t && rr.value === t.value && (t.names || []).indexOf(rr.name) !== -1) return ' ' + _wpRollTieChip('TIE');
+  if ((rset.lower_ties || []).indexOf(rr.value) !== -1) return ' <span class="dim" title="Same number as another roller">=</span>';
+  return '';
+}
+
 // ── 📦 Who looted what (the guild lead, 2026-10-03) ──────────────────────────────────
 // "the loot tab on mimic should have the 'who looted what' section on there for
 // items, as well as the rolls for loot." An agent only ever sees its OWN
@@ -6839,24 +6908,25 @@ function renderLootTab(s) {
     for (var rsi = 0; rsi < _rollSets.length; rsi++) {
       var rset = _rollSets[rsi];
       if (rset.kind === 'deathroll') { h += _wpDeathrollHtml(rset); continue; }
-      var rWinners =(rset.winners || []).map(function (w) { return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+      var rWinners = _wpRollWhoHtml(rset);
       var rTime = new Date(rset.started_at_ms).toLocaleTimeString();
       // 📦 Only when the looter is NOT a winner drawn here (a re-roll or a pass).
       var rLooted = wpNightLootedBy(rset, _wpNightLoot && _wpNightLoot.sessions);
       h += '<details ' + wpKeep('roll|' + rset.started_at_ms + '|' + rset.to) + '>';
       h += '<summary><b>' + rset.from + '–' + rset.to + '</b>'
          + (rset.item ? ' (' + esc(rset.item) + (rset.qty ? ' ×' + rset.qty : '') + ')' : '')
-         + ' — <span style="color:var(--gold,#f0c419)">' + (rWinners || '—') + '</span>'
+         + ' — <span style="color:var(' + (rset.tie && rset.tie.state !== 'done' ? '--orange' : '--gold,#f0c419') + ')">' + (rWinners || '—') + '</span>'
          + (rLooted.length ? ' <span style="color:var(--blue)">· 📦 looted by ' + rLooted.map(esc).join(', ') + '</span>' : '')
          + ' <span class="dim">· ' + rset.players + ' roller' + (rset.players === 1 ? '' : 's')
          + ' · ' + rTime + (rset.open ? ' · open' : '') + '</span></summary>';
+      h += _wpRollTiePrompt(rset);
       h += '<table><tr><th>Rolled</th><th>Player</th><th>Time</th></tr>';
       var rRows = (rset.rolls || []).slice().sort(function (a, b) { return b.value - a.value; });
       for (var rri = 0; rri < rRows.length; rri++) {
         var rr = rRows[rri];
         h += '<tr' + (rr.reroll ? ' style="opacity:0.45;text-decoration:line-through"' : '') + '>'
            + '<td class="num">' + rr.value + '</td>'
-           + '<td>' + esc(rr.name) + (rr.reroll ? ' (re-roll)' : '') + '</td>'
+           + '<td>' + esc(rr.name) + (rr.reroll ? ' (re-roll)' : '') + _wpRollRowMark(rset, rr) + '</td>'
            + '<td class="dim">' + new Date(rr.at_ms).toLocaleTimeString() + '</td></tr>';
       }
       h += '</table></details>';
@@ -11149,6 +11219,74 @@ async function dismissTopDamage(key) {
   setInterval(refresh, 5000);
 })();
 
+// ── 🔊 The sound library, as the dashboard sees it (2026-10-14) ─────────────
+// A trigger's `sound` is a NAME from the library ("slap"), "custom:<file>" for a file the member dropped in
+// their own sounds folder, or an http(s) URL — never a path, so a guild or synced trigger plays on every PC.
+// The agent lists and serves them (GET /api/sounds, GET /sounds/<name>); the shipped set comes with Mimic.
+// This is the one place the dashboard's pickers get their options from, and the one place that plays a
+// sample, so the editor, the guild-row control and the Sounds card cannot disagree.
+var WPSounds = (function () {
+  var list = [], userDir = '', loaded = false, loading = null, cur = null, packs = [], packsLoaded = false;
+  function load(force) {
+    if (loaded && !force) return Promise.resolve(list);
+    if (loading) return loading;
+    loading = fetch('/api/sounds').then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      if (j && Array.isArray(j.sounds)) { list = j.sounds; userDir = j.user_dir || ''; loaded = true; }
+      return list;
+    }).catch(function () { return list; }).then(function (x) { loading = null; return x; });
+    return loading;
+  }
+  function loadPacks() {
+    if (packsLoaded) return Promise.resolve(packs);
+    return fetch('/api/voice-packs').then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      if (j && Array.isArray(j.packs)) { packs = j.packs; packsLoaded = true; }
+      return packs;
+    }).catch(function () { return packs; });
+  }
+  function labelOf(s) {
+    var mine = s.source === 'custom';
+    return (String(s.name).indexOf('custom:') === 0 ? String(s.name).slice(7) : s.name) + (mine ? ' (mine)' : '');
+  }
+  // <option>s for a sound <select>: none, the library, and — if the saved value is in neither (a URL a guild
+  // trigger carries) — that value as it is, so opening a row and saving it never changes its sound.
+  function optionsHtml(selected) {
+    var sel = String(selected == null ? '' : selected), seen = sel === '';
+    var h = '<option value=""' + (sel === '' ? ' selected' : '') + '>none</option>';
+    for (var i = 0; i < list.length; i++) {
+      var on = list[i].name === sel; if (on) seen = true;
+      h += '<option value="' + esc(list[i].name) + '"' + (on ? ' selected' : '') + '>' + esc(labelOf(list[i])) + '</option>';
+    }
+    if (!seen) h += '<option value="' + esc(sel) + '" selected>' + esc(/^https?:/i.test(sel) ? 'a web address' : sel + ' (not on this PC)') + '</option>';
+    return h;
+  }
+  // Rewrites a <select>'s options in place, keeping what it had picked.
+  function fill(selectEl) {
+    if (!selectEl) return;
+    var keep = selectEl.value;
+    selectEl.innerHTML = optionsHtml(keep);
+    selectEl.value = keep;
+  }
+  function packOptionsHtml(selected, noneLabel) {
+    var h = '<option value="">' + esc(noneLabel || 'My voice (as set in Mimic)') + '</option>';
+    for (var i = 0; i < packs.length; i++) h += '<option value="' + esc(packs[i].id) + '"' + (packs[i].id === selected ? ' selected' : '') + '>' + esc(packs[i].label) + '</option>';
+    return h;
+  }
+  function play(name, vol) {
+    name = String(name || '');
+    if (!name) return;
+    try { if (cur) { cur.pause(); cur = null; } } catch (e) { void e; }
+    var url = /^https?:\/\//i.test(name) ? name : '/sounds/' + encodeURIComponent(name);
+    try {
+      var a = new Audio(url), v = Number(vol);
+      a.volume = (vol != null && vol !== '' && isFinite(v) && v >= 0 && v <= 1) ? v : 0.9;
+      cur = a;
+      var p = a.play(); if (p && p.catch) p.catch(function () { void 0; });
+    } catch (e) { void e; }
+  }
+  return { load: load, loadPacks: loadPacks, optionsHtml: optionsHtml, packOptionsHtml: packOptionsHtml, fill: fill, play: play, labelOf: labelOf,
+    list: function () { return list; }, userDir: function () { return userDir; }, packs: function () { return packs; } };
+})();
+
 // ── Trigger settings: what a trigger is set to do ───────────────────────────
 // FB-23 / FB-30: a trigger's name and pattern were all the list showed. A personal row's name was
 // also a .name cell, so clicking it went to the character page (a 404 for "Rampage on me")
@@ -11197,6 +11335,9 @@ function wpTrigSettingsHtml(t, scope) {
   }
   if (t.builtin_timer) add('Timer bar', esc(String(t.builtin_timer).replace(/_/g, ' ')) + ' <span class="dim">a switch: it draws a bar, there is nothing to match</span>');
   if (Array.isArray(t.exclude_patterns) && t.exclude_patterns.length) add('Unless', t.exclude_patterns.map(function (p) { return code(p); }).join(' '));
+  // A proc's landing text, told from the other spells that print it: only just after one of YOUR melee hits on that mob.
+  if (t.after_my_melee_ms > 0) add('Only when', 'one of <b>your</b> melee hits landed on that mob in the last ' + secs(t.after_my_melee_ms / 1000));
+  if (t.voice_pack) add('Voice', esc(String(t.voice_pack)) + ' <span class="dim">this callout\'s own voice pack</span>');
   if (Array.isArray(t.characters) && t.characters.length) add('Only on', names(t.characters));
   if (guild && Array.isArray(t.applies_to_classes) && t.applies_to_classes.length) add('Classes', esc(t.applies_to_classes.join(', ')));
   // what it does
@@ -11211,7 +11352,14 @@ function wpTrigSettingsHtml(t, scope) {
       // A Suggested alert with its 🔊 unticked says nothing (the agent mutes it); any other row with no speech text reads its display text.
       add('Says', a.tts ? '<b>' + esc(a.tts) + '</b>'
         : (!guild && String(t.id || '').indexOf('suggested:') === 0 ? '<span class="dim">nothing, its 🔊 is unticked under Suggested triggers</span>' : '<span class="dim">the same words it shows</span>'));
-      if (a.sound) add('Sound', esc(a.sound));
+      if (a.sound) {
+        var snd = String(a.sound);
+        add('Sound', esc(/^https?:\/\//i.test(snd) ? 'a web address' : snd.replace(/^custom:/i, ''))
+          + (a.sound_volume != null && Number(a.sound_volume) !== 0.9 ? ' at ' + Math.round(Number(a.sound_volume) * 100) + '%' : '')
+          + (a.sound_mode === 'replace' ? ' <span class="dim">plays instead of speaking</span>' : ''));
+      }
+    } else if (a.type === 'sound') {
+      add('Plays', esc(String(a.sound || '').replace(/^custom:/i, '')) + (a.sound_volume != null ? ' at ' + Math.round(Number(a.sound_volume) * 100) + '%' : '') + ' <span class="dim">a sound on its own</span>');
     } else {
       var msg = a.message || a.text || '';
       add('Also', esc(String(a.type).replace(/_/g, ' ')) + (msg ? ': ' + esc(String(msg).slice(0, 120)) : ''));
@@ -11275,11 +11423,23 @@ function wpTrigApplyForm(base, f) {
   if (f.overlay) {
     var a = Object.assign({ type: 'text_overlay' }, at >= 0 ? acts[at] : {}, { text: f.overlay, color: f.color, duration_ms: f.duration });
     if (f.tts) a.tts = f.tts; else delete a.tts;
+    // 2026-10-14: the sound. undefined = the caller has no sound box, so what the row had is kept (a URL
+    // sound on an imported trigger); '' = "none", clears it. sound_mode is written only when 'replace'
+    // (absent = plays with the callout) and the volume only when it is not the default 0.9.
+    if (f.sound !== undefined) {
+      if (f.sound) {
+        a.sound = f.sound;
+        if (f.soundReplace) a.sound_mode = 'replace'; else delete a.sound_mode;
+        if (f.soundVolume != null && Math.abs(Number(f.soundVolume) - 0.9) > 0.001) a.sound_volume = Math.max(0, Math.min(1, Number(f.soundVolume))); else delete a.sound_volume;
+      } else { delete a.sound; delete a.sound_mode; delete a.sound_volume; }
+    }
     if (at >= 0) acts[at] = a; else acts.unshift(a);
   } else if (at >= 0) {
     acts.splice(at, 1);
   }
   row.actions = acts;
+  // This trigger's own voice pack (a callout that should sound different); '' = the player's own voice.
+  if (f.voicePack !== undefined) { if (f.voicePack) row.voice_pack = f.voicePack; else delete row.voice_pack; }
   if (f.timerSec > 0) row.timer_duration_sec = f.timerSec; else delete row.timer_duration_sec;
   if (f.endEarly) { row.end_early_pattern = f.endEarly; if (row.end_use_regex === undefined) row.end_use_regex = true; }
   else { delete row.end_early_pattern; delete row.end_use_regex; }
@@ -11330,6 +11490,15 @@ function wpTrigApplyForm(base, f) {
       + '      <input id="trigNewOverlay" type="text" placeholder="e.g. CANCEL ON {target}!" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label style="grid-column:1/3">Spoken text (optional — leave blank to speak the overlay text)<br>'
       + '      <input id="trigNewTts" type="text" placeholder="e.g. D I fired on {tank}" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      // 2026-10-14: a sound from the library (or the member's own folder), its volume, whether it plays
+      // INSTEAD of the spoken callout, and this callout's own voice pack. The Sounds card below lists them all.
+      + '    <label>Sound (optional)<br><span style="display:flex;gap:6px;align-items:center">'
+      + '      <select id="trigNewSound" style="flex:1;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px">' + WPSounds.optionsHtml('') + '</select>'
+      + '      <button id="trigSoundPlay" type="button" title="Hear it at this volume" style="background:#21262d;color:var(--green);border:1px solid var(--border);padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:12px">&#9654;</button>'
+      + '    </span></label>'
+      + '    <label>Sound volume <span id="trigNewSoundVolVal" class="dim">90%</span><br><input id="trigNewSoundVol" type="range" min="0" max="100" value="90" style="width:100%"></label>'
+      + '    <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input id="trigNewSoundReplace" type="checkbox"> Play the sound <b>instead of</b> speaking the callout</label>'
+      + '    <label>Voice for this callout<br><select id="trigNewVoicePack" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px">' + WPSounds.packOptionsHtml('') + '</select></label>'
       + '    <label>Color<br><select id="trigNewColor" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"><option value="red">red</option><option value="orange">orange</option><option value="gold">gold</option><option value="green">green</option><option value="blue">blue</option><option value="purple">purple</option><option value="white">white</option></select></label>'
       + '    <label>Duration (ms)<br><input id="trigNewDuration" type="number" min="500" max="60000" value="5000" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label>Countdown timer (sec, 0 = no timer)<br><input id="trigNewTimerSec" type="number" min="0" max="3600" value="0" placeholder="e.g. 18 for a Cazic Touch refresh" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
@@ -11585,6 +11754,24 @@ function wpTrigApplyForm(base, f) {
     setChk('trigNewWarnTts', w ? w.tts : true);
     setChk('trigNewLoop', row.timer_loop === true);
     setVal('trigNewLoopMax', row.timer_loop_max > 0 ? row.timer_loop_max : '');
+    setSoundFields(o.sound, o.sound_volume, o.sound_mode === 'replace', row.voice_pack);
+  }
+  // The sound box, its volume, "instead of speaking" and the voice pack, set together (a saved row, a copy
+  // of a guild trigger, or back to blank after an add).
+  function setSoundFields(sound, volume, replace, pack) {
+    setVal('trigNewSound', sound || '');
+    setVal('trigNewSoundVol', volume != null && isFinite(Number(volume)) ? Math.round(Number(volume) * 100) : 90);
+    setChk('trigNewSoundReplace', !!replace);
+    setVal('trigNewVoicePack', pack || '');
+    syncSoundVolLabel();
+  }
+  function soundVolume() { var el = document.getElementById('trigNewSoundVol'); var v = el ? Number(el.value) : 90; return (isFinite(v) ? v : 90) / 100; }
+  function syncSoundVolLabel() { var l = document.getElementById('trigNewSoundVolVal'); if (l) l.textContent = Math.round(soundVolume() * 100) + '%'; }
+  // The sound and voice-pack lists arrive after the form is drawn: fill them in, keeping what is picked.
+  function refreshSoundPickers() {
+    WPSounds.fill(document.getElementById('trigNewSound'));
+    var vp = document.getElementById('trigNewVoicePack');
+    if (vp) { var keep = vp.value; vp.innerHTML = WPSounds.packOptionsHtml(keep); vp.value = keep; }
   }
   // Title, button labels and (when editing) the form's contents. Also what the form comes back as after
   // a section repaint rebuilds it: the edit survives, any unsaved typing does not.
@@ -11681,7 +11868,11 @@ function wpTrigApplyForm(base, f) {
           // tts only when the user typed one: absent means the overlay falls back
           // to the display text (cleaned of emoji by triggers.html), which is the
           // sane default for the many triggers that read fine as written.
-          actions: [{ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration, ...(ttsText ? { tts: ttsText } : {}) }],
+          actions: [Object.assign({ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration }, ttsText ? { tts: ttsText } : {},
+            // the sound, its volume, "instead of speaking" and this callout's voice pack play in the preview too
+            (document.getElementById('trigNewSound') || {}).value ? { sound: document.getElementById('trigNewSound').value, sound_volume: soundVolume(),
+              sound_mode: (document.getElementById('trigNewSoundReplace') || {}).checked ? 'replace' : 'add' } : {},
+            (document.getElementById('trigNewVoicePack') || {}).value ? { voice_pack: document.getElementById('trigNewVoicePack').value } : {})],
         },
       }),
     });
@@ -11893,7 +12084,10 @@ function wpTrigApplyForm(base, f) {
     // sane default for the many triggers that read fine as written.
     const form = { name: name, pattern: pattern, cooldown: cooldown, overlay: overlayText, tts: ttsText, color: color,
       duration: duration, timerSec: timerSec, endEarly: endEarly.trim(), zeal: zealCond,
-      warnSec: warnSec, warnText: warnText, warnTts: warnTts, loop: loop, loopMax: loopMax };
+      warnSec: warnSec, warnText: warnText, warnTts: warnTts, loop: loop, loopMax: loopMax,
+      sound: ((document.getElementById('trigNewSound') || {}).value || ''), soundVolume: soundVolume(),
+      soundReplace: !!(document.getElementById('trigNewSoundReplace') || {}).checked,
+      voicePack: ((document.getElementById('trigNewVoicePack') || {}).value || '') };
     var next;
     if (editing) {
       var at = -1;
@@ -11918,6 +12112,7 @@ function wpTrigApplyForm(base, f) {
         var ws = document.getElementById('trigNewWarnSec'); if (ws) ws.value = '0';
         var lp = document.getElementById('trigNewLoop'); if (lp) lp.checked = false;
         var zf = document.getElementById('trigNewZealField'); if (zf) zf.value = '';
+        setSoundFields('', null, false, '');
       }
       if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--green)'; }
       fetchAndRenderList();
@@ -11957,6 +12152,7 @@ function wpTrigApplyForm(base, f) {
     var wt = document.getElementById('trigNewWarnTts'); if (wt) wt.checked = cfg.warn_tts !== false;
     var lp = document.getElementById('trigNewLoop'); if (lp) lp.checked = cfg.timer_loop === true;
     set('trigNewLoopMax',  cfg.timer_loop_max || '');
+    setSoundFields(cfg.sound, cfg.sound_volume, cfg.sound_mode === 'replace', '');
     var msg = document.getElementById('trigAddMsg');
     if (msg) { msg.textContent = 'Copied from guild trigger — review and click "Add trigger" to save your personal copy.'; msg.style.color = 'var(--blue)'; }
     var panel = document.getElementById('trigEditorPanel');
@@ -12022,6 +12218,12 @@ function wpTrigApplyForm(base, f) {
       }
       var summary = '<span style="color:var(--green)">Imported ' + j.imported + ' of ' + j.total_in_xml + ' trigger' + (j.total_in_xml === 1 ? '' : 's') + '.</span>';
       if (j.skipped > 0) summary += ' <span class="dim">' + j.skipped + ' skipped (duplicate name or missing fields).</span>';
+      // Sounds that came along (copied into your sounds folder), and the ones that could not: those triggers keep their spoken callout.
+      if (j.sounds_copied > 0) summary += '<br><span class="dim" style="font-size:11px">' + j.sounds_copied + ' sound file' + (j.sounds_copied === 1 ? '' : 's') + ' copied into your sounds folder.</span>';
+      if (Array.isArray(j.sound_notes) && j.sound_notes.length > 0) {
+        summary += '<br><span class="dim" style="font-size:11px">' + j.sound_notes.length + ' trigger' + (j.sound_notes.length === 1 ? '' : 's') + ' played a sound that could not come along, so ' + (j.sound_notes.length === 1 ? 'it keeps' : 'they keep') + ' the spoken callout: '
+          + j.sound_notes.slice(0, 4).map(function(n){ return esc(n.name) + (n.file ? ' (' + esc(n.file) + ')' : '') + ' &mdash; ' + esc(n.why); }).join('; ') + (j.sound_notes.length > 4 ? '; and ' + (j.sound_notes.length - 4) + ' more' : '') + '. Drop the file in your sounds folder and pick it in the trigger.</span>';
+      }
       if (Array.isArray(j.errors) && j.errors.length > 0) {
         summary += '<br><span class="dim" style="font-size:10px">' + j.errors.length + ' bad pattern' + (j.errors.length === 1 ? '' : 's') + ': ' + j.errors.slice(0, 3).map(function(e){ return esc(e.name) + ' (' + esc(e.error) + ')'; }).join('; ') + (j.errors.length > 3 ? '; …' : '') + '</span>';
       }
@@ -12118,6 +12320,12 @@ function wpTrigApplyForm(base, f) {
     if (cancelBtn)  cancelBtn.addEventListener('click', onCancelEdit);
     listEl.addEventListener('click', onListClick);
     applyEditUi();   // a repaint rebuilt the form: put an open edit back
+    // 🔊 the sound row: ▶ plays what is picked at the slider's volume; the lists arrive after the form is drawn.
+    var soundPlay = document.getElementById('trigSoundPlay');
+    if (soundPlay) soundPlay.addEventListener('click', function(){ WPSounds.play((document.getElementById('trigNewSound') || {}).value, soundVolume()); });
+    var soundVol = document.getElementById('trigNewSoundVol');
+    if (soundVol) soundVol.addEventListener('input', syncSoundVolLabel);
+    WPSounds.load().then(function(){ return WPSounds.loadPacks(); }).then(refreshSoundPickers);
     if (previewBtn) previewBtn.addEventListener('click', onPreview);
     if (testBtn)    testBtn.addEventListener('click', onTest);
     if (runBtn)     runBtn.addEventListener('click', onTestRun);
@@ -12588,6 +12796,280 @@ function wpTrigApplyForm(base, f) {
     paint();
   }
   window._wpTrigSync = { mount: mount };
+})();
+
+// ── 🔊 Sounds (the guild lead, 2026-10-14) ───────────────────────────────────
+// *"allow users to add their own sound effects. allow them to use the sound effects instead of callouts
+// tts."* The library (WPSounds, above): the set that ships with Mimic plus whatever the member drops in
+// their own sounds folder, with ▶ on each and a button that opens the folder. Also the small 🔊 control on
+// an opened GUILD trigger — members cannot edit those, so a sound picked there is kept on THIS PC only
+// (trigger_sound_overrides.json) and applied when the trigger fires, including a relayed fire.
+// Fills #wpSounds, which the Triggers section emits; it repaints only when the list changed.
+function wpSoundOverrideHtml(t, ov) {
+  if (!t || !t.id) return '';
+  var h = '<div data-sndov="' + esc(String(t.id)) + '" style="margin-top:8px;padding-top:6px;border-top:1px dashed var(--border);display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:11px">';
+  h += '<span title="Kept on this PC only. The guild\'s trigger is not changed, and nobody else hears it.">🔊 My sound</span>';
+  h += '<select data-sndov-sound aria-label="My sound for this guild trigger" style="font-family:inherit;font-size:11px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:2px 6px">' + WPSounds.optionsHtml(ov && ov.sound || '') + '</select>';
+  h += '<button type="button" data-sndov-play title="Hear it" style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px">&#9654;</button>';
+  h += '<label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" data-sndov-replace' + (ov && ov.sound_mode === 'replace' ? ' checked' : '') + '> instead of speaking</label>';
+  return h + '</div>';
+}
+(function setupSounds(){
+  var el = null, mounted = false, lastHtml = '', msg = '';
+  function render(){
+    var list = WPSounds.list();
+    var h = '<h2>🔊 Sounds <span class="dim" style="font-size:11px;font-weight:normal">(play one with a callout, or instead of the voice)</span></h2>';
+    h += '<div class="dim" style="font-size:11px;margin-bottom:6px">Pick one in a personal trigger\'s <b>Sound</b> box, or on an opened guild trigger under <b>My sound</b>. To add your own, put .wav, .mp3 or .ogg files in your sounds folder; a file named like a built-in one (slap.mp3) replaces it on this PC.</div>';
+    h += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">';
+    for (var i = 0; i < list.length; i++) {
+      h += '<span style="display:inline-flex;align-items:center;gap:4px;background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:2px 4px 2px 8px;font-size:12px">'
+        + esc(WPSounds.labelOf(list[i]))
+        + '<button type="button" data-snd-play="' + esc(list[i].name) + '" title="Hear ' + esc(WPSounds.labelOf(list[i])) + '" style="background:none;border:0;color:var(--green);cursor:pointer;font-size:12px;padding:2px 5px">&#9654;</button></span>';
+    }
+    if (!list.length) h += '<span class="dim" style="font-size:12px">No sounds found.</span>';
+    h += '</div>';
+    h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px">'
+      + '<button type="button" id="wpSndOpen" style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px">Open my sounds folder</button>'
+      + '<button type="button" id="wpSndRefresh" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px">&#8635; Look again</button>'
+      + '<span id="wpSndMsg" class="dim" style="font-size:11px">' + esc(msg) + '</span></div>';
+    if (WPSounds.userDir()) h += '<div class="dim" style="font-size:10px;margin-top:6px">Your folder: <code>' + esc(WPSounds.userDir()) + '</code></div>';
+    return h;
+  }
+  function paint(){
+    if (!el) return;
+    var h = render();
+    if (h !== lastHtml) { lastHtml = h; el.innerHTML = h; }
+  }
+  async function refresh(force){ await WPSounds.load(force); paint(); try { if (window.__wpLastState) renderGuildTriggersCard(window.__wpLastState); } catch (e) { void e; } }
+  function say(t){ msg = t; var m = document.getElementById('wpSndMsg'); if (m) m.textContent = t; lastHtml = ''; }
+  function onClick(e){
+    var t = e.target && e.target.closest ? e.target : null;
+    if (!t) return;
+    var p = t.closest('[data-snd-play]');
+    if (p) { WPSounds.play(p.getAttribute('data-snd-play')); return; }
+    if (t.closest('#wpSndOpen')) {
+      fetch('/api/sounds/open-folder', { method: 'POST' }).then(function(r){ return r.json(); })
+        .then(function(j){ say('Opened. Drop files in, then press Look again.' + (j && j.user_dir ? '' : '')); }, function(){ say('Could not open it from here: the path is below.'); });
+      return;
+    }
+    if (t.closest('#wpSndRefresh')) { say(''); refresh(true); }
+  }
+  function mount(){
+    var n = document.getElementById('wpSounds');
+    if (!n) { mounted = false; return; }
+    if (mounted && n === el) return;
+    el = n; mounted = true; lastHtml = '';
+    el.addEventListener('click', onClick);
+    paint();
+    refresh(false);
+  }
+  // A guild trigger's "My sound": saved the moment it changes, on this PC only.
+  async function saveOverride(box){
+    var id = box.getAttribute('data-sndov');
+    var sel = box.querySelector('[data-sndov-sound]'), rep = box.querySelector('[data-sndov-replace]');
+    var body = { id: id, sound: sel ? sel.value : '', sound_mode: rep && rep.checked ? 'replace' : 'add' };
+    try {
+      var r = await fetch('/api/trigger-sound-overrides', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      var j = await r.json();
+      var s = window.__wpLastState;
+      if (j && j.ok && s) { s.soundOverrides = s.soundOverrides || {}; if (j.override) s.soundOverrides[id] = j.override; else delete s.soundOverrides[id]; renderGuildTriggersCard(s); }
+    } catch (e) { void e; }
+  }
+  document.addEventListener('change', function(e){
+    var box = e.target && e.target.closest ? e.target.closest('[data-sndov]') : null;
+    if (box) saveOverride(box);
+  });
+  document.addEventListener('click', function(e){
+    var b = e.target && e.target.closest ? e.target.closest('[data-sndov-play]') : null;
+    if (!b) return;
+    var box = b.closest('[data-sndov]'), sel = box && box.querySelector('[data-sndov-sound]');
+    if (sel && sel.value) WPSounds.play(sel.value);
+  });
+  window._wpSounds = { mount: mount, refresh: refresh };
+})();
+
+// ── 🗣 Voice & names (the guild lead, 2026-10-14) ────────────────────────────
+// *"different voice packs, get player pronunciation right … build this voice pack bit into onboarding."*
+// The voice: a pack (Default, Herald, Quick, Narrator), optionally one of the voices installed on this PC,
+// and speed and pitch — saved in Mimic's config (cfg.voice), read by the trigger window before each callout.
+// The names: how each of YOUR characters is said. The agent keeps the guild's list (synced from the
+// website) and this PC's own corrections; suggestions come from the server. The same two panels are in
+// Mimic's setup walkthrough. Fills #wpVoice; it repaints only on a click, never on a poll, so a half-typed
+// pronunciation is never wiped.
+(function setupVoiceNames(){
+  var el = null, mounted = false;
+  var cfgVoice = { pack: 'default', voiceName: '', rate: null, pitch: null };
+  var pron = null, drafts = {}, sugg = {}, notes = {};
+  function inMimic(){ return !!(window.mimic && window.mimic.getConfig && window.mimic.saveConfig); }
+  function voices(){ try { return window.speechSynthesis ? window.speechSynthesis.getVoices() : []; } catch (e) { return []; } }
+  function pack(id){ var ps = WPSounds.packs(); for (var i = 0; i < ps.length; i++) if (ps[i].id === id) return ps[i]; return null; }
+  // The same rules as Mimic's voice.js (which the walkthrough and the trigger window load).
+  function pick(packId){
+    var forced = !!packId, p = pack(packId || cfgVoice.pack || 'default'), vs = voices();
+    var rate = p ? p.rate : 1.05, pitch = p ? p.pitch : 1, voice = null;
+    if (!forced) {
+      if (cfgVoice.rate > 0) rate = cfgVoice.rate;
+      if (cfgVoice.pitch > 0) pitch = cfgVoice.pitch;
+      if (cfgVoice.voiceName) for (var i = 0; i < vs.length; i++) if (vs[i].name === cfgVoice.voiceName) { voice = vs[i]; break; }
+    }
+    if (!voice && p && p.voices) for (var f = 0; f < p.voices.length && !voice; f++) {
+      var frag = String(p.voices[f]).toLowerCase();
+      for (var j = 0; j < vs.length; j++) if (vs[j].name.toLowerCase().indexOf(frag) >= 0) { voice = vs[j]; break; }
+    }
+    return { voice: voice, rate: rate, pitch: pitch };
+  }
+  function speak(text, packId){
+    if (!window.speechSynthesis) return;
+    var v = pick(packId), u = new SpeechSynthesisUtterance(text);
+    if (v.voice) u.voice = v.voice;
+    u.rate = v.rate; u.pitch = v.pitch;
+    try { window.speechSynthesis.cancel(); } catch (e) { void e; }
+    window.speechSynthesis.speak(u);
+  }
+  function save(){ if (inMimic()) { try { window.mimic.saveConfig({ voice: cfgVoice }); } catch (e) { void e; } } }
+  function pct(n){ return Math.round(n * 100) / 100; }
+  function sampleLine(){ var c = pron && pron.characters && pron.characters[0]; return 'Enrage soon. Heal up' + (c ? ', ' + (c.say || c.name) : '') + '.'; }
+  function sugText(s){ return typeof s === 'string' ? s : (s && (s.say || s.text || s.name)) || ''; }
+
+  function voiceHtml(){
+    var ps = WPSounds.packs(), p = pack(cfgVoice.pack || 'default') || ps[0];
+    var h = '<h3 style="font-size:13px;margin:8px 0 4px">Voice</h3>';
+    if (!inMimic()) h += '<div class="dim" style="font-size:11px;margin-bottom:6px">Mimic saves the voice you pick. Open this dashboard from Mimic to change it; names below work anywhere.</div>';
+    h += '<div style="display:flex;flex-direction:column;gap:4px">';
+    for (var i = 0; i < ps.length; i++) {
+      var on = ps[i].id === (cfgVoice.pack || 'default');
+      h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;padding:3px 6px;border:1px solid ' + (on ? 'var(--blue)' : 'var(--border)') + ';border-radius:5px">'
+        + '<input type="radio" name="wpVoicePack" value="' + esc(ps[i].id) + '"' + (on ? ' checked' : '') + (inMimic() ? '' : ' disabled') + '>'
+        + '<b>' + esc(ps[i].label) + '</b><span class="dim" style="flex:1">' + esc(ps[i].blurb || '') + '</span>'
+        + '<button type="button" data-vn-sample="' + esc(ps[i].id) + '" style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px" title="Hear this pack">&#9654;</button></label>';
+    }
+    h += '</div>';
+    var vs = voices();
+    h += '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:8px;font-size:12px">'
+      + '<label>Installed voice <select id="wpVoiceName"' + (inMimic() ? '' : ' disabled') + ' style="font-family:inherit;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:2px 6px;max-width:260px"><option value="">Let the pack choose</option>';
+    var seen = !cfgVoice.voiceName;
+    for (var k = 0; k < vs.length; k++) { var sel = vs[k].name === cfgVoice.voiceName; if (sel) seen = true; h += '<option value="' + esc(vs[k].name) + '"' + (sel ? ' selected' : '') + '>' + esc(vs[k].name) + '</option>'; }
+    if (!seen) h += '<option value="' + esc(cfgVoice.voiceName) + '" selected>' + esc(cfgVoice.voiceName) + ' (not installed)</option>';
+    h += '</select></label>'
+      + '<label>Speed <input type="range" id="wpVoiceRate" min="50" max="200" value="' + Math.round((cfgVoice.rate > 0 ? cfgVoice.rate : (p ? p.rate : 1.05)) * 100) + '"' + (inMimic() ? '' : ' disabled') + '> <span id="wpVoiceRateV" class="dim">' + pct(cfgVoice.rate > 0 ? cfgVoice.rate : (p ? p.rate : 1.05)) + '&times;</span></label>'
+      + '<label>Pitch <input type="range" id="wpVoicePitch" min="0" max="200" value="' + Math.round((cfgVoice.pitch > 0 ? cfgVoice.pitch : (p ? p.pitch : 1)) * 100) + '"' + (inMimic() ? '' : ' disabled') + '> <span id="wpVoicePitchV" class="dim">' + pct(cfgVoice.pitch > 0 ? cfgVoice.pitch : (p ? p.pitch : 1)) + '</span></label>'
+      + '<button type="button" id="wpVoiceHear" style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px">&#9654; Hear it</button>'
+      + '<button type="button" id="wpVoiceReset" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:5px 10px;cursor:pointer;font-family:inherit;font-size:12px"' + (inMimic() ? '' : ' disabled') + '>Back to the pack\'s own</button>'
+      + '</div>';
+    h += '<div class="dim" style="font-size:11px;margin-top:4px">A pack whose voices are not installed here still sets the speed and pitch. A trigger can also name its own pack in its editor.</div>';
+    return h;
+  }
+  function namesHtml(){
+    var h = '<h3 style="font-size:13px;margin:14px 0 4px">Say your name</h3>';
+    if (!pron) return h + '<div class="dim" style="font-size:12px">loading…</div>';
+    if (!pron.characters.length) return h + '<div class="dim" style="font-size:12px">No characters found on this PC yet. Play with logging on and they will appear.</div>';
+    h += '<div class="dim" style="font-size:11px;margin-bottom:6px">'
+      + (pron.feature === 'off' ? 'The server has no shared list yet, so what you save here stays on this PC. ' : 'Saving for the guild changes how every raider\'s Mimic says your name. ')
+      + 'Hear it first with &#9654;.</div>';
+    for (var i = 0; i < pron.characters.length; i++) {
+      var c = pron.characters[i], nm = c.name, d = drafts[nm] != null ? drafts[nm] : (c.say || ''), s = sugg[nm];
+      h += '<div data-vn-char="' + esc(nm) + '" style="border-top:1px solid var(--border);padding:6px 0;font-size:12px">'
+        + '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px"><b>' + esc(nm) + '</b>'
+        + '<span class="dim">' + (c.say ? 'said as &ldquo;' + esc(c.say) + '&rdquo;' + (c.source === 'local' ? ' (this PC)' : '') : 'said as spelled') + '</span>'
+        + '<button type="button" data-vn-hear-name style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px" title="Hear it as it is said now">&#9654;</button>'
+        + '<button type="button" data-vn-suggest style="background:var(--panel);color:var(--blue);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px">Suggestions</button></div>';
+      if (s) {
+        if (s.available === false) h += '<div class="dim" style="font-size:11px;margin-top:4px">No suggestions right now' + (s.why ? ' (' + esc(s.why) + ')' : '') + '. Type how it should sound.</div>';
+        else {
+          h += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">';
+          var ss = s.suggestions || [];
+          for (var q = 0; q < ss.length; q++) {
+            var tx = sugText(ss[q]);
+            if (tx) h += '<span style="display:inline-flex;align-items:center;gap:2px;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:1px 2px 1px 4px"><button type="button" data-vn-hear="' + esc(tx) + '" style="background:none;border:0;color:var(--green);cursor:pointer;font-size:11px;padding:1px 4px" title="Hear it">&#9654;</button><button type="button" data-vn-use="' + esc(tx) + '" style="background:none;border:0;color:var(--text);cursor:pointer;font-size:12px;padding:1px 6px" title="Use this">' + esc(tx) + '</button></span>';
+          }
+          if (!ss.length) h += '<span class="dim" style="font-size:11px">No suggestions for this name.</span>';
+          h += '</div>';
+          var tips = s.tips || [];
+          if (tips.length) { h += '<ul class="dim" style="font-size:11px;margin:6px 0 0 16px;padding:0">'; for (var u = 0; u < tips.length; u++) h += '<li>' + esc(sugText(tips[u])) + '</li>'; h += '</ul>'; }
+        }
+      }
+      h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px">'
+        + '<input type="text" data-vn-say value="' + esc(d) + '" placeholder="how it sounds, e.g. Ahl-den-mar" maxlength="80" style="flex:1;min-width:160px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 6px;font-family:inherit;font-size:12px">'
+        + '<button type="button" data-vn-hear-draft style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:3px 8px" title="Hear what is typed">&#9654;</button>'
+        + '<button type="button" data-vn-save-guild style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:4px 10px;cursor:pointer;font-family:inherit;font-size:11px"' + (pron.signed_in ? '' : ' disabled title="Needs a linked Wolf Pack account"') + '>Save for the guild</button>'
+        + '<button type="button" data-vn-save-local style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 10px;cursor:pointer;font-family:inherit;font-size:11px">This PC only</button>'
+        + '<span class="dim" style="font-size:11px">' + esc(notes[nm] || '') + '</span></div></div>';
+    }
+    return h;
+  }
+  function paint(){
+    if (!el) return;
+    el.innerHTML = '<h2>🗣 Voice &amp; names <span class="dim" style="font-size:11px;font-weight:normal">(how callouts sound, and how your characters are said)</span></h2>' + voiceHtml() + namesHtml();
+  }
+  async function loadAll(){
+    await WPSounds.loadPacks();
+    if (inMimic()) { try { var c = await window.mimic.getConfig(); if (c && c.voice) cfgVoice = Object.assign({ pack: 'default', voiceName: '', rate: null, pitch: null }, c.voice); } catch (e) { void e; } }
+    paint();
+    try { var r = await fetch('/api/pronunciations'); pron = r.ok ? await r.json() : { characters: [], feature: 'off', signed_in: false }; } catch (e) { pron = { characters: [], feature: 'off', signed_in: false }; }
+    paint();
+  }
+  async function suggest(nm){
+    try { var r = await fetch('/api/pronunciation-suggest?name=' + encodeURIComponent(nm)); sugg[nm] = r.ok ? await r.json() : { available: false, why: 'server answered ' + r.status }; }
+    catch (e) { sugg[nm] = { available: false, why: 'could not ask' }; }
+    paint();
+  }
+  async function saveName(nm, say, guild){
+    if (!say) { notes[nm] = 'Type how it should sound first.'; paint(); return; }
+    notes[nm] = 'Saving…'; paint();
+    var ok = false, why = '';
+    try {
+      var r = await fetch(guild ? '/api/pronunciation' : '/api/pronunciations/local', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(guild ? { character: nm, say: say } : { name: nm, say: say }) });
+      var j = await r.json().catch(function(){ return {}; });
+      ok = r.ok && j.ok !== false; why = j.error || '';
+    } catch (e) { why = 'could not reach the agent'; }
+    notes[nm] = ok ? 'Saved' + (guild ? ' for the guild.' : ' on this PC.') : (why || 'Not saved.') + (guild ? ' You can still keep it on this PC only.' : '');
+    if (ok) { delete drafts[nm]; try { var r2 = await fetch('/api/pronunciations'); if (r2.ok) pron = await r2.json(); } catch (e) { void e; } }
+    paint();
+  }
+  function charOf(t){ var b = t.closest('[data-vn-char]'); return b ? b.getAttribute('data-vn-char') : ''; }
+  function onClick(e){
+    var t = e.target && e.target.closest ? e.target : null;
+    if (!t) return;
+    var b;
+    if ((b = t.closest('[data-vn-sample]'))) { speak(sampleLine(), b.getAttribute('data-vn-sample')); return; }
+    if (t.closest('#wpVoiceHear')) { speak(sampleLine()); return; }
+    if (t.closest('#wpVoiceReset')) { cfgVoice.voiceName = ''; cfgVoice.rate = null; cfgVoice.pitch = null; save(); paint(); return; }
+    var nm = charOf(t);
+    if (!nm) return;
+    var box = t.closest('[data-vn-char]'), inp = box.querySelector('[data-vn-say]');
+    if (t.closest('[data-vn-hear-name]')) { var c = pron.characters.filter(function(x){ return x.name === nm; })[0]; speak((c && c.say) || nm); return; }
+    if (t.closest('[data-vn-suggest]')) { suggest(nm); return; }
+    if ((b = t.closest('[data-vn-hear]'))) { speak(b.getAttribute('data-vn-hear')); return; }
+    if ((b = t.closest('[data-vn-use]'))) { drafts[nm] = b.getAttribute('data-vn-use'); if (inp) inp.value = drafts[nm]; return; }
+    if (t.closest('[data-vn-hear-draft]')) { speak(inp && inp.value ? inp.value : nm); return; }
+    if (t.closest('[data-vn-save-guild]')) { saveName(nm, inp ? inp.value.trim() : '', true); return; }
+    if (t.closest('[data-vn-save-local]')) { saveName(nm, inp ? inp.value.trim() : '', false); return; }
+  }
+  function onChange(e){
+    var t = e.target; if (!t) return;
+    if (t.name === 'wpVoicePack') { cfgVoice.pack = t.value; save(); paint(); return; }
+    if (t.id === 'wpVoiceName') { cfgVoice.voiceName = t.value; save(); return; }
+  }
+  function onInput(e){
+    var t = e.target; if (!t) return;
+    if (t.id === 'wpVoiceRate') { cfgVoice.rate = Number(t.value) / 100; var rv = document.getElementById('wpVoiceRateV'); if (rv) rv.innerHTML = pct(cfgVoice.rate) + '&times;'; save(); return; }
+    if (t.id === 'wpVoicePitch') { cfgVoice.pitch = Number(t.value) / 100; var pv = document.getElementById('wpVoicePitchV'); if (pv) pv.textContent = pct(cfgVoice.pitch); save(); return; }
+    if (t.hasAttribute && t.hasAttribute('data-vn-say')) { var nm = charOf(t); if (nm) drafts[nm] = t.value; }
+  }
+  function mount(){
+    var n = document.getElementById('wpVoice');
+    if (!n) { mounted = false; return; }
+    if (mounted && n === el) return;
+    el = n; mounted = true;
+    el.addEventListener('click', onClick);
+    el.addEventListener('change', onChange);
+    el.addEventListener('input', onInput);
+    paint();
+    if (!pron) loadAll();
+    if (window.speechSynthesis && !vcBound) { vcBound = true; window.speechSynthesis.addEventListener('voiceschanged', function(){ if (el && document.body.contains(el)) paint(); }); }
+  }
+  var vcBound = false;
+  window._wpVoiceNames = { mount: mount };
 })();
 
 // ── 💥 My Crits panel ───────────────────────────────────────────────────────

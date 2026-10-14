@@ -26,6 +26,22 @@
   #bar .sep{width:1px;height:18px;background:#30363d;margin:0 2px}
   #status{margin-left:auto;font-size:10px;color:#8b949e}
   #status.ok{color:#56d364} #status.err{color:#f87171}
+  /* Named-layout row: same look as the toolbar, one line under it. */
+  #layoutBar{flex:0 0 auto;align-items:center;gap:8px;padding:6px 12px;background:#131820;
+    border-bottom:1px solid #30363d;flex-wrap:wrap;font-size:11px;color:#8b949e}
+  #layoutBar strong{color:#7ee7c7;font-weight:600}
+  #layoutBar select,#layoutBar input,#layoutBar button{background:#0d1117;color:#e6edf3;border:1px solid #30363d;
+    border-radius:4px;padding:4px 8px;font-size:11px;font-family:inherit}
+  #layoutBar select{min-width:260px;max-width:420px}
+  #layoutBar input{width:200px;user-select:text}
+  #layoutBar button{cursor:pointer;background:#1f6feb;border-color:#1f6feb;color:#fff;font-weight:600}
+  #layoutBar button:hover{background:#388bfd}
+  #layoutBar button.secondary{background:#21262d;border-color:#30363d;color:#c9d1d9;font-weight:500}
+  #layoutBar button.secondary:hover{background:#30363d}
+  #layoutBar button[disabled]{opacity:0.4;cursor:not-allowed}
+  #layoutBar .sep{width:1px;height:18px;background:#30363d}
+  #layoutMsg{margin-left:auto;font-size:10px}
+  #layoutMsg.ok{color:#56d364} #layoutMsg.err{color:#f87171}
   /* Canvas — proportional to target resolution, scaled to fit. Black bg
      represents the EQ screen. Window rectangles overlay. */
   #stageWrap{display:flex;justify-content:center;align-items:center;flex:1 1 auto;min-width:0;
@@ -62,6 +78,15 @@
   .win .grip{position:absolute;width:8px;height:8px;background:#7ee7c7;
     border:1px solid #000;border-radius:1px;z-index:5}
   .win .grip.se{right:-4px;bottom:-4px;cursor:nwse-resize}
+  /* Chat window ↔ Inspector link: the selected chat window's rectangle and routing
+     card share one highlight; while a chip is dragged, valid rectangles light up. */
+  .win.kind-chat.selected{outline:2px solid #7ee7c7;outline-offset:-2px}
+  .chatCard.chatSel{outline:2px solid #7ee7c7;outline-offset:1px}
+  .chatCard.chatFlash{animation:chatFlash .9s ease-out}
+  @keyframes chatFlash{0%{box-shadow:0 0 0 4px rgba(126,231,199,.8)}100%{box-shadow:0 0 0 0 rgba(126,231,199,0)}}
+  #stage.chipDragging .win.chat-drop{outline:2px dashed #58a6ff;outline-offset:-2px}
+  #stage.chipDragging .win:not(.chat-drop){opacity:.35}
+  .win.chat-drop-hover{outline:2px solid #58a6ff !important;background:rgba(88,166,255,.38) !important}
   /* Side panel for the selected window's properties. Flex item (not fixed) so
      it sits beside the canvas under the natural-height toolbar. */
   #side{flex:0 0 240px;box-sizing:border-box;background:#161b22;
@@ -76,6 +101,18 @@
   #side .row{display:flex;gap:6px}
   #side .row .field{flex:1}
   #side .meta{color:#6e7681;font-size:9px;margin-top:8px}
+  /* The Hotbar Pages editor is docked beside the canvas (a flex item of #content), so the canvas gives up
+     width instead of being covered; the window-properties panel steps aside while it is open. */
+  body.inspecting #side{display:none !important}
+  /* "Discard changes to hotbar pages?" */
+  .chatRenameIn{user-select:text}
+  #discardAsk{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:90;display:flex;align-items:center;justify-content:center}
+  #discardAsk .box{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;width:min(380px,90vw);color:#c9d1d9;font-size:12px}
+  #discardAsk h3{margin:0 0 6px;color:#7ee7c7;font-size:14px}
+  #discardAsk p{margin:0 0 12px;color:#9aa4ad;line-height:1.4}
+  #discardAsk .btns{display:flex;gap:8px;justify-content:flex-end}
+  #discardAsk button{background:#f85149;border:1px solid #f85149;color:#fff;border-radius:4px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
+  #discardAsk button.secondary{background:#1f6feb;border-color:#1f6feb}
   /* Left filter panel — category toggles so the canvas isn't an unreadable
      pile of all 130 windows at once. Flex item beside the canvas. View-only
      (Save still writes every window). */
@@ -153,6 +190,23 @@
     <button id="cloudBackupBtn"    class="secondary" title="Upload encrypted backup of your UI ini files to the bot (existing capture flow)">☁ Backup</button>
     <button id="cloudRestoreBtn"   class="secondary" title="Pull a cloud backup into the editor — rescale it to this machine's monitor, then Save. Use this to deploy your layout on a new computer.">📥 Restore</button>
     <span id="status"></span>
+  </div>
+  <!-- Named layouts for the picked character (uiLayouts.js): alternative screens ("Raid (full chat)",
+       "Minimal chat + Mimic overlay"). A layout is a saved copy of the character's UI_*.ini; each is
+       backed up to the cloud under its name. Switching while EQ is running waits for logout. -->
+  <div id="layoutBar" style="display:none">
+    <strong>🗂 Layouts</strong>
+    <select id="layoutSelect" title="This character's named layouts. ● marks the one on disk now."></select>
+    <button id="layoutSwitch" title="Make the picked layout the one EQ loads. If EverQuest is running it applies after the character logs out; the file it replaces is kept as a .bak.">Switch to</button>
+    <button id="layoutUpdate" class="secondary" title="Replace the picked layout with the character's current UI files (this is how you edit a named layout: Switch to it, change it, Update)">Update from current</button>
+    <button id="layoutBackup" class="secondary" title="Back the picked layout up to the cloud under its name">☁ Back up</button>
+    <button id="layoutDelete" class="secondary" title="Delete the picked layout from this computer (cloud backups stay)">Delete</button>
+    <span class="sep"></span>
+    <input id="layoutName" maxlength="40" placeholder="Name, e.g. Raid (full chat)" title="Up to 40 characters">
+    <button id="layoutSaveNew" title="Save the character's current UI files as a new named layout (also backs it up)">Save current as…</button>
+    <button id="layoutRename" class="secondary" title="Give the picked layout the name typed here">Rename</button>
+    <button id="layoutImport" class="secondary" title="Bring a named layout back from your cloud backups (new computer)">📥 From cloud…</button>
+    <span id="layoutMsg"></span>
   </div>
   <!-- Deferred-save banner — shown while a save is scheduled to apply when the
        character logs out. -->
@@ -1235,6 +1289,7 @@
     stage.style.height = ch + 'px';
     var html = '';
     var shown = 0;
+    var items = [];
     for (var i = 0; i < STATE.windows.length; i++) {
       var w = STATE.windows[i];
       // Category filter — hidden groups are skipped on the canvas (Save still
@@ -1245,8 +1300,6 @@
       var sy = Math.round(w.y * STATE.sliceScale);
       var sw = Math.max(8, Math.round(w.w * STATE.sliceScale));
       var sh = Math.max(8, Math.round(w.h * STATE.sliceScale));
-      var sel = (STATE.selected === i) ? ' selected' : '';
-      var kindCls = w.kind ? ' kind-' + w.kind : '';
       // Chat windows get a richer label: "WindowName (Chat #) · default ch X"
       // — the ChatManager-supplied name (when present) reads more naturally
       // than the position-section name ("Chat12" → "F THIS CHAT (Chat 12)").
@@ -1256,15 +1309,29 @@
         var idx  = w.chatMeta.index;
         lbl = disp + (idx != null ? ' (Chat ' + idx + ')' : '');
       }
-      html += '<div class="win' + sel + kindCls + '" data-i="' + i + '" '
-            + 'style="left:' + sx + 'px;top:' + sy + 'px;width:' + sw + 'px;height:' + sh + 'px;">'
-            + '<span class="lbl">' + escapeHtml(lbl) + '</span>'
+      items.push({ i: i, sx: sx, sy: sy, sw: sw, sh: sh, lbl: lbl, chars: lbl.length });
+    }
+    var dys = _labelDy(items);
+    for (var k = 0; k < items.length; k++) {
+      var it = items[k];
+      i = it.i; w = STATE.windows[i];
+      var sel = (STATE.selected === i) ? ' selected' : '';
+      var kindCls = w.kind ? ' kind-' + w.kind : '';
+      // A chat rectangle is a drop target for a routing chip unless it is a Tell
+      // window (those route by sender — same rule as the cards).
+      var cwin = _chatWinOfRect(STATE.windows, i);
+      var dropCls = (cwin != null && w.chatMeta.defaultChannel !== 3) ? ' chat-drop' : '';
+      html += '<div class="win' + sel + kindCls + dropCls + '" data-i="' + i + '"'
+            + (cwin != null ? ' data-chat-win="' + cwin + '"' : '') + ' '
+            + 'style="left:' + it.sx + 'px;top:' + it.sy + 'px;width:' + it.sw + 'px;height:' + it.sh + 'px;">'
+            + '<span class="lbl"' + (dys[k] ? ' style="top:' + (2 + dys[k]) + 'px"' : '') + '>' + escapeHtml(it.lbl) + '</span>'
             + '<span class="sz">' + w.w + '×' + w.h + '</span>'
             + (STATE.selected === i && !w.fixedSize ? '<div class="grip se" data-grip="se"></div>' : '')
             + '</div>';
     }
     stage.innerHTML = html;
     updateSidePanel();
+    _syncChatCardSelection();
   }
   window.addEventListener('resize', function(){ if (STATE.windows.length) renderStage(); });
 
@@ -1288,6 +1355,43 @@
     };
     renderStage();
     e.preventDefault();
+  });
+
+  // A routing chip dragged from the Inspector can land on a chat rectangle. The
+  // rectangles are rebuilt on every render, so listen on the stable #stage.
+  var CHIP_MIME = 'application/x-wp-chatchip';
+  function _dragIsChip(e) { return !!(e.dataTransfer && e.dataTransfer.types && Array.prototype.indexOf.call(e.dataTransfer.types, CHIP_MIME) >= 0); }
+  function _clearChipHover() {
+    var hot = stage.querySelectorAll('.chat-drop-hover');
+    for (var i = 0; i < hot.length; i++) hot[i].classList.remove('chat-drop-hover');
+  }
+  stage.addEventListener('dragover', function(e){
+    if (!_dragIsChip(e)) return;
+    var el = e.target.closest('.win.chat-drop');
+    _clearChipHover();
+    if (!el) return;              // not a valid target (not chat, or a Tell window)
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    el.classList.add('chat-drop-hover');
+  });
+  stage.addEventListener('dragleave', function(e){ if (e.target === stage) _clearChipHover(); });
+  stage.addEventListener('drop', function(e){
+    if (!_dragIsChip(e)) return;
+    _clearChipHover();
+    stage.classList.remove('chipDragging');
+    var el = e.target.closest('.win.chat-drop');
+    if (!el || !CHAT_ROUTER || !CHAT_ROUTER.live()) return;
+    e.preventDefault();
+    _dropChipOnWindow(e.dataTransfer.getData('text/plain'), parseInt(el.getAttribute('data-chat-win'), 10), CHAT_ROUTER.rowFor, CHAT_ROUTER.reroute);
+  });
+  document.addEventListener('dragend', function(){ _clearChipHover(); stage.classList.remove('chipDragging'); });
+  // Esc clears the shared selection (not while a dialog owns Esc or a field has focus).
+  document.addEventListener('keydown', function(e){
+    if (e.key !== 'Escape') return;
+    var t = e.target && e.target.tagName;
+    if (t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT') return;
+    if (document.getElementById('displayPicker') || document.getElementById('snapPicker')) return;
+    _clearSelection();
   });
 
   document.addEventListener('mousemove', function(e){
@@ -1508,9 +1612,17 @@
   // BACKGROUND process, so it works even after UI Studio is closed (and across
   // a Mimic restart). The renderer just queues/cancels and reflects status.
   async function _cancelDefer(silent){
-    try { await window.mimic.uiStudioCancelDefer({ character: STATE.character, eqDir: STATE.eqDir }); } catch (e) {}
+    var cur = _deferTarget();
+    try { if (cur) await window.mimic.uiStudioCancelDefer({ character: cur.character, eqDir: cur.eqDir }); } catch (e) {}
     var b = document.getElementById('deferBanner'); if (b) b.style.display = 'none';
     if (!silent) setStatus('scheduled save cancelled', 'ok');
+    try { _layRefresh(); } catch (e2) {}
+  }
+  // The character the banner speaks for: the loaded one, else the one picked in the dropdown (a
+  // queued layout switch needs no Load).
+  function _deferTarget(){
+    if (STATE.character && STATE.eqDir) return { character: STATE.character, eqDir: STATE.eqDir };
+    return _selectedCharEqDir();
   }
   async function _queueDefer(built){
     // The queue holds the KEY EDITS, not file texts: they are merged into the
@@ -1529,13 +1641,19 @@
     var b = document.getElementById('deferBanner'); if (!b) return;
     var list = [];
     try { list = await window.mimic.uiStudioPendingList(); } catch (e) {}
-    var mine = (list || []).find(function(e){
-      return STATE.character && String(e.character).toLowerCase() === STATE.character.toLowerCase() && e.eqDir === STATE.eqDir;
+    var cur = _deferTarget();
+    var mine = (list || []).filter(function(e){
+      return cur && String(e.character).toLowerCase() === cur.character.toLowerCase() && e.eqDir === cur.eqDir;
     });
-    if (mine) {
+    var sw = mine.find(function(e){ return e.kind === 'layout'; });
+    if (sw) {
+      b.style.display = 'flex';
+      b.querySelector('.txt').textContent = '⏳ Scheduled: the "' + (sw.layoutName || 'saved') + '" layout is put in place when ' +
+        cur.character + ' logs out of EverQuest (the file it replaces is kept as .bak-eq). Background — safe to close UI Studio.';
+    } else if (mine.length) {
       b.style.display = 'flex';
       b.querySelector('.txt').textContent = '⏳ Scheduled: your layout applies automatically when ' +
-        STATE.character + ' logs out of EverQuest. (Background — safe to close UI Studio.)';
+        cur.character + ' logs out of EverQuest. (Background — safe to close UI Studio.)';
     } else {
       b.style.display = 'none';
     }
@@ -1714,6 +1832,171 @@
     catch (e) { setStatus('save failed: ' + e.message, 'err'); }
   });
   document.getElementById('deferCancel').addEventListener('click', function(){ _cancelDefer(false); });
+
+  // ── Named layouts (uiLayouts.js) ─────────────────────────────────────────
+  // Several named screens per character. A layout is a saved copy of the character's UI_*.ini; the
+  // main process keeps them, applies a switch (after logout when EQ is running) and uploads each
+  // one to the cloud backups with its name in the label (Layout: <name>).
+  var LAY = { items: [], cap: 10, hasCurrent: false };
+  var LAY_PREFIX = 'Layout: ';
+  function _layEl(id){ return document.getElementById(id); }
+  function _layMsg(msg, cls){ var m = _layEl('layoutMsg'); m.textContent = msg || ''; m.className = cls || ''; }
+  function _layPicked(){ var id = _layEl('layoutSelect').value; return LAY.items.find(function(i){ return i.id === id; }) || null; }
+  function _layErr(r){ return r && r.error ? r.error : 'unknown error'; }
+  function _layOptionText(i){
+    var t = (i.live ? '● ' : '') + i.name;
+    if (i.pending) t += '  ⏳ switch queued';
+    else if (i.live) t += i.modified ? '  (live, changed since saved)' : '  (live)';
+    else t += '  · saved ' + new Date(i.savedAt).toLocaleDateString();
+    return t;
+  }
+  async function _layRefresh(keepId){
+    var who = _selectedCharEqDir(), bar = _layEl('layoutBar');
+    if (!who || !window.mimic || !window.mimic.uiStudioLayoutList) { bar.style.display = 'none'; return; }
+    var r = await window.mimic.uiStudioLayoutList(who.character, who.eqDir).catch(function(e){ return { ok: false, error: e && e.message }; });
+    bar.style.display = 'flex';
+    var sel = _layEl('layoutSelect'), want = keepId || sel.value;
+    sel.innerHTML = '';
+    if (!r || !r.ok) { LAY.items = []; _layMsg('layouts unavailable: ' + _layErr(r), 'err'); _layEnable(); return; }
+    LAY.items = r.layouts || []; LAY.cap = r.cap || 10; LAY.hasCurrent = !!r.hasCurrent;
+    if (!LAY.items.length) {
+      var none = document.createElement('option'); none.value = '';
+      none.textContent = LAY.hasCurrent ? '— none yet: name one and Save current as… —' : '— no UI file for this character —';
+      sel.appendChild(none);
+    }
+    LAY.items.forEach(function(i){
+      var o = document.createElement('option'); o.value = i.id; o.textContent = _layOptionText(i); sel.appendChild(o);
+    });
+    var pick = LAY.items.find(function(i){ return i.id === want; }) || LAY.items.find(function(i){ return i.live; }) || LAY.items[0];
+    if (pick) sel.value = pick.id;
+    _layEnable();
+  }
+  function _layEnable(){
+    var p = _layPicked();
+    ['layoutSwitch', 'layoutUpdate', 'layoutBackup', 'layoutDelete', 'layoutRename'].forEach(function(id){ _layEl(id).disabled = !p; });
+    _layEl('layoutSaveNew').disabled = !LAY.hasCurrent || LAY.items.length >= LAY.cap;
+    _layEl('layoutSaveNew').title = LAY.items.length >= LAY.cap
+      ? 'The most layouts per character is ' + LAY.cap + ' — delete one first'
+      : 'Save the character\'s current UI files as a new named layout (also backs it up)';
+  }
+  async function _layBackup(id, quiet){
+    var who = _selectedCharEqDir(); if (!who) return false;
+    var r = await window.mimic.uiStudioCapture({ character: who.character, eqDir: who.eqDir, layoutId: id })
+      .catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (r && r.ok) { if (!quiet) _layMsg('☁ backed up ' + r.file_count + ' file(s) to the cloud', 'ok'); return true; }
+    if (!quiet) _layMsg('backup failed: ' + _layErr(r), 'err');
+    return false;
+  }
+  _layEl('layoutSelect').addEventListener('change', _layEnable);
+  document.getElementById('charSelect').addEventListener('change', function(){ _layEl('layoutName').value = ''; _layMsg(''); _layRefresh(); _showDeferBanner().catch(function(){}); });
+  window.addEventListener('focus', function(){ _layRefresh().catch(function(){}); });
+
+  _layEl('layoutSaveNew').addEventListener('click', async function(){
+    var who = _selectedCharEqDir(); if (!who) return;
+    var name = _layEl('layoutName').value;
+    if (!name.trim()) { _layMsg('type a name for the layout first', 'err'); return; }
+    var r = await window.mimic.uiStudioLayoutSave({ character: who.character, eqDir: who.eqDir, name: name })
+      .catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (!r || !r.ok) { _layMsg(_layErr(r), 'err'); return; }
+    _layEl('layoutName').value = '';
+    var up = await _layBackup(r.layout.id, true);
+    await _layRefresh(r.layout.id);
+    _layMsg('saved "' + r.layout.name + '" (' + r.layout.fileCount + ' file(s))' + (up ? ' · ☁ backed up' : ' · ⚠ cloud backup failed — use ☁ Back up'), up ? 'ok' : 'err');
+  });
+  _layEl('layoutUpdate').addEventListener('click', async function(){
+    var who = _selectedCharEqDir(), p = _layPicked(); if (!who || !p) return;
+    if (!window.confirm('Replace the saved layout "' + p.name + '" with ' + who.character + '\'s current UI files?')) return;
+    var r = await window.mimic.uiStudioLayoutSave({ character: who.character, eqDir: who.eqDir, id: p.id })
+      .catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (!r || !r.ok) { _layMsg(_layErr(r), 'err'); return; }
+    var up = await _layBackup(p.id, true);
+    await _layRefresh(p.id);
+    _layMsg('updated "' + p.name + '"' + (up ? ' · ☁ backed up' : ' · ⚠ cloud backup failed — use ☁ Back up'), up ? 'ok' : 'err');
+  });
+  _layEl('layoutRename').addEventListener('click', async function(){
+    var who = _selectedCharEqDir(), p = _layPicked(); if (!who || !p) return;
+    var name = _layEl('layoutName').value;
+    if (!name.trim()) { _layMsg('type the new name in the box first', 'err'); return; }
+    var r = await window.mimic.uiStudioLayoutRename({ character: who.character, id: p.id, name: name })
+      .catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (!r || !r.ok) { _layMsg(_layErr(r), 'err'); return; }
+    _layEl('layoutName').value = '';
+    await _layRefresh(p.id);
+    _layMsg('renamed to "' + r.layout.name + '" · ☁ Back up to put the new name on the cloud copy', 'ok');
+  });
+  _layEl('layoutDelete').addEventListener('click', async function(){
+    var who = _selectedCharEqDir(), p = _layPicked(); if (!who || !p) return;
+    if (!window.confirm('Delete the layout "' + p.name + '" from this computer?\n\nCloud backups of it stay; the UI files EQ is using now are not touched.')) return;
+    var r = await window.mimic.uiStudioLayoutDelete({ character: who.character, id: p.id })
+      .catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (!r || !r.ok) { _layMsg(_layErr(r), 'err'); return; }
+    await _layRefresh(); _showDeferBanner().catch(function(){});
+    _layMsg('deleted "' + p.name + '"', 'ok');
+  });
+  _layEl('layoutBackup').addEventListener('click', async function(){
+    var p = _layPicked(); if (!p) return;
+    _layMsg('uploading…'); await _layBackup(p.id, false);
+  });
+  _layEl('layoutSwitch').addEventListener('click', async function(){
+    var who = _selectedCharEqDir(), p = _layPicked(); if (!who || !p) return;
+    if (p.live && !p.modified && !p.pending) { _layMsg('"' + p.name + '" is already the live layout', 'ok'); return; }
+    // Anything on disk that is not a saved layout is replaced (a .bak copy is kept) — say so first.
+    var unsaved = LAY.hasCurrent && !LAY.items.some(function(i){ return i.live && !i.modified; });
+    if (unsaved && !window.confirm(who.character + '\'s current UI is not saved as a layout (or has changed since you saved it).\n\n' +
+        'Switching replaces it with "' + p.name + '". The old file is kept as a .bak copy beside it.\n\nSwitch anyway?')) return;
+    var r = await window.mimic.uiStudioLayoutSwitch({ character: who.character, eqDir: who.eqDir, id: p.id })
+      .catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (!r || !r.ok) { _layMsg(_layErr(r), 'err'); return; }
+    await _layRefresh(p.id); _showDeferBanner().catch(function(){});
+    if (r.queued) _layMsg('⏳ "' + r.name + '" is queued — it goes in when ' + who.character + ' logs out (EverQuest is running)', 'ok');
+    else _layMsg('✅ switched to "' + r.name + '" (' + r.written.length + ' file(s), the old ones kept as .bak) · log in to see it' +
+      (STATE.character && STATE.character.toLowerCase() === who.character.toLowerCase() ? ' · click Load + Rescale to see it here' : ''), 'ok');
+  });
+
+  // Layouts that were backed up under a name can come back on another computer.
+  _layEl('layoutImport').addEventListener('click', async function(){
+    var who = _selectedCharEqDir();
+    if (!who) { _layMsg('pick a character first', 'err'); return; }
+    _layMsg('fetching cloud backups…');
+    var r = await window.mimic.uiStudioListSnapshots(who.character).catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (!r || !r.ok) { _layMsg('could not list backups: ' + _layErr(r), 'err'); return; }
+    var seen = {}, snaps = (r.snapshots || []).filter(function(s){
+      var l = String(s.label || ''); if (l.indexOf(LAY_PREFIX) !== 0 || seen[l]) return false; seen[l] = 1; return true;
+    });
+    if (!snaps.length) { _layMsg('no named layouts in your cloud backups for ' + who.character + ' yet — Save current as… or ☁ Back up makes one', 'err'); return; }
+    _layMsg('');
+    var old = _layEl('layoutImportPicker'); if (old) old.remove();
+    var dlg = document.createElement('div'); dlg.id = 'layoutImportPicker';
+    dlg.style.cssText = 'position:fixed;top:90px;left:50%;transform:translateX(-50%);background:#161b22;border:1px solid #58a6ff;' +
+      'border-radius:6px;z-index:100;padding:10px;font-size:12px;color:#c9d1d9;min-width:340px;max-width:480px;max-height:70vh;overflow-y:auto';
+    var html = '<div style="color:#7ee7c7;font-weight:600;margin-bottom:4px">Bring back a layout for ' + escapeHtml(who.character) + '</div>' +
+      '<div style="color:#8b949e;font-size:10px;margin-bottom:8px">Adds it to this computer\'s layouts. Nothing in your EQ folder changes until you Switch to it.</div>';
+    snaps.forEach(function(s, i){
+      html += '<button data-i="' + i + '" style="display:block;width:100%;text-align:left;background:#0d1117;color:#e6edf3;border:1px solid #30363d;' +
+        'border-radius:4px;padding:6px 8px;margin-bottom:4px;cursor:pointer;font-size:11px;font-family:inherit">' +
+        '<div style="font-weight:600">' + escapeHtml(String(s.label).slice(LAY_PREFIX.length)) + '</div>' +
+        '<div style="color:#8b949e;font-size:10px">' + escapeHtml(s.created_at ? new Date(s.created_at).toLocaleString() : '') +
+        ' · 💻 ' + escapeHtml(s.machine_name || 'unknown machine') + '</div></button>';
+    });
+    html += '<div style="text-align:right"><button id="layoutImportCancel" style="background:transparent;color:#8b949e;border:1px solid #30363d;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">Cancel</button></div>';
+    dlg.innerHTML = html; document.body.appendChild(dlg);
+    _layEl('layoutImportCancel').addEventListener('click', function(){ dlg.remove(); });
+    dlg.querySelectorAll('button[data-i]').forEach(function(btn){
+      btn.addEventListener('click', async function(){
+        var s = snaps[parseInt(this.dataset.i, 10)], name = String(s.label).slice(LAY_PREFIX.length);
+        dlg.remove(); _layMsg('downloading…');
+        var g = await window.mimic.uiStudioGetSnapshot({ character: who.character, id: s.id }).catch(function(e){ return { ok: false, error: e && e.message }; });
+        if (!g || !g.ok || !g.files) { _layMsg('download failed: ' + _layErr(g), 'err'); return; }
+        var im = await window.mimic.uiStudioLayoutImport({ character: who.character, name: name, files: g.files }).catch(function(e){ return { ok: false, error: e && e.message }; });
+        if (im && !im.ok && im.code === 'exists' && window.confirm('You already have a layout called "' + name + '". Replace it with the cloud copy?')) {
+          im = await window.mimic.uiStudioLayoutImport({ character: who.character, name: name, files: g.files, replace: true }).catch(function(e){ return { ok: false, error: e && e.message }; });
+        }
+        if (!im || !im.ok) { _layMsg(_layErr(im), 'err'); return; }
+        await _layRefresh(im.layout.id);
+        _layMsg('brought back "' + im.layout.name + '" — Switch to it when you want it', 'ok');
+      });
+    });
+  });
 
   // ── Capture / Backup / Inspect Socials ───────────────────────────────────
   // Surfaces the existing _readUiBundle + ui-studio-capture cloud-backup
@@ -1920,6 +2203,466 @@
       note:'Stops your song, clicks {SLOT} (the /pause 30 = 3s covers the click cast — tune to the item), then resumes /melody {GEMS} (e.g. 1 2 3 4).' },
   ];
 
+  // ── Chat channel names (ChannelMap<N> in UI_<char> [ChatManager]) ────────
+  // ⚠ ChannelMap<N> is NOT a USERCOLOR id and NOT a made-up 0..24 list (the
+  // table that used to live here named id 4 "Auction" and id 6 "Guild", the
+  // opposite of the guild lead's own windows, 2026-10-14). N is the position in
+  // the client's chat-filter menu — the same number the context-menu item id
+  // carries minus 100. Sources:
+  //   0..40   MacroQuest eqlib include/eqlib/game/ChatFilters.h, enum
+  //           eChatChannel (CONTEXT_FILTER_* = 100 + N). The standard EQ filter
+  //           list is 41 long on the Quarm client: Zeal's chatfilter.cpp has
+  //           ChannelMapWnd[0x29], ChannelMap40 = 0x28 and FILTER_OFFSET 0x64.
+  //   41..56  Zeal Zeal/chatfilter.cpp Extended_ChannelMaps, saved as
+  //           ChannelMap41 + list index ("Keep new entries at the end").
+  // Checked against in-game Filters menus (the guild lead's screenshots): the
+  // Auction window = 6 + user channels 13..16; "other's melee" = 26, 27 plus
+  // Zeal 46, 47, 50, 53, 54, 55. Groups use the in-game menu's own headings;
+  // item wording is eqlib's. An id no source confirms stays "Ch N".
+  // rows: [id, group, name]   (group '' = a top-level menu item)
+  var CHAT_CHANNEL_ROWS = [
+    [0,'','Say'], [1,'','Tell'], [2,'','Group'], [3,'','Raid'], [4,'','Guild'],
+    [5,'','OOC'], [6,'','Auction'], [7,'','Shout'], [8,'','Emotes'],
+    [9,'Melee','Your hits'], [10,'Spells','Mine'], [11,'','Skills'],
+    [12,'Chat Channel',''], [13,'Chat Channel',''], [14,'Chat Channel',''], [15,'Chat Channel',''], [16,'Chat Channel',''],
+    [17,'Chat Channel',''], [18,'Chat Channel',''], [19,'Chat Channel',''], [20,'Chat Channel',''], [21,'Chat Channel',''],
+    [22,'','Other'],
+    [23,'Melee','Your misses'], [24,'Melee','Hits on you'], [25,'Melee','Misses on you'],
+    [26,'Melee',"Others' hits"], [27,'Melee',"Others' misses"],
+    [28,'Melee','Your death'], [29,'Melee',"Others' deaths"], [30,'Melee','Critical hits'],
+    [31,'Melee','Disciplines'], [32,'Melee','Warnings'],
+    [33,'Melee','NPC rampage'], [34,'Melee','NPC flurry'], [35,'Melee','NPC enrage'],
+    [36,'Spells','Others'], [37,'Spells','Failures'], [38,'Spells','Criticals'],
+    [39,'Spells','Worn off'], [40,'Spells','Non-melee hits'],
+    [41,'Zeal','Random'], [42,'Zeal','Loot'], [43,'Zeal','Money'],
+    [44,'Zeal','My Pet Say'], [45,'Zeal','My Pet Damage'],
+    [46,'Zeal','Other Pet Say'], [47,'Zeal','Other Pet Damage'],
+    [48,'Zeal','/who'], [49,'Zeal','My Melee Special'], [50,'Zeal','Other Melee Special'],
+    [51,'Zeal','/mystats'], [52,'Zeal','Item Speech'], [53,'Zeal','Other Melee Critical'],
+    [54,'Zeal','Other Damage Shield'], [55,'Zeal','Zeal Spam'], [56,'Zeal','Bandolier'],
+  ];
+  var CHAT_CHANNEL_BY_ID = {};
+  for (var _ccr = 0; _ccr < CHAT_CHANNEL_ROWS.length; _ccr++) CHAT_CHANNEL_BY_ID[CHAT_CHANNEL_ROWS[_ccr][0]] = CHAT_CHANNEL_ROWS[_ccr];
+  // `joined` = the character's /join names in slot order (optional). Slot k
+  // (id 12 + k) is the (k+1)th entry; without a name it reads "Chat channel k+1".
+  function _chatChannelInfo(n, joined) {
+    var row = CHAT_CHANNEL_BY_ID[n];
+    if (!row) return { id: n, known: false, text: 'Ch ' + n, title: 'unknown channel id (ChannelMap' + n + ')' };
+    var group = row[1], name = row[2], text, title;
+    if (group === 'Chat Channel') {
+      var slot = n - 12;
+      var jn = joined && joined[slot] ? String(joined[slot]) : '';
+      text = jn ? 'Chat Channel · ' + jn : 'Chat channel ' + (slot + 1);
+      title = text + (jn ? ' (slot ' + (slot + 1) + ', from your ChannelAutoJoin order)' : ' (a /join slot; name not known)');
+    } else {
+      text = group ? group + ' · ' + name : name;
+      title = text;
+    }
+    return { id: n, known: true, group: group, name: name, text: text,
+      title: title + ' — ChannelMap' + n + (n >= 41 ? ' (Zeal)' : '') };
+  }
+  // The chip body: the name, then the id as a small dim suffix. Unknown ids
+  // already read "Ch N", so they get no second copy.
+  function _chatChipInner(n, joined) {
+    var inf = _chatChannelInfo(n, joined);
+    return escapeHtml(inf.text) + (inf.known ? ' <span class="chId" style="color:#6e7681;font-size:9px">' + n + '</span>' : '');
+  }
+  // The "default:" pill. ChatWindow<N>_DefaultChannel is a different list from
+  // ChannelMap; only 3 = Tell is sourced (Zeal creates its tell windows with
+  // default channel 3). Anything else says so rather than guessing.
+  function _defaultChannelInfo(n) {
+    if (n == null || isNaN(n)) return { text: '—', title: 'no default channel' };
+    if (n === 3) return { text: 'Tell', title: 'default channel 3 = Tell (Zeal creates tell windows with it)' };
+    return { text: 'Ch ' + n, title: 'default channel id ' + n + ' — name not confirmed' };
+  }
+  // ── /Chat channel names ───────────────────────────────────────────────────
+
+  // ── Chat window ↔ layout link ─────────────────────────────────────────────
+  // ONE selection state: STATE.selected (the rectangle). A chat card is "selected"
+  // exactly when the selected rectangle is that chat window, so selecting from
+  // either side is the same assignment and both sides repaint from it.
+  // Routing from the layout reuses the card's own reroute (_rerouteChip) through
+  // CHAT_ROUTER — the layout has no write path of its own.
+  var CHAT_ROUTER = null;   // set by openSocialsInspector: { live(), rowFor(win), reroute(filter, fromWin, toWin, row) }
+  function _parseChipDrop(raw) {
+    var d; try { d = JSON.parse(raw); } catch (er) { return null; }
+    if (!d || !isFinite(d.filter) || !isFinite(d.fromWin)) return null;
+    return { filter: d.filter, fromWin: d.fromWin };
+  }
+  // Shared by the card rows and the layout rectangles. rowFor(toWin) returns the
+  // target card's chip row (data-drop="1" for a normal window, "0" for a Tell
+  // window, nothing when that window is not in the inspector).
+  function _dropChipOnWindow(raw, toWin, rowFor, reroute) {
+    var d = _parseChipDrop(raw); if (!d) return false;
+    var row = rowFor(toWin);
+    if (!row || row.getAttribute('data-drop') !== '1') return false;   // tell windows route by sender
+    if (d.fromWin === toWin) return false;
+    reroute(d.filter, d.fromWin, toWin, row);
+    return true;
+  }
+  function _chatWinOfRect(windows, i) {
+    var w = windows[i];
+    return (w && w.kind === 'chat' && w.chatMeta && w.chatMeta.index != null) ? w.chatMeta.index : null;
+  }
+  function _rectOfChatWin(windows, idx, file) {
+    var any = -1;
+    for (var i = 0; i < windows.length; i++) {
+      if (_chatWinOfRect(windows, i) !== idx) continue;
+      if (file == null || windows[i].file === file) return i;
+      if (any < 0) any = i;
+    }
+    return any;
+  }
+  function _selectChatWindow(idx, file) {
+    var i = _rectOfChatWin(STATE.windows, idx, file);
+    if (i < 0) return false;
+    STATE.selected = i;
+    renderStage();
+    return true;
+  }
+  function _clearSelection() {
+    if (STATE.selected < 0) return false;
+    STATE.selected = -1;
+    renderStage();
+    return true;
+  }
+  // Paint the inspector's cards from STATE.selected; scroll + flash only when the
+  // selected chat window CHANGES (renderStage runs on every drag tick).
+  function _syncChatCardSelection() {
+    var sel = _chatWinOfRect(STATE.windows, STATE.selected);
+    var cards = document.querySelectorAll('#socialsInspector .chatCard');
+    for (var i = 0; i < cards.length; i++) {
+      var on = sel != null && parseInt(cards[i].getAttribute('data-win'), 10) === sel;
+      cards[i].classList.toggle('chatSel', on);
+      if (on && STATE.chatSelShown !== sel) {
+        if (cards[i].scrollIntoView) cards[i].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        cards[i].classList.remove('chatFlash'); void cards[i].offsetWidth; cards[i].classList.add('chatFlash');
+      }
+    }
+    STATE.chatSelShown = sel;
+  }
+  // Stacked windows (same corner) draw their titles on top of each other. Push a
+  // title down a line while it would land on an earlier one. items: [{sx,sy,sw,sh,chars}].
+  function _labelDy(items) {
+    var placed = [], out = [];
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i], x0 = it.sx + 4, x1 = x0 + Math.min(it.sw - 8, it.chars * 5.5), dy = 0;
+      for (var tries = 0; tries < 6; tries++) {
+        var hit = false;
+        for (var j = 0; j < placed.length; j++) {
+          var p = placed[j];
+          if (x0 < p.x1 && p.x0 < x1 && Math.abs((it.sy + 2 + dy) - p.y) < 10) { hit = true; break; }
+        }
+        if (!hit) break;
+        dy += 11;
+      }
+      if (it.sy + 2 + dy + 10 > it.sy + it.sh) dy = 0;   // no room in the rectangle: leave it
+      placed.push({ x0: x0, x1: x1, y: it.sy + 2 + dy });
+      out.push(dy);
+    }
+    return out;
+  }
+  // ── /Chat window ↔ layout link ────────────────────────────────────────────
+
+  // ── Chat window structure: rename, font, add, delete (pure: model in, model out) ──
+  // The guild lead, 2026-10-14: "need to be able to delete or rename chats, or make new
+  // ones in the UI Studio" + "include chat fontsize". A model is
+  //   { cm:  { key → value }                 every key of [ChatManager]
+  //     geo: { sectionName → { key → value } } each chat window's own geometry block }
+  // and _chatModelDiff(disk, now) turns the difference into the key edits Save sends.
+  //
+  // KEYS (all in UI_<char> [ChatManager] unless noted) and where each is confirmed:
+  //   NumWindows                    ui-studio-inspect-socials (main.js) reads it; the game keeps <= 32
+  //                                 windows (Zeal game_ui.h CChatManager.ChatWindows[32])
+  //   ChatWindow<N>_Name            main.js reader; Zeal CreateChatWindow(name, …)
+  //   ChatWindow<N>_DefaultChannel  main.js reader; 3 = Tell (Zeal tellwindows.cpp)
+  //   ChatWindow<N>_ChatChannel     main.js reader
+  //   ChatWindow<N>_TellTarget      main.js reader
+  //   ChatWindow<N>_AlwaysHere      main.js reader ("1" = outgoing chat goes here)
+  //   ChatWindow<N>_FontStyle       Zeal tellwindows.cpp reads ChatWindow0_FontStyle from [ChatManager]
+  //                                 and clamps it to 0..6 for a new tell window. An INDEX, not points:
+  //                                 the point size each index draws at is NOT confirmed, so the UI shows
+  //                                 the index and never a size.
+  //   ChannelMap<M> = <window>      main.js reader; Zeal chatfilter.cpp
+  //   [MainChat] / [Chat N] / [ChatN]  window 0 / window N's own geometry (XPos<res>, YPos<res>, Width,
+  //                                 Height); both spellings exist in the wild, so each is kept as found.
+  // NOT confirmed (so never invented): the key for a window's language, any other per-window key beyond
+  // the above (they are copied from Chat 0 as found, never named here), and whether anything outside
+  // [ChatManager] and the geometry blocks holds a chat-window number.
+  var CHAT_NAME_MAX = 32;        // our limit, not the client's (the client's is not confirmed)
+  var CHAT_WINDOWS_MAX = 32;
+  var CHAT_FONT_MAX = 6;
+  var CHAT_GEO_RE = /^(mainchat|chat\s*(\d+))$/i;
+  var CHAT_POS_OFFSET = 30;      // a new window's top-left sits this far right and down of Chat 0's
+  function _chatNameClean(raw) {
+    var s = String(raw == null ? '' : raw).replace(/[\x00-\x1f\x7f\[\]]/g, ' ').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+    return s.length > CHAT_NAME_MAX ? s.slice(0, CHAT_NAME_MAX).replace(/\s+$/, '') : s;
+  }
+  function _csClone(m) {
+    var o = { cm: {}, geo: {} }, k, s;
+    for (k in m.cm) o.cm[k] = m.cm[k];
+    for (s in m.geo) { o.geo[s] = {}; for (k in m.geo[s]) o.geo[s][k] = m.geo[s][k]; }
+    return o;
+  }
+  function _csLook(obj, key) { var lk = String(key).toLowerCase(); for (var k in obj) if (k.toLowerCase() === lk) return k; return null; }
+  function _csGet(obj, key) { var k = _csLook(obj, key); return k == null ? undefined : obj[k]; }
+  function _csPut(obj, key, val) {
+    var k = _csLook(obj, key);
+    if (val == null) { if (k != null) delete obj[k]; return; }
+    obj[k == null ? key : k] = String(val);
+  }
+  function _csSecIdx(name) { var m = CHAT_GEO_RE.exec(String(name).replace(/^\s+|\s+$/g, '')); return m ? (m[2] == null ? 0 : parseInt(m[2], 10)) : null; }
+  function _csGeoNames(geo) { var out = {}; for (var s in geo) { var i = _csSecIdx(s); if (i != null && out[i] == null) out[i] = s; } return out; }
+  function _csWindowIdxs(cm) {
+    var seen = {}, out = [];
+    for (var k in cm) { var m = /^ChatWindow(\d+)_/i.exec(k); if (m && !seen[m[1]]) { seen[m[1]] = 1; out.push(parseInt(m[1], 10)); } }
+    return out.sort(function(a, b){ return a - b; });
+  }
+  function _csNum(cm) {
+    var n = parseInt(_csGet(cm, 'NumWindows'), 10);
+    if (isFinite(n) && n > 0) return n;
+    var ix = _csWindowIdxs(cm);
+    return ix.length ? ix[ix.length - 1] + 1 : 0;
+  }
+  function _csIsTell(cm, i) { return parseInt(_csGet(cm, 'ChatWindow' + i + '_DefaultChannel'), 10) === 3; }
+  function _csFont(cm, i) { var n = parseInt(_csGet(cm, 'ChatWindow' + i + '_FontStyle'), 10); return isFinite(n) ? n : null; }
+  // The cards' view of a model: windows in order, who routes where, the ★ holder.
+  function _chatView(model) {
+    var cm = model.cm, wins = [], routed = {}, always = null, k, m;
+    var ix = _csWindowIdxs(cm);
+    for (var a = 0; a < ix.length; a++) {
+      var i = ix[a], d = parseInt(_csGet(cm, 'ChatWindow' + i + '_DefaultChannel'), 10);
+      var nm = _csGet(cm, 'ChatWindow' + i + '_Name');
+      wins.push({ index: i, name: nm == null ? '' : String(nm).replace(/^\s+|\s+$/g, ''), default_channel: isFinite(d) ? d : null,
+        font: _csFont(cm, i), isTell: d === 3 });
+      if (parseInt(_csGet(cm, 'ChatWindow' + i + '_AlwaysHere'), 10) === 1 && always == null) always = i;
+    }
+    for (k in cm) {
+      m = /^ChannelMap(\d+)$/i.exec(k);
+      if (!m) continue;
+      var w = parseInt(cm[k], 10);
+      if (!isFinite(w)) continue;
+      (routed[w] = routed[w] || []).push(parseInt(m[1], 10));
+    }
+    return { windows: wins, routed: routed, alwaysIdx: always, num: _csNum(cm) };
+  }
+  // One staged edit ({section:'ChatManager', key, value|null}) applied to a model.
+  function _csApplyEdit(model, e) {
+    if (!e || e.section !== 'ChatManager') return;
+    _csPut(model.cm, e.key, e.value);
+  }
+  function _chatRenameModel(model, idx, raw) {
+    var nm = _chatNameClean(raw);
+    if (!nm) return { ok: false, error: 'A chat window needs a name.' };
+    if (_csWindowIdxs(model.cm).indexOf(idx) < 0) return { ok: false, error: 'No chat window ' + idx + '.' };
+    var m = _csClone(model);
+    _csPut(m.cm, 'ChatWindow' + idx + '_Name', nm);
+    return { ok: true, model: m, name: nm };
+  }
+  function _chatSetFont(model, idx, n) {
+    n = parseInt(n, 10);
+    if (!isFinite(n) || n < 0 || n > CHAT_FONT_MAX) return { ok: false, error: 'Font style is 0 to ' + CHAT_FONT_MAX + '.' };
+    if (_csWindowIdxs(model.cm).indexOf(idx) < 0) return { ok: false, error: 'No chat window ' + idx + '.' };
+    var m = _csClone(model);
+    _csPut(m.cm, 'ChatWindow' + idx + '_FontStyle', n);
+    return { ok: true, model: m };
+  }
+  // New window N = NumWindows. Its per-window keys are Chat 0's (so the font, and whatever else the
+  // client keeps per window, match Main Chat), minus the ones that are the window's own: name, tell
+  // target, ★. Its geometry block copies the newest numbered sibling, placed just right and down of
+  // Chat 0. With no numbered sibling the block's name spelling is unknown, so none is written.
+  function _chatAddWindow(model, rawName) {
+    var m = _csClone(model), cm = m.cm, n = _csNum(cm), k;
+    if (n >= CHAT_WINDOWS_MAX) return { ok: false, error: 'The game keeps at most ' + CHAT_WINDOWS_MAX + ' chat windows.' };
+    var nm = _chatNameClean(rawName) || ('Chat ' + n);
+    for (k in model.cm) if (new RegExp('^ChatWindow' + n + '_', 'i').test(k)) delete cm[k];   // a stale orphan
+    for (k in model.cm) {
+      var mm = /^ChatWindow0_([\w.]+)$/i.exec(k);
+      if (!mm || /^(Name|TellTarget|AlwaysHere)$/i.test(mm[1])) continue;
+      _csPut(cm, 'ChatWindow' + n + '_' + mm[1], model.cm[k]);
+    }
+    _csPut(cm, 'ChatWindow' + n + '_Name', nm);
+    _csPut(cm, 'NumWindows', n + 1);
+    var names = _csGeoNames(m.geo), top = -1, sib;
+    for (sib in names) if (+sib >= 1 && +sib > top) top = +sib;
+    var section = null, props = null;
+    if (top >= 1) {
+      var pm = /^(chat\s*)\d+$/i.exec(names[top]);
+      section = (pm ? pm[1] : 'Chat ') + n;
+      props = {};
+      for (k in m.geo[names[top]]) props[k] = m.geo[names[top]][k];
+      var ref = names[0] != null ? m.geo[names[0]] : null;
+      if (ref) for (k in ref) {
+        if (!/^[XY]Pos/i.test(k)) continue;
+        var rv = parseInt(ref[k], 10);
+        if (isFinite(rv)) _csPut(props, k, rv + CHAT_POS_OFFSET);
+      }
+      if (_csGet(props, 'Width') == null && _csGet(props, 'Height') == null) { _csPut(props, 'Width', 400); _csPut(props, 'Height', 200); }
+      m.geo[section] = props;
+    }
+    return { ok: true, model: m, index: n, name: nm, section: section, geo: props };
+  }
+  // Can window idx go, and how? 'renumber' = the later windows move down; 'last' = idx is the last window
+  // so nothing moves. Chat 0 and Tell windows never go. [ChatManager] keys that carry a number but are not
+  // ones we know (NumWindows, ChannelMap<N>, ChatWindow<N>_*) might be window numbers we would leave
+  // pointing at the wrong window, so then only the LAST window can be deleted.
+  function _chatDeleteCheck(model, idx) {
+    var cm = model.cm, ix = _csWindowIdxs(cm);
+    if (ix.indexOf(idx) < 0) return { ok: false, error: 'No chat window ' + idx + '.' };
+    if (idx === 0) return { ok: false, code: 'main', error: 'Main Chat (0) cannot be deleted.' };
+    if (_csIsTell(cm, idx)) return { ok: false, code: 'tell', error: 'Tell windows are made by the game for each sender and cannot be deleted here.' };
+    var last = ix[ix.length - 1];
+    if (idx === last) return { ok: true, mode: 'last', last: last };
+    var odd = [];
+    for (var k in cm) {
+      if (/^NumWindows$/i.test(k) || /^ChannelMap\d+$/i.test(k) || /^ChatWindow\d+_[\w.]+$/i.test(k)) continue;
+      if (/\d/.test(k)) odd.push(k);
+    }
+    if (odd.length) {
+      return { ok: false, code: 'last-only', last: last, error: 'Only the last chat window (Chat ' + last + ') can be deleted from this ini: [ChatManager] also holds ' +
+        odd.slice(0, 3).join(', ') + (odd.length > 3 ? ' and ' + (odd.length - 3) + ' more' : '') +
+        ', numbered settings that may refer to window numbers, and renumbering the windows after Chat ' + idx + ' could point them at the wrong window.' };
+    }
+    return { ok: true, mode: 'renumber', last: last };
+  }
+  function _chatDeleteWindow(model, idx) {
+    var chk = _chatDeleteCheck(model, idx);
+    if (!chk.ok) return chk;
+    var cm = model.cm, last = chk.last, n = _csNum(cm), k, m;
+    var moved = [];
+    var cm2 = {};
+    for (k in cm) {
+      if (/^NumWindows$/i.test(k)) { cm2[k] = String(Math.max(0, n - 1)); continue; }
+      m = /^ChannelMap(\d+)$/i.exec(k);
+      if (m) {
+        var v = parseInt(cm[k], 10);
+        if (!isFinite(v)) { cm2[k] = cm[k]; continue; }
+        if (v === idx) { cm2[k] = '0'; moved.push(parseInt(m[1], 10)); }
+        else cm2[k] = v > idx ? String(v - 1) : cm[k];
+        continue;
+      }
+      m = /^ChatWindow(\d+)_([\w.]+)$/i.exec(k);
+      if (m) {
+        var w = parseInt(m[1], 10);
+        if (w < idx) cm2[k] = cm[k];
+        else if (w > idx) cm2['ChatWindow' + (w - 1) + '_' + m[2]] = cm[k];
+        continue;                                  // w === idx: gone with the window
+      }
+      cm2[k] = cm[k];
+    }
+    var geo2 = {}, s, names = _csGeoNames(model.geo), renamed = [];
+    for (s in model.geo) { geo2[s] = {}; for (k in model.geo[s]) geo2[s][k] = model.geo[s][k]; }
+    for (var i = idx; i < last; i++) {
+      var src = names[i + 1], tgt = names[i];
+      if (tgt == null && src != null) { var sm = /^(chat\s*)\d+$/i.exec(src); tgt = (sm ? sm[1] : 'Chat ') + i; }
+      if (tgt == null) continue;
+      geo2[tgt] = {};
+      if (src != null) { for (k in model.geo[src]) geo2[tgt][k] = model.geo[src][k]; renamed.push([src, tgt]); }
+    }
+    if (names[last] != null && last > idx) geo2[names[last]] = {};          // the last block's keys are gone; its header stays
+    else if (names[idx] != null && last === idx) geo2[names[idx]] = {};
+    var renum = [];
+    for (var j = idx + 1; j <= last; j++) renum.push([j, j - 1]);
+    return { ok: true, mode: chk.mode, model: { cm: cm2, geo: geo2 }, moved: moved, renumbered: renum, renamedSections: renamed,
+      removedSection: names[idx] != null ? names[idx] : null, lastSection: names[last] != null ? names[last] : null };
+  }
+  // <option>s for the font picker: 0..6, the current one selected. A missing or out-of-range value gets
+  // its own disabled placeholder so the picker never claims a value the ini does not hold.
+  function _chatFontOptions(cur) {
+    var h = '';
+    if (cur == null) h += '<option value="" selected disabled>–</option>';
+    else if (cur < 0 || cur > CHAT_FONT_MAX) h += '<option value="' + cur + '" selected disabled>' + cur + '</option>';
+    for (var i = 0; i <= CHAT_FONT_MAX; i++) h += '<option value="' + i + '"' + (cur === i ? ' selected' : '') + '>' + i + '</option>';
+    return h;
+  }
+  function _chatDeleteConfirmText(name, idx, movedNames, renumbered) {
+    var t = 'Delete "' + name + '" (Chat ' + idx + ')?\n\n';
+    t += movedNames.length
+      ? movedNames.length + ' channel' + (movedNames.length === 1 ? '' : 's') + ' routed to it move to Main Chat (0): ' + movedNames.join(', ') + '.\n'
+      : 'No channels are routed to it.\n';
+    if (renumbered.length) t += 'The chat windows after it renumber down: ' + renumbered.map(function(p){ return 'Chat ' + p[0] + ' becomes Chat ' + p[1]; }).join(', ') + '.\n';
+    return t + '\nNothing is written until you press Save changes.';
+  }
+  // Key edits that turn the model on disk into the model now. Keys match case-insensitively (the client
+  // reads these files that way); a key gone from the model is deleted; a block gone entirely is emptied.
+  function _chatModelDiff(orig, cur) {
+    var edits = [];
+    function diff(section, a, b) {
+      var k, lk, bl = {}, al = {};
+      for (k in b) bl[k.toLowerCase()] = k;
+      for (k in a) al[k.toLowerCase()] = k;
+      for (lk in bl) if (al[lk] == null || a[al[lk]] !== b[bl[lk]]) edits.push({ section: section, key: bl[lk], value: b[bl[lk]] });
+      for (lk in al) if (bl[lk] == null) edits.push({ section: section, key: al[lk], value: null });
+    }
+    diff('ChatManager', orig.cm, cur.cm);
+    var seen = {}, s, ls;
+    for (s in cur.geo) { seen[s.toLowerCase()] = 1; var o = _csLook(orig.geo, s); diff(s, o == null ? {} : orig.geo[o], cur.geo[s]); }
+    for (s in orig.geo) { ls = s.toLowerCase(); if (!seen[ls]) diff(s, orig.geo[s], {}); }
+    return edits;
+  }
+  // The Hotbar Pages editor's "are you sure": nothing to lose = leave; otherwise ask, and Discard puts
+  // every field back before it closes. `guard` = { isDirty(), revert(), close() }.
+  function _hotbarLeaveAction(guard) { return (guard && guard.isDirty()) ? 'ask' : 'leave'; }
+  function _hotbarAnswer(guard, answer) {
+    if (answer === 'discard') { guard.revert(); guard.close(); return 'discarded'; }
+    return 'kept';
+  }
+  function _hotbarRevertInputs(inputs) {
+    for (var i = 0; i < inputs.length; i++) inputs[i].value = inputs[i].getAttribute('data-orig') || '';
+  }
+  // ── /Chat window structure ────────────────────────────────────────────────
+
+  // ── Leaving the Hotbar Pages editor (the guild lead, 2026-10-14: "clicking off the hotbar pages
+  // should ask if you want to cancel changes") ────────────────────────────────────────────────────
+  // While the editor holds unsaved changes, a press anywhere outside it (another panel, a layout
+  // rectangle, the toolbar) is held back and asked about; so is its ×. With nothing changed, nothing is
+  // asked. Keep editing leaves everything as it was; Discard puts every field back and closes it (the
+  // press itself is not replayed). A chip dragged out of the editor onto a rectangle is not a press
+  // outside — it starts inside — so routing from the layout still works.
+  var INSPECTOR_GUARD = null;   // set by openSocialsInspector while it is open: { isDirty, revert, close }
+  function _closeInspectorNow() {
+    var d = document.getElementById('socialsInspector');
+    if (d) d.remove();
+    INSPECTOR_GUARD = null;
+    document.body.classList.remove('inspecting');
+  }
+  function _askDiscardHotbar(onAnswer) {
+    if (document.getElementById('discardAsk')) return;
+    var m = document.createElement('div');
+    m.id = 'discardAsk';
+    m.innerHTML = '<div role="dialog" aria-modal="true" aria-labelledby="discardAskTitle" class="box">' +
+      '<h3 id="discardAskTitle">Discard changes to hotbar pages?</h3>' +
+      '<p>The editor has changes that are not saved yet. Discard puts everything back as it is in the ini and closes the editor; Keep editing takes you back to it.</p>' +
+      '<div class="btns"><button id="discardKeep" class="secondary">Keep editing</button><button id="discardGo">Discard</button></div></div>';
+    document.body.appendChild(m);
+    function end(ans) { document.removeEventListener('keydown', onKey, true); m.remove(); onAnswer(ans); }
+    function onKey(e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); end('keep'); } }
+    document.addEventListener('keydown', onKey, true);
+    document.getElementById('discardKeep').addEventListener('click', function(){ end('keep'); });
+    document.getElementById('discardGo').addEventListener('click', function(){ end('discard'); });
+    document.getElementById('discardKeep').focus();
+  }
+  function _inspectorTryLeave() {
+    var g = INSPECTOR_GUARD;
+    if (!g) return;
+    if (_hotbarLeaveAction(g) === 'leave') { g.close(); return; }
+    _askDiscardHotbar(function(ans){ _hotbarAnswer(g, ans); });
+  }
+  function _inspectorOutsidePress(e) {
+    var d = document.getElementById('socialsInspector');
+    if (!d || !INSPECTOR_GUARD) return;
+    var t = e.target;
+    if (!t || t.nodeType !== 1 || d.contains(t) || t.closest('#discardAsk')) return;
+    if (_hotbarLeaveAction(INSPECTOR_GUARD) === 'leave') return;   // nothing to lose: the press goes through
+    e.preventDefault(); e.stopPropagation();
+    if (e.type === 'mousedown') _inspectorTryLeave();
+  }
+  document.addEventListener('mousedown', _inspectorOutsidePress, true);
+  document.addEventListener('click', _inspectorOutsidePress, true);
+  // The canvas fits itself to the room it has: re-fit whenever the editor opens, closes or is resized.
+  if (window.ResizeObserver) new ResizeObserver(function(){ if (STATE.windows.length) renderStage(); }).observe(stageWrap);
+  // ── /Leaving the editor ───────────────────────────────────────────────────────────────────────
+
   function openSocialsInspector(res) {
     var files = (res && res.files) || [];
     var chat  = res && res.chat;
@@ -1931,10 +2674,14 @@
     if (!dlg) {
       dlg = document.createElement('div');
       dlg.id = 'socialsInspector';
-      dlg.style.cssText = 'position:fixed;top:50px;right:0;bottom:0;width:' + savedW + 'px;' +
-        'background:#161b22;border-left:1px solid #30363d;z-index:60;overflow-y:auto;' +
+      // DOCKED, not floating (the guild lead, 2026-10-14: "The UI should shrink to not sit over top of the
+      // hotbar pages"): the editor is a flex item of #content, so the layout canvas gives up its width
+      // instead of being covered, and #side hides while it is open (body.inspecting).
+      dlg.style.cssText = 'position:relative;flex:0 0 auto;min-width:0;box-sizing:border-box;width:' + savedW + 'px;max-width:70vw;' +
+        'background:#161b22;border-left:1px solid #30363d;overflow-y:auto;' +
         'padding:14px 14px 14px 22px;font-size:11px;color:#c9d1d9;font-family:ui-monospace,Menlo,Consolas,monospace';
-      document.body.appendChild(dlg);
+      document.getElementById('content').appendChild(dlg);
+      document.body.classList.add('inspecting');
       // Resize handle pinned to the left edge — drag to resize between 320px
       // and viewport-200px. cursor:ew-resize; persists to localStorage on
       // release. Persistent across opens since the dialog div is reused.
@@ -1967,7 +2714,7 @@
     }
     // Header bar — resize hint + Save button (enables when any input is dirty).
     var html = '<div style="position:relative">' +
-      '<button onclick="document.getElementById(\'socialsInspector\').remove()" ' +
+      '<button id="uiInspectorClose" title="Close the inspector (asks first if there are unsaved changes)" ' +
       'style="float:right;background:none;border:none;color:#8b949e;cursor:pointer;font-size:18px;line-height:1;padding:0 0 0 6px">×</button>' +
       '<button id="uiInspectorSave" disabled ' +
       'style="float:right;background:#21262d;border:1px solid #30363d;color:#6e7681;border-radius:4px;' +
@@ -1987,39 +2734,43 @@
     //   • Routed filter chips — draggable to other (non-tell) windows, X to remove
     // Tell windows (default_channel === 3) are NOT drop targets — those filters
     // route by sender, not by category.
-    if (chat && Array.isArray(chat.windows) && chat.windows.length) {
-      html += '<div id="chatRoutingBlock" data-file="' + escapeHtml(chat.file) + '" style="margin-bottom:14px"><div style="color:#7ee7c7;font-weight:600;margin-bottom:4px;font-family:sans-serif">' +
-        '💬 Chat windows & routing <span style="color:#8b949e;font-weight:400;font-size:10px">(' +
-        escapeHtml(chat.file) + ' · ' + chat.num_windows + ' windows)</span></div>' +
+    // The block is built from a MODEL of [ChatManager] + the chat windows' geometry blocks, not from the
+    // read-only `chat.windows`, so rename / font / add / delete re-draw it without touching the Hotbar
+    // Pages fields below (see "Chat window structure" above for the keys). CHAT_ORIG is the disk;
+    // CHAT_MODEL is the disk plus everything staged; Save sends their difference.
+    var CHAT_ORIG = (chat && chat.cm_props) ? { cm: chat.cm_props, geo: chat.geometry || {} } : null;
+    CHAT_ORIG = CHAT_ORIG ? _csClone(CHAT_ORIG) : null;
+    var CHAT_MODEL = CHAT_ORIG ? _csClone(CHAT_ORIG) : null;
+    // Chip names come from CHAT_CHANNEL_ROWS (top of this file, with its
+    // sources); /join names ride in on chat.autojoin when eqclient.ini had them.
+    var JOINED = Array.isArray(chat && chat.autojoin) ? chat.autojoin : null;
+    var _chatLog = [];          // what is staged, in words, for the unsaved hint
+    var _chatNoteMsg = '';      // the last refusal / explanation, shown under the block's title
+    var _chatStructural = false; // a window was added or deleted (layout rectangles changed too)
+    function _chatBlockHtml(){
+      var html = '';
+      var view = _chatView(CHAT_MODEL);
+      html += '<div id="chatRoutingBlock" data-file="' + escapeHtml(chat.file) + '" style="margin-bottom:14px"><div style="display:flex;align-items:center;gap:8px;color:#7ee7c7;font-weight:600;margin-bottom:4px;font-family:sans-serif">' +
+        '<span>💬 Chat windows & routing <span style="color:#8b949e;font-weight:400;font-size:10px">(' +
+        escapeHtml(chat.file) + ' · ' + view.num + ' windows)</span></span>' +
+        '<button id="chatAddBtn" title="Add a chat window: it starts empty, with Main Chat\'s font and settings, ready for channel chips"' +
+        (view.num >= CHAT_WINDOWS_MAX ? ' disabled' : '') +
+        ' style="margin-left:auto;background:#1f6feb;border:1px solid #1f6feb;color:#fff;border-radius:4px;padding:2px 9px;font-size:10px;cursor:pointer;font-family:sans-serif">+ New chat window</button></div>' +
         '<p style="color:#8b949e;font-size:10px;margin:0 0 6px;font-family:sans-serif">' +
         'Drag a channel chip from one window to another to reroute. Click <b>★</b> on a window ' +
-        'to make it the <b>Always chat here</b> target (highlights + bolds). Tell windows are ' +
-        'not drop targets — those route per sender.</p>';
-      // Common EQ channel-filter name map (varies slightly by client; falls
-      // back to "Ch <N>" for indexes outside the table). The user sees a
-      // recognizable label instead of a bare number.
-      var FILTER_NAMES = {
-        0:'Say', 1:'Tell', 2:'Group', 3:'Shout', 4:'Auction', 5:'OOC', 6:'Guild',
-        7:'Petition', 8:'Combat', 9:'Spells', 10:'Skills', 11:'NPC', 12:'Faction',
-        13:'Death', 14:'Loot', 15:'Money', 16:'System', 17:'Random', 18:'Damage',
-        19:'Other', 20:'Yell', 21:'Group Inv', 22:'Player NPC', 23:'Pet', 24:'Bard Songs'
-      };
-      function _filterName(n){ return FILTER_NAMES[n] || ('Ch ' + n); }
-      function _channelName(n){
-        if (n == null) return '—';
-        // Default-channel uses a slightly different palette — same indexes as
-        // filters for the common ones (Say=0, Tell=3 etc); falls back too.
-        return FILTER_NAMES[n] || ('Ch ' + n);
-      }
-      // ALWAYS_HERE flag — one window at a time. Initial value comes from
-      // chat.always_here_idx when the backend captured it; otherwise null. The
+        'to make it the <b>Always chat here</b> target (highlights + bolds). <b>✎</b> renames, <b>🗑</b> deletes ' +
+        '(its channels move to Main Chat). Tell windows are ' +
+        'not drop targets — those route per sender.</p>' +
+        '<div id="chatNote" style="color:#f6c365;font-size:10px;font-family:sans-serif;margin:0 0 6px;' + (_chatNoteMsg ? '' : 'display:none') + '">' + escapeHtml(_chatNoteMsg) + '</div>' +
+        '<div id="chatDirtyHint" style="color:#79c0ff;font-size:10px;font-family:sans-serif;margin:0 0 6px;display:none"></div>';
+      // ALWAYS_HERE flag — one window at a time (the model's ChatWindow<N>_AlwaysHere=1). The
       // ★ button toggles + saves it via the same writePages path.
-      var alwaysIdx = (chat && chat.always_here_idx != null) ? parseInt(chat.always_here_idx, 10) : null;
+      var alwaysIdx = view.alwaysIdx;
       html += '<div data-always-idx="' + (alwaysIdx == null ? '' : alwaysIdx) + '" style="display:flex;flex-direction:column;gap:8px">';
-      for (var ci = 0; ci < chat.windows.length; ci++) {
-        var cwn = chat.windows[ci];
-        var routed = (chat.routed_filters && chat.routed_filters[cwn.index]) || [];
-        var isTell = cwn.default_channel === 3;
+      for (var ci = 0; ci < view.windows.length; ci++) {
+        var cwn = view.windows[ci];
+        var routed = view.routed[cwn.index] || [];
+        var isTell = cwn.isTell;
         var isAlways = alwaysIdx === cwn.index;
         var headerStyle = isAlways
           ? 'color:#f6c365;font-weight:700;letter-spacing:0.5px'
@@ -2028,20 +2779,30 @@
         var cardBg     = isAlways ? 'rgba(240,180,41,0.06)' : '#0d1117';
         html += '<div class="chatCard" data-win="' + cwn.index + '" data-is-tell="' + (isTell?'1':'0') + '"' +
           ' style="background:' + cardBg + ';border:1px solid ' + cardBorder + ';border-radius:5px;padding:6px 8px">';
-        // Header — name (Chat #) + default channel + ★
-        html += '<div style="display:flex;align-items:center;gap:8px">' +
-          '<span style="' + headerStyle + ';font-family:sans-serif;font-size:12px">' +
+        // Header — name (Chat #) + ✎ + default channel + font + ★ + 🗑
+        var delWhy = cwn.index === 0 ? 'Main Chat (0) cannot be deleted' : (isTell ? 'Tell windows cannot be deleted here' : '');
+        html += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+          '<span class="chatTitle" data-win="' + cwn.index + '" title="Select this window in the layout" style="' + headerStyle + ';font-family:sans-serif;font-size:12px;cursor:pointer">' +
             (isAlways ? '⭐ ' : '') + escapeHtml(cwn.name || '(unnamed)') +
             ' <span style="color:#8b949e;font-weight:400;font-size:10px">(Chat ' + cwn.index + ')</span>' +
           '</span>' +
+          '<button class="chatRenameBtn" data-win="' + cwn.index + '" title="Rename this chat window (up to ' + CHAT_NAME_MAX + ' characters)" ' +
+            'style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:12px;line-height:1;padding:0 2px">✎</button>' +
           '<span style="color:#8b949e;font-size:10px;font-family:sans-serif">default:</span>' +
-          '<span style="background:#161b22;border:1px solid #30363d;border-radius:3px;padding:1px 6px;font-size:10px;color:#79c0ff">' +
-            escapeHtml(_channelName(cwn.default_channel)) + '</span>' +
+          '<span title="' + escapeHtml(_defaultChannelInfo(cwn.default_channel).title) + '" style="background:#161b22;border:1px solid #30363d;border-radius:3px;padding:1px 6px;font-size:10px;color:#79c0ff">' +
+            escapeHtml(_defaultChannelInfo(cwn.default_channel).text) + '</span>' +
+          '<label title="Chat font style: an index 0 to ' + CHAT_FONT_MAX + ' (ChatWindow' + cwn.index + '_FontStyle). The point size each index draws at is not confirmed, so this shows the index." ' +
+            'style="display:inline-flex;align-items:center;gap:3px;color:#8b949e;font-size:10px;font-family:sans-serif">font ' +
+            '<select class="chatFontSel" data-win="' + cwn.index + '" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:3px;font-size:10px;padding:0 2px">' +
+              _chatFontOptions(cwn.font) + '</select></label>' +
           (isTell
             ? '<span style="margin-left:auto;color:#8b949e;font-size:9px;font-family:sans-serif">tell window · not a drop target</span>'
             : '<button class="alwaysHereBtn" data-win="' + cwn.index + '" title="Always chat here — outgoing chat goes to this window" ' +
               'style="margin-left:auto;background:none;border:1px solid ' + (isAlways ? '#f0b429' : '#30363d') + ';color:' + (isAlways ? '#f6c365' : '#8b949e') + ';' +
               'cursor:pointer;font-size:13px;line-height:1;padding:2px 8px;border-radius:3px">★</button>') +
+          '<button class="chatDeleteBtn" data-win="' + cwn.index + '" title="' + (delWhy ? escapeHtml(delWhy) : 'Delete this chat window: its channels move to Main Chat (0) and later windows renumber') + '"' +
+            (delWhy ? ' disabled' : '') +
+            ' style="background:none;border:1px solid #30363d;color:' + (delWhy ? '#484f58' : '#f87171') + ';cursor:' + (delWhy ? 'not-allowed' : 'pointer') + ';font-size:12px;line-height:1;padding:2px 6px;border-radius:3px">🗑</button>' +
           '</div>';
         // Channel chips row
         html += '<div class="chatChipRow" data-win="' + cwn.index + '" data-drop="' + (isTell?'0':'1') + '" ' +
@@ -2052,9 +2813,10 @@
         for (var rf = 0; rf < routed.length; rf++) {
           var filt = routed[rf];
           html += '<span class="chatChip" draggable="true" data-filter="' + filt + '" data-from-win="' + cwn.index + '"' +
+            ' title="' + escapeHtml(_chatChannelInfo(filt, JOINED).title) + '"' +
             ' style="display:inline-flex;align-items:center;gap:3px;background:#1f2a3d;color:#79c0ff;border:1px solid #2a3d57;' +
             'border-radius:3px;padding:1px 4px 1px 6px;font-size:10px;cursor:grab;user-select:none">' +
-            escapeHtml(_filterName(filt)) +
+            _chatChipInner(filt, JOINED) +
             ' <button class="chipRemove" data-filter="' + filt + '" data-from-win="' + cwn.index + '" title="Remove this routing"' +
             ' style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:11px;padding:0 2px;line-height:1">×</button>' +
             '</span>';
@@ -2062,6 +2824,10 @@
         html += '</div></div>';
       }
       html += '</div></div>';
+      return html;
+    }
+    if (CHAT_MODEL && _chatView(CHAT_MODEL).windows.length) {
+      html += '<div id="chatHost">' + _chatBlockHtml() + '</div>';
     }
 
     // ── Tell windows (Zeal) ───────────────────────────────────────────────
@@ -2311,12 +3077,18 @@
       if (input.dataset.wasSet === '0' && cur === '') return false;
       return cur !== orig;
     }
-    function refreshSaveBtn(){
-      var anyDirty = false;
+    // Anything unsaved: an edited field, a staged chat change (routing, ★, rename, font, add, delete),
+    // or a queued macro. The Save button AND the leave-the-editor question both read this one answer.
+    function _anyDirty(){
       var inputs = dlg.querySelectorAll('.uiEdit');
-      for (var i = 0; i < inputs.length; i++) if (isDirty(inputs[i])) { anyDirty = true; break; }
-      if (!anyDirty && typeof _chatEdits !== 'undefined' && _chatEdits.size > 0) anyDirty = true;
-      if (!anyDirty && typeof _sugStaged !== 'undefined' && _sugStaged.size > 0) anyDirty = true;
+      for (var i = 0; i < inputs.length; i++) if (isDirty(inputs[i])) return true;
+      if (typeof _chatEdits !== 'undefined' && _chatEdits.size > 0) return true;
+      if (typeof _sugStaged !== 'undefined' && _sugStaged.size > 0) return true;
+      return false;
+    }
+    function refreshSaveBtn(){
+      var anyDirty = _anyDirty();
+      _renderChatDirtyHint();
       if (anyDirty) {
         saveBtn.disabled = false;
         saveBtn.style.background = '#1f6feb';
@@ -2336,6 +3108,30 @@
       inputs[i].addEventListener('input', refreshSaveBtn);
     }
 
+    // After a successful Save: the fields' baseline becomes what they now hold, and the chat model's
+    // baseline becomes the model, so _anyDirty() is false until the next change.
+    function _hbMarkSaved(){
+      var ins = dlg.querySelectorAll('.uiEdit');
+      for (var mi = 0; mi < ins.length; mi++) ins[mi].setAttribute('data-orig', ins[mi].value);
+      _chatEdits.clear(); _chatLog = []; _chatLayoutSnap = null;
+      if (CHAT_MODEL) CHAT_ORIG = _csClone(CHAT_MODEL);
+      _sugStaged.clear();
+    }
+
+    // Leaving this editor with unsaved changes asks first (see "Leaving the Hotbar Pages editor").
+    INSPECTOR_GUARD = {
+      isDirty: _anyDirty,
+      revert: function(){
+        _hotbarRevertInputs(dlg.querySelectorAll('.uiEdit'));
+        _chatEdits.clear();
+        if (CHAT_ORIG) CHAT_MODEL = _csClone(CHAT_ORIG);
+        _sugStaged.clear();
+        _restoreChatLayout();
+      },
+      close: _closeInspectorNow,
+    };
+    document.getElementById('uiInspectorClose').addEventListener('click', _inspectorTryLeave);
+
     // ── Chat routing interactions ────────────────────────────────────────────
     // Drag a chip from one window's chip-row to another's. Drop replaces that
     // chip's window assignment (writes a new ChannelMap<filter>=<win> on save).
@@ -2350,16 +3146,186 @@
     var _chatEdits = new Map();   // key → value (latest write wins per key)
     var chatBlock = document.getElementById('chatRoutingBlock');
     function _chatFile(){ return chatBlock ? chatBlock.dataset.file : null; }
+    // _chatEdits is ALWAYS the difference between the disk and the model, so a chip moved and moved
+    // back stages nothing, and a delete's renumbering is staged together with the routing before it.
+    function _chatRebuildEdits(){
+      _chatEdits.clear();
+      if (!CHAT_ORIG || !CHAT_MODEL) return;
+      var ds = _chatModelDiff(CHAT_ORIG, CHAT_MODEL);
+      for (var di = 0; di < ds.length; di++) _chatEdits.set('Sec\x01' + ds[di].section + '\x01' + ds[di].key, ds[di]);
+    }
     function _stageChatEdit(key, value){
       if (!_chatFile()) return;
-      _chatEdits.set(key, value);
+      _csApplyEdit(CHAT_MODEL, value);
+      _chatRebuildEdits();
       refreshSaveBtn();
     }
+    // The unsaved line under the block's title: what is waiting for Save, in words.
     function _renderChatDirtyHint(){
-      // No-op for now — refreshSaveBtn already enables the Save button.
-      // Future: visually mark windows whose routing changed.
+      var el = document.getElementById('chatDirtyHint');
+      if (!el) return;
+      if (!_chatEdits.size) { el.style.display = 'none'; el.textContent = ''; return; }
+      el.style.display = '';
+      el.textContent = '● Unsaved chat changes (' + _chatEdits.size + ' setting' + (_chatEdits.size === 1 ? '' : 's') + ' to write on Save changes)' +
+        (_chatLog.length ? ': ' + _chatLog.join('; ') : '');
     }
-    if (chatBlock) {
+    function _chatNote(msg){
+      _chatNoteMsg = msg || '';
+      var el = document.getElementById('chatNote');
+      if (el) { el.textContent = _chatNoteMsg; el.style.display = _chatNoteMsg ? '' : 'none'; }
+    }
+    // ── Structural chat edits (rename / font / add / delete) ───────────────────
+    // The layout rectangles follow the model: a new window gets one, a deleted one loses its, later
+    // ones take their new number. The first time, the rectangle list is kept so Discard can put it back.
+    var _chatLayoutSnap = null;
+    function _snapChatLayout(){
+      if (_chatLayoutSnap) return;
+      _chatLayoutSnap = STATE.windows.map(function(w){
+        return { w: w, section: w.section, label: w.label, chatMeta: w.chatMeta ? JSON.parse(JSON.stringify(w.chatMeta)) : w.chatMeta };
+      });
+    }
+    function _restoreChatLayout(){
+      if (!_chatLayoutSnap) return;
+      STATE.windows = _chatLayoutSnap.map(function(s){ s.w.section = s.section; s.w.label = s.label; s.w.chatMeta = s.chatMeta; return s.w; });
+      _chatLayoutSnap = null;
+      STATE.selected = -1;
+      renderStage();
+    }
+    function _chatRectFor(sectionName){
+      for (var i = 0; i < STATE.windows.length; i++) if (STATE.windows[i].kind === 'chat' && STATE.windows[i].section === sectionName) return i;
+      return -1;
+    }
+    function _chatMetaFor(idx){
+      var v = _chatView(CHAT_MODEL), out = { index: idx };
+      for (var i = 0; i < v.windows.length; i++) if (v.windows[i].index === idx) { out.name = v.windows[i].name; out.defaultChannel = v.windows[i].default_channel; }
+      return out;
+    }
+    function _chatAfterChange(logLine){
+      if (logLine) _chatLog.push(logLine);
+      _chatRebuildEdits();
+      var host = document.getElementById('chatHost');
+      if (host) { host.innerHTML = _chatBlockHtml(); _wireChat(); }
+      refreshSaveBtn();
+    }
+    function _chatRename(idx, raw){
+      var r = _chatRenameModel(CHAT_MODEL, idx, raw);
+      if (!r.ok) { _chatNote(r.error); _chatAfterChange(); return; }
+      CHAT_MODEL = r.model; _chatNote('');
+      for (var i = 0; i < STATE.windows.length; i++) {
+        var w = STATE.windows[i];
+        if (w.kind === 'chat' && w.chatMeta && w.chatMeta.index === idx && w.file === _chatFile()) w.chatMeta.name = r.name;
+      }
+      renderStage();
+      _chatAfterChange('renamed Chat ' + idx + ' to "' + r.name + '"');
+    }
+    function _chatFont(idx, n){
+      var r = _chatSetFont(CHAT_MODEL, idx, n);
+      if (!r.ok) { _chatNote(r.error); return; }
+      CHAT_MODEL = r.model; _chatNote('');
+      _chatRebuildEdits();
+      _chatLog = _chatLog.filter(function(t){ return t.indexOf('Chat ' + idx + ' font') !== 0; });
+      _chatLog.push('Chat ' + idx + ' font ' + n);
+      refreshSaveBtn();
+    }
+    function _chatLayoutDirty(){
+      for (var i = 0; i < STATE.windows.length; i++) if (_windowChanged(STATE.windows[i])) return true;
+      return false;
+    }
+    function _chatAdd(){
+      var r = _chatAddWindow(CHAT_MODEL, '');
+      if (!r.ok) { _chatNote(r.error); _chatAfterChange(); return; }
+      _snapChatLayout();
+      CHAT_MODEL = r.model;
+      _chatStructural = true;
+      var note ='Added "' + r.name + '" as Chat ' + r.index + ' with Main Chat\'s font and settings.';
+      if (r.section) {
+        // Its rectangle: Chat 0's spot, nudged, the newest sibling's size.
+        var main = -1, sib = -1;
+        for (var i = 0; i < STATE.windows.length; i++) {
+          var w = STATE.windows[i];
+          if (w.kind !== 'chat' || !w.chatMeta || w.file !== _chatFile()) continue;
+          if (w.chatMeta.index === 0) main = i;
+          if (w.chatMeta.index >= 1 && (sib < 0 || w.chatMeta.index > STATE.windows[sib].chatMeta.index)) sib = i;
+        }
+        var base = STATE.windows[main >= 0 ? main : (sib >= 0 ? sib : 0)];
+        var sz = STATE.windows[sib >= 0 ? sib : (main >= 0 ? main : 0)];
+        if (base && sz) {
+          var nx = Math.min(base.x + CHAT_POS_OFFSET, Math.max(0, STATE.tgtW - sz.w)), ny = Math.min(base.y + CHAT_POS_OFFSET, Math.max(0, STATE.tgtH - sz.h));
+          STATE.windows.push({
+            id: 'wchat' + r.index, file: _chatFile(), section: r.section, label: '💬 ' + r.section, kind: 'chat', category: 'chat',
+            contents: [], props: r.geo, hasWH: true, chatMeta: _chatMetaFor(r.index), xmlMax: null,
+            srcSuffix: sz.srcSuffix, x: nx, y: ny, w: sz.w, h: sz.h, origX: nx, origY: ny, origW: sz.w, origH: sz.h,
+          });
+          renderStage();
+        }
+      } else {
+        note += ' Its position is not written: this ini has no numbered chat window to copy a position block from, so place it in game.';
+      }
+      _chatNote(note);
+      _chatAfterChange('added Chat ' + r.index + ' "' + r.name + '"');
+      var t = document.querySelector('.chatRenameBtn[data-win="' + r.index + '"]');
+      if (t) t.click();
+    }
+    function _chatDelete(idx){
+      var r = _chatDeleteWindow(CHAT_MODEL, idx);
+      if (!r.ok) { _chatNote(r.error); _chatAfterChange(); return; }
+      if (_chatLayoutDirty()) { _chatNote('You have unsaved window moves in the layout. Save or Reset them first: deleting a chat window renumbers the ones after it, and the moves would land on the wrong window.'); _chatAfterChange(); return; }
+      var v = _chatView(CHAT_MODEL), nm = '';
+      for (var i = 0; i < v.windows.length; i++) if (v.windows[i].index === idx) nm = v.windows[i].name || ('Chat ' + idx);
+      var movedNames = r.moved.map(function(id){ return _chatChannelInfo(id, JOINED).text; });
+      if (!window.confirm(_chatDeleteConfirmText(nm, idx, movedNames, r.renumbered))) return;
+      _snapChatLayout();
+      CHAT_MODEL = r.model;
+      _chatStructural = true;
+      STATE.selected = -1;
+      var gone = r.removedSection != null ? _chatRectFor(r.removedSection) : -1;
+      var byOld = {};
+      for (var k = 0; k < r.renamedSections.length; k++) byOld[r.renamedSections[k][0]] = r.renamedSections[k][1];
+      var keep = [];
+      for (var j = 0; j < STATE.windows.length; j++) {
+        var w = STATE.windows[j];
+        if (j === gone) continue;
+        if (w.kind === 'chat' && w.chatMeta && w.chatMeta.index != null && w.chatMeta.index > idx && byOld[w.section] != null) {
+          w.section = byOld[w.section];
+          w.chatMeta = _chatMetaFor(w.chatMeta.index - 1);
+          w.label = '💬 ' + w.section;   // the rectangle's own title tracks its section name
+        }
+        keep.push(w);
+      }
+      STATE.windows = keep;
+      renderStage();
+      _chatNote('Deleted "' + nm + '". ' + (r.moved.length ? r.moved.length + ' channel' + (r.moved.length === 1 ? '' : 's') + ' now route to Main Chat (0). ' : '') +
+        (r.mode === 'renumber' ? 'Later chat windows moved down one number.' : ''));
+      _chatAfterChange('deleted Chat ' + idx + ' "' + nm + '"');
+    }
+    // Rename in place: the title becomes a field. Enter or leaving it keeps the name, Esc puts it back.
+    function _chatStartRename(idx){
+      var title = chatBlock && chatBlock.querySelector('.chatTitle[data-win="' + idx + '"]');
+      if (!title) return;
+      var cur = _csGet(CHAT_MODEL.cm, 'ChatWindow' + idx + '_Name') || '';
+      title.innerHTML = '<input class="chatRenameIn" maxlength="' + CHAT_NAME_MAX + '" value="' + escapeHtml(String(cur).replace(/^\s+|\s+$/g, '')) + '" ' +
+        'style="width:150px;background:#0d1117;color:#f6c365;border:1px solid #58a6ff;border-radius:3px;padding:1px 4px;font-size:12px;font-family:sans-serif">';
+      var inp = title.querySelector('input'), done = false;
+      inp.addEventListener('click', function(e){ e.stopPropagation(); });
+      inp.addEventListener('keydown', function(e){
+        e.stopPropagation();
+        if (e.key === 'Enter') { done = true; _chatRename(idx, inp.value); }
+        else if (e.key === 'Escape') { done = true; _chatAfterChange(); }
+      });
+      inp.addEventListener('blur', function(){ if (!done) { done = true; _chatRename(idx, inp.value); } });
+      inp.focus(); inp.select();
+    }
+    function _wireChat(){
+      chatBlock = document.getElementById('chatRoutingBlock');
+      if (!chatBlock) return;
+      var addBtn = document.getElementById('chatAddBtn');
+      if (addBtn) addBtn.addEventListener('click', _chatAdd);
+      var rn = chatBlock.querySelectorAll('.chatRenameBtn');
+      for (var rni = 0; rni < rn.length; rni++) rn[rni].addEventListener('click', function(e){ e.stopPropagation(); _chatStartRename(parseInt(this.getAttribute('data-win'), 10)); });
+      var dl = chatBlock.querySelectorAll('.chatDeleteBtn');
+      for (var dli = 0; dli < dl.length; dli++) dl[dli].addEventListener('click', function(e){ e.stopPropagation(); if (!this.disabled) _chatDelete(parseInt(this.getAttribute('data-win'), 10)); });
+      var fs_ = chatBlock.querySelectorAll('.chatFontSel');
+      for (var fsi = 0; fsi < fs_.length; fsi++) fs_[fsi].addEventListener('change', function(){ if (this.value !== '') _chatFont(parseInt(this.getAttribute('data-win'), 10), parseInt(this.value, 10)); });
       // Drag-drop wiring. We bind on the chip and the row (drop target) — no
       // delegation so newly-added chips don't accidentally get duplicate
       // listeners. The dialog re-renders on save, which rebuilds everything.
@@ -2376,11 +3342,48 @@
           var f = this.getAttribute('data-filter');
           var fromWin = this.getAttribute('data-from-win');
           e.dataTransfer.setData('text/plain', JSON.stringify({ filter: parseInt(f, 10), fromWin: parseInt(fromWin, 10) }));
+          e.dataTransfer.setData(CHIP_MIME, '1');   // lets the layout tell a chip from any other drag
           e.dataTransfer.effectAllowed = 'move';
           this.style.opacity = '0.5';
+          stage.classList.add('chipDragging');       // light up the rectangles that can take it
         });
-        chip.addEventListener('dragend', function(){ this.style.opacity = ''; });
+        chip.addEventListener('dragend', function(){ this.style.opacity = ''; stage.classList.remove('chipDragging'); });
       }
+      // The ONE reroute. A card-row drop and a layout-rectangle drop both land
+      // here (via _dropChipOnWindow), so there is a single write path.
+      function _rerouteChip(filter, fromWin, toWin, row){
+        // Stage the routing edit.
+        _stageChatEdit('Sec' + '\x01' + 'ChannelMap' + filter, { section: 'ChatManager', key: 'ChannelMap' + filter, value: String(toWin) });
+        // Move the chip DOM-side so the UI reflects the change before save.
+        var movedChip = chatBlock.querySelector('.chatChip[data-filter="' + filter + '"][data-from-win="' + fromWin + '"]');
+        if (movedChip) {
+          movedChip.setAttribute('data-from-win', String(toWin));
+          var rm = movedChip.querySelector('.chipRemove');
+          if (rm) rm.setAttribute('data-from-win', String(toWin));
+          // Drop the "no routed channels" placeholder if it's here.
+          var placeholder = row.querySelector('span[style*="italic"]');
+          if (placeholder) placeholder.remove();
+          row.appendChild(movedChip);
+          // If the source row is now empty, restore its placeholder.
+          var fromRow = chatBlock.querySelector('.chatChipRow[data-win="' + fromWin + '"]');
+          if (fromRow && fromRow.querySelectorAll('.chatChip').length === 0) {
+            fromRow.innerHTML = '<span style="color:#6e7681;font-size:10px;font-style:italic">no routed channels</span>';
+          }
+        }
+      }
+      CHAT_ROUTER = {
+        live: function(){ return chatBlock.isConnected; },
+        rowFor: function(win){ return chatBlock.querySelector('.chatChipRow[data-win="' + win + '"]'); },
+        reroute: _rerouteChip,
+      };
+      // Title click → select that window's rectangle in the layout.
+      var titles = chatBlock.querySelectorAll('.chatTitle');
+      for (var ti = 0; ti < titles.length; ti++) {
+        titles[ti].addEventListener('click', function(){
+          _selectChatWindow(parseInt(this.getAttribute('data-win'), 10), chatBlock.dataset.file);
+        });
+      }
+      _syncChatCardSelection();   // a rectangle may already be selected when the Inspector opens
       for (var ri = 0; ri < rows.length; ri++) {
         var row = rows[ri];
         if (row.getAttribute('data-drop') !== '1') continue;   // tell windows aren't drop targets
@@ -2394,27 +3397,8 @@
           e.preventDefault();
           _setRowHover(this, false);
           var raw = e.dataTransfer.getData('text/plain'); if (!raw) return;
-          var data; try { data = JSON.parse(raw); } catch (er) { return; }
-          var toWin = parseInt(this.getAttribute('data-win'), 10);
-          if (data.fromWin === toWin) return;
-          // Stage the routing edit.
-          _stageChatEdit('Sec' + '\x01' + 'ChannelMap' + data.filter, { section: 'ChatManager', key: 'ChannelMap' + data.filter, value: String(toWin) });
-          // Move the chip DOM-side so the UI reflects the change before save.
-          var movedChip = chatBlock.querySelector('.chatChip[data-filter="' + data.filter + '"][data-from-win="' + data.fromWin + '"]');
-          if (movedChip) {
-            movedChip.setAttribute('data-from-win', String(toWin));
-            var rm = movedChip.querySelector('.chipRemove');
-            if (rm) rm.setAttribute('data-from-win', String(toWin));
-            // Drop the "no routed channels" placeholder if it's here.
-            var placeholder = this.querySelector('span[style*="italic"]');
-            if (placeholder) placeholder.remove();
-            this.appendChild(movedChip);
-            // If the source row is now empty, restore its placeholder.
-            var fromRow = chatBlock.querySelector('.chatChipRow[data-win="' + data.fromWin + '"]');
-            if (fromRow && fromRow.querySelectorAll('.chatChip').length === 0) {
-              fromRow.innerHTML = '<span style="color:#6e7681;font-size:10px;font-style:italic">no routed channels</span>';
-            }
-          }
+          var thisRow = this;
+          _dropChipOnWindow(raw, parseInt(this.getAttribute('data-win'), 10), function(){ return thisRow; }, _rerouteChip);
         });
       }
       // X on a chip → remove that routing.
@@ -2469,6 +3453,7 @@
         });
       }
     }
+    _wireChat();
 
     // ── Macro-suggestion staging ─────────────────────────────────────────
     // 'P|B' → { name, page, btn, edits: [{file,section,key,value}] }. Folded
@@ -2591,9 +3576,17 @@
         setStatus(edits.length + ' edit' + (edits.length === 1 ? '' : 's') + ' saved · ' +
           (res.written || []).map(function(w){ return w.file; }).join(', '), 'ok');
         saveBtn.textContent = 'Saved ✓';
+        // What is on disk now is what the editor shows: nothing is unsaved any more, so reopening
+        // (and clicking elsewhere) must not ask about it.
+        _hbMarkSaved();
+        // A window added or deleted changed which section is which chat window, so the layout is re-read
+        // from the files; otherwise its rectangles would still be the old numbering.
+        var reload = _chatStructural && !STATE.fromCloud;
+        _chatStructural = false;
         // Re-open the inspector to refresh data-orig from disk so further
         // edits diff against the new baseline.
-        setTimeout(function(){
+        setTimeout(async function(){
+          try { if (reload) await loadAndRescale(); } catch (e) {}
           try { document.getElementById('inspectSocialsBtn').click(); } catch (e) {}
         }, 600);
       } catch (err) {

@@ -36,6 +36,7 @@ function hoverWorld({ cfg = {}, setup = false, single = false } = {}) {
      const _inSingleSetup = () => world.single;
      const _cursorInsideWindow = () => world.cursorInside;
      const _overlayEntries = () => world.entries;
+     const _coversScreen = (k) => k === 'canvas';   // main.js: the Canvas, and the Map while it is in Full mode
      const applyOverlayOpacity = (w, k) => world.applied.push(k);
      let setupMode = world.setup;
      ${hoverBlock}

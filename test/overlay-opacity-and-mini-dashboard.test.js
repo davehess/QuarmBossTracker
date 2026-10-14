@@ -110,12 +110,13 @@ describe('the HUD ring is not dockable', () => {
     const catalog = stripJs(sliceBlock(mainRaw, 'const _DOCK_CATALOG = [', '\n];'));
     expect(catalog).not.toMatch(/key: 'me'/);
     expect(catalog).toMatch(/key: 'mobinfo'/);                        // the others stay
-    expect(stripJs(dash)).toContain("var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas' || key === 'map' || key === 'maptimers')");
+    expect(stripJs(dash)).toContain("var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas' || key === 'map' || key === 'maptimers' || key === 'chat')");
   });
   it('a HUD that was docked gets its own window back — as undocking it would have', () => {
     // loadConfig reads through _readConfigRaw (the torn-file fallback, 2026-09-26), so both ride along.
     const load = (raw) => new Function('fs', 'CONFIG_FILE', 'defaultConfig',
       sliceBlock(mainRaw, 'function _readConfigRaw() {', '\n}\n') + '\n'
+      + sliceBlock(mainRaw, 'function _chatMigrateBreakouts(raw) {', '\n}\n') + '\n'
       + sliceBlock(mainRaw, 'function loadConfig() {', '\n}\n') + '\nreturn loadConfig();')(
       { readFileSync: () => JSON.stringify(raw) }, () => 'x', () => ({}));
     const was = load({ dockedOverlays: ['mobinfo', 'me'], dockedPrev: { me: true, mobinfo: false }, showMe: false });

@@ -31,6 +31,9 @@ const { startZealWatch } = require('./zealPipe');
 const zealUpdater = require('./zealUpdater');
 const uiPacks = require('./uiPacks');
 const { applyIniKeyEdits } = require('./iniKeyEdits');
+const { visibleUiRects, zealAreas, applyPicks, cleanPicks } = require('./uiClearRects');
+const uiLayouts = require('./uiLayouts');
+const soundLib = require('./sounds');
 
 // Hide the default File/Edit/View/Window/Help menubar — this is a focused
 // tray app, those entries just look unfinished. Must run before window
@@ -48,6 +51,20 @@ Menu.setApplicationMenu(null);
 // with a per-document synthetic gesture on the trigger window (below) as a
 // belt-and-suspenders for the speechSynthesis activation check specifically.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
+// ── Overlays must never be treated as "covered" (the guild lead, 2026-10-14) ─────────────────────────────────────────
+// "When i click onto a different window and then back into EQ the Overlays all refresh."
+// Chromium tracks which top-level windows are fully hidden behind others (CalculateNativeWinOcclusion) and, for a
+// covered window, flips the page to hidden: it stops painting, throws away the composited frame and throttles its
+// timers to about once a second. When the window is uncovered it repaints from nothing, and every page catches up in one
+// go - on a transparent window that is a visible blink of every overlay at once. Before agent 3.7.151 an overlay was
+// always topmost, so nothing could ever cover one and this never showed. Now the overlays drop behind other apps (see
+// _applyOverlayZ), so a browser in front of EverQuest covers them and clicking back into EQ wakes them all together.
+// Switching the occlusion tracker off keeps every visible overlay painting and ticking whatever is in front of it;
+// win.hide() / minimise still pause a page, as they should. Process-wide, so the dashboard window is covered too -
+// it keeps its normal timers rather than slowing to one tick a second behind another app, a cost of nothing.
+// Must run before app.whenReady(), and it is the only 'disable-features' switch (a second one would replace this).
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 
 // ── Single-instance lock ────────────────────────────────────────────────────
 // Mimic bundles + runs its own parser engine on a fixed port. Launching a
@@ -88,6 +105,16 @@ const AGENT_DIR   = () => path.join(app.getPath('userData'), 'agent');
 const AGENT_LOG   = () => path.join(app.getPath('userData'), 'agent.log');
 const ZEAL_RAW_LOG = () => path.join(app.getPath('userData'), 'zeal-raw.ndjson');
 const BASE_PORT   = 7779; // 7777/7778 left for Parser.bat coexistence
+
+// ── Sound effects (the guild lead, 2026-10-14) ──────────────────────────────
+// Shipped set: resources/sounds (extraResources) or the repo's apps/mimic/sounds in dev. A member's own
+// sounds go in <userData>/sounds, and a file there with a shipped one's name overrides it. A trigger
+// stores a NAME ("slap") or "custom:<file>", never a path; sounds.js has the rules. The agent gets both
+// folders through env so its dashboard can list and play them too (see _soundDirs in the agent).
+const SOUNDS_SHIPPED_DIR = () => (app.isPackaged ? path.join(process.resourcesPath, 'sounds') : path.join(__dirname, 'sounds'));
+const SOUNDS_USER_DIR    = () => path.join(app.getPath('userData'), 'sounds');
+function _ensureSoundsDir() { try { fs.mkdirSync(SOUNDS_USER_DIR(), { recursive: true }); } catch { /* read-only profile: the library is just the shipped set */ } }
+function _openSoundsFolder() { _ensureSoundsDir(); return shell.openPath(SOUNDS_USER_DIR()); }
 
 const WOLFPACK_URL    = 'https://wolfpack.quest';
 
@@ -153,6 +180,13 @@ let petsWindow    = null;
 let mobInfoWindow = null;
 let buffQueueWindow = null;
 let whoWindow     = null;
+let chatWindow    = null;   // the Chat overlay (this PC's own chat feed, chat.html) - key 'chat', cfg.showChat
+// Chat groups broken out into their own windows (chat.html?win=<id>&groups=<ids>; the guild lead, 2026-10-14: "add
+// breakout abilities for different tabs by right clicking the name of the chat type", then "we should be able
+// to add the breakout chats to other breakouts"). A VARIABLE number of windows, so they are not `let`s: one per
+// breakout window id (b1, b2...), each holding one or more groups, keyed 'chat:<id>' in _overlayEntries() like
+// 'panel:<key>', and they live exactly when the Chat overlay does (see _syncChatBreakouts).
+const chatBreakouts = new Map(); // breakout window id -> BrowserWindow
 let melodyWindow  = null;
 let zealWindow    = null;
 let threatWindow  = null;
@@ -163,6 +197,7 @@ let commandWindow = null;
 let popRaidWindow = null;
 let meWindow = null;
 let mapWindow = null;       // the spawn map (Mimic 2.9, beta) - map.html, key 'map', cfg.showMap
+let _mapFull = false;       // the Map in Full mode (cfg.mapMode === 'full'): screen-sized and click-through like the canvas
 let mapTimersWindow = null; // the Map's respawn-timers list popped out - map.html?part=timers, key 'maptimers', cfg.showMapTimers
 let canvasWindow = null;    // the Timers canvas — one screen-sized window of placed panels
 let _canvasArrange = false; // arranging it from the tray / dashboard (not persisted)
@@ -266,8 +301,24 @@ function defaultConfig() {
     // it back off doesn't downgrade — they just stop receiving new betas until
     // stable catches up. Toggle in the tray.
     betaChannel: false,
-    tellsMode: 'off',        // 'off' | 'local' | 'synced' — display ships v0.2
-    onboarded: false,        // false until user dismisses or completes loading
+    tellsMode: 'off',        // 'off' | 'local' | 'synced' — 'local'/'synced' show tells in the Chat overlay (this PC only)
+    // The Chat overlay (chat.html; the guild lead, 2026-10-14). Off until opted in, like every overlay.
+    // chatPrefs = { fontSize, group, officer, custom, byChar: { <charLower>: { off: [group ids] } } }:
+    // group/officer/custom switch those lines (group and custom default ON since 2026-10-14, officer stays opt-in),
+    // byChar remembers which channel chips each character has switched off. offChannels = [lower-case joined
+    // channel NAMES] switched off, shared by every character; absent = every channel shows. melee = opt-in for
+    // the combined-melee group (default off); spells and skills are the same kind of opt-in (default off). meleeShow = { mine, on_me, others, misses }, which
+    // melee lines show (all true unless switched off); spellShow = { mine, on_me, others } and skillShow = { mine, others } likewise. only = the "show only" view toggle ('' = off). win = { <window
+    // id: 'main' or a breakout window id (b1, b2...)>: { fontSize, lineGap, times, tags } }, each window's own text settings.
+    showChat: false,
+    chatPrefs: {},
+    // Breakout windows: [{ id: 'b1', groups: ['melee', 'spell'] }]. A window holds one or more channel groups, keeps
+    // its id while groups come and go, and remembers its own place under chatBounds_<id>. Empty = everything stays
+    // in the one Chat window. (Saved by an older Mimic as a plain list of group ids; loadConfig converts it.)
+    chatBreakouts: [],
+    // Chat windows locked together by the 🔗 button: [['main', 'b1'], ['b2', 'b3']] (window ids). Dragging one moves its group.
+    chatLinks: [],
+    onboarded: false,       // false until user dismisses or completes loading
     // Per-character "do not transmit" list. Names are case-sensitive as they
     // appear in the eqlog filename (eqlog_<Name>_pq.proj.txt → <Name>). The
     // agent honors this at the OUTERMOST boundary — excluded log files are
@@ -337,6 +388,9 @@ function defaultConfig() {
     // 'full' = overlays; 'agent' = agent only (uploads, tray, dashboard and spoken callouts, no overlay
     // windows). Read before any window exists (see _runModeAtStart), so a change needs a restart.
     runMode: 'full',
+    // Spoken-callout voice (the guild lead, 2026-10-14): a voice pack id (the agent's VOICE_PACKS), optionally an installed
+    // voice by name, and a speed / pitch that override the pack's own (null = the pack's). Read by triggers.html; see voice.js.
+    voice: { pack: 'default', voiceName: '', rate: null, pitch: null },
   };
 }
 // The config, or the last good copy of it. saveConfig keeps `.bak` (the file as
@@ -379,6 +433,8 @@ function loadConfig() {
       raw.showMe = prev.me !== undefined ? !!prev.me : true;
       delete prev.me;
     }
+    // Chat breakouts used to be a list of group ids; they are windows that hold groups now.
+    _chatMigrateBreakouts(raw);
     return Object.assign(defaultConfig(), raw);
   } catch { return defaultConfig(); }
 }
@@ -1286,6 +1342,7 @@ function _boundsKeyForWindow(win) {
   if (win === mobInfoWindow) return 'mobInfoBounds';
   if (win === buffQueueWindow) return 'buffQueueBounds';
   if (win === whoWindow)     return 'whoBounds';
+  if (win === chatWindow)    return 'chatBounds';
   if (win === melodyWindow)  return 'melodyBounds';
   if (win === zealWindow)    return 'zealBounds';
   if (win === threatWindow)  return 'threatBounds';
@@ -1299,6 +1356,9 @@ function _boundsKeyForWindow(win) {
   if (win === mapTimersWindow) return 'mapTimersBounds';
   for (const [panelKey, w] of panelOverlays.entries()) {
     if (w === win) return 'panelBounds_' + panelKey;
+  }
+  for (const [wid, w] of chatBreakouts.entries()) {
+    if (w === win) return 'chatBounds_' + wid;
   }
   return null;
 }
@@ -1330,6 +1390,9 @@ function _startWindowDrag(win, persistKey) {
       interval: null,
       restoreFocusable: !wasFocusable,
       startedAt: Date.now(),
+      // A Chat window (the main one or a breakout) snaps to the other Chat windows and drags its linked partners
+      // along; null for every other overlay, which is untouched.
+      chat: (() => { try { return _chatDragBegin(win); } catch { return null; } })(),
     };
     _dragSession.interval = setInterval(() => {
       if (!_dragSession) return;
@@ -1341,9 +1404,11 @@ function _startWindowDrag(win, persistKey) {
       if (Date.now() - _dragSession.startedAt > 30_000) { _stopWindowDrag(); return; }
       try {
         const cur = screen.getCursorScreenPoint();
+        let nx = cur.x - _dragSession.offsetX, ny = cur.y - _dragSession.offsetY;
+        if (_dragSession.chat) { try { const q = _chatDragStep(_dragSession.chat, nx, ny); nx = q.x; ny = q.y; } catch {} }
         _dragSession.win.setBounds({
-          x: cur.x - _dragSession.offsetX,
-          y: cur.y - _dragSession.offsetY,
+          x: nx,
+          y: ny,
           width:  _dragSession.width,
           height: _dragSession.height,
         });
@@ -1372,6 +1437,37 @@ function _startWindowResize(win) {
         width:  Math.max(120, Math.min(wa.x + wa.width - b0.x,  b0.width  + cur.x - c0.x)),
         height: Math.max(60,  Math.min(wa.y + wa.height - b0.y, b0.height + cur.y - c0.y)),
       };
+      _noteUserResize(s.win, nb);
+      s.win.setBounds(nb);
+    } catch {}
+  }, 16);
+}
+// The top-right grip a grow-upward overlay gets (the guild lead, 2026-10-14: "when grow upwards is on, we should be
+// able to drag the top right corner of overlays while not hitting the X button"). A grow-upward overlay is parked
+// by its BOTTOM edge, so that edge and the left edge stay put: the cursor's right/up travel widens the window and
+// raises its top. Pure, so the bottom-edge rule and the minimums are testable. `min` is the window's own minimum
+// size where it sets one; the floor of 120x60 is the same one the bottom-right grip uses.
+function _resizeUpBounds(b0, dx, dy, wa, min) {
+  const bottom = b0.y + b0.height;
+  const minW = Math.max(120, (min && min.width) || 0), minH = Math.max(60, (min && min.height) || 0);
+  const width  = Math.max(minW, Math.min(wa.x + wa.width - b0.x, b0.width + dx));
+  const height = Math.max(minH, Math.min(bottom - wa.y,          b0.height - dy));
+  return { x: b0.x, y: bottom - height, width, height };
+}
+function _startWindowResizeUp(win) {
+  if (!win || win.isDestroyed()) return;
+  _startWindowDrag(win);
+  if (!_dragSession) return;
+  clearInterval(_dragSession.interval);
+  const s = _dragSession, c0 = screen.getCursorScreenPoint(), b0 = win.getBounds();
+  let mw = 0, mh = 0;
+  try { [mw, mh] = win.getMinimumSize(); } catch { /* keep the floor */ }
+  s.interval = setInterval(() => {
+    if (!_dragSession) return;
+    if (s.win.isDestroyed() || Date.now() - s.startedAt > 30_000) { _stopWindowDrag(); return; }
+    try {
+      const cur = screen.getCursorScreenPoint(), wa = screen.getDisplayMatching(b0).workArea;
+      const nb = _resizeUpBounds(b0, cur.x - c0.x, cur.y - c0.y, wa, { width: mw, height: mh });
       _noteUserResize(s.win, nb);
       s.win.setBounds(nb);
     } catch {}
@@ -1546,7 +1642,8 @@ function _loadUiDeferred() {
   // from the copy Studio read at Load. Applying one would overwrite EQ's own
   // on-camp save with that stale copy — the bug key edits exist to end (the
   // guild lead, 2026-10-05) — so it is dropped, never applied.
-  const keep = _uiDeferred.filter(e => e && Array.isArray(e.edits) && e.edits.length);
+  // A queued layout switch (kind 'layout') holds a layout id, not file texts, so it is not the old format.
+  const keep = _uiDeferred.filter(e => e && ((e.kind === 'layout' && e.layoutId) || (Array.isArray(e.edits) && e.edits.length)));
   const dropped = _uiDeferred.length - keep.length;
   if (dropped) {
     const msg = `[ui-studio] dropped ${dropped} pending deferred save(s) in the old whole-file format — applying one would overwrite EQ's own save with a stale copy; open UI Studio and Save again\n`;
@@ -1566,7 +1663,35 @@ function _uiCharActiveInZeal(charLower) {
   }
   return false;
 }
+// Named layouts (uiLayouts.js): one store for the process, files under userData.
+let _uiLayoutStoreInst = null;
+function _uiLayoutStore() {
+  if (!_uiLayoutStoreInst) {
+    _uiLayoutStoreInst = uiLayouts.createLayoutStore({
+      dir: path.join(app.getPath('userData'), 'ui-layouts'),
+      readBundle: _readUiBundle,
+      backupAndWrite: _backupAndWriteFile,
+    });
+  }
+  return _uiLayoutStoreInst;
+}
+function _applyDeferredLayout(entry) {
+  let r;
+  try { r = _uiLayoutStore().apply(entry.character, entry.eqDir, entry.layoutId, { backupTag: 'eq' }); }
+  catch (err) { r = { ok: false, error: err && err.message }; }
+  if (!r.ok) { appendAgentLog(`[ui-studio] queued layout switch for ${entry.character} not applied: ${r.error}\n`); return false; }
+  appendAgentLog(`[ui-studio] switched ${entry.character} to layout "${r.name}" (${r.written.length} file(s)) after logout\n`);
+  try {
+    if (Notification.isSupported()) new Notification({
+      title: 'UI Studio — layout switched',
+      body: `${entry.character} logged out, so the "${r.name}" layout was applied (${r.written.length} file(s)). Log back in to see it.`,
+      silent: true,
+    }).show();
+  } catch {}
+  return true;
+}
 function _applyDeferredEntry(entry) {
+  if (entry && entry.kind === 'layout') return _applyDeferredLayout(entry);
   let written = 0;
   // Key edits only, applied to the file as EQ just wrote it on logout (its copy
   // → .bak-eq). An old whole-text entry is refused even if one got past
@@ -1663,6 +1788,7 @@ function _stopWindowDrag() {
     // Final persist — the periodic setBounds calls fire 'moved' but the
     // debounce may swallow the last one if the user lifts quickly.
     try { _persistBounds(_dragSession.persistKey, _dragSession.win); } catch {}
+    if (_dragSession.chat) { try { _chatDragEnd(_dragSession.chat); } catch {} }
     // Restore resting non-focusable state for overlays we temporarily made
     // focusable to receive the drag-ending mouseup (CH chain etc.).
     if (_dragSession.restoreFocusable && _dragSession.win && !_dragSession.win.isDestroyed()) {
@@ -2001,6 +2127,9 @@ function _zealAbsorb(obj, pid) {
       s.custom_recent.push({ at: Date.now(), text: String(text).slice(0, 300) });
       while (s.custom_recent.length > 8) s.custom_recent.shift();
       cur.dirty = true;
+      // `/pipe mimic load|save|next|prev|lock` — overlay sets, for the character who typed it.
+      const cmd = overlaySets.parsePipeCommand(text);
+      if (cmd) { try { _overlaySetCommand(cmd, character); } catch (e) { appendAgentLog(`[sets] /pipe ${text}: ${e.message}\n`); } }
     }
   } else if (type === 6) {                            // group — this char's group
     // Zeal group payload per member: { name, loc {x,y,z}, heading } always,
@@ -2651,7 +2780,7 @@ function _pollBlindState() {
 const _CHAR_PROFILE_FLAGS = [
   'showHud', 'enableTriggerTts', 'showCharm', 'showPets', 'showMobInfo',
   'showBuffQueue', 'showWho', 'showMelody', 'showZeal', 'showThreat', 'showChChain',
-  'showExtTarget', 'showCanvas', 'showMap',
+  'showExtTarget', 'showCanvas', 'showMap', 'showChat',
 ];
 // flag → (live-window getter, creator) so apply can materialize a window for an
 // overlay the profile turns on. Getters (not captured refs) read the current
@@ -2671,6 +2800,7 @@ const _CHAR_PROFILE_WINDOWS = [
   { flag: 'showChChain',      get: () => chChainWindow,   create: () => createChChainOverlay() },
   { flag: 'showCanvas',       get: () => canvasWindow,    create: () => createCanvasWindow() },
   { flag: 'showMap',          get: () => mapWindow,       create: () => createMapOverlay() },
+  { flag: 'showChat',         get: () => chatWindow,      create: () => createChatOverlay() },
 ];
 let _activeCharName = null;     // last activeCharacter seen on /api/state (display)
 let _lastProfileChar = null;    // last char we applied a profile for (change-gate)
@@ -2840,6 +2970,211 @@ function _charProfileTrayItems() {
   return items;
 }
 
+// ── Overlay sets (Mimic 3.0 step 1; R18 + R20, DECISIONS §83a) ───────────────
+// The guild lead, 2026-09-29: "multiple overlay modes per character, switchable
+// via hotkeys or a simple pipe output that we pick up /pipe mimic load <overlay
+// set name> or /pipe mimic save <overlay set name> the same load/save should
+// also be available from taskbar or cycle through via command". A set is which
+// overlays are on, where each one sits, how each is drawn, and the Timers
+// canvas panels; overlaySets.js keeps them in overlay-sets.json beside the
+// config, so they work with no network. The hotkey is EverQuest's own: a social
+// with `/pipe mimic next` on a hotbar button.
+// Loading is always asked for — /pipe, the tray or Settings — never done on a
+// character switch: with two clients open the active character flips as you
+// alt-tab, and the screen must not rearrange itself under you. The
+// per-character layouts above stay until sets replace them.
+const overlaySets = require('./overlaySets');
+const _SETS_FILE = () => path.join(app.getPath('userData'), 'overlay-sets.json');
+// Every overlay's saved spot, by the config key its window persists under.
+const _SET_BOUNDS_KEYS = [
+  'dockBounds', 'hudBounds', 'triggerBounds', 'charmBounds', 'petsBounds', 'mobInfoBounds',
+  'buffQueueBounds', 'whoBounds', 'melodyBounds', 'zealBounds', 'threatBounds', 'chChainBounds',
+  'tankBounds', 'extTargetBounds', 'commandBounds', 'popRaidBounds', 'meBounds',
+];
+// How each overlay is drawn: opacity, background, per-overlay size.
+const _SET_LOOK_KEYS = ['overlayOpacity', 'overlayBgAlpha', 'overlayBackdrop', 'overlayScaleByKey'];
+
+function _captureOverlaySet() {
+  const cfg = loadConfig();
+  const sig = _screenSignature();
+  const show = {};
+  for (const f of _HIDEALL_FLAGS) {
+    // While everything is hidden, the set is what the unhide would bring back.
+    const v = (_hideAllActive && _hideAllPrev && f in _hideAllPrev) ? _hideAllPrev[f]
+      : (f === 'showTriggerOverlay' ? cfg[f] !== false : cfg[f]);
+    show[f] = !!v;
+  }
+  // An overlay with no window right now (closing EverQuest frees them) keeps
+  // the spot it last saved on this screen setup; open windows say where they are.
+  const rects = {};
+  for (const bk of _SET_BOUNDS_KEYS) {
+    const b = cfg[bk];
+    if (b && cfg[bk + 'Sig'] === sig) rects[bk] = { x: b.x, y: b.y, width: b.width, height: b.height };
+  }
+  Object.assign(rects, _overlayRectsNow());
+  const look = {};
+  for (const k of _SET_LOOK_KEYS) {
+    if (cfg[k] && typeof cfg[k] === 'object') look[k] = JSON.parse(JSON.stringify(cfg[k]));
+  }
+  const eq = _eqMainWindow(10 * 60 * 1000);
+  return {
+    show, sig, rects, look,
+    eq: eq ? { x: eq.client.x, y: eq.client.y, width: eq.client.width, height: eq.client.height } : null,
+    canvas: (cfg.canvasLayouts && typeof cfg.canvasLayouts === 'object') ? JSON.parse(JSON.stringify(cfg.canvasLayouts)) : null,
+  };
+}
+// A set saved on another screen setup lands the way a screen change does
+// (§80a): an overlay whose screen is still here stays where the set had it;
+// one whose screen is gone keeps its side — with EverQuest, or on another screen.
+function _setRectsHere(set) {
+  const rects = (set && set.rects) || {};
+  const cur = _screenSignature();
+  if (!set.sig || set.sig === cur) return rects;
+  const eqWin = _eqMainWindow();
+  let target;
+  try { target = eqWin ? screen.getDisplayMatching(eqWin.client) : screen.getPrimaryDisplay(); }
+  catch { target = screen.getPrimaryDisplay(); }
+  const plan = _displayChangePlan({
+    prevSig: set.sig, curSig: cur, memory: { [set.sig]: { rects, eq: set.eq } }, currentRects: rects,
+    curDisplays: screen.getAllDisplays().map(d => ({ bounds: d.bounds, workArea: d.workArea })),
+    target: { bounds: target.bounds, workArea: target.workArea },
+  });
+  return Object.assign({}, rects, plan.moves);
+}
+function _applyOverlaySet(set) {
+  if (!set) return false;
+  const cfg = loadConfig();
+  // Loading a set is asking to see it, so a hide-all in force steps aside.
+  if (_hideAllActive) { _hideAllActive = false; _hideAllPrev = null; cfg.hideAllActive = false; cfg.hideAllPrev = null; }
+  for (const f of _HIDEALL_FLAGS) {
+    if (set.show && typeof set.show[f] === 'boolean') cfg[f] = set.show[f];
+  }
+  const rects = _setRectsHere(set);
+  const sig = _screenSignature();
+  // An overlay the set turns on opens at its spot (_resolveBounds reads these).
+  for (const [bk, r] of Object.entries(rects)) { cfg[bk] = r; cfg[bk + 'Sig'] = sig; }
+  for (const k of _SET_LOOK_KEYS) { if (set.look && set.look[k]) cfg[k] = set.look[k]; }
+  if (set.canvas) cfg.canvasLayouts = set.canvas;
+  saveConfig(cfg);
+  applyAllVisibility();
+  for (const [key, win] of _overlayEntries()) {
+    const bk = _boundsKeyForEntry(key, win);
+    if (bk && rects[bk]) { try { win.setBounds(rects[bk]); } catch { /* mid-close */ } }
+  }
+  applyAllOverlayOpacities();
+  applyAllOverlayBackdrops();
+  // The canvas reads its panels once per resolution; a reload picks up the set's.
+  if (set.canvas && canvasWindow && !canvasWindow.isDestroyed()) { try { canvasWindow.webContents.reload(); } catch { /* */ } }
+  pushStatus();
+  try { buildTrayMenu(); } catch { /* */ }
+  return true;
+}
+// A short line on the trigger overlay — where a raider is already looking; a
+// Windows notification does not show over full-screen EverQuest. It goes
+// through the agent's own preview path (/api/triggers/fire), so nothing new
+// draws it.
+function _flashOnTriggerOverlay(text) {
+  if (!agentPort) return;
+  const body = JSON.stringify({ trigger: { name: 'Mimic', actions: [{ type: 'text_overlay', text: String(text).slice(0, 80), duration_ms: 2500 }] } });
+  try {
+    const req = http.request({
+      host: '127.0.0.1', port: agentPort, path: '/api/triggers/fire', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }, timeout: 3000,
+    });
+    req.on('error', () => {});
+    req.on('timeout', () => req.destroy());
+    req.end(body);
+  } catch { /* the agent is restarting */ }
+}
+function _setsSay(r, quiet) {
+  appendAgentLog(`[sets] ${r.message}\n`);
+  if (!quiet) _flashOnTriggerOverlay(r.message);
+  return r;
+}
+// The one way in for /pipe, the tray and Settings.
+// cmd: { verb: 'save'|'load'|'next'|'prev'|'delete'|'lock', name?, on? } → { ok, message }
+function _overlaySetCommand(cmd, char, quiet) {
+  const file = _SETS_FILE();
+  const store = overlaySets.load(file);
+  const who = char || _activeCharName || null;
+  const persist = () => {
+    try { overlaySets.save(file, store); return true; }
+    catch (e) { appendAgentLog(`[sets] could not write ${file}: ${e.message}\n`); return false; }
+  };
+  if (cmd.verb === 'save') {
+    const cur = overlaySets.current(store, who);
+    const name = cmd.name || (cur && store.sets[cur].name);
+    if (!name) return _setsSay({ ok: false, message: 'Name the set: /pipe mimic save <name>' }, quiet);
+    const r = overlaySets.put(store, name, _captureOverlaySet(), who);
+    if (!r.ok) return _setsSay({ ok: false, message: r.error }, quiet);
+    if (!persist()) return _setsSay({ ok: false, message: 'Could not save the set (see the agent log)' }, quiet);
+    try { buildTrayMenu(); } catch { /* */ }
+    return _setsSay({ ok: true, message: `Saved overlay set: ${r.name}` }, quiet);
+  }
+  if (cmd.verb === 'load') {
+    const set = overlaySets.use(store, cmd.name, who);
+    if (!set) return _setsSay({ ok: false, message: `No overlay set called "${cmd.name}"` }, quiet);
+    persist();
+    _applyOverlaySet(set);
+    return _setsSay({ ok: true, message: `Overlay set: ${set.name}` }, quiet);
+  }
+  if (cmd.verb === 'next' || cmd.verb === 'prev') {
+    const key = overlaySets.step(store, who, cmd.verb === 'prev' ? -1 : 1);
+    if (!key) return _setsSay({ ok: false, message: 'No overlay sets yet: /pipe mimic save <name>' }, quiet);
+    return _overlaySetCommand({ verb: 'load', name: store.sets[key].name }, who, quiet);
+  }
+  if (cmd.verb === 'delete') {
+    if (!overlaySets.remove(store, cmd.name)) return _setsSay({ ok: false, message: `No overlay set called "${cmd.name}"` }, quiet);
+    persist();
+    try { buildTrayMenu(); } catch { /* */ }
+    return _setsSay({ ok: true, message: `Deleted overlay set: ${cmd.name}` }, quiet);
+  }
+  if (cmd.verb === 'lock') {
+    const cfg = loadConfig();
+    const locked = cmd.on == null ? cfg.overlaysLocked === false : !!cmd.on;
+    cfg.overlaysLocked = locked;
+    saveConfig(cfg);
+    if (locked) _exitAllSingleSetup();
+    applyOverlayInteractivity();
+    pushStatus();
+    try { buildTrayMenu(); } catch { /* */ }
+    return _setsSay({ ok: true, message: locked ? 'Overlays locked' : 'Overlays unlocked — drag to move' }, quiet);
+  }
+  // `/pipe mimic edit` — arrange the Canvas without reaching for the tray.
+  if (cmd.verb === 'edit') {
+    const on = cmd.on == null ? !_canvasArrange : !!cmd.on;
+    _setCanvasArrange(on);
+    return _setsSay({ ok: true, message: on ? 'Arranging the canvas' : 'Done arranging' }, quiet);
+  }
+  return { ok: false, message: 'Unknown overlay set command' };
+}
+// Tray: the sets by name (the active character's current one ticked), next,
+// save over the current one, save as a new one. Delete lives in Settings,
+// which can also take a name.
+function _overlaySetTrayItems() {
+  const who = _activeCharName;
+  const store = overlaySets.load(_SETS_FILE());
+  const rows = overlaySets.list(store, who);
+  const cur = overlaySets.current(store, who);
+  const items = rows.map(r => ({
+    label: r.name, type: 'radio', checked: r.current,
+    click: () => { _overlaySetCommand({ verb: 'load', name: r.name }, who); },
+  }));
+  if (items.length) items.push({ type: 'separator' });
+  items.push(
+    { label: '⏭ Next set', enabled: rows.length > 0, click: () => { _overlaySetCommand({ verb: 'next' }, who); } },
+    { label: cur ? `💾 Save over "${store.sets[cur].name}"` : '💾 Save over the current set', enabled: !!cur,
+      click: () => { _overlaySetCommand({ verb: 'save' }, who); } },
+    { label: '💾 Save as a new set', click: () => {
+      let n = rows.length + 1;
+      while (store.sets[overlaySets.keyOf('Set ' + n)]) n++;
+      _overlaySetCommand({ verb: 'save', name: 'Set ' + n }, who);
+    } },
+    { label: 'Name, delete, and the /pipe commands… (Settings)', click: () => { try { openSettings(); } catch { /* */ } } },
+  );
+  return items;
+}
+
 // ── Launch the agent under Electron's Node ──────────────────────────────────
 async function launchAgent() {
   if (quitting) return;
@@ -2934,6 +3269,10 @@ async function launchAgent() {
     WOLFPACK_APP_VERSION:   app.getVersion(),
   };
   if (primaryEqDir) env.WOLFPACK_EQ_DIR = primaryEqDir;
+  // The sound library's two folders, so the agent's dashboard lists and plays the same sounds Mimic does.
+  _ensureSoundsDir();
+  env.WOLFPACK_SOUNDS_DIR = SOUNDS_SHIPPED_DIR();
+  env.WOLFPACK_SOUNDS_USER_DIR = SOUNDS_USER_DIR();
   // Plural, path-delimited. The agent prefers this over its own watched-log
   // inference, which cannot see a folder that has never produced a log.
   if (knownDirs && knownDirs.length) env.WOLFPACK_EQ_DIRS = knownDirs.join(path.delimiter);
@@ -3589,8 +3928,11 @@ function _displayPlanText(plan, eqKnown) {
     + ', each at the same spot it had? They sat on a screen that went away or changed shape.';
   return { message: 'Your screen setup changed.', detail, buttons: ['Move them', 'Leave them'] };
 }
+// An overlay that covers its whole screen and is click-through always: the Timers canvas, and the Map while it is in Full
+// mode. Rescue, auto-arrange, the screen-change question, the move-to-screen menu and the hover brighten all pass it by.
+function _coversScreen(key) { return key === 'canvas' || (key === 'map' && _mapFull); }
 function _boundsKeyForEntry(key, win) {
-  if (key === 'canvas') return null;                 // it re-covers its own screen
+  if (_coversScreen(key)) return null;               // it re-covers its own screen (the Canvas, and the Map in Full mode)
   return _boundsKeyForWindow(win) || (key === 'dock' ? 'dockBounds' : null);
 }
 function _overlayRectsNow() {
@@ -3628,7 +3970,7 @@ function _snapshotLayout() {
 // display-change behaviour, now the fallback when the answer is "leave them").
 function _rescueOffscreenOverlays() {
   for (const [key, win] of _overlayEntries()) {
-    if (key === 'canvas' || !win || win.isDestroyed()) continue;
+    if (_coversScreen(key) || !win || win.isDestroyed()) continue;
     try {
       const b = win.getBounds();
       if (!_boundsOnScreen(b)) {
@@ -3651,6 +3993,9 @@ async function _askAboutDisplays() {
   _displayLastSig = curSig;
   if (!curSig || curSig === prevSig) { _displaySettleUntil = 0; return; }
   try { await _eqWindowGeometry(0); } catch { /* no answer → main screen */ }
+  // The Map in Full mode re-covers EverQuest's client area straight away, as the Canvas does: it is a cover, not a
+  // window that was placed, so it is not part of the plan below and there is nothing to ask about.
+  await _fitMapFull(false);
   const eqWin = _eqMainWindow();
   let target;
   try { target = eqWin ? screen.getDisplayMatching(eqWin.client) : screen.getPrimaryDisplay(); }
@@ -3708,7 +4053,7 @@ const _OVERLAY_NAMES = {
   pets: 'Pet tracker', mobinfo: 'Mob Info', buffQueue: 'Buff queue',
   who: '/who', melody: 'Melody', zeal: 'Tick', threat: 'Threat meter',
   chchain: 'CH chain', tank: 'Tank HUD', exttarget: 'Extended target',
-  command: 'Command center', popraid: 'PoP raids', me: 'HUD', canvas: 'Canvas', map: 'Map', maptimers: 'Map timers',
+  command: 'Command center', popraid: 'PoP raids', me: 'HUD', canvas: 'Canvas', map: 'Map', maptimers: 'Map timers', chat: 'Chat',
 };
 function _rescueSort(entries, displays, targetId) {
   const inside = (r, x, y) => x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
@@ -3764,7 +4109,7 @@ async function _rescueOverlays() {
   for (const [key, win] of _overlayEntries()) {
     // The Timers canvas covers its whole screen and places its own panels —
     // parking it as a small rect would shrink it to a corner.
-    if (key === 'canvas') continue;
+    if (_coversScreen(key)) continue;
     try {
       present.add(key);
       entries.push({ key, win, bk: _boundsKeyForEntry(key, win), b: win.getBounds() });
@@ -3843,8 +4188,8 @@ async function _rescueOverlays() {
   // Overlays with NO window at all (disabled via ✕/tray, or gated off) can't
   // be rescued — name them in the log so "still missing X" has an answer:
   // it needs re-enabling from tray → Overlays, not another rescue.
-  const KNOWN = ['hud', 'trigger', 'charm', 'pets', 'mobinfo', 'buffQueue', 'who', 'melody', 'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me', 'map', 'maptimers'];
-  const missing = KNOWN.filter(k => !present.has(k));
+  const KNOWN = ['hud', 'trigger', 'charm', 'pets', 'mobinfo', 'buffQueue', 'who', 'melody', 'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me', 'map', 'maptimers', 'chat'];
+  const missing =KNOWN.filter(k => !present.has(k));
   try { applyAllVisibility(); } catch { /* best effort */ }
   appendAgentLog(`[rescue] home display ${disp.id} (${disp.size.width}x${disp.size.height}) · lost ${sorted.lost.length} [${sorted.lost.map(e => e.key).join(', ')}]`
     + ` · nudged ${sorted.nudge.length} [${sorted.nudge.map(e => e.key).join(', ')}]`
@@ -3882,6 +4227,7 @@ function _resolveBounds(boundsKey, sigKey, def, legacySigKey) {
 // signature lets the next launch decide whether the saved coords are still
 // valid for the current monitor layout.
 const _boundsSaveTimers = {};
+const _boundsSaveWins = {};   // key -> the window whose save is pending (the graceful shutdown flushes these)
 // The size to SAVE for a window. The right-click menu stretches a short overlay
 // to 420 px so it has room to draw (overlay-ensure-min-height) and stashes the
 // real bounds with the height it gave (grownH, at grownY). That height is a
@@ -3903,20 +4249,26 @@ function _settledBounds(b, stash) {
   }
   return { x: b.x, y: b.y, width: b.width, height: b.height };
 }
+// Put one window's current bounds into `cfg` (no write): _writeBounds saves it at once, and the
+// graceful shutdown applies every pending window to ONE cfg and writes the file once.
+function _applyBounds(cfg, key, win) {
+  const b = _settledBounds(win.getBounds(), win.__wpPreMenuBounds);
+  cfg[key] = { x: b.x, y: b.y, width: b.width, height: b.height };
+  cfg[key + 'Sig'] = _screenSignature();
+  // Remembered per screen setup — but not while the screens are settling,
+  // or Windows' own shove off a dead monitor would overwrite the real layout.
+  if (Date.now() >= _displaySettleUntil) _rememberLayout(cfg, cfg[key + 'Sig'], key, b);
+}
 function _writeBounds(key, win) {
   try {
-    const b = _settledBounds(win.getBounds(), win.__wpPreMenuBounds);
     const cfg = loadConfig();
-    cfg[key] = { x: b.x, y: b.y, width: b.width, height: b.height };
-    cfg[key + 'Sig'] = _screenSignature();
-    // Remembered per screen setup — but not while the screens are settling,
-    // or Windows' own shove off a dead monitor would overwrite the real layout.
-    if (Date.now() >= _displaySettleUntil) _rememberLayout(cfg, cfg[key + 'Sig'], key, b);
+    _applyBounds(cfg, key, win);
     saveConfig(cfg);
   } catch {}
 }
 function _persistBounds(key, win) {
   if (!win || win.isDestroyed()) return;
+  _boundsSaveWins[key] = win;
   clearTimeout(_boundsSaveTimers[key]);
   _boundsSaveTimers[key] = setTimeout(() => { _boundsSaveTimers[key] = null; _writeBounds(key, win); }, 400);
 }
@@ -4009,6 +4361,92 @@ function _flushBounds(key, win) {
   _writeBounds(key, win);
 }
 
+// ── Graceful shutdown: ONE way out for Quit, every update install and the OS ──────────────
+// The guild lead, 2026-10-14: "when installing a new version, please exit gracefully and save
+// window position". Quit used to kill the agent on the spot and drop any bounds save still
+// waiting out its 400 ms debounce, and each update path (tray, dashboard button, the "Restart
+// now" dialog, the unattended install when EQ closes) called quitAndInstall with neither:
+// a window moved in the last 400 ms came back where it was, and on Windows kill() is a hard
+// stop, so the agent's own exit hooks (the upload queue's sync flush) never ran.
+// Order: bounds (one config write, with any patch the caller needs in the same write) →
+// stop the watchers → ask the agent to stop and wait a short while → the caller quits or
+// installs. The wait is capped, so a stuck agent can delay an install by seconds, never block it.
+const AGENT_STOP_TIMEOUT_MS = 3000;
+function _flushAllBounds(cfgPatch) {
+  // A height dragged in the last 400 ms is a floor; those write their own config entry.
+  try { for (const [, win] of _overlayEntries()) _flushFloor(win); } catch { /* best effort */ }
+  let cfg = null;
+  for (const key of Object.keys(_boundsSaveTimers)) {
+    if (!_boundsSaveTimers[key]) continue;
+    clearTimeout(_boundsSaveTimers[key]);
+    _boundsSaveTimers[key] = null;
+    const win = _boundsSaveWins[key];
+    if (!win || win.isDestroyed()) continue;
+    try { if (!cfg) cfg = loadConfig(); _applyBounds(cfg, key, win); } catch { /* one bad window must not lose the rest */ }
+  }
+  if (cfgPatch) { if (!cfg) cfg = loadConfig(); Object.assign(cfg, cfgPatch); }
+  if (cfg) saveConfig(cfg);
+}
+// Ask the agent to stop through its own /api/shutdown (saves its session, runs its exit hooks,
+// flushes the durable upload queue). Resolves true when it exited by itself, false when it had to
+// be killed (no answer, or still running after the timeout). Never rejects. Does NOT set
+// `quitting`, so the agent's exit handler still relaunches it: that is the hot-swap restart.
+function _stopAgentGracefully(timeoutMs) {
+  const proc = agentProc;
+  if (!proc) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (clean) => { if (settled) return; settled = true; clearTimeout(timer); resolve(clean); };
+    const hardKill = () => { try { proc.kill(); } catch { /* already gone */ } };
+    const timer = setTimeout(() => { hardKill(); finish(false); }, timeoutMs || AGENT_STOP_TIMEOUT_MS);
+    proc.once('exit', () => finish(true));
+    try {
+      const req = http.request({ host: '127.0.0.1', port: agentPort, path: '/api/shutdown', method: 'POST', timeout: 1500 }, (res) => { res.resume(); });
+      req.on('error', hardKill);                       // not listening yet: nothing to wait for
+      req.on('timeout', () => req.destroy());
+      req.end();
+    } catch { hardKill(); }
+  });
+}
+let _shutdownP = null;
+let _shutdownDone = false;
+function _gracefulShutdown(reason, cfgPatch) {
+  if (_shutdownP) return _shutdownP;   // a second click, or Quit and an install at once, shares the first
+  quitting = true;
+  try { appendAgentLog(`[mimic] shutting down cleanly (${reason})\n`); } catch { /* log only */ }
+  try { _flushAllBounds(cfgPatch); }
+  catch (e) { try { appendAgentLog(`[mimic] saving window positions failed: ${e && e.message}\n`); } catch { /* log only */ } }
+  try { _stopEqPolling(); _stopFocusWatcher(); } catch { /* best effort */ }
+  _shutdownP = _stopAgentGracefully(AGENT_STOP_TIMEOUT_MS).then((clean) => {
+    _shutdownDone = true;
+    try { appendAgentLog(`[mimic] agent ${clean ? 'stopped cleanly' : 'did not stop in time — killed'}\n`); } catch { /* log only */ }
+  });
+  return _shutdownP;
+}
+// The install did not happen (quitAndInstall threw): undo the shutdown so Mimic is usable again.
+function _abortShutdown() {
+  _shutdownP = null; _shutdownDone = false; quitting = false;
+  try { _startEqPolling(); _onFocusGateOptionChanged(); } catch { /* best effort */ }
+  try { if (!agentProc) launchAgent(); } catch { /* best effort */ }
+}
+// Every update install goes through here: the tray item, the dashboard button, the "Restart now"
+// dialog and the unattended install when EQ closes. A second call while one is under way is a no-op.
+let _installingUpdate = false;
+async function _installUpdateNow(reason, cfgPatch) {
+  if (_installingUpdate || !autoUpdater) return false;
+  _installingUpdate = true;
+  try {
+    await _gracefulShutdown('update: ' + reason, cfgPatch);
+    autoUpdater.quitAndInstall(true, true);
+    return true;
+  } catch (e) {
+    try { appendAgentLog(`[updater] quitAndInstall failed: ${e && e.message}\n`); } catch { /* log only */ }
+    _installingUpdate = false;
+    _abortShutdown();
+    return false;
+  }
+}
+
 // Apply lock state to an overlay WITHOUT restarting anything. Locked =
 // click-through + not resizable + drag handle hidden (renderer). Unlocked =
 // interactive + resizable + drag handle shown so the user can grab + move it.
@@ -4028,7 +4466,8 @@ function _overlayEntries() {
   if (mobInfoWindow && !mobInfoWindow.isDestroyed()) out.push(['mobinfo', mobInfoWindow]);
   if (buffQueueWindow && !buffQueueWindow.isDestroyed()) out.push(['buffQueue', buffQueueWindow]);
   if (whoWindow     && !whoWindow.isDestroyed())     out.push(['who',     whoWindow]);
-  if (melodyWindow  && !melodyWindow.isDestroyed())  out.push(['melody',  melodyWindow]);
+  if (chatWindow    && !chatWindow.isDestroyed())    out.push(['chat',    chatWindow]);
+  if (melodyWindow && !melodyWindow.isDestroyed())  out.push(['melody',  melodyWindow]);
   if (zealWindow    && !zealWindow.isDestroyed())    out.push(['zeal',    zealWindow]);
   if (threatWindow  && !threatWindow.isDestroyed())  out.push(['threat',  threatWindow]);
   if (chChainWindow && !chChainWindow.isDestroyed()) out.push(['chchain', chChainWindow]);
@@ -4042,6 +4481,9 @@ function _overlayEntries() {
   if (canvasWindow && !canvasWindow.isDestroyed()) out.push(['canvas', canvasWindow]);
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
+  }
+  for (const [wid, win] of chatBreakouts.entries()) {
+    if (win && !win.isDestroyed()) out.push(['chat:' + wid, win]);
   }
   return out;
 }
@@ -4167,7 +4609,7 @@ function _hoverFade(win) {
   step();
 }
 function _hoverEnter(win, key) {
-  if (!win || win.isDestroyed() || key === 'canvas') return;
+  if (!win || win.isDestroyed() || _coversScreen(key)) return;
   const st0 = _wpHover.get(win);
   if (st0 && st0.phase === 'inside') return;   // a ping from a cursor that never left
   const cfg = loadConfig();
@@ -4389,7 +4831,9 @@ function toggleAllBackdrops() {
 // as occupied (a placed-but-closed EQ window just costs free space), and the
 // dominant XPos<W>x<H> resolution block is assumed to be the live layout.
 const _UI_PHANTOM_RX = /^(zoneselect|characterlist|charselect|charactercreate|serverselect|login|connection|cursorattachment|confirmationdialog|mailwnd|barter|tribute|guildbank|expedition|mercenary|overseer|voicemacro|raidoptions|dragitem|itemdisplay|spelldisplay|bookwindow|givewnd|tradewnd|lootwnd|colorpicker|fileselection|helpwnd|storewnd|bazaarwnd|bazaarsearchwnd|alarmwnd|musicplayer|videomodes|textentrywnd)/i;
-function _newestUiIniFile() {
+// `char` (optional): only that character's UI_<char>_*.ini, for the Map's keep-clear areas.
+function _newestUiIniFile(char) {
+  const only = char && /^[A-Za-z]+$/.test(String(char)) ? new RegExp('^UI_' + char + '[_.]', 'i') : null;
   const cfg = loadConfig();
   const hints = Array.isArray(cfg.eqPaths) ? cfg.eqPaths : (cfg.eqPath ? [cfg.eqPath] : []);
   const dirs = new Set();
@@ -4405,6 +4849,7 @@ function _newestUiIniFile() {
     try { entries = fs.readdirSync(dir); } catch { continue; }
     for (const f of entries) {
       if (!/^UI_[A-Za-z]+.*\.ini$/i.test(f)) continue;
+      if (only && !only.test(f)) continue;
       try {
         const full = path.join(dir, f);
         const mt = fs.statSync(full).mtimeMs || 0;
@@ -4542,7 +4987,7 @@ function _autoArrangeOverlays(pinnedKey) {
   // grouped by the screen each one sits on.
   const wins = _overlayEntries()
     // Not the Timers canvas: it is screen-sized, fits nowhere, and would block every spot.
-    .filter(([k, w]) => { if (k === 'canvas') return false; try { return w.isVisible(); } catch { return false; } })
+    .filter(([k, w]) => { if (_coversScreen(k)) return false; try { return w.isVisible(); } catch { return false; } })
     .map(([key, win]) => ({ key, win, b: win.getBounds() }))
     .sort((a, b) => (b.b.width * b.b.height) - (a.b.width * a.b.height));
   const byScreen = new Map();
@@ -4664,8 +5109,8 @@ function applyOverlayInteractivity() {
     // interactivity sweep (tray toggle, status push) must not re-lock it
     // out from under the user while its setup strip is open.
     if (_inSingleSetup(win)) continue;
-    if (key === 'canvas') {
-      // Screen-sized: click-through even while unlocked, or it would wall off
+    if (_coversScreen(key)) {
+      // Screen-sized (the Canvas; the Map in Full mode): click-through even while unlocked, or it would wall off
       // EQ and every overlay beneath it. Its panels take the mouse through the
       // hover handshake; its visibility is applyCanvasVisibility's alone.
       win.setIgnoreMouseEvents(true, { forward: true });
@@ -4711,6 +5156,7 @@ function applySetupMode(on) {
   applyMobInfoVisibility();
   applyBuffQueueVisibility();
   applyWhoVisibility();
+  applyChatVisibility();
   applyMelodyVisibility();
   applyZealVisibility();
   applyCanvasVisibility();
@@ -5248,6 +5694,28 @@ ipcMain.handle('ui-studio-write-pages', (_e, eqDir, edits) => {
   }
 });
 
+// The /join channel names, in the order the client joins them, from eqclient.ini
+// `[Defaults] ChannelAutoJoin=<name>[:password] <name> …` (space-separated; Zeal's
+// per-character option writes `ChannelAutoJoin_<Character>`, preferred when
+// present). UI Studio labels the chat-channel chips (ChannelMap12..21 = slot 1..10)
+// with them. Names only: the `:password` part is cut here and never leaves main.
+function _autojoinNames(iniText, character) {
+  let inDefaults = false, generic = null, perChar = null;
+  const want = ('ChannelAutoJoin_' + String(character || '')).toLowerCase();
+  for (const L of String(iniText || '').split(/\r?\n/)) {
+    const sm = L.match(/^\s*\[([^\]]+)\]\s*$/);
+    if (sm) { inDefaults = (sm[1].toLowerCase() === 'defaults'); continue; }
+    if (!inDefaults) continue;
+    const kv = L.match(/^\s*([\w.]+)\s*=\s*(.*?)\s*$/);
+    if (!kv) continue;
+    if (kv[1].toLowerCase() === 'channelautojoin') generic = kv[2];
+    else if (kv[1].toLowerCase() === want) perChar = kv[2];
+  }
+  const spec = perChar != null ? perChar : generic;
+  if (!spec) return [];
+  return spec.split(/[\s,]+/).filter(Boolean).map((s) => s.split(':')[0]);
+}
+
 ipcMain.handle('ui-studio-inspect-socials', (_e, character, eqDir) => {
   try {
     const c = String(character || '').trim();
@@ -5347,21 +5815,33 @@ ipcMain.handle('ui-studio-inspect-socials', (_e, character, eqDir) => {
       if (fs.existsSync(uiPath)) {
         const uiText = fs.readFileSync(uiPath, 'utf8');
         const cm = {};
+        // Each chat window's own geometry block: [MainChat] = window 0, [Chat N] / [ChatN] = window N
+        // (UI Studio's chat add / delete moves these with the window). First block of a name wins.
+        const geometry = {};
+        let geoSec = null;
         let inCM = false;
         for (const L of uiText.split(/\r?\n/)) {
           const sm = L.match(/^\s*\[([^\]]+)\]\s*$/);
-          if (sm) { inCM = (sm[1] === 'ChatManager'); continue; }
-          if (!inCM) continue;
+          if (sm) {
+            inCM = (sm[1] === 'ChatManager');
+            const sn = sm[1].trim();
+            geoSec = /^(MainChat|Chat\s*\d+)$/i.test(sn) && !(sn in geometry) ? sn : null;
+            if (geoSec) geometry[geoSec] = {};
+            continue;
+          }
           const kv = L.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/);
+          if (geoSec && kv) geometry[geoSec][kv[1]] = kv[2];
+          if (!inCM) continue;
           if (kv) cm[kv[1]] = kv[2];
         }
         if (Object.keys(cm).length) {
           const windows = [];
-          for (let i = 0; i <= 30; i++) {
+          for (let i = 0; i <= 31; i++) {   // the client keeps at most 32 (Zeal CChatManager.ChatWindows[32])
             const name = cm[`ChatWindow${i}_Name`];
             const def  = cm[`ChatWindow${i}_DefaultChannel`];
             const chn  = cm[`ChatWindow${i}_ChatChannel`];
             const tt   = cm[`ChatWindow${i}_TellTarget`];
+            const fs_  = cm[`ChatWindow${i}_FontStyle`];
             if (name == null && def == null && chn == null) continue;
             windows.push({
               index: i,
@@ -5369,6 +5849,7 @@ ipcMain.handle('ui-studio-inspect-socials', (_e, character, eqDir) => {
               default_channel: def != null ? parseInt(def, 10) : null,
               chat_channel: chn != null ? parseInt(chn, 10) : null,
               tell_target: tt || null,
+              font_style: fs_ != null ? parseInt(fs_, 10) : null,
             });
           }
           // ChannelMap<filter> = <windowIndex> → invert to windowIndex → [filters]
@@ -5387,12 +5868,17 @@ ipcMain.handle('ui-studio-inspect-socials', (_e, character, eqDir) => {
             const mk = k.match(/^ChatWindow(\d+)_AlwaysHere$/i);
             if (mk && parseInt(v, 10) === 1) { alwaysHereIdx = parseInt(mk[1], 10); break; }
           }
+          let autojoin = [];
+          try { autojoin = _autojoinNames(fs.readFileSync(path.join(d, 'eqclient.ini'), 'utf8'), c); } catch {}
           chat = {
+            autojoin,
             file: path.basename(uiPath),
             num_windows: parseInt(cm.NumWindows, 10) || windows.length,
             windows,
             routed_filters: routed,
             always_here_idx: alwaysHereIdx,
+            cm_props: cm,       // every [ChatManager] key, for UI Studio's add / delete / rename / font
+            geometry,           // the chat windows' own geometry blocks
           };
         }
       }
@@ -5798,15 +6284,9 @@ function _installPendingUpdateOnEqClose() {
     if (!updatePending) return;
     if (_mimicWindowInUse()) { _installHeldFor = ver; appendAgentLog('[updater] the Mimic window was opened — holding the install\n'); return; }
     appendAgentLog(`[updater] installing v${ver} now (EQ closed)\n`);
-    // Mark the relaunch as unattended so the new instance starts to TRAY.
-    // Written before quitAndInstall because that call does not return.
-    try {
-      const c = loadConfig();
-      c.pendingSilentRelaunch = true;
-      saveConfig(c);
-    } catch (e) { void e; }
-    try { autoUpdater.quitAndInstall(true, true); }
-    catch (e) { appendAgentLog(`[updater] quitAndInstall failed: ${e && e.message}\n`); }
+    // Mark the relaunch as unattended so the new instance starts to TRAY. It rides the shutdown's
+    // single config write, which lands before quitAndInstall (that call does not return).
+    _installUpdateNow('EQ closed', { pendingSilentRelaunch: true });
   }, EQ_CLOSE_INSTALL_GRACE_MS);
 }
 
@@ -6057,6 +6537,15 @@ function _setStayOnTop(key, on) {
   try { pushStatus(); } catch (e) { void e; }
   return !!on;
 }
+// The watcher prints 0 when GetForegroundWindow() is NULL - Windows returns that for a moment while one window loses
+// activation and the next has not taken it, i.e. exactly while you switch between two apps. That is "no answer yet",
+// not "a window we cannot judge" (which _focusClassify rightly treats as focused): taken as focused it raised every
+// overlay over the app being switched to, and the real pid a moment later dropped them again - a pointless pair of
+// flips (with the hide option on, every overlay hidden, shown, hidden). Keep judging by the last real pid.
+function _focusFgSample(prevPid, line) {
+  const pid = Number(line);
+  return pid > 0 ? pid : prevPid;
+}
 function _focusOwnPids() {
   const s = new Set([process.pid]);
   try { for (const m of app.getAppMetrics()) s.add(m.pid); } catch (e) { void e; }
@@ -6075,8 +6564,11 @@ const _focusScript = (parentPid) => [
   'Add-Type -TypeDefinition \'using System;using System.Runtime.InteropServices;public static class WpFg{[DllImport("user32.dll")]public static extern IntPtr GetForegroundWindow();[DllImport("user32.dll")]public static extern uint GetWindowThreadProcessId(IntPtr h,out uint p);}\'',
   '[Console]::Out.AutoFlush=$true',
   '$last=[int64]-1;$n=0',
-  `while($true){$p=[uint32]0;$h=[WpFg]::GetForegroundWindow();if($h -ne [IntPtr]::Zero){[void][WpFg]::GetWindowThreadProcessId($h,[ref]$p)};if([int64]$p -ne $last){$last=[int64]$p;[Console]::WriteLine($p)};$n++;if($n % 10 -eq 0 -and -not (Get-Process -Id ${Number(parentPid) || 0} -ErrorAction SilentlyContinue)){break};Start-Sleep -Milliseconds 400}`,
+  `while($true){$p=[uint32]0;$h=[WpFg]::GetForegroundWindow();if($h -ne [IntPtr]::Zero){[void][WpFg]::GetWindowThreadProcessId($h,[ref]$p)};if([int64]$p -ne $last){$last=[int64]$p;[Console]::WriteLine($p)};$n++;if($n % 33 -eq 0 -and -not (Get-Process -Id ${Number(parentPid) || 0} -ErrorAction SilentlyContinue)){break};Start-Sleep -Milliseconds 120}`,
 ].join(';');
+// 120 ms, not 400 (the guild lead, 2026-10-14: overlays flicker when switching apps): clicking back into EverQuest puts
+// it over the dropped overlays at once, and they stay under it until the next sample. Two user32 calls a sample; the
+// parent-alive check still runs about every 4 s (33 x 120 ms).
 function _focusFailOpen(why) {
   if (!_focusFailLogged) { _focusFailLogged = true; appendAgentLog(`[focus] ${why} — treating Mimic as focused (the gate fails open)\n`); }
   _focusFgPid = 0;
@@ -6097,7 +6589,7 @@ function _startFocusWatcher() {
       while ((nl = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
         if (!/^\d+$/.test(line)) continue;
-        _focusFgPid = Number(line);
+        _focusFgPid = _focusFgSample(_focusFgPid, line);
         try { _focusReevaluate(); } catch (e) { void e; }
       }
     });
@@ -6408,34 +6900,202 @@ function applyMeVisibility() {
 // pane cannot hold a pannable map), and click-through when locked except its buttons, dots and rows.
 function createMapOverlay() {
   if (_agentOnly()) return;
-  const b = _resolveBounds('mapBounds', 'mapBoundsSig', { x: 60, y: 120, width: 760, height: 480 });
+  try { _mapFull = loadConfig().mapMode === 'full'; } catch { _mapFull = false; }
+  const wb = _resolveBounds('mapBounds', 'mapBoundsSig', { x: 60, y: 120, width: 760, height: 480 });
+  const b = _mapFull ? _mapFullRect(wb) : wb;   // Full: EverQuest's client area (refined by a fresh read once the page is up)
   mapWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Map overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 140,   // narrow: map.html drops its timer list below ~420px
-    frame: false, transparent: true, resizable: true,
+    frame: false, transparent: true, resizable: !_mapFull,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
     webPreferences: _wpPrefs('Map'),
   });
   mapWindow.setAlwaysOnTop(true, 'screen-saver');
   mapWindow.setVisibleOnAllWorkspaces(true);
   mapWindow.loadFile('map.html');
-  mapWindow.on('moved',  () => _persistBounds('mapBounds', mapWindow));
-  mapWindow.on('resize', () => _persistBounds('mapBounds', mapWindow));
+  // In Full mode the window is the screen-sized cover, not the user's window: only Window mode saves its bounds.
+  mapWindow.on('moved',  () => { if (!_mapFull) _persistBounds('mapBounds', mapWindow); _mapGeomPush(); });
+  mapWindow.on('resize', () => { if (!_mapFull) _persistBounds('mapBounds', mapWindow); _mapGeomPush(); });
   mapWindow.once('ready-to-show', () => {
     mapWindow.webContents.send('agent-port', agentPort);
     applyMapVisibility();
     applyOverlayInteractivity();
     applyOverlayOpacity(mapWindow, 'map');
+    if (_mapFull) _fitMapFull(true);
   });
 }
 function applyMapVisibility() {
   if (!_live(mapWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
-  const shouldShow = unlocked || (cfg.showMap && !cfg.hideOverlays && _eqGateOk(cfg));
+  // Full mode covers the screen, so unlocking does not conjure it (see _overlayWanted): its own switch decides.
+  const shouldShow = _mapFull
+    ? !!cfg.showMap && (unlocked || (!cfg.hideOverlays && _eqGateOk(cfg)))
+    : unlocked || (cfg.showMap && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) mapWindow.showInactive(); else mapWindow.hide();
 }
+
+// ── The Map: Window or Full (the guild lead, 2026-10-14: "give map a toggle full vs window mode, and have it avoid
+// drawing over UI elements when see through maps are in position") ──────────────────────────────────────────────
+// Window (cfg.mapMode unset or 'window') is the Map as it always was. Full lays the window over EverQuest's client area
+// and makes it click-through ALWAYS, the way the Timers canvas is (_coversScreen): rescue, auto-arrange and the
+// screen-change question pass it by, and only its buttons take the mouse, through the hover handshake. The window-mode
+// bounds stay in cfg.mapBounds untouched while Full lasts (nothing persists them then) and come back on the way out.
+// Where EverQuest is comes from _eqWindowGeometry (cached; read fresh only when the mode changes, the screens change, or
+// the raider presses ⟳ on the Map); with no answer the window covers the screen it was on.
+function _mapFullRect(base) {
+  const eq = _eqMainWindow(10 * 60 * 1000);
+  const r = eq ? eq.client : (() => {
+    let d;
+    try { d = screen.getDisplayMatching(base || (_live(mapWindow) ? mapWindow.getBounds() : { x: 0, y: 0, width: 1, height: 1 })); }
+    catch { d = screen.getPrimaryDisplay(); }
+    return d.bounds;
+  })();
+  return { x: Math.round(r.x), y: Math.round(r.y), width: Math.max(_OVERLAY_MIN_W, Math.round(r.width)), height: Math.max(140, Math.round(r.height)) };
+}
+async function _fitMapFull(fresh) {
+  if (!_mapFull || !_live(mapWindow)) return;
+  if (fresh) { try { await _eqWindowGeometry(0); } catch { /* no answer → the screen it is on */ } }
+  if (!_mapFull || !_live(mapWindow)) return;
+  try { mapWindow.setResizable(false); mapWindow.setBounds(_mapFullRect()); } catch { /* mid-close */ }
+  _mapGeomPush(true);
+}
+let _mapGeomTimer = null;
+// The page converts EverQuest's rectangles to its own window with the window's rect, so it hears when that changes.
+function _mapGeomPush(now) {
+  clearTimeout(_mapGeomTimer);
+  const go = () => { if (_live(mapWindow)) { try { mapWindow.webContents.send('map-geom', mapWindow.getBounds()); } catch { /* loading */ } } };
+  if (now) go(); else _mapGeomTimer = setTimeout(go, 120);
+}
+async function _setMapMode(mode) {
+  const next = mode === 'full';
+  if (next === _mapFull) return _mapFull ? 'full' : 'window';
+  if (next && _live(mapWindow)) {   // save the window-mode spot before the window grows over the screen
+    clearTimeout(_boundsSaveTimers.mapBounds); _boundsSaveTimers.mapBounds = null;
+    _writeBounds('mapBounds', mapWindow);
+  }
+  const cfg = loadConfig(); cfg.mapMode = next ? 'full' : 'window'; saveConfig(cfg);
+  _mapFull = next;
+  if (_live(mapWindow)) {
+    if (next) await _fitMapFull(true);
+    else {
+      try { mapWindow.setBounds(_resolveBounds('mapBounds', 'mapBoundsSig', { x: 60, y: 120, width: 760, height: 480 })); } catch { /* mid-close */ }
+    }
+    applyOverlayInteractivity();
+    applyMapVisibility();
+    try { mapWindow.webContents.send('map-mode', _mapFull ? 'full' : 'window'); } catch { /* loading */ }
+    _mapGeomPush(true);
+  }
+  try { pushStatus(); buildTrayMenu(); } catch { /* tray not up yet */ }
+  return _mapFull ? 'full' : 'window';
+}
+ipcMain.handle('map-mode-get', () => { try { return loadConfig().mapMode === 'full' ? 'full' : 'window'; } catch { return 'window'; } });
+ipcMain.handle('map-mode-set', (_e, mode) => _setMapMode(mode === 'full' ? 'full' : 'window'));
+
+// Keep-clear areas. (a) The windows EverQuest has open, from the active character's UI ini: read-only, in EverQuest's
+// own pixels (visibleUiRects), plus Zeal's raid and assist bars as auto-arrange counts them. (b) The raider's own boxes,
+// kept per character and per screen setup as FRACTIONS of EverQuest's client area, so a box means the same place at any
+// window size. map.html converts both to its own window (uiRectsToMap); main only reports where things are.
+// Every area carries { id, text, guess, keep }: `text` is the window's name as the ini has it (plus why it is a guess), and
+// `keep` is whether the Map cuts it out (the raider's pick for this character on this screen setup, else "yes unless a
+// guess"). Ignored areas are still sent so the Map can list them and outline them.
+function _mapClearUiRects(char) {
+  try {
+    const file = (char && _newestUiIniFile(char)) || _newestUiIniFile();
+    if (!file) return null;
+    const eq = _eqMainWindow(10 * 60 * 1000);
+    // The game's pixels, not DIPs: the ini's resolution blocks are physical, and a scaled display would never match.
+    let phys = eq ? eq.client : null;
+    try { if (eq && process.platform === 'win32') phys = screen.dipToScreenRect(null, eq.client); } catch { /* DIPs it is */ }
+    const client = phys && phys.width > 0 && phys.height > 0 ? { w: Math.round(phys.width), h: Math.round(phys.height) } : null;
+    const r = visibleUiRects(fs.readFileSync(file, 'utf8'), { skip: _UI_PHANTOM_RX, client });
+    const res = r.res || client;
+    let rects = r.rects.slice();
+    try {
+      const zini = path.join(path.dirname(file), 'zeal.ini');
+      if (res && fs.existsSync(zini)) rects = rects.concat(zealAreas(_zealBarRects(fs.readFileSync(zini, 'utf8'), res.w, res.h), res));
+    } catch { /* no Zeal bars to avoid */ }
+    const picks = _mapClearPicks(char);
+    return { rects: applyPicks(rects, picks), res, client, file: path.basename(file), exact: !!(char && new RegExp('^UI_' + char + '[_.]', 'i').test(path.basename(file))) };
+  } catch (e) {
+    appendAgentLog('[map] UI parse failed: ' + e.message + '\n');
+    return null;
+  }
+}
+// The raider's keep / ignore picks per window, { id: true | false }, kept per screen setup and character like the boxes.
+function _mapClearPicks(char) {
+  try {
+    const store = loadConfig().mapClearPicks;
+    const sig = _screenSignature();
+    return cleanPicks(store && store[sig] && store[sig][_mapBoxKey(char)]);
+  } catch { return {}; }
+}
+function _mapBoxKey(char) { return String(char || '').toLowerCase().replace(/[^a-z0-9]/g, '') || '_'; }
+function _mapCleanBoxes(list) {
+  const out = [];
+  for (const b of Array.isArray(list) ? list.slice(0, 40) : []) {
+    if (!b || ![b.x, b.y, b.w, b.h].every(Number.isFinite)) continue;
+    if (b.w < 0.002 || b.h < 0.002 || b.w > 2 || b.h > 2 || b.x < -1 || b.y < -1 || b.x > 2 || b.y > 2) continue;
+    const r5 = (n) => Math.round(n * 1e5) / 1e5;
+    out.push({ x: r5(b.x), y: r5(b.y), w: r5(b.w), h: r5(b.h) });
+  }
+  return out;
+}
+ipcMain.handle('map-clear-areas', async (_e, opts) => {
+  try {
+    const o = opts && typeof opts === 'object' ? opts : {};
+    // Cached unless asked: the page polls this on a slow timer and PowerShell is not for polling.
+    if (o.fresh || !_eqGeom.at) {
+      try { await _eqWindowGeometry(0); } catch { /* no answer */ }
+      if (o.fresh && _mapFull) await _fitMapFull(false);
+    }
+    const char = String(o.char || _activeCharName || '').replace(/[^A-Za-z]/g, '');
+    const eq = _eqMainWindow(10 * 60 * 1000);
+    const win = _live(mapWindow) ? mapWindow.getBounds() : null;
+    let ref = eq ? eq.client : null;
+    if (!ref) { try { ref = (win ? screen.getDisplayMatching(win) : screen.getPrimaryDisplay()).bounds; } catch { ref = null; } }
+    const store = loadConfig().mapClearBoxes;
+    const boxes = _mapCleanBoxes(store && store[_screenSignature()] && store[_screenSignature()][_mapBoxKey(char)]);
+    return { mode: _mapFull ? 'full' : 'window', eq: !!eq, ref: ref ? { x: ref.x, y: ref.y, width: ref.width, height: ref.height } : null,
+      win, ui: _mapClearUiRects(char), boxes, char: _mapBoxKey(char) };
+  } catch { return null; }
+});
+ipcMain.handle('map-clear-boxes-set', (_e, char, boxes) => {
+  try {
+    const cfg = loadConfig();
+    const store = (cfg.mapClearBoxes && typeof cfg.mapClearBoxes === 'object') ? cfg.mapClearBoxes : {};
+    const sig = _screenSignature(), key = _mapBoxKey(String(char || _activeCharName || '').replace(/[^A-Za-z]/g, ''));
+    const clean = _mapCleanBoxes(boxes);
+    store[sig] = Object.assign({}, store[sig]);
+    if (clean.length) store[sig][key] = clean; else delete store[sig][key];
+    if (!Object.keys(store[sig]).length) delete store[sig];
+    for (const k of Object.keys(store).slice(0, Math.max(0, Object.keys(store).length - 6))) delete store[k];   // the 6 newest setups
+    cfg.mapClearBoxes = store; saveConfig(cfg);
+    return clean;
+  } catch { return null; }
+});
+// One window's pick: keep = true (cut it out) | false (draw over it) | null (back to the default). id null = every pick
+// for this character on this screen setup goes back to the defaults. Answers with the windows as they now stand.
+ipcMain.handle('map-clear-pick-set', (_e, char, id, keep) => {
+  try {
+    const name = String(char || _activeCharName || '').replace(/[^A-Za-z]/g, '');
+    const cfg = loadConfig();
+    const store = (cfg.mapClearPicks && typeof cfg.mapClearPicks === 'object') ? cfg.mapClearPicks : {};
+    const sig = _screenSignature(), key = _mapBoxKey(name);
+    const picks = cleanPicks(store[sig] && store[sig][key]);
+    if (id == null) { for (const k of Object.keys(picks)) delete picks[k]; }
+    else if (typeof keep === 'boolean') picks[String(id)] = keep;
+    else delete picks[String(id)];
+    const clean = cleanPicks(picks);
+    store[sig] = Object.assign({}, store[sig]);
+    if (Object.keys(clean).length) store[sig][key] = clean; else delete store[sig][key];
+    if (!Object.keys(store[sig]).length) delete store[sig];
+    for (const k of Object.keys(store).slice(0, Math.max(0, Object.keys(store).length - 6))) delete store[k];   // the 6 newest setups
+    cfg.mapClearPicks = store; saveConfig(cfg);
+    return _mapClearUiRects(name);
+  } catch { return null; }
+});
 
 // The Map's respawn-timers list popped out into its own window (the guild lead, 2026-10-13: "Right clicking on the
 // timers clickout should allow you to pop it out and drag it around"; earlier the same night: "Same with timers,
@@ -6568,6 +7228,519 @@ function applyWhoVisibility() {
   const shouldShow = unlocked || (cfg.showWho && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) whoWindow.showInactive(); else whoWindow.hide();
 }
+
+// Chat overlay — this PC's own chat feed (the guild lead, 2026-10-14: "move it off the screen and be able
+// to show/hide different components from it"). One scrolling feed, colour-coded, with a chip per channel
+// group. Reads the agent's /api/chat; the lines live in the agent's memory only and are never uploaded.
+// Nothing here is tied to EverQuest's screen, so it sits on a second monitor like any overlay.
+function createChatOverlay() {
+  if (_agentOnly()) return;
+  const b = _resolveBounds('chatBounds', 'chatBoundsSig', { x: 40, y: 620, width: 440, height: 260 });
+  chatWindow = new BrowserWindow({
+    title: 'Wolf Pack miMIC — Chat overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: _OVERLAY_MIN_W, minHeight: 120,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: _wpPrefs('Chat'),
+  });
+  chatWindow.setAlwaysOnTop(true, 'screen-saver');
+  chatWindow.setVisibleOnAllWorkspaces(true);
+  chatWindow.loadFile('chat.html');
+  chatWindow.on('moved',  () => _persistBounds('chatBounds', chatWindow));
+  chatWindow.on('resize', () => _persistBounds('chatBounds', chatWindow));
+  chatWindow.once('ready-to-show', () => {
+    chatWindow.webContents.send('agent-port', agentPort);
+    applyChatVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(chatWindow, 'chat');
+  });
+  // The groups the guild lead broke out last time come back with the window they were broken out of.
+  try { _syncChatBreakouts(); } catch (e) { void e; }
+}
+// The Chat window and every broken-out group share ONE gate: a breakout is shown exactly when Chat is.
+function applyChatVisibility() {
+  const cfg = loadConfig();
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
+  const shouldShow = unlocked || (cfg.showChat && !cfg.hideOverlays && _eqGateOk(cfg));
+  if (_live(chatWindow)) { if (shouldShow) chatWindow.showInactive(); else chatWindow.hide(); }
+  for (const w of chatBreakouts.values()) {
+    if (!_live(w)) continue;
+    if (shouldShow) w.showInactive(); else w.hide();
+  }
+}
+
+// ── Chat breakouts (design A, started from a chip's right-click) ──────────────────────────────────────────
+// A breakout window is the same chat.html loaded with ?win=<id>&groups=<ids>: it polls /api/chat like the main
+// window and paints only the groups it holds; the main window hides those groups' lines while they are out.
+// cfg.chatBreakouts = [{ id: 'b1', groups: [...] }] is the list, so they come back after a restart. A window keeps
+// its id while groups are added to it or taken out of it (its place and text settings hang off the id), and it
+// closes when its last group leaves. The windows follow the Chat overlay (one rule, below), which is what makes
+// Chat off / hide-all / the EverQuest gate close them too.
+const CHAT_BREAKOUT_MAX = 12;
+const CHAT_BREAKOUT_GROUPS_MAX = 24;
+const _CHAT_GROUP_RX = /^[a-z]{1,16}$/;
+const _CHAT_BRK_ID_RX = /^b[0-9]{1,3}$/;
+// The old shape was a plain list of group ids (one window per group, its place under chatBounds_<group> and its
+// text settings under chatPrefs.win[<group>]). Each becomes a window of its own, and everything saved under the
+// group id moves to the window id, so nothing is lost. Runs on every config load and is a no-op once converted;
+// the ids it hands out are fixed by position, so an unsaved conversion comes out the same each time. (A literal
+// regex, not _CHAT_GROUP_RX: loadConfig can run before that const is initialised.)
+function _chatMigrateBreakouts(raw) {
+  if (!raw || !Array.isArray(raw.chatBreakouts) || !raw.chatBreakouts.some(x => typeof x === 'string')) return;
+  const rx = /^[a-z]{1,16}$/;
+  const keep = [], old = [];
+  for (const x of raw.chatBreakouts) {
+    if (typeof x === 'string') { if (rx.test(x) && old.indexOf(x) === -1) old.push(x); }
+    else if (x && typeof x === 'object') keep.push(x);
+  }
+  const used = new Set(keep.map(e => e.id));
+  const nextId = () => { for (let n = 1; ; n++) if (!used.has('b' + n)) { used.add('b' + n); return 'b' + n; } };
+  const win = (raw.chatPrefs && typeof raw.chatPrefs === 'object' && raw.chatPrefs.win && typeof raw.chatPrefs.win === 'object') ? raw.chatPrefs.win : null;
+  const out = keep.slice();
+  for (const g of old) {
+    const id = nextId();
+    out.push({ id, groups: [g] });
+    for (const suf of ['', 'Sig', 'Floor']) {
+      if (raw['chatBounds_' + g + suf] !== undefined) { raw['chatBounds_' + id + suf] = raw['chatBounds_' + g + suf]; delete raw['chatBounds_' + g + suf]; }
+    }
+    // The per-screen-setup layout memory, and the per-overlay maps (opacity, scale...), are keyed by overlay key.
+    const sigs = raw.overlayLayoutBySig;
+    if (sigs && typeof sigs === 'object') {
+      for (const s of Object.values(sigs)) {
+        const r = s && s.rects;
+        if (r && typeof r === 'object' && r['chatBounds_' + g] !== undefined) { r['chatBounds_' + id] = r['chatBounds_' + g]; delete r['chatBounds_' + g]; }
+      }
+    }
+    for (const v of Object.values(raw)) {
+      if (v && typeof v === 'object' && !Array.isArray(v) && Object.prototype.hasOwnProperty.call(v, 'chat:' + g)) { v['chat:' + id] = v['chat:' + g]; delete v['chat:' + g]; }
+    }
+    if (win && win[g] !== undefined) { win[id] = win[g]; delete win[g]; }
+  }
+  raw.chatBreakouts = out;
+}
+// The list, cleaned: window ids shaped b<n>, group ids lower-case letters, a group in at most one window, no empty
+// window, at most twelve windows. Always [{ id, groups[] }].
+function _chatBreakoutList(cfg) {
+  const raw = (cfg && Array.isArray(cfg.chatBreakouts)) ? cfg.chatBreakouts : [];
+  const seenW = new Set(), seenG = new Set(), out = [];
+  for (const e of raw) {
+    if (!e || typeof e !== 'object' || typeof e.id !== 'string' || !_CHAT_BRK_ID_RX.test(e.id) || seenW.has(e.id)) continue;
+    const groups = [];
+    for (const g of (Array.isArray(e.groups) ? e.groups : [])) {
+      if (typeof g === 'string' && _CHAT_GROUP_RX.test(g) && !seenG.has(g) && groups.length < CHAT_BREAKOUT_GROUPS_MAX) { seenG.add(g); groups.push(g); }
+    }
+    if (!groups.length) continue;
+    seenW.add(e.id);
+    out.push({ id: e.id, groups });
+  }
+  return out.slice(0, CHAT_BREAKOUT_MAX);
+}
+function _chatBreakoutWinId(win) {
+  for (const [wid, w] of chatBreakouts.entries()) if (w === win) return wid;
+  return null;
+}
+// The lowest window id not in use, so ids stay within b1..b12 for good (a re-opened window comes back where the
+// last one with that id sat, with its text settings).
+function _chatNextBreakoutId(list) {
+  const used = new Set(list.map(w => w.id));
+  for (let n = 1; ; n++) if (!used.has('b' + n)) return 'b' + n;
+}
+// Tell the Chat window and every breakout something changed (the list of broken-out groups, or the prefs).
+function _pushChatWindows(channel, payload) {
+  for (const w of [chatWindow].concat(Array.from(chatBreakouts.values()))) {
+    if (_live(w)) { try { w.webContents.send(channel, payload); } catch { /* mid-close */ } }
+  }
+}
+function createChatBreakout(wid, groups) {
+  if (_agentOnly()) return;
+  if (!_CHAT_BRK_ID_RX.test(String(wid))) return;
+  if (_live(chatBreakouts.get(wid))) return;
+  const boundsKey = 'chatBounds_' + wid;
+  const n = chatBreakouts.size;
+  const b = _resolveBounds(boundsKey, boundsKey + 'Sig', { x: 60 + 28 * n, y: 560 - 28 * n, width: 340, height: 200 });
+  const win = new BrowserWindow({
+    title: 'Wolf Pack miMIC — Chat overlay (' + wid + ')',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: _OVERLAY_MIN_W, minHeight: 90,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: _wpPrefs('Chat ' + wid),
+  });
+  chatBreakouts.set(wid, win);
+  win.setAlwaysOnTop(true, 'screen-saver');
+  win.setVisibleOnAllWorkspaces(true);
+  // The page starts with these groups, then follows the list ('chat-breakouts') as groups come and go.
+  win.loadFile('chat.html', { query: { win: wid, groups: (groups || []).join(',') } });
+  win.on('moved',  () => _persistBounds(boundsKey, win));
+  win.on('resize', () => _persistBounds(boundsKey, win));
+  win.on('closed', () => { if (chatBreakouts.get(wid) === win) chatBreakouts.delete(wid); });
+  win.once('ready-to-show', () => {
+    win.webContents.send('agent-port', agentPort);
+    applyChatVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(win, 'chat:' + wid);
+  });
+}
+// Make the windows match the list: one per breakout window while the Chat overlay is wanted, none otherwise.
+// Called by every pass that builds or frees overlay windows (_materializeEnabledOverlays and
+// _reapDisabledOverlays), so hide-all, Chat off and the EverQuest gate all take the breakouts with the window.
+// A window that stays in the list is left alone when its groups change: the page follows the list itself.
+function _syncChatBreakouts() {
+  if (_agentOnly()) return;
+  let cfg; try { cfg = loadConfig(); } catch { return; }
+  const chatEntry = _OVERLAY_WINDOWS.find(e => e.key === 'chat');
+  const list = _chatBreakoutList(cfg);
+  const listed = list.map(w => w.id);
+  const want = (chatEntry && _overlayWanted(cfg, chatEntry)) ? list : [];
+  const wantIds = want.map(w => w.id);
+  for (const [wid, win] of Array.from(chatBreakouts.entries())) {
+    if (_live(win) && wantIds.indexOf(wid) !== -1) continue;
+    if (_live(win) && _inSingleSetup(win)) continue;
+    try { _flushBounds('chatBounds_' + wid, win); } catch { /* best effort */ }
+    chatBreakouts.delete(wid);
+    try { if (_live(win)) win.destroy(); } catch { /* already gone */ }
+    appendAgentLog(`[overlay] freed chat:${wid} — ${listed.indexOf(wid) === -1 ? 'its groups went back to Chat' : 'Chat is not showing'}\n`);
+  }
+  for (const w of want) if (!_live(chatBreakouts.get(w.id))) createChatBreakout(w.id, w.groups);
+}
+// Move one group: target is 'main' (back in the Chat window), 'new' (a window of its own) or a breakout window id.
+// Saves the list, tells every Chat window (the main one hides or shows that group's lines and its chip says "out",
+// a breakout repaints its own groups), then builds or frees the windows. A window left with no group closes. A
+// target that does not exist changes nothing, so a group is never left without a window.
+function _chatMoveGroup(gid, target) {
+  gid = String(gid || ''); target = String(target || '');
+  const cfg0 = loadConfig();
+  if (!_CHAT_GROUP_RX.test(gid)) return _chatBreakoutList(cfg0);
+  const before = _chatBreakoutList(cfg0);
+  const home = before.find(w => w.groups.indexOf(gid) !== -1);
+  if (target === 'new' && home && home.groups.length === 1) return before;   // already alone in a window
+  if (target === 'main' && !home) return before;                              // already in the Chat window
+  if (home && home.id === target) return before;
+  let list = before.map(w => ({ id: w.id, groups: w.groups.filter(g => g !== gid) })).filter(w => w.groups.length);
+  if (target === 'new') {
+    if (list.length >= CHAT_BREAKOUT_MAX) return before;
+    list.push({ id: _chatNextBreakoutId(before), groups: [gid] });
+  } else if (target !== 'main') {
+    const w = list.find(x => x.id === target);
+    if (!w || w.groups.length >= CHAT_BREAKOUT_GROUPS_MAX) return before;
+    w.groups.push(gid);
+  }
+  return _chatSetBreakouts(cfg0, list);
+}
+// A breakout's ✕ (or its right-click "Put back"): every group in it goes back to the Chat window and the window closes.
+function _chatBreakoutClose(wid) {
+  const cfg = loadConfig();
+  const before = _chatBreakoutList(cfg);
+  if (!before.some(w => w.id === String(wid))) return before;
+  return _chatSetBreakouts(cfg, before.filter(w => w.id !== String(wid)));
+}
+function _chatSetBreakouts(cfg, list) {
+  cfg.chatBreakouts = list;
+  // A window that closed takes its links with it (the Chat window itself is always there).
+  const linksBefore = JSON.stringify(_chatLinkGroups(cfg));
+  cfg.chatLinks = _chatLinksPrune(_chatLinkGroups(cfg), ['main'].concat(list.map(w => w.id)));
+  saveConfig(cfg);
+  _pushChatWindows('chat-breakouts', list);
+  if (JSON.stringify(cfg.chatLinks) !== linksBefore) _pushChatWindows('chat-links', cfg.chatLinks);
+  // Deferred a tick: a breakout's own ✕ / Put back lands here from inside that window.
+  setImmediate(() => { try { _syncChatBreakouts(); applyChatVisibility(); applyOverlayInteractivity(); } catch (e) { void e; } });
+  return list;
+}
+// ── Chat window links (the guild lead, 2026-10-14: "make it so i can lock multiple breakout chats to each other") ──
+// Dragging a Chat window's ✥ snaps its edge flush to another Chat window's within CHAT_SNAP_PX. The 🔗 button on a
+// window locks the Chat windows touching it into a group (cfg.chatLinks = [['main', 'b1'], ['b2', 'b3']], window ids);
+// dragging any window in a group moves the rest by the same amount. It rides the existing manual drag
+// (_startWindowDrag), so there is no app-region and the windows still save their places one by one through the
+// ordinary bounds path. Resizing one window never moves the others. A group is kept on screen as a whole: the move
+// is cut back (per axis) until no window in it would end up mostly off every display.
+const CHAT_SNAP_PX = 8;
+const CHAT_LINK_TOUCH_PX = 10;     // "touching", for 🔗: a little looser than the snap, which lands flush
+const CHAT_LINK_MIN_VISIBLE = 0.8; // a linked window keeps at least this much of itself on screen (or what it had)
+// true: partners follow the cursor on every drag tick (~60/s, one setBounds each). false: they jump to the final
+// place when the drag ends - the cheaper version, if per-move partner moves ever feel janky.
+const CHAT_LINK_LIVE = true;
+const _CHAT_LINK_ID_RX = /^(?:main|b[0-9]{1,3})$/;
+function _chatLinkGroups(cfg) {
+  const raw = (cfg && Array.isArray(cfg.chatLinks)) ? cfg.chatLinks : [];
+  const seen = new Set(), out = [];
+  for (const g of raw) {
+    if (!Array.isArray(g)) continue;
+    const ids = [];
+    for (const id of g) if (typeof id === 'string' && _CHAT_LINK_ID_RX.test(id) && !seen.has(id) && ids.indexOf(id) === -1) ids.push(id);
+    if (ids.length >= 2) { ids.forEach(id => seen.add(id)); out.push(ids); }
+  }
+  return out.slice(0, 7);
+}
+// Keep only the ids that still name a window; a group left with one window is no group.
+function _chatLinksPrune(groups, validIds) {
+  return groups.map(g => g.filter(id => validIds.indexOf(id) !== -1)).filter(g => g.length >= 2);
+}
+function _chatWindowId(win) {
+  if (win && win === chatWindow) return 'main';
+  return _chatBreakoutWinId(win);
+}
+function _chatLiveWindows() {
+  const m = new Map();
+  if (_live(chatWindow)) m.set('main', chatWindow);
+  for (const [wid, w] of chatBreakouts.entries()) if (_live(w)) m.set(wid, w);
+  return m;
+}
+// Two rects touch when an edge of one lies on an edge of the other (within tol) and they overlap along it.
+function _chatRectsTouch(a, b, tol) {
+  const ox = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+  const oy = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+  const flushX = Math.abs(a.x + a.width - b.x) <= tol || Math.abs(b.x + b.width - a.x) <= tol;
+  const flushY = Math.abs(a.y + a.height - b.y) <= tol || Math.abs(b.y + b.height - a.y) <= tol;
+  return (flushX && oy > 0) || (flushY && ox > 0);
+}
+// Snap rect b (the one being dragged) to `others`: an edge within px of another's lands flush against it
+// (side by side or stacked), or lines up with it (same left/right/top/bottom edge). x first, then y with the new x.
+// A window only snaps along an axis when it is already next to the other one on the crossing axis.
+function _chatSnap(b, others, px) {
+  const gap = (a0, a1, b0, b1) => Math.max(0, Math.max(a0, b0) - Math.min(a1, b1));
+  let x = b.x, y = b.y, best = null;
+  for (const o of others) {
+    if (gap(b.y, b.y + b.height, o.y, o.y + o.height) > px) continue;
+    for (const d of [o.x + o.width - b.x, o.x - (b.x + b.width), o.x - b.x, o.x + o.width - (b.x + b.width)]) {
+      if (Math.abs(d) <= px && (best === null || Math.abs(d) < Math.abs(best))) best = d;
+    }
+  }
+  if (best !== null) x = b.x + best;
+  best = null;
+  for (const o of others) {
+    if (gap(x, x + b.width, o.x, o.x + o.width) > px) continue;
+    for (const d of [o.y + o.height - b.y, o.y - (b.y + b.height), o.y - b.y, o.y + o.height - (b.y + b.height)]) {
+      if (Math.abs(d) <= px && (best === null || Math.abs(d) < Math.abs(best))) best = d;
+    }
+  }
+  if (best !== null) y = b.y + best;
+  return { x, y, snapped: x !== b.x || y !== b.y };
+}
+// The part of r (0..1) that lies on some display's work area.
+function _chatVisibleFrac(r, areas) {
+  const total = r.width * r.height;
+  if (!(total > 0)) return 1;
+  let seen = 0;
+  for (const a of areas) {
+    const w = Math.min(a.x + a.width, r.x + r.width) - Math.max(a.x, r.x);
+    const h = Math.min(a.y + a.height, r.y + r.height) - Math.max(a.y, r.y);
+    if (w > 0 && h > 0) seen += w * h;
+  }
+  return Math.min(1, seen / total);
+}
+// Cut a group move (dx, dy) back so no window in the group ends up less visible than min(CHAT_LINK_MIN_VISIBLE, what it
+// had). Per axis, so sliding along an edge still works. No displays known: the move stands.
+function _chatClampGroupDelta(rects, dx, dy, areas) {
+  if (!areas || !areas.length) return { dx, dy };
+  const ok = (ddx, ddy) => rects.every(r => _chatVisibleFrac({ x: r.x + ddx, y: r.y + ddy, width: r.width, height: r.height }, areas) >= Math.min(CHAT_LINK_MIN_VISIBLE, _chatVisibleFrac(r, areas)) - 1e-9);
+  const best = (fn) => {
+    if (fn(1)) return 1;
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 12; i++) { const mid = (lo + hi) / 2; if (fn(mid)) lo = mid; else hi = mid; }
+    return lo;
+  };
+  const rx = Math.round(dx * best(t => ok(dx * t, 0)));
+  const ry = Math.round(dy * best(t => ok(rx, dy * t)));
+  return { dx: rx, dy: ry };
+}
+// The three drag hooks _startWindowDrag calls for a Chat window. begin captures the partners and the windows to snap
+// to; step turns the cursor's wanted place into the real one (snapped, group clamped) and moves the partners; end
+// finishes the partners' move (when they were not following live) and saves where each one now sits.
+function _chatDragBegin(win) {
+  const id = _chatWindowId(win);
+  if (!id) return null;
+  const live = _chatLiveWindows();
+  const group = _chatLinkGroups(loadConfig()).find(g => g.indexOf(id) !== -1) || [];
+  let areas = [];
+  try { areas = screen.getAllDisplays().map(d => d.workArea); } catch { /* no displays: no clamp */ }
+  return {
+    id, start: win.getBounds(), moved: false, last: { dx: 0, dy: 0 }, areas,
+    partners: group.filter(x => x !== id && live.has(x)).map(x => ({ id: x, win: live.get(x), b0: live.get(x).getBounds() })),
+    others: Array.from(live.entries()).filter(([k]) => k !== id && group.indexOf(k) === -1).map(([, w]) => w.getBounds()),
+  };
+}
+function _chatDragStep(s, x, y) {
+  const sn = _chatSnap({ x, y, width: s.start.width, height: s.start.height }, s.others, CHAT_SNAP_PX);
+  if (!s.partners.length) return { x: sn.x, y: sn.y };
+  const c = _chatClampGroupDelta([s.start].concat(s.partners.map(p => p.b0)), sn.x - s.start.x, sn.y - s.start.y, s.areas);
+  s.last = c; s.moved = true;
+  if (CHAT_LINK_LIVE) for (const p of s.partners) _chatPlacePartner(p, c);
+  return { x: s.start.x + c.dx, y: s.start.y + c.dy };
+}
+function _chatPlacePartner(p, c) {
+  if (!_live(p.win)) return;
+  p.win.setBounds({ x: p.b0.x + c.dx, y: p.b0.y + c.dy, width: p.b0.width, height: p.b0.height });
+}
+function _chatDragEnd(s) {
+  if (!s.moved) return;
+  for (const p of s.partners) {
+    if (!CHAT_LINK_LIVE) _chatPlacePartner(p, s.last);
+    const key = _boundsKeyForWindow(p.win);
+    if (key) _persistBounds(key, p.win);
+  }
+}
+// 🔗: a window that is in a group leaves it (a group left with one window dissolves); one that is not links itself to
+// every Chat window touching it, directly or through another (merging any groups they were already in). Nothing
+// touching = nothing to link: { ok: false }.
+function _chatLinkToggle(wid) {
+  if (!_CHAT_LINK_ID_RX.test(String(wid))) return { ok: false, groups: _chatLinkGroups(loadConfig()) };
+  const cfg = loadConfig();
+  let groups = _chatLinkGroups(cfg);
+  if (groups.some(g => g.indexOf(wid) !== -1)) {
+    groups = groups.map(g => g.filter(x => x !== wid)).filter(g => g.length >= 2);
+  } else {
+    const live = _chatLiveWindows();
+    if (!live.has(wid)) return { ok: false, groups };
+    const rect = new Map(Array.from(live.entries()).map(([k, w]) => [k, w.getBounds()]));
+    const comp = new Set([wid]), queue = [wid];
+    while (queue.length) {
+      const a = queue.pop();
+      for (const k of rect.keys()) if (!comp.has(k) && _chatRectsTouch(rect.get(a), rect.get(k), CHAT_LINK_TOUCH_PX)) { comp.add(k); queue.push(k); }
+    }
+    if (comp.size < 2) return { ok: false, groups };
+    const merged = new Set(comp);
+    groups = groups.filter(g => { if (g.some(x => comp.has(x))) { g.forEach(x => merged.add(x)); return false; } return true; });
+    groups.push(Array.from(merged));
+  }
+  cfg.chatLinks = groups;
+  saveConfig(cfg);
+  _pushChatWindows('chat-links', groups);
+  return { ok: true, groups };
+}
+ipcMain.handle('chat-link-toggle', (e) => {
+  const wid = _chatWindowId(BrowserWindow.fromWebContents(e.sender));
+  return wid ? _chatLinkToggle(wid) : { ok: false, groups: [] };
+});
+ipcMain.handle('chat-links-get', () => _chatLinkGroups(loadConfig()));
+ipcMain.handle('chat-move-group', (_e, gid, target) => _chatMoveGroup(gid, target));
+ipcMain.handle('chat-breakout-close', (_e, wid) => _chatBreakoutClose(wid));
+ipcMain.handle('chat-breakouts-get', () => _chatBreakoutList(loadConfig()));
+// What the Chat overlay remembers (cfg.chatPrefs): the font size and the three opt-in switches are shared;
+// which channel chips are switched OFF is kept per character. Whitelisted and clamped, because the
+// renderer hands these over.
+function _chatCharKey(char) { return String(char || '').toLowerCase().replace(/[^a-z]/g, '').slice(0, 24) || '_default'; }
+// offChannels (the guild lead, 2026-10-14: "turning off specific channels and keep people's settings"): the joined
+// channels switched off, by NAME in lower case (the slot number changes with the order channels are joined). Shared
+// by every character like the opt-in switches, since a channel is the guild's, not one character's. A channel with
+// no entry shows. An unnamed channel (Zeal's /abc shows only the number) is keyed "#<n>".
+function _chatChannelNames(arr) {
+  const out = [];
+  if (!Array.isArray(arr)) return out;
+  for (const x of arr) {
+    const k = typeof x === 'string' ? x.toLowerCase() : '';
+    if (/^[^\s\x00-\x1f]{1,32}$/.test(k) && out.indexOf(k) === -1) out.push(k);
+    if (out.length >= 64) break;
+  }
+  return out;
+}
+// "Show only this channel" (the guild lead, 2026-10-14): a VIEW toggle, so it lives beside the switches and never
+// writes them. The channel id ('guild'), or custom:<name> for a joined channel; '' = off.
+function _chatOnlyKey(x) { const k = typeof x === 'string' ? x.toLowerCase() : ''; return /^(?:[a-z]{1,16}|custom:[^\s\x00-\x1f]{1,32})$/.test(k) ? k : ''; }
+// Text settings per window (the guild lead, 2026-10-14: "extra windows need their text to be configurable"):
+// win = { main: {...}, <breakout window id: b1, b2...>: {...} }. Every field is optional; a missing one means "the default"
+// (the shared font size, normal spacing, timestamps and tags shown), so prefs saved before this existed read the same.
+// (An entry keyed by a bare group id is what an older Mimic saved; _chatMigrateBreakouts moves the live ones.)
+const _CHAT_WIN_ID_RX = /^(?:main|b[0-9]{1,3})$/;
+function _chatWinCfg(w) {
+  const o = {};
+  if (!w || typeof w !== 'object') return o;
+  const n = Math.round(Number(w.fontSize));
+  if (n >= 9 && n <= 24) o.fontSize = n;
+  if (w.lineGap === 'compact' || w.lineGap === 'normal') o.lineGap = w.lineGap;
+  if (typeof w.times === 'boolean') o.times = w.times;
+  if (typeof w.tags === 'boolean') o.tags = w.tags;
+  return o;
+}
+function _chatWinMap(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const id of Object.keys(raw).slice(0, 24)) if (_CHAT_WIN_ID_RX.test(id)) out[id] = _chatWinCfg(raw[id]);
+  return out;
+}
+// What the Melee group shows, like EQ's own combat filters (the guild lead, 2026-10-14: "filter out other's
+// information the same way we do with in game filters"): my swings (and my pet's), swings at me, everyone
+// else's, and misses. All four are ON unless switched off, so prefs saved before this read the same. One set
+// is shared by every window (the main one and a Melee breakout), like the other opt-in switches.
+const _MELEE_SHOW_KEYS = ['mine', 'on_me', 'others', 'misses'];
+function _chatMeleeShow(raw) {
+  const o = (raw && typeof raw === 'object') ? raw : {};
+  const out = {};
+  for (const k of _MELEE_SHOW_KEYS) out[k] = o[k] !== false;
+  return out;
+}
+// Spells and Skills filter the same way (the guild lead, 2026-10-14: "Filters for spells for others should be there as
+// well"): spellShow = { mine, on_me, others }, skillShow = { mine, others }. All ON unless switched off, shared by every window.
+const _SPELL_SHOW_KEYS = ['mine', 'on_me', 'others'];
+const _SKILL_SHOW_KEYS = ['mine', 'others'];
+function _chatShowMap(raw, keys) {
+  const o = (raw && typeof raw === 'object') ? raw : {};
+  const out = {};
+  for (const k of keys) out[k] = o[k] !== false;
+  return out;
+}
+function _chatPrefsPayload(cfg, char) {
+  const p = (cfg.chatPrefs && typeof cfg.chatPrefs === 'object') ? cfg.chatPrefs : {};
+  const mine = p.byChar && p.byChar[_chatCharKey(char)];
+  const fs_ = Math.round(Number(p.fontSize));
+  return {
+    melee: p.melee === true,     // combined melee floods the feed: opt-in, like officer
+    spells: p.spells === true,   // spells and skills are floods too (2026-10-14): opt-in, default off
+    skills: p.skills === true,
+    meleeShow: _chatMeleeShow(p.meleeShow),
+    spellShow: _chatShowMap(p.spellShow, _SPELL_SHOW_KEYS),
+    skillShow: _chatShowMap(p.skillShow, _SKILL_SHOW_KEYS),
+    only: _chatOnlyKey(p.only),
+    win: _chatWinMap(p.win),
+    fontSize: fs_ >= 9 && fs_ <= 24 ? fs_ : 12,
+    // Group and joined channels are ON unless switched off (the guild lead, 2026-10-14: "not seeing group chat or
+    // channels in the chat window"); officer stays opt-in. All of it stays on this PC either way.
+    group: p.group !== false, officer: p.officer === true, custom: p.custom !== false,
+    tells: cfg.tellsMode === 'local' || cfg.tellsMode === 'synced',
+    off: (mine && Array.isArray(mine.off)) ? mine.off.filter(x => typeof x === 'string').slice(0, 32) : [],
+    offChannels: _chatChannelNames(p.offChannels),
+  };
+}
+ipcMain.handle('chat-prefs-get', (_e, char) => _chatPrefsPayload(loadConfig(), char));
+ipcMain.handle('chat-prefs-set', (_e, char, patch) => {
+  const cfg = loadConfig();
+  const p = (cfg.chatPrefs && typeof cfg.chatPrefs === 'object') ? cfg.chatPrefs : {};
+  const inc = (patch && typeof patch === 'object') ? patch : {};
+  if (inc.fontSize != null) { const n = Math.round(Number(inc.fontSize)); if (n >= 9 && n <= 24) p.fontSize = n; }
+  for (const k of ['group', 'officer', 'custom', 'melee', 'spells', 'skills']) if (typeof inc[k] === 'boolean') p[k] = inc[k];
+  if (inc.meleeShow && typeof inc.meleeShow === 'object') {
+    // Only the keys sent change, and only to a boolean: the other switches keep what they had.
+    const cur = _chatMeleeShow(p.meleeShow);
+    for (const k of _MELEE_SHOW_KEYS) if (typeof inc.meleeShow[k] === 'boolean') cur[k] = inc.meleeShow[k];
+    p.meleeShow = cur;
+  }
+  for (const [prop, keys] of [['spellShow', _SPELL_SHOW_KEYS], ['skillShow', _SKILL_SHOW_KEYS]]) {
+    if (!inc[prop] || typeof inc[prop] !== 'object') continue;
+    const cur = _chatShowMap(p[prop], keys);
+    for (const k of keys) if (typeof inc[prop][k] === 'boolean') cur[k] = inc[prop][k];
+    p[prop] = cur;
+  }
+  if (typeof inc.only === 'string') p.only = _chatOnlyKey(inc.only);
+  // One window's text settings merge into that window's entry only: another window's are never rewritten.
+  if (inc.win && typeof inc.win === 'object') {
+    const cur = _chatWinMap(p.win);
+    for (const id of Object.keys(inc.win).slice(0, 4)) {
+      if (_CHAT_WIN_ID_RX.test(id)) cur[id] = Object.assign({}, cur[id], _chatWinCfg(inc.win[id]));
+    }
+    p.win = cur;
+  }
+  if (Array.isArray(inc.offChannels)) p.offChannels = _chatChannelNames(inc.offChannels);
+  if (Array.isArray(inc.off)) {
+    p.byChar = (p.byChar && typeof p.byChar === 'object') ? p.byChar : {};
+    p.byChar[_chatCharKey(char)] = { off: inc.off.filter(x => typeof x === 'string' && /^[a-z]{1,16}$/.test(x)).slice(0, 32) };
+  }
+  cfg.chatPrefs = p;
+  saveConfig(cfg);
+  // The switches ride every window's poll and the agent keeps the LAST one it was handed, so a broken-out
+  // window holding a stale officer/group/custom value would flip the capture off under the main window.
+  _pushChatWindows('chat-prefs-changed');
+  return _chatPrefsPayload(cfg, char);
+});
 
 // Melody overlay — bard /melody twist queue with per-song play / casting /
 // stopped state. Reads from /api/state.bardMelody (per-character).
@@ -6972,6 +8145,7 @@ const _OVERLAY_WINDOWS = [
   { key: 'mobinfo',   flag: 'showMobInfo',      get: () => mobInfoWindow,   create: createMobInfoOverlay,      drop: () => { mobInfoWindow = null; } },
   { key: 'buffQueue', flag: 'showBuffQueue',    get: () => buffQueueWindow, create: createBuffQueueOverlay,    drop: () => { buffQueueWindow = null; } },
   { key: 'who',       flag: 'showWho',          get: () => whoWindow,       create: createWhoOverlay,          drop: () => { whoWindow = null; } },
+  { key: 'chat',      flag: 'showChat',         get: () => chatWindow,      create: createChatOverlay,         drop: () => { chatWindow = null; } },
   { key: 'melody',    flag: 'showMelody',       get: () => melodyWindow,    create: createMelodyOverlay,       drop: () => { melodyWindow = null; } },
   { key: 'zeal',      flag: 'showZeal',         get: () => zealWindow,      create: createZealHealthOverlay,   drop: () => { zealWindow = null; } },
   { key: 'threat',    flag: 'showThreat',       get: () => threatWindow,    create: createThreatMeterOverlay,  drop: () => { threatWindow = null; } },
@@ -7142,6 +8316,10 @@ function _overlayWanted(cfg, e) {
     return !!cfg.showCanvas && (setupMode || cfg.overlaysLocked === false || _canvasArrange
       || (!cfg.hideOverlays && _eqGateOk(cfg)));
   }
+  // The Map in Full mode covers the screen, so setup / unlock do not conjure it for placement: its own switch decides.
+  if (e.key === 'map' && _mapFull) {
+    return !!cfg.showMap && (setupMode || cfg.overlaysLocked === false || (!cfg.hideOverlays && _eqGateOk(cfg)));
+  }
   if (_overlayForcedOn(cfg, e)) return true;
   if (!cfg[e.flag]) return false;
   if (e.key === 'trigger') return true;
@@ -7167,6 +8345,7 @@ function _materializeEnabledOverlays() {
     try { e.create(); }
     catch (err) { appendAgentLog(`[overlay] could not create ${e.key}: ${err && err.message}\n`); }
   }
+  try { _syncChatBreakouts(); } catch (err) { appendAgentLog(`[overlay] could not sync chat breakouts: ${err && err.message}\n`); }
 }
 
 // A window can die WITHOUT going through the reaper below: the user closes an
@@ -7216,6 +8395,8 @@ function _reapDisabledOverlays() {
               : 'EverQuest is not running';
     appendAgentLog(`[overlay] freed ${e.key} — ${why}\n`);
   }
+  // The Chat overlay's broken-out groups go with it (and stay put while it stays).
+  try { _syncChatBreakouts(); } catch { /* never break the reap */ }
 }
 
 // Convenience: refresh every overlay's visibility at once. Used by the EQ-
@@ -7233,6 +8414,7 @@ function applyAllVisibility() {
   applyMobInfoVisibility();
   applyBuffQueueVisibility();
   applyWhoVisibility();
+  applyChatVisibility();
   applyMelodyVisibility();
   applyZealVisibility();
   applyThreatVisibility();
@@ -7312,7 +8494,7 @@ const _HIDEALL_FLAGS = [
   'showHud', 'showTriggerOverlay', 'showCharm', 'showPets', 'showMobInfo',
   'showBuffQueue', 'showWho', 'showMelody', 'showZeal', 'showThreat',
   'showChChain', 'showTank', 'showExtTarget', 'showCommand', 'showPopRaid',
-  'showMe', 'showCanvas', 'showMap', 'showMapTimers',
+  'showMe', 'showCanvas', 'showMap', 'showMapTimers', 'showChat',
 ];
 function toggleHideAllOverlays() {
   if (_agentOnly()) return;   // nothing on screen to hide, and it would rewrite the saved overlay flags
@@ -7402,7 +8584,7 @@ let _registeredMiniAccel = null;
 // the dashboard's ON/OFF button does. No defaults: a global shortcut takes its
 // key away from EverQuest, so nobody gets one they did not ask for.
 const _OVERLAY_HOTKEY_KEYS = ['dock', 'hud', 'trigger', 'charm', 'pet', 'mobinfo', 'buffQueue', 'who', 'melody',
-  'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me', 'map', 'maptimers', 'canvas'];
+  'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me', 'map', 'maptimers', 'chat', 'canvas'];
 let _registeredOverlayAccels = {};   // overlay key → accelerator bound right now
 let _blockedOverlayAccels = {};      // overlay key → accelerator the OS refused
 let _hotkeyQuiet = false;            // true while the focus gate re-registers: no failure logs, blocked state untouched
@@ -7714,6 +8896,7 @@ function currentStatus() {
     showMobInfo: !!cfg.showMobInfo,
     showBuffQueue: !!cfg.showBuffQueue,
     showWho: !!cfg.showWho,
+    showChat: !!cfg.showChat,
     showMelody: !!cfg.showMelody,
     melodyBardOnly: !!cfg.melodyBardOnly,
     // AE-song damage chips on the melody overlay (per-hit + kite total).
@@ -7729,6 +8912,7 @@ function currentStatus() {
     showMe: !!cfg.showMe,
     showMap: !!cfg.showMap,
     showMapTimers: !!cfg.showMapTimers,
+    mapMode: cfg.mapMode === 'full' ? 'full' : 'window',   // the dashboard's Map Window / Full button
     // Timers canvas. canvasOwnsTriggers tells the (hidden) trigger window to
     // speak only, so a pinned callout lives in one place.
     showCanvas: !!cfg.showCanvas,
@@ -7922,9 +9106,7 @@ function makeTrayIcon() {
 }
 let _trayMenu = null;
 function _quitMimic() {
-  quitting = true;
-  if (agentProc) { try { agentProc.kill(); } catch {} }
-  app.quit();
+  _gracefulShutdown('quit').then(() => app.quit(), () => app.quit());
 }
 // Save the graphics-card choice. It only takes hold at startup, so when the saved choice now differs
 // from what this run started with, `ask` offers the restart (tray, Settings); setup passes ask=false
@@ -8058,6 +9240,11 @@ function buildTrayMenu() {
         if (mi.checked && !whoWindow) createWhoOverlay(); else applyWhoVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
+    { label: 'Chat (guild, raid, say; tells and more are opt-in) [beta]', type: 'checkbox', checked: !!s.showChat, enabled: !s.hideOverlays, click: (mi) => {
+        const cfg = loadConfig(); cfg.showChat = mi.checked; saveConfig(cfg);
+        if (mi.checked && !chatWindow) createChatOverlay(); else applyChatVisibility(); _reapDisabledOverlays();
+        pushStatus();
+      } },
     { label: 'Casting tracker (melody on bards, spells otherwise)', type: 'checkbox', checked: s.showMelody, enabled: !s.hideOverlays && !_dockedNow.includes('melody'), click: (mi) => {
         const cfg = loadConfig(); cfg.showMelody = mi.checked; saveConfig(cfg);
         if (mi.checked && !melodyWindow) createMelodyOverlay(); else applyMelodyVisibility(); _reapDisabledOverlays();
@@ -8118,6 +9305,10 @@ function buildTrayMenu() {
       } },
     { label: '  ↳ Map timers list as its own window [beta]', type: 'checkbox', checked: !!s.showMapTimers, enabled: !s.hideOverlays, click: (mi) => {
         _setMapTimersPopped(mi.checked);
+      } },
+    // Same setter as the Map's own Full / Window button and the dashboard's (tray ↔ dashboard parity).
+    { label: '  ↳ Map: full screen over EverQuest [beta]', type: 'checkbox', checked: s.mapMode === 'full', enabled: !s.hideOverlays, click: (mi) => {
+        _setMapMode(mi.checked ? 'full' : 'window');
       } },
     // Timers canvas — same internals as the dashboard row (_toggleOverlay /
     // _setCanvasArrange), per the tray ↔ dashboard parity rule.
@@ -8206,7 +9397,7 @@ function buildTrayMenu() {
       } };
 
   const updateItem = updatePending
-    ? { label: `Restart to install update v${updatePending.version}`, click: () => { try { autoUpdater && autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); } } }
+    ? { label: `Restart to install update v${updatePending.version}`, click: () => { _installUpdateNow('tray'); } }
     : { label: 'Check for updates…',
         // Manual check covers BOTH update channels — the Electron shell AND
         // the agent hot-swap (the guild lead, 2026-07-16: "check for updates also
@@ -8280,44 +9471,13 @@ function buildTrayMenu() {
     click: (mi) => setCrashReports(!!mi.checked),
   };
 
-  const menu = Menu.buildFromTemplate([
-    { label: headerLabel, enabled: false },
-    { type: 'separator' },
-    // Most-used actions up top: open the local dashboard, jump to the site.
-    { label: 'Show dashboard', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
-    // Tray ↔ dashboard parity: the dashboard's 📈 My parses tab is the other half of this item (a member,
-    // 2026-10-06: "is there a page in mimic that'll graph out my parses over a variable time window").
-    { label: '📈 My parses', click: () => showDashboardTab('myparses') },
-    { label: 'Open wolfpack.quest ↗', click: () => shell.openExternal(WOLFPACK_URL) },
-    { type: 'separator' },
-    // Run mode — full Mimic or agent only (the guild lead, 2026-10-08). Same setter as the dashboard's
-    // Overlays tab and Settings; saves the choice and offers a restart. In agent only the items that
-    // only mean something with overlays on screen are `visible: false` (hidden, not greyed — least
-    // diff, and a greyed list of things that can never work is noise).
-    { label: s.runMode === 'agent' ? '🪟 Switch to full Mimic (overlays)…' : '🖥 Switch to agent only (no overlays)…',
-      click: () => { _setRunMode(loadConfig().runMode === 'agent' ? 'full' : 'agent', true); } },
-    // Multi-monitor rescue — run from the tray on the monitor you play on;
-    // lost overlays come back there, the rest stay put (a member, 2026-07-15:
-    // "lost several overlays off my window and cannot find them").
-    { label: '🧲 Rescue overlays to this screen', visible: !agentOnly, click: () => {
-        _rescueOverlays().catch((e) => appendAgentLog('[rescue] failed: ' + e.message + '\n'));
-      } },
-    // The display-off half of Quiet mode (bottom block). It lived only in Settings (a
-    // member, 2026-09-23: "We don't have a taskbar option for No Overlays").
-    // Same flag and the same apply path as the Settings save — not a parallel one.
-    { label: '🙈 No overlays — I use another parser (uploads and voice continue)', type: 'checkbox', checked: !!s.hideOverlays, visible: !agentOnly, click: (mi) => {
-        const cfg = loadConfig(); cfg.hideOverlays = mi.checked; saveConfig(cfg);
-        applyAllVisibility();
-        pushStatus();
-      } },
-    // 💥 Damage-taken audio alert — top level (not the Overlays submenu): it's
-    // an audio cue, not an overlay, and "toggleable from the taskbar" (the guild lead)
-    // means one click from the tray. Label carries the live hotkey so the
-    // binding is discoverable without opening the dashboard. Disabled under
-    // Quiet mode because the trigger overlay stays silent there anyway.
-    { label: '💥 Damage-taken alert (' + (_damageAlertHotkeyLabelNow() || 'no hotkey') + ')',
-      type: 'checkbox', checked: !!s.damageAlert, enabled: !s.hideOverlays,
-      click: () => { toggleDamageAlert(); } },
+  // The menu is layout B (the guild lead, 2026-10-14: the tray had ~30 top-level lines and was
+  // overwhelming): a short top level (Show dashboard, Overlays, Rescue, Quiet mode) and three
+  // groups behind submenus. Only positions changed; every item below is the same object it was.
+  // Settings › is one flat submenu grouped by disabled header items + separators (not nested
+  // submenus: a checkbox stays one click from its group, and the groups are visible at a glance).
+  const settingsSubmenu = [
+    { label: 'Behaviour', enabled: false },
     ...(process.platform === 'win32' ? [
       { label: 'Start with Windows', type: 'checkbox', checked: !!s.autoStart, click: (mi) => {
           const cfg = loadConfig(); cfg.autoStart = !!mi.checked; saveConfig(cfg);
@@ -8343,34 +9503,110 @@ function buildTrayMenu() {
     ] : []),
     // Same switch as Settings → "Use the graphics card for overlays" (restarts Mimic).
     { label: 'Use the graphics card for overlays (restarts Mimic)', type: 'checkbox', checked: s.useGpu !== false, visible: !agentOnly, click: (mi) => { _setGpuDrawing(!!mi.checked, true); } },
+    // 💥 Damage-taken audio alert — "toggleable from the taskbar" (the guild lead) means one click
+    // from the tray. Label carries the live hotkey so the
+    // binding is discoverable without opening the dashboard. Disabled under
+    // Quiet mode because the trigger overlay stays silent there anyway.
+    { label: '💥 Damage-taken alert (' + (_damageAlertHotkeyLabelNow() || 'no hotkey') + ')',
+      type: 'checkbox', checked: !!s.damageAlert, enabled: !s.hideOverlays,
+      click: () => { toggleDamageAlert(); } },
+    { type: 'separator' },
+    { label: 'Mode', enabled: false },
+    // Run mode — full Mimic or agent only (the guild lead, 2026-10-08). Same setter as the dashboard's
+    // Overlays tab and Settings; saves the choice and offers a restart. In agent only the items that
+    // only mean something with overlays on screen are `visible: false` (hidden, not greyed — least
+    // diff, and a greyed list of things that can never work is noise).
+    { label: s.runMode === 'agent' ? '🪟 Switch to full Mimic (overlays)…' : '🖥 Switch to agent only (no overlays)…',
+      click: () => { _setRunMode(loadConfig().runMode === 'agent' ? 'full' : 'agent', true); } },
+    // The display-off half of Quiet mode. It lived only in Settings (a
+    // member, 2026-09-23: "We don't have a taskbar option for No Overlays").
+    // Same flag and the same apply path as the Settings save — not a parallel one.
+    { label: '🙈 No overlays — I use another parser (uploads and voice continue)', type: 'checkbox', checked: !!s.hideOverlays, visible: !agentOnly, click: (mi) => {
+        const cfg = loadConfig(); cfg.hideOverlays = mi.checked; saveConfig(cfg);
+        applyAllVisibility();
+        pushStatus();
+      } },
+    { type: 'separator' },
     { label: 'My /tells  🔒 PRIVATE', submenu: tellsSubmenu },
     { type: 'separator' },
+    crashReportsItem,
+    { type: 'separator' },
+    { label: 'Account', enabled: false },
     connectItem,
-    { label: 'Show agent log…', click: () => shell.openPath(AGENT_LOG()) },
+    // Uninstall lives in the maintenance block — deliberately NOT next to Quit.
+    // The tray menu opens upward with the cursor resting at the BOTTOM, so a
+    // bottom-adjacent uninstall was far too easy to mis-click (tester feedback).
+    ...(_uninstallerPath() ? [{ label: 'Uninstall Wolf Pack Mimic…', click: () => { runUninstaller(); } }] : []),
+    { type: 'separator' },
+    { label: 'Settings…', click: openSettings },
+  ];
+
+  // Updates › — its own top-level submenu (the guild lead, 2026-10-14: "add updates to the submenus for
+  // the taskbar"). The update item first, then the pop-up toggle and the channel choices. The submenu's
+  // own label says when an update is waiting, so it shows without opening anything.
+  const updatesSubmenu = [
+    updateItem,
+    { type: 'separator' },
+    updatePopupItem,
+    betaChannelItem,
+    alphaChannelItem,
+    revertStableItem,
+  ];
+
+  // Open › — everything that opens a window, a folder or a page.
+  const openSubmenu = [
+    // Tray ↔ dashboard parity: the dashboard's 📈 My parses tab is the other half of this item (a member,
+    // 2026-10-06: "is there a page in mimic that'll graph out my parses over a variable time window").
+    { label: '📈 My parses', click: () => showDashboardTab('myparses') },
+    { label: 'Open wolfpack.quest ↗', click: () => shell.openExternal(WOLFPACK_URL) },
     { label: 'Open dashboard in browser', click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/`) },
+    // Same folder as the dashboard's Sounds card button: drop .wav / .mp3 / .ogg files here to use them in triggers.
+    { label: 'Open my sounds folder (add your own trigger sounds)', click: () => { _openSoundsFolder(); } },
+    { label: 'Show agent log…', click: () => shell.openPath(AGENT_LOG()) },
+    { label: 'UI Studio — rescale EQ UI for a new resolution', click: () => openUiStudio() },
+    { label: 'Resource use — what Mimic costs this machine', click: () => openResources() },
+  ];
+
+  // Help › — the walkthrough, feedback, and the agent restart.
+  const helpSubmenu = [
+    // ✨ The setup walkthrough, both layouts until the guild lead picks one (§93). Same IPC
+    // as the dashboard Setup card's two buttons. Beta and alpha builds only: two unpicked
+    // layouts do not ship to the stable fleet (the UI-options rule), so a stable cut can still
+    // be the beta byte for byte.
+    ...(/-/.test(String(app.getVersion() || '')) ? [{ label: '✨ Setup walkthrough', submenu: [
+        { label: 'A · one step at a time', click: () => openWelcome('a') },
+        { label: 'B · essentials, then unlocks', click: () => openWelcome('b') },
+      ] }] : []),
     // Tray ↔ dashboard parity (CLAUDE.md): the feedback card lives on the
     // dashboard, so it needs a tray route too. Same destination, same internals
     // — this opens the dashboard with the card expanded rather than duplicating
     // the form in a second window that would then drift.
     { label: 'Send feedback — bug or idea',
       click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/#feedback`) },
-    { label: 'UI Studio — rescale EQ UI for a new resolution', click: () => openUiStudio() },
-    { label: 'Resource use — what Mimic costs this machine', click: () => openResources() },
-    updatePopupItem,
-    betaChannelItem,
-    alphaChannelItem,
-    revertStableItem,
-    crashReportsItem,
-    // Uninstall lives in the maintenance block — deliberately NOT next to Quit.
-    // The tray menu opens upward with the cursor resting at the BOTTOM, so a
-    // bottom-adjacent uninstall was far too easy to mis-click (tester feedback).
-    ...(_uninstallerPath() ? [{ label: 'Uninstall Wolf Pack Mimic…', click: () => { runUninstaller(); } }] : []),
+    { label: 'Restart agent', click: async () => {
+        appendAgentLog('[mimic] tray "Restart agent" clicked\n');
+        if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
+      } },
+  ];
+
+  const menu = Menu.buildFromTemplate([
+    { label: headerLabel, enabled: false },
     { type: 'separator' },
-    // Bottom block per user request: Overlays sits right above Restart agent
-    // (the tray opens upward, so this puts the most-used submenu nearest the
-    // cursor), then Check for updates directly below Restart, then Settings →
-    // Quit as the two safe bottom actions. Quiet mode sits just above Overlays, near the cursor (the guild
-    // lead, 2026-10-08: "Move quiet mode towards the bottom of the right click window for task bar").
+    // Most-used actions up top: open the local dashboard, rescue lost overlays, mute.
+    { label: 'Show dashboard', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
+    ...(agentOnly ? [] : [{ label: 'Overlays', submenu: overlaysSubmenu }]),
+    // Named overlay layouts (ported from alpha, the guild lead 2026-10-14). Same store as /pipe mimic load|save.
+    ...(agentOnly ? [] : [{ label: '🗂 Overlay sets', submenu: _overlaySetTrayItems() }]),
+    // Agent only keeps the one overlay control that is not about the screen: the spoken callouts.
+    { label: 'Spoken trigger callouts (TTS)', type: 'checkbox', checked: !!s.enableTriggerTts, visible: agentOnly,
+      click: () => { _toggleOverlay('trigger'); buildTrayMenu(); } },
+    // Multi-monitor rescue — run from the tray on the monitor you play on;
+    // lost overlays come back there, the rest stay put (a member, 2026-07-15:
+    // "lost several overlays off my window and cannot find them").
+    { label: '🧲 Rescue overlays to this screen', visible: !agentOnly, click: () => {
+        _rescueOverlays().catch((e) => appendAgentLog('[rescue] failed: ' + e.message + '\n'));
+      } },
+    // Quiet mode stays near the top level (the guild lead, 2026-10-08: it was moved toward the cursor end).
     { label: '🔇 Quiet mode — no TTS audio or sounds (overlays still show)', type: 'checkbox', checked: s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.quietMode = mi.checked; saveConfig(cfg);
         // Renderers only learn Mute from this broadcast (window.mimic.isMuted).
@@ -8380,24 +9616,12 @@ function buildTrayMenu() {
         applyAllVisibility();
         pushStatus();
       } },
-    ...(agentOnly ? [] : [{ label: 'Overlays', submenu: overlaysSubmenu }]),
-    // Agent only keeps the one overlay control that is not about the screen: the spoken callouts.
-    { label: 'Spoken trigger callouts (TTS)', type: 'checkbox', checked: !!s.enableTriggerTts, visible: agentOnly,
-      click: () => { _toggleOverlay('trigger'); buildTrayMenu(); } },
-    { label: 'Restart agent', click: async () => {
-        appendAgentLog('[mimic] tray "Restart agent" clicked\n');
-        if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
-      } },
-    updateItem,
-    // ✨ The setup walkthrough, both layouts until the guild lead picks one (§93). Same IPC
-    // as the dashboard Setup card's two buttons. Beta and alpha builds only: two unpicked
-    // layouts do not ship to the stable fleet (the UI-options rule), so a stable cut can still
-    // be the beta byte for byte.
-    ...(/-/.test(String(app.getVersion() || '')) ? [{ label: '✨ Setup walkthrough', submenu: [
-        { label: 'A · one step at a time', click: () => openWelcome('a') },
-        { label: 'B · essentials, then unlocks', click: () => openWelcome('b') },
-      ] }] : []),
-    { label: 'Settings…', click: openSettings },
+    { type: 'separator' },
+    { label: 'Settings', submenu: settingsSubmenu },
+    { label: updatePending ? `Updates — v${updatePending.version} ready` : 'Updates', submenu: updatesSubmenu },
+    { label: 'Open', submenu: openSubmenu },
+    { label: 'Help', submenu: helpSubmenu },
+    { type: 'separator' },
     { label: 'Quit Mimic', click: _quitMimic },
   ]);
   _trayMenu = menu;
@@ -8640,7 +9864,7 @@ async function checkAgentUpdate(opts) {
     // Restart ONLY the agent child. The exit handler relaunches via
     // launchAgent(), which re-reads the freshly-written AGENT_DIR/index.js.
     restartBackoff = 1000;
-    if (agentProc) { try { agentProc.kill(); } catch {} }
+    if (agentProc) _stopAgentGracefully(AGENT_STOP_TIMEOUT_MS);   // lets it flush its upload queue; the exit handler relaunches
     else { launchAgent(); }
   } catch (err) {
     appendAgentLog(`[mimic] agent update check failed: ${err && err.message ? err.message : err}\n`);
@@ -8837,7 +10061,7 @@ function wireAutoUpdater() {
         message: `Mimic v${updatePending.version} is ready to install.`,
         detail: 'Restart now to apply the update. Your settings and agent state are preserved.',
       }).then(({ response }) => {
-        if (response === 0) { try { autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); } }
+        if (response === 0) _installUpdateNow('restart-now dialog');
       });
     }
   });
@@ -8883,6 +10107,14 @@ ipcMain.handle('overlay-resize-start', (e) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (win) win.__wpPreMenuBounds = null;
     _startWindowResize(win);
+  } catch {}
+  return true;
+});
+ipcMain.handle('overlay-resize-up-start', (e) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (win) win.__wpPreMenuBounds = null;
+    _startWindowResizeUp(win);
   } catch {}
   return true;
 });
@@ -9236,6 +10468,7 @@ ipcMain.handle('overlay-resize-preset', (e, preset) => {
 // the renderer still receives mousemove/enter/leave, so a control can ask us to
 // momentarily make ITS window interactive while the cursor is over it, then
 // restore the click-through state on mouseleave. Standard Electron recipe.
+const _hoverArmFrames = new Set();
 ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
@@ -9249,6 +10482,15 @@ ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
     const isOverlay = _overlayEntries().some(([, w]) => w === win);
     if (!isOverlay) return false;
     if (wantInteractive) {
+      // One log line the first time each page (a Canvas panel is an iframe) arms its window, so "I cannot click the
+      // ✕ in the Canvas" can be answered from the log: a panel that never appears here never reached main.
+      try {
+        const frame = String((e.senderFrame && e.senderFrame.url) || '').slice(-90);
+        if (frame && !_hoverArmFrames.has(frame) && _hoverArmFrames.size < 24) {
+          _hoverArmFrames.add(frame);
+          appendAgentLog(`[hover] first arm from ${frame}\n`);
+        }
+      } catch { /* a log line is never worth the handshake */ }
       win.setIgnoreMouseEvents(false);
     } else {
       // Restore whatever the lock state dictates for this window. A window
@@ -9257,7 +10499,7 @@ ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
       // its Done button and resize edges unclickable.
       if (_inSingleSetup(win)) { win.setIgnoreMouseEvents(false); return true; }
       // The Timers canvas is screen-sized: back to click-through, unlocked or not.
-      if (win === canvasWindow) { win.setIgnoreMouseEvents(true, { forward: true }); return true; }
+      if (win === canvasWindow || (win === mapWindow && _mapFull)) { win.setIgnoreMouseEvents(true, { forward: true }); return true; }
       const cfg = loadConfig();
       const locked = !setupMode && cfg.overlaysLocked !== false;
       if (locked) win.setIgnoreMouseEvents(true, { forward: true });
@@ -9388,6 +10630,10 @@ function _toggleOverlay(name) {
       cfg.showWho = !cfg.showWho; saveConfig(cfg);
       if (cfg.showWho && !whoWindow) createWhoOverlay(); else applyWhoVisibility();
       break;
+    case 'chat':
+      cfg.showChat = !cfg.showChat; saveConfig(cfg);
+      if (cfg.showChat && !chatWindow) createChatOverlay(); else applyChatVisibility();
+      break;
     case 'melody':
       cfg.showMelody = !cfg.showMelody; saveConfig(cfg);
       if (cfg.showMelody && !melodyWindow) createMelodyOverlay(); else applyMelodyVisibility();
@@ -9506,7 +10752,7 @@ ipcMain.handle('wp-move-to-display', (e, id) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     let key = null;
     for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
-    if (!key || key === 'canvas') return false;
+    if (!key || _coversScreen(key)) return false;
     const to = screen.getAllDisplays().find(d => String(d.id) === String(id));
     if (!to) return false;
     const b = win.getBounds();
@@ -9529,7 +10775,7 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
   const cfg = loadConfig();
   return {
     key,
-    screens: key && key !== 'canvas' ? _otherScreensFor(win) : [],
+    screens: key && !_coversScreen(key) ? _otherScreensFor(win) : [],
     backdrop: key ? !!((cfg.overlayBackdrop || {})[key]) : false,
     arrangeOnShow: !!cfg.autoArrangeOnShow,
     pointer: cfg.standInPointer !== false,   // the stand-in mouse pointer switch (preload _wpPointerOn)
@@ -9565,7 +10811,7 @@ const _WP_THEMES = ['default', 'light', 'bright', 'soft', 'contrast', 'deutan', 
 // Global opacity — one slider on the dashboard drives every overlay. Writes
 // cfg.overlayOpacity for ALL known keys (so windows opened later inherit it)
 // and re-applies to the live set.
-const _ALL_OVERLAY_KEYS = ['hud','trigger','charm','pets','mobinfo','buffQueue','who','melody','zeal','threat','chchain','tank','exttarget','command','popraid','me','map','maptimers'];
+const _ALL_OVERLAY_KEYS = ['hud','trigger','charm','pets','mobinfo','buffQueue','who','melody','zeal','threat','chchain','tank','exttarget','command','popraid','me','map','maptimers','chat'];
 // `field` is overlayOpacity (the whole overlay) or overlayBgAlpha (its
 // background) — see applyOverlayOpacity for the split.
 function _setOpacityAll(field, v) {
@@ -9623,6 +10869,7 @@ ipcMain.handle('wp-growup-toggle', (e) => {
   map[key] = !_growUpSetting(cfg, key);
   cfg.overlayGrowUp = map;
   saveConfig(cfg);
+  try { win.webContents.send('wp-growup', !!map[key]); } catch { /* mid-close */ }   // the top-right grip follows (preload)
   return !!map[key];
 });
 // ⇅ Timers start at the top on the trigger overlay (a member, 2026-09-27: "start
@@ -9643,6 +10890,7 @@ ipcMain.handle('wp-timers-order-toggle', () => {
   cfg.overlayGrowUp = grow;
   saveConfig(cfg);
   if (triggerWindow && !triggerWindow.isDestroyed()) {
+    triggerWindow.webContents.send('wp-growup', !cfg.triggerTimersTopDown);   // this flips grow-up too (top-down = off, else the default up)
     triggerWindow.webContents.send('status', Object.assign(currentStatus(), hideAllStatusForRenderer()));
   }
   return cfg.triggerTimersTopDown;
@@ -10012,6 +11260,9 @@ ipcMain.handle('hide-overlay', (e) => {
     } else if (win === whoWindow) {
       cfg.showWho = false; saveConfig(cfg);
       try { whoWindow.hide(); } catch {}
+    } else if (win === chatWindow) {
+      cfg.showChat = false; saveConfig(cfg);
+      try { chatWindow.hide(); } catch {}
     } else if (win === buffQueueWindow) {
       cfg.showBuffQueue = false; saveConfig(cfg);
       try { buffQueueWindow.hide(); } catch {}
@@ -10056,6 +11307,10 @@ ipcMain.handle('hide-overlay', (e) => {
       try { canvasWindow.hide(); } catch {}
       applyTriggerVisibility();
       try { buildTrayMenu(); } catch {}
+    } else if (_chatBreakoutWinId(win)) {
+      // ✕ on a broken-out window puts ALL its groups back in the Chat window, so a channel is never left
+      // with no window showing it. (✕ on the Chat window itself turns Chat off and takes them all.)
+      _chatBreakoutClose(_chatBreakoutWinId(win));
     } else {
       for (const [key, w] of panelOverlays.entries()) {
         if (w === win) { try { w.close(); } catch {} panelOverlays.delete(key); break; }
@@ -10134,7 +11389,8 @@ ipcMain.handle('ui-studio-defer-save', (_e, params) => {
     const edits     = _cleanUiKeyEdits(params?.edits);
     if (!character || !eqDir || !edits.length) return { ok: false, error: 'character + eqDir + edits required' };
     const charLower = character.toLowerCase();
-    _uiDeferred = _uiDeferred.filter(e => !(String(e.character).toLowerCase() === charLower && e.eqDir === eqDir));
+    // A queued layout switch stays: edits queued after it apply on top once it has run.
+    _uiDeferred = _uiDeferred.filter(e => !(String(e.character).toLowerCase() === charLower && e.eqDir === eqDir && e.kind !== 'layout'));
     _uiDeferred.push({
       character, eqDir, edits,
       tgtSuffix: params?.tgtSuffix || null,
@@ -10146,8 +11402,61 @@ ipcMain.handle('ui-studio-defer-save', (_e, params) => {
   } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
 });
 ipcMain.handle('ui-studio-pending-list', () => {
-  return _uiDeferred.map(e => ({ character: e.character, eqDir: e.eqDir, tgtSuffix: e.tgtSuffix, queuedAt: e.queuedAt, sawActive: !!e.sawActive }));
+  return _uiDeferred.map(e => ({ character: e.character, eqDir: e.eqDir, tgtSuffix: e.tgtSuffix, queuedAt: e.queuedAt, sawActive: !!e.sawActive,
+    kind: e.kind || 'edits', layoutId: e.layoutId || null, layoutName: e.layoutName || null }));
 });
+
+// ── UI Studio named layouts (uiLayouts.js) ───────────────────────────────────
+// A queued switch replaces any earlier queued switch for the same character + folder. Queued key
+// edits are left alone and, being later in the list, apply after it.
+function _queueUiLayoutSwitch(entry) {
+  const charLower = String(entry.character).toLowerCase();
+  _uiDeferred = _uiDeferred.filter(e => !(e.kind === 'layout' && String(e.character).toLowerCase() === charLower && e.eqDir === entry.eqDir));
+  _uiDeferred.unshift({ ...entry, queuedAt: Date.now(), sawActive: _uiCharActiveInZeal(charLower) });
+  _saveUiDeferred();
+}
+function _layoutArgs(character, eqDir) {
+  const c = String(character || '').trim(), d = String(eqDir || '').trim();
+  return { c, d, pendingId: (_uiDeferred.find(e => e.kind === 'layout' && String(e.character).toLowerCase() === c.toLowerCase() && e.eqDir === d) || {}).layoutId || null };
+}
+function _layoutCall(fn) {
+  try { return fn(_uiLayoutStore()); } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
+}
+ipcMain.handle('ui-studio-layout-list', (_e, character, eqDir) => {
+  const a = _layoutArgs(character, eqDir);
+  return _layoutCall(s => s.list(a.c, a.d, { pendingId: a.pendingId }));
+});
+ipcMain.handle('ui-studio-layout-save', (_e, params) => {
+  const a = _layoutArgs(params && params.character, params && params.eqDir);
+  return _layoutCall(s => s.save(a.c, a.d, params && params.name, { id: params && params.id ? String(params.id) : undefined }));
+});
+ipcMain.handle('ui-studio-layout-rename', (_e, params) =>
+  _layoutCall(s => s.rename(String(params && params.character || '').trim(), String(params && params.id || ''), params && params.name)));
+ipcMain.handle('ui-studio-layout-delete', (_e, params) => {
+  const c = String(params && params.character || '').trim(), id = String(params && params.id || '');
+  const r = _layoutCall(s => s.remove(c, id));
+  // A queued switch to a layout that is gone has nothing to apply.
+  if (r.ok) { const n = _uiDeferred.length; _uiDeferred = _uiDeferred.filter(e => !(e.kind === 'layout' && e.layoutId === id)); if (_uiDeferred.length !== n) _saveUiDeferred(); }
+  return r;
+});
+// Switch to: EQ running (or the character in game) => queued for after logout; otherwise written now.
+ipcMain.handle('ui-studio-layout-switch', async (_e, params) => {
+  const a = _layoutArgs(params && params.character, params && params.eqDir);
+  const id = String(params && params.id || '');
+  let eqRunning = _uiCharActiveInZeal(a.c.toLowerCase());
+  if (!eqRunning) { try { eqRunning = await _isEqRunning(); } catch { eqRunning = false; } }
+  return _layoutCall(s => s.switchTo(a.c, a.d, id, { eqRunning, queue: _queueUiLayoutSwitch }));
+});
+ipcMain.handle('ui-studio-layout-cancel-switch', (_e, params) => {
+  const c = String(params && params.character || '').trim().toLowerCase(), d = String(params && params.eqDir || '').trim();
+  const n = _uiDeferred.length;
+  _uiDeferred = _uiDeferred.filter(e => !(e.kind === 'layout' && String(e.character).toLowerCase() === c && e.eqDir === d));
+  if (_uiDeferred.length !== n) _saveUiDeferred();
+  return { ok: true, removed: n - _uiDeferred.length };
+});
+// A layout made from a cloud backup's files (the new-computer path: the cloud holds the named layouts).
+ipcMain.handle('ui-studio-layout-import', (_e, params) =>
+  _layoutCall(s => s.importFiles(String(params && params.character || '').trim(), params && params.name, params && params.files, { replace: !!(params && params.replace) })));
 ipcMain.handle('ui-studio-cancel-defer', (_e, params) => {
   const character = String(params?.character || '').trim().toLowerCase();
   const eqDir     = String(params?.eqDir || '').trim();
@@ -10274,13 +11583,24 @@ ipcMain.handle('list-eq-characters', () => {
 ipcMain.handle('ui-studio-capture', async (_e, params) => {
   const character = String(params?.character || '').trim();
   const eqDir     = String(params?.eqDir || '').trim();
-  const label     = params?.label ? String(params.label).slice(0, 80) : null;
+  let label       = params?.label ? String(params.label).slice(0, 80) : null;
+  const layoutId  = params?.layoutId ? String(params.layoutId) : '';
   if (!character || !eqDir) return { ok: false, error: 'character + eqDir required' };
   const cfg = loadConfig();
   const _uiToken = resolveUploadToken(cfg);
   if (!_uiToken) return { ok: false, error: 'no token configured — set it in Settings' };
 
-  const files = _readUiBundle(eqDir, character);
+  // A named layout backs up its own saved files (not what is on disk now), with its name in the
+  // label the bot already stores — no new field, no migration.
+  let files;
+  if (layoutId) {
+    const lay = _uiLayoutStore().get(character, layoutId);
+    if (!lay) return { ok: false, error: 'that layout no longer exists' };
+    files = { ...lay.files };
+    label = uiLayouts.cloudLabel(lay.name);
+  } else {
+    files = _readUiBundle(eqDir, character);
+  }
   const fileCount = Object.keys(files).length;
   if (fileCount === 0) return { ok: false, error: 'no ini files found for this character' };
   // Source resolution — we use the primary display as a best-guess. The
@@ -10451,6 +11771,11 @@ ipcMain.handle('pick-log-backups', async (e, kind) => {
 });
 
 ipcMain.handle('get-config', () => configForRenderer(loadConfig()));
+// The sound library (see SOUNDS_SHIPPED_DIR): the list for the pickers, a name → file URL for the player,
+// and the member's own folder. Same internals as the tray's "Open my sounds folder".
+ipcMain.handle('sounds:list', () => soundLib.listSounds(SOUNDS_SHIPPED_DIR(), SOUNDS_USER_DIR()));
+ipcMain.handle('sounds:resolve', (_e, name) => soundLib.resolveSoundUrl(name, SOUNDS_SHIPPED_DIR(), SOUNDS_USER_DIR()));
+ipcMain.handle('sounds:open-folder', () => _openSoundsFolder().then(() => SOUNDS_USER_DIR()));
 // Mute (cfg.quietMode) reaches every overlay renderer as one boolean, so the
 // three places that speak or play a sound (triggers.html, chchain.html,
 // charm.html) check window.mimic.isMuted() with no config round-trip. Sent on
@@ -10492,6 +11817,8 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   }
   saveConfig(merged);
   _broadcastMute(merged);
+  // Tells on/off decides whether the Chat windows ask for tells: they re-read their prefs (all of them, together).
+  if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'tellsMode')) _pushChatWindows('chat-prefs-changed');
   if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'standInPointer')) _broadcastPointer(merged);
   if (incoming && ['hoverOpacity', 'hoverFadeDelay', 'hoverFadeDur'].some(k => Object.prototype.hasOwnProperty.call(incoming, k))) {
     try { _hoverSettingsChanged(); } catch {}
@@ -10533,6 +11860,7 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     if (merged.showMobInfo      && !mobInfoWindow)   createMobInfoOverlay();
     if (merged.showBuffQueue    && !buffQueueWindow) createBuffQueueOverlay();
     if (merged.showWho          && !whoWindow)       createWhoOverlay();
+    if (merged.showChat         && !chatWindow)      createChatOverlay();
     if (merged.showMelody       && !melodyWindow)    createMelodyOverlay();
     if (merged.showZeal         && !zealWindow)      createZealHealthOverlay();
     if (merged.showThreat       && !threatWindow)    createThreatMeterOverlay();
@@ -10547,7 +11875,7 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   } catch (e) { void e; }
   applyMapVisibility();
   applyMapTimersVisibility();
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyTankVisibility(); applyExtTargetVisibility(); applyCommandVisibility(); applyPopRaidVisibility(); applyMeVisibility(); applyOverlayInteractivity();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyChatVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyTankVisibility(); applyExtTargetVisibility(); applyCommandVisibility(); applyPopRaidVisibility(); applyMeVisibility(); applyOverlayInteractivity();
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
   // on Windows this writes/removes the HKCU\…\Run registry entry via
   // setLoginItemSettings — no UAC, no admin rights.
@@ -10572,6 +11900,16 @@ ipcMain.handle('set-overlays-locked', (_e, locked) => {
   applyOverlayInteractivity();
   pushStatus();
   return currentStatus();
+});
+// Overlay sets from Settings — the same command the tray and /pipe use.
+ipcMain.handle('overlay-sets-list', () => {
+  const store = overlaySets.load(_SETS_FILE());
+  return { char: _activeCharName || null, sets: overlaySets.list(store, _activeCharName) };
+});
+ipcMain.handle('overlay-sets-command', (_e, cmd) => {
+  const verb = cmd && String(cmd.verb || '');
+  if (!['save', 'load', 'next', 'prev', 'delete'].includes(verb)) return { ok: false, message: 'Unknown overlay set command' };
+  return _overlaySetCommand({ verb, name: overlaySets.cleanName(cmd.name) }, null, true);
 });
 ipcMain.handle('get-agent-port', () => agentPort);
 // "Set up for me" from Settings — bridge to the agent's single writer
@@ -10627,6 +11965,29 @@ ipcMain.handle('welcome-optin', (_e, action, paths) => new Promise((resolve) => 
   req.on('error', (e) => resolve({ ok: false, error: String(e && e.message || e) }));
   req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'The engine did not respond in time.' }); });
   appendAgentLog(`[welcome] ${action} ${list.length} path(s)\n`);
+  req.end(body);
+}));
+// A JSON POST to one of the engine's local routes, for the setup walkthrough's "Say your name" (a file://
+// page cannot read the reply to a POST). Only the routes listed here, only JSON, only 127.0.0.1.
+const _AGENT_POST_OK = new Set(['/api/pronunciation', '/api/pronunciations/local']);
+ipcMain.handle('agent-post', (_e, route, payload) => new Promise((resolve) => {
+  if (!_AGENT_POST_OK.has(route)) return resolve({ ok: false, error: 'not allowed' });
+  if (!agentPort) return resolve({ ok: false, error: 'The parser engine is not running yet.' });
+  const body = JSON.stringify(payload && typeof payload === 'object' ? payload : {});
+  if (body.length > 2000) return resolve({ ok: false, error: 'too large' });
+  const req = http.request({
+    host: '127.0.0.1', port: agentPort, path: route, method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }, timeout: 15000,
+  }, (res) => {
+    let buf = '';
+    res.on('data', (c) => { buf += c; });
+    res.on('end', () => {
+      let j = null; try { j = JSON.parse(buf); } catch { /* not JSON */ }
+      resolve({ ok: res.statusCode === 200, status: res.statusCode, body: j });
+    });
+  });
+  req.on('error', (e) => resolve({ ok: false, error: String(e && e.message || e) }));
+  req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'The engine did not respond in time.' }); });
   req.end(body);
 }));
 // ── Main / alt · Inventory only · Hide completely (the guild lead, 2026-10-06) ──────────────────────
@@ -11763,7 +13124,7 @@ ipcMain.handle('set-alpha-channel', async (_e, on) => {
 });
 // Dashboard "update ready" banner button → apply the downloaded update now.
 ipcMain.handle('restart-to-update', () => {
-  try { autoUpdater && autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); }
+  _installUpdateNow('dashboard');
   return true;
 });
 // Real resource numbers, not a promise.
@@ -11895,6 +13256,7 @@ function _windowLabelsByPid() {
     put(e.get(), (NAMES[e.key] || e.key) + (cfg[e.flag] ? '' : ' (switched OFF)'));
   }
   for (const [key, win] of panelOverlays.entries()) put(win, 'panel overlay · ' + key);
+  for (const [wid, win] of chatBreakouts.entries()) put(win, 'Chat breakout · ' + wid);
   put(mainWindow,      'Dashboard');
   put(settingsWindow,  'Settings');
   put(uiStudioWindow,  'UI Studio');
@@ -12055,7 +13417,15 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => { /* stay alive in tray */ });
-app.on('before-quit', () => {
+app.on('before-quit', (e) => {
+  // A quit nobody routed through _gracefulShutdown (the OS ending the session, electron-updater's
+  // own install-on-quit, a stray app.quit): hold it until the positions are saved and the agent
+  // has stopped, then quit again. The losing second instance has nothing to save.
+  if (_gotSingleInstanceLock && !_shutdownDone) {
+    try { e.preventDefault(); } catch { /* not cancelable here */ }
+    _gracefulShutdown('app quit').then(() => app.quit(), () => app.quit());
+    return;
+  }
   quitting = true;
   // Settings asks before closing with unsaved edits (a beforeunload), and in
   // Electron that would also cancel the QUIT. Its draft is already on disk, so

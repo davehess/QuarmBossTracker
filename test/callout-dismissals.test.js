@@ -324,7 +324,8 @@ describe('the overlay surface itself', () => {
     // keeping the comment left it green. Assert the code that builds the ✕.
     expect(overlay).toMatch(/x\.className = 'timer-x'/);
     expect(overlay).toMatch(/x\.textContent = '✕'/);
-    expect(overlay).toMatch(/dismissTimer\(t\.id\)/);
+    // The press is handled on the stable #timers parent and reads the row's id (test/timer-dismiss.test.js drives it).
+    expect(overlay).toMatch(/dismissTimer\(id, true\)/);
     expect(overlay, 'the #107 loot-only gate is gone').not.toMatch(/if \(t\.dismissible\)\{/);
   });
 
@@ -344,9 +345,10 @@ describe('the overlay surface itself', () => {
     expect(clearBtn).toMatch(/mouseenter[\s\S]*overlayHoverInteractive\(true\)/);
     expect(clearBtn).toMatch(/mouseleave[\s\S]*overlayHoverInteractive\(false\)/);
     expect(clearBtn).toMatch(/clearAllCallouts\(\)/);
-    const chipX = sliceBlock(overlay, '        // #207: EVERY countdown gets a ✕', 'row.appendChild(x);');
-    expect(chipX).toMatch(/mouseenter[\s\S]*overlayHoverInteractive\(true\)/);
-    expect(chipX).toMatch(/mouseleave[\s\S]*overlayHoverInteractive\(false\)/);
+    // The countdown ✕ does it from #timers (delegated: it survives the ✕ being rebuilt with its row).
+    const chipX = stripJs(sliceBlock(overlay, '  function onTimerXOver(ev){', "timersEl.addEventListener('mousedown', onTimerXPress);"));
+    expect(chipX).toMatch(/function onTimerXOver[\s\S]*overlayHoverInteractive\(true\)/);
+    expect(chipX).toMatch(/function onTimerXOut[\s\S]*overlayHoverInteractive\(false\)/);
   });
 
   it('the clear-all button sits clear of the fixed ✕ gutter', () => {

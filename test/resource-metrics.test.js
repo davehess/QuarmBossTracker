@@ -227,7 +227,8 @@ describe('_windowLabelsByPid', () => {
         .map(o => ({ ...o, get: () => (o.__pid ? __win(o.__pid) : null) }));
       const panelOverlays = new Map(${JSON.stringify(Object.entries(extra.panels || {}))}
         .map(([k, pid]) => [k, __win(pid)]));
-      const mainWindow      = ${extra.main      ? '__win(' + extra.main + ')'      : 'null'};
+      const chatBreakouts = new Map();
+      const mainWindow     = ${extra.main      ? '__win(' + extra.main + ')'      : 'null'};
       const settingsWindow  = ${extra.settings  ? '__win(' + extra.settings + ')'  : 'null'};
       const uiStudioWindow  = ${extra.uiStudio  ? '__win(' + extra.uiStudio + ')'  : 'null'};
       const resourcesWindow = ${extra.resources ? '__win(' + extra.resources + ')' : 'null'};
@@ -286,7 +287,7 @@ describe('_windowLabelsByPid', () => {
     const names = sliceBlock(src, 'const _OVERLAY_NAMES = {', '\n};');
     const table = new Function('return ' + names.slice(names.indexOf('{')))();
     const keys = [...src.matchAll(/\{ key: '([a-zA-Z]+)',\s+flag:/g)].map(m => m[1]);
-    expect(keys.length).toBe(20);   // 19 overlays (Timers canvas 2026-09-29, spawn map 2026-10-12, its timers pop-out 2026-10-13) + the Dock
+    expect(keys.length).toBe(21);   // 20 overlays (Timers canvas 2026-09-29, spawn map 2026-10-12, its timers pop-out 2026-10-13, Chat 2026-10-14) + the Dock
     for (const k of keys) expect(table[k], `${k} has no display name`).toBeTruthy();
   });
 });

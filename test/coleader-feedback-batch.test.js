@@ -74,7 +74,7 @@ describe('the tray menu always opens', () => {
     expect(dash).toContain('window.mimic.quitApp()');
   });
   it('quitting never waits on an unsaved Settings window', () => {
-    const bq = sliceBlock(main, "app.on('before-quit', () => {", '\n});');
+    const bq = sliceBlock(main, "app.on('before-quit', (e) => {", '\n});');
     expect(bq).toContain('settingsWindow.destroy()');
   });
 });

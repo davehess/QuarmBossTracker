@@ -145,10 +145,44 @@
   body.part-timers #mapPane, body.part-timers #cfg{display:none !important}
   body.part-timers #side{display:flex !important;flex:1 1 auto}
   body.part-timers #setupbar select, body.part-timers #setupbar span[title]{display:none}
+  /* Full mode (the guild lead, 2026-10-14: "give map a toggle full vs window mode"): the window is laid over EverQuest's
+     client area by main and is click-through always, like the Timers canvas, so only the buttons take the mouse. There is
+     no ✥ (nothing to move), no timers column (the pop-out still works), and a small control pair at the top-right to go
+     back to Window and open the settings. */
+  body.full #move-btn, body.full #drag-controls, body.full #sideBtn, body.full #side{display:none !important}
+  body.full.unlocked{outline:none}
+  #fullCtl{display:none;position:fixed;top:6px;right:30px;z-index:66;gap:4px}
+  body.full #fullCtl{display:flex}
+  body.full.setup #fullCtl{top:30px}
+  /* Keep-clear areas: the canvas paints the background itself (minus the holes), so the pane's own is off while any exist. */
+  #mapPane.holes{background:none}
+  #clearEdit{position:absolute;inset:0;z-index:7;cursor:crosshair;background:rgba(88,166,255,0.05)}
+  #clearEdit[hidden]{display:none}
+  #clearBar{position:absolute;top:34px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:6px;padding:3px 8px;
+    border-radius:5px;background:rgba(14,17,22,0.96);border:1px solid rgba(88,166,255,0.7);font-size:10px;color:#c9d1d9;cursor:default;white-space:nowrap}
+  #clearBar button{background:rgba(22,27,34,.9);color:#c9d1d9;border:1px solid rgba(110,118,129,0.5);border-radius:4px;font:inherit;font-size:10px;padding:1px 6px;cursor:pointer}
+  #clearBar button:hover{border-color:#58a6ff;color:#fff}
+  .cbox{position:absolute;box-sizing:border-box;pointer-events:none}
+  .cbox.user{border:1.5px dashed #58a6ff;background:rgba(88,166,255,0.12)}
+  .cbox.ui{border:1px dotted rgba(240,180,41,0.75);background:rgba(240,180,41,0.06)}
+  .cbox.band{border:1.5px dashed #f0b429;background:rgba(240,180,41,0.1)}
+  .cbox .cx{position:absolute;top:-1px;right:-1px;width:16px;height:16px;padding:0;line-height:14px;font-size:10px;border-radius:3px;pointer-events:auto;cursor:pointer;
+    background:rgba(14,17,22,0.9);color:#f87171;border:1px solid rgba(248,113,113,0.7)}
+  #cfg .note{font-size:9.5px;line-height:1.35;color:#8b949e;padding:2px 0 0}
+  #cfg .note.warn{color:#f0b429}
+  /* ⚙ → Keep clear: every game window found in the UI file, tick = keep it clear, hover = outline it on the map. */
+  #clearList{max-height:176px;overflow-y:auto;margin:3px 0;padding:2px 4px;border:1px solid rgba(110,118,129,0.3);border-radius:4px}
+  #clearList .crow:hover{background:rgba(88,166,255,0.14)}
+  #clearList .crow .sub{color:#6e7681}
+  #clearList .crow.off .bl{color:#8b949e}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner - same on every overlay)">✥</button>
   <button id="hide-btn" title="Hide the Map (turn back on from the tray → Overlays)">✕</button>
+  <div id="fullCtl">
+    <button class="tb" id="fullWinBtn" type="button" title="Back to Window mode: the Map returns to the size and spot it had.">▢ Window</button>
+    <button class="tb" id="fullCfgBtn" type="button" title="Map settings">⚙</button>
+  </div>
   <div id="drag-controls">
     <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
     <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
@@ -180,13 +214,20 @@
         <button class="tb" id="fitBtn" type="button" title="Fit the view. Click to cycle: zone, group, raid.">Fit zone</button>
         <button class="tb" id="panBtn" type="button" title="Over this button: the mouse wheel zooms, and dragging it pans the map, locked or not. A click switches Pan on, so the whole map drags and zooms; right-click centres on you.">✋ Pan / zoom</button>
         <button class="tb on" id="labelsBtn" type="button" title="Names on the map: boss names and room names. Switch off when it gets busy.">Labels: on</button>
+        <button class="tb on" id="namesBtn" type="button" title="Raiders' names: show or hide the name beside each raid and group member's dot. The dots stay, and mob names are not touched (the same switch as ⚙ → Group names and Raid names).">Raiders</button>
         <button class="tb on" id="dotsBtn" type="button" title="Spawn points: show or hide the spawn dots (the same switch as ⚙ → Spawn points).">•</button>
         <button class="tb" id="aggroBtn" type="button" title="Aggro rings: how close you can get to each spawn before it aggros (its aggro radius). Red: KOS to you (from its faction, your race, class and deity, your con, or an illusion it does not see through). Yellow: not KOS to you, but KOS to some players. Green: KOS to nobody. Dashed: how far it comes to help a friend (social aggro). Your target carries its own rings. Points on a running respawn timer have no ring.">◯</button>
+        <button class="tb" id="modeBtn" type="button" title="Full screen: the Map covers EverQuest's window and you click straight through it to the game. Window: the Map is a window you place, as before. The same switch as ⚙ → Mode and the tray.">▣ Full</button>
         <button class="tb" id="cfgBtn" type="button" title="Map settings: what is drawn, the height ranges, the ability icons, colours and the background">⚙</button>
       </div>
       <button class="tb" id="sideBtn" type="button" title="Slide the respawn timers list in or out. Slid in, the map takes the whole width.">Timers ▸</button>
       <div id="card"></div>
       <div id="menu"></div>
+      <!-- Edit clear areas: drag a box on the map to keep it clear of drawing. Interactive only while editing (data-wp-interact). -->
+      <div id="clearEdit" hidden data-wp-interact>
+        <div id="clearBoxes"></div>
+        <div id="clearBar"><span id="clearHint">Drag to mark an area to keep clear · ✕ removes a box</span><button id="clearAll" type="button">Clear all</button><button id="clearDone" type="button">Done</button></div>
+      </div>
     </div>
       <!-- ⚙ Map settings (the guild lead, 2026-10-12: "a config section for the map that pops up similar to the hud's").
            Rows are built in JS from CFG_SHOW / CFG_GLYPHS / CFG_COLS; data-wp-interact arms the click-through window. -->
@@ -194,6 +235,8 @@
         <div class="chead"><b>Map settings</b><span class="sp"></span><button id="cfgClose" type="button" title="Close">✕</button></div>
         <!-- Opacity first (the guild lead, 2026-10-13: "Own strength should say opacity in the options and should be right at the top"). -->
         <label class="row" title="How see-through the map's background is. Off: it follows Mimic's own background slider (setup bar)."><input type="checkbox" id="cfgBgOwn"><span class="bl">Opacity</span><input type="range" id="cfgBgA" min="0" max="1" step="0.05"></label>
+        <label class="row" title="How bold the map's lines, rings and dots are. Normal is the thin look; Strong and Max thicken walls and routes, give them a dark edge, and make rings and dots stronger so they read over the game."><span class="bl">Line strength</span><input type="range" id="cfgInk" min="1" max="3" step="0.25"><span class="val" id="cfgInkVal"></span></label>
+        <label class="row" title="Window: the Map is a window you place, as before. Full screen: it covers EverQuest's window and you click straight through it to the game; the same switch as the toolbar's ▣ and the tray."><span class="bl">Mode</span><select id="cfgMode"><option value="window">Window</option><option value="full">Full screen</option></select></label>
         <div class="grp">Heights</div>
         <label class="row" title="Walls this far above or below you stay bright; the rest fade. Height is in game units: you are about 6 tall, one floor is roughly 30 to 60, so ±100 is about your floor and the ones next to it."><span class="bl" id="levelsVal">Levels</span><input id="levels" type="range" min="0" max="7" step="1"></label>
         <label class="row" title="Spawn points this far above or below you are shown; the rest are hidden. Same height units as Levels: ±25 is about your own floor, ±100 a floor or two either way."><span class="bl" id="spawnVal">Spawn height</span><input id="spawnLevels" type="range" min="0" max="7" step="1"></label>
@@ -209,6 +252,15 @@
         <div class="row"><span class="bl">Colour</span><input type="color" id="cfgBg"><button class="rs" type="button" id="cfgBgRs" title="Back to the scheme's colour">↺</button></div>
         <div class="grp">Text</div>
         <label class="row"><span class="bl">Label size</span><input type="range" id="cfgText" min="0.7" max="1.8" step="0.1"><span class="val" id="cfgTextVal"></span></label>
+        <div class="grp">Keep clear</div>
+        <label class="row" title="Nothing is drawn on the map inside the windows EverQuest has open (read from your character's UI file), nor inside your own clear areas, so a see-through map never sits over your UI. On by default in Full screen."><input type="checkbox" id="cfgAvoid"><span class="bl">Avoid EQ windows</span></label>
+        <div class="row"><button type="button" id="clearEditBtn" title="Drag boxes on the map for areas to keep clear. Saved for this character on this screen setup.">Edit clear areas</button><button type="button" id="clearReread" title="Read EverQuest's window again (where it is and which windows are open)">⟳</button></div>
+        <label class="row" title="Draw a dashed outline and name around every area the map keeps clear (amber), every game window it draws over (grey) and your own boxes (blue). Off: they show only while these settings are open or you are editing, so nothing sits over the game during a raid."><input type="checkbox" id="cfgShowClear"><span class="bl">Outline clear areas</span></label>
+        <div class="row"><span class="bl" id="clearListHead">Game windows</span><button type="button" id="clearListReset" title="Back to the defaults: every window with a known size kept clear, the guessed ones drawn over">Defaults</button></div>
+        <div id="clearList"></div>
+        <div class="note" id="clearListNote">Tick a window to keep it clear; untick it to let the map draw over it. Hover a row to outline it on the map. “Size unknown” windows start unticked: the UI file does not say how big they are.</div>
+        <div class="note warn" id="clearRes" hidden></div>
+        <div class="note" id="clearNote">EverQuest saves its window positions when you camp or zone, so a window you moved since then needs its box adjusted here, or a camp or zone to save it.</div>
         <div class="foot"><span>Saved on this computer.</span><button id="cfgReset" type="button">Reset to default</button></div>
       </div>
     <div id="side">
@@ -272,6 +324,7 @@
     window.mimic.onBgAlpha(function(v){
       var a = (typeof v === 'number' && v >= 0.15 && v <= 1.0) ? v : 0.55;
       try { document.documentElement.style.setProperty('--bg-alpha', String(a)); } catch (e) {}
+      try { S.bgAlpha = a; } catch (e) {}
     });
   }
   var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
@@ -445,6 +498,50 @@
     }
     return null;
   }
+  // Mezzes and lulls on the rings (the guild lead, 2026-10-13: "add zzz's if it's mezzed" · "if it's truly pacified make
+  // the circle light pink and have it fill in the outside like a clock wipe more red until the pacify wears off. bard
+  // pacify is much shorter" · "druid harmony is still red on the inside at the lowered range, since it doesn't make
+  // aggro radius 0 like pacify"). The agent sends cc: [{ name, spawn_id, mez: {until}, calm: { kind: 'pacify' |
+  // 'harmony', startedAt, until, byBard, radiusFactor } }] from the landings Target Info keeps; each calm runs for its
+  // own spell's length, so a bard lull's wipe is just short. 'pacify' = the mob will not attack even if you collide with
+  // it (pink); 'harmony' (Harmony, Wake of Tranquility) only SHRINKS the radius, so its inside stays the normal colour.
+  // ⚠ HARMONY_FACTOR is a GUESS: the spell catalog carries no SPA 30 magnitude, so the agent sends radiusFactor null and
+  // this stands in. Replace it when a measured ring arrives.
+  var HARMONY_FACTOR = 0.5;
+  var CALM_PINK = '#ffb3d1', CALM_RED = '#ff3b30';
+  // Which entries are THIS mob's. Same name always; both ids known: they must agree. An entry with no id, or a mob with
+  // no id, belongs only to your own target (a landing we cannot pin to a spawn must not pink every mob of that name).
+  // Several: the latest mez; a pacify beats a harmony, the later end within a kind.
+  function ccFor(list, name, id, isTarget) {
+    if (!list || !list.length) return null;
+    var k = npcKey(name), out = null;
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i];
+      if (!c || npcKey(c.name) !== k) continue;
+      if (c.spawn_id != null && id != null ? Number(c.spawn_id) !== Number(id) : !isTarget) continue;
+      if (!out) out = { mez: null, calm: null };
+      if (c.mez && (!out.mez || c.mez.until > out.mez.until)) out.mez = c.mez;
+      var a = c.calm, b = out.calm;
+      if (a && (!b || (a.kind === 'pacify' && b.kind !== 'pacify') || (a.kind === b.kind && a.until > b.until))) out.calm = a;
+    }
+    return out && (out.mez || out.calm) ? out : null;
+  }
+  // What to draw for it right now, null = the normal ring. frac = how much of the calm is spent (0 at the landing, 1 at
+  // the end: the clock wipe); once `until` passes the whole thing is null again.
+  function ringState(cc, now) {
+    if (!cc) return null;
+    var mez = !!(cc.mez && cc.mez.until > now), k = cc.calm;
+    var calm = null;
+    if (k && k.until > now && k.until > k.startedAt) {
+      var f = Number(k.radiusFactor);
+      calm = { kind: k.kind === 'harmony' ? 'harmony' : 'pacify', byBard: !!k.byBard,
+        frac: Math.min(1, Math.max(0, (now - k.startedAt) / (k.until - k.startedAt))),
+        factor: f > 0 && f < 1 ? f : HARMONY_FACTOR };
+    }
+    return mez || calm ? { mez: mez, calm: calm } : null;
+  }
+  // The radius the ring is drawn at: a harmony shrinks it, a pacify keeps the whole circle (it is the fill that changes).
+  function calmRadius(ar, calm) { return calm && calm.kind === 'harmony' ? ar * calm.factor : ar; }
   // The route to light for your target (the guild lead, 2026-10-13: "this mob is going across the map and not on a path
   // line. Ideally it would highlight the path line"). Pinned to a point: that point's route. Not pinned (a walker that
   // left its point before you targeted it): of the routes its name walks, the one with a waypoint nearest the mob.
@@ -604,10 +701,13 @@
   // we should see that path"). Returns the trail to keep.
   // A crumb laid after more than TRAIL_GAP_MS without one (you tabbed away and back) starts a new stretch (`brk`):
   // it is not joined to the last one by a straight line, and the heading is never read across the gap.
+  // `aggro`: the mob has a target of its own right now (Zeal's assist bar ToT), so it is chasing someone, not walking
+  // its route; remembered as `agAt` so a leg walked through it is never learned (noteWanderLeg).
   var TRAIL_STEP = 4, TRAIL_MAX = 600, TRAILS_MAX = 40, TRAIL_GAP_MS = 2500;
-  function trailStep(tr, key, x, y, now) {
+  function trailStep(tr, key, x, y, now, aggro) {
     if (x == null || y == null) return tr;
     if (!tr || tr.key !== key) tr = { key: key, pts: [], legs: [], seen: now };
+    if (aggro) tr.agAt = now;
     var last = tr.pts[tr.pts.length - 1];
     if (!last || Math.hypot(x - last.x, y - last.y) >= TRAIL_STEP) {
       var c = { x: x, y: y, t: now };
@@ -623,6 +723,7 @@
   // redish-orange. Pathing can be yellow"): 'path' within OFF_PATH of its route (or HOME_R of its spawn point when it
   // walks none), 'away' off it and getting further, 'back' off it and closing in. The crumb where it first stepped off
   // is marked `leave`. `home` = homeOf(...); null = nothing known, everything reads as pathing.
+  var FOCUS_COL = '#ff3df2';   // the raid's focus mob (MA's target / most targeted): magenta, used nowhere else on the map
   var TRAIL_COL = { path: '#ffd23f', away: '#ff3b30', back: '#ff7a33' };
   // Random wanderers (EQEmu grid types 1 Random10, 2 Random, 5 Rand5LoS, 7 CenterPoint, 8 RandomCenterPoint) walk
   // straight to a random waypoint, not along the list, so a line through the list in order is a path nobody walks:
@@ -801,7 +902,20 @@
   // Record the leg the trail's latest stretch lies on (a new one only when it changes), so the path keeps the
   // waypoint-to-waypoint legs the mob was seen walking. Returns the leg once the mob ARRIVES at its far waypoint
   // (within LEG_REACH): a walked leg, confirmed, which the caller keeps for good (/api/map-leg). null otherwise.
-  var LEG_REACH = 12;
+  // A leg is learned only if the mob WALKED it (the guild lead, 2026-10-13, a swarm kited by a bard drawn across a
+  // dozen paths it never walks: "ignore when a mob is aggroed and has a circular path chasing a bard"): never from a
+  // mob that has had a target of its own while you watched it (`agAt`: pulled, so it is chasing or walking home), and
+  // only when its last leg-length of walking (at least half the leg seen) was close to a straight line: straight-line
+  // distance at least LEG_STRAIGHT of the distance walked. A chase that sweeps past a waypoint fails both; the
+  // straight-line test also covers a Zeal that sends no target-of-target.
+  var LEG_REACH = 12, LEG_STRAIGHT = 0.8;
+  function legWalked(tr, s, a, b) {
+    if (tr.agAt != null) return false;
+    var len = Math.hypot(b[0] - a[0], b[1] - a[1]), walked = 0, i = s.length - 1;
+    while (i > 0 && walked < len) { walked += Math.hypot(s[i].x - s[i - 1].x, s[i].y - s[i - 1].y); i--; }
+    var end = s[s.length - 1];
+    return walked >= len * 0.5 && Math.hypot(end.x - s[i].x, end.y - s[i].y) >= LEG_STRAIGHT * walked;
+  }
   function noteWanderLeg(tr, gpts) {
     var s = trailStretch(tr);
     if (s.length < 2) return null;
@@ -813,7 +927,7 @@
       if (leg && (!top || top.prev !== leg.prev || top.next !== leg.next)) tr.legs.push(top = leg);
     }
     var np = top && gpts[top.next];
-    if (top && !top.done && np && Math.hypot(np[0] - last.x, np[1] - last.y) <= LEG_REACH) { top.done = true; return top; }
+    if (top && !top.done && np && Math.hypot(np[0] - last.x, np[1] - last.y) <= LEG_REACH) { top.done = true; return legWalked(tr, s, gpts[top.prev], np) ? top : null; }
     return null;
   }
   // An arrowhead on the line from screen point a to b, its tip `t` of the way along (0.6: the guild lead, 2026-10-13,
@@ -888,13 +1002,17 @@
     return { x: -((px - w / 2) / view.scale + view.cx), y: -((py - h / 2) / view.scale + view.cy) };
   }
   // Your speed in game units a second, over the samples of the last ~1.5 s (null until there is a full second).
-  // ponytail: units/s, not Zeal's "% of normal run": the pipe sends no speed and we have no measured base yet.
   var SPEED_WINDOW_MS = 1500;
   function speedOf(hist) {
     if (!hist || hist.length < 2) return null;
     var a = hist[0], b = hist[hist.length - 1], dt = b.t - a.t;
     return dt >= 1000 ? Math.hypot(b.x - a.x, b.y - a.y) / dt * 1000 : null;
   }
+  // ...shown as Zeal's map shows it: % of normal run. The base is measured, not looked up: the guild lead's
+  // screenshot, 2026-10-14, had Zeal at 277% while this read 84 u/s, so 100% ≈ 30.3 u/s. One reading; a timed
+  // unbuffed run would tighten it.
+  var RUN_BASE_UPS = 30.3;
+  function runPct(ups) { return ups == null ? null : ups / RUN_BASE_UPS * 100; }
   // Your own map files (the agent's `local_map`, read on this computer and never sent anywhere; the guild lead,
   // 2026-10-12: "A for outdoor walls"). Their lines are already in the server frame, so they draw like spawn points.
   // Walls: Auto draws them whenever the zone has any, Ours only never does. Their colours are the map author's
@@ -979,6 +1097,7 @@
     ['you', 'You'], ['target', 'Target ring'], ['targetLine', 'Line to target'], ['distance', 'Distance to target'],
     ['targetName', 'Target name'], ['tot', 'Target\'s target (assist bar)'],
     ['pinLine', 'Target → its spawn point'], ['trail', 'Target\'s walked path'], ['conNames', 'Mob names in con colour'], ['group', 'Group'], ['groupNames', 'Group names'], ['raid', 'Raid'], ['raidNames', 'Raid names'],
+    ['focus', 'Raid focus target (MA / most targeted)'],
   ];
   var CFG_GLYPHS = [
     ['👁', 'Sees invisible'], ['👁ᵤ', 'Sees invisible to undead'], ['🥷', 'Sees through hide'], ['↯', 'Summons'],
@@ -1017,7 +1136,25 @@
     for (k in MAP_SCHEMES.default) col[k] = MAP_SCHEMES.default[k];
     // wallMode 'layers' (Brewall's floor colours) is the default since 2026-10-13; wallV marks a save made after that,
     // so an older save's 'map' (never chosen, it was the old default) moves to 'layers' and a newer one is kept.
-    return { show: show, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1 };
+    return { show: show, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1, ink: INK_DEFAULT, avoidEq: null, showClear: false };
+  }
+  // ⚙ → Line strength (the guild lead, 2026-10-13, over the game with Opacity full and no background: "make the maps
+  // and spawns more intense for how defined the lines and whatnot are ... its difficult to see"). One number, 1 to 3:
+  // 1 draws exactly what the Map drew before; above it walls, routes and rings get thicker and stronger, dots grow, and
+  // walls and routes get a dark casing so they read over a busy scene. Strong (1.75) is the default.
+  var INK_MIN = 1, INK_MAX = 3, INK_DEFAULT = 1.75;
+  function inkStyle(k) {
+    k = Math.min(INK_MAX, Math.max(INK_MIN, Number(k) || INK_DEFAULT));
+    var s = k - 1;
+    return {
+      line: k,                                   // line widths multiply by this
+      dot: 1 + s * 0.35,                         // spawn and raid/group dot radius
+      casing: Math.min(0.75, s * 0.5),           // the dark outline under walls and routes (0 = none)
+      ringFill: Math.min(0.22, 0.07 * k),        // aggro ring fill
+      ringLine: Math.min(1, 0.6 + s * 0.25),     // aggro ring outline
+      ringW: 1 + s * 0.6,                        // aggro ring outline width
+      faint: Math.min(0.6, 0.25 + s * 0.15),     // walls off your floor
+    };
   }
   // A saved settings object -> a complete, valid one. Unknown keys and bad values are dropped, never trusted.
   function mergeMapCfg(saved) {
@@ -1030,6 +1167,9 @@
     if (saved.wallMode === 'one' || saved.wallMode === 'layers' || (saved.wallMode === 'map' && saved.wallV === 2)) c.wallMode = saved.wallMode;
     if (typeof saved.bgA === 'number' && saved.bgA >= 0 && saved.bgA <= 1) c.bgA = saved.bgA;
     if (typeof saved.text === 'number' && saved.text >= 0.7 && saved.text <= 1.8) c.text = Math.round(saved.text * 10) / 10;
+    if (typeof saved.ink === 'number' && saved.ink >= INK_MIN && saved.ink <= INK_MAX) c.ink = Math.round(saved.ink * 4) / 4;
+    if (typeof saved.avoidEq === 'boolean') c.avoidEq = saved.avoidEq;   // null (unset) follows the mode
+    if (saved.showClear === true) c.showClear = true;   // outlines always on; off shows them only while ⚙ is open or editing
     return c;
   }
   // Picking a scheme replaces every colour; editing one colour afterwards makes the scheme "custom".
@@ -1059,6 +1199,84 @@
     }
     return null;
   }
+  // ── Full mode and keep-clear areas (the guild lead, 2026-10-14: "give map a toggle full vs window mode, and have it avoid
+  // drawing over UI elements when see through maps are in position") ──────────────────────────────────────────────────
+  // Rectangles are { x, y, w, h }. uiRectsToMap takes EverQuest's windows as the UI ini states them (EverQuest client pixels,
+  // laid out for res = { w, h }) to this window's own coordinates, using EverQuest's client area and this window's rectangle
+  // on screen ({ x, y, width, height }, both in the same screen units). What lies wholly outside the window is dropped, the
+  // rest is clipped to it; `i` is the rectangle's place in the list it came from, so a caller can tell which one it was.
+  function uiRectsToMap(rects, eqClient, mapWin, res) {
+    var out = [];
+    if (!rects || !eqClient || !mapWin) return out;
+    var sx = res && res.w > 0 ? eqClient.width / res.w : 1, sy = res && res.h > 0 ? eqClient.height / res.h : 1;
+    for (var i = 0; i < rects.length; i++) {
+      var r = rects[i];
+      if (!r) continue;
+      var x0 = eqClient.x + r.x * sx - mapWin.x, y0 = eqClient.y + r.y * sy - mapWin.y;
+      var x1 = x0 + r.w * sx, y1 = y0 + r.h * sy;
+      var cx0 = Math.max(0, x0), cy0 = Math.max(0, y0), cx1 = Math.min(mapWin.width, x1), cy1 = Math.min(mapWin.height, y1);
+      if (cx1 - cx0 < 1 || cy1 - cy0 < 1) continue;
+      out.push({ x: cx0, y: cy0, w: cx1 - cx0, h: cy1 - cy0, name: r.name, id: r.id, text: r.text, notes: r.notes, guess: !!r.guess, keep: r.keep !== false, i: i });
+    }
+    return out;
+  }
+  // Is the point inside any area? (left and top edges in, right and bottom edges out)
+  function inClearArea(x, y, areas) {
+    if (!areas) return false;
+    for (var i = 0; i < areas.length; i++) {
+      var a = areas[i];
+      if (x >= a.x && x < a.x + a.w && y >= a.y && y < a.y + a.h) return true;
+    }
+    return false;
+  }
+  // The raider's own boxes are kept as fractions of EverQuest's client area (so a box means the same place at any window size
+  // or screen). fracRectsToMap puts them in this window; winRectToFrac is the way back, from a box dragged here.
+  function fracRectsToMap(fracs, ref, mapWin) {
+    var scaled = (fracs || []).map(function (f) { return { x: f.x * 1000, y: f.y * 1000, w: f.w * 1000, h: f.h * 1000 }; });
+    return uiRectsToMap(scaled, ref, mapWin, { w: 1000, h: 1000 });
+  }
+  function winRectToFrac(r, ref, mapWin) {
+    return { x: (mapWin.x + r.x - ref.x) / ref.width, y: (mapWin.y + r.y - ref.y) / ref.height, w: r.w / ref.width, h: r.h / ref.height };
+  }
+  // Two corners (any order) -> a rectangle.
+  function normRect(ax, ay, bx, by) { return { x: Math.min(ax, bx), y: Math.min(ay, by), w: Math.abs(bx - ax), h: Math.abs(by - ay) }; }
+  // Avoid EQ windows: unset follows the mode (on in Full, off in Window); ticked or unticked is the raider's own choice.
+  function avoidEqOn(cfg, mode) { return cfg && typeof cfg.avoidEq === 'boolean' ? cfg.avoidEq : mode === 'full'; }
+  // Everything to keep clear, in this window's coordinates: { ui, user }. `clear` = { ui: { rects, res }, ref, boxes }.
+  // `ui` = the game windows to cut out (Avoid on, and not ticked off in the list); `off` = the rest of the windows found, which
+  // the map draws over (kept so they can be outlined and listed); `user` = the raider's own boxes.
+  function buildClearAreas(clear, avoid, mapWin) {
+    var out = { ui: [], off: [], user: [] };
+    if (!clear || !mapWin || !clear.ref) return out;
+    if (clear.ui && clear.ui.rects) {
+      var all = uiRectsToMap(clear.ui.rects, clear.ref, mapWin, clear.ui.res);
+      for (var i = 0; i < all.length; i++) (avoid && all[i].keep ? out.ui : out.off).push(all[i]);
+    }
+    out.user = fracRectsToMap(clear.boxes, clear.ref, mapWin);
+    return out;
+  }
+  // The outlines drawn on the map, in stage px: every area with its kind ('ui' kept, 'off' drawn over, 'user' the raider's box)
+  // and the name it is labelled with - the window's own section name, or "Your area N" for a box.
+  function outlinesToStage(areas, k, left, top) {
+    var out = [];
+    var add = function (list, kind) {
+      var px = clearToStage(list, k, left, top);
+      for (var n = 0; n < list.length; n++) {
+        var src = list[n];
+        out.push({ x: px[n].x, y: px[n].y, w: px[n].w, h: px[n].h, kind: kind,
+          id: kind === 'user' ? 'user:' + src.i : (src.id || 'ui:' + String(src.name).toLowerCase()),
+          text: kind === 'user' ? 'Your area ' + (src.i + 1) : (src.text || src.name || 'window'), guess: !!src.guess });
+      }
+    };
+    add(areas.ui, 'ui'); add(areas.off, 'off'); add(areas.user, 'user');
+    return out;
+  }
+  // The window's screen units (DIPs) <-> the page's CSS px (they differ under an overlay zoom: k = innerWidth / window width),
+  // and the stage's own corner inside the page.
+  function clearToStage(areas, k, left, top) {
+    return areas.map(function (a) { return { x: a.x * k - left, y: a.y * k - top, w: a.w * k, h: a.h * k }; });
+  }
+  function stageToWin(r, k, left, top) { return { x: (r.x + left) / k, y: (r.y + top) / k, w: r.w / k, h: r.h / k }; }
   // ── end pure helpers ──
 
   // ── state ──
@@ -1092,6 +1310,11 @@
   })();
   S.cfg = (function () { try { return mergeMapCfg(JSON.parse(lsGet('wp-map-cfg') || 'null')); } catch (e) { return mapCfgDefaults(); } })();
   function saveCfg() { lsSet('wp-map-cfg', JSON.stringify(S.cfg)); }
+  // Window / Full mode (main owns it: cfg.mapMode), and the keep-clear areas: what main last reported, the same in page px.
+  S.mode = 'window';
+  S.clear = { ui: null, ref: null, win: null, boxes: [], char: '', asked: '', eq: false, edit: false, hot: null, client: null };
+  S.clearPx = []; S.clearWin = { ui: [], off: [], user: [] }; S.clearK = 1; S.clearOut = [];
+  S.bgAlpha = 0.55;   // Mimic's own background strength (the setup slider), for the canvas-painted background
   // The background: its colour always from the settings; its strength from them only when the Opacity box is ticked.
   function applyCfgCss() {
     var root = document.documentElement.style;
@@ -1124,7 +1347,7 @@
   // map you cannot click through to EverQuest would eat every click under it. The dots, buttons and rows are
   // real buttons / data-wp-interact elements, so they arm the window by themselves.
   function syncInteract() {
-    var on = S.panMode || _unlocked;
+    var on = S.panMode || (_unlocked && S.mode !== 'full');   // Full is click-through always: unlocking does not wall off the game
     if (on) stage.setAttribute('data-wp-interact', ''); else stage.removeAttribute('data-wp-interact');
     document.getElementById('panBtn').classList.toggle('on', S.panMode);
   }
@@ -1189,6 +1412,7 @@
     S.skew = (p.now || Date.now()) - Date.now();
     S.p = p;
     syncWallNote();
+    noteClearKey();   // a new zone or character: read the keep-clear areas again
     S.timerBy = {}; S.candBy = {}; S.seenBy = {};
     (p.timers || []).forEach(function (t) { S.timerBy[String(t.point_id)] = t; });
     noteKills(p, S.trails, S);
@@ -1250,7 +1474,8 @@
       spdHist.push({ t: rt, x: d.x, y: d.y });
       while (spdHist.length > 2 && rt - spdHist[1].t >= SPEED_WINDOW_MS) spdHist.shift();
       var sp = speedOf(spdHist);
-      line = locText(d.x, d.y) + (sp != null ? ' · ' + Math.round(sp) + ' u/s' : '');
+      line = locText(d.x, d.y) + (sp != null ? ' · ' + Math.round(runPct(sp)) + '%' : '');
+      locBarEl.title = sp != null ? Math.round(sp) + ' units a second (100% = normal run, ' + RUN_BASE_UPS + ' u/s)' : '';
     } else spdHist = [];
     locBarEl.textContent = line;
     locBarEl.style.fontSize = Math.round(10 * (S.cfg.text || 1)) + 'px';   // follows ⚙ → Label size (the guild lead, 2026-10-13: "Location and speed should have scaling as well")
@@ -1314,6 +1539,7 @@
     cv.width = Math.floor(S.w * dpr); cv.height = Math.floor(S.h * dpr);
     if (!S.fitted && S.points.length && !S.follow) fitNow();
     placeTools();
+    rebuildClear(true);   // the stage moved or changed size: the keep-clear areas are re-placed on it
     renderMap();
   }
   // Fit the view to the whole zone (default) or to you + your group / raid. Returns the plan ({use, note}) so the
@@ -1390,11 +1616,12 @@
     var list = routeList(S.points, sz, range, srange, targetGrid);
     if (onlyTarget) list = list.filter(function (it) { return it.gid === targetGrid; });
     ctx.lineCap = 'butt';
+    var RK = inkStyle(S.cfg.ink).line;   // ⚙ → Line strength: thicker, and the background routes a little stronger
     list.forEach(function (it) {
       var g = S.grids[it.gid], hot = S.hoverGrid === it.gid, tgt = it.gid === targetGrid;
       // With a targeted walker, every other route steps back (the guild lead, 2026-10-13: "the other ones should fade").
-      ctx.globalAlpha = hot || tgt ? 1 : targetGrid ? (it.near ? 0.3 : 0.12) : it.near ? 0.75 : 0.25;
-      ctx.setLineDash(tgt ? [7, 3] : [4, 4]); ctx.lineWidth = tgt ? 2.2 : hot ? 1.8 : 1.2;
+      ctx.globalAlpha = hot || tgt ? 1 : Math.min(1, (targetGrid ? (it.near ? 0.3 : 0.12) : it.near ? 0.75 : 0.25) * (0.6 + 0.4 * RK));
+      ctx.setLineDash(tgt ? [7, 3] : [4, 4]); ctx.lineWidth = (tgt ? 2.2 : hot ? 1.8 : 1.2) * RK;
       ctx.strokeStyle = tgt ? S.cfg.col.routeTarget : hot ? ROUTE_HOT : S.cfg.col.route;
       if (RANDOM_WANDER[Number(g.type)]) {
         // The legs its mobs have been seen walking, waypoint to waypoint (learned, kept by the agent): solid once seen
@@ -1433,17 +1660,49 @@
   // One mob's rings at (x, y) px: the aggro radius solid, in the colour of whom it is a danger to (aggroKind), and the
   // social (assist) radius dashed, drawn only when it differs from the aggro one (equal, the solid edge stands for both).
   var AGGRO_COL = { none: 'aggroNone', safe: 'aggroSafe', kos: 'aggro' };
-  function aggroRing(x, y, ar, as, kind) {
-    var c = S.cfg.col[AGGRO_COL[kind]] || S.cfg.col.aggro, sc = S.view.scale;
-    ctx.lineWidth = 1;
-    if (ar * sc >= 4) {
-      ctx.beginPath(); ctx.arc(x, y, ar * sc, 0, 6.2832);
-      ctx.fillStyle = hexA(c, 0.07); ctx.fill(); ctx.strokeStyle = hexA(c, 0.6); ctx.stroke();
+  // cc = ccFor() of that mob, now = the map's clock: a pacified mob (single target: it will not attack) is a light pink
+  // disc with a band round its edge that a red sweep fills clockwise from 12 o'clock as the pacify runs out; a harmony
+  // keeps the normal fill and colour but at the shrunken radius (the full one left as a faint dashed line), with the
+  // same band; a mez adds "zzz". All three end on their own `until`, back to the normal ring (ringState).
+  function aggroRing(x, y, ar, as, kind, cc, now) {
+    var c = S.cfg.col[AGGRO_COL[kind]] || S.cfg.col.aggro, sc = S.view.scale, I = inkStyle(S.cfg.ink);
+    var rs = ringState(cc, now), calm = rs && rs.calm, pacified = !!calm && calm.kind === 'pacify', rr = calmRadius(ar, calm);
+    ctx.lineWidth = I.ringW;
+    if (calm && !pacified && ar * sc >= 4) {   // harmony: where the ring was
+      ctx.beginPath(); ctx.setLineDash([2, 4]); ctx.arc(x, y, ar * sc, 0, 6.2832);
+      ctx.strokeStyle = hexA(c, 0.4); ctx.stroke(); ctx.setLineDash([]);
+    }
+    if (rr * sc >= 4) {
+      ctx.beginPath(); ctx.arc(x, y, rr * sc, 0, 6.2832);
+      ctx.fillStyle = hexA(pacified ? CALM_PINK : c, pacified ? Math.max(0.2, I.ringFill * 2.2) : I.ringFill); ctx.fill();
+      ctx.strokeStyle = hexA(pacified ? CALM_PINK : c, I.ringLine); ctx.stroke();
+      if (calm) calmBand(x, y, rr * sc, calm.frac);
     }
     if (as > 0 && as !== ar && as * sc >= 4) {
       ctx.beginPath(); ctx.setLineDash([5, 4]); ctx.arc(x, y, as * sc, 0, 6.2832);
-      ctx.strokeStyle = hexA(c, 0.5); ctx.stroke(); ctx.setLineDash([]);
+      ctx.strokeStyle = hexA(c, I.ringLine - 0.1); ctx.stroke(); ctx.setLineDash([]);
     }
+    if (rs && rs.mez) mezZzz(x, y, now);
+  }
+  // The clock wipe: a band just inside the ring's edge, pink, with the spent part (frac of the way round, clockwise from
+  // 12 o'clock) filled red and redder as it goes.
+  function calmBand(x, y, R, frac) {
+    var w = Math.max(3, Math.min(10, R * 0.16)), a0 = -Math.PI / 2;
+    function sector(f, col) {
+      ctx.beginPath(); ctx.arc(x, y, R, a0, a0 + 6.2832 * f, false); ctx.arc(x, y, R - w, a0 + 6.2832 * f, a0, true); ctx.closePath();
+      ctx.fillStyle = col; ctx.fill();
+    }
+    sector(0.9999, hexA(CALM_PINK, 0.55));
+    if (frac > 0.002) sector(frac, hexA(CALM_RED, 0.55 + 0.4 * frac));
+  }
+  // "zzz" over a mezzed mob: three z's climbing up and to the right, each swelling in turn.
+  function mezZzz(x, y, now) {
+    var ga = ctx.globalAlpha;
+    for (var i = 0; i < 3; i++) {
+      ctx.globalAlpha = ga * (0.55 + 0.45 * Math.sin(now / 280 - i * 1.1));
+      halo('z', x + 7 + i * 6, y - 9 - i * 7, 'bold ' + (9 + i * 3) + 'px ui-monospace,Consolas,monospace', '#9ecbff', 'center');
+    }
+    ctx.globalAlpha = ga;
   }
   // The trail (trailStep): each stretch in the colour of what the mob was doing (classifyTrail: yellow pathing, red off
   // its home, reddish-orange walking back), a glowing red spot where it stepped off, the waypoint legs it was seen
@@ -1561,6 +1820,68 @@
   }
   // animating = called from the frame loop mid-glide (the spawn-dot buttons are then laid out at most every HITS_MS).
   function renderMap(animating) {
+    renderMapInner(animating);
+    paintHoles();
+  }
+  // Keep-clear areas: the pane's own background steps aside while any exist and the canvas paints it instead (behind
+  // everything, at the strength the pane would have had), then the areas are cut out of the whole picture - background,
+  // walls, dots, labels, arrows - so a see-through map never sits over the UI. With none it draws nothing extra, and the
+  // pane's CSS background is back: Window mode with no areas is exactly the map it always was.
+  function paintHoles() {
+    if (PART_TIMERS) return;
+    var areas = S.clearPx;
+    if (paneEl) paneEl.classList.toggle('holes', areas.length > 0);
+    if (areas.length) {
+      var a = S.cfg.bgA != null ? S.cfg.bgA : S.bgAlpha;
+      ctx.save();
+      ctx.globalCompositeOperation = 'destination-over';
+      ctx.fillStyle = hexA(S.cfg.col.bg, a);
+      ctx.fillRect(0, 0, S.w, S.h);
+      ctx.restore();
+      for (var i = 0; i < areas.length; i++) ctx.clearRect(areas[i].x, areas[i].y, areas[i].w, areas[i].h);
+    }
+    paintOutlines();
+  }
+  // See what is kept clear (the guild lead, 2026-10-14: "What UI element is this looking to avoid? ... We should be able to
+  // see what's hidden and what is not"). A thin dashed outline and the area's name on every area: amber dashes = kept clear,
+  // grey dots = a game window the map draws over (ticked off, or Avoid EQ windows is off), blue dashes = your own box. A
+  // guess carries its reason in the name. Shown while ⚙ is open or a box is being edited, and always with ⚙ → Outline clear
+  // areas: over a raid they would only be noise, while setting up they are the whole point. The row hovered in the list is
+  // drawn heavy and last. Drawn after the cuts, on top: the outlines never take part in what is cut.
+  function outlinesOn() { return !!(S.cfg && S.cfg.showClear) || cfgOpen() || !!S.clear.edit; }
+  function paintOutlines() {
+    var list = S.clearOut;
+    if (!list || !list.length || !outlinesOn()) return;
+    ctx.save();
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.textBaseline = 'top';
+    var hot = S.clear.hot, i;
+    var one = function (o, isHot) {
+      var col = o.kind === 'user' ? '#58a6ff' : o.kind === 'off' ? '#8b949e' : '#f0b429';
+      ctx.setLineDash(o.kind === 'off' ? [2, 3] : [6, 3]);
+      ctx.lineWidth = isHot ? 3 : 1.25;
+      ctx.strokeStyle = isHot ? '#ffffff' : col;
+      if (isHot) { ctx.fillStyle = 'rgba(255,255,255,0.14)'; ctx.fillRect(o.x, o.y, o.w, o.h); }
+      ctx.strokeRect(o.x + 0.75, o.y + 0.75, Math.max(0, o.w - 1.5), Math.max(0, o.h - 1.5));
+      ctx.setLineDash([]);
+      var text = o.text + (o.kind === 'off' ? ' · drawn over' : '');
+      var tw = ctx.measureText(text).width;
+      var ly = o.h < 22 && o.y >= 16 ? o.y - 15 : o.y + 2;
+      var lx = Math.max(2, Math.min(o.x + 2, S.w - tw - 10));
+      ctx.fillStyle = 'rgba(13,17,23,0.88)';
+      ctx.fillRect(lx, ly, tw + 8, 13);
+      ctx.fillStyle = isHot ? '#ffffff' : col;
+      ctx.fillText(text, lx + 4, ly + 2);
+    };
+    for (i = 0; i < list.length; i++) {
+      if (list[i].id === hot) continue;
+      if (list[i].kind === 'user' && S.clear.edit) continue;   // the editing layer draws these, with their ✕
+      one(list[i], false);
+    }
+    for (i = 0; i < list.length; i++) if (list[i].id === hot) one(list[i], true);
+    ctx.restore();
+  }
+  function renderMapInner(animating) {
     if (PART_TIMERS) return;   // the pop-out has no map pane to draw
     var dpr = window.devicePixelRatio || 1;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1572,17 +1893,23 @@
     var ox = w / 2 - v.cx * v.scale, oy = h / 2 - v.cy * v.scale;
     var sz = selfZ(), range = levelRange();
     var C = S.cfg, SH = C.show, CO = C.col;   // ⚙ Map settings: what is drawn, and in which colours
+    var I = inkStyle(C.ink);                  // ⚙ → Line strength
     var oneWall = C.wallMode === 'one';
+    // A wall pass: the dark casing first (over a busy game scene the coloured line alone gets lost), then the line.
+    var strokeWall = function (style, width, casing) {
+      if (casing > 0) { ctx.strokeStyle = 'rgba(0,0,0,' + casing + ')'; ctx.lineWidth = width + 2; ctx.stroke(); }
+      ctx.strokeStyle = style; ctx.lineWidth = width; ctx.stroke();
+    };
     // Walls. Your own map files when you have them for this zone (Walls: Auto): each line bright when its middle is
     // within the level range of you, faint otherwise. Else ours below.
     if (!SH.walls) { /* switched off in ⚙ */ }
     else if (localWalls()) {
-      ctx.lineCap = 'butt'; ctx.lineWidth = 1;
+      ctx.lineCap = 'butt';
       var lvOn = !!range && sz != null;
       for (var lg = 0; lg < S.local.groups.length; lg++) {
         var G = S.local.groups[lg];
         for (var pass = 0; pass < (lvOn ? 2 : 1); pass++) {   // 0 = bright, 1 = faint; with no level limit everything is bright
-          ctx.strokeStyle = oneWall ? hexA(CO.wall, pass === 0 ? 0.85 : 0.25) : (pass === 0 ? G.bright : G.faded);
+          var wallStyle = oneWall ? hexA(CO.wall, pass === 0 ? 0.85 : I.faint) : (pass === 0 ? G.bright : G.faded);
           ctx.beginPath();
           for (var li = 0, lj = 0; li < G.xy.length; li += 4, lj++) {
             if (lvOn && inLevelRange(G.z[lj], sz, range) !== (pass === 0)) continue;
@@ -1590,7 +1917,7 @@
             if ((lx1 < 0 && lx2 < 0) || (lx1 > w && lx2 > w) || (ly1 < 0 && ly2 < 0) || (ly1 > h && ly2 > h)) continue;
             ctx.moveTo(lx1, ly1); ctx.lineTo(lx2, ly2);
           }
-          ctx.stroke();
+          strokeWall(wallStyle, pass === 0 ? I.line : Math.max(1, I.line * 0.7), pass === 0 ? I.casing : I.casing / 2);
         }
       }
       ctx.lineCap = 'round';
@@ -1599,8 +1926,7 @@
       for (var b = 0; b < S.prep.gen.length; b++) {
         var bright = S.prep.bands.length <= 1 || inLevelRange(S.prep.bands[b], sz, range);
         var layerCol = C.wallMode === 'layers' ? brewallLayer(S.prep.bands, b, sz) : null;
-        ctx.strokeStyle = hexA(layerCol || (oneWall ? CO.wall : CO.oursWall), bright ? 0.95 : 0.35);
-        ctx.lineWidth = bright ? 1.6 : 1;
+        var oursStyle = hexA(layerCol || (oneWall ? CO.wall : CO.oursWall), bright ? 0.95 : Math.max(0.35, I.faint));
         var a = S.prep.gen[b];
         ctx.beginPath();
         for (var i = 0; i < a.length; i += 4) {
@@ -1608,7 +1934,7 @@
           if ((x1 < 0 && x2 < 0) || (x1 > w && x2 > w) || (y1 < 0 && y2 < 0) || (y1 > h && y2 > h)) continue;
           ctx.moveTo(x1, y1); ctx.lineTo(x2, y2);
         }
-        ctx.stroke();
+        strokeWall(oursStyle, (bright ? 1.6 : 1) * I.line, bright ? I.casing : I.casing / 2);
       }
     }
     // Spawn dots, and first the pather routes (under the dots; every route in range, not only visible points').
@@ -1637,9 +1963,10 @@
       for (var ai = 0; ai < vis.length; ai++) {
         var ap = vis[ai].p, at = S.timerBy[String(ap.id)];
         if (at && timerState(at, now) === 'wait') continue;
-        var aun = upNpc(ap, upOn(ap.id, S.p, S.seenBy));
+        var aup = upOn(ap.id, S.p, S.seenBy), aun = upNpc(ap, aup);
+        var acc = aup && S.p ? ccFor(S.p.cc, aup.name, aup.spawn_id, !!(S.p.target && (String(S.p.target.point_id) === String(ap.id) || (aup.spawn_id != null && aup.spawn_id === S.p.target.id)))) : null;
         ctx.globalAlpha = inLevelRange(ap.z, sz, range) ? 1 : 0.4;
-        aggroRing(vis[ai].x, vis[ai].y, aggroRadius(ap, aun), assistRadius(ap, aun), aggroKind(ap, aun, S.p && S.p.cons, S.facs, S.p && S.p.me));
+        aggroRing(vis[ai].x, vis[ai].y, aggroRadius(ap, aun), assistRadius(ap, aun), aggroKind(ap, aun, S.p && S.p.cons, S.facs, S.p && S.p.me), acc, now);
       }
       ctx.globalAlpha = 1;
     }
@@ -1647,7 +1974,7 @@
       var p = vis[vi].p, px = vis[vi].x, py = vis[vi].y;
       var kind = pointKind(p);
       ctx.globalAlpha = inLevelRange(p.z, sz, range) ? 1 : 0.4;
-      var r = kind.raid ? 6.5 : kind.named ? 5.5 : 4.2;
+      var r = (kind.raid ? 6.5 : kind.named ? 5.5 : 4.2) * I.dot;
       var t = S.timerBy[String(p.id)], cand = S.candBy[String(p.id)], sn = S.seenBy[String(p.id)];
       var up = upOn(p.id, S.p, S.seenBy), un = upNpc(p, up);
       if (up && !sn) sn = up;   // your pinned target is alive on this point now, before the next poll says so
@@ -1689,10 +2016,36 @@
           if (names && v.scale >= 0.4) halo(m.name, q[0] + rad + 3, q[1], fontSmall, color);
         }
       };
-      if (SH.raid) dotsOf(P.raid, CO.raid, 3, 'r:', SH.raidNames);
-      if (SH.group) dotsOf(P.group, CO.group, 4, 'g:', SH.groupNames);
+      if (SH.raid) dotsOf(P.raid, CO.raid, 3 * I.dot, 'r:', SH.raidNames);
+      if (SH.group) dotsOf(P.group, CO.group, 4 * I.dot, 'g:', SH.groupNames);
+      // Tracked NPCs' walks (the agent's MAP_TRACKED_PATHS: Thelin in the hedge maze), recorded whenever anyone on this
+      // machine had them targeted, whether or not you do now: the same trail, solid while they are being watched, faded after.
+      if (SH.trail && P.paths) for (var pk in P.paths) {
+        var tkp = P.paths[pk];
+        if (!tkp._tr) tkp._tr = { pts: tkp.pts.map(function (s) { return { x: s[0], y: s[1], st: 'path', brk: s[4] === 1 }; }), legs: [] };
+        tkp._tr.dead = tkp.live ? null : 0;   // not watched now: no heading arrow
+        drawTrail(tkp._tr, null, null, null, tkp.live ? 1 : 0.6);
+        if (tkp._tr.pts.length) { var tkl = tkp._tr.pts[tkp._tr.pts.length - 1], tkq = wpt(tkl.x, tkl.y); halo(tkp.name, tkq[0] + 9, tkq[1] - 9, labelFont('small'), TRAIL_COL.path); }
+      }
       // Killed mobs' paths, faded, until KILLS_FADE more kills (noteKills).
       if (SH.trail) for (var dk in S.trails) { if (trailShown(S.trails[dk], S.kills) && !(P.target && dk === targetKey(P.target))) drawTrail(S.trails[dk], null, null, null, 0.3); }
+      // The raid's focus mob (the guild lead, 2026-10-14: "highlight the MA's target or which target has the most people
+      // targetting them"): the one Extended Target puts on top, which the agent names. One strong mark, drawn under your own
+      // target ring: a double ring in FOCUS_COL and a tag saying why ("MA", or "5 targeting"). Placed only where the agent
+      // knows it: your own target, or the spawn point a pinned mob of that name stands on.
+      if (SH.focus && P.focus) {
+        var fo = P.focus, fp = null;
+        if (fo.at === 'target' && P.target && fo.x != null) fp = drawn(targetKey(P.target), P.target, rt);
+        else if (fo.at === 'raid' && fo.x != null) fp = { x: fo.x, y: fo.y };   // the raid's shared target positions (the bot, via the agent)
+        else if (fo.at === 'point' && S.byId[String(fo.point_id)]) fp = S.byId[String(fo.point_id)];
+        if (fp) {
+          var fq = wpt(fp.x, fp.y);
+          ctx.beginPath(); ctx.arc(fq[0], fq[1], 15, 0, 6.2832); ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.stroke();
+          ctx.beginPath(); ctx.arc(fq[0], fq[1], 15, 0, 6.2832); ctx.lineWidth = 2.6; ctx.strokeStyle = FOCUS_COL; ctx.stroke();
+          ctx.beginPath(); ctx.arc(fq[0], fq[1], 9, 0, 6.2832); ctx.lineWidth = 1.4; ctx.stroke();
+          halo(fo.why === 'ma' ? 'MA' : fo.n + ' targeting', fq[0], fq[1] - 24, 'bold ' + Math.round(11 * (S.cfg.text || 1)) + 'px ui-monospace,Consolas,monospace', FOCUS_COL, 'center');
+        }
+      }
       // Target: a ring and a dotted line from you.
       if (P.target && P.target.x != null) {
         var td = drawn(targetKey(P.target), P.target, rt), tq = wpt(td.x, td.y);
@@ -1705,7 +2058,8 @@
         // The path we have watched it walk, and where it is heading (the guild lead, 2026-10-13: "Can we show the path
         // that we observed a mob walking towards?"): its positions since you targeted it, fading with age, and an
         // arrow down its last stretch of movement.
-        var tKey = targetKey(P.target), tTrail = trailStep(S.trails[tKey], tKey, P.target.x, P.target.y, rt);
+        var tAggro = !!P.target.tot && P.target.type !== 0;   // an NPC with a target of its own: chasing, not walking
+        var tKey = targetKey(P.target), tTrail = trailStep(S.trails[tKey], tKey, P.target.x, P.target.y, rt, tAggro);
         if (!S.trails[tKey]) { var tKeys = Object.keys(S.trails); if (tKeys.length >= TRAILS_MAX) delete S.trails[tKeys[0]]; }
         S.trails[tKey] = tTrail;
         var tGid = routeTarget(P.target, S.points, S.grids, S.byId), tGrid = tGid && S.grids ? S.grids[tGid] : null;
@@ -1725,7 +2079,7 @@
         // has to go at its pace (the guild lead, 2026-10-13: "I expected to see the whole extrapolated dashed line and
         // the pace of the mob going towards that point").
         var cur = tGrid && tTrail && tTrail.legs.length ? tTrail.legs[tTrail.legs.length - 1] : null;
-        if (SH.trail && cur && !cur.done && tGrid.pts[cur.prev] && tGrid.pts[cur.next]) {
+        if (SH.trail && cur && !cur.done && !tAggro && tGrid.pts[cur.prev] && tGrid.pts[cur.next]) {
           var cp = tGrid.pts[cur.prev], cn = tGrid.pts[cur.next], cpq = wpt(cp[0], cp[1]), cnq = wpt(cn[0], cn[1]);
           ctx.globalAlpha = 0.45; ctx.lineWidth = 1.6; ctx.strokeStyle = CO.target;
           ctx.beginPath(); ctx.moveTo(cpq[0], cpq[1]); ctx.lineTo(tq[0], tq[1]); ctx.stroke();
@@ -1737,7 +2091,7 @@
         }
         // No waypoint lined up ahead (or no route at all): a dashed line on along its heading while it walks, about
         // 15 seconds of its pace (150 to 800 units), in the colour of what it is doing (headingRay).
-        if (SH.trail && tTrail && tTrail.dead == null && !(cur && !cur.done)) {
+        if (SH.trail && tTrail && tTrail.dead == null && !(cur && !cur.done && !tAggro)) {
           var hr = headingRay(tTrail, 10), hs = trailSpeed(tTrail, rt, 3000);
           if (hr && hs > 0) {
             var hl = Math.min(800, Math.max(150, hs * 15)), he = wpt(P.target.x + hr.ux * hl, P.target.y + hr.uy * hl);
@@ -1749,7 +2103,7 @@
         }
         if (SH.aggro) {
           var tnpc = targetNpc(P.target, S.points, S.byId);
-          if (tnpc) aggroRing(tq[0], tq[1], aggroRadius(null, tnpc), assistRadius(null, tnpc), aggroKind(null, tnpc, P.cons, S.facs, P.me));
+          if (tnpc) aggroRing(tq[0], tq[1], aggroRadius(null, tnpc), assistRadius(null, tnpc), aggroKind(null, tnpc, P.cons, S.facs, P.me), ccFor(P.cc, P.target.name, P.target.id, true), now);
         }
         // Pinned: a thin line from the target to the spawn point it is tied to. A point that shares its route with
         // others (route twins, e.g. Plane of Valor's five golem roamers) is a guess between them: faint dashed lines
@@ -1824,6 +2178,8 @@
 
   // One transparent button per visible spawn dot (capped): the click and hover target.
   function layoutHits(vis) {
+    // Nothing draws inside a keep-clear area, so nothing there takes a click or a hover either.
+    if (S.clearPx.length) vis = vis.filter(function (v) { return !inClearArea(v.x, v.y, S.clearPx); });
     var used = {}, n = 0;
     for (var i = 0; i < vis.length && n < 600; i++, n++) {
       var pid = String(vis[i].p.id);
@@ -2116,7 +2472,7 @@
   syncWallNote();
   // ⚙ Map settings: built from CFG_SHOW / CFG_GLYPHS / CFG_COLS on first open, saved on every change.
   var cfgEl = document.getElementById('cfg'), cfgBtn = document.getElementById('cfgBtn');
-  function cfgCommit() { saveCfg(); applyCfgCss(); syncAggroBtn(); syncDotsBtn(); renderMap(); }
+  function cfgCommit() { saveCfg(); applyCfgCss(); syncAggroBtn(); syncDotsBtn(); syncNamesBtn(); syncClearCtl(); rebuildClear(); }
   // ◯ on the toolbar (the guild lead, 2026-10-13: "add aggro rings onto the map, make a circle icon on the main
   // screen"): the same switch as ⚙ → Show → Aggro rings.
   var aggroBtn = document.getElementById('aggroBtn');
@@ -2137,6 +2493,19 @@
     cfgCommit();
   });
   syncDotsBtn();
+  // Raiders on the toolbar (the guild lead, 2026-10-14: "map should have a quick hide raiders labels too"): the name
+  // beside every raid and group dot, in one click; the dots and the mob names stay. The same two switches as
+  // ⚙ → Group names / Raid names. Map-only: the tray and dashboard have no Map settings to mirror.
+  var namesBtn = document.getElementById('namesBtn');
+  function namesOn() { return S.cfg.show.raidNames !== false || S.cfg.show.groupNames !== false; }
+  function syncNamesBtn() { namesBtn.classList.toggle('on', namesOn()); }
+  namesBtn.addEventListener('click', function () {
+    var on = !namesOn();
+    S.cfg.show.raidNames = on; S.cfg.show.groupNames = on;
+    if (cfgBuilt) buildCfg();
+    cfgCommit();
+  });
+  syncNamesBtn();
   function cfgCheckRow(parent, checked, labelNodes, onChange) {
     var lab = el('label', 'row'), cb = document.createElement('input');
     cb.type = 'checkbox'; cb.checked = !!checked;
@@ -2181,7 +2550,10 @@
     bgOwn.checked = C.bgA != null; bgA.value = String(C.bgA != null ? C.bgA : 0.55); bgA.disabled = C.bgA == null;
     var tx = document.getElementById('cfgText'), txv = document.getElementById('cfgTextVal');
     tx.value = String(C.text); txv.textContent = Math.round(C.text * 100) + '%';
+    document.getElementById('cfgInk').value = String(C.ink);
+    document.getElementById('cfgInkVal').textContent = inkWord(C.ink);
   }
+  function inkWord(k) { return k <= 1 ? 'Normal' : k >= INK_MAX ? 'Max' : k >= 1.75 ? 'Strong' : 'Medium'; }
   // The fixed controls are wired once; buildCfg only refreshes their values.
   document.getElementById('cfgScheme').addEventListener('change', function (e) {
     if (MAP_SCHEMES[e.target.value]) { applyScheme(S.cfg, e.target.value); buildCfg(); cfgCommit(); }
@@ -2204,6 +2576,11 @@
     document.getElementById('cfgTextVal').textContent = Math.round(S.cfg.text * 100) + '%';
     cfgCommit();
   });
+  document.getElementById('cfgInk').addEventListener('input', function (e) {
+    S.cfg.ink = Math.round(parseFloat(e.target.value) * 4) / 4;
+    document.getElementById('cfgInkVal').textContent = inkWord(S.cfg.ink);
+    cfgCommit();
+  });
   document.getElementById('cfgReset').addEventListener('click', function () { S.cfg = mapCfgDefaults(); buildCfg(); cfgCommit(); });
   // ⚙ opens the settings in the side slot, where the Timers list sits (the list steps aside while they are open), so the
   // map stays fully in view while it changes. If the list was slid in, the slot opens the same way the Timers button
@@ -2214,7 +2591,9 @@
     var before = slotOpen();
     cfgEl.hidden = !open; cfgBtn.classList.toggle('on', open);
     wrapEl.classList.toggle('cfgopen', open);
+    if (!open) S.clear.hot = null;
     slotChanged(before);
+    renderMap();   // the clear-area outlines show while these settings are open
   }
   cfgBtn.addEventListener('click', function () { setCfgOpen(!cfgOpen()); });
   document.getElementById('cfgClose').addEventListener('click', function () { setCfgOpen(false); });
@@ -2239,7 +2618,7 @@
   function slotChanged(before) {
     var after = slotOpen();
     var w0 = window.outerWidth || window.innerWidth || 0, h0 = window.outerHeight || window.innerHeight || 0;
-    if (before !== after && S.sideMode === 'grow' && w0 && h0 && window.mimic && typeof window.mimic.overlaySetBounds === 'function') {
+    if (before !== after && S.sideMode === 'grow' && S.mode !== 'full' && w0 && h0 && window.mimic && typeof window.mimic.overlaySetBounds === 'function') {
       window.mimic.overlaySetBounds({ width: w0 + (after ? SIDE_W : -SIDE_W), height: h0 });   // resize follows via the observer
     } else resize();
   }
@@ -2268,7 +2647,9 @@
       S.sideOpen = true;
     } else S.sideOpen = !S.sideOpen;
     lsSet('wp-map-side', S.sideOpen ? 1 : 0); syncSide();
+    S.clear.hot = null;
     slotChanged(before);
+    renderMap();
   });
   sideModeSel.addEventListener('change', function () {
     S.sideMode = sideModeSel.value === 'share' ? 'share' : 'grow'; lsSet('wp-map-side-mode', S.sideMode);
@@ -2340,6 +2721,239 @@
     e.preventDefault();
     if (S.p && S.p.self) { var s = toScreen(S.p.self.x, S.p.self.y); S.view.cx = s.sx; S.view.cy = s.sy; renderMap(); }
   });
+
+  // ── Window / Full mode, and the keep-clear areas ─────────────────────────────────────────────────────────────────
+  // Main owns the mode (cfg.mapMode) because the tray and the dashboard flip it too: this page asks main to change it,
+  // and follows what main says. Full lays the window over EverQuest and makes it click-through (main.js _setMapMode);
+  // here that only changes the chrome (no ✥, no timers column, the ▢ Window / ⚙ pair at the top-right).
+  var modeBtn = document.getElementById('modeBtn'), cfgModeSel = document.getElementById('cfgMode');
+  var cfgAvoid = document.getElementById('cfgAvoid'), clearEditBtn = document.getElementById('clearEditBtn');
+  var cfgShowClear = document.getElementById('cfgShowClear');
+  var clearListEl = document.getElementById('clearList'), clearListHead = document.getElementById('clearListHead');
+  var clearResEl = document.getElementById('clearRes');
+  var clearEditEl = document.getElementById('clearEdit'), clearBoxesEl = document.getElementById('clearBoxes');
+  function syncMode() {
+    var full = S.mode === 'full';
+    document.body.classList.toggle('full', full);
+    modeBtn.textContent = full ? '▢ Window' : '▣ Full';
+    modeBtn.classList.toggle('on', full);
+    cfgModeSel.value = S.mode;
+    syncInteract(); syncClearCtl();
+    resize();
+  }
+  function applyMode(m) {
+    m = m === 'full' ? 'full' : 'window';
+    if (m === S.mode) return;
+    S.mode = m; syncMode();
+    if (m !== 'full' && S.clear.edit) setClearEdit(false);
+    refreshClear(false);   // the window moved: main has just read EverQuest's rectangle afresh, so this is the cheap read
+  }
+  function setMode(m) {
+    m = m === 'full' ? 'full' : 'window';
+    if (window.mimic && window.mimic.setMapMode) { try { window.mimic.setMapMode(m).then(applyMode).catch(function () {}); } catch (e) {} }
+    else applyMode(m);
+  }
+  modeBtn.addEventListener('click', function () { setMode(S.mode === 'full' ? 'window' : 'full'); });
+  cfgModeSel.addEventListener('change', function () { setMode(cfgModeSel.value); });
+  document.getElementById('fullWinBtn').addEventListener('click', function () { setMode('window'); });
+  document.getElementById('fullCfgBtn').addEventListener('click', function () { setCfgOpen(!cfgOpen()); });
+  if (!PART_TIMERS) {
+    window.mimic && window.mimic.onMapMode && window.mimic.onMapMode(applyMode);
+    window.mimic && window.mimic.getMapMode && window.mimic.getMapMode().then(applyMode).catch(function () {});
+    window.mimic && window.mimic.onMapGeom && window.mimic.onMapGeom(function (b) {
+      if (b && isFinite(b.width) && b.width > 0) { S.clear.win = b; rebuildClear(); }   // the window moved or was resized
+    });
+  }
+  // The keep-clear areas as main last reported them, converted to this window (uiRectsToMap) and then to stage px.
+  function stageBox() { try { return stage.getBoundingClientRect(); } catch (e) { return { left: 0, top: 0 }; } }
+  function clearK() {
+    var w = S.clear.win;
+    return w && w.width > 0 && window.innerWidth > 0 ? window.innerWidth / w.width : 1;
+  }
+  function rebuildClear(noRender) {
+    if (PART_TIMERS) return;
+    var r = stageBox(), k = clearK();
+    S.clearK = k;
+    S.clearWin = buildClearAreas(S.clear, avoidEqOn(S.cfg, S.mode), S.clear.win);
+    S.clearPx = clearToStage(S.clearWin.ui.concat(S.clearWin.user), k, r.left || 0, r.top || 0);
+    S.clearOut = outlinesToStage(S.clearWin, k, r.left || 0, r.top || 0);
+    renderClearList();
+    if (S.clear.edit) renderClearEdit();
+    if (!noRender) renderMap();
+  }
+  function syncClearCtl() {
+    cfgAvoid.checked = avoidEqOn(S.cfg, S.mode);
+    cfgShowClear.checked = !!S.cfg.showClear;
+    clearEditBtn.textContent = S.clear.edit ? 'Done editing' : 'Edit clear areas';
+    clearEditBtn.classList.toggle('on', !!S.clear.edit);
+  }
+  // Read main again on a new zone or character, when the mode changes, and every minute: the ini only changes when EverQuest
+  // saves it, and EverQuest's rectangle is cached over there (fresh = ask Windows again, only from ⟳ or a mode change).
+  function charName() { return S.p && S.p.self && S.p.self.name ? String(S.p.self.name) : ''; }
+  function refreshClear(fresh) {
+    if (PART_TIMERS || !(window.mimic && window.mimic.mapClearAreas)) return;
+    var ch = charName();
+    S.clear.asked = ch;
+    try {
+      window.mimic.mapClearAreas({ fresh: !!fresh, char: ch }).then(function (r) {
+        if (!r) return;
+        S.clear.ui = r.ui || null; S.clear.ref = r.ref || null; S.clear.win = r.win || S.clear.win; S.clear.eq = !!r.eq;
+        S.clear.client = (r.ui && r.ui.client) || null;
+        if (!S.clear.edit) S.clear.boxes = r.boxes || [];   // never replace boxes under the raider's hand
+        S.clear.char = r.char || '';
+        rebuildClear();
+      }).catch(function () {});
+    } catch (e) {}
+  }
+  var clearKey = null;
+  function noteClearKey() {
+    var key = (S.p && S.p.zone ? S.p.zone : '') + '|' + charName();
+    if (key === clearKey) return;
+    clearKey = key; refreshClear(false);
+  }
+  document.getElementById('clearReread').addEventListener('click', function () { refreshClear(true); });
+  cfgAvoid.addEventListener('change', function () { S.cfg.avoidEq = !!cfgAvoid.checked; cfgCommit(); });
+  cfgShowClear.addEventListener('change', function () { S.cfg.showClear = !!cfgShowClear.checked; cfgCommit(); });
+
+  // ⚙ → Keep clear: every game window found in the character's UI file (and Zeal's bars), named as the file names it. A tick
+  // keeps the window clear, no tick lets the map draw over it; the pick is saved by main for this character on this screen
+  // setup. A window whose size is not in the file starts unticked ("size unknown"). Hovering a row outlines that area on the
+  // map. The rows are rebuilt only when the windows themselves change, so a tick or a poll never replaces what the mouse is on.
+  var clearRows = {}, clearListSig = '';
+  var LIST_NOTE = { 'size guessed': 'size unknown' };
+  function clearRects() { return S.clear.ui && S.clear.ui.rects ? S.clear.ui.rects : []; }
+  function setHot(id) { if (S.clear.hot === id) return; S.clear.hot = id; renderMap(); }
+  function renderClearList() {
+    if (PART_TIMERS) return;
+    var rects = clearRects(), i, r;
+    var sig = rects.map(function (x) { return x.id + '|' + x.text; }).join('\n');
+    if (sig !== clearListSig) {
+      clearListSig = sig; clearRows = {};
+      clearListEl.innerHTML = '';
+      if (!rects.length) clearListEl.appendChild(el('div', 'note', 'No open game windows found in your UI file yet.'));
+      for (i = 0; i < rects.length; i++) {
+        (function (rc) {
+          var row = el('label', 'row crow'), cb = el('input'), name = el('span', 'bl', rc.name);
+          cb.type = 'checkbox';
+          var notes = (rc.notes || []).map(function (n) { return LIST_NOTE[n] || n; });
+          if (notes.length) name.appendChild(el('span', 'sub', ' · ' + notes.join(', ')));
+          row.title = rc.text + ' · ' + rc.w + ' x ' + rc.h + ' at ' + rc.x + ', ' + rc.y + ' in EverQuest' + (rc.guess ? '. Not stated in your UI file, so it is a guess.' : '.');
+          row.setAttribute('data-wp-interact', '');
+          row.appendChild(cb); row.appendChild(name);
+          cb.addEventListener('change', function () { pickWindow(rc.id, !!cb.checked); });
+          row.addEventListener('mouseenter', function () { setHot(rc.id); });
+          row.addEventListener('mouseleave', function () { setHot(null); });
+          clearListEl.appendChild(row);
+          clearRows[rc.id] = { row: row, cb: cb };
+        })(rects[i]);
+      }
+    }
+    var kept = 0;
+    for (i = 0; i < rects.length; i++) {
+      r = rects[i];
+      var rw = clearRows[r.id];
+      if (r.keep !== false) kept++;
+      if (rw) { rw.cb.checked = r.keep !== false; rw.row.classList.toggle('off', r.keep === false); }
+    }
+    clearListHead.textContent = rects.length ? 'Game windows: ' + kept + ' of ' + rects.length + ' kept clear' : 'Game windows';
+    var res = S.clear.ui && S.clear.ui.res, cl = S.clear.client;
+    var mismatch = !!(res && res.match === false && cl);
+    clearResEl.hidden = !mismatch;
+    if (mismatch) clearResEl.textContent = 'EverQuest is running at ' + cl.w + 'x' + cl.h + ' but your UI file was last saved for ' + res.w + 'x' + res.h
+      + ', so these positions are scaled guesses and start unticked. Camp or zone in EverQuest to save the layout for this size.';
+  }
+  function pickWindow(id, keep) {
+    var rects = clearRects();
+    for (var i = 0; i < rects.length; i++) if (rects[i].id === id) rects[i].keep = keep;
+    rebuildClear();   // the cut-out changes at once; main then confirms what it saved
+    try {
+      window.mimic && window.mimic.mapClearPickSet && window.mimic.mapClearPickSet(S.clear.char || charName(), id, keep).then(function (ui) {
+        if (ui) { S.clear.ui = ui; S.clear.client = ui.client || S.clear.client; rebuildClear(); }
+      }).catch(function () {});
+    } catch (e) {}
+  }
+  document.getElementById('clearListReset').addEventListener('click', function () {
+    var rects = clearRects();
+    for (var i = 0; i < rects.length; i++) rects[i].keep = !rects[i].guess;
+    rebuildClear();
+    try {
+      window.mimic && window.mimic.mapClearPickSet && window.mimic.mapClearPickSet(S.clear.char || charName(), null, null).then(function (ui) {
+        if (ui) { S.clear.ui = ui; S.clear.client = ui.client || S.clear.client; rebuildClear(); }
+      }).catch(function () {});
+    } catch (e) {}
+  });
+  if (!PART_TIMERS) setInterval(function () { if (!document.hidden) refreshClear(false); }, 60000);
+
+  // Edit clear areas: drag a box anywhere on the map; the ✕ on a box removes it. Boxes are saved at once, for this
+  // character on this screen setup (main keeps them), as fractions of EverQuest's client area.
+  function saveBoxes() {
+    try { window.mimic && window.mimic.mapClearBoxesSet && window.mimic.mapClearBoxesSet(S.clear.char || charName(), S.clear.boxes); } catch (e) {}
+    rebuildClear();
+  }
+  function setClearEdit(on) {
+    S.clear.edit = !!on;
+    clearEditEl.hidden = !on;
+    document.getElementById('clearHint').textContent = S.clear.ref && S.clear.win
+      ? 'Drag to mark an area to keep clear · ✕ removes a box'
+      : 'EverQuest’s window is not known yet: try ⟳ in the settings';
+    if (on) renderClearEdit();
+    syncClearCtl();
+  }
+  function renderClearEdit() {
+    clearBoxesEl.innerHTML = '';
+    var k = S.clearK, r = stageBox(), i, a, d;
+    var shown = function (list, cls, onDel) {
+      for (i = 0; i < list.length; i++) {
+        a = clearToStage([list[i]], k, r.left || 0, r.top || 0)[0];
+        d = el('div', 'cbox ' + cls);
+        d.style.left = a.x + 'px'; d.style.top = a.y + 'px'; d.style.width = a.w + 'px'; d.style.height = a.h + 'px';
+        if (onDel) {
+          (function (src) {
+            var x = el('button', 'cx', '✕'); x.type = 'button'; x.title = 'Remove this clear area';
+            x.addEventListener('click', function (ev) { ev.stopPropagation(); S.clear.boxes.splice(src, 1); saveBoxes(); });
+            d.appendChild(x);
+          })(list[i].i);
+        }
+        clearBoxesEl.appendChild(d);
+      }
+    };
+    // The game windows are outlined and named on the canvas (paintOutlines) while editing; only the raider's boxes, which
+    // take a ✕, live in this layer.
+    shown(S.clearWin.user, 'user', true);
+  }
+  var rubber = null;
+  clearEditEl.addEventListener('mousedown', function (e) {
+    if (e.button !== 0 || (e.target.closest && e.target.closest('#clearBar, .cx'))) return;
+    if (!S.clear.ref || !S.clear.win) return;
+    var r = stageBox();
+    rubber = { x: e.clientX - (r.left || 0), y: e.clientY - (r.top || 0), el: el('div', 'cbox band') };
+    rubber.el.style.display = 'none';
+    clearBoxesEl.appendChild(rubber.el);
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', function (e) {
+    if (!rubber) return;
+    if (!(e.buttons & 1)) { rubber.el.remove && rubber.el.remove(); rubber = null; return; }   // the mouseup went to EverQuest
+    var r = stageBox(), b = normRect(rubber.x, rubber.y, e.clientX - (r.left || 0), e.clientY - (r.top || 0));
+    rubber.box = b;
+    rubber.el.style.display = 'block';
+    rubber.el.style.left = b.x + 'px'; rubber.el.style.top = b.y + 'px'; rubber.el.style.width = b.w + 'px'; rubber.el.style.height = b.h + 'px';
+  });
+  document.addEventListener('mouseup', function () {
+    if (!rubber) return;
+    var rb = rubber; rubber = null;
+    if (rb.el.remove) rb.el.remove();
+    var b = rb.box;
+    if (!b || b.w < 8 || b.h < 8 || !S.clear.ref || !S.clear.win) return;   // a click, not a box
+    var r = stageBox(), win = stageToWin(b, S.clearK, r.left || 0, r.top || 0);
+    S.clear.boxes.push(winRectToFrac(win, S.clear.ref, S.clear.win));
+    if (S.clear.boxes.length > 40) S.clear.boxes.shift();
+    saveBoxes();
+  });
+  clearEditBtn.addEventListener('click', function () { setClearEdit(!S.clear.edit); });
+  document.getElementById('clearDone').addEventListener('click', function () { setClearEdit(false); });
+  document.getElementById('clearAll').addEventListener('click', function () { S.clear.boxes = []; saveBoxes(); });
+  syncMode();
 
   window.addEventListener('resize', resize);
   try { new ResizeObserver(resize).observe(stage); } catch (e) {}

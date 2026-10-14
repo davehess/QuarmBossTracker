@@ -28,9 +28,15 @@ const EXPORTS = ['_mapServerXY', '_mapZoneShort', '_mapNormName', '_mapAttribute
   '_mapZoneDoc', '_mapPrune', '_mapEnsureZone', '_mapPaths', '_zealState', '_setRaid', '_setOpts', 'MAP_ZONE_SHORT',
   '_mapTryPin', '_mapPinGet', '_mapSync', '_mapSyncStop', '_mapSyncFlush', '_mapSyncPull', '_mapApplyRemote', '_mapLocalEvent',
   '_mapSegDist', '_mapRouteDist', '_mapCopy', '_mapCopyNoteWho', '_mapCurrentCopy', '_mapCopyInfo', 'whoData',
-  '_mapNoteCon', '_mapConsFor', '_mapMe', '_mapQuarmyIds', '_mapNoteLeg'];
+  '_mapNoteCon', '_mapConsFor', '_mapMe', '_mapQuarmyIds', '_mapNoteLeg', '_mapNotePath', '_mapFocusTarget', '_extTargetCache', '_mapCcStates', '_buffLandingsByTarget', '_spellByNameLower',
+  'MAP_TRACKED_PATHS', 'MAP_CORPSE_RE', '_mapDist2', '_mapMergePath', '_mapShownPath', '_mapApplyShared'];
 // The agent's real /consider tiers, for _mapNoteCon (they live outside the map core).
 const CON_DEFS = AGENT.slice(AGENT.indexOf('const CON_STANDINGS = ['), AGENT.indexOf('\n', AGENT.indexOf('const _CON_RX = ')));
+// The agent's real lull line and mez test, for _mapCcStates (also outside the map core).
+const LULL_DEFS = sliceBlock(AGENT, '// ── Pacify / lull line (SPA 30', 'return PACIFY_AE.has(String(name).toLowerCase().replace(/`/g, "\'").trim());\n}');
+// The agent's real "the NPC the most raiders are on" answer, which the Map's focus highlight reuses.
+const MAIN_TARGET_DEF = sliceBlock(AGENT, 'function _resolveMainTarget(activeCharacter) {', 'raider_count: best.raider_count || 0 } : null;\n}');
+const MEZ_DEF = sliceBlock(AGENT, 'function _isMezSpell(name) {', "includes('mez'));\n}");
 
 // Stand the block up over a temp dir and fake network modules.
 function loadCore({ dir, opts, net }) {
@@ -47,7 +53,15 @@ function loadCore({ dir, opts, net }) {
     function _zoneName(id) { return id === 164 ? 'The Deep' : null; }
     function _eqSetupDirs() { return []; }   // no EQ folder: the local map files are covered by test/map-local-files.test.js
     const whoData = new Map();               // the agent's /who registry (lower-cased name -> { guild, ... })
+    function _classOf(c) { const w = whoData.get(String(c || '').toLowerCase()); return w && w.class ? w.class : null; }
+    const _buffLandingsByTarget = new Map(); // what Target Info keeps: lower-cased mob -> Map(key -> landing)
+    const _spellByNameLower = new Map();     // the spell catalog, for the mez test
+    ${LULL_DEFS}
+    ${MEZ_DEF}
     ${CON_DEFS}
+    const _extTargetCache = new Map();       // the Extended Target aggregate: lower-cased character -> { at, payload }
+    function fetchExtendedTarget() {}
+    ${MAIN_TARGET_DEF}
   `;
   // eslint-disable-next-line no-new-func
   const f = new Function('fs', 'path', 'http', 'https', 'zlib', '__dirname', '__tmp', '__opts',
@@ -265,6 +279,23 @@ describe('the respawn window and its colour', () => {
     expect(Object.keys(zd.timers)).toEqual(['1']);
     k._mapPrune(zd, POINTS, T0 + 660000 + 600001);
     expect(Object.keys(zd.timers)).toEqual([]);
+  });
+  it('a timer follows its point\'s respawn when the zone data changes (2026-10-13)', () => {
+    // the guild lead, Bastion of Thunder named, killed while the cached zone data still said 6 h: "Still has the
+    // wrong timers". The window is re-worked from the death time and the point's current respawn.
+    const { c: k } = localCore();
+    k._mapNoteDeath('thedeep', { name: 'a decaying skeleton', spawn_id: 5, loc: { x: 100, y: 200 }, at: T0, src: 'zeal' }, T0);
+    const zd = k._mapZoneDoc('thedeep');
+    const long = POINTS.map(p => p.id === 1 ? Object.assign({}, p, { respawn_s: 21600, variance_s: 0 }) : p);
+    k._mapPrune(zd, long, T0 + 1000);
+    expect(zd.timers['1'].earliest).toBe(T0 + 21600000);                  // 6 h while the data says 6 h
+    const short = POINTS.map(p => p.id === 1 ? Object.assign({}, p, { respawn_s: 10800, variance_s: 0 }) : p);
+    k._mapPrune(zd, short, T0 + 2000);
+    expect(zd.timers['1'].earliest).toBe(T0 + 10800000);                  // 3 h once it says 3 h
+    expect(zd.timers['1'].latest).toBe(T0 + 10800000);
+    expect(zd.timers['1'].died_at).toBe(T0);                              // the death time is never moved
+    k._mapPrune(zd, [], T0 + 3000);                                       // no zone data: left as it was
+    expect(zd.timers['1'].earliest).toBe(T0 + 10800000);
   });
 });
 
@@ -505,7 +536,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, trailStep, wanderLeg, noteWanderLeg, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH, legArrow, LEG_ARROW_AT, classifyTrail, homeOf, homeDist, noteKills, trailShown, KILLS_FADE, TRAIL_COL, nearPack, followOffNow, labelMode, routeTwins, headingRay, toolDock, toolBox, nextFollow, spawnDistance, GATE_RANGE };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, runPct, trailStep, wanderLeg, noteWanderLeg, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH, legArrow, LEG_ARROW_AT, classifyTrail, homeOf, homeDist, noteKills, trailShown, KILLS_FADE, TRAIL_COL, nearPack, followOffNow, labelMode, routeTwins, headingRay, toolDock, toolBox, nextFollow, spawnDistance, GATE_RANGE, inkStyle, INK_DEFAULT };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -569,6 +600,22 @@ describe('the overlay (apps/mimic/map.html)', () => {
   });
 
   describe('⚙ Map settings', () => {
+    // Line strength (the guild lead, 2026-10-13: lines and spawns hard to see over the game with no background).
+    it('Line strength: 1 is exactly the old look, the default is Strong, and saves are clamped', () => {
+      expect(H.inkStyle(1)).toEqual({ line: 1, dot: 1, casing: 0, ringFill: 0.07, ringLine: 0.6, ringW: 1, faint: 0.25 });
+      const s = H.inkStyle(H.INK_DEFAULT);
+      expect(H.INK_DEFAULT).toBe(1.75);
+      expect(s.line).toBe(1.75);
+      expect(s.casing).toBeGreaterThan(0);                    // walls and routes get a dark edge
+      expect(s.dot).toBeGreaterThan(1);
+      expect(s.ringLine).toBeGreaterThan(0.6);
+      expect(H.inkStyle(9)).toEqual(H.inkStyle(3));           // out of range clamps
+      expect(H.inkStyle(3).ringLine).toBe(1);
+      expect(H.mapCfgDefaults().ink).toBe(1.75);
+      expect(H.mergeMapCfg({ ink: 2.6 }).ink).toBe(2.5);      // quarter steps
+      expect(H.mergeMapCfg({ ink: 7 }).ink).toBe(1.75);       // a bad save falls back to the default
+      expect(H.mergeMapCfg({ ink: 1 }).ink).toBe(1);          // Normal is kept
+    });
     it('defaults: everything shown except the aggro rings, no icon off, and the Default scheme is exactly the colours the map drew before', () => {
       const d = H.mapCfgDefaults();
       expect(Object.entries(d.show).filter(([k]) => k !== 'aggro' && k !== 'conNames').every(([, v]) => v)).toBe(true);
@@ -633,8 +680,8 @@ describe('the overlay (apps/mimic/map.html)', () => {
       const js = stripJs(MAP_HTML);
       expect(js).toMatch(/if \(as > 0 && as !== ar && as \* sc >= 4\) \{/);
       expect(js).toMatch(/ctx\.setLineDash\(\[5, 4\]\); ctx\.arc\(x, y, as \* sc/);
-      expect(js).toMatch(/if \(tnpc\) aggroRing\(tq\[0\], tq\[1\], aggroRadius\(null, tnpc\), assistRadius\(null, tnpc\), aggroKind\(null, tnpc, P\.cons, S\.facs, P\.me\)\);/);
-      expect(js).toMatch(/aggroKind\(ap, aun, S\.p && S\.p\.cons, S\.facs, S\.p && S\.p\.me\)/);
+      expect(js).toMatch(/if \(tnpc\) aggroRing\(tq\[0\], tq\[1\], aggroRadius\(null, tnpc\), assistRadius\(null, tnpc\), aggroKind\(null, tnpc, P\.cons, S\.facs, P\.me\), ccFor\(P\.cc, P\.target\.name, P\.target\.id, true\), now\);/);
+      expect(js).toMatch(/aggroKind\(ap, aun, S\.p && S\.p\.cons, S\.facs, S\.p && S\.p\.me\), acc, now\)/);
       // an unpinned target's label carries its spawn id
       expect(js).toMatch(/\+ \(P\.target\.id != null \? ' #' \+ P\.target\.id : ''\) : '';/);
     });
@@ -699,7 +746,7 @@ describe('the overlay (apps/mimic/map.html)', () => {
       expect(H.aggroRadius({ npcs: [{ aggro: null }] }, null)).toBe(0);         // an old zone cache: no radius, no ring
       const js = stripJs(MAP_HTML);
       expect(js).toMatch(/if \(at && timerState\(at, now\) === 'wait'\) continue;/);   // nothing up there: no ring
-      expect(js).toMatch(/if \(ar \* sc >= 4\) \{/);                               // no ring that would be a speck
+      expect(js).toMatch(/if \(rr \* sc >= 4\) \{/);                               // no ring that would be a speck (rr = ar unless a harmony shrank it)
       expect(MAP_HTML).toMatch(/<button class="tb" id="aggroBtn" type="button"[^>]*>◯<\/button>/);
     });
     it('a saved object is merged key by key; bad values and unknown keys are dropped', () => {
@@ -929,6 +976,97 @@ describe('pather routes', () => {
     const c2 = loadCore({ dir, opts: { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: '' }, net });
     expect(c2._mapZoneDoc('thedeep').legs[7]['0-1'].n).toBe(2);                         // kept across a restart
   });
+  it('a tracked NPC (Thelin) has his walk recorded off any target window and sent with the map state (2026-10-14)', () => {
+    // the guild lead: "for Thelin, if anyone is targetting him we should track that path and put his path on the map"
+    const net = fakeNet();
+    const c = loadCore({ dir, opts: { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: '' }, net });
+    c._zealState.Aldenmar = { zone: 204, updatedAt: 1e18, loc: { x: 0, y: 0, z: 0 } };
+    // Pipe {x, y} is the server's {y, x} (the coordinate swap): pipe x 10 / y 100 is server x 100 / y 10.
+    const look = (name, px, py, at, extra) => c._mapNoteState('Aldenmar', null,
+      Object.assign({ zone: 204, target_name: name, target_id: 486, target_type: 1, target_hp_pct: 100, target_loc: { x: px, y: py, z: 5 } }, extra || {}), at);
+    look('Thelin Poxbourne', 10, 100, T0);
+    look('Thelin Poxbourne', 12, 104, T0 + 1000);       // 4.5 units on: not a new point
+    look('Thelin Poxbourne', 10, 240, T0 + 2000);       // 140 on
+    look('Thelin Poxbourne', 10, 380, T0 + 40_000);     // nobody had him for 38 s: the line to here is not drawn (and one point alone has not moved 100: not drawn)
+    look('Thelin Poxbourne', 10, 1380, T0 + 41_000);    // 1000 on in a second: another body of that name
+    look('Thelin Poxbourne', 10, 1520, T0 + 42_000);
+    const p = c._mapStatePayload('', T0 + 43_000);
+    expect(p.paths['thelin poxbourne'].name).toBe('Thelin Poxbourne');
+    expect(p.paths['thelin poxbourne'].pts).toEqual([
+      [100, 10, 5, T0, 0], [240, 10, 5, T0 + 2000, 0], [1380, 10, 5, T0 + 41_000, 1], [1520, 10, 5, T0 + 42_000, 0]]);
+    expect(p.paths['thelin poxbourne'].live).toBe(true);
+    expect(c._mapStatePayload('', T0 + 42_000 + 20_000).paths['thelin poxbourne'].live).toBe(false);   // not watched now
+    expect(c._mapSaveNow()).toBe(true);
+    const c2 = loadCore({ dir, opts: { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: '' }, net });
+    expect(c2._mapZoneDoc('ponightmare').paths['thelin poxbourne'].pts).toHaveLength(5);              // kept across a restart
+  });
+  it('only the named list, in its own zone, as a live NPC, is recorded; last run\'s walk is dropped (2026-10-14)', () => {
+    const net = fakeNet();
+    const c = loadCore({ dir, opts: { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: '' }, net });
+    const state = (zone, name, extra) => Object.assign({ zone, target_name: name, target_id: 9, target_type: 1, target_hp_pct: 100, target_loc: { x: 1, y: 2, z: 0 } }, extra || {});
+    c._mapNoteState('Aldenmar', null, state(204, 'a hedge spider'), T0);                                  // not on the list
+    c._mapNoteState('Aldenmar', null, state(164, 'Thelin Poxbourne'), T0);                                // right name, wrong zone
+    c._mapNoteState('Aldenmar', null, state(204, 'Thelin Poxbourne', { target_type: 0 }), T0);            // a player of that name
+    c._mapNoteState('Aldenmar', null, state(204, "Thelin Poxbourne's corpse"), T0);                       // dead
+    c._mapNoteState('Aldenmar', null, state(204, 'Thelin Poxbourne', { target_loc: null }), T0);          // no position
+    expect(c._mapZoneDoc('ponightmare').paths).toEqual({});
+    expect(c._mapZoneDoc('thedeep').paths).toEqual({});
+    c._mapNoteState('Aldenmar', null, state(204, '#Thelin_Poxbourne'), T0);                               // spelt the catalog's way
+    expect(Object.keys(c._mapZoneDoc('ponightmare').paths)).toEqual(['thelin poxbourne']);
+    const WEEK = 7 * 24 * 3_600_000;
+    c._mapNoteState('Aldenmar', null, state(204, 'Thelin Poxbourne', { target_loc: { x: 500, y: 600, z: 0 } }), T0 + WEEK);
+    expect(c._mapZoneDoc('ponightmare').paths['thelin poxbourne'].pts).toEqual([[600, 500, 0, T0 + WEEK, 0]]);   // the old walk is gone
+  });
+  it('the raid\'s focus mob rides the payload: the main assist\'s target, else the NPC the most raiders are on, placed only where known (2026-10-14)', () => {
+    // the guild lead: "highlight the MA's target or which target has the most people targetting them"
+    const seedSeen = (c, name, id) => { const zd = c._mapZoneDoc('thedeep'); zd.seen['1'] = { point_id: 1, spawn_id: id, name, at: T0 }; };
+    const rows = (extra) => ({ at: T0, payload: { targets: [
+      { kind: 'npc', name: 'a cliff golem', raider_count: 3, spawn_id: 811 },
+      { kind: 'npc', name: 'Aldenmar the Pale', raider_count: 9 },
+      { kind: 'player', name: 'Brackwyn', raider_count: 12 },
+      { kind: 'npc', name: 'a stale thing', raider_count: 20, stale: true }].concat(extra || []) } });
+    const { c } = localCore();
+    c._zealState.Aldenmar = { zone: 164, updatedAt: 1e18, loc: { x: 0, y: 0, z: 0 } };
+    expect(c._mapStatePayload('', T0 + 1).focus).toBeNull();                                    // Extended Target has nothing yet
+    c._extTargetCache.set('aldenmar', rows());
+    // no MA declared: the most targeted live NPC (never a player, never a stale row); unplaced, we do not know where it is
+    expect(c._mapStatePayload('', T0 + 2).focus).toEqual({ name: 'Aldenmar the Pale', id: null, why: 'most', n: 9 });
+    // a stale "last seen" row carrying the MA mark is not a live focus
+    c._extTargetCache.set('aldenmar', rows([{ kind: 'npc', name: 'an old thing', raider_count: 1, ma_target: true, stale: true },
+      { kind: 'player', name: 'Corvale', raider_count: 1, ma_target: true }]));
+    expect(c._mapStatePayload('', T0 + 2).focus).toMatchObject({ name: 'Aldenmar the Pale', why: 'most' });
+    // the MA's target is the one the bot marked, whatever the headcount
+    c._extTargetCache.set('aldenmar', rows([{ kind: 'npc', name: 'a cliff golem', raider_count: 1, spawn_id: 812, ma_target: true }]));
+    expect(c._mapStatePayload('', T0 + 3).focus).toEqual({ name: 'a cliff golem', id: 812, why: 'ma', n: 1 });
+    // one raider on a mob is not a focus
+    c._extTargetCache.set('aldenmar', { at: T0, payload: { targets: [{ kind: 'npc', name: 'a cliff golem', raider_count: 1 }] } });
+    expect(c._mapStatePayload('', T0 + 4).focus).toBeNull();
+    // placed: your own target is that mob (name and spawn id agree)
+    c._extTargetCache.set('aldenmar', rows());
+    c._zealState.Aldenmar = Object.assign(c._zealState.Aldenmar, { target_name: 'Aldenmar the Pale', target_id: 77, target_type: 1, target_loc: { x: 10, y: 100, z: 5 } });
+    expect(c._mapStatePayload('', T0 + 5).focus).toEqual({ name: 'Aldenmar the Pale', id: null, why: 'most', n: 9, x: 100, y: 10, z: 5, at: 'target' });
+    // ...a different mob is your target: not placed there
+    c._zealState.Aldenmar.target_name = 'a bat';
+    expect(c._mapStatePayload('', T0 + 6).focus.x).toBeUndefined();
+    // a pinned mob of that name seen alive on a spawn point: placed on that point
+    seedSeen(c, 'Aldenmar_the_Pale', 5);
+    expect(c._mapStatePayload('', T0 + 7).focus).toMatchObject({ point_id: 1, at: 'point' });
+    // ...but not a pinned mob of another name, or another spawn id
+    seedSeen(c, 'a_bat', 5);
+    expect(c._mapStatePayload('', T0 + 8).focus.point_id).toBeUndefined();
+  });
+  it('the overlay marks the focus mob with one ring and a tag saying why, behind a ⚙ switch (2026-10-14)', () => {
+    const js = stripJs(MAP_HTML);
+    expect(js).toMatch(/if \(SH\.focus && P\.focus\) \{/);
+    expect(js).toMatch(/fo\.why === 'ma' \? 'MA' : fo\.n \+ ' targeting'/);
+    expect(js).toMatch(/\['focus', 'Raid focus target \(MA \/ most targeted\)'\]/);
+  });
+  it('the overlay draws every recorded path with the trail painter, whoever has the target (2026-10-14)', () => {
+    const js = stripJs(MAP_HTML);
+    expect(js).toMatch(/if \(SH\.trail && P\.paths\) for \(var pk in P\.paths\)/);
+    expect(js).toMatch(/drawTrail\(tkp\._tr, null, null, null, tkp\.live \? 1 : 0\.6\);/);
+    expect(js).toMatch(/brk: s\[4\] === 1/);   // a gap in watching is never bridged
+  });
   it('a zone with no routes sends grids: null', () => {
     const { c } = localCore();
     c._zealState.Aldenmar = { zone: 164, updatedAt: T0, loc: { x: 1, y: 2, z: 0 } };
@@ -942,7 +1080,7 @@ describe('pather routes', () => {
     expect(js).toMatch(/ctx\.strokeStyle = tgt \? S\.cfg\.col\.routeTarget : hot \? ROUTE_HOT : S\.cfg\.col\.route;/);
     expect(js).toMatch(/if \(SH\.routes\) drawRoutes\(/);
     expect(js).toMatch(/if \(!\(Number\(g\.pts\[j\]\[3\]\) > 0\)\) continue;/);
-    expect(js).toMatch(/ctx\.globalAlpha = hot \|\| tgt \? 1 : targetGrid \? \(it\.near \? 0\.3 : 0\.12\) : it\.near \? 0\.75 : 0\.25;/);
+    expect(js).toMatch(/ctx\.globalAlpha = hot \|\| tgt \? 1 : Math\.min\(1, \(targetGrid \? \(it\.near \? 0\.3 : 0\.12\) : it\.near \? 0\.75 : 0\.25\) \* \(0\.6 \+ 0\.4 \* RK\)\);/);
     expect(js).toMatch(/S\.hoverGrid = g; renderMap\(true\)/);
     expect(js).toMatch(/if \(p\.grid != null && SH\.pather\) halo\('↻'/);
     expect(js).toMatch(/S\.grids = p\.grids \|\| null;/);
@@ -1140,7 +1278,7 @@ describe('pather routes', () => {
     expect(base.all.cfg.hidden).toBe(false);
     expect(base.all.cfgBtn.classList.contains('on')).toBe(true);
     const showRows = base.all.cfgShow.children, glyphRows = base.all.cfgGlyphs.children, colRows = base.all.cfgCols.children;
-    expect(showRows).toHaveLength(24);
+    expect(showRows).toHaveLength(25);
     expect(glyphRows).toHaveLength(9);
     expect(colRows).toHaveLength(27);
     const walls = showRows[0].children[0];                                     // Walls
@@ -1191,6 +1329,29 @@ describe('pather routes', () => {
     const tools = sliceBlock(MAP_HTML, '<div id="tools">', '</div>');
     expect(tools.indexOf('id="dotsBtn"')).toBeLessThan(tools.indexOf('id="aggroBtn"'));   // next to ◯
   });
+  it('Raiders on the toolbar hides and shows the raid and group name labels in one click, saved; dots and mob names stay (2026-10-14)', async () => {
+    // the guild lead: "map should have a quick hide raiders labels too"
+    const base = await bootOverlay();
+    expect(base.all.namesBtn.classList.contains('on')).toBe(true);
+    base.all.namesBtn.listeners.click.forEach(f => f());
+    expect(base.S.cfg.show.raidNames).toBe(false);
+    expect(base.S.cfg.show.groupNames).toBe(false);
+    expect(base.S.cfg.show.raid).toBe(true);          // the dots stay
+    expect(base.S.cfg.show.group).toBe(true);
+    expect(base.S.cfg.show.bosses).toBe(true);        // mob labels untouched
+    expect(base.S.cfg.show.upLabel).toBe(true);
+    expect(base.all.namesBtn.classList.contains('on')).toBe(false);
+    expect(JSON.parse(base.store['wp-map-cfg']).show.raidNames).toBe(false);
+    const again = await bootOverlay({ store: base.store });
+    expect(again.all.namesBtn.classList.contains('on')).toBe(false);           // remembered
+    again.all.namesBtn.listeners.click.forEach(f => f());
+    expect(again.S.cfg.show.raidNames).toBe(true);
+    expect(again.S.cfg.show.groupNames).toBe(true);
+    // a real <button> inside the toolbar: the preload arms the hover handshake on its own
+    expect(sliceBlock(MAP_HTML, '<div id="tools">', '</div>')).toMatch(/<button class="tb on" id="namesBtn" type="button"/);
+    // and the draw still hangs the names on those two switches
+    expect(stripJs(MAP_HTML)).toMatch(/dotsOf\(P\.raid, CO\.raid, 3 \* I\.dot, 'r:', SH\.raidNames\)/);
+  });
   it('the readout: /loc order, the cursor back to the server frame, speed over a full second (2026-10-13)', () => {
     // the guild lead: "the run speed and the current player location coordinates in the top left ... as well as the
     // mouseover coordinates where the player's cursor is"
@@ -1204,6 +1365,11 @@ describe('pather routes', () => {
     expect(H.speedOf([{ t: 0, x: 0, y: 0 }, { t: 500, x: 30, y: 40 }])).toBeNull();   // under a second: not yet
     expect(H.speedOf([{ t: 0, x: 0, y: 0 }, { t: 1000, x: 30, y: 40 }])).toBeCloseTo(50);
     expect(MAP_HTML).toMatch(/<div id="locBar"><\/div>/);
+    // 2026-10-14, "Our speed calculation looks wrong": Zeal's map read 277% while ours read 84 u/s. Same speed, other
+    // units; the readout now speaks Zeal's % of normal run.
+    expect(Math.round(H.runPct(84))).toBe(277);
+    expect(H.runPct(null)).toBeNull();
+    expect(MAP_HTML).toContain("Math.round(runPct(sp)) + '%'");
   });
   it('Opacity heads the settings; the walked-path trail; the Pan / zoom button zooms on the wheel and pans on a drag (2026-10-13)', async () => {
     // the guild lead: "Own strength should say opacity in the options and should be right at the top"; "Can we show the
@@ -1270,9 +1436,29 @@ describe('pather routes', () => {
     expect(js).toMatch(/if \(Number\(lg\[3\]\) > 0\) fillArrow\(legArrow\(lqa, lqb, LEG_ARROW_AT/);
     expect(js).toMatch(/if \(Number\(lg\[4\]\) > 0\) fillArrow\(legArrow\(lqb, lqa, LEG_ARROW_AT/);
     expect(js).toMatch(/if \(walked\) postLeg\(tGid, walked\);/);
-    expect(js).toMatch(/ctx\.globalAlpha = hot \|\| tgt \? 1 : targetGrid \? \(it\.near \? 0\.3 : 0\.12\) : it\.near \? 0\.75 : 0\.25;/);
+    expect(js).toMatch(/ctx\.globalAlpha = hot \|\| tgt \? 1 : Math\.min\(1, \(targetGrid \? \(it\.near \? 0\.3 : 0\.12\) : it\.near \? 0\.75 : 0\.25\) \* \(0\.6 \+ 0\.4 \* RK\)\);/);
     expect(js).toMatch(/var learned = S\.p && S\.p\.legs \? S\.p\.legs\[it\.gid\] : null/);
     expect(js).toMatch(/if \(tr\.pts\[i\]\.brk\) continue;/);
+  });
+  it('a chasing mob teaches no leg: not while it has a target, not on a curving chase (2026-10-13)', () => {
+    // the guild lead, a swarm kited by a bard drawn across a dozen paths: "we need to ignore when a mob is aggroed
+    // and has a circular path chasing a bard"
+    const g = [[0, 0], [100, 0], [100, 100]];
+    const walk = (aggroAt) => {
+      let tr = null;
+      for (let x = 10; x <= 90; x += 10) tr = H.trailStep(tr, 't:9', x, 0, x * 100, x === aggroAt);
+      return H.noteWanderLeg(tr, g);
+    };
+    expect(walk(null)).toEqual({ prev: 0, next: 1, done: true });   // a straight, unpulled walk is still learned
+    expect(walk(60)).toBeNull();                                    // it had a target partway along: not learned
+    expect(walk(10)).toBeNull();                                    // ... from the first step
+    // A chase: it heads at waypoint 1, loops round the bard, and comes back across it. No target-of-target here
+    // (an older Zeal), so the curve alone has to reject it.
+    let tr = null, t = 0;
+    for (let x = 10; x <= 50; x += 10) tr = H.trailStep(tr, 't:9', x, 0, (t += 1000));
+    for (const [x, y] of [[70, 25], [55, 50], [35, 35], [45, 10], [60, 3], [75, 1], [90, 0]]) tr = H.trailStep(tr, 't:9', x, y, (t += 1000));
+    expect(H.noteWanderLeg(tr, g)).toBeNull();
+    expect(tr.legs[tr.legs.length - 1].done).toBe(true);           // and it is not tried again
   });
   it('the trail says what the mob was doing: yellow pathing, red off its home with a glow where it left, reddish-orange walking back (2026-10-13)', () => {
     // the guild lead: "The point that the mob leaves its spawn or its path it should be glowing RED, then when it appears
@@ -2056,11 +2242,11 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
       expect(js).toMatch(/if \(S\.cfg\.bgA == null\) root\.removeProperty\('--map-bg-a'\);/);   // off = follow Mimic's slider
     });
     it('brighter, thicker walls in the level range; the rest at 0.35; out-of-range dots at 0.4; bigger lighter dots with an outline', () => {
-      expect(js).toMatch(/ctx\.strokeStyle = hexA\(layerCol \|\| \(oneWall \? CO\.wall : CO\.oursWall\), bright \? 0\.95 : 0\.35\);/);
-      expect(js).toMatch(/ctx\.lineWidth = bright \? 1\.6 : 1;/);
+      expect(js).toMatch(/var oursStyle = hexA\(layerCol \|\| \(oneWall \? CO\.wall : CO\.oursWall\), bright \? 0\.95 : Math\.max\(0\.35, I\.faint\)\);/);
+      expect(js).toMatch(/strokeWall\(oursStyle, \(bright \? 1\.6 : 1\) \* I\.line, bright \? I\.casing : I\.casing \/ 2\);/);
       expect(js).toMatch(/var bright = S\.prep\.bands\.length <= 1 \|\| inLevelRange\(S\.prep\.bands\[b\], sz, range\);/);
       expect(js).toMatch(/ctx\.globalAlpha = inLevelRange\(p\.z, sz, range\) \? 1 : 0\.4;/);
-      expect(js).toMatch(/var r = kind\.raid \? 6\.5 : kind\.named \? 5\.5 : 4\.2;/);
+      expect(js).toMatch(/var r = \(kind\.raid \? 6\.5 : kind\.named \? 5\.5 : 4\.2\) \* I\.dot;/);
       expect(js).toMatch(/: CO\.dot; ctx\.fill\(\);/);
       expect(js).toMatch(/strokeStyle = '#0d1117'; ctx\.stroke\(\);   \/\/ a dark outline on every dot/);
     });
@@ -2077,6 +2263,186 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
     });
     it('the menu gets a Clear timer button only where there is a timer or a sighting', () => {
       expect(js).toMatch(/if \(S\.timerBy\[pid\] \|\| S\.seenBy\[pid\]\) mk\('Clear timer', 'clear'\);/);
+    });
+  });
+});
+
+// Mezzes and lulls on the aggro rings (the guild lead, 2026-10-13: "add zzz's if it's mezzed" · "if it's truly pacified
+// make the circle light pink and have it fill in the outside like a clock wipe more red until the pacify wears off. bard
+// pacify is much shorter" · "druid harmony is still red on the inside at the lowered range").
+describe('aggro rings: mez, pacify and harmony', () => {
+  // eslint-disable-next-line no-new-func
+  const H = new Function(sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──')
+    + '\nreturn { ccFor, ringState, calmRadius, HARMONY_FACTOR, CALM_PINK, CALM_RED, inkStyle, hexA };')();
+  const LAND = (o) => Object.assign({ dur_ticks: 60, landed_at: T0, target_id: 77, target_name: 'a gnoll', unconfirmed: false }, o);
+  function put(c, mob, landing) {
+    const k = mob.toLowerCase();
+    if (!c._buffLandingsByTarget.has(k)) c._buffLandingsByTarget.set(k, new Map());
+    c._buffLandingsByTarget.get(k).set(landing.name.toLowerCase() + '|' + (landing.target_id || ''), landing);
+  }
+
+  describe('the agent: /api/map-state cc', () => {
+    it('a pacify: its own landing, ends at the landing\'s length (60 ticks = 6 min), not a bard, no radius factor', () => {
+      const { c } = localCore();
+      c.whoData.set('aldenmar', { class: 'Cleric' });
+      put(c, 'a gnoll', LAND({ name: 'Pacify', landed_at: T0 - 60000, cast_by: 'Aldenmar' }));
+      const cc = c._mapStatePayload('', T0, '').cc;
+      expect(cc).toEqual([{ name: 'a gnoll', spawn_id: 77, mez: null,
+        calm: { kind: 'pacify', spell: 'Pacify', startedAt: T0 - 60000, until: T0 - 60000 + 360000, byBard: false, radiusFactor: null, unconfirmed: false } }]);
+    });
+    it('a bard lull is its own, much shorter length (2 ticks = 12 s), told by the song and by the caster\'s class', () => {
+      const { c } = localCore();
+      put(c, 'a gnoll', LAND({ name: 'Silent Song of Quellious', dur_ticks: 2, landed_at: T0 - 3000 }));
+      let row = c._mapCcStates(T0)[0];
+      expect(row.calm).toMatchObject({ kind: 'pacify', byBard: true, startedAt: T0 - 3000, until: T0 - 3000 + 12000 });
+      c._buffLandingsByTarget.clear();
+      c.whoData.set('brackwyn', { class: 'Bard' });
+      put(c, 'a gnoll', LAND({ name: 'Calm', dur_ticks: 7, cast_by: 'Brackwyn' }));
+      row = c._mapCcStates(T0)[0];
+      expect(row.calm).toMatchObject({ byBard: true, until: T0 + 42000 });   // the caster's class wins over the spell
+    });
+    it('Harmony and Wake of Tranquility are harmony (they only shrink the radius); a pacify on the same mob beats them', () => {
+      const { c } = localCore();
+      put(c, 'a gnoll', LAND({ name: 'Harmony', dur_ticks: 100 }));
+      expect(c._mapCcStates(T0)[0].calm.kind).toBe('harmony');
+      c._buffLandingsByTarget.clear();
+      put(c, 'a gnoll', LAND({ name: 'Wake of Tranquility', dur_ticks: 100 }));
+      expect(c._mapCcStates(T0)[0].calm.kind).toBe('harmony');
+      put(c, 'a gnoll', LAND({ name: 'Harmony of Nature', dur_ticks: 50 }));   // targettype 5: a true pacify
+      put(c, 'a gnoll', LAND({ name: 'Calm', dur_ticks: 5 }));
+      const calm = c._mapCcStates(T0)[0].calm;
+      expect(calm.kind).toBe('pacify');
+      expect(calm.spell).toBe('Harmony of Nature');                          // the later end within the kind
+    });
+    it('a mez, by the catalog\'s mez kind; spent, worn-off and unrelated landings send nothing; two spawns stay two rows', () => {
+      const { c } = localCore();
+      c._spellByNameLower.set('enthrall', { name: 'Enthrall', cc: ['mez'] });
+      put(c, 'a gnoll', LAND({ name: 'Enthrall', dur_ticks: 4, landed_at: T0 - 6000 }));
+      put(c, 'a gnoll', LAND({ name: 'Enthrall', dur_ticks: 4, landed_at: T0 - 6000, target_id: 78 }));
+      put(c, 'a gnoll', LAND({ name: 'Slow', dur_ticks: 50 }));
+      put(c, 'a bat', LAND({ name: 'Enthrall', dur_ticks: 4, landed_at: T0 - 99000, target_name: 'a bat', target_id: 5 }));   // ran out
+      put(c, 'a rat', LAND({ name: 'Pacify', worn_off_at: T0 - 1, target_name: 'a rat', target_id: 6 }));                       // worn off
+      const rows = c._mapCcStates(T0);
+      expect(rows.map(r => r.spawn_id).sort()).toEqual([77, 78]);
+      expect(rows[0].mez).toEqual({ spell: 'Enthrall', startedAt: T0 - 6000, until: T0 - 6000 + 24000 });
+      expect(rows[0].calm).toBeNull();
+    });
+  });
+
+  describe('the overlay: who a landing belongs to, and what state it is in', () => {
+    const calm = (kind, from, to, extra) => Object.assign({ kind, startedAt: from, until: to, byBard: false, radiusFactor: null }, extra);
+    it('same name; with both ids known they must agree; without an id only your own target takes it', () => {
+      const list = [{ name: 'a gnoll', spawn_id: 77, mez: { until: T0 + 5000 }, calm: null }, { name: 'a gnoll', spawn_id: null, mez: null, calm: calm('pacify', T0, T0 + 9000) }];
+      expect(H.ccFor(list, 'a_gnoll', 77, false).mez).toEqual({ until: T0 + 5000 });
+      expect(H.ccFor(list, 'a gnoll', 77, false).calm).toBeNull();                 // the id-less pacify is not proven for 77
+      expect(H.ccFor(list, 'a gnoll', 78, false)).toBeNull();                      // another spawn of the name
+      expect(H.ccFor(list, 'a gnoll', null, false)).toBeNull();                    // no id, not your target
+      expect(H.ccFor(list, 'a gnoll', 78, true).calm.kind).toBe('pacify');         // your target takes the id-less one
+      expect(H.ccFor(list, 'a bat', 77, true)).toBeNull();
+      expect(H.ccFor(null, 'a gnoll', 77, true)).toBeNull();
+    });
+    it('a pacify beats a harmony on one mob; the later end wins within a kind', () => {
+      const list = [{ name: 'a gnoll', spawn_id: 7, calm: calm('harmony', T0, T0 + 90000) }, { name: 'a gnoll', spawn_id: 7, calm: calm('pacify', T0, T0 + 12000) }];
+      expect(H.ccFor(list, 'a gnoll', 7, false).calm.kind).toBe('pacify');
+    });
+    it('the clock wipe fraction is (now - startedAt) / (until - startedAt); a bard lull uses its own short span', () => {
+      const long = { calm: calm('pacify', T0, T0 + 400000) }, bard = { calm: calm('pacify', T0, T0 + 12000, { byBard: true }) };
+      expect(H.ringState(long, T0).calm.frac).toBe(0);
+      expect(H.ringState(long, T0 + 100000).calm.frac).toBe(0.25);
+      expect(H.ringState(bard, T0 + 6000).calm.frac).toBe(0.5);
+      expect(H.ringState(bard, T0 + 6000).calm.byBard).toBe(true);
+    });
+    it('after `until` the ring is normal again (null), for a mez and a calm alike', () => {
+      const cc = { mez: { until: T0 + 5000 }, calm: calm('pacify', T0, T0 + 9000) };
+      expect(H.ringState(cc, T0 + 4999)).toMatchObject({ mez: true, calm: { kind: 'pacify' } });
+      expect(H.ringState(cc, T0 + 5000).mez).toBe(false);
+      expect(H.ringState(cc, T0 + 8999).calm).not.toBeNull();
+      expect(H.ringState(cc, T0 + 9000)).toBeNull();
+      expect(H.ringState(null, T0)).toBeNull();
+    });
+    it('harmony shrinks the radius (a guess of half unless the agent sends the real factor); pacify keeps it whole', () => {
+      expect(H.HARMONY_FACTOR).toBe(0.5);
+      const h = H.ringState({ calm: calm('harmony', T0, T0 + 9000) }, T0).calm;
+      expect(H.calmRadius(200, h)).toBe(100);
+      expect(H.calmRadius(200, H.ringState({ calm: calm('harmony', T0, T0 + 9000, { radiusFactor: 0.6 }) }, T0).calm)).toBeCloseTo(120);
+      expect(H.calmRadius(200, H.ringState({ calm: calm('pacify', T0, T0 + 9000) }, T0).calm)).toBe(200);
+      expect(H.calmRadius(200, null)).toBe(200);
+    });
+  });
+
+  describe('the overlay: what aggroRing draws', () => {
+    const src = sliceBlock(MAP_HTML, 'var AGGRO_COL = {', '    ctx.globalAlpha = ga;\n  }');
+    const RED = '#e5534b';
+    // A recording canvas: each arc / fill / stroke in order, with the style current when it ran; halo() records its text.
+    function draw(cc, now, opts) {
+      const o = Object.assign({ ar: 200, as: 0, kind: 'kos' }, opts), ops = [], halos = [];
+      const ctx = { globalAlpha: 1, lineWidth: 1, fillStyle: '', strokeStyle: '',
+        beginPath() {}, closePath() {}, setLineDash(d) { ops.push({ op: 'dash', d }); },
+        arc(x, y, r, a0, a1, ccw) { ops.push({ op: 'arc', r, a0, a1, ccw: !!ccw }); },
+        fill() { ops.push({ op: 'fill', style: ctx.fillStyle }); }, stroke() { ops.push({ op: 'stroke', style: ctx.strokeStyle }); } };
+      const S = { cfg: { col: { aggro: RED, aggroSafe: '#e3b341', aggroNone: '#56d364' }, ink: 1 }, view: { scale: 1 } };
+      const f = new Function('ctx', 'S', 'inkStyle', 'hexA', 'halo', 'ringState', 'calmRadius', 'CALM_PINK', 'CALM_RED',
+        src + '\nreturn aggroRing;');
+      f(ctx, S, H.inkStyle, H.hexA, (t) => halos.push(t), H.ringState, H.calmRadius, H.CALM_PINK, H.CALM_RED)(0, 0, o.ar, o.as, o.kind, cc, now);
+      return { ops, halos };
+    }
+    const pink = (s) => s.startsWith(H.hexA(H.CALM_PINK, 0).slice(0, -2));   // 'rgba(r,g,b,' of the colour, any alpha
+    const red = (s) => s.startsWith(H.hexA(H.CALM_RED, 0).slice(0, -2));
+    const alpha = (s) => Number(s.slice(s.lastIndexOf(',') + 1, -1));
+    const calm = (kind, from, to, extra) => ({ calm: Object.assign({ kind, startedAt: from, until: to, byBard: false, radiusFactor: null }, extra) });
+
+    it('no crowd control: the ring as it always was - one disc in the danger colour, nothing else', () => {
+      const d = draw(null, T0);
+      expect(d.ops.filter(o => o.op === 'arc')).toEqual([{ op: 'arc', r: 200, a0: 0, a1: 6.2832, ccw: false }]);
+      expect(d.ops.find(o => o.op === 'fill').style).toBe(H.hexA(RED, 0.07));
+      expect(d.halos).toEqual([]);
+    });
+    it('pacify: a light pink disc at the full radius, and a band whose red sweep starts at 12 o\'clock and runs clockwise', () => {
+      const d = draw(calm('pacify', T0, T0 + 400000), T0 + 100000);
+      const arcs = d.ops.filter(o => o.op === 'arc');
+      expect(arcs[0].r).toBe(200);                                   // the whole circle, not shrunk
+      const fills = d.ops.filter(o => o.op === 'fill');
+      expect(pink(fills[0].style)).toBe(true);                       // the disc
+      expect(fills.some(f => H.hexA(RED, 0.07) === f.style)).toBe(false);   // not the danger colour any more
+      const sweep = arcs.find(a => a.a0 === -Math.PI / 2 && a.ccw === false && a.a1 < 0.1 && a.a1 > -0.1);
+      expect(sweep.r).toBe(200);                                     // a quarter turn: 12 o'clock to 3 o'clock
+      expect(sweep.a1).toBeCloseTo(-Math.PI / 2 + 6.2832 * 0.25, 3);
+      const redFill = fills.find(f => red(f.style));
+      expect(alpha(redFill.style)).toBeCloseTo(0.65, 2);
+      const later = draw(calm('pacify', T0, T0 + 400000), T0 + 300000).ops.filter(o => o.op === 'fill').find(f => red(f.style));
+      expect(alpha(later.style)).toBeGreaterThan(alpha(redFill.style));   // redder as it runs out
+      expect(d.halos).toEqual([]);                                   // not mezzed: no zzz
+    });
+    it('a bard lull wipes over its own short span', () => {
+      const bard = calm('pacify', T0, T0 + 12000, { byBard: true });
+      const arcs = draw(bard, T0 + 6000).ops.filter(o => o.op === 'arc');
+      expect(arcs.some(a => a.a0 === -Math.PI / 2 && Math.abs(a.a1 - (-Math.PI / 2 + 6.2832 * 0.5)) < 1e-6)).toBe(true);   // half way round at 6 s of 12
+    });
+    it('harmony: still the danger colour inside, at the smaller radius, the old edge a faint dashed line, same band', () => {
+      const d = draw(calm('harmony', T0, T0 + 400000), T0 + 100000);
+      const arcs = d.ops.filter(o => o.op === 'arc');
+      expect(arcs.some(a => a.r === 100)).toBe(true);
+      const disc = d.ops.filter(o => o.op === 'fill')[0];
+      expect(disc.style).toBe(H.hexA(RED, 0.07));                    // red inside, as before
+      expect(d.ops.some(o => o.op === 'fill' && pink(o.style) && o.style === disc.style)).toBe(false);
+      const firstDash = d.ops.findIndex(o => o.op === 'dash' && o.d.length);
+      expect(arcs.find(a => a.r === 200)).toBeTruthy();              // the full-size edge is still marked...
+      expect(firstDash).toBeGreaterThanOrEqual(0);                   // ...dashed
+      const band = arcs.find(a => a.a0 === -Math.PI / 2 && a.r === 100 && Math.abs(a.a1 - (-Math.PI / 2 + 6.2832 * 0.25)) < 1e-6);
+      expect(band).toBeTruthy();                                     // the wipe rides the reduced edge
+      expect(d.ops.some(o => o.op === 'fill' && red(o.style))).toBe(true);
+    });
+    it('mez: zzz beside the ring, and the ring itself is unchanged', () => {
+      const d = draw({ mez: { until: T0 + 9000 } }, T0);
+      expect(d.halos).toEqual(['z', 'z', 'z']);
+      expect(d.ops).toEqual(draw(null, T0).ops);
+    });
+    it('after `until` the ring is the normal ring again: no pink, no band, no zzz', () => {
+      const cc = Object.assign({ mez: { until: T0 + 5000 } }, calm('pacify', T0, T0 + 9000));
+      expect(draw(cc, T0 + 1000).halos.length).toBe(3);
+      const gone = draw(cc, T0 + 9000);
+      expect(gone.halos).toEqual([]);
+      expect(gone.ops).toEqual(draw(null, T0).ops);
     });
   });
 });
@@ -2220,5 +2586,234 @@ describe('the Map direct position path (apps/mimic/main.js -> preload -> map.htm
     expect(js).toMatch(/mapWindow\.webContents\.send\('map-pos', p\)/);
     expect(stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'preload.js')))).toMatch(/onMapPos:\s+\(cb\)\s+=> ipcRenderer\.on\('map-pos', \(_e, p\) => cb\(p\)\)/);
     expect(stripJs(MAP_HTML)).toMatch(/window\.mimic && window\.mimic\.onMapPos && window\.mimic\.onMapPos\(onDirect\);/);
+  });
+});
+
+// ── The raid's shared targets and escort trails (DECISIONS 299, agent 3.7.166) ────────────────────────────────────
+// The guild lead picked both: B (the focus ring placed from other raiders' targets) and A (an escort trail every Mimic
+// sees). Source: the bot's map-sync pull (test/raid-targets.test.js is the bot half). The upload half rides live-state.
+// Mutation-checked (2026-10-14): the tsince query dropped, the merge dedupe dropped, the 100-unit shown gate dropped, the
+// age gate dropped, the id match dropped, the "raid" placement dropped, the local-mode gate dropped, the mover send and
+// the target fields dropped from the live-state record - each turns at least one test red.
+describe('shared escort trails and the raid focus (the bot\'s map-sync answer)', () => {
+  const LIVE2 = { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: 'tok' };
+  const seedZone = (short) => {
+    fs.mkdirSync(path.join(dir, 'zone-spawns-cache'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'zone-spawns-cache', short + '.json'), JSON.stringify({ etag: '"v1"', fetched_at: Date.now(), body: { ...ZONE_BODY, zone: short } }));
+  };
+  const core = (responder) => {
+    seedZone('ponightmare');
+    const net = fakeNet(responder || (() => ({ status: 200, body: { ok: true } })));
+    const c = loadCore({ dir, opts: LIVE2, net });
+    c._mapEnsureZone('ponightmare', 204, Date.now());
+    c._zealState.Aldenmar = { zone: 204, updatedAt: 1e18, loc: { x: 0, y: 0, z: 0 } };
+    return { c, net };
+  };
+  const pts = (xs, t0) => xs.map((x, i) => [x, 0, 0, t0 + i * 3000, 0]);
+
+  it('the escort list is the researched one, and a name on it is matched in its own zone', () => {
+    const { c } = core();
+    expect(Object.keys(c.MAP_TRACKED_PATHS).sort()).toEqual(['cazicthule', 'eastkarana', 'eastwastes', 'fungusgrove', 'grimling', 'iceclad',
+      'netherbian', 'poinnovation', 'ponightmare', 'sharvahl', 'steamfont', 'tenebrous']);
+    expect(c.MAP_TRACKED_PATHS.ponightmare).toEqual(['thelin poxbourne', 'aid eino']);
+    expect(c.MAP_TRACKED_PATHS.grimling).toHaveLength(7);
+  });
+
+  it('the first pull asks for everything; later pulls ask only for points newer than the newest held (tsince)', async () => {
+    const N = Date.now();
+    const answer = { zone: 'ponightmare', now: N, events: [], targets: [],
+      trails: { 'thelin poxbourne': { name: 'Thelin Poxbourne', at: N, live: true, pts: pts([0, 40, 80, 120], N - 12000) } } };
+    const { c, net } = core((o) => /map-sync/.test(o.path) ? { status: 200, body: answer } : { status: 500 });
+    c._mapStatePayload('', N);
+    expect(net.calls[0].path).toBe('/api/agent/map-sync?zone=ponightmare&since=0');
+    await tick();
+    c._mapStatePayload('', N + 10000);
+    expect(net.calls[1].path).toBe('/api/agent/map-sync?zone=ponightmare&since=0&tsince=' + (N - 12000 + 9000));
+  });
+
+  it('a shared trail is drawn though this machine never targeted him, solid while the bot says it is live', () => {
+    const { c } = core(); const N = Date.now();
+    c._mapApplyShared('ponightmare', { now: N, trails: { 'thelin poxbourne': { name: 'Thelin Poxbourne', at: N - 2000, live: true, pts: pts([0, 40, 80, 120], N - 12000) } } }, N);
+    const p = c._mapStatePayload('', N + 1000);
+    expect(p.paths['thelin poxbourne']).toMatchObject({ name: 'Thelin Poxbourne', live: true });
+    expect(p.paths['thelin poxbourne'].pts.map(q => q[0])).toEqual([0, 40, 80, 120]);
+    expect(c._mapStatePayload('', N + 30000).paths['thelin poxbourne'].live).toBe(false);   // the pull is old: not "being watched now"
+  });
+
+  it('joins the shared trail with this machine\'s own looks: the longer, newer union, one point per look', () => {
+    const { c } = core(); const N = Date.now();
+    // the bot holds 0..120; this machine alone has looked at 160..240 since (pipe y is server x)
+    c._mapApplyShared('ponightmare', { now: N, trails: { 'thelin poxbourne': { name: 'Thelin Poxbourne', at: N - 6000, live: true, pts: pts([0, 40, 80, 120], N - 15000) } } }, N);
+    const look = (y, at) => c._mapNoteState('Aldenmar', null, { zone: 204, target_name: 'Thelin Poxbourne', target_id: 9, target_type: 1, target_hp_pct: 100, target_loc: { x: 0, y, z: 0 } }, at);
+    look(120, N - 6001);            // the same look the bot already has (about a second apart on the two clocks)
+    look(160, N - 3000); look(200, N); look(240, N + 3000);
+    const got = c._mapStatePayload('', N + 3500).paths['thelin poxbourne'].pts;
+    expect(got.map(q => q[0])).toEqual([0, 40, 80, 120, 160, 200, 240]);
+    expect(got.every(q => q[4] === 0)).toBe(true);
+  });
+
+  it('merge: a break stays only where nobody else watched through it; a jump is always a break', () => {
+    const { c } = core();
+    const a = [[0, 0, 0, 1000, 0], [40, 0, 0, 4000, 0], [80, 0, 0, 90000, 1]];
+    expect(c._mapMergePath(a, []).map(q => q[4])).toEqual([0, 0, 1]);                              // over 20 s since: a real gap
+    expect(c._mapMergePath(a, [[60, 0, 0, 80000, 0]]).map(q => q[4])).toEqual([0, 0, 0, 0]);       // another source watched 10 s before: no gap
+    expect(c._mapMergePath([[0, 0, 0, 1000, 0], [500, 0, 0, 2000, 0]], []).map(q => q[4])).toEqual([0, 1]);   // too far to be a walk
+    expect(c._mapMergePath([[0, 0, 0, 1000, 0], [40, 0, 0, 4000, 1]], []).map(q => q[4])).toEqual([0, 0]);    // 3 s later: not a gap
+    expect(c._mapMergePath([[0, 0, 0, 1000, 0]], [[5, 0, 0, 2000, 0]]).length).toBe(1);                       // the same look from two sources
+  });
+
+  it('an idle town copy that never moved 100 units is not drawn; a stretch that did is, with a break before it', () => {
+    const { c } = core(); const N = Date.now();
+    c._mapApplyShared('ponightmare', { now: N, trails: { 'thelin poxbourne': { name: 'Thelin Poxbourne', at: N, live: true, pts: pts([0, 30, 60, 90], N - 12000) } } }, N);
+    expect(c._mapStatePayload('', N).paths).toEqual({});
+    expect(c._mapShownPath([[0, 0, 0, 1, 0], [30, 0, 0, 2, 0], [2000, 0, 0, 3, 1], [2120, 0, 0, 4, 0]])).toEqual([[2000, 0, 0, 3, 1], [2120, 0, 0, 4, 0]]);
+    expect(c._mapShownPath([[0, 0, 0, 1, 0], [100, 0, 0, 2, 0], [300, 0, 0, 3, 1], [450, 0, 0, 4, 0]]).map(q => q[4])).toEqual([0, 0, 1, 0]);
+    expect(c._mapShownPath([[0, 0, 0, 1, 0], [99, 0, 0, 2, 0]])).toEqual([]);
+  });
+
+  it('keeps only names on its own list, only valid points, and never the same point twice', () => {
+    const { c } = core(); const N = Date.now();
+    const answer = { now: N, trails: {
+      'a hedge spider': { name: 'a hedge spider', at: N, live: true, pts: pts([0, 40, 80, 120], N) },
+      'thelin poxbourne': { name: 'Thelin Poxbourne', at: N, live: true, pts: [...pts([0, 40, 80, 120], N - 12000), [1, 'x', 0, 5, 0], 'junk', [1, 2]] } } };
+    c._mapApplyShared('ponightmare', answer, N); c._mapApplyShared('ponightmare', answer, N + 10000);
+    const p = c._mapStatePayload('', N + 10500);
+    expect(Object.keys(p.paths)).toEqual(['thelin poxbourne']);
+    expect(p.paths['thelin poxbourne'].pts).toHaveLength(4);
+  });
+
+  describe('the focus ring placed from the raid\'s shared targets', () => {
+    const rows = [{ kind: 'npc', name: 'a cliff golem', raider_count: 3, spawn_id: 811 }, { kind: 'npc', name: 'Aldenmar the Pale', raider_count: 9 }];
+    const shared = (N) => ({ now: N, targets: [
+      { name: 'Aldenmar the Pale', id: 77, type: 1, x: 100, y: 10, z: 5, n: 2, at: N - 4000 },
+      { name: 'Aldenmar the Pale', id: 78, type: 1, x: 900, y: 90, z: 5, n: 6, at: N - 1000 },
+      { name: 'a cliff golem', id: 811, type: 1, x: 5, y: 6, z: 0, n: 3, at: N - 1000 }] });
+    const setup = (N) => {
+      const { c, net } = core();
+      c._extTargetCache.set('aldenmar', { at: N, payload: { targets: rows } });
+      return { c, net };
+    };
+
+    it('places the most-targeted row of that name when your own target is something else (at: raid)', () => {
+      const N = Date.now(); const { c } = setup(N);
+      c._mapApplyShared('ponightmare', shared(N), N);
+      expect(c._mapStatePayload('', N + 500).focus).toMatchObject({ name: 'Aldenmar the Pale', why: 'most', x: 900, y: 90, z: 5, at: 'raid' });
+    });
+    it('matches the spawn id when the focus names one (the MA row)', () => {
+      const N = Date.now(); const { c } = setup(N);
+      c._extTargetCache.set('aldenmar', { at: N, payload: { targets: [{ kind: 'npc', name: 'Aldenmar the Pale', raider_count: 1, spawn_id: 77, ma_target: true }] } });
+      c._mapApplyShared('ponightmare', shared(N), N);
+      expect(c._mapStatePayload('', N + 500).focus).toMatchObject({ id: 77, why: 'ma', x: 100, y: 10, at: 'raid' });
+      c._extTargetCache.set('aldenmar', { at: N, payload: { targets: [{ kind: 'npc', name: 'Aldenmar the Pale', raider_count: 1, spawn_id: 999, ma_target: true }] } });
+      expect(c._mapStatePayload('', N + 500).focus.x).toBeUndefined();   // another mob of that name: not placed
+    });
+    it('your own target wins over the raid\'s sample', () => {
+      const N = Date.now(); const { c } = setup(N);
+      c._zealState.Aldenmar = Object.assign(c._zealState.Aldenmar, { target_name: 'Aldenmar the Pale', target_id: 78, target_type: 1, target_loc: { x: 20, y: 700, z: 5 } });
+      c._mapApplyShared('ponightmare', shared(N), N);
+      expect(c._mapStatePayload('', N + 500).focus).toMatchObject({ x: 700, y: 20, at: 'target' });
+    });
+    it('a sample older than two minutes (bot clock plus time since the pull) is not a position', () => {
+      const N = Date.now(); const { c } = setup(N);
+      c._mapApplyShared('ponightmare', { now: N, targets: [{ name: 'Aldenmar the Pale', id: 77, x: 1, y: 2, z: 0, n: 2, at: N - 119000 }] }, N);
+      expect(c._mapStatePayload('', N + 500).focus.x).toBe(1);
+      expect(c._mapStatePayload('', N + 2000).focus.x).toBeUndefined();
+    });
+    it('another zone\'s targets never place it', () => {
+      const N = Date.now(); const { c } = setup(N);
+      c._mapApplyShared('cazicthule', shared(N), N);
+      expect(c._mapStatePayload('', N + 500).focus.x).toBeUndefined();
+    });
+    it('a bad row is dropped, and an answer without targets changes nothing', () => {
+      const N = Date.now(); const { c } = setup(N);
+      c._mapApplyShared('ponightmare', { now: N, targets: [{ name: 'Aldenmar the Pale', id: 0, x: 1, y: 2, at: N }, { name: 5, id: 3, x: 1, y: 2, at: N }, null,
+        { name: 'Aldenmar the Pale', id: 5, x: 'a', y: 2, at: N }] }, N);
+      expect(c._mapStatePayload('', N + 500).focus.x).toBeUndefined();
+      c._mapApplyShared('ponightmare', shared(N), N);
+      c._mapApplyShared('ponightmare', { now: N + 1, events: [] }, N + 1);
+      expect(c._mapStatePayload('', N + 500).focus.x).toBe(900);
+    });
+  });
+
+  it('LOCAL MODE: no request for targets or trails, and the trail still works from this machine', () => {
+    seedZone('ponightmare');
+    const net = fakeNet();
+    const c = loadCore({ dir, opts: { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: '' }, net });
+    c._mapEnsureZone('ponightmare', 204, T0);
+    c._zealState.Aldenmar = { zone: 204, updatedAt: 1e18, loc: { x: 0, y: 0, z: 0 } };
+    c._mapNoteState('Aldenmar', null, { zone: 204, target_name: 'Thelin Poxbourne', target_id: 9, target_type: 1, target_hp_pct: 100, target_loc: { x: 0, y: 0, z: 0 } }, T0);
+    c._mapNoteState('Aldenmar', null, { zone: 204, target_name: 'Thelin Poxbourne', target_id: 9, target_type: 1, target_hp_pct: 100, target_loc: { x: 0, y: 150, z: 0 } }, T0 + 3000);
+    expect(c._mapSyncPull('ponightmare', T0 + 4000)).toBe(false);
+    const p = c._mapStatePayload('', T0 + 5000);
+    expect(p.local_only).toBe(true);
+    expect(p.paths['thelin poxbourne'].pts).toHaveLength(2);
+    expect(net.calls).toHaveLength(0);
+  });
+});
+
+describe('live-state carries the target\'s position (agent 3.7.166)', () => {
+  // The helpers sit just outside the map core, so they are sliced as shipped and handed the core's own map helpers.
+  const BLOCK = sliceBlock(AGENT, 'const LIVE_TPOS_MOVE_UNITS = 30', 'return gap >= LIVE_TPOS_MIN_MS && moved >= LIVE_TPOS_MOVE_UNITS;\n}');
+  const load = () => {
+    seedCache(dir);
+    const c = loadCore({ dir, opts: { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: 'tok' }, net: fakeNet() });
+    // eslint-disable-next-line no-new-func
+    const f = new Function('MAP_CORPSE_RE', '_mapZoneShort', '_mapServerXY', 'MAP_TRACKED_PATHS', '_mapNormName', '_mapDist2', BLOCK + '\nreturn { _liveTargetPosOf, _liveTargetPosDue };');
+    return f(c.MAP_CORPSE_RE, c._mapZoneShort, c._mapServerXY, c.MAP_TRACKED_PATHS, c._mapNormName, c._mapDist2);
+  };
+  const st = (over = {}) => ({ zone: 164, target_name: 'a cliff golem', target_id: 811, target_type: 1, target_loc: { x: 10, y: 100, z: 5 }, ...over });
+
+  it('places a live NPC target in the Map\'s server frame, with its zone', () => {
+    expect(load()._liveTargetPosOf(st())).toEqual({ id: 811, x: 100, y: 10, z: 5, zone: 'thedeep', escort: false });
+  });
+  it('treats target id 0 (and none), a player, a corpse, no position and an unknown zone as nothing to place', () => {
+    const { _liveTargetPosOf: f } = load();
+    for (const over of [{ target_id: 0 }, { target_id: undefined }, { target_type: 0 }, { target_type: 2 }, { target_name: "a cliff golem's corpse" },
+      { target_loc: null }, { zone: 7 }, { target_name: '' }]) expect(f(st(over)), JSON.stringify(over)).toBeNull();
+  });
+  it('flags an escort by zone + name (spelt either way), not by id', () => {
+    const { _liveTargetPosOf: f } = load();
+    expect(f(st({ zone: 204, target_name: '#Thelin_Poxbourne', target_id: 1 })).escort).toBe(true);
+    expect(f(st({ zone: 204, target_name: 'Thelin Poxbourne', target_id: 99999 })).escort).toBe(true);
+    expect(f(st({ zone: 164, target_name: 'Thelin Poxbourne' })).escort).toBe(false);
+  });
+  it('a mob earns an extra send after 30 units AND 10 s on the same target, never on a swap (that trips the signature)', () => {
+    const { _liveTargetPosDue: due } = load();
+    const prev = { id: 811, x: 0, y: 0, at: 1000 }, cur = (x, id = 811) => ({ id, x, y: 0, z: 0, escort: false });
+    expect(due(prev, cur(30), 11000)).toBe(true);
+    expect(due(prev, cur(29), 11000)).toBe(false);
+    expect(due(prev, cur(30), 10999)).toBe(false);
+    expect(due(prev, cur(500, 812), 60000)).toBe(false);
+    expect(due(undefined, cur(500), 60000)).toBe(false);
+    expect(due(prev, null, 60000)).toBe(false);
+    expect(due(prev, cur(0), 60000)).toBe(false);          // standing: the heartbeat covers it
+  });
+  it('an escort earns one after 12 units AND 5 s, or 15 s standing', () => {
+    const { _liveTargetPosDue: due } = load();
+    const prev = { id: 9, x: 0, y: 0, at: 1000 }, cur = (x) => ({ id: 9, x, y: 0, z: 0, escort: true });
+    expect(due(prev, cur(12), 6000)).toBe(true);
+    expect(due(prev, cur(11), 6000)).toBe(false);
+    expect(due(prev, cur(12), 5999)).toBe(false);
+    expect(due(prev, cur(0), 15999)).toBe(false);
+    expect(due(prev, cur(0), 16000)).toBe(true);
+  });
+  it('flushLiveStateToBot puts the fields on the record (absent when nothing to place), sends a mover, and keeps them out of the signature', () => {
+    const fn = stripJs(sliceBlock(AGENT, 'function flushLiveStateToBot(opts) {', '_postLiveState(url, opts.token, { agent_version: AGENT_VERSION, uploaded_by: uploader || null, states });\n}'));
+    expect(fn).toMatch(/const tpos = _liveTargetPosOf\(st\);/);
+    expect(fn).toMatch(/\.\.\.\(tpos \? \{ target_map: \{ x: Math\.round\(tpos\.x\), y: Math\.round\(tpos\.y\), z: Math\.round\(tpos\.z\) \}, target_type: 1, target_zone: tpos\.zone \} : \{\}\),/);
+    expect(fn).toMatch(/const targetMoved  = _liveTargetPosDue\(_liveTargetPosSent\.get\(ch\), tpos, now\);/);
+    expect(fn).toMatch(/if \(!sigChanged && !heartbeatDue && !targetMoved\) continue;/);
+    expect(fn).toMatch(/if \(tpos\) _liveTargetPosSent\.set\(ch, \{ id: tpos\.id, x: tpos\.x, y: tpos\.y, at: now \}\); else _liveTargetPosSent\.delete\(ch\);/);
+    const sigAt = fn.indexOf('const sig = JSON.stringify([');
+    const sig = fn.slice(sigAt, fn.indexOf(']);', sigAt));
+    expect(sig).not.toMatch(/tpos|target_map|loc_x/);
+  });
+  it('is wired into the map pull: tsince on the query and the answer applied', () => {
+    const js = stripJs(CORE);
+    expect(js).toMatch(/\(tsince > 0 \? '&tsince=' \+ tsince : ''\)/);
+    expect(js).toMatch(/if \(j\) _mapApplyShared\(zone, j, Date\.now\(\)\);/);
+  });
+  it('the overlay draws a raid-placed focus ring at the shared position', () => {
+    expect(stripJs(MAP_HTML)).toMatch(/else if \(fo\.at === 'raid' && fo\.x != null\) fp = \{ x: fo\.x, y: fo\.y \};/);
   });
 });
