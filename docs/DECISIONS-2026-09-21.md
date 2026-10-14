@@ -10161,3 +10161,18 @@ Harmony, Hide/Sneak for non-rogues).
   now: a "Planar Projection" hail does not say which boss it belongs to, and those windows already open on the kill.
 - **Caveat:** a hail is seen only by Mimics whose log shows it, and a raider with no group number counts as no
   group (undercounts, never overcounts).
+
+### 286. Map rings for mez, pacify and harmony; the re-slow warning a minute ahead, never for bards (2026-10-13, agent 3.7.161 beta `ad36ffbe`)
+
+- Built per §284. `_mapCcStates` (agent) sends each mob's mez and calm state from the existing buff landings;
+  `map.html` draws: mezzed = pulsing "zzz"; pacify family (incl. bard lulls) = light-pink disc, outer band filling
+  red clockwise from 12 o'clock as it runs out; Harmony / Wake of Tranquility = the normal red ring at the shrunk
+  radius, old radius dotted, same band. Durations are each landing's own, so bard lulls end sooner on their own.
+  A landing with no spawn id marks only your own target (an unproven name never turns every same-name mob pink).
+- **Guess, flagged:** the harmony shrink is 0.5 of the aggro radius; the spell data carries no radius. The guild
+  lead to measure or confirm in game.
+- **Not knowable:** a mez broken by damage, or a pacify that failed on a too-high mob, has no log line; the ring
+  holds until the landing's own end.
+- **Slow warning (§284's in-fight rule):** "re-slow soon" fires at 60 s left (was 30) and never for a bard slow
+  (`SLOW_FADING_WARN_SECS`, `best.cls !== 'BRD'`). Every slow LANDING still announces, as before; whether those
+  go quiet during a fight is the guild lead's call.
