@@ -4765,3 +4765,12 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   (`apps/mimic/uiClearRects.js`, read-only) + the raider's own boxes (`cfg.mapClearBoxes[screenSig][char]`, fractions of EQ's client);
   `uiRectsToMap` / `inClearArea` in `map.html` convert and test them, `paintHoles` cuts them out of the canvas (background included).
   Test: `test/map-full-mode.test.js`.
+- **Tracked NPC walks, Raiders button, raid focus ring** (2026-10-14, agent 3.7.164 · Mimic beta `39d6bef3`, §298):
+  `MAP_TRACKED_PATHS` (today `ponightmare: ['thelin poxbourne']`) — `_mapNotePath` keeps a sample every 12+ units off any
+  character's target loc on this machine (800 max, break after a 20 s gap or a 400-unit jump, dropped after 12 h), stored in
+  `map_timers.json` `zones[z].paths`, served as `paths` on `/api/map-state`, drawn with `drawTrail` (solid while watched). Local only:
+  cross-raider sharing is MAP-REFINEMENTS #14. Toolbar **Raiders** toggles `raidNames` + `groupNames` together (dots and mob names
+  stay). `_mapFocusTarget` reads the Extended Target cache (bot `ma_target` row, else `_resolveMainTarget` with 2+ raiders) → `focus`;
+  the Map draws a magenta double ring + "MA" / "N targeting" only where it is placed (your own target, or a pinned seen spawn
+  point) — never an invented position (#15 for other raiders' target locs). ⚙ → "Raid focus target" switches it off.
+  Test: `test/spawn-map.test.js`.

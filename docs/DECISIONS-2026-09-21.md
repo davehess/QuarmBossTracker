@@ -10375,3 +10375,19 @@ the Bastion of Thunder at the time.
 - **Open:** the pick; whether checklist rows should appear as "self-reported"; recital rows can look newer than
   the flag (the tooltip says so). Files: `web/lib/popLatestFlags.ts`, `web/app/pop/LatestFlags.tsx`,
   `test/pop-latest-flags.test.js`.
+
+### 298. Map: Thelin's walk, a Raiders label switch, and the raid's focus ring (agent 3.7.164, Mimic beta `39d6bef3`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"for Thelin, if anyone is targetting him we should track that path and put
+  his path on the map"*; *"map should have a quick hide raiders labels too, and also highlight the MA's target or which
+  target has the most people targetting them."*
+- **Thelin's walk:** his waypoints come from the maze script, not a spawn grid, so the learned wander legs cannot hold
+  them. The agent keeps a plain trail instead (`MAP_TRACKED_PATHS`). Any character on this machine targeting him adds to
+  it. Gaps over 20 s and jumps over 400 units break the line, so the outside Thelin's body is never joined to the inside
+  one. **Local only for now:** sharing one trail across the raid needs a bot route (MAP-REFINEMENTS #14).
+- **Raiders button:** on the Map toolbar. It hides the raid and group names together; the dots and mob names stay.
+- **Focus ring:** the mob Extended Target puts on top. That is the MA's declared target, else the mob 2+ raiders target.
+  It gets one magenta double ring and an "MA" or "N targeting" tag. It is drawn only where its position is known: your
+  own target, or a pinned spawn point. Placing it from other raiders' targets needs each Mimic to share its target loc
+  (MAP-REFINEMENTS #15).
+- **Load:** the focus read uses the same 3 s Extended Target cache the dashboard state already refreshes, so it adds
+  no new bot traffic.
