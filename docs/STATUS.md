@@ -6013,6 +6013,12 @@ Two causes in the "overlays drop behind other apps" focus path (a9919715): a NUL
 and raised every overlay for 600 ms (`_focusFgSample` now ignores it), and the 400 ms foreground poll left overlays under EverQuest
 after clicking back into it (now 120 ms). **Open:** Windows retest; if it persists, say leaving EQ vs returning to EQ; the held
 Alt+Tab / taskbar (explorer.exe) case still drops and re-raises.
+**Follow-up, "overlays all refresh" when clicking back into EQ (Mimic beta `6bebcb79`, DECISIONS §328):** pages do not reload on
+the focus path (proved: no reload/navigation/broadcast reachable). Likely cause: since overlays can be covered, Chromium's
+native-window occlusion tracker marks covered overlays hidden and stops painting them; uncovering repaints them all at once.
+`main.js` now sets `disable-features=CalculateNativeWinOcclusion` (the only `disable-features` switch — a second would replace it).
+Test: `test/overlay-refocus-no-refresh.test.js`. **Open:** Windows check; if a blink remains with "Hide overlays when EverQuest
+isn't focused" off, try an atomic drop-and-tuck instead of toggling topmost.
 
 ### 🧾 2026-10-14 — Target Info shows how a mob hits: slash / pierce / blunt (agent 3.7.172, beta `4ec04404`, DECISIONS §314)
 The guild lead: *"when we observe what types of hits a mob is doing, put that onto the target info"*. A mob's melee verb names the

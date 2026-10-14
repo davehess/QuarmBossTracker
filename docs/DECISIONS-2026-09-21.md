@@ -10740,3 +10740,11 @@ the Bastion of Thunder at the time.
   before logout could be stale after EQ rewrites the file. The hotbar editor docks beside the layout and asks Keep editing / Discard.
 - **Open:** a live EQ check that a created window loads, that an emptied `[Chat N]` header is harmless, names up to 32 chars, and the
   point size per font index; after-logout deferral for inspector saves if wanted.
+
+### 328. Overlays stop repainting from blank when you click back into EQ (Mimic beta `6bebcb79`, 2026-10-14)
+- **The report (the guild lead, 2026-10-14):** *"When i click onto a different window and then back into EQ the Overlays all refresh"*.
+- **Finding:** nothing reloads (no reload, navigation or broadcast on the focus path; pages keep their state). Since §316's z-order change
+  overlays can be covered by another app, and Chromium's occlusion tracker then treats them as hidden — stops painting, throttles
+  timers — so uncovering repaints every overlay at once. **Fix:** `disable-features=CalculateNativeWinOcclusion`; covered overlays keep
+  painting. Cost: negligible (the dashboard also no longer slows when covered). Unverified on Windows.
+- **Open:** the guild lead's A/B (turn off "Other apps can draw over overlays…" — if the refresh stops, this is the cause).
