@@ -4716,3 +4716,11 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   Mimic's pipe handler now also carries `target_loc` / `target_type` (Zeal 1.4.8).
 - Test: `test/spawn-map.test.js`. Design: `docs/DESIGN-mimic-2.9-spawn-map.md`. Every refinement since (asks, what
   shipped, what is open): `docs/MAP-REFINEMENTS.md`.
+- **Full mode + keep-clear areas** (2026-10-14, agent 3.7.162 · Mimic beta): `cfg.mapMode` (`window` default | `full`), one setter `_setMapMode` in `main.js`
+  behind the Map toolbar ▣/▢, ⚙ → Mode, the tray item and the dashboard Overlays button. Full resizes the window to EverQuest's client
+  rectangle (`_eqWindowGeometry`, cached; fallback the display the Map was on) and is click-through always — `_coversScreen(key)` is the
+  one test rescue, auto-arrange, the screen-change question and move-to-screen use for the Canvas and the Full Map; the window-mode
+  bounds in `cfg.mapBounds` are never overwritten while Full. Keep-clear = the active character's UI ini windows with Show on
+  (`apps/mimic/uiClearRects.js`, read-only) + the raider's own boxes (`cfg.mapClearBoxes[screenSig][char]`, fractions of EQ's client);
+  `uiRectsToMap` / `inClearArea` in `map.html` convert and test them, `paintHoles` cuts them out of the canvas (background included).
+  Test: `test/map-full-mode.test.js`.
