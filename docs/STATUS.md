@@ -5985,6 +5985,14 @@ Abashi's Rod → 31242). The web has no decoder: it shows the stored link. **Ope
 fixable, staged in `docs/RUNBOOK-pqdi-chat-links.md`, unapplied (the guild lead's yes); the stable fleet keeps writing
 wrong links until the agent reaches stable.
 
+### 🧾 2026-10-14 — Roll ties: a tie at the top of a roll set is shown, and settled by deathroll (agent 3.7.167, beta, DECISIONS §301)
+The guild lead: *"if two toons roll the same number on a roll it should trigger a deathroll and highlight the tie"*. `rollSetTies` (one
+helper, in `rollSetsSnapshot`) finds two or more distinct characters on the highest first roll; the Rolls card and the Command Center header
+read `TIE 507: A · B`, the tied rows carry a TIE chip, a lower tie is only a dim `=`. The card prompts the deathroll (starts at the TIED
+number, first roller starts) and the Command Center 📋 copies one raid-say line; nothing is sent to the game. The follow-up rolls resolve the
+tie to the deathroll's winner. **No bot change.** **Open:** no spoken "Roll tie" callout (no roll callout path exists); the dashboard Rolls card
+shows the prompt but has no copy button; the web and the bot's night-loot roll card still show a tie as one winner.
+
 ### 🧾 2026-10-14 — Mimic Chat overlay, design B (agent 3.7.165 · Mimic beta `3be5b8e4`, DECISIONS §300)
 One feed, colour per channel, a chip per channel group; groups are data (`CHAT_GROUPS`) so A (tabs + tear-off) reuses the renderer.
 Local only: a 500-line memory ring beside the tell tap, served on `GET /api/chat` (127.0.0.1, `_localOriginOk`); never uploaded, never
