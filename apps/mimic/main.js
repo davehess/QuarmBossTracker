@@ -8651,44 +8651,13 @@ function buildTrayMenu() {
     click: (mi) => setCrashReports(!!mi.checked),
   };
 
-  const menu = Menu.buildFromTemplate([
-    { label: headerLabel, enabled: false },
-    { type: 'separator' },
-    // Most-used actions up top: open the local dashboard, jump to the site.
-    { label: 'Show dashboard', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
-    // Tray ↔ dashboard parity: the dashboard's 📈 My parses tab is the other half of this item (a member,
-    // 2026-10-06: "is there a page in mimic that'll graph out my parses over a variable time window").
-    { label: '📈 My parses', click: () => showDashboardTab('myparses') },
-    { label: 'Open wolfpack.quest ↗', click: () => shell.openExternal(WOLFPACK_URL) },
-    { type: 'separator' },
-    // Run mode — full Mimic or agent only (the guild lead, 2026-10-08). Same setter as the dashboard's
-    // Overlays tab and Settings; saves the choice and offers a restart. In agent only the items that
-    // only mean something with overlays on screen are `visible: false` (hidden, not greyed — least
-    // diff, and a greyed list of things that can never work is noise).
-    { label: s.runMode === 'agent' ? '🪟 Switch to full Mimic (overlays)…' : '🖥 Switch to agent only (no overlays)…',
-      click: () => { _setRunMode(loadConfig().runMode === 'agent' ? 'full' : 'agent', true); } },
-    // Multi-monitor rescue — run from the tray on the monitor you play on;
-    // lost overlays come back there, the rest stay put (a member, 2026-07-15:
-    // "lost several overlays off my window and cannot find them").
-    { label: '🧲 Rescue overlays to this screen', visible: !agentOnly, click: () => {
-        _rescueOverlays().catch((e) => appendAgentLog('[rescue] failed: ' + e.message + '\n'));
-      } },
-    // The display-off half of Quiet mode (bottom block). It lived only in Settings (a
-    // member, 2026-09-23: "We don't have a taskbar option for No Overlays").
-    // Same flag and the same apply path as the Settings save — not a parallel one.
-    { label: '🙈 No overlays — I use another parser (uploads and voice continue)', type: 'checkbox', checked: !!s.hideOverlays, visible: !agentOnly, click: (mi) => {
-        const cfg = loadConfig(); cfg.hideOverlays = mi.checked; saveConfig(cfg);
-        applyAllVisibility();
-        pushStatus();
-      } },
-    // 💥 Damage-taken audio alert — top level (not the Overlays submenu): it's
-    // an audio cue, not an overlay, and "toggleable from the taskbar" (the guild lead)
-    // means one click from the tray. Label carries the live hotkey so the
-    // binding is discoverable without opening the dashboard. Disabled under
-    // Quiet mode because the trigger overlay stays silent there anyway.
-    { label: '💥 Damage-taken alert (' + (_damageAlertHotkeyLabelNow() || 'no hotkey') + ')',
-      type: 'checkbox', checked: !!s.damageAlert, enabled: !s.hideOverlays,
-      click: () => { toggleDamageAlert(); } },
+  // The menu is layout B (the guild lead, 2026-10-14: the tray had ~30 top-level lines and was
+  // overwhelming): a short top level (Show dashboard, Overlays, Rescue, Quiet mode) and three
+  // groups behind submenus. Only positions changed; every item below is the same object it was.
+  // Settings › is one flat submenu grouped by disabled header items + separators (not nested
+  // submenus: a checkbox stays one click from its group, and the groups are visible at a glance).
+  const settingsSubmenu = [
+    { label: 'Behaviour', enabled: false },
     ...(process.platform === 'win32' ? [
       { label: 'Start with Windows', type: 'checkbox', checked: !!s.autoStart, click: (mi) => {
           const cfg = loadConfig(); cfg.autoStart = !!mi.checked; saveConfig(cfg);
@@ -8714,36 +8683,103 @@ function buildTrayMenu() {
     ] : []),
     // Same switch as Settings → "Use the graphics card for overlays" (restarts Mimic).
     { label: 'Use the graphics card for overlays (restarts Mimic)', type: 'checkbox', checked: s.useGpu !== false, visible: !agentOnly, click: (mi) => { _setGpuDrawing(!!mi.checked, true); } },
+    // 💥 Damage-taken audio alert — "toggleable from the taskbar" (the guild lead) means one click
+    // from the tray. Label carries the live hotkey so the
+    // binding is discoverable without opening the dashboard. Disabled under
+    // Quiet mode because the trigger overlay stays silent there anyway.
+    { label: '💥 Damage-taken alert (' + (_damageAlertHotkeyLabelNow() || 'no hotkey') + ')',
+      type: 'checkbox', checked: !!s.damageAlert, enabled: !s.hideOverlays,
+      click: () => { toggleDamageAlert(); } },
+    { type: 'separator' },
+    { label: 'Mode', enabled: false },
+    // Run mode — full Mimic or agent only (the guild lead, 2026-10-08). Same setter as the dashboard's
+    // Overlays tab and Settings; saves the choice and offers a restart. In agent only the items that
+    // only mean something with overlays on screen are `visible: false` (hidden, not greyed — least
+    // diff, and a greyed list of things that can never work is noise).
+    { label: s.runMode === 'agent' ? '🪟 Switch to full Mimic (overlays)…' : '🖥 Switch to agent only (no overlays)…',
+      click: () => { _setRunMode(loadConfig().runMode === 'agent' ? 'full' : 'agent', true); } },
+    // The display-off half of Quiet mode. It lived only in Settings (a
+    // member, 2026-09-23: "We don't have a taskbar option for No Overlays").
+    // Same flag and the same apply path as the Settings save — not a parallel one.
+    { label: '🙈 No overlays — I use another parser (uploads and voice continue)', type: 'checkbox', checked: !!s.hideOverlays, visible: !agentOnly, click: (mi) => {
+        const cfg = loadConfig(); cfg.hideOverlays = mi.checked; saveConfig(cfg);
+        applyAllVisibility();
+        pushStatus();
+      } },
+    { type: 'separator' },
     { label: 'My /tells  🔒 PRIVATE', submenu: tellsSubmenu },
     { type: 'separator' },
+    { label: 'Updates', enabled: false },
+    updateItem,
+    updatePopupItem,
+    betaChannelItem,
+    alphaChannelItem,
+    revertStableItem,
+    { type: 'separator' },
+    crashReportsItem,
+    { type: 'separator' },
+    { label: 'Account', enabled: false },
     connectItem,
-    { label: 'Show agent log…', click: () => shell.openPath(AGENT_LOG()) },
+    // Uninstall lives in the maintenance block — deliberately NOT next to Quit.
+    // The tray menu opens upward with the cursor resting at the BOTTOM, so a
+    // bottom-adjacent uninstall was far too easy to mis-click (tester feedback).
+    ...(_uninstallerPath() ? [{ label: 'Uninstall Wolf Pack Mimic…', click: () => { runUninstaller(); } }] : []),
+    { type: 'separator' },
+    { label: 'Settings…', click: openSettings },
+  ];
+
+  // Open › — everything that opens a window, a folder or a page.
+  const openSubmenu = [
+    // Tray ↔ dashboard parity: the dashboard's 📈 My parses tab is the other half of this item (a member,
+    // 2026-10-06: "is there a page in mimic that'll graph out my parses over a variable time window").
+    { label: '📈 My parses', click: () => showDashboardTab('myparses') },
+    { label: 'Open wolfpack.quest ↗', click: () => shell.openExternal(WOLFPACK_URL) },
+    { label: 'Open dashboard in browser', click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/`) },
     // Same folder as the dashboard's Sounds card button: drop .wav / .mp3 / .ogg files here to use them in triggers.
     { label: 'Open my sounds folder (add your own trigger sounds)', click: () => { _openSoundsFolder(); } },
-    { label: 'Open dashboard in browser', click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/`) },
+    { label: 'Show agent log…', click: () => shell.openPath(AGENT_LOG()) },
+    { label: 'UI Studio — rescale EQ UI for a new resolution', click: () => openUiStudio() },
+    { label: 'Resource use — what Mimic costs this machine', click: () => openResources() },
+  ];
+
+  // Help › — the walkthrough, feedback, and the agent restart.
+  const helpSubmenu = [
+    // ✨ The setup walkthrough, both layouts until the guild lead picks one (§93). Same IPC
+    // as the dashboard Setup card's two buttons. Beta and alpha builds only: two unpicked
+    // layouts do not ship to the stable fleet (the UI-options rule), so a stable cut can still
+    // be the beta byte for byte.
+    ...(/-/.test(String(app.getVersion() || '')) ? [{ label: '✨ Setup walkthrough', submenu: [
+        { label: 'A · one step at a time', click: () => openWelcome('a') },
+        { label: 'B · essentials, then unlocks', click: () => openWelcome('b') },
+      ] }] : []),
     // Tray ↔ dashboard parity (CLAUDE.md): the feedback card lives on the
     // dashboard, so it needs a tray route too. Same destination, same internals
     // — this opens the dashboard with the card expanded rather than duplicating
     // the form in a second window that would then drift.
     { label: 'Send feedback — bug or idea',
       click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/#feedback`) },
-    { label: 'UI Studio — rescale EQ UI for a new resolution', click: () => openUiStudio() },
-    { label: 'Resource use — what Mimic costs this machine', click: () => openResources() },
-    updatePopupItem,
-    betaChannelItem,
-    alphaChannelItem,
-    revertStableItem,
-    crashReportsItem,
-    // Uninstall lives in the maintenance block — deliberately NOT next to Quit.
-    // The tray menu opens upward with the cursor resting at the BOTTOM, so a
-    // bottom-adjacent uninstall was far too easy to mis-click (tester feedback).
-    ...(_uninstallerPath() ? [{ label: 'Uninstall Wolf Pack Mimic…', click: () => { runUninstaller(); } }] : []),
+    { label: 'Restart agent', click: async () => {
+        appendAgentLog('[mimic] tray "Restart agent" clicked\n');
+        if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
+      } },
+  ];
+
+  const menu = Menu.buildFromTemplate([
+    { label: headerLabel, enabled: false },
     { type: 'separator' },
-    // Bottom block per user request: Overlays sits right above Restart agent
-    // (the tray opens upward, so this puts the most-used submenu nearest the
-    // cursor), then Check for updates directly below Restart, then Settings →
-    // Quit as the two safe bottom actions. Quiet mode sits just above Overlays, near the cursor (the guild
-    // lead, 2026-10-08: "Move quiet mode towards the bottom of the right click window for task bar").
+    // Most-used actions up top: open the local dashboard, rescue lost overlays, mute.
+    { label: 'Show dashboard', click: () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } } },
+    ...(agentOnly ? [] : [{ label: 'Overlays', submenu: overlaysSubmenu }]),
+    // Agent only keeps the one overlay control that is not about the screen: the spoken callouts.
+    { label: 'Spoken trigger callouts (TTS)', type: 'checkbox', checked: !!s.enableTriggerTts, visible: agentOnly,
+      click: () => { _toggleOverlay('trigger'); buildTrayMenu(); } },
+    // Multi-monitor rescue — run from the tray on the monitor you play on;
+    // lost overlays come back there, the rest stay put (a member, 2026-07-15:
+    // "lost several overlays off my window and cannot find them").
+    { label: '🧲 Rescue overlays to this screen', visible: !agentOnly, click: () => {
+        _rescueOverlays().catch((e) => appendAgentLog('[rescue] failed: ' + e.message + '\n'));
+      } },
+    // Quiet mode stays near the top level (the guild lead, 2026-10-08: it was moved toward the cursor end).
     { label: '🔇 Quiet mode — no TTS audio or sounds (overlays still show)', type: 'checkbox', checked: s.quietMode, click: (mi) => {
         const cfg = loadConfig(); cfg.quietMode = mi.checked; saveConfig(cfg);
         // Renderers only learn Mute from this broadcast (window.mimic.isMuted).
@@ -8753,24 +8789,11 @@ function buildTrayMenu() {
         applyAllVisibility();
         pushStatus();
       } },
-    ...(agentOnly ? [] : [{ label: 'Overlays', submenu: overlaysSubmenu }]),
-    // Agent only keeps the one overlay control that is not about the screen: the spoken callouts.
-    { label: 'Spoken trigger callouts (TTS)', type: 'checkbox', checked: !!s.enableTriggerTts, visible: agentOnly,
-      click: () => { _toggleOverlay('trigger'); buildTrayMenu(); } },
-    { label: 'Restart agent', click: async () => {
-        appendAgentLog('[mimic] tray "Restart agent" clicked\n');
-        if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
-      } },
-    updateItem,
-    // ✨ The setup walkthrough, both layouts until the guild lead picks one (§93). Same IPC
-    // as the dashboard Setup card's two buttons. Beta and alpha builds only: two unpicked
-    // layouts do not ship to the stable fleet (the UI-options rule), so a stable cut can still
-    // be the beta byte for byte.
-    ...(/-/.test(String(app.getVersion() || '')) ? [{ label: '✨ Setup walkthrough', submenu: [
-        { label: 'A · one step at a time', click: () => openWelcome('a') },
-        { label: 'B · essentials, then unlocks', click: () => openWelcome('b') },
-      ] }] : []),
-    { label: 'Settings…', click: openSettings },
+    { type: 'separator' },
+    { label: 'Settings', submenu: settingsSubmenu },
+    { label: 'Open', submenu: openSubmenu },
+    { label: 'Help', submenu: helpSubmenu },
+    { type: 'separator' },
     { label: 'Quit Mimic', click: _quitMimic },
   ]);
   _trayMenu = menu;
