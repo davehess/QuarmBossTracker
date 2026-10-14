@@ -231,6 +231,14 @@ Edit/Write also fail loudly on a stale match, which is the behaviour you want
 in an 18k-line monolith. `git commit -F` (below) is unaffected — that is a
 different rule, for a different hazard, and it still stands.
 
+### Working rule — batch the docs: one docs push per task (guild lead, 2026-10-14)
+*"batch the docs going forward."* Every push to `main` costs a GitHub sync to `beta` and, before §333, a
+Vercel deployment on each branch; on 2026-10-14 28 separate docs pushes (plus their 28 beta syncs) helped spend
+the whole Vercel day. So DECISIONS / STATUS / HOW-ITS-BUILT edits for a task go up in ONE commit at the end of
+that task — ride along with the code push when the code is on `main`, or one docs-only push when it is not.
+Never push a docs edit on its own mid-task just to "save" it: the scratchpad and the worktree hold it until
+then. The exception is a correction someone is about to act on (a wrong instruction in the Open table).
+
 ### Working rule — commit messages go through a FILE, never `-m`
 `git commit -m "…"` in a double-quoted shell string executes anything in
 backticks. It happened twice on 2026-08-27/28: once eating two words, once
@@ -408,22 +416,25 @@ entry so the index stays trustworthy — a stale index causes exactly the wrong
   front of any page to see it as it stands on `beta`. Vercel had been building
   the branch anyway, but only onto a throwaway preview URL nobody could guess;
   this makes it addressable. Wiring:
-  - `web/vercel.json` → `"git": { "deploymentEnabled": { "**": false, "main": true, "beta": true } }`.
-    ⚠ **Only main and beta build the website** (the guild lead, 2026-09-29; DECISIONS §101). Vercel is on
-    **Hobby: 100 deployments a day**, and every push to every branch spends one. The alpha branch's
-    sync merges alone spent ~100 that day and beta went 90 minutes unbuilt
-    ("Deployment rate limited — retry in 24 hours" on the commit's Vercel status, which is readable
-    unauthenticated at `api.github.com/repos/<owner>/<repo>/commits/<sha>/status`). An Ignored Build Step
-    does NOT help that cap — a skipped build still counts. A new branch that should build the site goes in
-    this map, and costs a slot per push.
-    ⚠ **Hobby also caps Deployment Storage at 10 GB**, and every finished build keeps its whole output
-    (≈40 MB of `web/public` alone) until retention deletes it (Hobby default 30 days), plus the latest build
-    of every branch that still exists, indefinitely. It hit 10.32 GB on 2026-09-29 (DECISIONS §108). So
-    `"ignoreCommand": "git diff --quiet HEAD^ HEAD -- ."` skips a push that changes nothing under `web/`:
-    skipped builds store nothing. It is safe because the site imports nothing from outside `web/`; if that
-    ever changes, widen the path. ⚠ It compares only the push's LAST commit with its parent: a web commit
-    followed by a non-web commit in the same push deploys nothing (a stable Mimic cut on top of a web sweep,
-    2026-10-02, DECISIONS §134). Make the web commit the last one, or push it on its own;
+  - **Only a push that changes `web/` builds the site** (the guild lead, 2026-10-14; DECISIONS §333).
+    `web/vercel.json` → `"git": { "deploymentEnabled": false }`: Vercel builds nothing from a Git push on
+    its own. `.github/workflows/deploy-web.yml` runs on pushes to `main`/`beta` with `paths: ['web/**']`
+    and calls that branch's **Vercel Deploy Hook** (secrets `VERCEL_DEPLOY_HOOK_MAIN` /
+    `VERCEL_DEPLOY_HOOK_BETA`; Vercel → Settings → Git → Deploy Hooks, one per branch). `sync-beta.yml`
+    calls the beta hook itself when its merge brought `web/` changes, because its GITHUB_TOKEN push
+    triggers no workflow. `paths` covers the WHOLE push, so the old "make the web commit the last one"
+    trap (§134) is gone. A missing secret fails the run loudly.
+    ⚠ **Why: Vercel Hobby allows 100 deployments a day and every push Vercel sees spends one — a build
+    its Ignored Build Step skips still counts.** 2026-09-29 the alpha syncs spent ~100 (§101); 2026-10-14
+    the cap was hit again with only 15 real web builds among the 100 (33 beta syncs, 28 docs pushes, 20
+    Mimic/agent pushes, 6 bot pushes), so production missed a web release. The refusal shows as
+    "Deployment rate limited — retry in 24 hours" on the commit's Vercel status, readable unauthenticated at
+    `api.github.com/repos/<owner>/<repo>/commits/<sha>/status`. A new branch that should build the site gets
+    a hook, a secret and a case in `deploy-web.yml`.
+    ⚠ **Hobby also caps Deployment Storage at 10 GB** (every finished build keeps its whole output, ≈40 MB
+    of `web/public`, until retention deletes it; hit 10.32 GB on 2026-09-29, §108). Building only on `web/`
+    changes keeps that down too. The site must import nothing from outside `web/`; if that ever changes,
+    widen the `paths` filter;
   - Vercel → Domains → Add `b.wolfpack.quest`. **Pick the `Preview`
     environment, then set Git Branch to `beta`.** There is no "beta"
     environment and there should not be — Vercel's environments are

@@ -451,6 +451,14 @@ and the same never-refetch guarantee.
   /fun and nothing posts. Ours points at the general chat channel; the wizard
   should ask, not assume, since "which channel gets fun chatter" is a
   per-guild taste.
+- **2026-10-14 — on Vercel Hobby the website builds only from deploy hooks**
+  (`DECISIONS-2026-09-21.md` §333). Hobby allows 100 deployments a day and every
+  Git push spends one, skipped or not; a busy repo (bot, agent and docs in the same
+  repo, plus a beta branch kept in sync) burns it by evening. `web/vercel.json`
+  turns Git deployments off and `deploy-web.yml` calls a per-branch Deploy Hook
+  only when `web/` changed. The wizard must create one hook per website branch and
+  store each URL as a repo secret BEFORE that config lands, or the site stops
+  deploying. On a paid Vercel plan or a self-hosted web container this is optional.
 
 ### Assistant (Lord Mobsincamp, 2026-09-12)
 - **The assistant's name is a per-deployment value.** `ASSISTANT_NAME`

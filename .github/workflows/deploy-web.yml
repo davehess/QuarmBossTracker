@@ -1,0 +1,60 @@
+name: Deploy website
+
+# Only a push that changes web/ builds wolfpack.quest (main) or b.wolfpack.quest (beta)
+# (the guild lead, 2026-10-14; DECISIONS 2026-09-21 §333).
+#
+# Why. Vercel Hobby allows 100 deployments a day and EVERY push Vercel sees spends one, even one its
+# Ignored Build Step skips. On 2026-10-14 the cap was hit at ~22:00 UTC with only 15 real website builds
+# among the 100: 33 beta sync merges, 28 docs pushes, 20 Mimic/agent pushes, 6 bot pushes. So web/vercel.json
+# turns Vercel's own Git deployments OFF for every branch, and this workflow calls the branch's Vercel Deploy
+# Hook instead, only when web/ changed. A hook deployment still spends one of the 100; nothing else does.
+#
+# `paths` is evaluated over the WHOLE push (before..after), so a web commit followed by a docs commit in the
+# same push still deploys (the old ignoreCommand compared only the last commit, DECISIONS §134).
+#
+# ⚠ A push made with GITHUB_TOKEN does not trigger this workflow. sync-beta.yml pushes that way, so it calls the
+# beta hook itself when its merge brought web/ changes to beta.
+#
+# ⚠ This file must live on both main and beta: GitHub runs the copy on the branch being pushed. sync-beta
+# carries it to beta.
+#
+# Secrets (repo → Settings → Secrets and variables → Actions), each a Vercel Deploy Hook URL
+# (Vercel → project → Settings → Git → Deploy Hooks, one per branch):
+#   VERCEL_DEPLOY_HOOK_MAIN  → branch main
+#   VERCEL_DEPLOY_HOOK_BETA  → branch beta
+# A missing secret fails the run loudly: a site that silently stops deploying is the failure this must not have.
+
+on:
+  push:
+    branches: [main, beta]
+    paths: ['web/**']
+  workflow_dispatch:
+
+# A hook builds the branch HEAD, so a newer push supersedes an older one.
+concurrency:
+  group: deploy-web-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  hook:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call the branch's Vercel deploy hook
+        env:
+          BRANCH: ${{ github.ref_name }}
+          HOOK_MAIN: ${{ secrets.VERCEL_DEPLOY_HOOK_MAIN }}
+          HOOK_BETA: ${{ secrets.VERCEL_DEPLOY_HOOK_BETA }}
+        run: |
+          set -euo pipefail
+          case "$BRANCH" in
+            main) HOOK="$HOOK_MAIN"; NAME=VERCEL_DEPLOY_HOOK_MAIN ;;
+            beta) HOOK="$HOOK_BETA"; NAME=VERCEL_DEPLOY_HOOK_BETA ;;
+            *) echo "Only main and beta build the website; $BRANCH does not."; exit 0 ;;
+          esac
+          if [ -z "$HOOK" ]; then
+            echo "::error::$NAME is not set, so $BRANCH's website was NOT deployed. Add it under repo Settings → Secrets → Actions."
+            exit 1
+          fi
+          curl -fsS -X POST "$HOOK"
+          echo
+          echo "Deploy requested for $BRANCH."

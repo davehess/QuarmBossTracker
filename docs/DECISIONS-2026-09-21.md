@@ -114,6 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Website builds only on web/ changes (Vercel deploy hooks)** (§333) | Built on `claude/sharp-lamport-dC0TW`, not on main: it would stop all site deploys until the hooks exist | the guild lead: create Deploy Hooks `main` and `beta` in Vercel (Settings → Git) and put their URLs in repo secrets `VERCEL_DEPLOY_HOOK_MAIN` / `VERCEL_DEPLOY_HOOK_BETA`; then a session lands the branch after 00:30 ET |
+| **Pre-raid checklist "typical" class counts are inflated** (§333) | Diagnosed: averages a live snapshot table (today's daytime raids) and mismatches Shadowknight/Shadow Knight | the guild lead: pick the history source (past signups or DKP attendance); a session fixes it after the freeze |
 | **Web 1.8.158/1.8.159 not on production yet; the 2.9.1 #raid-chat card waits for it** (§332) | Code on main; Vercel refused the build ("Deployment rate limited", Hobby 100/day). Mimic 2.9.1 stable is out | a session (scheduled 00:40 ET): redeploy main's head on Vercel, confirm `/pop/latest` answers 307, confirm the card posted. The guild lead: decide whether beta pushes should stop building the site on busy days |
 | **Map: raid targets + shared escort trails** (§299) | Shipped: bot 3.1.263 on main, agent 3.7.166 on Mimic beta, `/privacy` updated | the guild lead: two Mimics in the hedge maze, one targets Thelin, the other's Map draws his trail; the MA targets a mob and the other's focus ring lands on it |
 | **Mimic Chat overlay, B** (§300) | Live in stable Mimic 2.9.1 (agent 3.7.176, §331): one feed, a chip per channel; officer off by default, tells follow Settings → Tells; local only | the guild lead: say whether officer, group and tells may show; check it on beta. A session: A (tabs + tear-off) next; confirm Zeal's abbreviated tags `S`/`O`/`Sh`/`A`/`To` from a real `/abc 2` log |
@@ -10799,3 +10801,27 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
   every 5 minutes for 24 hours. It reads the guild id through `supabase.guildId()`; an inline fallback broke `guild-tag-rest`'s ceiling (3.1.267).
 - **Golden log** had failed on beta since agent 3.7.172 (avoid lines now carry the swing verb) and on main since the cut: the
   expectations were never regenerated. Additive change, regenerated.
+
+### 333. Only a web/ change builds the website (Vercel deploy hooks), and docs go up in one batch per task (2026-10-14)
+The guild lead, after the cap refused tonight's web release: *"it doesn't seem like it would have been enough to take the entirety
+of versa's deployments for the day. did all of our changes for the other overlays end up kicking in on top of it"*, then picked
+**B** (*"B, and batch the docs going forward"*).
+- **Measured:** the 100 deployments before the refusal (00:38–22:00 UTC) were 33 beta sync merges, 28 docs pushes to main, 20
+  Mimic/agent pushes to beta, 6 bot pushes, 2 other, and only 11 web pushes; 85 were builds the Ignored Build Step skipped, which
+  still count. So it was not the website work: every push spends a slot, and every main push spends a second one through sync-beta.
+- **B (branch `claude/sharp-lamport-dC0TW`, lands on main after the freeze and after the two secrets exist):** `web/vercel.json`
+  `git.deploymentEnabled: false` and no `ignoreCommand`; `.github/workflows/deploy-web.yml` on pushes to main/beta with
+  `paths: ['web/**']` calls the branch's Vercel Deploy Hook; `sync-beta.yml` calls the beta hook itself when its merge brought
+  web/ changes (its GITHUB_TOKEN push triggers no workflow). `paths` covers the whole push, retiring the §134 last-commit trap.
+  Vercel's docs: hooks stop only when `github.enabled` is false, not `deploymentEnabled`. Test: `test/vercel-deploy-branches.test.js`
+  (mutation-checked on the sync step). Today's mix would have cost ~11 deployments instead of 100.
+- ⚠ **Order matters:** the hooks and secrets must exist BEFORE this reaches main, or main and beta stop deploying. Vercel →
+  project → Settings → Git → Deploy Hooks: `main` on branch main, `beta` on branch beta; their URLs into repo secrets
+  `VERCEL_DEPLOY_HOOK_MAIN` / `VERCEL_DEPLOY_HOOK_BETA`. Dashboard-only: no MCP tool creates a hook or a secret.
+- **Docs batching** (CLAUDE.md working rule): one docs commit per task, riding with the code push or as one docs push; no mid-task
+  docs pushes. Self-host epic: a guild on Vercel Hobby needs the same hook setup (DESIGN-selfhost-wizard §3 line).
+- **Found the same evening — the pre-raid checklist's "typical" class counts are wrong** (a member's screenshot, 8 druids typical):
+  `commands/preraid.js` averages `raid_roster` per night, but `raid_roster` is a LIVE snapshot that only holds today's rows
+  (217 rows, 87 characters, all from 13:23–20:00 UTC on 2026-10-14). So "typical" was one "night": every character seen in ANY
+  raid today, daytime groups and alts included (8 distinct druids). Second bug: signups say `Shadowknight`, the roster says
+  `Shadow Knight`, so tonight's 4 SKs read as "0 tonight vs ~4". Fix waits for the guild lead's source pick and the freeze.
