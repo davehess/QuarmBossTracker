@@ -264,6 +264,30 @@
   <div class="row"><input type="radio" name="runMode" value="agent" id="runMode_agent"><label for="runMode_agent">Agent only — upload my logs and keep the dashboard; no overlays</label></div>
   <div class="hint">Agent only keeps log uploads, the tray, the dashboard and spoken trigger callouts, and draws nothing over the game. Switch back any time; either way restarts Mimic.</div>
 
+  <h2>Voice and sounds</h2>
+  <div class="hint" style="margin-bottom:6px">How spoken callouts sound. A change applies to the next callout; nothing here waits for Save. A trigger can also pick its own voice, and its own sound, in the dashboard's trigger editor.</div>
+  <div id="voicePacks" role="radiogroup" aria-label="Voice pack" style="display:flex;flex-direction:column;gap:4px"></div>
+  <div class="row" style="flex-wrap:wrap;gap:10px">
+    <label for="voiceName">Installed voice</label>
+    <select id="voiceName" style="max-width:280px"><option value="">Let the pack choose</option></select>
+  </div>
+  <div class="row" style="align-items:center;gap:8px">
+    <label for="voiceRate">Speed</label>
+    <input id="voiceRate" type="range" min="50" max="200" step="5" value="105" style="flex:1;cursor:pointer" />
+    <span id="voiceRateVal" style="min-width:44px;text-align:right;color:#8b949e">1.05&times;</span>
+  </div>
+  <div class="row" style="align-items:center;gap:8px">
+    <label for="voicePitch">Pitch</label>
+    <input id="voicePitch" type="range" min="0" max="200" step="5" value="100" style="flex:1;cursor:pointer" />
+    <span id="voicePitchVal" style="min-width:44px;text-align:right;color:#8b949e">1.0</span>
+  </div>
+  <div class="row" style="gap:8px">
+    <button id="voiceHear" type="button" style="background:#1f6feb;color:#fff;border:0;border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">&#9654; Hear it</button>
+    <button id="voiceReset" type="button" style="background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">Back to the pack's own</button>
+    <button id="soundsFolder" type="button" style="background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 13px;cursor:pointer;font-family:inherit;font-size:12px">Open my sounds folder</button>
+  </div>
+  <div class="hint">A pack whose voices are not installed on this PC still sets the speed and pitch. Add your own trigger sounds (.wav, .mp3, .ogg) to the sounds folder; the dashboard's Triggers tab lists them. How your characters' names are said is under <b>Voice &amp; names</b> there too.</div>
+
   <h2>Private — /tells <span class="lock">🔒</span></h2>
   <div class="hint" style="margin-bottom:8px">EQ writes your tells to your log. These never upload to the bot. Display window ships in v0.2; the choice persists now.</div>
   <div class="row"><input type="radio" name="tells" value="off" id="tells_off"><label for="tells_off">Off — ignore tells</label></div>
@@ -370,6 +394,7 @@
   })();
 </script>
 
+<script src="voice.js"></script>
 <script>
   // Toast helper — explicit save feedback that lives at the top of the
   // window so it's never missed. State machine: pending → success | error.
@@ -738,6 +763,72 @@
   });
 
   let _loaded = { eqPaths: [], botUrl: '', token: null };
+  // ── Voice and sounds (the guild lead, 2026-10-14: "different voice packs") ──────────────────
+  // The pick lives in Mimic's config as cfg.voice = { pack, voiceName, rate, pitch } (rate / pitch null =
+  // the pack's own) and is read by the trigger window before every callout; voice.js holds the rules.
+  // The packs come from the agent (GET /api/voice-packs). Saved the moment a control changes, not by Save.
+  let _voice = { pack: 'default', voiceName: '', rate: null, pitch: null };
+  let _voicePacks = [];
+  function _voicePackNow() { return _voicePacks.find((p) => p.id === (_voice.pack || 'default')) || _voicePacks[0] || null; }
+  async function _saveVoice() { try { await window.mimic.saveConfig({ voice: _voice }); } catch {} }
+  function _renderVoiceNumbers() {
+    const p = _voicePackNow();
+    const rate = _voice.rate > 0 ? _voice.rate : (p ? p.rate : 1.05);
+    const pitch = _voice.pitch > 0 ? _voice.pitch : (p ? p.pitch : 1);
+    document.getElementById('voiceRate').value = String(Math.round(rate * 100));
+    document.getElementById('voiceRateVal').textContent = (Math.round(rate * 100) / 100) + '×';
+    document.getElementById('voicePitch').value = String(Math.round(pitch * 100));
+    document.getElementById('voicePitchVal').textContent = String(Math.round(pitch * 100) / 100);
+  }
+  function _renderVoiceNames() {
+    const sel = document.getElementById('voiceName');
+    const vs = window.speechSynthesis ? window.speechSynthesis.getVoices() : [];
+    let h = '<option value="">Let the pack choose</option>', seen = !_voice.voiceName;
+    for (const v of vs) { const on = v.name === _voice.voiceName; if (on) seen = true; h += '<option value="' + v.name.replace(/"/g, '&quot;') + '"' + (on ? ' selected' : '') + '>' + v.name.replace(/</g, '&lt;') + '</option>'; }
+    if (!seen) h += '<option value="' + _voice.voiceName.replace(/"/g, '&quot;') + '" selected>' + _voice.voiceName.replace(/</g, '&lt;') + ' (not installed)</option>';
+    sel.innerHTML = h;
+  }
+  function _renderVoicePacks() {
+    const box = document.getElementById('voicePacks');
+    const cur = _voicePackNow();
+    box.innerHTML = '';
+    for (const p of _voicePacks) {
+      const row = document.createElement('label');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;padding:3px 6px;border:1px solid ' + (cur && cur.id === p.id ? '#1f6feb' : '#30363d') + ';border-radius:5px';
+      const r = document.createElement('input'); r.type = 'radio'; r.name = 'voicePack'; r.value = p.id; r.checked = !!cur && cur.id === p.id;
+      const b = document.createElement('b'); b.textContent = p.label;
+      const d = document.createElement('span'); d.style.cssText = 'flex:1;color:#6b7280'; d.textContent = p.blurb || '';
+      const hear = document.createElement('button'); hear.type = 'button'; hear.textContent = '▶'; hear.title = 'Hear this pack';
+      hear.style.cssText = 'background:#21262d;color:#56d364;border:1px solid #30363d;border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px';
+      hear.addEventListener('click', (e) => { e.preventDefault(); window.WPVoice.sample('Enrage soon. Heal up.', _voicePacks, _voice, p.id); });
+      r.addEventListener('change', () => { _voice.pack = p.id; _saveVoice(); _renderVoicePacks(); _renderVoiceNumbers(); });
+      row.append(r, b, d, hear);
+      box.appendChild(row);
+    }
+    if (!_voicePacks.length) box.innerHTML = '<div class="hint">The agent is still starting; reopen this window in a moment.</div>';
+  }
+  async function _initVoice(saved) {
+    _voice = Object.assign({ pack: 'default', voiceName: '', rate: null, pitch: null }, saved || {});
+    try {
+      const port = await window.mimic.getAgentPort();
+      const r = await fetch('http://127.0.0.1:' + port + '/api/voice-packs');
+      const j = r.ok ? await r.json() : null;
+      _voicePacks = (j && Array.isArray(j.packs)) ? j.packs : [];
+    } catch { _voicePacks = []; }
+    _renderVoicePacks(); _renderVoiceNames(); _renderVoiceNumbers();
+    if (window.speechSynthesis && !_initVoice._bound) {
+      _initVoice._bound = true;
+      window.speechSynthesis.addEventListener('voiceschanged', _renderVoiceNames);
+      document.getElementById('voiceName').addEventListener('change', (e) => { _voice.voiceName = e.target.value; _saveVoice(); });
+      document.getElementById('voiceRate').addEventListener('input', (e) => { _voice.rate = Number(e.target.value) / 100; document.getElementById('voiceRateVal').textContent = (Math.round(_voice.rate * 100) / 100) + '×'; });
+      document.getElementById('voiceRate').addEventListener('change', _saveVoice);
+      document.getElementById('voicePitch').addEventListener('input', (e) => { _voice.pitch = Number(e.target.value) / 100; document.getElementById('voicePitchVal').textContent = String(Math.round(_voice.pitch * 100) / 100); });
+      document.getElementById('voicePitch').addEventListener('change', _saveVoice);
+      document.getElementById('voiceHear').addEventListener('click', () => window.WPVoice.sample('Enrage soon. Heal up.', _voicePacks, _voice));
+      document.getElementById('voiceReset').addEventListener('click', () => { _voice.voiceName = ''; _voice.rate = null; _voice.pitch = null; _saveVoice(); _renderVoiceNames(); _renderVoiceNumbers(); });
+      document.getElementById('soundsFolder').addEventListener('click', () => { try { window.mimic.openSoundsFolder(); } catch {} });
+    }
+  }
   async function load(){
     const c = await window.mimic.getConfig();
     await _loadEqFolders(c);
@@ -780,6 +871,7 @@
     }
     _renderZealStatus();
     _renderUiPacks();
+    _initVoice(c.voice);
     const tm = c.tellsMode || 'off';
     document.querySelectorAll('input[name=tells]').forEach(r => { r.checked = (r.value === tm); });
     _loaded = { eqPaths: _collectEqPaths().slice(), botUrl: c.botUrl || '', token: null };

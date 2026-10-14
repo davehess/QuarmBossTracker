@@ -350,6 +350,9 @@ function defaultConfig() {
     // 'full' = overlays; 'agent' = agent only (uploads, tray, dashboard and spoken callouts, no overlay
     // windows). Read before any window exists (see _runModeAtStart), so a change needs a restart.
     runMode: 'full',
+    // Spoken-callout voice (the guild lead, 2026-10-14): a voice pack id (the agent's VOICE_PACKS), optionally an installed
+    // voice by name, and a speed / pitch that override the pack's own (null = the pack's). Read by triggers.html; see voice.js.
+    voice: { pack: 'default', voiceName: '', rate: null, pitch: null },
   };
 }
 // The config, or the last good copy of it. saveConfig keeps `.bak` (the file as
@@ -10802,6 +10805,29 @@ ipcMain.handle('welcome-optin', (_e, action, paths) => new Promise((resolve) => 
   req.on('error', (e) => resolve({ ok: false, error: String(e && e.message || e) }));
   req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'The engine did not respond in time.' }); });
   appendAgentLog(`[welcome] ${action} ${list.length} path(s)\n`);
+  req.end(body);
+}));
+// A JSON POST to one of the engine's local routes, for the setup walkthrough's "Say your name" (a file://
+// page cannot read the reply to a POST). Only the routes listed here, only JSON, only 127.0.0.1.
+const _AGENT_POST_OK = new Set(['/api/pronunciation', '/api/pronunciations/local']);
+ipcMain.handle('agent-post', (_e, route, payload) => new Promise((resolve) => {
+  if (!_AGENT_POST_OK.has(route)) return resolve({ ok: false, error: 'not allowed' });
+  if (!agentPort) return resolve({ ok: false, error: 'The parser engine is not running yet.' });
+  const body = JSON.stringify(payload && typeof payload === 'object' ? payload : {});
+  if (body.length > 2000) return resolve({ ok: false, error: 'too large' });
+  const req = http.request({
+    host: '127.0.0.1', port: agentPort, path: route, method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }, timeout: 15000,
+  }, (res) => {
+    let buf = '';
+    res.on('data', (c) => { buf += c; });
+    res.on('end', () => {
+      let j = null; try { j = JSON.parse(buf); } catch { /* not JSON */ }
+      resolve({ ok: res.statusCode === 200, status: res.statusCode, body: j });
+    });
+  });
+  req.on('error', (e) => resolve({ ok: false, error: String(e && e.message || e) }));
+  req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'The engine did not respond in time.' }); });
   req.end(body);
 }));
 // ── Main / alt · Inventory only · Hide completely (the guild lead, 2026-10-06) ──────────────────────

@@ -855,6 +855,8 @@ contextBridge.exposeInMainWorld('mimic', {
   listSounds:       ()     => ipcRenderer.invoke('sounds:list'),
   resolveSound:     (name) => ipcRenderer.invoke('sounds:resolve', name),
   openSoundsFolder: ()     => ipcRenderer.invoke('sounds:open-folder'),
+  // A JSON POST to one of the engine's pronunciation routes (main keeps the list); → { ok, status, body }.
+  agentPost:        (route, body) => ipcRenderer.invoke('agent-post', route, body),
   saveConfig:    (cfg) => ipcRenderer.invoke('save-config', cfg),
   getAgentPort:  () => ipcRenderer.invoke('get-agent-port'),
   eqSetupForMe:  () => ipcRenderer.invoke('eq-setup-for-me'),

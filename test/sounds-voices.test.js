@@ -594,3 +594,126 @@ describe('the dashboard — the trigger form, the guild row, the cards', () => {
     expect(sliceBlock(code, 'function renderGuildTriggersCard(s) {', '\n}\n')).toContain('wpSoundOverrideHtml(t, _ov)');
   });
 });
+
+describe('the setup walkthrough — Your voice, Say your name', () => {
+  const page = readSource(path.join(ROOT, 'apps', 'mimic', 'welcome.html'));
+  const script = page.slice(page.indexOf('<script>'), page.lastIndexOf('</script>'));
+  const block = sliceBlock(script, 'function agentGet(p) {', '\n  function bDone(el) {').replace(/\n  function bDone\(el\) \{$/, '');
+
+  function build(over = {}) {
+    const calls = { cfg: [], post: [], samples: [], fetched: [] };
+    const S = Object.assign({ cfg: {}, port: 7779, agentReady: true, signedIn: true, eqConfigured: true, visited: new Set(), excluded: new Set(['hiddenone']),
+      chars: [{ character: 'Aldenmar' }, { character: 'Hiddenone' }, { character: 'Brackwyn' }] }, over.S || {});
+    const fetchStub = (url) => {
+      calls.fetched.push(url);
+      const body = url.includes('/api/voice-packs') ? { packs: agent.VOICE_PACKS }
+        : url.includes('/api/pronunciations') ? { feature: 'on', characters: [{ name: 'Aldenmar', say: 'Ahl-den-mar', source: 'synced' }, { name: 'Brackwyn', say: '', source: '' }] }
+        : { name: 'x', suggestions: ['Brack-win', { say: 'Brak-win' }], tips: ['Stress the first syllable.'], current: '', available: true };
+      return Promise.resolve({ ok: true, json: async () => body });
+    };
+    const M = { saveConfig: (c) => { calls.cfg.push(c); return Promise.resolve(true); },
+      agentPost: (route, b) => { calls.post.push([route, b]); return Promise.resolve(over.postResult || { ok: true, status: 200, body: { ok: true } }); } };
+    const el = { html: '', set innerHTML(v) { this.html = v; }, get innerHTML() { return this.html; }, querySelectorAll: () => [] };
+    const api = new Function('S', 'M', 'fetch', 'window', 'calls', `
+      function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+      function $() { return { addEventListener() {} }; }
+      function turnsOn(items) { return '<turns>' + items.join('|') + '</turns>'; }
+      var changedCount = 0; function changed() { changedCount++; }
+      ${block}
+      return { bVoice, bNames, savePron, nameChars, sampleSay, S, changed: () => changedCount };
+    `)(S, M, fetchStub, { WPVoice: { sample: (...a) => calls.samples.push(a) } }, calls);
+    return { api, el, calls, S };
+  }
+  const settle = () => new Promise(r => setTimeout(r, 5));
+
+  it('Your voice lists the four packs once the engine answers, with the saved one checked', async () => {
+    const { api, el, S } = build({ S: { cfg: { voice: { pack: 'herald' } } } });
+    api.bVoice(el);
+    expect(el.html).toContain('Loading the voice packs');
+    await settle();
+    api.bVoice(el);
+    for (const p of agent.VOICE_PACKS) expect(el.html).toContain('value="' + p.id + '"');
+    expect(el.html).toMatch(/value="herald" checked/);
+    expect(el.html).not.toMatch(/value="default" checked/);
+    expect(el.html).toContain('data-sample="quick"');
+    expect(S.voicePacks).toHaveLength(4);
+  });
+
+  it('with the engine still starting it says so and asks for nothing', () => {
+    const { api, el, calls } = build({ S: { agentReady: false } });
+    api.bVoice(el);
+    expect(el.html).toContain('Waiting for the engine');
+    expect(calls.fetched).toEqual([]);
+  });
+
+  it('Say your name lists the characters that are not hidden, loads suggestions and tips, and shows what is saved', async () => {
+    const { api, el, S } = build();
+    expect(api.nameChars()).toEqual(['Aldenmar', 'Brackwyn']);
+    api.bNames(el);
+    await settle(); await settle();
+    api.bNames(el);
+    expect(el.html).toContain('Aldenmar');
+    expect(el.html).not.toContain('Hiddenone');
+    expect(el.html).toContain('said as “Ahl-den-mar”');
+    expect(el.html).toContain('Brack-win');          // a plain suggestion
+    expect(el.html).toContain('Brak-win');           // one given as {say}
+    expect(el.html).toContain('Stress the first syllable.');
+    expect(el.html).toContain('data-keep-typing');   // the text box that holds a redraw off
+    expect(S.pronFeature).toBe('on');
+  });
+
+  it('Save for the guild posts {character, say} through main; This PC only posts the local route', async () => {
+    const { api, calls, S } = build();
+    api.bNames({ set innerHTML(v) { void v; }, querySelectorAll: () => [] });
+    await settle();
+    api.savePron('Brackwyn', 'Brack-win', true);
+    await settle();
+    api.savePron('Brackwyn', 'Brack-win', false);
+    await settle();
+    expect(calls.post).toEqual([['/api/pronunciation', { character: 'Brackwyn', say: 'Brack-win' }], ['/api/pronunciations/local', { name: 'Brackwyn', say: 'Brack-win' }]]);
+    expect(S.pron.brackwyn.say).toBe('Brack-win');
+    expect(S.pron.brackwyn.note).toBe('Saved on this PC.');
+    expect(S.visited.has('names')).toBe(true);
+  });
+
+  it('a refused guild save keeps what was typed and points to This PC only; an empty box saves nothing', async () => {
+    const { api, calls, S } = build({ postResult: { ok: false, status: 403, body: { ok: false, error: 'Only the character\'s owner can set it.' } } });
+    api.savePron('Brackwyn', 'Brack-win', true);
+    await settle();
+    expect(S.pron.brackwyn.note).toContain('Only the character\'s owner can set it.');
+    expect(S.pron.brackwyn.note).toContain('keep it on this PC only');
+    expect(S.pron.brackwyn.say).toBeUndefined();
+    calls.post.length = 0;
+    api.savePron('Brackwyn', '', true);
+    expect(calls.post).toEqual([]);
+    expect(S.pron.brackwyn.note).toContain('Type how it should sound first');
+  });
+
+  it('a redraw waits while the name box has the focus, and the engine route is the only one main will post to', () => {
+    const code = stripJs(page);
+    expect(code).toMatch(/if \(ae && ae\.hasAttribute && ae\.hasAttribute\('data-keep-typing'\)\) \{ _renderHeld = true; return; \}/);
+    const main = stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'main.js')));
+    expect(main).toContain("new Set(['/api/pronunciation', '/api/pronunciations/local'])");
+    expect(stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'preload.js')))).toContain("ipcRenderer.invoke('agent-post', route, body)");
+    // both steps are optional and sit right after the characters
+    const ids = [...code.matchAll(/\{ id: '([a-z]+)',\s+icon/g)].map(m => m[1]);
+    expect(ids.indexOf('voice')).toBe(ids.indexOf('chars') + 1);
+    expect(ids.indexOf('names')).toBe(ids.indexOf('chars') + 2);
+    expect(code).not.toMatch(/id: 'voice',[^}]*kind:/);
+  });
+});
+
+describe('Mimic Settings — Voice and sounds', () => {
+  const settings = readSource(path.join(ROOT, 'apps', 'mimic', 'settings.html'));
+  const main = stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'main.js')));
+  it('has the pack list, voice, speed, pitch, a sample, and the sounds folder, none of it waiting on Save', () => {
+    for (const id of ['voicePacks', 'voiceName', 'voiceRate', 'voicePitch', 'voiceHear', 'voiceReset', 'soundsFolder']) expect(settings).toContain('id="' + id + '"');
+    expect(settings).toContain('<script src="voice.js"></script>');
+    expect(stripJs(settings)).toContain('window.mimic.saveConfig({ voice: _voice })');
+    expect(stripJs(settings)).toContain('window.mimic.openSoundsFolder()');
+  });
+  it('the voice defaults live in Mimic\'s config, and the tray reaches the sounds folder too (tray-dashboard parity)', () => {
+    expect(main).toMatch(/voice: \{ pack: 'default', voiceName: '', rate: null, pitch: null \}/);
+    expect(main).toContain("label: 'Open my sounds folder (add your own trigger sounds)'");
+  });
+});
