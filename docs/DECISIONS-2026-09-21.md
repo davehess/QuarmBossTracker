@@ -10176,3 +10176,16 @@ Harmony, Hide/Sneak for non-rogues).
 - **Slow warning (§284's in-fight rule):** "re-slow soon" fires at 60 s left (was 30) and never for a bard slow
   (`SLOW_FADING_WARN_SECS`, `best.cls !== 'BRD'`). Every slow LANDING still announces, as before; whether those
   go quiet during a fight is the guild lead's call.
+
+### 287. The post-kill recap: the whole raid on /screen, inside the RaidBosses kill card, with fun events and stars (2026-10-13)
+
+- **The call** (the guild lead): *"displaying C the whole raid. raid thread cards can be coordinated with the
+  RaidBosses card. the fun events can be mentioned and highlight stellar performance."*
+- So the recap (how this kill compared with the last and the best, first kills, deaths) shows on
+  https://wolfpack.quest/screen's Overview for the whole raid, rides INSIDE the kill card the bot (Discord name
+  RaidBosses) already posts in the raid thread — no second post — and adds the fight's fun events and up to three
+  honest stellar-performance highlights. Post-kill only (§284).
+- **Test before the raid:** a read-only replay of every raid-boss kill since 2026-10-04, printing what the card
+  would have said at that moment (the guild lead: *"test the bot on a replay of fights from the last week"*).
+- Drafting: bot side (`utils/killRecap.js`, card hook, `bot_kv last_kill_recap`, screenLive `recap`) on main;
+  the /screen Overview card on beta. Both by Sonnet agents, reviewed here.
