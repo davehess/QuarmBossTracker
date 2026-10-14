@@ -5951,6 +5951,12 @@ Abashi's Rod → 31242). The web has no decoder: it shows the stored link. **Ope
 fixable, staged in `docs/RUNBOOK-pqdi-chat-links.md`, unapplied (the guild lead's yes); the stable fleet keeps writing
 wrong links until the agent reaches stable.
 
+### 🧾 2026-10-14 — UI Studio chat routing: real channel names, layout ↔ routing link (Mimic beta `a730c5be`, DECISIONS §312)
+Chips use the client's real filter names (ids 0–40 from the client's chat-filter list, 41–56 Zeal's filters in saved order) with the
+id as a dim suffix; 57+ read "Ch N". /join slots show the joined channel names from eqclient.ini's autojoin list. Selecting a chat
+window in the layout or the routing card is one shared state (Esc clears); a chip can be dropped on a chat rectangle. **Open:** autojoin
+order vs slot order unverified in game; default-channel names beyond Tell.
+
 ### 🧾 2026-10-14 — Tray menu layout B; chat overlay shows group and channels by default (Mimic beta `a9fcbfb4` / `a069a5ee`, DECISIONS §310–311)
 The tray's top level is now eight lines (Show dashboard, Overlays, Rescue, Quiet mode, Settings ›, Open ›, Help ›, Quit); every item
 kept its label and action, only its place changed (`test/tray-menu-layout.test.js` against `test/fixtures/tray-menu-before.json`).

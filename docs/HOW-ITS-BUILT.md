@@ -2753,6 +2753,13 @@ Loads the character's ini bundle (`ui-studio-read-bundle`), parses window
 sections (`XPos<res>` blocks, bare Width/Height), rescales source→target
 resolution, drag/snap editor, writes back with `.bak` or defers until logout
 (`defer-save` + background watcher).
+**Chat routing names** (Mimic beta `a730c5be`, 2026-10-14, DECISIONS §312): `ChannelMap<N>` is the client's
+chat-filter menu position. `CHAT_CHANNEL_ROWS` in `ui-studio.html` names ids 0–40 from MacroQuest eqlib
+`eChatChannel` and 41–56 from Zeal's `Extended_ChannelMaps` (saved order); 57+ stay "Ch N". /join slots
+(ids 12–21) take names from eqclient.ini `ChannelAutoJoin` (or Zeal's `ChannelAutoJoin_<Character>`) via
+`_autojoinNames` in `main.js`, which cuts every `:password` before anything leaves main. Layout ↔ routing
+card selection is one state (`STATE.selected`, Esc clears); a chip dropped on a chat rectangle goes through
+the same `_dropChipOnWindow` → `_rerouteChip` (Tell windows refuse). Test: `test/ui-studio-chat-channels.test.js`.
 **Save sends KEY EDITS, not file texts** (since 2026-10-05, the guild lead's pick A; DECISIONS-2026-09-21
 §164): `_buildSaveEdits` lists only the windows moved or resized in this session (every window when the
 layout is rescaled to another resolution block), and main's `_applyUiKeyEdits` re-reads each file and
