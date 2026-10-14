@@ -1098,6 +1098,11 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   a channel chip breaks that group into its own window (`chat.html?groups=<id>`, `chatBreakouts` Map in main.js, `cfg.chatBreakouts`,
   bounds `chatBounds_<id>`, key `chat:<id>`). Breakouts exist exactly while Chat does (`_syncChatBreakouts`); a breakout's ✕ puts the
   group back; `chat-prefs-changed` keeps every window's gates in step.
+- **Seer paste on /pop/guide** (web 1.8.154 · beta, §304): `web/app/pop/guide/SeerPaste.tsx` (collapsed `<details>` atop all guide
+  layouts); reader `web/lib/popRecital.ts` (`parseRecital`, `heldClosure`, `zoneViews`, `recitalRows`; table copied from
+  `utils/popFlagStages.js`, parity-tested); guide join `web/lib/popGuideSeer.ts` (`STEP_GUIDE`, `guideStepsProven`); save
+  `saveSeerRecital` (`web/app/pop/guide/actions.ts`) → `web/lib/popRecitalSave.ts` (ownership via `ownedCharacters`, skip existing
+  recital keys, in-memory limiter 8/10 min). Test: `test/pop-seer-paste.test.js`.
 - **PoP alts grouped by main** (`/pop?alts=group`, web 1.8.153 · beta, §302): `web/lib/popAltGroups.ts` (grouping, change rule,
   24 h / 3 d buckets — pure), `web/app/pop/AltGroupMatrix.tsx` (render), `web/app/pop/page.tsx` (params `alts`, `sort=latest`,
   `open=1`). Test: `test/pop-alt-groups.test.js`.
