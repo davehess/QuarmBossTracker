@@ -1111,7 +1111,13 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   recital keys, in-memory limiter 8/10 min). Test: `test/pop-seer-paste.test.js`.
 - **PoP alts grouped by main** (`/pop?alts=group`, web 1.8.153 · beta, §302): `web/lib/popAltGroups.ts` (grouping, change rule,
   24 h / 3 d buckets — pure), `web/app/pop/AltGroupMatrix.tsx` (render), `web/app/pop/page.tsx` (params `alts`, `sort=latest`,
-  `open=1`). Test: `test/pop-alt-groups.test.js`.
+  `open=1`). Test: `test/pop-alt-groups.test.js`. Since web 1.8.156 (§307) All characters' Matrix is grouped by default
+  (`?alts=flat` opts out).
+- **PoP scope + view toggles** (web 1.8.156 · beta, §307): `web/lib/popScope.ts` (`resolvePopView`: My Characters default, old-link
+  rules) + `web/app/pop/page.tsx`. Test: `test/pop-scope.test.js`.
+- **PoP missing spells, my characters** (web 1.8.156 · beta, §307): `web/lib/popMissingSpells.ts` (`pqdiSpellUrl`, copy-line builder,
+  one-line description from `eqemu_spells`) + `web/app/pop/MissingSpells.tsx` (closed `<details>`, `CopyChip`). Data: `pop_spell_needs`
+  plus one chunked `eqemu_spells` lookup. Test: `test/pop-missing-spells.test.js`.
 - **/who overlay** (`who.html`): fixed height (`wp:who:height`, drag grip, double-click = fit), a
   scrolling `#body`, CLASS/GUILD chips (`whoFacet`/`whoFilterRows`), sort (`whoSortRows`), and one
   document-level hover owner (`_zoneOf`) so the wheel reaches the list. **ZONE** switch (agent

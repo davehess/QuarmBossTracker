@@ -10515,3 +10515,17 @@ the Bastion of Thunder at the time.
   quests, the spells), and the Seer box already covers flag repair. Maelin hand-ins between raid kills stay with their tier; moving one
   is a line in `STEP_HOME`.
 - **Open:** "▶ next" from Mimic data on this layout (today only the Seer paste drives it); whether to retire `?v=b` / `?v=c`.
+
+### 307. /pop opens on My Characters; missing spells collapsed with copy; wider chart (web 1.8.156, beta `6c704690`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"The 'your pop spells still needed' should be collapsed and let you expand to see the full
+  list and what the spell does, link to pqdi, and a copy button…"*; *"The pop flags page should start on your characters by default,
+  with mains being the second toggle and all characters being the third (grouped by mains like I mentioned)"*; *"Pop flags breakdown
+  should be a little wider and less dense."*
+- **Toggles:** scope (`?scope=`) My Characters → Mains → All characters; view (`?view=`) Chart | Matrix. A bare `/pop` opens on My
+  Characters (its table). All characters' Matrix groups alts under mains (`?alts=flat` opts out). Old links that name a zone, view or
+  alts but no scope stay Mains; `?view=mine` is My Characters. Signed-in with no linked characters → Mains.
+- **Spells:** a closed `<details>`; per character a copy line (≤200 characters, split "(1/3)" without cutting a spell) and per spell
+  the PQDI link, level, scroll and a one-line description synthesized from `eqemu_spells` (no prose exists in the catalog). One chunked
+  `eqemu_spells` lookup, My Characters only.
+- **Chart:** full container width, 3 cards per row from `xl`, more padding, step rows that don't wrap the counts. CSS only.
+- **Open:** whether the guild-wide spell table at the bottom collapses too; whether My Characters' Chart view shows your spells.
