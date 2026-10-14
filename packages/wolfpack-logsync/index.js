@@ -8231,6 +8231,77 @@ function _deathrollEntry(ch, now) {
   };
 }
 
+// ── Ties at the top of a roll set (the guild lead, 2026-10-14) ──────────────────
+// "if two toons roll the same number on a roll it should trigger a deathroll and highlight the
+// tie" — the Rolls card showed `611 (Carved Bone Ring) — <name> 507` with two characters on 507.
+// ONE helper decides it for every surface (the dashboard's Rolls card and the Command Center both
+// draw what rollSetsSnapshot carries). A character's FIRST roll is the only one that counts, so
+// the same character rolling twice is a re-roll (already flagged `reroll`), never a tie. Only
+// the TOP tie decides the item, so only it gets a deathroll; a tie lower down comes back as a
+// value in `lower` for a quiet mark. With a linked quantity (3), a top group no larger than
+// the quantity is not contested — everyone in it wins — so it is not a tie either.
+function rollSetTies(rolls, qty) {
+  const first = new Map();
+  for (const r of rolls || []) {
+    const k = r.nameLower || String(r.name).toLowerCase();
+    if (!first.has(k)) first.set(k, r);
+  }
+  const byValue = new Map();
+  for (const r of first.values()) {
+    if (!byValue.has(r.value)) byValue.set(r.value, []);
+    byValue.get(r.value).push(r);
+  }
+  let topValue = -Infinity;
+  for (const v of byValue.keys()) if (v > topValue) topValue = v;
+  const group = byValue.get(topValue) || [];
+  const need = Math.max(1, qty || 1);
+  const top = group.length > need
+    ? { value: topValue, names: group.map(r => r.name), atMs: Math.max(...group.map(r => r.atMs)) }
+    : null;
+  const lower = [];
+  for (const [v, g] of byValue) if (g.length > 1 && !(top && v === top.value)) lower.push(v);
+  lower.sort((a, b) => b - a);
+  return { top, lower };
+}
+// Where the tie's deathroll stands. The start is the TIED value, not the original range: the
+// deathroll detector (here, and utils/deathroll.js on the bot) chains a roll only when its range
+// is the previous result, and the tied value IS the previous result, so /random 507 slots straight
+// onto the end of the 0-611 roll. It walks the same rule over every roll heard after the tie
+// (0-based range = last result, a different tied character each step, 2 minutes between steps,
+// 10 for the first), so a two-roll game the detector would not count still resolves the tie.
+// A 0 puts that character out; when no more than `qty` remain, those are the winners.
+function _rollTieResolve(top, qty, flat, now) {
+  const need = Math.max(1, qty || 1);
+  const left = new Map(top.names.map(n => [n.toLowerCase(), n]));
+  let cur = top.value, prev = null, last = top.atMs, gap = ROLL_SET_GAP_MS;
+  const steps = [], out = [], used = [];
+  for (const c of flat) {
+    const r = c.r;
+    if (left.size <= need) break;
+    if (r.atMs <= top.atMs) continue;
+    if (c.from !== 0 || c.to !== cur || !left.has(r.nameLower) || r.nameLower === prev) continue;
+    if (r.atMs - last > gap) break;
+    steps.push({ name: r.name, to: c.to, value: r.value, at_ms: r.atMs });
+    used.push(r);
+    prev = r.nameLower; last = r.atMs; cur = r.value; gap = DEATHROLL_STEP_MS;
+    if (r.value === 0) {
+      out.push(left.get(r.nameLower)); left.delete(r.nameLower);
+      cur = top.value; prev = null;
+    }
+  }
+  const remaining = [...left.values()];
+  const done = remaining.length <= need;
+  return {
+    used,
+    tie: {
+      value: top.value, names: top.names, starter: top.names[0],
+      state: done ? 'done' : (steps.length ? 'live' : 'pending'),
+      out, remaining, winners: done ? remaining : [], steps,
+      next: done || !steps.length ? null : { to: cur, name: prev && remaining.length === 2 ? remaining.find(n => n.toLowerCase() !== prev) : null },
+    },
+  };
+}
+
 // Serialized sets, newest first. Winners = the top-(qty) rolls counting each
 // player's FIRST roll only ((3) linked on the item = three winners). A
 // deathroll replaces the sets it is made of with ONE entry (kind 'deathroll').
@@ -8239,8 +8310,23 @@ function rollSetsSnapshot(maxAgeMs) {
   for (let i = _rollSets.length - 1; i >= 0; i--) {
     if (now - _rollSets[i].lastMs > ROLL_SET_KEEP_MS) _rollSets.splice(i, 1);
   }
-  const chains = _deathrollChains();
-  const inGame = new Set();
+  // A top tie's deathroll steps are ordinary /random sets, and the detector would also read them as
+  // a game opening on the tied roll ("Deathroll 611"). The tie entry carries them instead, so they
+  // are accounted for here and that chain is not drawn a second time.
+  const flat = [];
+  for (const s of _rollSets) for (const r of s.rolls) flat.push({ r, from: s.from, to: s.to });
+  flat.sort((a, b) => a.r.atMs - b.r.atMs);
+  const tieOf = new Map();
+  const tieUsed = new Set();
+  for (const s of _rollSets) {
+    const t = rollSetTies(s.rolls, s.qty);
+    if (!t.top) continue;
+    const res = _rollTieResolve(t.top, s.qty, flat, now);
+    tieOf.set(s, res.tie);
+    for (const r of res.used) tieUsed.add(r);
+  }
+  const chains = _deathrollChains().filter(ch => !ch.some(c => tieUsed.has(c.r)));
+  const inGame = new Set(tieUsed);
   for (const ch of chains) for (const c of ch) inGame.add(c.r);
   const out = [];
   for (const ch of chains) {
@@ -8256,14 +8342,21 @@ function rollSetsSnapshot(maxAgeMs) {
     for (const r of s.rolls) if (!firstByName.has(r.nameLower)) firstByName.set(r.nameLower, r);
     const ranked = [...firstByName.values()].sort((a, b) => b.value - a.value);
     const nWinners = Math.max(1, Math.min(s.qty || 1, ranked.length));
+    const tie = tieOf.get(s) || null;
+    const lower = rollSetTies(s.rolls, s.qty).lower;
     out.push({
       from: s.from, to: s.to, item: s.item || null, qty: s.qty || null,
       players: firstByName.size,
-      winners: ranked.slice(0, nWinners).map(r => ({ name: r.name, value: r.value })),
+      // A tie settled by its deathroll names the deathroll's winner, not the arbitrary first of the tied.
+      winners: tie && tie.state === 'done'
+        ? tie.winners.map(n => ({ name: n, value: tie.value }))
+        : ranked.slice(0, nWinners).map(r => ({ name: r.name, value: r.value })),
       // A later call that gave this number to another item closes it (FB-45).
       open: (now - s.lastMs) <= ROLL_SET_GAP_MS && !_rollSetSuperseded(s, _rollItemByNumber.get(s.to)),
       started_at_ms: s.startMs, last_at_ms: s.lastMs,
       rolls: s.rolls.map(r => ({ name: r.name, value: r.value, at_ms: r.atMs, reroll: r.reroll || undefined })),
+      ...(tie ? { tie } : {}),
+      ...(lower.length ? { lower_ties: lower } : {}),
     });
   }
   out.sort((a, b) => b.last_at_ms - a.last_at_ms);
@@ -24923,6 +25016,39 @@ function _wpDeathrollHtml(e) {
   return h + '</table></details>';
 }
 
+// 🤝 A tie at the top of a roll set (the guild lead, 2026-10-14: "if two toons roll the same number on a
+// roll it should trigger a deathroll and highlight the tie"). The agent decides it once (rollSetTies,
+// carried as rset.tie / rset.lower_ties); these only draw it. Orange, bordered and spelled out, so it
+// reads without the colour. The header names the tied rolls instead of one arbitrary winner and, once
+// the deathroll is over, names its winner. The prompt says who starts and on which range.
+function _wpRollTieChip(label) {
+  return '<span style="color:var(--orange);border:1px solid var(--orange);border-radius:3px;padding:0 4px;font-weight:700">'
+    + label + '</span>';
+}
+function _wpRollWhoHtml(rset) {
+  var t = rset && rset.tie;
+  if (!t) return (rset.winners || []).map(function (w) { return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+  var chip = _wpRollTieChip('TIE ' + Number(t.value));
+  if (t.state === 'done') return chip + ' <span style="color:var(--gold,#f0c419)">' + (t.winners || []).map(esc).join(', ') + '</span> won the deathroll';
+  return chip + ' ' + (t.names || []).map(esc).join(' · ');
+}
+function _wpRollTiePrompt(rset) {
+  var t = rset && rset.tie;
+  if (!t) return '';
+  var msg;
+  if (t.state === 'done') msg = 'Deathroll over: ' + (t.winners || []).map(esc).join(', ') + ' wins' + ((t.out || []).length ? ' · ' + t.out.map(esc).join(', ') + ' hit 0' : '');
+  else if (t.state === 'live') msg = 'Deathroll going: ' + (t.next && t.next.name ? esc(t.next.name) + ' rolls' : 'next roll') + ' /random ' + (t.next ? t.next.to : t.value);
+  else msg = 'Tie → deathroll: ' + esc(t.starter) + ' starts with /random ' + t.value;
+  return '<div style="border-left:3px solid var(--orange);padding:2px 8px;margin:4px 0;font-weight:600">' + msg + '</div>';
+}
+function _wpRollRowMark(rset, rr) {
+  if (!rset || rr.reroll) return '';
+  var t = rset.tie;
+  if (t && rr.value === t.value && (t.names || []).indexOf(rr.name) !== -1) return ' ' + _wpRollTieChip('TIE');
+  if ((rset.lower_ties || []).indexOf(rr.value) !== -1) return ' <span class="dim" title="Same number as another roller">=</span>';
+  return '';
+}
+
 // ── 📦 Who looted what (the guild lead, 2026-10-03) ──────────────────────────────────
 // "the loot tab on mimic should have the 'who looted what' section on there for
 // items, as well as the rolls for loot." An agent only ever sees its OWN
@@ -25091,24 +25217,25 @@ function renderLootTab(s) {
     for (var rsi = 0; rsi < _rollSets.length; rsi++) {
       var rset = _rollSets[rsi];
       if (rset.kind === 'deathroll') { h += _wpDeathrollHtml(rset); continue; }
-      var rWinners =(rset.winners || []).map(function (w) { return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+      var rWinners = _wpRollWhoHtml(rset);
       var rTime = new Date(rset.started_at_ms).toLocaleTimeString();
       // 📦 Only when the looter is NOT a winner drawn here (a re-roll or a pass).
       var rLooted = wpNightLootedBy(rset, _wpNightLoot && _wpNightLoot.sessions);
       h += '<details ' + wpKeep('roll|' + rset.started_at_ms + '|' + rset.to) + '>';
       h += '<summary><b>' + rset.from + '–' + rset.to + '</b>'
          + (rset.item ? ' (' + esc(rset.item) + (rset.qty ? ' ×' + rset.qty : '') + ')' : '')
-         + ' — <span style="color:var(--gold,#f0c419)">' + (rWinners || '—') + '</span>'
+         + ' — <span style="color:var(' + (rset.tie && rset.tie.state !== 'done' ? '--orange' : '--gold,#f0c419') + ')">' + (rWinners || '—') + '</span>'
          + (rLooted.length ? ' <span style="color:var(--blue)">· 📦 looted by ' + rLooted.map(esc).join(', ') + '</span>' : '')
          + ' <span class="dim">· ' + rset.players + ' roller' + (rset.players === 1 ? '' : 's')
          + ' · ' + rTime + (rset.open ? ' · open' : '') + '</span></summary>';
+      h += _wpRollTiePrompt(rset);
       h += '<table><tr><th>Rolled</th><th>Player</th><th>Time</th></tr>';
       var rRows = (rset.rolls || []).slice().sort(function (a, b) { return b.value - a.value; });
       for (var rri = 0; rri < rRows.length; rri++) {
         var rr = rRows[rri];
         h += '<tr' + (rr.reroll ? ' style="opacity:0.45;text-decoration:line-through"' : '') + '>'
            + '<td class="num">' + rr.value + '</td>'
-           + '<td>' + esc(rr.name) + (rr.reroll ? ' (re-roll)' : '') + '</td>'
+           + '<td>' + esc(rr.name) + (rr.reroll ? ' (re-roll)' : '') + _wpRollRowMark(rset, rr) + '</td>'
            + '<td class="dim">' + new Date(rr.at_ms).toLocaleTimeString() + '</td></tr>';
       }
       h += '</table></details>';
@@ -31497,6 +31624,13 @@ const COMMAND_HTML = `<!doctype html>
   .roll-detail .d.win .v{color:#f0c419;font-weight:700}
   .roll-detail .d.lose .v{color:#f85149;font-weight:700}
   .roll-detail .d .rng{opacity:.6;flex-shrink:0;font-variant-numeric:tabular-nums}
+  /* A tie at the top of a set (the guild lead, 2026-10-14). Orange, bordered and spelled TIE so it reads
+     without the colour; a tie lower down is only a dim "=". */
+  .roll-row .tt,.roll-detail .tt{color:#ffa657;font-size:9px;font-weight:700;flex-shrink:0;border:1px solid rgba(255,166,87,0.6);
+    border-radius:2px;padding:0 3px;line-height:1.3;align-self:center}
+  .roll-detail .d.tie .v{color:#ffa657;font-weight:700}
+  .roll-detail .d .eq{opacity:.55;flex-shrink:0}
+  .roll-detail .d.tiebox{color:#ffa657;font-weight:700;font-size:10px;border-left:2px solid #ffa657;padding-left:5px;margin-bottom:2px}
   /* A re-roll never wins, so it has to be legible at a glance or the list looks
      like someone rolled twice and got robbed. #6e7681 on this backdrop was not. */
   .roll-detail .d .rr{color:#c9a227;font-size:8px;flex-shrink:0;border:1px solid rgba(201,162,39,0.45);
@@ -31733,6 +31867,46 @@ const COMMAND_HTML = `<!doctype html>
       if (line.length <= DR_COPY_MAX) return line;
     }
     return line.slice(0, DR_COPY_MAX);
+  }
+  // 🤝 A tie at the top of a set (the guild lead, 2026-10-14: "if two toons roll the same number on a roll
+  // it should trigger a deathroll and highlight the tie"). The agent decides it once (rollSetTies) and
+  // sends rs.tie / rs.lower_ties; these only draw it and word the line to copy. The deathroll starts at
+  // the TIED number, because the deathroll detector chains a roll whose range is the last result.
+  function rollTieWhoHtml(rs) {
+    var t = rs && rs.tie;
+    if (!t) return (rs && rs.winners || []).map(function(w){ return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+    var chip = '<span class="tt">TIE ' + Number(t.value) + '</span> ';
+    if (t.state === 'done') return chip + '<span style="color:#f0c419">' + (t.winners || []).map(esc).join(', ') + '</span> won the deathroll';
+    return chip + '<span style="color:#ffa657">' + (t.names || []).map(esc).join(' · ') + '</span>';
+  }
+  function rollTiePromptText(rs) {
+    var t = rs && rs.tie;
+    if (!t) return '';
+    if (t.state === 'done') return 'Deathroll over: ' + (t.winners || []).join(', ') + ' wins' + ((t.out || []).length ? ' · ' + t.out.join(', ') + ' hit 0' : '');
+    if (t.state === 'live') return 'Deathroll going: ' + (t.next && t.next.name ? t.next.name + ' rolls' : 'next roll') + ' /random ' + (t.next ? t.next.to : t.value);
+    return 'Tie → deathroll: ' + t.starter + ' starts with /random ' + t.value;
+  }
+  // The row for one roll inside an expanded set: top-tie rows carry a TIE chip and the orange number,
+  // a lower tie only a dim "=". A re-roll is never part of a tie.
+  function rollTieRowHtml(rs, d) {
+    var t = rs && rs.tie;
+    var top = !!(t && !d.reroll && d.value === t.value && (t.names || []).indexOf(d.name) !== -1);
+    var low = !top && !d.reroll && (rs && rs.lower_ties || []).indexOf(d.value) !== -1;
+    return { cls: top ? ' tie' : '', mark: top ? '<span class="tt">TIE</span>' : (low ? '<span class="eq" title="Same number as another roller">=</span>' : '') };
+  }
+  // 📋 for a tie: ONE raid-say line, never sent for you. The tied number is the deathroll's first range.
+  function rollTieCopyLine(rs) {
+    var t = (rs && rs.tie) || {};
+    var item = rs && rs.item ? ' on ' + String(rs.item).slice(0, 40) : '';
+    var names = (t.names || []);
+    var line;
+    if (t.state === 'done') line = '/rs Deathroll over' + item + ': ' + (t.winners || []).join(', ') + ' wins the ' + t.value + ' tie.';
+    else if (t.state === 'live') line = '/rs TIE ' + t.value + item + ': ' + names.join(' vs ') + '. Deathroll live, '
+      + (t.next && t.next.name ? t.next.name + ' rolls' : 'next roll') + ' /random ' + (t.next ? t.next.to : t.value) + '.';
+    else line = '/rs TIE ' + t.value + item + ': ' + names.join(' vs ') + '. Deathroll! ' + t.starter + ' rolls /random ' + t.value
+      + ', then each rolls what the last got. First to 0 ' + (names.length > 2 ? 'is out.' : 'loses.');
+    // Plain ASCII only (no backslash in this file, so no escape class): drop anything outside space..tilde.
+    return line.split('').filter(function(ch){ return ch >= ' ' && ch <= '~'; }).join('').slice(0, DR_COPY_MAX);
   }
   // Which deathroll was just copied, so its 📋 reads ✓ for two seconds across the 1.5s repaints.
   var _copiedRoll = null, _copiedUntil = 0;
@@ -32167,7 +32341,9 @@ const COMMAND_HTML = `<!doctype html>
             // that was really 999 to 999 read like an ordinary 0 to 999 roll).
             html += '<div class="row roll-row"><span class="nm"><b>' + (rs.from ? rs.from + '–' : '') + rs.to + '</b>'
                  +    (rs.item ? ' (' + esc(rs.item) + (rs.qty ? ' ×' + rs.qty : '') + ')' : '')
-                 +    ' — <span style="color:#f0c419">' + (winners || '—') + '</span></span>'
+                 +    ' — ' + (rs.tie ? rollTieWhoHtml(rs) : '<span style="color:#f0c419">' + (winners || '—') + '</span>') + '</span>'
+                 +    (rs.tie ? '<span class="rollCopy" data-roll-id="' + esc(rid) + '" title="Copy a raid-say line announcing this tie and its deathroll">'
+                 +      (rid === _copiedRoll && Date.now() < _copiedUntil ? '✓' : '📋') + '</span>' : '')
                  +    '<span class="rollMore" data-roll-key="' + esc(rid) + '" title="'
                  +      (expanded ? 'Hide' : 'Show') + ' every roll in this set">'
                  +      (expanded ? '▾' : '▸') + ' ' + rs.players + ' roll' + (rs.players === 1 ? '' : 's') + '</span>'
@@ -32181,12 +32357,21 @@ const COMMAND_HTML = `<!doctype html>
               var winNames = {};
               for (var wj = 0; wj < (rs.winners || []).length; wj++) winNames[String(rs.winners[wj].name).toLowerCase()] = true;
               html += '<div class="roll-detail">';
+              if (rs.tie) html += '<div class="d tiebox">' + esc(rollTiePromptText(rs)) + '</div>';
               for (var dj = 0; dj < all.length; dj++) {
                 var d = all[dj];
                 var isWin = !d.reroll && winNames[String(d.name).toLowerCase()] === true;
-                html += '<div class="d' + (isWin ? ' win' : '') + '"><span>' + esc(d.name) + '</span>'
-                     +    (d.reroll ? '<span class="rr">re-roll</span>' : '')
+                var tieRow = rollTieRowHtml(rs, d);
+                html += '<div class="d' + (isWin && !rs.tie ? ' win' : '') + tieRow.cls + '"><span>' + esc(d.name) + '</span>'
+                     +    (d.reroll ? '<span class="rr">re-roll</span>' : '') + tieRow.mark
                      +    '<span class="v">' + d.value + '</span></div>';
+              }
+              if (rs.tie) {
+                for (var tk = 0; tk < (rs.tie.steps || []).length; tk++) {
+                  var ts = rs.tie.steps[tk];
+                  html += '<div class="d' + (ts.value === 0 ? ' lose' : '') + '"><span>' + esc(ts.name) + '</span>'
+                       +    '<span class="rng">0–' + ts.to + '</span><span class="v">' + ts.value + '</span></div>';
+                }
               }
               if (!all.length) html += '<div class="d"><span>no per-roll detail captured</span></div>';
               html += '</div>';
@@ -32369,7 +32554,7 @@ const COMMAND_HTML = `<!doctype html>
           if (_rollId(_lastState.rolls[rc]) === rcid) { rset = _lastState.rolls[rc]; break; }
         }
         if (rset) {
-          _copyText(deathrollCopyLine(rset), function(){
+          _copyText(rset.kind === 'deathroll' ? deathrollCopyLine(rset) : rollTieCopyLine(rset), function(){
             _copiedRoll = rcid; _copiedUntil = Date.now() + 2000;
             if (_lastState) render(_lastState);
             setTimeout(function(){ if (_lastState) render(_lastState); }, 2100);

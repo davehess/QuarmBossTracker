@@ -6707,6 +6707,39 @@ function _wpDeathrollHtml(e) {
   return h + '</table></details>';
 }
 
+// 🤝 A tie at the top of a roll set (the guild lead, 2026-10-14: "if two toons roll the same number on a
+// roll it should trigger a deathroll and highlight the tie"). The agent decides it once (rollSetTies,
+// carried as rset.tie / rset.lower_ties); these only draw it. Orange, bordered and spelled out, so it
+// reads without the colour. The header names the tied rolls instead of one arbitrary winner and, once
+// the deathroll is over, names its winner. The prompt says who starts and on which range.
+function _wpRollTieChip(label) {
+  return '<span style="color:var(--orange);border:1px solid var(--orange);border-radius:3px;padding:0 4px;font-weight:700">'
+    + label + '</span>';
+}
+function _wpRollWhoHtml(rset) {
+  var t = rset && rset.tie;
+  if (!t) return (rset.winners || []).map(function (w) { return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+  var chip = _wpRollTieChip('TIE ' + Number(t.value));
+  if (t.state === 'done') return chip + ' <span style="color:var(--gold,#f0c419)">' + (t.winners || []).map(esc).join(', ') + '</span> won the deathroll';
+  return chip + ' ' + (t.names || []).map(esc).join(' · ');
+}
+function _wpRollTiePrompt(rset) {
+  var t = rset && rset.tie;
+  if (!t) return '';
+  var msg;
+  if (t.state === 'done') msg = 'Deathroll over: ' + (t.winners || []).map(esc).join(', ') + ' wins' + ((t.out || []).length ? ' · ' + t.out.map(esc).join(', ') + ' hit 0' : '');
+  else if (t.state === 'live') msg = 'Deathroll going: ' + (t.next && t.next.name ? esc(t.next.name) + ' rolls' : 'next roll') + ' /random ' + (t.next ? t.next.to : t.value);
+  else msg = 'Tie → deathroll: ' + esc(t.starter) + ' starts with /random ' + t.value;
+  return '<div style="border-left:3px solid var(--orange);padding:2px 8px;margin:4px 0;font-weight:600">' + msg + '</div>';
+}
+function _wpRollRowMark(rset, rr) {
+  if (!rset || rr.reroll) return '';
+  var t = rset.tie;
+  if (t && rr.value === t.value && (t.names || []).indexOf(rr.name) !== -1) return ' ' + _wpRollTieChip('TIE');
+  if ((rset.lower_ties || []).indexOf(rr.value) !== -1) return ' <span class="dim" title="Same number as another roller">=</span>';
+  return '';
+}
+
 // ── 📦 Who looted what (the guild lead, 2026-10-03) ──────────────────────────────────
 // "the loot tab on mimic should have the 'who looted what' section on there for
 // items, as well as the rolls for loot." An agent only ever sees its OWN
@@ -6875,24 +6908,25 @@ function renderLootTab(s) {
     for (var rsi = 0; rsi < _rollSets.length; rsi++) {
       var rset = _rollSets[rsi];
       if (rset.kind === 'deathroll') { h += _wpDeathrollHtml(rset); continue; }
-      var rWinners =(rset.winners || []).map(function (w) { return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+      var rWinners = _wpRollWhoHtml(rset);
       var rTime = new Date(rset.started_at_ms).toLocaleTimeString();
       // 📦 Only when the looter is NOT a winner drawn here (a re-roll or a pass).
       var rLooted = wpNightLootedBy(rset, _wpNightLoot && _wpNightLoot.sessions);
       h += '<details ' + wpKeep('roll|' + rset.started_at_ms + '|' + rset.to) + '>';
       h += '<summary><b>' + rset.from + '–' + rset.to + '</b>'
          + (rset.item ? ' (' + esc(rset.item) + (rset.qty ? ' ×' + rset.qty : '') + ')' : '')
-         + ' — <span style="color:var(--gold,#f0c419)">' + (rWinners || '—') + '</span>'
+         + ' — <span style="color:var(' + (rset.tie && rset.tie.state !== 'done' ? '--orange' : '--gold,#f0c419') + ')">' + (rWinners || '—') + '</span>'
          + (rLooted.length ? ' <span style="color:var(--blue)">· 📦 looted by ' + rLooted.map(esc).join(', ') + '</span>' : '')
          + ' <span class="dim">· ' + rset.players + ' roller' + (rset.players === 1 ? '' : 's')
          + ' · ' + rTime + (rset.open ? ' · open' : '') + '</span></summary>';
+      h += _wpRollTiePrompt(rset);
       h += '<table><tr><th>Rolled</th><th>Player</th><th>Time</th></tr>';
       var rRows = (rset.rolls || []).slice().sort(function (a, b) { return b.value - a.value; });
       for (var rri = 0; rri < rRows.length; rri++) {
         var rr = rRows[rri];
         h += '<tr' + (rr.reroll ? ' style="opacity:0.45;text-decoration:line-through"' : '') + '>'
            + '<td class="num">' + rr.value + '</td>'
-           + '<td>' + esc(rr.name) + (rr.reroll ? ' (re-roll)' : '') + '</td>'
+           + '<td>' + esc(rr.name) + (rr.reroll ? ' (re-roll)' : '') + _wpRollRowMark(rset, rr) + '</td>'
            + '<td class="dim">' + new Date(rr.at_ms).toLocaleTimeString() + '</td></tr>';
       }
       h += '</table></details>';
