@@ -6070,4 +6070,5 @@ client size. **Open:** no confirmed "collapsed/minimised" key in the UI ini — 
 Everything on beta since 2.9.0 is now stable: Chat overlay (rounds 1–4, breakout windows and 🔗 lock-together, Melee/Spells/Skills), tray layout B + Updates
 submenu, overlay sets, UI Studio named layouts and chat windows, sounds / voices / names, Map Full mode + keep-clear + Line strength + rings + raid
 targets, DPS per-person time, Target Info hit types, Charm "Best pets here", roll ties, timer ✕, clean shutdown, flicker and refocus fixes. Web 1.8.159
-(roadmap). **Left on beta:** `apps/mimic/pop-quests.js` (generated from the beta web PoP guide; goes with the web PoP graduation).
+(roadmap). `apps/mimic/pop-quests.js` came with the web PoP graduation (web 1.8.158). Also tonight (§332): Linux `2.9.1-linux.41`, alpha
+re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). ⚠ Vercel's daily cap held back the web build; redeploy after the freeze.
