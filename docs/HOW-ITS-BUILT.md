@@ -2495,6 +2495,11 @@ flags left, M still to hail", and its clock (`hailClockState`) reads "leaves in 
 "gone" after. An older bot sends no cap and the card is byte-identical. No timer-window row: a plain timer would
 land in the callout-feedback learning set as an unknown expired trigger. Tests `test/hail-board.test.js`,
 `test/hail-board-command-center.test.js`, `test/hail-board-agent.test.js`.
+**Kill-less windows (bot 3.1.258, 2026-10-13, §285):** `HAIL_FLAGGERS` holds flag NPCs no boss kill stands up —
+today the hedge maze's Thelin Poxbourne (`hedge_maze`: done `thelin_2/3/4`, `hedge_event`). `noteHails` (called
+fire-and-forget from `_handleAgentPopFlags` after a `hail` row is stored) opens a window when hails of it from 2+
+distinct raid groups (`raid_roster.group_num`) land within `GROUPS_WITHIN_MS` (60 s); roster = the current raid.
+Fails closed (no group data → no window), one window per NPC at a time. No Mimic change: `hailBoardHtml` draws it.
 
 ### Bristlebane — the raid-voice bot (bristlebane 0.1.0, bot 3.1.208, §166)
 Its own Discord application and container: `apps/bristlebane/` (`index.js` = Discord glue, `lib.js` = the
