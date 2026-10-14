@@ -49,8 +49,10 @@
   .chip em{font-style:normal;font-size:9px;color:#7ee7c7;letter-spacing:0.3px}
   /* "More": the chip that opens the rest of the row. Lit (with a count) while a chip inside it is on, so a closed More never hides a channel that is showing. */
   .chip.more{border-style:dotted}
-  /* a broken-out window (chat.html?groups=<id>) is the feed alone: the chips and settings stay in the Chat window */
-  body.brk #chips,body.brk #onlypill,body.brk #spanel .nobrk{display:none}
+  /* a broken-out window (chat.html?win=<id>&groups=<ids>) keeps its chip row (just the groups it holds, no More), but
+     "show only" and the Chat window's switches stay in the Chat window */
+  body.brk #onlypill,body.brk #spanel .nobrk{display:none}
+  .chip.solo{cursor:default}
   /* this window's own text settings (⚙, or the right-click menu): spacing, timestamps and tags */
   body.tight{--lh:1.15}
   body.no-ts .ln .tm{display:none}
@@ -168,7 +170,7 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title"><span id="conn" class="conn bad">○</span><span id="ttl">💬 Chat</span><input id="find" type="text" maxlength="24" spellcheck="false" autocomplete="off" placeholder="character…" title="Show only one character: what they said, or what was heard on that character of yours. Enter or Esc leaves the box."><button id="fpick" class="fbtn" title="Pick one of your characters">▾</button><span class="sp"></span><button id="histbtn" class="fbtn" title="Show the chat from before this window opened, read from the game's own log files on this PC">⏱</button><button id="gear" class="fbtn" aria-pressed="false" title="Text size, and the channels that are off until you switch them on">⚙</button></div>
+    <div class="title"><span id="conn" class="conn bad">○</span><span id="ttl">💬 Chat</span><input id="find" type="text" maxlength="24" spellcheck="false" autocomplete="off" placeholder="character…" title="Show only one character: what they said, or what was heard on that character of yours. Enter or Esc leaves the box."><button id="fpick" class="fbtn" title="Pick one of your characters">▾</button><span class="sp"></span><button id="histbtn" class="fbtn" title="Show the chat from before this window opened, read from the game's own log files on this PC">⏱</button><button id="linkbtn" class="fbtn" aria-pressed="false" title="Link this window to the chat windows touching it, so they move together">🔗</button><button id="gear" class="fbtn" aria-pressed="false" title="Text size, and the channels that are off until you switch them on">⚙</button></div>
     <div id="cpick"></div>
     <div id="spanel">
       <div class="row"><span>Text size</span><button id="fsm" class="fbtn" title="Smaller">A−</button><span id="fsz">12</span><button id="fsp" class="fbtn" title="Larger">A+</button><button id="lsp" class="fbtn" title="Line spacing">compact</button></div>
@@ -298,8 +300,17 @@
     }
     return out;
   }
-  var _only = parseGroupsParam(window.location.search);   // non-empty: this window is a breakout
-  var _isBrk = _only.length > 0;
+  // The breakout window's own id (b1, b2...): its place and text settings hang off it, and it stays while groups
+  // come and go. '' = the Chat window.
+  function parseWinParam(search){
+    var m = /[?&]win=(b[0-9]{1,3})(?:&|$)/.exec(String(search || ''));
+    return m ? m[1] : '';
+  }
+  var _wid = parseWinParam(window.location.search);
+  var _only = parseGroupsParam(window.location.search);   // non-empty: this window is a breakout (the groups it holds; main keeps it current)
+  var _isBrk = _only.length > 0 || _wid !== '';
+  var _brkOff = [];            // a breakout with several groups: the ones hidden in THIS window only (not saved anywhere but this page's storage)
+  var _wins = [];              // every breakout window as main has it: [{ id, groups[] }]
 
   // A filter is just "which groups does this view show". The feed never asks anything else about a line, so a
   // breakout (or a tab) is a different list handed to the same code.
@@ -309,13 +320,13 @@
     var on = {}; for (var i = 0; i < groupIds.length; i++) on[groupIds[i]] = true;
     return function(line){ var g = groupOf(line.ch); return !!g && on[g.id] === true && gateOn(g); };
   }
-  // The Chat window shows every group that is on its chip and not out; a breakout shows its own groups,
-  // whatever the chips say (it has none). Both obey the opt-in switches.
+  // The Chat window shows every group that is on its chip and not out; a breakout shows the groups it holds (less any
+  // it has switched off for itself), whatever the Chat window's chips say. Both obey the opt-in switches.
   function shownGroupIds(){
     var out = [];
     for (var i = 0; i < _groups.length; i++) {
       var g = _groups[i]; if (!gateOn(g)) continue;
-      if (_isBrk) { if (_only.indexOf(g.id) !== -1) out.push(g.id); }
+      if (_isBrk) { if (_only.indexOf(g.id) !== -1 && _brkOff.indexOf(g.id) === -1) out.push(g.id); }
       else if (_prefs.off.indexOf(g.id) === -1 && _out.indexOf(g.id) === -1) out.push(g.id);
     }
     return out;
@@ -483,13 +494,16 @@
     emptyEl.style.display = feedEl.children.length ? 'none' : 'block';
     if (!feedEl.children.length) emptyEl.textContent = _findQ ? 'no lines from "' + _find.trim() + '"' : (_isBrk ? brkEmptyText() : EMPTY_TEXT);
   }
-  // What an empty breakout says: a gated group tells you which switch it is waiting on.
+  // What an empty breakout says: when every group it holds is gated, the first one tells you which switch it is waiting on.
   function brkEmptyText(){
-    var g = null;
-    for (var i = 0; i < _groups.length; i++) if (_groups[i].id === brkGroupId()) g = _groups[i];
-    if (!g) return 'waiting for the Chat feed';
-    if (!gateOn(g)) return g.gate === 'tells' ? 'Tells are off: choose Local or Synced under Settings → Tells' : g.label + ' is off: switch it on in the Chat window\'s ⚙';
-    return 'nothing yet in ' + g.label;
+    var held = heldGroups();
+    if (!held.length) return 'waiting for the Chat feed';
+    var off = held.filter(function(g){ return !gateOn(g); });
+    if (off.length === held.length) {
+      var g = off[0];
+      return g.gate === 'tells' ? 'Tells are off: choose Local or Synced under Settings → Tells' : g.label + ' is off: switch it on in the Chat window\'s ⚙';
+    }
+    return 'nothing yet in ' + brkTitleText();
   }
 
   // Repaint everything through the current filter (chip toggled, switch changed, restart). Appending is the
@@ -562,17 +576,26 @@
   function moreKey(){ return 'wpChatMore:' + winId(); }
   var _moreOpen = false;
   try { _moreOpen = localStorage.getItem(moreKey()) === '1'; } catch (e) {}
+  // The groups a multi-group breakout has hidden for itself (remembered like More, in this page's own storage).
+  try { if (_isBrk) _brkOff = (localStorage.getItem('wpChatBrkOff:' + winId()) || '').split(',').filter(function(x){ return /^[a-z]{1,16}$/.test(x); }); } catch (e) {}
   function setMore(open){
     _moreOpen = !!open;
     try { localStorage.setItem(moreKey(), _moreOpen ? '1' : '0'); } catch (e) {}
     paintChips();
   }
-  function chipIsOn(g){ return _out.indexOf(g.id) === -1 && _prefs.off.indexOf(g.id) === -1; }
+  // In the Chat window a chip is lit unless the group is out or switched off; in a breakout it is lit while the group is
+  // on in the Chat window's switches and not hidden in this window.
+  function chipIsOn(g){
+    if (_isBrk) return gateOn(g) && _brkOff.indexOf(g.id) === -1;
+    return _out.indexOf(g.id) === -1 && _prefs.off.indexOf(g.id) === -1;
+  }
   function chipHtml(g){
-    var isOut = _out.indexOf(g.id) !== -1, on = chipIsOn(g), c = (_channels[g.channels[0]] || {}).color || '#8b949e';
-    var label = CHIP_LABEL[g.id] || g.label;
-    var tip = isOut ? esc(label) + ' is in its own window: click, or right-click, to put it back' : (on ? 'Hide ' : 'Show ') + esc(label) + ' (right-click to break it out into its own window)';
-    return '<button type="button" class="chip' + (on ? ' on' : '') + (isOut ? ' out' : '') + '" data-g="' + esc(g.id) + '" aria-pressed="' + on + '" style="--c:' + esc(c) + '" title="' + tip + '"><i></i>' + esc(label) + (isOut ? ' <em>out</em>' : '') + '</button>';
+    var isOut = !_isBrk && _out.indexOf(g.id) !== -1, on = chipIsOn(g), c = (_channels[g.channels[0]] || {}).color || '#8b949e';
+    var label = CHIP_LABEL[g.id] || g.label, solo = _isBrk && _only.length < 2;
+    var tip = isOut ? esc(label) + ' is in its own window: click, or right-click, to put it back'
+      : _isBrk ? (solo ? esc(label) + ': right-click to move it to another window' : (on ? 'Hide ' : 'Show ') + esc(label) + ' in this window (right-click to move it to another window)')
+      : (on ? 'Hide ' : 'Show ') + esc(label) + ' (right-click to break it out into its own window, or move it to one)';
+    return '<button type="button" class="chip' + (on ? ' on' : '') + (isOut ? ' out' : '') + (solo ? ' solo' : '') + '" data-g="' + esc(g.id) + '" aria-pressed="' + on + '" style="--c:' + esc(c) + '" title="' + tip + '"><i></i>' + esc(label) + (isOut ? ' <em>out</em>' : '') + '</button>';
   }
   // "More ▾" / "More (3) ▾": the count is the chips inside that are ON, shown while it is closed so nothing is on out of sight.
   function moreHtml(nOn){
@@ -581,14 +604,19 @@
   }
   function paintChips(){
     var h = '', main = {}, rest = [], nOn = 0, k;
-    for (var i = 0; i < _groups.length; i++) {
-      var g = _groups[i]; if (!gateOn(g)) continue;
-      if (MAIN_CHIPS.indexOf(g.id) !== -1) main[g.id] = g; else { rest.push(g); if (chipIsOn(g)) nOn++; }
+    // A breakout's chip row is the groups it holds, in the agent's order, gated or not (a gated one shows dim, so it can
+    // still be moved out), and never a More.
+    if (_isBrk) {
+      for (k = 0; k < _groups.length; k++) if (_only.indexOf(_groups[k].id) !== -1) h += chipHtml(_groups[k]);
+    } else {
+      for (var i = 0; i < _groups.length; i++) {
+        var g = _groups[i]; if (!gateOn(g)) continue;
+        if (MAIN_CHIPS.indexOf(g.id) !== -1) main[g.id] = g; else { rest.push(g); if (chipIsOn(g)) nOn++; }
+      }
+      for (k = 0; k < MAIN_CHIPS.length; k++) if (main[MAIN_CHIPS[k]]) h += chipHtml(main[MAIN_CHIPS[k]]);
+      if (rest.length) h += moreHtml(nOn);
+      if (_moreOpen) for (k = 0; k < rest.length; k++) h += chipHtml(rest[k]);
     }
-    for (k = 0; k < MAIN_CHIPS.length; k++) if (main[MAIN_CHIPS[k]]) h += chipHtml(main[MAIN_CHIPS[k]]);
-    // A breakout has no chip row to look at (it is hidden), so it never gets a More either.
-    if (rest.length && !_isBrk) h += moreHtml(nOn);
-    if (_moreOpen || _isBrk) for (k = 0; k < rest.length; k++) h += chipHtml(rest[k]);
     if (chipsEl.__wpHtml !== h) { chipsEl.innerHTML = h; chipsEl.__wpHtml = h; }
   }
   chipsEl.addEventListener('click', function(e){
@@ -596,7 +624,16 @@
     if (!b) return;
     if (b.hasAttribute('data-more')) { setMore(!_moreOpen); return; }
     var id = b.getAttribute('data-g');
-    if (_out.indexOf(id) !== -1) { setBreakout(id, false); return; }   // an "out" chip has nothing to switch: it puts the group back
+    if (_isBrk) {
+      // A breakout's chips hide and show a group in THIS window only; a window of one group has nothing to switch.
+      if (_only.length < 2) return;
+      var bo = _brkOff.indexOf(id);
+      if (bo >= 0) _brkOff.splice(bo, 1); else _brkOff.push(id);
+      try { localStorage.setItem('wpChatBrkOff:' + winId(), _brkOff.join(',')); } catch (er) {}
+      paintChips(); repaint();
+      return;
+    }
+    if (_out.indexOf(id) !== -1) { moveGroup(id, 'main'); return; }   // an "out" chip has nothing to switch: it puts the group back
     var at = _prefs.off.indexOf(id);
     if (at >= 0) _prefs.off.splice(at, 1); else _prefs.off.push(id);
     savePrefs({ off: _prefs.off });
@@ -651,7 +688,7 @@
   // Off until asked: nothing is read from disk until a window is picked. The pick is remembered per window
   // in this page's own storage (which can be empty or blocked: the window works without it).
   var HIST_CHOICES = [0, 1, 2, 3, 6, 12, 24];
-  function histKey(){ return 'wpChatHistH:' + (_isBrk ? _only.join(',') : 'main'); }
+  function histKey(){ return 'wpChatHistH:' + winId(); }
   try { var _hv = Number(localStorage.getItem(histKey())); if (HIST_CHOICES.indexOf(_hv) > 0) _histHours = _hv; } catch (e) {}
   var histBtn = document.getElementById('histbtn');
   function paintHistBtn(){
@@ -692,19 +729,50 @@
   });
   paintHistBtn();
 
-  // ── breakouts: a group in its own window ─────────────────────────────────
-  function setBreakout(id, on){
-    try { window.mimic.chatBreakout(id, on).then(takeOut).catch(function(){}); } catch (e) {}
+  // ── breakouts: groups in windows of their own ────────────────────────────
+  // moveGroup(id, target): target is 'main' (the Chat window), 'new' (a window of its own) or a breakout window id.
+  // The answer is the new list of windows, which every Chat window also hears.
+  function moveGroup(id, target){
+    try { window.mimic.chatMoveGroup(id, target).then(takeOut).catch(function(){}); } catch (e) {}
   }
-  // The list of broken-out groups changed (this window or another asked). The Chat window leaves those
-  // groups' lines out and marks their chips; the lines themselves are kept, so a put-back shows them again.
-  function takeOut(ids){
-    var next = [];
-    if (Array.isArray(ids)) for (var i = 0; i < ids.length; i++) if (typeof ids[i] === 'string' && next.indexOf(ids[i]) === -1) next.push(ids[i]);
-    if (next.join(',') === _out.join(',')) return;
-    _out = next;
-    paintChips(); repaint(); paintBrkTitle();
+  // A breakout's ✕ / "Put back": all its groups return to the Chat window and the window closes.
+  function closeBreakout(){
+    if (!_wid) return;
+    try { window.mimic.chatBreakoutClose(_wid).then(takeOut).catch(function(){}); } catch (e) {}
   }
+  // The list of breakout windows changed (this window or another asked): [{ id, groups[] }]. The Chat window leaves
+  // every held group's lines out and marks their chips; a breakout follows its own entry, so a group moved in shows up
+  // and one moved out goes. The lines themselves are kept, so a group put back shows its history again.
+  function takeOut(list){
+    var wins = [], seen = {}, flat = [], i, j;
+    if (Array.isArray(list)) for (i = 0; i < list.length; i++) {
+      var w = list[i];
+      if (!w || typeof w.id !== 'string' || !Array.isArray(w.groups)) continue;
+      var gs = [];
+      for (j = 0; j < w.groups.length; j++) {
+        var g = w.groups[j];
+        if (typeof g === 'string' && /^[a-z]{1,16}$/.test(g) && !seen[g]) { seen[g] = true; gs.push(g); flat.push(g); }
+      }
+      if (gs.length) wins.push({ id: w.id, groups: gs });
+    }
+    var mine = null;
+    if (_isBrk && _wid) for (i = 0; i < wins.length; i++) if (wins[i].id === _wid) mine = wins[i];
+    var sig = JSON.stringify(wins), now = _isBrk && mine ? mine.groups.join(',') : _only.join(',');
+    if (sig === JSON.stringify(_wins) && now === _only.join(',')) return;
+    _wins = wins; _out = flat;
+    if (_isBrk && mine) _only = mine.groups.slice();
+    paintChips(); repaint(); paintBrkTitle(); paintSettings();
+  }
+  // What the groups are called on a chip: Party for the group group, else the agent's label.
+  function groupLabel(id){
+    for (var i = 0; i < _groups.length; i++) if (_groups[i].id === id) return CHIP_LABEL[id] || _groups[i].label;
+    return id;
+  }
+  function namesOf(ids){ return ids.map(groupLabel).join(' + '); }
+  function heldGroups(){ return _groups.filter(function(g){ return _only.indexOf(g.id) !== -1; }); }
+  function brkTitleText(){ return namesOf(_only); }
+  function holdsGroup(id){ return !_isBrk || _only.indexOf(id) !== -1; }
+  function homeOf(id){ for (var i = 0; i < _wins.length; i++) if (_wins[i].groups.indexOf(id) !== -1) return _wins[i]; return null; }
   // One or two plain buttons at the cursor, clamped inside the window. Dismissed by Escape, a click elsewhere,
   // the window losing focus, or the cursor staying off it for 3 s (a locked overlay is click-through, so a click
   // elsewhere may never reach this page: the same fallback the shared overlay menu uses).
@@ -737,21 +805,35 @@
     var b = e.target && e.target.closest ? e.target.closest('.chip') : null;
     if (!b) return;
     e.preventDefault();
-    if (b.hasAttribute('data-more')) return;   // More is not a group: it has nothing to break out
+    if (b.hasAttribute('data-more')) return;   // More is not a group: it has nothing to move
     var id = b.getAttribute('data-g'), g = null;
     for (var i = 0; i < _groups.length; i++) if (_groups[i].id === id) g = _groups[i];
     if (!g) return;
-    var isOut = _out.indexOf(id) !== -1;
-    openMenu(e.clientX, e.clientY, [isOut
-      ? { label: 'Put back in the Chat window', run: function(){ setBreakout(id, false); } }
-      : { label: 'Break out into its own window', run: function(){ setBreakout(id, true); } }]);
+    openMenu(e.clientX, e.clientY, chipMenuItems(id, e.clientX, e.clientY));
   });
-  // A breakout's title bar: right-click puts the group back (the ✕ does the same).
+  // What a chip's right-click offers, in the Chat window or in a breakout. A group can sit in the Chat window, or in
+  // any one breakout. "Move to window ▸" opens the list of the OTHER breakouts, named by the groups they hold, with
+  // "New window" last; with no other breakout to move to, the one item is "Break out into its own window".
+  function chipMenuItems(id, x, y){
+    var home = homeOf(id), items = [], others = _wins.filter(function(w){ return !home || w.id !== home.id; });
+    var canNew = !home || home.groups.length > 1;   // a group alone in its window gains nothing from a new one
+    if (home) items.push({ label: 'Move to main window', run: function(){ moveGroup(id, 'main'); } });
+    if (others.length) {
+      items.push({ label: 'Move to window ▸', run: function(){
+        var sub = others.map(function(w){ return { label: namesOf(w.groups), run: function(){ moveGroup(id, w.id); } }; });
+        if (canNew) sub.push({ label: 'New window', run: function(){ moveGroup(id, 'new'); } });
+        openMenu(x, y, sub);
+      } });
+    } else if (canNew) {
+      items.push({ label: 'Break out into its own window', run: function(){ moveGroup(id, 'new'); } });
+    }
+    return items;
+  }
+  // A breakout's title bar: right-click puts the groups back (the ✕ does the same). The window is named for what it holds.
   function brkGroupId(){ return _only[0] || ''; }
   function paintBrkTitle(){
     if (!_isBrk) return;
-    var label = brkGroupId();
-    for (var i = 0; i < _groups.length; i++) if (_groups[i].id === label) label = _groups[i].label;
+    var label = brkTitleText() || brkGroupId();
     document.getElementById('ttl').textContent = '💬 ' + label;
     document.title = 'chat: ' + label;
     var hb = document.getElementById('hide-btn');
@@ -763,7 +845,8 @@
       e.preventDefault();
       openMenu(e.clientX, e.clientY, [
         { label: 'Text settings…', run: function(){ if (!spanelEl.classList.contains('open')) gearEl.click(); } },
-        { label: 'Put back in the Chat window', run: function(){ setBreakout(brkGroupId(), false); } }]);
+        { label: linkGroup() ? 'Unlink from the other chat windows' : 'Link to the chat windows touching this one', run: function(){ toggleLink(); } },
+        { label: 'Put back in the Chat window', run: function(){ closeBreakout(); } }]);
     });
   }
 
@@ -779,9 +862,10 @@
     ['skills',  'Skills',         'Skill-ups, what your skills did (taunt, forage, mend, feign death, hide...), tradeskill combines and disciplines. Right-click the Skills chip to give it a window of its own.', 1]
   ];
   // ── this window's text settings ──────────────────────────────────────────
-  // Every Chat window (the main one, and each broken-out group) keeps its own: win[<id>] in the prefs, id
-  // being 'main' or the breakout's group id. A field left out means the default, so prefs saved before this existed read the same.
-  function winId(){ return _isBrk ? brkGroupId() : 'main'; }
+  // Every Chat window (the main one, and each breakout) keeps its own: win[<id>] in the prefs, id being 'main' or
+  // the breakout's window id (b1, b2...), which stays put while groups come and go. A field left out means the default,
+  // so prefs saved before this existed read the same.
+  function winId(){ return _isBrk ? (_wid || brkGroupId()) : 'main'; }
   function winCfg(){
     var w = (_prefs.win && _prefs.win[winId()]) || {};
     return { fontSize: w.fontSize || _prefs.fontSize || 12, lineGap: w.lineGap === 'compact' ? 'compact' : 'normal', times: w.times !== false, tags: w.tags !== false };
@@ -832,12 +916,12 @@
     if (h) h = '<span>Channels</span>' + h;
     if (el.__wpHtml !== h) { el.innerHTML = h; el.__wpHtml = h; }
   }
-  // What Melee shows (EQ's own combat filters): only offered while Melee is on, and in a Melee breakout's own ⚙.
+  // What Melee shows (EQ's own combat filters): only offered while Melee is on, and in a breakout that holds Melee.
   var MELEE_SHOW = [['mine', 'My melee', 'Your swings, and your pet\'s'], ['on_me', 'Hits on me', 'Swings at you'],
     ['others', 'Others\' melee', 'Everyone else\'s swings, and their pets\''], ['misses', 'Misses', 'Misses, dodges, parries and blocks']];
   function paintMeleeOpts(){
     var h = '';
-    if (_prefs.melee && (!_isBrk || brkGroupId() === 'melee')) {
+    if (_prefs.melee && holdsGroup('melee')) {
       var s = _prefs.meleeShow || {};
       h = '<span>Melee shows</span>';
       for (var i = 0; i < MELEE_SHOW.length; i++) {
@@ -857,7 +941,7 @@
     repaint();
   });
   // What Spells and Skills show: the same three words as Melee, in the same place. A row is offered only while its
-  // group is on, and in that group's own breakout ⚙. Keys match the prefs: spellShow / skillShow.
+  // group is on, and in a breakout that holds that group. Keys match the prefs: spellShow / skillShow.
   var SHOW_ROWS = [
     { grp: 'spells', pref: 'spellShow', el: 'spellopts', head: 'Spells show', opts: [
       ['mine', 'My spells', 'Your casts and songs, spells you land, your spell damage, your resists, fizzles and interrupts, and your buffs wearing off'],
@@ -870,7 +954,7 @@
   function paintShowOpts(){
     for (var r = 0; r < SHOW_ROWS.length; r++) {
       var row = SHOW_ROWS[r], h = '';
-      if (_prefs[row.grp] && (!_isBrk || brkGroupId() === row.grp)) {
+      if (_prefs[row.grp] && holdsGroup(row.grp)) {
         var s = _prefs[row.pref] || {};
         h = '<span>' + row.head + '</span>';
         for (var i = 0; i < row.opts.length; i++) {
@@ -1000,6 +1084,47 @@
     if (items.length) openMenu(e.clientX, e.clientY, items);
   });
 
+  // ── 🔗 linked windows ────────────────────────────────────────────────────
+  // Chat windows that are locked together move together when one is dragged (main does the moving: this page only
+  // asks to link/unlink and shows the state). The groups are lists of window ids ('main', 'b1'...), [[id, id...]].
+  var _links = [];
+  var linkBtn = document.getElementById('linkbtn');
+  function linkGroup(){
+    var id = winId();
+    for (var i = 0; i < _links.length; i++) if (_links[i].indexOf(id) !== -1) return _links[i];
+    return null;
+  }
+  function paintLink(){
+    var g = linkGroup();
+    linkBtn.classList.toggle('on', !!g);
+    linkBtn.setAttribute('aria-pressed', String(!!g));
+    linkBtn.title = g
+      ? 'Linked with ' + (g.length - 1) + ' other chat window' + (g.length > 2 ? 's' : '') + ': they move together. Click to unlink this window'
+      : 'Link this window to the chat windows touching it, so they move together (drag one by its ✥ to an edge of another to snap them flush first)';
+  }
+  function takeLinks(groups){
+    var next = [];
+    if (Array.isArray(groups)) for (var i = 0; i < groups.length; i++) {
+      if (Array.isArray(groups[i])) next.push(groups[i].filter(function(x){ return typeof x === 'string'; }));
+    }
+    if (JSON.stringify(next) === JSON.stringify(_links)) return;
+    _links = next; paintLink();
+  }
+  var _linkFlash = null;
+  function toggleLink(){
+    var was = !!linkGroup();
+    try {
+      window.mimic.chatLinkToggle().then(function(r){
+        takeLinks(r && r.groups);
+        if (r && !r.ok && !was) {            // nothing was touching: say so for a moment instead of doing nothing
+          linkBtn.textContent = '🔗 none touching';
+          clearTimeout(_linkFlash); _linkFlash = setTimeout(function(){ linkBtn.textContent = '🔗'; }, 1600);
+        }
+      }).catch(function(){});
+    } catch (e) {}
+  }
+  linkBtn.addEventListener('click', toggleLink);
+
   // ── prefs (remembered per character in Mimic's config) ───────────────────
   function savePrefs(patch){
     try { window.mimic.setChatPrefs(_char, patch).then(takePrefs).catch(function(){}); } catch (e) {}
@@ -1033,6 +1158,8 @@
     if (window.mimic && window.mimic.onChatPrefsChanged) window.mimic.onChatPrefsChanged(function(){ loadPrefs(); });
     if (window.mimic && window.mimic.onChatBreakouts) window.mimic.onChatBreakouts(takeOut);
     if (window.mimic && window.mimic.getChatBreakouts) window.mimic.getChatBreakouts().then(takeOut).catch(function(){});
+    if (window.mimic && window.mimic.onChatLinks) window.mimic.onChatLinks(takeLinks);
+    if (window.mimic && window.mimic.getChatLinks) window.mimic.getChatLinks().then(takeLinks).catch(function(){});
   } catch (e) {}
   // Mimic's status carries the active character and the Tells setting; either changing re-reads the prefs.
   function onStatus(s){

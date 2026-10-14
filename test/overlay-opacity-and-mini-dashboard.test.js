@@ -116,6 +116,7 @@ describe('the HUD ring is not dockable', () => {
     // loadConfig reads through _readConfigRaw (the torn-file fallback, 2026-09-26), so both ride along.
     const load = (raw) => new Function('fs', 'CONFIG_FILE', 'defaultConfig',
       sliceBlock(mainRaw, 'function _readConfigRaw() {', '\n}\n') + '\n'
+      + sliceBlock(mainRaw, 'function _chatMigrateBreakouts(raw) {', '\n}\n') + '\n'
       + sliceBlock(mainRaw, 'function loadConfig() {', '\n}\n') + '\nreturn loadConfig();')(
       { readFileSync: () => JSON.stringify(raw) }, () => 'x', () => ({}));
     const was = load({ dockedOverlays: ['mobinfo', 'me'], dockedPrev: { me: true, mobinfo: false }, showMe: false });

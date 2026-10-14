@@ -20,6 +20,11 @@
 //  - The live resolution is the XPos<W>x<H> block with the most keys, as auto-arrange assumes.
 //  - A shown window with no Width/Height is given a 200 x 100 stand-in and marked `guess: true`: its real size lives in
 //    the skin's XML, which this does not read. The user's own keep-clear boxes cover what a guess misses.
+//  - A guess is listed in the Map's settings as "size unknown" / "saved for <res>" and is NOT kept clear until the raider
+//    ticks it (applyPicks): drawing over a window by mistake costs a glance, cutting a hole where nothing is costs the map.
+//  - Nothing here reads a "minimised" or "collapsed" key: no such key is confirmed in any UI ini the repo has seen, and
+//    one is not invented. A window EverQuest keeps Show=1 while it is collapsed to its title bar is cut out at its
+//    full stored size; the raider unticks it in the Map's list.
 //  - `skip` is an optional RegExp of section names to ignore (login-screen and pop-up windows that never sit on the HUD).
 'use strict';
 
@@ -57,11 +62,42 @@ function dominantResolution(sections) {
   return { w, h, key: best };
 }
 
-// → { res: { w, h } | null, rects: [{ name, x, y, w, h, guess }] }, every rect in EverQuest pixels.
+// Which resolution block to read. Without a client size it is the dominant one (as before). With one (EverQuest's window,
+// in physical pixels) a block within 3% of it on both sides wins - that is the layout EverQuest is drawing right now -
+// and when none is that close the dominant block is read but `match: false` says the file was last saved for another size.
+function chooseResolution(sections, client) {
+  const dom = dominantResolution(sections);
+  if (!dom || !client || !(client.w > 0) || !(client.h > 0)) return dom;
+  const seen = new Set();
+  let best = null, bestD = Infinity;
+  for (const s of sections) {
+    for (const k of Object.keys(s.props)) {
+      const m = /^xpos(\d+)x(\d+)$/.exec(k);
+      if (!m || seen.has(k)) continue;
+      seen.add(k);
+      const w = Number(m[1]), h = Number(m[2]);
+      const dw = Math.abs(w - client.w) / client.w, dh = Math.abs(h - client.h) / client.h;
+      if (dw <= 0.03 && dh <= 0.03 && dw + dh < bestD) { bestD = dw + dh; best = { w, h, key: m[1] + 'x' + m[2] }; }
+    }
+  }
+  return best ? Object.assign(best, { match: true }) : Object.assign({}, dom, { match: false });
+}
+
+// What the window's name (the UI ini section) is called in lists and on the outline: "TargetWindow", "Zeal RaidBars".
+// The id is the same name lower-cased, so a pick survives EverQuest rewriting the file.
+function areaId(kind, name) { return kind + ':' + String(name == null ? '' : name).trim().toLowerCase(); }
+function areaText(name, notes) { return notes && notes.length ? name + ' (' + notes.join(', ') + ')' : name; }
+
+// → { res: { w, h, match? } | null, rects: [{ name, id, text, x, y, w, h, guess, notes }] }, every rect in EverQuest pixels.
+// `opts.client` = { w, h }: EverQuest's client size now, to choose the block by (see chooseResolution). A rect is `guess`
+// when its size or place is not stated by the file: no Width/Height (a 200 x 100 stand-in), or the file was last saved for
+// another resolution than EverQuest is running at. A guess is not kept clear unless the raider ticks it (applyPicks).
 function visibleUiRects(text, opts) {
   const skip = opts && opts.skip instanceof RegExp ? opts.skip : null;
   const sections = parseSections(text);
-  const res = dominantResolution(sections);
+  const chosen = chooseResolution(sections, opts && opts.client);
+  const res = chosen;
+  const savedFor = chosen && chosen.match === false ? chosen.w + 'x' + chosen.h : null;
   const num = (v) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : null; };
   const rects = [];
   for (const s of sections) {
@@ -74,12 +110,49 @@ function visibleUiRects(text, opts) {
     if (x == null || y == null) continue;
     const rw = num(p.width != null ? p.width : p['size.cx']);
     const rh = num(p.height != null ? p.height : p['size.cy']);
-    const guess = rw == null || rh == null;
-    const w = guess ? 200 : rw, h = guess ? 100 : rh;
+    const sizeGuess = rw == null || rh == null;
+    const w = sizeGuess ? 200 : rw, h = sizeGuess ? 100 : rh;
     if (w <= 0 || h <= 0 || x < -50 || y < -50) continue;
-    rects.push({ name: s.name, x, y, w, h, guess });
+    const notes = [];
+    if (sizeGuess) notes.push('size guessed');
+    if (savedFor) notes.push('saved for ' + savedFor);
+    rects.push({ name: s.name, id: areaId('ui', s.name), text: areaText(s.name, notes), x, y, w, h, guess: notes.length > 0, notes });
   }
-  return { res: res ? { w: res.w, h: res.h } : null, rects };
+  const out = res ? { w: res.w, h: res.h } : null;
+  if (out && res.match !== undefined) out.match = res.match;
+  return { res: out, rects };
 }
 
-module.exports = { visibleUiRects, parseSections, dominantResolution };
+// Zeal's own bars (from main.js _zealBarRects, in EverQuest pixels) in the same shape. The raid bars' box runs to the
+// screen's edge when zeal.ini's Right / Bottom are 0 - that is a limit, not the size of what is drawn, and the list of
+// raid members inside it is usually a narrow strip - so a box that reaches the edge counts as a guess.
+function zealAreas(bars, res) {
+  const out = [];
+  for (const z of Array.isArray(bars) ? bars : []) {
+    if (!z || ![z.x, z.y, z.w, z.h].every(Number.isFinite)) continue;
+    const toEdge = !!(/raidbars/i.test(z.name) && res && (z.x + z.w >= res.w || z.y + z.h >= res.h));
+    const notes = toEdge ? ['runs to the screen edge'] : [];
+    out.push({ name: z.name, id: areaId('zeal', z.name), text: areaText(z.name, notes), x: z.x, y: z.y, w: z.w, h: z.h, guess: toEdge, notes });
+  }
+  return out;
+}
+
+// The raider's picks, { id: true | false }: true = keep this one clear, false = draw over it. An id with no pick follows
+// the default, which is "keep clear unless it is a guess". → every rect with `keep` set.
+function applyPicks(rects, picks) {
+  const p = picks && typeof picks === 'object' ? picks : {};
+  return (rects || []).map((r) => Object.assign({}, r, { keep: typeof p[r.id] === 'boolean' ? p[r.id] : !r.guess }));
+}
+// Picks as they are saved: ids of the shape areaId makes, booleans only, at most 80.
+const PICK_ID_RE = /^(ui|zeal):[^\r\n]{1,60}$/;
+function cleanPicks(picks) {
+  const out = {};
+  if (!picks || typeof picks !== 'object') return out;
+  for (const k of Object.keys(picks)) {
+    if (Object.keys(out).length >= 80) break;
+    if (PICK_ID_RE.test(k) && typeof picks[k] === 'boolean') out[k] = picks[k];
+  }
+  return out;
+}
+
+module.exports = { visibleUiRects, parseSections, dominantResolution, chooseResolution, zealAreas, applyPicks, cleanPicks, areaId };

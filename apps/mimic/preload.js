@@ -1068,6 +1068,9 @@ contextBridge.exposeInMainWorld('mimic', {
   onMapGeom:          (cb)         => ipcRenderer.on('map-geom', (_e, b) => cb(b)),
   mapClearAreas:      (opts)       => ipcRenderer.invoke('map-clear-areas', opts || {}),
   mapClearBoxesSet:   (char, boxes) => ipcRenderer.invoke('map-clear-boxes-set', char, boxes),
+  // One game window's keep / ignore pick (true | false | null = default; id null = all back to default); answers with the
+  // windows as they now stand, the same shape as mapClearAreas().ui.
+  mapClearPickSet:    (char, id, keep) => ipcRenderer.invoke('map-clear-pick-set', char, id, keep),
 
   // Manual overlay drag — replaces the buggy Chromium app-region drag on
   // transparent windows. Renderer mousedown on the ✥ handle calls
@@ -1108,14 +1111,21 @@ contextBridge.exposeInMainWorld('mimic', {
   // setChatPrefs(char, patch) stores a whitelisted patch in Mimic's config and returns the same shape.
   getChatPrefs:      (char)        => ipcRenderer.invoke('chat-prefs-get', char || ''),
   setChatPrefs:      (char, patch) => ipcRenderer.invoke('chat-prefs-set', char || '', patch || {}),
-  // Breakouts: chatBreakout(groupId, true|false) breaks a channel group out into its own window (chat.html
-  // ?groups=<id>) or puts it back, and resolves to the list of broken-out ids. getChatBreakouts() reads the
+  // Breakouts: chatMoveGroup(groupId, target) moves a channel group to 'main' (the Chat window), 'new' (a window of
+  // its own) or a breakout window id, and resolves to the list of breakout windows [{ id, groups[] }];
+  // chatBreakoutClose(winId) sends all of a window's groups back to the Chat window. getChatBreakouts() reads the
   // list; onChatBreakouts(cb) hears it change; onChatPrefsChanged(cb) hears that another Chat window changed
   // the shared prefs, so every window asks the agent for the same thing.
-  chatBreakout:      (groupId, on) => ipcRenderer.invoke('chat-breakout', String(groupId || ''), !!on),
+  chatMoveGroup:     (groupId, target) => ipcRenderer.invoke('chat-move-group', String(groupId || ''), String(target || '')),
+  chatBreakoutClose: (winId)       => ipcRenderer.invoke('chat-breakout-close', String(winId || '')),
   getChatBreakouts:  ()            => ipcRenderer.invoke('chat-breakouts-get'),
-  onChatBreakouts:   (cb)          => ipcRenderer.on('chat-breakouts', (_e, ids) => cb(ids)),
+  onChatBreakouts:   (cb)          => ipcRenderer.on('chat-breakouts', (_e, list) => cb(list)),
   onChatPrefsChanged: (cb)         => ipcRenderer.on('chat-prefs-changed', () => cb()),
+  // 🔗: chatLinkToggle() links this Chat window to the ones touching it (or unlinks it) and resolves to
+  // { ok, groups }; getChatLinks() reads the groups [[windowId, ...]]; onChatLinks(cb) hears them change.
+  chatLinkToggle:    ()            => ipcRenderer.invoke('chat-link-toggle'),
+  getChatLinks:      ()            => ipcRenderer.invoke('chat-links-get'),
+  onChatLinks:       (cb)          => ipcRenderer.on('chat-links', (_e, groups) => cb(groups)),
 
   // ── Timers canvas (canvas.html) ───────────────────────────────────────────
   // canvasState() → { res, layout, edit, displays }; canvasSave(layout) stores

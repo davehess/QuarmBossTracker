@@ -6085,3 +6085,8 @@ and on the dashboard Overlays tab (one setter, `_setMapMode`). Keep-clear: the o
 (`apps/mimic/uiClearRects.js`, Show on, resolution-keyed) plus the raider's own boxes (⚙ → Edit clear areas, per character and per screen
 setup) are cut out of the canvas, background included. **Open:** unverified against a real EverQuest session (no Windows box here);
 a shown window with no Width/Height is a 200x100 guess; the timers column is hidden in Full (the pop-out still works). Test: `test/map-full-mode.test.js`.
+**Follow-up (Mimic beta `792da494`, DECISIONS §330):** every kept-clear area is now named and outlined (amber kept, grey drawn over, blue
+your box) while ⚙ is open or "Outline clear areas" is ticked; ⚙ → Keep clear lists each game window with a checkbox (picks per
+character + screen setup, `cfg.mapClearPicks`). Guessed sizes, Zeal RaidBars that run to the screen edge (the likely huge cut-out:
+`Right=0`/`Bottom=0` = to the edge), and a UI file saved for another resolution start unticked. The resolution block now follows EQ's
+client size. **Open:** no confirmed "collapsed/minimised" key in the UI ini — needs a real file with a collapsed and a closed window.
