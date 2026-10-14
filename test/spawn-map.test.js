@@ -28,9 +28,12 @@ const EXPORTS = ['_mapServerXY', '_mapZoneShort', '_mapNormName', '_mapAttribute
   '_mapZoneDoc', '_mapPrune', '_mapEnsureZone', '_mapPaths', '_zealState', '_setRaid', '_setOpts', 'MAP_ZONE_SHORT',
   '_mapTryPin', '_mapPinGet', '_mapSync', '_mapSyncStop', '_mapSyncFlush', '_mapSyncPull', '_mapApplyRemote', '_mapLocalEvent',
   '_mapSegDist', '_mapRouteDist', '_mapCopy', '_mapCopyNoteWho', '_mapCurrentCopy', '_mapCopyInfo', 'whoData',
-  '_mapNoteCon', '_mapConsFor', '_mapMe', '_mapQuarmyIds', '_mapNoteLeg'];
+  '_mapNoteCon', '_mapConsFor', '_mapMe', '_mapQuarmyIds', '_mapNoteLeg', '_mapCcStates', '_buffLandingsByTarget', '_spellByNameLower'];
 // The agent's real /consider tiers, for _mapNoteCon (they live outside the map core).
 const CON_DEFS = AGENT.slice(AGENT.indexOf('const CON_STANDINGS = ['), AGENT.indexOf('\n', AGENT.indexOf('const _CON_RX = ')));
+// The agent's real lull line and mez test, for _mapCcStates (also outside the map core).
+const LULL_DEFS = sliceBlock(AGENT, '// ── Pacify / lull line (SPA 30', 'return PACIFY_AE.has(String(name).toLowerCase().replace(/`/g, "\'").trim());\n}');
+const MEZ_DEF = sliceBlock(AGENT, 'function _isMezSpell(name) {', "includes('mez'));\n}");
 
 // Stand the block up over a temp dir and fake network modules.
 function loadCore({ dir, opts, net }) {
@@ -47,6 +50,11 @@ function loadCore({ dir, opts, net }) {
     function _zoneName(id) { return id === 164 ? 'The Deep' : null; }
     function _eqSetupDirs() { return []; }   // no EQ folder: the local map files are covered by test/map-local-files.test.js
     const whoData = new Map();               // the agent's /who registry (lower-cased name -> { guild, ... })
+    function _classOf(c) { const w = whoData.get(String(c || '').toLowerCase()); return w && w.class ? w.class : null; }
+    const _buffLandingsByTarget = new Map(); // what Target Info keeps: lower-cased mob -> Map(key -> landing)
+    const _spellByNameLower = new Map();     // the spell catalog, for the mez test
+    ${LULL_DEFS}
+    ${MEZ_DEF}
     ${CON_DEFS}
   `;
   // eslint-disable-next-line no-new-func
@@ -666,8 +674,8 @@ describe('the overlay (apps/mimic/map.html)', () => {
       const js = stripJs(MAP_HTML);
       expect(js).toMatch(/if \(as > 0 && as !== ar && as \* sc >= 4\) \{/);
       expect(js).toMatch(/ctx\.setLineDash\(\[5, 4\]\); ctx\.arc\(x, y, as \* sc/);
-      expect(js).toMatch(/if \(tnpc\) aggroRing\(tq\[0\], tq\[1\], aggroRadius\(null, tnpc\), assistRadius\(null, tnpc\), aggroKind\(null, tnpc, P\.cons, S\.facs, P\.me\)\);/);
-      expect(js).toMatch(/aggroKind\(ap, aun, S\.p && S\.p\.cons, S\.facs, S\.p && S\.p\.me\)/);
+      expect(js).toMatch(/if \(tnpc\) aggroRing\(tq\[0\], tq\[1\], aggroRadius\(null, tnpc\), assistRadius\(null, tnpc\), aggroKind\(null, tnpc, P\.cons, S\.facs, P\.me\), ccFor\(P\.cc, P\.target\.name, P\.target\.id, true\), now\);/);
+      expect(js).toMatch(/aggroKind\(ap, aun, S\.p && S\.p\.cons, S\.facs, S\.p && S\.p\.me\), acc, now\)/);
       // an unpinned target's label carries its spawn id
       expect(js).toMatch(/\+ \(P\.target\.id != null \? ' #' \+ P\.target\.id : ''\) : '';/);
     });
@@ -732,7 +740,7 @@ describe('the overlay (apps/mimic/map.html)', () => {
       expect(H.aggroRadius({ npcs: [{ aggro: null }] }, null)).toBe(0);         // an old zone cache: no radius, no ring
       const js = stripJs(MAP_HTML);
       expect(js).toMatch(/if \(at && timerState\(at, now\) === 'wait'\) continue;/);   // nothing up there: no ring
-      expect(js).toMatch(/if \(ar \* sc >= 4\) \{/);                               // no ring that would be a speck
+      expect(js).toMatch(/if \(rr \* sc >= 4\) \{/);                               // no ring that would be a speck (rr = ar unless a harmony shrank it)
       expect(MAP_HTML).toMatch(/<button class="tb" id="aggroBtn" type="button"[^>]*>◯<\/button>/);
     });
     it('a saved object is merged key by key; bad values and unknown keys are dropped', () => {
@@ -2130,6 +2138,186 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
     });
     it('the menu gets a Clear timer button only where there is a timer or a sighting', () => {
       expect(js).toMatch(/if \(S\.timerBy\[pid\] \|\| S\.seenBy\[pid\]\) mk\('Clear timer', 'clear'\);/);
+    });
+  });
+});
+
+// Mezzes and lulls on the aggro rings (the guild lead, 2026-10-13: "add zzz's if it's mezzed" · "if it's truly pacified
+// make the circle light pink and have it fill in the outside like a clock wipe more red until the pacify wears off. bard
+// pacify is much shorter" · "druid harmony is still red on the inside at the lowered range").
+describe('aggro rings: mez, pacify and harmony', () => {
+  // eslint-disable-next-line no-new-func
+  const H = new Function(sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──')
+    + '\nreturn { ccFor, ringState, calmRadius, HARMONY_FACTOR, CALM_PINK, CALM_RED, inkStyle, hexA };')();
+  const LAND = (o) => Object.assign({ dur_ticks: 60, landed_at: T0, target_id: 77, target_name: 'a gnoll', unconfirmed: false }, o);
+  function put(c, mob, landing) {
+    const k = mob.toLowerCase();
+    if (!c._buffLandingsByTarget.has(k)) c._buffLandingsByTarget.set(k, new Map());
+    c._buffLandingsByTarget.get(k).set(landing.name.toLowerCase() + '|' + (landing.target_id || ''), landing);
+  }
+
+  describe('the agent: /api/map-state cc', () => {
+    it('a pacify: its own landing, ends at the landing\'s length (60 ticks = 6 min), not a bard, no radius factor', () => {
+      const { c } = localCore();
+      c.whoData.set('aldenmar', { class: 'Cleric' });
+      put(c, 'a gnoll', LAND({ name: 'Pacify', landed_at: T0 - 60000, cast_by: 'Aldenmar' }));
+      const cc = c._mapStatePayload('', T0, '').cc;
+      expect(cc).toEqual([{ name: 'a gnoll', spawn_id: 77, mez: null,
+        calm: { kind: 'pacify', spell: 'Pacify', startedAt: T0 - 60000, until: T0 - 60000 + 360000, byBard: false, radiusFactor: null, unconfirmed: false } }]);
+    });
+    it('a bard lull is its own, much shorter length (2 ticks = 12 s), told by the song and by the caster\'s class', () => {
+      const { c } = localCore();
+      put(c, 'a gnoll', LAND({ name: 'Silent Song of Quellious', dur_ticks: 2, landed_at: T0 - 3000 }));
+      let row = c._mapCcStates(T0)[0];
+      expect(row.calm).toMatchObject({ kind: 'pacify', byBard: true, startedAt: T0 - 3000, until: T0 - 3000 + 12000 });
+      c._buffLandingsByTarget.clear();
+      c.whoData.set('brackwyn', { class: 'Bard' });
+      put(c, 'a gnoll', LAND({ name: 'Calm', dur_ticks: 7, cast_by: 'Brackwyn' }));
+      row = c._mapCcStates(T0)[0];
+      expect(row.calm).toMatchObject({ byBard: true, until: T0 + 42000 });   // the caster's class wins over the spell
+    });
+    it('Harmony and Wake of Tranquility are harmony (they only shrink the radius); a pacify on the same mob beats them', () => {
+      const { c } = localCore();
+      put(c, 'a gnoll', LAND({ name: 'Harmony', dur_ticks: 100 }));
+      expect(c._mapCcStates(T0)[0].calm.kind).toBe('harmony');
+      c._buffLandingsByTarget.clear();
+      put(c, 'a gnoll', LAND({ name: 'Wake of Tranquility', dur_ticks: 100 }));
+      expect(c._mapCcStates(T0)[0].calm.kind).toBe('harmony');
+      put(c, 'a gnoll', LAND({ name: 'Harmony of Nature', dur_ticks: 50 }));   // targettype 5: a true pacify
+      put(c, 'a gnoll', LAND({ name: 'Calm', dur_ticks: 5 }));
+      const calm = c._mapCcStates(T0)[0].calm;
+      expect(calm.kind).toBe('pacify');
+      expect(calm.spell).toBe('Harmony of Nature');                          // the later end within the kind
+    });
+    it('a mez, by the catalog\'s mez kind; spent, worn-off and unrelated landings send nothing; two spawns stay two rows', () => {
+      const { c } = localCore();
+      c._spellByNameLower.set('enthrall', { name: 'Enthrall', cc: ['mez'] });
+      put(c, 'a gnoll', LAND({ name: 'Enthrall', dur_ticks: 4, landed_at: T0 - 6000 }));
+      put(c, 'a gnoll', LAND({ name: 'Enthrall', dur_ticks: 4, landed_at: T0 - 6000, target_id: 78 }));
+      put(c, 'a gnoll', LAND({ name: 'Slow', dur_ticks: 50 }));
+      put(c, 'a bat', LAND({ name: 'Enthrall', dur_ticks: 4, landed_at: T0 - 99000, target_name: 'a bat', target_id: 5 }));   // ran out
+      put(c, 'a rat', LAND({ name: 'Pacify', worn_off_at: T0 - 1, target_name: 'a rat', target_id: 6 }));                       // worn off
+      const rows = c._mapCcStates(T0);
+      expect(rows.map(r => r.spawn_id).sort()).toEqual([77, 78]);
+      expect(rows[0].mez).toEqual({ spell: 'Enthrall', startedAt: T0 - 6000, until: T0 - 6000 + 24000 });
+      expect(rows[0].calm).toBeNull();
+    });
+  });
+
+  describe('the overlay: who a landing belongs to, and what state it is in', () => {
+    const calm = (kind, from, to, extra) => Object.assign({ kind, startedAt: from, until: to, byBard: false, radiusFactor: null }, extra);
+    it('same name; with both ids known they must agree; without an id only your own target takes it', () => {
+      const list = [{ name: 'a gnoll', spawn_id: 77, mez: { until: T0 + 5000 }, calm: null }, { name: 'a gnoll', spawn_id: null, mez: null, calm: calm('pacify', T0, T0 + 9000) }];
+      expect(H.ccFor(list, 'a_gnoll', 77, false).mez).toEqual({ until: T0 + 5000 });
+      expect(H.ccFor(list, 'a gnoll', 77, false).calm).toBeNull();                 // the id-less pacify is not proven for 77
+      expect(H.ccFor(list, 'a gnoll', 78, false)).toBeNull();                      // another spawn of the name
+      expect(H.ccFor(list, 'a gnoll', null, false)).toBeNull();                    // no id, not your target
+      expect(H.ccFor(list, 'a gnoll', 78, true).calm.kind).toBe('pacify');         // your target takes the id-less one
+      expect(H.ccFor(list, 'a bat', 77, true)).toBeNull();
+      expect(H.ccFor(null, 'a gnoll', 77, true)).toBeNull();
+    });
+    it('a pacify beats a harmony on one mob; the later end wins within a kind', () => {
+      const list = [{ name: 'a gnoll', spawn_id: 7, calm: calm('harmony', T0, T0 + 90000) }, { name: 'a gnoll', spawn_id: 7, calm: calm('pacify', T0, T0 + 12000) }];
+      expect(H.ccFor(list, 'a gnoll', 7, false).calm.kind).toBe('pacify');
+    });
+    it('the clock wipe fraction is (now - startedAt) / (until - startedAt); a bard lull uses its own short span', () => {
+      const long = { calm: calm('pacify', T0, T0 + 400000) }, bard = { calm: calm('pacify', T0, T0 + 12000, { byBard: true }) };
+      expect(H.ringState(long, T0).calm.frac).toBe(0);
+      expect(H.ringState(long, T0 + 100000).calm.frac).toBe(0.25);
+      expect(H.ringState(bard, T0 + 6000).calm.frac).toBe(0.5);
+      expect(H.ringState(bard, T0 + 6000).calm.byBard).toBe(true);
+    });
+    it('after `until` the ring is normal again (null), for a mez and a calm alike', () => {
+      const cc = { mez: { until: T0 + 5000 }, calm: calm('pacify', T0, T0 + 9000) };
+      expect(H.ringState(cc, T0 + 4999)).toMatchObject({ mez: true, calm: { kind: 'pacify' } });
+      expect(H.ringState(cc, T0 + 5000).mez).toBe(false);
+      expect(H.ringState(cc, T0 + 8999).calm).not.toBeNull();
+      expect(H.ringState(cc, T0 + 9000)).toBeNull();
+      expect(H.ringState(null, T0)).toBeNull();
+    });
+    it('harmony shrinks the radius (a guess of half unless the agent sends the real factor); pacify keeps it whole', () => {
+      expect(H.HARMONY_FACTOR).toBe(0.5);
+      const h = H.ringState({ calm: calm('harmony', T0, T0 + 9000) }, T0).calm;
+      expect(H.calmRadius(200, h)).toBe(100);
+      expect(H.calmRadius(200, H.ringState({ calm: calm('harmony', T0, T0 + 9000, { radiusFactor: 0.6 }) }, T0).calm)).toBeCloseTo(120);
+      expect(H.calmRadius(200, H.ringState({ calm: calm('pacify', T0, T0 + 9000) }, T0).calm)).toBe(200);
+      expect(H.calmRadius(200, null)).toBe(200);
+    });
+  });
+
+  describe('the overlay: what aggroRing draws', () => {
+    const src = sliceBlock(MAP_HTML, 'var AGGRO_COL = {', '    ctx.globalAlpha = ga;\n  }');
+    const RED = '#e5534b';
+    // A recording canvas: each arc / fill / stroke in order, with the style current when it ran; halo() records its text.
+    function draw(cc, now, opts) {
+      const o = Object.assign({ ar: 200, as: 0, kind: 'kos' }, opts), ops = [], halos = [];
+      const ctx = { globalAlpha: 1, lineWidth: 1, fillStyle: '', strokeStyle: '',
+        beginPath() {}, closePath() {}, setLineDash(d) { ops.push({ op: 'dash', d }); },
+        arc(x, y, r, a0, a1, ccw) { ops.push({ op: 'arc', r, a0, a1, ccw: !!ccw }); },
+        fill() { ops.push({ op: 'fill', style: ctx.fillStyle }); }, stroke() { ops.push({ op: 'stroke', style: ctx.strokeStyle }); } };
+      const S = { cfg: { col: { aggro: RED, aggroSafe: '#e3b341', aggroNone: '#56d364' }, ink: 1 }, view: { scale: 1 } };
+      const f = new Function('ctx', 'S', 'inkStyle', 'hexA', 'halo', 'ringState', 'calmRadius', 'CALM_PINK', 'CALM_RED',
+        src + '\nreturn aggroRing;');
+      f(ctx, S, H.inkStyle, H.hexA, (t) => halos.push(t), H.ringState, H.calmRadius, H.CALM_PINK, H.CALM_RED)(0, 0, o.ar, o.as, o.kind, cc, now);
+      return { ops, halos };
+    }
+    const pink = (s) => s.startsWith(H.hexA(H.CALM_PINK, 0).slice(0, -2));   // 'rgba(r,g,b,' of the colour, any alpha
+    const red = (s) => s.startsWith(H.hexA(H.CALM_RED, 0).slice(0, -2));
+    const alpha = (s) => Number(s.slice(s.lastIndexOf(',') + 1, -1));
+    const calm = (kind, from, to, extra) => ({ calm: Object.assign({ kind, startedAt: from, until: to, byBard: false, radiusFactor: null }, extra) });
+
+    it('no crowd control: the ring as it always was - one disc in the danger colour, nothing else', () => {
+      const d = draw(null, T0);
+      expect(d.ops.filter(o => o.op === 'arc')).toEqual([{ op: 'arc', r: 200, a0: 0, a1: 6.2832, ccw: false }]);
+      expect(d.ops.find(o => o.op === 'fill').style).toBe(H.hexA(RED, 0.07));
+      expect(d.halos).toEqual([]);
+    });
+    it('pacify: a light pink disc at the full radius, and a band whose red sweep starts at 12 o\'clock and runs clockwise', () => {
+      const d = draw(calm('pacify', T0, T0 + 400000), T0 + 100000);
+      const arcs = d.ops.filter(o => o.op === 'arc');
+      expect(arcs[0].r).toBe(200);                                   // the whole circle, not shrunk
+      const fills = d.ops.filter(o => o.op === 'fill');
+      expect(pink(fills[0].style)).toBe(true);                       // the disc
+      expect(fills.some(f => H.hexA(RED, 0.07) === f.style)).toBe(false);   // not the danger colour any more
+      const sweep = arcs.find(a => a.a0 === -Math.PI / 2 && a.ccw === false && a.a1 < 0.1 && a.a1 > -0.1);
+      expect(sweep.r).toBe(200);                                     // a quarter turn: 12 o'clock to 3 o'clock
+      expect(sweep.a1).toBeCloseTo(-Math.PI / 2 + 6.2832 * 0.25, 3);
+      const redFill = fills.find(f => red(f.style));
+      expect(alpha(redFill.style)).toBeCloseTo(0.65, 2);
+      const later = draw(calm('pacify', T0, T0 + 400000), T0 + 300000).ops.filter(o => o.op === 'fill').find(f => red(f.style));
+      expect(alpha(later.style)).toBeGreaterThan(alpha(redFill.style));   // redder as it runs out
+      expect(d.halos).toEqual([]);                                   // not mezzed: no zzz
+    });
+    it('a bard lull wipes over its own short span', () => {
+      const bard = calm('pacify', T0, T0 + 12000, { byBard: true });
+      const arcs = draw(bard, T0 + 6000).ops.filter(o => o.op === 'arc');
+      expect(arcs.some(a => a.a0 === -Math.PI / 2 && Math.abs(a.a1 - (-Math.PI / 2 + 6.2832 * 0.5)) < 1e-6)).toBe(true);   // half way round at 6 s of 12
+    });
+    it('harmony: still the danger colour inside, at the smaller radius, the old edge a faint dashed line, same band', () => {
+      const d = draw(calm('harmony', T0, T0 + 400000), T0 + 100000);
+      const arcs = d.ops.filter(o => o.op === 'arc');
+      expect(arcs.some(a => a.r === 100)).toBe(true);
+      const disc = d.ops.filter(o => o.op === 'fill')[0];
+      expect(disc.style).toBe(H.hexA(RED, 0.07));                    // red inside, as before
+      expect(d.ops.some(o => o.op === 'fill' && pink(o.style) && o.style === disc.style)).toBe(false);
+      const firstDash = d.ops.findIndex(o => o.op === 'dash' && o.d.length);
+      expect(arcs.find(a => a.r === 200)).toBeTruthy();              // the full-size edge is still marked...
+      expect(firstDash).toBeGreaterThanOrEqual(0);                   // ...dashed
+      const band = arcs.find(a => a.a0 === -Math.PI / 2 && a.r === 100 && Math.abs(a.a1 - (-Math.PI / 2 + 6.2832 * 0.25)) < 1e-6);
+      expect(band).toBeTruthy();                                     // the wipe rides the reduced edge
+      expect(d.ops.some(o => o.op === 'fill' && red(o.style))).toBe(true);
+    });
+    it('mez: zzz beside the ring, and the ring itself is unchanged', () => {
+      const d = draw({ mez: { until: T0 + 9000 } }, T0);
+      expect(d.halos).toEqual(['z', 'z', 'z']);
+      expect(d.ops).toEqual(draw(null, T0).ops);
+    });
+    it('after `until` the ring is the normal ring again: no pink, no band, no zzz', () => {
+      const cc = Object.assign({ mez: { until: T0 + 5000 } }, calm('pacify', T0, T0 + 9000));
+      expect(draw(cc, T0 + 1000).halos.length).toBe(3);
+      const gone = draw(cc, T0 + 9000);
+      expect(gone.halos).toEqual([]);
+      expect(gone.ops).toEqual(draw(null, T0).ops);
     });
   });
 });

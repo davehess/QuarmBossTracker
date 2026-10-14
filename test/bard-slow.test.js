@@ -64,3 +64,34 @@ describe('the other lists carry it too', () => {
     expect(set).toContain("'requiem of time'");
   });
 });
+
+describe('the re-slow warning: a minute ahead, never for a bard slow (2026-10-13)', () => {
+  // The guild lead: "don't interrupt the fight unless there's a critical thing, like less than 1 minute left on a
+  // non bard slow". The real _tickSlowCallouts runs here against a stubbed tracker.
+  const tick = sliceBlock(src, 'const SLOW_FADING_WARN_SECS = 60;', '\n}');
+  function run(best) {
+    const out = [];
+    // evalBlock's closure can't see `out` or `best` from here: pass them through globals the block reads.
+    globalThis.out = out; globalThis.best = best;
+    const t = evalBlock(
+      'const _slowCalloutState = new Map([["grummus", { name: best.name, display: "Grummus" }]]);\n'
+      + 'const _bestSlowForTarget = () => best;\n'
+      + 'const _isNameCurrentlyTargeted = () => true;\nconst _rampageOnMainTarget = () => true;\n'
+      + 'const _slowCalloutMob = (d) => d;\nconst _slowShortName = (n) => n;\nconst _announceSlowDrop = () => {};\n'
+      + 'const _pushOverlay = (o) => out.push(o);\n' + tick,
+      ['_tickSlowCallouts'],
+    );
+    t._tickSlowCallouts();
+    return out;
+  }
+  const at = Date.now() - 100_000;
+  it('warns at 55 s left on a shaman slow', () => {
+    expect(run({ name: "Turgur's Insects", cls: 'SHM', remaining_secs: 55, landedAtMs: at })).toHaveLength(1);
+  });
+  it('stays quiet at 90 s left', () => {
+    expect(run({ name: "Turgur's Insects", cls: 'SHM', remaining_secs: 90, landedAtMs: at })).toHaveLength(0);
+  });
+  it('never warns for a bard slow', () => {
+    expect(run({ name: 'Requiem of Time', cls: 'BRD', remaining_secs: 20, landedAtMs: at })).toHaveLength(0);
+  });
+});
