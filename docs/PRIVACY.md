@@ -126,7 +126,10 @@ then carries a personal token tied to your Discord account. **Signing Mimic out
 - **`/who` results:** every player shown who is level 50+ or anonymous, **from
   any guild** — name, level, class, race, guild and zone.
 - **Your live status**, every few seconds while Zeal is connected: zone,
-  position (x/y/z), HP, mana, buffs, target, pet and what is hitting you, and
+  position (x/y/z), HP, mana, buffs, target (and, from the Mimic that follows
+  this change, where that target stands, so your raid's Map can mark it; held
+  in memory for about a minute and shown only to your raid or group), pet and
+  what is hitting you, and
   (agent 3.7.66 beta) when your own discipline, Mend, Lay on Hands, Harm Touch
   and AAs are ready again. This goes out **in or out of a raid, and even with
   EQ logging off**.
@@ -348,6 +351,8 @@ server events, counted from the start).
 | What | Kept |
 |---|---|
 | Who targeted what | 1 day |
+| Where your target stands (for the Map's raid focus mark) | In the bot's memory only, about 90 seconds |
+| An escort NPC's walked path (no player named) | 12 hours |
 | Raid roster with positions | about a day |
 | Raid positions kept for replay (one sample every few seconds) | Kept for now; the Archive's copy is permanent |
 | Buffs and debuffs seen landing | 7 days |

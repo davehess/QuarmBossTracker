@@ -4774,3 +4774,11 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   the Map draws a magenta double ring + "MA" / "N targeting" only where it is placed (your own target, or a pinned seen spawn
   point) — never an invented position (#15 for other raiders' target locs). ⚙ → "Raid focus target" switches it off.
   Test: `test/spawn-map.test.js`.
+- **Raid targets + shared escort trails** (2026-10-14, bot 3.1.263 · agent next beta, §299): `utils/raidTargets.js`. Each Mimic's
+  target (`target_id`, `target_name`, `target_type`, `target_map` in the Map's server frame, `target_zone`) rides the existing
+  `POST /api/agent/live-state`; `_handleAgentLiveState` hands it to `_raidTargets().noteSample` (memory, 90 s, never on the
+  upserted row; id 0 = no target). `GET /api/agent/map-sync?zone=&since=&character=&tsince=` now also returns `targets`
+  (latest position + raider count per targeted NPC, scoped by `_raidTargetsFor` = Extended Target's raid / group / own rule)
+  and `trails` (escort NPCs in `ESCORT_NPCS`, rules of the agent's `_mapNotePath`, `bot_kv` rows `escort_trail:<zone>:<name>`,
+  saved at most every 10 s per trail, served only after 100 units of movement). Tests: `test/raid-targets.test.js`,
+  `test/raid-targets-escort-list.test.js` (bot list = agent `MAP_TRACKED_PATHS`).

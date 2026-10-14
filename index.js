@@ -303,6 +303,7 @@ const kvLatch = require('./utils/kvLatch');
 const _raidGroups = require('./utils/raidGroups');
 const _groupScope = require('./utils/groupScope');
 const _zoneTimersMod = require('./utils/zoneTimers');
+const _raidTargetsMod = require('./utils/raidTargets');
 const _mainAssist = require('./utils/mainAssist');
 const _mainAssistStore = _mainAssist.createStore();
 const { discordAbsoluteTime, discordRelativeTime, isShortTimerBoss } = require('./utils/timer');
@@ -17418,7 +17419,30 @@ async function _handleAgentMapSyncGet(req, res) {
     }
     _mapSyncCache.set(zone, hit);
   }
-  return _ptsJson(res, 200, { zone, now, events: hit.events.filter(e => e.at > since) });
+  const out = { zone, now, events: hit.events.filter(e => e.at > since) };
+  // The raid's targets here and the escort trails (utils/raidTargets.js): memory and one cached bot_kv read, no Supabase
+  // query per pull. Best-effort: a failure leaves the events exactly as before.
+  try { Object.assign(out, await _raidTargetsFor(identity, zone, sp)); }
+  catch (err) { console.warn('[map-sync] raid targets failed:', err && err.message); }
+  return _ptsJson(res, 200, out);
+}
+
+// Each Mimic's current target rides its live-state upload (_handleAgentLiveState); this is what the Map's pull gets
+// back: { targets, trails }. Scoped like Extended Target: the requester's raid, else group, else only their own.
+let _raidTargetsInst = null;
+const _raidTargets = () => _raidTargetsInst || (_raidTargetsInst = _raidTargetsMod.create({ supabase: require('./utils/supabase') }));
+async function _raidTargetsFor(identity, zone, sp) {
+  const rt = _raidTargets();
+  const inp = await _groupScopeInputs(identity.discord_id);
+  const selfChar = String(sp.get('character') || '').trim().toLowerCase();
+  const characters = [...(inp.characters || [])];
+  if (/^[a-z]{2,30}$/.test(selfChar) && !characters.includes(selfChar)) characters.push(selfChar);
+  const scope = _groupScope.scopeFor({ split: inp.split, discordId: identity.discord_id, characters, group: inp.group, disabled: inp.disabled });
+  const tsince = Number(sp.get('tsince'));
+  return {
+    targets: rt.targetsFor({ zone, scope, raidForName: inp.split ? inp.split.raidForName : null, own: new Set(inp.characters || []) }),
+    trails: await rt.trailsFor(zone, Number.isFinite(tsince) && tsince > 0 ? tsince : 0),
+  };
 }
 
 // GET /api/agent/who-lookup?names=a,b,c
@@ -18194,6 +18218,7 @@ async function _handleAgentLiveState(req, res) {
     // snapshot) — /raid moves them to "Not in raid (swapped to X)".
     if (st?.swapped_to && typeof st.swapped_to === 'string') {
       swaps.push({ character, swapped_to: st.swapped_to.trim().slice(0, 64) });
+      _raidTargets().forget(character);   // gone: its target no longer stands
       continue;
     }
     // Sanitize buffs → compact [{name, ticks, song}] and cap so a misbehaving
@@ -18265,6 +18290,13 @@ async function _handleAgentLiveState(req, res) {
     // The character's own known timers (agent 3.7.66+) — read back by
     // character-live-state for another raider's Target Info.
     const cooldowns = _sanitizeLiveCooldowns(st?.cooldowns, Date.now());
+    // The target's position for the Map (agent 3.7.165+: target_map in the Map's server frame, target_type, target_zone).
+    // Memory only, never a column: the upsert below takes `rows`, and these fields are not on it. No usable target
+    // (none, id 0, a player, a corpse) clears this character's sample. Never fails the POST.
+    try {
+      _raidTargets().noteSample({ character, zone: st?.target_zone, target_id: targetId, target_name: targetName,
+        target_type: st?.target_type, target_map: st?.target_map });
+    } catch (err) { console.warn('[raid-targets] note failed:', err?.message); }
     rows.push({
       guild_id:    guildId,
       character,
