@@ -34,6 +34,8 @@
 //              (only in Slides mode); null when it could not be read
 //   auctions   [{ item, endsAt }] | null           the OPEN loot auctions the bot already holds for Mimic, or null
 //              when it holds none fresh enough to trust. Item and end time only: no bidder, no bid (bids are sealed).
+//   recap      { boss, npcId, killedAt, lines, fun, stars } | null   the last raid boss kill's "how did we do" (bot_kv
+//              `last_kill_recap`, written by index.js when the kill card is built); null once the kill is 30 min old.
 //
 // READS ARE MEMOIZED, NOT PER VIEWER
 // Sixty viewers must cost the database what one does. The live zones (+ zone names) are read at most once per
@@ -207,15 +209,57 @@ function auctionsFor(ctx, nowMs) {
   return out.slice(0, AUCTIONS_MAX);
 }
 
+// ── Kill recap ───────────────────────────────────────────────────────────────
+
+// The last raid boss kill's "how did we do" (utils/killRecap.js; the bot writes it to bot_kv after the card is
+// built). One tiny row, read at most once per RECAP_TTL_MS for everyone. Wrapped as { value } so "no row yet" is
+// a settled answer, not a failed read. Served only for RECAP_MAX_AGE_MS after the kill: the Overview shows it
+// for one boss's worth of attention, not all night.
+const RECAP_KEY = 'last_kill_recap';
+const RECAP_TTL_MS = 10_000;
+const RECAP_STALE_MS = 60_000;
+const RECAP_MAX_AGE_MS = 30 * 60_000;
+const RECAP_LIST_MAX = 8;
+const RECAP_LINE_MAX = 300;
+
+async function loadRecapRow() {
+  const rows = await _sb().select('bot_kv',
+    `guild_id=eq.${_enc(_guildId())}&key=eq.${RECAP_KEY}&select=value&limit=1`);
+  if (!Array.isArray(rows)) return null;
+  return { value: rows[0]?.value ?? null };
+}
+
+const strList = (v) => (Array.isArray(v) ? v : []).filter(s => typeof s === 'string' && s.trim())
+  .slice(0, RECAP_LIST_MAX).map(s => s.slice(0, RECAP_LINE_MAX));
+
+/** The stored recap in the shape the page reads — { boss, npcId, killedAt, lines, fun, stars } — or null when
+ *  there is none, it is malformed, or the kill is older than RECAP_MAX_AGE_MS. Named fields only. */
+function recapFor(value, nowMs) {
+  if (!value || typeof value !== 'object') return null;
+  const killed = Date.parse(value.killedAt);
+  if (!Number.isFinite(killed) || nowMs - killed > RECAP_MAX_AGE_MS || killed - nowMs > 60_000) return null;
+  const lines = strList(value.lines);
+  if (!lines.length) return null;
+  return {
+    boss: typeof value.boss === 'string' ? value.boss.slice(0, 100) : '',
+    npcId: Number.isFinite(Number(value.npcId)) ? Number(value.npcId) : null,
+    killedAt: new Date(killed).toISOString(),
+    lines,
+    fun: strList(value.fun),
+    stars: strList(value.stars),
+  };
+}
+
 // ── The payload ──────────────────────────────────────────────────────────────
 
 async function buildPayload(ctx = {}) {
   const nowMs = _clock();
   const rows = _rt().liveRows(nowMs, ROWS_MAX_AGE_MS);
   // Nothing placed = nothing to look the zones of up.
-  const [mem, state] = await Promise.all([
+  const [mem, state, recapRow] = await Promise.all([
     rows.length ? cached('live', LIVE_TTL_MS, LIVE_STALE_MS, loadLive) : null,
     cached('state', STATE_TTL_MS, STATE_STALE_MS, loadState),
+    cached('recap', RECAP_TTL_MS, RECAP_STALE_MS, loadRecapRow),
   ]);
 
   const names = new Set(rows.map(r => r.name.toLowerCase()));
@@ -238,6 +282,8 @@ async function buildPayload(ctx = {}) {
     positions: rows.length && !mem ? null : { rows, live, zones },
     state: state || null,
     auctions: auctionsFor(ctx, nowMs),
+    // null = no raid boss has died in the last 30 minutes (or the read failed): the page shows nothing.
+    recap: recapFor(recapRow && recapRow.value, nowMs),
   };
 }
 
@@ -294,7 +340,7 @@ function _reset() { _memo.clear(); _zoneCache = new Map(); _zoneCacheAt = 0; _de
 function _setDeps(d = {}) { _deps = { ..._deps, ...d }; }
 
 module.exports = {
-  handle, buildPayload, allowedOrigins, clampSlideIndex,
+  handle, buildPayload, allowedOrigins, clampSlideIndex, recapFor, RECAP_MAX_AGE_MS,
   DEFAULT_ORIGINS, ROWS_MAX_AGE_MS, LIVE_ZONE_MS, LIVE_TTL_MS, STATE_TTL_MS, ZONE_TTL_MS, DECK_READ_LIMIT,
   LIVE_STALE_MS, STATE_STALE_MS, AUCTION_MAX_AGE_MS, AUCTION_EMPTY_MAX_AGE_MS, AUCTIONS_MAX, PREFLIGHT_MAX_AGE_S,
   _reset, _setDeps,

@@ -3959,6 +3959,12 @@ viewer follows within ~3 s. New page, so it carries `NewPageTag` ([beta]).
   The ticket's life is counted on the page's own clock (`ttl`), so a wrong PC clock cannot force the fallback.
   Turning the secret off on Railway is the kill switch.
 - **The Discord Activity version** (option C) is planned, not built: `docs/DESIGN-raid-screen-activity.md`.
+- **Kill recap (bot 3.1.259, the guild lead 2026-10-13):** after a confirmed raid-boss kill the parse card gets a "How we
+  did" field (`utils/killRecap.js`: vs the last comparable kill, deaths clipped to the fight, fun events inside the
+  fight ± 1 min, up to three honest stars), and the same recap is written to `bot_kv` `last_kill_recap` and served on
+  `/api/screen/live` as `recap { boss, npcId, killedAt, lines, fun, stars } | null` for 30 minutes. Hook: the card build
+  in `_postParseCardsDeferred` (`index.js`, `_killRecapForCard`). Replay on past fights, read-only:
+  `node scripts/replay-kill-recaps.js --sql-json <dump.json>`. Test: `test/kill-recap.test.js`.
 - **Tests:** `test/raid-screen.test.js`, `test/screen-live.test.js`.
 
 ### My parses over time (`/me/parses` web 1.8.107 · bot 3.1.210 · Mimic tab + meter Trend stable in Mimic 2.7.9, §170)
