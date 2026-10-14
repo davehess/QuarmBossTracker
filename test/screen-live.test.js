@@ -457,9 +457,10 @@ describe('the bot feed: GET /api/screen/live', () => {
   });
 
   describe('the payload: the inputs the page shapes with', () => {
-    it('is at, positions { rows, live, zones }, state and auctions', async () => {
+    it('is at, positions { rows, live, zones }, state, auctions and recap', async () => {
       const body = json(await ask({ origin: ORIGIN, token: ticket() }));
-      expect(Object.keys(body).sort()).toEqual(['at', 'auctions', 'positions', 'state']);
+      expect(Object.keys(body).sort()).toEqual(['at', 'auctions', 'positions', 'recap', 'state']);
+      expect(body.recap).toBeNull();   // no kill recap in bot_kv in this fixture (test/kill-recap.test.js serves one)
       expect(body.at).toBe(iso(clock.t));
       expect(Object.keys(body.positions).sort()).toEqual(['live', 'rows', 'zones']);
       expect(body.positions.rows.map(r => r.name).sort()).toEqual(['Aldenmar', 'Brackwyn', 'Corvale']);
@@ -587,7 +588,8 @@ describe('the bot feed: GET /api/screen/live', () => {
       expect(tableCalls('eqemu_zone')).toBe(1);
       expect(tableCalls('raid_screen_state')).toBe(1);
       expect(tableCalls('raid_screen_slides')).toBe(2);   // the deck's ids, then the one slide that is up
-      expect(sb.calls.length).toBe(5);
+      expect(tableCalls('bot_kv')).toBe(1);               // the last kill recap
+      expect(sb.calls.length).toBe(6);
     });
 
     it('the same holds for sequential requests inside the windows, and each table refreshes on its own clock', async () => {

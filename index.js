@@ -10537,6 +10537,66 @@ async function _handleAgentLockout(req, res) {
 // each post a fresh card.
 const _liveCards = new Map();
 
+// ── Kill recap (the guild lead, 2026-10-13) ───────────────────────────────────
+// "How did we do" for a confirmed raid-boss kill — faster than last time, deaths, fun events, highlights —
+// as ONE field on the parse card the bot already posts (never a second message), and published in bot_kv
+// (`last_kill_recap`) for wolfpack.quest/screen via utils/screenLive.js. Post-kill only (DECISIONS §284).
+// utils/killRecap.js has the rules; this is the plumbing. NOTHING here may break the card or the ingest:
+// every failure reads as "no recap". The card is rebuilt from scratch on each merging upload, so the recap
+// is cached per encounter and re-attached; a confirmed upload re-reads it at most every 20s (late parsers
+// improve the numbers).
+const _killRecaps = new Map();            // encounter id → { at, recap, promise }
+const _KILL_RECAP_REFRESH_MS = 20_000;
+const _KILL_RECAP_WAIT_MS = 6_000;        // the card never waits longer than this for its recap
+const _KILL_RECAP_KEY = 'last_kill_recap';
+let _lastRecapKilledAtMs = 0;
+
+async function _publishKillRecap(supabase, recap) {
+  if (!(recap.killedAtMs >= _lastRecapKilledAtMs)) return;   // a late re-read of an older kill never replaces a newer one
+  _lastRecapKilledAtMs = recap.killedAtMs;
+  await supabase.upsert('bot_kv', [{
+    guild_id: supabase.guildId(),
+    key: _KILL_RECAP_KEY,
+    value: {
+      boss: recap.boss, npcId: recap.npcId, killedAt: new Date(recap.killedAtMs).toISOString(),
+      lines: recap.lines, fun: recap.fun, stars: recap.stars,
+    },
+    updated_at: new Date().toISOString(),
+  }], 'guild_id,key', { minimal: true });
+}
+
+/** The recap for one encounter, or null. `confirmedNow` = THIS upload saw the death line. */
+async function _killRecapForCard(encounterId, bossName, confirmedNow) {
+  try {
+    if (!encounterId) return null;
+    const now = Date.now();
+    const hit = _killRecaps.get(encounterId);
+    if (hit && (hit.promise || !confirmedNow || now - hit.at < _KILL_RECAP_REFRESH_MS)) {
+      return hit.promise ? await Promise.race([hit.promise, new Promise(r => setTimeout(() => r(null), _KILL_RECAP_WAIT_MS).unref())]) : hit.recap;
+    }
+    if (!confirmedNow) return null;
+    const supabase = require('./utils/supabase');
+    if (!supabase.isEnabled()) return null;
+    const entry = { at: now, recap: hit ? hit.recap : null, promise: null };
+    entry.promise = (async () => {
+      try {
+        const recap = await require('./utils/killRecap').loadRecap({
+          supabase, guildId: supabase.guildId(), encounterId, bossName,
+        });
+        if (recap) { entry.recap = recap; await _publishKillRecap(supabase, recap); }
+      } catch (err) { console.warn(`[kill-recap] ${bossName}: no recap —`, err?.message); }
+      entry.promise = null;
+      return entry.recap;
+    })();
+    _killRecaps.set(encounterId, entry);
+    if (_killRecaps.size > 40) _killRecaps.delete(_killRecaps.keys().next().value);
+    return await Promise.race([entry.promise, new Promise(r => setTimeout(() => r(null), _KILL_RECAP_WAIT_MS).unref())]);
+  } catch (err) {
+    console.warn('[kill-recap] failed:', err?.message);
+    return null;
+  }
+}
+
 // GET /api/agent/incomplete-encounters?characters=Aldenmar,Brackwyn[&limit=20]
 //
 // Returns the list of encounters flagged data_incomplete that include any of
@@ -22575,6 +22635,19 @@ async function _handleAgentUpload(req, res) {
         card.setTitle(`${origTitle}  ·  ${startTimeStr}`);
 
         card.setFooter({ text: `${perspLabel}${stagingTag} · ${perspNames} · ${encounter.events.length} events (latest)` });
+
+        // ⏱️ How we did — the kill recap rides on THIS card (utils/killRecap.js). Raid bosses only, and only
+        // once a death line has confirmed the kill; any failure just leaves the card as it was.
+        if (_isBossCard && _encIdForLink) {
+          try {
+            const _recap = await _killRecapForCard(_encIdForLink, matchedBoss ? matchedBoss.name : mobName, encounter.confirmed_kill === true);
+            const _recapText = _recap ? require('./utils/killRecap').recapFieldValue(_recap) : '';
+            // Discord caps a whole embed at 6000 characters: skip the field rather than lose the card.
+            if (_recapText && JSON.stringify(card.toJSON()).length + _recapText.length + 40 < 5800) {
+              card.addFields({ name: '⏱️ How we did', value: _recapText, inline: false });
+            }
+          } catch (err) { console.warn('[kill-recap] card field failed:', err?.message); }
+        }
 
         // 🐾 Charmed — the charm pets listed together with who their damage
         // split across ("A Shissar Revenant — 12,480 (Tilbrook / Gwenna)").

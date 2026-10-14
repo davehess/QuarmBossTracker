@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.259': [
+    '**Raid boss kill cards now say how we did.** After a boss dies, its card in the raid thread gets a "How we did" section: how much faster or slower than last time, deaths, any fun moments during the fight, and a highlight or two. The same recap shows on the raid screen for half an hour.',
+  ],
   '3.1.248': [
     'The bot can now share the Mimic spawn map between members, so everyone with the map open in a zone sees the same respawn timers (Mimic beta, coming next).',
   ],
