@@ -10470,3 +10470,23 @@ the Bastion of Thunder at the time.
 - **Breakouts (design A, first half):** right-click a channel chip → its own window (`chat.html?groups=<id>`), remembered across
   restarts (`cfg.chatBreakouts`), own bounds. Breakouts exist exactly while Chat does; a breakout's ✕ puts the channel back.
 - **Open:** a per-breakout font size; whether ✕ should close instead of put back; tabs inside one window (design A, second half).
+
+### 304. Seer paste on the PoP guide; Start here and the figurine removed (web 1.8.154, beta `26737a4d`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"reverse engineer [takp.info/flag-check] so that peoples flags can just copy what the
+  seer says and fix their flags and get next steps"*; then *"players need to be able to submit the seer's stuff at the top of the page
+  with a collapsible text field"*, *"These top items can be removed, they're superflous"*, *"The intricate wooden figurine is not in
+  the game right now"*.
+- **Where:** a collapsed "Paste what the Seer says" box at the top of `/pop/guide` (all three layouts), not a separate page. It lands as
+  the default on beta: the removals are shared data, so no variant param could gate them.
+- **How:** the paste is read in the browser (`web/lib/popRecital.ts`); it ticks the guide's steps, rings the next step per open plane,
+  lists closed planes and unrecognised lines. Save sends only matched sentences; the server re-reads them, checks the character is on
+  the member's account, and writes `pop_flags` source `recital` at one time, skipping keys that already have a recital row. The raw
+  paste is never stored. `RECITAL_STAGES` / `STAGE_IMPLIES` are copied into `web/` (it imports nothing outside), held in step by
+  `test/pop-seer-paste.test.js`.
+- **takp:** substring-match each Seer sentence to a per-chain level, then a hand-written decision tree. No licence stated; no code or
+  text copied. Our 44 guided-meditation sentences are complete against Quarm's Seer script. Not yet read: the 14 "unlock memories"
+  locked texts (a kill done, an earlier hail missing), the best next-step signal.
+- **Removed:** the Start here section and the figurine step. `start_flag_fixers` (Seer + Maelin loop) and `start_traveler_manual`
+  (Willamina chain) carry content that tests and Mimic's Quests mode use, so they moved to the Knowledge quests section, same keys.
+- **Open:** keep or delete those two moved items; whether to tag pasted rows (e.g. `npc='web paste'`) so they can be told from
+  Mimic's. Today they are identical, so a paste for your own character reads as a real recital.
