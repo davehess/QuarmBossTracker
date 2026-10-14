@@ -12,15 +12,22 @@ const bot = readSource(path.join(ROOT, 'index.js'));
 const block = sliceBlock(bot, "const _MIMIC291_KV_KEY = 'announce_mimic_2_9_1_raid_chat';", '\n// First look a minute');
 const kvLatch = require('../utils/kvLatch');
 
-function harness({ latch = [], release = null } = {}) {
-  const log = { posts: [], upserts: [], fetched: 0 };
+// webStatus: what https://wolfpack.quest/pop/latest answers (307 = live behind sign-in, 404 = not deployed yet).
+function harness({ latch = [], release = null, webStatus = 307 } = {}) {
+  const log = { posts: [], upserts: [], fetched: 0, web: 0 };
   const fakes = {
     './utils/supabase': {
       select: async () => (typeof latch === 'function' ? latch() : latch),
       upsert: async (table, rows) => { log.upserts.push([table, rows]); },
     },
     https: {
-      get: (_opts, cb) => {
+      get: (opts, cb) => {
+        if (opts.hostname === 'wolfpack.quest') {
+          log.web++;
+          cb({ statusCode: webStatus, resume() {} });
+          const req = { on: () => req };
+          return req;
+        }
         log.fetched++;
         const res = { on: (ev, f) => { if (ev === 'data') f(JSON.stringify(release)); if (ev === 'end') f(); return res; } };
         cb(res);
@@ -50,6 +57,14 @@ describe('the Mimic 2.9.1 announcement in #raid-chat', () => {
       const { run, log } = harness({ release });
       expect(await run()).toBe('waiting');
       expect(log.posts).toHaveLength(0);
+    }
+  });
+
+  it('waits for /pop/latest to be live on the website, because the card links it', async () => {
+    for (const webStatus of [404, 0]) {
+      const { run, log } = harness({ release: READY, webStatus });
+      expect(await run()).toBe('waiting');
+      expect([log.posts.length, log.web]).toEqual([0, 1]);
     }
   });
 

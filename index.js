@@ -12816,6 +12816,14 @@ async function _announceMimic291Once() {
     ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
   });
   if (!_mimic291Ready(rel)) return 'waiting';
+  // The card links /pop/latest, which reaches production with the web build that the Vercel daily cap held
+  // back (2026-10-14). A 404 there means the page is not live yet; anything else (307 to sign-in) means it is.
+  const webStatus = await new Promise((resolve) => {
+    require('https').get({ hostname: 'wolfpack.quest', path: '/pop/latest', timeout: 10000 },
+      (res) => { res.resume(); resolve(res.statusCode); })
+      .on('error', () => resolve(0)).on('timeout', function () { this.destroy(); resolve(0); });
+  });
+  if (!webStatus || webStatus === 404) return 'waiting';
   let ch = process.env.RAID_CHAT_CHANNEL_ID
     ? await client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null)
     : null;
@@ -12841,7 +12849,7 @@ if (_oneshotGate('mimic291-announce')) {
   const tick = () => _announceMimic291Once()
     .then(r => { if (r === 'posted' || r === 'latched') clearInterval(t); })
     .catch(err => console.warn('[mimic291-announce]', err?.message));
-  const t = setInterval(() => { if (++tries > 144) { clearInterval(t); return; } tick(); }, 5 * 60_000);
+  const t = setInterval(() => { if (++tries > 288) { clearInterval(t); return; } tick(); }, 5 * 60_000);
   setTimeout(tick, 60_000);
 }
 
