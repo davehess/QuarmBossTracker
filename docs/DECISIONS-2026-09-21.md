@@ -10658,3 +10658,20 @@ the Bastion of Thunder at the time.
 - **The ask (the guild lead, 2026-10-14):** *"add updates to the submenus for the taskbar"*. Also settles §310's open question (a
   pending update now shows at the top level, as the submenu's label "Updates — vX ready").
 - Same items, same handlers; moved out of Settings ›, placed between Settings › and Open ›.
+
+### 320. Chat overlay round 5: Spells, Skills, Melee filters and colours (agent 3.7.175 · Mimic beta `0d4d33bd`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"chat can also have separable spell and skill information"*; *"For Melee in the chat, it
+  would be helpful to filter out other's information the same way we do with in game filters (do i want to see others combat or just
+  mine). The color schema could be updated as well."*
+- **Calls:** `[SP]` and `[SK]` are opt-in groups built like Melee (own ring, breakable, per-window text). Melee lines are mine / on me /
+  others (EQ's own split; a hit ON your pet is "others"), with a Misses switch; all on by default so nothing changes until switched.
+  Colours: mine near-white, on me red, others grey, misses dimmer; spells purple, skills amber — CSS variables, colourblind themes apply.
+- **Open:** skill-result line shapes beyond forage/traps are from memory (fishing, sense heading, hide/sneak, bind wound, tradeskill);
+  check a real log before widening. Landings on others cover only what the agent already indexes.
+
+### 321. Grow-upward overlays get a top-corner resize grip clear of the ✕ (Mimic beta `ac73bace`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"when grow upwards is on, we should be able to drag the top right corner of overlays while not
+  hitting the X button."*
+- **Call:** a 12 px grip in the top-right corner, and the ✕ steps 8 px left while grow-up is on (shrinking the grip into the 6 px margin
+  left a sliver too small to hit). Dragging keeps the bottom-left fixed. One shared preload grip, so every ✥ overlay gets it.
+- **Open:** Windows check; a header right under the ✕ may lose up to 2 px of gutter.

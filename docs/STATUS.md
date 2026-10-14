@@ -5988,6 +5988,11 @@ Abashi's Rod → 31242). The web has no decoder: it shows the stored link. **Ope
 fixable, staged in `docs/RUNBOOK-pqdi-chat-links.md`, unapplied (the guild lead's yes); the stable fleet keeps writing
 wrong links until the agent reaches stable.
 
+### 🧾 2026-10-14 — Chat Spells / Skills groups + Melee filters and colours; grow-up corner grip (agent 3.7.175 · Mimic beta `0d4d33bd`, `ac73bace`, DECISIONS §320–321)
+`[SP]` / `[SK]` opt-in groups like Melee; Melee split mine / on me / others + Misses, each coloured. Grow-upward overlays get a top-right
+resize grip with the ✕ stepped left. **Open:** unverified skill-result line shapes (fishing, sense heading, hide/sneak, bind wound,
+tradeskill) need a real log; Windows check of the grip.
+
 ### 🧾 2026-10-14 — Updates close Mimic cleanly and keep window positions (Mimic beta `b26c8162`, DECISIONS §318)
 Every install path, Quit, and the agent hot-swap go through one `_gracefulShutdown`: pending bounds flushed into one config write,
 watchers stopped, agent asked to stop (≤ 3 s, then killed) so its upload queue is saved, then `quitAndInstall`. **Open:** the main
