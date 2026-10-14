@@ -10502,3 +10502,16 @@ the Bastion of Thunder at the time.
 - **Privacy:** PRIVACY.md and `/privacy` say the overlay can read the last 1–24 h from the game's own logs, on the PC only.
 - **Open:** history is not time-merged with live lines newer than the ring's start (it sits above); the history window is remembered
   per window in localStorage, not in Mimic's config.
+
+### 306. PoP guide in collapsible sections with a sidebar (web 1.8.155, beta `c717eb93`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"Collapse all of the pop/guide stuff down into subsections, Tiers and plane of knowledge,
+  move the POK stuff except for the seer at the top. Give a sidebar nav for the different sections to drop down. It should be a simple
+  set of clicks."*
+- **Shape:** the Seer paste stays first. Below it, closed sections Tier One … Tier Four and the Plane of Time (the `/pop` chart's own
+  tiers), then the Plane of Knowledge. A tier's planes are sub-sections (the lower crypt, Temple of Marr and Ragrax fold into their
+  parent). Each summary shows "n / m done" and "▶ next" when the Seer paste rings a step inside. Sidebar on wide screens, drop-down on
+  phones; Expand all / Collapse all; URL hashes (`#tier-2-valor`, `#pok`) open on load and on back.
+- **PoK after the tiers:** the tiers are the route; Knowledge is the side shelf (flag fixers, the Traveler's Manual, the Knowledge
+  quests, the spells), and the Seer box already covers flag repair. Maelin hand-ins between raid kills stay with their tier; moving one
+  is a line in `STEP_HOME`.
+- **Open:** "▶ next" from Mimic data on this layout (today only the Seer paste drives it); whether to retire `?v=b` / `?v=c`.
