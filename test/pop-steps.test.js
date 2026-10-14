@@ -90,4 +90,12 @@ describe('the cards read the catalog', () => {
     expect(src).toContain('POP_STEPS[z.key]');
     expect(src).toContain('stepsHeld(');
   });
+  it('the top explanation folds behind a one-line summary (2026-10-14)', () => {
+    // the guild lead: "collapse the top explanation of the page with a summary and then click here for more info"
+    const src = stripJs(fs.readFileSync(path.join(ROOT, 'web/app/pop/page.tsx'), 'utf8'));
+    const top = src.slice(src.indexOf('🌀 PoP Flags'), src.indexOf('👥 <b'));
+    expect(top).toMatch(/<details[^>]*>\s*<summary[^>]*>Click here for more info<\/summary>/);
+    expect(top.indexOf('<details')).toBeGreaterThan(top.indexOf('every gate and every step'));   // summary first
+    expect(top.indexOf('guided')).toBeGreaterThan(top.indexOf('<details'));                      // the long text inside
+  });
 });

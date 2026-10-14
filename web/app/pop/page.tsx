@@ -869,9 +869,16 @@ export default async function PopFlagsPage(
         <h2 className="text-2xl text-gold flex items-center gap-3 mb-1">
           <span>🌀 PoP Flags</span>
         </h2>
+        {/* The explanation folds behind a one-line summary (the guild lead, 2026-10-14: "collapse the top explanation
+            of the page with a summary and then click here for more info that expands it"). */}
         <p className="text-sm text-dim leading-6">
-          The guild&apos;s road to <b className="text-text">Quarm</b> — every gate, who&apos;s through it, and what to
-          raid next to move the most people forward. Counts update from the flags Mimic sees: each grant is named by
+          The guild&apos;s road to <b className="text-text">Quarm</b>: every gate and every step, who holds it, and what
+          to raid next. Counts come from Mimic, /who, loot, and ticks on this site.
+        </p>
+        <details className="mt-1">
+          <summary className="cursor-pointer text-xs text-blue hover:underline">Click here for more info</summary>
+        <p className="text-sm text-dim leading-6 mt-2">
+          Counts update from the flags Mimic sees: each grant is named by
           what the flag NPC said just before it, and sitting with Seer Mal Nae`Shi in Knowledge (say &quot;guided
           meditation&quot;) records everything a character holds. <b className="text-text">/who</b> fills in the rest,
           Mimic or not: anyone a raider&apos;s /who shows inside a flagged plane holds that plane&apos;s gate, and the
@@ -879,11 +886,14 @@ export default async function PopFlagsPage(
           So does <b className="text-text">loot</b>: anyone who looted inside a flagged plane was there, and gets
           the same gates (a <span className="text-purple">purple ✓</span>).
           Anyone can also tick their <b className="text-text">own</b> characters&apos; gates on the Matrix or My
-          Characters views, or on <Link href="/pop/guide" className="underline">their checklist</Link>: that is their
-          own word, a <span className="text-gold">gold ☑</span>, and Mimic or /who outranks it.
+          Characters views, or on <Link href="/pop/guide" className="underline">their checklist</Link>, and officers
+          can tick anyone&apos;s on the Matrix: that is a <span className="text-gold">gold ☑</span>, and Mimic or /who
+          outranks it. Each zone card lists every step the server keeps, in order (💬 a hail, 🔇 a step that prints
+          no chat line, ⏳ a kill waiting on the step that comes first).
           The gates are Quarm&apos;s own, read from the server&apos;s portal script; there is no level bypass. Zones
           marked <b className="text-text">*</b> are not yet confirmed that way.
         </p>
+        </details>
         <div className="flex flex-wrap gap-4 mt-3 text-xs text-dim items-center">
           <span>
             <span title={`Raiders (Pack Leader, Officer, Raid Pack, Recruit) and raid alts, active, level ${POP_MIN_LEVEL}+ on their last /who. Traders and inactive characters are left out.`}>
