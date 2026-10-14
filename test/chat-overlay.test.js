@@ -1910,6 +1910,282 @@ describe('each window\'s own text settings', () => {
   });
 });
 
+// ── 10. Round 4 (the guild lead, 2026-10-14): "this is getting crowded": the main channels up front, the rest under More ──
+// The chip row and the ⚙ drawer, run against the real overlay code. There is no DOM here, so the page's element
+// is a stub that records the HTML it was handed and the listeners it was given.
+describe('the chip row: main channels up front, the rest under More', () => {
+  const s = script_();
+  const MAIN_ORDER = ['Guild', 'Raid', 'Party', 'Say', 'Tells', 'OOC/Shout'];
+  const REST_ALL = ['Auction', 'NPC', 'Zones', 'Officer', 'Custom', 'Melee', 'Spells', 'Skills'];
+  // opts: { brk, out, store (what localStorage already holds), groups }
+  function row(prefs = {}, opts = {}) {
+    const base = { fontSize: 12, group: false, officer: false, custom: false, tells: false, melee: false, spells: false, skills: false, off: [], offChannels: [], only: '', win: {} };
+    const api = evalBlock(`
+      var _groups = ${JSON.stringify(opts.groups || agent.CHAT_GROUPS)};
+      var _channels = ${JSON.stringify(agent.CHAT_CHANNELS)};
+      var _prefs = ${JSON.stringify({ ...base, ...prefs })};
+      var _only = ${JSON.stringify(opts.brk ? [opts.brk] : [])}, _out = ${JSON.stringify(opts.out || [])}, _isBrk = ${!!opts.brk};
+      var __store = ${JSON.stringify(opts.store || {})};
+      var localStorage = { getItem: function(k){ return Object.prototype.hasOwnProperty.call(__store, k) ? __store[k] : null; }, setItem: function(k, v){ __store[k] = String(v); } };
+      var handlers = {}, calls = { saved: [], broke: [], menu: null };
+      var chipsEl = { innerHTML: '', addEventListener: function(t, f){ handlers[t] = f; } };
+      function esc(s){ return String(s == null ? '' : s); }
+      function brkGroupId(){ return _only[0] || ''; }
+      function repaint(){} function openMenu(x, y, items){ calls.menu = items; }
+      function savePrefs(p){ calls.saved.push(p); } function setBreakout(id, on){ calls.broke.push([id, on]); }
+      ${sliceBlock(s, 'function groupOf(ch){', 'return out;\n  }')}
+      ${sliceBlock(s, 'function winId(){', 'tags: w.tags !== false };\n  }')}
+      ${sliceBlock(s, 'var MAIN_CHIPS = [', 'chipsEl.__wpHtml = h; }\n  }')}
+      ${sliceBlock(s, "chipsEl.addEventListener('click', function(e){", 'paintChips(); repaint();\n  });')}
+      ${sliceBlock(s, "chipsEl.addEventListener('contextmenu', function(e){", "run: function(){ setBreakout(id, true); } }]);\n  });")}
+      paintChips();
+      function isOpen(){ return _moreOpen; }
+    `, ['paintChips', 'setMore', 'isOpen', 'shownGroupIds', 'makeFilter', 'chipsEl', 'handlers', 'calls', '__store', '_groups']);
+    // the buttons the row holds
+    api.buttons = () => [...api.chipsEl.innerHTML.matchAll(/<button type="button" class="chip([^"]*)"([^>]*)>(.*?)<\/button>/g)]
+      .map(m => ({ cls: m[1].trim().split(/\s+/), attrs: m[2], label: m[3].replace(/<[^>]*>/g, '').trim(), g: (/data-g="([^"]*)"/.exec(m[2]) || [])[1] }));
+    api.labels = () => api.buttons().map(b => b.label);
+    // a click or a right-click on the chip whose group id is `id` (or the More chip), through the page's real handler
+    api.fire = (type, id) => {
+      const b = api.buttons().find(x => (id === 'more' ? /data-more/.test(x.attrs) : x.g === id));
+      if (!b) throw new Error('no chip ' + id);
+      const el = { getAttribute: (k) => (k === 'data-g' ? b.g : null), hasAttribute: (k) => k === 'data-more' && /data-more/.test(b.attrs) };
+      api.handlers[type]({ target: { closest: () => el }, preventDefault() {}, clientX: 5, clientY: 6 });
+    };
+    return api;
+  }
+  const ALL_ON = { group: true, officer: true, custom: true, tells: true, melee: true, spells: true, skills: true };
+
+  it('the main set is a short list constant, not markup: Guild, Raid, Party, Say, Tells, OOC/Shout, in that order', () => {
+    expect(stripJs(s)).toContain("var MAIN_CHIPS = ['guild', 'raid', 'group', 'say', 'tell', 'ooc'];");
+    const r = row(ALL_ON);
+    expect(r.labels().slice(0, 6)).toEqual(MAIN_ORDER);
+  });
+  it('the main set renders in that order whatever order the agent lists the groups in', () => {
+    const shuffled = agent.CHAT_GROUPS.slice().reverse();
+    const r = row(ALL_ON, { groups: shuffled });
+    expect(r.labels().slice(0, 6)).toEqual(MAIN_ORDER);
+  });
+  it('Party is the Group chip: the label changes, the id (and so every saved choice) does not', () => {
+    const r = row(ALL_ON);
+    const party = r.buttons().find(b => b.label === 'Party');
+    expect(party.g).toBe('group');
+    expect(r.labels()).not.toContain('Group');
+  });
+  it('a main chip whose switch is off is left out, the rest of the set keeps its order', () => {
+    expect(row({}).labels().slice(0, 4)).toEqual(['Guild', 'Raid', 'Say', 'OOC/Shout']);   // no Party, no Tells until switched on
+    expect(row({ tells: true }).labels().slice(0, 5)).toEqual(['Guild', 'Raid', 'Say', 'Tells', 'OOC/Shout']);
+  });
+  it('the rest are hidden until More opens, then follow the More chip', () => {
+    const r = row(ALL_ON);
+    expect(r.labels()).toEqual([...MAIN_ORDER, 'More (8) ▾']);
+    for (const l of REST_ALL) expect(r.labels(), l).not.toContain(l);
+    r.setMore(true);
+    expect(r.labels()).toEqual([...MAIN_ORDER, 'More ▴', ...REST_ALL]);
+    r.setMore(false);
+    expect(r.labels()).toEqual([...MAIN_ORDER, 'More (8) ▾']);
+  });
+  it('More is a real button (the hover handshake), and says whether it is open', () => {
+    const r = row(ALL_ON), more = () => r.buttons().find(b => /data-more/.test(b.attrs));
+    expect(r.chipsEl.innerHTML).toMatch(/<button type="button" class="chip more[^"]*" data-more="1" aria-expanded="false"/);
+    r.setMore(true);
+    expect(more().attrs).toContain('aria-expanded="true"');
+  });
+  it('the More count is the chips inside that are ON, and shows only while it is closed', () => {
+    // Auction, NPC and Zones always exist; Officer, Custom, Melee and Spells here: 7 on
+    const r = row({ officer: true, custom: true, melee: true, spells: true });
+    expect(r.labels().pop()).toBe('More (7) ▾');
+    // three switched off with their chips: the count drops
+    const r2 = row({ officer: true, custom: true, melee: true, spells: true, off: ['npc', 'zone', 'auction'] });
+    expect(r2.labels().pop()).toBe('More (4) ▾');
+    // a chip broken out into its own window is not on in this feed
+    const r3 = row({ off: ['npc', 'zone'] }, { out: ['auction'] });
+    expect(r3.labels().pop()).toBe('More ▾');
+    // every chip inside off: no count, and the More chip is not lit
+    const m4 = row({ off: ['npc', 'zone', 'auction'] }).buttons().pop();
+    expect(m4.cls).toContain('more'); expect(m4.cls).not.toContain('on');
+    // lit when something inside is on; open, it shows no count (the chips themselves say)
+    const r5 = row({});
+    expect(r5.buttons().pop().cls).toContain('on');
+    r5.setMore(true);
+    expect(r5.labels()).toContain('More ▴');
+  });
+  it('a click on More opens and folds it; a click on a chip inside it still switches that channel', () => {
+    const r = row({});
+    r.fire('click', 'more');
+    expect(r.isOpen()).toBe(true);
+    expect(r.labels()).toContain('Auction');
+    r.fire('click', 'auction');
+    expect(r.calls.saved).toEqual([{ off: ['auction'] }]);
+    expect(r.buttons().find(b => b.g === 'auction').cls).not.toContain('on');
+    r.fire('click', 'more');
+    expect(r.isOpen()).toBe(false);
+  });
+  it('right-click on a chip inside More still offers to break it out, and the menu item does it', () => {
+    const r = row({ melee: true });
+    r.setMore(true);
+    r.fire('contextmenu', 'melee');
+    expect(r.calls.menu.map(i => i.label)).toEqual(['Break out into its own window']);
+    r.calls.menu[0].run();
+    expect(r.calls.broke).toEqual([['melee', true]]);
+    // a chip that is already out offers to put it back, and is still found inside More
+    const out = row({ melee: true }, { out: ['melee'] });
+    out.setMore(true);
+    expect(out.buttons().find(b => b.g === 'melee').cls).toContain('out');
+    out.fire('contextmenu', 'melee');
+    expect(out.calls.menu.map(i => i.label)).toEqual(['Put back in the Chat window']);
+  });
+  it('right-click on the More chip itself offers nothing (it is not a channel)', () => {
+    const r = row({});
+    r.fire('contextmenu', 'more');
+    expect(r.calls.menu).toBeNull();
+  });
+  it('"show only" does not depend on More: a line from a channel inside it shows with the row closed', () => {
+    const auc = { n: 1, t: 0, ch: 'auction', who: 'Nyssara', text: 'WTS' };
+    const ov = overlay({ only: 'auction' });
+    expect(ov.lineVisible(ov.makeFilter(ov.shownGroupIds()), auc)).toBe(true);
+    const r = row({});          // More closed: the chip is out of sight, its lines are not
+    expect(r.labels()).not.toContain('Auction');
+    expect(r.makeFilter(r.shownGroupIds())(auc)).toBe(true);
+  });
+  it('the open state is remembered per window: written under the window id, read back on the next start', () => {
+    const a = row({});
+    a.setMore(true);
+    expect(a.__store).toEqual({ 'wpChatMore:main': '1' });
+    expect(row({}, { store: a.__store }).isOpen()).toBe(true);                                // a reopened Chat window
+    expect(row({ melee: true }, { brk: 'melee', store: a.__store }).isOpen()).toBe(false);    // another window is unaffected
+    a.setMore(false);
+    expect(row({}, { store: a.__store }).isOpen()).toBe(false);
+  });
+  it('a window with blocked storage starts closed and still works', () => {
+    const r = evalBlock(`
+      var _groups = ${JSON.stringify(agent.CHAT_GROUPS)}, _channels = {}, _prefs = { off: [] }, _only = [], _out = [], _isBrk = false;
+      var localStorage = { getItem: function(){ throw new Error('blocked'); }, setItem: function(){ throw new Error('blocked'); } };
+      var chipsEl = { innerHTML: '' }; function esc(s){ return String(s); } function brkGroupId(){ return ''; }
+      ${sliceBlock(s, 'function groupOf(ch){', 'return out;\n  }')}
+      ${sliceBlock(s, 'function winId(){', 'tags: w.tags !== false };\n  }')}
+      ${sliceBlock(s, 'var MAIN_CHIPS = [', 'chipsEl.__wpHtml = h; }\n  }')}
+      function open(){ return _moreOpen; }
+    `, ['open', 'setMore']);
+    expect(r.open()).toBe(false);
+    expect(() => r.setMore(true)).not.toThrow();
+    expect(r.open()).toBe(true);
+  });
+  it('a breakout window gets no More (its chip row is hidden), and a row with nothing to fold gets none either', () => {
+    const brk = row({ melee: true }, { brk: 'melee' });
+    expect(brk.chipsEl.innerHTML).not.toContain('data-more');
+    const small = row({}, { groups: agent.CHAT_GROUPS.filter(g => ['guild', 'raid', 'say'].includes(g.id)) });
+    expect(small.labels()).toEqual(['Guild', 'Raid', 'Say']);
+  });
+  it('a group added later (not in the main set) lands under More with no change to the page', () => {
+    const groups = [...agent.CHAT_GROUPS, { id: 'bard', label: 'Songs', channels: ['song'] }];
+    const r = row({}, { groups });
+    expect(r.labels()).not.toContain('Songs');
+    r.setMore(true);
+    expect(r.labels().pop()).toBe('Songs');
+  });
+  it('the chip row stays byte-stable across repaints, so a quiet poll never rewrites it', () => {
+    expect(stripJs(s)).toContain('if (chipsEl.__wpHtml !== h) { chipsEl.innerHTML = h; chipsEl.__wpHtml = h; }');
+  });
+});
+
+describe('the ⚙ drawer: text and the three opt-in channels up front, the rest under "More settings"', () => {
+  const s = script_();
+  const html = CHAT_HTML;
+  const fold = html.slice(html.indexOf('<details id="moreset">'), html.indexOf('</details>') + '</details>'.length);
+  const drawer = html.slice(html.indexOf('<div id="spanel">'), html.indexOf('<div id="chips">'));
+  const outside = drawer.replace(fold, '');
+  it('the fold is a <details> holding the Melee/Spells/Skills switches and "shows" rows, Channels and both notes', () => {
+    expect(fold).toMatch(/^<details id="moreset"><summary[^>]*>More settings<\/summary>/);
+    for (const id of ['moreoptins', 'meleeopts', 'spellopts', 'skillopts', 'chans', 'tellhint']) expect(fold, id).toContain(`id="${id}"`);
+    expect(fold).toContain('These lines stay on this PC');
+  });
+  it('text size, spacing, timestamps, tags and Group/Officer/Custom stay outside the fold', () => {
+    for (const id of ['fsm', 'fsz', 'fsp', 'lsp', 'textopts', 'optins']) expect(outside, id).toContain(`id="${id}"`);
+    for (const id of ['moreoptins', 'meleeopts', 'spellopts', 'skillopts', 'chans', 'tellhint']) expect(outside, id).not.toContain(`id="${id}"`);
+    expect(outside).not.toContain('These lines stay on this PC');
+  });
+  it('no control was removed: every id the drawer had is still there once', () => {
+    for (const id of ['fsm', 'fsz', 'fsp', 'lsp', 'textopts', 'wintxt', 'optins', 'moreoptins', 'meleeopts', 'spellopts', 'skillopts', 'chans', 'tellhint'])
+      expect(drawer.split(`id="${id}"`).length - 1, id).toBe(1);
+  });
+  // paintSettings with a stub document: which row each switch is written into
+  function paint(prefs) {
+    return evalBlock(`
+      var _prefs = ${JSON.stringify({ group: false, officer: false, custom: false, melee: false, spells: false, skills: false, tells: false, ...prefs })};
+      var els = {};
+      var document = { getElementById: function(id){ return els[id] || (els[id] = { innerHTML: '', textContent: '' }); } };
+      function esc(x){ return String(x); }
+      function applyWin(){} function paintChans(){} function paintOnly(){} function paintMeleeOpts(){} function paintShowOpts(){} function paintMoreSet(){}
+      ${sliceBlock(s, 'var OPTINS = [', '\n  ];')}
+      ${sliceBlock(s, 'function paintSettings(){', "'Tells are off. Choose Local or Synced under Settings → Tells to show them here.';\n  }")}
+      paintSettings();
+    `, ['els']).els;
+  }
+  it('Group, Officer and Custom are written to the visible row; Melee, Spells and Skills to the fold', () => {
+    const els = paint({ melee: true });
+    const ids = (h) => [...h.matchAll(/data-optin="(\w+)"/g)].map(m => m[1]);
+    expect(ids(els.optins.innerHTML)).toEqual(['group', 'officer', 'custom']);
+    expect(ids(els.moreoptins.innerHTML)).toEqual(['melee', 'spells', 'skills']);
+    expect(els.moreoptins.innerHTML).toMatch(/data-optin="melee" checked/);
+    expect(els.moreoptins.innerHTML).not.toMatch(/data-optin="spells" checked/);
+  });
+  it('the moved switches still work: both rows share one change handler that saves the pref and repaints the chips', () => {
+    const api = evalBlock(`
+      var _prefs = { melee: false }, calls = [];
+      function savePrefs(p){ calls.push(['save', p]); } function purgeGated(){ calls.push(['purge']); }
+      function paintChips(){ calls.push(['chips']); } function repaint(){ calls.push(['repaint']); }
+      ${sliceBlock(s, 'function onOptinChange(e){', 'purgeGated(); paintChips(); repaint();\n  }')}
+    `, ['onOptinChange', '_prefs', 'calls']);
+    api.onOptinChange({ target: { getAttribute: () => 'melee', checked: true } });
+    expect(api._prefs.melee).toBe(true);
+    expect(api.calls).toEqual([['save', { melee: true }], ['purge'], ['chips'], ['repaint']]);
+    const code = stripJs(s);
+    expect(code).toContain("document.getElementById('optins').addEventListener('change', onOptinChange);");
+    expect(code).toContain("document.getElementById('moreoptins').addEventListener('change', onOptinChange);");
+  });
+  it('the Melee / Spells / Skills "shows" rows are still painted, into rows that live inside the fold', () => {
+    expect(stripJs(s)).toMatch(/paintMeleeOpts\(\); paintShowOpts\(\); paintMoreSet\(\)/);
+    for (const id of ['meleeopts', 'spellopts', 'skillopts']) expect(fold).toContain(`id="${id}"`);
+  });
+  // the fold's open state, and its hiding in a breakout that would show nothing in it
+  function foldApi(opts = {}) {
+    const rows = { meleeopts: opts.melee ? '<span>Melee shows</span>' : '', spellopts: '', skillopts: '' };
+    return evalBlock(`
+      var __store = ${JSON.stringify(opts.store || {})}, el = { open: false, style: {}, listeners: {} };
+      var rows = ${JSON.stringify(rows)};
+      var localStorage = { getItem: function(k){ return Object.prototype.hasOwnProperty.call(__store, k) ? __store[k] : null; }, setItem: function(k, v){ __store[k] = String(v); } };
+      var document = { getElementById: function(id){ return id === 'moreset' ? el : { innerHTML: rows[id] || '' }; } };
+      el.addEventListener = function(t, f){ el.listeners[t] = f; };
+      var _isBrk = ${!!opts.brk}, _only = ${JSON.stringify(opts.brk ? [opts.brk] : [])};
+      function brkGroupId(){ return _only[0] || ''; }
+      ${sliceBlock(s, 'function winId(){', 'tags: w.tags !== false };\n  }')}
+      ${sliceBlock(s, "var moreSetEl = document.getElementById('moreset');", "moreSetEl.style.display = (_isBrk && !any) ? 'none' : '';\n  }")}
+    `, ['el', '__store', 'paintMoreSet']);
+  }
+  it('the fold remembers open or shut per window, and starts shut with nothing remembered', () => {
+    expect(foldApi().el.open).toBe(false);
+    expect(foldApi({ store: { 'wpChatMoreSet:main': '1' } }).el.open).toBe(true);
+    const f = foldApi();
+    f.el.open = true; f.el.listeners.toggle();
+    expect(f.__store).toEqual({ 'wpChatMoreSet:main': '1' });
+    f.el.open = false; f.el.listeners.toggle();
+    expect(f.__store['wpChatMoreSet:main']).toBe('0');
+    expect(foldApi({ brk: 'melee', store: { 'wpChatMoreSet:main': '1' } }).el.open).toBe(false);   // another window is unaffected
+  });
+  it('a breakout\'s drawer shows the fold only when it holds something (a Melee, Spells or Skills window)', () => {
+    const guild = foldApi({ brk: 'guild' }); guild.paintMoreSet();
+    expect(guild.el.style.display).toBe('none');
+    const melee = foldApi({ brk: 'melee', melee: true }); melee.paintMoreSet();
+    expect(melee.el.style.display).toBe('');
+    const main = foldApi(); main.paintMoreSet();
+    expect(main.el.style.display).toBe('');
+  });
+  it('the summary is armed for the hover handshake, so the fold opens on a locked overlay', () => {
+    expect(fold).toMatch(/<summary data-wp-interact>/);
+  });
+});
+
 // Mutation checks run when this file was written (2026-10-14), each reverted after it went red:
 //   • moved the noteLocalChatLine call out of `if (!_sourceExcluded) {…}`     → red, but ONLY after the first draft of the nesting
 //     check was fixed: it counted the `try {` that wraps the call as an open guard and stayed green
@@ -1921,5 +2197,7 @@ describe('each window\'s own text settings', () => {
 //   • removed 'showChat' from _HIDEALL_FLAGS, 'chat' from the rescue KNOWN list, and
 //     chat: 'showChat' from the dashboard's flag map (one at a time)           → each was caught (the first by the lifecycle suite too)
 //   • class="name" on the "You" span                                          → the class="name" test went red
+//   • (round 4) counted every chip under More instead of only the ones that are on  → the More-count test went red
+//   • (round 4) dropped the localStorage write in setMore                      → the per-window open-state test went red
 // Not mutation-checked: the "call runs ahead of shouldKeep" ordering test (it asserts an index comparison that no
 // natural edit flips without also tripping the guard test).

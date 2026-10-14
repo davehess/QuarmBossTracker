@@ -47,6 +47,8 @@
   /* a group broken out into its own window: dashed, and it says so. Its lines are not in this feed. */
   .chip.out{border-style:dashed;color:#8b949e}
   .chip em{font-style:normal;font-size:9px;color:#7ee7c7;letter-spacing:0.3px}
+  /* "More": the chip that opens the rest of the row. Lit (with a count) while a chip inside it is on, so a closed More never hides a channel that is showing. */
+  .chip.more{border-style:dotted}
   /* a broken-out window (chat.html?groups=<id>) is the feed alone: the chips and settings stay in the Chat window */
   body.brk #chips,body.brk #onlypill,body.brk #spanel .nobrk{display:none}
   /* this window's own text settings (⚙, or the right-click menu): spacing, timestamps and tags */
@@ -67,6 +69,13 @@
   #spanel .hint{font-size:10px;color:#8b949e;line-height:1.35}
   #spanel label{display:flex;align-items:center;gap:5px;cursor:pointer}
   #spanel input[type=checkbox]{margin:0;cursor:pointer}
+  /* "More settings": the less-used switches fold away, so the drawer opens short */
+  #moreset summary{cursor:pointer;color:#8b949e;list-style:none;width:max-content}
+  #moreset summary::-webkit-details-marker{display:none}
+  #moreset summary::after{content:" ▸"}
+  #moreset[open] summary::after{content:" ▾"}
+  #moreset summary:hover{color:#7ee7c7}
+  #moreset .mbody{display:flex;flex-direction:column;gap:5px;margin-top:5px}
   #fsz{min-width:30px;text-align:center;color:#e6edf3}
   /* the feed */
   #feedbox{position:relative;flex:1 1 auto;min-height:0;display:flex}
@@ -166,12 +175,15 @@
       <div class="row" id="textopts"></div>
       <div class="hint" id="wintxt"></div>
       <div class="row nobrk" id="optins"></div>
-      <div class="row" id="meleeopts"></div>
-      <div class="row" id="spellopts"></div>
-      <div class="row" id="skillopts"></div>
-      <div class="row nobrk" id="chans"></div>
-      <div class="hint nobrk" id="tellhint"></div>
-      <div class="hint nobrk">These lines stay on this PC, in memory, for this window only. Nothing here is uploaded, and Mimic forgets them when it restarts. The ⏱ button can read the last few hours back from the game's own log files on this PC; that is read here and never sent.</div>
+      <details id="moreset"><summary data-wp-interact>More settings</summary><div class="mbody">
+        <div class="row nobrk" id="moreoptins"></div>
+        <div class="row" id="meleeopts"></div>
+        <div class="row" id="spellopts"></div>
+        <div class="row" id="skillopts"></div>
+        <div class="row nobrk" id="chans"></div>
+        <div class="hint nobrk" id="tellhint"></div>
+        <div class="hint nobrk">These lines stay on this PC, in memory, for this window only. Nothing here is uploaded, and Mimic forgets them when it restarts. The ⏱ button can read the last few hours back from the game's own log files on this PC; that is read here and never sent.</div>
+      </div></details>
     </div>
     <div id="chips"></div>
     <div id="onlypill"><span id="onlytxt"></span><button type="button" id="onlyx" title="Show all channels again">✕</button></div>
@@ -540,20 +552,49 @@
     _lines = _lines.filter(function(l){ if (l.sep) return true; var g = groupOf(l.ch); return !!g && gateOn(g); });
   }
 
+  // The chips that are always on the row, in this order (the guild lead, 2026-10-14: "Guild/Raid/Party/Say/Tells/ooc/shout").
+  // Every other group (and any group added later) folds under "More". An id here that the agent does not serve, or
+  // that is gated off (Party and Tells wait on their switches), is simply skipped.
+  var MAIN_CHIPS = ['guild', 'raid', 'group', 'say', 'tell', 'ooc'];
+  var CHIP_LABEL = { group: 'Party' };      // the group id stays 'group'; only the chip's wording differs
+  // Whether "More" is open is remembered per window (the Chat window and each breakout), in this page's own
+  // storage like the history pick, which can be empty or blocked: it then starts closed.
+  function moreKey(){ return 'wpChatMore:' + winId(); }
+  var _moreOpen = false;
+  try { _moreOpen = localStorage.getItem(moreKey()) === '1'; } catch (e) {}
+  function setMore(open){
+    _moreOpen = !!open;
+    try { localStorage.setItem(moreKey(), _moreOpen ? '1' : '0'); } catch (e) {}
+    paintChips();
+  }
+  function chipIsOn(g){ return _out.indexOf(g.id) === -1 && _prefs.off.indexOf(g.id) === -1; }
+  function chipHtml(g){
+    var isOut = _out.indexOf(g.id) !== -1, on = chipIsOn(g), c = (_channels[g.channels[0]] || {}).color || '#8b949e';
+    var label = CHIP_LABEL[g.id] || g.label;
+    var tip = isOut ? esc(label) + ' is in its own window: click, or right-click, to put it back' : (on ? 'Hide ' : 'Show ') + esc(label) + ' (right-click to break it out into its own window)';
+    return '<button type="button" class="chip' + (on ? ' on' : '') + (isOut ? ' out' : '') + '" data-g="' + esc(g.id) + '" aria-pressed="' + on + '" style="--c:' + esc(c) + '" title="' + tip + '"><i></i>' + esc(label) + (isOut ? ' <em>out</em>' : '') + '</button>';
+  }
+  // "More ▾" / "More (3) ▾": the count is the chips inside that are ON, shown while it is closed so nothing is on out of sight.
+  function moreHtml(nOn){
+    var cnt = !_moreOpen && nOn ? ' (' + nOn + ')' : '';
+    return '<button type="button" class="chip more' + (nOn ? ' on' : '') + '" data-more="1" aria-expanded="' + _moreOpen + '" style="--c:#8b949e" title="' + (_moreOpen ? 'Fold the other channels away' : 'Show the other channels') + (nOn ? ' (' + nOn + ' of them on)' : '') + '">More' + cnt + (_moreOpen ? ' ▴' : ' ▾') + '</button>';
+  }
   function paintChips(){
-    var h = '';
+    var h = '', main = {}, rest = [], nOn = 0, k;
     for (var i = 0; i < _groups.length; i++) {
       var g = _groups[i]; if (!gateOn(g)) continue;
-      var isOut = _out.indexOf(g.id) !== -1;
-      var on = !isOut && _prefs.off.indexOf(g.id) === -1, c = (_channels[g.channels[0]] || {}).color || '#8b949e';
-      var tip = isOut ? esc(g.label) + ' is in its own window: click, or right-click, to put it back' : (on ? 'Hide ' : 'Show ') + esc(g.label) + ' (right-click to break it out into its own window)';
-      h += '<button type="button" class="chip' + (on ? ' on' : '') + (isOut ? ' out' : '') + '" data-g="' + esc(g.id) + '" aria-pressed="' + on + '" style="--c:' + esc(c) + '" title="' + tip + '"><i></i>' + esc(g.label) + (isOut ? ' <em>out</em>' : '') + '</button>';
+      if (MAIN_CHIPS.indexOf(g.id) !== -1) main[g.id] = g; else { rest.push(g); if (chipIsOn(g)) nOn++; }
     }
+    for (k = 0; k < MAIN_CHIPS.length; k++) if (main[MAIN_CHIPS[k]]) h += chipHtml(main[MAIN_CHIPS[k]]);
+    // A breakout has no chip row to look at (it is hidden), so it never gets a More either.
+    if (rest.length && !_isBrk) h += moreHtml(nOn);
+    if (_moreOpen || _isBrk) for (k = 0; k < rest.length; k++) h += chipHtml(rest[k]);
     if (chipsEl.__wpHtml !== h) { chipsEl.innerHTML = h; chipsEl.__wpHtml = h; }
   }
   chipsEl.addEventListener('click', function(e){
     var b = e.target && e.target.closest ? e.target.closest('.chip') : null;
     if (!b) return;
+    if (b.hasAttribute('data-more')) { setMore(!_moreOpen); return; }
     var id = b.getAttribute('data-g');
     if (_out.indexOf(id) !== -1) { setBreakout(id, false); return; }   // an "out" chip has nothing to switch: it puts the group back
     var at = _prefs.off.indexOf(id);
@@ -696,6 +737,7 @@
     var b = e.target && e.target.closest ? e.target.closest('.chip') : null;
     if (!b) return;
     e.preventDefault();
+    if (b.hasAttribute('data-more')) return;   // More is not a group: it has nothing to break out
     var id = b.getAttribute('data-g'), g = null;
     for (var i = 0; i < _groups.length; i++) if (_groups[i].id === id) g = _groups[i];
     if (!g) return;
@@ -727,13 +769,14 @@
 
   // ── settings drawer ──────────────────────────────────────────────────────
   var spanelEl = document.getElementById('spanel'), gearEl = document.getElementById('gear');
+  // A fourth field of 1 puts the switch under "More settings" instead of on the drawer itself.
   var OPTINS = [
     ['group',   'Group chat',     'Your group\'s private chat'],
     ['officer', 'Officer chat',   'The officer channel'],
     ['custom',  'Custom channels','Other chat channels you have joined'],
-    ['melee',   'Melee',          'Combined melee from the log: your hits and misses, theirs, and pets\'. Off keeps chat readable; right-click the Melee chip to give it a window of its own.'],
-    ['spells',  'Spells',         'Your casts, spells landing on you and others, spell damage, resists, fizzles and fades. Right-click the Spells chip to give it a window of its own.'],
-    ['skills',  'Skills',         'Skill-ups, what your skills did (taunt, forage, mend, feign death, hide...), tradeskill combines and disciplines. Right-click the Skills chip to give it a window of its own.']
+    ['melee',   'Melee',          'Combined melee from the log: your hits and misses, theirs, and pets\'. Off keeps chat readable; right-click the Melee chip to give it a window of its own.', 1],
+    ['spells',  'Spells',         'Your casts, spells landing on you and others, spell damage, resists, fizzles and fades. Right-click the Spells chip to give it a window of its own.', 1],
+    ['skills',  'Skills',         'Skill-ups, what your skills did (taunt, forage, mend, feign death, hide...), tradeskill combines and disciplines. Right-click the Skills chip to give it a window of its own.', 1]
   ];
   // ── this window's text settings ──────────────────────────────────────────
   // Every Chat window (the main one, and each broken-out group) keeps its own: win[<id>] in the prefs, id
@@ -851,14 +894,16 @@
   document.getElementById('spellopts').addEventListener('change', onShowChange);
   document.getElementById('skillopts').addEventListener('change', onShowChange);
   function paintSettings(){
-    var h = '';
+    var h = '', hm = '';
     for (var i = 0; i < OPTINS.length; i++) {
       var o = OPTINS[i];
-      h += '<label title="' + esc(o[2]) + '"><input type="checkbox" data-optin="' + o[0] + '"' + (_prefs[o[0]] ? ' checked' : '') + '>' + esc(o[1]) + '</label>';
+      var lab = '<label title="' + esc(o[2]) + '"><input type="checkbox" data-optin="' + o[0] + '"' + (_prefs[o[0]] ? ' checked' : '') + '>' + esc(o[1]) + '</label>';
+      if (o[3]) hm += lab; else h += lab;
     }
-    var oe = document.getElementById('optins');
+    var oe = document.getElementById('optins'), me = document.getElementById('moreoptins');
     if (oe.__wpHtml !== h) { oe.innerHTML = h; oe.__wpHtml = h; }
-    applyWin(); paintChans(); paintOnly(); paintMeleeOpts(); paintShowOpts();
+    if (me.__wpHtml !== hm) { me.innerHTML = hm; me.__wpHtml = hm; }
+    applyWin(); paintChans(); paintOnly(); paintMeleeOpts(); paintShowOpts(); paintMoreSet();
     document.getElementById('tellhint').textContent = _prefs.tells
       ? 'Tells are showing: Settings has Tells on Local or Synced.'
       : 'Tells are off. Choose Local or Synced under Settings → Tells to show them here.';
@@ -867,14 +912,27 @@
     var open = !spanelEl.classList.contains('open');
     spanelEl.classList.toggle('open', open); gearEl.classList.toggle('on', open); gearEl.setAttribute('aria-pressed', String(open));
   });
-  document.getElementById('optins').addEventListener('change', function(e){
+  function onOptinChange(e){
     var k = e.target && e.target.getAttribute ? e.target.getAttribute('data-optin') : null;
     if (!k) return;
     var patch = {}; patch[k] = !!e.target.checked;
     _prefs[k] = !!e.target.checked;
     savePrefs(patch);
     purgeGated(); paintChips(); repaint();
-  });
+  }
+  document.getElementById('optins').addEventListener('change', onOptinChange);
+  document.getElementById('moreoptins').addEventListener('change', onOptinChange);
+  // "More settings" folds the less-used switches away. Open or shut is remembered per window, like More on the chip row.
+  // A breakout's drawer has nothing in it unless the window is Melee, Spells or Skills, so the fold hides itself.
+  var moreSetEl = document.getElementById('moreset');
+  function moreSetKey(){ return 'wpChatMoreSet:' + winId(); }
+  try { if (localStorage.getItem(moreSetKey()) === '1') moreSetEl.open = true; } catch (e) {}
+  moreSetEl.addEventListener('toggle', function(){ try { localStorage.setItem(moreSetKey(), moreSetEl.open ? '1' : '0'); } catch (e) {} });
+  function paintMoreSet(){
+    var any = false, ids = ['meleeopts', 'spellopts', 'skillopts'];
+    for (var i = 0; i < ids.length; i++) if (document.getElementById(ids[i]).innerHTML) any = true;
+    moreSetEl.style.display = (_isBrk && !any) ? 'none' : '';
+  }
   // One joined channel on or off. Saved by NAME (lower case); only the list of switched-off names is written.
   document.getElementById('chans').addEventListener('change', function(e){
     var k = e.target && e.target.getAttribute ? e.target.getAttribute('data-chan') : null;
