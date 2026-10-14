@@ -230,6 +230,7 @@ describe('auto-arrange keeps each overlay on the screen it is on', () => {
     const env = {
       screen: { getDisplayMatching: (r) => ((r.x + r.width / 2) >= 1920 ? SIDE : MAIN) },
       _overlayHomeDisplay: () => MAIN, _parseUiWindowRects: () => null, _overlayEntries: () => wins,
+      _coversScreen: (key) => key === 'canvas',   // main.js: the Canvas, and the Map while it is in Full mode
       appendAgentLog: () => {}, path: { basename: (p) => p },
     };
     // eslint-disable-next-line no-new-func

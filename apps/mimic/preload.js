@@ -983,6 +983,16 @@ contextBridge.exposeInMainWorld('mimic', {
   onMapTimersPopped:  (cb)         => ipcRenderer.on('map-timers-popped', (_e, on) => cb(!!on)),
   mapCentreOn:        (pointId)    => ipcRenderer.send('map-centre', pointId),
   onMapCentre:        (cb)         => ipcRenderer.on('map-centre', (_e, id) => cb(id)),
+  // Map Window / Full mode and its keep-clear areas (the guild lead, 2026-10-14). mapMode / setMapMode: 'window' | 'full' (the
+  // tray, the dashboard and the Map's own button all drive the one setter); onMapMode hears it change; onMapGeom hears the Map
+  // window's rectangle change (screen DIPs). mapClearAreas({ fresh, char }) → EverQuest's open windows from the UI ini, the
+  // client rectangle, and this character's saved boxes; mapClearBoxesSet(char, boxes) saves the boxes (fractions of the client).
+  getMapMode:         ()           => ipcRenderer.invoke('map-mode-get'),
+  setMapMode:         (mode)       => ipcRenderer.invoke('map-mode-set', mode),
+  onMapMode:          (cb)         => ipcRenderer.on('map-mode', (_e, m) => cb(m)),
+  onMapGeom:          (cb)         => ipcRenderer.on('map-geom', (_e, b) => cb(b)),
+  mapClearAreas:      (opts)       => ipcRenderer.invoke('map-clear-areas', opts || {}),
+  mapClearBoxesSet:   (char, boxes) => ipcRenderer.invoke('map-clear-boxes-set', char, boxes),
 
   // Manual overlay drag — replaces the buggy Chromium app-region drag on
   // transparent windows. Renderer mousedown on the ✥ handle calls

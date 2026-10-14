@@ -186,12 +186,12 @@ describe('Mimic wiring (the overlay checklist)', () => {
   const m = stripJs(main);
   it('stays click-through while unlocked, and back to click-through on hover-out', () => {
     const inter = sliceBlock(m, 'function applyOverlayInteractivity() {', '\n}');
-    expect(inter).toMatch(/if \(key === 'canvas'\) \{\s*win\.setIgnoreMouseEvents\(true, \{ forward: true \}\);\s*\} else if \(locked\)/);
-    expect(m).toMatch(/if \(win === canvasWindow\) \{ win\.setIgnoreMouseEvents\(true, \{ forward: true \}\); return true; \}/);
+    expect(inter).toMatch(/if \(_coversScreen\(key\)\) \{\s*win\.setIgnoreMouseEvents\(true, \{ forward: true \}\);\s*\} else if \(locked\)/);   // the Canvas, and the Map in Full mode
+    expect(m).toMatch(/if \(win === canvasWindow \|\| \(win === mapWindow && _mapFull\)\) \{ win\.setIgnoreMouseEvents\(true, \{ forward: true \}\); return true; \}/);
   });
   it('is never parked or packed as a rect', () => {
-    expect(sliceBlock(m, 'function _rescueOverlays() {', '\n}')).toMatch(/if \(key === 'canvas'\) continue;/);
-    expect(sliceBlock(m, 'function _autoArrangeOverlays(pinnedKey) {', '.sort(')).toMatch(/if \(k === 'canvas'\) return false;/);
+    expect(sliceBlock(m, 'function _rescueOverlays() {', '\n}')).toMatch(/if \(_coversScreen\(key\)\) continue;/);
+    expect(sliceBlock(m, 'function _autoArrangeOverlays(pinnedKey) {', '.sort(')).toMatch(/if \(_coversScreen\(k\)\) return false;/);   // `_coversScreen`: the Canvas, and the Map in Full mode
   });
   it('hides the trigger overlay\'s visuals while it is on (the window stays, as the voice)', () => {
     const fn = sliceBlock(m, 'function applyTriggerVisibility() {', '\n}');

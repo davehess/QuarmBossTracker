@@ -89,6 +89,7 @@ function harness({ cfg = {}, setupMode = false, hideAll = false, blind = [], sin
     function _agentOnly() { return false; }   // full Mimic: the agent-only gate (test/mimic-agent-only-mode.test.js) is off
     let setupMode = ${JSON.stringify(setupMode)};
     let _canvasArrange = false;
+    let _mapFull = false;   // the Map in Full mode (main.js): not an overlay setup / unlock conjures
     let _hideAllActive = ${JSON.stringify(hideAll)};
     const __blind = ${JSON.stringify(blind)};
     function _blindForceOpen(k) { return __blind.includes(k); }

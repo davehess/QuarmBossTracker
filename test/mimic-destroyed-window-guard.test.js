@@ -95,7 +95,7 @@ describe('every apply*Visibility refuses to drive a destroyed window', () => {
       for (const s of scenarios) {
         const run = new Function('__win', '__setup', '__cfg', `
           let ${v} = __win;
-          let setupMode = __setup, _canvasArrange = false;
+          let setupMode = __setup, _canvasArrange = false, _mapFull = false;
           function loadConfig() { return __cfg; }
           function _eqGateOk() { return true; }
           function _blindForceOpen() { return false; }
@@ -120,7 +120,7 @@ describe('every apply*Visibility refuses to drive a destroyed window', () => {
       };
       const fn = new Function('__win', '__calls', `
         let ${v} = __win;
-        let setupMode = true, _canvasArrange = false;
+        let setupMode = true, _canvasArrange = false, _mapFull = false;
         function loadConfig() { return { overlaysLocked: true }; }
         function _eqGateOk() { return true; }
         function _blindForceOpen() { return false; }

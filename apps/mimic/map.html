@@ -145,10 +145,38 @@
   body.part-timers #mapPane, body.part-timers #cfg{display:none !important}
   body.part-timers #side{display:flex !important;flex:1 1 auto}
   body.part-timers #setupbar select, body.part-timers #setupbar span[title]{display:none}
+  /* Full mode (the guild lead, 2026-10-14: "give map a toggle full vs window mode"): the window is laid over EverQuest's
+     client area by main and is click-through always, like the Timers canvas, so only the buttons take the mouse. There is
+     no ✥ (nothing to move), no timers column (the pop-out still works), and a small control pair at the top-right to go
+     back to Window and open the settings. */
+  body.full #move-btn, body.full #drag-controls, body.full #sideBtn, body.full #side{display:none !important}
+  body.full.unlocked{outline:none}
+  #fullCtl{display:none;position:fixed;top:6px;right:30px;z-index:66;gap:4px}
+  body.full #fullCtl{display:flex}
+  body.full.setup #fullCtl{top:30px}
+  /* Keep-clear areas: the canvas paints the background itself (minus the holes), so the pane's own is off while any exist. */
+  #mapPane.holes{background:none}
+  #clearEdit{position:absolute;inset:0;z-index:7;cursor:crosshair;background:rgba(88,166,255,0.05)}
+  #clearEdit[hidden]{display:none}
+  #clearBar{position:absolute;top:34px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:6px;padding:3px 8px;
+    border-radius:5px;background:rgba(14,17,22,0.96);border:1px solid rgba(88,166,255,0.7);font-size:10px;color:#c9d1d9;cursor:default;white-space:nowrap}
+  #clearBar button{background:rgba(22,27,34,.9);color:#c9d1d9;border:1px solid rgba(110,118,129,0.5);border-radius:4px;font:inherit;font-size:10px;padding:1px 6px;cursor:pointer}
+  #clearBar button:hover{border-color:#58a6ff;color:#fff}
+  .cbox{position:absolute;box-sizing:border-box;pointer-events:none}
+  .cbox.user{border:1.5px dashed #58a6ff;background:rgba(88,166,255,0.12)}
+  .cbox.ui{border:1px dotted rgba(240,180,41,0.75);background:rgba(240,180,41,0.06)}
+  .cbox.band{border:1.5px dashed #f0b429;background:rgba(240,180,41,0.1)}
+  .cbox .cx{position:absolute;top:-1px;right:-1px;width:16px;height:16px;padding:0;line-height:14px;font-size:10px;border-radius:3px;pointer-events:auto;cursor:pointer;
+    background:rgba(14,17,22,0.9);color:#f87171;border:1px solid rgba(248,113,113,0.7)}
+  #cfg .note{font-size:9.5px;line-height:1.35;color:#8b949e;padding:2px 0 0}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner - same on every overlay)">✥</button>
   <button id="hide-btn" title="Hide the Map (turn back on from the tray → Overlays)">✕</button>
+  <div id="fullCtl">
+    <button class="tb" id="fullWinBtn" type="button" title="Back to Window mode: the Map returns to the size and spot it had.">▢ Window</button>
+    <button class="tb" id="fullCfgBtn" type="button" title="Map settings">⚙</button>
+  </div>
   <div id="drag-controls">
     <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
     <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
@@ -182,11 +210,17 @@
         <button class="tb on" id="labelsBtn" type="button" title="Names on the map: boss names and room names. Switch off when it gets busy.">Labels: on</button>
         <button class="tb on" id="dotsBtn" type="button" title="Spawn points: show or hide the spawn dots (the same switch as ⚙ → Spawn points).">•</button>
         <button class="tb" id="aggroBtn" type="button" title="Aggro rings: how close you can get to each spawn before it aggros (its aggro radius). Red: KOS to you (from its faction, your race, class and deity, your con, or an illusion it does not see through). Yellow: not KOS to you, but KOS to some players. Green: KOS to nobody. Dashed: how far it comes to help a friend (social aggro). Your target carries its own rings. Points on a running respawn timer have no ring.">◯</button>
+        <button class="tb" id="modeBtn" type="button" title="Full screen: the Map covers EverQuest's window and you click straight through it to the game. Window: the Map is a window you place, as before. The same switch as ⚙ → Mode and the tray.">▣ Full</button>
         <button class="tb" id="cfgBtn" type="button" title="Map settings: what is drawn, the height ranges, the ability icons, colours and the background">⚙</button>
       </div>
       <button class="tb" id="sideBtn" type="button" title="Slide the respawn timers list in or out. Slid in, the map takes the whole width.">Timers ▸</button>
       <div id="card"></div>
       <div id="menu"></div>
+      <!-- Edit clear areas: drag a box on the map to keep it clear of drawing. Interactive only while editing (data-wp-interact). -->
+      <div id="clearEdit" hidden data-wp-interact>
+        <div id="clearBoxes"></div>
+        <div id="clearBar"><span id="clearHint">Drag to mark an area to keep clear · ✕ removes a box</span><button id="clearAll" type="button">Clear all</button><button id="clearDone" type="button">Done</button></div>
+      </div>
     </div>
       <!-- ⚙ Map settings (the guild lead, 2026-10-12: "a config section for the map that pops up similar to the hud's").
            Rows are built in JS from CFG_SHOW / CFG_GLYPHS / CFG_COLS; data-wp-interact arms the click-through window. -->
@@ -195,6 +229,7 @@
         <!-- Opacity first (the guild lead, 2026-10-13: "Own strength should say opacity in the options and should be right at the top"). -->
         <label class="row" title="How see-through the map's background is. Off: it follows Mimic's own background slider (setup bar)."><input type="checkbox" id="cfgBgOwn"><span class="bl">Opacity</span><input type="range" id="cfgBgA" min="0" max="1" step="0.05"></label>
         <label class="row" title="How bold the map's lines, rings and dots are. Normal is the thin look; Strong and Max thicken walls and routes, give them a dark edge, and make rings and dots stronger so they read over the game."><span class="bl">Line strength</span><input type="range" id="cfgInk" min="1" max="3" step="0.25"><span class="val" id="cfgInkVal"></span></label>
+        <label class="row" title="Window: the Map is a window you place, as before. Full screen: it covers EverQuest's window and you click straight through it to the game; the same switch as the toolbar's ▣ and the tray."><span class="bl">Mode</span><select id="cfgMode"><option value="window">Window</option><option value="full">Full screen</option></select></label>
         <div class="grp">Heights</div>
         <label class="row" title="Walls this far above or below you stay bright; the rest fade. Height is in game units: you are about 6 tall, one floor is roughly 30 to 60, so ±100 is about your floor and the ones next to it."><span class="bl" id="levelsVal">Levels</span><input id="levels" type="range" min="0" max="7" step="1"></label>
         <label class="row" title="Spawn points this far above or below you are shown; the rest are hidden. Same height units as Levels: ±25 is about your own floor, ±100 a floor or two either way."><span class="bl" id="spawnVal">Spawn height</span><input id="spawnLevels" type="range" min="0" max="7" step="1"></label>
@@ -210,6 +245,10 @@
         <div class="row"><span class="bl">Colour</span><input type="color" id="cfgBg"><button class="rs" type="button" id="cfgBgRs" title="Back to the scheme's colour">↺</button></div>
         <div class="grp">Text</div>
         <label class="row"><span class="bl">Label size</span><input type="range" id="cfgText" min="0.7" max="1.8" step="0.1"><span class="val" id="cfgTextVal"></span></label>
+        <div class="grp">Keep clear</div>
+        <label class="row" title="Nothing is drawn on the map inside the windows EverQuest has open (read from your character's UI file), nor inside your own clear areas, so a see-through map never sits over your UI. On by default in Full screen."><input type="checkbox" id="cfgAvoid"><span class="bl">Avoid EQ windows</span></label>
+        <div class="row"><button type="button" id="clearEditBtn" title="Drag boxes on the map for areas to keep clear. Saved for this character on this screen setup.">Edit clear areas</button><button type="button" id="clearReread" title="Read EverQuest's window again (where it is and which windows are open)">⟳</button></div>
+        <div class="note" id="clearNote">EverQuest saves its window positions when you camp or zone, so a window you moved since then needs its box adjusted here, or a camp or zone to save it.</div>
         <div class="foot"><span>Saved on this computer.</span><button id="cfgReset" type="button">Reset to default</button></div>
       </div>
     <div id="side">
@@ -273,6 +312,7 @@
     window.mimic.onBgAlpha(function(v){
       var a = (typeof v === 'number' && v >= 0.15 && v <= 1.0) ? v : 0.55;
       try { document.documentElement.style.setProperty('--bg-alpha', String(a)); } catch (e) {}
+      try { S.bgAlpha = a; } catch (e) {}
     });
   }
   var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
@@ -1082,7 +1122,7 @@
     for (k in MAP_SCHEMES.default) col[k] = MAP_SCHEMES.default[k];
     // wallMode 'layers' (Brewall's floor colours) is the default since 2026-10-13; wallV marks a save made after that,
     // so an older save's 'map' (never chosen, it was the old default) moves to 'layers' and a newer one is kept.
-    return { show: show, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1, ink: INK_DEFAULT };
+    return { show: show, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1, ink: INK_DEFAULT, avoidEq: null };
   }
   // ⚙ → Line strength (the guild lead, 2026-10-13, over the game with Opacity full and no background: "make the maps
   // and spawns more intense for how defined the lines and whatnot are ... its difficult to see"). One number, 1 to 3:
@@ -1114,6 +1154,7 @@
     if (typeof saved.bgA === 'number' && saved.bgA >= 0 && saved.bgA <= 1) c.bgA = saved.bgA;
     if (typeof saved.text === 'number' && saved.text >= 0.7 && saved.text <= 1.8) c.text = Math.round(saved.text * 10) / 10;
     if (typeof saved.ink === 'number' && saved.ink >= INK_MIN && saved.ink <= INK_MAX) c.ink = Math.round(saved.ink * 4) / 4;
+    if (typeof saved.avoidEq === 'boolean') c.avoidEq = saved.avoidEq;   // null (unset) follows the mode
     return c;
   }
   // Picking a scheme replaces every colour; editing one colour afterwards makes the scheme "custom".
@@ -1143,6 +1184,63 @@
     }
     return null;
   }
+  // ── Full mode and keep-clear areas (the guild lead, 2026-10-14: "give map a toggle full vs window mode, and have it avoid
+  // drawing over UI elements when see through maps are in position") ──────────────────────────────────────────────────
+  // Rectangles are { x, y, w, h }. uiRectsToMap takes EverQuest's windows as the UI ini states them (EverQuest client pixels,
+  // laid out for res = { w, h }) to this window's own coordinates, using EverQuest's client area and this window's rectangle
+  // on screen ({ x, y, width, height }, both in the same screen units). What lies wholly outside the window is dropped, the
+  // rest is clipped to it; `i` is the rectangle's place in the list it came from, so a caller can tell which one it was.
+  function uiRectsToMap(rects, eqClient, mapWin, res) {
+    var out = [];
+    if (!rects || !eqClient || !mapWin) return out;
+    var sx = res && res.w > 0 ? eqClient.width / res.w : 1, sy = res && res.h > 0 ? eqClient.height / res.h : 1;
+    for (var i = 0; i < rects.length; i++) {
+      var r = rects[i];
+      if (!r) continue;
+      var x0 = eqClient.x + r.x * sx - mapWin.x, y0 = eqClient.y + r.y * sy - mapWin.y;
+      var x1 = x0 + r.w * sx, y1 = y0 + r.h * sy;
+      var cx0 = Math.max(0, x0), cy0 = Math.max(0, y0), cx1 = Math.min(mapWin.width, x1), cy1 = Math.min(mapWin.height, y1);
+      if (cx1 - cx0 < 1 || cy1 - cy0 < 1) continue;
+      out.push({ x: cx0, y: cy0, w: cx1 - cx0, h: cy1 - cy0, name: r.name, guess: !!r.guess, i: i });
+    }
+    return out;
+  }
+  // Is the point inside any area? (left and top edges in, right and bottom edges out)
+  function inClearArea(x, y, areas) {
+    if (!areas) return false;
+    for (var i = 0; i < areas.length; i++) {
+      var a = areas[i];
+      if (x >= a.x && x < a.x + a.w && y >= a.y && y < a.y + a.h) return true;
+    }
+    return false;
+  }
+  // The raider's own boxes are kept as fractions of EverQuest's client area (so a box means the same place at any window size
+  // or screen). fracRectsToMap puts them in this window; winRectToFrac is the way back, from a box dragged here.
+  function fracRectsToMap(fracs, ref, mapWin) {
+    var scaled = (fracs || []).map(function (f) { return { x: f.x * 1000, y: f.y * 1000, w: f.w * 1000, h: f.h * 1000 }; });
+    return uiRectsToMap(scaled, ref, mapWin, { w: 1000, h: 1000 });
+  }
+  function winRectToFrac(r, ref, mapWin) {
+    return { x: (mapWin.x + r.x - ref.x) / ref.width, y: (mapWin.y + r.y - ref.y) / ref.height, w: r.w / ref.width, h: r.h / ref.height };
+  }
+  // Two corners (any order) -> a rectangle.
+  function normRect(ax, ay, bx, by) { return { x: Math.min(ax, bx), y: Math.min(ay, by), w: Math.abs(bx - ax), h: Math.abs(by - ay) }; }
+  // Avoid EQ windows: unset follows the mode (on in Full, off in Window); ticked or unticked is the raider's own choice.
+  function avoidEqOn(cfg, mode) { return cfg && typeof cfg.avoidEq === 'boolean' ? cfg.avoidEq : mode === 'full'; }
+  // Everything to keep clear, in this window's coordinates: { ui, user }. `clear` = { ui: { rects, res }, ref, boxes }.
+  function buildClearAreas(clear, avoid, mapWin) {
+    var out = { ui: [], user: [] };
+    if (!clear || !mapWin || !clear.ref) return out;
+    if (avoid && clear.ui && clear.ui.rects) out.ui = uiRectsToMap(clear.ui.rects, clear.ref, mapWin, clear.ui.res);
+    out.user = fracRectsToMap(clear.boxes, clear.ref, mapWin);
+    return out;
+  }
+  // The window's screen units (DIPs) <-> the page's CSS px (they differ under an overlay zoom: k = innerWidth / window width),
+  // and the stage's own corner inside the page.
+  function clearToStage(areas, k, left, top) {
+    return areas.map(function (a) { return { x: a.x * k - left, y: a.y * k - top, w: a.w * k, h: a.h * k }; });
+  }
+  function stageToWin(r, k, left, top) { return { x: (r.x + left) / k, y: (r.y + top) / k, w: r.w / k, h: r.h / k }; }
   // ── end pure helpers ──
 
   // ── state ──
@@ -1176,6 +1274,11 @@
   })();
   S.cfg = (function () { try { return mergeMapCfg(JSON.parse(lsGet('wp-map-cfg') || 'null')); } catch (e) { return mapCfgDefaults(); } })();
   function saveCfg() { lsSet('wp-map-cfg', JSON.stringify(S.cfg)); }
+  // Window / Full mode (main owns it: cfg.mapMode), and the keep-clear areas: what main last reported, the same in page px.
+  S.mode = 'window';
+  S.clear = { ui: null, ref: null, win: null, boxes: [], char: '', asked: '', eq: false, edit: false };
+  S.clearPx = []; S.clearWin = { ui: [], user: [] }; S.clearK = 1;
+  S.bgAlpha = 0.55;   // Mimic's own background strength (the setup slider), for the canvas-painted background
   // The background: its colour always from the settings; its strength from them only when the Opacity box is ticked.
   function applyCfgCss() {
     var root = document.documentElement.style;
@@ -1208,7 +1311,7 @@
   // map you cannot click through to EverQuest would eat every click under it. The dots, buttons and rows are
   // real buttons / data-wp-interact elements, so they arm the window by themselves.
   function syncInteract() {
-    var on = S.panMode || _unlocked;
+    var on = S.panMode || (_unlocked && S.mode !== 'full');   // Full is click-through always: unlocking does not wall off the game
     if (on) stage.setAttribute('data-wp-interact', ''); else stage.removeAttribute('data-wp-interact');
     document.getElementById('panBtn').classList.toggle('on', S.panMode);
   }
@@ -1273,6 +1376,7 @@
     S.skew = (p.now || Date.now()) - Date.now();
     S.p = p;
     syncWallNote();
+    noteClearKey();   // a new zone or character: read the keep-clear areas again
     S.timerBy = {}; S.candBy = {}; S.seenBy = {};
     (p.timers || []).forEach(function (t) { S.timerBy[String(t.point_id)] = t; });
     noteKills(p, S.trails, S);
@@ -1399,6 +1503,7 @@
     cv.width = Math.floor(S.w * dpr); cv.height = Math.floor(S.h * dpr);
     if (!S.fitted && S.points.length && !S.follow) fitNow();
     placeTools();
+    rebuildClear(true);   // the stage moved or changed size: the keep-clear areas are re-placed on it
     renderMap();
   }
   // Fit the view to the whole zone (default) or to you + your group / raid. Returns the plan ({use, note}) so the
@@ -1679,6 +1784,27 @@
   }
   // animating = called from the frame loop mid-glide (the spawn-dot buttons are then laid out at most every HITS_MS).
   function renderMap(animating) {
+    renderMapInner(animating);
+    paintHoles();
+  }
+  // Keep-clear areas: the pane's own background steps aside while any exist and the canvas paints it instead (behind
+  // everything, at the strength the pane would have had), then the areas are cut out of the whole picture - background,
+  // walls, dots, labels, arrows - so a see-through map never sits over the UI. With none it draws nothing extra, and the
+  // pane's CSS background is back: Window mode with no areas is exactly the map it always was.
+  function paintHoles() {
+    if (PART_TIMERS) return;
+    var areas = S.clearPx;
+    if (paneEl) paneEl.classList.toggle('holes', areas.length > 0);
+    if (!areas.length) return;
+    var a = S.cfg.bgA != null ? S.cfg.bgA : S.bgAlpha;
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-over';
+    ctx.fillStyle = hexA(S.cfg.col.bg, a);
+    ctx.fillRect(0, 0, S.w, S.h);
+    ctx.restore();
+    for (var i = 0; i < areas.length; i++) ctx.clearRect(areas[i].x, areas[i].y, areas[i].w, areas[i].h);
+  }
+  function renderMapInner(animating) {
     if (PART_TIMERS) return;   // the pop-out has no map pane to draw
     var dpr = window.devicePixelRatio || 1;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1949,6 +2075,8 @@
 
   // One transparent button per visible spawn dot (capped): the click and hover target.
   function layoutHits(vis) {
+    // Nothing draws inside a keep-clear area, so nothing there takes a click or a hover either.
+    if (S.clearPx.length) vis = vis.filter(function (v) { return !inClearArea(v.x, v.y, S.clearPx); });
     var used = {}, n = 0;
     for (var i = 0; i < vis.length && n < 600; i++, n++) {
       var pid = String(vis[i].p.id);
@@ -2241,7 +2369,7 @@
   syncWallNote();
   // ⚙ Map settings: built from CFG_SHOW / CFG_GLYPHS / CFG_COLS on first open, saved on every change.
   var cfgEl = document.getElementById('cfg'), cfgBtn = document.getElementById('cfgBtn');
-  function cfgCommit() { saveCfg(); applyCfgCss(); syncAggroBtn(); syncDotsBtn(); renderMap(); }
+  function cfgCommit() { saveCfg(); applyCfgCss(); syncAggroBtn(); syncDotsBtn(); syncClearCtl(); rebuildClear(); }
   // ◯ on the toolbar (the guild lead, 2026-10-13: "add aggro rings onto the map, make a circle icon on the main
   // screen"): the same switch as ⚙ → Show → Aggro rings.
   var aggroBtn = document.getElementById('aggroBtn');
@@ -2372,7 +2500,7 @@
   function slotChanged(before) {
     var after = slotOpen();
     var w0 = window.outerWidth || window.innerWidth || 0, h0 = window.outerHeight || window.innerHeight || 0;
-    if (before !== after && S.sideMode === 'grow' && w0 && h0 && window.mimic && typeof window.mimic.overlaySetBounds === 'function') {
+    if (before !== after && S.sideMode === 'grow' && S.mode !== 'full' && w0 && h0 && window.mimic && typeof window.mimic.overlaySetBounds === 'function') {
       window.mimic.overlaySetBounds({ width: w0 + (after ? SIDE_W : -SIDE_W), height: h0 });   // resize follows via the observer
     } else resize();
   }
@@ -2473,6 +2601,162 @@
     e.preventDefault();
     if (S.p && S.p.self) { var s = toScreen(S.p.self.x, S.p.self.y); S.view.cx = s.sx; S.view.cy = s.sy; renderMap(); }
   });
+
+  // ── Window / Full mode, and the keep-clear areas ─────────────────────────────────────────────────────────────────
+  // Main owns the mode (cfg.mapMode) because the tray and the dashboard flip it too: this page asks main to change it,
+  // and follows what main says. Full lays the window over EverQuest and makes it click-through (main.js _setMapMode);
+  // here that only changes the chrome (no ✥, no timers column, the ▢ Window / ⚙ pair at the top-right).
+  var modeBtn = document.getElementById('modeBtn'), cfgModeSel = document.getElementById('cfgMode');
+  var cfgAvoid = document.getElementById('cfgAvoid'), clearEditBtn = document.getElementById('clearEditBtn');
+  var clearEditEl = document.getElementById('clearEdit'), clearBoxesEl = document.getElementById('clearBoxes');
+  function syncMode() {
+    var full = S.mode === 'full';
+    document.body.classList.toggle('full', full);
+    modeBtn.textContent = full ? '▢ Window' : '▣ Full';
+    modeBtn.classList.toggle('on', full);
+    cfgModeSel.value = S.mode;
+    syncInteract(); syncClearCtl();
+    resize();
+  }
+  function applyMode(m) {
+    m = m === 'full' ? 'full' : 'window';
+    if (m === S.mode) return;
+    S.mode = m; syncMode();
+    if (m !== 'full' && S.clear.edit) setClearEdit(false);
+    refreshClear(false);   // the window moved: main has just read EverQuest's rectangle afresh, so this is the cheap read
+  }
+  function setMode(m) {
+    m = m === 'full' ? 'full' : 'window';
+    if (window.mimic && window.mimic.setMapMode) { try { window.mimic.setMapMode(m).then(applyMode).catch(function () {}); } catch (e) {} }
+    else applyMode(m);
+  }
+  modeBtn.addEventListener('click', function () { setMode(S.mode === 'full' ? 'window' : 'full'); });
+  cfgModeSel.addEventListener('change', function () { setMode(cfgModeSel.value); });
+  document.getElementById('fullWinBtn').addEventListener('click', function () { setMode('window'); });
+  document.getElementById('fullCfgBtn').addEventListener('click', function () { setCfgOpen(!cfgOpen()); });
+  if (!PART_TIMERS) {
+    window.mimic && window.mimic.onMapMode && window.mimic.onMapMode(applyMode);
+    window.mimic && window.mimic.getMapMode && window.mimic.getMapMode().then(applyMode).catch(function () {});
+    window.mimic && window.mimic.onMapGeom && window.mimic.onMapGeom(function (b) {
+      if (b && isFinite(b.width) && b.width > 0) { S.clear.win = b; rebuildClear(); }   // the window moved or was resized
+    });
+  }
+  // The keep-clear areas as main last reported them, converted to this window (uiRectsToMap) and then to stage px.
+  function stageBox() { try { return stage.getBoundingClientRect(); } catch (e) { return { left: 0, top: 0 }; } }
+  function clearK() {
+    var w = S.clear.win;
+    return w && w.width > 0 && window.innerWidth > 0 ? window.innerWidth / w.width : 1;
+  }
+  function rebuildClear(noRender) {
+    if (PART_TIMERS) return;
+    var r = stageBox(), k = clearK();
+    S.clearK = k;
+    S.clearWin = buildClearAreas(S.clear, avoidEqOn(S.cfg, S.mode), S.clear.win);
+    S.clearPx = clearToStage(S.clearWin.ui.concat(S.clearWin.user), k, r.left || 0, r.top || 0);
+    if (S.clear.edit) renderClearEdit();
+    if (!noRender) renderMap();
+  }
+  function syncClearCtl() {
+    cfgAvoid.checked = avoidEqOn(S.cfg, S.mode);
+    clearEditBtn.textContent = S.clear.edit ? 'Done editing' : 'Edit clear areas';
+    clearEditBtn.classList.toggle('on', !!S.clear.edit);
+  }
+  // Read main again on a new zone or character, when the mode changes, and every minute: the ini only changes when EverQuest
+  // saves it, and EverQuest's rectangle is cached over there (fresh = ask Windows again, only from ⟳ or a mode change).
+  function charName() { return S.p && S.p.self && S.p.self.name ? String(S.p.self.name) : ''; }
+  function refreshClear(fresh) {
+    if (PART_TIMERS || !(window.mimic && window.mimic.mapClearAreas)) return;
+    var ch = charName();
+    S.clear.asked = ch;
+    try {
+      window.mimic.mapClearAreas({ fresh: !!fresh, char: ch }).then(function (r) {
+        if (!r) return;
+        S.clear.ui = r.ui || null; S.clear.ref = r.ref || null; S.clear.win = r.win || S.clear.win; S.clear.eq = !!r.eq;
+        if (!S.clear.edit) S.clear.boxes = r.boxes || [];   // never replace boxes under the raider's hand
+        S.clear.char = r.char || '';
+        rebuildClear();
+      }).catch(function () {});
+    } catch (e) {}
+  }
+  var clearKey = null;
+  function noteClearKey() {
+    var key = (S.p && S.p.zone ? S.p.zone : '') + '|' + charName();
+    if (key === clearKey) return;
+    clearKey = key; refreshClear(false);
+  }
+  document.getElementById('clearReread').addEventListener('click', function () { refreshClear(true); });
+  cfgAvoid.addEventListener('change', function () { S.cfg.avoidEq = !!cfgAvoid.checked; cfgCommit(); });
+  if (!PART_TIMERS) setInterval(function () { if (!document.hidden) refreshClear(false); }, 60000);
+
+  // Edit clear areas: drag a box anywhere on the map; the ✕ on a box removes it. Boxes are saved at once, for this
+  // character on this screen setup (main keeps them), as fractions of EverQuest's client area.
+  function saveBoxes() {
+    try { window.mimic && window.mimic.mapClearBoxesSet && window.mimic.mapClearBoxesSet(S.clear.char || charName(), S.clear.boxes); } catch (e) {}
+    rebuildClear();
+  }
+  function setClearEdit(on) {
+    S.clear.edit = !!on;
+    clearEditEl.hidden = !on;
+    document.getElementById('clearHint').textContent = S.clear.ref && S.clear.win
+      ? 'Drag to mark an area to keep clear · ✕ removes a box'
+      : 'EverQuest’s window is not known yet: try ⟳ in the settings';
+    if (on) renderClearEdit();
+    syncClearCtl();
+  }
+  function renderClearEdit() {
+    clearBoxesEl.innerHTML = '';
+    var k = S.clearK, r = stageBox(), i, a, d;
+    var shown = function (list, cls, onDel) {
+      for (i = 0; i < list.length; i++) {
+        a = clearToStage([list[i]], k, r.left || 0, r.top || 0)[0];
+        d = el('div', 'cbox ' + cls);
+        d.style.left = a.x + 'px'; d.style.top = a.y + 'px'; d.style.width = a.w + 'px'; d.style.height = a.h + 'px';
+        if (onDel) {
+          (function (src) {
+            var x = el('button', 'cx', '✕'); x.type = 'button'; x.title = 'Remove this clear area';
+            x.addEventListener('click', function (ev) { ev.stopPropagation(); S.clear.boxes.splice(src, 1); saveBoxes(); });
+            d.appendChild(x);
+          })(list[i].i);
+        }
+        clearBoxesEl.appendChild(d);
+      }
+    };
+    shown(S.clearWin.ui, 'ui', null);
+    shown(S.clearWin.user, 'user', true);
+  }
+  var rubber = null;
+  clearEditEl.addEventListener('mousedown', function (e) {
+    if (e.button !== 0 || (e.target.closest && e.target.closest('#clearBar, .cx'))) return;
+    if (!S.clear.ref || !S.clear.win) return;
+    var r = stageBox();
+    rubber = { x: e.clientX - (r.left || 0), y: e.clientY - (r.top || 0), el: el('div', 'cbox band') };
+    rubber.el.style.display = 'none';
+    clearBoxesEl.appendChild(rubber.el);
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', function (e) {
+    if (!rubber) return;
+    if (!(e.buttons & 1)) { rubber.el.remove && rubber.el.remove(); rubber = null; return; }   // the mouseup went to EverQuest
+    var r = stageBox(), b = normRect(rubber.x, rubber.y, e.clientX - (r.left || 0), e.clientY - (r.top || 0));
+    rubber.box = b;
+    rubber.el.style.display = 'block';
+    rubber.el.style.left = b.x + 'px'; rubber.el.style.top = b.y + 'px'; rubber.el.style.width = b.w + 'px'; rubber.el.style.height = b.h + 'px';
+  });
+  document.addEventListener('mouseup', function () {
+    if (!rubber) return;
+    var rb = rubber; rubber = null;
+    if (rb.el.remove) rb.el.remove();
+    var b = rb.box;
+    if (!b || b.w < 8 || b.h < 8 || !S.clear.ref || !S.clear.win) return;   // a click, not a box
+    var r = stageBox(), win = stageToWin(b, S.clearK, r.left || 0, r.top || 0);
+    S.clear.boxes.push(winRectToFrac(win, S.clear.ref, S.clear.win));
+    if (S.clear.boxes.length > 40) S.clear.boxes.shift();
+    saveBoxes();
+  });
+  clearEditBtn.addEventListener('click', function () { setClearEdit(!S.clear.edit); });
+  document.getElementById('clearDone').addEventListener('click', function () { setClearEdit(false); });
+  document.getElementById('clearAll').addEventListener('click', function () { S.clear.boxes = []; saveBoxes(); });
+  syncMode();
 
   window.addEventListener('resize', resize);
   try { new ResizeObserver(resize).observe(stage); } catch (e) {}

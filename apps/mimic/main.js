@@ -31,6 +31,7 @@ const { startZealWatch } = require('./zealPipe');
 const zealUpdater = require('./zealUpdater');
 const uiPacks = require('./uiPacks');
 const { applyIniKeyEdits } = require('./iniKeyEdits');
+const { visibleUiRects } = require('./uiClearRects');
 
 // Hide the default File/Edit/View/Window/Help menubar — this is a focused
 // tray app, those entries just look unfinished. Must run before window
@@ -163,6 +164,7 @@ let commandWindow = null;
 let popRaidWindow = null;
 let meWindow = null;
 let mapWindow = null;       // the spawn map (Mimic 2.9, beta) - map.html, key 'map', cfg.showMap
+let _mapFull = false;       // the Map in Full mode (cfg.mapMode === 'full'): screen-sized and click-through like the canvas
 let mapTimersWindow = null; // the Map's respawn-timers list popped out - map.html?part=timers, key 'maptimers', cfg.showMapTimers
 let canvasWindow = null;    // the Timers canvas — one screen-sized window of placed panels
 let _canvasArrange = false; // arranging it from the tray / dashboard (not persisted)
@@ -3589,8 +3591,11 @@ function _displayPlanText(plan, eqKnown) {
     + ', each at the same spot it had? They sat on a screen that went away or changed shape.';
   return { message: 'Your screen setup changed.', detail, buttons: ['Move them', 'Leave them'] };
 }
+// An overlay that covers its whole screen and is click-through always: the Timers canvas, and the Map while it is in Full
+// mode. Rescue, auto-arrange, the screen-change question, the move-to-screen menu and the hover brighten all pass it by.
+function _coversScreen(key) { return key === 'canvas' || (key === 'map' && _mapFull); }
 function _boundsKeyForEntry(key, win) {
-  if (key === 'canvas') return null;                 // it re-covers its own screen
+  if (_coversScreen(key)) return null;               // it re-covers its own screen (the Canvas, and the Map in Full mode)
   return _boundsKeyForWindow(win) || (key === 'dock' ? 'dockBounds' : null);
 }
 function _overlayRectsNow() {
@@ -3628,7 +3633,7 @@ function _snapshotLayout() {
 // display-change behaviour, now the fallback when the answer is "leave them").
 function _rescueOffscreenOverlays() {
   for (const [key, win] of _overlayEntries()) {
-    if (key === 'canvas' || !win || win.isDestroyed()) continue;
+    if (_coversScreen(key) || !win || win.isDestroyed()) continue;
     try {
       const b = win.getBounds();
       if (!_boundsOnScreen(b)) {
@@ -3651,6 +3656,9 @@ async function _askAboutDisplays() {
   _displayLastSig = curSig;
   if (!curSig || curSig === prevSig) { _displaySettleUntil = 0; return; }
   try { await _eqWindowGeometry(0); } catch { /* no answer → main screen */ }
+  // The Map in Full mode re-covers EverQuest's client area straight away, as the Canvas does: it is a cover, not a
+  // window that was placed, so it is not part of the plan below and there is nothing to ask about.
+  await _fitMapFull(false);
   const eqWin = _eqMainWindow();
   let target;
   try { target = eqWin ? screen.getDisplayMatching(eqWin.client) : screen.getPrimaryDisplay(); }
@@ -3764,7 +3772,7 @@ async function _rescueOverlays() {
   for (const [key, win] of _overlayEntries()) {
     // The Timers canvas covers its whole screen and places its own panels —
     // parking it as a small rect would shrink it to a corner.
-    if (key === 'canvas') continue;
+    if (_coversScreen(key)) continue;
     try {
       present.add(key);
       entries.push({ key, win, bk: _boundsKeyForEntry(key, win), b: win.getBounds() });
@@ -4167,7 +4175,7 @@ function _hoverFade(win) {
   step();
 }
 function _hoverEnter(win, key) {
-  if (!win || win.isDestroyed() || key === 'canvas') return;
+  if (!win || win.isDestroyed() || _coversScreen(key)) return;
   const st0 = _wpHover.get(win);
   if (st0 && st0.phase === 'inside') return;   // a ping from a cursor that never left
   const cfg = loadConfig();
@@ -4389,7 +4397,9 @@ function toggleAllBackdrops() {
 // as occupied (a placed-but-closed EQ window just costs free space), and the
 // dominant XPos<W>x<H> resolution block is assumed to be the live layout.
 const _UI_PHANTOM_RX = /^(zoneselect|characterlist|charselect|charactercreate|serverselect|login|connection|cursorattachment|confirmationdialog|mailwnd|barter|tribute|guildbank|expedition|mercenary|overseer|voicemacro|raidoptions|dragitem|itemdisplay|spelldisplay|bookwindow|givewnd|tradewnd|lootwnd|colorpicker|fileselection|helpwnd|storewnd|bazaarwnd|bazaarsearchwnd|alarmwnd|musicplayer|videomodes|textentrywnd)/i;
-function _newestUiIniFile() {
+// `char` (optional): only that character's UI_<char>_*.ini, for the Map's keep-clear areas.
+function _newestUiIniFile(char) {
+  const only = char && /^[A-Za-z]+$/.test(String(char)) ? new RegExp('^UI_' + char + '[_.]', 'i') : null;
   const cfg = loadConfig();
   const hints = Array.isArray(cfg.eqPaths) ? cfg.eqPaths : (cfg.eqPath ? [cfg.eqPath] : []);
   const dirs = new Set();
@@ -4405,6 +4415,7 @@ function _newestUiIniFile() {
     try { entries = fs.readdirSync(dir); } catch { continue; }
     for (const f of entries) {
       if (!/^UI_[A-Za-z]+.*\.ini$/i.test(f)) continue;
+      if (only && !only.test(f)) continue;
       try {
         const full = path.join(dir, f);
         const mt = fs.statSync(full).mtimeMs || 0;
@@ -4542,7 +4553,7 @@ function _autoArrangeOverlays(pinnedKey) {
   // grouped by the screen each one sits on.
   const wins = _overlayEntries()
     // Not the Timers canvas: it is screen-sized, fits nowhere, and would block every spot.
-    .filter(([k, w]) => { if (k === 'canvas') return false; try { return w.isVisible(); } catch { return false; } })
+    .filter(([k, w]) => { if (_coversScreen(k)) return false; try { return w.isVisible(); } catch { return false; } })
     .map(([key, win]) => ({ key, win, b: win.getBounds() }))
     .sort((a, b) => (b.b.width * b.b.height) - (a.b.width * a.b.height));
   const byScreen = new Map();
@@ -4664,8 +4675,8 @@ function applyOverlayInteractivity() {
     // interactivity sweep (tray toggle, status push) must not re-lock it
     // out from under the user while its setup strip is open.
     if (_inSingleSetup(win)) continue;
-    if (key === 'canvas') {
-      // Screen-sized: click-through even while unlocked, or it would wall off
+    if (_coversScreen(key)) {
+      // Screen-sized (the Canvas; the Map in Full mode): click-through even while unlocked, or it would wall off
       // EQ and every overlay beneath it. Its panels take the mouse through the
       // hover handshake; its visibility is applyCanvasVisibility's alone.
       win.setIgnoreMouseEvents(true, { forward: true });
@@ -6408,34 +6419,167 @@ function applyMeVisibility() {
 // pane cannot hold a pannable map), and click-through when locked except its buttons, dots and rows.
 function createMapOverlay() {
   if (_agentOnly()) return;
-  const b = _resolveBounds('mapBounds', 'mapBoundsSig', { x: 60, y: 120, width: 760, height: 480 });
+  try { _mapFull = loadConfig().mapMode === 'full'; } catch { _mapFull = false; }
+  const wb = _resolveBounds('mapBounds', 'mapBoundsSig', { x: 60, y: 120, width: 760, height: 480 });
+  const b = _mapFull ? _mapFullRect(wb) : wb;   // Full: EverQuest's client area (refined by a fresh read once the page is up)
   mapWindow = new BrowserWindow({
     title: 'Wolf Pack miMIC — Map overlay',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 140,   // narrow: map.html drops its timer list below ~420px
-    frame: false, transparent: true, resizable: true,
+    frame: false, transparent: true, resizable: !_mapFull,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
     webPreferences: _wpPrefs('Map'),
   });
   mapWindow.setAlwaysOnTop(true, 'screen-saver');
   mapWindow.setVisibleOnAllWorkspaces(true);
   mapWindow.loadFile('map.html');
-  mapWindow.on('moved',  () => _persistBounds('mapBounds', mapWindow));
-  mapWindow.on('resize', () => _persistBounds('mapBounds', mapWindow));
+  // In Full mode the window is the screen-sized cover, not the user's window: only Window mode saves its bounds.
+  mapWindow.on('moved',  () => { if (!_mapFull) _persistBounds('mapBounds', mapWindow); _mapGeomPush(); });
+  mapWindow.on('resize', () => { if (!_mapFull) _persistBounds('mapBounds', mapWindow); _mapGeomPush(); });
   mapWindow.once('ready-to-show', () => {
     mapWindow.webContents.send('agent-port', agentPort);
     applyMapVisibility();
     applyOverlayInteractivity();
     applyOverlayOpacity(mapWindow, 'map');
+    if (_mapFull) _fitMapFull(true);
   });
 }
 function applyMapVisibility() {
   if (!_live(mapWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
-  const shouldShow = unlocked || (cfg.showMap && !cfg.hideOverlays && _eqGateOk(cfg));
+  // Full mode covers the screen, so unlocking does not conjure it (see _overlayWanted): its own switch decides.
+  const shouldShow = _mapFull
+    ? !!cfg.showMap && (unlocked || (!cfg.hideOverlays && _eqGateOk(cfg)))
+    : unlocked || (cfg.showMap && !cfg.hideOverlays && _eqGateOk(cfg));
   if (shouldShow) mapWindow.showInactive(); else mapWindow.hide();
 }
+
+// ── The Map: Window or Full (the guild lead, 2026-10-14: "give map a toggle full vs window mode, and have it avoid
+// drawing over UI elements when see through maps are in position") ──────────────────────────────────────────────
+// Window (cfg.mapMode unset or 'window') is the Map as it always was. Full lays the window over EverQuest's client area
+// and makes it click-through ALWAYS, the way the Timers canvas is (_coversScreen): rescue, auto-arrange and the
+// screen-change question pass it by, and only its buttons take the mouse, through the hover handshake. The window-mode
+// bounds stay in cfg.mapBounds untouched while Full lasts (nothing persists them then) and come back on the way out.
+// Where EverQuest is comes from _eqWindowGeometry (cached; read fresh only when the mode changes, the screens change, or
+// the raider presses ⟳ on the Map); with no answer the window covers the screen it was on.
+function _mapFullRect(base) {
+  const eq = _eqMainWindow(10 * 60 * 1000);
+  const r = eq ? eq.client : (() => {
+    let d;
+    try { d = screen.getDisplayMatching(base || (_live(mapWindow) ? mapWindow.getBounds() : { x: 0, y: 0, width: 1, height: 1 })); }
+    catch { d = screen.getPrimaryDisplay(); }
+    return d.bounds;
+  })();
+  return { x: Math.round(r.x), y: Math.round(r.y), width: Math.max(_OVERLAY_MIN_W, Math.round(r.width)), height: Math.max(140, Math.round(r.height)) };
+}
+async function _fitMapFull(fresh) {
+  if (!_mapFull || !_live(mapWindow)) return;
+  if (fresh) { try { await _eqWindowGeometry(0); } catch { /* no answer → the screen it is on */ } }
+  if (!_mapFull || !_live(mapWindow)) return;
+  try { mapWindow.setResizable(false); mapWindow.setBounds(_mapFullRect()); } catch { /* mid-close */ }
+  _mapGeomPush(true);
+}
+let _mapGeomTimer = null;
+// The page converts EverQuest's rectangles to its own window with the window's rect, so it hears when that changes.
+function _mapGeomPush(now) {
+  clearTimeout(_mapGeomTimer);
+  const go = () => { if (_live(mapWindow)) { try { mapWindow.webContents.send('map-geom', mapWindow.getBounds()); } catch { /* loading */ } } };
+  if (now) go(); else _mapGeomTimer = setTimeout(go, 120);
+}
+async function _setMapMode(mode) {
+  const next = mode === 'full';
+  if (next === _mapFull) return _mapFull ? 'full' : 'window';
+  if (next && _live(mapWindow)) {   // save the window-mode spot before the window grows over the screen
+    clearTimeout(_boundsSaveTimers.mapBounds); _boundsSaveTimers.mapBounds = null;
+    _writeBounds('mapBounds', mapWindow);
+  }
+  const cfg = loadConfig(); cfg.mapMode = next ? 'full' : 'window'; saveConfig(cfg);
+  _mapFull = next;
+  if (_live(mapWindow)) {
+    if (next) await _fitMapFull(true);
+    else {
+      try { mapWindow.setBounds(_resolveBounds('mapBounds', 'mapBoundsSig', { x: 60, y: 120, width: 760, height: 480 })); } catch { /* mid-close */ }
+    }
+    applyOverlayInteractivity();
+    applyMapVisibility();
+    try { mapWindow.webContents.send('map-mode', _mapFull ? 'full' : 'window'); } catch { /* loading */ }
+    _mapGeomPush(true);
+  }
+  try { pushStatus(); buildTrayMenu(); } catch { /* tray not up yet */ }
+  return _mapFull ? 'full' : 'window';
+}
+ipcMain.handle('map-mode-get', () => { try { return loadConfig().mapMode === 'full' ? 'full' : 'window'; } catch { return 'window'; } });
+ipcMain.handle('map-mode-set', (_e, mode) => _setMapMode(mode === 'full' ? 'full' : 'window'));
+
+// Keep-clear areas. (a) The windows EverQuest has open, from the active character's UI ini: read-only, in EverQuest's
+// own pixels (visibleUiRects), plus Zeal's raid and assist bars as auto-arrange counts them. (b) The raider's own boxes,
+// kept per character and per screen setup as FRACTIONS of EverQuest's client area, so a box means the same place at any
+// window size. map.html converts both to its own window (uiRectsToMap); main only reports where things are.
+function _mapClearUiRects(char) {
+  try {
+    const file = (char && _newestUiIniFile(char)) || _newestUiIniFile();
+    if (!file) return null;
+    const r = visibleUiRects(fs.readFileSync(file, 'utf8'), { skip: _UI_PHANTOM_RX });
+    const eq = _eqMainWindow(10 * 60 * 1000);
+    const res = r.res || (eq ? { w: Math.round(eq.client.width), h: Math.round(eq.client.height) } : null);
+    const rects = r.rects.slice();
+    try {
+      const zini = path.join(path.dirname(file), 'zeal.ini');
+      if (res && fs.existsSync(zini)) {
+        for (const z of _zealBarRects(fs.readFileSync(zini, 'utf8'), res.w, res.h)) rects.push({ name: z.name, x: z.x, y: z.y, w: z.w, h: z.h, guess: false });
+      }
+    } catch { /* no Zeal bars to avoid */ }
+    return { rects, res, file: path.basename(file), exact: !!(char && new RegExp('^UI_' + char + '[_.]', 'i').test(path.basename(file))) };
+  } catch (e) {
+    appendAgentLog('[map] UI parse failed: ' + e.message + '\n');
+    return null;
+  }
+}
+function _mapBoxKey(char) { return String(char || '').toLowerCase().replace(/[^a-z0-9]/g, '') || '_'; }
+function _mapCleanBoxes(list) {
+  const out = [];
+  for (const b of Array.isArray(list) ? list.slice(0, 40) : []) {
+    if (!b || ![b.x, b.y, b.w, b.h].every(Number.isFinite)) continue;
+    if (b.w < 0.002 || b.h < 0.002 || b.w > 2 || b.h > 2 || b.x < -1 || b.y < -1 || b.x > 2 || b.y > 2) continue;
+    const r5 = (n) => Math.round(n * 1e5) / 1e5;
+    out.push({ x: r5(b.x), y: r5(b.y), w: r5(b.w), h: r5(b.h) });
+  }
+  return out;
+}
+ipcMain.handle('map-clear-areas', async (_e, opts) => {
+  try {
+    const o = opts && typeof opts === 'object' ? opts : {};
+    // Cached unless asked: the page polls this on a slow timer and PowerShell is not for polling.
+    if (o.fresh || !_eqGeom.at) {
+      try { await _eqWindowGeometry(0); } catch { /* no answer */ }
+      if (o.fresh && _mapFull) await _fitMapFull(false);
+    }
+    const char = String(o.char || _activeCharName || '').replace(/[^A-Za-z]/g, '');
+    const eq = _eqMainWindow(10 * 60 * 1000);
+    const win = _live(mapWindow) ? mapWindow.getBounds() : null;
+    let ref = eq ? eq.client : null;
+    if (!ref) { try { ref = (win ? screen.getDisplayMatching(win) : screen.getPrimaryDisplay()).bounds; } catch { ref = null; } }
+    const store = loadConfig().mapClearBoxes;
+    const boxes = _mapCleanBoxes(store && store[_screenSignature()] && store[_screenSignature()][_mapBoxKey(char)]);
+    return { mode: _mapFull ? 'full' : 'window', eq: !!eq, ref: ref ? { x: ref.x, y: ref.y, width: ref.width, height: ref.height } : null,
+      win, ui: _mapClearUiRects(char), boxes, char: _mapBoxKey(char) };
+  } catch { return null; }
+});
+ipcMain.handle('map-clear-boxes-set', (_e, char, boxes) => {
+  try {
+    const cfg = loadConfig();
+    const store = (cfg.mapClearBoxes && typeof cfg.mapClearBoxes === 'object') ? cfg.mapClearBoxes : {};
+    const sig = _screenSignature(), key = _mapBoxKey(String(char || _activeCharName || '').replace(/[^A-Za-z]/g, ''));
+    const clean = _mapCleanBoxes(boxes);
+    store[sig] = Object.assign({}, store[sig]);
+    if (clean.length) store[sig][key] = clean; else delete store[sig][key];
+    if (!Object.keys(store[sig]).length) delete store[sig];
+    for (const k of Object.keys(store).slice(0, Math.max(0, Object.keys(store).length - 6))) delete store[k];   // the 6 newest setups
+    cfg.mapClearBoxes = store; saveConfig(cfg);
+    return clean;
+  } catch { return null; }
+});
 
 // The Map's respawn-timers list popped out into its own window (the guild lead, 2026-10-13: "Right clicking on the
 // timers clickout should allow you to pop it out and drag it around"; earlier the same night: "Same with timers,
@@ -7142,6 +7286,10 @@ function _overlayWanted(cfg, e) {
     return !!cfg.showCanvas && (setupMode || cfg.overlaysLocked === false || _canvasArrange
       || (!cfg.hideOverlays && _eqGateOk(cfg)));
   }
+  // The Map in Full mode covers the screen, so setup / unlock do not conjure it for placement: its own switch decides.
+  if (e.key === 'map' && _mapFull) {
+    return !!cfg.showMap && (setupMode || cfg.overlaysLocked === false || (!cfg.hideOverlays && _eqGateOk(cfg)));
+  }
   if (_overlayForcedOn(cfg, e)) return true;
   if (!cfg[e.flag]) return false;
   if (e.key === 'trigger') return true;
@@ -7729,6 +7877,7 @@ function currentStatus() {
     showMe: !!cfg.showMe,
     showMap: !!cfg.showMap,
     showMapTimers: !!cfg.showMapTimers,
+    mapMode: cfg.mapMode === 'full' ? 'full' : 'window',   // the dashboard's Map Window / Full button
     // Timers canvas. canvasOwnsTriggers tells the (hidden) trigger window to
     // speak only, so a pinned callout lives in one place.
     showCanvas: !!cfg.showCanvas,
@@ -8118,6 +8267,10 @@ function buildTrayMenu() {
       } },
     { label: '  ↳ Map timers list as its own window [beta]', type: 'checkbox', checked: !!s.showMapTimers, enabled: !s.hideOverlays, click: (mi) => {
         _setMapTimersPopped(mi.checked);
+      } },
+    // Same setter as the Map's own Full / Window button and the dashboard's (tray ↔ dashboard parity).
+    { label: '  ↳ Map: full screen over EverQuest [beta]', type: 'checkbox', checked: s.mapMode === 'full', enabled: !s.hideOverlays, click: (mi) => {
+        _setMapMode(mi.checked ? 'full' : 'window');
       } },
     // Timers canvas — same internals as the dashboard row (_toggleOverlay /
     // _setCanvasArrange), per the tray ↔ dashboard parity rule.
@@ -9257,7 +9410,7 @@ ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
       // its Done button and resize edges unclickable.
       if (_inSingleSetup(win)) { win.setIgnoreMouseEvents(false); return true; }
       // The Timers canvas is screen-sized: back to click-through, unlocked or not.
-      if (win === canvasWindow) { win.setIgnoreMouseEvents(true, { forward: true }); return true; }
+      if (win === canvasWindow || (win === mapWindow && _mapFull)) { win.setIgnoreMouseEvents(true, { forward: true }); return true; }
       const cfg = loadConfig();
       const locked = !setupMode && cfg.overlaysLocked !== false;
       if (locked) win.setIgnoreMouseEvents(true, { forward: true });
@@ -9506,7 +9659,7 @@ ipcMain.handle('wp-move-to-display', (e, id) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     let key = null;
     for (const [k, w] of _overlayEntries()) if (w === win) { key = k; break; }
-    if (!key || key === 'canvas') return false;
+    if (!key || _coversScreen(key)) return false;
     const to = screen.getAllDisplays().find(d => String(d.id) === String(id));
     if (!to) return false;
     const b = win.getBounds();
@@ -9529,7 +9682,7 @@ ipcMain.handle('wp-overlay-menu-state', (e) => {
   const cfg = loadConfig();
   return {
     key,
-    screens: key && key !== 'canvas' ? _otherScreensFor(win) : [],
+    screens: key && !_coversScreen(key) ? _otherScreensFor(win) : [],
     backdrop: key ? !!((cfg.overlayBackdrop || {})[key]) : false,
     arrangeOnShow: !!cfg.autoArrangeOnShow,
     pointer: cfg.standInPointer !== false,   // the stand-in mouse pointer switch (preload _wpPointerOn)
