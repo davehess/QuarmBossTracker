@@ -1416,6 +1416,37 @@ function _startWindowResize(win) {
     } catch {}
   }, 16);
 }
+// The top-right grip a grow-upward overlay gets (the guild lead, 2026-10-14: "when grow upwards is on, we should be
+// able to drag the top right corner of overlays while not hitting the X button"). A grow-upward overlay is parked
+// by its BOTTOM edge, so that edge and the left edge stay put: the cursor's right/up travel widens the window and
+// raises its top. Pure, so the bottom-edge rule and the minimums are testable. `min` is the window's own minimum
+// size where it sets one; the floor of 120x60 is the same one the bottom-right grip uses.
+function _resizeUpBounds(b0, dx, dy, wa, min) {
+  const bottom = b0.y + b0.height;
+  const minW = Math.max(120, (min && min.width) || 0), minH = Math.max(60, (min && min.height) || 0);
+  const width  = Math.max(minW, Math.min(wa.x + wa.width - b0.x, b0.width + dx));
+  const height = Math.max(minH, Math.min(bottom - wa.y,          b0.height - dy));
+  return { x: b0.x, y: bottom - height, width, height };
+}
+function _startWindowResizeUp(win) {
+  if (!win || win.isDestroyed()) return;
+  _startWindowDrag(win);
+  if (!_dragSession) return;
+  clearInterval(_dragSession.interval);
+  const s = _dragSession, c0 = screen.getCursorScreenPoint(), b0 = win.getBounds();
+  let mw = 0, mh = 0;
+  try { [mw, mh] = win.getMinimumSize(); } catch { /* keep the floor */ }
+  s.interval = setInterval(() => {
+    if (!_dragSession) return;
+    if (s.win.isDestroyed() || Date.now() - s.startedAt > 30_000) { _stopWindowDrag(); return; }
+    try {
+      const cur = screen.getCursorScreenPoint(), wa = screen.getDisplayMatching(b0).workArea;
+      const nb = _resizeUpBounds(b0, cur.x - c0.x, cur.y - c0.y, wa, { width: mw, height: mh });
+      _noteUserResize(s.win, nb);
+      s.win.setBounds(nb);
+    } catch {}
+  }, 16);
+}
 
 // ── UI Studio — capture & restore EQ ini files ──────────────────────────────
 // Bundles every relevant ini file for a character (plus the global
@@ -9485,6 +9516,14 @@ ipcMain.handle('overlay-resize-start', (e) => {
   } catch {}
   return true;
 });
+ipcMain.handle('overlay-resize-up-start', (e) => {
+  try {
+    const win = BrowserWindow.fromWebContents(e.sender);
+    if (win) win.__wpPreMenuBounds = null;
+    _startWindowResizeUp(win);
+  } catch {}
+  return true;
+});
 
 // An overlay sizes and places its OWN window (2026-09-24): the Me overlay's
 // HUD layout wraps the centre of the screen, so it needs a large window
@@ -10236,6 +10275,7 @@ ipcMain.handle('wp-growup-toggle', (e) => {
   map[key] = !_growUpSetting(cfg, key);
   cfg.overlayGrowUp = map;
   saveConfig(cfg);
+  try { win.webContents.send('wp-growup', !!map[key]); } catch { /* mid-close */ }   // the top-right grip follows (preload)
   return !!map[key];
 });
 // ⇅ Timers start at the top on the trigger overlay (a member, 2026-09-27: "start
@@ -10256,6 +10296,7 @@ ipcMain.handle('wp-timers-order-toggle', () => {
   cfg.overlayGrowUp = grow;
   saveConfig(cfg);
   if (triggerWindow && !triggerWindow.isDestroyed()) {
+    triggerWindow.webContents.send('wp-growup', !cfg.triggerTimersTopDown);   // this flips grow-up too (top-down = off, else the default up)
     triggerWindow.webContents.send('status', Object.assign(currentStatus(), hideAllStatusForRenderer()));
   }
   return cfg.triggerTimersTopDown;

@@ -351,8 +351,8 @@ const _WP_MINI_CSS =
   'body.wp-mini{--wp-mini-bar-h:4px}' +
   // Chrome fades rather than hides: a mini overlay is still draggable and
   // closable, and a control that vanishes reads as a control that is gone.
-  'body.wp-mini #move-btn,body.wp-mini #hide-btn,body.wp-mini #wp-grip{opacity:0.12;transition:opacity 0.12s ease}' +
-  'body.wp-mini:hover #move-btn,body.wp-mini:hover #hide-btn,body.wp-mini:hover #wp-grip{opacity:1}' +
+  'body.wp-mini #move-btn,body.wp-mini #hide-btn,body.wp-mini #wp-grip,body.wp-mini #wp-grip-top{opacity:0.12;transition:opacity 0.12s ease}' +
+  'body.wp-mini:hover #move-btn,body.wp-mini:hover #hide-btn,body.wp-mini:hover #wp-grip,body.wp-mini:hover #wp-grip-top{opacity:1}' +
   'body.wp-mini .wp-mini-hide{display:none !important}' +
   'body.wp-mini .wp-mini-bar{height:var(--wp-mini-bar-h) !important;border-radius:2px}' +
   'body.wp-mini .wp-mini-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}' +
@@ -380,7 +380,7 @@ ipcRenderer.on('wp-mini', function (_e, p) { _wpApplyMini(p && p.mini); });
 // One rule for every overlay, keyed on those ids rather than on each page's
 // own container (the DPS HUD and trigger alerts have no #wrap).
 const _WP_OPACITY_CSS =
-  'body>:not(#move-btn):not(#hide-btn):not(#clear-btn):not(#drag-controls):not(#setupbar):not(#wp-grip)' +
+  'body>:not(#move-btn):not(#hide-btn):not(#clear-btn):not(#drag-controls):not(#setupbar):not(#wp-grip):not(#wp-grip-top)' +
   ':not(#wpResizeMenu):not(#mimic-conn-banner):not(#mimic-update-banner):not(#wp-cvd-defs):not(script):not(style)' +
   '{opacity:var(--wp-content-alpha,1)}';
 ipcRenderer.on('content-alpha', function (_e, v) {
@@ -447,6 +447,52 @@ document.addEventListener('DOMContentLoaded', function () {
   } catch (e) { void e; }
 });
 
+// ── ◥ Top-right resize corner, grow-upward overlays only (the guild lead, 2026-10-14: "when grow upwards is on, we should
+// be able to drag the top right corner of overlays while not hitting the X button") ─────────────────────────────────
+// A grow-upward overlay is parked by its bottom edge, so the corner you reach for is the top one. The ✕ sits 6px in from
+// that corner (every overlay's own CSS, 18px square), so while grow-up is on the ✕ steps GRIP+2 px short of the window's
+// right edge and the grip owns the corner: the two boxes never touch (test/overlay-growup-grip.test.js holds the numbers).
+// main's _startWindowResizeUp keeps the bottom and left edges fixed. Same eligibility as the ◢ grip above (a ✥ overlay
+// window, not a docked pane, not the HUD), shown and hidden live by main's 'wp-growup' push and pulled at load.
+const _WP_GROWUP_GRIP = 12;                       // px, square, flush in the top-right corner
+const _WP_GROWUP_HIDE_RIGHT = _WP_GROWUP_GRIP + 2;  // where the ✕'s right edge goes meanwhile (it is 6 normally)
+function _wpApplyGrowUp(on) {
+  try {
+    if (WP_IS_DOCKED || !document.getElementById('move-btn') || _wpDockKey() === 'me') return;
+    if (!document.getElementById('wp-grip-top-css')) {
+      const st = document.createElement('style');
+      st.id = 'wp-grip-top-css';
+      st.textContent = 'body.wp-growup #hide-btn{right:' + _WP_GROWUP_HIDE_RIGHT + 'px !important}'
+        + '#wp-grip-top{position:fixed;top:0;right:0;width:' + _WP_GROWUP_GRIP + 'px;height:' + _WP_GROWUP_GRIP + 'px;'
+        + 'z-index:2147483000;cursor:nesw-resize;opacity:0.45;'
+        + 'background:linear-gradient(225deg,transparent 0 55%,rgba(230,237,243,.85) 55% 62%,transparent 62% 72%,'
+        + 'rgba(230,237,243,.85) 72% 79%,transparent 79% 89%,rgba(230,237,243,.85) 89% 96%,transparent 96%)}'
+        + '#wp-grip-top:hover{opacity:1}';
+      document.head.appendChild(st);
+    }
+    document.body.classList.toggle('wp-growup', !!on);
+    let g = document.getElementById('wp-grip-top');
+    if (!on) { if (g) g.remove(); return; }
+    if (g) return;
+    g = document.createElement('div');
+    g.id = 'wp-grip-top';
+    g.setAttribute('data-wp-interact', '');
+    g.title = 'Drag to resize (the bottom edge stays put)';
+    g.addEventListener('mousedown', function (ev) {
+      if (ev.button !== 0) return;
+      ev.preventDefault(); ev.stopPropagation();
+      ipcRenderer.invoke('overlay-resize-up-start');
+      const end = function () {
+        document.removeEventListener('mouseup', end, true);
+        ipcRenderer.invoke('overlay-drag-end');
+      };
+      document.addEventListener('mouseup', end, true);
+    });
+    document.body.appendChild(g);
+  } catch (e) { void e; }
+}
+ipcRenderer.on('wp-growup', function (_e, on) { _wpApplyGrowUp(on); });
+
 // Mute (Settings → "Mute Mimic", cfg.quietMode): main broadcasts one boolean
 // on every config save; read once at load so a freshly created overlay starts
 // right. Renderers ask window.mimic.isMuted() before speaking or playing.
@@ -504,6 +550,7 @@ document.addEventListener('DOMContentLoaded', function () {
       if (s && s.pointer === false) _wpPointerOn = false;   // the stand-in pointer switch, pulled at load
       if (s && s.backdrop && _wpOverlayDoc()) document.body.classList.add('wp-backdrop');
       if (s && s.theme) _wpApplyTheme(s.theme);
+      if (s && s.growUp) _wpApplyGrowUp(true);   // the top-right grip, pulled like the backdrop
       // Mini is PULLED at load, not only pushed. A window created while its
       // mini flag was already on (re-enabled from the tray, restored after a
       // crash, or simply opened later) would otherwise come up full size and
