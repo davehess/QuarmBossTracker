@@ -10490,3 +10490,15 @@ the Bastion of Thunder at the time.
   (Willamina chain) carry content that tests and Mimic's Quests mode use, so they moved to the Knowledge quests section, same keys.
 - **Open:** keep or delete those two moved items; whether to tag pasted rows (e.g. `npc='web paste'`) so they can be told from
   Mimic's. Today they are identical, so a paste for your own character reads as a real recital.
+
+### 305. Chat overlay round 3: earlier characters, history from the logs, search, zone lines (agent 3.7.169, Mimic beta `f3840337`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"CHAT overlay should be able to bring in the chat from the previous characters you were on,
+  and put a line in saying swapped character, and the timeframe between. If you log out and log back in, show the previous logs (and
+  give a timeframe, past 24h, past 12h, past 6hr, 3, 2 1"*; *"and search to only show chats from that specific character"*; *"Lines
+  like 'You have entered Plane of Knowledge' are worth showing too"*.
+- **Calls:** a swap is a different log's line ≥30 s after the last (the /camp timer alone is 30 s, so dual-boxing doesn't draw a rule
+  every line; below that a dim "heard on X" tag). History is OFF by default and reads only when asked, backwards from the end of each
+  log; it never writes or uploads. Zones are an ungated group, on by default. Search matches the speaker or the character that heard it.
+- **Privacy:** PRIVACY.md and `/privacy` say the overlay can read the last 1–24 h from the game's own logs, on the PC only.
+- **Open:** history is not time-merged with live lines newer than the ring's start (it sits above); the history window is remembered
+  per window in localStorage, not in Mimic's config.

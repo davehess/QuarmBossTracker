@@ -1068,6 +1068,12 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   a channel chip breaks that group into its own window (`chat.html?groups=<id>`, `chatBreakouts` Map in main.js, `cfg.chatBreakouts`,
   bounds `chatBounds_<id>`, key `chat:<id>`). Breakouts exist exactly while Chat does (`_syncChatBreakouts`); a breakout's ✕ puts the
   group back; `chat-prefs-changed` keeps every window's gates in step.
+  **Round 3 (agent 3.7.169, §305):** every ring line carries the character it was heard on (`on`); a different character's line ≥30 s
+  (`CHAT_SWAP_MIN_MS`) after the last inserts a display-only swap rule ("Swapped to X — 14m after Y's last line"). Zone changes are a
+  `zone` channel/group (on by default; LOADING excluded). History: the overlay's clock menu (off/1/2/3/6/12/24 h, default off, per
+  window in localStorage) → `GET /api/chat/history?hours=N` (local-origin only, 20 s cache) reads each `eqlog_*` backwards in
+  256 KiB chunks, stopping past the window (256 MiB cap per file), through the same classifier and gates; merged, deduped, capped at
+  3000. A search box filters to one character as speaker or as the character that heard it. Test: `test/chat-history.test.js`.
 - **Seer paste on /pop/guide** (web 1.8.154 · beta, §304): `web/app/pop/guide/SeerPaste.tsx` (collapsed `<details>` atop all guide
   layouts); reader `web/lib/popRecital.ts` (`parseRecital`, `heldClosure`, `zoneViews`, `recitalRows`; table copied from
   `utils/popFlagStages.js`, parity-tested); guide join `web/lib/popGuideSeer.ts` (`STEP_GUIDE`, `guideStepsProven`); save
