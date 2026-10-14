@@ -7198,13 +7198,16 @@ function _logStandingsShapeOnce(models) {
   } catch { /* a probe must never break the caller */ }
 }
 
-// Raid window, ET: Sun/Wed/Thu 8pm-midnight with an hour either side, matching
-// utils/openDkpSync's _inRaidWindow. Duplicated rather than exported across the
-// module boundary because index.js must not import the sync's private state.
+// Raid window, ET: Sun/Wed/Thu 8pm-midnight with an hour either side. The hour
+// after midnight belongs to the night BEFORE: Wed 00:23 is Tuesday night, not a
+// raid (the guild lead, 2026-10-14 00:24 ET, a callout from another zone heard in
+// Overthere on a Tuesday). utils/openDkpSync's _inRaidWindow still reads the
+// calendar day; this copy no longer matches it on purpose.
 function _inRaidWindowEt(now = new Date()) {
   const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  if (![0, 3, 4].includes(et.getDay())) return false;
   const h = et.getHours();
+  const night = h < 1 ? (et.getDay() + 6) % 7 : et.getDay();
+  if (![0, 3, 4].includes(night)) return false;
   return h >= 19 || h < 1;
 }
 
@@ -20187,11 +20190,14 @@ async function _handleTriggerRelayPost(req, res) {
 // "I'm not in a zone with another guild member, or in a group, or even a raid.
 // These random slips need to stop." The raid cases are the safety net for a
 // real callout: inside them nothing is consulted and everything relays.
-function _relayScopeKeep({ inRaidWindow, inRaid, originZones, requesterZones }) {
+// `unplacedWindow`: on a raid evening a listener we cannot place still hears senders we cannot place
+// either, but never a sender we CAN place in a zone (2026-10-14: a group's enrage callout in the Bastion
+// of Thunder reached an unplaced member in Overthere).
+function _relayScopeKeep({ inRaidWindow, inRaid, originZones, requesterZones, unplacedWindow = false }) {
   if (inRaidWindow || inRaid) return true;                          // in a raid: unchanged, raid-wide
   const origin = originZones instanceof Set ? originZones
     : new Set(Array.isArray(originZones) ? originZones : (originZones ? [originZones] : []));
-  if (origin.size === 0) return false;                              // can't place the sender → not local
+  if (origin.size === 0) return !!unplacedWindow;                   // can't place the sender → not local
   if (!requesterZones || requesterZones.size === 0) return false;   // can't place ourselves → not local
   for (const z of origin) if (z && requesterZones.has(z)) return true;
   return false;
@@ -20301,12 +20307,13 @@ function _recentFiresFor(identity, sinceId, lootSinceId = 0, scope = null) {
   const inRaidWindow  = scope ? !!scope.inRaidWindow : true;
   const inRaid        = scope ? !!scope.inRaid : true;
   const requesterZones = scope ? scope.requesterZones : null;
+  const unplacedWindow = !!(scope && scope.unplacedWindow);
   const fires = _triggerRelay.entries
     .filter(e => e.id > sinceId && e.uploaded_by !== identity.discord_id)
     .filter(e => {
       // Raid or group first (utils/groupScope.js); no opinion falls through to the zone rule.
       const v = _groupScope.relayVerdict(scope && scope.group, e);
-      return v !== null ? v : _relayScopeKeep({ inRaidWindow, inRaid, originZones: e.origin_zones, requesterZones });
+      return v !== null ? v : _relayScopeKeep({ inRaidWindow, inRaid, originZones: e.origin_zones, requesterZones, unplacedWindow });
     })
     .map(e => ({
       id:                  e.id,
@@ -20360,7 +20367,7 @@ async function _relayScopeFor(identity) {
     if (g.mode !== 'legacy') {
       let zones = new Set();
       try { zones = await _requesterZones(discordId); } catch { zones = new Set(); }
-      return { inRaidWindow: zones.size === 0 && _inRaidWindowEt(new Date()), inRaid: false, requesterZones: zones, group: g };
+      return { inRaidWindow: false, unplacedWindow: zones.size === 0 && _inRaidWindowEt(new Date()), inRaid: false, requesterZones: zones, group: g };
     }
   } catch { /* fall through to the old rule */ }
   const inRaidWindow = _inRaidWindowEt(new Date());

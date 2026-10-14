@@ -32,10 +32,15 @@ const src = readSource(BOT_INDEX);
 const { _relayScopeKeep } = evalBlock(
   sliceBlock(
     src,
-    'function _relayScopeKeep({ inRaidWindow, inRaid, originZones, requesterZones }) {',
+    'function _relayScopeKeep({ inRaidWindow, inRaid, originZones, requesterZones, unplacedWindow = false }) {',
     '\n// character name (lower) → owning discord id.',
   ),
   ['_relayScopeKeep'],
+);
+
+const { _inRaidWindowEt } = evalBlock(
+  sliceBlock(src, 'function _inRaidWindowEt(now = new Date()) {', '\n// OpenDKP roster, cached 1h'),
+  ['_inRaidWindowEt'],
 );
 
 const zones = (...z) => new Set(z);
@@ -75,6 +80,47 @@ describe('outside a raid', () => {
   });
 });
 
+// The guild lead, 2026-10-14 00:24 ET (a Tuesday night): a member alone in Overthere heard another group's
+// enrage callout from the Bastion of Thunder. The member could not be placed, and the clock said "raid
+// evening" because 00:24 on a Wednesday counted as Wednesday.
+describe('an unplaced listener on a raid evening', () => {
+  const UNPLACED = { inRaidWindow: false, inRaid: false, unplacedWindow: true };
+  it('⚠ the report: a sender we CAN place is not heard by a listener we cannot', () => {
+    expect(_relayScopeKeep({ ...UNPLACED, originZones: ['Bastion of Thunder'], requesterZones: zones() })).toBe(false);
+  });
+  it('a sender nobody can place still is (both unknown: fail open, as before)', () => {
+    expect(_relayScopeKeep({ ...UNPLACED, originZones: [], requesterZones: zones() })).toBe(true);
+    expect(_relayScopeKeep({ ...UNPLACED, originZones: null, requesterZones: null })).toBe(true);
+  });
+  it('off the raid evening an unplaced sender is dropped again', () => {
+    expect(_relayScopeKeep({ ...OUT, originZones: [], requesterZones: zones() })).toBe(false);
+  });
+  it('the scope resolver sets the flag, never the raid-wide inRaidWindow, for an unplaced listener', () => {
+    const fn = stripJs(sliceBlock(src, 'async function _relayScopeFor(identity) {', '\nasync function _handleRecentFiresGet'));
+    expect(fn).toContain('return { inRaidWindow: false, unplacedWindow: zones.size === 0 && _inRaidWindowEt(new Date())');
+  });
+});
+
+describe('the raid evening: the hour after midnight belongs to the night before', () => {
+  // ET wall times as UTC instants (EDT = UTC-4 in October 2026).
+  const et = (iso) => new Date(iso + '-04:00');
+  it('⚠ Wednesday 00:24 is Tuesday night — not a raid', () => {
+    expect(_inRaidWindowEt(et('2026-10-14T00:24:00'))).toBe(false);
+  });
+  it('Thursday 00:30 is Wednesday night — a raid; Friday 00:30 is Thursday night — a raid; Monday 00:30 is Sunday night', () => {
+    expect(_inRaidWindowEt(et('2026-10-15T00:30:00'))).toBe(true);
+    expect(_inRaidWindowEt(et('2026-10-16T00:30:00'))).toBe(true);
+    expect(_inRaidWindowEt(et('2026-10-19T00:30:00'))).toBe(true);
+  });
+  it('the evenings themselves are unchanged', () => {
+    expect(_inRaidWindowEt(et('2026-10-14T19:00:00'))).toBe(true);    // Wed
+    expect(_inRaidWindowEt(et('2026-10-14T18:59:00'))).toBe(false);
+    expect(_inRaidWindowEt(et('2026-10-13T21:00:00'))).toBe(false);   // Tue
+    expect(_inRaidWindowEt(et('2026-10-18T23:30:00'))).toBe(true);    // Sun
+    expect(_inRaidWindowEt(et('2026-10-15T01:00:00'))).toBe(false);   // Thu 01:00, window over
+  });
+});
+
 describe('in a raid nothing changes — raid-wide, zones not consulted', () => {
   it('the scheduled window keeps a cross-zone fire — split raids are the normal case', () => {
     expect(_relayScopeKeep({ inRaidWindow: true, inRaid: false, originZones: ['Vex Thal'], requesterZones: zones('Plane of Hate') })).toBe(true);
@@ -103,7 +149,7 @@ describe('wiring', () => {
 
   it('the filter runs on the ring, beside the own-fire suppression', () => {
     const fn = sliceBlock(bot, 'function _recentFiresFor(', '\n  const loot =');
-    expect(fn).toContain('_relayScopeKeep({ inRaidWindow, inRaid, originZones: e.origin_zones, requesterZones })');
+    expect(fn).toContain('_relayScopeKeep({ inRaidWindow, inRaid, originZones: e.origin_zones, requesterZones, unplacedWindow })');
   });
 
   // The kill switch's (flag_disable_groupscope) and failed-read path: the pre-2026-10-07 rule, after the

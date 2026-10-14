@@ -199,11 +199,14 @@ describe('the relay keeps to your group when you are not in a raid', () => {
     expect(await rig.hears('a2')).toEqual(['a1']);
   });
 
-  it('identity unknown: a listener nobody can place hears the evening as before, and nothing off-evening (today\'s rule)', async () => {
+  it('identity unknown: on the evening a listener nobody can place hears only senders nobody can place either; nothing off-evening', async () => {
     const stranger = { discord_id: 'zz' };
     const inWindow = relayRig({ book, inWindow: true, accountOf: { ...PEOPLE } });
     await inWindow.fire('a1');
-    expect(await inWindow.hears(stranger.discord_id)).toEqual(['a1']);
+    // a1 is placed (Test Zone): 2026-10-14, a group's callout in another zone reached an unplaced member.
+    expect(await inWindow.hears(stranger.discord_id)).toEqual([]);
+    await inWindow.fire('yy');   // an account with no live character: unplaced, like the listener
+    expect(await inWindow.hears(stranger.discord_id)).toEqual(['yy']);
     const outside = relayRig({ book, inWindow: false });
     await outside.fire('a1');
     expect(await outside.hears(stranger.discord_id)).toEqual([]);
