@@ -227,7 +227,8 @@ describe('_windowLabelsByPid', () => {
         .map(o => ({ ...o, get: () => (o.__pid ? __win(o.__pid) : null) }));
       const panelOverlays = new Map(${JSON.stringify(Object.entries(extra.panels || {}))}
         .map(([k, pid]) => [k, __win(pid)]));
-      const mainWindow      = ${extra.main      ? '__win(' + extra.main + ')'      : 'null'};
+      const chatBreakouts = new Map();
+      const mainWindow     = ${extra.main      ? '__win(' + extra.main + ')'      : 'null'};
       const settingsWindow  = ${extra.settings  ? '__win(' + extra.settings + ')'  : 'null'};
       const uiStudioWindow  = ${extra.uiStudio  ? '__win(' + extra.uiStudio + ')'  : 'null'};
       const resourcesWindow = ${extra.resources ? '__win(' + extra.resources + ')' : 'null'};

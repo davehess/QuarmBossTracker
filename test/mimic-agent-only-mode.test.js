@@ -181,6 +181,7 @@ describe('the central helpers', () => {
         const _agentOnly = () => globalThis.__agent;
         ${names.map((n) => `const ${n} = { isDestroyed: () => false };`).join('\n')}
         const panelOverlays = new Map();
+        const chatBreakouts = new Map();
         ${sliceBlock(MAIN, 'function _overlayEntries() {', '\n}\n')}
       `, ['_overlayEntries']);
       const out = r._overlayEntries();

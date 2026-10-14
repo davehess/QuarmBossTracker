@@ -379,6 +379,8 @@ describe('Mimic: the overlay feature-parity checklist for `chat`', () => {
     expect(create).toContain("applyOverlayOpacity(chatWindow, 'chat')");
     expect(create).toContain('minWidth: _OVERLAY_MIN_W');
     const apply = fnBody('function applyChatVisibility() {');
+    // (the Chat window and every broken-out window share this one gate)
+    expect(apply).toContain('for (const w of chatBreakouts.values()) {');
     for (const bit of ['_live(chatWindow)', 'setupMode', 'overlaysLocked === false', 'cfg.showChat', 'cfg.hideOverlays', '_eqGateOk(cfg)']) expect(apply, bit).toContain(bit);
   });
   it('remembers its position (_boundsKeyForWindow) and is listed by _overlayEntries', () => {
@@ -439,7 +441,7 @@ describe('chat.html: the overlay\'s own parity items', () => {
   });
   it('the hover handshake covers every clickable thing: buttons (armed by the preload) plus the feed and chip row', () => {
     expect(script).toContain('window.mimic.overlayHoverInteractive(on)');
-    expect(script).toMatch(/el\.closest\('\.title, #chips, #spanel, #feed, #newchip'\)/);
+    expect(script).toMatch(/el\.closest\('\.title, #chips, #spanel, #feed, #newchip, #ctxmenu'\)/);
     // every clickable element is a <button>/<input>, which the preload arms on its own: no clickable <div>/<span>
     expect(html).not.toMatch(/<(?:div|span)[^>]*\sonclick=/);
     expect(html).not.toMatch(/<(?:div|span)[^>]*role="?button/);
@@ -478,20 +480,22 @@ describe('chat.html: the overlay\'s own parity items', () => {
   it('is not a Mimic-screen-specific window: no EverQuest-geometry or display calls', () => {
     expect(script).not.toMatch(/screen\.|getAllDisplays|eqWindow|getPrimaryDisplay/);
   });
-  it('does not build tabs or tear-out yet (B now, A later)', () => {
-    // (the header comment names them as the plan, so look at markup and code only)
+  it('builds no tab strip: a group is a chip, and a broken-out group is a window, not a tab', () => {
     const markup = stripCss(html.slice(html.indexOf('</style>'), html.indexOf('<script>')));
-    expect(markup).not.toMatch(/role="tab"|class="tab\b|tearout|tear-out|detach/i);
-    expect(script).not.toMatch(/tearOut|tear-out|detach|role="tab"|class="tab\b/i);
+    expect(markup).not.toMatch(/role="tab"|class="tab\b/i);
+    expect(script).not.toMatch(/role="tab"|class="tab\b/i);
   });
 });
 
 // The feed's filter, run for real: this is the seam tabs will use.
 describe('chat.html: the feed is painted through a filter handed a list of groups', () => {
   const script = CHAT_HTML.slice(CHAT_HTML.indexOf('<script>'), CHAT_HTML.indexOf('</script>'));
-  const make = (prefs) => evalBlock(`
+  const make = (prefs, only = [], out = []) => evalBlock(`
     var _groups = ${JSON.stringify(agent.CHAT_GROUPS)};
     var _prefs = ${JSON.stringify({ fontSize: 12, group: false, officer: false, custom: false, tells: false, off: [], ...prefs })};
+    var _only = ${JSON.stringify(only)};
+    var _out = ${JSON.stringify(out)};
+    var _isBrk = _only.length > 0;
     ${sliceBlock(script, 'function groupOf(ch){', 'return out;\n  }')}
   `, ['makeFilter', 'shownGroupIds', 'gateOn', '_prefs']);
   const line = (ch) => ({ ch });
@@ -529,13 +533,14 @@ describe('Mimic prefs: chips are remembered per character, tells follow the Tell
     const r = evalBlock(`
       const ipcMain = { handle: (n, f) => { HANDLERS[n] = f; } };
       let CFG = ${JSON.stringify(cfg)};
+      function _pushChatWindows(channel) { globalThis.__P.push(channel); }
       function loadConfig() { return JSON.parse(JSON.stringify(CFG)); }
       function saveConfig(c) { CFG = JSON.parse(JSON.stringify(c)); SAVED.push(CFG); }
       ${sliceBlock(MAIN, 'function _chatCharKey(char) {', "  return _chatPrefsPayload(cfg, char);\n});")}
     `.replace('HANDLERS', 'globalThis.__H').replace('SAVED', 'globalThis.__S'), ['_chatCharKey', '_chatPrefsPayload']);
     return { r, get: (...a) => globalThis.__H['chat-prefs-get']({}, ...a), set: (...a) => globalThis.__H['chat-prefs-set']({}, ...a), saved: () => globalThis.__S };
   }
-  beforeEach(() => { globalThis.__H = {}; globalThis.__S = []; });
+  beforeEach(() => { globalThis.__H = {}; globalThis.__S = []; globalThis.__P = []; });
   it('defaults: 12 px, group/officer/custom off, nothing hidden, tells off', async () => {
     const m = load({});
     expect(await m.get('Aldenmar')).toEqual({ fontSize: 12, group: false, officer: false, custom: false, tells: false, off: [] });
@@ -561,6 +566,13 @@ describe('Mimic prefs: chips are remembered per character, tells follow the Tell
     await m.set('Aldenmar', { fontSize: 16 });
     expect((await m.get('Brackwyn')).fontSize).toBe(16);
   });
+  it('a change is announced to every Chat window, so a breakout never polls with stale switches', async () => {
+    const m = load({});
+    await m.get('Aldenmar');
+    expect(globalThis.__P).toEqual([]);                  // reading announces nothing
+    await m.set('Aldenmar', { officer: true });
+    expect(globalThis.__P).toEqual(['chat-prefs-changed']);
+  });
   it('the renderer cannot store anything but the whitelist', async () => {
     const m = load({});
     await m.set('Aldenmar', { off: ['ok', 'Bad Id', 42, '../x', 'x'.repeat(40)], officer: 'yes', evil: true, tellsMode: 'synced' });
@@ -578,6 +590,380 @@ describe('Mimic prefs: chips are remembered per character, tells follow the Tell
   it('the preload exposes exactly the two prefs calls', () => {
     expect(stripJs(PRELOAD)).toMatch(/getChatPrefs:\s+\(char\)\s+=> ipcRenderer\.invoke\('chat-prefs-get'/);
     expect(stripJs(PRELOAD)).toMatch(/setChatPrefs:\s+\(char, patch\) => ipcRenderer\.invoke\('chat-prefs-set'/);
+  });
+});
+
+// ── 8. Round 2 (the guild lead, 2026-10-14): the Seer's recital, click-to-copy, breakouts ─────────────────
+// 8a. "tells from seer did not come through": the PoP flag NPC's recital is printed into the tell window with no
+// "X tells you," in front of it. Classified through parsePopFlagLine's own matcher, never a second table.
+describe('the Seer\'s recital shows as a tell', () => {
+  const POP = require_('../utils/popFlagStages.js');
+  // the three sentences on the guild lead's screenshot (the last is the Seer's "nothing new" answer)
+  const SHOT = [
+    'The evidence of Mavuin is the only thing that can save him now.',
+    'Grummus has been destroyed, about his corpse you found a small ward to protect from disease.',
+    'You manage to recover some images from your childhood, but no recent events spark a memory.',
+  ];
+  for (const s of SHOT) {
+    it(`"${s.slice(0, 40)}…" is a Seer tell`, () => {
+      expect(agent.classifyChatLine(L(s), ME)).toMatchObject({ ch: 'tell', who: 'Seer', text: s, npc: true, self: false });
+    });
+  }
+  it('every sentence the PoP-flag recital table knows is a tell here, so the two cannot drift apart', () => {
+    expect(POP.RECITAL_STAGES.length).toBeGreaterThan(30);
+    for (const [prefix] of POP.RECITAL_STAGES) {
+      const got = agent.classifyChatLine(L(prefix + ' (the rest of the sentence).'), ME);
+      expect(got, prefix).toMatchObject({ ch: 'tell', who: 'Seer' });
+    }
+  });
+  it('a player saying the same words is still a /say, and your own words are still yours', () => {
+    expect(agent.classifyChatLine(L('Corvale says, \'The evidence of Mavuin is the only thing that can save him now.\''), ME)).toMatchObject({ ch: 'say', who: 'Corvale' });
+    expect(agent.classifyChatLine(L('You say, \'Grummus has been destroyed\''), ME)).toMatchObject({ ch: 'say', who: 'You', self: true });
+  });
+  it('ordinary lines that merely start with a capital letter are not recitals', () => {
+    for (const t of ['The goblin is slain!', 'You have been slain by a gnoll!', 'Grummus has awakened.', 'You manage to hit a goblin.']) {
+      expect(agent.classifyChatLine(L(t), ME), t).toBeNull();
+    }
+  });
+  it('follows the Tells gate: never kept while Tells is off, kept and served as channel tell when it is on', () => {
+    for (const s of SHOT) agent.noteLocalChatLine(L(s), ME, T0);
+    expect(feed({ now: T0 }).lines).toHaveLength(0);
+    agent.setChatPolicy({ tells: true }, T0);
+    for (const s of SHOT) agent.noteLocalChatLine(L(s), ME, T0);
+    const r = feed({ tells: true, now: T0 });
+    expect(r.lines.map(l => l.text)).toEqual(SHOT);
+    expect(channelsOf(r)).toEqual(['tell']);
+    expect(r.lines.every(l => l.who === 'Seer' && l.npc === true)).toBe(true);
+    expect(feed({ tells: false, now: T0 }).lines).toHaveLength(0);
+  });
+  it('is the Tells group\'s line, so a Tells chip (or breakout) carries it', () => {
+    expect(agent.CHAT_GROUPS.find(g => g.channels.includes('tell')).gate).toBe('tells');
+  });
+  it('is never uploaded as chat: the buffers stay untouched, and the chat block does not run the flag parser', () => {
+    const b = agent._uploadBuffersForTest();
+    const before = [b.chatBuffer.length, b.tellBuffer.length, b.recentTells.length];
+    agent.setChatPolicy({ tells: true }, T0);
+    for (const s of SHOT) agent.noteLocalChatLine(L(s), ME, T0);
+    expect([b.chatBuffer.length, b.tellBuffer.length, b.recentTells.length]).toEqual(before);
+    const code = stripJs(CHAT_BLOCK);
+    expect(code).not.toMatch(/parsePopFlagLine|_popPrevLine/);   // the flag parser keeps state and uploads; this feed does neither
+    expect(code).toContain('_POP_RECITAL_RX.test(sentence)');
+  });
+  it('the "nothing new" answer is NOT a flag recital: the flag parser must not upload it', () => {
+    // eslint-disable-next-line no-new-func
+    const pop = new Function('_zealState', 'stats', 'parseEqTimestamp',
+      `${sliceBlock(AGENT_SRC, 'const _POP_GRANT_RX =', '\n}\n')}\nreturn { parsePopFlagLine };`)({}, { currentEncounterThreatByChar: {} }, () => new Date());
+    expect(pop.parsePopFlagLine(L(SHOT[2]), 'Aldenmar')).toBeNull();
+    expect(pop.parsePopFlagLine(L(SHOT[0]), 'Aldenmar')).toMatchObject({ kind: 'recital' });
+  });
+  it('a quest NPC\'s "X tells you," with a multi-word name lands in NPC, not Tells (unchanged)', () => {
+    expect(agent.classifyChatLine(L('Seer Mal Nae`Shi tells you, \'You must sit to listen.\''), ME)).toMatchObject({ ch: 'npc', who: 'Seer Mal Nae`Shi', npc: true });
+    expect(agent.classifyChatLine(L('Grand Librarian Maelin tells you, \'Welcome to Myrist!\''), ME)).toMatchObject({ ch: 'npc' });
+  });
+});
+
+// 8b. "Add a copy button if you click on the timestamp next to the message".
+describe('chat.html: click a line\'s timestamp to copy it', () => {
+  const script = CHAT_HTML.slice(CHAT_HTML.indexOf('<script>'), CHAT_HTML.indexOf('</script>'));
+  const code = stripJs(script);
+  const T = new Date(2026, 9, 14, 13, 3, 28).getTime();   // local time, like the overlay's own clock
+  const HHMM = sliceBlock(script, 'function hhmm(t){', '}\n');
+  const COPYLINE = sliceBlock(script, 'function copyLineText(l){', '+ l.text;\n  }');
+  const fns = () => evalBlock(`${HHMM}\n${COPYLINE}`, ['hhmm', 'copyLineText']);
+  it('copies "[hh:mm] Speaker: text"', () => {
+    const { copyLineText } = fns();
+    expect(copyLineText({ n: 1, t: T, ch: 'guild', who: 'Corvale', text: 'pull in five' })).toBe('[13:03] Corvale: pull in five');
+  });
+  it('your own line is "You", an outgoing tell names who it went to, an NPC keeps its name', () => {
+    const { copyLineText } = fns();
+    expect(copyLineText({ t: T, ch: 'say', who: 'Aldenmar', self: true, text: 'hi' })).toBe('[13:03] You: hi');
+    expect(copyLineText({ t: T, ch: 'tell', who: 'You', self: true, to: 'Corvale', text: 'sure' })).toBe('[13:03] You → Corvale: sure');
+    expect(copyLineText({ t: T, ch: 'tell', who: 'Seer', npc: true, text: 'Jiva\'s strength fills your body.' })).toBe('[13:03] Seer: Jiva\'s strength fills your body.');
+  });
+  it('the timestamp is a <button class="tm"> (armed for the hover handshake by the preload), not a span', () => {
+    expect(code).toContain('<button type="button" class="tm');
+    expect(code).not.toMatch(/<span class="tm/);
+    const lineHtml = evalBlock(`
+      var _channels = { guild: { color: '#56d364' } }, _copiedN = 0;
+      function esc(s){ return String(s == null ? '' : s); }
+      ${HHMM}
+      ${sliceBlock(script, 'function lineHtml(l){', "+ esc(l.text) + '</span></div>';\n  }")}
+    `, ['lineHtml', '_channels']);
+    const html = lineHtml.lineHtml({ n: 7, t: T, ch: 'guild', who: 'Corvale', text: 'hi' });
+    expect(html).toContain('<button type="button" class="tm" title="Click to copy this line">13:03</button>');
+    expect(html).toContain('data-n="7"');
+  });
+  // the click handler, run for real against stand-in elements
+  function harness({ clipboard }) {
+    const state = { handlers: {}, timers: [], fallbackUsed: false };
+    const row = { getAttribute: () => '7' };
+    const btn = { textContent: '13:03', _cls: new Set(), isConnected: true, closest: sel => (sel === '.ln' ? row : btn),
+      classList: { add: c => btn._cls.add(c), remove: c => btn._cls.delete(c) } };
+    const feedEl = { addEventListener: (t, f) => { state.handlers[t] = f; } };
+    const doc = { createElement: () => ({ style: {}, select() {}, remove() {} }), body: { appendChild() {} },
+      execCommand: () => { state.fallbackUsed = true; return true; } };
+    // eslint-disable-next-line no-new-func
+    new Function('feedEl', 'navigator', 'document', 'setTimeout', 'clearTimeout', '_lines', `
+      var _copiedN = 0;
+      ${HHMM}
+      ${COPYLINE}
+      ${sliceBlock(script, 'function _copyText(text, done){', 'catch (e) { fallback(); }\n  }')}
+      ${sliceBlock(script, 'var _copiedTimer = null', '_copiedTimer = setTimeout(_unflashCopied, 1200);\n    });\n  });')}
+    `)(feedEl, { clipboard }, doc, (f) => { state.timers.push(f); return state.timers.length; }, () => {}, [{ n: 7, t: T, ch: 'guild', who: 'Corvale', text: 'hello' }]);
+    return { state, btn, click: () => state.handlers.click({ target: { closest: sel => (sel === '.tm' ? btn : null) } }) };
+  }
+  it('click puts the line on the clipboard and the timestamp flashes "copied", then goes back', async () => {
+    const written = [];
+    const h = harness({ clipboard: { writeText: (t) => { written.push(t); return Promise.resolve(); } } });
+    h.click();
+    await Promise.resolve(); await Promise.resolve();
+    expect(written).toEqual(['[13:03] Corvale: hello']);
+    expect(h.btn.textContent).toBe('copied');
+    expect(h.btn._cls.has('copied')).toBe(true);
+    h.state.timers[0]();                       // the 1.2 s timer fires
+    expect(h.btn.textContent).toBe('13:03');
+    expect(h.btn._cls.has('copied')).toBe(false);
+  });
+  it('falls back to a hidden textarea when the clipboard API refuses, and flashes only if that worked', async () => {
+    const h = harness({ clipboard: { writeText: () => Promise.reject(new Error('Document is not focused')) } });
+    h.click();
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    expect(h.state.fallbackUsed).toBe(true);
+    expect(h.btn.textContent).toBe('copied');
+  });
+  it('a click anywhere else in the feed does nothing', () => {
+    const h = harness({ clipboard: { writeText: () => { throw new Error('should not copy'); } } });
+    h.state.handlers.click({ target: { closest: () => null } });
+    expect(h.btn.textContent).toBe('13:03');
+  });
+  it('uses the clipboard path the other overlays use (navigator.clipboard, then a textarea + execCommand)', () => {
+    expect(code).toContain('navigator.clipboard.writeText(text)');
+    expect(code).toContain("document.execCommand('copy')");
+  });
+});
+
+// 8c. "Add breakout abilities for different tabs by right clicking the name of the chat type".
+describe('chat.html: ?groups=<id> makes a breakout window, painted through the same filter', () => {
+  const script = CHAT_HTML.slice(CHAT_HTML.indexOf('<script>'), CHAT_HTML.indexOf('</script>'));
+  const code = stripJs(script);
+  const parse = (s) => evalBlock(sliceBlock(script, 'function parseGroupsParam(search){', 'return out;\n  }'), ['parseGroupsParam']).parseGroupsParam(s);
+  it('parses the query', () => {
+    expect(parse('?groups=guild')).toEqual(['guild']);
+    expect(parse('?x=1&groups=ooc,raid&y=2')).toEqual(['ooc', 'raid']);
+    expect(parse('?groups=Guild%2CRaid')).toEqual(['guild', 'raid']);
+    expect(parse('')).toEqual([]);
+    expect(parse('?groups=')).toEqual([]);
+  });
+  it('keeps only lower-case group ids: nothing else gets through', () => {
+    expect(parse('?groups=guild,guild,../x,a%20b,')).toEqual(['guild']);
+    expect(parse('?groups=' + 'x'.repeat(17))).toEqual([]);
+    expect(parse('?groups=%E0%A4%A')).toEqual([]);   // a malformed escape is not an error
+    expect(parse('?groups=<script>')).toEqual([]);
+  });
+  const line = (ch) => ({ ch });
+  const make = (prefs, only, out) => evalBlock(`
+    var _groups = ${JSON.stringify(agent.CHAT_GROUPS)};
+    var _prefs = ${JSON.stringify({ fontSize: 12, group: false, officer: false, custom: false, tells: false, off: [], ...prefs })};
+    var _only = ${JSON.stringify(only)};
+    var _out = ${JSON.stringify(out)};
+    var _isBrk = _only.length > 0;
+    ${sliceBlock(script, 'function groupOf(ch){', 'return out;\n  }')}
+  `, ['makeFilter', 'shownGroupIds']);
+  it('a breakout shows its own group and nothing else', () => {
+    const m = make({}, ['guild'], []);
+    expect(m.shownGroupIds()).toEqual(['guild']);
+    const f = m.makeFilter(m.shownGroupIds());
+    expect(f(line('guild'))).toBe(true);
+    for (const ch of ['raid', 'say', 'ooc', 'npc', 'auction']) expect(f(line(ch)), ch).toBe(false);
+  });
+  it('a breakout ignores the Chat window\'s chip choices (it has no chips)', () => {
+    expect(make({ off: ['guild'] }, ['guild'], []).shownGroupIds()).toEqual(['guild']);
+  });
+  it('the Chat window leaves a broken-out group out, and the group is back the moment it is put back', () => {
+    expect(make({}, [], ['guild', 'raid']).shownGroupIds()).toEqual(['say', 'ooc', 'auction', 'npc']);
+    expect(make({}, [], []).shownGroupIds()).toEqual(['guild', 'raid', 'say', 'ooc', 'auction', 'npc']);
+  });
+  it('a gated group is still gated in its breakout: Tells shows nothing until Tells is on', () => {
+    expect(make({}, ['tell'], ['tell']).shownGroupIds()).toEqual([]);
+    expect(make({ tells: true }, ['tell'], []).shownGroupIds()).toEqual(['tell']);
+    expect(make({}, ['officer'], []).shownGroupIds()).toEqual([]);
+    expect(make({ officer: true }, ['officer'], []).shownGroupIds()).toEqual(['officer']);
+  });
+  it('OOC and Shout are one group, so one breakout carries both', () => {
+    const m = make({}, ['ooc'], []);
+    const f = m.makeFilter(m.shownGroupIds());
+    expect(f(line('ooc'))).toBe(true);
+    expect(f(line('shout'))).toBe(true);
+  });
+  it('a chip offers "Break out into its own window" / "Put back in the Chat window" on right-click, and an "out" chip says so', () => {
+    expect(code).toContain("chipsEl.addEventListener('contextmenu'");
+    expect(code).toContain("'Break out into its own window'");
+    expect(code).toContain("'Put back in the Chat window'");
+    expect(code).toContain('window.mimic.chatBreakout(id, on)');
+    expect(code).toContain("(isOut ? ' <em>out</em>' : '')");
+  });
+  it('a breakout\'s title bar offers Put back too, and its ✕ does the same (main\'s hide-overlay puts it back)', () => {
+    expect(code).toMatch(/querySelector\('\.title'\)\.addEventListener\('contextmenu'/);
+  });
+  it('every Chat window waits for its first prefs before polling, and re-reads them when another window changes them', () => {
+    expect(code).toMatch(/async function tick\(\)\{[^}]*if \(!_prefsReady\) return;/);
+    expect(code).toContain('window.mimic.onChatPrefsChanged(function(){ loadPrefs(); })');
+    expect(code).toContain('window.mimic.onChatBreakouts(takeOut)');
+  });
+  it('the context menu is hover-armed: it is in the zone list and its items are buttons', () => {
+    expect(code).toContain("document.createElement('button')");
+    expect(code).toContain('#ctxmenu');
+  });
+});
+
+describe('Mimic: breakout windows are a VARIABLE set, wired into every site a fixed overlay is', () => {
+  const code = stripJs(MAIN);
+  const fnBody = (head) => stripJs(sliceBlock(MAIN, head, '\n}\n'));
+  it('are a Map keyed by group id, not one `let` each', () => {
+    expect(code).toMatch(/^const chatBreakouts = new Map\(\);/m);
+  });
+  it('remember their own place per group (chatBounds_<id>) and are listed by _overlayEntries as chat:<id>', () => {
+    expect(fnBody('function _boundsKeyForWindow(win) {')).toMatch(/for \(const \[gid, w\] of chatBreakouts\.entries\(\)\) \{\s+if \(w === win\) return 'chatBounds_' \+ gid;/);
+    expect(fnBody('function _overlayEntries() {')).toContain("out.push(['chat:' + gid, win])");
+    const create = fnBody('function createChatBreakout(gid) {');
+    expect(create).toContain("const boundsKey = 'chatBounds_' + gid;");
+    expect(create).toContain("loadFile('chat.html', { query: { groups: gid } })");
+    expect(create).toContain('_persistBounds(boundsKey, win)');
+    expect(create).toContain("applyOverlayOpacity(win, 'chat:' + gid)");
+    expect(create).toContain('minWidth: _OVERLAY_MIN_W');
+    expect(create).toContain("_resolveBounds(boundsKey, boundsKey + 'Sig'");
+    expect(create).toContain("_wpPrefs('Chat ' + gid)");   // a named renderer in Task Manager, one per group
+  });
+  it('are built and freed by the same passes that build and free every overlay, so hide-all, Chat off and the EverQuest gate take them along', () => {
+    expect(fnBody('function _materializeEnabledOverlays() {')).toContain('_syncChatBreakouts();');
+    expect(fnBody('function _reapDisabledOverlays() {')).toContain('_syncChatBreakouts();');
+    expect(fnBody('function createChatOverlay() {')).toContain('_syncChatBreakouts();');
+    const sync = fnBody('function _syncChatBreakouts() {');
+    expect(sync).toContain("_OVERLAY_WINDOWS.find(e => e.key === 'chat')");
+    expect(sync).toContain('_overlayWanted(cfg, chatEntry)');   // Chat's own wanted rule: flag, hide-all, EQ gate, setup/unlock
+  });
+  it('show and hide with Chat (one gate), and are in the diagnostics list', () => {
+    expect(fnBody('function applyChatVisibility() {')).toContain('chatBreakouts.values()');
+    expect(code).toContain("put(win, 'Chat breakout · ' + gid)");
+  });
+  it('their ✕ puts the group back (it never leaves a channel with no window), ahead of the panel fallback', () => {
+    const hide = stripJs(sliceBlock(MAIN, "ipcMain.handle('hide-overlay', (e) => {", '\n});'));
+    const at = hide.indexOf('} else if (_chatBreakoutGroup(win)) {');
+    expect(at).toBeGreaterThan(hide.indexOf('win === chatWindow'));
+    expect(at).toBeLessThan(hide.indexOf('panelOverlays.entries()'));
+    expect(hide.slice(at, hide.indexOf('panelOverlays.entries()'))).toContain('_chatBreakoutSet(_chatBreakoutGroup(win), false);');
+  });
+  it('the tray keeps a single "Chat" entry', () => {
+    expect((code.match(/label: 'Chat \(/g) || [])).toHaveLength(1);
+  });
+  it('the preload exposes the four breakout calls', () => {
+    const p = stripJs(PRELOAD);
+    expect(p).toMatch(/chatBreakout:\s+\(groupId, on\) => ipcRenderer\.invoke\('chat-breakout', String\(groupId \|\| ''\), !!on\)/);
+    expect(p).toMatch(/getChatBreakouts:\s+\(\)\s+=> ipcRenderer\.invoke\('chat-breakouts-get'\)/);
+    expect(p).toMatch(/onChatBreakouts:\s+\(cb\)\s+=> ipcRenderer\.on\('chat-breakouts'/);
+    expect(p).toMatch(/onChatPrefsChanged:\s+\(cb\)\s+=> ipcRenderer\.on\('chat-prefs-changed'/);
+  });
+  it('a prefs change reaches every Chat window (the agent keeps the LAST switches, so they must agree), and so does the Tells setting', () => {
+    expect(stripJs(sliceBlock(MAIN, "ipcMain.handle('chat-prefs-set'", '\n});'))).toContain("_pushChatWindows('chat-prefs-changed');");
+    expect(code).toMatch(/hasOwnProperty\.call\(incoming, 'tellsMode'\)\) _pushChatWindows\('chat-prefs-changed'\);/);
+  });
+  it('the list is in the default config (empty)', () => {
+    expect(stripJs(sliceBlock(MAIN, 'function defaultConfig() {', '\n}\n'))).toMatch(/chatBreakouts: \[\],/);
+  });
+
+  // The real logic, run: the list, the toggle and the sync, with the Electron pieces stubbed.
+  function mk(cfg0, opts = {}) {
+    const S = { wanted: opts.wanted !== false, single: opts.single || [], log: { created: [], destroyed: [], pushed: [], flushed: [] } };
+    const start = MAIN.indexOf('const CHAT_BREAKOUT_MAX = 12;');
+    const mid = MAIN.indexOf('function createChatBreakout(gid) {');
+    const syncAt = MAIN.indexOf('function _syncChatBreakouts() {');
+    const end = MAIN.indexOf("ipcMain.handle('chat-breakout',");
+    const body = MAIN.slice(start, mid) + MAIN.slice(syncAt, end);
+    // eslint-disable-next-line no-new-func
+    const r = new Function('S', `
+      let CFG = ${JSON.stringify(cfg0)};
+      const chatBreakouts = new Map();
+      let chatWindow = null;
+      const _OVERLAY_WINDOWS = [{ key: 'chat', flag: 'showChat' }];
+      const _live = (w) => !!w && !w.destroyed;
+      const _agentOnly = () => false;
+      const _overlayWanted = () => S.wanted;
+      const _inSingleSetup = (w) => S.single.indexOf(w.gid) !== -1;
+      const _flushBounds = (k) => S.log.flushed.push(k);
+      const appendAgentLog = () => {};
+      const setImmediate = (f) => f();
+      const applyChatVisibility = () => {}; const applyOverlayInteractivity = () => {};
+      function loadConfig() { return JSON.parse(JSON.stringify(CFG)); }
+      function saveConfig(c) { CFG = JSON.parse(JSON.stringify(c)); }
+      function createChatBreakout(gid) { const w = { gid, destroyed: false, destroy() { this.destroyed = true; S.log.destroyed.push(gid); } }; chatBreakouts.set(gid, w); S.log.created.push(gid); }
+      ${body}
+      function _pushChatWindows(channel, payload) { S.log.pushed.push([channel, payload]); }
+      return { _chatBreakoutIds, _chatBreakoutGroup, _chatBreakoutSet, _syncChatBreakouts, chatBreakouts, cfg: () => CFG };
+    `)(S);
+    return { r, S };
+  }
+  it('the saved list is sanitised: lower-case ids only, no duplicates, at most twelve', () => {
+    const { r } = mk({});
+    expect(r._chatBreakoutIds({ chatBreakouts: ['guild', 'guild', 'Raid', '../x', 7, 'a b', 'say'] })).toEqual(['guild', 'say']);
+    expect(r._chatBreakoutIds({})).toEqual([]);
+    expect(r._chatBreakoutIds({ chatBreakouts: 'guild' })).toEqual([]);
+    expect(r._chatBreakoutIds({ chatBreakouts: 'abcdefghijklmnopqrst'.split('') })).toHaveLength(12);
+  });
+  it('breaking a group out saves it, tells every Chat window, and builds exactly one window for it', () => {
+    const { r, S } = mk({ chatBreakouts: [] });
+    expect(r._chatBreakoutSet('guild', true)).toEqual(['guild']);
+    expect(r.cfg().chatBreakouts).toEqual(['guild']);
+    expect(S.log.pushed).toEqual([['chat-breakouts', ['guild']]]);
+    expect(S.log.created).toEqual(['guild']);
+    r._chatBreakoutSet('guild', true);                               // twice: still one window, one entry
+    expect(r.cfg().chatBreakouts).toEqual(['guild']);
+    expect(S.log.created).toEqual(['guild']);
+    r._chatBreakoutSet('raid', true);
+    expect(S.log.created).toEqual(['guild', 'raid']);
+  });
+  it('putting a group back removes it from the list and closes its window', () => {
+    const { r, S } = mk({ chatBreakouts: ['guild', 'raid'] });
+    r._syncChatBreakouts();
+    expect(S.log.created).toEqual(['guild', 'raid']);
+    expect(r._chatBreakoutSet('guild', false)).toEqual(['raid']);
+    expect(S.log.destroyed).toEqual(['guild']);
+    expect(r.chatBreakouts.has('guild')).toBe(false);
+    expect(r.chatBreakouts.has('raid')).toBe(true);
+    expect(S.log.flushed).toEqual(['chatBounds_guild']);             // its place is saved before it goes
+  });
+  it('they come back after a restart: a fresh pass builds one per saved id', () => {
+    const { r, S } = mk({ chatBreakouts: ['guild', 'tell'] });
+    r._syncChatBreakouts();
+    expect(S.log.created).toEqual(['guild', 'tell']);
+    r._syncChatBreakouts();                                          // idempotent
+    expect(S.log.created).toEqual(['guild', 'tell']);
+  });
+  it('Chat off / hide-all / the EverQuest gate (Chat not wanted) closes them all, and they return with it, still listed', () => {
+    const { r, S } = mk({ chatBreakouts: ['guild', 'raid'] });
+    r._syncChatBreakouts();
+    S.wanted = false;
+    r._syncChatBreakouts();
+    expect(S.log.destroyed.sort()).toEqual(['guild', 'raid']);
+    expect(r.chatBreakouts.size).toBe(0);
+    expect(r.cfg().chatBreakouts).toEqual(['guild', 'raid']);        // closing them is not "put back"
+    S.wanted = true;
+    r._syncChatBreakouts();
+    expect(S.log.created).toEqual(['guild', 'raid', 'guild', 'raid']);
+  });
+  it('a breakout being set up (Setup THIS) is spared while it is open', () => {
+    const { r, S } = mk({ chatBreakouts: ['guild'] }, { single: ['guild'] });
+    r._syncChatBreakouts();
+    S.wanted = false;
+    r._syncChatBreakouts();
+    expect(S.log.destroyed).toEqual([]);
+  });
+  it('the renderer cannot make a window for anything but a group-id-shaped string, nor more than twelve', () => {
+    const { r, S } = mk({ chatBreakouts: [] });
+    for (const bad of ['../etc', 'Guild', '', 'a b', 'x'.repeat(17), null, undefined, 5]) r._chatBreakoutSet(bad, true);
+    expect(S.log.created).toEqual([]);
+    expect(r.cfg().chatBreakouts).toEqual([]);
+    for (const g of 'abcdefghijklmnop'.split('')) r._chatBreakoutSet(g, true);
+    expect(r.cfg().chatBreakouts).toHaveLength(12);
   });
 });
 

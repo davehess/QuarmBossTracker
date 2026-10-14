@@ -96,6 +96,7 @@ describe('every apply*Visibility refuses to drive a destroyed window', () => {
         const run = new Function('__win', '__setup', '__cfg', `
           let ${v} = __win;
           let setupMode = __setup, _canvasArrange = false, _mapFull = false;
+          const chatBreakouts = new Map();   // applyChatVisibility also drives the Chat overlay's broken-out groups
           function loadConfig() { return __cfg; }
           function _eqGateOk() { return true; }
           function _blindForceOpen() { return false; }
@@ -121,6 +122,7 @@ describe('every apply*Visibility refuses to drive a destroyed window', () => {
       const fn = new Function('__win', '__calls', `
         let ${v} = __win;
         let setupMode = true, _canvasArrange = false, _mapFull = false;
+        const chatBreakouts = new Map();
         function loadConfig() { return { overlaysLocked: true }; }
         function _eqGateOk() { return true; }
         function _blindForceOpen() { return false; }

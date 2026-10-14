@@ -38529,6 +38529,10 @@ const CHAT_ABBREV_TAGS = {
   fr: 'tell', to: 'tell',
 };
 const CHAT_ABBREV_RX = /^\[[^\]]+\]\s+\[([A-Za-z]{1,6}|\d{1,2})\]\s+\[([^\]]{1,40})\]:\s?(.*)$/;
+// The Seer's "nothing new to unlock" answer. It is not a flag recital (parsePopFlagLine must not upload
+// it), but the game prints it into the same tell window, so the chat feed shows it beside the recitals.
+const _SEER_QUIET_RX = /^You manage to recover some images from your childhood/;
+const CHAT_SEER_NAME = 'Seer';
 
 function _chatCleanText(raw) {
   let t = String(raw == null ? '' : raw);
@@ -38599,6 +38603,19 @@ function classifyChatLine(line, selfName) {
     else if (ch === 'say' && _chatIsPetOrMerchantText(text)) return null;
     const mine = !!selfName && name.toLowerCase() === String(selfName).toLowerCase();
     return { ch, who: name, text, t, self: mine, npc: ch === 'npc' };
+  }
+  // The PoP flag Seer's recital (the guild lead, 2026-10-14: "tells from seer did not come through"). The
+  // game prints these sentences into the TELL window, but the log line has no "X tells you," in front of
+  // it: just the sentence after the timestamp. The sentence table is parsePopFlagLine's own
+  // (_POP_RECITAL_RX), reused here, not copied. They show wherever tells show and follow the same Tells
+  // gate (channel 'tell'). The speaker is a label: the line names nobody.
+  const at = line.indexOf('] ');
+  if (at > 0) {
+    const sentence = line.slice(at + 2);
+    if (_POP_RECITAL_RX.test(sentence) || _SEER_QUIET_RX.test(sentence)) {
+      const text = _chatCleanText(sentence);
+      if (text) return { ch: 'tell', who: CHAT_SEER_NAME, text, t, self: false, npc: true };
+    }
   }
   return null;
 }

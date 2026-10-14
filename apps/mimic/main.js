@@ -166,6 +166,11 @@ let mobInfoWindow = null;
 let buffQueueWindow = null;
 let whoWindow     = null;
 let chatWindow    = null;   // the Chat overlay (this PC's own chat feed, chat.html) - key 'chat', cfg.showChat
+// Chat groups broken out into their own windows (chat.html?groups=<id>; the guild lead, 2026-10-14: "add
+// breakout abilities for different tabs by right clicking the name of the chat type"). A VARIABLE number
+// of windows, so they are not `let`s: one per group id, keyed 'chat:<id>' in _overlayEntries() like
+// 'panel:<key>', and they live exactly when the Chat overlay does (see _syncChatBreakouts).
+const chatBreakouts = new Map(); // group id -> BrowserWindow
 let melodyWindow  = null;
 let zealWindow    = null;
 let threatWindow  = null;
@@ -287,6 +292,9 @@ function defaultConfig() {
     // byChar remembers which channel chips each character has switched off.
     showChat: false,
     chatPrefs: {},
+    // Channel groups broken out into their own windows (group ids; chat.html?groups=<id>). Each remembers its
+    // own place under chatBounds_<id>. Empty = everything stays in the one Chat window.
+    chatBreakouts: [],
     onboarded: false,        // false until user dismisses or completes loading
     // Per-character "do not transmit" list. Names are case-sensitive as they
     // appear in the eqlog filename (eqlog_<Name>_pq.proj.txt → <Name>). The
@@ -1323,6 +1331,9 @@ function _boundsKeyForWindow(win) {
   if (win === mapTimersWindow) return 'mapTimersBounds';
   for (const [panelKey, w] of panelOverlays.entries()) {
     if (w === win) return 'panelBounds_' + panelKey;
+  }
+  for (const [gid, w] of chatBreakouts.entries()) {
+    if (w === win) return 'chatBounds_' + gid;
   }
   return null;
 }
@@ -4079,6 +4090,9 @@ function _overlayEntries() {
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
   }
+  for (const [gid, win] of chatBreakouts.entries()) {
+    if (win && !win.isDestroyed()) out.push(['chat:' + gid, win]);
+  }
   return out;
 }
 
@@ -6768,14 +6782,108 @@ function createChatOverlay() {
     applyOverlayInteractivity();
     applyOverlayOpacity(chatWindow, 'chat');
   });
+  // The groups the guild lead broke out last time come back with the window they were broken out of.
+  try { _syncChatBreakouts(); } catch (e) { void e; }
 }
+// The Chat window and every broken-out group share ONE gate: a breakout is shown exactly when Chat is.
 function applyChatVisibility() {
-  if (!_live(chatWindow)) return;
   const cfg = loadConfig();
   const unlocked  = setupMode || cfg.overlaysLocked === false;
   const shouldShow = unlocked || (cfg.showChat && !cfg.hideOverlays && _eqGateOk(cfg));
-  if (shouldShow) chatWindow.showInactive(); else chatWindow.hide();
+  if (_live(chatWindow)) { if (shouldShow) chatWindow.showInactive(); else chatWindow.hide(); }
+  for (const w of chatBreakouts.values()) {
+    if (!_live(w)) continue;
+    if (shouldShow) w.showInactive(); else w.hide();
+  }
 }
+
+// ── Chat breakouts (design A, started from a chip's right-click) ──────────────────────────────────────────
+// A broken-out group is the same chat.html loaded with ?groups=<id>: it polls /api/chat like the main window
+// and paints only that group; the main window hides that group's lines while it is out. cfg.chatBreakouts is
+// the list, so they come back after a restart. The windows follow the Chat overlay (one rule, below), which is
+// what makes Chat off / hide-all / the EverQuest gate close them too.
+const CHAT_BREAKOUT_MAX = 12;
+const _CHAT_GROUP_RX = /^[a-z]{1,16}$/;
+function _chatBreakoutIds(cfg) {
+  const raw = (cfg && Array.isArray(cfg.chatBreakouts)) ? cfg.chatBreakouts : [];
+  const out = [];
+  for (const g of raw) if (typeof g === 'string' && _CHAT_GROUP_RX.test(g) && out.indexOf(g) === -1) out.push(g);
+  return out.slice(0, CHAT_BREAKOUT_MAX);
+}
+function _chatBreakoutGroup(win) {
+  for (const [gid, w] of chatBreakouts.entries()) if (w === win) return gid;
+  return null;
+}
+// Tell the Chat window and every breakout something changed (the list of broken-out groups, or the prefs).
+function _pushChatWindows(channel, payload) {
+  for (const w of [chatWindow].concat(Array.from(chatBreakouts.values()))) {
+    if (_live(w)) { try { w.webContents.send(channel, payload); } catch { /* mid-close */ } }
+  }
+}
+function createChatBreakout(gid) {
+  if (_agentOnly()) return;
+  if (!_CHAT_GROUP_RX.test(String(gid))) return;
+  if (_live(chatBreakouts.get(gid))) return;
+  const boundsKey = 'chatBounds_' + gid;
+  const n = chatBreakouts.size;
+  const b = _resolveBounds(boundsKey, boundsKey + 'Sig', { x: 60 + 28 * n, y: 560 - 28 * n, width: 340, height: 200 });
+  const win = new BrowserWindow({
+    title: 'Wolf Pack miMIC — Chat overlay (' + gid + ')',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: _OVERLAY_MIN_W, minHeight: 90,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: _wpPrefs('Chat ' + gid),
+  });
+  chatBreakouts.set(gid, win);
+  win.setAlwaysOnTop(true, 'screen-saver');
+  win.setVisibleOnAllWorkspaces(true);
+  win.loadFile('chat.html', { query: { groups: gid } });
+  win.on('moved',  () => _persistBounds(boundsKey, win));
+  win.on('resize', () => _persistBounds(boundsKey, win));
+  win.on('closed', () => { if (chatBreakouts.get(gid) === win) chatBreakouts.delete(gid); });
+  win.once('ready-to-show', () => {
+    win.webContents.send('agent-port', agentPort);
+    applyChatVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(win, 'chat:' + gid);
+  });
+}
+// Make the windows match the list: one per broken-out group while the Chat overlay is wanted, none otherwise.
+// Called by every pass that builds or frees overlay windows (_materializeEnabledOverlays and
+// _reapDisabledOverlays), so hide-all, Chat off and the EverQuest gate all take the breakouts with the window.
+function _syncChatBreakouts() {
+  if (_agentOnly()) return;
+  let cfg; try { cfg = loadConfig(); } catch { return; }
+  const chatEntry = _OVERLAY_WINDOWS.find(e => e.key === 'chat');
+  const want = (chatEntry && _overlayWanted(cfg, chatEntry)) ? _chatBreakoutIds(cfg) : [];
+  for (const [gid, win] of Array.from(chatBreakouts.entries())) {
+    if (_live(win) && want.indexOf(gid) !== -1) continue;
+    if (_live(win) && _inSingleSetup(win)) continue;
+    try { _flushBounds('chatBounds_' + gid, win); } catch { /* best effort */ }
+    chatBreakouts.delete(gid);
+    try { if (_live(win)) win.destroy(); } catch { /* already gone */ }
+    appendAgentLog(`[overlay] freed chat:${gid} — ${_chatBreakoutIds(cfg).indexOf(gid) === -1 ? 'put back in Chat' : 'Chat is not showing'}\n`);
+  }
+  for (const gid of want) if (!_live(chatBreakouts.get(gid))) createChatBreakout(gid);
+}
+// Break a group out (on) or put it back (off). Saves the list, builds or frees the window, and tells every
+// Chat window so the main one hides or shows that group's lines and its chip says "out".
+function _chatBreakoutSet(gid, on) {
+  gid = String(gid || '');
+  if (!_CHAT_GROUP_RX.test(gid)) return _chatBreakoutIds(loadConfig());
+  const cfg = loadConfig();
+  const ids = _chatBreakoutIds(cfg).filter(x => x !== gid);
+  if (on) ids.push(gid);
+  cfg.chatBreakouts = ids.slice(0, CHAT_BREAKOUT_MAX);
+  saveConfig(cfg);
+  _pushChatWindows('chat-breakouts', cfg.chatBreakouts);
+  // Deferred a tick: a breakout's own ✕ / Put back lands here from inside that window.
+  setImmediate(() => { try { _syncChatBreakouts(); applyChatVisibility(); applyOverlayInteractivity(); } catch (e) { void e; } });
+  return cfg.chatBreakouts;
+}
+ipcMain.handle('chat-breakout', (_e, gid, on) => _chatBreakoutSet(gid, !!on));
+ipcMain.handle('chat-breakouts-get', () => _chatBreakoutIds(loadConfig()));
 // What the Chat overlay remembers (cfg.chatPrefs): the font size and the three opt-in switches are shared;
 // which channel chips are switched OFF is kept per character. Whitelisted and clamped, because the
 // renderer hands these over.
@@ -6804,6 +6912,9 @@ ipcMain.handle('chat-prefs-set', (_e, char, patch) => {
   }
   cfg.chatPrefs = p;
   saveConfig(cfg);
+  // The switches ride every window's poll and the agent keeps the LAST one it was handed, so a broken-out
+  // window holding a stale officer/group/custom value would flip the capture off under the main window.
+  _pushChatWindows('chat-prefs-changed');
   return _chatPrefsPayload(cfg, char);
 });
 
@@ -7410,6 +7521,7 @@ function _materializeEnabledOverlays() {
     try { e.create(); }
     catch (err) { appendAgentLog(`[overlay] could not create ${e.key}: ${err && err.message}\n`); }
   }
+  try { _syncChatBreakouts(); } catch (err) { appendAgentLog(`[overlay] could not sync chat breakouts: ${err && err.message}\n`); }
 }
 
 // A window can die WITHOUT going through the reaper below: the user closes an
@@ -7459,6 +7571,8 @@ function _reapDisabledOverlays() {
               : 'EverQuest is not running';
     appendAgentLog(`[overlay] freed ${e.key} — ${why}\n`);
   }
+  // The Chat overlay's broken-out groups go with it (and stay put while it stays).
+  try { _syncChatBreakouts(); } catch { /* never break the reap */ }
 }
 
 // Convenience: refresh every overlay's visibility at once. Used by the EQ-
@@ -10320,6 +10434,10 @@ ipcMain.handle('hide-overlay', (e) => {
       try { canvasWindow.hide(); } catch {}
       applyTriggerVisibility();
       try { buildTrayMenu(); } catch {}
+    } else if (_chatBreakoutGroup(win)) {
+      // ✕ on a broken-out window puts that group back in the Chat window, so a channel is never left
+      // with no window showing it. (✕ on the Chat window itself turns Chat off and takes them all.)
+      _chatBreakoutSet(_chatBreakoutGroup(win), false);
     } else {
       for (const [key, w] of panelOverlays.entries()) {
         if (w === win) { try { w.close(); } catch {} panelOverlays.delete(key); break; }
@@ -10761,6 +10879,8 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   }
   saveConfig(merged);
   _broadcastMute(merged);
+  // Tells on/off decides whether the Chat windows ask for tells: they re-read their prefs (all of them, together).
+  if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'tellsMode')) _pushChatWindows('chat-prefs-changed');
   if (incoming && Object.prototype.hasOwnProperty.call(incoming, 'standInPointer')) _broadcastPointer(merged);
   if (incoming && ['hoverOpacity', 'hoverFadeDelay', 'hoverFadeDur'].some(k => Object.prototype.hasOwnProperty.call(incoming, k))) {
     try { _hoverSettingsChanged(); } catch {}
@@ -12188,6 +12308,7 @@ function _windowLabelsByPid() {
     put(e.get(), (NAMES[e.key] || e.key) + (cfg[e.flag] ? '' : ' (switched OFF)'));
   }
   for (const [key, win] of panelOverlays.entries()) put(win, 'panel overlay · ' + key);
+  for (const [gid, win] of chatBreakouts.entries()) put(win, 'Chat breakout · ' + gid);
   put(mainWindow,      'Dashboard');
   put(settingsWindow,  'Settings');
   put(uiStudioWindow,  'UI Studio');

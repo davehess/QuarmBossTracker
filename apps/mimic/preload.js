@@ -1039,6 +1039,14 @@ contextBridge.exposeInMainWorld('mimic', {
   // setChatPrefs(char, patch) stores a whitelisted patch in Mimic's config and returns the same shape.
   getChatPrefs:      (char)        => ipcRenderer.invoke('chat-prefs-get', char || ''),
   setChatPrefs:      (char, patch) => ipcRenderer.invoke('chat-prefs-set', char || '', patch || {}),
+  // Breakouts: chatBreakout(groupId, true|false) breaks a channel group out into its own window (chat.html
+  // ?groups=<id>) or puts it back, and resolves to the list of broken-out ids. getChatBreakouts() reads the
+  // list; onChatBreakouts(cb) hears it change; onChatPrefsChanged(cb) hears that another Chat window changed
+  // the shared prefs, so every window asks the agent for the same thing.
+  chatBreakout:      (groupId, on) => ipcRenderer.invoke('chat-breakout', String(groupId || ''), !!on),
+  getChatBreakouts:  ()            => ipcRenderer.invoke('chat-breakouts-get'),
+  onChatBreakouts:   (cb)          => ipcRenderer.on('chat-breakouts', (_e, ids) => cb(ids)),
+  onChatPrefsChanged: (cb)         => ipcRenderer.on('chat-prefs-changed', () => cb()),
 
   // ── Timers canvas (canvas.html) ───────────────────────────────────────────
   // canvasState() → { res, layout, edit, displays }; canvasSave(layout) stores
