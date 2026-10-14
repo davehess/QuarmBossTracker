@@ -10580,3 +10580,15 @@ the Bastion of Thunder at the time.
   overlay's ⚙ switches for them defaulted off.
 - **Call:** group and joined channels default on (`p.group !== false`, `p.custom !== false`); officer stays opt-in. A switch turned off
   stays off. Still memory-only on the player's PC; `PRIVACY.md` and `/privacy` updated to match.
+
+### 312. UI Studio chat routing: real channel names, layout ↔ routing link (Mimic beta `a730c5be`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"These Channels need to say what's actually in these chats, not just Ch 26 or Ch 46"*,
+  *"When you select one of these windows it should highlight the chat window routing"*, *"Also the labels are wrong"*, with the
+  in-game Filters menus of two windows as ground truth.
+- **Call:** `ChannelMap<N>` is the filter-menu position, not a colour id. Ids 0–40 from MacroQuest eqlib `eChatChannel` (corroborated by
+  Zeal's `chatfilter.cpp` offsets), 41–56 from Zeal's `Extended_ChannelMaps` in saved order; both in-game windows are golden fixtures and
+  match exactly. The old table was invented and wrong from id 3 on. Unsourced ids stay "Ch N"; no guesses.
+- **Also:** /join slot names from eqclient.ini's autojoin list, passwords cut in main; selection is one state across layout and cards; chips
+  drop onto layout rectangles; stacked titles no longer overlap.
+- **Open:** the autojoin order = slot order assumption is unverified (tooltip says so); the default-channel pill names only 3 = Tell
+  (`ChatWindow<N>_DefaultChannel` values beyond that need an in-game capture).
