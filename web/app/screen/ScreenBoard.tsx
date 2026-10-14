@@ -129,7 +129,7 @@ export default function ScreenBoard({ canDrive, plan, preflags = null }: {
       if (verdict.show) setState(d);
     },
   });
-  const { stateErr, auctions, kick: kickState } = feeds;
+  const { stateErr, auctions, recap, kick: kickState } = feeds;
   const positions: Positions | null = feeds.feed?.data ?? null;
   const signedOut = feeds.signedOut || feedSignedOut;
   // The map's slice of it, kept the same object until it changes so the memoised map is not redrawn by a clock.
@@ -241,7 +241,7 @@ export default function ScreenBoard({ canDrive, plan, preflags = null }: {
             </>
           )}
           {mode === 'loot' && <LootView feed={feed} auctions={auctions} now={panelNow} />}
-          {mode === 'overview' && <OverviewView positions={positions} feed={feed} now={panelNow} preflags={preflags} />}
+          {mode === 'overview' && <OverviewView positions={positions} feed={feed} now={panelNow} preflags={preflags} recap={recap} />}
         </div>
 
         <Rail state={state} feed={feed} positions={positions} />
