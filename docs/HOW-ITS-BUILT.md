@@ -1103,6 +1103,11 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   mine / others. `chatPrefs.spellShow` / `skillShow` (booleans, default true) filter them via `catShown` beside `meleeShown`;
   `--c-spell-{mine,on_me,others}` / `--c-skill-{mine,others}` shade them. A self-buff landing on you reads on_me (the
   `cast_on_you` text cannot say who cast it).
+  **Round 7 (Mimic beta `e6c95d9e`, §326):** chips render `MAIN_CHIPS` (guild, raid, group shown as "Party" via `CHIP_LABEL`, say,
+  tell, ooc) first, then a `More ▾` button holding every other group (`paintChips` / `moreHtml`; "More (N)" counts on-chips while
+  closed). The ⚙ keeps text settings + Group/Officer/Custom; Melee/Spells/Skills switches, the "shows" rows, Channels and the
+  notes live in `<details id="moreset">`. Both open states are per window in localStorage (`wpChatMore:<win>`,
+  `wpChatMoreSet:<win>`), failing closed.
 - **Seer paste on /pop/guide** (web 1.8.154 · beta, §304): `web/app/pop/guide/SeerPaste.tsx` (collapsed `<details>` atop all guide
   layouts); reader `web/lib/popRecital.ts` (`parseRecital`, `heldClosure`, `zoneViews`, `recitalRows`; table copied from
   `utils/popFlagStages.js`, parity-tested); guide join `web/lib/popGuideSeer.ts` (`STEP_GUIDE`, `guideStepsProven`); save
