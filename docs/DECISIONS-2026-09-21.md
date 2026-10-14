@@ -10234,3 +10234,22 @@ Harmony, Hide/Sneak for non-rogues).
   `slow_mitigation` goes in the mirror. Nothing reads the new columns yet: Target Info and the mob-info route
   are the next consumers.
 - **Self-host note:** additive columns on a table that is already mirrored; no storage cost worth a §3 line.
+
+### 291. Lord Mobsincamp's voice: the guild lead performs it, Seed-VC on V5 re-voices it (2026-10-14)
+
+- **The pick (the guild lead):** *"let's do B on v5"*: of A (effects only), B (voice conversion on V5) and C
+  (a paid cloud speech-to-speech service). The guild lead records the script; Seed-VC (zero-shot voice
+  conversion, GPL-3.0, pinned to commit `51383efd`) keeps the delivery and swaps the timbre; an ffmpeg ghost
+  chain (pitch, faint high double, echo, loudness level) goes on top.
+- **The target voice is synthetic, on purpose:** four reference clips made with Gemini TTS voices (Algenib,
+  Gacrux, Charon, Enceladus) reading a Lord Mobsincamp line, under 25 s each (Seed-VC clips longer references).
+  No real person's voice is cloned.
+- **Install shape:** a self-contained `C:\wolfvoice` on V5 (own Python 3.10 venv, own PyTorch 2.7.1 cu128,
+  own model cache), so it never touches the image-generation stack. Upstream's requirements file names torch
+  twice and cannot install as written; the script installs torch first and the rest without the torch lines
+  (and without `resemblyzer`, which is evaluation-only and needs a compiler on Windows). The kit lives in the
+  session scratchpad and was handed over as a zip; nothing of it is in the repo.
+- **Not yet:** a live wolf voice. Home Assistant Voice PE can play the finished files as announcements, but a
+  speaking, answering Lord Mobsincamp needs a TTS that can clone the target voice plugged into Home
+  Assistant's own voice pipeline. `huggingface/speech-to-speech` speaks the OpenAI Realtime protocol, not Home
+  Assistant's, so it does not plug into the PE directly.
