@@ -165,7 +165,8 @@ describe('the overlays\' rules this relies on, and the dashboard\'s wording', ()
 
   it('the trigger overlay skips a charm fire and does not speak a muted one', async () => {
     expect(triggers).toMatch(/function fire\(t\)\{\s*if \(t && t\.charm\) return;/);
-    expect(triggers).toContain('if (!t.mute) speak(spoken,');
+    // (a callout whose sound plays instead of speaking is skipped too, 2026-10-14)
+    expect(triggers).toContain('if (!t.mute && !replaced) speak(spoken,');
   });
 
   it('the Charm overlay speaks a charm fire unless it is marked already spoken', async () => {

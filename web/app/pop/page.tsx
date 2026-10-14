@@ -32,24 +32,32 @@
 // on the step before it (the checklist flag is held, the step is not); 🔇 marks a step the server prints no line
 // for. The zone view adds a Steps list: who can enter the zone and still needs each one.
 //
-// Views: default = chart + planner · ?zone=<key> = who's in/missing ·
-// ?view=matrix = roster × zone table · ?view=mine = the signed-in member's
-// own characters (mains AND alts — see the scope note below).
-//
-// ?scope=mains (default) | all — governs the guild-wide surfaces (chart,
-// matrix, and the "PoP spells ... still need" table below). Default
-// is mains: that's the number an officer planning a raid night cares about.
-// The planner ignores it: every number there is mains with alts in parentheses.
-// It does NOT apply to ?view=mine — PoP flagging is commonly done on alts
-// (a chance at Justice trial loot, a Storms-quest medallion run, whatever's
-// up), so a member tracking their OWN roster needs every character they own,
-// not just the one flagged as their main (the guild lead, 2026-08-26: "due to the
-// nature of pop flagging they may do it for many of their toons and we
-// shouldn't only track mains").
+// Two toggles (web/lib/popScope.ts; the guild lead, 2026-10-14: "start on your characters by default, with mains
+// being the second toggle and all characters being the third (grouped by mains)"):
+//   ?scope=mine | mains | all   whose characters the page counts. A bare /pop opens on mine (mains when the viewer
+//                               has no linked characters). A link that names a zone, view or alts but no scope
+//                               keeps its old meaning, mains.
+//   ?view=chart | matrix        how they are drawn: chart + planner, or the roster × zone table. mine's Matrix is
+//                               the My Characters table (every character the viewer owns, mains AND alts; PoP
+//                               flagging is commonly done on alts, the guild lead, 2026-08-26: "they may do it for
+//                               many of their toons and we shouldn't only track mains"); all's Matrix nests each
+//                               alt under its main (?alts=flat for the flat list). ?view=mine is the old spelling
+//                               of ?scope=mine. ?zone=<key> = who's in/missing.
+// Mains or All also governs the "PoP spells ... still need" table at the bottom (mains only, or every character).
+// The planner counts the scope's characters: mains with alts in parentheses, or just yours on mine.
 //
 // ?all=1 — My Characters and the spell-needs table leave out Traders, characters under level 46 and
 // characters their owner hid, and fold the ones with no known level into a collapsed area
 // (web/lib/listableChars.ts); this shows all of them inline again. Not a scope: it composes with ?scope and ?view.
+//
+// ?flags=a | b — the "Latest flags" strip above the page (web/lib/popLatestFlags.ts; the guild lead, 2026-10-14), beta
+// comparison: a = newest first, b = grouped by flag step; unset = no strip.
+//
+// ?alts=group — the Matrix with alts nested under their main, each family collapsed (web/lib/popAltGroups.ts; the
+// guild lead, 2026-10-14), beta comparison. Without ?view it opens the Matrix; it lists every raid alt whatever
+// ?scope says. &sort=latest orders families (and alts inside one) by their newest flag change, &open=1 opens every
+// family. Changes in the last 24 h / 3 days are highlighted. It is now the Matrix of All characters by default
+// (the guild lead, 2026-10-14); ?alts=flat brings the flat list back, and on Mains it stays opt-in.
 //
 // ?pclass=enc,wiz · ?psort=<column> · ?pdir=asc|desc — the spell-needs table's class filter and column sort
 // (the guild lead, 2026-10-09). Server-side, validated against whitelists in web/lib/popSpellsView.ts, carried by
@@ -86,6 +94,13 @@ import EssencesQueue from './EssencesQueue';
 import { loadEssenceQueue } from './essencesData';
 import { demoEssenceQueue } from '@/lib/essencesQueue';
 import { GUILD_TAG } from '@/lib/guild';
+import LatestFlags from './LatestFlags';
+import { latestFlagsFor } from '@/lib/popLatestFlags';
+import AltGroupMatrix from './AltGroupMatrix';
+import { changesByCharacter, groupFamilies, parseAltsView } from '@/lib/popAltGroups';
+import { POP_SCOPES, resolvePopView } from '@/lib/popScope';
+import { loadSpellInfo, spellIdsOf, type SpellInfo } from '@/lib/popMissingSpells';
+import MissingSpells from './MissingSpells';
 
 export const dynamic = 'force-dynamic';
 export const metadata = {
@@ -93,7 +108,7 @@ export const metadata = {
   description: 'Every Planes of Power flag gate by tier, how many raiders hold each flag and who can enter each zone today.',
 };
 
-type FlagRow = { character: string; flag_key: string; earned_at: string; boss: string | null; zone: string | null };
+type FlagRow = { character: string; flag_key: string; earned_at: string; boss: string | null; zone: string | null; source: string };
 // flags = recorded + seen + looted + self; seen = the flags only /who proves (a character standing in a gated plane);
 // looted = the flags only loot proves (a character that looted in one; Mimic and /who outrank it, so a flag they
 // prove is never here); self = the flags only the owner's own tick holds (Mimic, /who and loot all outrank it).
@@ -154,11 +169,10 @@ const KIND_ICONS: Record<string, string> = {
 };
 
 export default async function PopFlagsPage(
-  { searchParams }: { searchParams: Promise<{ zone?: string; view?: string; scope?: string; v?: string; demo?: string; all?: string; pclass?: string; psort?: string; pdir?: string }> },
+  { searchParams }: { searchParams: Promise<{ zone?: string; view?: string; scope?: string; v?: string; demo?: string; all?: string; pclass?: string; psort?: string; pdir?: string; flags?: string; alts?: string; sort?: string; open?: string }> },
 ) {
-  const { zone: zoneKey, view, scope: scopeParam, v, demo, all: allParam, pclass: pclassParam, psort: psortParam, pdir: pdirParam } = await searchParams;
+  const { zone: zoneKey, view, scope: scopeParam, v, demo, all: allParam, pclass: pclassParam, psort: psortParam, pdir: pdirParam, flags: flagsParam, alts: altsParam, sort: sortParam, open: openParam } = await searchParams;
   const showAll = allParam === '1';
-  const scope: 'mains' | 'all' = scopeParam === 'all' ? 'all' : 'mains';
   const { data: { user } } = await supabaseServer().auth.getUser();
   // Keep the query through sign-in, so a shared ?v=b&demo=1 or ?zone= link still opens what it names.
   if (!user) redirect(`/auth/signin?next=${encodeURIComponent('/pop?' + new URLSearchParams(await searchParams as Record<string, string>))}`);
@@ -183,6 +197,18 @@ export default async function PopFlagsPage(
     loadHiddenNames(sbAdmin),
   ]);
   const spellNeedsAll = groupNeeds(needRows);
+  // Whose flags the page is about and how they are drawn (web/lib/popScope.ts): My Characters, Mains, All characters,
+  // and Chart or Matrix. A bare /pop opens on the viewer's own characters (the guild lead, 2026-10-14); a link that
+  // names a zone, view or scope keeps the meaning it had.
+  const choice = resolvePopView({ scope: scopeParam, view, alts: altsParam, zone: zoneKey },
+    { signedIn: !!user, hasCharacters: myCharsAll.length > 0 });
+  const scope = choice.scope;
+  const altsView = parseAltsView({ alts: choice.groupAlts ? 'group' : undefined, sort: sortParam, open: openParam });
+  // "Latest flags" strip (the guild lead, 2026-10-14), two layouts on beta until one is picked:
+  // ?flags=a is newest-first, ?flags=b is grouped by step. No ?flags= is the page as production has it. Its own
+  // param because ?v=b already opens the Essences queue's layout b above.
+  const latestLayout: 'a' | 'b' | null = flagsParam === 'a' || flagsParam === 'b' ? flagsParam : null;
+  const latestRows = latestLayout ? await latestFlagsFor(sbAdmin, traderNames, flaggedHidden) : null;
 
   // Traders, characters under level 46 and characters their owner hid are tucked away on the two lists
   // that name individual characters (My Characters and the spell-needs table), behind ?all=1 (the guild
@@ -228,6 +254,11 @@ export default async function PopFlagsPage(
   // here, because the character list is short and known).
   const myNameSet = new Set(myChars.map(c => c.name.toLowerCase()));
   const myNeeds = spellNeeds.filter(n => myNameSet.has(n.name.toLowerCase()));
+  // What each missing spell does: one catalog lookup for the ids the list names (web/lib/popMissingSpells.ts),
+  // made only on My Characters, the one scope that shows the list.
+  const missingInfo = scope === 'mine' && myNeeds.length > 0
+    ? await loadSpellInfo(sbAdmin, spellIdsOf(myNeeds))
+    : new Map<number, SpellInfo>();
   let mySpellbookNames = new Set<string>();
   if (myChars.length > 0) {
     // Which of them have any spellbook rows: asked of the database as one lowered name each
@@ -255,7 +286,7 @@ export default async function PopFlagsPage(
     // flags so far, which would draw a half-flagged guild as if it were the whole one.
     // 'hail' rows are witnessed hails (who talked to which NPC), evidence and not flags (§119).
     return selectAll<FlagRow>((from, to) => sb.from('pop_flags')
-      .select('character, flag_key, earned_at, boss, zone')
+      .select('character, flag_key, earned_at, boss, zone, source')
       .not('flag_key', 'in', '(unmapped,hail)')
       .order('earned_at', { ascending: true }).order('id', { ascending: true })
       .range(from, to));
@@ -316,7 +347,7 @@ export default async function PopFlagsPage(
     mappedFlagRows(),
     sb.from('pop_flags').select('id', { count: 'exact', head: true }).eq('flag_key', 'unmapped'),
     sb.from('characters')
-      .select('name, rank, active')
+      .select('name, rank, active, main_name')
       .eq('guild_id', GUILD_TAG)
       .in('rank', [...RAIDER_RANKS, ...RAID_ALT_RANKS])
       .limit(1000),
@@ -333,7 +364,7 @@ export default async function PopFlagsPage(
   const hasMarkOfJustice = (name: string) => !!marks.get(name.toLowerCase())?.has(MARK_OF_JUSTICE.name);
 
   // Levels from each character's last /who (who_directory), a hundred names a request.
-  const rosterRows = (rosterRaw ?? []) as { name: string; rank: string | null; active: boolean | null }[];
+  const rosterRows = (rosterRaw ?? []) as { name: string; rank: string | null; active: boolean | null; main_name: string | null }[];
   const levelOf = new Map<string, number>();
   for (let i = 0; i < rosterRows.length; i += 100) {
     const { data } = await sb.from('who_directory').select('character_key, level')
@@ -442,7 +473,10 @@ export default async function PopFlagsPage(
   // reads `scopedChars`, not `chars`. Default is mains (the raider ranks); `?scope=all` adds the raid
   // alts. `byChar` (unscoped) stays around only for the My Characters view, which always wants the
   // viewer's full roster regardless of scope.
-  const scopedChars = scope === 'all' ? chars : chars.filter(c => c.main);
+  // On My Characters it is the viewer's own characters that are on the raid roster.
+  const scopedChars = scope === 'all' ? chars
+    : scope === 'mine' ? chars.filter(c => ownedKeys.has(c.name.toLowerCase()))
+    : chars.filter(c => c.main);
 
   // Counts.
   const flagCount = new Map<string, number>();
@@ -524,9 +558,24 @@ export default async function PopFlagsPage(
   plan.sort((a, b) => b.leverage.mains - a.leverage.mains || b.gains.mains - a.gains.mains
     || b.leverage.alts - a.leverage.alts || b.gains.alts - a.gains.alts || a.zone.tier - b.zone.tier);
   const planTop = plan.filter(p => p.leverage.mains + p.leverage.alts > 0 || p.gains.mains + p.gains.alts > 0).slice(0, 12);
-  const MainsAlts = ({ s }: { s: Split }) => <>{s.mains}{scope === 'all' && <span className="text-dim"> ({s.alts})</span>}</>;
+  const MainsAlts = ({ s }: { s: Split }) => <>{s.mains}{scope !== 'mains' && <span className="text-dim"> ({s.alts})</span>}</>;
 
   const selected = zoneKey ? POP_ZONE_BY_KEY[zoneKey] ?? null : null;
+  // The Matrix of Mains or All characters; on All it is grouped by default, and ?alts=group opens it on Mains too.
+  // My Characters has its own table (mineView below), which is its Matrix.
+  const matrixView = !selected && choice.view === 'matrix' && scope !== 'mine';
+  const mineView = !selected && choice.view === 'matrix' && scope === 'mine';
+  // The grouped Matrix lists every raid alt under its main whatever the scope says (grouping them is the point),
+  // minus the characters their owner hid unless ?all=1. A main that is not on the list leaves its alts standing alone.
+  const nowMs = Date.now();
+  const mainNameOf = new Map(rosterRows.map(r => [r.name.toLowerCase(), r.main_name]));
+  const rootOf = (lower: string) => mainNameOf.get(lower)?.toLowerCase() ?? null;
+  const changes = matrixView && altsView.group ? changesByCharacter(flagRows) : new Map();
+  const families = matrixView && altsView.group
+    ? groupFamilies(chars.filter(c => showAll || !flaggedHidden.has(c.name.toLowerCase())), {
+        rootOf, latestOf: k => changes.get(k)?.[0]?.at ?? null, sort: altsView.sort === 'latest' ? 'latest' : 'default',
+      })
+    : [];
   const topLevel = POP_ZONES.filter(z => !z.subZoneOf);
   const childrenOf = (key: string) => POP_ZONES.filter(z => z.subZoneOf === key);
   const gatedZones = POP_ZONES.filter(z => z.requires.length > 0);
@@ -539,9 +588,16 @@ export default async function PopFlagsPage(
   function hrefFor(overrides: {
     view?: string | null; zone?: string | null; scope?: string | null; all?: string | null;
     pclass?: string | null; psort?: string | null; pdir?: string | null;
+    alts?: string | null; sort?: string | null; open?: string | null;
   }) {
+    // The scope is always written out, so a link never falls back to the bare-/pop default; a view the URL named is
+    // carried along, one it did not name resets to the scope's own (Chart for Mains and All, the table for My Characters).
+    // alts is carried only as the URL had it ('group' or 'flat'), never as the grouping All characters implies.
     const next = {
-      view: view ?? null, zone: zoneKey ?? null, scope: scope === 'all' ? 'all' : null, all: showAll ? '1' : null,
+      view: choice.explicitView ? choice.view : null, zone: zoneKey ?? null, scope,
+      all: showAll ? '1' : null,
+      alts: altsParam === 'group' || altsParam === 'flat' ? altsParam : null,
+      sort: altsView.sort === 'latest' ? 'latest' : null, open: altsView.open ? '1' : null,
       ...viewParams(spellView),
       ...overrides,
     };
@@ -550,6 +606,9 @@ export default async function PopFlagsPage(
     if (next.view) params.set('view', next.view);
     if (next.scope) params.set('scope', next.scope);
     if (next.all) params.set('all', next.all);
+    if (next.alts) params.set('alts', next.alts);
+    if (next.sort) params.set('sort', next.sort);
+    if (next.open) params.set('open', next.open);
     if (next.pclass) params.set('pclass', next.pclass);
     if (next.psort) params.set('psort', next.psort);
     if (next.pdir) params.set('pdir', next.pdir);
@@ -652,10 +711,10 @@ export default async function PopFlagsPage(
     const elig = eligibleCount.get(z.key) ?? 0;
     const kids = childrenOf(z.key);
     return (
-      <div className="bg-panel border border-border rounded-lg p-3 flex flex-col gap-2"
+      <div className="bg-panel border border-border rounded-lg p-4 flex flex-col gap-3"
            style={{ borderTop: `3px solid ${color}` }}>
-        <div className="flex items-start justify-between gap-2">
-          <Link href={`/pop?zone=${z.key}`} className="text-sm text-text font-semibold hover:underline leading-tight">
+        <div className="flex items-start justify-between gap-3">
+          <Link href={hrefFor({ zone: z.key })} className="text-sm text-text font-semibold hover:underline leading-snug">
             {z.name}{!z.verified && <span className="text-dim" title="gate unverified until launch"> *</span>}
           </Link>
           <span className={`text-[11px] px-1.5 py-0.5 rounded border whitespace-nowrap ${elig > 0 ? 'border-green/60 text-green' : 'border-border text-dim'}`}
@@ -664,7 +723,7 @@ export default async function PopFlagsPage(
           </span>
         </div>
         {z.requires.length > 0 && (
-          <div className="flex flex-wrap gap-1">
+          <div className="flex flex-wrap gap-1.5">
             {z.requires.map(f => (
               <span key={f} className="text-[10px] px-1.5 py-0.5 rounded bg-black/30 border border-border text-dim"
                     title={`${POP_FLAGS[f]?.label ?? f} — ${flagCount.get(f) ?? 0} have it${selfNote(f)}`}>
@@ -673,19 +732,19 @@ export default async function PopFlagsPage(
             ))}
           </div>
         )}
-        <ul className="space-y-0.5">
+        <ul className="space-y-2">
           {POP_STEPS[z.key] ? POP_STEPS[z.key].map(s => {
             const n = stepHolders(s.key);
             const selfOnly = stepSelfOnly(s.key);
             const waiting = s.checklist ? stepWaiting(s.key, s.checklist) : 0;
             return (
-              <li key={s.key} className="text-xs flex items-center justify-between gap-2" title={s.note}>
-                <span className="text-dim">
+              <li key={s.key} className="text-[13px] leading-5 flex items-baseline justify-between gap-3" title={s.note}>
+                <span className="text-dim min-w-0">
                   {KIND_ICONS[s.how] ?? KIND_ICONS.event} {s.label}
                   {s.where && <span className="text-dim/60"> · {s.where}</span>}
                   {s.silent && <span title="The server prints no flag line for this step; only the Seer's guided meditation shows it"> 🔇</span>}
                 </span>
-                <span className="text-[11px] whitespace-nowrap">
+                <span className="text-xs whitespace-nowrap shrink-0">
                   <span className={n > 0 ? 'text-green' : 'text-dim'}>👤 {n}</span>
                   {selfOnly > 0 && (
                     <span className="text-gold" title={`${selfOnly} of them ticked by their owners on the site, not seen by Mimic or /who`}> ☑{selfOnly}</span>
@@ -700,9 +759,9 @@ export default async function PopFlagsPage(
             const def = POP_FLAGS[f];
             const n = flagCount.get(f) ?? 0;
             return (
-              <li key={f} className="text-xs flex items-center justify-between gap-2">
-                <span className="text-dim">{KIND_ICONS[def?.kind ?? 'event']} {def?.label ?? f}{def && !def.verified && ' *'}</span>
-                <span className="text-[11px]">
+              <li key={f} className="text-[13px] leading-5 flex items-baseline justify-between gap-3">
+                <span className="text-dim min-w-0">{KIND_ICONS[def?.kind ?? 'event']} {def?.label ?? f}{def && !def.verified && ' *'}</span>
+                <span className="text-xs shrink-0">
                   <span className={n > 0 ? 'text-green' : 'text-dim'}>👤 {n}</span>
                   {(selfFlagCount.get(f) ?? 0) > 0 && (
                     <span className="text-gold" title={`${selfFlagCount.get(f)} of them ticked by their owners on the site, not seen by Mimic or /who`}> ☑{selfFlagCount.get(f)}</span>
@@ -713,7 +772,7 @@ export default async function PopFlagsPage(
           })}
         </ul>
         {z.key === 'justice' && (
-          <div className="flex flex-wrap gap-1" title="Trial marks held: looted in Justice, or in an uploaded inventory">
+          <div className="flex flex-wrap gap-1.5" title="Trial marks held: looted in Justice, or in an uploaded inventory">
             {JUSTICE_MARKS.map(m => (
               <span key={m.trial} className="text-[10px] px-1.5 py-0.5 rounded bg-black/30 border border-border text-dim">
                 {m.trial} <b className={(markCount.get(m.trial) ?? 0) > 0 ? 'text-gold' : 'text-dim'}>{markCount.get(m.trial) ?? 0}</b>
@@ -724,9 +783,9 @@ export default async function PopFlagsPage(
         {z.levelBypass && (
           <div className="text-[10px] text-dim">classic: enter unflagged at {z.levelBypass}+</div>
         )}
-        {z.note && <div className="text-[10px] text-dim italic leading-tight">{z.note}</div>}
+        {z.note && <div className="text-[11px] text-dim italic leading-snug">{z.note}</div>}
         {kids.map(k => (
-          <div key={k.key} className="mt-1 rounded border border-dashed border-border p-2">
+          <div key={k.key} className="mt-1 rounded border border-dashed border-border p-3">
             <ZoneCard z={k} />
           </div>
         ))}
@@ -897,7 +956,7 @@ export default async function PopFlagsPage(
         <div className="flex flex-wrap gap-4 mt-3 text-xs text-dim items-center">
           <span>
             <span title={`Raiders (Pack Leader, Officer, Raid Pack, Recruit) and raid alts, active, level ${POP_MIN_LEVEL}+ on their last /who. Traders and inactive characters are left out.`}>
-              👥 <b className="text-text">{scopedChars.length}</b> {scope === 'mains' ? 'raiders' : 'raiders and raid alts'} at {POP_MIN_LEVEL}+
+              👥 <b className="text-text">{scopedChars.length}</b> {scope === 'mine' ? 'of your characters on the raid roster' : scope === 'mains' ? 'raiders' : 'raiders and raid alts'} at {POP_MIN_LEVEL}+
               {scope === 'mains' && chars.length > scopedChars.length && (
                 <span className="text-dim"> ({chars.length - scopedChars.length} raid alts)</span>
               )}
@@ -930,17 +989,28 @@ export default async function PopFlagsPage(
             </span>
           )}
           <span className="ml-auto flex flex-wrap gap-2 items-center">
-            <span className="flex gap-1 mr-1" title={`Applies to the chart, matrix and the spell-needs table below — not to the planner, which always shows mains with alts in parentheses, nor to My Characters, which shows every character you own (traders, hidden characters and characters under ${LIST_MIN_LEVEL} sit behind Show all; ones with no known level are folded away).`}>
-              <Link href={hrefFor({ scope: null })} className={navCls(scope === 'mains')}>Mains</Link>
-              <Link href={hrefFor({ scope: 'all' })} className={navCls(scope === 'all')}>All characters</Link>
+            <span className="flex flex-wrap gap-1 mr-1" role="group" aria-label="Whose characters"
+                  title={`Whose flags the chart, matrix and planner count. My Characters is every character on your account, alts included (traders, hidden characters and characters under ${LIST_MIN_LEVEL} sit behind Show all; ones with no known level are folded away). The spell-needs table at the bottom lists mains, or every character on All characters.`}>
+              {POP_SCOPES.map(s => (
+                <Link key={s.key} href={hrefFor(s.key === 'all' ? { scope: 'all', alts: null } : { scope: s.key })}
+                      aria-current={scope === s.key ? 'true' : undefined} title={s.title} className={navCls(scope === s.key)}>
+                  {s.label}
+                </Link>
+              ))}
             </span>
-            <Link href={hrefFor({ view: null, zone: null })} className={navCls(!selected && view !== 'matrix' && view !== 'mine')}>Chart</Link>
-            <Link href={hrefFor({ view: 'matrix', zone: null })} className={navCls(view === 'matrix')}>Matrix</Link>
-            <Link href={hrefFor({ view: 'mine', zone: null })} className={navCls(view === 'mine')}>🧍 My Characters</Link>
+            <span className="flex flex-wrap gap-1 mr-1" role="group" aria-label="How to draw them">
+              <Link href={hrefFor({ view: 'chart', zone: null, alts: null, sort: null, open: null })} aria-current={!selected && !matrixView && !mineView ? 'true' : undefined}
+                    className={navCls(!selected && !matrixView && !mineView)}>Chart</Link>
+              <Link href={hrefFor({ view: 'matrix', zone: null })} aria-current={matrixView || mineView ? 'true' : undefined}
+                    className={navCls(matrixView || mineView)}>Matrix</Link>
+            </span>
             <Link href="/pop/guide" className={navCls(false)}>☑ My checklist</Link>
+            <Link href="/pop/latest" className={navCls(false)}>Latest flags (try the new view)</Link>
           </span>
         </div>
       </section>
+
+      {latestLayout && latestRows && <LatestFlags layout={latestLayout} rows={latestRows} now={Date.now()} />}
 
       {essLayout && essences && <EssencesQueue layout={essLayout} demo={essDemo} {...essences} />}
 
@@ -950,7 +1020,7 @@ export default async function PopFlagsPage(
           <div className="flex items-center gap-3 mb-1">
             <h3 className="text-base text-orange">{selected.name}</h3>
             <span className="text-xs text-dim">{TIER_LABELS[selected.tier].name}{!selected.verified && ' · gate unverified'}</span>
-            <Link href="/pop" className="ml-auto text-xs text-dim hover:text-text">← back to chart</Link>
+            <Link href={hrefFor({ zone: null })} className="ml-auto text-xs text-dim hover:text-text">← back to chart</Link>
           </div>
           <p className="text-xs text-dim mb-3">
             Gate: {selected.requires.map(f => POP_FLAGS[f]?.label ?? f).join(' + ') || 'open'}
@@ -1010,7 +1080,47 @@ export default async function PopFlagsPage(
             </div>
           )}
         </section>
-      ) : view === 'matrix' ? (
+      ) : matrixView && altsView.group ? (
+        // ── Roster × zone matrix, alts nested under their main (beta comparison, ?alts=group) ──
+        <section className="bg-panel border border-border rounded-lg p-4 space-y-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-[10px] px-1.5 py-0.5 rounded border border-gold/60 text-gold" title="Layout comparison on beta">
+              preview · alts grouped
+            </span>
+            <span className="text-dim">Sort</span>
+            <Link href={hrefFor({ view: 'matrix', sort: null })} className={navCls(altsView.sort === 'flags')}>Flags held</Link>
+            <Link href={hrefFor({ view: 'matrix', sort: 'latest' })} className={navCls(altsView.sort === 'latest')}>Latest change</Link>
+            <span className="ml-auto flex gap-2">
+              <Link href={hrefFor({ view: 'matrix', open: altsView.open ? null : '1' })} className={navCls(false)}>
+                {altsView.open ? 'Collapse all' : 'Expand all'}
+              </Link>
+              <Link href={hrefFor({ view: 'matrix', alts: 'flat', sort: null, open: null })} className={navCls(false)}>Flat list</Link>
+            </span>
+          </div>
+          <p className="text-[11px] text-dim leading-5">
+            <span className="text-gold">●</span> a flag changed in the last 24 hours · <span className="text-gold">○</span> in the last 3 days.
+            A change is a flag the server confirmed, a kill logged on the checklist, or a recital that added a flag the
+            character had no row for before; a recital that only restates old flags and a witnessed hail are not changes.
+            Every raid alt is listed under its main{!showAll && flaggedHidden.size > 0 ? '; characters their owner hid are left out' : ''}.
+          </p>
+          {families.length === 0 ? (
+            <p className="text-sm text-dim">No flags recorded yet — the matrix fills in as grants land.</p>
+          ) : (
+            <SelfFlagsProvider initial={ownTicks(families.flatMap(f => [f.head, ...f.alts]))}>
+              <AltGroupMatrix
+                families={families} zones={gatedZones} now={nowMs} openAll={altsView.open} changes={changes}
+                altOf={c => {
+                  const m = c.main ? null : mainNameOf.get(c.name.toLowerCase());
+                  return m && m.toLowerCase() !== c.name.toLowerCase() ? m : null;
+                }}
+                renderGate={(z, c) => <GateCell z={z} c={c} owned={canTick(c.name)} />}
+                renderFlags={c => canTick(c.name) ? <OwnedFlagCount character={c.name} proven={provenOf(c)} /> : c.flags.size}
+              />
+            </SelfFlagsProvider>
+          )}
+          {families.length > 0 && gateLegend}
+        </section>
+      ) : matrixView ? (
         // ── Roster × zone matrix (secondary view) ─────────────────────────────
         <section className="bg-panel border border-border rounded-lg p-4 overflow-x-auto">
           {scopedChars.length === 0 ? (
@@ -1053,7 +1163,7 @@ export default async function PopFlagsPage(
           )}
           {scopedChars.length > 0 && gateLegend}
         </section>
-      ) : view === 'mine' ? (
+      ) : mineView ? (
         // ── My Characters — every character on the viewer's account, main
         // AND alt. Deliberately ignores the Mains/All scope toggle above:
         // PoP flagging isn't a mains-only activity, so tracking your own
@@ -1105,48 +1215,9 @@ export default async function PopFlagsPage(
                     : 'Submit a spellbook below to see what any of your characters still need.'}
                 </p>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-dim text-xs text-left">
-                        <th className="py-1 pr-3">Character</th>
-                        <th className="py-1 pr-3">Class</th>
-                        {POP_TURN_IN_ORDER.map(k => (
-                          <th key={k} className="py-1 pr-3 text-right" title={POP_TURN_INS[k].blurb}>
-                            {POP_TURN_INS[k].item.replace(' Parchment', '').replace('Glyphed Rune Word', 'Rune Word')}
-                          </th>
-                        ))}
-                        <th className="py-1 pr-3 text-right">Other</th>
-                        <th className="py-1 pr-3 text-right">Total</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border/50">
-                      {myNeeds.map(n => (
-                        <tr key={n.name} className="align-top">
-                          <td className="py-1.5 pr-3">
-                            <Link href={`/character/${encodeURIComponent(n.name)}/spells`} className="text-blue hover:underline">{n.name}</Link>
-                            {!n.isMain && <span className="ml-1 text-[10px] text-dim">alt</span>}
-                          </td>
-                          <td className="py-1.5 pr-3 text-dim">{n.cls ?? '—'}</td>
-                          {POP_TURN_IN_ORDER.map(k => {
-                            const list = n.tiers[k];
-                            return (
-                              <td key={k} className="py-1.5 pr-3 text-right"
-                                  title={list.length ? list.map(x => x.spell_name).join(', ') : 'nothing needed at this tier'}>
-                                <span className={list.length ? 'text-orange' : 'text-dim/50'}>{list.length || '—'}</span>
-                              </td>
-                            );
-                          })}
-                          <td className="py-1.5 pr-3 text-right"
-                              title={n.other.length ? n.other.map(x => x.spell_name).join(', ') : 'nothing outside the turn-in lists'}>
-                            <span className={n.other.length ? 'text-purple' : 'text-dim/50'}>{n.other.length || '—'}</span>
-                          </td>
-                          <td className="py-1.5 pr-3 text-right text-text">{n.total}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                // Closed by default: the summary is the one-line totals, the list opens per character with PQDI
+                // links, what each spell does and a copy button (the guild lead, 2026-10-14).
+                <MissingSpells chars={myNeeds} info={missingInfo} />
               )}
               {myChars.some(c => !mySpellbookNames.has(c.name.toLowerCase())) && (
                 <p className="text-[11px] text-dim mt-2">
@@ -1162,24 +1233,26 @@ export default async function PopFlagsPage(
       ) : (
         <>
           {/* ── The chart — tier bands, Samanna-style ── */}
-          <section className="max-w-5xl mx-auto space-y-3">
+          {/* Full width of the site container (the guild lead, 2026-10-14: "a little wider and less dense"): three
+              cards a row from xl, two from sm, one on a phone; roomier cards so a step stays on one or two lines. */}
+          <section className="space-y-4">
             {[1, 2, 3, 4, 5].map(tier => {
               const zones = topLevel.filter(z => z.tier === tier).sort((a, b) => a.col - b.col);
               if (zones.length === 0) return null;
               const t = TIER_LABELS[tier];
               return (
-                <div key={tier} className="relative rounded-lg border border-border/60 p-3 pt-2"
+                <div key={tier} className="relative rounded-lg border border-border/60 p-4 pt-3"
                      style={{ background: 'rgba(110,118,129,0.05)' }}>
-                  <div className="flex items-baseline gap-2 mb-2">
+                  <div className="flex items-baseline gap-2 mb-3">
                     <span className="text-xs font-bold tracking-wide" style={{ color: TIER_COLORS[tier] }}>{t.name}</span>
                     <span className="text-[10px] text-dim">{t.sub}</span>
                   </div>
-                  <div className={`grid gap-3 ${tier === 5 ? 'sm:grid-cols-3' : 'sm:grid-cols-2 lg:grid-cols-4'}`}>
+                  <div className={`grid gap-4 ${tier === 5 ? 'sm:grid-cols-3' : 'sm:grid-cols-2 xl:grid-cols-3'}`}>
                     {tier === 5 && <div className="hidden sm:block" />}
                     {zones.map(z => <ZoneCard key={z.key} z={z} />)}
                   </div>
                   {tier < 5 && (
-                    <div className="text-center text-dim text-xs leading-none mt-2 select-none">▼</div>
+                    <div className="text-center text-dim text-xs leading-none mt-3 select-none">▼</div>
                   )}
                 </div>
               );
@@ -1225,7 +1298,7 @@ export default async function PopFlagsPage(
                     <tr key={p.flag}>
                       <td className="py-1.5 pr-3 text-text">{KIND_ICONS[POP_FLAGS[p.flag]?.kind ?? 'kill']} {POP_FLAGS[p.flag]?.label ?? p.flag}</td>
                       <td className="py-1.5 px-2 text-dim text-xs">
-                        <Link href={`/pop?zone=${p.zone.key}`} className="hover:underline">{p.zone.short}</Link>
+                        <Link href={hrefFor({ zone: p.zone.key })} className="hover:underline">{p.zone.short}</Link>
                       </td>
                       <td className="py-1.5 px-2 text-right text-dim"><MainsAlts s={p.attend} /></td>
                       <td className="py-1.5 px-2 text-right text-text"><MainsAlts s={p.gains} /></td>
@@ -1251,19 +1324,19 @@ export default async function PopFlagsPage(
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
             <h2 className="text-lg text-gold mb-1">
-              📜 PoP spells {scope === 'mains' ? 'mains' : 'characters'} still need
+              📜 PoP spells {scope === 'all' ? 'characters' : 'mains'} still need
             </h2>
             <p className="text-sm text-dim leading-6 max-w-3xl">
               PoP spells come from turning a parchment in to your class&apos;s spell NPC, and each turn-in
               gives a <b className="text-text">random</b> spell from that trainer&apos;s hand-picked list for that
               parchment (read from the actual quest scripts — not guessed from spell levels) — so what matters is
               how many a person still needs from each list. Highest level first: whoever reaches the level first gets first dibs.
-              Only {scope === 'mains' ? 'mains' : 'characters'} who have{' '}
+              Only {scope === 'all' ? 'characters' : 'mains'} who have{' '}
               <b className="text-text">submitted a spellbook</b> appear — without one we
               can&apos;t tell &ldquo;doesn&apos;t have it&rdquo; from &ldquo;we don&apos;t know&rdquo;.{' '}
               {scope === 'mains' && (
                 <>Alts need PoP spells too — see <Link href={hrefFor({ scope: 'all' })} className="underline">all characters</Link>{' '}
-                or your own full roster under <Link href={hrefFor({ view: 'mine', zone: null })} className="underline">My Characters</Link>.</>
+                or your own full roster under <Link href={hrefFor({ scope: 'mine', view: null, zone: null })} className="underline">My Characters</Link>.</>
               )}
             </p>
           </div>

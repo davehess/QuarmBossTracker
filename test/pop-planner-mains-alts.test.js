@@ -56,15 +56,16 @@ describe('the page', () => {
     expect(body).toMatch(/for \(const \[f, proof\] of flagsFromSightings\(rows\)\) \{\s*if \(c\.flags\.has\(f\)\) continue;\s*c\.flags\.add\(f\);\s*c\.seen\.set\(f, proof\);/);
     // A gate only /who proves is a blue ✓, in the matrix and in My Characters alike: both tables render a
     // cell through GateCell (2026-10-03, which makes it the owner's button), and GateCell's other branch is AccessMark.
-    expect(body.match(/<GateCell z=\{z\} c=\{/g)?.length).toBe(2);
+    // The third is the alts-grouped matrix (?alts=group, 2026-10-14), which hands the same GateCell to its rows.
+    expect(body.match(/<GateCell z=\{z\} c=\{/g)?.length).toBe(3);
     expect(body.match(/<AccessMark z=\{z\} c=\{/g)?.length).toBe(1);
   });
   it('keeps the link\'s query through sign-in (a signed-out ?v=b&demo=1 used to land on bare /pop)', () => {
     expect(body).toMatch(/redirect\(`\/auth\/signin\?next=\$\{encodeURIComponent\('\/pop\?' \+ new URLSearchParams\(await searchParams/);
     expect(body).not.toMatch(/next=\/pop'/);
   });
-  it('Mains means the raiders; All characters adds the raid alts', () => {
-    expect(body).toMatch(/const scopedChars = scope === 'all' \? chars : chars\.filter\(c => c\.main\);/);
+  it('Mains means the raiders; All characters adds the raid alts; My Characters is the viewer\'s own', () => {
+    expect(body).toMatch(/const scopedChars = scope === 'all' \? chars\s+: scope === 'mine' \? chars\.filter\(c => ownedKeys\.has\(c\.name\.toLowerCase\(\)\)\)\s+: chars\.filter\(c => c\.main\);/);
   });
 });
 
@@ -77,8 +78,8 @@ describe('the raid-night planner', () => {
     expect(planner).toMatch(/const mains = list\.filter\(c => c\.main\)\.length;/);
     expect(planner).toMatch(/plan\.sort\(\(a, b\) => b\.leverage\.mains - a\.leverage\.mains \|\| b\.gains\.mains - a\.gains\.mains/);
   });
-  it('shows alts in parentheses only on All characters', () => {
-    expect(body).toMatch(/const MainsAlts = \(\{ s \}: \{ s: Split \}\) => <>\{s\.mains\}\{scope === 'all' && <span className="text-dim"> \(\{s\.alts\}\)<\/span>\}<\/>;/);
+  it('shows alts in parentheses everywhere but Mains (My Characters and All characters both hold alts)', () => {
+    expect(body).toMatch(/const MainsAlts = \(\{ s \}: \{ s: Split \}\) => <>\{s\.mains\}\{scope !== 'mains' && <span className="text-dim"> \(\{s\.alts\}\)<\/span>\}<\/>;/);
     expect(body).toMatch(/<MainsAlts s=\{p\.attend\} \/>/);
     expect(body).toMatch(/<MainsAlts s=\{p\.gains\} \/>/);
   });

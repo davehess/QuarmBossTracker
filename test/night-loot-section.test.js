@@ -24,6 +24,8 @@ const dash = readSource(path.join(ROOT, 'packages', 'wolfpack-logsync', 'dashboa
 
 // From the state var through the end of renderLootTab: every function under test.
 const uiBlock = sliceBlock(dash, 'var _wpNightLoot = null;', '  morphInto(host, h);\n}');
+// The roll-tie drawing helpers renderLootTab calls (the REAL ones, so a tie cannot break the card unseen).
+const tieBlock = sliceBlock(dash, 'function _wpRollTieChip(label) {', "\n  return '';\n}");
 
 // A just-big-enough document: #loot with appendChild/insertBefore, and ids.
 function makeDoc() {
@@ -52,7 +54,7 @@ function build() {
     function wpKeep(k){ return 'data-keep="' + esc(k) + '"'; }
     function _wpDeathrollHtml(){ return '<div>deathroll</div>'; }
   `;
-  const api = evalBlock(pre + uiBlock + '\nfunction _peek(){ return _wpNightLoot; }',
+  const api = evalBlock(pre + tieBlock + '\n' + uiBlock + '\nfunction _peek(){ return _wpNightLoot; }',
     ['wpNightLootHtml', 'wpNightLootSet', 'wpNightLootHost', 'wpNightLootedBy', 'renderLootTab', 'wpRenderNightLoot', '_peek']);
   return { ...api, doc, paints, html: (id) => (doc.getElementById(id) || {}).innerHTML };
 }

@@ -36,7 +36,7 @@ const { _foldPetsIntoOwners, _histRows, _rsRaiders } = evalBlock(
   sliceBlock(overlay, '  function _foldPetsIntoOwners(allRows){', '\n  // ── Poll loop '),
   ['_foldPetsIntoOwners', '_histRows', '_rsRaiders'],
 );
-const liveRows = new Function('pp', '_foldPetsIntoOwners',
+const liveRows = new Function('pp', '_foldPetsIntoOwners', 'et',
   "var allRows = []; const TAB_MODE = 'dps'; const field = 'dmg';\n"
   + upTo(overlay, 'allRows = Object.entries(pp)', 'allRows = _foldPetsIntoOwners(allRows);')
   + '\nallRows = _foldPetsIntoOwners(allRows);\nreturn allRows;');
@@ -152,7 +152,8 @@ describe('a damage shield is credited to the tank who wears it — in the live b
     feed(`${MOB} was pierced by thorns.`);
     const { et, entry } = record(b, 'Brackwyn');
     expect(et.perPlayer.Corvale.dmg).toBe(509);
-    expect(entry.local).toEqual([{ character: 'Corvale', dmg: 509, pet_owner: null, took: 210, tookMax: 210 }]);
+    expect(entry.local).toEqual([{ character: 'Corvale', dmg: 509, pet_owner: null, took: 210, tookMax: 210,
+                                  first_ms: expect.any(Number), last_ms: expect.any(Number) }]);
     expect(rowOf(_histRows(entry), 'Corvale')[1]).toBe(509);
   });
 

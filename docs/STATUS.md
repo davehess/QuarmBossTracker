@@ -462,6 +462,9 @@ next touch one rather than assuming a missing row means a missing doc.
 - **✅ Long-term bidding out of the timers (agent 3.7.92 stable hot-swap · 3.7.93 beta, 2026-10-06).** Auctions set to
   run over 6 h get no countdown and no Command Center row; the bidding window still lists them. ⏳ The ✕ on timer
   chips was reported unclickable; hardened on beta (`data-wp-interact`, `cf817067`), awaiting a retest. §171.
+  Still dead on 2026-10-14, so reworked on beta (agent 3.7.174, `4ae64a3b`): the ✕ dismisses on the press via one listener on
+  the stack, the server tick hides for the overlay's life, a dismissed zone timer stays dismissed on re-entry, and main.js logs
+  the first hover-arm per page. §317.
 - **✅ Reverse Slow called out; mob abilities in Quarm's numbering (FB-54, bot 3.1.212 · web 1.8.109, 2026-10-06).**
   Five PoP mobs turn a slow into a haste; Target Info and `/db/npc` flag them. Three false chips gone (44, 46, 7).
   Mimic beta warnings (red chip, HUD, callout) next. §173.
@@ -5985,6 +5988,85 @@ Abashi's Rod → 31242). The web has no decoder: it shows the stored link. **Ope
 fixable, staged in `docs/RUNBOOK-pqdi-chat-links.md`, unapplied (the guild lead's yes); the stable fleet keeps writing
 wrong links until the agent reaches stable.
 
+### 🧾 2026-10-14 — UI Studio named layouts per character (Mimic beta `d77a7d5b`, DECISIONS §322)
+Up to 10 named `UI_<char>*.ini` snapshots per character: save, rename, delete, switch (waits for logout while EQ runs), each backed up
+with its name. **Open:** `ui_snapshots` pruning; a Windows + EQ check that the swapped file survives a camp.
+
+### 🧾 2026-10-14 — Chat Spells / Skills groups + Melee filters and colours; grow-up corner grip (agent 3.7.175 · Mimic beta `0d4d33bd`, `ac73bace`, DECISIONS §320–321)
+`[SP]` / `[SK]` opt-in groups like Melee; Melee split mine / on me / others + Misses, each coloured. Grow-upward overlays get a top-right
+resize grip with the ✕ stepped left. **Open:** unverified skill-result line shapes (fishing, sense heading, hide/sneak, bind wound,
+tradeskill) need a real log; Windows check of the grip.
+
+### 🧾 2026-10-14 — Updates close Mimic cleanly and keep window positions (Mimic beta `b26c8162`, DECISIONS §318)
+Every install path, Quit, and the agent hot-swap go through one `_gracefulShutdown`: pending bounds flushed into one config write,
+watchers stopped, agent asked to stop (≤ 3 s, then killed) so its upload queue is saved, then `quitAndInstall`. **Open:** the main
+dashboard window's size is never saved; the first real test is the update after this build.
+
+### 🧾 2026-10-14 — Chat overlay round 4: channel tags, per-channel switches, show-only, Melee, per-window text (agent 3.7.173 · Mimic beta `efd30696`, DECISIONS §315)
+Every line is tagged `[GU] [P] [2]…`; joined channels switch off by name (`chatPrefs.offChannels`, shared by all characters);
+right-click "Show only" is a saved view toggle (`chatPrefs.only`); a Melee group (own 300-line ring, opt-in, `[M]`) reuses
+`parseEvent`; each window keeps its own text settings (`chatPrefs.win`). **Open:** a real `/abc` joined-channel log to confirm the name
+is never in it; per-channel switches shared vs per character; hiding timestamps also hides click-to-copy.
+
+### 🧾 2026-10-14 — Overlays stop flickering on app switch (Mimic beta `65eceea9`, DECISIONS §316)
+Two causes in the "overlays drop behind other apps" focus path (a9919715): a NULL foreground sample mid-switch read as "EQ in front"
+and raised every overlay for 600 ms (`_focusFgSample` now ignores it), and the 400 ms foreground poll left overlays under EverQuest
+after clicking back into it (now 120 ms). **Open:** Windows retest; if it persists, say leaving EQ vs returning to EQ; the held
+Alt+Tab / taskbar (explorer.exe) case still drops and re-raises.
+**Follow-up, "overlays all refresh" when clicking back into EQ (Mimic beta `6bebcb79`, DECISIONS §328):** pages do not reload on
+the focus path (proved: no reload/navigation/broadcast reachable). Likely cause: since overlays can be covered, Chromium's
+native-window occlusion tracker marks covered overlays hidden and stops painting them; uncovering repaints them all at once.
+`main.js` now sets `disable-features=CalculateNativeWinOcclusion` (the only `disable-features` switch — a second would replace it).
+Test: `test/overlay-refocus-no-refresh.test.js`. **Open:** Windows check; if a blink remains with "Hide overlays when EverQuest
+isn't focused" off, try an atomic drop-and-tuck instead of toggling topmost.
+
+### 🧾 2026-10-14 — Target Info shows how a mob hits: slash / pierce / blunt (agent 3.7.172, beta `4ec04404`, DECISIONS §314)
+The guild lead: *"when we observe what types of hits a mob is doing, put that onto the target info"*. A mob's melee verb names the
+type (`slashes` → slash, `bites` → pierce, `crushes` → blunt); `noteMobMelee` tallies it per mob NAME (the log line carries no spawn id),
+misses, dodges and parries included, mob melee only (a player's swings, shields, spells and pets do not count). Target Info's Stats tab
+gets a chip `Hits: Slash 62% · Pierce 38% (seen 41)` once something was seen; verbs and biggest hit sit in its tooltip. Local only,
+capped at 300 mobs, nothing uploaded. **Open:** no alpha Canvas piece yet; the bot's mob-info catalog does not carry it (pooling would
+need a new upload). Test: `test/mob-hit-types.test.js`.
+
+### 🧾 2026-10-14 — DPS meter: each row's Sec and DPS are its own active time (agent 3.7.171, beta `a79291e6`, DECISIONS §313)
+A row's seconds run from its first damage to its last (1 s at least, never past the fight); DPS is its damage over that. The total
+row, the Tank tab and any row without a span keep the fight's seconds. `spans` ride beside `perPlayer` (not inside: the
+threat-snapshot upload sends `perPlayer` whole). The copied `/rs` line writes each raider's own "in Ns". **Not changed:** Me HUD fight
+DPS / tonight average, My parses ledger, Trend view, and the bot's and website's parse math. Test: `test/dps-active-time.test.js`.
+
+### 🧾 2026-10-14 — UI Studio chat routing: real channel names, layout ↔ routing link (Mimic beta `a730c5be`, DECISIONS §312)
+Chips use the client's real filter names (ids 0–40 from the client's chat-filter list, 41–56 Zeal's filters in saved order) with the
+id as a dim suffix; 57+ read "Ch N". /join slots show the joined channel names from eqclient.ini's autojoin list. Selecting a chat
+window in the layout or the routing card is one shared state (Esc clears); a chip can be dropped on a chat rectangle. **Open:** autojoin
+order vs slot order unverified in game; default-channel names beyond Tell.
+
+### 🧾 2026-10-14 — Tray menu layout B; chat overlay shows group and channels by default (Mimic beta `a9fcbfb4` / `a069a5ee`, DECISIONS §310–311)
+The tray's top level is now eight lines (Show dashboard, Overlays, Rescue, Quiet mode, Settings ›, Open ›, Help ›, Quit); every item
+kept its label and action, only its place changed (`test/tray-menu-layout.test.js` against `test/fixtures/tray-menu-before.json`).
+The Chat overlay's group and joined-channel switches default on (officer stays opt-in). **Open:** whether a pending update gets a
+top-level tray line; four tray-only items with no dashboard twin (update pop-up, Pause Discord DMs, Uninstall, Show agent log).
+
+### 🧾 2026-10-14 — Roll ties: a tie at the top of a roll set is shown, and settled by deathroll (agent 3.7.167, beta, DECISIONS §301)
+The guild lead: *"if two toons roll the same number on a roll it should trigger a deathroll and highlight the tie"*. `rollSetTies` (one
+helper, in `rollSetsSnapshot`) finds two or more distinct characters on the highest first roll; the Rolls card and the Command Center header
+read `TIE 507: A · B`, the tied rows carry a TIE chip, a lower tie is only a dim `=`. The card prompts the deathroll (starts at the TIED
+number, first roller starts) and the Command Center 📋 copies one raid-say line; nothing is sent to the game. The follow-up rolls resolve the
+tie to the deathroll's winner. **No bot change.** **Open:** no spoken "Roll tie" callout (no roll callout path exists); the dashboard Rolls card
+shows the prompt but has no copy button; the web and the bot's night-loot roll card still show a tie as one winner.
+
+### 🧾 2026-10-14 — Mimic Chat overlay, design B (agent 3.7.165 · Mimic beta `3be5b8e4`, DECISIONS §300)
+One feed, colour per channel, a chip per channel group; groups are data (`CHAT_GROUPS`) so A (tabs + tear-off) reuses the renderer.
+Local only: a 500-line memory ring beside the tell tap, served on `GET /api/chat` (127.0.0.1, `_localOriginOk`); never uploaded, never
+on disk. Officer, group and custom are captured only while the overlay asks (off by default); tells follow Settings → Tells (now
+wired). **Open:** the guild lead's call on officer, group and tells; design A; Zeal's abbreviated tags beyond `G`/`R`/`P`/`Fr`/digits
+are guesses until a real `/abc 2` log confirms them.
+
+### 🧾 2026-10-14 — Map: the raid's targets and shared escort trails (bot 3.1.263 main `a1d7f11b` + agent 3.7.166 beta `46babe84`, DECISIONS §299)
+The guild lead picked both A (a shared escort trail for babysitting quests) and B (shared target positions for the MA focus ring).
+One extended upload (`live-state` carries the target's position), memory on the bot, served on the Map's `map-sync` pull; escort trails
+in `bot_kv`. `/privacy` updated. **Open:** an in-game check with two Mimics, more escorts in `ESCORT_NPCS` / `MAP_TRACKED_PATHS`
+(both lists, the parity test covers it), two raids in two copies of one zone share a trail.
+
 ### 🧾 2026-10-12 — Spawn map overlay, first build: 2D tracker with respawn timers (agent 3.7.130 · Mimic beta `79bafcf1` + bot 3.1.246 `dd8a9cb4`, DECISIONS §216 / §220 / §239)
 The guild lead: *"2d overlay on beta with spawn timer tracking"*. `apps/mimic/map.html` (key `map`, `cfg.showMap`, default off, [beta])
 is layout C (the tracker): walls and spawn dots on the left, the active respawn windows on the right. The agent reads the zone's
@@ -5994,3 +6076,12 @@ is credited to a spawn point by name and first-seen position (within 60 units an
 four candidates and no timer); a click marks Killed / Empty / Up. The bot route is live (bot 3.1.246; never serves the Brewall layer). **Open:** `target_loc` needs Zeal 1.4.8 (fleet reports 1.4.7), so until then sightings are empty and
 only marks and log-line deaths start timers; the floor picker, badges and `?` rings are unchecked against a real zone; Window/HUD mode,
 3D, painted art, routes, line of sight and group upload are not built. Test: `test/spawn-map.test.js`.
+
+### 🧾 2026-10-14 — Map: Full mode + keep-clear areas (agent 3.7.162 · on `beta` as `c7d881a8`)
+The guild lead: *"give map a toggle full vs window mode, and have it avoid drawing over UI elements when see through maps are in
+position"*. Window stays exactly as it was. Full lays the Map over EverQuest's client area, click-through always (the Canvas's rules:
+`_coversScreen` in `main.js`), with a ▢ Window / ⚙ pair at the top-right; the toggle is on the Map's toolbar, in ⚙ → Mode, in the tray
+and on the dashboard Overlays tab (one setter, `_setMapMode`). Keep-clear: the open windows of the active character's UI ini
+(`apps/mimic/uiClearRects.js`, Show on, resolution-keyed) plus the raider's own boxes (⚙ → Edit clear areas, per character and per screen
+setup) are cut out of the canvas, background included. **Open:** unverified against a real EverQuest session (no Windows box here);
+a shown window with no Width/Height is a 200x100 guess; the timers column is hidden in Full (the pop-out still works). Test: `test/map-full-mode.test.js`.

@@ -123,7 +123,7 @@ describe('the upload handler', () => {
       upsert: async (_t, rows) => { written = rows; return rows; },
     };
     // eslint-disable-next-line no-new-func
-    const fn = new Function('mimicLink', 'require', 'popFlagStages', 'POP_FLAG_BY_BOSS', '_popBossKey', '_trackUpload', '_hailHails',
+    const fn = new Function('mimicLink', 'require', 'popFlagStages', 'POP_FLAG_BY_BOSS', '_popBossKey', '_trackUpload', '_hailGrants',
       `${handler}\nreturn _handleAgentPopFlags;`)(
       { requireAgentAuth: async () => ({ discord_id: '1' }) }, () => supabase, S, POP_FLAG_BY_BOSS, _popBossKey, () => {}, () => {});
     const body = Buffer.from(JSON.stringify({ events }));

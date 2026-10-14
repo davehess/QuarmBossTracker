@@ -790,6 +790,11 @@ function normalizeSpecialVerb(raw) {
   if (/^frenz/.test(v)) return 'frenzy';
   return v.replace(/(?:es|s)$/, '');
 }
+// "slashes" → "slash", "crushes" → "crush", "pierces" → "pierce": the same base form the damage
+// events carry in `ability` (their inline normalisation, kept as is).
+function _baseAttackVerb(raw) {
+  return String(raw).toLowerCase().replace(/(?:sh|ch|ss|x)es$/, m => m.slice(0, -2)).replace(/s$/, '');
+}
 let _finishingBlowsDropped = 0;
 
 // ── Event parser ────────────────────────────────────────────────────────────
@@ -952,7 +957,9 @@ function parseEvent(line, ts) {
     // Extract the verb that matched (it's between the two captures)
     const verbMatch = m[0].match(new RegExp(`\\s+(${ATTACK_VERBS_RX})\\s+`, 'i'));
     const verb = (verbMatch?.[1] || 'hit').toLowerCase().replace(/(?:sh|ch|ss|x)es$/, m => m.slice(0, -2)).replace(/s$/, '');
-    return { ts: tsIso, type: 'damage', attacker: m[1], defender: m[2], ability: verb, amount: parseInt(m[3], 10) };
+    const ev = { ts: tsIso, type: 'damage', attacker: m[1], defender: m[2], ability: verb, amount: parseInt(m[3], 10) };
+    if (/points?\s+of\s+non-melee\s+damage/i.test(line)) ev.nonMelee = true;   // a spell/proc worded as a swing: no hit type (noteMobMelee)
+    return ev;
   }
 
   // "You hit X for N points of non-melee damage." (DoT/proc third-person past-tense)
@@ -1043,15 +1050,16 @@ function parseEvent(line, ts) {
   }
 
   // First-person: "You try to <verb> X, but ..."
-  m = line.match(new RegExp(`\\]\\s+You\\s+try\\s+to\\s+${ATTACK_VERBS_RX}\\s+(.+?),\\s+but\\s+(.+?)!`, 'i'));
+  // `verb` (the attempted swing, base form) rides the event so a mob's misses can show its hit type.
+  m = line.match(new RegExp(`\\]\\s+You\\s+try\\s+to\\s+(${ATTACK_VERBS_RX})\\s+(.+?),\\s+but\\s+(.+?)!`, 'i'));
   if (m) {
-    return { ts: tsIso, type: 'avoid', attacker: null /* self */, defender: m[1], kind: _classifyAvoid(m[2]) };
+    return { ts: tsIso, type: 'avoid', attacker: null /* self */, defender: m[2], kind: _classifyAvoid(m[3]), verb: _baseAttackVerb(m[1]) };
   }
 
   // Third-person: "<Name> tries to <verb> X, but ..."
-  m = line.match(new RegExp(`\\]\\s+(.+?)\\s+tries\\s+to\\s+${ATTACK_VERBS_RX}\\s+(.+?),\\s+but\\s+(.+?)!`, 'i'));
+  m = line.match(new RegExp(`\\]\\s+(.+?)\\s+tries\\s+to\\s+(${ATTACK_VERBS_RX})\\s+(.+?),\\s+but\\s+(.+?)!`, 'i'));
   if (m) {
-    return { ts: tsIso, type: 'avoid', attacker: m[1], defender: m[2], kind: _classifyAvoid(m[3]) };
+    return { ts: tsIso, type: 'avoid', attacker: m[1], defender: m[3], kind: _classifyAvoid(m[4]), verb: _baseAttackVerb(m[2]) };
   }
 
   // "X has taken N (points of) damage." (generic DoT tick — no source mentioned)
@@ -2583,6 +2591,74 @@ function recordPetCombat(ev, character) {
   if (amount > s.maxHit) s.maxHit = amount;
   s.lastSeenAt = now;
   _savePetStateSoon();
+}
+
+// ── What a mob's melee does: slash / pierce / blunt on Target Info (the guild lead, 2026-10-14) ─────────
+// "when we observe what types of hits a mob is doing, put that onto the target info (slashing / piercing /
+// etc)". The verb on a melee line names the damage type ("slashes YOU", "tries to pierce Aldenmar, but
+// misses!"), so every line a mob swings at anyone teaches us how that mob hits.
+//   · The verb → skill step is the Pet tracker's own (_verbToSkill, above); each skill then lands in one of
+//     three types. Four verbs it does not know (stab / backstab / strike / rend) are listed beside it.
+//     Archery, throwing and the like are no melee type, so they count nowhere.
+//   · A MISS counts: "tries to slash YOU, but misses!" still shows the swing, and so does a dodge, parry,
+//     riposte or block — the verb is the attempt, whatever came of it. Only damage carries a max hit.
+//   · MOB melee only. A player's swing on a mob, a damage shield and a spell are not a mob's hit type, and
+//     neither is a PET's: ours and the guild's declared pets are skipped (the Pet tracker has those).
+//   · Keyed by NAME, case-kept (_mobCaseKey, the key Target Info's catalog lookup uses), not by spawn id:
+//     the log line carries no id, and a mob swings at the raid while you are looking at another one, so an
+//     id-keyed ledger would catch almost none of it. A weapon type belongs to the kind of mob anyway.
+// LOCAL ONLY, in memory, capped (oldest-touched first out). Nothing here is uploaded.
+const _HIT_TYPE_BY_SKILL = {
+  Slashing: 'slash', Claw: 'slash',
+  Piercing: 'pierce', Bite: 'pierce', Gore: 'pierce', Sting: 'pierce',
+  Crushing: 'blunt', Bash: 'blunt', Kick: 'blunt', H2H: 'blunt', Hits: 'blunt', Maul: 'blunt',
+};
+const _HIT_TYPE_EXTRA_VERB = { stab: 'pierce', backstab: 'pierce', strike: 'blunt', rend: 'slash' };
+const MOB_HIT_TYPES_MAX = 300;
+const _mobHitTypes = new Map();   // caseKey → { slash, pierce, blunt, max:{type:n}, verbs:{verb:n} }
+function mobHitType(verb) {
+  const v = String(verb || '').toLowerCase().trim();
+  return _HIT_TYPE_BY_SKILL[_verbToSkill(v)] || _HIT_TYPE_EXTRA_VERB[v] || null;
+}
+// Is this swing a MOB's? Players' names are one word, so a multi-word attacker ("a gnoll", "Lord Nagafen")
+// is an NPC outright; a one-word one is a mob only when it is not a known player or pet AND either hits
+// a player (or a pet) or is a known NPC. A one-word attacker nobody can place, on a mob, is a player.
+function _isMobMeleeAttacker(attacker, defender, character) {
+  const a = String(attacker || '').trim();
+  if (!a || /^you$/i.test(a)) return false;
+  if (/\s/.test(a)) return true;
+  const al = a.toLowerCase();
+  if (al === String(character || '').toLowerCase()) return false;
+  if (isConfirmedPlayer(a) || _guildPetOwners.has(al) || _knownPlayerName(al)) return false;   // a player, or a pet
+  const d = String(defender || '').trim();
+  if (/^you$/i.test(d) || (d && (isConfirmedPlayer(d) || _knownPlayerName(d.toLowerCase())))) return true;
+  return _knownNpcNotPlayer(a);
+}
+function noteMobMelee(ev, character) {
+  if (!ev || !ev.attacker || ev.ds || ev.spellName || ev.nonMelee) return;
+  let verb, amount = 0;
+  if (ev.type === 'damage') { if (!(ev.amount > 0)) return; verb = ev.ability; amount = ev.amount; }
+  else if (ev.type === 'avoid') verb = ev.verb;
+  else return;
+  const type = mobHitType(verb);
+  if (!type || !_isMobMeleeAttacker(ev.attacker, ev.defender, character)) return;
+  const key = _mobCaseKey(ev.attacker);
+  let rec = _mobHitTypes.get(key);
+  if (rec) _mobHitTypes.delete(key);   // re-set below: Map order is the LRU order
+  else rec = { slash: 0, pierce: 0, blunt: 0, max: {}, verbs: {} };
+  rec[type] += 1;
+  const v = String(verb).toLowerCase().trim();
+  rec.verbs[v] = (rec.verbs[v] || 0) + 1;
+  if (amount > (rec.max[type] || 0)) rec.max[type] = amount;
+  _mobHitTypes.set(key, rec);
+  while (_mobHitTypes.size > MOB_HIT_TYPES_MAX) _mobHitTypes.delete(_mobHitTypes.keys().next().value);
+}
+// What Target Info shows for the current target, or null until something was seen.
+function mobHitTypesFor(mobName) {
+  const rec = _mobHitTypes.get(_mobCaseKey(mobName));
+  const seen = rec ? rec.slash + rec.pierce + rec.blunt : 0;
+  if (!seen) return null;
+  return { seen, slash: rec.slash, pierce: rec.pierce, blunt: rec.blunt, max: { ...rec.max }, verbs: { ...rec.verbs } };
 }
 
 // ── Your own timers pause while you are logged out (the guild lead, 2026-10-13) ───────────────────
@@ -8231,6 +8307,77 @@ function _deathrollEntry(ch, now) {
   };
 }
 
+// ── Ties at the top of a roll set (the guild lead, 2026-10-14) ──────────────────
+// "if two toons roll the same number on a roll it should trigger a deathroll and highlight the
+// tie" — the Rolls card showed `611 (Carved Bone Ring) — <name> 507` with two characters on 507.
+// ONE helper decides it for every surface (the dashboard's Rolls card and the Command Center both
+// draw what rollSetsSnapshot carries). A character's FIRST roll is the only one that counts, so
+// the same character rolling twice is a re-roll (already flagged `reroll`), never a tie. Only
+// the TOP tie decides the item, so only it gets a deathroll; a tie lower down comes back as a
+// value in `lower` for a quiet mark. With a linked quantity (3), a top group no larger than
+// the quantity is not contested — everyone in it wins — so it is not a tie either.
+function rollSetTies(rolls, qty) {
+  const first = new Map();
+  for (const r of rolls || []) {
+    const k = r.nameLower || String(r.name).toLowerCase();
+    if (!first.has(k)) first.set(k, r);
+  }
+  const byValue = new Map();
+  for (const r of first.values()) {
+    if (!byValue.has(r.value)) byValue.set(r.value, []);
+    byValue.get(r.value).push(r);
+  }
+  let topValue = -Infinity;
+  for (const v of byValue.keys()) if (v > topValue) topValue = v;
+  const group = byValue.get(topValue) || [];
+  const need = Math.max(1, qty || 1);
+  const top = group.length > need
+    ? { value: topValue, names: group.map(r => r.name), atMs: Math.max(...group.map(r => r.atMs)) }
+    : null;
+  const lower = [];
+  for (const [v, g] of byValue) if (g.length > 1 && !(top && v === top.value)) lower.push(v);
+  lower.sort((a, b) => b - a);
+  return { top, lower };
+}
+// Where the tie's deathroll stands. The start is the TIED value, not the original range: the
+// deathroll detector (here, and utils/deathroll.js on the bot) chains a roll only when its range
+// is the previous result, and the tied value IS the previous result, so /random 507 slots straight
+// onto the end of the 0-611 roll. It walks the same rule over every roll heard after the tie
+// (0-based range = last result, a different tied character each step, 2 minutes between steps,
+// 10 for the first), so a two-roll game the detector would not count still resolves the tie.
+// A 0 puts that character out; when no more than `qty` remain, those are the winners.
+function _rollTieResolve(top, qty, flat, now) {
+  const need = Math.max(1, qty || 1);
+  const left = new Map(top.names.map(n => [n.toLowerCase(), n]));
+  let cur = top.value, prev = null, last = top.atMs, gap = ROLL_SET_GAP_MS;
+  const steps = [], out = [], used = [];
+  for (const c of flat) {
+    const r = c.r;
+    if (left.size <= need) break;
+    if (r.atMs <= top.atMs) continue;
+    if (c.from !== 0 || c.to !== cur || !left.has(r.nameLower) || r.nameLower === prev) continue;
+    if (r.atMs - last > gap) break;
+    steps.push({ name: r.name, to: c.to, value: r.value, at_ms: r.atMs });
+    used.push(r);
+    prev = r.nameLower; last = r.atMs; cur = r.value; gap = DEATHROLL_STEP_MS;
+    if (r.value === 0) {
+      out.push(left.get(r.nameLower)); left.delete(r.nameLower);
+      cur = top.value; prev = null;
+    }
+  }
+  const remaining = [...left.values()];
+  const done = remaining.length <= need;
+  return {
+    used,
+    tie: {
+      value: top.value, names: top.names, starter: top.names[0],
+      state: done ? 'done' : (steps.length ? 'live' : 'pending'),
+      out, remaining, winners: done ? remaining : [], steps,
+      next: done || !steps.length ? null : { to: cur, name: prev && remaining.length === 2 ? remaining.find(n => n.toLowerCase() !== prev) : null },
+    },
+  };
+}
+
 // Serialized sets, newest first. Winners = the top-(qty) rolls counting each
 // player's FIRST roll only ((3) linked on the item = three winners). A
 // deathroll replaces the sets it is made of with ONE entry (kind 'deathroll').
@@ -8239,8 +8386,23 @@ function rollSetsSnapshot(maxAgeMs) {
   for (let i = _rollSets.length - 1; i >= 0; i--) {
     if (now - _rollSets[i].lastMs > ROLL_SET_KEEP_MS) _rollSets.splice(i, 1);
   }
-  const chains = _deathrollChains();
-  const inGame = new Set();
+  // A top tie's deathroll steps are ordinary /random sets, and the detector would also read them as
+  // a game opening on the tied roll ("Deathroll 611"). The tie entry carries them instead, so they
+  // are accounted for here and that chain is not drawn a second time.
+  const flat = [];
+  for (const s of _rollSets) for (const r of s.rolls) flat.push({ r, from: s.from, to: s.to });
+  flat.sort((a, b) => a.r.atMs - b.r.atMs);
+  const tieOf = new Map();
+  const tieUsed = new Set();
+  for (const s of _rollSets) {
+    const t = rollSetTies(s.rolls, s.qty);
+    if (!t.top) continue;
+    const res = _rollTieResolve(t.top, s.qty, flat, now);
+    tieOf.set(s, res.tie);
+    for (const r of res.used) tieUsed.add(r);
+  }
+  const chains = _deathrollChains().filter(ch => !ch.some(c => tieUsed.has(c.r)));
+  const inGame = new Set(tieUsed);
   for (const ch of chains) for (const c of ch) inGame.add(c.r);
   const out = [];
   for (const ch of chains) {
@@ -8256,14 +8418,21 @@ function rollSetsSnapshot(maxAgeMs) {
     for (const r of s.rolls) if (!firstByName.has(r.nameLower)) firstByName.set(r.nameLower, r);
     const ranked = [...firstByName.values()].sort((a, b) => b.value - a.value);
     const nWinners = Math.max(1, Math.min(s.qty || 1, ranked.length));
+    const tie = tieOf.get(s) || null;
+    const lower = rollSetTies(s.rolls, s.qty).lower;
     out.push({
       from: s.from, to: s.to, item: s.item || null, qty: s.qty || null,
       players: firstByName.size,
-      winners: ranked.slice(0, nWinners).map(r => ({ name: r.name, value: r.value })),
+      // A tie settled by its deathroll names the deathroll's winner, not the arbitrary first of the tied.
+      winners: tie && tie.state === 'done'
+        ? tie.winners.map(n => ({ name: n, value: tie.value }))
+        : ranked.slice(0, nWinners).map(r => ({ name: r.name, value: r.value })),
       // A later call that gave this number to another item closes it (FB-45).
       open: (now - s.lastMs) <= ROLL_SET_GAP_MS && !_rollSetSuperseded(s, _rollItemByNumber.get(s.to)),
       started_at_ms: s.startMs, last_at_ms: s.lastMs,
       rolls: s.rolls.map(r => ({ name: r.name, value: r.value, at_ms: r.atMs, reroll: r.reroll || undefined })),
+      ...(tie ? { tie } : {}),
+      ...(lower.length ? { lower_ties: lower } : {}),
     });
   }
   out.sort((a, b) => b.last_at_ms - a.last_at_ms);
@@ -9156,6 +9325,9 @@ class EncounterBuilder {
       return;
     }
     const perPlayer = {};
+    // name → [firstMs, lastMs] of that combatant's own damage. A SIBLING of perPlayer on purpose: the
+    // threat_snapshot upload sends perPlayer whole, and these would grow every stored row.
+    const spans = {};
     for (const [name, t] of this.threatBy) {
       // Defense-in-depth: even if a name slipped past the writer-side
       // NPC check, drop it here if it shows up as a damage target — the
@@ -9234,6 +9406,7 @@ class EncounterBuilder {
         pet_spawn_id: (petOwner && _petSpawnIdFor(name, petOwner)) || undefined,
         procDetail: t.procDetail || {},
       };
+      if (t.firstMs > 0 && t.lastMs >= t.firstMs) spans[name] = [t.firstMs, t.lastMs];
     }
     // Fight label for the overlays: the catalog-matched boss when known,
     // else the most-damaged defender this encounter — so trash/named pulls
@@ -9256,6 +9429,7 @@ class EncounterBuilder {
       // builder published last.
       uploader:  this.character || null,
       perPlayer,
+      spans,
     };
     // Pet aggro rollup — every charm or summoned pet that has a row in
     // perPlayer with a known pet_owner contributes its total threat back to
@@ -10303,6 +10477,14 @@ class EncounterBuilder {
         // per-fight damage overlay. Threat (swing/proc/spell) stays weighted
         // for the Tanks threat meter; this is the honest damage number.
         t.dmg = (t.dmg || 0) + event.amount;
+        // This combatant's own first and last damage time (log time, epoch ms). The meter's Sec column
+        // and DPS are damage over THIS span, EQLogParser-style, not over the whole fight (the guild
+        // lead, 2026-10-14: every row read the same seconds). `!(x <= y)` is also true while unset.
+        const _dmgTs = Date.parse(event.ts);
+        if (Number.isFinite(_dmgTs)) {
+          if (!(t.firstMs <= _dmgTs)) t.firstMs = _dmgTs;
+          if (!(t.lastMs >= _dmgTs)) t.lastMs = _dmgTs;
+        }
         const a = (event.ability || '').toLowerCase();
         // Categorize for DEEPS tracking — same buckets the threat code uses
         let deepsCategory;
@@ -18089,6 +18271,8 @@ function _serializeForDashboard() {
     // lines, honour the same rules.
     guildRuleModes:      _guildRuleModes(),
     builtinRuleModes:    _builtinRuleModes(),
+    // This PC's own sound on a guild trigger it cannot edit ({trigger_id: {sound, sound_mode}}); the guild table badges it.
+    soundOverrides:      _soundOverrides,
     personalTriggerCount: (_personalTriggers || []).length,
     // Trigger checkpoint journal (#76) — newest first, capped, for the Triggers
     // tab diagnostic card. Pure in-memory; never persisted or uploaded.
@@ -22667,6 +22851,11 @@ function renderTriggers(s) {
   // section HTML here stays byte-stable and the card is not rewritten by a Triggers repaint.
   h += '<div id="wpTrigRules" class="card wide"></div>';
 
+  // 🔊 Sounds and 🗣 Voice & names (the guild lead, 2026-10-14) — each its own wp* placeholder, filled by
+  // setupSounds / setupVoiceNames below, so this section's HTML stays byte-stable.
+  h += '<div id="wpSounds" class="card wide"></div>';
+  h += '<div id="wpVoice" class="card wide"></div>';
+
   // Suggested triggers — one-click catalog of pre-tested alerts grouped by
   // category. Toggling the Enable checkbox creates/removes a personal
   // trigger with id "suggested:<template_id>" via /api/triggers/suggested;
@@ -22708,6 +22897,12 @@ function renderTriggers(s) {
   if (window._wpTrigRules && window._wpTrigRules.mount) {
     window._wpTrigRules.mount();
   }
+  if (window._wpSounds && window._wpSounds.mount) {
+    window._wpSounds.mount();
+  }
+  if (window._wpVoiceNames && window._wpVoiceNames.mount) {
+    window._wpVoiceNames.mount();
+  }
   if (window._wpTrigSync && window._wpTrigSync.mount) {
     window._wpTrigSync.mount();
   }
@@ -22719,6 +22914,8 @@ function renderTriggers(s) {
 function renderGuildTriggersCard(s) {
   var el = document.getElementById('wpGuildTriggers');
   if (!el) return;   // Triggers tab not painted yet
+  // The sound list a row's "My sound" box needs arrives once, a moment after the first paint: draw again then.
+  if (!window._wpSndAsked) { window._wpSndAsked = true; WPSounds.load().then(function () { if (window.__wpLastState) renderGuildTriggersCard(window.__wpLastState); }); }
   var gt = s.guildTriggers || [];
   var h = '<h2>🛡️ Guild triggers <span class="dim" style="font-size:11px;font-weight:normal">(read-only: click one to see its settings; officers edit on wolfpack.quest/admin/triggers)</span></h2>';
   if (gt.length === 0) {
@@ -22756,6 +22953,9 @@ function renderGuildTriggersCard(s) {
         warn_tts: _w ? _w.tts : true,
         timer_loop: t.timer_loop === true,
         timer_loop_max: t.timer_loop_max || 0,
+        sound: _act.sound || '',
+        sound_volume: _act.sound_volume != null ? _act.sound_volume : null,
+        sound_mode: _act.sound_mode || '',
       };
       var key = String(t.id || t.name || '');
       var open = !!_wpTrigOpen['g|' + key];
@@ -22764,6 +22964,9 @@ function renderGuildTriggersCard(s) {
       var _rm = (s.guildRuleModes || {})[t.id];
       var _rbadge = _rm === 'overlay' ? '<span class="rbadge" title="Shown on the trigger overlay, never spoken (What you hear)">👁 overlay only</span>'
         : _rm === 'off' ? '<span class="rbadge off" title="Turned off: neither shown nor spoken (What you hear)">⛔ off</span>' : '';
+      // 🔊 this PC's own sound for the row, if the member picked one (kept off-guild, see Sounds)
+      var _ov = (s.soundOverrides || {})[t.id];
+      if (_ov && _ov.sound) _rbadge += '<span class="rbadge" title="Your own sound for this guild trigger, on this PC only">🔊 ' + esc(String(_ov.sound).replace(/^custom:/i, '').replace(/^https?:.*/i, 'web sound')) + '</span>';
       h += '<tr data-trig-key="' + esc(key) + '" style="cursor:pointer"><td>'
         + '<button type="button" class="trigname" data-trig-view="' + esc(key) + '" aria-expanded="' + (open ? 'true' : 'false') + '" style="color:var(--orange)" title="Show this trigger\\'s settings">'
         + (open ? '▾' : '▸') + ' ' + esc(t.name || '?') + '</button>' + _rbadge + '</td>' +
@@ -22771,7 +22974,7 @@ function renderGuildTriggersCard(s) {
            '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc((t.pattern || '').slice(0, 80)) + '</code></td>' +
            '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>' +
            '<td><button type="button" data-trig-copy="' + esc(JSON.stringify(_copy)) + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;white-space:nowrap" title="Copy this guild trigger to your own list so you can customize it without changing the guild\\'s version">⎘ Copy to personal</button></td></tr>';
-      if (open) h += '<tr class="trigdetail"><td colspan="5">' + wpTrigSettingsHtml(t, 'guild') + '</td></tr>';
+      if (open) h += '<tr class="trigdetail"><td colspan="5">' + wpTrigSettingsHtml(t, 'guild') + wpSoundOverrideHtml(t, _ov) + '</td></tr>';
     }
     h += '</table>';
   }
@@ -22806,6 +23009,7 @@ var WP_OVERLAY_ROWS = [
   ['mobinfo', 'Target Info',         'Current target: HP, AC, resists, special attacks, drop table — and, for a Shadow Knight mob, whether it still has its Harm Touch.'],
   ['buffQueue','Buff queue',         'Raid/group buff + debuff/cure queue with severity sort; pick a class to focus. Fills non-Mimic raiders from observed casts.'],
   ['who',     '/who',                'Latest /who in zone + recently-gone; anon rows de-anon\\'d from history.'],
+  ['chat',    'Chat [beta]',         'Your chat in a window of its own, off the EverQuest screen if you like: one feed, colour-coded by channel, with a chip for each (Guild, Raid, Say, OOC/Shout, Auction, NPC) to show or hide it. Tells appear when Settings has Tells on Local or Synced. Group, Officer and custom channels are hidden until you switch them on in the window\\'s ⚙. Lines stay on this PC in memory, are never uploaded, and are gone when Mimic restarts. Works in local mode.'],
   ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
   ['zeal',    'Tick',                'Server tick countdown for each character on Zeal, plus your charmed mob\\'s own tick. Bars or dials. Click the status line for the Zeal health check and this PC\\'s clock offset.'],
   ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. Aggro AAs like Disruptive Persecution and de-aggro spells like Concussion count via a CAST_HATE map; zoning clears your hate.'],
@@ -22832,6 +23036,7 @@ var WP_OVERLAY_BLURB = {
   mobinfo:   'HP, resists, special attacks, drops, Harm Touch.',
   buffQueue: 'Buffs, debuffs and cures the raid needs, by severity.',
   who:       'Latest /who in zone, recently gone.',
+  chat:      'Your chat in its own window, a chip per channel.',
   melody:    'Bard twist queue with cast bar and buff windows.',
   zeal:      'Server tick for each character, plus your charm tick.',
   threat:    'Per-fight aggro, stacked by swing, proc and heal.',
@@ -22894,6 +23099,7 @@ function renderOverlays(s) {
     + '<button type="button" class="wp-ov-act wp-btn" data-act="lock" id="wpOvLockBtn">…</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="arrange" title="Arranging only ever runs when you click it — never automatically.">✨ Auto-arrange now</button>'
     + '<button type="button" class="wp-ov-act wp-btn" data-act="rescue" title="Lost an overlay off the edge of a screen? Brings back only the overlays you cannot reach, each to a free spot on the screen this window is on; nothing else moves. Overlays sitting on another screen come too only if you say yes. That screen becomes the overlays\\' home for future arranges.">🧲 Rescue to this screen</button>'
+    + '<button type="button" class="wp-ov-act wp-btn" data-act="mapMode" id="wpOvMapModeBtn" title="The Map as a window you place, or laid over EverQuest and click-through so you play straight through it (it keeps clear of your UI windows). The same switch as the Map&rsquo;s own toolbar button and the tray.">…</button>'
     + '</span>'
     + '</div>';
   // On screen now | Add. Every overlay is written into BOTH — a row in the list
@@ -22913,7 +23119,7 @@ function renderOverlays(s) {
     // Nor the HUD ring (the guild lead, 2026-09-24: "HUD doesn't make sense to
     // dock") — it is a square round the character; main's catalog agrees.
     // The Canvas covers the screen and is a host itself.
-    var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas' || key === 'map' || key === 'maptimers')
+    var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas' || key === 'map' || key === 'maptimers' || key === 'chat')
       ? ''
       : '<button type="button" class="wp-ov-dock" data-ov="' + key + '">…</button>';
     // ▭ Mini mode (the guild lead, 2026-09-24: "I don't see any of the
@@ -23734,11 +23940,11 @@ function wpRefreshOverlayToggles() {
     var cfgP = window.mimic.getConfig ? window.mimic.getConfig().catch(function(){ return {}; }) : Promise.resolve({});
     Promise.all([window.mimic.getStatus(), cfgP]).then(function(res){
       var st = res[0] || {}, cfg = res[1] || {};
-      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid, me: !!st.showMe, map: !!st.showMap, maptimers: !!st.showMapTimers, canvas: !!st.showCanvas };
+      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, chat: !!st.showChat, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid, me: !!st.showMe, map: !!st.showMap, maptimers: !!st.showMapTimers, canvas: !!st.showCanvas };
       // Which cfg flag each row reads, so a HIDDEN row can be told from an OFF
       // one. Hide-all writes every flag false, so without the snapshot the two
       // are indistinguishable here (the guild lead, 2026-08-04).
-      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid', me: 'showMe', map: 'showMap', maptimers: 'showMapTimers', canvas: 'showCanvas' };
+      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', chat: 'showChat', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid', me: 'showMe', map: 'showMap', maptimers: 'showMapTimers', canvas: 'showCanvas' };
       var hidPrev = (st.hideAllActive && st.hideAllPrev) ? st.hideAllPrev : null;
       var hidCount = 0, nListed = 0, nOff = 0;
       var dockedList = Array.isArray(st.dockedOverlays) ? st.dockedOverlays : [];
@@ -23814,6 +24020,12 @@ function wpRefreshOverlayToggles() {
       if (arBtn) {
         arBtn.textContent = st.canvasArrange ? '✓ Done arranging' : '✏ Arrange on screen';
         arBtn.className = 'wp-ov-act wp-btn pri' + (st.canvasArrange ? ' on' : '');
+      }
+      // 🗺 Map: Window ↔ Full, as the tray item and the Map's own button. An older Mimic does not report it: no button.
+      var mmBtn = document.getElementById('wpOvMapModeBtn');
+      if (mmBtn) {
+        mmBtn.style.display = st.mapMode ? '' : 'none';
+        mmBtn.textContent = st.mapMode === 'full' ? '🗺 Map: Full screen — back to a window' : '🗺 Map: window — go full screen';
       }
       // ▭ Mini: each capable row's switch and 📌, and the Minimize ALL button.
       var miniMap = st.overlayMini || {}, pinMap = st.overlayMiniPinned || {};
@@ -23958,6 +24170,14 @@ if (typeof window !== 'undefined' && !window.__wpOvDelegated) {
           setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
         }).catch(function(){});
       } else if (a === 'canvasArrange' && window.mimic.setSetupMode) window.mimic.setSetupMode(true);
+      // Same setter as the tray item and the Map's own button.
+      if (a === 'mapMode' && window.mimic.setMapMode) {
+        window.mimic.getStatus().then(function(st){
+          return window.mimic.setMapMode(st && st.mapMode === 'full' ? 'window' : 'full');
+        }).then(function(){
+          setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
+        }).catch(function(){});
+      }
       if (a === 'miniall' && window.mimic.toggleMiniAll) {
         window.mimic.toggleMiniAll().then(function(){
           setTimeout(function(){ try { wpRefreshOverlayToggles(); } catch (e2) {} }, 200);
@@ -24885,6 +25105,39 @@ function _wpDeathrollHtml(e) {
   return h + '</table></details>';
 }
 
+// 🤝 A tie at the top of a roll set (the guild lead, 2026-10-14: "if two toons roll the same number on a
+// roll it should trigger a deathroll and highlight the tie"). The agent decides it once (rollSetTies,
+// carried as rset.tie / rset.lower_ties); these only draw it. Orange, bordered and spelled out, so it
+// reads without the colour. The header names the tied rolls instead of one arbitrary winner and, once
+// the deathroll is over, names its winner. The prompt says who starts and on which range.
+function _wpRollTieChip(label) {
+  return '<span style="color:var(--orange);border:1px solid var(--orange);border-radius:3px;padding:0 4px;font-weight:700">'
+    + label + '</span>';
+}
+function _wpRollWhoHtml(rset) {
+  var t = rset && rset.tie;
+  if (!t) return (rset.winners || []).map(function (w) { return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+  var chip = _wpRollTieChip('TIE ' + Number(t.value));
+  if (t.state === 'done') return chip + ' <span style="color:var(--gold,#f0c419)">' + (t.winners || []).map(esc).join(', ') + '</span> won the deathroll';
+  return chip + ' ' + (t.names || []).map(esc).join(' · ');
+}
+function _wpRollTiePrompt(rset) {
+  var t = rset && rset.tie;
+  if (!t) return '';
+  var msg;
+  if (t.state === 'done') msg = 'Deathroll over: ' + (t.winners || []).map(esc).join(', ') + ' wins' + ((t.out || []).length ? ' · ' + t.out.map(esc).join(', ') + ' hit 0' : '');
+  else if (t.state === 'live') msg = 'Deathroll going: ' + (t.next && t.next.name ? esc(t.next.name) + ' rolls' : 'next roll') + ' /random ' + (t.next ? t.next.to : t.value);
+  else msg = 'Tie → deathroll: ' + esc(t.starter) + ' starts with /random ' + t.value;
+  return '<div style="border-left:3px solid var(--orange);padding:2px 8px;margin:4px 0;font-weight:600">' + msg + '</div>';
+}
+function _wpRollRowMark(rset, rr) {
+  if (!rset || rr.reroll) return '';
+  var t = rset.tie;
+  if (t && rr.value === t.value && (t.names || []).indexOf(rr.name) !== -1) return ' ' + _wpRollTieChip('TIE');
+  if ((rset.lower_ties || []).indexOf(rr.value) !== -1) return ' <span class="dim" title="Same number as another roller">=</span>';
+  return '';
+}
+
 // ── 📦 Who looted what (the guild lead, 2026-10-03) ──────────────────────────────────
 // "the loot tab on mimic should have the 'who looted what' section on there for
 // items, as well as the rolls for loot." An agent only ever sees its OWN
@@ -25053,24 +25306,25 @@ function renderLootTab(s) {
     for (var rsi = 0; rsi < _rollSets.length; rsi++) {
       var rset = _rollSets[rsi];
       if (rset.kind === 'deathroll') { h += _wpDeathrollHtml(rset); continue; }
-      var rWinners =(rset.winners || []).map(function (w) { return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+      var rWinners = _wpRollWhoHtml(rset);
       var rTime = new Date(rset.started_at_ms).toLocaleTimeString();
       // 📦 Only when the looter is NOT a winner drawn here (a re-roll or a pass).
       var rLooted = wpNightLootedBy(rset, _wpNightLoot && _wpNightLoot.sessions);
       h += '<details ' + wpKeep('roll|' + rset.started_at_ms + '|' + rset.to) + '>';
       h += '<summary><b>' + rset.from + '–' + rset.to + '</b>'
          + (rset.item ? ' (' + esc(rset.item) + (rset.qty ? ' ×' + rset.qty : '') + ')' : '')
-         + ' — <span style="color:var(--gold,#f0c419)">' + (rWinners || '—') + '</span>'
+         + ' — <span style="color:var(' + (rset.tie && rset.tie.state !== 'done' ? '--orange' : '--gold,#f0c419') + ')">' + (rWinners || '—') + '</span>'
          + (rLooted.length ? ' <span style="color:var(--blue)">· 📦 looted by ' + rLooted.map(esc).join(', ') + '</span>' : '')
          + ' <span class="dim">· ' + rset.players + ' roller' + (rset.players === 1 ? '' : 's')
          + ' · ' + rTime + (rset.open ? ' · open' : '') + '</span></summary>';
+      h += _wpRollTiePrompt(rset);
       h += '<table><tr><th>Rolled</th><th>Player</th><th>Time</th></tr>';
       var rRows = (rset.rolls || []).slice().sort(function (a, b) { return b.value - a.value; });
       for (var rri = 0; rri < rRows.length; rri++) {
         var rr = rRows[rri];
         h += '<tr' + (rr.reroll ? ' style="opacity:0.45;text-decoration:line-through"' : '') + '>'
            + '<td class="num">' + rr.value + '</td>'
-           + '<td>' + esc(rr.name) + (rr.reroll ? ' (re-roll)' : '') + '</td>'
+           + '<td>' + esc(rr.name) + (rr.reroll ? ' (re-roll)' : '') + _wpRollRowMark(rset, rr) + '</td>'
            + '<td class="dim">' + new Date(rr.at_ms).toLocaleTimeString() + '</td></tr>';
       }
       h += '</table></details>';
@@ -29363,6 +29617,74 @@ async function dismissTopDamage(key) {
   setInterval(refresh, 5000);
 })();
 
+// ── 🔊 The sound library, as the dashboard sees it (2026-10-14) ─────────────
+// A trigger's \`sound\` is a NAME from the library ("slap"), "custom:<file>" for a file the member dropped in
+// their own sounds folder, or an http(s) URL — never a path, so a guild or synced trigger plays on every PC.
+// The agent lists and serves them (GET /api/sounds, GET /sounds/<name>); the shipped set comes with Mimic.
+// This is the one place the dashboard's pickers get their options from, and the one place that plays a
+// sample, so the editor, the guild-row control and the Sounds card cannot disagree.
+var WPSounds = (function () {
+  var list = [], userDir = '', loaded = false, loading = null, cur = null, packs = [], packsLoaded = false;
+  function load(force) {
+    if (loaded && !force) return Promise.resolve(list);
+    if (loading) return loading;
+    loading = fetch('/api/sounds').then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      if (j && Array.isArray(j.sounds)) { list = j.sounds; userDir = j.user_dir || ''; loaded = true; }
+      return list;
+    }).catch(function () { return list; }).then(function (x) { loading = null; return x; });
+    return loading;
+  }
+  function loadPacks() {
+    if (packsLoaded) return Promise.resolve(packs);
+    return fetch('/api/voice-packs').then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      if (j && Array.isArray(j.packs)) { packs = j.packs; packsLoaded = true; }
+      return packs;
+    }).catch(function () { return packs; });
+  }
+  function labelOf(s) {
+    var mine = s.source === 'custom';
+    return (String(s.name).indexOf('custom:') === 0 ? String(s.name).slice(7) : s.name) + (mine ? ' (mine)' : '');
+  }
+  // <option>s for a sound <select>: none, the library, and — if the saved value is in neither (a URL a guild
+  // trigger carries) — that value as it is, so opening a row and saving it never changes its sound.
+  function optionsHtml(selected) {
+    var sel = String(selected == null ? '' : selected), seen = sel === '';
+    var h = '<option value=""' + (sel === '' ? ' selected' : '') + '>none</option>';
+    for (var i = 0; i < list.length; i++) {
+      var on = list[i].name === sel; if (on) seen = true;
+      h += '<option value="' + esc(list[i].name) + '"' + (on ? ' selected' : '') + '>' + esc(labelOf(list[i])) + '</option>';
+    }
+    if (!seen) h += '<option value="' + esc(sel) + '" selected>' + esc(/^https?:/i.test(sel) ? 'a web address' : sel + ' (not on this PC)') + '</option>';
+    return h;
+  }
+  // Rewrites a <select>'s options in place, keeping what it had picked.
+  function fill(selectEl) {
+    if (!selectEl) return;
+    var keep = selectEl.value;
+    selectEl.innerHTML = optionsHtml(keep);
+    selectEl.value = keep;
+  }
+  function packOptionsHtml(selected, noneLabel) {
+    var h = '<option value="">' + esc(noneLabel || 'My voice (as set in Mimic)') + '</option>';
+    for (var i = 0; i < packs.length; i++) h += '<option value="' + esc(packs[i].id) + '"' + (packs[i].id === selected ? ' selected' : '') + '>' + esc(packs[i].label) + '</option>';
+    return h;
+  }
+  function play(name, vol) {
+    name = String(name || '');
+    if (!name) return;
+    try { if (cur) { cur.pause(); cur = null; } } catch (e) { void e; }
+    var url = /^https?:\\/\\//i.test(name) ? name : '/sounds/' + encodeURIComponent(name);
+    try {
+      var a = new Audio(url), v = Number(vol);
+      a.volume = (vol != null && vol !== '' && isFinite(v) && v >= 0 && v <= 1) ? v : 0.9;
+      cur = a;
+      var p = a.play(); if (p && p.catch) p.catch(function () { void 0; });
+    } catch (e) { void e; }
+  }
+  return { load: load, loadPacks: loadPacks, optionsHtml: optionsHtml, packOptionsHtml: packOptionsHtml, fill: fill, play: play, labelOf: labelOf,
+    list: function () { return list; }, userDir: function () { return userDir; }, packs: function () { return packs; } };
+})();
+
 // ── Trigger settings: what a trigger is set to do ───────────────────────────
 // FB-23 / FB-30: a trigger's name and pattern were all the list showed. A personal row's name was
 // also a .name cell, so clicking it went to the character page (a 404 for "Rampage on me")
@@ -29411,6 +29733,9 @@ function wpTrigSettingsHtml(t, scope) {
   }
   if (t.builtin_timer) add('Timer bar', esc(String(t.builtin_timer).replace(/_/g, ' ')) + ' <span class="dim">a switch: it draws a bar, there is nothing to match</span>');
   if (Array.isArray(t.exclude_patterns) && t.exclude_patterns.length) add('Unless', t.exclude_patterns.map(function (p) { return code(p); }).join(' '));
+  // A proc's landing text, told from the other spells that print it: only just after one of YOUR melee hits on that mob.
+  if (t.after_my_melee_ms > 0) add('Only when', 'one of <b>your</b> melee hits landed on that mob in the last ' + secs(t.after_my_melee_ms / 1000));
+  if (t.voice_pack) add('Voice', esc(String(t.voice_pack)) + ' <span class="dim">this callout\\'s own voice pack</span>');
   if (Array.isArray(t.characters) && t.characters.length) add('Only on', names(t.characters));
   if (guild && Array.isArray(t.applies_to_classes) && t.applies_to_classes.length) add('Classes', esc(t.applies_to_classes.join(', ')));
   // what it does
@@ -29425,7 +29750,14 @@ function wpTrigSettingsHtml(t, scope) {
       // A Suggested alert with its 🔊 unticked says nothing (the agent mutes it); any other row with no speech text reads its display text.
       add('Says', a.tts ? '<b>' + esc(a.tts) + '</b>'
         : (!guild && String(t.id || '').indexOf('suggested:') === 0 ? '<span class="dim">nothing, its 🔊 is unticked under Suggested triggers</span>' : '<span class="dim">the same words it shows</span>'));
-      if (a.sound) add('Sound', esc(a.sound));
+      if (a.sound) {
+        var snd = String(a.sound);
+        add('Sound', esc(/^https?:\\/\\//i.test(snd) ? 'a web address' : snd.replace(/^custom:/i, ''))
+          + (a.sound_volume != null && Number(a.sound_volume) !== 0.9 ? ' at ' + Math.round(Number(a.sound_volume) * 100) + '%' : '')
+          + (a.sound_mode === 'replace' ? ' <span class="dim">plays instead of speaking</span>' : ''));
+      }
+    } else if (a.type === 'sound') {
+      add('Plays', esc(String(a.sound || '').replace(/^custom:/i, '')) + (a.sound_volume != null ? ' at ' + Math.round(Number(a.sound_volume) * 100) + '%' : '') + ' <span class="dim">a sound on its own</span>');
     } else {
       var msg = a.message || a.text || '';
       add('Also', esc(String(a.type).replace(/_/g, ' ')) + (msg ? ': ' + esc(String(msg).slice(0, 120)) : ''));
@@ -29489,11 +29821,23 @@ function wpTrigApplyForm(base, f) {
   if (f.overlay) {
     var a = Object.assign({ type: 'text_overlay' }, at >= 0 ? acts[at] : {}, { text: f.overlay, color: f.color, duration_ms: f.duration });
     if (f.tts) a.tts = f.tts; else delete a.tts;
+    // 2026-10-14: the sound. undefined = the caller has no sound box, so what the row had is kept (a URL
+    // sound on an imported trigger); '' = "none", clears it. sound_mode is written only when 'replace'
+    // (absent = plays with the callout) and the volume only when it is not the default 0.9.
+    if (f.sound !== undefined) {
+      if (f.sound) {
+        a.sound = f.sound;
+        if (f.soundReplace) a.sound_mode = 'replace'; else delete a.sound_mode;
+        if (f.soundVolume != null && Math.abs(Number(f.soundVolume) - 0.9) > 0.001) a.sound_volume = Math.max(0, Math.min(1, Number(f.soundVolume))); else delete a.sound_volume;
+      } else { delete a.sound; delete a.sound_mode; delete a.sound_volume; }
+    }
     if (at >= 0) acts[at] = a; else acts.unshift(a);
   } else if (at >= 0) {
     acts.splice(at, 1);
   }
   row.actions = acts;
+  // This trigger's own voice pack (a callout that should sound different); '' = the player's own voice.
+  if (f.voicePack !== undefined) { if (f.voicePack) row.voice_pack = f.voicePack; else delete row.voice_pack; }
   if (f.timerSec > 0) row.timer_duration_sec = f.timerSec; else delete row.timer_duration_sec;
   if (f.endEarly) { row.end_early_pattern = f.endEarly; if (row.end_use_regex === undefined) row.end_use_regex = true; }
   else { delete row.end_early_pattern; delete row.end_use_regex; }
@@ -29544,6 +29888,15 @@ function wpTrigApplyForm(base, f) {
       + '      <input id="trigNewOverlay" type="text" placeholder="e.g. CANCEL ON {target}!" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label style="grid-column:1/3">Spoken text (optional — leave blank to speak the overlay text)<br>'
       + '      <input id="trigNewTts" type="text" placeholder="e.g. D I fired on {tank}" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      // 2026-10-14: a sound from the library (or the member's own folder), its volume, whether it plays
+      // INSTEAD of the spoken callout, and this callout's own voice pack. The Sounds card below lists them all.
+      + '    <label>Sound (optional)<br><span style="display:flex;gap:6px;align-items:center">'
+      + '      <select id="trigNewSound" style="flex:1;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px">' + WPSounds.optionsHtml('') + '</select>'
+      + '      <button id="trigSoundPlay" type="button" title="Hear it at this volume" style="background:#21262d;color:var(--green);border:1px solid var(--border);padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:12px">&#9654;</button>'
+      + '    </span></label>'
+      + '    <label>Sound volume <span id="trigNewSoundVolVal" class="dim">90%</span><br><input id="trigNewSoundVol" type="range" min="0" max="100" value="90" style="width:100%"></label>'
+      + '    <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input id="trigNewSoundReplace" type="checkbox"> Play the sound <b>instead of</b> speaking the callout</label>'
+      + '    <label>Voice for this callout<br><select id="trigNewVoicePack" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px">' + WPSounds.packOptionsHtml('') + '</select></label>'
       + '    <label>Color<br><select id="trigNewColor" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"><option value="red">red</option><option value="orange">orange</option><option value="gold">gold</option><option value="green">green</option><option value="blue">blue</option><option value="purple">purple</option><option value="white">white</option></select></label>'
       + '    <label>Duration (ms)<br><input id="trigNewDuration" type="number" min="500" max="60000" value="5000" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label>Countdown timer (sec, 0 = no timer)<br><input id="trigNewTimerSec" type="number" min="0" max="3600" value="0" placeholder="e.g. 18 for a Cazic Touch refresh" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
@@ -29799,6 +30152,24 @@ function wpTrigApplyForm(base, f) {
     setChk('trigNewWarnTts', w ? w.tts : true);
     setChk('trigNewLoop', row.timer_loop === true);
     setVal('trigNewLoopMax', row.timer_loop_max > 0 ? row.timer_loop_max : '');
+    setSoundFields(o.sound, o.sound_volume, o.sound_mode === 'replace', row.voice_pack);
+  }
+  // The sound box, its volume, "instead of speaking" and the voice pack, set together (a saved row, a copy
+  // of a guild trigger, or back to blank after an add).
+  function setSoundFields(sound, volume, replace, pack) {
+    setVal('trigNewSound', sound || '');
+    setVal('trigNewSoundVol', volume != null && isFinite(Number(volume)) ? Math.round(Number(volume) * 100) : 90);
+    setChk('trigNewSoundReplace', !!replace);
+    setVal('trigNewVoicePack', pack || '');
+    syncSoundVolLabel();
+  }
+  function soundVolume() { var el = document.getElementById('trigNewSoundVol'); var v = el ? Number(el.value) : 90; return (isFinite(v) ? v : 90) / 100; }
+  function syncSoundVolLabel() { var l = document.getElementById('trigNewSoundVolVal'); if (l) l.textContent = Math.round(soundVolume() * 100) + '%'; }
+  // The sound and voice-pack lists arrive after the form is drawn: fill them in, keeping what is picked.
+  function refreshSoundPickers() {
+    WPSounds.fill(document.getElementById('trigNewSound'));
+    var vp = document.getElementById('trigNewVoicePack');
+    if (vp) { var keep = vp.value; vp.innerHTML = WPSounds.packOptionsHtml(keep); vp.value = keep; }
   }
   // Title, button labels and (when editing) the form's contents. Also what the form comes back as after
   // a section repaint rebuilds it: the edit survives, any unsaved typing does not.
@@ -29895,7 +30266,11 @@ function wpTrigApplyForm(base, f) {
           // tts only when the user typed one: absent means the overlay falls back
           // to the display text (cleaned of emoji by triggers.html), which is the
           // sane default for the many triggers that read fine as written.
-          actions: [{ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration, ...(ttsText ? { tts: ttsText } : {}) }],
+          actions: [Object.assign({ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration }, ttsText ? { tts: ttsText } : {},
+            // the sound, its volume, "instead of speaking" and this callout's voice pack play in the preview too
+            (document.getElementById('trigNewSound') || {}).value ? { sound: document.getElementById('trigNewSound').value, sound_volume: soundVolume(),
+              sound_mode: (document.getElementById('trigNewSoundReplace') || {}).checked ? 'replace' : 'add' } : {},
+            (document.getElementById('trigNewVoicePack') || {}).value ? { voice_pack: document.getElementById('trigNewVoicePack').value } : {})],
         },
       }),
     });
@@ -30107,7 +30482,10 @@ function wpTrigApplyForm(base, f) {
     // sane default for the many triggers that read fine as written.
     const form = { name: name, pattern: pattern, cooldown: cooldown, overlay: overlayText, tts: ttsText, color: color,
       duration: duration, timerSec: timerSec, endEarly: endEarly.trim(), zeal: zealCond,
-      warnSec: warnSec, warnText: warnText, warnTts: warnTts, loop: loop, loopMax: loopMax };
+      warnSec: warnSec, warnText: warnText, warnTts: warnTts, loop: loop, loopMax: loopMax,
+      sound: ((document.getElementById('trigNewSound') || {}).value || ''), soundVolume: soundVolume(),
+      soundReplace: !!(document.getElementById('trigNewSoundReplace') || {}).checked,
+      voicePack: ((document.getElementById('trigNewVoicePack') || {}).value || '') };
     var next;
     if (editing) {
       var at = -1;
@@ -30132,6 +30510,7 @@ function wpTrigApplyForm(base, f) {
         var ws = document.getElementById('trigNewWarnSec'); if (ws) ws.value = '0';
         var lp = document.getElementById('trigNewLoop'); if (lp) lp.checked = false;
         var zf = document.getElementById('trigNewZealField'); if (zf) zf.value = '';
+        setSoundFields('', null, false, '');
       }
       if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--green)'; }
       fetchAndRenderList();
@@ -30171,6 +30550,7 @@ function wpTrigApplyForm(base, f) {
     var wt = document.getElementById('trigNewWarnTts'); if (wt) wt.checked = cfg.warn_tts !== false;
     var lp = document.getElementById('trigNewLoop'); if (lp) lp.checked = cfg.timer_loop === true;
     set('trigNewLoopMax',  cfg.timer_loop_max || '');
+    setSoundFields(cfg.sound, cfg.sound_volume, cfg.sound_mode === 'replace', '');
     var msg = document.getElementById('trigAddMsg');
     if (msg) { msg.textContent = 'Copied from guild trigger — review and click "Add trigger" to save your personal copy.'; msg.style.color = 'var(--blue)'; }
     var panel = document.getElementById('trigEditorPanel');
@@ -30236,6 +30616,12 @@ function wpTrigApplyForm(base, f) {
       }
       var summary = '<span style="color:var(--green)">Imported ' + j.imported + ' of ' + j.total_in_xml + ' trigger' + (j.total_in_xml === 1 ? '' : 's') + '.</span>';
       if (j.skipped > 0) summary += ' <span class="dim">' + j.skipped + ' skipped (duplicate name or missing fields).</span>';
+      // Sounds that came along (copied into your sounds folder), and the ones that could not: those triggers keep their spoken callout.
+      if (j.sounds_copied > 0) summary += '<br><span class="dim" style="font-size:11px">' + j.sounds_copied + ' sound file' + (j.sounds_copied === 1 ? '' : 's') + ' copied into your sounds folder.</span>';
+      if (Array.isArray(j.sound_notes) && j.sound_notes.length > 0) {
+        summary += '<br><span class="dim" style="font-size:11px">' + j.sound_notes.length + ' trigger' + (j.sound_notes.length === 1 ? '' : 's') + ' played a sound that could not come along, so ' + (j.sound_notes.length === 1 ? 'it keeps' : 'they keep') + ' the spoken callout: '
+          + j.sound_notes.slice(0, 4).map(function(n){ return esc(n.name) + (n.file ? ' (' + esc(n.file) + ')' : '') + ' &mdash; ' + esc(n.why); }).join('; ') + (j.sound_notes.length > 4 ? '; and ' + (j.sound_notes.length - 4) + ' more' : '') + '. Drop the file in your sounds folder and pick it in the trigger.</span>';
+      }
       if (Array.isArray(j.errors) && j.errors.length > 0) {
         summary += '<br><span class="dim" style="font-size:10px">' + j.errors.length + ' bad pattern' + (j.errors.length === 1 ? '' : 's') + ': ' + j.errors.slice(0, 3).map(function(e){ return esc(e.name) + ' (' + esc(e.error) + ')'; }).join('; ') + (j.errors.length > 3 ? '; …' : '') + '</span>';
       }
@@ -30332,6 +30718,12 @@ function wpTrigApplyForm(base, f) {
     if (cancelBtn)  cancelBtn.addEventListener('click', onCancelEdit);
     listEl.addEventListener('click', onListClick);
     applyEditUi();   // a repaint rebuilt the form: put an open edit back
+    // 🔊 the sound row: ▶ plays what is picked at the slider's volume; the lists arrive after the form is drawn.
+    var soundPlay = document.getElementById('trigSoundPlay');
+    if (soundPlay) soundPlay.addEventListener('click', function(){ WPSounds.play((document.getElementById('trigNewSound') || {}).value, soundVolume()); });
+    var soundVol = document.getElementById('trigNewSoundVol');
+    if (soundVol) soundVol.addEventListener('input', syncSoundVolLabel);
+    WPSounds.load().then(function(){ return WPSounds.loadPacks(); }).then(refreshSoundPickers);
     if (previewBtn) previewBtn.addEventListener('click', onPreview);
     if (testBtn)    testBtn.addEventListener('click', onTest);
     if (runBtn)     runBtn.addEventListener('click', onTestRun);
@@ -30804,6 +31196,280 @@ function wpTrigApplyForm(base, f) {
   window._wpTrigSync = { mount: mount };
 })();
 
+// ── 🔊 Sounds (the guild lead, 2026-10-14) ───────────────────────────────────
+// *"allow users to add their own sound effects. allow them to use the sound effects instead of callouts
+// tts."* The library (WPSounds, above): the set that ships with Mimic plus whatever the member drops in
+// their own sounds folder, with ▶ on each and a button that opens the folder. Also the small 🔊 control on
+// an opened GUILD trigger — members cannot edit those, so a sound picked there is kept on THIS PC only
+// (trigger_sound_overrides.json) and applied when the trigger fires, including a relayed fire.
+// Fills #wpSounds, which the Triggers section emits; it repaints only when the list changed.
+function wpSoundOverrideHtml(t, ov) {
+  if (!t || !t.id) return '';
+  var h = '<div data-sndov="' + esc(String(t.id)) + '" style="margin-top:8px;padding-top:6px;border-top:1px dashed var(--border);display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:11px">';
+  h += '<span title="Kept on this PC only. The guild\\'s trigger is not changed, and nobody else hears it.">🔊 My sound</span>';
+  h += '<select data-sndov-sound aria-label="My sound for this guild trigger" style="font-family:inherit;font-size:11px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:2px 6px">' + WPSounds.optionsHtml(ov && ov.sound || '') + '</select>';
+  h += '<button type="button" data-sndov-play title="Hear it" style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px">&#9654;</button>';
+  h += '<label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" data-sndov-replace' + (ov && ov.sound_mode === 'replace' ? ' checked' : '') + '> instead of speaking</label>';
+  return h + '</div>';
+}
+(function setupSounds(){
+  var el = null, mounted = false, lastHtml = '', msg = '';
+  function render(){
+    var list = WPSounds.list();
+    var h = '<h2>🔊 Sounds <span class="dim" style="font-size:11px;font-weight:normal">(play one with a callout, or instead of the voice)</span></h2>';
+    h += '<div class="dim" style="font-size:11px;margin-bottom:6px">Pick one in a personal trigger\\'s <b>Sound</b> box, or on an opened guild trigger under <b>My sound</b>. To add your own, put .wav, .mp3 or .ogg files in your sounds folder; a file named like a built-in one (slap.mp3) replaces it on this PC.</div>';
+    h += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">';
+    for (var i = 0; i < list.length; i++) {
+      h += '<span style="display:inline-flex;align-items:center;gap:4px;background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:2px 4px 2px 8px;font-size:12px">'
+        + esc(WPSounds.labelOf(list[i]))
+        + '<button type="button" data-snd-play="' + esc(list[i].name) + '" title="Hear ' + esc(WPSounds.labelOf(list[i])) + '" style="background:none;border:0;color:var(--green);cursor:pointer;font-size:12px;padding:2px 5px">&#9654;</button></span>';
+    }
+    if (!list.length) h += '<span class="dim" style="font-size:12px">No sounds found.</span>';
+    h += '</div>';
+    h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px">'
+      + '<button type="button" id="wpSndOpen" style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px">Open my sounds folder</button>'
+      + '<button type="button" id="wpSndRefresh" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px">&#8635; Look again</button>'
+      + '<span id="wpSndMsg" class="dim" style="font-size:11px">' + esc(msg) + '</span></div>';
+    if (WPSounds.userDir()) h += '<div class="dim" style="font-size:10px;margin-top:6px">Your folder: <code>' + esc(WPSounds.userDir()) + '</code></div>';
+    return h;
+  }
+  function paint(){
+    if (!el) return;
+    var h = render();
+    if (h !== lastHtml) { lastHtml = h; el.innerHTML = h; }
+  }
+  async function refresh(force){ await WPSounds.load(force); paint(); try { if (window.__wpLastState) renderGuildTriggersCard(window.__wpLastState); } catch (e) { void e; } }
+  function say(t){ msg = t; var m = document.getElementById('wpSndMsg'); if (m) m.textContent = t; lastHtml = ''; }
+  function onClick(e){
+    var t = e.target && e.target.closest ? e.target : null;
+    if (!t) return;
+    var p = t.closest('[data-snd-play]');
+    if (p) { WPSounds.play(p.getAttribute('data-snd-play')); return; }
+    if (t.closest('#wpSndOpen')) {
+      fetch('/api/sounds/open-folder', { method: 'POST' }).then(function(r){ return r.json(); })
+        .then(function(j){ say('Opened. Drop files in, then press Look again.' + (j && j.user_dir ? '' : '')); }, function(){ say('Could not open it from here: the path is below.'); });
+      return;
+    }
+    if (t.closest('#wpSndRefresh')) { say(''); refresh(true); }
+  }
+  function mount(){
+    var n = document.getElementById('wpSounds');
+    if (!n) { mounted = false; return; }
+    if (mounted && n === el) return;
+    el = n; mounted = true; lastHtml = '';
+    el.addEventListener('click', onClick);
+    paint();
+    refresh(false);
+  }
+  // A guild trigger's "My sound": saved the moment it changes, on this PC only.
+  async function saveOverride(box){
+    var id = box.getAttribute('data-sndov');
+    var sel = box.querySelector('[data-sndov-sound]'), rep = box.querySelector('[data-sndov-replace]');
+    var body = { id: id, sound: sel ? sel.value : '', sound_mode: rep && rep.checked ? 'replace' : 'add' };
+    try {
+      var r = await fetch('/api/trigger-sound-overrides', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      var j = await r.json();
+      var s = window.__wpLastState;
+      if (j && j.ok && s) { s.soundOverrides = s.soundOverrides || {}; if (j.override) s.soundOverrides[id] = j.override; else delete s.soundOverrides[id]; renderGuildTriggersCard(s); }
+    } catch (e) { void e; }
+  }
+  document.addEventListener('change', function(e){
+    var box = e.target && e.target.closest ? e.target.closest('[data-sndov]') : null;
+    if (box) saveOverride(box);
+  });
+  document.addEventListener('click', function(e){
+    var b = e.target && e.target.closest ? e.target.closest('[data-sndov-play]') : null;
+    if (!b) return;
+    var box = b.closest('[data-sndov]'), sel = box && box.querySelector('[data-sndov-sound]');
+    if (sel && sel.value) WPSounds.play(sel.value);
+  });
+  window._wpSounds = { mount: mount, refresh: refresh };
+})();
+
+// ── 🗣 Voice & names (the guild lead, 2026-10-14) ────────────────────────────
+// *"different voice packs, get player pronunciation right … build this voice pack bit into onboarding."*
+// The voice: a pack (Default, Herald, Quick, Narrator), optionally one of the voices installed on this PC,
+// and speed and pitch — saved in Mimic's config (cfg.voice), read by the trigger window before each callout.
+// The names: how each of YOUR characters is said. The agent keeps the guild's list (synced from the
+// website) and this PC's own corrections; suggestions come from the server. The same two panels are in
+// Mimic's setup walkthrough. Fills #wpVoice; it repaints only on a click, never on a poll, so a half-typed
+// pronunciation is never wiped.
+(function setupVoiceNames(){
+  var el = null, mounted = false;
+  var cfgVoice = { pack: 'default', voiceName: '', rate: null, pitch: null };
+  var pron = null, drafts = {}, sugg = {}, notes = {};
+  function inMimic(){ return !!(window.mimic && window.mimic.getConfig && window.mimic.saveConfig); }
+  function voices(){ try { return window.speechSynthesis ? window.speechSynthesis.getVoices() : []; } catch (e) { return []; } }
+  function pack(id){ var ps = WPSounds.packs(); for (var i = 0; i < ps.length; i++) if (ps[i].id === id) return ps[i]; return null; }
+  // The same rules as Mimic's voice.js (which the walkthrough and the trigger window load).
+  function pick(packId){
+    var forced = !!packId, p = pack(packId || cfgVoice.pack || 'default'), vs = voices();
+    var rate = p ? p.rate : 1.05, pitch = p ? p.pitch : 1, voice = null;
+    if (!forced) {
+      if (cfgVoice.rate > 0) rate = cfgVoice.rate;
+      if (cfgVoice.pitch > 0) pitch = cfgVoice.pitch;
+      if (cfgVoice.voiceName) for (var i = 0; i < vs.length; i++) if (vs[i].name === cfgVoice.voiceName) { voice = vs[i]; break; }
+    }
+    if (!voice && p && p.voices) for (var f = 0; f < p.voices.length && !voice; f++) {
+      var frag = String(p.voices[f]).toLowerCase();
+      for (var j = 0; j < vs.length; j++) if (vs[j].name.toLowerCase().indexOf(frag) >= 0) { voice = vs[j]; break; }
+    }
+    return { voice: voice, rate: rate, pitch: pitch };
+  }
+  function speak(text, packId){
+    if (!window.speechSynthesis) return;
+    var v = pick(packId), u = new SpeechSynthesisUtterance(text);
+    if (v.voice) u.voice = v.voice;
+    u.rate = v.rate; u.pitch = v.pitch;
+    try { window.speechSynthesis.cancel(); } catch (e) { void e; }
+    window.speechSynthesis.speak(u);
+  }
+  function save(){ if (inMimic()) { try { window.mimic.saveConfig({ voice: cfgVoice }); } catch (e) { void e; } } }
+  function pct(n){ return Math.round(n * 100) / 100; }
+  function sampleLine(){ var c = pron && pron.characters && pron.characters[0]; return 'Enrage soon. Heal up' + (c ? ', ' + (c.say || c.name) : '') + '.'; }
+  function sugText(s){ return typeof s === 'string' ? s : (s && (s.say || s.text || s.name)) || ''; }
+
+  function voiceHtml(){
+    var ps = WPSounds.packs(), p = pack(cfgVoice.pack || 'default') || ps[0];
+    var h = '<h3 style="font-size:13px;margin:8px 0 4px">Voice</h3>';
+    if (!inMimic()) h += '<div class="dim" style="font-size:11px;margin-bottom:6px">Mimic saves the voice you pick. Open this dashboard from Mimic to change it; names below work anywhere.</div>';
+    h += '<div style="display:flex;flex-direction:column;gap:4px">';
+    for (var i = 0; i < ps.length; i++) {
+      var on = ps[i].id === (cfgVoice.pack || 'default');
+      h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;padding:3px 6px;border:1px solid ' + (on ? 'var(--blue)' : 'var(--border)') + ';border-radius:5px">'
+        + '<input type="radio" name="wpVoicePack" value="' + esc(ps[i].id) + '"' + (on ? ' checked' : '') + (inMimic() ? '' : ' disabled') + '>'
+        + '<b>' + esc(ps[i].label) + '</b><span class="dim" style="flex:1">' + esc(ps[i].blurb || '') + '</span>'
+        + '<button type="button" data-vn-sample="' + esc(ps[i].id) + '" style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px" title="Hear this pack">&#9654;</button></label>';
+    }
+    h += '</div>';
+    var vs = voices();
+    h += '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:8px;font-size:12px">'
+      + '<label>Installed voice <select id="wpVoiceName"' + (inMimic() ? '' : ' disabled') + ' style="font-family:inherit;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:2px 6px;max-width:260px"><option value="">Let the pack choose</option>';
+    var seen = !cfgVoice.voiceName;
+    for (var k = 0; k < vs.length; k++) { var sel = vs[k].name === cfgVoice.voiceName; if (sel) seen = true; h += '<option value="' + esc(vs[k].name) + '"' + (sel ? ' selected' : '') + '>' + esc(vs[k].name) + '</option>'; }
+    if (!seen) h += '<option value="' + esc(cfgVoice.voiceName) + '" selected>' + esc(cfgVoice.voiceName) + ' (not installed)</option>';
+    h += '</select></label>'
+      + '<label>Speed <input type="range" id="wpVoiceRate" min="50" max="200" value="' + Math.round((cfgVoice.rate > 0 ? cfgVoice.rate : (p ? p.rate : 1.05)) * 100) + '"' + (inMimic() ? '' : ' disabled') + '> <span id="wpVoiceRateV" class="dim">' + pct(cfgVoice.rate > 0 ? cfgVoice.rate : (p ? p.rate : 1.05)) + '&times;</span></label>'
+      + '<label>Pitch <input type="range" id="wpVoicePitch" min="0" max="200" value="' + Math.round((cfgVoice.pitch > 0 ? cfgVoice.pitch : (p ? p.pitch : 1)) * 100) + '"' + (inMimic() ? '' : ' disabled') + '> <span id="wpVoicePitchV" class="dim">' + pct(cfgVoice.pitch > 0 ? cfgVoice.pitch : (p ? p.pitch : 1)) + '</span></label>'
+      + '<button type="button" id="wpVoiceHear" style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px">&#9654; Hear it</button>'
+      + '<button type="button" id="wpVoiceReset" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:5px 10px;cursor:pointer;font-family:inherit;font-size:12px"' + (inMimic() ? '' : ' disabled') + '>Back to the pack\\'s own</button>'
+      + '</div>';
+    h += '<div class="dim" style="font-size:11px;margin-top:4px">A pack whose voices are not installed here still sets the speed and pitch. A trigger can also name its own pack in its editor.</div>';
+    return h;
+  }
+  function namesHtml(){
+    var h = '<h3 style="font-size:13px;margin:14px 0 4px">Say your name</h3>';
+    if (!pron) return h + '<div class="dim" style="font-size:12px">loading…</div>';
+    if (!pron.characters.length) return h + '<div class="dim" style="font-size:12px">No characters found on this PC yet. Play with logging on and they will appear.</div>';
+    h += '<div class="dim" style="font-size:11px;margin-bottom:6px">'
+      + (pron.feature === 'off' ? 'The server has no shared list yet, so what you save here stays on this PC. ' : 'Saving for the guild changes how every raider\\'s Mimic says your name. ')
+      + 'Hear it first with &#9654;.</div>';
+    for (var i = 0; i < pron.characters.length; i++) {
+      var c = pron.characters[i], nm = c.name, d = drafts[nm] != null ? drafts[nm] : (c.say || ''), s = sugg[nm];
+      h += '<div data-vn-char="' + esc(nm) + '" style="border-top:1px solid var(--border);padding:6px 0;font-size:12px">'
+        + '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px"><b>' + esc(nm) + '</b>'
+        + '<span class="dim">' + (c.say ? 'said as &ldquo;' + esc(c.say) + '&rdquo;' + (c.source === 'local' ? ' (this PC)' : '') : 'said as spelled') + '</span>'
+        + '<button type="button" data-vn-hear-name style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px" title="Hear it as it is said now">&#9654;</button>'
+        + '<button type="button" data-vn-suggest style="background:var(--panel);color:var(--blue);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px">Suggestions</button></div>';
+      if (s) {
+        if (s.available === false) h += '<div class="dim" style="font-size:11px;margin-top:4px">No suggestions right now' + (s.why ? ' (' + esc(s.why) + ')' : '') + '. Type how it should sound.</div>';
+        else {
+          h += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">';
+          var ss = s.suggestions || [];
+          for (var q = 0; q < ss.length; q++) {
+            var tx = sugText(ss[q]);
+            if (tx) h += '<span style="display:inline-flex;align-items:center;gap:2px;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:1px 2px 1px 4px"><button type="button" data-vn-hear="' + esc(tx) + '" style="background:none;border:0;color:var(--green);cursor:pointer;font-size:11px;padding:1px 4px" title="Hear it">&#9654;</button><button type="button" data-vn-use="' + esc(tx) + '" style="background:none;border:0;color:var(--text);cursor:pointer;font-size:12px;padding:1px 6px" title="Use this">' + esc(tx) + '</button></span>';
+          }
+          if (!ss.length) h += '<span class="dim" style="font-size:11px">No suggestions for this name.</span>';
+          h += '</div>';
+          var tips = s.tips || [];
+          if (tips.length) { h += '<ul class="dim" style="font-size:11px;margin:6px 0 0 16px;padding:0">'; for (var u = 0; u < tips.length; u++) h += '<li>' + esc(sugText(tips[u])) + '</li>'; h += '</ul>'; }
+        }
+      }
+      h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px">'
+        + '<input type="text" data-vn-say value="' + esc(d) + '" placeholder="how it sounds, e.g. Ahl-den-mar" maxlength="80" style="flex:1;min-width:160px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 6px;font-family:inherit;font-size:12px">'
+        + '<button type="button" data-vn-hear-draft style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:3px 8px" title="Hear what is typed">&#9654;</button>'
+        + '<button type="button" data-vn-save-guild style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:4px 10px;cursor:pointer;font-family:inherit;font-size:11px"' + (pron.signed_in ? '' : ' disabled title="Needs a linked Wolf Pack account"') + '>Save for the guild</button>'
+        + '<button type="button" data-vn-save-local style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 10px;cursor:pointer;font-family:inherit;font-size:11px">This PC only</button>'
+        + '<span class="dim" style="font-size:11px">' + esc(notes[nm] || '') + '</span></div></div>';
+    }
+    return h;
+  }
+  function paint(){
+    if (!el) return;
+    el.innerHTML = '<h2>🗣 Voice &amp; names <span class="dim" style="font-size:11px;font-weight:normal">(how callouts sound, and how your characters are said)</span></h2>' + voiceHtml() + namesHtml();
+  }
+  async function loadAll(){
+    await WPSounds.loadPacks();
+    if (inMimic()) { try { var c = await window.mimic.getConfig(); if (c && c.voice) cfgVoice = Object.assign({ pack: 'default', voiceName: '', rate: null, pitch: null }, c.voice); } catch (e) { void e; } }
+    paint();
+    try { var r = await fetch('/api/pronunciations'); pron = r.ok ? await r.json() : { characters: [], feature: 'off', signed_in: false }; } catch (e) { pron = { characters: [], feature: 'off', signed_in: false }; }
+    paint();
+  }
+  async function suggest(nm){
+    try { var r = await fetch('/api/pronunciation-suggest?name=' + encodeURIComponent(nm)); sugg[nm] = r.ok ? await r.json() : { available: false, why: 'server answered ' + r.status }; }
+    catch (e) { sugg[nm] = { available: false, why: 'could not ask' }; }
+    paint();
+  }
+  async function saveName(nm, say, guild){
+    if (!say) { notes[nm] = 'Type how it should sound first.'; paint(); return; }
+    notes[nm] = 'Saving…'; paint();
+    var ok = false, why = '';
+    try {
+      var r = await fetch(guild ? '/api/pronunciation' : '/api/pronunciations/local', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(guild ? { character: nm, say: say } : { name: nm, say: say }) });
+      var j = await r.json().catch(function(){ return {}; });
+      ok = r.ok && j.ok !== false; why = j.error || '';
+    } catch (e) { why = 'could not reach the agent'; }
+    notes[nm] = ok ? 'Saved' + (guild ? ' for the guild.' : ' on this PC.') : (why || 'Not saved.') + (guild ? ' You can still keep it on this PC only.' : '');
+    if (ok) { delete drafts[nm]; try { var r2 = await fetch('/api/pronunciations'); if (r2.ok) pron = await r2.json(); } catch (e) { void e; } }
+    paint();
+  }
+  function charOf(t){ var b = t.closest('[data-vn-char]'); return b ? b.getAttribute('data-vn-char') : ''; }
+  function onClick(e){
+    var t = e.target && e.target.closest ? e.target : null;
+    if (!t) return;
+    var b;
+    if ((b = t.closest('[data-vn-sample]'))) { speak(sampleLine(), b.getAttribute('data-vn-sample')); return; }
+    if (t.closest('#wpVoiceHear')) { speak(sampleLine()); return; }
+    if (t.closest('#wpVoiceReset')) { cfgVoice.voiceName = ''; cfgVoice.rate = null; cfgVoice.pitch = null; save(); paint(); return; }
+    var nm = charOf(t);
+    if (!nm) return;
+    var box = t.closest('[data-vn-char]'), inp = box.querySelector('[data-vn-say]');
+    if (t.closest('[data-vn-hear-name]')) { var c = pron.characters.filter(function(x){ return x.name === nm; })[0]; speak((c && c.say) || nm); return; }
+    if (t.closest('[data-vn-suggest]')) { suggest(nm); return; }
+    if ((b = t.closest('[data-vn-hear]'))) { speak(b.getAttribute('data-vn-hear')); return; }
+    if ((b = t.closest('[data-vn-use]'))) { drafts[nm] = b.getAttribute('data-vn-use'); if (inp) inp.value = drafts[nm]; return; }
+    if (t.closest('[data-vn-hear-draft]')) { speak(inp && inp.value ? inp.value : nm); return; }
+    if (t.closest('[data-vn-save-guild]')) { saveName(nm, inp ? inp.value.trim() : '', true); return; }
+    if (t.closest('[data-vn-save-local]')) { saveName(nm, inp ? inp.value.trim() : '', false); return; }
+  }
+  function onChange(e){
+    var t = e.target; if (!t) return;
+    if (t.name === 'wpVoicePack') { cfgVoice.pack = t.value; save(); paint(); return; }
+    if (t.id === 'wpVoiceName') { cfgVoice.voiceName = t.value; save(); return; }
+  }
+  function onInput(e){
+    var t = e.target; if (!t) return;
+    if (t.id === 'wpVoiceRate') { cfgVoice.rate = Number(t.value) / 100; var rv = document.getElementById('wpVoiceRateV'); if (rv) rv.innerHTML = pct(cfgVoice.rate) + '&times;'; save(); return; }
+    if (t.id === 'wpVoicePitch') { cfgVoice.pitch = Number(t.value) / 100; var pv = document.getElementById('wpVoicePitchV'); if (pv) pv.textContent = pct(cfgVoice.pitch); save(); return; }
+    if (t.hasAttribute && t.hasAttribute('data-vn-say')) { var nm = charOf(t); if (nm) drafts[nm] = t.value; }
+  }
+  function mount(){
+    var n = document.getElementById('wpVoice');
+    if (!n) { mounted = false; return; }
+    if (mounted && n === el) return;
+    el = n; mounted = true;
+    el.addEventListener('click', onClick);
+    el.addEventListener('change', onChange);
+    el.addEventListener('input', onInput);
+    paint();
+    if (!pron) loadAll();
+    if (window.speechSynthesis && !vcBound) { vcBound = true; window.speechSynthesis.addEventListener('voiceschanged', function(){ if (el && document.body.contains(el)) paint(); }); }
+  }
+  var vcBound = false;
+  window._wpVoiceNames = { mount: mount };
+})();
+
 // ── 💥 My Crits panel ───────────────────────────────────────────────────────
 // The operator's own melee + spell criticals this session, per box. Rendered in
 // the main section loop into the stable #wpCritsCard placeholder (in renderDash)
@@ -31047,6 +31713,13 @@ const COMMAND_HTML = `<!doctype html>
   .roll-detail .d.win .v{color:#f0c419;font-weight:700}
   .roll-detail .d.lose .v{color:#f85149;font-weight:700}
   .roll-detail .d .rng{opacity:.6;flex-shrink:0;font-variant-numeric:tabular-nums}
+  /* A tie at the top of a set (the guild lead, 2026-10-14). Orange, bordered and spelled TIE so it reads
+     without the colour; a tie lower down is only a dim "=". */
+  .roll-row .tt,.roll-detail .tt{color:#ffa657;font-size:9px;font-weight:700;flex-shrink:0;border:1px solid rgba(255,166,87,0.6);
+    border-radius:2px;padding:0 3px;line-height:1.3;align-self:center}
+  .roll-detail .d.tie .v{color:#ffa657;font-weight:700}
+  .roll-detail .d .eq{opacity:.55;flex-shrink:0}
+  .roll-detail .d.tiebox{color:#ffa657;font-weight:700;font-size:10px;border-left:2px solid #ffa657;padding-left:5px;margin-bottom:2px}
   /* A re-roll never wins, so it has to be legible at a glance or the list looks
      like someone rolled twice and got robbed. #6e7681 on this backdrop was not. */
   .roll-detail .d .rr{color:#c9a227;font-size:8px;flex-shrink:0;border:1px solid rgba(201,162,39,0.45);
@@ -31283,6 +31956,46 @@ const COMMAND_HTML = `<!doctype html>
       if (line.length <= DR_COPY_MAX) return line;
     }
     return line.slice(0, DR_COPY_MAX);
+  }
+  // 🤝 A tie at the top of a set (the guild lead, 2026-10-14: "if two toons roll the same number on a roll
+  // it should trigger a deathroll and highlight the tie"). The agent decides it once (rollSetTies) and
+  // sends rs.tie / rs.lower_ties; these only draw it and word the line to copy. The deathroll starts at
+  // the TIED number, because the deathroll detector chains a roll whose range is the last result.
+  function rollTieWhoHtml(rs) {
+    var t = rs && rs.tie;
+    if (!t) return (rs && rs.winners || []).map(function(w){ return esc(w.name) + ' <b>' + w.value + '</b>'; }).join(', ');
+    var chip = '<span class="tt">TIE ' + Number(t.value) + '</span> ';
+    if (t.state === 'done') return chip + '<span style="color:#f0c419">' + (t.winners || []).map(esc).join(', ') + '</span> won the deathroll';
+    return chip + '<span style="color:#ffa657">' + (t.names || []).map(esc).join(' · ') + '</span>';
+  }
+  function rollTiePromptText(rs) {
+    var t = rs && rs.tie;
+    if (!t) return '';
+    if (t.state === 'done') return 'Deathroll over: ' + (t.winners || []).join(', ') + ' wins' + ((t.out || []).length ? ' · ' + t.out.join(', ') + ' hit 0' : '');
+    if (t.state === 'live') return 'Deathroll going: ' + (t.next && t.next.name ? t.next.name + ' rolls' : 'next roll') + ' /random ' + (t.next ? t.next.to : t.value);
+    return 'Tie → deathroll: ' + t.starter + ' starts with /random ' + t.value;
+  }
+  // The row for one roll inside an expanded set: top-tie rows carry a TIE chip and the orange number,
+  // a lower tie only a dim "=". A re-roll is never part of a tie.
+  function rollTieRowHtml(rs, d) {
+    var t = rs && rs.tie;
+    var top = !!(t && !d.reroll && d.value === t.value && (t.names || []).indexOf(d.name) !== -1);
+    var low = !top && !d.reroll && (rs && rs.lower_ties || []).indexOf(d.value) !== -1;
+    return { cls: top ? ' tie' : '', mark: top ? '<span class="tt">TIE</span>' : (low ? '<span class="eq" title="Same number as another roller">=</span>' : '') };
+  }
+  // 📋 for a tie: ONE raid-say line, never sent for you. The tied number is the deathroll's first range.
+  function rollTieCopyLine(rs) {
+    var t = (rs && rs.tie) || {};
+    var item = rs && rs.item ? ' on ' + String(rs.item).slice(0, 40) : '';
+    var names = (t.names || []);
+    var line;
+    if (t.state === 'done') line = '/rs Deathroll over' + item + ': ' + (t.winners || []).join(', ') + ' wins the ' + t.value + ' tie.';
+    else if (t.state === 'live') line = '/rs TIE ' + t.value + item + ': ' + names.join(' vs ') + '. Deathroll live, '
+      + (t.next && t.next.name ? t.next.name + ' rolls' : 'next roll') + ' /random ' + (t.next ? t.next.to : t.value) + '.';
+    else line = '/rs TIE ' + t.value + item + ': ' + names.join(' vs ') + '. Deathroll! ' + t.starter + ' rolls /random ' + t.value
+      + ', then each rolls what the last got. First to 0 ' + (names.length > 2 ? 'is out.' : 'loses.');
+    // Plain ASCII only (no backslash in this file, so no escape class): drop anything outside space..tilde.
+    return line.split('').filter(function(ch){ return ch >= ' ' && ch <= '~'; }).join('').slice(0, DR_COPY_MAX);
   }
   // Which deathroll was just copied, so its 📋 reads ✓ for two seconds across the 1.5s repaints.
   var _copiedRoll = null, _copiedUntil = 0;
@@ -31717,7 +32430,9 @@ const COMMAND_HTML = `<!doctype html>
             // that was really 999 to 999 read like an ordinary 0 to 999 roll).
             html += '<div class="row roll-row"><span class="nm"><b>' + (rs.from ? rs.from + '–' : '') + rs.to + '</b>'
                  +    (rs.item ? ' (' + esc(rs.item) + (rs.qty ? ' ×' + rs.qty : '') + ')' : '')
-                 +    ' — <span style="color:#f0c419">' + (winners || '—') + '</span></span>'
+                 +    ' — ' + (rs.tie ? rollTieWhoHtml(rs) : '<span style="color:#f0c419">' + (winners || '—') + '</span>') + '</span>'
+                 +    (rs.tie ? '<span class="rollCopy" data-roll-id="' + esc(rid) + '" title="Copy a raid-say line announcing this tie and its deathroll">'
+                 +      (rid === _copiedRoll && Date.now() < _copiedUntil ? '✓' : '📋') + '</span>' : '')
                  +    '<span class="rollMore" data-roll-key="' + esc(rid) + '" title="'
                  +      (expanded ? 'Hide' : 'Show') + ' every roll in this set">'
                  +      (expanded ? '▾' : '▸') + ' ' + rs.players + ' roll' + (rs.players === 1 ? '' : 's') + '</span>'
@@ -31731,12 +32446,21 @@ const COMMAND_HTML = `<!doctype html>
               var winNames = {};
               for (var wj = 0; wj < (rs.winners || []).length; wj++) winNames[String(rs.winners[wj].name).toLowerCase()] = true;
               html += '<div class="roll-detail">';
+              if (rs.tie) html += '<div class="d tiebox">' + esc(rollTiePromptText(rs)) + '</div>';
               for (var dj = 0; dj < all.length; dj++) {
                 var d = all[dj];
                 var isWin = !d.reroll && winNames[String(d.name).toLowerCase()] === true;
-                html += '<div class="d' + (isWin ? ' win' : '') + '"><span>' + esc(d.name) + '</span>'
-                     +    (d.reroll ? '<span class="rr">re-roll</span>' : '')
+                var tieRow = rollTieRowHtml(rs, d);
+                html += '<div class="d' + (isWin && !rs.tie ? ' win' : '') + tieRow.cls + '"><span>' + esc(d.name) + '</span>'
+                     +    (d.reroll ? '<span class="rr">re-roll</span>' : '') + tieRow.mark
                      +    '<span class="v">' + d.value + '</span></div>';
+              }
+              if (rs.tie) {
+                for (var tk = 0; tk < (rs.tie.steps || []).length; tk++) {
+                  var ts = rs.tie.steps[tk];
+                  html += '<div class="d' + (ts.value === 0 ? ' lose' : '') + '"><span>' + esc(ts.name) + '</span>'
+                       +    '<span class="rng">0–' + ts.to + '</span><span class="v">' + ts.value + '</span></div>';
+                }
               }
               if (!all.length) html += '<div class="d"><span>no per-roll detail captured</span></div>';
               html += '</div>';
@@ -31919,7 +32643,7 @@ const COMMAND_HTML = `<!doctype html>
           if (_rollId(_lastState.rolls[rc]) === rcid) { rset = _lastState.rolls[rc]; break; }
         }
         if (rset) {
-          _copyText(deathrollCopyLine(rset), function(){
+          _copyText(rset.kind === 'deathroll' ? deathrollCopyLine(rset) : rollTieCopyLine(rset), function(){
             _copiedRoll = rcid; _copiedUntil = Date.now() + 2000;
             if (_lastState) render(_lastState);
             setTimeout(function(){ if (_lastState) render(_lastState); }, 2100);
@@ -32361,6 +33085,9 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(_b || 'null');
       }
+      // Chat overlay (chat.html) — this PC's own chat window. Memory-only ring, never uploaded.
+      if (req.url && req.url.split('?')[0] === '/api/chat' && req.method === 'GET') return _handleLocalChat(req, res);
+      if (req.url && req.url.split('?')[0] === '/api/chat/history' && req.method === 'GET') return _handleLocalChatHistory(req, res);
       // Me overlay (me.html) — the active character's own panel.
       if (req.url === '/api/me') {
         let _b;
@@ -32383,12 +33110,22 @@ function startWebDashboard(port) {
       if (req.url === '/api/hail-mark' && req.method === 'POST') return _handleHailMark(req, res);
       // Spawn map overlay (map.html): positions + zone spawn points + timers in one poll, and its click-to-mark.
       if (req.url && req.url.split('?')[0] === '/api/map-state' && req.method === 'GET') return _handleMapState(req, res);
+      // Charm overlay's "Best pets here" (2026-10-14): the spell, the zone and the ranked list in one poll.
+      if (req.url && req.url.split('?')[0] === '/api/charm-best' && req.method === 'GET') {
+        let _cb;
+        try { _cb = charmBestState(new URL(req.url, 'http://x').searchParams.get('char'), Date.now()); }
+        catch (e) { console.error('[api/charm-best]', e && (e.stack || e.message || e)); _cb = { ok: false, show: false, status: 'hidden' }; }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(_cb));
+      }
       if (req.url === '/api/map-mark' && req.method === 'POST') return _handleMapMark(req, res);
       if (req.url === '/api/map-leg' && req.method === 'POST') return _handleMapLeg(req, res);
       // "What you hear" — per-person rules for every callout (the guild lead, 2026-10-12).
       if (req.url && req.url.split('?')[0] === '/api/trigger-rules' && (req.method === 'GET' || req.method === 'POST')) return _handleTriggerRules(req, res);
       // Personal trigger sync — Push / Pull between this household's PCs (2026-10-12).
       if (req.url && req.url.startsWith('/api/trigger-sync/')) return _handleTriggerSync(req, res);
+      // Sounds, voice packs, this PC's sound overrides, how names are pronounced (2026-10-14).
+      if (req.url && /^\/(?:sounds\/[^?#]|api\/(?:sounds(?:\/open-folder)?|trigger-sound-overrides|voice-packs|pronunciations(?:\/local)?|pronunciation-suggest|pronunciation)(?:[?#]|$))/.test(req.url)) return _handleSoundsVoices(req, res);
       // Command Center ✕ on a needs-rez row — clears it for the WHOLE raid.
       // Local state drops immediately so the click feels instant; the relay
       // rides the durable upload queue, and every other Command Center drops
@@ -33916,36 +34653,10 @@ function startWebDashboard(port) {
         const body = await _readBody(req).catch(() => '');
         let payload = {};
         try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
-        const reason = String(payload?.reason || 'dismissed').slice(0, 40);
-        if (payload && payload.all) {
-          let cancelled = 0;
-          for (const [tid, row] of [..._activeTimers]) {
-            if (row && row.kind === 'loot') continue;
-            _activeTimers.delete(tid);
-            cancelled++;
-            _recordCalloutFeedback({ direction: 'dismissed', timer: row, source: reason });
-          }
-          try { for (const r of _builtinTimerRows(Date.now())) { _builtinTimerHidden.add(r.id); cancelled++; } }
-          catch { /* best effort */ }
-          scheduleRender();
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ ok: true, cancelled }));
-        }
-        const id = String(payload?.id || '');
-        const row = id ? _activeTimers.get(id) : null;
-        let ok = id ? _cancelTimer(id) : false;
-        // A timer-bar row is rebuilt every snapshot — hide that instance.
-        if (!ok && id.startsWith('bt|')) { _builtinTimerHidden.add(id); ok = true; }
-        if (ok && row) _recordCalloutFeedback({ direction: 'dismissed', timer: row, source: reason });
-        if (ok && id.startsWith('loot|')) {
-          const sig = id.slice('loot|'.length);
-          _lootAuctions.delete(sig);
-          if (_lastLootSig === sig) _lastLootSig = null;
-        }
-        if (ok && id.startsWith('auction|')) _dkpAuctionsDismissed.add(id.slice('auction|'.length));
+        const out = _handleTimerCancel(payload);
         scheduleRender();
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok, cancelled: ok ? 1 : 0 }));
+        return res.end(JSON.stringify(out));
       }
 
       // POST /api/loot-prefs — dashboard Triggers-tab toggle + default-duration
@@ -34070,7 +34781,8 @@ function startWebDashboard(port) {
         const existingNames = new Set(_personalTriggers.map(t => String(t.name || '').toLowerCase()));
         const compiled = [];
         const errors = [];
-        let imported = 0, skipped = 0;
+        let imported = 0, skipped = 0, soundsCopied = 0;
+        const soundNotes = [];   // triggers whose sound file could not come along
         for (const t of parsed) {
           if (!t.name || !t.pattern) { skipped++; continue; }
           if (existingNames.has(t.name.toLowerCase())) { skipped++; continue; }
@@ -34090,6 +34802,18 @@ function startWebDashboard(port) {
               duration_ms: 5000,
               ...(ttsText ? { tts: ttsText } : {}),
             });
+          }
+          // The trigger's sound (2026-10-14): a file on this PC is copied into the sounds folder and played by
+          // name; otherwise the spoken callout stays and the result says what was left behind.
+          if (t.plays_sound) {
+            const snd = t.sound_file ? _importSoundFile(t.sound_file) : { ok: false, why: 'the export names no sound file' };
+            if (snd.ok) {
+              if (snd.copied) soundsCopied++;
+              const at = actions.find(a => a.type === 'text_overlay');
+              if (at) at.sound = snd.value; else actions.push({ type: 'sound', sound: snd.value });
+            } else {
+              soundNotes.push({ name: t.name.slice(0, 100), file: t.sound_file ? String(t.sound_file).split(/[\\/]/).pop().slice(0, 100) : '', why: snd.why });
+            }
           }
           const row = {
             id:            'p_' + Math.random().toString(36).slice(2, 10),
@@ -34132,7 +34856,8 @@ function startWebDashboard(port) {
           savePersonalTriggers();
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok: true, imported, skipped, total_in_xml: parsed.length, errors }));
+        return res.end(JSON.stringify({ ok: true, imported, skipped, total_in_xml: parsed.length, errors,
+          sounds_copied: soundsCopied, sound_notes: soundNotes.slice(0, 50) }));
       }
 
       // Live regex tester — paste a sample log line, see which patterns match
@@ -37795,6 +38520,740 @@ function _pushRecentTell(tellEvt, character) {
   if (over > 0) stats.recentTells.splice(0, over);
 }
 
+// ── Local chat window: the feed behind Mimic's Chat overlay ───────────────────
+// The guild lead, 2026-10-14: "move it off the screen and be able to show/hide different components
+// from it, or break it into tabs". Picked "B then A": ONE scrolling feed with a row of on/off chips
+// per channel group now; tabs per group (and tear-out windows) later. So the groups are DATA
+// (CHAT_GROUPS) served with the feed, and the overlay renders whatever filter it is handed.
+//
+// PRIVACY, the whole point of this block: these lines are kept on THIS PC for the user's own chat
+// window and never sent anywhere.
+//   • The ring is in memory only, capped, and gone on restart. No file, no queue.
+//   • Nothing here touches the guild-chat upload batch, the tell upload buffer, the feedback excerpt
+//     or any POST. DEFAULT_DROP_PATTERNS / shouldKeep are untouched: they still gate everything that
+//     leaves the machine, and a line this feed shows is still dropped there.
+//   • Tells, group, officer and custom channels are captured ONLY while the overlay has asked for
+//     them (CHAT_GROUPS[].gate) — the policy rides every GET /api/chat and lapses 15 s after the
+//     overlay stops asking, so a closed overlay leaves nothing private accumulating.
+//   • exclude_from_stats characters never reach this (the call site skips them, like the tell tap).
+const CHAT_RING_MAX = 500;
+const CHAT_PAGE_MAX = 200;
+const CHAT_POLICY_TTL_MS = 15_000;
+const CHAT_TEXT_MAX = 400;
+// id → label + colour + the EQ-style tag shown in front of each line (the guild lead, 2026-10-14: "put the
+// [P] [RS] [GU] [1] [2] [3] [4] etc in front of the lines"). Colour is the channel's identity in the overlay;
+// the overlay owns no copy of it. `tag` is '' for lines that are not a channel (NPC speech, zone changes) and
+// for a joined channel, whose tag is its slot NUMBER, which the line itself carries (cnum).
+const CHAT_CHANNELS = {
+  guild:   { label: 'Guild',   color: '#56d364', tag: 'GU' },
+  raid:    { label: 'Raid',    color: '#ffa657', tag: 'RS' },
+  say:     { label: 'Say',     color: '#c9d1d9', tag: 'S' },
+  ooc:     { label: 'OOC',     color: '#7ee7c7', tag: 'OOC' },
+  shout:   { label: 'Shout',   color: '#ff7b72', tag: 'SH' },
+  auction: { label: 'Auction', color: '#8b949e', tag: 'AUC' },
+  npc:     { label: 'NPC',     color: '#c9a96e', tag: '' },
+  zone:    { label: 'Zone',    color: '#6e7681', tag: '' },
+  tell:    { label: 'Tell',    color: '#a371f7', tag: 'T' },
+  group:   { label: 'Group',   color: '#58a6ff', tag: 'P' },
+  officer: { label: 'Officer', color: '#d29922', tag: 'OF' },
+  custom:  { label: 'Custom',  color: '#6e9bd6', tag: '' },
+  melee:   { label: 'Melee',   color: '#d0847a', tag: 'M' },
+  spell:   { label: 'Spells',  color: '#b392f0', tag: 'SP' },
+  skill:   { label: 'Skills',  color: '#e3b341', tag: 'SK' },
+};
+// One chip each. `gate` names the policy switch that must be on for these channels to be captured,
+// served and shown; no gate = public, shown by default. A tab is a group plus a filter, so this list
+// is the whole seam between "one feed with chips" and "tabs".
+const CHAT_GROUPS = [
+  { id: 'guild',   label: 'Guild',     channels: ['guild'] },
+  { id: 'raid',    label: 'Raid',      channels: ['raid'] },
+  { id: 'say',     label: 'Say',       channels: ['say'] },
+  { id: 'ooc',     label: 'OOC/Shout', channels: ['ooc', 'shout'] },
+  { id: 'auction', label: 'Auction',   channels: ['auction'] },
+  { id: 'npc',     label: 'NPC',       channels: ['npc'] },
+  { id: 'zone',    label: 'Zones',     channels: ['zone'] },
+  { id: 'tell',   label: 'Tells',     channels: ['tell'],    gate: 'tells' },
+  { id: 'group',   label: 'Group',     channels: ['group'],   gate: 'group' },
+  { id: 'officer', label: 'Officer',   channels: ['officer'], gate: 'officer' },
+  { id: 'custom',  label: 'Custom',    channels: ['custom'],  gate: 'custom' },
+  // Combined melee (the guild lead, 2026-10-14: "a spot for combined melee"): your hits and misses, hits and
+  // misses on you, everyone else's and pets'. A flood by nature, so it is a gated group (off until the overlay's
+  // ⚙ switches it on), kept in its own small ring, and meant to be broken out into a window of its own.
+  { id: 'melee',   label: 'Melee',     channels: ['melee'],   gate: 'melee' },
+  // Spells and Skills (the guild lead, 2026-10-14: "chat can also have separable spell and skill information"):
+  // built exactly like Melee: gated off until the overlay's ⚙ switches them on, a small ring each, and a
+  // breakout window of their own if wanted. Spells = casts, landings, spell damage, resists, fizzles, fades.
+  // Skills = skill-ups and what a skill did (taunt, forage, mend, feign, hide...), tradeskill combines, disciplines.
+  { id: 'spells',  label: 'Spells',    channels: ['spell'],   gate: 'spells' },
+  { id: 'skills',  label: 'Skills',    channels: ['skill'],   gate: 'skills' },
+];
+const CHAT_POLICY_KEYS = ['tells', 'group', 'officer', 'custom', 'melee', 'spells', 'skills'];
+
+// First-person lines ("You say, ..."). Group 1 is the text, except the custom-channel and told forms.
+const CHAT_SELF_PATTERNS = [
+  { rx: /^\[[^\]]+\]\s+You (?:say to|tell) your guild,\s*['"](.*)['"]\s*$/, ch: 'guild' },
+  { rx: /^\[[^\]]+\]\s+You (?:say to|tell) your raid,\s*['"](.*)['"]\s*$/, ch: 'raid' },
+  { rx: /^\[[^\]]+\]\s+You (?:say to|tell) your (?:group|party),\s*['"](.*)['"]\s*$/, ch: 'group' },
+  { rx: /^\[[^\]]+\]\s+You (?:say to|tell) your officers?,\s*['"](.*)['"]\s*$/, ch: 'officer' },
+  { rx: /^\[[^\]]+\]\s+You say out of character,\s*['"](.*)['"]\s*$/, ch: 'ooc' },
+  { rx: /^\[[^\]]+\]\s+You say,\s*['"](.*)['"]\s*$/, ch: 'say' },
+  { rx: /^\[[^\]]+\]\s+You shout,\s*['"](.*)['"]\s*$/, ch: 'shout' },
+  { rx: /^\[[^\]]+\]\s+You auction,\s*['"](.*)['"]\s*$/, ch: 'auction' },
+];
+const CHAT_SELF_CHANNEL_RX = /^\[[^\]]+\]\s+You (?:say to|tell) ([^\s,'"]+):(\d+),\s*['"](.*)['"]\s*$/;
+const CHAT_SELF_TELL_RX = /^\[[^\]]+\]\s+You told ([A-Za-z][A-Za-z' ]*?),\s*['"](.*)['"]\s*$/;
+// Everyone else's lines. The speaker stops at the first comma, so the verb is always the one
+// directly before it and a verb quoted inside the message cannot be mistaken for it.
+const CHAT_OTHER_RX = /^\[[^\]]+\]\s+([^,\]:"]+?)\s+(tells the guild|tells the raid|tells the group|tells the officers?|says out of character|says|shouts|auctions|tells you|tells ([^\s,'"]+):(\d+)),\s*['"](.*)['"]\s*$/;
+const CHAT_OTHER_CH = {
+  'tells the guild': 'guild', 'tells the raid': 'raid', 'tells the group': 'group',
+  'says out of character': 'ooc', 'says': 'say', 'shouts': 'shout', 'auctions': 'auction',
+};
+// Zeal's /abc "Chat and Log" writes `[Tag] [Sender]: text` with the quotes dropped. A digit tag is a
+// custom channel's slot — which channel it is cannot be told from the log, so it is "custom", never
+// "officer" (the safer side: both are off by default). The letter tags other than G / R / P / Fr are
+// best-effort and unverified against a live /abc 2 log; an unknown tag shows nothing.
+const CHAT_ABBREV_TAGS = {
+  g: 'guild', gu: 'guild', r: 'raid', ra: 'raid', p: 'group', gr: 'group',
+  s: 'say', sa: 'say', o: 'ooc', oo: 'ooc', ooc: 'ooc', sh: 'shout', a: 'auction', au: 'auction',
+  fr: 'tell', to: 'tell',
+};
+const CHAT_ABBREV_RX = /^\[[^\]]+\]\s+\[([A-Za-z]{1,6}|\d{1,2})\]\s+\[([^\]]{1,40})\]:\s?(.*)$/;
+// The Seer's "nothing new to unlock" answer. It is not a flag recital (parsePopFlagLine must not upload
+// it), but the game prints it into the same tell window, so the chat feed shows it beside the recitals.
+const _SEER_QUIET_RX = /^You manage to recover some images from your childhood/;
+const CHAT_SEER_NAME = 'Seer';
+// "You have entered Plane of Knowledge." (the guild lead, 2026-10-14: "lines like that are worth showing too").
+// The agent had no parser for this line (grep found none), so this is the one. The game also prints
+// "You have entered an area where …" / "an Arena (PvP) area": those begin "an" and are not a zone.
+// "LOADING, PLEASE WAIT..." is deliberately not shown: it is noise.
+const CHAT_ZONE_RX = /^\[[^\]]+\]\s+You have entered (?!an?\s)([^.]{2,60})\.\s*$/;
+// A character that stays silent for this long before another one speaks reads as a swap. Under it, two logs
+// being written at once (dual-boxing) would flap a separator on every other line; the "heard on" tag covers that.
+const CHAT_SWAP_MIN_MS = 30_000;
+
+function _chatCleanText(raw) {
+  let t = String(raw == null ? '' : raw);
+  // An item link is "\x12<7 digits><Item Name>\x12": show just the name.
+  if (t.indexOf('\x12') !== -1) t = t.replace(EQ_ITEM_LINK_RX, (_m, _id, name) => name).replace(/\x12/g, '');
+  t = t.trim();
+  return t.length > CHAT_TEXT_MAX ? t.slice(0, CHAT_TEXT_MAX - 1) + '…' : t;
+}
+function _chatIsNpcSpeaker(name) {
+  return /\s/.test(name) || NPC_SPEECH_ONE_WORD.has(String(name).toLowerCase());
+}
+// Pets and merchants talk in /say and as "tells": "My leader is X.", "Attacking X Master.", "That'll be 5 platinum".
+function _chatIsPetOrMerchantText(text) {
+  return /^My leader is /i.test(text) || _isNpcTellText(text);
+}
+
+// One log line → { ch, who, text, t, self, npc, to } or null. Pure: no state, no I/O.
+function classifyChatLine(line, selfName) {
+  if (typeof line !== 'string' || line.charCodeAt(0) !== 91 /* [ */) return null;
+  // Zeal /tag broadcasts are machine traffic on guild/raid/group/channel transports, not conversation.
+  if (line.indexOf('ZEALTAG | ') !== -1 || line.indexOf('ZT | ') !== -1) return null;
+  const ts = parseEqTimestamp(line);
+  const t = ts ? ts.getTime() : Date.now();
+  let m;
+  for (const p of CHAT_SELF_PATTERNS) {
+    if ((m = p.rx.exec(line))) return { ch: p.ch, who: 'You', text: _chatCleanText(m[1]), t, self: true, npc: false };
+  }
+  if ((m = CHAT_SELF_CHANNEL_RX.exec(line))) {
+    return { ch: /officer/i.test(m[1]) ? 'officer' : 'custom', who: 'You', text: _chatCleanText(m[3]), t, self: true, npc: false, chan: m[1], cn: m[1], cnum: Number(m[2]) };
+  }
+  if ((m = CHAT_SELF_TELL_RX.exec(line))) {
+    return { ch: 'tell', who: 'You', to: m[1].trim(), text: _chatCleanText(m[2]), t, self: true, npc: false };
+  }
+  if ((m = CHAT_OTHER_RX.exec(line))) {
+    const speaker = m[1].trim();
+    const verb = m[2];
+    const text = _chatCleanText(m[5]);
+    if (!speaker || !text) return null;
+    let ch;
+    if (verb === 'tells you') {
+      // parseTellLine owns the "is this a real player's tell" rules (NPC chatter, pets, bankers).
+      if (parseTellLine(line, selfName)) ch = 'tell';
+      else if (npcSpeechLine(line)) ch = 'npc';
+      else return null;
+    } else if (m[3]) {
+      ch = /officer/i.test(m[3]) ? 'officer' : 'custom';
+    } else if (/^tells the officers?$/.test(verb)) {
+      ch = 'officer';
+    } else {
+      ch = CHAT_OTHER_CH[verb];
+      if ((ch === 'say' || ch === 'shout') && _chatIsNpcSpeaker(speaker)) ch = 'npc';
+      else if (ch === 'say' && _chatIsPetOrMerchantText(text)) return null;
+    }
+    const mine = !!selfName && speaker.toLowerCase() === String(selfName).toLowerCase();
+    const evt = { ch, who: speaker, text, t, self: mine, npc: ch === 'npc' };
+    // A joined channel's name and slot number ("tells General:2"): the overlay tags the line with the number
+    // and keys the per-channel switch by the name (the number changes with the order channels are joined).
+    if (m[3]) { evt.cn = m[3]; evt.cnum = Number(m[4]); }
+    return evt;
+  }
+  if ((m = CHAT_ABBREV_RX.exec(line))) {
+    const tag = m[1].toLowerCase();
+    let ch = /^\d+$/.test(tag) ? 'custom' : CHAT_ABBREV_TAGS[tag];
+    if (!ch) return null;
+    const name = m[2].trim();
+    const text = _chatCleanText(m[3]);
+    if (!name || !text) return null;
+    if (tag === 'to') return { ch, who: 'You', to: name, text, t, self: true, npc: false };
+    if (ch === 'tell' && /\s/.test(name)) ch = 'npc';
+    else if (ch === 'tell' && (_isNpcTellText(text) || _isNpcTellSender(name))) return null;
+    else if ((ch === 'say' || ch === 'shout') && _chatIsNpcSpeaker(name)) ch = 'npc';
+    else if (ch === 'say' && _chatIsPetOrMerchantText(text)) return null;
+    const mine = !!selfName && name.toLowerCase() === String(selfName).toLowerCase();
+    const evt = { ch, who: name, text, t, self: mine, npc: ch === 'npc' };
+    // /abc writes only the slot number, never the channel's name: the overlay learns the name from other lines.
+    if (/^\d+$/.test(tag)) evt.cnum = Number(tag);
+    return evt;
+  }
+  if ((m = CHAT_ZONE_RX.exec(line))) return { ch: 'zone', who: '', text: m[1].trim(), t, self: false, npc: false };
+  // The PoP flag Seer's recital (the guild lead, 2026-10-14: "tells from seer did not come through"). The
+  // game prints these sentences into the TELL window, but the log line has no "X tells you," in front of
+  // it: just the sentence after the timestamp. The sentence table is parsePopFlagLine's own
+  // (_POP_RECITAL_RX), reused here, not copied. They show wherever tells show and follow the same Tells
+  // gate (channel 'tell'). The speaker is a label: the line names nobody.
+  const at = line.indexOf('] ');
+  if (at > 0) {
+    const sentence = line.slice(at + 2);
+    if (_POP_RECITAL_RX.test(sentence) || _SEER_QUIET_RX.test(sentence)) {
+      const text = _chatCleanText(sentence);
+      if (text) return { ch: 'tell', who: CHAT_SEER_NAME, text, t, self: false, npc: true };
+    }
+  }
+  return null;
+}
+
+// One log line → a melee row { ch: 'melee', who: '', text, t, self, npc: false } or null. Pure. There is no
+// second melee grammar here: parseEvent already reads every swing (hits, class specials, "tries to … but"
+// misses, dodges, parries) from everyone, and MELEE_ABILITIES is the dashboard's own "this verb is melee" list.
+// So a spell, a DoT, a damage shield or a proc (all `damage` events too) is left out by that list, and the
+// row shows the log's own sentence rather than a rebuilt one. `self` = the swing is yours.
+const CHAT_MELEE_PREFILTER_RX = /points? of damage|, but /;
+// EQ's own combat-filter split (the guild lead, 2026-10-14: "filter out other's information the same way we do with
+// in game filters"): 'mine' = you swing, or your own pet does (the agent knows it from the charm tracker or Zeal's
+// pet gauge); 'on_me' = something swings at YOU; 'others' = anyone else against anyone else, their pets included.
+// Read off parseEvent's own fields: attacker is null for you, and the log prints the target as the word YOU.
+function _meleeCategory(ev, character) {
+  if (ev.attacker == null) return 'mine';
+  if (character && _petOwnerByName(String(ev.attacker).toLowerCase()) === String(character).toLowerCase()) return 'mine';
+  return String(ev.defender || '').toUpperCase() === 'YOU' ? 'on_me' : 'others';
+}
+function classifyMeleeLine(line, character) {
+  if (typeof line !== 'string' || line.charCodeAt(0) !== 91 /* [ */) return null;
+  if (!CHAT_MELEE_PREFILTER_RX.test(line)) return null;
+  const ts = parseEqTimestamp(line);
+  if (!ts) return null;
+  let ev;
+  try { ev = parseEvent(line, ts); } catch { return null; }
+  if (!ev) return null;
+  if (ev.type === 'damage') {
+    if (!ev.ability || !MELEE_ABILITIES.has(String(ev.ability).toLowerCase()) || ev.ds || ev.spellName) return null;
+  } else if (ev.type !== 'avoid') return null;
+  const at = line.indexOf('] ');
+  const text = at > 0 ? _chatCleanText(line.slice(at + 2)) : '';
+  if (!text) return null;
+  // `miss` = the swing did not land (parseEvent's 'avoid': a miss, dodge, parry, riposte or block).
+  return { ch: 'melee', who: '', text, t: ts.getTime(), self: ev.attacker == null, npc: false, cat: _meleeCategory(ev, character), miss: ev.type === 'avoid' };
+}
+
+// ── Spells and Skills rows (the guild lead, 2026-10-14: "chat can also have separable spell and skill information") ──
+// Same promise as melee: ONE grammar. Every shape below is an existing parser's, not a new regex set:
+//   · parseEvent: cast / "begins to cast" / songs / non-melee damage / DoT ticks / spell crits / heals / resists;
+//   · resolveSelfCastLanding + parseBuffLanding + parseDebuffLanding + parseMechanicLanding: a spell landing on
+//     someone else, by the catalog's own cast_on_other text; the catalog's cast_on_you / spell_fades text (the
+//     same fields noteBlindLine reads) covers a landing on you and a fade;
+//   · _CAST_FAIL_RX + _CH_INTERRUPT_OTHER_RX: fizzles and interrupts;
+//   · _ME_SKILL_LINES, _ME_DISCS, _ME_DISC_OTHER, _DEF_*_RX, _DISC_REFUSAL_RX: the skill and discipline lines Mimic's
+//     own cooldown timers already read.
+// What had no parser anywhere is small and listed once, in CHAT_SKILL_TEXT_RXS (skill-ups, forage, fishing, hide...).
+// Ownership is exclusive, so nothing is shown twice: melee verbs stay in Melee (whether or not that group is on),
+// disciplines stay in Skills, and a skill's RESULT (not its damage) is Skills. Pure functions of the line.
+const CHAT_SPELL_EVENT_RX = /non-melee|taken \d+|begins? (?:to cast|casting|singing)|resist|heal|critical|melody|Your song ends/i;
+const CHAT_SKILL_EVENT_RX = /taunt|stun|fallen to the ground|ducked|ducking|mend/i;
+const CHAT_WORN_OFF_RX = /^Your .+ has worn off\.?$/;
+const CHAT_SKILLUP_RX = /^You have become better at .+! \(\d+\)$/;
+// Skill lines no existing parser reads. [kind, pattern] over the text after the timestamp.
+// ⚠ Only forage and the trap lines are confirmed against the server source (docs/data/class-abilities.json). The
+// rest are EQEmu's string table from memory and have not been seen in a Quarm log yet: if one never fires, check
+// the real line before widening, and do not "fix" a pattern into a guess.
+const CHAT_SKILL_TEXT_RXS = [
+  ['ability', /^You (?:have scrounged up |fail to locate any food nearby)/],                                      // Forage
+  ['ability', /^You (?:have disarmed the trap|fail to disarm the detected trap|have not detected any traps|sense a trap in this direction|don't sense any traps)\.?$/],
+  ['ability', /^You escape from combat, hiding yourself from view\.?$/],                                          // Fading Memories
+  ['ability', /^(?:You cast your line|You caught, |You didn't catch anything|You lost your bait|Your pole broke|You spill your beer while bringing in your line|Trying to catch land locked fish)/],   // fishing
+  ['ability', /^You (?:have hidden yourself from view|failed to hide yourself|stop sneaking|stop hiding)|^You are as quiet as a (?:cat stalking its prey|herd of stampeding elephants)/],   // hide, sneak
+  ['ability', /^You think you are heading /],                                                                    // sense heading
+  ['ability', /^You (?:bind|bandage|have bound) |^You cannot bind wounds/],                                       // bind wound
+  ['ability', /^You .*\bpick(?:ed)? the lock\b|^You (?:have )?(?:successfully )?(?:disarmed|failed to disarm) |^You .*\bpick(?:ed)? .*pocket|^You (?:beg|begged|have begged)\b|^You (?:begin|are now|stop) tracking\b/],   // pick lock, disarm, pickpocket, begging, tracking
+  ['tradeskill', /^(?:You have fashioned the items together to create something new!|You lacked the skills to fashion the items together\.|You can no longer advance your skill from making this item\.)$/],
+];
+// A `damage` event is melee when its verb is on MELEE_ABILITIES and it is neither a damage shield nor a named
+// spell: the very test classifyMeleeLine makes, so a swing is never claimed by both groups.
+function _chatDamageIsMelee(ev) {
+  return !!ev.ability && MELEE_ABILITIES.has(String(ev.ability).toLowerCase()) && !ev.ds && !ev.spellName;
+}
+// The catalog's own cast_on_you / spell_fades text, built once per catalog (noteBlindLine's pattern). Disciplines
+// are split out so their activation and fade lines belong to Skills only.
+let _chatSpellTextsFor = null, _chatSpellTextsVal = null;
+function _chatSpellTexts() {
+  if (_chatSpellTextsVal && _chatSpellTextsFor === _spellByNameLower) return _chatSpellTextsVal;
+  const you = new Set(), fades = new Set(), discFades = new Set();
+  const bare = (t) => String(t).trim().replace(/\.$/, '');
+  for (const e of _spellByNameLower.values()) {
+    if (!e) continue;
+    const isDisc = !!e.you && _ME_DISCS.has(String(e.you).trim());
+    const y = e.you ? bare(e.you) : '', f = e.fades ? bare(e.fades) : '';
+    if (y.length >= 8 && !isDisc) you.add(y);
+    if (f.length >= 8) (isDisc ? discFades : fades).add(f);
+  }
+  _chatSpellTextsVal = { you, fades, discFades };
+  _chatSpellTextsFor = _spellByNameLower;
+  return _chatSpellTextsVal;
+}
+// Whose a spell or skill line is, for the Spells / Skills filters (the guild lead, 2026-10-14: "Filters for spells for
+// others should be there as well"). Same three words as Melee, read off the fields the parsers above already return:
+//   'mine'   you did it (an event with no attacker, or the word "You"), or your own pet did (_petOwnerByName);
+//   'on_me'  it landed on YOU (the catalog's cast_on_you text, a heal or spell damage whose target is YOU);
+//   'others' anyone else's cast, landing, damage or heal, including a landing on someone else.
+// A fade, a resist, a fizzle and an interrupt are "mine": they are your buff ending or your cast failing.
+function _chatActorCat(name, character) {
+  if (name == null) return 'mine';
+  const n = String(name).replace(/['`]s$/, '').trim().toLowerCase();
+  if (n === 'you') return 'mine';
+  const me = character ? String(character).toLowerCase() : '';
+  if (n && me && (n === me || _petOwnerByName(n) === me)) return 'mine';
+  return 'others';
+}
+// An event with no attacker is yours only when the sentence says so; a sourceless tick ("X has taken 12 damage.")
+// or heal ("X has been healed for 5 points") has no owner we can name, so it is 'others'.
+function _chatEventCat(ev, body, character) {
+  if (ev.attacker == null) return /^Your? |\bfrom your /i.test(body) ? 'mine' : 'others';
+  return _chatActorCat(ev.attacker, character);
+}
+// "<Name>'s casting is interrupted!": the caster is a bystander ('others'), unless it is you or your pet.
+function _chatInterruptCat(line, character) {
+  const m = _CH_INTERRUPT_OTHER_RX.exec(line);
+  return m ? _chatActorCat(m[1], character) : 'others';
+}
+// { kind: 'activate' | 'fade' | 'refusal', cat } | null: a discipline line, yours or another player's. Reads Mimic's
+// own tables. Yours = your own activation / fade / "you can use a new discipline" refusal; another player's = the
+// third-person lines (_ME_DISC_OTHER, _DEF_DOWN_OTHER_RX).
+function _chatDiscKind(body) {
+  if (_ME_DISCS.has(body)) return { kind: 'activate', cat: 'mine' };
+  if (_DEF_DOWN_SELF_RX.test(body)) return { kind: 'fade', cat: 'mine' };
+  if (_DEF_DOWN_OTHER_RX.test(body)) return { kind: 'fade', cat: 'others' };
+  if (_DISC_REFUSAL_RX.test(body)) return { kind: 'refusal', cat: 'mine' };
+  if (_chatSpellTexts().discFades.has(body.replace(/\.$/, ''))) return { kind: 'fade', cat: 'mine' };
+  const rest = body.replace(/\.$/, '');
+  for (const key of _ME_DISC_OTHER.keys()) {
+    if (!rest.endsWith(key)) continue;
+    if (/^[A-Z][a-z]{2,14}$/.test(rest.slice(0, rest.length - key.length).trim())) return { kind: 'activate', cat: 'others' };
+  }
+  return null;
+}
+// → { kind, cat } | null
+function _chatSpellKind(line, body, ts, character) {
+  if (_chatDiscKind(body)) return null;                       // a discipline is a skill
+  const bare = body.replace(/\.$/, '');
+  const tx = _chatSpellTexts();
+  if (tx.you.has(bare)) return { kind: 'landing', cat: 'on_me' };    // cast_on_you: a spell on YOU, whoever cast it
+  if (tx.fades.has(bare) || CHAT_WORN_OFF_RX.test(body)) return { kind: 'fades', cat: 'mine' };
+  if (_CAST_FAIL_RX.test(line)) return { kind: 'interrupt', cat: 'mine' };
+  if (_CH_INTERRUPT_OTHER_RX.test(line)) return { kind: 'interrupt', cat: _chatInterruptCat(line, character) };
+  if (CHAT_SPELL_EVENT_RX.test(body)) {
+    let ev = null;
+    try { ev = parseEvent(line, ts); } catch { ev = null; }
+    if (ev) {
+      switch (ev.type) {
+        case 'cast': return { kind: 'cast', cat: _chatActorCat(ev.attacker, character) };
+        case 'dirge_cast': case 'melody_start': case 'melody_stop': return { kind: 'cast', cat: 'mine' };
+        case 'heal':
+          if (ev.defender != null && /^you$/i.test(ev.defender)) return { kind: 'heal', cat: 'on_me' };
+          return { kind: 'heal', cat: _chatEventCat(ev, body, character) };
+        case 'crit_heal': return { kind: 'heal', cat: _chatActorCat(ev.attacker, character) };
+        case 'resist': case 'spell_resisted': return { kind: 'resist', cat: 'mine' };   // "You resist…", "Your target resisted…"
+        case 'critical': return ev.kind === 'spell' ? { kind: 'damage', cat: _chatActorCat(ev.attacker, character) } : null;
+        case 'damage':
+          // Melee owns every swing it would take (its prefilter plus a melee verb). Everything else with a damage
+          // number is a spell, a DoT, a proc or a damage shield, including a proc worded as a swing ("non-melee").
+          if (CHAT_MELEE_PREFILTER_RX.test(line) && _chatDamageIsMelee(ev)) return null;
+          // Spell damage done to YOU is 'on_me' whoever dealt it; otherwise the dealer decides.
+          if (ev.defender == null || /^you$/i.test(ev.defender)) return { kind: 'damage', cat: 'on_me' };
+          return { kind: 'damage', cat: _chatEventCat(ev, body, character) };
+        default: break;
+      }
+    }
+  }
+  if (character && resolveSelfCastLanding(line, character)) return { kind: 'landing', cat: 'mine' };   // a spell YOU cast, landing on its target
+  if (parseBuffLanding(line, character) || parseDebuffLanding(line, character) || parseMechanicLanding(line)) return { kind: 'landing', cat: 'others' };
+  return null;
+}
+// → { kind, cat } | null. Nearly every skill line is the first person ("You taunt…", "You have become better at…"),
+// so 'mine'; only another player's discipline and another player's fall to the ground are 'others'.
+function _chatSkillKind(line, body, ts) {
+  if (CHAT_SKILLUP_RX.test(body)) return { kind: 'skillup', cat: 'mine' };
+  const disc = _chatDiscKind(body);
+  if (disc) return { kind: 'discipline', cat: disc.cat };
+  // Only the skills whose line is a result, not damage ('ht' is a swing, so Melee's) or a cast (Spells').
+  for (const s of _ME_SKILL_LINES) if ((s.key === 'mend' || s.key === 'taunt' || s.key === 'fd') && s.rx.test(body)) return { kind: 'ability', cat: 'mine' };
+  for (const [kind, rx] of CHAT_SKILL_TEXT_RXS) if (rx.test(body)) return { kind, cat: 'mine' };
+  if (CHAT_SKILL_EVENT_RX.test(body)) {
+    let ev = null;
+    try { ev = parseEvent(line, ts); } catch { ev = null; }
+    if (ev && (ev.type === 'taunt' || ev.type === 'stun' || ev.type === 'feign_death' || ev.type === 'evade' || ev.type === 'mend')) {
+      return { kind: 'ability', cat: ev.attacker == null ? 'mine' : 'others' };   // "Brackwyn has fallen to the ground." is the only third-person one
+    }
+  }
+  return null;
+}
+// One log line → { ch: 'spell' | 'skill', who: '', text, t, self, npc: false, kind, cat } or null. `kind` is for tests and is
+// not served; `cat` ('mine' | 'on_me' | 'others') is, and the overlay's Spells / Skills filters read it. `character` lets a
+// landing of a spell YOU cast be named from your own cast (resolveSelfCastLanding) and your pet's casts be yours.
+function _classifyExtraLine(line, character, ch) {
+  if (typeof line !== 'string' || line.charCodeAt(0) !== 91 /* [ */) return null;
+  const at = line.indexOf('] ');
+  if (at < 1) return null;
+  const body = line.slice(at + 2).replace(/\s+$/, '');
+  if (!body) return null;
+  const ts = parseEqTimestamp(line);
+  if (!ts) return null;
+  const k = ch === 'spell' ? _chatSpellKind(line, body, ts, character) : _chatSkillKind(line, body, ts);
+  if (!k) return null;
+  const text = _chatCleanText(body);
+  if (!text) return null;
+  return { ch, who: '', text, t: ts.getTime(), self: /^Your?\b/.test(body), npc: false, kind: k.kind, cat: k.cat };
+}
+function classifySpellLine(line, character) { return _classifyExtraLine(line, character, 'spell'); }
+function classifySkillLine(line) { return _classifyExtraLine(line, '', 'skill'); }
+
+// The overlay's switches, handed over on every poll. Default (nothing asked for, or the overlay went
+// quiet for CHAT_POLICY_TTL_MS) is public channels only.
+let _chatPolicy = null;
+let _chatPolicyAt = 0;
+function setChatPolicy(p, now) {
+  const next = {};
+  for (const k of CHAT_POLICY_KEYS) next[k] = !!(p && p[k]);
+  _chatPolicy = next;
+  _chatPolicyAt = now == null ? Date.now() : now;
+}
+function chatPolicyNow(now) {
+  const t = now == null ? Date.now() : now;
+  if (_chatPolicy && t - _chatPolicyAt <= CHAT_POLICY_TTL_MS) return _chatPolicy;
+  return { tells: false, group: false, officer: false, custom: false, melee: false, spells: false, skills: false };
+}
+function chatChannelAllowed(ch, policy) {
+  const g = CHAT_GROUPS.find(x => x.channels.indexOf(ch) !== -1);
+  if (!g) return false;
+  return !g.gate || !!(policy && policy[g.gate]);
+}
+
+// The ring. Memory only: never written to disk, never queued, never uploaded.
+const _chatRing = [];
+let _chatSeq = 0;
+const CHAT_BOOT = crypto.randomBytes(4).toString('hex');   // a new value after a restart tells the overlay to start over
+// One person's main + alt logs both hear the same guild line: one key, one copy. A zone line is per
+// character (two characters zoning together each did), so it carries the character too. The overlay
+// builds the same key to drop a history line it already holds (chat.html chatKey).
+function chatLineKey(evt, character) {
+  return evt.ch + '|' + String(evt.who).toLowerCase() + '|' + (evt.to || '') + '|' + evt.text + '|' + Math.floor(evt.t / 1000)
+    + (evt.ch === 'zone' ? '|' + String(character || '').toLowerCase() : '');
+}
+// "14m", "2h 5m", "3d": how long ago the last character's last line was.
+function _chatGapText(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm';
+  const h = Math.floor(m / 60);
+  if (h < 48) return h + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '');
+  return Math.floor(h / 24) + 'd';
+}
+// The "swapped character" line between two neighbouring lines (each { on, t }), or null. Pure display: it is
+// never classified as chat, never copied as one, never uploaded. Used by the live ring and by history.
+function chatSwapBetween(prev, cur) {
+  if (!prev || !cur || !prev.on || !cur.on) return null;
+  if (String(prev.on).toLowerCase() === String(cur.on).toLowerCase()) return null;
+  const gap = cur.t - prev.t;
+  if (!(gap >= CHAT_SWAP_MIN_MS)) return null;
+  return { sep: 1, t: cur.t, from: prev.on, to: cur.on, text: 'Swapped to ' + cur.on + ' — ' + _chatGapText(gap) + ' after ' + prev.on + '\'s last line' };
+}
+// Melee has its own small ring (a fight writes dozens of lines a second; chat must never be pushed out of the
+// 500) sharing the one sequence counter, so a single cursor still pages both. Memory only, like the chat ring.
+const CHAT_MELEE_RING_MAX = 300;
+const _meleeRing = [];
+// Spells and Skills get a ring of their own for the same reason: a fight casts and procs dozens of lines, and
+// neither may push chat, melee or each other out of its 300.
+const CHAT_SPELL_RING_MAX = 300;
+const CHAT_SKILL_RING_MAX = 300;
+const _spellRing = [];
+const _skillRing = [];
+// channel → its ring, its cap and the policy switch that gates it (the same name the group carries).
+const _chatExtraRings = {
+  melee: { ring: _meleeRing, max: CHAT_MELEE_RING_MAX, gate: 'melee' },
+  spell: { ring: _spellRing, max: CHAT_SPELL_RING_MAX, gate: 'spells' },
+  skill: { ring: _skillRing, max: CHAT_SKILL_RING_MAX, gate: 'skills' },
+};
+function noteLocalChatLine(line, character, now) {
+  const policy = chatPolicyNow(now);
+  let evt = classifyChatLine(line, character);
+  // Only looked for while the overlay has asked for melee, skills or spells: an overlay that did not leaves nothing
+  // accumulating. Melee first, then Skills, then Spells, so a line is only ever one of them.
+  if (!evt && policy.melee) evt = classifyMeleeLine(line, character);
+  if (!evt && policy.skills) evt = classifySkillLine(line);
+  if (!evt && policy.spells) evt = classifySpellLine(line, character);
+  if (!evt) return false;
+  if (!chatChannelAllowed(evt.ch, policy)) return false;
+  const extra = _chatExtraRings[evt.ch];
+  if (extra) {
+    const ring = extra.ring;
+    // Two of your characters in one fight each log the same swing: one copy. The same swing twice in ONE log
+    // (two equal hits in a second) is real, so only a line from a DIFFERENT log counts as a duplicate. A Spells or
+    // Skills line in the first person ("You begin casting…", "You have become better at…") is that character's
+    // own event, never a second sighting, so only what a bystander sees is de-duplicated.
+    const mk = evt.text + '|' + Math.floor(evt.t / 1000);
+    if (evt.ch === 'melee' || !/^Your?\b/.test(evt.text)) {
+      for (let i = ring.length - 1, n = 0; i >= 0 && n < 40; i--, n++) if (ring[i].k === mk && ring[i].on !== (character || '')) return false;
+    }
+    ring.push({ seq: ++_chatSeq, k: mk, t: evt.t, ch: evt.ch, who: '', to: null, text: evt.text, self: !!evt.self, npc: false, on: character || '', cat: evt.cat || null, miss: !!evt.miss });
+    const spill = ring.length - extra.max;
+    if (spill > 0) ring.splice(0, spill);
+    return true;
+  }
+  const key = chatLineKey(evt, character);
+  for (let i = _chatRing.length - 1, n = 0; i >= 0 && n < 60; i--, n++) if (_chatRing[i].k === key) return false;
+  // The character changed since the last line: say so, with the gap, before the new character's first line.
+  const prev = _chatRing.length ? _chatRing[_chatRing.length - 1] : null;
+  const swap = chatSwapBetween(prev, { on: character, t: evt.t });
+  if (swap) _chatRing.push({ seq: ++_chatSeq, k: 'swap|' + _chatSeq, swap: true, t: swap.t, from: swap.from, to: swap.to, text: swap.text });
+  _chatRing.push({ seq: ++_chatSeq, k: key, t: evt.t, ch: evt.ch, who: evt.who, to: evt.to || null, text: evt.text, self: !!evt.self, npc: !!evt.npc, on: character || '', cn: evt.cn || null, cnum: evt.cnum || null });
+  const over = _chatRing.length - CHAT_RING_MAX;
+  if (over > 0) _chatRing.splice(0, over);
+  return true;
+}
+
+// GET /api/chat?since=<seq>&boot=<boot>&tells=1&group=0&officer=0&custom=0 — the lines newer than `since`
+// that the caller's switches allow, plus the groups and colours to draw them with.
+function serializeLocalChat(q, now) {
+  const t = now == null ? Date.now() : now;
+  setChatPolicy(q, t);
+  const policy = chatPolicyNow(t);
+  let since = Number(q && q.since);
+  let reset = false;
+  if (q && q.boot && String(q.boot) !== CHAT_BOOT) { since = 0; reset = true; }
+  if (!(since >= 0) || since > _chatSeq) { since = 0; reset = true; }
+  const lines = [];
+  // Chat, melee, spell and skill rows page together, newest first, by their shared sequence number. A side ring is
+  // only read while its switch is on, so the common case is the chat ring alone.
+  const feeds = [_chatRing];
+  for (const x of Object.values(_chatExtraRings)) if (policy[x.gate]) feeds.push(x.ring);
+  const at = feeds.map(r => r.length - 1);
+  while (lines.length < CHAT_PAGE_MAX) {
+    let best = -1, bestSeq = -1;
+    for (let f = 0; f < feeds.length; f++) if (at[f] >= 0 && feeds[f][at[f]].seq > bestSeq) { best = f; bestSeq = feeds[f][at[f]].seq; }
+    if (best < 0) break;
+    const l = feeds[best][at[best]--];
+    if (l.seq <= since) break;
+    if (l.swap) { lines.push({ n: l.seq, t: l.t, sep: 1, from: l.from, to: l.to, text: l.text }); continue; }
+    if (!chatChannelAllowed(l.ch, policy)) continue;
+    const o = { n: l.seq, t: l.t, ch: l.ch, who: l.who, text: l.text };
+    if (l.on) o.on = l.on;
+    if (l.self) o.self = true;
+    if (l.npc) o.npc = true;
+    if (l.to) o.to = l.to;
+    if (l.cn) o.cn = l.cn;
+    if (l.cnum) o.cnum = l.cnum;
+    if (l.cat) o.cat = l.cat;
+    if (l.miss) o.miss = true;
+    lines.push(o);
+  }
+  lines.reverse();
+  return { ok: true, boot: CHAT_BOOT, seq: _chatSeq, reset, groups: CHAT_GROUPS, channels: CHAT_CHANNELS, lines };
+}
+function _handleLocalChat(req, res) {
+  const send = (code, body) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(body); };
+  if (!_localOriginOk(req)) return send(403, JSON.stringify({ error: 'forbidden origin' }));
+  const q = {};
+  try { new URL(req.url, 'http://127.0.0.1').searchParams.forEach((v, k) => { q[k] = v; }); } catch { void 0; }
+  for (const k of CHAT_POLICY_KEYS) q[k] = q[k] === '1';
+  // No last-good fallback here, unlike the other overlay routes: a body built under an earlier switch set could
+  // show officer or group lines the caller has just switched off. A failed read serves an empty page instead.
+  let body;
+  try { body = JSON.stringify(serializeLocalChat(q)); }
+  catch (e) { console.error('[api/chat] serialize failed:', e && (e.stack || e.message || e)); body = JSON.stringify({ ok: false, lines: [] }); }
+  return send(200, body);
+}
+function _resetLocalChatForTest() {
+  _chatRing.length = 0; _meleeRing.length = 0; _spellRing.length = 0; _skillRing.length = 0; _chatSeq = 0; _chatPolicy = null; _chatPolicyAt = 0;
+}
+// ── end Local chat window ──
+
+// ── Chat history: the last N hours of chat, read back from the game's own log files ───────────────
+// The guild lead, 2026-10-14: "if you log out and log back in, show the previous logs (past 24h, 12h, 6h,
+// 3, 2, 1)". The ring above is memory only, so a restarted Mimic starts empty. This block fills it back in
+// from the eqlog_<name>_pq.proj.txt files the agent already tails, ON REQUEST, and only for the window asked.
+//
+// PRIVACY: this is local file I/O and nothing else. The read happens on this PC, the result goes to the
+// overlay on 127.0.0.1 and nowhere else, and nothing is written to disk or queued. It runs the SAME
+// classifyChatLine and the SAME gates as the live feed (tells, group, officer, custom stay behind their
+// switches), and skips a character whose owner set exclude_from_stats, like the live tap.
+// COST: each log is read from its END in chunks and left as soon as a chunk reaches back past the window;
+// the whole file is never read. A file not touched inside the window is not even opened.
+const CHAT_HISTORY_MAX = 3000;                       // lines served, newest kept
+const CHAT_HISTORY_CHUNK = 256 * 1024;
+const CHAT_HISTORY_MAX_BYTES = 256 * 1024 * 1024;    // per log, however busy the window was
+const CHAT_HISTORY_CACHE_MS = 20_000;
+const CHAT_HISTORY_HOURS_MAX = 24;
+
+// Whole lines, newest first, from the END of a file. `onLine(line)` returns true to stop. Stops after the
+// first chunk whose earliest timestamped line is older than `cutoffMs` (EQ logs run forward in time), so
+// the caller still checks each line's own time: that chunk holds lines on both sides of the cutoff.
+// A line cut by a chunk boundary is carried into the next chunk, so it is delivered whole. Resolves
+// { end: 'window' | 'start' | 'cap' | 'stopped' | 'missing' | 'error', bytes } and never rejects.
+async function chatReadLogBackwards(file, cutoffMs, onLine, opts) {
+  const chunk = (opts && opts.chunk) || CHAT_HISTORY_CHUNK;
+  const maxBytes = (opts && opts.maxBytes) || CHAT_HISTORY_MAX_BYTES;
+  let fh;
+  try { fh = await fs.promises.open(file, 'r'); } catch { return { end: 'missing', bytes: 0 }; }
+  let bytes = 0, end = 'start';
+  try {
+    let pos = (await fh.stat()).size;
+    let carry = Buffer.alloc(0);
+    while (pos > 0) {
+      if (bytes >= maxBytes) { end = 'cap'; break; }
+      const len = Math.min(chunk, pos);
+      pos -= len;
+      const buf = Buffer.alloc(len);
+      const got = await fh.read(buf, 0, len, pos);
+      bytes += got.bytesRead;
+      let data = got.bytesRead === len ? buf : buf.subarray(0, got.bytesRead);
+      if (carry.length) data = Buffer.concat([data, carry]);
+      let body = data;
+      if (pos > 0) {
+        const nl = data.indexOf(0x0a);
+        if (nl === -1) { carry = data; continue; }       // one line longer than the chunk: keep growing it
+        carry = data.subarray(0, nl);                    // the cut-off start of a line: finished by the next chunk
+        body = data.subarray(nl + 1);
+      } else carry = Buffer.alloc(0);
+      const lines = body.toString('utf8').split('\n');
+      let oldest = null;
+      for (let i = 0; i < lines.length && i < 40 && oldest === null; i++) {
+        const ts = parseEqTimestamp(lines[i]);
+        if (ts) oldest = ts.getTime();
+      }
+      let stopped = false;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        let ln = lines[i];
+        if (ln.charCodeAt(ln.length - 1) === 13) ln = ln.slice(0, -1);
+        if (!ln) continue;
+        if (onLine(ln) === true) { stopped = true; break; }
+      }
+      if (stopped) { end = 'stopped'; break; }
+      if (oldest !== null && oldest < cutoffMs) { end = 'window'; break; }
+    }
+  } catch { end = 'error'; } finally { try { await fh.close(); } catch { void 0; } }
+  return { end, bytes };
+}
+
+// The logs to read: every watched character's log once, minus characters excluded from stats.
+function chatHistoryFiles(watched, isExcluded) {
+  const out = [], seen = new Set();
+  for (const w of (watched || [])) {
+    if (!w || !w.logPath || !w.character) continue;
+    if (isExcluded && isExcluded(w.character)) continue;
+    const k = String(w.logPath).toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({ character: String(w.character), file: String(w.logPath) });
+  }
+  return out;
+}
+
+// q: { hours, tells, group, officer, custom } (booleans). opts.files overrides the watched logs (tests).
+async function buildChatHistory(q, now, opts) {
+  const t = now == null ? Date.now() : now;
+  const hours = Math.min(CHAT_HISTORY_HOURS_MAX, Math.max(1, Math.round(Number(q && q.hours)) || 1));
+  const cutoff = t - hours * 3_600_000;
+  const policy = {};
+  for (const k of CHAT_POLICY_KEYS) policy[k] = !!(q && q[k]);
+  const files = (opts && opts.files) || chatHistoryFiles(stats.watchedLogs, c => !shouldUploadForCharacter(c));
+  const readOpts = opts && { chunk: opts.chunk, maxBytes: opts.maxBytes };
+  const seen = new Set();
+  const all = [];
+  let truncated = false, bytes = 0;
+  const chars = [];
+  for (const f of files) {
+    let mtime = 0;
+    try { mtime = (await fs.promises.stat(f.file)).mtimeMs; } catch { continue; }
+    if (mtime < cutoff) continue;                       // not written inside the window: nothing to read
+    chars.push(f.character);
+    const mine = [];
+    const r = await chatReadLogBackwards(f.file, cutoff, (line) => {
+      const evt = classifyChatLine(line, f.character);
+      if (!evt || evt.t < cutoff || !parseEqTimestamp(line)) return false;
+      if (!chatChannelAllowed(evt.ch, policy)) return false;
+      const key = chatLineKey(evt, f.character);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      const o = { t: evt.t, ch: evt.ch, who: evt.who, text: evt.text, on: f.character };
+      if (evt.self) o.self = true;
+      if (evt.npc) o.npc = true;
+      if (evt.to) o.to = evt.to;
+      if (evt.cn) o.cn = evt.cn;
+      if (evt.cnum) o.cnum = evt.cnum;
+      mine.push(o);
+      return mine.length >= CHAT_HISTORY_MAX;
+    }, readOpts);
+    bytes += r.bytes;
+    if (r.end === 'cap' || r.end === 'stopped') truncated = true;
+    for (const o of mine) all.push(o);
+  }
+  all.sort((a, b) => a.t - b.t);
+  let kept = all;
+  if (kept.length > CHAT_HISTORY_MAX) { kept = kept.slice(kept.length - CHAT_HISTORY_MAX); truncated = true; }
+  // Between one character's stretch and the next: the same "swapped" line the live feed shows.
+  const lines = [];
+  let prev = null;
+  for (const e of kept) {
+    const sep = chatSwapBetween(prev, e);
+    if (sep) lines.push(sep);
+    lines.push(e);
+    prev = e;
+  }
+  return { ok: true, hours, truncated, bytes, chars, lines };
+}
+
+// A short cache (one body per switch set), so the Chat window and its breakouts asking together read once.
+let _chatHistCache = null;
+function getChatHistory(q, now, opts) {
+  const key = [Math.round(Number(q && q.hours)) || 1].concat(CHAT_POLICY_KEYS.map(k => (q && q[k] ? 1 : 0))).join('|');
+  const t = now == null ? Date.now() : now;
+  if (!(opts && opts.files) && _chatHistCache && _chatHistCache.key === key && t - _chatHistCache.at < CHAT_HISTORY_CACHE_MS) return _chatHistCache.p;
+  const p = buildChatHistory(q, t, opts);
+  if (!(opts && opts.files)) {
+    _chatHistCache = { key, at: t, p };
+    p.catch(() => { if (_chatHistCache && _chatHistCache.p === p) _chatHistCache = null; });
+  }
+  return p;
+}
+// GET /api/chat/history?hours=N&tells=0&group=0&officer=0&custom=0 — 127.0.0.1 only, like /api/chat. It does
+// NOT hand the switches to setChatPolicy: asking for history must not turn on live capture of anything.
+async function _handleLocalChatHistory(req, res) {
+  const send = (code, body) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(body); };
+  if (!_localOriginOk(req)) return send(403, JSON.stringify({ error: 'forbidden origin' }));
+  const q = {};
+  try { new URL(req.url, 'http://127.0.0.1').searchParams.forEach((v, k) => { q[k] = v; }); } catch { void 0; }
+  for (const k of CHAT_POLICY_KEYS) q[k] = q[k] === '1';
+  let body;
+  try { body = JSON.stringify(await getChatHistory(q)); }
+  catch (e) { console.error('[api/chat/history] failed:', e && (e.stack || e.message || e)); body = JSON.stringify({ ok: false, lines: [] }); }
+  return send(200, body);
+}
+function _resetChatHistoryForTest() { _chatHistCache = null; }
+// ── end Chat history ──
+
 // ── /sll lockout parser ────────────────────────────────────────────────────
 // EQ /sll output in the log:
 //   [timestamp] === Current Loot Lockouts ===
@@ -38603,6 +40062,9 @@ function _recordFightHistory(et, character) {
     if (p.pet_charm) row.pet_charm = true;
     if (p.pet_summoned) row.pet_summoned = true;
     if (p.pet_spawn_id) row.pet_spawn_id = p.pet_spawn_id;
+    // Their own first and last damage time, for the row's Sec and DPS (an older entry has none).
+    const span = et.spans && et.spans[name];
+    if (span && span[0] > 0 && span[1] >= span[0]) { row.first_ms = span[0]; row.last_ms = span[1]; }
     // Damage taken, kept for a Tank History to come — stored, not rendered.
     if (p.took > 0) row.took = p.took;
     if (p.tookMax > 0) row.tookMax = p.tookMax;
@@ -42559,6 +44021,19 @@ const SUGGESTED_TRIGGERS = [
     pattern: 'You are no longer feigning death, because a spell hit you\\.',
     overlay_text: 'FD BROKEN — A SPELL HIT YOU', overlay_color: 'red', overlay_ms: 3000,
     tts_default: true,  cooldown_seconds: 2 },
+  // Willsapper (the guild lead, 2026-10-14: a member wanted a "slap" when it procs). The proc casts
+  // Energy Sap (spell 1960), whose landing text on the mob is "<mob> yawns." — and ten other spells
+  // print the same words, shaman slows among them (Turgur's / Tigir's / Togor's / Tagar's Insects,
+  // Walking Sleep, Drowsy). So it fires only when one of YOUR melee hits on that same mob was
+  // logged within 1.5 s (after_my_melee_ms). The sound is the point: it plays INSTEAD of speaking.
+  // Not gated on owning the weapon (the agent knows no equipped items): tick it, in "For:", for the
+  // character that wields it.
+  { id: 'proc_willsapper', category: 'self', label: 'Willsapper proc (Energy Sap — the "yawns" right after your own hit; tick it for the character with the weapon)',
+    pattern: '^\\[.+?\\]\\s+(?<target>.+?) yawns\\.$',
+    overlay_text: 'SLAP!', overlay_color: 'purple', overlay_ms: 1500,
+    overlay_preview: 'SLAP! (plays your slap sound — change it under Personal triggers)',
+    tts_default: false, cooldown_seconds: 0,
+    after_my_melee_ms: 1500, sound: 'slap', sound_mode: 'replace' },
   // The Charm overlay's own "charm break" waits for the pet to leave Zeal's
   // pet slot (6s grace, so a recast doesn't false-alarm) plus a 1.5s kill
   // guard, and only speaks while that overlay is open. This fires on the log
@@ -42727,7 +44202,9 @@ const BUILTIN_TIMER_KINDS = new Set(SUGGESTED_TRIGGERS.map(t => t.builtin_timer)
 const PERSONAL_CARRY_FIELDS = ['warning_seconds', 'warning_text', 'warning_tts', 'end_text', 'timer_warnings',
   'timer_loop', 'timer_loop_max',
   'timer_key_capture', 'timer_duration_capture', 'bar_color', 'pinned',
-  'display_threshold_sec', 'exclude_patterns', 'characters', 'catalog_match'];
+  'display_threshold_sec', 'exclude_patterns', 'characters', 'catalog_match',
+  // 2026-10-14: fire only just after one of your own melee hits on the same mob; a per-trigger voice pack.
+  'after_my_melee_ms', 'voice_pack'];
 // Saved suggested rows keep the pattern they were created with, so a template
 // fix never reached anyone who had already ticked it. A pattern listed here is
 // one we shipped dead; loadPersonalTriggers swaps it for the current one. Only
@@ -42770,8 +44247,10 @@ function _templateToPersonalRow(tpl, opts) {
     duration_ms: tpl.overlay_ms || 4000,
   };
   if (wantTts) action.tts = tpl.overlay_text;
+  if (tpl.sound) { action.sound = tpl.sound; action.sound_mode = tpl.sound_mode || 'add'; if (tpl.sound_volume != null) action.sound_volume = tpl.sound_volume; }
   return {
     id:            'suggested:' + tpl.id,
+    ...(tpl.after_my_melee_ms ? { after_my_melee_ms: tpl.after_my_melee_ms } : {}),
     name:          tpl.label,
     pattern:       tpl.pattern || '',
     pattern_flags: 'i',
@@ -42888,9 +44367,19 @@ function _parseTriggerXml(xml) {
       enders.push(eRegex ? '(?:' + text + ')' : '(?:' + _escapeForLiteralMatch(text) + ')');
     }
     if (!name || !pattern) continue;
+    // A sound file the trigger plays (2026-10-14). GINA's export carries <PlayMediaFile> as a bare True/False
+    // with no file name, so the name is read from whichever of these a pack does carry; a value that is
+    // only a True/False switch is not a file. `plays_sound` records that a sound was meant even when its
+    // file is unknown, so the import can say so instead of dropping it in silence.
+    const mediaSwitch = get('PlayMediaFile') || get('UseSound') || get('PlaySound');
+    const soundFile = [get('MediaFileName'), get('SoundFileName'), get('PlaySoundFile'), get('SoundFile'), get('SoundToPlay')]
+      .find(v => v && !/^(true|false)$/i.test(v)) || '';
+    const playsSound = !!soundFile || /^true$/i.test(mediaSwitch);
     triggers.push({
       name,
       pattern,
+      ...(soundFile ? { sound_file: soundFile } : {}),
+      ...(playsSound ? { plays_sound: true } : {}),
       use_regex:        enableRegex,
       display_text:     (useText === '' || useText.toLowerCase() === 'true') ? displayText : '',
       tts_text:         (useTts === '' || useTts.toLowerCase() === 'true') ? ttsText : '',
@@ -42900,6 +44389,39 @@ function _parseTriggerXml(xml) {
     });
   }
   return triggers;
+}
+
+// An imported trigger's sound file (the guild lead, 2026-10-14): when the file the trigger names is on THIS
+// PC, copy it into the member's sounds folder and hand back "custom:<file>", so the trigger plays on a
+// name like every other and keeps working after the original is moved. A file that is not here (a pack
+// from someone else's PC, or GINA's bare "play a sound" switch) keeps the trigger's spoken callout and
+// is reported in the import result instead. → { ok:true, value, copied } | { ok:false, why }.
+function _importSoundFile(srcPath) {
+  const src = String(srcPath == null ? '' : srcPath).trim().replace(/^"|"$/g, '');
+  if (!src) return { ok: false, why: 'no file name' };
+  const base = src.split(/[\\/]/).pop();
+  const ext = path.extname(base).toLowerCase();
+  if (!SOUND_EXTS.includes(ext)) return { ok: false, why: 'not a .wav, .mp3 or .ogg file' };
+  let st;
+  try { st = fs.statSync(src); } catch { return { ok: false, why: 'the file is not on this PC' }; }
+  if (!st.isFile() || st.size === 0 || st.size > SOUND_MAX_BYTES) return { ok: false, why: 'the file is empty or too large' };
+  const dir = _soundDirs().user;
+  try { fs.mkdirSync(dir, { recursive: true }); } catch { return { ok: false, why: 'could not make the sounds folder' }; }
+  const clean = base.replace(/[^\w .()-]/g, '_').slice(0, 100);
+  const stem = path.basename(clean, path.extname(clean));
+  let name = clean;
+  for (let i = 2; ; i++) {
+    const dst = path.join(dir, name);
+    let same = false;
+    try { const d = fs.statSync(dst); same = d.isFile() && d.size === st.size; } catch { /* free */ }
+    if (same) return { ok: true, value: 'custom:' + name, copied: false };   // already imported
+    if (!fs.existsSync(dst)) {
+      try { fs.copyFileSync(src, dst); } catch { return { ok: false, why: 'could not copy the file' }; }
+      return { ok: true, value: 'custom:' + name, copied: true };
+    }
+    name = stem + '-' + i + ext;
+    if (i > 50) return { ok: false, why: 'too many files with that name' };
+  }
 }
 
 // EQLogParser's NATIVE export is NOT the SharedTriggers XML — it's a JSON tree
@@ -42926,9 +44448,11 @@ function _parseTriggerTgfJson(text) {
         // the duration. Treat any positive TimerType OR EnableTimer with a
         // duration as a countdown timer — the warning callout depends on it.
         const hasTimer = dur > 0 && (Number(td.TimerType) > 0 || td.EnableTimer === true);
+        const soundFile = String(td.SoundToPlay || '').trim();   // EQLogParser's own sound file (2026-10-14)
         out.push({
           name,
           pattern,
+          ...(soundFile ? { sound_file: soundFile, plays_sound: true } : {}),
           use_regex:          td.UseRegex !== false,
           display_text:       String(td.TextToDisplay || '').trim(),
           tts_text:           String(td.TextToSpeak || '').trim(),
@@ -43409,12 +44933,400 @@ async function _handleTriggerSync(req, res) {
 }
 // ── end personal trigger sync (agent half) ──
 
+// ── Sounds, voices and pronunciations (the guild lead, 2026-10-14) ───────────────────────────────
+// A member wanted a custom "slap" when their Willsapper proc lands. The guild lead then asked for the
+// rest: *"different voice packs, get player pronunciation right … build this voice pack bit into
+// onboarding and allow users to add their own sound effects. allow them to use the sound effects
+// instead of callouts tts."*
+//
+// SOUNDS. A trigger's `sound` is a NAME ("slap"), "custom:<file>" for a member's own file, or an
+// http(s) URL (the Vex Thal guild trigger uses one) — never a path on anyone's disk, so a guild or
+// synced trigger plays on every PC. Two folders: Mimic's shipped set (env WOLFPACK_SOUNDS_DIR) and
+// the member's own (env WOLFPACK_SOUNDS_USER_DIR, else `sounds/` beside the agent's other state); a
+// custom file with a shipped file's name overrides it. apps/mimic/sounds.js holds the same rules for
+// Mimic's side — keep the two in step.
+//   sound_mode 'add' (default)  the sound plays with the spoken callout, as it always did
+//   sound_mode 'replace'        the sound plays INSTEAD of speaking ("allow them to use the sound
+//                               effects instead of callouts tts"); the overlay still flashes
+// A MEMBER'S OWN SOUND on a guild trigger they cannot edit lives in trigger_sound_overrides.json
+// ({trigger_id: {sound, sound_volume, sound_mode}}) and is applied at fire time on this PC only,
+// relayed fires included.
+const SOUND_EXTS = ['.wav', '.mp3', '.ogg'];
+const SOUND_MAX_BYTES = 8 * 1024 * 1024;
+const SOUND_MIME = { '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg' };
+function _soundDirs() {
+  return {
+    shipped: process.env.WOLFPACK_SOUNDS_DIR || '',
+    user: process.env.WOLFPACK_SOUNDS_USER_DIR || path.join(path.dirname(STATS_FILE || ''), 'sounds'),
+  };
+}
+function _soundScan(dir) {
+  const out = [];
+  if (!dir) return out;
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      const ext = path.extname(f).toLowerCase();
+      if (!SOUND_EXTS.includes(ext)) continue;
+      let st; try { st = fs.statSync(path.join(dir, f)); } catch { continue; }
+      if (!st.isFile() || st.size === 0 || st.size > SOUND_MAX_BYTES) continue;
+      out.push({ file: f, base: path.basename(f, path.extname(f)).toLowerCase() });
+    }
+  } catch { /* a missing folder is an empty library */ }
+  return out.sort((a, b) => a.file.localeCompare(b.file));
+}
+// → [{ name, file, source, overrides }] — `name` is the value a trigger stores.
+function _soundList() {
+  const d = _soundDirs();
+  const shipped = _soundScan(d.shipped), custom = _soundScan(d.user);
+  const customBy = new Map(custom.map(c => [c.base, c]));
+  const out = [];
+  for (const s of shipped) {
+    const over = customBy.get(s.base);
+    out.push({ name: s.base, file: over ? over.file : s.file, source: over ? 'custom' : 'shipped', overrides: !!over });
+  }
+  const shippedBases = new Set(shipped.map(s => s.base));
+  for (const c of custom) if (!shippedBases.has(c.base)) out.push({ name: 'custom:' + c.file, file: c.file, source: 'custom', overrides: false });
+  return out;
+}
+// name → absolute path, or null (unknown, a path, a traversal attempt, a URL).
+function _soundResolve(name) {
+  const raw = String(name == null ? '' : name).trim();
+  if (!raw) return null;
+  const d = _soundDirs();
+  if (raw.toLowerCase().startsWith('custom:')) {
+    const file = raw.slice(7).trim();
+    if (!file || file !== path.basename(file) || !SOUND_EXTS.includes(path.extname(file).toLowerCase())) return null;
+    const p = path.join(d.user, file);
+    return fs.existsSync(p) ? p : null;
+  }
+  const base = raw.toLowerCase();
+  if (!/^[a-z0-9][a-z0-9 _.-]{0,60}$/.test(base)) return null;
+  const mine = _soundScan(d.user).find(c => c.base === base);
+  if (mine) return path.join(d.user, mine.file);
+  const ours = _soundScan(d.shipped).find(s => s.base === base);
+  return ours ? path.join(d.shipped, ours.file) : null;
+}
+const _SOUND_URL_RX = /^https?:\/\/\S{1,300}$/i;
+// Can this machine play it? A URL is taken on trust (it plays as it always did); a name must resolve.
+function _soundUsable(sound) { return _SOUND_URL_RX.test(String(sound || '')) || !!_soundResolve(sound); }
+// A sound value a MEMBER typed or picked: a name, a custom: file, or a URL. '' = none / unusable.
+function _cleanSoundName(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (!s) return '';
+  if (_SOUND_URL_RX.test(s)) return s;
+  if (/^custom:/i.test(s)) { const f = s.slice(7).trim(); return f && f === path.basename(f) && SOUND_EXTS.includes(path.extname(f).toLowerCase()) && f.length <= 120 ? 'custom:' + f : ''; }
+  const b = s.toLowerCase();
+  return /^[a-z0-9][a-z0-9 _.-]{0,60}$/.test(b) ? b : '';
+}
+// The sound fields of an action or an override, cleaned. Only the keys that were present come back.
+function _soundSpecOf(a) {
+  const out = {};
+  if (!a || typeof a !== 'object') return out;
+  const s = _cleanSoundName(a.sound);
+  if (s) out.sound = s;
+  if (a.sound_volume != null && a.sound_volume !== '' && Number.isFinite(Number(a.sound_volume))) out.sound_volume = Math.max(0, Math.min(1, Number(a.sound_volume)));
+  if (a.sound_mode === 'replace' || a.sound_mode === 'add') out.sound_mode = a.sound_mode;
+  return out;
+}
+// Lay a sound spec onto an overlay about to be pushed. 'replace' silences the spoken callout (the
+// overlay still flashes) — but only when this PC can actually play the sound, so a missing file
+// falls back to speaking rather than to silence. triggers.html re-checks with its own resolution.
+function _applySoundSpec(o, spec) {
+  if (!o || !spec || !spec.sound) return o;
+  o.sound = spec.sound;
+  if (spec.sound_volume != null) o.sound_volume = spec.sound_volume; else delete o.sound_volume;
+  o.sound_mode = spec.sound_mode === 'replace' ? 'replace' : 'add';
+  if (o.sound_mode === 'replace' && _soundUsable(o.sound)) o.mute = true;
+  return o;
+}
+const _soundOverrides = {};   // trigger id → { sound, sound_volume?, sound_mode? }
+// Where this section keeps its files: beside the agent's other state (a test points it at a temp folder).
+let _voiceStateDir = null;
+function _vsDir() { return _voiceStateDir || path.dirname(STATS_FILE || ''); }
+function _soundOverridesPath() { const dir = _vsDir(); return dir ? path.join(dir, 'trigger_sound_overrides.json') : null; }
+function loadSoundOverrides() {
+  try {
+    const p = _soundOverridesPath();
+    if (!p || !fs.existsSync(p)) return;
+    const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
+    const src = raw && typeof raw === 'object' && raw.overrides && typeof raw.overrides === 'object' ? raw.overrides : raw;
+    for (const k of Object.keys(_soundOverrides)) delete _soundOverrides[k];
+    for (const [id, v] of Object.entries(src || {})) {
+      const spec = _soundSpecOf(v);
+      if (spec.sound && /^[\w:.-]{1,80}$/.test(id) && Object.keys(_soundOverrides).length < 2000) _soundOverrides[id] = spec;
+    }
+  } catch (err) { console.warn('[sound-overrides] load failed:', err.message); }
+}
+function saveSoundOverrides() {
+  try {
+    const p = _soundOverridesPath();
+    if (!p) return false;
+    const tmp = p + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify({ version: 1, overrides: _soundOverrides }, null, 2));
+    fs.renameSync(tmp, p);
+    return true;
+  } catch (err) { console.warn('[sound-overrides] save failed:', err.message); return false; }
+}
+// { id, sound, sound_volume?, sound_mode? } — an empty sound removes this PC's override.
+function _setSoundOverride(b) {
+  const id = String((b && b.id) || '').trim();
+  if (!/^[\w:.-]{1,80}$/.test(id)) return { ok: false, error: 'bad id' };
+  const spec = _soundSpecOf(b);
+  if (!spec.sound) { delete _soundOverrides[id]; }
+  else {
+    if (!_soundOverrides[id] && Object.keys(_soundOverrides).length >= 2000) return { ok: false, error: 'too many overrides' };
+    _soundOverrides[id] = spec;
+  }
+  if (!saveSoundOverrides()) return { ok: false, error: 'could not save' };
+  _stateJsonCache = { at: 0, body: null };
+  return { ok: true, id, override: _soundOverrides[id] || null };
+}
+
+// VOICE PACKS: named presets for the trigger voice. `voices` are substrings matched (case-insensitive)
+// against the installed Windows voice names, first hit wins; none installed = the default voice, with
+// the pack's rate and pitch still applied. The pick, and the rate / pitch sliders, live in Mimic's
+// config (cfg.voice); triggers.html resolves them. Served on GET /api/voice-packs.
+const VOICE_PACKS = [
+  { id: 'default',  label: 'Default',  blurb: 'Your Windows voice, as it is',                 voices: [],                                    rate: 1.05, pitch: 1.0 },
+  { id: 'herald',   label: 'Herald',   blurb: 'Slower and lower, like a town crier',          voices: ['David', 'Mark', 'George', 'Guy'],    rate: 0.9,  pitch: 0.75 },
+  { id: 'quick',    label: 'Quick',    blurb: 'Faster, for a raid that moves',                voices: ['Zira', 'Aria', 'Jenny', 'Hazel'],    rate: 1.35, pitch: 1.0 },
+  { id: 'narrator', label: 'Narrator', blurb: 'Even and calm, a little slower',               voices: ['Hazel', 'Susan', 'Zira', 'Aria'],    rate: 0.95, pitch: 0.95 },
+];
+
+// PRONUNCIATION. The bot keeps a guild-wide list of how to SAY a character's name (GET
+// /api/agent/pronunciations → { version, entries:[{name, say}] }, ETag'd); this agent fetches it every
+// 10 minutes with If-None-Match, caches it beside its other state, and rewrites every spoken string
+// before it reaches the speech engine. A 404 means an older bot: the feature is off, silently.
+// A member's own entries (pronunciations_local.json, this PC only) win over the synced ones.
+const PRON_POLL_MS = 10 * 60_000;
+let _pronSynced = new Map();     // lowercase name → say
+let _pronLocal = {};             // name (as typed) → say
+let _pronMeta = { version: null, etag: null, feature: 'unknown', checkedAt: 0 };
+let _pronMerged = null;          // Map, rebuilt when either side changes
+function _pronDir() { return _vsDir(); }
+function _pronMergedMap() {
+  if (_pronMerged) return _pronMerged;
+  const m = new Map(_pronSynced);
+  for (const [n, s] of Object.entries(_pronLocal)) { const k = String(n).toLowerCase(); if (s) m.set(k, s); else m.delete(k); }
+  return (_pronMerged = m);
+}
+// Anything list-shaped → [[lowercase name, say]] with blanks and self-maps dropped.
+function _pronPairs(map) {
+  let src = [];
+  if (map instanceof Map) src = [...map.entries()];
+  else if (Array.isArray(map)) src = map.map(e => [e && e.name, e && e.say]);
+  else if (map && typeof map === 'object') src = Object.entries(map);
+  const out = [];
+  for (const [n, s] of src) {
+    const name = String(n == null ? '' : n).trim().toLowerCase(), say = String(s == null ? '' : s).trim();
+    if (name && say && name !== say.toLowerCase()) out.push([name, say]);
+  }
+  return out;
+}
+const _pronCompiled = new WeakMap();
+// Rewrites names in a spoken string: whole words only (a name inside a longer word is left alone),
+// case-insensitive, the longest name first so "Aldenmar Prime" is not eaten by "Aldenmar", in ONE pass
+// so a replacement is never itself replaced. `map` is a Map, an array of {name, say} or a plain object.
+function _applyPronunciations(text, map) {
+  const s = String(text == null ? '' : text);
+  if (!s || !map) return s;
+  let c = (typeof map === 'object') ? _pronCompiled.get(map) : null;
+  if (!c) {
+    const pairs = _pronPairs(map).sort((a, b) => b[0].length - a[0].length);
+    if (!pairs.length) return s;
+    const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    c = { re: new RegExp('(?<![\\p{L}\\p{N}_])(?:' + pairs.map(p => esc(p[0])).join('|') + ')(?![\\p{L}\\p{N}_])', 'giu'), say: new Map(pairs) };
+    if (typeof map === 'object') _pronCompiled.set(map, c);
+  }
+  c.re.lastIndex = 0;
+  return s.replace(c.re, (w) => c.say.get(w.toLowerCase()) || w);
+}
+function _applySpokenPronunciations(text) {
+  const m = _pronMergedMap();
+  return m.size ? _applyPronunciations(text, m) : text;
+}
+function loadPronunciations() {
+  try {
+    const dir = _pronDir();
+    if (!dir) return;
+    const pc = path.join(dir, 'pronunciations_cache.json');
+    if (fs.existsSync(pc)) {
+      const j = JSON.parse(fs.readFileSync(pc, 'utf8'));
+      _pronSynced = new Map(_pronPairs(j && j.entries));
+      _pronMeta.version = (j && j.version) != null ? j.version : null;
+      _pronMeta.etag = (j && j.etag) || null;
+      if (_pronSynced.size) _pronMeta.feature = 'on';
+    }
+    const pl = path.join(dir, 'pronunciations_local.json');
+    if (fs.existsSync(pl)) {
+      const j = JSON.parse(fs.readFileSync(pl, 'utf8'));
+      const src = j && typeof j === 'object' && j.entries && typeof j.entries === 'object' ? j.entries : {};
+      _pronLocal = {};
+      for (const [n, s] of Object.entries(src)) if (String(n).trim() && String(s).trim() && Object.keys(_pronLocal).length < 2000) _pronLocal[String(n).trim()] = String(s).trim().slice(0, 80);
+    }
+    _pronMerged = null;
+  } catch (err) { console.warn('[pronunciations] load failed:', err.message); }
+}
+function _pronWrite(file, obj) {
+  try {
+    const dir = _pronDir();
+    if (!dir) return false;
+    const p = path.join(dir, file), tmp = p + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(obj));
+    fs.renameSync(tmp, p);
+    return true;
+  } catch (err) { console.warn('[pronunciations] save failed:', err.message); return false; }
+}
+// One poll. → 'updated' | 'unchanged' | 'off' (404, an older bot) | 'error' | 'local'.
+async function pollPronunciations({ botUrl, token, force = false } = {}) {
+  if (!botUrl || !token) return 'local';
+  try {
+    const base = botUrl.replace(/\/encounter(\?.*)?$/, '');
+    const headers = { Authorization: 'Bearer ' + token, 'User-Agent': 'wolfpack-logsync/' + AGENT_VERSION };
+    if (_mimicSessionToken) headers['X-Wolfpack-Mimic-Session'] = _mimicSessionToken;
+    if (_pronMeta.etag && !force) headers['If-None-Match'] = _pronMeta.etag;
+    const r = await fetch(base + '/pronunciations', { headers, signal: AbortSignal.timeout(10_000) });
+    _pronMeta.checkedAt = Date.now();
+    if (r.status === 404) { _pronMeta.feature = 'off'; return 'off'; }
+    if (r.status === 304) { _pronMeta.feature = 'on'; return 'unchanged'; }
+    if (!r.ok) return 'error';
+    const j = await r.json().catch(() => null);
+    if (!j || !Array.isArray(j.entries)) return 'error';
+    _pronSynced = new Map(_pronPairs(j.entries));
+    _pronMeta.version = j.version != null ? j.version : null;
+    _pronMeta.etag = r.headers.get('etag') || null;
+    _pronMeta.feature = 'on';
+    _pronMerged = null;
+    _pronWrite('pronunciations_cache.json', { version: _pronMeta.version, etag: _pronMeta.etag, entries: j.entries.slice(0, 5000) });
+    return 'updated';
+  } catch { return 'error'; }
+}
+// A call to one of the bot's pronunciation routes (suggest, set). Local mode makes none.
+async function _pronBotCall(method, route, body) {
+  if (_localOnly() || !_canAskGuildForFights()) return { ok: false, status: 0, local: true, error: 'Needs a linked Wolf Pack account.' };
+  try {
+    const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+    const headers = { ..._characterPrefsHeaders() };
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const r = await fetch(base + route, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(10_000) });
+    const j = await r.json().catch(() => null);
+    if (r.status === 404 && !(j && j.error)) return { ok: false, status: 404, error: 'The server has no pronunciation list yet.' };
+    if (!r.ok) return { ok: false, status: r.status, error: String((j && j.error) || ('the server answered ' + r.status)) };
+    return { ok: true, data: j || {} };
+  } catch { return { ok: false, status: 0, error: 'could not reach the Wolf Pack server' }; }
+}
+function _pronStatePayload() {
+  const merged = _pronMergedMap();
+  const chars = _watchedCharacters().map(c => {
+    const k = String(c).toLowerCase();
+    const mine = Object.keys(_pronLocal).find(n => n.toLowerCase() === k);
+    return { name: c, say: mine ? _pronLocal[mine] : (merged.get(k) || ''), source: mine ? 'local' : (_pronSynced.has(k) ? 'synced' : '') };
+  });
+  return { feature: _pronMeta.feature, version: _pronMeta.version, synced: _pronSynced.size, local: { ..._pronLocal }, characters: chars, signed_in: !(_localOnly() || !_canAskGuildForFights()) };
+}
+
+// The routes for all of the above. Writes are refused for a browser page that is not one of ours.
+async function _handleSoundsVoices(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
+  const u = new URL(req.url, 'http://127.0.0.1');
+  const p = u.pathname;
+  const body = async () => { try { return JSON.parse((await _readBody(req, 4096)) || '{}'); } catch { return null; } };
+  if (req.method === 'GET' && p.startsWith('/sounds/')) {
+    let name = '';
+    try { name = decodeURIComponent(p.slice(8)); } catch { name = ''; }
+    const file = _soundResolve(name);
+    if (!file) return send(404, { error: 'no such sound' });
+    try {
+      const buf = fs.readFileSync(file);
+      res.writeHead(200, { 'Content-Type': SOUND_MIME[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Content-Length': buf.length, 'Cache-Control': 'no-cache' });
+      return res.end(buf);
+    } catch { return send(404, { error: 'unreadable' }); }
+  }
+  if (p === '/api/sounds' && req.method === 'GET') {
+    const d = _soundDirs();
+    return send(200, { sounds: _soundList(), user_dir: d.user, has_shipped: !!d.shipped });
+  }
+  if (p === '/api/sounds/open-folder' && req.method === 'POST') {
+    if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+    const dir = _soundDirs().user;
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* the open below reports it */ }
+    try {
+      const { spawn } = require('child_process');
+      const [cmd, args] = process.platform === 'win32' ? ['explorer.exe', [dir]] : process.platform === 'darwin' ? ['open', [dir]] : ['xdg-open', [dir]];
+      const c = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+      c.on('error', () => { /* no file manager here: the path is in the reply */ });
+      c.unref();
+    } catch { /* same */ }
+    return send(200, { ok: true, user_dir: dir });
+  }
+  if (p === '/api/trigger-sound-overrides') {
+    if (req.method === 'GET') return send(200, { overrides: _soundOverrides });
+    if (req.method === 'POST') {
+      if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+      const b = await body();
+      if (!b) return send(400, { ok: false, error: 'bad body' });
+      const out = _setSoundOverride(b);
+      scheduleRender();
+      return send(out.ok ? 200 : 400, out);
+    }
+  }
+  if (p === '/api/voice-packs' && req.method === 'GET') return send(200, { packs: VOICE_PACKS });
+  if (p === '/api/pronunciations' && req.method === 'GET') return send(200, _pronStatePayload());
+  if (p === '/api/pronunciations/local' && req.method === 'POST') {
+    if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+    const b = await body();
+    const name = String((b && b.name) || '').trim().slice(0, 40);
+    if (!/^[A-Za-z][A-Za-z`' -]{1,39}$/.test(name)) return send(400, { ok: false, error: 'bad name' });
+    const say = String((b && b.say) || '').trim().slice(0, 80);
+    for (const k of Object.keys(_pronLocal)) if (k.toLowerCase() === name.toLowerCase()) delete _pronLocal[k];
+    if (say) _pronLocal[name] = say;
+    _pronMerged = null;
+    if (!_pronWrite('pronunciations_local.json', { version: 1, entries: _pronLocal })) return send(500, { ok: false, error: 'could not save' });
+    return send(200, { ok: true });
+  }
+  if (p === '/api/pronunciation-suggest' && req.method === 'GET') {
+    const name = String(u.searchParams.get('name') || '').trim().slice(0, 40);
+    if (!name) return send(400, { ok: false, error: 'name needed' });
+    const k = name.toLowerCase();
+    const mine = Object.keys(_pronLocal).find(n => n.toLowerCase() === k);
+    const out = await _pronBotCall('GET', '/pronunciation-suggest?name=' + encodeURIComponent(name));
+    const d = out.ok ? out.data : {};
+    return send(200, {
+      name: d.name || name,
+      suggestions: Array.isArray(d.suggestions) ? d.suggestions.slice(0, 12) : [],
+      tips: Array.isArray(d.tips) ? d.tips.slice(0, 8) : [],
+      current: mine ? _pronLocal[mine] : (d.current || _pronMergedMap().get(k) || ''),
+      available: out.ok, why: out.ok ? null : out.error,
+    });
+  }
+  if (p === '/api/pronunciation' && req.method === 'POST') {
+    if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+    const b = await body();
+    const character = String((b && b.character) || '').trim().slice(0, 40), say = String((b && b.say) || '').trim().slice(0, 80);
+    if (!character || !say) return send(400, { ok: false, error: 'character and say needed' });
+    const out = await _pronBotCall('POST', '/pronunciation', { character, say });
+    if (!out.ok) return send(out.status === 0 ? 502 : (out.status || 400), { ok: false, error: out.error });
+    pollPronunciations({ botUrl: _uploadOpts.botUrl, token: _uploadOpts.token, force: true }).catch(() => {});
+    return send(200, { ok: true });
+  }
+  return send(404, { error: 'not found' });
+}
+
 // Recent overlay queue — surfaced on /api/state for the dashboard to render.
 // Cap at 20 so a runaway trigger can't OOM us.
 const _activeOverlays = [];
 // Returns false when a "What you hear" rule dropped the fire.
 function _pushOverlay(o) {
+  // This PC's own sound for a guild trigger it cannot edit — also on a relayed fire (2026-10-14).
+  try { const ov = o && o.trigger_id && _soundOverrides[o.trigger_id]; if (ov) _applySoundSpec(o, ov); } catch { /* a sound fault must never silence a callout */ }
   try { if (!_applyTriggerRule(o)) return false; } catch { /* a rules fault must never silence a callout */ }
+  // How the guild says each name (and this PC's own corrections), before it reaches the speech engine.
+  try {
+    if (o && !o.mute && !o.soundOnly && _pronMergedMap().size) {
+      const said = _applySpokenPronunciations(o.tts || o.text || '');
+      if (said && said !== (o.tts || o.text)) o.tts = said;
+    }
+  } catch { /* speech goes out as written */ }
   _activeOverlays.unshift(o);
   if (_activeOverlays.length > 20) _activeOverlays.length = 20;
   _wakeFireWaitersSoon();
@@ -43467,6 +45379,14 @@ function _fireForWeb(o) {
     scope:   o.scope,
     test:    !!o.test,
     sound:   o.sound || null,
+    // 0–1; absent = the player's own default (0.9).
+    sound_volume: o.sound_volume != null ? o.sound_volume : null,
+    // 'replace' = the sound plays INSTEAD of the spoken callout; absent/'add' = with it.
+    sound_mode:   o.sound_mode || null,
+    // A standalone sound action: play it, flash nothing, say nothing.
+    sound_only:   !!o.soundOnly,
+    // A per-trigger voice pack (VOICE_PACKS id) overriding the player's pick for this callout.
+    voice_pack:   o.voice_pack || null,
     sticky:  !!o.sticky,
     rehearsal: !!o.rehearsal,
     replay:  !!o.replay,
@@ -44346,10 +46266,25 @@ function _runRelayedFire(fire, firedAtLocal) {
 // relay reached us, or the bot handed it again after a restart or a zone hop). A countdown from an OLDER
 // window is replaced: the bot only hands out a window a fresh sighting has not cleared.
 const LATE_JOIN_SAME_WINDOW_MS = 120_000;   // the bot's SAME_WINDOW_MS: two observers of one emote
+// A zone timer the raider ✕'d: trigger id → when that countdown started. The bot hands a window out again when
+// you leave the zone and come back (or after its own restart), and the "already running" check below cannot tell
+// a countdown you dismissed from one you never had, so the timer you just cleared came back. Same window = same
+// emote, by the same tolerance the bot uses; a NEW window starts later than that and arms normally.
+const _lateJoinDismissed = new Map();
+function _noteTimerDismissed(row) {
+  if (!row || !row.trigger_id || !Number.isFinite(row.started_at_ms)) return;
+  _lateJoinDismissed.set(String(row.trigger_id), row.started_at_ms);
+}
 function _runLateJoinFire(fire) {
   if (!fire || !fire.trigger_id) return false;
   const tid = String(fire.trigger_id);
   const startedAt = _relayFiredAtLocal(fire);
+  const dismissedAt = _lateJoinDismissed.get(tid);
+  if (dismissedAt != null &&Math.abs(startedAt - dismissedAt) <= LATE_JOIN_SAME_WINDOW_MS) {
+    _journalTrigger({ trigger: fire.name || 'zone timer', scope: 'guild_relay', checkpoint: TJ.MATCHED,
+                      stopped: true, reason: 'late join skipped — you dismissed this countdown' });
+    return false;
+  }
   // Our own definition first: it carries end_text, warnings, colour. The bot's fields are the fallback
   // for a trigger this agent has not loaded yet.
   const def = (stats.guildTriggers || []).find(g => g && String(g.id) === tid);
@@ -44823,6 +46758,37 @@ const MAP_SYNC_BACKOFF_MS    = 10 * 60 * 1000;      // the bot answered 404: not
 const MAP_SYNC_TIMEOUT_MS    = 8000;
 const MAP_SYNC_QUEUE_MAX     = 200;
 const MAP_CORPSE_RE          = /[`'’]s\s+corpse\d*$/i;
+// NPCs whose walk is recorded whenever anyone's target is on them (the guild lead, 2026-10-14: "for Thelin, if anyone
+// is targetting him we should track that path and put his path on the map"). Thelin Poxbourne is the escort of the
+// Plane of Nightmare hedge maze; his waypoints come from a quest script, not a spawn grid, so the learned wander legs
+// (_mapNoteLeg) cannot hold them and the samples are kept as a plain trail. { zone short: [normalised names] }.
+// ADD AN ESCORT HERE, one line per zone (lowercase, no leading '#', spaces for underscores), and in the bot's ESCORT_NPCS
+// (utils/raidTargets.js, shared trail): test/raid-targets-escort-list.test.js fails when the two lists differ.
+// Matched on zone + name, never on spawn id (Garadain Glacierbane has several ids across zones).
+const MAP_TRACKED_PATHS      = {
+  ponightmare: ['thelin poxbourne', 'aid eino'],
+  poinnovation: ['nitram anizok'],
+  eastwastes: ['garadain glacierbane'],
+  iceclad: ['general bragmur'],
+  cazicthule: ['gimlik cogboggle'],
+  steamfont: ['cargo clockwork'],
+  tenebrous: ['johanius barleou'],
+  fungusgrove: ['caller groo', 'caller murkin', 'caller torgal'],
+  netherbian: ['lerin sardor'],
+  eastkarana: ['teloa'],
+  sharvahl: ['shainai'],
+  grimling: ['scout husman', 'scout derrin', 'scout danarin', 'captain necin', 'sergeant jherum', 'veteran vadrel', 'scout gergil'],
+};
+// Several escorts also stand still in a town with the same name (Teloa, Shainai, the Grimling scouts): a stretch of
+// trail is drawn only once it has moved this far from where it began, so an idle copy never shows.
+const MAP_PATH_MIN_SHOWN_UNITS = 100;
+const MAP_FOCUS_RAID_MAX_MS = 2 * 60 * 1000;   // a shared target position older than this (bot clock, plus time since the pull) is not placed
+const MAP_PATH_STEP_UNITS    = 12;                  // a sample is kept only this far from the last one
+const MAP_PATH_GAP_MS        = 20 * 1000;           // nobody had him targeted this long: no straight line across the gap
+const MAP_PATH_JUMP_UNITS    = 400;                 // further than a walk covers between two looks: another body of that name
+const MAP_PATH_MAX           = 800;                 // samples kept per NPC (the oldest go first)
+const MAP_PATH_KEEP_MS       = 12 * 60 * 60 * 1000; // a path not added to for this long is dropped (the next run's walk starts clean)
+const MAP_PATH_LIVE_MS       = 15 * 1000;           // "being watched now" in the payload
 const MAP_ZONE_SHORT = Object.fromEntries(('1:qeynos,2:qeynos2,3:qrg,4:qeytoqrg,5:highpass,6:highkeep,8:freportn,9:freportw,10:freporte,11:runnyeye,12:qey2hh1,13:northkarana,14:southkarana,15:eastkarana,16:beholder,17:blackburrow,18:paw,19:rivervale,20:kithicor,21:commons,22:ecommons,23:erudnint,24:erudnext,25:nektulos,26:cshome,27:lavastorm,28:nektropos,29:halas,30:everfrost,31:soldunga,32:soldungb,33:misty,34:nro,35:sro,36:befallen,37:oasis,38:tox,39:hole,40:neriaka,41:neriakb,42:neriakc,43:neriakd,44:najena,45:qcat,46:innothule,47:feerrott,48:cazicthule,49:oggok,50:rathemtn,51:lakerathe,52:grobb,53:aviak,54:gfaydark,55:akanon,56:steamfont,57:lfaydark,58:crushbone,59:mistmoore,60:kaladima,61:felwithea,62:felwitheb,63:unrest,64:kedge,65:guktop,66:gukbottom,67:kaladimb,68:butcher,69:oot,70:cauldron,71:airplane,72:fearplane,73:permafrost,74:kerraridge,75:paineel,76:hateplane,77:arena,78:fieldofbone,79:warslikswood,80:soltemple,81:droga,82:cabwest,83:swampofnohope,84:firiona,85:lakeofillomen,86:dreadlands,87:burningwood,88:kaesora,89:sebilis,90:citymist,91:skyfire,92:frontiermtns,93:overthere,94:emeraldjungle,95:trakanon,96:timorous,97:kurn,98:erudsxing,100:stonebrunt,101:warrens,102:karnor,103:chardok,104:dalnir,105:charasis,106:cabeast,107:nurga,108:veeshan,109:veksar,110:iceclad,111:frozenshadow,112:velketor,113:kael,114:skyshrine,115:thurgadina,116:eastwastes,117:cobaltscar,118:greatdivide,119:wakening,120:westwastes,121:crystal,123:necropolis,124:templeveeshan,125:sirens,126:mischiefplane,127:growthplane,128:sleeper,129:thurgadinb,130:erudsxing2,150:shadowhaven,151:bazaar,152:nexus,153:echo,154:acrylia,155:sharvahl,156:paludal,157:fungusgrove,158:vexthal,159:sseru,160:katta,161:netherbian,162:ssratemple,163:griegsend,164:thedeep,165:shadeweaver,166:hollowshade,167:grimling,168:mseru,169:letalis,170:twilight,171:thegrey,172:tenebrous,173:maiden,174:dawnshroud,175:scarlet,176:umbral,179:akheva,180:arena2,181:jaggedpine,200:codecay,201:pojustice,202:poknowledge,203:potranquility,204:ponightmare,205:podisease,206:poinnovation,207:potorment,208:povalor,209:bothunder,210:postorms,211:hohonora,212:solrotower,213:powar,214:potactics,215:poair,216:powater,217:pofire,218:poeartha,219:potimea,220:hohonorb,221:nightmareb,222:poearthb,223:potimeb')
   .split(',').map(kv => { const i = kv.indexOf(':'); return [kv.slice(0, i), kv.slice(i + 1)]; }));   // eqemu_zone.zone_id -> short_name, read from the table 2026-10-12
 
@@ -44971,6 +46937,7 @@ function _mapZoneDoc(zone) {
   if (!e.seen || typeof e.seen !== 'object') e.seen = {};   // <point_id>: a pinned mob seen alive there
   if (!e.last || typeof e.last !== 'object') e.last = {};   // <point_id>: `at` of the newest event applied (local or guild) - newer wins
   if (!e.legs || typeof e.legs !== 'object') e.legs = {};   // <grid>: { "<a>-<b>": { n, at } } wander legs seen walked (_mapNoteLeg)
+  if (!e.paths || typeof e.paths !== 'object') e.paths = {};   // <normalised name>: { name, at, pts: [[x, y, z, t, brk]] } (_mapNotePath)
   return e;
 }
 function _mapSaveNow() {
@@ -45024,6 +46991,9 @@ function _mapPrune(zdoc, points, now) {
   }
   for (const [k, at] of Object.entries(zdoc.last || {})) {
     if (!(now - at <= MAP_LAST_KEEP_MS)) { delete zdoc.last[k]; changed = true; }
+  }
+  for (const [k, r] of Object.entries(zdoc.paths || {})) {
+    if (!r || !(now - r.at <= MAP_PATH_KEEP_MS)) { delete zdoc.paths[k]; changed = true; }
   }
   return changed;
 }
@@ -45303,6 +47273,295 @@ function _mapEnsureZone(short, zoneId, now) {
   return rec.body ? rec : null;
 }
 
+// ── Charm pets: the pure half ────────────────────────────────────────────────────────────────────
+// The guild lead, 2026-10-14: "integrate a list of the better charm pets for the highest level charm a player has
+// for the zone that they're in" (the Charm overlay's collapsible "Best pets here"). The IDEA is a third-party site's
+// (eqpetfinder); the rules are read from Project Quarm's server source (EQMacEmu zone/spells.cpp) and the data is our
+// own catalog, served by the bot's GET /api/agent/charm-pets (utils/charmPets.js) as a zone's charm CANDIDATES.
+// This half is what only the agent can know: the caster's spell (from the spellbook file, else assumed from level),
+// that spell's level cap and body-type limit, and the ranking. No I/O here; the tests run it as written.
+//
+// Class level, level cap and target type of every player charm in the catalog. Levels are PQDI's (Quarm's own);
+// the cap is the spell's SPA 22 `max` in eqemu_spells (verified 2026-10-14); `tt` is eqemu_spells.targettype.
+// Left out on purpose: the Dire Charm AA family (2759-2761, no class level), Alluring Whispers / Persuade (no
+// player class on PQDI).  `ids` lists a spell's duplicate catalog rows so a spellbook that scribes either counts.
+const CHARM_PET_SPELLS = [
+  { ids: [3355], name: 'Command of Druzzil',        cap: 64, tt: 5,  cls: { Enchanter: 64 } },
+  { ids: [3347], name: 'Beckon',                    cap: 57, tt: 5,  cls: { Enchanter: 62 } },
+  // Dictate is an area charm that lives 48 s: a spell you may know, never the one assumed for "best pets".
+  { ids: [1707], name: 'Dictate',                   cap: 58, tt: 5,  cls: { Enchanter: 60 }, aoe: true },
+  { ids: [1705, 1706], name: "Boltran's Agacerie",  cap: 53, tt: 5,  cls: { Enchanter: 53 } },
+  { ids: [184],  name: 'Allure',                    cap: 51, tt: 5,  cls: { Enchanter: 49 } },
+  { ids: [183],  name: 'Cajoling Whispers',         cap: 46, tt: 5,  cls: { Enchanter: 39 } },
+  { ids: [182],  name: 'Beguile',                   cap: 37, tt: 5,  cls: { Enchanter: 24 } },
+  { ids: [300],  name: 'Charm',                     cap: 25, tt: 5,  cls: { Enchanter: 12 } },
+  { ids: [3371], name: 'Call of the Banshee',       cap: 57, tt: 5,  cls: { Bard: 64 } },
+  { ids: [750],  name: "Solon's Bewitching Bravura", cap: 51, tt: 5, cls: { Bard: 39 } },
+  { ids: [725],  name: "Solon's Song of the Sirens", cap: 37, tt: 5, cls: { Bard: 27 } },
+  { ids: [3445], name: 'Command of Tunare',         cap: 60, tt: 9,  cls: { Druid: 63 } },
+  { ids: [1553], name: 'Call of Karana',            cap: 53, tt: 9,  cls: { Druid: 52 } },
+  { ids: [142],  name: 'Allure of the Wild',        cap: 49, tt: 9,  cls: { Druid: 44 } },
+  { ids: [141],  name: 'Beguile Animals',           cap: 43, tt: 9,  cls: { Druid: 34 } },
+  { ids: [1556], name: "Tunare's Request",          cap: 35, tt: 9,  cls: { Druid: 55 } },
+  { ids: [260],  name: 'Charm Animals',             cap: 33, tt: 9,  cls: { Druid: 24, Shaman: 34 } },
+  { ids: [245],  name: 'Befriend Animal',           cap: 24, tt: 9,  cls: { Druid: 14, Shaman: 29 } },
+  { ids: [753],  name: 'Beguile Plants',            cap: 25, tt: 16, cls: { Druid: 29 } },
+  { ids: [3316], name: 'Word of Terris',            cap: 60, tt: 10, cls: { Necromancer: 65 } },
+  { ids: [1629], name: 'Enslave Death',             cap: 55, tt: 10, cls: { Necromancer: 60 } },
+  { ids: [1624], name: 'Thrall of Bones',           cap: 53, tt: 10, cls: { Necromancer: 54 } },
+  { ids: [198],  name: 'Cajole Undead',             cap: 51, tt: 10, cls: { Necromancer: 49 } },
+  { ids: [197],  name: 'Beguile Undead',            cap: 46, tt: 10, cls: { Necromancer: 34 } },
+  { ids: [196],  name: 'Dominate Undead',           cap: 32, tt: 10, cls: { Necromancer: 20 } },
+  { ids: [3484], name: 'Call of the Arch Mage',     cap: 60, tt: 11, cls: { Magician: 65 } },
+];
+const CHARM_PET_TARGETS = { 5: 'any mob', 9: 'animals', 10: 'undead', 11: 'summoned', 16: 'plants' };
+const CHARM_PET_LIST_MAX = 8;
+const CHARM_PET_DPS_STEP = 1.1;   // two pets within 10% of each other's damage are a tie: the tougher one goes first
+
+// EQMacEmu zone/spells.cpp: an animal / undead / summoned / plant charm only lands on its own body type; the
+// general single-target charms (tt 5) take any. Undead is Undead 3, Summoned Undead 8 and Vampire 12; summoned is
+// Summoned 24, Summoned2 27 and Summoned3 28.
+function charmPetBodyOk(tt, bodytype) {
+  const bt = Number(bodytype);
+  if (tt === 5) return true;
+  if (tt === 9) return bt === 21;
+  if (tt === 10) return bt === 3 || bt === 8 || bt === 12;
+  if (tt === 11) return bt === 24 || bt === 27 || bt === 28;
+  if (tt === 16) return bt === 25;
+  return false;
+}
+
+// The spell the Best-pets list is for. `bookIds` is a Set of spell ids from the character's <Name>-Spellbook.txt, or
+// null when there is no such file. Highest level cap wins (the class's higher line wins a tie); Dictate only when it
+// is all there is. A spellbook that holds charms decides; one that holds none (or no file) falls back to the highest
+// charm the class has at this level, and says so (basis 'assumed') — a level is not proof the spell is scribed.
+// → null (this class has no charm line) | { spell, basis, bookChecked } | { spell: null, reason }
+function pickCharmPetSpell(cls, level, bookIds) {
+  const mine = CHARM_PET_SPELLS.filter(s => s.cls[cls] != null);
+  if (!mine.length) return null;
+  const best = (list) => list.reduce((a, s) => (!a || s.cap > a.cap || (s.cap === a.cap && s.cls[cls] > a.cls[cls])) ? s : a, null);
+  const pick = (list) => best(list.filter(s => !s.aoe)) || best(list);
+  const bookChecked = !!(bookIds && bookIds.size);
+  if (bookChecked) {
+    const known = mine.filter(s => s.ids.some(id => bookIds.has(id)));
+    if (known.length) return { spell: pick(known), basis: 'spellbook', bookChecked };
+  }
+  const lvl = Number(level);
+  if (!(lvl > 0)) return { spell: null, reason: 'level', bookChecked };
+  const usable = mine.filter(s => s.cls[cls] <= lvl);
+  if (!usable.length) return { spell: null, reason: 'low', bookChecked };
+  return { spell: pick(usable), basis: 'assumed', bookChecked };
+}
+
+// Average hit over the swing time, in damage per second. attack_delay is tenths of a second (30 = a 3.0 s swing).
+function charmPetDps(n) {
+  const delay = Number(n.delay) > 0 ? Number(n.delay) : 30;
+  return ((Number(n.mindmg) || 0) + (Number(n.maxdmg) || 0)) / 2 / (delay / 10);
+}
+
+// The "why" chips, in the order they matter for a pet, at most three (a mid-raid glance, not a table).
+function charmPetChips(n) {
+  const t = Array.isArray(n.traits) ? n.traits : [];
+  const out = [];
+  if (t.includes('summon')) out.push('summons');
+  if (t.includes('flurry')) out.push('flurry');
+  if (t.includes('triple')) out.push('triple');
+  if (t.includes('dual')) out.push('dual wield');
+  if (t.includes('rampage') || t.includes('area_rampage')) out.push('rampage');
+  if (n.proc) out.push('proc');
+  if (Number(n.delay) > 0 && Number(n.delay) <= 22) out.push('fast');
+  return out.slice(0, 3);
+}
+
+// A zone's candidates + the spell → the list to show. Level cap: an NPC counts when its LOWEST level is within the cap
+// (EQEmu rolls a level between level and maxlevel; `over` marks one that can roll past it). Ranked by damage per
+// second, in 10% steps; inside a step the tougher one (more HP) goes first, then the higher level. One row per name.
+function rankCharmPets(npcs, spell) {
+  const rows = [];
+  for (const n of Array.isArray(npcs) ? npcs : []) {
+    if (!n || !(Number(n.level) >= 1) || Number(n.level) > spell.cap) continue;
+    if (!charmPetBodyOk(spell.tt, n.bodytype)) continue;
+    const dps = charmPetDps(n);
+    rows.push({ n, dps, step: Math.floor(Math.log(Math.max(dps, 0.1)) / Math.log(CHARM_PET_DPS_STEP)) });
+  }
+  rows.sort((a, b) => (b.step - a.step) || ((Number(b.n.hp) || 0) - (Number(a.n.hp) || 0)) || (b.n.level - a.n.level)
+    || String(a.n.name).localeCompare(String(b.n.name)) || (a.n.id - b.n.id));
+  const seen = new Set(), pets = [];
+  for (const r of rows) {
+    const key = String(r.n.name).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const pt = Array.isArray(r.n.pts) && r.n.pts[0] ? r.n.pts[0] : null;
+    pets.push({
+      id: r.n.id, name: r.n.name, level: r.n.level, maxlevel: Number(r.n.maxlevel) > r.n.level ? Number(r.n.maxlevel) : 0,
+      over: Number(r.n.maxlevel) > spell.cap, hp: Number(r.n.hp) || 0, dps: Math.round(r.dps * 10) / 10,
+      delay: Number(r.n.delay) > 0 ? Number(r.n.delay) : 30, chips: charmPetChips(r.n),
+      cmd_target: '/target ' + r.n.name,
+      // The server frame (x, y) is /loc's (second, first): `/map y x`, the same as the quest "who to talk to next" chip.
+      cmd_map: pt ? '/map ' + pt[1] + ' ' + pt[0] : null,
+    });
+  }
+  return { total: seen.size, pets: pets.slice(0, CHARM_PET_LIST_MAX) };
+}
+// ── end Charm pets: the pure half ──
+
+// ── Charm pets: this machine's half ──────────────────────────────────────────────────────────────
+// A zone's candidates are kept on disk beside zone-spawns-cache/ and asked for with their ETag at most once a day.
+// Local mode (no token) never asks: it shows what the disk holds, or says it needs the server. A 404 (no spawn points
+// for the zone, or a bot that does not have the route yet) hides the section, and is asked again in six hours.
+const CHARM_PETS_REVALIDATE_MS = 24 * 60 * 60 * 1000;
+const CHARM_PETS_NONE_RETRY_MS = 6 * 60 * 60 * 1000;
+const CHARM_PETS_FAIL_RETRY_MS = 10 * 60 * 1000;
+const CHARM_PETS_BOOK_TTL_MS   = 30 * 1000;
+const _charmPetZones = new Map();    // short → { short, body, etag, fetchedAt, retryAt, none, inflight }
+const _charmBooks = new Map();       // lower-cased character → { checkedAt, file, mtimeMs, ids }
+
+function _charmPetsDir() { return path.join(__dirname, 'charm-pets-cache'); }
+function _charmPetsRec(short) {
+  let rec = _charmPetZones.get(short);
+  if (rec) return rec;
+  rec = { short, body: null, etag: null, fetchedAt: 0, retryAt: 0, none: false, inflight: false };
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(_charmPetsDir(), short + '.json'), 'utf8'));
+    if (j && j.body && Array.isArray(j.body.npcs)) { rec.body = j.body; rec.etag = j.etag || null; rec.fetchedAt = Number(j.fetched_at) || 0; }
+  } catch { /* not cached yet */ }
+  _charmPetZones.set(short, rec);
+  return rec;
+}
+// May this machine ask the bot at all? Local mode (no token) never does.
+function _charmPetsFetchAllowed() {
+  if (_localOnly()) return false;
+  const o = _uploadOpts;
+  if (!o || !o.botUrl || !o.token) return false;
+  try { if (typeof _controlStandDown === 'function' && _controlStandDown().down) return false; } catch { /* fail open */ }
+  return true;
+}
+function _charmPetsGet(short, etag, done) {
+  const opts = _uploadOpts;
+  const u = new URL(opts.botUrl.replace(/\/encounter(\?.*)?$/, '/charm-pets') + '?zone=' + encodeURIComponent(short));
+  const mod = u.protocol === 'https:' ? https : http;
+  const headers = { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}`, 'Accept-Encoding': 'gzip' };
+  if (etag) headers['If-None-Match'] = etag;
+  const req = mod.request({ method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search, headers, timeout: 30000 }, (res) => {
+    const chunks = [];
+    res.on('data', c => chunks.push(c));
+    res.on('end', () => {
+      try {
+        let buf = Buffer.concat(chunks);
+        if (/gzip/i.test(String(res.headers['content-encoding'] || '')) && buf.length) buf = zlib.gunzipSync(buf);
+        done(null, res.statusCode, buf, res.headers.etag || null);
+      } catch (e) { done(e); }
+    });
+  });
+  req.on('error',   (e) => done(e));
+  req.on('timeout', () => { req.destroy(); done(new Error('timeout')); });
+  req.end();
+}
+function _charmPetsSave(rec, t) {
+  fs.mkdirSync(_charmPetsDir(), { recursive: true });
+  const file = path.join(_charmPetsDir(), rec.short + '.json');
+  fs.writeFileSync(file + '.tmp', JSON.stringify({ etag: rec.etag, fetched_at: t, body: rec.body }));
+  fs.renameSync(file + '.tmp', file);
+}
+function _charmPetsFetch(rec) {
+  if (rec.inflight) return;
+  rec.inflight = true;
+  let finished = false;
+  try {
+    _charmPetsGet(rec.short, rec.body ? rec.etag : null, (err, status, buf, etag) => {
+      if (finished) return;
+      finished = true;
+      rec.inflight = false;
+      const t = Date.now();
+      try {
+        if (err || !(status === 200 || status === 304 || status === 404)) { rec.retryAt = t + CHARM_PETS_FAIL_RETRY_MS; return; }
+        if (status === 404) { rec.none = true; rec.retryAt = t + CHARM_PETS_NONE_RETRY_MS; return; }
+        rec.none = false; rec.retryAt = 0;
+        if (status === 304) { rec.fetchedAt = t; if (rec.body) _charmPetsSave(rec, t); return; }
+        const body = JSON.parse(buf.toString('utf8'));
+        if (!body || !Array.isArray(body.npcs)) throw new Error('no npcs');
+        rec.body = body; rec.etag = etag; rec.fetchedAt = t;
+        _charmPetsSave(rec, t);
+      } catch (e) { rec.retryAt = t + CHARM_PETS_FAIL_RETRY_MS; console.warn(`[charm-pets] zone ${rec.short}:`, e && e.message); }
+    });
+  } catch { rec.inflight = false; }
+}
+// The zone's candidates if we hold any (disk or fetched); starts a fetch when one is due and allowed.
+function _charmPetsEnsure(short, now) {
+  const rec = _charmPetsRec(short);
+  if ((!rec.body || (now - rec.fetchedAt) >= CHARM_PETS_REVALIDATE_MS) && !rec.inflight && now >= rec.retryAt && _charmPetsFetchAllowed()) _charmPetsFetch(rec);
+  return rec;
+}
+
+// The scribed spell ids from the character's own <Name>-Spellbook.txt (EQ's /outputfile spellbook), read where the
+// Quarmy / spellbook scans read it. Local only; nothing here is sent anywhere. null when there is no such file.
+function _charmBookIds(character, now) {
+  const lower = String(character || '').toLowerCase();
+  if (!lower) return null;
+  let rec = _charmBooks.get(lower);
+  if (rec && now - rec.checkedAt < CHARM_PETS_BOOK_TTL_MS) return rec.ids;
+  rec = rec || { checkedAt: 0, file: null, mtimeMs: 0, ids: null };
+  rec.checkedAt = now;
+  _charmBooks.set(lower, rec);
+  try {
+    const firstLog = stats.watchedLogs[0] && stats.watchedLogs[0].logPath;
+    if (!firstLog) return rec.ids;
+    const dir = path.dirname(firstLog);
+    const name = fs.readdirSync(dir).find(n => { const m = n.match(SPELLBOOK_FILENAME_RX); return m && m[1].toLowerCase() === lower; });
+    if (!name) { rec.file = null; rec.ids = null; return null; }
+    const full = path.join(dir, name);
+    const mtimeMs = fs.statSync(full).mtimeMs;
+    if (rec.file === full && rec.mtimeMs === mtimeMs) return rec.ids;
+    rec.ids = new Set(parseSpellbookFile(fs.readFileSync(full, 'utf8')).map(s => s.spell_id));
+    rec.file = full; rec.mtimeMs = mtimeMs;
+  } catch { /* unreadable: keep what we had */ }
+  return rec.ids;
+}
+
+// The focused EverQuest window's character: the watched character whose Zeal pipe spoke most recently (the same
+// 60 s rule as /api/state's activeCharacter).
+function _charmActiveCharacter(now) {
+  let best = null, bestTs = 0;
+  for (const ch of Object.keys(_zealState || {})) {
+    const ts = (_zealState[ch] && _zealState[ch].updatedAt) || 0;
+    if (ts > bestTs && (now - ts) < 60_000) { bestTs = ts; best = ch; }
+  }
+  return best;
+}
+
+// GET /api/charm-best[?char=<name>] — everything the Charm overlay's "Best pets here" section draws.
+//   show:false → this class has no charm line: the section is not drawn at all.
+//   status: 'ok' | 'no-zone' | 'no-spell' | 'loading' | 'needs-server' | 'hidden'
+//     hidden = the bot answered 404 for the zone (no spawn points, or no such route yet): draw nothing.
+function charmBestState(character, now) {
+  const char = character || _charmActiveCharacter(now);
+  const out = { ok: true, show: false, status: 'no-zone', char: char || null, cls: null, level: null, zone: null, spell: null, pets: [], total: 0 };
+  if (!char) return out;
+  const cls = _classOf(char), level = _levelOf(char);
+  out.cls = cls || null; out.level = level || null;
+  const sel = cls ? pickCharmPetSpell(cls, level, _charmBookIds(char, now)) : null;
+  if (!sel) return out;                    // no class known yet, or a class with no charm line
+  out.show = true;
+  if (!sel.spell) { out.status = 'no-spell'; out.spellReason = sel.reason; return out; }
+  const sp = sel.spell;
+  out.spell = { id: sp.ids[0], name: sp.name, cap: sp.cap, target: CHARM_PET_TARGETS[sp.tt] || 'any mob', basis: sel.basis, bookChecked: sel.bookChecked };
+  const st = _zealState[Object.keys(_zealState || {}).find(k => k.toLowerCase() === char.toLowerCase())];
+  const zoneId = st && Number(st.zone) > 0 ? Number(st.zone) : null;
+  const short = zoneId ? _mapZoneShort(zoneId) : null;
+  if (!short) return out;                  // status stays 'no-zone'
+  out.zone = { id: zoneId, short };
+  const rec = _charmPetsEnsure(short, now);
+  if (!rec.body) {
+    out.status = rec.none ? 'hidden' : (_charmPetsFetchAllowed() ? 'loading' : 'needs-server');
+    return out;
+  }
+  out.zone.long = rec.body.long_name || short;
+  const r = rankCharmPets(rec.body.npcs, sp);
+  out.status = 'ok'; out.pets = r.pets; out.total = r.total;
+  return out;
+}
+// ── end Charm pets: this machine's half ──
+
 // ── Pins: a live mob tied to its spawn point ────────────────────────────────────────────────────
 // Mobs are pulled before they die, so "where it died" is a poor clue ("4 possible spawn points"). The moment a
 // LIVE mob in your target window sits at exactly one point (_mapAttribute says 'assigned'), it is pinned there by
@@ -45496,7 +47755,11 @@ function _mapCopyInfo(zone, now) {
 // events newer than the last one seen. Ephemeral on purpose: no durable queue, a failed POST is dropped. A 404
 // means the bot does not have the route yet: nothing is asked of it for 10 minutes, and nothing is shown.
 // Same URL derivation, bearer, timeout and _mapFetchAllowed() gate as _mapGetZone: local mode never syncs.
-const _mapSync = { q: [], flushTimer: null, backoffUntil: 0, pulling: false, pullAt: 0, pullZone: null, since: {}, keys: new Set() };
+// The same pull also brings the raid's shared targets and the escort trails (bot 3.1.263, DECISIONS 299), kept here per
+// zone: `targets[zone]` = { rows, botNow, pulledAt }, `trails[zone][<name>]` = { name, at, live, pulledAt, pts, tmax }.
+// Memory only; the bot is where they persist. An older bot sends neither and nothing here changes.
+const _mapSync = { q: [], flushTimer: null, backoffUntil: 0, pulling: false, pullAt: 0, pullZone: null, since: {}, keys: new Set(),
+  targets: {}, trails: {} };
 const _mapSyncKey = (zone, e) => zone + '|' + e.point_id + '|' + e.kind + '|' + (e.spawn_id == null ? '' : e.spawn_id) + '|' + e.at;
 function _mapSyncRemember(key) { if (_mapSync.keys.size > 4000) _mapSync.keys.clear(); _mapSync.keys.add(key); }
 function _mapSyncStop() {
@@ -45567,7 +47830,9 @@ function _mapSyncPull(zone, now) {
   const rec = _mapZones.get(zone);
   if (!rec || !rec.body) return false;
   _mapSync.pulling = true; _mapSync.pullAt = now; _mapSync.pullZone = zone;
-  _mapSyncRequest('GET', '?zone=' + encodeURIComponent(zone) + '&since=' + (_mapSync.since[zone] || 0), null, (err, status, buf) => {
+  // tsince = the newest escort-trail point already held for this zone, so a pull brings only what is new (omitted until one is held).
+  const tsince = Math.max(0, ...Object.values(_mapSync.trails[zone] || {}).map(h => h.tmax || 0));
+  _mapSyncRequest('GET', '?zone=' + encodeURIComponent(zone) + '&since=' + (_mapSync.since[zone] || 0) + (tsince > 0 ? '&tsince=' + tsince : ''), null, (err, status, buf) => {
     _mapSync.pulling = false;
     if (err) return;
     if (status === 404) { _mapSync.backoffUntil = now + MAP_SYNC_BACKOFF_MS; return; }
@@ -45575,6 +47840,7 @@ function _mapSyncPull(zone, now) {
     try {
       const j = JSON.parse(buf.toString('utf8'));
       if (j && Array.isArray(j.events)) _mapApplyRemote(zone, j.events, Date.now());
+      if (j) _mapApplyShared(zone, j, Date.now());
     } catch { /* an unreadable answer is ignored; the next pull asks again */ }
   });
   return true;
@@ -45645,6 +47911,44 @@ function _mapApplyRemote(zone, events, now) {
   _mapSync.since[zone] = maxAt;
   if (applied) _mapSaveSoon();
   return applied;
+}
+// The raid's shared targets and the escort trails out of one map-sync answer (bot 3.1.263; an older bot sends neither and
+// nothing changes). `targets` replace the zone's last set; `trails` add the points not yet held (tsince asks for only the
+// new ones, but a stretch that just qualified comes whole, so dedupe by point time). Only names on this machine's own
+// MAP_TRACKED_PATHS list are kept. Memory only: the bot is where they persist.
+function _mapApplyShared(zone, j, now) {
+  if (!j || typeof j !== 'object') return;
+  const botNow = Number.isFinite(Number(j.now)) ? Number(j.now) : now;
+  if (Array.isArray(j.targets)) {
+    const rows = [];
+    for (const t of j.targets.slice(0, 40)) {
+      const x = Number(t && t.x), y = Number(t && t.y), at = Number(t && t.at), id = Number(t && t.id);
+      if (!t || typeof t.name !== 'string' || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(at) || !(id > 0)) continue;
+      rows.push({ name: t.name.slice(0, 80), id, x, y, z: Number.isFinite(Number(t.z)) ? Number(t.z) : 0,
+        n: Math.max(1, Math.trunc(Number(t.n)) || 1), age: Math.max(0, botNow - at) });   // age on the bot's clock, when the pull came back
+    }
+    _mapSync.targets[zone] = { rows, pulledAt: now };
+  }
+  if (j.trails && typeof j.trails === 'object' && !Array.isArray(j.trails)) {
+    const tracked = MAP_TRACKED_PATHS[zone] || [];
+    const zt = _mapSync.trails[zone] || (_mapSync.trails[zone] = {});
+    for (const [k, tr] of Object.entries(j.trails)) {
+      if (!tracked.includes(k) || !tr || typeof tr !== 'object') continue;
+      const h = zt[k] || (zt[k] = { name: k, at: 0, live: false, pulledAt: 0, pts: [], tmax: 0 });
+      if (typeof tr.name === 'string' && tr.name) h.name = tr.name.slice(0, 80);
+      h.live = tr.live === true; h.pulledAt = now;
+      h.at = Number.isFinite(Number(tr.at)) ? now - Math.max(0, botNow - Number(tr.at)) : now;   // on this machine's clock
+      const have = new Set(h.pts.map(p => p[3]));
+      for (const p of (Array.isArray(tr.pts) ? tr.pts.slice(0, MAP_PATH_MAX) : [])) {
+        if (!Array.isArray(p) || p.length < 4 || !p.slice(0, 4).every(v => Number.isFinite(Number(v))) || have.has(Number(p[3]))) continue;
+        have.add(Number(p[3]));
+        h.pts.push([Number(p[0]), Number(p[1]), Number(p[2]), Number(p[3]), p[4] === 1 ? 1 : 0]);
+      }
+      h.pts.sort((a, b) => a[3] - b[3]);
+      if (h.pts.length > MAP_PATH_MAX) h.pts.splice(0, h.pts.length - MAP_PATH_MAX);
+      h.tmax = h.pts.length ? h.pts[h.pts.length - 1][3] : 0;
+    }
+  }
 }
 
 // ── Sightings and deaths ────────────────────────────────────────────────────────────────────────
@@ -45791,6 +48095,61 @@ function _mapNoteLeg(zone, grid, a, b, now) {
   return { ok: true, n: l.n };
 }
 
+// A target-window sample of a tracked NPC (MAP_TRACKED_PATHS): `loc` is already in the server frame. Kept per zone and
+// name, so every look anyone on this machine takes adds to the same trail. A sample is stored only when he has moved
+// MAP_PATH_STEP_UNITS since the last; the first one after a gap in watching (or a jump too long to be a walk) carries
+// brk = 1 so the Map never draws a line across what nobody saw. Local only: nothing here is uploaded.
+function _mapNotePath(zone, name, loc, now) {
+  const key = _mapNormName(name), list = MAP_TRACKED_PATHS[zone];
+  if (!list || !list.includes(key) || !loc || !Number.isFinite(loc.x) || !Number.isFinite(loc.y)) return false;
+  const zd = _mapZoneDoc(zone);
+  const rec = zd.paths[key] || (zd.paths[key] = { name: _mapPrettyName(name), at: now, pts: [] });
+  if (now - rec.at > MAP_PATH_KEEP_MS) rec.pts = [];   // last week's walk (the prune only runs where the zone data is held)
+  const last = rec.pts[rec.pts.length - 1];
+  const gap = now - rec.at > MAP_PATH_GAP_MS;
+  rec.at = now;
+  const d = last ? _mapDist2({ x: last[0], y: last[1] }, loc) : Infinity;
+  if (d < MAP_PATH_STEP_UNITS) return false;
+  rec.pts.push([Math.round(loc.x), Math.round(loc.y), Math.round(loc.z || 0), now, last && (gap || d > MAP_PATH_JUMP_UNITS) ? 1 : 0]);
+  if (rec.pts.length > MAP_PATH_MAX) rec.pts.splice(0, rec.pts.length - MAP_PATH_MAX);
+  _mapSaveSoon();
+  return true;
+}
+
+// Two trails of one NPC - this machine's own looks and the raid's shared one (the bot's, via _mapApplyShared) -> one, in
+// time order. The bot saw this machine's looks too, so most points are in both: a point within one step and 30 s of the
+// last kept one is the same look and is dropped. A break stays only where nobody else was watching through it (the
+// previous point is over the gap limit away), and a jump too long to be a walk is always a break.
+function _mapMergePath(a, b) {
+  const all = a.concat(b).sort((p, q) => p[3] - q[3]);
+  const out = [];
+  for (const p of all) {
+    const last = out[out.length - 1];
+    const d = last ? _mapDist2({ x: last[0], y: last[1] }, { x: p[0], y: p[1] }) : Infinity;
+    if (last && p[3] - last[3] < 30000 && d < MAP_PATH_STEP_UNITS) continue;
+    let brk = last && p[4] === 1 ? 1 : 0;
+    if (brk && p[3] - last[3] <= MAP_PATH_GAP_MS) brk = 0;
+    if (last && d > MAP_PATH_JUMP_UNITS) brk = 1;
+    out.push([p[0], p[1], p[2], p[3], brk]);
+  }
+  return out.length > MAP_PATH_MAX ? out.slice(-MAP_PATH_MAX) : out;
+}
+// Only the stretches of a trail that moved MAP_PATH_MIN_SHOWN_UNITS from where they began (a break starts a new stretch).
+// An escort that also stands idle in a town under the same name (Teloa, Shainai, the Grimling scouts) never draws.
+function _mapShownPath(pts) {
+  const out = [];
+  let seg = [];
+  const close = () => {
+    if (seg.length && seg.some(p => _mapDist2({ x: p[0], y: p[1] }, { x: seg[0][0], y: seg[0][1] }) >= MAP_PATH_MIN_SHOWN_UNITS)) {
+      for (const p of seg) out.push(p);   // a stretch after the first starts at a break already (the split is on brk), so the line is never bridged
+    }
+    seg = [];
+  };
+  for (const p of pts) { if (p[4] === 1) close(); seg.push(p); }
+  close();
+  return out;
+}
+
 // ── What the overlay reads ──────────────────────────────────────────────────────────────────────
 // The character whose pipe is live right now (the freshest within a minute): that is the one on screen.
 function _mapActiveCharacter(now) {
@@ -45929,11 +48288,29 @@ function _mapCcStates(now) {
   const end = (r) => Math.max((r.mez && r.mez.until) || 0, (r.calm && r.calm.until) || 0);
   return [...rows.values()].sort((a, b) => end(b) - end(a)).slice(0, MAP_CC_MAX);
 }
+// The mob the raid is on, for the Map's highlight (the guild lead, 2026-10-14: "highlight the MA's target or which target
+// has the most people targetting them"). Nothing new is worked out here: it reads the Extended Target aggregate the
+// agent already keeps (_extTargetCache), so the Map marks exactly the mob Extended Target puts on top. The main assist's
+// target when the bot marked one (`ma_target`, from a raid-chat declaration), else _resolveMainTarget's answer (the NPC
+// the most raiders are on) when at least two are. → { name, id, why: 'ma' | 'most', n } or null. No position: the cache
+// has none, so the Map places it only where it already knows (your own target, a pinned spawn point; see the payload).
+function _mapFocusTarget(character) {
+  if (typeof _extTargetCache === 'undefined' || typeof _resolveMainTarget !== 'function') return null;
+  try {
+    const mt = _resolveMainTarget(character);   // also primes the cache for the next poll
+    const c = _extTargetCache.get(String(character || '').trim().toLowerCase());
+    const rows = c && c.payload && Array.isArray(c.payload.targets) ? c.payload.targets : [];
+    const ma = rows.find(t => t && t.ma_target && t.kind === 'npc' && !t.stale);
+    if (ma) return { name: String(ma.name), id: Number(ma.spawn_id) > 0 ? Number(ma.spawn_id) : null, why: 'ma', n: ma.raider_count || 0 };
+    if (mt && mt.raider_count >= 2) return { name: String(mt.name), id: null, why: 'most', n: mt.raider_count };
+  } catch { void 0; }
+  return null;
+}
 function _mapStatePayload(have, now, haveLocal) {
   const character = _mapActiveCharacter(now);
   const st = character ? _zealState[character] : null;
   const out = { zone: null, long_name: null, zone_id: null, version: null, status: character ? 'ok' : 'no-pipe', local_only: _localOnly(),
-    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], copy: null, cc: [], now };
+    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], copy: null, cc: [], paths: {}, now };
   if (!st) return out;
   out.zone_id = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
   out.pos_at = Number.isFinite(st.updatedAt) ? st.updatedAt : null;   // when the agent last heard from Mimic: the overlay's "pos NNN ms"
@@ -45986,7 +48363,29 @@ function _mapStatePayload(have, now, haveLocal) {
     const pin = zone ? _mapPinGet(zone, out.target.id, st.target_name) : null;
     if (pin) out.target.point_id = pin.point_id;
   }
+  // The raid's focus mob (_mapFocusTarget), placed only where we truly know it: your own target when it is that mob.
+  out.focus = _mapFocusTarget(character);
+  if (out.focus && out.target && out.target.x != null && (out.target.type == null || out.target.type === 1)
+      && _mapNormName(out.target.name) === _mapNormName(out.focus.name)
+      && (out.focus.id == null || out.target.id == null || out.focus.id === out.target.id)) {
+    Object.assign(out.focus, { x: out.target.x, y: out.target.y, z: out.target.z, at: 'target' });
+  }
   if (!zone) { out.status = 'no-zone'; return out; }
+  // Tracked NPCs' walks (MAP_TRACKED_PATHS), recorded off any target window: { <name>: { name, at, live, pts } }, pts
+  // [x, y, z, t, brk]. Before the spawn data: the trail draws even in a zone we hold no points for.
+  // Joined with the raid's shared trail for the same NPC when the bot sent one (_mapApplyShared / _mapMergePath), and only
+  // the stretches that moved 100 units are sent (_mapShownPath): an idle town copy of an escort never draws.
+  const shared = _mapSync.trails[zone] || {}, localPaths = _mapZoneDoc(zone).paths;
+  for (const k of new Set([...Object.keys(localPaths), ...Object.keys(shared)])) {
+    const r = localPaths[k], h = shared[k];
+    const lOk = !!(r && Array.isArray(r.pts) && r.pts.length && now - r.at <= MAP_PATH_KEEP_MS);
+    const sOk = !!(h && h.pts.length && now - h.pulledAt <= MAP_PATH_KEEP_MS);
+    if (!lOk && !sOk) continue;
+    const pts = _mapShownPath(lOk && sOk ? _mapMergePath(r.pts, h.pts) : lOk ? r.pts : h.pts);
+    if (!pts.length) continue;
+    const lLive = lOk && now - r.at <= MAP_PATH_LIVE_MS, sLive = sOk && h.live && now - h.pulledAt <= MAP_SYNC_PULL_MS + 2000;
+    out.paths[k] = { name: lOk ? r.name : h.name, at: Math.max(lOk ? r.at : 0, sOk ? h.at : 0), live: lLive || sLive, pts };
+  }
   try {   // before the spawn data: the walls draw even in a zone we hold no points for
     _mapBrewallEnsure(zone, now);   // first visit to a zone: fetch Brewall's map for it (see "Brewall maps")
     const lm = _mapLocalFor(zone, now);
@@ -46016,6 +48415,23 @@ function _mapStatePayload(have, now, haveLocal) {
     .filter(s => s && now - s.at <= MAP_SEEN_KEEP_MS && !(zd.timers[String(s.point_id)] && zd.timers[String(s.point_id)].died_at >= s.at))
     .map(s => ({ point_id: s.point_id, spawn_id: s.spawn_id == null ? null : s.spawn_id, name: s.name, at: s.at, by: s.by || null }))
     .sort((a, b) => b.at - a.at);
+  // Not your target: where the raid's shared targets (the bot, _mapApplyShared) put a mob of that name. The most-targeted
+  // row when several share the name and no spawn id was given; a row older than two minutes is not a position.
+  if (out.focus && out.focus.x == null) {
+    const sh = _mapSync.targets[zone];
+    if (sh) {
+      const fn = _mapNormName(out.focus.name);
+      const hit = sh.rows.filter(t => _mapNormName(t.name) === fn && (out.focus.id == null || t.id === out.focus.id)
+        && t.age + (now - sh.pulledAt) <= MAP_FOCUS_RAID_MAX_MS)
+        .sort((a, b) => b.n - a.n || a.age - b.age)[0];
+      if (hit) Object.assign(out.focus, { x: hit.x, y: hit.y, z: hit.z, at: 'raid' });
+    }
+  }
+  // Not your target, nobody shared it: the spawn point a pinned mob of that name was seen alive on (an unpulled mob stands there).
+  if (out.focus && out.focus.x == null) {
+    const hit = out.seen.find(s => _mapNormName(s.name) === _mapNormName(out.focus.name) && (out.focus.id == null || s.spawn_id == null || s.spawn_id === out.focus.id));
+    if (hit) { out.focus.point_id = hit.point_id; out.focus.at = 'point'; }
+  }
   // Learned wander legs per route: { <grid>: [[a, b, times seen, a→b, b→a], ...] } with a < b (_mapNoteLeg).
   out.legs = {};
   for (const [gid, ls] of Object.entries(zd.legs)) out.legs[gid] = Object.entries(ls).map(([k, v]) => { const [a, b] = k.split('-').map(Number); return [a, b, v.n, v.f || 0, v.r || 0]; });
@@ -46032,6 +48448,7 @@ function _mapNoteState(character, prev, next, now) {
   const isNpc = next.target_type == null || next.target_type === 1;
   if (isNpc && tl && next.target_id > 0 && next.target_name && !MAP_CORPSE_RE.test(String(next.target_name))) {
     _mapNoteSighting(zone, next.target_id, next.target_name, tl, now);
+    _mapNotePath(zone, next.target_name, tl, now);   // a tracked NPC (Thelin): one more point on his trail
     // A LIVE, UNPULLED mob standing at exactly one point is pinned there (and synced as "seen"); see "Pins".
     if (Number(next.target_hp_pct) > 0) {
       const tt = next.target_of_target;
@@ -47813,6 +50230,9 @@ function buildMobInfo() {
     // 'unaffected', spell, caster_level, at_ms } (learned from the server's
     // message) / null (unknown — the overlay draws nothing).
     target_lull:    lullVerdictFor(st.target_name, myZoneId),
+    // How this mob hits, from the melee verbs seen: { seen, slash, pierce, blunt, max, verbs } or
+    // null until one was seen (noteMobMelee). Local only; the overlay draws nothing for null.
+    target_hits:    mobHitTypesFor(st.target_name),
   };
 }
 
@@ -47852,6 +50272,31 @@ const _liveStateLastSig = new Map();   // character → last-sent signature
 // or two.
 const LIVE_STATE_HEARTBEAT_MS = 45_000;
 const _liveStateLastSentAt = new Map();   // character → ms of last successful send
+// Where the character's target stands, for the raid's Map (DECISIONS 299): it rides THIS upload, no stream of its own.
+// target_map is in the Map's server frame (the pipe's x/y swapped, _mapServerXY), not loc_x's pipe frame. Only a live NPC
+// with a spawn id (0 is "no target") and a position, in a zone the Map knows. The position is NOT in the change
+// signature (it churns); it rides every send, and a mover earns an extra send of its own, measured against the last
+// position sent: any mob after 30 units AND 10 s, an escort (MAP_TRACKED_PATHS) after 12 units AND 5 s, or 15 s standing
+// so its trail has no hole. A target swap already trips the signature. Local mode never gets here (no token, no push).
+const LIVE_TPOS_MOVE_UNITS = 30, LIVE_TPOS_MIN_MS = 10_000;
+const LIVE_TPOS_ESCORT_MOVE_UNITS = 12, LIVE_TPOS_ESCORT_MIN_MS = 5_000, LIVE_TPOS_ESCORT_REFRESH_MS = 15_000;
+const _liveTargetPosSent = new Map();     // character → { id, x, y, at } of the last position sent
+function _liveTargetPosOf(st) {
+  if (!st || !st.target_name || !(Number(st.target_id) > 0)) return null;
+  if (st.target_type != null && Number(st.target_type) !== 1) return null;            // players and corpses are not mobs
+  if (MAP_CORPSE_RE.test(String(st.target_name))) return null;
+  const zone = _mapZoneShort(st.zone), p = _mapServerXY(st.target_loc);
+  if (!zone || !p) return null;
+  const escort = (MAP_TRACKED_PATHS[zone] || []).includes(_mapNormName(st.target_name));
+  return { id: Number(st.target_id), x: p.x, y: p.y, z: p.z, zone, escort };
+}
+// An extra send because the same target moved since the last one sent. prev = _liveTargetPosSent's entry or undefined.
+function _liveTargetPosDue(prev, cur, now) {
+  if (!prev || !cur || prev.id !== cur.id) return false;
+  const gap = now - prev.at, moved = _mapDist2(prev, cur);
+  if (cur.escort) return gap >= LIVE_TPOS_ESCORT_MIN_MS && (moved >= LIVE_TPOS_ESCORT_MOVE_UNITS || gap >= LIVE_TPOS_ESCORT_REFRESH_MS);
+  return gap >= LIVE_TPOS_MIN_MS && moved >= LIVE_TPOS_MOVE_UNITS;
+}
 function _postLiveState(targetUrl, token, payload) {
   if (!token) return;   // Local mode: no token, so the live state (zone, buffs, pet) never leaves the machine.
   let url;
@@ -48567,6 +51012,7 @@ function flushLiveStateToBot(opts) {
         }
       }
     }
+    const tpos = _liveTargetPosOf(st);
     const rec = {
       character:   ch,
       zone_id:     st.zone != null ? st.zone : null,
@@ -48639,6 +51085,9 @@ function flushLiveStateToBot(opts) {
       loc_x:          (st.loc && Number.isFinite(Number(st.loc.x))) ? Number(st.loc.x) : null,
       loc_y:          (st.loc && Number.isFinite(Number(st.loc.y))) ? Number(st.loc.y) : null,
       loc_z:          (st.loc && Number.isFinite(Number(st.loc.z))) ? Number(st.loc.z) : null,
+      // Where that target stands (the raid's Map, bot 3.1.263): server frame, NPC only, see _liveTargetPosOf. Absent when
+      // there is nothing to place, which tells the bot to forget this character's last one.
+      ...(tpos ? { target_map: { x: Math.round(tpos.x), y: Math.round(tpos.y), z: Math.round(tpos.z) }, target_type: 1, target_zone: tpos.zone } : {}),
       incoming_mob:       incomingMob,
       incoming_mob_since: incomingMobSinceMs ? new Date(incomingMobSinceMs).toISOString() : null,
       // #194: every mob→player connect THIS observer's log saw recently — the
@@ -48796,9 +51245,11 @@ function flushLiveStateToBot(opts) {
     const sigChanged   = _liveStateLastSig.get(ch) !== sig;
     const lastSentAt   = _liveStateLastSentAt.get(ch) || 0;
     const heartbeatDue = (now - lastSentAt) >= LIVE_STATE_HEARTBEAT_MS;
-    if (!sigChanged && !heartbeatDue) continue;
+    const targetMoved  = _liveTargetPosDue(_liveTargetPosSent.get(ch), tpos, now);   // the same target walked on (see _liveTargetPosDue)
+    if (!sigChanged && !heartbeatDue && !targetMoved) continue;
     _liveStateLastSig.set(ch, sig);
     _liveStateLastSentAt.set(ch, now);
+    if (tpos) _liveTargetPosSent.set(ch, { id: tpos.id, x: tpos.x, y: tpos.y, at: now }); else _liveTargetPosSent.delete(ch);
     states.push(rec);
   }
   if (states.length === 0) return;
@@ -49155,6 +51606,47 @@ function _startTimer(t, tsMs, isTest, captures) {
 function _cancelTimer(id) {
   if (!id) return false;
   return _activeTimers.delete(String(id));
+}
+// POST /api/timers/cancel, as a function: the ✕ on a countdown row ({ id }) and the title-bar clear-all
+// ({ all: true }) both land here. Returns the JSON the route answers with. Every row kind the overlay can show is
+// cancellable by its id: a trigger countdown (a key in _activeTimers), a loot chip (`loot|…`), an OpenDKP auction
+// (`auction|…`) and a bar built from tracked state (`bt|…`, hidden by id, since the next snapshot rebuilds it).
+// A dismissal is also remembered per trigger, so a zone timer the bot hands out again on re-entry stays dismissed.
+function _handleTimerCancel(payload) {
+  const reason = String(payload?.reason || 'dismissed').slice(0, 40);
+  if (payload && payload.all) {
+    let cancelled = 0;
+    for (const [tid, row] of [..._activeTimers]) {
+      if (row && row.kind === 'loot') continue;
+      _activeTimers.delete(tid);
+      cancelled++;
+      _noteTimerDismissed(row);
+      _recordCalloutFeedback({ direction: 'dismissed', timer: row, source: reason });
+    }
+    // The server tick is perpetual: the overlay hides it for as long as it is open, so a hide kept here would
+    // outlast the overlay and the row would never come back until the tick source went quiet.
+    try {
+      for (const r of _builtinTimerRows(Date.now())) {
+        if (_BUILTIN_PERPETUAL_IDS.has(r.id)) continue;
+        _builtinTimerHidden.add(r.id);
+        cancelled++;
+      }
+    } catch { /* best effort */ }
+    return { ok: true, cancelled };
+  }
+  const id = String(payload?.id || '');
+  const row = id ? _activeTimers.get(id) : null;
+  let ok = id ? _cancelTimer(id) : false;
+  // A timer-bar row is rebuilt every snapshot — hide that instance.
+  if (!ok && id.startsWith('bt|')) { _builtinTimerHidden.add(id); ok = true; }
+  if (ok && row) { _noteTimerDismissed(row); _recordCalloutFeedback({ direction: 'dismissed', timer: row, source: reason }); }
+  if (ok && id.startsWith('loot|')) {
+    const sig = id.slice('loot|'.length);
+    _lootAuctions.delete(sig);
+    if (_lastLootSig === sig) _lastLootSig = null;
+  }
+  if (ok && id.startsWith('auction|')) _dkpAuctionsDismissed.add(id.slice('auction|'.length));
+  return { ok, cancelled: ok ? 1 : 0 };
 }
 // ── #142 boss-death → clear that mob's countdown timers ─────────────────────
 // A tank-buster / death-touch / any boss-cadence countdown (armed by a guild
@@ -49618,6 +52110,9 @@ function _calloutFeedbackSnapshot() {
 // next charm or recast shows again.
 const BUILTIN_TIMER_MIN_SPELL_SEC = 30;   // skips 3-tick bard songs and short DoT refreshes
 const _builtinTimerHidden = new Set();
+// Rows with one fixed id for as long as they exist (no land time in it). The ✕ on one hides it in the overlay
+// for as long as the overlay stays open; the agent never keeps that hide, or "until you reopen it" would be forever.
+const _BUILTIN_PERPETUAL_IDS = new Set(['bt|servertick']);
 function _builtinTimerKindsOn() {
   const on = new Set();
   let playing = null;   // resolved once, only when a switch is set for some characters (FB-34)
@@ -50455,8 +52950,50 @@ function _rehearseTrigger(t, opts) {
   return { patternExercised, line: line || null, captures };
 }
 
+// ── "Only just after my own melee hit" (after_my_melee_ms, the guild lead's Willsapper ask, 2026-10-14) ──
+// A weapon proc prints the landing text of its spell ("<mob> yawns." for Energy Sap, spell 1960) — but
+// ten other spells print the same words, a shaman's slow among them. What tells the proc apart is that
+// YOUR melee hit on that mob was logged a moment before. So every own hit is noted per character and
+// mob, and a trigger carrying `after_my_melee_ms` fires only when the captured mob (the `target`
+// group, else `mob`/`npc`/`s`/`s1`/`n1`, else the first group) took one of your hits within that many
+// ms. A trigger with no capture takes any hit of yours in the window. EQ stamps whole seconds, so a
+// 1500 ms window means "this second or the last one", and a line stamped up to a second BEFORE the
+// hit still counts (the proc and the damage line can land in either order inside one tick).
+const _ownMeleeAt = new Map();   // `${characterLc}|${mobLc}` → log timestamp (ms) of the last own hit
+const OWN_MELEE_RX = /^\[[^\]]*\]\s+You ([a-z]+(?:-[a-z]+)?) (.+?) for (\d+) points? of damage\./i;
+function _noteOwnMelee(line, tsMs, charLc) {
+  if (line.indexOf('] You ') < 0) return false;   // hot path: almost no line is ours
+  const m = OWN_MELEE_RX.exec(line);
+  if (!m) return false;
+  const mob = m[2].replace(/^on\s+/i, '').trim().toLowerCase();   // "You frenzy on <mob> for …"
+  if (!mob || !Number.isFinite(tsMs)) return false;
+  _ownMeleeAt.set(charLc + '|' + mob, tsMs);
+  if (_ownMeleeAt.size > 400) {
+    for (const [k, v] of _ownMeleeAt) if (tsMs - v > 60_000) _ownMeleeAt.delete(k);
+    if (_ownMeleeAt.size > 400) _ownMeleeAt.clear();
+  }
+  return true;
+}
+function _mobFromGroups(groups) {
+  const g = groups || {};
+  for (const k of ['target', 'mob', 'npc', 's', 's1', 'n1']) if (g[k] != null && String(g[k]).trim()) return String(g[k]).trim().toLowerCase();
+  const first = Object.keys(g).find(k => g[k] != null && String(g[k]).trim());
+  return first ? String(g[first]).trim().toLowerCase() : '';
+}
+function _afterMyMeleeOk(t, groups, tsMs, charLc) {
+  const win = Number(t && t.after_my_melee_ms);
+  if (!(win > 0)) return true;
+  const ok = (last) => last != null && (tsMs - last) <= win && (tsMs - last) >= -1000;
+  const mob = _mobFromGroups(groups);
+  if (mob) return ok(_ownMeleeAt.get(charLc + '|' + mob));
+  for (const [k, v] of _ownMeleeAt) if (k.startsWith(charLc + '|') && ok(v)) return true;
+  return false;
+}
+
 // Hot-path: called for every kept log line in the tail loop.
 function evaluateTriggersAgainstLine(line, tsMs, fileChar) {
+  const meleeChar = String(fileChar || '').toLowerCase();
+  try { _noteOwnMelee(line, tsMs, meleeChar); } catch { /* a note that fails is a hit not remembered */ }
   const all = [..._personalTriggers, ...(stats.guildTriggers || [])];
   if (all.length === 0) return;
   let charLc;   // whose line this is — resolved once, only when a trigger is set per character
@@ -50531,6 +53068,12 @@ function evaluateTriggersAgainstLine(line, tsMs, fileChar) {
     if (t._excludes && t._excludes.length && t._excludes.some(rx => rx.test(line))) {
       _journalTrigger({ trigger: t.name, scope: t._scope || 'personal', checkpoint: TJ.GATES,
                         stopped: true, reason: 'suppressed — matched an exclude pattern' });
+      continue;
+    }
+    // after_my_melee_ms — a proc's landing text, told from the other spells that print it (see above).
+    if (t.after_my_melee_ms && !_afterMyMeleeOk(t, m.groups, tsMs, meleeChar)) {
+      _journalTrigger({ trigger: t.name, scope: t._scope || 'personal', checkpoint: TJ.GATES,
+                        stopped: true, reason: 'no hit of yours on that mob in the last ' + t.after_my_melee_ms + ' ms' });
       continue;
     }
     // Charm-pet filter — if the captured {s} name is one of our currently
@@ -50846,7 +53389,13 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       // unticked box silenced nothing (FB-21, a beta tester: "it says 'charm break' twice on breaks,
       // even when tts is disabled"). Unticked now flashes and stays quiet, like a muted callout.
       if (!ttsText && String(t.id || '').startsWith('suggested:')) overlay.mute = true;
-      if (a.sound) overlay.sound = a.sound;
+      // A sound: a library name, "custom:<file>" or a URL; sound_mode 'replace' plays it INSTEAD of
+      // speaking (2026-10-14). A URL the old way (a bare `sound` string) is kept as it was.
+      if (a.sound) {
+        const sp = _soundSpecOf(a);
+        if (sp.sound) _applySoundSpec(overlay, sp); else overlay.sound = a.sound;
+      }
+      if (t.voice_pack || a.voice_pack) overlay.voice_pack = String(a.voice_pack || t.voice_pack).slice(0, 24);
       // Sticky critical callouts (#76): a trigger-level OR action-level `sticky`
       // flag pins the alert on the trigger overlay until the user dismisses it
       // (or a generous timeout), instead of fading on the normal schedule.
@@ -50955,8 +53504,35 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
         speakAt(a.message || a.text, 0);
         _dispatched = true;
       }
+    } else if (a.type === 'sound') {
+      // A sound on its own: plays it, shows nothing and says nothing (was a no-op until 2026-10-14).
+      // A rehearsal or replay plays too, so the player can hear what they set up.
+      const sp = _soundSpecOf(a);
+      if (sp.sound) {
+        const so = {
+          text:        t.name || 'sound',
+          color:       'red',
+          duration_ms: 500,
+          shownAt:     tsMs || Date.now(),
+          firedAt:     Date.now(),
+          trigger:     t.name,
+          trigger_id:  t.id || null,
+          scope:       t._scope || (test ? 'test' : 'personal'),
+          test:        !!test,
+          soundOnly:   true,
+          rule_key:    _ruleKey,
+          rule_char:   _ruleChar,
+        };
+        _applySoundSpec(so, sp);
+        so.mute = true;   // there is no spoken line to read
+        if (t._rehearsal) so.rehearsal = true;
+        if (t._replay) so.replay = true;
+        if (_pushOverlay(so) === false) _ruledOff = true;
+        else _dispatched = true;
+        console.log(`[trigger${test ? ':test' : ':' + (t._scope || '?')}] ${t.name} → sound ${sp.sound}`);
+      }
     }
-    // sound / emit_event beyond the overlay's own audio remain no-ops in v1.
+    // emit_event beyond the overlay's own audio remains a no-op in v1.
   }
   // Trigger-level timer countdown (separate from per-action overlays).
   // Starts when timer_duration_sec > 0 on the trigger itself. Captures
@@ -52517,6 +55093,12 @@ async function main() {
     // refresh every 10 min. Personal triggers load once from local disk.
     loadPersonalTriggers();
     loadTriggerRules();   // "What you hear" — beside personal_triggers.json
+    loadSoundOverrides();   // this PC's own sounds on guild triggers
+    loadPronunciations();   // how names are said: the cached guild list + this PC's own
+    if (token) {
+      setTimeout(() => { pollPronunciations({ botUrl, token }); }, 20_000);
+      setInterval(() => { pollPronunciations({ botUrl, token }); }, PRON_POLL_MS);
+    }
     setTimeout(() => pollGuildTriggers({ botUrl, token }), 12_000);
     // Poll every 2 min so a newly added/edited guild trigger reaches raiders in
     // ~2 min instead of 10. Cheap: the version-gate above skips the recompile
@@ -53016,6 +55598,10 @@ async function main() {
             // Don't `return` — tells are side-channel. Continue so any further
             // processing (e.g. log highlighter, future panels) still sees the line.
           }
+          // Mimic's Chat overlay (2026-10-14): same shape as the tell tap above — local memory
+          // only, ahead of shouldKeep, skipped for exclude_from_stats. Never uploaded; see the
+          // "Local chat window" block for what it keeps and why.
+          try { noteLocalChatLine(line, b.character); } catch (e) { void e; }
         }
 
         // /sll lockout output → bot timer (Available entries silently skipped)
@@ -53462,6 +56048,8 @@ async function main() {
           // slot 16), accumulate skill / max / total / hit-count stats for the
           // Pet tracker. Side-channel; doesn't touch the encounter builder.
           try { recordPetCombat(ev, b.character); } catch {}
+          // Mob melee → the hit types Target Info shows (local only; see noteMobMelee).
+          try { noteMobMelee(ev, b.character); } catch {}
           b.builder.add(ev);
         }
       });
@@ -53509,6 +56097,14 @@ module.exports = {
   parseEvent, shouldKeep, parseEqTimestamp,
   DEFAULT_DROP_PATTERNS, KEEP_PATTERNS,
   buildFeedbackLogSlice, _feedbackLineAllowed,
+  // Mimic's Chat overlay feed (2026-10-14). The buffers are exposed so a test can prove nothing here lands in an upload queue.
+  classifyChatLine, classifyMeleeLine, noteLocalChatLine, serializeLocalChat, setChatPolicy, chatPolicyNow, chatChannelAllowed,
+  CHAT_GROUPS, CHAT_CHANNELS, CHAT_RING_MAX, CHAT_PAGE_MAX, CHAT_POLICY_TTL_MS, _resetLocalChatForTest,
+  _uploadBuffersForTest: () => ({ chatBuffer, tellBuffer, recentTells: stats.recentTells }),
+  _chatRingForTest: () => _chatRing, _meleeRingForTest: () => _meleeRing, CHAT_MELEE_RING_MAX, _handleLocalChatForTest: _handleLocalChat,
+  classifySpellLine, classifySkillLine, noteSelfCast, _rebuildLandingIndexesForTest: () => { _rebuildBuffMatchers(); _rebuildMechanicMatchers(); }, _spellRingForTest: () => _spellRing, _skillRingForTest: () => _skillRing, CHAT_SPELL_RING_MAX, CHAT_SKILL_RING_MAX,
+  chatLineKey, chatSwapBetween, chatReadLogBackwards, chatHistoryFiles, buildChatHistory, getChatHistory,
+  _handleLocalChatHistoryForTest: _handleLocalChatHistory, _resetChatHistoryForTest, CHAT_HISTORY_MAX, CHAT_SWAP_MIN_MS,
   _noteBuffDurationsFromState, buffDurationStats, buffDurationTable, _noteBuffDurationSample,
   buffDurationFactorFor,
   SOURCELESS_SPELLS, BARD_SONGS,
@@ -53531,6 +56127,8 @@ module.exports = {
   MYFIGHTS_MAX, MYFIGHTS_KEEP_MS, MYFIGHTS_CAP, MYFIGHTS_SAVE_MS,
   _myFightsForTest: () => _myFights,
   _mobInfoByNameForTest: () => _mobInfoByName,
+  // Target Info's "how this mob hits" (2026-10-14).
+  noteMobMelee, mobHitTypesFor, mobHitType, MOB_HIT_TYPES_MAX, _resetMobHitTypesForTest: () => { _mobHitTypes.clear(); },
   _setMyFightsForTest: (rows) => { _myFights = rows || []; },
   // Point the log at a temp file and arm its debounced save (no argument: disarm and clear it again).
   _myFightsPersistForTest: (file) => { _myFightsFile = file || MYFIGHTS_FILE; _myFightsPersist = !!file; if (!file) { _myFights = []; if (_myFightsTimer) { clearTimeout(_myFightsTimer); _myFightsTimer = null; } } },
@@ -53642,6 +56240,14 @@ module.exports = {
   _applyTriggerPull, _triggerSyncPush, _triggerSyncList, _triggerSyncPull, _tsBackupLocal,
   _runRelayedFire, _pushBlindEvent, _blindEvents, _maybeAnnounceDamageTaken,
   _applyGuildTriggersResponse,
+  // Sounds, voices, pronunciations, after_my_melee_ms (2026-10-14) — exported for test/sounds-voices.test.js.
+  _soundList, _soundResolve, _soundUsable, _cleanSoundName, _soundSpecOf, _applySoundSpec, _soundOverrides, _setSoundOverride,
+  loadSoundOverrides, VOICE_PACKS, _fireForWeb, _handleSoundsVoices,
+  _applyPronunciations, _applySpokenPronunciations, pollPronunciations, _pronStatePayload,
+  _setPronunciationsForTest: (synced, local) => { _pronSynced = new Map(_pronPairs(synced)); _pronLocal = { ...(local || {}) }; _pronMerged = null; },
+  _noteOwnMelee, _afterMyMeleeOk, _ownMeleeAt,
+  _importSoundFile, _parseTriggerXml, _parseTriggerTgfJson,
+  _setVoiceStateDirForTest: (d) => { _voiceStateDir = d || null; },
   _setGuildTriggersForTest: (arr) => { stats.guildTriggers = arr; stats.guildTriggersVersion = null; },
 };
 

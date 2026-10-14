@@ -67,7 +67,7 @@ describe('the button', () => {
   it('sits on every deathroll row and copies that row\'s own game', () => {
     expect(code).toMatch(/'<span class="rollCopy" data-roll-id="' \+ esc\(rid\) \+ '"/);
     expect(code).toMatch(/if \(_rollId\(_lastState\.rolls\[rc\]\) === rcid\) \{ rset = _lastState\.rolls\[rc\]; break; \}/);
-    expect(code).toMatch(/_copyText\(deathrollCopyLine\(rset\)/);
+    expect(code).toMatch(/_copyText\(rset\.kind === 'deathroll' \? deathrollCopyLine\(rset\) : /);
   });
   it('works on a locked Command Center: it is on the hover handshake', () => {
     const hovers = code.match(/\bt\.closest\('\.rollCopy'\)/g) || [];

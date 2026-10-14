@@ -1,0 +1,67 @@
+# Bristlebane — the OpenClaw chat agent (Discord application "Bristlebane"), on Tower under Coolify.
+# NOT the voice bot: that is apps/bristlebane, Discord application "miMIC" (DECISIONS §323).
+#
+# Coolify: Docker Compose build pack from this Git repo.
+#   Base Directory = /deploy/openclaw-bristlebane   Compose Location = /docker-compose.yml
+#   Turn ON "Preserve repository during deployment" (the seed file below is a bind mount).
+#   No domain, no published ports: Discord is outbound-only.
+# Compose (not a plain image app) on purpose: Coolify stops the old container before starting the new one,
+# so two gateways never answer Discord at once during a redeploy.
+services:
+  openclaw-init:
+    # One-shot: make the volumes writable by the image's uid 1000 and seed the config the first time only.
+    image: busybox:1.37
+    user: "0:0"
+    restart: "no"
+    exclude_from_hc: true
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        mkdir -p /state /secrets
+        [ -f /state/openclaw.json ] || cp /seed/openclaw.json /state/openclaw.json
+        chown -R 1000:1000 /state /secrets
+    volumes:
+      - openclaw_state:/state
+      - openclaw_secrets:/secrets
+      - ./openclaw.seed.json5:/seed/openclaw.json:ro
+
+  openclaw-gateway:
+    image: ghcr.io/openclaw/openclaw:${OPENCLAW_IMAGE_TAG:-2026.10.3}
+    depends_on:
+      openclaw-init:
+        condition: service_completed_successfully
+    init: true
+    restart: unless-stopped
+    environment:
+      HOME: /home/node
+      OPENCLAW_HOME: /home/node
+      OPENCLAW_STATE_DIR: /home/node/.openclaw
+      OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
+      OPENCLAW_CONFIG_DIR: /home/node/.openclaw
+      OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
+      OPENCLAW_GATEWAY_PORT: "18789"
+      OPENCLAW_DISABLE_BONJOUR: "1"
+      TZ: ${OPENCLAW_TZ:-America/New_York}
+      # Secrets: pasted into Coolify's environment by the guild lead, never committed, never sent through a session.
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:?}
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:?}        # http://<v5-lan-address>:11434 — no /v1 (breaks tool calls)
+      OLLAMA_API_KEY: ollama-local                 # a marker, not a secret
+    volumes:
+      - openclaw_state:/home/node/.openclaw        # config, sqlite state, credentials, workspace (SOUL.md etc.)
+      - openclaw_secrets:/home/node/.config/openclaw
+    cap_drop: [NET_RAW, NET_ADMIN]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "node", "dist/docker-healthcheck.js"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # No command: the image's CMD is `node openclaw.mjs gateway` (loopback bind, foreground).
+
+volumes:
+  openclaw_state:
+  openclaw_secrets:

@@ -169,11 +169,9 @@ const sayOk = (act) => {
   return !!parts && parts.every(p => kws.includes(p) && lc.includes(p));
 };
 
-// Steps that have a say, a hand-in, a chain or a hail-after-something but NO seq, and why. One today.
-const NO_SEQ = {
-  start_charm: 'Gram Dunnar has no row in eqemu_quest_scripts, so "craft" / "I have stories" cannot be cited to a script',
-  start_hails: 'general advice about hailing, not a step with an order of its own',
-};
+// Steps that have a say, a hand-in, a chain or a hail-after-something but NO seq, and why. None today (the two
+// that were here, the charm and the "two rules" advice, left with the Start here section, 2026-10-14).
+const NO_SEQ = {};
 
 describe('the coverage: every step with words, a hand-in or a hail has an ordered seq (or says why not)', () => {
   const needs = (i) => !!(i.says?.length || i.chain || STEP_MORE[i.key]?.turnIn?.length || /\bhail\b/i.test(i.detail ?? ''));
@@ -184,7 +182,7 @@ describe('the coverage: every step with words, a hand-in or a hail has an ordere
   });
 
   it('every seq sits on a real step (a typo in the table would silently attach to nothing)', () => {
-    expect(withSeq.length).toBe(68);
+    expect(withSeq.length).toBe(67);
     for (const i of withSeq) expect(i.seq.length, i.key).toBeGreaterThan(0);
   });
 
@@ -217,7 +215,7 @@ describe('every act: a kind, a script it was read from, and the words the script
   const acts = withSeq.flatMap(i => i.seq.map((a, n) => ({ key: i.key, n, a })));
 
   it('has a known kind, a src that is a real script, and the fields its kind needs', () => {
-    expect(acts.length).toBe(336);
+    expect(acts.length).toBe(335);
     for (const { key, n, a } of acts) {
       const at = `${key}[${n}] ${a.kind}`;
       expect(KINDS, at).toContain(a.kind);

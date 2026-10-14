@@ -15,7 +15,7 @@
 // level (GUIDE_LEVELS: the /pop chart's tiers), every level starts closed and says how far along you
 // are and what is next, the sidebar opens the level you pick, and 🗺 / 📍 show the zone map on hover.
 
-import { useEffect, useMemo, useRef, useState, useTransition, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type MouseEvent, type PointerEvent, type ReactNode } from 'react';
 import Link from 'next/link';
 import {
   GUIDE_ITEMS, GUIDE_SECTIONS, WHO_LABEL, ZONE_NAMES, mapCommand, sayCommand,
@@ -28,6 +28,7 @@ import { type ItemCard } from '@/app/character/[name]/inventory/ItemHover';
 import CopyChip from '@/components/CopyChip';
 import { setGuideTick } from './actions';
 import { CharOptions, ChainView, Place, SeqView, WithItems } from './GuideChecklist';
+import SeerPaste, { useFocusStep, type SeerResult } from './SeerPaste';
 import ZoneMap, { type ZoneOutline } from './ZoneMap';
 
 // How a step got its tick. mimic = Mimic saw it happen; database = our records already show it;
@@ -54,7 +55,7 @@ function when(at: string | null) {
 function SourceBadge({ ev, manual }: { ev?: Evidence; manual: boolean }) {
   if (ev) {
     const label = ev.source === 'mimic' ? '✓ filled by Mimic' : ev.source === 'who' ? '✓ seen on /who'
-      : ev.source === 'loot' ? '✓ looted there' : '✓ from our records';
+      : ev.source === 'loot' ? '✓ looted there' : ev.source === 'seer' ? '✓ in your Seer paste' : '✓ from our records';
     return (
       <span className={`px-1.5 rounded border ${ev.source === 'mimic' ? 'border-green/60 text-green' : ev.source === 'loot' ? 'border-purple/60 text-purple' : 'border-blue/60 text-blue'}`}
             title={ev.what}>
@@ -139,7 +140,16 @@ export default function GuideRoute({ chars, initial, cards, outlines, layout, no
 
   const char = chars.find(c => c.name === charName) ?? null;
   const manual = (char && manualBy[char.name]) || new Set<string>();
-  const auto = useMemo(() => char?.auto ?? {}, [char]);
+  // What a pasted Seer recital shows, not saved yet (SeerPaste.tsx), joins what the loader proved; cleared when the
+  // character changes.
+  const [seer, setSeer] = useState<SeerResult | null>(null);
+  const auto = useMemo(() => {
+    const a: Record<string, Evidence> = { ...(char?.auto ?? {}) };
+    for (const k of seer?.proven ?? []) {
+      if (!a[k]) a[k] = { source: 'seer', what: 'The Seer text you pasted shows this. Save it to keep it.', at: null };
+    }
+    return a;
+  }, [char, seer]);
   const done = useMemo(() => new Set([...manual, ...Object.keys(auto)]), [manual, auto]);
 
   // The sidebar follows the level on screen.
@@ -168,6 +178,14 @@ export default function GuideRoute({ chars, initial, cards, outlines, layout, no
     return () => window.removeEventListener('hashchange', openHash);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // "Show in checklist" on a Seer next step: open the level that holds the step, then scroll to it.
+  const openFor = useCallback((key: string) => {
+    const section = GUIDE_ITEMS.find(i => i.key === key)?.section;
+    const lvl = section && GUIDE_LEVELS.find(l => l.sections.includes(section));
+    if (lvl) setOpen(prev => new Set(prev).add(lvl.key));
+  }, []);
+  useFocusStep('route-', openFor);
 
   function goTo(levelKey: string, id: string, e?: MouseEvent) {
     e?.preventDefault();
@@ -303,6 +321,8 @@ export default function GuideRoute({ chars, initial, cards, outlines, layout, no
   );
 
   return (
+    <div className="flex flex-col gap-4">
+    <SeerPaste character={char?.name ?? null} onResult={setSeer} />
     <div className="flex flex-col lg:flex-row gap-4 lg:items-start">
       <aside className="lg:w-60 shrink-0 min-w-0 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto bg-panel border border-border rounded-lg p-3">
         {sidebar}
@@ -355,7 +375,7 @@ export default function GuideRoute({ chars, initial, cards, outlines, layout, no
                               {rows.map(i => (
                                 <li key={i.key} className="border-t border-border first:border-t-0">
                                   <StepRow item={i} layout={layout} checked={done.has(i.key)} ev={auto[i.key]}
-                                           manual={manual.has(i.key)} disabled={!char} onToggle={toggle} cards={cards}
+                                           seerNext={!!seer?.next.has(i.key)} manual={manual.has(i.key)} disabled={!char} onToggle={toggle} cards={cards}
                                            outlines={outlines} picked={picked === i.key}
                                            onPick={() => setPicked(p => (p === i.key ? null : i.key))} />
                                 </li>
@@ -380,18 +400,19 @@ export default function GuideRoute({ chars, initial, cards, outlines, layout, no
         </div>
       </div>
     </div>
+    </div>
   );
 }
 
-function StepRow({ item, layout, checked, ev, manual, disabled, onToggle, cards, outlines, picked, onPick }: {
-  item: GuideItem; layout: 'b' | 'c'; checked: boolean; ev?: Evidence; manual: boolean; disabled: boolean;
+function StepRow({ item, layout, checked, ev, seerNext, manual, disabled, onToggle, cards, outlines, picked, onPick }: {
+  item: GuideItem; layout: 'b' | 'c'; checked: boolean; ev?: Evidence; seerNext: boolean; manual: boolean; disabled: boolean;
   onToggle: (item: GuideItem, next: boolean) => void; cards: Record<number, ItemCard>;
   outlines: Record<string, ZoneOutline>; picked: boolean; onPick: () => void;
 }) {
   const id = `route-${item.key}`;
   const places = stepPlaces(item, STEP_MORE[item.key]);
   return (
-    <div className={`flex gap-3 py-2 ${layout === 'c' && picked ? 'bg-gold/5 -mx-3 px-3' : ''}`}>
+    <div className={`flex gap-3 py-2 ${layout === 'c' && picked ? 'bg-gold/5 -mx-3 px-3' : ''} ${seerNext ? 'ring-1 ring-gold/70 rounded' : ''}`}>
       <input id={id} type="checkbox" checked={checked} disabled={disabled || !!ev}
              onChange={e => onToggle(item, e.target.checked)}
              className="mt-0.5 h-4 w-4 shrink-0 accent-green cursor-pointer disabled:cursor-default"
@@ -404,6 +425,7 @@ function StepRow({ item, layout, checked, ev, manual, disabled, onToggle, cards,
           <span className="px-1.5 rounded border border-border text-dim">{WHO_ICON[item.who]} {WHO_LABEL[item.who]}</span>
           {item.must && <span className="px-1.5 rounded border border-gold/60 text-gold">★ must</span>}
           <SourceBadge ev={ev} manual={manual && !ev} />
+          {seerNext && <span className="px-1.5 rounded border border-gold/70 text-gold" title="The next step the Seer text you pasted leaves open on this plane">▶ next</span>}
           {item.check && <span className="px-1.5 rounded border border-border text-dim" title="Classic detail, not yet confirmed on Quarm">verify at launch</span>}
           {places.length > 0 && (
             <MapPeek places={places} outlines={outlines} label={`Map for: ${plain(item.title)}`}

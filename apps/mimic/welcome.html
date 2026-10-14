@@ -139,6 +139,7 @@
 </head>
 <body>
 <div id="app"></div>
+<script src="voice.js"></script>
 <script>
 (function () {
   'use strict';
@@ -192,6 +193,15 @@
       lede: 'Mimic reads the log files EverQuest writes. Tick the folder you play from.' },
     { id: 'chars',    icon: '👤', title: 'Your characters',      kind: 'req', ess: true, body: bChars,
       lede: 'Every character with a log in that folder. Star your main, and say how each one shows up.' },
+    // 2026-10-14 (the guild lead: "different voice packs, get player pronunciation right … build this voice
+    // pack bit into onboarding"). Both optional; both live on in Settings → Voice and sounds and the dashboard's
+    // Voice & names card.
+    { id: 'voice',    icon: '🗣', title: 'Your voice',           body: bVoice,
+      summary: 'How callouts sound: pick a voice pack and hear a sample of each.',
+      lede: 'Mimic speaks its callouts with a Windows voice. A voice pack changes the speed and pitch, and picks a different installed voice when it can.' },
+    { id: 'names',    icon: '📣', title: 'Say your name',        body: bNames,
+      summary: 'Tell Mimic how your characters are pronounced, so the raid hears them right.',
+      lede: 'Callouts read a name the way it is spelled, which is often wrong. Pick a suggestion or type how it should sound, and hear it first.' },
     { id: 'zeal',     icon: '📡', title: 'Zeal',                 kind: 'rec', body: bZeal,
       summary: 'Live HP, mana, raid groups and charm breaks — the things the log never says.',
       lede: 'Zeal is a free add-on for the Quarm client: one file, Zeal.asi, in your EverQuest folder. It hands Mimic what the game knows but never writes down.' },
@@ -710,6 +720,147 @@
     wire(el, { dir: function () { pick('dir'); }, files: function () { pick('files'); } });
   }
 
+  // ── Your voice · Say your name (the guild lead, 2026-10-14) ──────────────────────────────────
+  // Voice packs come from the engine (GET /api/voice-packs), the pick is saved in Mimic's config as
+  // cfg.voice and read by the trigger window; voice.js holds the rules and plays the samples.
+  // Names: suggestions and the saved pronunciation come from the engine, which asks the server; a save
+  // goes through main (agent-post) because a file:// page cannot read a POST reply from the engine.
+  function agentGet(p) {
+    return fetch('http://127.0.0.1:' + S.port + p, { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); });
+  }
+  function sampleSay(text, packId) {
+    try { window.WPVoice.sample(text, S.voicePacks || [], S.cfg.voice || {}, packId || null); } catch (e) { void e; }
+  }
+  function loadVoicePacks() {
+    if (S.voicePacks || S.voicePacksBusy || !S.agentReady || Date.now() - (S.voicePacksFailAt || 0) < 5000) return;
+    S.voicePacksBusy = true;
+    agentGet('/api/voice-packs').then(function (j) { S.voicePacks = (j && Array.isArray(j.packs)) ? j.packs : null; if (!S.voicePacks) S.voicePacksFailAt = Date.now(); })
+      .catch(function () { S.voicePacksFailAt = Date.now(); })
+      .then(function () { S.voicePacksBusy = false; changed(); });
+  }
+  function bVoice(el) {
+    loadVoicePacks();
+    var v = S.cfg.voice || {};
+    if (!S.voicePacks) { el.innerHTML = '<div class="dim">' + (S.agentReady ? 'Loading the voice packs…' : 'Waiting for the engine to start…') + '</div>'; return; }
+    var h = '<div style="display:grid;gap:6px">' + S.voicePacks.map(function (p) {
+      return '<label class="tick"><input type="radio" name="wVoicePack" value="' + esc(p.id) + '"' + (p.id === (v.pack || 'default') ? ' checked' : '') + '>'
+        + '<span><b>' + esc(p.label) + '</b><span class="d">' + esc(p.blurb || '') + '</span></span>'
+        + '<button type="button" data-sample="' + esc(p.id) + '" style="margin-left:auto" title="Hear this pack">▶ Hear it</button></label>';
+    }).join('') + '</div>';
+    h += turnsOn([
+      '<b>Every spoken trigger callout</b> in the voice you pick',
+      'A pack whose voices are not installed here still sets the <b>speed and pitch</b>',
+      'One trigger can have a voice of its own: pick it in that trigger\'s editor on the dashboard',
+    ]);
+    h += '<div class="note dim">A specific installed voice, and speed and pitch by hand, are under Settings → Voice and sounds.</div>';
+    el.innerHTML = h;
+    el.querySelectorAll('[data-sample]').forEach(function (b) {
+      b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); sampleSay('Enrage soon. Heal up.', b.dataset.sample); });
+    });
+    el.querySelectorAll('input[name="wVoicePack"]').forEach(function (r) {
+      r.addEventListener('change', function () {
+        S.cfg.voice = Object.assign({ voiceName: '', rate: null, pitch: null }, S.cfg.voice || {}, { pack: r.value });
+        Promise.resolve(M.saveConfig({ voice: S.cfg.voice })).catch(function () {});
+        S.visited.add('voice'); changed();
+      });
+    });
+  }
+
+  // lowercase character name → { say, source, sugg, tips, why, draft, note, busy }
+  S.pron = S.pron || {};
+  function nameChars() {
+    return S.chars.filter(function (c) { return !S.excluded.has(c.character.toLowerCase()); }).slice(0, 12).map(function (c) { return c.character; });
+  }
+  var _pronQueue = Promise.resolve();
+  function loadPron(names) {
+    if (!S.agentReady) return;
+    names.forEach(function (nm) {
+      var lc = nm.toLowerCase();
+      if (S.pron[lc] && (S.pron[lc].loaded || S.pron[lc].loading)) return;
+      var p = S.pron[lc] = Object.assign(S.pron[lc] || {}, { loading: true });
+      // One name at a time, so a roster of twelve is not twelve requests to the server at once.
+      _pronQueue = _pronQueue.then(function () {
+        return Promise.all([
+          agentGet('/api/pronunciations').catch(function () { return null; }),
+          agentGet('/api/pronunciation-suggest?name=' + encodeURIComponent(nm)).catch(function () { return null; }),
+        ]).then(function (a) {
+          var mine = a[0] && (a[0].characters || []).filter(function (c) { return c.name.toLowerCase() === lc; })[0];
+          if (a[0]) S.pronFeature = a[0].feature;
+          p.say = (mine && mine.say) || (a[1] && a[1].current) || '';
+          p.sugg = (a[1] && Array.isArray(a[1].suggestions)) ? a[1].suggestions : [];
+          p.tips = (a[1] && Array.isArray(a[1].tips)) ? a[1].tips : [];
+          p.why = a[1] && a[1].available === false ? a[1].why : null;
+          p.loaded = true; p.loading = false;
+          changed();
+        });
+      });
+    });
+  }
+  function sugText(s) { return typeof s === 'string' ? s : (s && (s.say || s.text || s.name)) || ''; }
+  function savePron(nm, say, guild) {
+    var lc = nm.toLowerCase(), p = S.pron[lc] || (S.pron[lc] = {});
+    if (!say) { p.note = 'Type how it should sound first.'; changed(); return; }
+    p.busy = true; p.note = 'Saving…'; changed();
+    var post = guild ? M.agentPost('/api/pronunciation', { character: nm, say: say }) : M.agentPost('/api/pronunciations/local', { name: nm, say: say });
+    Promise.resolve(post).catch(function () { return { ok: false, error: 'could not reach the engine' }; }).then(function (r) {
+      p.busy = false;
+      var ok = r && r.ok && !(r.body && r.body.ok === false);
+      if (ok) { p.say = say; p.draft = null; p.note = guild ? 'Saved for the guild.' : 'Saved on this PC.'; S.visited.add('names'); }
+      else p.note = ((r && r.body && r.body.error) || (r && r.error) || 'Not saved.') + (guild ? ' You can still keep it on this PC only.' : '');
+      changed();
+    });
+  }
+  function bNames(el) {
+    var names = nameChars();
+    if (!names.length) {
+      el.innerHTML = '<div class="dim">' + (S.eqConfigured ? 'No characters yet — they appear here once they have written a log line.' : 'Pick your EverQuest folder first; characters are found from its logs.') + '</div>';
+      return;
+    }
+    loadPron(names);
+    if (!S.agentReady) { el.innerHTML = '<div class="dim">Waiting for the engine to start…</div>'; return; }
+    var h = '<div class="note dim" style="margin:0 0 6px">' + (S.signedIn && S.pronFeature !== 'off'
+      ? 'Saving for the guild changes how every raider\'s Mimic says the name. <b>This PC only</b> changes just yours.'
+      : 'Names are kept on this PC. Once you are signed in to a server that has the shared list, you can save for the guild too.') + '</div>';
+    names.forEach(function (nm, i) {
+      var p = S.pron[nm.toLowerCase()] || {};
+      var draft = p.draft != null ? p.draft : (p.say || '');
+      h += '<div class="box" data-pn="' + i + '"><div class="row"><b>' + esc(nm) + '</b>'
+        + '<span class="dim">' + (p.say ? 'said as “' + esc(p.say) + '”' : 'said as spelled') + '</span>'
+        + '<button type="button" data-hear-name title="Hear it as it is said now">▶</button></div>';
+      if (p.loading && !p.loaded) h += '<div class="dim" style="margin-top:6px">Looking for suggestions…</div>';
+      else if (p.why) h += '<div class="note dim">No suggestions right now (' + esc(p.why) + '). Type how it should sound.</div>';
+      else if (p.loaded) {
+        h += '<div class="row" style="margin-top:6px">';
+        (p.sugg || []).forEach(function (s, j) {
+          var tx = sugText(s);
+          if (tx) h += '<span class="row" style="gap:0;border:1px solid var(--border);border-radius:12px;padding:0 2px"><button type="button" class="link" data-hear="' + j + '" title="Hear it" style="padding:2px 6px;text-decoration:none">▶</button>'
+            + '<button type="button" class="link" data-use="' + j + '" title="Use this" style="padding:2px 8px;text-decoration:none;color:var(--text)">' + esc(tx) + '</button></span>';
+        });
+        if (!(p.sugg || []).length) h += '<span class="dim">No suggestions for this name.</span>';
+        h += '</div>';
+        if ((p.tips || []).length) h += '<ul class="dim" style="margin:6px 0 0;padding-left:18px;font-size:12px">' + p.tips.map(function (t) { return '<li>' + esc(sugText(t)) + '</li>'; }).join('') + '</ul>';
+      }
+      h += '<div class="row" style="margin-top:8px"><input type="text" data-keep-typing data-say value="' + esc(draft) + '" maxlength="80" placeholder="how it sounds, e.g. Ahl-den-mar" aria-label="How ' + esc(nm) + ' is said" '
+        + 'style="flex:1;min-width:150px;background:var(--ink);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:6px 8px;font:inherit">'
+        + '<button type="button" data-hear-draft title="Hear what is typed">▶</button>'
+        + '<button type="button" class="primary" data-save-guild' + (p.busy || !S.signedIn || S.pronFeature === 'off' ? ' disabled' : '') + '>Save for the guild</button>'
+        + '<button type="button" data-save-local' + (p.busy ? ' disabled' : '') + '>This PC only</button></div>'
+        + (p.note ? '<div class="note ' + (/^Saved/.test(p.note) ? 'ok' : 'dim') + '">' + esc(p.note) + '</div>' : '') + '</div>';
+    });
+    el.innerHTML = h;
+    el.querySelectorAll('[data-pn]').forEach(function (box) {
+      var nm = names[Number(box.dataset.pn)], lc = nm.toLowerCase(), p = S.pron[lc] || (S.pron[lc] = {});
+      var inp = $('[data-say]', box);
+      inp.addEventListener('input', function () { p.draft = inp.value; });
+      $('[data-hear-name]', box).addEventListener('click', function () { sampleSay(p.say || nm); });
+      $('[data-hear-draft]', box).addEventListener('click', function () { sampleSay(inp.value.trim() || nm); });
+      $('[data-save-guild]', box).addEventListener('click', function () { savePron(nm, inp.value.trim(), true); });
+      $('[data-save-local]', box).addEventListener('click', function () { savePron(nm, inp.value.trim(), false); });
+      box.querySelectorAll('[data-hear]').forEach(function (b) { b.addEventListener('click', function () { sampleSay(sugText(p.sugg[Number(b.dataset.hear)])); }); });
+      box.querySelectorAll('[data-use]').forEach(function (b) { b.addEventListener('click', function () { p.draft = sugText(p.sugg[Number(b.dataset.use)]); inp.value = p.draft; }); });
+    });
+  }
+
   function bDone(el) {
     var rows = STEPS.filter(function (s) { return !s.onlyA; }).map(function (s) {
       var st = stepState(s.id);
@@ -846,9 +997,21 @@
     else cur = id;
     render(); window.scrollTo(0, 0);
   }
-  function render() { if (V === 'b') renderB(); else renderA(); }
+  // A redraw rebuilds the page, which would eat what someone is typing: while a text box marked data-keep-typing
+  // has the focus (Say your name), the redraw waits and happens when the focus leaves it.
+  var _renderHeld = false;
+  function render() {
+    var ae = document.activeElement;
+    if (ae && ae.hasAttribute && ae.hasAttribute('data-keep-typing')) { _renderHeld = true; return; }
+    _renderHeld = false;
+    if (V === 'b') renderB(); else renderA();
+  }
+  document.addEventListener('focusout', function (e) {
+    // (a beat of delay, so the click on Save that took the focus away is not eaten by the rebuild under it)
+    if (_renderHeld && e.target && e.target.hasAttribute && e.target.hasAttribute('data-keep-typing')) setTimeout(function () { if (_renderHeld) render(); }, 350);
+  });
   // A state change redraws the chrome (rail, stepper, footer) and whichever body is showing.
-  // Typed input would be lost to a redraw — no step has a text field, on purpose.
+  // Typed input is kept by the hold above, and by each step's own draft; only Say your name has a text field.
   function changed() { render(); }
 
   // ── Loading ─────────────────────────────────────────────────────────────
@@ -954,6 +1117,7 @@
         { name: 'Brackwyn', mode: 'inventory', src: 'site', on_pc: true, log_read: true },
         { name: 'Corvale', mode: 'hidden', src: 'site', on_pc: true, log_read: false } ] }),
       setCharacterMode: ok({ ok: true, synced: true, restart_needed: false }),
+      agentPost: ok({ ok: true, status: 200, body: { ok: true } }),
     };
   }
 })();

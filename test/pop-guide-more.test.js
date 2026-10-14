@@ -63,16 +63,17 @@ describe('the extra detail', () => {
 });
 
 describe('what fills itself in, and says so', () => {
-  const base = { flags: [], loots: [], inventory: [], level: null, levelAt: null, spellbook: false, liveAt: null };
-  it('a recorded flag is Mimic’s; level, inventory and spellbook are our records', () => {
+  const base = { flags: [], loots: [], inventory: [], spellbook: false };
+  it('a recorded flag is Mimic’s; inventory and spellbook are our records', () => {
     const ev = guideEvidence({ ...base,
       flags: [{ flag_key: 'grummus_dead', earned_at: '2026-09-20T01:00:00Z' }],
       inventory: [{ item_id: 28745, observed_at: '2026-09-22T00:00:00Z' }],
-      level: 50, spellbook: true, liveAt: '2026-09-29T00:00:00Z' });
+      spellbook: true });
     expect(ev.flag_grummus.source).toBe('mimic');
     expect(ev.flag_grummus.at).toBe('2026-09-20T01:00:00Z');
-    expect(ev.start_mimic.source).toBe('mimic');
-    expect(ev.start_level46).toEqual({ source: 'database', what: 'Level 50 on /who.', at: null });
+    // The Start here steps that read the level and the live-state row were removed with the section (2026-10-14).
+    expect(ev.start_mimic).toBeUndefined();
+    expect(ev.start_level46).toBeUndefined();
     expect(ev.start_traveler_manual.source).toBe('database');
     expect(ev.spells_submit_book.source).toBe('database');
   });
@@ -81,8 +82,7 @@ describe('what fills itself in, and says so', () => {
     expect(ev.flag_trial_justice).toEqual({ source: 'mimic', what: 'Mimic saw you loot the Mark of Lashing.', at: '2026-09-21T01:00:00Z' });
     expect(guideEvidence({ ...base, loots: [{ item_name: 'Mark of the Ancients', looted_at: null }] }).flag_trial_justice).toBeUndefined();
   });
-  it('never under a level of 46, never with only some of the parchments, never from a hidden inventory', () => {
-    expect(guideEvidence({ ...base, level: 45 }).start_level46).toBeUndefined();
+  it('never with only some of the parchments, never from a hidden inventory', () => {
     expect(guideEvidence({ ...base, inventory: [{ item_id: 29112, observed_at: null }, { item_id: 29131, observed_at: null }] }).spells_parchments).toBeUndefined();
     expect(guideEvidence({ ...base, inventory: [29112, 29131, 29132].map(item_id => ({ item_id, observed_at: null })) }).spells_parchments.source).toBe('database');
     expect(guideEvidence({ ...base, inventory: null }).start_traveler_manual).toBeUndefined();

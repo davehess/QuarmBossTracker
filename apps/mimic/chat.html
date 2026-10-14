@@ -1,0 +1,1094 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>chat</title>
+<style>
+  /* Chat overlay: this PC's own chat feed (the guild lead, 2026-10-14: "move it off the screen and be able
+     to show/hide different components from it, or break it into tabs"). Picked "B then A": ONE scrolling
+     feed, colour-coded by channel, with a chip per channel group that shows or hides it. Right-click a chip
+     to break that group out into its own window (this same page, loaded with ?groups=<id>); the Chat window
+     then leaves that group's lines out and its chip says "out" until it is put back. The chips come from the
+     agent's group list (/api/chat -> groups) and the feed is painted through a filter: a window is a group
+     list plus a filter. Click a line's timestamp to copy the line.
+     The lines live in the agent's memory on THIS PC and are never uploaded. Nothing here is tied to
+     EverQuest's screen, so it works on a second monitor like every overlay. */
+  /* --bg-alpha: card-surface alpha, driven by the opacity slider via main -> preload 'bg-alpha'. */
+  :root{ --bg-alpha:0.5; --fs:12px;
+    /* Melee by who is swinging, like EQ's own hit colours (the guild lead, 2026-10-14): yours near-white, what hits
+       you red, everyone else's dim grey; a miss keeps its category's hue, dimmer. Spells and Skills have a colour each.
+       Variables, so one place changes them; the colour-blind themes are a body filter the preload applies to every overlay. */
+    --c-melee-mine:#f2f2f2; --c-melee-mine-miss:#a9a9a9;
+    --c-melee-on_me:#ff6b6b; --c-melee-on_me-miss:#a64d4d;
+    --c-melee-others:#8b949e; --c-melee-others-miss:#5f666e;
+    /* Spells (purple) and Skills (amber) split the same way inside their own hue: bright for yours, a pinker purple for
+       a spell landing on you, dim for everyone else's. A line from an older agent has no category and keeps the group colour. */
+    --c-spell-mine:#b392f0; --c-spell-on_me:#e57bd8; --c-spell-others:#74678f;
+    --c-skill-mine:#e3b341; --c-skill-others:#8c7a43; }
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
+  #wrap{height:100vh;box-sizing:border-box;display:flex;flex-direction:column;padding:6px 8px;gap:4px}
+  /* gutters: the move button sits top-left and the hide button top-right, so the title keeps clear of both */
+  .title{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:0 24px 0 24px;
+    font-size:12px;color:#7ee7c7;text-shadow:0 1px 2px #000;min-height:18px}
+  .conn{font-size:11px}
+  .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  .title .sp{flex:1}
+  .fbtn{font-family:inherit;font-size:10px;font-weight:bold;letter-spacing:0.5px;padding:0 6px;border-radius:3px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid #30363d;cursor:pointer;line-height:15px;white-space:nowrap}
+  .fbtn:hover{color:#7ee7c7;border-color:#2da68a}
+  .fbtn.on{background:#10302a;color:#7ee7c7;border-color:#2da68a}
+  /* the channel chips: lit = shown. The dot carries the channel's colour even when the chip is off. */
+  #chips{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:3px}
+  .chip{font-family:inherit;font-size:10px;padding:0 6px 0 5px;border-radius:3px;background:rgba(14,17,22,0.6);
+    color:#6e7681;border:1px solid #30363d;cursor:pointer;line-height:15px;white-space:nowrap;
+    display:inline-flex;align-items:center;gap:4px}
+  .chip i{width:7px;height:7px;border-radius:50%;background:var(--c);opacity:0.45;display:inline-block}
+  .chip:hover{border-color:var(--c)}
+  .chip.on{background:rgba(14,17,22,0.85);color:#e6edf3;border-color:var(--c)}
+  .chip.on i{opacity:1}
+  /* a group broken out into its own window: dashed, and it says so. Its lines are not in this feed. */
+  .chip.out{border-style:dashed;color:#8b949e}
+  .chip em{font-style:normal;font-size:9px;color:#7ee7c7;letter-spacing:0.3px}
+  /* "More": the chip that opens the rest of the row. Lit (with a count) while a chip inside it is on, so a closed More never hides a channel that is showing. */
+  .chip.more{border-style:dotted}
+  /* a broken-out window (chat.html?groups=<id>) is the feed alone: the chips and settings stay in the Chat window */
+  body.brk #chips,body.brk #onlypill,body.brk #spanel .nobrk{display:none}
+  /* this window's own text settings (⚙, or the right-click menu): spacing, timestamps and tags */
+  body.tight{--lh:1.15}
+  body.no-ts .ln .tm{display:none}
+  body.no-tags .ln .ctag{display:none}
+  /* the right-click menu (a chip, or a breakout's title bar): one or two plain buttons */
+  #ctxmenu{position:fixed;z-index:200;display:flex;flex-direction:column;gap:2px;padding:4px;border-radius:5px;
+    background:rgba(14,17,22,0.95);border:1px solid rgba(88,166,255,0.4);box-shadow:0 4px 12px rgba(0,0,0,0.6)}
+  #ctxmenu button{font-family:inherit;font-size:11px;text-align:left;white-space:nowrap;padding:5px 10px;border-radius:3px;
+    background:#21262d;color:#c9d1d9;border:1px solid #30363d;cursor:pointer}
+  #ctxmenu button:hover{background:#1f6feb;color:#fff}
+  /* settings drawer behind the gear: text size and the opt-in channels */
+  #spanel{display:none;flex:0 0 auto;flex-direction:column;gap:5px;padding:6px 8px;border-radius:5px;
+    background:rgb(0 0 0 / max(var(--bg-alpha), 0.6));font-size:11px;color:#c9d1d9;text-shadow:0 1px 2px #000}
+  #spanel.open{display:flex}
+  #spanel .row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  #spanel .hint{font-size:10px;color:#8b949e;line-height:1.35}
+  #spanel label{display:flex;align-items:center;gap:5px;cursor:pointer}
+  #spanel input[type=checkbox]{margin:0;cursor:pointer}
+  /* "More settings": the less-used switches fold away, so the drawer opens short */
+  #moreset summary{cursor:pointer;color:#8b949e;list-style:none;width:max-content}
+  #moreset summary::-webkit-details-marker{display:none}
+  #moreset summary::after{content:" ▸"}
+  #moreset[open] summary::after{content:" ▾"}
+  #moreset summary:hover{color:#7ee7c7}
+  #moreset .mbody{display:flex;flex-direction:column;gap:5px;margin-top:5px}
+  #fsz{min-width:30px;text-align:center;color:#e6edf3}
+  /* the feed */
+  #feedbox{position:relative;flex:1 1 auto;min-height:0;display:flex}
+  #feed{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;border-radius:5px;padding:4px 6px;
+    background:rgb(0 0 0 / var(--bg-alpha));font-size:var(--fs);line-height:var(--lh,1.4)}
+  #feed::-webkit-scrollbar{width:6px}
+  #feed::-webkit-scrollbar-thumb{background:rgba(126,231,199,0.35);border-radius:3px}
+  #feed::-webkit-scrollbar-track{background:transparent}
+  .ln{display:flex;align-items:baseline;gap:6px;padding:0 0 0 5px;border-left:3px solid var(--lc,#6e7681);
+    text-shadow:0 1px 2px #000;overflow-wrap:anywhere}
+  /* the timestamp is a button: click it to copy the line */
+  .ln .tm{flex:0 0 auto;color:#6e7681;font-size:0.82em;font-variant-numeric:tabular-nums;font-family:inherit;
+    background:none;border:0;padding:0;margin:0;cursor:copy;text-shadow:inherit;line-height:inherit}
+  .ln .tm:hover{color:#7ee7c7;text-decoration:underline}
+  .ln .tm.copied{color:#56d364;text-decoration:none}
+  .ln .tx{flex:1 1 auto;min-width:0;color:var(--lc,#c9d1d9)}
+  .ln .who{flex:0 0 auto;font-weight:bold;color:var(--lc,#c9d1d9)}
+  .ln .who.you{opacity:0.75}
+  .ln .who.npc{font-weight:normal;font-style:italic}
+  .ln .arrow{flex:0 0 auto;color:#6e7681}
+  /* the EQ-style channel tag in front of a line: [GU] [P] [2]. Bold in the channel's own colour, fixed to its
+     content so a column of them lines up on the left without a wide gutter. Right-click it for "Show only". */
+  .ln .ctag{flex:0 0 auto;font-weight:bold;color:var(--lc,#c9d1d9);font-size:0.86em;letter-spacing:0.2px;cursor:context-menu}
+  /* "Show only [GU]" is on: a pill above the feed says so, and its ✕ turns it off */
+  #onlypill{display:none;flex:0 0 auto;align-items:center;gap:6px;align-self:flex-start;padding:0 3px 0 8px;border-radius:9px;
+    background:#10302a;color:#7ee7c7;border:1px solid #2da68a;font-size:10px;line-height:15px}
+  #onlypill.show{display:inline-flex}
+  #onlypill button{font-family:inherit;font-size:10px;line-height:13px;padding:0 5px;border-radius:8px;border:0;background:transparent;color:#7ee7c7;cursor:pointer}
+  #onlypill button:hover{color:#f87171}
+  /* a zone change: dim, no speaker, so it reads as a note in the margin rather than something said */
+  .ln.zone .tx{font-style:italic;opacity:0.85}
+  /* which of your characters heard it: shown only where the character changes without a swap line, so it never fills the feed */
+  .ln .otag{flex:0 0 auto;color:#6e7681;font-size:0.78em;border:1px solid #30363d;border-radius:3px;padding:0 3px;line-height:1.3}
+  /* "Swapped to X": a rule across the feed, not a line of chat. It has no timestamp button, so nothing copies from it. */
+  .sep{display:flex;align-items:center;gap:6px;margin:3px 0;color:#8b949e;font-size:0.82em;text-shadow:0 1px 2px #000}
+  .sep::before,.sep::after{content:"";flex:1 1 12px;border-top:1px solid rgba(139,148,158,0.4)}
+  .sep span{flex:0 1 auto;text-align:center}
+  .hdiv{margin:3px 0;text-align:center;color:#6e7681;font-size:0.82em;font-style:italic;text-shadow:0 1px 2px #000}
+  /* the search box and the history button live in the title bar; a locked overlay is click-through, so both are armed by the preload */
+  #find{flex:1 1 50px;min-width:40px;max-width:130px;box-sizing:border-box;font-family:inherit;font-size:10px;padding:0 5px;
+    height:17px;border-radius:3px;background:rgba(14,17,22,0.7);color:#e6edf3;border:1px solid #30363d;user-select:text}
+  #find:focus{outline:none;border-color:#2da68a}
+  #find::placeholder{color:#6e7681}
+  #cpick{display:none;flex:0 0 auto;flex-wrap:wrap;gap:3px}
+  #cpick.open{display:flex}
+  #empty{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;
+    color:rgba(255,255,255,0.5);font-size:12px;text-shadow:0 1px 2px #000;pointer-events:none}
+  #newchip{display:none;position:absolute;right:12px;bottom:8px;font-family:inherit;font-size:10px;font-weight:bold;
+    padding:1px 8px;border-radius:9px;background:#10302a;color:#7ee7c7;border:1px solid #2da68a;cursor:pointer;
+    box-shadow:0 1px 4px #000}
+  #newchip.show{display:block}
+  /* drag/lock/setup chrome: same pattern as the other overlays. */
+  #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
+  body.unlocked #drag-controls{display:flex}
+  body.unlocked{outline:2px solid rgba(126,231,199,0.7);outline-offset:-2px}
+  .drag-btn{width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+    background:rgba(45,166,138,0.92);color:#fff;border:1px solid rgba(255,255,255,0.4);
+    border-radius:4px;font-size:13px;line-height:1;cursor:move;user-select:none}
+  #lock-btn{cursor:pointer;font-size:11px}
+  #setupbar{display:none;position:fixed;top:0;left:0;right:0;align-items:center;gap:8px;
+    padding:4px 8px;background:rgba(45,166,138,0.92);color:#fff;font-size:10px;font-weight:600;z-index:50}
+  body.setup #setupbar{display:flex}
+  body.setup #drag-controls{top:28px}
+  body.setup #wrap{padding-top:32px}
+  #setupbar input[type=range]{flex:1;cursor:pointer}
+  #hide-btn{position:fixed;top:6px;right:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:pointer;opacity:0.45;transition:opacity .12s}
+  #hide-btn:hover{opacity:1;color:#f87171;border-color:#f87171}
+  body.setup #hide-btn{top:30px}
+  #move-btn{position:fixed;top:6px;left:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
+  #move-btn:hover{opacity:1;color:#2da68a;border-color:#2da68a}
+  body.setup #move-btn{top:30px}
+  @media (prefers-reduced-motion: reduce){ #hide-btn,#move-btn{transition:none} }
+</style></head>
+<body>
+  <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner, same on every overlay)">✥</button>
+  <button id="hide-btn" title="Hide the Chat overlay (turn back on from the tray → Overlays)">✕</button>
+  <div id="drag-controls">
+    <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
+    <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
+  </div>
+  <div id="setupbar">
+    <span>🛠 Chat</span>
+    <span>opacity</span><input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" /><span id="opacityVal">100%</span>
+    <button id="exitSetupBtn">Done</button>
+  </div>
+  <div id="wrap">
+    <div class="title"><span id="conn" class="conn bad">○</span><span id="ttl">💬 Chat</span><input id="find" type="text" maxlength="24" spellcheck="false" autocomplete="off" placeholder="character…" title="Show only one character: what they said, or what was heard on that character of yours. Enter or Esc leaves the box."><button id="fpick" class="fbtn" title="Pick one of your characters">▾</button><span class="sp"></span><button id="histbtn" class="fbtn" title="Show the chat from before this window opened, read from the game's own log files on this PC">⏱</button><button id="gear" class="fbtn" aria-pressed="false" title="Text size, and the channels that are off until you switch them on">⚙</button></div>
+    <div id="cpick"></div>
+    <div id="spanel">
+      <div class="row"><span>Text size</span><button id="fsm" class="fbtn" title="Smaller">A−</button><span id="fsz">12</span><button id="fsp" class="fbtn" title="Larger">A+</button><button id="lsp" class="fbtn" title="Line spacing">compact</button></div>
+      <div class="row" id="textopts"></div>
+      <div class="hint" id="wintxt"></div>
+      <div class="row nobrk" id="optins"></div>
+      <details id="moreset"><summary data-wp-interact>More settings</summary><div class="mbody">
+        <div class="row nobrk" id="moreoptins"></div>
+        <div class="row" id="meleeopts"></div>
+        <div class="row" id="spellopts"></div>
+        <div class="row" id="skillopts"></div>
+        <div class="row nobrk" id="chans"></div>
+        <div class="hint nobrk" id="tellhint"></div>
+        <div class="hint nobrk">These lines stay on this PC, in memory, for this window only. Nothing here is uploaded, and Mimic forgets them when it restarts. The ⏱ button can read the last few hours back from the game's own log files on this PC; that is read here and never sent.</div>
+      </div></details>
+    </div>
+    <div id="chips"></div>
+    <div id="onlypill"><span id="onlytxt"></span><button type="button" id="onlyx" title="Show all channels again">✕</button></div>
+    <div id="feedbox">
+      <div id="feed"></div>
+      <div id="empty">nothing yet: talk in /gu, /rs or /say</div>
+      <button id="newchip" title="Jump to the newest line">↓ new</button>
+    </div>
+  </div>
+<script>
+  let PORT = 7779;
+  window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
+  window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
+
+  if (window.mimic && window.mimic.onOverlayLocked) {
+    window.mimic.onOverlayLocked(locked => { document.body.classList.toggle('unlocked', !locked); });
+  }
+  var lockBtn = document.getElementById('lock-btn');
+  if (lockBtn) lockBtn.addEventListener('click', function(){ try { window.mimic.setOverlaysLocked(true); } catch (e) {} });
+
+  var hideBtn = document.getElementById('hide-btn');
+  if (hideBtn) {
+    hideBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    hideBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    hideBtn.addEventListener('click', function(){ try { window.mimic.hideThisOverlay(); } catch (e) {} });
+  }
+
+  var moveHandle = document.getElementById('move-handle');
+  var moveBtn    = document.getElementById('move-btn');
+  var _dragging = false;
+  function _beginDrag(e){
+    if (e.button !== 0) return; e.preventDefault(); _dragging = true;
+    try { window.mimic.overlayDragStart(); } catch (err) {}
+  }
+  if (moveHandle) moveHandle.addEventListener('mousedown', _beginDrag);
+  if (moveBtn) {
+    moveBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    moveBtn.addEventListener('mouseleave', function(){ if (!_dragging) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} } });
+    moveBtn.addEventListener('mousedown', _beginDrag);
+    // Right-click ✥ -> shared chrome menu (resize presets + Setup THIS/ALL).
+    try { window.mimic.attachOverlayMenu(moveBtn); } catch (e) {}
+  }
+  document.addEventListener('mouseup', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} try{window.mimic.overlayHoverInteractive(false);}catch(e){} } });
+  window.addEventListener('blur', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} } });
+
+  var _overlayKey = null;
+  var _setupScope = null;
+  if (window.mimic && window.mimic.onSetupMode) {
+    window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; if (p && p.scope) _setupScope = p.scope; else if (p && p.active) _setupScope = 'all'; document.body.classList.toggle('setup', !!(p && p.active)); });
+  }
+  if (window.mimic && window.mimic.onBgAlpha) {
+    window.mimic.onBgAlpha(function(v){
+      var a = (typeof v === 'number' && v >= 0.15 && v <= 1.0) ? v : 0.5;
+      try { document.documentElement.style.setProperty('--bg-alpha', String(a)); } catch (e) {}
+    });
+  }
+  var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
+  if (slider) slider.addEventListener('input', function(){
+    var v = parseFloat(slider.value || '1'); if (oVal) oVal.textContent = Math.round(v*100)+'%';
+    if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
+  });
+  var doneBtn = document.getElementById('exitSetupBtn');
+  if (doneBtn) doneBtn.addEventListener('click', function(){ try { document.body.classList.remove('setup'); } catch (e) {} try { if (_setupScope === 'this') window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {} _setupScope = null; });
+
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+  function hhmm(t){ var d = new Date(t); if (isNaN(d.getTime())) return ''; var h = d.getHours(), m = d.getMinutes(); return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m; }
+
+  // One hover-interact owner for the zones that are not plain buttons (a locked overlay is click-through,
+  // overlay checklist item 3): the title bar, the chips, the settings drawer and the feed, so the wheel can
+  // scroll it. Buttons are armed by the preload on their own; this covers the rest.
+  function _zoneOf(el){ return (el && el.closest) ? el.closest('.title, #chips, #cpick, #spanel, #onlypill, #feed, #newchip, #ctxmenu') : null; }
+  function _hover(on){ try { window.mimic.overlayHoverInteractive(on); } catch (e) {} }
+  document.addEventListener('mouseover', function(e){ if (_zoneOf(e.target)) _hover(true); });
+  document.addEventListener('mouseout', function(e){ if (_zoneOf(e.target) && !_zoneOf(e.relatedTarget)) _hover(false); });
+
+  // ── state ────────────────────────────────────────────────────────────────
+  var FEED_MAX = 500;
+  var _groups = [];            // [{id,label,channels[],gate?}] as the agent serves them
+  var _channels = {};          // id -> {label,color}
+  var _lines = [];             // every line we hold, oldest first (the filter decides what shows)
+  var _seq = 0, _lastN = 0, _boot = '';
+  var _char = '';              // the character the chip choices are remembered for
+  var _prefs = { fontSize: 12, group: false, officer: false, custom: false, tells: false, melee: false, spells: false, skills: false, meleeShow: { mine: true, on_me: true, others: true, misses: true }, spellShow: { mine: true, on_me: true, others: true }, skillShow: { mine: true, others: true }, off: [], offChannels: [], only: '' };
+  var _chanNames = {};         // "<character>|<slot number>" -> channel name, learned from lines that carry both (Zeal's /abc shows only the number)
+  var _unread = 0;
+  var _out = [];               // group ids broken out into their own windows (the Chat window leaves them out)
+  var _prefsReady = false;     // the poll waits for the first prefs: the agent keeps the LAST switches it was handed
+  var _copiedN = 0;            // the line whose timestamp is flashing "copied"
+  var feedEl = document.getElementById('feed'), chipsEl = document.getElementById('chips');
+  var emptyEl = document.getElementById('empty'), newEl = document.getElementById('newchip');
+  var EMPTY_TEXT = emptyEl.textContent;
+  var _find = '', _findQ = '';   // the search box: this window only, this session only (never saved)
+  var _histLines = [];           // the last N hours read from the game's log files, oldest first (n < 0), above the live feed
+  var _histHours = 0;            // 0 = off: nothing is read from disk until it is switched on
+  var _histInfo = null;          // { loading } | { failed } | { truncated }
+  var _histSig = '';             // the switch set the history on screen was read under
+  var _histSeq = 0;
+  var _connectedOnce = false;    // the agent has answered at least once (so PORT is the real one)
+  var _lastOn = null;            // the character the last painted line was heard on (the "heard on" tag shows on a change)
+
+  // This page is also the broken-out window: chat.html?groups=guild (a comma list is fine) shows only those
+  // groups. No parameter = the Chat window. Ids are lower-case letters, which is all a group id is.
+  function parseGroupsParam(search){
+    var out = [], m = /[?&]groups=([^&]*)/.exec(String(search || ''));
+    if (!m) return out;
+    var raw = m[1];
+    try { raw = decodeURIComponent(raw); } catch (e) { return out; }
+    var parts = raw.split(',');
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i].trim().toLowerCase();
+      if (/^[a-z]{1,16}$/.test(p) && out.indexOf(p) === -1) out.push(p);
+    }
+    return out;
+  }
+  var _only = parseGroupsParam(window.location.search);   // non-empty: this window is a breakout
+  var _isBrk = _only.length > 0;
+
+  // A filter is just "which groups does this view show". The feed never asks anything else about a line, so a
+  // breakout (or a tab) is a different list handed to the same code.
+  function groupOf(ch){ for (var i = 0; i < _groups.length; i++) if (_groups[i].channels.indexOf(ch) !== -1) return _groups[i]; return null; }
+  function gateOn(g){ return !g.gate || !!_prefs[g.gate]; }
+  function makeFilter(groupIds){
+    var on = {}; for (var i = 0; i < groupIds.length; i++) on[groupIds[i]] = true;
+    return function(line){ var g = groupOf(line.ch); return !!g && on[g.id] === true && gateOn(g); };
+  }
+  // The Chat window shows every group that is on its chip and not out; a breakout shows its own groups,
+  // whatever the chips say (it has none). Both obey the opt-in switches.
+  function shownGroupIds(){
+    var out = [];
+    for (var i = 0; i < _groups.length; i++) {
+      var g = _groups[i]; if (!gateOn(g)) continue;
+      if (_isBrk) { if (_only.indexOf(g.id) !== -1) out.push(g.id); }
+      else if (_prefs.off.indexOf(g.id) === -1 && _out.indexOf(g.id) === -1) out.push(g.id);
+    }
+    return out;
+  }
+
+  // ── channel tags, per-channel switches, "show only" ──────────────────────
+  // A joined channel is "custom" to the agent, which also sends its name (cn) and slot number (cnum). The slot
+  // number is the tag ([2]) but changes with the order channels are joined, so everything SAVED is keyed by the
+  // NAME in lower case. Zeal's /abc lines carry only the number: the name is learned from a line that has both,
+  // else the channel is keyed "#<n>".
+  function learnChannel(l){
+    if (!l || !l.cn || !l.cnum) return false;
+    var k = String(l.on || '').toLowerCase() + '|' + l.cnum;
+    if (_chanNames[k] === l.cn) return false;
+    _chanNames[k] = l.cn; return true;
+  }
+  function chanName(l){
+    if (l.cn) return l.cn;
+    return l.cnum ? (_chanNames[String(l.on || '').toLowerCase() + '|' + l.cnum] || '') : '';
+  }
+  // The saved key of a joined channel's line ('' for anything else).
+  function chanKey(l){
+    if (l.ch !== 'custom') return '';
+    var n = chanName(l);
+    return n ? n.toLowerCase() : (l.cnum ? '#' + l.cnum : '');
+  }
+  // What goes in the brackets: the channel's tag from the agent, or the slot number for a joined channel.
+  function tagText(l){
+    if (l.ch === 'custom') return l.cnum ? String(l.cnum) : 'C';
+    return (_channels[l.ch] || {}).tag || '';
+  }
+  function tagTitle(l){
+    if (l.ch === 'custom') return chanName(l) || ('Channel ' + (l.cnum || ''));
+    return (_channels[l.ch] || {}).label || '';
+  }
+  // The key "Show only" stores: the channel id, or custom:<name> for a joined channel. '' = this line has no channel.
+  function onlyKeyOf(l){
+    if (l.sep || !tagText(l)) return '';
+    if (l.ch === 'custom') { var k = chanKey(l); return k ? 'custom:' + k : ''; }
+    return l.ch;
+  }
+  // Visibility the two per-channel features add on top of the group filter. Neither is a group, so neither
+  // touches the filter itself. A breakout window ignores "show only": it is already one group.
+  function chanShown(l){
+    if (l.sep) return true;
+    var k = chanKey(l);
+    if (k && (_prefs.offChannels || []).indexOf(k) !== -1) return false;
+    if (!_isBrk && _prefs.only && onlyKeyOf(l) !== _prefs.only) return false;
+    return meleeShown(l) && catShown(l);
+  }
+  // Which melee lines show, like EQ's combat filters: mine / on me / others', and misses. A line with no category
+  // (an agent from before the split) always shows.
+  function meleeShown(l){
+    if (l.ch !== 'melee') return true;
+    var s = _prefs.meleeShow || {};
+    if (l.cat && s[l.cat] === false) return false;
+    if (l.miss && s.misses === false) return false;
+    return true;
+  }
+  // Spells and Skills filter by the same three words (mine / on me / others'). No category = an older agent = shows.
+  function catShown(l){
+    var s = l.ch === 'spell' ? _prefs.spellShow : l.ch === 'skill' ? _prefs.skillShow : null;
+    return !(s && l.cat && s[l.cat] === false);
+  }
+  // The line's colour: a CSS variable per category (melee misses dimmer; Spells and Skills each a shade per category
+  // inside their hue), else the channel's own.
+  function lineColor(l){
+    var base = (_channels[l.ch] || {}).color || '#c9d1d9';
+    if (l.ch === 'melee' && l.cat) return 'var(--c-melee-' + l.cat + (l.miss ? '-miss' : '') + ',' + base + ')';
+    if ((l.ch === 'spell' || l.ch === 'skill') && l.cat) return 'var(--c-' + l.ch + '-' + l.cat + ',' + base + ')';
+    return base;
+  }
+  function onlyActive(){ return !_isBrk && !!_prefs.only; }
+  function tagHtml(l){
+    var t = tagText(l);
+    return t ? '<span class="ctag" title="' + esc(tagTitle(l)) + '">[' + esc(t) + ']</span>' : '';
+  }
+
+  function lineHtml(l, tag){
+    // "Swapped to X": display only. No timestamp button, so there is nothing to copy; it is not a chat line.
+    if (l.sep) return '<div class="sep" data-n="' + l.n + '"><span>' + esc(l.text) + '</span></div>';
+    var you = !!l.self, who;
+    if (l.ch === 'zone' || l.ch === 'melee' || l.ch === 'spell' || l.ch === 'skill') who = '';
+    else if (l.npc) who = '<span class="who npc">' + esc(l.who) + '</span>';
+    else if (you) who = '<span class="who you">You</span>';
+    else who = '<span class="who name">' + esc(l.who) + '</span>';
+    if (l.to) who += '<span class="arrow">→</span><span class="who name">' + esc(l.to) + '</span>';
+    var copied = l.n === _copiedN;
+    var otag = tag && l.on ? '<span class="otag" title="heard on ' + esc(l.on) + '">' + esc(l.on) + '</span>' : '';
+    return '<div class="ln' + (l.ch === 'zone' ? ' zone' : '') + '" style="--lc:' + esc(lineColor(l)) + '" data-n="' + l.n + '"><button type="button" class="tm' + (copied ? ' copied' : '') + '" title="Click to copy this line">' + (copied ? 'copied' : hhmm(l.t)) + '</button>' + tagHtml(l) + otag + who + '<span class="tx">' + (l.ch === 'zone' ? '→ ' : '') + esc(l.text) + '</span></div>';
+  }
+  // One row, with the "heard on" tag where the character changed from the row before it (a swap line resets
+  // it: that line already says so). Rows the filter hides do not count, so a one-speaker search tags the
+  // alt that heard each line.
+  function rowHtml(l){
+    if (l.sep) { _lastOn = l.to || null; return lineHtml(l); }
+    var tag = !!_lastOn && !!l.on && String(l.on).toLowerCase() !== String(_lastOn).toLowerCase();
+    if (l.on) _lastOn = l.on;
+    return lineHtml(l, tag);
+  }
+  // The search box. A name matches a line when it starts the SPEAKER's name, or the name of the character of
+  // yours the line was heard on (case does not matter). A zone line has no speaker: it belongs to the
+  // character whose log it came from. A swap line is shown only with no search.
+  function startsWithCI(s, q){ return String(s == null ? '' : s).toLowerCase().indexOf(q) === 0; }
+  function matchesFind(l, q){
+    if (!q) return true;
+    if (l.sep) return false;
+    return startsWithCI(l.on, q) || (!l.self && l.ch !== 'zone' && startsWithCI(l.who, q));
+  }
+  function lineVisible(f, l){ return l.sep ? (_findQ === '' && !onlyActive()) : (f(l) && chanShown(l) && matchesFind(l, _findQ)); }
+  // The same key the agent de-duplicates its ring with, so a history line already in the live feed is not shown twice.
+  function chatKey(l){
+    return l.ch + '|' + String(l.who == null ? '' : l.who).toLowerCase() + '|' + (l.to || '') + '|' + l.text + '|' + Math.floor(l.t / 1000)
+      + (l.ch === 'zone' ? '|' + String(l.on || '').toLowerCase() : '');
+  }
+
+  // Click a timestamp to copy that line as "[hh:mm] Speaker: text" (an outgoing tell reads "You → Name").
+  // The clipboard path is the one the other overlays use: navigator.clipboard, then a hidden textarea.
+  function copyLineText(l){
+    // a zone change copies as the plain log line, not as something a character said
+    if (l.ch === 'zone') return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + 'You have entered ' + l.text + '.';
+    if (l.ch === 'melee' || l.ch === 'spell' || l.ch === 'skill') return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + l.text;
+    var who = l.npc ? l.who : (l.self ? 'You' : l.who);
+    if (l.to) who += ' → ' + l.to;
+    var t = hhmm(l.t);
+    return (t ? '[' + t + '] ' : '') + who + ': ' + l.text;
+  }
+  function _copyText(text, done){
+    function fallback(){
+      var ta = document.createElement('textarea'), ok = false;
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { ok = document.execCommand('copy'); } catch (e) {} finally { ta.remove(); }
+      if (ok) done();
+    }
+    try { navigator.clipboard.writeText(text).then(done, fallback); } catch (e) { fallback(); }
+  }
+  var _copiedTimer = null, _copiedUndo = null;
+  function _unflashCopied(){
+    clearTimeout(_copiedTimer); _copiedTimer = null; _copiedN = 0;
+    if (_copiedUndo) { _copiedUndo(); _copiedUndo = null; }
+  }
+  feedEl.addEventListener('click', function(e){
+    var b = e.target && e.target.closest ? e.target.closest('.tm') : null;
+    if (!b) return;
+    var row = b.closest('.ln'), n = row ? Number(row.getAttribute('data-n')) : 0, line = null;
+    var pool = n < 0 ? _histLines : _lines;   // history rows are numbered below zero
+    for (var i = pool.length - 1; i >= 0; i--) if (pool[i].n === n) { line = pool[i]; break; }
+    if (!line || line.sep) return;
+    _copyText(copyLineText(line), function(){
+      _unflashCopied();
+      var stamp = hhmm(line.t);
+      _copiedN = n; b.textContent = 'copied'; b.classList.add('copied');
+      _copiedUndo = function(){ if (b.isConnected) { b.textContent = stamp; b.classList.remove('copied'); } };
+      _copiedTimer = setTimeout(_unflashCopied, 1200);
+    });
+  });
+  function pinned(){ return feedEl.scrollHeight - feedEl.scrollTop - feedEl.clientHeight < 28; }
+  function toBottom(){ feedEl.scrollTop = feedEl.scrollHeight; _unread = 0; paintNew(); }
+  function paintNew(){
+    newEl.textContent = _unread > 0 ? '↓ ' + _unread + ' new' : '↓ new';
+    newEl.classList.toggle('show', _unread > 0);
+  }
+  function paintEmpty(){
+    emptyEl.style.display = feedEl.children.length ? 'none' : 'block';
+    if (!feedEl.children.length) emptyEl.textContent = _findQ ? 'no lines from "' + _find.trim() + '"' : (_isBrk ? brkEmptyText() : EMPTY_TEXT);
+  }
+  // What an empty breakout says: a gated group tells you which switch it is waiting on.
+  function brkEmptyText(){
+    var g = null;
+    for (var i = 0; i < _groups.length; i++) if (_groups[i].id === brkGroupId()) g = _groups[i];
+    if (!g) return 'waiting for the Chat feed';
+    if (!gateOn(g)) return g.gate === 'tells' ? 'Tells are off: choose Local or Synced under Settings → Tells' : g.label + ' is off: switch it on in the Chat window\'s ⚙';
+    return 'nothing yet in ' + g.label;
+  }
+
+  // Repaint everything through the current filter (chip toggled, switch changed, restart). Appending is the
+  // normal path (addLines) so a quiet poll never touches the DOM.
+  // History sits above the live feed under a dim divider, minus anything the live feed already holds.
+  function histDividerHtml(shown){
+    var hrs = _histHours + ' h';
+    var t = !_histInfo ? '' : _histInfo.loading ? 'loading the last ' + hrs + '…'
+      : _histInfo.failed ? 'history is not available'
+      : (shown ? 'history from the last ' + hrs + (_histInfo.truncated ? ' (the newest ones)' : '') : 'no chat in the last ' + hrs);
+    return t ? '<div class="hdiv">— ' + esc(t) + ' —</div>' : '';
+  }
+  function repaint(){
+    var f = makeFilter(shownGroupIds()), h = '', i;
+    _lastOn = null;
+    if (_histHours) {
+      var have = {}, hh = '', shownH = 0;
+      for (i = 0; i < _lines.length; i++) if (!_lines[i].sep) have[chatKey(_lines[i])] = true;
+      for (i = 0; i < _histLines.length; i++) {
+        var hl = _histLines[i];
+        if (!hl.sep && have[chatKey(hl)]) continue;
+        if (lineVisible(f, hl)) { hh += rowHtml(hl); if (!hl.sep) shownH++; }
+      }
+      h += hh + histDividerHtml(shownH);
+    }
+    for (i = 0; i < _lines.length; i++) if (lineVisible(f, _lines[i])) h += rowHtml(_lines[i]);
+    var stick = pinned();
+    feedEl.innerHTML = h;
+    if (stick) toBottom();
+    paintEmpty();
+  }
+  function addLines(fresh){
+    if (!fresh.length) return;
+    // A first sight of a channel, or of a slot's name, changes what the ⚙ lists (and may resolve older "#n" rows).
+    var learned = false, anyChan = false;
+    for (var j = 0; j < fresh.length; j++) {
+      if (learnChannel(fresh[j])) learned = true;
+      if (fresh[j].ch === 'custom') anyChan = true;
+    }
+    if (anyChan) paintChans();
+    if (learned) { for (var q = 0; q < fresh.length; q++) _lines.push(fresh[q]); if (_lines.length > FEED_MAX) _lines.splice(0, _lines.length - FEED_MAX); repaint(); return; }
+    var f = makeFilter(shownGroupIds()), h = '', shown = 0, stick = pinned();
+    for (var i = 0; i < fresh.length; i++) { _lines.push(fresh[i]); if (lineVisible(f, fresh[i])) { h += rowHtml(fresh[i]); if (!fresh[i].sep) shown++; } }
+    if (_lines.length > FEED_MAX) _lines.splice(0, _lines.length - FEED_MAX);
+    if (h) {
+      feedEl.insertAdjacentHTML('beforeend', h);
+      // (history rows are not trimmed away by the live feed filling up)
+      var domMax = FEED_MAX + (_histHours ? _histLines.length + 3 : 0);
+      while (feedEl.children.length > domMax) feedEl.removeChild(feedEl.firstChild);
+      if (stick) toBottom(); else { _unread += shown; paintNew(); }
+    }
+    paintEmpty();
+  }
+  feedEl.addEventListener('scroll', function(){ if (pinned() && _unread) { _unread = 0; paintNew(); } });
+  newEl.addEventListener('click', toBottom);
+
+  // Lines the current switches no longer allow are dropped, not just hidden: turning Officer off should
+  // leave nothing of it behind in this window.
+  function purgeGated(){
+    _lines = _lines.filter(function(l){ if (l.sep) return true; var g = groupOf(l.ch); return !!g && gateOn(g); });
+  }
+
+  // The chips that are always on the row, in this order (the guild lead, 2026-10-14: "Guild/Raid/Party/Say/Tells/ooc/shout").
+  // Every other group (and any group added later) folds under "More". An id here that the agent does not serve, or
+  // that is gated off (Party and Tells wait on their switches), is simply skipped.
+  var MAIN_CHIPS = ['guild', 'raid', 'group', 'say', 'tell', 'ooc'];
+  var CHIP_LABEL = { group: 'Party' };      // the group id stays 'group'; only the chip's wording differs
+  // Whether "More" is open is remembered per window (the Chat window and each breakout), in this page's own
+  // storage like the history pick, which can be empty or blocked: it then starts closed.
+  function moreKey(){ return 'wpChatMore:' + winId(); }
+  var _moreOpen = false;
+  try { _moreOpen = localStorage.getItem(moreKey()) === '1'; } catch (e) {}
+  function setMore(open){
+    _moreOpen = !!open;
+    try { localStorage.setItem(moreKey(), _moreOpen ? '1' : '0'); } catch (e) {}
+    paintChips();
+  }
+  function chipIsOn(g){ return _out.indexOf(g.id) === -1 && _prefs.off.indexOf(g.id) === -1; }
+  function chipHtml(g){
+    var isOut = _out.indexOf(g.id) !== -1, on = chipIsOn(g), c = (_channels[g.channels[0]] || {}).color || '#8b949e';
+    var label = CHIP_LABEL[g.id] || g.label;
+    var tip = isOut ? esc(label) + ' is in its own window: click, or right-click, to put it back' : (on ? 'Hide ' : 'Show ') + esc(label) + ' (right-click to break it out into its own window)';
+    return '<button type="button" class="chip' + (on ? ' on' : '') + (isOut ? ' out' : '') + '" data-g="' + esc(g.id) + '" aria-pressed="' + on + '" style="--c:' + esc(c) + '" title="' + tip + '"><i></i>' + esc(label) + (isOut ? ' <em>out</em>' : '') + '</button>';
+  }
+  // "More ▾" / "More (3) ▾": the count is the chips inside that are ON, shown while it is closed so nothing is on out of sight.
+  function moreHtml(nOn){
+    var cnt = !_moreOpen && nOn ? ' (' + nOn + ')' : '';
+    return '<button type="button" class="chip more' + (nOn ? ' on' : '') + '" data-more="1" aria-expanded="' + _moreOpen + '" style="--c:#8b949e" title="' + (_moreOpen ? 'Fold the other channels away' : 'Show the other channels') + (nOn ? ' (' + nOn + ' of them on)' : '') + '">More' + cnt + (_moreOpen ? ' ▴' : ' ▾') + '</button>';
+  }
+  function paintChips(){
+    var h = '', main = {}, rest = [], nOn = 0, k;
+    for (var i = 0; i < _groups.length; i++) {
+      var g = _groups[i]; if (!gateOn(g)) continue;
+      if (MAIN_CHIPS.indexOf(g.id) !== -1) main[g.id] = g; else { rest.push(g); if (chipIsOn(g)) nOn++; }
+    }
+    for (k = 0; k < MAIN_CHIPS.length; k++) if (main[MAIN_CHIPS[k]]) h += chipHtml(main[MAIN_CHIPS[k]]);
+    // A breakout has no chip row to look at (it is hidden), so it never gets a More either.
+    if (rest.length && !_isBrk) h += moreHtml(nOn);
+    if (_moreOpen || _isBrk) for (k = 0; k < rest.length; k++) h += chipHtml(rest[k]);
+    if (chipsEl.__wpHtml !== h) { chipsEl.innerHTML = h; chipsEl.__wpHtml = h; }
+  }
+  chipsEl.addEventListener('click', function(e){
+    var b = e.target && e.target.closest ? e.target.closest('.chip') : null;
+    if (!b) return;
+    if (b.hasAttribute('data-more')) { setMore(!_moreOpen); return; }
+    var id = b.getAttribute('data-g');
+    if (_out.indexOf(id) !== -1) { setBreakout(id, false); return; }   // an "out" chip has nothing to switch: it puts the group back
+    var at = _prefs.off.indexOf(id);
+    if (at >= 0) _prefs.off.splice(at, 1); else _prefs.off.push(id);
+    savePrefs({ off: _prefs.off });
+    paintChips(); repaint();
+  });
+
+  // ── search: one character ────────────────────────────────────────────────
+  // The box is a plain <input>, so the preload arms the hover handshake for it. It takes keys only after a
+  // click and lets go on Enter, Esc, a few seconds of quiet or the window losing focus, so a locked overlay
+  // never keeps EverQuest's keystrokes. Nothing is remembered: closing the window forgets the search.
+  var findEl = document.getElementById('find'), cpickEl = document.getElementById('cpick');
+  var _findIdle = null;
+  function setFind(v){
+    _find = String(v == null ? '' : v); _findQ = _find.trim().toLowerCase();
+    if (findEl.value !== _find) findEl.value = _find;
+    repaint(); paintPick();
+  }
+  function releaseFind(){ clearTimeout(_findIdle); _findIdle = null; try { findEl.blur(); } catch (e) {} }
+  findEl.addEventListener('input', function(){
+    setFind(findEl.value);
+    clearTimeout(_findIdle); _findIdle = setTimeout(releaseFind, 8000);
+  });
+  findEl.addEventListener('keydown', function(e){
+    if (e.key === 'Enter') { releaseFind(); e.preventDefault(); }
+    else if (e.key === 'Escape') { setFind(''); releaseFind(); e.preventDefault(); }
+  });
+  window.addEventListener('blur', function(){ clearTimeout(_findIdle); _findIdle = null; });
+  // Your own characters seen in the feed or in history: every line says which of them heard it.
+  function ownCharacters(){
+    var seen = {}, out = [];
+    function add(arr){ for (var i = 0; i < arr.length; i++) { var o = arr[i].on; if (o && !seen[o.toLowerCase()]) { seen[o.toLowerCase()] = true; out.push(o); } } }
+    add(_histLines); add(_lines);
+    return out.sort(function(a, b){ return a.toLowerCase() < b.toLowerCase() ? -1 : 1; });
+  }
+  function paintPick(){
+    if (!cpickEl.classList.contains('open')) return;
+    var names = ownCharacters(), h = '';
+    for (var i = 0; i < names.length; i++) h += '<button type="button" class="fbtn' + (_findQ === names[i].toLowerCase() ? ' on' : '') + '" data-c="' + esc(names[i]) + '">' + esc(names[i]) + '</button>';
+    h += '<button type="button" class="fbtn" data-c="">' + (names.length ? 'all' : 'no characters seen yet') + '</button>';
+    if (cpickEl.__wpHtml !== h) { cpickEl.innerHTML = h; cpickEl.__wpHtml = h; }
+  }
+  document.getElementById('fpick').addEventListener('click', function(){
+    cpickEl.classList.toggle('open'); paintPick();
+  });
+  cpickEl.addEventListener('click', function(e){
+    var b = e.target && e.target.closest ? e.target.closest('button') : null;
+    if (!b) return;
+    setFind(b.getAttribute('data-c') || ''); cpickEl.classList.remove('open');
+  });
+
+  // ── history: the last N hours from the game's own log files ──────────────
+  // Off until asked: nothing is read from disk until a window is picked. The pick is remembered per window
+  // in this page's own storage (which can be empty or blocked: the window works without it).
+  var HIST_CHOICES = [0, 1, 2, 3, 6, 12, 24];
+  function histKey(){ return 'wpChatHistH:' + (_isBrk ? _only.join(',') : 'main'); }
+  try { var _hv = Number(localStorage.getItem(histKey())); if (HIST_CHOICES.indexOf(_hv) > 0) _histHours = _hv; } catch (e) {}
+  var histBtn = document.getElementById('histbtn');
+  function paintHistBtn(){
+    histBtn.textContent = _histHours ? '⏱ ' + _histHours + 'h' : '⏱';
+    histBtn.classList.toggle('on', _histHours > 0);
+  }
+  function histQuery(){
+    return 'hours=' + _histHours + '&tells=' + (_prefs.tells ? 1 : 0) + '&group=' + (_prefs.group ? 1 : 0) +
+      '&officer=' + (_prefs.officer ? 1 : 0) + '&custom=' + (_prefs.custom ? 1 : 0);
+  }
+  async function loadHistory(){
+    var mine = ++_histSeq;
+    if (!_histHours) { _histLines = []; _histInfo = null; _histSig = ''; repaint(); return; }
+    _histInfo = { loading: true }; _histSig = histQuery(); repaint();
+    var s = null;
+    try {
+      var r = await fetch('http://127.0.0.1:' + PORT + '/api/chat/history?' + _histSig, { cache: 'no-store' });
+      s = await r.json();
+    } catch (e) { s = null; }
+    if (mine !== _histSeq) return;          // a newer pick took over
+    if (s && s.ok && Array.isArray(s.lines)) {
+      _histLines = s.lines.filter(function(l){ return l && typeof l.text === 'string'; });
+      for (var i = 0; i < _histLines.length; i++) { _histLines[i].n = -(i + 1); learnChannel(_histLines[i]); }
+      _histInfo = { truncated: !!s.truncated };
+    } else { _histLines = []; _histInfo = { failed: true }; }
+    repaint(); paintPick(); paintChans();
+  }
+  function setHist(h){
+    _histHours = HIST_CHOICES.indexOf(h) >= 0 ? h : 0;
+    try { localStorage.setItem(histKey(), String(_histHours)); } catch (e) {}
+    paintHistBtn(); loadHistory();
+  }
+  histBtn.addEventListener('click', function(){
+    var r = histBtn.getBoundingClientRect();
+    openMenu(r.left, r.bottom + 2, HIST_CHOICES.map(function(h){
+      return { label: (h === _histHours ? '✓ ' : '') + (h ? 'Last ' + h + (h === 1 ? ' hour' : ' hours') : 'History off'), run: function(){ setHist(h); } };
+    }));
+  });
+  paintHistBtn();
+
+  // ── breakouts: a group in its own window ─────────────────────────────────
+  function setBreakout(id, on){
+    try { window.mimic.chatBreakout(id, on).then(takeOut).catch(function(){}); } catch (e) {}
+  }
+  // The list of broken-out groups changed (this window or another asked). The Chat window leaves those
+  // groups' lines out and marks their chips; the lines themselves are kept, so a put-back shows them again.
+  function takeOut(ids){
+    var next = [];
+    if (Array.isArray(ids)) for (var i = 0; i < ids.length; i++) if (typeof ids[i] === 'string' && next.indexOf(ids[i]) === -1) next.push(ids[i]);
+    if (next.join(',') === _out.join(',')) return;
+    _out = next;
+    paintChips(); repaint(); paintBrkTitle();
+  }
+  // One or two plain buttons at the cursor, clamped inside the window. Dismissed by Escape, a click elsewhere,
+  // the window losing focus, or the cursor staying off it for 3 s (a locked overlay is click-through, so a click
+  // elsewhere may never reach this page: the same fallback the shared overlay menu uses).
+  var _ctx = null, _ctxTimer = null;
+  function closeMenu(){
+    clearTimeout(_ctxTimer); _ctxTimer = null;
+    if (_ctx) { _ctx.remove(); _ctx = null; _hover(false); }
+  }
+  function openMenu(x, y, items){
+    closeMenu();
+    var m = document.createElement('div'); m.id = 'ctxmenu';
+    items.forEach(function(it){
+      var b = document.createElement('button'); b.type = 'button'; b.textContent = it.label;
+      b.addEventListener('click', function(){ closeMenu(); try { it.run(); } catch (e) {} });
+      m.appendChild(b);
+    });
+    document.body.appendChild(m); _ctx = m; _hover(true);
+    var r = m.getBoundingClientRect();
+    m.style.left = Math.max(2, Math.min(x, window.innerWidth - r.width - 2)) + 'px';
+    m.style.top = Math.max(2, Math.min(y, window.innerHeight - r.height - 2)) + 'px';
+    var arm = function(){ clearTimeout(_ctxTimer); _ctxTimer = setTimeout(closeMenu, 3000); };
+    m.addEventListener('mouseenter', function(){ clearTimeout(_ctxTimer); });
+    m.addEventListener('mouseleave', arm);
+    arm();
+  }
+  document.addEventListener('mousedown', function(e){ if (_ctx && !(e.target.closest && e.target.closest('#ctxmenu'))) closeMenu(); }, true);
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeMenu(); }, true);
+  window.addEventListener('blur', closeMenu);
+  chipsEl.addEventListener('contextmenu', function(e){
+    var b = e.target && e.target.closest ? e.target.closest('.chip') : null;
+    if (!b) return;
+    e.preventDefault();
+    if (b.hasAttribute('data-more')) return;   // More is not a group: it has nothing to break out
+    var id = b.getAttribute('data-g'), g = null;
+    for (var i = 0; i < _groups.length; i++) if (_groups[i].id === id) g = _groups[i];
+    if (!g) return;
+    var isOut = _out.indexOf(id) !== -1;
+    openMenu(e.clientX, e.clientY, [isOut
+      ? { label: 'Put back in the Chat window', run: function(){ setBreakout(id, false); } }
+      : { label: 'Break out into its own window', run: function(){ setBreakout(id, true); } }]);
+  });
+  // A breakout's title bar: right-click puts the group back (the ✕ does the same).
+  function brkGroupId(){ return _only[0] || ''; }
+  function paintBrkTitle(){
+    if (!_isBrk) return;
+    var label = brkGroupId();
+    for (var i = 0; i < _groups.length; i++) if (_groups[i].id === label) label = _groups[i].label;
+    document.getElementById('ttl').textContent = '💬 ' + label;
+    document.title = 'chat: ' + label;
+    var hb = document.getElementById('hide-btn');
+    if (hb) hb.title = 'Put ' + label + ' back in the Chat window';
+  }
+  if (_isBrk) {
+    document.body.classList.add('brk');
+    document.querySelector('.title').addEventListener('contextmenu', function(e){
+      e.preventDefault();
+      openMenu(e.clientX, e.clientY, [
+        { label: 'Text settings…', run: function(){ if (!spanelEl.classList.contains('open')) gearEl.click(); } },
+        { label: 'Put back in the Chat window', run: function(){ setBreakout(brkGroupId(), false); } }]);
+    });
+  }
+
+  // ── settings drawer ──────────────────────────────────────────────────────
+  var spanelEl = document.getElementById('spanel'), gearEl = document.getElementById('gear');
+  // A fourth field of 1 puts the switch under "More settings" instead of on the drawer itself.
+  var OPTINS = [
+    ['group',   'Group chat',     'Your group\'s private chat'],
+    ['officer', 'Officer chat',   'The officer channel'],
+    ['custom',  'Custom channels','Other chat channels you have joined'],
+    ['melee',   'Melee',          'Combined melee from the log: your hits and misses, theirs, and pets\'. Off keeps chat readable; right-click the Melee chip to give it a window of its own.', 1],
+    ['spells',  'Spells',         'Your casts, spells landing on you and others, spell damage, resists, fizzles and fades. Right-click the Spells chip to give it a window of its own.', 1],
+    ['skills',  'Skills',         'Skill-ups, what your skills did (taunt, forage, mend, feign death, hide...), tradeskill combines and disciplines. Right-click the Skills chip to give it a window of its own.', 1]
+  ];
+  // ── this window's text settings ──────────────────────────────────────────
+  // Every Chat window (the main one, and each broken-out group) keeps its own: win[<id>] in the prefs, id
+  // being 'main' or the breakout's group id. A field left out means the default, so prefs saved before this existed read the same.
+  function winId(){ return _isBrk ? brkGroupId() : 'main'; }
+  function winCfg(){
+    var w = (_prefs.win && _prefs.win[winId()]) || {};
+    return { fontSize: w.fontSize || _prefs.fontSize || 12, lineGap: w.lineGap === 'compact' ? 'compact' : 'normal', times: w.times !== false, tags: w.tags !== false };
+  }
+  function saveWin(patch){
+    var id = winId(), w = {}; w[id] = patch;
+    _prefs.win = _prefs.win || {}; _prefs.win[id] = Object.assign({}, _prefs.win[id], patch);   // at once; the saved copy replaces it
+    applyWin(); savePrefs({ win: w });
+  }
+  function applyWin(){
+    var c = winCfg();
+    document.documentElement.style.setProperty('--fs', c.fontSize + 'px');
+    document.body.classList.toggle('tight', c.lineGap === 'compact');
+    document.body.classList.toggle('no-ts', !c.times);
+    document.body.classList.toggle('no-tags', !c.tags);
+    document.getElementById('fsz').textContent = String(c.fontSize);
+    document.getElementById('lsp').textContent = c.lineGap === 'compact' ? 'spacing: compact' : 'spacing: normal';
+    var h = '<label><input type="checkbox" data-win="times"' + (c.times ? ' checked' : '') + '>Timestamps</label>' +
+            '<label><input type="checkbox" data-win="tags"' + (c.tags ? ' checked' : '') + '>Channel tags</label>';
+    var te = document.getElementById('textopts');
+    if (te.__wpHtml !== h) { te.innerHTML = h; te.__wpHtml = h; }
+    document.getElementById('wintxt').textContent = _isBrk ? 'These text settings are for this window only.' : 'These text settings are for this window only; each extra window has its own.';
+  }
+  // The joined channels the ⚙ lists: every one this window has seen, plus any saved as off that has not spoken
+  // yet this session (so it can be switched back on). Keyed by name; the number is only a label.
+  function seenChannels(){
+    var by = {}, order = [], i, l, k, arrs = [_histLines, _lines];
+    for (var a = 0; a < arrs.length; a++) for (i = 0; i < arrs[a].length; i++) {
+      l = arrs[a][i]; if (l.sep || l.ch !== 'custom') continue;
+      k = chanKey(l); if (!k) continue;
+      if (!by[k]) { by[k] = { key: k, name: chanName(l), num: l.cnum || 0 }; order.push(k); }
+      else { if (l.cnum) by[k].num = l.cnum; if (!by[k].name) by[k].name = chanName(l); }
+    }
+    var offs = _prefs.offChannels || [];
+    for (i = 0; i < offs.length; i++) if (!by[offs[i]]) { by[offs[i]] = { key: offs[i], name: offs[i].charAt(0) === '#' ? '' : offs[i], num: 0 }; order.push(offs[i]); }
+    return order.map(function(x){ return by[x]; });
+  }
+  function chanLabel(c){
+    var nm = c.name || (c.num ? 'Channel ' + c.num : c.key);
+    return c.num ? nm + ' (' + c.num + ')' : nm;
+  }
+  function paintChans(){
+    var el = document.getElementById('chans'), list = seenChannels(), h = '';
+    for (var i = 0; i < list.length; i++) {
+      var on = (_prefs.offChannels || []).indexOf(list[i].key) === -1;
+      h += '<label title="Show or hide this channel\'s lines"><input type="checkbox" data-chan="' + esc(list[i].key) + '"' + (on ? ' checked' : '') + '>' + esc(chanLabel(list[i])) + '</label>';
+    }
+    if (h) h = '<span>Channels</span>' + h;
+    if (el.__wpHtml !== h) { el.innerHTML = h; el.__wpHtml = h; }
+  }
+  // What Melee shows (EQ's own combat filters): only offered while Melee is on, and in a Melee breakout's own ⚙.
+  var MELEE_SHOW = [['mine', 'My melee', 'Your swings, and your pet\'s'], ['on_me', 'Hits on me', 'Swings at you'],
+    ['others', 'Others\' melee', 'Everyone else\'s swings, and their pets\''], ['misses', 'Misses', 'Misses, dodges, parries and blocks']];
+  function paintMeleeOpts(){
+    var h = '';
+    if (_prefs.melee && (!_isBrk || brkGroupId() === 'melee')) {
+      var s = _prefs.meleeShow || {};
+      h = '<span>Melee shows</span>';
+      for (var i = 0; i < MELEE_SHOW.length; i++) {
+        var o = MELEE_SHOW[i];
+        h += '<label title="' + esc(o[2]) + '"><input type="checkbox" data-ms="' + o[0] + '"' + (s[o[0]] !== false ? ' checked' : '') + '>' + esc(o[1]) + '</label>';
+      }
+    }
+    var me = document.getElementById('meleeopts');
+    if (me.__wpHtml !== h) { me.innerHTML = h; me.__wpHtml = h; }
+  }
+  document.getElementById('meleeopts').addEventListener('change', function(e){
+    var k = e.target && e.target.getAttribute ? e.target.getAttribute('data-ms') : null;
+    if (!k) return;
+    var patch = {}; patch[k] = !!e.target.checked;
+    _prefs.meleeShow = Object.assign({}, _prefs.meleeShow, patch);
+    savePrefs({ meleeShow: patch });
+    repaint();
+  });
+  // What Spells and Skills show: the same three words as Melee, in the same place. A row is offered only while its
+  // group is on, and in that group's own breakout ⚙. Keys match the prefs: spellShow / skillShow.
+  var SHOW_ROWS = [
+    { grp: 'spells', pref: 'spellShow', el: 'spellopts', head: 'Spells show', opts: [
+      ['mine', 'My spells', 'Your casts and songs, spells you land, your spell damage, your resists, fizzles and interrupts, and your buffs wearing off'],
+      ['on_me', 'On me', 'Other players\' spells landing on you, and spell damage and heals done to you'],
+      ['others', 'Others\' spells', 'Anyone else casting, landing a spell on or damaging someone else, including "begins to cast"']] },
+    { grp: 'skills', pref: 'skillShow', el: 'skillopts', head: 'Skills show', opts: [
+      ['mine', 'My skills', 'Your skill-ups, and what your skills and disciplines did'],
+      ['others', 'Others\' skills', 'Other players\' disciplines, and others feigning or falling']] }
+  ];
+  function paintShowOpts(){
+    for (var r = 0; r < SHOW_ROWS.length; r++) {
+      var row = SHOW_ROWS[r], h = '';
+      if (_prefs[row.grp] && (!_isBrk || brkGroupId() === row.grp)) {
+        var s = _prefs[row.pref] || {};
+        h = '<span>' + row.head + '</span>';
+        for (var i = 0; i < row.opts.length; i++) {
+          var o = row.opts[i];
+          h += '<label title="' + esc(o[2]) + '"><input type="checkbox" data-pref="' + row.pref + '" data-sk="' + o[0] + '"' + (s[o[0]] !== false ? ' checked' : '') + '>' + esc(o[1]) + '</label>';
+        }
+      }
+      var el = document.getElementById(row.el);
+      if (el.__wpHtml !== h) { el.innerHTML = h; el.__wpHtml = h; }
+    }
+  }
+  function onShowChange(e){
+    var t = e.target, pref = t && t.getAttribute ? t.getAttribute('data-pref') : null, k = t && t.getAttribute ? t.getAttribute('data-sk') : null;
+    if (!pref || !k || (pref !== 'spellShow' && pref !== 'skillShow')) return;
+    var patch = {}; patch[k] = !!t.checked;
+    var wrap = {}; wrap[pref] = patch;
+    _prefs[pref] = Object.assign({}, _prefs[pref], patch);
+    savePrefs(wrap);
+    repaint();
+  }
+  document.getElementById('spellopts').addEventListener('change', onShowChange);
+  document.getElementById('skillopts').addEventListener('change', onShowChange);
+  function paintSettings(){
+    var h = '', hm = '';
+    for (var i = 0; i < OPTINS.length; i++) {
+      var o = OPTINS[i];
+      var lab = '<label title="' + esc(o[2]) + '"><input type="checkbox" data-optin="' + o[0] + '"' + (_prefs[o[0]] ? ' checked' : '') + '>' + esc(o[1]) + '</label>';
+      if (o[3]) hm += lab; else h += lab;
+    }
+    var oe = document.getElementById('optins'), me = document.getElementById('moreoptins');
+    if (oe.__wpHtml !== h) { oe.innerHTML = h; oe.__wpHtml = h; }
+    if (me.__wpHtml !== hm) { me.innerHTML = hm; me.__wpHtml = hm; }
+    applyWin(); paintChans(); paintOnly(); paintMeleeOpts(); paintShowOpts(); paintMoreSet();
+    document.getElementById('tellhint').textContent = _prefs.tells
+      ? 'Tells are showing: Settings has Tells on Local or Synced.'
+      : 'Tells are off. Choose Local or Synced under Settings → Tells to show them here.';
+  }
+  gearEl.addEventListener('click', function(){
+    var open = !spanelEl.classList.contains('open');
+    spanelEl.classList.toggle('open', open); gearEl.classList.toggle('on', open); gearEl.setAttribute('aria-pressed', String(open));
+  });
+  function onOptinChange(e){
+    var k = e.target && e.target.getAttribute ? e.target.getAttribute('data-optin') : null;
+    if (!k) return;
+    var patch = {}; patch[k] = !!e.target.checked;
+    _prefs[k] = !!e.target.checked;
+    savePrefs(patch);
+    purgeGated(); paintChips(); repaint();
+  }
+  document.getElementById('optins').addEventListener('change', onOptinChange);
+  document.getElementById('moreoptins').addEventListener('change', onOptinChange);
+  // "More settings" folds the less-used switches away. Open or shut is remembered per window, like More on the chip row.
+  // A breakout's drawer has nothing in it unless the window is Melee, Spells or Skills, so the fold hides itself.
+  var moreSetEl = document.getElementById('moreset');
+  function moreSetKey(){ return 'wpChatMoreSet:' + winId(); }
+  try { if (localStorage.getItem(moreSetKey()) === '1') moreSetEl.open = true; } catch (e) {}
+  moreSetEl.addEventListener('toggle', function(){ try { localStorage.setItem(moreSetKey(), moreSetEl.open ? '1' : '0'); } catch (e) {} });
+  function paintMoreSet(){
+    var any = false, ids = ['meleeopts', 'spellopts', 'skillopts'];
+    for (var i = 0; i < ids.length; i++) if (document.getElementById(ids[i]).innerHTML) any = true;
+    moreSetEl.style.display = (_isBrk && !any) ? 'none' : '';
+  }
+  // One joined channel on or off. Saved by NAME (lower case); only the list of switched-off names is written.
+  document.getElementById('chans').addEventListener('change', function(e){
+    var k = e.target && e.target.getAttribute ? e.target.getAttribute('data-chan') : null;
+    if (!k) return;
+    var offs = (_prefs.offChannels || []).filter(function(x){ return x !== k; });
+    if (!e.target.checked) offs.push(k);
+    _prefs.offChannels = offs;
+    savePrefs({ offChannels: offs });
+    repaint();
+  });
+  document.getElementById('textopts').addEventListener('change', function(e){
+    var k = e.target && e.target.getAttribute ? e.target.getAttribute('data-win') : null;
+    if (k !== 'times' && k !== 'tags') return;
+    var patch = {}; patch[k] = !!e.target.checked;
+    saveWin(patch);
+  });
+  function bumpFont(d){
+    var cur = winCfg().fontSize, n = Math.max(9, Math.min(24, cur + d));
+    if (n === cur) return;
+    saveWin({ fontSize: n });
+    var stick = pinned(); if (stick) toBottom();
+  }
+  document.getElementById('fsm').addEventListener('click', function(){ bumpFont(-1); });
+  document.getElementById('fsp').addEventListener('click', function(){ bumpFont(1); });
+  document.getElementById('lsp').addEventListener('click', function(){ saveWin({ lineGap: winCfg().lineGap === 'compact' ? 'normal' : 'compact' }); });
+
+  // ── "Show only this channel" ─────────────────────────────────────────────
+  // Right-click a line (or its tag): the same small menu the chips use. A VIEW toggle: it is saved as prefs.only so a
+  // reopened window comes back the same way, but it never writes the per-channel switches or the chips.
+  function onlyLabel(key){
+    if (!key) return '';
+    if (key.indexOf('custom:') === 0) {
+      var nm = key.slice(7), list = seenChannels();
+      for (var i = 0; i < list.length; i++) if (list[i].key === nm) return '[' + (list[i].num || 'C') + '] ' + (list[i].name || nm);
+      return nm.charAt(0) === '#' ? 'Channel ' + nm.slice(1) : nm;
+    }
+    var c = _channels[key] || {};
+    return c.tag ? '[' + c.tag + ']' : (c.label || key);
+  }
+  function paintOnly(){
+    var on = onlyActive(), pill = document.getElementById('onlypill');
+    pill.classList.toggle('show', on);
+    document.getElementById('onlytxt').textContent = on ? 'Only ' + onlyLabel(_prefs.only) : '';
+  }
+  function setOnly(key){
+    _prefs.only = key || '';
+    paintOnly(); repaint();
+    savePrefs({ only: _prefs.only });
+  }
+  document.getElementById('onlyx').addEventListener('click', function(){ setOnly(''); });
+  function lineByN(n){
+    var pool = n < 0 ? _histLines : _lines;
+    for (var i = pool.length - 1; i >= 0; i--) if (pool[i].n === n) return pool[i];
+    return null;
+  }
+  feedEl.addEventListener('contextmenu', function(e){
+    var row = e.target && e.target.closest ? e.target.closest('.ln') : null;
+    if (!row || _isBrk) return;
+    var l = lineByN(Number(row.getAttribute('data-n')));
+    if (!l || l.sep) return;
+    var key = onlyKeyOf(l), items = [];
+    e.preventDefault();
+    if (onlyActive()) items.push({ label: 'Show all', run: function(){ setOnly(''); } });
+    if (key && key !== _prefs.only) items.push({ label: 'Show only ' + onlyLabel(key), run: function(){ setOnly(key); } });
+    if (items.length) openMenu(e.clientX, e.clientY, items);
+  });
+
+  // ── prefs (remembered per character in Mimic's config) ───────────────────
+  function savePrefs(patch){
+    try { window.mimic.setChatPrefs(_char, patch).then(takePrefs).catch(function(){}); } catch (e) {}
+  }
+  function takePrefs(p){
+    if (!p) return;
+    var tellsWas = _prefs.tells;
+    var meleeWas = _prefs.melee, spellsWas = _prefs.spells, skillsWas = _prefs.skills, showWas = JSON.stringify([_prefs.meleeShow, _prefs.spellShow, _prefs.skillShow]);
+    _prefs = {
+      fontSize: p.fontSize || 12, group: !!p.group, officer: !!p.officer, custom: !!p.custom,
+      tells: !!p.tells, melee: !!p.melee, spells: !!p.spells, skills: !!p.skills,
+      meleeShow: { mine: !p.meleeShow || p.meleeShow.mine !== false, on_me: !p.meleeShow || p.meleeShow.on_me !== false, others: !p.meleeShow || p.meleeShow.others !== false, misses: !p.meleeShow || p.meleeShow.misses !== false },
+      spellShow: { mine: !p.spellShow || p.spellShow.mine !== false, on_me: !p.spellShow || p.spellShow.on_me !== false, others: !p.spellShow || p.spellShow.others !== false },
+      skillShow: { mine: !p.skillShow || p.skillShow.mine !== false, others: !p.skillShow || p.skillShow.others !== false },
+      off: Array.isArray(p.off) ? p.off.slice() : [],
+      offChannels: Array.isArray(p.offChannels) ? p.offChannels.slice() : [],
+      only: typeof p.only === 'string' ? p.only : '',
+      win: (p.win && typeof p.win === 'object') ? p.win : {}
+    };
+    paintSettings();
+    if (tellsWas !== _prefs.tells || meleeWas !== _prefs.melee || spellsWas !== _prefs.spells || skillsWas !== _prefs.skills || showWas !== JSON.stringify([_prefs.meleeShow, _prefs.spellShow, _prefs.skillShow])) { purgeGated(); paintChips(); repaint(); }
+    // The history was read under one set of switches; a change (Tells, Group, Officer, Custom) re-reads it.
+    if (_histHours && _connectedOnce && histQuery() !== _histSig) loadHistory();
+  }
+  function loadPrefs(){
+    try { window.mimic.getChatPrefs(_char).then(function(p){ takePrefs(p); purgeGated(); paintChips(); repaint(); _prefsReady = true; }).catch(function(){ _prefsReady = true; }); } catch (e) { _prefsReady = true; }
+  }
+  // Every Chat window holds the same shared switches (and the poll sends them), so one changing them
+  // makes all of the others re-read.
+  try {
+    if (window.mimic && window.mimic.onChatPrefsChanged) window.mimic.onChatPrefsChanged(function(){ loadPrefs(); });
+    if (window.mimic && window.mimic.onChatBreakouts) window.mimic.onChatBreakouts(takeOut);
+    if (window.mimic && window.mimic.getChatBreakouts) window.mimic.getChatBreakouts().then(takeOut).catch(function(){});
+  } catch (e) {}
+  // Mimic's status carries the active character and the Tells setting; either changing re-reads the prefs.
+  function onStatus(s){
+    if (!s) return;
+    var c = s.activeCharacter ? String(s.activeCharacter) : '';
+    var tellsNow = s.tellsMode === 'local' || s.tellsMode === 'synced';
+    if (c !== _char) { _char = c; loadPrefs(); }
+    else if (tellsNow !== _prefs.tells) loadPrefs();
+  }
+  try {
+    if (window.mimic && window.mimic.onStatus) window.mimic.onStatus(onStatus);
+    if (window.mimic && window.mimic.getStatus) window.mimic.getStatus().then(onStatus).catch(function(){});
+  } catch (e) {}
+
+  // ── the poll ─────────────────────────────────────────────────────────────
+  // The switches ride every request: the agent keeps tells, group, officer and custom lines ONLY while
+  // this window is asking for them (and stops 15 s after it goes quiet).
+  function query(){
+    return 'since=' + _seq + '&boot=' + encodeURIComponent(_boot) +
+      '&tells=' + (_prefs.tells ? 1 : 0) + '&group=' + (_prefs.group ? 1 : 0) +
+      '&officer=' + (_prefs.officer ? 1 : 0) + '&custom=' + (_prefs.custom ? 1 : 0) + '&melee=' + (_prefs.melee ? 1 : 0) +
+      '&spells=' + (_prefs.spells ? 1 : 0) + '&skills=' + (_prefs.skills ? 1 : 0);
+  }
+  // Channel colours come from the agent's list, so a new channel needs no change here; the chips are
+  // repainted when that list changes.
+  function takeStyle(){
+    var chans = _channels, bits = '';
+    for (var k in chans) if (Object.prototype.hasOwnProperty.call(chans, k)) bits += k + ':' + chans[k].color + ';';
+    return bits;
+  }
+  var _lastStyle = '';
+  async function tick(){
+    // Not before the first prefs: the agent keeps the LAST switches it was handed, and a window that has not
+    // read them yet would hand it "everything off" under the others.
+    if (!_prefsReady) return;
+    try {
+      var r = await fetch('http://127.0.0.1:' + PORT + '/api/chat?' + query(), { cache: 'no-store' });
+      var s = await r.json();
+      var c = document.getElementById('conn'); c.className = 'conn ok'; c.textContent = '●';
+      if (!s || !s.ok) return;
+      var firstGroups = !_groups.length;
+      _groups = s.groups || _groups; _channels = s.channels || _channels;
+      var st = takeStyle();
+      if (firstGroups || st !== _lastStyle) { _lastStyle = st; paintChips(); paintBrkTitle(); paintEmpty(); }      if (s.reset || (s.boot && s.boot !== _boot)) { _lines = []; feedEl.innerHTML = ''; _boot = s.boot || ''; _lastN = 0; _unread = 0; paintNew(); }
+      _seq = s.seq || 0;
+      // First good answer from the agent: the port and the groups are known, so a remembered history window can be read now.
+      if (!_connectedOnce) { _connectedOnce = true; if (_histHours) loadHistory(); }
+      // Only lines newer than the last one taken: a replayed body (the agent serves its last good one if a
+      // poll fails to build) must not put a purged line back.
+      var fresh = (s.lines || []).filter(function(l){ return l && l.n > _lastN; });
+      if (fresh.length) { _lastN = fresh[fresh.length - 1].n; addLines(fresh); } else paintEmpty();
+    } catch (e) {
+      var c2 = document.getElementById('conn'); c2.className = 'conn bad'; c2.textContent = '○';
+    }
+  }
+  paintSettings(); paintEmpty(); loadPrefs();
+  tick(); setInterval(tick, 700);
+</script>
+</body></html>

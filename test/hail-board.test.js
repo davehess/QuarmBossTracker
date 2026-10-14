@@ -705,157 +705,153 @@ describe('every recorded kill reaches the listeners', () => {
 
 // ── A flag NPC no kill stands up: the hedge maze's Thelin ────────────────────────────────────────────
 // The guild lead, 2026-10-13: the board "did not end up displaying the nightmare hedges [maze] to unlock
-// Terris Thule and it didn't display how many people already had the flags. it's something that should pop up
-// when more than one group of a raid talks to one flagging mob."
+// Terris Thule and it didn't display how many people already had the flags." Then 2026-10-14, after it popped
+// at the START of the maze: "This is supposed to come up after the last boss dies, not right at the beginning
+// of the hedge event"; "the one on the inside won't give you flags until after he talks to terris thule at the
+// end". So the first grant opens it, never a hail.
 
-describe('hails of a kill-less flag NPC (the hedge maze) open a window when two raid groups talk to it', () => {
-  const THELIN = { npc: 'Thelin Poxbourne', zone: 'ponightmare' };
-  // name → raid group; the raid is in two groups, plus one raider the roster has no group for.
-  const GROUPS = { Aldenmar: 1, Brackwyn: 1, Corvale: 2, Rethlan: 2, Nyssara: 3, Zarrin: null };
-  const groupedRoster = (minAgo = 0) => Object.entries(GROUPS).map(([name, g]) =>
-    ({ guild_id: 'g', name, group_num: g, uploaded_by_discord_id: 'u1', captured_at: at(-minAgo) }));
-  const hedgeEnv = () => env({ raid_roster: groupedRoster(1) });
-  // A hail row as pop-flags stores it, and as the ingest hands it to noteHails.
-  const hail = (e, name, min, extra = {}) => {
-    e.flag(name, 'hail', 'hail_witnessed', at(min), { ...THELIN, ...extra });
-    return { character: name, flag_key: 'hail', earned_at: at(min), ...THELIN, ...extra };
+describe('the hedge maze board opens on Thelin\'s first flag (after the Terris talk), not on the hails that start the maze', () => {
+  const NIGHTMARE = '204';                                              // the zone id the agent sends
+  const NAMES = ['Aldenmar', 'Brackwyn', 'Corvale', 'Rethlan', 'Nyssara', 'Zarrin'];
+  const roster = (minAgo = 0) => NAMES.map(name =>
+    ({ guild_id: 'g', name, group_num: 1, uploaded_by_discord_id: 'u1', captured_at: at(-minAgo) }));
+  const hedgeEnv = () => env({ raid_roster: roster(1) });
+  // A row as the pop-flags ingest stores it, and hands it to noteGrants.
+  const row = (e, name, key, source, min, extra = {}) => {
+    e.flag(name, key, source, at(min), { zone: NIGHTMARE, ...extra });
+    return { character: name, flag_key: key, source, earned_at: at(min), zone: NIGHTMARE, npc: null, ...extra };
   };
+  const hail = (e, name, min, extra = {}) => row(e, name, 'hail', 'hail_witnessed', min, { npc: 'Thelin Poxbourne', ...extra });
+  const grant = (e, name, min, extra = {}) => row(e, name, 'thelin_2', 'event', min, { stage: 'thelin_2', ...extra });
 
-  it('has a Thelin entry with the right steps, a card heading the agent keeps whole, and no kill finds it', () => {
-    const row = hailBoard.HAIL_FLAGGERS.find(f => f.id === 'hedge_maze');
-    expect(row).toMatchObject({ zoneShort: 'ponightmare', checklist: 'cl_maze', prior: [['thelin_1']] });
-    expect(row.done).toEqual(['thelin_2', 'thelin_3', 'thelin_4', 'hedge_event']);
-    // The hail gives thelin_2, which the stage tables derive and the Seer recites, and "unlocks Terris Thule".
+  it('has a Thelin entry with the right steps, a 10-minute stay, a card heading the agent keeps whole, and no kill finds it', () => {
+    const cfg = hailBoard.HAIL_FLAGGERS.find(f => f.id === 'hedge_maze');
+    expect(cfg).toMatchObject({ zoneShort: 'ponightmare', checklist: 'cl_maze', prior: [['thelin_1']], minutes: 10 });
+    expect(cfg.done).toEqual(['thelin_2', 'thelin_3', 'thelin_4', 'hedge_event']);
+    expect(cfg.opensOn).toEqual(['thelin_2', 'cl_maze']);
+    // Both state-4 answers are what the stage tables store for this zone.
     expect(popFlagStages.ZONE_ONLY.grant.ponightmare).toBe('thelin_2');
     expect(popFlagStages.ZONE_ONLY.checklist.ponightmare).toBe('cl_maze');
+    expect(popFlagStages.zoneShort(NIGHTMARE)).toBe('ponightmare');
     expect(popFlagStages.STAGE_IMPLIES.thelin_2).toContain('hedge_event');
     expect(popFlagStages.RECITAL_STAGES.map(r => r[1])).toContain('thelin_1');
-    expect(row.npc).toMatch(/Hedge maze.*Thelin Poxbourne.*Lair of Terris Thule/);
-    expect(row.npc.length).toBeLessThanOrEqual(64);                     // the agent trims card text at 64
+    expect(cfg.npc).toMatch(/Hedge maze.*Thelin Poxbourne.*Lair of Terris Thule/);
+    expect(cfg.npc.length).toBeLessThanOrEqual(64);                     // the agent trims card text at 64
     expect(hailBoard.hailFor({ bossId: 'hedge_maze' })).toBeNull();
     expect(hailBoard.hailFor({ bossName: 'Thelin Poxbourne' })).toBeNull();
     expect(hailBoard.HAIL_BOSSES.some(b => b.id === 'hedge_maze')).toBe(false);
   });
 
-  it('two groups inside a minute open one window over the current raid, with the already-flagged count', async () => {
+  it('the hails that start the maze open nothing, and ask nothing of the database', async () => {
+    const e = hedgeEnv();
+    const rows = NAMES.map((n, i) => hail(e, n, i * 0.1));               // the whole raid hails at the start
+    expect(await e.hb.noteGrants(rows)).toBeNull();
+    expect(e.hb._windows()).toEqual([]);
+    expect(e.fake.calls).toEqual([]);
+  });
+
+  it('the first grant opens one window over the current raid, for 10 minutes, with the already-flagged count', async () => {
     const e = hedgeEnv();
     e.flag('Nyssara', 'thelin_1', 'recital', at(-30));
     e.flag('Zarrin', 'thelin_2', 'recital', at(-30));                    // already holds the step
     e.flag('Rethlan', 'thelin_3', 'event', at(-3 * 24 * 60));            // and a later step of the series
-    const rows = [hail(e, 'Aldenmar', 0), hail(e, 'Corvale', 0.5)];      // group 1, then group 2 30 s later
-    const w = await e.hb.noteHails(rows);
+    hail(e, 'Aldenmar', -5);                                             // a hail from the maze's start
+    const w = await e.hb.noteGrants([grant(e, 'Aldenmar', 0)]);
     expect(w).toMatchObject({ boss_id: 'hedge_maze', boss_name: 'Hedge maze' });
     expect(w.npc_name).toBe(hailBoard.HAIL_FLAGGERS[0].npc);
-    expect(w.roster.slice().sort()).toEqual(Object.keys(GROUPS).sort());
-    expect(Date.parse(w.opened_at)).toBe(KILL);
-    expect(Date.parse(w.expires_at)).toBe(e.clock + hailBoard.WINDOW_MS);   // a full stay from when it opened
+    expect(w.roster.slice().sort()).toEqual(NAMES.slice().sort());
+    expect(Date.parse(w.opened_at)).toBe(KILL);                          // from the grant
+    expect(Date.parse(w.expires_at)).toBe(KILL + 10 * MIN);             // Thelin's state-4 depop
     expect(e.tables.bot_kv[0].value.windows.map(x => x.id)).toEqual([w.id]);
 
     const [view] = (await e.hb.getBoard()).windows;
-    expect(Object.keys(view).sort()).toEqual(
-      ['already_flagged', 'boss_id', 'boss_name', 'expires_at', 'flag_cap', 'flags_granted', 'flags_left', 'hailed', 'id',
-        'ms_left', 'npc_name', 'opened_at', 'seen_by', 'still', 'zone']);
-    expect(view.already_flagged).toEqual(['Rethlan', 'Zarrin']);          // the count the card prints
-    expect(view.hailed).toEqual([{ name: 'Aldenmar', how: 'seen' }, { name: 'Corvale', how: 'seen' }]);
-    expect(view.still).toEqual([{ name: 'Brackwyn', prior_missing: false }, { name: 'Nyssara', prior_missing: false }]);
-    expect(view).toMatchObject({ flag_cap: null, flags_left: null, flags_granted: 0, zone: 'Plane of Nightmare' });
+    expect(view.already_flagged).toEqual(['Rethlan', 'Zarrin']);
+    expect(view.hailed).toEqual([{ name: 'Aldenmar', how: 'flag' }]);
+    // The start-of-maze hail is before the window: it credits nobody.
+    expect(view.still.map(s => s.name)).toEqual(['Brackwyn', 'Corvale', 'Nyssara']);
+    expect(view).toMatchObject({ flag_cap: null, flags_left: null, flags_granted: 1, zone: 'Plane of Nightmare' });
+  });
+
+  it('a checklist answer ("I do not recognize your face") opens it too', async () => {
+    const e = hedgeEnv();
+    const w = await e.hb.noteGrants([row(e, 'Brackwyn', 'cl_maze', 'checklist', 0)]);
+    expect(w).toMatchObject({ boss_id: 'hedge_maze' });
   });
 
   it('a raider whose recital shows no Adroha step is told the hail may not flag them', async () => {
     const e = hedgeEnv();
     e.flag('Brackwyn', 'mavuin_3', 'recital', at(-30));                  // recital on file, thelin_1 not in it
-    await e.hb.noteHails([hail(e, 'Aldenmar', 0), hail(e, 'Corvale', 0.2)]);
+    await e.hb.noteGrants([grant(e, 'Aldenmar', 0)]);
     const [view] = (await e.hb.getBoard()).windows;
     expect(view.still.find(s => s.name === 'Brackwyn')).toEqual({ name: 'Brackwyn', prior_missing: true });
   });
 
-  it('one group does not open it, however many of them hail', async () => {
+  it('opens once: a second grant, and a concurrent pair of reports, leave one window', async () => {
     const e = hedgeEnv();
-    const w = await e.hb.noteHails([hail(e, 'Aldenmar', 0), hail(e, 'Brackwyn', 0.2)]);
-    expect(w).toBeNull();
-    expect((await e.hb.getBoard()).windows).toEqual([]);
-  });
-
-  it('two groups 90 seconds apart do not; 60 seconds apart do', async () => {
-    const apart = hedgeEnv();
-    expect(await apart.hb.noteHails([hail(apart, 'Aldenmar', 0), hail(apart, 'Corvale', 1.5)])).toBeNull();
-    const edge = hedgeEnv();
-    expect(await edge.hb.noteHails([hail(edge, 'Aldenmar', 0), hail(edge, 'Corvale', 1)])).not.toBeNull();
-  });
-
-  it('opens once: a second report, a third group and a concurrent pair of reports leave one window', async () => {
-    const e = hedgeEnv();
-    const rows = [hail(e, 'Aldenmar', 0), hail(e, 'Corvale', 0.2)];
-    const [a, b] = await Promise.all([e.hb.noteHails(rows), e.hb.noteHails(rows)]);
+    const rows = [grant(e, 'Aldenmar', 0)];
+    const [a, b] = await Promise.all([e.hb.noteGrants(rows), e.hb.noteGrants(rows)]);
     expect([a, b].filter(Boolean)).toHaveLength(1);
     e.advance(2 * MIN);
-    const more = [hail(e, 'Nyssara', 2)];
-    expect(await e.hb.noteHails(more)).toBeNull();
+    expect(await e.hb.noteGrants([grant(e, 'Corvale', 2)])).toBeNull();
     expect(e.hb._windows()).toHaveLength(1);
-    const reads = e.calls('pop_flags', /flag_key=eq\.hail/);
-    await e.hb.noteHails(more);
-    expect(e.calls('pop_flags', /flag_key=eq\.hail/)).toBe(reads);       // an open window asks nothing more
+    const [view] = (await e.hb.getBoard()).windows;
+    expect(view.hailed.map(h => h.name)).toEqual(['Aldenmar', 'Corvale']);
   });
 
-  it('a hail inside an open kill-less window joins the board as seen, through the existing witnessed-hailer path', async () => {
+  it('a late upload of a closed window\'s grant opens nothing; the next maze run opens a new one', async () => {
     const e = hedgeEnv();
-    await e.hb.noteHails([hail(e, 'Aldenmar', 0), hail(e, 'Corvale', 0.2)]);
+    await e.hb.noteGrants([grant(e, 'Aldenmar', 0)]);
+    e.advance(11 * MIN);
+    expect(await e.hb.noteGrants([grant(e, 'Corvale', 5)])).toBeNull();  // inside the closed window
+    e.advance(5 * MIN);
+    e.tables.raid_roster = roster(0).map(r => ({ ...r, captured_at: new Date(e.clock).toISOString() }));
+    const next = await e.hb.noteGrants([grant(e, 'Nyssara', 16)]);
+    expect(next).not.toBeNull();
+    expect(e.hb._windows()).toHaveLength(2);
+  });
+
+  it('a hail inside an open window joins the board as seen, through the existing witnessed-hailer path', async () => {
+    const e = hedgeEnv();
+    await e.hb.noteGrants([grant(e, 'Aldenmar', 0)]);
     hail(e, 'Outsider', 3);                                              // not on the roster, stood at the NPC
     e.advance(MIN);
     const [view] = (await e.hb.getBoard()).windows;
     expect(view.hailed.map(h => h.name)).toContain('Outsider');
   });
 
-  it('fails closed: unknown groups, a failed group read, a bad zone or the wrong NPC open nothing and never throw', async () => {
-    // Zarrin has no group on the roster, and Aldenmar is alone in group 1: the second group is unknown.
-    const unknown = hedgeEnv();
-    expect(await unknown.hb.noteHails([hail(unknown, 'Aldenmar', 0), hail(unknown, 'Zarrin', 0.2)])).toBeNull();
-    // The roster read errors (a timeout): the groups cannot be told, so no window.
-    const down = hedgeEnv();
-    down.failRoster = true;
-    const rows = [hail(down, 'Aldenmar', 0), hail(down, 'Corvale', 0.2)];
-    await expect(down.hb.noteHails(rows)).resolves.toBeNull();
-    expect(down.hb._windows()).toEqual([]);
-    // A hail of "Thelin" in the Plane of Tranquility is the other Thelin; one with no zone is not trusted by that name.
-    const other = hedgeEnv();
-    expect(await other.hb.noteHails([hail(other, 'Aldenmar', 0, { npc: 'Thelin', zone: 'potranquility' }),
-      hail(other, 'Corvale', 0.2, { npc: 'Thelin', zone: 'potranquility' })])).toBeNull();
-    const zoneless = hedgeEnv();
-    expect(await zoneless.hb.noteHails([hail(zoneless, 'Aldenmar', 0, { npc: 'Thelin', zone: null }),
-      hail(zoneless, 'Corvale', 0.2, { npc: 'Thelin', zone: null })])).toBeNull();
-    const full = hedgeEnv();
-    expect(await full.hb.noteHails([hail(full, 'Aldenmar', 0, { zone: null }), hail(full, 'Corvale', 0.2, { zone: null })])).not.toBeNull();
-    // A store that throws is swallowed.
-    const boom = hedgeEnv();
-    const rowsB = [hail(boom, 'Aldenmar', 0), hail(boom, 'Corvale', 0.2)];
-    boom.fake.selectAllPaged = () => { throw new Error('db down'); };
-    await expect(boom.hb.noteHails(rowsB)).resolves.toBeNull();
-  });
-
-  it('costs nothing for any other hail, a stale one, or a disabled store', async () => {
+  it('opens nothing for the other Thelins\' grants, a zoneless grant, a recital, a stale grant or a disabled store', async () => {
     const e = hedgeEnv();
-    expect(await e.hb.noteHails([hail(e, 'Aldenmar', 0, { npc: 'A Planar Projection', zone: 'codecay' })])).toBeNull();
-    expect(await e.hb.noteHails([hail(e, 'Aldenmar', -60), hail(e, 'Corvale', -60)])).toBeNull();   // an old log's backfill
-    expect(await e.hb.noteHails([])).toBeNull();
-    expect(await e.hb.noteHails(undefined)).toBeNull();
+    // The Plane of Knowledge and Tranquility Thelins give thelin steps too; the Seer recites thelin_2 anywhere.
+    expect(await e.hb.noteGrants([grant(e, 'Aldenmar', 0, { zone: '202' })])).toBeNull();
+    expect(await e.hb.noteGrants([grant(e, 'Aldenmar', 0, { zone: 'potranquility' })])).toBeNull();
+    expect(await e.hb.noteGrants([grant(e, 'Aldenmar', 0, { zone: null })])).toBeNull();
+    expect(await e.hb.noteGrants([row(e, 'Aldenmar', 'thelin_2', 'recital', 0)])).toBeNull();
+    expect(await e.hb.noteGrants([grant(e, 'Aldenmar', -60)])).toBeNull();   // an old log's backfill
+    expect(await e.hb.noteGrants([row(e, 'Aldenmar', 'fuirstel_2', 'event', 0)])).toBeNull();
+    expect(await e.hb.noteGrants([])).toBeNull();
+    expect(await e.hb.noteGrants(undefined)).toBeNull();
     expect(e.fake.calls).toEqual([]);
-    const off = env({ raid_roster: groupedRoster(1) }, { enabled: false });
-    expect(await off.hb.noteHails([hail(off, 'Aldenmar', 0), hail(off, 'Corvale', 0.2)])).toBeNull();
+    const off = env({ raid_roster: roster(1) }, { enabled: false });
+    expect(await off.hb.noteGrants([grant(off, 'Aldenmar', 0)])).toBeNull();
   });
 
-  it('a window that opens while the roster read fails is pending, with the hailers on it, and fills in later', async () => {
+  it('a window that opens while the roster read fails is pending, with the granter on it, and fills in later', async () => {
     const e = hedgeEnv();
-    const rows = [hail(e, 'Aldenmar', 0), hail(e, 'Corvale', 0.2)];
-    // The group read passes; only the roster snapshot behind the window fails.
-    let reads = 0;
-    const real = e.fake.selectAllPaged;
-    e.fake.selectAllPaged = (table, ...a) => (table === 'raid_roster' && ++reads === 2 ? Promise.resolve(null) : real(table, ...a));
-    const w = await e.hb.noteHails(rows);
+    e.failRoster = true;
+    const w = await e.hb.noteGrants([grant(e, 'Aldenmar', 0)]);
     expect(w.roster_pending).toBe(true);
-    expect(w.roster.slice().sort()).toEqual(['Aldenmar', 'Corvale']);
+    expect(w.roster).toEqual(['Aldenmar']);
+    e.failRoster = false;
     e.advance(35_000);
     const [view] = (await e.hb.getBoard()).windows;
-    expect(view.still.length + view.hailed.length).toBe(Object.keys(GROUPS).length);
+    expect(view.still.length + view.hailed.length).toBe(NAMES.length);
+  });
+
+  it('a store that throws is swallowed', async () => {
+    const e = hedgeEnv();
+    e.fake.selectAllPaged = () => { throw new Error('db down'); };
+    e.fake.select = () => { throw new Error('db down'); };
+    await expect(e.hb.noteGrants([grant(e, 'Aldenmar', 0)])).resolves.toBeNull();
   });
 });
 
@@ -947,14 +943,14 @@ describe('the wiring in index.js', () => {
       bot.indexOf('// ── Best-effort Supabase write. Falls through silently'));
   });
 
-  it('hands the stored hail rows (and only those) to the kill-less opener once the upsert worked, and swallows its failure', () => {
+  it('hands every stored row to the kill-less opener once the upsert worked, and swallows its failure', () => {
     const ingest = stripJs(sliceBlock(bot, 'async function _handleAgentPopFlags(req, res) {', '\n}\n'));
-    expect(ingest).toMatch(/if \(Array\.isArray\(r\)\) \{\s*written = r\.length;\s*_hailHails\(rows\.filter\(x => x\.flag_key === 'hail'\)\);/);
-    const note = stripJs(sliceBlock(bot, 'function _hailHails(rows) {', '\n}\n'));
-    expect(note).toMatch(/_hailBoard\(\)\.noteHails\(rows\)\.catch\(/);
+    expect(ingest).toMatch(/if \(Array\.isArray\(r\)\) \{\s*written = r\.length;\s*_hailGrants\(rows\);/);
+    const note = stripJs(sliceBlock(bot, 'function _hailGrants(rows) {', '\n}\n'));
+    expect(note).toMatch(/_hailBoard\(\)\.noteGrants\(rows\)\.catch\(/);
     // Behaviour: a throw (or a rejection) from the board never escapes into the ingest path.
-    const noteFn = (board) => new Function('_hailBoard', 'console', `${sliceBlock(bot, 'function _hailHails(rows) {', '\n}\n')}\nreturn _hailHails;`)(() => board, { warn() {} });
-    expect(() => noteFn({ noteHails: () => { throw new Error('x'); } })([])).not.toThrow();
-    expect(() => noteFn({ noteHails: () => Promise.reject(new Error('x')) })([])).not.toThrow();
+    const noteFn = (board) => new Function('_hailBoard', 'console', `${sliceBlock(bot, 'function _hailGrants(rows) {', '\n}\n')}\nreturn _hailGrants;`)(() => board, { warn() {} });
+    expect(() => noteFn({ noteGrants: () => { throw new Error('x'); } })([])).not.toThrow();
+    expect(() => noteFn({ noteGrants: () => Promise.reject(new Error('x')) })([])).not.toThrow();
   });
 });

@@ -31,6 +31,7 @@ function harness(displays, { eqOn = null, rect = { x: 2020, y: 100, width: 320, 
     BrowserWindow: { fromWebContents: () => win },
     _overlayEntries: () => [['exttarget', win]],
     _boundsKeyForEntry: () => 'extTargetBounds',
+    _coversScreen: (key) => key === 'canvas',   // main.js: the Canvas, and the Map while it is in Full mode
     _persistBounds: (k) => persisted.push(k),
     appendAgentLog: () => {},
     ipcMain: { handle: (name, fn) => { handlers[name] = fn; } },
@@ -75,6 +76,6 @@ describe('🖥 Move to another screen', () => {
   it('the right-click menu builds its rows from that list and never for the Timers canvas', () => {
     const p = stripJs(preload);
     expect(p).toMatch(/\(st\.screens \|\| \[\]\)\.forEach\(function \(s\) \{\s*menu\.appendChild\(mkItem\('🖥 Move to ' \+ s\.label, '#1f3a57', \(\) => ipcRenderer\.invoke\('wp-move-to-display', s\.id\)\)\);/);
-    expect(stripJs(main)).toContain("screens: key && key !== 'canvas' ? _otherScreensFor(win) : [],");
+    expect(stripJs(main)).toContain("screens: key && !_coversScreen(key) ? _otherScreensFor(win) : [],");   // the Canvas, and the Map in Full mode
   });
 });

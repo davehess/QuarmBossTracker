@@ -303,6 +303,7 @@ const kvLatch = require('./utils/kvLatch');
 const _raidGroups = require('./utils/raidGroups');
 const _groupScope = require('./utils/groupScope');
 const _zoneTimersMod = require('./utils/zoneTimers');
+const _raidTargetsMod = require('./utils/raidTargets');
 const _mainAssist = require('./utils/mainAssist');
 const _mainAssistStore = _mainAssist.createStore();
 const { discordAbsoluteTime, discordRelativeTime, isShortTimerBoss } = require('./utils/timer');
@@ -9713,8 +9714,8 @@ async function _handleAgentPopFlags(req, res) {
       .catch(err => { console.warn('[pop-flags] upsert failed:', err?.message); return null; });
     if (Array.isArray(r)) {
       written = r.length;
-      // A flag NPC no kill stands up (the hedge maze's Thelin) opens its hail window when two raid groups hail it.
-      _hailHails(rows.filter(x => x.flag_key === 'hail'));
+      // A flag NPC no kill stands up (the hedge maze's Thelin) opens its hail window on the first flag it gives.
+      _hailGrants(rows);
     }
   }
   _trackUpload({ endpoint: 'pop_flags', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
@@ -9737,10 +9738,10 @@ function _hailKill(args) {
   try { _hailBoard().openWindow(args).catch(err => console.warn('[hail-board] open failed:', err?.message)); }
   catch (err) { console.warn('[hail-board] open failed:', err?.message); }
 }
-// Stored hail rows → the board's kill-less opener (utils/hailBoard.js noteHails). Fire-and-forget, never throws.
-function _hailHails(rows) {
-  try { _hailBoard().noteHails(rows).catch(err => console.warn('[hail-board] hail open failed:', err?.message)); }
-  catch (err) { console.warn('[hail-board] hail open failed:', err?.message); }
+// Stored pop_flags rows → the board's kill-less opener (utils/hailBoard.js noteGrants). Fire-and-forget, never throws.
+function _hailGrants(rows) {
+  try { _hailBoard().noteGrants(rows).catch(err => console.warn('[hail-board] grant open failed:', err?.message)); }
+  catch (err) { console.warn('[hail-board] grant open failed:', err?.message); }
 }
 // Every kill recorded on the board, whichever path recorded it. The bosses the board does not carry
 // (Mithaniel Marr, Solusek Ro, the Keeper, the Behemoth, the Arbitor) are opened by name where the kill is
@@ -12216,6 +12217,8 @@ const _BUDGET_DEFAULTS = {
   // Mimic 2.9 spawn map: one GET per zone-in, cached 6h and ETag'd at the bot. Not shed: it is a read
   // (mob-info and who-lookup are not in _SHED_KINDS either), so over budget is a 429 the agent backs off.
   zone_spawns:     { perMin: 30,  durable: false, get: true },
+  // Charm overlay "Best pets here" (2026-10-14): same shape as zone_spawns, one GET per zone-in then a 304.
+  charm_pets:      { perMin: 30,  durable: false, get: true },
   // Mimic Spawn map sync (GET poll + POST push share it). A poll every few seconds per open map is ~20/min;
   // over budget is a 429 the agent backs off on (get:true applies to both verbs).
   map_sync:        { perMin: 60,  durable: false, get: true },
@@ -17343,6 +17346,30 @@ async function _handleAgentZoneSpawns(req, res) {
   res.end(gzip ? r.gz : r.body);
 }
 
+// GET /api/agent/charm-pets?zone=<short_name> — the Charm overlay's "Best pets here" (the guild lead,
+// 2026-10-14). utils/charmPets.js holds the reads, the charm-immunity rules and the 6 h per-zone cache. It answers
+// the zone's charm CANDIDATES; the caster's spell (level cap, body type) and the ranking are the agent's.
+async function _handleAgentCharmPets(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const charmPets = require('./utils/charmPets');
+  const supabase = require('./utils/supabase');
+  const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (!supabase.isEnabled()) return json(503, { error: 'database unavailable' });
+  const r = await charmPets.getCharmPets(supabase, new URL(req.url, 'http://x').searchParams.get('zone'));
+  if (r.status === 400) return json(400, { error: 'unknown or invalid zone' });
+  if (r.status === 404) return json(404, { error: 'no spawn points for this zone' });
+  if (r.status !== 200) return json(503, { error: 'try again shortly' });
+  if (charmPets.etagMatches(req.headers['if-none-match'], r.etag)) {
+    res.writeHead(304, { 'ETag': r.etag, 'Cache-Control': 'max-age=21600' });
+    return res.end();
+  }
+  const gzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
+  res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'ETag': r.etag, 'Cache-Control': 'max-age=21600' },
+    gzip ? { 'Content-Encoding': 'gzip' } : {}));
+  res.end(gzip ? r.gz : r.body);
+}
+
 // POST/GET /api/agent/map-sync — the Mimic Spawn map's synced spawn-point events (the guild lead,
 // 2026-10-12). The agent pushes CERTAIN attributions (utils/mapSync.js validates; a bad event is dropped,
 // a bad body or zone is a 400) and pulls everyone else's, so a zone's respawn timers match across the
@@ -17418,7 +17445,30 @@ async function _handleAgentMapSyncGet(req, res) {
     }
     _mapSyncCache.set(zone, hit);
   }
-  return _ptsJson(res, 200, { zone, now, events: hit.events.filter(e => e.at > since) });
+  const out = { zone, now, events: hit.events.filter(e => e.at > since) };
+  // The raid's targets here and the escort trails (utils/raidTargets.js): memory and one cached bot_kv read, no Supabase
+  // query per pull. Best-effort: a failure leaves the events exactly as before.
+  try { Object.assign(out, await _raidTargetsFor(identity, zone, sp)); }
+  catch (err) { console.warn('[map-sync] raid targets failed:', err && err.message); }
+  return _ptsJson(res, 200, out);
+}
+
+// Each Mimic's current target rides its live-state upload (_handleAgentLiveState); this is what the Map's pull gets
+// back: { targets, trails }. Scoped like Extended Target: the requester's raid, else group, else only their own.
+let _raidTargetsInst = null;
+const _raidTargets = () => _raidTargetsInst || (_raidTargetsInst = _raidTargetsMod.create({ supabase: require('./utils/supabase') }));
+async function _raidTargetsFor(identity, zone, sp) {
+  const rt = _raidTargets();
+  const inp = await _groupScopeInputs(identity.discord_id);
+  const selfChar = String(sp.get('character') || '').trim().toLowerCase();
+  const characters = [...(inp.characters || [])];
+  if (/^[a-z]{2,30}$/.test(selfChar) && !characters.includes(selfChar)) characters.push(selfChar);
+  const scope = _groupScope.scopeFor({ split: inp.split, discordId: identity.discord_id, characters, group: inp.group, disabled: inp.disabled });
+  const tsince = Number(sp.get('tsince'));
+  return {
+    targets: rt.targetsFor({ zone, scope, raidForName: inp.split ? inp.split.raidForName : null, own: new Set(inp.characters || []) }),
+    trails: await rt.trailsFor(zone, Number.isFinite(tsince) && tsince > 0 ? tsince : 0),
+  };
 }
 
 // GET /api/agent/who-lookup?names=a,b,c
@@ -18194,6 +18244,7 @@ async function _handleAgentLiveState(req, res) {
     // snapshot) — /raid moves them to "Not in raid (swapped to X)".
     if (st?.swapped_to && typeof st.swapped_to === 'string') {
       swaps.push({ character, swapped_to: st.swapped_to.trim().slice(0, 64) });
+      _raidTargets().forget(character);   // gone: its target no longer stands
       continue;
     }
     // Sanitize buffs → compact [{name, ticks, song}] and cap so a misbehaving
@@ -18265,6 +18316,13 @@ async function _handleAgentLiveState(req, res) {
     // The character's own known timers (agent 3.7.66+) — read back by
     // character-live-state for another raider's Target Info.
     const cooldowns = _sanitizeLiveCooldowns(st?.cooldowns, Date.now());
+    // The target's position for the Map (agent 3.7.166+: target_map in the Map's server frame, target_type, target_zone).
+    // Memory only, never a column: the upsert below takes `rows`, and these fields are not on it. No usable target
+    // (none, id 0, a player, a corpse) clears this character's sample. Never fails the POST.
+    try {
+      _raidTargets().noteSample({ character, zone: st?.target_zone, target_id: targetId, target_name: targetName,
+        target_type: st?.target_type, target_map: st?.target_map });
+    } catch (err) { console.warn('[raid-targets] note failed:', err?.message); }
     rows.push({
       guild_id:    guildId,
       character,
@@ -23647,6 +23705,16 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentZoneSpawns(req, res); }
     catch (err) {
       console.error('[zone-spawns] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.split('?')[0] === '/api/agent/charm-pets') {
+    if (await _overBudget('charm_pets', req, res)) return;
+    try { return await _handleAgentCharmPets(req, res); }
+    catch (err) {
+      console.error('[charm-pets] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }

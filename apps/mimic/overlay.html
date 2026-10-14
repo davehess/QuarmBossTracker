@@ -598,19 +598,35 @@
     var start = i < 0 ? 0 : Math.max(0, Math.min(i - 1, allRows.length - 3));
     return allRows.slice(start, start + 3);
   }
+  // A row's own seconds: first damage to last damage (index 11 / 12, epoch ms), at least 1, never more than
+  // the fight (the guild lead, 2026-10-14: "dps METER counts the same amount of time for everyone versus
+  // just when the person engaged"). A row with no span - a fight saved by an older agent, a guild-only
+  // player, the zeroed "you" row - reads the fight's seconds, as every row used to.
+  function _rowSecs(row, fightSecs) {
+    var a = Number(row[11]), b = Number(row[12]);
+    if (!(a > 0) || !(b >= a)) return fightSecs;
+    var s = Math.max(1, Math.round((b - a) / 1000));
+    return fightSecs > 0 ? Math.min(s, fightSecs) : s;
+  }
+  // The Sec and DPS a row shows. Tank tab rows keep the fight's seconds: the span stamps damage DEALT.
+  function _rowTiming(row, fightSecs, tank) {
+    var secs = tank ? fightSecs : _rowSecs(row, fightSecs);
+    return { secs: secs, dps: secs > 0 ? Math.round((row[1] || 0) / secs) : 0 };
+  }
   // One mini row: rank, name, total, @rate, then a share-of-raid bar under
   // the name. "me" reuses the full board's li.me highlight.
   function miniRowsHtml(rows, me, totalDmg, secs, tank) {
     var lc = me ? String(me).toLowerCase() : null;
     return rows.map(function(row){
       var d = row[1];
+      var rt = _rowTiming(row, secs, tank);
       var pct = totalDmg > 0 ? Math.min(100, (d / totalDmg) * 100) : 0;
       var isMe = !!lc && String(row[0]).toLowerCase() === lc;
       return '<li class="mrow' + (isMe ? ' me' : '') + (tank ? ' tk' : '') + '">'
         + '<span class="r">#' + row[4] + '</span>'
         + '<span class="n wp-mini-name" title="' + esc(row[0]) + '">' + esc(row[0]) + '</span>'
         + '<span class="v wp-mini-num"><span class="d">' + fmt(d) + '</span> <span class="dps">@'
-        +   fmt(secs > 0 ? Math.round(d / secs) : 0) + '</span></span>'
+        +   fmt(rt.dps) + '</span></span>'
         + '<span class="mbar wp-mini-bar"><i style="width:' + pct.toFixed(1) + '%"></i></span>'
         + '</li>';
     }).join('');
@@ -720,6 +736,10 @@
         owner[2]  = Math.max(owner[2] || 0, r[2] || 0);
         owner[8]  = true;                       // index 8 = absorbed a pet → "+pet"
                                                 // (7 is localDmg once the guild merge runs)
+        // index 11 / 12 = first / last damage time: the owner's span grows to cover the pet's, so
+        // "owner +pet" is timed from the first swing of either to the last of either.
+        if (r[11] > 0) owner[11] = owner[11] > 0 ? Math.min(owner[11], r[11]) : r[11];
+        if (r[12] > 0) owner[12] = owner[12] > 0 ? Math.max(owner[12], r[12]) : r[12];
         // index 10 = the pets folded in, kept apart for the bar's pet share and
         // the +pet line (index 9 is the pet row's own spawn id).
         (owner[10] = owner[10] || []).push({ name: String(r[0]), v: r[1] || 0, id: r[9] || null });
@@ -745,7 +765,8 @@
   function _histRows(HIST) {
     var rows = (HIST.local || []).map(function(p){
       return [p.character, p.dmg || 0, 0, p.pet_owner || null, 0, 0,
-              p.pet_charm || (p.pet_summoned ? 'pet' : false), undefined, false, p.pet_spawn_id || null];
+              p.pet_charm || (p.pet_summoned ? 'pet' : false), undefined, false, p.pet_spawn_id || null,
+              undefined, p.first_ms || null, p.last_ms || null];
     }).filter(function(x){ return x[0] && (!/\s/.test(x[0]) || x[3] || x[6]) && x[1] > 0; });
     var petNames = new Set();
     rows.forEach(function(r){ if (r[3]) petNames.add(String(r[0]).toLowerCase()); });
@@ -758,8 +779,12 @@
       var k = String(p.character).toLowerCase();
       if (petNames.has(k)) return;
       var loc = localBy.get(k);
+      // This machine's span times the guild's number only when this machine saw most of that number: a
+      // player seen in part has a span shorter than their real one, which would inflate their DPS.
+      var spanOk = !!(loc && loc[1] >= (p.dmg || 0) * 0.8);
       merged.push([p.character, p.dmg || 0, 0, null, 0, 0, loc ? loc[6] : false,
-                   loc ? loc[1] : 0, loc ? loc[8] : false, loc ? loc[9] : null, loc ? loc[10] : undefined]);
+                   loc ? loc[1] : 0, loc ? loc[8] : false, loc ? loc[9] : null, loc ? loc[10] : undefined,
+                   spanOk ? loc[11] : null, spanOk ? loc[12] : null]);
     });
     // Anyone we saw but the guild has not reported keeps their local number
     // rather than vanishing - the merge only ever ADDS.
@@ -791,18 +816,20 @@
     return '/rs ' + boss + ' in ' + secs + 's, ' + pnumK(totalDmg)
       + ' Damage @' + pnum(Math.round(totalDmg / secs)) + ', '
       + real.map(function(x, i){
+          // The header is the fight's; each raider's own "in Ns" is theirs, as EQLogParser writes it.
+          var rs = _rowSecs(x, secs);
           return (i + 1) + '. ' + x[0] + (x[8] ? ' +Pets' : '') + ' = ' + pnum(x[1]) + '@'
-               + pnum(Math.round(x[1] / secs)) + ' in ' + secs + 's';
+               + pnum(Math.round(x[1] / rs)) + ' in ' + rs + 's';
         }).join(' | ');
   }
   // The live fight as folded damage rows, whichever tab is showing — a "/rs parse" is always a DAMAGE
   // parse. Same row shape and keep-filter as the DPS board's own mapping in tick().
-  function _liveRsRows(perPlayer) {
+  function _liveRsRows(perPlayer, spans) {
     var rows = Object.entries(perPlayer || {})
       .map(function(e){
-        var t = e[1] || {};
+        var t = e[1] || {}, sp = (spans && spans[e[0]]) || [];
         return [e[0], t.dmg || 0, 0, t.pet_owner || null, 0, 0, t.pet_charm || (t.pet_summoned ? 'pet' : false),
-                undefined, false, t.pet_spawn_id || null];
+                undefined, false, t.pet_spawn_id || null, undefined, sp[0] || null, sp[1] || null];
       })
       .filter(function(x){ return x[0] && (!/\s/.test(x[0]) || x[3] || x[6]) && x[1] > 0; });
     return _foldPetsIntoOwners(rows);
@@ -903,10 +930,10 @@
       // Per-FIGHT raw damage from currentEncounterThreat.perPlayer[].dmg — the
       // honest damage each player has done to the mob(s) THIS encounter, not
       // total-session-seen. EQLogParser-style layout: rank · name · % ·
-      // Damage · DPS · Sec. Sec/DPS use the fight's elapsed time (startedAt
-      // → now) — the agent doesn't track per-player first-hit timestamps, so
-      // these are fight-relative, not active-time-relative. Close enough for
-      // the in-game HUD.
+      // Damage · DPS · Sec. On the DPS tab each row's Sec/DPS are that
+      // combatant's own active time (first → last damage, from et.spans);
+      // the total row, the Tank tab and any row without a span use the
+      // fight's elapsed time (startedAt → now).
       // Each row is [name, primary_value, max_hit].
       // DPS mode: primary = .dmg, max = 0 (no max-hit tracking for outgoing).
       // Tank mode: primary = .took, max = .tookMax (biggest single hit absorbed).
@@ -924,7 +951,8 @@
         // (FB-35): labelled "(pet)" so it never reads as a raider.
         allRows = Object.entries(pp)
           .map(([name, t]) => [name, (t && t[field]) || 0, (t && t.tookMax) || 0, (t && t.pet_owner) || null, 0, 0, (t && t.pet_charm) || (t && t.pet_summoned ? 'pet' : false),
-                               undefined, false, (t && t.pet_spawn_id) || null])
+                               undefined, false, (t && t.pet_spawn_id) || null,
+                               undefined, (((et && et.spans) || {})[name] || [])[0] || null, (((et && et.spans) || {})[name] || [])[1] || null])
           .filter(x => x[0] && (!/\s/.test(x[0]) || x[3] || x[6]) && x[1] > 0)
           .sort((a,b)=>(b[1]||0)-(a[1]||0));
         allRows = _foldPetsIntoOwners(allRows);
@@ -1020,7 +1048,7 @@
         if (!HIST && et && et.perPlayer && boss && secs > 0) {
           // FB-22: pets fold into their owners (the charmer who never swung gets a line too) before
           // the line is built; it used to drop every pet row and keep only their sum in the header.
-          var liveRs = _liveRsRows(et.perPlayer);
+          var liveRs = _liveRsRows(et.perPlayer, et.spans);
           var liveRsLine = _rsLine(boss, secs, liveRs.reduce(function(a, x){ return a + x[1]; }, 0), liveRs);
           if (liveRsLine) _lastParseLine = liveRsLine;
         }
@@ -1032,7 +1060,9 @@
       var bodyHtml = rows.map(function(row){
         var n = row[0], d = row[1], mx = row[2], petOwner = row[3], rank = row[4], extra = row[5], petCharm = row[6];
         var pct = totalDmg > 0 ? (d / totalDmg) * 100 : 0;
-        var dps = secs > 0 ? Math.round(d / secs) : 0;
+        // DPS tab: this row's own active seconds. Tank tab: the fight's (_rowTiming).
+        var rt = _rowTiming(row, secs, TAB_MODE === 'tank');
+        var rsecs = rt.secs, dps = rt.dps;
         var isMe = me && n.toLowerCase() === me.toLowerCase();
         // Pet rows carry their owner in dim parens — same convention as the
         // Mob Info "Allure (Sorvane)" charm label. Charm mobs with no live
@@ -1087,7 +1117,7 @@
              // no guild view at all (the number would just be itself).
              + '<span class="obs">' + (_obsDiffers ? fmt(row[7]) : '') + '</span>'
              + '<span class="dps">' + fmt(dps) + '</span>'
-             + '<span class="sec">' + (secs > 0 ? secs : '—') + '</span>'
+             + '<span class="sec">' + (rsecs > 0 ? rsecs : '—') + '</span>'
              + '<span class="pb"><i style="width:' + (barW - petW).toFixed(1) + '%"></i>'
                + (petW > 0 ? '<i class="pet" style="width:' + petW.toFixed(1) + '%"></i>' : '') + '</span>'
              + '</li>' + petLines;

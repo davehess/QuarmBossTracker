@@ -31,6 +31,7 @@ const overlay = readSource(path.join(ROOT, 'apps', 'mimic', 'overlay.html'));
 const { _foldPetsIntoOwners, _histRows, _rsLine, _liveRsRows } = evalBlock(
   sliceBlock(overlay, '  function pnum(n){', 'return String(n); }') + '\n'
   + sliceBlock(overlay, '  function pnumK(n){', "return (n/1e3).toFixed(2)+'K'; }") + '\n'
+  + sliceBlock(overlay, '  function _rowSecs(row, fightSecs) {', '  // One mini row: rank, name') + '\n'
   + sliceBlock(overlay, '  function _foldPetsIntoOwners(allRows){', '\n  // ── Poll loop '),
   ['_foldPetsIntoOwners', '_histRows', '_rsLine', '_liveRsRows'],
 );
@@ -128,8 +129,10 @@ describe('the current fight\'s copy counts the pet, under its owner', () => {
 describe('History\'s copy says whose pet it is', () => {
   it('unsettled: the same line the live copy gives for the same fight', () => {
     const { et, entry } = ownedPetFight();
-    expect(histLine(entry)).toBe(liveLine(et.perPlayer));
-    expect(histLine(entry)).toContain('2. Nyssara +Pets = 400@7 in 60s');
+    // One hit each, a second apart: each raider's own "in Ns" is their first-to-last damage (1 s here),
+    // while the header keeps the fight's 60 s. The fixtures above pass no spans, so they read 60 s.
+    expect(histLine(entry)).toBe(_rsLine(MOB, 60, total(_liveRsRows(et.perPlayer, et.spans)), _liveRsRows(et.perPlayer, et.spans)));
+    expect(histLine(entry)).toContain('2. Nyssara +Pets = 400@400 in 1s');
   });
 
   it('settled: the guild\'s numbers (the bot has already folded the pet) keep the mark', () => {
@@ -137,7 +140,7 @@ describe('History\'s copy says whose pet it is', () => {
     const settled = { ...entry, players: botRollup(et.perPlayer), uploaders: 3, settled: true };
     expect(histLine(settled)).toBe(
       '/rs a Shissar acolyte in 60s, 0.90K Damage @15, '
-      + '1. Corvale = 500@8 in 60s | 2. Nyssara +Pets = 400@7 in 60s');
+      + '1. Corvale = 500@500 in 1s | 2. Nyssara +Pets = 400@400 in 1s');
   });
 
   it('settled, when the bot left the pet as a raider: no line of its own, no double count', () => {
@@ -203,7 +206,7 @@ describe('and both copies are wired through it', () => {
     expect(clean).toMatch(/_histParseLine = _rsLine\(boss, secs, totalDmg, allRows\);/);
   });
   it('the live copy folds the live rows first', () => {
-    expect(clean).toMatch(/var liveRs = _liveRsRows\(et\.perPlayer\);/);
+    expect(clean).toMatch(/var liveRs = _liveRsRows\(et\.perPlayer, et\.spans\);/);
     expect(clean).toMatch(/_lastParseLine = liveRsLine;/);
   });
 });

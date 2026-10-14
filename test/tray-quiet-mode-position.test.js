@@ -13,18 +13,19 @@ import { readSource, sliceBlock, stripJs, ROOT } from './_source-slice.js';
 const SRC = readSource(path.join(ROOT, 'apps', 'mimic', 'main.js'));
 const MENU = stripJs(sliceBlock(SRC, '  const menu = Menu.buildFromTemplate([', "    { label: 'Quit Mimic', click: _quitMimic },"));
 
+// Layout B (2026-10-14): Quiet mode is the last top-level toggle, directly above the Settings / Open /
+// Help block (the full order is asserted in tray-menu-layout.test.js).
 describe('tray menu: Quiet mode position', () => {
-  it('appears once, directly above the Overlays submenu', () => {
+  it('appears once, directly above the Settings submenu', () => {
     const quiet = MENU.indexOf("label: '🔇 Quiet mode");
     expect(quiet).toBeGreaterThan(-1);
     expect(MENU.indexOf("label: '🔇 Quiet mode", quiet + 1)).toBe(-1);
-    const overlays = MENU.indexOf("{ label: 'Overlays', submenu: overlaysSubmenu }");
-    expect(overlays).toBeGreaterThan(quiet);
-    // Nothing else between the two: the next item after Quiet mode is Overlays.
-    expect(MENU.slice(quiet + 1, overlays)).not.toMatch(/\{ label: '/);
+    const settings = MENU.indexOf("{ label: 'Settings', submenu: settingsSubmenu }");
+    expect(settings).toBeGreaterThan(quiet);
+    // Nothing but a separator between the two.
+    expect(MENU.slice(quiet + 1, settings)).not.toMatch(/\{ label: '/);
   });
-  it('sits below the maintenance items, in the bottom block', () => {
-    expect(MENU.indexOf("label: '🔇 Quiet mode")).toBeGreaterThan(MENU.indexOf("label: 'Resource use"));
+  it('sits right after the Rescue item, in the top block', () => {
     expect(MENU.indexOf("label: '🔇 Quiet mode")).toBeGreaterThan(MENU.indexOf("label: '🧲 Rescue overlays"));
   });
 });

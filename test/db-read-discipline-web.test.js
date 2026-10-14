@@ -557,6 +557,7 @@ const UNIQUE_KEYS = {
   character_lockouts: [['character', 'boss_key']],
   fun_events: [['id']],
   pop_flags: [['id']],
+  raid_roster: [['uploaded_by_discord_id', 'name']],   // pkey (guild_id, uploaded_by_discord_id, name), 20260611210000; /pop/latest pages it
   pop_guide_ticks: [['character_name', 'item_key']],
   looted_items: [['id']],
   roll_sets: [['id']],
@@ -568,6 +569,7 @@ const UNIQUE_KEYS = {
   wolfpack_members: [['discord_id']],
   eqemu_items: [['id']],
   eqemu_npc_types: [['id']],
+  eqemu_spells: [['id']],   // /pop's missing-spell descriptions page the catalog by id (web/lib/popMissingSpells.ts)
   eqemu_faction_list_full: [['id']],
   eqemu_npc_faction: [['id']],
   eqemu_npc_faction_entries: [['npc_faction_id', 'faction_id']],

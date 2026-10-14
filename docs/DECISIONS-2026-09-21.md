@@ -114,6 +114,10 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Map: raid targets + shared escort trails** (§299) | Shipped: bot 3.1.263 on main, agent 3.7.166 on Mimic beta, `/privacy` updated | the guild lead: two Mimics in the hedge maze, one targets Thelin, the other's Map draws his trail; the MA targets a mob and the other's focus ring lands on it |
+| **Mimic Chat overlay, B** (§300) | On Mimic beta (agent 3.7.165): one feed, a chip per channel; officer, group and custom off by default, tells follow Settings → Tells; local only | the guild lead: say whether officer, group and tells may show; check it on beta. A session: A (tabs + tear-off) next; confirm Zeal's abbreviated tags `S`/`O`/`Sh`/`A`/`To` from a real `/abc 2` log |
+| **/pop alts grouped under mains** (§302) | On beta (web 1.8.153): `?alts=group`, `&sort=latest`, `&open=1`; highlights for 24 h and 3 days | the guild lead: compare https://b.wolfpack.quest/pop?alts=group&sort=latest with https://b.wolfpack.quest/pop?view=matrix and pick; a session then graduates it to main |
+| **/pop "Latest flags" strip** (§297) | On beta (web 1.8.152): `?flags=a` newest first, `?flags=b` by step; no param = production | the guild lead: pick a or b at https://b.wolfpack.quest/pop?flags=a and https://b.wolfpack.quest/pop?flags=b. A session then graduates it to main as the default and deletes the other |
 | **Member lockout** (§252) | Live: `/admin/access` [beta], bot 3.1.251, web 1.8.143. Officers cannot be locked out (web 1.8.144). Untested against a real member | the guild lead: lock a test or alt account, confirm Mimic, the site and a bot command all refuse it within 30 s, then unlock |
 | **Map target-of-target never fires on real Zeal** (§251) | Zeal's `/assistbar` (1.4.7) knows it, but the pipe export was only our unsent draft, so the Map's ToT arrow and the pin rule's "not aggroed" check fail open. Ported onto current Zeal main as fork branch `tot-pipe` (`21f41f3`, local only: the push was refused by this session's permissions) | the guild lead: push `tot-pipe` to the fork (or allow it), then say whether it joins `test-all` for an in-game check |
 | **Zeal in-game test run + PoP flags export + `/spellid`** (§227, §229) | `test-all` `035d8a3` (build passed) = PoP flags `b27bb26` (overview + tiers 1–5, once each, kept out of chat) + roleplay guild marks + `spell-id-tooltip` `67cb705` (`/spellid on` puts the spell id on the buff/gem/spellbook info window, off by default). 67 test hotkeys (socials pages 4–10, say + `/log`, works at level 1) log what to look for and the target's spawn id; `tools/evidence.py` on the fork's `showcase` branch turns the log into an EVIDENCE.md per change. Every suggestion post has "Pull request" and "Testing evidence" lines waiting to be filled | the guild lead: (1) install `test-all`, paste the hotkeys, run pages 4–10, send the log + `<name>-PoPFlags.txt`; (2) file the PRs (smallest first, §228). A session: write EVIDENCE.md per change, fill the PR links (posts, showcase JSON `pr_url`) |
@@ -7371,7 +7375,8 @@ maps, overviews. this will be bristlebane's job"* → *"mostly the theme and the
 look as characters so if we animate something in the future it looks good and we can recreate from point
 map during raids."*
 
-- **A separate Discord application, "Bristlebane"** (app id 1556801422689837240; private bot; no privileged
+- **A separate Discord application, "Bristlebane"** (app id 1556801422689837240 — ⚠ since renamed **miMIC** in Discord; the
+  Bristlebane persona is now a different app, see §323; private bot; no privileged
   intents), its own component `apps/bristlebane/` running as a Coolify app on Tower. Separate because a bot
   holds one voice connection per server and a second login on the RaidBosses token would answer every
   command twice. `CLAUDE.md`'s component table now lists five.
@@ -10315,3 +10320,431 @@ the Bastion of Thunder at the time.
   - **The Willsapper proc** lands as "<mob> yawns.", and ten other spells print the same line, the shaman slows among them. So
     the trigger only fires within 1.5 s of the member's own melee hit on that mob (`after_my_melee_ms`).
 - **Where it lands:** bot + migration on main, web character page on beta, agent + Mimic on beta (§295 records the ship).
+
+### 295. Shipped: sounds, voice packs, names, the Willsapper slap, and the Map's Full mode (2026-10-14)
+
+- **Bot 3.1.261 (main, `1b343563`):**
+  - `utils/pronounce.js` and the agent routes `GET /api/agent/pronunciations` (ETag), `GET /api/agent/pronunciation-suggest`
+    and `POST /api/agent/pronunciation`.
+  - Who may save: the owner, meaning `characters.discord_id` is theirs or the family root's is.
+  - The `name_pronunciations` migration file is in the repo. ⚠ Applying it through the MCP was cancelled, so check the
+    table exists before relying on it.
+- **Web 1.8.151 (beta, `3b3b4cba`):** "How to say this name" on the character page: ▶ Listen for everyone, and the editor
+  (alternates, coaching, Save) for the owner. `web/lib/pronounce.ts` gives the same output as the bot's (checked on 3,033
+  names).
+- **Agent 3.7.163 + Mimic beta (`ef9fbf79`..`b7d2632c`):**
+  - The sound library: eight sounds generated with ffmpeg, plus `<userData>/sounds`, where your own files override shipped
+    ones.
+  - Per trigger: `sound`, `sound_volume` and `sound_mode` add/replace. Your own sound on a guild trigger, on this PC only.
+  - The editor fields, a Sounds card, and the tray's "Open my sounds folder".
+  - GINA / EQLogParser imports bring their sound file along.
+  - Voice packs (Default, Herald, Quick, Narrator) plus an installed-voice picker. Pronunciations are applied to
+    trigger speech.
+  - Two walkthrough steps: "Your voice" and "Say your name".
+  - The "Willsapper proc" suggested trigger: slap, replace, `after_my_melee_ms` 1500.
+  - Not done: sound files packed inside a `.gtp`, and names in the Charm and CH-chain overlays' own speech.
+- **Map Full mode + keep-clear areas (agent 3.7.162, beta `c7d881a8`):**
+  - Full lays the map over EverQuest's client area, click-through always (`_coversScreen`).
+  - Keep-clear areas: the UI ini's open windows plus your own boxes.
+  - Open: the timers column is hidden in Full; nothing has been tried on Windows yet.
+
+### 296. The hedge maze board opens on Thelin's first flag, not on the hails that start the maze (bot 3.1.262, 2026-10-14)
+- **The call (the guild lead, 2026-10-14, from a morning raid):** *"This is supposed to come up after the last
+  boss dies, not right at the beginning of the hedge event, based on the raid"*; *"the one on the inside won't
+  give you flags until after he talks to terris thule at the end."*
+- **Why it popped early:** §285's opener fired on hails from two raid groups inside a minute. Raids hail Thelin
+  in groups to START the maze, so that is the first thing it saw. The production rows show it: a burst of
+  Thelin hails at 14:48–14:51 UTC, no grant.
+- **What the script says (`ponightmare/encounters/Maze.lua`):** a hail gives a flag only in state 4. State 4 comes
+  after the last construct dies, its shard is handed in, and Terris-Thule's talk ends. Both state-4 answers are
+  rows we already store: "Please destroy her…" (`thelin_2`, said even to raiders who already hold it) and
+  "I do not recognize your face…" (`cl_maze`). State 4 also starts Thelin's 10-minute depop.
+- **Where it landed:** `utils/hailBoard.js` `noteGrants` replaces `noteHails`. The first `thelin_2` (event) or
+  `cl_maze` (checklist) row whose zone resolves to `ponightmare` opens the window, which runs 10 minutes
+  (`minutes: 10`) from that grant. Recitals, other zones' Thelins and zoneless rows open nothing. Hails no longer
+  open anything; inside an open window they still count as seen. The two-groups rule and `GROUPS_WITHIN_MS` are
+  gone. `index.js` `_hailGrants(rows)` passes every stored row.
+- **Known limit:** if no raider with Mimic hails Thelin in state 4, nobody's grant reaches us and no board opens.
+  That is the same reach the boss boards already have.
+
+### 297. "Latest flags" strip on /pop: two layouts on beta, awaiting a pick (web 1.8.152, beta `7257bed1`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"we should show a 'latest flags completed/verified' section at the top
+  of the pop page."*
+- **What it shows:** `pop_flags` rows from the last 7 days whose source is `event` (the server's flag line) or
+  `recital` (an NPC recited it), each badged with its source. `checklist` and `hail_witnessed` rows are left out.
+  Traders, hidden characters and known levels under 46 are filtered with the page's existing lists.
+- **The two layouts:** `?flags=a` = newest first, one row per character per moment (rows within 90 s fold
+  together, implied steps dropped). `?flags=b` = grouped by flag step. The param is not `?v=` because `/pop` already
+  uses `?v=b|c` for the Essences queue. No param = production's page.
+- **Open:** the pick; whether checklist rows should appear as "self-reported"; recital rows can look newer than
+  the flag (the tooltip says so). Files: `web/lib/popLatestFlags.ts`, `web/app/pop/LatestFlags.tsx`,
+  `test/pop-latest-flags.test.js`.
+
+### 298. Map: Thelin's walk, a Raiders label switch, and the raid's focus ring (agent 3.7.164, Mimic beta `39d6bef3`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"for Thelin, if anyone is targetting him we should track that path and put
+  his path on the map"*; *"map should have a quick hide raiders labels too, and also highlight the MA's target or which
+  target has the most people targetting them."*
+- **Thelin's walk:** his waypoints come from the maze script, not a spawn grid, so the learned wander legs cannot hold
+  them. The agent keeps a plain trail instead (`MAP_TRACKED_PATHS`). Any character on this machine targeting him adds to
+  it. Gaps over 20 s and jumps over 400 units break the line, so the outside Thelin's body is never joined to the inside
+  one. **Local only for now:** sharing one trail across the raid needs a bot route (MAP-REFINEMENTS #14).
+- **Raiders button:** on the Map toolbar. It hides the raid and group names together; the dots and mob names stay.
+- **Focus ring:** the mob Extended Target puts on top. That is the MA's declared target, else the mob 2+ raiders target.
+  It gets one magenta double ring and an "MA" or "N targeting" tag. It is drawn only where its position is known: your
+  own target, or a pinned spawn point. Placing it from other raiders' targets needs each Mimic to share its target loc
+  (MAP-REFINEMENTS #15).
+- **Load:** the focus read uses the same 3 s Extended Target cache the dashboard state already refreshes, so it adds
+  no new bot traffic.
+
+### 299. Map: the raid's targets and shared escort trails (bot 3.1.263 on main `a1d7f11b`, agent 3.7.166 on beta `46babe84`, 2026-10-14)
+- **The picks (the guild lead, 2026-10-14):** both. **A**, "for these types of babysitting escort quests": one escort-NPC
+  trail every Mimic in the raid sees. **B**, "also important for MA": shared target positions, so the focus ring can be
+  placed when it is not your own target. B's samples are A's source.
+- **One upload, extended, not a new stream:** each Mimic's current target rides the existing `live-state` POST
+  (`target_map` in the Map's server frame, `target_type`, `target_zone`; `target_id`/`target_name` were already there).
+  The upload is change-driven plus a 45 s heartbeat; the agent adds a position-driven send only when the target is an NPC
+  that moved (30 units and 10 s for any mob; 12 units and 5 s, or 15 s standing, for an escort). The bot keeps the latest
+  sample per character in memory for 90 s (`utils/raidTargets.js`), never in a column, and sheds with
+  `flag_shed_live_state` because it is that stream. Target id 0 is no target.
+- **Served on the Map's existing pull:** `GET /api/agent/map-sync` gains `targets` (per zone: each targeted NPC's latest
+  position and how many raiders are on it) and `trails` (past `tsince`). Scope is Extended Target's: your raid (the other
+  raid dropped when two are live), else your group, else only your own characters. The trails are not scoped; they name no one.
+- **Escort trails (A):** `ESCORT_NPCS` in `utils/raidTargets.js`, mirrored by the agent's `MAP_TRACKED_PATHS` (a test fails
+  if they drift). Matched on zone + name, never id. Rules of the local trail: a point every 12+ units, a break after a 20 s
+  gap or a 400-unit jump, 800 kept, dropped after 12 h. A stretch is served only once it has moved 100 units, so a town copy
+  that stands still never draws. Stored in `bot_kv` (`escort_trail:<zone>:<name>`, one row per guild + zone + NPC), written
+  at most once per 10 s per trail, nothing written before a read has succeeded.
+- **Limits:** two raids in two copies of one zone share one trail per escort (only the 400-unit break separates them).
+  The Map's pull is every 10 s, so a shared focus position can be ~15 s old.
+- **Privacy:** a target's name and position is game state, not chat. PRIVACY.md lists it with the live status.
+
+### 300. Mimic Chat overlay: design B now, A next (agent 3.7.165, Mimic beta `3be5b8e4`, 2026-10-14)
+- **The ask and the pick (the guild lead, 2026-10-14):** *"i need a chat overlay so i can move it off the screen and be able to
+  show/hide different components from it, or break it into tabs"*; picked "B then A" — one feed with show/hide chips now, tabs
+  that tear out into their own windows next. C (Canvas pieces) was ruled out: the Canvas lives on one screen.
+- **Privacy split:** the upload filter (`DEFAULT_DROP_PATTERNS` / `shouldKeep`) is untouched. A separate local tap beside the tell
+  tap feeds a 500-line memory ring, served only on 127.0.0.1 (`/api/chat`, origin-checked). It is skipped for excluded characters
+  and never written to disk or queued. The route serves an empty page on failure rather than a stale one, so a switch turned off
+  never re-shows lines.
+- **Defaults, pending the guild lead's call:** guild, raid, say, OOC, shout, auction and NPC speech show; tells follow Settings →
+  Tells (Off by default; Local/Synced show them, neither uploads); officer, group and custom channels are off until switched on in
+  the overlay, and are captured only while it asks.
+- **Where it landed:** `apps/mimic/chat.html` + every overlay-parity site in `main.js`, the dashboard row, `test/chat-overlay.test.js`;
+  `/privacy` and PRIVACY.md say the same.
+
+### 301. Roll ties: a top tie is shown and settled by deathroll (agent 3.7.167, Mimic beta, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** from a Rolls card reading `611 (Carved Bone Ring) — <name> 507 · 7 rolls open` with two characters
+  on 507: *"if two toons roll the same number on a roll it should trigger a deathroll and highlight the tie"*.
+- **The rule:** only the TOP tie triggers anything — two or more distinct characters sharing the highest FIRST roll (a character rolling twice is
+  already a re-roll and never counts). A lower tie is a dim `=` on the row. With a linked quantity (3), a top group no bigger than the quantity
+  is not contested, so it is not a tie. One helper, `rollSetTies` in the agent, decides it; both Rolls surfaces draw what the snapshot carries.
+- **The deathroll starts at the TIED number, not the original range.** Both deathroll detectors (the agent's and `utils/deathroll.js`) chain a
+  roll only when its range is the previous result, and the tied number IS the previous result: `/random 507` chains straight onto the 0-611
+  roll. The first character to have rolled the tied number starts. With three or more tied, the first 0 puts one out and the rest start again
+  from the tied number until no more than the quantity remain.
+- **Nothing is sent to the game.** The Command Center 📋 copies one `/rs` line (plain ASCII, 250 characters at most). The agent reads the
+  follow-up /random lines the same way the detector does, so the tie resolves to the deathroll's winner without any bot change; a two-roll game
+  (which the detector's three-roll minimum would not record) still resolves the card. The tie's game is drawn on the tie, not again as "Deathroll 611".
+- **Not built:** a spoken "Roll tie" callout — the agent speaks no roll events, so there is no path to add one to.
+- **Where it landed:** `rollSetTies` / `_rollTieResolve` in `rollSetsSnapshot`; `_wpRollWhoHtml` / `_wpRollTiePrompt` / `_wpRollRowMark` in
+  `dashboard.html`; `rollTie*` in `apps/mimic/command.html`; `test/roll-tie.test.js`.
+
+### 302. /pop: alts grouped under their main, latest-change sort, 24 h / 3 day highlights (web 1.8.153, beta `6def4593`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"Lets group the flagging for alts by main with collapse turned on, we can expand all
+  from a button. Then if we want to sort by latest changes, highlight the things that have changed in the last day, and last 3 days."*
+- **The calls:** grouping is on the Matrix only, behind `?alts=group` (`&sort=latest`, `&open=1` to expand all). Native `<details>`,
+  collapsed by default; the summary line carries the family's newest change. A "change" is an `event` or `checklist` row, or a
+  recital that newly added a flag (no earlier row for that character + flag). `hail_witnessed` is never a change. Buckets: 24 h
+  (strong) and 3 days (soft). Main links come from `characters.main_name` at runtime; nothing is written into the repo.
+- **Known caveat:** a character's first-ever recital marks every flag it recites as new at that moment.
+- **Cost:** zero new queries; the page's existing paged `pop_flags` read adds `source`, the roster read adds `main_name`.
+- **Where it landed:** `web/lib/popAltGroups.ts`, `web/app/pop/AltGroupMatrix.tsx`, `web/app/pop/page.tsx`; `test/pop-alt-groups.test.js`.
+
+### 303. Chat overlay round 2: the Seer's tells, copy on the timestamp, channel breakouts (agent 3.7.168, Mimic beta `432b4999`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14, from a screenshot of EverQuest's Tells window):** *"tells from seer did not come through"*,
+  *"Add a copy button if you clikc on the timestamp next to the message"*, *"Add breakout abilities for different tabs by right
+  clicking the name of the chat type"*.
+- **Seer:** her recital is written to the log as a bare sentence (no "tells you"). `classifyChatLine` reuses the flag matcher
+  (`_POP_RECITAL_RX`) and files it as a Tells line from "Seer", under the Tells gate. Her "nothing new" answer is added to the chat
+  block only (`_SEER_QUIET_RX`), never to the flag matcher, so it is not uploaded as a recital.
+- **Copy:** the timestamp is a button; it copies `[hh:mm] Speaker: text` and flashes "copied".
+- **Breakouts (design A, first half):** right-click a channel chip → its own window (`chat.html?groups=<id>`), remembered across
+  restarts (`cfg.chatBreakouts`), own bounds. Breakouts exist exactly while Chat does; a breakout's ✕ puts the channel back.
+- **Open:** a per-breakout font size; whether ✕ should close instead of put back; tabs inside one window (design A, second half).
+
+### 304. Seer paste on the PoP guide; Start here and the figurine removed (web 1.8.154, beta `26737a4d`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"reverse engineer [takp.info/flag-check] so that peoples flags can just copy what the
+  seer says and fix their flags and get next steps"*; then *"players need to be able to submit the seer's stuff at the top of the page
+  with a collapsible text field"*, *"These top items can be removed, they're superflous"*, *"The intricate wooden figurine is not in
+  the game right now"*.
+- **Where:** a collapsed "Paste what the Seer says" box at the top of `/pop/guide` (all three layouts), not a separate page. It lands as
+  the default on beta: the removals are shared data, so no variant param could gate them.
+- **How:** the paste is read in the browser (`web/lib/popRecital.ts`); it ticks the guide's steps, rings the next step per open plane,
+  lists closed planes and unrecognised lines. Save sends only matched sentences; the server re-reads them, checks the character is on
+  the member's account, and writes `pop_flags` source `recital` at one time, skipping keys that already have a recital row. The raw
+  paste is never stored. `RECITAL_STAGES` / `STAGE_IMPLIES` are copied into `web/` (it imports nothing outside), held in step by
+  `test/pop-seer-paste.test.js`.
+- **takp:** substring-match each Seer sentence to a per-chain level, then a hand-written decision tree. No licence stated; no code or
+  text copied. Our 44 guided-meditation sentences are complete against Quarm's Seer script. Not yet read: the 14 "unlock memories"
+  locked texts (a kill done, an earlier hail missing), the best next-step signal.
+- **Removed:** the Start here section and the figurine step. `start_flag_fixers` (Seer + Maelin loop) and `start_traveler_manual`
+  (Willamina chain) carry content that tests and Mimic's Quests mode use, so they moved to the Knowledge quests section, same keys.
+- **Open:** keep or delete those two moved items; whether to tag pasted rows (e.g. `npc='web paste'`) so they can be told from
+  Mimic's. Today they are identical, so a paste for your own character reads as a real recital.
+
+### 305. Chat overlay round 3: earlier characters, history from the logs, search, zone lines (agent 3.7.169, Mimic beta `f3840337`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"CHAT overlay should be able to bring in the chat from the previous characters you were on,
+  and put a line in saying swapped character, and the timeframe between. If you log out and log back in, show the previous logs (and
+  give a timeframe, past 24h, past 12h, past 6hr, 3, 2 1"*; *"and search to only show chats from that specific character"*; *"Lines
+  like 'You have entered Plane of Knowledge' are worth showing too"*.
+- **Calls:** a swap is a different log's line ≥30 s after the last (the /camp timer alone is 30 s, so dual-boxing doesn't draw a rule
+  every line; below that a dim "heard on X" tag). History is OFF by default and reads only when asked, backwards from the end of each
+  log; it never writes or uploads. Zones are an ungated group, on by default. Search matches the speaker or the character that heard it.
+- **Privacy:** PRIVACY.md and `/privacy` say the overlay can read the last 1–24 h from the game's own logs, on the PC only.
+- **Open:** history is not time-merged with live lines newer than the ring's start (it sits above); the history window is remembered
+  per window in localStorage, not in Mimic's config.
+
+### 306. PoP guide in collapsible sections with a sidebar (web 1.8.155, beta `c717eb93`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"Collapse all of the pop/guide stuff down into subsections, Tiers and plane of knowledge,
+  move the POK stuff except for the seer at the top. Give a sidebar nav for the different sections to drop down. It should be a simple
+  set of clicks."*
+- **Shape:** the Seer paste stays first. Below it, closed sections Tier One … Tier Four and the Plane of Time (the `/pop` chart's own
+  tiers), then the Plane of Knowledge. A tier's planes are sub-sections (the lower crypt, Temple of Marr and Ragrax fold into their
+  parent). Each summary shows "n / m done" and "▶ next" when the Seer paste rings a step inside. Sidebar on wide screens, drop-down on
+  phones; Expand all / Collapse all; URL hashes (`#tier-2-valor`, `#pok`) open on load and on back.
+- **PoK after the tiers:** the tiers are the route; Knowledge is the side shelf (flag fixers, the Traveler's Manual, the Knowledge
+  quests, the spells), and the Seer box already covers flag repair. Maelin hand-ins between raid kills stay with their tier; moving one
+  is a line in `STEP_HOME`.
+- **Open:** "▶ next" from Mimic data on this layout (today only the Seer paste drives it); whether to retire `?v=b` / `?v=c`.
+
+### 307. /pop opens on My Characters; missing spells collapsed with copy; wider chart (web 1.8.156, beta `6c704690`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"The 'your pop spells still needed' should be collapsed and let you expand to see the full
+  list and what the spell does, link to pqdi, and a copy button…"*; *"The pop flags page should start on your characters by default,
+  with mains being the second toggle and all characters being the third (grouped by mains like I mentioned)"*; *"Pop flags breakdown
+  should be a little wider and less dense."*
+- **Toggles:** scope (`?scope=`) My Characters → Mains → All characters; view (`?view=`) Chart | Matrix. A bare `/pop` opens on My
+  Characters (its table). All characters' Matrix groups alts under mains (`?alts=flat` opts out). Old links that name a zone, view or
+  alts but no scope stay Mains; `?view=mine` is My Characters. Signed-in with no linked characters → Mains.
+- **Spells:** a closed `<details>`; per character a copy line (≤200 characters, split "(1/3)" without cutting a spell) and per spell
+  the PQDI link, level, scroll and a one-line description synthesized from `eqemu_spells` (no prose exists in the catalog). One chunked
+  `eqemu_spells` lookup, My Characters only.
+- **Chart:** full container width, 3 cards per row from `xl`, more padding, step rows that don't wrap the counts. CSS only.
+- **Open:** whether the guild-wide spell table at the bottom collapses too; whether My Characters' Chart view shows your spells.
+
+### 308. Charm overlay "Best pets here" (agent 3.7.170 Mimic beta `f4f3b917`, bot 3.1.264 main `4ef29778`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"integrate a list of the better charm pets for the highest level charm a player has for the
+  zone that they're in"*, pointing at a third-party pet finder. It states no licence: we took the idea only, with our own data and
+  Quarm's server source for the rules.
+- **Charm immunity (from EQMacEmu `Mob::IsImmuneToSpell`):** special ability 14 (Uncharmable, already `utils/mobSpecials.js` code 14);
+  merchant 41, banker 40, guildmasters 20–34; Veksar at level 50+; level above the spell's SPA 22 max; body type for animal (21),
+  undead (3/8/12), summoned (24/27/28) and plant (25) charms. We also drop placeholder and untargetable bodies and raid targets (the
+  server's "too powerful for your charm" engage notice is not in our mirror, and a false positive costs a pull).
+- **Split:** the bot serves a spell-independent candidate list per zone; the agent owns the spell, cap, body type and ranking.
+- **Ranking:** damage per second (average hit ÷ swing time, `attack_delay` in tenths) in 10 % steps, then HP, then level; up to 3
+  chips (summons, flurry, triple, dual wield, rampage, proc, fast) — chips only, no invented multipliers.
+- **Spell:** the spellbook file (`/outputfile spellbook`, read locally) first, else the class's highest charm at its level, labelled
+  "assumed from level". Class levels are PQDI's. Dictate is never assumed.
+- **Not done:** Dire Charm AA; resist modelling; a Map highlight (costed in the report: medium build, colour meaning hard to retract).
+
+### 309. /pop/latest [beta]: a grouped stream and stage cards in step order (web 1.8.157, beta `7167ca91`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"I like the verbose stream of A, but for flags that go together I think that a list view in
+  alpha order by default would be helpful … There should be a collapsible latest section that has B's layout format, in order of stages
+  and what relies on each flag … The (and 29 more) item isn't useful if we can't open it up. Make me a new beta page to try all of this
+  out."*
+- **What it is:** https://b.wolfpack.quest/pop/latest, linked from `/pop`'s header. Stream: characters who earned the same steps within
+  5 minutes are one row (names A–Z by default, or latest first); with a live raid, a collapsed "N in the raid still need this". By
+  stage (open by default): cards per progression line in dependency order, each step with its own plane, an expandable name list and an
+  "unlocks →" line. Filters 24 h / 3 d / 7 d, Mains / All.
+- **Fixes to the §297 strip:** a recital row shows only steps new to that character (repeats collapse); a step shows its own plane,
+  never the zone the row was heard in (the Seer's Plane of Knowledge).
+- **Calls:** chain order is derived (`NEXT_LINES` → `STEP_GUIDE` / guide flags → `STEP_IMPLIES`), no second order table; "unlocks →"
+  also reads plane gates (so the hedge shows "enter Lair of Terris Thule"); every fold is a native `<details>` (`ExpandList`); "still
+  needs it" counts event / recital rows only; idle chain steps show dimmed for context.
+- **Cost:** one paged `pop_flags` read (90 days), one paged `raid_roster` read, the shared roster read, one levels call.
+- **Open:** A–Z vs latest; dimmed idle steps; first-ever recitals still read as new (labelled "first recital").
+
+### 310. Tray menu: layout B (Mimic beta `a9fcbfb4`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"We need to refine and simplify the taskbar menu so its not so overwhelming"*, then
+  *"Tray layout B"*.
+- **What it is:** the top level is status, Show dashboard, Overlays ›, Rescue, Quiet mode, Settings ›, Open ›, Help ›, Quit. Settings ›
+  holds the options under Behaviour / Mode / My tells / Updates / crash reports / Account, then Settings…; Open › holds the pages,
+  folders and windows; Help › holds the walkthrough, feedback and Restart agent.
+- **Calls:** Settings › is one flat submenu with disabled headers and separators, not nested submenus (a checkbox stays one click from
+  its group). Positions only: no label, handler or checkbox changed (`test/tray-menu-layout.test.js` checks against a snapshot of the
+  old template). Agent only: "Spoken trigger callouts (TTS)" takes the Overlays slot.
+- **Open:** a pending "Restart to install update" now sits inside Settings › Updates instead of at the top level; the guild lead's call
+  whether it gets a top-level line while one is pending. Tray-only items with no dashboard or Settings twin: "Pop up when an update is
+  ready", the four "Pause Discord DMs" items, Uninstall, Show agent log.
+
+### 311. Chat overlay: group chat and joined channels on by default (Mimic beta `a069a5ee`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"not seeing group chat or channels in the chat window either"*. The classifier read them; the
+  overlay's ⚙ switches for them defaulted off.
+- **Call:** group and joined channels default on (`p.group !== false`, `p.custom !== false`); officer stays opt-in. A switch turned off
+  stays off. Still memory-only on the player's PC; `PRIVACY.md` and `/privacy` updated to match.
+
+### 312. UI Studio chat routing: real channel names, layout ↔ routing link (Mimic beta `a730c5be`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"These Channels need to say what's actually in these chats, not just Ch 26 or Ch 46"*,
+  *"When you select one of these windows it should highlight the chat window routing"*, *"Also the labels are wrong"*, with the
+  in-game Filters menus of two windows as ground truth.
+- **Call:** `ChannelMap<N>` is the filter-menu position, not a colour id. Ids 0–40 from MacroQuest eqlib `eChatChannel` (corroborated by
+  Zeal's `chatfilter.cpp` offsets), 41–56 from Zeal's `Extended_ChannelMaps` in saved order; both in-game windows are golden fixtures and
+  match exactly. The old table was invented and wrong from id 3 on. Unsourced ids stay "Ch N"; no guesses.
+- **Also:** /join slot names from eqclient.ini's autojoin list, passwords cut in main; selection is one state across layout and cards; chips
+  drop onto layout rectangles; stacked titles no longer overlap.
+- **Open:** the autojoin order = slot order assumption is unverified (tooltip says so); the default-channel pill names only 3 = Tell
+  (`ChatWindow<N>_DefaultChannel` values beyond that need an in-game capture).
+
+### 313. DPS meter: each row's seconds are its own active time (agent 3.7.171, beta `a79291e6`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"dps METER counts the same amount of time for everyone versus just when the person engaged.
+  That makes the DPS calculation incorrect."*
+- **Call:** EQLogParser-style. A row's Sec = its first damage → last damage (≥ 1 s, ≤ the fight); an owner's span covers its pets'. The
+  total row, the Tank tab, old saved fights and a guild-settled player this machine saw under 80% of keep the fight's seconds (a partial
+  local span would inflate DPS). Spans ride beside `perPlayer`, never inside it, so the threat-snapshot upload (58% of the database) does
+  not grow. The copied `/rs` line writes each raider's own "in Ns", which the bot's `/rs` parser already reads as per-player seconds.
+- **Open (needs a pick):** the Me HUD fight DPS / tonight average, the My parses ledger (saved `dur`) and the Trend view still divide by
+  fight time and must move together; the bot's merged-parse DPS (`index.js` `/rs` and merge paths, `utils/killRecap.js`) also uses one
+  duration for everyone.
+
+### 314. Target Info: the mob's observed hit types (agent 3.7.172, beta `4ec04404`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"when we observe what types of hits a mob is doing, put that onto the target info
+  (slashing/ piercing/etc)"*.
+- **Calls:** keyed by mob NAME (`_mobCaseKey`), not spawn id — the melee line has no id and a mob swings while you target another;
+  misses / dodges / parries count (the verb is the attempt), max hit from damage only; our pets and declared guild pets excluded; a
+  one-word attacker counts only when it is not a known player or pet. Verb map reuses the Pet tracker's `_verbToSkill` (+ stab, backstab,
+  strike, rend). Local only, nothing uploaded.
+- **Open:** chip placement (slate chip vs the stats grid); an alpha Canvas piece; pooling across the guild would need a new upload.
+
+### 315. Chat overlay round 4: tags, per-channel switches, show-only, Melee, per-window text (agent 3.7.173 · Mimic beta `efd30696`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"put the [P] [RS] [GU] [1] [2] [3] [4] etc in front of the lines"*, *"Allow for turning off
+  specific channels and keep people's settings"*, *"need rightclick on chat to 'show only this' as an option to toggle on and off"*,
+  *"have a spot for combined melee"*, *"extra windows need their text to be configurable"*.
+- **Calls:** joined-channel switches keyed by lower-case NAME (slot numbers move), shared by every character; show-only is a view toggle
+  that never writes the switches; Melee is opt-in with its own ring and reuses the agent's melee parser; "extra windows" read as the
+  breakouts + Melee window + main, each with its own font size / spacing / timestamps / tags. All local, memory only.
+- **Open:** per-character channel switches?; a real `/abc` log to confirm.
+
+### 316. Overlay flicker on app switch (Mimic beta `65eceea9`, 2026-10-14)
+- **The report (the guild lead, 2026-10-14):** *"lately i've been seeing a flicker for the overlays when i switch between applications"*.
+- **Cause (a9919715, 2026-10-13, overlays drop behind other apps):** a NULL foreground sample while switching read as focused, raising
+  every overlay over the incoming app for the 600 ms debounce; and clicking back into EverQuest covered the dropped overlays until the
+  next 400 ms sample. **Fix:** ignore NULL samples; poll every 120 ms (two user32 calls; parent-alive check still ~4 s).
+- **Open:** Windows retest; quick A/B is "Other apps can draw over overlays when EverQuest isn't focused" off.
+
+### 317. The timer ✕ dismisses on the press, for every row kind (agent 3.7.174 · Mimic beta `4ae64a3b`, 2026-10-14)
+- **The report (the guild lead, 2026-10-14, a screenshot):** *"These timers aren't able to be clicked off"* — the second time (§171's
+  `data-wp-interact` round did not fix it). The rows: the server tick, two spell recasts, two zone-timer countdowns.
+- **What changed:** the ✕ no longer owns a click listener. One `mousedown` listener on the stable `#timers` parent reads the row's
+  `data-timer-id`, so a repaint between press and release cannot lose it, and a row sliding up under the cursor cannot take the click.
+  The window stays armed until the button comes up. The cancel POST retries twice. The ✕ has a 5 px invisible ring.
+- **Server tick:** ✕ hides it for as long as the overlay stays open (tooltip says so); nothing is sent to the agent, and the agent's
+  clear-all leaves it alone.
+- **Zone timers:** a countdown the raider ✕'d stays dismissed when the bot hands that window out again on re-entry (2-minute
+  tolerance; a new emote arms normally). Before this the "stampede window" came straight back.
+- **Not proven on Windows:** whether the Canvas iframe ever armed its window; main.js now logs `[hover] first arm from <page>` once per
+  page. Test: `test/timer-dismiss.test.js`.
+
+### 318. Installing an update shuts Mimic down like Quit, positions saved (Mimic beta `b26c8162`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"when installing a new version, please exit gracefully and save window position"*.
+- **What it fixed:** all four install paths (tray, dashboard, the "Restart now" dialog, install-when-EQ-closes) called `quitAndInstall`
+  straight away; bounds saved only on a 400 ms debounce, so a move just before an install was lost; and Quit itself hard-killed the agent
+  (`kill()` on Windows skips its exit hooks, so the upload queue flush never ran).
+- **Now:** one `_gracefulShutdown` (memoised) flushes every pending bounds and floor save into one config write, stops the watchers,
+  asks the agent to stop via its `/api/shutdown` and waits ≤ 3 s (then kills), and only then `_installUpdateNow` → `quitAndInstall`.
+  Quit, `before-quit` (covers install-on-quit and OS logoff) and the agent hot-swap use the same path. A throwing install restores
+  everything. Test: `test/mimic-graceful-update-exit.test.js`.
+- **Open:** the main dashboard window's own size/position is never saved (always 1200×800) — a separate change if wanted; first real
+  test is the update AFTER this build, since the build being replaced still has the old shutdown.
+
+### 319. Tray: Updates is its own submenu (Mimic beta `1ae718c1`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"add updates to the submenus for the taskbar"*. Also settles §310's open question (a
+  pending update now shows at the top level, as the submenu's label "Updates — vX ready").
+- Same items, same handlers; moved out of Settings ›, placed between Settings › and Open ›.
+
+### 320. Chat overlay round 5: Spells, Skills, Melee filters and colours (agent 3.7.175 · Mimic beta `0d4d33bd`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"chat can also have separable spell and skill information"*; *"For Melee in the chat, it
+  would be helpful to filter out other's information the same way we do with in game filters (do i want to see others combat or just
+  mine). The color schema could be updated as well."*
+- **Calls:** `[SP]` and `[SK]` are opt-in groups built like Melee (own ring, breakable, per-window text). Melee lines are mine / on me /
+  others (EQ's own split; a hit ON your pet is "others"), with a Misses switch; all on by default so nothing changes until switched.
+  Colours: mine near-white, on me red, others grey, misses dimmer; spells purple, skills amber — CSS variables, colourblind themes apply.
+- **Open:** skill-result line shapes beyond forage/traps are from memory (fishing, sense heading, hide/sneak, bind wound, tradeskill);
+  check a real log before widening. Landings on others cover only what the agent already indexes.
+
+### 321. Grow-upward overlays get a top-corner resize grip clear of the ✕ (Mimic beta `ac73bace`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"when grow upwards is on, we should be able to drag the top right corner of overlays while not
+  hitting the X button."*
+- **Call:** a 12 px grip in the top-right corner, and the ✕ steps 8 px left while grow-up is on (shrinking the grip into the 6 px margin
+  left a sliver too small to hit). Dragging keeps the bottom-left fixed. One shared preload grip, so every ✥ overlay gets it.
+- **Open:** Windows check; a header right under the ✕ may lose up to 2 px of gutter.
+
+### 322. UI Studio: named EverQuest UI layouts per character (Mimic beta `d77a7d5b`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"we should allow for multiple layouts for characters screens so we can have alternative
+  modes, and be able to back up both. Name them as well."* (a minimal-chat layout that leans on the Chat overlay, beside the full one).
+- **Calls:** a layout is only the character's `UI_<char>*.ini` — EQ keeps changing socials, spell sets and `eqclient.ini` on its own, so a
+  switch must never lay old copies of those back. Switching while EQ runs waits for logout (same queue as deferred saves). Backups carry
+  the name in the existing `ui_snapshots.label` ("Layout: <name>"): no bot change, no migration.
+- **Open:** `ui_snapshots` has no pruning and each layout save adds a row; `/me/ui` may now show "Layout: …" as the newest label;
+  Windows + EQ run to confirm EQ keeps the swapped file after a camp.
+
+### 323. Bristlebane's chat agent moves from V5 to Tower (Coolify); cloud sessions get a deploy token (2026-10-14)
+- **What broke:** the OpenClaw agent wearing the Bristlebane Discord app, on V5, died on a setup step with "Auto-compaction could not
+  recover this turn" (its fix hint: `agents.defaults.compaction.reserveTokensFloor` ≥ 20000) — a local model's small context window
+  filled by one step's output.
+- **The guild lead (2026-10-14):** *"this is on V5 not on tower. If you can set this up on tower for me in coolify, GO"*; then picked
+  **A — give the cloud session a deploy token** (over B, a compose the guild lead clicks in) and **the model stays V5's local model over
+  the LAN**.
+- **Access change (widens §9):** a second Coolify token with **write + deploy, still no `read:sensitive`**, in the cloud environment's
+  `COOLIFY_TOKEN`. Secrets (the Discord bot token) are pasted in Coolify's UI by the guild lead, never sent through a session. The
+  tailnet policy is unchanged (Coolify API 8000 + Tower 5432 only).
+- **Found on the way:** the existing Coolify app `bristlebane` (the voice bot, `apps/bristlebane`) is `exited:unhealthy` since
+  2026-10-06; its logs need `read:sensitive`, so they are unread.
+- **Which Discord app is which (the guild lead, 2026-10-14):** the Coolify app `bristlebane` runs Discord application
+  `1556801422689837240`, which §166 called "Bristlebane" and which now shows in the server as **miMIC**. The OpenClaw chat agent on V5
+  is a **separate** application, `1549680353747406858`, named **Bristlebane**. Different tokens, so the two never fight over a login.
+  (The component and folder are still called `apps/bristlebane`; renaming them is a separate change.)
+- **Open:** the token; V5's model server must listen on the LAN at a real context that matches the declared one (see §325 — not
+  `reserveTokensFloor`); the step files (`01-step0-discover.md`) live on V5 and are not in the repo.
+
+### 324. Chat overlay: Spells and Skills get mine / on me / others filters (agent 3.7.176 · Mimic beta `7488b291`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14, a screenshot of the ⚙):** *"same here with spells skills - Filters for spells for others
+  should be there as well."*
+- **Calls:** Spells show My spells / On me / Others' spells; Skills show My skills / Others' skills; all on by default; shades of each
+  group's hue. Resists, fizzles and interrupts count as mine (no separate switch). Known edge: your self-buff landing on you reads
+  "on me", because EQ's landing text does not say who cast it.
+
+### 325. The Bristlebane chat agent's Tower deploy is in the repo; `reserveTokensFloor` is a trap (2026-10-14)
+- **Research (sourced, OpenClaw docs + source):** the V5 error's hint is stale. `reserveTokensFloor` defaulted to 20000 already, and
+  from OpenClaw 2026.8 the key is **removed** — an unknown key makes the gateway refuse to start. The overflow comes from one big tool
+  result or a context window smaller than declared. ⚠ This corrects this session's earlier advice to set it.
+- **Landed (main):** `deploy/openclaw-bristlebane/` — `docker-compose.yml` (Coolify Compose from Git; busybox init service chowns the
+  named volumes to uid 1000 and seeds the config once; pinned `ghcr.io/openclaw/openclaw:2026.10.3`; no ports), `openclaw.seed.json5`
+  (`tools.profile: "messaging"`, an honest 64K `contextWindow` = `num_ctx`, `midTurnPrecheck`, smaller bootstrap caps, Discord via
+  env SecretRef, placeholders only), `README.md` (deploy + V5 cutover). Self-host wizard §3 entry added.
+- **Open:** the deploy token (§323), V5's model server on the LAN at a real 64K context, the `<…>` ids, stopping V5's gateway first,
+  and resetting the Bristlebane token on the cutover. Untested on Coolify: volume naming and `service_completed_successfully`.
+
+### 326. Chat overlay: main channels up front, the rest under More (Mimic beta `e6c95d9e`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"This is getting crowded. Make the main set Guild/Raid/Party/Say/Tells/ooc/shout, then
+  the rest as an expandable section 'More' that opens up to show the rest"*.
+- **Calls:** main chips Guild · Raid · Party · Say · Tells · OOC/Shout; everything else behind `More ▾`, which shows "More (N)" while
+  closed so nothing is on unseen; the ⚙ gets a matching "More settings" fold. Open states remembered per window. Open: "Party" vs
+  "Group (party)" wording.
+
+### 327. UI Studio: rename, add and delete chat windows, set their font; hotbar pages ask before discarding (Mimic beta `f26fa569`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"need to be able to delete or rename chats, or make new ones in the UI Studio"*; *"clicking
+  off the hotbar pages should ask if you want to cancel changes. The UI should shrink to not sit over top of the hotbar pages"*; *"also
+  include chat fontsize on the ui studio for chats"*.
+- **Calls:** delete moves the window's channels to Main Chat (0) and renumbers later windows; never deletes 0 or a Tell window; falls back
+  to last-window-only if an unknown numbered key exists. Font is EQ's `_FontStyle` index 0–6 (point sizes unconfirmed, so the picker
+  shows the index). The inspector save stays blocked while EQ runs rather than deferring past logout, because a renumbering planned
+  before logout could be stale after EQ rewrites the file. The hotbar editor docks beside the layout and asks Keep editing / Discard.
+- **Open:** a live EQ check that a created window loads, that an emptied `[Chat N]` header is harmless, names up to 32 chars, and the
+  point size per font index; after-logout deferral for inspector saves if wanted.
+
+### 328. Overlays stop repainting from blank when you click back into EQ (Mimic beta `6bebcb79`, 2026-10-14)
+- **The report (the guild lead, 2026-10-14):** *"When i click onto a different window and then back into EQ the Overlays all refresh"*.
+- **Finding:** nothing reloads (no reload, navigation or broadcast on the focus path; pages keep their state). Since §316's z-order change
+  overlays can be covered by another app, and Chromium's occlusion tracker then treats them as hidden — stops painting, throttles
+  timers — so uncovering repaints every overlay at once. **Fix:** `disable-features=CalculateNativeWinOcclusion`; covered overlays keep
+  painting. Cost: negligible (the dashboard also no longer slows when covered). Unverified on Windows.
+- **Open:** the guild lead's A/B (turn off "Other apps can draw over overlays…" — if the refresh stops, this is the cause).
