@@ -6065,3 +6065,9 @@ your box) while ⚙ is open or "Outline clear areas" is ticked; ⚙ → Keep cle
 character + screen setup, `cfg.mapClearPicks`). Guessed sizes, Zeal RaidBars that run to the screen edge (the likely huge cut-out:
 `Right=0`/`Bottom=0` = to the edge), and a UI file saved for another resolution start unticked. The resolution block now follows EQ's
 client size. **Open:** no confirmed "collapsed/minimised" key in the UI ini — needs a real file with a collapsed and a closed window.
+
+### 🧾 2026-10-14 — Mimic 2.9.1 stable (agent 3.7.176, DECISIONS §331)
+Everything on beta since 2.9.0 is now stable: Chat overlay (rounds 1–4, breakout windows and 🔗 lock-together, Melee/Spells/Skills), tray layout B + Updates
+submenu, overlay sets, UI Studio named layouts and chat windows, sounds / voices / names, Map Full mode + keep-clear + Line strength + rings + raid
+targets, DPS per-person time, Target Info hit types, Charm "Best pets here", roll ties, timer ✕, clean shutdown, flicker and refocus fixes. Web 1.8.159
+(roadmap). **Left on beta:** `apps/mimic/pop-quests.js` (generated from the beta web PoP guide; goes with the web PoP graduation).
