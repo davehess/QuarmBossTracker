@@ -297,8 +297,60 @@ describe('after_my_melee_ms — the Willsapper proc, told from the shaman slows 
   });
 });
 
+describe('GINA / EQLogParser import brings a trigger\'s sound along', () => {
+  const GINA = (inner) => `<SharedTriggers><Triggers><Trigger><Name>T</Name><TriggerText>x</TriggerText>${inner}</Trigger></Triggers></SharedTriggers>`;
+  beforeEach(cleanUser);
+
+  it('reads a file name from the tags a GINA pack carries; a bare True/False switch is no file, but is remembered', () => {
+    const [a] = agent._parseTriggerXml(GINA('<PlayMediaFile>True</PlayMediaFile><MediaFileName>C:\\Sounds\\ding.wav</MediaFileName>'));
+    expect(a).toMatchObject({ sound_file: 'C:\\Sounds\\ding.wav', plays_sound: true });
+    const [b] = agent._parseTriggerXml(GINA('<PlayMediaFile>True</PlayMediaFile>'));
+    expect(b.sound_file).toBeUndefined();
+    expect(b.plays_sound).toBe(true);
+    const [c] = agent._parseTriggerXml(GINA('<PlayMediaFile>False</PlayMediaFile>'));
+    expect(c.plays_sound).toBeUndefined();
+    const [d] = agent._parseTriggerXml(GINA('<SoundFileName>chime.mp3</SoundFileName>'));
+    expect(d.sound_file).toBe('chime.mp3');
+  });
+
+  it('reads EQLogParser\'s SoundToPlay', () => {
+    const tgf = JSON.stringify([{ Name: 'folder', Nodes: [{ Name: 'Mez', TriggerData: { Pattern: 'x', SoundToPlay: 'C:\\EQLP\\beep.wav' } }] }]);
+    expect(agent._parseTriggerTgfJson(tgf)[0]).toMatchObject({ sound_file: 'C:\\EQLP\\beep.wav', plays_sound: true });
+  });
+
+  it('a file on this PC is copied into the sounds folder and named custom:<file>', () => {
+    const src = path.join(tmp, 'ding dong!.wav'); fs.writeFileSync(src, Buffer.alloc(900, 3));
+    const r = agent._importSoundFile(src);
+    expect(r).toEqual({ ok: true, value: 'custom:ding dong_.wav', copied: true });
+    expect(fs.existsSync(path.join(userDir, 'ding dong_.wav'))).toBe(true);
+    expect(agent._soundResolve(r.value)).toBe(path.join(userDir, 'ding dong_.wav'));
+    // the same file again is not copied twice; a different one of the same name gets its own
+    expect(agent._importSoundFile(src)).toEqual({ ok: true, value: 'custom:ding dong_.wav', copied: false });
+    fs.writeFileSync(src, Buffer.alloc(901, 4));
+    expect(agent._importSoundFile(src)).toEqual({ ok: true, value: 'custom:ding dong_-2.wav', copied: true });
+  });
+
+  it('a missing file, a wrong kind of file or nothing at all is refused with a reason (the trigger keeps its TTS)', () => {
+    expect(agent._importSoundFile(path.join(tmp, 'nowhere.wav'))).toMatchObject({ ok: false, why: 'the file is not on this PC' });
+    fs.writeFileSync(path.join(tmp, 'a.exe'), 'x');
+    expect(agent._importSoundFile(path.join(tmp, 'a.exe'))).toMatchObject({ ok: false });
+    expect(agent._importSoundFile('')).toMatchObject({ ok: false });
+    expect(agent._importSoundFile('C:\\Windows\\media\\tada.wav').ok).toBe(false);   // not on this (Linux) test box
+  });
+
+  it('the import route attaches the sound to the alert, reports the ones left behind, and counts copies', () => {
+    const route = sliceBlock(stripJs(readSource(path.join(ROOT, 'packages', 'wolfpack-logsync', 'index.js'))),
+      "if (req.url === '/api/personal-triggers/import' && req.method === 'POST') {", "sound_notes: soundNotes.slice(0, 50) }));");
+    expect(route).toContain('_importSoundFile(t.sound_file)');
+    expect(route).toContain("at.sound = snd.value");
+    expect(route).toContain("actions.push({ type: 'sound', sound: snd.value })");
+    expect(route).toContain('soundNotes.push(');
+    expect(route).toContain('sounds_copied: soundsCopied');
+  });
+});
+
 describe('pronunciation', () => {
-  const map = [{ name: 'Aldenmar', say: 'Ahl-den-mar' }, { name: 'Aldenmar Prime', say: 'Ahl-den-mar Prime' }, { name: 'Nyssara', say: 'Nih-sar-uh' }];
+  const map =[{ name: 'Aldenmar', say: 'Ahl-den-mar' }, { name: 'Aldenmar Prime', say: 'Ahl-den-mar Prime' }, { name: 'Nyssara', say: 'Nih-sar-uh' }];
 
   it('replaces whole words, case-insensitively, and leaves a name inside a longer word alone', () => {
     const f = agent._applyPronunciations;

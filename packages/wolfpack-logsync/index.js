@@ -30398,6 +30398,12 @@ function wpTrigApplyForm(base, f) {
       }
       var summary = '<span style="color:var(--green)">Imported ' + j.imported + ' of ' + j.total_in_xml + ' trigger' + (j.total_in_xml === 1 ? '' : 's') + '.</span>';
       if (j.skipped > 0) summary += ' <span class="dim">' + j.skipped + ' skipped (duplicate name or missing fields).</span>';
+      // Sounds that came along (copied into your sounds folder), and the ones that could not: those triggers keep their spoken callout.
+      if (j.sounds_copied > 0) summary += '<br><span class="dim" style="font-size:11px">' + j.sounds_copied + ' sound file' + (j.sounds_copied === 1 ? '' : 's') + ' copied into your sounds folder.</span>';
+      if (Array.isArray(j.sound_notes) && j.sound_notes.length > 0) {
+        summary += '<br><span class="dim" style="font-size:11px">' + j.sound_notes.length + ' trigger' + (j.sound_notes.length === 1 ? '' : 's') + ' played a sound that could not come along, so ' + (j.sound_notes.length === 1 ? 'it keeps' : 'they keep') + ' the spoken callout: '
+          + j.sound_notes.slice(0, 4).map(function(n){ return esc(n.name) + (n.file ? ' (' + esc(n.file) + ')' : '') + ' &mdash; ' + esc(n.why); }).join('; ') + (j.sound_notes.length > 4 ? '; and ' + (j.sound_notes.length - 4) + ' more' : '') + '. Drop the file in your sounds folder and pick it in the trigger.</span>';
+      }
       if (Array.isArray(j.errors) && j.errors.length > 0) {
         summary += '<br><span class="dim" style="font-size:10px">' + j.errors.length + ' bad pattern' + (j.errors.length === 1 ? '' : 's') + ': ' + j.errors.slice(0, 3).map(function(e){ return esc(e.name) + ' (' + esc(e.error) + ')'; }).join('; ') + (j.errors.length > 3 ? '; …' : '') + '</span>';
       }
@@ -34514,7 +34520,8 @@ function startWebDashboard(port) {
         const existingNames = new Set(_personalTriggers.map(t => String(t.name || '').toLowerCase()));
         const compiled = [];
         const errors = [];
-        let imported = 0, skipped = 0;
+        let imported = 0, skipped = 0, soundsCopied = 0;
+        const soundNotes = [];   // triggers whose sound file could not come along
         for (const t of parsed) {
           if (!t.name || !t.pattern) { skipped++; continue; }
           if (existingNames.has(t.name.toLowerCase())) { skipped++; continue; }
@@ -34534,6 +34541,18 @@ function startWebDashboard(port) {
               duration_ms: 5000,
               ...(ttsText ? { tts: ttsText } : {}),
             });
+          }
+          // The trigger's sound (2026-10-14): a file on this PC is copied into the sounds folder and played by
+          // name; otherwise the spoken callout stays and the result says what was left behind.
+          if (t.plays_sound) {
+            const snd = t.sound_file ? _importSoundFile(t.sound_file) : { ok: false, why: 'the export names no sound file' };
+            if (snd.ok) {
+              if (snd.copied) soundsCopied++;
+              const at = actions.find(a => a.type === 'text_overlay');
+              if (at) at.sound = snd.value; else actions.push({ type: 'sound', sound: snd.value });
+            } else {
+              soundNotes.push({ name: t.name.slice(0, 100), file: t.sound_file ? String(t.sound_file).split(/[\\/]/).pop().slice(0, 100) : '', why: snd.why });
+            }
           }
           const row = {
             id:            'p_' + Math.random().toString(36).slice(2, 10),
@@ -34576,7 +34595,8 @@ function startWebDashboard(port) {
           savePersonalTriggers();
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok: true, imported, skipped, total_in_xml: parsed.length, errors }));
+        return res.end(JSON.stringify({ ok: true, imported, skipped, total_in_xml: parsed.length, errors,
+          sounds_copied: soundsCopied, sound_notes: soundNotes.slice(0, 50) }));
       }
 
       // Live regex tester — paste a sample log line, see which patterns match
@@ -43349,9 +43369,19 @@ function _parseTriggerXml(xml) {
       enders.push(eRegex ? '(?:' + text + ')' : '(?:' + _escapeForLiteralMatch(text) + ')');
     }
     if (!name || !pattern) continue;
+    // A sound file the trigger plays (2026-10-14). GINA's export carries <PlayMediaFile> as a bare True/False
+    // with no file name, so the name is read from whichever of these a pack does carry; a value that is
+    // only a True/False switch is not a file. `plays_sound` records that a sound was meant even when its
+    // file is unknown, so the import can say so instead of dropping it in silence.
+    const mediaSwitch = get('PlayMediaFile') || get('UseSound') || get('PlaySound');
+    const soundFile = [get('MediaFileName'), get('SoundFileName'), get('PlaySoundFile'), get('SoundFile'), get('SoundToPlay')]
+      .find(v => v && !/^(true|false)$/i.test(v)) || '';
+    const playsSound = !!soundFile || /^true$/i.test(mediaSwitch);
     triggers.push({
       name,
       pattern,
+      ...(soundFile ? { sound_file: soundFile } : {}),
+      ...(playsSound ? { plays_sound: true } : {}),
       use_regex:        enableRegex,
       display_text:     (useText === '' || useText.toLowerCase() === 'true') ? displayText : '',
       tts_text:         (useTts === '' || useTts.toLowerCase() === 'true') ? ttsText : '',
@@ -43361,6 +43391,39 @@ function _parseTriggerXml(xml) {
     });
   }
   return triggers;
+}
+
+// An imported trigger's sound file (the guild lead, 2026-10-14): when the file the trigger names is on THIS
+// PC, copy it into the member's sounds folder and hand back "custom:<file>", so the trigger plays on a
+// name like every other and keeps working after the original is moved. A file that is not here (a pack
+// from someone else's PC, or GINA's bare "play a sound" switch) keeps the trigger's spoken callout and
+// is reported in the import result instead. → { ok:true, value, copied } | { ok:false, why }.
+function _importSoundFile(srcPath) {
+  const src = String(srcPath == null ? '' : srcPath).trim().replace(/^"|"$/g, '');
+  if (!src) return { ok: false, why: 'no file name' };
+  const base = src.split(/[\\/]/).pop();
+  const ext = path.extname(base).toLowerCase();
+  if (!SOUND_EXTS.includes(ext)) return { ok: false, why: 'not a .wav, .mp3 or .ogg file' };
+  let st;
+  try { st = fs.statSync(src); } catch { return { ok: false, why: 'the file is not on this PC' }; }
+  if (!st.isFile() || st.size === 0 || st.size > SOUND_MAX_BYTES) return { ok: false, why: 'the file is empty or too large' };
+  const dir = _soundDirs().user;
+  try { fs.mkdirSync(dir, { recursive: true }); } catch { return { ok: false, why: 'could not make the sounds folder' }; }
+  const clean = base.replace(/[^\w .()-]/g, '_').slice(0, 100);
+  const stem = path.basename(clean, path.extname(clean));
+  let name = clean;
+  for (let i = 2; ; i++) {
+    const dst = path.join(dir, name);
+    let same = false;
+    try { const d = fs.statSync(dst); same = d.isFile() && d.size === st.size; } catch { /* free */ }
+    if (same) return { ok: true, value: 'custom:' + name, copied: false };   // already imported
+    if (!fs.existsSync(dst)) {
+      try { fs.copyFileSync(src, dst); } catch { return { ok: false, why: 'could not copy the file' }; }
+      return { ok: true, value: 'custom:' + name, copied: true };
+    }
+    name = stem + '-' + i + ext;
+    if (i > 50) return { ok: false, why: 'too many files with that name' };
+  }
 }
 
 // EQLogParser's NATIVE export is NOT the SharedTriggers XML — it's a JSON tree
@@ -43387,9 +43450,11 @@ function _parseTriggerTgfJson(text) {
         // the duration. Treat any positive TimerType OR EnableTimer with a
         // duration as a countdown timer — the warning callout depends on it.
         const hasTimer = dur > 0 && (Number(td.TimerType) > 0 || td.EnableTimer === true);
+        const soundFile = String(td.SoundToPlay || '').trim();   // EQLogParser's own sound file (2026-10-14)
         out.push({
           name,
           pattern,
+          ...(soundFile ? { sound_file: soundFile, plays_sound: true } : {}),
           use_regex:          td.UseRegex !== false,
           display_text:       String(td.TextToDisplay || '').trim(),
           tts_text:           String(td.TextToSpeak || '').trim(),
@@ -54592,6 +54657,7 @@ module.exports = {
   _applyPronunciations, _applySpokenPronunciations, pollPronunciations, _pronStatePayload,
   _setPronunciationsForTest: (synced, local) => { _pronSynced = new Map(_pronPairs(synced)); _pronLocal = { ...(local || {}) }; _pronMerged = null; },
   _noteOwnMelee, _afterMyMeleeOk, _ownMeleeAt,
+  _importSoundFile, _parseTriggerXml, _parseTriggerTgfJson,
   _setVoiceStateDirForTest: (d) => { _voiceStateDir = d || null; },
   _setGuildTriggersForTest: (arr) => { stats.guildTriggers = arr; stats.guildTriggersVersion = null; },
 };

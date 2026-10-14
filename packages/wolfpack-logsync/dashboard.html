@@ -12182,6 +12182,12 @@ function wpTrigApplyForm(base, f) {
       }
       var summary = '<span style="color:var(--green)">Imported ' + j.imported + ' of ' + j.total_in_xml + ' trigger' + (j.total_in_xml === 1 ? '' : 's') + '.</span>';
       if (j.skipped > 0) summary += ' <span class="dim">' + j.skipped + ' skipped (duplicate name or missing fields).</span>';
+      // Sounds that came along (copied into your sounds folder), and the ones that could not: those triggers keep their spoken callout.
+      if (j.sounds_copied > 0) summary += '<br><span class="dim" style="font-size:11px">' + j.sounds_copied + ' sound file' + (j.sounds_copied === 1 ? '' : 's') + ' copied into your sounds folder.</span>';
+      if (Array.isArray(j.sound_notes) && j.sound_notes.length > 0) {
+        summary += '<br><span class="dim" style="font-size:11px">' + j.sound_notes.length + ' trigger' + (j.sound_notes.length === 1 ? '' : 's') + ' played a sound that could not come along, so ' + (j.sound_notes.length === 1 ? 'it keeps' : 'they keep') + ' the spoken callout: '
+          + j.sound_notes.slice(0, 4).map(function(n){ return esc(n.name) + (n.file ? ' (' + esc(n.file) + ')' : '') + ' &mdash; ' + esc(n.why); }).join('; ') + (j.sound_notes.length > 4 ? '; and ' + (j.sound_notes.length - 4) + ' more' : '') + '. Drop the file in your sounds folder and pick it in the trigger.</span>';
+      }
       if (Array.isArray(j.errors) && j.errors.length > 0) {
         summary += '<br><span class="dim" style="font-size:10px">' + j.errors.length + ' bad pattern' + (j.errors.length === 1 ? '' : 's') + ': ' + j.errors.slice(0, 3).map(function(e){ return esc(e.name) + ' (' + esc(e.error) + ')'; }).join('; ') + (j.errors.length > 3 ? '; …' : '') + '</span>';
       }
