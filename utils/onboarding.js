@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.260': [
+    '**Fewer callouts from other people\'s fights.** Late on a non-raid night, Mimic could speak another group\'s callout from a different zone (an enrage across the world). The raid-evening hour after midnight now counts for the night before, and a callout from a zone we know you are not in no longer reaches you just because we could not tell where you are.',
+  ],
   '3.1.259': [
     '**Raid boss kill cards now say how we did.** After a boss dies, its card in the raid thread gets a "How we did" section: how much faster or slower than last time, deaths, any fun moments during the fight, and a highlight or two. The same recap shows on the raid screen for half an hour.',
   ],
