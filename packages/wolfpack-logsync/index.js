@@ -18089,6 +18089,8 @@ function _serializeForDashboard() {
     // lines, honour the same rules.
     guildRuleModes:      _guildRuleModes(),
     builtinRuleModes:    _builtinRuleModes(),
+    // This PC's own sound on a guild trigger it cannot edit ({trigger_id: {sound, sound_mode}}); the guild table badges it.
+    soundOverrides:      _soundOverrides,
     personalTriggerCount: (_personalTriggers || []).length,
     // Trigger checkpoint journal (#76) — newest first, capped, for the Triggers
     // tab diagnostic card. Pure in-memory; never persisted or uploaded.
@@ -22667,6 +22669,11 @@ function renderTriggers(s) {
   // section HTML here stays byte-stable and the card is not rewritten by a Triggers repaint.
   h += '<div id="wpTrigRules" class="card wide"></div>';
 
+  // 🔊 Sounds and 🗣 Voice & names (the guild lead, 2026-10-14) — each its own wp* placeholder, filled by
+  // setupSounds / setupVoiceNames below, so this section's HTML stays byte-stable.
+  h += '<div id="wpSounds" class="card wide"></div>';
+  h += '<div id="wpVoice" class="card wide"></div>';
+
   // Suggested triggers — one-click catalog of pre-tested alerts grouped by
   // category. Toggling the Enable checkbox creates/removes a personal
   // trigger with id "suggested:<template_id>" via /api/triggers/suggested;
@@ -22708,6 +22715,12 @@ function renderTriggers(s) {
   if (window._wpTrigRules && window._wpTrigRules.mount) {
     window._wpTrigRules.mount();
   }
+  if (window._wpSounds && window._wpSounds.mount) {
+    window._wpSounds.mount();
+  }
+  if (window._wpVoiceNames && window._wpVoiceNames.mount) {
+    window._wpVoiceNames.mount();
+  }
   if (window._wpTrigSync && window._wpTrigSync.mount) {
     window._wpTrigSync.mount();
   }
@@ -22719,6 +22732,8 @@ function renderTriggers(s) {
 function renderGuildTriggersCard(s) {
   var el = document.getElementById('wpGuildTriggers');
   if (!el) return;   // Triggers tab not painted yet
+  // The sound list a row's "My sound" box needs arrives once, a moment after the first paint: draw again then.
+  if (!window._wpSndAsked) { window._wpSndAsked = true; WPSounds.load().then(function () { if (window.__wpLastState) renderGuildTriggersCard(window.__wpLastState); }); }
   var gt = s.guildTriggers || [];
   var h = '<h2>🛡️ Guild triggers <span class="dim" style="font-size:11px;font-weight:normal">(read-only: click one to see its settings; officers edit on wolfpack.quest/admin/triggers)</span></h2>';
   if (gt.length === 0) {
@@ -22756,6 +22771,9 @@ function renderGuildTriggersCard(s) {
         warn_tts: _w ? _w.tts : true,
         timer_loop: t.timer_loop === true,
         timer_loop_max: t.timer_loop_max || 0,
+        sound: _act.sound || '',
+        sound_volume: _act.sound_volume != null ? _act.sound_volume : null,
+        sound_mode: _act.sound_mode || '',
       };
       var key = String(t.id || t.name || '');
       var open = !!_wpTrigOpen['g|' + key];
@@ -22764,6 +22782,9 @@ function renderGuildTriggersCard(s) {
       var _rm = (s.guildRuleModes || {})[t.id];
       var _rbadge = _rm === 'overlay' ? '<span class="rbadge" title="Shown on the trigger overlay, never spoken (What you hear)">👁 overlay only</span>'
         : _rm === 'off' ? '<span class="rbadge off" title="Turned off: neither shown nor spoken (What you hear)">⛔ off</span>' : '';
+      // 🔊 this PC's own sound for the row, if the member picked one (kept off-guild, see Sounds)
+      var _ov = (s.soundOverrides || {})[t.id];
+      if (_ov && _ov.sound) _rbadge += '<span class="rbadge" title="Your own sound for this guild trigger, on this PC only">🔊 ' + esc(String(_ov.sound).replace(/^custom:/i, '').replace(/^https?:.*/i, 'web sound')) + '</span>';
       h += '<tr data-trig-key="' + esc(key) + '" style="cursor:pointer"><td>'
         + '<button type="button" class="trigname" data-trig-view="' + esc(key) + '" aria-expanded="' + (open ? 'true' : 'false') + '" style="color:var(--orange)" title="Show this trigger\\'s settings">'
         + (open ? '▾' : '▸') + ' ' + esc(t.name || '?') + '</button>' + _rbadge + '</td>' +
@@ -22771,7 +22792,7 @@ function renderGuildTriggersCard(s) {
            '<td><code style="font-size:10px;background:#161b22;border:1px solid var(--border);padding:1px 4px;border-radius:3px">' + esc((t.pattern || '').slice(0, 80)) + '</code></td>' +
            '<td class="dim">' + ((t.cooldown_seconds || 0) > 0 ? t.cooldown_seconds + 's' : '—') + '</td>' +
            '<td><button type="button" data-trig-copy="' + esc(JSON.stringify(_copy)) + '" style="background:#21262d;color:var(--blue);border:1px solid var(--border);cursor:pointer;font-size:11px;padding:2px 8px;border-radius:3px;white-space:nowrap" title="Copy this guild trigger to your own list so you can customize it without changing the guild\\'s version">⎘ Copy to personal</button></td></tr>';
-      if (open) h += '<tr class="trigdetail"><td colspan="5">' + wpTrigSettingsHtml(t, 'guild') + '</td></tr>';
+      if (open) h += '<tr class="trigdetail"><td colspan="5">' + wpTrigSettingsHtml(t, 'guild') + wpSoundOverrideHtml(t, _ov) + '</td></tr>';
     }
     h += '</table>';
   }
@@ -29378,6 +29399,74 @@ async function dismissTopDamage(key) {
   setInterval(refresh, 5000);
 })();
 
+// ── 🔊 The sound library, as the dashboard sees it (2026-10-14) ─────────────
+// A trigger's \`sound\` is a NAME from the library ("slap"), "custom:<file>" for a file the member dropped in
+// their own sounds folder, or an http(s) URL — never a path, so a guild or synced trigger plays on every PC.
+// The agent lists and serves them (GET /api/sounds, GET /sounds/<name>); the shipped set comes with Mimic.
+// This is the one place the dashboard's pickers get their options from, and the one place that plays a
+// sample, so the editor, the guild-row control and the Sounds card cannot disagree.
+var WPSounds = (function () {
+  var list = [], userDir = '', loaded = false, loading = null, cur = null, packs = [], packsLoaded = false;
+  function load(force) {
+    if (loaded && !force) return Promise.resolve(list);
+    if (loading) return loading;
+    loading = fetch('/api/sounds').then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      if (j && Array.isArray(j.sounds)) { list = j.sounds; userDir = j.user_dir || ''; loaded = true; }
+      return list;
+    }).catch(function () { return list; }).then(function (x) { loading = null; return x; });
+    return loading;
+  }
+  function loadPacks() {
+    if (packsLoaded) return Promise.resolve(packs);
+    return fetch('/api/voice-packs').then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      if (j && Array.isArray(j.packs)) { packs = j.packs; packsLoaded = true; }
+      return packs;
+    }).catch(function () { return packs; });
+  }
+  function labelOf(s) {
+    var mine = s.source === 'custom';
+    return (String(s.name).indexOf('custom:') === 0 ? String(s.name).slice(7) : s.name) + (mine ? ' (mine)' : '');
+  }
+  // <option>s for a sound <select>: none, the library, and — if the saved value is in neither (a URL a guild
+  // trigger carries) — that value as it is, so opening a row and saving it never changes its sound.
+  function optionsHtml(selected) {
+    var sel = String(selected == null ? '' : selected), seen = sel === '';
+    var h = '<option value=""' + (sel === '' ? ' selected' : '') + '>none</option>';
+    for (var i = 0; i < list.length; i++) {
+      var on = list[i].name === sel; if (on) seen = true;
+      h += '<option value="' + esc(list[i].name) + '"' + (on ? ' selected' : '') + '>' + esc(labelOf(list[i])) + '</option>';
+    }
+    if (!seen) h += '<option value="' + esc(sel) + '" selected>' + esc(/^https?:/i.test(sel) ? 'a web address' : sel + ' (not on this PC)') + '</option>';
+    return h;
+  }
+  // Rewrites a <select>'s options in place, keeping what it had picked.
+  function fill(selectEl) {
+    if (!selectEl) return;
+    var keep = selectEl.value;
+    selectEl.innerHTML = optionsHtml(keep);
+    selectEl.value = keep;
+  }
+  function packOptionsHtml(selected, noneLabel) {
+    var h = '<option value="">' + esc(noneLabel || 'My voice (as set in Mimic)') + '</option>';
+    for (var i = 0; i < packs.length; i++) h += '<option value="' + esc(packs[i].id) + '"' + (packs[i].id === selected ? ' selected' : '') + '>' + esc(packs[i].label) + '</option>';
+    return h;
+  }
+  function play(name, vol) {
+    name = String(name || '');
+    if (!name) return;
+    try { if (cur) { cur.pause(); cur = null; } } catch (e) { void e; }
+    var url = /^https?:\\/\\//i.test(name) ? name : '/sounds/' + encodeURIComponent(name);
+    try {
+      var a = new Audio(url), v = Number(vol);
+      a.volume = (vol != null && vol !== '' && isFinite(v) && v >= 0 && v <= 1) ? v : 0.9;
+      cur = a;
+      var p = a.play(); if (p && p.catch) p.catch(function () { void 0; });
+    } catch (e) { void e; }
+  }
+  return { load: load, loadPacks: loadPacks, optionsHtml: optionsHtml, packOptionsHtml: packOptionsHtml, fill: fill, play: play, labelOf: labelOf,
+    list: function () { return list; }, userDir: function () { return userDir; }, packs: function () { return packs; } };
+})();
+
 // ── Trigger settings: what a trigger is set to do ───────────────────────────
 // FB-23 / FB-30: a trigger's name and pattern were all the list showed. A personal row's name was
 // also a .name cell, so clicking it went to the character page (a 404 for "Rampage on me")
@@ -29426,6 +29515,9 @@ function wpTrigSettingsHtml(t, scope) {
   }
   if (t.builtin_timer) add('Timer bar', esc(String(t.builtin_timer).replace(/_/g, ' ')) + ' <span class="dim">a switch: it draws a bar, there is nothing to match</span>');
   if (Array.isArray(t.exclude_patterns) && t.exclude_patterns.length) add('Unless', t.exclude_patterns.map(function (p) { return code(p); }).join(' '));
+  // A proc's landing text, told from the other spells that print it: only just after one of YOUR melee hits on that mob.
+  if (t.after_my_melee_ms > 0) add('Only when', 'one of <b>your</b> melee hits landed on that mob in the last ' + secs(t.after_my_melee_ms / 1000));
+  if (t.voice_pack) add('Voice', esc(String(t.voice_pack)) + ' <span class="dim">this callout\\'s own voice pack</span>');
   if (Array.isArray(t.characters) && t.characters.length) add('Only on', names(t.characters));
   if (guild && Array.isArray(t.applies_to_classes) && t.applies_to_classes.length) add('Classes', esc(t.applies_to_classes.join(', ')));
   // what it does
@@ -29440,7 +29532,14 @@ function wpTrigSettingsHtml(t, scope) {
       // A Suggested alert with its 🔊 unticked says nothing (the agent mutes it); any other row with no speech text reads its display text.
       add('Says', a.tts ? '<b>' + esc(a.tts) + '</b>'
         : (!guild && String(t.id || '').indexOf('suggested:') === 0 ? '<span class="dim">nothing, its 🔊 is unticked under Suggested triggers</span>' : '<span class="dim">the same words it shows</span>'));
-      if (a.sound) add('Sound', esc(a.sound));
+      if (a.sound) {
+        var snd = String(a.sound);
+        add('Sound', esc(/^https?:\\/\\//i.test(snd) ? 'a web address' : snd.replace(/^custom:/i, ''))
+          + (a.sound_volume != null && Number(a.sound_volume) !== 0.9 ? ' at ' + Math.round(Number(a.sound_volume) * 100) + '%' : '')
+          + (a.sound_mode === 'replace' ? ' <span class="dim">plays instead of speaking</span>' : ''));
+      }
+    } else if (a.type === 'sound') {
+      add('Plays', esc(String(a.sound || '').replace(/^custom:/i, '')) + (a.sound_volume != null ? ' at ' + Math.round(Number(a.sound_volume) * 100) + '%' : '') + ' <span class="dim">a sound on its own</span>');
     } else {
       var msg = a.message || a.text || '';
       add('Also', esc(String(a.type).replace(/_/g, ' ')) + (msg ? ': ' + esc(String(msg).slice(0, 120)) : ''));
@@ -29504,11 +29603,23 @@ function wpTrigApplyForm(base, f) {
   if (f.overlay) {
     var a = Object.assign({ type: 'text_overlay' }, at >= 0 ? acts[at] : {}, { text: f.overlay, color: f.color, duration_ms: f.duration });
     if (f.tts) a.tts = f.tts; else delete a.tts;
+    // 2026-10-14: the sound. undefined = the caller has no sound box, so what the row had is kept (a URL
+    // sound on an imported trigger); '' = "none", clears it. sound_mode is written only when 'replace'
+    // (absent = plays with the callout) and the volume only when it is not the default 0.9.
+    if (f.sound !== undefined) {
+      if (f.sound) {
+        a.sound = f.sound;
+        if (f.soundReplace) a.sound_mode = 'replace'; else delete a.sound_mode;
+        if (f.soundVolume != null && Math.abs(Number(f.soundVolume) - 0.9) > 0.001) a.sound_volume = Math.max(0, Math.min(1, Number(f.soundVolume))); else delete a.sound_volume;
+      } else { delete a.sound; delete a.sound_mode; delete a.sound_volume; }
+    }
     if (at >= 0) acts[at] = a; else acts.unshift(a);
   } else if (at >= 0) {
     acts.splice(at, 1);
   }
   row.actions = acts;
+  // This trigger's own voice pack (a callout that should sound different); '' = the player's own voice.
+  if (f.voicePack !== undefined) { if (f.voicePack) row.voice_pack = f.voicePack; else delete row.voice_pack; }
   if (f.timerSec > 0) row.timer_duration_sec = f.timerSec; else delete row.timer_duration_sec;
   if (f.endEarly) { row.end_early_pattern = f.endEarly; if (row.end_use_regex === undefined) row.end_use_regex = true; }
   else { delete row.end_early_pattern; delete row.end_use_regex; }
@@ -29559,6 +29670,15 @@ function wpTrigApplyForm(base, f) {
       + '      <input id="trigNewOverlay" type="text" placeholder="e.g. CANCEL ON {target}!" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label style="grid-column:1/3">Spoken text (optional — leave blank to speak the overlay text)<br>'
       + '      <input id="trigNewTts" type="text" placeholder="e.g. D I fired on {tank}" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
+      // 2026-10-14: a sound from the library (or the member's own folder), its volume, whether it plays
+      // INSTEAD of the spoken callout, and this callout's own voice pack. The Sounds card below lists them all.
+      + '    <label>Sound (optional)<br><span style="display:flex;gap:6px;align-items:center">'
+      + '      <select id="trigNewSound" style="flex:1;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px">' + WPSounds.optionsHtml('') + '</select>'
+      + '      <button id="trigSoundPlay" type="button" title="Hear it at this volume" style="background:#21262d;color:var(--green);border:1px solid var(--border);padding:4px 10px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:12px">&#9654;</button>'
+      + '    </span></label>'
+      + '    <label>Sound volume <span id="trigNewSoundVolVal" class="dim">90%</span><br><input id="trigNewSoundVol" type="range" min="0" max="100" value="90" style="width:100%"></label>'
+      + '    <label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input id="trigNewSoundReplace" type="checkbox"> Play the sound <b>instead of</b> speaking the callout</label>'
+      + '    <label>Voice for this callout<br><select id="trigNewVoicePack" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px">' + WPSounds.packOptionsHtml('') + '</select></label>'
       + '    <label>Color<br><select id="trigNewColor" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"><option value="red">red</option><option value="orange">orange</option><option value="gold">gold</option><option value="green">green</option><option value="blue">blue</option><option value="purple">purple</option><option value="white">white</option></select></label>'
       + '    <label>Duration (ms)<br><input id="trigNewDuration" type="number" min="500" max="60000" value="5000" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
       + '    <label>Countdown timer (sec, 0 = no timer)<br><input id="trigNewTimerSec" type="number" min="0" max="3600" value="0" placeholder="e.g. 18 for a Cazic Touch refresh" style="width:100%;background:#0d1117;color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:4px;font-family:inherit;font-size:12px"></label>'
@@ -29814,6 +29934,24 @@ function wpTrigApplyForm(base, f) {
     setChk('trigNewWarnTts', w ? w.tts : true);
     setChk('trigNewLoop', row.timer_loop === true);
     setVal('trigNewLoopMax', row.timer_loop_max > 0 ? row.timer_loop_max : '');
+    setSoundFields(o.sound, o.sound_volume, o.sound_mode === 'replace', row.voice_pack);
+  }
+  // The sound box, its volume, "instead of speaking" and the voice pack, set together (a saved row, a copy
+  // of a guild trigger, or back to blank after an add).
+  function setSoundFields(sound, volume, replace, pack) {
+    setVal('trigNewSound', sound || '');
+    setVal('trigNewSoundVol', volume != null && isFinite(Number(volume)) ? Math.round(Number(volume) * 100) : 90);
+    setChk('trigNewSoundReplace', !!replace);
+    setVal('trigNewVoicePack', pack || '');
+    syncSoundVolLabel();
+  }
+  function soundVolume() { var el = document.getElementById('trigNewSoundVol'); var v = el ? Number(el.value) : 90; return (isFinite(v) ? v : 90) / 100; }
+  function syncSoundVolLabel() { var l = document.getElementById('trigNewSoundVolVal'); if (l) l.textContent = Math.round(soundVolume() * 100) + '%'; }
+  // The sound and voice-pack lists arrive after the form is drawn: fill them in, keeping what is picked.
+  function refreshSoundPickers() {
+    WPSounds.fill(document.getElementById('trigNewSound'));
+    var vp = document.getElementById('trigNewVoicePack');
+    if (vp) { var keep = vp.value; vp.innerHTML = WPSounds.packOptionsHtml(keep); vp.value = keep; }
   }
   // Title, button labels and (when editing) the form's contents. Also what the form comes back as after
   // a section repaint rebuilds it: the edit survives, any unsaved typing does not.
@@ -29910,7 +30048,11 @@ function wpTrigApplyForm(base, f) {
           // tts only when the user typed one: absent means the overlay falls back
           // to the display text (cleaned of emoji by triggers.html), which is the
           // sane default for the many triggers that read fine as written.
-          actions: [{ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration, ...(ttsText ? { tts: ttsText } : {}) }],
+          actions: [Object.assign({ type: 'text_overlay', text: overlayText, color: color, duration_ms: duration }, ttsText ? { tts: ttsText } : {},
+            // the sound, its volume, "instead of speaking" and this callout's voice pack play in the preview too
+            (document.getElementById('trigNewSound') || {}).value ? { sound: document.getElementById('trigNewSound').value, sound_volume: soundVolume(),
+              sound_mode: (document.getElementById('trigNewSoundReplace') || {}).checked ? 'replace' : 'add' } : {},
+            (document.getElementById('trigNewVoicePack') || {}).value ? { voice_pack: document.getElementById('trigNewVoicePack').value } : {})],
         },
       }),
     });
@@ -30122,7 +30264,10 @@ function wpTrigApplyForm(base, f) {
     // sane default for the many triggers that read fine as written.
     const form = { name: name, pattern: pattern, cooldown: cooldown, overlay: overlayText, tts: ttsText, color: color,
       duration: duration, timerSec: timerSec, endEarly: endEarly.trim(), zeal: zealCond,
-      warnSec: warnSec, warnText: warnText, warnTts: warnTts, loop: loop, loopMax: loopMax };
+      warnSec: warnSec, warnText: warnText, warnTts: warnTts, loop: loop, loopMax: loopMax,
+      sound: ((document.getElementById('trigNewSound') || {}).value || ''), soundVolume: soundVolume(),
+      soundReplace: !!(document.getElementById('trigNewSoundReplace') || {}).checked,
+      voicePack: ((document.getElementById('trigNewVoicePack') || {}).value || '') };
     var next;
     if (editing) {
       var at = -1;
@@ -30147,6 +30292,7 @@ function wpTrigApplyForm(base, f) {
         var ws = document.getElementById('trigNewWarnSec'); if (ws) ws.value = '0';
         var lp = document.getElementById('trigNewLoop'); if (lp) lp.checked = false;
         var zf = document.getElementById('trigNewZealField'); if (zf) zf.value = '';
+        setSoundFields('', null, false, '');
       }
       if (msg) { msg.textContent = 'Saved.'; msg.style.color = 'var(--green)'; }
       fetchAndRenderList();
@@ -30186,6 +30332,7 @@ function wpTrigApplyForm(base, f) {
     var wt = document.getElementById('trigNewWarnTts'); if (wt) wt.checked = cfg.warn_tts !== false;
     var lp = document.getElementById('trigNewLoop'); if (lp) lp.checked = cfg.timer_loop === true;
     set('trigNewLoopMax',  cfg.timer_loop_max || '');
+    setSoundFields(cfg.sound, cfg.sound_volume, cfg.sound_mode === 'replace', '');
     var msg = document.getElementById('trigAddMsg');
     if (msg) { msg.textContent = 'Copied from guild trigger — review and click "Add trigger" to save your personal copy.'; msg.style.color = 'var(--blue)'; }
     var panel = document.getElementById('trigEditorPanel');
@@ -30347,6 +30494,12 @@ function wpTrigApplyForm(base, f) {
     if (cancelBtn)  cancelBtn.addEventListener('click', onCancelEdit);
     listEl.addEventListener('click', onListClick);
     applyEditUi();   // a repaint rebuilt the form: put an open edit back
+    // 🔊 the sound row: ▶ plays what is picked at the slider's volume; the lists arrive after the form is drawn.
+    var soundPlay = document.getElementById('trigSoundPlay');
+    if (soundPlay) soundPlay.addEventListener('click', function(){ WPSounds.play((document.getElementById('trigNewSound') || {}).value, soundVolume()); });
+    var soundVol = document.getElementById('trigNewSoundVol');
+    if (soundVol) soundVol.addEventListener('input', syncSoundVolLabel);
+    WPSounds.load().then(function(){ return WPSounds.loadPacks(); }).then(refreshSoundPickers);
     if (previewBtn) previewBtn.addEventListener('click', onPreview);
     if (testBtn)    testBtn.addEventListener('click', onTest);
     if (runBtn)     runBtn.addEventListener('click', onTestRun);
@@ -30817,6 +30970,280 @@ function wpTrigApplyForm(base, f) {
     paint();
   }
   window._wpTrigSync = { mount: mount };
+})();
+
+// ── 🔊 Sounds (the guild lead, 2026-10-14) ───────────────────────────────────
+// *"allow users to add their own sound effects. allow them to use the sound effects instead of callouts
+// tts."* The library (WPSounds, above): the set that ships with Mimic plus whatever the member drops in
+// their own sounds folder, with ▶ on each and a button that opens the folder. Also the small 🔊 control on
+// an opened GUILD trigger — members cannot edit those, so a sound picked there is kept on THIS PC only
+// (trigger_sound_overrides.json) and applied when the trigger fires, including a relayed fire.
+// Fills #wpSounds, which the Triggers section emits; it repaints only when the list changed.
+function wpSoundOverrideHtml(t, ov) {
+  if (!t || !t.id) return '';
+  var h = '<div data-sndov="' + esc(String(t.id)) + '" style="margin-top:8px;padding-top:6px;border-top:1px dashed var(--border);display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:11px">';
+  h += '<span title="Kept on this PC only. The guild\\'s trigger is not changed, and nobody else hears it.">🔊 My sound</span>';
+  h += '<select data-sndov-sound aria-label="My sound for this guild trigger" style="font-family:inherit;font-size:11px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:2px 6px">' + WPSounds.optionsHtml(ov && ov.sound || '') + '</select>';
+  h += '<button type="button" data-sndov-play title="Hear it" style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px">&#9654;</button>';
+  h += '<label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" data-sndov-replace' + (ov && ov.sound_mode === 'replace' ? ' checked' : '') + '> instead of speaking</label>';
+  return h + '</div>';
+}
+(function setupSounds(){
+  var el = null, mounted = false, lastHtml = '', msg = '';
+  function render(){
+    var list = WPSounds.list();
+    var h = '<h2>🔊 Sounds <span class="dim" style="font-size:11px;font-weight:normal">(play one with a callout, or instead of the voice)</span></h2>';
+    h += '<div class="dim" style="font-size:11px;margin-bottom:6px">Pick one in a personal trigger\\'s <b>Sound</b> box, or on an opened guild trigger under <b>My sound</b>. To add your own, put .wav, .mp3 or .ogg files in your sounds folder; a file named like a built-in one (slap.mp3) replaces it on this PC.</div>';
+    h += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">';
+    for (var i = 0; i < list.length; i++) {
+      h += '<span style="display:inline-flex;align-items:center;gap:4px;background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:2px 4px 2px 8px;font-size:12px">'
+        + esc(WPSounds.labelOf(list[i]))
+        + '<button type="button" data-snd-play="' + esc(list[i].name) + '" title="Hear ' + esc(WPSounds.labelOf(list[i])) + '" style="background:none;border:0;color:var(--green);cursor:pointer;font-size:12px;padding:2px 5px">&#9654;</button></span>';
+    }
+    if (!list.length) h += '<span class="dim" style="font-size:12px">No sounds found.</span>';
+    h += '</div>';
+    h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px">'
+      + '<button type="button" id="wpSndOpen" style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px">Open my sounds folder</button>'
+      + '<button type="button" id="wpSndRefresh" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px">&#8635; Look again</button>'
+      + '<span id="wpSndMsg" class="dim" style="font-size:11px">' + esc(msg) + '</span></div>';
+    if (WPSounds.userDir()) h += '<div class="dim" style="font-size:10px;margin-top:6px">Your folder: <code>' + esc(WPSounds.userDir()) + '</code></div>';
+    return h;
+  }
+  function paint(){
+    if (!el) return;
+    var h = render();
+    if (h !== lastHtml) { lastHtml = h; el.innerHTML = h; }
+  }
+  async function refresh(force){ await WPSounds.load(force); paint(); try { if (window.__wpLastState) renderGuildTriggersCard(window.__wpLastState); } catch (e) { void e; } }
+  function say(t){ msg = t; var m = document.getElementById('wpSndMsg'); if (m) m.textContent = t; lastHtml = ''; }
+  function onClick(e){
+    var t = e.target && e.target.closest ? e.target : null;
+    if (!t) return;
+    var p = t.closest('[data-snd-play]');
+    if (p) { WPSounds.play(p.getAttribute('data-snd-play')); return; }
+    if (t.closest('#wpSndOpen')) {
+      fetch('/api/sounds/open-folder', { method: 'POST' }).then(function(r){ return r.json(); })
+        .then(function(j){ say('Opened. Drop files in, then press Look again.' + (j && j.user_dir ? '' : '')); }, function(){ say('Could not open it from here: the path is below.'); });
+      return;
+    }
+    if (t.closest('#wpSndRefresh')) { say(''); refresh(true); }
+  }
+  function mount(){
+    var n = document.getElementById('wpSounds');
+    if (!n) { mounted = false; return; }
+    if (mounted && n === el) return;
+    el = n; mounted = true; lastHtml = '';
+    el.addEventListener('click', onClick);
+    paint();
+    refresh(false);
+  }
+  // A guild trigger's "My sound": saved the moment it changes, on this PC only.
+  async function saveOverride(box){
+    var id = box.getAttribute('data-sndov');
+    var sel = box.querySelector('[data-sndov-sound]'), rep = box.querySelector('[data-sndov-replace]');
+    var body = { id: id, sound: sel ? sel.value : '', sound_mode: rep && rep.checked ? 'replace' : 'add' };
+    try {
+      var r = await fetch('/api/trigger-sound-overrides', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      var j = await r.json();
+      var s = window.__wpLastState;
+      if (j && j.ok && s) { s.soundOverrides = s.soundOverrides || {}; if (j.override) s.soundOverrides[id] = j.override; else delete s.soundOverrides[id]; renderGuildTriggersCard(s); }
+    } catch (e) { void e; }
+  }
+  document.addEventListener('change', function(e){
+    var box = e.target && e.target.closest ? e.target.closest('[data-sndov]') : null;
+    if (box) saveOverride(box);
+  });
+  document.addEventListener('click', function(e){
+    var b = e.target && e.target.closest ? e.target.closest('[data-sndov-play]') : null;
+    if (!b) return;
+    var box = b.closest('[data-sndov]'), sel = box && box.querySelector('[data-sndov-sound]');
+    if (sel && sel.value) WPSounds.play(sel.value);
+  });
+  window._wpSounds = { mount: mount, refresh: refresh };
+})();
+
+// ── 🗣 Voice & names (the guild lead, 2026-10-14) ────────────────────────────
+// *"different voice packs, get player pronunciation right … build this voice pack bit into onboarding."*
+// The voice: a pack (Default, Herald, Quick, Narrator), optionally one of the voices installed on this PC,
+// and speed and pitch — saved in Mimic's config (cfg.voice), read by the trigger window before each callout.
+// The names: how each of YOUR characters is said. The agent keeps the guild's list (synced from the
+// website) and this PC's own corrections; suggestions come from the server. The same two panels are in
+// Mimic's setup walkthrough. Fills #wpVoice; it repaints only on a click, never on a poll, so a half-typed
+// pronunciation is never wiped.
+(function setupVoiceNames(){
+  var el = null, mounted = false;
+  var cfgVoice = { pack: 'default', voiceName: '', rate: null, pitch: null };
+  var pron = null, drafts = {}, sugg = {}, notes = {};
+  function inMimic(){ return !!(window.mimic && window.mimic.getConfig && window.mimic.saveConfig); }
+  function voices(){ try { return window.speechSynthesis ? window.speechSynthesis.getVoices() : []; } catch (e) { return []; } }
+  function pack(id){ var ps = WPSounds.packs(); for (var i = 0; i < ps.length; i++) if (ps[i].id === id) return ps[i]; return null; }
+  // The same rules as Mimic's voice.js (which the walkthrough and the trigger window load).
+  function pick(packId){
+    var forced = !!packId, p = pack(packId || cfgVoice.pack || 'default'), vs = voices();
+    var rate = p ? p.rate : 1.05, pitch = p ? p.pitch : 1, voice = null;
+    if (!forced) {
+      if (cfgVoice.rate > 0) rate = cfgVoice.rate;
+      if (cfgVoice.pitch > 0) pitch = cfgVoice.pitch;
+      if (cfgVoice.voiceName) for (var i = 0; i < vs.length; i++) if (vs[i].name === cfgVoice.voiceName) { voice = vs[i]; break; }
+    }
+    if (!voice && p && p.voices) for (var f = 0; f < p.voices.length && !voice; f++) {
+      var frag = String(p.voices[f]).toLowerCase();
+      for (var j = 0; j < vs.length; j++) if (vs[j].name.toLowerCase().indexOf(frag) >= 0) { voice = vs[j]; break; }
+    }
+    return { voice: voice, rate: rate, pitch: pitch };
+  }
+  function speak(text, packId){
+    if (!window.speechSynthesis) return;
+    var v = pick(packId), u = new SpeechSynthesisUtterance(text);
+    if (v.voice) u.voice = v.voice;
+    u.rate = v.rate; u.pitch = v.pitch;
+    try { window.speechSynthesis.cancel(); } catch (e) { void e; }
+    window.speechSynthesis.speak(u);
+  }
+  function save(){ if (inMimic()) { try { window.mimic.saveConfig({ voice: cfgVoice }); } catch (e) { void e; } } }
+  function pct(n){ return Math.round(n * 100) / 100; }
+  function sampleLine(){ var c = pron && pron.characters && pron.characters[0]; return 'Enrage soon. Heal up' + (c ? ', ' + (c.say || c.name) : '') + '.'; }
+  function sugText(s){ return typeof s === 'string' ? s : (s && (s.say || s.text || s.name)) || ''; }
+
+  function voiceHtml(){
+    var ps = WPSounds.packs(), p = pack(cfgVoice.pack || 'default') || ps[0];
+    var h = '<h3 style="font-size:13px;margin:8px 0 4px">Voice</h3>';
+    if (!inMimic()) h += '<div class="dim" style="font-size:11px;margin-bottom:6px">Mimic saves the voice you pick. Open this dashboard from Mimic to change it; names below work anywhere.</div>';
+    h += '<div style="display:flex;flex-direction:column;gap:4px">';
+    for (var i = 0; i < ps.length; i++) {
+      var on = ps[i].id === (cfgVoice.pack || 'default');
+      h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;padding:3px 6px;border:1px solid ' + (on ? 'var(--blue)' : 'var(--border)') + ';border-radius:5px">'
+        + '<input type="radio" name="wpVoicePack" value="' + esc(ps[i].id) + '"' + (on ? ' checked' : '') + (inMimic() ? '' : ' disabled') + '>'
+        + '<b>' + esc(ps[i].label) + '</b><span class="dim" style="flex:1">' + esc(ps[i].blurb || '') + '</span>'
+        + '<button type="button" data-vn-sample="' + esc(ps[i].id) + '" style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px" title="Hear this pack">&#9654;</button></label>';
+    }
+    h += '</div>';
+    var vs = voices();
+    h += '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:8px;font-size:12px">'
+      + '<label>Installed voice <select id="wpVoiceName"' + (inMimic() ? '' : ' disabled') + ' style="font-family:inherit;font-size:12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:2px 6px;max-width:260px"><option value="">Let the pack choose</option>';
+    var seen = !cfgVoice.voiceName;
+    for (var k = 0; k < vs.length; k++) { var sel = vs[k].name === cfgVoice.voiceName; if (sel) seen = true; h += '<option value="' + esc(vs[k].name) + '"' + (sel ? ' selected' : '') + '>' + esc(vs[k].name) + '</option>'; }
+    if (!seen) h += '<option value="' + esc(cfgVoice.voiceName) + '" selected>' + esc(cfgVoice.voiceName) + ' (not installed)</option>';
+    h += '</select></label>'
+      + '<label>Speed <input type="range" id="wpVoiceRate" min="50" max="200" value="' + Math.round((cfgVoice.rate > 0 ? cfgVoice.rate : (p ? p.rate : 1.05)) * 100) + '"' + (inMimic() ? '' : ' disabled') + '> <span id="wpVoiceRateV" class="dim">' + pct(cfgVoice.rate > 0 ? cfgVoice.rate : (p ? p.rate : 1.05)) + '&times;</span></label>'
+      + '<label>Pitch <input type="range" id="wpVoicePitch" min="0" max="200" value="' + Math.round((cfgVoice.pitch > 0 ? cfgVoice.pitch : (p ? p.pitch : 1)) * 100) + '"' + (inMimic() ? '' : ' disabled') + '> <span id="wpVoicePitchV" class="dim">' + pct(cfgVoice.pitch > 0 ? cfgVoice.pitch : (p ? p.pitch : 1)) + '</span></label>'
+      + '<button type="button" id="wpVoiceHear" style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px">&#9654; Hear it</button>'
+      + '<button type="button" id="wpVoiceReset" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:5px 10px;cursor:pointer;font-family:inherit;font-size:12px"' + (inMimic() ? '' : ' disabled') + '>Back to the pack\\'s own</button>'
+      + '</div>';
+    h += '<div class="dim" style="font-size:11px;margin-top:4px">A pack whose voices are not installed here still sets the speed and pitch. A trigger can also name its own pack in its editor.</div>';
+    return h;
+  }
+  function namesHtml(){
+    var h = '<h3 style="font-size:13px;margin:14px 0 4px">Say your name</h3>';
+    if (!pron) return h + '<div class="dim" style="font-size:12px">loading…</div>';
+    if (!pron.characters.length) return h + '<div class="dim" style="font-size:12px">No characters found on this PC yet. Play with logging on and they will appear.</div>';
+    h += '<div class="dim" style="font-size:11px;margin-bottom:6px">'
+      + (pron.feature === 'off' ? 'The server has no shared list yet, so what you save here stays on this PC. ' : 'Saving for the guild changes how every raider\\'s Mimic says your name. ')
+      + 'Hear it first with &#9654;.</div>';
+    for (var i = 0; i < pron.characters.length; i++) {
+      var c = pron.characters[i], nm = c.name, d = drafts[nm] != null ? drafts[nm] : (c.say || ''), s = sugg[nm];
+      h += '<div data-vn-char="' + esc(nm) + '" style="border-top:1px solid var(--border);padding:6px 0;font-size:12px">'
+        + '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px"><b>' + esc(nm) + '</b>'
+        + '<span class="dim">' + (c.say ? 'said as &ldquo;' + esc(c.say) + '&rdquo;' + (c.source === 'local' ? ' (this PC)' : '') : 'said as spelled') + '</span>'
+        + '<button type="button" data-vn-hear-name style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px" title="Hear it as it is said now">&#9654;</button>'
+        + '<button type="button" data-vn-suggest style="background:var(--panel);color:var(--blue);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px">Suggestions</button></div>';
+      if (s) {
+        if (s.available === false) h += '<div class="dim" style="font-size:11px;margin-top:4px">No suggestions right now' + (s.why ? ' (' + esc(s.why) + ')' : '') + '. Type how it should sound.</div>';
+        else {
+          h += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">';
+          var ss = s.suggestions || [];
+          for (var q = 0; q < ss.length; q++) {
+            var tx = sugText(ss[q]);
+            if (tx) h += '<span style="display:inline-flex;align-items:center;gap:2px;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:1px 2px 1px 4px"><button type="button" data-vn-hear="' + esc(tx) + '" style="background:none;border:0;color:var(--green);cursor:pointer;font-size:11px;padding:1px 4px" title="Hear it">&#9654;</button><button type="button" data-vn-use="' + esc(tx) + '" style="background:none;border:0;color:var(--text);cursor:pointer;font-size:12px;padding:1px 6px" title="Use this">' + esc(tx) + '</button></span>';
+          }
+          if (!ss.length) h += '<span class="dim" style="font-size:11px">No suggestions for this name.</span>';
+          h += '</div>';
+          var tips = s.tips || [];
+          if (tips.length) { h += '<ul class="dim" style="font-size:11px;margin:6px 0 0 16px;padding:0">'; for (var u = 0; u < tips.length; u++) h += '<li>' + esc(sugText(tips[u])) + '</li>'; h += '</ul>'; }
+        }
+      }
+      h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:6px">'
+        + '<input type="text" data-vn-say value="' + esc(d) + '" placeholder="how it sounds, e.g. Ahl-den-mar" maxlength="80" style="flex:1;min-width:160px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 6px;font-family:inherit;font-size:12px">'
+        + '<button type="button" data-vn-hear-draft style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:3px 8px" title="Hear what is typed">&#9654;</button>'
+        + '<button type="button" data-vn-save-guild style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:4px 10px;cursor:pointer;font-family:inherit;font-size:11px"' + (pron.signed_in ? '' : ' disabled title="Needs a linked Wolf Pack account"') + '>Save for the guild</button>'
+        + '<button type="button" data-vn-save-local style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:4px 10px;cursor:pointer;font-family:inherit;font-size:11px">This PC only</button>'
+        + '<span class="dim" style="font-size:11px">' + esc(notes[nm] || '') + '</span></div></div>';
+    }
+    return h;
+  }
+  function paint(){
+    if (!el) return;
+    el.innerHTML = '<h2>🗣 Voice &amp; names <span class="dim" style="font-size:11px;font-weight:normal">(how callouts sound, and how your characters are said)</span></h2>' + voiceHtml() + namesHtml();
+  }
+  async function loadAll(){
+    await WPSounds.loadPacks();
+    if (inMimic()) { try { var c = await window.mimic.getConfig(); if (c && c.voice) cfgVoice = Object.assign({ pack: 'default', voiceName: '', rate: null, pitch: null }, c.voice); } catch (e) { void e; } }
+    paint();
+    try { var r = await fetch('/api/pronunciations'); pron = r.ok ? await r.json() : { characters: [], feature: 'off', signed_in: false }; } catch (e) { pron = { characters: [], feature: 'off', signed_in: false }; }
+    paint();
+  }
+  async function suggest(nm){
+    try { var r = await fetch('/api/pronunciation-suggest?name=' + encodeURIComponent(nm)); sugg[nm] = r.ok ? await r.json() : { available: false, why: 'server answered ' + r.status }; }
+    catch (e) { sugg[nm] = { available: false, why: 'could not ask' }; }
+    paint();
+  }
+  async function saveName(nm, say, guild){
+    if (!say) { notes[nm] = 'Type how it should sound first.'; paint(); return; }
+    notes[nm] = 'Saving…'; paint();
+    var ok = false, why = '';
+    try {
+      var r = await fetch(guild ? '/api/pronunciation' : '/api/pronunciations/local', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(guild ? { character: nm, say: say } : { name: nm, say: say }) });
+      var j = await r.json().catch(function(){ return {}; });
+      ok = r.ok && j.ok !== false; why = j.error || '';
+    } catch (e) { why = 'could not reach the agent'; }
+    notes[nm] = ok ? 'Saved' + (guild ? ' for the guild.' : ' on this PC.') : (why || 'Not saved.') + (guild ? ' You can still keep it on this PC only.' : '');
+    if (ok) { delete drafts[nm]; try { var r2 = await fetch('/api/pronunciations'); if (r2.ok) pron = await r2.json(); } catch (e) { void e; } }
+    paint();
+  }
+  function charOf(t){ var b = t.closest('[data-vn-char]'); return b ? b.getAttribute('data-vn-char') : ''; }
+  function onClick(e){
+    var t = e.target && e.target.closest ? e.target : null;
+    if (!t) return;
+    var b;
+    if ((b = t.closest('[data-vn-sample]'))) { speak(sampleLine(), b.getAttribute('data-vn-sample')); return; }
+    if (t.closest('#wpVoiceHear')) { speak(sampleLine()); return; }
+    if (t.closest('#wpVoiceReset')) { cfgVoice.voiceName = ''; cfgVoice.rate = null; cfgVoice.pitch = null; save(); paint(); return; }
+    var nm = charOf(t);
+    if (!nm) return;
+    var box = t.closest('[data-vn-char]'), inp = box.querySelector('[data-vn-say]');
+    if (t.closest('[data-vn-hear-name]')) { var c = pron.characters.filter(function(x){ return x.name === nm; })[0]; speak((c && c.say) || nm); return; }
+    if (t.closest('[data-vn-suggest]')) { suggest(nm); return; }
+    if ((b = t.closest('[data-vn-hear]'))) { speak(b.getAttribute('data-vn-hear')); return; }
+    if ((b = t.closest('[data-vn-use]'))) { drafts[nm] = b.getAttribute('data-vn-use'); if (inp) inp.value = drafts[nm]; return; }
+    if (t.closest('[data-vn-hear-draft]')) { speak(inp && inp.value ? inp.value : nm); return; }
+    if (t.closest('[data-vn-save-guild]')) { saveName(nm, inp ? inp.value.trim() : '', true); return; }
+    if (t.closest('[data-vn-save-local]')) { saveName(nm, inp ? inp.value.trim() : '', false); return; }
+  }
+  function onChange(e){
+    var t = e.target; if (!t) return;
+    if (t.name === 'wpVoicePack') { cfgVoice.pack = t.value; save(); paint(); return; }
+    if (t.id === 'wpVoiceName') { cfgVoice.voiceName = t.value; save(); return; }
+  }
+  function onInput(e){
+    var t = e.target; if (!t) return;
+    if (t.id === 'wpVoiceRate') { cfgVoice.rate = Number(t.value) / 100; var rv = document.getElementById('wpVoiceRateV'); if (rv) rv.innerHTML = pct(cfgVoice.rate) + '&times;'; save(); return; }
+    if (t.id === 'wpVoicePitch') { cfgVoice.pitch = Number(t.value) / 100; var pv = document.getElementById('wpVoicePitchV'); if (pv) pv.textContent = pct(cfgVoice.pitch); save(); return; }
+    if (t.hasAttribute && t.hasAttribute('data-vn-say')) { var nm = charOf(t); if (nm) drafts[nm] = t.value; }
+  }
+  function mount(){
+    var n = document.getElementById('wpVoice');
+    if (!n) { mounted = false; return; }
+    if (mounted && n === el) return;
+    el = n; mounted = true;
+    el.addEventListener('click', onClick);
+    el.addEventListener('change', onChange);
+    el.addEventListener('input', onInput);
+    paint();
+    if (!pron) loadAll();
+    if (window.speechSynthesis && !vcBound) { vcBound = true; window.speechSynthesis.addEventListener('voiceschanged', function(){ if (el && document.body.contains(el)) paint(); }); }
+  }
+  var vcBound = false;
+  window._wpVoiceNames = { mount: mount };
 })();
 
 // ── 💥 My Crits panel ───────────────────────────────────────────────────────
@@ -32404,6 +32831,8 @@ function startWebDashboard(port) {
       if (req.url && req.url.split('?')[0] === '/api/trigger-rules' && (req.method === 'GET' || req.method === 'POST')) return _handleTriggerRules(req, res);
       // Personal trigger sync — Push / Pull between this household's PCs (2026-10-12).
       if (req.url && req.url.startsWith('/api/trigger-sync/')) return _handleTriggerSync(req, res);
+      // Sounds, voice packs, this PC's sound overrides, how names are pronounced (2026-10-14).
+      if (req.url && /^\/(?:sounds\/[^?#]|api\/(?:sounds(?:\/open-folder)?|trigger-sound-overrides|voice-packs|pronunciations(?:\/local)?|pronunciation-suggest|pronunciation)(?:[?#]|$))/.test(req.url)) return _handleSoundsVoices(req, res);
       // Command Center ✕ on a needs-rez row — clears it for the WHOLE raid.
       // Local state drops immediately so the click feels instant; the relay
       // rides the durable upload queue, and every other Command Center drops
@@ -42574,6 +43003,19 @@ const SUGGESTED_TRIGGERS = [
     pattern: 'You are no longer feigning death, because a spell hit you\\.',
     overlay_text: 'FD BROKEN — A SPELL HIT YOU', overlay_color: 'red', overlay_ms: 3000,
     tts_default: true,  cooldown_seconds: 2 },
+  // Willsapper (the guild lead, 2026-10-14: a member wanted a "slap" when it procs). The proc casts
+  // Energy Sap (spell 1960), whose landing text on the mob is "<mob> yawns." — and ten other spells
+  // print the same words, shaman slows among them (Turgur's / Tigir's / Togor's / Tagar's Insects,
+  // Walking Sleep, Drowsy). So it fires only when one of YOUR melee hits on that same mob was
+  // logged within 1.5 s (after_my_melee_ms). The sound is the point: it plays INSTEAD of speaking.
+  // Not gated on owning the weapon (the agent knows no equipped items): tick it, in "For:", for the
+  // character that wields it.
+  { id: 'proc_willsapper', category: 'self', label: 'Willsapper proc (Energy Sap — the "yawns" right after your own hit; tick it for the character with the weapon)',
+    pattern: '^\\[.+?\\]\\s+(?<target>.+?) yawns\\.$',
+    overlay_text: 'SLAP!', overlay_color: 'purple', overlay_ms: 1500,
+    overlay_preview: 'SLAP! (plays your slap sound — change it under Personal triggers)',
+    tts_default: false, cooldown_seconds: 0,
+    after_my_melee_ms: 1500, sound: 'slap', sound_mode: 'replace' },
   // The Charm overlay's own "charm break" waits for the pet to leave Zeal's
   // pet slot (6s grace, so a recast doesn't false-alarm) plus a 1.5s kill
   // guard, and only speaks while that overlay is open. This fires on the log
@@ -42742,7 +43184,9 @@ const BUILTIN_TIMER_KINDS = new Set(SUGGESTED_TRIGGERS.map(t => t.builtin_timer)
 const PERSONAL_CARRY_FIELDS = ['warning_seconds', 'warning_text', 'warning_tts', 'end_text', 'timer_warnings',
   'timer_loop', 'timer_loop_max',
   'timer_key_capture', 'timer_duration_capture', 'bar_color', 'pinned',
-  'display_threshold_sec', 'exclude_patterns', 'characters', 'catalog_match'];
+  'display_threshold_sec', 'exclude_patterns', 'characters', 'catalog_match',
+  // 2026-10-14: fire only just after one of your own melee hits on the same mob; a per-trigger voice pack.
+  'after_my_melee_ms', 'voice_pack'];
 // Saved suggested rows keep the pattern they were created with, so a template
 // fix never reached anyone who had already ticked it. A pattern listed here is
 // one we shipped dead; loadPersonalTriggers swaps it for the current one. Only
@@ -42785,8 +43229,10 @@ function _templateToPersonalRow(tpl, opts) {
     duration_ms: tpl.overlay_ms || 4000,
   };
   if (wantTts) action.tts = tpl.overlay_text;
+  if (tpl.sound) { action.sound = tpl.sound; action.sound_mode = tpl.sound_mode || 'add'; if (tpl.sound_volume != null) action.sound_volume = tpl.sound_volume; }
   return {
     id:            'suggested:' + tpl.id,
+    ...(tpl.after_my_melee_ms ? { after_my_melee_ms: tpl.after_my_melee_ms } : {}),
     name:          tpl.label,
     pattern:       tpl.pattern || '',
     pattern_flags: 'i',
@@ -43424,12 +43870,400 @@ async function _handleTriggerSync(req, res) {
 }
 // ── end personal trigger sync (agent half) ──
 
+// ── Sounds, voices and pronunciations (the guild lead, 2026-10-14) ───────────────────────────────
+// A member wanted a custom "slap" when their Willsapper proc lands. The guild lead then asked for the
+// rest: *"different voice packs, get player pronunciation right … build this voice pack bit into
+// onboarding and allow users to add their own sound effects. allow them to use the sound effects
+// instead of callouts tts."*
+//
+// SOUNDS. A trigger's `sound` is a NAME ("slap"), "custom:<file>" for a member's own file, or an
+// http(s) URL (the Vex Thal guild trigger uses one) — never a path on anyone's disk, so a guild or
+// synced trigger plays on every PC. Two folders: Mimic's shipped set (env WOLFPACK_SOUNDS_DIR) and
+// the member's own (env WOLFPACK_SOUNDS_USER_DIR, else `sounds/` beside the agent's other state); a
+// custom file with a shipped file's name overrides it. apps/mimic/sounds.js holds the same rules for
+// Mimic's side — keep the two in step.
+//   sound_mode 'add' (default)  the sound plays with the spoken callout, as it always did
+//   sound_mode 'replace'        the sound plays INSTEAD of speaking ("allow them to use the sound
+//                               effects instead of callouts tts"); the overlay still flashes
+// A MEMBER'S OWN SOUND on a guild trigger they cannot edit lives in trigger_sound_overrides.json
+// ({trigger_id: {sound, sound_volume, sound_mode}}) and is applied at fire time on this PC only,
+// relayed fires included.
+const SOUND_EXTS = ['.wav', '.mp3', '.ogg'];
+const SOUND_MAX_BYTES = 8 * 1024 * 1024;
+const SOUND_MIME = { '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg' };
+function _soundDirs() {
+  return {
+    shipped: process.env.WOLFPACK_SOUNDS_DIR || '',
+    user: process.env.WOLFPACK_SOUNDS_USER_DIR || path.join(path.dirname(STATS_FILE || ''), 'sounds'),
+  };
+}
+function _soundScan(dir) {
+  const out = [];
+  if (!dir) return out;
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      const ext = path.extname(f).toLowerCase();
+      if (!SOUND_EXTS.includes(ext)) continue;
+      let st; try { st = fs.statSync(path.join(dir, f)); } catch { continue; }
+      if (!st.isFile() || st.size === 0 || st.size > SOUND_MAX_BYTES) continue;
+      out.push({ file: f, base: path.basename(f, path.extname(f)).toLowerCase() });
+    }
+  } catch { /* a missing folder is an empty library */ }
+  return out.sort((a, b) => a.file.localeCompare(b.file));
+}
+// → [{ name, file, source, overrides }] — `name` is the value a trigger stores.
+function _soundList() {
+  const d = _soundDirs();
+  const shipped = _soundScan(d.shipped), custom = _soundScan(d.user);
+  const customBy = new Map(custom.map(c => [c.base, c]));
+  const out = [];
+  for (const s of shipped) {
+    const over = customBy.get(s.base);
+    out.push({ name: s.base, file: over ? over.file : s.file, source: over ? 'custom' : 'shipped', overrides: !!over });
+  }
+  const shippedBases = new Set(shipped.map(s => s.base));
+  for (const c of custom) if (!shippedBases.has(c.base)) out.push({ name: 'custom:' + c.file, file: c.file, source: 'custom', overrides: false });
+  return out;
+}
+// name → absolute path, or null (unknown, a path, a traversal attempt, a URL).
+function _soundResolve(name) {
+  const raw = String(name == null ? '' : name).trim();
+  if (!raw) return null;
+  const d = _soundDirs();
+  if (raw.toLowerCase().startsWith('custom:')) {
+    const file = raw.slice(7).trim();
+    if (!file || file !== path.basename(file) || !SOUND_EXTS.includes(path.extname(file).toLowerCase())) return null;
+    const p = path.join(d.user, file);
+    return fs.existsSync(p) ? p : null;
+  }
+  const base = raw.toLowerCase();
+  if (!/^[a-z0-9][a-z0-9 _.-]{0,60}$/.test(base)) return null;
+  const mine = _soundScan(d.user).find(c => c.base === base);
+  if (mine) return path.join(d.user, mine.file);
+  const ours = _soundScan(d.shipped).find(s => s.base === base);
+  return ours ? path.join(d.shipped, ours.file) : null;
+}
+const _SOUND_URL_RX = /^https?:\/\/\S{1,300}$/i;
+// Can this machine play it? A URL is taken on trust (it plays as it always did); a name must resolve.
+function _soundUsable(sound) { return _SOUND_URL_RX.test(String(sound || '')) || !!_soundResolve(sound); }
+// A sound value a MEMBER typed or picked: a name, a custom: file, or a URL. '' = none / unusable.
+function _cleanSoundName(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (!s) return '';
+  if (_SOUND_URL_RX.test(s)) return s;
+  if (/^custom:/i.test(s)) { const f = s.slice(7).trim(); return f && f === path.basename(f) && SOUND_EXTS.includes(path.extname(f).toLowerCase()) && f.length <= 120 ? 'custom:' + f : ''; }
+  const b = s.toLowerCase();
+  return /^[a-z0-9][a-z0-9 _.-]{0,60}$/.test(b) ? b : '';
+}
+// The sound fields of an action or an override, cleaned. Only the keys that were present come back.
+function _soundSpecOf(a) {
+  const out = {};
+  if (!a || typeof a !== 'object') return out;
+  const s = _cleanSoundName(a.sound);
+  if (s) out.sound = s;
+  if (a.sound_volume != null && a.sound_volume !== '' && Number.isFinite(Number(a.sound_volume))) out.sound_volume = Math.max(0, Math.min(1, Number(a.sound_volume)));
+  if (a.sound_mode === 'replace' || a.sound_mode === 'add') out.sound_mode = a.sound_mode;
+  return out;
+}
+// Lay a sound spec onto an overlay about to be pushed. 'replace' silences the spoken callout (the
+// overlay still flashes) — but only when this PC can actually play the sound, so a missing file
+// falls back to speaking rather than to silence. triggers.html re-checks with its own resolution.
+function _applySoundSpec(o, spec) {
+  if (!o || !spec || !spec.sound) return o;
+  o.sound = spec.sound;
+  if (spec.sound_volume != null) o.sound_volume = spec.sound_volume; else delete o.sound_volume;
+  o.sound_mode = spec.sound_mode === 'replace' ? 'replace' : 'add';
+  if (o.sound_mode === 'replace' && _soundUsable(o.sound)) o.mute = true;
+  return o;
+}
+const _soundOverrides = {};   // trigger id → { sound, sound_volume?, sound_mode? }
+// Where this section keeps its files: beside the agent's other state (a test points it at a temp folder).
+let _voiceStateDir = null;
+function _vsDir() { return _voiceStateDir || path.dirname(STATS_FILE || ''); }
+function _soundOverridesPath() { const dir = _vsDir(); return dir ? path.join(dir, 'trigger_sound_overrides.json') : null; }
+function loadSoundOverrides() {
+  try {
+    const p = _soundOverridesPath();
+    if (!p || !fs.existsSync(p)) return;
+    const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
+    const src = raw && typeof raw === 'object' && raw.overrides && typeof raw.overrides === 'object' ? raw.overrides : raw;
+    for (const k of Object.keys(_soundOverrides)) delete _soundOverrides[k];
+    for (const [id, v] of Object.entries(src || {})) {
+      const spec = _soundSpecOf(v);
+      if (spec.sound && /^[\w:.-]{1,80}$/.test(id) && Object.keys(_soundOverrides).length < 2000) _soundOverrides[id] = spec;
+    }
+  } catch (err) { console.warn('[sound-overrides] load failed:', err.message); }
+}
+function saveSoundOverrides() {
+  try {
+    const p = _soundOverridesPath();
+    if (!p) return false;
+    const tmp = p + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify({ version: 1, overrides: _soundOverrides }, null, 2));
+    fs.renameSync(tmp, p);
+    return true;
+  } catch (err) { console.warn('[sound-overrides] save failed:', err.message); return false; }
+}
+// { id, sound, sound_volume?, sound_mode? } — an empty sound removes this PC's override.
+function _setSoundOverride(b) {
+  const id = String((b && b.id) || '').trim();
+  if (!/^[\w:.-]{1,80}$/.test(id)) return { ok: false, error: 'bad id' };
+  const spec = _soundSpecOf(b);
+  if (!spec.sound) { delete _soundOverrides[id]; }
+  else {
+    if (!_soundOverrides[id] && Object.keys(_soundOverrides).length >= 2000) return { ok: false, error: 'too many overrides' };
+    _soundOverrides[id] = spec;
+  }
+  if (!saveSoundOverrides()) return { ok: false, error: 'could not save' };
+  _stateJsonCache = { at: 0, body: null };
+  return { ok: true, id, override: _soundOverrides[id] || null };
+}
+
+// VOICE PACKS: named presets for the trigger voice. `voices` are substrings matched (case-insensitive)
+// against the installed Windows voice names, first hit wins; none installed = the default voice, with
+// the pack's rate and pitch still applied. The pick, and the rate / pitch sliders, live in Mimic's
+// config (cfg.voice); triggers.html resolves them. Served on GET /api/voice-packs.
+const VOICE_PACKS = [
+  { id: 'default',  label: 'Default',  blurb: 'Your Windows voice, as it is',                 voices: [],                                    rate: 1.05, pitch: 1.0 },
+  { id: 'herald',   label: 'Herald',   blurb: 'Slower and lower, like a town crier',          voices: ['David', 'Mark', 'George', 'Guy'],    rate: 0.9,  pitch: 0.75 },
+  { id: 'quick',    label: 'Quick',    blurb: 'Faster, for a raid that moves',                voices: ['Zira', 'Aria', 'Jenny', 'Hazel'],    rate: 1.35, pitch: 1.0 },
+  { id: 'narrator', label: 'Narrator', blurb: 'Even and calm, a little slower',               voices: ['Hazel', 'Susan', 'Zira', 'Aria'],    rate: 0.95, pitch: 0.95 },
+];
+
+// PRONUNCIATION. The bot keeps a guild-wide list of how to SAY a character's name (GET
+// /api/agent/pronunciations → { version, entries:[{name, say}] }, ETag'd); this agent fetches it every
+// 10 minutes with If-None-Match, caches it beside its other state, and rewrites every spoken string
+// before it reaches the speech engine. A 404 means an older bot: the feature is off, silently.
+// A member's own entries (pronunciations_local.json, this PC only) win over the synced ones.
+const PRON_POLL_MS = 10 * 60_000;
+let _pronSynced = new Map();     // lowercase name → say
+let _pronLocal = {};             // name (as typed) → say
+let _pronMeta = { version: null, etag: null, feature: 'unknown', checkedAt: 0 };
+let _pronMerged = null;          // Map, rebuilt when either side changes
+function _pronDir() { return _vsDir(); }
+function _pronMergedMap() {
+  if (_pronMerged) return _pronMerged;
+  const m = new Map(_pronSynced);
+  for (const [n, s] of Object.entries(_pronLocal)) { const k = String(n).toLowerCase(); if (s) m.set(k, s); else m.delete(k); }
+  return (_pronMerged = m);
+}
+// Anything list-shaped → [[lowercase name, say]] with blanks and self-maps dropped.
+function _pronPairs(map) {
+  let src = [];
+  if (map instanceof Map) src = [...map.entries()];
+  else if (Array.isArray(map)) src = map.map(e => [e && e.name, e && e.say]);
+  else if (map && typeof map === 'object') src = Object.entries(map);
+  const out = [];
+  for (const [n, s] of src) {
+    const name = String(n == null ? '' : n).trim().toLowerCase(), say = String(s == null ? '' : s).trim();
+    if (name && say && name !== say.toLowerCase()) out.push([name, say]);
+  }
+  return out;
+}
+const _pronCompiled = new WeakMap();
+// Rewrites names in a spoken string: whole words only (a name inside a longer word is left alone),
+// case-insensitive, the longest name first so "Aldenmar Prime" is not eaten by "Aldenmar", in ONE pass
+// so a replacement is never itself replaced. `map` is a Map, an array of {name, say} or a plain object.
+function _applyPronunciations(text, map) {
+  const s = String(text == null ? '' : text);
+  if (!s || !map) return s;
+  let c = (typeof map === 'object') ? _pronCompiled.get(map) : null;
+  if (!c) {
+    const pairs = _pronPairs(map).sort((a, b) => b[0].length - a[0].length);
+    if (!pairs.length) return s;
+    const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    c = { re: new RegExp('(?<![\\p{L}\\p{N}_])(?:' + pairs.map(p => esc(p[0])).join('|') + ')(?![\\p{L}\\p{N}_])', 'giu'), say: new Map(pairs) };
+    if (typeof map === 'object') _pronCompiled.set(map, c);
+  }
+  c.re.lastIndex = 0;
+  return s.replace(c.re, (w) => c.say.get(w.toLowerCase()) || w);
+}
+function _applySpokenPronunciations(text) {
+  const m = _pronMergedMap();
+  return m.size ? _applyPronunciations(text, m) : text;
+}
+function loadPronunciations() {
+  try {
+    const dir = _pronDir();
+    if (!dir) return;
+    const pc = path.join(dir, 'pronunciations_cache.json');
+    if (fs.existsSync(pc)) {
+      const j = JSON.parse(fs.readFileSync(pc, 'utf8'));
+      _pronSynced = new Map(_pronPairs(j && j.entries));
+      _pronMeta.version = (j && j.version) != null ? j.version : null;
+      _pronMeta.etag = (j && j.etag) || null;
+      if (_pronSynced.size) _pronMeta.feature = 'on';
+    }
+    const pl = path.join(dir, 'pronunciations_local.json');
+    if (fs.existsSync(pl)) {
+      const j = JSON.parse(fs.readFileSync(pl, 'utf8'));
+      const src = j && typeof j === 'object' && j.entries && typeof j.entries === 'object' ? j.entries : {};
+      _pronLocal = {};
+      for (const [n, s] of Object.entries(src)) if (String(n).trim() && String(s).trim() && Object.keys(_pronLocal).length < 2000) _pronLocal[String(n).trim()] = String(s).trim().slice(0, 80);
+    }
+    _pronMerged = null;
+  } catch (err) { console.warn('[pronunciations] load failed:', err.message); }
+}
+function _pronWrite(file, obj) {
+  try {
+    const dir = _pronDir();
+    if (!dir) return false;
+    const p = path.join(dir, file), tmp = p + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(obj));
+    fs.renameSync(tmp, p);
+    return true;
+  } catch (err) { console.warn('[pronunciations] save failed:', err.message); return false; }
+}
+// One poll. → 'updated' | 'unchanged' | 'off' (404, an older bot) | 'error' | 'local'.
+async function pollPronunciations({ botUrl, token, force = false } = {}) {
+  if (!botUrl || !token) return 'local';
+  try {
+    const base = botUrl.replace(/\/encounter(\?.*)?$/, '');
+    const headers = { Authorization: 'Bearer ' + token, 'User-Agent': 'wolfpack-logsync/' + AGENT_VERSION };
+    if (_mimicSessionToken) headers['X-Wolfpack-Mimic-Session'] = _mimicSessionToken;
+    if (_pronMeta.etag && !force) headers['If-None-Match'] = _pronMeta.etag;
+    const r = await fetch(base + '/pronunciations', { headers, signal: AbortSignal.timeout(10_000) });
+    _pronMeta.checkedAt = Date.now();
+    if (r.status === 404) { _pronMeta.feature = 'off'; return 'off'; }
+    if (r.status === 304) { _pronMeta.feature = 'on'; return 'unchanged'; }
+    if (!r.ok) return 'error';
+    const j = await r.json().catch(() => null);
+    if (!j || !Array.isArray(j.entries)) return 'error';
+    _pronSynced = new Map(_pronPairs(j.entries));
+    _pronMeta.version = j.version != null ? j.version : null;
+    _pronMeta.etag = r.headers.get('etag') || null;
+    _pronMeta.feature = 'on';
+    _pronMerged = null;
+    _pronWrite('pronunciations_cache.json', { version: _pronMeta.version, etag: _pronMeta.etag, entries: j.entries.slice(0, 5000) });
+    return 'updated';
+  } catch { return 'error'; }
+}
+// A call to one of the bot's pronunciation routes (suggest, set). Local mode makes none.
+async function _pronBotCall(method, route, body) {
+  if (_localOnly() || !_canAskGuildForFights()) return { ok: false, status: 0, local: true, error: 'Needs a linked Wolf Pack account.' };
+  try {
+    const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+    const headers = { ..._characterPrefsHeaders() };
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const r = await fetch(base + route, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(10_000) });
+    const j = await r.json().catch(() => null);
+    if (r.status === 404 && !(j && j.error)) return { ok: false, status: 404, error: 'The server has no pronunciation list yet.' };
+    if (!r.ok) return { ok: false, status: r.status, error: String((j && j.error) || ('the server answered ' + r.status)) };
+    return { ok: true, data: j || {} };
+  } catch { return { ok: false, status: 0, error: 'could not reach the Wolf Pack server' }; }
+}
+function _pronStatePayload() {
+  const merged = _pronMergedMap();
+  const chars = _watchedCharacters().map(c => {
+    const k = String(c).toLowerCase();
+    const mine = Object.keys(_pronLocal).find(n => n.toLowerCase() === k);
+    return { name: c, say: mine ? _pronLocal[mine] : (merged.get(k) || ''), source: mine ? 'local' : (_pronSynced.has(k) ? 'synced' : '') };
+  });
+  return { feature: _pronMeta.feature, version: _pronMeta.version, synced: _pronSynced.size, local: { ..._pronLocal }, characters: chars, signed_in: !(_localOnly() || !_canAskGuildForFights()) };
+}
+
+// The routes for all of the above. Writes are refused for a browser page that is not one of ours.
+async function _handleSoundsVoices(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(obj)); };
+  const u = new URL(req.url, 'http://127.0.0.1');
+  const p = u.pathname;
+  const body = async () => { try { return JSON.parse((await _readBody(req, 4096)) || '{}'); } catch { return null; } };
+  if (req.method === 'GET' && p.startsWith('/sounds/')) {
+    let name = '';
+    try { name = decodeURIComponent(p.slice(8)); } catch { name = ''; }
+    const file = _soundResolve(name);
+    if (!file) return send(404, { error: 'no such sound' });
+    try {
+      const buf = fs.readFileSync(file);
+      res.writeHead(200, { 'Content-Type': SOUND_MIME[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Content-Length': buf.length, 'Cache-Control': 'no-cache' });
+      return res.end(buf);
+    } catch { return send(404, { error: 'unreadable' }); }
+  }
+  if (p === '/api/sounds' && req.method === 'GET') {
+    const d = _soundDirs();
+    return send(200, { sounds: _soundList(), user_dir: d.user, has_shipped: !!d.shipped });
+  }
+  if (p === '/api/sounds/open-folder' && req.method === 'POST') {
+    if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+    const dir = _soundDirs().user;
+    try { fs.mkdirSync(dir, { recursive: true }); } catch { /* the open below reports it */ }
+    try {
+      const { spawn } = require('child_process');
+      const [cmd, args] = process.platform === 'win32' ? ['explorer.exe', [dir]] : process.platform === 'darwin' ? ['open', [dir]] : ['xdg-open', [dir]];
+      const c = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+      c.on('error', () => { /* no file manager here: the path is in the reply */ });
+      c.unref();
+    } catch { /* same */ }
+    return send(200, { ok: true, user_dir: dir });
+  }
+  if (p === '/api/trigger-sound-overrides') {
+    if (req.method === 'GET') return send(200, { overrides: _soundOverrides });
+    if (req.method === 'POST') {
+      if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+      const b = await body();
+      if (!b) return send(400, { ok: false, error: 'bad body' });
+      const out = _setSoundOverride(b);
+      scheduleRender();
+      return send(out.ok ? 200 : 400, out);
+    }
+  }
+  if (p === '/api/voice-packs' && req.method === 'GET') return send(200, { packs: VOICE_PACKS });
+  if (p === '/api/pronunciations' && req.method === 'GET') return send(200, _pronStatePayload());
+  if (p === '/api/pronunciations/local' && req.method === 'POST') {
+    if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+    const b = await body();
+    const name = String((b && b.name) || '').trim().slice(0, 40);
+    if (!/^[A-Za-z][A-Za-z`' -]{1,39}$/.test(name)) return send(400, { ok: false, error: 'bad name' });
+    const say = String((b && b.say) || '').trim().slice(0, 80);
+    for (const k of Object.keys(_pronLocal)) if (k.toLowerCase() === name.toLowerCase()) delete _pronLocal[k];
+    if (say) _pronLocal[name] = say;
+    _pronMerged = null;
+    if (!_pronWrite('pronunciations_local.json', { version: 1, entries: _pronLocal })) return send(500, { ok: false, error: 'could not save' });
+    return send(200, { ok: true });
+  }
+  if (p === '/api/pronunciation-suggest' && req.method === 'GET') {
+    const name = String(u.searchParams.get('name') || '').trim().slice(0, 40);
+    if (!name) return send(400, { ok: false, error: 'name needed' });
+    const k = name.toLowerCase();
+    const mine = Object.keys(_pronLocal).find(n => n.toLowerCase() === k);
+    const out = await _pronBotCall('GET', '/pronunciation-suggest?name=' + encodeURIComponent(name));
+    const d = out.ok ? out.data : {};
+    return send(200, {
+      name: d.name || name,
+      suggestions: Array.isArray(d.suggestions) ? d.suggestions.slice(0, 12) : [],
+      tips: Array.isArray(d.tips) ? d.tips.slice(0, 8) : [],
+      current: mine ? _pronLocal[mine] : (d.current || _pronMergedMap().get(k) || ''),
+      available: out.ok, why: out.ok ? null : out.error,
+    });
+  }
+  if (p === '/api/pronunciation' && req.method === 'POST') {
+    if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+    const b = await body();
+    const character = String((b && b.character) || '').trim().slice(0, 40), say = String((b && b.say) || '').trim().slice(0, 80);
+    if (!character || !say) return send(400, { ok: false, error: 'character and say needed' });
+    const out = await _pronBotCall('POST', '/pronunciation', { character, say });
+    if (!out.ok) return send(out.status === 0 ? 502 : (out.status || 400), { ok: false, error: out.error });
+    pollPronunciations({ botUrl: _uploadOpts.botUrl, token: _uploadOpts.token, force: true }).catch(() => {});
+    return send(200, { ok: true });
+  }
+  return send(404, { error: 'not found' });
+}
+
 // Recent overlay queue — surfaced on /api/state for the dashboard to render.
 // Cap at 20 so a runaway trigger can't OOM us.
 const _activeOverlays = [];
 // Returns false when a "What you hear" rule dropped the fire.
 function _pushOverlay(o) {
+  // This PC's own sound for a guild trigger it cannot edit — also on a relayed fire (2026-10-14).
+  try { const ov = o && o.trigger_id && _soundOverrides[o.trigger_id]; if (ov) _applySoundSpec(o, ov); } catch { /* a sound fault must never silence a callout */ }
   try { if (!_applyTriggerRule(o)) return false; } catch { /* a rules fault must never silence a callout */ }
+  // How the guild says each name (and this PC's own corrections), before it reaches the speech engine.
+  try {
+    if (o && !o.mute && !o.soundOnly && _pronMergedMap().size) {
+      const said = _applySpokenPronunciations(o.tts || o.text || '');
+      if (said && said !== (o.tts || o.text)) o.tts = said;
+    }
+  } catch { /* speech goes out as written */ }
   _activeOverlays.unshift(o);
   if (_activeOverlays.length > 20) _activeOverlays.length = 20;
   _wakeFireWaitersSoon();
@@ -43482,6 +44316,14 @@ function _fireForWeb(o) {
     scope:   o.scope,
     test:    !!o.test,
     sound:   o.sound || null,
+    // 0–1; absent = the player's own default (0.9).
+    sound_volume: o.sound_volume != null ? o.sound_volume : null,
+    // 'replace' = the sound plays INSTEAD of the spoken callout; absent/'add' = with it.
+    sound_mode:   o.sound_mode || null,
+    // A standalone sound action: play it, flash nothing, say nothing.
+    sound_only:   !!o.soundOnly,
+    // A per-trigger voice pack (VOICE_PACKS id) overriding the player's pick for this callout.
+    voice_pack:   o.voice_pack || null,
     sticky:  !!o.sticky,
     rehearsal: !!o.rehearsal,
     replay:  !!o.replay,
@@ -50470,8 +51312,50 @@ function _rehearseTrigger(t, opts) {
   return { patternExercised, line: line || null, captures };
 }
 
+// ── "Only just after my own melee hit" (after_my_melee_ms, the guild lead's Willsapper ask, 2026-10-14) ──
+// A weapon proc prints the landing text of its spell ("<mob> yawns." for Energy Sap, spell 1960) — but
+// ten other spells print the same words, a shaman's slow among them. What tells the proc apart is that
+// YOUR melee hit on that mob was logged a moment before. So every own hit is noted per character and
+// mob, and a trigger carrying `after_my_melee_ms` fires only when the captured mob (the `target`
+// group, else `mob`/`npc`/`s`/`s1`/`n1`, else the first group) took one of your hits within that many
+// ms. A trigger with no capture takes any hit of yours in the window. EQ stamps whole seconds, so a
+// 1500 ms window means "this second or the last one", and a line stamped up to a second BEFORE the
+// hit still counts (the proc and the damage line can land in either order inside one tick).
+const _ownMeleeAt = new Map();   // `${characterLc}|${mobLc}` → log timestamp (ms) of the last own hit
+const OWN_MELEE_RX = /^\[[^\]]*\]\s+You ([a-z]+(?:-[a-z]+)?) (.+?) for (\d+) points? of damage\./i;
+function _noteOwnMelee(line, tsMs, charLc) {
+  if (line.indexOf('] You ') < 0) return false;   // hot path: almost no line is ours
+  const m = OWN_MELEE_RX.exec(line);
+  if (!m) return false;
+  const mob = m[2].replace(/^on\s+/i, '').trim().toLowerCase();   // "You frenzy on <mob> for …"
+  if (!mob || !Number.isFinite(tsMs)) return false;
+  _ownMeleeAt.set(charLc + '|' + mob, tsMs);
+  if (_ownMeleeAt.size > 400) {
+    for (const [k, v] of _ownMeleeAt) if (tsMs - v > 60_000) _ownMeleeAt.delete(k);
+    if (_ownMeleeAt.size > 400) _ownMeleeAt.clear();
+  }
+  return true;
+}
+function _mobFromGroups(groups) {
+  const g = groups || {};
+  for (const k of ['target', 'mob', 'npc', 's', 's1', 'n1']) if (g[k] != null && String(g[k]).trim()) return String(g[k]).trim().toLowerCase();
+  const first = Object.keys(g).find(k => g[k] != null && String(g[k]).trim());
+  return first ? String(g[first]).trim().toLowerCase() : '';
+}
+function _afterMyMeleeOk(t, groups, tsMs, charLc) {
+  const win = Number(t && t.after_my_melee_ms);
+  if (!(win > 0)) return true;
+  const ok = (last) => last != null && (tsMs - last) <= win && (tsMs - last) >= -1000;
+  const mob = _mobFromGroups(groups);
+  if (mob) return ok(_ownMeleeAt.get(charLc + '|' + mob));
+  for (const [k, v] of _ownMeleeAt) if (k.startsWith(charLc + '|') && ok(v)) return true;
+  return false;
+}
+
 // Hot-path: called for every kept log line in the tail loop.
 function evaluateTriggersAgainstLine(line, tsMs, fileChar) {
+  const meleeChar = String(fileChar || '').toLowerCase();
+  try { _noteOwnMelee(line, tsMs, meleeChar); } catch { /* a note that fails is a hit not remembered */ }
   const all = [..._personalTriggers, ...(stats.guildTriggers || [])];
   if (all.length === 0) return;
   let charLc;   // whose line this is — resolved once, only when a trigger is set per character
@@ -50546,6 +51430,12 @@ function evaluateTriggersAgainstLine(line, tsMs, fileChar) {
     if (t._excludes && t._excludes.length && t._excludes.some(rx => rx.test(line))) {
       _journalTrigger({ trigger: t.name, scope: t._scope || 'personal', checkpoint: TJ.GATES,
                         stopped: true, reason: 'suppressed — matched an exclude pattern' });
+      continue;
+    }
+    // after_my_melee_ms — a proc's landing text, told from the other spells that print it (see above).
+    if (t.after_my_melee_ms && !_afterMyMeleeOk(t, m.groups, tsMs, meleeChar)) {
+      _journalTrigger({ trigger: t.name, scope: t._scope || 'personal', checkpoint: TJ.GATES,
+                        stopped: true, reason: 'no hit of yours on that mob in the last ' + t.after_my_melee_ms + ' ms' });
       continue;
     }
     // Charm-pet filter — if the captured {s} name is one of our currently
@@ -50861,7 +51751,13 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
       // unticked box silenced nothing (FB-21, a beta tester: "it says 'charm break' twice on breaks,
       // even when tts is disabled"). Unticked now flashes and stays quiet, like a muted callout.
       if (!ttsText && String(t.id || '').startsWith('suggested:')) overlay.mute = true;
-      if (a.sound) overlay.sound = a.sound;
+      // A sound: a library name, "custom:<file>" or a URL; sound_mode 'replace' plays it INSTEAD of
+      // speaking (2026-10-14). A URL the old way (a bare `sound` string) is kept as it was.
+      if (a.sound) {
+        const sp = _soundSpecOf(a);
+        if (sp.sound) _applySoundSpec(overlay, sp); else overlay.sound = a.sound;
+      }
+      if (t.voice_pack || a.voice_pack) overlay.voice_pack = String(a.voice_pack || t.voice_pack).slice(0, 24);
       // Sticky critical callouts (#76): a trigger-level OR action-level `sticky`
       // flag pins the alert on the trigger overlay until the user dismisses it
       // (or a generous timeout), instead of fading on the normal schedule.
@@ -50970,8 +51866,35 @@ function _fireTriggerActions(t, captures, tsMs, test, isRelay) {
         speakAt(a.message || a.text, 0);
         _dispatched = true;
       }
+    } else if (a.type === 'sound') {
+      // A sound on its own: plays it, shows nothing and says nothing (was a no-op until 2026-10-14).
+      // A rehearsal or replay plays too, so the player can hear what they set up.
+      const sp = _soundSpecOf(a);
+      if (sp.sound) {
+        const so = {
+          text:        t.name || 'sound',
+          color:       'red',
+          duration_ms: 500,
+          shownAt:     tsMs || Date.now(),
+          firedAt:     Date.now(),
+          trigger:     t.name,
+          trigger_id:  t.id || null,
+          scope:       t._scope || (test ? 'test' : 'personal'),
+          test:        !!test,
+          soundOnly:   true,
+          rule_key:    _ruleKey,
+          rule_char:   _ruleChar,
+        };
+        _applySoundSpec(so, sp);
+        so.mute = true;   // there is no spoken line to read
+        if (t._rehearsal) so.rehearsal = true;
+        if (t._replay) so.replay = true;
+        if (_pushOverlay(so) === false) _ruledOff = true;
+        else _dispatched = true;
+        console.log(`[trigger${test ? ':test' : ':' + (t._scope || '?')}] ${t.name} → sound ${sp.sound}`);
+      }
     }
-    // sound / emit_event beyond the overlay's own audio remain no-ops in v1.
+    // emit_event beyond the overlay's own audio remains a no-op in v1.
   }
   // Trigger-level timer countdown (separate from per-action overlays).
   // Starts when timer_duration_sec > 0 on the trigger itself. Captures
@@ -52532,6 +53455,12 @@ async function main() {
     // refresh every 10 min. Personal triggers load once from local disk.
     loadPersonalTriggers();
     loadTriggerRules();   // "What you hear" — beside personal_triggers.json
+    loadSoundOverrides();   // this PC's own sounds on guild triggers
+    loadPronunciations();   // how names are said: the cached guild list + this PC's own
+    if (token) {
+      setTimeout(() => { pollPronunciations({ botUrl, token }); }, 20_000);
+      setInterval(() => { pollPronunciations({ botUrl, token }); }, PRON_POLL_MS);
+    }
     setTimeout(() => pollGuildTriggers({ botUrl, token }), 12_000);
     // Poll every 2 min so a newly added/edited guild trigger reaches raiders in
     // ~2 min instead of 10. Cheap: the version-gate above skips the recompile
@@ -53657,6 +54586,13 @@ module.exports = {
   _applyTriggerPull, _triggerSyncPush, _triggerSyncList, _triggerSyncPull, _tsBackupLocal,
   _runRelayedFire, _pushBlindEvent, _blindEvents, _maybeAnnounceDamageTaken,
   _applyGuildTriggersResponse,
+  // Sounds, voices, pronunciations, after_my_melee_ms (2026-10-14) — exported for test/sounds-voices.test.js.
+  _soundList, _soundResolve, _soundUsable, _cleanSoundName, _soundSpecOf, _applySoundSpec, _soundOverrides, _setSoundOverride,
+  loadSoundOverrides, VOICE_PACKS, _fireForWeb, _handleSoundsVoices,
+  _applyPronunciations, _applySpokenPronunciations, pollPronunciations, _pronStatePayload,
+  _setPronunciationsForTest: (synced, local) => { _pronSynced = new Map(_pronPairs(synced)); _pronLocal = { ...(local || {}) }; _pronMerged = null; },
+  _noteOwnMelee, _afterMyMeleeOk, _ownMeleeAt,
+  _setVoiceStateDirForTest: (d) => { _voiceStateDir = d || null; },
   _setGuildTriggersForTest: (arr) => { stats.guildTriggers = arr; stats.guildTriggersVersion = null; },
 };
 
