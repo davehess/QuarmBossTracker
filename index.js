@@ -294,6 +294,7 @@ const {
 } = require('./utils/killops');
 const { hasAllowedRole, allowedRolesList, hasOfficerRole, officerRolesList, isGuildMember, MEMBERS_ONLY } = require('./utils/roles');
 const mimicLink = require('./utils/mimicLink');
+const { charmSpellName, charmRanFull } = require('./utils/charmSession');
 const popFlagStages = require('./utils/popFlagStages');
 const { EXPANSION_ORDER, getThreadId, getBossExpansion, isPopLocked, isPopEraLocked } = require('./utils/config');
 const { dedupParseDeaths } = require('./utils/parseDeaths');
@@ -302,6 +303,7 @@ const kvLatch = require('./utils/kvLatch');
 const _raidGroups = require('./utils/raidGroups');
 const _groupScope = require('./utils/groupScope');
 const _zoneTimersMod = require('./utils/zoneTimers');
+const _raidTargetsMod = require('./utils/raidTargets');
 const _mainAssist = require('./utils/mainAssist');
 const _mainAssistStore = _mainAssist.createStore();
 const { discordAbsoluteTime, discordRelativeTime, isShortTimerBoss } = require('./utils/timer');
@@ -409,6 +411,10 @@ client.once(Events.ClientReady, async (readyClient) => {
   // loaded (the beta ref resolver awaits the tuning map — unsafe at module top).
   _refreshAgentManifestBeta().catch(() => {});
   try { setInterval(_refreshAgentManifestBeta, AGENT_MANIFEST_REFRESH_MS).unref(); } catch (_) { /* non-fatal */ }
+  // Slow mode (utils/slowMode.js) before any kill is recorded or reconciled: it decides the timer length.
+  await require('./utils/slowMode').loadSlowMode();
+  // Member lockout (utils/memberLockout.js): load the set before interactions and agent calls are judged by it.
+  require('./utils/memberLockout').start();
   await registerCommands();
   startSpawnChecker(readyClient);
   scheduleMidnightSummary(readyClient);
@@ -1151,6 +1157,16 @@ async function registerCommands() {
 
 // ── Interactions ───────────────────────────────────────────────────────────
 client.on(Events.InteractionCreate, async (interaction) => {
+  // Member lockout (utils/memberLockout.js): a locked member gets nothing from the bot, whatever roles they hold.
+  if (require('./utils/memberLockout').isLocked(interaction.user?.id)) {
+    try {
+      if (interaction.isAutocomplete()) await interaction.respond([]).catch(() => {});
+      else if (interaction.isRepliable?.()) {
+        await interaction.reply({ flags: MessageFlags.Ephemeral, content: 'Your access to the guild tools is paused. Ask an officer if you think this is a mistake.' }).catch(() => {});
+      }
+    } catch (_) { /* a failed reply must never throw out of the handler */ }
+    return;
+  }
   if (interaction.isAutocomplete()) {
     const cmd = client.commands.get(interaction.commandName);
     if (cmd?.autocomplete) { try { await cmd.autocomplete(interaction); } catch (e) { console.error(e); } }
@@ -4724,16 +4740,19 @@ async function _handleAgentChat(req, res) {
 
   // EQ item link → PQDI markdown link. Handles both the raw \x12-delimited form
   // and the Discord-stripped form (where 0x12 control chars were eaten upstream,
-  // leaving "0022194A Lucid Shard" — 7 hex chars then an item-cased name).
+  // leaving "0022194A Lucid Shard" — 7 digits then an item-cased name).
   //
-  // The 7-char Quarm blob is <1 version><5 hex item ID><1 flag>. We slice past
-  // the version byte if it looks like 0/1, otherwise we read from offset 0.
-  const EQ_ITEM_LINK_RX     = /\x12([0-9A-Fa-f]{5,})\x12([^\x12]+)\x12/g;
-  const EQ_STRIPPED_LINK_RX = /\b([0-9A-F]{7})((?:A |An |The )?[A-Z][a-z`'\-]+(?: (?:[a-z]{1,3} )*[A-Z][a-z`'\-]+){0,6})\b/g;
+  // A link is \x12 + the item id as 7 zero-padded DECIMAL digits + the name + \x12
+  // (A Lucid Shard, id 22194 → "\x120022194A Lucid Shard\x12"). Same rule as the
+  // agent's transformEqItemLinks; test/eq-item-link.test.js holds it to the
+  // shared fixtures in test/_eq-item-link-fixtures.js.
+  // Until bot 3.1.241 this read 5 of the digits as HEX, so every link pointed at
+  // the wrong item (Ragebringer 11057 → 4357).
+  const EQ_ITEM_LINK_RX     = /\x12(\d{7})([^\x12]+)\x12/g;
+  const EQ_STRIPPED_LINK_RX = /\b(\d{7})((?:A |An |The )?[A-Z][a-z`'\-]+(?: (?:[a-z]{1,3} )*[A-Z][a-z`'\-]+){0,6})\b/g;
   function _itemIdFromBlob(blob) {
-    const startIdx = (blob[0] === '0' || blob[0] === '1') && blob.length >= 6 ? 1 : 0;
-    const id = parseInt(blob.slice(startIdx, startIdx + 5), 16);
-    return (Number.isFinite(id) && id > 0 && id <= 999999) ? id : null;
+    const id = parseInt(blob, 10);
+    return id > 0 ? id : null;
   }
   function linkifyEqItems(text) {
     if (!text) return text;
@@ -6140,6 +6159,41 @@ async function _handleAgentOptinSummary(req, res) {
 // lockout (lower-case names). The guild lead, 2026-10-02, on the Oct 1 patch's
 // "Xanamech has no lockout": take him off the board.
 const _OFF_BOARD_NO_LOCKOUT = new Set(['xanamech nezmirthafen']);
+// POST /api/agent/slow-mode  { state: 'on'|'off', at: <ISO time from the log line>, by?: <character> }
+// An agent reporting the server's own slow-mode message (the guild lead, 2026-10-11). Every raider's agent
+// hears the same line, so it is idempotent — see applyDetectedSlowMode. Only 'off' is sent today.
+async function _handleAgentSlowMode(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > 4 * 1024) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+
+  const slowMode = require('./utils/slowMode');
+  const state = payload?.state;
+  const by = typeof payload?.by === 'string' ? payload.by.slice(0, 64) : null;
+  const result = await slowMode.applyDetectedSlowMode(state, Date.parse(payload?.at), by);
+  if (!result.changed && (result.reason === 'bad-state' || result.reason === 'bad-time')) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: result.reason }));
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, changed: !!result.changed, reason: result.reason || null }));
+  if (result.changed) {
+    slowMode.announce(client, state === 'off'
+      ? '🐢 Slow mode ended — Bastion of Thunder named are back on their usual timers. Kills before that moment keep their 18h.'
+      : '🐢 Slow mode is on — second-floor Bastion of Thunder named respawn in 18h.')
+      .catch(() => {});
+  }
+}
+
 async function _handleAgentBossKill(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -6210,8 +6264,8 @@ async function _handleAgentBossKill(req, res) {
 
     if (boss) {
       // Record kill and refresh all tracker cards
-      recordKill(boss.id, boss.timerHours, character, killedAt);
-      const nextSpawn = killedAt + boss.timerHours * 3600000;
+      // The entry's own nextSpawn: a slow-mode kill (utils/slowMode.js) runs longer than boss.timerHours.
+      const nextSpawn = recordKill(boss.id, boss.timerHours, character, killedAt).nextSpawn;
       if (channelId) {
         postKillUpdate(client, channelId, boss.id).catch(e =>
           console.warn('[bosskill] postKillUpdate error:', e?.message));
@@ -6293,6 +6347,14 @@ async function _handleAgentBossKill(req, res) {
 //     }, ...
 //   ]
 // }
+// Our own kill: the agent's flag, or the killer's guild is ours. The agent only knows its guild after it
+// has seen a Druzzil broadcast that session, so on its own it labelled members' kills "Foreign kill"
+// (the guild lead, 2026-10-10: "these are not foreign kills").
+function _hateKillIsOwnGuild(k) {
+  const guild = typeof k?.killerGuild === 'string' ? k.killerGuild.trim().toLowerCase() : '';
+  return !!k?.isOwnGuild || (!!guild && guild === WP_GUILD_NAME.toLowerCase());
+}
+
 async function _handleAgentHateKill(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -6328,14 +6390,12 @@ async function _handleAgentHateKill(req, res) {
     const bossName   = k?.boss || 'Hate Mini-Boss';
     const zone       = k?.zone || 'Plane of Hate';
     const instanced  = !!k?.instanced;
-    const isOwnGuild = !!k?.isOwnGuild;
+    const isOwnGuild = _hateKillIsOwnGuild(k);
     const killedAtMs = k?.ts ? Date.parse(k.ts) : Date.now();
 
-    // Defensive — the agent shouldn't send our own instance kills (the
-    // Druzzil /bosskill path already covers those). Drop silently if it
-    // ever does so we don't double-announce.
-    if (isOwnGuild && instanced) continue;
-
+    // Our own instance kills are recorded too, with an informational "We killed" post and no spot picker
+    // (an instance has no open-world spot). This is the only ledger row they get: the Druzzil /bosskill
+    // path feeds the raid boards, not this table.
     const notes = instanced ? 'Instanced' : null;
 
     const row = await hateKills.recordHateKill({
@@ -6618,19 +6678,56 @@ setTimeout(() => { _backfillSocialsIndex().catch(() => {}); }, 90_000);
 // edits for the agent's watched characters. Section allowlist enforced here
 // AND at insert time (web server action): only Socials/HotButtons keys ever
 // reach an agent, so a compromised row can't touch arbitrary ini sections.
+// One person's Discord ids: theirs plus any account merged into the same household (wolfpack_members
+// merged_into_discord_id, the walk /me uses). Gates UI backups and staged UI edits to their owner.
+// Cached 5 minutes; a failed read falls back to just the id itself (narrower, never wider).
+const _householdCache = new Map();
+async function _householdDiscordIds(discordId) {
+  const id = String(discordId || '');
+  if (!id) return new Set();
+  const hit = _householdCache.get(id);
+  if (hit && Date.now() - hit.at < 5 * 60 * 1000) return hit.ids;
+  const ids = new Set([id]);
+  try {
+    const supabase = require('./utils/supabase');
+    const me = await supabase.select('wolfpack_members',
+      `discord_id=eq.${encodeURIComponent(id)}&select=discord_id,merged_into_discord_id&limit=1`);
+    const root = (Array.isArray(me) && me[0]?.merged_into_discord_id) || id;
+    ids.add(String(root));
+    const fam = await supabase.select('wolfpack_members',
+      `or=(discord_id.eq.${encodeURIComponent(root)},merged_into_discord_id.eq.${encodeURIComponent(root)})&select=discord_id`);
+    for (const r of Array.isArray(fam) ? fam : []) if (r?.discord_id) ids.add(String(r.discord_id));
+  } catch { /* narrower set */ }
+  _householdCache.set(id, { at: Date.now(), ids });
+  return ids;
+}
+// The household's ROOT id (merged_into_discord_id, else the id itself) — who owns rows the household shares.
+async function _householdRootDiscordId(discordId) {
+  const id = String(discordId || '');
+  if (!id) return '';
+  try {
+    const me = await require('./utils/supabase').select('wolfpack_members',
+      `discord_id=eq.${encodeURIComponent(id)}&select=discord_id,merged_into_discord_id&limit=1`);
+    return String((Array.isArray(me) && me[0]?.merged_into_discord_id) || id);
+  } catch { return id; }
+}
+
 // Assemble pending web-staged UI (socials/hotbutton) edits for a character list.
 // Shared by the standalone GET /ui-pending-edits and the multiplexed GET /poll
 // (#106). Returns { edits } — the section allowlist is enforced here (and again
-// agent-side) so web rows can never touch arbitrary ini keys.
-async function _uiPendingEditsFor(characters) {
+// agent-side) so web rows can never touch arbitrary ini keys. Only the caller's
+// own edits (their household's Discord ids) are returned.
+async function _uiPendingEditsFor(characters, discordId) {
   const supabase = require('./utils/supabase');
   if (!supabase.isEnabled()) return { edits: [], note: 'supabase disabled' };
   const chars = (Array.isArray(characters) ? characters : []).slice(0, 20);
-  if (!chars.length) return { edits: [] };
+  if (!chars.length || !discordId) return { edits: [] };
+  const owners = [...await _householdDiscordIds(discordId)].map(encodeURIComponent).join(',');
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const inList = chars.map(c => `"${c.replace(/"/g, '')}"`).join(',');
   const rows = await supabase.select('ui_pending_edits',
     `guild_id=eq.${encodeURIComponent(guildId)}&status=eq.pending&character=in.(${encodeURIComponent(inList)})` +
+    `&owner_discord_id=in.(${owners})` +
     `&select=id,character,target_file,edits,created_at&order=created_at.asc&limit=50`).catch(() => []);
   const safe = (Array.isArray(rows) ? rows : []).map(r => ({
     ...r,
@@ -6650,7 +6747,7 @@ async function _handleAgentUiPendingEdits(req, res) {
     chars = (new URL(req.url, 'http://x').searchParams.get('characters') || '')
       .split(',').map(s => s.trim()).filter(Boolean).slice(0, 20);
   } catch { /* */ }
-  const data = await _uiPendingEditsFor(chars);
+  const data = await _uiPendingEditsFor(chars, identity.discord_id);
   res.writeHead(200, { 'Content-Type': 'application/json' });
   return res.end(JSON.stringify(data));
 }
@@ -6670,7 +6767,10 @@ async function _handleAgentUiEditResult(req, res) {
   if (!Number.isFinite(id)) { res.writeHead(400); return res.end(JSON.stringify({ error: 'id required' })); }
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const ok = !!(p && p.ok);
-  await supabase.update('ui_pending_edits', `id=eq.${id}&guild_id=eq.${encodeURIComponent(guildId)}&status=eq.pending`, {
+  // Only the edit's owner (their household) can settle it.
+  const owners = [...await _householdDiscordIds(identity.discord_id)].map(encodeURIComponent).join(',');
+  if (!owners) { res.writeHead(403); return res.end(JSON.stringify({ error: 'not yours' })); }
+  await supabase.update('ui_pending_edits', `id=eq.${id}&guild_id=eq.${encodeURIComponent(guildId)}&status=eq.pending&owner_discord_id=in.(${owners})`, {
     status: ok ? 'applied' : 'failed',
     error: ok ? null : String(p.error || 'apply failed').slice(0, 400),
     applied_at: new Date().toISOString(),
@@ -6678,7 +6778,7 @@ async function _handleAgentUiEditResult(req, res) {
   if (ok) {
     // Merge into the socials index. Group the row's edits by (page,button).
     try {
-      const rows = await supabase.select('ui_pending_edits', `id=eq.${id}&select=character,edits,owner_discord_id&limit=1`);
+      const rows = await supabase.select('ui_pending_edits', `id=eq.${id}&owner_discord_id=in.(${owners})&select=character,edits,owner_discord_id&limit=1`);
       const row = Array.isArray(rows) && rows[0];
       if (row && Array.isArray(row.edits)) {
         const byCell = new Map();
@@ -7099,13 +7199,16 @@ function _logStandingsShapeOnce(models) {
   } catch { /* a probe must never break the caller */ }
 }
 
-// Raid window, ET: Sun/Wed/Thu 8pm-midnight with an hour either side, matching
-// utils/openDkpSync's _inRaidWindow. Duplicated rather than exported across the
-// module boundary because index.js must not import the sync's private state.
+// Raid window, ET: Sun/Wed/Thu 8pm-midnight with an hour either side. The hour
+// after midnight belongs to the night BEFORE: Wed 00:23 is Tuesday night, not a
+// raid (the guild lead, 2026-10-14 00:24 ET, a callout from another zone heard in
+// Overthere on a Tuesday). utils/openDkpSync's _inRaidWindow still reads the
+// calendar day; this copy no longer matches it on purpose.
 function _inRaidWindowEt(now = new Date()) {
   const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  if (![0, 3, 4].includes(et.getDay())) return false;
   const h = et.getHours();
+  const night = h < 1 ? (et.getDay() + 6) % 7 : et.getDay();
+  if (![0, 3, 4].includes(night)) return false;
   return h >= 19 || h < 1;
 }
 
@@ -7215,7 +7318,7 @@ function _lootCacheSet(k, val, ttlMs = 60_000) { _lootPanelCache.set(k, { val, e
 // looted row in the window (paged), not the newest 200 the list shows.
 async function _nightLootPanelBody(supabase, guildId, nowMs = Date.now(), hours = 12) {
   const { buildNightLootPanel, NIGHT_LOOT_WINDOW_MS } = require('./utils/rollLoot');
-  const { clampLootHours, lookupItemValues, buildLootValue } = require('./utils/lootValue');
+  const { clampLootHours, lookupItemValues, loadPetGearNames, buildLootValue } = require('./utils/lootValue');
   hours = clampLootHours(hours);
   const windowMs = hours * 3600_000;
   const sinceIso = encodeURIComponent(new Date(nowMs - NIGHT_LOOT_WINDOW_MS).toISOString());
@@ -7224,14 +7327,20 @@ async function _nightLootPanelBody(supabase, guildId, nowMs = Date.now(), hours 
   // Paged, newest first: a 12h window on a busy loot night holds more than the `limit=400` / `limit=500`
   // these were (1,021 roll sets and 1,070 looted rows in the 12h to 2026-10-03 03:30 UTC), and a cut
   // drops the OLDEST rows of the night.
-  const [rollRows, lootedRows] = await Promise.all([
+  // `from_own_pet` (gear looted back off the looter's own charm pet's corpse) is asked for first and dropped from the
+  // select when the read answers null (the column is not there yet): the panel must never go down for it.
+  const lootedSel = (cols) => supabase.selectAllPaged('looted_items',
+    `guild_id=eq.${g}&looted_at=gte.${slackIso}&select=${cols}`, 'looted_at.desc,id');
+  const [rollRows, lootedAll] = await Promise.all([
     supabase.selectAllPaged('roll_sets',
       `guild_id=eq.${g}&started_at=gte.${sinceIso}`
       + `&select=roll_from,roll_to,item,qty,zone,rolls,started_at,last_at`, 'started_at.desc,id'),
-    supabase.selectAllPaged('looted_items',
-      `guild_id=eq.${g}&looted_at=gte.${slackIso}`
-      + `&select=looter_character,item_name,zone,looted_at`, 'looted_at.desc,id'),
+    lootedSel('looter_character,item_name,zone,looted_at,from_own_pet'),
   ]);
+  const lootedFull = Array.isArray(lootedAll) ? lootedAll : await lootedSel('looter_character,item_name,zone,looted_at');
+  // Own-pet loot is not loot at all (the guild lead, 2026-10-09: "It was already theirs"): out of the list, the roll
+  // attribution and the value (buildLootValue counts it in own_pet_items), unlike charm-pet gear, which the list keeps.
+  const lootedRows = Array.isArray(lootedFull) ? lootedFull.filter(l => l?.from_own_pet !== true) : lootedFull;
   // supabase.select / selectAllPaged answer null on ANY failure (timeout, breaker, 4xx/5xx), and
   // a null is not an empty night — throw so the 60s cache never holds a hollow
   // panel and the agent sees an error instead of "nobody looted anything".
@@ -7242,8 +7351,11 @@ async function _nightLootPanelBody(supabase, guildId, nowMs = Date.now(), hours 
   const wide = buildNightLootPanel([], lootedRows, { nowMs, windowMs });
   // Prices are decoration: a failed lookup leaves rows unpriced (and the response uncached), it never
   // takes the list down.
-  const { values, failed } = await lookupItemValues(supabase, lootedRows.map(l => l?.item_name).filter(Boolean), { nowMs });
-  const money = buildLootValue(lootedRows, values, { nowMs, windowMs });
+  const [{ values, failed }, petGearNames] = await Promise.all([
+    lookupItemValues(supabase, lootedRows.map(l => l?.item_name).filter(Boolean), { nowMs }),
+    loadPetGearNames(supabase),     // charm-pet gear is left out of the totals (fails open to the mr < 0 rule)
+  ]);
+  const money = buildLootValue(lootedFull, values, { nowMs, windowMs, petGearNames });   // the unfiltered rows: it counts own_pet_items
   return {
     ...panel,
     loot_total: wide.loot_total,
@@ -8702,7 +8814,8 @@ async function _handleAgentUiLayoutList(req, res) {
     ).catch(() => []);
     ownerDiscord = Array.isArray(rootRows) && rootRows[0]?.discord_id || null;
   }
-  if (!ownerDiscord) {
+  // Your own characters only (your household's Discord ids): a backup holds the whole character file.
+  if (!ownerDiscord || !(await _householdDiscordIds(identity.discord_id)).has(String(ownerDiscord))) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ snapshots: [] }));
   }
@@ -8747,7 +8860,9 @@ async function _handleAgentUiLayoutDownload(req, res, snapshotId) {
     ).catch(() => []);
     ownerDiscord = Array.isArray(rootRows) && rootRows[0]?.discord_id || null;
   }
-  if (!ownerDiscord) { res.writeHead(403).end(); return; }
+  if (!ownerDiscord || !(await _householdDiscordIds(identity.discord_id)).has(String(ownerDiscord))) {
+    res.writeHead(403).end(); return;
+  }
 
   const rows = await supabase.select(
     'ui_snapshots',
@@ -8780,6 +8895,118 @@ async function _handleAgentUiLayoutDownload(req, res, snapshotId) {
     files: parsed.files || {},
   }));
 }
+
+// ── Personal trigger sync (the guild lead, 2026-10-12: "Personal triggers should be syncable") ──
+// Push / Pull buttons like UI backups: a Mimic pushes its personal triggers + per-user "what you hear"
+// rules as ONE AES-256-GCM blob (bidCrypto, same key as ui_snapshots); another PC of the same household
+// pulls it. Visible to the owner's household only (merged alts included), service-role table, newest 20
+// pushes kept per owner. Shapes are checked in utils/personalTriggerSync.js. The agent half refuses to
+// call these in local mode; the bot has no local mode to check.
+function _ptsReadBody(req, max) {
+  return new Promise((resolve) => {
+    if (parseInt(req.headers?.['content-length'], 10) > max) return resolve({ tooBig: true });
+    const chunks = []; let n = 0; let tooBig = false;
+    req.on('data', (c) => { if (tooBig) return; n += c.length; if (n > max) { tooBig = true; chunks.length = 0; return; } chunks.push(c); });
+    req.on('end',   () => resolve(tooBig ? { tooBig } : { text: Buffer.concat(chunks).toString('utf8') }));
+    req.on('error', () => resolve({ error: true }));
+  });
+}
+function _ptsJson(res, code, obj) {
+  res.writeHead(code, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify(obj));
+}
+
+// POST /api/agent/personal-triggers/push { triggers: [...], rules: {...}, machine_name?, agent_version? }
+async function _handlePersonalTriggersPush(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const sync = require('./utils/personalTriggerSync');
+  const got = await _ptsReadBody(req, sync.MAX_BODY_BYTES);
+  if (got.tooBig) return _ptsJson(res, 413, { error: `payload too large (max ${sync.MAX_BODY_BYTES / 1024} KB)` });
+  if (got.error) return _ptsJson(res, 400, { error: 'read failed' });
+  let body; try { body = JSON.parse(got.text); } catch { return _ptsJson(res, 400, { error: 'invalid json' }); }
+  const v = sync.validatePush(body);
+  if (!v.ok) return _ptsJson(res, 400, { error: v.error });
+
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'supabase disabled' });
+  const { encryptBlob, isEncryptionEnabled } = require('./utils/bidCrypto');
+  if (!isEncryptionEnabled()) return _ptsJson(res, 503, { error: 'WISHLIST_BID_KEY not configured on the bot — cannot encrypt' });
+  const enc = encryptBlob(JSON.stringify({ triggers: v.triggers, rules: v.rules, schema: 1 }));
+  if (!enc) return _ptsJson(res, 500, { error: 'encryption failed' });
+
+  const guildId = supabase.guildId();
+  const owner = await _householdRootDiscordId(identity.discord_id);
+  const written = await supabase.insert('personal_trigger_sync', [{
+    owner_discord_id:     owner,
+    guild_id:             guildId,
+    payload_enc:          enc,
+    trigger_count:        v.triggers.length,
+    rule_count:           Object.keys(v.rules).length,
+    machine_name:         (body.machine_name || null) && String(body.machine_name).trim().slice(0, 64),
+    agent_version:        (body.agent_version || null) && String(body.agent_version).slice(0, 32),
+    pushed_by_discord_id: String(identity.discord_id),
+  }]).catch(err => { console.error('[personal-triggers] insert failed:', err?.message || err); return null; });
+  if (!Array.isArray(written) || written.length === 0) return _ptsJson(res, 500, { error: 'insert failed' });
+
+  // Bounded history: drop this owner's rows past the newest N. Best-effort — never fails the push.
+  try {
+    const old = await supabase.select('personal_trigger_sync',
+      `guild_id=eq.${encodeURIComponent(guildId)}&owner_discord_id=eq.${encodeURIComponent(owner)}` +
+      `&select=id&order=created_at.desc&offset=${sync.KEEP_PER_OWNER}&limit=200`);
+    const ids = (Array.isArray(old) ? old : []).map(r => String(r.id)).filter(i => /^[0-9a-f-]{36}$/i.test(i));
+    if (ids.length) await supabase.del('personal_trigger_sync', `id=in.(${ids.join(',')})`);
+  } catch (err) { console.warn('[personal-triggers] prune failed:', err?.message); }
+
+  const row = written[0];
+  return _ptsJson(res, 200, { ok: true, id: row.id, created_at: row.created_at || new Date().toISOString(),
+    trigger_count: v.triggers.length, rule_count: Object.keys(v.rules).length });
+}
+
+// GET /api/agent/personal-triggers/list — the household's newest pushes, no payload.
+async function _handlePersonalTriggersList(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'supabase disabled' });
+  const owners = [...await _householdDiscordIds(identity.discord_id)].map(encodeURIComponent).join(',');
+  const rows = await supabase.select('personal_trigger_sync',
+    `guild_id=eq.${encodeURIComponent(supabase.guildId())}&owner_discord_id=in.(${owners})` +
+    `&select=id,created_at,machine_name,trigger_count,rule_count,agent_version&order=created_at.desc&limit=20`,
+  ).catch(() => []);
+  return _ptsJson(res, 200, { pushes: Array.isArray(rows) ? rows : [] });
+}
+
+// GET /api/agent/personal-triggers/pull?id=<uuid> — decrypted { triggers, rules }; no id = the newest.
+async function _handlePersonalTriggersPull(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'supabase disabled' });
+  const id = (new URL(req.url, 'http://x').searchParams.get('id') || '').trim();
+  if (id && !/^[0-9a-f-]{36}$/i.test(id)) return _ptsJson(res, 400, { error: 'invalid id' });
+
+  const household = await _householdDiscordIds(identity.discord_id);
+  const guildId = encodeURIComponent(supabase.guildId());
+  const cols = 'id,owner_discord_id,payload_enc,machine_name,agent_version,created_at';
+  const q = id
+    ? `id=eq.${id}&guild_id=eq.${guildId}&select=${cols}&limit=1`
+    : `guild_id=eq.${guildId}&owner_discord_id=in.(${[...household].map(encodeURIComponent).join(',')})` +
+      `&select=${cols}&order=created_at.desc&limit=1`;
+  const rows = await supabase.select('personal_trigger_sync', q).catch(() => []);
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row) return _ptsJson(res, 404, { error: 'nothing pushed yet' });
+  // Your household's pushes only: a row id alone is not enough.
+  if (!household.has(String(row.owner_discord_id))) return _ptsJson(res, 403, { error: 'not yours' });
+
+  const { decryptBlob } = require('./utils/bidCrypto');
+  const plaintext = decryptBlob(row.payload_enc);
+  if (!plaintext) return _ptsJson(res, 500, { error: 'decryption failed' });
+  let parsed; try { parsed = JSON.parse(plaintext); } catch { return _ptsJson(res, 500, { error: 'payload malformed' }); }
+  return _ptsJson(res, 200, { id: row.id, created_at: row.created_at, machine_name: row.machine_name,
+    agent_version: row.agent_version, triggers: parsed.triggers || [], rules: parsed.rules || {} });
+}
+// ── end personal trigger sync ──
 
 // Looks up CharacterId + Rank from OpenDKP roster and forwards as a bid.
 // Returns the OpenDKP response (or a 4xx if the input is bad).
@@ -9485,7 +9712,11 @@ async function _handleAgentPopFlags(req, res) {
   if (rows.length) {
     const r = await supabase.upsert('pop_flags', rows, 'guild_id,character,flag_key,earned_at')
       .catch(err => { console.warn('[pop-flags] upsert failed:', err?.message); return null; });
-    if (Array.isArray(r)) written = r.length;
+    if (Array.isArray(r)) {
+      written = r.length;
+      // A flag NPC no kill stands up (the hedge maze's Thelin) opens its hail window on the first flag it gives.
+      _hailGrants(rows);
+    }
   }
   _trackUpload({ endpoint: 'pop_flags', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
   res.writeHead(200);
@@ -9506,6 +9737,11 @@ const _hailBoard = () => _hailBoardInst || (_hailBoardInst = require('./utils/ha
 function _hailKill(args) {
   try { _hailBoard().openWindow(args).catch(err => console.warn('[hail-board] open failed:', err?.message)); }
   catch (err) { console.warn('[hail-board] open failed:', err?.message); }
+}
+// Stored pop_flags rows → the board's kill-less opener (utils/hailBoard.js noteGrants). Fire-and-forget, never throws.
+function _hailGrants(rows) {
+  try { _hailBoard().noteGrants(rows).catch(err => console.warn('[hail-board] grant open failed:', err?.message)); }
+  catch (err) { console.warn('[hail-board] grant open failed:', err?.message); }
 }
 // Every kill recorded on the board, whichever path recorded it. The bosses the board does not carry
 // (Mithaniel Marr, Solusek Ro, the Keeper, the Behemoth, the Arbitor) are opened by name where the kill is
@@ -10305,6 +10541,66 @@ async function _handleAgentLockout(req, res) {
 // each post a fresh card.
 const _liveCards = new Map();
 
+// ── Kill recap (the guild lead, 2026-10-13) ───────────────────────────────────
+// "How did we do" for a confirmed raid-boss kill — faster than last time, deaths, fun events, highlights —
+// as ONE field on the parse card the bot already posts (never a second message), and published in bot_kv
+// (`last_kill_recap`) for wolfpack.quest/screen via utils/screenLive.js. Post-kill only (DECISIONS §284).
+// utils/killRecap.js has the rules; this is the plumbing. NOTHING here may break the card or the ingest:
+// every failure reads as "no recap". The card is rebuilt from scratch on each merging upload, so the recap
+// is cached per encounter and re-attached; a confirmed upload re-reads it at most every 20s (late parsers
+// improve the numbers).
+const _killRecaps = new Map();            // encounter id → { at, recap, promise }
+const _KILL_RECAP_REFRESH_MS = 20_000;
+const _KILL_RECAP_WAIT_MS = 6_000;        // the card never waits longer than this for its recap
+const _KILL_RECAP_KEY = 'last_kill_recap';
+let _lastRecapKilledAtMs = 0;
+
+async function _publishKillRecap(supabase, recap) {
+  if (!(recap.killedAtMs >= _lastRecapKilledAtMs)) return;   // a late re-read of an older kill never replaces a newer one
+  _lastRecapKilledAtMs = recap.killedAtMs;
+  await supabase.upsert('bot_kv', [{
+    guild_id: supabase.guildId(),
+    key: _KILL_RECAP_KEY,
+    value: {
+      boss: recap.boss, npcId: recap.npcId, killedAt: new Date(recap.killedAtMs).toISOString(),
+      lines: recap.lines, fun: recap.fun, stars: recap.stars,
+    },
+    updated_at: new Date().toISOString(),
+  }], 'guild_id,key', { minimal: true });
+}
+
+/** The recap for one encounter, or null. `confirmedNow` = THIS upload saw the death line. */
+async function _killRecapForCard(encounterId, bossName, confirmedNow) {
+  try {
+    if (!encounterId) return null;
+    const now = Date.now();
+    const hit = _killRecaps.get(encounterId);
+    if (hit && (hit.promise || !confirmedNow || now - hit.at < _KILL_RECAP_REFRESH_MS)) {
+      return hit.promise ? await Promise.race([hit.promise, new Promise(r => setTimeout(() => r(null), _KILL_RECAP_WAIT_MS).unref())]) : hit.recap;
+    }
+    if (!confirmedNow) return null;
+    const supabase = require('./utils/supabase');
+    if (!supabase.isEnabled()) return null;
+    const entry = { at: now, recap: hit ? hit.recap : null, promise: null };
+    entry.promise = (async () => {
+      try {
+        const recap = await require('./utils/killRecap').loadRecap({
+          supabase, guildId: supabase.guildId(), encounterId, bossName,
+        });
+        if (recap) { entry.recap = recap; await _publishKillRecap(supabase, recap); }
+      } catch (err) { console.warn(`[kill-recap] ${bossName}: no recap —`, err?.message); }
+      entry.promise = null;
+      return entry.recap;
+    })();
+    _killRecaps.set(encounterId, entry);
+    if (_killRecaps.size > 40) _killRecaps.delete(_killRecaps.keys().next().value);
+    return await Promise.race([entry.promise, new Promise(r => setTimeout(() => r(null), _KILL_RECAP_WAIT_MS).unref())]);
+  } catch (err) {
+    console.warn('[kill-recap] failed:', err?.message);
+    return null;
+  }
+}
+
 // GET /api/agent/incomplete-encounters?characters=Aldenmar,Brackwyn[&limit=20]
 //
 // Returns the list of encounters flagged data_incomplete that include any of
@@ -10963,6 +11259,117 @@ async function _handleAgentItemClickies(req, res, isPublic) {
   return res.end(_itemClickyCache.body);
 }
 
+// ── Name pronunciations (the guild lead, 2026-10-14) ─────────────────────────
+// "Get player pronunciation right": the owner of a character writes how its name should sound, and the
+// agents substitute it into spoken text (utils/pronounce.js applyPronunciations).
+//   GET  /api/agent/pronunciations           → { version, entries: [{ name, say }] }, ETag'd, 60 s cache
+//   GET  /api/agent/pronunciation-suggest    → ?name=X → { name, suggestions, tips, current }
+//   POST /api/agent/pronunciation            → { character, say }, only for a character the caller owns
+const { suggestPronunciations, coachingTips, validSay } = require('./utils/pronounce');
+let _pronCache = null;                       // { fetchedAt, body, etag }
+const _PRON_TTL_MS = 60 * 1000;
+const _PRON_NAME_RE = /^[A-Za-z]{2,32}$/;    // character names are letters only (same check as the website's save)
+
+async function _handleAgentPronunciations(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const fresh = _pronCache && (Date.now() - _pronCache.fetchedAt) < _PRON_TTL_MS;
+  if (!fresh) {
+    const supabase = require('./utils/supabase');
+    const guildId  = supabase.guildId();
+    const rows = await supabase.selectAllPaged('name_pronunciations',
+      `select=display_name,say,updated_at&guild_id=eq.${encodeURIComponent(guildId)}`, 'character_lc');
+    if (!Array.isArray(rows)) {
+      // A failed read is never cached: keep serving the last good body, else tell the agent to retry.
+      if (_pronCache) _pronCache.fetchedAt = Date.now() - _PRON_TTL_MS + 15 * 1000;
+      else {
+        res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+        return res.end(JSON.stringify({ error: 'pronunciations unavailable' }));
+      }
+    } else {
+      let newest = '';
+      for (const r of rows) if (r.updated_at && String(r.updated_at) > newest) newest = String(r.updated_at);
+      const version = `${newest}#${rows.length}`;
+      const body = JSON.stringify({ version, entries: rows.map(r => ({ name: r.display_name, say: r.say })) });
+      _pronCache = { fetchedAt: Date.now(), body, etag: '"' + version + '"' };
+    }
+  }
+  if (req.headers['if-none-match'] === _pronCache.etag) {
+    res.writeHead(304, { 'ETag': _pronCache.etag, 'Cache-Control': 'max-age=60' });
+    return res.end();
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json', 'ETag': _pronCache.etag, 'Cache-Control': 'max-age=60' });
+  return res.end(_pronCache.body);
+}
+
+async function _handleAgentPronunciationSuggest(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const name = String(new URL(req.url, 'http://x').searchParams.get('name') || '').trim();
+  if (!_PRON_NAME_RE.test(name)) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'need a character name' }));
+  }
+  let current = null;
+  try {
+    const supabase = require('./utils/supabase');
+    const guildId  = supabase.guildId();
+    const rows = await supabase.select('name_pronunciations',
+      `select=say&guild_id=eq.${encodeURIComponent(guildId)}&character_lc=eq.${encodeURIComponent(name.toLowerCase())}&limit=1`);
+    if (Array.isArray(rows) && rows[0]) current = rows[0].say;
+  } catch { /* the suggestions are still useful without the saved one */ }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ name, suggestions: suggestPronunciations(name), tips: coachingTips(name), current }));
+}
+
+async function _handleAgentPronunciationSet(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) { total += chunk.length; if (total > 4 * 1024) { res.writeHead(413); return res.end(); } chunks.push(chunk); }
+  let body; try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+  const character = String(body?.character || '').trim();
+  const say       = String(body?.say || '').trim().replace(/\s+/g, ' ');
+  if (!_PRON_NAME_RE.test(character) || !validSay(say)) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'need a character and a spelling of 1-60 letters, spaces, hyphens or apostrophes' }));
+  }
+  const supabase = require('./utils/supabase');
+  const guildId  = supabase.guildId();
+  const q = (name) => `select=name,discord_id,main_name&guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(name)}&limit=1`;
+  // Only the character's owner may set it, whoever holds a valid token. The website's rule: the row's
+  // discord_id is the caller's, or its family root's is (alts often carry no discord_id of their own).
+  const owned = await supabase.select('characters', q(character));
+  const row = Array.isArray(owned) ? owned[0] : null;
+  let mine = !!row && !!row.discord_id && String(row.discord_id) === String(identity.discord_id);
+  if (row && !mine && row.main_name && row.main_name !== row.name && _PRON_NAME_RE.test(row.main_name)) {
+    const root = await supabase.select('characters', q(row.main_name));
+    mine = Array.isArray(root) && !!root[0] && !!root[0].discord_id && String(root[0].discord_id) === String(identity.discord_id);
+  }
+  if (!mine) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'not your character' }));
+  }
+  const alternates = suggestPronunciations(row.name).filter(s => s.toLowerCase() !== say.toLowerCase()).slice(0, 4);
+  const saved = await supabase.upsert('name_pronunciations', [{
+    guild_id: guildId,
+    character_lc: String(row.name).toLowerCase(),
+    display_name: row.name,
+    say,
+    alternates,
+    set_by_discord_id: String(identity.discord_id),
+    updated_at: new Date().toISOString(),
+  }], 'guild_id,character_lc');   // representation, not minimal: a failed write is null, a good one is an array
+  if (!Array.isArray(saved)) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'save failed' }));
+  }
+  _pronCache = null;
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ ok: true }));
+}
+
 // GET /api/agent/item-catalog
 //
 // The wishlist picker's universe: every item any catalogued NPC can drop, with
@@ -11078,9 +11485,11 @@ function _normMobName(n) {
   // like "Vyzh`dra the Exiled's corpse" still resolves to the live NPC row
   // in eqemu_npc_types (otherwise the underscore-collapsed form ends in
   // "_s_corpse" and never matches). Lets the Mob Info overlay keep showing
-  // stats + loot for a freshly-killed mob you're looting from.
+  // stats + loot for a freshly-killed mob you're looting from. The client also
+  // writes it with a backtick ("Laef Windfall`s corpse") and sometimes a number
+  // after "corpse" (the guild lead, 2026-10-12: an empty Loot tab on one).
   return String(n || '').trim().toLowerCase()
-    .replace(/'s\s+corpse$/, '')
+    .replace(/[`'’]s\s+corpse\d*$/, '')
     .replace(/[\s`'’]+/g, '_').replace(/^#/, '');
 }
 // _normMobName with the CASE kept — except the first letter, which is folded
@@ -11092,7 +11501,7 @@ function _normMobName(n) {
 // them differ in class.
 function _mobCaseKey(n) {
   const s = String(n || '').trim()
-    .replace(/'s\s+corpse$/i, '')
+    .replace(/[`'’]s\s+corpse\d*$/i, '')
     .replace(/[\s`'’]+/g, '_').replace(/^#/, '');
   return s.charAt(0).toLowerCase() + s.slice(1);
 }
@@ -11790,6 +12199,8 @@ const _BUDGET_DEFAULTS = {
   historical_chat: { perMin: 120, durable: true },
   buff_casts:      { perMin: 240, durable: true },
   bosskill:        { perMin: 30,  durable: true },
+  slow_mode:       { perMin: 30,  durable: true },
+  personal_trigger_sync: { perMin: 10, durable: true },   // Push/Pull buttons (list + pull share it)
   lockout:         { perMin: 30,  durable: true },
   rolls:           { perMin: 60,  durable: true },
   looted:          { perMin: 60,  durable: true },
@@ -11803,6 +12214,14 @@ const _BUDGET_DEFAULTS = {
   // cached at the agent (5m) and bot (60s) so a healthy client barely calls it;
   // the generous cap only trips a runaway client, which backs off on the 429.
   who_lookup:      { perMin: 120, durable: false, get: true },
+  // Mimic 2.9 spawn map: one GET per zone-in, cached 6h and ETag'd at the bot. Not shed: it is a read
+  // (mob-info and who-lookup are not in _SHED_KINDS either), so over budget is a 429 the agent backs off.
+  zone_spawns:     { perMin: 30,  durable: false, get: true },
+  // Charm overlay "Best pets here" (2026-10-14): same shape as zone_spawns, one GET per zone-in then a 304.
+  charm_pets:      { perMin: 30,  durable: false, get: true },
+  // Mimic Spawn map sync (GET poll + POST push share it). A poll every few seconds per open map is ~20/min;
+  // over budget is a 429 the agent backs off on (get:true applies to both verbs).
+  map_sync:        { perMin: 60,  durable: false, get: true },
   // #106 multiplexed GET poll — one request carries recent_fires + tuning +
   // (at their own cadence) triggers/prefs/backfill/ui_edits. A healthy agent
   // polls ~40/min active, far slower idle/dormant; the generous cap only trips a
@@ -16029,10 +16448,14 @@ async function _npcInteract(npcId) {
   const zone = Array.isArray(zoneRows) ? zoneRows[0] : null;
   const display = qd.displayName(npc.name);
 
-  // The script: the exact file first (zone folder + catalog name), else by name in the zone.
+  // The script: a file named for the npc id first (the server reads <zone>/<id>.lua before the name's;
+  // the Plane of Tactics' Planar Projections and Zeks are only scripted that way, FB-72), then the
+  // exact file (zone folder + catalog name), else by name in the zone.
   let script = null;
   if (zone) {
-    const s = await supabase.select('eqemu_quest_scripts',
+    const byId = await supabase.select('eqemu_quest_scripts',
+      `path=eq.${encodeURIComponent(`${zone.short_name}/${npcId}.lua`)}&select=path,body&limit=1`).catch(() => []);
+    const s = (Array.isArray(byId) && byId[0]) ? byId : await supabase.select('eqemu_quest_scripts',
       `path=eq.${encodeURIComponent(qd.scriptPath(zone.short_name, npc.name))}&select=path,body&limit=1`).catch(() => []);
     script = (Array.isArray(s) && s[0]) || null;
     if (!script) {
@@ -16252,6 +16675,41 @@ async function _handleAgentNpcInteract(req, res) {
   }
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(body ? { ok: true, npc: body } : { ok: true, npc: null }));
+}
+
+// GET /api/agent/item-card?id=<item id> — the compact card Target Info shows when a dropped item
+// is hovered (FB-73). Catalog data (the weekly eqemu mirror), so 6h; an unknown item is remembered
+// for 10 minutes. A failed read is a 503 and is never cached.
+const _itemCardCache = new Map();   // itemId → { at, card|null }
+const _ITEM_CARD_TTL_MS = 6 * 60 * 60 * 1000;
+async function _handleAgentItemCard(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  let itemId = NaN;
+  try { itemId = Number(new URL(req.url, 'http://x').searchParams.get('id')); } catch { /* */ }
+  if (!Number.isInteger(itemId) || itemId <= 0) { res.writeHead(400); return res.end(JSON.stringify({ error: 'id required' })); }
+  const itemCard = require('./utils/itemCard');
+  const hit = _itemCardCache.get(itemId);
+  let card;
+  if (hit && Date.now() - hit.at < (hit.card ? _ITEM_CARD_TTL_MS : 10 * 60 * 1000)) {
+    card = hit.card;
+  } else {
+    const supabase = require('./utils/supabase');
+    const rows = await supabase.select('eqemu_items', `id=eq.${itemId}&select=${itemCard.ITEM_CARD_COLUMNS}&limit=1`);
+    if (!Array.isArray(rows)) { res.writeHead(503, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'item catalog unavailable' })); }
+    const row = rows[0] || null;
+    const names = new Map();
+    const spellIds = row ? itemCard.itemCardSpellIds(row) : [];
+    if (spellIds.length) {
+      const sp = await supabase.select('eqemu_spells', `id=in.(${spellIds.join(',')})&select=id,name`);
+      if (Array.isArray(sp)) for (const s of sp) names.set(Number(s.id), s.name);    // a failed read just leaves "spell #id"
+    }
+    card = itemCard.buildItemCard(row, names);
+    if (_itemCardCache.size > 2000) _itemCardCache.clear();
+    _itemCardCache.set(itemId, { at: Date.now(), card });
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ ok: true, card }));
 }
 
 async function _handleAgentMobInfo(req, res) {
@@ -16618,8 +17076,13 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
         assist = ix ? factionAssist.assistFor(ix, r.id) : null;
       } catch (err) { console.warn('[mob-info] faction assist failed:', err?.message); }
 
+      const questId = mobSpecials.questNpcId(_mobRowsForCase(rows, caseKey), reqZoneId, r.id);
       mob = {
         id:      r.id ?? null,   // #186 eqemu npc id → the overlay's PQDI link (pqdi.cc/npc/<id>)
+        // The body to read the quest script of, when the pick above is from another zone and the
+        // requester's own zone has one of this name (FB-72: Giwin Mirakon in Innovation resolved to
+        // Tactics'). Absent otherwise; the overlay falls back to `id`.
+        ...(questId ? { quest_id: questId } : {}),
         name:    String(r.name || name).replace(/_/g, ' '),
         class:   _MOB_CLASS_NAMES[r.class] || null,
         gender:  _GENDER_NAMES[r.gender] ?? null,
@@ -16721,7 +17184,8 @@ const _MOB_PACK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 //   2 (2026-10-06): faction_primary, faction_assists, faction_assisted_by, faction_assisted_by_more
 //   3 (2026-10-06): special-ability labels in Quarm's numbering (utils/mobSpecials.js), Reverse Slow (FB-54)
 //   4 (2026-10-07): procs [{ kind, spell_id, name, chance, summary }]
-const _MOB_PACK_VERSION = 4;
+//   5 (2026-10-10): quest_id, the same-name body of the requester's zone the Quest tab reads (FB-72)
+const _MOB_PACK_VERSION = 5;
 const _MOB_PACK_PINNED = Array.from({ length: 24 }, (_, i) => 200 + i);
 const _mobPacks = new Map();          // zoneId → { etag, builtAt, body, gz, version }
 const _mobPackQueue = [];             // zone ids waiting to build
@@ -16857,6 +17321,154 @@ async function _handleAgentMobPack(req, res) {
   res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'ETag': pack.etag },
     gzip ? { 'Content-Encoding': 'gzip' } : {}));
   res.end(gzip ? pack.gz : pack.body);
+}
+
+// GET /api/agent/zone-spawns?zone=<short_name> — the Mimic 2.9 spawn map's points (utils/zoneSpawns.js
+// holds the reads, the named rule, the badges and the 6 h per-zone cache). Server frame, ETag'd.
+async function _handleAgentZoneSpawns(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const zoneSpawns = require('./utils/zoneSpawns');
+  const supabase = require('./utils/supabase');
+  const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (!supabase.isEnabled()) return json(503, { error: 'database unavailable' });
+  const r = await zoneSpawns.getZoneSpawns(supabase, new URL(req.url, 'http://x').searchParams.get('zone'), getBosses());
+  if (r.status === 400) return json(400, { error: 'unknown or invalid zone' });
+  if (r.status === 404) return json(404, { error: 'no spawn points for this zone' });
+  if (r.status !== 200) return json(503, { error: 'try again shortly' });
+  if (zoneSpawns.etagMatches(req.headers['if-none-match'], r.etag)) {
+    res.writeHead(304, { 'ETag': r.etag, 'Cache-Control': 'max-age=21600' });
+    return res.end();
+  }
+  const gzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
+  res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'ETag': r.etag, 'Cache-Control': 'max-age=21600' },
+    gzip ? { 'Content-Encoding': 'gzip' } : {}));
+  res.end(gzip ? r.gz : r.body);
+}
+
+// GET /api/agent/charm-pets?zone=<short_name> — the Charm overlay's "Best pets here" (the guild lead,
+// 2026-10-14). utils/charmPets.js holds the reads, the charm-immunity rules and the 6 h per-zone cache. It answers
+// the zone's charm CANDIDATES; the caster's spell (level cap, body type) and the ranking are the agent's.
+async function _handleAgentCharmPets(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const charmPets = require('./utils/charmPets');
+  const supabase = require('./utils/supabase');
+  const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (!supabase.isEnabled()) return json(503, { error: 'database unavailable' });
+  const r = await charmPets.getCharmPets(supabase, new URL(req.url, 'http://x').searchParams.get('zone'));
+  if (r.status === 400) return json(400, { error: 'unknown or invalid zone' });
+  if (r.status === 404) return json(404, { error: 'no spawn points for this zone' });
+  if (r.status !== 200) return json(503, { error: 'try again shortly' });
+  if (charmPets.etagMatches(req.headers['if-none-match'], r.etag)) {
+    res.writeHead(304, { 'ETag': r.etag, 'Cache-Control': 'max-age=21600' });
+    return res.end();
+  }
+  const gzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
+  res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'ETag': r.etag, 'Cache-Control': 'max-age=21600' },
+    gzip ? { 'Content-Encoding': 'gzip' } : {}));
+  res.end(gzip ? r.gz : r.body);
+}
+
+// POST/GET /api/agent/map-sync — the Mimic Spawn map's synced spawn-point events (the guild lead,
+// 2026-10-12). The agent pushes CERTAIN attributions (utils/mapSync.js validates; a bad event is dropped,
+// a bad body or zone is a 400) and pulls everyone else's, so a zone's respawn timers match across the
+// guild. Table: map_spawn_events (service role). Guild-wide per zone; a zone's rows past 24 h go on each push.
+const _MAP_SYNC_WINDOW_MS = 8 * 60 * 60 * 1000;   // default and maximum look-back of a GET
+const _MAP_SYNC_CACHE_MS = 3000;                  // many agents poll the same zone
+const _MAP_SYNC_LIMIT = 500;
+const _mapSyncCache = new Map();                  // zone -> { at, events: newest-last, last 8 h }
+function _mapSyncGuildId() { return process.env.DISCORD_GUILD_ID || require('./utils/supabase').guildId(); }
+
+async function _handleAgentMapSyncPost(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const mapSync = require('./utils/mapSync');
+  const supabase = require('./utils/supabase');
+  const got = await _ptsReadBody(req, 64 * 1024);
+  if (got.tooBig) return _ptsJson(res, 413, { error: 'payload too large' });
+  if (got.error) return _ptsJson(res, 400, { error: 'read failed' });
+  let body; try { body = JSON.parse(got.text); } catch { return _ptsJson(res, 400, { error: 'invalid json' }); }
+  const v = mapSync.validateEvents(body, Date.now());
+  if (v.error) return _ptsJson(res, 400, { error: v.error });
+  if (!v.events.length) return _ptsJson(res, 200, { ok: true, stored: 0 });
+  if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'database unavailable' });
+
+  const guildId = _mapSyncGuildId();
+  const written = await supabase.insert('map_spawn_events', v.events.map(e => ({
+    guild_id: guildId, zone: v.zone, point_id: e.point_id, kind: e.kind, spawn_id: e.spawn_id,
+    npc_name: e.name, at: new Date(e.at).toISOString(), by_character: v.character,
+    by_discord_id: String(identity.discord_id), inst: e.inst,
+  }))).catch(err => { console.error('[map-sync] insert failed:', err?.message || err); return null; });
+  if (!Array.isArray(written)) return _ptsJson(res, 503, { error: 'try again shortly' });
+  _mapSyncCache.delete(v.zone);
+
+  // Retention: this zone's rows past 24 h. Best-effort — never fails the push.
+  try {
+    const cutoff = new Date(Date.now() - mapSync.MAX_AGE_MS).toISOString();
+    await supabase.del('map_spawn_events',
+      `guild_id=eq.${encodeURIComponent(guildId)}&zone=eq.${v.zone}&at=lt.${encodeURIComponent(cutoff)}`);
+  } catch (err) { console.warn('[map-sync] prune failed:', err?.message); }
+  return _ptsJson(res, 200, { ok: true, stored: written.length });
+}
+
+async function _handleAgentMapSyncGet(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const mapSync = require('./utils/mapSync');
+  const supabase = require('./utils/supabase');
+  const sp = new URL(req.url, 'http://x').searchParams;
+  const zone = sp.get('zone') || '';
+  if (!mapSync.ZONE_RE.test(zone)) return _ptsJson(res, 400, { error: 'invalid zone' });
+  if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'database unavailable' });
+  const now = Date.now();
+  const floor = now - _MAP_SYNC_WINDOW_MS;
+  const sinceRaw = Number(sp.get('since'));
+  const since = Number.isFinite(sinceRaw) && sinceRaw > floor ? sinceRaw : floor;
+
+  let hit = _mapSyncCache.get(zone);
+  if (!hit || now - hit.at > _MAP_SYNC_CACHE_MS) {
+    // Newest 500 of the last 8 h, then flipped so the reply reads newest-last. One cached read per zone;
+    // every agent's own `since` is applied to it in memory.
+    const rows = await supabase.select('map_spawn_events',
+      `guild_id=eq.${encodeURIComponent(_mapSyncGuildId())}&zone=eq.${zone}` +
+      `&at=gt.${encodeURIComponent(new Date(floor).toISOString())}` +
+      `&select=id,point_id,kind,spawn_id,npc_name,at,by_character,inst&order=at.desc,id.desc&limit=${_MAP_SYNC_LIMIT}`,
+    ).catch(() => null);
+    if (!Array.isArray(rows)) return _ptsJson(res, 503, { error: 'try again shortly' });
+    hit = { at: now, events: rows.reverse().map(r => ({
+      id: r.id, point_id: r.point_id, kind: r.kind, spawn_id: r.spawn_id, name: r.npc_name,
+      at: Date.parse(r.at), by: r.by_character, inst: r.inst || null,   // the zone copy (agent 3.7.140+), or null
+    })) };
+    if (_mapSyncCache.size >= 100) {
+      for (const [z, c] of _mapSyncCache) if (now - c.at > _MAP_SYNC_CACHE_MS) _mapSyncCache.delete(z);
+    }
+    _mapSyncCache.set(zone, hit);
+  }
+  const out = { zone, now, events: hit.events.filter(e => e.at > since) };
+  // The raid's targets here and the escort trails (utils/raidTargets.js): memory and one cached bot_kv read, no Supabase
+  // query per pull. Best-effort: a failure leaves the events exactly as before.
+  try { Object.assign(out, await _raidTargetsFor(identity, zone, sp)); }
+  catch (err) { console.warn('[map-sync] raid targets failed:', err && err.message); }
+  return _ptsJson(res, 200, out);
+}
+
+// Each Mimic's current target rides its live-state upload (_handleAgentLiveState); this is what the Map's pull gets
+// back: { targets, trails }. Scoped like Extended Target: the requester's raid, else group, else only their own.
+let _raidTargetsInst = null;
+const _raidTargets = () => _raidTargetsInst || (_raidTargetsInst = _raidTargetsMod.create({ supabase: require('./utils/supabase') }));
+async function _raidTargetsFor(identity, zone, sp) {
+  const rt = _raidTargets();
+  const inp = await _groupScopeInputs(identity.discord_id);
+  const selfChar = String(sp.get('character') || '').trim().toLowerCase();
+  const characters = [...(inp.characters || [])];
+  if (/^[a-z]{2,30}$/.test(selfChar) && !characters.includes(selfChar)) characters.push(selfChar);
+  const scope = _groupScope.scopeFor({ split: inp.split, discordId: identity.discord_id, characters, group: inp.group, disabled: inp.disabled });
+  const tsince = Number(sp.get('tsince'));
+  return {
+    targets: rt.targetsFor({ zone, scope, raidForName: inp.split ? inp.split.raidForName : null, own: new Set(inp.characters || []) }),
+    trails: await rt.trailsFor(zone, Number.isFinite(tsince) && tsince > 0 ? tsince : 0),
+  };
 }
 
 // GET /api/agent/who-lookup?names=a,b,c
@@ -17314,6 +17926,35 @@ async function _handleAgentCharacterPrefsSet(req, res) {
   return _sendPrefsResult(res, out);
 }
 
+// POST + GET /api/agent/own-timers — a player's own pet/self buff timers, kept in bot_kv (the guild lead,
+// 2026-10-13: timers "synced to the database so if I logged on from a different machine or if my installation
+// failed I would still have those buff timers"). Same ownership rule as POST /character-prefs (a character in the
+// caller's family, else 403); the rules and the contract live in utils/ownTimers.js. Not sheddable: it is tiny
+// and it is restore data, so there is no flag_shed_ kind and no _SHED_KINDS entry.
+const ownTimers = require('./utils/ownTimers');
+async function _handleAgentOwnTimersSet(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) {
+    total += chunk.length;
+    if (total > ownTimers.MAX_BODY_BYTES) { res.writeHead(413); return res.end(); }
+    chunks.push(chunk);
+  }
+  let payload;
+  try { payload = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+  return _sendPrefsResult(res, await ownTimers.saveTimers(
+    require('./utils/supabase'), _ownedCharsCache, String(identity.discord_id || ''), payload));
+}
+async function _handleAgentOwnTimersGet(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  return _sendPrefsResult(res, await ownTimers.loadTimers(
+    require('./utils/supabase'), _ownedCharsCache, String(identity.discord_id || ''), url.searchParams.get('character') || ''));
+}
+
 // POST /api/agent/live-state
 //
 // Snapshot of what each watched character is currently carrying + where, from
@@ -17603,6 +18244,7 @@ async function _handleAgentLiveState(req, res) {
     // snapshot) — /raid moves them to "Not in raid (swapped to X)".
     if (st?.swapped_to && typeof st.swapped_to === 'string') {
       swaps.push({ character, swapped_to: st.swapped_to.trim().slice(0, 64) });
+      _raidTargets().forget(character);   // gone: its target no longer stands
       continue;
     }
     // Sanitize buffs → compact [{name, ticks, song}] and cap so a misbehaving
@@ -17674,6 +18316,13 @@ async function _handleAgentLiveState(req, res) {
     // The character's own known timers (agent 3.7.66+) — read back by
     // character-live-state for another raider's Target Info.
     const cooldowns = _sanitizeLiveCooldowns(st?.cooldowns, Date.now());
+    // The target's position for the Map (agent 3.7.166+: target_map in the Map's server frame, target_type, target_zone).
+    // Memory only, never a column: the upsert below takes `rows`, and these fields are not on it. No usable target
+    // (none, id 0, a player, a corpse) clears this character's sample. Never fails the POST.
+    try {
+      _raidTargets().noteSample({ character, zone: st?.target_zone, target_id: targetId, target_name: targetName,
+        target_type: st?.target_type, target_map: st?.target_map });
+    } catch (err) { console.warn('[raid-targets] note failed:', err?.message); }
     rows.push({
       guild_id:    guildId,
       character,
@@ -19255,7 +19904,7 @@ async function _handleAgentLooted(req, res) {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const nowIso  = new Date().toISOString();
   const rows = [];
-  const seen = new Set();   // in-batch de-dup on the same conflict key
+  const seen = new Map();   // in-batch de-dup on the same conflict key
   for (const e of events.slice(0, 500)) {
     const item   = e?.item ? String(e.item).trim().slice(0, 64) : '';
     const looter = e?.looter ? String(e.looter).trim().slice(0, 32) : '';
@@ -19264,8 +19913,12 @@ async function _handleAgentLooted(req, res) {
     const looterLower = looter.toLowerCase();
     const atIso = at.toISOString();
     const key = `${looterLower}|${item}|${atIso}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    // `from_own_pet` (the guild lead, 2026-10-09: gear a charmer loots back off their own pet's corpse is not loot) is
+    // honoured only as the boolean true. The key is written ONLY on a flagged row, so an unflagged re-send leaves an
+    // existing true alone (merge-duplicates updates just the columns in the body) and a bot that deploys before the
+    // column exists still stores every ordinary line.
+    const fromOwnPet = e?.from_own_pet === true;
+    if (seen.has(key)) { if (fromOwnPet) seen.get(key).from_own_pet = true; continue; }
     rows.push({
       guild_id:               guildId,
       looter_character:       looter,
@@ -19276,11 +19929,21 @@ async function _handleAgentLooted(req, res) {
       uploaded_by_discord_id: identity.discord_id,
       source:                 'local_agent_v1',
       created_at:             nowIso,
+      ...(fromOwnPet ? { from_own_pet: true } : {}),
     });
+    seen.set(key, rows[rows.length - 1]);
   }
   if (rows.length === 0) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, stored: 0 })); }
   try {
-    await supabase.upsert('looted_items', rows, 'guild_id,looter_lower,item_name,looted_at');
+    // Two upserts, never one mixed batch: PostgREST fills a key one row omits with NULL for the whole bulk body.
+    const ownPet = rows.filter(r => r.from_own_pet === true);
+    const plain  = rows.filter(r => r.from_own_pet !== true);
+    if (plain.length)  await supabase.upsert('looted_items', plain, 'guild_id,looter_lower,item_name,looted_at');
+    // supabase.upsert answers null on ANY failure. A flagged body fails alone when the column is not there yet, so those
+    // rows are stored once more without the key: they count as ordinary loot (how it was before the flag), never lost.
+    if (ownPet.length && !(await supabase.upsert('looted_items', ownPet, 'guild_id,looter_lower,item_name,looted_at'))) {
+      await supabase.upsert('looted_items', ownPet.map(({ from_own_pet, ...r }) => r), 'guild_id,looter_lower,item_name,looted_at');
+    }
     res.writeHead(200);
     res.end(JSON.stringify({ ok: true, stored: rows.length }));
     // A looted line resolves "who actually took it" on the event thread's roll
@@ -19696,11 +20359,14 @@ async function _handleTriggerRelayPost(req, res) {
 // "I'm not in a zone with another guild member, or in a group, or even a raid.
 // These random slips need to stop." The raid cases are the safety net for a
 // real callout: inside them nothing is consulted and everything relays.
-function _relayScopeKeep({ inRaidWindow, inRaid, originZones, requesterZones }) {
+// `unplacedWindow`: on a raid evening a listener we cannot place still hears senders we cannot place
+// either, but never a sender we CAN place in a zone (2026-10-14: a group's enrage callout in the Bastion
+// of Thunder reached an unplaced member in Overthere).
+function _relayScopeKeep({ inRaidWindow, inRaid, originZones, requesterZones, unplacedWindow = false }) {
   if (inRaidWindow || inRaid) return true;                          // in a raid: unchanged, raid-wide
   const origin = originZones instanceof Set ? originZones
     : new Set(Array.isArray(originZones) ? originZones : (originZones ? [originZones] : []));
-  if (origin.size === 0) return false;                              // can't place the sender → not local
+  if (origin.size === 0) return !!unplacedWindow;                   // can't place the sender → not local
   if (!requesterZones || requesterZones.size === 0) return false;   // can't place ourselves → not local
   for (const z of origin) if (z && requesterZones.has(z)) return true;
   return false;
@@ -19810,12 +20476,13 @@ function _recentFiresFor(identity, sinceId, lootSinceId = 0, scope = null) {
   const inRaidWindow  = scope ? !!scope.inRaidWindow : true;
   const inRaid        = scope ? !!scope.inRaid : true;
   const requesterZones = scope ? scope.requesterZones : null;
+  const unplacedWindow = !!(scope && scope.unplacedWindow);
   const fires = _triggerRelay.entries
     .filter(e => e.id > sinceId && e.uploaded_by !== identity.discord_id)
     .filter(e => {
       // Raid or group first (utils/groupScope.js); no opinion falls through to the zone rule.
       const v = _groupScope.relayVerdict(scope && scope.group, e);
-      return v !== null ? v : _relayScopeKeep({ inRaidWindow, inRaid, originZones: e.origin_zones, requesterZones });
+      return v !== null ? v : _relayScopeKeep({ inRaidWindow, inRaid, originZones: e.origin_zones, requesterZones, unplacedWindow });
     })
     .map(e => ({
       id:                  e.id,
@@ -19869,7 +20536,7 @@ async function _relayScopeFor(identity) {
     if (g.mode !== 'legacy') {
       let zones = new Set();
       try { zones = await _requesterZones(discordId); } catch { zones = new Set(); }
-      return { inRaidWindow: zones.size === 0 && _inRaidWindowEt(new Date()), inRaid: false, requesterZones: zones, group: g };
+      return { inRaidWindow: false, unplacedWindow: zones.size === 0 && _inRaidWindowEt(new Date()), inRaid: false, requesterZones: zones, group: g };
     }
   } catch { /* fall through to the old rule */ }
   const inRaidWindow = _inRaidWindowEt(new Date());
@@ -20035,7 +20702,7 @@ async function _handleAgentPoll(req, res) {
     out.streams.backfill = await _backfillRequestsFor(chars);
   }
   if (_pollStreamDecision('ui_edits', want, tune, null, null) === 'send') {
-    out.streams.ui_edits = await _uiPendingEditsFor(chars);
+    out.streams.ui_edits = await _uiPendingEditsFor(chars, identity.discord_id);
   }
   // pet_owners (FB-35) — the owners pooled from every raider's uploads, so one
   // "My leader is <Owner>" seen by anyone names that pet on every client's live meter.
@@ -22145,6 +22812,19 @@ async function _handleAgentUpload(req, res) {
 
         card.setFooter({ text: `${perspLabel}${stagingTag} · ${perspNames} · ${encounter.events.length} events (latest)` });
 
+        // ⏱️ How we did — the kill recap rides on THIS card (utils/killRecap.js). Raid bosses only, and only
+        // once a death line has confirmed the kill; any failure just leaves the card as it was.
+        if (_isBossCard && _encIdForLink) {
+          try {
+            const _recap = await _killRecapForCard(_encIdForLink, matchedBoss ? matchedBoss.name : mobName, encounter.confirmed_kill === true);
+            const _recapText = _recap ? require('./utils/killRecap').recapFieldValue(_recap) : '';
+            // Discord caps a whole embed at 6000 characters: skip the field rather than lose the card.
+            if (_recapText && JSON.stringify(card.toJSON()).length + _recapText.length + 40 < 5800) {
+              card.addFields({ name: '⏱️ How we did', value: _recapText, inline: false });
+            }
+          } catch (err) { console.warn('[kill-recap] card field failed:', err?.message); }
+        }
+
         // 🐾 Charmed — the charm pets listed together with who their damage
         // split across ("A Shissar Revenant — 12,480 (Tilbrook / Gwenna)").
         // Latest-perspective like the footer's event count; same-named pets
@@ -22613,6 +23293,8 @@ async function _handleAgentUpload(req, res) {
             is_dire_charm: !!s.is_dire_charm,
             encounter_id:  recParseResult.encounterId,
             end_reason:    s.end_reason || null,
+            spell_name:    charmSpellName(s.spell),
+            ran_full:      charmRanFull(s.ran_full),
             uploaded_by:   character || null,
           }));
           try {
@@ -23018,6 +23700,36 @@ const httpServer = http.createServer(async (req, res) => {
     }
   }
 
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/zone-spawns')) {
+    if (await _overBudget('zone_spawns', req, res)) return;
+    try { return await _handleAgentZoneSpawns(req, res); }
+    catch (err) {
+      console.error('[zone-spawns] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.split('?')[0] === '/api/agent/charm-pets') {
+    if (await _overBudget('charm_pets', req, res)) return;
+    try { return await _handleAgentCharmPets(req, res); }
+    catch (err) {
+      console.error('[charm-pets] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if ((req.method === 'GET' || req.method === 'POST') && req.url.split('?')[0] === '/api/agent/map-sync') {
+    if (await _overBudget('map_sync', req, res)) return;
+    try { return await (req.method === 'POST' ? _handleAgentMapSyncPost : _handleAgentMapSyncGet)(req, res); }
+    catch (err) {
+      console.error('[map-sync] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
   if (req.method === 'GET' && req.url.startsWith('/api/agent/mob-info')) {
     try { return await _handleAgentMobInfo(req, res); }
     catch (err) {
@@ -23032,6 +23744,16 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentNpcInteract(req, res); }
     catch (err) {
       console.error('[npc-interact] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  // Target Info's Loot tab: the hovered item's card, by item id (FB-73).
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/item-card')) {
+    try { return await _handleAgentItemCard(req, res); }
+    catch (err) {
+      console.error('[item-card] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
@@ -23127,6 +23849,21 @@ const httpServer = http.createServer(async (req, res) => {
     }
   }
 
+  {
+    const pronPath = req.url.split('?')[0];
+    const pronHandler = req.method === 'GET' && pronPath === '/api/agent/pronunciations' ? _handleAgentPronunciations
+      : req.method === 'GET' && pronPath === '/api/agent/pronunciation-suggest' ? _handleAgentPronunciationSuggest
+      : req.method === 'POST' && pronPath === '/api/agent/pronunciation' ? _handleAgentPronunciationSet : null;
+    if (pronHandler) {
+      try { return await pronHandler(req, res); }
+      catch (err) {
+        console.error('[pronunciation] handler error:', err);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'internal error' }));
+      }
+    }
+  }
+
   if (req.method === 'GET' && req.url.startsWith('/api/agent/item-catalog')) {
     try { return await _handleAgentItemCatalog(req, res); }
     catch (err) {
@@ -23180,6 +23917,24 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentCharacterPrefsSet(req, res); }
     catch (err) {
       console.error('[character-prefs set] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.startsWith('/api/agent/own-timers')) {
+    try { return await _handleAgentOwnTimersGet(req, res); }
+    catch (err) {
+      console.error('[own-timers] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/own-timers') {
+    try { return await _handleAgentOwnTimersSet(req, res); }
+    catch (err) {
+      console.error('[own-timers set] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
@@ -23528,6 +24283,17 @@ const httpServer = http.createServer(async (req, res) => {
     }
   }
 
+  // Bastion of Thunder slow mode starting/ending, as heard by an agent (utils/slowMode.js)
+  if (req.method === 'POST' && req.url === '/api/agent/slow-mode') {
+    if (await _overBudget('slow_mode', req, res)) return;
+    try { return await _handleAgentSlowMode(req, res); }
+    catch (err) {
+      console.error('[slow-mode] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
   // Plane-of-Hate mini-boss kills from [PVP] echoes — own-guild kills get
   // a spot-picker post, foreign kills land as unassigned rows for later
   // inference assignment on the web page.
@@ -23762,6 +24528,24 @@ const httpServer = http.createServer(async (req, res) => {
         console.error('[ui_layout download] handler error:', err);
         res.writeHead(500).end();
         return;
+      }
+    }
+  }
+
+  // Personal trigger sync — Push / Pull buttons (household-only, encrypted). Not sheddable: a
+  // button press that 200-acks without storing would tell the member it worked.
+  if (req.url.startsWith('/api/agent/personal-triggers/')) {
+    const route = req.url.split('?')[0].slice('/api/agent/personal-triggers/'.length);
+    const handler = (req.method === 'POST' && route === 'push') ? _handlePersonalTriggersPush
+      : (req.method === 'GET' && route === 'list') ? _handlePersonalTriggersList
+      : (req.method === 'GET' && route === 'pull') ? _handlePersonalTriggersPull : null;
+    if (handler) {
+      if (await _overBudget('personal_trigger_sync', req, res)) return;
+      try { return await handler(req, res); }
+      catch (err) {
+        console.error('[personal-triggers] handler error:', err);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'internal error' }));
       }
     }
   }

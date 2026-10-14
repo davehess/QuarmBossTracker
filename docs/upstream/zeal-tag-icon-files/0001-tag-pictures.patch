@@ -1,3 +1,69 @@
+From 903572291ca3d093a9df6883a482406c00373ecc Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Fri, 9 Oct 2026 18:08:11 +0000
+Subject: [PATCH] Add tag pictures: ^I<name>^ shows a .png or .tga from
+ uifiles/zeal/tagicons
+
+Guilds keep asking for their own logos as tag markers. Building each one
+into Zeal means a code change and a release per guild, and a painted logo
+can't be drawn as an extruded shape anyway. Tag pictures work like the
+target ring textures instead: drop a file in a folder and use it.
+
+- uifiles/zeal/tagicons/<name>.png or .tga, where <name> is 1 to 6 letters
+  or digits in any case. ^I<name>^ draws that picture flat, facing the
+  camera the way the nameplate text does, sitting where the shape would.
+  A picture takes over from a built-in guild icon with the same code
+  (EUR.png replaces the built-in EUR icon for whoever has the file).
+- Only players with the file see the picture. Others see the guild's
+  built-in shape, or just the text for a code that isn't a guild. If
+  the file won't load, the tag falls back to the built-in shape, or a
+  white arrow when there is none.
+- Files are checked before they are decoded: the PNG or true-color TGA
+  header must give a size of at most 512 pixels a side, and the file must
+  be at most 1 MB. Anything else is skipped with a chat message, once.
+- Each picture is loaded once (a managed texture) and released with the
+  other tag resources; /tag icons lists the pictures, reads the folder
+  again and reloads changed files.
+- The tag chat line reads "(Picture EUR)" for a picture tag.
+- README: document tag pictures.
+
+Tag pictures: a custom folder that wins, and pictures for guild banners:
+A player's own tag pictures go in uifiles/zeal/tagicons/custom. Nothing
+installs into that folder, and a picture there wins over one with the same
+name in tagicons, so a player can add pictures, or replace one that shipped
+with a UI or a Zeal build, and keep it through updates.
+
+A picture named for a guild's banner key now replaces that banner too:
+BEUR.png for ^BEUR^, as EUR.png already replaced the icon ^IEUR^. Only real
+guild codes count, so a stray B<name>.png changes no banner. The nameplate now
+keeps the picture's whole key ("ieur", "beur") rather than the code after the
+I, so the draw finds the banner's picture, not the icon's.
+
+/tag icons creates the custom folder if it is missing, says where it is, and
+marks a player's own pictures "(yours)" in the list.
+
+Tag pictures: accept the whole key as the file name, and keep custom first:
+A ^I<code>^ picture may now also be named for the whole key, I<code>.png, as
+a banner's is (BEUR.png). Windows allows no file called CON.png (CON is a
+reserved device name), so without this the CON guild's icon could never be
+replaced; ICON.png serves it.
+
+With two names per key, one merged map could let a shipped EUR.png beat a
+player's custom IEUR.png. The pictures are now kept as two maps, shipped and
+custom, and a lookup tries every name in custom before any in shipped, so a
+player's own picture wins under either name. /tag icons lists the two merged,
+the player's marked "(yours)".
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Uq6P6RYLtiKKfy5UWjT7AX
+---
+ README.md           |  10 ++++
+ Zeal/nameplate.cpp  | 127 ++++++++++++++++++++++++++++++++++++++++--
+ Zeal/nameplate.h    |   1 +
+ Zeal/tag_arrows.cpp | 131 ++++++++++++++++++++++++++++++++++++++++++++
+ Zeal/tag_arrows.h   |  34 ++++++++++++
+ 5 files changed, 298 insertions(+), 5 deletions(-)
+
 diff --git a/README.md b/README.md
 index c03256b..50c74d1 100644
 --- a/README.md
@@ -477,3 +543,6 @@ index 42eb40f..b06cff7 100644
  
    // Vertex buffer acts as a cache of most recently used shapes (stored in render_infos).
    IDirect3DVertexBuffer8 *vertex_buffer = nullptr;
+-- 
+2.43.0
+

@@ -44,7 +44,7 @@ export function StatusNote() {
 export function GuildKeys({ guild }: { guild: Guild }) {
   return (
     <div className="flex flex-wrap gap-1.5">
-      <CopyKey text={`^B${guild.code}^`} label={`${guild.name} banner key`} />
+      <CopyKey text={`^F${guild.code}^`} label={`${guild.name} flag key`} />
       <CopyKey text={`^I${guild.code}^`} label={`${guild.name} icon key`} />
     </div>
   );

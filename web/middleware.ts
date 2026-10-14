@@ -18,7 +18,8 @@
 // isolate alive until the work finishes.
 import { NextResponse, type NextRequest, type NextFetchEvent } from 'next/server';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
-import { isEqmimicHost, EQMIMIC_FEEDBACK_PATH } from './lib/eqmimicHost';
+import { isEqmimicHost, eqmimicLandingTarget } from './lib/eqmimicHost';
+import { isLockedOut } from './lib/lockout';
 
 // Routes we never log: API/RSC payloads, auth callbacks, admin pages
 // (officers checking dashboards would dominate the data), the analytics page
@@ -48,18 +49,54 @@ function normalizeRoute(pathname: string): string {
 // which serves per-path OG tags (web/lib/pageMeta.ts). Case-insensitive.
 const PREVIEW_BOT_RX = /discordbot|slackbot|twitterbot|facebookexternalhit|whatsapp|telegrambot|linkedinbot|skypeuripreview|redditbot|mastodon|pinterestbot/i;
 
+// The lockout never applies to the explanation page itself (or it would redirect to itself forever) or to
+// static assets that slipped past the matcher. /api/ is always enforced: a .json-looking API path is not an asset.
+function lockoutExempt(pathname: string): boolean {
+  if (pathname === '/auth/paused') return true;
+  if (pathname.startsWith('/api/')) return false;
+  return pathname.startsWith('/_next/') || SKIP_SUFFIXES.some(s => pathname.endsWith(s));
+}
+
+// Sign the locked-out user out and send them to /auth/paused. signOut() revokes their refresh tokens at Supabase
+// (global scope), but it is a network call that can fail or hang, and it hands its cookie removals to a response
+// we are about to discard, so the auth cookies are ALSO expired by hand on the response we return.
+// 303 so a POST (a server action) lands on the page with a GET; /api/ gets a 403 JSON instead of an HTML redirect.
+async function lockedOutResponse(
+  request: NextRequest,
+  supabase: ReturnType<typeof createServerClient>,
+): Promise<NextResponse> {
+  try {
+    await Promise.race([
+      supabase.auth.signOut(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('signout-timeout')), 2000)),
+    ]);
+  } catch { /* the cookies are cleared below either way */ }
+
+  const res = request.nextUrl.pathname.startsWith('/api/')
+    ? NextResponse.json({ error: 'access_paused' }, { status: 403 })
+    : NextResponse.redirect(new URL('/auth/paused', request.url), 303);
+  for (const c of request.cookies.getAll()) {
+    if (/^sb-.*-auth-token(\.\d+)?$/.test(c.name)) {
+      res.cookies.set({ name: c.name, value: '', path: '/', maxAge: 0 });
+    }
+  }
+  return res;
+}
+
 export async function middleware(request: NextRequest, event: NextFetchEvent) {
-  // eqmimic.quest (the guild lead, 2026-10-08) serves ONE page, the anonymous feedback form, and no
-  // Wolf Pack page at all. Decided before anything else runs: no session refresh (the form has no
+  // eqmimic.quest (the guild lead, 2026-10-08) serves TWO pages and no Wolf Pack page at all: the
+  // anonymous feedback form at /feedback (Mimic opens exactly that address) and the landing page for
+  // everything else. Decided before anything else runs: no session refresh (neither page has a
   // sign-in, and an anonymous visitor's request should touch nothing of ours), no page-view log, no
-  // link-preview rewrite. Every path lands on the form; the query string is dropped so nothing a
-  // caller tacked on rides further. /_next/ assets are not rewritten or the page would have no
+  // link-preview rewrite. eqmimicLandingTarget() picks the page and drops the whole query string (the
+  // landing page's scenarios are linked by a #clip-<slug> fragment, which never reaches us). /_next/ assets are not rewritten or the page would have no
   // scripts (the matcher already skips /_next/static and /_next/image; this covers the rest).
   if (isEqmimicHost(request.headers.get('host'))) {
     if (request.nextUrl.pathname.startsWith('/_next/')) return NextResponse.next();
     const url = request.nextUrl.clone();
-    url.pathname = EQMIMIC_FEEDBACK_PATH;
-    url.search = '';
+    const to = eqmimicLandingTarget(request.nextUrl.pathname);
+    url.pathname = to.pathname;
+    url.search = to.search;
     return NextResponse.rewrite(url);
   }
 
@@ -127,6 +164,13 @@ export async function middleware(request: NextRequest, event: NextFetchEvent) {
     } catch {
       user = null;
     }
+  }
+
+  // Member lockout (the guild lead, 2026-10-13; web/lib/lockout.ts): a locked-out member is signed out and sent
+  // to /auth/paused whatever Discord roles they hold. Only runs for a request that already has a user, so
+  // anonymous traffic costs nothing; the lookup itself is cached for 20 s per isolate and fails open.
+  if (user && !lockoutExempt(request.nextUrl.pathname) && (await isLockedOut(user))) {
+    return lockedOutResponse(request, supabase);
   }
 
   // Page-view logging — only on real, authenticated GETs to non-skipped paths.

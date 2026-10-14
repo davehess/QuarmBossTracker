@@ -20,11 +20,15 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { ownedCharacters } from '@/lib/ownedCharacters';
 import InventoryExplorer, { type InvItem, type LocGroup } from './InventoryExplorer';
 import { selectAll } from '@/lib/selectAll';
-import { clusterSharedBanks } from '@/lib/sharedBank';
+import { planSharedBanks, pickSharedRows } from '@/lib/sharedBank';
+import { loadAccountPlacements } from '@/lib/accountPlacements';
 import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'My inventory — Wolf Pack' };
+export const metadata = {
+  title: 'My inventory — Wolf Pack',
+  description: 'Every item across your characters and where it sits, in one searchable list. Private to you.',
+};
 
 type InvRow = { character_name: string; slot_label: string; item_id: number | null; item_name: string; quantity: number | null; observed_at: string | null };
 type ItemMeta = { id: number; damage: number | null; ac: number | null; nodrop: boolean | null; itemtype: number | null; slots: number | null };
@@ -93,21 +97,32 @@ export default async function MyInventoryPage() {
     // account), and one differing row broke the whole hash. Slot addresses are
     // account-scoped and stable, so a 4-rows-stale snapshot still agrees on
     // the other 100. See web/lib/sharedBank.ts.
-    const sharedRows = rows.filter(r => locGroup(r.slot_label) === 'shared');
-    const clusters = clusterSharedBanks(sharedRows.map(r => ({
-      character: r.character_name,
-      slot:      r.slot_label,
-      itemKey:   (r.item_id ? `id:${r.item_id}` : `nm:${r.item_name.toLowerCase()}`)
-                 + '|' + String(r.quantity ?? 1),
-      observedAt: r.observed_at,
-    })));
-    // Only the freshest snapshot of each account contributes its shared bank.
-    const skipShared = clusters.skip;
-    sharedAccountCount = clusters.accountCount;
+    //
+    // Game accounts (the guild lead, 2026-10-13): a character with an OPEN
+    // `character_accounts` row is on that account — authoritative. Only the
+    // characters without one are inferred from their banks (planSharedBanks).
+    // If the tables are not there yet the loader returns nothing and this is
+    // exactly the inference-only page it was before. Each account's shared bank
+    // then counts once, from its FRESHEST snapshot (pickSharedRows).
+    const placements = await loadAccountPlacements(admin, GUILD_TAG, charNames);
+    const sharedRows = rows
+      .filter(r => locGroup(r.slot_label) === 'shared')
+      .map(r => ({
+        character: r.character_name,
+        slot:      r.slot_label,
+        itemKey:   (r.item_id ? `id:${r.item_id}` : `nm:${r.item_name.toLowerCase()}`)
+                   + '|' + String(r.quantity ?? 1),
+        observedAt: r.observed_at,
+        inv: r,
+      }));
+    const plan = planSharedBanks(sharedRows, placements);
+    const countedShared = new Set<InvRow>(pickSharedRows(sharedRows, plan.accountOf).map(s => s.inv));
+    const accountById = new Map(plan.accounts.map(a => [a.id, a]));
+    sharedAccountCount = plan.accountCount;
     // A cluster too large to be one account means the scoring misfired; those
     // are left un-deduped (visible duplicates beat hidden losses) and logged
     // so it is noticed rather than silently absorbed.
-    for (const grp of clusters.oversized) {
+    for (const grp of plan.oversized) {
       console.warn('[shared-bank] refusing to dedup an implausible account cluster:', grp.join(', '));
     }
 
@@ -125,8 +140,9 @@ export default async function MyInventoryPage() {
     const byKey = new Map<string, InvItem>();
     for (const r of rows) {
       // Shared-bank rows count once per ACCOUNT — skip every copy except the
-      // group representative's (see the dedup block above).
-      if (locGroup(r.slot_label) === 'shared' && skipShared.has(r.character_name)) continue;
+      // account's freshest snapshot (see the dedup block above).
+      const grp = locGroup(r.slot_label);
+      if (grp === 'shared' && !countedShared.has(r)) continue;
       const key = r.item_id ? `id:${r.item_id}` : `nm:${r.item_name.toLowerCase()}`;
       let it = byKey.get(key);
       if (!it) {
@@ -139,10 +155,16 @@ export default async function MyInventoryPage() {
       }
       const qty = Math.max(1, r.quantity ?? 1);
       it.total += qty;
-      const grp = locGroup(r.slot_label);
-      const h = it.holdings.find(x => x.character === r.character_name && x.location === grp);
+      // A shared holding belongs to the ACCOUNT when it has more than one
+      // character; a lone character's bank stays a plain character holding.
+      const acct = grp === 'shared' ? accountById.get(plan.accountOf.get(r.character_name.toLowerCase()) ?? '') : undefined;
+      const h = acct
+        ? it.holdings.find(x => x.account?.id === acct.id)
+        : it.holdings.find(x => !x.account && x.character === r.character_name && x.location === grp);
       if (h) h.qty += qty;
-      else it.holdings.push({ character: r.character_name, location: grp, qty });
+      else it.holdings.push(acct
+        ? { character: acct.label, location: grp, qty, account: { id: acct.id, label: acct.label, members: acct.members, placed: acct.placed } }
+        : { character: r.character_name, location: grp, qty });
     }
     items = [...byKey.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
   }
@@ -157,7 +179,8 @@ export default async function MyInventoryPage() {
           Everything across <b className="text-text">all your characters</b> at once — total count of each item and
           exactly who&apos;s holding it. Items in the <b className="text-purple">shared bank</b> are tagged, since any
           of your characters can pull those — and they count <b className="text-text">once per game account</b>, not
-          once per character (characters whose shared-bank contents match are grouped as one account automatically).
+          once per character (characters placed on a game account are grouped by that account; the
+          rest are grouped as &quot;same account?&quot; when their shared-bank contents match).
           Filter by type, and toggle which characters or which places (equipped /
           bags / bank / shared) to include. Data comes from your <code>/outputfile inventory</code> uploads
           (📖 on <Link href="/me" className="text-blue hover:underline">/me</Link>) — only your own characters, private to you.

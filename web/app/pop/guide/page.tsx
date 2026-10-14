@@ -1,4 +1,8 @@
-// /pop/guide — the PoP checklist: where to start, the must-haves, and who you need for each step
+// /pop/guide — the PoP checklist: the must-haves, and who you need for each step. At the top, collapsed, a box to
+// paste what Seer Mal Nae`Shi says (SeerPaste.tsx): it ticks the steps she proves, rings the next ones, and saves
+// them to one of your characters. The "Start here" section was removed 2026-10-14 (the guild lead: superfluous).
+// Under it the steps are collapsed sections (GuideChecklist.tsx): a Tier each, a Plane of Knowledge, and a plane
+// to a sub-section, with a sidebar to jump between them (GuideNav.tsx; ids and grouping in web/lib/popGuideSections.ts).
 // (the guild lead, 2026-09-28: "where to start, what quests are must haves, what can be done with a
 // group or a raid or solo. Make this a checkbox type of thing").
 //
@@ -14,19 +18,25 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { ownedCharacters } from '@/lib/ownedCharacters';
 import { LIST_MIN_LEVEL, loadLevels, partitionTiers } from '@/lib/listableChars';
 import { guideItemIds } from '@/lib/popGuide';
+import { charNextSteps, nextCard, nxMode } from '@/lib/popNextSteps';
 import { type ItemCard } from '@/app/character/[name]/inventory/ItemHover';
 import GuideChecklist, { type GuideChar } from './GuideChecklist';
 import GuideRoute from './GuideRoute';
+import NextUp from './NextUp';
+import NextTable from './NextTable';
 import { loadRoute } from './routeData';
 import { GUILD_TAG } from '@/lib/guild';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'PoP Checklist — Wolf Pack' };
+export const metadata = {
+  title: 'PoP Checklist — Wolf Pack',
+  description: 'Every Planes of Power step in order, with what to say and where to stand, ticked off per character.',
+};
 
 export default async function PopGuidePage(
-  { searchParams }: { searchParams: Promise<{ c?: string; v?: string; all?: string }> },
+  { searchParams }: { searchParams: Promise<{ c?: string; v?: string; all?: string; nx?: string }> },
 ) {
-  const { c, v, all } = await searchParams;
+  const { c, v, all, nx } = await searchParams;
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pop/guide');
 
@@ -62,12 +72,39 @@ export default async function PopGuidePage(
     </p>
   );
 
+  // Beta (the guild lead, 2026-10-10: "put at the top of the guide next steps for flags in a consolidated
+  // place"): two panels to pick from, over any of the layouts below. ?nx=a is one character's next few steps
+  // (NextUp.tsx), ?nx=b is every character at once (NextTable.tsx). No ?nx is this page as production has
+  // it: nothing is loaded for it and nothing is drawn. The panels read loadRoute's data, the fullest
+  // done-state we have (Mimic, /who, loot, records, ticks), so with ?v=b/c it is the data the layout already
+  // loaded. Their links jump to the step's row; the row ids differ by layout.
+  const mode = nxMode(nx);
+  const routeLoad = (v === 'b' || v === 'c' || mode) ? loadRoute(mine) : null;
+  const anchorPrefix = (v === 'b' || v === 'c') ? 'route-' : 'guide-';
+  const nxHref = (name: string | null, variant: 'a' | 'b', stepKey?: string) => {
+    const q = new URLSearchParams();
+    if (name) q.set('c', name);
+    if (v === 'b' || v === 'c') q.set('v', v);
+    if (all === '1') q.set('all', '1');
+    q.set('nx', variant);
+    return `/pop/guide?${q}${stepKey ? `#${anchorPrefix}${stepKey}` : ''}`;
+  };
+  const nxChars = mode ? (await routeLoad!).chars : [];
+  const nxRows = nxChars.map(ch => ({ name: ch.name, cls: ch.cls, isMain: ch.isMain, lines: charNextSteps(ch) }));
+  const nxFirst = (nxChars.find(ch => c && ch.name.toLowerCase() === c.toLowerCase()) ?? nxChars.find(ch => ch.isMain) ?? nxChars[0])?.name ?? null;
+  const nxPanel = mode
+    ? (mode === 'a'
+      ? <NextUp chars={nxRows.map(r => ({ name: r.name, cls: r.cls, isMain: r.isMain, card: nextCard(r.lines) }))}
+                initial={nxFirst} anchorPrefix={anchorPrefix} compareHref={nxHref(null, 'b')} />
+      : <NextTable rows={nxRows} hrefFor={(name, key) => nxHref(name, 'b', key)} singleHref={nxHref(nxFirst, 'a')} />)
+    : null;
+
   // Beta (the guild lead, 2026-09-29: "more detail, maps, who to turn things into, expectations and who
   // you will go back to. a sidebar nav with sections"): two layouts to pick from, GuideRoute.tsx. No
   // ?v= is this page as production has it.
   if (v === 'b' || v === 'c') {
     const [{ chars: routeChars, outlines }, { data: routeCards }] = await Promise.all([
-      loadRoute(mine),
+      routeLoad!,
       supabaseAdmin().rpc('item_card_info', { p_item_ids: guideItemIds() }),
     ]);
     const rc: Record<number, ItemCard> = {};
@@ -82,13 +119,14 @@ export default async function PopGuidePage(
             <Link href="/pop" className="text-xs text-blue hover:underline">flag chart →</Link>
           </div>
           <p className="text-sm text-dim mt-1 max-w-3xl">
-            Where to start, what you can&apos;t skip, who you need, who takes what and who you go back to, by
+            What you can&apos;t skip, who you need, who takes what and who you go back to, by
             progression level. Open a level to see its steps; hover 🗺 for the map. Steps Mimic saw you do, that
             our records already show, or that /who proves (you were seen inside a plane that needs them) tick
-            themselves and say which.
+            themselves and say which. Not running Mimic? Paste what the Seer says, just below.
           </p>
           {hiddenNote}
         </section>
+        {nxPanel}
         <GuideRoute chars={routeChars} initial={first} cards={rc} outlines={outlines} layout={v} noLevel={noLevel} />
       </div>
     );
@@ -130,18 +168,21 @@ export default async function PopGuidePage(
   const initial = (byParam ?? chars.find(ch => ch.isMain) ?? chars[0])?.name ?? null;
 
   return (
-    <div className="max-w-5xl mx-auto flex flex-col gap-4">
+    <div className="max-w-6xl mx-auto flex flex-col gap-4">
       <section className="bg-panel border border-border rounded-lg p-4">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <h1 className="text-lg text-gold">Planes of Power: your checklist</h1>
           <Link href="/pop" className="text-xs text-blue hover:underline">flag chart →</Link>
         </div>
         <p className="text-sm text-dim mt-1 max-w-3xl">
-          Where to start, what you can&apos;t skip, and who you need for each step. Tick things off as you go;
-          your ticks are saved per character, and any flag Mimic has recorded ticks itself.
+          What you can&apos;t skip, and who you need for each step. Tick things off as you go;
+          your ticks are saved per character, and any flag Mimic has recorded ticks itself. Not running Mimic?
+          Paste what the Seer says, just below. Then open a tier (or the Plane of Knowledge) from the list
+          beside the steps; each one opens to its planes.
         </p>
         {hiddenNote}
       </section>
+      {nxPanel}
       <GuideChecklist chars={chars} initial={initial} cards={cards} noLevel={noLevel} />
     </div>
   );

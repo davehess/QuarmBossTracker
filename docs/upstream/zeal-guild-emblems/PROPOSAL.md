@@ -2,7 +2,7 @@
 
 > **Decided 2026-09-25: both.** The guild lead: *"I like the flags, make them B__ for
 > Banner. Lets put them all in"*, then *"I want both"*.
-> - `^B<code>^` draws the banner and `^I<code>^` the icon, for all 30 guilds. The
+> - `^F<code>^` draws the banner and `^I<code>^` the icon, for all 30 guilds. The
 >   single `^#<code>^` key proposed below was not used.
 > - Built in C++ on the `tag-shapes` branch (`3c02f65`); the real-mesh render is
 >   `../zeal-tag-shapes/guilds.png`, and every command to try is in

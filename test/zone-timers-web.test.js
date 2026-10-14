@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { parseZoneTimers, windowStatus, visibleCleared, fmtRemaining, zoneLabel } from '../web/lib/zoneTimers.ts';
+import { parseZoneTimers, windowStatus, visibleCleared, fmtRemaining, zoneLabel, eventInfo, pqdiNpcUrl } from '../web/lib/zoneTimers.ts';
 
 const W = { window_id: 'w1', trigger_name: 'Tactics: stampede window opens', zone: 'potactics', observed_at_ms: 1000, min_at_ms: 2000, max_at_ms: 9000 };
 
@@ -64,6 +64,21 @@ describe('visibleCleared', () => {
   });
 });
 
+describe('eventInfo: what the window is', () => {
+  it('names the stampede windows "Boar stampede" and links the piglet on PQDI', () => {
+    for (const t of ['Tactics: stampede window opens', 'Tactics: stampede by', 'Tactics: boar stampede incoming']) {
+      const e = eventInfo(t);
+      expect(e.title).toBe('Boar stampede');
+      expect(e.blurb).toMatch(/earliest and latest start/);
+      expect(e.pqdi).toEqual({ label: 'Stampeding Piglet', npcId: 214303 });
+    }
+    expect(pqdiNpcUrl(214303)).toBe('https://www.pqdi.cc/npc/214303');
+  });
+  it('shows an unknown trigger under its own name with no blurb and no link', () => {
+    expect(eventInfo('Somewhere: a thing')).toEqual({ title: 'Somewhere: a thing', blurb: null, pqdi: null });
+  });
+});
+
 describe('labels and clock', () => {
   it('names the stored short zone and leaves an unknown one as stored', () => {
     expect(zoneLabel('potactics')).toBe('Plane of Tactics');
@@ -80,9 +95,12 @@ describe('labels and clock', () => {
 describe('the page', () => {
   const src = readFileSync(new URL('../web/app/boards/page.tsx', import.meta.url), 'utf8')
     .split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
-  it('shows the panel only on the ?v=b variant, so production stays as it was', () => {
-    expect(src).toMatch(/v === 'b' \? await loadZoneTimers\(\) : null/);
-    expect(src).toMatch(/\{zoneTimers && <ZoneTimersPanel/);
+  it('shows the panel on /boards itself, not behind a ?v= variant (a running stampede was invisible without it)', () => {
+    expect(src).toMatch(/<ZoneTimersPanel timers=\{zoneTimers\} \/>/);
+    expect(src).not.toMatch(/\bsearchParams\b/);
+    expect(src).not.toMatch(/v === 'b'/);
+    // read in parallel with the boards, so the page is no slower for it
+    expect(src).toMatch(/Promise\.all\(\[loadZoneTimers\(\), loadBoards\(\)\]\)/);
   });
   it('reads the ledger key the bot writes', () => {
     expect(src).toMatch(/\.eq\('key', 'zone_timer_windows'\)/);

@@ -1,6 +1,11 @@
 // Admin landing — officer-only. Auth + officer gating handled by parent layout.
 import Link from 'next/link';
 
+export const metadata = {
+  title: 'Officer tools · Admin',
+  description: 'The officer tools: attendance, sign-ups, triggers, feedback, members and more.',
+};
+
 export default function AdminPage() {
   return (
     <div className="space-y-6">
@@ -48,6 +53,11 @@ export default function AdminPage() {
           title="👥 Member dashboard"
           body="Silent-member outreach list. Cross-references guild members against character roster, chat, parses, and /who observations to find inactive raiders and roster gaps."
           href="/admin/members"
+        />
+        <Card
+          title="🚫 Member access"
+          body="[beta] Lock a member out of the website, Mimic and the bot's commands whatever Discord roles they hold, with a reason and an optional end date; their Mimic sessions are revoked. Unlock here too."
+          href="/admin/access"
         />
         <Card
           title="👁 /who directory"

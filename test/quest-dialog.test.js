@@ -526,8 +526,11 @@ describe('NPCs scripted by an encounter file', () => {
     const lua = q.encounterHandlers(RINGFOUR, 116005);
     expect(lua).not.toMatch(/event_trade/);
     const say = q.parseDialog(lua);
-    expect(say.map((b) => b.keywords)).toEqual([['hail']]);   // "help" only spawns Ghrek, says nothing: the parser drops a silent branch
+    // "help" says nothing but spawns Ghrek: it is listed (with the spawn warning), not dropped as silent (FB-72).
+    expect(say.map((b) => b.keywords)).toEqual([['hail'], ['help']]);
     expect(say[0].replies[0].text).toMatch(/Kromrif ambushed me/);
+    expect(say[1].replies).toEqual([]);
+    expect(say[1].fx.spawns).toEqual([116018]);
     expect(lua).not.toMatch(/passout/);                // TainTimer is not a say handler
   });
 

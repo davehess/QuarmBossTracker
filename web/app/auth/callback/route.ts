@@ -12,6 +12,7 @@ import { createClient } from '@supabase/supabase-js';
 import { supabaseServer } from '@/lib/supabase-server';
 import { fetchGuildMember, memberAvatarUrl, memberDisplayName } from '@/lib/discord';
 import { requestOrigin } from '@/lib/request-origin';
+import { isLockedOut } from '@/lib/lockout';
 
 // Sanitize the post-login redirect target. Must be a same-origin relative
 // path: starts with a single "/" (not "//", which is protocol-relative and an
@@ -119,6 +120,14 @@ export async function GET(req: NextRequest) {
         )}`,
       );
     }
+  }
+
+  // Member lockout (the guild lead, 2026-10-13): an officer can pause a member whatever roles they hold, so a
+  // locked-out member never gets a session here. Checked on the Discord id (the lock is keyed on it) and on the
+  // auth user id; the upsert below would otherwise also refresh the row as if nothing had happened.
+  if (await isLockedOut({ id: data.session.user.id, user_metadata: { provider_id: member.user.id } })) {
+    await supabase.auth.signOut();
+    return NextResponse.redirect(`${origin}/auth/paused`);
   }
 
   const { error: upsertError } = await admin.from('wolfpack_members').upsert({

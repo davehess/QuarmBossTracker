@@ -15,6 +15,8 @@ int main() {
   for (const char *c = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"; *c; ++c) names.push_back(std::string("P") + *c);
   for (const auto &guild : TagShapes::kGuilds) names.push_back(std::string("B") + guild.code);
   for (const auto &guild : TagShapes::kGuilds) names.push_back(std::string("I") + guild.code);
+  names.push_back("MainAssist");
+  names.push_back("Hourglass");
   if (names.size() != static_cast<size_t>(TagShapes::Kind::Count)) {
     std::fprintf(stderr, "names out of step with TagShapes::Kind\n");
     return 1;
@@ -30,7 +32,13 @@ int main() {
         std::fprintf(stderr, "%s: index %d out of range (%d vertices)\n", names[k].c_str(), idx, n);
         ++failures;
       }
-    std::printf("{\"name\":\"%s\",\"min_z\":%.4f,\"max_z\":%.4f,\"vertices\":[", names[k].c_str(), mesh.min_z, mesh.max_z);
+    // A banner also carries its logo color and name color (the guild's Logo* and LogoText tones resolve to them).
+    unsigned logo = 0, text = 0;
+    if (k >= static_cast<int>(TagShapes::Kind::Banner0) && k <= static_cast<int>(TagShapes::Kind::BannerLast)) {
+      logo = TagShapes::BannerLogoRgb(k - static_cast<int>(TagShapes::Kind::Banner0));
+      text = TagShapes::BannerTextRgb(k - static_cast<int>(TagShapes::Kind::Banner0));
+    }
+    std::printf("{\"name\":\"%s\",\"logo\":%u,\"text\":%u,\"min_z\":%.4f,\"max_z\":%.4f,\"vertices\":[", names[k].c_str(), logo, text, mesh.min_z, mesh.max_z);
     for (int i = 0; i < n; ++i) {
       const auto &v = mesh.vertices[i];
       std::printf("%s[%.4f,%.4f,%.4f,%d]", i ? "," : "", v.x, v.y, v.z, static_cast<int>(v.tone));

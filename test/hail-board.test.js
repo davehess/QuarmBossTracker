@@ -40,7 +40,14 @@ function env(tables = {}, { enabled = true } = {}) {
   const sb = {
     isEnabled: () => enabled,
     select: (...a) => fake.select(...a),
-    selectAllPaged: (...a) => fake.selectAllPaged(...a),
+    // e.failRoster simulates a raid_roster read that times out (decided when the read ends); e.hold (a promise)
+    // parks a raid_roster read until it resolves, a slow Supabase; e.rosterReads counts every attempt.
+    selectAllPaged: (table, ...a) => {
+      if (table !== 'raid_roster') return fake.selectAllPaged(table, ...a);
+      e.rosterReads++;
+      if (!e.hold) return e.failRoster ? Promise.resolve(null) : fake.selectAllPaged(table, ...a);
+      return e.hold.then(() => (e.failRoster ? null : fake.selectAllPaged(table, ...a)));
+    },
     upsert: async (table, rows) => {
       upserts.push({ table, rows: JSON.parse(JSON.stringify(rows)) });
       if (table === 'bot_kv') {
@@ -53,7 +60,7 @@ function env(tables = {}, { enabled = true } = {}) {
       return rows;
     },
   };
-  const e = { tables: t, fake, upserts, clock: KILL + 20_000 };
+  const e = { tables: t, fake, upserts, clock: KILL + 20_000, failRoster: false, rosterReads: 0 };
   e.hb = hailBoard.create({ supabase: sb, guildId: 'g', now: () => e.clock, log: { warn() {} } });
   e.boot = () => hailBoard.create({ supabase: sb, guildId: 'g', now: () => e.clock, log: { warn() {} } });
   e.calls = (table, re) => fake.calls.filter(c => c.table === table && (!re || re.test(c.query))).length;
@@ -160,12 +167,32 @@ describe('a hail boss kill opens a window', () => {
     expect(e.upserts).toHaveLength(0);
   });
 
-  it('falls back to the fight\'s participants when no roster is fresh, and opens nothing when there is nobody', async () => {
+  it('uses the fight\'s participants when no roster is fresh, and still opens (pending) when there is nobody at all', async () => {
+    const none = env();
+    const empty = await none.hb.openWindow({ bossId: 'saryrn', killedAtMs: KILL });
+    expect(empty).toMatchObject({ roster: [], roster_pending: true });
     const e = env();
-    expect(await e.hb.openWindow({ bossId: 'saryrn', killedAtMs: KILL })).toBeNull();
     const w = await e.hb.openWindow({ bossId: 'saryrn', killedAtMs: KILL, participants: ['Aldenmar', 'Brackwyn', 'Aldenmar', 'a bat'] });
     expect(w.roster).toEqual(['Aldenmar', 'Brackwyn']);
     expect(w.uploaders).toEqual([]);
+    expect(w.roster_pending).toBe(true);
+  });
+
+  it('the roster is the snapshot UNION the fight\'s participants, deduped without regard to case', async () => {
+    const e = env({ raid_roster: rosterRows(['Aldenmar', 'Brackwyn', 'Corvale'], 'u1') });
+    const w = await e.hb.openWindow({ bossId: 'grummus', killedAtMs: KILL,
+      participants: ['brackwyn', 'Rethlan', 'Nyssara', 'a bat'] });
+    expect([...w.roster].sort()).toEqual(['Aldenmar', 'Brackwyn', 'Corvale', 'Nyssara', 'Rethlan']);
+    expect(w.roster_pending).toBeUndefined();         // the read worked and found people: nothing to retry
+    expect(w.uploaders).toEqual(['u1']);
+  });
+
+  it('a roster read that fails does not freeze the window: it opens pending with the participants', async () => {
+    const e = env({ raid_roster: rosterRows(RAID, 'u1') });
+    e.failRoster = true;
+    const w = await e.hb.openWindow({ bossId: 'grummus', killedAtMs: KILL, participants: ['Aldenmar'] });
+    expect(w).toMatchObject({ roster: ['Aldenmar'], uploaders: [], roster_pending: true });
+    expect(e.tables.bot_kv[0].value.windows[0].roster_pending).toBe(true);
   });
 
   it('is one window per death: a second report folds in, and the earlier kill time wins', async () => {
@@ -307,6 +334,141 @@ describe('the board sorts every raider from what we already collect', () => {
     e.flag('Corvale', 'hail', 'hail_witnessed', at(3), { npc: 'A Planar Projection' });   // seen, not self-reported
     const [view] = (await e.hb.getBoard()).windows;
     expect(view.seen_by).toBe(3);
+  });
+});
+
+// ── A roster that arrived thin (FB-71) ────────────────────────────────────────────────────────────────
+// A member, 2026-10-10: "The command center did not capture everyone's hails for grummus". 48 raiders hailed
+// and the card showed one name: the post-kill upload burst timed the raid_roster read out, the window froze on
+// the uploader's own player list, and every other hailer was invisible to the board for the whole 20 minutes.
+
+describe('a roster read that failed is retried, and a witnessed hailer is on the board', () => {
+  const POLL = 30_000;
+
+  async function pendingGrummus(extra = {}) {
+    const e = env({ raid_roster: rosterRows(RAID, 'u1'), ...extra });
+    e.failRoster = true;
+    const w = await e.hb.openWindow({ bossId: 'grummus', killedAtMs: KILL, participants: ['Aldenmar'] });
+    e.failRoster = false;
+    return { e, w };
+  }
+  const everyone = (v) => [...v.still.map(s => s.name), ...v.hailed.map(h => h.name), ...v.already_flagged].sort();
+
+  it('a poll after 30 s re-reads the roster, unions the whole raid in, clears pending and persists it', async () => {
+    const { e, w } = await pendingGrummus();
+    expect(e.rosterReads).toBe(1);
+    expect(everyone((await e.hb.getBoard()).windows[0])).toEqual(['Aldenmar']);   // inside the 30 s: still thin
+    e.advance(POLL);
+    const [view] = (await e.hb.getBoard()).windows;
+    expect(e.rosterReads).toBe(2);
+    expect(everyone(view)).toEqual([...RAID].sort());
+    expect(view.seen_by).toBe(1);                                     // the roster's uploader is now counted
+    expect(w.roster_pending).toBeUndefined();
+    const stored = e.tables.bot_kv[0].value.windows[0];
+    expect(stored.roster_pending).toBeUndefined();
+    expect([...stored.roster].sort()).toEqual([...RAID].sort());
+    expect(stored.uploaders).toEqual(['u1']);
+    // Settled: no further roster read however long the window stays open.
+    e.advance(5 * MIN);
+    await e.hb.getBoard();
+    expect(e.rosterReads).toBe(2);
+  });
+
+  it('never retries inside 30 s, never twice at once, and keeps trying every 30 s while the read keeps failing', async () => {
+    const { e } = await pendingGrummus();
+    e.failRoster = true;
+    for (const ms of [5_000, 10_000, 14_000]) { e.advance(ms); await e.hb.getBoard(); }   // 29 s after the open
+    expect(e.rosterReads).toBe(1);
+    e.advance(1_000);
+    await Promise.all([e.hb.getBoard(), e.hb.getBoard(), e.hb.getBoard()]);              // 30 s: one retry for all three
+    expect(e.rosterReads).toBe(2);
+    expect(e.hb._windows()[0].roster_pending).toBe(true);
+    e.advance(29_000); await e.hb.getBoard();
+    expect(e.rosterReads).toBe(2);
+    e.advance(1_000); await e.hb.getBoard();
+    expect(e.rosterReads).toBe(3);
+  });
+
+  it('a slow retry is never doubled: a poll that arrives while it is in flight waits for it', async () => {
+    const { e } = await pendingGrummus();
+    let release; e.hold = new Promise(r => { release = r; });
+    e.advance(POLL);
+    const first = e.hb.getBoard();
+    await flush();
+    expect(e.rosterReads).toBe(2);
+    e.advance(POLL + 1_000);                       // a second poll well past the throttle, the read still parked
+    const second = e.hb.getBoard();
+    await flush();
+    expect(e.rosterReads).toBe(2);
+    e.failRoster = true;                            // the parked read times out: the window is still pending...
+    release();
+    await Promise.all([first, second]);
+    expect(e.hb._windows()[0].roster_pending).toBe(true);
+    expect(e.rosterReads).toBe(2);                  // ...and the second poll did not start a read of its own
+  });
+
+  it('a read that works but finds nobody keeps the window pending; the retry reads only the window\'s own span', async () => {
+    const e = env({ raid_roster: rosterRows(['Staleguy'], 'u9', 40) });
+    await e.hb.openWindow({ bossId: 'grummus', killedAtMs: KILL });
+    expect(e.hb._windows()[0]).toMatchObject({ roster: [], roster_pending: true });
+    e.tables.raid_roster.push(...rosterRows(['Lateguy'], 'u8', -30));
+    e.advance(POLL);
+    await e.hb.getBoard();
+    // Lateguy was captured 30 minutes AFTER the kill, past the NPC's departure: not the raid at the kill.
+    expect(e.hb._windows()[0]).toMatchObject({ roster: [], roster_pending: true });
+    e.tables.raid_roster.push(...rosterRows(['Aldenmar'], 'u1', -5));
+    e.advance(POLL);
+    const [view] = (await e.hb.getBoard()).windows;
+    expect(everyone(view)).toEqual(['Aldenmar']);
+    expect(e.hb._windows()[0].roster_pending).toBeUndefined();
+  });
+
+  it('a hailer the roster missed is added to the board as seen, once, and kept across a restart', async () => {
+    const e = env({ raid_roster: rosterRows(RAID, 'u1') });
+    await e.hb.openWindow({ bossId: 'grummus', killedAtMs: KILL });
+    const npc = { npc: 'A Planar Projection' };
+    e.flag('Quillon', 'hail', 'hail_witnessed', at(3), npc);                         // not on the roster
+    e.flag('Sarnoth', 'hail', 'hail_witnessed', at(3), { npc: 'Seer Mal Nae' });      // a different NPC
+    e.flag('Brindlo', 'hail', 'hail_witnessed', at(-10), npc);                       // before this kill
+    e.flag('Tolvane', 'hail', 'hail_witnessed', at(3), { ...npc, zone: '214' });      // another zone's projection
+    e.flag('Corvale', 'hail', 'hail_witnessed', at(4), npc);                         // already on the roster
+    const [view] = (await e.hb.getBoard()).windows;
+    expect(view.hailed).toEqual([{ name: 'Corvale', how: 'seen' }, { name: 'Quillon', how: 'seen' }]);
+    expect(everyone(view)).toEqual([...RAID, 'Quillon'].sort());
+    e.advance(6_000);
+    expect((await e.hb.getBoard()).windows[0].hailed.map(h => h.name)).toEqual(['Corvale', 'Quillon']);
+    expect(e.hb._windows()[0].roster.filter(n => n === 'Quillon')).toHaveLength(1);
+    await flush();
+    expect(e.tables.bot_kv[0].value.windows[0].roster).toContain('Quillon');
+    const back = (await e.boot().getBoard()).windows[0];
+    expect(back.hailed.map(h => h.name)).toContain('Quillon');
+  });
+
+  it('a witnessed hailer joins the earliest window their hail fits, not every window', async () => {
+    const e = env({ raid_roster: rosterRows(['Aldenmar'], 'u1') });
+    await e.hb.openWindow({ bossId: 'tallon_zek', killedAtMs: KILL });
+    e.advance(3 * MIN);
+    await e.hb.openWindow({ bossId: 'vallon_zek', killedAtMs: KILL + 2 * MIN });
+    e.flag('Quillon', 'hail', 'hail_witnessed', at(2.5), { npc: 'a planar projection', zone: '214' });
+    const by = Object.fromEntries((await e.hb.getBoard()).windows.map(w => [w.boss_id, everyone(w)]));
+    expect(by).toEqual({ tallon_zek: ['Aldenmar', 'Quillon'], vallon_zek: ['Aldenmar'] });
+  });
+
+  it('a pending window with nobody on it asks nothing about raiders, and an idle board makes no read at all', async () => {
+    const e = env();
+    e.failRoster = true;
+    await e.hb.openWindow({ bossId: 'grummus', killedAtMs: KILL });
+    const afterOpen = e.fake.calls.length;
+    const [view] = (await e.hb.getBoard()).windows;
+    expect(view).toMatchObject({ still: [], hailed: [], already_flagged: [] });
+    expect(e.fake.calls.filter(c => c.table === 'pop_flags' && /character=in\./.test(c.query))).toEqual([]);
+    expect(e.fake.calls.length).toBeGreaterThan(afterOpen);          // the one hail read; nothing per-raider
+    // The window ends: no board, no retry, no read of any table, however long the poll goes on.
+    e.advance(21 * MIN);
+    const reads = e.rosterReads, calls = e.fake.calls.length;
+    for (let i = 0; i < 3; i++) { expect(await e.hb.getBoard()).toEqual({ windows: [] }); e.advance(MIN); }
+    expect(e.rosterReads).toBe(reads);
+    expect(e.fake.calls.length).toBe(calls);
   });
 });
 
@@ -511,7 +673,8 @@ describe('every recorded kill reaches the listeners', () => {
   const wrapper = sliceBlock(stateSrc, 'const _killListeners = [];', '  return entry;\n}');
   const load = (recordKill) =>
     // eslint-disable-next-line no-new-func
-    new Function('recordKill', `${wrapper}\nreturn { onKillRecorded, recordKillNotifying };`)(recordKill);
+    // slowMode: the wrapper also applies the slow-mode timer (test/slow-mode.test.js); here it changes nothing.
+    new Function('recordKill', 'slowMode', `${wrapper}\nreturn { onKillRecorded, recordKillNotifying };`)(recordKill, { timerHoursForKill: (id, h) => h });
 
   it('hands each listener the boss, the kill time and the killer, and returns the record untouched', () => {
     const entry = { killedAt: 1234, nextSpawn: 9999, killedBy: 'x' };
@@ -537,6 +700,158 @@ describe('every recorded kill reaches the listeners', () => {
     const code = stripJs(stateSrc);
     expect(code).toMatch(/recordKill:\s*recordKillNotifying/);
     expect(code).toMatch(/\bonKillRecorded\b[^\n]*\n[^\n]*overrideTimer/);
+  });
+});
+
+// ── A flag NPC no kill stands up: the hedge maze's Thelin ────────────────────────────────────────────
+// The guild lead, 2026-10-13: the board "did not end up displaying the nightmare hedges [maze] to unlock
+// Terris Thule and it didn't display how many people already had the flags." Then 2026-10-14, after it popped
+// at the START of the maze: "This is supposed to come up after the last boss dies, not right at the beginning
+// of the hedge event"; "the one on the inside won't give you flags until after he talks to terris thule at the
+// end". So the first grant opens it, never a hail.
+
+describe('the hedge maze board opens on Thelin\'s first flag (after the Terris talk), not on the hails that start the maze', () => {
+  const NIGHTMARE = '204';                                              // the zone id the agent sends
+  const NAMES = ['Aldenmar', 'Brackwyn', 'Corvale', 'Rethlan', 'Nyssara', 'Zarrin'];
+  const roster = (minAgo = 0) => NAMES.map(name =>
+    ({ guild_id: 'g', name, group_num: 1, uploaded_by_discord_id: 'u1', captured_at: at(-minAgo) }));
+  const hedgeEnv = () => env({ raid_roster: roster(1) });
+  // A row as the pop-flags ingest stores it, and hands it to noteGrants.
+  const row = (e, name, key, source, min, extra = {}) => {
+    e.flag(name, key, source, at(min), { zone: NIGHTMARE, ...extra });
+    return { character: name, flag_key: key, source, earned_at: at(min), zone: NIGHTMARE, npc: null, ...extra };
+  };
+  const hail = (e, name, min, extra = {}) => row(e, name, 'hail', 'hail_witnessed', min, { npc: 'Thelin Poxbourne', ...extra });
+  const grant = (e, name, min, extra = {}) => row(e, name, 'thelin_2', 'event', min, { stage: 'thelin_2', ...extra });
+
+  it('has a Thelin entry with the right steps, a 10-minute stay, a card heading the agent keeps whole, and no kill finds it', () => {
+    const cfg = hailBoard.HAIL_FLAGGERS.find(f => f.id === 'hedge_maze');
+    expect(cfg).toMatchObject({ zoneShort: 'ponightmare', checklist: 'cl_maze', prior: [['thelin_1']], minutes: 10 });
+    expect(cfg.done).toEqual(['thelin_2', 'thelin_3', 'thelin_4', 'hedge_event']);
+    expect(cfg.opensOn).toEqual(['thelin_2', 'cl_maze']);
+    // Both state-4 answers are what the stage tables store for this zone.
+    expect(popFlagStages.ZONE_ONLY.grant.ponightmare).toBe('thelin_2');
+    expect(popFlagStages.ZONE_ONLY.checklist.ponightmare).toBe('cl_maze');
+    expect(popFlagStages.zoneShort(NIGHTMARE)).toBe('ponightmare');
+    expect(popFlagStages.STAGE_IMPLIES.thelin_2).toContain('hedge_event');
+    expect(popFlagStages.RECITAL_STAGES.map(r => r[1])).toContain('thelin_1');
+    expect(cfg.npc).toMatch(/Hedge maze.*Thelin Poxbourne.*Lair of Terris Thule/);
+    expect(cfg.npc.length).toBeLessThanOrEqual(64);                     // the agent trims card text at 64
+    expect(hailBoard.hailFor({ bossId: 'hedge_maze' })).toBeNull();
+    expect(hailBoard.hailFor({ bossName: 'Thelin Poxbourne' })).toBeNull();
+    expect(hailBoard.HAIL_BOSSES.some(b => b.id === 'hedge_maze')).toBe(false);
+  });
+
+  it('the hails that start the maze open nothing, and ask nothing of the database', async () => {
+    const e = hedgeEnv();
+    const rows = NAMES.map((n, i) => hail(e, n, i * 0.1));               // the whole raid hails at the start
+    expect(await e.hb.noteGrants(rows)).toBeNull();
+    expect(e.hb._windows()).toEqual([]);
+    expect(e.fake.calls).toEqual([]);
+  });
+
+  it('the first grant opens one window over the current raid, for 10 minutes, with the already-flagged count', async () => {
+    const e = hedgeEnv();
+    e.flag('Nyssara', 'thelin_1', 'recital', at(-30));
+    e.flag('Zarrin', 'thelin_2', 'recital', at(-30));                    // already holds the step
+    e.flag('Rethlan', 'thelin_3', 'event', at(-3 * 24 * 60));            // and a later step of the series
+    hail(e, 'Aldenmar', -5);                                             // a hail from the maze's start
+    const w = await e.hb.noteGrants([grant(e, 'Aldenmar', 0)]);
+    expect(w).toMatchObject({ boss_id: 'hedge_maze', boss_name: 'Hedge maze' });
+    expect(w.npc_name).toBe(hailBoard.HAIL_FLAGGERS[0].npc);
+    expect(w.roster.slice().sort()).toEqual(NAMES.slice().sort());
+    expect(Date.parse(w.opened_at)).toBe(KILL);                          // from the grant
+    expect(Date.parse(w.expires_at)).toBe(KILL + 10 * MIN);             // Thelin's state-4 depop
+    expect(e.tables.bot_kv[0].value.windows.map(x => x.id)).toEqual([w.id]);
+
+    const [view] = (await e.hb.getBoard()).windows;
+    expect(view.already_flagged).toEqual(['Rethlan', 'Zarrin']);
+    expect(view.hailed).toEqual([{ name: 'Aldenmar', how: 'flag' }]);
+    // The start-of-maze hail is before the window: it credits nobody.
+    expect(view.still.map(s => s.name)).toEqual(['Brackwyn', 'Corvale', 'Nyssara']);
+    expect(view).toMatchObject({ flag_cap: null, flags_left: null, flags_granted: 1, zone: 'Plane of Nightmare' });
+  });
+
+  it('a checklist answer ("I do not recognize your face") opens it too', async () => {
+    const e = hedgeEnv();
+    const w = await e.hb.noteGrants([row(e, 'Brackwyn', 'cl_maze', 'checklist', 0)]);
+    expect(w).toMatchObject({ boss_id: 'hedge_maze' });
+  });
+
+  it('a raider whose recital shows no Adroha step is told the hail may not flag them', async () => {
+    const e = hedgeEnv();
+    e.flag('Brackwyn', 'mavuin_3', 'recital', at(-30));                  // recital on file, thelin_1 not in it
+    await e.hb.noteGrants([grant(e, 'Aldenmar', 0)]);
+    const [view] = (await e.hb.getBoard()).windows;
+    expect(view.still.find(s => s.name === 'Brackwyn')).toEqual({ name: 'Brackwyn', prior_missing: true });
+  });
+
+  it('opens once: a second grant, and a concurrent pair of reports, leave one window', async () => {
+    const e = hedgeEnv();
+    const rows = [grant(e, 'Aldenmar', 0)];
+    const [a, b] = await Promise.all([e.hb.noteGrants(rows), e.hb.noteGrants(rows)]);
+    expect([a, b].filter(Boolean)).toHaveLength(1);
+    e.advance(2 * MIN);
+    expect(await e.hb.noteGrants([grant(e, 'Corvale', 2)])).toBeNull();
+    expect(e.hb._windows()).toHaveLength(1);
+    const [view] = (await e.hb.getBoard()).windows;
+    expect(view.hailed.map(h => h.name)).toEqual(['Aldenmar', 'Corvale']);
+  });
+
+  it('a late upload of a closed window\'s grant opens nothing; the next maze run opens a new one', async () => {
+    const e = hedgeEnv();
+    await e.hb.noteGrants([grant(e, 'Aldenmar', 0)]);
+    e.advance(11 * MIN);
+    expect(await e.hb.noteGrants([grant(e, 'Corvale', 5)])).toBeNull();  // inside the closed window
+    e.advance(5 * MIN);
+    e.tables.raid_roster = roster(0).map(r => ({ ...r, captured_at: new Date(e.clock).toISOString() }));
+    const next = await e.hb.noteGrants([grant(e, 'Nyssara', 16)]);
+    expect(next).not.toBeNull();
+    expect(e.hb._windows()).toHaveLength(2);
+  });
+
+  it('a hail inside an open window joins the board as seen, through the existing witnessed-hailer path', async () => {
+    const e = hedgeEnv();
+    await e.hb.noteGrants([grant(e, 'Aldenmar', 0)]);
+    hail(e, 'Outsider', 3);                                              // not on the roster, stood at the NPC
+    e.advance(MIN);
+    const [view] = (await e.hb.getBoard()).windows;
+    expect(view.hailed.map(h => h.name)).toContain('Outsider');
+  });
+
+  it('opens nothing for the other Thelins\' grants, a zoneless grant, a recital, a stale grant or a disabled store', async () => {
+    const e = hedgeEnv();
+    // The Plane of Knowledge and Tranquility Thelins give thelin steps too; the Seer recites thelin_2 anywhere.
+    expect(await e.hb.noteGrants([grant(e, 'Aldenmar', 0, { zone: '202' })])).toBeNull();
+    expect(await e.hb.noteGrants([grant(e, 'Aldenmar', 0, { zone: 'potranquility' })])).toBeNull();
+    expect(await e.hb.noteGrants([grant(e, 'Aldenmar', 0, { zone: null })])).toBeNull();
+    expect(await e.hb.noteGrants([row(e, 'Aldenmar', 'thelin_2', 'recital', 0)])).toBeNull();
+    expect(await e.hb.noteGrants([grant(e, 'Aldenmar', -60)])).toBeNull();   // an old log's backfill
+    expect(await e.hb.noteGrants([row(e, 'Aldenmar', 'fuirstel_2', 'event', 0)])).toBeNull();
+    expect(await e.hb.noteGrants([])).toBeNull();
+    expect(await e.hb.noteGrants(undefined)).toBeNull();
+    expect(e.fake.calls).toEqual([]);
+    const off = env({ raid_roster: roster(1) }, { enabled: false });
+    expect(await off.hb.noteGrants([grant(off, 'Aldenmar', 0)])).toBeNull();
+  });
+
+  it('a window that opens while the roster read fails is pending, with the granter on it, and fills in later', async () => {
+    const e = hedgeEnv();
+    e.failRoster = true;
+    const w = await e.hb.noteGrants([grant(e, 'Aldenmar', 0)]);
+    expect(w.roster_pending).toBe(true);
+    expect(w.roster).toEqual(['Aldenmar']);
+    e.failRoster = false;
+    e.advance(35_000);
+    const [view] = (await e.hb.getBoard()).windows;
+    expect(view.still.length + view.hailed.length).toBe(NAMES.length);
+  });
+
+  it('a store that throws is swallowed', async () => {
+    const e = hedgeEnv();
+    e.fake.selectAllPaged = () => { throw new Error('db down'); };
+    e.fake.select = () => { throw new Error('db down'); };
+    await expect(e.hb.noteGrants([grant(e, 'Aldenmar', 0)])).resolves.toBeNull();
   });
 });
 
@@ -626,5 +941,16 @@ describe('the wiring in index.js', () => {
     // Outside the Supabase block: a gated-out uncurated boss must still open its window.
     expect(bot.indexOf('// ── Hail board: a confirmed kill of a boss')).toBeLessThan(
       bot.indexOf('// ── Best-effort Supabase write. Falls through silently'));
+  });
+
+  it('hands every stored row to the kill-less opener once the upsert worked, and swallows its failure', () => {
+    const ingest = stripJs(sliceBlock(bot, 'async function _handleAgentPopFlags(req, res) {', '\n}\n'));
+    expect(ingest).toMatch(/if \(Array\.isArray\(r\)\) \{\s*written = r\.length;\s*_hailGrants\(rows\);/);
+    const note = stripJs(sliceBlock(bot, 'function _hailGrants(rows) {', '\n}\n'));
+    expect(note).toMatch(/_hailBoard\(\)\.noteGrants\(rows\)\.catch\(/);
+    // Behaviour: a throw (or a rejection) from the board never escapes into the ingest path.
+    const noteFn = (board) => new Function('_hailBoard', 'console', `${sliceBlock(bot, 'function _hailGrants(rows) {', '\n}\n')}\nreturn _hailGrants;`)(() => board, { warn() {} });
+    expect(() => noteFn({ noteGrants: () => { throw new Error('x'); } })([])).not.toThrow();
+    expect(() => noteFn({ noteGrants: () => Promise.reject(new Error('x')) })([])).not.toThrow();
   });
 });

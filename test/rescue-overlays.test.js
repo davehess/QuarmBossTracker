@@ -38,6 +38,7 @@ async function rescue(rects, { answer = 0, remembered = {}, displays = [MAIN, SI
     loadConfig: () => cfg, saveConfig: () => {},
     _overlayEntries: () => wins,
     _boundsKeyForEntry: (key) => key + 'Bounds',
+    _coversScreen: (key) => key === 'canvas',   // main.js: the Canvas, and the Map while it is in Full mode
     _parseUiWindowRects: () => null,
     _screenSignature: () => 'SIG',
     dialog: { showMessageBox: async (o) => { asked.push(o); return { response: answer }; } },

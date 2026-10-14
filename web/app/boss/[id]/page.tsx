@@ -8,6 +8,13 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { fmtDmg, fmtDuration, fmtTime, dayKey, dayLabel } from '@/lib/format';
 import { userTz } from '@/lib/timezone';
 
+import { pageMetadata } from '@/lib/pageMetaData';
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  return pageMetadata(`/boss/${encodeURIComponent(id)}`);
+}
+
 export const dynamic = 'force-dynamic';
 
 type BossRef     = { id: number; name: string; zone_short: string | null };

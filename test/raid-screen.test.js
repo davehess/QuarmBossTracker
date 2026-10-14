@@ -963,7 +963,7 @@ describe('the page, the nav, the embed and the migration', () => {
     const src = stripJs(read('web/app/screen/page.tsx'));
     expect(src).toMatch(/redirect\('\/auth\/signin\?next=\/screen'\)/);
     expect(src).toMatch(/const canDrive = await isOfficer\(user\.id\)/);
-    expect(src).toMatch(/<ScreenBoard canDrive=\{canDrive\} \/>/);
+    expect(src).toMatch(/<ScreenBoard canDrive=\{canDrive\}[^>]*\/>/);
     expect(src).toMatch(/<NewPageTag/);
     expect(src).toMatch(/title: '\[beta\] Raid screen'/);
   });
@@ -973,7 +973,7 @@ describe('the page, the nav, the embed and the migration', () => {
     expect(src).toMatch(/\{canDrive && \(\s*<>\s*<span[^>]*>LEADER ONLY<\/span>/);
     expect(src).toMatch(/if \(!canDrive\) return;/);
     expect(src).toMatch(/fetch\('\/api\/screen\/state', \{\s*method: 'POST'/);
-    expect(src).toMatch(/<SpectatorBoard embedded shared=\{shared\} \/>/);
+    expect(src).toMatch(/<SpectatorBoard embedded shared=\{shared\}( plan=\{plan\})? \/>/);
   });
 
   it('an open auction row says "bidding open" and prints no name or amount, in the Loot panel and in the rail', () => {
@@ -993,7 +993,7 @@ describe('the page, the nav, the embed and the migration', () => {
 
   it('the spectator board is embedded by a prop, and /spectator still mounts it with none', () => {
     const board = stripJs(read('web/app/spectator/SpectatorBoard.tsx'));
-    expect(board).toMatch(/export default function SpectatorBoard\(\{ embedded = false, shared \}: \{\s*embedded\?: boolean;\s*shared\?: Pick<ScreenLive, 'feed' \| 'netErr' \| 'signedOut'>;\s*\} = \{\}\)/);
+    expect(board).toMatch(/export default function SpectatorBoard\(\{ embedded = false, shared, plan \}: \{\s*embedded\?: boolean;\s*shared\?: Pick<ScreenLive, 'feed' \| 'netErr' \| 'signedOut'>;\s*plan\?: PlanOverlay\[\];\s*\} = \{\}\)/);
     expect(stripJs(read('web/app/spectator/page.tsx'))).toMatch(/<SpectatorBoard \/>/);
   });
 

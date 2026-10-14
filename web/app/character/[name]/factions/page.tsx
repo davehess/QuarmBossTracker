@@ -30,6 +30,15 @@ import {
   type FactionConRow as ConRow,
 } from '@/lib/capSafeReads';
 
+import type { Metadata } from 'next';
+import { characterMeta } from '@/lib/pageMeta';
+
+export async function generateMetadata({ params }: { params: Promise<{ name: string }> }): Promise<Metadata> {
+  const { name } = await params;
+  const { title, description } = characterMeta(name, 'factions');
+  return { title, description };
+}
+
 export const dynamic = 'force-dynamic';
 
 type StandingRow = {

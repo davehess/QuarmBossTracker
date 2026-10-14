@@ -35,6 +35,11 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { getDemoMode, maybeFake } from '@/lib/obfuscate';
 import { GUILD_TAG } from '@/lib/guild';
 
+export const metadata = {
+  title: 'Attendance · Admin',
+  description: 'Class-by-class raid attendance against the targets for a full raid.',
+};
+
 export const dynamic = 'force-dynamic';
 
 // Order matters — controls the column order on the grid and the row

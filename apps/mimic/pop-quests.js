@@ -10,76 +10,14 @@ window.POP_QUESTS = {
   {
    "key": "before",
    "title": "Before the planes",
-   "sub": "Start here · Knowledge quests · your spells",
+   "sub": "Knowledge quests · your spells",
    "color": "#6e7681",
    "sections": [
     {
-     "key": "start",
-     "title": "Start here",
-     "blurb": "Do these first. Most take a minute.",
+     "key": "pok",
+     "title": "Plane of Knowledge quests",
+     "blurb": "Open now, ordered easy to hard. Small rewards; good for alts.",
      "quests": [
-      {
-       "key": "start_level46",
-       "title": "Reach level 46",
-       "who": "solo",
-       "must": true,
-       "detail": "Every PoP zone needs 46. The Plane of Knowledge does not; the Plane of Time asks for more."
-      },
-      {
-       "key": "start_pok_bind",
-       "title": "Get to the Plane of Knowledge and bind there",
-       "who": "solo",
-       "detail": "Its books reach most of Norrath, so it becomes your home for the expansion.",
-       "says": [
-        {
-         "to": "Soulbinder Jera",
-         "text": "bind my soul"
-        }
-       ],
-       "where": [
-        {
-         "npc": "Soulbinder Jera",
-         "zone": "Plane of Knowledge",
-         "y": -221,
-         "x": -53
-        }
-       ],
-       "seq": [
-        {
-         "kind": "say",
-         "to": "Soulbinder Jera",
-         "text": "bind my soul",
-         "src": "poknowledge/Soulbinder_Jera.lua"
-        }
-       ]
-      },
-      {
-       "key": "start_popflags",
-       "title": "Type #popflags in game",
-       "who": "solo",
-       "must": true,
-       "detail": "New server command: lists your PoP flags by tier. Add overview, 1 to 5, time or all."
-      },
-      {
-       "key": "start_mimic",
-       "title": "Run Mimic while you play",
-       "who": "solo",
-       "detail": "Every flag you earn is recorded for you and ticks the matching box on this page."
-      },
-      {
-       "key": "start_guild_books",
-       "title": "Find the guild-instance books in the Plane of Tranquility",
-       "who": "solo",
-       "must": true,
-       "detail": "PoP raids now run in guild instances. You must be in the guild or the raid to use the books."
-      },
-      {
-       "key": "start_hails",
-       "title": "The two rules that break flags",
-       "who": "solo",
-       "must": true,
-       "detail": "Talk to the right NPC before AND after each boss; after a kill, hail A Planar Projection. And the first time you earn a flag, zone into the next plane from the one you are in (Valor → Halls of Honor, Storms → Bastion of Thunder)."
-      },
       {
        "key": "start_flag_fixers",
        "title": "Meet the two flag fixers in PoK",
@@ -164,32 +102,6 @@ window.POP_QUESTS = {
          "kind": "note",
          "text": "Each of them unlocks what the other needs, so go back to the Seer and do it again, back and forth, until neither has anything new. Visit Maelin before and after the Zeks and after Saryrn.",
          "src": "poknowledge/Seer_Mal_Nae-Shi.lua"
-        }
-       ]
-      },
-      {
-       "key": "start_charm",
-       "title": "Pick up your charm, the Intricate Wooden Figurine",
-       "who": "solo",
-       "must": true,
-       "check": true,
-       "detail": "Gram Dunnar gives it free. Come back each time you open a new zone for free AA and charm upgrades.",
-       "says": [
-        {
-         "to": "Gram Dunnar",
-         "text": "craft"
-        },
-        {
-         "to": "Gram Dunnar",
-         "text": "I have stories"
-        }
-       ],
-       "where": [
-        {
-         "npc": "Gram Dunnar",
-         "zone": "Plane of Knowledge",
-         "y": -341,
-         "x": -181
         }
        ]
       },
@@ -610,14 +522,7 @@ window.POP_QUESTS = {
          }
         ]
        }
-      }
-     ]
-    },
-    {
-     "key": "pok",
-     "title": "Plane of Knowledge quests",
-     "blurb": "Open now, ordered easy to hard. Small rewards; good for alts.",
-     "quests": [
+      },
       {
        "key": "pok_taxidermy",
        "title": "Collection of Taxidermy → Fine Antique Ring",

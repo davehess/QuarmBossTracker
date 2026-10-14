@@ -15,11 +15,43 @@ import { revalidatePath } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { ownedCharacters } from '@/lib/ownedCharacters';
+import { isOfficer } from '@/lib/officer';
 import { GUIDE_KEYS } from '@/lib/popGuide';
 import { MAX_FLAGS_PER_TICK, tickKeyForFlag, tickKeysForFlag } from '@/lib/popSelfFlags';
 import { GUILD_TAG } from '@/lib/guild';
+import { makeLimiter, saveRecital, type SaveResult } from '@/lib/popRecitalSave';
 
 type Result = { ok: boolean; error?: string };
+
+// Save a Seer recital for one of YOUR characters (the guild lead, 2026-10-14: paste what the Seer says, fix your
+// flags). The rules (ownership, idempotency, what is written) are in web/lib/popRecitalSave.ts; this only wires
+// them to the session and the table. The browser sends the matched sentences; the paste itself is never stored.
+// Eight saves in ten minutes per member, per server instance.
+const recitalAllowed = makeLimiter(8, 10 * 60_000);
+export async function saveSeerRecital(character: string, sentences: string[]): Promise<SaveResult> {
+  const admin = supabaseAdmin();
+  const res = await saveRecital({
+    guildId: GUILD_TAG,
+    userId: async () => (await supabaseServer().auth.getUser()).data.user?.id ?? null,
+    owned: async (userId) => (await ownedCharacters(userId)).map(c => c.name),
+    recitalKeys: async (name, keys) => {
+      const { data, error } = await admin.from('pop_flags').select('flag_key')
+        .eq('guild_id', GUILD_TAG).eq('source', 'recital')
+        .ilike('character', name.replace(/[\\%_]/g, '\\$&')).in('flag_key', keys).limit(1000);
+      return error ? null : ((data ?? []) as { flag_key: string }[]).map(r => r.flag_key);
+    },
+    insert: async (rows) => {
+      const { error } = await admin.from('pop_flags')
+        .upsert(rows, { onConflict: 'guild_id,character,flag_key,earned_at', ignoreDuplicates: true });
+      return error ? error.message : null;
+    },
+    now: () => new Date(),
+    allow: recitalAllowed,
+  }, character, sentences);
+  // /pop reads the same rows; the guide ticks them from the next load.
+  if (res.ok && res.written > 0) revalidatePath('/pop');
+  return res;
+}
 
 export async function setGuideTick(character: string, itemKey: string, ticked: boolean): Promise<Result> {
   if (typeof character !== 'string' || typeof itemKey !== 'string' || typeof ticked !== 'boolean') {
@@ -55,16 +87,25 @@ export async function setFlagTicks(character: string, flags: string[], ticked: b
   return res;
 }
 
-// The gate: signed in, then YOUR character, and only then a write under the character's real name.
-// `write` is what a tick stores; `remove` is every key that counts as the same report, so an untick
-// cannot leave one behind.
+// The gate: signed in, then YOUR character (or any roster character for an officer), and only then a write
+// under the character's real name. `write` is what a tick stores; `remove` is every key that counts as the
+// same report, so an untick cannot leave one behind.
+// Officers tick for anyone (the guild lead, 2026-10-14: "make it so we can check off characters for flags as
+// officers or check off your own flags on the matrix page"); ticked_by keeps who did it.
 async function writeTicks(character: string, write: string[], remove: string[], ticked: boolean): Promise<Result> {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return { ok: false, error: 'not signed in' };
-  const owned = (await ownedCharacters(user.id)).find(c => c.name.toLowerCase() === character.toLowerCase());
-  if (!owned) return { ok: false, error: 'not your character' };
-
   const admin = supabaseAdmin();
+  let name = (await ownedCharacters(user.id)).find(c => c.name.toLowerCase() === character.toLowerCase())?.name ?? null;
+  if (!name && await isOfficer(user.id)) {
+    // Only a character the roster knows, under its real casing (ilike with the pattern characters escaped).
+    const { data } = await admin.from('characters').select('name')
+      .ilike('name', character.replace(/[\\%_]/g, '\\$&')).limit(1).maybeSingle();
+    name = (data as { name: string } | null)?.name ?? null;
+  }
+  if (!name) return { ok: false, error: 'not your character' };
+  const owned = { name };
+
   if (ticked) {
     const { data: me } = await admin.from('wolfpack_members').select('discord_id').eq('user_id', user.id).maybeSingle();
     const now = new Date().toISOString();

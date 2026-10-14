@@ -25,6 +25,9 @@ import {
   type EraSummary,
 } from '@/lib/character-family';
 import { fetchParseSummary, type ParseSummary } from '@/lib/capSafeReads';
+import { characterMeta } from '@/lib/pageMeta';
+import { loadPronunciation, ownerOfCharacter } from '@/lib/namePronunciation';
+import PronounceSection from './PronounceSection';
 
 export const dynamic = 'force-dynamic';
 
@@ -184,15 +187,12 @@ async function load(name: string) {
 
 // The character name is already in the route, so this needs no query at all —
 // the unfurl goes from "WolfPack.quest" to the character being linked for free.
+// Same words as the Discord card (lib/pageMeta.ts characterMeta). Name from the URL only, so a hidden or
+// stats-excluded character leaks nothing the link did not already say.
 export async function generateMetadata({ params }: { params: Promise<{ name: string }> }): Promise<Metadata> {
   const { name } = await params;
-  const clean = decodeURIComponent(name || '').trim().replace(/[^A-Za-z]/g, '').slice(0, 24);
-  if (!clean) return {};
-  const display = clean.charAt(0).toUpperCase() + clean.slice(1).toLowerCase();
-  return {
-    title: display,
-    description: `${display} on WolfPack.quest — gear, inventory, spells, factions and parse history.`,
-  };
+  const { title, description } = characterMeta(name);
+  return { title, description };
 }
 
 export default async function CharacterPage({ params }: { params: Promise<{ name: string }> }) {
@@ -233,6 +233,13 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
   if (!hasFootprint) notFound();
 
   const { displayName, who, parseSummary, loot, lootEnriched, attendance, family, familyRoot, timeline, familyAgg } = data;
+
+  // How the name should sound (the guild lead, 2026-10-14). Everyone sees it; only the owner gets the editor,
+  // and the save action asks the same question again.
+  const [pronunciation, ownership] = await Promise.all([
+    loadPronunciation(displayName),
+    ownerOfCharacter(user.id, displayName).catch(() => ({ ok: false as const, error: 'lookup failed' })),
+  ]);
 
   // Aggregates (parse count / total / best / newest-30 come summed from SQL)
   const totalParses = parseSummary.count;
@@ -341,6 +348,8 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
           <Stat label="Last raid"  value={attendance?.last_attended  ? new Date(attendance.last_attended).toLocaleDateString()  : '—'} />
         </div>
       </section>
+
+      <PronounceSection name={displayName} saved={pronunciation?.say ?? null} canEdit={ownership.ok} />
 
       {/* Gallery (2026-09-28): this character's pictures and clips; nothing renders without any. */}
       <CharacterGallery name={displayName} />

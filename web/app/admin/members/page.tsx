@@ -27,6 +27,11 @@ import { selectAll } from '@/lib/selectAll';
 import { charsSeenByUploader, countsByDiscord, readChatCounts, readContribCounts, readWhoActivity } from '@/lib/memberActivity';
 import { GUILD_TAG } from '@/lib/guild';
 
+export const metadata = {
+  title: 'Members · Admin',
+  description: 'The member dashboard: Discord roles, linked characters and who is active.',
+};
+
 export const dynamic = 'force-dynamic';
 
 // Roles that count as "active raid team". Anything outside this set

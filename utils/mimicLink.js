@@ -19,6 +19,7 @@
 
 const crypto = require('crypto');
 const supabase = require('./supabase');
+const memberLockout = require('./memberLockout');
 
 const LINK_CODE_TTL_SECONDS = 10 * 60;     // 10 minutes from /start
 const POLL_INTERVAL_SECONDS = 2;
@@ -157,6 +158,13 @@ async function handlePoll(req, res) {
     return res.end(JSON.stringify({ status: 'pending' }));
   }
 
+  // A locked member gets no new session: the code is spent and the device is told it expired.
+  if (memberLockout.isLocked(row.authorized_discord_id)) {
+    await supabase.del('mimic_link_codes', `device_code=eq.${encodeURIComponent(deviceCode)}`).catch(() => null);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ status: 'expired' }));
+  }
+
   // Authorized — mint the session, look up display info, delete the link code.
   const sessionToken = _generateSessionToken();
   const insertSession = await supabase.insert('mimic_sessions', [{
@@ -244,6 +252,14 @@ const LOOKUP_ERROR = Symbol('session_lookup_error');
 // uploads). Single cache means a session token used by both surfaces only
 // hits Supabase once per 5 min.
 async function _resolveSessionToken(token) {
+  const r = await _lookupSessionToken(token);
+  // Member lockout (utils/memberLockout.js): a locked member's token behaves exactly like a revoked one. The check
+  // sits OUTSIDE the 5-minute cache on purpose, so an unlock (or a lock) takes effect within one lockout refresh.
+  if (r && r !== LOOKUP_ERROR && memberLockout.isLocked(r.discord_id)) return null;
+  return r;
+}
+
+async function _lookupSessionToken(token) {
   if (!token) return null;
   const cached = _sessionCache.get(token);
   if (cached && (Date.now() - cached.resolvedAt) < SESSION_CACHE_TTL_MS) return cached.value;
@@ -367,6 +383,7 @@ function invalidateSessionCache(token) {
 // Returns { sessionToken, sessionId } or null on failure.
 async function mintSessionForUser({ userId, discordId, agentVersion = null, machineLabel = null }) {
   if (!supabase.isEnabled() || !discordId) return null;
+  if (memberLockout.isLocked(discordId)) return null;
   const sessionToken = _generateSessionToken();
   const inserted = await supabase.insert('mimic_sessions', [{
     session_token: sessionToken,

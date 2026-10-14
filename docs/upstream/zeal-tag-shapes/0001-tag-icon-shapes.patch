@@ -1,6 +1,6 @@
-From 3c02f6578dca464c3011527be21c36e60d9f84f0 Mon Sep 17 00:00:00 2001
+From c2a5333d105922e527f4c0446a282278be5b03f0 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
-Date: Fri, 25 Sep 2026 13:35:57 +0000
+Date: Fri, 9 Oct 2026 18:08:11 +0000
 Subject: [PATCH] Add icon shapes, numbered badges, lettered paws and guild
  marks for /tag
 
@@ -75,10 +75,10 @@ Claude-Session: https://claude.ai/code/session_01Uq6P6RYLtiKKfy5UWjT7AX
  create mode 100644 Zeal/tag_shapes_wolf.inc
 
 diff --git a/README.md b/README.md
-index c4bd3a9..ac4fbb6 100644
+index 79929a8..c03256b 100644
 --- a/README.md
 +++ b/README.md
-@@ -693,6 +693,14 @@ Manual editing of the ini file is required to copy from old section to the new s
+@@ -700,6 +700,14 @@ Manual editing of the ini file is required to copy from old section to the new s
        - Colored arrow: (`R` = red, `O` = orange, `Y` = yellow, `G` = green, `B` = blue, `W` = white)
        - Green pet paw symbol: `P`
        - Red stop sign (octagon): `S`
@@ -93,7 +93,7 @@ index c4bd3a9..ac4fbb6 100644
        - Clear any existing shape: `-`
  - Tags can be cleared with:
    - `/tag clear`: Clears tag from current target if there is a target else all tags
-@@ -723,6 +731,9 @@ Manual editing of the ini file is required to copy from old section to the new s
+@@ -730,6 +738,9 @@ Manual editing of the ini file is required to copy from old section to the new s
    - `/tag rsay Assist me` broadcasts a raid-wide tag that sets 'Assist Me'
    - `/tag rsay +TASH` appends ' | TASH' to the tag text (does not affect explicit shape)
    - `/tag rsay ^p^` adds an explicit paw shape above the target for all raid members
@@ -148,7 +148,7 @@ index eda60ee..701987f 100644
        <Filter>Source Files</Filter>
      </ClCompile>
 diff --git a/Zeal/nameplate.cpp b/Zeal/nameplate.cpp
-index 030a79f..52f2ca2 100644
+index 9825750..fcffd03 100644
 --- a/Zeal/nameplate.cpp
 +++ b/Zeal/nameplate.cpp
 @@ -3,6 +3,7 @@
@@ -156,10 +156,10 @@ index 030a79f..52f2ca2 100644
  #include <array>
  #include <cmath>
 +#include <cstdio>
+ #include <string>
  
  #include "callbacks.h"
- #include "chat.h"
-@@ -37,6 +38,19 @@ enum TagArrowColor : DWORD {
+@@ -39,6 +40,19 @@ enum TagArrowColor : DWORD {
    Nameplate = 1,
    Paw = D3DCOLOR_XRGB(0x20, 0xc0, 0x20),       // Ensure this is unique.
    StopSign = D3DCOLOR_XRGB(0xf0, 0x00, 0x00),  // Ensure this is unique.
@@ -179,7 +179,7 @@ index 030a79f..52f2ca2 100644
    Red = D3DCOLOR_XRGB(0xff, 0, 0),
    Orange = D3DCOLOR_XRGB(0xff, 0x80, 0),
    Yellow = D3DCOLOR_XRGB(0xff, 0xff, 0),
-@@ -45,6 +59,150 @@ enum TagArrowColor : DWORD {
+@@ -47,6 +61,150 @@ enum TagArrowColor : DWORD {
    White = D3DCOLOR_XRGB(0xff, 0xff, 0xff),
  };
  
@@ -330,7 +330,7 @@ index 030a79f..52f2ca2 100644
  static float z_position_offset = 1.5f;  // Static global to allow parse overrides during evaluation.
  
  static void ChangeDagStringSprite(Zeal::GameStructures::GAMEDAGINFO *dag, int fontTexture, const char *str) {
-@@ -418,12 +576,14 @@ void NamePlate::render_ui() {
+@@ -501,12 +659,14 @@ void NamePlate::render_ui() {
      // If an explicit tag color was set, use that color otherwise use the nameplate color.
      if (!is_corpse && info.tag_color != TagArrowColor::Off) {
        auto tag_color = (info.tag_color == TagArrowColor::Nameplate) ? nameplate_color : info.tag_color;
@@ -348,7 +348,7 @@ index 030a79f..52f2ca2 100644
      }
    }
    tag_arrows->FlushQueueToScreen();
-@@ -910,6 +1070,19 @@ void NamePlate::handle_tag_command(const std::vector<std::string> &args) {
+@@ -993,6 +1153,19 @@ void NamePlate::handle_tag_command(const std::vector<std::string> &args) {
      return;
    }
  
@@ -368,9 +368,9 @@ index 030a79f..52f2ca2 100644
    if (args.size() == 2 && args[1] == "clear") {
      auto target = Zeal::Game::get_target();
      if (target) {
-@@ -982,15 +1155,66 @@ void NamePlate::handle_tag_command(const std::vector<std::string> &args) {
+@@ -1071,6 +1244,13 @@ void NamePlate::handle_tag_command(const std::vector<std::string> &args) {
    Zeal::Game::print_chat("Usage: /tag target <text_to_match>");
-   Zeal::Game::print_chat("Usage: /tag <gsay | rsay | chat> local> <message | clear | channel>");
+   Zeal::Game::print_chat("Usage: /tag <gsay | rsay | rsgs | chat | local> <message | clear | channel>");
    Zeal::Game::print_chat("Usage: <message> prefixes: '+' to append, '^R^' or '*R:' for color arrow (R, O, Y, G, B, W)");
 +  Zeal::Game::print_chat(
 +      "Usage: shapes in place of the color: P paw, S stop, K skull, X x, A sword, D diamond, F flame, T star, "
@@ -379,9 +379,10 @@ index 030a79f..52f2ca2 100644
 +  Zeal::Game::print_chat("Usage: a paw with a letter or digit on it: P then the character (like '^PK^')");
 +  Zeal::Game::print_chat(
 +      "Usage: a guild's banner or icon: B or I then its code (like '^BEUR^'); /tag guilds lists them");
-   Zeal::Game::print_chat("Example: /tag rsay Assist me");
-   Zeal::Game::print_chat("Example: /tag gsay Off tank");
-   Zeal::Game::print_chat("Example: /tag gsay clear (broadcasts a clear all tags)");
+   Zeal::Game::print_chat("Example: /tag rsay Assist me (broadcasts a tag to the raid)");
+   Zeal::Game::print_chat(
+       "Example: /tag rsgs Off tank (broadcasts a tag to raid if in raid else to group if in group else local)");
+@@ -1078,9 +1258,53 @@ void NamePlate::handle_tag_command(const std::vector<std::string> &args) {
    return;
  }
  
@@ -438,7 +439,7 @@ index 030a79f..52f2ca2 100644
    switch (color_key) {
      case 'r':
        return TagArrowColor::Red;
-@@ -1008,6 +1232,30 @@ static D3DCOLOR GetTagArrowColor(char color_key) {
+@@ -1098,6 +1322,30 @@ static D3DCOLOR GetTagArrowColor(char color_key) {
        return TagArrowColor::Paw;
      case 's':
        return TagArrowColor::StopSign;
@@ -469,7 +470,7 @@ index 030a79f..52f2ca2 100644
      default:
        break;
    }
-@@ -1099,8 +1347,9 @@ bool NamePlate::handle_tag_message(const char *message, bool apply, bool allow_m
+@@ -1189,8 +1437,9 @@ bool NamePlate::handle_tag_message(const char *message, bool apply, bool allow_m
    // The tag arrow is either enabled explicitly with a specific color (which must be disabled explicitly)
    // or enabled by default on a NPC if there is any tag text (can suppress with ^-^).
    if (tag_text.size() > 2 && tag_text[0] == '^') {
@@ -481,7 +482,7 @@ index 030a79f..52f2ca2 100644
    } else if (it->second.tag_color == TagArrowColor::Off || it->second.tag_color == TagArrowColor::Nameplate) {
      bool disable_arrow = !setting_tag_default_arrow.get() || entity->Type != Zeal::GameEnums::NPC ||
                           (tag_text.empty() && it->second.tag_text.empty());
-@@ -1267,13 +1516,17 @@ static std::string prettyprint_tag_message(const std::string &msg) {
+@@ -1357,13 +1606,17 @@ static std::string prettyprint_tag_message(const std::string &msg) {
    }
  
    if (text.size() > 2 && text[0] == '^') {
@@ -503,7 +504,7 @@ index 030a79f..52f2ca2 100644
    }
  
    // Prefix ends with a ^ if one exists. Adding this search here to try and support
-@@ -1361,6 +1614,7 @@ static const char *get_tag_color_description(DWORD color) {
+@@ -1451,6 +1704,7 @@ static const char *get_tag_color_description(DWORD color) {
      case TagArrowColor::StopSign:
        return "Stop";
      default:

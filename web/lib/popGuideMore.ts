@@ -22,7 +22,7 @@ const planesOf = (tier: number) => POP_ZONES.filter(z => z.tier === tier && !z.s
 const tierLevel = (key: SectionKey, tier: number): GuideLevel =>
   ({ key, title: TIER_LABELS[tier].name, sub: planesOf(tier), color: TIER_COLORS[tier], sections: [key] });
 export const GUIDE_LEVELS: GuideLevel[] = [
-  { key: 'before', title: 'Before the planes', sub: 'Start here · Knowledge quests · your spells', color: '#6e7681', sections: ['start', 'pok', 'spells'] },
+  { key: 'before', title: 'Before the planes', sub: 'Knowledge quests · your spells', color: '#6e7681', sections: ['pok', 'spells'] },
   tierLevel('t1', 1), tierLevel('t2', 2), tierLevel('t3', 3), tierLevel('t4', 4), tierLevel('time', 5),
 ];
 
@@ -44,8 +44,6 @@ const FLAG_AUTO = 'Ticks itself when Mimic sees “You have received a character
 // Checked 2026-09-29 against the quest scripts (#Mavuin, The_Tribunal, Askr_the_Lost, postorms and
 // bothunder player.lua, Karana) — DECISIONS §86.
 export const STEP_MORE: Record<string, StepMore> = {
-  start_level46: { auto: 'Ticks itself from your level on /who.' },
-  start_mimic: { auto: 'Ticks itself once Mimic has reported this character.' },
   start_traveler_manual: { auto: 'Ticks itself when your last inventory upload holds the manual.' },
   spells_submit_book: { auto: 'Ticks itself once your spellbook is uploaded.' },
   spells_parchments: { auto: 'Ticks itself when your last inventory upload holds all three.' },

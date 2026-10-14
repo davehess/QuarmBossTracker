@@ -114,8 +114,23 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Map: raid targets + shared escort trails** (§299) | Shipped: bot 3.1.263 on main, agent 3.7.166 on Mimic beta, `/privacy` updated | the guild lead: two Mimics in the hedge maze, one targets Thelin, the other's Map draws his trail; the MA targets a mob and the other's focus ring lands on it |
+| **Mimic Chat overlay, B** (§300) | On Mimic beta (agent 3.7.165): one feed, a chip per channel; officer, group and custom off by default, tells follow Settings → Tells; local only | the guild lead: say whether officer, group and tells may show; check it on beta. A session: A (tabs + tear-off) next; confirm Zeal's abbreviated tags `S`/`O`/`Sh`/`A`/`To` from a real `/abc 2` log |
+| **/pop alts grouped under mains** (§302) | On beta (web 1.8.153): `?alts=group`, `&sort=latest`, `&open=1`; highlights for 24 h and 3 days | the guild lead: compare https://b.wolfpack.quest/pop?alts=group&sort=latest with https://b.wolfpack.quest/pop?view=matrix and pick; a session then graduates it to main |
+| **/pop "Latest flags" strip** (§297) | On beta (web 1.8.152): `?flags=a` newest first, `?flags=b` by step; no param = production | the guild lead: pick a or b at https://b.wolfpack.quest/pop?flags=a and https://b.wolfpack.quest/pop?flags=b. A session then graduates it to main as the default and deletes the other |
+| **Member lockout** (§252) | Live: `/admin/access` [beta], bot 3.1.251, web 1.8.143. Officers cannot be locked out (web 1.8.144). Untested against a real member | the guild lead: lock a test or alt account, confirm Mimic, the site and a bot command all refuse it within 30 s, then unlock |
+| **Map target-of-target never fires on real Zeal** (§251) | Zeal's `/assistbar` (1.4.7) knows it, but the pipe export was only our unsent draft, so the Map's ToT arrow and the pin rule's "not aggroed" check fail open. Ported onto current Zeal main as fork branch `tot-pipe` (`21f41f3`, local only: the push was refused by this session's permissions) | the guild lead: push `tot-pipe` to the fork (or allow it), then say whether it joins `test-all` for an in-game check |
+| **Zeal in-game test run + PoP flags export + `/spellid`** (§227, §229) | `test-all` `035d8a3` (build passed) = PoP flags `b27bb26` (overview + tiers 1–5, once each, kept out of chat) + roleplay guild marks + `spell-id-tooltip` `67cb705` (`/spellid on` puts the spell id on the buff/gem/spellbook info window, off by default). 67 test hotkeys (socials pages 4–10, say + `/log`, works at level 1) log what to look for and the target's spawn id; `tools/evidence.py` on the fork's `showcase` branch turns the log into an EVIDENCE.md per change. Every suggestion post has "Pull request" and "Testing evidence" lines waiting to be filled | the guild lead: (1) install `test-all`, paste the hotkeys, run pages 4–10, send the log + `<name>-PoPFlags.txt`; (2) file the PRs (smallest first, §228). A session: write EVIDENCE.md per change, fill the PR links (posts, showcase JSON `pr_url`) |
+| **Mimic 2.9: spawn map, zone-server directory, live mob dots** (§216) | **Refinements ledger: `docs/MAP-REFINEMENTS.md` (§264)** — every Map ask, what shipped, what is open (detachable timers, atlas, Target Info map tab, raiders' zones, Follow target, spawn distance + gate rule). Called 2026-10-10 as the 2.9 minor line. Research in: `dbg.txt` names the zone server on every zone-in (`Zone addr [<host>:<port>]` + `StartWorldDisplay: <zone>`), and one zone was seen on two ports within an hour, so a port is a per-boot instance token, not a zone id. Design doc written (`docs/DESIGN-mimic-2.9-spawn-map.md`). Hosting needs no plan change (§217); **Picked (§220):** 3D-A on web (from the EQEmu collision mesh), 3D-B in Mimic, routes from our import, Mimic layout C (tracker), tab-target dots, group sharing to the group + recent helpers (30-min grace) | a session: (1) route tables + spell range in the weekly import, (2) web: spawn layer + routes + 3D-A on `/spectator` beta, (3) agent group-position upload + PRIVACY line, (4) Mimic tracker overlay (Window/HUD), (5) the client-zone converter for painted + 3D in Mimic |
+| **Zeal review fixes + guild marks B** (§216) | The guild lead: *"go ahead with the zeal fixes, B for guild marks"*. Pushed 2026-10-10 as fast-forwards: `tag-shapes` `f777d81` (guild marks B + render-state restore + color check), `tag-icon-files` `b20331f` (exception, per-frame, size and chat fixes). Guild marks B = automatic marks from the player's guild, `/tag guildmarks off|tagged|auto`, default `tagged`. `test-all` `59bbfca` merges every tag branch (incl. `tag-persistence` hardening, now `6ab82a9` with a `(std::min)` fix for the Windows `min` macro) and **builds green** (Actions run 38025797523). Restored tags keep their picture and guild mark (save format adds `:<mark>:<picture>` after the color; old files still load) | the guild lead: install the `test-all` build and run the in-game list in §216, plus: zone and relog with a picture tag and a guild-mark tag on, and check both come back |
+| **Every page unfurls with its own name** (§215) | On `main` (web 1.8.135): `pageMeta.ts` covers every route, `pageMetaData.ts` names FB / catalog pages, root OG no longer pinned, `test/page-metadata.test.js` enforces it | the guild lead: post a fresh `/feedback/FB-<n>` link in Discord (it caches per URL) and say whether parses should name their boss |
+| **Zeal: cursor with the UI hidden (pick B) + PR cleanup** (§213) | Branch `hide-ui-cursor` (`2433493`) pushed and merged into `test-all` (`4014c49`); the GitHub build passed (`zeal_test-all.zip`, 2026-10-09 18:12 UTC), not run in game. The four tag branches are force-pushed as one commit each on v1.4.8 (the guild lead: *"force push github"*): `tag-shapes` `c2a5333`, `tag-persistence` `c143cee`, `tag-corpses` `7f7c824`, `tag-icon-files` `9035722` (on `tag-shapes`). Deleting `bandolier-chat-filter` and `pipe-spawn-id` was refused by the cloud session's git proxy (HTTP 403) | the guild lead: (1) Mimic → Settings → Zeal → Test build → Install, run the 9 steps in `docs/upstream/zeal-hide-ui-cursor/PULL-REQUEST.md`; (2) delete the two branches on GitHub (Branches page → 🗑); (3) re-author each branch and open the PRs |
+| **Europa tag picture replaced** (§213) | web 1.8.133 on `beta` (`ba445fa4`): the shield logo as `EUR.png`/`EUR.tga`, 226×256 | the guild lead: look at https://b.wolfpack.quest/zeal-icons; say graduate to main |
+| **"Your target looks unaffected." drops the phantom lull timer** (§212) | On `beta`: agent 3.7.124 (`10901c15`), agent + Mimic Target Info | a beta tester casts Pacify at a mob above its level and checks the bar goes and the amber chip shows |
+| **Charm-pet gear is not loot** (§210) | Built on `claude/loot-pet-gear`: migration `20261009030000` (NOT applied), `utils/lootValue.js`, one sentence on `/admin/loot`. `loot_pet_gear_names` ships empty | a session with Supabase access: apply the migration, then route bot + web to `main`. The guild lead: veto the 9 extra rows (§210) or name the pet weapons and haste items so officers can INSERT them |
+| **Charm sessions record spell + ran_full** (§209) | Built on two local branches: bot (`utils/charmSession.js`, migration `20261009010000`, NOT applied) and agent (beta). Inert until both ship | a session with Supabase access: apply the migration FIRST; then route the bot to `main` and the agent to `beta`. After a week of enchanter raids, read per-spell `ran_full` before touching any charm warning |
 | **Stampede timer follows you into the zone** (§208) | Built on a local branch: bot 3.1.233 (`utils/zoneTimers.js`, bot_kv `zone_timer_windows`) + agent 3.7.115 (`_runLateJoinFire`). Inert until the two stampede rows carry the `zone-timer` tag | the guild lead: route the bot to `main` and the agent to `beta`, then run the tag SQL in §208; a raider zones into Tactics after a stampede and checks both countdowns |
-| **Callouts + Extended Target keep to your raid or group** (§189) | Live: bot 3.1.222 on `main` (2026-10-08 00:36 ET) and stable Mimic 2.7.10 / agent 3.7.106 with the Raid \| Group switch (§190) | the guild lead: try Group while grouped and say if it still shows other groups; the rest of the separation inventory (loot posts, shared alerts, attendance per raid) waits on picks |
+| **Callouts + Extended Target keep to your raid or group** (§189, §292) | Live: bot 3.1.222 on `main` (2026-10-08 00:36 ET) and stable Mimic 2.7.10 / agent 3.7.106 with the Raid \| Group switch (§190). Bot 3.1.260 (§292): the after-midnight clock bug and the unplaced-listener blanket closed | a session: place unlinked members by their upload history (§292 "Next"); the agent's own zone check on relayed fires; the rest of the separation inventory (loot posts, shared alerts, attendance per raid) waits on picks |
 | **Three picks: bard counts, AE chip by spell data, height floor** (§178) | All three built; HUD counts, AE gate and the floor on beta (agent 3.7.98); the catalog's `ae` flag waits on this branch reaching `main` | the guild lead: push this branch to main (after 00:30 ET on a raid night); a bard on beta checks the ring label; a beta tester drags an overlay small and confirms it stays |
 | **Guild kit slices 1b, 2-prep, 3** (§177) | Bot 3.1.215: `utils/guildConfig.js` loader + getters, Discord self-provisioner (`/setup discord`, standalone script), tag-correct REST filters with a ratchet, one-shot announcers gated on the guild tag, Bristlebane guild file. Web slice A (`web/lib/guild.ts` + the literal swap) reviewed separately → `beta` | a session: slice 2, the de-branding sweep (start from the 11 getter-only env names in `test/guild-config.test.js`); then `doctor` and the wizard CLI (§8 picks stand) |
 | **HUD second clicky row** (§185) | Mimic beta: row 2 one line inside row 1, on by default, 7 picks (4 on one row) | Picked A (7 picks), §187. Next: a beta tester with many clickies tries two rows |
@@ -128,7 +143,7 @@ is ephemeral. It is a desktop-session job.
 | **Mimic 2.7.9 stable + member-report sweep** (§176) | Stable `40af051a` (agent 3.7.96), beta re-parked 2.7.10. 13 older member reports closed with their senders DMed, plus FB-43; 23 stay open (partial / not done / unclear / alpha, listed in §176) | a session: the open member reports, starting with the partials (FB-22, FB-26, FB-3, FB-37); the guild lead: pick the four B/C web previews still on beta |
 | **Main / alt · Inventory only · Hide completely** (§175) | Bot 3.1.214 live; agent 3.7.96, stable in Mimic 2.7.9: the choice in setup and on the dashboard's Me card, Hide completely also stops this PC reading the log | the guild lead: should Inventory only also stop that character's fight uploads? |
 | **My parses: explore + Guild / My logs** (§174) | Live: search, zone, By day on `/me/parses` (web 1.8.110 · bot 3.1.213, `my_parse_series_v2`); the same in Mimic plus Guild / My logs, stable in Mimic 2.7.9 | a session with confirmation: drop the old `my_parse_series` |
-| **Reverse Slow + Quarm ability numbering** (§173, FB-54) | Bot 3.1.212 + web 1.8.109 live: the chip, corrected labels; Mimic warnings stable in 2.7.9 (agent 3.7.94+) | the guild lead: add `slow_mitigation` to the mirror? |
+| **Reverse Slow + Quarm ability numbering** (§173, FB-54) | Bot 3.1.212 + web 1.8.109 live: the chip, corrected labels; Mimic warnings stable in 2.7.9 (agent 3.7.94+); `slow_mitigation` now in the mirror (§290) | a session: show slow mitigation on Target Info / mob-info (not wired yet) |
 | **Target Info: faction + who assists** (§172) | Bot 3.1.211 on main; the Faction sub-tab on Mimic beta | the guild lead: target a Plane of Justice mob on the beta and check Faction / Assisted by |
 | **Long-term bidding out of the timers** (§171) | Stable hot-swap agent 3.7.92 (`f5850e89`), beta 3.7.93: auctions set to run over 6 h get no timer and no Command Center row; bidding unchanged. The ✕ on timer chips: hardened (`cf817067`), stable in Mimic 2.7.9 | the guild lead: retest a ✕ with overlays locked and say which window if it still fails |
 | **My parses over time** (§170) | Live: `/me/parses` [beta] (web 1.8.108) + `/api/agent/my-parses` (bot 3.1.210), one function `my_parse_series`; mules and traders fold behind "+N more". On beta (agent 3.7.91+): Mimic's My parses tab + tray item and the meter's Trend view | the guild lead: (1) add the 29 missing PoP bosses to the boss list? (2) link `/me/parses` from `/me` (a change to an existing page, so beta first)? Members: try the beta tab and Trend |
@@ -223,7 +238,7 @@ is ephemeral. It is a desktop-session job.
 | **Zeal: Bandolier chat filter** | **Shipped upstream in Zeal 1.4.8 (#238, §117).** The #213 ask (target level/class/race + loc on the pipe) shipped in the same release (#239), from a third party | the guild lead: delete the fork's `bandolier-chat-filter` branch when ready (and `pipe-spawn-id`, obsolete since 1.4.6). Pipe fields: pick when to build the adoption in §117 |
 | **Zeal: tags survive crash/relog/character switch + no cross-zone tagging (branch; first build crashed at launch, fixed)** | **2026-09-25 (§28).** Branch `tag-persistence` on the fork (`ca71999`): name check on received tags; per-character `<name>_tags.txt`, restored by zone + spawn id + name, 3 h expiry, `/tag persist` on by default. `0d66a28` crashed EQ at launch (init order; dump symbolized, fixed). **2026-09-26 (§40): players are now kept by name** (`9a3fd09`), so a tagged player keeps the tag through their zoning, a camp or a death; in `test-all` (`7d49ae6` now, on Zeal 1.4.8, §117) | the guild lead: build + run the 8-step test plan, confirm or change the four defaults in the PR doc, re-author, open the PR |
 | **Zeal: icon tag shapes, numbered badges, lettered paws, traced wolf, guild banners + icons (branch; rendered in game 2026-09-26, §39)** | **2026-09-25 (§27, §30–§33).** Branch `tag-shapes` on the fork (`3c02f65`): letters `K X A D F T M U N H E $` = skull, X, sword, diamond, flame, star, moon, lasso, lute, shield, euro, dollar; **`^WP^` = the wolf**; `^1^`–`^12^` badges; `^P0^`–`^PZ^` paw with a charmer's initial; **`^B<code>^` banner + `^I<code>^` icon for 30 guilds** (`/tag guilds` lists them). `test-all` = `7d49ae6` (on Zeal 1.4.8, §117; with tag pictures §38 and player tags kept by name §40). **In game 2026-09-26:** every symbol, badge, lettered paw and all 30 guild icons draw correctly, including over other guilds' players | the guild lead: try the banners (`^B<code>^`, not in the screenshots yet), correct any guild codes, re-author, open the PR. Ours after upstream ships: agent `_ZEAL_TAG_SHAPES` + prettyprint regex learn the new keys |
-| **Zeal: tag corpses (branch; built, not yet in game)** | **2026-09-25 (§34).** Branch `tag-corpses` on the fork (`aa975e1`, from main): NPC + player corpses taggable; a mob's pre-death tag stays hidden on its corpse, tags set on the corpse show; `/tag target` picks a corpse only by its own tag. In `test-all` (`7d49ae6` now, on Zeal 1.4.8, §117). A target whose model is not drawn is still refused (spawn-id hold proposed, not built) | the guild lead: try the "Corpses" steps in `TRY-IN-GAME.md`; say whether far/unloaded targets need the spawn-id hold; open the PR (`docs/upstream/zeal-tag-corpses/`) |
+| **Zeal: tag corpses (branch; WORKS in game 2026-10-09)** | **2026-10-09:** the guild lead confirmed in game: *"IT WORKS on corpses, both NPC and player corpses"*. Branch now one commit, `7f7c824`, on v1.4.8 (§213). **2026-09-25 (§34).** Branch `tag-corpses` on the fork (`aa975e1`, from main): NPC + player corpses taggable; a mob's pre-death tag stays hidden on its corpse, tags set on the corpse show; `/tag target` picks a corpse only by its own tag. In `test-all` (`7d49ae6` now, on Zeal 1.4.8, §117). A target whose model is not drawn is still refused (spawn-id hold proposed, not built) | the guild lead: try the "Corpses" steps in `TRY-IN-GAME.md`; say whether far/unloaded targets need the spawn-id hold; open the PR (`docs/upstream/zeal-tag-corpses/`) |
 | **Zeal: guild logos as tag pictures from a folder (branch; built, not yet in game)** | **2026-09-26 (§38).** Branch `tag-icon-files` on the fork (`ac5d177`), in `test-all` (`7d49ae6` now, on Zeal 1.4.8, §117): `uifiles/zeal/tagicons/<name>.png` (or `.tga`) shows as `^I<name>^`, like target rings; a picture beats the built-in icon with the same code; files checked before decoding (PNG/TGA header, ≤512 px, ≤1 MB); `/tag icons` lists and reloads. Draw path not compiled here; logic tested + mutation-checked | the guild lead: rebuild `test-all`, run TRY-IN-GAME → "Pictures" (the UP card first: it catches a mirrored quad); send the reply to the requesting guild; open the PR (`docs/upstream/zeal-tag-icon-files/`) |
 | **Zeal tag icons gallery `/zeal-icons` (beta preview, two layouts)** | **2026-09-26 (§39).** The guild lead: *"yes, host the picture files in the gallery"*. Public page on `beta`: every guild's banner + icon with copyable keys, symbols/badges/paws, Europa's picture as `EUR.png`/`EUR.tga`; logos come in via Discord, no uploads. **A** `b.wolfpack.quest/zeal-icons` (one catalogue page) · **B** `b.wolfpack.quest/zeal-icons?v=b` (guild index + `/zeal-icons/<code>` per guild). Beta `f71e9975` | the guild lead: pick A or B. Session: graduate the pick to main (roadmap entry, web bump, footer link), delete the other; optional for B, the guild's icon in Discord link previews (touches the shared preview route) |
 | **HUD tracking arrows (agent 3.7.18 on beta)** | **2026-09-26 (§35).** A member's idea, the guild lead's "YES": eight arrows round the HUD ring, the tracked mob's direction lit gold, from the client's own tracking lines (eqstr 12676–12680). ⚙ → Tracking: all/lit + size. Beta `fe43d0b8`. **The wording comes from the client string file, not yet a real log** | a tracker on beta: track a mob and confirm the arrow follows; if the words differ, send the log lines. Later: turn-with-you rotation needs EQ's heading direction checked in game |
@@ -7360,7 +7375,8 @@ maps, overviews. this will be bristlebane's job"* → *"mostly the theme and the
 look as characters so if we animate something in the future it looks good and we can recreate from point
 map during raids."*
 
-- **A separate Discord application, "Bristlebane"** (app id 1556801422689837240; private bot; no privileged
+- **A separate Discord application, "Bristlebane"** (app id 1556801422689837240 — ⚠ since renamed **miMIC** in Discord; the
+  Bristlebane persona is now a different app, see §323; private bot; no privileged
   intents), its own component `apps/bristlebane/` running as a Coolify app on Tower. Separate because a bot
   holds one voice connection per server and a second login on the RaidBosses token would answer every
   command twice. `CLAUDE.md`'s component table now lists five.
@@ -8446,3 +8462,2306 @@ everyone** when the latest passes unobserved or a fresh sighting replaces it, an
      and not ('zone-timer' = any(coalesce(tags, '{}'::text[])));
   ```
   It should report `UPDATE 2`. The bot picks the tag up within 2 minutes; no deploy needed after the bot change is live.
+
+### 209. Charm sessions record the spell and whether the charm ran its course (2026-10-09, bot · agent beta · migration `20261009010000`, NOT applied)
+**The ask** (the guild lead, 2026-10-08, *"A plus B's instrumentation"*): enchanters say charms break early, and we could not
+say how long each charm spell lasts when nothing interferes, so the warning cannot be set per spell. This is the collecting
+half only; no warning, no page, no threshold changes here.
+- **The data finding.** Over the last 30 days, enchanter `charm_sessions` rows with `end_reason = 'charm_break'` have a median
+  `duration_sec` of **36 s (n = 285)** against spells that last 6 to 12 minutes. That number cannot be used for per-spell
+  warnings, and two things make it unusable rather than merely noisy: (1) the sessions carry no spell at all; (2) `duration_sec`
+  is the gap between the agent's `lastEvent` at the land and at the break, and `lastEvent` is advanced only by combat events
+  (the charm handlers `return` before the line that sets it), so it measures the time between two fights' last blows, not the
+  charm. The old rows stay as they are; nothing is backfilled or recomputed.
+- **What the log can and cannot say.** `Your charm spell has worn off.` is the spell-fades line: it prints for a natural fade
+  and for a resist break alike. So `end_reason` keeps its two values (`charm_break`, `encounter_flush`) and is NOT split into
+  `expired` / `resisted`; a guess there would put a number on a chart that looks like a measurement.
+- **What is collected instead.** Agent (beta): each session gains `spell` (the staged cast name, lower-cased as in the agent's
+  charm table, null if the cast was not seen) and `ran_full` (lived at least 90% of that spell's max duration, null when
+  unknown). `ran_full` is timed from the land line's and the break line's own timestamps. It is null when the owner recast
+  mid-session (the span covers two spells), when another charmer took the mob (the break line was never seen), and when the
+  encounter flushed short; a flush that already reached 90% is still true. Every existing field and value is untouched.
+- **Bot:** `charm_sessions.spell_name text` and `ran_full boolean`, both nullable, no default, `IF NOT EXISTS`. The upsert
+  writes `spell_name` only when it is a non-empty string of 80 characters or fewer and `ran_full` only when it is a real
+  boolean (`utils/charmSession.js`); an older agent that sends neither writes two nulls, so nothing changes for it. The bot
+  validates no `end_reason` allow-list today, so there was none to extend.
+- **Order matters: apply the migration BEFORE the bot reaches `main`.** The upsert now names both columns; without them every
+  charm-carrying encounter's `charm_sessions` write fails and is swallowed by the catch-warn, the same silent failure that
+  left the table uncreated until 2026-07-13 (migration 20260713123000). The migration is not applied by this change.
+- **Read it as:** per spell, the share of sessions with `ran_full = true` among those with a known spell, and the duration
+  of the true ones. Sessions older than the agent change, and every row from an agent that has not updated, stay null and are
+  simply not in the sample. Do not read null as "broke early".
+- **Found on the way, not fixed (outside this change):** the same-owner recast branch of the charm-land handler tests
+  `pcSpell.dur || pcSpell.cls`, but `_consumePendingCharmSpell` returns `charm_class` / `duration_sec`, so that test is never
+  true and a recast never refreshes the charm overlay's timer. The new `ran_full` handling keys off the consumed spell instead,
+  so it is not affected.
+- Tests: `test/charm-session-ran-full.test.js` (agent, beta), `test/charm-session-spell-ran-full.test.js` (bot; mutation-checked).
+### 209. eqmimic.quest becomes a landing page for newcomers, with three layouts and a loud rights notice (2026-10-08/09, web [beta])
+**The ask** (the guild lead): *"a landing page for someone that's new to Mimic to be able to deploy it for themselves as
+standalone, have an understanding of what each component does as a walk-through. There should be a section that says: do
+you want more hive mind? here's how your guild can implement this ... I will provide some video that we can clip and have
+some little highlights on the main page ... Make sure there is clear distinction on the page about the rights being
+Daybreak's and this being a fan site; use the language from WolfPack.quest."* Built on branch `claude/eqmimic-landing`
+(not pushed; one commit, so the web commit is the tip for the Vercel ignore step).
+- **Routing changed.** The eqmimic middleware branch used to send EVERY path to the form. Now `eqmimicLandingTarget`
+  (`web/lib/eqmimicHost.ts`, shared by the middleware and the tests): `/feedback` -> the form (Mimic opens exactly
+  `https://eqmimic.quest/feedback#…` and refuses any other address, so that path is not negotiable); `/`, `/index` and
+  every other path -> the landing page, keeping ONLY a `?v=b|c` layout preview, all other parameters dropped. Unknown
+  paths land on the landing page as the safest default (a stray link reads a page, not a form). The branch stays FIRST
+  in the middleware, before the link-preview rewrite and any session client.
+- **The shell lost its width.** The bare eqmimic layout no longer wraps children in `max-w-2xl`; the form page carries its
+  own `mx-auto max-w-2xl` (identical look on the host) and the landing sets a wider one per layout (A 3xl, B 5xl, C 6xl).
+  On wolfpack.quest the form is now centred in its column; nothing else there changed.
+- **Three genuinely different layouts, one content module** (`web/lib/eqmimicLanding.ts`; `?v=`: none = A, `b`, `c`):
+  **A, Walk-through:** one column, a numbered journey, sticky section nav, reads like a guide. **B, Ledger:** a two-column
+  "On your PC (free, no account)" against "Needs a guild server" first, then highlights, privacy strip, an FAQ accordion,
+  the walk-through, hive mind last. **C, Reel-led:** the highlights reel is the hero, an overlay gallery follows, the
+  walk-through and hive steps compressed below. Costs: build ~ a day (shared blocks), maintenance LOW (one module, no
+  layout logic), runtime near zero (server components, no client JS, no new dependency), change LOW until a layout is
+  picked, then delete the other two. When one is picked, graduate it and remove the others in the same change.
+- **The rights notice is the loudest block, not the quietest line.** wolfpack.quest keeps it as the footer's last dim
+  sentence; here it is a gold-bordered "Fan site notice" panel directly under the hero in all three layouts, repeated in the
+  footer, in the wolfpack.quest wording VERBATIM plus one sentence of ours (fan project by a guild, AGPL-3.0-or-later). A
+  test reads `web/app/layout.tsx` and compares the sentence sets so the two cannot drift.
+- **Content calls.** Windows is the supported target, Linux/Deck labelled experimental. Local mode is described as what it is
+  (nothing sent to any guild server; guild-only overlays empty). The guild section carries an "honest list" box: wizard only
+  designed, Mimic's links and branding still hard-coded to wolfpack.quest so a guild builds its own Mimic (about a day),
+  `.env.example` still holds our defaults, no self-serve game-data catalog (~100 MB), no `doctor`. Costs are the measured
+  2026-09 figures (about $30/mo). The one demo guild in the page is invented ("Lantern Watch"); no member, id or address.
+- **Video slots.** `HIGHLIGHTS` (4 cards, `src`/`poster` optional): a card with `src` renders a muted, lazy `<video controls>`,
+  otherwise a "clip coming" placeholder. Nothing external is fetched or embedded. The guild lead supplies the clips.
+- **Metadata.** Title `[beta] Wolf Pack Mimic — a free overlay suite for Project Quarm`, `noindex` like the feedback page. A
+  `[beta]` badge heads each layout ("this page is new — tell us what's missing" -> the form) and a corner switch labels A/B/C.
+- **Tests.** `test/eqmimic-landing.test.js` (new: routing function, middleware run, verbatim notice, placement, content,
+  video slots) and `test/anon-feedback-surface.test.js` (changed ONLY where behaviour deliberately changed: `/` and unknown
+  paths now rewrite to the landing page instead of the form; the "first in the middleware" and layout-ordering assertions are
+  kept; the middleware slice now expects `eqmimicLandingTarget`). Mutation-checked: a changed word in the notice, the notice
+  removed from layout C, the footer notice removed, every query parameter kept, and `muted` removed from the video each
+  turn a test red.
+- **Not done / for the guild lead.** Pick A, B or C and send the clips. DNS for eqmimic.quest still points elsewhere
+  (`docs/RUNBOOK-eqmimic-domain.md`). The sticky-nav offset under the Wolf Pack header on the beta host is a guess (header
+  measured 51 px on production, the beta banner height was not measured).
+- **Addendum 2026-10-09: the guild lead picked the structure, and it is none of A, B or C.** *"landing page should be a large
+  video page to start, where people can click in and view each recorded scenario. then highlights of the overlays, then
+  setup."* The three layouts were retired in one change (they stay in git history at the commit before it): `LayoutA/B/C.tsx`,
+  the A/B/C switcher, `eqmimicLandingVariant` and the `?v=` handling are gone. `eqmimicLandingTarget` now drops EVERY query
+  parameter (a stale `?v=b` link just shows the page). One page, `web/app/eqmimic/_landing/Landing.tsx`, in this order:
+  compact header (name, pitch, Download, a small `[beta]` badge linking the feedback form) -> the large player with its
+  scenario picker (right column on desktop, a scrollable row of cards on a phone) -> the fan-site notice, directly under the
+  video block -> the overlay gallery (name, purpose, `[local]`/`[guild]`; optional `still`/`clip` slots, rendered only when
+  set) -> standalone setup (six steps, local-mode box, troubleshooting, and the "On your PC" against "Needs a guild server"
+  ledger folded in from the old layout B) -> what each piece does, privacy, "Want more hive mind?" (compact) -> footer with
+  the notice again. The FAQ accordion went with layout B (every answer is on the page already).
+  **Scenarios.** `SCENARIOS` replaces `HIGHLIGHTS` in `web/lib/eqmimicLanding.ts`: `{slug, title, caption, src?, poster?,
+  durationSec?}`; six placeholders (`dps-threat`, `triggers`, `charm-pets`, `hive-mind`, `zone-timers`, `setup`) until the
+  guild lead supplies clips. A click loads the scenario into the big player and sets `#clip-<slug>`; opening the page with that
+  hash preselects it (`scenarioFromHash`, pure and unit-tested; a fragment that names no scenario, like `#setup`, never resets
+  the selection). The player is the only client component; no autoplay, nothing external. Costs: build ~ half a day, maintenance
+  LOW (one layout, one module), runtime one small client component (no new dependency), change LOW (a scenario is one array
+  entry). Tests: `test/eqmimic-landing.test.js` (order, notice placement, scenario shape, hash helpers, the "query dropped"
+  cases that replace the `?v=b|c` ones), `test/anon-feedback-surface.test.js`. Still open: the clips, DNS, and the guild lead
+  saying when `[beta]` can come off.
+
+### 210. Charm-pet gear is not loot (2026-10-09, bot · web [beta], migration `20261009030000`, applied 2026-10-09)
+**The ask** (the guild lead, 2026-10-09, looking at `/admin/loot` "By character"): *"when someone gives their charm pet items,
+they should not be counted as loot. Silver Jacinth ring has negative MR for charming, similar to Rusty Spiked Shoulderpads,
+Adamantium ring, or other pet weapons or haste items."* A charmer loots an item and hands it to the charmed pet; gear with
+NEGATIVE magic resist is worn by charm pets on purpose (lower MR keeps the charm on longer), so the log's "has looted" line
+is not a keep-for-self drop.
+- **The call.** An item NAME is charm-pet gear when ANY `eqemu_items` row with that exact name has `mr < 0`, OR its
+  lower-cased name is in the new officer table `loot_pet_gear_names` (`item_name` primary key, `note`, `created_at`; RLS on, no
+  anon/authenticated policy, ships EMPTY). Name-based because `looted_items` carries only the item name.
+- **The data** (90 days to 2026-10-09): 7 looted names have `mr < 0`, 152 of 41,447 rows: Adamantite Band (-10, 61x; the
+  "Adamantium ring"), Rusty Spiked Shoulderpads (-10, 61x), Silver Jacinth Wedding Ring (-7 version id 14696; 20x),
+  Gauntlets of Mortality (-5, 4x), Astral Leggings of the Titans (-5, 3x), Astral Cloak of the Titans (-5, 2x), Greenish Metal
+  Shard (-7, 1x).
+- **Known cost of "any row", the guild lead may veto.** The same-name `mr 0` Silver Jacinth Wedding Ring (id 16792) is also left
+  out (the log carries a name, not an id), and the three -5 pieces (Gauntlets of Mortality, Astral Leggings and Cloak of the
+  Titans) are included: 9 rows in 90 days. If those should count, the fix is to key the rule on the lowest-id row only, or to
+  exempt names; say so and it changes.
+- **Not covered yet:** "pet weapons or haste items" were named but not which. They are not detected by any stat; officers (or a
+  session) add them with `INSERT INTO loot_pet_gear_names (item_name, note) VALUES (...)`. Comparison is case-insensitive.
+- **Where it landed.** SQL: `loot_value_rows` leaves those rows out, decided once per DISTINCT name (a `pet` CTE and an
+  anti-join, so the 90-day window keeps the speed of `20261008190000`); same signature, `CREATE OR REPLACE`, no DROP.
+  `loot_value_grouped` and `loot_value_by_looter_v3` read `loot_value_rows`, so both inherit it untouched. Bot: the Mimic Loot
+  tab's per-looter VALUE totals (`utils/lootValue.js`: `lookupItemValues` now selects `mr`, `loadPetGearNames` reads the table
+  and fails OPEN to the `mr` rule alone, `buildLootValue` skips the rows and reports `pet_gear_items`). The Mimic "who looted
+  what" LIST still shows these items (it is built by `buildNightLootPanel`, a different path, and is the record of what was
+  looted); only the totals drop them. Web: one sentence under the `/admin/loot` description so the exclusion is never a mystery.
+- Tests: `test/loot-pet-gear.test.js` (migration text, the JS definition, the panel body end to end; mutation-checked),
+  `test/night-loot-value.test.js` (value shape gained `pet_gear`).
+
+### 211. Gear a charmer loots back off their own pet's corpse is not loot (2026-10-09, bot half; agent half on `beta`; migration `20261009050000`, applied 2026-10-09)
+**The ask** (the guild lead, 2026-10-09): *"anything a charmer gives to their pet (and we have the spawn ID) and they loot is not
+counted as loot. It was already theirs."* A charmer hands gear to a charmed pet, the pet dies, the charmer loots the gear back
+off its corpse, and the log's `--You have looted <item>.--` line was stored as ordinary loot.
+- **The call (design "D").** The charmer's OWN agent remembers its pet's spawn id while the pet is alive and sets
+  `from_own_pet: true` on the looted event only when the looter's current Zeal target is that same id, in the same zone, the
+  record is fresh, and the target's name ends in "'s corpse" (conditions and tests on the agent branch). The bot stores the flag;
+  it never infers one. Charm-pet gear by stat (§210) is a separate rule and still applies to everything else.
+- **Accepted limits.** (1) No log line exists when an item is handed to a pet, so nothing marks the hand-over itself.
+  (2) It needs Zeal 1.4.6 or newer with a known pet id; about half the fleet is on it, and without an id the line simply is not
+  flagged (a missed flag counts as loot, as before). (3) The loot target must still be the corpse when the line is written;
+  that is UNTESTED (STATUS: needs a local session), and if it fails the feature flags nothing, never something wrong. (4) Only
+  the charmer's own agent can flag it; another raider's agent that saw the same line cannot (it is self-only in EQ anyway).
+  (5) The raid-screen feed (`/api/screen/feed`) and the Discord rolled-loot card still read `looted_items` unfiltered; only
+  the Mimic Loot tab and `/admin/loot` were asked for.
+- **Where it landed.** `looted_items.from_own_pet boolean not null default false`. `loot_value_rows` gained
+  `and not li.from_own_pet` in its first CTE and kept §210's charm-pet-gear CTE and anti-join; `loot_value_grouped` and
+  `loot_value_by_looter_v3` inherit it. Same signature, `CREATE OR REPLACE`, no DROP.
+- **True is sticky, by construction.** `_handleAgentLooted` accepts only the boolean `true` and writes the key ONLY on a flagged
+  row (two upserts per batch: the flagged rows, then the rest; a PostgREST bulk body fills a key one row omits with NULL).
+  A merge-duplicates upsert updates just the columns in the body, so a re-send without the flag (older agent, restart that
+  lost the pet record) leaves a true alone, and a re-send with it upgrades a false. The same line twice in one batch keeps the flag.
+  Undoing one is a direct UPDATE. If the flagged body fails (the migration is not applied yet) the rows are stored again
+  without the key, i.e. as ordinary loot, never dropped.
+- **Mimic Loot tab.** `_nightLootPanelBody` reads `from_own_pet` and, if that read answers null (no column yet), re-reads
+  without it. Own-pet rows leave the "who looted what" list, the roll attribution and the per-looter value (unlike charm-pet gear,
+  which the list keeps), and `buildLootValue` reports them as `own_pet_items`, like `pet_gear_items`. Web: the one `/admin/loot`
+  sentence about charm-pet gear also says this.
+- Tests: `test/loot-own-pet-bot.test.js` (migration text, strict-boolean ingest, sticky/mixed-batch/column-missing behaviour,
+  totals and list, the absent-column read; mutation-checked).
+
+### 212. "Your target looks unaffected." is the too-high-level lull message; it drops the phantom timer (2026-10-09, agent + Mimic Target Info, `beta`)
+**The evidence** (the guild lead, 2026-10-09, in-game screenshot): Pacify on a level-58 mob that is NOT ability-31 immune
+printed `Your target looks unaffected.` in red, twice, while Target Info kept a Pacify bar "56/60 · 5:33". That is the phantom
+timer the Harmony policy in CLAUDE.md predicted, and the string `docs/STATUS.md` had been waiting on. The guild lead's note:
+*"This mob doesn't say if it can or can't be lulled or pacified"*, so the catalog gives no warning before the cast.
+- **The call.** The line carries no target and no spell, so it is attributed to the newest own cast, and only when that cast
+  is a lull-family spell (`_isPacifySpell`, the existing set) and the line falls within the spell's cast time plus 4 seconds
+  (cast time from the spell catalog, capped at 6 s). After any other cast, with no cast, or later, it does nothing to lull state.
+  An invented or broader match was rejected: other spells may print the same words.
+- **What it does.** (a) Withdraws that spell's row from the cast's target (the Zeal target when "You begin casting" printed, a
+  provably different spawn id excepted, an older separate landing left alone), clears the pending revert, and removes the
+  caster's own copy from the not-yet-uploaded `buff_casts` batch. (b) Remembers "unaffected by <spell>, cast at level N" per mob
+  name + zone bucket (the Mob Info cache key) for the session; it is not written to the mob-info zone packs, which are shared
+  catalog data. (c) `buildMobInfo` returns `target_lull`: `{verdict:'immune'}` (ability 31, which always wins),
+  `{verdict:'unaffected', spell, caster_level, at_ms}`, or null.
+- **Target Info.** An amber "Pacify: unaffected" chip on the Stats chip row; the tooltip carries the spell, the level, the time
+  and "too high a level for that spell, or immune. Try a stronger lull." so the row stays byte-stable between polls. The
+  "Immune Pacify" chip already existed (ability 31 on `mob.specials`, blue) and was not duplicated. Unknown draws nothing.
+- **Not built.** A green "Lull OK" (`landed`): the agent only holds landings while they are active, and a landing line is not
+  proof the lull worked (the screenshot's bar was one), so a "worked" verdict would be an invention. Needs a signal first.
+- **Accepted limits.** (1) The mirror already uploaded to other raiders before the line arrived is not retracted (it is
+  withdrawn only if still in the batch; a flush can beat the line). (2) Only the caster's agent sees the line. (3) Not known
+  whether AE lulls print it once per mob. (4) A different, stronger lull cast later is not auto-cleared; the chip names the
+  spell it was learned from.
+- **CLAUDE.md** (Harmony policy) now names the captured string instead of "a message we have not captured".
+- **Shipped:** agent 3.7.124 on `beta` (`10901c15`). Same day, agent 3.7.123: the Loot tab's platinum values always carry one
+  decimal, matching web 1.8.132 (*"we need consistent sig figs on this. either show a decimal or not."*).
+- Tests: `test/lull-unaffected.test.js` (the cast-then-line, non-lull cast, 10 s late, other raiders, immune-wins, zone bucket,
+  the chip, and the call sites; mutation-checked).
+
+### 213. Zeal draws a cursor while the UI is hidden (pick B); the tag PRs are squashed; the Europa logo is replaced (2026-10-09)
+**The pick** (the guild lead, 2026-10-09): *"b, BUILT in hide ui hides the mouse and zeal could show it. we need to finish
+cleaning up these zeal PRs"*. B was "the fork draws the cursor", over A (the fork reports UI state on the pipe and Mimic
+draws one) and C (Mimic watches F10). §13 has why nothing else can bring the game's own cursor back.
+- **Built:** branch `hide-ui-cursor` on the fork, one commit on v1.4.8 (`2433493`), merged into `test-all` (`4014c49`) so
+  Mimic's Test build carries it. A `HideUiCursor` class on `RenderUI` draws a flat white arrow with a black outline at
+  `mouse_client_x/y` when the UI is hidden, in game, not mouse-looking and EverQuest is focused. Setting
+  `ShowCursorWithUiHidden`, on by default; `/uicursor [on|off]`. PR package and the 9-step in-game test:
+  `docs/upstream/zeal-hide-ui-cursor/`. Drafted by a Sonnet agent, reviewed here; clang-format clean; not compiled
+  (no MSVC in a cloud session) and not run in game.
+- **Open in game:** whether the game still updates the mouse position in F10 mode (if not, read `GetCursorPos` instead),
+  and whether the arrow draws above the world (`RenderUI` runs before the game's UI pass).
+- **PR cleanup.** None of the tag branches is open upstream yet. Each was a feature commit plus a "merge main (1.4.8)"
+  commit (and, for tag pictures, two follow-ups). Rebuilt locally as one commit per branch on `50dc9a4`, messages folded
+  together, with trees byte-identical to the pushed branches; `tag-icon-files` stays stacked on `tag-shapes` (it uses the
+  guild shapes). All four pass the repo's own `Zeal/.clang-format`. **Force-pushed** on the guild lead's word (*"force
+  push github"*), each with a lease on the head it replaced: `tag-shapes` 8b4ff07→`c2a5333`, `tag-persistence`
+  a5f104d→`c143cee`, `tag-corpses` ccf7c07→`7f7c824`, `tag-icon-files` e8254ec→`9035722`. The old commits stay reachable
+  through `test-all`'s merges. A local checkout of any of them must `git fetch && git reset --hard origin/<branch>`.
+  **Not deleted:** `bandolier-chat-filter` (merged upstream as #238, head `30a79bb`) and `pipe-spawn-id` (obsolete since
+  Zeal 1.4.6, head `b585ab6`). The cloud session's git proxy refuses branch deletion (HTTP 403), so that is a GitHub
+  Branches-page click for the guild lead.
+- **Europa logo.** *"Try making this the Europa logo"*, with a picture of a wooden shield with "EUROPA" across it. It
+  replaces `web/public/zeal/tagicons/EUR.png`/`.tga` (226×256, transparent); processing in `web/public/zeal/PROVENANCE.txt`.
+  web 1.8.133 on `beta` (`ba445fa4`), an existing page, so beta first: https://b.wolfpack.quest/zeal-icons.
+
+### 214. PoP flags are piecemeal, so the guide gets a "next steps" panel at the top: two previews on beta (2026-10-10)
+**The ask** (the guild lead): *"are we taking piecemeal flags? if so we should put at the top of the guide next steps
+for flags in a consolidated place"*. Yes: each character's flags arrive one at a time from four sources (Mimic's server
+flag lines, /who in a plane, loot from a plane, the owner's ticks), and nothing summed them into "what next".
+- **Built** (web 1.8.134 on `beta`, `ca6631c2`): `web/lib/popNextSteps.ts` (`nextSteps`/`charNextSteps`/`nextCard`,
+  14 progression lines in `NEXT_LINES`, gated by `POP_ZONES.requires` and `GATE_IMPLIES`; a later hand tick is trusted
+  and the steps it skipped are reported, not hidden). Two panels above every layout, only with `?nx=`:
+  **A** (`NextUp.tsx`) the picked character's next 3–5 steps; **B** (`NextTable.tsx`) every listed character × line.
+  https://b.wolfpack.quest/pop/guide?nx=a · https://b.wolfpack.quest/pop/guide?nx=b. No `?nx` = the page as production.
+- **Fixed on the way:** `routeData.ts` read `pop_flags` without excluding witnessed `hail` rows, so a household's
+  1,000-row read could miss real flags (page.tsx already excluded them). Now the same filter.
+- **Known gaps:** three server flags (`fuirstel_5`, `thelin_4`, `hoh_trials`) have no checklist step, so the panel reads
+  them from the raw flags; steps with no flag (the HoH zone-in, the Maelin hails) can only be ticked by hand; the
+  panel shows the state as the page loaded. Drafted by a Sonnet agent, reviewed here; 42 tests, mutation-checked.
+- **Next:** the guild lead picks A, B or both; the pick graduates to main and the `?nx` switch goes.
+
+### 215. Every page unfurls with its own name and summary: a standing rule, and the Discord card was never reading the page (2026-10-10, web)
+**The ask** (the guild lead, looking at Discord's card for `https://wolfpack.quest/feedback/FB-71`, which was the site-wide
+"Guild-wide build planner…" card): *"discord embedded links for the feedback links are generic. all links from our site
+should include at least top level information and the page name. make it a rule"*.
+- **The rule** is in `CLAUDE.md` ("every page unfurls with its own name and summary") and is enforced by
+  `test/page-metadata.test.js`, which walks every `web/app/**/page.tsx`.
+- **The finding that changed the fix:** Discord never reads a page's `metadata`. The middleware rewrites every preview
+  crawler to `/api/embed-meta`, which serves `metaForPath()` in `web/lib/pageMeta.ts` (crawlers cannot sign in, and the
+  pages redirect to sign-in). Confirmed on a local dev server: a bot user agent gets the rewrite, any other anonymous
+  request gets a 307 to `/auth/signin`. So a route missing from `pageMeta.ts` unfurls as the site card whatever its page
+  exports. FB-71 was missing; so were dozens of other routes (every admin page shared one "Officer Tools" card).
+- **Built (web 1.8.135; 1.8.133 and 1.8.134 are taken on `beta`):**
+  - `pageMeta.ts` gets an entry or a pattern for every route, plus pure builders (`feedbackMeta`, `entityMeta`,
+    `characterMeta`, `pvpMeta`, `raidReviewMeta`) and `lookupFor()` naming the routes that need one read.
+  - `pageMetaData.ts` (new) does those reads, one small select each, and `/api/embed-meta` and every dynamic page's
+    `generateMetadata` both call it, so the Discord card and the browser tab cannot disagree.
+  - Every page exports `metadata` (title + one sentence) or, for a dynamic route, `generateMetadata`. The admin layout
+    carries `robots: noindex` once for all officer pages.
+  - The root layout no longer pins `openGraph.title`, `description` or `url`. Next fills an empty OG title/description
+    from the page, but a pinned root value wins over the page's, so every OG/twitter title read "WolfPack.quest" (measured
+    on `/roadmap` before and after: og:title "WolfPack.quest" -> "Roadmap — Wolf Pack EQ · WolfPack.quest").
+- **Privacy calls (the crawler is anonymous, so a card carries only what a signed-out visitor could see):**
+  - `/feedback/FB-n`: `[beta] FB-71 · Bug report · Seen`. Selects `ref, category, status` only; the category and status go
+    through closed vocabularies, so no raw string reaches the card. Never the message, submitter, notes, replies or log.
+    The `[beta]` tag stays while the page wears NewPageTag.
+  - Items, spells, NPCs, factions, recipes, bosses and raid guides: the catalog name and the kind (`Ragebringer · Item`),
+    one `name` column. Game data, not guild data, though the pages behind them need sign-in. The description is the
+    kind's sentence, never stats or drops.
+  - Characters and PvP records: the name comes from the URL alone, no database read, so a hidden or stats-excluded
+    character leaks nothing the link did not already say and a made-up name is not confirmed to exist.
+  - **Parses stay "Parse Breakdown"** on the card. The page's own tab title names the boss, night and DPS, but that is
+    guild data a signed-out visitor cannot see. The guild lead can overrule this; parse ids are UUIDs, not enumerable.
+- **Not verified:** the live Vercel rewrite. On a local dev server the rewrite's query string is ignored by the route (the
+  original query wins), so `/api/embed-meta` was checked by calling it directly with `?path=`. The middleware does emit the
+  right rewrite header. It has served per-page cards on production since July, so this is a dev-server quirk, but nobody
+  has re-checked a production card after this change; Discord caches per URL, so test with a fresh link.
+- **Open:** a `?v=` variant URL or a trailing query is dropped from the card path (the middleware passes the pathname only).
+
+### 216. Mimic 2.9 is the spawn-map line; Zeal review fixes go ahead; guild marks are option B (2026-10-10)
+**The call** (the guild lead): a "hearty feature … worth being part of the next minor release numbering 2.9": read `dbg.txt`
+without locking it to build a directory of Quarm zone servers and zones; pull nearby-mob locations from the Zeal pipe
+(reportedly up to 250 units) into our own map with spawn points, pathers, pets, named spawns, the target with a range
+line, aggro radius, learned respawn timers (PvP ±20%) and spawn order after downtime; show it on the spectator map and as a
+Mimic overlay or second-screen view; non-raid opt-in/opt-out position sharing within a group; and a hidden officer view
+listing zones and groups for guild-instance moderation.
+- **`dbg.txt`, from real files** (five copies from members' EQ folders, 2026-10-08): ASCII, CRLF, every line
+  `[<timestamp>]<seq>:<text>`. Each zone-in writes `Zone addr [pq.projectquarm.pq<N>.projectquarm.com:<port>] received...`,
+  then `Zone info received.`, then `StartWorldDisplay: <zone_short>` (plus `_obj`/`_chr`/`_lit` variants to skip);
+  `Starting char select.` and `*** EXITING: I have completed camping.` mark the session edges. The same zone appeared on
+  port 11243 and on port 7312 within twelve minutes, so a port names a running copy of a zone, never the zone itself: the
+  directory is a time-stamped log of (zone_short, host, port, first/last seen). The file also holds install paths
+  (`<drive>:\<folder>\…s3d`) and hardware lines, so only the allow-listed zone lines may ever leave the machine
+  (`docs/PRIVACY.md` gets a line when it ships). Reading it the same way the agent tails eqlog (open-read-close per poll)
+  does not lock it.
+- **Zeal review fixes: go.** The ranked findings (picture-folder crash on a non-English filename, persistence save loop
+  able to throw into the game loop or read a dangling entity, picture memory, per-frame lookups, silent failed saves,
+  the merged build dropping picture tags on restore) are being fixed as new commits on each branch. A raider's remote
+  `clear` keeps wiping the zone's saved tags (unchanged, deliberately).
+- **Guild marks: B.** Players show their guild's mark automatically from the guild the client already knows
+  (`Entity.GuildId`), drawn only on the viewer's screen, never for /anon or /roleplay players, only for guilds in the
+  `kGuilds` table, within 150 units, icons not banners. `/tag guildmarks off|tagged|auto`, default `tagged` (no change
+  for anyone who does not opt in); `off` also hides marks other raiders tagged.
+- **Landed (2026-10-10):** `tag-shapes` `f777d81` (guild marks B, render-state restore on a failed shape allocation,
+  startup check that tag identity colors are unique) and `tag-icon-files` `b20331f` (per-file `std::exception` catches
+  plus a non-throwing path printer, picture file resolved once per tag instead of per frame, 128 px picture cap, load
+  problems printed after the frame, auto marks use a guild's picture file when present). Both were fast-forward pushes.
+  Nothing outside `tag_shapes.cpp` has been compiled here (no MSVC); the GitHub build of `test-all` is the first real
+  compile. **In-game checks:** (1) `/tag guildmarks` alone prints the mode, "tagged" on a fresh profile; (2) `auto`
+  near listed guilds shows their icons, nothing for unguilded or unlisted guilds; (3) /anon and /roleplay players get
+  none; (4) marks vanish past ~150 units; (5) `off` hides `^B…^`/`^I…^` tags from others but keeps `^E^`, `^$^`, `^WP^`;
+  (6) `tagged` after `auto` drops only the automatic marks; (7) a player tagged with a non-guild shape keeps it in `auto`;
+  (8) frame rate with ~70 players, `auto` vs `tagged`; (9) a non-English picture file name is skipped without a crash;
+  (10) a picture over 128 px prints one skip line after the frame; (11) replacing a picture then `/tag icons` updates a
+  tagged mob without re-tagging; (12) a guild picture file (`<code>.png`) is used by `auto`, and removing it falls back.
+  ⚠ Guild names match `kGuilds` by letters and digits only, so "&" vs "and" will not match; compare `/tag guilds` to
+  the nameplate text. A guild seen before the client loaded its guild list stays unmarked until the next UI reload.
+  Pictures between 129 and 512 px that used to load are now refused.
+
+### 217. More real-time map data needs no plan upgrade; Vercel Hobby is the ceiling to keep the live feed off (2026-10-10)
+**The question** (the guild lead): *"to implement more of this realtime reporting do we need to increase our plan for
+supabase, vercel, or railway"*, plus *"can we build in more visual top-down maps with actual graphics"*, and a page of
+findings and mockups others can comment on.
+- **Supabase Pro: no change.** The spectator positions read is ~6 KB per poll for a full raid (one row per raider from
+  `spectator_positions`); 20 viewers × 3 s × 4 h × 12 raids ≈ 7 GB/month of the 250 GB egress. Live mob dots must NOT
+  be stored in Postgres (database size is the one meter that only grows); keep them in the bot's memory beside the
+  positions. A raid-replay recording is the feature that would cost database size.
+- **Railway: no change.** The live feed is already the bot's in-memory `/api/screen/live` (signed ticket, every 3 s);
+  up to ~70 nearby mobs per uploader adds a few KB.
+- **Vercel Hobby: no change, but it is the ceiling.** Hobby includes 1,000,000 function invocations, 1M CDN requests and
+  4 active CPU-hours a month (vercel.com/docs/plans/hobby, read 2026-10-10), and going over **pauses the feature for 30
+  days** instead of billing. If the bot feed is down and every viewer falls back to the Vercel polls, 20 viewers × 3 s ×
+  4 h × 12 raids ≈ 1.15M calls, over the cap. So: live data stays on the bot, and the fallback stays slow. Whether
+  `SCREEN_LIVE_URL` + `SCREEN_TOKEN_SECRET` are set on Vercel production was NOT confirmed (the env listing a session
+  can read was partial).
+- **Map art options** (A parchment generated from our own walls/floors/spawn density; B real textures rendered from the
+  player's own client files, Mimic-only because the website would be redistributing game art; C one AI-painted map per
+  zone; D community map images, not recommended for licence and coverage). Recommendation: A on the web now, B as a
+  Mimic option later.
+- **Where it landed:** a claude.ai workshop page (owner-shared, so not linked here) with the findings, three live
+  mockups (A radar, B zone board, C tracker) with layer toggles and the three art styles, picks for version / art /
+  the three open 2.9 picks, and a notes board. The beta `/spectator` variants are built after the picks.
+
+### 218. The spawn map's controls, its HUD mode, local-first data and mob range rings (2026-10-10)
+**The calls** (the guild lead): *"we should see a mob's longest range attack or spell ring as well emanating from its
+location"*; *"we need to be local on the map with the player and group and raid's zeal pipe location data"*; zoom in
+and out, drag to pan, right-click centres on you, follow-the-player by default as a UI toggle, north-up / heading-up as
+a toggle, and *"a secondary mode that is a more transparent overlay mode like where HUD would be in the middle of the
+screen"*.
+- **Controls (every version, Mimic and web):** wheel zooms around the cursor; drag pans and turns Follow off; right-click
+  centres on you once (Follow stays as the toggle says); Follow defaults ON; the orientation button names the current
+  mode (N-up / Heading-up) and flips it.
+- **Two display modes:** Window (framed, opaque) and HUD (no frame or background; walls only, see-through, sized for the
+  middle of the screen; the title bar and controls show on hover). HUD is a Mimic overlay mode, so it must stay
+  click-through when locked like every overlay (the hover handshake in the parity checklist).
+- **Local first:** in Mimic the map draws you, your group, your raid and your target straight from the local agent's
+  Zeal pipe data, with no server hop and no upload; it works in local mode. The server is needed only for people outside
+  your raid (opt-in sharing) and for the website.
+- **Range rings:** per NPC, the farthest spell in its spell list (`npc_spells` + entries, mirrored) or its ranged attack
+  (special ability 11, decoded in `utils/mobSpecials.js`) as a purple dashed ring, and its widest area-of-effect radius
+  as an orange ring. A worst case, never a prediction. Shown for the target by default, optionally named or all.
+  ⚠ `eqemu_spells` does not mirror `range` / `aoerange` yet: adding them is a migration plus the column list in
+  `scripts/sync-from-eqmac.js` (spells transform) and a forced re-import of `sync-quarm.yml`.
+- **Zeal's map or ours:** asked as a pick (A our own map, recommended; B rings inside Zeal's map via the fork, which needs
+  a weekly data file and lives only in our fork; C our overlay laid over Zeal's map, fragile). Zeal draws its map inside
+  the game, so Mimic cannot add to it from outside.
+- **Where it landed:** the workshop page (version 2) has all of it working on simulated data.
+
+### 219. Two outside map sites reviewed: a 3D zone viewer and a Vex Thal pathing map — references, not sources (2026-10-10)
+**The ask** (the guild lead): a 3D zone viewer site *"would be an incredible viewpoint for spectator's 3d mode"*, and a
+MacroQuest-community automap page *"for pathing of vex thal"*.
+- **The 3D viewer** (a hobbyist's React + three.js app, "EQ Advanced Map"): orbit / fly / follow cameras over 180 zones
+  incl. the PoP planes. Its zone models are converted client art (Draco-compressed GLB with WebP textures, ~1 MB median,
+  up to ~7 MB, 276 MB for all zones) served from ANOTHER emulator server project's cloud storage; its spawn data is that
+  server's, not Quarm's. **No licence** in either repo and no permission statement for the art. It can be iframed (no
+  X-Frame-Options/CSP) but has no API to feed it our positions; its live mode needs the author's own local exe (whose
+  repo commits TLS key files — do not use). Spawns are placed at `(-y, z, x)`, so /loc mapping looks plausible but is
+  unverified. **Use it as a UX reference only.** It proves ~1–5 MB per zone is practical for real meshes.
+- **The automap page:** Leaflet, server-rendered, Vex Thal = 3,683 wall lines, 353 spawn points, 42 patrol routes with
+  pause times. Data is the modern ProjectEQ database (not Quarm's EQMacEmu fork) plus map-file lines; **no licence or
+  terms published**; other zones sit behind an anti-bot challenge (not bypassed). Do not scrape it.
+- **Patrol routes come from our own import instead:** mirror `grid` (`id, zoneid, type, type2`) and `grid_entries`
+  (`gridid, zoneid, number, x, y, z, heading, pause`) in `scripts/sync-from-eqmac.js` + one migration; draw via
+  `eqemu_spawn2.pathgrid`. **Confirmed 2026-10-10 by streaming `quarm_2026-09-27-22_44.tar.gz`:** `grid` (`id, zoneid,
+  type, type2`, 22,824 rows) and `grid_entries` (`gridid, zoneid, number, x, y, z, heading, pause, centerpoint`, 711,517
+  rows) are both in the Quarm dump; Vex Thal (zone id 426) has 44 grids / 398 waypoints. `spells_new` carries `range`
+  (default 100) and `aoerange` (default 0) — Pacify 200/0, Harmony 200/40 — so the range-ring columns come from the same
+  dump. ⚠ The Al'Kabor fallback must still never fill route tables: fail loudly if a future dump drops them.
+- **Options put to the guild lead** (workshop page, version 3): 3D-A raised walls from our line maps (no game art, safe
+  on the public site; recommended for the web), 3D-B real models converted locally inside Mimic from the player's own
+  install (nothing published), 3D-C real models on the website (needs a rights call, or the viewer author's written
+  permission), 3D-D embed the viewer (not recommended). Routes: A our Quarm import (recommended), B link out.
+
+### 220. 2.9 spawn map picks; group positions are visible to the group (and its recent helpers) (2026-10-10)
+**The picks** (the guild lead, in the workshop and in chat): **3D-A on the web, 3D-B in Mimic, routes A.** Workshop
+votes: version **C** (tracker: radar + nearby list), map art **B** (painted, Mimic-only) with the note *"combo of painted
+and parchment as options (or no background)"*, map drawn on **our own canvas (A)**, nearby dots **A** (tab-target, works
+on today's Zeal), build for **both** web and Mimic, group sharing **yes**.
+- **How they fit together:**
+  - **Web:** the zone board stays the spectator layout; background choices are none / lines / parchment; 3D-A is
+    the 3D mode. **3D-A is built from the EQEmu collision mesh** (`EQEmu/maps` `base/<zone>.map`, GPL-2.0-or-later),
+    which `/spectator` already fetches and caches (`web/lib/zoneMap/source.ts`). It is the server's real 3D zone
+    shape, shaded with no textures, so it carries no Daybreak art and no new licence question. Brewall lines (no
+    stated licence) stay a flat overlay only.
+  - **Mimic:** version C (radar + nearby list) in Window and HUD modes; backgrounds none / lines / parchment /
+    painted. **Painted (2D) and 3D-B share ONE converter** that reads the player's own client zone files on their
+    machine and never uploads them. It is the largest single build in 2.9, so it ships after the 2D overlay.
+  - **Routes:** our Quarm import (`grid` / `grid_entries`), never another server's (§219).
+- **Group privacy rule — the call** (the guild lead): *"a group's data is already exposed to that user via zeal pipe.
+  display it for any logged in authenticated user that is in that group currently (or was until recently, in case
+  they're dropped from a disconnect or helping with damage/healing outside of the group. like what happens prior to
+  forming a raid or power leveling to help a group get leveled faster"*.
+  - **Who sees a group's positions:** a signed-in member whose character is in that group now, per any member's
+    Zeal group data. Also anyone who was in it within the **grace window**, and anyone **helping** it inside the
+    grace window: healing or buffing a group member, or damaging the group's current target, as seen in a group
+    member's log.
+  - **Grace window default: 30 minutes**, long enough to cover a disconnect and relog or a short power-levelling
+    session. The guild lead may change it.
+  - **What is shown:** only what the pipe already gives each of those people: name, class, level, HP and position.
+    Raid positions keep the existing members-only raid rule.
+  - **Owed before it ships:** group positions (Zeal type 6) are not uploaded yet, only the raid roster (type 5),
+    so the agent needs a group upload. That upload needs a `docs/PRIVACY.md` line and the per-character opt-out
+    honoured (`exclude_from_stats`). The membership check runs on the server; the page never decides it.
+- **XP per hour status** (asked the same day): collection (FB-37 option B) has run since 2026-10-02. 54,647 rows,
+  35 players, 72 characters, 36 zones; raid rows are stored but kept out of group answers. The local XP/AA-per-hour
+  readout is on the HUD (agent `_meRate`). **No board yet** — the week of data the board waited for is now in. A
+  first SQL pass shows bracket 60–64 leading in Plane of Disease, The Deep and Plane of Valor, and level 65 AA/hour
+  leading in Plane of Nightmares and Valor. These are percent-of-level numbers on small samples, not yet the exact
+  total-XP figures `DESIGN-xp-tracking.md` §2 calls for. The four §5 questions are still open (A/B/C; 7 or 30 days;
+  names; raid XP).
+
+### 221. Spawn map: guessed spawn points, click-to-mark, danger badges, per-zone line of sight (2026-10-10)
+**The calls** (the guild lead): *"some zones we will pull mobs but not know their spawn point, only guess. by name or by
+what mob they came with. if we are standing in a spot where there could have been a mob and it's missing, we should be
+able to click on it somehow and mark it. boss mobs or ones that are harder it see invis should have that noted somehow
+easy to see"*; and on line of sight: indoor vs outdoor differs; several outdoor PoP zones did not enforce line of sight
+through walls for years, mostly fixed on this server in the past week; Plane of Hate has collision and pathing around
+walls but does not check line of sight for casting or ranged; with no path, a mob may teleport through walls to reach
+a player or its home point.
+- **Where it landed:** `docs/DESIGN-mimic-2.9-spawn-map.md`, new section "Pulled mobs, missing spawns, dangerous mobs,
+  line of sight". In short: a pulled mob's death is credited to a candidate spawn point by name + spawn group +
+  linked-pull proximity, and left **unassigned with "?" rings** when ambiguous; a player can click a spawn point to
+  mark it empty / killed / up, which starts a respawn **window** (a range, not a time) labelled as a mark, overridden
+  by any observed death; danger badges come from columns we already mirror (`raid_target`, `rare_spawn`,
+  `see_invis`, `see_invis_undead`, `see_hide`, `see_improved_hide`) plus the decoded special abilities.
+- **Line of sight is not in any database** (`eqemu_zone.cast_outdoor` is indoor/outdoor only), so it becomes a small
+  officer-curated table (`zone_los_rules`: spells / ranged / mob warp / notes / verified on), with rows going
+  "unverified" after 30 days. In enforced zones the range rings are clipped by walls using the cached EQEmu collision
+  mesh; in zones like Plane of Hate they are drawn unclipped with a "no LoS" tag, because walls do not protect you.
+- **Not built yet.** These join the 2.9 phases: badges with phase 1, marks + candidate attribution with phase 4,
+  the LoS table + clipped rings after the range-ring columns land in the import.
+
+### 222. Every class's active abilities catalogued; a home for `/pipe` commands proposed (2026-10-10)
+**The ask** (the guild lead): the full active ability set for every class (trained skills, AAs, long-recast spells),
+"like we have with monks", and a spot where a `/pipe` line triggers UI for actions with no success message (Pacify,
+Harmony, Hide/Sneak for non-rogues).
+- **Where it landed:** `docs/DESIGN-class-abilities.md` + `docs/data/class-abilities.json` (281 abilities, all 15
+  classes). AA reuse comes from Quarm's own `aa_actions` table in the 2026-09-27 dump (77 AAs; it corrected seven
+  research values, e.g. Mend Companion 36 min, Divine Resurrection 36 h, Mana Burn 8640 s).
+- **Bugs it found in today's HUD** (fix with the build) — ⚠ the Taunt claim was WRONG and is withdrawn: the guild
+  lead confirmed in game that a successful Taunt prints "You taunt <mob> to ignore others and attack you!", so the
+  existing Taunt timer is right; `/pipe taunt` adds presses that do not land. The rest stand: Hand of Piety starts the Lay on Hands slot (same landing text); Necromancer / Shadow Knight Feign
+  Death is a 15 s spell, not the monk skill; `/pipe` lines are only read while the HUD is open; AA timers must clear
+  on "Your ability failed. Timer has been reset."; the monk FD 10 s vs the server's 8 s needs an in-game check.
+- **Lull line closed:** "Your target looks unaffected." is the whole Pacify/Harmony/Lull family's failure (too high
+  level or Immune Pacify; once per mob on an AE cast). Harmony has no success line at all.
+- **Pipe-commands spot:** options A (pipe as a trigger source), B (a Pipe commands card on the Triggers tab, built on
+  A — recommended), C (user words as HUD chips) put to the guild lead; open.
+- **Also found:** `eqemu_spells` stops at id 4678, so Quarm's own spells above it (Mass Group Buff 5228 and others)
+  are missing from the mirror — check the weekly import's filter.
+
+### 223. Command Center: quests by zone, tank cooldowns, mana tabs; Feign Death varies by AA, Mend is constant (2026-10-10)
+**The calls** (the guild lead):
+- *"command center can start supporting quest details based on which zones we're in and who needs each step based on
+  what the database knows. collapsed in a section then collapsed more.."* — a Command Center section, two collapse
+  levels (section → quest → steps), driven by the zones the raid/group is in and the per-character progress the
+  database already holds.
+- *"feign death timer is variable and depends on AAs. mend is constant."* — FD reuse follows the monk's Rapid Feign
+  rank (server: 8 s base, 7/6/3 s at ranks 1/2/3 per §222); Mend keeps one fixed timer.
+- *"taunts done via pipe are good to watch for. area taunt timers are worth having on command center along with
+  defensive."* — `/pipe taunt` is the taunt signal (the log line belongs to Area Taunt, §222); the Command Center
+  shows each tank's Area Taunt and Defensive discipline timers.
+- *"other mana users can be displayed as well at casters via tabs by type, healers int and hybrid."* — a mana panel
+  with tabs: Healers (Cleric, Druid, Shaman), Casters/INT (Necromancer, Wizard, Magician, Enchanter), Hybrids.
+- **Also (same day):** *"taunt shows a success message. successful or resisted casts add to hate"* — the §222 Taunt
+  claim is withdrawn (the existing timer is right); the threat meter already credits resisted casts (flat
+  `RESIST_HATE_DEFAULT` 120 + per-spell overrides).
+- **Scoped (three agents, 2026-10-10):**
+  - **Feign Death:** the Quarmy export carries the Rapid Feign rank (AA index 100); the agent parses it in
+    `parseQuarmyExport` but `_quarmyLocalItems` drops it. Client lockout 10 / 9 / 7.5 / 5 s at rank 0–3. Of 8
+    exported monks, 4 are not 3/3 — today's "59+ = 5 s" guess is wrong for them. No export → 10 s. Mend 289 s flat.
+  - **Tank cooldowns:** every Mimic already uploads its own timers (`character_live_state.cooldowns`, incl.
+    `aa:area_taunt` and the disc); only Target Info reads them. Smallest add: a `tank_cooldowns` array on the bot's
+    `/api/agent/di-status` payload every Mimic already polls. Two gaps: `/pipe` is read only inside the HUD build,
+    and timers under 60 s are never uploaded (so `/pipe taunt` never leaves the machine). Stale rows must show stale,
+    not ready (`live_state` is sheddable).
+  - **Mana:** the Zeal raid pipe has no mana for others; exact mana comes only from Mimic raiders' own uploads, plus
+    the chat "N% mana" macros (`mana_reports`). `di-status` filters to Cleric/Druid/Shaman today; widen it for tabs.
+  - **Quests:** the Command Center (`apps/mimic/command.html`, agent `/api/command-center`, collapse store
+    `wp_cmd_collapsed`) gains a section fed by a new bot route `GET /api/agent/quest-needs?zone=&names=` returning
+    quest → steps → `needed_by` with a source (flag / tick / who / loot). v1 covers the 29 PoP flag steps
+    (`pop_flags`, 23.8k rows); item/loot proofs need the web rules (`popGuideAuto.ts`) ported to JS.
+  - **Options put to the guild lead:** quests A zone ladder (current zone's quests) vs B who-first grid; tank strip
+    A rides `di-status` vs B per-tank poll; mana A class tabs vs B stacked sections. Recommended: A, A, A.
+
+### 224. Pipe presses: ignore repeats inside a running timer, carry target name / spawn id; tags as roles (WPMA, follow) (2026-10-10)
+**The calls** (the guild lead):
+- *"pipe messages sent between timers should be ignored if tied to your timers"* — a `/pipe <word>` that arrives
+  while that ability's own timer is still running does not restart it (the game refused that press).
+- *"...and taking a target name and/or spawn id ... should also help with identification. %t outputs target name in
+  game, we may need one for spawn id."* — `/pipe <word> %t` keys the timer to that mob; a Zeal fork code for the
+  target's spawn id (alongside `%t`) is to be added so same-name mobs separate.
+- *"if you tag something 'foo' and you /target foo it will target the tagged foo target"* — Zeal tags double as a
+  targeting handle. Two role conventions follow:
+  - **Follow:** a raider tags themselves with a follow tag (e.g. `<Name>Follow`) so a slow-moving raider can
+    `/target <tag>` then `/follow` (the guild lead raised it for a specific raider; not named here).
+  - **Main assist `WPMA`:** the tank who holds main assist is tagged `WPMA`; everyone else can `/target WPMA` then
+    `/assist` (or `/assist WPMA`). Taking the job: `/target WPMA`, `/tag chat clear`, `/target <self>`,
+    `/tag chat WPMA` (to be confirmed against Zeal's tag semantics). Mimic should treat the `WPMA`-tagged raider as
+    the declared main assist, latest tag winning, alongside the existing raid-chat declaration.
+- *"even include a specific zeal target for MA. maybe target with 4 arrows pointing at it?"* — a new tag shape for
+  main assist: a target ring with four arrows pointing inward.
+- **Status:** two research agents scoping (Zeal fork: the spawn-id code, `/target`-by-tag semantics, the MA shape as
+  a local draft; agent: the repeat-press guard, the pipe grammar with target name / spawn id, WPMA as the MA signal).
+- **WPMA only** (the guild lead): *"WPMA is Wolf Pack Main Assist. if MA we can do that, but the in-game assist may look
+  for someone names MA---- as their name"* — plain `MA` could match a player whose name starts with "Ma", so only
+  `WPMA` counts as the main-assist tag.
+- **Agent design (scoped):** a pipe press inside its own running timer is ignored when it lands earlier than 1.5 s
+  before the timer's end (pipe latency cancels between presses; the server arms at reuse − 1 s); log-line starts
+  always win; AA presses keep the previous press so a refused one cannot teach a too-short reuse. Grammar:
+  `/pipe [cd ]<word> [<mob name>] [<spawn id>]`, longest known word first, a trailing integer is the spawn id only
+  after a name. WPMA is kept by NAME in the agent (outside the 10-minute tag TTL and the zone wipe), newest wins, cleared
+  by `clear` or after 6 h; the bot's `utils/mainAssist.js` gains a tag source beside the raid-chat declaration.
+  ⚠ `docs/PRIVACY.md` never says that the structured tag extract (mob, tag text, tagger) uploads — fix it in this
+  change, with the MA name and pipe-target timers.
+- **Raid-leader handoff** (asked the same day): *"research if we could use a zeal command to give raid leader to
+  someone as a guild officer, or if we have a password attached that the user sets for being able to have someone take
+  raid lead"* — under research (client/server mechanics, Quarm's rules on automation, security of a shared password).
+- **Zeal fork findings (2026-10-10, local draft `ma-draft` 2c9d691 on top of `test-all` 59bbfca, NOT pushed, not
+  compiled):**
+  - `%t` is the game's own code; Zeal runs its `percent_replacements` first (chat.cpp), and `/pipe`, `/log` and
+    `/assist` all pass through it. The draft adds **`%tid`** (alias `%targetid`) = the target's spawn id, empty with
+    no target. Multi-letter on purpose: Zeal's replace is a case-insensitive regex and native single-letter codes
+    could not be enumerated here, so a clash would be silent.
+  - Tag-based targeting today is `/tag target <text>`: exact, case-sensitive match on the tag's text fields, over
+    visible NPCs and corpses within 250 units, nearest wins. ⚠ **A player cannot carry tag TEXT, only a shape**, so
+    tagging yourself "WPMA" as text would not be targetable. The draft lets plain `/target <text>` try tags first
+    (then falls back to the game's `/target`) and lets `/target ^MA^` match by SHAPE, which works on players.
+  - ⚠ **`/tag chat clear` wipes ALL tags on every receiving client** — it is not a per-sender clear. It must not be
+    part of the "take MA" sequence.
+  - **Main-assist marker:** key `^MA^`, a target ring with four inward arrows (preview sent to the guild lead).
+    Exclusive: a new `^MA^` clears the previous holder. Take MA: `/target <your name>` (or Target Self), then
+    `/tag chat ^MA^`. Everyone else: `/target ^MA^`, then `/assist`. Older clients read `^MA^` as `^M` (the moon).
+  - **Follow** needs no new code: `/tag chat ^PF^` on yourself (paw with an F); followers `/target ^PF^`, `/follow`.
+  - Open: whether the key stays `^MA^` or becomes `^WPMA^` to match the guild's name; Mimic treats the marker holder
+    as the WPMA main assist either way.
+- **The handle is guild configuration** (the guild lead: *"the one for other guilds may be RaidMA or something else
+  make it configuration but with the stipulation that nobody should have that name in the raid OR of there are any
+  mobs that start with that phrase"*): `main_assist_tag` in `guild/config.json`, Wolf Pack `WPMA`. Because `/target`
+  matches name prefixes, the value is rejected at config time if any NPC name or known character name starts with it,
+  and Mimic warns at raid time if a raid member or a targeted mob does. Measured: `WPMA` / `RaidMA` match nothing;
+  `MA` matches 171 NPC names and 295 players seen in `/who`. Rule + check list in `docs/DESIGN-guild-kit.md` §3.
+- **Raid-leader handoff researched** (`/tmp` notes not kept; summary here):
+  - Server (EQMacEmu): the make-leader button sends `OP_RaidInvite` action 20 and is honoured **only from the current
+    leader** — no officer, GM or password path. When the leader camps, goes linkdead or leaves, leadership passes to
+    the **first other member in the raid list** (only with 3+ remaining), not by rank.
+  - Zeal already has `/raidpromote` (`/rp`, sends Quarm's `#raidpromote`; its README says raid leader, its changelog
+    says group leader — unverified) and a password precedent, `/autoraidinvite <password>`, which invites on a matching
+    tell. The Zeal pipe is output-only, so Mimic cannot send commands into the client.
+  - Both proposed designs (an officer's message or a password making the leader's client promote someone) fail in the
+    case that matters most — a linkdead or AFK leader can run nothing — and put secrets in chat logs. Quarm's posted
+    rules (quarm.guide/about-project-quarm: "If you have to ask if you can do it or not, just don't do it"; "All forms of
+    automation software are not allowed…") make acting on another player's message **not clearly allowed** — treat it
+    as not allowed unless the Quarm team says otherwise in writing.
+  - Options put to the guild lead: A no automation — keep an officer FIRST in the raid list so the server's own
+    handoff lands on them (and/or promote at raid start); B a confirm-first prompt where a human presses a key;
+    C a password auto-promote (copy of `/autoraidinvite`; rules risk). Recommended A.
+
+### 225. Raid lead: C (password auto-handoff) as a Zeal setting, B as the no-password fallback; `/pipe ARI` posts the invite password to Discord; marker key `^MA^` (2026-10-10)
+**The calls** (the guild lead):
+- *"/raidpromote makes someone a group leader presumably from unassigned making a new group in order from 1 to N where
+  the first open group with no member is."* — so `#raidpromote` is a group-leader tool, not a raid-leader one.
+- *"A is good to know, but we figure that out from Zeal pipes now too. update command center when raid lead changes."*
+  — the raid leader is already visible from the Zeal pipe; the Command Center must update when it changes.
+- *"B is good if there is a password and the person asking to take over raid lead doesn't have the password."* — the
+  confirm-first prompt is the fallback for a request WITHOUT the password.
+- *"C is ideal because we can set it to automatically take raid lead. this would be ideal to be able to set in our
+  zeal in like we so with autojoining channels in eqclient.ini."* — the password auto-handoff, configured persistently
+  in the Zeal ini like channel auto-join.
+- *"may need to accept client only passwords and make sure it doesn't throw an error or crash anyone if the person
+  receiving the request didn't have zeal or doesn't have it up to date OR neither person is a raid lead or officer or
+  anything else."* — the password lives only on the leader's client (never uploaded); every failure path is silent
+  and safe: no Zeal / old Zeal on either side, the receiver not raid leader, the sender not in the raid.
+- *"marker should be MA"* — the main-assist tag key stays `^MA^`.
+- *"a /pipe ARI should update something on our side in discord with/Ari and the Password given. it may not need to
+  overwrite only the current ARI person and password if we're doing more than one raid for something.."* — the
+  auto-invite (ARI) password goes to Discord so raiders can get invited, ONE ENTRY PER LEADER (several raids can run).
+- *"ARI is cleared currently when you restart the client"* — ARI should persist across a client restart.
+- ⚠ **Rules note (recorded, not overriding the call):** §224's research found Quarm's posted rules forbid automation
+  and say "if you have to ask… don't". Zeal already ships `/autoraidinvite`, which acts on a tell the same way, so the
+  auto-handoff sits in that existing precedent; the guild lead may still want a written OK from the Quarm team.
+- **Status:** a Zeal fork draft (persisted ARI, escaped password match, `/autoraidlead`, pipe notices) and the
+  Mimic/bot side (ARI card in Discord per leader, raid-leader change on the Command Center) are being drafted.
+- **Drafted (2026-10-10):** Zeal local branch `raidlead-draft` b15b8a2 (on `ma-draft`; not compiled, not pushed):
+  `AutoRaidInvite` / `AutoRaidLead` per character in zeal.ini, plain-string whole-message match (fixes the
+  unescaped-regex bug), `/arl give`, a "raidlead" tell prompt, 10 s rate limit, pipe lines `ARI set|clear`,
+  `ARL on|off`. The handoff sends `OP_RaidInvite` (0x425f) action 20 through Zeal's mapped `send_message`, with a
+  `RaidGeneral_Struct` built from the server source — **must be proven in a two-person raid** before raid use. The raid
+  leader was already on the type-5 pipe (rank "Raid Leader"). Bot/Mimic design: one ARI entry per leader in `bot_kv`
+  (new `utils/ariBoard.js`, replacing the single state.json entry), one edited-in-place Discord message, 20-minute
+  heartbeat, Mimic scrubs any non-on/off `ARL` pipe line to `ARL ***`.
+- **"defaults"** (the guild lead) to the five open questions: a dedicated members-only thread for the ARI list;
+  entries drop 4 h after the last heartbeat; officer-set and Mimic-set entries share one list; `/ari` shows the
+  password to non-officers too; raid-lead changes show on the Command Center only (no Discord post).
+- **Next asked:** suggestion-thread write-ups (what / why / how / how tested) and test cases for every Zeal change,
+  and a referenceable showcase branch in the fork for preview images and posters.
+
+### 226. Zeal write-ups, test cases and a showcase branch; a banner on every Zeal PR; Burnouts cigarette and logo banners (2026-10-10)
+- **Asked** (the guild lead): *"start drafting overviews for each zeal PR update for me to post in zeal suggestions
+  threads that read as what, why, how, and how tested. then write me the test cases and help me get this referenceable
+  in a different fork version"*, then *"the banners are for all of the zeal PRs once they're filed"*.
+- **Landed:** `docs/upstream/zeal-<change>/SUGGESTION.md` (≤350 words, banner on top) and `TEST-CASES.md` for 11
+  changes; `docs/upstream/README.md` is the status index. The fork's **`showcase` branch** holds only docs: an index,
+  one folder per change, and per change a 1200×675 poster and a 1280×320 PR header banner rendered from one JSON
+  (`showcase/tools/render-posters.js`). **When a PR is filed:** set `pr_url` and `status` in its JSON, re-run the
+  script, commit — the banner's pill and the index row follow. Spawn ids (upstream PR 229) checked merged 2026-09-01.
+- **Burnouts icon** (the guild lead: *"a burning rolled cigarette instead of match"*) and **guild banners carry the
+  guild's logo** in a colour contrast-checked against the flag (*"have the logo on them that contrasts well"*), with
+  logo + name as a one-line switch (*"could we try putting the names on the flags also?"*). Local branch
+  `guildicon-draft` `bbd5fe0`, not pushed, not compiled with MSVC. Open: the guild lead picks L (logo) or LN (logo +
+  name); the website's banner PNGs change with it and go through beta.
+- **Settled in review (same day):** names on the flags (LN) is the default, **full names for every guild** (*"keep
+  full names"*, *"fix intervention with its whole name"*, *"full name for tranquillity"*), names may sit above and
+  below the logo (Here There Be Monsters **stacked**: HERE / THERE, serpent, BE / MONSTERS; Mass Group Ego: MASS,
+  mirror, GROUP / EGO). The wolf stays white with black details (*"needs to be closer to the white"*). **Banner logos
+  use the guild icon's own colours** (*"missing colors from many of these on the inside, please consult the non-banner
+  ones"*), with a thin dark or light rim only where the icon's colour fails 3:1 against the flag — **no backing disc**,
+  Tranquility included. Commits `30606bc` (names, layouts, wolf) and `30a4eb2` (icon colours, rims) on
+  `guildicon-draft`; Intervention as INTER- / VENTION (`d9dd631`); **Tranquility shows TRANQ** (the guild lead:
+  *"make it TRANQ for tranquility"*, `dca0b85`). Website banners on beta: web 1.8.136 / 1.8.137.
+- **Europa's picture file was too big for the fork's tag pictures (found 2026-10-10).** The `tag-icon-files` review
+  fixes (`b20331f`) lowered Zeal's picture limit from 512 to 128 pixels a side, but the site kept offering a 226×256
+  `EUR.png`/`EUR.tga` and still told guilds "512". In game that file is skipped with a chat note and the built-in
+  Europa icon draws instead. Beta (web 1.8.137) ships a 113×128 copy and says 128. **Graduated to `main`** (the guild
+  lead: *"send the Europa fix to main"*): web 1.8.138 `b8d08da3` — the 10-09 shield logo at 113×128, the 128 rule, a
+  roadmap entry; beta bumped to the same 1.8.138 (`8aba1676`) first so the main→beta sync merges cleanly.
+- **Zeal drafts pushed and in the test build** (the guild lead: *"push"*). `ma-draft` `206b884`, `raidlead-draft`
+  `b15b8a2` and `guildicon-draft` `dca0b85` are on the fork; `raidlead-draft` and `guildicon-draft` each sit on
+  `ma-draft`. `test-all` = previous `59bbfca` + both, merge `3c4766c` (CHANGELOG conflict: both sides kept); the GitHub
+  Windows build passed, so `tag_arrows.cpp` compiles. Nothing run in game yet. ⚠ The test build's moon key is `^MEZ^`
+  (`^M^` no longer draws it); the website's symbol list still says `^M^`, correct for official Zeal and the
+  `tag-shapes` PR — decide which the site shows.
+- **Guild flag key is `^F<code>^`, replacing `^B<code>^`** (the guild lead: *"maybe we should make it F<Guild
+  acronym> for Flag"*, then *"instead of b for banner"*, and *"nobody has installed this but me, were safe to
+  proceed"*). `^FWP^` = Wolf Pack's flag; `^F^` alone and `^Fire^` stay the flame (a guild key must name a real code);
+  `^B` is the plain blue arrow again, so an old saved `^BWP^` tag now shows a blue arrow. A flag picture override is
+  `FEUR.png`. Website: beta 1.8.139 (`5e8f67b9`) and `main` 1.8.139 (`2e68c737`) the same day — same version on both
+  so the sync merges. Docs, posts, test cases and showcase changed in the same round; the fork's `tag-shapes`,
+  `tag-icon-files`, `guildicon-draft` and `test-all` get the code change.
+- **Welcome card "Set up parsing" refreshed** (the guild lead: *"this needs to be updated"*): bot 3.1.240 `98512340`.
+
+### 227. Test hotkeys write the evidence; every Zeal post carries PR + evidence lines; PoP flags export added (2026-10-10)
+
+- **In-game testing runs from socials, and the log is the evidence** (the guild lead: *"make me a config file of
+  hotkeys … make them have the test numbers and also output the results so that I can just grab the log"*; then
+  *"you can just have me join a channel"*, and *"/leave 1 5 times in a row to have everything go to channel 1"*).
+  Each test button posts what to look for into a password channel (as `/1`), writes `[id] target=%t id=%tid` with
+  `/log`, then runs the commands; PASS/FAIL are buttons 11/12 on every page. ⚠ A new character cannot talk in a
+  custom channel ("not high enough level or high enough karma"), and the guild lead's real characters have no 7 free
+  socials pages, so the default is now `/say` for the what-to-look-for line and `/log` for the target, PASS/FAIL and
+  notes (`/log NOTE …`); `/log` works at any level. The channel flow stays as an option. 64 buttons on pages 4–10, every
+  fork change plus PoP flags. Generated from one list: `showcase/tools/hotkey-tests.json` + `hotkey-socials.py` on the
+  fork's `showcase` branch (`61f19c6`); `tools/evidence.py` turns the log into one EVIDENCE.md per change, replacing
+  the tester's and any listed character names, and reports tests with no PASS/FAIL. The character-specific .ini and
+  guide stay out of the repo.
+- **Every suggestion post carries a "Pull request" and a "Testing evidence" line** (the guild lead: *"I'm going to make
+  Zeal suggestion threads link to these PRS as well … I'll need to have the testing evidence"*). Placeholders until the
+  PRs are filed and the run is done (`d206a452` here, `61f19c6` on the showcase). Guild emblems rides the tag-shapes
+  PR and mez/slow rides the main-assist PR, and their posts say so.
+- **PoP flags export on /camp** (the guild lead: *"add this in"*, with the suggestion thread 'Zeal "Export data on
+  /camp" option to include a full #POPFLAGS output?'). New fork branch `popflags-export` (`195433e` + include fix
+  `9b0186d`) on Zeal 1.4.8: with "Export data on /camp" on, camping sends `#popflags all` once, keeps 3 seconds of
+  server-coloured reply lines and writes `<name>-PoPFlags.txt`; `/outputfile popflags [name]` does it on demand; one
+  request per 10 seconds. Drafted by a Sonnet agent and reviewed here. The first `test-all` build (`ab95a91`) failed
+  on a missing `callbacks.h` include; `test-all` is now `2c5e006`. Posts and showcase entry:
+  `docs/upstream/zeal-popflags-export/`, `showcase/popflags-export/`.
+- **First in-game run: `#popflags all` is staff-only; the export now sends the overview and tiers 1–5.** The guild lead's
+  test file held one server line, "The all option is restricted to server staff." That proves the camp hook, the colour
+  filter and the file write; the command was wrong. Quarm's `zone/gm_commands/popflags.cpp` (EQMacEmu, public) gives
+  players `#popflags` = overview and `#popflags 1`–`5` = each tier; `all` needs admin 80. Every reply line is White,
+  Lime, Yellow or Red, all kept by the filter. Fork `ef17b00`: six commands one second apart (all scheduled up front,
+  none from inside a delayed callback), file written 3 s after the last, the chat timestamp the run showed on each
+  line removed, 15 s between requests. `test-all` `67bea01`. The test character is new, so its
+  `<Char>_pq.proj.ini` has no `[Socials]` section yet; the hotkey guide now says to paste the whole file, header
+  included, in that case (the format matches existing characters' `PageNButtonM…` socials).
+- **Second run: the camp export spammed the chat** (the guild lead: *"the popflag spam on camp is noticeable"*). Each
+  section printed several times (Tier 4 ×3, Plane of Time ×10). Cause: Zeal's `CallbackManager::invoke_delayed`
+  (`callbacks.cpp:142-149`) fires a callback when `now >= time` but erases it only when `now > time`, and
+  `GetTickCount64` moves in 10–16 ms steps, so a delayed callback runs on every frame inside that step. Fix on our side
+  (popflags `b27bb26`, test-all `593f848`): each send checks its turn and runs once; captured reply lines are cleared
+  from the chat output (the same `msg = ""` suppression nameplate.cpp uses), so they reach the file only; only the four
+  reply colours are taken; sends are 250 ms apart with a 1.5 s tail. ⚠ The `invoke_delayed` bug is upstream and
+  affects any feature that schedules with `AddDelayed`; a one-character fix (erase with `>=`) would make a small,
+  separate upstream PR — not bundled into ours.
+- **Guild marks include /roleplay players** (the guild lead: *"Roleplaying toons still expose their guild, so they
+  should be included"*). Only `/anon` (`AnonymousState == 1`) is skipped now, matching Zeal's own `show_guild` check.
+  tag-shapes `4447114` (amended), merged down to tag-icon-files `ddde80a`, guildicon-draft `605ef22`, test-all
+  `99c7345`.
+
+### 228. The upstream Zeal bar for our PRs: small, modular, off with no cost, existing behaviour untouched (2026-10-10)
+
+- **What the upstream maintainer wants** (relayed by the guild lead, 2026-10-10): *"Preferably your PRs are modular and
+  easy to disable w/out any performance impact (or just small and easy to see they are safe / do not break existing
+  behavior)."* The same note called another contributor's open PRs "minor examples of where the LLM generated code
+  gets clumsy / bloated / repetitive and makes the existing code/functionality harder to maintain."
+- **What that slop looked like** (the guild lead asked us to comb upstream #245 and #236; two Sonnet reviews,
+  verified here against the diffs and 1.4.8):
+  - **#245, tick bar:** the render code reaches into the wrong layer and runs for every nameplate string. It has
+    dead plumbing (`is_self` set, never read), unused locals, tick math copied from `tick.cpp`, and a latent D3D8
+    bug (`DrawPrimitiveUP` resets stream 0 inside the font loop).
+  - **#236, spell effects:** a wrong prefix length drops persisted `replace-classic` entries, and a 256-character
+    single ini value truncates. It also leaves debug `print_chat` in sync loops, a mutex that guards nothing, one
+    switch pasted three times, and nine commits including fixups.
+  - The full notes are a scratchpad deliverable, not committed: they review someone else's work, so the guild lead
+    decides whether to share them.
+- **Our checklist before filing a fork PR** (applies to every branch in §226/§227):
+  1. One squashed commit.
+  2. One setting turns it off, and with it off the hot paths do zero extra work: no per-frame lookups, no
+     allocations.
+  3. Nothing changes for players who never touch the feature.
+  4. No dead code, debug output or review-chatter comments.
+  5. No copied helpers; reuse Zeal's own.
+  6. clang-format clean.
+  7. A README that matches the actual commands.
+- **Size check (code under `Zeal/`, vs each branch's base):**
+
+  | Branch | Lines added | Commits | Files | Notes |
+  |---|---|---|---|---|
+  | spell-id-tooltip | +28 | 2 | | squash to one when filing (§229) |
+  | tag-corpses | +29 | 1 | | |
+  | popflags-export | +121 | 3 | | |
+  | hide-ui-cursor | +194 | 1 | | |
+  | raidlead-draft | +223 | 1 | | |
+  | tag-persistence | +291 | 3 | | |
+  | tag-icon-files | +354 | 4 | | |
+  | guildicon-draft | +454 | 10 | | |
+  | ma-draft | +1175 | 41 | 75 | |
+  | tag-shapes | +1964 | 3 | | mostly geometry tables |
+
+  The last two fail "small" on their face and need splitting or slimming before they go up.
+
+### 229. Zeal: the spell id in spell info windows (`/spellid`), built to the §228 bar (2026-10-10)
+
+- **The ask** (the guild lead): *"add in a bit for zeal to include the spell ID in a spell's tooltip to make it easier
+  to block"*. Blocking a buff (and our `#blockbuff` picker, §157) works by id, and the client never shows one.
+- **What shipped:** fork branch `spell-id-tooltip` (`0a57fba` + README wording `67cb705`; squash to one commit when
+  filing), on Zeal `main` 1.4.8. `/spellid [on|off]` (bare toggles) adds `Spell ID: <id>` as the last line of the spell
+  info window. One `ZealSetting` (`[Zeal] ShowSpellId`, **off by default**) and one helper appended in
+  `UpdateSetSpellText`, on both the enhanced and the stock path; nothing per frame. +32/−1 across `item_display.cpp`,
+  `item_display.h`, README. clang-format clean on every changed line (the file's two existing diffs are upstream's).
+- **Where it shows:** every window that goes through `CItemDisplayWnd::SetSpell` — the buff window, spell gems, the
+  spellbook. **Not** item windows (a scroll in your bags, an item's click effect): those go through `SetItem`. The
+  first README said "scrolls"; corrected before it was filed.
+- **Built:** merged into `test-all` `035d8a3`; GitHub build passed, release `test-all (035d8a3)`. Not run in game.
+- **Docs:** `docs/upstream/zeal-spell-id-tooltip/` (post + 13 test cases), the fork's `showcase` branch
+  (`3e115b6`: poster, banner, index row), hotkey tests `SI1`–`SI3` (page 10, buttons 4–6).
+- **Not done, on purpose:** the item-window path (a scroll's or click effect's spell id). It is a second hook in a
+  different function; add it only if blocking needs it.
+
+### 230. Other guilds' logos become Zeal tag pictures, shipped with the fork's Zeal build (2026-10-10)
+
+- **The ask** (the guild lead): 17 guild logos collected from their Discord servers, *"capture and queue for cutting"*,
+  then *"cut them into icons and banners"*, then *"these are for zeal"*.
+- **Cut:** 16 guilds (Loot & Some Fun sent two logos), each an icon `<CODE>.png` (`^I<CODE>^`; Continuum as
+  `ICON.png`, since Windows reserves `CON`) and a 128x64 banner `F<CODE>.png` (`^F<CODE>^`). The banner is the
+  guild's own name-bearing logo where the art has one, else the icon beside the name in a colour from the logo.
+  All within Zeal's limits (128 px a side, 2:1, 1 MB). Reproducible: `docs/upstream/zeal-guild-icon-refresh/intake/`
+  (`cutlib.py`, one `recipes_*.py` per group, sources, `cut/`, `QUEUE.md`). First drafts by three Sonnet agents, each
+  preview reviewed here.
+- **Shipped in Zeal, not the website:** fork branch `guild-tagicons` (`ad52240`, data only, on `tag-icon-files`, so
+  that branch's upstream PR stays code), merged into `test-all` `e1fde3d` with Europa's picture. Anyone on that build
+  sees them; a player's own picture in `tagicons\custom` still wins; official Zeal shows the built-in shape. The
+  merge kept test-all's tagicons README and fixed two lines in it: the size limit (128, not 512) and the 160 px
+  templates, which must be scaled down to load.
+- **Not done:** the wolfpack.quest gallery does not list them (its test wants each file named exactly the guild
+  code, which `F<CODE>` and `ICON` are not). Weak spots: Intervention and Tranquility came from small sources; the
+  Novae, Zek, Continuum and Tranquility banner names are small; the Eclipse corona has a hard left edge.
+
+### 231. Mimic 2.8.1 stable cut from beta as-is; the beta sync had been failing all evening (2026-10-10)
+
+- **The ask** (the guild lead): *"cut a fresh stable mimic for this evening with the updates for the birthday"*.
+  Nothing named a birthday anywhere (repo, branches, briefing); asked, the guild lead picked **all of beta as-is**.
+- **Shipped:** `main` `d76fedbc` (web 1.8.141, the roadmap entry, pushed alone) then `3200f49b` (Mimic 2.8.1,
+  agent 3.7.127, pushed alone so it is the tip; player notes in the release body). Release `v2.8.1` published
+  23:17 UTC. File-level promotion of `apps/mimic` + `packages/wolfpack-logsync` from beta (byte-identical) plus the 17
+  agent/Mimic tests beta had added or changed; web and bot beta work stays on beta. Graduates FB-72 and FB-73.
+  Gate: dashboard check and lint clean; the suite passed 9,842/9,842 on the second run (the first run had one
+  load-timing failure in `pgrst-cap-bot-reads`, a bot test, which passes alone with and without the promotion).
+- **Beta sync repaired by hand:** `sync-beta.yml` had failed on every main push since 19:33 UTC (conflicts in
+  `web/package.json` and `web/public/zeal/PROVENANCE.txt`), so beta was missing the day's main work. Hand-merged on
+  beta (`483210ef`): `web/package.json` takes main's 1.8.141, PROVENANCE keeps beta's guildicon-draft paragraph;
+  beta's full suite 10,103 passed. Then re-parked at **2.8.2** (`9738bb0c`). A sync failure is loud only in Actions:
+  check its runs before a stable cut.
+
+### 232. Merging socials across machines: scoped, options out; UI backups now owner-only (2026-10-11)
+
+- **The ask** (the guild lead): *"we should be able to merge socials across machines with the knowledge from today.
+  directly into characters files while making a backup"*.
+- **What exists** (two research agents): Mimic's ☁ backup already uploads each character's whole file set, with the
+  machine's name, and ↩ Restore writes a whole bundle back (refused while EQ runs, `.bak` first). The agent and Mimic
+  both have key-level ini writers that wait for the character to log out (`_applyIniKeyEditsToFile`,
+  `apps/mimic/iniKeyEdits.js`). Missing: a socials-only merge, any `[CustomValid]` handling (§227: a file without
+  `Valid=42` seemed to make the client ignore `[Socials]`), automatic capture, and pruning of `.bak` files.
+- **Fixed first:** the UI-backup and staged-UI-edit routes now answer only to the character's owner (bot 3.1.243,
+  `7d93301f`; details in the guild lead's private briefing).
+- **Open:** the guild lead picks between pull-from-my-other-PC, automatic sync and a web hub.
+
+### 233. Better bot voices with KittenTTS 2: pinned (2026-10-11)
+
+- **The ask** (the guild lead): *"maybe we can use kittentts2 to make the voices better for the bots"*, then
+  *"put a pin in this."*
+- **What was found:** KittenTTS 2 is 1.7B parameters (~947 MiB) and needs ~6 GB RAM on CPU. It is Python-only,
+  with 47 voices, voice cloning and its own Stellon Labs licence. It would join the §169 announcer candidates
+  (Kokoro / Chatterbox / Qwen3 on Tower). Today the bot speaks through msedge-tts + `@discordjs/voice` 0.18 (which
+  may have broken under Discord's 2026-03-01 voice-encryption change, unchecked), and Mimic through the browser's
+  `speechSynthesis`.
+- **Pinned, nothing built.** The options put out were: A, a listening test on Tower; B, KittenTTS 2 everywhere;
+  C, keep the §169 plan. When it is unpinned, run `/voicetest` first: if the bot's Discord voice is down, that
+  comes before any voice-quality work.
+
+### 234. EverQuest on an Android phone: the Winlator route, written up as a draft (2026-10-11)
+
+- **The ask** (the guild lead): *"let's get back to getting this to work on mobile"*. This means the Windows
+  client under Winlator, after a third-party build was dropped for the official one.
+- **Landed:** `docs/RUNBOOK-android-winlator.md`. It carries the Deck's working renderer chain across
+  (dgVoodoo `D3D8.dll` + `dgVoodoo.conf` → D3D11 → DXVK → Vulkan, now on Turnip), along with its failure
+  signatures, the `patchme` + working-directory launch, and the FPS cap. Every Winlator-specific step is marked
+  [verify]: a web search found no report of EverQuest under Winlator or its forks.
+- **Scope:** EverQuest + Zeal on the phone. Mimic and log uploads stay on the PC. Streaming from the PC
+  (Moonlight/Sunshine or Steam Link) is the dependable route when the overlays matter.
+- **No device details** go in the runbook or a report (the guild lead's standing "don't post my PII").
+- **Follow-up, the same night:** *"people are running games in browsers now as well, perhaps that's a way forward
+  with mimic in the mix?"* Two research agents:
+  - no browser EverQuest client can reach Quarm, and Windows-in-the-browser runs at about 1 fps;
+  - Mimic's overlays could run in a phone browser against an agent in Termux, log-driven panels only.
+  Options went out: **A**, stream the PC (Mimic comes along unchanged); **B**, phone-only, with a Termux agent and
+  browser overlays (a small agent change, and only after Winlator boots EverQuest). **Open:** the guild lead
+  picks. Recorded in the runbook's last section.
+
+### 235. Zeal fork: tag-persistence squashed; the popflags commands no longer show in chat on camp (2026-10-11)
+
+- **Squash** (the guild lead: *"go ahead and squash these into persistence"*): `tag-persistence` is now ONE
+  commit, `7bacdd3`, on v1.4.8. It has the same tree as the old tip `6ab82a9` (checked with `git diff`), and the
+  message carries the Safety bullets. Force-pushed with a lease on the old tip. Both PR descriptions are
+  paste-ready in `docs/upstream/zeal-tag-persistence/PULL-REQUEST.md` and `docs/upstream/zeal-tag-corpses/`
+  (the corpses one uses upstream's own tag keys).
+- **Popflags echo** (the guild lead, with a screenshot: *"On camp we see these commands"*): all six `#popflags`
+  sends showed as say lines (`[S] [Name]: #popflags 3`, abbreviated chat), although `do_say(true, …)` hides the
+  local echo. While a request is pending, `popflags_capture` now also clears any non-server-colour line containing
+  `#popflags`, and stores nothing from it. `popflags-export` `80a8de9`, merged into `test-all` `75e85e4`.
+  Not yet seen in game: the next camp should show no `#popflags` lines.
+- **Not settled:** why the hidden say still comes back. Either the server echoes the say to the speaker, or the
+  echo patch misses this path. The fix works either way. Other hidden `#` commands (for example `#showhelm`) may
+  show the same echo; nobody has reported it.
+
+### 236. Command Center rolls show the whole range when it does not start at 0 (2026-10-12)
+
+- **The ask** (the guild lead, with a screenshot): *"Need to see the range if it's not 0 to X"*. A set rolled 999 to
+  999 sat in the Command Center as "999 (Spectral Parchment)", which reads like an ordinary 0 to 999 roll.
+- **Landed:** the set header in `apps/mimic/command.html` prints `from–to` when `from` is not 0 (for example
+  "999–999"); a 0-based set keeps the plain top number. The agent already kept `from` per set, and the agent
+  dashboard and the web /rolls page already printed both ends. Beta `16fb1aaa`, test `test/roll-range-label.test.js`
+  (fails with the fix reverted). Reaches Windows beta testers with the next beta build; stable at the next cut.
+
+### 237. Raid night 2026-10-11: spectator HP, Bastion of Thunder slow mode, a logout crash, a freeze slip
+
+- **Spectator HP** (the guild lead: *"Spectator keeps only showing one group's HP then showing everyone else"*).
+  Measured live: 8 of 21 uploaders send HP for the whole raid, 13 only for their own group. `spectator_positions`
+  read `hp_pct` off whichever row won the position, so the column flipped with the last writer. HP now comes from
+  the freshest non-null reading in the same 30 s window (migration `20261012013000_spectator_positions_hp`). It is
+  DB-only (restarts nothing), so it was applied through MCP mid-raid; live check 45 of 45 with HP. The file landed
+  after the freeze.
+- **Slow mode** (the guild lead: *"When we kill mobs in 'slowmode' it sets the spawn for those to 18 hours"*, then
+  *"Just the second floor BOT named tonight, not the first floor ones"*; picked C, a switch now plus auto-detect).
+  - The second-floor named are picked by spawn height in `eqemu_spawn2` (z ≈ 1,470 to 2,330): Auliffe Chaoswind,
+    Brynju Thunderclap, Kuanbyr Hailstorm and Eindride Icestorm get `slowModeHours: 18`. The first floor
+    (z ≈ -1,400: Gaukr, Hreidar, Laef, Oreen) keeps 3 h.
+  - The switch lives in `bot_kv` (`slow_mode`) and is judged by each kill's own time. One rule at the
+    `recordKill` wrapper plus the boot/6h reconcile. Officers flip it with `/slowmode`; it turns itself off after
+    8 h.
+  - The server's end-of-slow-mode guild line (*"Druzzil Ro tells the guild, 'A ripple passes through your guild's
+    thread of time. … Time has returned to its natural pace…'"*) turns it off via `POST /api/agent/slow-mode`.
+    The agent side is still to come on beta. The STARTING line has not been captured, so nothing turns it on
+    automatically yet; the guild lead was asked for it.
+  - Tonight's window (20:13 ET from guild chat, to 21:43:36 ET from the end line) is stored in `bot_kv`, so the
+    startup rebuild gives tonight's second-floor kills (Auliffe, Brynju, Kuanbyr) their 18 h without hand edits.
+    Bot 3.1.244.
+- **Logout crash** (Zeal test-all `e1fde3d`, 9 s after camping): a minidump walk puts it inside the client's own
+  world teardown. dpvs.dll called through a garbage pointer under `CDisplay::StopWorldDisplay`, with no Zeal frame
+  on the stack. About 85% not a Zeal bug. The one Zeal path in that teardown is the nameplate font sprite swap
+  (long-standing, in official Zeal too). Next step only if it recurs: a night with Zeal nameplate fonts off, and
+  a richer minidump (`MiniDumpWithIndirectlyReferencedMemory`) on the test-all build if the guild lead wants it.
+- **Freeze slip:** the DECISIONS 236 docs push landed on main at 21:23 ET, inside the Sunday freeze. Railway
+  SKIPPED it, and Vercel builds only `web/` changes, so nothing restarted. Check the ET clock before every main
+  push on a raid night; the session clock read UTC.
+
+### 238. "What you hear": per-trigger speak / overlay only / off, a 🔇 button on callouts, personal trigger sync (2026-10-12)
+
+- **The ask** (the guild lead): *"fix the categorization for triggers within the guild section so that we can pick
+  ones that we specifically do not want to hear or can just be shown on the trigger overlay. The charm aging. And
+  many other callouts do not have a way to turn them off, such as enrage soon. And it seemed that I was still
+  getting the enrage callouts, even though I had turned it off for my character"*, and *"Personal triggers should
+  be syncable"*.
+- **Why enrage kept speaking:** three separate paths. (a) The built-in "Enrage soon" (12%) had no switch at all.
+  (b) The guild triggers "Enrage (Begin)/(End)" fire and are relayed from every raider's Mimic. (c) The switch the
+  guild lead used turned off only the suggested "ENRAGED — STOP DPS" row, for one character.
+- **Picked B + B, plus a mute button** (*"B and B but then also a mute button on the TTS callouts so people can
+  turn it off"*):
+  - **Controls (agent 3.7.128, beta `791fe4e0`):**
+    - Every callout (guild, personal, built-in) gets Speak / Overlay only / Off, by group (built-in callouts,
+      stat cards, one group per zone from the guild tags, class, other guild, personal) with per-trigger
+      overrides, for everyone or one character.
+    - One checkpoint in `_pushOverlay` covers local AND relayed fires. Timer warnings, blind alerts and
+      charm.html's own lines honour the same rules.
+    - The built-ins finally have switches: Enrage soon, charm break/aging/breaking, recharm, CH GO, DI DOWN, the
+      slow callouts, New Rampage, taking damage, boss countdowns, loot posted, blind.
+    - 🔇 Mute under any spoken callout sets that trigger to overlay only, with undo.
+    - The CH-chain voice is not covered yet.
+  - **Sync (bot 3.1.245, main `428ea8a0`):** an encrypted `personal_trigger_sync` table, household-only,
+    newest 20 pushes kept. Routes: `POST /api/agent/personal-triggers/push`, `GET …/list`, `GET …/pull`. The
+    payload carries the personal triggers AND the "what you hear" rules. The Mimic Push / Pull buttons are the
+    next step on beta.
+- **Found on the way:** the Command Center roll-range fix (§236) had edited `command.html` without re-running
+  `sync-command-embed`, so the agent's embedded copy was stale and `check:dashboard` failed on beta. Re-synced in
+  `791fe4e0`.
+- **Not done, needs a yes:** the 134 stat-card guild triggers are read aloud today because they have no voice
+  line. Making them display-only is a guild-wide data change, offered to the guild lead.
+
+### 239. Mimic 2.9 spawn map, first cut: a 2D Map overlay with respawn windows (2026-10-12)
+
+- **The ask** (the guild lead): *"2d overlay on beta with spawn timer tracking"*. The first piece of the 2.9
+  line (§216, §220), layout C (tracker), before any 3D.
+- **Shipped:**
+  - **Bot 3.1.246 (main `dd8a9cb4`):** `GET /api/agent/zone-spawns?zone=<short>` serves the zone's placed
+    spawn points (spawn2 + spawnentry + npc_types: coords, respawn, variance, the NPCs each can spawn with
+    chance, level, named / raid flags and ability badges) plus the EQEmu wall layer. ETag / 304, 6 h cache.
+    **The Brewall layer is never selected** (the map read is exactly `bands,segs,bounds`; a test fails if that
+    changes). Brewall stays on the website only.
+  - **Agent 3.7.130 + Mimic (beta `79bafcf1`):** a "Map" overlay, off by default, all six parity items.
+    Walls, spawn dots, your position, Follow / Fit / pan / zoom / floors. Zone data is cached on disk; local
+    mode never asks the bot.
+- **How a kill lands on a spawn point** (the rule a later session must not loosen without asking):
+  - The death comes from the Zeal target turning to a corpse or 0 HP, or the slain log line (lines older than a
+    minute are ignored).
+  - The point is picked from where that spawn id was FIRST seen, not where it died: the nearest point that can
+    spawn that name, if it is within 60 units and the next one is at least twice as far (or past 120).
+  - Anything less certain is drawn as "?" on up to four candidates and starts **no timer**. "Killed — this one"
+    settles it. A guessed timer that is wrong is worse than none.
+  - The timer is a window, never a time: respawn ± variance. Green waiting, yellow can be up, red/flash overdue.
+- **Known gaps:** sightings need Zeal 1.4.8's `target_loc` (the fleet mostly reports 1.4.7), so older Zeal
+  gets log-line deaths and manual marks only. Not yet run in a real Electron window; heading direction, floor
+  picker and dot density are unchecked. Ability badges: a few get a glyph on the dot (see-invis, see-hide,
+  summon, pacify-immune, rampage, enrage, flurry, reverse slow); the rest are spelled out in the hover card.
+- **Real-time positions (agent 3.7.131, beta `4bf1ff6e`).** The guild lead: *"local locations should update in
+  real time, location data from me/group/raid"*. Self and group already reached the agent every 300 ms; the
+  raid rode the 2 s pipe batch. Now a waiting raid sample flushes on the 300 ms beat (other pipe types keep
+  2 s), the overlay polls every 250 ms and glides dots between samples (a jump over 200 units snaps). No
+  extra uploads: the raid roster still uploads on a composition change or the 3 s heartbeat only.
+- **Found while testing: two Mimic installs side by side.** The guild lead saw "Not connected" on a stable
+  2.8.1 window while their beta 2.8.2 install was signed in and uploading. Two installs have two settings
+  folders, so only one holds the sign-in. Offered: a warning when a second Mimic is already watching the logs.
+
+### 240. A corpse written with a backtick resolves to its NPC (2026-10-12)
+
+- **The report** (the guild lead, screenshot): Target Info on "Laef Windfall\`s corpse" said "no published
+  drop table", though the NPC has 11 drops. The guild lead suspected the new Zeal corpse code.
+- **Cause:** every name key stripped "'s corpse" with a straight apostrophe only, so a backtick possessive
+  became `laef_windfall_s_corpse` and matched nothing. Whichever client path writes the backtick, the keys
+  must accept it.
+- **Fix:** bot 3.1.247 (main `6654e1cd`, `_normMobName` / `_mobCaseKey`) and agent 3.7.132 (beta `18f247df`:
+  the same two keys plus the "your target died" check) strip backtick, apostrophe and curly apostrophe, and
+  a number after "corpse". Tests: `test/corpse-name-key-bot.test.js`, `test/corpse-name-key-agent.test.js`.
+
+### 241. Map overlay round two: the name, tab-target pins, guild-shared timers, walker routes, low-lag positions (2026-10-12)
+
+- **Name** (the guild lead): *"just call it Map overlay, not spawn map"*. User-facing text says **Map**; the code key stays
+  `map` and the agent block keeps its "Spawn map core" anchor.
+- **Pins** (*"need the tab targetting to set the specific mob in a synced way on the map once it's certain"*):
+  targeting a live NPC pins its spawn id to a point ONLY when `_mapAttribute` is certain (≤60 units, the next point
+  ≥2× or >120). A pin is sticky (a pulled mob stays pinned), name-guarded (the server reuses spawn ids), spent on
+  death. Agent 3.7.133 (beta `20cb464d`).
+- **Shared timers — guild-wide per zone** (my default, offered to the guild lead to change): bot 3.1.248 (main
+  `1f3f5e67`), table `map_spawn_events` (service role only, 24 h retention, pruned on push), `POST/GET
+  /api/agent/map-sync`. Only certain events are shared (pinned sightings, assigned deaths, manual marks); a "?" never
+  leaves the machine; local mode never syncs. **Known ceiling:** two guild raids in two instances of one zone see each
+  other's events.
+- **Pather routes** (*"did we find their path data?"*): bot 3.1.249 (main `1ffcdf75`) mirrors the Quarm dump's
+  `grid` / `grid_entries` as ONE jsonb row per zone in `eqemu_zone_grids` (410 rows, 8 MB — a plain 711k-row table
+  would have cost far more). The Al'Kabor fallback is barred for routes. First import run by hand 2026-10-12.
+  Agent 3.7.134 (beta `31777156`) draws routes and measures a walker's distance to its route, so targeting it
+  mid-route pins it.
+- **Lag** (*"are we able to pull directly from EQ rather than waiting for the pipe?"*): no — we do not read the game
+  client's memory; Zeal is the sanctioned surface and already streams at 10 Hz (PipeDelay 100). The lag was our own
+  hops. Agent 3.7.134: Mimic pushes positions straight to the Map window (≤20/s, only while it is visible), a short
+  smoothing window instead of a glide one interval behind, and beta knobs (Position Direct/Agent, Smoothing
+  Off/Light/Smooth, a "pos N ms" readout) in the setup bar.
+- **Fit + levels** (*"Fit Zone … should also have fit group or fit raid … a how far to include levels, same with
+  spawns"*): one button cycles Fit zone → group → raid; "Levels ±N" (default ±100) replaces the floor list for walls
+  AND spawn dots.
+- **Zeal `/pipedelay` always printed 0** — a print bug (the setting object passed to `%i`), the value WAS applied.
+  Upstream 1.4.8 has it too. Fork branch `pipedelay-print` (`53befe7`), merged into `test-all` (`d42dee6`); a
+  one-line upstream PR candidate.
+- **Open — outdoor walls:** Plane of Tranquility drew no walls. Our wall layer is horizontal slices of the collision
+  mesh, and an open hilly zone gets one slice that catches only cliff edges; Justice, Valor, Torment and Sol Ro Tower
+  have no rows at all until the website first renders them. Offered: **A** read the player's own map files locally
+  (what Zeal draws, nothing published) with our slices as fallback; **B** better slicing + precompute every zone in
+  the weekly sync. Recommended A now plus B's precompute. Waiting on the guild lead.
+- **Also from today's dump inventory:** `eqemu_spawn2` holds 43,655 rows against 48,739 in the dump; spawn
+  conditions, spell range/class columns and that gap are the recommended next mirror additions (waiting on a pick).
+
+### 242. Map overlay walls: the player's own map files (A), room and boss names (2026-10-12)
+
+- **Pick** (the guild lead): *"A for outdoor walls sounds fine, please display names of the rooms and named bosses in
+  the map"*. Then supplied a "Good's Maps" pack (566 zones, Zeal-compatible `L`/`P` files, dated 2023-11, **no licence
+  file**).
+- **Shipped:** agent 3.7.135 (beta `2cfbf9fd`). The agent reads `<EQ>/map_files/<zone>.txt` + `_1`…`_10` (Zeal's
+  path) then `<EQ>/maps/<zone>.txt` + `_1`…`_3`, from every EQ folder Mimic knows (`_eqSetupDirs`), and the Map draws
+  those walls and labels; zones without a file fall back to our EQEmu slices. Frame **server = (−file_x, −file_y,
+  z)**, no swap — derived from `web/lib/zoneMap/brewall.ts` and checked against the real pack (a Plane of Tranquility
+  merchant label vs its `eqemu_spawn2` row, within 2 units). Named / raid-target spawn points are labelled at any zoom;
+  greedy collision avoidance, bosses first; a Labels toggle; "Walls: Auto / Ours only" in the setup bar.
+- **Rule kept:** map-file content never leaves the player's machine — not uploaded, not synced, not in the repo
+  (synthetic test fixtures only); `test/map-local-files.test.js` pins it. We do not host or redistribute the pack;
+  sharing it with members by hand is the guild lead's call.
+- **Also shipped today on the Map (beta, Mimic-only):** the top-right **Timers** button slides the timers list in and
+  out (`8f44b741`), with **Widen window** (default — the window grows by the list's 216 px, the map keeps its size) or
+  **Share space** (`b076d8a2`); a "Spawn height ±N" filter in the toolbar (game height units; ±25 ≈ your floor).
+- **Offered, not built:** a Mimic button that installs a map-pack zip the player picks into `map_files`.
+
+### 243. Target position past 250: removed in the test build, a raised limit asked upstream (2026-10-12)
+
+- **Ask** (the guild lead): *"remove the 250 hard cap on range - it should be longer because certain spells and range
+  attacks can be longer like 500"*, then *"Grab me a list of the spells and ranged attacks above 250 range for an
+  upstream request, but remove it for beta so i can see the line beyond 250"*.
+- **Where the cap lives:** Zeal itself, not us. Zeal 1.4.8's pipe sends `target_loc` only within 250 units
+  (`named_pipe.cpp`, added with upstream #239 as a server-policy limit). The Map overlay draws whatever arrives.
+- **Test build only:** fork branch `target-loc-range` (`f987701`) drops the check, marked in the source as never for
+  upstream; merged into `test-all` (`5bcd34a`, which also carries the `/pipedelay` print fix `53befe7`). Live players on
+  release Zeal still stop at 250.
+- **Upstream ask: raise to ~450, not remove** — `docs/upstream/zeal-target-loc-range/SUGGESTION.md`. Evidence from the
+  2026-09-27 Quarm dump: archery is bow + arrow range (82 bows reach 251–300 and 66 reach 301–400 with a 150 arrow,
+  the best 400–420); the Wizard and Magician bolt line is 300; Flare 400, Fade 350; crowd control is 200 and unaffected.
+  Long-range utility (Summon Corpse, Call of the Hero, Yonder) is deliberately left out of the ask. Not filed.
+
+### 244. Map: a known mob shows its own name, spawn id and symbols (2026-10-12, Mimic beta `37607ac3`)
+
+- **Ask** (the guild lead, with a Plane of Tactics screenshot): *"targetting needs to update the symbols. it does not,
+  and it also needs to display spawn ID and pick which name it is."* The pin worked; the point kept drawing the
+  symbols of every mob in its spawn group and named nothing.
+- **Shipped:** when the Map knows which mob is up on a point (your pinned target first, else a sighting by you or the
+  guild), the point draws only that mob's symbols, is labelled `<name> #<spawn id>` in green ahead of every other
+  label (also with Labels off), goes green the moment you target it, and the hover card leads with that mob marked ▶.
+  Room names now follow the Labels switch too. Overlay-only (`apps/mimic/map.html`); no agent change.
+- **Earlier the same day, a Plane of Tranquility screenshot looked "awful"**: that install was on a Mimic before the
+  map-file walls (§242). Updating fixed it; zones without the player's own map file still fall back to our sparse walls.
+
+### 245. Map walls: Brewall's maps from Zeal's repo; routes at any zoom; colours kept apart (2026-10-12, agent 3.7.136 beta `1c39c995`)
+
+- **Report** (the guild lead, with a Plane of Tactics screenshot next to Zeal's own map): *"Pathing disappears when
+  close enough in zooming. We need some differentiation in colors as well, pathing should be a different color, we
+  could use the colors in the brewall maps, but we also don't see stairs like we do in the zeal maps. We should try to
+  figure out which pather it is when highlighted and highlight that path green as well."* Then: *"we should use the
+  brewall maps then"*.
+- **Why the stairs were missing:** the player's own pack (§242) has Tactics in black, dark green and a few reds only.
+  Zeal's in-game map is Brewall's (eqmaps.info, plus the projectmiragulmaps label layers), compiled into the DLL;
+  the same text files sit in Zeal's public repo (`CoastalRedwood/Zeal`, `Zeal/zone_map_src/map_files`). Brewall's
+  Tactics has green and purple floors, grey stair hatching, brown and red: exactly the screenshot.
+- **Shipped:** the agent fetches a zone's `<zone>.txt` + `<zone>_1.txt` from there the first time the Map shows it,
+  keeps them in `brewall-maps/`, and reads that folder ahead of `map_files` / `maps`. Plain GETs, nothing about the
+  player; a 404 is remembered a week, a failure retried after 10 minutes. Checked live from a session: Tactics came
+  back with 2,715 lines, 51 labels and Brewall's seven colours. We host nothing.
+- **Colours:** the old 60%-toward-white lift turned every colour grey. Now greys keep their order (black walls mid
+  grey, grey stairs lighter) and a coloured line is brightened at its own hue.
+- **Routes:** were drawn only for pathers whose spawn point was on screen, so zooming in dropped them. Now every route
+  inside the Spawn height range is drawn, in cyan (not a wall colour), and the pather you have targeted (pinned) is
+  green, on top, at any spawn height.
+- **Not done:** a choice to prefer the player's own pack over Brewall's (Brewall wins whenever it exists).
+
+### 246. A mouse pointer over every locked overlay (2026-10-12, Mimic beta `11a42051`)
+
+- **Ask** (the guild lead): *"we should show a mouse when we mouseover the map window, otherwise we lose it behind in
+  the EQ window. the same should apply with any of the overlays."*
+- **Why:** a locked overlay is click-through, so the mouse belongs to EQ, which hides the Windows pointer and draws its
+  own inside the game scene, underneath every overlay window.
+- **Shipped** (shared preload, so every overlay at once): a stand-in arrow at the mouse position over SOLID parts of a
+  locked overlay (canvas, image, a background ≥35% opaque, or the solid-backdrop setting). Not over controls (Windows
+  shows its own pointer there), not on unlocked overlays, not over see-through parts (EQ's pointer shows through).
+- **Known edge:** with EQ in the background (alt-tabbed) the Windows pointer is visible too, so the stand-in can show
+  beside it over a solid overlay. Untested in game.
+- **First in-game report, same day** (*"mouse drawover in our overlays will sometimes leave an artifact"*, a
+  screenshot of a white arrow left on the HUD ring next to EQ's own pointer). Two causes, both fixed (`f145e562`):
+  leaving a click-through window sends no mouseout, so the arrow stayed; once the mousemoves stop the preload now asks
+  main whether the mouse is still inside the window (`overlay-cursor-inside`) and hides it if not. And a bare
+  `<canvas>` counted as solid, while the HUD ring is a window-sized see-through canvas: only a background colour
+  counts now.
+
+### 247. Map ⚙ settings panel (2026-10-12, Mimic beta `92fcd318`)
+
+- **Ask** (the guild lead): *"give me a config section for the map that pops up similar to the hud's where we can
+  toggle on or off different bits, same with spawn height and levels and whatnot, labels can stay as a button. turn
+  off individual icons if necessary. background config and color schemas for each label/element."*
+- **Built** as one design inside the HUD builder's family (sticky head, groups, ↺ per row), not as options: the ask
+  named its model. A ⚙ in the Map toolbar opens a panel over the map's right side with the Levels and Spawn height
+  sliders (moved out of the toolbar; Labels stays a button), 19 show/hide switches, the nine ability icons one by one,
+  three colour schemes (Default = the previous colours exactly, High contrast, Colour-blind safe on Okabe–Ito) plus a
+  picker per element (23), wall colours "map's own" or one colour, background colour + optional own strength, and
+  label size 70–180%. One JSON object in the overlay's localStorage (`wp-map-cfg`), validated key by key on load.
+- **Not done:** per-character settings (the HUD's are per character; the Map's are per computer), and an
+  alternative layout (e.g. a floating palette) — say if the panel over the map is in the way.
+
+### 248. Map sharing: judged fair; scoped to your raid / group; zone-server port researched (2026-10-13, agent 3.7.137 beta `2e912ca1`)
+
+- **The ShowEQ question** (raised by members): the guild lead's call — sharing sightings and timers is *"fair and no
+  different from typical callouts or other tool timers for spawns"*; the difference is only the logic placing a mob at
+  its point at pull time. Sharing stays on. Recorded against it: upstream Zeal's own comment on the 250-unit
+  `target_loc` cap reads *"(server policy), so this can't be used to locate spawns across a zone"*
+  (`Zeal/named_pipe.cpp`, #239). The test build's cap removal (§243) is still in `test-all`; whether to pull it is open.
+- **Pick: C** (A now, B later). **A shipped:** a guild map event is applied only when its sender is in your raid, or
+  your group outside a raid (`_mapPartyNames`); solo, only your own. Zeal sends a zone id but no instance id, so the
+  open world, our copy and the PvP copy of a zone shared one stream; a raid is one copy.
+- **B researched, not built** (a Sonnet agent over Zeal `origin/main` and EQMacEmu): Zeal exports no zone-server address
+  and no client offset for it is known. In EQMacEmu each zone process gets its own client port, world sends it in
+  `OP_ZoneServerInfo` (`ZoneServerInfo_Struct { ip[128]; port }`), and ports are **recycled** when a zone process
+  closes, so a port identifies a copy only while it runs. The public EQMacEmu source shows **no instance support**:
+  Quarm's instances are a server-side addition we cannot read, so whether a copy gets its own port is unverified.
+  Next step: the guild lead's Resource Monitor check (Network → eqgame.exe → remote port, open world vs instance).
+- **New idea, not built:** pull grouping — a graph of neighbouring spawn points so that when several mobs come at once
+  their likely points are suggested on the Map and linked from Extended Target (options in the reply).
+
+### 249. Map: player targets named, and who your target is on (2026-10-13, agent 3.7.138 beta `90b10749`)
+
+- **Ask** (the guild lead): *"pvp targeting should work as well, where it shows who were targeting and who they're
+  targeting from /assistbar ToT from zeal"*.
+- **Shipped:** the map payload's target carries Zeal's target type and its `target_of_target` (the field the HUD
+  already reads). The Map labels the target ring "Name → Their target" (name only when the target is not already
+  pinned to a spawn point) and draws a dashed arrow from the target to its target when that is you, your group or your
+  raid; anyone else gets the name only — their position is not on the pipe. A player target is never pinned to a spawn
+  point (pins stay NPC-only). Two ⚙ switches (Target name, Target's target) and a colour in each scheme.
+- **Limit, unchanged:** the target's own position still arrives only within 250 units on release Zeal (§243).
+
+### 250. Pull grouping: A picked; unpulled-on-its-spot pin rule shipped; copies and slow mode in timers (2026-10-13, agent 3.7.139 beta `fcb6b310`)
+
+- **Pick: A** (suggestions only) for pull grouping, with the guild lead's refinements: pulls are not one group —
+  *"typically monks, rogues, bards, some Shadowknights. paladins and rangers may get an initial tag also"*.
+- **Shipped now — the pin rule** (*"if a mob is stationary, not aggroed (no assist currently when pulled) and is in
+  the spot where it would typically spawn we can make that educated guess and associate it"*): a live target is tied
+  to its point only when it has no target of its own on Zeal's assist bar AND stands on the point (≤ 8 units) or has
+  held still within 3 units for 1.5 s; walkers may move. Before, a mob running at someone through another same-name
+  point could be pinned there. Candidates are still only points whose spawn list holds the name.
+- **Designed, next to build — pull suggestions:** for each Extended Target mob not tied to a point, the candidate points
+  are those with its name in their spawn list, not holding another live mob, not under a running "not yet" timer, near
+  a raid member of a puller class (MNK, ROG, BRD, SHD, PAL, RNG) when the mob first appeared. Shown as dashed "?" on
+  the Map and "probably from …" on its Extended Target row; never shared or timed until confirmed.
+- **Asked, needs data — copies and timers** (*"spawn timers need to take into account the slowmode for instance or
+  variability if in PVP"*; *"start referencing if people are in guild/guild-slow in raid/live/pvp"*). Known: slow mode
+  (§237) is 18 h vs 3 h for the second-floor Bastion of Thunder named; PvP timers vary ±20%; guild-instance bosses are
+  3 h from death (#288). Not known: which line, if any, the client prints on entering a guild, guild-slow, live or PvP
+  copy, and whether trash respawn changes in those copies. Waiting on the guild lead's capture before any timer
+  changes.
+- **Facts added the same day** (the guild lead): *"if one guild instance is slow mode they all are for us"* — slow mode
+  is guild-wide, not per zone, so the bot's one `slow_mode` switch is the right shape for every copy we own. And
+  *"people will sometimes go in other guild instances, like breakfast club. they must be in a raid to join those"* —
+  so a member in another guild's copy is always in that guild's raid. Consequences: the raid/group scoping (§248)
+  already keeps their sightings and timers out of ours (different raid); a copy can be labelled "another guild's"
+  when the member's raid is mostly not ours; our slow mode never applies to someone in another guild's copy.
+
+### 251. Zone copies: the zone server port from dbg.txt, and the /who live/PvP check (2026-10-13, agent 3.7.140 beta `bcc6f1d6`, bot 3.1.250)
+
+- **The ask** (the guild lead): *"we can see the different zones in the debug file we reviewed earlier in this session
+  with port numbers. if a /who reveals anyone in the zone that's not in our guild and not in our raid, we are in live
+  or PVP."* This builds phase 3 of `DESIGN-mimic-2.9-spawn-map.md` (option B of §248's "A now, B later").
+- **dbg.txt reader (agent):** tails `<EQ>/dbg.txt` the way eqlog is tailed. It parses only `Zone addr [<host>:<port>]
+  received`, `StartWorldDisplay: <zone>` (not the `_chr`/`_lit`/`_obj` loads) and `Starting char select`, and keeps
+  host, port, zone and time. ⚠ The file also holds install paths and hardware lines: those are never kept or sent.
+  A port names one running copy and is reused after it shuts down, so a copy is host:port plus its zone-in time.
+- **/who check (agent):** after the zone-in, a plain /who (its footer names the zone) listing anyone who is in neither
+  our guild (their tag, or the tag last seen on them, since /anon hides it) nor the raid/group marks the copy
+  **open: the live zone or PvP**, for the life of that copy. Only guild + raid = "closed so far": our instance, or a
+  raid instance we were brought into. A quiet live zone looks the same, so "closed" is never proof. Our own guild
+  comes from a /who that lists you, or /guildstatus.
+- **Sync by copy:** each synced map event carries `inst` (host:port; `map_spawn_events.inst`, migration
+  `20261013013000`, applied). An event from the same copy is taken from anyone; one from another copy never, even from
+  your raid; when either side does not know its copy, §248's raid/group rule stays. Known ceiling: a port reused for a
+  new copy of the same zone inside the 8 h pull window would match.
+- **Map header:** `<zone> · :<port> live / PvP | guild + raid only | /who to check`, with a tooltip saying why.
+- **Not done:** slow mode and PvP ±20% in Map timers (slow mode is not served to agents yet, and trash respawn in slow
+  copies is still unknown); telling PvP from live (nothing on the agent says which); pull suggestions (§250, next).
+- **Found on the way:** Map target-of-target (3.7.138) and the pin rule's "not aggroed" check (3.7.139) read
+  `target_of_target`, which no released Zeal sends. The pipe export was our draft `docs/zeal-tot-pipe.patch`, never sent
+  and no longer applying. Both fail open (no arrow; the on-spot/still test still guards the pin). Ported to current Zeal
+  main as fork branch `tot-pipe` (`21f41f3`, +123/−39 across `assist_target.*`, `named_pipe.cpp`, README; not compiled,
+  reviewed by reading). The push to the fork was refused by this session's permission check: the guild lead's step.
+
+### 252. Member lockout: officers pause a member out of our tools whatever their Discord roles (2026-10-13, bot 3.1.251, web 1.8.143)
+
+- **The ask** (the guild lead): *"I need an admin page to lock out members despite discord roles and invalidate mimic
+  sessions."* Picked **A** (a lock switch an officer sets and lifts) over B (also follow Discord departures
+  automatically) and C (a revoke button only): *"A seems the most straightforward."*
+- **Shipped:** `member_lockouts` (one row per locked member, optional end date; migration `20261013030000`, applied).
+  `/admin/access` [beta] locks and unlocks, revokes the member's Mimic sessions and logs both to `audit_log`. The bot
+  (20 s refresh) refuses their Mimic token, new Mimic links and every Discord command or button; the website signs
+  them out and refuses sign-in. Discord roles and channels are untouched; their data stays. Map in `HOW-ITS-BUILT.md`
+  (Identity & auth).
+- **Rules set:** officers only; nobody can lock themselves; a reason is required. **Officers cannot be locked out**
+  (the guild lead, same day: *"officers can't lock out other officers"*; web 1.8.144): the picker leaves anyone with
+  an officer role out, and `lockMember` refuses one before writing. Officer = `OFFICER_ROLE_NAMES` on the member's
+  synced `role_names` (`roleNamesAreOfficer` in `web/lib/officer.ts`), so a member promoted in Discord is protected
+  from the next member sync (6 h) or their next sign-in. A lock that already stands is not lifted by a promotion.
+- **Not done:** Mimic still shows nothing when its token is refused (it just stops uploading quietly), so a locked
+  member sees "paused" only on the website and in Discord. A Mimic-side "you have been signed out" message is a beta
+  follow-up. Option B (departures lock automatically) stays open.
+- **Officer brief** (for the officers, kept outside the repo): a claude.ai doc, "Member lockout — officer brief".
+- Security findings made while scoping this went to the private briefing, not here.
+
+### 253. Map: ⚙ settings open beside the map, in the Timers slot (2026-10-13, Mimic beta `ad97bd27`)
+
+- **The ask** (the guild lead): *"in the map overlay the customization should open up to a new section to the side
+  where the timers would be so you can update the map at the same time"* (with a screenshot of the settings panel
+  covering the map's right side).
+- **Shipped:** the settings are a column of their own, the same width as the Timers list, beside the map. With the list
+  out, the settings take its place and the Timers button brings the list back; with the list slid in, opening the
+  settings opens the slot the way the Timers button does (the window widens, or the map shrinks in "share space") and
+  closing gives it back. `apps/mimic/map.html` (`setCfgOpen`, `slotOpen`, `slotChanged`).
+
+### 254. Mouse pointer over overlays: a switch, never on the HUD, Canvas panels only (2026-10-13, agent 3.7.141 beta `2c22540d`)
+
+- **The ask** (the guild lead): *"make mouse over configurable, and remove it from the HUD. for Canvas it should only
+  show over the elements."*
+- **Shipped:** one switch for every overlay, `cfg.standInPointer` (default on), in the tray ("Show a mouse pointer over
+  overlays") and the dashboard's Overlays tab → More… (tray ↔ dashboard parity). Main pushes it live to every overlay
+  and to each frame inside it (the Canvas's panels are iframes); overlays pull it at load. Never drawn on the HUD
+  (`me.html`). On the Canvas only over a panel, never the open screen between panels, backdrop on or off
+  (`_wpOverSolid` in `apps/mimic/preload.js`).
+- **Not done:** a per-overlay switch. Say if one overlay besides the HUD should never show it.
+
+### 255. Map aggro rings with a ◯ toolbar button (2026-10-13, bot 3.1.252 `f7dc2bba`, Mimic beta `97bad067`, agent 3.7.142 beta)
+
+- **The ask** (the guild lead): *"add aggro rings onto the map, make a circle icon on the main screen."*
+- **Shipped:** the bot's zone data now carries each NPC's `aggro` radius (`eqemu_npc_types.aggroradius`, game units;
+  17,054 of 18,033 NPCs have one, median 60; 0 → null). The Map draws a ring per spawn point, scaled with the map and
+  under the dots: the up mob's own radius when one is known there, else the widest of who can spawn there (cautious).
+  No ring while the point is on a "not yet" respawn timer, none when it would be under 4 px, and values past 1000 (the
+  database's "whole zone" sentinels, up to 10000) are ignored. ◯ on the toolbar is the switch (off by default,
+  remembered), the same as ⚙ → Show → Aggro rings, with its own colour in every scheme. A zone cached before today is
+  re-checked once early so the rings show without waiting out the daily revalidation.
+- **Not done:** assist radius (only 1,834 NPCs have one; the server default covers the rest, which we do not know).
+  *Done in §257, drawn only where the database has one.*
+
+### 256. Map routes: random wanderers draw as waypoints; a walking target lights its route (2026-10-13, Mimic beta `c2d68090`)
+
+- **The ask** (the guild lead, with screenshots of a golem in Plane of Valor crossing the drawn line): *"this mob is
+  going across the map and not on a path line. Ideally it would highlight the path line."*
+- **Why it crossed the line:** its grid (Plane of Valor grid 1) is EQEmu wander type 8, RandomCenterPoint. Types 1, 2,
+  5, 7 and 8 walk straight to a random waypoint, so a line through the waypoint list in order was a path nobody walks.
+- **Shipped:** those types draw as waypoint diamonds only; the ordered types (0 circular, 3 patrol, 4/6 one-way) keep
+  the dashed line. An unpinned target (a walker that left its point before you targeted it) now lights the route its
+  name walks: of the routes its spawn points use, the one with a waypoint nearest the mob. A pinned target keeps its
+  point's route. The guild lead's follow-up screenshots confirm the green diamonds on the golem's grid.
+
+### 257. Aggro rings coloured by faction and your con, a dashed social ring, and a ring on your target (2026-10-13, bot 3.1.253 `46303546`, agent 3.7.144 beta `c1fd5534`)
+
+- **The ask** (the guild lead): *"This tree frog is dubious, we should have a different color for him … faction matters
+  here but for mobs with no faction we could make the assumption that they will not aggro, and solidify it once we
+  have the mob targetted and know its exact faction … Green if it's not aggro to anyone, yellow if it could be KOS to
+  some but is not to the player. Then a dashed line for social aggro distance"*, and *"This pather does not have his
+  aggro radius drawn"* (its ring sat at its spawn point while it walked).
+- **Data:** the bot's zone data adds each NPC's `fac` (`npc_faction_id`, 0 = none: 2,113 of 18,033 NPCs) and `assist`
+  (`assistradius`, 0 → null). Quarm's data carries generic factions by name ("Beta Dubious" for the frog, "Beta KOS"
+  for the golem), but a real faction's KOS-ness depends on the player's own standing, so the con decides.
+- **Agent:** keeps your latest /consider per mob name, EVERY tier including the hostile ones the faction upload drops
+  (a mob scowling at you mid-fight is KOS to you right then; the next calm con corrects it), six hours, per character;
+  sent with the map state as `cons`.
+- **Map:** green = no faction (assumed never aggros, until a con says otherwise); yellow = has a faction and your last
+  con was dubious or better; red = conned threatening/scowling, or not conned yet (the cautious reading, and every
+  NPC of a zone cached before today). A point with no known mob up takes its worst NPC. The dashed ring is the assist
+  radius, drawn only when it differs from the aggro radius. Your target carries its own rings at its live position.
+  Three new colours per scheme (colour-blind: blue / yellow / vermillion).
+- **Not done:** con lines are matched by name, so two same-name mobs on different factions share a colour; no spawn id
+  rides a /consider line.
+
+### 258. ◢ Resize corner on every overlay window, no setup needed (2026-10-13, Mimic beta `dbb007b2`)
+
+- **The ask** (the guild lead): *"Map needs a resize drag corner at the bottom right, as do all of the windows, to
+  resize without having to setup."*
+- **Shipped:** the shared preload adds a small grip to the bottom-right of every overlay window that has the ✥ chrome,
+  locked or not (`data-wp-interact`, so a click-through window arms under it). Main's `_startWindowResize` reuses the
+  ✥ drag session: the top-left stays put, the size follows the cursor inside its screen, `_stopWindowDrag` saves the
+  bounds, and each step goes through `_noteUserResize`, so a fit-height overlay keeps the dragged height as its floor.
+- **Left out on purpose:** docked panes (the dock is one window), the Canvas (screen-sized; its panels resize
+  themselves) and the HUD ring (it sizes its own window around the screen centre).
+
+### 259. Roamers pin to their spawn point: route twins and random-wander distance (2026-10-13, agent 3.7.145 beta `37518472`)
+
+- **The ask** (the guild lead): *"roamers are not capturing their spawn ids on the map, or tags."* Read as: a roaming
+  mob never got pinned, so it never showed its `#id` or its name label on its point.
+- **Why:** Plane of Valor's golem spawn group has five spawn points that all walk grid 1. A walking golem was the same
+  route distance from all five, and `_mapAttribute` only pins on a clear winner, so it never pinned. Grid 1 is also a
+  random wanderer (type 8), so distance to a line through its waypoints in order was wrong anyway.
+- **Shipped:** points that share a route AND the same respawn and variance count as one candidate (the nearest spawn
+  spot). Whichever of them the mob came from, the route and the timer are the same. A random wanderer's distance is to
+  its waypoints' bounding box (0 inside). The Map's label for an unpinned target now carries its spawn id.
+- **Kept honest:** twins with a different respawn are still a "?". A box, not a hull: an L-shaped wander grid could
+  over-claim its empty corner (marked `ponytail:` in the code).
+
+### 260. Map readout: your /loc, speed and the cursor's /loc; a • spawn-points button (2026-10-13, Mimic beta `d3dff52b`)
+
+- **The ask** (the guild lead, pointing at Zeal's map): *"the run speed and the current player location coordinates in
+  the top left ... as well as the mouseover coordinates where the player's cursor is. Showing/hiding spawnpoints should
+  be a quick-button on the top nav of our map next to the circles."*
+- **Shipped:** top-left of the Map, in /loc order (Y, X): your location, your speed, and the cursor's location while
+  it is over the map (works locked: the window still hears the mouse). • next to ◯ is ⚙ → Spawn points.
+- **Speed is game units a second, not Zeal's "% of normal run".** The pipe sends no speed and we have no measured
+  base run speed to divide by. One unbuffed run timed on the Map would give the base, and then % is a one-line change.
+
+### 261. Faction maths for the Map and the faction page (2026-10-13, bot 3.1.254 `12b7e20d`, agent 3.7.146 beta `546f20df`, web 1.8.145 beta `ca336d28`)
+
+- **The ask** (the guild lead): Plane of Tranquility's mobs are indifferent to everyone, so green. Plane of Valor gives
+  every player race +1000 on a -1000 base, so a NON-player illusion (no race mod) makes them scowl: *"If someone has a
+  non-player illusion on it should switch them to red immediately."* And on the faction page: modifiers by name and
+  grouped, your characters' default and current standing, raise / lower lists, and faction colours (*"never KOS by
+  default ... green, the ones that can be KOS by default could be orange, the ones that are always KOS should be
+  red"*).
+- **The maths** (one module, three copies kept in step by tests: `utils/factionCon.js`, `web/lib/factionCon.ts`, the
+  Map's own): default value = base + race mod + class mod + deity mod (`eqemu_faction_list_mod` `r<id>/c<id>/d<id>`),
+  held to the caps only when a cap is set (0/0 = no cap). Con tiers are EQEmu's `CalculateFaction` bands (ally 1100,
+  warmly 750, kindly 500, amiably 100, indifferent 0, apprehensive -100, dubious -700, threatening -999, else scowls).
+  **KOS = below -700** (threatening attacks on a roll, scowls always). Never / some / always KOS = the range over all
+  14 player races x 15 classes x 17 deities.
+- **Map:** the bot sends each NPC's primary faction (`pf`) and the zone's factions; the agent sends who you are
+  (class and deity from Zeal labels 3 and 4, race from a /who of you or your last Quarmy export, an illusion from your
+  buffs). Order: an illusion the faction does not see through wins (even over an older con); else your con (it
+  includes earned faction); else the maths for you, an unknown dimension spreading over every player choice. Red when
+  you are or could be KOS; green when the faction is never KOS to anyone; else yellow.
+- **Website:** https://b.wolfpack.quest/db/faction/1655?v=b on beta, the default view untouched until a pick.
+- **Not done:** the Map knows your race only from a /who of yourself or a Quarmy export; Zeal sends no race. An
+  illusion we do not name counts as no race at all. Faction-coloured links elsewhere on the site (the one internal link
+  is on /db/npc) wait for the pick.
+
+### 262. Map: the target's walked path, Opacity first, zoom and pan from the Pan / zoom button (2026-10-13, Mimic beta `d646bdd4`)
+
+- **The ask** (the guild lead): *"Can we show the path that we observed a mob walking towards? Own strength should say
+  opacity in the options and should be right at the top. If you mouse over pan /zoom you should be able to zoom in and
+  out, and if you click and drag on that button we should pan."*
+- **Shipped:** your target's positions since you targeted it (three minutes, fading) with an arrowhead down its last
+  stretch (⚙ → Target's walked path); "Own strength" renamed Opacity and moved to the top of Map settings; the wheel
+  over Pan / zoom zooms and a drag from it pans, both while locked, a plain click still toggles Pan.
+
+### 263. Map: two roamers on one route, your target's point at any height, kept walked paths, con-colour names, Brewall layer walls (2026-10-13, agent 3.7.147 on beta `0f7a48ce`)
+
+- **The ask** (the guild lead): *"Going above a spawn point should still show you the spawn point of the creature
+  that's targetted. This is attributing both of these pathers to the same spawn point."* Then: keep the extrapolated
+  previous/next waypoint of a random path as part of that mob's path while targeted, show it again on a re-target,
+  graded from the target colour back to the origin; names in con colour as an override; *"Default colors should
+  probably be the same as the Brewall ones"* (eqmaps.info mapping standards).
+- **Shipped:** a spawn point already held by another pinned mob loses a tie on a shared wander route, so two roamers
+  get two points; the target's point draws at any height; walked paths are kept per mob (up to 40 mobs) and redrawn on
+  re-target, with each random-wander leg drawn dashed from the waypoint it left to the one it heads for, and a gradient
+  from the target colour to the spawn-point colour; ⚙ → "Mob names in con colour" (off by default, the agent now sends
+  your level); walls default to Brewall's layer colours above (Layer 2–7) and below (Layer 8–11) your floor, your own
+  floor keeps our wall colour because Brewall's black "Main" vanishes on a dark map. A saved "map" wall mode migrates.
+- **Still open, options given in chat:** Target Info map tab + history ✕ + search, map buttons on other overlays,
+  raiders' zones on the Map, and a Planes of Power era atlas (continents and planes, click down into any zone). The
+  guild lead supplied a PoP-era world atlas picture as the layout reference; it is not ours to commit.
+
+### 264. Map refinements round: learned roamer paths, trail states, kill fading, Follow/Fit/Labels, movable buttons; overlay tooltips and mouse-over fade (2026-10-13, bot 3.1.255, agent 3.7.148–3.7.150 beta, Mimic beta to `791cb572`)
+
+- **The call** (the guild lead): *"made sure all of this from tonight is actually recorded into a specific map
+  refinements doc"*. **`docs/MAP-REFINEMENTS.md` is now the ledger for every Map refinement**: each ask quoted, what
+  shipped with its version or commit, and the open list. Add to it in the same change as any Map refinement.
+- **Shipped this round** (details and quotes in the ledger): walked legs remembered per route with a count and a
+  direction arrow at 60%; the target's route lit, others faded; seconds to the next waypoint; spawn group under the
+  target (bot 3.1.255 sends `sg` / `spawngroups`); trail yellow / red / reddish-orange by what the mob is doing with a
+  red glow where it left home; killed paths fade, drop out after 3 kills, return faded for the next mob from that
+  point; a dashed heading line ahead; shared-route pins drawn to every point on the route; Follow keeps your screen spot
+  (right-click locks); Fit ignores stragglers and uses your raid group in a raid; Labels all / targets / off; • hides
+  route markers; a ⠿ grip moves the button bar and locks it to an edge (upright on the sides); the readout scales.
+  Every overlay: tooltips close after 3 s; Mouse-over opacity / Fade delay / Fade duration, EverQuest's own fade model.
+- **Open** (ledger §2): detachable timers window, the PoP-era atlas, Target Info map tab + search, map buttons on other
+  overlays, raiders' zones, sharing learned paths across raiders, Follow target, distance from spawn + the gate/leash
+  rule (researching).
+
+### 265. Songs sung from /melody count as cast, so their landings reach Target Info (2026-10-13, agent 3.7.152 beta `133a2548`)
+
+- **The ask** (the guild lead): *"Pacify songs like Silent Song of Quelius should show on the target info."*
+- **Cause:** Quarm logs no "You begin singing X." for songs queued by `/melody`, and `resolveSelfCastLanding` only
+  attributes a landing ("A gnoll appears at ease.") to a cast it saw. Silent Song of Quellious (3361) was already a
+  known pacify and Target Info already draws pacifies (blue "aggro reduced"); the cast was the missing link.
+- **Fix:** during an active `/melody`, Zeal's casting label changing to a song is recorded as that cast (a
+  `'[] You begin singing X.'` stand-in through `noteSelfCast`, the shape the clicky path already uses). Every melody
+  song, not only pacifies. Test: `test/melody-song-landing.test.js`.
+- **Left:** the song lasts 12 s (+6 s linger); if a pulse does not re-print its landing line the row may flap. Not seen
+  in game yet.
+
+### 266. A mez or charm you cast goes on the timers at any length (2026-10-13, agent 3.7.153 beta `2f4504b5`)
+
+- **The ask** (the guild lead, bard melody screenshot): *"a mez you cast should end up on the timers, same for charm."*
+- **Cause:** the built-in spell timers drop anything under 30 s, and a bard mez (Dreams of Terris) is 18 s.
+- **Fix:** mez (catalog `cc` includes `mez`) and charm spells you cast show at any length. Mez gets its own group
+  ("Mezzes" on the Canvas), charm keeps its own, and a new suggested-timer switch "Mez and charm you cast" turns them
+  on. "Your X spell has worn off." ends a mez bar early. Tests: `test/timer-bars-and-trigger-fixes.test.js`.
+
+### 267. The Map takes the boss board's respawn over the spawn mirror's (2026-10-13, bot 3.1.256 main)
+
+- **The ask** (the guild lead, Bastion of Thunder Map timers at "up in 5h35m"): *"timers were updated for the named in
+  here to 3 hours not 6"*.
+- **Cause:** `eqemu_spawn2.respawntime` is still 21600 s for every BoT named. The weekly eqemu dump lags the live
+  server's change. `data/bosses.json` already said 3 h (and 6 h for Emmerik and Evynd).
+- **Fix:** `utils/zoneSpawns.js` uses the board's `timerHours` for a point whose NPC is on the board with
+  `lockout: false` (there the hours ARE the respawn; on a lockout boss they are the lockout). An instanced point stays
+  null. So the board is now the override for any spawn time the mirror has wrong: fix the board entry, not the map.
+  Test: `test/zone-spawns.test.js` (mutation-checked both ways).
+
+### 268. A pet keeps its buffs across a zone, and after Suspended Minion 2 (2026-10-13, agent 3.7.154 beta `c7599927`)
+
+- **The report** (FB-77, a member): *"Pets lose their buffs on their pet overlay (and timers) when zoning."* Its log:
+  Visions of Grandeur on an enchanter animation, a zone, then `/pet health` still listing the buff. Closed by the
+  beta test commit `4de9185e` (`Fixes FB-77`).
+- **The rule** (the guild lead): *"when you suspend with your second level of the AA it keeps its buffs. When you
+  suspend with 1 it removes the buffs and you get back a fresh pet with no timers."*
+- **Cause:** `_reconcilePetIdentity` dropped a pet's buffs whenever its Zeal spawn id changed (added for same-named
+  re-charms, 2026-08-31). A spawn id is a slot in the zone's entity table, so every zone gave the same pet a new
+  id. It only bit on Zeal builds that send `pet_id`.
+- **Fix:** a new id after the owner zoned keeps the buffs. In the same zone (an unsuspended pet) the buffs are kept
+  only at Suspended Minion rank 2, read from the owner's Quarmy export (eqmac AA 176 = `eqemu_altadv_vars` skill 526).
+  Rank 1, or no export: fresh pet, as before. A different pet name is still a new pet. Test:
+  `test/pet-buff-landing.test.js`.
+- **Known edges:** rank 1 + suspend + zone + unsuspend keeps buffs it should not (indistinguishable from a zone). At
+  rank 2, re-charming a same-named mob in the same zone keeps the old buffs until `/pet health` or the charm-land clear
+  reconciles. No suspend log line is used: we have not captured Quarm's wording, so none is invented.
+- **Confirm in game:** the agent log prints `[pet] … kept its buffs` on the new path, and `dropped the previous pet's
+  buffs` on the old one.
+
+### 269. A charm land keeps what is on the mob; an NPC's cast is timed at its level (2026-10-13, agent 3.7.155 beta `2bb282ec`)
+
+- **The call** (the guild lead): *"Charm landing should not clear buffs and debuffs if we have the timers and know the
+  focus effects and the AAs of the caster. If it is done via an NPC we treat it as that level mob's cast timer."*
+- **Shipped:**
+  - Re-charming the same spawn after a break keeps the pet's buffs (the charm tracker remembers the spawn id).
+    Another spawn of the same name, or no id, still starts clean: a same-named mob cannot be ruled out.
+  - A pre-charm debuff proven by spawn id to be on this mob carries over at any age while its timer runs. One proven
+    on another spawn never does. An unproven one keeps the 60 s window (the razorfiend case in the code comment).
+  - A landing an NPC provably cast (it began casting inside 15 s and the spell is in its own list, one known level)
+    is timed at that NPC's level instead of the era cap of 65.
+- **Not shipped, and why: the caster's duration focus and AAs.** We apply neither today. Item focus is computable:
+  `eqemu_items.focus_effect` → the Extended Enhancement line (SPA 128, +15%, with a max spell level), read off the
+  caster's Quarmy-exported gear. AA duration is not: `eqemu_aa_effects` has one row per AA and no rank, so Spell
+  Casting Reinforcement's per-rank values cannot be read from our data, and its effect id collides with another AA.
+  Both only stretch BENEFICIAL spells, so pre-charm debuffs are unaffected; buffs cast on the pet after the charm are
+  where it shows (they read as falling off early). Next step needs a verified per-rank table (EQMacEmu source or a
+  measured Zeal remaining-ticks reading, which the agent already records per character in `buffDurationFactorFor`).
+- **Test:** `test/charm-keeps-buffs.test.js`.
+
+### 270. Your own and your pet's buff timers pause while you are logged out, and live in the database (2026-10-13, agent 3.7.156 beta `deaf08e1`, bot 3.1.257 main `e7fe036c`)
+
+- **The call** (the guild lead): *"My buffs on my pet and myself should pause if I log out … synced to the database so
+  if I logged on from a different machine or if my installation failed I would still have those buff timers.
+  Conversely, if I logged back in to reclaim a charmed pet or kill a buffed/debuffed mob those timers should continue
+  to tick while the server is online."*
+- **Self buffs needed nothing:** after login Zeal reports the client's own remaining ticks. The log-derived timers were
+  the wrong ones: the pet's (`_petBuffLandings`) and the entries under your own and your summoned pet's name.
+- **Pause:** the agent remembers each character's last log line. "Welcome to EverQuest!" after a gap of a minute or
+  more moves every still-running own/summoned-pet entry forward by the gap. A charmed pet and every NPC key keep
+  ticking; an expired or worn-off entry is never revived. While logged out nothing prunes those entries (they read
+  against the frozen clock), across an agent restart too. The pet's new spawn id after login is not a new pet.
+- **Database:** `POST/GET /api/agent/own-timers`, one `bot_kv` row per character (`own_timers:<name>`, service-role
+  only, no migration), same ownership rule as `/character-prefs`. Sent after a pet buff lands, after a resume, on a
+  wipe and at logout; a PC that has never seen the character pulls it on first sight. Local mode, dry run and
+  `exclude_from_stats` send nothing. Self-host note: a few hundred bytes per character, one row each.
+- **Known edges:** no Welcome line seen (agent off at login) → nothing shifts; a standalone agent with no Zeal and a
+  quiet log reads as offline until the next line; the Timers canvas still counts own spells on the wall clock while
+  logged out (it catches up at the resume).
+- **Tests:** `test/own-timers-pause.test.js`, `test/own-timers-endpoint.test.js`.
+
+### 271. Characters belong to game accounts: login name if we can read it, shared-bank guess otherwise, the owner's word first (2026-10-13)
+
+- **The call** (the guild lead): *"C if available, B otherwise. We could let users screenshot their account character
+  inventories and paste them, or drag and drop between accounts to start. We could allow users to use alternate names
+  for accounts, or just call them account 1 through 10."*
+- **Server rules** (the guild lead): a forum account holds up to 10 game logins; a game login holds up to 8
+  characters; `#charactertransfer` moves a character only between game logins on the same forum account, and only
+  into one with space. The command shows on neither the Zeal pipe nor (as far as anyone has captured) the EQ log, so
+  a transfer is seen indirectly: the character's shared bank starts matching another account, or its login changes.
+- **Order of evidence:** the owner's placement (drag and drop on `/me/accounts`) beats everything; then the login
+  account (option C, once a local session confirms where the client keeps it and the guild lead clears sending a
+  salted hash of it, never the name); then the shared-bank guess (option B). Accounts are "Account 1" … "Account
+  10" unless the owner names one.
+- **Data:** `game_accounts` + `character_accounts` (membership rows with `valid_from` / `valid_to`; a move closes the
+  old row and opens a new one, so a transfer keeps its history). Service-role only. **The mapping never goes in the
+  repo**: the guild lead removed the old alt list from docs on purpose (2026-09-16).
+- **Purpose:** `/me/inventory` counts a shared-bank slot once per account instead of once per character (the guild
+  lead's Shield of the Water Dragon screenshot: three characters, one bank, counted three times). The cause on that
+  screenshot was the old single-link 0.75 match splitting a group whose snapshots were weeks apart (0.84 / 0.73 /
+  0.64 pairwise).
+- **Later, not now:** paste a character-select screenshot to fill an account.
+
+### 272. Mimic 2.9.0, the Cartography Release, and the Map training page (2026-10-13, stable `700dc1f9`, web 1.8.146 `7d1e179a`)
+
+- **The call** (the guild lead): *"push out a new minor release as 2.9, the Cartography Release, focused on the map.
+  add a training page on the map to send out to the users, give me some samples ... simple terms please, but talk
+  about persistence."* The release name is the guild lead's.
+- **Shipped:** Mimic 2.9.0 stable (agent 3.7.156) graduated from beta: `apps/mimic`, `packages/wolfpack-logsync` and
+  their 27 tests; the website and bot work on beta stays there. Beta re-parked at 2.9.1 (`8255c70a`). Release body
+  from the `player-notes` block; `Fixes FB-77` repeated so FB-77 moves to Implemented.
+- **Training page** `/mimic/map` [beta], two samples: Guided tour (default, eight lessons) and Cheat sheet (`?v=b`).
+  The persistence claims were each checked against the code. One correction to what we had been saying: respawn
+  timers are not only local, they are shared with your raid or group (never "?" guesses, never positions).
+- **Open:** the guild lead picks a sample; the other is deleted in the same change.
+
+### 273. Map Line strength: one dial for how hard the lines and dots draw, Strong by default (2026-10-13, agent 3.7.157 beta `c04db4ea`)
+
+- **The ask** (the guild lead, with an in-game screenshot): *"Can we make the maps and spawns more intense for how
+  defined the lines and whatnot are? this is opacity full on the window and off for background and its difficult to
+  see"*. Opacity was already full, so the fix is weight, not alpha.
+- **Shipped:** `inkStyle(k)` in `map.html`, k from 1 to 3. It scales wall and route width, puts a dark edge under walls
+  and routes, grows spawn, raid and group dots, and strengthens the aggro rings and the faint off-floor walls.
+  ⚙ → **Line strength** (Normal / Medium / Strong / Max) sits under Opacity and saves with the map settings.
+- **Default is Strong (1.75)**, so the change reaches everyone without a setting; Normal (1) reproduces the old drawing
+  exactly, and the test pins that.
+- Also fixed on beta: `web/lib/gameAccounts.ts` read the guild by a quoted literal, which the guild kit's no-literal
+  tests on beta rejected once the accounts page synced over from main. It now reads `GUILD_TAG`.
+
+### 274. The Map learns a path only from a mob that is walking, never from one chasing someone (2026-10-13, agent 3.7.158 beta `fd50adc5`)
+
+- **The report** (the guild lead, with a screenshot of a swarm kited by a bard): *"These mobs in a swarm are showing
+  that they're on a bunch of paths that they're not, so we need to ignore when a mob is aggroed and has a circular
+  path chasing a bard"*.
+- **Cause:** a random-wander leg was learned whenever the target headed at a waypoint and reached it. A chase sweeps
+  through waypoints constantly, so each pass was saved as a walked leg (and twice-seen legs draw solid).
+- **Rule now:** a leg is learned only if (1) the mob never had a target of its own while you watched it (Zeal's
+  target-of-target), and (2) its last leg-length of walking was nearly straight (straight-line distance at least 0.8
+  of the distance walked, and at least half the leg seen). (2) also covers a Zeal that sends no target-of-target.
+  While the target is chasing, the "leg to the next waypoint + seconds" is not drawn.
+- **Not done:** legs already learned from earlier chases stay in the local `map_timers.json`. Clearing them needs a
+  "forget learned paths" control, offered to the guild lead rather than built.
+
+### 275. A corrected respawn reaches every running Map timer within the hour (2026-10-13, agent 3.7.159 beta `25c9d7ed`)
+
+- **The report** (the guild lead, a screenshot of the Bastion of Thunder named still counting ~6 h): *"Still has the
+  wrong timers"*. §267's bot fix was live (07:32 UTC) and correct; Oreen Wavecrasher died at 14:22 UTC and still ran
+  6 h.
+- **Cause, two parts, both in the agent:** (1) each Mimic re-checked its cached zone data once a day, so a copy taken
+  before the fix kept 6 h; (2) a timer's window was worked out once at the death and stored.
+- **Now:** the zone copy is re-checked hourly (a 304 when nothing changed), and every pass re-works each running
+  timer's window from its death time and the point's current respawn. The death time never moves; with no zone data
+  loaded, a timer is left as it was.
+- **Rule for later:** a stored timer is a death time plus the point's CURRENT respawn, never a frozen window. A fix
+  to a respawn on the board reaches the Map within an hour, for kills already counted too.
+
+### 276. Requiem of Time is a slow, called out as "Bard Slow (55%)" (2026-10-13, agent 3.7.160 beta `34657c5c`)
+
+- **The call** (the guild lead, with the spell window): *"Requiem of Time is a slow as well, call out Bard Slow
+  (55%)"*. It was on none of the slow lists, so it had no badge, no timeline mark and no callouts.
+- **Grounded:** spell 3066, SPA 11 max 45 = 55%. Its land line, "<mob>'s rhythm slows.", is its own, so a
+  bystander knows which slow landed.
+- **Shipped:** the agent's three slow tables (badge "BRD SLOW 55%"), Mimic Extended Target's copy, and the raid
+  review's list. Callouts name it "Bard Slow": "Slowed <mob> — Bard Slow (55%)", spoken "Slowed. Bard Slow".
+  Every other slow keeps its spell name.
+- **Not added (not asked):** the other bard slows, Selo's Consonant Chain (40%) and the two Largo's bindings (35%).
+  Both Largo's share one land line, so they would read as "slowed" without a name. Also still missing from the raid
+  review: the four Beastlord slows, which the agent and Extended Target have carried since 2026-10-08.
+
+### 277. /pop shows every character-flag step, and the Grummus gap was eligibility, not the hail (2026-10-13, web beta `471f7c69`)
+
+- **The trigger:** a raider asked which mains still needed Grummus, and the page could not say. The data showed
+  41 raiders at the Oct 10 kill, Mimic users witnessed 48 characters hailing the projection, yet only 5 got the
+  visible flag. 14 of the rest had Mimic on and Adler done.
+- **What the server's script says** (podisease/A_Planar_Projection.lua + lua_modules/projection_eligibility.lua):
+  a projection flags only the raid (or group) that got the kill, and refuses everyone else silently (the refusal
+  goes to GMs only). An eligible hail with fuirstel 1 prints the Milyk line and the flag; without it, a checklist
+  flag. The Crypt of Decay key (`grummus`) is set on every eligible hail with NO chat line. So "no line in the
+  log" never means "no Crypt access", and "hailed but no flag" most likely means "not in the kill-credit raid".
+  Unconfirmed until those raiders do the Seer meditation.
+- **The call** (the guild lead): *"update the entire page with all of the character flag steps required, not
+  just the main ones"*. Shipped: `web/lib/popSteps.ts` lists every step the server keeps per zone card, read
+  off the scripts (pre-kill hails, silent steps, the Tranquility return trips, Maelin's steps, the five Sol Ro
+  wings, Miak's pre-flag); `stepsHeld` expands a series. Cards show holders, ☑ owner-tick-only, ⏳ checklist
+  waiting on the Seer, 🔇 silent step; `/pop?zone=` lists who can enter and still needs each step.
+- **Found on the way:** the Sol Ro projection checks all five wing cauldrons, Miak's pre-flag AND zeks 7 (the
+  Rallos Zek step) before it opens Doomfire; Aerin`Dar's projection flags only holders of the Justice flag.
+- **Backfill answer:** Opt-in Logs and `--since` read flag grants, checklist lines, Seer recitals and witnessed
+  hails, the same as live.
+
+### 278. /pop/raid: one page for the raid night (2026-10-14, web 1.8.148 main)
+
+- **The call** (the guild lead, 2026-10-13): *"this is our target list for tomorrow. make us a raid page that has
+  preflag checking, travel guide, expectations, and maps with paths preferably"*. Targets: Grummus; Manaetic
+  Prototypes X, IX, XI and the Behemoth; Vhaksiz and Mujaki; Terris Thule; Aerin`Dar. A new page, so it went
+  live with the [beta] marker (§135).
+- **Travel facts from the guild lead:** the guild-instance doors are in the buildings around the PoK book in
+  Tranquility, grouped by tier: tier 1 south, tier 2 north, more of tier 2 and tier 3 east. And: *"in order to
+  zone into new zones we do need to zone into live first via the standard portals"*. The page says both; it
+  does not name which side Valor's door is on, only that Valor is tier 2.
+- **What it shows:** a preflag table for everyone signed up to the night's event (`rh_events`/`rh_signups`, the
+  roster as fallback), each target's must-have steps from `web/lib/popSteps.ts`, travel and boss notes read off
+  Quarm's scripts and spawn tables ("(inferred)" where the scripts do not say), and a map per zone with the
+  route, the markers and the patrol. Walls come from the EQEmu layer only (`zone_map_lines.segs`), never the
+  Brewall art. Innovation runs in the guild's order: X, IX, XI, then the Behemoth. The travel notes fold behind
+  "Click here for more info", like /pop's top.
+- **Where:** `web/lib/raidPlan.ts` (all content), `web/app/pop/raid/` (page, map, walls), `test/pop-raid-plan.test.js`.
+  The plan is dated for one night; the next raid needs a new plan or the file edited.
+
+### 279. Every page named in a reply is a full link (2026-10-13, docs)
+
+- **The call** (the guild lead): *"give me direct links from now on not just the /page"*. A reply names a page as
+  `https://wolfpack.quest/<path>` (live) or `https://b.wolfpack.quest/<path>` (beta), never a bare `/<path>`.
+  It widens the beta-link rule (§135) to every page. Landed in CLAUDE.md under the UI working rule.
+- **Also asked:** *"this stuff can also go on /screen"*: the raid plan on https://wolfpack.quest/screen.
+  Options offered the same night; the pick is open.
+
+### 280. Recorded raid positions also refine the raid-guide paths (2026-10-13)
+
+- **The call** (the guild lead): *"are we tracking everyone's positions through the raid so I can replay it on the
+  map? we should be ... storing those as we discussed previous, so we can refine the path for these raid
+  guides"*. A second use for §161's recorder: the paths drawn on https://wolfpack.quest/pop/raid should come
+  from where the raid actually walked, not only from the scripts' coordinates.
+- **Measured the same night:** `raid_track_minutes` holds 1,964 minutes (5.5 MB) from 2026-10-06 on, every day,
+  with the sweep off. Wednesday's target zones already have earlier minutes: Innovation 193, Nightmare 136,
+  Disease 115, the Lair 15, Valor 15.
+- **Still not built:** the replay viewer (§161's A/B/C look is unpicked; the previews promised for after
+  2026-10-07 never landed) and any path learned from the recordings. Tower's permanent copy is still the open
+  STATUS item (its merge script is not a git checkout).
+- Options for both offered the same night; the picks are open.
+
+### 281. /pop/raid: the preflag check works, and the page links everything (2026-10-13, web 1.8.149 main)
+
+- **Report (the guild lead, phone screenshot):** "Could not read the raiders: characters: column characters.level
+  does not exist". Plus: *"link to the subsections from the overview, add in mouseover for items and link to
+  PQDI. links to PQDI for the mobs"*.
+- **Two bugs, one hidden behind the other.** The query asked `characters` for `level`, which lives in
+  `who_directory`. With that fixed it would still have shown nobody: it kept only rows with `main_name` null,
+  but a main's `main_name` is its own name (0 of the 233 characters of tonight's 66 sign-ups had it null; 52
+  players have a main). Now it reads every character a signed-up player has, keeps the mains, and picks one
+  per player by the class they signed up as, then active, then raider rank.
+- **Loot now comes from the server's drop tables** (`eqemu_npc_drops`), not hand-typed lists, which were wrong:
+  Grummus drops eight items at 12.5% each, not "one of five", and Vhaksiz and Mujaki have parchments and gems
+  the list left out. Each item has the inventory page's hover card and a PQDI link; each boss name links to
+  its PQDI npc page.
+- **Overview:** a numbered list at the top linking the preflag check, each zone and each boss (`bossAnchor`);
+  each preflag names the zones that need it, linked.
+- **The test missed it** because nothing ran the query. `test/pop-raid-plan.test.js` now checks that no
+  `characters` select names `level` and that the main filter accepts a self-named main.
+
+### 282. The raid plan on /screen: slides (A) and on the live map (C) (2026-10-14, web beta `e958a8a4`)
+
+- **The call** (the guild lead): picked **A and C** of the three /screen options.
+- **A — slides.** An officer presses "Load tonight's plan" in the slide editor; the plan becomes "Plan · …" slides
+  after the officers' own (16 today: Tonight, Preflags, then per zone before+travel and one per boss; capped at
+  30, long bodies split, never cut). Pressing it again replaces only the "Plan · …" slides. `web/lib/raidPlanSlides.ts`,
+  POST `/api/screen/slides` `{action:'loadPlan'}`.
+- **C — map.** When the screen's live map shows a zone in tonight's plan, the route, bosses, zone-ins, NPCs and
+  patrol are drawn under the raid dots (a "Tonight's plan" chip hides it). It shows nothing until raiders are in
+  that zone. `SpectatorBoard`'s new `plan` prop is passed only by /screen, so https://wolfpack.quest/spectator is
+  unchanged. Overview gains a Preflags box (who still lacks each one), loaded once per page load.
+- **Code move:** `loadRaiders`/`loadHeld` left `/pop/raid`'s page for `web/lib/raidPreflags.ts` on beta. Main still
+  has them inline until this graduates, so a main edit to them before then will need a hand merge into beta.
+- **Not done:** plan points have no height, so the map draws them on every floor.
+- **Next:** the guild lead looks at https://b.wolfpack.quest/screen; on a yes it graduates to main before the
+  19:30 ET freeze.
+
+### 283. miMIC streams /screen to the raid and posts the next target (2026-10-13, direction; nothing built yet)
+
+- **The guild lead:** *"the persona is in discord as mimic, ready to stream this screen and send encouragement and
+  details to the raid"*. The miMIC announcer persona is already present in Discord; it will stream
+  https://wolfpack.quest/screen to the raid and post encouragement plus details.
+- **Asked the same night, to be built (options first where it is UI):** a deep link in the Discord raid thread to
+  the next target, its instructions and the step the raid is on; the same copyable from Mimic's Command Center and
+  the HUD; a map button that expands to pathing to the next spot with ?, mob and quest markers; tracking your own
+  character toward the next quest marker with a copyable, labelled Zeal `/map` coordinate.
+- **Also:** the Command Center hail board did not show the Nightmare hedge-maze flag (the Terris Thule unlock) or
+  how many already held the flags; it should open when more than one raid group hails one flagging NPC.
+- **Data asks for Wednesday's raid:** average the routes raiders take; directions players and mobs go; severe
+  injuries and deaths; engagement order; feed these into gold splits for fast fights and into what Lord
+  Mobsincamp looks for. Recording is on (§161, §280); the analysis is not built.
+- Research fanned out to Sonnet agents the same night; results and options follow in the session's reply.
+
+### 284. Announcers stay quiet in a fight; post-kill comparisons; Map rings for mez, pacify and harmony (2026-10-13)
+
+- **In-fight rule (the guild lead):** *"don't interrupt the fight unless there's a critical thing, like less than 1
+  minute left on a non bard slow"*. Applies to every announcer persona (miMIC, Bristlebane, Lord Mobsincamp):
+  nothing spoken or posted during a fight except a critical alert. The worked example: a slow from a non-bard
+  (shaman, enchanter, beastlord) with under a minute left on the boss. Bard slows are not critical (bards
+  re-apply constantly).
+- **Post-kill comparisons (asked):** mine the guild's earlier kills (Grummus and the rest) for stats an announcer
+  can say after a kill, e.g. how much faster than last time. Research handed to a Sonnet agent the same night.
+- **Map overlay rings (the guild lead):** *"add zzz's if it's mezzed, if it's truly pacified make the circle light
+  pink and have it fill in the outside like a clock wipe more red until the pacify wears off. bard pacify is much
+  shorter. druid harmony is still red on the inside at the lowered range, since it doesn't make aggro radius 0
+  like pacify"*. Follows the Harmony-is-not-Pacify policy (CLAUDE.md): pacify family (targettype 5) = pink, will
+  not aggro; Harmony / Wake of Tranquility (targettype 8) = still red inside at the reduced radius. Durations come
+  from each spell, so bard lulls run shorter on their own. Drafting on beta (agent + map.html).
+
+### 285. The hail board opens for the hedge maze when two raid groups hail Thelin (2026-10-13, bot 3.1.258 main)
+
+- **Report (the guild lead):** the Command Center's hail board did not show the Nightmare hedge-maze flag (the
+  Terris Thule unlock) or how many already held it; *"it's something that should pop up when more than one group
+  of a raid talks to one flagging mob"*.
+- **Why:** the board only opened on one of 14 boss kills. The maze ends on a hail to Thelin Poxbourne with no kill.
+- **Fix (bot only, so every Mimic gets it with no update):** `HAIL_FLAGGERS` + `noteHails` in `utils/hailBoard.js`.
+  Hails of Thelin from 2+ distinct raid groups within 60 s open a window over the current raid; the card shows
+  who already holds the step (thelin 2 or later) and the count, through the existing `buildViews`. Thelin only for
+  now: a "Planar Projection" hail does not say which boss it belongs to, and those windows already open on the kill.
+- **Caveat:** a hail is seen only by Mimics whose log shows it, and a raider with no group number counts as no
+  group (undercounts, never overcounts).
+
+### 286. Map rings for mez, pacify and harmony; the re-slow warning a minute ahead, never for bards (2026-10-13, agent 3.7.161 beta `ad36ffbe`)
+
+- Built per §284. `_mapCcStates` (agent) sends each mob's mez and calm state from the existing buff landings;
+  `map.html` draws: mezzed = pulsing "zzz"; pacify family (incl. bard lulls) = light-pink disc, outer band filling
+  red clockwise from 12 o'clock as it runs out; Harmony / Wake of Tranquility = the normal red ring at the shrunk
+  radius, old radius dotted, same band. Durations are each landing's own, so bard lulls end sooner on their own.
+  A landing with no spawn id marks only your own target (an unproven name never turns every same-name mob pink).
+- **Guess, flagged:** the harmony shrink is 0.5 of the aggro radius; the spell data carries no radius. The guild
+  lead to measure or confirm in game.
+- **Not knowable:** a mez broken by damage, or a pacify that failed on a too-high mob, has no log line; the ring
+  holds until the landing's own end.
+- **Slow warning (§284's in-fight rule):** "re-slow soon" fires at 60 s left (was 30) and never for a bard slow
+  (`SLOW_FADING_WARN_SECS`, `best.cls !== 'BRD'`). Every slow LANDING still announces, as before; whether those
+  go quiet during a fight is the guild lead's call.
+
+### 287. The post-kill recap: the whole raid on /screen, inside the RaidBosses kill card, with fun events and stars (2026-10-13)
+
+- **The call** (the guild lead): *"displaying C the whole raid. raid thread cards can be coordinated with the
+  RaidBosses card. the fun events can be mentioned and highlight stellar performance."*
+- So the recap (how this kill compared with the last and the best, first kills, deaths) shows on
+  https://wolfpack.quest/screen's Overview for the whole raid, rides INSIDE the kill card the bot (Discord name
+  RaidBosses) already posts in the raid thread — no second post — and adds the fight's fun events and up to three
+  honest stellar-performance highlights. Post-kill only (§284).
+- **Test before the raid:** a read-only replay of every raid-boss kill since 2026-10-04, printing what the card
+  would have said at that moment (the guild lead: *"test the bot on a replay of fights from the last week"*).
+- Drafting: bot side (`utils/killRecap.js`, card hook, `bot_kv last_kill_recap`, screenLive `recap`) on main;
+  the /screen Overview card on beta. Both by Sonnet agents, reviewed here.
+
+### 288. Bristlebane gets lore to talk about; Lord Mobsincamp transmits through Mimic; V5 renders the scenes (2026-10-13)
+
+- **Lore (the guild lead):** *"lookup the lore associated with the story for bristlebane to be able to talk
+  about"*. A sourced brief on Bristlebane Fizzlethorpe and each PoP target, with post-kill lines in his voice,
+  is being drafted for the cast bible (docs/DESIGN-raid-announcers.md). In-game quest text preferred over fan lore.
+- **Transmissions (the guild lead):** *"Lord Mobsincamp can send audio via mimic as a transmission"*. His voice
+  reaches raiders through Mimic on their own PC (a card + audio), not only through a Discord voice bot. Same
+  rules: nothing during a fight except critical alerts (§284), respects Mimic's mute and quiet mode. Options
+  (text-to-speech vs pre-rendered clips) follow the research.
+- **Scene renders:** the guild lead will run image generation and LTX on the V5 box while playing and streaming
+  on V4. This session builds the conditioning frames, animatics and a job sheet from `raid_track_minutes`
+  (EQEmu wall layer only, class colours, no names) and hands over a zip.
+- **/screen recap card:** on beta (`3c25a53f`), waiting on the bot side to serve `recap`.
+
+### 289. Lord Mobsincamp is an ancient wolf god who runs with the pullers; a pre-raid video for Wednesday (2026-10-13)
+
+- **The look (the guild lead):** an ancient anthropomorphic wolf god, robed and wizened, weary of time, a glowing
+  hourglass floating on a chain, lassos and whips in holsters for pulls; runs on the wind, tight around corners,
+  vigilant, one eye on the Pack and on where we go next; runs with the pullers and watches for the raid lead's
+  eye contact. Written into the cast bible (docs/DESIGN-raid-announcers.md, Lord Mobsincamp → Identity: "Look"
+  and a new portrait prompt; the seated-keeper portrait is marked superseded). He still never fights.
+- **The video (the guild lead):** *"let's start putting together a video that we will probably have to generate a
+  lot of after 1pm est today"* (Wednesday 2026-10-14). Generation runs on V5 (§288). This session prepares the
+  production pack first: character reference sheet prompts, a storyboard tied to the pre-raid monologues,
+  per-shot image and LTX prompts, and the job list.
+
+### 290. A mob's swing speed, stats and look are in the mirror (2026-10-14)
+
+- **The ask (the guild lead):** *"mob attack speed is in the data on PQDI. I presume we have all of the info for
+  each mob in the database, including model and what it [looks like]"*. We had race, gender, texture and size,
+  but not the rest: `scripts/sync-from-eqmac.js` picks upstream columns by name and never named them.
+- **What landed:** migration `20261014040000_npc_types_combat_and_look` (applied to production via MCP; the same
+  file is committed) adds 35 columns to `eqemu_npc_types`: `attack_delay` (tenths of a second per round), the
+  seven stats (`_INT` is stored as `int_stat`), `atk`, `accuracy`, `avoidance`, `slow_mitigation`, the regen
+  rates, `see_sneak`, `npc_aggro`, and the look (helm, face, armour textures, tint, held-weapon models, light).
+  The sync picks them up, and `test/sync-npc-sheet-columns.test.js` guards both ways a column goes silently
+  missing. A dump without a column leaves it null; it never nulls a stored value.
+- **Verified:** the forced sync (run 38502496697, `force=true`, because the unchanged dump sha would otherwise
+  skip) filled all 18,033 rows. Grummus reads attack_delay 18 and see_sneak true, which matches PQDI.
+- **Read off it for tonight:** Mujaki swings every 1.0 s, the fastest of the night. Prototypes IX and XI and
+  Terris Thule have slow_mitigation 75, so a quarter of a slow lands. This closes the §173 question of whether
+  `slow_mitigation` goes in the mirror. Nothing reads the new columns yet: Target Info and the mob-info route
+  are the next consumers.
+- **Self-host note:** additive columns on a table that is already mirrored; no storage cost worth a §3 line.
+
+### 291. Lord Mobsincamp's voice: the guild lead performs it, Seed-VC on V5 re-voices it (2026-10-14)
+
+- **The pick (the guild lead):** *"let's do B on v5"*: of A (effects only), B (voice conversion on V5) and C
+  (a paid cloud speech-to-speech service). The guild lead records the script; Seed-VC (zero-shot voice
+  conversion, GPL-3.0, pinned to commit `51383efd`) keeps the delivery and swaps the timbre; an ffmpeg ghost
+  chain (pitch, faint high double, echo, loudness level) goes on top.
+- **The target voice is synthetic, on purpose:** four reference clips made with Gemini TTS voices (Algenib,
+  Gacrux, Charon, Enceladus) reading a Lord Mobsincamp line, under 25 s each (Seed-VC clips longer references).
+  No real person's voice is cloned.
+- **Install shape:** a self-contained `C:\wolfvoice` on V5 (own Python 3.10 venv, own PyTorch 2.7.1 cu128,
+  own model cache), so it never touches the image-generation stack. Upstream's requirements file names torch
+  twice and cannot install as written; the script installs torch first and the rest without the torch lines
+  (and without `resemblyzer`, which is evaluation-only and needs a compiler on Windows). The kit lives in the
+  session scratchpad and was handed over as a zip; nothing of it is in the repo.
+- **Not yet:** a live wolf voice. Home Assistant Voice PE can play the finished files as announcements, but a
+  speaking, answering Lord Mobsincamp needs a TTS that can clone the target voice plugged into Home
+  Assistant's own voice pipeline. `huggingface/speech-to-speech` speaks the OpenAI Realtime protocol, not Home
+  Assistant's, so it does not plug into the PE directly.
+
+### 292. A callout from another zone reached an unplaced member on a Tuesday night (bot 3.1.260, 2026-10-14)
+
+The guild lead, 2026-10-14 00:24 ET, with a guild-chat screenshot of a member running through Overthere who heard
+"enraged <militis>" from Mimic: *"we need to stop having leaks for callouts from other groups or raids when we're
+nowhere nearby"*. A group (not a raid; no raid roster had been uploaded for three hours) was fighting militis mobs in
+the Bastion of Thunder at the time.
+
+- **Why it got through (two faults together):**
+  1. The member could not be placed. Their characters have no `characters.discord_id`, so `_requesterZones` was empty.
+  2. An unplaced listener hears every guild callout on a raid evening, and the raid-evening clock attached the hour after
+     midnight to the wrong day: `_inRaidWindowEt` read the calendar day, so Wednesday 00:24 counted as a Wednesday raid.
+     It covered Tue/Wed/Sat after midnight and missed Thu/Fri/Mon after midnight, the real ones.
+- **The fix (bot only, no Mimic update):**
+  - `_inRaidWindowEt`: the hour before 01:00 belongs to the night before.
+  - An unplaced listener on a raid evening now hears only senders the bot cannot place either (both unknown fails open,
+    as before). A sender the bot CAN place in a zone no longer reaches them (`unplacedWindow` in `_relayScopeKeep`; the
+    resolver stops setting the raid-wide `inRaidWindow` for that case).
+  - Raid mode and group mode are unchanged. Tests: `test/relay-scope-gate.test.js` (behaviour, mutation-checked) and
+    `test/group-scope.test.js`.
+- **Also affected:** the OpenDKP panel caches (`_panelAuctions`, `_panelStandings`) use the same clock to refresh faster
+  in a raid; they now follow the right night too. `utils/openDkpSync.js` has its own copies with the same calendar-day
+  reading (its sync cadence only): left alone, listed here.
+- **Next, not done:**
+  - Place unlinked members by their upload history. `agent_upload_stats` maps character → uploading Discord account
+    (493 pairs; 10 characters have two owners; 163 characters lack a link), but it is 1,857 rows, so the read needs
+    paging.
+  - Defence in depth on the agent: send the sender's zone with each relayed fire and let the listener drop one whose zone
+    is not its current Zeal zone (needs a Mimic update).
+
+### 293. The Map's speed reads as % of normal run, like Zeal (Mimic beta `dbf2a0d8`, 2026-10-14)
+
+- **The report (the guild lead):** *"Our speed calculation looks wrong"*, with a screenshot showing our readout at 84 u/s
+  beside Zeal's map at 277% at the same moment.
+- **It wasn't wrong, just in other units.** Our readout (units a second, §260) and Zeal's (% of normal run) agree when
+  100% ≈ 30.3 u/s. That is the base §260 said it lacked, measured from this pair. Four nights of `raid_track_minutes`
+  steps agree on the scale: most movement sits under 60 u/s and the tail ends near 110 u/s.
+- **Change:** the top-left readout now shows `NNN%` (`RUN_BASE_UPS = 30.3`, `runPct`), with the units-a-second value in
+  its tooltip. It is one reading: a timed unbuffed run would tighten the base. `test/spawn-map.test.js` pins 84 → 277%.
+
+### 294. Custom sounds, voice packs and name pronunciation: option C (2026-10-14)
+
+- **The ask:** a member wanted a slap sound when their Willsapper procs. The guild lead then picked **C** (a sound library
+  plus voices) and widened it: *"different voice packs, get player pronunciation right. let each player suggest how their
+  name should sound phonetically with some coaching and alternate pronunciation available to choose from. this can also
+  exist for each character on their page. build this voice pack bit into onboarding and allow users to add their own sound
+  effects. allow them to use the sound effects instead of callouts tts"*.
+- **What exists before this:** Mimic plays a trigger's `sound` (any URL) and mute silences it. But nothing sets one, GINA
+  sounds are dropped on import, there is no volume, and every voice is the Windows default.
+- **Shape picked:**
+  - **Sounds by name, never by path.** A shipped library (generated by us, so no licence questions) plus a per-PC
+    `sounds\` folder whose files override shipped ones. A synced or guild trigger therefore plays on every PC.
+  - **Per-trigger choices:** volume, and "add to the callout" vs "play instead of speaking". Members can attach their own
+    sound to a guild trigger on their own machine.
+  - **Voice packs** are presets over installed voices (voice, rate, pitch) with a per-trigger override. Clip packs (the
+    announcer personas) come later.
+  - **Name pronunciation:** a guild table `name_pronunciations`. The owner sets each character's phonetic spelling from
+    suggested alternates plus coaching tips, in Mimic onboarding or on the character's page. Every agent applies it to spoken
+    text.
+  - **The Willsapper proc** lands as "<mob> yawns.", and ten other spells print the same line, the shaman slows among them. So
+    the trigger only fires within 1.5 s of the member's own melee hit on that mob (`after_my_melee_ms`).
+- **Where it lands:** bot + migration on main, web character page on beta, agent + Mimic on beta (§295 records the ship).
+
+### 295. Shipped: sounds, voice packs, names, the Willsapper slap, and the Map's Full mode (2026-10-14)
+
+- **Bot 3.1.261 (main, `1b343563`):**
+  - `utils/pronounce.js` and the agent routes `GET /api/agent/pronunciations` (ETag), `GET /api/agent/pronunciation-suggest`
+    and `POST /api/agent/pronunciation`.
+  - Who may save: the owner, meaning `characters.discord_id` is theirs or the family root's is.
+  - The `name_pronunciations` migration file is in the repo. ⚠ Applying it through the MCP was cancelled, so check the
+    table exists before relying on it.
+- **Web 1.8.151 (beta, `3b3b4cba`):** "How to say this name" on the character page: ▶ Listen for everyone, and the editor
+  (alternates, coaching, Save) for the owner. `web/lib/pronounce.ts` gives the same output as the bot's (checked on 3,033
+  names).
+- **Agent 3.7.163 + Mimic beta (`ef9fbf79`..`b7d2632c`):**
+  - The sound library: eight sounds generated with ffmpeg, plus `<userData>/sounds`, where your own files override shipped
+    ones.
+  - Per trigger: `sound`, `sound_volume` and `sound_mode` add/replace. Your own sound on a guild trigger, on this PC only.
+  - The editor fields, a Sounds card, and the tray's "Open my sounds folder".
+  - GINA / EQLogParser imports bring their sound file along.
+  - Voice packs (Default, Herald, Quick, Narrator) plus an installed-voice picker. Pronunciations are applied to
+    trigger speech.
+  - Two walkthrough steps: "Your voice" and "Say your name".
+  - The "Willsapper proc" suggested trigger: slap, replace, `after_my_melee_ms` 1500.
+  - Not done: sound files packed inside a `.gtp`, and names in the Charm and CH-chain overlays' own speech.
+- **Map Full mode + keep-clear areas (agent 3.7.162, beta `c7d881a8`):**
+  - Full lays the map over EverQuest's client area, click-through always (`_coversScreen`).
+  - Keep-clear areas: the UI ini's open windows plus your own boxes.
+  - Open: the timers column is hidden in Full; nothing has been tried on Windows yet.
+
+### 296. The hedge maze board opens on Thelin's first flag, not on the hails that start the maze (bot 3.1.262, 2026-10-14)
+- **The call (the guild lead, 2026-10-14, from a morning raid):** *"This is supposed to come up after the last
+  boss dies, not right at the beginning of the hedge event, based on the raid"*; *"the one on the inside won't
+  give you flags until after he talks to terris thule at the end."*
+- **Why it popped early:** §285's opener fired on hails from two raid groups inside a minute. Raids hail Thelin
+  in groups to START the maze, so that is the first thing it saw. The production rows show it: a burst of
+  Thelin hails at 14:48–14:51 UTC, no grant.
+- **What the script says (`ponightmare/encounters/Maze.lua`):** a hail gives a flag only in state 4. State 4 comes
+  after the last construct dies, its shard is handed in, and Terris-Thule's talk ends. Both state-4 answers are
+  rows we already store: "Please destroy her…" (`thelin_2`, said even to raiders who already hold it) and
+  "I do not recognize your face…" (`cl_maze`). State 4 also starts Thelin's 10-minute depop.
+- **Where it landed:** `utils/hailBoard.js` `noteGrants` replaces `noteHails`. The first `thelin_2` (event) or
+  `cl_maze` (checklist) row whose zone resolves to `ponightmare` opens the window, which runs 10 minutes
+  (`minutes: 10`) from that grant. Recitals, other zones' Thelins and zoneless rows open nothing. Hails no longer
+  open anything; inside an open window they still count as seen. The two-groups rule and `GROUPS_WITHIN_MS` are
+  gone. `index.js` `_hailGrants(rows)` passes every stored row.
+- **Known limit:** if no raider with Mimic hails Thelin in state 4, nobody's grant reaches us and no board opens.
+  That is the same reach the boss boards already have.
+
+### 297. "Latest flags" strip on /pop: two layouts on beta, awaiting a pick (web 1.8.152, beta `7257bed1`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"we should show a 'latest flags completed/verified' section at the top
+  of the pop page."*
+- **What it shows:** `pop_flags` rows from the last 7 days whose source is `event` (the server's flag line) or
+  `recital` (an NPC recited it), each badged with its source. `checklist` and `hail_witnessed` rows are left out.
+  Traders, hidden characters and known levels under 46 are filtered with the page's existing lists.
+- **The two layouts:** `?flags=a` = newest first, one row per character per moment (rows within 90 s fold
+  together, implied steps dropped). `?flags=b` = grouped by flag step. The param is not `?v=` because `/pop` already
+  uses `?v=b|c` for the Essences queue. No param = production's page.
+- **Open:** the pick; whether checklist rows should appear as "self-reported"; recital rows can look newer than
+  the flag (the tooltip says so). Files: `web/lib/popLatestFlags.ts`, `web/app/pop/LatestFlags.tsx`,
+  `test/pop-latest-flags.test.js`.
+
+### 298. Map: Thelin's walk, a Raiders label switch, and the raid's focus ring (agent 3.7.164, Mimic beta `39d6bef3`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"for Thelin, if anyone is targetting him we should track that path and put
+  his path on the map"*; *"map should have a quick hide raiders labels too, and also highlight the MA's target or which
+  target has the most people targetting them."*
+- **Thelin's walk:** his waypoints come from the maze script, not a spawn grid, so the learned wander legs cannot hold
+  them. The agent keeps a plain trail instead (`MAP_TRACKED_PATHS`). Any character on this machine targeting him adds to
+  it. Gaps over 20 s and jumps over 400 units break the line, so the outside Thelin's body is never joined to the inside
+  one. **Local only for now:** sharing one trail across the raid needs a bot route (MAP-REFINEMENTS #14).
+- **Raiders button:** on the Map toolbar. It hides the raid and group names together; the dots and mob names stay.
+- **Focus ring:** the mob Extended Target puts on top. That is the MA's declared target, else the mob 2+ raiders target.
+  It gets one magenta double ring and an "MA" or "N targeting" tag. It is drawn only where its position is known: your
+  own target, or a pinned spawn point. Placing it from other raiders' targets needs each Mimic to share its target loc
+  (MAP-REFINEMENTS #15).
+- **Load:** the focus read uses the same 3 s Extended Target cache the dashboard state already refreshes, so it adds
+  no new bot traffic.
+
+### 299. Map: the raid's targets and shared escort trails (bot 3.1.263 on main `a1d7f11b`, agent 3.7.166 on beta `46babe84`, 2026-10-14)
+- **The picks (the guild lead, 2026-10-14):** both. **A**, "for these types of babysitting escort quests": one escort-NPC
+  trail every Mimic in the raid sees. **B**, "also important for MA": shared target positions, so the focus ring can be
+  placed when it is not your own target. B's samples are A's source.
+- **One upload, extended, not a new stream:** each Mimic's current target rides the existing `live-state` POST
+  (`target_map` in the Map's server frame, `target_type`, `target_zone`; `target_id`/`target_name` were already there).
+  The upload is change-driven plus a 45 s heartbeat; the agent adds a position-driven send only when the target is an NPC
+  that moved (30 units and 10 s for any mob; 12 units and 5 s, or 15 s standing, for an escort). The bot keeps the latest
+  sample per character in memory for 90 s (`utils/raidTargets.js`), never in a column, and sheds with
+  `flag_shed_live_state` because it is that stream. Target id 0 is no target.
+- **Served on the Map's existing pull:** `GET /api/agent/map-sync` gains `targets` (per zone: each targeted NPC's latest
+  position and how many raiders are on it) and `trails` (past `tsince`). Scope is Extended Target's: your raid (the other
+  raid dropped when two are live), else your group, else only your own characters. The trails are not scoped; they name no one.
+- **Escort trails (A):** `ESCORT_NPCS` in `utils/raidTargets.js`, mirrored by the agent's `MAP_TRACKED_PATHS` (a test fails
+  if they drift). Matched on zone + name, never id. Rules of the local trail: a point every 12+ units, a break after a 20 s
+  gap or a 400-unit jump, 800 kept, dropped after 12 h. A stretch is served only once it has moved 100 units, so a town copy
+  that stands still never draws. Stored in `bot_kv` (`escort_trail:<zone>:<name>`, one row per guild + zone + NPC), written
+  at most once per 10 s per trail, nothing written before a read has succeeded.
+- **Limits:** two raids in two copies of one zone share one trail per escort (only the 400-unit break separates them).
+  The Map's pull is every 10 s, so a shared focus position can be ~15 s old.
+- **Privacy:** a target's name and position is game state, not chat. PRIVACY.md lists it with the live status.
+
+### 300. Mimic Chat overlay: design B now, A next (agent 3.7.165, Mimic beta `3be5b8e4`, 2026-10-14)
+- **The ask and the pick (the guild lead, 2026-10-14):** *"i need a chat overlay so i can move it off the screen and be able to
+  show/hide different components from it, or break it into tabs"*; picked "B then A" — one feed with show/hide chips now, tabs
+  that tear out into their own windows next. C (Canvas pieces) was ruled out: the Canvas lives on one screen.
+- **Privacy split:** the upload filter (`DEFAULT_DROP_PATTERNS` / `shouldKeep`) is untouched. A separate local tap beside the tell
+  tap feeds a 500-line memory ring, served only on 127.0.0.1 (`/api/chat`, origin-checked). It is skipped for excluded characters
+  and never written to disk or queued. The route serves an empty page on failure rather than a stale one, so a switch turned off
+  never re-shows lines.
+- **Defaults, pending the guild lead's call:** guild, raid, say, OOC, shout, auction and NPC speech show; tells follow Settings →
+  Tells (Off by default; Local/Synced show them, neither uploads); officer, group and custom channels are off until switched on in
+  the overlay, and are captured only while it asks.
+- **Where it landed:** `apps/mimic/chat.html` + every overlay-parity site in `main.js`, the dashboard row, `test/chat-overlay.test.js`;
+  `/privacy` and PRIVACY.md say the same.
+
+### 301. Roll ties: a top tie is shown and settled by deathroll (agent 3.7.167, Mimic beta, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** from a Rolls card reading `611 (Carved Bone Ring) — <name> 507 · 7 rolls open` with two characters
+  on 507: *"if two toons roll the same number on a roll it should trigger a deathroll and highlight the tie"*.
+- **The rule:** only the TOP tie triggers anything — two or more distinct characters sharing the highest FIRST roll (a character rolling twice is
+  already a re-roll and never counts). A lower tie is a dim `=` on the row. With a linked quantity (3), a top group no bigger than the quantity
+  is not contested, so it is not a tie. One helper, `rollSetTies` in the agent, decides it; both Rolls surfaces draw what the snapshot carries.
+- **The deathroll starts at the TIED number, not the original range.** Both deathroll detectors (the agent's and `utils/deathroll.js`) chain a
+  roll only when its range is the previous result, and the tied number IS the previous result: `/random 507` chains straight onto the 0-611
+  roll. The first character to have rolled the tied number starts. With three or more tied, the first 0 puts one out and the rest start again
+  from the tied number until no more than the quantity remain.
+- **Nothing is sent to the game.** The Command Center 📋 copies one `/rs` line (plain ASCII, 250 characters at most). The agent reads the
+  follow-up /random lines the same way the detector does, so the tie resolves to the deathroll's winner without any bot change; a two-roll game
+  (which the detector's three-roll minimum would not record) still resolves the card. The tie's game is drawn on the tie, not again as "Deathroll 611".
+- **Not built:** a spoken "Roll tie" callout — the agent speaks no roll events, so there is no path to add one to.
+- **Where it landed:** `rollSetTies` / `_rollTieResolve` in `rollSetsSnapshot`; `_wpRollWhoHtml` / `_wpRollTiePrompt` / `_wpRollRowMark` in
+  `dashboard.html`; `rollTie*` in `apps/mimic/command.html`; `test/roll-tie.test.js`.
+
+### 302. /pop: alts grouped under their main, latest-change sort, 24 h / 3 day highlights (web 1.8.153, beta `6def4593`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"Lets group the flagging for alts by main with collapse turned on, we can expand all
+  from a button. Then if we want to sort by latest changes, highlight the things that have changed in the last day, and last 3 days."*
+- **The calls:** grouping is on the Matrix only, behind `?alts=group` (`&sort=latest`, `&open=1` to expand all). Native `<details>`,
+  collapsed by default; the summary line carries the family's newest change. A "change" is an `event` or `checklist` row, or a
+  recital that newly added a flag (no earlier row for that character + flag). `hail_witnessed` is never a change. Buckets: 24 h
+  (strong) and 3 days (soft). Main links come from `characters.main_name` at runtime; nothing is written into the repo.
+- **Known caveat:** a character's first-ever recital marks every flag it recites as new at that moment.
+- **Cost:** zero new queries; the page's existing paged `pop_flags` read adds `source`, the roster read adds `main_name`.
+- **Where it landed:** `web/lib/popAltGroups.ts`, `web/app/pop/AltGroupMatrix.tsx`, `web/app/pop/page.tsx`; `test/pop-alt-groups.test.js`.
+
+### 303. Chat overlay round 2: the Seer's tells, copy on the timestamp, channel breakouts (agent 3.7.168, Mimic beta `432b4999`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14, from a screenshot of EverQuest's Tells window):** *"tells from seer did not come through"*,
+  *"Add a copy button if you clikc on the timestamp next to the message"*, *"Add breakout abilities for different tabs by right
+  clicking the name of the chat type"*.
+- **Seer:** her recital is written to the log as a bare sentence (no "tells you"). `classifyChatLine` reuses the flag matcher
+  (`_POP_RECITAL_RX`) and files it as a Tells line from "Seer", under the Tells gate. Her "nothing new" answer is added to the chat
+  block only (`_SEER_QUIET_RX`), never to the flag matcher, so it is not uploaded as a recital.
+- **Copy:** the timestamp is a button; it copies `[hh:mm] Speaker: text` and flashes "copied".
+- **Breakouts (design A, first half):** right-click a channel chip → its own window (`chat.html?groups=<id>`), remembered across
+  restarts (`cfg.chatBreakouts`), own bounds. Breakouts exist exactly while Chat does; a breakout's ✕ puts the channel back.
+- **Open:** a per-breakout font size; whether ✕ should close instead of put back; tabs inside one window (design A, second half).
+
+### 304. Seer paste on the PoP guide; Start here and the figurine removed (web 1.8.154, beta `26737a4d`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"reverse engineer [takp.info/flag-check] so that peoples flags can just copy what the
+  seer says and fix their flags and get next steps"*; then *"players need to be able to submit the seer's stuff at the top of the page
+  with a collapsible text field"*, *"These top items can be removed, they're superflous"*, *"The intricate wooden figurine is not in
+  the game right now"*.
+- **Where:** a collapsed "Paste what the Seer says" box at the top of `/pop/guide` (all three layouts), not a separate page. It lands as
+  the default on beta: the removals are shared data, so no variant param could gate them.
+- **How:** the paste is read in the browser (`web/lib/popRecital.ts`); it ticks the guide's steps, rings the next step per open plane,
+  lists closed planes and unrecognised lines. Save sends only matched sentences; the server re-reads them, checks the character is on
+  the member's account, and writes `pop_flags` source `recital` at one time, skipping keys that already have a recital row. The raw
+  paste is never stored. `RECITAL_STAGES` / `STAGE_IMPLIES` are copied into `web/` (it imports nothing outside), held in step by
+  `test/pop-seer-paste.test.js`.
+- **takp:** substring-match each Seer sentence to a per-chain level, then a hand-written decision tree. No licence stated; no code or
+  text copied. Our 44 guided-meditation sentences are complete against Quarm's Seer script. Not yet read: the 14 "unlock memories"
+  locked texts (a kill done, an earlier hail missing), the best next-step signal.
+- **Removed:** the Start here section and the figurine step. `start_flag_fixers` (Seer + Maelin loop) and `start_traveler_manual`
+  (Willamina chain) carry content that tests and Mimic's Quests mode use, so they moved to the Knowledge quests section, same keys.
+- **Open:** keep or delete those two moved items; whether to tag pasted rows (e.g. `npc='web paste'`) so they can be told from
+  Mimic's. Today they are identical, so a paste for your own character reads as a real recital.
+
+### 305. Chat overlay round 3: earlier characters, history from the logs, search, zone lines (agent 3.7.169, Mimic beta `f3840337`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"CHAT overlay should be able to bring in the chat from the previous characters you were on,
+  and put a line in saying swapped character, and the timeframe between. If you log out and log back in, show the previous logs (and
+  give a timeframe, past 24h, past 12h, past 6hr, 3, 2 1"*; *"and search to only show chats from that specific character"*; *"Lines
+  like 'You have entered Plane of Knowledge' are worth showing too"*.
+- **Calls:** a swap is a different log's line ≥30 s after the last (the /camp timer alone is 30 s, so dual-boxing doesn't draw a rule
+  every line; below that a dim "heard on X" tag). History is OFF by default and reads only when asked, backwards from the end of each
+  log; it never writes or uploads. Zones are an ungated group, on by default. Search matches the speaker or the character that heard it.
+- **Privacy:** PRIVACY.md and `/privacy` say the overlay can read the last 1–24 h from the game's own logs, on the PC only.
+- **Open:** history is not time-merged with live lines newer than the ring's start (it sits above); the history window is remembered
+  per window in localStorage, not in Mimic's config.
+
+### 306. PoP guide in collapsible sections with a sidebar (web 1.8.155, beta `c717eb93`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"Collapse all of the pop/guide stuff down into subsections, Tiers and plane of knowledge,
+  move the POK stuff except for the seer at the top. Give a sidebar nav for the different sections to drop down. It should be a simple
+  set of clicks."*
+- **Shape:** the Seer paste stays first. Below it, closed sections Tier One … Tier Four and the Plane of Time (the `/pop` chart's own
+  tiers), then the Plane of Knowledge. A tier's planes are sub-sections (the lower crypt, Temple of Marr and Ragrax fold into their
+  parent). Each summary shows "n / m done" and "▶ next" when the Seer paste rings a step inside. Sidebar on wide screens, drop-down on
+  phones; Expand all / Collapse all; URL hashes (`#tier-2-valor`, `#pok`) open on load and on back.
+- **PoK after the tiers:** the tiers are the route; Knowledge is the side shelf (flag fixers, the Traveler's Manual, the Knowledge
+  quests, the spells), and the Seer box already covers flag repair. Maelin hand-ins between raid kills stay with their tier; moving one
+  is a line in `STEP_HOME`.
+- **Open:** "▶ next" from Mimic data on this layout (today only the Seer paste drives it); whether to retire `?v=b` / `?v=c`.
+
+### 307. /pop opens on My Characters; missing spells collapsed with copy; wider chart (web 1.8.156, beta `6c704690`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"The 'your pop spells still needed' should be collapsed and let you expand to see the full
+  list and what the spell does, link to pqdi, and a copy button…"*; *"The pop flags page should start on your characters by default,
+  with mains being the second toggle and all characters being the third (grouped by mains like I mentioned)"*; *"Pop flags breakdown
+  should be a little wider and less dense."*
+- **Toggles:** scope (`?scope=`) My Characters → Mains → All characters; view (`?view=`) Chart | Matrix. A bare `/pop` opens on My
+  Characters (its table). All characters' Matrix groups alts under mains (`?alts=flat` opts out). Old links that name a zone, view or
+  alts but no scope stay Mains; `?view=mine` is My Characters. Signed-in with no linked characters → Mains.
+- **Spells:** a closed `<details>`; per character a copy line (≤200 characters, split "(1/3)" without cutting a spell) and per spell
+  the PQDI link, level, scroll and a one-line description synthesized from `eqemu_spells` (no prose exists in the catalog). One chunked
+  `eqemu_spells` lookup, My Characters only.
+- **Chart:** full container width, 3 cards per row from `xl`, more padding, step rows that don't wrap the counts. CSS only.
+- **Open:** whether the guild-wide spell table at the bottom collapses too; whether My Characters' Chart view shows your spells.
+
+### 308. Charm overlay "Best pets here" (agent 3.7.170 Mimic beta `f4f3b917`, bot 3.1.264 main `4ef29778`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"integrate a list of the better charm pets for the highest level charm a player has for the
+  zone that they're in"*, pointing at a third-party pet finder. It states no licence: we took the idea only, with our own data and
+  Quarm's server source for the rules.
+- **Charm immunity (from EQMacEmu `Mob::IsImmuneToSpell`):** special ability 14 (Uncharmable, already `utils/mobSpecials.js` code 14);
+  merchant 41, banker 40, guildmasters 20–34; Veksar at level 50+; level above the spell's SPA 22 max; body type for animal (21),
+  undead (3/8/12), summoned (24/27/28) and plant (25) charms. We also drop placeholder and untargetable bodies and raid targets (the
+  server's "too powerful for your charm" engage notice is not in our mirror, and a false positive costs a pull).
+- **Split:** the bot serves a spell-independent candidate list per zone; the agent owns the spell, cap, body type and ranking.
+- **Ranking:** damage per second (average hit ÷ swing time, `attack_delay` in tenths) in 10 % steps, then HP, then level; up to 3
+  chips (summons, flurry, triple, dual wield, rampage, proc, fast) — chips only, no invented multipliers.
+- **Spell:** the spellbook file (`/outputfile spellbook`, read locally) first, else the class's highest charm at its level, labelled
+  "assumed from level". Class levels are PQDI's. Dictate is never assumed.
+- **Not done:** Dire Charm AA; resist modelling; a Map highlight (costed in the report: medium build, colour meaning hard to retract).
+
+### 309. /pop/latest [beta]: a grouped stream and stage cards in step order (web 1.8.157, beta `7167ca91`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"I like the verbose stream of A, but for flags that go together I think that a list view in
+  alpha order by default would be helpful … There should be a collapsible latest section that has B's layout format, in order of stages
+  and what relies on each flag … The (and 29 more) item isn't useful if we can't open it up. Make me a new beta page to try all of this
+  out."*
+- **What it is:** https://b.wolfpack.quest/pop/latest, linked from `/pop`'s header. Stream: characters who earned the same steps within
+  5 minutes are one row (names A–Z by default, or latest first); with a live raid, a collapsed "N in the raid still need this". By
+  stage (open by default): cards per progression line in dependency order, each step with its own plane, an expandable name list and an
+  "unlocks →" line. Filters 24 h / 3 d / 7 d, Mains / All.
+- **Fixes to the §297 strip:** a recital row shows only steps new to that character (repeats collapse); a step shows its own plane,
+  never the zone the row was heard in (the Seer's Plane of Knowledge).
+- **Calls:** chain order is derived (`NEXT_LINES` → `STEP_GUIDE` / guide flags → `STEP_IMPLIES`), no second order table; "unlocks →"
+  also reads plane gates (so the hedge shows "enter Lair of Terris Thule"); every fold is a native `<details>` (`ExpandList`); "still
+  needs it" counts event / recital rows only; idle chain steps show dimmed for context.
+- **Cost:** one paged `pop_flags` read (90 days), one paged `raid_roster` read, the shared roster read, one levels call.
+- **Open:** A–Z vs latest; dimmed idle steps; first-ever recitals still read as new (labelled "first recital").
+
+### 310. Tray menu: layout B (Mimic beta `a9fcbfb4`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"We need to refine and simplify the taskbar menu so its not so overwhelming"*, then
+  *"Tray layout B"*.
+- **What it is:** the top level is status, Show dashboard, Overlays ›, Rescue, Quiet mode, Settings ›, Open ›, Help ›, Quit. Settings ›
+  holds the options under Behaviour / Mode / My tells / Updates / crash reports / Account, then Settings…; Open › holds the pages,
+  folders and windows; Help › holds the walkthrough, feedback and Restart agent.
+- **Calls:** Settings › is one flat submenu with disabled headers and separators, not nested submenus (a checkbox stays one click from
+  its group). Positions only: no label, handler or checkbox changed (`test/tray-menu-layout.test.js` checks against a snapshot of the
+  old template). Agent only: "Spoken trigger callouts (TTS)" takes the Overlays slot.
+- **Open:** a pending "Restart to install update" now sits inside Settings › Updates instead of at the top level; the guild lead's call
+  whether it gets a top-level line while one is pending. Tray-only items with no dashboard or Settings twin: "Pop up when an update is
+  ready", the four "Pause Discord DMs" items, Uninstall, Show agent log.
+
+### 311. Chat overlay: group chat and joined channels on by default (Mimic beta `a069a5ee`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"not seeing group chat or channels in the chat window either"*. The classifier read them; the
+  overlay's ⚙ switches for them defaulted off.
+- **Call:** group and joined channels default on (`p.group !== false`, `p.custom !== false`); officer stays opt-in. A switch turned off
+  stays off. Still memory-only on the player's PC; `PRIVACY.md` and `/privacy` updated to match.
+
+### 312. UI Studio chat routing: real channel names, layout ↔ routing link (Mimic beta `a730c5be`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"These Channels need to say what's actually in these chats, not just Ch 26 or Ch 46"*,
+  *"When you select one of these windows it should highlight the chat window routing"*, *"Also the labels are wrong"*, with the
+  in-game Filters menus of two windows as ground truth.
+- **Call:** `ChannelMap<N>` is the filter-menu position, not a colour id. Ids 0–40 from MacroQuest eqlib `eChatChannel` (corroborated by
+  Zeal's `chatfilter.cpp` offsets), 41–56 from Zeal's `Extended_ChannelMaps` in saved order; both in-game windows are golden fixtures and
+  match exactly. The old table was invented and wrong from id 3 on. Unsourced ids stay "Ch N"; no guesses.
+- **Also:** /join slot names from eqclient.ini's autojoin list, passwords cut in main; selection is one state across layout and cards; chips
+  drop onto layout rectangles; stacked titles no longer overlap.
+- **Open:** the autojoin order = slot order assumption is unverified (tooltip says so); the default-channel pill names only 3 = Tell
+  (`ChatWindow<N>_DefaultChannel` values beyond that need an in-game capture).
+
+### 313. DPS meter: each row's seconds are its own active time (agent 3.7.171, beta `a79291e6`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"dps METER counts the same amount of time for everyone versus just when the person engaged.
+  That makes the DPS calculation incorrect."*
+- **Call:** EQLogParser-style. A row's Sec = its first damage → last damage (≥ 1 s, ≤ the fight); an owner's span covers its pets'. The
+  total row, the Tank tab, old saved fights and a guild-settled player this machine saw under 80% of keep the fight's seconds (a partial
+  local span would inflate DPS). Spans ride beside `perPlayer`, never inside it, so the threat-snapshot upload (58% of the database) does
+  not grow. The copied `/rs` line writes each raider's own "in Ns", which the bot's `/rs` parser already reads as per-player seconds.
+- **Open (needs a pick):** the Me HUD fight DPS / tonight average, the My parses ledger (saved `dur`) and the Trend view still divide by
+  fight time and must move together; the bot's merged-parse DPS (`index.js` `/rs` and merge paths, `utils/killRecap.js`) also uses one
+  duration for everyone.
+
+### 314. Target Info: the mob's observed hit types (agent 3.7.172, beta `4ec04404`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"when we observe what types of hits a mob is doing, put that onto the target info
+  (slashing/ piercing/etc)"*.
+- **Calls:** keyed by mob NAME (`_mobCaseKey`), not spawn id — the melee line has no id and a mob swings while you target another;
+  misses / dodges / parries count (the verb is the attempt), max hit from damage only; our pets and declared guild pets excluded; a
+  one-word attacker counts only when it is not a known player or pet. Verb map reuses the Pet tracker's `_verbToSkill` (+ stab, backstab,
+  strike, rend). Local only, nothing uploaded.
+- **Open:** chip placement (slate chip vs the stats grid); an alpha Canvas piece; pooling across the guild would need a new upload.
+
+### 315. Chat overlay round 4: tags, per-channel switches, show-only, Melee, per-window text (agent 3.7.173 · Mimic beta `efd30696`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"put the [P] [RS] [GU] [1] [2] [3] [4] etc in front of the lines"*, *"Allow for turning off
+  specific channels and keep people's settings"*, *"need rightclick on chat to 'show only this' as an option to toggle on and off"*,
+  *"have a spot for combined melee"*, *"extra windows need their text to be configurable"*.
+- **Calls:** joined-channel switches keyed by lower-case NAME (slot numbers move), shared by every character; show-only is a view toggle
+  that never writes the switches; Melee is opt-in with its own ring and reuses the agent's melee parser; "extra windows" read as the
+  breakouts + Melee window + main, each with its own font size / spacing / timestamps / tags. All local, memory only.
+- **Open:** per-character channel switches?; a real `/abc` log to confirm.
+
+### 316. Overlay flicker on app switch (Mimic beta `65eceea9`, 2026-10-14)
+- **The report (the guild lead, 2026-10-14):** *"lately i've been seeing a flicker for the overlays when i switch between applications"*.
+- **Cause (a9919715, 2026-10-13, overlays drop behind other apps):** a NULL foreground sample while switching read as focused, raising
+  every overlay over the incoming app for the 600 ms debounce; and clicking back into EverQuest covered the dropped overlays until the
+  next 400 ms sample. **Fix:** ignore NULL samples; poll every 120 ms (two user32 calls; parent-alive check still ~4 s).
+- **Open:** Windows retest; quick A/B is "Other apps can draw over overlays when EverQuest isn't focused" off.
+
+### 317. The timer ✕ dismisses on the press, for every row kind (agent 3.7.174 · Mimic beta `4ae64a3b`, 2026-10-14)
+- **The report (the guild lead, 2026-10-14, a screenshot):** *"These timers aren't able to be clicked off"* — the second time (§171's
+  `data-wp-interact` round did not fix it). The rows: the server tick, two spell recasts, two zone-timer countdowns.
+- **What changed:** the ✕ no longer owns a click listener. One `mousedown` listener on the stable `#timers` parent reads the row's
+  `data-timer-id`, so a repaint between press and release cannot lose it, and a row sliding up under the cursor cannot take the click.
+  The window stays armed until the button comes up. The cancel POST retries twice. The ✕ has a 5 px invisible ring.
+- **Server tick:** ✕ hides it for as long as the overlay stays open (tooltip says so); nothing is sent to the agent, and the agent's
+  clear-all leaves it alone.
+- **Zone timers:** a countdown the raider ✕'d stays dismissed when the bot hands that window out again on re-entry (2-minute
+  tolerance; a new emote arms normally). Before this the "stampede window" came straight back.
+- **Not proven on Windows:** whether the Canvas iframe ever armed its window; main.js now logs `[hover] first arm from <page>` once per
+  page. Test: `test/timer-dismiss.test.js`.
+
+### 318. Installing an update shuts Mimic down like Quit, positions saved (Mimic beta `b26c8162`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"when installing a new version, please exit gracefully and save window position"*.
+- **What it fixed:** all four install paths (tray, dashboard, the "Restart now" dialog, install-when-EQ-closes) called `quitAndInstall`
+  straight away; bounds saved only on a 400 ms debounce, so a move just before an install was lost; and Quit itself hard-killed the agent
+  (`kill()` on Windows skips its exit hooks, so the upload queue flush never ran).
+- **Now:** one `_gracefulShutdown` (memoised) flushes every pending bounds and floor save into one config write, stops the watchers,
+  asks the agent to stop via its `/api/shutdown` and waits ≤ 3 s (then kills), and only then `_installUpdateNow` → `quitAndInstall`.
+  Quit, `before-quit` (covers install-on-quit and OS logoff) and the agent hot-swap use the same path. A throwing install restores
+  everything. Test: `test/mimic-graceful-update-exit.test.js`.
+- **Open:** the main dashboard window's own size/position is never saved (always 1200×800) — a separate change if wanted; first real
+  test is the update AFTER this build, since the build being replaced still has the old shutdown.
+
+### 319. Tray: Updates is its own submenu (Mimic beta `1ae718c1`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"add updates to the submenus for the taskbar"*. Also settles §310's open question (a
+  pending update now shows at the top level, as the submenu's label "Updates — vX ready").
+- Same items, same handlers; moved out of Settings ›, placed between Settings › and Open ›.
+
+### 320. Chat overlay round 5: Spells, Skills, Melee filters and colours (agent 3.7.175 · Mimic beta `0d4d33bd`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"chat can also have separable spell and skill information"*; *"For Melee in the chat, it
+  would be helpful to filter out other's information the same way we do with in game filters (do i want to see others combat or just
+  mine). The color schema could be updated as well."*
+- **Calls:** `[SP]` and `[SK]` are opt-in groups built like Melee (own ring, breakable, per-window text). Melee lines are mine / on me /
+  others (EQ's own split; a hit ON your pet is "others"), with a Misses switch; all on by default so nothing changes until switched.
+  Colours: mine near-white, on me red, others grey, misses dimmer; spells purple, skills amber — CSS variables, colourblind themes apply.
+- **Open:** skill-result line shapes beyond forage/traps are from memory (fishing, sense heading, hide/sneak, bind wound, tradeskill);
+  check a real log before widening. Landings on others cover only what the agent already indexes.
+
+### 321. Grow-upward overlays get a top-corner resize grip clear of the ✕ (Mimic beta `ac73bace`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"when grow upwards is on, we should be able to drag the top right corner of overlays while not
+  hitting the X button."*
+- **Call:** a 12 px grip in the top-right corner, and the ✕ steps 8 px left while grow-up is on (shrinking the grip into the 6 px margin
+  left a sliver too small to hit). Dragging keeps the bottom-left fixed. One shared preload grip, so every ✥ overlay gets it.
+- **Open:** Windows check; a header right under the ✕ may lose up to 2 px of gutter.
+
+### 322. UI Studio: named EverQuest UI layouts per character (Mimic beta `d77a7d5b`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"we should allow for multiple layouts for characters screens so we can have alternative
+  modes, and be able to back up both. Name them as well."* (a minimal-chat layout that leans on the Chat overlay, beside the full one).
+- **Calls:** a layout is only the character's `UI_<char>*.ini` — EQ keeps changing socials, spell sets and `eqclient.ini` on its own, so a
+  switch must never lay old copies of those back. Switching while EQ runs waits for logout (same queue as deferred saves). Backups carry
+  the name in the existing `ui_snapshots.label` ("Layout: <name>"): no bot change, no migration.
+- **Open:** `ui_snapshots` has no pruning and each layout save adds a row; `/me/ui` may now show "Layout: …" as the newest label;
+  Windows + EQ run to confirm EQ keeps the swapped file after a camp.
+
+### 323. Bristlebane's chat agent moves from V5 to Tower (Coolify); cloud sessions get a deploy token (2026-10-14)
+- **What broke:** the OpenClaw agent wearing the Bristlebane Discord app, on V5, died on a setup step with "Auto-compaction could not
+  recover this turn" (its fix hint: `agents.defaults.compaction.reserveTokensFloor` ≥ 20000) — a local model's small context window
+  filled by one step's output.
+- **The guild lead (2026-10-14):** *"this is on V5 not on tower. If you can set this up on tower for me in coolify, GO"*; then picked
+  **A — give the cloud session a deploy token** (over B, a compose the guild lead clicks in) and **the model stays V5's local model over
+  the LAN**.
+- **Access change (widens §9):** a second Coolify token with **write + deploy, still no `read:sensitive`**, in the cloud environment's
+  `COOLIFY_TOKEN`. Secrets (the Discord bot token) are pasted in Coolify's UI by the guild lead, never sent through a session. The
+  tailnet policy is unchanged (Coolify API 8000 + Tower 5432 only).
+- **Found on the way:** the existing Coolify app `bristlebane` (the voice bot, `apps/bristlebane`) is `exited:unhealthy` since
+  2026-10-06; its logs need `read:sensitive`, so they are unread.
+- **Which Discord app is which (the guild lead, 2026-10-14):** the Coolify app `bristlebane` runs Discord application
+  `1556801422689837240`, which §166 called "Bristlebane" and which now shows in the server as **miMIC**. The OpenClaw chat agent on V5
+  is a **separate** application, `1549680353747406858`, named **Bristlebane**. Different tokens, so the two never fight over a login.
+  (The component and folder are still called `apps/bristlebane`; renaming them is a separate change.)
+- **Open:** the token; V5's model server must listen on the LAN at a real context that matches the declared one (see §325 — not
+  `reserveTokensFloor`); the step files (`01-step0-discover.md`) live on V5 and are not in the repo.
+
+### 324. Chat overlay: Spells and Skills get mine / on me / others filters (agent 3.7.176 · Mimic beta `7488b291`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14, a screenshot of the ⚙):** *"same here with spells skills - Filters for spells for others
+  should be there as well."*
+- **Calls:** Spells show My spells / On me / Others' spells; Skills show My skills / Others' skills; all on by default; shades of each
+  group's hue. Resists, fizzles and interrupts count as mine (no separate switch). Known edge: your self-buff landing on you reads
+  "on me", because EQ's landing text does not say who cast it.
+
+### 325. The Bristlebane chat agent's Tower deploy is in the repo; `reserveTokensFloor` is a trap (2026-10-14)
+- **Research (sourced, OpenClaw docs + source):** the V5 error's hint is stale. `reserveTokensFloor` defaulted to 20000 already, and
+  from OpenClaw 2026.8 the key is **removed** — an unknown key makes the gateway refuse to start. The overflow comes from one big tool
+  result or a context window smaller than declared. ⚠ This corrects this session's earlier advice to set it.
+- **Landed (main):** `deploy/openclaw-bristlebane/` — `docker-compose.yml` (Coolify Compose from Git; busybox init service chowns the
+  named volumes to uid 1000 and seeds the config once; pinned `ghcr.io/openclaw/openclaw:2026.10.3`; no ports), `openclaw.seed.json5`
+  (`tools.profile: "messaging"`, an honest 64K `contextWindow` = `num_ctx`, `midTurnPrecheck`, smaller bootstrap caps, Discord via
+  env SecretRef, placeholders only), `README.md` (deploy + V5 cutover). Self-host wizard §3 entry added.
+- **Open:** the deploy token (§323), V5's model server on the LAN at a real 64K context, the `<…>` ids, stopping V5's gateway first,
+  and resetting the Bristlebane token on the cutover. Untested on Coolify: volume naming and `service_completed_successfully`.
+
+### 326. Chat overlay: main channels up front, the rest under More (Mimic beta `e6c95d9e`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"This is getting crowded. Make the main set Guild/Raid/Party/Say/Tells/ooc/shout, then
+  the rest as an expandable section 'More' that opens up to show the rest"*.
+- **Calls:** main chips Guild · Raid · Party · Say · Tells · OOC/Shout; everything else behind `More ▾`, which shows "More (N)" while
+  closed so nothing is on unseen; the ⚙ gets a matching "More settings" fold. Open states remembered per window. Open: "Party" vs
+  "Group (party)" wording.
+
+### 327. UI Studio: rename, add and delete chat windows, set their font; hotbar pages ask before discarding (Mimic beta `f26fa569`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"need to be able to delete or rename chats, or make new ones in the UI Studio"*; *"clicking
+  off the hotbar pages should ask if you want to cancel changes. The UI should shrink to not sit over top of the hotbar pages"*; *"also
+  include chat fontsize on the ui studio for chats"*.
+- **Calls:** delete moves the window's channels to Main Chat (0) and renumbers later windows; never deletes 0 or a Tell window; falls back
+  to last-window-only if an unknown numbered key exists. Font is EQ's `_FontStyle` index 0–6 (point sizes unconfirmed, so the picker
+  shows the index). The inspector save stays blocked while EQ runs rather than deferring past logout, because a renumbering planned
+  before logout could be stale after EQ rewrites the file. The hotbar editor docks beside the layout and asks Keep editing / Discard.
+- **Open:** a live EQ check that a created window loads, that an emptied `[Chat N]` header is harmless, names up to 32 chars, and the
+  point size per font index; after-logout deferral for inspector saves if wanted.
+
+### 328. Overlays stop repainting from blank when you click back into EQ (Mimic beta `6bebcb79`, 2026-10-14)
+- **The report (the guild lead, 2026-10-14):** *"When i click onto a different window and then back into EQ the Overlays all refresh"*.
+- **Finding:** nothing reloads (no reload, navigation or broadcast on the focus path; pages keep their state). Since §316's z-order change
+  overlays can be covered by another app, and Chromium's occlusion tracker then treats them as hidden — stops painting, throttles
+  timers — so uncovering repaints every overlay at once. **Fix:** `disable-features=CalculateNativeWinOcclusion`; covered overlays keep
+  painting. Cost: negligible (the dashboard also no longer slows when covered). Unverified on Windows.
+- **Open:** the guild lead's A/B (turn off "Other apps can draw over overlays…" — if the refresh stops, this is the cause).
+
+### 329. Overlay sets come to beta from alpha (Mimic beta `5206a591`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"push up the multiple overlay layouts per character to this beta from alpha please"*; then
+  *"canvas does exist on beta, but in a different format"*.
+- **What moved:** alpha's `e9e4f3d6` (cherry-picked with `-x`): named overlay sets per character, `/pipe mimic load|save|next|prev|lock`,
+  the tray's 🗂 Overlay sets (placed under Overlays in layout B) and Settings → Overlay sets (badge BETA). Plus `/pipe mimic edit|arrange`,
+  which drives beta's own Canvas arrange mode. **Not moved:** `/pipe mimic group` — it needs alpha's saved Canvas groups.
+- **Found on the way:** the automatic beta → alpha sync has failed since 05:33 UTC today (conflicts in `charm.html`, `main.js`,
+  `settings.html`, the agent `package.json`, and now the overlay-sets files on both sides). A hand-resolved merge is under way; alpha keeps
+  its superset overlay-sets code and takes the agent version from beta.
+
+### 330. Map keep-clear areas are visible, named and switchable (Mimic beta `792da494`, 2026-10-14)
+- **The report (the guild lead, 2026-10-14, two screenshots):** *"What UI element is this looking to avoid? It cuts out a lot of it. We
+  should be able to see what's hidden and what is not."*
+- **Calls:** outlines + names only while configuring (⚙ open) or on an opt-in tick — mid-raid labels over the game are noise. Any area
+  whose size or position is a guess (no Width/Height, Zeal bars that run to the screen edge, a UI file saved for another resolution)
+  starts unticked; a pick is per character and per screen setup. No collapsed/minimised key was invented — none is known yet.

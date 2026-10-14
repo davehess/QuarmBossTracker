@@ -40,10 +40,12 @@ export const metadata: Metadata = {
     template: IS_BETA ? '%s · WolfPack.quest (beta)' : '%s · WolfPack.quest',
   },
   description: 'Guild-wide build planner, parse history, and loadout library for Project Quarm.',
+  // ⚠ NO `title`, `description` or `url` here (the guild lead, 2026-10-10: every page unfurls with its own
+  // name and summary). Next fills an empty openGraph.title/description from the page's own `title` and
+  // `description`, but a value pinned at the root WINS over the page's, so every page's og:title read
+  // "WolfPack.quest" and its og:description the site blurb. A pinned `url` made every page claim the home
+  // page as its canonical address. test/page-metadata.test.js fails if any of the three comes back.
   openGraph: {
-    title:       'WolfPack.quest',
-    description: 'Guild-wide build planner, parse history, and loadout library for Project Quarm.',
-    url:         SITE_URL,
     siteName:    'WolfPack.quest',
     type:        'website',
   },
@@ -62,14 +64,15 @@ export const metadata: Metadata = {
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   // eqmimic.quest gets a bare shell (the guild lead, 2026-10-08): no Wolf Pack header, search, tour,
-  // sign-in or footer, and no session lookup, because the one page served there is the anonymous
-  // feedback form. Keyed on the Host header; the layout is already per-request (it reads the session
-  // cookie below), so reading a header costs nothing extra.
+  // sign-in or footer, and no session lookup, because the two pages served there (the landing page and
+  // the anonymous feedback form) have no sign-in. Keyed on the Host header; the layout is already
+  // per-request (it reads the session cookie below), so reading a header costs nothing extra. The
+  // shell sets NO max width: each page sets its own (the form is narrow, the landing page is wide).
   if (isEqmimicHost(headers().get('host'))) {
     return (
       <html lang="en">
         <body className="font-mono">
-          <div className="max-w-2xl mx-auto p-3 sm:p-4">
+          <div className="mx-auto p-3 sm:p-4">
             <main>{children}</main>
           </div>
         </body>

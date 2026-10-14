@@ -15,7 +15,10 @@ import NewPageTag from '@/components/NewPageTag';
 
 export const dynamic = 'force-dynamic';
 
-export const metadata = { title: '[beta] Anonymous feedback' };
+export const metadata = {
+  title: '[beta] Anonymous feedback',
+  description: 'Reports and ideas sent from the Mimic feedback form without signing in.',
+};
 
 const STATUSES = ['new', 'read', 'done'] as const;
 

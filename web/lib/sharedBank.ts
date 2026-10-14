@@ -37,7 +37,22 @@ export type SharedBankRow = {
 // union-find chained those weak links into a 29-character and a 17-character
 // "account" (measured before this changed).
 export const MIN_COMMON_SLOTS = 5;
-export const MIN_AGREEMENT     = 0.75;
+
+// Staleness skew (the guild lead, 2026-10-13): three characters of ONE account
+// whose snapshots were weeks apart scored 0.84 / 0.73 / 0.64 pairwise. A
+// single-link bar of 0.75 dropped the 0.73 link, the group split, and an item
+// was counted three times. Staleness grows with the TIME GAP, so the pair
+// furthest apart scores lowest while each neighbouring pair still scores
+// well. Two bars, then:
+//   LINK      — single-link at 0.70 builds a candidate group (neighbouring
+//               snapshots chain together);
+//   CONSENSUS — every member must still score >= 0.60 against the group's
+//               NEWEST snapshot, the closest thing we have to the bank's
+//               current truth. That check is what stops the looser link bar
+//               from chaining unrelated banks: a member that only hangs on
+//               through a long chain is cut loose.
+export const LINK_AGREEMENT      = 0.70;
+export const CONSENSUS_AGREEMENT = 0.60;
 
 // Hard server rule, not a guess: 8 characters per game account.
 export const MAX_ACCOUNT_CHARACTERS = 8;
@@ -60,6 +75,8 @@ export type SharedBankClusters = {
   skip: Set<string>;
   /** Number of distinct accounts seen. */
   accountCount: number;
+  /** The accepted groups (each one inferred account), members sorted. Lone characters appear as groups of one. */
+  groups: string[][];
   /**
    * Groups that could not be split down to a plausible account even at the
    * strictest threshold. NOT deduped — a merge we cannot explain would hide
@@ -99,10 +116,21 @@ export function agreement(a: SlotMap, b: SlotMap): { common: number; score: numb
 }
 
 /** Do these two characters read the same physical shared bank? */
-export function sameAccount(a: SlotMap, b: SlotMap, threshold = MIN_AGREEMENT): boolean {
+export function sameAccount(a: SlotMap, b: SlotMap, threshold = LINK_AGREEMENT): boolean {
   const { common, score } = agreement(a, b);
   if (common < MIN_COMMON_SLOTS) return false;
   return score >= threshold;
+}
+
+/** Freshest snapshot first; ties go to the larger bank, then the name. */
+function rankByFreshness(members: string[], maps: Map<string, SlotMap>, newest: Map<string, string>): string[] {
+  return [...members].sort((x, y) => {
+    const nx = newest.get(x) || '', ny = newest.get(y) || '';
+    if (nx !== ny) return nx < ny ? 1 : -1;
+    const sx = maps.get(x)!.size, sy = maps.get(y)!.size;
+    if (sx !== sy) return sy - sx;
+    return x.localeCompare(y);
+  });
 }
 
 /** Connected components over "same account at `threshold`", within `members`. */
@@ -145,9 +173,25 @@ export function clusterSharedBanks(rows: SharedBankRow[]): SharedBankClusters {
   const accepted: string[][] = [];
   const oversized: string[][] = [];
 
+  // Stage 1: single-link at LINK_AGREEMENT, then cut loose anyone who does not
+  // agree with the group's NEWEST snapshot at CONSENSUS_AGREEMENT. Whoever is
+  // cut loose is re-clustered among themselves (the newest member always
+  // stays, so every pass shrinks the remainder and the loop ends).
+  const stage1: string[][] = [];
+  const pending: string[][] = chars.length ? [chars] : [];
+  while (pending.length) {
+    for (const comp of componentsAt(pending.pop()!, maps, LINK_AGREEMENT)) {
+      const top = rankByFreshness(comp, maps, newest)[0];
+      const keep = comp.filter(c => c === top || sameAccount(maps.get(c)!, maps.get(top)!, CONSENSUS_AGREEMENT));
+      stage1.push(keep);
+      const rest = comp.filter(c => !keep.includes(c));
+      if (rest.length) pending.push(rest);
+    }
+  }
+
   // Split anything larger than an account can hold by tightening the bar.
   const queue: Array<{ members: string[]; step: number }> =
-    componentsAt(chars, maps, MIN_AGREEMENT).map(members => ({ members, step: 0 }));
+    stage1.map(members => ({ members, step: 0 }));
 
   while (queue.length) {
     const { members, step } = queue.shift()!;
@@ -162,13 +206,7 @@ export function clusterSharedBanks(rows: SharedBankRow[]): SharedBankClusters {
   const repByCharacter = new Map<string, string>();
   const skip = new Set<string>();
   for (const members of accepted) {
-    const rep = [...members].sort((x, y) => {
-      const nx = newest.get(x) || '', ny = newest.get(y) || '';
-      if (nx !== ny) return nx < ny ? 1 : -1;
-      const sx = maps.get(x)!.size, sy = maps.get(y)!.size;
-      if (sx !== sy) return sy - sx;
-      return x.localeCompare(y);
-    })[0];
+    const rep = rankByFreshness(members, maps, newest)[0];
     for (const m of members) {
       repByCharacter.set(m.toLowerCase(), rep);
       if (m !== rep) skip.add(m);
@@ -178,5 +216,113 @@ export function clusterSharedBanks(rows: SharedBankRow[]): SharedBankClusters {
     for (const m of members) repByCharacter.set(m.toLowerCase(), m);
   }
 
-  return { repByCharacter, skip, accountCount: accepted.length + oversized.length, oversized };
+  return {
+    repByCharacter, skip, accountCount: accepted.length + oversized.length, oversized,
+    groups: accepted.map(g => [...g].sort()),
+  };
+}
+
+// ── Owner-placed accounts beat inference (the guild lead, 2026-10-13) ───────
+// `character_accounts` (open row = valid_to null) says which game account a
+// character is on. That is authoritative; bank similarity only places the
+// characters that have no such row.
+
+export type AccountPlacement = {
+  character: string;
+  accountId: string;
+  /** game_accounts.label, when the owner named it. */
+  label?: string | null;
+  /** game_accounts.slot (1..10) — "Account 3". */
+  slot?: number | null;
+};
+
+export type SharedAccount = {
+  id: string;
+  /** true = owner-placed (authoritative); false = inferred from the bank. */
+  placed: boolean;
+  /** Display label: "Account 3 (Aldenmar, Brackwyn)" or "same account? (Aldenmar, Brackwyn)". */
+  label: string;
+  /** Every character of the account we know about — INCLUDING ones with no shared-bank rows. */
+  members: string[];
+};
+
+export type SharedBankPlan = {
+  /** Multi-character accounts only; a lone unplaced character is not an "account" worth a label. */
+  accounts: SharedAccount[];
+  /** character (lowercased) -> account id, for the characters in `accounts`. */
+  accountOf: Map<string, string>;
+  /** Accounts counted for the header stat (placed with a bank + inferred, lone characters included). */
+  accountCount: number;
+  oversized: string[][];
+};
+
+const byName = (a: string, b: string) => a.toLowerCase().localeCompare(b.toLowerCase());
+
+/** Build the account groups for one family's shared-bank rows. */
+export function planSharedBanks(rows: SharedBankRow[], placements: AccountPlacement[] = []): SharedBankPlan {
+  const placedBy = new Map<string, AccountPlacement>();
+  for (const p of placements) if (p.character && p.accountId) placedBy.set(p.character.toLowerCase(), p);
+
+  const accounts: SharedAccount[] = [];
+  const accountOf = new Map<string, string>();
+
+  const byAccount = new Map<string, AccountPlacement[]>();
+  for (const p of placedBy.values()) {
+    (byAccount.get(p.accountId) ?? byAccount.set(p.accountId, []).get(p.accountId)!).push(p);
+  }
+  const withBank = new Set(rows.map(r => r.character.toLowerCase()));
+  let placedWithBank = 0;
+  for (const [id, ps] of byAccount) {
+    const members = ps.map(p => p.character).sort(byName);
+    const named = ps.find(p => p.label && p.label.trim())?.label?.trim();
+    const slot = ps.find(p => p.slot != null)?.slot;
+    const base = named || (slot != null ? `Account ${slot}` : 'Account');
+    accounts.push({ id, placed: true, label: `${base} (${members.join(', ')})`, members });
+    for (const m of members) accountOf.set(m.toLowerCase(), id);
+    if (members.some(m => withBank.has(m.toLowerCase()))) placedWithBank++;
+  }
+
+  // Only the characters with no open placement are inferred from their banks.
+  const clusters = clusterSharedBanks(rows.filter(r => !placedBy.has(r.character.toLowerCase())));
+  for (const g of clusters.groups) {
+    if (g.length < 2) continue;
+    const members = [...g].sort(byName);
+    const id = `inferred:${members[0].toLowerCase()}`;
+    accounts.push({ id, placed: false, label: `same account? (${members.join(', ')})`, members });
+    for (const m of members) accountOf.set(m.toLowerCase(), id);
+  }
+
+  return { accounts, accountOf, accountCount: placedWithBank + clusters.accountCount, oversized: clusters.oversized };
+}
+
+/**
+ * The shared-bank rows that COUNT: the account's FRESHEST snapshot, whole, and
+ * nothing from its older ones. Characters outside `accountOf` are their own
+ * account. An older export only says what the bank held then: mixing its slots
+ * in would count an item withdrawn since, and count one moved between slots
+ * twice. (The rule since 2026-08-20; the 2026-10-13 change was to the grouping.)
+ */
+export function pickSharedRows<T extends SharedBankRow>(rows: T[], accountOf: Map<string, string>): T[] {
+  const { maps, newest } = buildMaps(rows);
+  const acct = (c: string) => accountOf.get(c.toLowerCase()) ?? `solo:${c.toLowerCase()}`;
+  const rep = new Map<string, string>();               // account → the character whose snapshot counts
+  for (const c of rankByFreshness([...maps.keys()], maps, newest)) {
+    if (!rep.has(acct(c))) rep.set(acct(c), c);
+  }
+  return rows.filter(r => !!r.character && !!r.slot && rep.get(acct(r.character)) === r.character);
+}
+
+/**
+ * Explorer chip rule for one holding. A plain holding follows its character's
+ * chip; an ACCOUNT holding (the shared bank) is hidden only when EVERY one of
+ * the account's characters is off — any one of them can still pull from it.
+ */
+export function holdingVisible(
+  h: { character: string; location: string; account?: { members: string[] } | null },
+  offChars: ReadonlySet<string>,
+  offLocs: ReadonlySet<string>,
+): boolean {
+  if (offLocs.has(h.location)) return false;
+  if (h.account) return !h.account.members.every(m => offChars.has(m));
+  return !offChars.has(h.character);
 }

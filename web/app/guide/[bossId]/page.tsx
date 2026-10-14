@@ -31,6 +31,13 @@ import {
 } from '@/lib/raidGuide';
 import { loadAwardsForItems, loadDropperCounts } from '@/lib/fullReads';
 
+import { pageMetadata } from '@/lib/pageMetaData';
+
+export async function generateMetadata({ params }: { params: Promise<{ bossId: string }> }) {
+  const { bossId } = await params;
+  return pageMetadata(`/guide/${encodeURIComponent(bossId)}`);
+}
+
 export const dynamic = 'force-dynamic';
 
 type BoardRow  = { boss_id: string; name: string | null; zone: string | null; expansion: string | null; timer_hours: number | null; emoji: string | null; pqdi_url: string | null };

@@ -3,6 +3,11 @@
 // route + any bookmarks still land in the right place.
 import { redirect } from 'next/navigation';
 
+export const metadata = {
+  title: 'Who · Admin',
+  description: 'Moved: the /who directory now lives at /who.',
+};
+
 export const dynamic = 'force-dynamic';
 
 export default function AdminWhoRedirect() {

@@ -7,7 +7,8 @@ import {
   type Award, type FeedKill, type FeedSpawn, type LootedGroup, type ScreenFeed, type ScreenState,
 } from '@/lib/raidScreen';
 import { fmtDuration } from '@/lib/format';
-import type { LiveAuction } from '@/lib/screenLive';
+import type { LiveAuction, LiveRecap } from '@/lib/screenLive';
+import type { PreflagSummary } from '@/lib/screenPlan';
 import type { Positions } from '@/lib/spectator';
 
 export const label = 'text-[11px] uppercase tracking-wider text-dim';
@@ -185,11 +186,72 @@ export function SpawnList({ spawns, now, max }: { spawns: FeedSpawn[]; now: numb
   );
 }
 
-export function OverviewView({ positions, feed, now }: { positions: Positions | null; feed: ScreenFeed | null; now: number }) {
+// Who still lacks each preflag for tonight's plan. A snapshot from when the page was opened (the server page reads
+// it once), so it says so; a raider who earns a flag mid-raid shows here until the page is reloaded.
+function PreflagBox({ summary }: { summary: PreflagSummary }) {
+  return (
+    <section className={card} aria-label="Preflags">
+      <h2 className={`${label} border-b border-border px-3 py-2`}>
+        Preflags <span className="normal-case text-text">{summary.total} raiders</span>
+      </h2>
+      <ul>
+        {summary.lines.map(l => (
+          <li key={l.key} className="border-b border-border/60 px-3 py-2 last:border-b-0">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="min-w-0 flex-1 text-text">{l.label}</span>
+              <span className={`shrink-0 text-xs ${l.missing.length ? 'text-red' : 'text-green'}`}>
+                {l.missing.length ? `${l.missing.length} missing` : 'everyone has it'}
+              </span>
+            </div>
+            {l.missing.length > 0 && <p className="mt-1 text-xs text-dim">{l.missing.join(', ')}</p>}
+          </li>
+        ))}
+      </ul>
+      <p className="border-t border-border px-3 py-2 text-xs text-dim">{summary.note} Checked when this page was opened; reload to refresh.</p>
+    </section>
+  );
+}
+
+// The recap the bot holds for ~30 minutes after a raid-boss kill. Written to be read from across a room on a
+// stream: the comparison with last time is the biggest type, then the highlights, then the fun. Text nodes only;
+// a section with nothing in it is not drawn.
+function RecapCard({ recap, now }: { recap: LiveRecap; now: number }) {
+  return (
+    <section className={`${card} border-gold/50`} aria-label="Last kill">
+      <h2 className={`${label} flex flex-wrap items-baseline gap-x-3 border-b border-border px-4 py-2`}>
+        <span>Last kill</span>
+        <span className="text-base normal-case text-gold sm:text-xl">{recap.boss}</span>
+        <span className="normal-case text-dim">{agoText(recap.killedAt, now)}</span>
+      </h2>
+      <div className="space-y-4 px-4 py-4">
+        {recap.lines.length > 0 && (
+          <ul className="space-y-2 text-xl leading-snug text-text sm:text-3xl sm:leading-snug">
+            {recap.lines.map((t, i) => <li key={i}>{t}</li>)}
+          </ul>
+        )}
+        {recap.stars.length > 0 && (
+          <ul className="space-y-1.5 text-lg leading-snug text-gold sm:text-2xl sm:leading-snug">
+            {recap.stars.map((t, i) => <li key={i}><span aria-hidden>⭐ </span>{t}</li>)}
+          </ul>
+        )}
+        {recap.fun.length > 0 && (
+          <ul className="space-y-1.5 text-lg leading-snug text-purple sm:text-2xl sm:leading-snug">
+            {recap.fun.map((t, i) => <li key={i}><span aria-hidden>🎲 </span>{t}</li>)}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}
+
+export function OverviewView({ positions, feed, now, preflags = null, recap = null }: {
+  positions: Positions | null; feed: ScreenFeed | null; now: number; preflags?: PreflagSummary | null; recap?: LiveRecap | null;
+}) {
   const zones = positions ? summarizeRaid(positions.raiders, positions.zones) : [];
   const total = positions?.raiders.length ?? 0;
   return (
     <div className="space-y-4">
+      {recap && <RecapCard recap={recap} now={now} />}
       <div className="grid grid-cols-3 gap-3">
         <Stat n={total} text={total === 1 ? 'raider mapped' : 'raiders mapped'} />
         <Stat n={zones.length} text={zones.length === 1 ? 'zone' : 'zones'} />
@@ -230,6 +292,8 @@ export function OverviewView({ positions, feed, now }: { positions: Positions | 
           <p className="border-t border-border px-3 py-2 text-xs text-dim">{positions.unplaced} more with a position but no known zone yet.</p>
         )}
       </section>
+
+      {preflags && <PreflagBox summary={preflags} />}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <section className={card} aria-label="Boss kills tonight">

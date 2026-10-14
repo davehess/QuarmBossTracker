@@ -1407,11 +1407,12 @@ describe('the tab is wired into the dashboard', () => {
 describe('Mimic: the tray item and showDashboardTab', () => {
   const code = stripJs(MAIN);
 
-  it('the tray has 📈 My parses, up with the dashboard and the website', () => {
+  it('the tray has 📈 My parses, first in the Open submenu with the website next', () => {
     expect(code).toMatch(/\{ label: '📈 My parses', click: \(\) => showDashboardTab\('myparses'\) \},/);
     const at = (s) => code.indexOf(s);
-    expect(at("{ label: 'Show dashboard'")).toBeLessThan(at("label: '📈 My parses'"));
+    expect(at("const openSubmenu = [")).toBeLessThan(at("label: '📈 My parses'"));
     expect(at("label: '📈 My parses'")).toBeLessThan(at("{ label: 'Open wolfpack.quest ↗'"));
+    expect(at("{ label: 'Open wolfpack.quest ↗'")).toBeLessThan(at("const helpSubmenu = ["));
   });
 
   const showSrc = sliceBlock(MAIN, 'function showDashboardTab(tab) {', '\n}\n');

@@ -29,6 +29,39 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.263': [
+    '**The Mimic Map can place the raid\'s focus mob, and escort quests get a shared trail.** Your Mimic now shares which mob you have targeted and where it stands, only with your raid or group. The Map can put the main assist\'s target (or the most-targeted mob) on the map even when it is not your target, and escort NPCs like Thelin Poxbourne draw one trail the whole raid sees, as soon as anyone has them targeted (Mimic beta, coming next).',
+  ],
+  '3.1.262': [
+    '**The hedge maze board comes up at the end, not the start.** Thelin\'s hail board in the Plane of Nightmare used to pop as the raid hailed him to begin the maze. It now opens with the first flag he hands out, after Terris-Thule\'s talk, and counts down his 10 minutes from there.',
+  ],
+  '3.1.261': [
+    '**Say your name your way.** Voice callouts can now say your character\'s name the way you want it said. Pick from a few suggested spellings or type your own (like "AL-den-mar"), and Mimic reads it that way. Mimic support is coming next.',
+  ],
+  '3.1.260': [
+    '**Fewer callouts from other people\'s fights.** Late on a non-raid night, Mimic could speak another group\'s callout from a different zone (an enrage across the world). The raid-evening hour after midnight now counts for the night before, and a callout from a zone we know you are not in no longer reaches you just because we could not tell where you are.',
+  ],
+  '3.1.259': [
+    '**Raid boss kill cards now say how we did.** After a boss dies, its card in the raid thread gets a "How we did" section: how much faster or slower than last time, deaths, any fun moments during the fight, and a highlight or two. The same recap shows on the raid screen for half an hour.',
+  ],
+  '3.1.248': [
+    'The bot can now share the Mimic spawn map between members, so everyone with the map open in a zone sees the same respawn timers (Mimic beta, coming next).',
+  ],
+  '3.1.246': [
+    'The bot now serves zone spawn points to Mimic for the coming map overlay.',
+  ],
+  '3.1.245': [
+    '**Your personal triggers and what-you-hear settings can be pushed from one PC and pulled on another.** They are stored encrypted and only you (and your linked accounts) can see them (Mimic beta, coming next).',
+  ],
+  '3.1.244': [
+    '**Bastion of Thunder slow mode gets the right timers.** While the server is in slow mode, the four second-floor named (Auliffe, Brynju, Kuanbyr and Eindride) respawn after 18 hours instead of 3, and their timers on the board now say so with a "🐢 slow mode" tag. An officer turns it on with `/slowmode on` (it switches itself off after 8 hours), and it also turns off by itself when the server announces that time has returned to normal (needs the Mimic beta). First-floor named keep their usual timers.',
+  ],
+  '3.1.242': [
+    '**Our own Plane of Hate kills are no longer "foreign".** A Wolf Pack kill of a Hate mini-boss was posted as "🩸 Foreign kill" whenever the reporting Mimic had not yet heard a guild broadcast that session. It is now posted as "🐺 We killed", and our instanced kills are still logged.',
+  ],
+  '3.1.241': [
+    '**Item links in guild and raid chat go to the right item.** When you linked an item in game, the PQDI link the relay added pointed at a different item (Ragebringer opened Sparring Grappler Gloves). The links now open the item you linked (needs the Mimic beta for links from your own client).',
+  ],
   '3.1.233': [
     '**The stampede timer follows you into Plane of Tactics.** If you zone in after someone heard the hooves, Mimic picks up the "window opens" and "stampede by" countdowns with the time left, and they call out when they end like everyone else\'s. Nothing is replayed when you arrive, and anyone in the zone who hears the next stampede restarts the clock for everyone (needs the next Mimic update).',
   ],
@@ -913,8 +946,11 @@ const PARSER_DOWNLOAD_URL =
 
 // ── Onboarding action rows ────────────────────────────────────────────────────
 // Surfaced when a member clicks "Set up the parser" in the welcome flow. Two
-// recommended paths: Mimic (new default — Electron desktop, v1.0.0+, includes
-// overlay/triggers/charm/tells) and Parser.bat (classic CLI agent, minimal).
+// paths: Mimic (the default desktop app) and Parser.bat (classic CLI agent).
+// No version number here: it went stale at "v1.0.0" while Mimic shipped 2.x
+// (the guild lead, 2026-10-10: "this needs to be updated"). The link text is
+// a label, never the URL itself — Discord shows a masked link whose text is a
+// URL as raw markdown. Steps follow /parsehelp (Discord sign-in, no token).
 const MIMIC_URL = 'https://wolfpack.quest/mimic';
 function buildParseOverviewEmbed() {
   return new EmbedBuilder()
@@ -923,18 +959,17 @@ function buildParseOverviewEmbed() {
     .setDescription('Both share your combat data with the bot so guild stats stay current. Mimic is the all-in-one desktop app (recommended); Parser.bat is the minimal CLI agent.')
     .addFields(
       {
-        name: '⭐ Recommended: Wolf Pack Mimic v1.0.0',
+        name: '⭐ Recommended: Wolf Pack Mimic',
         value:
-          `[**${MIMIC_URL}**](${MIMIC_URL}) — one-click installer, bundles its own Node, no extras to install.\n` +
-          '**Includes:** DPS overlay · trigger TTS · charm tracker · /tells history · Buffs & Zone card · UI layout backup · optional Discord sign-in.\n' +
-          'After install, paste your `/token` value into Settings → Agent token.',
+          `**[Download Mimic](${MIMIC_URL})** — Windows installer, bundles everything, no admin prompt, updates itself.\n` +
+          '**Includes:** DPS/Tank meter · triggers with voice callouts and timers · Target Info (mob stats, spells, loot) · charm, buff and debuff trackers · HUD · Command Center · UI backups.\n' +
+          'First run: **Sign in with Discord** (no token to paste), pick your EverQuest folder, then `/log on` in game. Full walkthrough: `/parsehelp`.',
         inline: false,
       },
       {
         name: '🧱 Minimal: Parser.bat (CLI)',
         value:
-          `[**WolfPackParser.zip**](${PARSER_DOWNLOAD_URL}) — unzip, double-click \`RUN-FIRST-for-Node.js.bat\` once, then \`Parser.bat\` each session.\n` +
-          'Full walkthrough: `/parsehelp`',
+          `**[WolfPackParser.zip](${PARSER_DOWNLOAD_URL})** — uploads only, no overlays. Unzip, double-click \`RUN-FIRST-for-Node.js.bat\` once, then \`Parser.bat\` each session.`,
         inline: false,
       },
     )

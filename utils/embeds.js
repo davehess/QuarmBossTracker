@@ -3,6 +3,7 @@
 const { EmbedBuilder } = require('discord.js');
 const { discordRelativeTime, discordAbsoluteTime, statusEmoji, isShortTimerBoss } = require('./timer');
 const { getDefaultTz } = require('./timezone');
+const { isSlowModeTimer } = require('./slowMode');
 
 const EXP_ORDER = ['Classic', 'Kunark', 'Velious', 'Luclin', 'PoP'];
 const EXP_EMOJI = { Classic: '⚔️', Kunark: '🦎', Velious: '❄️', Luclin: '🌙', PoP: '🔥' };
@@ -15,7 +16,7 @@ function buildZoneKillCard(zone, killedBosses) {
   for (const { boss, entry, killedBy } of killedBosses) {
     embed.addFields({
       name: `${boss.emoji || '☠️'} ${boss.name} killed`,
-      value: `Recorded by <@${killedBy}> • [PQDI](${boss.pqdiUrl})\n**Next spawn:** ${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})`,
+      value: `Recorded by <@${killedBy}> • [PQDI](${boss.pqdiUrl})${isSlowModeTimer(boss, entry) ? ' • 🐢 slow mode' : ''}\n**Next spawn:** ${discordAbsoluteTime(entry.nextSpawn)} (${discordRelativeTime(entry.nextSpawn)})`,
       inline: false,
     });
   }

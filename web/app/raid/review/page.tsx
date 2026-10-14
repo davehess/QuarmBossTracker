@@ -25,6 +25,11 @@ import { buildNights, nightNames, type NightRaid, type NightTick } from '@/lib/r
 import WindowPicker from '@/components/WindowPicker';
 import { GUILD_TAG } from '@/lib/guild';
 
+export const metadata = {
+  title: 'Raid night review',
+  description: 'The morning-after list of recent raid nights, each with its full breakdown.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type PlayerRow = { character_name: string; total_damage: number };

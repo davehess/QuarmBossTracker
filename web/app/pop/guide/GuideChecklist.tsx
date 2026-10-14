@@ -7,12 +7,17 @@
 import { useMemo, useState, useTransition } from 'react';
 import Link from 'next/link';
 import {
-  GUIDE_ITEMS, GUIDE_SECTIONS, WHO_LABEL, ZONE_NAMES, mapCommand, recordedKeys, sayCommand, seqRows, splitItems, tickedKeys,
+  GUIDE_ITEMS, WHO_LABEL, ZONE_NAMES, mapCommand, recordedKeys, sayCommand, seqRows, splitItems, tickedKeys,
   type Act, type Chain, type GuideItem, type Loc, type Who,
 } from '@/lib/popGuide';
+import { GUIDE_TREE, openParents } from '@/lib/popGuideSections';
 import ItemHover, { type ItemCard } from '@/app/character/[name]/inventory/ItemHover';
 import CopyChip from '@/components/CopyChip';
+import { heldClosure } from '@/lib/popRecital';
+import { guideStepsProven } from '@/lib/popGuideSeer';
 import { setGuideTick } from './actions';
+import SeerPaste, { useFocusStep, type SeerResult } from './SeerPaste';
+import GuideNav, { type NavCount } from './GuideNav';
 
 export type GuideChar = { name: string; cls: string | null; isMain: boolean; manual: string[]; flags: string[] };
 
@@ -35,6 +40,25 @@ export function CharOptions({ chars, noLevel }: { chars: Pick<GuideChar, 'name' 
   );
 }
 
+// "Show in checklist" (SeerPaste) and a link to a step's row: the row sits inside a collapsed section and maybe a
+// collapsed sub-section, so open both first, then the scroll finds it.
+function openRowParents(key: string) {
+  openParents(document.getElementById(`guide-${key}`));
+}
+
+function Progress({ c }: { c: NavCount }) {
+  return (
+    <span className="ml-auto flex items-baseline gap-2 text-xs whitespace-nowrap">
+      {c.next && (
+        <span className="px-1.5 rounded border border-gold/70 text-gold text-[10px]" title="The Seer text you pasted rings a next step in here">▶ next</span>
+      )}
+      <span className={c.done === c.total ? 'text-green' : 'text-dim'}>{c.done} / {c.total} done</span>
+    </span>
+  );
+}
+
+const SUMMARY = 'cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden flex flex-wrap items-baseline gap-x-3 gap-y-1';
+
 export default function GuideChecklist(
   { chars, initial, cards, noLevel }: { chars: GuideChar[]; initial: string | null; cards: Record<number, ItemCard>; noLevel?: string[] },
 ) {
@@ -49,8 +73,22 @@ export default function GuideChecklist(
 
   const char = chars.find(c => c.name === charName) ?? null;
   const manual = (char && manualBy[char.name]) || new Set<string>();
-  const recorded = useMemo(() => recordedKeys(char?.flags ?? []), [char]);
-  const done = useMemo(() => tickedKeys(manual, char?.flags ?? []), [manual, char]);
+  // The server's own flag steps are stored under their step names (a Seer paste saves them that way), and each
+  // stands for a guide step (popGuideSeer.ts): they lock and tick like a flag Mimic recorded.
+  const recorded = useMemo(() => {
+    const r = recordedKeys(char?.flags ?? []);
+    for (const k of guideStepsProven(heldClosure(char?.flags ?? []))) r.add(k);
+    return r;
+  }, [char]);
+  // What a pasted Seer recital shows, not saved yet (SeerPaste.tsx); cleared when the character changes.
+  const [seer, setSeer] = useState<SeerResult | null>(null);
+  const done = useMemo(() => {
+    const d = tickedKeys(manual, char?.flags ?? []);
+    for (const k of recorded) d.add(k);
+    for (const k of seer?.proven ?? []) d.add(k);
+    return d;
+  }, [manual, char, recorded, seer]);
+  useFocusStep('guide-', openRowParents);
 
   function pick(name: string) {
     setCharName(name);
@@ -63,7 +101,7 @@ export default function GuideChecklist(
   }
 
   function toggle(item: GuideItem, next: boolean) {
-    if (!char || recorded.has(item.key)) return;
+    if (!char || recorded.has(item.key) || seer?.proven.has(item.key)) return;
     const name = char.name;
     const apply = (on: boolean) => setManualBy(prev => {
       const s = new Set(prev[name] ?? []);
@@ -85,8 +123,40 @@ export default function GuideChecklist(
   const mustDone = GUIDE_ITEMS.filter(i => i.must && done.has(i.key)).length;
   const allDone = GUIDE_ITEMS.filter(i => done.has(i.key)).length;
 
+  // One progress line per section and sub-section: how many of its steps are done, and whether the Seer paste
+  // rings the next step inside it. The sidebar shows the same numbers. Counted over ALL the steps, not the
+  // filtered ones, so a filter never changes what "7 / 12" means.
+  const itemByKey = useMemo(() => new Map(GUIDE_ITEMS.map(i => [i.key, i])), []);
+  const countOf = (keys: string[]): NavCount => ({
+    done: keys.filter(k => done.has(k)).length,
+    total: keys.length,
+    next: keys.some(k => !!seer?.next.has(k) && !done.has(k)),
+  });
+  const counts: Record<string, NavCount> = {};
+  for (const s of GUIDE_TREE) {
+    counts[s.id] = countOf(s.keys);
+    if (s.split) for (const g of s.groups) counts[g.id] = countOf(g.keys);
+  }
+  const stepList = (keys: string[]) => {
+    const rows = keys.map(k => itemByKey.get(k)).filter((i): i is GuideItem => !!i && !!visible(i));
+    if (rows.length === 0) return <p className="text-xs text-dim py-1">No steps here match the filters.</p>;
+    return (
+      <ul>
+        {rows.map(i => (
+          <Row key={i.key} item={i} checked={done.has(i.key)} recorded={recorded.has(i.key)}
+               seer={seer?.proven.has(i.key) && !recorded.has(i.key) ? 'in' : seer?.next.has(i.key) ? 'next' : null}
+               disabled={!char} onToggle={toggle} cards={cards} />
+        ))}
+      </ul>
+    );
+  };
+
   return (
     <div className="flex flex-col gap-4">
+      <SeerPaste character={char?.name ?? null} onResult={setSeer} />
+      <div className="flex flex-col lg:flex-row gap-4 lg:items-start">
+      <GuideNav counts={counts} />
+      <div className="flex-1 min-w-0 flex flex-col gap-4">
       {/* Character + progress + filters */}
       <section className="bg-panel border border-border rounded-lg p-3 flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
@@ -135,27 +205,40 @@ export default function GuideChecklist(
         {error && <p className="text-xs text-red" role="alert">{error}</p>}
       </section>
 
-      {GUIDE_SECTIONS.map(s => {
-        const items = GUIDE_ITEMS.filter(i => i.section === s.key);
-        const shown = items.filter(visible);
-        if (shown.length === 0) return null;
-        const n = items.filter(i => done.has(i.key)).length;
-        return (
-          <section key={s.key} className="bg-panel border border-border rounded-lg p-3">
-            <div className="flex items-baseline justify-between gap-3">
-              <h2 className="text-sm text-text font-semibold">{s.title}</h2>
-              <span className={`text-xs ${n === items.length ? 'text-green' : 'text-dim'}`}>{n}/{items.length}</span>
-            </div>
-            <p className="text-xs text-dim mb-1">{s.blurb}</p>
-            <ul>
-              {shown.map(i => (
-                <Row key={i.key} item={i} checked={done.has(i.key)} recorded={recorded.has(i.key)}
-                     disabled={!char} onToggle={toggle} cards={cards} />
-              ))}
-            </ul>
-          </section>
-        );
-      })}
+      {/* Every section starts closed (the guild lead, 2026-10-14). The ids are the URL hashes; GuideNav opens one. */}
+      {GUIDE_TREE.map(s => (
+        <details key={s.id} id={s.id} data-gd className="group/sec bg-panel border border-border rounded-lg scroll-mt-24"
+                 style={{ borderLeft: `3px solid ${s.color}` }}>
+          <summary className={`${SUMMARY} p-3 rounded-lg hover:bg-bg/40 focus:outline focus:outline-2 focus:outline-blue`}>
+            <span aria-hidden className="inline-block w-3 text-dim transition-transform group-open/sec:rotate-90">▸</span>
+            <h2 className="text-sm font-semibold" style={{ color: s.color }}>{s.title}</h2>
+            <span className="text-[11px] text-dim">{s.sub}</span>
+            <Progress c={counts[s.id]} />
+          </summary>
+          <div className="px-3 pb-3">
+            <p className="text-xs text-dim mb-2">{s.blurb}</p>
+            {s.split ? (
+              <div className="flex flex-col gap-2">
+                {s.groups.map(g => (
+                  <details key={g.id} id={g.id} data-gd className="group/sub rounded border border-border scroll-mt-24">
+                    <summary className={`${SUMMARY} px-3 py-2 rounded hover:bg-bg/40 focus:outline focus:outline-2 focus:outline-blue`}>
+                      <span aria-hidden className="inline-block w-3 text-dim transition-transform group-open/sub:rotate-90">▸</span>
+                      <h3 className="text-sm text-text">{g.title}</h3>
+                      <Progress c={counts[g.id]} />
+                    </summary>
+                    <div className="px-3 pb-2">
+                      {g.blurb && <p className="text-xs text-dim mb-1">{g.blurb}</p>}
+                      {stepList(g.keys)}
+                    </div>
+                  </details>
+                ))}
+              </div>
+            ) : stepList(s.keys)}
+          </div>
+        </details>
+      ))}
+      </div>
+      </div>
     </div>
   );
 }
@@ -330,18 +413,18 @@ export function ChainView({ chain, cards, skipHandins }: { chain: Chain; cards: 
   );
 }
 
-function Row({ item, checked, recorded, disabled, onToggle, cards }: {
-  item: GuideItem; checked: boolean; recorded: boolean; disabled: boolean; cards: Record<number, ItemCard>;
+function Row({ item, checked, recorded, seer, disabled, onToggle, cards }: {
+  item: GuideItem; checked: boolean; recorded: boolean; seer: 'in' | 'next' | null; disabled: boolean; cards: Record<number, ItemCard>;
   onToggle: (item: GuideItem, next: boolean) => void;
 }) {
   const id = `guide-${item.key}`;
   const external = item.link?.href.startsWith('http');
   return (
-    <li className="flex gap-3 py-2 border-t border-border first:border-t-0">
-      <input id={id} type="checkbox" checked={checked} disabled={disabled || recorded}
+    <li className={`flex gap-3 py-2 border-t border-border first:border-t-0 ${seer === 'next' ? 'ring-1 ring-gold/70 rounded -mx-1 px-1' : ''}`}>
+      <input id={id} type="checkbox" checked={checked} disabled={disabled || recorded || seer === 'in'}
              onChange={e => onToggle(item, e.target.checked)}
              className="mt-0.5 h-4 w-4 shrink-0 accent-green cursor-pointer disabled:cursor-default"
-             title={recorded ? 'Mimic recorded this flag for you' : undefined} />
+             title={recorded ? 'Your recorded flags show this' : seer === 'in' ? 'In the Seer paste above (not saved yet)' : undefined} />
       <div className="flex-1 min-w-0">
         <label htmlFor={id} className={`text-sm cursor-pointer ${checked ? 'text-dim' : 'text-text'}`}>
           <WithItems text={item.title} cards={cards} />
@@ -350,6 +433,8 @@ function Row({ item, checked, recorded, disabled, onToggle, cards }: {
           <span className="px-1.5 rounded border border-border text-dim">{WHO_ICON[item.who]} {WHO_LABEL[item.who]}</span>
           {item.must && <span className="px-1.5 rounded border border-gold/60 text-gold">★ must</span>}
           {recorded && <span className="px-1.5 rounded border border-green/60 text-green">✓ recorded</span>}
+          {seer === 'in' && <span className="px-1.5 rounded border border-blue/60 text-blue" title="Shown by the Seer text you pasted; save it to keep it">✓ in your Seer paste</span>}
+          {seer === 'next' && <span className="px-1.5 rounded border border-gold/70 text-gold" title="The next step the Seer text you pasted leaves open on this plane">▶ next</span>}
           {item.check && <span className="px-1.5 rounded border border-border text-dim" title="Classic detail, not yet confirmed on Quarm">verify at launch</span>}
         </div>
         {(item.detail || item.link) && (

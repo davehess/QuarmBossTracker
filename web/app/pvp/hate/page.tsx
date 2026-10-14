@@ -20,6 +20,11 @@ import Link from 'next/link';
 import { supabaseServer } from '@/lib/supabase-server';
 import AssignKillCard from './AssignKillCard';
 
+export const metadata = {
+  title: 'Plane of Hate tracker',
+  description: 'PvP in the Plane of Hate: kills, camps and contested timers.',
+};
+
 export const dynamic = 'force-dynamic';
 
 // Keep in lock-step with data/hate-spots.js + utils/hateKills.js

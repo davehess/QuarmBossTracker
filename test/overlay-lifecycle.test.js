@@ -48,6 +48,7 @@ const PAIRS = [
   ['mobInfoWindow',   'createMobInfoOverlay'],
   ['buffQueueWindow', 'createBuffQueueOverlay'],
   ['whoWindow',       'createWhoOverlay'],
+  ['chatWindow',      'createChatOverlay'],   // this PC's own chat feed (2026-10-14)
   ['melodyWindow',    'createMelodyOverlay'],
   ['zealWindow',      'createZealHealthOverlay'],
   ['threatWindow',    'createThreatMeterOverlay'],
@@ -57,6 +58,8 @@ const PAIRS = [
   ['commandWindow',   'createCommandOverlay'],
   ['popRaidWindow',   'createPopRaidOverlay'],
   ['meWindow',        'createMeOverlay'],
+  ['mapWindow',       'createMapOverlay'],   // the spawn map (Mimic 2.9, beta)
+  ['mapTimersWindow', 'createMapTimersOverlay'],   // its respawn-timers list popped out (2026-10-13)
   // The Timers canvas (2026-09-29) is the one entry setup / unlock do NOT
   // conjure: it is an alternative home for the trigger overlay's visuals, so
   // placing everything would show every timer twice. See PLACED below.
@@ -87,6 +90,7 @@ function harness({ cfg = {}, setupMode = false, hideAll = false, blind = [], sin
     function _agentOnly() { return false; }   // full Mimic: the agent-only gate (test/mimic-agent-only-mode.test.js) is off
     let setupMode = ${JSON.stringify(setupMode)};
     let _canvasArrange = false;
+    let _mapFull = false;   // the Map in Full mode (main.js): not an overlay setup / unlock conjures
     let _hideAllActive = ${JSON.stringify(hideAll)};
     const __blind = ${JSON.stringify(blind)};
     function _blindForceOpen(k) { return __blind.includes(k); }

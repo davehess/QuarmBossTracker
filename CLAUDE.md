@@ -86,6 +86,9 @@ design. Give me two or three genuinely different approaches to choose from."*
 - **Every mention of a beta page carries its link** — `https://b.wolfpack.quest/<path>` (with the
   `?v=` when it is a variant), and `https://wolfpack.quest/<path>` for a live one. *"give me the links
   for beta pages when you reference them. I'm not always going to scroll through beta to check."*
+  **This holds for EVERY page, live or beta, in every reply** (the guild lead, 2026-10-13: *"give me direct
+  links from now on not just the /page"*): write `https://wolfpack.quest/pop/raid`, never a bare `/pop/raid`.
+  A bare path is fine only inside code or a file path.
 - **Everything else (Mimic overlays, the agent dashboard, Discord cards):**
   the framework plus notes on how the designs differ and what each costs.
 - **Cost is FOUR numbers, never one "harder":** build (time to get right),
@@ -264,6 +267,25 @@ comment, and a sync-ordering test anchored to a comment's position.
 - Sibling trap, same symptom: the VACUOUS assertion — a cap tested with a
   corpus smaller than the cap passes whether the cap exists or not. Mutation-
   check new assertions; green alone proves nothing.
+
+### Working rule — every page unfurls with its own name and summary (the guild lead, 2026-10-10)
+*"discord embedded links for the feedback links are generic. all links from our site should include at least top
+level information and the page name. make it a rule."* Every route on wolfpack.quest has a real **title** (the page's
+name; for an entity, `<name> · <kind>`) and a **one-sentence description** of what the page is, and the OG tags follow.
+- **Two places, both required.** The page exports `metadata` (or `generateMetadata` for a dynamic route) for the browser
+  tab. And the route is in `web/lib/pageMeta.ts` (`STATIC_META`, a pattern in `metaForPath`, or `ADMIN_TITLES`), because
+  **Discord never reads the page**: the middleware rewrites preview crawlers to `/api/embed-meta`, which serves
+  `metaForPath`. A new page with no `pageMeta.ts` entry unfurls as the site card, whatever it exports. A route that needs
+  a database read to name itself goes in `lookupFor` and `web/lib/pageMetaData.ts`, and its `generateMetadata` calls
+  `pageMetadata()` so the card and the tab agree.
+- **The root layout pins no `openGraph.title`, `description` or `url`.** A pinned root value beats the page's own.
+- **Metadata is PUBLIC.** The crawler is anonymous. A card carries only what a signed-out visitor could already see: the
+  page's name, a catalog name (game data), a number in the URL, a closed-vocabulary status. **Never member-submitted
+  text, a member or character name read from the database, notes, logs, or a parse's boss, night or numbers.** Reads
+  select the fewest columns that name the page (FB-n: `ref, category, status`).
+- `test/page-metadata.test.js` enforces it: it walks every `page.tsx` and fails on a page with no title and description, a
+  dynamic route without `generateMetadata`, a route that still resolves to the site card, a pinned root OG field, or a
+  card read that selects a private column. A new route's sample value goes in its `SAMPLE` map if it needs one.
 
 ### Working rule — close reports by their FB number (guild lead, 2026-09-29)
 *"We need to start having referenceable IDs for each bug or enhancement request so the bot can update
@@ -1297,8 +1319,10 @@ already decodes onto the `mob-info` row and the Mob Info overlay already chips.
 "Harmony needs outdoors" heuristic says it should work — and **116 of its 118
 NPCs carry ability 31**. So never reason about the lull line from zone type;
 read ability 31. `_pacifyImmuneKnown()` in the agent is the shared answer.
-⚠ It ALSO fails on a too-high-level mob, with a message we have not captured, so
-that failure stays undetectable and a synthesized timer can still be a phantom.
+⚠ It ALSO fails on a too-high-level mob, with the server message `Your target looks
+unaffected.` (captured 2026-10-09). The agent drops the timer when that line follows
+your own lull cast (`noteLullUnaffected`, DECISIONS-2026-09-21 §212), so a phantom
+remains only where the line never printed or reached another raider first.
 The ask is filed in `docs/STATUS.md`; **do not invent the string.**
 ⚠ `Atone` is SPA 30 but instant (`buffduration`/formula 0) — it can never carry
 a timer.

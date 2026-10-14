@@ -149,6 +149,7 @@ Management API exposes neither. Do not quote an egress figure until someone does
 - **2026-09-28 — the PoP checklist stores one small row per hand tick** (`DECISIONS-2026-09-21.md` §65): table `pop_guide_ticks` (character, item key, when), no policies, written only by the web after an ownership check, kept with no pruning. Tens of bytes a row, about 46 items a character at most, so it never matters for size on any tier. The checklist items are code (`web/lib/popGuide.ts`), era-specific to PoP; another guild on a different era gets an empty table and a list it would rewrite.
 
 - **2026-10-05 — the spectator map caches zone maps per zone, fetched at run time** (`DECISIONS-2026-09-21.md` §160): table `zone_map_lines`, one row per zone asked for (~170 KB; ~30 MB if all 180 Quarm-era zones are opened), no pruning, service role only. Two outbound sources at run time: EQEmu/maps on GitHub (GPLv2+, the server collision meshes, sliced into walls) and Zeal's public repo for Brewall's lines. Brewall's lines carry no stated licence; we serve them only behind the Discord-gated sign-in and never commit them. A guild copying this must make its own call on that layer, or turn it off and keep the generated walls. The page polls every 3 s per open viewer (a small one-row-per-raider SQL call), so its cost scales with how many people watch a raid, not with the raid.
+- **2026-10-14 — the Charm overlay's "Best pets here" reads the NPC catalog per zone** (`DECISIONS-2026-09-21.md` §308): bot route `GET /api/agent/charm-pets` needs the spawn tables, `eqemu_npc_types` and `eqemu_npc_spells` mirrors; it caches 6 h per zone in memory only (no table). Each PC caches the zones it visits on disk (~30–60 KB each). A guild without the eqemu mirrors gets no list; the Charm overlay hides the section.
 - **2026-10-06 — always-on duties get one dedicated box; gaming PCs only help** (`DECISIONS-2026-09-21.md` §167). The local assistant, announcer voices, speech-to-text and the raid voice bot need a box that is always on, wired and never gamed on; a GPU in a gaming PC is unavailable exactly when the raid needs it (the game holds its memory). Gaming PCs run a small worker that takes picture jobs from a queue only when free (no game running, idle, GPU free), the larger-memory card first. Nothing reaches into the house: workers pull. The wizard asks which box is the home and lets any number of helpers join.
 - **2026-10-06 — the raid screen's live read comes from the bot host, not the website host** (`DECISIONS-2026-09-21.md` §166). `/screen` polls every 3 s per viewer. On Vercel Hobby (1M function invocations a month, then a 30-day wait) one 60-viewer raid night costs ~600k. The bot already keeps the raid's positions in memory, so it serves `GET /api/screen/live` against a 2-hour HMAC ticket the website mints. The wizard sets one shared secret, `SCREEN_TOKEN_SECRET`, on both hosts, plus `SCREEN_LIVE_URL` (website) and `SCREEN_ALLOWED_ORIGINS` (bot). Without them the page falls back to polling the website, which is fine for a small guild or a paid website plan. A Discord Activity version of the screen (`DESIGN-raid-screen-activity.md`) needs that guild's own verified Discord app: unverified Activities launch only in servers under 25 members, and verification ties the app to the owner's ID.
 - **2026-10-06 — a new guild gets ONE Discord bot that does both jobs** (the guild lead: *"for future guilds the same discord bot should do both"*). The wizard creates one application and invites it with the full permission set in `README.md` → Required Bot Permissions (`2252135193504768`; `2252684949318657` if the raid screen is a Discord Activity). Wolf Pack's two applications are history, not the pattern. What a shared token needs before the wizard can offer it: (1) one place registers slash commands — today both `index.js` (`applicationGuildCommands`, bulk PUT) and `apps/bristlebane` bulk-overwrite the guild's commands, so on one token each would delete the other's; (2) each process answers only its own interactions (both receive all of them); (3) one voice connection per server, so callouts and recording share it — Bristlebane owns voice and the timer bot's own `utils/voice.js` path goes. Folding Bristlebane into the bot process meets all three at once, but then the bot needs the on-prem box (recordings) or a disk.
@@ -557,6 +558,27 @@ and the same never-refetch guarantee.
 - **2026-10-08 — members read their own reports on the site** (§193): `/feedback/FB-n` for the submitter
   and officers, replies in `feedback_replies` relayed by the bot to the officer card, and a Monday
   count-only AFB line latched in `bot_kv` (`afb_weekly_digest`). Small rows, no pruning needed on any tier.
+- **2026-10-12 — the Map's walls are Brewall's maps, fetched by each agent from Zeal's public repo**
+  (`DECISIONS-2026-09-21.md` §245): the first time a player's Map shows a zone, their agent GETs that zone's
+  two files from `raw.githubusercontent.com/CoastalRedwood/Zeal/.../map_files/` into `brewall-maps/` next to
+  the agent (≈0.1–1 MB a zone, kept). No cost to any server of ours; we host none of it. For the wizard: the
+  source address is a constant in the agent (`MAP_BREWALL_BASE`); a guild on another server whose zones Zeal
+  does not cover would point it elsewhere or switch it off (`_mapPaths.brewall = null`).
+- **2026-10-13 — synced Map events carry the zone copy (`map_spawn_events.inst`, host:port)** (`DECISIONS-2026-09-21.md`
+  §251): one nullable text column on a table that already prunes at 24 h, so no growth worth counting. The value
+  comes from the player's own EverQuest `dbg.txt`, and the agent reads only its zone-in lines. For the wizard, it
+  assumes a server whose client writes `Zone addr [host:port]`, as Quarm's does. Elsewhere the column stays null and
+  the raid/group rule (§248) still scopes sharing.
+- **2026-10-13 — member lockout is one small table plus a 20 s poll per reader** (`DECISIONS-2026-09-21.md` §252):
+  `member_lockouts` holds a handful of rows; the bot re-reads it every 20 s (about 4,300 tiny reads a day) and each
+  website Edge isolate at most every 20 s while signed-in traffic flows. Negligible on any plan. The wizard needs
+  nothing guild-specific here beyond who counts as an officer.
+- **2026-10-14 — a persona chat agent is an OpenClaw gateway as a Coolify Compose resource** (`DECISIONS-2026-09-21.md`
+  §325, `deploy/openclaw-bristlebane/`): one container (`ghcr.io/openclaw/openclaw`, ~1.2 GB image, pinned tag), two
+  named volumes, no ports, its own Discord application; the model is wherever the guild has one (ours: a local model on a
+  gaming PC over the LAN, free but only up while that PC is). Compose, not a plain image app, so redeploys never run
+  two gateways on one bot token. A guild without a local GPU swaps the provider block for a hosted model (per-message
+  cost, larger window). The wizard must ask: Discord app for the persona, model host, honest context window.
 
 ## 4. Open questions for whoever builds it
 

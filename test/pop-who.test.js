@@ -26,7 +26,7 @@ const { STAGE_IMPLIES, ZONE_BY_ID } = require('../utils/popFlagStages.js');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
 const sight = (zone, first = '2026-10-01T20:13:44Z') => ({ zone, first_seen: first, last_seen: first });
-const NO_DATA = { flags: [], loots: [], inventory: null, level: null, levelAt: null, spellbook: false, liveAt: null };
+const NO_DATA = { flags: [], loots: [], inventory: null, spellbook: false };
 
 describe('which flags a sighting proves', () => {
   it('Storms and Valor: the Justice flag, and nothing more', () => {

@@ -9,7 +9,7 @@
 //
 // Whitelist (anything else from the dump is ignored):
 //   zone, items, npc_types, loottable, loottable_entries, lootdrop, lootdrop_entries,
-//   spawngroup, spawnentry, spawn2
+//   spawngroup, spawnentry, spawn2 (+ many more below; grid / grid_entries fold into eqemu_zone_grids)
 //
 // PII / server-private tables (account, character_*, ip_*, etc.) are NEVER touched.
 //
@@ -104,7 +104,16 @@ const WHITELIST = {
   merchantlist:        { dest: 'eqemu_merchantlist',         transform: 'merchantlist' },
   object:              { dest: 'eqemu_object',               transform: 'object' },
   npc_emotes:          { dest: 'eqemu_npc_emotes',           transform: 'npc_emotes' },
+  // Pather routes (the guild lead, 2026-10-12). These two never reach Supabase as rows: their dests are
+  // staging buffers that buildZoneGrids folds into ONE eqemu_zone_grids row per zone (711k waypoints as
+  // plain rows would cost database size for something read a zone at a time).
+  grid:                { dest: 'eqemu_grid_raw',             transform: 'grid' },
+  grid_entries:        { dest: 'eqemu_grid_entries_raw',     transform: 'grid_entries' },
 };
+
+// Tables that must come from the Quarm dump or not at all: the Al'Kabor fallback below would hand back
+// ANOTHER server's routes, which is worse than none (the validation gate fails the run instead).
+const NO_FALLBACK = new Set(['grid', 'grid_entries']);
 
 // ── Supabase REST helper ────────────────────────────────────────────────────
 async function sb(p, opts = {}) {
@@ -471,7 +480,12 @@ const TRANSFORMS = {
     };
   },
   npc_types: (cols, row) => {
-    const r = pick(cols, row, ['id', 'name', 'lastname', 'level', 'race', 'class', 'bodytype', 'hp', 'mana', 'gender', 'texture', 'size', 'AC', 'mindmg', 'maxdmg', 'attack_count', 'aggroradius', 'assistradius', 'MR', 'CR', 'DR', 'FR', 'PR', 'see_invis', 'see_invis_undead', 'see_hide', 'see_improved_hide', 'npc_spells_id', 'loottable_id', 'runspeed', 'walkspeed', 'npc_faction_id', 'maxlevel', 'scalerate', 'raid_target', 'rare_spawn', 'npcspecialattks', 'special_abilities', 'merchant_id']);
+    const r = pick(cols, row, ['id', 'name', 'lastname', 'level', 'race', 'class', 'bodytype', 'hp', 'mana', 'gender', 'texture', 'size', 'AC', 'mindmg', 'maxdmg', 'attack_count', 'aggroradius', 'assistradius', 'MR', 'CR', 'DR', 'FR', 'PR', 'see_invis', 'see_invis_undead', 'see_hide', 'see_improved_hide', 'npc_spells_id', 'loottable_id', 'runspeed', 'walkspeed', 'npc_faction_id', 'maxlevel', 'scalerate', 'raid_target', 'rare_spawn', 'npcspecialattks', 'special_abilities', 'merchant_id',
+      'attack_delay', 'STR', 'STA', 'DEX', 'AGI', '_INT', 'WIS', 'CHA', 'ATK', 'Accuracy', 'avoidance', 'slow_mitigation',
+      'hp_regen_rate', 'mana_regen_rate', 'combat_hp_regen', 'combat_mana_regen', 'see_sneak', 'npc_aggro',
+      'helmtexture', 'face', 'chesttexture', 'armtexture', 'bracertexture', 'handtexture', 'legtexture', 'feettexture',
+      'armortint_red', 'armortint_green', 'armortint_blue', 'd_melee_texture1', 'd_melee_texture2',
+      'prim_melee_type', 'sec_melee_type', 'ranged_type', 'light']);
     if (!r.id) return null;
     return {
       id: r.id, name: r.name, lastname: r.lastname,
@@ -500,6 +514,23 @@ const TRANSFORMS = {
       // deep-linking PQDI. 0 = not a merchant → null keeps the partial index
       // small.
       merchant_id: (r.merchant_id != null && Number(r.merchant_id) > 0) ? Number(r.merchant_id) : null,
+      // The rest of the sheet (the guild lead, 2026-10-13: "mob attack speed is in the data on PQDI ... including
+      // model and what it [looks like]"; migration 20261014040000). attack_delay = tenths of a second per round.
+      // A dump without a column leaves it undefined, which JSON drops, so it never nulls out a stored value.
+      attack_delay: r.attack_delay,
+      str: r.STR, sta: r.STA, dex: r.DEX, agi: r.AGI, int_stat: r._INT, wis: r.WIS, cha: r.CHA,
+      atk: r.ATK, accuracy: r.Accuracy, avoidance: r.avoidance, slow_mitigation: r.slow_mitigation,
+      hp_regen_rate: r.hp_regen_rate, mana_regen_rate: r.mana_regen_rate,
+      combat_hp_regen: r.combat_hp_regen, combat_mana_regen: r.combat_mana_regen,
+      see_sneak: r.see_sneak == null ? undefined : !!toBool(r.see_sneak),
+      npc_aggro: r.npc_aggro == null ? undefined : !!toBool(r.npc_aggro),
+      helmtexture: r.helmtexture, face: r.face,
+      chesttexture: r.chesttexture, armtexture: r.armtexture, bracertexture: r.bracertexture,
+      handtexture: r.handtexture, legtexture: r.legtexture, feettexture: r.feettexture,
+      armortint_red: r.armortint_red, armortint_green: r.armortint_green, armortint_blue: r.armortint_blue,
+      d_melee_texture1: r.d_melee_texture1, d_melee_texture2: r.d_melee_texture2,
+      prim_melee_type: r.prim_melee_type, sec_melee_type: r.sec_melee_type, ranged_type: r.ranged_type,
+      light: r.light,
     };
   },
   loottable: (cols, row) => {
@@ -796,7 +827,50 @@ const TRANSFORMS = {
       text:    r.text    ?? null,
     };
   },
+  // Pather routes: `grid` is the route (id is unique only inside zoneid), `grid_entries` its waypoints.
+  grid: (cols, row) => {
+    const r = pick(cols, row, ['id', 'zoneid', 'type', 'type2']);
+    if (r.id == null || r.zoneid == null) return null;
+    return { id: r.id, zoneid: r.zoneid, type: r.type ?? 0, type2: r.type2 ?? 0 };
+  },
+  grid_entries: (cols, row) => {
+    const r = pick(cols, row, ['gridid', 'zoneid', 'number', 'x', 'y', 'z', 'pause']);
+    if (r.gridid == null || r.zoneid == null || r.number == null) return null;
+    return { gridid: r.gridid, zoneid: r.zoneid, number: r.number, x: r.x, y: r.y, z: r.z, pause: r.pause };
+  },
 };
+
+// Fold the staged grid / grid_entries rows into { zoneid: { gridid: { type, type2, pts: [[x,y,z,pause]] } } }.
+// Waypoints are ordered by `number`, coordinates rounded to one decimal (the server's own frame, as in
+// spawn2) and a waypoint with a non-numeric coordinate is dropped. A grid with no waypoints, and an entry
+// whose grid is not in the dump, are dropped too. Pure so test/zone-spawns.test.js can run it.
+const round1 = (v) => Math.round(Number(v) * 10) / 10;
+function buildZoneGrids(gridRows, entryRows) {
+  const byZone = {};
+  for (const g of gridRows || []) {
+    (byZone[g.zoneid] = byZone[g.zoneid] || {})[g.id] = { type: g.type ?? 0, type2: g.type2 ?? 0, pts: [] };
+  }
+  const entries = [...(entryRows || [])].sort((a, b) => a.number - b.number);
+  for (const e of entries) {
+    const grid = byZone[e.zoneid] && byZone[e.zoneid][e.gridid];
+    if (!grid || e.x == null || e.y == null || e.z == null) continue;
+    const x = round1(e.x), y = round1(e.y), z = round1(e.z);
+    if (![x, y, z].every(Number.isFinite)) continue;
+    grid.pts.push([x, y, z, Number(e.pause) || 0]);
+  }
+  for (const [zoneid, grids] of Object.entries(byZone)) {
+    for (const [id, grid] of Object.entries(grids)) if (!grid.pts.length) delete grids[id];
+    if (!Object.keys(grids).length) delete byZone[zoneid];
+  }
+  return byZone;
+}
+
+// → eqemu_zone_grids rows. `shortById` maps eqemu_zone.zone_id → short_name.
+function zoneGridRows(byZone, shortById, updatedAt) {
+  return Object.entries(byZone).map(([zoneid, grids]) => ({
+    zoneid: Number(zoneid), zone_short: shortById.get(Number(zoneid)) ?? null, grids, updated_at: updatedAt,
+  }));
+}
 
 function pick(cols, row, wanted) {
   const out = {};
@@ -829,8 +903,7 @@ function toBool(v) {
 }
 
 // ── Upsert in chunks ────────────────────────────────────────────────────────
-async function upsertChunks(dest, rows, primaryKeyCols) {
-  const CHUNK = 500;
+async function upsertChunks(dest, rows, primaryKeyCols, CHUNK = 500) {
   let upserted = 0;
   for (let i = 0; i < rows.length; i += CHUNK) {
     const chunk = rows.slice(i, i + CHUNK);
@@ -877,10 +950,11 @@ const PK_MAP = {
   eqemu_merchantlist:                ['merchantid', 'slot'],
   eqemu_object:                      ['id'],
   eqemu_npc_emotes:                  ['id'],
+  eqemu_zone_grids:                  ['zoneid'],
 };
 
 // ── Exports for tests ───────────────────────────────────────────────────────
-module.exports = { iterInserts, splitTuples, pick, toBool, TRANSFORMS, WHITELIST, PK_MAP };
+module.exports = { iterInserts, splitTuples, pick, toBool, TRANSFORMS, WHITELIST, PK_MAP, buildZoneGrids, zoneGridRows };
 
 // Skip the IIFE when this file is loaded as a module (e.g. by test-sync-parser.js)
 if (require.main !== module) return;
@@ -935,7 +1009,7 @@ if (require.main !== module) return;
   //     gets pulled from the latest alkabor_*.tar.gz (TAKP parent, same
   //     mysqldump format). Classic-static tables (factions, recipes, doors,
   //     merchant lists, ground spawns, …) live there.
-  const missing = Object.keys(WHITELIST).filter(t => !seenInPrimary.has(t));
+  const missing = Object.keys(WHITELIST).filter(t => !seenInPrimary.has(t) && !NO_FALLBACK.has(t));
   if (missing.length > 0) {
     console.log(`Al'Kabor fallback needed for ${missing.length} table(s): ${missing.join(', ')}`);
     const akDump = await findAlkaborDump();
@@ -962,6 +1036,15 @@ if (require.main !== module) return;
   }
 
   console.log(`Parsed ${totalRows} rows from ${Object.keys(buffers).length} destination tables`);
+
+  // Pather routes: fold the staged grid rows into one eqemu_zone_grids row per zone (see buildZoneGrids).
+  if (buffers.eqemu_grid_raw || buffers.eqemu_grid_entries_raw) {
+    const shortById = new Map((buffers.eqemu_zone || []).map(z => [z.zone_id, z.short_name]));
+    const byZone = buildZoneGrids(buffers.eqemu_grid_raw, buffers.eqemu_grid_entries_raw);
+    buffers.eqemu_zone_grids = zoneGridRows(byZone, shortById, new Date().toISOString());
+    delete buffers.eqemu_grid_raw;
+    delete buffers.eqemu_grid_entries_raw;
+  }
 
   // ── Drop child rows with dangling FKs ──────────────────────────────────────
   // The upstream Quarm dump occasionally ships *_entries rows whose parent
@@ -1029,11 +1112,13 @@ if (require.main !== module) return;
     'eqemu_merchantlist',
     'eqemu_object',
     'eqemu_npc_emotes',
+    'eqemu_zone_grids',
   ];
   for (const dest of ORDER) {
     if (!buffers[dest] || !buffers[dest].length) continue;
     console.log(`  → ${dest} (${buffers[dest].length} rows)`);
-    counts[dest] = await upsertChunks(dest, buffers[dest], PK_MAP[dest]);
+    // A zone's routes are a document of ~0.1 MB, so 500 per request would be a ~50 MB body.
+    counts[dest] = await upsertChunks(dest, buffers[dest], PK_MAP[dest], dest === 'eqemu_zone_grids' ? 10 : 500);
   }
 
   // ── Validation gates ──────────────────────────────────────────────────────
@@ -1072,6 +1157,9 @@ if (require.main !== module) return;
     if (!(got > 0)) { problems.push(`${table}: NOT SYNCED (expected >= ${floor})`); continue; }
     if (got < floor) problems.push(`${table}: ${got} rows, expected >= ${floor}`);
   }
+  // The pather routes have no row-count floor (no observed count to pin one to), but an empty import is
+  // exactly the silent no-op the floors exist to catch.
+  if (!(counts.eqemu_zone_grids > 0)) problems.push('eqemu_zone_grids: NOT SYNCED (no grid / grid_entries rows in the Quarm dump)');
 
   // Referential spot-checks. Cheap HEAD requests with an exact count, run
   // against what actually landed rather than the local buffers — the buffers

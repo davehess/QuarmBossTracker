@@ -4,7 +4,7 @@
 // `onState` is held in a ref so a new callback each render does not restart the loop.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  createScreenLive, type LiveAuction, type LiveStatus, type PositionsFeed,
+  createScreenLive, type LiveAuction, type LiveRecap, type LiveStatus, type PositionsFeed,
 } from '@/lib/screenLive';
 import type { ScreenState } from '@/lib/raidScreen';
 
@@ -12,6 +12,8 @@ export type ScreenLive = LiveStatus & {
   feed: PositionsFeed | null;
   /** The bot's list of open loot auctions, or null (Vercel fallback, or the bot holds none fresh). */
   auctions: LiveAuction[] | null;
+  /** The last-kill recap the bot holds for ~30 min after a raid-boss kill, or null (none, an older bot, or the Vercel fallback). */
+  recap: LiveRecap | null;
   /** Read again now. */
   kick: () => void;
 };
@@ -22,6 +24,7 @@ export function useScreenLive(opts: { enabled?: boolean; wantState?: boolean; on
   const { enabled = true, wantState = false } = opts;
   const [feed, setFeed] = useState<PositionsFeed | null>(null);
   const [auctions, setAuctions] = useState<LiveAuction[] | null>(null);
+  const [recap, setRecap] = useState<LiveRecap | null>(null);
   const [status, setStatus] = useState<LiveStatus>(IDLE);
   const onState = useRef(opts.onState);
   onState.current = opts.onState;
@@ -32,7 +35,7 @@ export function useScreenLive(opts: { enabled?: boolean; wantState?: boolean; on
     const e = createScreenLive({
       wantState,
       isHidden: () => document.hidden,
-      sinks: { onPositions: setFeed, onState: s => onState.current?.(s), onAuctions: setAuctions, onStatus: setStatus },
+      sinks: { onPositions: setFeed, onState: s => onState.current?.(s), onAuctions: setAuctions, onRecap: setRecap, onStatus: setStatus },
     });
     engine.current = e;
     const onVisibility = () => e.visibilityChanged();
@@ -46,5 +49,5 @@ export function useScreenLive(opts: { enabled?: boolean; wantState?: boolean; on
   }, [enabled, wantState]);
 
   const kick = useCallback(() => engine.current?.kick(), []);
-  return { ...status, feed, auctions, kick };
+  return { ...status, feed, auctions, recap, kick };
 }

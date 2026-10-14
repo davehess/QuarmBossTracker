@@ -14,6 +14,11 @@ import Link from 'next/link';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 
+export const metadata = {
+  title: 'Link Mimic',
+  description: 'Link the Mimic desktop app to your Discord account with the six-character code it shows.',
+};
+
 export const dynamic = 'force-dynamic';
 
 async function authorizeCode(formData: FormData) {

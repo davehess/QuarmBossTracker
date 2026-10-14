@@ -9,6 +9,11 @@ import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
 import { GUILD_TAG } from '@/lib/guild';
 
+export const metadata = {
+  title: 'Guild rules · Admin',
+  description: 'A read-only view of the guild rules ingested from Discord.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type RuleRow = {

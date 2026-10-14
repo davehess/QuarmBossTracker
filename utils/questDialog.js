@@ -88,9 +88,12 @@ function _stringTables(src) {
 function _guardValues(seg, pos, ident) {
   let cond = null;
   for (const m of seg.slice(0, pos).matchAll(/\b(?:if|elseif)\b([^\n]*?)\bthen\b/g)) cond = m[1];
-  if (!cond) return [];
+  // null = nothing here guards this index (the Tribunal's "prepared" emote is PREPARED_TEXT[trialNum],
+  // chosen by which Tribunal you stand at): every line of the list may be said.
+  if (!cond) return null;
   const vals = new Set();
   const id = ident.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (!new RegExp(`\\b${id}\\b`).test(cond)) return null;
   for (const m of cond.matchAll(new RegExp(`\\b${id}\\s*(==|<=|<)\\s*(\\d+)`, 'g'))) {
     const n = Number(m[2]);
     if (m[1] === '==') vals.add(n);
@@ -128,7 +131,11 @@ function _replies(seg, tables) {
     }
     const byVar = /^\s*([A-Za-z_]\w*)\s*\[\s*([A-Za-z_]\w*)\s*\]\s*$/.exec(args);
     if (byVar && tables && tables[byVar[1]]) {
-      for (const n of _guardValues(seg, m.index, byVar[2])) push(kind, tables[byVar[1]][n - 1]);
+      const list = tables[byVar[1]];
+      // An unguarded index gives every line of a SHORT list (the Tribunal's six); a long one is a
+      // conversation state machine (Bittrik's 30) where the lines belong to different moments.
+      const guard = _guardValues(seg, m.index, byVar[2]) || (list.length <= 8 ? list.map((_, i) => i + 1) : []);
+      for (const n of guard) push(kind, list[n - 1]);
       continue;
     }
     push(kind, _exprText(args, tables));
@@ -228,9 +235,16 @@ function parseDialog(body) {
   const branches = [];
   let m;
   while ((m = COND_RX.exec(say))) {
-    const hits = [...m[1].matchAll(/findi\(\s*(["'])(.+?)\1\s*\)/g)]
+    // findi("literal") or findi("literal" .. TABLE[n]): the Tribunal listens for "ready to begin the "
+    // .. TRIAL_TEXT[trialNum], which is one phrase per trial, so a table lookup there gives every value.
+    const hits = [...m[1].matchAll(/findi\(\s*(["'])(.+?)\1\s*(?:\)|\.\.\s*([A-Za-z_]\w*)\s*\[[^\]]*\]\s*\))/g)]
       .filter((k) => !/\bnot\s+[\w.:]*$/.test(m[1].slice(0, k.index)));
-    const kws = hits.map((k) => k[2].trim()).filter(Boolean);
+    const spread = hits.length === 1 && hits[0][3] && tables[hits[0][3]] ? tables[hits[0][3]].map((t) => hits[0][2] + t) : null;
+    if (spread) {
+      for (const phrase of spread) branches.push({ start: m.index, at: m.index + m[0].length, cond: m[1], keywords: [phrase], sayText: phrase });
+      continue;
+    }
+    const kws = hits.filter((k) => !k[3]).map((k) => k[2].trim()).filter(Boolean);
     // "and" between two findi calls means the line must hold every word: the Seer's
     // findi("unlock") and findi("memories") ignores a bare "unlock".
     const needsAll = hits.some((k, i) => i > 0 && /\band\b/.test(m[1].slice(hits[i - 1].index + hits[i - 1][0].length, k.index)));
@@ -244,9 +258,12 @@ function parseDialog(body) {
   const GM_RX = /:GetGM\s*\(|:Admin\s*\(/;
   // A branch runs until the next keyword branch; nested conditions inside it (flag checks)
   // stay part of it.
-  return branches.map((b, n) => {
-    const seg = say.slice(b.at, n + 1 < branches.length ? branches[n + 1].start : say.length);
+  return branches.map((b) => {
+    // (The first branch that starts later: a phrase spread over a table shares one condition.)
+    const after = branches.find((o) => o.start > b.start);
+    const seg = say.slice(b.at, after ? after.start : say.length);
     const replies = _replies(seg, tables);
+    const fx = effects(seg);
     const hints = [...new Set(replies.flatMap((r) => [...r.text.matchAll(/\[([^\]]{1,40})\]/g)].map((h) => h[1].trim())))];
     return {
       keywords: b.keywords,
@@ -260,10 +277,16 @@ function parseDialog(body) {
       flag: /set_global\s*\(|received a character flag/i.test(seg),
       clears: /delete_global\s*\(/.test(seg) && !/set_global\s*\(/.test(seg),
       hints,
-      fx: effects(seg),              // despawns, spawns, faction, items you get
+      fx,                            // despawns, spawns, faction, items you get
       needs: needsItems(b.cond),     // items it checks you carry before answering
+      // Says nothing and sets no flag but still does something to you or the zone: Askr's "transport"
+      // moves you, Tylis's "ready to return" casts the spell that carries you out, Trydan's "ready"
+      // spawns the custodian, an Essence's "hail" hands over the item. Those are the steps a raider
+      // needs the phrase for (FB-72, a member, 2026-10-10: a step missing from the Quest tab).
+      acts: fx.gives.length > 0 || fx.spawns.length > 0 || fx.spawnOther || fx.depopSelf || fx.depops.length > 0
+        || /:MovePC\s*\(|:CastSpell\s*\(|\beq\.zone\s*\(/.test(seg),
     };
-  }).filter((b) => !b.gm && (b.replies.length || b.flag || b.clears)).map(({ gm, ...b }) => b);
+  }).filter((b) => !b.gm && (b.replies.length || b.flag || b.clears || b.acts)).map(({ gm, acts, ...b }) => b);
 }
 
 // What the NPC says when you hand something in (event_trade), in order. The "who's next"

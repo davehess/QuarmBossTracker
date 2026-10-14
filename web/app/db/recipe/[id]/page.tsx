@@ -16,11 +16,16 @@ import {
   type RecipePart, splitParts, partLabel, containerLabel, isWorldContainer, tradeskillName, isQuestCombine,
 } from '@/lib/tradeskills';
 import NewPageTag from '@/components/NewPageTag';
+import { pageMetadata } from '@/lib/pageMetaData';
 
 export const dynamic = 'force-dynamic';
 // New on production 2026-10-03 with the [beta] tag (DECISIONS §135). The item page that links here
-// is still a beta preview, so until it graduates this page is reached by its address.
-export const metadata = { title: '[beta] Recipe' };
+// is still a beta preview, so until it graduates this page is reached by its address. The title keeps
+// the [beta] tag too (lib/pageMeta.ts entityMeta).
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  return pageMetadata(`/db/recipe/${encodeURIComponent(id)}`);
+}
 
 type RecipeRow = {
   id: number; name: string; tradeskill: number | null; skillneeded: number | null;

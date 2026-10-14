@@ -16,6 +16,14 @@ function _officerNames() {
     .split(',').map(s => s.trim()).filter(Boolean);
 }
 
+// The same officer test on a member row's role_names, for pages that judge OTHER members (e.g. /admin/access,
+// where officers cannot be locked out).
+export function roleNamesAreOfficer(names: unknown): boolean {
+  if (!Array.isArray(names)) return false;
+  const allow = new Set(_officerNames());
+  return names.some(n => typeof n === 'string' && allow.has(n));
+}
+
 // Module-level singleton — the old code built a fresh client (and connection
 // state) on EVERY isOfficer call (efficiency review 2026-07-07, MEDIUM).
 let _adminClient: SupabaseClient | null = null;

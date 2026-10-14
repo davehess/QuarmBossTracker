@@ -61,7 +61,7 @@ describe('lookupItemValues', () => {
   it('takes the LOWEST id when a name exists under several ids, whatever order they come back in', async () => {
     const sb = makeCapFake({ tables: { eqemu_items: [itemRow(16050, 'Rune of Proximity', 25), itemRow(11742, 'Rune of Proximity', 900, false), itemRow(20000, 'Rune of Proximity', 5)] } });
     const { values } = await lookupItemValues(sb, ['Rune of Proximity'], { nowMs: NOW });
-    expect(values.get('Rune of Proximity')).toEqual({ value_cp: 900, nodrop: false });
+    expect(values.get('Rune of Proximity')).toEqual({ value_cp: 900, nodrop: false, pet_gear: false });
   });
 
   it('a name with an apostrophe or a comma is found by exact match', async () => {
@@ -78,7 +78,7 @@ describe('lookupItemValues', () => {
   it('an unknown name is null; a known item priced 0 is a price, not a gap', async () => {
     const sb = makeCapFake({ tables: { eqemu_items: [itemRow(1, 'Quest Token', 0)] } });
     const { values } = await lookupItemValues(sb, ['Quest Token', 'Nothing Like This'], { nowMs: NOW });
-    expect(values.get('Quest Token')).toEqual({ value_cp: 0, nodrop: true });
+    expect(values.get('Quest Token')).toEqual({ value_cp: 0, nodrop: true, pet_gear: false });
     expect(values.get('Nothing Like This')).toBeNull();
   });
 

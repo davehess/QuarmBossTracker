@@ -4,9 +4,10 @@
 // most SLIDES_MAX rows and is read with an explicit limit, the state is one row, a member is one row.
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 import {
-  SCREEN_GUILD, SLIDES_MAX, buildScreenState, slideIndexAfter, toScreenSlide,
+  SCREEN_GUILD, SLIDES_MAX, buildScreenState, parseSlideInput, slideIndexAfter, toScreenSlide,
   type ScreenSlide, type ScreenState,
 } from '@/lib/raidScreen';
+import { isPlanSlideTitle, planSlides } from './raidPlanSlides';
 
 type Db = SupabaseClient;
 
@@ -102,6 +103,44 @@ export async function keepSlideUp(db: Db, was: number | null, before: string[], 
   if (next === was) return;
   const { error } = await db.from('raid_screen_state').update({ slide_index: next }).eq('guild_id', SCREEN_GUILD);
   if (error) throw new Error(error.message);
+}
+
+/**
+ * "Load tonight's plan": replace the deck's plan slides (titles starting PLAN_SLIDE_PREFIX) with the plan as it
+ * is now, after the officers' own slides. The new rows go in FIRST and the old ones come out after, so a failed
+ * write leaves the old plan in place rather than a hole. `deck` is listSlides() from before. Returns an error
+ * text for the caller to answer 400 with (the deck would pass SLIDES_MAX, or the plan fails the slide limits).
+ */
+export async function replacePlanSlides(db: Db, deck: ScreenSlide[]): Promise<string | null> {
+  const own = deck.filter(s => !isPlanSlideTitle(s.title));
+  const old = deck.filter(s => isPlanSlideTitle(s.title));
+  const plan = planSlides();
+  if (own.length + plan.length > SLIDES_MAX) {
+    return `the plan is ${plan.length} slides and the deck already holds ${own.length} of its own: ${SLIDES_MAX} is the most`;
+  }
+  const rows = [];
+  const start = deck.reduce((m, s) => Math.max(m, s.position + 1), deck.length);
+  const now = new Date().toISOString();
+  for (const [i, s] of plan.entries()) {
+    const p = parseSlideInput({ title: s.title, body: s.body });
+    if (!p.ok) return p.error;
+    rows.push({ guild_id: SCREEN_GUILD, position: start + i, title: p.value.title, body: p.value.body, image_url: null, updated_at: now });
+  }
+
+  const ins = await db.from('raid_screen_slides').insert(rows).select('id, position');
+  if (ins.error) throw new Error(ins.error.message);
+  const fresh = ((ins.data ?? []) as { id: string; position: number }[]).sort((a, b) => a.position - b.position);
+
+  if (old.length) {
+    const del = await db.from('raid_screen_slides').delete().in('id', old.map(s => s.id)).eq('guild_id', SCREEN_GUILD);
+    if (del.error) throw new Error(del.error.message);
+  }
+
+  const was = await readSlideIndex(db);
+  const final = [...own.map(s => s.id), ...fresh.map(s => s.id)];
+  await writeOrder(db, final, new Map([...own.map(s => [s.id, s.position] as const), ...fresh.map(s => [s.id, s.position] as const)]));
+  await keepSlideUp(db, was, deck.map(s => s.id), final);
+  return null;
 }
 
 /**

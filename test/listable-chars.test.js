@@ -214,9 +214,10 @@ describe('the pages apply it', () => {
     expect(page).toMatch(/const scopedUnknownNeeds = scope === 'all' \? unknownNeeds : unknownNeeds\.filter\(n => n\.isMain\);/);
     // The same fold in both places, wrapping the same table the listed rows use.
     expect(page).toMatch(/myUnknown\.length > 0 && noLevelFold\(myUnknown\.length, <MineTable rows=\{myUnknownSorted\} \/>\)/);
-    expect(page).toMatch(/noLevelFold\(scopedUnknownNeeds\.length, <NeedsTable rows=\{scopedUnknownNeeds\} \/>\)/);
+    // (the rows reach the tables through the class filter + sort: test/pop-spells-filter.test.js)
+    expect(page).toMatch(/noLevelFold\(shownUnknownNeeds\.length, <NeedsTable rows=\{shownUnknownNeeds\} \/>\)/);
     expect(page).toMatch(/<MineTable rows=\{myCharsSorted\} \/>/);
-    expect(page).toMatch(/<NeedsTable rows=\{scopedSpellNeeds\} \/>/);
+    expect(page).toMatch(/<NeedsTable rows=\{shownSpellNeeds\} \/>/);
     // The fold says what to do, and is closed by default.
     const fold = sliceBlock(page, 'const noLevelFold =', '</details>');
     expect(fold).toMatch(/<details className="[^"]*">/);

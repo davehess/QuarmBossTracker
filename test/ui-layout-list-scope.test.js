@@ -36,15 +36,16 @@ function applyFilters(rows, query) {
   }));
 }
 
-async function list(character) {
+async function list(character, caller = 'D1') {
   const supabase = {
     isEnabled: () => true,
     select: async (table, query) => applyFilters(table === 'characters' ? CHARS : SNAPS, query),
   };
-  const mimicLink = { requireAgentAuth: async () => ({ discord_id: 'D1' }) };
+  const mimicLink = { requireAgentAuth: async () => ({ discord_id: caller }) };
+  const household = async (id) => new Set([String(id)]);   // each caller is only themselves here
   // eslint-disable-next-line no-new-func
-  const handler = new Function('require', 'mimicLink', block + '\nreturn _handleAgentUiLayoutList;')(
-    (m) => (m === './utils/supabase' ? supabase : null), mimicLink);
+  const handler = new Function('require', 'mimicLink', '_householdDiscordIds', block + '\nreturn _handleAgentUiLayoutList;')(
+    (m) => (m === './utils/supabase' ? supabase : null), mimicLink, household);
   let body = '';
   const res = { writeHead() { return res; }, end(b) { body = b || ''; return res; } };
   await handler({ url: '/api/agent/ui_layout?character=' + encodeURIComponent(character) }, res);
@@ -58,5 +59,9 @@ describe('UI backups list is scoped to the character asked for', () => {
 
   it("an alt's list holds only the alt's, resolved through the main's owner", async () => {
     expect(await list('brackwyn')).toEqual(['s2']);
+  });
+
+  it("someone else's Mimic gets no list for a character that isn't theirs", async () => {
+    expect(await list('Aldenmar', 'D2')).toEqual([]);
   });
 });

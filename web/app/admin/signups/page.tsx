@@ -30,6 +30,11 @@ import {
 import { loadSignupStatuses, loadRaidWindowNames } from '@/lib/adminReads';
 import { GUILD_TAG } from '@/lib/guild';
 
+export const metadata = {
+  title: 'Sign-ups · Admin',
+  description: 'Raid-Helper sign-ups reconciled against who actually showed up.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type RhEvent = {

@@ -20,6 +20,11 @@ import { userTz, fmtDateOnly } from '@/lib/timezone';
 import VengeanceList from './VengeanceList';
 import { GUILD_TAG, GUILD_INGAME_NAME } from '@/lib/guild';
 
+export const metadata = {
+  title: 'Server PvP top 10',
+  description: 'Server-wide PvP kill leaders on Project Quarm.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type VengeanceRow = {

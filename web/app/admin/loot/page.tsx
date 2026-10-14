@@ -26,7 +26,10 @@ import { GUILD_TAG } from '@/lib/guild';
 import LootTable, { SORTS, type Sort, type LootGroupRow } from './LootTable';
 
 export const dynamic = 'force-dynamic';
-export const metadata = { title: '[beta] Loot by value — Wolf Pack admin' };
+export const metadata = {
+  title: '[beta] Loot by value — Wolf Pack admin',
+  description: 'What the raid has looted, ranked by value, over a day, a week or longer.',
+};
 
 const WINDOWS = [
   { label: '24h', days: 1 },
@@ -117,7 +120,9 @@ export default async function AdminLootPage({ searchParams }: { searchParams: Pr
         <p role="note" className="text-sm text-orange leading-6 border-l-2 border-orange/60 pl-3">
           Who looted an item is not always who ends up with it. Items are often looted by one raider and
           handed to another (master looter, corpse runs, trades). These rows are the &ldquo;You have
-          looted&rdquo; lines each raider&rsquo;s Mimic saw.
+          looted&rdquo; lines each raider&rsquo;s Mimic saw. Gear a charmer hands to a charmed pet (negative
+          magic resist, plus a short officer list) is not counted as loot, and neither is gear a charmer
+          loots back from their own pet&rsquo;s corpse.
         </p>
         <p className="text-xs text-dim leading-5 mt-3">
           Last <span className="text-text">{windowLabel}</span>:{' '}

@@ -10,7 +10,8 @@
 // already-posted link may show the old card until their cache expires.
 
 import { NextRequest } from 'next/server';
-import { metaForPath, SITE_NAME } from '@/lib/pageMeta';
+import { SITE_NAME } from '@/lib/pageMeta';
+import { metaForPathWithData } from '@/lib/pageMetaData';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,7 +21,7 @@ function escHtml(s: string): string {
 
 export async function GET(req: NextRequest) {
   const path = req.nextUrl.searchParams.get('path') || '/';
-  const { title, description, image } = metaForPath(path);
+  const { title, description, image } = await metaForPathWithData(path);
   const fullTitle = title === SITE_NAME ? title : `${title} — ${SITE_NAME}`;
   const url = `https://wolfpack.quest${path}`;
   // A page with a picture gets the big card; the rest keep the small one.

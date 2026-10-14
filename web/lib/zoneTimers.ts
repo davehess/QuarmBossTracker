@@ -27,6 +27,27 @@ export function zoneLabel(zone: string): string {
   return ZONE_LABELS[zone.toLowerCase()] || zone;
 }
 
+// What a window IS, in words a raider reads (the guild lead, 2026-10-09: "this requires more description: Boar
+// stampede, approximate earliest and latest start timers (observed) and a PQDI link to the piglet"). Keyed on the
+// trigger name the bot stores; an unknown trigger shows under its own name with no blurb.
+export type EventInfo = { title: string; blurb: string | null; pqdi: { label: string; npcId: number } | null };
+const EVENT_RULES: { match: RegExp; info: EventInfo }[] = [
+  {
+    match: /stampede/i,
+    info: {
+      title: 'Boar stampede',
+      blurb: 'The boars charge through the zone somewhere between 40 minutes and 2 hours after the last one. '
+        + 'These are the earliest and latest start times seen so far, not a fixed time.',
+      pqdi: { label: 'Stampeding Piglet', npcId: 214303 },
+    },
+  },
+];
+export function eventInfo(trigger: string): EventInfo {
+  for (const r of EVENT_RULES) if (r.match.test(trigger)) return r.info;
+  return { title: trigger, blurb: null, pqdi: null };
+}
+export const pqdiNpcUrl = (npcId: number): string => `https://www.pqdi.cc/npc/${npcId}`;
+
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null);
 const str = (v: unknown, max = 120): string | null => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
 

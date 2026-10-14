@@ -21,6 +21,11 @@ import {
   computeRaidKit, MR_FLOOR, UTILITY_KEYS, UTILITY_LABEL, type RaidKitResult,
 } from '@/lib/raidKit';
 
+export const metadata = {
+  title: 'Raid kit readiness · Admin',
+  description: 'Every raider’s resist floor and utility checklist in one roll-up.',
+};
+
 export const dynamic = 'force-dynamic';
 
 // Membership predicate — the raid-roster ranks /admin/attendance counts (Raid

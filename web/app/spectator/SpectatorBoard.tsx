@@ -18,6 +18,8 @@ import {
   type LayerChoice, type Raider, type View, type ZoneMap,
 } from '@/lib/spectator';
 import { useScreenLive, type ScreenLive } from '@/lib/useScreenLive';
+import { overlayForZone, type PlanOverlay } from '@/lib/screenPlan';
+import type { Pt } from '@/lib/raidPlan';
 
 const BG = '#0d1117';
 const PANEL = '#161b22';
@@ -32,6 +34,12 @@ const DOT_R = 5.5;
 const LABEL_MIN_SCALE = 0.35;
 const LABEL_MAX = 60;
 const LABEL_CHARS = 26;
+// The raid plan layer (/screen only): the same colours as the plan page's maps (app/pop/raid/ZoneSvg.tsx).
+const PLAN_ROUTE = '#ffa657';
+const PLAN_ALT = '#58a6ff';
+const PLAN_PATROL = '#a371f7';
+const PLAN_KIND = { boss: '#f85149', zonein: '#56d364', npc: '#d29922' } as const;
+const PLAN_R = 6;
 
 // A zone's map, ready to draw: everything already in the picture's frame (x, y negated), in flat typed
 // arrays so a frame is a loop. `bands` are the floors the chips show: the generated walls' own, else
@@ -97,6 +105,96 @@ function bandColor(i: number, n: number, alpha: number) {
   return `hsla(${hue.toFixed(0)}, 42%, 60%, ${alpha})`;
 }
 
+// Tonight's plan, drawn under the dots: patrol (solid), the numbered dashed route and its alternates, then the
+// boss / zone-in / NPC markers with their names. Plan points are in the SERVER frame, so they go through
+// toScreen() exactly as the walls and the dots do (never serverXY, which converts raid_roster's loc columns).
+// A handful of points, so no culling beyond skipping a marker that is off the canvas.
+function drawPlan(ctx: CanvasRenderingContext2D, plan: PlanOverlay, v: View, ox: number, oy: number, w: number, h: number) {
+  const at = (p: Pt) => {
+    const s = toScreen(p.x, p.y);
+    return { px: s.sx * v.scale + ox, py: s.sy * v.scale + oy };
+  };
+  const trace = (pts: Pt[]) => {
+    ctx.beginPath();
+    pts.forEach((p, i) => { const q = at(p); if (i) ctx.lineTo(q.px, q.py); else ctx.moveTo(q.px, q.py); });
+    ctx.stroke();
+  };
+  const numbered = (rt: Pt[], color: string) => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    trace(rt);
+    ctx.setLineDash([]);
+    ctx.font = LABEL_FONT;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    rt.forEach((p, i) => {
+      const q = at(p);
+      const bx = q.px - PLAN_R * 1.5, by = q.py - PLAN_R * 1.5;
+      if (bx < -20 || bx > w + 20 || by < -20 || by > h + 20) return;
+      ctx.fillStyle = BG;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(bx, by, PLAN_R * 1.15, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.fillText(String(i + 1), bx, by);
+    });
+  };
+
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.globalAlpha = 0.9;
+  if (plan.patrol && plan.patrol.length > 1) {
+    ctx.strokeStyle = PLAN_PATROL;
+    ctx.lineWidth = 2;
+    trace(plan.patrol);
+  }
+  numbered(plan.route, PLAN_ROUTE);
+  for (const rt of plan.altRoutes ?? []) numbered(rt, PLAN_ALT);
+
+  // Markers last so a boss sits over the route; bosses name themselves first, so a crowded corner keeps them.
+  ctx.font = LABEL_FONT;
+  ctx.textBaseline = 'middle';
+  ctx.lineWidth = 3;
+  const placed: [number, number, number, number][] = [];
+  const order = [...plan.markers].sort((a, b) => Number(b.kind === 'boss') - Number(a.kind === 'boss'));
+  for (const m of order) {
+    const q = at(m);
+    if (q.px < -20 || q.px > w + 20 || q.py < -20 || q.py > h + 20) continue;
+    const c = PLAN_KIND[m.kind];
+    ctx.fillStyle = c;
+    ctx.strokeStyle = BG;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    if (m.kind === 'boss') ctx.arc(q.px, q.py, PLAN_R, 0, Math.PI * 2);
+    else if (m.kind === 'zonein') {
+      const d = PLAN_R * 1.3;
+      ctx.moveTo(q.px, q.py - d); ctx.lineTo(q.px + d, q.py); ctx.lineTo(q.px, q.py + d); ctx.lineTo(q.px - d, q.py); ctx.closePath();
+    } else {
+      ctx.moveTo(q.px, q.py - PLAN_R * 1.3); ctx.lineTo(q.px + PLAN_R * 1.2, q.py + PLAN_R); ctx.lineTo(q.px - PLAN_R * 1.2, q.py + PLAN_R); ctx.closePath();
+    }
+    ctx.fill();
+    ctx.stroke();
+
+    const text = m.label.length > LABEL_CHARS ? m.label.slice(0, LABEL_CHARS - 1) + '…' : m.label;
+    const tw = ctx.measureText(text).width;
+    const right = q.px + PLAN_R * 1.9 + tw > w - 4;
+    const lx = right ? q.px - PLAN_R * 1.9 - tw : q.px + PLAN_R * 1.9;
+    const box: [number, number, number, number] = [lx, q.py - 7, lx + tw, q.py + 7];
+    if (placed.some(p => box[0] < p[2] && box[2] > p[0] && box[1] < p[3] && box[3] > p[1])) continue;
+    placed.push(box);
+    ctx.textAlign = 'left';
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = BG;
+    ctx.strokeText(text, lx, q.py);
+    ctx.fillStyle = TEXT;
+    ctx.fillText(text, lx, q.py);
+  }
+  ctx.restore();
+}
+
 const chip = 'rounded border px-2.5 py-1.5 text-xs whitespace-nowrap transition-colors '
   + 'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue';
 const chipIdle = 'border-border bg-panel text-text hover:bg-[#21262d]';
@@ -110,9 +208,13 @@ const chipOff ='disabled:opacity-40 disabled:hover:bg-panel';
 // map take the height of the window. Everything else is the same board.
 // `shared`: positions handed in by a parent that already reads them (the screen reads the bot once for the whole
 // page); given, the board does not poll at all. Left out, the board reads them itself (/spectator).
-export default function SpectatorBoard({ embedded = false, shared }: {
+// `plan`: tonight's raid plan (route, bosses, zone-ins, NPCs, patrol), only /screen passes it. When the zone on
+// screen is one the plan covers, it is drawn under the dots, with a chip to hide it. Left out (/spectator), the
+// board is exactly as it was.
+export default function SpectatorBoard({ embedded = false, shared, plan }: {
   embedded?: boolean;
   shared?: Pick<ScreenLive, 'feed' | 'netErr' | 'signedOut'>;
+  plan?: PlanOverlay[];
 } = {}) {
   const own = useScreenLive({ enabled: shared === undefined });
   const { feed, netErr, signedOut } = shared ?? own;
@@ -122,6 +224,7 @@ export default function SpectatorBoard({ embedded = false, shared }: {
   const [selected, setSelected] = useState<string | null>(null);
   const [following, setFollowingState] = useState(true);
   const [layer, setLayer] = useState<LayerChoice>('brewall');
+  const [showPlan, setShowPlan] = useState(true);
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -137,6 +240,7 @@ export default function SpectatorBoard({ embedded = false, shared }: {
     layers: { brewall: false, generated: false },
     refZ: null as number | null,   // the raid's median z
     filter: false,                 // more than one floor, so lines off the raid's floor are dimmed
+    plan: null as PlanOverlay | null,   // the plan to draw under the dots, or none
   });
 
   const setFollow = useCallback((on: boolean) => { followRef.current = on; setFollowingState(on); }, []);
@@ -145,6 +249,8 @@ export default function SpectatorBoard({ embedded = false, shared }: {
   const zones = feed?.data.zones ?? [];
   const zone = pickZone(zones, chosen);
   const zoneName = zones.find(z => z.zone === zone)?.name ?? zone ?? '';
+  const planHere = useMemo(() => overlayForZone(plan, zone), [plan, zone]);
+  const planDrawn = showPlan ? planHere : null;
   const raiders = useMemo(
     () => (feed && zone ? feed.data.raiders.filter(r => r.zone === zone) : []),
     [feed, zone],
@@ -265,6 +371,9 @@ export default function SpectatorBoard({ embedded = false, shared }: {
       ctx.globalAlpha = 1;
       ctx.textAlign = 'start';
     }
+
+    // Tonight's plan: over the walls, under the dots.
+    if (s.plan) drawPlan(ctx, s.plan, v, ox, oy, w, h);
 
     // Dots: stale ones first so a live dot is never hidden under a faded one; the selected one last.
     const elapsed = (Date.now() - s.rxAt) / 1000;
@@ -408,10 +517,10 @@ export default function SpectatorBoard({ embedded = false, shared }: {
     live.current = {
       raiders, map: ready, hidden, focusBand, selected, rxAt: feed?.rxAt ?? 0,
       layers: { brewall: layerBrewall, generated: layerGenerated },
-      refZ, filter: bands.length > 1 && refZ != null,
+      refZ, filter: bands.length > 1 && refZ != null, plan: planDrawn,
     };
     sync();
-  }, [raiders, ready, hidden, focusBand, selected, feed, sync, layerBrewall, layerGenerated, refZ, bands.length]);
+  }, [raiders, ready, hidden, focusBand, selected, feed, sync, layerBrewall, layerGenerated, refZ, bands.length, planDrawn]);
 
   // Canvas size: backing store at device pixels, drawn in CSS pixels.
   useEffect(() => {
@@ -698,6 +807,21 @@ export default function SpectatorBoard({ embedded = false, shared }: {
                 {label}
               </button>
             ))}
+          </div>
+        )}
+
+        {planHere && (
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5" role="group" aria-label="Raid plan">
+            <button type="button" aria-pressed={showPlan} onClick={() => setShowPlan(s => !s)}
+              className={`${chip} ${showPlan ? chipFloorOn : chipIdle}`}>
+              Tonight&apos;s plan
+            </button>
+            {showPlan && (
+              <span className="text-xs text-dim">
+                <span className="text-red">●</span> boss · <span className="text-green">◆</span> zone-in · <span className="text-gold">▲</span> NPC ·{' '}
+                <span className="text-orange">- - -</span> numbered route
+              </span>
+            )}
           </div>
         )}
 

@@ -19,7 +19,7 @@ export async function generateMetadata({ params }: { params: Promise<{ code: str
   if (!guild) return {};
   return {
     title: `[beta] ${guild.name}: Zeal tag icon`,
-    description: `${guild.name}'s banner and icon for Zeal /tag: ^B${guild.code}^ and ^I${guild.code}^.`,
+    description: `${guild.name}'s banner and icon for Zeal /tag: ^F${guild.code}^ and ^I${guild.code}^.`,
   };
 }
 

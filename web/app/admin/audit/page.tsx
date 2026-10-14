@@ -11,6 +11,11 @@ import Link from 'next/link';
 import { supabaseAdmin } from '@/lib/supabase';
 import { requireOfficer } from '@/lib/officer';
 
+export const metadata = {
+  title: 'Audit log · Admin',
+  description: 'Search every change the bot and officers have made, by actor, action, boss or date.',
+};
+
 export const dynamic = 'force-dynamic';
 
 type AuditRow = {

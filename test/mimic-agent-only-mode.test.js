@@ -173,14 +173,15 @@ describe('the central helpers', () => {
 
   it('_overlayEntries is empty in agent only even with windows alive, and lists them in full Mimic', () => {
     const names = ['dockWindow', 'overlayWindow', 'triggerWindow', 'charmWindow', 'petsWindow', 'mobInfoWindow', 'buffQueueWindow',
-      'whoWindow', 'melodyWindow', 'zealWindow', 'threatWindow', 'chChainWindow', 'tankWindow', 'extTargetWindow', 'commandWindow',
-      'popRaidWindow', 'meWindow', 'canvasWindow'];
+      'whoWindow', 'chatWindow', 'melodyWindow', 'zealWindow', 'threatWindow', 'chChainWindow', 'tankWindow', 'extTargetWindow', 'commandWindow',
+      'popRaidWindow', 'meWindow', 'mapWindow', 'mapTimersWindow', 'canvasWindow'];
     const entries = (agent) => {
       globalThis.__agent = agent;
       const r = evalBlock(`
         const _agentOnly = () => globalThis.__agent;
         ${names.map((n) => `const ${n} = { isDestroyed: () => false };`).join('\n')}
         const panelOverlays = new Map();
+        const chatBreakouts = new Map();
         ${sliceBlock(MAIN, 'function _overlayEntries() {', '\n}\n')}
       `, ['_overlayEntries']);
       const out = r._overlayEntries();

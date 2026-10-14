@@ -11,13 +11,14 @@ import { readSource, ROOT, sliceBlock, stripJs } from './_source-slice.js';
 
 const html = readSource(path.join(ROOT, 'apps', 'mimic', 'mobinfo.html'));
 
-function load(npcById) {
+function load(npcById, asked) {
   const block = sliceBlock(html, '  var _fqvSub = \'quest\';', '\n  var _copyHoldUntil = 0;');
   const store = {};
   const env = {
     window: { localStorage: { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = v; } } },
     fetch: (url) => {
       const id = Number(new URL(url).searchParams.get('id'));
+      if (asked) asked.push(id);
       return Promise.resolve({ json: () => Promise.resolve({ npc: npcById[id] || null }) });
     },
   };
@@ -57,6 +58,37 @@ describe('F/Q/V', () => {
     const other = f.renderFqv({ id: 202299 });
     expect(other).not.toContain('data-fqv="vendor"');
     expect(other).toMatch(/class="fqvtab on" data-fqv="quest"/);
+  });
+});
+
+// FB-72, a member, 2026-10-10: the Giwin Mirakon inside the Plane of Innovation's factory had no
+// "test the machine" step. The bot's stats pick for that name is the Plane of Tactics' body (214014);
+// it names the body in the player's zone as quest_id (206038), and the Quest tab asks for that one.
+describe('the Quest tab reads quest_id when the bot sends one', () => {
+  const INSIDE = { id: 206038, say: [
+    { keywords: ['hail'], say: 'hail', replies: [{ kind: 'message', text: 'How did you get in here?' }], gated: false, flag: false, hints: ['great warrior'] },
+    { keywords: ['test the machine'], say: 'test the machine', replies: [{ kind: 'message', text: 'Haha! I knew I sensed the warring spirit within you.' }], gated: false, flag: true, hints: [] },
+  ], trade: [], turnins: [], next: [], vendor: [] };
+  const TACTICS = { id: 214014, say: [{ keywords: ['hail'], say: 'hail', replies: [{ kind: 'message', text: 'Who are you to talk to me?' }], gated: false, flag: false, hints: [] }],
+    trade: [], turnins: [], next: [], vendor: [] };
+
+  it('asks for quest_id, not id, and shows that NPC\'s steps', async () => {
+    const asked = [];
+    const f = load({ 206038: INSIDE, 214014: TACTICS }, asked);
+    const mob = { id: 214014, quest_id: 206038, name: 'Giwin Mirakon' };
+    f.renderFqv(mob); await settle(); await settle();
+    const out = f.renderFqv(mob);
+    expect(asked).toEqual([206038]);
+    expect(out).toContain('data-copy="/say test the machine"');
+    expect(out).not.toContain('Who are you to talk to me');
+  });
+
+  it('with no quest_id (older bot, or the pick is already in the zone) it asks for id as before', async () => {
+    const asked = [];
+    const f = load({ 206038: INSIDE, 214014: TACTICS }, asked);
+    f.renderFqv({ id: 214014 }); await settle(); await settle();
+    expect(asked).toEqual([214014]);
+    expect(f.renderFqv({ id: 214014 })).not.toContain('/say test the machine');
   });
 });
 
@@ -136,7 +168,7 @@ describe('the Quest tab folds the NPC text, warns, and labels items', () => {
 describe('a locked overlay still takes the clicks', () => {
   const code = stripJs(html);
   it('the hover handshake covers the sub-tabs, chips and the says toggles', () => {
-    expect(code).toMatch(/closest\('\.pqdi, \.fqvtab, \.qcopy, \.qtoggle, \.facl'\)[^\n]*\n[^\n]*overlayHoverInteractive\(true\)/);
-    expect(code).toMatch(/closest\('\.pqdi, \.fqvtab, \.qcopy, \.qtoggle, \.facl'\)[^\n]*\n[^\n]*overlayHoverInteractive\(false\)/);
+    expect(code).toMatch(/closest\('\.pqdi, \.inm, \.fqvtab, \.qcopy, \.qtoggle, \.facl'\)[^\n]*\n[^\n]*overlayHoverInteractive\(true\)/);
+    expect(code).toMatch(/closest\('\.pqdi, \.inm, \.fqvtab, \.qcopy, \.qtoggle, \.facl'\)[^\n]*\n[^\n]*overlayHoverInteractive\(false\)/);
   });
 });

@@ -1,5 +1,10 @@
 # Zeal PR draft — tag corpses (and keep a mob's pre-death tag off its corpse)
 
+> **Current (2026-10-09):** the branch is ONE commit, `7f7c824`, on Zeal v1.4.8 (`50dc9a4`), squashed from the
+> commits named below with the same code; `0001-tag-corpses.patch` is that commit. The hashes below are history.
+> A local checkout: `git fetch origin && git reset --hard origin/tag-corpses`.
+> **Tested in game 2026-10-09** (the guild lead, on the `test-all` build): tagging works on both NPC and player corpses.
+
 *Drafted 2026-09-25 against Zeal v1.4.7 (`e24a3ed`). Branch **`tag-corpses`** on the
 guild lead's fork (github.com/davehess/zeal/tree/tag-corpses, one commit, `aa975e1`); the
 same change is `0001-tag-corpses.patch` here. It is merged into `test-all` (`d32bed1`),
@@ -62,3 +67,51 @@ too far away, or not loaded yet, has nowhere to hold a tag.
 4. Target something else, then `/tag target Loot` targets the corpse.
 5. Broadcast one corpse tag by rsay: others in the raid see it on the same corpse.
 6. Unchanged: live NPC tags, `/tag clear`, and `/tag target` on live mobs.
+
+---
+
+## PR title
+
+`Allow tagging corpses; keep a mob's pre-death tag off its corpse`
+
+## PR body (paste as-is)
+
+*Upstream has none of the tag-shapes keys (`^K^`, `^H^`, `^PL^`), so the test plan
+below uses only upstream's own (`^R^`, `^P^`, `^S^`, `^G^`).*
+
+`/tag` on a corpse answers "Must have a valid target with a visible nameplate to tag":
+only live players and NPCs are taggable, and tag text and shapes are never drawn on a
+corpse. Marking corpses is useful (loot order, a rez mark on a player corpse), but a
+kill marker should not linger on the corpse it made.
+
+**What changes** (`nameplate.cpp/.h`, 31 lines added, 11 removed)
+
+- NPC and player corpses are taggable targets. They take tag text and the default
+  arrow, like NPCs; live players still take only an explicit shape.
+- `NamePlateInfo::corpse_tag` records that a tag was set on the corpse itself. A corpse
+  draws its tag text, shape and tagged nameplate colour only when it is set. The first
+  tag applied to a corpse replaces whatever the mob carried before it died.
+- `/tag target` can select a corpse only by a tag set on the corpse, so a pre-death
+  "Kill" tag never targets the body.
+- README: one line on corpse tagging.
+
+**Not changed:** a target whose model is not drawn (too far away, not loaded yet) still
+cannot be tagged. A tag lives on the nameplate entry created in
+`handle_SetNameSpriteState`, which needs a head point. Creating that entry early would
+be unsafe: entries are keyed by entity pointer and removed in the entity-destructor
+hook, and nothing guarantees that hook fires for an actor that never had a nameplate.
+
+Tested in game on NPC and player corpses.
+
+**Test plan**
+
+1. Tag a live mob `^R^Kill`, then kill it: no arrow or text on the corpse.
+2. `/tag local ^P^Loot` on the corpse: the paw and "Loot" show, in the tagged
+   nameplate colour.
+3. A player corpse: `/tag local ^S^Rez me` shows. Plain `/tag local Rez first` gets the
+   default arrow.
+4. Target something else, then `/tag target Loot`: the corpse is targeted.
+   `/tag target Kill` does not pick the corpse from step 1.
+5. Broadcast a corpse tag by rsay: others in the raid see it on the same corpse.
+6. Unchanged: live NPC tags, live player shapes (`/tag local ^G^` on a player),
+   `/tag clear`, and `/tag target` on live mobs.

@@ -9,12 +9,19 @@ face-on view, 160x160 with a transparent background.
 - icon-<name>.png: the symbol keys (K X A D F T WP M U N H $ E).
 - badge-<n>.png: the numbered badges ^1^ to ^12^.
 - paw-<c>.png: the paw with a letter or digit, ^P<c>^.
-- banner-<CODE>.png and guild-<CODE>.png: each guild's banner ^B<CODE>^ and icon ^I<CODE>^.
+- banner-<CODE>.png and guild-<CODE>.png: each guild's flag (banner) ^F<CODE>^ and icon ^I<CODE>^.
+
+The banners (every banner-<CODE>.png) and the Burnouts icon (guild-BRN.png, now a lit cigarette) come
+from the fork's `guildicon-draft` branch instead: a local draft, not yet pushed and not in any Zeal
+build. A banner there is the guild's icon in its own colours with a thin contrast rim, plus the guild's
+full name above and below the logo. Every other file here is unchanged from the tag-shapes branch
+(the export below, run on guildicon-draft, regenerates them identically).
 
 The guild icons are our own drawings, made for each guild's name or theme. No guild's artwork
 was traced for them.
 
-To regenerate after a shape changes, from a checkout of the fork:
+To regenerate after a shape changes, from a checkout of the fork (the `guildicon-draft` branch for
+the banners and guild-BRN.png):
   g++ -std=c++20 -O2 -I<zeal>/Zeal -o dump dump.cpp <zeal>/Zeal/tag_shapes.cpp && ./dump > meshes.json
   python3 export_marks.py meshes.json <zeal>/Zeal/tag_shapes.cpp <zeal>/Zeal/tag_arrows.cpp <web>/public/zeal/marks
 
@@ -22,12 +29,16 @@ zeal/tagicons/*: provenance
 ===========================
 Picture files for Zeal's tag pictures (^I<name>^ with <name>.png or .tga in uifiles/zeal/tagicons).
 
-- EUR.png, EUR.tga: Europa's guild logo. Their guild leader sent it on 2026-09-25 and asked for it
-  to be made into a Zeal tag icon. The file was processed in this repo:
-  - the black background was removed by flood fill from the edges, with enclosed dark areas put
-    back;
-  - it was scaled to 244x256.
+- EUR.png, EUR.tga: Europa's guild logo, the shield with "EUROPA" across it. Their guild leader
+  first sent a logo on 2026-09-25 and asked for it to be made into a Zeal tag icon; the guild lead
+  supplied this version on 2026-10-09 ("Try making this the Europa logo"). Processed in this repo:
+  - the dark background was removed by flood fill from the edges, after closing the shield's
+    outline (11 px) so its dark band and rim stay in; background-coloured shadow within 11 px of
+    the outside was then dropped and the edge feathered by about a pixel;
+  - it was cropped to the shield and scaled to 226x256, then (2026-10-10) to 113x128, because the
+    fork's tag pictures refuse anything over 128 pixels a side (kMaxImagePixels in tag_arrows.cpp,
+    lowered from 512 in the fork's review fixes) and the 226x256 file would have been skipped in game.
   The TGA is the same pixels as the PNG, 32-bit with alpha. The logo belongs to Europa.
 
-Every picture file here must pass Zeal's own checks: a PNG or true-colour TGA, at most 512 pixels a
-side, at most 1 MB. test/zeal-icons-page.test.js enforces this.
+Every picture file here must pass Zeal's own checks: a PNG or true-colour TGA, at most 128 pixels a
+side, at most 1 MB. test/zeal-icons-page.test.js enforces this (PICTURE_RULES in web/lib/zealIcons.ts).

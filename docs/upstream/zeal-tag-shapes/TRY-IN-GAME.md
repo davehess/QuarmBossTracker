@@ -124,36 +124,36 @@ copy C:\dev\zeal-pr\Zeal\Release\Zeal.asi A:\EQ\Zeal.asi
 `/tag guilds` prints the codes in game.
 
 ```
-/tag local ^BWP^BWP Wolf Pack
-/tag local ^BMAY^BMAY Mayhem
-/tag local ^BEUR^BEUR Europa
-/tag local ^BTRQ^BTRQ Tranquility
-/tag local ^BSOW^BSOW Squirrels of War
-/tag local ^BINT^BINT Intervention
-/tag local ^BECG^BECG Erud's Crossing Guard
-/tag local ^BSAV^BSAV Savage
-/tag local ^BBRN^BBRN Burnouts
-/tag local ^BFG^BFG Former Glory
-/tag local ^BAX^BAX Axiom
-/tag local ^BHVN^BHVN Haven
-/tag local ^BFRE^BFRE Freedom
-/tag local ^BSOS^BSOS Seekers of Souls
-/tag local ^BHC^BHC Hardened Casuals
-/tag local ^BNOC^BNOC Nocturnal
-/tag local ^BDND^BDND Dungeons and Dragons
-/tag local ^BZEK^BZEK Zek
-/tag local ^BDRF^BDRF The Drift
-/tag local ^BCON^BCON Continuum
-/tag local ^BECL^BECL Eclipse
-/tag local ^BLSF^BLSF Loot & Some Fun
-/tag local ^BNOV^BNOV Novae
-/tag local ^BMGE^BMGE Mass Group Ego
-/tag local ^BBC^BBC Breakfast Club
-/tag local ^BHBM^BHBM Here There Be Monsters
-/tag local ^BSEN^BSEN Sentinels
-/tag local ^BALZ^BALZ Alianza
-/tag local ^BCMP^BCMP Camped
-/tag local ^BCVT^BCVT Convicts
+/tag local ^FWP^FWP Wolf Pack
+/tag local ^FMAY^FMAY Mayhem
+/tag local ^FEUR^FEUR Europa
+/tag local ^FTRQ^FTRQ Tranquility
+/tag local ^FSOW^FSOW Squirrels of War
+/tag local ^FINT^FINT Intervention
+/tag local ^FECG^FECG Erud's Crossing Guard
+/tag local ^FSAV^FSAV Savage
+/tag local ^FBRN^FBRN Burnouts
+/tag local ^FFG^FFG Former Glory
+/tag local ^FAX^FAX Axiom
+/tag local ^FHVN^FHVN Haven
+/tag local ^FFRE^FFRE Freedom
+/tag local ^FSOS^FSOS Seekers of Souls
+/tag local ^FHC^FHC Hardened Casuals
+/tag local ^FNOC^FNOC Nocturnal
+/tag local ^FDND^FDND Dungeons and Dragons
+/tag local ^FZEK^FZEK Zek
+/tag local ^FDRF^FDRF The Drift
+/tag local ^FCON^FCON Continuum
+/tag local ^FECL^FECL Eclipse
+/tag local ^FLSF^FLSF Loot & Some Fun
+/tag local ^FNOV^FNOV Novae
+/tag local ^FMGE^FMGE Mass Group Ego
+/tag local ^FBC^FBC Breakfast Club
+/tag local ^FHBM^FHBM Here There Be Monsters
+/tag local ^FSEN^FSEN Sentinels
+/tag local ^FALZ^FALZ Alianza
+/tag local ^FCMP^FCMP Camped
+/tag local ^FCVT^FCVT Convicts
 ```
 
 ## Guild icons (`I` + code)
@@ -244,8 +244,8 @@ icon as `I<code>.png` and banner as `B<code>.png`). Nothing installs into `tagic
 11. Copy `templates\IMAY.png` into `custom\`, paint a big mark on it in any editor that keeps
     transparency, run `/tag icons` (it lists **MAY (yours)**), then
     `/tag local ^IMAY^IMAY Mine`: **your edited icon** draws, not the built-in one.
-12. Copy `templates\BMAY.png` into `custom\`, edit it, `/tag icons`, then
-    `/tag local ^BMAY^BMAY Banner`: **your banner** draws in place of the built-in flag.
+12. Copy `templates\FMAY.png` into `custom\`, edit it, `/tag icons`, then
+    `/tag local ^FMAY^FMAY Banner`: **your banner** draws in place of the built-in flag.
 13. Put a different picture in `tagicons\` as `MAY.png` (the shipped folder) and `/tag icons`:
     the tag still shows **your** `custom\IMAY.png`. Custom wins under either name.
 14. Copy `templates\ICON.png` into `custom\`, `/tag icons`, `/tag local ^ICON^ICON Con`: it
@@ -270,8 +270,8 @@ A player's tag is kept by name, because their spawn id changes every time they z
 | Command | Expected |
 |---|---|
 | `/tag local ^Blue^Kill` | a **blue arrow**; "lue" is not a guild code |
-| `/tag local ^BXYZ^x` | a blue arrow |
-| `/tag local ^BC^x` | a blue arrow; Breakfast Club's banner is `^BBC^` |
+| `/tag local ^FXYZ^x` | the flame (no guild XYZ, so it falls back to `F`) |
+| `/tag local ^BC^x` | a blue arrow; Breakfast Club's banner is `^FBC^` |
 | `/tag local ^W^x` | a white arrow; the wolf is only an exact `^WP^` |
 | `/tag local ^L^x` | text only; `L` was the wolf's old key and is free again |
 | `/tag local ^-^` | clears the shape, keeps the text |
@@ -281,7 +281,7 @@ A player's tag is kept by name, because their spawn id changes every time they z
 
 - **`/tag`** with nothing after it prints the help, including the new lines for icons,
   banners and guilds.
-- **Prettyprint:** with `/tag prettyprint on`, a `/tag rsay ^BEUR^x` (or gsay) reads
+- **Prettyprint:** with `/tag prettyprint on`, a `/tag rsay ^FEUR^x` (or gsay) reads
   "… => <name> (Banner EUR)". An icon reads "(Icon MAY)", a badge "(#7)", and a
   lettered paw "(Paw K)".
 - **Tooltip:** with `/tag tooltip on`, the target window names the shape.

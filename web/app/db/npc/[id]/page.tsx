@@ -12,6 +12,13 @@ import { loadSpawn2 } from '@/lib/fullReads';
 import { MOB_CLASS_NAMES, decodeMobSpecialChips, deUnderscore } from '@/lib/npcDecode';
 import { ERA_LABEL } from '@/lib/itemDecode';
 
+import { pageMetadata } from '@/lib/pageMetaData';
+
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  return pageMetadata(`/db/npc/${encodeURIComponent(id)}`);
+}
+
 export const dynamic = 'force-dynamic';
 
 type Npc = {
