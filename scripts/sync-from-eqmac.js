@@ -480,7 +480,12 @@ const TRANSFORMS = {
     };
   },
   npc_types: (cols, row) => {
-    const r = pick(cols, row, ['id', 'name', 'lastname', 'level', 'race', 'class', 'bodytype', 'hp', 'mana', 'gender', 'texture', 'size', 'AC', 'mindmg', 'maxdmg', 'attack_count', 'aggroradius', 'assistradius', 'MR', 'CR', 'DR', 'FR', 'PR', 'see_invis', 'see_invis_undead', 'see_hide', 'see_improved_hide', 'npc_spells_id', 'loottable_id', 'runspeed', 'walkspeed', 'npc_faction_id', 'maxlevel', 'scalerate', 'raid_target', 'rare_spawn', 'npcspecialattks', 'special_abilities', 'merchant_id']);
+    const r = pick(cols, row, ['id', 'name', 'lastname', 'level', 'race', 'class', 'bodytype', 'hp', 'mana', 'gender', 'texture', 'size', 'AC', 'mindmg', 'maxdmg', 'attack_count', 'aggroradius', 'assistradius', 'MR', 'CR', 'DR', 'FR', 'PR', 'see_invis', 'see_invis_undead', 'see_hide', 'see_improved_hide', 'npc_spells_id', 'loottable_id', 'runspeed', 'walkspeed', 'npc_faction_id', 'maxlevel', 'scalerate', 'raid_target', 'rare_spawn', 'npcspecialattks', 'special_abilities', 'merchant_id',
+      'attack_delay', 'STR', 'STA', 'DEX', 'AGI', '_INT', 'WIS', 'CHA', 'ATK', 'Accuracy', 'avoidance', 'slow_mitigation',
+      'hp_regen_rate', 'mana_regen_rate', 'combat_hp_regen', 'combat_mana_regen', 'see_sneak', 'npc_aggro',
+      'helmtexture', 'face', 'chesttexture', 'armtexture', 'bracertexture', 'handtexture', 'legtexture', 'feettexture',
+      'armortint_red', 'armortint_green', 'armortint_blue', 'd_melee_texture1', 'd_melee_texture2',
+      'prim_melee_type', 'sec_melee_type', 'ranged_type', 'light']);
     if (!r.id) return null;
     return {
       id: r.id, name: r.name, lastname: r.lastname,
@@ -509,6 +514,23 @@ const TRANSFORMS = {
       // deep-linking PQDI. 0 = not a merchant → null keeps the partial index
       // small.
       merchant_id: (r.merchant_id != null && Number(r.merchant_id) > 0) ? Number(r.merchant_id) : null,
+      // The rest of the sheet (the guild lead, 2026-10-13: "mob attack speed is in the data on PQDI ... including
+      // model and what it [looks like]"; migration 20261014040000). attack_delay = tenths of a second per round.
+      // A dump without a column leaves it undefined, which JSON drops, so it never nulls out a stored value.
+      attack_delay: r.attack_delay,
+      str: r.STR, sta: r.STA, dex: r.DEX, agi: r.AGI, int_stat: r._INT, wis: r.WIS, cha: r.CHA,
+      atk: r.ATK, accuracy: r.Accuracy, avoidance: r.avoidance, slow_mitigation: r.slow_mitigation,
+      hp_regen_rate: r.hp_regen_rate, mana_regen_rate: r.mana_regen_rate,
+      combat_hp_regen: r.combat_hp_regen, combat_mana_regen: r.combat_mana_regen,
+      see_sneak: r.see_sneak == null ? undefined : !!toBool(r.see_sneak),
+      npc_aggro: r.npc_aggro == null ? undefined : !!toBool(r.npc_aggro),
+      helmtexture: r.helmtexture, face: r.face,
+      chesttexture: r.chesttexture, armtexture: r.armtexture, bracertexture: r.bracertexture,
+      handtexture: r.handtexture, legtexture: r.legtexture, feettexture: r.feettexture,
+      armortint_red: r.armortint_red, armortint_green: r.armortint_green, armortint_blue: r.armortint_blue,
+      d_melee_texture1: r.d_melee_texture1, d_melee_texture2: r.d_melee_texture2,
+      prim_melee_type: r.prim_melee_type, sec_melee_type: r.sec_melee_type, ranged_type: r.ranged_type,
+      light: r.light,
     };
   },
   loottable: (cols, row) => {
