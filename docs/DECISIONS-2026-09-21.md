@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **/pop "Latest flags" strip** (§297) | On beta (web 1.8.152): `?flags=a` newest first, `?flags=b` by step; no param = production | the guild lead: pick a or b at https://b.wolfpack.quest/pop?flags=a and https://b.wolfpack.quest/pop?flags=b. A session then graduates it to main as the default and deletes the other |
 | **Member lockout** (§252) | Live: `/admin/access` [beta], bot 3.1.251, web 1.8.143. Officers cannot be locked out (web 1.8.144). Untested against a real member | the guild lead: lock a test or alt account, confirm Mimic, the site and a bot command all refuse it within 30 s, then unlock |
 | **Map target-of-target never fires on real Zeal** (§251) | Zeal's `/assistbar` (1.4.7) knows it, but the pipe export was only our unsent draft, so the Map's ToT arrow and the pin rule's "not aggroed" check fail open. Ported onto current Zeal main as fork branch `tot-pipe` (`21f41f3`, local only: the push was refused by this session's permissions) | the guild lead: push `tot-pipe` to the fork (or allow it), then say whether it joins `test-all` for an in-game check |
 | **Zeal in-game test run + PoP flags export + `/spellid`** (§227, §229) | `test-all` `035d8a3` (build passed) = PoP flags `b27bb26` (overview + tiers 1–5, once each, kept out of chat) + roleplay guild marks + `spell-id-tooltip` `67cb705` (`/spellid on` puts the spell id on the buff/gem/spellbook info window, off by default). 67 test hotkeys (socials pages 4–10, say + `/log`, works at level 1) log what to look for and the target's spawn id; `tools/evidence.py` on the fork's `showcase` branch turns the log into an EVIDENCE.md per change. Every suggestion post has "Pull request" and "Testing evidence" lines waiting to be filled | the guild lead: (1) install `test-all`, paste the hotkeys, run pages 4–10, send the log + `<name>-PoPFlags.txt`; (2) file the PRs (smallest first, §228). A session: write EVIDENCE.md per change, fill the PR links (posts, showcase JSON `pr_url`) |
@@ -10361,3 +10362,16 @@ the Bastion of Thunder at the time.
   gone. `index.js` `_hailGrants(rows)` passes every stored row.
 - **Known limit:** if no raider with Mimic hails Thelin in state 4, nobody's grant reaches us and no board opens.
   That is the same reach the boss boards already have.
+
+### 297. "Latest flags" strip on /pop: two layouts on beta, awaiting a pick (web 1.8.152, beta `7257bed1`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"we should show a 'latest flags completed/verified' section at the top
+  of the pop page."*
+- **What it shows:** `pop_flags` rows from the last 7 days whose source is `event` (the server's flag line) or
+  `recital` (an NPC recited it), each badged with its source. `checklist` and `hail_witnessed` rows are left out.
+  Traders, hidden characters and known levels under 46 are filtered with the page's existing lists.
+- **The two layouts:** `?flags=a` = newest first, one row per character per moment (rows within 90 s fold
+  together, implied steps dropped). `?flags=b` = grouped by flag step. The param is not `?v=` because `/pop` already
+  uses `?v=b|c` for the Essences queue. No param = production's page.
+- **Open:** the pick; whether checklist rows should appear as "self-reported"; recital rows can look newer than
+  the flag (the tooltip says so). Files: `web/lib/popLatestFlags.ts`, `web/app/pop/LatestFlags.tsx`,
+  `test/pop-latest-flags.test.js`.
