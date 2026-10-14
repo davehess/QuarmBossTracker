@@ -10544,3 +10544,20 @@ the Bastion of Thunder at the time.
 - **Spell:** the spellbook file (`/outputfile spellbook`, read locally) first, else the class's highest charm at its level, labelled
   "assumed from level". Class levels are PQDI's. Dictate is never assumed.
 - **Not done:** Dire Charm AA; resist modelling; a Map highlight (costed in the report: medium build, colour meaning hard to retract).
+
+### 309. /pop/latest [beta]: a grouped stream and stage cards in step order (web 1.8.157, beta `7167ca91`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"I like the verbose stream of A, but for flags that go together I think that a list view in
+  alpha order by default would be helpful … There should be a collapsible latest section that has B's layout format, in order of stages
+  and what relies on each flag … The (and 29 more) item isn't useful if we can't open it up. Make me a new beta page to try all of this
+  out."*
+- **What it is:** https://b.wolfpack.quest/pop/latest, linked from `/pop`'s header. Stream: characters who earned the same steps within
+  5 minutes are one row (names A–Z by default, or latest first); with a live raid, a collapsed "N in the raid still need this". By
+  stage (open by default): cards per progression line in dependency order, each step with its own plane, an expandable name list and an
+  "unlocks →" line. Filters 24 h / 3 d / 7 d, Mains / All.
+- **Fixes to the §297 strip:** a recital row shows only steps new to that character (repeats collapse); a step shows its own plane,
+  never the zone the row was heard in (the Seer's Plane of Knowledge).
+- **Calls:** chain order is derived (`NEXT_LINES` → `STEP_GUIDE` / guide flags → `STEP_IMPLIES`), no second order table; "unlocks →"
+  also reads plane gates (so the hedge shows "enter Lair of Terris Thule"); every fold is a native `<details>` (`ExpandList`); "still
+  needs it" counts event / recital rows only; idle chain steps show dimmed for context.
+- **Cost:** one paged `pop_flags` read (90 days), one paged `raid_roster` read, the shared roster read, one levels call.
+- **Open:** A–Z vs latest; dimmed idle steps; first-ever recitals still read as new (labelled "first recital").
