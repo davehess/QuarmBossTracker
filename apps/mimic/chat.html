@@ -38,7 +38,11 @@
   .chip.out{border-style:dashed;color:#8b949e}
   .chip em{font-style:normal;font-size:9px;color:#7ee7c7;letter-spacing:0.3px}
   /* a broken-out window (chat.html?groups=<id>) is the feed alone: the chips and settings stay in the Chat window */
-  body.brk #chips,body.brk #gear,body.brk #spanel{display:none}
+  body.brk #chips,body.brk #onlypill,body.brk #spanel .nobrk{display:none}
+  /* this window's own text settings (⚙, or the right-click menu): spacing, timestamps and tags */
+  body.tight{--lh:1.15}
+  body.no-ts .ln .tm{display:none}
+  body.no-tags .ln .ctag{display:none}
   /* the right-click menu (a chip, or a breakout's title bar): one or two plain buttons */
   #ctxmenu{position:fixed;z-index:200;display:flex;flex-direction:column;gap:2px;padding:4px;border-radius:5px;
     background:rgba(14,17,22,0.95);border:1px solid rgba(88,166,255,0.4);box-shadow:0 4px 12px rgba(0,0,0,0.6)}
@@ -57,7 +61,7 @@
   /* the feed */
   #feedbox{position:relative;flex:1 1 auto;min-height:0;display:flex}
   #feed{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;border-radius:5px;padding:4px 6px;
-    background:rgb(0 0 0 / var(--bg-alpha));font-size:var(--fs);line-height:1.4}
+    background:rgb(0 0 0 / var(--bg-alpha));font-size:var(--fs);line-height:var(--lh,1.4)}
   #feed::-webkit-scrollbar{width:6px}
   #feed::-webkit-scrollbar-thumb{background:rgba(126,231,199,0.35);border-radius:3px}
   #feed::-webkit-scrollbar-track{background:transparent}
@@ -73,6 +77,15 @@
   .ln .who.you{opacity:0.75}
   .ln .who.npc{font-weight:normal;font-style:italic}
   .ln .arrow{flex:0 0 auto;color:#6e7681}
+  /* the EQ-style channel tag in front of a line: [GU] [P] [2]. Bold in the channel's own colour, fixed to its
+     content so a column of them lines up on the left without a wide gutter. Right-click it for "Show only". */
+  .ln .ctag{flex:0 0 auto;font-weight:bold;color:var(--lc,#c9d1d9);font-size:0.86em;letter-spacing:0.2px;cursor:context-menu}
+  /* "Show only [GU]" is on: a pill above the feed says so, and its ✕ turns it off */
+  #onlypill{display:none;flex:0 0 auto;align-items:center;gap:6px;align-self:flex-start;padding:0 3px 0 8px;border-radius:9px;
+    background:#10302a;color:#7ee7c7;border:1px solid #2da68a;font-size:10px;line-height:15px}
+  #onlypill.show{display:inline-flex}
+  #onlypill button{font-family:inherit;font-size:10px;line-height:13px;padding:0 5px;border-radius:8px;border:0;background:transparent;color:#7ee7c7;cursor:pointer}
+  #onlypill button:hover{color:#f87171}
   /* a zone change: dim, no speaker, so it reads as a note in the margin rather than something said */
   .ln.zone .tx{font-style:italic;opacity:0.85}
   /* which of your characters heard it: shown only where the character changes without a swap line, so it never fills the feed */
@@ -139,12 +152,16 @@
     <div class="title"><span id="conn" class="conn bad">○</span><span id="ttl">💬 Chat</span><input id="find" type="text" maxlength="24" spellcheck="false" autocomplete="off" placeholder="character…" title="Show only one character: what they said, or what was heard on that character of yours. Enter or Esc leaves the box."><button id="fpick" class="fbtn" title="Pick one of your characters">▾</button><span class="sp"></span><button id="histbtn" class="fbtn" title="Show the chat from before this window opened, read from the game's own log files on this PC">⏱</button><button id="gear" class="fbtn" aria-pressed="false" title="Text size, and the channels that are off until you switch them on">⚙</button></div>
     <div id="cpick"></div>
     <div id="spanel">
-      <div class="row"><span>Text size</span><button id="fsm" class="fbtn" title="Smaller">A−</button><span id="fsz">12</span><button id="fsp" class="fbtn" title="Larger">A+</button></div>
-      <div class="row" id="optins"></div>
-      <div class="hint" id="tellhint"></div>
-      <div class="hint">These lines stay on this PC, in memory, for this window only. Nothing here is uploaded, and Mimic forgets them when it restarts. The ⏱ button can read the last few hours back from the game's own log files on this PC; that is read here and never sent.</div>
+      <div class="row"><span>Text size</span><button id="fsm" class="fbtn" title="Smaller">A−</button><span id="fsz">12</span><button id="fsp" class="fbtn" title="Larger">A+</button><button id="lsp" class="fbtn" title="Line spacing">compact</button></div>
+      <div class="row" id="textopts"></div>
+      <div class="hint" id="wintxt"></div>
+      <div class="row nobrk" id="optins"></div>
+      <div class="row nobrk" id="chans"></div>
+      <div class="hint nobrk" id="tellhint"></div>
+      <div class="hint nobrk">These lines stay on this PC, in memory, for this window only. Nothing here is uploaded, and Mimic forgets them when it restarts. The ⏱ button can read the last few hours back from the game's own log files on this PC; that is read here and never sent.</div>
     </div>
     <div id="chips"></div>
+    <div id="onlypill"><span id="onlytxt"></span><button type="button" id="onlyx" title="Show all channels again">✕</button></div>
     <div id="feedbox">
       <div id="feed"></div>
       <div id="empty">nothing yet: talk in /gu, /rs or /say</div>
@@ -212,7 +229,7 @@
   // One hover-interact owner for the zones that are not plain buttons (a locked overlay is click-through,
   // overlay checklist item 3): the title bar, the chips, the settings drawer and the feed, so the wheel can
   // scroll it. Buttons are armed by the preload on their own; this covers the rest.
-  function _zoneOf(el){ return (el && el.closest) ? el.closest('.title, #chips, #cpick, #spanel, #feed, #newchip, #ctxmenu') : null; }
+  function _zoneOf(el){ return (el && el.closest) ? el.closest('.title, #chips, #cpick, #spanel, #onlypill, #feed, #newchip, #ctxmenu') : null; }
   function _hover(on){ try { window.mimic.overlayHoverInteractive(on); } catch (e) {} }
   document.addEventListener('mouseover', function(e){ if (_zoneOf(e.target)) _hover(true); });
   document.addEventListener('mouseout', function(e){ if (_zoneOf(e.target) && !_zoneOf(e.relatedTarget)) _hover(false); });
@@ -224,7 +241,8 @@
   var _lines = [];             // every line we hold, oldest first (the filter decides what shows)
   var _seq = 0, _lastN = 0, _boot = '';
   var _char = '';              // the character the chip choices are remembered for
-  var _prefs = { fontSize: 12, group: false, officer: false, custom: false, tells: false, off: [] };
+  var _prefs = { fontSize: 12, group: false, officer: false, custom: false, tells: false, melee: false, off: [], offChannels: [], only: '' };
+  var _chanNames = {};         // "<character>|<slot number>" -> channel name, learned from lines that carry both (Zeal's /abc shows only the number)
   var _unread = 0;
   var _out = [];               // group ids broken out into their own windows (the Chat window leaves them out)
   var _prefsReady = false;     // the poll waits for the first prefs: the agent keeps the LAST switches it was handed
@@ -278,18 +296,69 @@
     return out;
   }
 
+  // ── channel tags, per-channel switches, "show only" ──────────────────────
+  // A joined channel is "custom" to the agent, which also sends its name (cn) and slot number (cnum). The slot
+  // number is the tag ([2]) but changes with the order channels are joined, so everything SAVED is keyed by the
+  // NAME in lower case. Zeal's /abc lines carry only the number: the name is learned from a line that has both,
+  // else the channel is keyed "#<n>".
+  function learnChannel(l){
+    if (!l || !l.cn || !l.cnum) return false;
+    var k = String(l.on || '').toLowerCase() + '|' + l.cnum;
+    if (_chanNames[k] === l.cn) return false;
+    _chanNames[k] = l.cn; return true;
+  }
+  function chanName(l){
+    if (l.cn) return l.cn;
+    return l.cnum ? (_chanNames[String(l.on || '').toLowerCase() + '|' + l.cnum] || '') : '';
+  }
+  // The saved key of a joined channel's line ('' for anything else).
+  function chanKey(l){
+    if (l.ch !== 'custom') return '';
+    var n = chanName(l);
+    return n ? n.toLowerCase() : (l.cnum ? '#' + l.cnum : '');
+  }
+  // What goes in the brackets: the channel's tag from the agent, or the slot number for a joined channel.
+  function tagText(l){
+    if (l.ch === 'custom') return l.cnum ? String(l.cnum) : 'C';
+    return (_channels[l.ch] || {}).tag || '';
+  }
+  function tagTitle(l){
+    if (l.ch === 'custom') return chanName(l) || ('Channel ' + (l.cnum || ''));
+    return (_channels[l.ch] || {}).label || '';
+  }
+  // The key "Show only" stores: the channel id, or custom:<name> for a joined channel. '' = this line has no channel.
+  function onlyKeyOf(l){
+    if (l.sep || !tagText(l)) return '';
+    if (l.ch === 'custom') { var k = chanKey(l); return k ? 'custom:' + k : ''; }
+    return l.ch;
+  }
+  // Visibility the two per-channel features add on top of the group filter. Neither is a group, so neither
+  // touches the filter itself. A breakout window ignores "show only": it is already one group.
+  function chanShown(l){
+    if (l.sep) return true;
+    var k = chanKey(l);
+    if (k && (_prefs.offChannels || []).indexOf(k) !== -1) return false;
+    if (!_isBrk && _prefs.only && onlyKeyOf(l) !== _prefs.only) return false;
+    return true;
+  }
+  function onlyActive(){ return !_isBrk && !!_prefs.only; }
+  function tagHtml(l){
+    var t = tagText(l);
+    return t ? '<span class="ctag" title="' + esc(tagTitle(l)) + '">[' + esc(t) + ']</span>' : '';
+  }
+
   function lineHtml(l, tag){
     // "Swapped to X": display only. No timestamp button, so there is nothing to copy; it is not a chat line.
     if (l.sep) return '<div class="sep" data-n="' + l.n + '"><span>' + esc(l.text) + '</span></div>';
     var you = !!l.self, who;
-    if (l.ch === 'zone') who = '';
+    if (l.ch === 'zone' || l.ch === 'melee') who = '';
     else if (l.npc) who = '<span class="who npc">' + esc(l.who) + '</span>';
     else if (you) who = '<span class="who you">You</span>';
     else who = '<span class="who name">' + esc(l.who) + '</span>';
     if (l.to) who += '<span class="arrow">→</span><span class="who name">' + esc(l.to) + '</span>';
     var copied = l.n === _copiedN;
     var otag = tag && l.on ? '<span class="otag" title="heard on ' + esc(l.on) + '">' + esc(l.on) + '</span>' : '';
-    return '<div class="ln' + (l.ch === 'zone' ? ' zone' : '') + '" style="--lc:' + esc((_channels[l.ch] || {}).color || '#c9d1d9') + '" data-n="' + l.n + '"><button type="button" class="tm' + (copied ? ' copied' : '') + '" title="Click to copy this line">' + (copied ? 'copied' : hhmm(l.t)) + '</button>' + otag + who + '<span class="tx">' + (l.ch === 'zone' ? '→ ' : '') + esc(l.text) + '</span></div>';
+    return '<div class="ln' + (l.ch === 'zone' ? ' zone' : '') + '" style="--lc:' + esc((_channels[l.ch] || {}).color || '#c9d1d9') + '" data-n="' + l.n + '"><button type="button" class="tm' + (copied ? ' copied' : '') + '" title="Click to copy this line">' + (copied ? 'copied' : hhmm(l.t)) + '</button>' + tagHtml(l) + otag + who + '<span class="tx">' + (l.ch === 'zone' ? '→ ' : '') + esc(l.text) + '</span></div>';
   }
   // One row, with the "heard on" tag where the character changed from the row before it (a swap line resets
   // it: that line already says so). Rows the filter hides do not count, so a one-speaker search tags the
@@ -309,7 +378,7 @@
     if (l.sep) return false;
     return startsWithCI(l.on, q) || (!l.self && l.ch !== 'zone' && startsWithCI(l.who, q));
   }
-  function lineVisible(f, l){ return l.sep ? _findQ === '' : (f(l) && matchesFind(l, _findQ)); }
+  function lineVisible(f, l){ return l.sep ? (_findQ === '' && !onlyActive()) : (f(l) && chanShown(l) && matchesFind(l, _findQ)); }
   // The same key the agent de-duplicates its ring with, so a history line already in the live feed is not shown twice.
   function chatKey(l){
     return l.ch + '|' + String(l.who == null ? '' : l.who).toLowerCase() + '|' + (l.to || '') + '|' + l.text + '|' + Math.floor(l.t / 1000)
@@ -321,6 +390,7 @@
   function copyLineText(l){
     // a zone change copies as the plain log line, not as something a character said
     if (l.ch === 'zone') return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + 'You have entered ' + l.text + '.';
+    if (l.ch === 'melee') return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + l.text;
     var who = l.npc ? l.who : (l.self ? 'You' : l.who);
     if (l.to) who += ' → ' + l.to;
     var t = hhmm(l.t);
@@ -406,6 +476,14 @@
   }
   function addLines(fresh){
     if (!fresh.length) return;
+    // A first sight of a channel, or of a slot's name, changes what the ⚙ lists (and may resolve older "#n" rows).
+    var learned = false, anyChan = false;
+    for (var j = 0; j < fresh.length; j++) {
+      if (learnChannel(fresh[j])) learned = true;
+      if (fresh[j].ch === 'custom') anyChan = true;
+    }
+    if (anyChan) paintChans();
+    if (learned) { for (var q = 0; q < fresh.length; q++) _lines.push(fresh[q]); if (_lines.length > FEED_MAX) _lines.splice(0, _lines.length - FEED_MAX); repaint(); return; }
     var f = makeFilter(shownGroupIds()), h = '', shown = 0, stick = pinned();
     for (var i = 0; i < fresh.length; i++) { _lines.push(fresh[i]); if (lineVisible(f, fresh[i])) { h += rowHtml(fresh[i]); if (!fresh[i].sep) shown++; } }
     if (_lines.length > FEED_MAX) _lines.splice(0, _lines.length - FEED_MAX);
@@ -520,10 +598,10 @@
     if (mine !== _histSeq) return;          // a newer pick took over
     if (s && s.ok && Array.isArray(s.lines)) {
       _histLines = s.lines.filter(function(l){ return l && typeof l.text === 'string'; });
-      for (var i = 0; i < _histLines.length; i++) _histLines[i].n = -(i + 1);
+      for (var i = 0; i < _histLines.length; i++) { _histLines[i].n = -(i + 1); learnChannel(_histLines[i]); }
       _histInfo = { truncated: !!s.truncated };
     } else { _histLines = []; _histInfo = { failed: true }; }
-    repaint(); paintPick();
+    repaint(); paintPick(); paintChans();
   }
   function setHist(h){
     _histHours = HIST_CHOICES.indexOf(h) >= 0 ? h : 0;
@@ -606,7 +684,9 @@
     document.body.classList.add('brk');
     document.querySelector('.title').addEventListener('contextmenu', function(e){
       e.preventDefault();
-      openMenu(e.clientX, e.clientY, [{ label: 'Put back in the Chat window', run: function(){ setBreakout(brkGroupId(), false); } }]);
+      openMenu(e.clientX, e.clientY, [
+        { label: 'Text settings…', run: function(){ if (!spanelEl.classList.contains('open')) gearEl.click(); } },
+        { label: 'Put back in the Chat window', run: function(){ setBreakout(brkGroupId(), false); } }]);
     });
   }
 
@@ -615,8 +695,63 @@
   var OPTINS = [
     ['group',   'Group chat',     'Your group\'s private chat'],
     ['officer', 'Officer chat',   'The officer channel'],
-    ['custom',  'Custom channels','Other chat channels you have joined']
+    ['custom',  'Custom channels','Other chat channels you have joined'],
+    ['melee',   'Melee',          'Combined melee from the log: your hits and misses, theirs, and pets\'. Off keeps chat readable; right-click the Melee chip to give it a window of its own.']
   ];
+  // ── this window's text settings ──────────────────────────────────────────
+  // Every Chat window (the main one, and each broken-out group) keeps its own: win[<id>] in the prefs, id
+  // being 'main' or the breakout's group id. A field left out means the default, so prefs saved before this existed read the same.
+  function winId(){ return _isBrk ? brkGroupId() : 'main'; }
+  function winCfg(){
+    var w = (_prefs.win && _prefs.win[winId()]) || {};
+    return { fontSize: w.fontSize || _prefs.fontSize || 12, lineGap: w.lineGap === 'compact' ? 'compact' : 'normal', times: w.times !== false, tags: w.tags !== false };
+  }
+  function saveWin(patch){
+    var id = winId(), w = {}; w[id] = patch;
+    _prefs.win = _prefs.win || {}; _prefs.win[id] = Object.assign({}, _prefs.win[id], patch);   // at once; the saved copy replaces it
+    applyWin(); savePrefs({ win: w });
+  }
+  function applyWin(){
+    var c = winCfg();
+    document.documentElement.style.setProperty('--fs', c.fontSize + 'px');
+    document.body.classList.toggle('tight', c.lineGap === 'compact');
+    document.body.classList.toggle('no-ts', !c.times);
+    document.body.classList.toggle('no-tags', !c.tags);
+    document.getElementById('fsz').textContent = String(c.fontSize);
+    document.getElementById('lsp').textContent = c.lineGap === 'compact' ? 'spacing: compact' : 'spacing: normal';
+    var h = '<label><input type="checkbox" data-win="times"' + (c.times ? ' checked' : '') + '>Timestamps</label>' +
+            '<label><input type="checkbox" data-win="tags"' + (c.tags ? ' checked' : '') + '>Channel tags</label>';
+    var te = document.getElementById('textopts');
+    if (te.__wpHtml !== h) { te.innerHTML = h; te.__wpHtml = h; }
+    document.getElementById('wintxt').textContent = _isBrk ? 'These text settings are for this window only.' : 'These text settings are for this window only; each extra window has its own.';
+  }
+  // The joined channels the ⚙ lists: every one this window has seen, plus any saved as off that has not spoken
+  // yet this session (so it can be switched back on). Keyed by name; the number is only a label.
+  function seenChannels(){
+    var by = {}, order = [], i, l, k, arrs = [_histLines, _lines];
+    for (var a = 0; a < arrs.length; a++) for (i = 0; i < arrs[a].length; i++) {
+      l = arrs[a][i]; if (l.sep || l.ch !== 'custom') continue;
+      k = chanKey(l); if (!k) continue;
+      if (!by[k]) { by[k] = { key: k, name: chanName(l), num: l.cnum || 0 }; order.push(k); }
+      else { if (l.cnum) by[k].num = l.cnum; if (!by[k].name) by[k].name = chanName(l); }
+    }
+    var offs = _prefs.offChannels || [];
+    for (i = 0; i < offs.length; i++) if (!by[offs[i]]) { by[offs[i]] = { key: offs[i], name: offs[i].charAt(0) === '#' ? '' : offs[i], num: 0 }; order.push(offs[i]); }
+    return order.map(function(x){ return by[x]; });
+  }
+  function chanLabel(c){
+    var nm = c.name || (c.num ? 'Channel ' + c.num : c.key);
+    return c.num ? nm + ' (' + c.num + ')' : nm;
+  }
+  function paintChans(){
+    var el = document.getElementById('chans'), list = seenChannels(), h = '';
+    for (var i = 0; i < list.length; i++) {
+      var on = (_prefs.offChannels || []).indexOf(list[i].key) === -1;
+      h += '<label title="Show or hide this channel\'s lines"><input type="checkbox" data-chan="' + esc(list[i].key) + '"' + (on ? ' checked' : '') + '>' + esc(chanLabel(list[i])) + '</label>';
+    }
+    if (h) h = '<span>Channels</span>' + h;
+    if (el.__wpHtml !== h) { el.innerHTML = h; el.__wpHtml = h; }
+  }
   function paintSettings(){
     var h = '';
     for (var i = 0; i < OPTINS.length; i++) {
@@ -625,11 +760,10 @@
     }
     var oe = document.getElementById('optins');
     if (oe.__wpHtml !== h) { oe.innerHTML = h; oe.__wpHtml = h; }
-    document.getElementById('fsz').textContent = String(_prefs.fontSize);
+    applyWin(); paintChans(); paintOnly();
     document.getElementById('tellhint').textContent = _prefs.tells
       ? 'Tells are showing: Settings has Tells on Local or Synced.'
       : 'Tells are off. Choose Local or Synced under Settings → Tells to show them here.';
-    document.documentElement.style.setProperty('--fs', _prefs.fontSize + 'px');
   }
   gearEl.addEventListener('click', function(){
     var open = !spanelEl.classList.contains('open');
@@ -643,14 +777,72 @@
     savePrefs(patch);
     purgeGated(); paintChips(); repaint();
   });
+  // One joined channel on or off. Saved by NAME (lower case); only the list of switched-off names is written.
+  document.getElementById('chans').addEventListener('change', function(e){
+    var k = e.target && e.target.getAttribute ? e.target.getAttribute('data-chan') : null;
+    if (!k) return;
+    var offs = (_prefs.offChannels || []).filter(function(x){ return x !== k; });
+    if (!e.target.checked) offs.push(k);
+    _prefs.offChannels = offs;
+    savePrefs({ offChannels: offs });
+    repaint();
+  });
+  document.getElementById('textopts').addEventListener('change', function(e){
+    var k = e.target && e.target.getAttribute ? e.target.getAttribute('data-win') : null;
+    if (k !== 'times' && k !== 'tags') return;
+    var patch = {}; patch[k] = !!e.target.checked;
+    saveWin(patch);
+  });
   function bumpFont(d){
-    var n = Math.max(9, Math.min(24, _prefs.fontSize + d));
-    if (n === _prefs.fontSize) return;
-    _prefs.fontSize = n; savePrefs({ fontSize: n }); paintSettings();
+    var cur = winCfg().fontSize, n = Math.max(9, Math.min(24, cur + d));
+    if (n === cur) return;
+    saveWin({ fontSize: n });
     var stick = pinned(); if (stick) toBottom();
   }
   document.getElementById('fsm').addEventListener('click', function(){ bumpFont(-1); });
   document.getElementById('fsp').addEventListener('click', function(){ bumpFont(1); });
+  document.getElementById('lsp').addEventListener('click', function(){ saveWin({ lineGap: winCfg().lineGap === 'compact' ? 'normal' : 'compact' }); });
+
+  // ── "Show only this channel" ─────────────────────────────────────────────
+  // Right-click a line (or its tag): the same small menu the chips use. A VIEW toggle: it is saved as prefs.only so a
+  // reopened window comes back the same way, but it never writes the per-channel switches or the chips.
+  function onlyLabel(key){
+    if (!key) return '';
+    if (key.indexOf('custom:') === 0) {
+      var nm = key.slice(7), list = seenChannels();
+      for (var i = 0; i < list.length; i++) if (list[i].key === nm) return '[' + (list[i].num || 'C') + '] ' + (list[i].name || nm);
+      return nm.charAt(0) === '#' ? 'Channel ' + nm.slice(1) : nm;
+    }
+    var c = _channels[key] || {};
+    return c.tag ? '[' + c.tag + ']' : (c.label || key);
+  }
+  function paintOnly(){
+    var on = onlyActive(), pill = document.getElementById('onlypill');
+    pill.classList.toggle('show', on);
+    document.getElementById('onlytxt').textContent = on ? 'Only ' + onlyLabel(_prefs.only) : '';
+  }
+  function setOnly(key){
+    _prefs.only = key || '';
+    paintOnly(); repaint();
+    savePrefs({ only: _prefs.only });
+  }
+  document.getElementById('onlyx').addEventListener('click', function(){ setOnly(''); });
+  function lineByN(n){
+    var pool = n < 0 ? _histLines : _lines;
+    for (var i = pool.length - 1; i >= 0; i--) if (pool[i].n === n) return pool[i];
+    return null;
+  }
+  feedEl.addEventListener('contextmenu', function(e){
+    var row = e.target && e.target.closest ? e.target.closest('.ln') : null;
+    if (!row || _isBrk) return;
+    var l = lineByN(Number(row.getAttribute('data-n')));
+    if (!l || l.sep) return;
+    var key = onlyKeyOf(l), items = [];
+    e.preventDefault();
+    if (onlyActive()) items.push({ label: 'Show all', run: function(){ setOnly(''); } });
+    if (key && key !== _prefs.only) items.push({ label: 'Show only ' + onlyLabel(key), run: function(){ setOnly(key); } });
+    if (items.length) openMenu(e.clientX, e.clientY, items);
+  });
 
   // ── prefs (remembered per character in Mimic's config) ───────────────────
   function savePrefs(patch){
@@ -659,12 +851,16 @@
   function takePrefs(p){
     if (!p) return;
     var tellsWas = _prefs.tells;
+    var meleeWas = _prefs.melee;
     _prefs = {
       fontSize: p.fontSize || 12, group: !!p.group, officer: !!p.officer, custom: !!p.custom,
-      tells: !!p.tells, off: Array.isArray(p.off) ? p.off.slice() : []
+      tells: !!p.tells, melee: !!p.melee, off: Array.isArray(p.off) ? p.off.slice() : [],
+      offChannels: Array.isArray(p.offChannels) ? p.offChannels.slice() : [],
+      only: typeof p.only === 'string' ? p.only : '',
+      win: (p.win && typeof p.win === 'object') ? p.win : {}
     };
     paintSettings();
-    if (tellsWas !== _prefs.tells) { purgeGated(); paintChips(); repaint(); }
+    if (tellsWas !== _prefs.tells || meleeWas !== _prefs.melee) { purgeGated(); paintChips(); repaint(); }
     // The history was read under one set of switches; a change (Tells, Group, Officer, Custom) re-reads it.
     if (_histHours && _connectedOnce && histQuery() !== _histSig) loadHistory();
   }
@@ -697,7 +893,7 @@
   function query(){
     return 'since=' + _seq + '&boot=' + encodeURIComponent(_boot) +
       '&tells=' + (_prefs.tells ? 1 : 0) + '&group=' + (_prefs.group ? 1 : 0) +
-      '&officer=' + (_prefs.officer ? 1 : 0) + '&custom=' + (_prefs.custom ? 1 : 0);
+      '&officer=' + (_prefs.officer ? 1 : 0) + '&custom=' + (_prefs.custom ? 1 : 0) + '&melee=' + (_prefs.melee ? 1 : 0);
   }
   // Channel colours come from the agent's list, so a new channel needs no change here; the chips are
   // repainted when that list changes.

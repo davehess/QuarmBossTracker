@@ -1035,7 +1035,7 @@ contextBridge.exposeInMainWorld('mimic', {
     : ipcRenderer.invoke('hide-overlay')),
 
   // ── Chat overlay (chat.html) ──────────────────────────────────────────────
-  // getChatPrefs(char) → { fontSize, group, officer, custom, tells, off:[group ids] } for that character;
+  // getChatPrefs(char) → { fontSize, group, officer, custom, tells, off:[group ids], offChannels:[channel names] } for that character;
   // setChatPrefs(char, patch) stores a whitelisted patch in Mimic's config and returns the same shape.
   getChatPrefs:      (char)        => ipcRenderer.invoke('chat-prefs-get', char || ''),
   setChatPrefs:      (char, patch) => ipcRenderer.invoke('chat-prefs-set', char || '', patch || {}),

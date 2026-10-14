@@ -288,8 +288,11 @@ function defaultConfig() {
     tellsMode: 'off',        // 'off' | 'local' | 'synced' — 'local'/'synced' show tells in the Chat overlay (this PC only)
     // The Chat overlay (chat.html; the guild lead, 2026-10-14). Off until opted in, like every overlay.
     // chatPrefs = { fontSize, group, officer, custom, byChar: { <charLower>: { off: [group ids] } } }:
-    // group/officer/custom are the opt-in switches for lines that stay hidden otherwise (default OFF),
-    // byChar remembers which channel chips each character has switched off.
+    // group/officer/custom switch those lines (group and custom default ON since 2026-10-14, officer stays opt-in),
+    // byChar remembers which channel chips each character has switched off. offChannels = [lower-case joined
+    // channel NAMES] switched off, shared by every character; absent = every channel shows. melee = opt-in for
+    // the combined-melee group (default off). only = the "show only" view toggle ('' = off). win = { <window
+    // id: 'main' or a breakout group id>: { fontSize, lineGap, times, tags } }, each window's own text settings.
     showChat: false,
     chatPrefs: {},
     // Channel groups broken out into their own windows (group ids; chat.html?groups=<id>). Each remembers its
@@ -6925,17 +6928,58 @@ ipcMain.handle('chat-breakouts-get', () => _chatBreakoutIds(loadConfig()));
 // which channel chips are switched OFF is kept per character. Whitelisted and clamped, because the
 // renderer hands these over.
 function _chatCharKey(char) { return String(char || '').toLowerCase().replace(/[^a-z]/g, '').slice(0, 24) || '_default'; }
+// offChannels (the guild lead, 2026-10-14: "turning off specific channels and keep people's settings"): the joined
+// channels switched off, by NAME in lower case (the slot number changes with the order channels are joined). Shared
+// by every character like the opt-in switches, since a channel is the guild's, not one character's. A channel with
+// no entry shows. An unnamed channel (Zeal's /abc shows only the number) is keyed "#<n>".
+function _chatChannelNames(arr) {
+  const out = [];
+  if (!Array.isArray(arr)) return out;
+  for (const x of arr) {
+    const k = typeof x === 'string' ? x.toLowerCase() : '';
+    if (/^[^\s\x00-\x1f]{1,32}$/.test(k) && out.indexOf(k) === -1) out.push(k);
+    if (out.length >= 64) break;
+  }
+  return out;
+}
+// "Show only this channel" (the guild lead, 2026-10-14): a VIEW toggle, so it lives beside the switches and never
+// writes them. The channel id ('guild'), or custom:<name> for a joined channel; '' = off.
+function _chatOnlyKey(x) { const k = typeof x === 'string' ? x.toLowerCase() : ''; return /^(?:[a-z]{1,16}|custom:[^\s\x00-\x1f]{1,32})$/.test(k) ? k : ''; }
+// Text settings per window (the guild lead, 2026-10-14: "extra windows need their text to be configurable"):
+// win = { main: {...}, <breakout group id>: {...} }. Every field is optional; a missing one means "the default"
+// (the shared font size, normal spacing, timestamps and tags shown), so prefs saved before this existed read the same.
+const _CHAT_WIN_ID_RX = /^(?:main|[a-z]{1,16})$/;
+function _chatWinCfg(w) {
+  const o = {};
+  if (!w || typeof w !== 'object') return o;
+  const n = Math.round(Number(w.fontSize));
+  if (n >= 9 && n <= 24) o.fontSize = n;
+  if (w.lineGap === 'compact' || w.lineGap === 'normal') o.lineGap = w.lineGap;
+  if (typeof w.times === 'boolean') o.times = w.times;
+  if (typeof w.tags === 'boolean') o.tags = w.tags;
+  return o;
+}
+function _chatWinMap(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const id of Object.keys(raw).slice(0, 24)) if (_CHAT_WIN_ID_RX.test(id)) out[id] = _chatWinCfg(raw[id]);
+  return out;
+}
 function _chatPrefsPayload(cfg, char) {
   const p = (cfg.chatPrefs && typeof cfg.chatPrefs === 'object') ? cfg.chatPrefs : {};
   const mine = p.byChar && p.byChar[_chatCharKey(char)];
   const fs_ = Math.round(Number(p.fontSize));
   return {
+    melee: p.melee === true,     // combined melee floods the feed: opt-in, like officer
+    only: _chatOnlyKey(p.only),
+    win: _chatWinMap(p.win),
     fontSize: fs_ >= 9 && fs_ <= 24 ? fs_ : 12,
     // Group and joined channels are ON unless switched off (the guild lead, 2026-10-14: "not seeing group chat or
     // channels in the chat window"); officer stays opt-in. All of it stays on this PC either way.
     group: p.group !== false, officer: p.officer === true, custom: p.custom !== false,
     tells: cfg.tellsMode === 'local' || cfg.tellsMode === 'synced',
     off: (mine && Array.isArray(mine.off)) ? mine.off.filter(x => typeof x === 'string').slice(0, 32) : [],
+    offChannels: _chatChannelNames(p.offChannels),
   };
 }
 ipcMain.handle('chat-prefs-get', (_e, char) => _chatPrefsPayload(loadConfig(), char));
@@ -6944,7 +6988,17 @@ ipcMain.handle('chat-prefs-set', (_e, char, patch) => {
   const p = (cfg.chatPrefs && typeof cfg.chatPrefs === 'object') ? cfg.chatPrefs : {};
   const inc = (patch && typeof patch === 'object') ? patch : {};
   if (inc.fontSize != null) { const n = Math.round(Number(inc.fontSize)); if (n >= 9 && n <= 24) p.fontSize = n; }
-  for (const k of ['group', 'officer', 'custom']) if (typeof inc[k] === 'boolean') p[k] = inc[k];
+  for (const k of ['group', 'officer', 'custom', 'melee']) if (typeof inc[k] === 'boolean') p[k] = inc[k];
+  if (typeof inc.only === 'string') p.only = _chatOnlyKey(inc.only);
+  // One window's text settings merge into that window's entry only: another window's are never rewritten.
+  if (inc.win && typeof inc.win === 'object') {
+    const cur = _chatWinMap(p.win);
+    for (const id of Object.keys(inc.win).slice(0, 4)) {
+      if (_CHAT_WIN_ID_RX.test(id)) cur[id] = Object.assign({}, cur[id], _chatWinCfg(inc.win[id]));
+    }
+    p.win = cur;
+  }
+  if (Array.isArray(inc.offChannels)) p.offChannels = _chatChannelNames(inc.offChannels);
   if (Array.isArray(inc.off)) {
     p.byChar = (p.byChar && typeof p.byChar === 'object') ? p.byChar : {};
     p.byChar[_chatCharKey(char)] = { off: inc.off.filter(x => typeof x === 'string' && /^[a-z]{1,16}$/.test(x)).slice(0, 32) };

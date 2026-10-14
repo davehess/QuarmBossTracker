@@ -259,7 +259,7 @@ describe('buildChatHistory', () => {
     const f = mk('Aldenmar', [at(10, "Rethlan tells Wolfpackofficer:5, 'off'")]);
     await HIST([{ character: 'Aldenmar', file: f }], { officer: true });
     expect(agent._chatRingForTest()).toHaveLength(0);
-    expect(agent.chatPolicyNow()).toEqual({ tells: false, group: false, officer: false, custom: false });
+    expect(agent.chatPolicyNow()).toEqual({ tells: false, group: false, officer: false, custom: false, melee: false });
   });
 });
 
@@ -448,7 +448,7 @@ describe('chat.html: search, history and rows', () => {
   const make = (st = {}) => evalBlock(`
     var _channels = ${JSON.stringify(agent.CHAT_CHANNELS)};
     var _groups = ${JSON.stringify(agent.CHAT_GROUPS)};
-    var _prefs = { fontSize: 12, group: false, officer: false, custom: false, tells: false, off: [] };
+    var _prefs = { fontSize: 12, group: false, officer: false, custom: false, tells: false, off: [], offChannels: [], only: '' }, _chanNames = {};
     var _only = ${JSON.stringify(st.only || [])}, _out = [], _isBrk = _only.length > 0;
     var _copiedN = 0, _find = '', _findQ = '', _histHours = ${st.hours || 0}, _histInfo = ${JSON.stringify(st.info || null)}, _histLines = [], _lines = [], _lastOn = null;
     var feedEl = { innerHTML: '' };
@@ -456,6 +456,7 @@ describe('chat.html: search, history and rows', () => {
     function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
     ${HHMM}
     ${sliceBlock(SCRIPT, 'function groupOf(ch){', 'return out;\n  }')}
+    ${sliceBlock(SCRIPT, 'function learnChannel(l){', "esc(t) + ']</span>' : '';\n  }")}
     ${LINEHTML}
     ${REPAINT}
     ${COPYLINE}
@@ -596,7 +597,7 @@ describe('chat.html: search, history and rows', () => {
       { n: 5, t: T, sep: 1, from: 'Brackwyn', to: 'Aldenmar', text: 'Swapped to Aldenmar' }, ln(6, 'guild', 'Corvale', 'e', 'Aldenmar'),
     ] });
     m.repaint();
-    const tagged = [...m.feedEl.innerHTML.matchAll(/data-n="(\d+)"[^>]*><button[^>]*>[^<]*<\/button><span class="otag"/g)].map(x => Number(x[1]));
+    const tagged = [...m.feedEl.innerHTML.matchAll(/data-n="(\d+)"[^>]*><button[^>]*>[^<]*<\/button>(?:<span class="ctag"[^>]*>[^<]*<\/span>)?<span class="otag"/g)].map(x => Number(x[1]));
     expect(tagged).toEqual([3]);     // line 1 starts the feed, 3 changes character, 6 follows a swap line
   });
   it('searching one speaker tags the alt that heard each line', () => {
@@ -631,7 +632,7 @@ describe('chat.html: search, history and rows', () => {
       expect(code).toContain('add(_histLines); add(_lines);');
     });
     it('the hover handshake covers the picker row, and the title bar already carries the box', () => {
-      expect(code).toContain("'.title, #chips, #cpick, #spanel, #feed, #newchip, #ctxmenu'");
+      expect(code).toContain("'.title, #chips, #cpick, #spanel, #onlypill, #feed, #newchip, #ctxmenu'");
     });
     it('the History picker offers off, 1, 2, 3, 6, 12 and 24 hours and starts OFF', () => {
       expect(code).toContain('var HIST_CHOICES = [0, 1, 2, 3, 6, 12, 24];');

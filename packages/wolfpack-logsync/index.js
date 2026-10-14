@@ -38566,20 +38566,24 @@ const CHAT_RING_MAX = 500;
 const CHAT_PAGE_MAX = 200;
 const CHAT_POLICY_TTL_MS = 15_000;
 const CHAT_TEXT_MAX = 400;
-// id → label + colour. Colour is the channel's identity in the overlay; the overlay owns no copy of it.
+// id → label + colour + the EQ-style tag shown in front of each line (the guild lead, 2026-10-14: "put the
+// [P] [RS] [GU] [1] [2] [3] [4] etc in front of the lines"). Colour is the channel's identity in the overlay;
+// the overlay owns no copy of it. `tag` is '' for lines that are not a channel (NPC speech, zone changes) and
+// for a joined channel, whose tag is its slot NUMBER, which the line itself carries (cnum).
 const CHAT_CHANNELS = {
-  guild:   { label: 'Guild',   color: '#56d364' },
-  raid:    { label: 'Raid',    color: '#ffa657' },
-  say:     { label: 'Say',     color: '#c9d1d9' },
-  ooc:     { label: 'OOC',     color: '#7ee7c7' },
-  shout:   { label: 'Shout',   color: '#ff7b72' },
-  auction: { label: 'Auction', color: '#8b949e' },
-  npc:     { label: 'NPC',     color: '#c9a96e' },
-  zone:    { label: 'Zone',    color: '#6e7681' },
-  tell:    { label: 'Tell',    color: '#a371f7' },
-  group:   { label: 'Group',   color: '#58a6ff' },
-  officer: { label: 'Officer', color: '#d29922' },
-  custom:  { label: 'Custom',  color: '#6e9bd6' },
+  guild:   { label: 'Guild',   color: '#56d364', tag: 'GU' },
+  raid:    { label: 'Raid',    color: '#ffa657', tag: 'RS' },
+  say:     { label: 'Say',     color: '#c9d1d9', tag: 'S' },
+  ooc:     { label: 'OOC',     color: '#7ee7c7', tag: 'OOC' },
+  shout:   { label: 'Shout',   color: '#ff7b72', tag: 'SH' },
+  auction: { label: 'Auction', color: '#8b949e', tag: 'AUC' },
+  npc:     { label: 'NPC',     color: '#c9a96e', tag: '' },
+  zone:    { label: 'Zone',    color: '#6e7681', tag: '' },
+  tell:    { label: 'Tell',    color: '#a371f7', tag: 'T' },
+  group:   { label: 'Group',   color: '#58a6ff', tag: 'P' },
+  officer: { label: 'Officer', color: '#d29922', tag: 'OF' },
+  custom:  { label: 'Custom',  color: '#6e9bd6', tag: '' },
+  melee:   { label: 'Melee',   color: '#d0847a', tag: 'M' },
 };
 // One chip each. `gate` names the policy switch that must be on for these channels to be captured,
 // served and shown; no gate = public, shown by default. A tab is a group plus a filter, so this list
@@ -38596,8 +38600,12 @@ const CHAT_GROUPS = [
   { id: 'group',   label: 'Group',     channels: ['group'],   gate: 'group' },
   { id: 'officer', label: 'Officer',   channels: ['officer'], gate: 'officer' },
   { id: 'custom',  label: 'Custom',    channels: ['custom'],  gate: 'custom' },
+  // Combined melee (the guild lead, 2026-10-14: "a spot for combined melee"): your hits and misses, hits and
+  // misses on you, everyone else's and pets'. A flood by nature, so it is a gated group (off until the overlay's
+  // ⚙ switches it on), kept in its own small ring, and meant to be broken out into a window of its own.
+  { id: 'melee',   label: 'Melee',     channels: ['melee'],   gate: 'melee' },
 ];
-const CHAT_POLICY_KEYS = ['tells', 'group', 'officer', 'custom'];
+const CHAT_POLICY_KEYS = ['tells', 'group', 'officer', 'custom', 'melee'];
 
 // First-person lines ("You say, ..."). Group 1 is the text, except the custom-channel and told forms.
 const CHAT_SELF_PATTERNS = [
@@ -38669,7 +38677,7 @@ function classifyChatLine(line, selfName) {
     if ((m = p.rx.exec(line))) return { ch: p.ch, who: 'You', text: _chatCleanText(m[1]), t, self: true, npc: false };
   }
   if ((m = CHAT_SELF_CHANNEL_RX.exec(line))) {
-    return { ch: /officer/i.test(m[1]) ? 'officer' : 'custom', who: 'You', text: _chatCleanText(m[3]), t, self: true, npc: false, chan: m[1] };
+    return { ch: /officer/i.test(m[1]) ? 'officer' : 'custom', who: 'You', text: _chatCleanText(m[3]), t, self: true, npc: false, chan: m[1], cn: m[1], cnum: Number(m[2]) };
   }
   if ((m = CHAT_SELF_TELL_RX.exec(line))) {
     return { ch: 'tell', who: 'You', to: m[1].trim(), text: _chatCleanText(m[2]), t, self: true, npc: false };
@@ -38695,7 +38703,11 @@ function classifyChatLine(line, selfName) {
       else if (ch === 'say' && _chatIsPetOrMerchantText(text)) return null;
     }
     const mine = !!selfName && speaker.toLowerCase() === String(selfName).toLowerCase();
-    return { ch, who: speaker, text, t, self: mine, npc: ch === 'npc' };
+    const evt = { ch, who: speaker, text, t, self: mine, npc: ch === 'npc' };
+    // A joined channel's name and slot number ("tells General:2"): the overlay tags the line with the number
+    // and keys the per-channel switch by the name (the number changes with the order channels are joined).
+    if (m[3]) { evt.cn = m[3]; evt.cnum = Number(m[4]); }
+    return evt;
   }
   if ((m = CHAT_ABBREV_RX.exec(line))) {
     const tag = m[1].toLowerCase();
@@ -38710,7 +38722,10 @@ function classifyChatLine(line, selfName) {
     else if ((ch === 'say' || ch === 'shout') && _chatIsNpcSpeaker(name)) ch = 'npc';
     else if (ch === 'say' && _chatIsPetOrMerchantText(text)) return null;
     const mine = !!selfName && name.toLowerCase() === String(selfName).toLowerCase();
-    return { ch, who: name, text, t, self: mine, npc: ch === 'npc' };
+    const evt = { ch, who: name, text, t, self: mine, npc: ch === 'npc' };
+    // /abc writes only the slot number, never the channel's name: the overlay learns the name from other lines.
+    if (/^\d+$/.test(tag)) evt.cnum = Number(tag);
+    return evt;
   }
   if ((m = CHAT_ZONE_RX.exec(line))) return { ch: 'zone', who: '', text: m[1].trim(), t, self: false, npc: false };
   // The PoP flag Seer's recital (the guild lead, 2026-10-14: "tells from seer did not come through"). The
@@ -38729,6 +38744,29 @@ function classifyChatLine(line, selfName) {
   return null;
 }
 
+// One log line → a melee row { ch: 'melee', who: '', text, t, self, npc: false } or null. Pure. There is no
+// second melee grammar here: parseEvent already reads every swing (hits, class specials, "tries to … but"
+// misses, dodges, parries) from everyone, and MELEE_ABILITIES is the dashboard's own "this verb is melee" list.
+// So a spell, a DoT, a damage shield or a proc (all `damage` events too) is left out by that list, and the
+// row shows the log's own sentence rather than a rebuilt one. `self` = the swing is yours.
+const CHAT_MELEE_PREFILTER_RX = /points? of damage|, but /;
+function classifyMeleeLine(line) {
+  if (typeof line !== 'string' || line.charCodeAt(0) !== 91 /* [ */) return null;
+  if (!CHAT_MELEE_PREFILTER_RX.test(line)) return null;
+  const ts = parseEqTimestamp(line);
+  if (!ts) return null;
+  let ev;
+  try { ev = parseEvent(line, ts); } catch { return null; }
+  if (!ev) return null;
+  if (ev.type === 'damage') {
+    if (!ev.ability || !MELEE_ABILITIES.has(String(ev.ability).toLowerCase()) || ev.ds || ev.spellName) return null;
+  } else if (ev.type !== 'avoid') return null;
+  const at = line.indexOf('] ');
+  const text = at > 0 ? _chatCleanText(line.slice(at + 2)) : '';
+  if (!text) return null;
+  return { ch: 'melee', who: '', text, t: ts.getTime(), self: ev.attacker == null, npc: false };
+}
+
 // The overlay's switches, handed over on every poll. Default (nothing asked for, or the overlay went
 // quiet for CHAT_POLICY_TTL_MS) is public channels only.
 let _chatPolicy = null;
@@ -38742,7 +38780,7 @@ function setChatPolicy(p, now) {
 function chatPolicyNow(now) {
   const t = now == null ? Date.now() : now;
   if (_chatPolicy && t - _chatPolicyAt <= CHAT_POLICY_TTL_MS) return _chatPolicy;
-  return { tells: false, group: false, officer: false, custom: false };
+  return { tells: false, group: false, officer: false, custom: false, melee: false };
 }
 function chatChannelAllowed(ch, policy) {
   const g = CHAT_GROUPS.find(x => x.channels.indexOf(ch) !== -1);
@@ -38780,17 +38818,34 @@ function chatSwapBetween(prev, cur) {
   if (!(gap >= CHAT_SWAP_MIN_MS)) return null;
   return { sep: 1, t: cur.t, from: prev.on, to: cur.on, text: 'Swapped to ' + cur.on + ' — ' + _chatGapText(gap) + ' after ' + prev.on + '\'s last line' };
 }
+// Melee has its own small ring (a fight writes dozens of lines a second; chat must never be pushed out of the
+// 500) sharing the one sequence counter, so a single cursor still pages both. Memory only, like the chat ring.
+const CHAT_MELEE_RING_MAX = 300;
+const _meleeRing = [];
 function noteLocalChatLine(line, character, now) {
-  const evt = classifyChatLine(line, character);
+  const policy = chatPolicyNow(now);
+  let evt = classifyChatLine(line, character);
+  // Only looked for while the overlay has asked for melee: an overlay that did not leaves nothing accumulating.
+  if (!evt && policy.melee) evt = classifyMeleeLine(line);
   if (!evt) return false;
-  if (!chatChannelAllowed(evt.ch, chatPolicyNow(now))) return false;
+  if (!chatChannelAllowed(evt.ch, policy)) return false;
+  if (evt.ch === 'melee') {
+    // Two of your characters in one fight each log the same swing: one copy. The same swing twice in ONE log
+    // (two equal hits in a second) is real, so only a line from a DIFFERENT log counts as a duplicate.
+    const mk = evt.text + '|' + Math.floor(evt.t / 1000);
+    for (let i = _meleeRing.length - 1, n = 0; i >= 0 && n < 40; i--, n++) if (_meleeRing[i].k === mk && _meleeRing[i].on !== (character || '')) return false;
+    _meleeRing.push({ seq: ++_chatSeq, k: mk, t: evt.t, ch: 'melee', who: '', to: null, text: evt.text, self: !!evt.self, npc: false, on: character || '' });
+    const spill = _meleeRing.length - CHAT_MELEE_RING_MAX;
+    if (spill > 0) _meleeRing.splice(0, spill);
+    return true;
+  }
   const key = chatLineKey(evt, character);
   for (let i = _chatRing.length - 1, n = 0; i >= 0 && n < 60; i--, n++) if (_chatRing[i].k === key) return false;
   // The character changed since the last line: say so, with the gap, before the new character's first line.
   const prev = _chatRing.length ? _chatRing[_chatRing.length - 1] : null;
   const swap = chatSwapBetween(prev, { on: character, t: evt.t });
   if (swap) _chatRing.push({ seq: ++_chatSeq, k: 'swap|' + _chatSeq, swap: true, t: swap.t, from: swap.from, to: swap.to, text: swap.text });
-  _chatRing.push({ seq: ++_chatSeq, k: key, t: evt.t, ch: evt.ch, who: evt.who, to: evt.to || null, text: evt.text, self: !!evt.self, npc: !!evt.npc, on: character || '' });
+  _chatRing.push({ seq: ++_chatSeq, k: key, t: evt.t, ch: evt.ch, who: evt.who, to: evt.to || null, text: evt.text, self: !!evt.self, npc: !!evt.npc, on: character || '', cn: evt.cn || null, cnum: evt.cnum || null });
   const over = _chatRing.length - CHAT_RING_MAX;
   if (over > 0) _chatRing.splice(0, over);
   return true;
@@ -38807,8 +38862,14 @@ function serializeLocalChat(q, now) {
   if (q && q.boot && String(q.boot) !== CHAT_BOOT) { since = 0; reset = true; }
   if (!(since >= 0) || since > _chatSeq) { since = 0; reset = true; }
   const lines = [];
-  for (let i = _chatRing.length - 1; i >= 0 && lines.length < CHAT_PAGE_MAX; i--) {
-    const l = _chatRing[i];
+  // Chat and melee rows page together, newest first, by their shared sequence number. The melee ring is
+  // only read while the switch is on, so the common case is the chat ring alone.
+  let mi = policy.melee ? _meleeRing.length - 1 : -1;
+  let ci = _chatRing.length - 1;
+  while ((ci >= 0 || mi >= 0) && lines.length < CHAT_PAGE_MAX) {
+    const cs = ci >= 0 ? _chatRing[ci].seq : -1, ms = mi >= 0 ? _meleeRing[mi].seq : -1;
+    const fromMelee = ms > cs;
+    const l = fromMelee ? _meleeRing[mi--] : _chatRing[ci--];
     if (l.seq <= since) break;
     if (l.swap) { lines.push({ n: l.seq, t: l.t, sep: 1, from: l.from, to: l.to, text: l.text }); continue; }
     if (!chatChannelAllowed(l.ch, policy)) continue;
@@ -38817,6 +38878,8 @@ function serializeLocalChat(q, now) {
     if (l.self) o.self = true;
     if (l.npc) o.npc = true;
     if (l.to) o.to = l.to;
+    if (l.cn) o.cn = l.cn;
+    if (l.cnum) o.cnum = l.cnum;
     lines.push(o);
   }
   lines.reverse();
@@ -38836,7 +38899,7 @@ function _handleLocalChat(req, res) {
   return send(200, body);
 }
 function _resetLocalChatForTest() {
-  _chatRing.length = 0; _chatSeq = 0; _chatPolicy = null; _chatPolicyAt = 0;
+  _chatRing.length = 0; _meleeRing.length = 0; _chatSeq = 0; _chatPolicy = null; _chatPolicyAt = 0;
 }
 // ── end Local chat window ──
 
@@ -38951,6 +39014,8 @@ async function buildChatHistory(q, now, opts) {
       if (evt.self) o.self = true;
       if (evt.npc) o.npc = true;
       if (evt.to) o.to = evt.to;
+      if (evt.cn) o.cn = evt.cn;
+      if (evt.cnum) o.cnum = evt.cnum;
       mine.push(o);
       return mine.length >= CHAT_HISTORY_MAX;
     }, readOpts);
@@ -55787,10 +55852,10 @@ module.exports = {
   DEFAULT_DROP_PATTERNS, KEEP_PATTERNS,
   buildFeedbackLogSlice, _feedbackLineAllowed,
   // Mimic's Chat overlay feed (2026-10-14). The buffers are exposed so a test can prove nothing here lands in an upload queue.
-  classifyChatLine, noteLocalChatLine, serializeLocalChat, setChatPolicy, chatPolicyNow, chatChannelAllowed,
+  classifyChatLine, classifyMeleeLine, noteLocalChatLine, serializeLocalChat, setChatPolicy, chatPolicyNow, chatChannelAllowed,
   CHAT_GROUPS, CHAT_CHANNELS, CHAT_RING_MAX, CHAT_PAGE_MAX, CHAT_POLICY_TTL_MS, _resetLocalChatForTest,
   _uploadBuffersForTest: () => ({ chatBuffer, tellBuffer, recentTells: stats.recentTells }),
-  _chatRingForTest: () => _chatRing, _handleLocalChatForTest: _handleLocalChat,
+  _chatRingForTest: () => _chatRing, _meleeRingForTest: () => _meleeRing, CHAT_MELEE_RING_MAX, _handleLocalChatForTest: _handleLocalChat,
   chatLineKey, chatSwapBetween, chatReadLogBackwards, chatHistoryFiles, buildChatHistory, getChatHistory,
   _handleLocalChatHistoryForTest: _handleLocalChatHistory, _resetChatHistoryForTest, CHAT_HISTORY_MAX, CHAT_SWAP_MIN_MS,
   _noteBuffDurationsFromState, buffDurationStats, buffDurationTable, _noteBuffDurationSample,

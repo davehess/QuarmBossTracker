@@ -155,9 +155,9 @@ describe('CHAT_GROUPS: the channel groups are a list of { id, label, channels[] 
     }
     expect(Object.keys(owner).sort()).toEqual(Object.keys(agent.CHAT_CHANNELS).sort());
   });
-  it('the gated groups are exactly tells, group, officer and custom: the private ones', () => {
+  it('the gated groups are exactly tells, group, officer, custom and melee: the private ones, and the flood', () => {
     const gated = Object.fromEntries(agent.CHAT_GROUPS.filter(g => g.gate).map(g => [g.id, g.gate]));
-    expect(gated).toEqual({ tell: 'tells', group: 'group', officer: 'officer', custom: 'custom' });
+    expect(gated).toEqual({ tell: 'tells', group: 'group', officer: 'officer', custom: 'custom', melee: 'melee' });
   });
   it('the public channels have no gate', () => {
     for (const id of ['guild', 'raid', 'say', 'ooc', 'auction', 'npc']) {
@@ -219,7 +219,7 @@ describe('what the feed keeps and shows', () => {
     agent.setChatPolicy({ officer: true }, T0);
     expect(agent.noteLocalChatLine(L('Rethlan tells Wolfpackofficer:5, \'a\''), ME, T0 + 10_000)).toBe(true);
     expect(agent.noteLocalChatLine(L('Rethlan tells Wolfpackofficer:5, \'b\''), ME, T0 + agent.CHAT_POLICY_TTL_MS + 1)).toBe(false);
-    expect(agent.chatPolicyNow(T0 + agent.CHAT_POLICY_TTL_MS + 1)).toEqual({ tells: false, group: false, officer: false, custom: false });
+    expect(agent.chatPolicyNow(T0 + agent.CHAT_POLICY_TTL_MS + 1)).toEqual({ tells: false, group: false, officer: false, custom: false, melee: false });
   });
   it('one person\'s main and alt logs hear the same guild line: one copy', () => {
     expect(agent.noteLocalChatLine(L('Corvale tells the guild, \'hi\''), 'Aldenmar', T0)).toBe(true);
@@ -278,8 +278,8 @@ describe('never uploaded', () => {
     expect(uses.filter(l => /^CHAT_GROUPS, CHAT_CHANNELS, CHAT_RING_MAX,/.test(l))).toHaveLength(1);
     expect(uses.filter(l => /^if \(req\.url && req\.url\.split\('\?'\)\[0\] === '\/api\/chat' && req\.method === 'GET'\) return _handleLocalChat\(req, res\);$/.test(l))).toHaveLength(1);
     expect(uses.filter(l => /^try \{ noteLocalChatLine\(line, b\.character\); \} catch \(e\) \{ void e; \}$/.test(l))).toHaveLength(1);
-    expect(uses.filter(l => /^classifyChatLine, noteLocalChatLine, serializeLocalChat,/.test(l))).toHaveLength(1);
-    expect(uses.filter(l => /^_chatRingForTest: \(\) => _chatRing, _handleLocalChatForTest: _handleLocalChat,$/.test(l))).toHaveLength(1);
+    expect(uses.filter(l => /^classifyChatLine, classifyMeleeLine, noteLocalChatLine, serializeLocalChat,/.test(l))).toHaveLength(1);
+    expect(uses.filter(l => /^_chatRingForTest: \(\) => _chatRing, _meleeRingForTest: \(\) => _meleeRing, CHAT_MELEE_RING_MAX, _handleLocalChatForTest: _handleLocalChat,$/.test(l))).toHaveLength(1);
     // and the tap's own line is not part of any upload call
     expect(outside).not.toMatch(/noteLocalChatLine\([^)]*\)[^;\n]*\b(?:chatBuffer|tellBuffer|enqueueUpload)/);
   });
@@ -446,7 +446,7 @@ describe('chat.html: the overlay\'s own parity items', () => {
   });
   it('the hover handshake covers every clickable thing: buttons (armed by the preload) plus the feed and chip row', () => {
     expect(script).toContain('window.mimic.overlayHoverInteractive(on)');
-    expect(script).toMatch(/el\.closest\('\.title, #chips, #cpick, #spanel, #feed, #newchip, #ctxmenu'\)/);
+    expect(script).toMatch(/el\.closest\('\.title, #chips, #cpick, #spanel, #onlypill, #feed, #newchip, #ctxmenu'\)/);
     // every clickable element is a <button>/<input>, which the preload arms on its own: no clickable <div>/<span>
     expect(html).not.toMatch(/<(?:div|span)[^>]*\sonclick=/);
     expect(html).not.toMatch(/<(?:div|span)[^>]*role="?button/);
@@ -548,7 +548,7 @@ describe('Mimic prefs: chips are remembered per character, tells follow the Tell
   beforeEach(() => { globalThis.__H = {}; globalThis.__S = []; globalThis.__P = []; });
   it('defaults: 12 px, group and channels on, officer off, nothing hidden, tells off', async () => {
     const m = load({});
-    expect(await m.get('Aldenmar')).toEqual({ fontSize: 12, group: true, officer: false, custom: true, tells: false, off: [] });
+    expect(await m.get('Aldenmar')).toEqual({ fontSize: 12, group: true, officer: false, custom: true, tells: false, off: [], melee: false, offChannels: [], only: '', win: {} });
   });
   it('group and channels stay off once switched off', async () => {
     const m = load({ chatPrefs: { group: false, custom: false } });
@@ -595,6 +595,66 @@ describe('Mimic prefs: chips are remembered per character, tells follow the Tell
     const settings = fs.readFileSync(path.join(ROOT, 'apps', 'mimic', 'settings.html'), 'utf8');
     expect(settings).not.toMatch(/ships in v0\.2/);
     expect(settings).toMatch(/Local and Synced show your tells in the Chat overlay on this PC/);
+  });
+  // ── round 3 (the guild lead, 2026-10-14): per-channel switches, "show only", melee opt-in, per-window text ──
+  it('per-channel switches are saved by lower-case NAME, de-duplicated, whitelisted, and read back', async () => {
+    const m = load({});
+    await m.set('Aldenmar', { offChannels: ['General', 'general', 'Ports', '#3', 'bad name', 42, '', 'x'.repeat(40)] });
+    expect(m.saved().pop().chatPrefs.offChannels).toEqual(['general', 'ports', '#3']);
+    expect((await m.get('Brackwyn')).offChannels).toEqual(['general', 'ports', '#3']);   // shared by every character
+    await m.set('Aldenmar', { offChannels: [] });
+    expect((await m.get('Aldenmar')).offChannels).toEqual([]);                          // switching the last one back on clears it
+  });
+  it('prefs saved before this existed load unchanged: nothing is reset and every channel still shows', async () => {
+    const old = { fontSize: 15, group: false, officer: true, byChar: { aldenmar: { off: ['raid'] } } };
+    const m = load({ chatPrefs: old });
+    expect(await m.get('Aldenmar')).toEqual({
+      fontSize: 15, group: false, officer: true, custom: true, tells: false, off: ['raid'],
+      melee: false, offChannels: [], only: '', win: {},
+    });
+    await m.set('Aldenmar', { offChannels: ['general'] });
+    const stored = m.saved().pop().chatPrefs;
+    expect(stored).toMatchObject({ fontSize: 15, group: false, officer: true, byChar: { aldenmar: { off: ['raid'] } }, offChannels: ['general'] });   // no key dropped
+  });
+  it('defaults stay as they were: group and joined channels on, officer opt-in, melee opt-in', async () => {
+    const m = load({});
+    expect(await m.get('Aldenmar')).toMatchObject({ group: true, custom: true, officer: false, melee: false });
+    await m.set('Aldenmar', { melee: true, officer: true });
+    expect(await m.get('Aldenmar')).toMatchObject({ melee: true, officer: true });
+  });
+  it('"show only" is saved as its own key and never touches the saved switches', async () => {
+    const m = load({ chatPrefs: { officer: true, byChar: { aldenmar: { off: ['raid'] } }, offChannels: ['ports'] } });
+    await m.set('Aldenmar', { only: 'custom:General' });
+    let got = await m.get('Aldenmar');
+    expect(got.only).toBe('custom:general');
+    expect(got).toMatchObject({ officer: true, off: ['raid'], offChannels: ['ports'], custom: true, group: true });
+    await m.set('Aldenmar', { only: 'guild' });
+    expect((await m.get('Aldenmar')).only).toBe('guild');
+    await m.set('Aldenmar', { only: '' });
+    got = await m.get('Aldenmar');
+    expect(got).toMatchObject({ only: '', officer: true, off: ['raid'], offChannels: ['ports'] });
+    await m.set('Aldenmar', { only: '../x y' });
+    expect((await m.get('Aldenmar')).only).toBe('');
+  });
+  it('text settings are saved per window; one window\'s change never touches another\'s', async () => {
+    const m = load({ chatPrefs: { fontSize: 14 } });
+    await m.set('Aldenmar', { win: { main: { fontSize: 18 } } });
+    await m.set('Aldenmar', { win: { melee: { fontSize: 10, lineGap: 'compact', times: false, tags: false } } });
+    let got = await m.get('Aldenmar');
+    expect(got.win.main).toEqual({ fontSize: 18 });
+    expect(got.win.melee).toEqual({ fontSize: 10, lineGap: 'compact', times: false, tags: false });
+    await m.set('Aldenmar', { win: { melee: { times: true } } });                    // one field merges in; the rest stay
+    got = await m.get('Aldenmar');
+    expect(got.win.melee).toEqual({ fontSize: 10, lineGap: 'compact', times: true, tags: false });
+    expect(got.win.main).toEqual({ fontSize: 18 });
+    expect(got.fontSize).toBe(14);                                                   // the shared size (every window's default) is untouched
+    expect((await m.get('Brackwyn')).win.melee.tags).toBe(false);                    // survives a reopen / another character
+  });
+  it('the renderer cannot store anything but valid window ids and fields', async () => {
+    const m = load({});
+    await m.set('Aldenmar', { win: { 'Bad Id': { fontSize: 12 }, main: { fontSize: 99, lineGap: 'huge', times: 'no', evil: 1 }, guild: { lineGap: 'compact' } } });
+    const stored = m.saved().pop().chatPrefs.win;
+    expect(stored).toEqual({ main: {}, guild: { lineGap: 'compact' } });
   });
   it('the preload exposes exactly the two prefs calls', () => {
     expect(stripJs(PRELOAD)).toMatch(/getChatPrefs:\s+\(char\)\s+=> ipcRenderer\.invoke\('chat-prefs-get'/);
@@ -693,8 +753,9 @@ describe('chat.html: click a line\'s timestamp to copy it', () => {
     expect(code).toContain('<button type="button" class="tm');
     expect(code).not.toMatch(/<span class="tm/);
     const lineHtml = evalBlock(`
-      var _channels = { guild: { color: '#56d364' } }, _copiedN = 0;
+      var _channels = { guild: { color: '#56d364', tag: 'GU', label: 'Guild' } }, _copiedN = 0, _chanNames = {}, _prefs = { offChannels: [], only: '' }, _isBrk = false;
       function esc(s){ return String(s == null ? '' : s); }
+      ${sliceBlock(script, 'function learnChannel(l){', "esc(t) + ']</span>' : '';\n  }")}
       ${HHMM}
       ${sliceBlock(script, 'function lineHtml(l, tag){',"+ esc(l.text) + '</span></div>';\n  }")}
     `, ['lineHtml', '_channels']);
@@ -973,6 +1034,254 @@ describe('Mimic: breakout windows are a VARIABLE set, wired into every site a fi
     expect(r.cfg().chatBreakouts).toEqual([]);
     for (const g of 'abcdefghijklmnop'.split('')) r._chatBreakoutSet(g, true);
     expect(r.cfg().chatBreakouts).toHaveLength(12);
+  });
+});
+
+// ── 9. Round 3 (the guild lead, 2026-10-14): channel tags, per-channel switches, "show only", Melee, window text ─────
+function script_() { return CHAT_HTML.slice(CHAT_HTML.indexOf('<script>'), CHAT_HTML.indexOf('</script>')); }
+// The overlay's own filter, tag, switch, "show only" and window-text functions, sliced out of chat.html and run for
+// real. opts: { brk: '<group id>' } makes it a breakout window; { lines: [...] } is what the window has seen.
+function overlay(prefs, opts = {}) {
+  const s = script_();
+  const base = { fontSize: 12, group: false, officer: false, custom: false, tells: false, melee: false, off: [], offChannels: [], only: '', win: {} };
+  return evalBlock(`
+    var _groups = ${JSON.stringify(agent.CHAT_GROUPS)};
+    var _channels = ${JSON.stringify(agent.CHAT_CHANNELS)};
+    var _prefs = ${JSON.stringify({ ...base, ...prefs })};
+    var _only = ${JSON.stringify(opts.brk ? [opts.brk] : [])}, _out = [], _isBrk = ${!!opts.brk}, _findQ = '', _chanNames = {}, _copiedN = 0;
+    var _lines = ${JSON.stringify(opts.lines || [])}, _histLines = [];
+    function brkGroupId(){ return _only[0] || ''; }
+    function esc(s){ return String(s == null ? '' : s); }
+    ${sliceBlock(s, 'function hhmm(t){', '}\n')}
+    ${sliceBlock(s, 'function groupOf(ch){', 'return out;\n  }')}
+    ${sliceBlock(s, 'function learnChannel(l){', "esc(t) + ']</span>' : '';\n  }")}
+    ${sliceBlock(s, 'function lineHtml(l, tag){', "+ esc(l.text) + '</span></div>';\n  }")}
+    ${sliceBlock(s, 'function startsWithCI(s, q){', 'matchesFind(l, _findQ)); }')}
+    ${sliceBlock(s, 'function winId(){', 'tags: w.tags !== false };\n  }')}
+    ${sliceBlock(s, 'function seenChannels(){', 'return order.map(function(x){ return by[x]; });\n  }')}
+    ${sliceBlock(s, 'function chanLabel(c){', "return c.num ? nm + ' (' + c.num + ')' : nm;\n  }")}
+    ${sliceBlock(s, 'function onlyLabel(key){', "return c.tag ? '[' + c.tag + ']' : (c.label || key);\n  }")}
+    function prefs(){ return _prefs; }
+  `, ['makeFilter', 'shownGroupIds', 'learnChannel', 'chanName', 'chanKey', 'tagText', 'lineHtml', 'lineVisible', 'winId', 'winCfg',
+    'seenChannels', 'chanLabel', 'onlyLabel', 'prefs']);
+}
+
+describe('channel tags: every line type, and a joined channel by its slot number', () => {
+  beforeEach(() => agent._resetLocalChatForTest());
+  const tagFor = (text) => {
+    const evt = agent.classifyChatLine(L(text), ME);
+    const ov = overlay({});
+    return ov.tagText(evt);
+  };
+  const CASES = [
+    ['guild', 'Corvale tells the guild, \'a\'', 'GU'], ['raid say', 'Corvale tells the raid, \'a\'', 'RS'],
+    ['group', 'Corvale tells the group, \'a\'', 'P'], ['group, self', 'You tell your party, \'a\'', 'P'],
+    ['officer', 'Rethlan tells Wolfpackofficer:5, \'a\'', 'OF'], ['say', 'Zarrin says, \'a\'', 'S'],
+    ['shout', 'Zarrin shouts, \'a\'', 'SH'], ['ooc', 'Zarrin says out of character, \'a\'', 'OOC'],
+    ['auction', 'Zarrin auctions, \'WTS a\'', 'AUC'], ['tell in', 'Corvale tells you, \'a\'', 'T'],
+    ['tell out', 'You told Corvale, \'a\'', 'T'],
+    ['joined channel', 'Zarrin tells General:2, \'a\'', '2'], ['joined channel, self', 'You say to Ports:4, \'a\'', '4'],
+    ['joined channel, two digits', 'Zarrin tells Trade:12, \'a\'', '12'],
+    ['Zeal /abc slot', '[2] [Zarrin]: a', '2'],
+    ['zone change (no tag)', 'You have entered Plane of Knowledge.', ''],
+    ['npc speech (no tag)', 'a goblin warrior says, \'You will not leave\'', ''],
+  ];
+  for (const [label, text, want] of CASES) it(label, () => expect(tagFor(text), text).toBe(want));
+  it('the number comes from the LINE, so the same channel joined in another order is tagged with its new number', () => {
+    expect(tagFor('Zarrin tells General:2, \'a\'')).toBe('2');
+    expect(tagFor('Zarrin tells General:7, \'a\'')).toBe('7');
+  });
+  it('the agent serves the channel name and number on the row it hands the overlay', () => {
+    agent.setChatPolicy({ custom: true }, 1);
+    agent.noteLocalChatLine(L('Zarrin tells General:2, \'anyone for a group\''), ME, 1);
+    agent.noteLocalChatLine(L('Zarrin tells Corvale:9, \'x\''), ME, 1);
+    const rows = agent.serializeLocalChat({ custom: true }, 1).lines;
+    expect(rows[0]).toMatchObject({ ch: 'custom', cn: 'General', cnum: 2 });
+    expect(agent.CHAT_CHANNELS.guild.tag).toBe('GU');
+  });
+  it('the tag is drawn in front of the line with the channel name on hover; a joined channel shows [n] and its name', () => {
+    const ov = overlay({});
+    const html = ov.lineHtml({ n: 1, t: 0, ch: 'custom', who: 'Zarrin', text: 'hi', cn: 'General', cnum: 2 });
+    expect(html).toContain('<span class="ctag" title="General">[2]</span>');
+    expect(html.indexOf('ctag')).toBeLessThan(html.indexOf('class="who name"'));
+    expect(ov.lineHtml({ n: 2, t: 0, ch: 'guild', who: 'Corvale', text: 'hi' })).toContain('<span class="ctag" title="Guild">[GU]</span>');
+    expect(ov.lineHtml({ n: 3, t: 0, ch: 'zone', who: '', text: 'Plane of Knowledge' })).not.toContain('ctag');
+  });
+  it('/abc lines carry only the slot number: the name is learned from a line that has both', () => {
+    const ov = overlay({});
+    const abbrev = agent.classifyChatLine(L('[2] [Zarrin]: a'), ME);
+    Object.assign(abbrev, { on: ME });
+    expect(ov.chanKey(abbrev)).toBe('#2');
+    ov.learnChannel({ ch: 'custom', cn: 'General', cnum: 2, on: ME });
+    expect(ov.chanKey(abbrev)).toBe('general');
+  });
+});
+
+describe('per-channel switches and "show only", run against the real overlay code', () => {
+  const line = (cn, cnum, extra) => Object.assign({ n: 1, t: 0, ch: 'custom', who: 'Zarrin', text: 'hi', cn, cnum, on: ME }, extra);
+  const guild = { n: 2, t: 0, ch: 'guild', who: 'Corvale', text: 'hi', on: ME };
+  const raid = { n: 3, t: 0, ch: 'raid', who: 'Corvale', text: 'hi', on: ME };
+  const shown = (ov, lines) => lines.filter(l => ov.lineVisible(ov.makeFilter(ov.shownGroupIds()), l));
+  it('with no per-channel setting every channel shows', () => {
+    const ov = overlay({ custom: true });
+    expect(shown(ov, [line('General', 2), line('Ports', 4), guild])).toHaveLength(3);
+  });
+  it('switching one channel off hides only that channel\'s lines', () => {
+    const ov = overlay({ custom: true, offChannels: ['general'] });
+    const out = shown(ov, [line('General', 2), line('Ports', 4), guild, raid]);
+    expect(out.map(l => l.cn || l.ch)).toEqual(['Ports', 'guild', 'raid']);
+  });
+  it('the switch follows the NAME: the same channel under another slot number is still off', () => {
+    const ov = overlay({ custom: true, offChannels: ['general'] });
+    expect(shown(ov, [line('General', 5)])).toHaveLength(0);
+    expect(shown(ov, [line('GENERAL', 2)])).toHaveLength(0);
+  });
+  it('a /abc line is hidden once its slot is known to be that channel', () => {
+    const ov = overlay({ custom: true, offChannels: ['general'] });
+    ov.learnChannel(line('General', 2));
+    expect(shown(ov, [{ n: 5, t: 0, ch: 'custom', who: 'Zarrin', text: 'hi', cnum: 2, on: ME }])).toHaveLength(0);
+  });
+  it('the ⚙ lists every channel seen with its number, plus a saved-off one that has not spoken yet', () => {
+    const ov = overlay({ custom: true, offChannels: ['trade'] }, { lines: [line('General', 2), line('Ports', 4)] });
+    expect(ov.seenChannels().map(c => ov.chanLabel(c))).toEqual(['General (2)', 'Ports (4)', 'trade']);
+  });
+  it('"show only" filters the view to that one channel and clears again', () => {
+    const lines = [line('General', 2), line('Ports', 4), guild, raid];
+    expect(shown(overlay({ custom: true, only: 'guild' }), lines)).toEqual([guild]);
+    expect(shown(overlay({ custom: true, only: 'custom:general' }), lines).map(l => l.cn)).toEqual(['General']);
+    expect(shown(overlay({ custom: true, only: '' }), lines)).toHaveLength(4);
+  });
+  it('"show only" is a view toggle: it neither reads nor writes the switches, and a switched-off channel stays off under it', () => {
+    const ov = overlay({ custom: true, offChannels: ['general'], off: ['raid'], only: 'custom:general' });
+    expect(shown(ov, [line('General', 2), guild])).toHaveLength(0);
+    expect(ov.prefs().offChannels).toEqual(['general']);
+    expect(ov.prefs().off).toEqual(['raid']);
+  });
+  it('a broken-out window ignores "show only"', () => {
+    expect(shown(overlay({ only: 'raid' }, { brk: 'guild' }), [guild])).toEqual([guild]);
+  });
+  it('the pill text names the channel: [GU], or [2] General', () => {
+    const ov = overlay({ custom: true }, { lines: [line('General', 2)] });
+    expect(ov.onlyLabel('guild')).toBe('[GU]');
+    expect(ov.onlyLabel('custom:general')).toBe('[2] General');
+  });
+  it('the menu is the chips\' menu (openMenu), the pill has a real ✕ button, and nothing writes the switches', () => {
+    const code = script_().split('\n').filter(l => !/^\s*\/\//.test(l)).join('\n');
+    expect(code).toMatch(/feedEl\.addEventListener\('contextmenu'/);
+    expect(code).toContain("label: 'Show all'");
+    expect(code).toMatch(/openMenu\(e\.clientX, e\.clientY, items\)/);
+    expect((code.match(/function openMenu\(/g) || [])).toHaveLength(1);
+    expect(CHAT_HTML).toMatch(/<button type="button" id="onlyx"/);
+    const setOnly = sliceBlock(code, 'function setOnly(key){', '\n  }');
+    expect(setOnly).toContain("savePrefs({ only: _prefs.only })");
+    expect(setOnly).not.toMatch(/offChannels|off:/);
+  });
+});
+
+describe('Melee: one combined group, off by default, in a ring of its own', () => {
+  beforeEach(() => agent._resetLocalChatForTest());
+  const MELEE = [
+    ['your hit', 'You slash a goblin for 120 points of damage.', true],
+    ['your special', 'You flying kick a goblin for 200 points of damage.', true],
+    ['your miss', 'You try to slash a goblin, but a goblin dodges!', true],
+    ['a hit on you', 'a goblin hits YOU for 45 points of damage.', false],
+    ['a miss on you', 'a goblin tries to hit YOU, but YOU parry!', false],
+    ['someone else\'s hit', 'Brackwyn hits a goblin for 90 points of damage.', false],
+    ['a pet\'s hit', 'Gobby bites a goblin for 12 points of damage.', false],
+  ];
+  for (const [label, text, mine] of MELEE) {
+    it(label + ' classifies as [M]', () => {
+      const evt = agent.classifyMeleeLine(L(text));
+      expect(evt).toMatchObject({ ch: 'melee', self: mine, text });
+      expect(agent.CHAT_CHANNELS[evt.ch].tag).toBe('M');
+    });
+  }
+  it('spells, procs, DoTs, damage shields and chat are not melee', () => {
+    for (const t of [
+      'You hit a goblin for 5 points of non-melee damage.', 'Your Fireblast hits a goblin for 300 points of non-melee damage.',
+      'a goblin has taken 12 damage from your Flame Lick.', 'a goblin was hit by non-melee for 14 points of damage.',
+      'a goblin was pierced by thorns.', 'Zarrin tells General:2, \'anyone\'', 'You say, \'hello\'',
+    ]) expect(agent.classifyMeleeLine(L(t)), t).toBeNull();
+  });
+  it('there is one melee grammar: parseEvent\'s, with MELEE_ABILITIES as the list of melee verbs', () => {
+    const code = stripJs(AGENT_SRC);
+    const fn = sliceBlock(code, 'function classifyMeleeLine(line) {', '\n}\n');
+    expect(fn).toContain('parseEvent(line, ts)');
+    expect(fn).toContain('MELEE_ABILITIES.has(');
+    expect(fn).not.toMatch(/new RegExp|\.match\(|\/\^?\\\[/);
+  });
+  it('nothing is captured until the overlay asks for it, and the default view never carries it', () => {
+    expect(agent.noteLocalChatLine(L('You slash a goblin for 120 points of damage.'), ME, 1)).toBe(false);
+    agent.setChatPolicy({}, 1);
+    expect(agent.noteLocalChatLine(L('You slash a goblin for 120 points of damage.'), ME, 1)).toBe(false);
+    expect(agent._meleeRingForTest()).toHaveLength(0);
+    agent.setChatPolicy({ melee: true }, 2);
+    expect(agent.noteLocalChatLine(L('You slash a goblin for 120 points of damage.'), ME, 2)).toBe(true);
+    expect(agent.serializeLocalChat({ melee: true }, 2).lines).toHaveLength(1);
+    expect(agent.serializeLocalChat({ melee: false }, 3).lines).toHaveLength(0);     // asked off: held, not served
+    expect(agent.CHAT_GROUPS.find(g => g.id === 'melee')).toMatchObject({ channels: ['melee'], gate: 'melee' });
+  });
+  it('in the overlay Melee stays out of the main view until its switch is on, then is a chip like any group', () => {
+    const m = { n: 1, t: 0, ch: 'melee', who: '', text: 'You slash a goblin for 120 points of damage.' };
+    const off = overlay({});
+    expect(off.shownGroupIds()).not.toContain('melee');
+    expect(off.makeFilter(off.shownGroupIds())(m)).toBe(false);
+    const on = overlay({ melee: true });
+    expect(on.shownGroupIds()).toContain('melee');
+    expect(on.makeFilter(on.shownGroupIds())(m)).toBe(true);
+    const brk = overlay({ melee: true }, { brk: 'melee' });                      // and it breaks out like any other group
+    expect(brk.makeFilter(brk.shownGroupIds())(m)).toBe(true);
+    expect(overlay({}, { brk: 'melee' }).makeFilter(overlay({}, { brk: 'melee' }).shownGroupIds())(m)).toBe(false);   // still gated until switched on
+    expect(on.lineHtml(m)).toContain('[M]');
+  });
+  it('a melee flood cannot push chat out: separate rings, one cursor', () => {
+    agent.setChatPolicy({ melee: true }, 1);
+    for (let i = 0; i < 5; i++) agent.noteLocalChatLine(L(`Corvale tells the guild, 'line ${i}'`), ME, 1);
+    for (let i = 0; i < 2000; i++) agent.noteLocalChatLine(`[Wed Oct 14 21:11:${String(i % 60).padStart(2, '0')} 2026] You slash a goblin for ${100 + i} points of damage.`, ME, 1);
+    expect(agent._meleeRingForTest().length).toBeLessThanOrEqual(agent.CHAT_MELEE_RING_MAX);
+    expect(agent._chatRingForTest().filter(r => r.ch === 'guild')).toHaveLength(5);
+    // the cursor pages both rings in order
+    const first = agent.serializeLocalChat({ melee: true }, 1);
+    const seqs = first.lines.map(l => l.n);
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+    const next = agent.serializeLocalChat({ melee: true, since: first.seq }, 1);
+    expect(next.lines).toHaveLength(0);
+  });
+  it('two of your characters hear one swing once; the same swing twice in one log is real and kept', () => {
+    agent.setChatPolicy({ melee: true }, 1);
+    const sw = L('You slash a goblin for 120 points of damage.');
+    expect(agent.noteLocalChatLine(sw, 'Aldenmar', 1)).toBe(true);
+    expect(agent.noteLocalChatLine(sw, 'Brackwyn', 1)).toBe(false);
+    expect(agent.noteLocalChatLine(sw, 'Aldenmar', 1)).toBe(true);
+  });
+  it('local only, excluded characters skipped: melee enters through the same guarded call as chat, and is never read elsewhere', () => {
+    const code = stripJs(AGENT_SRC);
+    expect(code.match(/classifyMeleeLine\(/g)).toHaveLength(2);                  // its definition, and noteLocalChatLine
+    const note = sliceBlock(code, 'function noteLocalChatLine(line, character, now) {', '\n}\n');
+    expect(note).toContain('classifyMeleeLine(line)');
+    expect(note).not.toMatch(/chatBuffer|tellBuffer|enqueueUpload|fetch\(|writeFile/);
+    const tap = code.indexOf('noteLocalChatLine(line, b.character)');
+    expect(code.lastIndexOf('if (!_sourceExcluded) {', tap)).toBeGreaterThan(code.lastIndexOf('\n      const _sourceExcluded', tap) - 1);
+  });
+});
+
+describe('each window\'s own text settings', () => {
+  it('default to the shared size with normal spacing, timestamps and tags shown', () => {
+    const ov = overlay({ fontSize: 14 });
+    expect(ov.winCfg()).toEqual({ fontSize: 14, lineGap: 'normal', times: true, tags: true });
+  });
+  it('are read from the window\'s own entry: main and a breakout differ', () => {
+    const win = { main: { fontSize: 18 }, melee: { fontSize: 10, lineGap: 'compact', times: false, tags: false } };
+    expect(overlay({ win }).winCfg()).toEqual({ fontSize: 18, lineGap: 'normal', times: true, tags: true });
+    expect(overlay({ win }, { brk: 'melee' }).winCfg()).toEqual({ fontSize: 10, lineGap: 'compact', times: false, tags: false });
+    expect(overlay({ win, fontSize: 13 }, { brk: 'guild' }).winCfg().fontSize).toBe(13);   // a window with no entry keeps the default
+  });
+  it('the window id is "main" or the breakout group; the ⚙ reaches a breakout\'s settings and hides the rest', () => {
+    expect(overlay({}).winId()).toBe('main');
+    expect(overlay({}, { brk: 'melee' }).winId()).toBe('melee');
+    expect(CHAT_HTML).toMatch(/body\.brk #chips,body\.brk #onlypill,body\.brk #spanel \.nobrk\{display:none\}/);
+    expect(CHAT_HTML).not.toMatch(/body\.brk[^{]*#gear/);
+    expect(stripJs(CHAT_HTML)).toContain("label: 'Text settings…'");
   });
 });
 
