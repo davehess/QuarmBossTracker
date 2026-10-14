@@ -790,6 +790,11 @@ function normalizeSpecialVerb(raw) {
   if (/^frenz/.test(v)) return 'frenzy';
   return v.replace(/(?:es|s)$/, '');
 }
+// "slashes" → "slash", "crushes" → "crush", "pierces" → "pierce": the same base form the damage
+// events carry in `ability` (their inline normalisation, kept as is).
+function _baseAttackVerb(raw) {
+  return String(raw).toLowerCase().replace(/(?:sh|ch|ss|x)es$/, m => m.slice(0, -2)).replace(/s$/, '');
+}
 let _finishingBlowsDropped = 0;
 
 // ── Event parser ────────────────────────────────────────────────────────────
@@ -952,7 +957,9 @@ function parseEvent(line, ts) {
     // Extract the verb that matched (it's between the two captures)
     const verbMatch = m[0].match(new RegExp(`\\s+(${ATTACK_VERBS_RX})\\s+`, 'i'));
     const verb = (verbMatch?.[1] || 'hit').toLowerCase().replace(/(?:sh|ch|ss|x)es$/, m => m.slice(0, -2)).replace(/s$/, '');
-    return { ts: tsIso, type: 'damage', attacker: m[1], defender: m[2], ability: verb, amount: parseInt(m[3], 10) };
+    const ev = { ts: tsIso, type: 'damage', attacker: m[1], defender: m[2], ability: verb, amount: parseInt(m[3], 10) };
+    if (/points?\s+of\s+non-melee\s+damage/i.test(line)) ev.nonMelee = true;   // a spell/proc worded as a swing: no hit type (noteMobMelee)
+    return ev;
   }
 
   // "You hit X for N points of non-melee damage." (DoT/proc third-person past-tense)
@@ -1043,15 +1050,16 @@ function parseEvent(line, ts) {
   }
 
   // First-person: "You try to <verb> X, but ..."
-  m = line.match(new RegExp(`\\]\\s+You\\s+try\\s+to\\s+${ATTACK_VERBS_RX}\\s+(.+?),\\s+but\\s+(.+?)!`, 'i'));
+  // `verb` (the attempted swing, base form) rides the event so a mob's misses can show its hit type.
+  m = line.match(new RegExp(`\\]\\s+You\\s+try\\s+to\\s+(${ATTACK_VERBS_RX})\\s+(.+?),\\s+but\\s+(.+?)!`, 'i'));
   if (m) {
-    return { ts: tsIso, type: 'avoid', attacker: null /* self */, defender: m[1], kind: _classifyAvoid(m[2]) };
+    return { ts: tsIso, type: 'avoid', attacker: null /* self */, defender: m[2], kind: _classifyAvoid(m[3]), verb: _baseAttackVerb(m[1]) };
   }
 
   // Third-person: "<Name> tries to <verb> X, but ..."
-  m = line.match(new RegExp(`\\]\\s+(.+?)\\s+tries\\s+to\\s+${ATTACK_VERBS_RX}\\s+(.+?),\\s+but\\s+(.+?)!`, 'i'));
+  m = line.match(new RegExp(`\\]\\s+(.+?)\\s+tries\\s+to\\s+(${ATTACK_VERBS_RX})\\s+(.+?),\\s+but\\s+(.+?)!`, 'i'));
   if (m) {
-    return { ts: tsIso, type: 'avoid', attacker: m[1], defender: m[2], kind: _classifyAvoid(m[3]) };
+    return { ts: tsIso, type: 'avoid', attacker: m[1], defender: m[3], kind: _classifyAvoid(m[4]), verb: _baseAttackVerb(m[2]) };
   }
 
   // "X has taken N (points of) damage." (generic DoT tick — no source mentioned)
@@ -2583,6 +2591,74 @@ function recordPetCombat(ev, character) {
   if (amount > s.maxHit) s.maxHit = amount;
   s.lastSeenAt = now;
   _savePetStateSoon();
+}
+
+// ── What a mob's melee does: slash / pierce / blunt on Target Info (the guild lead, 2026-10-14) ─────────
+// "when we observe what types of hits a mob is doing, put that onto the target info (slashing / piercing /
+// etc)". The verb on a melee line names the damage type ("slashes YOU", "tries to pierce Aldenmar, but
+// misses!"), so every line a mob swings at anyone teaches us how that mob hits.
+//   · The verb → skill step is the Pet tracker's own (_verbToSkill, above); each skill then lands in one of
+//     three types. Four verbs it does not know (stab / backstab / strike / rend) are listed beside it.
+//     Archery, throwing and the like are no melee type, so they count nowhere.
+//   · A MISS counts: "tries to slash YOU, but misses!" still shows the swing, and so does a dodge, parry,
+//     riposte or block — the verb is the attempt, whatever came of it. Only damage carries a max hit.
+//   · MOB melee only. A player's swing on a mob, a damage shield and a spell are not a mob's hit type, and
+//     neither is a PET's: ours and the guild's declared pets are skipped (the Pet tracker has those).
+//   · Keyed by NAME, case-kept (_mobCaseKey, the key Target Info's catalog lookup uses), not by spawn id:
+//     the log line carries no id, and a mob swings at the raid while you are looking at another one, so an
+//     id-keyed ledger would catch almost none of it. A weapon type belongs to the kind of mob anyway.
+// LOCAL ONLY, in memory, capped (oldest-touched first out). Nothing here is uploaded.
+const _HIT_TYPE_BY_SKILL = {
+  Slashing: 'slash', Claw: 'slash',
+  Piercing: 'pierce', Bite: 'pierce', Gore: 'pierce', Sting: 'pierce',
+  Crushing: 'blunt', Bash: 'blunt', Kick: 'blunt', H2H: 'blunt', Hits: 'blunt', Maul: 'blunt',
+};
+const _HIT_TYPE_EXTRA_VERB = { stab: 'pierce', backstab: 'pierce', strike: 'blunt', rend: 'slash' };
+const MOB_HIT_TYPES_MAX = 300;
+const _mobHitTypes = new Map();   // caseKey → { slash, pierce, blunt, max:{type:n}, verbs:{verb:n} }
+function mobHitType(verb) {
+  const v = String(verb || '').toLowerCase().trim();
+  return _HIT_TYPE_BY_SKILL[_verbToSkill(v)] || _HIT_TYPE_EXTRA_VERB[v] || null;
+}
+// Is this swing a MOB's? Players' names are one word, so a multi-word attacker ("a gnoll", "Lord Nagafen")
+// is an NPC outright; a one-word one is a mob only when it is not a known player or pet AND either hits
+// a player (or a pet) or is a known NPC. A one-word attacker nobody can place, on a mob, is a player.
+function _isMobMeleeAttacker(attacker, defender, character) {
+  const a = String(attacker || '').trim();
+  if (!a || /^you$/i.test(a)) return false;
+  if (/\s/.test(a)) return true;
+  const al = a.toLowerCase();
+  if (al === String(character || '').toLowerCase()) return false;
+  if (isConfirmedPlayer(a) || _guildPetOwners.has(al) || _knownPlayerName(al)) return false;   // a player, or a pet
+  const d = String(defender || '').trim();
+  if (/^you$/i.test(d) || (d && (isConfirmedPlayer(d) || _knownPlayerName(d.toLowerCase())))) return true;
+  return _knownNpcNotPlayer(a);
+}
+function noteMobMelee(ev, character) {
+  if (!ev || !ev.attacker || ev.ds || ev.spellName || ev.nonMelee) return;
+  let verb, amount = 0;
+  if (ev.type === 'damage') { if (!(ev.amount > 0)) return; verb = ev.ability; amount = ev.amount; }
+  else if (ev.type === 'avoid') verb = ev.verb;
+  else return;
+  const type = mobHitType(verb);
+  if (!type || !_isMobMeleeAttacker(ev.attacker, ev.defender, character)) return;
+  const key = _mobCaseKey(ev.attacker);
+  let rec = _mobHitTypes.get(key);
+  if (rec) _mobHitTypes.delete(key);   // re-set below: Map order is the LRU order
+  else rec = { slash: 0, pierce: 0, blunt: 0, max: {}, verbs: {} };
+  rec[type] += 1;
+  const v = String(verb).toLowerCase().trim();
+  rec.verbs[v] = (rec.verbs[v] || 0) + 1;
+  if (amount > (rec.max[type] || 0)) rec.max[type] = amount;
+  _mobHitTypes.set(key, rec);
+  while (_mobHitTypes.size > MOB_HIT_TYPES_MAX) _mobHitTypes.delete(_mobHitTypes.keys().next().value);
+}
+// What Target Info shows for the current target, or null until something was seen.
+function mobHitTypesFor(mobName) {
+  const rec = _mobHitTypes.get(_mobCaseKey(mobName));
+  const seen = rec ? rec.slash + rec.pierce + rec.blunt : 0;
+  if (!seen) return null;
+  return { seen, slash: rec.slash, pierce: rec.pierce, blunt: rec.blunt, max: { ...rec.max }, verbs: { ...rec.verbs } };
 }
 
 // ── Your own timers pause while you are logged out (the guild lead, 2026-10-13) ───────────────────
@@ -49887,6 +49963,9 @@ function buildMobInfo() {
     // 'unaffected', spell, caster_level, at_ms } (learned from the server's
     // message) / null (unknown — the overlay draws nothing).
     target_lull:    lullVerdictFor(st.target_name, myZoneId),
+    // How this mob hits, from the melee verbs seen: { seen, slash, pierce, blunt, max, verbs } or
+    // null until one was seen (noteMobMelee). Local only; the overlay draws nothing for null.
+    target_hits:    mobHitTypesFor(st.target_name),
   };
 }
 
@@ -55658,6 +55737,8 @@ async function main() {
           // slot 16), accumulate skill / max / total / hit-count stats for the
           // Pet tracker. Side-channel; doesn't touch the encounter builder.
           try { recordPetCombat(ev, b.character); } catch {}
+          // Mob melee → the hit types Target Info shows (local only; see noteMobMelee).
+          try { noteMobMelee(ev, b.character); } catch {}
           b.builder.add(ev);
         }
       });
@@ -55734,6 +55815,8 @@ module.exports = {
   MYFIGHTS_MAX, MYFIGHTS_KEEP_MS, MYFIGHTS_CAP, MYFIGHTS_SAVE_MS,
   _myFightsForTest: () => _myFights,
   _mobInfoByNameForTest: () => _mobInfoByName,
+  // Target Info's "how this mob hits" (2026-10-14).
+  noteMobMelee, mobHitTypesFor, mobHitType, MOB_HIT_TYPES_MAX, _resetMobHitTypesForTest: () => { _mobHitTypes.clear(); },
   _setMyFightsForTest: (rows) => { _myFights = rows || []; },
   // Point the log at a temp file and arm its debounced save (no argument: disarm and clear it again).
   _myFightsPersistForTest: (file) => { _myFightsFile = file || MYFIGHTS_FILE; _myFightsPersist = !!file; if (!file) { _myFights = []; if (_myFightsTimer) { clearTimeout(_myFightsTimer); _myFightsTimer = null; } } },
