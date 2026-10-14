@@ -2166,6 +2166,11 @@ a map per zone. All content is data in `web/lib/raidPlan.ts` (dated for one nigh
 only (never Brewall). `test/pop-raid-plan.test.js`.
 
 ### PoP checklist (`/pop/guide`)
+**Sections + sidebar (web 1.8.155 · beta, §306):** `web/lib/popGuideSections.ts` groups `GUIDE_ITEMS` into `GUIDE_TREE` (tiers 1–5
+from `TIER_LABELS`, planes from `POP_ZONES`, then the Plane of Knowledge) via the explicit `STEP_HOME` map; `GUIDE_NAV` comes from the
+same tree. `GuideChecklist.tsx` draws native `<details data-gd>` (ids = URL hashes `tier-N`, `tier-N-<plane>`, `pok`,
+`pok-flags|quests|spells` — links people send, do not rename); `GuideNav.tsx` is the sidebar. "Show in checklist" and `#guide-<step>`
+open the parents via `openParents`. Test: `test/pop-guide-sections.test.js`.
 Steps are data in `web/lib/popGuide.ts` (section, Solo / Group / Raid, must-have, optional
 `flag` → a `POP_FLAGS` key, `says` → copyable `/say`, `where` → copyable `/map Y X` from the
 NPC's `eqemu_spawn2` row, and `[[Item#id]]` tokens in the text). The page
