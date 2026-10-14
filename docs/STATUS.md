@@ -134,7 +134,16 @@ next touch one rather than assuming a missing row means a missing doc.
   `test/target-info-item-links.test.js`. ⚠ Found on the way: the chat relay's item links decode the id as HEX, but
   Quarm writes it in DECIMAL, so those PQDI links point at the wrong item (see the bot-side note, not fixed here).
   Waits on the guild lead pasting a copied link into EQ to confirm the 7-digit form.
-- **🧪 /pop/guide: next steps for flags at the top, two previews (web, beta, 2026-10-10; the guild lead: "are we taking
+- **✅ PoP flags pages to production (web 1.8.158, 2026-10-14; the guild lead: "push the updates for web to main, the popflags pages, links to latest").**
+  One file-level promotion from `beta` (never a branch merge): the "Latest flags" strip (`/pop?flags=a|b`), alts grouped
+  under their main (`/pop?alts=group`, the default on All characters; `?alts=flat` opts out), the Seer paste box at the top
+  of `/pop/guide`, the guide in collapsible sections with a sidebar, `/pop` opening on My Characters with the collapsed
+  missing-spell list, the class filter, and the NEW page `/pop/latest` (live with its `[beta]` tag under the new-page rule,
+  linked from `/pop`: https://wolfpack.quest/pop/latest). `web/lib/guild.ts` rode along because the PoP files read
+  `GUILD_TAG` (it resolves to `wolfpack` unless the env says otherwise). `/pop/raid` (needs `raidPreflags.ts` from the
+  `/screen` work) and the rest of beta's web work stayed behind. Still unpicked: `?flags=a|b`, `?nx=a|b` on the guide,
+  the guide's `?v=b|c` and the Essences `?v=b|c` on `/pop`. DECISIONS §297, §302, §304, §306, §307, §309.
+- **✅ /pop/guide: next steps for flags at the top, two previews (web, live in 1.8.158 with the `?nx` switch still open; was beta, 2026-10-10; the guild lead: "are we taking
   piecemeal flags? if so we should put at the top of the guide next steps for flags in a consolidated place").**
   Yes, piecemeal: a flag reaches a character from Mimic, /who, loot or the owner's tick, and nothing showed what is
   left. `?nx=a` is a card for the picked character (3 to 5 steps that can be done now, each jumping to its row, a
@@ -146,7 +155,7 @@ next touch one rather than assuming a missing row means a missing doc.
   picked. Gaps found: the server's own Tranquility steps (`fuirstel_5`, `thelin_4`) and `hoh_trials` have no `flag` on
   their guide steps, so Mimic records them but the checklist row never ticks (the panel reads them as flags); the beta
   layouts' pop_flags read let witnessed-hail rows crowd out real flags (fixed in the same change).
-- **🧪 /pop: class filter + column sort on "PoP spells still need" (web, beta, 2026-10-09; the guild lead: "add sorting
+- **✅ /pop: class filter + column sort on "PoP spells still need" (web, live in 1.8.158; was beta, 2026-10-09; the guild lead: "add sorting
   and filtering to the pop spells section by class"; preview https://b.wolfpack.quest/pop).** Chips for every class
   in the rows ("Enchanter 4", "All" clears; several can be on at once) filter BOTH tables, the main one and the
   no-level fold; every column header (character, class, level, the three turn-ins, Other, Total) sorts, with
@@ -6090,3 +6099,9 @@ your box) while ⚙ is open or "Outline clear areas" is ticked; ⚙ → Keep cle
 character + screen setup, `cfg.mapClearPicks`). Guessed sizes, Zeal RaidBars that run to the screen edge (the likely huge cut-out:
 `Right=0`/`Bottom=0` = to the edge), and a UI file saved for another resolution start unticked. The resolution block now follows EQ's
 client size. **Open:** no confirmed "collapsed/minimised" key in the UI ini — needs a real file with a collapsed and a closed window.
+
+### 🧾 2026-10-14 — Mimic 2.9.1 stable (agent 3.7.176, DECISIONS §331)
+Everything on beta since 2.9.0 is now stable: Chat overlay (rounds 1–4, breakout windows and 🔗 lock-together, Melee/Spells/Skills), tray layout B + Updates
+submenu, overlay sets, UI Studio named layouts and chat windows, sounds / voices / names, Map Full mode + keep-clear + Line strength + rings + raid
+targets, DPS per-person time, Target Info hit types, Charm "Best pets here", roll ties, timer ✕, clean shutdown, flicker and refocus fixes. Web 1.8.159
+(roadmap). **Left on beta:** `apps/mimic/pop-quests.js` (generated from the beta web PoP guide; goes with the web PoP graduation).

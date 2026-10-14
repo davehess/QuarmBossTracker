@@ -401,13 +401,14 @@ Which raid is whose, when the guild runs more than one. DECISIONS-2026-09-21 §1
 - Mimic: `apps/mimic/buffqueue.html` By buff | By group (`wp:bq:view`), reads `groups` / `self_group` /
   `classes`, falls back to the queue rows on an older bot. Test: `test/buffqueue-groups.test.js`. §149.
 
-### PoP guide: next steps for flags (`?nx=a` / `?nx=b`, web beta, 2026-10-10)
+### PoP guide: next steps for flags (`?nx=a` / `?nx=b`, live, web 1.8.158; built 1.8.134, 2026-10-10)
 - `web/lib/popNextSteps.ts`: `NEXT_LINES` is the one authored table (14 progression lines, each an ordered list of
   stages of guide step keys); `nextSteps({ done, flags })` returns, per line, `done` / `next` (the earliest stage's open
   steps) / `blocked` (the flags it waits on and the line that grants each). Prerequisites are NOT restated: a stage's plane
   gate is `POP_ZONES[].requires` (`popFlags.ts`), a flag's earlier flags are `GATE_IMPLIES` (`popWho.ts`), and a held flag
   is closed over both (`whoProves`). A later step ticked without an earlier one is trusted; the skipped steps are reported.
-  Optional steps are not on a line. `nextCard` is variant A's payload, `nxMode` the `?nx=` switch.
+  Optional steps are not on a line. `nextCard` is variant A's payload, `nxMode` the `?nx=` switch. Still a two-way
+  preview: A or B is the guild lead's pick.
 - `web/app/pop/guide/page.tsx` builds the panel before the layout switch and drops it into the `?v=b/c` and the default
   branch; the data is `loadRoute` (`routeData.ts`, which now also returns every flag shown for a character).
   `NextUp.tsx` (client, follows `?c=`), `NextTable.tsx` (server). Cells and links use the rows' own ids (`guide-<key>`,
@@ -922,24 +923,6 @@ be a confidently wrong number. The `vs catalog` ratio column is the answer
 instead: it is the focus effect **observed**, correct for Quarm's own tuning.
 Tests: `test/buff-durations.test.js`.
 
-### Focus gate: hide overlays + release hotkeys when EQ/Mimic isn't in front (Mimic beta, 2026-10-08)
-`cfg.hideOverlaysWhenUnfocused` (default off, Windows only). Switch: tray ("Hide overlays + hotkeys when
-EverQuest/Mimic isn't focused"), Settings, and a checkbox under the keys on the dashboard's Overlays tab
-(`dashboard.html`, `#wpFocusGate`) — all three end in `_onFocusGateOptionChanged` in `apps/mimic/main.js`.
-- **Watcher:** one resident hidden PowerShell (`_startFocusWatcher`, `-EncodedCommand`, user32
-  `GetForegroundWindow`) prints the foreground pid only when it changes; it exits itself if Mimic dies.
-- **Classify:** `_focusClassify` — EQ pids (`_eqPids`, from the same tasklist read as `_checkEqRunning`) or
-  Mimic's own pids (`process.pid` + `app.getAppMetrics()`) = focused; anything unreadable or unknown FAILS OPEN.
-- **Debounce:** `_makeFocusDebouncer` — 600 ms of foreign focus before the flip, regained focus is immediate.
-- **Gate:** `_eqGateOk` = EQ-running part AND `_focusPass` (bypassed by option off, other platforms, setup mode,
-  unlocked overlays), so every `apply*Visibility()` and `_overlayWanted` follow it; the trigger window stays alive
-  hidden, so spoken callouts keep playing.
-- **Hotkeys:** `_syncFocusHotkeys` (idempotent, run from `applyAllVisibility` / `applyOverlayInteractivity`)
-  `unregisterAll`s on focus loss and re-registers through `registerHideAllHotkey` under `_hotkeyQuiet` (no
-  failure logs, `_blockedHotkeys`/`_blockedOverlayAccels` restored). `_hotkeysGatedOff` makes
-  `registerHideAllHotkey` a no-op, so the dashboard key-capture's 30 s auto-resume cannot re-register mid-gate.
-- Tests: `test/focus-gate.test.js`. Status fields: `focusGateOn`, `focusOk`.
-
 ### Dashboard: the Overlays tab, option C (agent 3.7.49, beta `b8c6b98c`, 2026-09-29)
 The guild lead picked option C of three mockups (DECISIONS §106–§107). The tab, top to bottom:
 - **Your layouts**: one tile per saved per-character layout (`_wpOvLaysHtml`), with its ✕ forget and a
@@ -1138,18 +1121,18 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   closed). The ⚙ keeps text settings + Group/Officer/Custom; Melee/Spells/Skills switches, the "shows" rows, Channels and the
   notes live in `<details id="moreset">`. Both open states are per window in localStorage (`wpChatMore:<win>`,
   `wpChatMoreSet:<win>`), failing closed.
-- **Seer paste on /pop/guide** (web 1.8.154 · beta, §304): `web/app/pop/guide/SeerPaste.tsx` (collapsed `<details>` atop all guide
+- **Seer paste on /pop/guide** (live, web 1.8.158; built 1.8.154, §304): `web/app/pop/guide/SeerPaste.tsx` (collapsed `<details>` atop all guide
   layouts); reader `web/lib/popRecital.ts` (`parseRecital`, `heldClosure`, `zoneViews`, `recitalRows`; table copied from
   `utils/popFlagStages.js`, parity-tested); guide join `web/lib/popGuideSeer.ts` (`STEP_GUIDE`, `guideStepsProven`); save
   `saveSeerRecital` (`web/app/pop/guide/actions.ts`) → `web/lib/popRecitalSave.ts` (ownership via `ownedCharacters`, skip existing
   recital keys, in-memory limiter 8/10 min). Test: `test/pop-seer-paste.test.js`.
-- **PoP alts grouped by main** (`/pop?alts=group`, web 1.8.153 · beta, §302): `web/lib/popAltGroups.ts` (grouping, change rule,
+- **PoP alts grouped by main** (`/pop?alts=group`, live, web 1.8.158; built 1.8.153, §302): `web/lib/popAltGroups.ts` (grouping, change rule,
   24 h / 3 d buckets — pure), `web/app/pop/AltGroupMatrix.tsx` (render), `web/app/pop/page.tsx` (params `alts`, `sort=latest`,
   `open=1`). Test: `test/pop-alt-groups.test.js`. Since web 1.8.156 (§307) All characters' Matrix is grouped by default
   (`?alts=flat` opts out).
-- **PoP scope + view toggles** (web 1.8.156 · beta, §307): `web/lib/popScope.ts` (`resolvePopView`: My Characters default, old-link
+- **PoP scope + view toggles** (live, web 1.8.158; built 1.8.156, §307): `web/lib/popScope.ts` (`resolvePopView`: My Characters default, old-link
   rules) + `web/app/pop/page.tsx`. Test: `test/pop-scope.test.js`.
-- **Latest flags page** (`/pop/latest` [beta], web 1.8.157, §309): `web/lib/popLatestView.ts` (moments, clusters, recital-repeat
+- **Latest flags page** (`/pop/latest` [beta] tag, live on https://wolfpack.quest/pop/latest since web 1.8.158; built 1.8.157, §309): `web/lib/popLatestView.ts` (moments, clusters, recital-repeat
   collapse, derived chain order, unlocks, raid still-needs, filters), `web/app/pop/latest/` (page, Stream, StageBoard, ExpandList);
   strip rules shared with `web/lib/popLatestFlags.ts`. Test: `test/pop-latest-view.test.js`.
 - **Best charm pets in this zone** (agent 3.7.170 · Mimic beta + bot 3.1.264, §308): Charm overlay `apps/mimic/charm.html` section
@@ -1157,7 +1140,7 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   level; `rankCharmPets`; local `GET /api/charm-best`; disk cache `charm-pets-cache/`); bot `utils/charmPets.js` +
   `GET /api/agent/charm-pets?zone=` (spell-independent candidates per zone, 6 h cache, ETag). 404 → section hidden; local mode makes no
   call. Tests: `test/charm-pets.test.js`, `test/charm-pets-agent.test.js`.
-- **PoP missing spells, my characters** (web 1.8.156 · beta, §307): `web/lib/popMissingSpells.ts` (`pqdiSpellUrl`, copy-line builder,
+- **PoP missing spells, my characters** (live, web 1.8.158; built 1.8.156, §307): `web/lib/popMissingSpells.ts` (`pqdiSpellUrl`, copy-line builder,
   one-line description from `eqemu_spells`) + `web/app/pop/MissingSpells.tsx` (closed `<details>`, `CopyChip`). Data: `pop_spell_needs`
   plus one chunked `eqemu_spells` lookup. Test: `test/pop-missing-spells.test.js`.
 - **/who overlay** (`who.html`): fixed height (`wp:who:height`, drag grip, double-click = fit), a
@@ -2253,7 +2236,7 @@ a map per zone. All content is data in `web/lib/raidPlan.ts` (dated for one nigh
 only (never Brewall). `test/pop-raid-plan.test.js`.
 
 ### PoP checklist (`/pop/guide`)
-**Sections + sidebar (web 1.8.155 · beta, §306):** `web/lib/popGuideSections.ts` groups `GUIDE_ITEMS` into `GUIDE_TREE` (tiers 1–5
+**Sections + sidebar (live, web 1.8.158; built 1.8.155, §306):** `web/lib/popGuideSections.ts` groups `GUIDE_ITEMS` into `GUIDE_TREE` (tiers 1–5
 from `TIER_LABELS`, planes from `POP_ZONES`, then the Plane of Knowledge) via the explicit `STEP_HOME` map; `GUIDE_NAV` comes from the
 same tree. `GuideChecklist.tsx` draws native `<details data-gd>` (ids = URL hashes `tier-N`, `tier-N-<plane>`, `pok`,
 `pok-flags|quests|spells` — links people send, do not rename); `GuideNav.tsx` is the sidebar. "Show in checklist" and `#guide-<step>`
@@ -3506,9 +3489,7 @@ version for Check, Install and the 12-hour reminder. Default stays `official`.
     `tag_shapes.cpp`.
   - **Images:** `public/zeal/marks` (121 PNGs), rendered from the real meshes by
     `docs/upstream/zeal-tag-shapes/preview/export_marks.py`. Provenance is in
-    `public/zeal/PROVENANCE.txt`. The 30 banners and the Burnouts icon (web 1.8.136, beta)
-    come from the fork's local `guildicon-draft` branch (logo in the guild's colours with a rim, full
-    name around it); `dump.cpp` and `export_marks.py` carry the logo and name colours for that.
+    `public/zeal/PROVENANCE.txt`.
   - **Link previews:** `lib/pageMeta.ts` names the gallery and each guild.
   - **Test:** `test/zeal-icons-page.test.js` checks that the page stays public and inert,
     that every named image exists, and that every hosted picture passes Zeal's own checks
