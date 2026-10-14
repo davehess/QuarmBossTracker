@@ -217,6 +217,10 @@
     background:rgba(0,0,0,0.35);color:#c9d1d9;border:1px solid rgba(255,255,255,0.18);
     font-size:11px;line-height:1;cursor:pointer;pointer-events:auto}
   .timer-row .timer-x:hover{color:#fff;background:rgba(248,113,113,0.6);border-color:#f87171}
+  /* A 16px target is small on a shrunk overlay (the size slider is a zoom): the invisible ring around it takes
+     the press too, without moving the row's layout. */
+  .timer-row .timer-x{position:relative}
+  .timer-row .timer-x::before{content:'';position:absolute;inset:-5px}
   /* (The stack is bottom-anchored now, so the setup bar at the top of the
      window no longer sits on it — the old `body.setup #timers{top:58px}`
      nudge is gone. measureWanted() still reserves the taller top gutter in
@@ -962,7 +966,13 @@
   // so an in-flight /api/state poll (started before the cancel POST landed)
   // can't flicker the chip back. Pruned on read.
   const _dismissedIds = new Map();   // id → expiry ms
+  // A row that never ends (the server tick: one fixed id, regenerated every snapshot) cannot be "dismissed for a
+  // few seconds" — it would be back at once. ✕ hides it for as long as THIS page lives, i.e. until the overlay is
+  // reopened or Mimic restarts. Nothing is sent to the agent: a hide kept there would outlast the page.
+  const PERPETUAL_ROWS = new Set(['bt|servertick']);
+  const _hiddenForLife = new Set();
   function _isDismissed(id){
+    if (_hiddenForLife.has(id)) return true;
     const exp = _dismissedIds.get(id);
     if (exp == null) return false;
     if (Date.now() > exp){ _dismissedIds.delete(id); return false; }
@@ -974,22 +984,79 @@
   // person clearing a Death Touch bar can't clear the raid's, and nothing is
   // remembered after the process exits. The agent records the dismissal as a
   // signal (#207); it does not act on it.
-  function dismissTimer(id){
-    if (!id) return;
-    _dismissedIds.set(id, Date.now() + 4000);
-    const n = timerNodes.get(id);
-    if (n){ n.row.remove(); timerNodes.delete(id); }
-    try { window.mimic.overlayHoverInteractive(false); } catch(e){}
+  // The cancel POST, retried twice if the agent is busy or the request fails: a lost one used to mean a ✕ that
+  // "did nothing" (the row came back on the next poll once the 4 s grace ended). `ok:false` is an answer, not a
+  // failure: the agent no longer has that row, which is what the click wanted.
+  function postCancel(body, tries){
+    tries = tries || 0;
     try {
       fetch('http://127.0.0.1:'+PORT+'/api/timers/cancel', {
         method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ id: id, reason: 'chip_x' }),
-      }).catch(function(){});
+        body: JSON.stringify(body),
+      }).then(function(r){ if (!r.ok) throw new Error('cancel ' + r.status); })
+        .catch(function(){ if (tries < 2) setTimeout(function(){ postCancel(body, tries + 1); }, 400 * (tries + 1)); });
     } catch(e){}
+  }
+  // The window is armed (takes the mouse) while the cursor is over a ✕. A press that removes the row would
+  // otherwise disarm it before the button comes up, and that mouseup would fall through to EverQuest; with
+  // `held`, the disarm waits for the mouseup (or a second, if it never comes).
+  function releaseHover(held){
+    if (!held){ try { window.mimic.overlayHoverInteractive(false); } catch(e){} return; }
+    let done = false;
+    const off = function(){
+      if (done) return;
+      done = true;
+      window.removeEventListener('mouseup', off, true);
+      try { window.mimic.overlayHoverInteractive(false); } catch(e){}
+    };
+    window.addEventListener('mouseup', off, true);
+    setTimeout(off, 1000);
+  }
+  function dismissTimer(id, held){
+    if (!id) return;
+    const perpetual = PERPETUAL_ROWS.has(id);
+    if (perpetual) _hiddenForLife.add(id);
+    else _dismissedIds.set(id, Date.now() + 4000);
+    const n = timerNodes.get(id);
+    if (n){ n.row.remove(); timerNodes.delete(id); }
+    releaseHover(held);
+    if (!perpetual) postCancel({ id: id, reason: 'chip_x' });
     // Shrink the window back now that a chip is gone.
     try { requestAutoHeight(); } catch(e){}
     try { refreshClearButton(); } catch(e){}
   }
+  // The ✕ is handled by ONE set of listeners on the stable #timers parent, not by listeners on each ✕. A ✕ is
+  // rebuilt whenever its row is (a timer that ends and comes back, a re-sorted stack), and a press is two events
+  // far enough apart for that to happen between them, so a listener on the ✕ itself can miss. Which row it
+  // belongs to is read off the row (data-timer-id) at the moment of the press, not from a closure over the
+  // first render. The PRESS (mousedown) dismisses, not the click: removing the row moves its neighbours up under
+  // the cursor, so a click handler would see the mouseup land on the next row's ✕.
+  function _timerXOf(ev){
+    const t = ev && ev.target;
+    return (t && t.closest) ? t.closest('.timer-x') : null;
+  }
+  function _timerIdOf(x){
+    const row = x && x.closest ? x.closest('.timer-row') : null;
+    return row && row.dataset ? row.dataset.timerId : null;
+  }
+  function onTimerXOver(ev){
+    if (_timerXOf(ev)) { try { window.mimic.overlayHoverInteractive(true); } catch(e){} }
+  }
+  function onTimerXOut(ev){
+    const x = _timerXOf(ev);
+    if (x && !(ev.relatedTarget && x.contains(ev.relatedTarget))) { try { window.mimic.overlayHoverInteractive(false); } catch(e){} }
+  }
+  function onTimerXPress(ev){
+    if (ev.button != null && ev.button !== 0) return;
+    const x = _timerXOf(ev);
+    const id = _timerIdOf(x);
+    if (!id) return;
+    if (ev.preventDefault) ev.preventDefault();
+    dismissTimer(id, true);
+  }
+  timersEl.addEventListener('mouseover', onTimerXOver);
+  timersEl.addEventListener('mouseout', onTimerXOut);
+  timersEl.addEventListener('mousedown', onTimerXPress);
   // 🗑 title-bar clear-all — countdowns AND pinned callouts in one click.
   // "this is annoying and no way to clear it" (Rethlan, live on Ssra): before
   // this the only escape was hiding the whole overlay.
@@ -998,21 +1065,17 @@
       // Skip loot chips on BOTH sides — the agent spares them too, so clearing
       // one here would only blank it until the next 700ms poll put it back.
       if (n.row.classList.contains('loot')) continue;
-      _dismissedIds.set(id, Date.now() + 4000);
+      if (PERPETUAL_ROWS.has(id)) _hiddenForLife.add(id);
+      else _dismissedIds.set(id, Date.now() + 4000);
       n.row.remove();
       timerNodes.delete(id);
     }
     for (const key of Array.from(stickyRows.keys())) dismissSticky(key, 'dismissed');
     try { window.mimic.overlayHoverInteractive(false); } catch(e){}
-    try {
-      // The agent decides what "all" means — it spares open loot-auction
-      // windows (#129: a raider must see every bid window to bid on it) and
-      // records one dismissal per countdown it drops.
-      fetch('http://127.0.0.1:'+PORT+'/api/timers/cancel', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ all: true, reason: 'clear_all' }),
-      }).catch(function(){});
-    } catch(e){}
+    // The agent decides what "all" means — it spares open loot-auction
+    // windows (#129: a raider must see every bid window to bid on it) and
+    // records one dismissal per countdown it drops.
+    postCancel({ all: true, reason: 'clear_all' });
     try { requestAutoHeight(); } catch(e){}
     try { refreshClearButton(); } catch(e){}
   }
@@ -1165,10 +1228,11 @@
           // dependable path (the guild lead, 2026-10-06: "I can't click on these x's either").
           x.setAttribute('data-wp-interact', '');
           x.textContent = '✕';
-          x.title = 'Dismiss this countdown (yours only)';
-          x.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch(e){} });
-          x.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch(e){} });
-          x.addEventListener('click', function(){ dismissTimer(t.id); });
+          x.title = PERPETUAL_ROWS.has(t.id)
+            ? 'Hide this until you reopen the timers overlay or restart Mimic'
+            : 'Dismiss this countdown (yours only)';
+          // The listeners live on #timers (onTimerXPress and friends), keyed by the row's data-timer-id.
+          row.dataset.timerId = t.id;
           row.appendChild(x);
         }
         n = {

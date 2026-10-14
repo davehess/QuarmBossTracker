@@ -9723,6 +9723,7 @@ ipcMain.handle('overlay-resize-preset', (e, preset) => {
 // the renderer still receives mousemove/enter/leave, so a control can ask us to
 // momentarily make ITS window interactive while the cursor is over it, then
 // restore the click-through state on mouseleave. Standard Electron recipe.
+const _hoverArmFrames = new Set();
 ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
   try {
     const win = BrowserWindow.fromWebContents(e.sender);
@@ -9736,6 +9737,15 @@ ipcMain.handle('overlay-hover-interactive', (e, wantInteractive) => {
     const isOverlay = _overlayEntries().some(([, w]) => w === win);
     if (!isOverlay) return false;
     if (wantInteractive) {
+      // One log line the first time each page (a Canvas panel is an iframe) arms its window, so "I cannot click the
+      // ✕ in the Canvas" can be answered from the log: a panel that never appears here never reached main.
+      try {
+        const frame = String((e.senderFrame && e.senderFrame.url) || '').slice(-90);
+        if (frame && !_hoverArmFrames.has(frame) && _hoverArmFrames.size < 24) {
+          _hoverArmFrames.add(frame);
+          appendAgentLog(`[hover] first arm from ${frame}\n`);
+        }
+      } catch { /* a log line is never worth the handshake */ }
       win.setIgnoreMouseEvents(false);
     } else {
       // Restore whatever the lock state dictates for this window. A window

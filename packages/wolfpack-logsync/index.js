@@ -34653,36 +34653,10 @@ function startWebDashboard(port) {
         const body = await _readBody(req).catch(() => '');
         let payload = {};
         try { payload = body ? JSON.parse(body) : {}; } catch { payload = {}; }
-        const reason = String(payload?.reason || 'dismissed').slice(0, 40);
-        if (payload && payload.all) {
-          let cancelled = 0;
-          for (const [tid, row] of [..._activeTimers]) {
-            if (row && row.kind === 'loot') continue;
-            _activeTimers.delete(tid);
-            cancelled++;
-            _recordCalloutFeedback({ direction: 'dismissed', timer: row, source: reason });
-          }
-          try { for (const r of _builtinTimerRows(Date.now())) { _builtinTimerHidden.add(r.id); cancelled++; } }
-          catch { /* best effort */ }
-          scheduleRender();
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          return res.end(JSON.stringify({ ok: true, cancelled }));
-        }
-        const id = String(payload?.id || '');
-        const row = id ? _activeTimers.get(id) : null;
-        let ok = id ? _cancelTimer(id) : false;
-        // A timer-bar row is rebuilt every snapshot — hide that instance.
-        if (!ok && id.startsWith('bt|')) { _builtinTimerHidden.add(id); ok = true; }
-        if (ok && row) _recordCalloutFeedback({ direction: 'dismissed', timer: row, source: reason });
-        if (ok && id.startsWith('loot|')) {
-          const sig = id.slice('loot|'.length);
-          _lootAuctions.delete(sig);
-          if (_lastLootSig === sig) _lastLootSig = null;
-        }
-        if (ok && id.startsWith('auction|')) _dkpAuctionsDismissed.add(id.slice('auction|'.length));
+        const out = _handleTimerCancel(payload);
         scheduleRender();
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({ ok, cancelled: ok ? 1 : 0 }));
+        return res.end(JSON.stringify(out));
       }
 
       // POST /api/loot-prefs — dashboard Triggers-tab toggle + default-duration
@@ -46079,10 +46053,25 @@ function _runRelayedFire(fire, firedAtLocal) {
 // relay reached us, or the bot handed it again after a restart or a zone hop). A countdown from an OLDER
 // window is replaced: the bot only hands out a window a fresh sighting has not cleared.
 const LATE_JOIN_SAME_WINDOW_MS = 120_000;   // the bot's SAME_WINDOW_MS: two observers of one emote
+// A zone timer the raider ✕'d: trigger id → when that countdown started. The bot hands a window out again when
+// you leave the zone and come back (or after its own restart), and the "already running" check below cannot tell
+// a countdown you dismissed from one you never had, so the timer you just cleared came back. Same window = same
+// emote, by the same tolerance the bot uses; a NEW window starts later than that and arms normally.
+const _lateJoinDismissed = new Map();
+function _noteTimerDismissed(row) {
+  if (!row || !row.trigger_id || !Number.isFinite(row.started_at_ms)) return;
+  _lateJoinDismissed.set(String(row.trigger_id), row.started_at_ms);
+}
 function _runLateJoinFire(fire) {
   if (!fire || !fire.trigger_id) return false;
   const tid = String(fire.trigger_id);
   const startedAt = _relayFiredAtLocal(fire);
+  const dismissedAt = _lateJoinDismissed.get(tid);
+  if (dismissedAt != null &&Math.abs(startedAt - dismissedAt) <= LATE_JOIN_SAME_WINDOW_MS) {
+    _journalTrigger({ trigger: fire.name || 'zone timer', scope: 'guild_relay', checkpoint: TJ.MATCHED,
+                      stopped: true, reason: 'late join skipped — you dismissed this countdown' });
+    return false;
+  }
   // Our own definition first: it carries end_text, warnings, colour. The bot's fields are the fallback
   // for a trigger this agent has not loaded yet.
   const def = (stats.guildTriggers || []).find(g => g && String(g.id) === tid);
@@ -51405,6 +51394,47 @@ function _cancelTimer(id) {
   if (!id) return false;
   return _activeTimers.delete(String(id));
 }
+// POST /api/timers/cancel, as a function: the ✕ on a countdown row ({ id }) and the title-bar clear-all
+// ({ all: true }) both land here. Returns the JSON the route answers with. Every row kind the overlay can show is
+// cancellable by its id: a trigger countdown (a key in _activeTimers), a loot chip (`loot|…`), an OpenDKP auction
+// (`auction|…`) and a bar built from tracked state (`bt|…`, hidden by id, since the next snapshot rebuilds it).
+// A dismissal is also remembered per trigger, so a zone timer the bot hands out again on re-entry stays dismissed.
+function _handleTimerCancel(payload) {
+  const reason = String(payload?.reason || 'dismissed').slice(0, 40);
+  if (payload && payload.all) {
+    let cancelled = 0;
+    for (const [tid, row] of [..._activeTimers]) {
+      if (row && row.kind === 'loot') continue;
+      _activeTimers.delete(tid);
+      cancelled++;
+      _noteTimerDismissed(row);
+      _recordCalloutFeedback({ direction: 'dismissed', timer: row, source: reason });
+    }
+    // The server tick is perpetual: the overlay hides it for as long as it is open, so a hide kept here would
+    // outlast the overlay and the row would never come back until the tick source went quiet.
+    try {
+      for (const r of _builtinTimerRows(Date.now())) {
+        if (_BUILTIN_PERPETUAL_IDS.has(r.id)) continue;
+        _builtinTimerHidden.add(r.id);
+        cancelled++;
+      }
+    } catch { /* best effort */ }
+    return { ok: true, cancelled };
+  }
+  const id = String(payload?.id || '');
+  const row = id ? _activeTimers.get(id) : null;
+  let ok = id ? _cancelTimer(id) : false;
+  // A timer-bar row is rebuilt every snapshot — hide that instance.
+  if (!ok && id.startsWith('bt|')) { _builtinTimerHidden.add(id); ok = true; }
+  if (ok && row) { _noteTimerDismissed(row); _recordCalloutFeedback({ direction: 'dismissed', timer: row, source: reason }); }
+  if (ok && id.startsWith('loot|')) {
+    const sig = id.slice('loot|'.length);
+    _lootAuctions.delete(sig);
+    if (_lastLootSig === sig) _lastLootSig = null;
+  }
+  if (ok && id.startsWith('auction|')) _dkpAuctionsDismissed.add(id.slice('auction|'.length));
+  return { ok, cancelled: ok ? 1 : 0 };
+}
 // ── #142 boss-death → clear that mob's countdown timers ─────────────────────
 // A tank-buster / death-touch / any boss-cadence countdown (armed by a guild
 // trigger with timer_duration_sec) should vanish the instant the mob dies, so
@@ -51867,6 +51897,9 @@ function _calloutFeedbackSnapshot() {
 // next charm or recast shows again.
 const BUILTIN_TIMER_MIN_SPELL_SEC = 30;   // skips 3-tick bard songs and short DoT refreshes
 const _builtinTimerHidden = new Set();
+// Rows with one fixed id for as long as they exist (no land time in it). The ✕ on one hides it in the overlay
+// for as long as the overlay stays open; the agent never keeps that hide, or "until you reopen it" would be forever.
+const _BUILTIN_PERPETUAL_IDS = new Set(['bt|servertick']);
 function _builtinTimerKindsOn() {
   const on = new Set();
   let playing = null;   // resolved once, only when a switch is set for some characters (FB-34)
