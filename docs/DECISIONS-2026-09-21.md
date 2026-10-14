@@ -10203,3 +10203,15 @@ Harmony, Hide/Sneak for non-rogues).
   on V4. This session builds the conditioning frames, animatics and a job sheet from `raid_track_minutes`
   (EQEmu wall layer only, class colours, no names) and hands over a zip.
 - **/screen recap card:** on beta (`3c25a53f`), waiting on the bot side to serve `recap`.
+
+### 289. Lord Mobsincamp is an ancient wolf god who runs with the pullers; a pre-raid video for Wednesday (2026-10-13)
+
+- **The look (the guild lead):** an ancient anthropomorphic wolf god, robed and wizened, weary of time, a glowing
+  hourglass floating on a chain, lassos and whips in holsters for pulls; runs on the wind, tight around corners,
+  vigilant, one eye on the Pack and on where we go next; runs with the pullers and watches for the raid lead's
+  eye contact. Written into the cast bible (docs/DESIGN-raid-announcers.md, Lord Mobsincamp → Identity: "Look"
+  and a new portrait prompt; the seated-keeper portrait is marked superseded). He still never fights.
+- **The video (the guild lead):** *"let's start putting together a video that we will probably have to generate a
+  lot of after 1pm est today"* (Wednesday 2026-10-14). Generation runs on V5 (§288). This session prepares the
+  production pack first: character reference sheet prompts, a storyboard tied to the pre-raid monologues,
+  per-shot image and LTX prompts, and the job list.
