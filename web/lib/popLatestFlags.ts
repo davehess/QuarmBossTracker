@@ -87,7 +87,7 @@ export type MomentGroup = {
 
 // A key another key in the same moment already proves (fuirstel_2 carries fuirstel_1 and grummus_1) is not a
 // second thing the character did, so it is not listed beside the one that carried it.
-function dropImplied(keys: string[]): string[] {
+export function dropImplied(keys: string[]): string[] {
   const proves = (from: string, target: string) => {
     const seen = new Set<string>();
     const stack = [...(STEP_IMPLIES[from] ?? [])];

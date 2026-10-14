@@ -312,7 +312,7 @@ describe('the page: the owner’s cells are buttons, everyone else’s are marks
 
   it('seeds each table’s provider with the ticks the viewer may change (own rows; every row for an officer)', () => {
     expect(page).toMatch(/rows\.filter\(r => canTick\(r\.name\)\)/);
-    expect(page.match(/<SelfFlagsProvider initial=/g)).toHaveLength(2);   // My Characters and the matrix
+    expect(page.match(/<SelfFlagsProvider initial=/g)).toHaveLength(3);   // My Characters, the matrix and the alts-grouped matrix
   });
 
   it('shows a tick as its own gold ☑, with the title, and lets a proof outrank it', () => {
@@ -329,7 +329,7 @@ describe('the page: the owner’s cells are buttons, everyone else’s are marks
 
   it('has a legend next to the tables, and counts the ticks on the chart', () => {
     expect(page).toMatch(/const gateLegend = \(/);
-    expect(page.match(/\{gateLegend\}|&& gateLegend\}/g)).toHaveLength(2);   // My Characters and the matrix
+    expect(page.match(/\{gateLegend\}|&& gateLegend\}/g)).toHaveLength(3);   // My Characters, the matrix and the alts-grouped matrix
     expect(page).toMatch(/selfFlagCount\.get\(f\)/);
   });
 

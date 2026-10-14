@@ -54,6 +54,11 @@
 // ?flags=a | b — the "Latest flags" strip above the page (web/lib/popLatestFlags.ts; the guild lead, 2026-10-14), beta
 // comparison: a = newest first, b = grouped by flag step; unset = no strip.
 //
+// ?alts=group — the Matrix with alts nested under their main, each family collapsed (web/lib/popAltGroups.ts; the
+// guild lead, 2026-10-14), beta comparison. Without ?view it opens the Matrix; it lists every raid alt whatever
+// ?scope says. &sort=latest orders families (and alts inside one) by their newest flag change, &open=1 opens every
+// family. Changes in the last 24 h / 3 days are highlighted. Unset = the flat Matrix as production has it.
+//
 // ?pclass=enc,wiz · ?psort=<column> · ?pdir=asc|desc — the spell-needs table's class filter and column sort
 // (the guild lead, 2026-10-09). Server-side, validated against whitelists in web/lib/popSpellsView.ts, carried by
 // every hrefFor link; unset = every class, highest level first.
@@ -91,6 +96,8 @@ import { demoEssenceQueue } from '@/lib/essencesQueue';
 import { GUILD_TAG } from '@/lib/guild';
 import LatestFlags from './LatestFlags';
 import { latestFlagsFor } from '@/lib/popLatestFlags';
+import AltGroupMatrix from './AltGroupMatrix';
+import { changesByCharacter, groupFamilies, parseAltsView } from '@/lib/popAltGroups';
 
 export const dynamic = 'force-dynamic';
 export const metadata = {
@@ -98,7 +105,7 @@ export const metadata = {
   description: 'Every Planes of Power flag gate by tier, how many raiders hold each flag and who can enter each zone today.',
 };
 
-type FlagRow = { character: string; flag_key: string; earned_at: string; boss: string | null; zone: string | null };
+type FlagRow = { character: string; flag_key: string; earned_at: string; boss: string | null; zone: string | null; source: string };
 // flags = recorded + seen + looted + self; seen = the flags only /who proves (a character standing in a gated plane);
 // looted = the flags only loot proves (a character that looted in one; Mimic and /who outrank it, so a flag they
 // prove is never here); self = the flags only the owner's own tick holds (Mimic, /who and loot all outrank it).
@@ -159,10 +166,11 @@ const KIND_ICONS: Record<string, string> = {
 };
 
 export default async function PopFlagsPage(
-  { searchParams }: { searchParams: Promise<{ zone?: string; view?: string; scope?: string; v?: string; demo?: string; all?: string; pclass?: string; psort?: string; pdir?: string; flags?: string }> },
+  { searchParams }: { searchParams: Promise<{ zone?: string; view?: string; scope?: string; v?: string; demo?: string; all?: string; pclass?: string; psort?: string; pdir?: string; flags?: string; alts?: string; sort?: string; open?: string }> },
 ) {
-  const { zone: zoneKey, view, scope: scopeParam, v, demo, all: allParam, pclass: pclassParam, psort: psortParam, pdir: pdirParam, flags: flagsParam } = await searchParams;
+  const { zone: zoneKey, view, scope: scopeParam, v, demo, all: allParam, pclass: pclassParam, psort: psortParam, pdir: pdirParam, flags: flagsParam, alts: altsParam, sort: sortParam, open: openParam } = await searchParams;
   const showAll = allParam === '1';
+  const altsView = parseAltsView({ alts: altsParam, sort: sortParam, open: openParam });
   const scope: 'mains' | 'all' = scopeParam === 'all' ? 'all' : 'mains';
   const { data: { user } } = await supabaseServer().auth.getUser();
   // Keep the query through sign-in, so a shared ?v=b&demo=1 or ?zone= link still opens what it names.
@@ -265,7 +273,7 @@ export default async function PopFlagsPage(
     // flags so far, which would draw a half-flagged guild as if it were the whole one.
     // 'hail' rows are witnessed hails (who talked to which NPC), evidence and not flags (§119).
     return selectAll<FlagRow>((from, to) => sb.from('pop_flags')
-      .select('character, flag_key, earned_at, boss, zone')
+      .select('character, flag_key, earned_at, boss, zone, source')
       .not('flag_key', 'in', '(unmapped,hail)')
       .order('earned_at', { ascending: true }).order('id', { ascending: true })
       .range(from, to));
@@ -326,7 +334,7 @@ export default async function PopFlagsPage(
     mappedFlagRows(),
     sb.from('pop_flags').select('id', { count: 'exact', head: true }).eq('flag_key', 'unmapped'),
     sb.from('characters')
-      .select('name, rank, active')
+      .select('name, rank, active, main_name')
       .eq('guild_id', GUILD_TAG)
       .in('rank', [...RAIDER_RANKS, ...RAID_ALT_RANKS])
       .limit(1000),
@@ -343,7 +351,7 @@ export default async function PopFlagsPage(
   const hasMarkOfJustice = (name: string) => !!marks.get(name.toLowerCase())?.has(MARK_OF_JUSTICE.name);
 
   // Levels from each character's last /who (who_directory), a hundred names a request.
-  const rosterRows = (rosterRaw ?? []) as { name: string; rank: string | null; active: boolean | null }[];
+  const rosterRows = (rosterRaw ?? []) as { name: string; rank: string | null; active: boolean | null; main_name: string | null }[];
   const levelOf = new Map<string, number>();
   for (let i = 0; i < rosterRows.length; i += 100) {
     const { data } = await sb.from('who_directory').select('character_key, level')
@@ -537,6 +545,19 @@ export default async function PopFlagsPage(
   const MainsAlts = ({ s }: { s: Split }) => <>{s.mains}{scope === 'all' && <span className="text-dim"> ({s.alts})</span>}</>;
 
   const selected = zoneKey ? POP_ZONE_BY_KEY[zoneKey] ?? null : null;
+  // ?alts=group opens the Matrix when no view is named, so /pop?alts=group lands on the grouped list.
+  const matrixView = !selected && (view === 'matrix' || (altsView.group && !view));
+  // The grouped Matrix lists every raid alt under its main whatever the scope says (grouping them is the point),
+  // minus the characters their owner hid unless ?all=1. A main that is not on the list leaves its alts standing alone.
+  const nowMs = Date.now();
+  const mainNameOf = new Map(rosterRows.map(r => [r.name.toLowerCase(), r.main_name]));
+  const rootOf = (lower: string) => mainNameOf.get(lower)?.toLowerCase() ?? null;
+  const changes = matrixView && altsView.group ? changesByCharacter(flagRows) : new Map();
+  const families = matrixView && altsView.group
+    ? groupFamilies(chars.filter(c => showAll || !flaggedHidden.has(c.name.toLowerCase())), {
+        rootOf, latestOf: k => changes.get(k)?.[0]?.at ?? null, sort: altsView.sort === 'latest' ? 'latest' : 'default',
+      })
+    : [];
   const topLevel = POP_ZONES.filter(z => !z.subZoneOf);
   const childrenOf = (key: string) => POP_ZONES.filter(z => z.subZoneOf === key);
   const gatedZones = POP_ZONES.filter(z => z.requires.length > 0);
@@ -549,9 +570,11 @@ export default async function PopFlagsPage(
   function hrefFor(overrides: {
     view?: string | null; zone?: string | null; scope?: string | null; all?: string | null;
     pclass?: string | null; psort?: string | null; pdir?: string | null;
+    alts?: string | null; sort?: string | null; open?: string | null;
   }) {
     const next = {
       view: view ?? null, zone: zoneKey ?? null, scope: scope === 'all' ? 'all' : null, all: showAll ? '1' : null,
+      alts: altsView.group ? 'group' : null, sort: altsView.sort === 'latest' ? 'latest' : null, open: altsView.open ? '1' : null,
       ...viewParams(spellView),
       ...overrides,
     };
@@ -560,6 +583,9 @@ export default async function PopFlagsPage(
     if (next.view) params.set('view', next.view);
     if (next.scope) params.set('scope', next.scope);
     if (next.all) params.set('all', next.all);
+    if (next.alts) params.set('alts', next.alts);
+    if (next.sort) params.set('sort', next.sort);
+    if (next.open) params.set('open', next.open);
     if (next.pclass) params.set('pclass', next.pclass);
     if (next.psort) params.set('psort', next.psort);
     if (next.pdir) params.set('pdir', next.pdir);
@@ -944,8 +970,8 @@ export default async function PopFlagsPage(
               <Link href={hrefFor({ scope: null })} className={navCls(scope === 'mains')}>Mains</Link>
               <Link href={hrefFor({ scope: 'all' })} className={navCls(scope === 'all')}>All characters</Link>
             </span>
-            <Link href={hrefFor({ view: null, zone: null })} className={navCls(!selected && view !== 'matrix' && view !== 'mine')}>Chart</Link>
-            <Link href={hrefFor({ view: 'matrix', zone: null })} className={navCls(view === 'matrix')}>Matrix</Link>
+            <Link href={hrefFor({ view: null, zone: null, alts: null, sort: null, open: null })} className={navCls(!selected && !matrixView && view !== 'mine')}>Chart</Link>
+            <Link href={hrefFor({ view: 'matrix', zone: null })} className={navCls(matrixView)}>Matrix</Link>
             <Link href={hrefFor({ view: 'mine', zone: null })} className={navCls(view === 'mine')}>🧍 My Characters</Link>
             <Link href="/pop/guide" className={navCls(false)}>☑ My checklist</Link>
           </span>
@@ -1022,7 +1048,47 @@ export default async function PopFlagsPage(
             </div>
           )}
         </section>
-      ) : view === 'matrix' ? (
+      ) : matrixView && altsView.group ? (
+        // ── Roster × zone matrix, alts nested under their main (beta comparison, ?alts=group) ──
+        <section className="bg-panel border border-border rounded-lg p-4 space-y-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-[10px] px-1.5 py-0.5 rounded border border-gold/60 text-gold" title="Layout comparison on beta">
+              preview · alts grouped
+            </span>
+            <span className="text-dim">Sort</span>
+            <Link href={hrefFor({ view: 'matrix', sort: null })} className={navCls(altsView.sort === 'flags')}>Flags held</Link>
+            <Link href={hrefFor({ view: 'matrix', sort: 'latest' })} className={navCls(altsView.sort === 'latest')}>Latest change</Link>
+            <span className="ml-auto flex gap-2">
+              <Link href={hrefFor({ view: 'matrix', open: altsView.open ? null : '1' })} className={navCls(false)}>
+                {altsView.open ? 'Collapse all' : 'Expand all'}
+              </Link>
+              <Link href={hrefFor({ view: 'matrix', alts: null, sort: null, open: null })} className={navCls(false)}>Flat list</Link>
+            </span>
+          </div>
+          <p className="text-[11px] text-dim leading-5">
+            <span className="text-gold">●</span> a flag changed in the last 24 hours · <span className="text-gold">○</span> in the last 3 days.
+            A change is a flag the server confirmed, a kill logged on the checklist, or a recital that added a flag the
+            character had no row for before; a recital that only restates old flags and a witnessed hail are not changes.
+            Every raid alt is listed under its main{!showAll && flaggedHidden.size > 0 ? '; characters their owner hid are left out' : ''}.
+          </p>
+          {families.length === 0 ? (
+            <p className="text-sm text-dim">No flags recorded yet — the matrix fills in as grants land.</p>
+          ) : (
+            <SelfFlagsProvider initial={ownTicks(families.flatMap(f => [f.head, ...f.alts]))}>
+              <AltGroupMatrix
+                families={families} zones={gatedZones} now={nowMs} openAll={altsView.open} changes={changes}
+                altOf={c => {
+                  const m = c.main ? null : mainNameOf.get(c.name.toLowerCase());
+                  return m && m.toLowerCase() !== c.name.toLowerCase() ? m : null;
+                }}
+                renderGate={(z, c) => <GateCell z={z} c={c} owned={canTick(c.name)} />}
+                renderFlags={c => canTick(c.name) ? <OwnedFlagCount character={c.name} proven={provenOf(c)} /> : c.flags.size}
+              />
+            </SelfFlagsProvider>
+          )}
+          {families.length > 0 && gateLegend}
+        </section>
+      ) : matrixView ? (
         // ── Roster × zone matrix (secondary view) ─────────────────────────────
         <section className="bg-panel border border-border rounded-lg p-4 overflow-x-auto">
           {scopedChars.length === 0 ? (

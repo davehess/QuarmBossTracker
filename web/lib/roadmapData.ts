@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-8-153-2026-10-14',
+    title: 'Alts under their main',
+    version: 'Web 1.8.153',
+    date: '2026-10-14',
+    channel: 'beta',
+    headline: 'The PoP Flags matrix can group each main with their alts, folded shut, and show what changed in the last day or three.',
+    features: [
+      { name: 'Alts under their main', blurb: 'Each main is one row with their alts folded underneath it. The line under the name says how many alts and when the family last got a flag. One button opens or closes every family.' },
+      { name: 'Latest change', blurb: 'Sort by who got a flag most recently. A main whose alt just flagged moves up with them.' },
+      { name: 'What changed', blurb: 'A flag from the last 24 hours is marked "new today" and one from the last 3 days is marked softer, on the folded family too, so you can tell which ones are worth opening. A recital only counts when it added a flag the character did not have before.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-8-152-2026-10-14',
     title: 'Latest flags',
     version: 'Web 1.8.152',
