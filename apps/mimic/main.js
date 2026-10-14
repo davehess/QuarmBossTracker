@@ -9777,6 +9777,9 @@ function buildTrayMenu() {
           _pollEqPresence().then(() => applyAllVisibility()).catch(() => applyAllVisibility());
           pushStatus();
         } },
+    ] : []),
+    // The focus gate and "other apps draw over overlays" ride on the Windows-only foreground watcher.
+    ...(process.platform === 'win32' ? [
       // Same switch as Settings and the dashboard's Overlays tab (all land in _onFocusGateOptionChanged).
       { label: 'Hide overlays + hotkeys when EverQuest/Mimic isn\'t focused', type: 'checkbox', checked: !!s.hideOverlaysWhenUnfocused, visible: !agentOnly, click: (mi) => {
           const cfg = loadConfig(); cfg.hideOverlaysWhenUnfocused = !!mi.checked; saveConfig(cfg);

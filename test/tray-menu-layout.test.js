@@ -212,6 +212,9 @@ describe('nothing lost, nothing changed, nothing sneaked in', () => {
       // ... and the only additions are the new structure
       const extra = now.filter((x) => !before.includes(x)).map((x) => JSON.parse(x));
       for (const e of extra) {
+        // Deck line only (FB-66): Linux polls for EverQuest too, so its tray shows the EQ-down switch the
+        // beta snapshot hides off Windows. Nothing else may differ.
+        if (name === 'linux full' && e.label === "Hide overlays when EverQuest isn't running") continue;
         expect(HEADERS.includes(e.label) || isContainer(e.label)).toBe(true);
         if (HEADERS.includes(e.label)) expect(e).toEqual({ label: e.label, enabled: false });
         else expect(e).toEqual({ label: e.label, submenu: true });

@@ -85,7 +85,8 @@ describe('focus gate: debounce', () => {
 
 describe('focus gate: _eqGateOk truth table', () => {
   function gate({ platform = 'win32', eqRunning = true, setup = false, focusOk = true, cfg = {} }) {
-    const code = `${pureBlock}\n${gateFn}\nlet _eqRunning = ${eqRunning}, setupMode = ${setup};\n_focusOk = ${focusOk};`
+    // _backgroundActive is the Deck line's Background Mode check (always false off Linux), stubbed so this stays the Windows truth table.
+    const code = `${pureBlock}\n${gateFn}\nfunction _backgroundActive() { return false; }\nlet _eqRunning = ${eqRunning}, setupMode = ${setup};\n_focusOk = ${focusOk};`
       + `\nconst process = { platform: ${JSON.stringify(platform)} };`;
     return evalBlock(code, ['_eqGateOk'])._eqGateOk(cfg);
   }
