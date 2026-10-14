@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Map: raid targets + shared escort trails** (§299) | Built, committed locally, NOT pushed: bot 3.1.263 on `claude/raid-targets-bot` (off `main`), agent on `claude/raid-targets-agent` (off `beta`). Inert until both ship | the guild lead: route the bot to `main` after 00:30 ET on a raid night, then the agent to `beta`; two Mimics in the hedge maze, one targets Thelin, the other's Map draws his trail; the MA targets a mob and the other's focus ring lands on it. A session: update `/privacy` (§299) |
 | **/pop "Latest flags" strip** (§297) | On beta (web 1.8.152): `?flags=a` newest first, `?flags=b` by step; no param = production | the guild lead: pick a or b at https://b.wolfpack.quest/pop?flags=a and https://b.wolfpack.quest/pop?flags=b. A session then graduates it to main as the default and deletes the other |
 | **Member lockout** (§252) | Live: `/admin/access` [beta], bot 3.1.251, web 1.8.143. Officers cannot be locked out (web 1.8.144). Untested against a real member | the guild lead: lock a test or alt account, confirm Mimic, the site and a bot command all refuse it within 30 s, then unlock |
 | **Map target-of-target never fires on real Zeal** (§251) | Zeal's `/assistbar` (1.4.7) knows it, but the pipe export was only our unsent draft, so the Map's ToT arrow and the pin rule's "not aggroed" check fail open. Ported onto current Zeal main as fork branch `tot-pipe` (`21f41f3`, local only: the push was refused by this session's permissions) | the guild lead: push `tot-pipe` to the fork (or allow it), then say whether it joins `test-all` for an in-game check |
@@ -10391,3 +10392,25 @@ the Bastion of Thunder at the time.
   (MAP-REFINEMENTS #15).
 - **Load:** the focus read uses the same 3 s Extended Target cache the dashboard state already refreshes, so it adds
   no new bot traffic.
+
+### 299. Map: the raid's targets and shared escort trails (bot 3.1.263 on `claude/raid-targets-bot`, agent on `claude/raid-targets-agent`, 2026-10-14)
+- **The picks (the guild lead, 2026-10-14):** both. **A**, "for these types of babysitting escort quests": one escort-NPC
+  trail every Mimic in the raid sees. **B**, "also important for MA": shared target positions, so the focus ring can be
+  placed when it is not your own target. B's samples are A's source.
+- **One upload, extended, not a new stream:** each Mimic's current target rides the existing `live-state` POST
+  (`target_map` in the Map's server frame, `target_type`, `target_zone`; `target_id`/`target_name` were already there).
+  The upload is change-driven plus a 45 s heartbeat; the agent adds a position-driven send only when the target is an NPC
+  that moved (30 units and 10 s for any mob; 12 units and 5 s, or 15 s standing, for an escort). The bot keeps the latest
+  sample per character in memory for 90 s (`utils/raidTargets.js`), never in a column, and sheds with
+  `flag_shed_live_state` because it is that stream. Target id 0 is no target.
+- **Served on the Map's existing pull:** `GET /api/agent/map-sync` gains `targets` (per zone: each targeted NPC's latest
+  position and how many raiders are on it) and `trails` (past `tsince`). Scope is Extended Target's: your raid (the other
+  raid dropped when two are live), else your group, else only your own characters. The trails are not scoped; they name no one.
+- **Escort trails (A):** `ESCORT_NPCS` in `utils/raidTargets.js`, mirrored by the agent's `MAP_TRACKED_PATHS` (a test fails
+  if they drift). Matched on zone + name, never id. Rules of the local trail: a point every 12+ units, a break after a 20 s
+  gap or a 400-unit jump, 800 kept, dropped after 12 h. A stretch is served only once it has moved 100 units, so a town copy
+  that stands still never draws. Stored in `bot_kv` (`escort_trail:<zone>:<name>`, one row per guild + zone + NPC), written
+  at most once per 10 s per trail, nothing written before a read has succeeded.
+- **Limits:** two raids in two copies of one zone share one trail per escort (only the 400-unit break separates them).
+  The Map's pull is every 10 s, so a shared focus position can be ~15 s old.
+- **Privacy:** a target's name and position is game state, not chat. PRIVACY.md lists it with the live status.

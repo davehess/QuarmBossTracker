@@ -12,7 +12,7 @@
 > editing this file: **describe what the software does today, not what we
 > intend.** A promise goes in only once the code keeps it.
 
-*Last updated: 2026-10-02*
+*Last updated: 2026-10-14*
 
 ## The spirit
 
@@ -32,7 +32,10 @@ Each of these was checked against the code on the date above.
   can check anything on this page.
 - **Private chat is filtered on your own PC first.** Officer chat, group chat,
   custom channels, `/say`, OOC, shouts and auctions are dropped on your machine
-  before anything is sent. Tells are too, unless you turn tell relay on.
+  before anything is sent. Tells are too, unless you turn tell relay on. If you
+  use Mimic's Chat overlay (beta), those same lines are also kept in memory on
+  your PC so the overlay can show them to you. They are never sent anywhere,
+  never written to disk, and gone when Mimic restarts.
 - **The sensitive things are off until you turn them on:** tell relay, crash
   reports, uploading old logs, UI backups, and attaching your log to feedback.
 - **No selling, no ads, no third-party trackers.** wolfpack.quest loads no
@@ -126,7 +129,10 @@ then carries a personal token tied to your Discord account. **Signing Mimic out
 - **`/who` results:** every player shown who is level 50+ or anonymous, **from
   any guild** — name, level, class, race, guild and zone.
 - **Your live status**, every few seconds while Zeal is connected: zone,
-  position (x/y/z), HP, mana, buffs, target, pet and what is hitting you, and
+  position (x/y/z), HP, mana, buffs, target (and, from the Mimic that follows
+  this change, where that target stands, so your raid's Map can mark it; held
+  in memory for about a minute and shown only to your raid or group), pet and
+  what is hitting you, and
   (agent 3.7.66 beta) when your own discipline, Mend, Lay on Hands, Harm Touch
   and AAs are ready again. This goes out **in or out of a raid, and even with
   EQ logging off**.
@@ -151,7 +157,13 @@ UI backups, and attaching your log to feedback.
 
 **Never sent as chat:** officer chat, group chat, custom channels (including
 the guild's tag channel), `/say`, OOC, shouts, auctions, and tells unless you
-turn tell relay on. The one exception is a hail — see below.
+turn tell relay on. The one exception is a hail — see below. Mimic's Chat
+overlay (beta) can show many of these lines (and your tells, if you set Tells to
+Local or Synced) in a window on your own PC. That is a local view only: held in
+memory, not saved, not uploaded, cleared when Mimic restarts. Group, officer and
+custom-channel lines are not even held until you switch them on in the overlay,
+and stop being held shortly after you close it. Characters you have excluded
+from stats are never read into it.
 
 ## Tells
 
@@ -163,10 +175,11 @@ turn tell relay on. The one exception is a hail — see below.
 - The person on the other side of the tell has not agreed to this. Please keep
   that in mind before you turn it on.
 - Turning relay off stops new uploads; it does not delete tells already stored.
-- **Mimic also has a Tells setting (Off / Local / Synced), which isn't wired up
-  yet.** It doesn't affect uploads — tell relay on `/me` is the switch that
-  decides. Its description in Mimic still describes how it was planned to work,
-  and we're updating it.
+- **Mimic's Tells setting (Off / Local / Synced) decides whether your tells
+  appear in the Chat overlay on your PC (beta).** Off keeps them out. Local and
+  Synced show them, in both directions, held in memory only. The setting never
+  uploads anything; Synced currently shows the same thing Local does. Tell relay
+  on `/me` is still the only switch that decides what is sent.
 
 ## Hails (the one `/say` exception)
 
@@ -348,6 +361,8 @@ server events, counted from the start).
 | What | Kept |
 |---|---|
 | Who targeted what | 1 day |
+| Where your target stands (for the Map's raid focus mark) | In the bot's memory only, about 90 seconds |
+| An escort NPC's walked path (no player named) | 12 hours |
 | Raid roster with positions | about a day |
 | Raid positions kept for replay (one sample every few seconds) | Kept for now; the Archive's copy is permanent |
 | Buffs and debuffs seen landing | 7 days |

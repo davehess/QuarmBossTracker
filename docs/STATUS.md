@@ -5985,6 +5985,13 @@ Abashi's Rod → 31242). The web has no decoder: it shows the stored link. **Ope
 fixable, staged in `docs/RUNBOOK-pqdi-chat-links.md`, unapplied (the guild lead's yes); the stable fleet keeps writing
 wrong links until the agent reaches stable.
 
+### 🧾 2026-10-14 — Map: the raid's targets and shared escort trails (bot 3.1.263 + agent, both local branches, DECISIONS §299)
+The guild lead picked both A (a shared escort trail for babysitting quests) and B (shared target positions for the MA focus ring).
+One extended upload (`live-state` carries the target's position), memory on the bot, served on the Map's `map-sync` pull; escort trails
+in `bot_kv`. **Not shipped:** bot branch `claude/raid-targets-bot` (to `main` after a raid window), agent branch
+`claude/raid-targets-agent` (to `beta`). **Open:** `/privacy` page wording (PRIVACY.md is updated), more escorts in `ESCORT_NPCS` /
+`MAP_TRACKED_PATHS`, two raids in two copies of one zone share a trail.
+
 ### 🧾 2026-10-12 — Spawn map overlay, first build: 2D tracker with respawn timers (agent 3.7.130 · Mimic beta `79bafcf1` + bot 3.1.246 `dd8a9cb4`, DECISIONS §216 / §220 / §239)
 The guild lead: *"2d overlay on beta with spawn timer tracking"*. `apps/mimic/map.html` (key `map`, `cfg.showMap`, default off, [beta])
 is layout C (the tracker): walls and spawn dots on the left, the active respawn windows on the right. The agent reads the zone's
