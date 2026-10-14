@@ -1046,6 +1046,9 @@ contextBridge.exposeInMainWorld('mimic', {
   onMapGeom:          (cb)         => ipcRenderer.on('map-geom', (_e, b) => cb(b)),
   mapClearAreas:      (opts)       => ipcRenderer.invoke('map-clear-areas', opts || {}),
   mapClearBoxesSet:   (char, boxes) => ipcRenderer.invoke('map-clear-boxes-set', char, boxes),
+  // One game window's keep / ignore pick (true | false | null = default; id null = all back to default); answers with the
+  // windows as they now stand, the same shape as mapClearAreas().ui.
+  mapClearPickSet:    (char, id, keep) => ipcRenderer.invoke('map-clear-pick-set', char, id, keep),
 
   // Manual overlay drag — replaces the buggy Chromium app-region drag on
   // transparent windows. Renderer mousedown on the ✥ handle calls

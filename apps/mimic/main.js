@@ -31,7 +31,7 @@ const { startZealWatch } = require('./zealPipe');
 const zealUpdater = require('./zealUpdater');
 const uiPacks = require('./uiPacks');
 const { applyIniKeyEdits } = require('./iniKeyEdits');
-const { visibleUiRects } = require('./uiClearRects');
+const { visibleUiRects, zealAreas, applyPicks, cleanPicks } = require('./uiClearRects');
 const uiLayouts = require('./uiLayouts');
 const soundLib = require('./sounds');
 
@@ -6985,25 +6985,39 @@ ipcMain.handle('map-mode-set', (_e, mode) => _setMapMode(mode === 'full' ? 'full
 // own pixels (visibleUiRects), plus Zeal's raid and assist bars as auto-arrange counts them. (b) The raider's own boxes,
 // kept per character and per screen setup as FRACTIONS of EverQuest's client area, so a box means the same place at any
 // window size. map.html converts both to its own window (uiRectsToMap); main only reports where things are.
+// Every area carries { id, text, guess, keep }: `text` is the window's name as the ini has it (plus why it is a guess), and
+// `keep` is whether the Map cuts it out (the raider's pick for this character on this screen setup, else "yes unless a
+// guess"). Ignored areas are still sent so the Map can list them and outline them.
 function _mapClearUiRects(char) {
   try {
     const file = (char && _newestUiIniFile(char)) || _newestUiIniFile();
     if (!file) return null;
-    const r = visibleUiRects(fs.readFileSync(file, 'utf8'), { skip: _UI_PHANTOM_RX });
     const eq = _eqMainWindow(10 * 60 * 1000);
-    const res = r.res || (eq ? { w: Math.round(eq.client.width), h: Math.round(eq.client.height) } : null);
-    const rects = r.rects.slice();
+    // The game's pixels, not DIPs: the ini's resolution blocks are physical, and a scaled display would never match.
+    let phys = eq ? eq.client : null;
+    try { if (eq && process.platform === 'win32') phys = screen.dipToScreenRect(null, eq.client); } catch { /* DIPs it is */ }
+    const client = phys && phys.width > 0 && phys.height > 0 ? { w: Math.round(phys.width), h: Math.round(phys.height) } : null;
+    const r = visibleUiRects(fs.readFileSync(file, 'utf8'), { skip: _UI_PHANTOM_RX, client });
+    const res = r.res || client;
+    let rects = r.rects.slice();
     try {
       const zini = path.join(path.dirname(file), 'zeal.ini');
-      if (res && fs.existsSync(zini)) {
-        for (const z of _zealBarRects(fs.readFileSync(zini, 'utf8'), res.w, res.h)) rects.push({ name: z.name, x: z.x, y: z.y, w: z.w, h: z.h, guess: false });
-      }
+      if (res && fs.existsSync(zini)) rects = rects.concat(zealAreas(_zealBarRects(fs.readFileSync(zini, 'utf8'), res.w, res.h), res));
     } catch { /* no Zeal bars to avoid */ }
-    return { rects, res, file: path.basename(file), exact: !!(char && new RegExp('^UI_' + char + '[_.]', 'i').test(path.basename(file))) };
+    const picks = _mapClearPicks(char);
+    return { rects: applyPicks(rects, picks), res, client, file: path.basename(file), exact: !!(char && new RegExp('^UI_' + char + '[_.]', 'i').test(path.basename(file))) };
   } catch (e) {
     appendAgentLog('[map] UI parse failed: ' + e.message + '\n');
     return null;
   }
+}
+// The raider's keep / ignore picks per window, { id: true | false }, kept per screen setup and character like the boxes.
+function _mapClearPicks(char) {
+  try {
+    const store = loadConfig().mapClearPicks;
+    const sig = _screenSignature();
+    return cleanPicks(store && store[sig] && store[sig][_mapBoxKey(char)]);
+  } catch { return {}; }
 }
 function _mapBoxKey(char) { return String(char || '').toLowerCase().replace(/[^a-z0-9]/g, '') || '_'; }
 function _mapCleanBoxes(list) {
@@ -7047,6 +7061,27 @@ ipcMain.handle('map-clear-boxes-set', (_e, char, boxes) => {
     for (const k of Object.keys(store).slice(0, Math.max(0, Object.keys(store).length - 6))) delete store[k];   // the 6 newest setups
     cfg.mapClearBoxes = store; saveConfig(cfg);
     return clean;
+  } catch { return null; }
+});
+// One window's pick: keep = true (cut it out) | false (draw over it) | null (back to the default). id null = every pick
+// for this character on this screen setup goes back to the defaults. Answers with the windows as they now stand.
+ipcMain.handle('map-clear-pick-set', (_e, char, id, keep) => {
+  try {
+    const name = String(char || _activeCharName || '').replace(/[^A-Za-z]/g, '');
+    const cfg = loadConfig();
+    const store = (cfg.mapClearPicks && typeof cfg.mapClearPicks === 'object') ? cfg.mapClearPicks : {};
+    const sig = _screenSignature(), key = _mapBoxKey(name);
+    const picks = cleanPicks(store[sig] && store[sig][key]);
+    if (id == null) { for (const k of Object.keys(picks)) delete picks[k]; }
+    else if (typeof keep === 'boolean') picks[String(id)] = keep;
+    else delete picks[String(id)];
+    const clean = cleanPicks(picks);
+    store[sig] = Object.assign({}, store[sig]);
+    if (Object.keys(clean).length) store[sig][key] = clean; else delete store[sig][key];
+    if (!Object.keys(store[sig]).length) delete store[sig];
+    for (const k of Object.keys(store).slice(0, Math.max(0, Object.keys(store).length - 6))) delete store[k];   // the 6 newest setups
+    cfg.mapClearPicks = store; saveConfig(cfg);
+    return _mapClearUiRects(name);
   } catch { return null; }
 });
 

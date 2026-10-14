@@ -169,6 +169,12 @@
   .cbox .cx{position:absolute;top:-1px;right:-1px;width:16px;height:16px;padding:0;line-height:14px;font-size:10px;border-radius:3px;pointer-events:auto;cursor:pointer;
     background:rgba(14,17,22,0.9);color:#f87171;border:1px solid rgba(248,113,113,0.7)}
   #cfg .note{font-size:9.5px;line-height:1.35;color:#8b949e;padding:2px 0 0}
+  #cfg .note.warn{color:#f0b429}
+  /* ⚙ → Keep clear: every game window found in the UI file, tick = keep it clear, hover = outline it on the map. */
+  #clearList{max-height:176px;overflow-y:auto;margin:3px 0;padding:2px 4px;border:1px solid rgba(110,118,129,0.3);border-radius:4px}
+  #clearList .crow:hover{background:rgba(88,166,255,0.14)}
+  #clearList .crow .sub{color:#6e7681}
+  #clearList .crow.off .bl{color:#8b949e}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner - same on every overlay)">✥</button>
@@ -249,6 +255,11 @@
         <div class="grp">Keep clear</div>
         <label class="row" title="Nothing is drawn on the map inside the windows EverQuest has open (read from your character's UI file), nor inside your own clear areas, so a see-through map never sits over your UI. On by default in Full screen."><input type="checkbox" id="cfgAvoid"><span class="bl">Avoid EQ windows</span></label>
         <div class="row"><button type="button" id="clearEditBtn" title="Drag boxes on the map for areas to keep clear. Saved for this character on this screen setup.">Edit clear areas</button><button type="button" id="clearReread" title="Read EverQuest's window again (where it is and which windows are open)">⟳</button></div>
+        <label class="row" title="Draw a dashed outline and name around every area the map keeps clear (amber), every game window it draws over (grey) and your own boxes (blue). Off: they show only while these settings are open or you are editing, so nothing sits over the game during a raid."><input type="checkbox" id="cfgShowClear"><span class="bl">Outline clear areas</span></label>
+        <div class="row"><span class="bl" id="clearListHead">Game windows</span><button type="button" id="clearListReset" title="Back to the defaults: every window with a known size kept clear, the guessed ones drawn over">Defaults</button></div>
+        <div id="clearList"></div>
+        <div class="note" id="clearListNote">Tick a window to keep it clear; untick it to let the map draw over it. Hover a row to outline it on the map. “Size unknown” windows start unticked: the UI file does not say how big they are.</div>
+        <div class="note warn" id="clearRes" hidden></div>
         <div class="note" id="clearNote">EverQuest saves its window positions when you camp or zone, so a window you moved since then needs its box adjusted here, or a camp or zone to save it.</div>
         <div class="foot"><span>Saved on this computer.</span><button id="cfgReset" type="button">Reset to default</button></div>
       </div>
@@ -1125,7 +1136,7 @@
     for (k in MAP_SCHEMES.default) col[k] = MAP_SCHEMES.default[k];
     // wallMode 'layers' (Brewall's floor colours) is the default since 2026-10-13; wallV marks a save made after that,
     // so an older save's 'map' (never chosen, it was the old default) moves to 'layers' and a newer one is kept.
-    return { show: show, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1, ink: INK_DEFAULT, avoidEq: null };
+    return { show: show, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1, ink: INK_DEFAULT, avoidEq: null, showClear: false };
   }
   // ⚙ → Line strength (the guild lead, 2026-10-13, over the game with Opacity full and no background: "make the maps
   // and spawns more intense for how defined the lines and whatnot are ... its difficult to see"). One number, 1 to 3:
@@ -1158,6 +1169,7 @@
     if (typeof saved.text === 'number' && saved.text >= 0.7 && saved.text <= 1.8) c.text = Math.round(saved.text * 10) / 10;
     if (typeof saved.ink === 'number' && saved.ink >= INK_MIN && saved.ink <= INK_MAX) c.ink = Math.round(saved.ink * 4) / 4;
     if (typeof saved.avoidEq === 'boolean') c.avoidEq = saved.avoidEq;   // null (unset) follows the mode
+    if (saved.showClear === true) c.showClear = true;   // outlines always on; off shows them only while ⚙ is open or editing
     return c;
   }
   // Picking a scheme replaces every colour; editing one colour afterwards makes the scheme "custom".
@@ -1204,7 +1216,7 @@
       var x1 = x0 + r.w * sx, y1 = y0 + r.h * sy;
       var cx0 = Math.max(0, x0), cy0 = Math.max(0, y0), cx1 = Math.min(mapWin.width, x1), cy1 = Math.min(mapWin.height, y1);
       if (cx1 - cx0 < 1 || cy1 - cy0 < 1) continue;
-      out.push({ x: cx0, y: cy0, w: cx1 - cx0, h: cy1 - cy0, name: r.name, guess: !!r.guess, i: i });
+      out.push({ x: cx0, y: cy0, w: cx1 - cx0, h: cy1 - cy0, name: r.name, id: r.id, text: r.text, notes: r.notes, guess: !!r.guess, keep: r.keep !== false, i: i });
     }
     return out;
   }
@@ -1231,11 +1243,32 @@
   // Avoid EQ windows: unset follows the mode (on in Full, off in Window); ticked or unticked is the raider's own choice.
   function avoidEqOn(cfg, mode) { return cfg && typeof cfg.avoidEq === 'boolean' ? cfg.avoidEq : mode === 'full'; }
   // Everything to keep clear, in this window's coordinates: { ui, user }. `clear` = { ui: { rects, res }, ref, boxes }.
+  // `ui` = the game windows to cut out (Avoid on, and not ticked off in the list); `off` = the rest of the windows found, which
+  // the map draws over (kept so they can be outlined and listed); `user` = the raider's own boxes.
   function buildClearAreas(clear, avoid, mapWin) {
-    var out = { ui: [], user: [] };
+    var out = { ui: [], off: [], user: [] };
     if (!clear || !mapWin || !clear.ref) return out;
-    if (avoid && clear.ui && clear.ui.rects) out.ui = uiRectsToMap(clear.ui.rects, clear.ref, mapWin, clear.ui.res);
+    if (clear.ui && clear.ui.rects) {
+      var all = uiRectsToMap(clear.ui.rects, clear.ref, mapWin, clear.ui.res);
+      for (var i = 0; i < all.length; i++) (avoid && all[i].keep ? out.ui : out.off).push(all[i]);
+    }
     out.user = fracRectsToMap(clear.boxes, clear.ref, mapWin);
+    return out;
+  }
+  // The outlines drawn on the map, in stage px: every area with its kind ('ui' kept, 'off' drawn over, 'user' the raider's box)
+  // and the name it is labelled with - the window's own section name, or "Your area N" for a box.
+  function outlinesToStage(areas, k, left, top) {
+    var out = [];
+    var add = function (list, kind) {
+      var px = clearToStage(list, k, left, top);
+      for (var n = 0; n < list.length; n++) {
+        var src = list[n];
+        out.push({ x: px[n].x, y: px[n].y, w: px[n].w, h: px[n].h, kind: kind,
+          id: kind === 'user' ? 'user:' + src.i : (src.id || 'ui:' + String(src.name).toLowerCase()),
+          text: kind === 'user' ? 'Your area ' + (src.i + 1) : (src.text || src.name || 'window'), guess: !!src.guess });
+      }
+    };
+    add(areas.ui, 'ui'); add(areas.off, 'off'); add(areas.user, 'user');
     return out;
   }
   // The window's screen units (DIPs) <-> the page's CSS px (they differ under an overlay zoom: k = innerWidth / window width),
@@ -1279,8 +1312,8 @@
   function saveCfg() { lsSet('wp-map-cfg', JSON.stringify(S.cfg)); }
   // Window / Full mode (main owns it: cfg.mapMode), and the keep-clear areas: what main last reported, the same in page px.
   S.mode = 'window';
-  S.clear = { ui: null, ref: null, win: null, boxes: [], char: '', asked: '', eq: false, edit: false };
-  S.clearPx = []; S.clearWin = { ui: [], user: [] }; S.clearK = 1;
+  S.clear = { ui: null, ref: null, win: null, boxes: [], char: '', asked: '', eq: false, edit: false, hot: null, client: null };
+  S.clearPx = []; S.clearWin = { ui: [], off: [], user: [] }; S.clearK = 1; S.clearOut = [];
   S.bgAlpha = 0.55;   // Mimic's own background strength (the setup slider), for the canvas-painted background
   // The background: its colour always from the settings; its strength from them only when the Opacity box is ticked.
   function applyCfgCss() {
@@ -1798,14 +1831,55 @@
     if (PART_TIMERS) return;
     var areas = S.clearPx;
     if (paneEl) paneEl.classList.toggle('holes', areas.length > 0);
-    if (!areas.length) return;
-    var a = S.cfg.bgA != null ? S.cfg.bgA : S.bgAlpha;
+    if (areas.length) {
+      var a = S.cfg.bgA != null ? S.cfg.bgA : S.bgAlpha;
+      ctx.save();
+      ctx.globalCompositeOperation = 'destination-over';
+      ctx.fillStyle = hexA(S.cfg.col.bg, a);
+      ctx.fillRect(0, 0, S.w, S.h);
+      ctx.restore();
+      for (var i = 0; i < areas.length; i++) ctx.clearRect(areas[i].x, areas[i].y, areas[i].w, areas[i].h);
+    }
+    paintOutlines();
+  }
+  // See what is kept clear (the guild lead, 2026-10-14: "What UI element is this looking to avoid? ... We should be able to
+  // see what's hidden and what is not"). A thin dashed outline and the area's name on every area: amber dashes = kept clear,
+  // grey dots = a game window the map draws over (ticked off, or Avoid EQ windows is off), blue dashes = your own box. A
+  // guess carries its reason in the name. Shown while ⚙ is open or a box is being edited, and always with ⚙ → Outline clear
+  // areas: over a raid they would only be noise, while setting up they are the whole point. The row hovered in the list is
+  // drawn heavy and last. Drawn after the cuts, on top: the outlines never take part in what is cut.
+  function outlinesOn() { return !!(S.cfg && S.cfg.showClear) || cfgOpen() || !!S.clear.edit; }
+  function paintOutlines() {
+    var list = S.clearOut;
+    if (!list || !list.length || !outlinesOn()) return;
     ctx.save();
-    ctx.globalCompositeOperation = 'destination-over';
-    ctx.fillStyle = hexA(S.cfg.col.bg, a);
-    ctx.fillRect(0, 0, S.w, S.h);
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.textBaseline = 'top';
+    var hot = S.clear.hot, i;
+    var one = function (o, isHot) {
+      var col = o.kind === 'user' ? '#58a6ff' : o.kind === 'off' ? '#8b949e' : '#f0b429';
+      ctx.setLineDash(o.kind === 'off' ? [2, 3] : [6, 3]);
+      ctx.lineWidth = isHot ? 3 : 1.25;
+      ctx.strokeStyle = isHot ? '#ffffff' : col;
+      if (isHot) { ctx.fillStyle = 'rgba(255,255,255,0.14)'; ctx.fillRect(o.x, o.y, o.w, o.h); }
+      ctx.strokeRect(o.x + 0.75, o.y + 0.75, Math.max(0, o.w - 1.5), Math.max(0, o.h - 1.5));
+      ctx.setLineDash([]);
+      var text = o.text + (o.kind === 'off' ? ' · drawn over' : '');
+      var tw = ctx.measureText(text).width;
+      var ly = o.h < 22 && o.y >= 16 ? o.y - 15 : o.y + 2;
+      var lx = Math.max(2, Math.min(o.x + 2, S.w - tw - 10));
+      ctx.fillStyle = 'rgba(13,17,23,0.88)';
+      ctx.fillRect(lx, ly, tw + 8, 13);
+      ctx.fillStyle = isHot ? '#ffffff' : col;
+      ctx.fillText(text, lx + 4, ly + 2);
+    };
+    for (i = 0; i < list.length; i++) {
+      if (list[i].id === hot) continue;
+      if (list[i].kind === 'user' && S.clear.edit) continue;   // the editing layer draws these, with their ✕
+      one(list[i], false);
+    }
+    for (i = 0; i < list.length; i++) if (list[i].id === hot) one(list[i], true);
     ctx.restore();
-    for (var i = 0; i < areas.length; i++) ctx.clearRect(areas[i].x, areas[i].y, areas[i].w, areas[i].h);
   }
   function renderMapInner(animating) {
     if (PART_TIMERS) return;   // the pop-out has no map pane to draw
@@ -2517,7 +2591,9 @@
     var before = slotOpen();
     cfgEl.hidden = !open; cfgBtn.classList.toggle('on', open);
     wrapEl.classList.toggle('cfgopen', open);
+    if (!open) S.clear.hot = null;
     slotChanged(before);
+    renderMap();   // the clear-area outlines show while these settings are open
   }
   cfgBtn.addEventListener('click', function () { setCfgOpen(!cfgOpen()); });
   document.getElementById('cfgClose').addEventListener('click', function () { setCfgOpen(false); });
@@ -2571,7 +2647,9 @@
       S.sideOpen = true;
     } else S.sideOpen = !S.sideOpen;
     lsSet('wp-map-side', S.sideOpen ? 1 : 0); syncSide();
+    S.clear.hot = null;
     slotChanged(before);
+    renderMap();
   });
   sideModeSel.addEventListener('change', function () {
     S.sideMode = sideModeSel.value === 'share' ? 'share' : 'grow'; lsSet('wp-map-side-mode', S.sideMode);
@@ -2650,6 +2728,9 @@
   // here that only changes the chrome (no ✥, no timers column, the ▢ Window / ⚙ pair at the top-right).
   var modeBtn = document.getElementById('modeBtn'), cfgModeSel = document.getElementById('cfgMode');
   var cfgAvoid = document.getElementById('cfgAvoid'), clearEditBtn = document.getElementById('clearEditBtn');
+  var cfgShowClear = document.getElementById('cfgShowClear');
+  var clearListEl = document.getElementById('clearList'), clearListHead = document.getElementById('clearListHead');
+  var clearResEl = document.getElementById('clearRes');
   var clearEditEl = document.getElementById('clearEdit'), clearBoxesEl = document.getElementById('clearBoxes');
   function syncMode() {
     var full = S.mode === 'full';
@@ -2695,11 +2776,14 @@
     S.clearK = k;
     S.clearWin = buildClearAreas(S.clear, avoidEqOn(S.cfg, S.mode), S.clear.win);
     S.clearPx = clearToStage(S.clearWin.ui.concat(S.clearWin.user), k, r.left || 0, r.top || 0);
+    S.clearOut = outlinesToStage(S.clearWin, k, r.left || 0, r.top || 0);
+    renderClearList();
     if (S.clear.edit) renderClearEdit();
     if (!noRender) renderMap();
   }
   function syncClearCtl() {
     cfgAvoid.checked = avoidEqOn(S.cfg, S.mode);
+    cfgShowClear.checked = !!S.cfg.showClear;
     clearEditBtn.textContent = S.clear.edit ? 'Done editing' : 'Edit clear areas';
     clearEditBtn.classList.toggle('on', !!S.clear.edit);
   }
@@ -2714,6 +2798,7 @@
       window.mimic.mapClearAreas({ fresh: !!fresh, char: ch }).then(function (r) {
         if (!r) return;
         S.clear.ui = r.ui || null; S.clear.ref = r.ref || null; S.clear.win = r.win || S.clear.win; S.clear.eq = !!r.eq;
+        S.clear.client = (r.ui && r.ui.client) || null;
         if (!S.clear.edit) S.clear.boxes = r.boxes || [];   // never replace boxes under the raider's hand
         S.clear.char = r.char || '';
         rebuildClear();
@@ -2728,6 +2813,75 @@
   }
   document.getElementById('clearReread').addEventListener('click', function () { refreshClear(true); });
   cfgAvoid.addEventListener('change', function () { S.cfg.avoidEq = !!cfgAvoid.checked; cfgCommit(); });
+  cfgShowClear.addEventListener('change', function () { S.cfg.showClear = !!cfgShowClear.checked; cfgCommit(); });
+
+  // ⚙ → Keep clear: every game window found in the character's UI file (and Zeal's bars), named as the file names it. A tick
+  // keeps the window clear, no tick lets the map draw over it; the pick is saved by main for this character on this screen
+  // setup. A window whose size is not in the file starts unticked ("size unknown"). Hovering a row outlines that area on the
+  // map. The rows are rebuilt only when the windows themselves change, so a tick or a poll never replaces what the mouse is on.
+  var clearRows = {}, clearListSig = '';
+  var LIST_NOTE = { 'size guessed': 'size unknown' };
+  function clearRects() { return S.clear.ui && S.clear.ui.rects ? S.clear.ui.rects : []; }
+  function setHot(id) { if (S.clear.hot === id) return; S.clear.hot = id; renderMap(); }
+  function renderClearList() {
+    if (PART_TIMERS) return;
+    var rects = clearRects(), i, r;
+    var sig = rects.map(function (x) { return x.id + '|' + x.text; }).join('\n');
+    if (sig !== clearListSig) {
+      clearListSig = sig; clearRows = {};
+      clearListEl.innerHTML = '';
+      if (!rects.length) clearListEl.appendChild(el('div', 'note', 'No open game windows found in your UI file yet.'));
+      for (i = 0; i < rects.length; i++) {
+        (function (rc) {
+          var row = el('label', 'row crow'), cb = el('input'), name = el('span', 'bl', rc.name);
+          cb.type = 'checkbox';
+          var notes = (rc.notes || []).map(function (n) { return LIST_NOTE[n] || n; });
+          if (notes.length) name.appendChild(el('span', 'sub', ' · ' + notes.join(', ')));
+          row.title = rc.text + ' · ' + rc.w + ' x ' + rc.h + ' at ' + rc.x + ', ' + rc.y + ' in EverQuest' + (rc.guess ? '. Not stated in your UI file, so it is a guess.' : '.');
+          row.setAttribute('data-wp-interact', '');
+          row.appendChild(cb); row.appendChild(name);
+          cb.addEventListener('change', function () { pickWindow(rc.id, !!cb.checked); });
+          row.addEventListener('mouseenter', function () { setHot(rc.id); });
+          row.addEventListener('mouseleave', function () { setHot(null); });
+          clearListEl.appendChild(row);
+          clearRows[rc.id] = { row: row, cb: cb };
+        })(rects[i]);
+      }
+    }
+    var kept = 0;
+    for (i = 0; i < rects.length; i++) {
+      r = rects[i];
+      var rw = clearRows[r.id];
+      if (r.keep !== false) kept++;
+      if (rw) { rw.cb.checked = r.keep !== false; rw.row.classList.toggle('off', r.keep === false); }
+    }
+    clearListHead.textContent = rects.length ? 'Game windows: ' + kept + ' of ' + rects.length + ' kept clear' : 'Game windows';
+    var res = S.clear.ui && S.clear.ui.res, cl = S.clear.client;
+    var mismatch = !!(res && res.match === false && cl);
+    clearResEl.hidden = !mismatch;
+    if (mismatch) clearResEl.textContent = 'EverQuest is running at ' + cl.w + 'x' + cl.h + ' but your UI file was last saved for ' + res.w + 'x' + res.h
+      + ', so these positions are scaled guesses and start unticked. Camp or zone in EverQuest to save the layout for this size.';
+  }
+  function pickWindow(id, keep) {
+    var rects = clearRects();
+    for (var i = 0; i < rects.length; i++) if (rects[i].id === id) rects[i].keep = keep;
+    rebuildClear();   // the cut-out changes at once; main then confirms what it saved
+    try {
+      window.mimic && window.mimic.mapClearPickSet && window.mimic.mapClearPickSet(S.clear.char || charName(), id, keep).then(function (ui) {
+        if (ui) { S.clear.ui = ui; S.clear.client = ui.client || S.clear.client; rebuildClear(); }
+      }).catch(function () {});
+    } catch (e) {}
+  }
+  document.getElementById('clearListReset').addEventListener('click', function () {
+    var rects = clearRects();
+    for (var i = 0; i < rects.length; i++) rects[i].keep = !rects[i].guess;
+    rebuildClear();
+    try {
+      window.mimic && window.mimic.mapClearPickSet && window.mimic.mapClearPickSet(S.clear.char || charName(), null, null).then(function (ui) {
+        if (ui) { S.clear.ui = ui; S.clear.client = ui.client || S.clear.client; rebuildClear(); }
+      }).catch(function () {});
+    } catch (e) {}
+  });
   if (!PART_TIMERS) setInterval(function () { if (!document.hidden) refreshClear(false); }, 60000);
 
   // Edit clear areas: drag a box anywhere on the map; the ✕ on a box removes it. Boxes are saved at once, for this
@@ -2763,7 +2917,8 @@
         clearBoxesEl.appendChild(d);
       }
     };
-    shown(S.clearWin.ui, 'ui', null);
+    // The game windows are outlined and named on the canvas (paintOutlines) while editing; only the raider's boxes, which
+    // take a ✕, live in this layer.
     shown(S.clearWin.user, 'user', true);
   }
   var rubber = null;
