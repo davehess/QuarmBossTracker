@@ -367,7 +367,21 @@ Standard, a progression night. Manaetic Prototype IX, the night's fourth kill (i
 - **Sounds:** the ember (a settling log, ≤0.6 s), "Hm.", "Ahh." (first-ever kills only). Never laughter, bells or sighs.
 - **Build:** Qwen3-TTS VoiceDesign bakes a reference clip (nobody's voice); Chatterbox clones new lines from it on a free gaming PC; 3–5 takes, speech-to-text check; high-pass 70 Hz, low shelf ~120 Hz, 3:1 compression, the tier's room. Slots are stitched clips; bosses and zones go through `spoken_as`.
 - **Voice prompt:** *A vast, warm male bass-baritone, mature and unhurried, the lowest and slowest voice in any room. Round vowels, neutral stage diction, no wizard cliché. Genuinely kind; every sentence smiling, never smug. Dry, quietly amused, never laughing. Real pauses; every sentence ends on a settled, falling pitch. Close, quiet room, no baked reverb.*
-- **Portrait prompt:** *Painterly portrait of a vast hooded keeper seated on a fallen stone of a druid ring (a Ring of Karana silhouette), face lit only by the campfire at its centre; a ledger open on one knee; one huge hand lowered in blessing. Inside the ring a polite congregation of old newbie mobs: a gnoll pup, a decaying skeleton, a large rat, a fire beetle, Fippy Darkpaw at the front. A small chest with gold eyes at the edge; a bone-white wolf asleep at his feet. Teal night, ember light, bone #E8E2D4, gold #FFCF5C. No text, bells, throne, beard cliché or real likeness.* **Emblem:** *a druid ring seen from above, one flame at the centre, three embers rising; reads at 64 px.*
+- **Look (the guild lead, 2026-10-13 — supersedes the seated-keeper portrait below):** *"an ancient
+  Anthropomorphic Wolf God for us, robed and wizened, weary of time with a glowing floating hourglass on a chain
+  and lassos/whips for pulls in holsters. he runs on the wind, tight around corners with haste, vigilant. but
+  always with a keen eye on the pack and where we're going next. he runs with the pullers and watches for eye
+  contact from the raid lead."* So: an old grey-muzzled wolf standing upright, long weathered robes that stream
+  behind him, tired wise eyes; a small hourglass glowing gold, floating on a chain at his side; coiled lassos and
+  a whip in hip holsters (the puller's tools). In motion he runs on the wind, low and fast, cutting corners tight;
+  at rest he is half-turned, one eye on the Pack behind him and one on the road ahead, waiting for the raid
+  lead's nod. He still never fights: he pulls, guides and keeps.
+- **Portrait prompt (current):** *Painterly portrait of an ancient anthropomorphic wolf god, grey-muzzled and
+  wizened, in long weathered travelling robes streaming in the wind; a small glowing golden hourglass floating on
+  a chain at his hip; coiled lassos and a braided whip in leather holsters; mid-stride on a path of wind and
+  leaves, glancing back over his shoulder at a pack of adventurers following him; teal night, ember light, bone
+  #E8E2D4, gold #FFCF5C. Kind, tired, vigilant eyes. No text, no throne, no real likeness.*
+- **Portrait prompt (superseded 2026-10-13):** *Painterly portrait of a vast hooded keeper seated on a fallen stone of a druid ring (a Ring of Karana silhouette), face lit only by the campfire at its centre; a ledger open on one knee; one huge hand lowered in blessing. Inside the ring a polite congregation of old newbie mobs: a gnoll pup, a decaying skeleton, a large rat, a fire beetle, Fippy Darkpaw at the front. A small chest with gold eyes at the edge; a bone-white wolf asleep at his feet. Teal night, ember light, bone #E8E2D4, gold #FFCF5C. No text, bells, throne, beard cliché or real likeness.* **Emblem:** *a druid ring seen from above, one flame at the centre, three embers rising; reads at 64 px.*
 
 ### 3. Speech rules
 
