@@ -5951,6 +5951,18 @@ Abashi's Rod → 31242). The web has no decoder: it shows the stored link. **Ope
 fixable, staged in `docs/RUNBOOK-pqdi-chat-links.md`, unapplied (the guild lead's yes); the stable fleet keeps writing
 wrong links until the agent reaches stable.
 
+### 🧾 2026-10-14 — Chat overlay round 4: channel tags, per-channel switches, show-only, Melee, per-window text (agent 3.7.173 · Mimic beta `efd30696`, DECISIONS §315)
+Every line is tagged `[GU] [P] [2]…`; joined channels switch off by name (`chatPrefs.offChannels`, shared by all characters);
+right-click "Show only" is a saved view toggle (`chatPrefs.only`); a Melee group (own 300-line ring, opt-in, `[M]`) reuses
+`parseEvent`; each window keeps its own text settings (`chatPrefs.win`). **Open:** a real `/abc` joined-channel log to confirm the name
+is never in it; per-channel switches shared vs per character; hiding timestamps also hides click-to-copy.
+
+### 🧾 2026-10-14 — Overlays stop flickering on app switch (Mimic beta `65eceea9`, DECISIONS §316)
+Two causes in the "overlays drop behind other apps" focus path (a9919715): a NULL foreground sample mid-switch read as "EQ in front"
+and raised every overlay for 600 ms (`_focusFgSample` now ignores it), and the 400 ms foreground poll left overlays under EverQuest
+after clicking back into it (now 120 ms). **Open:** Windows retest; if it persists, say leaving EQ vs returning to EQ; the held
+Alt+Tab / taskbar (explorer.exe) case still drops and re-raises.
+
 ### 🧾 2026-10-14 — Target Info shows how a mob hits: slash / pierce / blunt (agent 3.7.172, beta `4ec04404`, DECISIONS §314)
 The guild lead: *"when we observe what types of hits a mob is doing, put that onto the target info"*. A mob's melee verb names the
 type (`slashes` → slash, `bites` → pierce, `crushes` → blunt); `noteMobMelee` tallies it per mob NAME (the log line carries no spawn id),

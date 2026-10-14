@@ -10612,3 +10612,19 @@ the Bastion of Thunder at the time.
   one-word attacker counts only when it is not a known player or pet. Verb map reuses the Pet tracker's `_verbToSkill` (+ stab, backstab,
   strike, rend). Local only, nothing uploaded.
 - **Open:** chip placement (slate chip vs the stats grid); an alpha Canvas piece; pooling across the guild would need a new upload.
+
+### 315. Chat overlay round 4: tags, per-channel switches, show-only, Melee, per-window text (agent 3.7.173 · Mimic beta `efd30696`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"put the [P] [RS] [GU] [1] [2] [3] [4] etc in front of the lines"*, *"Allow for turning off
+  specific channels and keep people's settings"*, *"need rightclick on chat to 'show only this' as an option to toggle on and off"*,
+  *"have a spot for combined melee"*, *"extra windows need their text to be configurable"*.
+- **Calls:** joined-channel switches keyed by lower-case NAME (slot numbers move), shared by every character; show-only is a view toggle
+  that never writes the switches; Melee is opt-in with its own ring and reuses the agent's melee parser; "extra windows" read as the
+  breakouts + Melee window + main, each with its own font size / spacing / timestamps / tags. All local, memory only.
+- **Open:** per-character channel switches?; a real `/abc` log to confirm.
+
+### 316. Overlay flicker on app switch (Mimic beta `65eceea9`, 2026-10-14)
+- **The report (the guild lead, 2026-10-14):** *"lately i've been seeing a flicker for the overlays when i switch between applications"*.
+- **Cause (a9919715, 2026-10-13, overlays drop behind other apps):** a NULL foreground sample while switching read as focused, raising
+  every overlay over the incoming app for the 600 ms debounce; and clicking back into EverQuest covered the dropped overlays until the
+  next 400 ms sample. **Fix:** ignore NULL samples; poll every 120 ms (two user32 calls; parent-alive check still ~4 s).
+- **Open:** Windows retest; quick A/B is "Other apps can draw over overlays when EverQuest isn't focused" off.
