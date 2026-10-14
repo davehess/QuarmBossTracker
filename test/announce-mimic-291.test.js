@@ -17,6 +17,7 @@ function harness({ latch = [], release = null, webStatus = 307 } = {}) {
   const log = { posts: [], upserts: [], fetched: 0, web: 0 };
   const fakes = {
     './utils/supabase': {
+      guildId: () => 'wolfpack',
       select: async () => (typeof latch === 'function' ? latch() : latch),
       upsert: async (table, rows) => { log.upserts.push([table, rows]); },
     },

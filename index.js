@@ -12800,7 +12800,7 @@ function _mimic291Embed() {
 }
 async function _announceMimic291Once() {
   const supabase = require('./utils/supabase');
-  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const guildId = supabase.guildId();
   const rows = await supabase.select('bot_kv',
     `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_MIMIC291_KV_KEY}&select=value&limit=1`);
   // Fail closed (utils/kvLatch.js): null is "could not check", not "never posted".
