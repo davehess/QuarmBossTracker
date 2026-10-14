@@ -1962,6 +1962,7 @@
       if (SH.focus && P.focus) {
         var fo = P.focus, fp = null;
         if (fo.at === 'target' && P.target && fo.x != null) fp = drawn(targetKey(P.target), P.target, rt);
+        else if (fo.at === 'raid' && fo.x != null) fp = { x: fo.x, y: fo.y };   // the raid's shared target positions (the bot, via the agent)
         else if (fo.at === 'point' && S.byId[String(fo.point_id)]) fp = S.byId[String(fo.point_id)];
         if (fp) {
           var fq = wpt(fp.x, fp.y);

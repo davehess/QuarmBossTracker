@@ -45988,7 +45988,27 @@ const MAP_CORPSE_RE          = /[`'’]s\s+corpse\d*$/i;
 // is targetting him we should track that path and put his path on the map"). Thelin Poxbourne is the escort of the
 // Plane of Nightmare hedge maze; his waypoints come from a quest script, not a spawn grid, so the learned wander legs
 // (_mapNoteLeg) cannot hold them and the samples are kept as a plain trail. { zone short: [normalised names] }.
-const MAP_TRACKED_PATHS      = { ponightmare: ['thelin poxbourne'] };
+// ADD AN ESCORT HERE, one line per zone (lowercase, no leading '#', spaces for underscores), and in the bot's ESCORT_NPCS
+// (utils/raidTargets.js, shared trail): test/raid-targets-escort-list.test.js fails when the two lists differ.
+// Matched on zone + name, never on spawn id (Garadain Glacierbane has several ids across zones).
+const MAP_TRACKED_PATHS      = {
+  ponightmare: ['thelin poxbourne', 'aid eino'],
+  poinnovation: ['nitram anizok'],
+  eastwastes: ['garadain glacierbane'],
+  iceclad: ['general bragmur'],
+  cazicthule: ['gimlik cogboggle'],
+  steamfont: ['cargo clockwork'],
+  tenebrous: ['johanius barleou'],
+  fungusgrove: ['caller groo', 'caller murkin', 'caller torgal'],
+  netherbian: ['lerin sardor'],
+  eastkarana: ['teloa'],
+  sharvahl: ['shainai'],
+  grimling: ['scout husman', 'scout derrin', 'scout danarin', 'captain necin', 'sergeant jherum', 'veteran vadrel', 'scout gergil'],
+};
+// Several escorts also stand still in a town with the same name (Teloa, Shainai, the Grimling scouts): a stretch of
+// trail is drawn only once it has moved this far from where it began, so an idle copy never shows.
+const MAP_PATH_MIN_SHOWN_UNITS = 100;
+const MAP_FOCUS_RAID_MAX_MS = 2 * 60 * 1000;   // a shared target position older than this (bot clock, plus time since the pull) is not placed
 const MAP_PATH_STEP_UNITS    = 12;                  // a sample is kept only this far from the last one
 const MAP_PATH_GAP_MS        = 20 * 1000;           // nobody had him targeted this long: no straight line across the gap
 const MAP_PATH_JUMP_UNITS    = 400;                 // further than a walk covers between two looks: another body of that name
@@ -46672,7 +46692,11 @@ function _mapCopyInfo(zone, now) {
 // events newer than the last one seen. Ephemeral on purpose: no durable queue, a failed POST is dropped. A 404
 // means the bot does not have the route yet: nothing is asked of it for 10 minutes, and nothing is shown.
 // Same URL derivation, bearer, timeout and _mapFetchAllowed() gate as _mapGetZone: local mode never syncs.
-const _mapSync = { q: [], flushTimer: null, backoffUntil: 0, pulling: false, pullAt: 0, pullZone: null, since: {}, keys: new Set() };
+// The same pull also brings the raid's shared targets and the escort trails (bot 3.1.263, DECISIONS 299), kept here per
+// zone: `targets[zone]` = { rows, botNow, pulledAt }, `trails[zone][<name>]` = { name, at, live, pulledAt, pts, tmax }.
+// Memory only; the bot is where they persist. An older bot sends neither and nothing here changes.
+const _mapSync = { q: [], flushTimer: null, backoffUntil: 0, pulling: false, pullAt: 0, pullZone: null, since: {}, keys: new Set(),
+  targets: {}, trails: {} };
 const _mapSyncKey = (zone, e) => zone + '|' + e.point_id + '|' + e.kind + '|' + (e.spawn_id == null ? '' : e.spawn_id) + '|' + e.at;
 function _mapSyncRemember(key) { if (_mapSync.keys.size > 4000) _mapSync.keys.clear(); _mapSync.keys.add(key); }
 function _mapSyncStop() {
@@ -46743,7 +46767,9 @@ function _mapSyncPull(zone, now) {
   const rec = _mapZones.get(zone);
   if (!rec || !rec.body) return false;
   _mapSync.pulling = true; _mapSync.pullAt = now; _mapSync.pullZone = zone;
-  _mapSyncRequest('GET', '?zone=' + encodeURIComponent(zone) + '&since=' + (_mapSync.since[zone] || 0), null, (err, status, buf) => {
+  // tsince = the newest escort-trail point already held for this zone, so a pull brings only what is new (omitted until one is held).
+  const tsince = Math.max(0, ...Object.values(_mapSync.trails[zone] || {}).map(h => h.tmax || 0));
+  _mapSyncRequest('GET', '?zone=' + encodeURIComponent(zone) + '&since=' + (_mapSync.since[zone] || 0) + (tsince > 0 ? '&tsince=' + tsince : ''), null, (err, status, buf) => {
     _mapSync.pulling = false;
     if (err) return;
     if (status === 404) { _mapSync.backoffUntil = now + MAP_SYNC_BACKOFF_MS; return; }
@@ -46751,6 +46777,7 @@ function _mapSyncPull(zone, now) {
     try {
       const j = JSON.parse(buf.toString('utf8'));
       if (j && Array.isArray(j.events)) _mapApplyRemote(zone, j.events, Date.now());
+      if (j) _mapApplyShared(zone, j, Date.now());
     } catch { /* an unreadable answer is ignored; the next pull asks again */ }
   });
   return true;
@@ -46821,6 +46848,44 @@ function _mapApplyRemote(zone, events, now) {
   _mapSync.since[zone] = maxAt;
   if (applied) _mapSaveSoon();
   return applied;
+}
+// The raid's shared targets and the escort trails out of one map-sync answer (bot 3.1.263; an older bot sends neither and
+// nothing changes). `targets` replace the zone's last set; `trails` add the points not yet held (tsince asks for only the
+// new ones, but a stretch that just qualified comes whole, so dedupe by point time). Only names on this machine's own
+// MAP_TRACKED_PATHS list are kept. Memory only: the bot is where they persist.
+function _mapApplyShared(zone, j, now) {
+  if (!j || typeof j !== 'object') return;
+  const botNow = Number.isFinite(Number(j.now)) ? Number(j.now) : now;
+  if (Array.isArray(j.targets)) {
+    const rows = [];
+    for (const t of j.targets.slice(0, 40)) {
+      const x = Number(t && t.x), y = Number(t && t.y), at = Number(t && t.at), id = Number(t && t.id);
+      if (!t || typeof t.name !== 'string' || !Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(at) || !(id > 0)) continue;
+      rows.push({ name: t.name.slice(0, 80), id, x, y, z: Number.isFinite(Number(t.z)) ? Number(t.z) : 0,
+        n: Math.max(1, Math.trunc(Number(t.n)) || 1), age: Math.max(0, botNow - at) });   // age on the bot's clock, when the pull came back
+    }
+    _mapSync.targets[zone] = { rows, pulledAt: now };
+  }
+  if (j.trails && typeof j.trails === 'object' && !Array.isArray(j.trails)) {
+    const tracked = MAP_TRACKED_PATHS[zone] || [];
+    const zt = _mapSync.trails[zone] || (_mapSync.trails[zone] = {});
+    for (const [k, tr] of Object.entries(j.trails)) {
+      if (!tracked.includes(k) || !tr || typeof tr !== 'object') continue;
+      const h = zt[k] || (zt[k] = { name: k, at: 0, live: false, pulledAt: 0, pts: [], tmax: 0 });
+      if (typeof tr.name === 'string' && tr.name) h.name = tr.name.slice(0, 80);
+      h.live = tr.live === true; h.pulledAt = now;
+      h.at = Number.isFinite(Number(tr.at)) ? now - Math.max(0, botNow - Number(tr.at)) : now;   // on this machine's clock
+      const have = new Set(h.pts.map(p => p[3]));
+      for (const p of (Array.isArray(tr.pts) ? tr.pts.slice(0, MAP_PATH_MAX) : [])) {
+        if (!Array.isArray(p) || p.length < 4 || !p.slice(0, 4).every(v => Number.isFinite(Number(v))) || have.has(Number(p[3]))) continue;
+        have.add(Number(p[3]));
+        h.pts.push([Number(p[0]), Number(p[1]), Number(p[2]), Number(p[3]), p[4] === 1 ? 1 : 0]);
+      }
+      h.pts.sort((a, b) => a[3] - b[3]);
+      if (h.pts.length > MAP_PATH_MAX) h.pts.splice(0, h.pts.length - MAP_PATH_MAX);
+      h.tmax = h.pts.length ? h.pts[h.pts.length - 1][3] : 0;
+    }
+  }
 }
 
 // ── Sightings and deaths ────────────────────────────────────────────────────────────────────────
@@ -46986,6 +47051,40 @@ function _mapNotePath(zone, name, loc, now) {
   if (rec.pts.length > MAP_PATH_MAX) rec.pts.splice(0, rec.pts.length - MAP_PATH_MAX);
   _mapSaveSoon();
   return true;
+}
+
+// Two trails of one NPC - this machine's own looks and the raid's shared one (the bot's, via _mapApplyShared) -> one, in
+// time order. The bot saw this machine's looks too, so most points are in both: a point within one step and 30 s of the
+// last kept one is the same look and is dropped. A break stays only where nobody else was watching through it (the
+// previous point is over the gap limit away), and a jump too long to be a walk is always a break.
+function _mapMergePath(a, b) {
+  const all = a.concat(b).sort((p, q) => p[3] - q[3]);
+  const out = [];
+  for (const p of all) {
+    const last = out[out.length - 1];
+    const d = last ? _mapDist2({ x: last[0], y: last[1] }, { x: p[0], y: p[1] }) : Infinity;
+    if (last && p[3] - last[3] < 30000 && d < MAP_PATH_STEP_UNITS) continue;
+    let brk = last && p[4] === 1 ? 1 : 0;
+    if (brk && p[3] - last[3] <= MAP_PATH_GAP_MS) brk = 0;
+    if (last && d > MAP_PATH_JUMP_UNITS) brk = 1;
+    out.push([p[0], p[1], p[2], p[3], brk]);
+  }
+  return out.length > MAP_PATH_MAX ? out.slice(-MAP_PATH_MAX) : out;
+}
+// Only the stretches of a trail that moved MAP_PATH_MIN_SHOWN_UNITS from where they began (a break starts a new stretch).
+// An escort that also stands idle in a town under the same name (Teloa, Shainai, the Grimling scouts) never draws.
+function _mapShownPath(pts) {
+  const out = [];
+  let seg = [];
+  const close = () => {
+    if (seg.length && seg.some(p => _mapDist2({ x: p[0], y: p[1] }, { x: seg[0][0], y: seg[0][1] }) >= MAP_PATH_MIN_SHOWN_UNITS)) {
+      for (const p of seg) out.push(p);   // a stretch after the first starts at a break already (the split is on brk), so the line is never bridged
+    }
+    seg = [];
+  };
+  for (const p of pts) { if (p[4] === 1) close(); seg.push(p); }
+  close();
+  return out;
 }
 
 // ── What the overlay reads ──────────────────────────────────────────────────────────────────────
@@ -47211,8 +47310,18 @@ function _mapStatePayload(have, now, haveLocal) {
   if (!zone) { out.status = 'no-zone'; return out; }
   // Tracked NPCs' walks (MAP_TRACKED_PATHS), recorded off any target window: { <name>: { name, at, live, pts } }, pts
   // [x, y, z, t, brk]. Before the spawn data: the trail draws even in a zone we hold no points for.
-  for (const [k, r] of Object.entries(_mapZoneDoc(zone).paths)) {
-    if (r && Array.isArray(r.pts) && r.pts.length && now - r.at <= MAP_PATH_KEEP_MS) out.paths[k] = { name: r.name, at: r.at, live: now - r.at <= MAP_PATH_LIVE_MS, pts: r.pts };
+  // Joined with the raid's shared trail for the same NPC when the bot sent one (_mapApplyShared / _mapMergePath), and only
+  // the stretches that moved 100 units are sent (_mapShownPath): an idle town copy of an escort never draws.
+  const shared = _mapSync.trails[zone] || {}, localPaths = _mapZoneDoc(zone).paths;
+  for (const k of new Set([...Object.keys(localPaths), ...Object.keys(shared)])) {
+    const r = localPaths[k], h = shared[k];
+    const lOk = !!(r && Array.isArray(r.pts) && r.pts.length && now - r.at <= MAP_PATH_KEEP_MS);
+    const sOk = !!(h && h.pts.length && now - h.pulledAt <= MAP_PATH_KEEP_MS);
+    if (!lOk && !sOk) continue;
+    const pts = _mapShownPath(lOk && sOk ? _mapMergePath(r.pts, h.pts) : lOk ? r.pts : h.pts);
+    if (!pts.length) continue;
+    const lLive = lOk && now - r.at <= MAP_PATH_LIVE_MS, sLive = sOk && h.live && now - h.pulledAt <= MAP_SYNC_PULL_MS + 2000;
+    out.paths[k] = { name: lOk ? r.name : h.name, at: Math.max(lOk ? r.at : 0, sOk ? h.at : 0), live: lLive || sLive, pts };
   }
   try {   // before the spawn data: the walls draw even in a zone we hold no points for
     _mapBrewallEnsure(zone, now);   // first visit to a zone: fetch Brewall's map for it (see "Brewall maps")
@@ -47243,7 +47352,19 @@ function _mapStatePayload(have, now, haveLocal) {
     .filter(s => s && now - s.at <= MAP_SEEN_KEEP_MS && !(zd.timers[String(s.point_id)] && zd.timers[String(s.point_id)].died_at >= s.at))
     .map(s => ({ point_id: s.point_id, spawn_id: s.spawn_id == null ? null : s.spawn_id, name: s.name, at: s.at, by: s.by || null }))
     .sort((a, b) => b.at - a.at);
-  // Not your target: the spawn point a pinned mob of that name was seen alive on (an unpulled mob stands there).
+  // Not your target: where the raid's shared targets (the bot, _mapApplyShared) put a mob of that name. The most-targeted
+  // row when several share the name and no spawn id was given; a row older than two minutes is not a position.
+  if (out.focus && out.focus.x == null) {
+    const sh = _mapSync.targets[zone];
+    if (sh) {
+      const fn = _mapNormName(out.focus.name);
+      const hit = sh.rows.filter(t => _mapNormName(t.name) === fn && (out.focus.id == null || t.id === out.focus.id)
+        && t.age + (now - sh.pulledAt) <= MAP_FOCUS_RAID_MAX_MS)
+        .sort((a, b) => b.n - a.n || a.age - b.age)[0];
+      if (hit) Object.assign(out.focus, { x: hit.x, y: hit.y, z: hit.z, at: 'raid' });
+    }
+  }
+  // Not your target, nobody shared it: the spawn point a pinned mob of that name was seen alive on (an unpulled mob stands there).
   if (out.focus && out.focus.x == null) {
     const hit = out.seen.find(s => _mapNormName(s.name) === _mapNormName(out.focus.name) && (out.focus.id == null || s.spawn_id == null || s.spawn_id === out.focus.id));
     if (hit) { out.focus.point_id = hit.point_id; out.focus.at = 'point'; }
@@ -49085,6 +49206,31 @@ const _liveStateLastSig = new Map();   // character → last-sent signature
 // or two.
 const LIVE_STATE_HEARTBEAT_MS = 45_000;
 const _liveStateLastSentAt = new Map();   // character → ms of last successful send
+// Where the character's target stands, for the raid's Map (DECISIONS 299): it rides THIS upload, no stream of its own.
+// target_map is in the Map's server frame (the pipe's x/y swapped, _mapServerXY), not loc_x's pipe frame. Only a live NPC
+// with a spawn id (0 is "no target") and a position, in a zone the Map knows. The position is NOT in the change
+// signature (it churns); it rides every send, and a mover earns an extra send of its own, measured against the last
+// position sent: any mob after 30 units AND 10 s, an escort (MAP_TRACKED_PATHS) after 12 units AND 5 s, or 15 s standing
+// so its trail has no hole. A target swap already trips the signature. Local mode never gets here (no token, no push).
+const LIVE_TPOS_MOVE_UNITS = 30, LIVE_TPOS_MIN_MS = 10_000;
+const LIVE_TPOS_ESCORT_MOVE_UNITS = 12, LIVE_TPOS_ESCORT_MIN_MS = 5_000, LIVE_TPOS_ESCORT_REFRESH_MS = 15_000;
+const _liveTargetPosSent = new Map();     // character → { id, x, y, at } of the last position sent
+function _liveTargetPosOf(st) {
+  if (!st || !st.target_name || !(Number(st.target_id) > 0)) return null;
+  if (st.target_type != null && Number(st.target_type) !== 1) return null;            // players and corpses are not mobs
+  if (MAP_CORPSE_RE.test(String(st.target_name))) return null;
+  const zone = _mapZoneShort(st.zone), p = _mapServerXY(st.target_loc);
+  if (!zone || !p) return null;
+  const escort = (MAP_TRACKED_PATHS[zone] || []).includes(_mapNormName(st.target_name));
+  return { id: Number(st.target_id), x: p.x, y: p.y, z: p.z, zone, escort };
+}
+// An extra send because the same target moved since the last one sent. prev = _liveTargetPosSent's entry or undefined.
+function _liveTargetPosDue(prev, cur, now) {
+  if (!prev || !cur || prev.id !== cur.id) return false;
+  const gap = now - prev.at, moved = _mapDist2(prev, cur);
+  if (cur.escort) return gap >= LIVE_TPOS_ESCORT_MIN_MS && (moved >= LIVE_TPOS_ESCORT_MOVE_UNITS || gap >= LIVE_TPOS_ESCORT_REFRESH_MS);
+  return gap >= LIVE_TPOS_MIN_MS && moved >= LIVE_TPOS_MOVE_UNITS;
+}
 function _postLiveState(targetUrl, token, payload) {
   if (!token) return;   // Local mode: no token, so the live state (zone, buffs, pet) never leaves the machine.
   let url;
@@ -49800,6 +49946,7 @@ function flushLiveStateToBot(opts) {
         }
       }
     }
+    const tpos = _liveTargetPosOf(st);
     const rec = {
       character:   ch,
       zone_id:     st.zone != null ? st.zone : null,
@@ -49872,6 +50019,9 @@ function flushLiveStateToBot(opts) {
       loc_x:          (st.loc && Number.isFinite(Number(st.loc.x))) ? Number(st.loc.x) : null,
       loc_y:          (st.loc && Number.isFinite(Number(st.loc.y))) ? Number(st.loc.y) : null,
       loc_z:          (st.loc && Number.isFinite(Number(st.loc.z))) ? Number(st.loc.z) : null,
+      // Where that target stands (the raid's Map, bot 3.1.263): server frame, NPC only, see _liveTargetPosOf. Absent when
+      // there is nothing to place, which tells the bot to forget this character's last one.
+      ...(tpos ? { target_map: { x: Math.round(tpos.x), y: Math.round(tpos.y), z: Math.round(tpos.z) }, target_type: 1, target_zone: tpos.zone } : {}),
       incoming_mob:       incomingMob,
       incoming_mob_since: incomingMobSinceMs ? new Date(incomingMobSinceMs).toISOString() : null,
       // #194: every mob→player connect THIS observer's log saw recently — the
@@ -50029,9 +50179,11 @@ function flushLiveStateToBot(opts) {
     const sigChanged   = _liveStateLastSig.get(ch) !== sig;
     const lastSentAt   = _liveStateLastSentAt.get(ch) || 0;
     const heartbeatDue = (now - lastSentAt) >= LIVE_STATE_HEARTBEAT_MS;
-    if (!sigChanged && !heartbeatDue) continue;
+    const targetMoved  = _liveTargetPosDue(_liveTargetPosSent.get(ch), tpos, now);   // the same target walked on (see _liveTargetPosDue)
+    if (!sigChanged && !heartbeatDue && !targetMoved) continue;
     _liveStateLastSig.set(ch, sig);
     _liveStateLastSentAt.set(ch, now);
+    if (tpos) _liveTargetPosSent.set(ch, { id: tpos.id, x: tpos.x, y: tpos.y, at: now }); else _liveTargetPosSent.delete(ch);
     states.push(rec);
   }
   if (states.length === 0) return;

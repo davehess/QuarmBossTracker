@@ -28,7 +28,8 @@ const EXPORTS = ['_mapServerXY', '_mapZoneShort', '_mapNormName', '_mapAttribute
   '_mapZoneDoc', '_mapPrune', '_mapEnsureZone', '_mapPaths', '_zealState', '_setRaid', '_setOpts', 'MAP_ZONE_SHORT',
   '_mapTryPin', '_mapPinGet', '_mapSync', '_mapSyncStop', '_mapSyncFlush', '_mapSyncPull', '_mapApplyRemote', '_mapLocalEvent',
   '_mapSegDist', '_mapRouteDist', '_mapCopy', '_mapCopyNoteWho', '_mapCurrentCopy', '_mapCopyInfo', 'whoData',
-  '_mapNoteCon', '_mapConsFor', '_mapMe', '_mapQuarmyIds', '_mapNoteLeg', '_mapNotePath', '_mapFocusTarget', '_extTargetCache', '_mapCcStates', '_buffLandingsByTarget', '_spellByNameLower'];
+  '_mapNoteCon', '_mapConsFor', '_mapMe', '_mapQuarmyIds', '_mapNoteLeg', '_mapNotePath', '_mapFocusTarget', '_extTargetCache', '_mapCcStates', '_buffLandingsByTarget', '_spellByNameLower',
+  'MAP_TRACKED_PATHS', 'MAP_CORPSE_RE', '_mapDist2', '_mapMergePath', '_mapShownPath', '_mapApplyShared'];
 // The agent's real /consider tiers, for _mapNoteCon (they live outside the map core).
 const CON_DEFS = AGENT.slice(AGENT.indexOf('const CON_STANDINGS = ['), AGENT.indexOf('\n', AGENT.indexOf('const _CON_RX = ')));
 // The agent's real lull line and mez test, for _mapCcStates (also outside the map core).
@@ -985,14 +986,14 @@ describe('pather routes', () => {
       Object.assign({ zone: 204, target_name: name, target_id: 486, target_type: 1, target_hp_pct: 100, target_loc: { x: px, y: py, z: 5 } }, extra || {}), at);
     look('Thelin Poxbourne', 10, 100, T0);
     look('Thelin Poxbourne', 12, 104, T0 + 1000);       // 4.5 units on: not a new point
-    look('Thelin Poxbourne', 10, 140, T0 + 2000);       // 40 on
-    look('Thelin Poxbourne', 10, 180, T0 + 40_000);     // nobody had him for 38 s: the line to here is not drawn
-    look('Thelin Poxbourne', 10, 1180, T0 + 41_000);    // 1000 on in a second: another body of that name
-    look('Thelin Poxbourne', 10, 1220, T0 + 42_000);
+    look('Thelin Poxbourne', 10, 240, T0 + 2000);       // 140 on
+    look('Thelin Poxbourne', 10, 380, T0 + 40_000);     // nobody had him for 38 s: the line to here is not drawn (and one point alone has not moved 100: not drawn)
+    look('Thelin Poxbourne', 10, 1380, T0 + 41_000);    // 1000 on in a second: another body of that name
+    look('Thelin Poxbourne', 10, 1520, T0 + 42_000);
     const p = c._mapStatePayload('', T0 + 43_000);
     expect(p.paths['thelin poxbourne'].name).toBe('Thelin Poxbourne');
     expect(p.paths['thelin poxbourne'].pts).toEqual([
-      [100, 10, 5, T0, 0], [140, 10, 5, T0 + 2000, 0], [180, 10, 5, T0 + 40_000, 1], [1180, 10, 5, T0 + 41_000, 1], [1220, 10, 5, T0 + 42_000, 0]]);
+      [100, 10, 5, T0, 0], [240, 10, 5, T0 + 2000, 0], [1380, 10, 5, T0 + 41_000, 1], [1520, 10, 5, T0 + 42_000, 0]]);
     expect(p.paths['thelin poxbourne'].live).toBe(true);
     expect(c._mapStatePayload('', T0 + 42_000 + 20_000).paths['thelin poxbourne'].live).toBe(false);   // not watched now
     expect(c._mapSaveNow()).toBe(true);
@@ -2585,5 +2586,234 @@ describe('the Map direct position path (apps/mimic/main.js -> preload -> map.htm
     expect(js).toMatch(/mapWindow\.webContents\.send\('map-pos', p\)/);
     expect(stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'preload.js')))).toMatch(/onMapPos:\s+\(cb\)\s+=> ipcRenderer\.on\('map-pos', \(_e, p\) => cb\(p\)\)/);
     expect(stripJs(MAP_HTML)).toMatch(/window\.mimic && window\.mimic\.onMapPos && window\.mimic\.onMapPos\(onDirect\);/);
+  });
+});
+
+// ── The raid's shared targets and escort trails (DECISIONS 299, agent 3.7.166) ────────────────────────────────────
+// The guild lead picked both: B (the focus ring placed from other raiders' targets) and A (an escort trail every Mimic
+// sees). Source: the bot's map-sync pull (test/raid-targets.test.js is the bot half). The upload half rides live-state.
+// Mutation-checked (2026-10-14): the tsince query dropped, the merge dedupe dropped, the 100-unit shown gate dropped, the
+// age gate dropped, the id match dropped, the "raid" placement dropped, the local-mode gate dropped, the mover send and
+// the target fields dropped from the live-state record - each turns at least one test red.
+describe('shared escort trails and the raid focus (the bot\'s map-sync answer)', () => {
+  const LIVE2 = { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: 'tok' };
+  const seedZone = (short) => {
+    fs.mkdirSync(path.join(dir, 'zone-spawns-cache'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'zone-spawns-cache', short + '.json'), JSON.stringify({ etag: '"v1"', fetched_at: Date.now(), body: { ...ZONE_BODY, zone: short } }));
+  };
+  const core = (responder) => {
+    seedZone('ponightmare');
+    const net = fakeNet(responder || (() => ({ status: 200, body: { ok: true } })));
+    const c = loadCore({ dir, opts: LIVE2, net });
+    c._mapEnsureZone('ponightmare', 204, Date.now());
+    c._zealState.Aldenmar = { zone: 204, updatedAt: 1e18, loc: { x: 0, y: 0, z: 0 } };
+    return { c, net };
+  };
+  const pts = (xs, t0) => xs.map((x, i) => [x, 0, 0, t0 + i * 3000, 0]);
+
+  it('the escort list is the researched one, and a name on it is matched in its own zone', () => {
+    const { c } = core();
+    expect(Object.keys(c.MAP_TRACKED_PATHS).sort()).toEqual(['cazicthule', 'eastkarana', 'eastwastes', 'fungusgrove', 'grimling', 'iceclad',
+      'netherbian', 'poinnovation', 'ponightmare', 'sharvahl', 'steamfont', 'tenebrous']);
+    expect(c.MAP_TRACKED_PATHS.ponightmare).toEqual(['thelin poxbourne', 'aid eino']);
+    expect(c.MAP_TRACKED_PATHS.grimling).toHaveLength(7);
+  });
+
+  it('the first pull asks for everything; later pulls ask only for points newer than the newest held (tsince)', async () => {
+    const N = Date.now();
+    const answer = { zone: 'ponightmare', now: N, events: [], targets: [],
+      trails: { 'thelin poxbourne': { name: 'Thelin Poxbourne', at: N, live: true, pts: pts([0, 40, 80, 120], N - 12000) } } };
+    const { c, net } = core((o) => /map-sync/.test(o.path) ? { status: 200, body: answer } : { status: 500 });
+    c._mapStatePayload('', N);
+    expect(net.calls[0].path).toBe('/api/agent/map-sync?zone=ponightmare&since=0');
+    await tick();
+    c._mapStatePayload('', N + 10000);
+    expect(net.calls[1].path).toBe('/api/agent/map-sync?zone=ponightmare&since=0&tsince=' + (N - 12000 + 9000));
+  });
+
+  it('a shared trail is drawn though this machine never targeted him, solid while the bot says it is live', () => {
+    const { c } = core(); const N = Date.now();
+    c._mapApplyShared('ponightmare', { now: N, trails: { 'thelin poxbourne': { name: 'Thelin Poxbourne', at: N - 2000, live: true, pts: pts([0, 40, 80, 120], N - 12000) } } }, N);
+    const p = c._mapStatePayload('', N + 1000);
+    expect(p.paths['thelin poxbourne']).toMatchObject({ name: 'Thelin Poxbourne', live: true });
+    expect(p.paths['thelin poxbourne'].pts.map(q => q[0])).toEqual([0, 40, 80, 120]);
+    expect(c._mapStatePayload('', N + 30000).paths['thelin poxbourne'].live).toBe(false);   // the pull is old: not "being watched now"
+  });
+
+  it('joins the shared trail with this machine\'s own looks: the longer, newer union, one point per look', () => {
+    const { c } = core(); const N = Date.now();
+    // the bot holds 0..120; this machine alone has looked at 160..240 since (pipe y is server x)
+    c._mapApplyShared('ponightmare', { now: N, trails: { 'thelin poxbourne': { name: 'Thelin Poxbourne', at: N - 6000, live: true, pts: pts([0, 40, 80, 120], N - 15000) } } }, N);
+    const look = (y, at) => c._mapNoteState('Aldenmar', null, { zone: 204, target_name: 'Thelin Poxbourne', target_id: 9, target_type: 1, target_hp_pct: 100, target_loc: { x: 0, y, z: 0 } }, at);
+    look(120, N - 6001);            // the same look the bot already has (about a second apart on the two clocks)
+    look(160, N - 3000); look(200, N); look(240, N + 3000);
+    const got = c._mapStatePayload('', N + 3500).paths['thelin poxbourne'].pts;
+    expect(got.map(q => q[0])).toEqual([0, 40, 80, 120, 160, 200, 240]);
+    expect(got.every(q => q[4] === 0)).toBe(true);
+  });
+
+  it('merge: a break stays only where nobody else watched through it; a jump is always a break', () => {
+    const { c } = core();
+    const a = [[0, 0, 0, 1000, 0], [40, 0, 0, 4000, 0], [80, 0, 0, 90000, 1]];
+    expect(c._mapMergePath(a, []).map(q => q[4])).toEqual([0, 0, 1]);                              // over 20 s since: a real gap
+    expect(c._mapMergePath(a, [[60, 0, 0, 80000, 0]]).map(q => q[4])).toEqual([0, 0, 0, 0]);       // another source watched 10 s before: no gap
+    expect(c._mapMergePath([[0, 0, 0, 1000, 0], [500, 0, 0, 2000, 0]], []).map(q => q[4])).toEqual([0, 1]);   // too far to be a walk
+    expect(c._mapMergePath([[0, 0, 0, 1000, 0], [40, 0, 0, 4000, 1]], []).map(q => q[4])).toEqual([0, 0]);    // 3 s later: not a gap
+    expect(c._mapMergePath([[0, 0, 0, 1000, 0]], [[5, 0, 0, 2000, 0]]).length).toBe(1);                       // the same look from two sources
+  });
+
+  it('an idle town copy that never moved 100 units is not drawn; a stretch that did is, with a break before it', () => {
+    const { c } = core(); const N = Date.now();
+    c._mapApplyShared('ponightmare', { now: N, trails: { 'thelin poxbourne': { name: 'Thelin Poxbourne', at: N, live: true, pts: pts([0, 30, 60, 90], N - 12000) } } }, N);
+    expect(c._mapStatePayload('', N).paths).toEqual({});
+    expect(c._mapShownPath([[0, 0, 0, 1, 0], [30, 0, 0, 2, 0], [2000, 0, 0, 3, 1], [2120, 0, 0, 4, 0]])).toEqual([[2000, 0, 0, 3, 1], [2120, 0, 0, 4, 0]]);
+    expect(c._mapShownPath([[0, 0, 0, 1, 0], [100, 0, 0, 2, 0], [300, 0, 0, 3, 1], [450, 0, 0, 4, 0]]).map(q => q[4])).toEqual([0, 0, 1, 0]);
+    expect(c._mapShownPath([[0, 0, 0, 1, 0], [99, 0, 0, 2, 0]])).toEqual([]);
+  });
+
+  it('keeps only names on its own list, only valid points, and never the same point twice', () => {
+    const { c } = core(); const N = Date.now();
+    const answer = { now: N, trails: {
+      'a hedge spider': { name: 'a hedge spider', at: N, live: true, pts: pts([0, 40, 80, 120], N) },
+      'thelin poxbourne': { name: 'Thelin Poxbourne', at: N, live: true, pts: [...pts([0, 40, 80, 120], N - 12000), [1, 'x', 0, 5, 0], 'junk', [1, 2]] } } };
+    c._mapApplyShared('ponightmare', answer, N); c._mapApplyShared('ponightmare', answer, N + 10000);
+    const p = c._mapStatePayload('', N + 10500);
+    expect(Object.keys(p.paths)).toEqual(['thelin poxbourne']);
+    expect(p.paths['thelin poxbourne'].pts).toHaveLength(4);
+  });
+
+  describe('the focus ring placed from the raid\'s shared targets', () => {
+    const rows = [{ kind: 'npc', name: 'a cliff golem', raider_count: 3, spawn_id: 811 }, { kind: 'npc', name: 'Aldenmar the Pale', raider_count: 9 }];
+    const shared = (N) => ({ now: N, targets: [
+      { name: 'Aldenmar the Pale', id: 77, type: 1, x: 100, y: 10, z: 5, n: 2, at: N - 4000 },
+      { name: 'Aldenmar the Pale', id: 78, type: 1, x: 900, y: 90, z: 5, n: 6, at: N - 1000 },
+      { name: 'a cliff golem', id: 811, type: 1, x: 5, y: 6, z: 0, n: 3, at: N - 1000 }] });
+    const setup = (N) => {
+      const { c, net } = core();
+      c._extTargetCache.set('aldenmar', { at: N, payload: { targets: rows } });
+      return { c, net };
+    };
+
+    it('places the most-targeted row of that name when your own target is something else (at: raid)', () => {
+      const N = Date.now(); const { c } = setup(N);
+      c._mapApplyShared('ponightmare', shared(N), N);
+      expect(c._mapStatePayload('', N + 500).focus).toMatchObject({ name: 'Aldenmar the Pale', why: 'most', x: 900, y: 90, z: 5, at: 'raid' });
+    });
+    it('matches the spawn id when the focus names one (the MA row)', () => {
+      const N = Date.now(); const { c } = setup(N);
+      c._extTargetCache.set('aldenmar', { at: N, payload: { targets: [{ kind: 'npc', name: 'Aldenmar the Pale', raider_count: 1, spawn_id: 77, ma_target: true }] } });
+      c._mapApplyShared('ponightmare', shared(N), N);
+      expect(c._mapStatePayload('', N + 500).focus).toMatchObject({ id: 77, why: 'ma', x: 100, y: 10, at: 'raid' });
+      c._extTargetCache.set('aldenmar', { at: N, payload: { targets: [{ kind: 'npc', name: 'Aldenmar the Pale', raider_count: 1, spawn_id: 999, ma_target: true }] } });
+      expect(c._mapStatePayload('', N + 500).focus.x).toBeUndefined();   // another mob of that name: not placed
+    });
+    it('your own target wins over the raid\'s sample', () => {
+      const N = Date.now(); const { c } = setup(N);
+      c._zealState.Aldenmar = Object.assign(c._zealState.Aldenmar, { target_name: 'Aldenmar the Pale', target_id: 78, target_type: 1, target_loc: { x: 20, y: 700, z: 5 } });
+      c._mapApplyShared('ponightmare', shared(N), N);
+      expect(c._mapStatePayload('', N + 500).focus).toMatchObject({ x: 700, y: 20, at: 'target' });
+    });
+    it('a sample older than two minutes (bot clock plus time since the pull) is not a position', () => {
+      const N = Date.now(); const { c } = setup(N);
+      c._mapApplyShared('ponightmare', { now: N, targets: [{ name: 'Aldenmar the Pale', id: 77, x: 1, y: 2, z: 0, n: 2, at: N - 119000 }] }, N);
+      expect(c._mapStatePayload('', N + 500).focus.x).toBe(1);
+      expect(c._mapStatePayload('', N + 2000).focus.x).toBeUndefined();
+    });
+    it('another zone\'s targets never place it', () => {
+      const N = Date.now(); const { c } = setup(N);
+      c._mapApplyShared('cazicthule', shared(N), N);
+      expect(c._mapStatePayload('', N + 500).focus.x).toBeUndefined();
+    });
+    it('a bad row is dropped, and an answer without targets changes nothing', () => {
+      const N = Date.now(); const { c } = setup(N);
+      c._mapApplyShared('ponightmare', { now: N, targets: [{ name: 'Aldenmar the Pale', id: 0, x: 1, y: 2, at: N }, { name: 5, id: 3, x: 1, y: 2, at: N }, null,
+        { name: 'Aldenmar the Pale', id: 5, x: 'a', y: 2, at: N }] }, N);
+      expect(c._mapStatePayload('', N + 500).focus.x).toBeUndefined();
+      c._mapApplyShared('ponightmare', shared(N), N);
+      c._mapApplyShared('ponightmare', { now: N + 1, events: [] }, N + 1);
+      expect(c._mapStatePayload('', N + 500).focus.x).toBe(900);
+    });
+  });
+
+  it('LOCAL MODE: no request for targets or trails, and the trail still works from this machine', () => {
+    seedZone('ponightmare');
+    const net = fakeNet();
+    const c = loadCore({ dir, opts: { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: '' }, net });
+    c._mapEnsureZone('ponightmare', 204, T0);
+    c._zealState.Aldenmar = { zone: 204, updatedAt: 1e18, loc: { x: 0, y: 0, z: 0 } };
+    c._mapNoteState('Aldenmar', null, { zone: 204, target_name: 'Thelin Poxbourne', target_id: 9, target_type: 1, target_hp_pct: 100, target_loc: { x: 0, y: 0, z: 0 } }, T0);
+    c._mapNoteState('Aldenmar', null, { zone: 204, target_name: 'Thelin Poxbourne', target_id: 9, target_type: 1, target_hp_pct: 100, target_loc: { x: 0, y: 150, z: 0 } }, T0 + 3000);
+    expect(c._mapSyncPull('ponightmare', T0 + 4000)).toBe(false);
+    const p = c._mapStatePayload('', T0 + 5000);
+    expect(p.local_only).toBe(true);
+    expect(p.paths['thelin poxbourne'].pts).toHaveLength(2);
+    expect(net.calls).toHaveLength(0);
+  });
+});
+
+describe('live-state carries the target\'s position (agent 3.7.166)', () => {
+  // The helpers sit just outside the map core, so they are sliced as shipped and handed the core's own map helpers.
+  const BLOCK = sliceBlock(AGENT, 'const LIVE_TPOS_MOVE_UNITS = 30', 'return gap >= LIVE_TPOS_MIN_MS && moved >= LIVE_TPOS_MOVE_UNITS;\n}');
+  const load = () => {
+    seedCache(dir);
+    const c = loadCore({ dir, opts: { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: 'tok' }, net: fakeNet() });
+    // eslint-disable-next-line no-new-func
+    const f = new Function('MAP_CORPSE_RE', '_mapZoneShort', '_mapServerXY', 'MAP_TRACKED_PATHS', '_mapNormName', '_mapDist2', BLOCK + '\nreturn { _liveTargetPosOf, _liveTargetPosDue };');
+    return f(c.MAP_CORPSE_RE, c._mapZoneShort, c._mapServerXY, c.MAP_TRACKED_PATHS, c._mapNormName, c._mapDist2);
+  };
+  const st = (over = {}) => ({ zone: 164, target_name: 'a cliff golem', target_id: 811, target_type: 1, target_loc: { x: 10, y: 100, z: 5 }, ...over });
+
+  it('places a live NPC target in the Map\'s server frame, with its zone', () => {
+    expect(load()._liveTargetPosOf(st())).toEqual({ id: 811, x: 100, y: 10, z: 5, zone: 'thedeep', escort: false });
+  });
+  it('treats target id 0 (and none), a player, a corpse, no position and an unknown zone as nothing to place', () => {
+    const { _liveTargetPosOf: f } = load();
+    for (const over of [{ target_id: 0 }, { target_id: undefined }, { target_type: 0 }, { target_type: 2 }, { target_name: "a cliff golem's corpse" },
+      { target_loc: null }, { zone: 7 }, { target_name: '' }]) expect(f(st(over)), JSON.stringify(over)).toBeNull();
+  });
+  it('flags an escort by zone + name (spelt either way), not by id', () => {
+    const { _liveTargetPosOf: f } = load();
+    expect(f(st({ zone: 204, target_name: '#Thelin_Poxbourne', target_id: 1 })).escort).toBe(true);
+    expect(f(st({ zone: 204, target_name: 'Thelin Poxbourne', target_id: 99999 })).escort).toBe(true);
+    expect(f(st({ zone: 164, target_name: 'Thelin Poxbourne' })).escort).toBe(false);
+  });
+  it('a mob earns an extra send after 30 units AND 10 s on the same target, never on a swap (that trips the signature)', () => {
+    const { _liveTargetPosDue: due } = load();
+    const prev = { id: 811, x: 0, y: 0, at: 1000 }, cur = (x, id = 811) => ({ id, x, y: 0, z: 0, escort: false });
+    expect(due(prev, cur(30), 11000)).toBe(true);
+    expect(due(prev, cur(29), 11000)).toBe(false);
+    expect(due(prev, cur(30), 10999)).toBe(false);
+    expect(due(prev, cur(500, 812), 60000)).toBe(false);
+    expect(due(undefined, cur(500), 60000)).toBe(false);
+    expect(due(prev, null, 60000)).toBe(false);
+    expect(due(prev, cur(0), 60000)).toBe(false);          // standing: the heartbeat covers it
+  });
+  it('an escort earns one after 12 units AND 5 s, or 15 s standing', () => {
+    const { _liveTargetPosDue: due } = load();
+    const prev = { id: 9, x: 0, y: 0, at: 1000 }, cur = (x) => ({ id: 9, x, y: 0, z: 0, escort: true });
+    expect(due(prev, cur(12), 6000)).toBe(true);
+    expect(due(prev, cur(11), 6000)).toBe(false);
+    expect(due(prev, cur(12), 5999)).toBe(false);
+    expect(due(prev, cur(0), 15999)).toBe(false);
+    expect(due(prev, cur(0), 16000)).toBe(true);
+  });
+  it('flushLiveStateToBot puts the fields on the record (absent when nothing to place), sends a mover, and keeps them out of the signature', () => {
+    const fn = stripJs(sliceBlock(AGENT, 'function flushLiveStateToBot(opts) {', '_postLiveState(url, opts.token, { agent_version: AGENT_VERSION, uploaded_by: uploader || null, states });\n}'));
+    expect(fn).toMatch(/const tpos = _liveTargetPosOf\(st\);/);
+    expect(fn).toMatch(/\.\.\.\(tpos \? \{ target_map: \{ x: Math\.round\(tpos\.x\), y: Math\.round\(tpos\.y\), z: Math\.round\(tpos\.z\) \}, target_type: 1, target_zone: tpos\.zone \} : \{\}\),/);
+    expect(fn).toMatch(/const targetMoved  = _liveTargetPosDue\(_liveTargetPosSent\.get\(ch\), tpos, now\);/);
+    expect(fn).toMatch(/if \(!sigChanged && !heartbeatDue && !targetMoved\) continue;/);
+    expect(fn).toMatch(/if \(tpos\) _liveTargetPosSent\.set\(ch, \{ id: tpos\.id, x: tpos\.x, y: tpos\.y, at: now \}\); else _liveTargetPosSent\.delete\(ch\);/);
+    const sigAt = fn.indexOf('const sig = JSON.stringify([');
+    const sig = fn.slice(sigAt, fn.indexOf(']);', sigAt));
+    expect(sig).not.toMatch(/tpos|target_map|loc_x/);
+  });
+  it('is wired into the map pull: tsince on the query and the answer applied', () => {
+    const js = stripJs(CORE);
+    expect(js).toMatch(/\(tsince > 0 \? '&tsince=' \+ tsince : ''\)/);
+    expect(js).toMatch(/if \(j\) _mapApplyShared\(zone, j, Date\.now\(\)\);/);
+  });
+  it('the overlay draws a raid-placed focus ring at the shared position', () => {
+    expect(stripJs(MAP_HTML)).toMatch(/else if \(fo\.at === 'raid' && fo\.x != null\) fp = \{ x: fo\.x, y: fo\.y \};/);
   });
 });
