@@ -7582,6 +7582,7 @@ function _isNameCurrentlyTargeted(nameLower) {
 // 1s tick — drives the fall-off (DROP) callout (catalog expiry has no log line)
 // and the SILENT downgrade when the strongest slow expires but a weaker one is
 // still live (display flips; no callout).
+const SLOW_FADING_WARN_SECS = 60;
 function _tickSlowCallouts() {
   const now = Date.now();
   for (const [targetLower, prev] of _slowCalloutState) {
@@ -7589,11 +7590,14 @@ function _tickSlowCallouts() {
     if (best) {
       const nameChanged = String(best.name).toLowerCase() !== String(prev.name || '').toLowerCase();
       // #181 — "re-slow soon" pre-warn: once per landing window, when the
-      // strongest active slow is within 30s of wearing, on the main target only.
+      // strongest active slow is within SLOW_FADING_WARN_SECS of wearing, on the main target only.
       // A refresh (new landedAtMs, incl. the ambiguous re-land above) re-arms it.
       // The slow analogue of the Ancient Breath DPS-OUT pre-warn (the guild lead
-      // 2026-07-24: "should see it for the slow as well").
-      const warnDue = best.remaining_secs != null && best.remaining_secs <= 30
+      // 2026-07-24: "should see it for the slow as well"). 2026-10-13, the guild lead: "don't interrupt the
+      // fight unless there's a critical thing, like less than 1 minute left on a non bard slow" — so a
+      // minute's warning, and none for a bard slow (bards keep theirs up).
+      const warnDue = best.remaining_secs != null && best.remaining_secs <= SLOW_FADING_WARN_SECS
+        && best.cls !== 'BRD'
         && best.landedAtMs && prev.warnedForLandMs !== best.landedAtMs
         && _isNameCurrentlyTargeted(targetLower) && _rampageOnMainTarget(targetLower);
       if (nameChanged || warnDue) {
@@ -45870,11 +45874,66 @@ function _mapConsFor(character, now) {
   for (const [k, v] of _mapConByName) if (k.startsWith(pre) && now - v.at <= 6 * 3_600_000) out[k.slice(pre.length)] = v.rank;
   return out;
 }
+// Crowd control standing on mobs, for the aggro rings (the guild lead, 2026-10-13: "add zzz's if it's mezzed", "if it's
+// truly pacified make the circle light pink and have it fill in the outside like a clock wipe more red until the
+// pacify wears off. bard pacify is much shorter", "druid harmony is still red on the inside at the lowered range").
+// Read from the buff landings Target Info already keeps (_buffLandingsByTarget: yours, the guild's relayed ones, the
+// synthesized Harmony), so nothing new is parsed. One row per mob: { name, spawn_id, mez, calm }.
+//   mez  = { spell, startedAt, until } (ms epoch), or null.
+//   calm = { kind: 'pacify' | 'harmony', spell, startedAt, until, byBard, radiusFactor, unconfirmed }, or null.
+// 'pacify' = the single-target family (Lull, Soothe, Calm, Pacify, Pacification, Harmony of Nature, the bard lulls): the
+// mob will not attack even if you collide with it. 'harmony' = targettype 8 (Harmony, Wake of Tranquility): it only
+// SHRINKS the aggro radius. A pacify beats a harmony on the same mob. Both end at the landing's own length
+// (dur_ticks x 6s, the spell's catalog duration at the caster's level; a bard lull is 2 ticks), snapped to the mob's own
+// tick when that is known, exactly as the timer bars are.
+// radiusFactor is null: the catalog ships no SPA 30 base value, so the overlay uses its own stand-in (a guess).
+// byBard: the caster's class when we know who cast it (your own casts), else the two bard lull songs by name.
+// ⚠ Nothing says when damage breaks a mez or when a pacify fails against a too-high-level mob, so a row can outlive
+// the real effect until its own `until`.
+const MAP_BARD_LULLS = new Set(["kelin's lugubrious lament", 'silent song of quellious']);
+const MAP_CC_MAX = 60;
+function _mapCcStates(now) {
+  if (typeof _buffLandingsByTarget === 'undefined' || !_buffLandingsByTarget) return [];
+  const rows = new Map();
+  for (const [tk, mp] of _buffLandingsByTarget) {
+    for (const b of mp.values()) {
+      if (!b || b.worn_off_at || !b.name) continue;
+      const mez = typeof _isMezSpell === 'function' && _isMezSpell(b.name);
+      const calm = typeof _isPacifySpell === 'function' && _isPacifySpell(b.name);
+      if (!mez && !calm) continue;
+      const ticks = Number(b.dur_ticks) || 0, at = Number(b.landed_at);
+      if (!(ticks > 0) || !Number.isFinite(at)) continue;
+      const mobName = b.target_name || tk;
+      const fade = (typeof _entityTickFadeAt === 'function' && typeof _mobTickFor === 'function') ? _entityTickFadeAt(at, ticks, _mobTickFor(mobName, now)) : null;
+      const until = fade ? fade.at : at + ticks * 6000;
+      if (!(until > now)) continue;
+      const id = Number.isFinite(Number(b.target_id)) && Number(b.target_id) > 0 ? Number(b.target_id) : null;
+      const key = (id != null ? '#' + id : '') + '|' + _mapNormName(mobName);
+      let r = rows.get(key);
+      if (!r) { r = { name: String(mobName), spawn_id: id, mez: null, calm: null }; rows.set(key, r); }
+      const spell = String(b.name);
+      if (mez) {
+        if (!r.mez || until > r.mez.until) r.mez = { spell, startedAt: at, until };
+      } else {
+        const lc = spell.toLowerCase().replace(/`/g, "'").trim();
+        const by = b.cast_by || b.owner;
+        const cls = by && typeof _classOf === 'function' ? _classOf(by) : null;
+        const kind = typeof _isAePacify === 'function' && _isAePacify(spell) ? 'harmony' : 'pacify';
+        const cand = { kind, spell, startedAt: at, until, byBard: cls ? /^bard$/i.test(String(cls)) : MAP_BARD_LULLS.has(lc),
+          radiusFactor: null, unconfirmed: !!b.unconfirmed };
+        const cur = r.calm;
+        if (!cur || (cand.kind === 'pacify' && cur.kind === 'harmony') || (cand.kind === cur.kind && until > cur.until)) r.calm = cand;
+      }
+    }
+  }
+  const end = (r) => Math.max((r.mez && r.mez.until) || 0, (r.calm && r.calm.until) || 0);
+  return [...rows.values()].sort((a, b) => end(b) - end(a)).slice(0, MAP_CC_MAX);
+}
 function _mapStatePayload(have, now, haveLocal) {
   const character = _mapActiveCharacter(now);
   const st = character ? _zealState[character] : null;
   const out = { zone: null, long_name: null, zone_id: null, version: null, status: character ? 'ok' : 'no-pipe', local_only: _localOnly(),
-    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], copy: null, now };
+    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], copy: null, cc: [], now };
   if (!st) return out;
   out.zone_id = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
   out.pos_at = Number.isFinite(st.updatedAt) ? st.updatedAt : null;   // when the agent last heard from Mimic: the overlay's "pos NNN ms"
@@ -45883,6 +45942,7 @@ function _mapStatePayload(have, now, haveLocal) {
   out.long_name = _zoneName(st.zone);
   try { out.copy = _mapCopyInfo(zone, now); } catch { out.copy = null; }   // which copy of the zone (see "Zone copies")
   out.cons = _mapConsFor(character, now);   // your faction cons by mob name: { 'a small tree frog': 2 } (0 scowls … 8 ally)
+  try { out.cc = _mapCcStates(now); } catch { out.cc = []; }   // mezzes and lulls standing on mobs, for the aggro rings
   const self = _mapPos(st.loc, st.heading);
   if (self) out.self = Object.assign({ name: character }, self);
   const me = String(character).toLowerCase();
