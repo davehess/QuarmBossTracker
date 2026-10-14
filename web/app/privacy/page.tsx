@@ -69,6 +69,8 @@ const SWITCHES: { name: string; where: string; does: string; doesnt: string }[] 
 
 const RETENTION: [string, string][] = [
   ['Who targeted what', '1 day'],
+  ['Where your target stands (for your raid’s Map)', 'Our server’s memory only, about 90 seconds'],
+  ['Escort NPC trails (Thelin and other escort quests; no player named)', '12 hours'],
   ['Raid roster with positions', 'about a day'],
   ['Raid positions kept for replay (one sample every few seconds)', "Kept for now; the Archive's copy is permanent"],
   ["How each raider's character looks on a raid night (race, worn armor and weapons)", "Kept for now; the Archive's copy is permanent"],
@@ -100,7 +102,7 @@ export default function PrivacyPage() {
       <header className="border-b border-border pb-4">
         <h1 className="text-2xl text-gold">🐺 Wolf Pack — Privacy, in plain words</h1>
         <p className="text-xs text-dim mt-1">
-          Last updated: 2026-10-02 · Questions? <code>#feedback</code> or{' '}
+          Last updated: 2026-10-14 · Questions? <code>#feedback</code> or{' '}
           <Link href="/me" className="text-blue hover:underline">/me</Link>{' '}for what we have on you.
         </p>
       </header>
@@ -127,7 +129,9 @@ export default function PrivacyPage() {
           <li>
             <B>Private chat is filtered on your own PC first.</B> Officer chat, group chat, custom
             channels, <code>/say</code>, OOC, shouts and auctions are dropped on your machine before
-            anything is sent. Tells are too, unless you turn tell relay on.
+            anything is sent. Tells are too, unless you turn tell relay on. If you use Mimic&apos;s Chat
+            overlay (beta), those same lines are also kept in memory on your PC so the overlay can show
+            them to you. They are never sent anywhere, never written to disk, and gone when Mimic restarts.
           </li>
           <li>
             <B>The sensitive things are off until you turn them on:</B> tell relay, crash reports,
@@ -252,7 +256,8 @@ export default function PrivacyPage() {
           </li>
           <li>
             <B>Your live status</B>, every few seconds while Zeal is connected: zone, position (x/y/z),
-            HP, mana, buffs, target, pet and what is hitting you, and when your own discipline, Mend,
+            HP, mana, buffs, target (and, on beta Mimic, where that target stands, so your raid&apos;s
+            Map can show it), pet and what is hitting you, and when your own discipline, Mend,
             Lay on Hands, Harm Touch and AAs are ready again (beta Mimic). This goes out{' '}
             <B>in or out of a raid, and even with EQ logging off</B>.
           </li>
@@ -285,7 +290,12 @@ export default function PrivacyPage() {
         <p>
           <B>Never sent as chat:</B> officer chat, group chat, custom channels (including the guild&apos;s
           tag channel), <code>/say</code>, OOC, shouts, auctions, and tells unless you turn tell relay on.
-          The one exception is a hail — see below.
+          The one exception is a hail — see below. Mimic&apos;s Chat overlay (beta) can show many of these
+          lines (and your tells, if you set Tells to Local or Synced) in a window on your own PC. That is a
+          local view only: held in memory, not saved, not uploaded, cleared when Mimic restarts. Group,
+          officer and custom-channel lines are not even held until you switch them on in the overlay, and
+          stop being held shortly after you close it. Characters you have excluded from stats are never
+          read into it.
         </p>
       </Section>
 
@@ -306,9 +316,10 @@ export default function PrivacyPage() {
           </li>
           <li>Turning relay off stops new uploads; it does not delete tells already stored.</li>
           <li>
-            <B>Mimic also has a Tells setting (Off / Local / Synced), which isn&apos;t wired up yet.</B>{' '}
-            It doesn&apos;t affect uploads — tell relay on /me is the switch that decides. Its description
-            in Mimic still describes how it was planned to work, and we&apos;re updating it.
+            <B>Mimic&apos;s Tells setting (Off / Local / Synced) decides whether your tells appear in the
+            Chat overlay on your PC (beta).</B>{' '}Off keeps them out. Local and Synced show them, in both
+            directions, held in memory only. The setting never uploads anything; Synced currently shows the
+            same thing Local does. Tell relay on /me is still the only switch that decides what is sent.
           </li>
         </Bullets>
       </Section>
