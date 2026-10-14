@@ -1085,6 +1085,11 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   (`?alts=flat` opts out).
 - **PoP scope + view toggles** (web 1.8.156 · beta, §307): `web/lib/popScope.ts` (`resolvePopView`: My Characters default, old-link
   rules) + `web/app/pop/page.tsx`. Test: `test/pop-scope.test.js`.
+- **Best charm pets in this zone** (agent 3.7.170 · Mimic beta + bot 3.1.264, §308): Charm overlay `apps/mimic/charm.html` section
+  `#pets` (collapsed); agent "Charm pets" blocks (`CHARM_PET_SPELLS`, `pickCharmPetSpell` — spellbook file first, else assumed from
+  level; `rankCharmPets`; local `GET /api/charm-best`; disk cache `charm-pets-cache/`); bot `utils/charmPets.js` +
+  `GET /api/agent/charm-pets?zone=` (spell-independent candidates per zone, 6 h cache, ETag). 404 → section hidden; local mode makes no
+  call. Tests: `test/charm-pets.test.js`, `test/charm-pets-agent.test.js`.
 - **PoP missing spells, my characters** (web 1.8.156 · beta, §307): `web/lib/popMissingSpells.ts` (`pqdiSpellUrl`, copy-line builder,
   one-line description from `eqemu_spells`) + `web/app/pop/MissingSpells.tsx` (closed `<details>`, `CopyChip`). Data: `pop_spell_needs`
   plus one chunked `eqemu_spells` lookup. Test: `test/pop-missing-spells.test.js`.
