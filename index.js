@@ -9713,8 +9713,8 @@ async function _handleAgentPopFlags(req, res) {
       .catch(err => { console.warn('[pop-flags] upsert failed:', err?.message); return null; });
     if (Array.isArray(r)) {
       written = r.length;
-      // A flag NPC no kill stands up (the hedge maze's Thelin) opens its hail window when two raid groups hail it.
-      _hailHails(rows.filter(x => x.flag_key === 'hail'));
+      // A flag NPC no kill stands up (the hedge maze's Thelin) opens its hail window on the first flag it gives.
+      _hailGrants(rows);
     }
   }
   _trackUpload({ endpoint: 'pop_flags', character: payload?.character, agentVersion: payload?.agent_version, payloadBytes: total, agentState: payload?.agent_state || null, uploadedBy: identity.discord_id });
@@ -9737,10 +9737,10 @@ function _hailKill(args) {
   try { _hailBoard().openWindow(args).catch(err => console.warn('[hail-board] open failed:', err?.message)); }
   catch (err) { console.warn('[hail-board] open failed:', err?.message); }
 }
-// Stored hail rows → the board's kill-less opener (utils/hailBoard.js noteHails). Fire-and-forget, never throws.
-function _hailHails(rows) {
-  try { _hailBoard().noteHails(rows).catch(err => console.warn('[hail-board] hail open failed:', err?.message)); }
-  catch (err) { console.warn('[hail-board] hail open failed:', err?.message); }
+// Stored pop_flags rows → the board's kill-less opener (utils/hailBoard.js noteGrants). Fire-and-forget, never throws.
+function _hailGrants(rows) {
+  try { _hailBoard().noteGrants(rows).catch(err => console.warn('[hail-board] grant open failed:', err?.message)); }
+  catch (err) { console.warn('[hail-board] grant open failed:', err?.message); }
 }
 // Every kill recorded on the board, whichever path recorded it. The bosses the board does not carry
 // (Mithaniel Marr, Solusek Ro, the Keeper, the Behemoth, the Arbitor) are opened by name where the kill is
