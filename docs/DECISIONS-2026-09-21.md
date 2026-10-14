@@ -10561,3 +10561,22 @@ the Bastion of Thunder at the time.
   needs it" counts event / recital rows only; idle chain steps show dimmed for context.
 - **Cost:** one paged `pop_flags` read (90 days), one paged `raid_roster` read, the shared roster read, one levels call.
 - **Open:** A–Z vs latest; dimmed idle steps; first-ever recitals still read as new (labelled "first recital").
+
+### 310. Tray menu: layout B (Mimic beta `a9fcbfb4`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"We need to refine and simplify the taskbar menu so its not so overwhelming"*, then
+  *"Tray layout B"*.
+- **What it is:** the top level is status, Show dashboard, Overlays ›, Rescue, Quiet mode, Settings ›, Open ›, Help ›, Quit. Settings ›
+  holds the options under Behaviour / Mode / My tells / Updates / crash reports / Account, then Settings…; Open › holds the pages,
+  folders and windows; Help › holds the walkthrough, feedback and Restart agent.
+- **Calls:** Settings › is one flat submenu with disabled headers and separators, not nested submenus (a checkbox stays one click from
+  its group). Positions only: no label, handler or checkbox changed (`test/tray-menu-layout.test.js` checks against a snapshot of the
+  old template). Agent only: "Spoken trigger callouts (TTS)" takes the Overlays slot.
+- **Open:** a pending "Restart to install update" now sits inside Settings › Updates instead of at the top level; the guild lead's call
+  whether it gets a top-level line while one is pending. Tray-only items with no dashboard or Settings twin: "Pop up when an update is
+  ready", the four "Pause Discord DMs" items, Uninstall, Show agent log.
+
+### 311. Chat overlay: group chat and joined channels on by default (Mimic beta `a069a5ee`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"not seeing group chat or channels in the chat window either"*. The classifier read them; the
+  overlay's ⚙ switches for them defaulted off.
+- **Call:** group and joined channels default on (`p.group !== false`, `p.custom !== false`); officer stays opt-in. A switch turned off
+  stays off. Still memory-only on the player's PC; `PRIVACY.md` and `/privacy` updated to match.
