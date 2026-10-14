@@ -7375,7 +7375,8 @@ maps, overviews. this will be bristlebane's job"* → *"mostly the theme and the
 look as characters so if we animate something in the future it looks good and we can recreate from point
 map during raids."*
 
-- **A separate Discord application, "Bristlebane"** (app id 1556801422689837240; private bot; no privileged
+- **A separate Discord application, "Bristlebane"** (app id 1556801422689837240 — ⚠ since renamed **miMIC** in Discord; the
+  Bristlebane persona is now a different app, see §323; private bot; no privileged
   intents), its own component `apps/bristlebane/` running as a Coolify app on Tower. Separate because a bot
   holds one voice connection per server and a second login on the RaidBosses token would answer every
   command twice. `CLAUDE.md`'s component table now lists five.
@@ -10696,7 +10697,10 @@ the Bastion of Thunder at the time.
   `COOLIFY_TOKEN`. Secrets (the Discord bot token) are pasted in Coolify's UI by the guild lead, never sent through a session. The
   tailnet policy is unchanged (Coolify API 8000 + Tower 5432 only).
 - **Found on the way:** the existing Coolify app `bristlebane` (the voice bot, `apps/bristlebane`) is `exited:unhealthy` since
-  2026-10-06; its logs need `read:sensitive`, so they are unread. ⚠ It and the chat agent must not both log in with the same Discord bot
-  token at once.
+  2026-10-06; its logs need `read:sensitive`, so they are unread.
+- **Which Discord app is which (the guild lead, 2026-10-14):** the Coolify app `bristlebane` runs Discord application
+  `1556801422689837240`, which §166 called "Bristlebane" and which now shows in the server as **miMIC**. The OpenClaw chat agent on V5
+  is a **separate** application, `1549680353747406858`, named **Bristlebane**. Different tokens, so the two never fight over a login.
+  (The component and folder are still called `apps/bristlebane`; renaming them is a separate change.)
 - **Open:** the token; V5's model server must listen on the LAN (and declare a context large enough for the 20000 reserve); the
   step files (`01-step0-discover.md`) live on V5 and are not in the repo.
