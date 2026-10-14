@@ -2802,6 +2802,15 @@ match `^UI_[\w.-]+\.ini$` as bare basenames. Switch while EQ runs queues `{kind:
 after-logout queue (`ui-studio-pending.json`, applied before key edits, `.bak-eq`); otherwise writes at once with `.bak`.
 Backups reuse the cloud UI capture with `label = "Layout: <name>"` (`ui_snapshots.label`, no migration); Settings'
 backup table gained a Name column. Seven `ui-studio-layout-*` IPCs. Test: `test/ui-studio-named-layouts.test.js`.
+**Chat windows: rename / add / delete / font** (Mimic beta `f26fa569`, 2026-10-14, DECISIONS §327): keys `NumWindows`,
+`ChatWindow<N>_Name/_DefaultChannel/_ChatChannel/_TellTarget/_AlwaysHere/_FontStyle` and `ChannelMap<M>` in
+`[ChatManager]`; geometry in `[MainChat]` (window 0) and `[Chat N]`/`[ChatN]` (spelling kept per file). `_FontStyle` is an
+index 0–6 (Zeal `tellwindows.cpp` clamps it; point sizes unconfirmed). Max 32 windows (Zeal `CChatManager.ChatWindows[32]`).
+Delete moves the window's ChannelMap entries to 0 and shifts every later window's keys and geometry down; refused for 0
+and Tell windows, and limited to the last window if `[ChatManager]` holds an unknown numbered key. Edits are the diff
+between disk and the working model; the inspector save stays blocked while EQ runs (no after-logout deferral — a
+renumbering computed beforehand could be stale). The Hotbar Pages editor is docked in `#content` and asks "Discard
+changes?" on an outside press when dirty. Test: `test/ui-studio-chat-windows.test.js`.
 **Save sends KEY EDITS, not file texts** (since 2026-10-05, the guild lead's pick A; DECISIONS-2026-09-21
 §164): `_buildSaveEdits` lists only the windows moved or resized in this session (every window when the
 layout is rescaled to another resolution block), and main's `_applyUiKeyEdits` re-reads each file and

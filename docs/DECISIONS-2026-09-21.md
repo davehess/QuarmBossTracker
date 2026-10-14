@@ -10702,6 +10702,8 @@ the Bastion of Thunder at the time.
   `1556801422689837240`, which §166 called "Bristlebane" and which now shows in the server as **miMIC**. The OpenClaw chat agent on V5
   is a **separate** application, `1549680353747406858`, named **Bristlebane**. Different tokens, so the two never fight over a login.
   (The component and folder are still called `apps/bristlebane`; renaming them is a separate change.)
+- **Open:** the token; V5's model server must listen on the LAN at a real context that matches the declared one (see §325 — not
+  `reserveTokensFloor`); the step files (`01-step0-discover.md`) live on V5 and are not in the repo.
 
 ### 324. Chat overlay: Spells and Skills get mine / on me / others filters (agent 3.7.176 · Mimic beta `7488b291`, 2026-10-14)
 - **The ask (the guild lead, 2026-10-14, a screenshot of the ⚙):** *"same here with spells skills - Filters for spells for others
@@ -10727,5 +10729,14 @@ the Bastion of Thunder at the time.
 - **Calls:** main chips Guild · Raid · Party · Say · Tells · OOC/Shout; everything else behind `More ▾`, which shows "More (N)" while
   closed so nothing is on unseen; the ⚙ gets a matching "More settings" fold. Open states remembered per window. Open: "Party" vs
   "Group (party)" wording.
-- **Open:** the token; V5's model server must listen on the LAN (and declare a context large enough for the 20000 reserve); the
-  step files (`01-step0-discover.md`) live on V5 and are not in the repo.
+
+### 327. UI Studio: rename, add and delete chat windows, set their font; hotbar pages ask before discarding (Mimic beta `f26fa569`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14):** *"need to be able to delete or rename chats, or make new ones in the UI Studio"*; *"clicking
+  off the hotbar pages should ask if you want to cancel changes. The UI should shrink to not sit over top of the hotbar pages"*; *"also
+  include chat fontsize on the ui studio for chats"*.
+- **Calls:** delete moves the window's channels to Main Chat (0) and renumbers later windows; never deletes 0 or a Tell window; falls back
+  to last-window-only if an unknown numbered key exists. Font is EQ's `_FontStyle` index 0–6 (point sizes unconfirmed, so the picker
+  shows the index). The inspector save stays blocked while EQ runs rather than deferring past logout, because a renumbering planned
+  before logout could be stale after EQ rewrites the file. The hotbar editor docks beside the layout and asks Keep editing / Discard.
+- **Open:** a live EQ check that a created window loads, that an emptied `[Chat N]` header is harmless, names up to 32 chars, and the
+  point size per font index; after-logout deferral for inspector saves if wanted.
