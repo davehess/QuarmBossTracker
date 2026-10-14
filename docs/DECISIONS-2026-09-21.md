@@ -10653,3 +10653,8 @@ the Bastion of Thunder at the time.
   everything. Test: `test/mimic-graceful-update-exit.test.js`.
 - **Open:** the main dashboard window's own size/position is never saved (always 1200×800) — a separate change if wanted; first real
   test is the update AFTER this build, since the build being replaced still has the old shutdown.
+
+### 319. Tray: Updates is its own submenu (Mimic beta `1ae718c1`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"add updates to the submenus for the taskbar"*. Also settles §310's open question (a
+  pending update now shows at the top level, as the submenu's label "Updates — vX ready").
+- Same items, same handlers; moved out of Settings ›, placed between Settings › and Open ›.

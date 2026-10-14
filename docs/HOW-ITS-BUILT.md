@@ -1067,6 +1067,8 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   never more than one click from its group. Items are the same objects as before, only moved; the
   pre-change template is snapshotted in `test/fixtures/tray-menu-before.json` and
   `test/tray-menu-layout.test.js` builds the real menu under stubs (`test/_tray-menu-harness.js`).
+  **Updates › (Mimic beta `1ae718c1`, 2026-10-14, §319):** the Updates group left Settings › for its own top-level
+  submenu between Settings › and Open › (`updatesSubmenu`); its label reads "Updates — vX ready" while `updatePending`.
 - **Config**: `saveConfig` writes `.tmp`, keeps `.bak` (only if the current file parses), then renames;
   `_readConfigRaw` tries the file, then `.bak`, then `.tmp`. A torn file used to load as all defaults.
 - **Alert speed**: `tailFile` reads every 150 ms while a log grew within the last minute (`_tailDelayMs`),
