@@ -10429,3 +10429,20 @@ the Bastion of Thunder at the time.
   the overlay, and are captured only while it asks.
 - **Where it landed:** `apps/mimic/chat.html` + every overlay-parity site in `main.js`, the dashboard row, `test/chat-overlay.test.js`;
   `/privacy` and PRIVACY.md say the same.
+
+### 301. Roll ties: a top tie is shown and settled by deathroll (agent 3.7.167, Mimic beta, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** from a Rolls card reading `611 (Carved Bone Ring) — <name> 507 · 7 rolls open` with two characters
+  on 507: *"if two toons roll the same number on a roll it should trigger a deathroll and highlight the tie"*.
+- **The rule:** only the TOP tie triggers anything — two or more distinct characters sharing the highest FIRST roll (a character rolling twice is
+  already a re-roll and never counts). A lower tie is a dim `=` on the row. With a linked quantity (3), a top group no bigger than the quantity
+  is not contested, so it is not a tie. One helper, `rollSetTies` in the agent, decides it; both Rolls surfaces draw what the snapshot carries.
+- **The deathroll starts at the TIED number, not the original range.** Both deathroll detectors (the agent's and `utils/deathroll.js`) chain a
+  roll only when its range is the previous result, and the tied number IS the previous result: `/random 507` chains straight onto the 0-611
+  roll. The first character to have rolled the tied number starts. With three or more tied, the first 0 puts one out and the rest start again
+  from the tied number until no more than the quantity remain.
+- **Nothing is sent to the game.** The Command Center 📋 copies one `/rs` line (plain ASCII, 250 characters at most). The agent reads the
+  follow-up /random lines the same way the detector does, so the tie resolves to the deathroll's winner without any bot change; a two-roll game
+  (which the detector's three-roll minimum would not record) still resolves the card. The tie's game is drawn on the tie, not again as "Deathroll 611".
+- **Not built:** a spoken "Roll tie" callout — the agent speaks no roll events, so there is no path to add one to.
+- **Where it landed:** `rollSetTies` / `_rollTieResolve` in `rollSetsSnapshot`; `_wpRollWhoHtml` / `_wpRollTiePrompt` / `_wpRollRowMark` in
+  `dashboard.html`; `rollTie*` in `apps/mimic/command.html`; `test/roll-tie.test.js`.

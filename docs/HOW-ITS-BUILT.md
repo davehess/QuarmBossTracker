@@ -4284,6 +4284,10 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   game's sets into one `kind:'deathroll'` entry in `rollSetsSnapshot`, drawn by
   `_wpDeathrollHtml` (dashboard Rolls card) and the Command Center roll list.
   /fun card: the `☠️ Deathrolls` SECTION in `web/app/fun/page.tsx` (beta).
+  Ties (agent 3.7.167, beta, DECISIONS §301): `rollSetTies` finds a tie at the TOP of a set (distinct
+  characters, first rolls only); `_rollTieResolve` follows the deathroll that starts at the TIED number
+  and settles it. Both ride `rollSetsSnapshot` as `tie` / `lower_ties`; `_wpRollWhoHtml` (dashboard) and
+  `rollTieWhoHtml` + the 📋 `rollTieCopyLine` (Command Center) draw it. Test: `test/roll-tie.test.js`.
 - **Me overlay (agent 3.7.2, beta, 2026-09-24)** — `GET /api/me` =
   `_serializeMeState` (active character: vitals, XP/AA with `_meRate`-measured
   per-hour, casting via gauge 7, gems 60-67 + recast gauges 26-33 with casts
