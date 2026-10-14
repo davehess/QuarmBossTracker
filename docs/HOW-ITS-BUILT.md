@@ -2785,6 +2785,13 @@ chat-filter menu position. `CHAT_CHANNEL_ROWS` in `ui-studio.html` names ids 0�
 `_autojoinNames` in `main.js`, which cuts every `:password` before anything leaves main. Layout ↔ routing
 card selection is one state (`STATE.selected`, Esc clears); a chip dropped on a chat rectangle goes through
 the same `_dropChipOnWindow` → `_rerouteChip` (Tell windows refuse). Test: `test/ui-studio-chat-channels.test.js`.
+**Named layouts** (Mimic beta `d77a7d5b`, 2026-10-14, DECISIONS §322): `apps/mimic/uiLayouts.js` keeps up to 10 named
+snapshots per character of ONLY its `UI_<char>*.ini` (windows, chat windows, routing — not socials, spell sets,
+`eqclient.ini` or `zeal.ini`) in `userData/ui-layouts/layouts-<char>.json`; names are sanitised labels, file names must
+match `^UI_[\w.-]+\.ini$` as bare basenames. Switch while EQ runs queues `{kind:'layout', layoutId}` in the existing
+after-logout queue (`ui-studio-pending.json`, applied before key edits, `.bak-eq`); otherwise writes at once with `.bak`.
+Backups reuse the cloud UI capture with `label = "Layout: <name>"` (`ui_snapshots.label`, no migration); Settings'
+backup table gained a Name column. Seven `ui-studio-layout-*` IPCs. Test: `test/ui-studio-named-layouts.test.js`.
 **Save sends KEY EDITS, not file texts** (since 2026-10-05, the guild lead's pick A; DECISIONS-2026-09-21
 §164): `_buildSaveEdits` lists only the windows moved or resized in this session (every window when the
 layout is rescaled to another resolution block), and main's `_applyUiKeyEdits` re-reads each file and

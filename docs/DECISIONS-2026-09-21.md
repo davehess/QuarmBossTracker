@@ -10675,3 +10675,12 @@ the Bastion of Thunder at the time.
 - **Call:** a 12 px grip in the top-right corner, and the ✕ steps 8 px left while grow-up is on (shrinking the grip into the 6 px margin
   left a sliver too small to hit). Dragging keeps the bottom-left fixed. One shared preload grip, so every ✥ overlay gets it.
 - **Open:** Windows check; a header right under the ✕ may lose up to 2 px of gutter.
+
+### 322. UI Studio: named EverQuest UI layouts per character (Mimic beta `d77a7d5b`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"we should allow for multiple layouts for characters screens so we can have alternative
+  modes, and be able to back up both. Name them as well."* (a minimal-chat layout that leans on the Chat overlay, beside the full one).
+- **Calls:** a layout is only the character's `UI_<char>*.ini` — EQ keeps changing socials, spell sets and `eqclient.ini` on its own, so a
+  switch must never lay old copies of those back. Switching while EQ runs waits for logout (same queue as deferred saves). Backups carry
+  the name in the existing `ui_snapshots.label` ("Layout: <name>"): no bot change, no migration.
+- **Open:** `ui_snapshots` has no pruning and each layout save adds a row; `/me/ui` may now show "Layout: …" as the newest label;
+  Windows + EQ run to confirm EQ keeps the swapped file after a camp.

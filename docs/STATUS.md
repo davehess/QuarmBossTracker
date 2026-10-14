@@ -5954,6 +5954,10 @@ Abashi's Rod → 31242). The web has no decoder: it shows the stored link. **Ope
 fixable, staged in `docs/RUNBOOK-pqdi-chat-links.md`, unapplied (the guild lead's yes); the stable fleet keeps writing
 wrong links until the agent reaches stable.
 
+### 🧾 2026-10-14 — UI Studio named layouts per character (Mimic beta `d77a7d5b`, DECISIONS §322)
+Up to 10 named `UI_<char>*.ini` snapshots per character: save, rename, delete, switch (waits for logout while EQ runs), each backed up
+with its name. **Open:** `ui_snapshots` pruning; a Windows + EQ check that the swapped file survives a camp.
+
 ### 🧾 2026-10-14 — Chat Spells / Skills groups + Melee filters and colours; grow-up corner grip (agent 3.7.175 · Mimic beta `0d4d33bd`, `ac73bace`, DECISIONS §320–321)
 `[SP]` / `[SK]` opt-in groups like Melee; Melee split mine / on me / others + Misses, each coloured. Grow-upward overlays get a top-right
 resize grip with the ✕ stepped left. **Open:** unverified skill-result line shapes (fishing, sense heading, hide/sneak, bind wound,
