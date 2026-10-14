@@ -12217,6 +12217,8 @@ const _BUDGET_DEFAULTS = {
   // Mimic 2.9 spawn map: one GET per zone-in, cached 6h and ETag'd at the bot. Not shed: it is a read
   // (mob-info and who-lookup are not in _SHED_KINDS either), so over budget is a 429 the agent backs off.
   zone_spawns:     { perMin: 30,  durable: false, get: true },
+  // Charm overlay "Best pets here" (2026-10-14): same shape as zone_spawns, one GET per zone-in then a 304.
+  charm_pets:      { perMin: 30,  durable: false, get: true },
   // Mimic Spawn map sync (GET poll + POST push share it). A poll every few seconds per open map is ~20/min;
   // over budget is a 429 the agent backs off on (get:true applies to both verbs).
   map_sync:        { perMin: 60,  durable: false, get: true },
@@ -17335,6 +17337,30 @@ async function _handleAgentZoneSpawns(req, res) {
   if (r.status === 404) return json(404, { error: 'no spawn points for this zone' });
   if (r.status !== 200) return json(503, { error: 'try again shortly' });
   if (zoneSpawns.etagMatches(req.headers['if-none-match'], r.etag)) {
+    res.writeHead(304, { 'ETag': r.etag, 'Cache-Control': 'max-age=21600' });
+    return res.end();
+  }
+  const gzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] || ''));
+  res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'ETag': r.etag, 'Cache-Control': 'max-age=21600' },
+    gzip ? { 'Content-Encoding': 'gzip' } : {}));
+  res.end(gzip ? r.gz : r.body);
+}
+
+// GET /api/agent/charm-pets?zone=<short_name> — the Charm overlay's "Best pets here" (the guild lead,
+// 2026-10-14). utils/charmPets.js holds the reads, the charm-immunity rules and the 6 h per-zone cache. It answers
+// the zone's charm CANDIDATES; the caster's spell (level cap, body type) and the ranking are the agent's.
+async function _handleAgentCharmPets(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const charmPets = require('./utils/charmPets');
+  const supabase = require('./utils/supabase');
+  const json = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (!supabase.isEnabled()) return json(503, { error: 'database unavailable' });
+  const r = await charmPets.getCharmPets(supabase, new URL(req.url, 'http://x').searchParams.get('zone'));
+  if (r.status === 400) return json(400, { error: 'unknown or invalid zone' });
+  if (r.status === 404) return json(404, { error: 'no spawn points for this zone' });
+  if (r.status !== 200) return json(503, { error: 'try again shortly' });
+  if (charmPets.etagMatches(req.headers['if-none-match'], r.etag)) {
     res.writeHead(304, { 'ETag': r.etag, 'Cache-Control': 'max-age=21600' });
     return res.end();
   }
@@ -23679,6 +23705,16 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentZoneSpawns(req, res); }
     catch (err) {
       console.error('[zone-spawns] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'GET' && req.url.split('?')[0] === '/api/agent/charm-pets') {
+    if (await _overBudget('charm_pets', req, res)) return;
+    try { return await _handleAgentCharmPets(req, res); }
+    catch (err) {
+      console.error('[charm-pets] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
