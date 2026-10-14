@@ -10748,3 +10748,13 @@ the Bastion of Thunder at the time.
   timers — so uncovering repaints every overlay at once. **Fix:** `disable-features=CalculateNativeWinOcclusion`; covered overlays keep
   painting. Cost: negligible (the dashboard also no longer slows when covered). Unverified on Windows.
 - **Open:** the guild lead's A/B (turn off "Other apps can draw over overlays…" — if the refresh stops, this is the cause).
+
+### 329. Overlay sets come to beta from alpha (Mimic beta `5206a591`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"push up the multiple overlay layouts per character to this beta from alpha please"*; then
+  *"canvas does exist on beta, but in a different format"*.
+- **What moved:** alpha's `e9e4f3d6` (cherry-picked with `-x`): named overlay sets per character, `/pipe mimic load|save|next|prev|lock`,
+  the tray's 🗂 Overlay sets (placed under Overlays in layout B) and Settings → Overlay sets (badge BETA). Plus `/pipe mimic edit|arrange`,
+  which drives beta's own Canvas arrange mode. **Not moved:** `/pipe mimic group` — it needs alpha's saved Canvas groups.
+- **Found on the way:** the automatic beta → alpha sync has failed since 05:33 UTC today (conflicts in `charm.html`, `main.js`,
+  `settings.html`, the agent `package.json`, and now the overlay-sets files on both sides). A hand-resolved merge is under way; alpha keeps
+  its superset overlay-sets code and takes the agent version from beta.
