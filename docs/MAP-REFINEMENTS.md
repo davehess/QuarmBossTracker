@@ -70,6 +70,7 @@ own screenshots; treat each row as "shipped, needs an in-game look" until it is 
 | *"Own strength should say opacity … right at the top"*; wheel zooms over Pan / zoom, drag pans | | §262 |
 | *"Map needs a resize drag corner at the bottom right, as do all of the windows"* | ◢ on every overlay window | §258 |
 | Run speed, your /loc and the cursor's /loc top-left | Readout | §260 |
+| *"map should have a quick hide raiders labels too"* (2026-10-14) | **Raiders** toolbar button: one click hides (or shows) the name beside every raid and group dot, saved; the dots and the mob labels stay. Same two switches as ⚙ → Group names / Raid names. Map-only: the tray and dashboard carry no Map settings, so there is nothing to mirror | agent 3.7.164 beta, Mimic beta |
 | *"Location and speed should have scaling as well"* | The readout follows ⚙ → Label size | Mimic `791cb572` |
 | *"Follow me doesn't need to center the map on the player … right clicking the follow me can lock it"* | Follow keeps you where you sit on screen; right-click locks it (🔒), so dragging moves your spot instead of switching Follow off | agent 3.7.150 |
 | *"In plane of valor fit raid or fit group just zooms out to the whole zone"* | Fit leaves out anyone far from the pack (over 400 units and 3× the middle distance); inside a raid, Fit group uses your raid group (the agent sends raid group numbers) | agent 3.7.150 |

@@ -1279,6 +1279,29 @@ describe('pather routes', () => {
     const tools = sliceBlock(MAP_HTML, '<div id="tools">', '</div>');
     expect(tools.indexOf('id="dotsBtn"')).toBeLessThan(tools.indexOf('id="aggroBtn"'));   // next to ◯
   });
+  it('Raiders on the toolbar hides and shows the raid and group name labels in one click, saved; dots and mob names stay (2026-10-14)', async () => {
+    // the guild lead: "map should have a quick hide raiders labels too"
+    const base = await bootOverlay();
+    expect(base.all.namesBtn.classList.contains('on')).toBe(true);
+    base.all.namesBtn.listeners.click.forEach(f => f());
+    expect(base.S.cfg.show.raidNames).toBe(false);
+    expect(base.S.cfg.show.groupNames).toBe(false);
+    expect(base.S.cfg.show.raid).toBe(true);          // the dots stay
+    expect(base.S.cfg.show.group).toBe(true);
+    expect(base.S.cfg.show.bosses).toBe(true);        // mob labels untouched
+    expect(base.S.cfg.show.upLabel).toBe(true);
+    expect(base.all.namesBtn.classList.contains('on')).toBe(false);
+    expect(JSON.parse(base.store['wp-map-cfg']).show.raidNames).toBe(false);
+    const again = await bootOverlay({ store: base.store });
+    expect(again.all.namesBtn.classList.contains('on')).toBe(false);           // remembered
+    again.all.namesBtn.listeners.click.forEach(f => f());
+    expect(again.S.cfg.show.raidNames).toBe(true);
+    expect(again.S.cfg.show.groupNames).toBe(true);
+    // a real <button> inside the toolbar: the preload arms the hover handshake on its own
+    expect(sliceBlock(MAP_HTML, '<div id="tools">', '</div>')).toMatch(/<button class="tb on" id="namesBtn" type="button"/);
+    // and the draw still hangs the names on those two switches
+    expect(stripJs(MAP_HTML)).toMatch(/dotsOf\(P\.raid, CO\.raid, 3 \* I\.dot, 'r:', SH\.raidNames\)/);
+  });
   it('the readout: /loc order, the cursor back to the server frame, speed over a full second (2026-10-13)', () => {
     // the guild lead: "the run speed and the current player location coordinates in the top left ... as well as the
     // mouseover coordinates where the player's cursor is"

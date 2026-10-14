@@ -208,6 +208,7 @@
         <button class="tb" id="fitBtn" type="button" title="Fit the view. Click to cycle: zone, group, raid.">Fit zone</button>
         <button class="tb" id="panBtn" type="button" title="Over this button: the mouse wheel zooms, and dragging it pans the map, locked or not. A click switches Pan on, so the whole map drags and zooms; right-click centres on you.">✋ Pan / zoom</button>
         <button class="tb on" id="labelsBtn" type="button" title="Names on the map: boss names and room names. Switch off when it gets busy.">Labels: on</button>
+        <button class="tb on" id="namesBtn" type="button" title="Raiders' names: show or hide the name beside each raid and group member's dot. The dots stay, and mob names are not touched (the same switch as ⚙ → Group names and Raid names).">Raiders</button>
         <button class="tb on" id="dotsBtn" type="button" title="Spawn points: show or hide the spawn dots (the same switch as ⚙ → Spawn points).">•</button>
         <button class="tb" id="aggroBtn" type="button" title="Aggro rings: how close you can get to each spawn before it aggros (its aggro radius). Red: KOS to you (from its faction, your race, class and deity, your con, or an illusion it does not see through). Yellow: not KOS to you, but KOS to some players. Green: KOS to nobody. Dashed: how far it comes to help a friend (social aggro). Your target carries its own rings. Points on a running respawn timer have no ring.">◯</button>
         <button class="tb" id="modeBtn" type="button" title="Full screen: the Map covers EverQuest's window and you click straight through it to the game. Window: the Map is a window you place, as before. The same switch as ⚙ → Mode and the tray.">▣ Full</button>
@@ -2378,7 +2379,7 @@
   syncWallNote();
   // ⚙ Map settings: built from CFG_SHOW / CFG_GLYPHS / CFG_COLS on first open, saved on every change.
   var cfgEl = document.getElementById('cfg'), cfgBtn = document.getElementById('cfgBtn');
-  function cfgCommit() { saveCfg(); applyCfgCss(); syncAggroBtn(); syncDotsBtn(); syncClearCtl(); rebuildClear(); }
+  function cfgCommit() { saveCfg(); applyCfgCss(); syncAggroBtn(); syncDotsBtn(); syncNamesBtn(); syncClearCtl(); rebuildClear(); }
   // ◯ on the toolbar (the guild lead, 2026-10-13: "add aggro rings onto the map, make a circle icon on the main
   // screen"): the same switch as ⚙ → Show → Aggro rings.
   var aggroBtn = document.getElementById('aggroBtn');
@@ -2399,6 +2400,19 @@
     cfgCommit();
   });
   syncDotsBtn();
+  // Raiders on the toolbar (the guild lead, 2026-10-14: "map should have a quick hide raiders labels too"): the name
+  // beside every raid and group dot, in one click; the dots and the mob names stay. The same two switches as
+  // ⚙ → Group names / Raid names. Map-only: the tray and dashboard have no Map settings to mirror.
+  var namesBtn = document.getElementById('namesBtn');
+  function namesOn() { return S.cfg.show.raidNames !== false || S.cfg.show.groupNames !== false; }
+  function syncNamesBtn() { namesBtn.classList.toggle('on', namesOn()); }
+  namesBtn.addEventListener('click', function () {
+    var on = !namesOn();
+    S.cfg.show.raidNames = on; S.cfg.show.groupNames = on;
+    if (cfgBuilt) buildCfg();
+    cfgCommit();
+  });
+  syncNamesBtn();
   function cfgCheckRow(parent, checked, labelNodes, onChange) {
     var lab = el('label', 'row'), cb = document.createElement('input');
     cb.type = 'checkbox'; cb.checked = !!checked;
