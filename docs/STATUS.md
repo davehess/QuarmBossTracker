@@ -5951,6 +5951,14 @@ Abashi's Rod → 31242). The web has no decoder: it shows the stored link. **Ope
 fixable, staged in `docs/RUNBOOK-pqdi-chat-links.md`, unapplied (the guild lead's yes); the stable fleet keeps writing
 wrong links until the agent reaches stable.
 
+### 🧾 2026-10-14 — Target Info shows how a mob hits: slash / pierce / blunt (agent 3.7.172, beta `4ec04404`, DECISIONS §314)
+The guild lead: *"when we observe what types of hits a mob is doing, put that onto the target info"*. A mob's melee verb names the
+type (`slashes` → slash, `bites` → pierce, `crushes` → blunt); `noteMobMelee` tallies it per mob NAME (the log line carries no spawn id),
+misses, dodges and parries included, mob melee only (a player's swings, shields, spells and pets do not count). Target Info's Stats tab
+gets a chip `Hits: Slash 62% · Pierce 38% (seen 41)` once something was seen; verbs and biggest hit sit in its tooltip. Local only,
+capped at 300 mobs, nothing uploaded. **Open:** no alpha Canvas piece yet; the bot's mob-info catalog does not carry it (pooling would
+need a new upload). Test: `test/mob-hit-types.test.js`.
+
 ### 🧾 2026-10-14 — DPS meter: each row's Sec and DPS are its own active time (agent 3.7.171, beta `a79291e6`, DECISIONS §313)
 A row's seconds run from its first damage to its last (1 s at least, never past the fight); DPS is its damage over that. The total
 row, the Tank tab and any row without a span keep the fight's seconds. `spans` ride beside `perPlayer` (not inside: the

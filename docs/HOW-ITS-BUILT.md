@@ -1493,6 +1493,13 @@ that section for why a spawn key there would fragment a catalog cache for
 nothing.
 Tests: `test/target-info-spawn-id-scope.test.js`.
 
+### Target Info: how the mob hits (slash / pierce / blunt) (agent 3.7.172, beta `4ec04404`, DECISIONS §314)
+`noteMobMelee` (agent `index.js`, called from the live tail beside `recordPetCombat`) reads each mob swing's verb
+(damage lines' `ability`, avoid lines' new `verb`) through the Pet tracker's `_verbToSkill` and a small skill → type table
+(`mobHitType`), into `_mobHitTypes` (keyed by `_mobCaseKey`, capped 300, local only). Third-person "non-melee" swings carry
+`nonMelee` and are skipped. `buildMobInfo` serves it as `target_hits`; `mobinfo.html`'s `hitsChip` draws it on the Stats
+tab. Test `test/mob-hit-types.test.js`.
+
 ### Mob Info: "will invis hide me from this?" (bot 3.1.115 · agent 3.6.28 · Mimic 2.6.5)
 The guild lead 2026-09-02: *"mob info needs to also denote if a mob can see invis."* The
 four sight flags were already selected AND already returned by `mob-info` — the

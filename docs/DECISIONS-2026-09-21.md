@@ -10603,3 +10603,12 @@ the Bastion of Thunder at the time.
 - **Open (needs a pick):** the Me HUD fight DPS / tonight average, the My parses ledger (saved `dur`) and the Trend view still divide by
   fight time and must move together; the bot's merged-parse DPS (`index.js` `/rs` and merge paths, `utils/killRecap.js`) also uses one
   duration for everyone.
+
+### 314. Target Info: the mob's observed hit types (agent 3.7.172, beta `4ec04404`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"when we observe what types of hits a mob is doing, put that onto the target info
+  (slashing/ piercing/etc)"*.
+- **Calls:** keyed by mob NAME (`_mobCaseKey`), not spawn id — the melee line has no id and a mob swings while you target another;
+  misses / dodges / parries count (the verb is the attempt), max hit from damage only; our pets and declared guild pets excluded; a
+  one-word attacker counts only when it is not a known player or pet. Verb map reuses the Pet tracker's `_verbToSkill` (+ stab, backstab,
+  strike, rend). Local only, nothing uploaded.
+- **Open:** chip placement (slate chip vs the stats grid); an alpha Canvas piece; pooling across the guild would need a new upload.
