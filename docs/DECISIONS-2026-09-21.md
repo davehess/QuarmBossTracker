@@ -10189,3 +10189,17 @@ Harmony, Hide/Sneak for non-rogues).
   would have said at that moment (the guild lead: *"test the bot on a replay of fights from the last week"*).
 - Drafting: bot side (`utils/killRecap.js`, card hook, `bot_kv last_kill_recap`, screenLive `recap`) on main;
   the /screen Overview card on beta. Both by Sonnet agents, reviewed here.
+
+### 288. Bristlebane gets lore to talk about; Lord Mobsincamp transmits through Mimic; V5 renders the scenes (2026-10-13)
+
+- **Lore (the guild lead):** *"lookup the lore associated with the story for bristlebane to be able to talk
+  about"*. A sourced brief on Bristlebane Fizzlethorpe and each PoP target, with post-kill lines in his voice,
+  is being drafted for the cast bible (docs/DESIGN-raid-announcers.md). In-game quest text preferred over fan lore.
+- **Transmissions (the guild lead):** *"Lord Mobsincamp can send audio via mimic as a transmission"*. His voice
+  reaches raiders through Mimic on their own PC (a card + audio), not only through a Discord voice bot. Same
+  rules: nothing during a fight except critical alerts (§284), respects Mimic's mute and quiet mode. Options
+  (text-to-speech vs pre-rendered clips) follow the research.
+- **Scene renders:** the guild lead will run image generation and LTX on the V5 box while playing and streaming
+  on V4. This session builds the conditioning frames, animatics and a job sheet from `raid_track_minutes`
+  (EQEmu wall layer only, class colours, no names) and hands over a zip.
+- **/screen recap card:** on beta (`3c25a53f`), waiting on the bot side to serve `recap`.
