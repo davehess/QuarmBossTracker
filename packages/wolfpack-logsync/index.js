@@ -9249,6 +9249,9 @@ class EncounterBuilder {
       return;
     }
     const perPlayer = {};
+    // name → [firstMs, lastMs] of that combatant's own damage. A SIBLING of perPlayer on purpose: the
+    // threat_snapshot upload sends perPlayer whole, and these would grow every stored row.
+    const spans = {};
     for (const [name, t] of this.threatBy) {
       // Defense-in-depth: even if a name slipped past the writer-side
       // NPC check, drop it here if it shows up as a damage target — the
@@ -9327,6 +9330,7 @@ class EncounterBuilder {
         pet_spawn_id: (petOwner && _petSpawnIdFor(name, petOwner)) || undefined,
         procDetail: t.procDetail || {},
       };
+      if (t.firstMs > 0 && t.lastMs >= t.firstMs) spans[name] = [t.firstMs, t.lastMs];
     }
     // Fight label for the overlays: the catalog-matched boss when known,
     // else the most-damaged defender this encounter — so trash/named pulls
@@ -9349,6 +9353,7 @@ class EncounterBuilder {
       // builder published last.
       uploader:  this.character || null,
       perPlayer,
+      spans,
     };
     // Pet aggro rollup — every charm or summoned pet that has a row in
     // perPlayer with a known pet_owner contributes its total threat back to
@@ -10396,6 +10401,14 @@ class EncounterBuilder {
         // per-fight damage overlay. Threat (swing/proc/spell) stays weighted
         // for the Tanks threat meter; this is the honest damage number.
         t.dmg = (t.dmg || 0) + event.amount;
+        // This combatant's own first and last damage time (log time, epoch ms). The meter's Sec column
+        // and DPS are damage over THIS span, EQLogParser-style, not over the whole fight (the guild
+        // lead, 2026-10-14: every row read the same seconds). `!(x <= y)` is also true while unset.
+        const _dmgTs = Date.parse(event.ts);
+        if (Number.isFinite(_dmgTs)) {
+          if (!(t.firstMs <= _dmgTs)) t.firstMs = _dmgTs;
+          if (!(t.lastMs >= _dmgTs)) t.lastMs = _dmgTs;
+        }
         const a = (event.ability || '').toLowerCase();
         // Categorize for DEEPS tracking — same buckets the threat code uses
         let deepsCategory;
@@ -39721,6 +39734,9 @@ function _recordFightHistory(et, character) {
     if (p.pet_charm) row.pet_charm = true;
     if (p.pet_summoned) row.pet_summoned = true;
     if (p.pet_spawn_id) row.pet_spawn_id = p.pet_spawn_id;
+    // Their own first and last damage time, for the row's Sec and DPS (an older entry has none).
+    const span = et.spans && et.spans[name];
+    if (span && span[0] > 0 && span[1] >= span[0]) { row.first_ms = span[0]; row.last_ms = span[1]; }
     // Damage taken, kept for a Tank History to come — stored, not rendered.
     if (p.took > 0) row.took = p.took;
     if (p.tookMax > 0) row.tookMax = p.tookMax;
