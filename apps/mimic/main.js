@@ -6894,7 +6894,9 @@ function _chatPrefsPayload(cfg, char) {
   const fs_ = Math.round(Number(p.fontSize));
   return {
     fontSize: fs_ >= 9 && fs_ <= 24 ? fs_ : 12,
-    group: p.group === true, officer: p.officer === true, custom: p.custom === true,
+    // Group and joined channels are ON unless switched off (the guild lead, 2026-10-14: "not seeing group chat or
+    // channels in the chat window"); officer stays opt-in. All of it stays on this PC either way.
+    group: p.group !== false, officer: p.officer === true, custom: p.custom !== false,
     tells: cfg.tellsMode === 'local' || cfg.tellsMode === 'synced',
     off: (mine && Array.isArray(mine.off)) ? mine.off.filter(x => typeof x === 'string').slice(0, 32) : [],
   };

@@ -546,9 +546,13 @@ describe('Mimic prefs: chips are remembered per character, tells follow the Tell
     return { r, get: (...a) => globalThis.__H['chat-prefs-get']({}, ...a), set: (...a) => globalThis.__H['chat-prefs-set']({}, ...a), saved: () => globalThis.__S };
   }
   beforeEach(() => { globalThis.__H = {}; globalThis.__S = []; globalThis.__P = []; });
-  it('defaults: 12 px, group/officer/custom off, nothing hidden, tells off', async () => {
+  it('defaults: 12 px, group and channels on, officer off, nothing hidden, tells off', async () => {
     const m = load({});
-    expect(await m.get('Aldenmar')).toEqual({ fontSize: 12, group: false, officer: false, custom: false, tells: false, off: [] });
+    expect(await m.get('Aldenmar')).toEqual({ fontSize: 12, group: true, officer: false, custom: true, tells: false, off: [] });
+  });
+  it('group and channels stay off once switched off', async () => {
+    const m = load({ chatPrefs: { group: false, custom: false } });
+    expect(await m.get('Aldenmar')).toMatchObject({ group: false, custom: false });
   });
   it('tells are on for Local and Synced, off for Off', async () => {
     for (const [mode, want] of [['off', false], ['local', true], ['synced', true], [undefined, false]]) {
