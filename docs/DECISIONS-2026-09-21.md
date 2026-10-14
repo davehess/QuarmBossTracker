@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Web 1.8.158/1.8.159 not on production yet; the 2.9.1 #raid-chat card waits for it** (§332) | Code on main; Vercel refused the build ("Deployment rate limited", Hobby 100/day). Mimic 2.9.1 stable is out | a session (scheduled 00:40 ET): redeploy main's head on Vercel, confirm `/pop/latest` answers 307, confirm the card posted. The guild lead: decide whether beta pushes should stop building the site on busy days |
 | **Map: raid targets + shared escort trails** (§299) | Shipped: bot 3.1.263 on main, agent 3.7.166 on Mimic beta, `/privacy` updated | the guild lead: two Mimics in the hedge maze, one targets Thelin, the other's Map draws his trail; the MA targets a mob and the other's focus ring lands on it |
 | **Mimic Chat overlay, B** (§300) | Live in stable Mimic 2.9.1 (agent 3.7.176, §331): one feed, a chip per channel; officer off by default, tells follow Settings → Tells; local only | the guild lead: say whether officer, group and tells may show; check it on beta. A session: A (tabs + tear-off) next; confirm Zeal's abbreviated tags `S`/`O`/`Sh`/`A`/`To` from a real `/abc 2` log |
 | **/pop alts grouped under mains** (§302) | On beta (web 1.8.153): `?alts=group`, `&sort=latest`, `&open=1`; highlights for 24 h and 3 days | the guild lead: compare https://b.wolfpack.quest/pop?alts=group&sort=latest with https://b.wolfpack.quest/pop?view=matrix and pick; a session then graduates it to main |
@@ -10770,8 +10771,31 @@ the Bastion of Thunder at the time.
 - **The call** (the guild lead, 2026-10-14): push all of today's beta work to main.
 - **Shipped:** `apps/mimic` and `packages/wolfpack-logsync` from beta `acd4f048`, plus the Mimic/agent tests, as a file-level
   promotion (no merge). Roadmap entry + web 1.8.159. Beta re-parks at 2.9.2. No new FB numbers in this cycle (FB-77 went out with 2.9.0).
-- **Left on beta on purpose:** `apps/mimic/pop-quests.js` is GENERATED from `web/lib/popGuide*.ts`; beta's copy follows the web PoP
-  guide on beta (Start here removed), so on main it fails `test/pop-quests-sync.test.js`. It travels with the web PoP graduation, which
-  must regenerate it (`npm run sync:pop-quests`) and take `test/pop-overlay-quests.test.js` with it. Web-only tests stayed behind too.
+- **`apps/mimic/pop-quests.js`** is GENERATED from `web/lib/popGuide*.ts`, so it travels with the web PoP guide. The web PoP graduation
+  (web 1.8.158, `42c117c4`) carried beta's copy and `test/pop-overlay-quests.test.js` to main before this cut, so the 2.9.1 installer
+  ships the beta guide's quests. (The prep note said it stayed behind; that was written before the graduation landed.) Web-only tests stayed behind.
 - **Bot routes the promoted code calls are already on main:** `/api/agent/charm-pets`, `/api/agent/pronunciations`, the live-state
   target fields (bot 3.1.263). Each degrades quietly if absent (404 hides the section / turns names off).
+
+### 332. Tonight's release: what landed where, the Vercel cap, and the #raid-chat card (2026-10-14, before the raid freeze)
+The guild lead: *"after that push all of this up to main, update the linux client and alpha"*, *"also push the updates for web to main,
+the popflags pages, links to latest"*, then *"make a raid chat post about all of the updates"*; timing picked: before 19:30 ET.
+- **Main, in push order:** web 1.8.158 `42c117c4` (/pop pages from beta, `/pop/latest` new and marked [beta], linked from /pop) ·
+  bot 3.1.265–3.1.267 (`2954945a`, `7de550ea`, `e4ec8827`, the one-shot card) · **stable Mimic 2.9.1** `0cf809fb` (agent 3.7.176,
+  web 1.8.159 roadmap; pushed on its own, so the release body is its player notes, verified) · golden expectations `7c7b2203`.
+  The 2.9.1 release carries its installer.
+- **Beta:** chat breakout merge + 🔗 lock-together `acd4f048`, then a hand merge of main with the 2.9.2 re-park `5d24287b`: sync-beta
+  would have stopped on `web/package.json`, `web/lib/roadmapData.ts` and `docs/HOW-ITS-BUILT.md` (main's side taken; beta's 1.8.151
+  pronunciation roadmap entry kept, its 1.8.152–1.8.157 entries dropped as superseded by 1.8.158).
+- **Alpha:** hand-merged from beta `106e9a7c` (sync-alpha had failed since 05:33 UTC); later beta pushes merge clean.
+- **Linux:** `claude/deck-156-refresh` merged beta `acd4f048`; `build-mimic-linux` run 41 → `2.9.1-linux.41`. Focus-gate switches stay
+  Windows-only in the Linux tray (`7247a5ec`). Untested on a Deck.
+- ⚠ **Vercel refused the web push: "Deployment rate limited".** Hobby's 100-a-day cap: 100 deployments since 00:38 UTC (62 beta,
+  38 main; 85 of them skipped builds, which still count). So production does NOT yet show web 1.8.158/1.8.159 (`/pop/latest` answers
+  404). Slots free as yesterday's deployments age past 24 h; a redeploy of main's head is scheduled for 00:40 ET, after the freeze.
+  Every push to main also spends a beta slot through sync-beta, so the busy days are the ones that hit this.
+- **The #raid-chat card** (`_announceMimic291Once`, latched `announce_mimic_2_9_1_raid_chat`): the 2.7.8 card's shape, pings nobody,
+  and waits for BOTH the v2.9.1 installer and `/pop/latest` answering something other than 404, because the card links it. It looks
+  every 5 minutes for 24 hours. It reads the guild id through `supabase.guildId()`; an inline fallback broke `guild-tag-rest`'s ceiling (3.1.267).
+- **Golden log** had failed on beta since agent 3.7.172 (avoid lines now carry the swing verb) and on main since the cut: the
+  expectations were never regenerated. Additive change, regenerated.
