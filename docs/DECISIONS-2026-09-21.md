@@ -10058,3 +10058,11 @@ Harmony, Hide/Sneak for non-rogues).
   "Click here for more info", like /pop's top.
 - **Where:** `web/lib/raidPlan.ts` (all content), `web/app/pop/raid/` (page, map, walls), `test/pop-raid-plan.test.js`.
   The plan is dated for one night; the next raid needs a new plan or the file edited.
+
+### 279. Every page named in a reply is a full link (2026-10-13, docs)
+
+- **The call** (the guild lead): *"give me direct links from now on not just the /page"*. A reply names a page as
+  `https://wolfpack.quest/<path>` (live) or `https://b.wolfpack.quest/<path>` (beta), never a bare `/<path>`.
+  It widens the beta-link rule (§135) to every page. Landed in CLAUDE.md under the UI working rule.
+- **Also asked:** *"this stuff can also go on /screen"*: the raid plan on https://wolfpack.quest/screen.
+  Options offered the same night; the pick is open.

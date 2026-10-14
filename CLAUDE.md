@@ -86,6 +86,9 @@ design. Give me two or three genuinely different approaches to choose from."*
 - **Every mention of a beta page carries its link** — `https://b.wolfpack.quest/<path>` (with the
   `?v=` when it is a variant), and `https://wolfpack.quest/<path>` for a live one. *"give me the links
   for beta pages when you reference them. I'm not always going to scroll through beta to check."*
+  **This holds for EVERY page, live or beta, in every reply** (the guild lead, 2026-10-13: *"give me direct
+  links from now on not just the /page"*): write `https://wolfpack.quest/pop/raid`, never a bare `/pop/raid`.
+  A bare path is fine only inside code or a file path.
 - **Everything else (Mimic overlays, the agent dashboard, Discord cards):**
   the framework plus notes on how the designs differ and what each costs.
 - **Cost is FOUR numbers, never one "harder":** build (time to get right),
