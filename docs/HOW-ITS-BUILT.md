@@ -2532,6 +2532,45 @@ parity checklist in `CLAUDE.md` (✕ hide, ✥ move + context menu,
 hover-interact handshake, dashboard toggle row, visibility fn) — most beta
 bugs were a missing item from that list.
 
+### Sounds, voice packs, pronunciation, and the Willsapper proc (agent 3.7.162, beta, 2026-10-14)
+The guild lead: a "slap" when a Willsapper procs; then voice packs, names said right, members' own
+sounds, and a sound used *instead of* the spoken callout.
+- **Library.** `apps/mimic/sounds/` — eight sounds (slap, bell, chime, alarm, horn, gong, pop, whoosh)
+  generated with ffmpeg, none under 60 KB, no third-party audio. Shipped as `extraResources` (outside the
+  asar); a member's own `.wav/.mp3/.ogg` go in `<userData>/sounds` (made on start, tray: *Open my sounds
+  folder*, dashboard: Triggers → Sounds), and a file named like a shipped one overrides it. `apps/mimic/sounds.js`
+  holds the rules for Mimic; the agent has the same in `_soundList` / `_soundResolve` (it is one file), fed the two
+  folders by env (`WOLFPACK_SOUNDS_DIR`, `WOLFPACK_SOUNDS_USER_DIR`). IPC: `sounds:list|resolve|open-folder`.
+- **A trigger stores a NAME** (`slap`, `custom:<file>`) or an http(s) URL — never a path — so guild and synced
+  triggers play on every PC. Action fields: `sound`, `sound_volume` (0–1, default 0.9), `sound_mode` `add`
+  (default) | `replace` (plays *instead of* speaking; the agent mutes speech only when this PC can play the file,
+  and `triggers.html` speaks after all if the play fails). `{type:'sound'}` is now a real standalone action.
+- **A member's own sound on a guild trigger:** `trigger_sound_overrides.json` `{trigger_id:{sound,sound_volume,sound_mode}}`,
+  applied in `_pushOverlay` (so relayed fires too), this PC only. UI: "🔊 My sound" on an opened guild row.
+- **Editor + cards.** Personal trigger form: Sound, ▶, volume, "instead of speaking", voice pack. Triggers tab
+  cards *Sounds* (list, ▶, open folder) and *Voice & names*. Routes: `/api/sounds`, `/sounds/<name>`,
+  `/api/sounds/open-folder`, `/api/trigger-sound-overrides`, `/api/voice-packs`, `/api/pronunciations`,
+  `/api/pronunciations/local`, `/api/pronunciation-suggest`, `/api/pronunciation`.
+- **Voice packs.** `VOICE_PACKS` in the agent (Default, Herald, Quick, Narrator): voice-name fragments + rate +
+  pitch. The pick is `cfg.voice` in Mimic's config (Settings → Voice and sounds, the walkthrough's *Your voice*,
+  the dashboard card); `apps/mimic/voice.js` resolves it for `triggers.html` (a trigger's own `voice_pack` outranks
+  it). A pack whose voices are not installed falls back to the default voice with the pack's speed and pitch.
+- **Pronunciation.** The bot keeps a guild list (`GET /api/agent/pronunciations`, ETag); the agent polls it every
+  10 min with `If-None-Match`, caches `pronunciations_cache.json` (404 = feature off), keeps this PC's own entries in
+  `pronunciations_local.json` (they win), and `_applyPronunciations` rewrites every spoken string in `_pushOverlay`
+  (whole words, case-insensitive, longest first, one pass). The walkthrough's *Say your name* and the dashboard card
+  fetch suggestions + tips from `pronunciation-suggest` and save through `POST /api/agent/pronunciation`.
+  Speech built outside the trigger overlay (the Charm and CH-chain overlays say their own lines) is not rewritten.
+- **`after_my_melee_ms`.** A trigger (personal, or a guild row that carries it) fires only if one of the player's own
+  melee hits on the SAME mob name was logged within that many ms (`_noteOwnMelee` / `_afterMyMeleeOk`, per character).
+  Made for **Willsapper**: its proc casts Energy Sap (spell 1960), whose landing text `<mob> yawns.` ten other spells
+  print too (shaman slows among them). Suggested trigger *Willsapper proc*: `^\[.+?\]\s+(?<target>.+?) yawns\.$`,
+  `slap`, replace, 1500 ms. Per-character via the panel's "For:" picker (the agent knows no equipped items).
+- **Import.** GINA / EQLogParser sound files that exist on this PC are copied into the sounds folder (`_importSoundFile`)
+  and played as `custom:<file>`; GINA's bare `PlayMediaFile` switch carries no file name, so those keep their TTS and
+  are listed in the import result.
+- Tests: `test/sounds-voices.test.js`.
+
 ### Melody: the DIRGE TACTICAL NUKE board (agent 3.7.22, beta, 2026-09-26)
 The guild lead: a board that comes out once a bard is set for the biggest Dirges (pre-buffs
 up, Amplification last), a Puretone key, and a button for every Dirge the mana holds.
