@@ -28,7 +28,7 @@ const EXPORTS = ['_mapServerXY', '_mapZoneShort', '_mapNormName', '_mapAttribute
   '_mapZoneDoc', '_mapPrune', '_mapEnsureZone', '_mapPaths', '_zealState', '_setRaid', '_setOpts', 'MAP_ZONE_SHORT',
   '_mapTryPin', '_mapPinGet', '_mapSync', '_mapSyncStop', '_mapSyncFlush', '_mapSyncPull', '_mapApplyRemote', '_mapLocalEvent',
   '_mapSegDist', '_mapRouteDist', '_mapCopy', '_mapCopyNoteWho', '_mapCurrentCopy', '_mapCopyInfo', 'whoData',
-  '_mapNoteCon', '_mapConsFor', '_mapMe', '_mapQuarmyIds', '_mapNoteLeg', '_mapCcStates', '_buffLandingsByTarget', '_spellByNameLower'];
+  '_mapNoteCon', '_mapConsFor', '_mapMe', '_mapQuarmyIds', '_mapNoteLeg', '_mapNotePath', '_mapCcStates', '_buffLandingsByTarget', '_spellByNameLower'];
 // The agent's real /consider tiers, for _mapNoteCon (they live outside the map core).
 const CON_DEFS = AGENT.slice(AGENT.indexOf('const CON_STANDINGS = ['), AGENT.indexOf('\n', AGENT.indexOf('const _CON_RX = ')));
 // The agent's real lull line and mez test, for _mapCcStates (also outside the map core).
@@ -969,6 +969,53 @@ describe('pather routes', () => {
     expect(c._mapSaveNow()).toBe(true);
     const c2 = loadCore({ dir, opts: { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: '' }, net });
     expect(c2._mapZoneDoc('thedeep').legs[7]['0-1'].n).toBe(2);                         // kept across a restart
+  });
+  it('a tracked NPC (Thelin) has his walk recorded off any target window and sent with the map state (2026-10-14)', () => {
+    // the guild lead: "for Thelin, if anyone is targetting him we should track that path and put his path on the map"
+    const net = fakeNet();
+    const c = loadCore({ dir, opts: { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: '' }, net });
+    c._zealState.Aldenmar = { zone: 204, updatedAt: 1e18, loc: { x: 0, y: 0, z: 0 } };
+    // Pipe {x, y} is the server's {y, x} (the coordinate swap): pipe x 10 / y 100 is server x 100 / y 10.
+    const look = (name, px, py, at, extra) => c._mapNoteState('Aldenmar', null,
+      Object.assign({ zone: 204, target_name: name, target_id: 486, target_type: 1, target_hp_pct: 100, target_loc: { x: px, y: py, z: 5 } }, extra || {}), at);
+    look('Thelin Poxbourne', 10, 100, T0);
+    look('Thelin Poxbourne', 12, 104, T0 + 1000);       // 4.5 units on: not a new point
+    look('Thelin Poxbourne', 10, 140, T0 + 2000);       // 40 on
+    look('Thelin Poxbourne', 10, 180, T0 + 40_000);     // nobody had him for 38 s: the line to here is not drawn
+    look('Thelin Poxbourne', 10, 1180, T0 + 41_000);    // 1000 on in a second: another body of that name
+    look('Thelin Poxbourne', 10, 1220, T0 + 42_000);
+    const p = c._mapStatePayload('', T0 + 43_000);
+    expect(p.paths['thelin poxbourne'].name).toBe('Thelin Poxbourne');
+    expect(p.paths['thelin poxbourne'].pts).toEqual([
+      [100, 10, 5, T0, 0], [140, 10, 5, T0 + 2000, 0], [180, 10, 5, T0 + 40_000, 1], [1180, 10, 5, T0 + 41_000, 1], [1220, 10, 5, T0 + 42_000, 0]]);
+    expect(p.paths['thelin poxbourne'].live).toBe(true);
+    expect(c._mapStatePayload('', T0 + 42_000 + 20_000).paths['thelin poxbourne'].live).toBe(false);   // not watched now
+    expect(c._mapSaveNow()).toBe(true);
+    const c2 = loadCore({ dir, opts: { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: '' }, net });
+    expect(c2._mapZoneDoc('ponightmare').paths['thelin poxbourne'].pts).toHaveLength(5);              // kept across a restart
+  });
+  it('only the named list, in its own zone, as a live NPC, is recorded; last run\'s walk is dropped (2026-10-14)', () => {
+    const net = fakeNet();
+    const c = loadCore({ dir, opts: { botUrl: 'http://127.0.0.1:9/api/agent/encounter', token: '' }, net });
+    const state = (zone, name, extra) => Object.assign({ zone, target_name: name, target_id: 9, target_type: 1, target_hp_pct: 100, target_loc: { x: 1, y: 2, z: 0 } }, extra || {});
+    c._mapNoteState('Aldenmar', null, state(204, 'a hedge spider'), T0);                                  // not on the list
+    c._mapNoteState('Aldenmar', null, state(164, 'Thelin Poxbourne'), T0);                                // right name, wrong zone
+    c._mapNoteState('Aldenmar', null, state(204, 'Thelin Poxbourne', { target_type: 0 }), T0);            // a player of that name
+    c._mapNoteState('Aldenmar', null, state(204, "Thelin Poxbourne's corpse"), T0);                       // dead
+    c._mapNoteState('Aldenmar', null, state(204, 'Thelin Poxbourne', { target_loc: null }), T0);          // no position
+    expect(c._mapZoneDoc('ponightmare').paths).toEqual({});
+    expect(c._mapZoneDoc('thedeep').paths).toEqual({});
+    c._mapNoteState('Aldenmar', null, state(204, '#Thelin_Poxbourne'), T0);                               // spelt the catalog's way
+    expect(Object.keys(c._mapZoneDoc('ponightmare').paths)).toEqual(['thelin poxbourne']);
+    const WEEK = 7 * 24 * 3_600_000;
+    c._mapNoteState('Aldenmar', null, state(204, 'Thelin Poxbourne', { target_loc: { x: 500, y: 600, z: 0 } }), T0 + WEEK);
+    expect(c._mapZoneDoc('ponightmare').paths['thelin poxbourne'].pts).toEqual([[600, 500, 0, T0 + WEEK, 0]]);   // the old walk is gone
+  });
+  it('the overlay draws every recorded path with the trail painter, whoever has the target (2026-10-14)', () => {
+    const js = stripJs(MAP_HTML);
+    expect(js).toMatch(/if \(SH\.trail && P\.paths\) for \(var pk in P\.paths\)/);
+    expect(js).toMatch(/drawTrail\(tkp\._tr, null, null, null, tkp\.live \? 1 : 0\.6\);/);
+    expect(js).toMatch(/brk: s\[4\] === 1/);   // a gap in watching is never bridged
   });
   it('a zone with no routes sends grids: null', () => {
     const { c } = localCore();

@@ -45745,6 +45745,17 @@ const MAP_SYNC_BACKOFF_MS    = 10 * 60 * 1000;      // the bot answered 404: not
 const MAP_SYNC_TIMEOUT_MS    = 8000;
 const MAP_SYNC_QUEUE_MAX     = 200;
 const MAP_CORPSE_RE          = /[`'’]s\s+corpse\d*$/i;
+// NPCs whose walk is recorded whenever anyone's target is on them (the guild lead, 2026-10-14: "for Thelin, if anyone
+// is targetting him we should track that path and put his path on the map"). Thelin Poxbourne is the escort of the
+// Plane of Nightmare hedge maze; his waypoints come from a quest script, not a spawn grid, so the learned wander legs
+// (_mapNoteLeg) cannot hold them and the samples are kept as a plain trail. { zone short: [normalised names] }.
+const MAP_TRACKED_PATHS      = { ponightmare: ['thelin poxbourne'] };
+const MAP_PATH_STEP_UNITS    = 12;                  // a sample is kept only this far from the last one
+const MAP_PATH_GAP_MS        = 20 * 1000;           // nobody had him targeted this long: no straight line across the gap
+const MAP_PATH_JUMP_UNITS    = 400;                 // further than a walk covers between two looks: another body of that name
+const MAP_PATH_MAX           = 800;                 // samples kept per NPC (the oldest go first)
+const MAP_PATH_KEEP_MS       = 12 * 60 * 60 * 1000; // a path not added to for this long is dropped (the next run's walk starts clean)
+const MAP_PATH_LIVE_MS       = 15 * 1000;           // "being watched now" in the payload
 const MAP_ZONE_SHORT = Object.fromEntries(('1:qeynos,2:qeynos2,3:qrg,4:qeytoqrg,5:highpass,6:highkeep,8:freportn,9:freportw,10:freporte,11:runnyeye,12:qey2hh1,13:northkarana,14:southkarana,15:eastkarana,16:beholder,17:blackburrow,18:paw,19:rivervale,20:kithicor,21:commons,22:ecommons,23:erudnint,24:erudnext,25:nektulos,26:cshome,27:lavastorm,28:nektropos,29:halas,30:everfrost,31:soldunga,32:soldungb,33:misty,34:nro,35:sro,36:befallen,37:oasis,38:tox,39:hole,40:neriaka,41:neriakb,42:neriakc,43:neriakd,44:najena,45:qcat,46:innothule,47:feerrott,48:cazicthule,49:oggok,50:rathemtn,51:lakerathe,52:grobb,53:aviak,54:gfaydark,55:akanon,56:steamfont,57:lfaydark,58:crushbone,59:mistmoore,60:kaladima,61:felwithea,62:felwitheb,63:unrest,64:kedge,65:guktop,66:gukbottom,67:kaladimb,68:butcher,69:oot,70:cauldron,71:airplane,72:fearplane,73:permafrost,74:kerraridge,75:paineel,76:hateplane,77:arena,78:fieldofbone,79:warslikswood,80:soltemple,81:droga,82:cabwest,83:swampofnohope,84:firiona,85:lakeofillomen,86:dreadlands,87:burningwood,88:kaesora,89:sebilis,90:citymist,91:skyfire,92:frontiermtns,93:overthere,94:emeraldjungle,95:trakanon,96:timorous,97:kurn,98:erudsxing,100:stonebrunt,101:warrens,102:karnor,103:chardok,104:dalnir,105:charasis,106:cabeast,107:nurga,108:veeshan,109:veksar,110:iceclad,111:frozenshadow,112:velketor,113:kael,114:skyshrine,115:thurgadina,116:eastwastes,117:cobaltscar,118:greatdivide,119:wakening,120:westwastes,121:crystal,123:necropolis,124:templeveeshan,125:sirens,126:mischiefplane,127:growthplane,128:sleeper,129:thurgadinb,130:erudsxing2,150:shadowhaven,151:bazaar,152:nexus,153:echo,154:acrylia,155:sharvahl,156:paludal,157:fungusgrove,158:vexthal,159:sseru,160:katta,161:netherbian,162:ssratemple,163:griegsend,164:thedeep,165:shadeweaver,166:hollowshade,167:grimling,168:mseru,169:letalis,170:twilight,171:thegrey,172:tenebrous,173:maiden,174:dawnshroud,175:scarlet,176:umbral,179:akheva,180:arena2,181:jaggedpine,200:codecay,201:pojustice,202:poknowledge,203:potranquility,204:ponightmare,205:podisease,206:poinnovation,207:potorment,208:povalor,209:bothunder,210:postorms,211:hohonora,212:solrotower,213:powar,214:potactics,215:poair,216:powater,217:pofire,218:poeartha,219:potimea,220:hohonorb,221:nightmareb,222:poearthb,223:potimeb')
   .split(',').map(kv => { const i = kv.indexOf(':'); return [kv.slice(0, i), kv.slice(i + 1)]; }));   // eqemu_zone.zone_id -> short_name, read from the table 2026-10-12
 
@@ -45893,6 +45904,7 @@ function _mapZoneDoc(zone) {
   if (!e.seen || typeof e.seen !== 'object') e.seen = {};   // <point_id>: a pinned mob seen alive there
   if (!e.last || typeof e.last !== 'object') e.last = {};   // <point_id>: `at` of the newest event applied (local or guild) - newer wins
   if (!e.legs || typeof e.legs !== 'object') e.legs = {};   // <grid>: { "<a>-<b>": { n, at } } wander legs seen walked (_mapNoteLeg)
+  if (!e.paths || typeof e.paths !== 'object') e.paths = {};   // <normalised name>: { name, at, pts: [[x, y, z, t, brk]] } (_mapNotePath)
   return e;
 }
 function _mapSaveNow() {
@@ -45946,6 +45958,9 @@ function _mapPrune(zdoc, points, now) {
   }
   for (const [k, at] of Object.entries(zdoc.last || {})) {
     if (!(now - at <= MAP_LAST_KEEP_MS)) { delete zdoc.last[k]; changed = true; }
+  }
+  for (const [k, r] of Object.entries(zdoc.paths || {})) {
+    if (!r || !(now - r.at <= MAP_PATH_KEEP_MS)) { delete zdoc.paths[k]; changed = true; }
   }
   return changed;
 }
@@ -46713,6 +46728,27 @@ function _mapNoteLeg(zone, grid, a, b, now) {
   return { ok: true, n: l.n };
 }
 
+// A target-window sample of a tracked NPC (MAP_TRACKED_PATHS): `loc` is already in the server frame. Kept per zone and
+// name, so every look anyone on this machine takes adds to the same trail. A sample is stored only when he has moved
+// MAP_PATH_STEP_UNITS since the last; the first one after a gap in watching (or a jump too long to be a walk) carries
+// brk = 1 so the Map never draws a line across what nobody saw. Local only: nothing here is uploaded.
+function _mapNotePath(zone, name, loc, now) {
+  const key = _mapNormName(name), list = MAP_TRACKED_PATHS[zone];
+  if (!list || !list.includes(key) || !loc || !Number.isFinite(loc.x) || !Number.isFinite(loc.y)) return false;
+  const zd = _mapZoneDoc(zone);
+  const rec = zd.paths[key] || (zd.paths[key] = { name: _mapPrettyName(name), at: now, pts: [] });
+  if (now - rec.at > MAP_PATH_KEEP_MS) rec.pts = [];   // last week's walk (the prune only runs where the zone data is held)
+  const last = rec.pts[rec.pts.length - 1];
+  const gap = now - rec.at > MAP_PATH_GAP_MS;
+  rec.at = now;
+  const d = last ? _mapDist2({ x: last[0], y: last[1] }, loc) : Infinity;
+  if (d < MAP_PATH_STEP_UNITS) return false;
+  rec.pts.push([Math.round(loc.x), Math.round(loc.y), Math.round(loc.z || 0), now, last && (gap || d > MAP_PATH_JUMP_UNITS) ? 1 : 0]);
+  if (rec.pts.length > MAP_PATH_MAX) rec.pts.splice(0, rec.pts.length - MAP_PATH_MAX);
+  _mapSaveSoon();
+  return true;
+}
+
 // ── What the overlay reads ──────────────────────────────────────────────────────────────────────
 // The character whose pipe is live right now (the freshest within a minute): that is the one on screen.
 function _mapActiveCharacter(now) {
@@ -46855,7 +46891,7 @@ function _mapStatePayload(have, now, haveLocal) {
   const character = _mapActiveCharacter(now);
   const st = character ? _zealState[character] : null;
   const out = { zone: null, long_name: null, zone_id: null, version: null, status: character ? 'ok' : 'no-pipe', local_only: _localOnly(),
-    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], copy: null, cc: [], now };
+    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], copy: null, cc: [], paths: {}, now };
   if (!st) return out;
   out.zone_id = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
   out.pos_at = Number.isFinite(st.updatedAt) ? st.updatedAt : null;   // when the agent last heard from Mimic: the overlay's "pos NNN ms"
@@ -46909,6 +46945,11 @@ function _mapStatePayload(have, now, haveLocal) {
     if (pin) out.target.point_id = pin.point_id;
   }
   if (!zone) { out.status = 'no-zone'; return out; }
+  // Tracked NPCs' walks (MAP_TRACKED_PATHS), recorded off any target window: { <name>: { name, at, live, pts } }, pts
+  // [x, y, z, t, brk]. Before the spawn data: the trail draws even in a zone we hold no points for.
+  for (const [k, r] of Object.entries(_mapZoneDoc(zone).paths)) {
+    if (r && Array.isArray(r.pts) && r.pts.length && now - r.at <= MAP_PATH_KEEP_MS) out.paths[k] = { name: r.name, at: r.at, live: now - r.at <= MAP_PATH_LIVE_MS, pts: r.pts };
+  }
   try {   // before the spawn data: the walls draw even in a zone we hold no points for
     _mapBrewallEnsure(zone, now);   // first visit to a zone: fetch Brewall's map for it (see "Brewall maps")
     const lm = _mapLocalFor(zone, now);
@@ -46954,6 +46995,7 @@ function _mapNoteState(character, prev, next, now) {
   const isNpc = next.target_type == null || next.target_type === 1;
   if (isNpc && tl && next.target_id > 0 && next.target_name && !MAP_CORPSE_RE.test(String(next.target_name))) {
     _mapNoteSighting(zone, next.target_id, next.target_name, tl, now);
+    _mapNotePath(zone, next.target_name, tl, now);   // a tracked NPC (Thelin): one more point on his trail
     // A LIVE, UNPULLED mob standing at exactly one point is pinned there (and synced as "seen"); see "Pins".
     if (Number(next.target_hp_pct) > 0) {
       const tt = next.target_of_target;

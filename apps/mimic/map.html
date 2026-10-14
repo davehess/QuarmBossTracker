@@ -1941,6 +1941,15 @@
       };
       if (SH.raid) dotsOf(P.raid, CO.raid, 3 * I.dot, 'r:', SH.raidNames);
       if (SH.group) dotsOf(P.group, CO.group, 4 * I.dot, 'g:', SH.groupNames);
+      // Tracked NPCs' walks (the agent's MAP_TRACKED_PATHS: Thelin in the hedge maze), recorded whenever anyone on this
+      // machine had them targeted, whether or not you do now: the same trail, solid while they are being watched, faded after.
+      if (SH.trail && P.paths) for (var pk in P.paths) {
+        var tkp = P.paths[pk];
+        if (!tkp._tr) tkp._tr = { pts: tkp.pts.map(function (s) { return { x: s[0], y: s[1], st: 'path', brk: s[4] === 1 }; }), legs: [] };
+        tkp._tr.dead = tkp.live ? null : 0;   // not watched now: no heading arrow
+        drawTrail(tkp._tr, null, null, null, tkp.live ? 1 : 0.6);
+        if (tkp._tr.pts.length) { var tkl = tkp._tr.pts[tkp._tr.pts.length - 1], tkq = wpt(tkl.x, tkl.y); halo(tkp.name, tkq[0] + 9, tkq[1] - 9, labelFont('small'), TRAIL_COL.path); }
+      }
       // Killed mobs' paths, faded, until KILLS_FADE more kills (noteKills).
       if (SH.trail) for (var dk in S.trails) { if (trailShown(S.trails[dk], S.kills) && !(P.target && dk === targetKey(P.target))) drawTrail(S.trails[dk], null, null, null, 0.3); }
       // Target: a ring and a dotted line from you.
