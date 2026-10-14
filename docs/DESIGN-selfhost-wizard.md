@@ -573,6 +573,12 @@ and the same never-refetch guarantee.
   `member_lockouts` holds a handful of rows; the bot re-reads it every 20 s (about 4,300 tiny reads a day) and each
   website Edge isolate at most every 20 s while signed-in traffic flows. Negligible on any plan. The wizard needs
   nothing guild-specific here beyond who counts as an officer.
+- **2026-10-14 — a persona chat agent is an OpenClaw gateway as a Coolify Compose resource** (`DECISIONS-2026-09-21.md`
+  §325, `deploy/openclaw-bristlebane/`): one container (`ghcr.io/openclaw/openclaw`, ~1.2 GB image, pinned tag), two
+  named volumes, no ports, its own Discord application; the model is wherever the guild has one (ours: a local model on a
+  gaming PC over the LAN, free but only up while that PC is). Compose, not a plain image app, so redeploys never run
+  two gateways on one bot token. A guild without a local GPU swaps the provider block for a hosted model (per-message
+  cost, larger window). The wizard must ask: Discord app for the persona, model host, honest context window.
 
 ## 4. Open questions for whoever builds it
 
