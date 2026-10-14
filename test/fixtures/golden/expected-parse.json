@@ -356,7 +356,8 @@
         "type": "avoid",
         "attacker": "Lord of Ire",
         "defender": "Torvahk",
-        "kind": "parry"
+        "kind": "parry",
+        "verb": "hit"
       }
     },
     {
@@ -369,7 +370,8 @@
         "type": "avoid",
         "attacker": null,
         "defender": "Lord of Ire",
-        "kind": "dodge"
+        "kind": "dodge",
+        "verb": "slash"
       }
     },
     {
@@ -505,7 +507,8 @@
         "type": "avoid",
         "attacker": "Lord of Ire",
         "defender": "Torvahk",
-        "kind": "riposte"
+        "kind": "riposte",
+        "verb": "crush"
       }
     },
     {
@@ -717,7 +720,8 @@
         "type": "avoid",
         "attacker": "Lord of Ire",
         "defender": "Torvahk",
-        "kind": "dodge"
+        "kind": "dodge",
+        "verb": "hit"
       }
     },
     {
@@ -835,7 +839,8 @@
         "type": "avoid",
         "attacker": "Lord of Ire",
         "defender": "Torvahk",
-        "kind": "block"
+        "kind": "block",
+        "verb": "hit"
       }
     },
     {
@@ -1318,7 +1323,8 @@
         "attacker": "a fear touched drolvarg",
         "defender": "Torvahk",
         "ability": "hit",
-        "amount": 91
+        "amount": 91,
+        "nonMelee": true
       }
     },
     {
@@ -1357,7 +1363,8 @@
         "type": "avoid",
         "attacker": "Torvahk",
         "defender": "Lord Nagafen",
-        "kind": "invulnerable"
+        "kind": "invulnerable",
+        "verb": "bash"
       }
     },
     {
@@ -1370,7 +1377,8 @@
         "type": "avoid",
         "attacker": null,
         "defender": "Lord Nagafen",
-        "kind": "miss"
+        "kind": "miss",
+        "verb": "kick"
       }
     },
     {
