@@ -38480,20 +38480,21 @@ function serializeLocalChat(q, now) {
   lines.reverse();
   return { ok: true, boot: CHAT_BOOT, seq: _chatSeq, reset, groups: CHAT_GROUPS, channels: CHAT_CHANNELS, lines };
 }
-let _chatLastGood = null;
 function _handleLocalChat(req, res) {
   const send = (code, body) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(body); };
   if (!_localOriginOk(req)) return send(403, JSON.stringify({ error: 'forbidden origin' }));
   const q = {};
   try { new URL(req.url, 'http://127.0.0.1').searchParams.forEach((v, k) => { q[k] = v; }); } catch { void 0; }
   for (const k of CHAT_POLICY_KEYS) q[k] = q[k] === '1';
+  // No last-good fallback here, unlike the other overlay routes: a body built under an earlier switch set could
+  // show officer or group lines the caller has just switched off. A failed read serves an empty page instead.
   let body;
-  try { body = JSON.stringify(serializeLocalChat(q)); _chatLastGood = body; }
-  catch (e) { console.error('[api/chat] serialize failed, serving last-good:', e && (e.stack || e.message || e)); body = _chatLastGood; }
-  return send(200, body || 'null');
+  try { body = JSON.stringify(serializeLocalChat(q)); }
+  catch (e) { console.error('[api/chat] serialize failed:', e && (e.stack || e.message || e)); body = JSON.stringify({ ok: false, lines: [] }); }
+  return send(200, body);
 }
 function _resetLocalChatForTest() {
-  _chatRing.length = 0; _chatSeq = 0; _chatPolicy = null; _chatPolicyAt = 0; _chatLastGood = null;
+  _chatRing.length = 0; _chatSeq = 0; _chatPolicy = null; _chatPolicyAt = 0;
 }
 // ── end Local chat window ──
 
