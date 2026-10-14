@@ -1,4 +1,6 @@
-// /pop/guide — the PoP checklist: where to start, the must-haves, and who you need for each step
+// /pop/guide — the PoP checklist: the must-haves, and who you need for each step. At the top, collapsed, a box to
+// paste what Seer Mal Nae`Shi says (SeerPaste.tsx): it ticks the steps she proves, rings the next ones, and saves
+// them to one of your characters. The "Start here" section was removed 2026-10-14 (the guild lead: superfluous).
 // (the guild lead, 2026-09-28: "where to start, what quests are must haves, what can be done with a
 // group or a raid or solo. Make this a checkbox type of thing").
 //
@@ -115,10 +117,10 @@ export default async function PopGuidePage(
             <Link href="/pop" className="text-xs text-blue hover:underline">flag chart →</Link>
           </div>
           <p className="text-sm text-dim mt-1 max-w-3xl">
-            Where to start, what you can&apos;t skip, who you need, who takes what and who you go back to, by
+            What you can&apos;t skip, who you need, who takes what and who you go back to, by
             progression level. Open a level to see its steps; hover 🗺 for the map. Steps Mimic saw you do, that
             our records already show, or that /who proves (you were seen inside a plane that needs them) tick
-            themselves and say which.
+            themselves and say which. Not running Mimic? Paste what the Seer says, just below.
           </p>
           {hiddenNote}
         </section>
@@ -171,8 +173,9 @@ export default async function PopGuidePage(
           <Link href="/pop" className="text-xs text-blue hover:underline">flag chart →</Link>
         </div>
         <p className="text-sm text-dim mt-1 max-w-3xl">
-          Where to start, what you can&apos;t skip, and who you need for each step. Tick things off as you go;
-          your ticks are saved per character, and any flag Mimic has recorded ticks itself.
+          What you can&apos;t skip, and who you need for each step. Tick things off as you go;
+          your ticks are saved per character, and any flag Mimic has recorded ticks itself. Not running Mimic?
+          Paste what the Seer says, just below.
         </p>
         {hiddenNote}
       </section>

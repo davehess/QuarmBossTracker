@@ -4,8 +4,9 @@
 //
 // Three sources, named on every row they tick:
 //   mimic    — Mimic saw it happen: a flag message after a boss kill (pop_flags, mapped), a Mark
-//              looted (looted_items), Mimic reporting the character at all (character_live_state).
-//   database — our records already show it: level on /who, an item in the last inventory upload
+//              looted (looted_items). A flag step the Seer's recital named counts the same, pasted
+//              on the guide or heard by Mimic (popGuideSeer.ts says which guide step each one is).
+//   database — our records already show it: an item in the last inventory upload
 //              (character_inventory, never when the character hides its inventory), the spellbook
 //              upload.
 //   who      — a raider's /who showed the character inside a gated plane, so its gate and the gates
@@ -20,16 +21,16 @@
 
 import { GUIDE_ITEMS } from './popGuide';
 import { flagsFromLoot, flagsFromSightings, lootText, seenText, type LootSighting, type Sighting } from './popWho';
+import { heldClosure } from './popRecital';
+import { guideStepsProven } from './popGuideSeer';
 
-export type Evidence = { source: 'mimic' | 'database' | 'who' | 'loot'; what: string; at: string | null };
+// seer = a Seer recital pasted on the guide and not saved yet (SeerPaste.tsx); the page adds it, never the loader.
+export type Evidence = { source: 'mimic' | 'database' | 'who' | 'loot' | 'seer'; what: string; at: string | null };
 export type AutoInput = {
   flags: { flag_key: string; earned_at: string | null }[];
   loots: { item_name: string; looted_at: string | null }[];
   inventory: { item_id: number; observed_at: string | null }[] | null;   // null = the character hides it
-  level: number | null;
-  levelAt: string | null;
   spellbook: boolean;
-  liveAt: string | null;
   seen?: Sighting[];   // pop_who_sightings rows for this character
   looted?: LootSighting[];   // pop_loot_sightings rows for this character
 };
@@ -96,6 +97,12 @@ export function guideEvidence(inp: AutoInput): Record<string, Evidence> {
       if (!out[k]) out[k] = { source: 'mimic', what: 'Mimic recorded a later flag in this arc, which needs this step first.', at: at ?? null };
     }
   }
+  // The server's own flag steps (fuirstel_1, thelin_4, …) are stored under their step names, and a later value
+  // of a series carries the earlier ones: the guide steps they stand for tick too. Last of the flag rules, so
+  // the more exact wording above wins where two of them name one step.
+  for (const k of guideStepsProven(heldClosure(flagAt.keys()))) {
+    if (!out[k]) out[k] = { source: 'mimic', what: 'Your recorded flags show this step.', at: null };
+  }
   // /who: the gate of the plane they were seen in, and of every plane on the way in.
   for (const [flag, proof] of flagsFromSightings(inp.seen ?? [])) {
     const ev: Evidence = { source: 'who', what: seenText(proof.zone), at: proof.at };
@@ -108,10 +115,6 @@ export function guideEvidence(inp: AutoInput): Record<string, Evidence> {
     const ev: Evidence = { source: 'loot', what: lootText(proof.zone, proof.source), at: proof.at };
     for (const i of GUIDE_ITEMS) if (i.flag === flag && !out[i.key]) out[i.key] = ev;
     for (const k of STEPS_BEFORE[flag] ?? []) if (!out[k]) out[k] = ev;
-  }
-  if (inp.liveAt) out.start_mimic = { source: 'mimic', what: 'Mimic has reported this character.', at: inp.liveAt };
-  if (inp.level != null && inp.level >= 46) {
-    out.start_level46 = { source: 'database', what: `Level ${inp.level} on /who.`, at: inp.levelAt };
   }
   if (inp.spellbook) out.spells_submit_book = { source: 'database', what: 'Your spellbook is uploaded.', at: null };
   if (inp.inventory) {

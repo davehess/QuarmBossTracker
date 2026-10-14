@@ -34,7 +34,7 @@ export async function loadRoute(mine: Owned[]): Promise<{ chars: RouteChar[]; ou
   const none = Promise.resolve({ data: [] as unknown[] });
   const zones = [...new Set(GUIDE_ITEMS.flatMap(i => stepPlaces(i, STEP_MORE[i.key]).map(p => p.zone)))];
 
-  const [ticks, flags, loots, inv, chars, who, live, sights, lootSights, ...outlineList] = await Promise.all([
+  const [ticks, flags, loots, inv, chars, sights, lootSights, ...outlineList] = await Promise.all([
     names.length ? admin.from('pop_guide_ticks').select('character_name, item_key').eq('guild_id', GUILD_TAG).in('character_name', names) : none,
     // Real flags only ('unmapped' and the witnessed 'hail' rows are not flags; page.tsx says why the 1,000-row
     // read must not spend itself on them): the next-steps panel reads these as the flags a character holds.
@@ -45,8 +45,6 @@ export async function loadRoute(mine: Owned[]): Promise<{ chars: RouteChar[]; ou
     names.length ? admin.from('character_inventory').select('character_name, item_id, observed_at').in('character_name', names)
       .in('item_id', AUTO_ITEM_IDS).limit(1000) : none,
     names.length ? admin.from('characters').select('name, exclude_inventory, spellbook_checksum').in('name', names) : none,
-    names.length ? admin.from('who_directory').select('character_key, level, last_seen').in('character_key', lower) : none,
-    names.length ? admin.from('character_live_state').select('character, updated_at').in('character', names) : none,
     // Where /who has shown each of them inside a gated plane (popWho.ts says what that proves).
     // Paged (selectAll): the API stops at 1,000 rows a request and this grows with every /who of a gated plane.
     names.length
@@ -66,7 +64,6 @@ export async function loadRoute(mine: Owned[]): Promise<{ chars: RouteChar[]; ou
     const lc = ch.name.toLowerCase();
     const meta = rows<{ name: string; exclude_inventory: boolean | null; spellbook_checksum: string | null }>(chars)
       .find(r => r.name.toLowerCase() === lc);
-    const w = rows<{ character_key: string; level: number | null; last_seen: string | null }>(who).find(r => r.character_key === lc);
     const seen = (sights as SightRow[]).filter(r => r.character_key === lc);
     const looted = (lootSights as LootRow[]).filter(r => r.character_key === lc);
     const mimicFlags = rows<{ character: string; flag_key: string; earned_at: string | null }>(flags).filter(r => r.character.toLowerCase() === lc);
@@ -75,10 +72,7 @@ export async function loadRoute(mine: Owned[]): Promise<{ chars: RouteChar[]; ou
       loots: rows<{ looter_lower: string; item_name: string; looted_at: string | null }>(loots).filter(r => r.looter_lower === lc),
       inventory: meta?.exclude_inventory ? null
         : rows<{ character_name: string; item_id: number; observed_at: string | null }>(inv).filter(r => r.character_name.toLowerCase() === lc),
-      level: w?.level ?? null,
-      levelAt: w?.last_seen ?? null,
       spellbook: !!meta?.spellbook_checksum,
-      liveAt: rows<{ character: string; updated_at: string }>(live).find(r => r.character.toLowerCase() === lc)?.updated_at ?? null,
       seen,
       looted,
     });

@@ -37,6 +37,23 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-8-154-2026-10-14',
+    title: 'Paste what the Seer says',
+    version: 'Web 1.8.154',
+    date: '2026-10-14',
+    channel: 'beta',
+    headline: 'No Mimic? Copy what Seer Mal Nae`Shi tells you, paste it at the top of the PoP checklist, and your flags are read for you.',
+    features: [
+      { name: 'Paste and check', blurb: 'Sit, say “guided meditation”, copy her lines from your chat window or your log, with or without the time in front, and paste them in. The checklist ticks every step she shows and rings the next one on each plane you can enter.' },
+      { name: 'Next steps', blurb: 'A list of what is still open on each plane, which planes are still closed to you and why, and any line it did not recognise so we can learn it.' },
+      { name: 'Save it', blurb: 'Save the result to one of your own characters so /pop and the checklist show it. Pasting the same lines again adds nothing twice. The text you paste is read in your browser and is never kept.' },
+    ],
+    fixes: [
+      'The “Start here” list at the top of the checklist is gone. The Seer and the Planar Traveler’s Manual steps moved to the Knowledge quests.',
+      'The Intricate Wooden Figurine step is gone, since the item is not in the game right now.',
+    ],
+  },
+  {
     key: 'web-1-8-153-2026-10-14',
     title: 'Alts under their main',
     version: 'Web 1.8.153',

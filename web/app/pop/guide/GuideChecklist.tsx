@@ -12,7 +12,10 @@ import {
 } from '@/lib/popGuide';
 import ItemHover, { type ItemCard } from '@/app/character/[name]/inventory/ItemHover';
 import CopyChip from '@/components/CopyChip';
+import { heldClosure } from '@/lib/popRecital';
+import { guideStepsProven } from '@/lib/popGuideSeer';
 import { setGuideTick } from './actions';
+import SeerPaste, { useFocusStep, type SeerResult } from './SeerPaste';
 
 export type GuideChar = { name: string; cls: string | null; isMain: boolean; manual: string[]; flags: string[] };
 
@@ -49,8 +52,22 @@ export default function GuideChecklist(
 
   const char = chars.find(c => c.name === charName) ?? null;
   const manual = (char && manualBy[char.name]) || new Set<string>();
-  const recorded = useMemo(() => recordedKeys(char?.flags ?? []), [char]);
-  const done = useMemo(() => tickedKeys(manual, char?.flags ?? []), [manual, char]);
+  // The server's own flag steps are stored under their step names (a Seer paste saves them that way), and each
+  // stands for a guide step (popGuideSeer.ts): they lock and tick like a flag Mimic recorded.
+  const recorded = useMemo(() => {
+    const r = recordedKeys(char?.flags ?? []);
+    for (const k of guideStepsProven(heldClosure(char?.flags ?? []))) r.add(k);
+    return r;
+  }, [char]);
+  // What a pasted Seer recital shows, not saved yet (SeerPaste.tsx); cleared when the character changes.
+  const [seer, setSeer] = useState<SeerResult | null>(null);
+  const done = useMemo(() => {
+    const d = tickedKeys(manual, char?.flags ?? []);
+    for (const k of recorded) d.add(k);
+    for (const k of seer?.proven ?? []) d.add(k);
+    return d;
+  }, [manual, char, recorded, seer]);
+  useFocusStep('guide-');
 
   function pick(name: string) {
     setCharName(name);
@@ -63,7 +80,7 @@ export default function GuideChecklist(
   }
 
   function toggle(item: GuideItem, next: boolean) {
-    if (!char || recorded.has(item.key)) return;
+    if (!char || recorded.has(item.key) || seer?.proven.has(item.key)) return;
     const name = char.name;
     const apply = (on: boolean) => setManualBy(prev => {
       const s = new Set(prev[name] ?? []);
@@ -87,6 +104,7 @@ export default function GuideChecklist(
 
   return (
     <div className="flex flex-col gap-4">
+      <SeerPaste character={char?.name ?? null} onResult={setSeer} />
       {/* Character + progress + filters */}
       <section className="bg-panel border border-border rounded-lg p-3 flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
@@ -150,6 +168,7 @@ export default function GuideChecklist(
             <ul>
               {shown.map(i => (
                 <Row key={i.key} item={i} checked={done.has(i.key)} recorded={recorded.has(i.key)}
+                     seer={seer?.proven.has(i.key) && !recorded.has(i.key) ? 'in' : seer?.next.has(i.key) ? 'next' : null}
                      disabled={!char} onToggle={toggle} cards={cards} />
               ))}
             </ul>
@@ -330,18 +349,18 @@ export function ChainView({ chain, cards, skipHandins }: { chain: Chain; cards: 
   );
 }
 
-function Row({ item, checked, recorded, disabled, onToggle, cards }: {
-  item: GuideItem; checked: boolean; recorded: boolean; disabled: boolean; cards: Record<number, ItemCard>;
+function Row({ item, checked, recorded, seer, disabled, onToggle, cards }: {
+  item: GuideItem; checked: boolean; recorded: boolean; seer: 'in' | 'next' | null; disabled: boolean; cards: Record<number, ItemCard>;
   onToggle: (item: GuideItem, next: boolean) => void;
 }) {
   const id = `guide-${item.key}`;
   const external = item.link?.href.startsWith('http');
   return (
-    <li className="flex gap-3 py-2 border-t border-border first:border-t-0">
-      <input id={id} type="checkbox" checked={checked} disabled={disabled || recorded}
+    <li className={`flex gap-3 py-2 border-t border-border first:border-t-0 ${seer === 'next' ? 'ring-1 ring-gold/70 rounded -mx-1 px-1' : ''}`}>
+      <input id={id} type="checkbox" checked={checked} disabled={disabled || recorded || seer === 'in'}
              onChange={e => onToggle(item, e.target.checked)}
              className="mt-0.5 h-4 w-4 shrink-0 accent-green cursor-pointer disabled:cursor-default"
-             title={recorded ? 'Mimic recorded this flag for you' : undefined} />
+             title={recorded ? 'Your recorded flags show this' : seer === 'in' ? 'In the Seer paste above (not saved yet)' : undefined} />
       <div className="flex-1 min-w-0">
         <label htmlFor={id} className={`text-sm cursor-pointer ${checked ? 'text-dim' : 'text-text'}`}>
           <WithItems text={item.title} cards={cards} />
@@ -350,6 +369,8 @@ function Row({ item, checked, recorded, disabled, onToggle, cards }: {
           <span className="px-1.5 rounded border border-border text-dim">{WHO_ICON[item.who]} {WHO_LABEL[item.who]}</span>
           {item.must && <span className="px-1.5 rounded border border-gold/60 text-gold">★ must</span>}
           {recorded && <span className="px-1.5 rounded border border-green/60 text-green">✓ recorded</span>}
+          {seer === 'in' && <span className="px-1.5 rounded border border-blue/60 text-blue" title="Shown by the Seer text you pasted; save it to keep it">✓ in your Seer paste</span>}
+          {seer === 'next' && <span className="px-1.5 rounded border border-gold/70 text-gold" title="The next step the Seer text you pasted leaves open on this plane">▶ next</span>}
           {item.check && <span className="px-1.5 rounded border border-border text-dim" title="Classic detail, not yet confirmed on Quarm">verify at launch</span>}
         </div>
         {(item.detail || item.link) && (

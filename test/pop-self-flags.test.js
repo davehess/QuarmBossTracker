@@ -70,10 +70,10 @@ describe('a flag and the row that stores it', () => {
   });
 
   it('a plain checklist step reports no flag; only keys that stand for one are read', () => {
-    expect(flagForTickKey('start_level46')).toBeNull();
+    expect(flagForTickKey('pok_taxidermy')).toBeNull();
     expect(flagForTickKey('not_a_key')).toBeNull();
     for (const k of SELF_TICK_KEYS) expect(flagForTickKey(k), k).not.toBeNull();
-    expect(SELF_TICK_KEYS).not.toContain('start_level46');
+    expect(SELF_TICK_KEYS).not.toContain('pok_taxidermy');
     expect(SELF_TICK_KEYS.every(k => GUIDE_KEYS.has(k) || k.startsWith(FLAG_TICK_PREFIX))).toBe(true);
   });
 });
@@ -93,7 +93,7 @@ describe('selfFlagsFromTicks', () => {
 
   it('ignores steps that grant no flag, junk keys and unknown flags', () => {
     const m = selfFlagsFromTicks([
-      { character_name: 'Corvale', item_key: 'start_level46' },
+      { character_name: 'Corvale', item_key: 'pok_taxidermy' },
       { character_name: 'Corvale', item_key: 'flag:made_up' },
       { character_name: 'Corvale', item_key: 'flag:unmapped' },
       { character_name: 'Corvale', item_key: '' },

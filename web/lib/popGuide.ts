@@ -103,7 +103,7 @@ export type Chain = {
   handins: ChainStage[];
 };
 
-export type SectionKey = 'start' | 'pok' | 'spells' | 't1' | 't2' | 't3' | 't4' | 'time';
+export type SectionKey = 'pok' | 'spells' | 't1' | 't2' | 't3' | 't4' | 'time';
 
 export const ZONE_NAMES = {
   poknowledge: 'Plane of Knowledge',
@@ -122,7 +122,6 @@ export const ZONE_NAMES = {
 export type ZoneKey = keyof typeof ZONE_NAMES;
 
 export const GUIDE_SECTIONS: { key: SectionKey; title: string; blurb: string }[] = [
-  { key: 'start', title: 'Start here', blurb: 'Do these first. Most take a minute.' },
   { key: 'pok', title: 'Plane of Knowledge quests', blurb: 'Open now, ordered easy to hard. Small rewards; good for alts.' },
   { key: 'spells', title: 'Your PoP spells', blurb: 'Casters: this is where most of your power in PoP comes from.' },
   { key: 't1', title: 'Tier one: the four open planes', blurb: 'Every plane here opens at 46. Talk to the NPC BEFORE each boss, or the kill will not flag you.' },
@@ -137,10 +136,8 @@ const popZone = (key: string) => ({ href: `/pop?zone=${key}`, label: 'who has it
 
 // Placed NPCs people walk to.
 const L = {
-  soulbinder: { npc: 'Soulbinder Jera', zone: 'poknowledge', y: -221, x: -53 },
   seer: { npc: 'Seer Mal Nae`Shi', zone: 'poknowledge', y: -42, x: -224, note: 'next to the Plane of Tranquility book' },
   maelin: { npc: 'Grand Librarian Maelin', zone: 'poknowledge', y: 6, x: 1016, note: 'top of the library elevator' },
-  gram: { npc: 'Gram Dunnar', zone: 'poknowledge', y: -341, x: -181 },
   willamina: { npc: 'Willamina', zone: 'poknowledge', y: -427, x: 1154 },
   bolcen: { npc: 'Bolcen Tendag', zone: 'poknowledge', y: 685, x: 954 },
   // Willamina's Needles, the rest of the chain (placed spawns; the book is a ground spawn).
@@ -232,21 +229,7 @@ const PROJECTION = 'Then hail A Planar Projection before anyone leaves.';
 
 // The steps as authored; GUIDE_ITEMS below is this list with each step's `seq` attached.
 const BASE_ITEMS: GuideItem[] = [
-  // ── Start here ────────────────────────────────────────────────────────────
-  { key: 'start_level46', section: 'start', who: 'solo', must: true, title: 'Reach level 46',
-    detail: 'Every PoP zone needs 46. The Plane of Knowledge does not; the Plane of Time asks for more.' },
-  { key: 'start_pok_bind', section: 'start', who: 'solo', title: 'Get to the Plane of Knowledge and bind there',
-    detail: 'Its books reach most of Norrath, so it becomes your home for the expansion.',
-    says: [{ to: 'Soulbinder Jera', text: 'bind my soul' }], where: [L.soulbinder] },
-  { key: 'start_popflags', section: 'start', who: 'solo', must: true, title: 'Type #popflags in game',
-    detail: 'New server command: lists your PoP flags by tier. Add overview, 1 to 5, time or all.' },
-  { key: 'start_mimic', section: 'start', who: 'solo', title: 'Run Mimic while you play',
-    detail: 'Every flag you earn is recorded for you and ticks the matching box on this page.' },
-  { key: 'start_guild_books', section: 'start', who: 'solo', must: true, title: 'Find the guild-instance books in the Plane of Tranquility',
-    detail: 'PoP raids now run in guild instances. You must be in the guild or the raid to use the books.' },
-  { key: 'start_hails', section: 'start', who: 'solo', must: true, title: 'The two rules that break flags',
-    detail: 'Talk to the right NPC before AND after each boss; after a kill, hail A Planar Projection. And the first time you earn a flag, zone into the next plane from the one you are in (Valor → Halls of Honor, Storms → Bastion of Thunder).' },
-  { key: 'start_flag_fixers', section: 'start', who: 'solo', must: true, title: 'Meet the two flag fixers in PoK',
+  { key: 'start_flag_fixers', section: 'pok', who: 'solo', must: true, title: 'Meet the two flag fixers in PoK',
     detail: 'Seer Mal Nae`Shi shows and repairs your flags, but only while you sit: /sit, then say her line. If she answers that “no recent events spark a memory”, there is nothing new to unlock yet. Grand Librarian Maelin hands out the flags you are owed. Repeat each phrase until nothing new comes. Visit Maelin before and after the Zeks and after Saryrn.',
     says: [
       { to: 'Seer Mal Nae`Shi', text: 'guided meditation', sit: true },
@@ -256,10 +239,7 @@ const BASE_ITEMS: GuideItem[] = [
       { to: 'Grand Librarian Maelin', text: 'what information' },
     ],
     where: [L.seer, L.maelin] },
-  { key: 'start_charm', section: 'start', who: 'solo', must: true, check: true, title: 'Pick up your charm, the Intricate Wooden Figurine',
-    detail: 'Gram Dunnar gives it free. Come back each time you open a new zone for free AA and charm upgrades.',
-    says: [{ to: 'Gram Dunnar', text: 'craft' }, { to: 'Gram Dunnar', text: 'I have stories' }], where: [L.gram] },
-  { key: 'start_traveler_manual', section: 'start', who: 'solo', must: true, title: '[[Planar Traveler’s Manual#28745]] (Willamina’s Needles)',
+  { key: 'start_traveler_manual', section: 'pok', who: 'solo', must: true, title: '[[Planar Traveler’s Manual#28745]] (Willamina’s Needles)',
     detail: 'All inside PoK, no fighting. Start at Agrakath Theric and fetch him one book; ten hand-ins later, Willamina gives you the manual. Needed for the Beginner Manual quests later.',
     link: pqdiNpc(202058),
     // No step-level says/where: the chain's "Start here" box carries Agrakath's /say and both /maps.
@@ -635,8 +615,7 @@ const BASE_ITEMS: GuideItem[] = [
 // (postorms/Askr_the_Lost.lua: head → "it was me" → "paying attention" → "continue" twice), the order is
 // the script's. Where it is only a list of keywords with no state (most hails and "story" words), the
 // guide's existing order is kept and the script does not fix it. Marked per step.
-// ⚠ Steps with no quest script in the mirror have NO seq and keep says[] as they were: Gram Dunnar's charm
-// ("craft", "I have stories") is in no eqemu_quest_scripts row, so there is nothing to cite.
+// ⚠ A step with no quest script in the mirror has NO seq and keeps says[] as it was: nothing to cite.
 const I = (name: string, id: number) => `[[${name}#${id}]]`;
 const hail = (to: string, src: string, text?: string): Act => ({ kind: 'hail', to, ...(text ? { text } : {}), src });
 const say = (to: string, text: string, src: string, more: { sit?: boolean; times?: number; until?: string } = {}): Act =>
@@ -675,8 +654,6 @@ const BAG = I('Askr’s Bag of Verity', 17192);
 const COLLECTORS_BOX = I('Collector’s Box', 17769);
 
 const SEQ: Record<string, Act[]> = {
-  // ── Start here ──
-  start_pok_bind: [say('Soulbinder Jera', 'bind my soul', 'poknowledge/Soulbinder_Jera.lua')],
   // Order across the two NPCs is NOT fixed by either script: the Seer's checklist flags need flags Maelin sets
   // (cl_rallos needs zeks 6) and Maelin needs flags the Seer sets (cl_saryrn → saryrn, for the cipher), so it
   // is a loop. Within one visit to Maelin, "Hail" (cipher) must come before "information" (the Zek reading
