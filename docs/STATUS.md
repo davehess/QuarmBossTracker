@@ -5961,7 +5961,7 @@ four candidates and no timer); a click marks Killed / Empty / Up. The bot route 
 only marks and log-line deaths start timers; the floor picker, badges and `?` rings are unchecked against a real zone; Window/HUD mode,
 3D, painted art, routes, line of sight and group upload are not built. Test: `test/spawn-map.test.js`.
 
-### 🧾 2026-10-14 — Map: Full mode + keep-clear areas (agent 3.7.162 · Mimic beta, branch `claude/map-full-mode`, not yet on `beta`)
+### 🧾 2026-10-14 — Map: Full mode + keep-clear areas (agent 3.7.162 · on `beta` as `c7d881a8`)
 The guild lead: *"give map a toggle full vs window mode, and have it avoid drawing over UI elements when see through maps are in
 position"*. Window stays exactly as it was. Full lays the Map over EverQuest's client area, click-through always (the Canvas's rules:
 `_coversScreen` in `main.js`), with a ▢ Window / ⚙ pair at the top-right; the toggle is on the Map's toolbar, in ⚙ → Mode, in the tray
