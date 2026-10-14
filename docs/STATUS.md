@@ -5985,6 +5985,12 @@ Abashi's Rod → 31242). The web has no decoder: it shows the stored link. **Ope
 fixable, staged in `docs/RUNBOOK-pqdi-chat-links.md`, unapplied (the guild lead's yes); the stable fleet keeps writing
 wrong links until the agent reaches stable.
 
+### 🧾 2026-10-14 — Tray menu layout B; chat overlay shows group and channels by default (Mimic beta `a9fcbfb4` / `a069a5ee`, DECISIONS §310–311)
+The tray's top level is now eight lines (Show dashboard, Overlays, Rescue, Quiet mode, Settings ›, Open ›, Help ›, Quit); every item
+kept its label and action, only its place changed (`test/tray-menu-layout.test.js` against `test/fixtures/tray-menu-before.json`).
+The Chat overlay's group and joined-channel switches default on (officer stays opt-in). **Open:** whether a pending update gets a
+top-level tray line; four tray-only items with no dashboard twin (update pop-up, Pause Discord DMs, Uninstall, Show agent log).
+
 ### 🧾 2026-10-14 — Roll ties: a tie at the top of a roll set is shown, and settled by deathroll (agent 3.7.167, beta, DECISIONS §301)
 The guild lead: *"if two toons roll the same number on a roll it should trigger a deathroll and highlight the tie"*. `rollSetTies` (one
 helper, in `rollSetsSnapshot`) finds two or more distinct characters on the highest first roll; the Rolls card and the Command Center header

@@ -1061,6 +1061,12 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   on Windows replacing a context menu closes the open one. `_trayFallbackMenu` (Open, Settings,
   Restart agent, Quit) opens if the full build throws. `_quitMimic` is shared with the dashboard's
   ⏻ Quit (`quit-app` IPC, `window.mimic.quitApp`).
+  **Layout B (Mimic beta `a9fcbfb4`, 2026-10-14, DECISIONS §310):** top level is status, Show dashboard,
+  Overlays ›, Rescue, Quiet mode, Settings ›, Open ›, Help ›, Quit. Settings › is ONE flat submenu
+  grouped by disabled header items (Behaviour / Mode / Updates / Account) + separators, so a checkbox is
+  never more than one click from its group. Items are the same objects as before, only moved; the
+  pre-change template is snapshotted in `test/fixtures/tray-menu-before.json` and
+  `test/tray-menu-layout.test.js` builds the real menu under stubs (`test/_tray-menu-harness.js`).
 - **Config**: `saveConfig` writes `.tmp`, keeps `.bak` (only if the current file parses), then renames;
   `_readConfigRaw` tries the file, then `.bak`, then `.tmp`. A torn file used to load as all defaults.
 - **Alert speed**: `tailFile` reads every 150 ms while a log grew within the last minute (`_tailDelayMs`),
