@@ -8,6 +8,7 @@ import {
 } from '@/lib/raidScreen';
 import { fmtDuration } from '@/lib/format';
 import type { LiveAuction } from '@/lib/screenLive';
+import type { PreflagSummary } from '@/lib/screenPlan';
 import type { Positions } from '@/lib/spectator';
 
 export const label = 'text-[11px] uppercase tracking-wider text-dim';
@@ -185,7 +186,35 @@ export function SpawnList({ spawns, now, max }: { spawns: FeedSpawn[]; now: numb
   );
 }
 
-export function OverviewView({ positions, feed, now }: { positions: Positions | null; feed: ScreenFeed | null; now: number }) {
+// Who still lacks each preflag for tonight's plan. A snapshot from when the page was opened (the server page reads
+// it once), so it says so; a raider who earns a flag mid-raid shows here until the page is reloaded.
+function PreflagBox({ summary }: { summary: PreflagSummary }) {
+  return (
+    <section className={card} aria-label="Preflags">
+      <h2 className={`${label} border-b border-border px-3 py-2`}>
+        Preflags <span className="normal-case text-text">{summary.total} raiders</span>
+      </h2>
+      <ul>
+        {summary.lines.map(l => (
+          <li key={l.key} className="border-b border-border/60 px-3 py-2 last:border-b-0">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="min-w-0 flex-1 text-text">{l.label}</span>
+              <span className={`shrink-0 text-xs ${l.missing.length ? 'text-red' : 'text-green'}`}>
+                {l.missing.length ? `${l.missing.length} missing` : 'everyone has it'}
+              </span>
+            </div>
+            {l.missing.length > 0 && <p className="mt-1 text-xs text-dim">{l.missing.join(', ')}</p>}
+          </li>
+        ))}
+      </ul>
+      <p className="border-t border-border px-3 py-2 text-xs text-dim">{summary.note} Checked when this page was opened; reload to refresh.</p>
+    </section>
+  );
+}
+
+export function OverviewView({ positions, feed, now, preflags = null }: {
+  positions: Positions | null; feed: ScreenFeed | null; now: number; preflags?: PreflagSummary | null;
+}) {
   const zones = positions ? summarizeRaid(positions.raiders, positions.zones) : [];
   const total = positions?.raiders.length ?? 0;
   return (
@@ -230,6 +259,8 @@ export function OverviewView({ positions, feed, now }: { positions: Positions | 
           <p className="border-t border-border px-3 py-2 text-xs text-dim">{positions.unplaced} more with a position but no known zone yet.</p>
         )}
       </section>
+
+      {preflags && <PreflagBox summary={preflags} />}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <section className={card} aria-label="Boss kills tonight">

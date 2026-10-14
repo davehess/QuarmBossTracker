@@ -1,9 +1,11 @@
 // /api/screen/slides: the deck the raid screen's Slides mode shows.
 //
 //   GET     members -> { slides: [{ id, position, title, body, imageUrl, updatedAt }] } in order
-//   POST    officers only. Two shapes, both answer with the fresh { slides }:
+//   POST    officers only. Three shapes, all answer with the fresh { slides }:
 //             { id?, title, body, imageUrl }   add a slide at the end, or edit the one named by `id`
 //             { action: 'move', id, dir }      dir 'up' | 'down': swap the slide with its neighbour
+//             { action: 'loadPlan' }           tonight's raid plan as slides (lib/raidPlanSlides.ts): replaces the
+//                                              slides titled "Plan · …" and puts the new ones after the officers' own
 //   DELETE  officers only: ?id=<slide id>. The rest close up.
 //
 // The screen stores which slide is up as a position (raid_screen_state.slide_index), so a move or a delete
@@ -18,7 +20,7 @@ import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { isOfficer } from '@/lib/officer';
 import { SCREEN_GUILD, SLIDES_MAX, isUuid, moveId, parseSlideInput } from '@/lib/raidScreen';
-import { keepSlideUp, listSlides, readSlideIndex, writeOrder } from '@/lib/raidScreenServer';
+import { keepSlideUp, listSlides, readSlideIndex, replacePlanSlides, writeOrder } from '@/lib/raidScreenServer';
 
 export const dynamic = 'force-dynamic';
 
@@ -58,6 +60,12 @@ export async function POST(req: Request) {
       const was = await readSlideIndex(admin);
       await writeOrder(admin, moved, positions);
       await keepSlideUp(admin, was, before, moved);
+      return NextResponse.json({ slides: await listSlides(admin) }, { headers: NO_STORE });
+    }
+
+    if (b.action === 'loadPlan') {
+      const refused = await replacePlanSlides(admin, deck);
+      if (refused) return fail(400, refused);
       return NextResponse.json({ slides: await listSlides(admin) }, { headers: NO_STORE });
     }
 

@@ -62,6 +62,13 @@ export default function SlideEditor({ onChanged, onShow }: {
     }
   };
 
+  // The plan's slides all start "Plan · " (PLAN_SLIDE_PREFIX in lib/raidPlanSlides.ts, not imported: that file
+  // pulls the whole plan into this client bundle for one word).
+  const loadPlan = async () => {
+    if (!window.confirm('Load tonight\'s plan? Any slides titled "Plan · …" are replaced, and the plan goes after your own slides.')) return;
+    if (await post({ action: 'loadPlan' })) { setDraft(EMPTY); onChanged(); }
+  };
+
   const full = (slides?.length ?? 0) >= SLIDES_MAX && !draft.id;
 
   return (
@@ -71,6 +78,9 @@ export default function SlideEditor({ onChanged, onShow }: {
           <h3 className="mb-2 text-[11px] uppercase tracking-wider text-dim">
             Deck{slides ? ` · ${slides.length} of ${SLIDES_MAX}` : ''}
           </h3>
+          <button type="button" className={`${btnIdle} mb-2`} disabled={busy || !slides} onClick={loadPlan}>
+            Load tonight&apos;s plan
+          </button>
           {!slides && <p className="text-xs text-dim">Loading the deck…</p>}
           {slides && slides.length === 0 && <p className="text-xs text-dim">No slides yet. Add the first one.</p>}
           <ol className="space-y-1">
