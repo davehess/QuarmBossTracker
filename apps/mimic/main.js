@@ -52,6 +52,20 @@ Menu.setApplicationMenu(null);
 // belt-and-suspenders for the speechSynthesis activation check specifically.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
+// ── Overlays must never be treated as "covered" (the guild lead, 2026-10-14) ─────────────────────────────────────────
+// "When i click onto a different window and then back into EQ the Overlays all refresh."
+// Chromium tracks which top-level windows are fully hidden behind others (CalculateNativeWinOcclusion) and, for a
+// covered window, flips the page to hidden: it stops painting, throws away the composited frame and throttles its
+// timers to about once a second. When the window is uncovered it repaints from nothing, and every page catches up in one
+// go - on a transparent window that is a visible blink of every overlay at once. Before agent 3.7.151 an overlay was
+// always topmost, so nothing could ever cover one and this never showed. Now the overlays drop behind other apps (see
+// _applyOverlayZ), so a browser in front of EverQuest covers them and clicking back into EQ wakes them all together.
+// Switching the occlusion tracker off keeps every visible overlay painting and ticking whatever is in front of it;
+// win.hide() / minimise still pause a page, as they should. Process-wide, so the dashboard window is covered too -
+// it keeps its normal timers rather than slowing to one tick a second behind another app, a cost of nothing.
+// Must run before app.whenReady(), and it is the only 'disable-features' switch (a second one would replace this).
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+
 // ── Single-instance lock ────────────────────────────────────────────────────
 // Mimic bundles + runs its own parser engine on a fixed port. Launching a
 // SECOND copy (e.g. clicking the taskbar/Start-menu shortcut while one is
