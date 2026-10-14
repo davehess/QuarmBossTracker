@@ -10758,3 +10758,10 @@ the Bastion of Thunder at the time.
 - **Found on the way:** the automatic beta → alpha sync has failed since 05:33 UTC today (conflicts in `charm.html`, `main.js`,
   `settings.html`, the agent `package.json`, and now the overlay-sets files on both sides). A hand-resolved merge is under way; alpha keeps
   its superset overlay-sets code and takes the agent version from beta.
+
+### 330. Map keep-clear areas are visible, named and switchable (Mimic beta `792da494`, 2026-10-14)
+- **The report (the guild lead, 2026-10-14, two screenshots):** *"What UI element is this looking to avoid? It cuts out a lot of it. We
+  should be able to see what's hidden and what is not."*
+- **Calls:** outlines + names only while configuring (⚙ open) or on an opt-in tick — mid-raid labels over the game are noise. Any area
+  whose size or position is a guess (no Width/Height, Zeal bars that run to the screen edge, a UI file saved for another resolution)
+  starts unticked; a pick is per character and per screen setup. No collapsed/minimised key was invented — none is known yet.
