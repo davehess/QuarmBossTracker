@@ -16,7 +16,8 @@ import { stepsHeld } from '@/lib/popSteps';
 import { popRoster, RAIDER_RANKS, RAID_ALT_RANKS } from '@/lib/popRoster';
 import { SELF_TICK_KEYS, selfFlagsFromTicks } from '@/lib/popSelfFlags';
 import { WHO_ZONE_NAMES, flagsFromSightings, type Sighting } from '@/lib/popWho';
-import { PLAN, PREFLAGS, RAID_DATE, RAID_DATE_LINE, TRAVEL_BASICS, loc, pickRaidEvent } from '@/lib/raidPlan';
+import { PLAN, PREFLAGS, RAID_DATE, RAID_DATE_LINE, TRAVEL_BASICS, bossAnchor, loc, pickRaidEvent } from '@/lib/raidPlan';
+import ItemHover, { type ItemCard } from '@/app/character/[name]/inventory/ItemHover';
 import ZoneSvg from './ZoneSvg';
 import { loadWalls } from './walls';
 import { GUILD_TAG } from '@/lib/guild';
@@ -51,25 +52,35 @@ async function loadRaiders(): Promise<{ raiders: Raider[]; note: string; unlinke
   const event = pickRaidEvent((evRows ?? []) as { id: string; title: string; start_time: string }[], RAID_DATE);
 
   if (event) {
-    const signups = await selectAll<{ discord_id: string | null; user_name: string | null; status: string | null }>((from, to) =>
-      sb.from('rh_signups').select('discord_id, user_name, status')
+    const signups = await selectAll<{ discord_id: string | null; user_name: string | null; status: string | null; class_name: string | null }>((from, to) =>
+      sb.from('rh_signups').select('discord_id, user_name, status, class_name')
         .eq('event_id', event.id)
         .order('signup_id', { ascending: true }).range(from, to));
     const going = signups.filter(s => !NOT_GOING.test(String(s.status || '')));
     const ids = [...new Set(going.map(s => s.discord_id).filter((d): d is string => !!d))];
-    const mains: { name: string; discord_id: string; class: string | null; level: number | null; rank: string | null; active: boolean | null }[] = [];
+    // A main's main_name is its own name (null on a few old rows), so read every character the player has and
+    // keep the mains here. characters has no level column (it lives in who_directory).
+    type Row = { name: string; discord_id: string; class: string | null; rank: string | null; active: boolean | null; main_name: string | null };
+    const rows: Row[] = [];
     for (const part of chunks(ids)) {
       const { data, error } = await sb.from('characters')
-        .select('name, discord_id, class, level, rank, active')
-        .eq('guild_id', GUILD).is('main_name', null).in('discord_id', part).limit(1000);
+        .select('name, discord_id, class, rank, active, main_name')
+        .eq('guild_id', GUILD).in('discord_id', part).limit(1000);
       if (error) throw new Error(`characters: ${error.message}`);
-      mains.push(...(data ?? []) as typeof mains);
+      rows.push(...(data ?? []) as Row[]);
     }
-    // One main per player. A player with several rows keeps the active, highest-level one.
-    const best = new Map<string, (typeof mains)[number]>();
+    const mains = rows.filter(c => !c.main_name || c.main_name.toLowerCase() === c.name.toLowerCase());
+    // One main per player: the one on the class they signed up as, then active, then on a raider rank.
+    const signedClass = new Map(going.map(s => [s.discord_id, String(s.class_name || '').toLowerCase()]));
+    const score = (x: Row) => {
+      const want = signedClass.get(x.discord_id) || '';
+      const cls = String(x.class || '').toLowerCase();
+      return (want && cls && (want.startsWith(cls) || cls.startsWith(want)) ? 4 : 0)
+        + (x.active ? 2 : 0) + (RAIDER_RANKS.includes(x.rank ?? '') ? 1 : 0);
+    };
+    const best = new Map<string, Row>();
     for (const c of mains) {
       const cur = best.get(c.discord_id);
-      const score = (x: typeof c) => (x.active ? 1000 : 0) + (x.level ?? 0);
       if (!cur || score(c) > score(cur)) best.set(c.discord_id, c);
     }
     const linked = new Set(best.keys());
@@ -144,6 +155,33 @@ async function load(): Promise<Loaded> {
   }
 }
 
+// Loot straight from the server's drop tables (eqemu_npc_drops), not typed by hand, plus the hover cards.
+type Drop = { npc_id: number; item_id: number; item_name: string; effective_chance: number | null };
+async function loadLoot(): Promise<{ drops: Map<number, Drop[]>; cards: Record<number, ItemCard> }> {
+  const sb = supabaseAdmin();
+  const npcs = PLAN.flatMap(s => s.bosses.map(b => b.npc));
+  const { data } = await sb.from('eqemu_npc_drops')
+    // 63 rows for tonight's nine bosses (2026-10-13); 100 leaves room without paging.
+    .select('npc_id, item_id, item_name, effective_chance').in('npc_id', npcs).limit(100);
+  const drops = new Map<number, Drop[]>();
+  for (const d of (data ?? []) as Drop[]) {
+    if (!drops.has(d.npc_id)) drops.set(d.npc_id, []);
+    drops.get(d.npc_id)!.push(d);
+  }
+  for (const list of drops.values()) {
+    list.sort((a, b) => (b.effective_chance ?? 0) - (a.effective_chance ?? 0) || a.item_name.localeCompare(b.item_name));
+  }
+  const ids = [...new Set((data ?? []).map(d => (d as Drop).item_id))];
+  const cards: Record<number, ItemCard> = {};
+  if (ids.length) {
+    const { data: rows } = await sb.rpc('item_card_info', { p_item_ids: ids });
+    for (const r of (rows ?? []) as ItemCard[]) cards[r.item_id] = r;
+  }
+  return { drops, cards };
+}
+
+const pct = (n: number | null) => n == null ? '' : n >= 99.95 ? 'always' : `${Number(n.toFixed(1))}%`;
+
 const List = ({ items }: { items: string[] }) => (
   <ul className="list-disc space-y-0.5 pl-4 text-xs text-text">{items.map((t, i) => <li key={i}>{t}</li>)}</ul>
 );
@@ -155,7 +193,10 @@ export default async function RaidPlanPage() {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) redirect('/auth/signin?next=/pop/raid');
 
-  const [data, walls] = await Promise.all([load(), Promise.all(PLAN.map(s => loadWalls(s.zone)))]);
+  const [data, walls, loot] = await Promise.all([
+    load(), Promise.all(PLAN.map(s => loadWalls(s.zone))),
+    loadLoot().catch(() => ({ drops: new Map<number, Drop[]>(), cards: {} as Record<number, ItemCard> })),
+  ]);
   const { raiders, held, note, unlinked, error } = data;
   const has = (name: string, key: string) => held.get(name.toLowerCase())?.has(key) ?? false;
   const missing = (key: string) => raiders.filter(r => !has(r.name, key)).map(r => r.name);
@@ -166,12 +207,22 @@ export default async function RaidPlanPage() {
       <h1 className="text-2xl text-gold">Raid night plan</h1>
       <p className="mt-1 text-sm text-dim">{RAID_DATE_LINE}</p>
 
-      <nav className="mt-3 flex flex-wrap gap-2 text-xs" aria-label="Targets">
-        {PLAN.map(s => (
-          <a key={s.id} href={`#${s.id}`} className="rounded border border-border bg-panel px-2 py-1 text-text hover:border-gold hover:text-gold">
-            {s.title}
-          </a>
-        ))}
+      <nav className="mt-3 rounded-lg border border-border bg-panel p-3 text-xs" aria-label="Targets">
+        <ol className="space-y-1">
+          <li><a href="#preflags" className="text-gold hover:underline">Preflag check</a></li>
+          {PLAN.map((s, i) => (
+            <li key={s.id}>
+              <a href={`#${s.id}`} className="text-gold hover:underline">{i + 1}. {s.zoneName}</a>
+              <span className="text-dim"> · </span>
+              {s.bosses.map((b, j) => (
+                <span key={b.npc}>
+                  {j > 0 && <span className="text-dim">, </span>}
+                  <a href={`#${bossAnchor(s.id, b.npc)}`} className="text-text hover:text-gold hover:underline">{b.name}</a>
+                </span>
+              ))}
+            </li>
+          ))}
+        </ol>
       </nav>
 
       <section className="mt-4 rounded-lg border border-border bg-panel p-3">
@@ -221,7 +272,12 @@ export default async function RaidPlanPage() {
                 const m = missing(p.key);
                 return (
                   <li key={p.key}>
-                    <b className="text-text">{p.label}</b> <span className="text-dim">({p.target})</span>
+                    <b className="text-text">{p.label}</b>{' '}
+                    <span className="text-dim">(
+                      {PLAN.filter(s => s.needs.includes(p.key)).map((s, j) => (
+                        <span key={s.id}>{j > 0 && ', '}<a href={`#${s.id}`} className="hover:text-gold hover:underline">{s.zoneName}</a></span>
+                      ))}
+                    )</span>
                     <div className={m.length ? 'text-red' : 'text-green'}>
                       {m.length ? `missing (${m.length}): ${m.join(', ')}` : 'everyone has it'}
                     </div>
@@ -262,8 +318,11 @@ export default async function RaidPlanPage() {
               <H>Travel</H>
               <List items={s.travel} />
               {s.bosses.map(b => (
-                <div key={b.npc} className="mt-4 border-t border-border/60 pt-2">
-                  <div className="text-sm font-semibold text-text">{b.name} <span className="font-normal text-dim">· npc {b.npc}</span></div>
+                <div key={b.npc} id={bossAnchor(s.id, b.npc)} className="mt-4 scroll-mt-4 border-t border-border/60 pt-2">
+                  <div className="text-sm font-semibold text-text">
+                    <a href={`https://www.pqdi.cc/npc/${b.npc}`} target="_blank" rel="noreferrer" className="text-blue hover:underline">{b.name} ↗</a>
+                    <span className="font-normal text-dim"> · PQDI npc {b.npc}</span>
+                  </div>
                   <div className="text-xs text-gold">{b.stats}</div>
                   <div className="mt-0.5 text-xs text-dim">{b.abilities}</div>
                   {b.before && <><H>Before this one</H><List items={b.before} /></>}
@@ -271,7 +330,20 @@ export default async function RaidPlanPage() {
                   <List items={b.mechanics} />
                   {b.after && <><H>After</H><List items={b.after} /></>}
                   <H>Loot</H>
-                  <List items={b.loot} />
+                  {(loot.drops.get(b.npc) ?? []).length === 0 ? (
+                    <p className="text-xs text-dim">Drop table not loaded; see PQDI.</p>
+                  ) : (
+                    <ul className="space-y-0.5 text-xs">
+                      {loot.drops.get(b.npc)!.map(d => (
+                        <li key={d.item_id}>
+                          <ItemHover card={loot.cards[d.item_id]} fallbackName={d.item_name}>
+                            <a href={`https://www.pqdi.cc/item/${d.item_id}`} target="_blank" rel="noreferrer" className="text-blue hover:underline">{d.item_name}</a>
+                          </ItemHover>
+                          <span className="text-dim"> {pct(d.effective_chance)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   {b.history && <p className="mt-2 text-[11px] text-dim">{b.history}</p>}
                 </div>
               ))}

@@ -10080,3 +10080,22 @@ Harmony, Hide/Sneak for non-rogues).
   2026-10-07 never landed) and any path learned from the recordings. Tower's permanent copy is still the open
   STATUS item (its merge script is not a git checkout).
 - Options for both offered the same night; the picks are open.
+
+### 281. /pop/raid: the preflag check works, and the page links everything (2026-10-13, web 1.8.149 main)
+
+- **Report (the guild lead, phone screenshot):** "Could not read the raiders: characters: column characters.level
+  does not exist". Plus: *"link to the subsections from the overview, add in mouseover for items and link to
+  PQDI. links to PQDI for the mobs"*.
+- **Two bugs, one hidden behind the other.** The query asked `characters` for `level`, which lives in
+  `who_directory`. With that fixed it would still have shown nobody: it kept only rows with `main_name` null,
+  but a main's `main_name` is its own name (0 of the 233 characters of tonight's 66 sign-ups had it null; 52
+  players have a main). Now it reads every character a signed-up player has, keeps the mains, and picks one
+  per player by the class they signed up as, then active, then raider rank.
+- **Loot now comes from the server's drop tables** (`eqemu_npc_drops`), not hand-typed lists, which were wrong:
+  Grummus drops eight items at 12.5% each, not "one of five", and Vhaksiz and Mujaki have parchments and gems
+  the list left out. Each item has the inventory page's hover card and a PQDI link; each boss name links to
+  its PQDI npc page.
+- **Overview:** a numbered list at the top linking the preflag check, each zone and each boss (`bossAnchor`);
+  each preflag names the zones that need it, linked.
+- **The test missed it** because nothing ran the query. `test/pop-raid-plan.test.js` now checks that no
+  `characters` select names `level` and that the main filter accepts a self-named main.

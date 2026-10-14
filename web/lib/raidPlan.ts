@@ -20,7 +20,6 @@ export type Boss = {
   mechanics: string[];
   before?: string[];
   after?: string[];
-  loot: string[];
   history?: string;
 };
 
@@ -61,6 +60,9 @@ export function pickRaidEvent<T extends { start_time: string }>(events: T[], dat
     .sort((a, b) => a.start_time.localeCompare(b.start_time));
   return sameDay.find(e => et(e.start_time).hour >= 18) ?? sameDay[0] ?? null;
 }
+
+/** The in-page anchor of one boss, so the overview can link straight to it. */
+export const bossAnchor = (sectionId: string, npc: number): string => `${sectionId}-${npc}`;
 
 /** What a player types to compare: /loc prints Y first, then X. */
 export const loc = (x: number, y: number): string => `/loc ${y}, ${x}`;
@@ -136,10 +138,6 @@ export const PLAN: PlanSection[] = [
         'With the Adler step: the Milyk flag (fuirstel 2) plus the Crypt key. Without it: a checklist flag, plus the Crypt key (silently, no chat line).',
         'Later: hail Elder Fuirstel in Tranquility with the ward (fuirstel 3).',
       ],
-      loot: [
-        'Ethereal Parchment (always), Spectral Parchment (25%)',
-        'One of: Bone Spiked Crusher, Ring of the Pox-bearer, Runed Lance of Gryme, Diseased Ratskin Mask, Fetid Flesh Wristband',
-      ],
       history: 'Our history: 1 kill (Oct 10), 42 players, about 5 minutes.',
     }],
     markers: [
@@ -180,7 +178,6 @@ export const PLAN: PlanSection[] = [
           'Teleports its target every 2 to 30 seconds, toward IX\'s room (inferred).',
           'Fight each one in its own room and expect the tank to be pulled into a neighbour\'s room.',
         ],
-        loot: ['Ethereal Parchment (50%)', '25% each: Cog Encrusted Epaulets, Double Wrapped Wide Belt, Polished Smoothmetal Torque, Sharp Ended Broken Lever'],
       },
       {
         name: 'Manaetic Prototype IX',
@@ -191,7 +188,6 @@ export const PLAN: PlanSection[] = [
           `Spawns at ${loc(-1, -495)}. Leash: y -600 to -350.`,
           'Teleports its target every 2 to 30 seconds, toward XI\'s room (inferred).',
         ],
-        loot: ['Same table as X.'],
       },
       {
         name: 'Manaetic Prototype XI',
@@ -202,7 +198,6 @@ export const PLAN: PlanSection[] = [
           `Spawns at ${loc(295, -240)}. Leash: x 100 to 400.`,
           'Teleports its target every 2 to 30 seconds, toward X\'s room (inferred).',
         ],
-        loot: ['Same table as X.'],
         history: 'Our last run (Oct 5): about 12 to 37 seconds each, about 30 players. No flags, loot only.',
       },
       {
@@ -220,7 +215,6 @@ export const PLAN: PlanSection[] = [
           `#Giwin Mirakon spawns at ${loc(1013, 0)} for ONLY 10 MINUTES. Hail him.`,
           'With the Giwin step (zeks 1): the real flag (zeks 2, opens Plane of Tactics). Without it: a checklist flag.',
         ],
-        loot: ['Ethereal Parchment (always)', '20% each: Coil of Twisted Platinum Wire, Glowing Steel Shim, Innovators Hammer, Protective Dust Drape, Self Contained Force Barrier'],
         history: 'Our history: 4 kills, 45 to 84 seconds, 20 to 32 players.',
       },
     ],
@@ -269,7 +263,6 @@ export const PLAN: PlanSection[] = [
           `Stands still at ${loc(-407, 1418)}, no patrol. Leash 155 units: pull him further and he resets.`,
           'Casts Nullify Magic (dispel), Aura of Pain, Invoke Fear, Festering Darkness (snare), Ignite Blood and Asystole (DoTs), Touch of Innoruuk (lifetap). 5% Shadowblade proc.',
         ],
-        loot: ['Heart of Vhaksiz (always)', '25% each: Disemboweler, Blackened Metal Greaves, Horn Spiked Shoulder Plates, Flame Engraved Torque'],
         history: 'No flag.',
       },
       {
@@ -286,7 +279,6 @@ export const PLAN: PlanSection[] = [
           'Waves every 2 minutes from 2 minutes in (waves 4 to 7 are doubled). Servants that reach the platform become Riders (L60, 22,000 HP) and fight beside Mujaki.',
           'Mujaki and the Riders become attackable about 18 minutes in. The room empties after 25 minutes if not engaged.',
         ],
-        loot: ['Nightmare Rift (always), Ethereal Parchment (50%)', '33% each: Cloak of Daggers, Earring of Twisted Visions, Hooded Shroud'],
         history: 'No flag.',
       },
     ],
@@ -340,7 +332,6 @@ export const PLAN: PlanSection[] = [
         'With thelin 2 you get thelin 3; otherwise a checklist flag.',
         'Later: hail Thelin (Elder Poxbourne) in Tranquility (thelin 4, half of the Torment gate).',
       ],
-      loot: ['Ethereal Parchment (always)', '20% each: Carved Bone Ring, Fearsome Midnight Cloak, Indigo Snake Bracelet, Knucklebone Beaded Veil, Sable Lined Mantle'],
       history: 'Our history: none.',
     }],
     markers: [
@@ -385,10 +376,6 @@ export const PLAN: PlanSection[] = [
       after: [
         `A Planar Projection spawns at ${loc(360, 2528)} for 20 minutes. Hail it (silently sets the Aerin\`Dar step, only with mavuin 3).`,
         `Then click the Halls of Honor door at ${loc(656, 4276)} for the HoH flag.`,
-      ],
-      loot: [
-        'Ethereal Parchment (always), Spectral Parchment (50%)',
-        'One of: Double-edged Greatsword of Visions, Honorable Longsword, Honorary Amulet, Ring of Nobility, Shoulderpads of the Visionary, Valorous Quarterstaff, Wrath of Mithaniel',
       ],
       history: 'Our history: none.',
     }],
