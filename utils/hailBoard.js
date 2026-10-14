@@ -25,6 +25,10 @@
 // name and 47 hailers never showed). A failed or empty roster read opens the window `roster_pending` and the
 // read path re-reads it every 30 s until it finds the raid.
 //
+// A flag NPC with no boss to kill (the hedge maze's Thelin Poxbourne, HAIL_FLAGGERS) opens its window the other
+// way round (the guild lead, 2026-10-13): when hails of it from members of 2+ distinct raid groups land inside
+// a minute, the raid is working it together, and noteHails opens the window over the current raid roster.
+//
 // ⚠ State lives in bot_kv (key `hail_windows`), never state.json: it is keyed per kill and state.json does
 // not survive a Railway deploy (CLAUDE.md). The in-memory copy is authoritative once loaded — one bot replica
 // — so an idle board costs ZERO queries per poll, which matters because every Mimic in the raid polls it.
@@ -48,6 +52,7 @@ const MAX_WINDOWS    = 12;
 const MAX_NAMES      = 150;
 const KV_KEY         = 'hail_windows';
 const SAME_KILL_MS   = 30 * MIN;   // two relays of one death land this close together
+const GROUPS_WITHIN_MS = 60_000;   // hails from 2+ raid groups this close together open a kill-less window
 
 const PROJECTION = ['planar projection', 'projection'];
 
@@ -136,19 +141,35 @@ const HAIL_BOSSES = [
     done: ['earthb_key_1', 'arbitor_dead'], checklist: null, prior: [] },
 ];
 
+// Flag NPCs that stand with no boss kill to open them (the guild lead, 2026-10-13: the hedge maze's end,
+// Thelin Poxbourne, "did not end up displaying ... it's something that should pop up when more than one group
+// of a raid talks to one flagging mob"). Same row shape as a HAIL_BOSSES row, so buildViews reads it
+// unchanged, but no kill opens it and hailFor never finds it: noteHails opens it, from the hails themselves.
+// `npcFull` = the one key unique to this NPC: a hail carrying no zone is trusted only under that name
+// ("Thelin" alone is also the NPC in the Plane of Tranquility). No flagCap: the script's cap is unread, and
+// a board with no cap draws no cap line. The label is the card's heading, kept under the agent's 64 characters.
+const HAIL_FLAGGERS = [
+  { id: 'hedge_maze', name: 'Hedge maze', zone: 'Plane of Nightmare', zoneShort: 'ponightmare',
+    npc: 'Hedge maze — Thelin Poxbourne (unlocks the Lair of Terris Thule)',
+    npcKeys: ['thelin poxbourne', 'thelin'], npcFull: 'thelin poxbourne',
+    // thelin_2 is what the hail gives (the Seer recites it too); 3 and 4 are later steps of the series.
+    done: ['thelin_2', 'thelin_3', 'thelin_4', 'hedge_event'], checklist: 'cl_maze', prior: [['thelin_1']] },
+];
+
 // A catalog name ("#Aerin`Dar", "Terris_Thule") and a log name ("Terris Thule") are the same boss.
 function bossKey(name) {
   return String(name || '').trim().replace(/^#/, '').replace(/[_-]/g, ' ').replace(/'/g, '`')
     .replace(/\s+/g, ' ').trim().toLowerCase();
 }
-const BY_ID = new Map(HAIL_BOSSES.map(b => [b.id, b]));
+const BOSS_BY_ID = new Map(HAIL_BOSSES.map(b => [b.id, b]));
+const BY_ID = new Map([...HAIL_BOSSES, ...HAIL_FLAGGERS].map(b => [b.id, b]));   // every window's row
 const BY_NAME = new Map();
 for (const b of HAIL_BOSSES) for (const n of b.names) BY_NAME.set(bossKey(n), b);
 
 // The hail row for a boss kill, or null. The board's own id wins; the name covers bosses the board does not
 // carry (Mithaniel Marr, Solusek Ro, the Keeper, the Behemoth, the Arbitor).
 function hailFor({ bossId, bossName } = {}) {
-  return (bossId && BY_ID.get(bossId)) || BY_NAME.get(bossKey(bossName)) || null;
+  return (bossId && BOSS_BY_ID.get(bossId)) || BY_NAME.get(bossKey(bossName)) || null;
 }
 
 const enc = encodeURIComponent;
@@ -167,6 +188,14 @@ function hailFits(cfg, r, t, cutoff, until) {
   return !!(npcKey(r.npc) && cfg.npcKeys.includes(npcKey(r.npc))
     && (!r.zone || popFlagStages.zoneShort(r.zone) === cfg.zoneShort)
     && t >= cutoff && t <= until);
+}
+
+// The flag NPC (HAIL_FLAGGERS) a stored hail row is a hail of, or null. A row's zone must be the NPC's where it
+// carries one; with none, only the NPC's full name counts.
+function flaggerFor(r) {
+  const k = npcKey(r && r.npc);
+  return (k && HAIL_FLAGGERS.find(f => f.npcKeys.includes(k)
+    && (r.zone ? popFlagStages.zoneShort(r.zone) === f.zoneShort : k === f.npcFull))) || null;
 }
 
 // Names, deduped case-insensitively (the first spelling wins), letters-only, capped.
@@ -352,6 +381,80 @@ function create({ supabase, guildId, now = Date.now, log = console } = {}) {
     });
   }
 
+  // The kill-less opener (HAIL_FLAGGERS): hails of a flag NPC from members of 2+ DISTINCT raid groups within
+  // GROUPS_WITHIN_MS open a window for it, roster = the current raid. `rows` = the hail rows an ingest just
+  // stored ({character, npc, zone, earned_at}). Nothing here is asked of the database unless one of them is a
+  // recent hail of a flag NPC with no window open, and every failure (a group lookup that errors included)
+  // means no window, never an exception: this runs on the ingest path. → the opened window, or null.
+  function noteHails(rows) {
+    if (!enabled()) return Promise.resolve(null);
+    const t0 = now();
+    const ids = new Set();
+    for (const r of rows || []) {
+      const f = r && isCharName(r.character) && flaggerFor(r);
+      if (f && Date.parse(r.earned_at) >= t0 - ROSTER_FRESH_MS) ids.add(f.id);
+    }
+    if (!ids.size) return Promise.resolve(null);
+    return serial(async () => {
+      await load();
+      prune();
+      let opened = null;
+      for (const cfg of HAIL_FLAGGERS.filter(f => ids.has(f.id))) opened = (await openFromHails(cfg)) || opened;
+      return opened;
+    }).catch(err => { log.warn('[hail-board] hail open failed:', err && err.message); return null; });
+  }
+
+  async function openFromHails(cfg) {
+    const t = now();
+    const mine = windows.filter(w => w.boss_id === cfg.id);
+    // One window per NPC at a time, and hails a window already covered (or that predate its close) are its own.
+    if (mine.some(w => Date.parse(w.expires_at) > t)) return null;
+    const lastClose = Math.max(0, ...mine.map(w => Date.parse(w.expires_at)));
+    const hailRows = await supabase.selectAllPaged('pop_flags',
+      `guild_id=eq.${enc(gid())}&flag_key=eq.hail&earned_at=gte.${enc(iso(t - ROSTER_FRESH_MS))}` +
+      `&earned_at=lte.${enc(iso(t + FLAG_SLACK_MS))}&select=character,npc,zone,earned_at`, 'id').catch(() => null);
+    const hails = (hailRows || [])
+      .filter(r => isCharName(r.character) && flaggerFor(r) === cfg)
+      .map(r => ({ name: String(r.character).trim(), t: Date.parse(r.earned_at) }))
+      .filter(h => Number.isFinite(h.t) && h.t > lastClose)
+      .sort((a, b) => a.t - b.t);
+    const names = unionNames(hails.map(h => h.name));
+    if (names.length < 2) return null;
+    const roster = await supabase.selectAllPaged('raid_roster',
+      `guild_id=eq.${enc(gid())}&captured_at=gte.${enc(iso(t - ROSTER_FRESH_MS))}&name=in.(${names.map(enc).join(',')})` +
+      '&select=name,group_num,captured_at', 'uploaded_by_discord_id.asc,name').catch(() => null);
+    if (!Array.isArray(roster)) return null;                        // groups unknown: fail closed
+    // Each hailer's group from their newest roster row. Ungrouped / out-of-range numbers are no group at all.
+    const groupOf = new Map();
+    for (const r of roster) {
+      if (r.group_num == null) continue;
+      const g = Number(r.group_num), at = Date.parse(r.captured_at) || 0, k = lc(r.name);
+      if (!(Number.isInteger(g) && g >= 0 && g < 1000)) continue;
+      if (!groupOf.has(k) || at >= groupOf.get(k).at) groupOf.set(k, { g, at });
+    }
+    const grouped = hails.map(h => ({ ...h, g: groupOf.has(lc(h.name)) ? groupOf.get(lc(h.name)).g : null })).filter(h => h.g != null);
+    let found = false;
+    for (let i = 0; i < grouped.length && !found; i++) {
+      const gs = new Set();
+      for (let j = i; j < grouped.length && grouped[j].t - grouped[i].t <= GROUPS_WITHIN_MS; j++) gs.add(grouped[j].g);
+      found = gs.size >= 2;
+    }
+    if (!found) return null;
+    // opened_at = the first hail of this stretch, so a hail before the second group arrived still credits.
+    const opened = Math.min(hails[0].t, t);
+    const snap = await snapshotRoster(t);
+    const w = {
+      id: `${cfg.id}:${Math.floor(opened / 1000)}`, boss_id: cfg.id, boss_name: cfg.name, npc_name: cfg.npc,
+      zone: cfg.zone, opened_at: iso(opened), expires_at: iso(t + WINDOW_MS),
+      roster: unionNames(snap.names, names), uploaders: snap.uploaders, marks: {},
+    };
+    if (!(snap.ok && snap.names.length)) { w.roster_pending = true; rosterRetryAt = t; }
+    windows.push(w); version++;
+    prune();
+    await save();
+    return w;
+  }
+
   // Re-read the raid roster for open windows that opened `roster_pending`, at most once per ROSTER_RETRY_MS and
   // never two at once (every Mimic in the raid polls, so callers share the one in flight). The read is bounded
   // to the window's own span. New names and feeders are unioned in; the flag clears once a read finds anyone.
@@ -493,10 +596,10 @@ function create({ supabase, guildId, now = Date.now, log = console } = {}) {
     });
   }
 
-  return { openWindow, getBoard, markHailed, _windows: () => windows };
+  return { openWindow, noteHails, getBoard, markHailed, _windows: () => windows };
 }
 
 module.exports = {
-  create, hailFor, buildViews, bossKey, HAIL_BOSSES,
+  create, hailFor, buildViews, bossKey, HAIL_BOSSES, HAIL_FLAGGERS, GROUPS_WITHIN_MS,
   WINDOW_MS, KEEP_AFTER_MS, FLAG_SLACK_MS, ROSTER_FRESH_MS, KV_KEY,
 };

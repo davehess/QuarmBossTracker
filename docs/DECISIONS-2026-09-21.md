@@ -10148,3 +10148,16 @@ Harmony, Hide/Sneak for non-rogues).
   like pacify"*. Follows the Harmony-is-not-Pacify policy (CLAUDE.md): pacify family (targettype 5) = pink, will
   not aggro; Harmony / Wake of Tranquility (targettype 8) = still red inside at the reduced radius. Durations come
   from each spell, so bard lulls run shorter on their own. Drafting on beta (agent + map.html).
+
+### 285. The hail board opens for the hedge maze when two raid groups hail Thelin (2026-10-13, bot 3.1.258 main)
+
+- **Report (the guild lead):** the Command Center's hail board did not show the Nightmare hedge-maze flag (the
+  Terris Thule unlock) or how many already held it; *"it's something that should pop up when more than one group
+  of a raid talks to one flagging mob"*.
+- **Why:** the board only opened on one of 14 boss kills. The maze ends on a hail to Thelin Poxbourne with no kill.
+- **Fix (bot only, so every Mimic gets it with no update):** `HAIL_FLAGGERS` + `noteHails` in `utils/hailBoard.js`.
+  Hails of Thelin from 2+ distinct raid groups within 60 s open a window over the current raid; the card shows
+  who already holds the step (thelin 2 or later) and the count, through the existing `buildViews`. Thelin only for
+  now: a "Planar Projection" hail does not say which boss it belongs to, and those windows already open on the kill.
+- **Caveat:** a hail is seen only by Mimics whose log shows it, and a raider with no group number counts as no
+  group (undercounts, never overcounts).
