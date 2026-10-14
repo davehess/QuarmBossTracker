@@ -12764,6 +12764,87 @@ if (_oneshotGate('mimic278-announce')) {
   setTimeout(tick, 60_000);
 }
 
+// ── Mimic 2.9.1 one-shot raid-chat announcement (2026-10-14) ─────────────────
+// The guild lead: "make a raid chat post about all of the updates". The 2.7.8 card's shape: one post
+// ever (bot_kv latch, fail-closed), and only once the STABLE v2.9.1 release carries its installer.
+const _MIMIC291_KV_KEY = 'announce_mimic_2_9_1_raid_chat';
+const _MIMIC291_TAG = 'v2.9.1';
+function _mimic291Ready(rel) {
+  return !!(rel && rel.tag_name === _MIMIC291_TAG && !rel.draft && !rel.prerelease
+    && Array.isArray(rel.assets) && rel.assets.some(a => /\.exe$/i.test(String(a && a.name))));
+}
+function _mimic291Embed() {
+  const { EmbedBuilder } = require('discord.js');
+  return new EmbedBuilder()
+    .setColor(0x58a6ff)
+    .setTitle('🐺 Mimic 2.9.1 is out')
+    .setDescription([
+      'Accept the Mimic update prompt, or restart Mimic, to get it. If EverQuest is open it waits quietly in the tray. From this version on, an update closes Mimic cleanly and keeps where your overlays sit.',
+      '',
+      '- **Chat overlay** — every line tagged with its channel ([GU] [RS] [P] [1]…). Guild, Raid, Party, Say, Tells, OOC and Shout up front, the rest under More. Switch single channels off, right-click a channel to show only it, search, and history from your logs.',
+      '- **Melee, Spells and Skills** each get their own spot, with mine / on me / others filters and colours, like the in-game filters.',
+      '- **Breakout chat windows** — pop a channel out into its own window, set its text, and join breakouts together so they move as one.',
+      '- **DPS meter** — each person\'s time now counts only from when they engaged, so a late joiner\'s DPS is fair.',
+      '- **Target Info** shows the hit types the mob has used (slash, pierce, blunt).',
+      '- **Map** — clearer lines over the game, speed as % of normal run, mez / pacify / harmony rings, a re-slow warning a minute ahead, the raid\'s targets and escort trails, the focus mob lit up, and a Full mode that shows which game windows it keeps clear (turn any off).',
+      '- **Sounds and voices** — a sound library for triggers, pick a voice and how it says your name; GINA / EQLogParser imports bring their sounds.',
+      '- **Charm overlay** — "Best pets here": the top charm targets in your zone.',
+      '- **Roll ties** are shown and settled by deathroll.',
+      '- **Overlay sets** — save several named overlay layouts per character and switch from the tray.',
+      '- **UI Studio** — named EverQuest UI layouts per character (each backed up); rename, add and delete chat windows and set their font size.',
+      '- **Fixes** — the ✕ on timers works, overlays no longer flicker or refresh when you click back into EverQuest, grow-upwards overlays get a resize corner clear of the ✕, and the tray has an Updates menu.',
+      '',
+      'On the website: the PoP pages open on your characters with the missing spells collapsed (https://wolfpack.quest/pop), and **Latest flags** shows who just got which flag and who in the raid still needs it (https://wolfpack.quest/pop/latest).',
+    ].join('\n'))
+    .setFooter({ text: 'Mimic 2.9.1 stable · one-time announcement' });
+}
+async function _announceMimic291Once() {
+  const supabase = require('./utils/supabase');
+  const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(guildId)}&key=eq.${_MIMIC291_KV_KEY}&select=value&limit=1`);
+  // Fail closed (utils/kvLatch.js): null is "could not check", not "never posted".
+  if (!kvLatch.shouldRunOnce(rows)) {
+    if (kvLatch.latchState(rows) === 'unknown') { console.warn('[mimic291-announce] latch unreadable — NOT posting, will retry'); return 'unknown'; }
+    return 'latched';
+  }
+  const rel = await new Promise((resolve) => {
+    const https = require('https');
+    https.get({ hostname: 'api.github.com', path: '/repos/davehess/QuarmBossTracker/releases/tags/' + _MIMIC291_TAG,
+      headers: { 'User-Agent': 'wolfpack-bot', 'Accept': 'application/vnd.github+json' }, timeout: 10000 },
+      (res) => { let b = ''; res.on('data', c => b += c); res.on('end', () => { try { resolve(JSON.parse(b)); } catch { resolve(null); } }); }
+    ).on('error', () => resolve(null)).on('timeout', function () { this.destroy(); resolve(null); });
+  });
+  if (!_mimic291Ready(rel)) return 'waiting';
+  let ch = process.env.RAID_CHAT_CHANNEL_ID
+    ? await client.channels.fetch(process.env.RAID_CHAT_CHANNEL_ID).catch(() => null)
+    : null;
+  if (!ch) {
+    const g = client.guilds.cache.get(process.env.DISCORD_GUILD_ID) || client.guilds.cache.first();
+    ch = g?.channels?.cache?.find(c => c?.name === 'raid-chat' && typeof c.send === 'function') || null;
+  }
+  if (!ch) { console.log('[mimic291-announce] no #raid-chat channel found — skipping'); return 'no-channel'; }
+  const posted = await ch.send({ embeds: [_mimic291Embed()], allowedMentions: { parse: [] } }).catch(err => {
+    console.warn('[mimic291-announce] post failed:', err?.message);
+    return null;
+  });
+  if (!posted) return 'failed';
+  await supabase.upsert('bot_kv',
+    [{ guild_id: guildId, key: _MIMIC291_KV_KEY, value: { posted_at: new Date().toISOString(), message_id: posted.id }, updated_at: new Date().toISOString() }],
+    'guild_id,key');
+  console.log('[mimic291-announce] posted to #raid-chat:', posted.id);
+  return 'posted';
+}
+// First look a minute after boot, then every 5 minutes until it has posted (or finds it already had), for up to 12 hours.
+if (_oneshotGate('mimic291-announce')) {
+  let tries = 0;
+  const tick = () => _announceMimic291Once()
+    .then(r => { if (r === 'posted' || r === 'latched') clearInterval(t); })
+    .catch(err => console.warn('[mimic291-announce]', err?.message));
+  const t = setInterval(() => { if (++tries > 144) { clearInterval(t); return; } tick(); }, 5 * 60_000);
+  setTimeout(tick, 60_000);
+}
+
 // ── Opt-in logs → PvP credit: one-shot #pvp post (2026-09-27) ────────────────
 // The guild lead: "make a note in the PVP channel for people to run their opt
 // in logs to get historical credit on pvp kills and assists." Guildmate
