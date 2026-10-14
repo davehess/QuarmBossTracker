@@ -10529,3 +10529,18 @@ the Bastion of Thunder at the time.
   `eqemu_spells` lookup, My Characters only.
 - **Chart:** full container width, 3 cards per row from `xl`, more padding, step rows that don't wrap the counts. CSS only.
 - **Open:** whether the guild-wide spell table at the bottom collapses too; whether My Characters' Chart view shows your spells.
+
+### 308. Charm overlay "Best pets here" (agent 3.7.170 Mimic beta `f4f3b917`, bot 3.1.264 main `4ef29778`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"integrate a list of the better charm pets for the highest level charm a player has for the
+  zone that they're in"*, pointing at a third-party pet finder. It states no licence: we took the idea only, with our own data and
+  Quarm's server source for the rules.
+- **Charm immunity (from EQMacEmu `Mob::IsImmuneToSpell`):** special ability 14 (Uncharmable, already `utils/mobSpecials.js` code 14);
+  merchant 41, banker 40, guildmasters 20–34; Veksar at level 50+; level above the spell's SPA 22 max; body type for animal (21),
+  undead (3/8/12), summoned (24/27/28) and plant (25) charms. We also drop placeholder and untargetable bodies and raid targets (the
+  server's "too powerful for your charm" engage notice is not in our mirror, and a false positive costs a pull).
+- **Split:** the bot serves a spell-independent candidate list per zone; the agent owns the spell, cap, body type and ranking.
+- **Ranking:** damage per second (average hit ÷ swing time, `attack_delay` in tenths) in 10 % steps, then HP, then level; up to 3
+  chips (summons, flurry, triple, dual wield, rampage, proc, fast) — chips only, no invented multipliers.
+- **Spell:** the spellbook file (`/outputfile spellbook`, read locally) first, else the class's highest charm at its level, labelled
+  "assumed from level". Class levels are PQDI's. Dictate is never assumed.
+- **Not done:** Dire Charm AA; resist modelling; a Map highlight (costed in the report: medium build, colour meaning hard to retract).
