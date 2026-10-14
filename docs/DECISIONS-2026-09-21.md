@@ -10720,5 +10720,12 @@ the Bastion of Thunder at the time.
   env SecretRef, placeholders only), `README.md` (deploy + V5 cutover). Self-host wizard §3 entry added.
 - **Open:** the deploy token (§323), V5's model server on the LAN at a real 64K context, the `<…>` ids, stopping V5's gateway first,
   and resetting the Bristlebane token on the cutover. Untested on Coolify: volume naming and `service_completed_successfully`.
+
+### 326. Chat overlay: main channels up front, the rest under More (Mimic beta `e6c95d9e`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"This is getting crowded. Make the main set Guild/Raid/Party/Say/Tells/ooc/shout, then
+  the rest as an expandable section 'More' that opens up to show the rest"*.
+- **Calls:** main chips Guild · Raid · Party · Say · Tells · OOC/Shout; everything else behind `More ▾`, which shows "More (N)" while
+  closed so nothing is on unseen; the ⚙ gets a matching "More settings" fold. Open states remembered per window. Open: "Party" vs
+  "Group (party)" wording.
 - **Open:** the token; V5's model server must listen on the LAN (and declare a context large enough for the 20000 reserve); the
   step files (`01-step0-discover.md`) live on V5 and are not in the repo.
