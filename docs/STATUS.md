@@ -5951,6 +5951,12 @@ Abashi's Rod → 31242). The web has no decoder: it shows the stored link. **Ope
 fixable, staged in `docs/RUNBOOK-pqdi-chat-links.md`, unapplied (the guild lead's yes); the stable fleet keeps writing
 wrong links until the agent reaches stable.
 
+### 🧾 2026-10-14 — DPS meter: each row's Sec and DPS are its own active time (agent 3.7.171, beta `a79291e6`, DECISIONS §313)
+A row's seconds run from its first damage to its last (1 s at least, never past the fight); DPS is its damage over that. The total
+row, the Tank tab and any row without a span keep the fight's seconds. `spans` ride beside `perPlayer` (not inside: the
+threat-snapshot upload sends `perPlayer` whole). The copied `/rs` line writes each raider's own "in Ns". **Not changed:** Me HUD fight
+DPS / tonight average, My parses ledger, Trend view, and the bot's and website's parse math. Test: `test/dps-active-time.test.js`.
+
 ### 🧾 2026-10-14 — UI Studio chat routing: real channel names, layout ↔ routing link (Mimic beta `a730c5be`, DECISIONS §312)
 Chips use the client's real filter names (ids 0–40 from the client's chat-filter list, 41–56 Zeal's filters in saved order) with the
 id as a dim suffix; 57+ read "Ch N". /join slots show the joined channel names from eqclient.ini's autojoin list. Selecting a chat

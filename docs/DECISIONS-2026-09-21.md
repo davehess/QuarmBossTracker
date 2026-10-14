@@ -10592,3 +10592,14 @@ the Bastion of Thunder at the time.
   drop onto layout rectangles; stacked titles no longer overlap.
 - **Open:** the autojoin order = slot order assumption is unverified (tooltip says so); the default-channel pill names only 3 = Tell
   (`ChatWindow<N>_DefaultChannel` values beyond that need an in-game capture).
+
+### 313. DPS meter: each row's seconds are its own active time (agent 3.7.171, beta `a79291e6`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"dps METER counts the same amount of time for everyone versus just when the person engaged.
+  That makes the DPS calculation incorrect."*
+- **Call:** EQLogParser-style. A row's Sec = its first damage → last damage (≥ 1 s, ≤ the fight); an owner's span covers its pets'. The
+  total row, the Tank tab, old saved fights and a guild-settled player this machine saw under 80% of keep the fight's seconds (a partial
+  local span would inflate DPS). Spans ride beside `perPlayer`, never inside it, so the threat-snapshot upload (58% of the database) does
+  not grow. The copied `/rs` line writes each raider's own "in Ns", which the bot's `/rs` parser already reads as per-player seconds.
+- **Open (needs a pick):** the Me HUD fight DPS / tonight average, the My parses ledger (saved `dur`) and the Trend view still divide by
+  fight time and must move together; the bot's merged-parse DPS (`index.js` `/rs` and merge paths, `utils/killRecap.js`) also uses one
+  duration for everyone.
