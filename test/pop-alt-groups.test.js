@@ -222,23 +222,26 @@ describe('the param wiring', () => {
   it('the page reads alts, sort and open and none of them collides with an existing param', () => {
     expect(page).toMatch(/alts\?: string; sort\?: string; open\?: string/);
     expect(page).toMatch(/alts: altsParam, sort: sortParam, open: openParam/);
-    expect(page).toMatch(/parseAltsView\(\{ alts: altsParam, sort: sortParam, open: openParam \}\)/);
+    // Whether the Matrix is grouped is decided once, by resolvePopView (web/lib/popScope.ts), not by the raw param.
+    expect(page).toMatch(/parseAltsView\(\{ alts: choice\.groupAlts \? 'group' : undefined, sort: sortParam, open: openParam \}\)/);
     // psort is the spell table's own sort; the new sort must not be read from it, nor the other way round.
     expect(page).not.toMatch(/[^p]sort: psortParam/);
     expect(page).not.toMatch(/parseAltsView\(\{[^}]*psortParam/);
     expect(page).toMatch(/psort: psortParam/);
   });
   it('every page link carries the three params, and the Chart link drops them', () => {
-    expect(page).toMatch(/alts: altsView\.group \? 'group' : null/);
+    // alts rides along as the URL had it ('group' or 'flat'), never as the grouping All characters implies.
+    expect(page).toMatch(/alts: altsParam === 'group' \|\| altsParam === 'flat' \? altsParam : null/);
     expect(page).toMatch(/sort: altsView\.sort === 'latest' \? 'latest' : null/);
     expect(page).toMatch(/open: altsView\.open \? '1' : null/);
     expect(page).toMatch(/params\.set\('alts', next\.alts\)/);
     expect(page).toMatch(/params\.set\('sort', next\.sort\)/);
     expect(page).toMatch(/params\.set\('open', next\.open\)/);
-    expect(page).toMatch(/hrefFor\(\{ view: null, zone: null, alts: null, sort: null, open: null \}\)/);
+    expect(page).toMatch(/hrefFor\(\{ view: 'chart', zone: null, alts: null, sort: null, open: null \}\)/);
   });
   it('?alts=group opens the Matrix when no view is named, and only the Matrix', () => {
-    expect(page).toMatch(/const matrixView = !selected && \(view === 'matrix' \|\| \(altsView\.group && !view\)\)/);
+    // resolvePopView turns ?alts=group (no view) into the Matrix; the page only reads its answer.
+    expect(page).toMatch(/const matrixView = !selected && choice\.view === 'matrix' && scope !== 'mine'/);
     expect(page).toMatch(/\) : matrixView && altsView\.group \? \(/);
     expect(page).toMatch(/\) : matrixView \? \(/);
   });

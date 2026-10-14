@@ -37,6 +37,23 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-8-156-2026-10-14',
+    title: 'PoP Flags starts on your characters',
+    version: 'Web 1.8.156',
+    date: '2026-10-14',
+    channel: 'beta',
+    headline: 'The PoP Flags page now opens on your own characters, the spells you still need fold away with a list you can copy, and the chart has more room.',
+    features: [
+      { name: 'Starts on you', blurb: 'The page opens on My Characters. Next to it are Mains, then All characters, which lists every alt under its main. Chart and Matrix are a second pair of buttons, so you can see either one for any group.' },
+      { name: 'Spells you still need', blurb: 'Closed by default, with the totals on one line. Open it to see each character’s missing spells with their level, the scroll that buys them, what the spell does, and a link to PQDI.' },
+      { name: 'Copy what you are missing', blurb: 'One button per character copies a short line you can paste in chat, like “Name (Class) needs: Spell (Ethereal), Spell (Spectral)”. A long list splits into numbered lines that each fit one EQ chat line.' },
+      { name: 'Roomier chart', blurb: 'The tier boxes use the full width of the page with three planes to a row on a wide screen, more space around each step, and the counts stay on the same line as the step name.' },
+    ],
+    fixes: [
+      'Clicking a plane on the chart or the planner keeps whichever group you were looking at.',
+    ],
+  },
+  {
     key: 'web-1-8-155-2026-10-14',
     title: 'The PoP checklist in sections',
     version: 'Web 1.8.155',

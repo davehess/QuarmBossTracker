@@ -64,8 +64,8 @@ describe('the page', () => {
     expect(body).toMatch(/redirect\(`\/auth\/signin\?next=\$\{encodeURIComponent\('\/pop\?' \+ new URLSearchParams\(await searchParams/);
     expect(body).not.toMatch(/next=\/pop'/);
   });
-  it('Mains means the raiders; All characters adds the raid alts', () => {
-    expect(body).toMatch(/const scopedChars = scope === 'all' \? chars : chars\.filter\(c => c\.main\);/);
+  it('Mains means the raiders; All characters adds the raid alts; My Characters is the viewer\'s own', () => {
+    expect(body).toMatch(/const scopedChars = scope === 'all' \? chars\s+: scope === 'mine' \? chars\.filter\(c => ownedKeys\.has\(c\.name\.toLowerCase\(\)\)\)\s+: chars\.filter\(c => c\.main\);/);
   });
 });
 
@@ -78,8 +78,8 @@ describe('the raid-night planner', () => {
     expect(planner).toMatch(/const mains = list\.filter\(c => c\.main\)\.length;/);
     expect(planner).toMatch(/plan\.sort\(\(a, b\) => b\.leverage\.mains - a\.leverage\.mains \|\| b\.gains\.mains - a\.gains\.mains/);
   });
-  it('shows alts in parentheses only on All characters', () => {
-    expect(body).toMatch(/const MainsAlts = \(\{ s \}: \{ s: Split \}\) => <>\{s\.mains\}\{scope === 'all' && <span className="text-dim"> \(\{s\.alts\}\)<\/span>\}<\/>;/);
+  it('shows alts in parentheses everywhere but Mains (My Characters and All characters both hold alts)', () => {
+    expect(body).toMatch(/const MainsAlts = \(\{ s \}: \{ s: Split \}\) => <>\{s\.mains\}\{scope !== 'mains' && <span className="text-dim"> \(\{s\.alts\}\)<\/span>\}<\/>;/);
     expect(body).toMatch(/<MainsAlts s=\{p\.attend\} \/>/);
     expect(body).toMatch(/<MainsAlts s=\{p\.gains\} \/>/);
   });

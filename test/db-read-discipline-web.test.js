@@ -568,6 +568,7 @@ const UNIQUE_KEYS = {
   wolfpack_members: [['discord_id']],
   eqemu_items: [['id']],
   eqemu_npc_types: [['id']],
+  eqemu_spells: [['id']],   // /pop's missing-spell descriptions page the catalog by id (web/lib/popMissingSpells.ts)
   eqemu_faction_list_full: [['id']],
   eqemu_npc_faction: [['id']],
   eqemu_npc_faction_entries: [['npc_faction_id', 'faction_id']],
