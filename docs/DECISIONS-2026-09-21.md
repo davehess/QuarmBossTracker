@@ -10702,5 +10702,12 @@ the Bastion of Thunder at the time.
   `1556801422689837240`, which §166 called "Bristlebane" and which now shows in the server as **miMIC**. The OpenClaw chat agent on V5
   is a **separate** application, `1549680353747406858`, named **Bristlebane**. Different tokens, so the two never fight over a login.
   (The component and folder are still called `apps/bristlebane`; renaming them is a separate change.)
+
+### 324. Chat overlay: Spells and Skills get mine / on me / others filters (agent 3.7.176 · Mimic beta `7488b291`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14, a screenshot of the ⚙):** *"same here with spells skills - Filters for spells for others
+  should be there as well."*
+- **Calls:** Spells show My spells / On me / Others' spells; Skills show My skills / Others' skills; all on by default; shades of each
+  group's hue. Resists, fizzles and interrupts count as mine (no separate switch). Known edge: your self-buff landing on you reads
+  "on me", because EQ's landing text does not say who cast it.
 - **Open:** the token; V5's model server must listen on the LAN (and declare a context large enough for the 20000 reserve); the
   step files (`01-step0-discover.md`) live on V5 and are not in the repo.
