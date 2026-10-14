@@ -10315,3 +10315,30 @@ the Bastion of Thunder at the time.
   - **The Willsapper proc** lands as "<mob> yawns.", and ten other spells print the same line, the shaman slows among them. So
     the trigger only fires within 1.5 s of the member's own melee hit on that mob (`after_my_melee_ms`).
 - **Where it lands:** bot + migration on main, web character page on beta, agent + Mimic on beta (§295 records the ship).
+
+### 295. Shipped: sounds, voice packs, names, the Willsapper slap, and the Map's Full mode (2026-10-14)
+
+- **Bot 3.1.261 (main, `1b343563`):**
+  - `utils/pronounce.js` and the agent routes `GET /api/agent/pronunciations` (ETag), `GET /api/agent/pronunciation-suggest`
+    and `POST /api/agent/pronunciation`.
+  - Who may save: the owner, meaning `characters.discord_id` is theirs or the family root's is.
+  - The `name_pronunciations` migration file is in the repo. ⚠ Applying it through the MCP was cancelled, so check the
+    table exists before relying on it.
+- **Web 1.8.151 (beta, `3b3b4cba`):** "How to say this name" on the character page: ▶ Listen for everyone, and the editor
+  (alternates, coaching, Save) for the owner. `web/lib/pronounce.ts` gives the same output as the bot's (checked on 3,033
+  names).
+- **Agent 3.7.163 + Mimic beta (`ef9fbf79`..`b7d2632c`):**
+  - The sound library: eight sounds generated with ffmpeg, plus `<userData>/sounds`, where your own files override shipped
+    ones.
+  - Per trigger: `sound`, `sound_volume` and `sound_mode` add/replace. Your own sound on a guild trigger, on this PC only.
+  - The editor fields, a Sounds card, and the tray's "Open my sounds folder".
+  - GINA / EQLogParser imports bring their sound file along.
+  - Voice packs (Default, Herald, Quick, Narrator) plus an installed-voice picker. Pronunciations are applied to
+    trigger speech.
+  - Two walkthrough steps: "Your voice" and "Say your name".
+  - The "Willsapper proc" suggested trigger: slap, replace, `after_my_melee_ms` 1500.
+  - Not done: sound files packed inside a `.gtp`, and names in the Charm and CH-chain overlays' own speech.
+- **Map Full mode + keep-clear areas (agent 3.7.162, beta `c7d881a8`):**
+  - Full lays the map over EverQuest's client area, click-through always (`_coversScreen`).
+  - Keep-clear areas: the UI ini's open windows plus your own boxes.
+  - Open: the timers column is hidden in Full; nothing has been tried on Windows yet.
