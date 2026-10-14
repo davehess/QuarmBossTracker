@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-8-148-2026-10-14',
+    title: 'Raid night plan',
+    version: 'Web 1.8.148',
+    date: '2026-10-14',
+    headline: 'One page for the night: who is missing a preflag, how to get there, what each boss does, and a map with the path.',
+    features: [
+      { name: 'Preflag check', blurb: 'Everyone signed up for the night, with the steps each target needs, and who is still missing each one.' },
+      { name: 'Travel', blurb: 'From Tranquility to each zone, and the route inside it. First time into a zone, go through the live portal once.' },
+      { name: 'What to expect', blurb: 'Each boss: health, what it casts, the adds and when they come, what to do after the kill, and the loot.' },
+      { name: 'Maps', blurb: 'Each zone drawn with the route, the bosses, the zone-ins and the patrols.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-8-147-2026-10-14',
     title: 'Every PoP flag step',
     version: 'Web 1.8.147',
