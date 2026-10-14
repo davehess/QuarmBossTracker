@@ -851,6 +851,10 @@ contextBridge.exposeInMainWorld('mimic', {
   createPanelOverlay:  (panelKey) => ipcRenderer.invoke('create-panel-overlay', panelKey),
   getConfig:     () => ipcRenderer.invoke('get-config'),
   isMuted:       () => _wpMuted,
+  // The sound library: [{name, file, source}], a name → file URL (null if it is not there), and the member's own folder.
+  listSounds:       ()     => ipcRenderer.invoke('sounds:list'),
+  resolveSound:     (name) => ipcRenderer.invoke('sounds:resolve', name),
+  openSoundsFolder: ()     => ipcRenderer.invoke('sounds:open-folder'),
   saveConfig:    (cfg) => ipcRenderer.invoke('save-config', cfg),
   getAgentPort:  () => ipcRenderer.invoke('get-agent-port'),
   eqSetupForMe:  () => ipcRenderer.invoke('eq-setup-for-me'),

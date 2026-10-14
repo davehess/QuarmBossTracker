@@ -128,7 +128,7 @@ describe('triggers.html as a canvas part', () => {
   it('never speaks and never plays a sound — the trigger window is the voice', () => {
     const code = stripJs(triggers);
     expect(code).toMatch(/function speak\(text, meta\)\{\s*if \(PART\) return;/);
-    expect(code).toMatch(/function playSound\(url\)\{\s*if\(!url \|\| _wpMutedNow\(\)\) return;\s*if \(PART\) return;/);
+    expect(code).toMatch(/function playSound\(url, volume\)\{\s*if\(!url \|\| _wpMutedNow\(\)\) return;\s*if \(PART\) return;/);
   });
 
   it('a timers panel reads no fires and fires no warnings', () => {

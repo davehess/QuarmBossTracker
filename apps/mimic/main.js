@@ -32,6 +32,7 @@ const zealUpdater = require('./zealUpdater');
 const uiPacks = require('./uiPacks');
 const { applyIniKeyEdits } = require('./iniKeyEdits');
 const { visibleUiRects } = require('./uiClearRects');
+const soundLib = require('./sounds');
 
 // Hide the default File/Edit/View/Window/Help menubar — this is a focused
 // tray app, those entries just look unfinished. Must run before window
@@ -89,6 +90,16 @@ const AGENT_DIR   = () => path.join(app.getPath('userData'), 'agent');
 const AGENT_LOG   = () => path.join(app.getPath('userData'), 'agent.log');
 const ZEAL_RAW_LOG = () => path.join(app.getPath('userData'), 'zeal-raw.ndjson');
 const BASE_PORT   = 7779; // 7777/7778 left for Parser.bat coexistence
+
+// ── Sound effects (the guild lead, 2026-10-14) ──────────────────────────────
+// Shipped set: resources/sounds (extraResources) or the repo's apps/mimic/sounds in dev. A member's own
+// sounds go in <userData>/sounds, and a file there with a shipped one's name overrides it. A trigger
+// stores a NAME ("slap") or "custom:<file>", never a path; sounds.js has the rules. The agent gets both
+// folders through env so its dashboard can list and play them too (see _soundDirs in the agent).
+const SOUNDS_SHIPPED_DIR = () => (app.isPackaged ? path.join(process.resourcesPath, 'sounds') : path.join(__dirname, 'sounds'));
+const SOUNDS_USER_DIR    = () => path.join(app.getPath('userData'), 'sounds');
+function _ensureSoundsDir() { try { fs.mkdirSync(SOUNDS_USER_DIR(), { recursive: true }); } catch { /* read-only profile: the library is just the shipped set */ } }
+function _openSoundsFolder() { _ensureSoundsDir(); return shell.openPath(SOUNDS_USER_DIR()); }
 
 const WOLFPACK_URL    = 'https://wolfpack.quest';
 
@@ -2936,6 +2947,10 @@ async function launchAgent() {
     WOLFPACK_APP_VERSION:   app.getVersion(),
   };
   if (primaryEqDir) env.WOLFPACK_EQ_DIR = primaryEqDir;
+  // The sound library's two folders, so the agent's dashboard lists and plays the same sounds Mimic does.
+  _ensureSoundsDir();
+  env.WOLFPACK_SOUNDS_DIR = SOUNDS_SHIPPED_DIR();
+  env.WOLFPACK_SOUNDS_USER_DIR = SOUNDS_USER_DIR();
   // Plural, path-delimited. The agent prefers this over its own watched-log
   // inference, which cannot see a folder that has never produced a log.
   if (knownDirs && knownDirs.length) env.WOLFPACK_EQ_DIRS = knownDirs.join(path.delimiter);
@@ -8500,6 +8515,8 @@ function buildTrayMenu() {
     { type: 'separator' },
     connectItem,
     { label: 'Show agent log…', click: () => shell.openPath(AGENT_LOG()) },
+    // Same folder as the dashboard's Sounds card button: drop .wav / .mp3 / .ogg files here to use them in triggers.
+    { label: 'Open my sounds folder (add your own trigger sounds)', click: () => { _openSoundsFolder(); } },
     { label: 'Open dashboard in browser', click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/`) },
     // Tray ↔ dashboard parity (CLAUDE.md): the feedback card lives on the
     // dashboard, so it needs a tray route too. Same destination, same internals
@@ -10604,6 +10621,11 @@ ipcMain.handle('pick-log-backups', async (e, kind) => {
 });
 
 ipcMain.handle('get-config', () => configForRenderer(loadConfig()));
+// The sound library (see SOUNDS_SHIPPED_DIR): the list for the pickers, a name → file URL for the player,
+// and the member's own folder. Same internals as the tray's "Open my sounds folder".
+ipcMain.handle('sounds:list', () => soundLib.listSounds(SOUNDS_SHIPPED_DIR(), SOUNDS_USER_DIR()));
+ipcMain.handle('sounds:resolve', (_e, name) => soundLib.resolveSoundUrl(name, SOUNDS_SHIPPED_DIR(), SOUNDS_USER_DIR()));
+ipcMain.handle('sounds:open-folder', () => _openSoundsFolder().then(() => SOUNDS_USER_DIR()));
 // Mute (cfg.quietMode) reaches every overlay renderer as one boolean, so the
 // three places that speak or play a sound (triggers.html, chchain.html,
 // charm.html) check window.mimic.isMuted() with no config round-trip. Sent on

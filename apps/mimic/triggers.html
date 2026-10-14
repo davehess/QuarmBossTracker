@@ -303,6 +303,7 @@
     <div id="sticky"></div>
   </div>
   <div id="timers"></div>
+<script src="voice.js"></script>
 <script>
   // ── Timers canvas part ─────────────────────────────────────────────────────
   // ?part=timers  — the countdown stack only, holding the rows the canvas routes
@@ -516,6 +517,19 @@
   // preempts ordinary chatter; ordinary chatter waits its turn.
   var SPEAK_TTL_MS    = 5000;   // a callout older than this is stale — never speak it late
   var SPEAK_QUEUE_MAX = 3;      // a raid can out-talk the engine; bound the backlog
+  // The voice: the player's pick (cfg.voice in Mimic's config) over the agent's voice packs; see voice.js.
+  // Re-read every few seconds so a change in Settings reaches the next callout without a restart.
+  var _voiceCfg = null, _voicePacks = [];
+  function _refreshVoice(){
+    if (PART) return;   // a canvas panel never speaks
+    try { if (window.mimic && window.mimic.getConfig) window.mimic.getConfig().then(function(c){ _voiceCfg = (c && c.voice) || null; }, function(){}); } catch (e) {}
+    try {
+      fetch('http://127.0.0.1:' + PORT + '/api/voice-packs').then(function(r){ return r.ok ? r.json() : null; })
+        .then(function(j){ if (j && Array.isArray(j.packs)) _voicePacks = j.packs; }, function(){});
+    } catch (e) {}
+  }
+  _refreshVoice();
+  setInterval(_refreshVoice, 5000);
   var _speakQ = [];
   var _speakingUtt = null, _speakingPrio = -1, _speakWatchdog = null;
 
@@ -569,6 +583,15 @@
     try{
       const u = new SpeechSynthesisUtterance(item.text);
       u.rate = 1.05; u.volume = 1;
+      // Voice, rate and pitch from the player's pack (or this callout's own); the default voice when none is
+      // set or the named one is not installed. Never allowed to stop the line being spoken.
+      try {
+        if (window.WPVoice){
+          const vp = window.WPVoice.pick(_voicePacks, _voiceCfg, item.meta && item.meta.voice_pack, window.speechSynthesis.getVoices());
+          if (vp.voice) u.voice = vp.voice;
+          u.rate = vp.rate; u.pitch = vp.pitch;
+        }
+      } catch (e) {}
       var settled = false;
       u.onstart = function(){ if (settled) return; settled = true; reportPlayback('started', null, item.meta); };
       u.onerror = function(e){ if (settled) return; settled = true; reportPlayback('error', (e && e.error) || 'speech error', item.meta); _speakPump(); };
@@ -594,10 +617,32 @@
       _speakPump();
     }
   }
-  function playSound(url){
+  // A trigger's `sound` is a library NAME ("slap"), "custom:<file>" or an http(s) URL (the guild lead,
+  // 2026-10-14) — never a path, so a guild or synced trigger plays on every PC. Names resolve through
+  // Mimic (the shipped set plus the member's own sounds folder); a URL plays as it always did.
+  // Positive answers are kept 30s, so a file dropped in the folder is picked up within the minute.
+  var _soundUrls = {};
+  function _resolveSoundUrl(name){
+    name = String(name || '');
+    if (/^https?:\/\//i.test(name)) return Promise.resolve(name);
+    var hit = _soundUrls[name];
+    if (hit && Date.now() - hit.at < 30000) return Promise.resolve(hit.url);
+    var ask;
+    if (window.mimic && window.mimic.resolveSound) ask = window.mimic.resolveSound(name);
+    else ask = Promise.resolve('http://127.0.0.1:' + PORT + '/sounds/' + encodeURIComponent(name));   // no bridge: the agent serves them too
+    return Promise.resolve(ask).then(function(u){ if (u) _soundUrls[name] = { url: u, at: Date.now() }; return u || null; }, function(){ return null; });
+  }
+  // Plays it at the trigger's own volume (0-1, default 0.9). Resolves true once it is playing, false when it could
+  // not (no such sound, blocked) — a 'replace' callout speaks instead then, rather than saying nothing at all.
+  function playSound(url, volume){
     if(!url || _wpMutedNow()) return;
     if (PART) return;   // a canvas panel shows; the trigger window plays
-    try{ const a = new Audio(url); a.volume = 0.9; a.play().catch(()=>{}); }catch(e){}
+    return _resolveSoundUrl(url).then(function(u){
+      if (!u) return false;
+      var a = new Audio(u), v = Number(volume);
+      a.volume = (volume != null && isFinite(v) && v >= 0 && v <= 1) ? v : 0.9;
+      return a.play().then(function(){ return true; }, function(){ return false; });
+    }).catch(function(){ return false; });
   }
   function flash(text){
     el.textContent = text;
@@ -833,6 +878,8 @@
     // than narrate fires nobody can see. Mute is NOT checked here: under Mute
     // the alert still flashes, and speak()/playSound() stay quiet.
     if (!alertsEnabled) return;
+    // A standalone sound action: play it; no flash, no speech, no vote buttons.
+    if (t && t.sound_only){ playSound(t.sound, t.sound_volume); return; }
     // Overlay text is written to be SEEN: it leads with an emoji and uses
     // punctuation as visual separators. Speech synthesis reads all of that
     // aloud - a leading U+26A1 becomes "high voltage", and "D.I. FIRED - {tank}
@@ -852,8 +899,14 @@
     // #136 raid callout allow-list: the agent sets mute=true on a guild/relayed
     // fire outside the critical categories — it still flashes (visibility), but
     // stays silent so the raid-wide TTS only voices the high-value callouts.
-    if (!t.mute) speak(spoken, { trigger: t.trigger || t.text || t.label || spoken, rehearsal: !!t.rehearsal });
-    playSound(t.sound);
+    // sound_mode 'replace' (the guild lead, 2026-10-14: "allow them to use the sound effects instead of
+    // callouts tts"): the sound plays INSTEAD of the spoken line. If it cannot play (no such file on this
+    // PC) the line is spoken after all, so a missing sound never costs the callout.
+    const speakMeta = { trigger: t.trigger || t.text || t.label || spoken, rehearsal: !!t.rehearsal, voice_pack: t.voice_pack || null };
+    const replaced = !!(t.sound && t.sound_mode === 'replace');
+    if (!t.mute && !replaced) speak(spoken, speakMeta);
+    const played = playSound(t.sound, t.sound_volume);
+    if (replaced && !t.mute && played && played.then) played.then(function(ok){ if (!ok) speak(spoken, speakMeta); });
     if (visual) showFeedback(t);
     if (visual) offerMute(t);   // "What you hear": 🔇 under a callout that was actually spoken
     if (t.sticky && !_visualElsewhere) pinSticky(t);

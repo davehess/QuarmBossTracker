@@ -36,6 +36,7 @@
       "**/*",
       "!**/*.md",
       "!staged-agent/**",
+      "!sounds/**",
       "!scripts/**",
       "!dist/**",
       "!.gitignore"
@@ -44,6 +45,10 @@
       {
         "from": "staged-agent",
         "to": "agent"
+      },
+      {
+        "from": "sounds",
+        "to": "sounds"
       }
     ],
     "publish": [

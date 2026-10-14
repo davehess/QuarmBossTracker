@@ -165,7 +165,7 @@ describe('mute reaches every place that makes noise', () => {
 
   it('triggers.html also mutes sound files, and still flashes (flash is a separate call)', () => {
     const src = stripJs(read('apps/mimic/triggers.html'));
-    expect(src).toMatch(/function playSound\(url\)\{\s*if\(!url \|\| _wpMutedNow\(\)\) return;/);
+    expect(src).toMatch(/function playSound\(url, volume\)\{\s*if\(!url \|\| _wpMutedNow\(\)\) return;/);
     expect(src).toMatch(/function flash\(text\)\{/);
   });
 });
