@@ -51,6 +51,9 @@
 // characters their owner hid, and fold the ones with no known level into a collapsed area
 // (web/lib/listableChars.ts); this shows all of them inline again. Not a scope: it composes with ?scope and ?view.
 //
+// ?flags=a | b — the "Latest flags" strip above the page (web/lib/popLatestFlags.ts; the guild lead, 2026-10-14), beta
+// comparison: a = newest first, b = grouped by flag step; unset = no strip.
+//
 // ?pclass=enc,wiz · ?psort=<column> · ?pdir=asc|desc — the spell-needs table's class filter and column sort
 // (the guild lead, 2026-10-09). Server-side, validated against whitelists in web/lib/popSpellsView.ts, carried by
 // every hrefFor link; unset = every class, highest level first.
@@ -86,6 +89,8 @@ import EssencesQueue from './EssencesQueue';
 import { loadEssenceQueue } from './essencesData';
 import { demoEssenceQueue } from '@/lib/essencesQueue';
 import { GUILD_TAG } from '@/lib/guild';
+import LatestFlags from './LatestFlags';
+import { latestFlagsFor } from '@/lib/popLatestFlags';
 
 export const dynamic = 'force-dynamic';
 export const metadata = {
@@ -154,9 +159,9 @@ const KIND_ICONS: Record<string, string> = {
 };
 
 export default async function PopFlagsPage(
-  { searchParams }: { searchParams: Promise<{ zone?: string; view?: string; scope?: string; v?: string; demo?: string; all?: string; pclass?: string; psort?: string; pdir?: string }> },
+  { searchParams }: { searchParams: Promise<{ zone?: string; view?: string; scope?: string; v?: string; demo?: string; all?: string; pclass?: string; psort?: string; pdir?: string; flags?: string }> },
 ) {
-  const { zone: zoneKey, view, scope: scopeParam, v, demo, all: allParam, pclass: pclassParam, psort: psortParam, pdir: pdirParam } = await searchParams;
+  const { zone: zoneKey, view, scope: scopeParam, v, demo, all: allParam, pclass: pclassParam, psort: psortParam, pdir: pdirParam, flags: flagsParam } = await searchParams;
   const showAll = allParam === '1';
   const scope: 'mains' | 'all' = scopeParam === 'all' ? 'all' : 'mains';
   const { data: { user } } = await supabaseServer().auth.getUser();
@@ -183,6 +188,11 @@ export default async function PopFlagsPage(
     loadHiddenNames(sbAdmin),
   ]);
   const spellNeedsAll = groupNeeds(needRows);
+  // "Latest flags" strip (the guild lead, 2026-10-14), two layouts on beta until one is picked:
+  // ?flags=a is newest-first, ?flags=b is grouped by step. No ?flags= is the page as production has it. Its own
+  // param because ?v=b already opens the Essences queue's layout b above.
+  const latestLayout: 'a' | 'b' | null = flagsParam === 'a' || flagsParam === 'b' ? flagsParam : null;
+  const latestRows = latestLayout ? await latestFlagsFor(sbAdmin, traderNames, flaggedHidden) : null;
 
   // Traders, characters under level 46 and characters their owner hid are tucked away on the two lists
   // that name individual characters (My Characters and the spell-needs table), behind ?all=1 (the guild
@@ -941,6 +951,8 @@ export default async function PopFlagsPage(
           </span>
         </div>
       </section>
+
+      {latestLayout && latestRows && <LatestFlags layout={latestLayout} rows={latestRows} now={Date.now()} />}
 
       {essLayout && essences && <EssencesQueue layout={essLayout} demo={essDemo} {...essences} />}
 

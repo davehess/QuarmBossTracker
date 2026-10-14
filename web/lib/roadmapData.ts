@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-8-152-2026-10-14',
+    title: 'Latest flags',
+    version: 'Web 1.8.152',
+    date: '2026-10-14',
+    channel: 'beta',
+    headline: 'A strip at the top of the PoP Flags page shows the flags raiders just finished, confirmed by the server.',
+    features: [
+      { name: 'Latest flags', blurb: 'The newest flag steps from the last week, with who earned them, where, how long ago, and a badge for the server or an NPC recital confirming it. Two layouts to compare: newest first, or grouped by step.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-8-151-2026-10-14',
     title: 'Say my name right',
     version: 'Web 1.8.151',
