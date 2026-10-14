@@ -10684,3 +10684,19 @@ the Bastion of Thunder at the time.
   the name in the existing `ui_snapshots.label` ("Layout: <name>"): no bot change, no migration.
 - **Open:** `ui_snapshots` has no pruning and each layout save adds a row; `/me/ui` may now show "Layout: …" as the newest label;
   Windows + EQ run to confirm EQ keeps the swapped file after a camp.
+
+### 323. Bristlebane's chat agent moves from V5 to Tower (Coolify); cloud sessions get a deploy token (2026-10-14)
+- **What broke:** the OpenClaw agent wearing the Bristlebane Discord app, on V5, died on a setup step with "Auto-compaction could not
+  recover this turn" (its fix hint: `agents.defaults.compaction.reserveTokensFloor` ≥ 20000) — a local model's small context window
+  filled by one step's output.
+- **The guild lead (2026-10-14):** *"this is on V5 not on tower. If you can set this up on tower for me in coolify, GO"*; then picked
+  **A — give the cloud session a deploy token** (over B, a compose the guild lead clicks in) and **the model stays V5's local model over
+  the LAN**.
+- **Access change (widens §9):** a second Coolify token with **write + deploy, still no `read:sensitive`**, in the cloud environment's
+  `COOLIFY_TOKEN`. Secrets (the Discord bot token) are pasted in Coolify's UI by the guild lead, never sent through a session. The
+  tailnet policy is unchanged (Coolify API 8000 + Tower 5432 only).
+- **Found on the way:** the existing Coolify app `bristlebane` (the voice bot, `apps/bristlebane`) is `exited:unhealthy` since
+  2026-10-06; its logs need `read:sensitive`, so they are unread. ⚠ It and the chat agent must not both log in with the same Discord bot
+  token at once.
+- **Open:** the token; V5's model server must listen on the LAN (and declare a context large enough for the 20000 reserve); the
+  step files (`01-step0-discover.md`) live on V5 and are not in the repo.
