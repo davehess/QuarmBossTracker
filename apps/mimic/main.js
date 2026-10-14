@@ -8885,13 +8885,6 @@ function buildTrayMenu() {
     { type: 'separator' },
     { label: 'My /tells  🔒 PRIVATE', submenu: tellsSubmenu },
     { type: 'separator' },
-    { label: 'Updates', enabled: false },
-    updateItem,
-    updatePopupItem,
-    betaChannelItem,
-    alphaChannelItem,
-    revertStableItem,
-    { type: 'separator' },
     crashReportsItem,
     { type: 'separator' },
     { label: 'Account', enabled: false },
@@ -8902,6 +8895,18 @@ function buildTrayMenu() {
     ...(_uninstallerPath() ? [{ label: 'Uninstall Wolf Pack Mimic…', click: () => { runUninstaller(); } }] : []),
     { type: 'separator' },
     { label: 'Settings…', click: openSettings },
+  ];
+
+  // Updates › — its own top-level submenu (the guild lead, 2026-10-14: "add updates to the submenus for
+  // the taskbar"). The update item first, then the pop-up toggle and the channel choices. The submenu's
+  // own label says when an update is waiting, so it shows without opening anything.
+  const updatesSubmenu = [
+    updateItem,
+    { type: 'separator' },
+    updatePopupItem,
+    betaChannelItem,
+    alphaChannelItem,
+    revertStableItem,
   ];
 
   // Open › — everything that opens a window, a folder or a page.
@@ -8967,6 +8972,7 @@ function buildTrayMenu() {
       } },
     { type: 'separator' },
     { label: 'Settings', submenu: settingsSubmenu },
+    { label: updatePending ? `Updates — v${updatePending.version} ready` : 'Updates', submenu: updatesSubmenu },
     { label: 'Open', submenu: openSubmenu },
     { label: 'Help', submenu: helpSubmenu },
     { type: 'separator' },
