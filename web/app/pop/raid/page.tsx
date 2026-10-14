@@ -174,8 +174,9 @@ async function loadLoot(): Promise<{ drops: Map<number, Drop[]>; cards: Record<n
   const ids = [...new Set((data ?? []).map(d => (d as Drop).item_id))];
   const cards: Record<number, ItemCard> = {};
   if (ids.length) {
-    const { data: rows } = await sb.rpc('item_card_info', { p_item_ids: ids });
-    for (const r of (rows ?? []) as ItemCard[]) cards[r.item_id] = r;
+    // Paged like every set-returning call (beta's read-discipline ratchet), though ~60 ids is one page.
+    const rows = await selectAll<ItemCard>((from, to) => sb.rpc('item_card_info', { p_item_ids: ids }).range(from, to));
+    for (const r of rows) cards[r.item_id] = r;
   }
   return { drops, cards };
 }
