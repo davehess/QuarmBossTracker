@@ -126,7 +126,7 @@ is ephemeral. It is a desktop-session job.
 | **Charm-pet gear is not loot** (§210) | Built on `claude/loot-pet-gear`: migration `20261009030000` (NOT applied), `utils/lootValue.js`, one sentence on `/admin/loot`. `loot_pet_gear_names` ships empty | a session with Supabase access: apply the migration, then route bot + web to `main`. The guild lead: veto the 9 extra rows (§210) or name the pet weapons and haste items so officers can INSERT them |
 | **Charm sessions record spell + ran_full** (§209) | Built on two local branches: bot (`utils/charmSession.js`, migration `20261009010000`, NOT applied) and agent (beta). Inert until both ship | a session with Supabase access: apply the migration FIRST; then route the bot to `main` and the agent to `beta`. After a week of enchanter raids, read per-spell `ran_full` before touching any charm warning |
 | **Stampede timer follows you into the zone** (§208) | Built on a local branch: bot 3.1.233 (`utils/zoneTimers.js`, bot_kv `zone_timer_windows`) + agent 3.7.115 (`_runLateJoinFire`). Inert until the two stampede rows carry the `zone-timer` tag | the guild lead: route the bot to `main` and the agent to `beta`, then run the tag SQL in §208; a raider zones into Tactics after a stampede and checks both countdowns |
-| **Callouts + Extended Target keep to your raid or group** (§189) | Live: bot 3.1.222 on `main` (2026-10-08 00:36 ET) and stable Mimic 2.7.10 / agent 3.7.106 with the Raid \| Group switch (§190) | the guild lead: try Group while grouped and say if it still shows other groups; the rest of the separation inventory (loot posts, shared alerts, attendance per raid) waits on picks |
+| **Callouts + Extended Target keep to your raid or group** (§189, §292) | Live: bot 3.1.222 on `main` (2026-10-08 00:36 ET) and stable Mimic 2.7.10 / agent 3.7.106 with the Raid \| Group switch (§190). Bot 3.1.260 (§292): the after-midnight clock bug and the unplaced-listener blanket closed | a session: place unlinked members by their upload history (§292 "Next"); the agent's own zone check on relayed fires; the rest of the separation inventory (loot posts, shared alerts, attendance per raid) waits on picks |
 | **Three picks: bard counts, AE chip by spell data, height floor** (§178) | All three built; HUD counts, AE gate and the floor on beta (agent 3.7.98); the catalog's `ae` flag waits on this branch reaching `main` | the guild lead: push this branch to main (after 00:30 ET on a raid night); a bard on beta checks the ring label; a beta tester drags an overlay small and confirms it stays |
 | **Guild kit slices 1b, 2-prep, 3** (§177) | Bot 3.1.215: `utils/guildConfig.js` loader + getters, Discord self-provisioner (`/setup discord`, standalone script), tag-correct REST filters with a ratchet, one-shot announcers gated on the guild tag, Bristlebane guild file. Web slice A (`web/lib/guild.ts` + the literal swap) reviewed separately → `beta` | a session: slice 2, the de-branding sweep (start from the 11 getter-only env names in `test/guild-config.test.js`); then `doctor` and the wizard CLI (§8 picks stand) |
 | **HUD second clicky row** (§185) | Mimic beta: row 2 one line inside row 1, on by default, 7 picks (4 on one row) | Picked A (7 picks), §187. Next: a beta tester with many clickies tries two rows |
@@ -10253,3 +10253,32 @@ Harmony, Hide/Sneak for non-rogues).
   speaking, answering Lord Mobsincamp needs a TTS that can clone the target voice plugged into Home
   Assistant's own voice pipeline. `huggingface/speech-to-speech` speaks the OpenAI Realtime protocol, not Home
   Assistant's, so it does not plug into the PE directly.
+
+### 292. A callout from another zone reached an unplaced member on a Tuesday night (bot 3.1.260, 2026-10-14)
+
+The guild lead, 2026-10-14 00:24 ET, with a guild-chat screenshot of a member running through Overthere who heard
+"enraged <militis>" from Mimic: *"we need to stop having leaks for callouts from other groups or raids when we're
+nowhere nearby"*. A group (not a raid; no raid roster had been uploaded for three hours) was fighting militis mobs in
+the Bastion of Thunder at the time.
+
+- **Why it got through (two faults together):**
+  1. The member could not be placed. Their characters have no `characters.discord_id`, so `_requesterZones` was empty.
+  2. An unplaced listener hears every guild callout on a raid evening, and the raid-evening clock attached the hour after
+     midnight to the wrong day: `_inRaidWindowEt` read the calendar day, so Wednesday 00:24 counted as a Wednesday raid.
+     It covered Tue/Wed/Sat after midnight and missed Thu/Fri/Mon after midnight, the real ones.
+- **The fix (bot only, no Mimic update):**
+  - `_inRaidWindowEt`: the hour before 01:00 belongs to the night before.
+  - An unplaced listener on a raid evening now hears only senders the bot cannot place either (both unknown fails open,
+    as before). A sender the bot CAN place in a zone no longer reaches them (`unplacedWindow` in `_relayScopeKeep`; the
+    resolver stops setting the raid-wide `inRaidWindow` for that case).
+  - Raid mode and group mode are unchanged. Tests: `test/relay-scope-gate.test.js` (behaviour, mutation-checked) and
+    `test/group-scope.test.js`.
+- **Also affected:** the OpenDKP panel caches (`_panelAuctions`, `_panelStandings`) use the same clock to refresh faster
+  in a raid; they now follow the right night too. `utils/openDkpSync.js` has its own copies with the same calendar-day
+  reading (its sync cadence only): left alone, listed here.
+- **Next, not done:**
+  - Place unlinked members by their upload history. `agent_upload_stats` maps character → uploading Discord account
+    (493 pairs; 10 characters have two owners; 163 characters lack a link), but it is 1,857 rows, so the read needs
+    paging.
+  - Defence in depth on the agent: send the sender's zone with each relayed fire and let the listener drop one whose zone
+    is not its current Zeal zone (needs a Mimic update).
