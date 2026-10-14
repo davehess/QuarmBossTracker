@@ -33,7 +33,8 @@
         "rule": "side-tab",
         "value": "*",
         "files": [
-          "apps/mimic/triggers.html"
+          "apps/mimic/triggers.html",
+          "apps/mimic/chat.html"
         ],
         "createdAt": "2026-10-05T15:42:20.005Z",
         "reason": "Repo rule (CLAUDE.md: frontend-design wins over impeccable aesthetics): the timer row's left bar is each trigger's own bar_color (guild_triggers.bar_color, GINA-style rows since 2026-06-03), a functional colour code read mid-raid"
