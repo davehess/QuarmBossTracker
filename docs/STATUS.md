@@ -462,6 +462,9 @@ next touch one rather than assuming a missing row means a missing doc.
 - **✅ Long-term bidding out of the timers (agent 3.7.92 stable hot-swap · 3.7.93 beta, 2026-10-06).** Auctions set to
   run over 6 h get no countdown and no Command Center row; the bidding window still lists them. ⏳ The ✕ on timer
   chips was reported unclickable; hardened on beta (`data-wp-interact`, `cf817067`), awaiting a retest. §171.
+  Still dead on 2026-10-14, so reworked on beta (agent 3.7.174, `4ae64a3b`): the ✕ dismisses on the press via one listener on
+  the stack, the server tick hides for the overlay's life, a dismissed zone timer stays dismissed on re-entry, and main.js logs
+  the first hover-arm per page. §317.
 - **✅ Reverse Slow called out; mob abilities in Quarm's numbering (FB-54, bot 3.1.212 · web 1.8.109, 2026-10-06).**
   Five PoP mobs turn a slow into a haste; Target Info and `/db/npc` flag them. Three false chips gone (44, 46, 7).
   Mimic beta warnings (red chip, HUD, callout) next. §173.
@@ -5984,6 +5987,11 @@ so every link fell through to the "stripped" fallback. Fixed in the agent's `tra
 Abashi's Rod → 31242). The web has no decoder: it shows the stored link. **Open:** the 57 bad links already stored are
 fixable, staged in `docs/RUNBOOK-pqdi-chat-links.md`, unapplied (the guild lead's yes); the stable fleet keeps writing
 wrong links until the agent reaches stable.
+
+### 🧾 2026-10-14 — Updates close Mimic cleanly and keep window positions (Mimic beta `b26c8162`, DECISIONS §318)
+Every install path, Quit, and the agent hot-swap go through one `_gracefulShutdown`: pending bounds flushed into one config write,
+watchers stopped, agent asked to stop (≤ 3 s, then killed) so its upload queue is saved, then `quitAndInstall`. **Open:** the main
+dashboard window's size is never saved; the first real test is the update after this build.
 
 ### 🧾 2026-10-14 — Chat overlay round 4: channel tags, per-channel switches, show-only, Melee, per-window text (agent 3.7.173 · Mimic beta `efd30696`, DECISIONS §315)
 Every line is tagged `[GU] [P] [2]…`; joined channels switch off by name (`chatPrefs.offChannels`, shared by all characters);

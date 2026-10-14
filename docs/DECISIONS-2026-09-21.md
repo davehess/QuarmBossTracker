@@ -10628,3 +10628,28 @@ the Bastion of Thunder at the time.
   every overlay over the incoming app for the 600 ms debounce; and clicking back into EverQuest covered the dropped overlays until the
   next 400 ms sample. **Fix:** ignore NULL samples; poll every 120 ms (two user32 calls; parent-alive check still ~4 s).
 - **Open:** Windows retest; quick A/B is "Other apps can draw over overlays when EverQuest isn't focused" off.
+
+### 317. The timer ✕ dismisses on the press, for every row kind (agent 3.7.174 · Mimic beta `4ae64a3b`, 2026-10-14)
+- **The report (the guild lead, 2026-10-14, a screenshot):** *"These timers aren't able to be clicked off"* — the second time (§171's
+  `data-wp-interact` round did not fix it). The rows: the server tick, two spell recasts, two zone-timer countdowns.
+- **What changed:** the ✕ no longer owns a click listener. One `mousedown` listener on the stable `#timers` parent reads the row's
+  `data-timer-id`, so a repaint between press and release cannot lose it, and a row sliding up under the cursor cannot take the click.
+  The window stays armed until the button comes up. The cancel POST retries twice. The ✕ has a 5 px invisible ring.
+- **Server tick:** ✕ hides it for as long as the overlay stays open (tooltip says so); nothing is sent to the agent, and the agent's
+  clear-all leaves it alone.
+- **Zone timers:** a countdown the raider ✕'d stays dismissed when the bot hands that window out again on re-entry (2-minute
+  tolerance; a new emote arms normally). Before this the "stampede window" came straight back.
+- **Not proven on Windows:** whether the Canvas iframe ever armed its window; main.js now logs `[hover] first arm from <page>` once per
+  page. Test: `test/timer-dismiss.test.js`.
+
+### 318. Installing an update shuts Mimic down like Quit, positions saved (Mimic beta `b26c8162`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"when installing a new version, please exit gracefully and save window position"*.
+- **What it fixed:** all four install paths (tray, dashboard, the "Restart now" dialog, install-when-EQ-closes) called `quitAndInstall`
+  straight away; bounds saved only on a 400 ms debounce, so a move just before an install was lost; and Quit itself hard-killed the agent
+  (`kill()` on Windows skips its exit hooks, so the upload queue flush never ran).
+- **Now:** one `_gracefulShutdown` (memoised) flushes every pending bounds and floor save into one config write, stops the watchers,
+  asks the agent to stop via its `/api/shutdown` and waits ≤ 3 s (then kills), and only then `_installUpdateNow` → `quitAndInstall`.
+  Quit, `before-quit` (covers install-on-quit and OS logoff) and the agent hot-swap use the same path. A throwing install restores
+  everything. Test: `test/mimic-graceful-update-exit.test.js`.
+- **Open:** the main dashboard window's own size/position is never saved (always 1200×800) — a separate change if wanted; first real
+  test is the update AFTER this build, since the build being replaced still has the old shutdown.
