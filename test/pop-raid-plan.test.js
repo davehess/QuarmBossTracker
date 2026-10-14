@@ -10,7 +10,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT, stripJs } from './_source-slice.js';
-import { PLAN, PREFLAGS, TRAVEL_BASICS, loc, pickRaidEvent } from '../web/lib/raidPlan.ts';
+import { PLAN, PREFLAGS, TRAVEL_BASICS, bossAnchor, loc, pickRaidEvent } from '../web/lib/raidPlan.ts';
 import { POP_STEPS, STEP_IMPLIES, stepsHeld } from '../web/lib/popSteps.ts';
 
 const read = (p) => stripJs(fs.readFileSync(path.join(ROOT, p), 'utf8'));
@@ -99,6 +99,24 @@ describe('the page', () => {
     expect(page).toMatch(/redirect\('\/auth\/signin\?next=\/pop\/raid'\)/);
     expect(page).toMatch(/<NewPageTag/);
     expect(page).toMatch(/dynamic = 'force-dynamic'/);
+  });
+  it('asks characters only for columns it has, and keeps a main whose main_name is its own name (2026-10-13)', () => {
+    // The live page died with "column characters.level does not exist"; then, with no level, every signed-up
+    // player still dropped out, because a main's main_name is its own name, not null.
+    const sel = [...page.matchAll(/from\('characters'\)\s*\.select\('([^']+)'\)/g)].map(m => m[1]);
+    expect(sel.length).toBeGreaterThan(0);
+    for (const s of sel) expect(s.split(/,\s*/)).not.toContain('level');
+    expect(page).not.toMatch(/\.is\('main_name', null\)/);
+    expect(page).toMatch(/c\.main_name\.toLowerCase\(\) === c\.name\.toLowerCase\(\)/);
+  });
+  it('links the overview to each target and boss, the bosses to PQDI, and the loot to item cards', () => {
+    expect(page).toMatch(/href=\{`#\$\{bossAnchor\(s\.id, b\.npc\)\}`\}/);
+    expect(page).toMatch(/id=\{bossAnchor\(s\.id, b\.npc\)\}/);
+    expect(page).toContain('https://www.pqdi.cc/npc/${b.npc}');
+    expect(page).toContain('https://www.pqdi.cc/item/${d.item_id}');
+    expect(page).toMatch(/from\('eqemu_npc_drops'\)/);
+    expect(page).toMatch(/<ItemHover card=\{loot\.cards\[d\.item_id\]\}/);
+    expect(bossAnchor('innovation', 206053)).toBe('innovation-206053');
   });
   it('folds the travel notes behind "Click here for more info"', () => {
     expect(page).toMatch(/<details[^>]*>\s*<summary[^>]*>Click here for more info<\/summary>\s*<List items=\{TRAVEL_BASICS\.points\}/);
