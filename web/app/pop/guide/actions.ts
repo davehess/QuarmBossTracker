@@ -15,6 +15,7 @@ import { revalidatePath } from 'next/cache';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { ownedCharacters } from '@/lib/ownedCharacters';
+import { isOfficer } from '@/lib/officer';
 import { GUIDE_KEYS } from '@/lib/popGuide';
 import { MAX_FLAGS_PER_TICK, tickKeyForFlag, tickKeysForFlag } from '@/lib/popSelfFlags';
 import { GUILD_TAG } from '@/lib/guild';
@@ -55,16 +56,25 @@ export async function setFlagTicks(character: string, flags: string[], ticked: b
   return res;
 }
 
-// The gate: signed in, then YOUR character, and only then a write under the character's real name.
-// `write` is what a tick stores; `remove` is every key that counts as the same report, so an untick
-// cannot leave one behind.
+// The gate: signed in, then YOUR character (or any roster character for an officer), and only then a write
+// under the character's real name. `write` is what a tick stores; `remove` is every key that counts as the
+// same report, so an untick cannot leave one behind.
+// Officers tick for anyone (the guild lead, 2026-10-14: "make it so we can check off characters for flags as
+// officers or check off your own flags on the matrix page"); ticked_by keeps who did it.
 async function writeTicks(character: string, write: string[], remove: string[], ticked: boolean): Promise<Result> {
   const { data: { user } } = await supabaseServer().auth.getUser();
   if (!user) return { ok: false, error: 'not signed in' };
-  const owned = (await ownedCharacters(user.id)).find(c => c.name.toLowerCase() === character.toLowerCase());
-  if (!owned) return { ok: false, error: 'not your character' };
-
   const admin = supabaseAdmin();
+  let name = (await ownedCharacters(user.id)).find(c => c.name.toLowerCase() === character.toLowerCase())?.name ?? null;
+  if (!name && await isOfficer(user.id)) {
+    // Only a character the roster knows, under its real casing (ilike with the pattern characters escaped).
+    const { data } = await admin.from('characters').select('name')
+      .ilike('name', character.replace(/[\\%_]/g, '\\$&')).limit(1).maybeSingle();
+    name = (data as { name: string } | null)?.name ?? null;
+  }
+  if (!name) return { ok: false, error: 'not your character' };
+  const owned = { name };
+
   if (ticked) {
     const { data: me } = await admin.from('wolfpack_members').select('discord_id').eq('user_id', user.id).maybeSingle();
     const now = new Date().toISOString();
