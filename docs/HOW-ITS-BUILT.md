@@ -2133,6 +2133,13 @@ it is earned in, `GATE_IMPLIES` = the bot's `STAGE_IMPLIES`, `wayInChain` for th
 text). `/pop` adds them to each character with `seen` kept apart (blue ✓ via `AccessMark`, `seenTag`).
 `test/pop-who.test.js`.
 
+### Raid night plan (`/pop/raid`, [beta], web 1.8.148, DECISIONS §278)
+One page per raid night: preflag table for the night's sign-ups (`rh_events`/`rh_signups` via `pickRaidEvent`,
+roster fallback; flags = `pop_flags` + site ticks + `/who` sightings through `stepsHeld`), travel, boss notes and
+a map per zone. All content is data in `web/lib/raidPlan.ts` (dated for one night; edit it for the next).
+`web/app/pop/raid/ZoneSvg.tsx` draws walls + route + markers + patrol; `walls.ts` reads `zone_map_lines.segs`
+only (never Brewall). `test/pop-raid-plan.test.js`.
+
 ### PoP checklist (`/pop/guide`)
 Steps are data in `web/lib/popGuide.ts` (section, Solo / Group / Raid, must-have, optional
 `flag` → a `POP_FLAGS` key, `says` → copyable `/say`, `where` → copyable `/map Y X` from the
