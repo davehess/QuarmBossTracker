@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-8-151-2026-10-14',
+    title: 'Say my name right',
+    version: 'Web 1.8.151',
+    date: '2026-10-14',
+    channel: 'beta',
+    headline: 'Tell the voice how your name sounds, so callouts stop mangling it.',
+    features: [
+      { name: 'How to say this name', blurb: 'Every character page now has a line showing how the name should sound, with a Listen button.' },
+      { name: 'Set your own', blurb: 'On your own characters, type how the name sounds, hear it as you type, and pick from other ways to say it. A few tips help with the tricky letters.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-8-148-2026-10-14',
     title: 'Raid night plan',
     version: 'Web 1.8.149',

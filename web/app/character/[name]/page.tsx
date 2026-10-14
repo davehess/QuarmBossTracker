@@ -26,6 +26,8 @@ import {
 } from '@/lib/character-family';
 import { fetchParseSummary, type ParseSummary } from '@/lib/capSafeReads';
 import { characterMeta } from '@/lib/pageMeta';
+import { loadPronunciation, ownerOfCharacter } from '@/lib/namePronunciation';
+import PronounceSection from './PronounceSection';
 
 export const dynamic = 'force-dynamic';
 
@@ -232,6 +234,13 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
 
   const { displayName, who, parseSummary, loot, lootEnriched, attendance, family, familyRoot, timeline, familyAgg } = data;
 
+  // How the name should sound (the guild lead, 2026-10-14). Everyone sees it; only the owner gets the editor,
+  // and the save action asks the same question again.
+  const [pronunciation, ownership] = await Promise.all([
+    loadPronunciation(displayName),
+    ownerOfCharacter(user.id, displayName).catch(() => ({ ok: false as const, error: 'lookup failed' })),
+  ]);
+
   // Aggregates (parse count / total / best / newest-30 come summed from SQL)
   const totalParses = parseSummary.count;
   const totalDamage = parseSummary.totalDamage;
@@ -339,6 +348,8 @@ export default async function CharacterPage({ params }: { params: Promise<{ name
           <Stat label="Last raid"  value={attendance?.last_attended  ? new Date(attendance.last_attended).toLocaleDateString()  : '—'} />
         </div>
       </section>
+
+      <PronounceSection name={displayName} saved={pronunciation?.say ?? null} canEdit={ownership.ok} />
 
       {/* Gallery (2026-09-28): this character's pictures and clips; nothing renders without any. */}
       <CharacterGallery name={displayName} />
