@@ -291,7 +291,8 @@ function defaultConfig() {
     // group/officer/custom switch those lines (group and custom default ON since 2026-10-14, officer stays opt-in),
     // byChar remembers which channel chips each character has switched off. offChannels = [lower-case joined
     // channel NAMES] switched off, shared by every character; absent = every channel shows. melee = opt-in for
-    // the combined-melee group (default off). only = the "show only" view toggle ('' = off). win = { <window
+    // the combined-melee group (default off); spells and skills are the same kind of opt-in (default off). meleeShow = { mine, on_me, others, misses }, which
+    // melee lines show (all true unless switched off). only = the "show only" view toggle ('' = off). win = { <window
     // id: 'main' or a breakout group id>: { fontSize, lineGap, times, tags } }, each window's own text settings.
     showChat: false,
     chatPrefs: {},
@@ -7052,12 +7053,26 @@ function _chatWinMap(raw) {
   for (const id of Object.keys(raw).slice(0, 24)) if (_CHAT_WIN_ID_RX.test(id)) out[id] = _chatWinCfg(raw[id]);
   return out;
 }
+// What the Melee group shows, like EQ's own combat filters (the guild lead, 2026-10-14: "filter out other's
+// information the same way we do with in game filters"): my swings (and my pet's), swings at me, everyone
+// else's, and misses. All four are ON unless switched off, so prefs saved before this read the same. One set
+// is shared by every window (the main one and a Melee breakout), like the other opt-in switches.
+const _MELEE_SHOW_KEYS = ['mine', 'on_me', 'others', 'misses'];
+function _chatMeleeShow(raw) {
+  const o = (raw && typeof raw === 'object') ? raw : {};
+  const out = {};
+  for (const k of _MELEE_SHOW_KEYS) out[k] = o[k] !== false;
+  return out;
+}
 function _chatPrefsPayload(cfg, char) {
   const p = (cfg.chatPrefs && typeof cfg.chatPrefs === 'object') ? cfg.chatPrefs : {};
   const mine = p.byChar && p.byChar[_chatCharKey(char)];
   const fs_ = Math.round(Number(p.fontSize));
   return {
     melee: p.melee === true,     // combined melee floods the feed: opt-in, like officer
+    spells: p.spells === true,   // spells and skills are floods too (2026-10-14): opt-in, default off
+    skills: p.skills === true,
+    meleeShow: _chatMeleeShow(p.meleeShow),
     only: _chatOnlyKey(p.only),
     win: _chatWinMap(p.win),
     fontSize: fs_ >= 9 && fs_ <= 24 ? fs_ : 12,
@@ -7075,7 +7090,13 @@ ipcMain.handle('chat-prefs-set', (_e, char, patch) => {
   const p = (cfg.chatPrefs && typeof cfg.chatPrefs === 'object') ? cfg.chatPrefs : {};
   const inc = (patch && typeof patch === 'object') ? patch : {};
   if (inc.fontSize != null) { const n = Math.round(Number(inc.fontSize)); if (n >= 9 && n <= 24) p.fontSize = n; }
-  for (const k of ['group', 'officer', 'custom', 'melee']) if (typeof inc[k] === 'boolean') p[k] = inc[k];
+  for (const k of ['group', 'officer', 'custom', 'melee', 'spells', 'skills']) if (typeof inc[k] === 'boolean') p[k] = inc[k];
+  if (inc.meleeShow && typeof inc.meleeShow === 'object') {
+    // Only the keys sent change, and only to a boolean: the other switches keep what they had.
+    const cur = _chatMeleeShow(p.meleeShow);
+    for (const k of _MELEE_SHOW_KEYS) if (typeof inc.meleeShow[k] === 'boolean') cur[k] = inc.meleeShow[k];
+    p.meleeShow = cur;
+  }
   if (typeof inc.only === 'string') p.only = _chatOnlyKey(inc.only);
   // One window's text settings merge into that window's entry only: another window's are never rewritten.
   if (inc.win && typeof inc.win === 'object') {

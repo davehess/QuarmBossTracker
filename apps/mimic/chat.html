@@ -11,7 +11,14 @@
      The lines live in the agent's memory on THIS PC and are never uploaded. Nothing here is tied to
      EverQuest's screen, so it works on a second monitor like every overlay. */
   /* --bg-alpha: card-surface alpha, driven by the opacity slider via main -> preload 'bg-alpha'. */
-  :root{ --bg-alpha:0.5; --fs:12px; }
+  :root{ --bg-alpha:0.5; --fs:12px;
+    /* Melee by who is swinging, like EQ's own hit colours (the guild lead, 2026-10-14): yours near-white, what hits
+       you red, everyone else's dim grey; a miss keeps its category's hue, dimmer. Spells and Skills have a colour each.
+       Variables, so one place changes them; the colour-blind themes are a body filter the preload applies to every overlay. */
+    --c-melee-mine:#f2f2f2; --c-melee-mine-miss:#a9a9a9;
+    --c-melee-on_me:#ff6b6b; --c-melee-on_me-miss:#a64d4d;
+    --c-melee-others:#8b949e; --c-melee-others-miss:#5f666e;
+    --c-spell:#b392f0; --c-skill:#e3b341; }
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
   #wrap{height:100vh;box-sizing:border-box;display:flex;flex-direction:column;padding:6px 8px;gap:4px}
@@ -156,6 +163,7 @@
       <div class="row" id="textopts"></div>
       <div class="hint" id="wintxt"></div>
       <div class="row nobrk" id="optins"></div>
+      <div class="row" id="meleeopts"></div>
       <div class="row nobrk" id="chans"></div>
       <div class="hint nobrk" id="tellhint"></div>
       <div class="hint nobrk">These lines stay on this PC, in memory, for this window only. Nothing here is uploaded, and Mimic forgets them when it restarts. The ⏱ button can read the last few hours back from the game's own log files on this PC; that is read here and never sent.</div>
@@ -241,7 +249,7 @@
   var _lines = [];             // every line we hold, oldest first (the filter decides what shows)
   var _seq = 0, _lastN = 0, _boot = '';
   var _char = '';              // the character the chip choices are remembered for
-  var _prefs = { fontSize: 12, group: false, officer: false, custom: false, tells: false, melee: false, off: [], offChannels: [], only: '' };
+  var _prefs = { fontSize: 12, group: false, officer: false, custom: false, tells: false, melee: false, spells: false, skills: false, meleeShow: { mine: true, on_me: true, others: true, misses: true }, off: [], offChannels: [], only: '' };
   var _chanNames = {};         // "<character>|<slot number>" -> channel name, learned from lines that carry both (Zeal's /abc shows only the number)
   var _unread = 0;
   var _out = [];               // group ids broken out into their own windows (the Chat window leaves them out)
@@ -339,7 +347,24 @@
     var k = chanKey(l);
     if (k && (_prefs.offChannels || []).indexOf(k) !== -1) return false;
     if (!_isBrk && _prefs.only && onlyKeyOf(l) !== _prefs.only) return false;
+    return meleeShown(l);
+  }
+  // Which melee lines show, like EQ's combat filters: mine / on me / others', and misses. A line with no category
+  // (an agent from before the split) always shows.
+  function meleeShown(l){
+    if (l.ch !== 'melee') return true;
+    var s = _prefs.meleeShow || {};
+    if (l.cat && s[l.cat] === false) return false;
+    if (l.miss && s.misses === false) return false;
     return true;
+  }
+  // The line's colour: a CSS variable per melee category (misses dimmer), one each for Spells and Skills, else the channel's own.
+  function lineColor(l){
+    var base = (_channels[l.ch] || {}).color || '#c9d1d9';
+    if (l.ch === 'melee' && l.cat) return 'var(--c-melee-' + l.cat + (l.miss ? '-miss' : '') + ',' + base + ')';
+    if (l.ch === 'spell') return 'var(--c-spell,' + base + ')';
+    if (l.ch === 'skill') return 'var(--c-skill,' + base + ')';
+    return base;
   }
   function onlyActive(){ return !_isBrk && !!_prefs.only; }
   function tagHtml(l){
@@ -351,14 +376,14 @@
     // "Swapped to X": display only. No timestamp button, so there is nothing to copy; it is not a chat line.
     if (l.sep) return '<div class="sep" data-n="' + l.n + '"><span>' + esc(l.text) + '</span></div>';
     var you = !!l.self, who;
-    if (l.ch === 'zone' || l.ch === 'melee') who = '';
+    if (l.ch === 'zone' || l.ch === 'melee' || l.ch === 'spell' || l.ch === 'skill') who = '';
     else if (l.npc) who = '<span class="who npc">' + esc(l.who) + '</span>';
     else if (you) who = '<span class="who you">You</span>';
     else who = '<span class="who name">' + esc(l.who) + '</span>';
     if (l.to) who += '<span class="arrow">→</span><span class="who name">' + esc(l.to) + '</span>';
     var copied = l.n === _copiedN;
     var otag = tag && l.on ? '<span class="otag" title="heard on ' + esc(l.on) + '">' + esc(l.on) + '</span>' : '';
-    return '<div class="ln' + (l.ch === 'zone' ? ' zone' : '') + '" style="--lc:' + esc((_channels[l.ch] || {}).color || '#c9d1d9') + '" data-n="' + l.n + '"><button type="button" class="tm' + (copied ? ' copied' : '') + '" title="Click to copy this line">' + (copied ? 'copied' : hhmm(l.t)) + '</button>' + tagHtml(l) + otag + who + '<span class="tx">' + (l.ch === 'zone' ? '→ ' : '') + esc(l.text) + '</span></div>';
+    return '<div class="ln' + (l.ch === 'zone' ? ' zone' : '') + '" style="--lc:' + esc(lineColor(l)) + '" data-n="' + l.n + '"><button type="button" class="tm' + (copied ? ' copied' : '') + '" title="Click to copy this line">' + (copied ? 'copied' : hhmm(l.t)) + '</button>' + tagHtml(l) + otag + who + '<span class="tx">' + (l.ch === 'zone' ? '→ ' : '') + esc(l.text) + '</span></div>';
   }
   // One row, with the "heard on" tag where the character changed from the row before it (a swap line resets
   // it: that line already says so). Rows the filter hides do not count, so a one-speaker search tags the
@@ -390,7 +415,7 @@
   function copyLineText(l){
     // a zone change copies as the plain log line, not as something a character said
     if (l.ch === 'zone') return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + 'You have entered ' + l.text + '.';
-    if (l.ch === 'melee') return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + l.text;
+    if (l.ch === 'melee' || l.ch === 'spell' || l.ch === 'skill') return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + l.text;
     var who = l.npc ? l.who : (l.self ? 'You' : l.who);
     if (l.to) who += ' → ' + l.to;
     var t = hhmm(l.t);
@@ -696,7 +721,9 @@
     ['group',   'Group chat',     'Your group\'s private chat'],
     ['officer', 'Officer chat',   'The officer channel'],
     ['custom',  'Custom channels','Other chat channels you have joined'],
-    ['melee',   'Melee',          'Combined melee from the log: your hits and misses, theirs, and pets\'. Off keeps chat readable; right-click the Melee chip to give it a window of its own.']
+    ['melee',   'Melee',          'Combined melee from the log: your hits and misses, theirs, and pets\'. Off keeps chat readable; right-click the Melee chip to give it a window of its own.'],
+    ['spells',  'Spells',         'Your casts, spells landing on you and others, spell damage, resists, fizzles and fades. Right-click the Spells chip to give it a window of its own.'],
+    ['skills',  'Skills',         'Skill-ups, what your skills did (taunt, forage, mend, feign death, hide...), tradeskill combines and disciplines. Right-click the Skills chip to give it a window of its own.']
   ];
   // ── this window's text settings ──────────────────────────────────────────
   // Every Chat window (the main one, and each broken-out group) keeps its own: win[<id>] in the prefs, id
@@ -752,6 +779,30 @@
     if (h) h = '<span>Channels</span>' + h;
     if (el.__wpHtml !== h) { el.innerHTML = h; el.__wpHtml = h; }
   }
+  // What Melee shows (EQ's own combat filters): only offered while Melee is on, and in a Melee breakout's own ⚙.
+  var MELEE_SHOW = [['mine', 'My melee', 'Your swings, and your pet\'s'], ['on_me', 'Hits on me', 'Swings at you'],
+    ['others', 'Others\' melee', 'Everyone else\'s swings, and their pets\''], ['misses', 'Misses', 'Misses, dodges, parries and blocks']];
+  function paintMeleeOpts(){
+    var h = '';
+    if (_prefs.melee && (!_isBrk || brkGroupId() === 'melee')) {
+      var s = _prefs.meleeShow || {};
+      h = '<span>Melee shows</span>';
+      for (var i = 0; i < MELEE_SHOW.length; i++) {
+        var o = MELEE_SHOW[i];
+        h += '<label title="' + esc(o[2]) + '"><input type="checkbox" data-ms="' + o[0] + '"' + (s[o[0]] !== false ? ' checked' : '') + '>' + esc(o[1]) + '</label>';
+      }
+    }
+    var me = document.getElementById('meleeopts');
+    if (me.__wpHtml !== h) { me.innerHTML = h; me.__wpHtml = h; }
+  }
+  document.getElementById('meleeopts').addEventListener('change', function(e){
+    var k = e.target && e.target.getAttribute ? e.target.getAttribute('data-ms') : null;
+    if (!k) return;
+    var patch = {}; patch[k] = !!e.target.checked;
+    _prefs.meleeShow = Object.assign({}, _prefs.meleeShow, patch);
+    savePrefs({ meleeShow: patch });
+    repaint();
+  });
   function paintSettings(){
     var h = '';
     for (var i = 0; i < OPTINS.length; i++) {
@@ -760,7 +811,7 @@
     }
     var oe = document.getElementById('optins');
     if (oe.__wpHtml !== h) { oe.innerHTML = h; oe.__wpHtml = h; }
-    applyWin(); paintChans(); paintOnly();
+    applyWin(); paintChans(); paintOnly(); paintMeleeOpts();
     document.getElementById('tellhint').textContent = _prefs.tells
       ? 'Tells are showing: Settings has Tells on Local or Synced.'
       : 'Tells are off. Choose Local or Synced under Settings → Tells to show them here.';
@@ -851,16 +902,18 @@
   function takePrefs(p){
     if (!p) return;
     var tellsWas = _prefs.tells;
-    var meleeWas = _prefs.melee;
+    var meleeWas = _prefs.melee, spellsWas = _prefs.spells, skillsWas = _prefs.skills, showWas = JSON.stringify(_prefs.meleeShow);
     _prefs = {
       fontSize: p.fontSize || 12, group: !!p.group, officer: !!p.officer, custom: !!p.custom,
-      tells: !!p.tells, melee: !!p.melee, off: Array.isArray(p.off) ? p.off.slice() : [],
+      tells: !!p.tells, melee: !!p.melee, spells: !!p.spells, skills: !!p.skills,
+      meleeShow: { mine: !p.meleeShow || p.meleeShow.mine !== false, on_me: !p.meleeShow || p.meleeShow.on_me !== false, others: !p.meleeShow || p.meleeShow.others !== false, misses: !p.meleeShow || p.meleeShow.misses !== false },
+      off: Array.isArray(p.off) ? p.off.slice() : [],
       offChannels: Array.isArray(p.offChannels) ? p.offChannels.slice() : [],
       only: typeof p.only === 'string' ? p.only : '',
       win: (p.win && typeof p.win === 'object') ? p.win : {}
     };
     paintSettings();
-    if (tellsWas !== _prefs.tells || meleeWas !== _prefs.melee) { purgeGated(); paintChips(); repaint(); }
+    if (tellsWas !== _prefs.tells || meleeWas !== _prefs.melee || spellsWas !== _prefs.spells || skillsWas !== _prefs.skills || showWas !== JSON.stringify(_prefs.meleeShow)) { purgeGated(); paintChips(); repaint(); }
     // The history was read under one set of switches; a change (Tells, Group, Officer, Custom) re-reads it.
     if (_histHours && _connectedOnce && histQuery() !== _histSig) loadHistory();
   }
@@ -893,7 +946,8 @@
   function query(){
     return 'since=' + _seq + '&boot=' + encodeURIComponent(_boot) +
       '&tells=' + (_prefs.tells ? 1 : 0) + '&group=' + (_prefs.group ? 1 : 0) +
-      '&officer=' + (_prefs.officer ? 1 : 0) + '&custom=' + (_prefs.custom ? 1 : 0) + '&melee=' + (_prefs.melee ? 1 : 0);
+      '&officer=' + (_prefs.officer ? 1 : 0) + '&custom=' + (_prefs.custom ? 1 : 0) + '&melee=' + (_prefs.melee ? 1 : 0) +
+      '&spells=' + (_prefs.spells ? 1 : 0) + '&skills=' + (_prefs.skills ? 1 : 0);
   }
   // Channel colours come from the agent's list, so a new channel needs no change here; the chips are
   // repainted when that list changes.

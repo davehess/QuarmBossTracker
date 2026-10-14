@@ -38558,6 +38558,8 @@ const CHAT_CHANNELS = {
   officer: { label: 'Officer', color: '#d29922', tag: 'OF' },
   custom:  { label: 'Custom',  color: '#6e9bd6', tag: '' },
   melee:   { label: 'Melee',   color: '#d0847a', tag: 'M' },
+  spell:   { label: 'Spells',  color: '#b392f0', tag: 'SP' },
+  skill:   { label: 'Skills',  color: '#e3b341', tag: 'SK' },
 };
 // One chip each. `gate` names the policy switch that must be on for these channels to be captured,
 // served and shown; no gate = public, shown by default. A tab is a group plus a filter, so this list
@@ -38578,8 +38580,14 @@ const CHAT_GROUPS = [
   // misses on you, everyone else's and pets'. A flood by nature, so it is a gated group (off until the overlay's
   // ⚙ switches it on), kept in its own small ring, and meant to be broken out into a window of its own.
   { id: 'melee',   label: 'Melee',     channels: ['melee'],   gate: 'melee' },
+  // Spells and Skills (the guild lead, 2026-10-14: "chat can also have separable spell and skill information"):
+  // built exactly like Melee: gated off until the overlay's ⚙ switches them on, a small ring each, and a
+  // breakout window of their own if wanted. Spells = casts, landings, spell damage, resists, fizzles, fades.
+  // Skills = skill-ups and what a skill did (taunt, forage, mend, feign, hide...), tradeskill combines, disciplines.
+  { id: 'spells',  label: 'Spells',    channels: ['spell'],   gate: 'spells' },
+  { id: 'skills',  label: 'Skills',    channels: ['skill'],   gate: 'skills' },
 ];
-const CHAT_POLICY_KEYS = ['tells', 'group', 'officer', 'custom', 'melee'];
+const CHAT_POLICY_KEYS = ['tells', 'group', 'officer', 'custom', 'melee', 'spells', 'skills'];
 
 // First-person lines ("You say, ..."). Group 1 is the text, except the custom-channel and told forms.
 const CHAT_SELF_PATTERNS = [
@@ -38724,7 +38732,16 @@ function classifyChatLine(line, selfName) {
 // So a spell, a DoT, a damage shield or a proc (all `damage` events too) is left out by that list, and the
 // row shows the log's own sentence rather than a rebuilt one. `self` = the swing is yours.
 const CHAT_MELEE_PREFILTER_RX = /points? of damage|, but /;
-function classifyMeleeLine(line) {
+// EQ's own combat-filter split (the guild lead, 2026-10-14: "filter out other's information the same way we do with
+// in game filters"): 'mine' = you swing, or your own pet does (the agent knows it from the charm tracker or Zeal's
+// pet gauge); 'on_me' = something swings at YOU; 'others' = anyone else against anyone else, their pets included.
+// Read off parseEvent's own fields: attacker is null for you, and the log prints the target as the word YOU.
+function _meleeCategory(ev, character) {
+  if (ev.attacker == null) return 'mine';
+  if (character && _petOwnerByName(String(ev.attacker).toLowerCase()) === String(character).toLowerCase()) return 'mine';
+  return String(ev.defender || '').toUpperCase() === 'YOU' ? 'on_me' : 'others';
+}
+function classifyMeleeLine(line, character) {
   if (typeof line !== 'string' || line.charCodeAt(0) !== 91 /* [ */) return null;
   if (!CHAT_MELEE_PREFILTER_RX.test(line)) return null;
   const ts = parseEqTimestamp(line);
@@ -38738,8 +38755,137 @@ function classifyMeleeLine(line) {
   const at = line.indexOf('] ');
   const text = at > 0 ? _chatCleanText(line.slice(at + 2)) : '';
   if (!text) return null;
-  return { ch: 'melee', who: '', text, t: ts.getTime(), self: ev.attacker == null, npc: false };
+  // `miss` = the swing did not land (parseEvent's 'avoid': a miss, dodge, parry, riposte or block).
+  return { ch: 'melee', who: '', text, t: ts.getTime(), self: ev.attacker == null, npc: false, cat: _meleeCategory(ev, character), miss: ev.type === 'avoid' };
 }
+
+// ── Spells and Skills rows (the guild lead, 2026-10-14: "chat can also have separable spell and skill information") ──
+// Same promise as melee: ONE grammar. Every shape below is an existing parser's, not a new regex set:
+//   · parseEvent: cast / "begins to cast" / songs / non-melee damage / DoT ticks / spell crits / heals / resists;
+//   · resolveSelfCastLanding + parseBuffLanding + parseDebuffLanding + parseMechanicLanding: a spell landing on
+//     someone else, by the catalog's own cast_on_other text; the catalog's cast_on_you / spell_fades text (the
+//     same fields noteBlindLine reads) covers a landing on you and a fade;
+//   · _CAST_FAIL_RX + _CH_INTERRUPT_OTHER_RX: fizzles and interrupts;
+//   · _ME_SKILL_LINES, _ME_DISCS, _ME_DISC_OTHER, _DEF_*_RX, _DISC_REFUSAL_RX: the skill and discipline lines Mimic's
+//     own cooldown timers already read.
+// What had no parser anywhere is small and listed once, in CHAT_SKILL_TEXT_RXS (skill-ups, forage, fishing, hide...).
+// Ownership is exclusive, so nothing is shown twice: melee verbs stay in Melee (whether or not that group is on),
+// disciplines stay in Skills, and a skill's RESULT (not its damage) is Skills. Pure functions of the line.
+const CHAT_SPELL_EVENT_RX = /non-melee|taken \d+|begins? (?:to cast|casting|singing)|resist|heal|critical|melody|Your song ends/i;
+const CHAT_SKILL_EVENT_RX = /taunt|stun|fallen to the ground|ducked|ducking|mend/i;
+const CHAT_WORN_OFF_RX = /^Your .+ has worn off\.?$/;
+const CHAT_SKILLUP_RX = /^You have become better at .+! \(\d+\)$/;
+// Skill lines no existing parser reads. [kind, pattern] over the text after the timestamp.
+// ⚠ Only forage and the trap lines are confirmed against the server source (docs/data/class-abilities.json). The
+// rest are EQEmu's string table from memory and have not been seen in a Quarm log yet: if one never fires, check
+// the real line before widening, and do not "fix" a pattern into a guess.
+const CHAT_SKILL_TEXT_RXS = [
+  ['ability', /^You (?:have scrounged up |fail to locate any food nearby)/],                                      // Forage
+  ['ability', /^You (?:have disarmed the trap|fail to disarm the detected trap|have not detected any traps|sense a trap in this direction|don't sense any traps)\.?$/],
+  ['ability', /^You escape from combat, hiding yourself from view\.?$/],                                          // Fading Memories
+  ['ability', /^(?:You cast your line|You caught, |You didn't catch anything|You lost your bait|Your pole broke|You spill your beer while bringing in your line|Trying to catch land locked fish)/],   // fishing
+  ['ability', /^You (?:have hidden yourself from view|failed to hide yourself|stop sneaking|stop hiding)|^You are as quiet as a (?:cat stalking its prey|herd of stampeding elephants)/],   // hide, sneak
+  ['ability', /^You think you are heading /],                                                                    // sense heading
+  ['ability', /^You (?:bind|bandage|have bound) |^You cannot bind wounds/],                                       // bind wound
+  ['ability', /^You .*\bpick(?:ed)? the lock\b|^You (?:have )?(?:successfully )?(?:disarmed|failed to disarm) |^You .*\bpick(?:ed)? .*pocket|^You (?:beg|begged|have begged)\b|^You (?:begin|are now|stop) tracking\b/],   // pick lock, disarm, pickpocket, begging, tracking
+  ['tradeskill', /^(?:You have fashioned the items together to create something new!|You lacked the skills to fashion the items together\.|You can no longer advance your skill from making this item\.)$/],
+];
+// A `damage` event is melee when its verb is on MELEE_ABILITIES and it is neither a damage shield nor a named
+// spell: the very test classifyMeleeLine makes, so a swing is never claimed by both groups.
+function _chatDamageIsMelee(ev) {
+  return !!ev.ability && MELEE_ABILITIES.has(String(ev.ability).toLowerCase()) && !ev.ds && !ev.spellName;
+}
+// The catalog's own cast_on_you / spell_fades text, built once per catalog (noteBlindLine's pattern). Disciplines
+// are split out so their activation and fade lines belong to Skills only.
+let _chatSpellTextsFor = null, _chatSpellTextsVal = null;
+function _chatSpellTexts() {
+  if (_chatSpellTextsVal && _chatSpellTextsFor === _spellByNameLower) return _chatSpellTextsVal;
+  const you = new Set(), fades = new Set(), discFades = new Set();
+  const bare = (t) => String(t).trim().replace(/\.$/, '');
+  for (const e of _spellByNameLower.values()) {
+    if (!e) continue;
+    const isDisc = !!e.you && _ME_DISCS.has(String(e.you).trim());
+    const y = e.you ? bare(e.you) : '', f = e.fades ? bare(e.fades) : '';
+    if (y.length >= 8 && !isDisc) you.add(y);
+    if (f.length >= 8) (isDisc ? discFades : fades).add(f);
+  }
+  _chatSpellTextsVal = { you, fades, discFades };
+  _chatSpellTextsFor = _spellByNameLower;
+  return _chatSpellTextsVal;
+}
+// 'activate' | 'fade' | 'refusal' | null: a discipline line, yours or another player's. Reads Mimic's own tables.
+function _chatDiscKind(body) {
+  if (_ME_DISCS.has(body)) return 'activate';
+  if (_DEF_DOWN_SELF_RX.test(body) || _DEF_DOWN_OTHER_RX.test(body)) return 'fade';
+  if (_DISC_REFUSAL_RX.test(body)) return 'refusal';
+  if (_chatSpellTexts().discFades.has(body.replace(/\.$/, ''))) return 'fade';
+  const rest = body.replace(/\.$/, '');
+  for (const key of _ME_DISC_OTHER.keys()) {
+    if (!rest.endsWith(key)) continue;
+    if (/^[A-Z][a-z]{2,14}$/.test(rest.slice(0, rest.length - key.length).trim())) return 'activate';
+  }
+  return null;
+}
+function _chatSpellKind(line, body, ts, character) {
+  if (_chatDiscKind(body)) return null;                       // a discipline is a skill
+  const bare = body.replace(/\.$/, '');
+  const tx = _chatSpellTexts();
+  if (tx.you.has(bare)) return 'landing';
+  if (tx.fades.has(bare) || CHAT_WORN_OFF_RX.test(body)) return 'fades';
+  if (_CAST_FAIL_RX.test(line) || _CH_INTERRUPT_OTHER_RX.test(line)) return 'interrupt';
+  if (CHAT_SPELL_EVENT_RX.test(body)) {
+    let ev = null;
+    try { ev = parseEvent(line, ts); } catch { ev = null; }
+    if (ev) {
+      switch (ev.type) {
+        case 'cast': case 'dirge_cast': case 'melody_start': case 'melody_stop': return 'cast';
+        case 'heal': case 'crit_heal': return 'heal';
+        case 'resist': case 'spell_resisted': return 'resist';
+        case 'critical': return ev.kind === 'spell' ? 'damage' : null;
+        case 'damage':
+          // Melee owns every swing it would take (its prefilter plus a melee verb). Everything else with a damage
+          // number is a spell, a DoT, a proc or a damage shield, including a proc worded as a swing ("non-melee").
+          if (CHAT_MELEE_PREFILTER_RX.test(line) && _chatDamageIsMelee(ev)) return null;
+          return 'damage';
+        default: break;
+      }
+    }
+  }
+  if (character && resolveSelfCastLanding(line, character)) return 'landing';
+  if (parseBuffLanding(line, character) || parseDebuffLanding(line, character) || parseMechanicLanding(line)) return 'landing';
+  return null;
+}
+function _chatSkillKind(line, body, ts) {
+  if (CHAT_SKILLUP_RX.test(body)) return 'skillup';
+  if (_chatDiscKind(body)) return 'discipline';
+  // Only the skills whose line is a result, not damage ('ht' is a swing, so Melee's) or a cast (Spells').
+  for (const s of _ME_SKILL_LINES) if ((s.key === 'mend' || s.key === 'taunt' || s.key === 'fd') && s.rx.test(body)) return 'ability';
+  for (const [kind, rx] of CHAT_SKILL_TEXT_RXS) if (rx.test(body)) return kind;
+  if (CHAT_SKILL_EVENT_RX.test(body)) {
+    let ev = null;
+    try { ev = parseEvent(line, ts); } catch { ev = null; }
+    if (ev && (ev.type === 'taunt' || ev.type === 'stun' || ev.type === 'feign_death' || ev.type === 'evade' || ev.type === 'mend')) return 'ability';
+  }
+  return null;
+}
+// One log line → { ch: 'spell' | 'skill', who: '', text, t, self, npc: false, kind } or null. `kind` is for tests and is
+// not served. `character` lets a landing of a spell YOU cast be named from your own cast (resolveSelfCastLanding).
+function _classifyExtraLine(line, character, ch) {
+  if (typeof line !== 'string' || line.charCodeAt(0) !== 91 /* [ */) return null;
+  const at = line.indexOf('] ');
+  if (at < 1) return null;
+  const body = line.slice(at + 2).replace(/\s+$/, '');
+  if (!body) return null;
+  const ts = parseEqTimestamp(line);
+  if (!ts) return null;
+  const kind = ch === 'spell' ? _chatSpellKind(line, body, ts, character) : _chatSkillKind(line, body, ts);
+  if (!kind) return null;
+  const text = _chatCleanText(body);
+  if (!text) return null;
+  return { ch, who: '', text, t: ts.getTime(), self: /^Your?\b/.test(body), npc: false, kind };
+}
+function classifySpellLine(line, character) { return _classifyExtraLine(line, character, 'spell'); }
+function classifySkillLine(line) { return _classifyExtraLine(line, '', 'skill'); }
 
 // The overlay's switches, handed over on every poll. Default (nothing asked for, or the overlay went
 // quiet for CHAT_POLICY_TTL_MS) is public channels only.
@@ -38754,7 +38900,7 @@ function setChatPolicy(p, now) {
 function chatPolicyNow(now) {
   const t = now == null ? Date.now() : now;
   if (_chatPolicy && t - _chatPolicyAt <= CHAT_POLICY_TTL_MS) return _chatPolicy;
-  return { tells: false, group: false, officer: false, custom: false, melee: false };
+  return { tells: false, group: false, officer: false, custom: false, melee: false, spells: false, skills: false };
 }
 function chatChannelAllowed(ch, policy) {
   const g = CHAT_GROUPS.find(x => x.channels.indexOf(ch) !== -1);
@@ -38796,21 +38942,42 @@ function chatSwapBetween(prev, cur) {
 // 500) sharing the one sequence counter, so a single cursor still pages both. Memory only, like the chat ring.
 const CHAT_MELEE_RING_MAX = 300;
 const _meleeRing = [];
+// Spells and Skills get a ring of their own for the same reason: a fight casts and procs dozens of lines, and
+// neither may push chat, melee or each other out of its 300.
+const CHAT_SPELL_RING_MAX = 300;
+const CHAT_SKILL_RING_MAX = 300;
+const _spellRing = [];
+const _skillRing = [];
+// channel → its ring, its cap and the policy switch that gates it (the same name the group carries).
+const _chatExtraRings = {
+  melee: { ring: _meleeRing, max: CHAT_MELEE_RING_MAX, gate: 'melee' },
+  spell: { ring: _spellRing, max: CHAT_SPELL_RING_MAX, gate: 'spells' },
+  skill: { ring: _skillRing, max: CHAT_SKILL_RING_MAX, gate: 'skills' },
+};
 function noteLocalChatLine(line, character, now) {
   const policy = chatPolicyNow(now);
   let evt = classifyChatLine(line, character);
-  // Only looked for while the overlay has asked for melee: an overlay that did not leaves nothing accumulating.
-  if (!evt && policy.melee) evt = classifyMeleeLine(line);
+  // Only looked for while the overlay has asked for melee, skills or spells: an overlay that did not leaves nothing
+  // accumulating. Melee first, then Skills, then Spells, so a line is only ever one of them.
+  if (!evt && policy.melee) evt = classifyMeleeLine(line, character);
+  if (!evt && policy.skills) evt = classifySkillLine(line);
+  if (!evt && policy.spells) evt = classifySpellLine(line, character);
   if (!evt) return false;
   if (!chatChannelAllowed(evt.ch, policy)) return false;
-  if (evt.ch === 'melee') {
+  const extra = _chatExtraRings[evt.ch];
+  if (extra) {
+    const ring = extra.ring;
     // Two of your characters in one fight each log the same swing: one copy. The same swing twice in ONE log
-    // (two equal hits in a second) is real, so only a line from a DIFFERENT log counts as a duplicate.
+    // (two equal hits in a second) is real, so only a line from a DIFFERENT log counts as a duplicate. A Spells or
+    // Skills line in the first person ("You begin casting…", "You have become better at…") is that character's
+    // own event, never a second sighting, so only what a bystander sees is de-duplicated.
     const mk = evt.text + '|' + Math.floor(evt.t / 1000);
-    for (let i = _meleeRing.length - 1, n = 0; i >= 0 && n < 40; i--, n++) if (_meleeRing[i].k === mk && _meleeRing[i].on !== (character || '')) return false;
-    _meleeRing.push({ seq: ++_chatSeq, k: mk, t: evt.t, ch: 'melee', who: '', to: null, text: evt.text, self: !!evt.self, npc: false, on: character || '' });
-    const spill = _meleeRing.length - CHAT_MELEE_RING_MAX;
-    if (spill > 0) _meleeRing.splice(0, spill);
+    if (evt.ch === 'melee' || !/^Your?\b/.test(evt.text)) {
+      for (let i = ring.length - 1, n = 0; i >= 0 && n < 40; i--, n++) if (ring[i].k === mk && ring[i].on !== (character || '')) return false;
+    }
+    ring.push({ seq: ++_chatSeq, k: mk, t: evt.t, ch: evt.ch, who: '', to: null, text: evt.text, self: !!evt.self, npc: false, on: character || '', cat: evt.cat || null, miss: !!evt.miss });
+    const spill = ring.length - extra.max;
+    if (spill > 0) ring.splice(0, spill);
     return true;
   }
   const key = chatLineKey(evt, character);
@@ -38836,14 +39003,16 @@ function serializeLocalChat(q, now) {
   if (q && q.boot && String(q.boot) !== CHAT_BOOT) { since = 0; reset = true; }
   if (!(since >= 0) || since > _chatSeq) { since = 0; reset = true; }
   const lines = [];
-  // Chat and melee rows page together, newest first, by their shared sequence number. The melee ring is
-  // only read while the switch is on, so the common case is the chat ring alone.
-  let mi = policy.melee ? _meleeRing.length - 1 : -1;
-  let ci = _chatRing.length - 1;
-  while ((ci >= 0 || mi >= 0) && lines.length < CHAT_PAGE_MAX) {
-    const cs = ci >= 0 ? _chatRing[ci].seq : -1, ms = mi >= 0 ? _meleeRing[mi].seq : -1;
-    const fromMelee = ms > cs;
-    const l = fromMelee ? _meleeRing[mi--] : _chatRing[ci--];
+  // Chat, melee, spell and skill rows page together, newest first, by their shared sequence number. A side ring is
+  // only read while its switch is on, so the common case is the chat ring alone.
+  const feeds = [_chatRing];
+  for (const x of Object.values(_chatExtraRings)) if (policy[x.gate]) feeds.push(x.ring);
+  const at = feeds.map(r => r.length - 1);
+  while (lines.length < CHAT_PAGE_MAX) {
+    let best = -1, bestSeq = -1;
+    for (let f = 0; f < feeds.length; f++) if (at[f] >= 0 && feeds[f][at[f]].seq > bestSeq) { best = f; bestSeq = feeds[f][at[f]].seq; }
+    if (best < 0) break;
+    const l = feeds[best][at[best]--];
     if (l.seq <= since) break;
     if (l.swap) { lines.push({ n: l.seq, t: l.t, sep: 1, from: l.from, to: l.to, text: l.text }); continue; }
     if (!chatChannelAllowed(l.ch, policy)) continue;
@@ -38854,6 +39023,8 @@ function serializeLocalChat(q, now) {
     if (l.to) o.to = l.to;
     if (l.cn) o.cn = l.cn;
     if (l.cnum) o.cnum = l.cnum;
+    if (l.cat) o.cat = l.cat;
+    if (l.miss) o.miss = true;
     lines.push(o);
   }
   lines.reverse();
@@ -38873,7 +39044,7 @@ function _handleLocalChat(req, res) {
   return send(200, body);
 }
 function _resetLocalChatForTest() {
-  _chatRing.length = 0; _meleeRing.length = 0; _chatSeq = 0; _chatPolicy = null; _chatPolicyAt = 0;
+  _chatRing.length = 0; _meleeRing.length = 0; _spellRing.length = 0; _skillRing.length = 0; _chatSeq = 0; _chatPolicy = null; _chatPolicyAt = 0;
 }
 // ── end Local chat window ──
 
@@ -55889,6 +56060,7 @@ module.exports = {
   CHAT_GROUPS, CHAT_CHANNELS, CHAT_RING_MAX, CHAT_PAGE_MAX, CHAT_POLICY_TTL_MS, _resetLocalChatForTest,
   _uploadBuffersForTest: () => ({ chatBuffer, tellBuffer, recentTells: stats.recentTells }),
   _chatRingForTest: () => _chatRing, _meleeRingForTest: () => _meleeRing, CHAT_MELEE_RING_MAX, _handleLocalChatForTest: _handleLocalChat,
+  classifySpellLine, classifySkillLine, _rebuildLandingIndexesForTest: () => { _rebuildBuffMatchers(); _rebuildMechanicMatchers(); }, _spellRingForTest: () => _spellRing, _skillRingForTest: () => _skillRing, CHAT_SPELL_RING_MAX, CHAT_SKILL_RING_MAX,
   chatLineKey, chatSwapBetween, chatReadLogBackwards, chatHistoryFiles, buildChatHistory, getChatHistory,
   _handleLocalChatHistoryForTest: _handleLocalChatHistory, _resetChatHistoryForTest, CHAT_HISTORY_MAX, CHAT_SWAP_MIN_MS,
   _noteBuffDurationsFromState, buffDurationStats, buffDurationTable, _noteBuffDurationSample,

@@ -11,7 +11,7 @@
 //
 // Run: npx vitest run test/chat-overlay.test.js
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -155,9 +155,9 @@ describe('CHAT_GROUPS: the channel groups are a list of { id, label, channels[] 
     }
     expect(Object.keys(owner).sort()).toEqual(Object.keys(agent.CHAT_CHANNELS).sort());
   });
-  it('the gated groups are exactly tells, group, officer, custom and melee: the private ones, and the flood', () => {
+  it('the gated groups are exactly tells, group, officer, custom, melee, spells and skills: the private ones, and the floods', () => {
     const gated = Object.fromEntries(agent.CHAT_GROUPS.filter(g => g.gate).map(g => [g.id, g.gate]));
-    expect(gated).toEqual({ tell: 'tells', group: 'group', officer: 'officer', custom: 'custom', melee: 'melee' });
+    expect(gated).toEqual({ tell: 'tells', group: 'group', officer: 'officer', custom: 'custom', melee: 'melee', spells: 'spells', skills: 'skills' });
   });
   it('the public channels have no gate', () => {
     for (const id of ['guild', 'raid', 'say', 'ooc', 'auction', 'npc']) {
@@ -219,7 +219,7 @@ describe('what the feed keeps and shows', () => {
     agent.setChatPolicy({ officer: true }, T0);
     expect(agent.noteLocalChatLine(L('Rethlan tells Wolfpackofficer:5, \'a\''), ME, T0 + 10_000)).toBe(true);
     expect(agent.noteLocalChatLine(L('Rethlan tells Wolfpackofficer:5, \'b\''), ME, T0 + agent.CHAT_POLICY_TTL_MS + 1)).toBe(false);
-    expect(agent.chatPolicyNow(T0 + agent.CHAT_POLICY_TTL_MS + 1)).toEqual({ tells: false, group: false, officer: false, custom: false, melee: false });
+    expect(agent.chatPolicyNow(T0 + agent.CHAT_POLICY_TTL_MS + 1)).toEqual({ tells: false, group: false, officer: false, custom: false, melee: false, spells: false, skills: false });
   });
   it('one person\'s main and alt logs hear the same guild line: one copy', () => {
     expect(agent.noteLocalChatLine(L('Corvale tells the guild, \'hi\''), 'Aldenmar', T0)).toBe(true);
@@ -548,7 +548,7 @@ describe('Mimic prefs: chips are remembered per character, tells follow the Tell
   beforeEach(() => { globalThis.__H = {}; globalThis.__S = []; globalThis.__P = []; });
   it('defaults: 12 px, group and channels on, officer off, nothing hidden, tells off', async () => {
     const m = load({});
-    expect(await m.get('Aldenmar')).toEqual({ fontSize: 12, group: true, officer: false, custom: true, tells: false, off: [], melee: false, offChannels: [], only: '', win: {} });
+    expect(await m.get('Aldenmar')).toEqual({ fontSize: 12, group: true, officer: false, custom: true, tells: false, off: [], melee: false, spells: false, skills: false, meleeShow: { mine: true, on_me: true, others: true, misses: true }, offChannels: [], only: '', win: {} });
   });
   it('group and channels stay off once switched off', async () => {
     const m = load({ chatPrefs: { group: false, custom: false } });
@@ -610,7 +610,7 @@ describe('Mimic prefs: chips are remembered per character, tells follow the Tell
     const m = load({ chatPrefs: old });
     expect(await m.get('Aldenmar')).toEqual({
       fontSize: 15, group: false, officer: true, custom: true, tells: false, off: ['raid'],
-      melee: false, offChannels: [], only: '', win: {},
+      melee: false, spells: false, skills: false, meleeShow: { mine: true, on_me: true, others: true, misses: true }, offChannels: [], only: '', win: {},
     });
     await m.set('Aldenmar', { offChannels: ['general'] });
     const stored = m.saved().pop().chatPrefs;
@@ -621,6 +621,42 @@ describe('Mimic prefs: chips are remembered per character, tells follow the Tell
     expect(await m.get('Aldenmar')).toMatchObject({ group: true, custom: true, officer: false, melee: false });
     await m.set('Aldenmar', { melee: true, officer: true });
     expect(await m.get('Aldenmar')).toMatchObject({ melee: true, officer: true });
+  });
+  it('spells and skills are opt-in like melee: default off, saved only as booleans, and old prefs load unchanged', async () => {
+    const m = load({});
+    expect(await m.get('Aldenmar')).toMatchObject({ spells: false, skills: false });
+    await m.set('Aldenmar', { spells: true, skills: true, melee: true });
+    expect(await m.get('Aldenmar')).toMatchObject({ spells: true, skills: true, melee: true });
+    expect(await m.get('Brackwyn')).toMatchObject({ spells: true, skills: true });          // shared by every character, like melee
+    await m.set('Aldenmar', { spells: false });
+    expect(await m.get('Aldenmar')).toMatchObject({ spells: false, skills: true });         // one switch never moves the other
+    await m.set('Aldenmar', { spells: 'yes', skills: 1 });                                  // the renderer cannot store a non-boolean
+    expect(await m.get('Aldenmar')).toMatchObject({ spells: false, skills: true });
+    const old = load({ chatPrefs: { fontSize: 15, melee: true, byChar: { aldenmar: { off: ['raid'] } } } });   // saved before Spells/Skills existed
+    expect(await old.get('Aldenmar')).toMatchObject({ fontSize: 15, melee: true, spells: false, skills: false, off: ['raid'] });
+    await old.set('Aldenmar', { skills: true });
+    expect(old.saved().pop().chatPrefs).toMatchObject({ fontSize: 15, melee: true, skills: true, byChar: { aldenmar: { off: ['raid'] } } });   // no key dropped
+  });
+  it('what Melee shows round-trips: all on by default, only booleans stored, one switch never moves another, old prefs unchanged', async () => {
+    const m = load({});
+    const ALL = { mine: true, on_me: true, others: true, misses: true };
+    expect((await m.get('Aldenmar')).meleeShow).toEqual(ALL);
+    await m.set('Aldenmar', { meleeShow: { others: false } });
+    expect((await m.get('Aldenmar')).meleeShow).toEqual({ ...ALL, others: false });
+    expect((await m.get('Brackwyn')).meleeShow).toEqual({ ...ALL, others: false });          // shared by every character
+    await m.set('Aldenmar', { meleeShow: { misses: false } });
+    expect((await m.get('Aldenmar')).meleeShow).toEqual({ mine: true, on_me: true, others: false, misses: false });
+    await m.set('Aldenmar', { meleeShow: { others: true } });
+    expect((await m.get('Aldenmar')).meleeShow).toEqual({ mine: true, on_me: true, others: true, misses: false });
+    await m.set('Aldenmar', { meleeShow: { mine: 'no', on_me: 0, evil: false, others: null } });   // the renderer cannot store a non-boolean or a new key
+    expect((await m.get('Aldenmar')).meleeShow).toEqual({ mine: true, on_me: true, others: true, misses: false });
+    expect(Object.keys(m.saved().pop().chatPrefs.meleeShow).sort()).toEqual(['misses', 'mine', 'on_me', 'others'].sort());
+    await m.set('Aldenmar', { meleeShow: 'all' });                                           // not an object: ignored
+    expect((await m.get('Aldenmar')).meleeShow.misses).toBe(false);
+    const old = load({ chatPrefs: { fontSize: 15, melee: true, byChar: { aldenmar: { off: ['raid'] } } } });   // saved before the filters existed
+    expect((await old.get('Aldenmar')).meleeShow).toEqual(ALL);
+    await old.set('Aldenmar', { meleeShow: { others: false } });
+    expect(old.saved().pop().chatPrefs).toMatchObject({ fontSize: 15, melee: true, byChar: { aldenmar: { off: ['raid'] } }, meleeShow: { others: false } });
   });
   it('"show only" is saved as its own key and never touches the saved switches', async () => {
     const m = load({ chatPrefs: { officer: true, byChar: { aldenmar: { off: ['raid'] } }, offChannels: ['ports'] } });
@@ -1043,7 +1079,7 @@ function script_() { return CHAT_HTML.slice(CHAT_HTML.indexOf('<script>'), CHAT_
 // real. opts: { brk: '<group id>' } makes it a breakout window; { lines: [...] } is what the window has seen.
 function overlay(prefs, opts = {}) {
   const s = script_();
-  const base = { fontSize: 12, group: false, officer: false, custom: false, tells: false, melee: false, off: [], offChannels: [], only: '', win: {} };
+  const base = { fontSize: 12, group: false, officer: false, custom: false, tells: false, melee: false, spells: false, skills: false, off: [], offChannels: [], only: '', win: {} };
   return evalBlock(`
     var _groups = ${JSON.stringify(agent.CHAT_GROUPS)};
     var _channels = ${JSON.stringify(agent.CHAT_CHANNELS)};
@@ -1205,7 +1241,7 @@ describe('Melee: one combined group, off by default, in a ring of its own', () =
   });
   it('there is one melee grammar: parseEvent\'s, with MELEE_ABILITIES as the list of melee verbs', () => {
     const code = stripJs(AGENT_SRC);
-    const fn = sliceBlock(code, 'function classifyMeleeLine(line) {', '\n}\n');
+    const fn = sliceBlock(code, 'function classifyMeleeLine(line, character) {', '\n}\n');
     expect(fn).toContain('parseEvent(line, ts)');
     expect(fn).toContain('MELEE_ABILITIES.has(');
     expect(fn).not.toMatch(/new RegExp|\.match\(|\/\^?\\\[/);
@@ -1258,10 +1294,403 @@ describe('Melee: one combined group, off by default, in a ring of its own', () =
     const code = stripJs(AGENT_SRC);
     expect(code.match(/classifyMeleeLine\(/g)).toHaveLength(2);                  // its definition, and noteLocalChatLine
     const note = sliceBlock(code, 'function noteLocalChatLine(line, character, now) {', '\n}\n');
-    expect(note).toContain('classifyMeleeLine(line)');
+    expect(note).toContain('classifyMeleeLine(line, character)');
     expect(note).not.toMatch(/chatBuffer|tellBuffer|enqueueUpload|fetch\(|writeFile/);
     const tap = code.indexOf('noteLocalChatLine(line, b.character)');
     expect(code.lastIndexOf('if (!_sourceExcluded) {', tap)).toBeGreaterThan(code.lastIndexOf('\n      const _sourceExcluded', tap) - 1);
+  });
+});
+
+// ── 9b. Round 5 (the guild lead, 2026-10-14): Melee filtered the way EQ's own combat filters are, and coloured by category ──
+describe('Melee categories, filters and colours (mine / on me / others\', misses)', () => {
+  beforeEach(() => agent._resetLocalChatForTest());
+  afterEach(() => agent._setZealStateForTest('Aldenmar', null));
+  const CASES = [
+    ['your hit',                'You slash a goblin for 120 points of damage.',                       'mine',   false],
+    ['your special',            'You flying kick a goblin for 200 points of damage.',                 'mine',   false],
+    ['your miss',               'You try to slash a goblin, but a goblin dodges!',                    'mine',   true],
+    ['a hit on you',            'a goblin hits YOU for 45 points of damage.',                         'on_me',  false],
+    ['a miss at you',           'a goblin tries to hit YOU, but YOU parry!',                          'on_me',  true],
+    ['a mob missing you',       'A frenzied initiate tries to slash YOU, but misses!',                'on_me',  true],
+    ['another player\'s hit',   'Brackwyn slashes a goblin for 90 points of damage.',                 'others', false],
+    ['a mob hitting another',   'a goblin hits Brackwyn for 30 points of damage.',                    'others', false],
+    ['a mob missing another',   'A frenzied initiate tries to slash Zarrin, but misses!',             'others', true],
+    ['another player\'s miss',  'Brackwyn tries to slash a goblin, but a goblin ripostes!',           'others', true],
+  ];
+  for (const [label, text, cat, miss] of CASES) {
+    it(`${label} is "${cat}"${miss ? ' and a miss' : ' and a hit'}`, () => {
+      expect(agent.classifyMeleeLine(L(text), ME), text).toMatchObject({ ch: 'melee', cat, miss });
+    });
+  }
+  it('your own pet\'s swings are "mine", but only for the character it belongs to; anyone else\'s pet is "others"', () => {
+    agent._setZealStateForTest('Aldenmar', { gauges: [{ slot: 16, text: 'Gobby' }] });
+    const pet = L('Gobby bites a goblin for 12 points of damage.');
+    expect(agent.classifyMeleeLine(pet, 'Aldenmar')).toMatchObject({ cat: 'mine', miss: false });
+    expect(agent.classifyMeleeLine(L('Gobby tries to bite a goblin, but misses!'), 'Aldenmar')).toMatchObject({ cat: 'mine', miss: true });
+    expect(agent.classifyMeleeLine(pet, 'Brackwyn')).toMatchObject({ cat: 'others' });         // heard on someone else's log
+    expect(agent.classifyMeleeLine(pet)).toMatchObject({ cat: 'others' });                      // no character: nothing is claimed
+    expect(agent.classifyMeleeLine(L('Fluffy bites a goblin for 12 points of damage.'), 'Aldenmar')).toMatchObject({ cat: 'others' });
+    expect(agent.classifyMeleeLine(L('a goblin hits Gobby for 9 points of damage.'), 'Aldenmar')).toMatchObject({ cat: 'others' });   // a hit ON your pet is not a hit on you
+  });
+  it('the category rides the ring and the page; a hit carries no miss flag', () => {
+    agent.setChatPolicy({ melee: true }, 1);
+    for (const [, text] of CASES) agent.noteLocalChatLine(L(text), ME, 1);
+    const lines = agent.serializeLocalChat({ melee: true }, 1).lines;
+    expect(lines.map(l => l.cat)).toEqual(CASES.map(c => c[2]));
+    expect(lines.map(l => !!l.miss)).toEqual(CASES.map(c => c[3]));
+    expect(lines[0]).not.toHaveProperty('miss');
+  });
+  it('the agent still hands over every melee line: the filter is the overlay\'s, so a switch is instant and loses nothing', () => {
+    agent.setChatPolicy({ melee: true }, 1);
+    for (const [, text] of CASES) agent.noteLocalChatLine(L(text), ME, 1);
+    expect(agent._meleeRingForTest()).toHaveLength(CASES.length);
+  });
+
+  // The overlay's own filter, run for real over the lines the agent classified.
+  const rows = () => CASES.map(([, text], i) => ({ n: i + 1, t: 0, ch: 'melee', who: '', text, ...agent.classifyMeleeLine(L(text), ME), }));
+  const shown = (prefs) => { const ov = overlay({ melee: true, ...prefs }); const f = ov.makeFilter(ov.shownGroupIds()); return rows().filter(l => ov.lineVisible(f, l)).map(l => l.cat + (l.miss ? '-miss' : '')); };
+  it('nothing changes by default: all four switches are on, and a line with no category always shows', () => {
+    expect(shown({})).toHaveLength(CASES.length);
+    expect(shown({ meleeShow: { mine: true, on_me: true, others: true, misses: true } })).toHaveLength(CASES.length);
+    const ov = overlay({ melee: true, meleeShow: { mine: false, on_me: false, others: false, misses: false } });
+    expect(ov.lineVisible(ov.makeFilter(ov.shownGroupIds()), { n: 1, t: 0, ch: 'melee', who: '', text: 'x' })).toBe(true);
+  });
+  it('switching off Others\' melee hides everyone else\'s lines and keeps mine and the ones at me', () => {
+    const got = shown({ meleeShow: { mine: true, on_me: true, others: false, misses: true } });
+    expect(got).not.toContain('others');
+    expect(got).not.toContain('others-miss');
+    expect(got).toEqual(expect.arrayContaining(['mine', 'mine-miss', 'on_me', 'on_me-miss']));
+    expect(got).toHaveLength(CASES.filter(c => c[2] !== 'others').length);
+  });
+  it('each of My melee and Hits on me hides only its own category', () => {
+    expect(shown({ meleeShow: { mine: false } }).some(x => x.startsWith('mine'))).toBe(false);
+    expect(shown({ meleeShow: { mine: false } })).toHaveLength(CASES.filter(c => c[2] !== 'mine').length);
+    expect(shown({ meleeShow: { on_me: false } }).some(x => x.startsWith('on_me'))).toBe(false);
+    expect(shown({ meleeShow: { on_me: false } })).toHaveLength(CASES.filter(c => c[2] !== 'on_me').length);
+  });
+  it('Misses hides misses in every category and leaves every hit', () => {
+    const got = shown({ meleeShow: { misses: false } });
+    expect(got.some(x => x.endsWith('-miss'))).toBe(false);
+    expect(got).toHaveLength(CASES.filter(c => !c[3]).length);
+  });
+  it('the switches only touch Melee: chat, spells and skills never pass through them', () => {
+    const ov = overlay({ melee: true, spells: true, skills: true, guild: true, meleeShow: { mine: false, on_me: false, others: false, misses: false } });
+    const f = ov.makeFilter(ov.shownGroupIds());
+    for (const ch of ['guild', 'spell', 'skill']) expect(ov.lineVisible(f, { n: 1, t: 0, ch, who: '', text: 'x', cat: 'others', miss: true }), ch).toBe(true);
+  });
+  it('a Melee breakout obeys the same switches', () => {
+    const ov = overlay({ melee: true, meleeShow: { others: false } }, { brk: 'melee' });
+    const f = ov.makeFilter(ov.shownGroupIds());
+    const [mine, , , , , , others] = rows();
+    expect(ov.lineVisible(f, mine)).toBe(true);
+    expect(ov.lineVisible(f, others)).toBe(false);
+  });
+
+  it('a colour per category, misses dimmer, as CSS variables with the channel colour as the fallback', () => {
+    const css = stripCss(CHAT_HTML.slice(CHAT_HTML.indexOf('<style>'), CHAT_HTML.indexOf('</style>')));
+    const v = (name) => (css.match(new RegExp('--' + name + ':(#[0-9a-f]{6})', 'i')) || [])[1];
+    const names = ['c-melee-mine', 'c-melee-mine-miss', 'c-melee-on_me', 'c-melee-on_me-miss', 'c-melee-others', 'c-melee-others-miss', 'c-spell', 'c-skill'];
+    for (const n of names) expect(v(n), n).toBeTruthy();
+    expect(new Set(names.map(v)).size).toBe(names.length);                       // eight different colours
+    const lum = (hex) => { const n = parseInt(hex.slice(1), 16); return 0.2126 * (n >> 16) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255); };
+    for (const c of ['mine', 'on_me', 'others']) expect(lum(v(`c-melee-${c}-miss`)), `${c} miss is dimmer`).toBeLessThan(lum(v(`c-melee-${c}`)));
+    const red = (hex) => { const n = parseInt(hex.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
+    const [r, g, b] = red(v('c-melee-on_me'));
+    expect(r).toBeGreaterThan(g * 1.8); expect(r).toBeGreaterThan(b * 1.8);       // on me is red
+    const [mr, mg, mb] = red(v('c-melee-mine'));
+    expect(Math.min(mr, mg, mb)).toBeGreaterThan(220);                             // mine is near-white
+    const [gr, gg, gb] = red(v('c-melee-others'));
+    expect(Math.max(gr, gg, gb) - Math.min(gr, gg, gb)).toBeLessThan(40);          // others' is grey
+    const ov = overlay({ melee: true, spells: true, skills: true });
+    const html = (l) => ov.lineHtml({ n: 1, t: 0, who: '', text: 'x', ...l });
+    expect(html({ ch: 'melee', cat: 'mine' })).toContain('--lc:var(--c-melee-mine,');
+    expect(html({ ch: 'melee', cat: 'mine', miss: true })).toContain('--lc:var(--c-melee-mine-miss,');
+    expect(html({ ch: 'melee', cat: 'on_me' })).toContain('--lc:var(--c-melee-on_me,');
+    expect(html({ ch: 'melee', cat: 'others', miss: true })).toContain('--lc:var(--c-melee-others-miss,');
+    expect(html({ ch: 'melee' })).toContain('--lc:' + agent.CHAT_CHANNELS.melee.color);          // no category: the channel colour, as before
+    expect(html({ ch: 'spell' })).toContain('--lc:var(--c-spell,');
+    expect(html({ ch: 'skill' })).toContain('--lc:var(--c-skill,');
+    expect(html({ ch: 'guild' })).toContain('--lc:' + agent.CHAT_CHANNELS.guild.color);          // other channels untouched
+  });
+  it('the ⚙ offers the four switches while Melee is on, and sends only the one that changed', () => {
+    const code = stripJs(CHAT_HTML);
+    for (const k of ['mine', 'on_me', 'others', 'misses']) expect(code).toContain(`['${k}', `);
+    expect(code).toContain("'My melee'");
+    expect(code).toContain("'Hits on me'");
+    expect(code).toContain("'Others\\' melee'");
+    expect(code).toMatch(/savePrefs\(\{ meleeShow: patch \}\)/);
+    expect(code).toMatch(/if \(_prefs\.melee && \(!_isBrk \|\| brkGroupId\(\) === 'melee'\)\)/);
+  });
+});
+
+// ── 10. Round 5 (the guild lead, 2026-10-14): "chat can also have separable spell and skill information" ─────────────
+describe('Spells [SP] and Skills [SK]: two more combined groups, built the way Melee was', () => {
+  // A tiny catalog in the real shape ({ id, name, you, other, fades, dur, durf, good }): the landing and fade texts
+  // are the spell's own, which is the only thing the classifier reads from it. The invented names are not anyone.
+  const CATALOG = [
+    { id: 1, name: 'Spirit of Wolf', you: 'You feel the spirit of wolf enter you.', other: 'is surrounded by a brief lupine aura.', fades: 'The spirit of wolf fades.', dur: 100, durf: 3, good: 1 },
+    { id: 2, name: 'Tashania', you: 'You feel your magic resistance drop.', other: 'glances nervously about.', fades: 'You feel less nervous.', dur: 50, durf: 3, good: 0 },
+    { id: 3, name: 'Hundred Fists Discipline', you: 'Your fists begin to blur.', other: '\'s fists begin to blur.', fades: 'Your fists slow down.', dur: 10, durf: 1, good: 1 },
+  ];
+  beforeAll(() => { agent._setSpellCatalogForTest(CATALOG); agent._rebuildLandingIndexesForTest(); });
+  afterAll(() => { agent._setSpellCatalogForTest([]); agent._rebuildLandingIndexesForTest(); });
+  beforeEach(() => agent._resetLocalChatForTest());
+
+  // [label, log text, kind]
+  const SPELLS = [
+    ['your cast',                  'You begin casting Spirit of Wolf.', 'cast'],
+    ['your song',                  'You begin singing Selo`s Accelerando.', 'cast'],
+    ['another player\'s cast',     'Brackwyn begins to cast a spell.', 'cast'],
+    ['a mob\'s cast',              'a goblin shaman begins to cast a spell.', 'cast'],
+    ['a landing on you',           'You feel the spirit of wolf enter you.', 'landing'],
+    ['a buff landing on another',  'Brackwyn is surrounded by a brief lupine aura.', 'landing'],
+    ['a debuff landing on a mob',  'a goblin glances nervously about.', 'landing'],
+    ['your spell damage',          'Your Frost Shard hits a goblin for 300 points of non-melee damage.', 'damage'],
+    ['a proc worded as a swing',   'You hit a goblin for 5 points of non-melee damage.', 'damage'],
+    ['hit by non-melee',           'a goblin was hit by non-melee for 14 points of damage.', 'damage'],
+    ['a DoT tick',                 'a goblin has taken 12 damage from your Flame Lick.', 'damage'],
+    ['a spell crit',               'Brackwyn delivers a critical blast!(300)', 'damage'],
+    ['a heal on you',              'You have been healed for 50 points of damage.', 'heal'],
+    ['your outgoing resist',       'Your target resisted the Tashania spell.', 'resist'],
+    ['a resist of a mob\'s spell', 'You resist the Tashania spell!', 'resist'],
+    ['a fizzle',                   'Your spell fizzles!', 'interrupt'],
+    ['an interrupt',               'Your spell is interrupted.', 'interrupt'],
+    ['another caster interrupted', 'Brackwyn\'s casting is interrupted!', 'interrupt'],
+    ['a spell worn off',           'Your Spirit of Wolf spell has worn off.', 'fades'],
+    ['a fade from the catalog',    'The spirit of wolf fades.', 'fades'],
+  ];
+  const SKILLS = [
+    ['a skill-up',                 'You have become better at Swimming! (45)', 'skillup'],
+    ['a language skill-up',        'You have become better at Common Tongue! (100)', 'skillup'],
+    ['a taunt',                    'You taunt a goblin to ignore others and attack you!', 'ability'],
+    ['a taunt attempt',            'You attempt to taunt a goblin.', 'ability'],
+    ['mend',                       'You mend your wounds and heal some damage.', 'ability'],
+    ['a failed mend',              'You have failed to mend your wounds.', 'ability'],
+    ['a failed feign death',       'You have fallen to the ground.', 'ability'],
+    ['another player\'s feign',    'Brackwyn has fallen to the ground.', 'ability'],
+    ['forage',                     'You have scrounged up some food.', 'ability'],
+    ['a failed forage',            'You fail to locate any food nearby.', 'ability'],
+    ['a trap disarm',              'You have disarmed the trap.', 'ability'],
+    ['an evade',                   'You have momentarily ducked away from the main combat.', 'ability'],
+    ['a warrior stun',             'You stun a goblin.', 'ability'],
+    ['a discipline starting',      'Your fists begin to blur.', 'discipline'],
+    ['a discipline of another',    'Brackwyn assumes a defensive fighting style.', 'discipline'],
+    ['a discipline fading',        'Your fists slow down.', 'discipline'],
+    ['a discipline refused',       'You can use a new discipline in 3 minutes 10 seconds.', 'discipline'],
+    ['a tradeskill success',       'You have fashioned the items together to create something new!', 'tradeskill'],
+    ['a tradeskill failure',       'You lacked the skills to fashion the items together.', 'tradeskill'],
+  ];
+  // Everything Melee already takes, plus the spell and skill lines' near neighbours that are NOT theirs.
+  const MELEE_LINES = [
+    'You slash a goblin for 120 points of damage.', 'You kick a goblin for 20 points of damage.', 'You bash a goblin for 40 points of damage.',
+    'You try to bash a goblin, but miss!', 'You try to kick a goblin, but a goblin dodges!', 'You harm touch a goblin for 500 points of damage.',
+    'a goblin hits YOU for 45 points of damage.', 'a goblin tries to hit YOU, but YOU parry!', 'Brackwyn hits a goblin for 90 points of damage.',
+  ];
+
+  for (const [label, text, kind] of SPELLS) {
+    it(`Spells: ${label} lands in the Spells group, tagged [SP]`, () => {
+      const evt = agent.classifySpellLine(L(text), ME);
+      expect(evt, text).toMatchObject({ ch: 'spell', who: '', text, kind, npc: false });
+      expect(agent.CHAT_CHANNELS[evt.ch].tag).toBe('SP');
+      expect(agent.CHAT_GROUPS.find(g => g.channels.includes(evt.ch))).toMatchObject({ id: 'spells', gate: 'spells' });
+    });
+  }
+  for (const [label, text, kind] of SKILLS) {
+    it(`Skills: ${label} lands in the Skills group, tagged [SK]`, () => {
+      const evt = agent.classifySkillLine(L(text));
+      expect(evt, text).toMatchObject({ ch: 'skill', who: '', text, kind, npc: false });
+      expect(agent.CHAT_CHANNELS[evt.ch].tag).toBe('SK');
+      expect(agent.CHAT_GROUPS.find(g => g.channels.includes(evt.ch))).toMatchObject({ id: 'skills', gate: 'skills' });
+    });
+  }
+  it('first-person lines are marked yours; the rest are not', () => {
+    expect(agent.classifySpellLine(L('You begin casting Spirit of Wolf.'), ME).self).toBe(true);
+    expect(agent.classifySpellLine(L('Brackwyn begins to cast a spell.'), ME).self).toBe(false);
+    expect(agent.classifySkillLine(L('Brackwyn has fallen to the ground.')).self).toBe(false);
+  });
+
+  it('melee lines are Melee\'s alone: neither Spells nor Skills takes a swing, a kick, a bash or a harm touch', () => {
+    for (const t of MELEE_LINES) {
+      expect(agent.classifyMeleeLine(L(t)), t).not.toBeNull();
+      expect(agent.classifySkillLine(L(t)), `${t} must not be a skill`).toBeNull();
+      expect(agent.classifySpellLine(L(t), ME), `${t} must not be a spell`).toBeNull();
+    }
+  });
+  it('a skill is never a spell and a spell is never a skill, and disciplines belong to Skills whichever switch is on', () => {
+    for (const [, t] of SKILLS) expect(agent.classifySpellLine(L(t), ME), `${t} must not be a spell`).toBeNull();
+    for (const [, t] of SPELLS) expect(agent.classifySkillLine(L(t)), `${t} must not be a skill`).toBeNull();
+  });
+  it('a proc worded as a swing is Spells\'; a swing is Melee\'s: ownership does not depend on which switches are on', () => {
+    const proc = L('You hit a goblin for 5 points of non-melee damage.');
+    expect(agent.classifyMeleeLine(proc)).toBeNull();
+    expect(agent.classifySpellLine(proc, ME)).not.toBeNull();
+    agent.setChatPolicy({ melee: true, spells: true, skills: true }, 1);
+    agent.noteLocalChatLine(proc, ME, 1);
+    agent.noteLocalChatLine(L('You slash a goblin for 120 points of damage.'), ME, 1);
+    expect(agent._meleeRingForTest().map(r => r.text)).toEqual(['You slash a goblin for 120 points of damage.']);
+    expect(agent._spellRingForTest().map(r => r.text)).toEqual(['You hit a goblin for 5 points of non-melee damage.']);
+    expect(agent._skillRingForTest()).toHaveLength(0);
+  });
+  it('chat is chat: a quoted spell or skill line is never pulled out of a message', () => {
+    agent.setChatPolicy({ melee: true, spells: true, skills: true }, 1);
+    for (const t of [
+      'Corvale tells the guild, \'You begin casting Spirit of Wolf.\'', 'Corvale tells the raid, \'You have become better at Swimming! (45)\'',
+      'Zarrin says, \'Brackwyn begins to cast a spell.\'', 'You say, \'You have fallen to the ground.\'',
+    ]) expect(agent.noteLocalChatLine(L(t), ME, 1), t).toBe(true);
+    expect(agent._spellRingForTest()).toHaveLength(0);
+    expect(agent._skillRingForTest()).toHaveLength(0);
+    expect(agent._chatRingForTest()).toHaveLength(4);
+  });
+  it('lines that are neither are dropped, not guessed at', () => {
+    for (const t of ['Zarrin yawns.', 'You have entered the Plane of Fire.', 'Welcome to EverQuest!', 'You are hungry.', 'Corvale has become better at Swimming! (45)']) {
+      expect(agent.classifySpellLine(L(t), ME), t).toBeNull();
+      expect(agent.classifySkillLine(L(t)), t).toBeNull();
+    }
+    expect(agent.classifySpellLine('not a log line', ME)).toBeNull();
+    expect(agent.classifySkillLine('')).toBeNull();
+  });
+
+  it('nothing is captured until the overlay asks, each switch is its own, and the default view never carries either', () => {
+    const cast = L('You begin casting Spirit of Wolf.'), skillup = L('You have become better at Swimming! (45)');
+    expect(agent.noteLocalChatLine(cast, ME, 1)).toBe(false);                         // no policy yet
+    agent.setChatPolicy({}, 1);
+    expect(agent.noteLocalChatLine(cast, ME, 1)).toBe(false);
+    expect(agent.noteLocalChatLine(skillup, ME, 1)).toBe(false);
+    expect(agent._spellRingForTest()).toHaveLength(0);
+    expect(agent._skillRingForTest()).toHaveLength(0);
+    agent.setChatPolicy({ spells: true }, 2);                                          // Spells alone
+    expect(agent.noteLocalChatLine(cast, ME, 2)).toBe(true);
+    expect(agent.noteLocalChatLine(skillup, ME, 2)).toBe(false);
+    agent.setChatPolicy({ skills: true }, 3);                                          // Skills alone
+    expect(agent.noteLocalChatLine(skillup, ME, 3)).toBe(true);
+    expect(agent.noteLocalChatLine(L('You begin casting Spirit of Wolf. '), ME, 3)).toBe(false);
+    expect(agent.serializeLocalChat({ spells: true, skills: true }, 4).lines.map(l => l.ch)).toEqual(['spell', 'skill']);
+    expect(agent.serializeLocalChat({ spells: true }, 5).lines.map(l => l.ch)).toEqual(['spell']);
+    expect(agent.serializeLocalChat({ skills: true }, 5).lines.map(l => l.ch)).toEqual(['skill']);
+    expect(agent.serializeLocalChat({}, 6).lines).toHaveLength(0);                     // asked off: held, not served
+  });
+  it('/api/chat reads spells=1 and skills=1 as the switches', () => {
+    agent.setChatPolicy({ spells: true, skills: true }, Date.now());
+    agent.noteLocalChatLine(L('You begin casting Spirit of Wolf.'), ME);
+    agent.noteLocalChatLine(L('You have become better at Swimming! (45)'), ME);
+    const get = (qs) => { const res = { code: null, body: null, writeHead(c) { this.code = c; }, end(b) { this.body = b; } };
+      agent._handleLocalChatForTest({ url: '/api/chat?since=0' + qs, headers: {} }, res); return JSON.parse(res.body); };
+    expect(get('&spells=1&skills=1').lines.map(l => l.ch)).toEqual(['spell', 'skill']);
+    expect(get('&spells=1').lines.map(l => l.ch)).toEqual(['spell']);
+    expect(get('').lines).toEqual([]);
+    expect(get('&spells=1').groups.map(g => g.id)).toEqual(expect.arrayContaining(['spells', 'skills']));
+  });
+  it('in the overlay both stay out of the main view until their switch is on, then are chips like any group, and break out', () => {
+    const sp = { n: 1, t: 0, ch: 'spell', who: '', text: 'You begin casting Spirit of Wolf.' };
+    const sk = { n: 2, t: 0, ch: 'skill', who: '', text: 'You have become better at Swimming! (45)' };
+    const off = overlay({});
+    expect(off.shownGroupIds()).not.toContain('spells');
+    expect(off.shownGroupIds()).not.toContain('skills');
+    expect(off.makeFilter(off.shownGroupIds())(sp)).toBe(false);
+    expect(off.makeFilter(off.shownGroupIds())(sk)).toBe(false);
+    const on = overlay({ spells: true });                                              // one switch does not bring the other
+    expect(on.shownGroupIds()).toContain('spells');
+    expect(on.shownGroupIds()).not.toContain('skills');
+    expect(on.makeFilter(on.shownGroupIds())(sp)).toBe(true);
+    expect(on.makeFilter(on.shownGroupIds())(sk)).toBe(false);
+    const both = overlay({ spells: true, skills: true });
+    expect(both.makeFilter(both.shownGroupIds())(sk)).toBe(true);
+    for (const [id, line] of [['spells', sp], ['skills', sk]]) {
+      const brk = overlay({ spells: true, skills: true }, { brk: id });
+      expect(brk.makeFilter(brk.shownGroupIds())(line), id).toBe(true);
+      const still = overlay({}, { brk: id });
+      expect(still.makeFilter(still.shownGroupIds())(line), `${id} breakout is still gated`).toBe(false);
+    }
+    expect(both.lineHtml(sp)).toContain('[SP]');
+    expect(both.lineHtml(sk)).toContain('[SK]');
+    expect(both.lineHtml(sp)).not.toContain('class="who');                             // no speaker, like melee and zone lines
+  });
+  it('both are breakable into windows of their own with their own text settings, like Melee', () => {
+    const win = { spells: { fontSize: 10, lineGap: 'compact', times: false, tags: false }, skills: { fontSize: 16 } };
+    expect(overlay({ win }, { brk: 'spells' }).winCfg()).toEqual({ fontSize: 10, lineGap: 'compact', times: false, tags: false });
+    expect(overlay({ win }, { brk: 'skills' }).winCfg()).toEqual({ fontSize: 16, lineGap: 'normal', times: true, tags: true });
+    expect(overlay({ win }, { brk: 'spells' }).winId()).toBe('spells');
+    // the group ids are letters only, which is what main.js accepts for a breakout and for a window id
+    for (const id of ['spells', 'skills']) expect(id).toMatch(/^[a-z]{1,16}$/);
+  });
+  it('the overlay\'s ⚙ lists both switches and sends them with every poll', () => {
+    const code = stripJs(CHAT_HTML);
+    expect(code).toContain("['spells',  'Spells',");
+    expect(code).toContain("['skills',  'Skills',");
+    expect(code).toMatch(/'&spells=' \+ \(_prefs\.spells \? 1 : 0\) \+ '&skills=' \+ \(_prefs\.skills \? 1 : 0\)/);
+    expect(code).toMatch(/spells: !!p\.spells, skills: !!p\.skills/);
+  });
+
+  it('a spell or skill flood cannot push anything out: a ring each, capped at 300, one cursor over all four', () => {
+    agent.setChatPolicy({ melee: true, spells: true, skills: true }, 1);
+    for (let i = 0; i < 5; i++) agent.noteLocalChatLine(L(`Corvale tells the guild, 'line ${i}'`), ME, 1);
+    for (let i = 0; i < 10; i++) agent.noteLocalChatLine(`[Wed Oct 14 21:11:0${i} 2026] You slash a goblin for ${100 + i} points of damage.`, ME, 1);
+    for (let i = 0; i < 2000; i++) {
+      const s = String(i % 60).padStart(2, '0');
+      agent.noteLocalChatLine(`[Wed Oct 14 21:12:${s} 2026] You begin casting Spell Number ${i}.`, ME, 1);
+      agent.noteLocalChatLine(`[Wed Oct 14 21:13:${s} 2026] You have become better at Skill ${i}! (${i % 200})`, ME, 1);
+    }
+    expect(agent.CHAT_SPELL_RING_MAX).toBe(300);
+    expect(agent.CHAT_SKILL_RING_MAX).toBe(300);
+    expect(agent._spellRingForTest()).toHaveLength(300);
+    expect(agent._skillRingForTest()).toHaveLength(300);
+    expect(agent._spellRingForTest().pop().text).toBe('You begin casting Spell Number 1999.');   // the newest are kept
+    expect(agent._chatRingForTest().filter(r => r.ch === 'guild')).toHaveLength(5);              // chat untouched
+    expect(agent._meleeRingForTest()).toHaveLength(10);                                          // melee untouched
+    const first = agent.serializeLocalChat({ melee: true, spells: true, skills: true }, 1);
+    const seqs = first.lines.map(l => l.n);
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+    expect(first.lines.length).toBeLessThanOrEqual(agent.CHAT_PAGE_MAX);
+    expect(agent.serializeLocalChat({ melee: true, spells: true, skills: true, since: first.seq }, 1).lines).toHaveLength(0);
+    // a switch that is off leaves that ring unread
+    expect(agent.serializeLocalChat({ spells: true }, 1).lines.every(l => l.ch === 'spell')).toBe(true);
+  });
+  it('a bystander\'s line heard by two of your characters is one copy; your own first-person lines are each kept', () => {
+    agent.setChatPolicy({ spells: true, skills: true }, 1);
+    const other = L('Brackwyn begins to cast a spell.');
+    expect(agent.noteLocalChatLine(other, 'Aldenmar', 1)).toBe(true);
+    expect(agent.noteLocalChatLine(other, 'Corvale', 1)).toBe(false);
+    const mine = L('You begin casting Spirit of Wolf.');
+    expect(agent.noteLocalChatLine(mine, 'Aldenmar', 1)).toBe(true);
+    expect(agent.noteLocalChatLine(mine, 'Corvale', 1)).toBe(true);                    // two characters, two casts
+    const up = L('You have become better at Swimming! (45)');
+    expect(agent.noteLocalChatLine(up, 'Aldenmar', 1)).toBe(true);
+    expect(agent.noteLocalChatLine(up, 'Corvale', 1)).toBe(true);
+    expect(agent._spellRingForTest()).toHaveLength(3);
+    expect(agent._skillRingForTest()).toHaveLength(2);
+  });
+
+  it('there is no second grammar: the classifiers call the agent\'s own parsers and the catalog\'s own texts', () => {
+    const code = stripJs(AGENT_SRC);
+    const spellKind = sliceBlock(code, 'function _chatSpellKind(line, body, ts, character) {', '\n}\n');
+    for (const used of ['parseEvent(line, ts)', 'resolveSelfCastLanding(line, character)', 'parseBuffLanding(line, character)',
+      'parseDebuffLanding(line, character)', 'parseMechanicLanding(line)', '_CAST_FAIL_RX.test(line)', '_CH_INTERRUPT_OTHER_RX.test(line)',
+      '_chatSpellTexts()', '_chatDamageIsMelee(ev)', 'CHAT_MELEE_PREFILTER_RX.test(line)']) expect(spellKind, used).toContain(used);
+    expect(spellKind).not.toMatch(/new RegExp|\.match\(|\.exec\(/);                  // no pattern of its own: it only asks the parsers
+    const skillKind = sliceBlock(code, 'function _chatSkillKind(line, body, ts) {', '\n}\n');
+    for (const used of ['parseEvent(line, ts)', '_chatDiscKind(body)', '_ME_SKILL_LINES']) expect(skillKind, used).toContain(used);
+    const disc = sliceBlock(code, 'function _chatDiscKind(body) {', '\n}\n');
+    for (const used of ['_ME_DISCS', '_ME_DISC_OTHER', '_DEF_DOWN_SELF_RX', '_DEF_DOWN_OTHER_RX', '_DISC_REFUSAL_RX']) expect(disc, used).toContain(used);
+    // the only patterns written here are the skill lines no parser reads, in one list
+    expect(code).toContain('const CHAT_SKILL_TEXT_RXS = [');
+  });
+  it('local only, excluded characters skipped: both enter through the same guarded call as chat, and are read nowhere else', () => {
+    const code = stripJs(AGENT_SRC);
+    expect(code.match(/classifySpellLine\(/g)).toHaveLength(2);                          // its definition, and noteLocalChatLine
+    expect(code.match(/classifySkillLine\(/g)).toHaveLength(2);
+    const note = sliceBlock(code, 'function noteLocalChatLine(line, character, now) {', '\n}\n');
+    expect(note).toContain('classifySpellLine(line, character)');
+    expect(note).toContain('classifySkillLine(line)');
+    expect(note).not.toMatch(/chatBuffer|tellBuffer|enqueueUpload|fetch\(|writeFile/);
+    const block = stripJs(AGENT_SRC.slice(AGENT_SRC.indexOf('// ── Spells and Skills rows'), AGENT_SRC.indexOf('// The overlay\'s switches, handed over')));
+    expect(block.length).toBeGreaterThan(2000);                                          // the anchors found the block
+    expect(block).not.toMatch(/chatBuffer|tellBuffer|enqueueUpload|fetch\(|writeFile|fs\./);
+    const tap = code.indexOf('noteLocalChatLine(line, b.character)');
+    expect(code.lastIndexOf('if (!_sourceExcluded) {', tap)).toBeGreaterThan(code.lastIndexOf('\n      const _sourceExcluded', tap) - 1);
+  });
+  it('history stays chat only: neither group is read back from the log files', () => {
+    const hist = stripJs(HISTORY_BLOCK);
+    expect(hist).not.toMatch(/classifyMeleeLine|classifySpellLine|classifySkillLine/);
   });
 });
 
