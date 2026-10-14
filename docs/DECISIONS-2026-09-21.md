@@ -10709,5 +10709,16 @@ the Bastion of Thunder at the time.
 - **Calls:** Spells show My spells / On me / Others' spells; Skills show My skills / Others' skills; all on by default; shades of each
   group's hue. Resists, fizzles and interrupts count as mine (no separate switch). Known edge: your self-buff landing on you reads
   "on me", because EQ's landing text does not say who cast it.
+
+### 325. The Bristlebane chat agent's Tower deploy is in the repo; `reserveTokensFloor` is a trap (2026-10-14)
+- **Research (sourced, OpenClaw docs + source):** the V5 error's hint is stale. `reserveTokensFloor` defaulted to 20000 already, and
+  from OpenClaw 2026.8 the key is **removed** — an unknown key makes the gateway refuse to start. The overflow comes from one big tool
+  result or a context window smaller than declared. ⚠ This corrects this session's earlier advice to set it.
+- **Landed (main):** `deploy/openclaw-bristlebane/` — `docker-compose.yml` (Coolify Compose from Git; busybox init service chowns the
+  named volumes to uid 1000 and seeds the config once; pinned `ghcr.io/openclaw/openclaw:2026.10.3`; no ports), `openclaw.seed.json5`
+  (`tools.profile: "messaging"`, an honest 64K `contextWindow` = `num_ctx`, `midTurnPrecheck`, smaller bootstrap caps, Discord via
+  env SecretRef, placeholders only), `README.md` (deploy + V5 cutover). Self-host wizard §3 entry added.
+- **Open:** the deploy token (§323), V5's model server on the LAN at a real 64K context, the `<…>` ids, stopping V5's gateway first,
+  and resetting the Bristlebane token on the cutover. Untested on Coolify: volume naming and `service_completed_successfully`.
 - **Open:** the token; V5's model server must listen on the LAN (and declare a context large enough for the 20000 reserve); the
   step files (`01-step0-discover.md`) live on V5 and are not in the repo.
