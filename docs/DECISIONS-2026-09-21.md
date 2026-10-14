@@ -10039,3 +10039,22 @@ Harmony, Hide/Sneak for non-rogues).
   Rallos Zek step) before it opens Doomfire; Aerin`Dar's projection flags only holders of the Justice flag.
 - **Backfill answer:** Opt-in Logs and `--since` read flag grants, checklist lines, Seer recitals and witnessed
   hails, the same as live.
+
+### 278. /pop/raid: one page for the raid night (2026-10-14, web 1.8.148 main)
+
+- **The call** (the guild lead, 2026-10-13): *"this is our target list for tomorrow. make us a raid page that has
+  preflag checking, travel guide, expectations, and maps with paths preferably"*. Targets: Grummus; Manaetic
+  Prototypes X, IX, XI and the Behemoth; Vhaksiz and Mujaki; Terris Thule; Aerin`Dar. A new page, so it went
+  live with the [beta] marker (§135).
+- **Travel facts from the guild lead:** the guild-instance doors are in the buildings around the PoK book in
+  Tranquility, grouped by tier: tier 1 south, tier 2 north, more of tier 2 and tier 3 east. And: *"in order to
+  zone into new zones we do need to zone into live first via the standard portals"*. The page says both; it
+  does not name which side Valor's door is on, only that Valor is tier 2.
+- **What it shows:** a preflag table for everyone signed up to the night's event (`rh_events`/`rh_signups`, the
+  roster as fallback), each target's must-have steps from `web/lib/popSteps.ts`, travel and boss notes read off
+  Quarm's scripts and spawn tables ("(inferred)" where the scripts do not say), and a map per zone with the
+  route, the markers and the patrol. Walls come from the EQEmu layer only (`zone_map_lines.segs`), never the
+  Brewall art. Innovation runs in the guild's order: X, IX, XI, then the Behemoth. The travel notes fold behind
+  "Click here for more info", like /pop's top.
+- **Where:** `web/lib/raidPlan.ts` (all content), `web/app/pop/raid/` (page, map, walls), `test/pop-raid-plan.test.js`.
+  The plan is dated for one night; the next raid needs a new plan or the file edited.
