@@ -51,6 +51,9 @@ function harness({ eqRunning = false, pending = { version: '9.9.9' }, win = null
     let _eqRunning    = ${eqRunning};
     let __eqNext      = ${eqRunning};
     const autoUpdater = { quitAndInstall: __quitAndInstall };
+    // The real _installUpdateNow (save positions, stop the agent, then quitAndInstall) is covered by
+    // test/mimic-graceful-update-exit.test.js; here it only has to be the thing that installs.
+    const _installUpdateNow = () => { autoUpdater.quitAndInstall(true, true); return Promise.resolve(true); };
     const appendAgentLog = (s) => __log.push(String(s).trim());
     const _checkEqRunning = async () => __eqNext;
     const applyAllVisibility = () => {};

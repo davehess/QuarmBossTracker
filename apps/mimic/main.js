@@ -3931,6 +3931,7 @@ function _resolveBounds(boundsKey, sigKey, def, legacySigKey) {
 // signature lets the next launch decide whether the saved coords are still
 // valid for the current monitor layout.
 const _boundsSaveTimers = {};
+const _boundsSaveWins = {};   // key -> the window whose save is pending (the graceful shutdown flushes these)
 // The size to SAVE for a window. The right-click menu stretches a short overlay
 // to 420 px so it has room to draw (overlay-ensure-min-height) and stashes the
 // real bounds with the height it gave (grownH, at grownY). That height is a
@@ -3952,20 +3953,26 @@ function _settledBounds(b, stash) {
   }
   return { x: b.x, y: b.y, width: b.width, height: b.height };
 }
+// Put one window's current bounds into `cfg` (no write): _writeBounds saves it at once, and the
+// graceful shutdown applies every pending window to ONE cfg and writes the file once.
+function _applyBounds(cfg, key, win) {
+  const b = _settledBounds(win.getBounds(), win.__wpPreMenuBounds);
+  cfg[key] = { x: b.x, y: b.y, width: b.width, height: b.height };
+  cfg[key + 'Sig'] = _screenSignature();
+  // Remembered per screen setup — but not while the screens are settling,
+  // or Windows' own shove off a dead monitor would overwrite the real layout.
+  if (Date.now() >= _displaySettleUntil) _rememberLayout(cfg, cfg[key + 'Sig'], key, b);
+}
 function _writeBounds(key, win) {
   try {
-    const b = _settledBounds(win.getBounds(), win.__wpPreMenuBounds);
     const cfg = loadConfig();
-    cfg[key] = { x: b.x, y: b.y, width: b.width, height: b.height };
-    cfg[key + 'Sig'] = _screenSignature();
-    // Remembered per screen setup — but not while the screens are settling,
-    // or Windows' own shove off a dead monitor would overwrite the real layout.
-    if (Date.now() >= _displaySettleUntil) _rememberLayout(cfg, cfg[key + 'Sig'], key, b);
+    _applyBounds(cfg, key, win);
     saveConfig(cfg);
   } catch {}
 }
 function _persistBounds(key, win) {
   if (!win || win.isDestroyed()) return;
+  _boundsSaveWins[key] = win;
   clearTimeout(_boundsSaveTimers[key]);
   _boundsSaveTimers[key] = setTimeout(() => { _boundsSaveTimers[key] = null; _writeBounds(key, win); }, 400);
 }
@@ -4056,6 +4063,92 @@ function _flushBounds(key, win) {
   clearTimeout(_boundsSaveTimers[key]);
   _boundsSaveTimers[key] = null;
   _writeBounds(key, win);
+}
+
+// ── Graceful shutdown: ONE way out for Quit, every update install and the OS ──────────────
+// The guild lead, 2026-10-14: "when installing a new version, please exit gracefully and save
+// window position". Quit used to kill the agent on the spot and drop any bounds save still
+// waiting out its 400 ms debounce, and each update path (tray, dashboard button, the "Restart
+// now" dialog, the unattended install when EQ closes) called quitAndInstall with neither:
+// a window moved in the last 400 ms came back where it was, and on Windows kill() is a hard
+// stop, so the agent's own exit hooks (the upload queue's sync flush) never ran.
+// Order: bounds (one config write, with any patch the caller needs in the same write) →
+// stop the watchers → ask the agent to stop and wait a short while → the caller quits or
+// installs. The wait is capped, so a stuck agent can delay an install by seconds, never block it.
+const AGENT_STOP_TIMEOUT_MS = 3000;
+function _flushAllBounds(cfgPatch) {
+  // A height dragged in the last 400 ms is a floor; those write their own config entry.
+  try { for (const [, win] of _overlayEntries()) _flushFloor(win); } catch { /* best effort */ }
+  let cfg = null;
+  for (const key of Object.keys(_boundsSaveTimers)) {
+    if (!_boundsSaveTimers[key]) continue;
+    clearTimeout(_boundsSaveTimers[key]);
+    _boundsSaveTimers[key] = null;
+    const win = _boundsSaveWins[key];
+    if (!win || win.isDestroyed()) continue;
+    try { if (!cfg) cfg = loadConfig(); _applyBounds(cfg, key, win); } catch { /* one bad window must not lose the rest */ }
+  }
+  if (cfgPatch) { if (!cfg) cfg = loadConfig(); Object.assign(cfg, cfgPatch); }
+  if (cfg) saveConfig(cfg);
+}
+// Ask the agent to stop through its own /api/shutdown (saves its session, runs its exit hooks,
+// flushes the durable upload queue). Resolves true when it exited by itself, false when it had to
+// be killed (no answer, or still running after the timeout). Never rejects. Does NOT set
+// `quitting`, so the agent's exit handler still relaunches it: that is the hot-swap restart.
+function _stopAgentGracefully(timeoutMs) {
+  const proc = agentProc;
+  if (!proc) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (clean) => { if (settled) return; settled = true; clearTimeout(timer); resolve(clean); };
+    const hardKill = () => { try { proc.kill(); } catch { /* already gone */ } };
+    const timer = setTimeout(() => { hardKill(); finish(false); }, timeoutMs || AGENT_STOP_TIMEOUT_MS);
+    proc.once('exit', () => finish(true));
+    try {
+      const req = http.request({ host: '127.0.0.1', port: agentPort, path: '/api/shutdown', method: 'POST', timeout: 1500 }, (res) => { res.resume(); });
+      req.on('error', hardKill);                       // not listening yet: nothing to wait for
+      req.on('timeout', () => req.destroy());
+      req.end();
+    } catch { hardKill(); }
+  });
+}
+let _shutdownP = null;
+let _shutdownDone = false;
+function _gracefulShutdown(reason, cfgPatch) {
+  if (_shutdownP) return _shutdownP;   // a second click, or Quit and an install at once, shares the first
+  quitting = true;
+  try { appendAgentLog(`[mimic] shutting down cleanly (${reason})\n`); } catch { /* log only */ }
+  try { _flushAllBounds(cfgPatch); }
+  catch (e) { try { appendAgentLog(`[mimic] saving window positions failed: ${e && e.message}\n`); } catch { /* log only */ } }
+  try { _stopEqPolling(); _stopFocusWatcher(); } catch { /* best effort */ }
+  _shutdownP = _stopAgentGracefully(AGENT_STOP_TIMEOUT_MS).then((clean) => {
+    _shutdownDone = true;
+    try { appendAgentLog(`[mimic] agent ${clean ? 'stopped cleanly' : 'did not stop in time — killed'}\n`); } catch { /* log only */ }
+  });
+  return _shutdownP;
+}
+// The install did not happen (quitAndInstall threw): undo the shutdown so Mimic is usable again.
+function _abortShutdown() {
+  _shutdownP = null; _shutdownDone = false; quitting = false;
+  try { _startEqPolling(); _onFocusGateOptionChanged(); } catch { /* best effort */ }
+  try { if (!agentProc) launchAgent(); } catch { /* best effort */ }
+}
+// Every update install goes through here: the tray item, the dashboard button, the "Restart now"
+// dialog and the unattended install when EQ closes. A second call while one is under way is a no-op.
+let _installingUpdate = false;
+async function _installUpdateNow(reason, cfgPatch) {
+  if (_installingUpdate || !autoUpdater) return false;
+  _installingUpdate = true;
+  try {
+    await _gracefulShutdown('update: ' + reason, cfgPatch);
+    autoUpdater.quitAndInstall(true, true);
+    return true;
+  } catch (e) {
+    try { appendAgentLog(`[updater] quitAndInstall failed: ${e && e.message}\n`); } catch { /* log only */ }
+    _installingUpdate = false;
+    _abortShutdown();
+    return false;
+  }
 }
 
 // Apply lock state to an overlay WITHOUT restarting anything. Locked =
@@ -5880,15 +5973,9 @@ function _installPendingUpdateOnEqClose() {
     if (!updatePending) return;
     if (_mimicWindowInUse()) { _installHeldFor = ver; appendAgentLog('[updater] the Mimic window was opened — holding the install\n'); return; }
     appendAgentLog(`[updater] installing v${ver} now (EQ closed)\n`);
-    // Mark the relaunch as unattended so the new instance starts to TRAY.
-    // Written before quitAndInstall because that call does not return.
-    try {
-      const c = loadConfig();
-      c.pendingSilentRelaunch = true;
-      saveConfig(c);
-    } catch (e) { void e; }
-    try { autoUpdater.quitAndInstall(true, true); }
-    catch (e) { appendAgentLog(`[updater] quitAndInstall failed: ${e && e.message}\n`); }
+    // Mark the relaunch as unattended so the new instance starts to TRAY. It rides the shutdown's
+    // single config write, which lands before quitAndInstall (that call does not return).
+    _installUpdateNow('EQ closed', { pendingSilentRelaunch: true });
   }, EQ_CLOSE_INSTALL_GRACE_MS);
 }
 
@@ -8375,9 +8462,7 @@ function makeTrayIcon() {
 }
 let _trayMenu = null;
 function _quitMimic() {
-  quitting = true;
-  if (agentProc) { try { agentProc.kill(); } catch {} }
-  app.quit();
+  _gracefulShutdown('quit').then(() => app.quit(), () => app.quit());
 }
 // Save the graphics-card choice. It only takes hold at startup, so when the saved choice now differs
 // from what this run started with, `ask` offers the restart (tray, Settings); setup passes ask=false
@@ -8668,7 +8753,7 @@ function buildTrayMenu() {
       } };
 
   const updateItem = updatePending
-    ? { label: `Restart to install update v${updatePending.version}`, click: () => { try { autoUpdater && autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); } } }
+    ? { label: `Restart to install update v${updatePending.version}`, click: () => { _installUpdateNow('tray'); } }
     : { label: 'Check for updates…',
         // Manual check covers BOTH update channels — the Electron shell AND
         // the agent hot-swap (the guild lead, 2026-07-16: "check for updates also
@@ -9127,7 +9212,7 @@ async function checkAgentUpdate(opts) {
     // Restart ONLY the agent child. The exit handler relaunches via
     // launchAgent(), which re-reads the freshly-written AGENT_DIR/index.js.
     restartBackoff = 1000;
-    if (agentProc) { try { agentProc.kill(); } catch {} }
+    if (agentProc) _stopAgentGracefully(AGENT_STOP_TIMEOUT_MS);   // lets it flush its upload queue; the exit handler relaunches
     else { launchAgent(); }
   } catch (err) {
     appendAgentLog(`[mimic] agent update check failed: ${err && err.message ? err.message : err}\n`);
@@ -9324,7 +9409,7 @@ function wireAutoUpdater() {
         message: `Mimic v${updatePending.version} is ready to install.`,
         detail: 'Restart now to apply the update. Your settings and agent state are preserved.',
       }).then(({ response }) => {
-        if (response === 0) { try { autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); } }
+        if (response === 0) _installUpdateNow('restart-now dialog');
       });
     }
   });
@@ -12302,7 +12387,7 @@ ipcMain.handle('set-alpha-channel', async (_e, on) => {
 });
 // Dashboard "update ready" banner button → apply the downloaded update now.
 ipcMain.handle('restart-to-update', () => {
-  try { autoUpdater && autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); }
+  _installUpdateNow('dashboard');
   return true;
 });
 // Real resource numbers, not a promise.
@@ -12595,7 +12680,15 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => { /* stay alive in tray */ });
-app.on('before-quit', () => {
+app.on('before-quit', (e) => {
+  // A quit nobody routed through _gracefulShutdown (the OS ending the session, electron-updater's
+  // own install-on-quit, a stray app.quit): hold it until the positions are saved and the agent
+  // has stopped, then quit again. The losing second instance has nothing to save.
+  if (_gotSingleInstanceLock && !_shutdownDone) {
+    try { e.preventDefault(); } catch { /* not cancelable here */ }
+    _gracefulShutdown('app quit').then(() => app.quit(), () => app.quit());
+    return;
+  }
   quitting = true;
   // Settings asks before closing with unsaved edits (a beforeunload), and in
   // Electron that would also cancel the QUIT. Its draft is already on disk, so

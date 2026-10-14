@@ -267,7 +267,7 @@
    "{\"label\":\"Receive beta updates\",\"type\":\"checkbox\",\"checked\":false,\"enabled\":true,\"click\":\"(mi) => setBetaChannel(!!mi.checked, 'tray')\"}",
    "{\"label\":\"Resource use — what Mimic costs this machine\",\"click\":\"() => openResources()\"}",
    "{\"label\":\"Restart agent\",\"click\":\"async () => { appendAgentLog('[mimic] tray \\\"Restart agent\\\" clicked\\\\n'); if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); } }\"}",
-   "{\"label\":\"Restart to install update v9.9.9\",\"click\":\"() => { try { autoUpdater && autoUpdater.quitAndInstall(true, true); } catch (e) { console.warn('[updater] quitAndInstall failed', e); } }\"}",
+   "{\"label\":\"Restart to install update v9.9.9\",\"click\":\"() => { _installUpdateNow('tray'); }\"}",
    "{\"label\":\"Resume Discord DMs now\",\"enabled\":false,\"click\":\"() => _setTellsDmPause(0)\"}",
    "{\"label\":\"Send feedback — bug or idea\",\"click\":\"() => shell.openExternal(`http://127.0.0.1:${agentPort}/#feedback`)\"}",
    "{\"label\":\"Settings…\",\"click\":\"ref:openSettings\"}",
