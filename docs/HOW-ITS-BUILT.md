@@ -1057,6 +1057,12 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   signature as the floating Save and never holding the token; `_offerDraft` at the end of `load()`;
   a `beforeunload` bar asks before closing. `before-quit` destroys the Settings window, because in
   Electron a cancelled unload also cancels the quit.
+- **Chat overlay** (`chat.html`, key `chat`, agent 3.7.165 · Mimic beta, §300): `classifyChatLine` (quoted and Zeal-abbreviated
+  shapes) → `noteLocalChatLine` (beside the tell tap, inside `!_sourceExcluded`) → `_chatRing` (500, memory only) → `GET /api/chat`
+  (`since`/`boot` cursor, page ≤200, `_localOriginOk`). Groups are data (`CHAT_GROUPS`, `{id,label,channels,gate}`); the page paints
+  through `makeFilter(groupIds)`, so tabs (design A) are a group list away. Gated groups (tells → `tellsMode`; group / officer /
+  custom → the overlay's ⚙ switches) are captured only while the latest poll asked (15 s lapse). Prefs: `cfg.chatPrefs`
+  (`chat-prefs-get/-set`). Test: `test/chat-overlay.test.js`.
 - **/who overlay** (`who.html`): fixed height (`wp:who:height`, drag grip, double-click = fit), a
   scrolling `#body`, CLASS/GUILD chips (`whoFacet`/`whoFilterRows`), sort (`whoSortRows`), and one
   document-level hover owner (`_zoneOf`) so the wheel reaches the list. **ZONE** switch (agent

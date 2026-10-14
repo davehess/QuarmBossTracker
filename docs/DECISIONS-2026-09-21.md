@@ -114,7 +114,8 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Map: raid targets + shared escort trails** (§299) | Built, committed locally, NOT pushed: bot 3.1.263 on `claude/raid-targets-bot` (off `main`), agent on `claude/raid-targets-agent` (off `beta`). Inert until both ship | the guild lead: route the bot to `main` after 00:30 ET on a raid night, then the agent to `beta`; two Mimics in the hedge maze, one targets Thelin, the other's Map draws his trail; the MA targets a mob and the other's focus ring lands on it. A session: update `/privacy` (§299) |
+| **Map: raid targets + shared escort trails** (§299) | Shipped: bot 3.1.263 on main, agent 3.7.166 on Mimic beta, `/privacy` updated | the guild lead: two Mimics in the hedge maze, one targets Thelin, the other's Map draws his trail; the MA targets a mob and the other's focus ring lands on it |
+| **Mimic Chat overlay, B** (§300) | On Mimic beta (agent 3.7.165): one feed, a chip per channel; officer, group and custom off by default, tells follow Settings → Tells; local only | the guild lead: say whether officer, group and tells may show; check it on beta. A session: A (tabs + tear-off) next; confirm Zeal's abbreviated tags `S`/`O`/`Sh`/`A`/`To` from a real `/abc 2` log |
 | **/pop "Latest flags" strip** (§297) | On beta (web 1.8.152): `?flags=a` newest first, `?flags=b` by step; no param = production | the guild lead: pick a or b at https://b.wolfpack.quest/pop?flags=a and https://b.wolfpack.quest/pop?flags=b. A session then graduates it to main as the default and deletes the other |
 | **Member lockout** (§252) | Live: `/admin/access` [beta], bot 3.1.251, web 1.8.143. Officers cannot be locked out (web 1.8.144). Untested against a real member | the guild lead: lock a test or alt account, confirm Mimic, the site and a bot command all refuse it within 30 s, then unlock |
 | **Map target-of-target never fires on real Zeal** (§251) | Zeal's `/assistbar` (1.4.7) knows it, but the pipe export was only our unsent draft, so the Map's ToT arrow and the pin rule's "not aggroed" check fail open. Ported onto current Zeal main as fork branch `tot-pipe` (`21f41f3`, local only: the push was refused by this session's permissions) | the guild lead: push `tot-pipe` to the fork (or allow it), then say whether it joins `test-all` for an in-game check |
@@ -10393,7 +10394,7 @@ the Bastion of Thunder at the time.
 - **Load:** the focus read uses the same 3 s Extended Target cache the dashboard state already refreshes, so it adds
   no new bot traffic.
 
-### 299. Map: the raid's targets and shared escort trails (bot 3.1.263 on `claude/raid-targets-bot`, agent on `claude/raid-targets-agent`, 2026-10-14)
+### 299. Map: the raid's targets and shared escort trails (bot 3.1.263 on main `a1d7f11b`, agent 3.7.166 on beta `46babe84`, 2026-10-14)
 - **The picks (the guild lead, 2026-10-14):** both. **A**, "for these types of babysitting escort quests": one escort-NPC
   trail every Mimic in the raid sees. **B**, "also important for MA": shared target positions, so the focus ring can be
   placed when it is not your own target. B's samples are A's source.
@@ -10414,3 +10415,17 @@ the Bastion of Thunder at the time.
 - **Limits:** two raids in two copies of one zone share one trail per escort (only the 400-unit break separates them).
   The Map's pull is every 10 s, so a shared focus position can be ~15 s old.
 - **Privacy:** a target's name and position is game state, not chat. PRIVACY.md lists it with the live status.
+
+### 300. Mimic Chat overlay: design B now, A next (agent 3.7.165, Mimic beta `3be5b8e4`, 2026-10-14)
+- **The ask and the pick (the guild lead, 2026-10-14):** *"i need a chat overlay so i can move it off the screen and be able to
+  show/hide different components from it, or break it into tabs"*; picked "B then A" — one feed with show/hide chips now, tabs
+  that tear out into their own windows next. C (Canvas pieces) was ruled out: the Canvas lives on one screen.
+- **Privacy split:** the upload filter (`DEFAULT_DROP_PATTERNS` / `shouldKeep`) is untouched. A separate local tap beside the tell
+  tap feeds a 500-line memory ring, served only on 127.0.0.1 (`/api/chat`, origin-checked). It is skipped for excluded characters
+  and never written to disk or queued. The route serves an empty page on failure rather than a stale one, so a switch turned off
+  never re-shows lines.
+- **Defaults, pending the guild lead's call:** guild, raid, say, OOC, shout, auction and NPC speech show; tells follow Settings →
+  Tells (Off by default; Local/Synced show them, neither uploads); officer, group and custom channels are off until switched on in
+  the overlay, and are captured only while it asks.
+- **Where it landed:** `apps/mimic/chat.html` + every overlay-parity site in `main.js`, the dashboard row, `test/chat-overlay.test.js`;
+  `/privacy` and PRIVACY.md say the same.
