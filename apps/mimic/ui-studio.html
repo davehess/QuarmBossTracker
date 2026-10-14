@@ -62,6 +62,15 @@
   .win .grip{position:absolute;width:8px;height:8px;background:#7ee7c7;
     border:1px solid #000;border-radius:1px;z-index:5}
   .win .grip.se{right:-4px;bottom:-4px;cursor:nwse-resize}
+  /* Chat window ↔ Inspector link: the selected chat window's rectangle and routing
+     card share one highlight; while a chip is dragged, valid rectangles light up. */
+  .win.kind-chat.selected{outline:2px solid #7ee7c7;outline-offset:-2px}
+  .chatCard.chatSel{outline:2px solid #7ee7c7;outline-offset:1px}
+  .chatCard.chatFlash{animation:chatFlash .9s ease-out}
+  @keyframes chatFlash{0%{box-shadow:0 0 0 4px rgba(126,231,199,.8)}100%{box-shadow:0 0 0 0 rgba(126,231,199,0)}}
+  #stage.chipDragging .win.chat-drop{outline:2px dashed #58a6ff;outline-offset:-2px}
+  #stage.chipDragging .win:not(.chat-drop){opacity:.35}
+  .win.chat-drop-hover{outline:2px solid #58a6ff !important;background:rgba(88,166,255,.38) !important}
   /* Side panel for the selected window's properties. Flex item (not fixed) so
      it sits beside the canvas under the natural-height toolbar. */
   #side{flex:0 0 240px;box-sizing:border-box;background:#161b22;
@@ -1235,6 +1244,7 @@
     stage.style.height = ch + 'px';
     var html = '';
     var shown = 0;
+    var items = [];
     for (var i = 0; i < STATE.windows.length; i++) {
       var w = STATE.windows[i];
       // Category filter — hidden groups are skipped on the canvas (Save still
@@ -1245,8 +1255,6 @@
       var sy = Math.round(w.y * STATE.sliceScale);
       var sw = Math.max(8, Math.round(w.w * STATE.sliceScale));
       var sh = Math.max(8, Math.round(w.h * STATE.sliceScale));
-      var sel = (STATE.selected === i) ? ' selected' : '';
-      var kindCls = w.kind ? ' kind-' + w.kind : '';
       // Chat windows get a richer label: "WindowName (Chat #) · default ch X"
       // — the ChatManager-supplied name (when present) reads more naturally
       // than the position-section name ("Chat12" → "F THIS CHAT (Chat 12)").
@@ -1256,15 +1264,29 @@
         var idx  = w.chatMeta.index;
         lbl = disp + (idx != null ? ' (Chat ' + idx + ')' : '');
       }
-      html += '<div class="win' + sel + kindCls + '" data-i="' + i + '" '
-            + 'style="left:' + sx + 'px;top:' + sy + 'px;width:' + sw + 'px;height:' + sh + 'px;">'
-            + '<span class="lbl">' + escapeHtml(lbl) + '</span>'
+      items.push({ i: i, sx: sx, sy: sy, sw: sw, sh: sh, lbl: lbl, chars: lbl.length });
+    }
+    var dys = _labelDy(items);
+    for (var k = 0; k < items.length; k++) {
+      var it = items[k];
+      i = it.i; w = STATE.windows[i];
+      var sel = (STATE.selected === i) ? ' selected' : '';
+      var kindCls = w.kind ? ' kind-' + w.kind : '';
+      // A chat rectangle is a drop target for a routing chip unless it is a Tell
+      // window (those route by sender — same rule as the cards).
+      var cwin = _chatWinOfRect(STATE.windows, i);
+      var dropCls = (cwin != null && w.chatMeta.defaultChannel !== 3) ? ' chat-drop' : '';
+      html += '<div class="win' + sel + kindCls + dropCls + '" data-i="' + i + '"'
+            + (cwin != null ? ' data-chat-win="' + cwin + '"' : '') + ' '
+            + 'style="left:' + it.sx + 'px;top:' + it.sy + 'px;width:' + it.sw + 'px;height:' + it.sh + 'px;">'
+            + '<span class="lbl"' + (dys[k] ? ' style="top:' + (2 + dys[k]) + 'px"' : '') + '>' + escapeHtml(it.lbl) + '</span>'
             + '<span class="sz">' + w.w + '×' + w.h + '</span>'
             + (STATE.selected === i && !w.fixedSize ? '<div class="grip se" data-grip="se"></div>' : '')
             + '</div>';
     }
     stage.innerHTML = html;
     updateSidePanel();
+    _syncChatCardSelection();
   }
   window.addEventListener('resize', function(){ if (STATE.windows.length) renderStage(); });
 
@@ -1288,6 +1310,43 @@
     };
     renderStage();
     e.preventDefault();
+  });
+
+  // A routing chip dragged from the Inspector can land on a chat rectangle. The
+  // rectangles are rebuilt on every render, so listen on the stable #stage.
+  var CHIP_MIME = 'application/x-wp-chatchip';
+  function _dragIsChip(e) { return !!(e.dataTransfer && e.dataTransfer.types && Array.prototype.indexOf.call(e.dataTransfer.types, CHIP_MIME) >= 0); }
+  function _clearChipHover() {
+    var hot = stage.querySelectorAll('.chat-drop-hover');
+    for (var i = 0; i < hot.length; i++) hot[i].classList.remove('chat-drop-hover');
+  }
+  stage.addEventListener('dragover', function(e){
+    if (!_dragIsChip(e)) return;
+    var el = e.target.closest('.win.chat-drop');
+    _clearChipHover();
+    if (!el) return;              // not a valid target (not chat, or a Tell window)
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    el.classList.add('chat-drop-hover');
+  });
+  stage.addEventListener('dragleave', function(e){ if (e.target === stage) _clearChipHover(); });
+  stage.addEventListener('drop', function(e){
+    if (!_dragIsChip(e)) return;
+    _clearChipHover();
+    stage.classList.remove('chipDragging');
+    var el = e.target.closest('.win.chat-drop');
+    if (!el || !CHAT_ROUTER || !CHAT_ROUTER.live()) return;
+    e.preventDefault();
+    _dropChipOnWindow(e.dataTransfer.getData('text/plain'), parseInt(el.getAttribute('data-chat-win'), 10), CHAT_ROUTER.rowFor, CHAT_ROUTER.reroute);
+  });
+  document.addEventListener('dragend', function(){ _clearChipHover(); stage.classList.remove('chipDragging'); });
+  // Esc clears the shared selection (not while a dialog owns Esc or a field has focus).
+  document.addEventListener('keydown', function(e){
+    if (e.key !== 'Escape') return;
+    var t = e.target && e.target.tagName;
+    if (t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT') return;
+    if (document.getElementById('displayPicker') || document.getElementById('snapPicker')) return;
+    _clearSelection();
   });
 
   document.addEventListener('mousemove', function(e){
@@ -1920,6 +1979,167 @@
       note:'Stops your song, clicks {SLOT} (the /pause 30 = 3s covers the click cast — tune to the item), then resumes /melody {GEMS} (e.g. 1 2 3 4).' },
   ];
 
+  // ── Chat channel names (ChannelMap<N> in UI_<char> [ChatManager]) ────────
+  // ⚠ ChannelMap<N> is NOT a USERCOLOR id and NOT a made-up 0..24 list (the
+  // table that used to live here named id 4 "Auction" and id 6 "Guild", the
+  // opposite of the guild lead's own windows, 2026-10-14). N is the position in
+  // the client's chat-filter menu — the same number the context-menu item id
+  // carries minus 100. Sources:
+  //   0..40   MacroQuest eqlib include/eqlib/game/ChatFilters.h, enum
+  //           eChatChannel (CONTEXT_FILTER_* = 100 + N). The standard EQ filter
+  //           list is 41 long on the Quarm client: Zeal's chatfilter.cpp has
+  //           ChannelMapWnd[0x29], ChannelMap40 = 0x28 and FILTER_OFFSET 0x64.
+  //   41..56  Zeal Zeal/chatfilter.cpp Extended_ChannelMaps, saved as
+  //           ChannelMap41 + list index ("Keep new entries at the end").
+  // Checked against in-game Filters menus (the guild lead's screenshots): the
+  // Auction window = 6 + user channels 13..16; "other's melee" = 26, 27 plus
+  // Zeal 46, 47, 50, 53, 54, 55. Groups use the in-game menu's own headings;
+  // item wording is eqlib's. An id no source confirms stays "Ch N".
+  // rows: [id, group, name]   (group '' = a top-level menu item)
+  var CHAT_CHANNEL_ROWS = [
+    [0,'','Say'], [1,'','Tell'], [2,'','Group'], [3,'','Raid'], [4,'','Guild'],
+    [5,'','OOC'], [6,'','Auction'], [7,'','Shout'], [8,'','Emotes'],
+    [9,'Melee','Your hits'], [10,'Spells','Mine'], [11,'','Skills'],
+    [12,'Chat Channel',''], [13,'Chat Channel',''], [14,'Chat Channel',''], [15,'Chat Channel',''], [16,'Chat Channel',''],
+    [17,'Chat Channel',''], [18,'Chat Channel',''], [19,'Chat Channel',''], [20,'Chat Channel',''], [21,'Chat Channel',''],
+    [22,'','Other'],
+    [23,'Melee','Your misses'], [24,'Melee','Hits on you'], [25,'Melee','Misses on you'],
+    [26,'Melee',"Others' hits"], [27,'Melee',"Others' misses"],
+    [28,'Melee','Your death'], [29,'Melee',"Others' deaths"], [30,'Melee','Critical hits'],
+    [31,'Melee','Disciplines'], [32,'Melee','Warnings'],
+    [33,'Melee','NPC rampage'], [34,'Melee','NPC flurry'], [35,'Melee','NPC enrage'],
+    [36,'Spells','Others'], [37,'Spells','Failures'], [38,'Spells','Criticals'],
+    [39,'Spells','Worn off'], [40,'Spells','Non-melee hits'],
+    [41,'Zeal','Random'], [42,'Zeal','Loot'], [43,'Zeal','Money'],
+    [44,'Zeal','My Pet Say'], [45,'Zeal','My Pet Damage'],
+    [46,'Zeal','Other Pet Say'], [47,'Zeal','Other Pet Damage'],
+    [48,'Zeal','/who'], [49,'Zeal','My Melee Special'], [50,'Zeal','Other Melee Special'],
+    [51,'Zeal','/mystats'], [52,'Zeal','Item Speech'], [53,'Zeal','Other Melee Critical'],
+    [54,'Zeal','Other Damage Shield'], [55,'Zeal','Zeal Spam'], [56,'Zeal','Bandolier'],
+  ];
+  var CHAT_CHANNEL_BY_ID = {};
+  for (var _ccr = 0; _ccr < CHAT_CHANNEL_ROWS.length; _ccr++) CHAT_CHANNEL_BY_ID[CHAT_CHANNEL_ROWS[_ccr][0]] = CHAT_CHANNEL_ROWS[_ccr];
+  // `joined` = the character's /join names in slot order (optional). Slot k
+  // (id 12 + k) is the (k+1)th entry; without a name it reads "Chat channel k+1".
+  function _chatChannelInfo(n, joined) {
+    var row = CHAT_CHANNEL_BY_ID[n];
+    if (!row) return { id: n, known: false, text: 'Ch ' + n, title: 'unknown channel id (ChannelMap' + n + ')' };
+    var group = row[1], name = row[2], text, title;
+    if (group === 'Chat Channel') {
+      var slot = n - 12;
+      var jn = joined && joined[slot] ? String(joined[slot]) : '';
+      text = jn ? 'Chat Channel · ' + jn : 'Chat channel ' + (slot + 1);
+      title = text + (jn ? ' (slot ' + (slot + 1) + ', from your ChannelAutoJoin order)' : ' (a /join slot; name not known)');
+    } else {
+      text = group ? group + ' · ' + name : name;
+      title = text;
+    }
+    return { id: n, known: true, group: group, name: name, text: text,
+      title: title + ' — ChannelMap' + n + (n >= 41 ? ' (Zeal)' : '') };
+  }
+  // The chip body: the name, then the id as a small dim suffix. Unknown ids
+  // already read "Ch N", so they get no second copy.
+  function _chatChipInner(n, joined) {
+    var inf = _chatChannelInfo(n, joined);
+    return escapeHtml(inf.text) + (inf.known ? ' <span class="chId" style="color:#6e7681;font-size:9px">' + n + '</span>' : '');
+  }
+  // The "default:" pill. ChatWindow<N>_DefaultChannel is a different list from
+  // ChannelMap; only 3 = Tell is sourced (Zeal creates its tell windows with
+  // default channel 3). Anything else says so rather than guessing.
+  function _defaultChannelInfo(n) {
+    if (n == null || isNaN(n)) return { text: '—', title: 'no default channel' };
+    if (n === 3) return { text: 'Tell', title: 'default channel 3 = Tell (Zeal creates tell windows with it)' };
+    return { text: 'Ch ' + n, title: 'default channel id ' + n + ' — name not confirmed' };
+  }
+  // ── /Chat channel names ───────────────────────────────────────────────────
+
+  // ── Chat window ↔ layout link ─────────────────────────────────────────────
+  // ONE selection state: STATE.selected (the rectangle). A chat card is "selected"
+  // exactly when the selected rectangle is that chat window, so selecting from
+  // either side is the same assignment and both sides repaint from it.
+  // Routing from the layout reuses the card's own reroute (_rerouteChip) through
+  // CHAT_ROUTER — the layout has no write path of its own.
+  var CHAT_ROUTER = null;   // set by openSocialsInspector: { live(), rowFor(win), reroute(filter, fromWin, toWin, row) }
+  function _parseChipDrop(raw) {
+    var d; try { d = JSON.parse(raw); } catch (er) { return null; }
+    if (!d || !isFinite(d.filter) || !isFinite(d.fromWin)) return null;
+    return { filter: d.filter, fromWin: d.fromWin };
+  }
+  // Shared by the card rows and the layout rectangles. rowFor(toWin) returns the
+  // target card's chip row (data-drop="1" for a normal window, "0" for a Tell
+  // window, nothing when that window is not in the inspector).
+  function _dropChipOnWindow(raw, toWin, rowFor, reroute) {
+    var d = _parseChipDrop(raw); if (!d) return false;
+    var row = rowFor(toWin);
+    if (!row || row.getAttribute('data-drop') !== '1') return false;   // tell windows route by sender
+    if (d.fromWin === toWin) return false;
+    reroute(d.filter, d.fromWin, toWin, row);
+    return true;
+  }
+  function _chatWinOfRect(windows, i) {
+    var w = windows[i];
+    return (w && w.kind === 'chat' && w.chatMeta && w.chatMeta.index != null) ? w.chatMeta.index : null;
+  }
+  function _rectOfChatWin(windows, idx, file) {
+    var any = -1;
+    for (var i = 0; i < windows.length; i++) {
+      if (_chatWinOfRect(windows, i) !== idx) continue;
+      if (file == null || windows[i].file === file) return i;
+      if (any < 0) any = i;
+    }
+    return any;
+  }
+  function _selectChatWindow(idx, file) {
+    var i = _rectOfChatWin(STATE.windows, idx, file);
+    if (i < 0) return false;
+    STATE.selected = i;
+    renderStage();
+    return true;
+  }
+  function _clearSelection() {
+    if (STATE.selected < 0) return false;
+    STATE.selected = -1;
+    renderStage();
+    return true;
+  }
+  // Paint the inspector's cards from STATE.selected; scroll + flash only when the
+  // selected chat window CHANGES (renderStage runs on every drag tick).
+  function _syncChatCardSelection() {
+    var sel = _chatWinOfRect(STATE.windows, STATE.selected);
+    var cards = document.querySelectorAll('#socialsInspector .chatCard');
+    for (var i = 0; i < cards.length; i++) {
+      var on = sel != null && parseInt(cards[i].getAttribute('data-win'), 10) === sel;
+      cards[i].classList.toggle('chatSel', on);
+      if (on && STATE.chatSelShown !== sel) {
+        if (cards[i].scrollIntoView) cards[i].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        cards[i].classList.remove('chatFlash'); void cards[i].offsetWidth; cards[i].classList.add('chatFlash');
+      }
+    }
+    STATE.chatSelShown = sel;
+  }
+  // Stacked windows (same corner) draw their titles on top of each other. Push a
+  // title down a line while it would land on an earlier one. items: [{sx,sy,sw,sh,chars}].
+  function _labelDy(items) {
+    var placed = [], out = [];
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i], x0 = it.sx + 4, x1 = x0 + Math.min(it.sw - 8, it.chars * 5.5), dy = 0;
+      for (var tries = 0; tries < 6; tries++) {
+        var hit = false;
+        for (var j = 0; j < placed.length; j++) {
+          var p = placed[j];
+          if (x0 < p.x1 && p.x0 < x1 && Math.abs((it.sy + 2 + dy) - p.y) < 10) { hit = true; break; }
+        }
+        if (!hit) break;
+        dy += 11;
+      }
+      if (it.sy + 2 + dy + 10 > it.sy + it.sh) dy = 0;   // no room in the rectangle: leave it
+      placed.push({ x0: x0, x1: x1, y: it.sy + 2 + dy });
+      out.push(dy);
+    }
+    return out;
+  }
+  // ── /Chat window ↔ layout link ────────────────────────────────────────────
+
   function openSocialsInspector(res) {
     var files = (res && res.files) || [];
     var chat  = res && res.chat;
@@ -1995,22 +2215,9 @@
         'Drag a channel chip from one window to another to reroute. Click <b>★</b> on a window ' +
         'to make it the <b>Always chat here</b> target (highlights + bolds). Tell windows are ' +
         'not drop targets — those route per sender.</p>';
-      // Common EQ channel-filter name map (varies slightly by client; falls
-      // back to "Ch <N>" for indexes outside the table). The user sees a
-      // recognizable label instead of a bare number.
-      var FILTER_NAMES = {
-        0:'Say', 1:'Tell', 2:'Group', 3:'Shout', 4:'Auction', 5:'OOC', 6:'Guild',
-        7:'Petition', 8:'Combat', 9:'Spells', 10:'Skills', 11:'NPC', 12:'Faction',
-        13:'Death', 14:'Loot', 15:'Money', 16:'System', 17:'Random', 18:'Damage',
-        19:'Other', 20:'Yell', 21:'Group Inv', 22:'Player NPC', 23:'Pet', 24:'Bard Songs'
-      };
-      function _filterName(n){ return FILTER_NAMES[n] || ('Ch ' + n); }
-      function _channelName(n){
-        if (n == null) return '—';
-        // Default-channel uses a slightly different palette — same indexes as
-        // filters for the common ones (Say=0, Tell=3 etc); falls back too.
-        return FILTER_NAMES[n] || ('Ch ' + n);
-      }
+      // Chip names come from CHAT_CHANNEL_ROWS (top of this file, with its
+      // sources); /join names ride in on chat.autojoin when eqclient.ini had them.
+      var JOINED = Array.isArray(chat.autojoin) ? chat.autojoin : null;
       // ALWAYS_HERE flag — one window at a time. Initial value comes from
       // chat.always_here_idx when the backend captured it; otherwise null. The
       // ★ button toggles + saves it via the same writePages path.
@@ -2030,13 +2237,13 @@
           ' style="background:' + cardBg + ';border:1px solid ' + cardBorder + ';border-radius:5px;padding:6px 8px">';
         // Header — name (Chat #) + default channel + ★
         html += '<div style="display:flex;align-items:center;gap:8px">' +
-          '<span style="' + headerStyle + ';font-family:sans-serif;font-size:12px">' +
+          '<span class="chatTitle" data-win="' + cwn.index + '" title="Select this window in the layout" style="' + headerStyle + ';font-family:sans-serif;font-size:12px;cursor:pointer">' +
             (isAlways ? '⭐ ' : '') + escapeHtml(cwn.name || '(unnamed)') +
             ' <span style="color:#8b949e;font-weight:400;font-size:10px">(Chat ' + cwn.index + ')</span>' +
           '</span>' +
           '<span style="color:#8b949e;font-size:10px;font-family:sans-serif">default:</span>' +
-          '<span style="background:#161b22;border:1px solid #30363d;border-radius:3px;padding:1px 6px;font-size:10px;color:#79c0ff">' +
-            escapeHtml(_channelName(cwn.default_channel)) + '</span>' +
+          '<span title="' + escapeHtml(_defaultChannelInfo(cwn.default_channel).title) + '" style="background:#161b22;border:1px solid #30363d;border-radius:3px;padding:1px 6px;font-size:10px;color:#79c0ff">' +
+            escapeHtml(_defaultChannelInfo(cwn.default_channel).text) + '</span>' +
           (isTell
             ? '<span style="margin-left:auto;color:#8b949e;font-size:9px;font-family:sans-serif">tell window · not a drop target</span>'
             : '<button class="alwaysHereBtn" data-win="' + cwn.index + '" title="Always chat here — outgoing chat goes to this window" ' +
@@ -2052,9 +2259,10 @@
         for (var rf = 0; rf < routed.length; rf++) {
           var filt = routed[rf];
           html += '<span class="chatChip" draggable="true" data-filter="' + filt + '" data-from-win="' + cwn.index + '"' +
+            ' title="' + escapeHtml(_chatChannelInfo(filt, JOINED).title) + '"' +
             ' style="display:inline-flex;align-items:center;gap:3px;background:#1f2a3d;color:#79c0ff;border:1px solid #2a3d57;' +
             'border-radius:3px;padding:1px 4px 1px 6px;font-size:10px;cursor:grab;user-select:none">' +
-            escapeHtml(_filterName(filt)) +
+            _chatChipInner(filt, JOINED) +
             ' <button class="chipRemove" data-filter="' + filt + '" data-from-win="' + cwn.index + '" title="Remove this routing"' +
             ' style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:11px;padding:0 2px;line-height:1">×</button>' +
             '</span>';
@@ -2376,11 +2584,48 @@
           var f = this.getAttribute('data-filter');
           var fromWin = this.getAttribute('data-from-win');
           e.dataTransfer.setData('text/plain', JSON.stringify({ filter: parseInt(f, 10), fromWin: parseInt(fromWin, 10) }));
+          e.dataTransfer.setData(CHIP_MIME, '1');   // lets the layout tell a chip from any other drag
           e.dataTransfer.effectAllowed = 'move';
           this.style.opacity = '0.5';
+          stage.classList.add('chipDragging');       // light up the rectangles that can take it
         });
-        chip.addEventListener('dragend', function(){ this.style.opacity = ''; });
+        chip.addEventListener('dragend', function(){ this.style.opacity = ''; stage.classList.remove('chipDragging'); });
       }
+      // The ONE reroute. A card-row drop and a layout-rectangle drop both land
+      // here (via _dropChipOnWindow), so there is a single write path.
+      function _rerouteChip(filter, fromWin, toWin, row){
+        // Stage the routing edit.
+        _stageChatEdit('Sec' + '\x01' + 'ChannelMap' + filter, { section: 'ChatManager', key: 'ChannelMap' + filter, value: String(toWin) });
+        // Move the chip DOM-side so the UI reflects the change before save.
+        var movedChip = chatBlock.querySelector('.chatChip[data-filter="' + filter + '"][data-from-win="' + fromWin + '"]');
+        if (movedChip) {
+          movedChip.setAttribute('data-from-win', String(toWin));
+          var rm = movedChip.querySelector('.chipRemove');
+          if (rm) rm.setAttribute('data-from-win', String(toWin));
+          // Drop the "no routed channels" placeholder if it's here.
+          var placeholder = row.querySelector('span[style*="italic"]');
+          if (placeholder) placeholder.remove();
+          row.appendChild(movedChip);
+          // If the source row is now empty, restore its placeholder.
+          var fromRow = chatBlock.querySelector('.chatChipRow[data-win="' + fromWin + '"]');
+          if (fromRow && fromRow.querySelectorAll('.chatChip').length === 0) {
+            fromRow.innerHTML = '<span style="color:#6e7681;font-size:10px;font-style:italic">no routed channels</span>';
+          }
+        }
+      }
+      CHAT_ROUTER = {
+        live: function(){ return chatBlock.isConnected; },
+        rowFor: function(win){ return chatBlock.querySelector('.chatChipRow[data-win="' + win + '"]'); },
+        reroute: _rerouteChip,
+      };
+      // Title click → select that window's rectangle in the layout.
+      var titles = chatBlock.querySelectorAll('.chatTitle');
+      for (var ti = 0; ti < titles.length; ti++) {
+        titles[ti].addEventListener('click', function(){
+          _selectChatWindow(parseInt(this.getAttribute('data-win'), 10), chatBlock.dataset.file);
+        });
+      }
+      _syncChatCardSelection();   // a rectangle may already be selected when the Inspector opens
       for (var ri = 0; ri < rows.length; ri++) {
         var row = rows[ri];
         if (row.getAttribute('data-drop') !== '1') continue;   // tell windows aren't drop targets
@@ -2394,27 +2639,8 @@
           e.preventDefault();
           _setRowHover(this, false);
           var raw = e.dataTransfer.getData('text/plain'); if (!raw) return;
-          var data; try { data = JSON.parse(raw); } catch (er) { return; }
-          var toWin = parseInt(this.getAttribute('data-win'), 10);
-          if (data.fromWin === toWin) return;
-          // Stage the routing edit.
-          _stageChatEdit('Sec' + '\x01' + 'ChannelMap' + data.filter, { section: 'ChatManager', key: 'ChannelMap' + data.filter, value: String(toWin) });
-          // Move the chip DOM-side so the UI reflects the change before save.
-          var movedChip = chatBlock.querySelector('.chatChip[data-filter="' + data.filter + '"][data-from-win="' + data.fromWin + '"]');
-          if (movedChip) {
-            movedChip.setAttribute('data-from-win', String(toWin));
-            var rm = movedChip.querySelector('.chipRemove');
-            if (rm) rm.setAttribute('data-from-win', String(toWin));
-            // Drop the "no routed channels" placeholder if it's here.
-            var placeholder = this.querySelector('span[style*="italic"]');
-            if (placeholder) placeholder.remove();
-            this.appendChild(movedChip);
-            // If the source row is now empty, restore its placeholder.
-            var fromRow = chatBlock.querySelector('.chatChipRow[data-win="' + data.fromWin + '"]');
-            if (fromRow && fromRow.querySelectorAll('.chatChip').length === 0) {
-              fromRow.innerHTML = '<span style="color:#6e7681;font-size:10px;font-style:italic">no routed channels</span>';
-            }
-          }
+          var thisRow = this;
+          _dropChipOnWindow(raw, parseInt(this.getAttribute('data-win'), 10), function(){ return thisRow; }, _rerouteChip);
         });
       }
       // X on a chip → remove that routing.

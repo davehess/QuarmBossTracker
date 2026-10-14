@@ -5302,6 +5302,28 @@ ipcMain.handle('ui-studio-write-pages', (_e, eqDir, edits) => {
   }
 });
 
+// The /join channel names, in the order the client joins them, from eqclient.ini
+// `[Defaults] ChannelAutoJoin=<name>[:password] <name> …` (space-separated; Zeal's
+// per-character option writes `ChannelAutoJoin_<Character>`, preferred when
+// present). UI Studio labels the chat-channel chips (ChannelMap12..21 = slot 1..10)
+// with them. Names only: the `:password` part is cut here and never leaves main.
+function _autojoinNames(iniText, character) {
+  let inDefaults = false, generic = null, perChar = null;
+  const want = ('ChannelAutoJoin_' + String(character || '')).toLowerCase();
+  for (const L of String(iniText || '').split(/\r?\n/)) {
+    const sm = L.match(/^\s*\[([^\]]+)\]\s*$/);
+    if (sm) { inDefaults = (sm[1].toLowerCase() === 'defaults'); continue; }
+    if (!inDefaults) continue;
+    const kv = L.match(/^\s*([\w.]+)\s*=\s*(.*?)\s*$/);
+    if (!kv) continue;
+    if (kv[1].toLowerCase() === 'channelautojoin') generic = kv[2];
+    else if (kv[1].toLowerCase() === want) perChar = kv[2];
+  }
+  const spec = perChar != null ? perChar : generic;
+  if (!spec) return [];
+  return spec.split(/[\s,]+/).filter(Boolean).map((s) => s.split(':')[0]);
+}
+
 ipcMain.handle('ui-studio-inspect-socials', (_e, character, eqDir) => {
   try {
     const c = String(character || '').trim();
@@ -5441,7 +5463,10 @@ ipcMain.handle('ui-studio-inspect-socials', (_e, character, eqDir) => {
             const mk = k.match(/^ChatWindow(\d+)_AlwaysHere$/i);
             if (mk && parseInt(v, 10) === 1) { alwaysHereIdx = parseInt(mk[1], 10); break; }
           }
+          let autojoin = [];
+          try { autojoin = _autojoinNames(fs.readFileSync(path.join(d, 'eqclient.ini'), 'utf8'), c); } catch {}
           chat = {
+            autojoin,
             file: path.basename(uiPath),
             num_windows: parseInt(cm.NumWindows, 10) || windows.length,
             windows,
