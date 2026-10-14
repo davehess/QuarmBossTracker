@@ -32998,6 +32998,7 @@ function startWebDashboard(port) {
       }
       // Chat overlay (chat.html) — this PC's own chat window. Memory-only ring, never uploaded.
       if (req.url && req.url.split('?')[0] === '/api/chat' && req.method === 'GET') return _handleLocalChat(req, res);
+      if (req.url && req.url.split('?')[0] === '/api/chat/history' && req.method === 'GET') return _handleLocalChatHistory(req, res);
       // Me overlay (me.html) — the active character's own panel.
       if (req.url === '/api/me') {
         let _b;
@@ -38477,6 +38478,7 @@ const CHAT_CHANNELS = {
   shout:   { label: 'Shout',   color: '#ff7b72' },
   auction: { label: 'Auction', color: '#8b949e' },
   npc:     { label: 'NPC',     color: '#c9a96e' },
+  zone:    { label: 'Zone',    color: '#6e7681' },
   tell:    { label: 'Tell',    color: '#a371f7' },
   group:   { label: 'Group',   color: '#58a6ff' },
   officer: { label: 'Officer', color: '#d29922' },
@@ -38492,7 +38494,8 @@ const CHAT_GROUPS = [
   { id: 'ooc',     label: 'OOC/Shout', channels: ['ooc', 'shout'] },
   { id: 'auction', label: 'Auction',   channels: ['auction'] },
   { id: 'npc',     label: 'NPC',       channels: ['npc'] },
-  { id: 'tell',    label: 'Tells',     channels: ['tell'],    gate: 'tells' },
+  { id: 'zone',    label: 'Zones',     channels: ['zone'] },
+  { id: 'tell',   label: 'Tells',     channels: ['tell'],    gate: 'tells' },
   { id: 'group',   label: 'Group',     channels: ['group'],   gate: 'group' },
   { id: 'officer', label: 'Officer',   channels: ['officer'], gate: 'officer' },
   { id: 'custom',  label: 'Custom',    channels: ['custom'],  gate: 'custom' },
@@ -38533,6 +38536,14 @@ const CHAT_ABBREV_RX = /^\[[^\]]+\]\s+\[([A-Za-z]{1,6}|\d{1,2})\]\s+\[([^\]]{1,4
 // it), but the game prints it into the same tell window, so the chat feed shows it beside the recitals.
 const _SEER_QUIET_RX = /^You manage to recover some images from your childhood/;
 const CHAT_SEER_NAME = 'Seer';
+// "You have entered Plane of Knowledge." (the guild lead, 2026-10-14: "lines like that are worth showing too").
+// The agent had no parser for this line (grep found none), so this is the one. The game also prints
+// "You have entered an area where …" / "an Arena (PvP) area": those begin "an" and are not a zone.
+// "LOADING, PLEASE WAIT..." is deliberately not shown: it is noise.
+const CHAT_ZONE_RX = /^\[[^\]]+\]\s+You have entered (?!an?\s)([^.]{2,60})\.\s*$/;
+// A character that stays silent for this long before another one speaks reads as a swap. Under it, two logs
+// being written at once (dual-boxing) would flap a separator on every other line; the "heard on" tag covers that.
+const CHAT_SWAP_MIN_MS = 30_000;
 
 function _chatCleanText(raw) {
   let t = String(raw == null ? '' : raw);
@@ -38604,6 +38615,7 @@ function classifyChatLine(line, selfName) {
     const mine = !!selfName && name.toLowerCase() === String(selfName).toLowerCase();
     return { ch, who: name, text, t, self: mine, npc: ch === 'npc' };
   }
+  if ((m = CHAT_ZONE_RX.exec(line))) return { ch: 'zone', who: '', text: m[1].trim(), t, self: false, npc: false };
   // The PoP flag Seer's recital (the guild lead, 2026-10-14: "tells from seer did not come through"). The
   // game prints these sentences into the TELL window, but the log line has no "X tells you," in front of
   // it: just the sentence after the timestamp. The sentence table is parsePopFlagLine's own
@@ -38645,14 +38657,43 @@ function chatChannelAllowed(ch, policy) {
 const _chatRing = [];
 let _chatSeq = 0;
 const CHAT_BOOT = crypto.randomBytes(4).toString('hex');   // a new value after a restart tells the overlay to start over
+// One person's main + alt logs both hear the same guild line: one key, one copy. A zone line is per
+// character (two characters zoning together each did), so it carries the character too. The overlay
+// builds the same key to drop a history line it already holds (chat.html chatKey).
+function chatLineKey(evt, character) {
+  return evt.ch + '|' + String(evt.who).toLowerCase() + '|' + (evt.to || '') + '|' + evt.text + '|' + Math.floor(evt.t / 1000)
+    + (evt.ch === 'zone' ? '|' + String(character || '').toLowerCase() : '');
+}
+// "14m", "2h 5m", "3d": how long ago the last character's last line was.
+function _chatGapText(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + 'm';
+  const h = Math.floor(m / 60);
+  if (h < 48) return h + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '');
+  return Math.floor(h / 24) + 'd';
+}
+// The "swapped character" line between two neighbouring lines (each { on, t }), or null. Pure display: it is
+// never classified as chat, never copied as one, never uploaded. Used by the live ring and by history.
+function chatSwapBetween(prev, cur) {
+  if (!prev || !cur || !prev.on || !cur.on) return null;
+  if (String(prev.on).toLowerCase() === String(cur.on).toLowerCase()) return null;
+  const gap = cur.t - prev.t;
+  if (!(gap >= CHAT_SWAP_MIN_MS)) return null;
+  return { sep: 1, t: cur.t, from: prev.on, to: cur.on, text: 'Swapped to ' + cur.on + ' — ' + _chatGapText(gap) + ' after ' + prev.on + '\'s last line' };
+}
 function noteLocalChatLine(line, character, now) {
   const evt = classifyChatLine(line, character);
   if (!evt) return false;
   if (!chatChannelAllowed(evt.ch, chatPolicyNow(now))) return false;
-  // One person's main + alt logs both hear the same guild line: keep one copy.
-  const key = evt.ch + '|' + String(evt.who).toLowerCase() + '|' + (evt.to || '') + '|' + evt.text + '|' + Math.floor(evt.t / 1000);
+  const key = chatLineKey(evt, character);
   for (let i = _chatRing.length - 1, n = 0; i >= 0 && n < 60; i--, n++) if (_chatRing[i].k === key) return false;
-  _chatRing.push({ seq: ++_chatSeq, k: key, t: evt.t, ch: evt.ch, who: evt.who, to: evt.to || null, text: evt.text, self: !!evt.self, npc: !!evt.npc });
+  // The character changed since the last line: say so, with the gap, before the new character's first line.
+  const prev = _chatRing.length ? _chatRing[_chatRing.length - 1] : null;
+  const swap = chatSwapBetween(prev, { on: character, t: evt.t });
+  if (swap) _chatRing.push({ seq: ++_chatSeq, k: 'swap|' + _chatSeq, swap: true, t: swap.t, from: swap.from, to: swap.to, text: swap.text });
+  _chatRing.push({ seq: ++_chatSeq, k: key, t: evt.t, ch: evt.ch, who: evt.who, to: evt.to || null, text: evt.text, self: !!evt.self, npc: !!evt.npc, on: character || '' });
   const over = _chatRing.length - CHAT_RING_MAX;
   if (over > 0) _chatRing.splice(0, over);
   return true;
@@ -38672,8 +38713,10 @@ function serializeLocalChat(q, now) {
   for (let i = _chatRing.length - 1; i >= 0 && lines.length < CHAT_PAGE_MAX; i--) {
     const l = _chatRing[i];
     if (l.seq <= since) break;
+    if (l.swap) { lines.push({ n: l.seq, t: l.t, sep: 1, from: l.from, to: l.to, text: l.text }); continue; }
     if (!chatChannelAllowed(l.ch, policy)) continue;
     const o = { n: l.seq, t: l.t, ch: l.ch, who: l.who, text: l.text };
+    if (l.on) o.on = l.on;
     if (l.self) o.self = true;
     if (l.npc) o.npc = true;
     if (l.to) o.to = l.to;
@@ -38699,6 +38742,168 @@ function _resetLocalChatForTest() {
   _chatRing.length = 0; _chatSeq = 0; _chatPolicy = null; _chatPolicyAt = 0;
 }
 // ── end Local chat window ──
+
+// ── Chat history: the last N hours of chat, read back from the game's own log files ───────────────
+// The guild lead, 2026-10-14: "if you log out and log back in, show the previous logs (past 24h, 12h, 6h,
+// 3, 2, 1)". The ring above is memory only, so a restarted Mimic starts empty. This block fills it back in
+// from the eqlog_<name>_pq.proj.txt files the agent already tails, ON REQUEST, and only for the window asked.
+//
+// PRIVACY: this is local file I/O and nothing else. The read happens on this PC, the result goes to the
+// overlay on 127.0.0.1 and nowhere else, and nothing is written to disk or queued. It runs the SAME
+// classifyChatLine and the SAME gates as the live feed (tells, group, officer, custom stay behind their
+// switches), and skips a character whose owner set exclude_from_stats, like the live tap.
+// COST: each log is read from its END in chunks and left as soon as a chunk reaches back past the window;
+// the whole file is never read. A file not touched inside the window is not even opened.
+const CHAT_HISTORY_MAX = 3000;                       // lines served, newest kept
+const CHAT_HISTORY_CHUNK = 256 * 1024;
+const CHAT_HISTORY_MAX_BYTES = 256 * 1024 * 1024;    // per log, however busy the window was
+const CHAT_HISTORY_CACHE_MS = 20_000;
+const CHAT_HISTORY_HOURS_MAX = 24;
+
+// Whole lines, newest first, from the END of a file. `onLine(line)` returns true to stop. Stops after the
+// first chunk whose earliest timestamped line is older than `cutoffMs` (EQ logs run forward in time), so
+// the caller still checks each line's own time: that chunk holds lines on both sides of the cutoff.
+// A line cut by a chunk boundary is carried into the next chunk, so it is delivered whole. Resolves
+// { end: 'window' | 'start' | 'cap' | 'stopped' | 'missing' | 'error', bytes } and never rejects.
+async function chatReadLogBackwards(file, cutoffMs, onLine, opts) {
+  const chunk = (opts && opts.chunk) || CHAT_HISTORY_CHUNK;
+  const maxBytes = (opts && opts.maxBytes) || CHAT_HISTORY_MAX_BYTES;
+  let fh;
+  try { fh = await fs.promises.open(file, 'r'); } catch { return { end: 'missing', bytes: 0 }; }
+  let bytes = 0, end = 'start';
+  try {
+    let pos = (await fh.stat()).size;
+    let carry = Buffer.alloc(0);
+    while (pos > 0) {
+      if (bytes >= maxBytes) { end = 'cap'; break; }
+      const len = Math.min(chunk, pos);
+      pos -= len;
+      const buf = Buffer.alloc(len);
+      const got = await fh.read(buf, 0, len, pos);
+      bytes += got.bytesRead;
+      let data = got.bytesRead === len ? buf : buf.subarray(0, got.bytesRead);
+      if (carry.length) data = Buffer.concat([data, carry]);
+      let body = data;
+      if (pos > 0) {
+        const nl = data.indexOf(0x0a);
+        if (nl === -1) { carry = data; continue; }       // one line longer than the chunk: keep growing it
+        carry = data.subarray(0, nl);                    // the cut-off start of a line: finished by the next chunk
+        body = data.subarray(nl + 1);
+      } else carry = Buffer.alloc(0);
+      const lines = body.toString('utf8').split('\n');
+      let oldest = null;
+      for (let i = 0; i < lines.length && i < 40 && oldest === null; i++) {
+        const ts = parseEqTimestamp(lines[i]);
+        if (ts) oldest = ts.getTime();
+      }
+      let stopped = false;
+      for (let i = lines.length - 1; i >= 0; i--) {
+        let ln = lines[i];
+        if (ln.charCodeAt(ln.length - 1) === 13) ln = ln.slice(0, -1);
+        if (!ln) continue;
+        if (onLine(ln) === true) { stopped = true; break; }
+      }
+      if (stopped) { end = 'stopped'; break; }
+      if (oldest !== null && oldest < cutoffMs) { end = 'window'; break; }
+    }
+  } catch { end = 'error'; } finally { try { await fh.close(); } catch { void 0; } }
+  return { end, bytes };
+}
+
+// The logs to read: every watched character's log once, minus characters excluded from stats.
+function chatHistoryFiles(watched, isExcluded) {
+  const out = [], seen = new Set();
+  for (const w of (watched || [])) {
+    if (!w || !w.logPath || !w.character) continue;
+    if (isExcluded && isExcluded(w.character)) continue;
+    const k = String(w.logPath).toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({ character: String(w.character), file: String(w.logPath) });
+  }
+  return out;
+}
+
+// q: { hours, tells, group, officer, custom } (booleans). opts.files overrides the watched logs (tests).
+async function buildChatHistory(q, now, opts) {
+  const t = now == null ? Date.now() : now;
+  const hours = Math.min(CHAT_HISTORY_HOURS_MAX, Math.max(1, Math.round(Number(q && q.hours)) || 1));
+  const cutoff = t - hours * 3_600_000;
+  const policy = {};
+  for (const k of CHAT_POLICY_KEYS) policy[k] = !!(q && q[k]);
+  const files = (opts && opts.files) || chatHistoryFiles(stats.watchedLogs, c => !shouldUploadForCharacter(c));
+  const readOpts = opts && { chunk: opts.chunk, maxBytes: opts.maxBytes };
+  const seen = new Set();
+  const all = [];
+  let truncated = false, bytes = 0;
+  const chars = [];
+  for (const f of files) {
+    let mtime = 0;
+    try { mtime = (await fs.promises.stat(f.file)).mtimeMs; } catch { continue; }
+    if (mtime < cutoff) continue;                       // not written inside the window: nothing to read
+    chars.push(f.character);
+    const mine = [];
+    const r = await chatReadLogBackwards(f.file, cutoff, (line) => {
+      const evt = classifyChatLine(line, f.character);
+      if (!evt || evt.t < cutoff || !parseEqTimestamp(line)) return false;
+      if (!chatChannelAllowed(evt.ch, policy)) return false;
+      const key = chatLineKey(evt, f.character);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      const o = { t: evt.t, ch: evt.ch, who: evt.who, text: evt.text, on: f.character };
+      if (evt.self) o.self = true;
+      if (evt.npc) o.npc = true;
+      if (evt.to) o.to = evt.to;
+      mine.push(o);
+      return mine.length >= CHAT_HISTORY_MAX;
+    }, readOpts);
+    bytes += r.bytes;
+    if (r.end === 'cap' || r.end === 'stopped') truncated = true;
+    for (const o of mine) all.push(o);
+  }
+  all.sort((a, b) => a.t - b.t);
+  let kept = all;
+  if (kept.length > CHAT_HISTORY_MAX) { kept = kept.slice(kept.length - CHAT_HISTORY_MAX); truncated = true; }
+  // Between one character's stretch and the next: the same "swapped" line the live feed shows.
+  const lines = [];
+  let prev = null;
+  for (const e of kept) {
+    const sep = chatSwapBetween(prev, e);
+    if (sep) lines.push(sep);
+    lines.push(e);
+    prev = e;
+  }
+  return { ok: true, hours, truncated, bytes, chars, lines };
+}
+
+// A short cache (one body per switch set), so the Chat window and its breakouts asking together read once.
+let _chatHistCache = null;
+function getChatHistory(q, now, opts) {
+  const key = [Math.round(Number(q && q.hours)) || 1].concat(CHAT_POLICY_KEYS.map(k => (q && q[k] ? 1 : 0))).join('|');
+  const t = now == null ? Date.now() : now;
+  if (!(opts && opts.files) && _chatHistCache && _chatHistCache.key === key && t - _chatHistCache.at < CHAT_HISTORY_CACHE_MS) return _chatHistCache.p;
+  const p = buildChatHistory(q, t, opts);
+  if (!(opts && opts.files)) {
+    _chatHistCache = { key, at: t, p };
+    p.catch(() => { if (_chatHistCache && _chatHistCache.p === p) _chatHistCache = null; });
+  }
+  return p;
+}
+// GET /api/chat/history?hours=N&tells=0&group=0&officer=0&custom=0 — 127.0.0.1 only, like /api/chat. It does
+// NOT hand the switches to setChatPolicy: asking for history must not turn on live capture of anything.
+async function _handleLocalChatHistory(req, res) {
+  const send = (code, body) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(body); };
+  if (!_localOriginOk(req)) return send(403, JSON.stringify({ error: 'forbidden origin' }));
+  const q = {};
+  try { new URL(req.url, 'http://127.0.0.1').searchParams.forEach((v, k) => { q[k] = v; }); } catch { void 0; }
+  for (const k of CHAT_POLICY_KEYS) q[k] = q[k] === '1';
+  let body;
+  try { body = JSON.stringify(await getChatHistory(q)); }
+  catch (e) { console.error('[api/chat/history] failed:', e && (e.stack || e.message || e)); body = JSON.stringify({ ok: false, lines: [] }); }
+  return send(200, body);
+}
+function _resetChatHistoryForTest() { _chatHistCache = null; }
+// ── end Chat history ──
 
 // ── /sll lockout parser ────────────────────────────────────────────────────
 // EQ /sll output in the log:
@@ -55192,6 +55397,8 @@ module.exports = {
   CHAT_GROUPS, CHAT_CHANNELS, CHAT_RING_MAX, CHAT_PAGE_MAX, CHAT_POLICY_TTL_MS, _resetLocalChatForTest,
   _uploadBuffersForTest: () => ({ chatBuffer, tellBuffer, recentTells: stats.recentTells }),
   _chatRingForTest: () => _chatRing, _handleLocalChatForTest: _handleLocalChat,
+  chatLineKey, chatSwapBetween, chatReadLogBackwards, chatHistoryFiles, buildChatHistory, getChatHistory,
+  _handleLocalChatHistoryForTest: _handleLocalChatHistory, _resetChatHistoryForTest, CHAT_HISTORY_MAX, CHAT_SWAP_MIN_MS,
   _noteBuffDurationsFromState, buffDurationStats, buffDurationTable, _noteBuffDurationSample,
   buffDurationFactorFor,
   SOURCELESS_SPELLS, BARD_SONGS,

@@ -29,6 +29,10 @@ const BLOCK_START = '// ── Local chat window: the feed behind Mimic\'s Chat 
 const BLOCK_END = '// ── end Local chat window ──';
 const CHAT_BLOCK = AGENT_SRC.slice(AGENT_SRC.indexOf(BLOCK_START), AGENT_SRC.indexOf(BLOCK_END) + BLOCK_END.length);
 
+const HISTORY_START = '// ── Chat history: the last N hours of chat';
+const HISTORY_END = '// ── end Chat history ──';
+const HISTORY_BLOCK = AGENT_SRC.slice(AGENT_SRC.indexOf(HISTORY_START), AGENT_SRC.indexOf(HISTORY_END) + HISTORY_END.length);
+
 const TS = '[Wed Oct 14 21:10:01 2026]';
 const L = (s) => `${TS} ${s}`;
 const ME = 'Aldenmar';
@@ -266,9 +270,10 @@ describe('never uploaded', () => {
     }
   });
   it('the ring is referenced nowhere outside that block: not the feedback excerpt, the crash reports, the dashboard state or any uploader', () => {
-    const outside = stripJs(AGENT_SRC.replace(CHAT_BLOCK, ''));
+    // (the history block is the second block: it reads files, so it cannot live in the first, which may not name `fs.`)
+    const outside = stripJs(AGENT_SRC.replace(CHAT_BLOCK, '').replace(HISTORY_BLOCK, ''));
     const uses = outside.split('\n').filter(l => /\b(?:_chatRing|serializeLocalChat|_handleLocalChat|CHAT_BOOT|noteLocalChatLine|classifyChatLine|chatChannelAllowed|CHAT_GROUPS)\b/.test(l)).map(l => l.trim());
-    // exactly five lines mention the feed outside its block: the route, the tail tap, and three export lines
+    // exactly five lines mention the feed outside its blocks: the route, the tail tap, and three export lines
     expect(uses).toHaveLength(5);
     expect(uses.filter(l => /^CHAT_GROUPS, CHAT_CHANNELS, CHAT_RING_MAX,/.test(l))).toHaveLength(1);
     expect(uses.filter(l => /^if \(req\.url && req\.url\.split\('\?'\)\[0\] === '\/api\/chat' && req\.method === 'GET'\) return _handleLocalChat\(req, res\);$/.test(l))).toHaveLength(1);
@@ -441,7 +446,7 @@ describe('chat.html: the overlay\'s own parity items', () => {
   });
   it('the hover handshake covers every clickable thing: buttons (armed by the preload) plus the feed and chip row', () => {
     expect(script).toContain('window.mimic.overlayHoverInteractive(on)');
-    expect(script).toMatch(/el\.closest\('\.title, #chips, #spanel, #feed, #newchip, #ctxmenu'\)/);
+    expect(script).toMatch(/el\.closest\('\.title, #chips, #cpick, #spanel, #feed, #newchip, #ctxmenu'\)/);
     // every clickable element is a <button>/<input>, which the preload arms on its own: no clickable <div>/<span>
     expect(html).not.toMatch(/<(?:div|span)[^>]*\sonclick=/);
     expect(html).not.toMatch(/<(?:div|span)[^>]*role="?button/);
@@ -460,7 +465,7 @@ describe('chat.html: the overlay\'s own parity items', () => {
     expect(script).toContain('Math.max(9, Math.min(24,');
   });
   it('class="name" is on a speaker only when the speaker is a character: never "You", never an NPC', () => {
-    const lineHtml = script.slice(script.indexOf('function lineHtml(l){'), script.indexOf('function pinned()'));
+    const lineHtml = script.slice(script.indexOf('function lineHtml(l, tag){'), script.indexOf('function rowHtml(l){'));
     expect(lineHtml).toContain("'<span class=\"who npc\">'");
     expect(lineHtml).toContain("'<span class=\"who you\">You</span>'");
     expect(lineHtml).toContain("'<span class=\"who name\">' + esc(l.who)");
@@ -516,8 +521,8 @@ describe('chat.html: the feed is painted through a filter handed a list of group
     expect(on(line('custom'))).toBe(false);
   });
   it('the chips\' off-list decides what shows by default, and the gated groups are not in it until opted in', () => {
-    expect(make({}).shownGroupIds()).toEqual(['guild', 'raid', 'say', 'ooc', 'auction', 'npc']);
-    expect(make({ off: ['raid', 'auction'] }).shownGroupIds()).toEqual(['guild', 'say', 'ooc', 'npc']);
+    expect(make({}).shownGroupIds()).toEqual(['guild', 'raid', 'say', 'ooc', 'auction', 'npc', 'zone']);   // Zones are on by default
+    expect(make({ off: ['raid', 'auction'] }).shownGroupIds()).toEqual(['guild', 'say', 'ooc', 'npc', 'zone']);
     expect(make({ officer: true }).shownGroupIds()).toContain('officer');
   });
   it('an unknown channel shows nothing', () => {
@@ -687,7 +692,7 @@ describe('chat.html: click a line\'s timestamp to copy it', () => {
       var _channels = { guild: { color: '#56d364' } }, _copiedN = 0;
       function esc(s){ return String(s == null ? '' : s); }
       ${HHMM}
-      ${sliceBlock(script, 'function lineHtml(l){', "+ esc(l.text) + '</span></div>';\n  }")}
+      ${sliceBlock(script, 'function lineHtml(l, tag){',"+ esc(l.text) + '</span></div>';\n  }")}
     `, ['lineHtml', '_channels']);
     const html = lineHtml.lineHtml({ n: 7, t: T, ch: 'guild', who: 'Corvale', text: 'hi' });
     expect(html).toContain('<button type="button" class="tm" title="Click to copy this line">13:03</button>');
@@ -780,8 +785,8 @@ describe('chat.html: ?groups=<id> makes a breakout window, painted through the s
     expect(make({ off: ['guild'] }, ['guild'], []).shownGroupIds()).toEqual(['guild']);
   });
   it('the Chat window leaves a broken-out group out, and the group is back the moment it is put back', () => {
-    expect(make({}, [], ['guild', 'raid']).shownGroupIds()).toEqual(['say', 'ooc', 'auction', 'npc']);
-    expect(make({}, [], []).shownGroupIds()).toEqual(['guild', 'raid', 'say', 'ooc', 'auction', 'npc']);
+    expect(make({}, [], ['guild', 'raid']).shownGroupIds()).toEqual(['say', 'ooc', 'auction', 'npc', 'zone']);
+    expect(make({}, [], []).shownGroupIds()).toEqual(['guild', 'raid', 'say', 'ooc', 'auction', 'npc', 'zone']);
   });
   it('a gated group is still gated in its breakout: Tells shows nothing until Tells is on', () => {
     expect(make({}, ['tell'], ['tell']).shownGroupIds()).toEqual([]);

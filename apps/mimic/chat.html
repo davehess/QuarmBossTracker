@@ -73,6 +73,22 @@
   .ln .who.you{opacity:0.75}
   .ln .who.npc{font-weight:normal;font-style:italic}
   .ln .arrow{flex:0 0 auto;color:#6e7681}
+  /* a zone change: dim, no speaker, so it reads as a note in the margin rather than something said */
+  .ln.zone .tx{font-style:italic;opacity:0.85}
+  /* which of your characters heard it: shown only where the character changes without a swap line, so it never fills the feed */
+  .ln .otag{flex:0 0 auto;color:#6e7681;font-size:0.78em;border:1px solid #30363d;border-radius:3px;padding:0 3px;line-height:1.3}
+  /* "Swapped to X": a rule across the feed, not a line of chat. It has no timestamp button, so nothing copies from it. */
+  .sep{display:flex;align-items:center;gap:6px;margin:3px 0;color:#8b949e;font-size:0.82em;text-shadow:0 1px 2px #000}
+  .sep::before,.sep::after{content:"";flex:1 1 12px;border-top:1px solid rgba(139,148,158,0.4)}
+  .sep span{flex:0 1 auto;text-align:center}
+  .hdiv{margin:3px 0;text-align:center;color:#6e7681;font-size:0.82em;font-style:italic;text-shadow:0 1px 2px #000}
+  /* the search box and the history button live in the title bar; a locked overlay is click-through, so both are armed by the preload */
+  #find{flex:1 1 50px;min-width:40px;max-width:130px;box-sizing:border-box;font-family:inherit;font-size:10px;padding:0 5px;
+    height:17px;border-radius:3px;background:rgba(14,17,22,0.7);color:#e6edf3;border:1px solid #30363d;user-select:text}
+  #find:focus{outline:none;border-color:#2da68a}
+  #find::placeholder{color:#6e7681}
+  #cpick{display:none;flex:0 0 auto;flex-wrap:wrap;gap:3px}
+  #cpick.open{display:flex}
   #empty{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;
     color:rgba(255,255,255,0.5);font-size:12px;text-shadow:0 1px 2px #000;pointer-events:none}
   #newchip{display:none;position:absolute;right:12px;bottom:8px;font-family:inherit;font-size:10px;font-weight:bold;
@@ -120,12 +136,13 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title"><span id="conn" class="conn bad">○</span><span id="ttl">💬 Chat</span><span class="sp"></span><button id="gear" class="fbtn" aria-pressed="false" title="Text size, and the channels that are off until you switch them on">⚙</button></div>
+    <div class="title"><span id="conn" class="conn bad">○</span><span id="ttl">💬 Chat</span><input id="find" type="text" maxlength="24" spellcheck="false" autocomplete="off" placeholder="character…" title="Show only one character: what they said, or what was heard on that character of yours. Enter or Esc leaves the box."><button id="fpick" class="fbtn" title="Pick one of your characters">▾</button><span class="sp"></span><button id="histbtn" class="fbtn" title="Show the chat from before this window opened, read from the game's own log files on this PC">⏱</button><button id="gear" class="fbtn" aria-pressed="false" title="Text size, and the channels that are off until you switch them on">⚙</button></div>
+    <div id="cpick"></div>
     <div id="spanel">
       <div class="row"><span>Text size</span><button id="fsm" class="fbtn" title="Smaller">A−</button><span id="fsz">12</span><button id="fsp" class="fbtn" title="Larger">A+</button></div>
       <div class="row" id="optins"></div>
       <div class="hint" id="tellhint"></div>
-      <div class="hint">These lines stay on this PC, in memory, for this window only. Nothing here is uploaded, and Mimic forgets them when it restarts.</div>
+      <div class="hint">These lines stay on this PC, in memory, for this window only. Nothing here is uploaded, and Mimic forgets them when it restarts. The ⏱ button can read the last few hours back from the game's own log files on this PC; that is read here and never sent.</div>
     </div>
     <div id="chips"></div>
     <div id="feedbox">
@@ -195,7 +212,7 @@
   // One hover-interact owner for the zones that are not plain buttons (a locked overlay is click-through,
   // overlay checklist item 3): the title bar, the chips, the settings drawer and the feed, so the wheel can
   // scroll it. Buttons are armed by the preload on their own; this covers the rest.
-  function _zoneOf(el){ return (el && el.closest) ? el.closest('.title, #chips, #spanel, #feed, #newchip, #ctxmenu') : null; }
+  function _zoneOf(el){ return (el && el.closest) ? el.closest('.title, #chips, #cpick, #spanel, #feed, #newchip, #ctxmenu') : null; }
   function _hover(on){ try { window.mimic.overlayHoverInteractive(on); } catch (e) {} }
   document.addEventListener('mouseover', function(e){ if (_zoneOf(e.target)) _hover(true); });
   document.addEventListener('mouseout', function(e){ if (_zoneOf(e.target) && !_zoneOf(e.relatedTarget)) _hover(false); });
@@ -214,6 +231,15 @@
   var _copiedN = 0;            // the line whose timestamp is flashing "copied"
   var feedEl = document.getElementById('feed'), chipsEl = document.getElementById('chips');
   var emptyEl = document.getElementById('empty'), newEl = document.getElementById('newchip');
+  var EMPTY_TEXT = emptyEl.textContent;
+  var _find = '', _findQ = '';   // the search box: this window only, this session only (never saved)
+  var _histLines = [];           // the last N hours read from the game's log files, oldest first (n < 0), above the live feed
+  var _histHours = 0;            // 0 = off: nothing is read from disk until it is switched on
+  var _histInfo = null;          // { loading } | { failed } | { truncated }
+  var _histSig = '';             // the switch set the history on screen was read under
+  var _histSeq = 0;
+  var _connectedOnce = false;    // the agent has answered at least once (so PORT is the real one)
+  var _lastOn = null;            // the character the last painted line was heard on (the "heard on" tag shows on a change)
 
   // This page is also the broken-out window: chat.html?groups=guild (a comma list is fine) shows only those
   // groups. No parameter = the Chat window. Ids are lower-case letters, which is all a group id is.
@@ -252,19 +278,49 @@
     return out;
   }
 
-  function lineHtml(l){
+  function lineHtml(l, tag){
+    // "Swapped to X": display only. No timestamp button, so there is nothing to copy; it is not a chat line.
+    if (l.sep) return '<div class="sep" data-n="' + l.n + '"><span>' + esc(l.text) + '</span></div>';
     var you = !!l.self, who;
-    if (l.npc) who = '<span class="who npc">' + esc(l.who) + '</span>';
+    if (l.ch === 'zone') who = '';
+    else if (l.npc) who = '<span class="who npc">' + esc(l.who) + '</span>';
     else if (you) who = '<span class="who you">You</span>';
     else who = '<span class="who name">' + esc(l.who) + '</span>';
     if (l.to) who += '<span class="arrow">→</span><span class="who name">' + esc(l.to) + '</span>';
     var copied = l.n === _copiedN;
-    return '<div class="ln" style="--lc:' + esc((_channels[l.ch] || {}).color || '#c9d1d9') + '" data-n="' + l.n + '"><button type="button" class="tm' + (copied ? ' copied' : '') + '" title="Click to copy this line">' + (copied ? 'copied' : hhmm(l.t)) + '</button>' + who + '<span class="tx">' + esc(l.text) + '</span></div>';
+    var otag = tag && l.on ? '<span class="otag" title="heard on ' + esc(l.on) + '">' + esc(l.on) + '</span>' : '';
+    return '<div class="ln' + (l.ch === 'zone' ? ' zone' : '') + '" style="--lc:' + esc((_channels[l.ch] || {}).color || '#c9d1d9') + '" data-n="' + l.n + '"><button type="button" class="tm' + (copied ? ' copied' : '') + '" title="Click to copy this line">' + (copied ? 'copied' : hhmm(l.t)) + '</button>' + otag + who + '<span class="tx">' + (l.ch === 'zone' ? '→ ' : '') + esc(l.text) + '</span></div>';
+  }
+  // One row, with the "heard on" tag where the character changed from the row before it (a swap line resets
+  // it: that line already says so). Rows the filter hides do not count, so a one-speaker search tags the
+  // alt that heard each line.
+  function rowHtml(l){
+    if (l.sep) { _lastOn = l.to || null; return lineHtml(l); }
+    var tag = !!_lastOn && !!l.on && String(l.on).toLowerCase() !== String(_lastOn).toLowerCase();
+    if (l.on) _lastOn = l.on;
+    return lineHtml(l, tag);
+  }
+  // The search box. A name matches a line when it starts the SPEAKER's name, or the name of the character of
+  // yours the line was heard on (case does not matter). A zone line has no speaker: it belongs to the
+  // character whose log it came from. A swap line is shown only with no search.
+  function startsWithCI(s, q){ return String(s == null ? '' : s).toLowerCase().indexOf(q) === 0; }
+  function matchesFind(l, q){
+    if (!q) return true;
+    if (l.sep) return false;
+    return startsWithCI(l.on, q) || (!l.self && l.ch !== 'zone' && startsWithCI(l.who, q));
+  }
+  function lineVisible(f, l){ return l.sep ? _findQ === '' : (f(l) && matchesFind(l, _findQ)); }
+  // The same key the agent de-duplicates its ring with, so a history line already in the live feed is not shown twice.
+  function chatKey(l){
+    return l.ch + '|' + String(l.who == null ? '' : l.who).toLowerCase() + '|' + (l.to || '') + '|' + l.text + '|' + Math.floor(l.t / 1000)
+      + (l.ch === 'zone' ? '|' + String(l.on || '').toLowerCase() : '');
   }
 
   // Click a timestamp to copy that line as "[hh:mm] Speaker: text" (an outgoing tell reads "You → Name").
   // The clipboard path is the one the other overlays use: navigator.clipboard, then a hidden textarea.
   function copyLineText(l){
+    // a zone change copies as the plain log line, not as something a character said
+    if (l.ch === 'zone') return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + 'You have entered ' + l.text + '.';
     var who = l.npc ? l.who : (l.self ? 'You' : l.who);
     if (l.to) who += ' → ' + l.to;
     var t = hhmm(l.t);
@@ -289,8 +345,9 @@
     var b = e.target && e.target.closest ? e.target.closest('.tm') : null;
     if (!b) return;
     var row = b.closest('.ln'), n = row ? Number(row.getAttribute('data-n')) : 0, line = null;
-    for (var i = _lines.length - 1; i >= 0; i--) if (_lines[i].n === n) { line = _lines[i]; break; }
-    if (!line) return;
+    var pool = n < 0 ? _histLines : _lines;   // history rows are numbered below zero
+    for (var i = pool.length - 1; i >= 0; i--) if (pool[i].n === n) { line = pool[i]; break; }
+    if (!line || line.sep) return;
     _copyText(copyLineText(line), function(){
       _unflashCopied();
       var stamp = hhmm(line.t);
@@ -307,7 +364,7 @@
   }
   function paintEmpty(){
     emptyEl.style.display = feedEl.children.length ? 'none' : 'block';
-    if (_isBrk && !feedEl.children.length) emptyEl.textContent = brkEmptyText();
+    if (!feedEl.children.length) emptyEl.textContent = _findQ ? 'no lines from "' + _find.trim() + '"' : (_isBrk ? brkEmptyText() : EMPTY_TEXT);
   }
   // What an empty breakout says: a gated group tells you which switch it is waiting on.
   function brkEmptyText(){
@@ -320,9 +377,28 @@
 
   // Repaint everything through the current filter (chip toggled, switch changed, restart). Appending is the
   // normal path (addLines) so a quiet poll never touches the DOM.
+  // History sits above the live feed under a dim divider, minus anything the live feed already holds.
+  function histDividerHtml(shown){
+    var hrs = _histHours + ' h';
+    var t = !_histInfo ? '' : _histInfo.loading ? 'loading the last ' + hrs + '…'
+      : _histInfo.failed ? 'history is not available'
+      : (shown ? 'history from the last ' + hrs + (_histInfo.truncated ? ' (the newest ones)' : '') : 'no chat in the last ' + hrs);
+    return t ? '<div class="hdiv">— ' + esc(t) + ' —</div>' : '';
+  }
   function repaint(){
-    var f = makeFilter(shownGroupIds()), h = '';
-    for (var i = 0; i < _lines.length; i++) if (f(_lines[i])) h += lineHtml(_lines[i]);
+    var f = makeFilter(shownGroupIds()), h = '', i;
+    _lastOn = null;
+    if (_histHours) {
+      var have = {}, hh = '', shownH = 0;
+      for (i = 0; i < _lines.length; i++) if (!_lines[i].sep) have[chatKey(_lines[i])] = true;
+      for (i = 0; i < _histLines.length; i++) {
+        var hl = _histLines[i];
+        if (!hl.sep && have[chatKey(hl)]) continue;
+        if (lineVisible(f, hl)) { hh += rowHtml(hl); if (!hl.sep) shownH++; }
+      }
+      h += hh + histDividerHtml(shownH);
+    }
+    for (i = 0; i < _lines.length; i++) if (lineVisible(f, _lines[i])) h += rowHtml(_lines[i]);
     var stick = pinned();
     feedEl.innerHTML = h;
     if (stick) toBottom();
@@ -331,11 +407,13 @@
   function addLines(fresh){
     if (!fresh.length) return;
     var f = makeFilter(shownGroupIds()), h = '', shown = 0, stick = pinned();
-    for (var i = 0; i < fresh.length; i++) { _lines.push(fresh[i]); if (f(fresh[i])) { h += lineHtml(fresh[i]); shown++; } }
+    for (var i = 0; i < fresh.length; i++) { _lines.push(fresh[i]); if (lineVisible(f, fresh[i])) { h += rowHtml(fresh[i]); if (!fresh[i].sep) shown++; } }
     if (_lines.length > FEED_MAX) _lines.splice(0, _lines.length - FEED_MAX);
-    if (shown) {
+    if (h) {
       feedEl.insertAdjacentHTML('beforeend', h);
-      while (feedEl.children.length > FEED_MAX) feedEl.removeChild(feedEl.firstChild);
+      // (history rows are not trimmed away by the live feed filling up)
+      var domMax = FEED_MAX + (_histHours ? _histLines.length + 3 : 0);
+      while (feedEl.children.length > domMax) feedEl.removeChild(feedEl.firstChild);
       if (stick) toBottom(); else { _unread += shown; paintNew(); }
     }
     paintEmpty();
@@ -346,7 +424,7 @@
   // Lines the current switches no longer allow are dropped, not just hidden: turning Officer off should
   // leave nothing of it behind in this window.
   function purgeGated(){
-    _lines = _lines.filter(function(l){ var g = groupOf(l.ch); return !!g && gateOn(g); });
+    _lines = _lines.filter(function(l){ if (l.sep) return true; var g = groupOf(l.ch); return !!g && gateOn(g); });
   }
 
   function paintChips(){
@@ -370,6 +448,95 @@
     savePrefs({ off: _prefs.off });
     paintChips(); repaint();
   });
+
+  // ── search: one character ────────────────────────────────────────────────
+  // The box is a plain <input>, so the preload arms the hover handshake for it. It takes keys only after a
+  // click and lets go on Enter, Esc, a few seconds of quiet or the window losing focus, so a locked overlay
+  // never keeps EverQuest's keystrokes. Nothing is remembered: closing the window forgets the search.
+  var findEl = document.getElementById('find'), cpickEl = document.getElementById('cpick');
+  var _findIdle = null;
+  function setFind(v){
+    _find = String(v == null ? '' : v); _findQ = _find.trim().toLowerCase();
+    if (findEl.value !== _find) findEl.value = _find;
+    repaint(); paintPick();
+  }
+  function releaseFind(){ clearTimeout(_findIdle); _findIdle = null; try { findEl.blur(); } catch (e) {} }
+  findEl.addEventListener('input', function(){
+    setFind(findEl.value);
+    clearTimeout(_findIdle); _findIdle = setTimeout(releaseFind, 8000);
+  });
+  findEl.addEventListener('keydown', function(e){
+    if (e.key === 'Enter') { releaseFind(); e.preventDefault(); }
+    else if (e.key === 'Escape') { setFind(''); releaseFind(); e.preventDefault(); }
+  });
+  window.addEventListener('blur', function(){ clearTimeout(_findIdle); _findIdle = null; });
+  // Your own characters seen in the feed or in history: every line says which of them heard it.
+  function ownCharacters(){
+    var seen = {}, out = [];
+    function add(arr){ for (var i = 0; i < arr.length; i++) { var o = arr[i].on; if (o && !seen[o.toLowerCase()]) { seen[o.toLowerCase()] = true; out.push(o); } } }
+    add(_histLines); add(_lines);
+    return out.sort(function(a, b){ return a.toLowerCase() < b.toLowerCase() ? -1 : 1; });
+  }
+  function paintPick(){
+    if (!cpickEl.classList.contains('open')) return;
+    var names = ownCharacters(), h = '';
+    for (var i = 0; i < names.length; i++) h += '<button type="button" class="fbtn' + (_findQ === names[i].toLowerCase() ? ' on' : '') + '" data-c="' + esc(names[i]) + '">' + esc(names[i]) + '</button>';
+    h += '<button type="button" class="fbtn" data-c="">' + (names.length ? 'all' : 'no characters seen yet') + '</button>';
+    if (cpickEl.__wpHtml !== h) { cpickEl.innerHTML = h; cpickEl.__wpHtml = h; }
+  }
+  document.getElementById('fpick').addEventListener('click', function(){
+    cpickEl.classList.toggle('open'); paintPick();
+  });
+  cpickEl.addEventListener('click', function(e){
+    var b = e.target && e.target.closest ? e.target.closest('button') : null;
+    if (!b) return;
+    setFind(b.getAttribute('data-c') || ''); cpickEl.classList.remove('open');
+  });
+
+  // ── history: the last N hours from the game's own log files ──────────────
+  // Off until asked: nothing is read from disk until a window is picked. The pick is remembered per window
+  // in this page's own storage (which can be empty or blocked: the window works without it).
+  var HIST_CHOICES = [0, 1, 2, 3, 6, 12, 24];
+  function histKey(){ return 'wpChatHistH:' + (_isBrk ? _only.join(',') : 'main'); }
+  try { var _hv = Number(localStorage.getItem(histKey())); if (HIST_CHOICES.indexOf(_hv) > 0) _histHours = _hv; } catch (e) {}
+  var histBtn = document.getElementById('histbtn');
+  function paintHistBtn(){
+    histBtn.textContent = _histHours ? '⏱ ' + _histHours + 'h' : '⏱';
+    histBtn.classList.toggle('on', _histHours > 0);
+  }
+  function histQuery(){
+    return 'hours=' + _histHours + '&tells=' + (_prefs.tells ? 1 : 0) + '&group=' + (_prefs.group ? 1 : 0) +
+      '&officer=' + (_prefs.officer ? 1 : 0) + '&custom=' + (_prefs.custom ? 1 : 0);
+  }
+  async function loadHistory(){
+    var mine = ++_histSeq;
+    if (!_histHours) { _histLines = []; _histInfo = null; _histSig = ''; repaint(); return; }
+    _histInfo = { loading: true }; _histSig = histQuery(); repaint();
+    var s = null;
+    try {
+      var r = await fetch('http://127.0.0.1:' + PORT + '/api/chat/history?' + _histSig, { cache: 'no-store' });
+      s = await r.json();
+    } catch (e) { s = null; }
+    if (mine !== _histSeq) return;          // a newer pick took over
+    if (s && s.ok && Array.isArray(s.lines)) {
+      _histLines = s.lines.filter(function(l){ return l && typeof l.text === 'string'; });
+      for (var i = 0; i < _histLines.length; i++) _histLines[i].n = -(i + 1);
+      _histInfo = { truncated: !!s.truncated };
+    } else { _histLines = []; _histInfo = { failed: true }; }
+    repaint(); paintPick();
+  }
+  function setHist(h){
+    _histHours = HIST_CHOICES.indexOf(h) >= 0 ? h : 0;
+    try { localStorage.setItem(histKey(), String(_histHours)); } catch (e) {}
+    paintHistBtn(); loadHistory();
+  }
+  histBtn.addEventListener('click', function(){
+    var r = histBtn.getBoundingClientRect();
+    openMenu(r.left, r.bottom + 2, HIST_CHOICES.map(function(h){
+      return { label: (h === _histHours ? '✓ ' : '') + (h ? 'Last ' + h + (h === 1 ? ' hour' : ' hours') : 'History off'), run: function(){ setHist(h); } };
+    }));
+  });
+  paintHistBtn();
 
   // ── breakouts: a group in its own window ─────────────────────────────────
   function setBreakout(id, on){
@@ -498,6 +665,8 @@
     };
     paintSettings();
     if (tellsWas !== _prefs.tells) { purgeGated(); paintChips(); repaint(); }
+    // The history was read under one set of switches; a change (Tells, Group, Officer, Custom) re-reads it.
+    if (_histHours && _connectedOnce && histQuery() !== _histSig) loadHistory();
   }
   function loadPrefs(){
     try { window.mimic.getChatPrefs(_char).then(function(p){ takePrefs(p); purgeGated(); paintChips(); repaint(); _prefsReady = true; }).catch(function(){ _prefsReady = true; }); } catch (e) { _prefsReady = true; }
@@ -550,9 +719,10 @@
       var firstGroups = !_groups.length;
       _groups = s.groups || _groups; _channels = s.channels || _channels;
       var st = takeStyle();
-      if (firstGroups || st !== _lastStyle) { _lastStyle = st; paintChips(); paintBrkTitle(); paintEmpty(); }
-      if (s.reset || (s.boot && s.boot !== _boot)) { _lines = []; feedEl.innerHTML = ''; _boot = s.boot || ''; _lastN = 0; _unread = 0; paintNew(); }
+      if (firstGroups || st !== _lastStyle) { _lastStyle = st; paintChips(); paintBrkTitle(); paintEmpty(); }      if (s.reset || (s.boot && s.boot !== _boot)) { _lines = []; feedEl.innerHTML = ''; _boot = s.boot || ''; _lastN = 0; _unread = 0; paintNew(); }
       _seq = s.seq || 0;
+      // First good answer from the agent: the port and the groups are known, so a remembered history window can be read now.
+      if (!_connectedOnce) { _connectedOnce = true; if (_histHours) loadHistory(); }
       // Only lines newer than the last one taken: a replayed body (the agent serves its last good one if a
       // poll fails to build) must not put a purged line back.
       var fresh = (s.lines || []).filter(function(l){ return l && l.n > _lastN; });
