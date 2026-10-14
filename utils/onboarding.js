@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.262': [
+    '**The hedge maze board comes up at the end, not the start.** Thelin\'s hail board in the Plane of Nightmare used to pop as the raid hailed him to begin the maze. It now opens with the first flag he hands out, after Terris-Thule\'s talk, and counts down his 10 minutes from there.',
+  ],
   '3.1.261': [
     '**Say your name your way.** Voice callouts can now say your character\'s name the way you want it said. Pick from a few suggested spellings or type your own (like "AL-den-mar"), and Mimic reads it that way. Mimic support is coming next.',
   ],

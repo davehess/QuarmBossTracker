@@ -10342,3 +10342,22 @@ the Bastion of Thunder at the time.
   - Full lays the map over EverQuest's client area, click-through always (`_coversScreen`).
   - Keep-clear areas: the UI ini's open windows plus your own boxes.
   - Open: the timers column is hidden in Full; nothing has been tried on Windows yet.
+
+### 296. The hedge maze board opens on Thelin's first flag, not on the hails that start the maze (bot 3.1.262, 2026-10-14)
+- **The call (the guild lead, 2026-10-14, from a morning raid):** *"This is supposed to come up after the last
+  boss dies, not right at the beginning of the hedge event, based on the raid"*; *"the one on the inside won't
+  give you flags until after he talks to terris thule at the end."*
+- **Why it popped early:** §285's opener fired on hails from two raid groups inside a minute. Raids hail Thelin
+  in groups to START the maze, so that is the first thing it saw. The production rows show it: a burst of
+  Thelin hails at 14:48–14:51 UTC, no grant.
+- **What the script says (`ponightmare/encounters/Maze.lua`):** a hail gives a flag only in state 4. State 4 comes
+  after the last construct dies, its shard is handed in, and Terris-Thule's talk ends. Both state-4 answers are
+  rows we already store: "Please destroy her…" (`thelin_2`, said even to raiders who already hold it) and
+  "I do not recognize your face…" (`cl_maze`). State 4 also starts Thelin's 10-minute depop.
+- **Where it landed:** `utils/hailBoard.js` `noteGrants` replaces `noteHails`. The first `thelin_2` (event) or
+  `cl_maze` (checklist) row whose zone resolves to `ponightmare` opens the window, which runs 10 minutes
+  (`minutes: 10`) from that grant. Recitals, other zones' Thelins and zoneless rows open nothing. Hails no longer
+  open anything; inside an open window they still count as seen. The two-groups rule and `GROUPS_WITHIN_MS` are
+  gone. `index.js` `_hailGrants(rows)` passes every stored row.
+- **Known limit:** if no raider with Mimic hails Thelin in state 4, nobody's grant reaches us and no board opens.
+  That is the same reach the boss boards already have.

@@ -2496,10 +2496,12 @@ flags left, M still to hail", and its clock (`hailClockState`) reads "leaves in 
 land in the callout-feedback learning set as an unknown expired trigger. Tests `test/hail-board.test.js`,
 `test/hail-board-command-center.test.js`, `test/hail-board-agent.test.js`.
 **Kill-less windows (bot 3.1.258, 2026-10-13, §285):** `HAIL_FLAGGERS` holds flag NPCs no boss kill stands up —
-today the hedge maze's Thelin Poxbourne (`hedge_maze`: done `thelin_2/3/4`, `hedge_event`). `noteHails` (called
-fire-and-forget from `_handleAgentPopFlags` after a `hail` row is stored) opens a window when hails of it from 2+
-distinct raid groups (`raid_roster.group_num`) land within `GROUPS_WITHIN_MS` (60 s); roster = the current raid.
-Fails closed (no group data → no window), one window per NPC at a time. No Mimic change: `hailBoardHtml` draws it.
+today the hedge maze's Thelin Poxbourne (`hedge_maze`: done `thelin_2/3/4`, `hedge_event`). **Since bot 3.1.262
+(§296)** `noteGrants` (called fire-and-forget from `_handleAgentPopFlags` with every stored row) opens it on the
+first `opensOn` grant (`thelin_2` event / `cl_maze` checklist) whose zone resolves to `ponightmare` — Maze.lua
+only grants in state 4, after the last construct, the shard and Terris-Thule's talk — and runs `minutes: 10` (his
+state-4 depop) from that grant; roster = the current raid. Hails open nothing (the 3.1.258 two-groups-hail opener
+fired at the maze's START). One window per NPC at a time. No Mimic change: `hailBoardHtml` draws it.
 
 ### Bristlebane — the raid-voice bot (bristlebane 0.1.0, bot 3.1.208, §166)
 Its own Discord application and container: `apps/bristlebane/` (`index.js` = Discord glue, `lib.js` = the
