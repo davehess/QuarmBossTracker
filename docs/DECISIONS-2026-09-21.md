@@ -10099,3 +10099,20 @@ Harmony, Hide/Sneak for non-rogues).
   each preflag names the zones that need it, linked.
 - **The test missed it** because nothing ran the query. `test/pop-raid-plan.test.js` now checks that no
   `characters` select names `level` and that the main filter accepts a self-named main.
+
+### 282. The raid plan on /screen: slides (A) and on the live map (C) (2026-10-14, web beta `e958a8a4`)
+
+- **The call** (the guild lead): picked **A and C** of the three /screen options.
+- **A — slides.** An officer presses "Load tonight's plan" in the slide editor; the plan becomes "Plan · …" slides
+  after the officers' own (16 today: Tonight, Preflags, then per zone before+travel and one per boss; capped at
+  30, long bodies split, never cut). Pressing it again replaces only the "Plan · …" slides. `web/lib/raidPlanSlides.ts`,
+  POST `/api/screen/slides` `{action:'loadPlan'}`.
+- **C — map.** When the screen's live map shows a zone in tonight's plan, the route, bosses, zone-ins, NPCs and
+  patrol are drawn under the raid dots (a "Tonight's plan" chip hides it). It shows nothing until raiders are in
+  that zone. `SpectatorBoard`'s new `plan` prop is passed only by /screen, so https://wolfpack.quest/spectator is
+  unchanged. Overview gains a Preflags box (who still lacks each one), loaded once per page load.
+- **Code move:** `loadRaiders`/`loadHeld` left `/pop/raid`'s page for `web/lib/raidPreflags.ts` on beta. Main still
+  has them inline until this graduates, so a main edit to them before then will need a hand merge into beta.
+- **Not done:** plan points have no height, so the map draws them on every floor.
+- **Next:** the guild lead looks at https://b.wolfpack.quest/screen; on a yes it graduates to main before the
+  19:30 ET freeze.
