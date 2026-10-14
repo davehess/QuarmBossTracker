@@ -1,0 +1,71 @@
+// Seed config for the Bristlebane chat agent. Copied into the state volume ONCE (first deploy); after that the
+// live file is /home/node/.openclaw/openclaw.json inside the container — edit it there (`openclaw config ...`),
+// not here. Fill every <...> before the first deploy. No secrets in this file: tokens come from the environment.
+// For image 2026.8+ (default 2026.10.3). ⚠ Do NOT add agents.defaults.compaction.reserveTokensFloor: it was
+// removed in 2026.8 and an unknown key stops the gateway from starting (the 20000 floor is now built in).
+{
+  gateway: { mode: "local", bind: "loopback" },   // gateway token comes from OPENCLAW_GATEWAY_TOKEN
+
+  channels: {
+    discord: {
+      enabled: true,
+      token: { source: "env", provider: "default", id: "DISCORD_BOT_TOKEN" },
+      applicationId: "<bristlebane-application-id>",
+      dmPolicy: "allowlist",
+      allowFrom: ["<operator-discord-user-id>"],
+      groupPolicy: "allowlist",
+      guilds: {
+        "<guild-id>": {
+          requireMention: true,
+          channels: { "<chat-channel-id>": { enabled: true, requireMention: false } },
+        },
+      },
+      // voice stays off: miMIC holds the raid voice connection.
+    },
+  },
+
+  models: {
+    mode: "merge",
+    providers: {
+      ollama: {
+        baseUrl: "${OLLAMA_BASE_URL}",
+        apiKey: "ollama-local",
+        api: "ollama",
+        timeoutSeconds: 300,
+        maxTokens: 2048,
+        models: [
+          {
+            id: "<ollama-model-tag>",
+            name: "<ollama-model-tag>",
+            reasoning: false,
+            input: ["text"],
+            // Must match what V5's server really runs (OLLAMA_CONTEXT_LENGTH / num_ctx). A declared window larger
+            // than the real one is exactly how "Auto-compaction could not recover this turn" happens.
+            contextWindow: 65536,
+            contextTokens: 65536,
+            params: { num_ctx: 65536, thinking: false, keep_alive: "30m" },
+          },
+        ],
+      },
+    },
+  },
+
+  // A chat persona needs no shell, file or web tools; "full" (the onboarding default) also fills the window
+  // with their schemas and lets one big tool result swamp a small local model.
+  tools: { profile: "messaging" },
+
+  agents: {
+    defaults: {
+      workspace: "/home/node/.openclaw/workspace",
+      model: { primary: "ollama/<ollama-model-tag>" },
+      bootstrapMaxChars: 8000,
+      bootstrapTotalMaxChars: 20000,
+      compaction: {
+        mode: "safeguard",
+        keepRecentTokens: 12000,
+        midTurnPrecheck: { enabled: true },
+        notifyUser: true,
+      },
+    },
+  },
+}
