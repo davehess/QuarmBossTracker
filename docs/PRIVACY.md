@@ -160,9 +160,10 @@ the guild's tag channel), `/say`, OOC, shouts, auctions, and tells unless you
 turn tell relay on. The one exception is a hail — see below. Mimic's Chat
 overlay (beta) can show many of these lines (and your tells, if you set Tells to
 Local or Synced) in a window on your own PC. That is a local view only: held in
-memory, not saved, not uploaded, cleared when Mimic restarts. Group, officer and
-custom-channel lines are not even held until you switch them on in the overlay,
-and stop being held shortly after you close it. Characters you have excluded
+memory, not saved, not uploaded, cleared when Mimic restarts. Group and joined
+channels show by default (switch them off in the overlay's ⚙); officer lines are
+not even held until you switch them on, and stop being held shortly after you
+close the overlay. Characters you have excluded
 from stats are never read into it. When you pick a time window on its clock
 button, the overlay can also show the last 1 to 24 hours of chat from the game's
 own log files on your PC: read on your PC, shown only in that overlay, never sent
