@@ -81,6 +81,7 @@ import { popRoster, RAIDER_RANKS, RAID_ALT_RANKS, POP_MIN_LEVEL } from '@/lib/po
 import SpellbookSubmit from './SpellbookSubmit';
 import GateMark from './GateMark';
 import { OwnedFlagCount, OwnedGateCell, SelfFlagsProvider } from './SelfFlagCells';
+import { isOfficer } from '@/lib/officer';
 import EssencesQueue from './EssencesQueue';
 import { loadEssenceQueue } from './essencesData';
 import { demoEssenceQueue } from '@/lib/essencesQueue';
@@ -421,6 +422,10 @@ export default async function PopFlagsPage(
   const selfCount = [...byChar.values()].filter(c => c.self.size > 0).length;
   // The characters the viewer owns, hidden and low-level ones included: their cells are the buttons.
   const ownedKeys = new Set(myCharsAll.map(c => c.name.toLowerCase()));
+  // Officers tick for anyone on the matrix (the guild lead, 2026-10-14: "make it so we can check off characters
+  // for flags as officers or check off your own flags on the matrix page"); the action checks again.
+  const viewerIsOfficer = await isOfficer(user.id);
+  const canTick = (name: string) => ownedKeys.has(name.toLowerCase()) || viewerIsOfficer;
   // The guild-wide surfaces count the raid roster only (popRoster): raiders are the mains, raid alts the
   // alts. Their flags come from byChar; someone with none yet can still enter the open tier.
   const chars: CharFlags[] = members
@@ -621,7 +626,7 @@ export default async function PopFlagsPage(
   const provenOf = (c: MarkSource) => [...c.flags].filter(f => !c.self.has(f));
   // The viewer's own ticks for the rows of a table, to seed its SelfFlagsProvider.
   const ownTicks = (rows: { name: string; self: Set<string> }[]) =>
-    Object.fromEntries(rows.filter(r => ownedKeys.has(r.name.toLowerCase())).map(r => [r.name.toLowerCase(), [...r.self]]));
+    Object.fromEntries(rows.filter(r => canTick(r.name)).map(r => [r.name.toLowerCase(), [...r.self]]));
   function seenTag(c: CharFlags) {
     if (!selected) return null;
     const seen = seenFor(selected, c);
@@ -1015,7 +1020,7 @@ export default async function PopFlagsPage(
                 </thead>
                 <tbody className="divide-y divide-border/50">
                   {scopedChars.map(c => {
-                    const owned = ownedKeys.has(c.name.toLowerCase());
+                    const owned = canTick(c.name);
                     return (
                       <tr key={c.name}>
                         <td className="py-1.5 pr-3">

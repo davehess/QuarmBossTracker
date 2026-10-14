@@ -233,6 +233,24 @@ describe('the tick action: gate, then write', () => {
     expect(src).not.toMatch(/character_name: character\b/);
   });
 
+  it('an officer may tick any roster character, only after ownership fails, under the roster name (2026-10-14)', () => {
+    // the guild lead: "make it so we can check off characters for flags as officers or check off your own flags"
+    const gate = src.slice(src.indexOf('async function writeTicks('));
+    const owns = gate.indexOf('ownedCharacters(user.id)');
+    const off = gate.indexOf('isOfficer(user.id)');
+    expect(owns).toBeGreaterThan(0);
+    expect(off).toBeGreaterThan(owns);                                   // ownership first, then the officer check
+    expect(off).toBeLessThan(gate.indexOf("from('pop_guide_ticks')"));   // both before any write
+    expect(gate).toMatch(/if \(!name && await isOfficer\(user\.id\)\)/);   // officers only reach it when not the owner
+    expect(gate).toMatch(/from\('characters'\)\.select\('name'\)/);        // a real roster character
+    expect(gate).toMatch(/\.replace\(\/\[\\\\%_\]\/g, '\\\\\$&'\)/);       // LIKE wildcards in a name escaped
+    // The page lets officers press every matrix cell; the owner rule stays for everyone else.
+    const popPage = stripJs(read('web/app/pop/page.tsx'));
+    expect(popPage).toMatch(/const viewerIsOfficer = await isOfficer\(user\.id\)/);
+    expect(popPage).toMatch(/const canTick = \(name: string\) => ownedKeys\.has\(name\.toLowerCase\(\)\) \|\| viewerIsOfficer/);
+    expect(popPage).toMatch(/const owned = canTick\(c\.name\)/);
+  });
+
   it('un-ticking removes every key that counts as the report, not just the one it would write', () => {
     expect(flagAction).toMatch(/tickKeysForFlag\(f\)/);
     expect(src).toMatch(/\.in\('item_key', remove\)/);
@@ -270,13 +288,14 @@ describe('the page: the owner’s cells are buttons, everyone else’s are marks
     expect(merge.slice(0, 300)).toMatch(/if \(!nameOf\.has\(k\)\) continue;/);
   });
 
-  it('turns a cell into the owner’s button only for a character the viewer owns', () => {
+  it('turns a cell into a button only for a character the viewer owns, or for an officer', () => {
     expect(cell).toMatch(/if \(!owned\) return <AccessMark z=\{z\} c=\{c\} \/>;/);
     expect(cell.indexOf('<OwnedGateCell')).toBeGreaterThan(cell.indexOf('if (!owned)'));
     expect(page.match(/<OwnedGateCell/g)).toHaveLength(1);
     // The matrix decides per row from the viewer's own characters, hidden and low-level ones included.
     expect(page).toMatch(/const ownedKeys = new Set\(myCharsAll\.map\(c => c\.name\.toLowerCase\(\)\)\);/);
-    expect(page).toMatch(/const owned = ownedKeys\.has\(c\.name\.toLowerCase\(\)\);/);
+    expect(page).toMatch(/const owned = canTick\(c\.name\);/);
+    expect(page).toMatch(/const canTick = \(name: string\) => ownedKeys\.has\(name\.toLowerCase\(\)\) \|\| viewerIsOfficer;/);
     expect(page).toMatch(/<GateCell z=\{z\} c=\{c\} owned=\{owned\} \/>/);
     // My Characters lists only the viewer's characters, so every one of its cells is theirs.
     expect(page).toMatch(/<GateCell z=\{z\} c=\{f\} owned \/>/);
@@ -291,13 +310,13 @@ describe('the page: the owner’s cells are buttons, everyone else’s are marks
     expect(table).toMatch(/owned \? <OwnedFlagCount/);
   });
 
-  it('seeds each table’s provider with the viewer’s own ticks only', () => {
-    expect(page).toMatch(/rows\.filter\(r => ownedKeys\.has\(r\.name\.toLowerCase\(\)\)\)/);
+  it('seeds each table’s provider with the ticks the viewer may change (own rows; every row for an officer)', () => {
+    expect(page).toMatch(/rows\.filter\(r => canTick\(r\.name\)\)/);
     expect(page.match(/<SelfFlagsProvider initial=/g)).toHaveLength(2);   // My Characters and the matrix
   });
 
   it('shows a tick as its own gold ☑, with the title, and lets a proof outrank it', () => {
-    expect(SELF_TICK_TITLE).toBe('Ticked by its owner on the site');
+    expect(SELF_TICK_TITLE).toBe('Ticked on the site by its owner or an officer');
     expect(accessMark).toMatch(/gateState\(z\.requires, proofFor\(z\.requires, c\), c\.self\)/);
     expect(accessMark).toMatch(/g\.mark === 'self' \? selfTitle\(z, c\)/);
     expect(accessMark).toMatch(/<GateMark kind=\{g\.mark\}/);
@@ -338,7 +357,7 @@ describe('what the browser loads', () => {
   it('popSelfFlags re-exports the gate rules, so the server page imports from one place', () => {
     expect(typeof gateState).toBe('function');
     expect(typeof proofFor).toBe('function');
-    expect(SELF_TICK_TITLE).toBe('Ticked by its owner on the site');
+    expect(SELF_TICK_TITLE).toBe('Ticked on the site by its owner or an officer');
   });
 });
 

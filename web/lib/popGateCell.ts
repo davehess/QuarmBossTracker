@@ -13,7 +13,7 @@
 // older, wider record), so a purple ✓ only ever means "the loot is the only proof"; and a gate with one
 // flag from each shows /who's blue, the first of the two in the weakest-wins order below.
 
-export const SELF_TICK_TITLE = 'Ticked by its owner on the site';
+export const SELF_TICK_TITLE = 'Ticked on the site by its owner or an officer';
 
 export type FlagProof = 'mimic' | 'who' | 'loot';
 export type GateMarkKind = 'none' | 'mimic' | 'who' | 'loot' | 'self';

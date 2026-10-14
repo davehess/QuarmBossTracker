@@ -86,8 +86,8 @@ export function OwnedGateCell({ character, zone, requires, proof, proofTitle }: 
       type="button"
       onClick={() => ctx.toggle(character, t.action, t.flags)}
       aria-pressed={g.access}
-      aria-label={`${character}, ${zone} gate (${names(requires.map(r => r.key))}): held on your own word`}
-      title={g.access ? `${held} Tap to untick.` : `Missing ${names(g.open)}. Tap to tick it as held, on your own word.`}
+      aria-label={`${character}, ${zone} gate (${names(requires.map(r => r.key))}): ticked on the site`}
+      title={g.access ? `${held} Tap to untick.` : `Missing ${names(g.open)}. Tap to tick it as held.`}
       className="inline-flex h-7 min-w-[1.75rem] items-center justify-center rounded border border-dashed border-border px-1 hover:border-gold focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue"
     >
       {mark ? <GateMark kind={mark} /> : <span className="text-dim">—</span>}
