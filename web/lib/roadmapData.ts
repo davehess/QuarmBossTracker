@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-8-147-2026-10-14',
+    title: 'Every PoP flag step',
+    version: 'Web 1.8.147',
+    date: '2026-10-14',
+    headline: 'The PoP Flags page shows every step the server keeps, not just the gates, and who still needs each one.',
+    features: [
+      { name: 'Every step', blurb: 'Each zone card lists its steps in order: the hails that must come before a kill (Adler, Adroha, Giwin, Fahlia), the ones that print nothing in chat, and the trips back to Tranquility.' },
+      { name: 'Who still needs it', blurb: 'Open a zone on the PoP Flags page to see, for each step, everyone who can get in but has not done it yet.' },
+      { name: 'Officers can tick', blurb: 'Officers can tick any character’s gates on the Matrix; everyone can still tick their own.' },
+      { name: 'Shorter top', blurb: 'The explanation at the top folds away behind a one-line summary.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'mimic-2-9-0-2026-10-13',
     title: 'Mimic 2.9 — the Cartography Release',
     version: 'Mimic 2.9.0 · Agent 3.7.156 · Web 1.8.146',
