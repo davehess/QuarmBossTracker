@@ -33021,6 +33021,14 @@ function startWebDashboard(port) {
       if (req.url === '/api/hail-mark' && req.method === 'POST') return _handleHailMark(req, res);
       // Spawn map overlay (map.html): positions + zone spawn points + timers in one poll, and its click-to-mark.
       if (req.url && req.url.split('?')[0] === '/api/map-state' && req.method === 'GET') return _handleMapState(req, res);
+      // Charm overlay's "Best pets here" (2026-10-14): the spell, the zone and the ranked list in one poll.
+      if (req.url && req.url.split('?')[0] === '/api/charm-best' && req.method === 'GET') {
+        let _cb;
+        try { _cb = charmBestState(new URL(req.url, 'http://x').searchParams.get('char'), Date.now()); }
+        catch (e) { console.error('[api/charm-best]', e && (e.stack || e.message || e)); _cb = { ok: false, show: false, status: 'hidden' }; }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(_cb));
+      }
       if (req.url === '/api/map-mark' && req.method === 'POST') return _handleMapMark(req, res);
       if (req.url === '/api/map-leg' && req.method === 'POST') return _handleMapLeg(req, res);
       // "What you hear" — per-person rules for every callout (the guild lead, 2026-10-12).
@@ -46905,6 +46913,295 @@ function _mapEnsureZone(short, zoneId, now) {
   }
   return rec.body ? rec : null;
 }
+
+// ── Charm pets: the pure half ────────────────────────────────────────────────────────────────────
+// The guild lead, 2026-10-14: "integrate a list of the better charm pets for the highest level charm a player has
+// for the zone that they're in" (the Charm overlay's collapsible "Best pets here"). The IDEA is a third-party site's
+// (eqpetfinder); the rules are read from Project Quarm's server source (EQMacEmu zone/spells.cpp) and the data is our
+// own catalog, served by the bot's GET /api/agent/charm-pets (utils/charmPets.js) as a zone's charm CANDIDATES.
+// This half is what only the agent can know: the caster's spell (from the spellbook file, else assumed from level),
+// that spell's level cap and body-type limit, and the ranking. No I/O here; the tests run it as written.
+//
+// Class level, level cap and target type of every player charm in the catalog. Levels are PQDI's (Quarm's own);
+// the cap is the spell's SPA 22 `max` in eqemu_spells (verified 2026-10-14); `tt` is eqemu_spells.targettype.
+// Left out on purpose: the Dire Charm AA family (2759-2761, no class level), Alluring Whispers / Persuade (no
+// player class on PQDI).  `ids` lists a spell's duplicate catalog rows so a spellbook that scribes either counts.
+const CHARM_PET_SPELLS = [
+  { ids: [3355], name: 'Command of Druzzil',        cap: 64, tt: 5,  cls: { Enchanter: 64 } },
+  { ids: [3347], name: 'Beckon',                    cap: 57, tt: 5,  cls: { Enchanter: 62 } },
+  // Dictate is an area charm that lives 48 s: a spell you may know, never the one assumed for "best pets".
+  { ids: [1707], name: 'Dictate',                   cap: 58, tt: 5,  cls: { Enchanter: 60 }, aoe: true },
+  { ids: [1705, 1706], name: "Boltran's Agacerie",  cap: 53, tt: 5,  cls: { Enchanter: 53 } },
+  { ids: [184],  name: 'Allure',                    cap: 51, tt: 5,  cls: { Enchanter: 49 } },
+  { ids: [183],  name: 'Cajoling Whispers',         cap: 46, tt: 5,  cls: { Enchanter: 39 } },
+  { ids: [182],  name: 'Beguile',                   cap: 37, tt: 5,  cls: { Enchanter: 24 } },
+  { ids: [300],  name: 'Charm',                     cap: 25, tt: 5,  cls: { Enchanter: 12 } },
+  { ids: [3371], name: 'Call of the Banshee',       cap: 57, tt: 5,  cls: { Bard: 64 } },
+  { ids: [750],  name: "Solon's Bewitching Bravura", cap: 51, tt: 5, cls: { Bard: 39 } },
+  { ids: [725],  name: "Solon's Song of the Sirens", cap: 37, tt: 5, cls: { Bard: 27 } },
+  { ids: [3445], name: 'Command of Tunare',         cap: 60, tt: 9,  cls: { Druid: 63 } },
+  { ids: [1553], name: 'Call of Karana',            cap: 53, tt: 9,  cls: { Druid: 52 } },
+  { ids: [142],  name: 'Allure of the Wild',        cap: 49, tt: 9,  cls: { Druid: 44 } },
+  { ids: [141],  name: 'Beguile Animals',           cap: 43, tt: 9,  cls: { Druid: 34 } },
+  { ids: [1556], name: "Tunare's Request",          cap: 35, tt: 9,  cls: { Druid: 55 } },
+  { ids: [260],  name: 'Charm Animals',             cap: 33, tt: 9,  cls: { Druid: 24, Shaman: 34 } },
+  { ids: [245],  name: 'Befriend Animal',           cap: 24, tt: 9,  cls: { Druid: 14, Shaman: 29 } },
+  { ids: [753],  name: 'Beguile Plants',            cap: 25, tt: 16, cls: { Druid: 29 } },
+  { ids: [3316], name: 'Word of Terris',            cap: 60, tt: 10, cls: { Necromancer: 65 } },
+  { ids: [1629], name: 'Enslave Death',             cap: 55, tt: 10, cls: { Necromancer: 60 } },
+  { ids: [1624], name: 'Thrall of Bones',           cap: 53, tt: 10, cls: { Necromancer: 54 } },
+  { ids: [198],  name: 'Cajole Undead',             cap: 51, tt: 10, cls: { Necromancer: 49 } },
+  { ids: [197],  name: 'Beguile Undead',            cap: 46, tt: 10, cls: { Necromancer: 34 } },
+  { ids: [196],  name: 'Dominate Undead',           cap: 32, tt: 10, cls: { Necromancer: 20 } },
+  { ids: [3484], name: 'Call of the Arch Mage',     cap: 60, tt: 11, cls: { Magician: 65 } },
+];
+const CHARM_PET_TARGETS = { 5: 'any mob', 9: 'animals', 10: 'undead', 11: 'summoned', 16: 'plants' };
+const CHARM_PET_LIST_MAX = 8;
+const CHARM_PET_DPS_STEP = 1.1;   // two pets within 10% of each other's damage are a tie: the tougher one goes first
+
+// EQMacEmu zone/spells.cpp: an animal / undead / summoned / plant charm only lands on its own body type; the
+// general single-target charms (tt 5) take any. Undead is Undead 3, Summoned Undead 8 and Vampire 12; summoned is
+// Summoned 24, Summoned2 27 and Summoned3 28.
+function charmPetBodyOk(tt, bodytype) {
+  const bt = Number(bodytype);
+  if (tt === 5) return true;
+  if (tt === 9) return bt === 21;
+  if (tt === 10) return bt === 3 || bt === 8 || bt === 12;
+  if (tt === 11) return bt === 24 || bt === 27 || bt === 28;
+  if (tt === 16) return bt === 25;
+  return false;
+}
+
+// The spell the Best-pets list is for. `bookIds` is a Set of spell ids from the character's <Name>-Spellbook.txt, or
+// null when there is no such file. Highest level cap wins (the class's higher line wins a tie); Dictate only when it
+// is all there is. A spellbook that holds charms decides; one that holds none (or no file) falls back to the highest
+// charm the class has at this level, and says so (basis 'assumed') — a level is not proof the spell is scribed.
+// → null (this class has no charm line) | { spell, basis, bookChecked } | { spell: null, reason }
+function pickCharmPetSpell(cls, level, bookIds) {
+  const mine = CHARM_PET_SPELLS.filter(s => s.cls[cls] != null);
+  if (!mine.length) return null;
+  const best = (list) => list.reduce((a, s) => (!a || s.cap > a.cap || (s.cap === a.cap && s.cls[cls] > a.cls[cls])) ? s : a, null);
+  const pick = (list) => best(list.filter(s => !s.aoe)) || best(list);
+  const bookChecked = !!(bookIds && bookIds.size);
+  if (bookChecked) {
+    const known = mine.filter(s => s.ids.some(id => bookIds.has(id)));
+    if (known.length) return { spell: pick(known), basis: 'spellbook', bookChecked };
+  }
+  const lvl = Number(level);
+  if (!(lvl > 0)) return { spell: null, reason: 'level', bookChecked };
+  const usable = mine.filter(s => s.cls[cls] <= lvl);
+  if (!usable.length) return { spell: null, reason: 'low', bookChecked };
+  return { spell: pick(usable), basis: 'assumed', bookChecked };
+}
+
+// Average hit over the swing time, in damage per second. attack_delay is tenths of a second (30 = a 3.0 s swing).
+function charmPetDps(n) {
+  const delay = Number(n.delay) > 0 ? Number(n.delay) : 30;
+  return ((Number(n.mindmg) || 0) + (Number(n.maxdmg) || 0)) / 2 / (delay / 10);
+}
+
+// The "why" chips, in the order they matter for a pet, at most three (a mid-raid glance, not a table).
+function charmPetChips(n) {
+  const t = Array.isArray(n.traits) ? n.traits : [];
+  const out = [];
+  if (t.includes('summon')) out.push('summons');
+  if (t.includes('flurry')) out.push('flurry');
+  if (t.includes('triple')) out.push('triple');
+  if (t.includes('dual')) out.push('dual wield');
+  if (t.includes('rampage') || t.includes('area_rampage')) out.push('rampage');
+  if (n.proc) out.push('proc');
+  if (Number(n.delay) > 0 && Number(n.delay) <= 22) out.push('fast');
+  return out.slice(0, 3);
+}
+
+// A zone's candidates + the spell → the list to show. Level cap: an NPC counts when its LOWEST level is within the cap
+// (EQEmu rolls a level between level and maxlevel; `over` marks one that can roll past it). Ranked by damage per
+// second, in 10% steps; inside a step the tougher one (more HP) goes first, then the higher level. One row per name.
+function rankCharmPets(npcs, spell) {
+  const rows = [];
+  for (const n of Array.isArray(npcs) ? npcs : []) {
+    if (!n || !(Number(n.level) >= 1) || Number(n.level) > spell.cap) continue;
+    if (!charmPetBodyOk(spell.tt, n.bodytype)) continue;
+    const dps = charmPetDps(n);
+    rows.push({ n, dps, step: Math.floor(Math.log(Math.max(dps, 0.1)) / Math.log(CHARM_PET_DPS_STEP)) });
+  }
+  rows.sort((a, b) => (b.step - a.step) || ((Number(b.n.hp) || 0) - (Number(a.n.hp) || 0)) || (b.n.level - a.n.level)
+    || String(a.n.name).localeCompare(String(b.n.name)) || (a.n.id - b.n.id));
+  const seen = new Set(), pets = [];
+  for (const r of rows) {
+    const key = String(r.n.name).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const pt = Array.isArray(r.n.pts) && r.n.pts[0] ? r.n.pts[0] : null;
+    pets.push({
+      id: r.n.id, name: r.n.name, level: r.n.level, maxlevel: Number(r.n.maxlevel) > r.n.level ? Number(r.n.maxlevel) : 0,
+      over: Number(r.n.maxlevel) > spell.cap, hp: Number(r.n.hp) || 0, dps: Math.round(r.dps * 10) / 10,
+      delay: Number(r.n.delay) > 0 ? Number(r.n.delay) : 30, chips: charmPetChips(r.n),
+      cmd_target: '/target ' + r.n.name,
+      // The server frame (x, y) is /loc's (second, first): `/map y x`, the same as the quest "who to talk to next" chip.
+      cmd_map: pt ? '/map ' + pt[1] + ' ' + pt[0] : null,
+    });
+  }
+  return { total: seen.size, pets: pets.slice(0, CHARM_PET_LIST_MAX) };
+}
+// ── end Charm pets: the pure half ──
+
+// ── Charm pets: this machine's half ──────────────────────────────────────────────────────────────
+// A zone's candidates are kept on disk beside zone-spawns-cache/ and asked for with their ETag at most once a day.
+// Local mode (no token) never asks: it shows what the disk holds, or says it needs the server. A 404 (no spawn points
+// for the zone, or a bot that does not have the route yet) hides the section, and is asked again in six hours.
+const CHARM_PETS_REVALIDATE_MS = 24 * 60 * 60 * 1000;
+const CHARM_PETS_NONE_RETRY_MS = 6 * 60 * 60 * 1000;
+const CHARM_PETS_FAIL_RETRY_MS = 10 * 60 * 1000;
+const CHARM_PETS_BOOK_TTL_MS   = 30 * 1000;
+const _charmPetZones = new Map();    // short → { short, body, etag, fetchedAt, retryAt, none, inflight }
+const _charmBooks = new Map();       // lower-cased character → { checkedAt, file, mtimeMs, ids }
+
+function _charmPetsDir() { return path.join(__dirname, 'charm-pets-cache'); }
+function _charmPetsRec(short) {
+  let rec = _charmPetZones.get(short);
+  if (rec) return rec;
+  rec = { short, body: null, etag: null, fetchedAt: 0, retryAt: 0, none: false, inflight: false };
+  try {
+    const j = JSON.parse(fs.readFileSync(path.join(_charmPetsDir(), short + '.json'), 'utf8'));
+    if (j && j.body && Array.isArray(j.body.npcs)) { rec.body = j.body; rec.etag = j.etag || null; rec.fetchedAt = Number(j.fetched_at) || 0; }
+  } catch { /* not cached yet */ }
+  _charmPetZones.set(short, rec);
+  return rec;
+}
+// May this machine ask the bot at all? Local mode (no token) never does.
+function _charmPetsFetchAllowed() {
+  if (_localOnly()) return false;
+  const o = _uploadOpts;
+  if (!o || !o.botUrl || !o.token) return false;
+  try { if (typeof _controlStandDown === 'function' && _controlStandDown().down) return false; } catch { /* fail open */ }
+  return true;
+}
+function _charmPetsGet(short, etag, done) {
+  const opts = _uploadOpts;
+  const u = new URL(opts.botUrl.replace(/\/encounter(\?.*)?$/, '/charm-pets') + '?zone=' + encodeURIComponent(short));
+  const mod = u.protocol === 'https:' ? https : http;
+  const headers = { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}`, 'Accept-Encoding': 'gzip' };
+  if (etag) headers['If-None-Match'] = etag;
+  const req = mod.request({ method: 'GET', hostname: u.hostname, port: u.port, path: u.pathname + u.search, headers, timeout: 30000 }, (res) => {
+    const chunks = [];
+    res.on('data', c => chunks.push(c));
+    res.on('end', () => {
+      try {
+        let buf = Buffer.concat(chunks);
+        if (/gzip/i.test(String(res.headers['content-encoding'] || '')) && buf.length) buf = zlib.gunzipSync(buf);
+        done(null, res.statusCode, buf, res.headers.etag || null);
+      } catch (e) { done(e); }
+    });
+  });
+  req.on('error',   (e) => done(e));
+  req.on('timeout', () => { req.destroy(); done(new Error('timeout')); });
+  req.end();
+}
+function _charmPetsSave(rec, t) {
+  fs.mkdirSync(_charmPetsDir(), { recursive: true });
+  const file = path.join(_charmPetsDir(), rec.short + '.json');
+  fs.writeFileSync(file + '.tmp', JSON.stringify({ etag: rec.etag, fetched_at: t, body: rec.body }));
+  fs.renameSync(file + '.tmp', file);
+}
+function _charmPetsFetch(rec) {
+  if (rec.inflight) return;
+  rec.inflight = true;
+  let finished = false;
+  try {
+    _charmPetsGet(rec.short, rec.body ? rec.etag : null, (err, status, buf, etag) => {
+      if (finished) return;
+      finished = true;
+      rec.inflight = false;
+      const t = Date.now();
+      try {
+        if (err || !(status === 200 || status === 304 || status === 404)) { rec.retryAt = t + CHARM_PETS_FAIL_RETRY_MS; return; }
+        if (status === 404) { rec.none = true; rec.retryAt = t + CHARM_PETS_NONE_RETRY_MS; return; }
+        rec.none = false; rec.retryAt = 0;
+        if (status === 304) { rec.fetchedAt = t; if (rec.body) _charmPetsSave(rec, t); return; }
+        const body = JSON.parse(buf.toString('utf8'));
+        if (!body || !Array.isArray(body.npcs)) throw new Error('no npcs');
+        rec.body = body; rec.etag = etag; rec.fetchedAt = t;
+        _charmPetsSave(rec, t);
+      } catch (e) { rec.retryAt = t + CHARM_PETS_FAIL_RETRY_MS; console.warn(`[charm-pets] zone ${rec.short}:`, e && e.message); }
+    });
+  } catch { rec.inflight = false; }
+}
+// The zone's candidates if we hold any (disk or fetched); starts a fetch when one is due and allowed.
+function _charmPetsEnsure(short, now) {
+  const rec = _charmPetsRec(short);
+  if ((!rec.body || (now - rec.fetchedAt) >= CHARM_PETS_REVALIDATE_MS) && !rec.inflight && now >= rec.retryAt && _charmPetsFetchAllowed()) _charmPetsFetch(rec);
+  return rec;
+}
+
+// The scribed spell ids from the character's own <Name>-Spellbook.txt (EQ's /outputfile spellbook), read where the
+// Quarmy / spellbook scans read it. Local only; nothing here is sent anywhere. null when there is no such file.
+function _charmBookIds(character, now) {
+  const lower = String(character || '').toLowerCase();
+  if (!lower) return null;
+  let rec = _charmBooks.get(lower);
+  if (rec && now - rec.checkedAt < CHARM_PETS_BOOK_TTL_MS) return rec.ids;
+  rec = rec || { checkedAt: 0, file: null, mtimeMs: 0, ids: null };
+  rec.checkedAt = now;
+  _charmBooks.set(lower, rec);
+  try {
+    const firstLog = stats.watchedLogs[0] && stats.watchedLogs[0].logPath;
+    if (!firstLog) return rec.ids;
+    const dir = path.dirname(firstLog);
+    const name = fs.readdirSync(dir).find(n => { const m = n.match(SPELLBOOK_FILENAME_RX); return m && m[1].toLowerCase() === lower; });
+    if (!name) { rec.file = null; rec.ids = null; return null; }
+    const full = path.join(dir, name);
+    const mtimeMs = fs.statSync(full).mtimeMs;
+    if (rec.file === full && rec.mtimeMs === mtimeMs) return rec.ids;
+    rec.ids = new Set(parseSpellbookFile(fs.readFileSync(full, 'utf8')).map(s => s.spell_id));
+    rec.file = full; rec.mtimeMs = mtimeMs;
+  } catch { /* unreadable: keep what we had */ }
+  return rec.ids;
+}
+
+// The focused EverQuest window's character: the watched character whose Zeal pipe spoke most recently (the same
+// 60 s rule as /api/state's activeCharacter).
+function _charmActiveCharacter(now) {
+  let best = null, bestTs = 0;
+  for (const ch of Object.keys(_zealState || {})) {
+    const ts = (_zealState[ch] && _zealState[ch].updatedAt) || 0;
+    if (ts > bestTs && (now - ts) < 60_000) { bestTs = ts; best = ch; }
+  }
+  return best;
+}
+
+// GET /api/charm-best[?char=<name>] — everything the Charm overlay's "Best pets here" section draws.
+//   show:false → this class has no charm line: the section is not drawn at all.
+//   status: 'ok' | 'no-zone' | 'no-spell' | 'loading' | 'needs-server' | 'hidden'
+//     hidden = the bot answered 404 for the zone (no spawn points, or no such route yet): draw nothing.
+function charmBestState(character, now) {
+  const char = character || _charmActiveCharacter(now);
+  const out = { ok: true, show: false, status: 'no-zone', char: char || null, cls: null, level: null, zone: null, spell: null, pets: [], total: 0 };
+  if (!char) return out;
+  const cls = _classOf(char), level = _levelOf(char);
+  out.cls = cls || null; out.level = level || null;
+  const sel = cls ? pickCharmPetSpell(cls, level, _charmBookIds(char, now)) : null;
+  if (!sel) return out;                    // no class known yet, or a class with no charm line
+  out.show = true;
+  if (!sel.spell) { out.status = 'no-spell'; out.spellReason = sel.reason; return out; }
+  const sp = sel.spell;
+  out.spell = { id: sp.ids[0], name: sp.name, cap: sp.cap, target: CHARM_PET_TARGETS[sp.tt] || 'any mob', basis: sel.basis, bookChecked: sel.bookChecked };
+  const st = _zealState[Object.keys(_zealState || {}).find(k => k.toLowerCase() === char.toLowerCase())];
+  const zoneId = st && Number(st.zone) > 0 ? Number(st.zone) : null;
+  const short = zoneId ? _mapZoneShort(zoneId) : null;
+  if (!short) return out;                  // status stays 'no-zone'
+  out.zone = { id: zoneId, short };
+  const rec = _charmPetsEnsure(short, now);
+  if (!rec.body) {
+    out.status = rec.none ? 'hidden' : (_charmPetsFetchAllowed() ? 'loading' : 'needs-server');
+    return out;
+  }
+  out.zone.long = rec.body.long_name || short;
+  const r = rankCharmPets(rec.body.npcs, sp);
+  out.status = 'ok'; out.pets = r.pets; out.total = r.total;
+  return out;
+}
+// ── end Charm pets: this machine's half ──
 
 // ── Pins: a live mob tied to its spawn point ────────────────────────────────────────────────────
 // Mobs are pulled before they die, so "where it died" is a poor clue ("4 possible spawn points"). The moment a

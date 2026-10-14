@@ -161,6 +161,37 @@
     font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
   #move-btn:hover{opacity:1;color:#58a6ff;border-color:#58a6ff}
   body.setup #move-btn{top:30px}
+  /* "Best pets here" (the guild lead, 2026-10-14) — a collapsed-by-default list under the charm cards. One neutral
+     chip style on purpose: the reader is mid-fight, and colour here would mean something it does not. The only
+     colour is orange on "assumed" (a guess about your spellbook), the same meaning it has elsewhere. */
+  #pets{display:none;margin-top:4px}
+  #pets.on{display:block}
+  #pets-toggle{display:flex;align-items:center;gap:6px;width:100%;box-sizing:border-box;padding:3px 8px;
+    background:rgb(0 0 0 / var(--bg-alpha));border:0;border-radius:5px;color:#c9d1d9;font:inherit;font-size:11px;
+    text-align:left;cursor:pointer;text-shadow:0 1px 2px #000}
+  #pets-toggle:hover{color:#fff}
+  #pets-toggle .car{color:#6e7681;width:10px}
+  #pets-toggle .ct{margin-left:auto;color:#6e7681}
+  #pets-body{display:none;padding:3px 8px 4px;background:rgb(0 0 0 / var(--bg-alpha));border-radius:0 0 5px 5px;margin-top:1px}
+  #pets.open #pets-body{display:block}
+  .pets-sub{font-size:10px;color:#8b949e;margin-bottom:2px;line-height:1.3}
+  .pets-sub b{color:#c9d1d9;font-weight:normal}
+  .pets-sub .assumed{color:#ffa657}
+  .pets-note{font-size:10px;color:#6e7681;padding:2px 0}
+  .pr{display:flex;align-items:center;gap:6px;padding:1px 0;color:#c9d1d9;font-size:11px;line-height:1.35;text-shadow:0 1px 2px #000}
+  .pr .pm{display:flex;align-items:center;gap:6px;flex:1 1 auto;min-width:0;padding:0;background:transparent;border:0;
+    color:inherit;font:inherit;text-align:left;cursor:pointer;text-shadow:inherit}
+  .pr .pm:hover .pn{color:#fff;text-decoration:underline}
+  .pr .pm.copied .pn{color:#56d364}
+  .pr .lv{flex:0 0 38px;color:#8b949e;font-variant-numeric:tabular-nums}
+  .pr .pn{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pr .nm{flex:0 0 auto;color:#8b949e;font-size:10px;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .pr .nm b{color:#c9d1d9;font-weight:normal}
+  .pr .ch{flex:0 0 auto;font-size:9px;padding:0 4px;border-radius:3px;border:1px solid rgba(255,255,255,0.18);color:#8b949e}
+  .pr .loc{flex:0 0 auto;padding:0 3px;background:transparent;border:1px solid rgba(255,255,255,0.18);border-radius:3px;font:inherit;font-size:9px;color:#8b949e;cursor:pointer}
+  .pr .loc:hover{color:#58a6ff;border-color:#58a6ff}
+  .pr .loc.copied{color:#56d364;border-color:#56d364}
+  body.wp-mini #pets{display:none !important}
 </style></head>
 <body>
   <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner — same on every overlay)">✥</button>
@@ -179,6 +210,10 @@
     <div class="title wp-mini-hide"><span id="conn" class="conn bad">○</span><span>🔮 Charm tracker</span></div>
     <div id="list"></div>
     <div id="empty">no active charm</div>
+    <div id="pets" class="wp-mini-hide">
+      <button id="pets-toggle" type="button" title="The best charm targets in your zone for your highest charm spell"><span class="car" id="pets-car">▸</span><span>Best pets here</span><span class="ct" id="pets-ct"></span></button>
+      <div id="pets-body"></div>
+    </div>
   </div>
 <script>
   let PORT = 7779;
@@ -789,6 +824,104 @@
       body: JSON.stringify({ key: key })
     }).catch(function(){}).then(function(){ tick(); });
   });
+  // ── Best pets here (the guild lead, 2026-10-14: "a list of the better charm pets for the highest level charm a
+  // player has for the zone that they're in") ──────────────────────────────────────────────────────────────────
+  // The agent does the work (GET /api/charm-best: the spell, the zone, the ranked list); this only draws it. Collapsed
+  // by default, remembered per PC. An agent without the route (404), or one that says the class has no charm line or the
+  // bot has nothing for this zone, leaves the section hidden. Polled every 10 s while open, every 30 s while closed.
+  var petsEl = document.getElementById('pets'), petsBody = document.getElementById('pets-body');
+  var petsToggle = document.getElementById('pets-toggle'), petsCt = document.getElementById('pets-ct');
+  var petsOpen = false, petsTimer = null, petsGone = false;
+  try { petsOpen = localStorage.getItem('wpCharmPetsOpen') === '1'; } catch (e) {}
+  function petsFmtHp(n){ return n >= 10000 ? Math.round(n / 1000) + 'k' : (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n)); }
+  function petsLevel(p){ return 'L' + p.level + (p.maxlevel > p.level ? '-' + p.maxlevel : '') + (p.over ? '*' : ''); }
+  // Copy a command to the clipboard (the same two-step as Mob Info's /say and /map chips).
+  function petsCopy(text, el){
+    function fallback(){
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch (e) {} finally { ta.remove(); }
+    }
+    try { navigator.clipboard.writeText(text).catch(fallback); } catch (e) { fallback(); }
+    if (el) { el.classList.add('copied'); setTimeout(function(){ el.classList.remove('copied'); }, 1200); }
+  }
+  function petsMessage(s){
+    switch (s.status) {
+      case 'no-zone':      return 'waiting for your zone (needs Zeal)';
+      case 'no-spell':     return s.spellReason === 'level' ? 'your level is not known yet' : 'no charm spell at level ' + s.level + ' yet';
+      case 'loading':      return 'loading this zone…';
+      case 'needs-server': return 'needs the server (local mode keeps no pet data)';
+      case 'ok':           return s.total ? '' : 'nothing here your ' + s.spell.name + ' can take';
+      default:             return '';
+    }
+  }
+  function petsHtml(s){
+    var sp = s.spell, sub = '';
+    if (sp) {
+      sub = '<div class="pets-sub"><b>' + esc(sp.name) + '</b> · up to L' + sp.cap + ' · ' + esc(sp.target)
+        + (sp.basis === 'assumed' ? ' · <span class="assumed" title="'
+          + esc(sp.bookChecked ? 'None of your charm spells is in your spellbook file, so this is the best your class has at your level.' : 'No spellbook file found (/outputfile spellbook), so this is the best your class has at your level.')
+          + '">assumed from level</span>' : '')
+        + (s.zone && s.zone.long ? ' · ' + esc(s.zone.long) : '') + '</div>';
+    }
+    var msg = petsMessage(s);
+    if (msg) return sub + '<div class="pets-note">' + esc(msg) + '</div>';
+    var rows = '';
+    for (var i = 0; i < s.pets.length; i++) {
+      var p = s.pets[i];
+      var chips = '';
+      for (var c = 0; c < p.chips.length; c++) chips += '<span class="ch">' + esc(p.chips[c]) + '</span>';
+      // The name, level and numbers are one button (copies /target); the map chip is a second button beside it.
+      rows += '<div class="pr"><button type="button" class="pm" data-cmd="' + esc(p.cmd_target) + '" title="'
+        + esc('Click to copy ' + p.cmd_target + (p.over ? ' · can roll above your charm\'s level cap' : '') + ' · swing ' + (p.delay / 10).toFixed(1) + 's') + '">'
+        + '<span class="lv">' + esc(petsLevel(p)) + '</span><span class="pn">' + esc(p.name) + '</span>'
+        + '<span class="nm"><b>' + p.dps + '</b> dps · ' + petsFmtHp(p.hp) + ' hp</span></button>' + chips
+        + (p.cmd_map ? '<button type="button" class="loc" data-cmd="' + esc(p.cmd_map) + '" title="Copy ' + esc(p.cmd_map) + '">map</button>' : '')
+        + '</div>';
+    }
+    return sub + rows + (s.total > s.pets.length ? '<div class="pets-note">top ' + s.pets.length + ' of ' + s.total + '</div>' : '');
+  }
+  function petsApply(s){
+    var visible = !!(s && s.ok && s.show && s.status !== 'hidden');
+    petsEl.classList.toggle('on', visible);
+    if (!visible) { _requestAutoHeight(); return; }
+    petsCt.textContent = s.status === 'ok' && s.total ? String(s.total) : '';
+    var html = petsHtml(s);
+    if (petsBody.__wpHtml !== html) { petsBody.innerHTML = html; petsBody.__wpHtml = html; }
+    _requestAutoHeight();
+  }
+  async function petsPoll(){
+    clearTimeout(petsTimer);
+    if (petsGone) return;
+    var next = petsOpen ? 10000 : 30000;
+    try {
+      var r = await fetch('http://127.0.0.1:' + PORT + '/api/charm-best', { cache: 'no-store' });
+      if (r.status === 404) { petsGone = true; petsEl.classList.remove('on'); return; }   // an agent from before this
+      petsApply(await r.json());
+    } catch (e) { /* agent offline: the charm cards say so already */ }
+    petsTimer = setTimeout(petsPoll, next);
+  }
+  function petsSetOpen(v, quiet){
+    petsOpen = v;
+    petsEl.classList.toggle('open', v);
+    document.getElementById('pets-car').textContent = v ? '▾' : '▸';
+    try { localStorage.setItem('wpCharmPetsOpen', v ? '1' : '0'); } catch (e) {}
+    _requestAutoHeight();
+    if (v && !quiet) petsPoll();   // opening asks now instead of waiting out the 30 s closed cadence
+  }
+  petsToggle.addEventListener('click', function(){ petsSetOpen(!petsOpen); });
+  // Both are real buttons, so the preload arms their hover handshake and a click lands while the overlay is locked.
+  petsBody.addEventListener('click', function(e){
+    var src = e.target && e.target.closest && e.target.closest('button[data-cmd]');
+    if (!src) return;
+    e.stopPropagation();
+    petsCopy(src.getAttribute('data-cmd'), src);
+  });
+  petsSetOpen(petsOpen, true);
+  petsPoll();
+  window.addEventListener('wp-mini-change', function(){ _requestAutoHeight(); });
+
   // Mini flipped: repaint in the other rendition, THEN re-measure. The explicit
   // re-measure covers the cases the byte guard skips — no charm up (the list is
   // '' either way, but the title line just appeared or vanished) and an agent
