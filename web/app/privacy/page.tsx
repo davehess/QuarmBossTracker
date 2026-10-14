@@ -295,7 +295,9 @@ export default function PrivacyPage() {
           local view only: held in memory, not saved, not uploaded, cleared when Mimic restarts. Group,
           officer and custom-channel lines are not even held until you switch them on in the overlay, and
           stop being held shortly after you close it. Characters you have excluded from stats are never
-          read into it.
+          read into it. When you pick a time window on its clock button, the overlay can also show the last
+          1 to 24 hours of chat from the game&apos;s own log files on your PC: read on your PC, shown only in
+          that overlay, never sent and never saved by Mimic, under the same switches as live chat.
         </p>
       </Section>
 
