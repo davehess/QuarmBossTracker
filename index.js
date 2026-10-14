@@ -18290,7 +18290,7 @@ async function _handleAgentLiveState(req, res) {
     // The character's own known timers (agent 3.7.66+) — read back by
     // character-live-state for another raider's Target Info.
     const cooldowns = _sanitizeLiveCooldowns(st?.cooldowns, Date.now());
-    // The target's position for the Map (agent 3.7.165+: target_map in the Map's server frame, target_type, target_zone).
+    // The target's position for the Map (agent 3.7.166+: target_map in the Map's server frame, target_type, target_zone).
     // Memory only, never a column: the upsert below takes `rows`, and these fields are not on it. No usable target
     // (none, id 0, a player, a corpse) clears this character's sample. Never fails the POST.
     try {
