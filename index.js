@@ -11258,6 +11258,117 @@ async function _handleAgentItemClickies(req, res, isPublic) {
   return res.end(_itemClickyCache.body);
 }
 
+// ── Name pronunciations (the guild lead, 2026-10-14) ─────────────────────────
+// "Get player pronunciation right": the owner of a character writes how its name should sound, and the
+// agents substitute it into spoken text (utils/pronounce.js applyPronunciations).
+//   GET  /api/agent/pronunciations           → { version, entries: [{ name, say }] }, ETag'd, 60 s cache
+//   GET  /api/agent/pronunciation-suggest    → ?name=X → { name, suggestions, tips, current }
+//   POST /api/agent/pronunciation            → { character, say }, only for a character the caller owns
+const { suggestPronunciations, coachingTips, validSay } = require('./utils/pronounce');
+let _pronCache = null;                       // { fetchedAt, body, etag }
+const _PRON_TTL_MS = 60 * 1000;
+const _PRON_NAME_RE = /^[A-Za-z]{2,32}$/;    // character names are letters only (same check as the website's save)
+
+async function _handleAgentPronunciations(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const fresh = _pronCache && (Date.now() - _pronCache.fetchedAt) < _PRON_TTL_MS;
+  if (!fresh) {
+    const supabase = require('./utils/supabase');
+    const guildId  = supabase.guildId();
+    const rows = await supabase.selectAllPaged('name_pronunciations',
+      `select=display_name,say,updated_at&guild_id=eq.${encodeURIComponent(guildId)}`, 'character_lc');
+    if (!Array.isArray(rows)) {
+      // A failed read is never cached: keep serving the last good body, else tell the agent to retry.
+      if (_pronCache) _pronCache.fetchedAt = Date.now() - _PRON_TTL_MS + 15 * 1000;
+      else {
+        res.writeHead(503, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+        return res.end(JSON.stringify({ error: 'pronunciations unavailable' }));
+      }
+    } else {
+      let newest = '';
+      for (const r of rows) if (r.updated_at && String(r.updated_at) > newest) newest = String(r.updated_at);
+      const version = `${newest}#${rows.length}`;
+      const body = JSON.stringify({ version, entries: rows.map(r => ({ name: r.display_name, say: r.say })) });
+      _pronCache = { fetchedAt: Date.now(), body, etag: '"' + version + '"' };
+    }
+  }
+  if (req.headers['if-none-match'] === _pronCache.etag) {
+    res.writeHead(304, { 'ETag': _pronCache.etag, 'Cache-Control': 'max-age=60' });
+    return res.end();
+  }
+  res.writeHead(200, { 'Content-Type': 'application/json', 'ETag': _pronCache.etag, 'Cache-Control': 'max-age=60' });
+  return res.end(_pronCache.body);
+}
+
+async function _handleAgentPronunciationSuggest(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const name = String(new URL(req.url, 'http://x').searchParams.get('name') || '').trim();
+  if (!_PRON_NAME_RE.test(name)) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'need a character name' }));
+  }
+  let current = null;
+  try {
+    const supabase = require('./utils/supabase');
+    const guildId  = supabase.guildId();
+    const rows = await supabase.select('name_pronunciations',
+      `select=say&guild_id=eq.${encodeURIComponent(guildId)}&character_lc=eq.${encodeURIComponent(name.toLowerCase())}&limit=1`);
+    if (Array.isArray(rows) && rows[0]) current = rows[0].say;
+  } catch { /* the suggestions are still useful without the saved one */ }
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ name, suggestions: suggestPronunciations(name), tips: coachingTips(name), current }));
+}
+
+async function _handleAgentPronunciationSet(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const chunks = []; let total = 0;
+  for await (const chunk of req) { total += chunk.length; if (total > 4 * 1024) { res.writeHead(413); return res.end(); } chunks.push(chunk); }
+  let body; try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { res.writeHead(400, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ error: 'invalid JSON' })); }
+  const character = String(body?.character || '').trim();
+  const say       = String(body?.say || '').trim().replace(/\s+/g, ' ');
+  if (!_PRON_NAME_RE.test(character) || !validSay(say)) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'need a character and a spelling of 1-60 letters, spaces, hyphens or apostrophes' }));
+  }
+  const supabase = require('./utils/supabase');
+  const guildId  = supabase.guildId();
+  const q = (name) => `select=name,discord_id,main_name&guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(name)}&limit=1`;
+  // Only the character's owner may set it, whoever holds a valid token. The website's rule: the row's
+  // discord_id is the caller's, or its family root's is (alts often carry no discord_id of their own).
+  const owned = await supabase.select('characters', q(character));
+  const row = Array.isArray(owned) ? owned[0] : null;
+  let mine = !!row && !!row.discord_id && String(row.discord_id) === String(identity.discord_id);
+  if (row && !mine && row.main_name && row.main_name !== row.name && _PRON_NAME_RE.test(row.main_name)) {
+    const root = await supabase.select('characters', q(row.main_name));
+    mine = Array.isArray(root) && !!root[0] && !!root[0].discord_id && String(root[0].discord_id) === String(identity.discord_id);
+  }
+  if (!mine) {
+    res.writeHead(403, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'not your character' }));
+  }
+  const alternates = suggestPronunciations(row.name).filter(s => s.toLowerCase() !== say.toLowerCase()).slice(0, 4);
+  const saved = await supabase.upsert('name_pronunciations', [{
+    guild_id: guildId,
+    character_lc: String(row.name).toLowerCase(),
+    display_name: row.name,
+    say,
+    alternates,
+    set_by_discord_id: String(identity.discord_id),
+    updated_at: new Date().toISOString(),
+  }], 'guild_id,character_lc');   // representation, not minimal: a failed write is null, a good one is an array
+  if (!Array.isArray(saved)) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ error: 'save failed' }));
+  }
+  _pronCache = null;
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ ok: true }));
+}
+
 // GET /api/agent/item-catalog
 //
 // The wishlist picker's universe: every item any catalogued NPC can drop, with
@@ -23667,6 +23778,21 @@ const httpServer = http.createServer(async (req, res) => {
       console.error('[item-clickies] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  {
+    const pronPath = req.url.split('?')[0];
+    const pronHandler = req.method === 'GET' && pronPath === '/api/agent/pronunciations' ? _handleAgentPronunciations
+      : req.method === 'GET' && pronPath === '/api/agent/pronunciation-suggest' ? _handleAgentPronunciationSuggest
+      : req.method === 'POST' && pronPath === '/api/agent/pronunciation' ? _handleAgentPronunciationSet : null;
+    if (pronHandler) {
+      try { return await pronHandler(req, res); }
+      catch (err) {
+        console.error('[pronunciation] handler error:', err);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({ error: 'internal error' }));
+      }
     }
   }
 

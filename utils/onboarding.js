@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.261': [
+    '**Say your name your way.** Voice callouts can now say your character\'s name the way you want it said. Pick from a few suggested spellings or type your own (like "AL-den-mar"), and Mimic reads it that way. Mimic support is coming next.',
+  ],
   '3.1.260': [
     '**Fewer callouts from other people\'s fights.** Late on a non-raid night, Mimic could speak another group\'s callout from a different zone (an enrage across the world). The raid-evening hour after midnight now counts for the night before, and a callout from a zone we know you are not in no longer reaches you just because we could not tell where you are.',
   ],
