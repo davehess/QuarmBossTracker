@@ -48,6 +48,7 @@ const PAIRS = [
   ['mobInfoWindow',   'createMobInfoOverlay'],
   ['buffQueueWindow', 'createBuffQueueOverlay'],
   ['whoWindow',       'createWhoOverlay'],
+  ['chatWindow',      'createChatOverlay'],   // this PC's own chat feed (2026-10-14)
   ['melodyWindow',    'createMelodyOverlay'],
   ['zealWindow',      'createZealHealthOverlay'],
   ['threatWindow',    'createThreatMeterOverlay'],

@@ -165,6 +165,7 @@ let petsWindow    = null;
 let mobInfoWindow = null;
 let buffQueueWindow = null;
 let whoWindow     = null;
+let chatWindow    = null;   // the Chat overlay (this PC's own chat feed, chat.html) - key 'chat', cfg.showChat
 let melodyWindow  = null;
 let zealWindow    = null;
 let threatWindow  = null;
@@ -279,7 +280,13 @@ function defaultConfig() {
     // it back off doesn't downgrade — they just stop receiving new betas until
     // stable catches up. Toggle in the tray.
     betaChannel: false,
-    tellsMode: 'off',        // 'off' | 'local' | 'synced' — display ships v0.2
+    tellsMode: 'off',        // 'off' | 'local' | 'synced' — 'local'/'synced' show tells in the Chat overlay (this PC only)
+    // The Chat overlay (chat.html; the guild lead, 2026-10-14). Off until opted in, like every overlay.
+    // chatPrefs = { fontSize, group, officer, custom, byChar: { <charLower>: { off: [group ids] } } }:
+    // group/officer/custom are the opt-in switches for lines that stay hidden otherwise (default OFF),
+    // byChar remembers which channel chips each character has switched off.
+    showChat: false,
+    chatPrefs: {},
     onboarded: false,        // false until user dismisses or completes loading
     // Per-character "do not transmit" list. Names are case-sensitive as they
     // appear in the eqlog filename (eqlog_<Name>_pq.proj.txt → <Name>). The
@@ -1302,6 +1309,7 @@ function _boundsKeyForWindow(win) {
   if (win === mobInfoWindow) return 'mobInfoBounds';
   if (win === buffQueueWindow) return 'buffQueueBounds';
   if (win === whoWindow)     return 'whoBounds';
+  if (win === chatWindow)    return 'chatBounds';
   if (win === melodyWindow)  return 'melodyBounds';
   if (win === zealWindow)    return 'zealBounds';
   if (win === threatWindow)  return 'threatBounds';
@@ -2667,7 +2675,7 @@ function _pollBlindState() {
 const _CHAR_PROFILE_FLAGS = [
   'showHud', 'enableTriggerTts', 'showCharm', 'showPets', 'showMobInfo',
   'showBuffQueue', 'showWho', 'showMelody', 'showZeal', 'showThreat', 'showChChain',
-  'showExtTarget', 'showCanvas', 'showMap',
+  'showExtTarget', 'showCanvas', 'showMap', 'showChat',
 ];
 // flag → (live-window getter, creator) so apply can materialize a window for an
 // overlay the profile turns on. Getters (not captured refs) read the current
@@ -2687,6 +2695,7 @@ const _CHAR_PROFILE_WINDOWS = [
   { flag: 'showChChain',      get: () => chChainWindow,   create: () => createChChainOverlay() },
   { flag: 'showCanvas',       get: () => canvasWindow,    create: () => createCanvasWindow() },
   { flag: 'showMap',          get: () => mapWindow,       create: () => createMapOverlay() },
+  { flag: 'showChat',         get: () => chatWindow,      create: () => createChatOverlay() },
 ];
 let _activeCharName = null;     // last activeCharacter seen on /api/state (display)
 let _lastProfileChar = null;    // last char we applied a profile for (change-gate)
@@ -3734,7 +3743,7 @@ const _OVERLAY_NAMES = {
   pets: 'Pet tracker', mobinfo: 'Mob Info', buffQueue: 'Buff queue',
   who: '/who', melody: 'Melody', zeal: 'Tick', threat: 'Threat meter',
   chchain: 'CH chain', tank: 'Tank HUD', exttarget: 'Extended target',
-  command: 'Command center', popraid: 'PoP raids', me: 'HUD', canvas: 'Canvas', map: 'Map', maptimers: 'Map timers',
+  command: 'Command center', popraid: 'PoP raids', me: 'HUD', canvas: 'Canvas', map: 'Map', maptimers: 'Map timers', chat: 'Chat',
 };
 function _rescueSort(entries, displays, targetId) {
   const inside = (r, x, y) => x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
@@ -3869,8 +3878,8 @@ async function _rescueOverlays() {
   // Overlays with NO window at all (disabled via ✕/tray, or gated off) can't
   // be rescued — name them in the log so "still missing X" has an answer:
   // it needs re-enabling from tray → Overlays, not another rescue.
-  const KNOWN = ['hud', 'trigger', 'charm', 'pets', 'mobinfo', 'buffQueue', 'who', 'melody', 'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me', 'map', 'maptimers'];
-  const missing = KNOWN.filter(k => !present.has(k));
+  const KNOWN = ['hud', 'trigger', 'charm', 'pets', 'mobinfo', 'buffQueue', 'who', 'melody', 'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me', 'map', 'maptimers', 'chat'];
+  const missing =KNOWN.filter(k => !present.has(k));
   try { applyAllVisibility(); } catch { /* best effort */ }
   appendAgentLog(`[rescue] home display ${disp.id} (${disp.size.width}x${disp.size.height}) · lost ${sorted.lost.length} [${sorted.lost.map(e => e.key).join(', ')}]`
     + ` · nudged ${sorted.nudge.length} [${sorted.nudge.map(e => e.key).join(', ')}]`
@@ -4054,7 +4063,8 @@ function _overlayEntries() {
   if (mobInfoWindow && !mobInfoWindow.isDestroyed()) out.push(['mobinfo', mobInfoWindow]);
   if (buffQueueWindow && !buffQueueWindow.isDestroyed()) out.push(['buffQueue', buffQueueWindow]);
   if (whoWindow     && !whoWindow.isDestroyed())     out.push(['who',     whoWindow]);
-  if (melodyWindow  && !melodyWindow.isDestroyed())  out.push(['melody',  melodyWindow]);
+  if (chatWindow    && !chatWindow.isDestroyed())    out.push(['chat',    chatWindow]);
+  if (melodyWindow && !melodyWindow.isDestroyed())  out.push(['melody',  melodyWindow]);
   if (zealWindow    && !zealWindow.isDestroyed())    out.push(['zeal',    zealWindow]);
   if (threatWindow  && !threatWindow.isDestroyed())  out.push(['threat',  threatWindow]);
   if (chChainWindow && !chChainWindow.isDestroyed()) out.push(['chchain', chChainWindow]);
@@ -4740,6 +4750,7 @@ function applySetupMode(on) {
   applyMobInfoVisibility();
   applyBuffQueueVisibility();
   applyWhoVisibility();
+  applyChatVisibility();
   applyMelodyVisibility();
   applyZealVisibility();
   applyCanvasVisibility();
@@ -6731,6 +6742,71 @@ function applyWhoVisibility() {
   if (shouldShow) whoWindow.showInactive(); else whoWindow.hide();
 }
 
+// Chat overlay — this PC's own chat feed (the guild lead, 2026-10-14: "move it off the screen and be able
+// to show/hide different components from it"). One scrolling feed, colour-coded, with a chip per channel
+// group. Reads the agent's /api/chat; the lines live in the agent's memory only and are never uploaded.
+// Nothing here is tied to EverQuest's screen, so it sits on a second monitor like any overlay.
+function createChatOverlay() {
+  if (_agentOnly()) return;
+  const b = _resolveBounds('chatBounds', 'chatBoundsSig', { x: 40, y: 620, width: 440, height: 260 });
+  chatWindow = new BrowserWindow({
+    title: 'Wolf Pack miMIC — Chat overlay',
+    width: b.width, height: b.height, x: b.x, y: b.y,
+    minWidth: _OVERLAY_MIN_W, minHeight: 120,
+    frame: false, transparent: true, resizable: true,
+    alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
+    webPreferences: _wpPrefs('Chat'),
+  });
+  chatWindow.setAlwaysOnTop(true, 'screen-saver');
+  chatWindow.setVisibleOnAllWorkspaces(true);
+  chatWindow.loadFile('chat.html');
+  chatWindow.on('moved',  () => _persistBounds('chatBounds', chatWindow));
+  chatWindow.on('resize', () => _persistBounds('chatBounds', chatWindow));
+  chatWindow.once('ready-to-show', () => {
+    chatWindow.webContents.send('agent-port', agentPort);
+    applyChatVisibility();
+    applyOverlayInteractivity();
+    applyOverlayOpacity(chatWindow, 'chat');
+  });
+}
+function applyChatVisibility() {
+  if (!_live(chatWindow)) return;
+  const cfg = loadConfig();
+  const unlocked  = setupMode || cfg.overlaysLocked === false;
+  const shouldShow = unlocked || (cfg.showChat && !cfg.hideOverlays && _eqGateOk(cfg));
+  if (shouldShow) chatWindow.showInactive(); else chatWindow.hide();
+}
+// What the Chat overlay remembers (cfg.chatPrefs): the font size and the three opt-in switches are shared;
+// which channel chips are switched OFF is kept per character. Whitelisted and clamped, because the
+// renderer hands these over.
+function _chatCharKey(char) { return String(char || '').toLowerCase().replace(/[^a-z]/g, '').slice(0, 24) || '_default'; }
+function _chatPrefsPayload(cfg, char) {
+  const p = (cfg.chatPrefs && typeof cfg.chatPrefs === 'object') ? cfg.chatPrefs : {};
+  const mine = p.byChar && p.byChar[_chatCharKey(char)];
+  const fs_ = Math.round(Number(p.fontSize));
+  return {
+    fontSize: fs_ >= 9 && fs_ <= 24 ? fs_ : 12,
+    group: p.group === true, officer: p.officer === true, custom: p.custom === true,
+    tells: cfg.tellsMode === 'local' || cfg.tellsMode === 'synced',
+    off: (mine && Array.isArray(mine.off)) ? mine.off.filter(x => typeof x === 'string').slice(0, 32) : [],
+  };
+}
+ipcMain.handle('chat-prefs-get', (_e, char) => _chatPrefsPayload(loadConfig(), char));
+ipcMain.handle('chat-prefs-set', (_e, char, patch) => {
+  const cfg = loadConfig();
+  const p = (cfg.chatPrefs && typeof cfg.chatPrefs === 'object') ? cfg.chatPrefs : {};
+  const inc = (patch && typeof patch === 'object') ? patch : {};
+  if (inc.fontSize != null) { const n = Math.round(Number(inc.fontSize)); if (n >= 9 && n <= 24) p.fontSize = n; }
+  for (const k of ['group', 'officer', 'custom']) if (typeof inc[k] === 'boolean') p[k] = inc[k];
+  if (Array.isArray(inc.off)) {
+    p.byChar = (p.byChar && typeof p.byChar === 'object') ? p.byChar : {};
+    p.byChar[_chatCharKey(char)] = { off: inc.off.filter(x => typeof x === 'string' && /^[a-z]{1,16}$/.test(x)).slice(0, 32) };
+  }
+  cfg.chatPrefs = p;
+  saveConfig(cfg);
+  return _chatPrefsPayload(cfg, char);
+});
+
 // Melody overlay — bard /melody twist queue with per-song play / casting /
 // stopped state. Reads from /api/state.bardMelody (per-character).
 function createMelodyOverlay() {
@@ -7134,6 +7210,7 @@ const _OVERLAY_WINDOWS = [
   { key: 'mobinfo',   flag: 'showMobInfo',      get: () => mobInfoWindow,   create: createMobInfoOverlay,      drop: () => { mobInfoWindow = null; } },
   { key: 'buffQueue', flag: 'showBuffQueue',    get: () => buffQueueWindow, create: createBuffQueueOverlay,    drop: () => { buffQueueWindow = null; } },
   { key: 'who',       flag: 'showWho',          get: () => whoWindow,       create: createWhoOverlay,          drop: () => { whoWindow = null; } },
+  { key: 'chat',      flag: 'showChat',         get: () => chatWindow,      create: createChatOverlay,         drop: () => { chatWindow = null; } },
   { key: 'melody',    flag: 'showMelody',       get: () => melodyWindow,    create: createMelodyOverlay,       drop: () => { melodyWindow = null; } },
   { key: 'zeal',      flag: 'showZeal',         get: () => zealWindow,      create: createZealHealthOverlay,   drop: () => { zealWindow = null; } },
   { key: 'threat',    flag: 'showThreat',       get: () => threatWindow,    create: createThreatMeterOverlay,  drop: () => { threatWindow = null; } },
@@ -7399,6 +7476,7 @@ function applyAllVisibility() {
   applyMobInfoVisibility();
   applyBuffQueueVisibility();
   applyWhoVisibility();
+  applyChatVisibility();
   applyMelodyVisibility();
   applyZealVisibility();
   applyThreatVisibility();
@@ -7478,7 +7556,7 @@ const _HIDEALL_FLAGS = [
   'showHud', 'showTriggerOverlay', 'showCharm', 'showPets', 'showMobInfo',
   'showBuffQueue', 'showWho', 'showMelody', 'showZeal', 'showThreat',
   'showChChain', 'showTank', 'showExtTarget', 'showCommand', 'showPopRaid',
-  'showMe', 'showCanvas', 'showMap', 'showMapTimers',
+  'showMe', 'showCanvas', 'showMap', 'showMapTimers', 'showChat',
 ];
 function toggleHideAllOverlays() {
   if (_agentOnly()) return;   // nothing on screen to hide, and it would rewrite the saved overlay flags
@@ -7568,7 +7646,7 @@ let _registeredMiniAccel = null;
 // the dashboard's ON/OFF button does. No defaults: a global shortcut takes its
 // key away from EverQuest, so nobody gets one they did not ask for.
 const _OVERLAY_HOTKEY_KEYS = ['dock', 'hud', 'trigger', 'charm', 'pet', 'mobinfo', 'buffQueue', 'who', 'melody',
-  'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me', 'map', 'maptimers', 'canvas'];
+  'zeal', 'threat', 'chchain', 'tank', 'exttarget', 'command', 'popraid', 'me', 'map', 'maptimers', 'chat', 'canvas'];
 let _registeredOverlayAccels = {};   // overlay key → accelerator bound right now
 let _blockedOverlayAccels = {};      // overlay key → accelerator the OS refused
 let _hotkeyQuiet = false;            // true while the focus gate re-registers: no failure logs, blocked state untouched
@@ -7880,6 +7958,7 @@ function currentStatus() {
     showMobInfo: !!cfg.showMobInfo,
     showBuffQueue: !!cfg.showBuffQueue,
     showWho: !!cfg.showWho,
+    showChat: !!cfg.showChat,
     showMelody: !!cfg.showMelody,
     melodyBardOnly: !!cfg.melodyBardOnly,
     // AE-song damage chips on the melody overlay (per-hit + kite total).
@@ -8223,6 +8302,11 @@ function buildTrayMenu() {
     { label: '/who (zone roster)', type: 'checkbox', checked: s.showWho, enabled: !s.hideOverlays && !_dockedNow.includes('who'), click: (mi) => {
         const cfg = loadConfig(); cfg.showWho = mi.checked; saveConfig(cfg);
         if (mi.checked && !whoWindow) createWhoOverlay(); else applyWhoVisibility(); _reapDisabledOverlays();
+        pushStatus();
+      } },
+    { label: 'Chat (guild, raid, say; tells and more are opt-in) [beta]', type: 'checkbox', checked: !!s.showChat, enabled: !s.hideOverlays, click: (mi) => {
+        const cfg = loadConfig(); cfg.showChat = mi.checked; saveConfig(cfg);
+        if (mi.checked && !chatWindow) createChatOverlay(); else applyChatVisibility(); _reapDisabledOverlays();
         pushStatus();
       } },
     { label: 'Casting tracker (melody on bards, spells otherwise)', type: 'checkbox', checked: s.showMelody, enabled: !s.hideOverlays && !_dockedNow.includes('melody'), click: (mi) => {
@@ -9561,6 +9645,10 @@ function _toggleOverlay(name) {
       cfg.showWho = !cfg.showWho; saveConfig(cfg);
       if (cfg.showWho && !whoWindow) createWhoOverlay(); else applyWhoVisibility();
       break;
+    case 'chat':
+      cfg.showChat = !cfg.showChat; saveConfig(cfg);
+      if (cfg.showChat && !chatWindow) createChatOverlay(); else applyChatVisibility();
+      break;
     case 'melody':
       cfg.showMelody = !cfg.showMelody; saveConfig(cfg);
       if (cfg.showMelody && !melodyWindow) createMelodyOverlay(); else applyMelodyVisibility();
@@ -9738,7 +9826,7 @@ const _WP_THEMES = ['default', 'light', 'bright', 'soft', 'contrast', 'deutan', 
 // Global opacity — one slider on the dashboard drives every overlay. Writes
 // cfg.overlayOpacity for ALL known keys (so windows opened later inherit it)
 // and re-applies to the live set.
-const _ALL_OVERLAY_KEYS = ['hud','trigger','charm','pets','mobinfo','buffQueue','who','melody','zeal','threat','chchain','tank','exttarget','command','popraid','me','map','maptimers'];
+const _ALL_OVERLAY_KEYS = ['hud','trigger','charm','pets','mobinfo','buffQueue','who','melody','zeal','threat','chchain','tank','exttarget','command','popraid','me','map','maptimers','chat'];
 // `field` is overlayOpacity (the whole overlay) or overlayBgAlpha (its
 // background) — see applyOverlayOpacity for the split.
 function _setOpacityAll(field, v) {
@@ -10185,6 +10273,9 @@ ipcMain.handle('hide-overlay', (e) => {
     } else if (win === whoWindow) {
       cfg.showWho = false; saveConfig(cfg);
       try { whoWindow.hide(); } catch {}
+    } else if (win === chatWindow) {
+      cfg.showChat = false; saveConfig(cfg);
+      try { chatWindow.hide(); } catch {}
     } else if (win === buffQueueWindow) {
       cfg.showBuffQueue = false; saveConfig(cfg);
       try { buffQueueWindow.hide(); } catch {}
@@ -10711,6 +10802,7 @@ ipcMain.handle('save-config', async (_e, incoming) => {
     if (merged.showMobInfo      && !mobInfoWindow)   createMobInfoOverlay();
     if (merged.showBuffQueue    && !buffQueueWindow) createBuffQueueOverlay();
     if (merged.showWho          && !whoWindow)       createWhoOverlay();
+    if (merged.showChat         && !chatWindow)      createChatOverlay();
     if (merged.showMelody       && !melodyWindow)    createMelodyOverlay();
     if (merged.showZeal         && !zealWindow)      createZealHealthOverlay();
     if (merged.showThreat       && !threatWindow)    createThreatMeterOverlay();
@@ -10725,7 +10817,7 @@ ipcMain.handle('save-config', async (_e, incoming) => {
   } catch (e) { void e; }
   applyMapVisibility();
   applyMapTimersVisibility();
-  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyTankVisibility(); applyExtTargetVisibility(); applyCommandVisibility(); applyPopRaidVisibility(); applyMeVisibility(); applyOverlayInteractivity();
+  applyOverlayVisibility(); applyTriggerVisibility(); applyCharmVisibility(); applyPetsVisibility(); applyMobInfoVisibility(); applyBuffQueueVisibility(); applyWhoVisibility(); applyChatVisibility(); applyMelodyVisibility(); applyZealVisibility(); applyThreatVisibility(); applyChChainVisibility(); applyTankVisibility(); applyExtTargetVisibility(); applyCommandVisibility(); applyPopRaidVisibility(); applyMeVisibility(); applyOverlayInteractivity();
   // Sync autostart-with-Windows with the saved pref. No-op on non-Windows;
   // on Windows this writes/removes the HKCU\…\Run registry entry via
   // setLoginItemSettings — no UAC, no admin rights.

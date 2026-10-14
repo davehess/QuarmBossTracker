@@ -1034,6 +1034,12 @@ contextBridge.exposeInMainWorld('mimic', {
     ? ipcRenderer.invoke('dock-set', _wpDockKey(), false)
     : ipcRenderer.invoke('hide-overlay')),
 
+  // ── Chat overlay (chat.html) ──────────────────────────────────────────────
+  // getChatPrefs(char) → { fontSize, group, officer, custom, tells, off:[group ids] } for that character;
+  // setChatPrefs(char, patch) stores a whitelisted patch in Mimic's config and returns the same shape.
+  getChatPrefs:      (char)        => ipcRenderer.invoke('chat-prefs-get', char || ''),
+  setChatPrefs:      (char, patch) => ipcRenderer.invoke('chat-prefs-set', char || '', patch || {}),
+
   // ── Timers canvas (canvas.html) ───────────────────────────────────────────
   // canvasState() → { res, layout, edit, displays }; canvasSave(layout) stores
   // it for the screen's resolution; canvasEdit(on) is the tray's "Arrange";

@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>chat</title>
+<style>
+  /* Chat overlay: this PC's own chat feed (the guild lead, 2026-10-14: "move it off the screen and be able
+     to show/hide different components from it, or break it into tabs"). Picked "B then A": ONE scrolling
+     feed, colour-coded by channel, with a chip per channel group that shows or hides it. Tabs per group
+     and tear-out windows come later, which is why the chips come from the agent's group list
+     (/api/chat -> groups) and the feed is painted through a filter: a tab is a group plus a filter.
+     The lines live in the agent's memory on THIS PC and are never uploaded. Nothing here is tied to
+     EverQuest's screen, so it works on a second monitor like every overlay. */
+  /* --bg-alpha: card-surface alpha, driven by the opacity slider via main -> preload 'bg-alpha'. */
+  :root{ --bg-alpha:0.5; --fs:12px; }
+  html,body{margin:0;height:100%;background:transparent;overflow:hidden;
+    font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
+  #wrap{height:100vh;box-sizing:border-box;display:flex;flex-direction:column;padding:6px 8px;gap:4px}
+  /* gutters: the move button sits top-left and the hide button top-right, so the title keeps clear of both */
+  .title{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:0 24px 0 24px;
+    font-size:12px;color:#7ee7c7;text-shadow:0 1px 2px #000;min-height:18px}
+  .conn{font-size:11px}
+  .conn.ok{color:#56d364} .conn.bad{color:#8b949e}
+  .title .sp{flex:1}
+  .fbtn{font-family:inherit;font-size:10px;font-weight:bold;letter-spacing:0.5px;padding:0 6px;border-radius:3px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid #30363d;cursor:pointer;line-height:15px;white-space:nowrap}
+  .fbtn:hover{color:#7ee7c7;border-color:#2da68a}
+  .fbtn.on{background:#10302a;color:#7ee7c7;border-color:#2da68a}
+  /* the channel chips: lit = shown. The dot carries the channel's colour even when the chip is off. */
+  #chips{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:3px}
+  .chip{font-family:inherit;font-size:10px;padding:0 6px 0 5px;border-radius:3px;background:rgba(14,17,22,0.6);
+    color:#6e7681;border:1px solid #30363d;cursor:pointer;line-height:15px;white-space:nowrap;
+    display:inline-flex;align-items:center;gap:4px}
+  .chip i{width:7px;height:7px;border-radius:50%;background:var(--c);opacity:0.45;display:inline-block}
+  .chip:hover{border-color:var(--c)}
+  .chip.on{background:rgba(14,17,22,0.85);color:#e6edf3;border-color:var(--c)}
+  .chip.on i{opacity:1}
+  /* settings drawer behind the gear: text size and the opt-in channels */
+  #spanel{display:none;flex:0 0 auto;flex-direction:column;gap:5px;padding:6px 8px;border-radius:5px;
+    background:rgb(0 0 0 / max(var(--bg-alpha), 0.6));font-size:11px;color:#c9d1d9;text-shadow:0 1px 2px #000}
+  #spanel.open{display:flex}
+  #spanel .row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  #spanel .hint{font-size:10px;color:#8b949e;line-height:1.35}
+  #spanel label{display:flex;align-items:center;gap:5px;cursor:pointer}
+  #spanel input[type=checkbox]{margin:0;cursor:pointer}
+  #fsz{min-width:30px;text-align:center;color:#e6edf3}
+  /* the feed */
+  #feedbox{position:relative;flex:1 1 auto;min-height:0;display:flex}
+  #feed{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;border-radius:5px;padding:4px 6px;
+    background:rgb(0 0 0 / var(--bg-alpha));font-size:var(--fs);line-height:1.4}
+  #feed::-webkit-scrollbar{width:6px}
+  #feed::-webkit-scrollbar-thumb{background:rgba(126,231,199,0.35);border-radius:3px}
+  #feed::-webkit-scrollbar-track{background:transparent}
+  .ln{display:flex;align-items:baseline;gap:6px;padding:0 0 0 5px;border-left:3px solid var(--lc,#6e7681);
+    text-shadow:0 1px 2px #000;overflow-wrap:anywhere}
+  .ln .tm{flex:0 0 auto;color:#6e7681;font-size:0.82em;font-variant-numeric:tabular-nums}
+  .ln .tx{flex:1 1 auto;min-width:0;color:var(--lc,#c9d1d9)}
+  .ln .who{flex:0 0 auto;font-weight:bold;color:var(--lc,#c9d1d9)}
+  .ln .who.you{opacity:0.75}
+  .ln .who.npc{font-weight:normal;font-style:italic}
+  .ln .arrow{flex:0 0 auto;color:#6e7681}
+  #empty{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;
+    color:rgba(255,255,255,0.5);font-size:12px;text-shadow:0 1px 2px #000;pointer-events:none}
+  #newchip{display:none;position:absolute;right:12px;bottom:8px;font-family:inherit;font-size:10px;font-weight:bold;
+    padding:1px 8px;border-radius:9px;background:#10302a;color:#7ee7c7;border:1px solid #2da68a;cursor:pointer;
+    box-shadow:0 1px 4px #000}
+  #newchip.show{display:block}
+  /* drag/lock/setup chrome: same pattern as the other overlays. */
+  #drag-controls{display:none;position:fixed;top:4px;left:4px;gap:4px;z-index:60}
+  body.unlocked #drag-controls{display:flex}
+  body.unlocked{outline:2px solid rgba(126,231,199,0.7);outline-offset:-2px}
+  .drag-btn{width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+    background:rgba(45,166,138,0.92);color:#fff;border:1px solid rgba(255,255,255,0.4);
+    border-radius:4px;font-size:13px;line-height:1;cursor:move;user-select:none}
+  #lock-btn{cursor:pointer;font-size:11px}
+  #setupbar{display:none;position:fixed;top:0;left:0;right:0;align-items:center;gap:8px;
+    padding:4px 8px;background:rgba(45,166,138,0.92);color:#fff;font-size:10px;font-weight:600;z-index:50}
+  body.setup #setupbar{display:flex}
+  body.setup #drag-controls{top:28px}
+  body.setup #wrap{padding-top:32px}
+  #setupbar input[type=range]{flex:1;cursor:pointer}
+  #hide-btn{position:fixed;top:6px;right:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:pointer;opacity:0.45;transition:opacity .12s}
+  #hide-btn:hover{opacity:1;color:#f87171;border-color:#f87171}
+  body.setup #hide-btn{top:30px}
+  #move-btn{position:fixed;top:6px;left:6px;z-index:65;width:18px;height:18px;
+    display:flex;align-items:center;justify-content:center;border-radius:4px;
+    background:rgba(14,17,22,0.6);color:#8b949e;border:1px solid rgba(110,118,129,0.3);
+    font-size:11px;line-height:1;cursor:move;opacity:0.45;transition:opacity .12s}
+  #move-btn:hover{opacity:1;color:#2da68a;border-color:#2da68a}
+  body.setup #move-btn{top:30px}
+  @media (prefers-reduced-motion: reduce){ #hide-btn,#move-btn{transition:none} }
+</style></head>
+<body>
+  <button id="move-btn" title="Drag from this icon to move the overlay (top-left corner, same on every overlay)">✥</button>
+  <button id="hide-btn" title="Hide the Chat overlay (turn back on from the tray → Overlays)">✕</button>
+  <div id="drag-controls">
+    <div id="move-handle" class="drag-btn" title="Drag to move">✥</div>
+    <div id="lock-btn"   class="drag-btn" title="Lock in place">🔒</div>
+  </div>
+  <div id="setupbar">
+    <span>🛠 Chat</span>
+    <span>opacity</span><input id="opacitySlider" type="range" min="0.15" max="1" step="0.05" value="1" /><span id="opacityVal">100%</span>
+    <button id="exitSetupBtn">Done</button>
+  </div>
+  <div id="wrap">
+    <div class="title"><span id="conn" class="conn bad">○</span><span>💬 Chat</span><span class="sp"></span><button id="gear" class="fbtn" aria-pressed="false" title="Text size, and the channels that are off until you switch them on">⚙</button></div>
+    <div id="spanel">
+      <div class="row"><span>Text size</span><button id="fsm" class="fbtn" title="Smaller">A−</button><span id="fsz">12</span><button id="fsp" class="fbtn" title="Larger">A+</button></div>
+      <div class="row" id="optins"></div>
+      <div class="hint" id="tellhint"></div>
+      <div class="hint">These lines stay on this PC, in memory, for this window only. Nothing here is uploaded, and Mimic forgets them when it restarts.</div>
+    </div>
+    <div id="chips"></div>
+    <div id="feedbox">
+      <div id="feed"></div>
+      <div id="empty">nothing yet: talk in /gu, /rs or /say</div>
+      <button id="newchip" title="Jump to the newest line">↓ new</button>
+    </div>
+  </div>
+<script>
+  let PORT = 7779;
+  window.mimic && window.mimic.onAgentPort && window.mimic.onAgentPort(p => { PORT = p; });
+  window.mimic && window.mimic.getAgentPort && window.mimic.getAgentPort().then(p => { if (p) PORT = p; });
+
+  if (window.mimic && window.mimic.onOverlayLocked) {
+    window.mimic.onOverlayLocked(locked => { document.body.classList.toggle('unlocked', !locked); });
+  }
+  var lockBtn = document.getElementById('lock-btn');
+  if (lockBtn) lockBtn.addEventListener('click', function(){ try { window.mimic.setOverlaysLocked(true); } catch (e) {} });
+
+  var hideBtn = document.getElementById('hide-btn');
+  if (hideBtn) {
+    hideBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    hideBtn.addEventListener('mouseleave', function(){ try { window.mimic.overlayHoverInteractive(false); } catch (e) {} });
+    hideBtn.addEventListener('click', function(){ try { window.mimic.hideThisOverlay(); } catch (e) {} });
+  }
+
+  var moveHandle = document.getElementById('move-handle');
+  var moveBtn    = document.getElementById('move-btn');
+  var _dragging = false;
+  function _beginDrag(e){
+    if (e.button !== 0) return; e.preventDefault(); _dragging = true;
+    try { window.mimic.overlayDragStart(); } catch (err) {}
+  }
+  if (moveHandle) moveHandle.addEventListener('mousedown', _beginDrag);
+  if (moveBtn) {
+    moveBtn.addEventListener('mouseenter', function(){ try { window.mimic.overlayHoverInteractive(true); } catch (e) {} });
+    moveBtn.addEventListener('mouseleave', function(){ if (!_dragging) { try { window.mimic.overlayHoverInteractive(false); } catch (e) {} } });
+    moveBtn.addEventListener('mousedown', _beginDrag);
+    // Right-click ✥ -> shared chrome menu (resize presets + Setup THIS/ALL).
+    try { window.mimic.attachOverlayMenu(moveBtn); } catch (e) {}
+  }
+  document.addEventListener('mouseup', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} try{window.mimic.overlayHoverInteractive(false);}catch(e){} } });
+  window.addEventListener('blur', function(){ if (_dragging){ _dragging=false; try{window.mimic.overlayDragEnd();}catch(e){} } });
+
+  var _overlayKey = null;
+  var _setupScope = null;
+  if (window.mimic && window.mimic.onSetupMode) {
+    window.mimic.onSetupMode(function(p){ _overlayKey = p && p.overlayKey; if (p && p.scope) _setupScope = p.scope; else if (p && p.active) _setupScope = 'all'; document.body.classList.toggle('setup', !!(p && p.active)); });
+  }
+  if (window.mimic && window.mimic.onBgAlpha) {
+    window.mimic.onBgAlpha(function(v){
+      var a = (typeof v === 'number' && v >= 0.15 && v <= 1.0) ? v : 0.5;
+      try { document.documentElement.style.setProperty('--bg-alpha', String(a)); } catch (e) {}
+    });
+  }
+  var slider = document.getElementById('opacitySlider'); var oVal = document.getElementById('opacityVal');
+  if (slider) slider.addEventListener('input', function(){
+    var v = parseFloat(slider.value || '1'); if (oVal) oVal.textContent = Math.round(v*100)+'%';
+    if (_overlayKey && window.mimic && window.mimic.setOverlayOpacity) { try { window.mimic.setOverlayOpacity(_overlayKey, v); } catch (e) {} }
+  });
+  var doneBtn = document.getElementById('exitSetupBtn');
+  if (doneBtn) doneBtn.addEventListener('click', function(){ try { document.body.classList.remove('setup'); } catch (e) {} try { if (_setupScope === 'this') window.mimic.setSetupModeThis(false); else window.mimic.setSetupMode(false); } catch (e) {} _setupScope = null; });
+
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c]; }); }
+  function hhmm(t){ var d = new Date(t); if (isNaN(d.getTime())) return ''; var h = d.getHours(), m = d.getMinutes(); return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m; }
+
+  // One hover-interact owner for the zones that are not plain buttons (a locked overlay is click-through,
+  // overlay checklist item 3): the title bar, the chips, the settings drawer and the feed, so the wheel can
+  // scroll it. Buttons are armed by the preload on their own; this covers the rest.
+  function _zoneOf(el){ return (el && el.closest) ? el.closest('.title, #chips, #spanel, #feed, #newchip') : null; }
+  function _hover(on){ try { window.mimic.overlayHoverInteractive(on); } catch (e) {} }
+  document.addEventListener('mouseover', function(e){ if (_zoneOf(e.target)) _hover(true); });
+  document.addEventListener('mouseout', function(e){ if (_zoneOf(e.target) && !_zoneOf(e.relatedTarget)) _hover(false); });
+
+  // ── state ────────────────────────────────────────────────────────────────
+  var FEED_MAX = 500;
+  var _groups = [];            // [{id,label,channels[],gate?}] as the agent serves them
+  var _channels = {};          // id -> {label,color}
+  var _lines = [];             // every line we hold, oldest first (the filter decides what shows)
+  var _seq = 0, _lastN = 0, _boot = '';
+  var _char = '';              // the character the chip choices are remembered for
+  var _prefs = { fontSize: 12, group: false, officer: false, custom: false, tells: false, off: [] };
+  var _unread = 0;
+  var feedEl = document.getElementById('feed'), chipsEl = document.getElementById('chips');
+  var emptyEl = document.getElementById('empty'), newEl = document.getElementById('newchip');
+
+  // The seam for tabs later: a filter is just "which groups does this view show". The feed never asks
+  // anything else about a line, so a tab (or a torn-out window) is a different list handed to the same code.
+  function groupOf(ch){ for (var i = 0; i < _groups.length; i++) if (_groups[i].channels.indexOf(ch) !== -1) return _groups[i]; return null; }
+  function gateOn(g){ return !g.gate || !!_prefs[g.gate]; }
+  function makeFilter(groupIds){
+    var on = {}; for (var i = 0; i < groupIds.length; i++) on[groupIds[i]] = true;
+    return function(line){ var g = groupOf(line.ch); return !!g && on[g.id] === true && gateOn(g); };
+  }
+  function shownGroupIds(){
+    var out = [];
+    for (var i = 0; i < _groups.length; i++) { var g = _groups[i]; if (gateOn(g) && _prefs.off.indexOf(g.id) === -1) out.push(g.id); }
+    return out;
+  }
+
+  function lineHtml(l){
+    var you = !!l.self, who;
+    if (l.npc) who = '<span class="who npc">' + esc(l.who) + '</span>';
+    else if (you) who = '<span class="who you">You</span>';
+    else who = '<span class="who name">' + esc(l.who) + '</span>';
+    if (l.to) who += '<span class="arrow">→</span><span class="who name">' + esc(l.to) + '</span>';
+    return '<div class="ln" style="--lc:' + esc((_channels[l.ch] || {}).color || '#c9d1d9') + '" data-n="' + l.n + '"><span class="tm">' + hhmm(l.t) + '</span>' + who + '<span class="tx">' + esc(l.text) + '</span></div>';
+  }
+  function pinned(){ return feedEl.scrollHeight - feedEl.scrollTop - feedEl.clientHeight < 28; }
+  function toBottom(){ feedEl.scrollTop = feedEl.scrollHeight; _unread = 0; paintNew(); }
+  function paintNew(){
+    newEl.textContent = _unread > 0 ? '↓ ' + _unread + ' new' : '↓ new';
+    newEl.classList.toggle('show', _unread > 0);
+  }
+  function paintEmpty(){ emptyEl.style.display = feedEl.children.length ? 'none' : 'block'; }
+
+  // Repaint everything through the current filter (chip toggled, switch changed, restart). Appending is the
+  // normal path (addLines) so a quiet poll never touches the DOM.
+  function repaint(){
+    var f = makeFilter(shownGroupIds()), h = '';
+    for (var i = 0; i < _lines.length; i++) if (f(_lines[i])) h += lineHtml(_lines[i]);
+    var stick = pinned();
+    feedEl.innerHTML = h;
+    if (stick) toBottom();
+    paintEmpty();
+  }
+  function addLines(fresh){
+    if (!fresh.length) return;
+    var f = makeFilter(shownGroupIds()), h = '', shown = 0, stick = pinned();
+    for (var i = 0; i < fresh.length; i++) { _lines.push(fresh[i]); if (f(fresh[i])) { h += lineHtml(fresh[i]); shown++; } }
+    if (_lines.length > FEED_MAX) _lines.splice(0, _lines.length - FEED_MAX);
+    if (shown) {
+      feedEl.insertAdjacentHTML('beforeend', h);
+      while (feedEl.children.length > FEED_MAX) feedEl.removeChild(feedEl.firstChild);
+      if (stick) toBottom(); else { _unread += shown; paintNew(); }
+    }
+    paintEmpty();
+  }
+  feedEl.addEventListener('scroll', function(){ if (pinned() && _unread) { _unread = 0; paintNew(); } });
+  newEl.addEventListener('click', toBottom);
+
+  // Lines the current switches no longer allow are dropped, not just hidden: turning Officer off should
+  // leave nothing of it behind in this window.
+  function purgeGated(){
+    _lines = _lines.filter(function(l){ var g = groupOf(l.ch); return !!g && gateOn(g); });
+  }
+
+  function paintChips(){
+    var h = '';
+    for (var i = 0; i < _groups.length; i++) {
+      var g = _groups[i]; if (!gateOn(g)) continue;
+      var on = _prefs.off.indexOf(g.id) === -1, c = (_channels[g.channels[0]] || {}).color || '#8b949e';
+      h += '<button type="button" class="chip' + (on ? ' on' : '') + '" data-g="' + esc(g.id) + '" aria-pressed="' + on + '" style="--c:' + esc(c) + '" title="' + (on ? 'Hide ' : 'Show ') + esc(g.label) + '"><i></i>' + esc(g.label) + '</button>';
+    }
+    if (chipsEl.__wpHtml !== h) { chipsEl.innerHTML = h; chipsEl.__wpHtml = h; }
+  }
+  chipsEl.addEventListener('click', function(e){
+    var b = e.target && e.target.closest ? e.target.closest('.chip') : null;
+    if (!b) return;
+    var id = b.getAttribute('data-g'), at = _prefs.off.indexOf(id);
+    if (at >= 0) _prefs.off.splice(at, 1); else _prefs.off.push(id);
+    savePrefs({ off: _prefs.off });
+    paintChips(); repaint();
+  });
+
+  // ── settings drawer ──────────────────────────────────────────────────────
+  var spanelEl = document.getElementById('spanel'), gearEl = document.getElementById('gear');
+  var OPTINS = [
+    ['group',   'Group chat',     'Your group\'s private chat'],
+    ['officer', 'Officer chat',   'The officer channel'],
+    ['custom',  'Custom channels','Other chat channels you have joined']
+  ];
+  function paintSettings(){
+    var h = '';
+    for (var i = 0; i < OPTINS.length; i++) {
+      var o = OPTINS[i];
+      h += '<label title="' + esc(o[2]) + '"><input type="checkbox" data-optin="' + o[0] + '"' + (_prefs[o[0]] ? ' checked' : '') + '>' + esc(o[1]) + '</label>';
+    }
+    var oe = document.getElementById('optins');
+    if (oe.__wpHtml !== h) { oe.innerHTML = h; oe.__wpHtml = h; }
+    document.getElementById('fsz').textContent = String(_prefs.fontSize);
+    document.getElementById('tellhint').textContent = _prefs.tells
+      ? 'Tells are showing: Settings has Tells on Local or Synced.'
+      : 'Tells are off. Choose Local or Synced under Settings → Tells to show them here.';
+    document.documentElement.style.setProperty('--fs', _prefs.fontSize + 'px');
+  }
+  gearEl.addEventListener('click', function(){
+    var open = !spanelEl.classList.contains('open');
+    spanelEl.classList.toggle('open', open); gearEl.classList.toggle('on', open); gearEl.setAttribute('aria-pressed', String(open));
+  });
+  document.getElementById('optins').addEventListener('change', function(e){
+    var k = e.target && e.target.getAttribute ? e.target.getAttribute('data-optin') : null;
+    if (!k) return;
+    var patch = {}; patch[k] = !!e.target.checked;
+    _prefs[k] = !!e.target.checked;
+    savePrefs(patch);
+    purgeGated(); paintChips(); repaint();
+  });
+  function bumpFont(d){
+    var n = Math.max(9, Math.min(24, _prefs.fontSize + d));
+    if (n === _prefs.fontSize) return;
+    _prefs.fontSize = n; savePrefs({ fontSize: n }); paintSettings();
+    var stick = pinned(); if (stick) toBottom();
+  }
+  document.getElementById('fsm').addEventListener('click', function(){ bumpFont(-1); });
+  document.getElementById('fsp').addEventListener('click', function(){ bumpFont(1); });
+
+  // ── prefs (remembered per character in Mimic's config) ───────────────────
+  function savePrefs(patch){
+    try { window.mimic.setChatPrefs(_char, patch).then(takePrefs).catch(function(){}); } catch (e) {}
+  }
+  function takePrefs(p){
+    if (!p) return;
+    var tellsWas = _prefs.tells;
+    _prefs = {
+      fontSize: p.fontSize || 12, group: !!p.group, officer: !!p.officer, custom: !!p.custom,
+      tells: !!p.tells, off: Array.isArray(p.off) ? p.off.slice() : []
+    };
+    paintSettings();
+    if (tellsWas !== _prefs.tells) { purgeGated(); paintChips(); repaint(); }
+  }
+  function loadPrefs(){
+    try { window.mimic.getChatPrefs(_char).then(function(p){ takePrefs(p); purgeGated(); paintChips(); repaint(); }).catch(function(){}); } catch (e) {}
+  }
+  // Mimic's status carries the active character and the Tells setting; either changing re-reads the prefs.
+  function onStatus(s){
+    if (!s) return;
+    var c = s.activeCharacter ? String(s.activeCharacter) : '';
+    var tellsNow = s.tellsMode === 'local' || s.tellsMode === 'synced';
+    if (c !== _char) { _char = c; loadPrefs(); }
+    else if (tellsNow !== _prefs.tells) loadPrefs();
+  }
+  try {
+    if (window.mimic && window.mimic.onStatus) window.mimic.onStatus(onStatus);
+    if (window.mimic && window.mimic.getStatus) window.mimic.getStatus().then(onStatus).catch(function(){});
+  } catch (e) {}
+
+  // ── the poll ─────────────────────────────────────────────────────────────
+  // The switches ride every request: the agent keeps tells, group, officer and custom lines ONLY while
+  // this window is asking for them (and stops 15 s after it goes quiet).
+  function query(){
+    return 'since=' + _seq + '&boot=' + encodeURIComponent(_boot) +
+      '&tells=' + (_prefs.tells ? 1 : 0) + '&group=' + (_prefs.group ? 1 : 0) +
+      '&officer=' + (_prefs.officer ? 1 : 0) + '&custom=' + (_prefs.custom ? 1 : 0);
+  }
+  // Channel colours come from the agent's list, so a new channel needs no change here; the chips are
+  // repainted when that list changes.
+  function takeStyle(){
+    var chans = _channels, bits = '';
+    for (var k in chans) if (Object.prototype.hasOwnProperty.call(chans, k)) bits += k + ':' + chans[k].color + ';';
+    return bits;
+  }
+  var _lastStyle = '';
+  async function tick(){
+    try {
+      var r = await fetch('http://127.0.0.1:' + PORT + '/api/chat?' + query(), { cache: 'no-store' });
+      var s = await r.json();
+      var c = document.getElementById('conn'); c.className = 'conn ok'; c.textContent = '●';
+      if (!s || !s.ok) return;
+      var firstGroups = !_groups.length;
+      _groups = s.groups || _groups; _channels = s.channels || _channels;
+      var st = takeStyle();
+      if (firstGroups || st !== _lastStyle) { _lastStyle = st; paintChips(); }
+      if (s.reset || (s.boot && s.boot !== _boot)) { _lines = []; feedEl.innerHTML = ''; _boot = s.boot || ''; _lastN = 0; _unread = 0; paintNew(); }
+      _seq = s.seq || 0;
+      // Only lines newer than the last one taken: a replayed body (the agent serves its last good one if a
+      // poll fails to build) must not put a purged line back.
+      var fresh = (s.lines || []).filter(function(l){ return l && l.n > _lastN; });
+      if (fresh.length) { _lastN = fresh[fresh.length - 1].n; addLines(fresh); } else paintEmpty();
+    } catch (e) {
+      var c2 = document.getElementById('conn'); c2.className = 'conn bad'; c2.textContent = '○';
+    }
+  }
+  paintSettings(); paintEmpty(); loadPrefs();
+  tick(); setInterval(tick, 700);
+</script>
+</body></html>

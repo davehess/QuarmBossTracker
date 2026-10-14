@@ -4611,6 +4611,7 @@ var WP_OVERLAY_ROWS = [
   ['mobinfo', 'Target Info',         'Current target: HP, AC, resists, special attacks, drop table — and, for a Shadow Knight mob, whether it still has its Harm Touch.'],
   ['buffQueue','Buff queue',         'Raid/group buff + debuff/cure queue with severity sort; pick a class to focus. Fills non-Mimic raiders from observed casts.'],
   ['who',     '/who',                'Latest /who in zone + recently-gone; anon rows de-anon\'d from history.'],
+  ['chat',    'Chat [beta]',         'Your chat in a window of its own, off the EverQuest screen if you like: one feed, colour-coded by channel, with a chip for each (Guild, Raid, Say, OOC/Shout, Auction, NPC) to show or hide it. Tells appear when Settings has Tells on Local or Synced. Group, Officer and custom channels are hidden until you switch them on in the window\'s ⚙. Lines stay on this PC in memory, are never uploaded, and are gone when Mimic restarts. Works in local mode.'],
   ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
   ['zeal',    'Tick',                'Server tick countdown for each character on Zeal, plus your charmed mob\'s own tick. Bars or dials. Click the status line for the Zeal health check and this PC\'s clock offset.'],
   ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. Aggro AAs like Disruptive Persecution and de-aggro spells like Concussion count via a CAST_HATE map; zoning clears your hate.'],
@@ -4637,6 +4638,7 @@ var WP_OVERLAY_BLURB = {
   mobinfo:   'HP, resists, special attacks, drops, Harm Touch.',
   buffQueue: 'Buffs, debuffs and cures the raid needs, by severity.',
   who:       'Latest /who in zone, recently gone.',
+  chat:      'Your chat in its own window, a chip per channel.',
   melody:    'Bard twist queue with cast bar and buff windows.',
   zeal:      'Server tick for each character, plus your charm tick.',
   threat:    'Per-fight aggro, stacked by swing, proc and heal.',
@@ -4719,7 +4721,7 @@ function renderOverlays(s) {
     // Nor the HUD ring (the guild lead, 2026-09-24: "HUD doesn't make sense to
     // dock") — it is a square round the character; main's catalog agrees.
     // The Canvas covers the screen and is a host itself.
-    var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas' || key === 'map' || key === 'maptimers')
+    var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas' || key === 'map' || key === 'maptimers' || key === 'chat')
       ? ''
       : '<button type="button" class="wp-ov-dock" data-ov="' + key + '">…</button>';
     // ▭ Mini mode (the guild lead, 2026-09-24: "I don't see any of the
@@ -5540,11 +5542,11 @@ function wpRefreshOverlayToggles() {
     var cfgP = window.mimic.getConfig ? window.mimic.getConfig().catch(function(){ return {}; }) : Promise.resolve({});
     Promise.all([window.mimic.getStatus(), cfgP]).then(function(res){
       var st = res[0] || {}, cfg = res[1] || {};
-      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid, me: !!st.showMe, map: !!st.showMap, maptimers: !!st.showMapTimers, canvas: !!st.showCanvas };
+      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, chat: !!st.showChat, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid, me: !!st.showMe, map: !!st.showMap, maptimers: !!st.showMapTimers, canvas: !!st.showCanvas };
       // Which cfg flag each row reads, so a HIDDEN row can be told from an OFF
       // one. Hide-all writes every flag false, so without the snapshot the two
       // are indistinguishable here (the guild lead, 2026-08-04).
-      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid', me: 'showMe', map: 'showMap', maptimers: 'showMapTimers', canvas: 'showCanvas' };
+      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', chat: 'showChat', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid', me: 'showMe', map: 'showMap', maptimers: 'showMapTimers', canvas: 'showCanvas' };
       var hidPrev = (st.hideAllActive && st.hideAllPrev) ? st.hideAllPrev : null;
       var hidCount = 0, nListed = 0, nOff = 0;
       var dockedList = Array.isArray(st.dockedOverlays) ? st.dockedOverlays : [];

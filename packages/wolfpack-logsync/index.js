@@ -22827,6 +22827,7 @@ var WP_OVERLAY_ROWS = [
   ['mobinfo', 'Target Info',         'Current target: HP, AC, resists, special attacks, drop table — and, for a Shadow Knight mob, whether it still has its Harm Touch.'],
   ['buffQueue','Buff queue',         'Raid/group buff + debuff/cure queue with severity sort; pick a class to focus. Fills non-Mimic raiders from observed casts.'],
   ['who',     '/who',                'Latest /who in zone + recently-gone; anon rows de-anon\\'d from history.'],
+  ['chat',    'Chat [beta]',         'Your chat in a window of its own, off the EverQuest screen if you like: one feed, colour-coded by channel, with a chip for each (Guild, Raid, Say, OOC/Shout, Auction, NPC) to show or hide it. Tells appear when Settings has Tells on Local or Synced. Group, Officer and custom channels are hidden until you switch them on in the window\\'s ⚙. Lines stay on this PC in memory, are never uploaded, and are gone when Mimic restarts. Works in local mode.'],
   ['melody',  'Melody',              'Bard /melody twist queue with cast bar + buff-window timers; ⏹ when you stop singing.'],
   ['zeal',    'Tick',                'Server tick countdown for each character on Zeal, plus your charmed mob\\'s own tick. Bars or dials. Click the status line for the Zeal health check and this PC\\'s clock offset.'],
   ['threat',  'Threat meter',        'Per-fight aggro: swing/proc/spell/heal stacked breakdown per player, leader highlighted, pet hate rolled into owner. Aggro AAs like Disruptive Persecution and de-aggro spells like Concussion count via a CAST_HATE map; zoning clears your hate.'],
@@ -22853,6 +22854,7 @@ var WP_OVERLAY_BLURB = {
   mobinfo:   'HP, resists, special attacks, drops, Harm Touch.',
   buffQueue: 'Buffs, debuffs and cures the raid needs, by severity.',
   who:       'Latest /who in zone, recently gone.',
+  chat:      'Your chat in its own window, a chip per channel.',
   melody:    'Bard twist queue with cast bar and buff windows.',
   zeal:      'Server tick for each character, plus your charm tick.',
   threat:    'Per-fight aggro, stacked by swing, proc and heal.',
@@ -22935,7 +22937,7 @@ function renderOverlays(s) {
     // Nor the HUD ring (the guild lead, 2026-09-24: "HUD doesn't make sense to
     // dock") — it is a square round the character; main's catalog agrees.
     // The Canvas covers the screen and is a host itself.
-    var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas' || key === 'map' || key === 'maptimers')
+    var dockCell = (key === 'trigger' || key === 'dock' || key === 'me' || key === 'canvas' || key === 'map' || key === 'maptimers' || key === 'chat')
       ? ''
       : '<button type="button" class="wp-ov-dock" data-ov="' + key + '">…</button>';
     // ▭ Mini mode (the guild lead, 2026-09-24: "I don't see any of the
@@ -23756,11 +23758,11 @@ function wpRefreshOverlayToggles() {
     var cfgP = window.mimic.getConfig ? window.mimic.getConfig().catch(function(){ return {}; }) : Promise.resolve({});
     Promise.all([window.mimic.getStatus(), cfgP]).then(function(res){
       var st = res[0] || {}, cfg = res[1] || {};
-      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid, me: !!st.showMe, map: !!st.showMap, maptimers: !!st.showMapTimers, canvas: !!st.showCanvas };
+      var on = { dock: !!st.showDock, hud: !!st.showHud, trigger: !!st.enableTriggerTts, charm: !!st.showCharm, pet: !!st.showPets, mobinfo: !!st.showMobInfo, buffQueue: !!st.showBuffQueue, who: !!st.showWho, chat: !!st.showChat, melody: !!st.showMelody, zeal: !!st.showZeal, threat: !!st.showThreat, chchain: !!st.showChChain, tank: !!st.showTank, exttarget: !!st.showExtTarget, command: !!st.showCommand, popraid: !!st.showPopRaid, me: !!st.showMe, map: !!st.showMap, maptimers: !!st.showMapTimers, canvas: !!st.showCanvas };
       // Which cfg flag each row reads, so a HIDDEN row can be told from an OFF
       // one. Hide-all writes every flag false, so without the snapshot the two
       // are indistinguishable here (the guild lead, 2026-08-04).
-      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid', me: 'showMe', map: 'showMap', maptimers: 'showMapTimers', canvas: 'showCanvas' };
+      var flagOf = { dock: 'showDock', hud: 'showHud', trigger: 'enableTriggerTts', charm: 'showCharm', pet: 'showPets', mobinfo: 'showMobInfo', buffQueue: 'showBuffQueue', who: 'showWho', chat: 'showChat', melody: 'showMelody', zeal: 'showZeal', threat: 'showThreat', chchain: 'showChChain', tank: 'showTank', exttarget: 'showExtTarget', command: 'showCommand', popraid: 'showPopRaid', me: 'showMe', map: 'showMap', maptimers: 'showMapTimers', canvas: 'showCanvas' };
       var hidPrev = (st.hideAllActive && st.hideAllPrev) ? st.hideAllPrev : null;
       var hidCount = 0, nListed = 0, nOff = 0;
       var dockedList = Array.isArray(st.dockedOverlays) ? st.dockedOverlays : [];
@@ -32809,6 +32811,8 @@ function startWebDashboard(port) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(_b || 'null');
       }
+      // Chat overlay (chat.html) — this PC's own chat window. Memory-only ring, never uploaded.
+      if (req.url && req.url.split('?')[0] === '/api/chat' && req.method === 'GET') return _handleLocalChat(req, res);
       // Me overlay (me.html) — the active character's own panel.
       if (req.url === '/api/me') {
         let _b;
@@ -38258,6 +38262,240 @@ function _pushRecentTell(tellEvt, character) {
   const over = stats.recentTells.length - _RECENT_TELLS_MAX;
   if (over > 0) stats.recentTells.splice(0, over);
 }
+
+// ── Local chat window: the feed behind Mimic's Chat overlay ───────────────────
+// The guild lead, 2026-10-14: "move it off the screen and be able to show/hide different components
+// from it, or break it into tabs". Picked "B then A": ONE scrolling feed with a row of on/off chips
+// per channel group now; tabs per group (and tear-out windows) later. So the groups are DATA
+// (CHAT_GROUPS) served with the feed, and the overlay renders whatever filter it is handed.
+//
+// PRIVACY, the whole point of this block: these lines are kept on THIS PC for the user's own chat
+// window and never sent anywhere.
+//   • The ring is in memory only, capped, and gone on restart. No file, no queue.
+//   • Nothing here touches the guild-chat upload batch, the tell upload buffer, the feedback excerpt
+//     or any POST. DEFAULT_DROP_PATTERNS / shouldKeep are untouched: they still gate everything that
+//     leaves the machine, and a line this feed shows is still dropped there.
+//   • Tells, group, officer and custom channels are captured ONLY while the overlay has asked for
+//     them (CHAT_GROUPS[].gate) — the policy rides every GET /api/chat and lapses 15 s after the
+//     overlay stops asking, so a closed overlay leaves nothing private accumulating.
+//   • exclude_from_stats characters never reach this (the call site skips them, like the tell tap).
+const CHAT_RING_MAX = 500;
+const CHAT_PAGE_MAX = 200;
+const CHAT_POLICY_TTL_MS = 15_000;
+const CHAT_TEXT_MAX = 400;
+// id → label + colour. Colour is the channel's identity in the overlay; the overlay owns no copy of it.
+const CHAT_CHANNELS = {
+  guild:   { label: 'Guild',   color: '#56d364' },
+  raid:    { label: 'Raid',    color: '#ffa657' },
+  say:     { label: 'Say',     color: '#c9d1d9' },
+  ooc:     { label: 'OOC',     color: '#7ee7c7' },
+  shout:   { label: 'Shout',   color: '#ff7b72' },
+  auction: { label: 'Auction', color: '#8b949e' },
+  npc:     { label: 'NPC',     color: '#c9a96e' },
+  tell:    { label: 'Tell',    color: '#a371f7' },
+  group:   { label: 'Group',   color: '#58a6ff' },
+  officer: { label: 'Officer', color: '#d29922' },
+  custom:  { label: 'Custom',  color: '#6e9bd6' },
+};
+// One chip each. `gate` names the policy switch that must be on for these channels to be captured,
+// served and shown; no gate = public, shown by default. A tab is a group plus a filter, so this list
+// is the whole seam between "one feed with chips" and "tabs".
+const CHAT_GROUPS = [
+  { id: 'guild',   label: 'Guild',     channels: ['guild'] },
+  { id: 'raid',    label: 'Raid',      channels: ['raid'] },
+  { id: 'say',     label: 'Say',       channels: ['say'] },
+  { id: 'ooc',     label: 'OOC/Shout', channels: ['ooc', 'shout'] },
+  { id: 'auction', label: 'Auction',   channels: ['auction'] },
+  { id: 'npc',     label: 'NPC',       channels: ['npc'] },
+  { id: 'tell',    label: 'Tells',     channels: ['tell'],    gate: 'tells' },
+  { id: 'group',   label: 'Group',     channels: ['group'],   gate: 'group' },
+  { id: 'officer', label: 'Officer',   channels: ['officer'], gate: 'officer' },
+  { id: 'custom',  label: 'Custom',    channels: ['custom'],  gate: 'custom' },
+];
+const CHAT_POLICY_KEYS = ['tells', 'group', 'officer', 'custom'];
+
+// First-person lines ("You say, ..."). Group 1 is the text, except the custom-channel and told forms.
+const CHAT_SELF_PATTERNS = [
+  { rx: /^\[[^\]]+\]\s+You (?:say to|tell) your guild,\s*['"](.*)['"]\s*$/, ch: 'guild' },
+  { rx: /^\[[^\]]+\]\s+You (?:say to|tell) your raid,\s*['"](.*)['"]\s*$/, ch: 'raid' },
+  { rx: /^\[[^\]]+\]\s+You (?:say to|tell) your (?:group|party),\s*['"](.*)['"]\s*$/, ch: 'group' },
+  { rx: /^\[[^\]]+\]\s+You (?:say to|tell) your officers?,\s*['"](.*)['"]\s*$/, ch: 'officer' },
+  { rx: /^\[[^\]]+\]\s+You say out of character,\s*['"](.*)['"]\s*$/, ch: 'ooc' },
+  { rx: /^\[[^\]]+\]\s+You say,\s*['"](.*)['"]\s*$/, ch: 'say' },
+  { rx: /^\[[^\]]+\]\s+You shout,\s*['"](.*)['"]\s*$/, ch: 'shout' },
+  { rx: /^\[[^\]]+\]\s+You auction,\s*['"](.*)['"]\s*$/, ch: 'auction' },
+];
+const CHAT_SELF_CHANNEL_RX = /^\[[^\]]+\]\s+You (?:say to|tell) ([^\s,'"]+):(\d+),\s*['"](.*)['"]\s*$/;
+const CHAT_SELF_TELL_RX = /^\[[^\]]+\]\s+You told ([A-Za-z][A-Za-z' ]*?),\s*['"](.*)['"]\s*$/;
+// Everyone else's lines. The speaker stops at the first comma, so the verb is always the one
+// directly before it and a verb quoted inside the message cannot be mistaken for it.
+const CHAT_OTHER_RX = /^\[[^\]]+\]\s+([^,\]:"]+?)\s+(tells the guild|tells the raid|tells the group|tells the officers?|says out of character|says|shouts|auctions|tells you|tells ([^\s,'"]+):(\d+)),\s*['"](.*)['"]\s*$/;
+const CHAT_OTHER_CH = {
+  'tells the guild': 'guild', 'tells the raid': 'raid', 'tells the group': 'group',
+  'says out of character': 'ooc', 'says': 'say', 'shouts': 'shout', 'auctions': 'auction',
+};
+// Zeal's /abc "Chat and Log" writes `[Tag] [Sender]: text` with the quotes dropped. A digit tag is a
+// custom channel's slot — which channel it is cannot be told from the log, so it is "custom", never
+// "officer" (the safer side: both are off by default). The letter tags other than G / R / P / Fr are
+// best-effort and unverified against a live /abc 2 log; an unknown tag shows nothing.
+const CHAT_ABBREV_TAGS = {
+  g: 'guild', gu: 'guild', r: 'raid', ra: 'raid', p: 'group', gr: 'group',
+  s: 'say', sa: 'say', o: 'ooc', oo: 'ooc', ooc: 'ooc', sh: 'shout', a: 'auction', au: 'auction',
+  fr: 'tell', to: 'tell',
+};
+const CHAT_ABBREV_RX = /^\[[^\]]+\]\s+\[([A-Za-z]{1,6}|\d{1,2})\]\s+\[([^\]]{1,40})\]:\s?(.*)$/;
+
+function _chatCleanText(raw) {
+  let t = String(raw == null ? '' : raw);
+  // An item link is "\x12<7 digits><Item Name>\x12": show just the name.
+  if (t.indexOf('\x12') !== -1) t = t.replace(EQ_ITEM_LINK_RX, (_m, _id, name) => name).replace(/\x12/g, '');
+  t = t.trim();
+  return t.length > CHAT_TEXT_MAX ? t.slice(0, CHAT_TEXT_MAX - 1) + '…' : t;
+}
+function _chatIsNpcSpeaker(name) {
+  return /\s/.test(name) || NPC_SPEECH_ONE_WORD.has(String(name).toLowerCase());
+}
+// Pets and merchants talk in /say and as "tells": "My leader is X.", "Attacking X Master.", "That'll be 5 platinum".
+function _chatIsPetOrMerchantText(text) {
+  return /^My leader is /i.test(text) || _isNpcTellText(text);
+}
+
+// One log line → { ch, who, text, t, self, npc, to } or null. Pure: no state, no I/O.
+function classifyChatLine(line, selfName) {
+  if (typeof line !== 'string' || line.charCodeAt(0) !== 91 /* [ */) return null;
+  // Zeal /tag broadcasts are machine traffic on guild/raid/group/channel transports, not conversation.
+  if (line.indexOf('ZEALTAG | ') !== -1 || line.indexOf('ZT | ') !== -1) return null;
+  const ts = parseEqTimestamp(line);
+  const t = ts ? ts.getTime() : Date.now();
+  let m;
+  for (const p of CHAT_SELF_PATTERNS) {
+    if ((m = p.rx.exec(line))) return { ch: p.ch, who: 'You', text: _chatCleanText(m[1]), t, self: true, npc: false };
+  }
+  if ((m = CHAT_SELF_CHANNEL_RX.exec(line))) {
+    return { ch: /officer/i.test(m[1]) ? 'officer' : 'custom', who: 'You', text: _chatCleanText(m[3]), t, self: true, npc: false, chan: m[1] };
+  }
+  if ((m = CHAT_SELF_TELL_RX.exec(line))) {
+    return { ch: 'tell', who: 'You', to: m[1].trim(), text: _chatCleanText(m[2]), t, self: true, npc: false };
+  }
+  if ((m = CHAT_OTHER_RX.exec(line))) {
+    const speaker = m[1].trim();
+    const verb = m[2];
+    const text = _chatCleanText(m[5]);
+    if (!speaker || !text) return null;
+    let ch;
+    if (verb === 'tells you') {
+      // parseTellLine owns the "is this a real player's tell" rules (NPC chatter, pets, bankers).
+      if (parseTellLine(line, selfName)) ch = 'tell';
+      else if (npcSpeechLine(line)) ch = 'npc';
+      else return null;
+    } else if (m[3]) {
+      ch = /officer/i.test(m[3]) ? 'officer' : 'custom';
+    } else if (/^tells the officers?$/.test(verb)) {
+      ch = 'officer';
+    } else {
+      ch = CHAT_OTHER_CH[verb];
+      if ((ch === 'say' || ch === 'shout') && _chatIsNpcSpeaker(speaker)) ch = 'npc';
+      else if (ch === 'say' && _chatIsPetOrMerchantText(text)) return null;
+    }
+    const mine = !!selfName && speaker.toLowerCase() === String(selfName).toLowerCase();
+    return { ch, who: speaker, text, t, self: mine, npc: ch === 'npc' };
+  }
+  if ((m = CHAT_ABBREV_RX.exec(line))) {
+    const tag = m[1].toLowerCase();
+    let ch = /^\d+$/.test(tag) ? 'custom' : CHAT_ABBREV_TAGS[tag];
+    if (!ch) return null;
+    const name = m[2].trim();
+    const text = _chatCleanText(m[3]);
+    if (!name || !text) return null;
+    if (tag === 'to') return { ch, who: 'You', to: name, text, t, self: true, npc: false };
+    if (ch === 'tell' && /\s/.test(name)) ch = 'npc';
+    else if (ch === 'tell' && (_isNpcTellText(text) || _isNpcTellSender(name))) return null;
+    else if ((ch === 'say' || ch === 'shout') && _chatIsNpcSpeaker(name)) ch = 'npc';
+    else if (ch === 'say' && _chatIsPetOrMerchantText(text)) return null;
+    const mine = !!selfName && name.toLowerCase() === String(selfName).toLowerCase();
+    return { ch, who: name, text, t, self: mine, npc: ch === 'npc' };
+  }
+  return null;
+}
+
+// The overlay's switches, handed over on every poll. Default (nothing asked for, or the overlay went
+// quiet for CHAT_POLICY_TTL_MS) is public channels only.
+let _chatPolicy = null;
+let _chatPolicyAt = 0;
+function setChatPolicy(p, now) {
+  const next = {};
+  for (const k of CHAT_POLICY_KEYS) next[k] = !!(p && p[k]);
+  _chatPolicy = next;
+  _chatPolicyAt = now == null ? Date.now() : now;
+}
+function chatPolicyNow(now) {
+  const t = now == null ? Date.now() : now;
+  if (_chatPolicy && t - _chatPolicyAt <= CHAT_POLICY_TTL_MS) return _chatPolicy;
+  return { tells: false, group: false, officer: false, custom: false };
+}
+function chatChannelAllowed(ch, policy) {
+  const g = CHAT_GROUPS.find(x => x.channels.indexOf(ch) !== -1);
+  if (!g) return false;
+  return !g.gate || !!(policy && policy[g.gate]);
+}
+
+// The ring. Memory only: never written to disk, never queued, never uploaded.
+const _chatRing = [];
+let _chatSeq = 0;
+const CHAT_BOOT = crypto.randomBytes(4).toString('hex');   // a new value after a restart tells the overlay to start over
+function noteLocalChatLine(line, character, now) {
+  const evt = classifyChatLine(line, character);
+  if (!evt) return false;
+  if (!chatChannelAllowed(evt.ch, chatPolicyNow(now))) return false;
+  // One person's main + alt logs both hear the same guild line: keep one copy.
+  const key = evt.ch + '|' + String(evt.who).toLowerCase() + '|' + (evt.to || '') + '|' + evt.text + '|' + Math.floor(evt.t / 1000);
+  for (let i = _chatRing.length - 1, n = 0; i >= 0 && n < 60; i--, n++) if (_chatRing[i].k === key) return false;
+  _chatRing.push({ seq: ++_chatSeq, k: key, t: evt.t, ch: evt.ch, who: evt.who, to: evt.to || null, text: evt.text, self: !!evt.self, npc: !!evt.npc });
+  const over = _chatRing.length - CHAT_RING_MAX;
+  if (over > 0) _chatRing.splice(0, over);
+  return true;
+}
+
+// GET /api/chat?since=<seq>&boot=<boot>&tells=1&group=0&officer=0&custom=0 — the lines newer than `since`
+// that the caller's switches allow, plus the groups and colours to draw them with.
+function serializeLocalChat(q, now) {
+  const t = now == null ? Date.now() : now;
+  setChatPolicy(q, t);
+  const policy = chatPolicyNow(t);
+  let since = Number(q && q.since);
+  let reset = false;
+  if (q && q.boot && String(q.boot) !== CHAT_BOOT) { since = 0; reset = true; }
+  if (!(since >= 0) || since > _chatSeq) { since = 0; reset = true; }
+  const lines = [];
+  for (let i = _chatRing.length - 1; i >= 0 && lines.length < CHAT_PAGE_MAX; i--) {
+    const l = _chatRing[i];
+    if (l.seq <= since) break;
+    if (!chatChannelAllowed(l.ch, policy)) continue;
+    const o = { n: l.seq, t: l.t, ch: l.ch, who: l.who, text: l.text };
+    if (l.self) o.self = true;
+    if (l.npc) o.npc = true;
+    if (l.to) o.to = l.to;
+    lines.push(o);
+  }
+  lines.reverse();
+  return { ok: true, boot: CHAT_BOOT, seq: _chatSeq, reset, groups: CHAT_GROUPS, channels: CHAT_CHANNELS, lines };
+}
+let _chatLastGood = null;
+function _handleLocalChat(req, res) {
+  const send = (code, body) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(body); };
+  if (!_localOriginOk(req)) return send(403, JSON.stringify({ error: 'forbidden origin' }));
+  const q = {};
+  try { new URL(req.url, 'http://127.0.0.1').searchParams.forEach((v, k) => { q[k] = v; }); } catch { void 0; }
+  for (const k of CHAT_POLICY_KEYS) q[k] = q[k] === '1';
+  let body;
+  try { body = JSON.stringify(serializeLocalChat(q)); _chatLastGood = body; }
+  catch (e) { console.error('[api/chat] serialize failed, serving last-good:', e && (e.stack || e.message || e)); body = _chatLastGood; }
+  return send(200, body || 'null');
+}
+function _resetLocalChatForTest() {
+  _chatRing.length = 0; _chatSeq = 0; _chatPolicy = null; _chatPolicyAt = 0; _chatLastGood = null;
+}
+// ── end Local chat window ──
 
 // ── /sll lockout parser ────────────────────────────────────────────────────
 // EQ /sll output in the log:
@@ -54097,6 +54335,10 @@ async function main() {
             // Don't `return` — tells are side-channel. Continue so any further
             // processing (e.g. log highlighter, future panels) still sees the line.
           }
+          // Mimic's Chat overlay (2026-10-14): same shape as the tell tap above — local memory
+          // only, ahead of shouldKeep, skipped for exclude_from_stats. Never uploaded; see the
+          // "Local chat window" block for what it keeps and why.
+          try { noteLocalChatLine(line, b.character); } catch (e) { void e; }
         }
 
         // /sll lockout output → bot timer (Available entries silently skipped)
@@ -54590,6 +54832,11 @@ module.exports = {
   parseEvent, shouldKeep, parseEqTimestamp,
   DEFAULT_DROP_PATTERNS, KEEP_PATTERNS,
   buildFeedbackLogSlice, _feedbackLineAllowed,
+  // Mimic's Chat overlay feed (2026-10-14). The buffers are exposed so a test can prove nothing here lands in an upload queue.
+  classifyChatLine, noteLocalChatLine, serializeLocalChat, setChatPolicy, chatPolicyNow, chatChannelAllowed,
+  CHAT_GROUPS, CHAT_CHANNELS, CHAT_RING_MAX, CHAT_PAGE_MAX, CHAT_POLICY_TTL_MS, _resetLocalChatForTest,
+  _uploadBuffersForTest: () => ({ chatBuffer, tellBuffer, recentTells: stats.recentTells }),
+  _chatRingForTest: () => _chatRing, _handleLocalChatForTest: _handleLocalChat,
   _noteBuffDurationsFromState, buffDurationStats, buffDurationTable, _noteBuffDurationSample,
   buffDurationFactorFor,
   SOURCELESS_SPELLS, BARD_SONGS,
