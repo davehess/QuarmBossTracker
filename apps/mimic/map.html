@@ -949,13 +949,17 @@
     return { x: -((px - w / 2) / view.scale + view.cx), y: -((py - h / 2) / view.scale + view.cy) };
   }
   // Your speed in game units a second, over the samples of the last ~1.5 s (null until there is a full second).
-  // ponytail: units/s, not Zeal's "% of normal run": the pipe sends no speed and we have no measured base yet.
   var SPEED_WINDOW_MS = 1500;
   function speedOf(hist) {
     if (!hist || hist.length < 2) return null;
     var a = hist[0], b = hist[hist.length - 1], dt = b.t - a.t;
     return dt >= 1000 ? Math.hypot(b.x - a.x, b.y - a.y) / dt * 1000 : null;
   }
+  // ...shown as Zeal's map shows it: % of normal run. The base is measured, not looked up: the guild lead's
+  // screenshot, 2026-10-14, had Zeal at 277% while this read 84 u/s, so 100% ≈ 30.3 u/s. One reading; a timed
+  // unbuffed run would tighten it.
+  var RUN_BASE_UPS = 30.3;
+  function runPct(ups) { return ups == null ? null : ups / RUN_BASE_UPS * 100; }
   // Your own map files (the agent's `local_map`, read on this computer and never sent anywhere; the guild lead,
   // 2026-10-12: "A for outdoor walls"). Their lines are already in the server frame, so they draw like spawn points.
   // Walls: Auto draws them whenever the zone has any, Ours only never does. Their colours are the map author's
@@ -1330,7 +1334,8 @@
       spdHist.push({ t: rt, x: d.x, y: d.y });
       while (spdHist.length > 2 && rt - spdHist[1].t >= SPEED_WINDOW_MS) spdHist.shift();
       var sp = speedOf(spdHist);
-      line = locText(d.x, d.y) + (sp != null ? ' · ' + Math.round(sp) + ' u/s' : '');
+      line = locText(d.x, d.y) + (sp != null ? ' · ' + Math.round(runPct(sp)) + '%' : '');
+      locBarEl.title = sp != null ? Math.round(sp) + ' units a second (100% = normal run, ' + RUN_BASE_UPS + ' u/s)' : '';
     } else spdHist = [];
     locBarEl.textContent = line;
     locBarEl.style.fontSize = Math.round(10 * (S.cfg.text || 1)) + 'px';   // follows ⚙ → Label size (the guild lead, 2026-10-13: "Location and speed should have scaling as well")
