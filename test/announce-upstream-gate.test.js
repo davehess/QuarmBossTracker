@@ -1,4 +1,4 @@
-// The eight one-shot "upstream" announcers (Harmonic Howl, Mimic 2.7.1 / 2.7.8, the opt-in-logs #pvp note,
+// The nine one-shot "upstream" announcers (Harmonic Howl, Mimic 2.7.1 / 2.7.8 / 2.9.1, the opt-in-logs #pvp note,
 // the film making-of, the Vex Thal celebration and its film, the inventory split) post Wolf Pack's own history
 // and are latched only by a bot_kv row, finding their channel by NAME. A new guild with an empty bot_kv and a
 // channel called #raid-chat would have got "Congrats Wolf Pack on the last Aten Ha Ra of Luclin" on its first
@@ -113,7 +113,7 @@ describe('_oneshotGate: the call every scheduling site makes', () => {
 
 // ── 2. every announcer is gated at its call sites ────────────────────────────
 const NAMES = [
-  '_announceHarmonicHowlOnce', '_announceMimic271Once', '_announceMimic278Once', '_announceOptinPvpOnce',
+  '_announceHarmonicHowlOnce', '_announceMimic271Once', '_announceMimic278Once', '_announceMimic291Once', '_announceOptinPvpOnce',
   '_announceFilmMakingOnce', '_announceVexThalClearedOnce', '_announceVexThalFilmOnce', '_announceInventorySplitOnce',
 ];
 
@@ -130,8 +130,8 @@ function openingLine(idx) {
 describe('every one-shot announcer is gated', () => {
   const declared = [...src.matchAll(/^(?:async )?function (_announce\w*Once)\(/gm)].map(m => m[1]);
 
-  it('there are exactly eight _announce*Once functions (a ninth must come with a gate, then bump this)', () => {
-    expect(declared).toHaveLength(8);
+  it('there are exactly nine _announce*Once functions (a tenth must come with a gate, then bump this)', () => {
+    expect(declared).toHaveLength(9);
     expect([...declared].sort()).toEqual([...NAMES].sort());
   });
 
@@ -147,12 +147,12 @@ describe('every one-shot announcer is gated', () => {
     }
   });
 
-  it('eight gates, one distinct tag each', () => {
+  it('ten gates, one distinct tag each', () => {
     const tags = [...src.matchAll(/_oneshotGate\('([^']+)'\)/g)].map(m => m[1]);
-    // 8 announcers + the howl-card repair one-shot (gated since the 2026-10-07 review; not an
-    // _announce*Once, so NAMES stays at 8).
-    expect(tags).toHaveLength(9);
-    expect(new Set(tags).size).toBe(9);
+    // 9 announcers + the howl-card repair one-shot (gated since the 2026-10-07 review; not an
+    // _announce*Once, so it is not in NAMES).
+    expect(tags).toHaveLength(10);
+    expect(new Set(tags).size).toBe(10);
   });
 });
 
@@ -182,8 +182,8 @@ function run(tag, gateAnswer) {
 }
 
 describe('the gated scheduling statements', () => {
-  it('cover all eight tags', () => {
-    expect(TAGS).toHaveLength(9);
+  it('cover all ten tags', () => {
+    expect(TAGS).toHaveLength(10);
   });
 
   for (const tag of TAGS) {
