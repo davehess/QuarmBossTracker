@@ -219,11 +219,12 @@ let mobInfoWindow = null;
 let buffQueueWindow = null;
 let whoWindow     = null;
 let chatWindow    = null;   // the Chat overlay (this PC's own chat feed, chat.html) - key 'chat', cfg.showChat
-// Chat groups broken out into their own windows (chat.html?groups=<id>; the guild lead, 2026-10-14: "add
-// breakout abilities for different tabs by right clicking the name of the chat type"). A VARIABLE number
-// of windows, so they are not `let`s: one per group id, keyed 'chat:<id>' in _overlayEntries() like
+// Chat groups broken out into their own windows (chat.html?win=<id>&groups=<ids>; the guild lead, 2026-10-14: "add
+// breakout abilities for different tabs by right clicking the name of the chat type", then "we should be able
+// to add the breakout chats to other breakouts"). A VARIABLE number of windows, so they are not `let`s: one per
+// breakout window id (b1, b2...), each holding one or more groups, keyed 'chat:<id>' in _overlayEntries() like
 // 'panel:<key>', and they live exactly when the Chat overlay does (see _syncChatBreakouts).
-const chatBreakouts = new Map(); // group id -> BrowserWindow
+const chatBreakouts = new Map(); // breakout window id -> BrowserWindow
 let melodyWindow  = null;
 let zealWindow    = null;
 let threatWindow  = null;
@@ -359,13 +360,16 @@ function defaultConfig() {
     // channel NAMES] switched off, shared by every character; absent = every channel shows. melee = opt-in for
     // the combined-melee group (default off); spells and skills are the same kind of opt-in (default off). meleeShow = { mine, on_me, others, misses }, which
     // melee lines show (all true unless switched off); spellShow = { mine, on_me, others } and skillShow = { mine, others } likewise. only = the "show only" view toggle ('' = off). win = { <window
-    // id: 'main' or a breakout group id>: { fontSize, lineGap, times, tags } }, each window's own text settings.
+    // id: 'main' or a breakout window id (b1, b2...)>: { fontSize, lineGap, times, tags } }, each window's own text settings.
     showChat: false,
     chatPrefs: {},
-    // Channel groups broken out into their own windows (group ids; chat.html?groups=<id>). Each remembers its
-    // own place under chatBounds_<id>. Empty = everything stays in the one Chat window.
+    // Breakout windows: [{ id: 'b1', groups: ['melee', 'spell'] }]. A window holds one or more channel groups, keeps
+    // its id while groups come and go, and remembers its own place under chatBounds_<id>. Empty = everything stays
+    // in the one Chat window. (Saved by an older Mimic as a plain list of group ids; loadConfig converts it.)
     chatBreakouts: [],
-    onboarded: false,        // false until user dismisses or completes loading
+    // Chat windows locked together by the 🔗 button: [['main', 'b1'], ['b2', 'b3']] (window ids). Dragging one moves its group.
+    chatLinks: [],
+    onboarded: false,       // false until user dismisses or completes loading
     // Per-character "do not transmit" list. Names are case-sensitive as they
     // appear in the eqlog filename (eqlog_<Name>_pq.proj.txt → <Name>). The
     // agent honors this at the OUTERMOST boundary — excluded log files are
@@ -480,6 +484,8 @@ function loadConfig() {
       raw.showMe = prev.me !== undefined ? !!prev.me : true;
       delete prev.me;
     }
+    // Chat breakouts used to be a list of group ids; they are windows that hold groups now.
+    _chatMigrateBreakouts(raw);
     return Object.assign(defaultConfig(), raw);
   } catch { return defaultConfig(); }
 }
@@ -1694,8 +1700,8 @@ function _boundsKeyForWindow(win) {
   for (const [panelKey, w] of panelOverlays.entries()) {
     if (w === win) return 'panelBounds_' + panelKey;
   }
-  for (const [gid, w] of chatBreakouts.entries()) {
-    if (w === win) return 'chatBounds_' + gid;
+  for (const [wid, w] of chatBreakouts.entries()) {
+    if (w === win) return 'chatBounds_' + wid;
   }
   return null;
 }
@@ -1727,6 +1733,9 @@ function _startWindowDrag(win, persistKey) {
       interval: null,
       restoreFocusable: !wasFocusable,
       startedAt: Date.now(),
+      // A Chat window (the main one or a breakout) snaps to the other Chat windows and drags its linked partners
+      // along; null for every other overlay, which is untouched.
+      chat: (() => { try { return _chatDragBegin(win); } catch { return null; } })(),
     };
     _dragSession.interval = setInterval(() => {
       if (!_dragSession) return;
@@ -1738,9 +1747,11 @@ function _startWindowDrag(win, persistKey) {
       if (Date.now() - _dragSession.startedAt > 30_000) { _stopWindowDrag(); return; }
       try {
         const cur = screen.getCursorScreenPoint();
+        let nx = cur.x - _dragSession.offsetX, ny = cur.y - _dragSession.offsetY;
+        if (_dragSession.chat) { try { const q = _chatDragStep(_dragSession.chat, nx, ny); nx = q.x; ny = q.y; } catch {} }
         _dragSession.win.setBounds({
-          x: cur.x - _dragSession.offsetX,
-          y: cur.y - _dragSession.offsetY,
+          x: nx,
+          y: ny,
           width:  _dragSession.width,
           height: _dragSession.height,
         });
@@ -2135,6 +2146,7 @@ function _stopWindowDrag() {
     // Final persist — the periodic setBounds calls fire 'moved' but the
     // debounce may swallow the last one if the user lifts quickly.
     try { _persistBounds(_dragSession.persistKey, _dragSession.win); } catch {}
+    if (_dragSession.chat) { try { _chatDragEnd(_dragSession.chat); } catch {} }
     // Restore resting non-focusable state for overlays we temporarily made
     // focusable to receive the drag-ending mouseup (CH chain etc.).
     if (_dragSession.restoreFocusable && _dragSession.win && !_dragSession.win.isDestroyed()) {
@@ -4848,8 +4860,8 @@ function _overlayEntries() {
   for (const [panelKey, win] of panelOverlays.entries()) {
     if (win && !win.isDestroyed()) out.push(['panel:' + panelKey, win]);
   }
-  for (const [gid, win] of chatBreakouts.entries()) {
-    if (win && !win.isDestroyed()) out.push(['chat:' + gid, win]);
+  for (const [wid, win] of chatBreakouts.entries()) {
+    if (win && !win.isDestroyed()) out.push(['chat:' + wid, win]);
   }
   return out;
 }
@@ -7809,21 +7821,80 @@ function applyChatVisibility() {
 }
 
 // ── Chat breakouts (design A, started from a chip's right-click) ──────────────────────────────────────────
-// A broken-out group is the same chat.html loaded with ?groups=<id>: it polls /api/chat like the main window
-// and paints only that group; the main window hides that group's lines while it is out. cfg.chatBreakouts is
-// the list, so they come back after a restart. The windows follow the Chat overlay (one rule, below), which is
-// what makes Chat off / hide-all / the EverQuest gate close them too.
+// A breakout window is the same chat.html loaded with ?win=<id>&groups=<ids>: it polls /api/chat like the main
+// window and paints only the groups it holds; the main window hides those groups' lines while they are out.
+// cfg.chatBreakouts = [{ id: 'b1', groups: [...] }] is the list, so they come back after a restart. A window keeps
+// its id while groups are added to it or taken out of it (its place and text settings hang off the id), and it
+// closes when its last group leaves. The windows follow the Chat overlay (one rule, below), which is what makes
+// Chat off / hide-all / the EverQuest gate close them too.
 const CHAT_BREAKOUT_MAX = 12;
+const CHAT_BREAKOUT_GROUPS_MAX = 24;
 const _CHAT_GROUP_RX = /^[a-z]{1,16}$/;
-function _chatBreakoutIds(cfg) {
+const _CHAT_BRK_ID_RX = /^b[0-9]{1,3}$/;
+// The old shape was a plain list of group ids (one window per group, its place under chatBounds_<group> and its
+// text settings under chatPrefs.win[<group>]). Each becomes a window of its own, and everything saved under the
+// group id moves to the window id, so nothing is lost. Runs on every config load and is a no-op once converted;
+// the ids it hands out are fixed by position, so an unsaved conversion comes out the same each time. (A literal
+// regex, not _CHAT_GROUP_RX: loadConfig can run before that const is initialised.)
+function _chatMigrateBreakouts(raw) {
+  if (!raw || !Array.isArray(raw.chatBreakouts) || !raw.chatBreakouts.some(x => typeof x === 'string')) return;
+  const rx = /^[a-z]{1,16}$/;
+  const keep = [], old = [];
+  for (const x of raw.chatBreakouts) {
+    if (typeof x === 'string') { if (rx.test(x) && old.indexOf(x) === -1) old.push(x); }
+    else if (x && typeof x === 'object') keep.push(x);
+  }
+  const used = new Set(keep.map(e => e.id));
+  const nextId = () => { for (let n = 1; ; n++) if (!used.has('b' + n)) { used.add('b' + n); return 'b' + n; } };
+  const win = (raw.chatPrefs && typeof raw.chatPrefs === 'object' && raw.chatPrefs.win && typeof raw.chatPrefs.win === 'object') ? raw.chatPrefs.win : null;
+  const out = keep.slice();
+  for (const g of old) {
+    const id = nextId();
+    out.push({ id, groups: [g] });
+    for (const suf of ['', 'Sig', 'Floor']) {
+      if (raw['chatBounds_' + g + suf] !== undefined) { raw['chatBounds_' + id + suf] = raw['chatBounds_' + g + suf]; delete raw['chatBounds_' + g + suf]; }
+    }
+    // The per-screen-setup layout memory, and the per-overlay maps (opacity, scale...), are keyed by overlay key.
+    const sigs = raw.overlayLayoutBySig;
+    if (sigs && typeof sigs === 'object') {
+      for (const s of Object.values(sigs)) {
+        const r = s && s.rects;
+        if (r && typeof r === 'object' && r['chatBounds_' + g] !== undefined) { r['chatBounds_' + id] = r['chatBounds_' + g]; delete r['chatBounds_' + g]; }
+      }
+    }
+    for (const v of Object.values(raw)) {
+      if (v && typeof v === 'object' && !Array.isArray(v) && Object.prototype.hasOwnProperty.call(v, 'chat:' + g)) { v['chat:' + id] = v['chat:' + g]; delete v['chat:' + g]; }
+    }
+    if (win && win[g] !== undefined) { win[id] = win[g]; delete win[g]; }
+  }
+  raw.chatBreakouts = out;
+}
+// The list, cleaned: window ids shaped b<n>, group ids lower-case letters, a group in at most one window, no empty
+// window, at most twelve windows. Always [{ id, groups[] }].
+function _chatBreakoutList(cfg) {
   const raw = (cfg && Array.isArray(cfg.chatBreakouts)) ? cfg.chatBreakouts : [];
-  const out = [];
-  for (const g of raw) if (typeof g === 'string' && _CHAT_GROUP_RX.test(g) && out.indexOf(g) === -1) out.push(g);
+  const seenW = new Set(), seenG = new Set(), out = [];
+  for (const e of raw) {
+    if (!e || typeof e !== 'object' || typeof e.id !== 'string' || !_CHAT_BRK_ID_RX.test(e.id) || seenW.has(e.id)) continue;
+    const groups = [];
+    for (const g of (Array.isArray(e.groups) ? e.groups : [])) {
+      if (typeof g === 'string' && _CHAT_GROUP_RX.test(g) && !seenG.has(g) && groups.length < CHAT_BREAKOUT_GROUPS_MAX) { seenG.add(g); groups.push(g); }
+    }
+    if (!groups.length) continue;
+    seenW.add(e.id);
+    out.push({ id: e.id, groups });
+  }
   return out.slice(0, CHAT_BREAKOUT_MAX);
 }
-function _chatBreakoutGroup(win) {
-  for (const [gid, w] of chatBreakouts.entries()) if (w === win) return gid;
+function _chatBreakoutWinId(win) {
+  for (const [wid, w] of chatBreakouts.entries()) if (w === win) return wid;
   return null;
+}
+// The lowest window id not in use, so ids stay within b1..b12 for good (a re-opened window comes back where the
+// last one with that id sat, with its text settings).
+function _chatNextBreakoutId(list) {
+  const used = new Set(list.map(w => w.id));
+  for (let n = 1; ; n++) if (!used.has('b' + n)) return 'b' + n;
 }
 // Tell the Chat window and every breakout something changed (the list of broken-out groups, or the prefs).
 function _pushChatWindows(channel, payload) {
@@ -7831,70 +7902,270 @@ function _pushChatWindows(channel, payload) {
     if (_live(w)) { try { w.webContents.send(channel, payload); } catch { /* mid-close */ } }
   }
 }
-function createChatBreakout(gid) {
+function createChatBreakout(wid, groups) {
   if (_agentOnly()) return;
-  if (!_CHAT_GROUP_RX.test(String(gid))) return;
-  if (_live(chatBreakouts.get(gid))) return;
-  const boundsKey = 'chatBounds_' + gid;
+  if (!_CHAT_BRK_ID_RX.test(String(wid))) return;
+  if (_live(chatBreakouts.get(wid))) return;
+  const boundsKey = 'chatBounds_' + wid;
   const n = chatBreakouts.size;
   const b = _resolveBounds(boundsKey, boundsKey + 'Sig', { x: 60 + 28 * n, y: 560 - 28 * n, width: 340, height: 200 });
   const win = new BrowserWindow({
-    title: 'Wolf Pack miMIC — Chat overlay (' + gid + ')',
+    title: 'Wolf Pack miMIC — Chat overlay (' + wid + ')',
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: _OVERLAY_MIN_W, minHeight: 90,
     frame: false, transparent: true, resizable: true,
     alwaysOnTop: true, skipTaskbar: true, focusable: true, show: false,
-    webPreferences: _wpPrefs('Chat ' + gid),
+    webPreferences: _wpPrefs('Chat ' + wid),
   });
-  chatBreakouts.set(gid, win);
+  chatBreakouts.set(wid, win);
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setVisibleOnAllWorkspaces(true);
-  win.loadFile('chat.html', { query: { groups: gid } });
+  // The page starts with these groups, then follows the list ('chat-breakouts') as groups come and go.
+  win.loadFile('chat.html', { query: { win: wid, groups: (groups || []).join(',') } });
   win.on('moved',  () => _persistBounds(boundsKey, win));
   win.on('resize', () => _persistBounds(boundsKey, win));
-  win.on('closed', () => { if (chatBreakouts.get(gid) === win) chatBreakouts.delete(gid); });
+  win.on('closed', () => { if (chatBreakouts.get(wid) === win) chatBreakouts.delete(wid); });
   win.once('ready-to-show', () => {
     win.webContents.send('agent-port', agentPort);
     applyChatVisibility();
     applyOverlayInteractivity();
-    applyOverlayOpacity(win, 'chat:' + gid);
+    applyOverlayOpacity(win, 'chat:' + wid);
   });
 }
-// Make the windows match the list: one per broken-out group while the Chat overlay is wanted, none otherwise.
+// Make the windows match the list: one per breakout window while the Chat overlay is wanted, none otherwise.
 // Called by every pass that builds or frees overlay windows (_materializeEnabledOverlays and
 // _reapDisabledOverlays), so hide-all, Chat off and the EverQuest gate all take the breakouts with the window.
+// A window that stays in the list is left alone when its groups change: the page follows the list itself.
 function _syncChatBreakouts() {
   if (_agentOnly()) return;
   let cfg; try { cfg = loadConfig(); } catch { return; }
   const chatEntry = _OVERLAY_WINDOWS.find(e => e.key === 'chat');
-  const want = (chatEntry && _overlayWanted(cfg, chatEntry)) ? _chatBreakoutIds(cfg) : [];
-  for (const [gid, win] of Array.from(chatBreakouts.entries())) {
-    if (_live(win) && want.indexOf(gid) !== -1) continue;
+  const list = _chatBreakoutList(cfg);
+  const listed = list.map(w => w.id);
+  const want = (chatEntry && _overlayWanted(cfg, chatEntry)) ? list : [];
+  const wantIds = want.map(w => w.id);
+  for (const [wid, win] of Array.from(chatBreakouts.entries())) {
+    if (_live(win) && wantIds.indexOf(wid) !== -1) continue;
     if (_live(win) && _inSingleSetup(win)) continue;
-    try { _flushBounds('chatBounds_' + gid, win); } catch { /* best effort */ }
-    chatBreakouts.delete(gid);
+    try { _flushBounds('chatBounds_' + wid, win); } catch { /* best effort */ }
+    chatBreakouts.delete(wid);
     try { if (_live(win)) win.destroy(); } catch { /* already gone */ }
-    appendAgentLog(`[overlay] freed chat:${gid} — ${_chatBreakoutIds(cfg).indexOf(gid) === -1 ? 'put back in Chat' : 'Chat is not showing'}\n`);
+    appendAgentLog(`[overlay] freed chat:${wid} — ${listed.indexOf(wid) === -1 ? 'its groups went back to Chat' : 'Chat is not showing'}\n`);
   }
-  for (const gid of want) if (!_live(chatBreakouts.get(gid))) createChatBreakout(gid);
+  for (const w of want) if (!_live(chatBreakouts.get(w.id))) createChatBreakout(w.id, w.groups);
 }
-// Break a group out (on) or put it back (off). Saves the list, builds or frees the window, and tells every
-// Chat window so the main one hides or shows that group's lines and its chip says "out".
-function _chatBreakoutSet(gid, on) {
-  gid = String(gid || '');
-  if (!_CHAT_GROUP_RX.test(gid)) return _chatBreakoutIds(loadConfig());
+// Move one group: target is 'main' (back in the Chat window), 'new' (a window of its own) or a breakout window id.
+// Saves the list, tells every Chat window (the main one hides or shows that group's lines and its chip says "out",
+// a breakout repaints its own groups), then builds or frees the windows. A window left with no group closes. A
+// target that does not exist changes nothing, so a group is never left without a window.
+function _chatMoveGroup(gid, target) {
+  gid = String(gid || ''); target = String(target || '');
+  const cfg0 = loadConfig();
+  if (!_CHAT_GROUP_RX.test(gid)) return _chatBreakoutList(cfg0);
+  const before = _chatBreakoutList(cfg0);
+  const home = before.find(w => w.groups.indexOf(gid) !== -1);
+  if (target === 'new' && home && home.groups.length === 1) return before;   // already alone in a window
+  if (target === 'main' && !home) return before;                              // already in the Chat window
+  if (home && home.id === target) return before;
+  let list = before.map(w => ({ id: w.id, groups: w.groups.filter(g => g !== gid) })).filter(w => w.groups.length);
+  if (target === 'new') {
+    if (list.length >= CHAT_BREAKOUT_MAX) return before;
+    list.push({ id: _chatNextBreakoutId(before), groups: [gid] });
+  } else if (target !== 'main') {
+    const w = list.find(x => x.id === target);
+    if (!w || w.groups.length >= CHAT_BREAKOUT_GROUPS_MAX) return before;
+    w.groups.push(gid);
+  }
+  return _chatSetBreakouts(cfg0, list);
+}
+// A breakout's ✕ (or its right-click "Put back"): every group in it goes back to the Chat window and the window closes.
+function _chatBreakoutClose(wid) {
   const cfg = loadConfig();
-  const ids = _chatBreakoutIds(cfg).filter(x => x !== gid);
-  if (on) ids.push(gid);
-  cfg.chatBreakouts = ids.slice(0, CHAT_BREAKOUT_MAX);
+  const before = _chatBreakoutList(cfg);
+  if (!before.some(w => w.id === String(wid))) return before;
+  return _chatSetBreakouts(cfg, before.filter(w => w.id !== String(wid)));
+}
+function _chatSetBreakouts(cfg, list) {
+  cfg.chatBreakouts = list;
+  // A window that closed takes its links with it (the Chat window itself is always there).
+  const linksBefore = JSON.stringify(_chatLinkGroups(cfg));
+  cfg.chatLinks = _chatLinksPrune(_chatLinkGroups(cfg), ['main'].concat(list.map(w => w.id)));
   saveConfig(cfg);
-  _pushChatWindows('chat-breakouts', cfg.chatBreakouts);
+  _pushChatWindows('chat-breakouts', list);
+  if (JSON.stringify(cfg.chatLinks) !== linksBefore) _pushChatWindows('chat-links', cfg.chatLinks);
   // Deferred a tick: a breakout's own ✕ / Put back lands here from inside that window.
   setImmediate(() => { try { _syncChatBreakouts(); applyChatVisibility(); applyOverlayInteractivity(); } catch (e) { void e; } });
-  return cfg.chatBreakouts;
+  return list;
 }
-ipcMain.handle('chat-breakout', (_e, gid, on) => _chatBreakoutSet(gid, !!on));
-ipcMain.handle('chat-breakouts-get', () => _chatBreakoutIds(loadConfig()));
+// ── Chat window links (the guild lead, 2026-10-14: "make it so i can lock multiple breakout chats to each other") ──
+// Dragging a Chat window's ✥ snaps its edge flush to another Chat window's within CHAT_SNAP_PX. The 🔗 button on a
+// window locks the Chat windows touching it into a group (cfg.chatLinks = [['main', 'b1'], ['b2', 'b3']], window ids);
+// dragging any window in a group moves the rest by the same amount. It rides the existing manual drag
+// (_startWindowDrag), so there is no app-region and the windows still save their places one by one through the
+// ordinary bounds path. Resizing one window never moves the others. A group is kept on screen as a whole: the move
+// is cut back (per axis) until no window in it would end up mostly off every display.
+const CHAT_SNAP_PX = 8;
+const CHAT_LINK_TOUCH_PX = 10;     // "touching", for 🔗: a little looser than the snap, which lands flush
+const CHAT_LINK_MIN_VISIBLE = 0.8; // a linked window keeps at least this much of itself on screen (or what it had)
+// true: partners follow the cursor on every drag tick (~60/s, one setBounds each). false: they jump to the final
+// place when the drag ends - the cheaper version, if per-move partner moves ever feel janky.
+const CHAT_LINK_LIVE = true;
+const _CHAT_LINK_ID_RX = /^(?:main|b[0-9]{1,3})$/;
+function _chatLinkGroups(cfg) {
+  const raw = (cfg && Array.isArray(cfg.chatLinks)) ? cfg.chatLinks : [];
+  const seen = new Set(), out = [];
+  for (const g of raw) {
+    if (!Array.isArray(g)) continue;
+    const ids = [];
+    for (const id of g) if (typeof id === 'string' && _CHAT_LINK_ID_RX.test(id) && !seen.has(id) && ids.indexOf(id) === -1) ids.push(id);
+    if (ids.length >= 2) { ids.forEach(id => seen.add(id)); out.push(ids); }
+  }
+  return out.slice(0, 7);
+}
+// Keep only the ids that still name a window; a group left with one window is no group.
+function _chatLinksPrune(groups, validIds) {
+  return groups.map(g => g.filter(id => validIds.indexOf(id) !== -1)).filter(g => g.length >= 2);
+}
+function _chatWindowId(win) {
+  if (win && win === chatWindow) return 'main';
+  return _chatBreakoutWinId(win);
+}
+function _chatLiveWindows() {
+  const m = new Map();
+  if (_live(chatWindow)) m.set('main', chatWindow);
+  for (const [wid, w] of chatBreakouts.entries()) if (_live(w)) m.set(wid, w);
+  return m;
+}
+// Two rects touch when an edge of one lies on an edge of the other (within tol) and they overlap along it.
+function _chatRectsTouch(a, b, tol) {
+  const ox = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+  const oy = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+  const flushX = Math.abs(a.x + a.width - b.x) <= tol || Math.abs(b.x + b.width - a.x) <= tol;
+  const flushY = Math.abs(a.y + a.height - b.y) <= tol || Math.abs(b.y + b.height - a.y) <= tol;
+  return (flushX && oy > 0) || (flushY && ox > 0);
+}
+// Snap rect b (the one being dragged) to `others`: an edge within px of another's lands flush against it
+// (side by side or stacked), or lines up with it (same left/right/top/bottom edge). x first, then y with the new x.
+// A window only snaps along an axis when it is already next to the other one on the crossing axis.
+function _chatSnap(b, others, px) {
+  const gap = (a0, a1, b0, b1) => Math.max(0, Math.max(a0, b0) - Math.min(a1, b1));
+  let x = b.x, y = b.y, best = null;
+  for (const o of others) {
+    if (gap(b.y, b.y + b.height, o.y, o.y + o.height) > px) continue;
+    for (const d of [o.x + o.width - b.x, o.x - (b.x + b.width), o.x - b.x, o.x + o.width - (b.x + b.width)]) {
+      if (Math.abs(d) <= px && (best === null || Math.abs(d) < Math.abs(best))) best = d;
+    }
+  }
+  if (best !== null) x = b.x + best;
+  best = null;
+  for (const o of others) {
+    if (gap(x, x + b.width, o.x, o.x + o.width) > px) continue;
+    for (const d of [o.y + o.height - b.y, o.y - (b.y + b.height), o.y - b.y, o.y + o.height - (b.y + b.height)]) {
+      if (Math.abs(d) <= px && (best === null || Math.abs(d) < Math.abs(best))) best = d;
+    }
+  }
+  if (best !== null) y = b.y + best;
+  return { x, y, snapped: x !== b.x || y !== b.y };
+}
+// The part of r (0..1) that lies on some display's work area.
+function _chatVisibleFrac(r, areas) {
+  const total = r.width * r.height;
+  if (!(total > 0)) return 1;
+  let seen = 0;
+  for (const a of areas) {
+    const w = Math.min(a.x + a.width, r.x + r.width) - Math.max(a.x, r.x);
+    const h = Math.min(a.y + a.height, r.y + r.height) - Math.max(a.y, r.y);
+    if (w > 0 && h > 0) seen += w * h;
+  }
+  return Math.min(1, seen / total);
+}
+// Cut a group move (dx, dy) back so no window in the group ends up less visible than min(CHAT_LINK_MIN_VISIBLE, what it
+// had). Per axis, so sliding along an edge still works. No displays known: the move stands.
+function _chatClampGroupDelta(rects, dx, dy, areas) {
+  if (!areas || !areas.length) return { dx, dy };
+  const ok = (ddx, ddy) => rects.every(r => _chatVisibleFrac({ x: r.x + ddx, y: r.y + ddy, width: r.width, height: r.height }, areas) >= Math.min(CHAT_LINK_MIN_VISIBLE, _chatVisibleFrac(r, areas)) - 1e-9);
+  const best = (fn) => {
+    if (fn(1)) return 1;
+    let lo = 0, hi = 1;
+    for (let i = 0; i < 12; i++) { const mid = (lo + hi) / 2; if (fn(mid)) lo = mid; else hi = mid; }
+    return lo;
+  };
+  const rx = Math.round(dx * best(t => ok(dx * t, 0)));
+  const ry = Math.round(dy * best(t => ok(rx, dy * t)));
+  return { dx: rx, dy: ry };
+}
+// The three drag hooks _startWindowDrag calls for a Chat window. begin captures the partners and the windows to snap
+// to; step turns the cursor's wanted place into the real one (snapped, group clamped) and moves the partners; end
+// finishes the partners' move (when they were not following live) and saves where each one now sits.
+function _chatDragBegin(win) {
+  const id = _chatWindowId(win);
+  if (!id) return null;
+  const live = _chatLiveWindows();
+  const group = _chatLinkGroups(loadConfig()).find(g => g.indexOf(id) !== -1) || [];
+  let areas = [];
+  try { areas = screen.getAllDisplays().map(d => d.workArea); } catch { /* no displays: no clamp */ }
+  return {
+    id, start: win.getBounds(), moved: false, last: { dx: 0, dy: 0 }, areas,
+    partners: group.filter(x => x !== id && live.has(x)).map(x => ({ id: x, win: live.get(x), b0: live.get(x).getBounds() })),
+    others: Array.from(live.entries()).filter(([k]) => k !== id && group.indexOf(k) === -1).map(([, w]) => w.getBounds()),
+  };
+}
+function _chatDragStep(s, x, y) {
+  const sn = _chatSnap({ x, y, width: s.start.width, height: s.start.height }, s.others, CHAT_SNAP_PX);
+  if (!s.partners.length) return { x: sn.x, y: sn.y };
+  const c = _chatClampGroupDelta([s.start].concat(s.partners.map(p => p.b0)), sn.x - s.start.x, sn.y - s.start.y, s.areas);
+  s.last = c; s.moved = true;
+  if (CHAT_LINK_LIVE) for (const p of s.partners) _chatPlacePartner(p, c);
+  return { x: s.start.x + c.dx, y: s.start.y + c.dy };
+}
+function _chatPlacePartner(p, c) {
+  if (!_live(p.win)) return;
+  p.win.setBounds({ x: p.b0.x + c.dx, y: p.b0.y + c.dy, width: p.b0.width, height: p.b0.height });
+}
+function _chatDragEnd(s) {
+  if (!s.moved) return;
+  for (const p of s.partners) {
+    if (!CHAT_LINK_LIVE) _chatPlacePartner(p, s.last);
+    const key = _boundsKeyForWindow(p.win);
+    if (key) _persistBounds(key, p.win);
+  }
+}
+// 🔗: a window that is in a group leaves it (a group left with one window dissolves); one that is not links itself to
+// every Chat window touching it, directly or through another (merging any groups they were already in). Nothing
+// touching = nothing to link: { ok: false }.
+function _chatLinkToggle(wid) {
+  if (!_CHAT_LINK_ID_RX.test(String(wid))) return { ok: false, groups: _chatLinkGroups(loadConfig()) };
+  const cfg = loadConfig();
+  let groups = _chatLinkGroups(cfg);
+  if (groups.some(g => g.indexOf(wid) !== -1)) {
+    groups = groups.map(g => g.filter(x => x !== wid)).filter(g => g.length >= 2);
+  } else {
+    const live = _chatLiveWindows();
+    if (!live.has(wid)) return { ok: false, groups };
+    const rect = new Map(Array.from(live.entries()).map(([k, w]) => [k, w.getBounds()]));
+    const comp = new Set([wid]), queue = [wid];
+    while (queue.length) {
+      const a = queue.pop();
+      for (const k of rect.keys()) if (!comp.has(k) && _chatRectsTouch(rect.get(a), rect.get(k), CHAT_LINK_TOUCH_PX)) { comp.add(k); queue.push(k); }
+    }
+    if (comp.size < 2) return { ok: false, groups };
+    const merged = new Set(comp);
+    groups = groups.filter(g => { if (g.some(x => comp.has(x))) { g.forEach(x => merged.add(x)); return false; } return true; });
+    groups.push(Array.from(merged));
+  }
+  cfg.chatLinks = groups;
+  saveConfig(cfg);
+  _pushChatWindows('chat-links', groups);
+  return { ok: true, groups };
+}
+ipcMain.handle('chat-link-toggle', (e) => {
+  const wid = _chatWindowId(BrowserWindow.fromWebContents(e.sender));
+  return wid ? _chatLinkToggle(wid) : { ok: false, groups: [] };
+});
+ipcMain.handle('chat-links-get', () => _chatLinkGroups(loadConfig()));
+ipcMain.handle('chat-move-group', (_e, gid, target) => _chatMoveGroup(gid, target));
+ipcMain.handle('chat-breakout-close', (_e, wid) => _chatBreakoutClose(wid));
+ipcMain.handle('chat-breakouts-get', () => _chatBreakoutList(loadConfig()));
 // What the Chat overlay remembers (cfg.chatPrefs): the font size and the three opt-in switches are shared;
 // which channel chips are switched OFF is kept per character. Whitelisted and clamped, because the
 // renderer hands these over.
@@ -7917,9 +8188,10 @@ function _chatChannelNames(arr) {
 // writes them. The channel id ('guild'), or custom:<name> for a joined channel; '' = off.
 function _chatOnlyKey(x) { const k = typeof x === 'string' ? x.toLowerCase() : ''; return /^(?:[a-z]{1,16}|custom:[^\s\x00-\x1f]{1,32})$/.test(k) ? k : ''; }
 // Text settings per window (the guild lead, 2026-10-14: "extra windows need their text to be configurable"):
-// win = { main: {...}, <breakout group id>: {...} }. Every field is optional; a missing one means "the default"
+// win = { main: {...}, <breakout window id: b1, b2...>: {...} }. Every field is optional; a missing one means "the default"
 // (the shared font size, normal spacing, timestamps and tags shown), so prefs saved before this existed read the same.
-const _CHAT_WIN_ID_RX = /^(?:main|[a-z]{1,16})$/;
+// (An entry keyed by a bare group id is what an older Mimic saved; _chatMigrateBreakouts moves the live ones.)
+const _CHAT_WIN_ID_RX = /^(?:main|b[0-9]{1,3})$/;
 function _chatWinCfg(w) {
   const o = {};
   if (!w || typeof w !== 'object') return o;
@@ -11615,10 +11887,10 @@ ipcMain.handle('hide-overlay', (e) => {
       try { canvasWindow.hide(); } catch {}
       applyTriggerVisibility();
       try { buildTrayMenu(); } catch {}
-    } else if (_chatBreakoutGroup(win)) {
-      // ✕ on a broken-out window puts that group back in the Chat window, so a channel is never left
+    } else if (_chatBreakoutWinId(win)) {
+      // ✕ on a broken-out window puts ALL its groups back in the Chat window, so a channel is never left
       // with no window showing it. (✕ on the Chat window itself turns Chat off and takes them all.)
-      _chatBreakoutSet(_chatBreakoutGroup(win), false);
+      _chatBreakoutClose(_chatBreakoutWinId(win));
     } else {
       for (const [key, w] of panelOverlays.entries()) {
         if (w === win) { try { w.close(); } catch {} panelOverlays.delete(key); break; }
@@ -13772,7 +14044,7 @@ function _windowLabelsByPid() {
     put(e.get(), (NAMES[e.key] || e.key) + (cfg[e.flag] ? '' : ' (switched OFF)'));
   }
   for (const [key, win] of panelOverlays.entries()) put(win, 'panel overlay · ' + key);
-  for (const [gid, win] of chatBreakouts.entries()) put(win, 'Chat breakout · ' + gid);
+  for (const [wid, win] of chatBreakouts.entries()) put(win, 'Chat breakout · ' + wid);
   put(mainWindow,      'Dashboard');
   put(settingsWindow,  'Settings');
   put(uiStudioWindow,  'UI Studio');

@@ -705,22 +705,23 @@ describe('Mimic prefs: chips are remembered per character, tells follow the Tell
   it('text settings are saved per window; one window\'s change never touches another\'s', async () => {
     const m = load({ chatPrefs: { fontSize: 14 } });
     await m.set('Aldenmar', { win: { main: { fontSize: 18 } } });
-    await m.set('Aldenmar', { win: { melee: { fontSize: 10, lineGap: 'compact', times: false, tags: false } } });
+    await m.set('Aldenmar', { win: { b1: { fontSize: 10, lineGap: 'compact', times: false, tags: false } } });
     let got = await m.get('Aldenmar');
     expect(got.win.main).toEqual({ fontSize: 18 });
-    expect(got.win.melee).toEqual({ fontSize: 10, lineGap: 'compact', times: false, tags: false });
-    await m.set('Aldenmar', { win: { melee: { times: true } } });                    // one field merges in; the rest stay
+    expect(got.win.b1).toEqual({ fontSize: 10, lineGap: 'compact', times: false, tags: false });
+    await m.set('Aldenmar', { win: { b1: { times: true } } });                       // one field merges in; the rest stay
     got = await m.get('Aldenmar');
-    expect(got.win.melee).toEqual({ fontSize: 10, lineGap: 'compact', times: true, tags: false });
+    expect(got.win.b1).toEqual({ fontSize: 10, lineGap: 'compact', times: true, tags: false });
     expect(got.win.main).toEqual({ fontSize: 18 });
     expect(got.fontSize).toBe(14);                                                   // the shared size (every window's default) is untouched
-    expect((await m.get('Brackwyn')).win.melee.tags).toBe(false);                    // survives a reopen / another character
+    expect((await m.get('Brackwyn')).win.b1.tags).toBe(false);                       // survives a reopen / another character
   });
   it('the renderer cannot store anything but valid window ids and fields', async () => {
     const m = load({});
-    await m.set('Aldenmar', { win: { 'Bad Id': { fontSize: 12 }, main: { fontSize: 99, lineGap: 'huge', times: 'no', evil: 1 }, guild: { lineGap: 'compact' } } });
+    await m.set('Aldenmar', { win: { 'Bad Id': { fontSize: 12 }, main: { fontSize: 99, lineGap: 'huge', times: 'no', evil: 1 }, b2: { lineGap: 'compact' }, guild: { lineGap: 'compact' }, b1234: { fontSize: 11 } } });
     const stored = m.saved().pop().chatPrefs.win;
-    expect(stored).toEqual({ main: {}, guild: { lineGap: 'compact' } });
+    // a window is main or b<n>: a bare group id (what an older Mimic saved) is no longer a window id
+    expect(stored).toEqual({ main: {}, b2: { lineGap: 'compact' } });
   });
   it('the preload exposes exactly the two prefs calls', () => {
     expect(stripJs(PRELOAD)).toMatch(/getChatPrefs:\s+\(char\)\s+=> ipcRenderer\.invoke\('chat-prefs-get'/);
@@ -897,12 +898,13 @@ describe('chat.html: ?groups=<id> makes a breakout window, painted through the s
     expect(parse('?groups=<script>')).toEqual([]);
   });
   const line = (ch) => ({ ch });
-  const make = (prefs, only, out) => evalBlock(`
+  const make = (prefs, only, out, brkOff) => evalBlock(`
     var _groups = ${JSON.stringify(agent.CHAT_GROUPS)};
     var _prefs = ${JSON.stringify({ fontSize: 12, group: false, officer: false, custom: false, tells: false, off: [], ...prefs })};
     var _only = ${JSON.stringify(only)};
     var _out = ${JSON.stringify(out)};
     var _isBrk = _only.length > 0;
+    var _brkOff = ${JSON.stringify(brkOff || [])};
     ${sliceBlock(script, 'function groupOf(ch){', 'return out;\n  }')}
   `, ['makeFilter', 'shownGroupIds']);
   it('a breakout shows its own group and nothing else', () => {
@@ -931,15 +933,43 @@ describe('chat.html: ?groups=<id> makes a breakout window, painted through the s
     expect(f(line('ooc'))).toBe(true);
     expect(f(line('shout'))).toBe(true);
   });
-  it('a chip offers "Break out into its own window" / "Put back in the Chat window" on right-click, and an "out" chip says so', () => {
+  it('a chip offers a way to move its group on right-click, and an "out" chip says so', () => {
     expect(code).toContain("chipsEl.addEventListener('contextmenu'");
     expect(code).toContain("'Break out into its own window'");
-    expect(code).toContain("'Put back in the Chat window'");
-    expect(code).toContain('window.mimic.chatBreakout(id, on)');
+    expect(code).toContain("'Move to main window'");
+    expect(code).toContain("'Move to window ▸'");
+    expect(code).toContain("'New window'");
+    expect(code).toContain('window.mimic.chatMoveGroup(id, target)');
     expect(code).toContain("(isOut ? ' <em>out</em>' : '')");
   });
-  it('a breakout\'s title bar offers Put back too, and its ✕ does the same (main\'s hide-overlay puts it back)', () => {
+  it('a breakout\'s title bar offers Put back too, and its ✕ does the same (main\'s hide-overlay puts every group back)', () => {
     expect(code).toMatch(/querySelector\('\.title'\)\.addEventListener\('contextmenu'/);
+    expect(code).toContain("'Put back in the Chat window'");
+    expect(code).toContain('window.mimic.chatBreakoutClose(_wid)');
+  });
+  it('a breakout window keeps its chip row (it was hidden before); only "show only" and the Chat window\'s switches stay behind', () => {
+    const css = stripCss(CHAT_HTML.slice(CHAT_HTML.indexOf('<style>'), CHAT_HTML.indexOf('</style>')));
+    expect(css).toMatch(/body\.brk #onlypill,body\.brk #spanel \.nobrk\{display:none\}/);
+    expect(css).not.toMatch(/body\.brk[^{]*#chips/);
+  });
+  it('the window id comes from ?win=b<n> and nothing else', () => {
+    const w = (s) => evalBlock(sliceBlock(script, 'function parseWinParam(search){', "return m ? m[1] : '';\n  }"), ['parseWinParam']).parseWinParam(s);
+    expect(w('?win=b1&groups=guild,raid')).toBe('b1');
+    expect(w('?groups=guild&win=b12')).toBe('b12');
+    for (const bad of ['', '?win=', '?win=main', '?win=b', '?win=B1', '?win=b1234', '?win=../x', '?xwin=b1']) expect(w(bad), bad).toBe('');
+  });
+  it('a breakout holding several groups shows all of them and nothing else; a group it holds but has hidden is left out', () => {
+    const m = make({ melee: true, spells: true }, ['melee', 'spells'], []);
+    expect(m.shownGroupIds()).toEqual(['melee', 'spells']);
+    const f = m.makeFilter(m.shownGroupIds());
+    expect(f(line('melee'))).toBe(true);
+    expect(f(line('spell'))).toBe(true);
+    for (const ch of ['guild', 'skill', 'say']) expect(f(line(ch)), ch).toBe(false);
+    expect(make({ melee: true, spells: true }, ['melee', 'spells'], [], ['spells']).shownGroupIds()).toEqual(['melee']);
+  });
+  it('a gated group in a multi-group window is still gated: Guild + Officer shows Guild only until Officer is switched on', () => {
+    expect(make({}, ['guild', 'officer'], []).shownGroupIds()).toEqual(['guild']);
+    expect(make({ officer: true }, ['guild', 'officer'], []).shownGroupIds()).toEqual(['guild', 'officer']);
   });
   it('every Chat window waits for its first prefs before polling, and re-reads them when another window changes them', () => {
     expect(code).toMatch(/async function tick\(\)\{[^}]*if \(!_prefsReady\) return;/);
@@ -955,20 +985,20 @@ describe('chat.html: ?groups=<id> makes a breakout window, painted through the s
 describe('Mimic: breakout windows are a VARIABLE set, wired into every site a fixed overlay is', () => {
   const code = stripJs(MAIN);
   const fnBody = (head) => stripJs(sliceBlock(MAIN, head, '\n}\n'));
-  it('are a Map keyed by group id, not one `let` each', () => {
+  it('are a Map keyed by breakout window id (b1, b2...), not one `let` each and not one per group', () => {
     expect(code).toMatch(/^const chatBreakouts = new Map\(\);/m);
   });
-  it('remember their own place per group (chatBounds_<id>) and are listed by _overlayEntries as chat:<id>', () => {
-    expect(fnBody('function _boundsKeyForWindow(win) {')).toMatch(/for \(const \[gid, w\] of chatBreakouts\.entries\(\)\) \{\s+if \(w === win\) return 'chatBounds_' \+ gid;/);
-    expect(fnBody('function _overlayEntries() {')).toContain("out.push(['chat:' + gid, win])");
-    const create = fnBody('function createChatBreakout(gid) {');
-    expect(create).toContain("const boundsKey = 'chatBounds_' + gid;");
-    expect(create).toContain("loadFile('chat.html', { query: { groups: gid } })");
+  it('remember their own place per WINDOW (chatBounds_<window id>) and are listed by _overlayEntries as chat:<window id>', () => {
+    expect(fnBody('function _boundsKeyForWindow(win) {')).toMatch(/for \(const \[wid, w\] of chatBreakouts\.entries\(\)\) \{\s+if \(w === win\) return 'chatBounds_' \+ wid;/);
+    expect(fnBody('function _overlayEntries() {')).toContain("out.push(['chat:' + wid, win])");
+    const create = fnBody('function createChatBreakout(wid, groups) {');
+    expect(create).toContain("const boundsKey = 'chatBounds_' + wid;");
+    expect(create).toContain("loadFile('chat.html', { query: { win: wid, groups: (groups || []).join(',') } })");
     expect(create).toContain('_persistBounds(boundsKey, win)');
-    expect(create).toContain("applyOverlayOpacity(win, 'chat:' + gid)");
+    expect(create).toContain("applyOverlayOpacity(win, 'chat:' + wid)");
     expect(create).toContain('minWidth: _OVERLAY_MIN_W');
     expect(create).toContain("_resolveBounds(boundsKey, boundsKey + 'Sig'");
-    expect(create).toContain("_wpPrefs('Chat ' + gid)");   // a named renderer in Task Manager, one per group
+    expect(create).toContain("_wpPrefs('Chat ' + wid)");   // a named renderer in Task Manager, one per window
   });
   it('are built and freed by the same passes that build and free every overlay, so hide-all, Chat off and the EverQuest gate take them along', () => {
     expect(fnBody('function _materializeEnabledOverlays() {')).toContain('_syncChatBreakouts();');
@@ -980,21 +1010,22 @@ describe('Mimic: breakout windows are a VARIABLE set, wired into every site a fi
   });
   it('show and hide with Chat (one gate), and are in the diagnostics list', () => {
     expect(fnBody('function applyChatVisibility() {')).toContain('chatBreakouts.values()');
-    expect(code).toContain("put(win, 'Chat breakout · ' + gid)");
+    expect(code).toContain("put(win, 'Chat breakout · ' + wid)");
   });
-  it('their ✕ puts the group back (it never leaves a channel with no window), ahead of the panel fallback', () => {
+  it('their ✕ puts EVERY group in the window back (it never leaves a channel with no window), ahead of the panel fallback', () => {
     const hide = stripJs(sliceBlock(MAIN, "ipcMain.handle('hide-overlay', (e) => {", '\n});'));
-    const at = hide.indexOf('} else if (_chatBreakoutGroup(win)) {');
+    const at = hide.indexOf('} else if (_chatBreakoutWinId(win)) {');
     expect(at).toBeGreaterThan(hide.indexOf('win === chatWindow'));
     expect(at).toBeLessThan(hide.indexOf('panelOverlays.entries()'));
-    expect(hide.slice(at, hide.indexOf('panelOverlays.entries()'))).toContain('_chatBreakoutSet(_chatBreakoutGroup(win), false);');
+    expect(hide.slice(at, hide.indexOf('panelOverlays.entries()'))).toContain('_chatBreakoutClose(_chatBreakoutWinId(win));');
   });
   it('the tray keeps a single "Chat" entry', () => {
     expect((code.match(/label: 'Chat \(/g) || [])).toHaveLength(1);
   });
-  it('the preload exposes the four breakout calls', () => {
+  it('the preload exposes the breakout calls: move a group, close a window, read the list, hear it change', () => {
     const p = stripJs(PRELOAD);
-    expect(p).toMatch(/chatBreakout:\s+\(groupId, on\) => ipcRenderer\.invoke\('chat-breakout', String\(groupId \|\| ''\), !!on\)/);
+    expect(p).toMatch(/chatMoveGroup:\s+\(groupId, target\) => ipcRenderer\.invoke\('chat-move-group', String\(groupId \|\| ''\), String\(target \|\| ''\)\)/);
+    expect(p).toMatch(/chatBreakoutClose:\s+\(winId\)\s+=> ipcRenderer\.invoke\('chat-breakout-close', String\(winId \|\| ''\)\)/);
     expect(p).toMatch(/getChatBreakouts:\s+\(\)\s+=> ipcRenderer\.invoke\('chat-breakouts-get'\)/);
     expect(p).toMatch(/onChatBreakouts:\s+\(cb\)\s+=> ipcRenderer\.on\('chat-breakouts'/);
     expect(p).toMatch(/onChatPrefsChanged:\s+\(cb\)\s+=> ipcRenderer\.on\('chat-prefs-changed'/);
@@ -1009,104 +1040,518 @@ describe('Mimic: breakout windows are a VARIABLE set, wired into every site a fi
 
   // The real logic, run: the list, the toggle and the sync, with the Electron pieces stubbed.
   function mk(cfg0, opts = {}) {
-    const S = { wanted: opts.wanted !== false, single: opts.single || [], log: { created: [], destroyed: [], pushed: [], flushed: [] } };
+    // S.bounds: window id -> the rect that window sits at (the stub windows read and write it); S.displays: work areas.
+    const S = { wanted: opts.wanted !== false, single: opts.single || [], bounds: opts.bounds || {}, displays: opts.displays || [], log: { created: [], destroyed: [], pushed: [], flushed: [], persisted: [] } };
     const start = MAIN.indexOf('const CHAT_BREAKOUT_MAX = 12;');
-    const mid = MAIN.indexOf('function createChatBreakout(gid) {');
+    const mid = MAIN.indexOf('function createChatBreakout(wid, groups) {');
     const syncAt = MAIN.indexOf('function _syncChatBreakouts() {');
-    const end = MAIN.indexOf("ipcMain.handle('chat-breakout',");
-    const body = MAIN.slice(start, mid) + MAIN.slice(syncAt, end);
+    const end = MAIN.indexOf("ipcMain.handle('chat-move-group',");
+    let body = MAIN.slice(start, mid) + MAIN.slice(syncAt, end);
+    if (opts.live === false) body = body.replace('const CHAT_LINK_LIVE = true;', 'const CHAT_LINK_LIVE = false;');
     // eslint-disable-next-line no-new-func
     const r = new Function('S', `
       let CFG = ${JSON.stringify(cfg0)};
       const chatBreakouts = new Map();
-      let chatWindow = null;
+      const stubWin = (wid) => ({ wid, destroyed: false, destroy() { this.destroyed = true; S.log.destroyed.push(wid); },
+        getBounds() { return Object.assign({}, S.bounds[wid]); }, setBounds(b) { S.bounds[wid] = Object.assign({}, b); } });
+      let chatWindow = ${opts.main ? "stubWin('main')" : 'null'};
+      const ipcMain = { handle() {} }; const BrowserWindow = {};
+      const screen = { getAllDisplays: () => S.displays.map(workArea => ({ workArea })) };
+      const _boundsKeyForWindow = (w) => (w === chatWindow ? 'chatBounds' : 'chatBounds_' + w.wid);
+      const _persistBounds = (k) => S.log.persisted.push(k);
       const _OVERLAY_WINDOWS = [{ key: 'chat', flag: 'showChat' }];
       const _live = (w) => !!w && !w.destroyed;
       const _agentOnly = () => false;
       const _overlayWanted = () => S.wanted;
-      const _inSingleSetup = (w) => S.single.indexOf(w.gid) !== -1;
+      const _inSingleSetup = (w) => S.single.indexOf(w.wid) !== -1;
       const _flushBounds = (k) => S.log.flushed.push(k);
       const appendAgentLog = () => {};
       const setImmediate = (f) => f();
       const applyChatVisibility = () => {}; const applyOverlayInteractivity = () => {};
-      function loadConfig() { return JSON.parse(JSON.stringify(CFG)); }
+      function loadConfig() { const c = JSON.parse(JSON.stringify(CFG)); _chatMigrateBreakouts(c); return c; }
       function saveConfig(c) { CFG = JSON.parse(JSON.stringify(c)); }
-      function createChatBreakout(gid) { const w = { gid, destroyed: false, destroy() { this.destroyed = true; S.log.destroyed.push(gid); } }; chatBreakouts.set(gid, w); S.log.created.push(gid); }
+      function createChatBreakout(wid, groups) { const w = Object.assign(stubWin(wid), { groups }); chatBreakouts.set(wid, w); S.log.created.push(wid + ':' + groups.join('+')); }
       ${body}
       function _pushChatWindows(channel, payload) { S.log.pushed.push([channel, payload]); }
-      return { _chatBreakoutIds, _chatBreakoutGroup, _chatBreakoutSet, _syncChatBreakouts, chatBreakouts, cfg: () => CFG };
+      return { _chatMigrateBreakouts, _chatBreakoutList, _chatBreakoutWinId, _chatMoveGroup, _chatBreakoutClose, _syncChatBreakouts, loadConfig, chatBreakouts, cfg: () => CFG,
+        _chatLinkGroups, _chatLinksPrune, _chatRectsTouch, _chatSnap, _chatVisibleFrac, _chatClampGroupDelta, _chatLinkToggle, _chatDragBegin, _chatDragStep, _chatDragEnd,
+        _chatWindowId, mainWin: () => chatWindow, CHAT_SNAP_PX, CHAT_LINK_LIVE };
     `)(S);
     return { r, S };
   }
-  it('the saved list is sanitised: lower-case ids only, no duplicates, at most twelve', () => {
+  const groupsOf = (list) => list.map(w => w.id + ':' + w.groups.join('+'));
+  it('the saved list is sanitised: b<n> window ids, lower-case group ids, a group in one window only, no empty window, at most twelve windows', () => {
     const { r } = mk({});
-    expect(r._chatBreakoutIds({ chatBreakouts: ['guild', 'guild', 'Raid', '../x', 7, 'a b', 'say'] })).toEqual(['guild', 'say']);
-    expect(r._chatBreakoutIds({})).toEqual([]);
-    expect(r._chatBreakoutIds({ chatBreakouts: 'guild' })).toEqual([]);
-    expect(r._chatBreakoutIds({ chatBreakouts: 'abcdefghijklmnopqrst'.split('') })).toHaveLength(12);
+    const dirty = { chatBreakouts: [
+      { id: 'b1', groups: ['guild', 'guild', 'Raid', '../x', 7, 'a b', 'say'] },
+      { id: 'b1', groups: ['ooc'] },                       // a repeated window id
+      { id: 'b2', groups: ['say', 'ooc'] },                // say is already in b1
+      { id: 'main', groups: ['tell'] }, { id: 'B3', groups: ['tell'] }, { id: 'b2345', groups: ['tell'] },   // not window ids
+      { id: 'b4', groups: [] }, { id: 'b5' }, null, 'guild', 7] };
+    expect(groupsOf(r._chatBreakoutList(dirty))).toEqual(['b1:guild+say', 'b2:ooc']);
+    expect(r._chatBreakoutList({})).toEqual([]);
+    expect(r._chatBreakoutList({ chatBreakouts: 'guild' })).toEqual([]);
+    const many = 'abcdefghijklmnopqrst'.split('').map((c, i) => ({ id: 'b' + (i + 1), groups: ['g' + c] }));
+    expect(r._chatBreakoutList({ chatBreakouts: many })).toHaveLength(12);
   });
-  it('breaking a group out saves it, tells every Chat window, and builds exactly one window for it', () => {
+
+  // ── the old shape, a plain list of group ids, becomes windows with nothing lost ──
+  describe('migration from the old shape (a list of group ids)', () => {
+    const OLD = () => ({
+      chatBreakouts: ['melee', 'guild', 'melee', 'Bad id'],
+      chatBounds_melee: { x: 10, y: 20, width: 300, height: 150 }, chatBounds_meleeSig: 'sig-1', chatBounds_meleeFloor: { h: 90, sig: 'sig-1' },
+      chatBounds_guild: { x: 400, y: 500, width: 340, height: 200 }, chatBounds_guildSig: 'sig-1',
+      overlayLayoutBySig: { 'sig-1': { rects: { chatBounds_melee: { x: 10, y: 20, width: 300, height: 150 }, chatBounds_guild: { x: 400, y: 500, width: 340, height: 200 }, mapBounds: { x: 1, y: 2, width: 3, height: 4 } }, at: 5 } },
+      overlayOpacity: { 'chat:melee': 0.7, 'chat:guild': 0.9, chat: 0.5 },
+      chatPrefs: { fontSize: 14, win: { main: { fontSize: 18 }, melee: { fontSize: 10, lineGap: 'compact', times: false }, guild: { tags: false } } },
+    });
+    it('each group id becomes a window of its own, in order, with b<n> ids', () => {
+      const { r } = mk({});
+      const c = OLD(); r._chatMigrateBreakouts(c);
+      expect(c.chatBreakouts).toEqual([{ id: 'b1', groups: ['melee'] }, { id: 'b2', groups: ['guild'] }]);
+    });
+    it('keeps each window\'s place (bounds, screen signature, height floor, per-screen memory) under the new window id', () => {
+      const { r } = mk({});
+      const c = OLD(); r._chatMigrateBreakouts(c);
+      expect(c.chatBounds_b1).toEqual({ x: 10, y: 20, width: 300, height: 150 });
+      expect(c.chatBounds_b1Sig).toBe('sig-1');
+      expect(c.chatBounds_b1Floor).toEqual({ h: 90, sig: 'sig-1' });
+      expect(c.chatBounds_b2).toEqual({ x: 400, y: 500, width: 340, height: 200 });
+      expect(c.overlayLayoutBySig['sig-1'].rects.chatBounds_b1).toEqual({ x: 10, y: 20, width: 300, height: 150 });
+      expect(c.overlayLayoutBySig['sig-1'].rects.chatBounds_b2).toBeTruthy();
+      expect(c.overlayLayoutBySig['sig-1'].rects.mapBounds).toEqual({ x: 1, y: 2, width: 3, height: 4 });   // other overlays untouched
+      for (const k of ['chatBounds_melee', 'chatBounds_meleeSig', 'chatBounds_meleeFloor', 'chatBounds_guild', 'chatBounds_guildSig']) expect(c, k).not.toHaveProperty(k);
+      expect(c.overlayLayoutBySig['sig-1'].rects).not.toHaveProperty('chatBounds_melee');
+    });
+    it('keeps each window\'s text settings and its opacity under the new window id, and leaves main alone', () => {
+      const { r } = mk({});
+      const c = OLD(); r._chatMigrateBreakouts(c);
+      expect(c.chatPrefs.win).toEqual({ main: { fontSize: 18 }, b1: { fontSize: 10, lineGap: 'compact', times: false }, b2: { tags: false } });
+      expect(c.overlayOpacity).toEqual({ 'chat:b1': 0.7, 'chat:b2': 0.9, chat: 0.5 });
+      expect(c.chatPrefs.fontSize).toBe(14);
+    });
+    it('is a no-op on the new shape and runs once: converting twice changes nothing', () => {
+      const { r } = mk({});
+      const c = OLD(); r._chatMigrateBreakouts(c);
+      const once = JSON.stringify(c);
+      r._chatMigrateBreakouts(c);
+      expect(JSON.stringify(c)).toBe(once);
+      const fresh = { chatBreakouts: [{ id: 'b3', groups: ['say'] }] };
+      r._chatMigrateBreakouts(fresh);
+      expect(fresh.chatBreakouts).toEqual([{ id: 'b3', groups: ['say'] }]);
+      for (const nothing of [{}, { chatBreakouts: [] }, { chatBreakouts: 'guild' }, null]) expect(() => r._chatMigrateBreakouts(nothing)).not.toThrow();
+    });
+    it('happens on load (loadConfig), and what loads builds one window per old group with its old place', () => {
+      expect(stripJs(sliceBlock(MAIN, 'function loadConfig() {', '\n}\n'))).toContain('_chatMigrateBreakouts(raw);');
+      const { r, S } = mk(OLD());
+      r._syncChatBreakouts();
+      expect(S.log.created).toEqual(['b1:melee', 'b2:guild']);
+      expect(r.loadConfig().chatBounds_b1).toEqual({ x: 10, y: 20, width: 300, height: 150 });
+    });
+    it('does not depend on a const defined further down the file (loadConfig can run before it is initialised)', () => {
+      const fn = stripJs(sliceBlock(MAIN, 'function _chatMigrateBreakouts(raw) {', '\n}\n'));
+      expect(fn).not.toMatch(/_CHAT_GROUP_RX|_CHAT_BRK_ID_RX|CHAT_BREAKOUT_MAX/);
+    });
+  });
+
+  // ── combining: one window, several groups ──
+  it('breaking a group out saves a window for it, tells every Chat window, and builds exactly one window', () => {
     const { r, S } = mk({ chatBreakouts: [] });
-    expect(r._chatBreakoutSet('guild', true)).toEqual(['guild']);
-    expect(r.cfg().chatBreakouts).toEqual(['guild']);
-    expect(S.log.pushed).toEqual([['chat-breakouts', ['guild']]]);
-    expect(S.log.created).toEqual(['guild']);
-    r._chatBreakoutSet('guild', true);                               // twice: still one window, one entry
-    expect(r.cfg().chatBreakouts).toEqual(['guild']);
-    expect(S.log.created).toEqual(['guild']);
-    r._chatBreakoutSet('raid', true);
-    expect(S.log.created).toEqual(['guild', 'raid']);
+    expect(groupsOf(r._chatMoveGroup('guild', 'new'))).toEqual(['b1:guild']);
+    expect(r.cfg().chatBreakouts).toEqual([{ id: 'b1', groups: ['guild'] }]);
+    expect(S.log.pushed).toEqual([['chat-breakouts', [{ id: 'b1', groups: ['guild'] }]]]);
+    expect(S.log.created).toEqual(['b1:guild']);
+    r._chatMoveGroup('guild', 'new');                                // again: it is alone in its window, nothing changes
+    expect(S.log.created).toEqual(['b1:guild']);
+    expect(S.log.pushed).toHaveLength(1);
+    r._chatMoveGroup('raid', 'new');
+    expect(S.log.created).toEqual(['b1:guild', 'b2:raid']);
   });
-  it('putting a group back removes it from the list and closes its window', () => {
-    const { r, S } = mk({ chatBreakouts: ['guild', 'raid'] });
+  it('a group moved into an existing breakout joins it: that window holds both, and nothing else is built', () => {
+    const { r, S } = mk({ chatBreakouts: [{ id: 'b1', groups: ['melee'] }, { id: 'b2', groups: ['guild'] }] });
     r._syncChatBreakouts();
-    expect(S.log.created).toEqual(['guild', 'raid']);
-    expect(r._chatBreakoutSet('guild', false)).toEqual(['raid']);
-    expect(S.log.destroyed).toEqual(['guild']);
-    expect(r.chatBreakouts.has('guild')).toBe(false);
-    expect(r.chatBreakouts.has('raid')).toBe(true);
-    expect(S.log.flushed).toEqual(['chatBounds_guild']);             // its place is saved before it goes
+    expect(groupsOf(r._chatMoveGroup('spells', 'b1'))).toEqual(['b1:melee+spells', 'b2:guild']);
+    expect(r.cfg().chatBreakouts[0]).toEqual({ id: 'b1', groups: ['melee', 'spells'] });
+    expect(S.log.created).toEqual(['b1:melee', 'b2:guild']);          // b1 kept its window (and so its place and text settings)
+    expect(S.log.destroyed).toEqual([]);
+    expect(S.log.pushed.pop()).toEqual(['chat-breakouts', r.cfg().chatBreakouts]);   // every window hears the new list
   });
-  it('they come back after a restart: a fresh pass builds one per saved id', () => {
-    const { r, S } = mk({ chatBreakouts: ['guild', 'tell'] });
+  it('the window id and place stay put as groups come and go', () => {
+    const { r, S } = mk({ chatBreakouts: [{ id: 'b1', groups: ['melee'] }] });
     r._syncChatBreakouts();
-    expect(S.log.created).toEqual(['guild', 'tell']);
+    const win = r.chatBreakouts.get('b1');
+    r._chatMoveGroup('spells', 'b1'); r._chatMoveGroup('skills', 'b1'); r._chatMoveGroup('melee', 'main');
+    expect(groupsOf(r._chatBreakoutList(r.cfg()))).toEqual(['b1:spells+skills']);
+    expect(r.chatBreakouts.get('b1')).toBe(win);                      // the very same window
+    expect(S.log.created).toEqual(['b1:melee']);
+    expect(S.log.flushed).toEqual([]);
+  });
+  it('a group moved from one breakout to another leaves the first, and the first closes when that was its last group', () => {
+    const { r, S } = mk({ chatBreakouts: [{ id: 'b1', groups: ['melee'] }, { id: 'b2', groups: ['spells', 'skills'] }] });
+    r._syncChatBreakouts();
+    expect(groupsOf(r._chatMoveGroup('skills', 'b1'))).toEqual(['b1:melee+skills', 'b2:spells']);
+    expect(S.log.destroyed).toEqual([]);
+    expect(groupsOf(r._chatMoveGroup('spells', 'b1'))).toEqual(['b1:melee+skills+spells']);
+    expect(S.log.destroyed).toEqual(['b2']);                          // b2 had nothing left
+    expect(S.log.flushed).toEqual(['chatBounds_b2']);                 // its place is saved before it goes
+    expect(r.chatBreakouts.has('b2')).toBe(false);
+  });
+  it('moving a group back to the main window takes it out of its breakout; the window stays while it still holds a group', () => {
+    const { r, S } = mk({ chatBreakouts: [{ id: 'b1', groups: ['melee', 'spells'] }] });
+    r._syncChatBreakouts();
+    expect(groupsOf(r._chatMoveGroup('spells', 'main'))).toEqual(['b1:melee']);
+    expect(S.log.destroyed).toEqual([]);
+    expect(r._chatMoveGroup('spells', 'main')).toEqual([{ id: 'b1', groups: ['melee'] }]);   // already in main: nothing to do
+  });
+  it('removing the last group closes the window, and the list no longer has it', () => {
+    const { r, S } = mk({ chatBreakouts: [{ id: 'b1', groups: ['melee', 'spells'] }, { id: 'b2', groups: ['guild'] }] });
+    r._syncChatBreakouts();
+    r._chatMoveGroup('melee', 'main');
+    expect(S.log.destroyed).toEqual([]);
+    expect(r._chatMoveGroup('spells', 'main')).toEqual([{ id: 'b2', groups: ['guild'] }]);
+    expect(S.log.destroyed).toEqual(['b1']);
+    expect(r.chatBreakouts.has('b1')).toBe(false);
+    expect(r.chatBreakouts.has('b2')).toBe(true);
+    expect(r.cfg().chatBreakouts).toEqual([{ id: 'b2', groups: ['guild'] }]);
+  });
+  it('the ✕ returns ALL of a window\'s groups to the main window and closes it, leaving the others alone', () => {
+    const { r, S } = mk({ chatBreakouts: [{ id: 'b1', groups: ['melee', 'spells', 'skills'] }, { id: 'b2', groups: ['guild', 'officer'] }] });
+    r._syncChatBreakouts();
+    expect(r._chatBreakoutWinId(r.chatBreakouts.get('b1'))).toBe('b1');
+    expect(r._chatBreakoutClose('b1')).toEqual([{ id: 'b2', groups: ['guild', 'officer'] }]);
+    expect(S.log.destroyed).toEqual(['b1']);
+    expect(S.log.pushed.pop()).toEqual(['chat-breakouts', [{ id: 'b2', groups: ['guild', 'officer'] }]]);   // so main's chips drop "out" for all three
+    expect(r._chatBreakoutClose('b9')).toEqual([{ id: 'b2', groups: ['guild', 'officer'] }]);   // no such window: nothing happens
+  });
+  it('a window name that does not exist changes nothing (a group is never left without a window)', () => {
+    const { r, S } = mk({ chatBreakouts: [{ id: 'b1', groups: ['melee'] }] });
+    r._syncChatBreakouts();
+    for (const bad of ['b7', 'main2', '', 'B1', '../x']) expect(groupsOf(r._chatMoveGroup('guild', bad)), bad).toEqual(['b1:melee']);
+    expect(groupsOf(r._chatMoveGroup('melee', 'b7'))).toEqual(['b1:melee']);   // melee stays where it was
+    expect(S.log.destroyed).toEqual([]);
+  });
+  it('a group alone in its window does not get a new window made for it', () => {
+    const { r, S } = mk({ chatBreakouts: [{ id: 'b1', groups: ['melee'] }] });
+    r._syncChatBreakouts();
+    r._chatMoveGroup('melee', 'new');
+    expect(S.log.created).toEqual(['b1:melee']);
+    expect(S.log.destroyed).toEqual([]);
+    // but a group sharing a window can be split out into a new one, which takes the next free id
+    r._chatMoveGroup('spells', 'b1');
+    r._chatMoveGroup('spells', 'new');
+    expect(groupsOf(r._chatBreakoutList(r.cfg()))).toEqual(['b1:melee', 'b2:spells']);
+  });
+  it('a freed window id is the next one handed out, so ids stay within b1..b12', () => {
+    const { r } = mk({ chatBreakouts: [{ id: 'b1', groups: ['guild'] }, { id: 'b2', groups: ['raid'] }, { id: 'b3', groups: ['say'] }] });
+    r._chatBreakoutClose('b2');
+    expect(groupsOf(r._chatMoveGroup('melee', 'new'))).toEqual(['b1:guild', 'b3:say', 'b2:melee']);
+  });
+  it('they come back after a restart: a fresh pass builds one window per saved entry, holding its groups', () => {
+    const { r, S } = mk({ chatBreakouts: [{ id: 'b1', groups: ['guild', 'officer'] }, { id: 'b2', groups: ['tell'] }] });
+    r._syncChatBreakouts();
+    expect(S.log.created).toEqual(['b1:guild+officer', 'b2:tell']);
     r._syncChatBreakouts();                                          // idempotent
-    expect(S.log.created).toEqual(['guild', 'tell']);
+    expect(S.log.created).toEqual(['b1:guild+officer', 'b2:tell']);
+  });
+  it('prefs round-trip: the list survives save and load as saved, and a second cleaning changes nothing', () => {
+    const { r } = mk({ chatBreakouts: [] });
+    r._chatMoveGroup('melee', 'new'); r._chatMoveGroup('spells', 'b1'); r._chatMoveGroup('guild', 'new');
+    const saved = JSON.parse(JSON.stringify(r.cfg()));               // what went to disk
+    expect(saved.chatBreakouts).toEqual([{ id: 'b1', groups: ['melee', 'spells'] }, { id: 'b2', groups: ['guild'] }]);
+    const back = r.loadConfig();
+    expect(back.chatBreakouts).toEqual(saved.chatBreakouts);
+    expect(r._chatBreakoutList(back)).toEqual(back.chatBreakouts);
   });
   it('Chat off / hide-all / the EverQuest gate (Chat not wanted) closes them all, and they return with it, still listed', () => {
-    const { r, S } = mk({ chatBreakouts: ['guild', 'raid'] });
+    const { r, S } = mk({ chatBreakouts: [{ id: 'b1', groups: ['guild', 'raid'] }, { id: 'b2', groups: ['say'] }] });
     r._syncChatBreakouts();
     S.wanted = false;
     r._syncChatBreakouts();
-    expect(S.log.destroyed.sort()).toEqual(['guild', 'raid']);
+    expect(S.log.destroyed.sort()).toEqual(['b1', 'b2']);
     expect(r.chatBreakouts.size).toBe(0);
-    expect(r.cfg().chatBreakouts).toEqual(['guild', 'raid']);        // closing them is not "put back"
+    expect(r.cfg().chatBreakouts).toHaveLength(2);                   // closing them is not "put back"
     S.wanted = true;
     r._syncChatBreakouts();
-    expect(S.log.created).toEqual(['guild', 'raid', 'guild', 'raid']);
+    expect(S.log.created).toEqual(['b1:guild+raid', 'b2:say', 'b1:guild+raid', 'b2:say']);
   });
   it('a breakout being set up (Setup THIS) is spared while it is open', () => {
-    const { r, S } = mk({ chatBreakouts: ['guild'] }, { single: ['guild'] });
+    const { r, S } = mk({ chatBreakouts: [{ id: 'b1', groups: ['guild'] }] }, { single: ['b1'] });
     r._syncChatBreakouts();
     S.wanted = false;
     r._syncChatBreakouts();
     expect(S.log.destroyed).toEqual([]);
   });
-  it('the renderer cannot make a window for anything but a group-id-shaped string, nor more than twelve', () => {
+  it('the renderer cannot make a window for anything but a group-id-shaped string, nor more than twelve windows', () => {
     const { r, S } = mk({ chatBreakouts: [] });
-    for (const bad of ['../etc', 'Guild', '', 'a b', 'x'.repeat(17), null, undefined, 5]) r._chatBreakoutSet(bad, true);
+    for (const bad of ['../etc', 'Guild', '', 'a b', 'x'.repeat(17), null, undefined, 5]) r._chatMoveGroup(bad, 'new');
     expect(S.log.created).toEqual([]);
     expect(r.cfg().chatBreakouts).toEqual([]);
-    for (const g of 'abcdefghijklmnop'.split('')) r._chatBreakoutSet(g, true);
+    for (const g of 'abcdefghijklmnop'.split('')) r._chatMoveGroup(g, 'new');
     expect(r.cfg().chatBreakouts).toHaveLength(12);
+    expect(r.cfg().chatBreakouts.map(w => w.id)).toEqual(Array.from({ length: 12 }, (_, i) => 'b' + (i + 1)));
+  });
+
+  // ── 🔗 snap and link (the guild lead, 2026-10-14: "lock multiple breakout chats to each other") ──
+  describe('snapping', () => {
+    const { r } = mk({});
+    const A = { x: 100, y: 100, width: 300, height: 200 };            // right edge 400, bottom 300
+    const B = (x, y) => ({ x, y, width: 200, height: 100 });
+    it('an edge within 8px lands flush: side by side, either side', () => {
+      expect(r.CHAT_SNAP_PX).toBe(8);
+      expect(r._chatSnap(B(406, 120), [A], 8)).toMatchObject({ x: 400, y: 120, snapped: true });     // B's left edge to A's right edge
+      expect(r._chatSnap(B(-105, 120), [A], 8)).toMatchObject({ x: -100, y: 120, snapped: true });    // B's right edge (95) to A's left edge (100)
+    });
+    it('stacked: top to bottom, bottom to top; and a same-side edge lines up', () => {
+      expect(r._chatSnap(B(104, 305), [A], 8)).toMatchObject({ x: 100, y: 300 });                    // under A, and left edges line up
+      expect(r._chatSnap(B(104, -3), [A], 8)).toMatchObject({ x: 100, y: 0 });                       // above A: its bottom (97) to A's top (100)
+      expect(r._chatSnap(B(112, 305), [A], 8)).toMatchObject({ x: 112, y: 300 });                    // 12px off line: it stacks but does not align
+    });
+    it('9px is too far, and so is a window that is not next to it on the other axis', () => {
+      expect(r._chatSnap(B(409, 120), [A], 8)).toMatchObject({ x: 409, snapped: false });
+      expect(r._chatSnap(B(405, 500), [A], 8)).toMatchObject({ x: 405, y: 500, snapped: false });    // 200px below: not a neighbour
+    });
+    it('takes the nearest edge when several are in reach, and snaps to the nearest of several windows', () => {
+      const C = { x: 405, y: 100, width: 100, height: 200 };
+      expect(r._chatSnap(B(403, 120), [A, C], 8).x).toBe(405);                                       // 2 from lining up with C, 3 from A's right edge: the nearer wins
+      expect(r._chatSnap(B(401, 120), [A, C], 8).x).toBe(400);                                       // 1 from A's right edge, 4 from C
+    });
+    it('touching: an edge on an edge with some overlap, not a corner and not a gap', () => {
+      expect(r._chatRectsTouch(A, { x: 400, y: 150, width: 100, height: 100 }, 10)).toBe(true);
+      expect(r._chatRectsTouch(A, { x: 405, y: 150, width: 100, height: 100 }, 10)).toBe(true);        // within tolerance
+      expect(r._chatRectsTouch(A, { x: 100, y: 300, width: 100, height: 100 }, 10)).toBe(true);        // stacked
+      expect(r._chatRectsTouch(A, { x: 400, y: 300, width: 100, height: 100 }, 10)).toBe(false);       // diagonal corner only
+      expect(r._chatRectsTouch(A, { x: 430, y: 150, width: 100, height: 100 }, 10)).toBe(false);       // 30px gap
+    });
+  });
+
+  describe('linking', () => {
+    const W = (x, y) => ({ x, y, width: 300, height: 200 });
+    // main sits at 0,0; b1 flush to its right; b2 flush to b1's right; b3 far away
+    const SETUP = () => ({ main: W(0, 0), b1: W(300, 0), b2: W(600, 0), b3: W(1500, 700) });
+    const make = (links, extra = {}) => {
+      const m = mk({ chatBreakouts: [{ id: 'b1', groups: ['melee'] }, { id: 'b2', groups: ['spells'] }, { id: 'b3', groups: ['guild'] }], chatLinks: links }, { main: true, bounds: SETUP(), displays: [{ x: 0, y: 0, width: 1920, height: 1080 }], ...extra });
+      m.r._syncChatBreakouts();
+      return m;
+    };
+    it('🔗 links every window touching this one, directly or through another, and not the far one', () => {
+      const { r, S } = make([]);
+      const res = r._chatLinkToggle('b1');
+      expect(res.ok).toBe(true);
+      expect(res.groups.map(g => g.slice().sort())).toEqual([['b1', 'b2', 'main']]);
+      expect(r.cfg().chatLinks).toEqual(res.groups);                      // saved
+      expect(S.log.pushed.pop()).toEqual(['chat-links', res.groups]);     // every window hears it
+    });
+    it('nothing touching: nothing to link, nothing saved', () => {
+      const { r, S } = make([]);
+      const before = S.log.pushed.length;
+      expect(r._chatLinkToggle('b3')).toMatchObject({ ok: false, groups: [] });
+      expect(r.cfg().chatLinks).toEqual([]);
+      expect(S.log.pushed).toHaveLength(before);
+    });
+    it('🔗 again unlinks just that window; a group left with one window is dissolved', () => {
+      const { r } = make([['main', 'b1', 'b2']]);
+      expect(r._chatLinkToggle('b2').groups).toEqual([['main', 'b1']]);
+      expect(r._chatLinkToggle('b1').groups).toEqual([]);
+      expect(r.cfg().chatLinks).toEqual([]);
+    });
+    it('linking a window next to an existing group merges into it', () => {
+      const { r } = make([['main', 'b1']]);
+      const res = r._chatLinkToggle('b2');
+      expect(res.groups).toHaveLength(1);
+      expect(res.groups[0].slice().sort()).toEqual(['b1', 'b2', 'main']);
+    });
+    it('cfg.chatLinks round-trips and is sanitised: window ids only, a window in one group, groups of two or more', () => {
+      const { r } = make([]);
+      expect(r._chatLinkGroups({ chatLinks: [['main', 'b1', 'b1', 'guild', 7], ['b1', 'b2'], ['b2', 'b3'], ['b4'], 'main', null, ['B5', 'b6']] }))
+        .toEqual([['main', 'b1'], ['b2', 'b3']]);
+      expect(r._chatLinkGroups({})).toEqual([]);
+      expect(r._chatLinkGroups({ chatLinks: 'main' })).toEqual([]);
+      r._chatLinkToggle('b1');
+      const saved = JSON.parse(JSON.stringify(r.cfg()));
+      expect(r._chatLinkGroups(saved)).toEqual(saved.chatLinks);
+      expect(r.loadConfig().chatLinks).toEqual(saved.chatLinks);
+    });
+    it('closing a window takes it out of its group; a group left with one window goes with it', () => {
+      const { r, S } = make([['main', 'b1', 'b2']]);
+      r._chatBreakoutClose('b2');
+      expect(r.cfg().chatLinks).toEqual([['main', 'b1']]);
+      expect(S.log.pushed.filter(p => p[0] === 'chat-links').pop()).toEqual(['chat-links', [['main', 'b1']]]);
+      r._chatBreakoutClose('b1');
+      expect(r.cfg().chatLinks).toEqual([]);
+    });
+    it('returning a window\'s last group to the main window closes it, and its links go with it', () => {
+      const { r } = make([['b1', 'b2'], ['main', 'b3']]);
+      r._chatMoveGroup('melee', 'main');                                  // b1 held only melee
+      expect(r.cfg().chatLinks).toEqual([['main', 'b3']]);
+      r._chatMoveGroup('guild', 'b2');                                    // b3 empties
+      expect(r.cfg().chatLinks).toEqual([]);
+    });
+    it('the main window keeps its links when a breakout comes and goes; a window only leaves a group by closing or unlinking', () => {
+      const { r } = make([['main', 'b1']]);
+      r._chatMoveGroup('spells', 'b1');                                    // b2 closes; unrelated to the group
+      expect(r.cfg().chatLinks).toEqual([['main', 'b1']]);
+    });
+  });
+
+  describe('dragging a linked window', () => {
+    const W = (x, y) => ({ x, y, width: 300, height: 200 });
+    const AREA = [{ x: 0, y: 0, width: 1920, height: 1080 }];
+    const make = (links, bounds, extra = {}) => {
+      const m = mk({ chatBreakouts: [{ id: 'b1', groups: ['melee'] }, { id: 'b2', groups: ['spells'] }, { id: 'b3', groups: ['guild'] }], chatLinks: links },
+        { main: true, bounds: { main: W(100, 100), b1: W(400, 100), b2: W(700, 100), b3: W(1500, 700), ...bounds }, displays: AREA, ...extra });
+      m.r._syncChatBreakouts();
+      return m;
+    };
+    const drag = (m, wid, dx, dy) => {
+      const win = wid === 'main' ? m.r.mainWin() : m.r.chatBreakouts.get(wid);
+      const s = m.r._chatDragBegin(win);
+      const at = m.r._chatDragStep(s, s.start.x + dx, s.start.y + dy);
+      m.S.bounds[wid] = { ...s.start, x: at.x, y: at.y };                  // what the drag loop does with the answer
+      return { s, at };
+    };
+    it('moving one window of a group moves its partners by the same amount', () => {
+      const m = make([['main', 'b1', 'b2']]);
+      const { at } = drag(m, 'b1', 120, 45);
+      expect(at).toEqual({ x: 520, y: 145 });
+      expect(m.S.bounds.main).toEqual(W(220, 145));
+      expect(m.S.bounds.b2).toEqual(W(820, 145));
+      expect(m.S.bounds.b3).toEqual(W(1500, 700));                         // not in the group: not moved
+      expect(m.S.bounds.main.x - 100).toBe(at.x - 400);                    // the very same delta
+    });
+    it('a window with no links moves alone', () => {
+      const m = make([]);
+      const { at, s } = drag(m, 'b1', 60, 0);
+      expect(s.partners).toEqual([]);
+      expect(at).toEqual({ x: 460, y: 100 });
+      expect(m.S.bounds.main).toEqual(W(100, 100));
+    });
+    it('after the link is released, the window leaves the others behind', () => {
+      const m = make([['main', 'b1']]);
+      m.r._chatLinkToggle('b1');                                           // unlink (main and b1 touch, but it is a toggle off)
+      expect(m.r.cfg().chatLinks).toEqual([]);
+      drag(m, 'b1', 80, 80);
+      expect(m.S.bounds.main).toEqual(W(100, 100));
+    });
+    it('snaps to a window outside the group as it goes, and the partners follow the snapped place', () => {
+      const m = make([['main', 'b1']], { b3: W(800, 100) });               // b3 sits right of b1's reach: its left edge is at 800
+      const { at } = drag(m, 'b1', 97, 3);                                // b1 would land at 497..797: 3px short of b3's left edge
+      expect(at).toEqual({ x: 500, y: 100 });                              // flush to b3 (right edge 800), y lined up with b3's top
+      expect(m.S.bounds.main).toEqual(W(200, 100));                        // main moved the same 100
+    });
+    it('a group is clamped on screen as a whole: a partner at the edge stops the lot, but sliding along the edge still works', () => {
+      const m = make([['main', 'b1']], { main: W(20, 100), b1: W(320, 100) });
+      const { at } = drag(m, 'b1', -500, 40);
+      expect(m.S.bounds.main.x).toBeGreaterThanOrEqual(-60);               // main keeps 80% of itself on screen
+      expect(m.S.bounds.main.x).toBeLessThanOrEqual(-58);
+      expect(at.x - 320).toBe(m.S.bounds.main.x - 20);                     // still the same delta
+      expect(at.y).toBe(140);                                              // the vertical part of the move was not lost
+      expect(m.S.bounds.main.y).toBe(140);
+    });
+    it('the clamp also holds the bottom and right edges, across the whole group', () => {
+      const m = make([['main', 'b1']], { main: W(1300, 880), b1: W(1600, 880) });
+      drag(m, 'main', 400, 400);
+      expect(m.S.bounds.b1.x + 300).toBeLessThanOrEqual(1920 + 60);        // b1 may overhang by up to 20% of its width
+      expect(m.S.bounds.b1.y + 200).toBeLessThanOrEqual(1080 + 40);
+      expect(m.S.bounds.b1.x - m.S.bounds.main.x).toBe(300);               // and the pair did not come apart
+    });
+    it('a group that starts partly off screen is not frozen: it can move, just not further out', () => {
+      const m = make([['main', 'b1']], { main: W(-150, 100), b1: W(150, 100) });
+      drag(m, 'b1', 30, 0);
+      expect(m.S.bounds.main.x).toBe(-120);                                // moved in
+      drag(m, 'b1', -100, 0);
+      expect(m.S.bounds.main.x).toBeGreaterThanOrEqual(-120);              // would be further out: held
+    });
+    it('the clamp maths on its own: no displays known = the move stands; fully visible stays at or above 80%', () => {
+      const { r } = mk({});
+      expect(r._chatClampGroupDelta([W(0, 0)], -500, 0, [])).toEqual({ dx: -500, dy: 0 });
+      expect(r._chatVisibleFrac(W(-150, 0), AREA)).toBe(0.5);
+      expect(r._chatVisibleFrac(W(0, 0), AREA)).toBe(1);
+      expect(r._chatVisibleFrac(W(5000, 0), AREA)).toBe(0);
+      const c = r._chatClampGroupDelta([W(0, 0)], -500, 0, AREA);
+      expect(c.dx).toBeGreaterThanOrEqual(-60); expect(c.dx).toBeLessThanOrEqual(-58);
+    });
+    it('partners that follow live are placed on every step; the cheaper mode places them once, when the drag ends, and saves them either way', () => {
+      const live = make([['main', 'b1']]);
+      const a = drag(live, 'b1', 50, 0);
+      expect(live.S.bounds.main.x).toBe(150);
+      live.r._chatDragEnd(a.s);
+      expect(live.S.log.persisted).toEqual(['chatBounds']);                // main's place goes through the ordinary bounds path
+      const lazy = make([['main', 'b1']], {}, { live: false });
+      const b = drag(lazy, 'b1', 50, 0);
+      expect(lazy.S.bounds.main.x).toBe(100);                              // not yet
+      lazy.r._chatDragEnd(b.s);
+      expect(lazy.S.bounds.main.x).toBe(150);
+      expect(lazy.S.log.persisted).toEqual(['chatBounds']);
+    });
+    it('a drag that never moved partners saves nothing for them (a corner-grip resize shares the session)', () => {
+      const m = make([['main', 'b1']]);
+      const s = m.r._chatDragBegin(m.r.chatBreakouts.get('b1'));
+      m.r._chatDragEnd(s);
+      expect(m.S.log.persisted).toEqual([]);
+    });
+    it('only Chat windows are involved: any other window gets no drag state', () => {
+      const m = make([['main', 'b1']]);
+      expect(m.r._chatDragBegin({ getBounds: () => W(0, 0) })).toBeNull();
+    });
+  });
+});
+
+describe('🔗 wiring', () => {
+  const code = stripJs(MAIN);
+  const script = stripJs(script_());
+  it('the existing manual drag does the moving (no app-region), through three hooks that only Chat windows answer', () => {
+    const start = stripJs(sliceBlock(MAIN, 'function _startWindowDrag(win, persistKey) {', '\n}\n'));
+    expect(start).toContain('chat: (() => { try { return _chatDragBegin(win); } catch { return null; } })(),');
+    expect(start).toContain('_chatDragStep(_dragSession.chat, nx, ny)');
+    expect(stripJs(sliceBlock(MAIN, 'function _stopWindowDrag() {', '\n}\n'))).toContain('_chatDragEnd(_dragSession.chat)');
+    expect(stripJs(sliceBlock(MAIN, 'const CHAT_SNAP_PX = 8;', "ipcMain.handle('chat-links-get'"))).not.toMatch(/app-region|-webkit-app-region/);
+  });
+  it('is in the default config as an empty list', () => {
+    expect(stripJs(sliceBlock(MAIN, 'function defaultConfig() {', '\n}\n'))).toMatch(/chatLinks: \[\],/);
+  });
+  it('the preload exposes toggle, read and listen', () => {
+    const p = stripJs(PRELOAD);
+    expect(p).toMatch(/chatLinkToggle:\s+\(\)\s+=> ipcRenderer\.invoke\('chat-link-toggle'\)/);
+    expect(p).toMatch(/getChatLinks:\s+\(\)\s+=> ipcRenderer\.invoke\('chat-links-get'\)/);
+    expect(p).toMatch(/onChatLinks:\s+\(cb\)\s+=> ipcRenderer\.on\('chat-links'/);
+    expect(code).toContain("ipcMain.handle('chat-link-toggle'");
+  });
+  it('the 🔗 is a real button in the title bar (the hover handshake arms buttons on its own), and the breakout menu offers it too', () => {
+    expect(CHAT_HTML).toMatch(/<div class="title">.*<button id="linkbtn" class="fbtn"[^>]*>🔗<\/button>/);
+    expect(script).toContain("linkBtn.addEventListener('click', toggleLink);");
+    expect(script).toContain("'Unlink from the other chat windows'");
+    expect(script).toContain('window.mimic.onChatLinks(takeLinks)');
+  });
+  it('the button shows whether this window is linked, and says so when nothing was touching', () => {
+    const s = script_();
+    const page = (links, id) => evalBlock(`
+      var _links = ${JSON.stringify(links)}; var _isBrk = ${id !== 'main'}, _wid = ${JSON.stringify(id === 'main' ? '' : id)}, _only = [];
+      function brkGroupId(){ return ''; }
+      var linkBtn = { cls: {}, attrs: {}, title: '', textContent: '🔗', classList: { toggle: function(k, v){ linkBtn.cls[k] = !!v; } }, setAttribute: function(k, v){ linkBtn.attrs[k] = v; } };
+      var window = { mimic: { chatLinkToggle: function(){ return Promise.resolve({ ok: false, groups: [] }); } } };
+      ${sliceBlock(s, 'function winId(){', "brkGroupId()) : 'main'; }")}
+      ${sliceBlock(s, 'function linkGroup(){', 'linkBtn.addEventListener')}
+    `, ['linkGroup', 'paintLink', 'takeLinks', 'toggleLink', 'linkBtn']);
+    const main = page([['main', 'b1', 'b2']], 'main');
+    main.paintLink();
+    expect(main.linkBtn.cls.on).toBe(true);
+    expect(main.linkBtn.attrs['aria-pressed']).toBe('true');
+    expect(main.linkBtn.title).toContain('Linked with 2 other chat windows');
+    const lone = page([['b1', 'b2']], 'main');
+    lone.paintLink();
+    expect(lone.linkBtn.cls.on).toBe(false);
+    expect(lone.linkBtn.title).toContain('Link this window');
+    lone.takeLinks([['main', 'b1'], 'junk', [3, 'b2']]);                   // main joins; junk is dropped
+    expect(lone.linkBtn.cls.on).toBe(true);
+    expect(lone.linkGroup()).toEqual(['main', 'b1']);
   });
 });
 
 // ── 9. Round 3 (the guild lead, 2026-10-14): channel tags, per-channel switches, "show only", Melee, window text ─────
 function script_() { return CHAT_HTML.slice(CHAT_HTML.indexOf('<script>'), CHAT_HTML.indexOf('</script>')); }
 // The overlay's own filter, tag, switch, "show only" and window-text functions, sliced out of chat.html and run for
-// real. opts: { brk: '<group id>' } makes it a breakout window; { lines: [...] } is what the window has seen.
+// real. opts: { brk: '<group id>' | ['<group id>', ...] } makes it a breakout window holding those groups (its window
+// id is opts.wid, default 'b1'); { lines: [...] } is what the window has seen.
 function overlay(prefs, opts = {}) {
   const s = script_();
   const base = { fontSize: 12, group: false, officer: false, custom: false, tells: false, melee: false, spells: false, skills: false, off: [], offChannels: [], only: '', win: {} };
@@ -1114,7 +1559,8 @@ function overlay(prefs, opts = {}) {
     var _groups = ${JSON.stringify(agent.CHAT_GROUPS)};
     var _channels = ${JSON.stringify(agent.CHAT_CHANNELS)};
     var _prefs = ${JSON.stringify({ ...base, ...prefs })};
-    var _only = ${JSON.stringify(opts.brk ? [opts.brk] : [])}, _out = [], _isBrk = ${!!opts.brk}, _findQ = '', _chanNames = {}, _copiedN = 0;
+    var _only = ${JSON.stringify(opts.brk ? [].concat(opts.brk) : [])}, _out = [], _isBrk = ${!!opts.brk}, _findQ = '', _chanNames = {}, _copiedN = 0;
+    var _wid = ${JSON.stringify(opts.brk ? (opts.wid || 'b1') : '')}, _brkOff = ${JSON.stringify(opts.brkOff || [])}, _wins = [];
     var _lines = ${JSON.stringify(opts.lines || [])}, _histLines = [];
     function brkGroupId(){ return _only[0] || ''; }
     function esc(s){ return String(s == null ? '' : s); }
@@ -1453,7 +1899,7 @@ describe('Melee categories, filters and colours (mine / on me / others\', misses
     expect(code).toContain("'Hits on me'");
     expect(code).toContain("'Others\\' melee'");
     expect(code).toMatch(/savePrefs\(\{ meleeShow: patch \}\)/);
-    expect(code).toMatch(/if \(_prefs\.melee && \(!_isBrk \|\| brkGroupId\(\) === 'melee'\)\)/);
+    expect(code).toMatch(/if \(_prefs\.melee && holdsGroup\('melee'\)\)/);
   });
 });
 
@@ -1640,12 +2086,12 @@ describe('Spells [SP] and Skills [SK]: two more combined groups, built the way M
     expect(both.lineHtml(sp)).not.toContain('class="who');                             // no speaker, like melee and zone lines
   });
   it('both are breakable into windows of their own with their own text settings, like Melee', () => {
-    const win = { spells: { fontSize: 10, lineGap: 'compact', times: false, tags: false }, skills: { fontSize: 16 } };
-    expect(overlay({ win }, { brk: 'spells' }).winCfg()).toEqual({ fontSize: 10, lineGap: 'compact', times: false, tags: false });
-    expect(overlay({ win }, { brk: 'skills' }).winCfg()).toEqual({ fontSize: 16, lineGap: 'normal', times: true, tags: true });
-    expect(overlay({ win }, { brk: 'spells' }).winId()).toBe('spells');
-    // the group ids are letters only, which is what main.js accepts for a breakout and for a window id
-    for (const id of ['spells', 'skills']) expect(id).toMatch(/^[a-z]{1,16}$/);
+    const win = { b1: { fontSize: 10, lineGap: 'compact', times: false, tags: false }, b2: { fontSize: 16 } };
+    expect(overlay({ win }, { brk: 'spells', wid: 'b1' }).winCfg()).toEqual({ fontSize: 10, lineGap: 'compact', times: false, tags: false });
+    expect(overlay({ win }, { brk: 'skills', wid: 'b2' }).winCfg()).toEqual({ fontSize: 16, lineGap: 'normal', times: true, tags: true });
+    expect(overlay({ win }, { brk: 'spells', wid: 'b1' }).winId()).toBe('b1');
+    // the settings hang off the WINDOW, so a window holding both has one set, and it does not change when a group joins
+    expect(overlay({ win }, { brk: ['spells', 'skills'], wid: 'b1' }).winCfg().fontSize).toBe(10);
   });
   it('the overlay\'s ⚙ lists both switches and sends them with every poll', () => {
     const code = stripJs(CHAT_HTML);
@@ -1881,7 +2327,7 @@ describe('Spells [SP] and Skills [SK]: two more combined groups, built the way M
     const code = stripJs(CHAT_HTML);
     for (const t of ["'My spells'", "'On me'", "'Others\\' spells'", "'My skills'", "'Others\\' skills'", "pref: 'spellShow'", "pref: 'skillShow'"]) expect(code, t).toContain(t);
     for (const k of ['mine', 'on_me', 'others']) expect(code).toContain(`['${k}', `);
-    expect(code).toMatch(/if \(_prefs\[row\.grp\] && \(!_isBrk \|\| brkGroupId\(\) === row\.grp\)\)/);
+    expect(code).toMatch(/if \(_prefs\[row\.grp\] && holdsGroup\(row\.grp\)\)/);
     expect(code).toMatch(/grp: 'spells', pref: 'spellShow'/);
     expect(code).toMatch(/grp: 'skills', pref: 'skillShow'/);
     expect(code).toMatch(/savePrefs\(wrap\)/);
@@ -1896,15 +2342,16 @@ describe('each window\'s own text settings', () => {
     expect(ov.winCfg()).toEqual({ fontSize: 14, lineGap: 'normal', times: true, tags: true });
   });
   it('are read from the window\'s own entry: main and a breakout differ', () => {
-    const win = { main: { fontSize: 18 }, melee: { fontSize: 10, lineGap: 'compact', times: false, tags: false } };
+    const win = { main: { fontSize: 18 }, b1: { fontSize: 10, lineGap: 'compact', times: false, tags: false } };
     expect(overlay({ win }).winCfg()).toEqual({ fontSize: 18, lineGap: 'normal', times: true, tags: true });
-    expect(overlay({ win }, { brk: 'melee' }).winCfg()).toEqual({ fontSize: 10, lineGap: 'compact', times: false, tags: false });
-    expect(overlay({ win, fontSize: 13 }, { brk: 'guild' }).winCfg().fontSize).toBe(13);   // a window with no entry keeps the default
+    expect(overlay({ win }, { brk: 'melee', wid: 'b1' }).winCfg()).toEqual({ fontSize: 10, lineGap: 'compact', times: false, tags: false });
+    expect(overlay({ win, fontSize: 13 }, { brk: 'guild', wid: 'b2' }).winCfg().fontSize).toBe(13);   // a window with no entry keeps the default
   });
-  it('the window id is "main" or the breakout group; the ⚙ reaches a breakout\'s settings and hides the rest', () => {
+  it('the window id is "main" or the breakout window\'s own id, whatever groups it holds; the ⚙ reaches a breakout\'s settings and hides the rest', () => {
     expect(overlay({}).winId()).toBe('main');
-    expect(overlay({}, { brk: 'melee' }).winId()).toBe('melee');
-    expect(CHAT_HTML).toMatch(/body\.brk #chips,body\.brk #onlypill,body\.brk #spanel \.nobrk\{display:none\}/);
+    expect(overlay({}, { brk: 'melee', wid: 'b3' }).winId()).toBe('b3');
+    expect(overlay({}, { brk: ['melee', 'spells'], wid: 'b3' }).winId()).toBe('b3');
+    expect(CHAT_HTML).toMatch(/body\.brk #onlypill,body\.brk #spanel \.nobrk\{display:none\}/);
     expect(CHAT_HTML).not.toMatch(/body\.brk[^{]*#gear/);
     expect(stripJs(CHAT_HTML)).toContain("label: 'Text settings…'");
   });
@@ -1917,30 +2364,36 @@ describe('the chip row: main channels up front, the rest under More', () => {
   const s = script_();
   const MAIN_ORDER = ['Guild', 'Raid', 'Party', 'Say', 'Tells', 'OOC/Shout'];
   const REST_ALL = ['Auction', 'NPC', 'Zones', 'Officer', 'Custom', 'Melee', 'Spells', 'Skills'];
-  // opts: { brk, out, store (what localStorage already holds), groups }
+  // opts: { brk (a group id or list: this is that breakout window), out (group ids held by breakouts, one window each unless
+  // wins is given), wins ([{ id, groups }]), store (what localStorage already holds), groups }
   function row(prefs = {}, opts = {}) {
+    const brkList = opts.brk ? [].concat(opts.brk) : [];
+    const wins = opts.wins || (opts.out || []).map((g, i) => ({ id: 'b' + (i + 1), groups: [g] }));
     const base = { fontSize: 12, group: false, officer: false, custom: false, tells: false, melee: false, spells: false, skills: false, off: [], offChannels: [], only: '', win: {} };
     const api = evalBlock(`
       var _groups = ${JSON.stringify(opts.groups || agent.CHAT_GROUPS)};
       var _channels = ${JSON.stringify(agent.CHAT_CHANNELS)};
       var _prefs = ${JSON.stringify({ ...base, ...prefs })};
-      var _only = ${JSON.stringify(opts.brk ? [opts.brk] : [])}, _out = ${JSON.stringify(opts.out || [])}, _isBrk = ${!!opts.brk};
+      var _only = ${JSON.stringify(brkList)}, _out = ${JSON.stringify(wins.reduce((a, w) => a.concat(w.groups), []))}, _isBrk = ${!!opts.brk};
+      var _wid = ${JSON.stringify(opts.brk ? (opts.wid || 'b1') : '')}, _brkOff = [], _wins = ${JSON.stringify(wins)};
       var __store = ${JSON.stringify(opts.store || {})};
       var localStorage = { getItem: function(k){ return Object.prototype.hasOwnProperty.call(__store, k) ? __store[k] : null; }, setItem: function(k, v){ __store[k] = String(v); } };
-      var handlers = {}, calls = { saved: [], broke: [], menu: null };
+      var handlers = {}, calls = { saved: [], moved: [], menu: null };
       var chipsEl = { innerHTML: '', addEventListener: function(t, f){ handlers[t] = f; } };
       function esc(s){ return String(s == null ? '' : s); }
       function brkGroupId(){ return _only[0] || ''; }
       function repaint(){} function openMenu(x, y, items){ calls.menu = items; }
-      function savePrefs(p){ calls.saved.push(p); } function setBreakout(id, on){ calls.broke.push([id, on]); }
+      function savePrefs(p){ calls.saved.push(p); } function moveGroup(id, target){ calls.moved.push([id, target]); }
       ${sliceBlock(s, 'function groupOf(ch){', 'return out;\n  }')}
       ${sliceBlock(s, 'function winId(){', 'tags: w.tags !== false };\n  }')}
+      ${sliceBlock(s, 'function groupLabel(id){', 'return null; }')}
       ${sliceBlock(s, 'var MAIN_CHIPS = [', 'chipsEl.__wpHtml = h; }\n  }')}
       ${sliceBlock(s, "chipsEl.addEventListener('click', function(e){", 'paintChips(); repaint();\n  });')}
-      ${sliceBlock(s, "chipsEl.addEventListener('contextmenu', function(e){", "run: function(){ setBreakout(id, true); } }]);\n  });")}
+      ${sliceBlock(s, 'function chipMenuItems(id, x, y){', '    return items;\n  }')}
+      ${sliceBlock(s, "chipsEl.addEventListener('contextmenu', function(e){", "chipMenuItems(id, e.clientX, e.clientY));\n  });")}
       paintChips();
       function isOpen(){ return _moreOpen; }
-    `, ['paintChips', 'setMore', 'isOpen', 'shownGroupIds', 'makeFilter', 'chipsEl', 'handlers', 'calls', '__store', '_groups']);
+    `, ['paintChips', 'setMore', 'isOpen', 'shownGroupIds', 'makeFilter', 'chipsEl', 'handlers', 'calls', '__store', '_groups', 'chipMenuItems']);
     // the buttons the row holds
     api.buttons = () => [...api.chipsEl.innerHTML.matchAll(/<button type="button" class="chip([^"]*)"([^>]*)>(.*?)<\/button>/g)]
       .map(m => ({ cls: m[1].trim().split(/\s+/), attrs: m[2], label: m[3].replace(/<[^>]*>/g, '').trim(), g: (/data-g="([^"]*)"/.exec(m[2]) || [])[1] }));
@@ -2027,13 +2480,15 @@ describe('the chip row: main channels up front, the rest under More', () => {
     r.fire('contextmenu', 'melee');
     expect(r.calls.menu.map(i => i.label)).toEqual(['Break out into its own window']);
     r.calls.menu[0].run();
-    expect(r.calls.broke).toEqual([['melee', true]]);
-    // a chip that is already out offers to put it back, and is still found inside More
+    expect(r.calls.moved).toEqual([['melee', 'new']]);
+    // a chip that is already out offers to move it back, and is still found inside More
     const out = row({ melee: true }, { out: ['melee'] });
     out.setMore(true);
     expect(out.buttons().find(b => b.g === 'melee').cls).toContain('out');
     out.fire('contextmenu', 'melee');
-    expect(out.calls.menu.map(i => i.label)).toEqual(['Put back in the Chat window']);
+    expect(out.calls.menu.map(i => i.label)).toEqual(['Move to main window']);
+    out.calls.menu[0].run();
+    expect(out.calls.moved).toEqual([['melee', 'main']]);
   });
   it('right-click on the More chip itself offers nothing (it is not a channel)', () => {
     const r = row({});
@@ -2071,11 +2526,81 @@ describe('the chip row: main channels up front, the rest under More', () => {
     expect(() => r.setMore(true)).not.toThrow();
     expect(r.open()).toBe(true);
   });
-  it('a breakout window gets no More (its chip row is hidden), and a row with nothing to fold gets none either', () => {
+  it('a breakout window gets no More; its chip row is the groups it holds. A row with nothing to fold gets none either', () => {
     const brk = row({ melee: true }, { brk: 'melee' });
     expect(brk.chipsEl.innerHTML).not.toContain('data-more');
+    expect(brk.labels()).toEqual(['Melee']);
     const small = row({}, { groups: agent.CHAT_GROUPS.filter(g => ['guild', 'raid', 'say'].includes(g.id)) });
     expect(small.labels()).toEqual(['Guild', 'Raid', 'Say']);
+  });
+  // ── combining windows: the menus ──
+  const WINS = [{ id: 'b1', groups: ['melee', 'spells'] }, { id: 'b2', groups: ['guild'] }];
+  it('right-click in the Chat window with breakouts open: "Move to window ▸" lists them by the groups they hold, then "New window"', () => {
+    const r = row({ melee: true, spells: true }, { wins: [{ id: 'b1', groups: ['spells', 'skills'] }, { id: 'b2', groups: ['guild'] }] });
+    r.setMore(true);
+    r.fire('contextmenu', 'melee');
+    expect(r.calls.menu.map(i => i.label)).toEqual(['Move to window ▸']);          // melee is in main: nothing to move back
+    r.calls.menu[0].run();                                                          // opens the second level
+    expect(r.calls.menu.map(i => i.label)).toEqual(['Spells + Skills', 'Guild', 'New window']);
+    r.calls.menu[0].run();
+    r.fire('contextmenu', 'melee'); r.calls.menu[0].run(); r.calls.menu[1].run();
+    r.fire('contextmenu', 'melee'); r.calls.menu[0].run(); r.calls.menu[2].run();
+    expect(r.calls.moved).toEqual([['melee', 'b1'], ['melee', 'b2'], ['melee', 'new']]);
+  });
+  it('right-click on a chip that is out (Chat window): back to main, or on to another window, but not to the window it is already in', () => {
+    const r = row({ melee: true, spells: true }, { wins: WINS });
+    r.setMore(true);
+    r.fire('contextmenu', 'melee');
+    expect(r.calls.menu.map(i => i.label)).toEqual(['Move to main window', 'Move to window ▸']);
+    r.calls.menu[1].run();
+    expect(r.calls.menu.map(i => i.label)).toEqual(['Guild', 'New window']);        // b1 (its own) is not offered
+    r.calls.menu[1].run();
+    expect(r.calls.moved).toEqual([['melee', 'new']]);
+  });
+  it('inside a breakout: its chip row shows the groups it holds; right-click offers "Move to main window" and "Move to window ▸"', () => {
+    const r = row({ melee: true, spells: true }, { brk: ['melee', 'spells'], wid: 'b1', wins: WINS });
+    expect(r.labels()).toEqual(['Melee', 'Spells']);                                // the agent's order, and no More
+    r.fire('contextmenu', 'spells');
+    expect(r.calls.menu.map(i => i.label)).toEqual(['Move to main window', 'Move to window ▸']);
+    r.calls.menu[0].run();
+    expect(r.calls.moved).toEqual([['spells', 'main']]);
+    r.calls.menu[1].run();
+    expect(r.calls.menu.map(i => i.label)).toEqual(['Guild', 'New window']);
+    r.calls.menu[0].run();
+    expect(r.calls.moved).toEqual([['spells', 'main'], ['spells', 'b2']]);
+  });
+  it('a group alone in its breakout is offered no "New window" (it would only swap windows), just main and the others', () => {
+    const r = row({ melee: true }, { brk: 'melee', wid: 'b1', wins: [{ id: 'b1', groups: ['melee'] }, { id: 'b2', groups: ['guild'] }] });
+    r.fire('contextmenu', 'melee');
+    expect(r.calls.menu.map(i => i.label)).toEqual(['Move to main window', 'Move to window ▸']);
+    r.calls.menu[1].run();
+    expect(r.calls.menu.map(i => i.label)).toEqual(['Guild']);
+    const only = row({ melee: true }, { brk: 'melee', wid: 'b1', wins: [{ id: 'b1', groups: ['melee'] }] });
+    only.fire('contextmenu', 'melee');
+    expect(only.calls.menu.map(i => i.label)).toEqual(['Move to main window']);
+  });
+  it('a chip in a multi-group breakout hides and shows that group in THIS window only, remembered under the window id; a solo window has nothing to switch', () => {
+    const r = row({ melee: true, spells: true }, { brk: ['melee', 'spells'], wid: 'b1', wins: WINS });
+    expect(r.buttons().map(b => b.cls.includes('on'))).toEqual([true, true]);
+    r.fire('click', 'spells');
+    expect(r.__store).toEqual({ 'wpChatBrkOff:b1': 'spells' });
+    expect(r.buttons().find(b => b.g === 'spells').cls).not.toContain('on');
+    expect(r.calls.saved).toEqual([]);                                              // never written to the shared prefs
+    expect(r.makeFilter(r.shownGroupIds())({ ch: 'spell' })).toBe(false);
+    expect(r.makeFilter(r.shownGroupIds())({ ch: 'melee' })).toBe(true);
+    r.fire('click', 'spells');
+    expect(r.__store).toEqual({ 'wpChatBrkOff:b1': '' });
+    const solo = row({ melee: true }, { brk: 'melee', wid: 'b1', wins: [{ id: 'b1', groups: ['melee'] }] });
+    solo.fire('click', 'melee');
+    expect(solo.__store).toEqual({});
+    expect(solo.buttons()[0].cls).toContain('solo');
+  });
+  it('every chip is a real button (the hover handshake) and a gated group in a breakout still has its chip, dim, so it can be moved out', () => {
+    const r = row({}, { brk: ['guild', 'officer'], wid: 'b2', wins: [{ id: 'b2', groups: ['guild', 'officer'] }] });
+    expect(r.chipsEl.innerHTML).toMatch(/^<button type="button" class="chip/);
+    const off = r.buttons().find(b => b.g === 'officer');
+    expect(off.cls).not.toContain('on');                                            // officer is off: dim, not missing
+    expect(r.buttons().find(b => b.g === 'guild').cls).toContain('on');
   });
   it('a group added later (not in the main set) lands under More with no change to the page', () => {
     const groups = [...agent.CHAT_GROUPS, { id: 'bard', label: 'Songs', channels: ['song'] }];
@@ -2086,6 +2611,104 @@ describe('the chip row: main channels up front, the rest under More', () => {
   });
   it('the chip row stays byte-stable across repaints, so a quiet poll never rewrites it', () => {
     expect(stripJs(s)).toContain('if (chipsEl.__wpHtml !== h) { chipsEl.innerHTML = h; chipsEl.__wpHtml = h; }');
+  });
+});
+
+// A breakout window follows the list main keeps: groups moved in show up, groups moved out go, the title is the joined names.
+describe('chat.html: a breakout follows the window list main hands it', () => {
+  const s = script_();
+  function page(opts = {}) {
+    return evalBlock(`
+      var _groups = ${JSON.stringify(agent.CHAT_GROUPS)};
+      var _prefs = ${JSON.stringify({ off: [], melee: true, spells: true, skills: true, ...(opts.prefs || {}) })};
+      var _wid = ${JSON.stringify(opts.brk ? 'b1' : '')}, _only = ${JSON.stringify(opts.brk || [])}, _isBrk = ${!!opts.brk};
+      var _wins = [], _out = [], _brkOff = [];
+      var CHIP_LABEL = { group: 'Party' };
+      var log = { paint: 0, sent: [], title: '', doc: '', hb: '' };
+      function paintChips(){ log.paint++; } function repaint(){ log.paint++; } function paintSettings(){ log.paint++; }
+      function brkGroupId(){ return _only[0] || ''; }
+      var document = { title: '', getElementById: function(id){ return id === 'ttl' ? ttl : hide; } };
+      var ttl = { textContent: '' }, hide = { title: '' };
+      var window = { mimic: {
+        chatMoveGroup: function(g, t){ log.sent.push(['move', g, t]); return Promise.resolve(ANSWER); },
+        chatBreakoutClose: function(w){ log.sent.push(['close', w]); return Promise.resolve(ANSWER); } } };
+      var ANSWER = [];
+      function gateOn(g){ return !g.gate || !!_prefs[g.gate]; }
+      ${sliceBlock(s, 'function moveGroup(id, target){', 'return null; }')}
+      ${sliceBlock(s, 'function paintBrkTitle(){', "hb.title = 'Put ' + label + ' back in the Chat window';\n  }")}
+      ${sliceBlock(s, 'function brkEmptyText(){', "return 'nothing yet in ' + brkTitleText();\n  }")}
+      function answer(a){ ANSWER = a; }
+    `, ['takeOut', 'moveGroup', 'closeBreakout', 'paintBrkTitle', 'brkEmptyText', 'namesOf', 'holdsGroup', 'homeOf', 'answer', 'log', 'document', 'ttl', 'hide', '_groups', '_prefs']);
+  }
+  it('the Chat window marks every group held by any breakout as out, and nothing else', () => {
+    const p = page();
+    p.takeOut([{ id: 'b1', groups: ['melee', 'spells'] }, { id: 'b2', groups: ['guild'] }]);
+    expect(p.homeOf('spells').id).toBe('b1');
+    expect(p.homeOf('guild').id).toBe('b2');
+    expect(p.homeOf('raid')).toBeNull();
+    expect(p.holdsGroup('anything')).toBe(true);                        // the Chat window holds whatever is not out
+  });
+  it('a breakout takes its own entry: a group moved in is held, one moved out is gone, another window\'s groups are not', () => {
+    const p = page({ brk: ['melee'] });
+    expect(p.holdsGroup('spells')).toBe(false);
+    p.takeOut([{ id: 'b1', groups: ['melee', 'spells'] }, { id: 'b2', groups: ['guild'] }]);
+    expect(p.holdsGroup('spells')).toBe(true);
+    expect(p.holdsGroup('guild')).toBe(false);
+    p.takeOut([{ id: 'b1', groups: ['spells'] }, { id: 'b2', groups: ['guild'] }]);
+    expect(p.holdsGroup('melee')).toBe(false);
+    expect(p.holdsGroup('spells')).toBe(true);
+  });
+  it('a list without this window in it (it is closing) leaves the window as it was', () => {
+    const p = page({ brk: ['melee', 'spells'] });
+    p.takeOut([{ id: 'b2', groups: ['guild'] }]);
+    expect(p.holdsGroup('melee')).toBe(true);
+    expect(p.holdsGroup('spells')).toBe(true);
+  });
+  it('junk in the list is ignored: bad shapes, bad group ids, and a group named twice', () => {
+    const p = page({ brk: ['melee'] });
+    p.takeOut([null, 'b1', { id: 'b1' }, { id: 7, groups: ['x'] }, { id: 'b1', groups: ['melee', 'melee', '../x', 'Guild', 5, 'spells'] }]);
+    expect(p.holdsGroup('spells')).toBe(true);
+    expect(p.holdsGroup('x')).toBe(false);
+    p.takeOut('nope'); p.takeOut(undefined);
+  });
+  it('a list that has not changed repaints nothing', () => {
+    const p = page({ brk: ['melee'] });
+    const list = () => [{ id: 'b1', groups: ['melee', 'spells'] }];
+    p.takeOut(list());
+    const n = p.log.paint;
+    p.takeOut(list());
+    expect(p.log.paint).toBe(n);
+    p.takeOut([{ id: 'b1', groups: ['melee'] }]);
+    expect(p.log.paint).toBeGreaterThan(n);
+  });
+  it('the title is the joined group names, in the window and in the title bar, and the ✕ says what it puts back', () => {
+    const p = page({ brk: ['melee', 'spells'] });
+    p.paintBrkTitle();
+    expect(p.ttl.textContent).toBe('💬 Melee + Spells');
+    expect(p.document.title).toBe('chat: Melee + Spells');
+    expect(p.hide.title).toBe('Put Melee + Spells back in the Chat window');
+    const one = page({ brk: ['guild'] }); one.paintBrkTitle();
+    expect(one.ttl.textContent).toBe('💬 Guild');
+    const party = page({ brk: ['guild', 'group'] }); party.paintBrkTitle();
+    expect(party.ttl.textContent).toBe('💬 Guild + Party');
+  });
+  it('an empty window says what it waits for: the first switched-off group when every group is off, else the names', () => {
+    expect(page({ brk: ['melee', 'spells'], prefs: { melee: false, spells: false } }).brkEmptyText()).toBe('Melee is off: switch it on in the Chat window\'s ⚙');
+    expect(page({ brk: ['melee', 'spells'], prefs: { melee: false } }).brkEmptyText()).toBe('nothing yet in Melee + Spells');
+    expect(page({ brk: ['tell', 'melee'], prefs: { tells: false, melee: false } }).brkEmptyText()).toMatch(/^Tells are off/);
+  });
+  it('moving a group and closing a window go through the preload, and the answer (the new list) is taken at once', async () => {
+    const p = page({ brk: ['melee'] });
+    p.answer([{ id: 'b1', groups: ['melee', 'spells'] }]);
+    p.moveGroup('spells', 'b1');
+    await Promise.resolve(); await Promise.resolve();
+    expect(p.log.sent).toEqual([['move', 'spells', 'b1']]);
+    expect(p.holdsGroup('spells')).toBe(true);
+    p.closeBreakout();
+    expect(p.log.sent.pop()).toEqual(['close', 'b1']);
+    expect(page().log.sent).toEqual([]);
+    const main = page(); main.closeBreakout();                          // the Chat window has no window id: nothing to close
+    expect(main.log.sent).toEqual([]);
   });
 });
 
