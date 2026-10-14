@@ -18,8 +18,40 @@ import { ownedCharacters } from '@/lib/ownedCharacters';
 import { isOfficer } from '@/lib/officer';
 import { GUIDE_KEYS } from '@/lib/popGuide';
 import { MAX_FLAGS_PER_TICK, tickKeyForFlag, tickKeysForFlag } from '@/lib/popSelfFlags';
+import { GUILD_TAG } from '@/lib/guild';
+import { makeLimiter, saveRecital, type SaveResult } from '@/lib/popRecitalSave';
 
 type Result = { ok: boolean; error?: string };
+
+// Save a Seer recital for one of YOUR characters (the guild lead, 2026-10-14: paste what the Seer says, fix your
+// flags). The rules (ownership, idempotency, what is written) are in web/lib/popRecitalSave.ts; this only wires
+// them to the session and the table. The browser sends the matched sentences; the paste itself is never stored.
+// Eight saves in ten minutes per member, per server instance.
+const recitalAllowed = makeLimiter(8, 10 * 60_000);
+export async function saveSeerRecital(character: string, sentences: string[]): Promise<SaveResult> {
+  const admin = supabaseAdmin();
+  const res = await saveRecital({
+    guildId: GUILD_TAG,
+    userId: async () => (await supabaseServer().auth.getUser()).data.user?.id ?? null,
+    owned: async (userId) => (await ownedCharacters(userId)).map(c => c.name),
+    recitalKeys: async (name, keys) => {
+      const { data, error } = await admin.from('pop_flags').select('flag_key')
+        .eq('guild_id', GUILD_TAG).eq('source', 'recital')
+        .ilike('character', name.replace(/[\\%_]/g, '\\$&')).in('flag_key', keys).limit(1000);
+      return error ? null : ((data ?? []) as { flag_key: string }[]).map(r => r.flag_key);
+    },
+    insert: async (rows) => {
+      const { error } = await admin.from('pop_flags')
+        .upsert(rows, { onConflict: 'guild_id,character,flag_key,earned_at', ignoreDuplicates: true });
+      return error ? error.message : null;
+    },
+    now: () => new Date(),
+    allow: recitalAllowed,
+  }, character, sentences);
+  // /pop reads the same rows; the guide ticks them from the next load.
+  if (res.ok && res.written > 0) revalidatePath('/pop');
+  return res;
+}
 
 export async function setGuideTick(character: string, itemKey: string, ticked: boolean): Promise<Result> {
   if (typeof character !== 'string' || typeof itemKey !== 'string' || typeof ticked !== 'boolean') {
@@ -78,14 +110,14 @@ async function writeTicks(character: string, write: string[], remove: string[], 
     const { data: me } = await admin.from('wolfpack_members').select('discord_id').eq('user_id', user.id).maybeSingle();
     const now = new Date().toISOString();
     const { error } = await admin.from('pop_guide_ticks').upsert(
-      write.map(item_key => ({ guild_id: 'wolfpack', character_name: owned.name, item_key,
+      write.map(item_key => ({ guild_id: GUILD_TAG, character_name: owned.name, item_key,
         ticked_at: now, ticked_by: me?.discord_id ?? null })),
       { onConflict: 'guild_id,character_name,item_key' },
     );
     if (error) return { ok: false, error: error.message };
   } else {
     const { error } = await admin.from('pop_guide_ticks').delete()
-      .eq('guild_id', 'wolfpack').eq('character_name', owned.name).in('item_key', remove);
+      .eq('guild_id', GUILD_TAG).eq('character_name', owned.name).in('item_key', remove);
     if (error) return { ok: false, error: error.message };
   }
   return { ok: true };

@@ -28,8 +28,15 @@ describe('the checklist catalog', () => {
     expect(unknownFlags()).toEqual([]);
   });
 
-  it('answers the ask: a start, must-haves, and solo, group and raid work', () => {
-    expect(GUIDE_SECTIONS[0].key).toBe('start');
+  it('answers the ask: must-haves, and solo, group and raid work', () => {
+    // The "Start here" section (level 46, bind, #popflags, Mimic, the books, the two rules) and the Gram Dunnar
+    // charm were removed 2026-10-14 (the guild lead: superfluous; the figurine is not in the game right now).
+    expect(GUIDE_SECTIONS[0].key).toBe('pok');
+    expect(GUIDE_SECTIONS.some(s => s.key === 'start')).toBe(false);
+    expect(GUIDE_ITEMS.some(i => i.section === 'start' || /^start_(level46|pok_bind|popflags|mimic|guild_books|hails|charm)$/.test(i.key))).toBe(false);
+    expect(GUIDE_ITEMS.some(i => /Wooden Figurine/i.test(i.title))).toBe(false);
+    // The two that carried real content moved to the Knowledge section under the same keys (ticks are stored by key).
+    for (const k of ['start_flag_fixers', 'start_traveler_manual']) expect(GUIDE_ITEMS.find(i => i.key === k)?.section, k).toBe('pok');
     expect(GUIDE_ITEMS.filter(i => i.must).length).toBeGreaterThan(10);
     for (const who of ['solo', 'group', 'raid']) expect(GUIDE_ITEMS.some(i => i.who === who), who).toBe(true);
   });
@@ -137,8 +144,8 @@ describe('quest chains', () => {
 
 describe('ticks', () => {
   it('merges hand ticks with recorded flags, and drops keys the guide does not define', () => {
-    const t = tickedKeys(['start_level46', 'not_a_key'], ['grummus_dead']);
-    expect(t.has('start_level46')).toBe(true);
+    const t = tickedKeys(['pok_taxidermy', 'not_a_key'], ['grummus_dead']);
+    expect(t.has('pok_taxidermy')).toBe(true);
     expect(t.has('flag_grummus')).toBe(true);
     expect(t.has('not_a_key')).toBe(false);
     expect([...recordedKeys(['grummus_dead'])]).toEqual(['flag_grummus']);

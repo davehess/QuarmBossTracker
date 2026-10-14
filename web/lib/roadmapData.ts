@@ -37,6 +37,29 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-8-158-2026-10-14',
+    title: 'PoP flags, rebuilt',
+    version: 'Web 1.8.158',
+    date: '2026-10-14',
+    headline: 'The PoP Flags page opens on your own characters and groups alts under their main, the checklist takes what the Seer says, and a new Latest flags page shows who just flagged.',
+    features: [
+      { name: 'Latest flags page (new, marked [beta])', blurb: 'A link at the top of PoP Flags opens a page of the newest confirmed flags. Raiders who flagged together are one row, names in A to Z order or latest first, and a live raid can open to the raiders who still need those steps. A second view lays the steps out as cards in the order they unlock. Filters for 24 hours, 3 days or 7 days, and mains or all characters.' },
+      { name: 'Starts on your characters', blurb: 'PoP Flags opens on My Characters. Next to it are Mains, then All characters. Chart and Matrix are a second pair of buttons.' },
+      { name: 'Alts under their main', blurb: 'On All characters, each main is one row with their alts folded underneath, and the line under the name says when the family last got a flag. A flag from the last day is marked new today, and one from the last three days is marked softer. Open or close every family with one button. Add ?alts=flat to the address for the old flat list.' },
+      { name: 'Latest flags strip', blurb: 'The PoP Flags page can show the flags raiders just finished, confirmed by the server or an NPC, either newest first or grouped by step. Add ?flags=a or ?flags=b to the address to compare the two.' },
+      { name: 'Paste what the Seer says', blurb: 'No Mimic? Say “guided meditation” to the Seer, copy her lines, and paste them into the box at the top of the checklist. It ticks every step she shows and rings the next one on each plane you can enter. You can save the result to one of your own characters. The text you paste is read in your browser and is never kept.' },
+      { name: 'Checklist in sections', blurb: 'The checklist is a short list of closed sections, one for each tier and one for the Plane of Knowledge, with a jump list on the side (a drop-down on a phone). Each section says how many steps are done, and the address changes as you jump so you can send a link to a plane.' },
+      { name: 'Spells you still need', blurb: 'Closed by default with the totals on one line. Open it to see each missing spell with its level, the scroll that buys it, what it does and a PQDI link. One button per character copies a short line you can paste in chat. Chips filter the table by class, and every column sorts.' },
+      { name: 'Roomier chart', blurb: 'The tier boxes use the full width of the page, with more space around each step.' },
+    ],
+    fixes: [
+      'The “Start here” list at the top of the checklist is gone. The Seer and the Planar Traveler’s Manual steps moved to the Knowledge quests.',
+      'The Intricate Wooden Figurine step is gone, since the item is not in the game right now.',
+      'The same Seer recital no longer shows up twice a few minutes apart, and each step shows its own plane, not the plane where the Seer happened to be standing.',
+      'Clicking a plane on the chart or the planner keeps whichever group you were looking at.',
+    ],
+  },
+  {
     key: 'web-1-8-148-2026-10-14',
     title: 'Raid night plan',
     version: 'Web 1.8.149',
