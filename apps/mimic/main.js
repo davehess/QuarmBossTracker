@@ -5581,21 +5581,33 @@ ipcMain.handle('ui-studio-inspect-socials', (_e, character, eqDir) => {
       if (fs.existsSync(uiPath)) {
         const uiText = fs.readFileSync(uiPath, 'utf8');
         const cm = {};
+        // Each chat window's own geometry block: [MainChat] = window 0, [Chat N] / [ChatN] = window N
+        // (UI Studio's chat add / delete moves these with the window). First block of a name wins.
+        const geometry = {};
+        let geoSec = null;
         let inCM = false;
         for (const L of uiText.split(/\r?\n/)) {
           const sm = L.match(/^\s*\[([^\]]+)\]\s*$/);
-          if (sm) { inCM = (sm[1] === 'ChatManager'); continue; }
-          if (!inCM) continue;
+          if (sm) {
+            inCM = (sm[1] === 'ChatManager');
+            const sn = sm[1].trim();
+            geoSec = /^(MainChat|Chat\s*\d+)$/i.test(sn) && !(sn in geometry) ? sn : null;
+            if (geoSec) geometry[geoSec] = {};
+            continue;
+          }
           const kv = L.match(/^\s*([\w.]+)\s*=\s*(.*)\s*$/);
+          if (geoSec && kv) geometry[geoSec][kv[1]] = kv[2];
+          if (!inCM) continue;
           if (kv) cm[kv[1]] = kv[2];
         }
         if (Object.keys(cm).length) {
           const windows = [];
-          for (let i = 0; i <= 30; i++) {
+          for (let i = 0; i <= 31; i++) {   // the client keeps at most 32 (Zeal CChatManager.ChatWindows[32])
             const name = cm[`ChatWindow${i}_Name`];
             const def  = cm[`ChatWindow${i}_DefaultChannel`];
             const chn  = cm[`ChatWindow${i}_ChatChannel`];
             const tt   = cm[`ChatWindow${i}_TellTarget`];
+            const fs_  = cm[`ChatWindow${i}_FontStyle`];
             if (name == null && def == null && chn == null) continue;
             windows.push({
               index: i,
@@ -5603,6 +5615,7 @@ ipcMain.handle('ui-studio-inspect-socials', (_e, character, eqDir) => {
               default_channel: def != null ? parseInt(def, 10) : null,
               chat_channel: chn != null ? parseInt(chn, 10) : null,
               tell_target: tt || null,
+              font_style: fs_ != null ? parseInt(fs_, 10) : null,
             });
           }
           // ChannelMap<filter> = <windowIndex> → invert to windowIndex → [filters]
@@ -5630,6 +5643,8 @@ ipcMain.handle('ui-studio-inspect-socials', (_e, character, eqDir) => {
             windows,
             routed_filters: routed,
             always_here_idx: alwaysHereIdx,
+            cm_props: cm,       // every [ChatManager] key, for UI Studio's add / delete / rename / font
+            geometry,           // the chat windows' own geometry blocks
           };
         }
       }

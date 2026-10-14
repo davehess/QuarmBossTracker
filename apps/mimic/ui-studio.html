@@ -101,6 +101,18 @@
   #side .row{display:flex;gap:6px}
   #side .row .field{flex:1}
   #side .meta{color:#6e7681;font-size:9px;margin-top:8px}
+  /* The Hotbar Pages editor is docked beside the canvas (a flex item of #content), so the canvas gives up
+     width instead of being covered; the window-properties panel steps aside while it is open. */
+  body.inspecting #side{display:none !important}
+  /* "Discard changes to hotbar pages?" */
+  .chatRenameIn{user-select:text}
+  #discardAsk{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:90;display:flex;align-items:center;justify-content:center}
+  #discardAsk .box{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;width:min(380px,90vw);color:#c9d1d9;font-size:12px}
+  #discardAsk h3{margin:0 0 6px;color:#7ee7c7;font-size:14px}
+  #discardAsk p{margin:0 0 12px;color:#9aa4ad;line-height:1.4}
+  #discardAsk .btns{display:flex;gap:8px;justify-content:flex-end}
+  #discardAsk button{background:#f85149;border:1px solid #f85149;color:#fff;border-radius:4px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
+  #discardAsk button.secondary{background:#1f6feb;border-color:#1f6feb}
   /* Left filter panel — category toggles so the canvas isn't an unreadable
      pile of all 130 windows at once. Flex item beside the canvas. View-only
      (Save still writes every window). */
@@ -2352,6 +2364,305 @@
   }
   // ── /Chat window ↔ layout link ────────────────────────────────────────────
 
+  // ── Chat window structure: rename, font, add, delete (pure: model in, model out) ──
+  // The guild lead, 2026-10-14: "need to be able to delete or rename chats, or make new
+  // ones in the UI Studio" + "include chat fontsize". A model is
+  //   { cm:  { key → value }                 every key of [ChatManager]
+  //     geo: { sectionName → { key → value } } each chat window's own geometry block }
+  // and _chatModelDiff(disk, now) turns the difference into the key edits Save sends.
+  //
+  // KEYS (all in UI_<char> [ChatManager] unless noted) and where each is confirmed:
+  //   NumWindows                    ui-studio-inspect-socials (main.js) reads it; the game keeps <= 32
+  //                                 windows (Zeal game_ui.h CChatManager.ChatWindows[32])
+  //   ChatWindow<N>_Name            main.js reader; Zeal CreateChatWindow(name, …)
+  //   ChatWindow<N>_DefaultChannel  main.js reader; 3 = Tell (Zeal tellwindows.cpp)
+  //   ChatWindow<N>_ChatChannel     main.js reader
+  //   ChatWindow<N>_TellTarget      main.js reader
+  //   ChatWindow<N>_AlwaysHere      main.js reader ("1" = outgoing chat goes here)
+  //   ChatWindow<N>_FontStyle       Zeal tellwindows.cpp reads ChatWindow0_FontStyle from [ChatManager]
+  //                                 and clamps it to 0..6 for a new tell window. An INDEX, not points:
+  //                                 the point size each index draws at is NOT confirmed, so the UI shows
+  //                                 the index and never a size.
+  //   ChannelMap<M> = <window>      main.js reader; Zeal chatfilter.cpp
+  //   [MainChat] / [Chat N] / [ChatN]  window 0 / window N's own geometry (XPos<res>, YPos<res>, Width,
+  //                                 Height); both spellings exist in the wild, so each is kept as found.
+  // NOT confirmed (so never invented): the key for a window's language, any other per-window key beyond
+  // the above (they are copied from Chat 0 as found, never named here), and whether anything outside
+  // [ChatManager] and the geometry blocks holds a chat-window number.
+  var CHAT_NAME_MAX = 32;        // our limit, not the client's (the client's is not confirmed)
+  var CHAT_WINDOWS_MAX = 32;
+  var CHAT_FONT_MAX = 6;
+  var CHAT_GEO_RE = /^(mainchat|chat\s*(\d+))$/i;
+  var CHAT_POS_OFFSET = 30;      // a new window's top-left sits this far right and down of Chat 0's
+  function _chatNameClean(raw) {
+    var s = String(raw == null ? '' : raw).replace(/[\x00-\x1f\x7f\[\]]/g, ' ').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+    return s.length > CHAT_NAME_MAX ? s.slice(0, CHAT_NAME_MAX).replace(/\s+$/, '') : s;
+  }
+  function _csClone(m) {
+    var o = { cm: {}, geo: {} }, k, s;
+    for (k in m.cm) o.cm[k] = m.cm[k];
+    for (s in m.geo) { o.geo[s] = {}; for (k in m.geo[s]) o.geo[s][k] = m.geo[s][k]; }
+    return o;
+  }
+  function _csLook(obj, key) { var lk = String(key).toLowerCase(); for (var k in obj) if (k.toLowerCase() === lk) return k; return null; }
+  function _csGet(obj, key) { var k = _csLook(obj, key); return k == null ? undefined : obj[k]; }
+  function _csPut(obj, key, val) {
+    var k = _csLook(obj, key);
+    if (val == null) { if (k != null) delete obj[k]; return; }
+    obj[k == null ? key : k] = String(val);
+  }
+  function _csSecIdx(name) { var m = CHAT_GEO_RE.exec(String(name).replace(/^\s+|\s+$/g, '')); return m ? (m[2] == null ? 0 : parseInt(m[2], 10)) : null; }
+  function _csGeoNames(geo) { var out = {}; for (var s in geo) { var i = _csSecIdx(s); if (i != null && out[i] == null) out[i] = s; } return out; }
+  function _csWindowIdxs(cm) {
+    var seen = {}, out = [];
+    for (var k in cm) { var m = /^ChatWindow(\d+)_/i.exec(k); if (m && !seen[m[1]]) { seen[m[1]] = 1; out.push(parseInt(m[1], 10)); } }
+    return out.sort(function(a, b){ return a - b; });
+  }
+  function _csNum(cm) {
+    var n = parseInt(_csGet(cm, 'NumWindows'), 10);
+    if (isFinite(n) && n > 0) return n;
+    var ix = _csWindowIdxs(cm);
+    return ix.length ? ix[ix.length - 1] + 1 : 0;
+  }
+  function _csIsTell(cm, i) { return parseInt(_csGet(cm, 'ChatWindow' + i + '_DefaultChannel'), 10) === 3; }
+  function _csFont(cm, i) { var n = parseInt(_csGet(cm, 'ChatWindow' + i + '_FontStyle'), 10); return isFinite(n) ? n : null; }
+  // The cards' view of a model: windows in order, who routes where, the ★ holder.
+  function _chatView(model) {
+    var cm = model.cm, wins = [], routed = {}, always = null, k, m;
+    var ix = _csWindowIdxs(cm);
+    for (var a = 0; a < ix.length; a++) {
+      var i = ix[a], d = parseInt(_csGet(cm, 'ChatWindow' + i + '_DefaultChannel'), 10);
+      var nm = _csGet(cm, 'ChatWindow' + i + '_Name');
+      wins.push({ index: i, name: nm == null ? '' : String(nm).replace(/^\s+|\s+$/g, ''), default_channel: isFinite(d) ? d : null,
+        font: _csFont(cm, i), isTell: d === 3 });
+      if (parseInt(_csGet(cm, 'ChatWindow' + i + '_AlwaysHere'), 10) === 1 && always == null) always = i;
+    }
+    for (k in cm) {
+      m = /^ChannelMap(\d+)$/i.exec(k);
+      if (!m) continue;
+      var w = parseInt(cm[k], 10);
+      if (!isFinite(w)) continue;
+      (routed[w] = routed[w] || []).push(parseInt(m[1], 10));
+    }
+    return { windows: wins, routed: routed, alwaysIdx: always, num: _csNum(cm) };
+  }
+  // One staged edit ({section:'ChatManager', key, value|null}) applied to a model.
+  function _csApplyEdit(model, e) {
+    if (!e || e.section !== 'ChatManager') return;
+    _csPut(model.cm, e.key, e.value);
+  }
+  function _chatRenameModel(model, idx, raw) {
+    var nm = _chatNameClean(raw);
+    if (!nm) return { ok: false, error: 'A chat window needs a name.' };
+    if (_csWindowIdxs(model.cm).indexOf(idx) < 0) return { ok: false, error: 'No chat window ' + idx + '.' };
+    var m = _csClone(model);
+    _csPut(m.cm, 'ChatWindow' + idx + '_Name', nm);
+    return { ok: true, model: m, name: nm };
+  }
+  function _chatSetFont(model, idx, n) {
+    n = parseInt(n, 10);
+    if (!isFinite(n) || n < 0 || n > CHAT_FONT_MAX) return { ok: false, error: 'Font style is 0 to ' + CHAT_FONT_MAX + '.' };
+    if (_csWindowIdxs(model.cm).indexOf(idx) < 0) return { ok: false, error: 'No chat window ' + idx + '.' };
+    var m = _csClone(model);
+    _csPut(m.cm, 'ChatWindow' + idx + '_FontStyle', n);
+    return { ok: true, model: m };
+  }
+  // New window N = NumWindows. Its per-window keys are Chat 0's (so the font, and whatever else the
+  // client keeps per window, match Main Chat), minus the ones that are the window's own: name, tell
+  // target, ★. Its geometry block copies the newest numbered sibling, placed just right and down of
+  // Chat 0. With no numbered sibling the block's name spelling is unknown, so none is written.
+  function _chatAddWindow(model, rawName) {
+    var m = _csClone(model), cm = m.cm, n = _csNum(cm), k;
+    if (n >= CHAT_WINDOWS_MAX) return { ok: false, error: 'The game keeps at most ' + CHAT_WINDOWS_MAX + ' chat windows.' };
+    var nm = _chatNameClean(rawName) || ('Chat ' + n);
+    for (k in model.cm) if (new RegExp('^ChatWindow' + n + '_', 'i').test(k)) delete cm[k];   // a stale orphan
+    for (k in model.cm) {
+      var mm = /^ChatWindow0_([\w.]+)$/i.exec(k);
+      if (!mm || /^(Name|TellTarget|AlwaysHere)$/i.test(mm[1])) continue;
+      _csPut(cm, 'ChatWindow' + n + '_' + mm[1], model.cm[k]);
+    }
+    _csPut(cm, 'ChatWindow' + n + '_Name', nm);
+    _csPut(cm, 'NumWindows', n + 1);
+    var names = _csGeoNames(m.geo), top = -1, sib;
+    for (sib in names) if (+sib >= 1 && +sib > top) top = +sib;
+    var section = null, props = null;
+    if (top >= 1) {
+      var pm = /^(chat\s*)\d+$/i.exec(names[top]);
+      section = (pm ? pm[1] : 'Chat ') + n;
+      props = {};
+      for (k in m.geo[names[top]]) props[k] = m.geo[names[top]][k];
+      var ref = names[0] != null ? m.geo[names[0]] : null;
+      if (ref) for (k in ref) {
+        if (!/^[XY]Pos/i.test(k)) continue;
+        var rv = parseInt(ref[k], 10);
+        if (isFinite(rv)) _csPut(props, k, rv + CHAT_POS_OFFSET);
+      }
+      if (_csGet(props, 'Width') == null && _csGet(props, 'Height') == null) { _csPut(props, 'Width', 400); _csPut(props, 'Height', 200); }
+      m.geo[section] = props;
+    }
+    return { ok: true, model: m, index: n, name: nm, section: section, geo: props };
+  }
+  // Can window idx go, and how? 'renumber' = the later windows move down; 'last' = idx is the last window
+  // so nothing moves. Chat 0 and Tell windows never go. [ChatManager] keys that carry a number but are not
+  // ones we know (NumWindows, ChannelMap<N>, ChatWindow<N>_*) might be window numbers we would leave
+  // pointing at the wrong window, so then only the LAST window can be deleted.
+  function _chatDeleteCheck(model, idx) {
+    var cm = model.cm, ix = _csWindowIdxs(cm);
+    if (ix.indexOf(idx) < 0) return { ok: false, error: 'No chat window ' + idx + '.' };
+    if (idx === 0) return { ok: false, code: 'main', error: 'Main Chat (0) cannot be deleted.' };
+    if (_csIsTell(cm, idx)) return { ok: false, code: 'tell', error: 'Tell windows are made by the game for each sender and cannot be deleted here.' };
+    var last = ix[ix.length - 1];
+    if (idx === last) return { ok: true, mode: 'last', last: last };
+    var odd = [];
+    for (var k in cm) {
+      if (/^NumWindows$/i.test(k) || /^ChannelMap\d+$/i.test(k) || /^ChatWindow\d+_[\w.]+$/i.test(k)) continue;
+      if (/\d/.test(k)) odd.push(k);
+    }
+    if (odd.length) {
+      return { ok: false, code: 'last-only', last: last, error: 'Only the last chat window (Chat ' + last + ') can be deleted from this ini: [ChatManager] also holds ' +
+        odd.slice(0, 3).join(', ') + (odd.length > 3 ? ' and ' + (odd.length - 3) + ' more' : '') +
+        ', numbered settings that may refer to window numbers, and renumbering the windows after Chat ' + idx + ' could point them at the wrong window.' };
+    }
+    return { ok: true, mode: 'renumber', last: last };
+  }
+  function _chatDeleteWindow(model, idx) {
+    var chk = _chatDeleteCheck(model, idx);
+    if (!chk.ok) return chk;
+    var cm = model.cm, last = chk.last, n = _csNum(cm), k, m;
+    var moved = [];
+    var cm2 = {};
+    for (k in cm) {
+      if (/^NumWindows$/i.test(k)) { cm2[k] = String(Math.max(0, n - 1)); continue; }
+      m = /^ChannelMap(\d+)$/i.exec(k);
+      if (m) {
+        var v = parseInt(cm[k], 10);
+        if (!isFinite(v)) { cm2[k] = cm[k]; continue; }
+        if (v === idx) { cm2[k] = '0'; moved.push(parseInt(m[1], 10)); }
+        else cm2[k] = v > idx ? String(v - 1) : cm[k];
+        continue;
+      }
+      m = /^ChatWindow(\d+)_([\w.]+)$/i.exec(k);
+      if (m) {
+        var w = parseInt(m[1], 10);
+        if (w < idx) cm2[k] = cm[k];
+        else if (w > idx) cm2['ChatWindow' + (w - 1) + '_' + m[2]] = cm[k];
+        continue;                                  // w === idx: gone with the window
+      }
+      cm2[k] = cm[k];
+    }
+    var geo2 = {}, s, names = _csGeoNames(model.geo), renamed = [];
+    for (s in model.geo) { geo2[s] = {}; for (k in model.geo[s]) geo2[s][k] = model.geo[s][k]; }
+    for (var i = idx; i < last; i++) {
+      var src = names[i + 1], tgt = names[i];
+      if (tgt == null && src != null) { var sm = /^(chat\s*)\d+$/i.exec(src); tgt = (sm ? sm[1] : 'Chat ') + i; }
+      if (tgt == null) continue;
+      geo2[tgt] = {};
+      if (src != null) { for (k in model.geo[src]) geo2[tgt][k] = model.geo[src][k]; renamed.push([src, tgt]); }
+    }
+    if (names[last] != null && last > idx) geo2[names[last]] = {};          // the last block's keys are gone; its header stays
+    else if (names[idx] != null && last === idx) geo2[names[idx]] = {};
+    var renum = [];
+    for (var j = idx + 1; j <= last; j++) renum.push([j, j - 1]);
+    return { ok: true, mode: chk.mode, model: { cm: cm2, geo: geo2 }, moved: moved, renumbered: renum, renamedSections: renamed,
+      removedSection: names[idx] != null ? names[idx] : null, lastSection: names[last] != null ? names[last] : null };
+  }
+  // <option>s for the font picker: 0..6, the current one selected. A missing or out-of-range value gets
+  // its own disabled placeholder so the picker never claims a value the ini does not hold.
+  function _chatFontOptions(cur) {
+    var h = '';
+    if (cur == null) h += '<option value="" selected disabled>–</option>';
+    else if (cur < 0 || cur > CHAT_FONT_MAX) h += '<option value="' + cur + '" selected disabled>' + cur + '</option>';
+    for (var i = 0; i <= CHAT_FONT_MAX; i++) h += '<option value="' + i + '"' + (cur === i ? ' selected' : '') + '>' + i + '</option>';
+    return h;
+  }
+  function _chatDeleteConfirmText(name, idx, movedNames, renumbered) {
+    var t = 'Delete "' + name + '" (Chat ' + idx + ')?\n\n';
+    t += movedNames.length
+      ? movedNames.length + ' channel' + (movedNames.length === 1 ? '' : 's') + ' routed to it move to Main Chat (0): ' + movedNames.join(', ') + '.\n'
+      : 'No channels are routed to it.\n';
+    if (renumbered.length) t += 'The chat windows after it renumber down: ' + renumbered.map(function(p){ return 'Chat ' + p[0] + ' becomes Chat ' + p[1]; }).join(', ') + '.\n';
+    return t + '\nNothing is written until you press Save changes.';
+  }
+  // Key edits that turn the model on disk into the model now. Keys match case-insensitively (the client
+  // reads these files that way); a key gone from the model is deleted; a block gone entirely is emptied.
+  function _chatModelDiff(orig, cur) {
+    var edits = [];
+    function diff(section, a, b) {
+      var k, lk, bl = {}, al = {};
+      for (k in b) bl[k.toLowerCase()] = k;
+      for (k in a) al[k.toLowerCase()] = k;
+      for (lk in bl) if (al[lk] == null || a[al[lk]] !== b[bl[lk]]) edits.push({ section: section, key: bl[lk], value: b[bl[lk]] });
+      for (lk in al) if (bl[lk] == null) edits.push({ section: section, key: al[lk], value: null });
+    }
+    diff('ChatManager', orig.cm, cur.cm);
+    var seen = {}, s, ls;
+    for (s in cur.geo) { seen[s.toLowerCase()] = 1; var o = _csLook(orig.geo, s); diff(s, o == null ? {} : orig.geo[o], cur.geo[s]); }
+    for (s in orig.geo) { ls = s.toLowerCase(); if (!seen[ls]) diff(s, orig.geo[s], {}); }
+    return edits;
+  }
+  // The Hotbar Pages editor's "are you sure": nothing to lose = leave; otherwise ask, and Discard puts
+  // every field back before it closes. `guard` = { isDirty(), revert(), close() }.
+  function _hotbarLeaveAction(guard) { return (guard && guard.isDirty()) ? 'ask' : 'leave'; }
+  function _hotbarAnswer(guard, answer) {
+    if (answer === 'discard') { guard.revert(); guard.close(); return 'discarded'; }
+    return 'kept';
+  }
+  function _hotbarRevertInputs(inputs) {
+    for (var i = 0; i < inputs.length; i++) inputs[i].value = inputs[i].getAttribute('data-orig') || '';
+  }
+  // ── /Chat window structure ────────────────────────────────────────────────
+
+  // ── Leaving the Hotbar Pages editor (the guild lead, 2026-10-14: "clicking off the hotbar pages
+  // should ask if you want to cancel changes") ────────────────────────────────────────────────────
+  // While the editor holds unsaved changes, a press anywhere outside it (another panel, a layout
+  // rectangle, the toolbar) is held back and asked about; so is its ×. With nothing changed, nothing is
+  // asked. Keep editing leaves everything as it was; Discard puts every field back and closes it (the
+  // press itself is not replayed). A chip dragged out of the editor onto a rectangle is not a press
+  // outside — it starts inside — so routing from the layout still works.
+  var INSPECTOR_GUARD = null;   // set by openSocialsInspector while it is open: { isDirty, revert, close }
+  function _closeInspectorNow() {
+    var d = document.getElementById('socialsInspector');
+    if (d) d.remove();
+    INSPECTOR_GUARD = null;
+    document.body.classList.remove('inspecting');
+  }
+  function _askDiscardHotbar(onAnswer) {
+    if (document.getElementById('discardAsk')) return;
+    var m = document.createElement('div');
+    m.id = 'discardAsk';
+    m.innerHTML = '<div role="dialog" aria-modal="true" aria-labelledby="discardAskTitle" class="box">' +
+      '<h3 id="discardAskTitle">Discard changes to hotbar pages?</h3>' +
+      '<p>The editor has changes that are not saved yet. Discard puts everything back as it is in the ini and closes the editor; Keep editing takes you back to it.</p>' +
+      '<div class="btns"><button id="discardKeep" class="secondary">Keep editing</button><button id="discardGo">Discard</button></div></div>';
+    document.body.appendChild(m);
+    function end(ans) { document.removeEventListener('keydown', onKey, true); m.remove(); onAnswer(ans); }
+    function onKey(e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); end('keep'); } }
+    document.addEventListener('keydown', onKey, true);
+    document.getElementById('discardKeep').addEventListener('click', function(){ end('keep'); });
+    document.getElementById('discardGo').addEventListener('click', function(){ end('discard'); });
+    document.getElementById('discardKeep').focus();
+  }
+  function _inspectorTryLeave() {
+    var g = INSPECTOR_GUARD;
+    if (!g) return;
+    if (_hotbarLeaveAction(g) === 'leave') { g.close(); return; }
+    _askDiscardHotbar(function(ans){ _hotbarAnswer(g, ans); });
+  }
+  function _inspectorOutsidePress(e) {
+    var d = document.getElementById('socialsInspector');
+    if (!d || !INSPECTOR_GUARD) return;
+    var t = e.target;
+    if (!t || t.nodeType !== 1 || d.contains(t) || t.closest('#discardAsk')) return;
+    if (_hotbarLeaveAction(INSPECTOR_GUARD) === 'leave') return;   // nothing to lose: the press goes through
+    e.preventDefault(); e.stopPropagation();
+    if (e.type === 'mousedown') _inspectorTryLeave();
+  }
+  document.addEventListener('mousedown', _inspectorOutsidePress, true);
+  document.addEventListener('click', _inspectorOutsidePress, true);
+  // The canvas fits itself to the room it has: re-fit whenever the editor opens, closes or is resized.
+  if (window.ResizeObserver) new ResizeObserver(function(){ if (STATE.windows.length) renderStage(); }).observe(stageWrap);
+  // ── /Leaving the editor ───────────────────────────────────────────────────────────────────────
+
   function openSocialsInspector(res) {
     var files = (res && res.files) || [];
     var chat  = res && res.chat;
@@ -2363,10 +2674,14 @@
     if (!dlg) {
       dlg = document.createElement('div');
       dlg.id = 'socialsInspector';
-      dlg.style.cssText = 'position:fixed;top:50px;right:0;bottom:0;width:' + savedW + 'px;' +
-        'background:#161b22;border-left:1px solid #30363d;z-index:60;overflow-y:auto;' +
+      // DOCKED, not floating (the guild lead, 2026-10-14: "The UI should shrink to not sit over top of the
+      // hotbar pages"): the editor is a flex item of #content, so the layout canvas gives up its width
+      // instead of being covered, and #side hides while it is open (body.inspecting).
+      dlg.style.cssText = 'position:relative;flex:0 0 auto;min-width:0;box-sizing:border-box;width:' + savedW + 'px;max-width:70vw;' +
+        'background:#161b22;border-left:1px solid #30363d;overflow-y:auto;' +
         'padding:14px 14px 14px 22px;font-size:11px;color:#c9d1d9;font-family:ui-monospace,Menlo,Consolas,monospace';
-      document.body.appendChild(dlg);
+      document.getElementById('content').appendChild(dlg);
+      document.body.classList.add('inspecting');
       // Resize handle pinned to the left edge — drag to resize between 320px
       // and viewport-200px. cursor:ew-resize; persists to localStorage on
       // release. Persistent across opens since the dialog div is reused.
@@ -2399,7 +2714,7 @@
     }
     // Header bar — resize hint + Save button (enables when any input is dirty).
     var html = '<div style="position:relative">' +
-      '<button onclick="document.getElementById(\'socialsInspector\').remove()" ' +
+      '<button id="uiInspectorClose" title="Close the inspector (asks first if there are unsaved changes)" ' +
       'style="float:right;background:none;border:none;color:#8b949e;cursor:pointer;font-size:18px;line-height:1;padding:0 0 0 6px">×</button>' +
       '<button id="uiInspectorSave" disabled ' +
       'style="float:right;background:#21262d;border:1px solid #30363d;color:#6e7681;border-radius:4px;' +
@@ -2419,26 +2734,43 @@
     //   • Routed filter chips — draggable to other (non-tell) windows, X to remove
     // Tell windows (default_channel === 3) are NOT drop targets — those filters
     // route by sender, not by category.
-    if (chat && Array.isArray(chat.windows) && chat.windows.length) {
-      html += '<div id="chatRoutingBlock" data-file="' + escapeHtml(chat.file) + '" style="margin-bottom:14px"><div style="color:#7ee7c7;font-weight:600;margin-bottom:4px;font-family:sans-serif">' +
-        '💬 Chat windows & routing <span style="color:#8b949e;font-weight:400;font-size:10px">(' +
-        escapeHtml(chat.file) + ' · ' + chat.num_windows + ' windows)</span></div>' +
+    // The block is built from a MODEL of [ChatManager] + the chat windows' geometry blocks, not from the
+    // read-only `chat.windows`, so rename / font / add / delete re-draw it without touching the Hotbar
+    // Pages fields below (see "Chat window structure" above for the keys). CHAT_ORIG is the disk;
+    // CHAT_MODEL is the disk plus everything staged; Save sends their difference.
+    var CHAT_ORIG = (chat && chat.cm_props) ? { cm: chat.cm_props, geo: chat.geometry || {} } : null;
+    CHAT_ORIG = CHAT_ORIG ? _csClone(CHAT_ORIG) : null;
+    var CHAT_MODEL = CHAT_ORIG ? _csClone(CHAT_ORIG) : null;
+    // Chip names come from CHAT_CHANNEL_ROWS (top of this file, with its
+    // sources); /join names ride in on chat.autojoin when eqclient.ini had them.
+    var JOINED = Array.isArray(chat && chat.autojoin) ? chat.autojoin : null;
+    var _chatLog = [];          // what is staged, in words, for the unsaved hint
+    var _chatNoteMsg = '';      // the last refusal / explanation, shown under the block's title
+    var _chatStructural = false; // a window was added or deleted (layout rectangles changed too)
+    function _chatBlockHtml(){
+      var html = '';
+      var view = _chatView(CHAT_MODEL);
+      html += '<div id="chatRoutingBlock" data-file="' + escapeHtml(chat.file) + '" style="margin-bottom:14px"><div style="display:flex;align-items:center;gap:8px;color:#7ee7c7;font-weight:600;margin-bottom:4px;font-family:sans-serif">' +
+        '<span>💬 Chat windows & routing <span style="color:#8b949e;font-weight:400;font-size:10px">(' +
+        escapeHtml(chat.file) + ' · ' + view.num + ' windows)</span></span>' +
+        '<button id="chatAddBtn" title="Add a chat window: it starts empty, with Main Chat\'s font and settings, ready for channel chips"' +
+        (view.num >= CHAT_WINDOWS_MAX ? ' disabled' : '') +
+        ' style="margin-left:auto;background:#1f6feb;border:1px solid #1f6feb;color:#fff;border-radius:4px;padding:2px 9px;font-size:10px;cursor:pointer;font-family:sans-serif">+ New chat window</button></div>' +
         '<p style="color:#8b949e;font-size:10px;margin:0 0 6px;font-family:sans-serif">' +
         'Drag a channel chip from one window to another to reroute. Click <b>★</b> on a window ' +
-        'to make it the <b>Always chat here</b> target (highlights + bolds). Tell windows are ' +
-        'not drop targets — those route per sender.</p>';
-      // Chip names come from CHAT_CHANNEL_ROWS (top of this file, with its
-      // sources); /join names ride in on chat.autojoin when eqclient.ini had them.
-      var JOINED = Array.isArray(chat.autojoin) ? chat.autojoin : null;
-      // ALWAYS_HERE flag — one window at a time. Initial value comes from
-      // chat.always_here_idx when the backend captured it; otherwise null. The
+        'to make it the <b>Always chat here</b> target (highlights + bolds). <b>✎</b> renames, <b>🗑</b> deletes ' +
+        '(its channels move to Main Chat). Tell windows are ' +
+        'not drop targets — those route per sender.</p>' +
+        '<div id="chatNote" style="color:#f6c365;font-size:10px;font-family:sans-serif;margin:0 0 6px;' + (_chatNoteMsg ? '' : 'display:none') + '">' + escapeHtml(_chatNoteMsg) + '</div>' +
+        '<div id="chatDirtyHint" style="color:#79c0ff;font-size:10px;font-family:sans-serif;margin:0 0 6px;display:none"></div>';
+      // ALWAYS_HERE flag — one window at a time (the model's ChatWindow<N>_AlwaysHere=1). The
       // ★ button toggles + saves it via the same writePages path.
-      var alwaysIdx = (chat && chat.always_here_idx != null) ? parseInt(chat.always_here_idx, 10) : null;
+      var alwaysIdx = view.alwaysIdx;
       html += '<div data-always-idx="' + (alwaysIdx == null ? '' : alwaysIdx) + '" style="display:flex;flex-direction:column;gap:8px">';
-      for (var ci = 0; ci < chat.windows.length; ci++) {
-        var cwn = chat.windows[ci];
-        var routed = (chat.routed_filters && chat.routed_filters[cwn.index]) || [];
-        var isTell = cwn.default_channel === 3;
+      for (var ci = 0; ci < view.windows.length; ci++) {
+        var cwn = view.windows[ci];
+        var routed = view.routed[cwn.index] || [];
+        var isTell = cwn.isTell;
         var isAlways = alwaysIdx === cwn.index;
         var headerStyle = isAlways
           ? 'color:#f6c365;font-weight:700;letter-spacing:0.5px'
@@ -2447,20 +2779,30 @@
         var cardBg     = isAlways ? 'rgba(240,180,41,0.06)' : '#0d1117';
         html += '<div class="chatCard" data-win="' + cwn.index + '" data-is-tell="' + (isTell?'1':'0') + '"' +
           ' style="background:' + cardBg + ';border:1px solid ' + cardBorder + ';border-radius:5px;padding:6px 8px">';
-        // Header — name (Chat #) + default channel + ★
-        html += '<div style="display:flex;align-items:center;gap:8px">' +
+        // Header — name (Chat #) + ✎ + default channel + font + ★ + 🗑
+        var delWhy = cwn.index === 0 ? 'Main Chat (0) cannot be deleted' : (isTell ? 'Tell windows cannot be deleted here' : '');
+        html += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
           '<span class="chatTitle" data-win="' + cwn.index + '" title="Select this window in the layout" style="' + headerStyle + ';font-family:sans-serif;font-size:12px;cursor:pointer">' +
             (isAlways ? '⭐ ' : '') + escapeHtml(cwn.name || '(unnamed)') +
             ' <span style="color:#8b949e;font-weight:400;font-size:10px">(Chat ' + cwn.index + ')</span>' +
           '</span>' +
+          '<button class="chatRenameBtn" data-win="' + cwn.index + '" title="Rename this chat window (up to ' + CHAT_NAME_MAX + ' characters)" ' +
+            'style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:12px;line-height:1;padding:0 2px">✎</button>' +
           '<span style="color:#8b949e;font-size:10px;font-family:sans-serif">default:</span>' +
           '<span title="' + escapeHtml(_defaultChannelInfo(cwn.default_channel).title) + '" style="background:#161b22;border:1px solid #30363d;border-radius:3px;padding:1px 6px;font-size:10px;color:#79c0ff">' +
             escapeHtml(_defaultChannelInfo(cwn.default_channel).text) + '</span>' +
+          '<label title="Chat font style: an index 0 to ' + CHAT_FONT_MAX + ' (ChatWindow' + cwn.index + '_FontStyle). The point size each index draws at is not confirmed, so this shows the index." ' +
+            'style="display:inline-flex;align-items:center;gap:3px;color:#8b949e;font-size:10px;font-family:sans-serif">font ' +
+            '<select class="chatFontSel" data-win="' + cwn.index + '" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:3px;font-size:10px;padding:0 2px">' +
+              _chatFontOptions(cwn.font) + '</select></label>' +
           (isTell
             ? '<span style="margin-left:auto;color:#8b949e;font-size:9px;font-family:sans-serif">tell window · not a drop target</span>'
             : '<button class="alwaysHereBtn" data-win="' + cwn.index + '" title="Always chat here — outgoing chat goes to this window" ' +
               'style="margin-left:auto;background:none;border:1px solid ' + (isAlways ? '#f0b429' : '#30363d') + ';color:' + (isAlways ? '#f6c365' : '#8b949e') + ';' +
               'cursor:pointer;font-size:13px;line-height:1;padding:2px 8px;border-radius:3px">★</button>') +
+          '<button class="chatDeleteBtn" data-win="' + cwn.index + '" title="' + (delWhy ? escapeHtml(delWhy) : 'Delete this chat window: its channels move to Main Chat (0) and later windows renumber') + '"' +
+            (delWhy ? ' disabled' : '') +
+            ' style="background:none;border:1px solid #30363d;color:' + (delWhy ? '#484f58' : '#f87171') + ';cursor:' + (delWhy ? 'not-allowed' : 'pointer') + ';font-size:12px;line-height:1;padding:2px 6px;border-radius:3px">🗑</button>' +
           '</div>';
         // Channel chips row
         html += '<div class="chatChipRow" data-win="' + cwn.index + '" data-drop="' + (isTell?'0':'1') + '" ' +
@@ -2482,6 +2824,10 @@
         html += '</div></div>';
       }
       html += '</div></div>';
+      return html;
+    }
+    if (CHAT_MODEL && _chatView(CHAT_MODEL).windows.length) {
+      html += '<div id="chatHost">' + _chatBlockHtml() + '</div>';
     }
 
     // ── Tell windows (Zeal) ───────────────────────────────────────────────
@@ -2731,12 +3077,18 @@
       if (input.dataset.wasSet === '0' && cur === '') return false;
       return cur !== orig;
     }
-    function refreshSaveBtn(){
-      var anyDirty = false;
+    // Anything unsaved: an edited field, a staged chat change (routing, ★, rename, font, add, delete),
+    // or a queued macro. The Save button AND the leave-the-editor question both read this one answer.
+    function _anyDirty(){
       var inputs = dlg.querySelectorAll('.uiEdit');
-      for (var i = 0; i < inputs.length; i++) if (isDirty(inputs[i])) { anyDirty = true; break; }
-      if (!anyDirty && typeof _chatEdits !== 'undefined' && _chatEdits.size > 0) anyDirty = true;
-      if (!anyDirty && typeof _sugStaged !== 'undefined' && _sugStaged.size > 0) anyDirty = true;
+      for (var i = 0; i < inputs.length; i++) if (isDirty(inputs[i])) return true;
+      if (typeof _chatEdits !== 'undefined' && _chatEdits.size > 0) return true;
+      if (typeof _sugStaged !== 'undefined' && _sugStaged.size > 0) return true;
+      return false;
+    }
+    function refreshSaveBtn(){
+      var anyDirty = _anyDirty();
+      _renderChatDirtyHint();
       if (anyDirty) {
         saveBtn.disabled = false;
         saveBtn.style.background = '#1f6feb';
@@ -2756,6 +3108,30 @@
       inputs[i].addEventListener('input', refreshSaveBtn);
     }
 
+    // After a successful Save: the fields' baseline becomes what they now hold, and the chat model's
+    // baseline becomes the model, so _anyDirty() is false until the next change.
+    function _hbMarkSaved(){
+      var ins = dlg.querySelectorAll('.uiEdit');
+      for (var mi = 0; mi < ins.length; mi++) ins[mi].setAttribute('data-orig', ins[mi].value);
+      _chatEdits.clear(); _chatLog = []; _chatLayoutSnap = null;
+      if (CHAT_MODEL) CHAT_ORIG = _csClone(CHAT_MODEL);
+      _sugStaged.clear();
+    }
+
+    // Leaving this editor with unsaved changes asks first (see "Leaving the Hotbar Pages editor").
+    INSPECTOR_GUARD = {
+      isDirty: _anyDirty,
+      revert: function(){
+        _hotbarRevertInputs(dlg.querySelectorAll('.uiEdit'));
+        _chatEdits.clear();
+        if (CHAT_ORIG) CHAT_MODEL = _csClone(CHAT_ORIG);
+        _sugStaged.clear();
+        _restoreChatLayout();
+      },
+      close: _closeInspectorNow,
+    };
+    document.getElementById('uiInspectorClose').addEventListener('click', _inspectorTryLeave);
+
     // ── Chat routing interactions ────────────────────────────────────────────
     // Drag a chip from one window's chip-row to another's. Drop replaces that
     // chip's window assignment (writes a new ChannelMap<filter>=<win> on save).
@@ -2770,16 +3146,186 @@
     var _chatEdits = new Map();   // key → value (latest write wins per key)
     var chatBlock = document.getElementById('chatRoutingBlock');
     function _chatFile(){ return chatBlock ? chatBlock.dataset.file : null; }
+    // _chatEdits is ALWAYS the difference between the disk and the model, so a chip moved and moved
+    // back stages nothing, and a delete's renumbering is staged together with the routing before it.
+    function _chatRebuildEdits(){
+      _chatEdits.clear();
+      if (!CHAT_ORIG || !CHAT_MODEL) return;
+      var ds = _chatModelDiff(CHAT_ORIG, CHAT_MODEL);
+      for (var di = 0; di < ds.length; di++) _chatEdits.set('Sec\x01' + ds[di].section + '\x01' + ds[di].key, ds[di]);
+    }
     function _stageChatEdit(key, value){
       if (!_chatFile()) return;
-      _chatEdits.set(key, value);
+      _csApplyEdit(CHAT_MODEL, value);
+      _chatRebuildEdits();
       refreshSaveBtn();
     }
+    // The unsaved line under the block's title: what is waiting for Save, in words.
     function _renderChatDirtyHint(){
-      // No-op for now — refreshSaveBtn already enables the Save button.
-      // Future: visually mark windows whose routing changed.
+      var el = document.getElementById('chatDirtyHint');
+      if (!el) return;
+      if (!_chatEdits.size) { el.style.display = 'none'; el.textContent = ''; return; }
+      el.style.display = '';
+      el.textContent = '● Unsaved chat changes (' + _chatEdits.size + ' setting' + (_chatEdits.size === 1 ? '' : 's') + ' to write on Save changes)' +
+        (_chatLog.length ? ': ' + _chatLog.join('; ') : '');
     }
-    if (chatBlock) {
+    function _chatNote(msg){
+      _chatNoteMsg = msg || '';
+      var el = document.getElementById('chatNote');
+      if (el) { el.textContent = _chatNoteMsg; el.style.display = _chatNoteMsg ? '' : 'none'; }
+    }
+    // ── Structural chat edits (rename / font / add / delete) ───────────────────
+    // The layout rectangles follow the model: a new window gets one, a deleted one loses its, later
+    // ones take their new number. The first time, the rectangle list is kept so Discard can put it back.
+    var _chatLayoutSnap = null;
+    function _snapChatLayout(){
+      if (_chatLayoutSnap) return;
+      _chatLayoutSnap = STATE.windows.map(function(w){
+        return { w: w, section: w.section, label: w.label, chatMeta: w.chatMeta ? JSON.parse(JSON.stringify(w.chatMeta)) : w.chatMeta };
+      });
+    }
+    function _restoreChatLayout(){
+      if (!_chatLayoutSnap) return;
+      STATE.windows = _chatLayoutSnap.map(function(s){ s.w.section = s.section; s.w.label = s.label; s.w.chatMeta = s.chatMeta; return s.w; });
+      _chatLayoutSnap = null;
+      STATE.selected = -1;
+      renderStage();
+    }
+    function _chatRectFor(sectionName){
+      for (var i = 0; i < STATE.windows.length; i++) if (STATE.windows[i].kind === 'chat' && STATE.windows[i].section === sectionName) return i;
+      return -1;
+    }
+    function _chatMetaFor(idx){
+      var v = _chatView(CHAT_MODEL), out = { index: idx };
+      for (var i = 0; i < v.windows.length; i++) if (v.windows[i].index === idx) { out.name = v.windows[i].name; out.defaultChannel = v.windows[i].default_channel; }
+      return out;
+    }
+    function _chatAfterChange(logLine){
+      if (logLine) _chatLog.push(logLine);
+      _chatRebuildEdits();
+      var host = document.getElementById('chatHost');
+      if (host) { host.innerHTML = _chatBlockHtml(); _wireChat(); }
+      refreshSaveBtn();
+    }
+    function _chatRename(idx, raw){
+      var r = _chatRenameModel(CHAT_MODEL, idx, raw);
+      if (!r.ok) { _chatNote(r.error); _chatAfterChange(); return; }
+      CHAT_MODEL = r.model; _chatNote('');
+      for (var i = 0; i < STATE.windows.length; i++) {
+        var w = STATE.windows[i];
+        if (w.kind === 'chat' && w.chatMeta && w.chatMeta.index === idx && w.file === _chatFile()) w.chatMeta.name = r.name;
+      }
+      renderStage();
+      _chatAfterChange('renamed Chat ' + idx + ' to "' + r.name + '"');
+    }
+    function _chatFont(idx, n){
+      var r = _chatSetFont(CHAT_MODEL, idx, n);
+      if (!r.ok) { _chatNote(r.error); return; }
+      CHAT_MODEL = r.model; _chatNote('');
+      _chatRebuildEdits();
+      _chatLog = _chatLog.filter(function(t){ return t.indexOf('Chat ' + idx + ' font') !== 0; });
+      _chatLog.push('Chat ' + idx + ' font ' + n);
+      refreshSaveBtn();
+    }
+    function _chatLayoutDirty(){
+      for (var i = 0; i < STATE.windows.length; i++) if (_windowChanged(STATE.windows[i])) return true;
+      return false;
+    }
+    function _chatAdd(){
+      var r = _chatAddWindow(CHAT_MODEL, '');
+      if (!r.ok) { _chatNote(r.error); _chatAfterChange(); return; }
+      _snapChatLayout();
+      CHAT_MODEL = r.model;
+      _chatStructural = true;
+      var note ='Added "' + r.name + '" as Chat ' + r.index + ' with Main Chat\'s font and settings.';
+      if (r.section) {
+        // Its rectangle: Chat 0's spot, nudged, the newest sibling's size.
+        var main = -1, sib = -1;
+        for (var i = 0; i < STATE.windows.length; i++) {
+          var w = STATE.windows[i];
+          if (w.kind !== 'chat' || !w.chatMeta || w.file !== _chatFile()) continue;
+          if (w.chatMeta.index === 0) main = i;
+          if (w.chatMeta.index >= 1 && (sib < 0 || w.chatMeta.index > STATE.windows[sib].chatMeta.index)) sib = i;
+        }
+        var base = STATE.windows[main >= 0 ? main : (sib >= 0 ? sib : 0)];
+        var sz = STATE.windows[sib >= 0 ? sib : (main >= 0 ? main : 0)];
+        if (base && sz) {
+          var nx = Math.min(base.x + CHAT_POS_OFFSET, Math.max(0, STATE.tgtW - sz.w)), ny = Math.min(base.y + CHAT_POS_OFFSET, Math.max(0, STATE.tgtH - sz.h));
+          STATE.windows.push({
+            id: 'wchat' + r.index, file: _chatFile(), section: r.section, label: '💬 ' + r.section, kind: 'chat', category: 'chat',
+            contents: [], props: r.geo, hasWH: true, chatMeta: _chatMetaFor(r.index), xmlMax: null,
+            srcSuffix: sz.srcSuffix, x: nx, y: ny, w: sz.w, h: sz.h, origX: nx, origY: ny, origW: sz.w, origH: sz.h,
+          });
+          renderStage();
+        }
+      } else {
+        note += ' Its position is not written: this ini has no numbered chat window to copy a position block from, so place it in game.';
+      }
+      _chatNote(note);
+      _chatAfterChange('added Chat ' + r.index + ' "' + r.name + '"');
+      var t = document.querySelector('.chatRenameBtn[data-win="' + r.index + '"]');
+      if (t) t.click();
+    }
+    function _chatDelete(idx){
+      var r = _chatDeleteWindow(CHAT_MODEL, idx);
+      if (!r.ok) { _chatNote(r.error); _chatAfterChange(); return; }
+      if (_chatLayoutDirty()) { _chatNote('You have unsaved window moves in the layout. Save or Reset them first: deleting a chat window renumbers the ones after it, and the moves would land on the wrong window.'); _chatAfterChange(); return; }
+      var v = _chatView(CHAT_MODEL), nm = '';
+      for (var i = 0; i < v.windows.length; i++) if (v.windows[i].index === idx) nm = v.windows[i].name || ('Chat ' + idx);
+      var movedNames = r.moved.map(function(id){ return _chatChannelInfo(id, JOINED).text; });
+      if (!window.confirm(_chatDeleteConfirmText(nm, idx, movedNames, r.renumbered))) return;
+      _snapChatLayout();
+      CHAT_MODEL = r.model;
+      _chatStructural = true;
+      STATE.selected = -1;
+      var gone = r.removedSection != null ? _chatRectFor(r.removedSection) : -1;
+      var byOld = {};
+      for (var k = 0; k < r.renamedSections.length; k++) byOld[r.renamedSections[k][0]] = r.renamedSections[k][1];
+      var keep = [];
+      for (var j = 0; j < STATE.windows.length; j++) {
+        var w = STATE.windows[j];
+        if (j === gone) continue;
+        if (w.kind === 'chat' && w.chatMeta && w.chatMeta.index != null && w.chatMeta.index > idx && byOld[w.section] != null) {
+          w.section = byOld[w.section];
+          w.chatMeta = _chatMetaFor(w.chatMeta.index - 1);
+          w.label = '💬 ' + w.section;   // the rectangle's own title tracks its section name
+        }
+        keep.push(w);
+      }
+      STATE.windows = keep;
+      renderStage();
+      _chatNote('Deleted "' + nm + '". ' + (r.moved.length ? r.moved.length + ' channel' + (r.moved.length === 1 ? '' : 's') + ' now route to Main Chat (0). ' : '') +
+        (r.mode === 'renumber' ? 'Later chat windows moved down one number.' : ''));
+      _chatAfterChange('deleted Chat ' + idx + ' "' + nm + '"');
+    }
+    // Rename in place: the title becomes a field. Enter or leaving it keeps the name, Esc puts it back.
+    function _chatStartRename(idx){
+      var title = chatBlock && chatBlock.querySelector('.chatTitle[data-win="' + idx + '"]');
+      if (!title) return;
+      var cur = _csGet(CHAT_MODEL.cm, 'ChatWindow' + idx + '_Name') || '';
+      title.innerHTML = '<input class="chatRenameIn" maxlength="' + CHAT_NAME_MAX + '" value="' + escapeHtml(String(cur).replace(/^\s+|\s+$/g, '')) + '" ' +
+        'style="width:150px;background:#0d1117;color:#f6c365;border:1px solid #58a6ff;border-radius:3px;padding:1px 4px;font-size:12px;font-family:sans-serif">';
+      var inp = title.querySelector('input'), done = false;
+      inp.addEventListener('click', function(e){ e.stopPropagation(); });
+      inp.addEventListener('keydown', function(e){
+        e.stopPropagation();
+        if (e.key === 'Enter') { done = true; _chatRename(idx, inp.value); }
+        else if (e.key === 'Escape') { done = true; _chatAfterChange(); }
+      });
+      inp.addEventListener('blur', function(){ if (!done) { done = true; _chatRename(idx, inp.value); } });
+      inp.focus(); inp.select();
+    }
+    function _wireChat(){
+      chatBlock = document.getElementById('chatRoutingBlock');
+      if (!chatBlock) return;
+      var addBtn = document.getElementById('chatAddBtn');
+      if (addBtn) addBtn.addEventListener('click', _chatAdd);
+      var rn = chatBlock.querySelectorAll('.chatRenameBtn');
+      for (var rni = 0; rni < rn.length; rni++) rn[rni].addEventListener('click', function(e){ e.stopPropagation(); _chatStartRename(parseInt(this.getAttribute('data-win'), 10)); });
+      var dl = chatBlock.querySelectorAll('.chatDeleteBtn');
+      for (var dli = 0; dli < dl.length; dli++) dl[dli].addEventListener('click', function(e){ e.stopPropagation(); if (!this.disabled) _chatDelete(parseInt(this.getAttribute('data-win'), 10)); });
+      var fs_ = chatBlock.querySelectorAll('.chatFontSel');
+      for (var fsi = 0; fsi < fs_.length; fsi++) fs_[fsi].addEventListener('change', function(){ if (this.value !== '') _chatFont(parseInt(this.getAttribute('data-win'), 10), parseInt(this.value, 10)); });
       // Drag-drop wiring. We bind on the chip and the row (drop target) — no
       // delegation so newly-added chips don't accidentally get duplicate
       // listeners. The dialog re-renders on save, which rebuilds everything.
@@ -2907,6 +3453,7 @@
         });
       }
     }
+    _wireChat();
 
     // ── Macro-suggestion staging ─────────────────────────────────────────
     // 'P|B' → { name, page, btn, edits: [{file,section,key,value}] }. Folded
@@ -3029,9 +3576,17 @@
         setStatus(edits.length + ' edit' + (edits.length === 1 ? '' : 's') + ' saved · ' +
           (res.written || []).map(function(w){ return w.file; }).join(', '), 'ok');
         saveBtn.textContent = 'Saved ✓';
+        // What is on disk now is what the editor shows: nothing is unsaved any more, so reopening
+        // (and clicking elsewhere) must not ask about it.
+        _hbMarkSaved();
+        // A window added or deleted changed which section is which chat window, so the layout is re-read
+        // from the files; otherwise its rectangles would still be the old numbering.
+        var reload = _chatStructural && !STATE.fromCloud;
+        _chatStructural = false;
         // Re-open the inspector to refresh data-orig from disk so further
         // edits diff against the new baseline.
-        setTimeout(function(){
+        setTimeout(async function(){
+          try { if (reload) await loadAndRescale(); } catch (e) {}
           try { document.getElementById('inspectSocialsBtn').click(); } catch (e) {}
         }, 600);
       } catch (err) {
