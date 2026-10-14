@@ -449,7 +449,7 @@ describe('chat.html: search, history and rows', () => {
     var _channels = ${JSON.stringify(agent.CHAT_CHANNELS)};
     var _groups = ${JSON.stringify(agent.CHAT_GROUPS)};
     var _prefs = { fontSize: 12, group: false, officer: false, custom: false, tells: false, off: [], offChannels: [], only: '' }, _chanNames = {};
-    var _only = ${JSON.stringify(st.only || [])}, _out = [], _isBrk = _only.length > 0;
+    var _only = ${JSON.stringify(st.only || [])}, _out = [], _isBrk = _only.length > 0, _brkOff = [];
     var _copiedN = 0, _find = '', _findQ = '', _histHours = ${st.hours || 0}, _histInfo = ${JSON.stringify(st.info || null)}, _histLines = [], _lines = [], _lastOn = null;
     var feedEl = { innerHTML: '' };
     function pinned(){ return false; } function toBottom(){} function paintEmpty(){}
@@ -652,7 +652,7 @@ describe('chat.html: search, history and rows', () => {
       expect(code).toMatch(/try \{ var _hv = Number\(localStorage\.getItem\(histKey\(\)\)\)/);
       expect(code).toMatch(/try \{ localStorage\.setItem\(histKey\(\), String\(_histHours\)\); \} catch \(e\) \{\}/);
       expect(code).toMatch(/if \(!_connectedOnce\) \{ _connectedOnce = true; if \(_histHours\) loadHistory\(\); \}/);
-      expect(code).toContain("'wpChatHistH:' + (_isBrk ? _only.join(',') : 'main')");
+      expect(code).toContain("'wpChatHistH:' + winId()");   // per window id (b1...), so it survives groups moving in and out
     });
     it('a newer pick wins over a slower earlier one', () => {
       expect(code).toContain('var mine = ++_histSeq;');
