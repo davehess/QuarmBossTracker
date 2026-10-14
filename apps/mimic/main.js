@@ -6136,6 +6136,15 @@ function _setStayOnTop(key, on) {
   try { pushStatus(); } catch (e) { void e; }
   return !!on;
 }
+// The watcher prints 0 when GetForegroundWindow() is NULL - Windows returns that for a moment while one window loses
+// activation and the next has not taken it, i.e. exactly while you switch between two apps. That is "no answer yet",
+// not "a window we cannot judge" (which _focusClassify rightly treats as focused): taken as focused it raised every
+// overlay over the app being switched to, and the real pid a moment later dropped them again - a pointless pair of
+// flips (with the hide option on, every overlay hidden, shown, hidden). Keep judging by the last real pid.
+function _focusFgSample(prevPid, line) {
+  const pid = Number(line);
+  return pid > 0 ? pid : prevPid;
+}
 function _focusOwnPids() {
   const s = new Set([process.pid]);
   try { for (const m of app.getAppMetrics()) s.add(m.pid); } catch (e) { void e; }
@@ -6154,8 +6163,11 @@ const _focusScript = (parentPid) => [
   'Add-Type -TypeDefinition \'using System;using System.Runtime.InteropServices;public static class WpFg{[DllImport("user32.dll")]public static extern IntPtr GetForegroundWindow();[DllImport("user32.dll")]public static extern uint GetWindowThreadProcessId(IntPtr h,out uint p);}\'',
   '[Console]::Out.AutoFlush=$true',
   '$last=[int64]-1;$n=0',
-  `while($true){$p=[uint32]0;$h=[WpFg]::GetForegroundWindow();if($h -ne [IntPtr]::Zero){[void][WpFg]::GetWindowThreadProcessId($h,[ref]$p)};if([int64]$p -ne $last){$last=[int64]$p;[Console]::WriteLine($p)};$n++;if($n % 10 -eq 0 -and -not (Get-Process -Id ${Number(parentPid) || 0} -ErrorAction SilentlyContinue)){break};Start-Sleep -Milliseconds 400}`,
+  `while($true){$p=[uint32]0;$h=[WpFg]::GetForegroundWindow();if($h -ne [IntPtr]::Zero){[void][WpFg]::GetWindowThreadProcessId($h,[ref]$p)};if([int64]$p -ne $last){$last=[int64]$p;[Console]::WriteLine($p)};$n++;if($n % 33 -eq 0 -and -not (Get-Process -Id ${Number(parentPid) || 0} -ErrorAction SilentlyContinue)){break};Start-Sleep -Milliseconds 120}`,
 ].join(';');
+// 120 ms, not 400 (the guild lead, 2026-10-14: overlays flicker when switching apps): clicking back into EverQuest puts
+// it over the dropped overlays at once, and they stay under it until the next sample. Two user32 calls a sample; the
+// parent-alive check still runs about every 4 s (33 x 120 ms).
 function _focusFailOpen(why) {
   if (!_focusFailLogged) { _focusFailLogged = true; appendAgentLog(`[focus] ${why} — treating Mimic as focused (the gate fails open)\n`); }
   _focusFgPid = 0;
@@ -6176,7 +6188,7 @@ function _startFocusWatcher() {
       while ((nl = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
         if (!/^\d+$/.test(line)) continue;
-        _focusFgPid = Number(line);
+        _focusFgPid = _focusFgSample(_focusFgPid, line);
         try { _focusReevaluate(); } catch (e) { void e; }
       }
     });
