@@ -46887,6 +46887,24 @@ function _mapCcStates(now) {
   const end = (r) => Math.max((r.mez && r.mez.until) || 0, (r.calm && r.calm.until) || 0);
   return [...rows.values()].sort((a, b) => end(b) - end(a)).slice(0, MAP_CC_MAX);
 }
+// The mob the raid is on, for the Map's highlight (the guild lead, 2026-10-14: "highlight the MA's target or which target
+// has the most people targetting them"). Nothing new is worked out here: it reads the Extended Target aggregate the
+// agent already keeps (_extTargetCache), so the Map marks exactly the mob Extended Target puts on top. The main assist's
+// target when the bot marked one (`ma_target`, from a raid-chat declaration), else _resolveMainTarget's answer (the NPC
+// the most raiders are on) when at least two are. → { name, id, why: 'ma' | 'most', n } or null. No position: the cache
+// has none, so the Map places it only where it already knows (your own target, a pinned spawn point; see the payload).
+function _mapFocusTarget(character) {
+  if (typeof _extTargetCache === 'undefined' || typeof _resolveMainTarget !== 'function') return null;
+  try {
+    const mt = _resolveMainTarget(character);   // also primes the cache for the next poll
+    const c = _extTargetCache.get(String(character || '').trim().toLowerCase());
+    const rows = c && c.payload && Array.isArray(c.payload.targets) ? c.payload.targets : [];
+    const ma = rows.find(t => t && t.ma_target && t.kind === 'npc' && !t.stale);
+    if (ma) return { name: String(ma.name), id: Number(ma.spawn_id) > 0 ? Number(ma.spawn_id) : null, why: 'ma', n: ma.raider_count || 0 };
+    if (mt && mt.raider_count >= 2) return { name: String(mt.name), id: null, why: 'most', n: mt.raider_count };
+  } catch { void 0; }
+  return null;
+}
 function _mapStatePayload(have, now, haveLocal) {
   const character = _mapActiveCharacter(now);
   const st = character ? _zealState[character] : null;
@@ -46944,6 +46962,13 @@ function _mapStatePayload(have, now, haveLocal) {
     const pin = zone ? _mapPinGet(zone, out.target.id, st.target_name) : null;
     if (pin) out.target.point_id = pin.point_id;
   }
+  // The raid's focus mob (_mapFocusTarget), placed only where we truly know it: your own target when it is that mob.
+  out.focus = _mapFocusTarget(character);
+  if (out.focus && out.target && out.target.x != null && (out.target.type == null || out.target.type === 1)
+      && _mapNormName(out.target.name) === _mapNormName(out.focus.name)
+      && (out.focus.id == null || out.target.id == null || out.focus.id === out.target.id)) {
+    Object.assign(out.focus, { x: out.target.x, y: out.target.y, z: out.target.z, at: 'target' });
+  }
   if (!zone) { out.status = 'no-zone'; return out; }
   // Tracked NPCs' walks (MAP_TRACKED_PATHS), recorded off any target window: { <name>: { name, at, live, pts } }, pts
   // [x, y, z, t, brk]. Before the spawn data: the trail draws even in a zone we hold no points for.
@@ -46979,6 +47004,11 @@ function _mapStatePayload(have, now, haveLocal) {
     .filter(s => s && now - s.at <= MAP_SEEN_KEEP_MS && !(zd.timers[String(s.point_id)] && zd.timers[String(s.point_id)].died_at >= s.at))
     .map(s => ({ point_id: s.point_id, spawn_id: s.spawn_id == null ? null : s.spawn_id, name: s.name, at: s.at, by: s.by || null }))
     .sort((a, b) => b.at - a.at);
+  // Not your target: the spawn point a pinned mob of that name was seen alive on (an unpulled mob stands there).
+  if (out.focus && out.focus.x == null) {
+    const hit = out.seen.find(s => _mapNormName(s.name) === _mapNormName(out.focus.name) && (out.focus.id == null || s.spawn_id == null || s.spawn_id === out.focus.id));
+    if (hit) { out.focus.point_id = hit.point_id; out.focus.at = 'point'; }
+  }
   // Learned wander legs per route: { <grid>: [[a, b, times seen, a→b, b→a], ...] } with a < b (_mapNoteLeg).
   out.legs = {};
   for (const [gid, ls] of Object.entries(zd.legs)) out.legs[gid] = Object.entries(ls).map(([k, v]) => { const [a, b] = k.split('-').map(Number); return [a, b, v.n, v.f || 0, v.r || 0]; });

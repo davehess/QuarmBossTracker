@@ -40,6 +40,7 @@ own screenshots; treat each row as "shipped, needs an in-game look" until it is 
 ### Aggro and faction
 | Ask | What shipped | Where |
 |---|---|---|
+| *"highlight the MA's target or which target has the most people targetting them"* (2026-10-14) | The Map marks the raid's focus mob with a magenta double ring and a tag saying why: "MA" (the target of the main assist a raid-chat declaration named) or "N targeting" (the NPC the most raiders are on, at least two). It is Extended Target's own answer (`ma_target`, else `_resolveMainTarget`), read from the agent's cache, nothing recomputed; ⚙ → Raid focus target switches it off. **Placement is the limit:** the aggregate carries names and counts, no positions, so the ring is drawn only on your own target when it is that mob, or on the spawn point a pinned mob of that name was seen alive on; otherwise nothing is drawn (no invented position). Needs Extended Target's feed, so it is absent in local mode | agent 3.7.164 beta, Mimic beta |
 | Aggro rings with a toolbar button | ◯ draws each spawn's aggro radius | §255 |
 | *"Green if it's not aggro to anyone, yellow if it could be KOS to some but is not to the player. Then a dashed line for social aggro distance"* | Ring colour by faction + your race/class/deity + your con; dashed assist ring; your target carries its own rings | §257 |
 | Plane of Tranquility green; Plane of Valor red in a non-player illusion | Faction maths per primary faction, illusion handling | §261 |
@@ -102,6 +103,8 @@ own screenshots; treat each row as "shipped, needs an in-game look" until it is 
 | 12 | **Timers pop-out**: *"Right clicking on the timers clickout should allow you to pop it out and drag it around"* | **Shipped** with #1 | — |
 | 13 | *"We can afford to show the character's name"* (HUD box) | **Shipped** (Mimic `97fd2722`): the name is never cut; level/class give way | — |
 | 14 | **Tracked NPC paths shared across raiders** (Thelin, 2026-10-14) | Local first: only targets on this machine feed the trail | A bot route: the agent POSTs `{ zone, name, pts }` batches (new points only, ~1 per 3 s while watched) to e.g. `/api/agent/npc-path`, the bot keeps the last run's points per zone+name (a `bot_kv` row, not `state.json`) and serves them back on the Map poll's pull so every raider's Map draws the union. Storage is a few KB per NPC per night. Needs the guild lead's yes (bot change on `main` after the raid window) |
+
+| 15 | **Focus mob placed when it is not your target** (2026-10-14) | Today only your own target or a pinned spawn point places the MA / most-targeted ring | The bot's Extended Target rows would need a position per mob: agents already hold `target_loc` for their own target, so each Mimic would upload `{ name, spawn_id, loc }` with its live state (a bot change on `main` after the raid window), and the aggregate would carry the median. The same upload would give open #14 its cross-raider path source |
 
 ## 4. Gate and leash, from Quarm's server source (researched 2026-10-13)
 

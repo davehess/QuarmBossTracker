@@ -28,11 +28,13 @@ const EXPORTS = ['_mapServerXY', '_mapZoneShort', '_mapNormName', '_mapAttribute
   '_mapZoneDoc', '_mapPrune', '_mapEnsureZone', '_mapPaths', '_zealState', '_setRaid', '_setOpts', 'MAP_ZONE_SHORT',
   '_mapTryPin', '_mapPinGet', '_mapSync', '_mapSyncStop', '_mapSyncFlush', '_mapSyncPull', '_mapApplyRemote', '_mapLocalEvent',
   '_mapSegDist', '_mapRouteDist', '_mapCopy', '_mapCopyNoteWho', '_mapCurrentCopy', '_mapCopyInfo', 'whoData',
-  '_mapNoteCon', '_mapConsFor', '_mapMe', '_mapQuarmyIds', '_mapNoteLeg', '_mapNotePath', '_mapCcStates', '_buffLandingsByTarget', '_spellByNameLower'];
+  '_mapNoteCon', '_mapConsFor', '_mapMe', '_mapQuarmyIds', '_mapNoteLeg', '_mapNotePath', '_mapFocusTarget', '_extTargetCache', '_mapCcStates', '_buffLandingsByTarget', '_spellByNameLower'];
 // The agent's real /consider tiers, for _mapNoteCon (they live outside the map core).
 const CON_DEFS = AGENT.slice(AGENT.indexOf('const CON_STANDINGS = ['), AGENT.indexOf('\n', AGENT.indexOf('const _CON_RX = ')));
 // The agent's real lull line and mez test, for _mapCcStates (also outside the map core).
 const LULL_DEFS = sliceBlock(AGENT, '// ── Pacify / lull line (SPA 30', 'return PACIFY_AE.has(String(name).toLowerCase().replace(/`/g, "\'").trim());\n}');
+// The agent's real "the NPC the most raiders are on" answer, which the Map's focus highlight reuses.
+const MAIN_TARGET_DEF = sliceBlock(AGENT, 'function _resolveMainTarget(activeCharacter) {', 'raider_count: best.raider_count || 0 } : null;\n}');
 const MEZ_DEF = sliceBlock(AGENT, 'function _isMezSpell(name) {', "includes('mez'));\n}");
 
 // Stand the block up over a temp dir and fake network modules.
@@ -56,6 +58,9 @@ function loadCore({ dir, opts, net }) {
     ${LULL_DEFS}
     ${MEZ_DEF}
     ${CON_DEFS}
+    const _extTargetCache = new Map();       // the Extended Target aggregate: lower-cased character -> { at, payload }
+    function fetchExtendedTarget() {}
+    ${MAIN_TARGET_DEF}
   `;
   // eslint-disable-next-line no-new-func
   const f = new Function('fs', 'path', 'http', 'https', 'zlib', '__dirname', '__tmp', '__opts',
@@ -1011,6 +1016,50 @@ describe('pather routes', () => {
     c._mapNoteState('Aldenmar', null, state(204, 'Thelin Poxbourne', { target_loc: { x: 500, y: 600, z: 0 } }), T0 + WEEK);
     expect(c._mapZoneDoc('ponightmare').paths['thelin poxbourne'].pts).toEqual([[600, 500, 0, T0 + WEEK, 0]]);   // the old walk is gone
   });
+  it('the raid\'s focus mob rides the payload: the main assist\'s target, else the NPC the most raiders are on, placed only where known (2026-10-14)', () => {
+    // the guild lead: "highlight the MA's target or which target has the most people targetting them"
+    const seedSeen = (c, name, id) => { const zd = c._mapZoneDoc('thedeep'); zd.seen['1'] = { point_id: 1, spawn_id: id, name, at: T0 }; };
+    const rows = (extra) => ({ at: T0, payload: { targets: [
+      { kind: 'npc', name: 'a cliff golem', raider_count: 3, spawn_id: 811 },
+      { kind: 'npc', name: 'Aldenmar the Pale', raider_count: 9 },
+      { kind: 'player', name: 'Brackwyn', raider_count: 12 },
+      { kind: 'npc', name: 'a stale thing', raider_count: 20, stale: true }].concat(extra || []) } });
+    const { c } = localCore();
+    c._zealState.Aldenmar = { zone: 164, updatedAt: 1e18, loc: { x: 0, y: 0, z: 0 } };
+    expect(c._mapStatePayload('', T0 + 1).focus).toBeNull();                                    // Extended Target has nothing yet
+    c._extTargetCache.set('aldenmar', rows());
+    // no MA declared: the most targeted live NPC (never a player, never a stale row); unplaced, we do not know where it is
+    expect(c._mapStatePayload('', T0 + 2).focus).toEqual({ name: 'Aldenmar the Pale', id: null, why: 'most', n: 9 });
+    // a stale "last seen" row carrying the MA mark is not a live focus
+    c._extTargetCache.set('aldenmar', rows([{ kind: 'npc', name: 'an old thing', raider_count: 1, ma_target: true, stale: true },
+      { kind: 'player', name: 'Corvale', raider_count: 1, ma_target: true }]));
+    expect(c._mapStatePayload('', T0 + 2).focus).toMatchObject({ name: 'Aldenmar the Pale', why: 'most' });
+    // the MA's target is the one the bot marked, whatever the headcount
+    c._extTargetCache.set('aldenmar', rows([{ kind: 'npc', name: 'a cliff golem', raider_count: 1, spawn_id: 812, ma_target: true }]));
+    expect(c._mapStatePayload('', T0 + 3).focus).toEqual({ name: 'a cliff golem', id: 812, why: 'ma', n: 1 });
+    // one raider on a mob is not a focus
+    c._extTargetCache.set('aldenmar', { at: T0, payload: { targets: [{ kind: 'npc', name: 'a cliff golem', raider_count: 1 }] } });
+    expect(c._mapStatePayload('', T0 + 4).focus).toBeNull();
+    // placed: your own target is that mob (name and spawn id agree)
+    c._extTargetCache.set('aldenmar', rows());
+    c._zealState.Aldenmar = Object.assign(c._zealState.Aldenmar, { target_name: 'Aldenmar the Pale', target_id: 77, target_type: 1, target_loc: { x: 10, y: 100, z: 5 } });
+    expect(c._mapStatePayload('', T0 + 5).focus).toEqual({ name: 'Aldenmar the Pale', id: null, why: 'most', n: 9, x: 100, y: 10, z: 5, at: 'target' });
+    // ...a different mob is your target: not placed there
+    c._zealState.Aldenmar.target_name = 'a bat';
+    expect(c._mapStatePayload('', T0 + 6).focus.x).toBeUndefined();
+    // a pinned mob of that name seen alive on a spawn point: placed on that point
+    seedSeen(c, 'Aldenmar_the_Pale', 5);
+    expect(c._mapStatePayload('', T0 + 7).focus).toMatchObject({ point_id: 1, at: 'point' });
+    // ...but not a pinned mob of another name, or another spawn id
+    seedSeen(c, 'a_bat', 5);
+    expect(c._mapStatePayload('', T0 + 8).focus.point_id).toBeUndefined();
+  });
+  it('the overlay marks the focus mob with one ring and a tag saying why, behind a ⚙ switch (2026-10-14)', () => {
+    const js = stripJs(MAP_HTML);
+    expect(js).toMatch(/if \(SH\.focus && P\.focus\) \{/);
+    expect(js).toMatch(/fo\.why === 'ma' \? 'MA' : fo\.n \+ ' targeting'/);
+    expect(js).toMatch(/\['focus', 'Raid focus target \(MA \/ most targeted\)'\]/);
+  });
   it('the overlay draws every recorded path with the trail painter, whoever has the target (2026-10-14)', () => {
     const js = stripJs(MAP_HTML);
     expect(js).toMatch(/if \(SH\.trail && P\.paths\) for \(var pk in P\.paths\)/);
@@ -1228,7 +1277,7 @@ describe('pather routes', () => {
     expect(base.all.cfg.hidden).toBe(false);
     expect(base.all.cfgBtn.classList.contains('on')).toBe(true);
     const showRows = base.all.cfgShow.children, glyphRows = base.all.cfgGlyphs.children, colRows = base.all.cfgCols.children;
-    expect(showRows).toHaveLength(24);
+    expect(showRows).toHaveLength(25);
     expect(glyphRows).toHaveLength(9);
     expect(colRows).toHaveLength(27);
     const walls = showRows[0].children[0];                                     // Walls

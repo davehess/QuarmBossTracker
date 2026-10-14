@@ -712,6 +712,7 @@
   // redish-orange. Pathing can be yellow"): 'path' within OFF_PATH of its route (or HOME_R of its spawn point when it
   // walks none), 'away' off it and getting further, 'back' off it and closing in. The crumb where it first stepped off
   // is marked `leave`. `home` = homeOf(...); null = nothing known, everything reads as pathing.
+  var FOCUS_COL = '#ff3df2';   // the raid's focus mob (MA's target / most targeted): magenta, used nowhere else on the map
   var TRAIL_COL = { path: '#ffd23f', away: '#ff3b30', back: '#ff7a33' };
   // Random wanderers (EQEmu grid types 1 Random10, 2 Random, 5 Rand5LoS, 7 CenterPoint, 8 RandomCenterPoint) walk
   // straight to a random waypoint, not along the list, so a line through the list in order is a path nobody walks:
@@ -1085,6 +1086,7 @@
     ['you', 'You'], ['target', 'Target ring'], ['targetLine', 'Line to target'], ['distance', 'Distance to target'],
     ['targetName', 'Target name'], ['tot', 'Target\'s target (assist bar)'],
     ['pinLine', 'Target → its spawn point'], ['trail', 'Target\'s walked path'], ['conNames', 'Mob names in con colour'], ['group', 'Group'], ['groupNames', 'Group names'], ['raid', 'Raid'], ['raidNames', 'Raid names'],
+    ['focus', 'Raid focus target (MA / most targeted)'],
   ];
   var CFG_GLYPHS = [
     ['👁', 'Sees invisible'], ['👁ᵤ', 'Sees invisible to undead'], ['🥷', 'Sees through hide'], ['↯', 'Summons'],
@@ -1953,6 +1955,22 @@
       }
       // Killed mobs' paths, faded, until KILLS_FADE more kills (noteKills).
       if (SH.trail) for (var dk in S.trails) { if (trailShown(S.trails[dk], S.kills) && !(P.target && dk === targetKey(P.target))) drawTrail(S.trails[dk], null, null, null, 0.3); }
+      // The raid's focus mob (the guild lead, 2026-10-14: "highlight the MA's target or which target has the most people
+      // targetting them"): the one Extended Target puts on top, which the agent names. One strong mark, drawn under your own
+      // target ring: a double ring in FOCUS_COL and a tag saying why ("MA", or "5 targeting"). Placed only where the agent
+      // knows it: your own target, or the spawn point a pinned mob of that name stands on.
+      if (SH.focus && P.focus) {
+        var fo = P.focus, fp = null;
+        if (fo.at === 'target' && P.target && fo.x != null) fp = drawn(targetKey(P.target), P.target, rt);
+        else if (fo.at === 'point' && S.byId[String(fo.point_id)]) fp = S.byId[String(fo.point_id)];
+        if (fp) {
+          var fq = wpt(fp.x, fp.y);
+          ctx.beginPath(); ctx.arc(fq[0], fq[1], 15, 0, 6.2832); ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.stroke();
+          ctx.beginPath(); ctx.arc(fq[0], fq[1], 15, 0, 6.2832); ctx.lineWidth = 2.6; ctx.strokeStyle = FOCUS_COL; ctx.stroke();
+          ctx.beginPath(); ctx.arc(fq[0], fq[1], 9, 0, 6.2832); ctx.lineWidth = 1.4; ctx.stroke();
+          halo(fo.why === 'ma' ? 'MA' : fo.n + ' targeting', fq[0], fq[1] - 24, 'bold ' + Math.round(11 * (S.cfg.text || 1)) + 'px ui-monospace,Consolas,monospace', FOCUS_COL, 'center');
+        }
+      }
       // Target: a ring and a dotted line from you.
       if (P.target && P.target.x != null) {
         var td = drawn(targetKey(P.target), P.target, rt), tq = wpt(td.x, td.y);
