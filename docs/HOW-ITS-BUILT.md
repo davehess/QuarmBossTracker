@@ -1128,6 +1128,11 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   shapes unverified against a real Quarm log). Ownership: Melee takes every swing, disciplines are Skills only, chat is classified first.
   Melee lines carry `cat` (mine / on_me / others, pets via `_petOwnerByName`) + `miss`; `chatPrefs.meleeShow` filters them and
   `--c-melee-*` / `--c-spell` / `--c-skill` colour them.
+  **Round 6 (agent 3.7.176 · Mimic beta `7488b291`, §324):** spell and skill rows carry `cat` too (`_chatActorCat` /
+  `_chatEventCat`; `_chatSpellKind` / `_chatSkillKind` / `_chatDiscKind` return `{kind, cat}`): spells mine / on_me / others, skills
+  mine / others. `chatPrefs.spellShow` / `skillShow` (booleans, default true) filter them via `catShown` beside `meleeShown`;
+  `--c-spell-{mine,on_me,others}` / `--c-skill-{mine,others}` shade them. A self-buff landing on you reads on_me (the
+  `cast_on_you` text cannot say who cast it).
 - **Seer paste on /pop/guide** (web 1.8.154 · beta, §304): `web/app/pop/guide/SeerPaste.tsx` (collapsed `<details>` atop all guide
   layouts); reader `web/lib/popRecital.ts` (`parseRecital`, `heldClosure`, `zoneViews`, `recitalRows`; table copied from
   `utils/popFlagStages.js`, parity-tested); guide join `web/lib/popGuideSeer.ts` (`STEP_GUIDE`, `guideStepsProven`); save
