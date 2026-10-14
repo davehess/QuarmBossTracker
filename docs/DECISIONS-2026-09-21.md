@@ -115,7 +115,7 @@ is ephemeral. It is a desktop-session job.
 | Item | Where it stands | Next |
 |---|---|---|
 | **Map: raid targets + shared escort trails** (§299) | Shipped: bot 3.1.263 on main, agent 3.7.166 on Mimic beta, `/privacy` updated | the guild lead: two Mimics in the hedge maze, one targets Thelin, the other's Map draws his trail; the MA targets a mob and the other's focus ring lands on it |
-| **Mimic Chat overlay, B** (§300) | On Mimic beta (agent 3.7.165): one feed, a chip per channel; officer, group and custom off by default, tells follow Settings → Tells; local only | the guild lead: say whether officer, group and tells may show; check it on beta. A session: A (tabs + tear-off) next; confirm Zeal's abbreviated tags `S`/`O`/`Sh`/`A`/`To` from a real `/abc 2` log |
+| **Mimic Chat overlay, B** (§300) | Live in stable Mimic 2.9.1 (agent 3.7.176, §331): one feed, a chip per channel; officer off by default, tells follow Settings → Tells; local only | the guild lead: say whether officer, group and tells may show; check it on beta. A session: A (tabs + tear-off) next; confirm Zeal's abbreviated tags `S`/`O`/`Sh`/`A`/`To` from a real `/abc 2` log |
 | **/pop alts grouped under mains** (§302) | On beta (web 1.8.153): `?alts=group`, `&sort=latest`, `&open=1`; highlights for 24 h and 3 days | the guild lead: compare https://b.wolfpack.quest/pop?alts=group&sort=latest with https://b.wolfpack.quest/pop?view=matrix and pick; a session then graduates it to main |
 | **/pop "Latest flags" strip** (§297) | On beta (web 1.8.152): `?flags=a` newest first, `?flags=b` by step; no param = production | the guild lead: pick a or b at https://b.wolfpack.quest/pop?flags=a and https://b.wolfpack.quest/pop?flags=b. A session then graduates it to main as the default and deletes the other |
 | **Member lockout** (§252) | Live: `/admin/access` [beta], bot 3.1.251, web 1.8.143. Officers cannot be locked out (web 1.8.144). Untested against a real member | the guild lead: lock a test or alt account, confirm Mimic, the site and a bot command all refuse it within 30 s, then unlock |
@@ -10765,3 +10765,13 @@ the Bastion of Thunder at the time.
 - **Calls:** outlines + names only while configuring (⚙ open) or on an opt-in tick — mid-raid labels over the game are noise. Any area
   whose size or position is a guess (no Width/Height, Zeal bars that run to the screen edge, a UI file saved for another resolution)
   starts unticked; a pick is per character and per screen setup. No collapsed/minimised key was invented — none is known yet.
+
+### 331. Mimic 2.9.1 stable (agent 3.7.176), and why `pop-quests.js` stayed behind (2026-10-14)
+- **The call** (the guild lead, 2026-10-14): push all of today's beta work to main.
+- **Shipped:** `apps/mimic` and `packages/wolfpack-logsync` from beta `acd4f048`, plus the Mimic/agent tests, as a file-level
+  promotion (no merge). Roadmap entry + web 1.8.159. Beta re-parks at 2.9.2. No new FB numbers in this cycle (FB-77 went out with 2.9.0).
+- **Left on beta on purpose:** `apps/mimic/pop-quests.js` is GENERATED from `web/lib/popGuide*.ts`; beta's copy follows the web PoP
+  guide on beta (Start here removed), so on main it fails `test/pop-quests-sync.test.js`. It travels with the web PoP graduation, which
+  must regenerate it (`npm run sync:pop-quests`) and take `test/pop-overlay-quests.test.js` with it. Web-only tests stayed behind too.
+- **Bot routes the promoted code calls are already on main:** `/api/agent/charm-pets`, `/api/agent/pronunciations`, the live-state
+  target fields (bot 3.1.263). Each degrades quietly if absent (404 hides the section / turns names off).
