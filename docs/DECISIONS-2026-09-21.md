@@ -116,6 +116,7 @@ is ephemeral. It is a desktop-session job.
 |---|---|---|
 | **Map: raid targets + shared escort trails** (§299) | Shipped: bot 3.1.263 on main, agent 3.7.166 on Mimic beta, `/privacy` updated | the guild lead: two Mimics in the hedge maze, one targets Thelin, the other's Map draws his trail; the MA targets a mob and the other's focus ring lands on it |
 | **Mimic Chat overlay, B** (§300) | On Mimic beta (agent 3.7.165): one feed, a chip per channel; officer, group and custom off by default, tells follow Settings → Tells; local only | the guild lead: say whether officer, group and tells may show; check it on beta. A session: A (tabs + tear-off) next; confirm Zeal's abbreviated tags `S`/`O`/`Sh`/`A`/`To` from a real `/abc 2` log |
+| **/pop alts grouped under mains** (§302) | On beta (web 1.8.153): `?alts=group`, `&sort=latest`, `&open=1`; highlights for 24 h and 3 days | the guild lead: compare https://b.wolfpack.quest/pop?alts=group&sort=latest with https://b.wolfpack.quest/pop?view=matrix and pick; a session then graduates it to main |
 | **/pop "Latest flags" strip** (§297) | On beta (web 1.8.152): `?flags=a` newest first, `?flags=b` by step; no param = production | the guild lead: pick a or b at https://b.wolfpack.quest/pop?flags=a and https://b.wolfpack.quest/pop?flags=b. A session then graduates it to main as the default and deletes the other |
 | **Member lockout** (§252) | Live: `/admin/access` [beta], bot 3.1.251, web 1.8.143. Officers cannot be locked out (web 1.8.144). Untested against a real member | the guild lead: lock a test or alt account, confirm Mimic, the site and a bot command all refuse it within 30 s, then unlock |
 | **Map target-of-target never fires on real Zeal** (§251) | Zeal's `/assistbar` (1.4.7) knows it, but the pipe export was only our unsent draft, so the Map's ToT arrow and the pin rule's "not aggroed" check fail open. Ported onto current Zeal main as fork branch `tot-pipe` (`21f41f3`, local only: the push was refused by this session's permissions) | the guild lead: push `tot-pipe` to the fork (or allow it), then say whether it joins `test-all` for an in-game check |
@@ -10446,3 +10447,26 @@ the Bastion of Thunder at the time.
 - **Not built:** a spoken "Roll tie" callout — the agent speaks no roll events, so there is no path to add one to.
 - **Where it landed:** `rollSetTies` / `_rollTieResolve` in `rollSetsSnapshot`; `_wpRollWhoHtml` / `_wpRollTiePrompt` / `_wpRollRowMark` in
   `dashboard.html`; `rollTie*` in `apps/mimic/command.html`; `test/roll-tie.test.js`.
+
+### 302. /pop: alts grouped under their main, latest-change sort, 24 h / 3 day highlights (web 1.8.153, beta `6def4593`, 2026-10-14)
+- **The ask (the guild lead, 2026-10-14):** *"Lets group the flagging for alts by main with collapse turned on, we can expand all
+  from a button. Then if we want to sort by latest changes, highlight the things that have changed in the last day, and last 3 days."*
+- **The calls:** grouping is on the Matrix only, behind `?alts=group` (`&sort=latest`, `&open=1` to expand all). Native `<details>`,
+  collapsed by default; the summary line carries the family's newest change. A "change" is an `event` or `checklist` row, or a
+  recital that newly added a flag (no earlier row for that character + flag). `hail_witnessed` is never a change. Buckets: 24 h
+  (strong) and 3 days (soft). Main links come from `characters.main_name` at runtime; nothing is written into the repo.
+- **Known caveat:** a character's first-ever recital marks every flag it recites as new at that moment.
+- **Cost:** zero new queries; the page's existing paged `pop_flags` read adds `source`, the roster read adds `main_name`.
+- **Where it landed:** `web/lib/popAltGroups.ts`, `web/app/pop/AltGroupMatrix.tsx`, `web/app/pop/page.tsx`; `test/pop-alt-groups.test.js`.
+
+### 303. Chat overlay round 2: the Seer's tells, copy on the timestamp, channel breakouts (agent 3.7.168, Mimic beta `432b4999`, 2026-10-14)
+- **The asks (the guild lead, 2026-10-14, from a screenshot of EverQuest's Tells window):** *"tells from seer did not come through"*,
+  *"Add a copy button if you clikc on the timestamp next to the message"*, *"Add breakout abilities for different tabs by right
+  clicking the name of the chat type"*.
+- **Seer:** her recital is written to the log as a bare sentence (no "tells you"). `classifyChatLine` reuses the flag matcher
+  (`_POP_RECITAL_RX`) and files it as a Tells line from "Seer", under the Tells gate. Her "nothing new" answer is added to the chat
+  block only (`_SEER_QUIET_RX`), never to the flag matcher, so it is not uploaded as a recital.
+- **Copy:** the timestamp is a button; it copies `[hh:mm] Speaker: text` and flashes "copied".
+- **Breakouts (design A, first half):** right-click a channel chip → its own window (`chat.html?groups=<id>`), remembered across
+  restarts (`cfg.chatBreakouts`), own bounds. Breakouts exist exactly while Chat does; a breakout's ✕ puts the channel back.
+- **Open:** a per-breakout font size; whether ✕ should close instead of put back; tabs inside one window (design A, second half).

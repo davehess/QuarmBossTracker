@@ -1093,6 +1093,14 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   through `makeFilter(groupIds)`, so tabs (design A) are a group list away. Gated groups (tells → `tellsMode`; group / officer /
   custom → the overlay's ⚙ switches) are captured only while the latest poll asked (15 s lapse). Prefs: `cfg.chatPrefs`
   (`chat-prefs-get/-set`). Test: `test/chat-overlay.test.js`.
+  **Round 2 (agent 3.7.168, §303):** the Seer's recital shows as Tells from "Seer" (`classifyChatLine` reuses `_POP_RECITAL_RX`;
+  `_SEER_QUIET_RX` adds her "nothing new" line, chat only); clicking a line's timestamp copies `[hh:mm] Speaker: text`; right-clicking
+  a channel chip breaks that group into its own window (`chat.html?groups=<id>`, `chatBreakouts` Map in main.js, `cfg.chatBreakouts`,
+  bounds `chatBounds_<id>`, key `chat:<id>`). Breakouts exist exactly while Chat does (`_syncChatBreakouts`); a breakout's ✕ puts the
+  group back; `chat-prefs-changed` keeps every window's gates in step.
+- **PoP alts grouped by main** (`/pop?alts=group`, web 1.8.153 · beta, §302): `web/lib/popAltGroups.ts` (grouping, change rule,
+  24 h / 3 d buckets — pure), `web/app/pop/AltGroupMatrix.tsx` (render), `web/app/pop/page.tsx` (params `alts`, `sort=latest`,
+  `open=1`). Test: `test/pop-alt-groups.test.js`.
 - **/who overlay** (`who.html`): fixed height (`wp:who:height`, drag grip, double-click = fit), a
   scrolling `#body`, CLASS/GUILD chips (`whoFacet`/`whoFilterRows`), sort (`whoSortRows`), and one
   document-level hover owner (`_zoneOf`) so the wheel reaches the list. **ZONE** switch (agent
