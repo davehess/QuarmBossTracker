@@ -10282,3 +10282,13 @@ the Bastion of Thunder at the time.
     paging.
   - Defence in depth on the agent: send the sender's zone with each relayed fire and let the listener drop one whose zone
     is not its current Zeal zone (needs a Mimic update).
+
+### 293. The Map's speed reads as % of normal run, like Zeal (Mimic beta `dbf2a0d8`, 2026-10-14)
+
+- **The report (the guild lead):** *"Our speed calculation looks wrong"*, with a screenshot showing our readout at 84 u/s
+  beside Zeal's map at 277% at the same moment.
+- **It wasn't wrong, just in other units.** Our readout (units a second, §260) and Zeal's (% of normal run) agree when
+  100% ≈ 30.3 u/s. That is the base §260 said it lacked, measured from this pair. Four nights of `raid_track_minutes`
+  steps agree on the scale: most movement sits under 60 u/s and the tail ends near 110 u/s.
+- **Change:** the top-left readout now shows `NNN%` (`RUN_BASE_UPS = 30.3`, `runPct`), with the units-a-second value in
+  its tooltip. It is one reading: a timed unbuffed run would tighten the base. `test/spawn-map.test.js` pins 84 → 277%.
