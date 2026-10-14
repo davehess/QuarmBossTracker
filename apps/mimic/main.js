@@ -293,7 +293,7 @@ function defaultConfig() {
     // byChar remembers which channel chips each character has switched off. offChannels = [lower-case joined
     // channel NAMES] switched off, shared by every character; absent = every channel shows. melee = opt-in for
     // the combined-melee group (default off); spells and skills are the same kind of opt-in (default off). meleeShow = { mine, on_me, others, misses }, which
-    // melee lines show (all true unless switched off). only = the "show only" view toggle ('' = off). win = { <window
+    // melee lines show (all true unless switched off); spellShow = { mine, on_me, others } and skillShow = { mine, others } likewise. only = the "show only" view toggle ('' = off). win = { <window
     // id: 'main' or a breakout group id>: { fontSize, lineGap, times, tags } }, each window's own text settings.
     showChat: false,
     chatPrefs: {},
@@ -7125,6 +7125,16 @@ function _chatMeleeShow(raw) {
   for (const k of _MELEE_SHOW_KEYS) out[k] = o[k] !== false;
   return out;
 }
+// Spells and Skills filter the same way (the guild lead, 2026-10-14: "Filters for spells for others should be there as
+// well"): spellShow = { mine, on_me, others }, skillShow = { mine, others }. All ON unless switched off, shared by every window.
+const _SPELL_SHOW_KEYS = ['mine', 'on_me', 'others'];
+const _SKILL_SHOW_KEYS = ['mine', 'others'];
+function _chatShowMap(raw, keys) {
+  const o = (raw && typeof raw === 'object') ? raw : {};
+  const out = {};
+  for (const k of keys) out[k] = o[k] !== false;
+  return out;
+}
 function _chatPrefsPayload(cfg, char) {
   const p = (cfg.chatPrefs && typeof cfg.chatPrefs === 'object') ? cfg.chatPrefs : {};
   const mine = p.byChar && p.byChar[_chatCharKey(char)];
@@ -7134,6 +7144,8 @@ function _chatPrefsPayload(cfg, char) {
     spells: p.spells === true,   // spells and skills are floods too (2026-10-14): opt-in, default off
     skills: p.skills === true,
     meleeShow: _chatMeleeShow(p.meleeShow),
+    spellShow: _chatShowMap(p.spellShow, _SPELL_SHOW_KEYS),
+    skillShow: _chatShowMap(p.skillShow, _SKILL_SHOW_KEYS),
     only: _chatOnlyKey(p.only),
     win: _chatWinMap(p.win),
     fontSize: fs_ >= 9 && fs_ <= 24 ? fs_ : 12,
@@ -7157,6 +7169,12 @@ ipcMain.handle('chat-prefs-set', (_e, char, patch) => {
     const cur = _chatMeleeShow(p.meleeShow);
     for (const k of _MELEE_SHOW_KEYS) if (typeof inc.meleeShow[k] === 'boolean') cur[k] = inc.meleeShow[k];
     p.meleeShow = cur;
+  }
+  for (const [prop, keys] of [['spellShow', _SPELL_SHOW_KEYS], ['skillShow', _SKILL_SHOW_KEYS]]) {
+    if (!inc[prop] || typeof inc[prop] !== 'object') continue;
+    const cur = _chatShowMap(p[prop], keys);
+    for (const k of keys) if (typeof inc[prop][k] === 'boolean') cur[k] = inc[prop][k];
+    p[prop] = cur;
   }
   if (typeof inc.only === 'string') p.only = _chatOnlyKey(inc.only);
   // One window's text settings merge into that window's entry only: another window's are never rewritten.

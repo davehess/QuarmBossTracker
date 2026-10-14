@@ -18,7 +18,10 @@
     --c-melee-mine:#f2f2f2; --c-melee-mine-miss:#a9a9a9;
     --c-melee-on_me:#ff6b6b; --c-melee-on_me-miss:#a64d4d;
     --c-melee-others:#8b949e; --c-melee-others-miss:#5f666e;
-    --c-spell:#b392f0; --c-skill:#e3b341; }
+    /* Spells (purple) and Skills (amber) split the same way inside their own hue: bright for yours, a pinker purple for
+       a spell landing on you, dim for everyone else's. A line from an older agent has no category and keeps the group colour. */
+    --c-spell-mine:#b392f0; --c-spell-on_me:#e57bd8; --c-spell-others:#74678f;
+    --c-skill-mine:#e3b341; --c-skill-others:#8c7a43; }
   html,body{margin:0;height:100%;background:transparent;overflow:hidden;
     font-family:ui-monospace,Menlo,Consolas,monospace;color:#fff;user-select:none;}
   #wrap{height:100vh;box-sizing:border-box;display:flex;flex-direction:column;padding:6px 8px;gap:4px}
@@ -164,6 +167,8 @@
       <div class="hint" id="wintxt"></div>
       <div class="row nobrk" id="optins"></div>
       <div class="row" id="meleeopts"></div>
+      <div class="row" id="spellopts"></div>
+      <div class="row" id="skillopts"></div>
       <div class="row nobrk" id="chans"></div>
       <div class="hint nobrk" id="tellhint"></div>
       <div class="hint nobrk">These lines stay on this PC, in memory, for this window only. Nothing here is uploaded, and Mimic forgets them when it restarts. The ⏱ button can read the last few hours back from the game's own log files on this PC; that is read here and never sent.</div>
@@ -249,7 +254,7 @@
   var _lines = [];             // every line we hold, oldest first (the filter decides what shows)
   var _seq = 0, _lastN = 0, _boot = '';
   var _char = '';              // the character the chip choices are remembered for
-  var _prefs = { fontSize: 12, group: false, officer: false, custom: false, tells: false, melee: false, spells: false, skills: false, meleeShow: { mine: true, on_me: true, others: true, misses: true }, off: [], offChannels: [], only: '' };
+  var _prefs = { fontSize: 12, group: false, officer: false, custom: false, tells: false, melee: false, spells: false, skills: false, meleeShow: { mine: true, on_me: true, others: true, misses: true }, spellShow: { mine: true, on_me: true, others: true }, skillShow: { mine: true, others: true }, off: [], offChannels: [], only: '' };
   var _chanNames = {};         // "<character>|<slot number>" -> channel name, learned from lines that carry both (Zeal's /abc shows only the number)
   var _unread = 0;
   var _out = [];               // group ids broken out into their own windows (the Chat window leaves them out)
@@ -347,7 +352,7 @@
     var k = chanKey(l);
     if (k && (_prefs.offChannels || []).indexOf(k) !== -1) return false;
     if (!_isBrk && _prefs.only && onlyKeyOf(l) !== _prefs.only) return false;
-    return meleeShown(l);
+    return meleeShown(l) && catShown(l);
   }
   // Which melee lines show, like EQ's combat filters: mine / on me / others', and misses. A line with no category
   // (an agent from before the split) always shows.
@@ -358,12 +363,17 @@
     if (l.miss && s.misses === false) return false;
     return true;
   }
-  // The line's colour: a CSS variable per melee category (misses dimmer), one each for Spells and Skills, else the channel's own.
+  // Spells and Skills filter by the same three words (mine / on me / others'). No category = an older agent = shows.
+  function catShown(l){
+    var s = l.ch === 'spell' ? _prefs.spellShow : l.ch === 'skill' ? _prefs.skillShow : null;
+    return !(s && l.cat && s[l.cat] === false);
+  }
+  // The line's colour: a CSS variable per category (melee misses dimmer; Spells and Skills each a shade per category
+  // inside their hue), else the channel's own.
   function lineColor(l){
     var base = (_channels[l.ch] || {}).color || '#c9d1d9';
     if (l.ch === 'melee' && l.cat) return 'var(--c-melee-' + l.cat + (l.miss ? '-miss' : '') + ',' + base + ')';
-    if (l.ch === 'spell') return 'var(--c-spell,' + base + ')';
-    if (l.ch === 'skill') return 'var(--c-skill,' + base + ')';
+    if ((l.ch === 'spell' || l.ch === 'skill') && l.cat) return 'var(--c-' + l.ch + '-' + l.cat + ',' + base + ')';
     return base;
   }
   function onlyActive(){ return !_isBrk && !!_prefs.only; }
@@ -803,6 +813,43 @@
     savePrefs({ meleeShow: patch });
     repaint();
   });
+  // What Spells and Skills show: the same three words as Melee, in the same place. A row is offered only while its
+  // group is on, and in that group's own breakout ⚙. Keys match the prefs: spellShow / skillShow.
+  var SHOW_ROWS = [
+    { grp: 'spells', pref: 'spellShow', el: 'spellopts', head: 'Spells show', opts: [
+      ['mine', 'My spells', 'Your casts and songs, spells you land, your spell damage, your resists, fizzles and interrupts, and your buffs wearing off'],
+      ['on_me', 'On me', 'Other players\' spells landing on you, and spell damage and heals done to you'],
+      ['others', 'Others\' spells', 'Anyone else casting, landing a spell on or damaging someone else, including "begins to cast"']] },
+    { grp: 'skills', pref: 'skillShow', el: 'skillopts', head: 'Skills show', opts: [
+      ['mine', 'My skills', 'Your skill-ups, and what your skills and disciplines did'],
+      ['others', 'Others\' skills', 'Other players\' disciplines, and others feigning or falling']] }
+  ];
+  function paintShowOpts(){
+    for (var r = 0; r < SHOW_ROWS.length; r++) {
+      var row = SHOW_ROWS[r], h = '';
+      if (_prefs[row.grp] && (!_isBrk || brkGroupId() === row.grp)) {
+        var s = _prefs[row.pref] || {};
+        h = '<span>' + row.head + '</span>';
+        for (var i = 0; i < row.opts.length; i++) {
+          var o = row.opts[i];
+          h += '<label title="' + esc(o[2]) + '"><input type="checkbox" data-pref="' + row.pref + '" data-sk="' + o[0] + '"' + (s[o[0]] !== false ? ' checked' : '') + '>' + esc(o[1]) + '</label>';
+        }
+      }
+      var el = document.getElementById(row.el);
+      if (el.__wpHtml !== h) { el.innerHTML = h; el.__wpHtml = h; }
+    }
+  }
+  function onShowChange(e){
+    var t = e.target, pref = t && t.getAttribute ? t.getAttribute('data-pref') : null, k = t && t.getAttribute ? t.getAttribute('data-sk') : null;
+    if (!pref || !k || (pref !== 'spellShow' && pref !== 'skillShow')) return;
+    var patch = {}; patch[k] = !!t.checked;
+    var wrap = {}; wrap[pref] = patch;
+    _prefs[pref] = Object.assign({}, _prefs[pref], patch);
+    savePrefs(wrap);
+    repaint();
+  }
+  document.getElementById('spellopts').addEventListener('change', onShowChange);
+  document.getElementById('skillopts').addEventListener('change', onShowChange);
   function paintSettings(){
     var h = '';
     for (var i = 0; i < OPTINS.length; i++) {
@@ -811,7 +858,7 @@
     }
     var oe = document.getElementById('optins');
     if (oe.__wpHtml !== h) { oe.innerHTML = h; oe.__wpHtml = h; }
-    applyWin(); paintChans(); paintOnly(); paintMeleeOpts();
+    applyWin(); paintChans(); paintOnly(); paintMeleeOpts(); paintShowOpts();
     document.getElementById('tellhint').textContent = _prefs.tells
       ? 'Tells are showing: Settings has Tells on Local or Synced.'
       : 'Tells are off. Choose Local or Synced under Settings → Tells to show them here.';
@@ -902,18 +949,20 @@
   function takePrefs(p){
     if (!p) return;
     var tellsWas = _prefs.tells;
-    var meleeWas = _prefs.melee, spellsWas = _prefs.spells, skillsWas = _prefs.skills, showWas = JSON.stringify(_prefs.meleeShow);
+    var meleeWas = _prefs.melee, spellsWas = _prefs.spells, skillsWas = _prefs.skills, showWas = JSON.stringify([_prefs.meleeShow, _prefs.spellShow, _prefs.skillShow]);
     _prefs = {
       fontSize: p.fontSize || 12, group: !!p.group, officer: !!p.officer, custom: !!p.custom,
       tells: !!p.tells, melee: !!p.melee, spells: !!p.spells, skills: !!p.skills,
       meleeShow: { mine: !p.meleeShow || p.meleeShow.mine !== false, on_me: !p.meleeShow || p.meleeShow.on_me !== false, others: !p.meleeShow || p.meleeShow.others !== false, misses: !p.meleeShow || p.meleeShow.misses !== false },
+      spellShow: { mine: !p.spellShow || p.spellShow.mine !== false, on_me: !p.spellShow || p.spellShow.on_me !== false, others: !p.spellShow || p.spellShow.others !== false },
+      skillShow: { mine: !p.skillShow || p.skillShow.mine !== false, others: !p.skillShow || p.skillShow.others !== false },
       off: Array.isArray(p.off) ? p.off.slice() : [],
       offChannels: Array.isArray(p.offChannels) ? p.offChannels.slice() : [],
       only: typeof p.only === 'string' ? p.only : '',
       win: (p.win && typeof p.win === 'object') ? p.win : {}
     };
     paintSettings();
-    if (tellsWas !== _prefs.tells || meleeWas !== _prefs.melee || spellsWas !== _prefs.spells || skillsWas !== _prefs.skills || showWas !== JSON.stringify(_prefs.meleeShow)) { purgeGated(); paintChips(); repaint(); }
+    if (tellsWas !== _prefs.tells || meleeWas !== _prefs.melee || spellsWas !== _prefs.spells || skillsWas !== _prefs.skills || showWas !== JSON.stringify([_prefs.meleeShow, _prefs.spellShow, _prefs.skillShow])) { purgeGated(); paintChips(); repaint(); }
     // The history was read under one set of switches; a change (Tells, Group, Officer, Custom) re-reads it.
     if (_histHours && _connectedOnce && histQuery() !== _histSig) loadHistory();
   }

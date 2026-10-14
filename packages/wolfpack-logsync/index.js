@@ -38813,63 +38813,105 @@ function _chatSpellTexts() {
   _chatSpellTextsFor = _spellByNameLower;
   return _chatSpellTextsVal;
 }
-// 'activate' | 'fade' | 'refusal' | null: a discipline line, yours or another player's. Reads Mimic's own tables.
+// Whose a spell or skill line is, for the Spells / Skills filters (the guild lead, 2026-10-14: "Filters for spells for
+// others should be there as well"). Same three words as Melee, read off the fields the parsers above already return:
+//   'mine'   you did it (an event with no attacker, or the word "You"), or your own pet did (_petOwnerByName);
+//   'on_me'  it landed on YOU (the catalog's cast_on_you text, a heal or spell damage whose target is YOU);
+//   'others' anyone else's cast, landing, damage or heal, including a landing on someone else.
+// A fade, a resist, a fizzle and an interrupt are "mine": they are your buff ending or your cast failing.
+function _chatActorCat(name, character) {
+  if (name == null) return 'mine';
+  const n = String(name).replace(/['`]s$/, '').trim().toLowerCase();
+  if (n === 'you') return 'mine';
+  const me = character ? String(character).toLowerCase() : '';
+  if (n && me && (n === me || _petOwnerByName(n) === me)) return 'mine';
+  return 'others';
+}
+// An event with no attacker is yours only when the sentence says so; a sourceless tick ("X has taken 12 damage.")
+// or heal ("X has been healed for 5 points") has no owner we can name, so it is 'others'.
+function _chatEventCat(ev, body, character) {
+  if (ev.attacker == null) return /^Your? |\bfrom your /i.test(body) ? 'mine' : 'others';
+  return _chatActorCat(ev.attacker, character);
+}
+// "<Name>'s casting is interrupted!": the caster is a bystander ('others'), unless it is you or your pet.
+function _chatInterruptCat(line, character) {
+  const m = _CH_INTERRUPT_OTHER_RX.exec(line);
+  return m ? _chatActorCat(m[1], character) : 'others';
+}
+// { kind: 'activate' | 'fade' | 'refusal', cat } | null: a discipline line, yours or another player's. Reads Mimic's
+// own tables. Yours = your own activation / fade / "you can use a new discipline" refusal; another player's = the
+// third-person lines (_ME_DISC_OTHER, _DEF_DOWN_OTHER_RX).
 function _chatDiscKind(body) {
-  if (_ME_DISCS.has(body)) return 'activate';
-  if (_DEF_DOWN_SELF_RX.test(body) || _DEF_DOWN_OTHER_RX.test(body)) return 'fade';
-  if (_DISC_REFUSAL_RX.test(body)) return 'refusal';
-  if (_chatSpellTexts().discFades.has(body.replace(/\.$/, ''))) return 'fade';
+  if (_ME_DISCS.has(body)) return { kind: 'activate', cat: 'mine' };
+  if (_DEF_DOWN_SELF_RX.test(body)) return { kind: 'fade', cat: 'mine' };
+  if (_DEF_DOWN_OTHER_RX.test(body)) return { kind: 'fade', cat: 'others' };
+  if (_DISC_REFUSAL_RX.test(body)) return { kind: 'refusal', cat: 'mine' };
+  if (_chatSpellTexts().discFades.has(body.replace(/\.$/, ''))) return { kind: 'fade', cat: 'mine' };
   const rest = body.replace(/\.$/, '');
   for (const key of _ME_DISC_OTHER.keys()) {
     if (!rest.endsWith(key)) continue;
-    if (/^[A-Z][a-z]{2,14}$/.test(rest.slice(0, rest.length - key.length).trim())) return 'activate';
+    if (/^[A-Z][a-z]{2,14}$/.test(rest.slice(0, rest.length - key.length).trim())) return { kind: 'activate', cat: 'others' };
   }
   return null;
 }
+// → { kind, cat } | null
 function _chatSpellKind(line, body, ts, character) {
   if (_chatDiscKind(body)) return null;                       // a discipline is a skill
   const bare = body.replace(/\.$/, '');
   const tx = _chatSpellTexts();
-  if (tx.you.has(bare)) return 'landing';
-  if (tx.fades.has(bare) || CHAT_WORN_OFF_RX.test(body)) return 'fades';
-  if (_CAST_FAIL_RX.test(line) || _CH_INTERRUPT_OTHER_RX.test(line)) return 'interrupt';
+  if (tx.you.has(bare)) return { kind: 'landing', cat: 'on_me' };    // cast_on_you: a spell on YOU, whoever cast it
+  if (tx.fades.has(bare) || CHAT_WORN_OFF_RX.test(body)) return { kind: 'fades', cat: 'mine' };
+  if (_CAST_FAIL_RX.test(line)) return { kind: 'interrupt', cat: 'mine' };
+  if (_CH_INTERRUPT_OTHER_RX.test(line)) return { kind: 'interrupt', cat: _chatInterruptCat(line, character) };
   if (CHAT_SPELL_EVENT_RX.test(body)) {
     let ev = null;
     try { ev = parseEvent(line, ts); } catch { ev = null; }
     if (ev) {
       switch (ev.type) {
-        case 'cast': case 'dirge_cast': case 'melody_start': case 'melody_stop': return 'cast';
-        case 'heal': case 'crit_heal': return 'heal';
-        case 'resist': case 'spell_resisted': return 'resist';
-        case 'critical': return ev.kind === 'spell' ? 'damage' : null;
+        case 'cast': return { kind: 'cast', cat: _chatActorCat(ev.attacker, character) };
+        case 'dirge_cast': case 'melody_start': case 'melody_stop': return { kind: 'cast', cat: 'mine' };
+        case 'heal':
+          if (ev.defender != null && /^you$/i.test(ev.defender)) return { kind: 'heal', cat: 'on_me' };
+          return { kind: 'heal', cat: _chatEventCat(ev, body, character) };
+        case 'crit_heal': return { kind: 'heal', cat: _chatActorCat(ev.attacker, character) };
+        case 'resist': case 'spell_resisted': return { kind: 'resist', cat: 'mine' };   // "You resist…", "Your target resisted…"
+        case 'critical': return ev.kind === 'spell' ? { kind: 'damage', cat: _chatActorCat(ev.attacker, character) } : null;
         case 'damage':
           // Melee owns every swing it would take (its prefilter plus a melee verb). Everything else with a damage
           // number is a spell, a DoT, a proc or a damage shield, including a proc worded as a swing ("non-melee").
           if (CHAT_MELEE_PREFILTER_RX.test(line) && _chatDamageIsMelee(ev)) return null;
-          return 'damage';
+          // Spell damage done to YOU is 'on_me' whoever dealt it; otherwise the dealer decides.
+          if (ev.defender == null || /^you$/i.test(ev.defender)) return { kind: 'damage', cat: 'on_me' };
+          return { kind: 'damage', cat: _chatEventCat(ev, body, character) };
         default: break;
       }
     }
   }
-  if (character && resolveSelfCastLanding(line, character)) return 'landing';
-  if (parseBuffLanding(line, character) || parseDebuffLanding(line, character) || parseMechanicLanding(line)) return 'landing';
+  if (character && resolveSelfCastLanding(line, character)) return { kind: 'landing', cat: 'mine' };   // a spell YOU cast, landing on its target
+  if (parseBuffLanding(line, character) || parseDebuffLanding(line, character) || parseMechanicLanding(line)) return { kind: 'landing', cat: 'others' };
   return null;
 }
+// → { kind, cat } | null. Nearly every skill line is the first person ("You taunt…", "You have become better at…"),
+// so 'mine'; only another player's discipline and another player's fall to the ground are 'others'.
 function _chatSkillKind(line, body, ts) {
-  if (CHAT_SKILLUP_RX.test(body)) return 'skillup';
-  if (_chatDiscKind(body)) return 'discipline';
+  if (CHAT_SKILLUP_RX.test(body)) return { kind: 'skillup', cat: 'mine' };
+  const disc = _chatDiscKind(body);
+  if (disc) return { kind: 'discipline', cat: disc.cat };
   // Only the skills whose line is a result, not damage ('ht' is a swing, so Melee's) or a cast (Spells').
-  for (const s of _ME_SKILL_LINES) if ((s.key === 'mend' || s.key === 'taunt' || s.key === 'fd') && s.rx.test(body)) return 'ability';
-  for (const [kind, rx] of CHAT_SKILL_TEXT_RXS) if (rx.test(body)) return kind;
+  for (const s of _ME_SKILL_LINES) if ((s.key === 'mend' || s.key === 'taunt' || s.key === 'fd') && s.rx.test(body)) return { kind: 'ability', cat: 'mine' };
+  for (const [kind, rx] of CHAT_SKILL_TEXT_RXS) if (rx.test(body)) return { kind, cat: 'mine' };
   if (CHAT_SKILL_EVENT_RX.test(body)) {
     let ev = null;
     try { ev = parseEvent(line, ts); } catch { ev = null; }
-    if (ev && (ev.type === 'taunt' || ev.type === 'stun' || ev.type === 'feign_death' || ev.type === 'evade' || ev.type === 'mend')) return 'ability';
+    if (ev && (ev.type === 'taunt' || ev.type === 'stun' || ev.type === 'feign_death' || ev.type === 'evade' || ev.type === 'mend')) {
+      return { kind: 'ability', cat: ev.attacker == null ? 'mine' : 'others' };   // "Brackwyn has fallen to the ground." is the only third-person one
+    }
   }
   return null;
 }
-// One log line → { ch: 'spell' | 'skill', who: '', text, t, self, npc: false, kind } or null. `kind` is for tests and is
-// not served. `character` lets a landing of a spell YOU cast be named from your own cast (resolveSelfCastLanding).
+// One log line → { ch: 'spell' | 'skill', who: '', text, t, self, npc: false, kind, cat } or null. `kind` is for tests and is
+// not served; `cat` ('mine' | 'on_me' | 'others') is, and the overlay's Spells / Skills filters read it. `character` lets a
+// landing of a spell YOU cast be named from your own cast (resolveSelfCastLanding) and your pet's casts be yours.
 function _classifyExtraLine(line, character, ch) {
   if (typeof line !== 'string' || line.charCodeAt(0) !== 91 /* [ */) return null;
   const at = line.indexOf('] ');
@@ -38878,11 +38920,11 @@ function _classifyExtraLine(line, character, ch) {
   if (!body) return null;
   const ts = parseEqTimestamp(line);
   if (!ts) return null;
-  const kind = ch === 'spell' ? _chatSpellKind(line, body, ts, character) : _chatSkillKind(line, body, ts);
-  if (!kind) return null;
+  const k = ch === 'spell' ? _chatSpellKind(line, body, ts, character) : _chatSkillKind(line, body, ts);
+  if (!k) return null;
   const text = _chatCleanText(body);
   if (!text) return null;
-  return { ch, who: '', text, t: ts.getTime(), self: /^Your?\b/.test(body), npc: false, kind };
+  return { ch, who: '', text, t: ts.getTime(), self: /^Your?\b/.test(body), npc: false, kind: k.kind, cat: k.cat };
 }
 function classifySpellLine(line, character) { return _classifyExtraLine(line, character, 'spell'); }
 function classifySkillLine(line) { return _classifyExtraLine(line, '', 'skill'); }
@@ -56060,7 +56102,7 @@ module.exports = {
   CHAT_GROUPS, CHAT_CHANNELS, CHAT_RING_MAX, CHAT_PAGE_MAX, CHAT_POLICY_TTL_MS, _resetLocalChatForTest,
   _uploadBuffersForTest: () => ({ chatBuffer, tellBuffer, recentTells: stats.recentTells }),
   _chatRingForTest: () => _chatRing, _meleeRingForTest: () => _meleeRing, CHAT_MELEE_RING_MAX, _handleLocalChatForTest: _handleLocalChat,
-  classifySpellLine, classifySkillLine, _rebuildLandingIndexesForTest: () => { _rebuildBuffMatchers(); _rebuildMechanicMatchers(); }, _spellRingForTest: () => _spellRing, _skillRingForTest: () => _skillRing, CHAT_SPELL_RING_MAX, CHAT_SKILL_RING_MAX,
+  classifySpellLine, classifySkillLine, noteSelfCast, _rebuildLandingIndexesForTest: () => { _rebuildBuffMatchers(); _rebuildMechanicMatchers(); }, _spellRingForTest: () => _spellRing, _skillRingForTest: () => _skillRing, CHAT_SPELL_RING_MAX, CHAT_SKILL_RING_MAX,
   chatLineKey, chatSwapBetween, chatReadLogBackwards, chatHistoryFiles, buildChatHistory, getChatHistory,
   _handleLocalChatHistoryForTest: _handleLocalChatHistory, _resetChatHistoryForTest, CHAT_HISTORY_MAX, CHAT_SWAP_MIN_MS,
   _noteBuffDurationsFromState, buffDurationStats, buffDurationTable, _noteBuffDurationSample,
