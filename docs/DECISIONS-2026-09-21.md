@@ -10116,3 +10116,19 @@ Harmony, Hide/Sneak for non-rogues).
 - **Not done:** plan points have no height, so the map draws them on every floor.
 - **Next:** the guild lead looks at https://b.wolfpack.quest/screen; on a yes it graduates to main before the
   19:30 ET freeze.
+
+### 283. miMIC streams /screen to the raid and posts the next target (2026-10-13, direction; nothing built yet)
+
+- **The guild lead:** *"the persona is in discord as mimic, ready to stream this screen and send encouragement and
+  details to the raid"*. The miMIC announcer persona is already present in Discord; it will stream
+  https://wolfpack.quest/screen to the raid and post encouragement plus details.
+- **Asked the same night, to be built (options first where it is UI):** a deep link in the Discord raid thread to
+  the next target, its instructions and the step the raid is on; the same copyable from Mimic's Command Center and
+  the HUD; a map button that expands to pathing to the next spot with ?, mob and quest markers; tracking your own
+  character toward the next quest marker with a copyable, labelled Zeal `/map` coordinate.
+- **Also:** the Command Center hail board did not show the Nightmare hedge-maze flag (the Terris Thule unlock) or
+  how many already held the flags; it should open when more than one raid group hails one flagging NPC.
+- **Data asks for Wednesday's raid:** average the routes raiders take; directions players and mobs go; severe
+  injuries and deaths; engagement order; feed these into gold splits for fast fights and into what Lord
+  Mobsincamp looks for. Recording is on (§161, §280); the analysis is not built.
+- Research fanned out to Sonnet agents the same night; results and options follow in the session's reply.
