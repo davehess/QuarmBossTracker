@@ -1110,6 +1110,15 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   window in localStorage) → `GET /api/chat/history?hours=N` (local-origin only, 20 s cache) reads each `eqlog_*` backwards in
   256 KiB chunks, stopping past the window (256 MiB cap per file), through the same classifier and gates; merged, deduped, capped at
   3000. A search box filters to one character as speaker or as the character that heard it. Test: `test/chat-history.test.js`.
+  **Round 4 (agent 3.7.173 · Mimic beta `efd30696`, §315):** every line has an EQ-style tag in front (`CHAT_CHANNELS[].tag`:
+  `[GU] [RS] [P] [OF] [S] [SH] [OOC] [AUC] [T] [M]`; a joined channel's tag is its slot number, `cn`/`cnum` on the served row, name as
+  the hover title). Joined channels get their own ⚙ switches, saved by lower-case NAME in `chatPrefs.offChannels` (the number changes
+  with join order; a `/abc` line has only the number, so its name is learned from a line that carries both; unnamed = `#<n>`).
+  Right-click a line → "Show only [x]" / "Show all" through the chips' `openMenu`; a pill shows it, `chatPrefs.only` keeps it, and it
+  never writes the switches. Melee (`classifyMeleeLine`, gated `melee` group, `[M]`) reuses `parseEvent` + `MELEE_ABILITIES`, is off
+  until its ⚙ switch, and has its own 300-line ring (`_meleeRing`) so a fight cannot push chat out; not in ⏱ history. Each window
+  has its own text settings (`chatPrefs.win[<main|group id>]`: font size, spacing, timestamps, tags), merged per window in main's
+  `chat-prefs-set` (whitelisted, clamped).
 - **Seer paste on /pop/guide** (web 1.8.154 · beta, §304): `web/app/pop/guide/SeerPaste.tsx` (collapsed `<details>` atop all guide
   layouts); reader `web/lib/popRecital.ts` (`parseRecital`, `heldClosure`, `zoneViews`, `recitalRows`; table copied from
   `utils/popFlagStages.js`, parity-tested); guide join `web/lib/popGuideSeer.ts` (`STEP_GUIDE`, `guideStepsProven`); save
