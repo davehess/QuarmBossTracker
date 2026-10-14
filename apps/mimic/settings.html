@@ -660,10 +660,12 @@
             slot.innerHTML = '<div style="color:#6b7280;font-size:11px;font-style:italic;margin-top:6px">No backups yet. Click 📦 Back up first.</div>';
           } else {
             slot.innerHTML = '<table style="width:100%;margin-top:8px;font-size:11px;border-collapse:collapse">' +
-              '<tr style="color:#8b949e"><th style="text-align:left;padding:2px 4px">When</th><th style="text-align:left;padding:2px 4px">Source res.</th><th style="text-align:left;padding:2px 4px">Files</th><th style="text-align:right;padding:2px 4px">Restore</th></tr>' +
+              '<tr style="color:#8b949e"><th style="text-align:left;padding:2px 4px">When</th><th style="text-align:left;padding:2px 4px">Name</th><th style="text-align:left;padding:2px 4px">Source res.</th><th style="text-align:left;padding:2px 4px">Files</th><th style="text-align:right;padding:2px 4px">Restore</th></tr>' +
               r.snapshots.map(s =>
                 '<tr style="border-top:1px solid #2a3140">' +
                   '<td style="padding:3px 4px;color:#c9d1d9">' + new Date(s.created_at).toLocaleString() + '</td>' +
+                  // A named layout's backup carries "Layout: <name>" in its label (UI Studio); show the name.
+                  '<td style="padding:3px 4px;color:#7ee7c7">' + String(s.label == null ? '' : s.label).replace(/^Layout: /, '🗂 ').replace(/[&<>"]/g, function (ch) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]; }) + '</td>' +
                   '<td style="padding:3px 4px;color:#8b949e">' + (s.source_width && s.source_height ? s.source_width + '×' + s.source_height : '—') + '</td>' +
                   '<td style="padding:3px 4px;color:#8b949e">' + s.file_count + '</td>' +
                   '<td style="padding:3px 4px;text-align:right;white-space:nowrap">' +
@@ -671,7 +673,7 @@
                     '<button type="button" class="ui-restore" data-id="' + s.id + '" data-charidx="' + idx + '" style="margin:0;padding:3px 9px;font-size:10px;background:#1a7f37">↩ Restore</button>' +
                   '</td>' +
                 '</tr>' +
-                '<tr data-files-for="' + s.id + '" style="display:none"><td colspan="4" style="padding:4px 6px 8px"></td></tr>'
+                '<tr data-files-for="' + s.id + '" style="display:none"><td colspan="5" style="padding:4px 6px 8px"></td></tr>'
               ).join('') +
             '</table>';
             // 📄 Files: what is inside a backup (the guild lead, 2026-10-04: "What 19 files were

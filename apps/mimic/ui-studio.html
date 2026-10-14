@@ -26,6 +26,22 @@
   #bar .sep{width:1px;height:18px;background:#30363d;margin:0 2px}
   #status{margin-left:auto;font-size:10px;color:#8b949e}
   #status.ok{color:#56d364} #status.err{color:#f87171}
+  /* Named-layout row: same look as the toolbar, one line under it. */
+  #layoutBar{flex:0 0 auto;align-items:center;gap:8px;padding:6px 12px;background:#131820;
+    border-bottom:1px solid #30363d;flex-wrap:wrap;font-size:11px;color:#8b949e}
+  #layoutBar strong{color:#7ee7c7;font-weight:600}
+  #layoutBar select,#layoutBar input,#layoutBar button{background:#0d1117;color:#e6edf3;border:1px solid #30363d;
+    border-radius:4px;padding:4px 8px;font-size:11px;font-family:inherit}
+  #layoutBar select{min-width:260px;max-width:420px}
+  #layoutBar input{width:200px;user-select:text}
+  #layoutBar button{cursor:pointer;background:#1f6feb;border-color:#1f6feb;color:#fff;font-weight:600}
+  #layoutBar button:hover{background:#388bfd}
+  #layoutBar button.secondary{background:#21262d;border-color:#30363d;color:#c9d1d9;font-weight:500}
+  #layoutBar button.secondary:hover{background:#30363d}
+  #layoutBar button[disabled]{opacity:0.4;cursor:not-allowed}
+  #layoutBar .sep{width:1px;height:18px;background:#30363d}
+  #layoutMsg{margin-left:auto;font-size:10px}
+  #layoutMsg.ok{color:#56d364} #layoutMsg.err{color:#f87171}
   /* Canvas — proportional to target resolution, scaled to fit. Black bg
      represents the EQ screen. Window rectangles overlay. */
   #stageWrap{display:flex;justify-content:center;align-items:center;flex:1 1 auto;min-width:0;
@@ -162,6 +178,23 @@
     <button id="cloudBackupBtn"    class="secondary" title="Upload encrypted backup of your UI ini files to the bot (existing capture flow)">☁ Backup</button>
     <button id="cloudRestoreBtn"   class="secondary" title="Pull a cloud backup into the editor — rescale it to this machine's monitor, then Save. Use this to deploy your layout on a new computer.">📥 Restore</button>
     <span id="status"></span>
+  </div>
+  <!-- Named layouts for the picked character (uiLayouts.js): alternative screens ("Raid (full chat)",
+       "Minimal chat + Mimic overlay"). A layout is a saved copy of the character's UI_*.ini; each is
+       backed up to the cloud under its name. Switching while EQ is running waits for logout. -->
+  <div id="layoutBar" style="display:none">
+    <strong>🗂 Layouts</strong>
+    <select id="layoutSelect" title="This character's named layouts. ● marks the one on disk now."></select>
+    <button id="layoutSwitch" title="Make the picked layout the one EQ loads. If EverQuest is running it applies after the character logs out; the file it replaces is kept as a .bak.">Switch to</button>
+    <button id="layoutUpdate" class="secondary" title="Replace the picked layout with the character's current UI files (this is how you edit a named layout: Switch to it, change it, Update)">Update from current</button>
+    <button id="layoutBackup" class="secondary" title="Back the picked layout up to the cloud under its name">☁ Back up</button>
+    <button id="layoutDelete" class="secondary" title="Delete the picked layout from this computer (cloud backups stay)">Delete</button>
+    <span class="sep"></span>
+    <input id="layoutName" maxlength="40" placeholder="Name, e.g. Raid (full chat)" title="Up to 40 characters">
+    <button id="layoutSaveNew" title="Save the character's current UI files as a new named layout (also backs it up)">Save current as…</button>
+    <button id="layoutRename" class="secondary" title="Give the picked layout the name typed here">Rename</button>
+    <button id="layoutImport" class="secondary" title="Bring a named layout back from your cloud backups (new computer)">📥 From cloud…</button>
+    <span id="layoutMsg"></span>
   </div>
   <!-- Deferred-save banner — shown while a save is scheduled to apply when the
        character logs out. -->
@@ -1567,9 +1600,17 @@
   // BACKGROUND process, so it works even after UI Studio is closed (and across
   // a Mimic restart). The renderer just queues/cancels and reflects status.
   async function _cancelDefer(silent){
-    try { await window.mimic.uiStudioCancelDefer({ character: STATE.character, eqDir: STATE.eqDir }); } catch (e) {}
+    var cur = _deferTarget();
+    try { if (cur) await window.mimic.uiStudioCancelDefer({ character: cur.character, eqDir: cur.eqDir }); } catch (e) {}
     var b = document.getElementById('deferBanner'); if (b) b.style.display = 'none';
     if (!silent) setStatus('scheduled save cancelled', 'ok');
+    try { _layRefresh(); } catch (e2) {}
+  }
+  // The character the banner speaks for: the loaded one, else the one picked in the dropdown (a
+  // queued layout switch needs no Load).
+  function _deferTarget(){
+    if (STATE.character && STATE.eqDir) return { character: STATE.character, eqDir: STATE.eqDir };
+    return _selectedCharEqDir();
   }
   async function _queueDefer(built){
     // The queue holds the KEY EDITS, not file texts: they are merged into the
@@ -1588,13 +1629,19 @@
     var b = document.getElementById('deferBanner'); if (!b) return;
     var list = [];
     try { list = await window.mimic.uiStudioPendingList(); } catch (e) {}
-    var mine = (list || []).find(function(e){
-      return STATE.character && String(e.character).toLowerCase() === STATE.character.toLowerCase() && e.eqDir === STATE.eqDir;
+    var cur = _deferTarget();
+    var mine = (list || []).filter(function(e){
+      return cur && String(e.character).toLowerCase() === cur.character.toLowerCase() && e.eqDir === cur.eqDir;
     });
-    if (mine) {
+    var sw = mine.find(function(e){ return e.kind === 'layout'; });
+    if (sw) {
+      b.style.display = 'flex';
+      b.querySelector('.txt').textContent = '⏳ Scheduled: the "' + (sw.layoutName || 'saved') + '" layout is put in place when ' +
+        cur.character + ' logs out of EverQuest (the file it replaces is kept as .bak-eq). Background — safe to close UI Studio.';
+    } else if (mine.length) {
       b.style.display = 'flex';
       b.querySelector('.txt').textContent = '⏳ Scheduled: your layout applies automatically when ' +
-        STATE.character + ' logs out of EverQuest. (Background — safe to close UI Studio.)';
+        cur.character + ' logs out of EverQuest. (Background — safe to close UI Studio.)';
     } else {
       b.style.display = 'none';
     }
@@ -1773,6 +1820,171 @@
     catch (e) { setStatus('save failed: ' + e.message, 'err'); }
   });
   document.getElementById('deferCancel').addEventListener('click', function(){ _cancelDefer(false); });
+
+  // ── Named layouts (uiLayouts.js) ─────────────────────────────────────────
+  // Several named screens per character. A layout is a saved copy of the character's UI_*.ini; the
+  // main process keeps them, applies a switch (after logout when EQ is running) and uploads each
+  // one to the cloud backups with its name in the label (Layout: <name>).
+  var LAY = { items: [], cap: 10, hasCurrent: false };
+  var LAY_PREFIX = 'Layout: ';
+  function _layEl(id){ return document.getElementById(id); }
+  function _layMsg(msg, cls){ var m = _layEl('layoutMsg'); m.textContent = msg || ''; m.className = cls || ''; }
+  function _layPicked(){ var id = _layEl('layoutSelect').value; return LAY.items.find(function(i){ return i.id === id; }) || null; }
+  function _layErr(r){ return r && r.error ? r.error : 'unknown error'; }
+  function _layOptionText(i){
+    var t = (i.live ? '● ' : '') + i.name;
+    if (i.pending) t += '  ⏳ switch queued';
+    else if (i.live) t += i.modified ? '  (live, changed since saved)' : '  (live)';
+    else t += '  · saved ' + new Date(i.savedAt).toLocaleDateString();
+    return t;
+  }
+  async function _layRefresh(keepId){
+    var who = _selectedCharEqDir(), bar = _layEl('layoutBar');
+    if (!who || !window.mimic || !window.mimic.uiStudioLayoutList) { bar.style.display = 'none'; return; }
+    var r = await window.mimic.uiStudioLayoutList(who.character, who.eqDir).catch(function(e){ return { ok: false, error: e && e.message }; });
+    bar.style.display = 'flex';
+    var sel = _layEl('layoutSelect'), want = keepId || sel.value;
+    sel.innerHTML = '';
+    if (!r || !r.ok) { LAY.items = []; _layMsg('layouts unavailable: ' + _layErr(r), 'err'); _layEnable(); return; }
+    LAY.items = r.layouts || []; LAY.cap = r.cap || 10; LAY.hasCurrent = !!r.hasCurrent;
+    if (!LAY.items.length) {
+      var none = document.createElement('option'); none.value = '';
+      none.textContent = LAY.hasCurrent ? '— none yet: name one and Save current as… —' : '— no UI file for this character —';
+      sel.appendChild(none);
+    }
+    LAY.items.forEach(function(i){
+      var o = document.createElement('option'); o.value = i.id; o.textContent = _layOptionText(i); sel.appendChild(o);
+    });
+    var pick = LAY.items.find(function(i){ return i.id === want; }) || LAY.items.find(function(i){ return i.live; }) || LAY.items[0];
+    if (pick) sel.value = pick.id;
+    _layEnable();
+  }
+  function _layEnable(){
+    var p = _layPicked();
+    ['layoutSwitch', 'layoutUpdate', 'layoutBackup', 'layoutDelete', 'layoutRename'].forEach(function(id){ _layEl(id).disabled = !p; });
+    _layEl('layoutSaveNew').disabled = !LAY.hasCurrent || LAY.items.length >= LAY.cap;
+    _layEl('layoutSaveNew').title = LAY.items.length >= LAY.cap
+      ? 'The most layouts per character is ' + LAY.cap + ' — delete one first'
+      : 'Save the character\'s current UI files as a new named layout (also backs it up)';
+  }
+  async function _layBackup(id, quiet){
+    var who = _selectedCharEqDir(); if (!who) return false;
+    var r = await window.mimic.uiStudioCapture({ character: who.character, eqDir: who.eqDir, layoutId: id })
+      .catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (r && r.ok) { if (!quiet) _layMsg('☁ backed up ' + r.file_count + ' file(s) to the cloud', 'ok'); return true; }
+    if (!quiet) _layMsg('backup failed: ' + _layErr(r), 'err');
+    return false;
+  }
+  _layEl('layoutSelect').addEventListener('change', _layEnable);
+  document.getElementById('charSelect').addEventListener('change', function(){ _layEl('layoutName').value = ''; _layMsg(''); _layRefresh(); _showDeferBanner().catch(function(){}); });
+  window.addEventListener('focus', function(){ _layRefresh().catch(function(){}); });
+
+  _layEl('layoutSaveNew').addEventListener('click', async function(){
+    var who = _selectedCharEqDir(); if (!who) return;
+    var name = _layEl('layoutName').value;
+    if (!name.trim()) { _layMsg('type a name for the layout first', 'err'); return; }
+    var r = await window.mimic.uiStudioLayoutSave({ character: who.character, eqDir: who.eqDir, name: name })
+      .catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (!r || !r.ok) { _layMsg(_layErr(r), 'err'); return; }
+    _layEl('layoutName').value = '';
+    var up = await _layBackup(r.layout.id, true);
+    await _layRefresh(r.layout.id);
+    _layMsg('saved "' + r.layout.name + '" (' + r.layout.fileCount + ' file(s))' + (up ? ' · ☁ backed up' : ' · ⚠ cloud backup failed — use ☁ Back up'), up ? 'ok' : 'err');
+  });
+  _layEl('layoutUpdate').addEventListener('click', async function(){
+    var who = _selectedCharEqDir(), p = _layPicked(); if (!who || !p) return;
+    if (!window.confirm('Replace the saved layout "' + p.name + '" with ' + who.character + '\'s current UI files?')) return;
+    var r = await window.mimic.uiStudioLayoutSave({ character: who.character, eqDir: who.eqDir, id: p.id })
+      .catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (!r || !r.ok) { _layMsg(_layErr(r), 'err'); return; }
+    var up = await _layBackup(p.id, true);
+    await _layRefresh(p.id);
+    _layMsg('updated "' + p.name + '"' + (up ? ' · ☁ backed up' : ' · ⚠ cloud backup failed — use ☁ Back up'), up ? 'ok' : 'err');
+  });
+  _layEl('layoutRename').addEventListener('click', async function(){
+    var who = _selectedCharEqDir(), p = _layPicked(); if (!who || !p) return;
+    var name = _layEl('layoutName').value;
+    if (!name.trim()) { _layMsg('type the new name in the box first', 'err'); return; }
+    var r = await window.mimic.uiStudioLayoutRename({ character: who.character, id: p.id, name: name })
+      .catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (!r || !r.ok) { _layMsg(_layErr(r), 'err'); return; }
+    _layEl('layoutName').value = '';
+    await _layRefresh(p.id);
+    _layMsg('renamed to "' + r.layout.name + '" · ☁ Back up to put the new name on the cloud copy', 'ok');
+  });
+  _layEl('layoutDelete').addEventListener('click', async function(){
+    var who = _selectedCharEqDir(), p = _layPicked(); if (!who || !p) return;
+    if (!window.confirm('Delete the layout "' + p.name + '" from this computer?\n\nCloud backups of it stay; the UI files EQ is using now are not touched.')) return;
+    var r = await window.mimic.uiStudioLayoutDelete({ character: who.character, id: p.id })
+      .catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (!r || !r.ok) { _layMsg(_layErr(r), 'err'); return; }
+    await _layRefresh(); _showDeferBanner().catch(function(){});
+    _layMsg('deleted "' + p.name + '"', 'ok');
+  });
+  _layEl('layoutBackup').addEventListener('click', async function(){
+    var p = _layPicked(); if (!p) return;
+    _layMsg('uploading…'); await _layBackup(p.id, false);
+  });
+  _layEl('layoutSwitch').addEventListener('click', async function(){
+    var who = _selectedCharEqDir(), p = _layPicked(); if (!who || !p) return;
+    if (p.live && !p.modified && !p.pending) { _layMsg('"' + p.name + '" is already the live layout', 'ok'); return; }
+    // Anything on disk that is not a saved layout is replaced (a .bak copy is kept) — say so first.
+    var unsaved = LAY.hasCurrent && !LAY.items.some(function(i){ return i.live && !i.modified; });
+    if (unsaved && !window.confirm(who.character + '\'s current UI is not saved as a layout (or has changed since you saved it).\n\n' +
+        'Switching replaces it with "' + p.name + '". The old file is kept as a .bak copy beside it.\n\nSwitch anyway?')) return;
+    var r = await window.mimic.uiStudioLayoutSwitch({ character: who.character, eqDir: who.eqDir, id: p.id })
+      .catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (!r || !r.ok) { _layMsg(_layErr(r), 'err'); return; }
+    await _layRefresh(p.id); _showDeferBanner().catch(function(){});
+    if (r.queued) _layMsg('⏳ "' + r.name + '" is queued — it goes in when ' + who.character + ' logs out (EverQuest is running)', 'ok');
+    else _layMsg('✅ switched to "' + r.name + '" (' + r.written.length + ' file(s), the old ones kept as .bak) · log in to see it' +
+      (STATE.character && STATE.character.toLowerCase() === who.character.toLowerCase() ? ' · click Load + Rescale to see it here' : ''), 'ok');
+  });
+
+  // Layouts that were backed up under a name can come back on another computer.
+  _layEl('layoutImport').addEventListener('click', async function(){
+    var who = _selectedCharEqDir();
+    if (!who) { _layMsg('pick a character first', 'err'); return; }
+    _layMsg('fetching cloud backups…');
+    var r = await window.mimic.uiStudioListSnapshots(who.character).catch(function(e){ return { ok: false, error: e && e.message }; });
+    if (!r || !r.ok) { _layMsg('could not list backups: ' + _layErr(r), 'err'); return; }
+    var seen = {}, snaps = (r.snapshots || []).filter(function(s){
+      var l = String(s.label || ''); if (l.indexOf(LAY_PREFIX) !== 0 || seen[l]) return false; seen[l] = 1; return true;
+    });
+    if (!snaps.length) { _layMsg('no named layouts in your cloud backups for ' + who.character + ' yet — Save current as… or ☁ Back up makes one', 'err'); return; }
+    _layMsg('');
+    var old = _layEl('layoutImportPicker'); if (old) old.remove();
+    var dlg = document.createElement('div'); dlg.id = 'layoutImportPicker';
+    dlg.style.cssText = 'position:fixed;top:90px;left:50%;transform:translateX(-50%);background:#161b22;border:1px solid #58a6ff;' +
+      'border-radius:6px;z-index:100;padding:10px;font-size:12px;color:#c9d1d9;min-width:340px;max-width:480px;max-height:70vh;overflow-y:auto';
+    var html = '<div style="color:#7ee7c7;font-weight:600;margin-bottom:4px">Bring back a layout for ' + escapeHtml(who.character) + '</div>' +
+      '<div style="color:#8b949e;font-size:10px;margin-bottom:8px">Adds it to this computer\'s layouts. Nothing in your EQ folder changes until you Switch to it.</div>';
+    snaps.forEach(function(s, i){
+      html += '<button data-i="' + i + '" style="display:block;width:100%;text-align:left;background:#0d1117;color:#e6edf3;border:1px solid #30363d;' +
+        'border-radius:4px;padding:6px 8px;margin-bottom:4px;cursor:pointer;font-size:11px;font-family:inherit">' +
+        '<div style="font-weight:600">' + escapeHtml(String(s.label).slice(LAY_PREFIX.length)) + '</div>' +
+        '<div style="color:#8b949e;font-size:10px">' + escapeHtml(s.created_at ? new Date(s.created_at).toLocaleString() : '') +
+        ' · 💻 ' + escapeHtml(s.machine_name || 'unknown machine') + '</div></button>';
+    });
+    html += '<div style="text-align:right"><button id="layoutImportCancel" style="background:transparent;color:#8b949e;border:1px solid #30363d;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">Cancel</button></div>';
+    dlg.innerHTML = html; document.body.appendChild(dlg);
+    _layEl('layoutImportCancel').addEventListener('click', function(){ dlg.remove(); });
+    dlg.querySelectorAll('button[data-i]').forEach(function(btn){
+      btn.addEventListener('click', async function(){
+        var s = snaps[parseInt(this.dataset.i, 10)], name = String(s.label).slice(LAY_PREFIX.length);
+        dlg.remove(); _layMsg('downloading…');
+        var g = await window.mimic.uiStudioGetSnapshot({ character: who.character, id: s.id }).catch(function(e){ return { ok: false, error: e && e.message }; });
+        if (!g || !g.ok || !g.files) { _layMsg('download failed: ' + _layErr(g), 'err'); return; }
+        var im = await window.mimic.uiStudioLayoutImport({ character: who.character, name: name, files: g.files }).catch(function(e){ return { ok: false, error: e && e.message }; });
+        if (im && !im.ok && im.code === 'exists' && window.confirm('You already have a layout called "' + name + '". Replace it with the cloud copy?')) {
+          im = await window.mimic.uiStudioLayoutImport({ character: who.character, name: name, files: g.files, replace: true }).catch(function(e){ return { ok: false, error: e && e.message }; });
+        }
+        if (!im || !im.ok) { _layMsg(_layErr(im), 'err'); return; }
+        await _layRefresh(im.layout.id);
+        _layMsg('brought back "' + im.layout.name + '" — Switch to it when you want it', 'ok');
+      });
+    });
+  });
 
   // ── Capture / Backup / Inspect Socials ───────────────────────────────────
   // Surfaces the existing _readUiBundle + ui-studio-capture cloud-backup

@@ -32,6 +32,7 @@ const zealUpdater = require('./zealUpdater');
 const uiPacks = require('./uiPacks');
 const { applyIniKeyEdits } = require('./iniKeyEdits');
 const { visibleUiRects } = require('./uiClearRects');
+const uiLayouts = require('./uiLayouts');
 const soundLib = require('./sounds');
 
 // Hide the default File/Edit/View/Window/Help menubar — this is a focused
@@ -1616,7 +1617,8 @@ function _loadUiDeferred() {
   // from the copy Studio read at Load. Applying one would overwrite EQ's own
   // on-camp save with that stale copy — the bug key edits exist to end (the
   // guild lead, 2026-10-05) — so it is dropped, never applied.
-  const keep = _uiDeferred.filter(e => e && Array.isArray(e.edits) && e.edits.length);
+  // A queued layout switch (kind 'layout') holds a layout id, not file texts, so it is not the old format.
+  const keep = _uiDeferred.filter(e => e && ((e.kind === 'layout' && e.layoutId) || (Array.isArray(e.edits) && e.edits.length)));
   const dropped = _uiDeferred.length - keep.length;
   if (dropped) {
     const msg = `[ui-studio] dropped ${dropped} pending deferred save(s) in the old whole-file format — applying one would overwrite EQ's own save with a stale copy; open UI Studio and Save again\n`;
@@ -1636,7 +1638,35 @@ function _uiCharActiveInZeal(charLower) {
   }
   return false;
 }
+// Named layouts (uiLayouts.js): one store for the process, files under userData.
+let _uiLayoutStoreInst = null;
+function _uiLayoutStore() {
+  if (!_uiLayoutStoreInst) {
+    _uiLayoutStoreInst = uiLayouts.createLayoutStore({
+      dir: path.join(app.getPath('userData'), 'ui-layouts'),
+      readBundle: _readUiBundle,
+      backupAndWrite: _backupAndWriteFile,
+    });
+  }
+  return _uiLayoutStoreInst;
+}
+function _applyDeferredLayout(entry) {
+  let r;
+  try { r = _uiLayoutStore().apply(entry.character, entry.eqDir, entry.layoutId, { backupTag: 'eq' }); }
+  catch (err) { r = { ok: false, error: err && err.message }; }
+  if (!r.ok) { appendAgentLog(`[ui-studio] queued layout switch for ${entry.character} not applied: ${r.error}\n`); return false; }
+  appendAgentLog(`[ui-studio] switched ${entry.character} to layout "${r.name}" (${r.written.length} file(s)) after logout\n`);
+  try {
+    if (Notification.isSupported()) new Notification({
+      title: 'UI Studio — layout switched',
+      body: `${entry.character} logged out, so the "${r.name}" layout was applied (${r.written.length} file(s)). Log back in to see it.`,
+      silent: true,
+    }).show();
+  } catch {}
+  return true;
+}
 function _applyDeferredEntry(entry) {
+  if (entry && entry.kind === 'layout') return _applyDeferredLayout(entry);
   let written = 0;
   // Key edits only, applied to the file as EQ just wrote it on logout (its copy
   // → .bak-eq). An old whole-text entry is refused even if one got past
@@ -10795,7 +10825,8 @@ ipcMain.handle('ui-studio-defer-save', (_e, params) => {
     const edits     = _cleanUiKeyEdits(params?.edits);
     if (!character || !eqDir || !edits.length) return { ok: false, error: 'character + eqDir + edits required' };
     const charLower = character.toLowerCase();
-    _uiDeferred = _uiDeferred.filter(e => !(String(e.character).toLowerCase() === charLower && e.eqDir === eqDir));
+    // A queued layout switch stays: edits queued after it apply on top once it has run.
+    _uiDeferred = _uiDeferred.filter(e => !(String(e.character).toLowerCase() === charLower && e.eqDir === eqDir && e.kind !== 'layout'));
     _uiDeferred.push({
       character, eqDir, edits,
       tgtSuffix: params?.tgtSuffix || null,
@@ -10807,8 +10838,61 @@ ipcMain.handle('ui-studio-defer-save', (_e, params) => {
   } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
 });
 ipcMain.handle('ui-studio-pending-list', () => {
-  return _uiDeferred.map(e => ({ character: e.character, eqDir: e.eqDir, tgtSuffix: e.tgtSuffix, queuedAt: e.queuedAt, sawActive: !!e.sawActive }));
+  return _uiDeferred.map(e => ({ character: e.character, eqDir: e.eqDir, tgtSuffix: e.tgtSuffix, queuedAt: e.queuedAt, sawActive: !!e.sawActive,
+    kind: e.kind || 'edits', layoutId: e.layoutId || null, layoutName: e.layoutName || null }));
 });
+
+// ── UI Studio named layouts (uiLayouts.js) ───────────────────────────────────
+// A queued switch replaces any earlier queued switch for the same character + folder. Queued key
+// edits are left alone and, being later in the list, apply after it.
+function _queueUiLayoutSwitch(entry) {
+  const charLower = String(entry.character).toLowerCase();
+  _uiDeferred = _uiDeferred.filter(e => !(e.kind === 'layout' && String(e.character).toLowerCase() === charLower && e.eqDir === entry.eqDir));
+  _uiDeferred.unshift({ ...entry, queuedAt: Date.now(), sawActive: _uiCharActiveInZeal(charLower) });
+  _saveUiDeferred();
+}
+function _layoutArgs(character, eqDir) {
+  const c = String(character || '').trim(), d = String(eqDir || '').trim();
+  return { c, d, pendingId: (_uiDeferred.find(e => e.kind === 'layout' && String(e.character).toLowerCase() === c.toLowerCase() && e.eqDir === d) || {}).layoutId || null };
+}
+function _layoutCall(fn) {
+  try { return fn(_uiLayoutStore()); } catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
+}
+ipcMain.handle('ui-studio-layout-list', (_e, character, eqDir) => {
+  const a = _layoutArgs(character, eqDir);
+  return _layoutCall(s => s.list(a.c, a.d, { pendingId: a.pendingId }));
+});
+ipcMain.handle('ui-studio-layout-save', (_e, params) => {
+  const a = _layoutArgs(params && params.character, params && params.eqDir);
+  return _layoutCall(s => s.save(a.c, a.d, params && params.name, { id: params && params.id ? String(params.id) : undefined }));
+});
+ipcMain.handle('ui-studio-layout-rename', (_e, params) =>
+  _layoutCall(s => s.rename(String(params && params.character || '').trim(), String(params && params.id || ''), params && params.name)));
+ipcMain.handle('ui-studio-layout-delete', (_e, params) => {
+  const c = String(params && params.character || '').trim(), id = String(params && params.id || '');
+  const r = _layoutCall(s => s.remove(c, id));
+  // A queued switch to a layout that is gone has nothing to apply.
+  if (r.ok) { const n = _uiDeferred.length; _uiDeferred = _uiDeferred.filter(e => !(e.kind === 'layout' && e.layoutId === id)); if (_uiDeferred.length !== n) _saveUiDeferred(); }
+  return r;
+});
+// Switch to: EQ running (or the character in game) => queued for after logout; otherwise written now.
+ipcMain.handle('ui-studio-layout-switch', async (_e, params) => {
+  const a = _layoutArgs(params && params.character, params && params.eqDir);
+  const id = String(params && params.id || '');
+  let eqRunning = _uiCharActiveInZeal(a.c.toLowerCase());
+  if (!eqRunning) { try { eqRunning = await _isEqRunning(); } catch { eqRunning = false; } }
+  return _layoutCall(s => s.switchTo(a.c, a.d, id, { eqRunning, queue: _queueUiLayoutSwitch }));
+});
+ipcMain.handle('ui-studio-layout-cancel-switch', (_e, params) => {
+  const c = String(params && params.character || '').trim().toLowerCase(), d = String(params && params.eqDir || '').trim();
+  const n = _uiDeferred.length;
+  _uiDeferred = _uiDeferred.filter(e => !(e.kind === 'layout' && String(e.character).toLowerCase() === c && e.eqDir === d));
+  if (_uiDeferred.length !== n) _saveUiDeferred();
+  return { ok: true, removed: n - _uiDeferred.length };
+});
+// A layout made from a cloud backup's files (the new-computer path: the cloud holds the named layouts).
+ipcMain.handle('ui-studio-layout-import', (_e, params) =>
+  _layoutCall(s => s.importFiles(String(params && params.character || '').trim(), params && params.name, params && params.files, { replace: !!(params && params.replace) })));
 ipcMain.handle('ui-studio-cancel-defer', (_e, params) => {
   const character = String(params?.character || '').trim().toLowerCase();
   const eqDir     = String(params?.eqDir || '').trim();
@@ -10935,13 +11019,24 @@ ipcMain.handle('list-eq-characters', () => {
 ipcMain.handle('ui-studio-capture', async (_e, params) => {
   const character = String(params?.character || '').trim();
   const eqDir     = String(params?.eqDir || '').trim();
-  const label     = params?.label ? String(params.label).slice(0, 80) : null;
+  let label       = params?.label ? String(params.label).slice(0, 80) : null;
+  const layoutId  = params?.layoutId ? String(params.layoutId) : '';
   if (!character || !eqDir) return { ok: false, error: 'character + eqDir required' };
   const cfg = loadConfig();
   const _uiToken = resolveUploadToken(cfg);
   if (!_uiToken) return { ok: false, error: 'no token configured — set it in Settings' };
 
-  const files = _readUiBundle(eqDir, character);
+  // A named layout backs up its own saved files (not what is on disk now), with its name in the
+  // label the bot already stores — no new field, no migration.
+  let files;
+  if (layoutId) {
+    const lay = _uiLayoutStore().get(character, layoutId);
+    if (!lay) return { ok: false, error: 'that layout no longer exists' };
+    files = { ...lay.files };
+    label = uiLayouts.cloudLabel(lay.name);
+  } else {
+    files = _readUiBundle(eqDir, character);
+  }
   const fileCount = Object.keys(files).length;
   if (fileCount === 0) return { ok: false, error: 'no ini files found for this character' };
   // Source resolution — we use the primary display as a best-guess. The

@@ -1154,6 +1154,15 @@ contextBridge.exposeInMainWorld('mimic', {
   uiStudioPendingList:    ()        => ipcRenderer.invoke('ui-studio-pending-list'),
   uiStudioCancelDefer:    (params)  => ipcRenderer.invoke('ui-studio-cancel-defer', params),
   uiStudioListCharacters: ()        => ipcRenderer.invoke('ui-studio-list-characters'),
+  // Named layouts per character (uiLayouts.js): list / save (id = update in place) / rename / delete /
+  // switch (queued for after logout when EQ is running) / cancel a queued switch / import from a backup.
+  uiStudioLayoutList:     (character, eqDir) => ipcRenderer.invoke('ui-studio-layout-list', character, eqDir),
+  uiStudioLayoutSave:     (params)  => ipcRenderer.invoke('ui-studio-layout-save', params),
+  uiStudioLayoutRename:   (params)  => ipcRenderer.invoke('ui-studio-layout-rename', params),
+  uiStudioLayoutDelete:   (params)  => ipcRenderer.invoke('ui-studio-layout-delete', params),
+  uiStudioLayoutSwitch:   (params)  => ipcRenderer.invoke('ui-studio-layout-switch', params),
+  uiStudioLayoutCancelSwitch: (params) => ipcRenderer.invoke('ui-studio-layout-cancel-switch', params),
+  uiStudioLayoutImport:   (params)  => ipcRenderer.invoke('ui-studio-layout-import', params),
   uiStudioCapture:        (params)  => ipcRenderer.invoke('ui-studio-capture', params),
   uiStudioListSnapshots:  (character)=> ipcRenderer.invoke('ui-studio-list-snapshots', character),
   uiStudioGetSnapshot:    (params)  => ipcRenderer.invoke('ui-studio-get-snapshot', params),
