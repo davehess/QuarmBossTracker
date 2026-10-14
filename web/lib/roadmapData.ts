@@ -39,7 +39,7 @@ export const releases: Release[] = [
   {
     key: 'web-1-8-148-2026-10-14',
     title: 'Raid night plan',
-    version: 'Web 1.8.148',
+    version: 'Web 1.8.149',
     date: '2026-10-14',
     headline: 'One page for the night: who is missing a preflag, how to get there, what each boss does, and a map with the path.',
     features: [
@@ -47,8 +47,9 @@ export const releases: Release[] = [
       { name: 'Travel', blurb: 'From Tranquility to each zone, and the route inside it. First time into a zone, go through the live portal once.' },
       { name: 'What to expect', blurb: 'Each boss: health, what it casts, the adds and when they come, what to do after the kill, and the loot.' },
       { name: 'Maps', blurb: 'Each zone drawn with the route, the bosses, the zone-ins and the patrols.' },
+      { name: 'Links', blurb: 'The top of the page jumps to each zone and boss. Bosses link to PQDI; every drop shows its item card on hover and links to PQDI.' },
     ],
-    fixes: [],
+    fixes: ['The preflag check showed an error instead of the raiders.', 'Loot lists now come from the drop tables, so every drop and its chance is right.'],
   },
   {
     key: 'web-1-8-147-2026-10-14',
