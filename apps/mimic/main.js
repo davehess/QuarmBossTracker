@@ -358,7 +358,7 @@ function defaultConfig() {
     // group/officer/custom switch those lines (group and custom default ON since 2026-10-14, officer stays opt-in),
     // byChar remembers which channel chips each character has switched off. offChannels = [lower-case joined
     // channel NAMES] switched off, shared by every character; absent = every channel shows. melee = opt-in for
-    // the combined-melee group (default off); spells and skills are the same kind of opt-in (default off). meleeShow = { mine, on_me, others, misses }, which
+    // the combined-melee group (default off); spells, skills, loot, random and other are the same kind of opt-in (default off). meleeShow = { mine, on_me, others, misses }, which
     // melee lines show (all true unless switched off); spellShow = { mine, on_me, others } and skillShow = { mine, others } likewise. only = the "show only" view toggle ('' = off). win = { <window
     // id: 'main' or a breakout window id (b1, b2...)>: { fontSize, lineGap, times, tags } }, each window's own text settings.
     showChat: false,
@@ -8275,6 +8275,9 @@ function _chatPrefsPayload(cfg, char) {
     melee: p.melee === true,     // combined melee floods the feed: opt-in, like officer
     spells: p.spells === true,   // spells and skills are floods too (2026-10-14): opt-in, default off
     skills: p.skills === true,
+    loot: p.loot === true,       // Loot, Random and Other (2026-10-15): the same kind of opt-in, default off
+    random: p.random === true,
+    other: p.other === true,
     meleeShow: _chatMeleeShow(p.meleeShow),
     spellShow: _chatShowMap(p.spellShow, _SPELL_SHOW_KEYS),
     skillShow: _chatShowMap(p.skillShow, _SKILL_SHOW_KEYS),
@@ -8295,7 +8298,7 @@ ipcMain.handle('chat-prefs-set', (_e, char, patch) => {
   const p = (cfg.chatPrefs && typeof cfg.chatPrefs === 'object') ? cfg.chatPrefs : {};
   const inc = (patch && typeof patch === 'object') ? patch : {};
   if (inc.fontSize != null) { const n = Math.round(Number(inc.fontSize)); if (n >= 9 && n <= 24) p.fontSize = n; }
-  for (const k of ['group', 'officer', 'custom', 'melee', 'spells', 'skills']) if (typeof inc[k] === 'boolean') p[k] = inc[k];
+  for (const k of ['group', 'officer', 'custom', 'melee', 'spells', 'skills', 'loot', 'random', 'other']) if (typeof inc[k] === 'boolean') p[k] = inc[k];
   if (inc.meleeShow && typeof inc.meleeShow === 'object') {
     // Only the keys sent change, and only to a boolean: the other switches keep what they had.
     const cur = _chatMeleeShow(p.meleeShow);

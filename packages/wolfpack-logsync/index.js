@@ -38676,6 +38676,9 @@ const CHAT_CHANNELS = {
   melee:   { label: 'Melee',   color: '#d0847a', tag: 'M' },
   spell:   { label: 'Spells',  color: '#b392f0', tag: 'SP' },
   skill:   { label: 'Skills',  color: '#e3b341', tag: 'SK' },
+  loot:    { label: 'Loot',    color: '#f778ba', tag: 'LT' },
+  random:  { label: 'Random',  color: '#2fb8c9', tag: 'RND' },
+  other:   { label: 'Other',   color: '#a0a8b8', tag: 'OT' },
 };
 // One chip each. `gate` names the policy switch that must be on for these channels to be captured,
 // served and shown; no gate = public, shown by default. A tab is a group plus a filter, so this list
@@ -38702,8 +38705,18 @@ const CHAT_GROUPS = [
   // Skills = skill-ups and what a skill did (taunt, forage, mend, feign, hide...), tradeskill combines, disciplines.
   { id: 'spells',  label: 'Spells',    channels: ['spell'],   gate: 'spells' },
   { id: 'skills',  label: 'Skills',    channels: ['skill'],   gate: 'skills' },
+  // Loot, Random and Other (the guild lead, 2026-10-15: "chat overlay needs the rest of the channels available, loot,
+  // money, other, etc"). The game's own filter menu names them Loot / Random (Zeal) and Other (ChannelMap 22; see
+  // ui-studio.html). Built like Skills: gated off until the ⚙ switches them on, a small ring each. Loot = your own
+  // "--You have looted ...--" line; Random = the /random pair; Other = a game or system line no other group claims
+  // (experience, faction, bandolier and the like), never anything that looks like speech. Money has no group yet:
+  // no coin line is in the repo's parsers or fixtures, and a pattern is not guessed. Until one is added a coin line
+  // reads as Other.
+  { id: 'loot',    label: 'Loot',      channels: ['loot'],    gate: 'loot' },
+  { id: 'random',  label: 'Random',    channels: ['random'],  gate: 'random' },
+  { id: 'other',   label: 'Other',     channels: ['other'],   gate: 'other' },
 ];
-const CHAT_POLICY_KEYS = ['tells', 'group', 'officer', 'custom', 'melee', 'spells', 'skills'];
+const CHAT_POLICY_KEYS = ['tells', 'group', 'officer', 'custom', 'melee', 'spells', 'skills', 'loot', 'random', 'other'];
 
 // First-person lines ("You say, ..."). Group 1 is the text, except the custom-channel and told forms.
 const CHAT_SELF_PATTERNS = [
@@ -39045,6 +39058,69 @@ function _classifyExtraLine(line, character, ch) {
 function classifySpellLine(line, character) { return _classifyExtraLine(line, character, 'spell'); }
 function classifySkillLine(line) { return _classifyExtraLine(line, '', 'skill'); }
 
+// ── Loot, Random and Other rows (the guild lead, 2026-10-15: "chat overlay needs the rest of the channels available,
+// loot, money, other, etc"). Same promise as the groups above: no grammar of their own for what the agent already reads.
+//   · Loot   = trackLootedLine's own _LOOTED_RX, the self-only "--You have looted a <Item>.--" (no other player's loot
+//              echoes into this log; trackLootedLine's header says so).
+//   · Random = the /random pair rollTracker reads: _ROLL_DIE_RX ("**A Magic Die is rolled by <Name>.") and
+//              _ROLL_RESULT_RX ("**It could have been any number from 0 to 333, but this time it turned up a 116."). Both
+//              are heard by everyone in the zone, so two of your characters log the same line.
+//   · Other  = what is left: a game or system line that no group claims (experience, faction standing, bandolier,
+//              "You are hungry.", ...). It is a FALLBACK, and the rules that keep it safe are the point:
+//                1. it never takes a line another group owns, whether or not that group's switch is on (those
+//                   classifiers are asked first; a Melee swing with Melee off is NOT Other);
+//                2. it never takes anything that looks like speech: a quoted sentence (`<Name> tells you, '...'`, a pet's
+//                   or merchant's line that chat deliberately dropped), a Zeal `[Tag] [Name]:` line, a /tag broadcast.
+//                   Tells, group and officer chat stay behind their own switches and are not reachable from here;
+//                3. combat damage and misses are not Other (they are Melee's, Spells' or nobody's, never "system").
+//            Money (coin received, split) has no row: the repo has no coin line in a parser or a fixture to build on.
+const CHAT_OTHER_SPEECH_RX = /,\s*['"].*['"]\s*$/;
+const CHAT_OTHER_COMBAT_RX = /points? of (?:non-melee )?damage|, but /;
+const CHAT_OTHER_NOISE_RX = /^LOADING, PLEASE WAIT/i;
+function _chatLogBody(line) {
+  if (typeof line !== 'string' || line.charCodeAt(0) !== 91 /* [ */) return null;
+  const at = line.indexOf('] ');
+  if (at < 1) return null;
+  const body = line.slice(at + 2).replace(/\s+$/, '');
+  return body || null;
+}
+function classifyLootLine(line) {
+  const body = _chatLogBody(line);
+  if (!body || body.charCodeAt(0) !== 45 /* - */ || !_LOOTED_RX.test(body) || !body.startsWith('--You have looted ')) return null;
+  const ts = parseEqTimestamp(line);
+  const text = _chatCleanText(body);
+  if (!ts || !text) return null;
+  return { ch: 'loot', who: '', text, t: ts.getTime(), self: true, npc: false };
+}
+function classifyRandomLine(line) {
+  const body = _chatLogBody(line);
+  if (!body || !body.startsWith('**') || !(_ROLL_DIE_RX.test(line) || _ROLL_RESULT_RX.test(line))) return null;
+  const ts = parseEqTimestamp(line);
+  const text = _chatCleanText(body);
+  if (!ts || !text) return null;
+  return { ch: 'random', who: '', text, t: ts.getTime(), self: false, npc: false };
+}
+// `ran` = the classifiers noteLocalChatLine has already asked and got null from ({ melee, skills, spells }), so a
+// line is not classified twice; anything not listed is asked here.
+function classifyOtherLine(line, character, ran) {
+  const body = _chatLogBody(line);
+  if (!body) return null;
+  if (body.charCodeAt(0) === 91 /* [ */) return null;                                  // Zeal "[Tag] [Name]: text" chat, /who rows
+  if (line.indexOf('ZEALTAG | ') !== -1 || line.indexOf('ZT | ') !== -1) return null;   // /tag broadcasts
+  if (CHAT_OTHER_SPEECH_RX.test(body) || CHAT_OTHER_COMBAT_RX.test(body) || CHAT_OTHER_NOISE_RX.test(body)) return null;
+  const ts = parseEqTimestamp(line);
+  if (!ts) return null;
+  if (classifyChatLine(line, character)) return null;                                // chat (any channel, gated or not) is never Other
+  if (classifyLootLine(line) || classifyRandomLine(line)) return null;
+  const r = ran || {};
+  if (!r.melee && classifyMeleeLine(line, character)) return null;
+  if (!r.skills && _classifyExtraLine(line, '', 'skill')) return null;
+  if (!r.spells && _classifyExtraLine(line, character, 'spell')) return null;
+  const text = _chatCleanText(body);
+  if (!text) return null;
+  return { ch: 'other', who: '', text, t: ts.getTime(), self: /^Your?\b/.test(body), npc: false };
+}
+
 // The overlay's switches, handed over on every poll. Default (nothing asked for, or the overlay went
 // quiet for CHAT_POLICY_TTL_MS) is public channels only.
 let _chatPolicy = null;
@@ -39058,7 +39134,7 @@ function setChatPolicy(p, now) {
 function chatPolicyNow(now) {
   const t = now == null ? Date.now() : now;
   if (_chatPolicy && t - _chatPolicyAt <= CHAT_POLICY_TTL_MS) return _chatPolicy;
-  return { tells: false, group: false, officer: false, custom: false, melee: false, spells: false, skills: false };
+  return { tells: false, group: false, officer: false, custom: false, melee: false, spells: false, skills: false, loot: false, random: false, other: false };
 }
 function chatChannelAllowed(ch, policy) {
   const g = CHAT_GROUPS.find(x => x.channels.indexOf(ch) !== -1);
@@ -39106,20 +39182,35 @@ const CHAT_SPELL_RING_MAX = 300;
 const CHAT_SKILL_RING_MAX = 300;
 const _spellRing = [];
 const _skillRing = [];
+// Loot, Random and Other: a ring each, for the same reason (a roll night or an experience-heavy pull must not push chat out).
+const CHAT_LOOT_RING_MAX = 300;
+const CHAT_RANDOM_RING_MAX = 300;
+const CHAT_OTHER_RING_MAX = 300;
+const _lootRing = [];
+const _randomRing = [];
+const _otherRing = [];
 // channel → its ring, its cap and the policy switch that gates it (the same name the group carries).
 const _chatExtraRings = {
   melee: { ring: _meleeRing, max: CHAT_MELEE_RING_MAX, gate: 'melee' },
   spell: { ring: _spellRing, max: CHAT_SPELL_RING_MAX, gate: 'spells' },
   skill: { ring: _skillRing, max: CHAT_SKILL_RING_MAX, gate: 'skills' },
+  loot:   { ring: _lootRing,   max: CHAT_LOOT_RING_MAX,   gate: 'loot' },
+  random: { ring: _randomRing, max: CHAT_RANDOM_RING_MAX, gate: 'random' },
+  other:  { ring: _otherRing,  max: CHAT_OTHER_RING_MAX,  gate: 'other' },
 };
 function noteLocalChatLine(line, character, now) {
   const policy = chatPolicyNow(now);
   let evt = classifyChatLine(line, character);
   // Only looked for while the overlay has asked for melee, skills or spells: an overlay that did not leaves nothing
   // accumulating. Melee first, then Skills, then Spells, so a line is only ever one of them.
+  // Loot and Random have exact shapes of their own, so they are asked first; Other is asked LAST and only for a line
+  // nothing else claimed (classifyOtherLine re-asks the groups whose switch is off, so it never takes their lines).
+  if (!evt && policy.loot) evt = classifyLootLine(line);
+  if (!evt && policy.random) evt = classifyRandomLine(line);
   if (!evt && policy.melee) evt = classifyMeleeLine(line, character);
   if (!evt && policy.skills) evt = classifySkillLine(line);
   if (!evt && policy.spells) evt = classifySpellLine(line, character);
+  if (!evt && policy.other) evt = classifyOtherLine(line, character, { melee: policy.melee, skills: policy.skills, spells: policy.spells });
   if (!evt) return false;
   if (!chatChannelAllowed(evt.ch, policy)) return false;
   const extra = _chatExtraRings[evt.ch];
@@ -39130,7 +39221,9 @@ function noteLocalChatLine(line, character, now) {
     // Skills line in the first person ("You begin casting…", "You have become better at…") is that character's
     // own event, never a second sighting, so only what a bystander sees is de-duplicated.
     const mk = evt.text + '|' + Math.floor(evt.t / 1000);
-    if (evt.ch === 'melee' || !/^Your?\b/.test(evt.text)) {
+    // (Loot is the exception to "first person": "--You have looted ...--" opens with dashes but is just as much that
+    // character's own event.)
+    if (evt.ch === 'melee' || !/^(?:--)?Your?\b/.test(evt.text)) {
       for (let i = ring.length - 1, n = 0; i >= 0 && n < 40; i--, n++) if (ring[i].k === mk && ring[i].on !== (character || '')) return false;
     }
     ring.push({ seq: ++_chatSeq, k: mk, t: evt.t, ch: evt.ch, who: '', to: null, text: evt.text, self: !!evt.self, npc: false, on: character || '', cat: evt.cat || null, miss: !!evt.miss });
@@ -39202,7 +39295,7 @@ function _handleLocalChat(req, res) {
   return send(200, body);
 }
 function _resetLocalChatForTest() {
-  _chatRing.length = 0; _meleeRing.length = 0; _spellRing.length = 0; _skillRing.length = 0; _chatSeq = 0; _chatPolicy = null; _chatPolicyAt = 0;
+  _chatRing.length = 0; _meleeRing.length = 0; _spellRing.length = 0; _skillRing.length = 0; _lootRing.length = 0; _randomRing.length = 0; _otherRing.length = 0; _chatSeq = 0; _chatPolicy = null; _chatPolicyAt = 0;
 }
 // ── end Local chat window ──
 
@@ -56347,6 +56440,7 @@ module.exports = {
   _uploadBuffersForTest: () => ({ chatBuffer, tellBuffer, recentTells: stats.recentTells }),
   _chatRingForTest: () => _chatRing, _meleeRingForTest: () => _meleeRing, CHAT_MELEE_RING_MAX, _handleLocalChatForTest: _handleLocalChat,
   classifySpellLine, classifySkillLine, noteSelfCast, _rebuildLandingIndexesForTest: () => { _rebuildBuffMatchers(); _rebuildMechanicMatchers(); }, _spellRingForTest: () => _spellRing, _skillRingForTest: () => _skillRing, CHAT_SPELL_RING_MAX, CHAT_SKILL_RING_MAX,
+  classifyLootLine, classifyRandomLine, classifyOtherLine, _lootRingForTest: () => _lootRing, _randomRingForTest: () => _randomRing, _otherRingForTest: () => _otherRing, CHAT_LOOT_RING_MAX, CHAT_RANDOM_RING_MAX, CHAT_OTHER_RING_MAX,
   chatLineKey, chatSwapBetween, chatReadLogBackwards, chatHistoryFiles, buildChatHistory, getChatHistory,
   _handleLocalChatHistoryForTest: _handleLocalChatHistory, _resetChatHistoryForTest, CHAT_HISTORY_MAX, CHAT_SWAP_MIN_MS,
   _noteBuffDurationsFromState, buffDurationStats, buffDurationTable, _noteBuffDurationSample,

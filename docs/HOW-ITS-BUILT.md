@@ -2829,6 +2829,11 @@ Loads the character's ini bundle (`ui-studio-read-bundle`), parses window
 sections (`XPos<res>` blocks, bare Width/Height), rescales source→target
 resolution, drag/snap editor, writes back with `.bak` or defers until logout
 (`defer-save` + background watcher).
+**Picking a character = their current UI, unconverted** (Mimic beta `5ce28ec4`, 2026-10-15, DECISIONS §339): the
+dropdown change runs a fresh disk read at the file's own resolution (Source = Target) — eqclient.ini `[VideoMode]`
+Width/Height when the UI file has that block, else the block with the most windows. Load + Rescale stays the
+explicit conversion step. The status line and "Update from current" show when the UI file was last written
+(`liveUiFileInfo` in `uiLayouts.js`, IPC `ui-studio-live-info`).
 **Chat routing names** (Mimic beta `a730c5be`, 2026-10-14, DECISIONS §312): `ChannelMap<N>` is the client's
 chat-filter menu position. `CHAT_CHANNEL_ROWS` in `ui-studio.html` names ids 0–40 from MacroQuest eqlib
 `eChatChannel` and 41–56 from Zeal's `Extended_ChannelMaps` (saved order); 57+ stay "Ch N". /join slots
