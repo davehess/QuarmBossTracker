@@ -409,4 +409,7 @@ module.exports = {
   deriveMovement,
   pickAndMergeMobRows,
   zoneIdOf,
+  // Area Rampage reach (utils/aeRampage.js). Required lazily: that file imports parseSpecials from
+  // here, and _buildMobInfo is evaluated in tests with `mobSpecials` as its only catalog helper.
+  aeRampageInfo: (row) => require('./aeRampage').aeRampageInfo(row),
 };

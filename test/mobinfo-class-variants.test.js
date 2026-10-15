@@ -45,7 +45,7 @@ describe('mob-info reports the pair, not the winner as fact', () => {
   const handler = bot.slice(bot.indexOf('async function _handleAgentMobInfo('), bot.indexOf('\nasync function ', bot.indexOf('async function _buildMobInfo(') + 10));
 
   it('fetches race and gender with the row', () => {
-    expect(handler).toMatch(/see_improved_hide,race,gender&limit=200/);
+    expect(handler).toMatch(/see_improved_hide,race,size,gender&limit=200/);
   });
   it('builds class_variants over the candidates and flags a class disagreement', () => {
     expect(handler).toMatch(/const cands = Array\.isArray\(picked\.candidates\)/);
