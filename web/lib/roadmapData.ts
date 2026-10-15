@@ -37,6 +37,39 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-8-171-2026-10-15',
+    title: 'Full parses in the raid session review',
+    version: 'Web 1.8.172 · Bot 3.1.276',
+    date: '2026-10-15',
+    channel: 'beta',
+    headline: 'Every fight in a raid session review now opens into its full parse, not just the top five.',
+    features: [
+      { name: 'Full parse for every fight [beta]', blurb: 'On the raid session review, tap a fight to see everyone who did damage: their class, damage, DPS, share of the fight and time, with a total at the bottom. Tap a column heading to sort. Anyone who opted out of stats is left out, and the shares are worked out from who is shown.' },
+      { name: 'Open the parse page [beta]', blurb: 'Signed-in members get a link on each fight to its full parse page. Shared session links show the table only.' },
+      { name: 'Bosses as big red dots [beta]', blurb: 'On the replay map (2D and 3D), a boss the raid was fighting is a big red dot where it actually stood. Nights recorded before we kept boss positions show a red dashed ring at the boss\'s spawn point instead.' },
+      { name: 'Session review link after the raid', blurb: 'The raid review posted in Discord after midnight now has a "Full session review" button that opens the map replay, fights, loot and attendance for that night.' },
+    ],
+    fixes: [
+      'A long raid night used to show top damage for only the first 60 fights. It now covers the whole night.',
+    ],
+  },
+  {
+    key: 'web-1-8-170-2026-10-15',
+    title: 'Raid replay in 3D, and shareable raid sessions',
+    version: 'Web 1.8.170 · Bot 3.1.275',
+    date: '2026-10-15',
+    headline: 'Replay a raid in 3D and follow anyone through it, then review a whole session in one page and share it with a link.',
+    features: [
+      { name: 'Replay in 3D [beta]', blurb: 'The replay has a 3D view: the zone’s walls and shaded floors, raiders as dots at their real height. Drag to turn, scroll to zoom. In 2D the map sits on a parchment background (or plain lines, or none).' },
+      { name: 'Follow a raider', blurb: 'Pick raiders from the list or tap a dot: they light up and the rest dim. Follow keeps the camera on one of them, even across zones. The picks are in the link, so you can share what you are looking at.' },
+      { name: 'Bosses on the map', blurb: 'Bosses we killed show at their spawn point while the fight is on. From tonight the replay also records what the raid is targeting, so mobs show where they really were.' },
+      { name: 'Split screen and steadier camera', blurb: 'When the raid is split between two zones the map splits too. A night opens on the guild raid, not the daytime groups, and the view keeps most of the raid in frame instead of jumping.' },
+      { name: 'Raid session review [beta]', blurb: 'wolfpack.quest/raid/session shows one recorded session: the replay, who was there and for how long, the fights, the loot, the rolls and the top damage. Tap any time in a list and the replay jumps there.' },
+      { name: 'Share a session [beta]', blurb: 'Officers can make a public link to one session that anyone can open without signing in, until it runs out (7, 30 or 90 days) or an officer cancels it. It shows only that session, leaves out anyone who opted out of stats, and explains where the data comes from.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-8-160-2026-10-15',
     title: 'Raid replay',
     version: 'Web 1.8.160 · Bot 3.1.273',

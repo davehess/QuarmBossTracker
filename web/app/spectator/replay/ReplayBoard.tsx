@@ -16,6 +16,10 @@
 //     other groups as options. The slider and coverage track span only that session. `?session=` is in the URL.
 //   * Auto-framing holds the view still while the nearest 80% of the raid is in it and glides when it is not,
 //     snapping only on a scrub, a zone change or a session change (lib/replayFraming.ts).
+//   * The 2D background is None / Lines / Parchment (`?bg=`, one choice for both panes, default Parchment). The
+//     parchment is paper plus a floor wash generated from the EQEmu floors mesh (lib/zoneFloor.ts), painted once per
+//     zone and size bucket in idle time by lib/parchmentStore.ts and only blitted per frame; the wall lines go on
+//     top in ink. The 3D view has no background choice: its floors are the shaded surface (Replay3D.tsx).
 // The coordinate rules (axis swap, north up, heading) live in lib/spectator.ts; the decoding and the split rule
 // in lib/raidReplay.ts.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -38,6 +42,8 @@ import {
 } from '@/lib/replayFollow';
 import { activeSpawns, normMobName, parseBosses, type ActiveSpawn, type SpawnBoss } from '@/lib/replayBosses';
 import { bandColor, prepare, type Prepared } from '../SpectatorBoard';
+import { BGS, bgSearch, inkColor, parseBg, type Bg } from '@/lib/mapBackdrop';
+import { ParchmentStore, drawParchmentLayer, paintPaper } from '@/lib/parchmentStore';
 import type { Bridge3D } from './Replay3D';
 
 // three.js is only fetched when the 3D view is first shown.
@@ -51,7 +57,7 @@ const PANEL = '#161b22';
 const BORDER = '#30363d';
 const TEXT = '#c9d1d9';
 const TARGET_RED = '#ef4444';
-const SPAWN_AMBER = '#b7791f';
+const BOSS_R = 13;                     // a killed boss (where the raid fought it, or its spawn point): a big red dot
 const FONT = '12px "Cascadia Code", Consolas, ui-monospace, monospace';
 const DOT_R = 4.5;
 const TAIL_MS = 30_000;
@@ -98,9 +104,12 @@ const newPane = (): Pane => ({
 
 type PaneArgs = {
   t: number; zone: string | null; here: Placed[]; targets: ReplayTarget[]; spawns: ActiveSpawn[];
+  bosses: ReadonlySet<string>;   // normMobName of the night's killed bosses: a target in it draws as a big red dot
   frames: ReplayFrame[]; idx: number; hasFrame: boolean; tails: boolean; entry: MapEntry | undefined;
   hl: ReadonlySet<string>; picks: Picks; fol: Placed | null;
   snap: boolean;                 // the playhead jumped (a scrub, a new session): frame the raid at once, no glide
+  bg: Bg;                        // none: raiders only; lines: the wall lines on the dark page; parchment: lines in ink on paper
+  store: ParchmentStore;
 };
 type PaintInfo = {
   zones: [string | null, string | null];
@@ -213,9 +222,18 @@ function drawPane(p: Pane, o: PaneArgs): boolean {
   const oy = h / 2 - v.cy * v.scale;
   const refZ = median(here.map(q => q.z));
 
+  // The parchment under the lines: paper over the whole pane, then the zone's floor wash (painted once per zone and
+  // size bucket by the store; null until it is ready, so the paper alone shows first). The lines go on top in ink.
+  const ink = o.bg === 'parchment';
+  if (ink) {
+    paintPaper(ctx, w, h);
+    const lay = o.zone ? o.store.layer(o.zone, w, h) : null;
+    if (lay) drawParchmentLayer(ctx, lay, v, ox, oy);
+  }
+
   // The zone's map underneath.
   const entry = o.entry;
-  if (entry?.status === 'ready') {
+  if (entry?.status === 'ready' && o.bg !== 'none') {
     const layers = effectiveLayers('brewall', entry.map);
     const { prep } = entry;
     const multi = prep.bands.length > 1 && refZ != null;
@@ -225,7 +243,7 @@ function drawPane(p: Pane, o: PaneArgs): boolean {
       for (const bright of [false, true]) {
         ctx.globalAlpha = bright ? 0.9 : 0.22;
         for (const g of prep.bw.groups) {
-          ctx.strokeStyle = g.css;
+          ctx.strokeStyle = ink ? inkColor(bright ? 0.9 : 0.3) : g.css;
           ctx.beginPath();
           for (let i = 0, n = g.band.length; i < n; i++) {
             const near = !multi || lineNearZ(g.z[2 * i], g.z[2 * i + 1], refZ as number);
@@ -246,7 +264,7 @@ function drawPane(p: Pane, o: PaneArgs): boolean {
       ctx.lineCap = 'round';
       prep.gen.forEach((arr, bi) => {
         const bright = bi === focus;
-        ctx.strokeStyle = bandColor(bi, prep.gen!.length, bright ? 0.85 : 0.2);
+        ctx.strokeStyle = ink ? inkColor(bright ? 0.85 : 0.28) : bandColor(bi, prep.gen!.length, bright ? 0.85 : 0.2);
         ctx.lineWidth = bright ? 1.4 : 1;
         ctx.beginPath();
         for (let i = 0; i < arr.length; i += 4) {
@@ -263,21 +281,25 @@ function drawPane(p: Pane, o: PaneArgs): boolean {
   const sx = (x: number) => -x * v.scale + ox;
   const sy = (y: number) => -y * v.scale + oy;
 
-  // Spawn points of the bosses fought now: dimmed, dashed, underneath everything else.
+  // Spawn points of the bosses fought now: a big red DASHED ring, underneath everything else — where the boss stands
+  // when it appears, not where the raid fought it (the filled dot below is that).
   ctx.font = FONT;
   ctx.textBaseline = 'middle';
   for (const s of o.spawns) {
     const px = sx(s.x), py = sy(s.y);
-    if (px < -20 || px > w + 20 || py < -20 || py > h + 20) continue;
-    ctx.globalAlpha = 0.65;
-    ctx.strokeStyle = SPAWN_AMBER;
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([3, 3]);
-    diamond(ctx, px, py, 7);
+    if (px < -24 || px > w + 24 || py < -24 || py > h + 24) continue;
+    ctx.fillStyle = TARGET_RED;
+    ctx.globalAlpha = 0.18;
+    ctx.beginPath();
+    ctx.arc(px, py, BOSS_R, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 0.85;
+    ctx.strokeStyle = TARGET_RED;
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([4, 3]);
     ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = SPAWN_AMBER;
-    ctx.fillText(`${s.name} · spawn point`, px + 11, py);
+    tag(ctx, w, h, `${s.name} · spawn point`, px + BOSS_R, py, TARGET_RED, '#fecaca');
     ctx.globalAlpha = 1;
   }
 
@@ -354,12 +376,22 @@ function drawPane(p: Pane, o: PaneArgs): boolean {
     p.drawn.push({ name: r.name, cls: r.cls, hp: r.hp, px, py });
   }
 
-  // Recorded targets: red diamonds, bigger the more raiders had it targeted.
+  // Recorded targets: red diamonds, bigger the more raiders had it targeted. A killed boss is a big red dot with a
+  // white ring, so it is the thing to point at on the raid screen.
   for (const tg of o.targets) {
     const px = sx(tg.x), py = sy(tg.y);
     if (px < -30 || px > w + 30 || py < -30 || py > h + 30) continue;
-    const r = Math.min(16, 6 + 2 * Math.sqrt(tg.n));
     ctx.fillStyle = TARGET_RED;
+    if (o.bosses.has(normMobName(tg.name))) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(px, py, BOSS_R, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      continue;
+    }
+    const r = Math.min(16, 6 + 2 * Math.sqrt(tg.n));
     ctx.strokeStyle = BG;
     ctx.lineWidth = 1.5;
     diamond(ctx, px, py, r);
@@ -378,7 +410,8 @@ function drawPane(p: Pane, o: PaneArgs): boolean {
   for (const tg of o.targets) {
     const px = sx(tg.x), py = sy(tg.y);
     if (px < -30 || px > w + 30 || py < -30 || py > h + 30) continue;
-    tag(ctx, w, h, `${tg.name}${tg.n > 1 ? ` ×${tg.n}` : ''}`, px + 6, py, TARGET_RED, '#fecaca');
+    const boss = o.bosses.has(normMobName(tg.name));
+    tag(ctx, w, h, `${tg.name}${tg.n > 1 ? ` ×${tg.n}` : ''}`, px + (boss ? BOSS_R : 6), py, TARGET_RED, boss ? '#ffffff' : '#fecaca');
   }
 
   // Scale bar and north.
@@ -404,8 +437,29 @@ function drawPane(p: Pane, o: PaneArgs): boolean {
   return animating;
 }
 
-export default function ReplayBoard() {
-  const [nights, setNights] = useState<NightSummary[] | null>(null);
+/**
+ * BOUNDED MODE (the raid session review and the public share page): the board plays ONE fixed window of a
+ * recording. `night` is that window as a NightSummary (first = the window's start, so the 15-minute windows line up
+ * with the server's), there is no night or session picker and nothing is written to `?session=`, and every fetch
+ * goes through `urls` so the caller decides which routes (and which credential) the data comes from. `seek` is a
+ * request from outside to move the playhead (a click on a kill, a roll or a loot line); `n` changes on every
+ * request so the same time can be asked for twice.
+ */
+export type BoundedReplay = {
+  night: NightSummary;
+  urls: {
+    window: (nightKey: string, fromIso: string, toIso: string) => string;
+    bosses: ((nightKey: string) => string) | null;
+    map: (zone: string) => string;
+    mesh: (zone: string, floors: '' | '1' | 'only') => string;
+  };
+  seek?: { t: number; n: number } | null;
+};
+
+export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {}) {
+  const urlsRef = useRef(bounded?.urls ?? null);
+  urlsRef.current = bounded?.urls ?? null;
+  const [nights, setNights] = useState<NightSummary[] | null>(bounded ? [bounded.night] : null);
   const [netErr, setNetErr] = useState(false);
   const [signedOut, setSignedOut] = useState(false);
   const [nightKey, setNightKey] = useState<string | null>(null);
@@ -421,6 +475,8 @@ export default function ReplayBoard() {
   const [mode, setMode] = useState<'2d' | '3d'>('2d');
   const [no3d, setNo3d] = useState(false);
   const [floors, setFloors] = useState(true);
+  const [bg, setBg] = useState<Bg>(parseBg(''));   // the 2D background; `?bg=` in the URL, one choice for both panes
+  const [, setFloorTick] = useState(0);            // the parchment store's status changed: the notes re-read it
   const [showBosses, setShowBosses] = useState(true);
   const [picks, setPicks] = useState<Picks>(NO_PICKS);
   const [urlReady, setUrlReady] = useState(false);
@@ -477,6 +533,7 @@ export default function ReplayBoard() {
   const lastPaintT = useRef<number | null>(null);
   const rosterRef = useRef(new Map<string, RosterEntry>());
   const bossesRef = useRef<SpawnBoss[]>([]);
+  const bossNamesRef = useRef<ReadonlySet<string>>(new Set());
   const showBossesRef = useRef(true);
   // 3D: while it is showing, paint() hands each pane's raiders to its 3D view instead of drawing the canvas.
   const modeRef = useRef<'2d' | '3d'>('2d');
@@ -488,9 +545,14 @@ export default function ReplayBoard() {
     if (rafRef.current) return;
     rafRef.current = requestAnimationFrame(ts => stepRef.current(ts));
   }, []);
+  // The parchment floors, fetched and painted once per zone and size bucket (lib/parchmentStore.ts).
+  const bgRef = useRef<Bg>(bg);
+  const parchment = useMemo(() => new ParchmentStore(() => { setFloorTick(n => n + 1); schedule(); }), [schedule]);
+  useEffect(() => () => parchment.dispose(), [parchment]);
 
   // ── data ───────────────────────────────────────────────────────────────────
   useEffect(() => {
+    if (urlsRef.current) return;   // bounded: the one window came in as a prop
     let dead = false;
     fetch('/api/spectator/replay?nights=1')
       .then(async res => {
@@ -527,9 +589,11 @@ export default function ReplayBoard() {
     wins.current.set(w, { state: 'loading', at: Date.now() });
     const g = gen.current;
     const to = Math.min(from + REPLAY_WINDOW_MS, end);
-    const url = '/api/spectator/replay?night=' + encodeURIComponent(n.night_key)
-      + '&from=' + encodeURIComponent(new Date(from).toISOString())
-      + '&to=' + encodeURIComponent(new Date(to).toISOString());
+    const url = urlsRef.current
+      ? urlsRef.current.window(n.night_key, new Date(from).toISOString(), new Date(to).toISOString())
+      : '/api/spectator/replay?night=' + encodeURIComponent(n.night_key)
+        + '&from=' + encodeURIComponent(new Date(from).toISOString())
+        + '&to=' + encodeURIComponent(new Date(to).toISOString());
     fetch(url)
       .then(async res => {
         if (g !== gen.current) return;
@@ -580,13 +644,17 @@ export default function ReplayBoard() {
   // The night's killed bosses with their spawn points: for nights recorded before the recorder kept targets.
   useEffect(() => {
     bossesRef.current = [];
+    bossNamesRef.current = new Set();
     const key = night?.night_key;
     if (!key) return;
+    const u = urlsRef.current;
+    if (u && !u.bosses) return;   // bounded, and the caller serves no boss markers
     const ac = new AbortController();
-    fetch('/api/spectator/replay/bosses?night=' + encodeURIComponent(key), { signal: ac.signal })
+    fetch(u?.bosses ? u.bosses(key) : '/api/spectator/replay/bosses?night=' + encodeURIComponent(key), { signal: ac.signal })
       .then(async res => {
         if (!res.ok) return;
         bossesRef.current = parseBosses(await res.json());
+        bossNamesRef.current = new Set(bossesRef.current.map(b => normMobName(b.name)));
         schedule();
       })
       .catch(() => {});
@@ -603,7 +671,7 @@ export default function ReplayBoard() {
       schedule();
     };
     put({ status: 'loading' });
-    fetch('/api/spectator/map?zone=' + encodeURIComponent(z))
+    fetch(urlsRef.current ? urlsRef.current.map(z) : '/api/spectator/map?zone=' + encodeURIComponent(z))
       .then(async res => {
         if (res.status === 404) return put({ status: 'none' });
         if (!res.ok) return put({ status: 'error' });
@@ -702,20 +770,20 @@ export default function ReplayBoard() {
         pane.holdsFollow = !!folHere;
         bridges[i].current?.feed(zone, here.map(q => ({ name: q.r.name, cls: q.r.cls, hp: q.r.hp, x: q.x, y: q.y, z: q.z })), {
           hl, follow: folHere ? pk.follow : null,
-          targets: targets.map(x => ({ name: x.name, n: x.n, x: x.x, y: x.y, z: x.z })),
+          targets: targets.map(x => ({ name: x.name, n: x.n, x: x.x, y: x.y, z: x.z, boss: bossNamesRef.current.has(normMobName(x.name)) })),
           spawns, snap,
         });
         continue;
       }
       if (drawPane(pane, {
-        t, zone, here, targets, spawns, frames, idx, hasFrame: !!a, tails: tailsRef.current,
-        entry: mapsRef.current[zone], hl, picks: pk, fol: folHere, snap,
+        t, zone, here, targets, spawns, bosses: bossNamesRef.current, frames, idx, hasFrame: !!a, tails: tailsRef.current,
+        entry: mapsRef.current[zone], hl, picks: pk, fol: folHere, snap, bg: bgRef.current, store: parchment,
       })) out.animating = true;
     }
     out.elsewhere = a ? a.raiders.length - heldTotal : 0;
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panes]);
+  }, [panes, parchment]);
 
   // One pass: advance the playhead if playing, make sure the data is coming, draw, report to the controls.
   const step = useCallback((ts: number) => {
@@ -776,6 +844,16 @@ export default function ReplayBoard() {
     schedule();
   }, [schedule]);
 
+  // A request from outside (bounded mode): move the playhead there and pause, so the picture stays on that moment.
+  const seekN = bounded?.seek?.n ?? 0;
+  const seekT = bounded?.seek?.t ?? null;
+  useEffect(() => {
+    if (seekT == null || !seekN) return;
+    playingRef.current = false;
+    setPlaying(false);
+    seek(seekT);
+  }, [seekN, seekT, seek]);
+
   const togglePlay = useCallback(() => {
     const n = nightRef.current;
     if (!n) return;
@@ -802,6 +880,7 @@ export default function ReplayBoard() {
     try {
       setPicks(parsePicks(window.location.search));
       setSessionFrom(parseSessionParam(window.location.search));
+      setBg(parseBg(window.location.search));
     } catch { /* no URL to read */ }
     setUrlReady(true);
   }, []);
@@ -809,7 +888,7 @@ export default function ReplayBoard() {
   // "no param", because the default moves as new nights are recorded.
   const urlSession = chosen?.session?.from ?? null;
   useEffect(() => {
-    if (!urlReady || urlSession == null) return;
+    if (!urlReady || urlSession == null || urlsRef.current) return;   // bounded: the page names the window, not ?session=
     try {
       const s = sessionSearch(urlSession, window.location.search);
       if (s !== window.location.search) window.history.replaceState(null, '', window.location.pathname + s + window.location.hash);
@@ -825,6 +904,16 @@ export default function ReplayBoard() {
       if (s !== window.location.search) window.history.replaceState(null, '', window.location.pathname + s + window.location.hash);
     } catch { /* a blocked history API only costs the shareable link */ }
   }, [picks, urlReady, schedule]);
+  // The background, both panes at once, kept in the URL like the picks (the default is left out of it).
+  useEffect(() => {
+    bgRef.current = bg;
+    schedule();
+    if (!urlReady) return;
+    try {
+      const s = bgSearch(bg, window.location.search);
+      if (s !== window.location.search) window.history.replaceState(null, '', window.location.pathname + s + window.location.hash);
+    } catch { /* a blocked history API only costs the shareable link */ }
+  }, [bg, urlReady, schedule]);
   // A new follow glides in from where the view was, and takes the zone pin off so the zone can follow the raider.
   useEffect(() => {
     for (const p of panes) p.kick = !!picks.follow;
@@ -1020,6 +1109,7 @@ export default function ReplayBoard() {
   return (
     <div className="min-w-0">
       <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-dim">
+        {!bounded && (<>
         <label className="flex items-center gap-1.5">
           <span>Night</span>
           <select value={night.night_key} onChange={e => { setSessionFrom(null); setNightKey(e.target.value); }}
@@ -1041,6 +1131,11 @@ export default function ReplayBoard() {
             ))}
           </select>
         </label>
+        {chosen?.session && (
+          <a href={`/raid/session?from=${encodeURIComponent(new Date(chosen.session.from).toISOString())}&to=${encodeURIComponent(new Date(chosen.session.to).toISOString())}`}
+            className="underline hover:text-text">Review this session</a>
+        )}
+        </>)}
         <label className="flex items-center gap-1.5">
           <span>Zone</span>
           <select value={pinned ?? ''} onChange={e => setPinned(e.target.value || null)}
@@ -1063,6 +1158,15 @@ export default function ReplayBoard() {
           <button type="button" aria-pressed={tails} className={`${chip} ${tails ? chipOn : chipIdle}`} onClick={() => setTails(t => !t)}>
             Tails
           </button>
+        )}
+        {mode === '2d' && (
+          <div className="flex items-center gap-1.5" role="group" aria-label="Map background">
+            <span className="text-xs text-dim">Background</span>
+            {BGS.map(b => (
+              <button key={b} type="button" aria-pressed={bg === b} onClick={() => setBg(b)}
+                className={`${chip} ${bg === b ? chipOn : chipIdle}`}>{b === 'none' ? 'None' : b === 'lines' ? 'Lines' : 'Parchment'}</button>
+            ))}
+          </div>
         )}
         {mode === '3d' && (
           <button type="button" aria-pressed={floors} className={`${chip} ${floors ? chipOn : chipIdle}`} onClick={() => setFloors(f => !f)}>
@@ -1178,7 +1282,7 @@ export default function ReplayBoard() {
                     onPointerCancel={handlers(p).onPointerUp}
                     onKeyDown={onKeyDown} />
                   {mode === '3d' && z && (
-                    <Replay3D zone={z} floors={floors} bridgeRef={bridges[i]} onReady={schedule} onKeyDown={onKeyDown}
+                    <Replay3D zone={z} floors={floors} meshUrl={bounded?.urls.mesh} bridgeRef={bridges[i]} onReady={schedule} onKeyDown={onKeyDown}
                       onPick={pick} onPanAway={panAway}
                       onFail={() => { setNo3d(true); setMode('2d'); }}
                       label={aria} />
@@ -1189,6 +1293,15 @@ export default function ReplayBoard() {
                   {i === 0 && state === 'nodata' && <MapNote>Nobody was recorded at this moment.</MapNote>}
                   {state === 'ok' && mode === '2d' && (!entry || entry.status === 'loading') && z && <MapNote>Loading map…</MapNote>}
                   {state === 'ok' && mode === '2d' && entry?.status === 'none' && <MapNote>No wall map for {z} yet. Showing raiders only.</MapNote>}
+                  {mode === '2d' && bg === 'parchment' && z && parchment.status(z) === 'loading' && !(state === 'ok' && (!entry || entry.status === 'loading')) && (
+                    <MapNote>Loading the parchment floors…</MapNote>
+                  )}
+                  {mode === '2d' && bg === 'parchment' && z && parchment.status(z) === 'error' && (
+                    <MapNote>
+                      The floors did not load; showing the paper alone.{' '}
+                      <button type="button" className="pointer-events-auto underline" onClick={() => parchment.retry(z)}>Retry</button>
+                    </MapNote>
+                  )}
                   {state === 'ok' && mode === '2d' && entry?.status === 'error' && (
                     <MapNote>
                       The map did not load.{' '}

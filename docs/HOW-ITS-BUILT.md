@@ -586,6 +586,10 @@ Discord: `utils/raidReview.js` builds an embed (kills timeline · standouts ·
 OpenDKP loot · tick attendance · "what to work on" · one fun line) and posts it
 into **that night's raid thread** via `getRaidNightTarget`, linking out to the
 web page. Design + the content cuts: `docs/DESIGN-80-raid-night-review.md`.
+**Since bot 3.1.276 the FINAL post (00:45 ET, not the live card) carries a "Full session review" link button** to
+`/raid/session?from=&to=` (members only; never an auto-made public share). The window is the recorded
+`raid_track_minutes` session overlapping 19:30–00:30 ET, picked by `utils/raidSessionWindow.js` with the web's
+rules (20-min gap split, most minutes wins), falling back to the raid window itself (§338).
 Load-bearing details:
 - **Anchored on the night's FIRST ENCOUNTER**, never `Date.now()` — by the time
   the review runs the scheduled-event window has closed, so "now" can plan a

@@ -12045,6 +12045,11 @@ ipcMain.handle('ui-studio-layout-list', (_e, character, eqDir) => {
   const a = _layoutArgs(character, eqDir);
   return _layoutCall(s => s.list(a.c, a.d, { pendingId: a.pendingId }));
 });
+// When EQ last wrote the character's UI_*.ini files (a stat on the live files, never a saved layout).
+ipcMain.handle('ui-studio-live-info', (_e, character, eqDir) => {
+  try { return { ok: true, ...uiLayouts.liveUiFileInfo(String(eqDir || '').trim(), String(character || '').trim()) }; }
+  catch (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; }
+});
 ipcMain.handle('ui-studio-layout-save', (_e, params) => {
   const a = _layoutArgs(params && params.character, params && params.eqDir);
   return _layoutCall(s => s.save(a.c, a.d, params && params.name, { id: params && params.id ? String(params.id) : undefined }));

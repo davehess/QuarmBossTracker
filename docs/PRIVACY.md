@@ -12,7 +12,7 @@
 > editing this file: **describe what the software does today, not what we
 > intend.** A promise goes in only once the code keeps it.
 
-*Last updated: 2026-10-14*
+*Last updated: 2026-10-15*
 
 ## The spirit
 
@@ -330,6 +330,24 @@ chooses which to send. On the website, screenshots need a signed-in pack member.
   looks is kept for that replay: race, deity and the worn armor and weapons from
   the gear we already hold (not your inventory for characters set to exclude
   inventory). Characters set to exclude from stats are never kept.
+- 🔗 **Anyone with a share link** (2026-10-15) — an **officer** can make a public
+  link to ONE recorded raid session, so a raid can be shown to people outside
+  the guild (another guild's leaders, say) without a Discord sign-in. The page
+  at `/share/raid/<secret>` shows, for that session's time window only: the
+  replay (where each raider stood, on the map), who was there and for how long
+  (character names and classes), the fights that ended in it with the top
+  damage per fight, the loot, and the roll sessions with every roll. It never
+  shows tells, chat, Discord names or ids, inventory, or a link into a member
+  page. **Characters set to exclude from stats or exclude from inventory are
+  left out of all of it**, including the replay and any roll or loot line they
+  would appear on (the line stays, the name does not). A link works until it
+  **expires** (7, 30 or 90 days; 30 unless the officer picks otherwise) or an
+  officer **revokes** it, which takes effect on the next page load. The secret
+  is random and is stored only as a hash, so it cannot be recovered from our
+  database, and a link cannot be widened to a different time. The page sets no
+  cookie, asks for nothing about the reader, and tells search engines not to
+  index it; we count how many times a link was opened, nothing more. Anyone
+  you give the link to can pass it on, which is the same as any link.
 - 🎙 **Raid voice (Bristlebane)** — the raid voice bot records **only members
   who ran `/bristlebane optin`**; nobody else is listened to, kept or named. A
   recording is one file per person, kept on the guild's home server for raid

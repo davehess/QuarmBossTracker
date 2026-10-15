@@ -594,6 +594,10 @@ const UNIQUE_KEYS = {
   eqemu_spawnentry: [['spawngroup_id', 'npc_id']],   // pkey (spawngroup_id, npc_id), 20260525120000; /api/spectator/replay/bosses pages it
   pvp_boss_kills: [['id'], ['dedup_key']],
   raid_track_minutes: [['minute_at']],   // pkey (guild_id, minute_at), 20261005020000; /spectator/replay pages the night list
+  // lib/raidSessionLoad.ts (the raid session review and share page): all three are `id` primary keys (pg_indexes, 2026-10-15)
+  loot_observations: [['id']],
+  roll_set_overrides: [['id']],
+  raid_attendance_ticks: [['id']],
 };
 
 const SOURCES = webSources().map(f => [f, stripJs(read(f))]);

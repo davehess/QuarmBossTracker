@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Raid replay** (§335) | A live [beta] at `/spectator/replay` (web 1.8.160). C (3D) plus follow/highlight, floors, boss markers and split screen on beta only: web 1.8.162, `https://b.wolfpack.quest/spectator/replay`. Bot 3.1.274 records NPC targets from tonight | the guild lead: try it on b.wolfpack.quest and say go (then graduate the files to main — the beta routes import `lib/guild`, which main lacks, so graduation brings that module or reverts to the literal) or what to change; check the heading direction in game |
+| **Raid replay + session share links** (§335, §337) | **Graduated to main 2026-10-15 (web 1.8.170)** on the guild lead's word: replay 3D/floors/parchment/follow/bosses/split, guild-raid sessions, `/raid/session`, public `/share/raid/<token>` (works on wolfpack.quest and b.wolfpack.quest). Bot 3.1.274+ records NPC targets. §338: bot 3.1.276 puts a "Full session review" button on the final raid review (main); full per-fight parse tables on beta, web 1.8.171 (`https://b.wolfpack.quest/raid/session`) | the guild lead: send the share link; check the heading direction in game; look at the parse tables on beta, say graduate |
 | **Database load, no upgrade** (§334) | The guild lead: no compute upgrade. The biggest cost was one unindexed read (live damage, ~70% of DB time), fixed in bot 3.1.272; the batched sweep trims snapshots nightly (3.1.271). Round two (bot 3.1.273): `who_directory_lookup` (1.27 s → ms), trigram indexes on three ilike reads, the 30-day damage board memoised | (1) the guild lead: paste `20261015080000_drop_unused_indexes.sql` into the Supabase SQL editor (the speed-up and merge-lock files are applied); (2) a session after the next raid: re-read `pg_stat_statements` |
 | **Slow mode ON wording** (§334) | Every boss gets 18 h inside the window (bot 3.1.269); agent 3.7.177 beta reads any Druzzil "thread of time" guild line as on/off | a session after the next slow-mode night: read `bot_kv` `slow_mode.set_line`, pin the exact ON text in the agent regex and `utils/slowMode.js` |
 | **Feedback popup** (§334) | On beta: agent 3.7.179 `fb30386f`; not tried in a live Electron yet | the guild lead: on the next beta build, click 💬 Feedback, type, restart the agent from the tray, confirm the text survives and sending works |
@@ -10948,3 +10948,55 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
   §220: the website gets none / lines / **parchment generated from our own walls, floors and spawn density**, and
   3D-A stays the EQEmu mesh **shaded with no textures**; painted art and real textures are Mimic-only via the local
   converter (3D-B). Building the web part on the replay page now; no new pick was needed.
+
+### 337. Raid session review + public share links; kite coach, Tail and parchment on beta; the npm build break (2026-10-15)
+- **The ask** (the guild lead): *"lets start merging the spectator replay and the raid's contents bound by the timeframe.
+  the morning raid yesterday would be ideal to send to the other guild's leadership for them to review, with rolls,
+  attendance, etc with a public sharing link that doesn't require discord permissions."*
+- **Built (web 1.8.165, beta only — it stands on the beta replay stack and `lib/guild`):** `/raid/session?from=&to=`
+  (members) = the replay bounded to one session + Attendance (from the recording), Kills (encounters ended in the
+  window), Loot (`looted_items`, `loot_observations`), Rolls (`roll_sets` + officer overrides), Parses; every time
+  seeks the replay. **Share links:** an officer makes one (7/30/90 days, default 30), revocable; table `raid_shares`
+  (migration `20261015130000`, applied) stores only the SHA-256 of a 32-byte token; `/share/raid/<token>` needs no
+  sign-in, renders a bare shell (no member links), `noindex`, and every read is bound to the share row's window —
+  nothing public takes a time from the URL. Opted-out characters (`exclude_from_stats` or `exclude_inventory`) are
+  scrubbed from every list and from the replay frames server-side. Unknown, expired and revoked tokens are one 404.
+  `docs/PRIVACY.md` says what a link exposes.
+- **The first link** — yesterday's daytime session, 2026-10-14 13:08–16:51 UTC (9:08 AM–12:51 PM ET), 79 raiders,
+  89 loot rows, 65 roll sets, no curated bosses — was created by this session for the guild lead to send (expires
+  2026-11-14). The link itself is not written here.
+- **Follow-ups the same day (the guild lead):** the officer panel now copies the link on the current host (a
+  wolfpack.quest share address 404s until the stack graduates; web 1.8.166); a collapsed **"How do you have this
+  data?"** under every session review explains the Zeal pipe (the raid window any raid member's client already
+  holds) and miMIC (reads the pipe and the player's own log locally; chat channels filtered on the machine), web
+  1.8.167; share pages get a **public top bar** — home, About, In short, Platform, Roadmap, Get started, Zeal marks,
+  Privacy and the miMIC downloads, nothing that needs an account (`web/components/PublicTopBar.tsx`, web 1.8.168).
+- **Also on beta today:** agent 3.7.180 — the kite drift coach, guild loop rings and a **Tail** slider for the Map's
+  target trail (the guild lead: *"we need a slider for tail history"*; Off / 10 s–5 min, default 60 s); web 1.8.164 —
+  parchment background (2D) and shaded opaque floors (3D), per §220.
+- **The build break:** bot 3.1.275 failed twice on Railway at `npm install --omit=dev` ("reading 'edgesOut'" in npm's
+  peer resolver): with no lockfile, a fresh vitest release's optional peer set crashed npm 10 even though dev deps
+  are omitted. Production stayed on 3.1.274. Fix: `npm install --omit=dev --legacy-peer-deps` in the Dockerfile
+  (same production tree; no prod dependency needs an auto-installed peer). Deployed 15:22 UTC.
+- **Graduated to main** (the guild lead: *"graduate these to main"*), 2026-10-15 13:30 ET, outside the raid freeze:
+  the eleven beta commits c23af97e…1ef8c5eb cherry-picked onto main clean (`lib/guild` was already on main), the
+  full suite green but for the known my-logs-local failure, then web 1.8.170 rewrote the roadmap entry as a live
+  release in a SECOND push — after `sync-beta` had merged the cherry-picks — so main→beta stayed conflict-free.
+  The share link now works on both hosts; the officer panel copies the current host's address.
+
+### 338. The post-raid output links the session review; every fight gets its full parse (2026-10-15)
+- **The ask** (the guild lead): *"after raids we should build in this link into the output, we should see the full
+  parses and whatnot as well"*.
+- **Bot 3.1.276 (main):** the FINAL raid review (00:45 ET, or `/raidreview`) carries a **"Full session review"** link
+  button to `/raid/session?from=&to=`. The live card does not (it would add a read every 5 minutes). It is the
+  MEMBERS link: no public share is made automatically — a share stays an officer's deliberate act (§337). The window
+  is the `raid_track_minutes` session overlapping 19:30–00:30 ET (20-min gaps split, most minutes wins, the same
+  rules as the web's default session) from a `minute_at`-only read bounded 12:00 ET → 06:00 ET; with no recording
+  it falls back to the raid window itself. `utils/raidSessionWindow.js`, `test/raid-session-window.test.js`.
+- **Web 1.8.171 (beta — an existing page):** each fight on the Kills tab (and under each Parses card) opens into the
+  full table — every player with class, damage, DPS, share and time, sortable, with totals — fetched when opened.
+  Members: `/api/raid/session/parse`, plus a link to the fight's `/parses/<id>`. Share: `/api/share/raid/<token>/parse`
+  serves a fight only if it ENDED inside the share's window — the exact rule the page lists fights by, so nothing
+  outside the listed set is reachable by guessing ids. Opted-out characters are dropped before shares and totals are
+  computed. The top-five read now covers 400 fights (was 60; the list itself was never capped).
+- Where: `https://b.wolfpack.quest/raid/session` (and any share link on b.). Graduates on the guild lead's word.

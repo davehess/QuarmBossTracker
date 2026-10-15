@@ -76,6 +76,29 @@ function pickLayoutFiles(bundle, character) {
   return out;
 }
 
+// When EverQuest last wrote this character's UI_*.ini files, read straight off the disk (a stat, never
+// the text). UI Studio shows it so a stale file is visible instead of looking like a wrong read.
+// -> { files: [{ name, mtimeMs, size }], newestMs: number|null }
+function liveUiFileInfo(eqDir, character) {
+  const out = { files: [], newestMs: null };
+  const want = String(character || '').toLowerCase();
+  if (!eqDir || !want) return out;
+  let entries = [];
+  try { entries = fs.readdirSync(eqDir); } catch { return out; }
+  for (const name of entries) {
+    if (!LAYOUT_FILE_RE.test(name)) continue;
+    const m = name.match(/^UI_([A-Za-z]+)/i);
+    if (!m || m[1].toLowerCase() !== want) continue;
+    try {
+      const st = fs.statSync(path.join(eqDir, name));
+      if (!st.isFile()) continue;
+      out.files.push({ name, mtimeMs: st.mtimeMs, size: st.size });
+      if (out.newestMs == null || st.mtimeMs > out.newestMs) out.newestMs = st.mtimeMs;
+    } catch { /* gone between readdir and stat */ }
+  }
+  return out;
+}
+
 function sameFiles(a, b) {
   const ka = Object.keys(a || {}), kb = Object.keys(b || {});
   if (ka.length !== kb.length) return false;
@@ -256,5 +279,5 @@ function createLayoutStore(deps) {
 
 module.exports = {
   LAYOUT_CAP, NAME_MAX, CLOUD_LABEL_PREFIX,
-  cleanLayoutName, cloudLabel, nameFromCloudLabel, pickLayoutFiles, sameFiles, createLayoutStore,
+  cleanLayoutName, cloudLabel, nameFromCloudLabel, pickLayoutFiles, liveUiFileInfo, sameFiles, createLayoutStore,
 };
