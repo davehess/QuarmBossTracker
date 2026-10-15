@@ -57,6 +57,12 @@
   #locBar{position:absolute;top:28px;left:30px;z-index:4;font-size:10px;line-height:1.35;color:#e6edf3;pointer-events:none;
     text-shadow:0 0 3px #000,0 0 2px #000;font-variant-numeric:tabular-nums}
   #locBar .cur{color:#f2cc60}
+  /* The kite coach's readout (the guild lead, 2026-10-15): one line under the position readout while you circle. The drift
+     number is coloured by how far the centre moved from the lap before, as a share of the radius. */
+  #kiteChip{position:absolute;left:30px;z-index:4;font-size:11px;line-height:1.35;color:#e6edf3;pointer-events:none;white-space:nowrap;
+    text-shadow:0 0 3px #000,0 0 2px #000;font-variant-numeric:tabular-nums}
+  #kiteChip[hidden]{display:none}
+  #kiteChip .g{color:#56d364}#kiteChip .a{color:#f0b429}#kiteChip .r{color:#ff6b5e}#kiteChip .gd{color:#d4f542}
   /* The timers list slides in and out (the guild lead, 2026-10-12: "slide the spawn timers in and out. So that it could
      take up less space if we weren't focused on that"): a top-right button on the map; slid in, the map takes the width. */
   #sideBtn{position:absolute;top:6px;right:6px;z-index:6}
@@ -207,6 +213,7 @@
         <div id="hits"></div>
         <div id="msg">waiting for the agent…</div>
         <div id="locBar"></div>
+        <div id="kiteChip" hidden></div>
       </div>
       <div id="tools">
         <button class="tb grip" id="toolsGrip" type="button" title="Drag the buttons anywhere on the map; let go near an edge and they lock to it (on the left or right edge they stand upright).">⠿</button>
@@ -252,6 +259,7 @@
         <div class="row"><span class="bl">Colour</span><input type="color" id="cfgBg"><button class="rs" type="button" id="cfgBgRs" title="Back to the scheme's colour">↺</button></div>
         <div class="grp">Text</div>
         <label class="row"><span class="bl">Label size</span><input type="range" id="cfgText" min="0.7" max="1.8" step="0.1"><span class="val" id="cfgTextVal"></span></label>
+        <label class="row" title="How much of your target's walked path stays drawn, by time; the older part fades out. Off hides it. A kited mob's path piles up fast: shorten this. Your kite coach's ghost ring (the lap before) follows it too."><span class="bl">Tail</span><input type="range" id="cfgTail" min="0" max="7" step="1"><span class="val" id="cfgTailVal"></span></label>
         <div class="grp">Keep clear</div>
         <label class="row" title="Nothing is drawn on the map inside the windows EverQuest has open (read from your character's UI file), nor inside your own clear areas, so a see-through map never sits over your UI. On by default in Full screen."><input type="checkbox" id="cfgAvoid"><span class="bl">Avoid EQ windows</span></label>
         <div class="row"><button type="button" id="clearEditBtn" title="Drag boxes on the map for areas to keep clear. Saved for this character on this screen setup.">Edit clear areas</button><button type="button" id="clearReread" title="Read EverQuest's window again (where it is and which windows are open)">⟳</button></div>
@@ -272,6 +280,7 @@
       <div id="foot"></div>
     </div>
   </div>
+<script src="kiteCoach.js"></script>
 <script>
   let PORT = 7779;
   try { const q = new URLSearchParams(location.search).get('port'); if (q) PORT = parseInt(q, 10) || PORT; } catch (e) {}
@@ -718,6 +727,24 @@
     while (tr.pts.length > TRAIL_MAX) { tr.pts.shift(); if (tr.cls) tr.cls--; }
     return tr;
   }
+  // ⚙ → Tail (the guild lead, 2026-10-15, a kited mob's trail piled into a scribble: "we need a slider for tail history"):
+  // how long a stretch of your target's crumb trail stays drawn, BY TIME (every crumb has the time it was laid, `t`), the
+  // older part fading out. Off (0) draws none. TRAIL_MAX above is still the cap on what is remembered at all. The kite
+  // coach's ghost ring (the lap before) follows the same setting.
+  var TAIL_STEPS = [0, 10, 20, 30, 60, 120, 180, 300], TAIL_DEFAULT = 60;   // seconds; the slider is the index into this
+  var TAIL_FADES = [1, 0.75, 0.5, 0.3];                                     // strength by age quarter: newest quarter .. oldest
+  function tailLabel(sec) { return sec > 0 ? (sec < 60 ? sec + ' s' : (sec / 60) + ' min') : 'Off'; }
+  // The index of the first crumb (oldest first, each with `t` in ms) laid within the last `sec` seconds; pts.length for none.
+  function tailFrom(pts, now, sec) {
+    var cut = now - (sec > 0 ? sec : 0) * 1000, i = pts.length;
+    while (i > 0 && pts[i - 1].t >= cut) i--;
+    return i;
+  }
+  // How strongly something `ageMs` old is drawn inside a `sec`-second tail.
+  function tailFade(ageMs, sec) {
+    var q = Math.floor(Math.max(0, ageMs) / (sec * 1000) * TAIL_FADES.length);
+    return TAIL_FADES[Math.min(TAIL_FADES.length - 1, q)];
+  }
   // What the mob is doing at each crumb (the guild lead, 2026-10-13: "The point that the mob leaves its spawn or its
   // path it should be glowing RED, then when it appears to be walking back towards its home base it should be
   // redish-orange. Pathing can be yellow"): 'path' within OFF_PATH of its route (or HOME_R of its spawn point when it
@@ -1098,6 +1125,7 @@
     ['targetName', 'Target name'], ['tot', 'Target\'s target (assist bar)'],
     ['pinLine', 'Target → its spawn point'], ['trail', 'Target\'s walked path'], ['conNames', 'Mob names in con colour'], ['group', 'Group'], ['groupNames', 'Group names'], ['raid', 'Raid'], ['raidNames', 'Raid names'],
     ['focus', 'Raid focus target (MA / most targeted)'],
+    ['kite', 'Kite coach (your circling: lap, drift)'], ['kiteLoops', 'Guild kite loops'],
   ];
   var CFG_GLYPHS = [
     ['👁', 'Sees invisible'], ['👁ᵤ', 'Sees invisible to undead'], ['🥷', 'Sees through hide'], ['↯', 'Summons'],
@@ -1136,7 +1164,7 @@
     for (k in MAP_SCHEMES.default) col[k] = MAP_SCHEMES.default[k];
     // wallMode 'layers' (Brewall's floor colours) is the default since 2026-10-13; wallV marks a save made after that,
     // so an older save's 'map' (never chosen, it was the old default) moves to 'layers' and a newer one is kept.
-    return { show: show, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1, ink: INK_DEFAULT, avoidEq: null, showClear: false };
+    return { show: show, glyphsOff: {}, col: col, scheme: 'default', wallMode: 'layers', wallV: 2, bgA: null, text: 1, ink: INK_DEFAULT, avoidEq: null, showClear: false, tail: TAIL_DEFAULT };
   }
   // ⚙ → Line strength (the guild lead, 2026-10-13, over the game with Opacity full and no background: "make the maps
   // and spawns more intense for how defined the lines and whatnot are ... its difficult to see"). One number, 1 to 3:
@@ -1169,6 +1197,7 @@
     if (typeof saved.text === 'number' && saved.text >= 0.7 && saved.text <= 1.8) c.text = Math.round(saved.text * 10) / 10;
     if (typeof saved.ink === 'number' && saved.ink >= INK_MIN && saved.ink <= INK_MAX) c.ink = Math.round(saved.ink * 4) / 4;
     if (typeof saved.avoidEq === 'boolean') c.avoidEq = saved.avoidEq;   // null (unset) follows the mode
+    if (TAIL_STEPS.indexOf(saved.tail) >= 0) c.tail = saved.tail;   // seconds of target trail drawn; anything off the slider's steps is ignored
     if (saved.showClear === true) c.showClear = true;   // outlines always on; off shows them only while ⚙ is open or editing
     return c;
   }
@@ -1401,6 +1430,8 @@
     }
     if (p.zone !== S.zone) {
       S.zone = p.zone; S.fitted = false; S.follow = true; S.followOff = { x: 0, y: 0 }; S.trk = {}; S.trails = {}; S.pointTrails = {}; S.kills = 0; S.killSeen = {}; S.killPrimed = false; zoned = true;
+      if (S.kite) { S.kite.reset(); S.kiteView = null; }   // a new zone: the kite coach starts over, and so do the guild's loops
+      S.guild = { zone: null, loops: [], asked: 0, retried: false };
       if (!p.points) { S.points = []; S.byId = {}; S.map = null; S.prep = null; S.grids = null; S.facs = null; S.sgs = null; }
       S.local = null; S.localVer = null;
       document.getElementById('followBtn').classList.add('on');
@@ -1421,6 +1452,7 @@
     if (S.follow && (p.self || p.target)) followTo(followSubject(Date.now()));
     else if (!S.follow && !S.fitted && S.points.length) fitNow();
     noteTracks(p, Date.now());
+    guildLoopsMaybe(Date.now());
     // The side list is rebuilt from scratch, so at the poll rate it would eat a click between mousedown and mouseup;
     // it only needs the clock to tick once a second, plus whenever the zone or the data changed shape.
     var rt = Date.now();
@@ -1441,6 +1473,7 @@
       keep[key] = 1; S.trk[key] = trackStep(S.trk[key], m, now, sm);
     };
     put('self', p.self);
+    kiteFeed(dm ? (S.direct.p.at || now) : (Number(p.pos_at) > 0 ? Number(p.pos_at) : now));   // the kite coach hears YOUR spot, when it was taken
     (p.group || []).forEach(function (m) { put('g:' + m.name, m); });
     (p.raid || []).forEach(function (m) { put('r:' + m.name, m); });
     if (p.target) put(targetKey(p.target), p.target);
@@ -1487,8 +1520,9 @@
     var inside = e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom;
     cursorLoc = inside && S.view ? screenToServer(e.clientX - r.left, e.clientY - r.top, S.view, S.w, S.h) : null;
     updateLocBar(Date.now());
+    if (S.guild && (S.guild.loops.length || S.hoverLoop)) kiteHover(cursorLoc);   // a guild loop's label shows while the cursor is on its ring
   }, { passive: true });
-  document.addEventListener('mouseout', function (e) { if (!e.relatedTarget) { cursorLoc = null; updateLocBar(Date.now()); } });
+  document.addEventListener('mouseout', function (e) { if (!e.relatedTarget) { cursorLoc = null; updateLocBar(Date.now()); if (S.hoverLoop) kiteHover(null); } });
   function frame() {
     raf = 0;
     var now = Date.now();
@@ -1530,6 +1564,130 @@
     fetch('http://127.0.0.1:' + PORT + '/api/map-leg', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ zone: zone, grid: gid, a: leg.prev, b: leg.next }) }).catch(function () {});
   }
+
+  // ── Kite coach (the guild lead, 2026-10-15: "common non-drifting circles and speeds are worth us hanging onto") ──
+  // Your own position, at the rate it arrives, goes through kiteCoach.js (the math; pure, tested): it finds a circle, counts
+  // laps, and says how far the centre drifts lap to lap. Everything is local until a run of 3+ CLEAN laps happens: then ONE
+  // summary goes to the agent (/api/kite-loop), which decides whether it may leave the machine (local mode, opted out,
+  // paused: nothing does). The guild's loops for this zone come back the other way (/api/kite-loops). ⚙ → Kite coach /
+  // Guild kite loops switch each half off; off, the Map neither listens, sends, nor asks.
+  var KC = window.WPKite || null;
+  S.kite = KC && !PART_TIMERS ? KC.create() : null;   // the Timers pop-out hears the same positions: only the Map coaches (and uploads)
+  S.kiteView = null; S.hoverLoop = null;
+  S.guild = { zone: null, loops: [], asked: 0, retried: false };
+  var GUILD_POLL_MS = 60000;      // the agent refreshes from the bot every 10 min; asking it is local and cheap
+  var KITE_GUILD_COL = '#d4f542', KITE_DRIFT_COL = { g: '#56d364', a: '#f0b429', r: '#ff6b5e', n: '#ffffff' };
+  function kiteOn() { return !!S.kite && S.cfg.show.kite !== false; }
+  function guildOn() { return !!S.kite && S.cfg.show.kiteLoops !== false; }
+  // A new sample of your own spot (called by noteTracks with the spot it just took, and when it was taken).
+  function kiteFeed(t) {
+    if (!S.kite) return;
+    if (!kiteOn()) { if (S.kiteView) { S.kite.reset(); S.kiteView = null; } return; }
+    var tr = S.trk.self;
+    if (!tr) return;
+    var ev = S.kite.push(t, tr.to.x, tr.to.y, tr.to.z);
+    for (var i = 0; i < ev.length; i++) if (ev[i].type === 'report') postKiteLoop(ev[i].body);
+    S.kiteView = S.kite.view();
+  }
+  function postKiteLoop(b) {
+    var zone = S.p && S.p.zone;
+    if (!zone) return;
+    fetch('http://127.0.0.1:' + PORT + '/api/kite-loop', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ zone: zone, cx: b.cx, cy: b.cy, cz: b.cz, r: b.r, lap_s: b.lap_s, speed_pct: b.speed_pct, drift_u: b.drift_u,
+        wobble_u: b.wobble_u, laps: b.laps, dir: b.dir }) }).catch(function () {});
+  }
+  function goodLoop(l) {
+    return !!l && isFinite(l.cx) && isFinite(l.cy) && l.r > 0 && l.lap_s > 0 && isFinite(l.speed_pct) && (l.dir === 'cw' || l.dir === 'ccw');
+  }
+  // The guild's loops for the zone you are in: asked on a new zone (again 4 s later, once: the agent's first answer is
+  // empty while it fetches), then once a minute. Nothing when the Map is off the zone or the switch is off.
+  function guildLoopsMaybe(now) {
+    if (!guildOn() || !S.zone) return;
+    var g = S.guild;
+    if (g.zone === S.zone && now - g.asked < GUILD_POLL_MS) return;
+    if (g.zone !== S.zone) { g.zone = S.zone; g.loops = []; g.retried = false; }
+    g.asked = now;
+    var z = S.zone;
+    fetch('http://127.0.0.1:' + PORT + '/api/kite-loops?zone=' + encodeURIComponent(z)).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      if (S.zone !== z || !j || !Array.isArray(j.loops)) return;
+      g.loops = j.loops.filter(goodLoop);
+      if (!g.retried) { g.retried = true; g.asked = Date.now() - GUILD_POLL_MS + 4000; }
+    }).catch(function () {});
+  }
+  function loopAt(loc) {
+    if (!loc || !guildOn()) return null;
+    var best = null, bd = 9 / S.view.scale;
+    for (var i = 0; i < S.guild.loops.length; i++) {
+      var L = S.guild.loops[i], d = Math.abs(Math.hypot(loc.x - L.cx, loc.y - L.cy) - L.r);
+      if (d <= bd) { best = L; bd = d; }
+    }
+    return best;
+  }
+  function kiteHover(loc) {
+    var L = loopAt(loc), id = L ? String(L.id) : null;
+    if (id !== S.hoverLoop) { S.hoverLoop = id; renderMap(true); }
+  }
+  // The coach's rings and the guild's loops. Returns true when a guild loop is on screen (its pace dot needs a repaint timer).
+  function drawKite(rt, SH, w, h) {
+    var v = S.kiteView, sc = S.view.scale, live = false;
+    var ring = function (cx, cy, r) { var q = wpt(cx, cy); ctx.beginPath(); ctx.arc(q[0], q[1], r * sc, 0, 6.2832); return q; };
+    ctx.lineCap = 'round';
+    if (S.kite && SH.kite !== false && v) {
+      // The ghost (the lap before) is the coach's history: it follows ⚙ → Tail, fading as it ages and gone past it (or at Off).
+      var tail = S.cfg.tail, gAge = v.ghost ? rt - v.ghost.t1 : 0, ghost = v.ghost && tail > 0 && gAge <= tail * 1000 ? v.ghost : null;
+      if (ghost) { ring(ghost.cx, ghost.cy, ghost.r); ctx.globalAlpha = 0.35 * tailFade(gAge, tail); ctx.lineWidth = 1.5; ctx.strokeStyle = '#ffffff'; ctx.stroke(); }
+      var col = KITE_DRIFT_COL[v.cls] || KITE_DRIFT_COL.n, cq = ring(v.cur.cx, v.cur.cy, v.cur.r);
+      ctx.globalAlpha = 0.9; ctx.lineWidth = 2; ctx.strokeStyle = col; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cq[0] - 4, cq[1]); ctx.lineTo(cq[0] + 4, cq[1]); ctx.moveTo(cq[0], cq[1] - 4); ctx.lineTo(cq[0], cq[1] + 4); ctx.stroke();
+      if (v.showArrow && ghost) {
+        var gq = wpt(ghost.cx, ghost.cy), dx = cq[0] - gq[0], dy = cq[1] - gq[1], dl = Math.hypot(dx, dy) || 1, vl = Math.max(dl, 14);   // never shorter than 14 px: the label says how far
+        var ux = dx / dl, uy = dy / dl, ex = gq[0] + ux * vl, ey = gq[1] + uy * vl;
+        ctx.beginPath(); ctx.moveTo(gq[0], gq[1]); ctx.lineTo(ex, ey); ctx.lineWidth = 2; ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(ex - ux * 6 - uy * 3.5, ey - uy * 6 + ux * 3.5); ctx.lineTo(ex - ux * 6 + uy * 3.5, ey - uy * 6 - ux * 3.5);
+        ctx.closePath(); ctx.fillStyle = col; ctx.fill();
+        halo(Math.round(v.cur.drift) + ' u', ex + ux * 6, ey + uy * 6 - 4, labelFont('dist'), col);
+      }
+      ctx.globalAlpha = 1;
+    }
+    if (S.kite && SH.kiteLoops !== false) {
+      var now = Date.now();
+      for (var i = 0; i < S.guild.loops.length; i++) {
+        var L = S.guild.loops[i], q = wpt(L.cx, L.cy), rp = L.r * sc;
+        if (q[0] + rp < 0 || q[0] - rp > w || q[1] + rp < 0 || q[1] - rp > h) continue;
+        var hot = S.hoverLoop === String(L.id);
+        ring(L.cx, L.cy, L.r); ctx.setLineDash([6, 5]); ctx.globalAlpha = hot ? 1 : 0.75; ctx.lineWidth = hot ? 2.6 : 1.6; ctx.strokeStyle = KITE_GUILD_COL; ctx.stroke(); ctx.setLineDash([]);
+        var d = KC.guildDot(L, now), dq = wpt(d.x, d.y);
+        ctx.globalAlpha = 1; ctx.beginPath(); ctx.arc(dq[0], dq[1], 3.5, 0, 6.2832); ctx.fillStyle = KITE_GUILD_COL; ctx.fill(); ctx.lineWidth = 1; ctx.strokeStyle = '#0d1117'; ctx.stroke();
+        if (hot) halo(KC.guildLabel(L), q[0], q[1] - rp - 8, labelFont('dist'), KITE_GUILD_COL, 'center');
+        live = true;
+      }
+      ctx.globalAlpha = 1;
+    }
+    return live;
+  }
+  // The readout chip under the position readout: `Lap 12.4 s · r 118 · drift 6 u NE · wobble 4 · 104%`, the drift in green /
+  // amber / red by its share of the radius, and `vs guild: +0.8 s/lap, centre 9 u off` when you are on a guild loop.
+  var kiteChipEl = document.getElementById('kiteChip'), kiteChipKey = '', lastKiteChip = 0;
+  function updateKiteChip() {
+    if (!kiteChipEl) return;
+    var v = kiteOn() ? S.kiteView : null, key = '';
+    var gl = v && guildOn() ? KC.matchGuild(v.cur, S.guild.loops) : null;
+    if (v) key = v.chip + '|' + v.cls + '|' + (gl ? KC.guildText(v.cur, gl) : '');
+    if (key === kiteChipKey) return;
+    kiteChipKey = key;
+    kiteChipEl.textContent = '';
+    kiteChipEl.hidden = !v;
+    if (!v) return;
+    v.chip.split(' · ').forEach(function (part, i) {
+      if (i) kiteChipEl.appendChild(document.createTextNode(' · '));
+      kiteChipEl.appendChild(part.indexOf('drift') === 0 ? el('span', v.cls, part) : document.createTextNode(part));
+    });
+    if (gl) { kiteChipEl.appendChild(document.createTextNode(' · ')); kiteChipEl.appendChild(el('span', 'gd', KC.guildText(v.cur, gl))); }
+    kiteChipEl.style.fontSize = Math.round(11 * (S.cfg.text || 1)) + 'px';
+    kiteChipEl.style.top = ((parseFloat(locBarEl.style.top) || 28) + Math.round(30 * (S.cfg.text || 1))) + 'px';
+  }
+  var kiteDotTimer = null;
+  // ── end Kite coach ──
 
   // ── drawing ──
   function resize() {
@@ -1708,7 +1866,8 @@
   // its home, reddish-orange walking back), a glowing red spot where it stepped off, the waypoint legs it was seen
   // walking (dashed, in the targeted-route colour), and an arrowhead the way its last few breadcrumbs went.
   // head = where the mob is drawn now (null for a killed mob's path: its last crumb); alpha < 1 = a faded path.
-  function drawTrail(tr, head, grid, legColour, alpha) {
+  // `tailSec` (the target's own trail only): draw just the last that-many seconds of crumbs, the older part fading (⚙ → Tail).
+  function drawTrail(tr, head, grid, legColour, alpha, tailSec) {
     if (!tr || tr.pts.length < 2) return;
     var A = alpha == null ? 1 : alpha, last = tr.pts[tr.pts.length - 1];
     if (!head) head = wpt(last.x, last.y);
@@ -1727,17 +1886,24 @@
     // nothing, i want to see it"): a dark casing under every stretch first, then the colour at full strength, so a light
     // floor never swallows any of it.
     var n = tr.pts.length - 1, segs = [], leaves = [];
+    var tNow = Date.now(), first = tailSec > 0 ? tailFrom(tr.pts, tNow, tailSec) : 0;
     for (var i = 1; i < tr.pts.length; i++) {
+      if (i < first) continue;   // laid before the Tail window
       if (tr.pts[i].leave) leaves.push(wpt(tr.pts[i].x, tr.pts[i].y));
       if (tr.pts[i].brk) continue;   // a gap: never bridged with a straight line
-      segs.push([wpt(tr.pts[i - 1].x, tr.pts[i - 1].y), i === n ? head : wpt(tr.pts[i].x, tr.pts[i].y), TRAIL_COL[tr.pts[i].st] || TRAIL_COL.path]);
+      segs.push([wpt(tr.pts[i - 1].x, tr.pts[i - 1].y), i === n ? head : wpt(tr.pts[i].x, tr.pts[i].y), TRAIL_COL[tr.pts[i].st] || TRAIL_COL.path,
+        tailSec > 0 ? tailFade(tNow - tr.pts[i].t, tailSec) : 1]);
     }
-    ctx.lineCap = 'round'; ctx.globalAlpha = A; ctx.lineWidth = 4.5; ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-    ctx.beginPath();
-    segs.forEach(function (s) { ctx.moveTo(s[0][0], s[0][1]); ctx.lineTo(s[1][0], s[1][1]); });
-    ctx.stroke();
+    ctx.lineCap = 'round'; ctx.lineWidth = 4.5; ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    TAIL_FADES.forEach(function (fa) {   // the casing, one pass per strength
+      var any = false;
+      ctx.beginPath();
+      segs.forEach(function (s) { if (s[3] === fa) { any = true; ctx.moveTo(s[0][0], s[0][1]); ctx.lineTo(s[1][0], s[1][1]); } });
+      if (any) { ctx.globalAlpha = A * fa; ctx.stroke(); }
+    });
     ctx.lineWidth = 2.4;
-    segs.forEach(function (s) { ctx.beginPath(); ctx.moveTo(s[0][0], s[0][1]); ctx.lineTo(s[1][0], s[1][1]); ctx.strokeStyle = s[2]; ctx.stroke(); });
+    segs.forEach(function (s) { ctx.globalAlpha = A * s[3]; ctx.beginPath(); ctx.moveTo(s[0][0], s[0][1]); ctx.lineTo(s[1][0], s[1][1]); ctx.strokeStyle = s[2]; ctx.stroke(); });
+    ctx.globalAlpha = A;
     leaves.forEach(function (q) {   // where it left its home: a red glow
       var gl = ctx.createRadialGradient(q[0], q[1], 0, q[0], q[1], 11);
       gl.addColorStop(0, 'rgba(255,59,48,0.95)'); gl.addColorStop(0.45, 'rgba(255,59,48,0.45)'); gl.addColorStop(1, 'rgba(255,59,48,0)');
@@ -1939,7 +2105,7 @@
     }
     // Spawn dots, and first the pather routes (under the dots; every route in range, not only visible points').
     var bossC = [];
-    var vis = [], flashOn =Math.floor(now / 450) % 2 === 0, anyFlash = false, srange = spawnRange();
+    var vis = [], flashOn =Math.floor(now / 450) % 2 === 0, anyFlash = false, kiteDots = false, srange = spawnRange();
     // Your target's own spawn point shows at any height (the guild lead, 2026-10-13: "Going above a spawn point should
     // still show you the spawn point of the creature that's targetted").
     var tgtPid = S.p && S.p.target && S.p.target.point_id != null ? String(S.p.target.point_id) : null;
@@ -2074,7 +2240,7 @@
         // The last path seen from this spawn point, faded under the mob you have now.
         var arch = tTrail && tTrail.pid ? S.pointTrails[tTrail.pid] : null;
         if (SH.trail && arch && arch !== tTrail) drawTrail(arch, null, null, null, 0.3);
-        if (SH.trail) drawTrail(tTrail, tq, tGrid, CO.routeTarget, tTrail && tTrail.dead != null ? 0.35 : 1);
+        if (SH.trail && C.tail > 0) drawTrail(tTrail, tq, tGrid, CO.routeTarget, tTrail && tTrail.dead != null ? 0.35 : 1, C.tail);   // ⚙ → Tail: Off draws none
         // The leg it is on now, drawn whole and bright from the waypoint it left to the one ahead, with how long it
         // has to go at its pace (the guild lead, 2026-10-13: "I expected to see the whole extrapolated dashed line and
         // the pace of the mob going towards that point").
@@ -2154,6 +2320,7 @@
           .filter(Boolean).join(' · ');
         if (subTxt) halo(subTxt, tq[0] + 9, tq[1] + 6, labelFont('small'), CO.target);
       }
+      kiteDots = drawKite(rt, SH, w, h);
       // You: an arrow by heading.
       if (P.self && SH.you) {
         var md = drawn('self', P.self, rt), me = wpt(md.x, md.y);
@@ -2170,9 +2337,13 @@
     if (!animating || rt - lastHits >= HITS_MS) { lastHits = rt; layoutHits(SH.dots ? vis : []); }   // hidden points take no clicks
     if (posAgeEl && rt - lastAge >= 200) { lastAge = rt; posAgeEl.textContent = S.sampleAt ? posAgeText(rt - S.sampleAt, S.sampleSrc) : ''; }
     if (rt - lastLoc >= 200) { lastLoc = rt; updateLocBar(rt); }
+    if (rt - lastKiteChip >= 250) { lastKiteChip = rt; updateKiteChip(); }   // ~4 a second, not once a frame
     // Flashing rings need a faster repaint than the one-second poll.
     if (anyFlash && !flashTimer) flashTimer = setInterval(function () { if (!document.hidden) renderMap(); }, 450);
     if (!anyFlash && flashTimer) { clearInterval(flashTimer); flashTimer = null; }
+    // A guild loop on screen has a pace dot going round it: repaint five times a second while one is in view.
+    if (kiteDots && !kiteDotTimer) kiteDotTimer = setInterval(function () { if (!document.hidden) renderMap(true); }, 200);
+    if (!kiteDots && kiteDotTimer) { clearInterval(kiteDotTimer); kiteDotTimer = null; }
   }
   var flashTimer = null;
 
@@ -2552,6 +2723,8 @@
     tx.value = String(C.text); txv.textContent = Math.round(C.text * 100) + '%';
     document.getElementById('cfgInk').value = String(C.ink);
     document.getElementById('cfgInkVal').textContent = inkWord(C.ink);
+    document.getElementById('cfgTail').value = String(Math.max(0, TAIL_STEPS.indexOf(C.tail)));
+    document.getElementById('cfgTailVal').textContent = tailLabel(C.tail);
   }
   function inkWord(k) { return k <= 1 ? 'Normal' : k >= INK_MAX ? 'Max' : k >= 1.75 ? 'Strong' : 'Medium'; }
   // The fixed controls are wired once; buildCfg only refreshes their values.
@@ -2574,6 +2747,12 @@
   document.getElementById('cfgText').addEventListener('input', function (e) {
     S.cfg.text = Math.round(parseFloat(e.target.value) * 10) / 10;
     document.getElementById('cfgTextVal').textContent = Math.round(S.cfg.text * 100) + '%';
+    cfgCommit();
+  });
+  document.getElementById('cfgTail').addEventListener('input', function (e) {
+    var i = parseInt(e.target.value, 10);
+    S.cfg.tail = TAIL_STEPS[i >= 0 && i < TAIL_STEPS.length ? i : TAIL_STEPS.indexOf(TAIL_DEFAULT)];
+    document.getElementById('cfgTailVal').textContent = tailLabel(S.cfg.tail);
     cfgCommit();
   });
   document.getElementById('cfgInk').addEventListener('input', function (e) {

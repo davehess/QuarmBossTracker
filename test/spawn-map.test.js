@@ -1278,7 +1278,7 @@ describe('pather routes', () => {
     expect(base.all.cfg.hidden).toBe(false);
     expect(base.all.cfgBtn.classList.contains('on')).toBe(true);
     const showRows = base.all.cfgShow.children, glyphRows = base.all.cfgGlyphs.children, colRows = base.all.cfgCols.children;
-    expect(showRows).toHaveLength(25);
+    expect(showRows).toHaveLength(27);                                         // 25 + Kite coach + Guild kite loops (2026-10-15)
     expect(glyphRows).toHaveLength(9);
     expect(colRows).toHaveLength(27);
     const walls = showRows[0].children[0];                                     // Walls
@@ -1395,7 +1395,7 @@ describe('pather routes', () => {
     const js = stripJs(MAP_HTML);
     expect(js).toMatch(/if \(S\.panDragged\) \{ S\.panDragged = false; return; \}/);   // a drag is not a click
     expect(js).toMatch(/if \(d\.btn && !\(e\.buttons & 1\)\)/);                          // a lost mouseup ends it
-    expect(js).toMatch(/if \(SH\.trail\) drawTrail\(tTrail, tq, tGrid, CO\.routeTarget, /);
+    expect(js).toMatch(/if \(SH\.trail && C\.tail > 0\) drawTrail\(tTrail, tq, tGrid, CO\.routeTarget, /);   // ⚙ → Tail (2026-10-15): Off draws none
   });
   it('a roamer\'s leg is confirmed when it reaches the far waypoint; a tab-away gap breaks the trail; its pace; its spawn group (2026-10-13)', () => {
     // the guild lead: "Tabbing between two pathing mobs, i expected to see the whole extrapolated dashed line and the
@@ -1503,7 +1503,7 @@ describe('pather routes', () => {
     expect(st.pointTrails['11']).toBe(trA);                                           // ...but still there for that point
     const js = stripJs(MAP_HTML);
     expect(js).toMatch(/if \(SH\.trail && arch && arch !== tTrail\) drawTrail\(arch, null, null, null, 0\.3\);/);
-    expect(js).toMatch(/drawTrail\(tTrail, tq, tGrid, CO\.routeTarget, tTrail && tTrail\.dead != null \? 0\.35 : 1\);/);
+    expect(js).toMatch(/drawTrail\(tTrail, tq, tGrid, CO\.routeTarget, tTrail && tTrail\.dead != null \? 0\.35 : 1, C\.tail\);/);
   });
   it('Fit leaves stragglers out; Follow keeps your spot on screen; spawns hidden hide the routes; labels all / targets / off (2026-10-13)', () => {
     // the guild lead: "In plane of valor fit raid or fit group just zooms out to the whole zone"; "Follow me doesn't

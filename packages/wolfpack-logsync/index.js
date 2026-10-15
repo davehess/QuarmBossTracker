@@ -11832,6 +11832,9 @@ const QUEUE_PERMANENT_CODES = new Set([400, 401, 403, 404, 413, 422, 431]);
 // stays cheap and durable events are what actually persist.
 const _EPHEMERAL_KINDS   = new Set(['casting', 'raid_roster', 'threat_snapshot']);
 const _CASTING_STALE_MS  = 90_000;   // a cast relayed >90s late is useless
+// Kinds whose body is a fixed contract and carries nobody: enqueueUpload stamps neither the operator's `character`
+// nor `agent_state` on them (kite_loop: the bot is written against exactly the fields in "Kite loops" below).
+const _BARE_KINDS        = new Set(['kite_loop']);
 
 let _uploadQueue       = [];        // in-memory mirror, persisted to QUEUE_FILE
 let _queueDrainTimer   = null;
@@ -12098,6 +12101,7 @@ function _endpointForKind(kind, botUrl) {
     case 'casting':         return base + '/casting';
     case 'ari_lead':        return base + '/ari-lead';
     case 'crash_report':    return base + '/crash_report';
+    case 'kite_loop':       return base + '/kite-loop';
     default:                return botUrl;
   }
 }
@@ -12311,7 +12315,7 @@ function enqueueUpload(kind, payload) {
   // they carry no per-box `character`, which made the admin board file them all
   // under "(unknown)". Encounters already set their own per-box character and
   // are left untouched.
-  if (payload && typeof payload === 'object' && !payload.character) {
+  if (payload && typeof payload === 'object' && !payload.character && !_BARE_KINDS.has(kind)) {
     const pc = _primaryCharacter();
     if (pc) payload.character = pc;
   }
@@ -12320,7 +12324,7 @@ function enqueueUpload(kind, payload) {
   // WOLFPACK_CLIENT identifies the wrapper (e.g. 'mimic'); default 'parser'
   // for Parser.bat installs. WOLFPACK_APP_VERSION lets Mimic stamp its own
   // semver so the admin board can show beta.X without parsing tray strings.
-  if (payload && typeof payload === 'object' && !payload.agent_state) {
+  if (payload && typeof payload === 'object' && !payload.agent_state && !_BARE_KINDS.has(kind)) {
     payload.agent_state = {
       client:       process.env.WOLFPACK_CLIENT      || 'parser',
       app_version:  process.env.WOLFPACK_APP_VERSION || null,
@@ -33200,6 +33204,9 @@ function startWebDashboard(port) {
       }
       if (req.url === '/api/map-mark' && req.method === 'POST') return _handleMapMark(req, res);
       if (req.url === '/api/map-leg' && req.method === 'POST') return _handleMapLeg(req, res);
+      // Kite coach (map.html): one loop summary out, the guild's loops for the zone in.
+      if (req.url === '/api/kite-loop' && req.method === 'POST') return _handleKiteLoopPost(req, res);
+      if (req.url && req.url.split('?')[0] === '/api/kite-loops' && req.method === 'GET') return _handleKiteLoopsGet(req, res);
       // "What you hear" — per-person rules for every callout (the guild lead, 2026-10-12).
       if (req.url && req.url.split('?')[0] === '/api/trigger-rules' && (req.method === 'GET' || req.method === 'POST')) return _handleTriggerRules(req, res);
       // Personal trigger sync — Push / Pull between this household's PCs (2026-10-12).
@@ -48660,6 +48667,112 @@ async function _handleMapLeg(req, res) {
   const r = _mapNoteLeg(zone, b && b.grid, b && b.a, b && b.b, now);
   send(r.ok ? 200 : 400, r);
 }
+// ── Kite loops ──────────────────────────────────────────────────────────────────────────────────
+// The guild lead, 2026-10-15: kiters run circles, and "common non-drifting circles and speeds are worth us hanging
+// onto". map.html's kite coach (apps/mimic/kiteCoach.js) finds the circles in YOUR OWN position, locally; this is the
+// only part that talks to the guild, and it is deliberately narrow:
+//   * OUT: POST /api/kite-loop (from the Map) -> ONE summary of a run of 3+ clean laps -> enqueueUpload('kite_loop') ->
+//     POST <bot>/api/agent/kite-loop with EXACTLY { zone, cx, cy, cz, r, lap_s, speed_pct, drift_u, wobble_u, laps,
+//     dir, at, agent_version }. Never the raw path, never a character name (_BARE_KINDS keeps enqueueUpload from
+//     stamping one), and the agent re-checks the loop is clean before it queues it.
+//   * IN: GET /api/kite-loops?zone=<short> (from the Map) -> the guild's loops for the zone, fetched from
+//     GET <bot>/api/agent/kite-loops?zone=<short> at most every 10 minutes per zone and cached. A 404 (an older bot)
+//     is "none", retried in 10 minutes.
+// Both ride the same gate as the own-timers sync (_ownTimersAllowed): local mode (no token), a dry run, the guild's
+// kill switch / version floor (_mapFetchAllowed), and a character set to exclude_from_stats send and fetch nothing.
+const KITE_LOOP_MIN_LAPS = 3, KITE_R_MIN = 20, KITE_R_MAX = 500, KITE_CLEAN_DRIFT = 0.08, KITE_CLEAN_WOBBLE = 0.10;
+const KITE_LOOPS_TTL_MS = 10 * 60 * 1000, KITE_LOOPS_RETRY_MS = 10 * 60 * 1000, KITE_LOOPS_ERR_MS = 2 * 60 * 1000, KITE_LOOPS_MAX = 60;
+const _kiteLoopCache = new Map();      // zone short -> { loops, at, retryAt, inflight }
+function _kiteNum(v, lo, hi) { const n = typeof v === 'number' ? v : NaN; return Number.isFinite(n) && n >= lo && n <= hi ? n : null; }
+const _kiteRound = (n, dp) => { const m = Math.pow(10, dp); return Math.round(n * m) / m; };
+// The Map's summary -> the body the bot is written against, or null when it is not a clean, plausible loop.
+function _kiteLoopBody(b, zone, now) {
+  if (!b || typeof b !== 'object' || !zone) return null;
+  const cx = _kiteNum(b.cx, -1e5, 1e5), cy = _kiteNum(b.cy, -1e5, 1e5), cz = _kiteNum(b.cz, -1e5, 1e5);
+  const r = _kiteNum(b.r, KITE_R_MIN, KITE_R_MAX), lap = _kiteNum(b.lap_s, 1, 600), sp = _kiteNum(b.speed_pct, 1, 1000);
+  const laps = _kiteNum(b.laps, KITE_LOOP_MIN_LAPS, 10000);
+  const dir = b.dir === 'cw' || b.dir === 'ccw' ? b.dir : null;
+  if (cx == null || cy == null || cz == null || r == null || lap == null || sp == null || laps == null || !dir) return null;
+  // (+0.05 u: the Map rounds these to a tenth of a unit, which can tip a loop exactly on the line over it)
+  const drift = _kiteNum(b.drift_u, 0, r * KITE_CLEAN_DRIFT + 0.05), wob = _kiteNum(b.wobble_u, 0, r * KITE_CLEAN_WOBBLE + 0.05);
+  if (drift == null || wob == null) return null;
+  return {
+    zone: String(zone), cx: _kiteRound(cx, 1), cy: _kiteRound(cy, 1), cz: _kiteRound(cz, 1), r: _kiteRound(r, 1), lap_s: _kiteRound(lap, 2),
+    speed_pct: _kiteRound(sp, 1), drift_u: _kiteRound(drift, 1), wobble_u: _kiteRound(wob, 1), laps: Math.floor(laps), dir,
+    at: new Date(now).toISOString(), agent_version: AGENT_VERSION,
+  };
+}
+// The bot's list -> only the fields the Map draws, numbers only, capped.
+function _kiteLoopsClean(list) {
+  const out = [];
+  for (const l of Array.isArray(list) ? list : []) {
+    if (!l || typeof l !== 'object') continue;
+    const cx = _kiteNum(l.cx, -1e5, 1e5), cy = _kiteNum(l.cy, -1e5, 1e5), cz = _kiteNum(l.cz, -1e5, 1e5), r = _kiteNum(l.r, KITE_R_MIN, KITE_R_MAX);
+    const lap = _kiteNum(l.lap_s, 1, 600), sp = _kiteNum(l.speed_pct, 0, 1000);
+    if (cx == null || cy == null || r == null || lap == null || sp == null || !(l.dir === 'cw' || l.dir === 'ccw')) continue;
+    out.push({ id: typeof l.id === 'number' || typeof l.id === 'string' ? l.id : out.length, cx, cy, cz: cz == null ? 0 : cz, r, lap_s: lap, speed_pct: sp, dir: l.dir,
+      drift_u: _kiteNum(l.drift_u, 0, 1e4) || 0, wobble_u: _kiteNum(l.wobble_u, 0, 1e4) || 0, laps: _kiteNum(l.laps, 0, 1e6) || 0,
+      seen: _kiteNum(l.seen, 0, 1e6) || 1, last_at: typeof l.last_at === 'string' ? l.last_at.slice(0, 40) : null });
+    if (out.length >= KITE_LOOPS_MAX) break;
+  }
+  return out;
+}
+// The Map's POST: gate, then queue. Pure of HTTP so a test can drive it. -> { status, body }
+function _kiteLoopSubmit(b, now) {
+  const ch = _mapActiveCharacter(now);
+  const live = ch ? _mapZoneShort(_zealState[ch].zone) : null;
+  if (!live) return { status: 409, body: { error: 'no zone' } };
+  if (b && b.zone && String(b.zone) !== live) return { status: 409, body: { error: 'that is not the zone you are in' } };
+  if (!_ownTimersAllowed(ch)) return { status: 200, body: { ok: true, sent: false } };   // local mode / paused / opted out: nothing leaves
+  const body = _kiteLoopBody(b, live, now);
+  if (!body) return { status: 400, body: { error: 'not a clean loop' } };
+  enqueueUpload('kite_loop', body);
+  return { status: 200, body: { ok: true, sent: true } };
+}
+function _kiteLoopsFetch(zone, rec, now) {
+  rec.inflight = true;
+  const base = _uploadOpts.botUrl.replace(/\/encounter(\?.*)?$/, '');
+  fetch(base + '/kite-loops?zone=' + encodeURIComponent(zone), { headers: _ownTimersHeaders(), signal: AbortSignal.timeout(8_000) })
+    .then(async (r) => {
+      if (r.status === 404) { rec.loops = []; rec.at = now; rec.retryAt = now + KITE_LOOPS_RETRY_MS; return; }   // an older bot: none
+      if (!r.ok) { rec.retryAt = now + KITE_LOOPS_ERR_MS; return; }
+      const j = await r.json();
+      rec.loops = _kiteLoopsClean(j && j.loops); rec.at = now; rec.retryAt = now + KITE_LOOPS_TTL_MS;
+    })
+    .catch(() => { rec.retryAt = now + KITE_LOOPS_ERR_MS; })       // keep what we had
+    .finally(() => { rec.inflight = false; });
+}
+// What the Map gets: the cached loops for the zone (empty while the first fetch is out), refreshed when stale.
+function _kiteLoopsFor(zone, character, now) {
+  if (!_ownTimersAllowed(character)) return [];
+  let rec = _kiteLoopCache.get(zone);
+  if (!rec) {
+    if (_kiteLoopCache.size >= 20) _kiteLoopCache.delete(_kiteLoopCache.keys().next().value);
+    rec = { loops: [], at: 0, retryAt: 0, inflight: false };
+    _kiteLoopCache.set(zone, rec);
+  }
+  if (!rec.inflight && now >= rec.retryAt) _kiteLoopsFetch(zone, rec, now);
+  return rec.loops;
+}
+async function _handleKiteLoopPost(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 2048)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { error: 'bad body' }); }
+  const r = _kiteLoopSubmit(b, Date.now());
+  send(r.status, r.body);
+}
+function _handleKiteLoopsGet(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let zone = '';
+  try { zone = new URL(req.url, 'http://127.0.0.1').searchParams.get('zone') || ''; } catch { void 0; }
+  if (!/^[a-z0-9_]{1,40}$/i.test(zone)) return send(400, { error: 'zone is required' });
+  const now = Date.now(), ch = _mapActiveCharacter(now);
+  send(200, { loops: _kiteLoopsFor(zone, ch, now) });
+}
+// ── end Kite loops ──
+
 // A timer written in the last two seconds is flushed on the way out.
 process.on('exit', () => { try { if (_mapSaveTimer) _mapSaveNow(); } catch { void 0; } });
 
@@ -56249,6 +56362,9 @@ module.exports = {
   // Meter History on disk + its own endpoint (2026-10-04).
   FIGHT_HISTORY_MAX, FIGHT_HISTORY_KEEP_MS, _saveFightHistory, _loadFightHistory, _resettleRestoredFights,
   _fightHistoryPayload, _setUploadOptsForTest: (o) => { _uploadOpts = o; },
+  // Kite loops (2026-10-15): the Map's summary gate + queue, the guild's loops in, and the queue the summary lands in.
+  _kiteLoopSubmit, _kiteLoopBody, _kiteLoopsClean, _kiteLoopsFor, _kiteLoopCache, _handleKiteLoopPost, _handleKiteLoopsGet,
+  _uploadQueueForTest: () => _uploadQueue, _applyCharacterPrefsResponse, _applyControlPlane,
   // The 📈 My parses proxy (2026-10-06): the param whitelist, the fetch with its 5-minute cache.
   _myParsesParams, fetchMyParses, MY_PARSES_TTL_MS, MY_PARSES_FRESH_MIN_MS,
   _resetMyParsesForTest: () => { _myParsesCache.clear(); _myParsesInflight.clear(); },
