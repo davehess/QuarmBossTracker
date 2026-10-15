@@ -38,7 +38,11 @@ import type { RollOverride, RollSetRow } from './rolls';
 export type SessionReview = { bundle: SessionBundle; night: NightSummary | null };
 
 const MINUTE_PAGE = 30;       // rows of ~25 KB each: ~750 KB a response
-const TOP_FIGHTS = 60;        // parses are read for the biggest unclassified fights at most
+// The top-five list is read for this many fights at most (curated bosses first, then the biggest). It was 60, which
+// left the later fights of a long night with no parse line at all. A night is one window of under 24 hours and a
+// raid night's unclassified fights number in the low hundreds, so 400 covers all of one; the cost is 20 ids a read,
+// at most 20 reads, once per window (the bundle is cached below). The full table of any fight loads on demand.
+const TOP_FIGHTS = 400;
 const CACHE_MS = 5 * 60_000;
 const cache = new Map<string, { at: number; value: SessionReview }>();
 

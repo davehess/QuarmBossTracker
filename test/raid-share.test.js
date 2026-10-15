@@ -29,6 +29,7 @@ import {
   buildRolls, buildTicks,
 } from '../web/lib/raidSession.ts';
 import { loadSessionReview } from '../web/lib/raidSessionLoad.ts';
+import { loadFightParse, fightInWindow, buildFightParse } from '../web/lib/raidSessionParse.ts';
 import { decodeMinute, MINUTE_MS, REPLAY_WINDOW_MS } from '../web/lib/raidReplay.ts';
 
 const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
@@ -244,6 +245,82 @@ describe('the session loader bounds every read to the window', () => {
   });
 });
 
+// ── 4b. FULL PARSE OF ONE FIGHT ──────────────────────────────────────────────────────────────────────────────
+// loadFightParse is what both parse routes call. The fake database ignores filters, so the window guard is
+// proved by the row it is handed (started/ended outside the window -> null) and the opt-out by the players it
+// is handed (the hidden one never reaches the result, or the shares and totals).
+describe('the full parse of one fight', () => {
+  const W = makeWindow(T0, T0 + 120 * MINUTE_MS);
+  const ID = '0b9a6d3e-1c2f-4a5b-8c7d-123456789abc';
+  const at = (min) => new Date(T0 + min * MINUTE_MS).toISOString();
+  const players = [
+    { encounter_id: ID, character_name: 'Aldenmar', total_damage: 300, dps: 10, duration_sec: 30 },
+    { encounter_id: ID, character_name: 'Hushed', total_damage: 9000, dps: 300, duration_sec: 30 },
+    { encounter_id: ID, character_name: 'Brackwyn', total_damage: 100, dps: null, duration_sec: null },
+    { encounter_id: ID, character_name: 'Idle', total_damage: 0, dps: 0, duration_sec: 30 },
+  ];
+  const dbFor = (enc) => fakeDb({
+    encounters: enc ? [{ id: ID, ...enc }] : [],
+    encounter_players: players,
+    characters: [{ name: 'Hushed', class: 'Wizard', exclude_from_stats: true }, { name: 'Aldenmar', class: 'Cleric' }],
+  });
+  const inside = { started_at: at(10), ended_at: at(11), duration_sec: 40 };
+  const opts = { guild: 'parse-test-guild', win: W };
+
+  it('a fight inside the window is returned, biggest first, with shares of what is shown', async () => {
+    const p = await loadFightParse(dbFor(inside), ID, opts);
+    expect(p.players.map(x => x.name)).toEqual(['Aldenmar', 'Brackwyn']);
+    expect(p.players[0]).toMatchObject({ cls: 'Cleric', damage: 300, dps: 10, durationSec: 30 });
+    expect(p.players[1]).toMatchObject({ cls: null, dps: null, durationSec: 40 });   // no per-player time: the fight's
+    expect(p.totalDamage).toBe(400);
+    expect(p.players.map(x => x.pct)).toEqual([75, 25]);
+  });
+  it('a fight outside the window is rejected, before or after it', async () => {
+    expect(await loadFightParse(dbFor({ started_at: at(-60), ended_at: at(-55), duration_sec: 9 }), ID, opts)).toBeNull();
+    expect(await loadFightParse(dbFor({ started_at: at(130), ended_at: at(131), duration_sec: 9 }), ID, opts)).toBeNull();
+  });
+  it('the window is [from, to) on the fight END, the same rule the review lists fights by', () => {
+    expect(fightInWindow({ started_at: at(-1), ended_at: at(0) }, W)).toBe(true);     // began a minute early, ended inside
+    expect(fightInWindow({ started_at: at(119), ended_at: at(120) }, W)).toBe(false); // began inside, ended at `to`: not listed
+    expect(fightInWindow({ started_at: at(119), ended_at: at(121) }, W)).toBe(false); // ended after: not listed, not served
+    expect(fightInWindow({ started_at: at(-5), ended_at: at(-1) }, W)).toBe(false);
+    expect(fightInWindow({ started_at: at(120), ended_at: null }, W)).toBe(false);
+    expect(fightInWindow({ started_at: 'junk', ended_at: null }, W)).toBe(false);
+  });
+  it('a members call has no window; an unknown id, a junk id and a missing fight are all null', async () => {
+    expect((await loadFightParse(dbFor({ started_at: at(-600), ended_at: at(-599), duration_sec: 9 }), ID, { guild: 'parse-test-guild' })).players.length).toBe(2);
+    expect(await loadFightParse(dbFor(null), ID, opts)).toBeNull();
+    const db = dbFor(inside);
+    for (const bad of [null, undefined, '', 'e1', `${ID}' or 1=1`, 42]) expect(await loadFightParse(db, bad, opts)).toBeNull();
+    expect(db.queries.length).toBe(0);   // a junk id never becomes a query
+  });
+  it('is read for this guild, unclassified, and by the fight id', async () => {
+    const db = dbFor(inside);
+    await loadFightParse(db, ID, opts);
+    const enc = db.queries.find(q => q.table === 'encounters');
+    expect(hasOp(enc, 'eq', 'guild_id', 'parse-test-guild')).toBe(true);
+    expect(hasOp(enc, 'is', 'classification', null)).toBe(true);
+    expect(hasOp(enc, 'eq', 'id', ID)).toBe(true);
+    expect(hasOp(db.queries.find(q => q.table === 'encounter_players'), 'eq', 'encounter_id', ID)).toBe(true);
+  });
+  it('an opted-out character is in no row, no share and no total, nor anywhere in the JSON', async () => {
+    const p = await loadFightParse(dbFor(inside), ID, opts);
+    expect(JSON.stringify(p)).not.toContain('Hushed');
+    expect(p.totalDamage).toBe(400);   // 9,000 would be there if they were counted
+  });
+  it('buildFightParse drops opted-out pets with their owner, and zero-damage rows', () => {
+    const enc = { id: 'x', started_at: at(0), ended_at: at(1), duration_sec: 5 };
+    const rows = [
+      { character_name: 'Hushed`s pet', total_damage: 50, dps: 1, duration_sec: 5 },
+      { character_name: 'Visible', total_damage: 50, dps: 1, duration_sec: 5 },
+      { character_name: 'Idle', total_damage: 0, dps: 0, duration_sec: 5 },
+    ];
+    const p = buildFightParse(enc, rows, new Map(), new Set(['hushed']));
+    expect(p.players.map(x => x.name)).toEqual(['Visible']);
+    expect(p.players[0].pct).toBe(100);
+  });
+});
+
 // ── 5. OPT-OUTS ──────────────────────────────────────────────────────────────────────────────────────────────
 describe('opted-out characters', () => {
   const set = optedOutSet([
@@ -335,7 +412,7 @@ describe('the public surface never takes a time from the URL', () => {
   const page = stripJs(read('web', 'app', 'share', 'raid', '[token]', 'page.tsx'));
 
   it('found the routes (a path bug would make the rest vacuous)', () => {
-    expect(routes.map(r => r[0]).sort()).toEqual(['bosses', 'map', 'mesh', 'replay']);
+    expect(routes.map(r => r[0]).sort()).toEqual(['bosses', 'map', 'mesh', 'parse', 'replay']);
     expect(page.length).toBeGreaterThan(500);
   });
   it('the share page reads no search parameter at all', () => {
@@ -350,7 +427,7 @@ describe('the public surface never takes a time from the URL', () => {
     expect(src).not.toMatch(/searchParams\.get\(\s*['"]\w*(from|to|night)\w*['"]/i);
     // the only parameters any of them reads
     const names = [...src.matchAll(/\.get\(\s*['"](\w+)['"]\s*\)/g)].map(m => m[1]);
-    for (const n of names) expect(['w', 'zone', 'floors']).toContain(n);
+    for (const n of names) expect(['w', 'zone', 'floors', 'encounter']).toContain(n);
   });
   it('the replay route cuts its slice from the share window and reads through windowed()', () => {
     const src = routes.find(r => r[0] === 'replay')[1];
@@ -358,6 +435,12 @@ describe('the public surface never takes a time from the URL', () => {
     expect(src).toMatch(/windowIso\(slice\)/);
     expect(src).toMatch(/from\('raid_track_minutes'\)[\s\S]*?\.gte\('minute_at', from\)\.lt\('minute_at', to\)/);
     expect(src).toMatch(/scrubMinuteData\(/);
+  });
+  it('the parse route hands the share row\'s window to the loader and answers a miss with the one 404', () => {
+    const src = routes.find(r => r[0] === 'parse')[1];
+    expect(src).toMatch(/loadFightParse\([\s\S]*?win:\s*share\.win/);
+    expect(src).toMatch(/guild:\s*share\.row\.guild_id/);
+    expect(src).toMatch(/if \(!parse\) return NOT_FOUND\(\)/);
   });
   it('the public map route never reads the Brewall layer (third-party art, members only)', () => {
     const src = routes.find(r => r[0] === 'map')[1];
