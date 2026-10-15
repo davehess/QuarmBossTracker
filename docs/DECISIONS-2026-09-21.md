@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Database overload: compute upgrade vs cleanup** (§334) | Micro (1 GB) swapped and timed out mid-raid; threat snapshots are 61% of the DB. The batched sweep (bot 3.1.271) starts trimming tonight | the guild lead: pick A (compute upgrade to Small) and/or B (cleanup); then a session schedules `VACUUM FULL`/`pg_repack` of `encounter_threat_snapshots` off-hours |
+| **Database load, no upgrade** (§334) | The guild lead: no compute upgrade. The biggest cost was one unindexed read (live damage, ~70% of DB time), fixed in bot 3.1.272; the batched sweep trims snapshots nightly (3.1.271) | a session after the next raid: re-read `pg_stat_statements` (reset at 2026-10-12 01:53 UTC; reset it again first so the raid stands alone) and fix the next-largest reads — `who_directory` (1.27 s × 7.5k calls) and the `p_guild_id, p_since, p_limit` RPC (0.5 s × 11.7k) |
 | **Slow mode ON wording** (§334) | Every boss gets 18 h inside the window (bot 3.1.269); agent 3.7.177 beta reads any Druzzil "thread of time" guild line as on/off | a session after the next slow-mode night: read `bot_kv` `slow_mode.set_line`, pin the exact ON text in the agent regex and `utils/slowMode.js` |
 | **Feedback popup** (§334) | On beta: agent 3.7.179 `fb30386f`; not tried in a live Electron yet | the guild lead: on the next beta build, click 💬 Feedback, type, restart the agent from the tray, confirm the text survives and sending works |
 | **Dashboard drag stutter** (§334) | No code moves the window; cause unknown | the guild lead: drag after each of: hide all overlays, Map Full/Canvas off, GPU off, overlays-follow-EQ off; say which monitor/scale |
@@ -10846,3 +10846,13 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
 - **Main window drag stutter** (the guild lead): nothing in Mimic moves the dashboard window (its `main.js` is identical to 2.9.1).
   Asked the guild lead to bisect: hide all overlays, then Map Full/Canvas, GPU off, overlays-follow-EQ off, and say which monitor and scale.
 - Known red test: `test/my-logs-local.test.js` fails on main and beta, unrelated to tonight.
+- **No database upgrade (the guild lead: *"I don't want to pay for more database server and upgrade. Was it DB or
+  was it Vercel?"*).** It was the database; Vercel only held back the website deploy. `pg_stat_statements` (since
+  2026-10-12) put ~70% of all DB time on one read: the DPS meter's `/api/agent/live-damage` query of
+  `encounter_threat_snapshots` filtered `boss_name =`, but the only boss index is on `lower(boss_name)`, so 183k calls
+  each walked the time range (153–172 ms). `live_damage_snapshots(...)` (migration `20261015060000`, applied) reads on
+  `lower(boss_name)`: 2.8 ms, no new index (bot 3.1.272 `6373212b`). Next in line: `who_directory` (1.27 s × 7.5k) and
+  a `p_guild_id, p_since, p_limit` RPC (0.5 s × 11.7k).
+- **Alpha builds now follow beta** (ci `e1c776e0`): `sync-alpha.yml` dispatches `release-mimic.yml` on alpha whenever
+  alpha's Mimic or agent differs from the `mimic-alpha` build (GITHUB_TOKEN pushes never start on-push builds, so alpha
+  installs had sat a day behind the branch). First automatic build: 3.0.0-alpha.1085, 05:17 UTC.
