@@ -37,15 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
-    key: 'web-1-8-165-2026-10-15',
-    title: 'Web 1.8.165',
-    version: 'Web 1.8.165',
-    channel: 'beta',
+    key: 'web-1-8-170-2026-10-15',
+    title: 'Raid replay in 3D, and shareable raid sessions',
+    version: 'Web 1.8.170 · Bot 3.1.275',
     date: '2026-10-15',
-    headline: 'Review a whole raid session in one page, and send it to someone outside the guild with a link.',
+    headline: 'Replay a raid in 3D and follow anyone through it, then review a whole session in one page and share it with a link.',
     features: [
-      { name: 'Raid session review [beta]', blurb: 'wolfpack.quest/raid/session shows one recorded raid session: the replay on the map, and beside it who was there and for how long, the fights, the loot, the rolls and the top damage. Tap any time in a list and the replay jumps to that moment.' },
-      { name: 'Share a session [beta]', blurb: 'Officers can make a public link to one session. Anyone with the link can read it without signing in, until it runs out (7, 30 or 90 days) or an officer cancels it. It shows only that session, and anyone who opted out of stats is left out.' },
+      { name: 'Replay in 3D [beta]', blurb: 'The replay has a 3D view: the zone’s walls and shaded floors, raiders as dots at their real height. Drag to turn, scroll to zoom. In 2D the map sits on a parchment background (or plain lines, or none).' },
+      { name: 'Follow a raider', blurb: 'Pick raiders from the list or tap a dot: they light up and the rest dim. Follow keeps the camera on one of them, even across zones. The picks are in the link, so you can share what you are looking at.' },
+      { name: 'Bosses on the map', blurb: 'Bosses we killed show at their spawn point while the fight is on. From tonight the replay also records what the raid is targeting, so mobs show where they really were.' },
+      { name: 'Split screen and steadier camera', blurb: 'When the raid is split between two zones the map splits too. A night opens on the guild raid, not the daytime groups, and the view keeps most of the raid in frame instead of jumping.' },
+      { name: 'Raid session review [beta]', blurb: 'wolfpack.quest/raid/session shows one recorded session: the replay, who was there and for how long, the fights, the loot, the rolls and the top damage. Tap any time in a list and the replay jumps there.' },
+      { name: 'Share a session [beta]', blurb: 'Officers can make a public link to one session that anyone can open without signing in, until it runs out (7, 30 or 90 days) or an officer cancels it. It shows only that session, leaves out anyone who opted out of stats, and explains where the data comes from.' },
     ],
     fixes: [],
   },
