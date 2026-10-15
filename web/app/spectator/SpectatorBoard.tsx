@@ -38,7 +38,7 @@ const LABEL_CHARS = 26;
 // worked out from Brewall's line heights.
 type BwGroup = { css: string; xy: Float32Array; z: Float32Array; band: Uint16Array };
 type BwLabelP = { sx: number; sy: number; z: number; band: number; text: string };
-type Prepared = {
+export type Prepared = {
   gen: Float32Array[] | null;
   bw: { groups: BwGroup[]; labels: BwLabelP[] } | null;
   bands: number[];
@@ -50,7 +50,7 @@ type MapEntry =
   | { status: 'error' }
   | { status: 'ready'; map: ZoneMap; prep: Prepared };
 
-function prepare(map: ZoneMap): Prepared {
+export function prepare(map: ZoneMap): Prepared {
   const bands = map.eqemu ? map.eqemu.bands : map.brewall ? deriveBands(map.brewall.lines) : [];
 
   let gen: Float32Array[] | null = null;
@@ -92,7 +92,7 @@ function prepare(map: ZoneMap): Prepared {
 }
 
 // Low floors cool, high floors warm: a hue per band index. Muted (the dots are the loud thing on this page).
-function bandColor(i: number, n: number, alpha: number) {
+export function bandColor(i: number, n: number, alpha: number) {
   const hue = n <= 1 ? 205 : 215 - (i / (n - 1)) * 190;
   return `hsla(${hue.toFixed(0)}, 42%, 60%, ${alpha})`;
 }
