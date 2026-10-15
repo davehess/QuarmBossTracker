@@ -17247,6 +17247,7 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
       // body is rooted, that one isn't" is two different mobs, not a warning).
       const move = mobSpecials.deriveMovement(r);
       const aeRampage = mobSpecials.aeRampageInfo(r);
+      const rampage = mobSpecials.rampageInfo(r);
 
       // Faction consequences of killing this mob. ⚠ Reuses the bot's existing
       // resolver rather than re-deriving the npc_faction → faction_list chain:
@@ -17334,6 +17335,8 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
         // How far from this mob Area Rampage reaches, read off the PRIMARY body (utils/aeRampage.js).
         // Absent, not null, when the mob has no Area Rampage; the Mimic map draws the ring from it.
         ...(aeRampage ? { ae_rampage: aeRampage } : {}),
+        // Regular Rampage reach: one person inside `range` of the mob, not the tank. Same absent-not-null rule.
+        ...(rampage ? { rampage } : {}),
         // Provenance for the overlay/diagnostics: how many bodies were merged,
         // which preference tier won, and whether we had to fall back to a
         // placeholder because the name has no real row at all.
@@ -17383,7 +17386,8 @@ const _MOB_PACK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 //   4 (2026-10-07): procs [{ kind, spell_id, name, chance, summary }]
 //   5 (2026-10-10): quest_id, the same-name body of the requester's zone the Quest tab reads (FB-72)
 //   6 (2026-10-15): ae_rampage { radius_still, radius_moving, chance, targets, damage_pct }
-const _MOB_PACK_VERSION = 6;
+//   7 (2026-10-15): rampage { range, chance, damage_pct }
+const _MOB_PACK_VERSION = 7;
 const _MOB_PACK_PINNED = Array.from({ length: 24 }, (_, i) => 200 + i);
 const _mobPacks = new Map();          // zoneId → { etag, builtAt, body, gz, version }
 const _mobPackQueue = [];             // zone ids waiting to build
