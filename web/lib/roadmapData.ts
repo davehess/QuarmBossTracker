@@ -37,9 +37,10 @@ export type Release = {
 
 export const releases: Release[] = [
   {
-    key: 'web-1-8-164-2026-10-15',
-    title: 'Web 1.8.164',
-    version: 'Web 1.8.164',
+    key: 'web-1-8-165-2026-10-15',
+    title: 'Web 1.8.165',
+    version: 'Web 1.8.165',
+    channel: 'beta',
     date: '2026-10-15',
     headline: 'Review a whole raid session in one page, and send it to someone outside the guild with a link.',
     features: [
