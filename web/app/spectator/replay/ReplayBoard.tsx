@@ -2,26 +2,35 @@
 // The /spectator/replay board: a recorded raid night played back on the same zone maps the live board uses.
 //
 // Rules this file keeps:
-//   * The playhead, the frames and the view live in refs. React state holds only what the controls show
-//     (the clock, the slider, the zone, the buffering note), updated a few times a second at most, so a dot
-//     never costs a React render.
-//   * One requestAnimationFrame loop, running only while playing; a pause, a scrub or a data arrival draws
-//     once through the same guard.
+//   * The playhead, the frames and the views live in refs. React state holds only what the controls show
+//     (the clock, the slider, the zones, the buffering note, the picks), updated a few times a second at most,
+//     so a dot never costs a React render.
+//   * One requestAnimationFrame loop, running only while playing (or while a follow is still gliding); a pause,
+//     a scrub or a data arrival draws once through the same guard. A split screen is two panes drawn by that one
+//     loop: two canvases, two views, one set of frames and one set of fetches.
 //   * The data arrives in 15-minute windows (/api/spectator/replay). The window the playhead is in and the next
 //     one are kept; the rest are dropped, so a whole night (~5.5 MB) is never held at once.
 //   * Between two recorded frames (about 3 s apart) a dot is interpolated, so it glides instead of hopping.
-// The coordinate rules (axis swap, north up, heading) live in lib/spectator.ts; the decoding in lib/raidReplay.ts.
-import { useCallback, useEffect, useRef, useState } from 'react';
+//   * Picks (highlighted raiders, the followed one, the split mode) are state in the URL, see lib/replayFollow.ts.
+// The coordinate rules (axis swap, north up, heading) live in lib/spectator.ts; the decoding and the split rule
+// in lib/raidReplay.ts.
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import {
   classAbbr, classColor, coreRaiders, effectiveLayers, fitView, headingVec, layerBounds, lineNearZ, mapBox,
-  median, nearestBand, needsRefit, parseZoneMap, raidBox, scaleBarUnits, toScreen, zoomAt,
+  median, nearestBand, needsRefit, parseZoneMap, raidBox, scaleBarUnits, zoomAt,
   type View, type ZoneMap,
 } from '@/lib/spectator';
 import {
-  FRAME_GAP_MS, MINUTE_MS, REPLAY_WINDOW_MS, decodeRows, frameIndexAt, nextSpanStart, pickReplayZone, windowIndex,
-  zoneCounts, type NightSummary, type ReplayFrame, type ReplayRaider,
+  FRAME_GAP_MS, MINUTE_MS, REPLAY_WINDOW_MS, SPLIT_INIT, decodeRows, frameIndexAt, glideTargets, nextSpanStart,
+  pickReplayZone, pickSplit, recentTargetNames, windowIndex, zoneCounts,
+  type NightSummary, type ReplayFrame, type ReplayRaider, type ReplayTarget, type SplitState,
 } from '@/lib/raidReplay';
+import {
+  NO_PICKS, collectRoster, decayOffset, groupRoster, isFollowed, isPicked, offsetSettled, parsePicks, pickedSet,
+  picksSearch, toggleFollow, togglePick, type Offset, type Picks, type RosterEntry,
+} from '@/lib/replayFollow';
+import { activeSpawns, normMobName, parseBosses, type ActiveSpawn, type SpawnBoss } from '@/lib/replayBosses';
 import { bandColor, prepare, type Prepared } from '../SpectatorBoard';
 import type { Bridge3D } from './Replay3D';
 
@@ -35,11 +44,15 @@ const BG = '#0d1117';
 const PANEL = '#161b22';
 const BORDER = '#30363d';
 const TEXT = '#c9d1d9';
+const TARGET_RED = '#ef4444';
+const SPAWN_AMBER = '#b7791f';
 const FONT = '12px "Cascadia Code", Consolas, ui-monospace, monospace';
 const DOT_R = 4.5;
 const TAIL_MS = 30_000;
 const TELEPORT = 200;   // a raider who moved further than this between two frames did not walk it: no glide, no tail
 const SPEEDS = [1, 10, 30, 60];
+const FOLLOW_SPAN = 700;            // ground a fresh view on a followed raider shows
+const RECORDED_LOOKBACK_MS = 30_000;   // a boss targeted this recently hides its spawn-point marker
 
 type MapEntry =
   | { status: 'loading' }
@@ -49,6 +62,44 @@ type MapEntry =
 
 type Win = { state: 'loading' | 'ok' | 'err'; at: number };
 type Drawn = { name: string; cls: string | null; hp: number | null; px: number; py: number };
+type Placed = { r: ReplayRaider; x: number; y: number; z: number };
+
+/** One map pane. Two exist; the second is shown only while the split is open. Plain mutable state: nothing here is rendered by React. */
+type Pane = {
+  cv: HTMLCanvasElement | null;
+  wrap: HTMLDivElement | null;
+  size: { w: number; h: number; dpr: number };
+  view: View | null;
+  fit: boolean;                  // the view follows the raid (re-fits when someone is about to leave it)
+  zone: string | null;
+  drawn: Drawn[];
+  hover: string | null;
+  off: Offset;                   // follow glide: camera - followed raider, decaying (screen-frame units)
+  kick: boolean;                 // a follow just began: start the glide from where the view is
+  lastTs: number;
+  holdsFollow: boolean;
+  ptrs: Map<number, { x: number; y: number }>;
+  moved: number;
+  pinch: number;
+};
+const newPane = (): Pane => ({
+  cv: null, wrap: null, size: { w: 0, h: 0, dpr: 1 }, view: null, fit: true, zone: null, drawn: [], hover: null,
+  off: { x: 0, y: 0 }, kick: false, lastTs: 0, holdsFollow: false, ptrs: new Map(), moved: 0, pinch: 0,
+});
+
+type PaneArgs = {
+  t: number; zone: string | null; here: Placed[]; targets: ReplayTarget[]; spawns: ActiveSpawn[];
+  frames: ReplayFrame[]; idx: number; hasFrame: boolean; tails: boolean; entry: MapEntry | undefined;
+  hl: ReadonlySet<string>; picks: Picks; fol: Placed | null;
+};
+type PaintInfo = {
+  zones: [string | null, string | null];
+  here: [number, number];
+  elsewhere: number;
+  hasFrame: boolean;
+  followAbsent: boolean;
+  animating: boolean;
+};
 
 const etClock = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York', weekday: 'short', hour: 'numeric', minute: '2-digit', second: '2-digit',
@@ -63,6 +114,272 @@ const chipOn = 'border-accent bg-accent text-white';
 
 function lerp(a: number, b: number, f: number) { return a + (b - a) * f; }
 
+function diamond(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x, y - r * 1.3);
+  ctx.lineTo(x + r, y);
+  ctx.lineTo(x, y + r * 1.3);
+  ctx.lineTo(x - r, y);
+  ctx.closePath();
+}
+
+/** A small framed label near (px, py), kept inside the pane. */
+function tag(ctx: CanvasRenderingContext2D, w: number, h: number, text: string, px: number, py: number, border: string, color: string, dash = false) {
+  const tw = ctx.measureText(text).width + 12;
+  const lx = Math.max(4, Math.min(w - tw - 4, px + 10));
+  const ly = Math.max(14, Math.min(h - 14, py - 14));
+  ctx.fillStyle = PANEL;
+  ctx.strokeStyle = border;
+  ctx.lineWidth = 1;
+  if (dash) ctx.setLineDash([3, 3]);
+  ctx.fillRect(lx, ly - 10, tw, 20);
+  ctx.strokeRect(lx + 0.5, ly - 9.5, tw - 1, 19);
+  ctx.setLineDash([]);
+  ctx.fillStyle = color;
+  ctx.fillText(text, lx + 6, ly);
+}
+
+/** Draws one pane at one moment. Returns true while a follow glide is still settling (the loop must run again). */
+function drawPane(p: Pane, o: PaneArgs): boolean {
+  const { w, h, dpr } = p.size;
+  const cv = p.cv;
+  p.holdsFollow = !!o.fol;
+  if (!cv || !w || !h) return false;
+  const ctx = cv.getContext('2d');
+  if (!ctx) return false;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, w, h);
+  p.drawn = [];
+  const { here, hl } = o;
+  const anyHl = hl.size > 0;
+  let animating = false;
+  const now = performance.now();
+  const dtm = p.lastTs ? Math.min(100, now - p.lastTs) : 0;
+  p.lastTs = now;
+
+  // The view. Following a raider: centre on them, keep the zoom the viewer chose, glide in from where the view
+  // was when the follow began. Otherwise fit the raid once, then follow it only while it is about to leave the picture.
+  if (o.fol) {
+    const tx = -o.fol.x, ty = -o.fol.y;
+    let v = p.view;
+    if (!v) {
+      v = fitView({ minX: tx - FOLLOW_SPAN / 2, maxX: tx + FOLLOW_SPAN / 2, minY: ty - FOLLOW_SPAN / 2, maxY: ty + FOLLOW_SPAN / 2 }, w, h);
+      p.off = { x: 0, y: 0 };
+      p.kick = false;
+    } else if (p.kick) {
+      p.off = { x: v.cx - tx, y: v.cy - ty };
+      p.kick = false;
+      const need = Math.min(w, h) / (FOLLOW_SPAN * 1.5);
+      if (v.scale < need) v = { ...v, scale: need };   // zoomed far out: close in so the raider is more than a speck
+    }
+    p.off = decayOffset(p.off, dtm);
+    if (!offsetSettled(p.off)) animating = true;
+    p.view = { ...v, cx: tx + p.off.x, cy: ty + p.off.y };
+    p.fit = false;
+  } else if (p.fit && here.length) {
+    const box = raidBox(coreRaiders(here.map(q => q.r)))!;
+    const v = p.view;
+    if (!v || needsRefit(v, box, w, h)) p.view = fitView(box, w, h);
+  }
+  const v = p.view;
+  if (!v) return animating;
+  const ox = w / 2 - v.cx * v.scale;
+  const oy = h / 2 - v.cy * v.scale;
+  const refZ = median(here.map(q => q.z));
+
+  // The zone's map underneath.
+  const entry = o.entry;
+  if (entry?.status === 'ready') {
+    const layers = effectiveLayers('brewall', entry.map);
+    const { prep } = entry;
+    const multi = prep.bands.length > 1 && refZ != null;
+    if (prep.bw && layers.brewall) {
+      ctx.lineCap = 'butt';
+      ctx.lineWidth = 1;
+      for (const bright of [false, true]) {
+        ctx.globalAlpha = bright ? 0.9 : 0.22;
+        for (const g of prep.bw.groups) {
+          ctx.strokeStyle = g.css;
+          ctx.beginPath();
+          for (let i = 0, n = g.band.length; i < n; i++) {
+            const near = !multi || lineNearZ(g.z[2 * i], g.z[2 * i + 1], refZ as number);
+            if (near !== bright) continue;
+            const x1 = g.xy[4 * i] * v.scale + ox, y1 = g.xy[4 * i + 1] * v.scale + oy;
+            const x2 = g.xy[4 * i + 2] * v.scale + ox, y2 = g.xy[4 * i + 3] * v.scale + oy;
+            if ((x1 < 0 && x2 < 0) || (x1 > w && x2 > w) || (y1 < 0 && y2 < 0) || (y1 > h && y2 > h)) continue;
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+          }
+          ctx.stroke();
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+    if (prep.gen && layers.generated) {
+      const focus = multi ? nearestBand(prep.bands, refZ) : 0;
+      ctx.lineCap = 'round';
+      prep.gen.forEach((arr, bi) => {
+        const bright = bi === focus;
+        ctx.strokeStyle = bandColor(bi, prep.gen!.length, bright ? 0.85 : 0.2);
+        ctx.lineWidth = bright ? 1.4 : 1;
+        ctx.beginPath();
+        for (let i = 0; i < arr.length; i += 4) {
+          const x1 = arr[i] * v.scale + ox, y1 = arr[i + 1] * v.scale + oy;
+          const x2 = arr[i + 2] * v.scale + ox, y2 = arr[i + 3] * v.scale + oy;
+          if ((x1 < 0 && x2 < 0) || (x1 > w && x2 > w) || (y1 < 0 && y2 < 0) || (y1 > h && y2 > h)) continue;
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(x2, y2);
+        }
+        ctx.stroke();
+      });
+    }
+  }
+  const sx = (x: number) => -x * v.scale + ox;
+  const sy = (y: number) => -y * v.scale + oy;
+
+  // Spawn points of the bosses fought now: dimmed, dashed, underneath everything else.
+  ctx.font = FONT;
+  ctx.textBaseline = 'middle';
+  for (const s of o.spawns) {
+    const px = sx(s.x), py = sy(s.y);
+    if (px < -20 || px > w + 20 || py < -20 || py > h + 20) continue;
+    ctx.globalAlpha = 0.65;
+    ctx.strokeStyle = SPAWN_AMBER;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([3, 3]);
+    diamond(ctx, px, py, 7);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = SPAWN_AMBER;
+    ctx.fillText(`${s.name} · spawn point`, px + 11, py);
+    ctx.globalAlpha = 1;
+  }
+
+  // Tails: where each raider in this zone was over the last TAIL_MS, fading toward the past.
+  if (o.tails && o.hasFrame && o.zone) {
+    const frames = o.frames;
+    const since = o.t - TAIL_MS;
+    let j = o.idx;
+    while (j > 0 && frames[j - 1].t >= since) j--;
+    const last = new Map<string, { x: number; y: number }>();
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 1.5;
+    for (let k = j; k <= o.idx; k++) {
+      const fr = frames[k];
+      const alpha = 0.55 * Math.max(0, (fr.t - since) / TAIL_MS);
+      for (const r of fr.raiders) {
+        if (r.zone !== o.zone) continue;
+        const prev = last.get(r.name);
+        if (prev && Math.hypot(r.x - prev.x, r.y - prev.y) < TELEPORT) {
+          ctx.globalAlpha = anyHl && !isPicked(hl, r.name) ? alpha * 0.4 : alpha;
+          ctx.strokeStyle = classColor(r.cls);
+          ctx.beginPath();
+          ctx.moveTo(sx(prev.x), sy(prev.y));
+          ctx.lineTo(sx(r.x), sy(r.y));
+          ctx.stroke();
+        }
+        last.set(r.name, { x: r.x, y: r.y });
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Dots, the picked ones last (on top), everyone else dimmed while anyone is picked.
+  const placed = here.slice().sort((a, b) => Number(isPicked(hl, a.r.name)) - Number(isPicked(hl, b.r.name)));
+  ctx.lineCap = 'butt';
+  for (const { r, x, y } of placed) {
+    const px = sx(x), py = sy(y);
+    if (px < -20 || px > w + 20 || py < -20 || py > h + 20) continue;
+    const pick = anyHl && isPicked(hl, r.name);
+    const color = classColor(r.cls);
+    ctx.globalAlpha = anyHl && !pick ? 0.3 : 1;
+    if (pick) {
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.28;
+      ctx.beginPath();
+      ctx.arc(px, py, DOT_R + 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    if (r.h != null) {
+      const { dx, dy } = headingVec(r.h);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(px + dx * DOT_R, py + dy * DOT_R);
+      ctx.lineTo(px + dx * (DOT_R + 6), py + dy * (DOT_R + 6));
+      ctx.stroke();
+    }
+    ctx.fillStyle = color;
+    ctx.strokeStyle = BG;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(px, py, DOT_R, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    if (pick) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(px, py, DOT_R + 4, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    p.drawn.push({ name: r.name, cls: r.cls, hp: r.hp, px, py });
+  }
+
+  // Recorded targets: red diamonds, bigger the more raiders had it targeted.
+  for (const tg of o.targets) {
+    const px = sx(tg.x), py = sy(tg.y);
+    if (px < -30 || px > w + 30 || py < -30 || py > h + 30) continue;
+    const r = Math.min(16, 6 + 2 * Math.sqrt(tg.n));
+    ctx.fillStyle = TARGET_RED;
+    ctx.strokeStyle = BG;
+    ctx.lineWidth = 1.5;
+    diamond(ctx, px, py, r);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // Labels: the hovered raider, every picked one, every recorded target.
+  ctx.font = FONT;
+  ctx.textBaseline = 'middle';
+  for (const d of p.drawn) {
+    const pick = anyHl && isPicked(hl, d.name);
+    if (!pick && d.name !== p.hover) continue;
+    tag(ctx, w, h, `${d.name} · ${classAbbr(d.cls)}${d.hp != null ? ` · ${d.hp}%` : ''}`, d.px, d.py, pick ? '#f0f6fc' : BORDER, pick ? '#f0f6fc' : TEXT);
+  }
+  for (const tg of o.targets) {
+    const px = sx(tg.x), py = sy(tg.y);
+    if (px < -30 || px > w + 30 || py < -30 || py > h + 30) continue;
+    tag(ctx, w, h, `${tg.name}${tg.n > 1 ? ` ×${tg.n}` : ''}`, px + 6, py, TARGET_RED, '#fecaca');
+  }
+
+  // Scale bar and north.
+  const units = scaleBarUnits(v.scale);
+  const len = units * v.scale;
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = BG;
+  ctx.fillStyle = TEXT;
+  ctx.lineWidth = 3;
+  ctx.strokeText(`${units.toLocaleString()} units`, 14, h - 34);
+  ctx.fillText(`${units.toLocaleString()} units`, 14, h - 34);
+  ctx.strokeStyle = TEXT;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(14, h - 26); ctx.lineTo(14, h - 18); ctx.lineTo(14 + len, h - 18); ctx.lineTo(14 + len, h - 26);
+  ctx.stroke();
+  ctx.textAlign = 'center';
+  ctx.strokeStyle = BG;
+  ctx.lineWidth = 3;
+  ctx.strokeText('N', w - 22, 24);
+  ctx.fillText('N', w - 22, 24);
+  ctx.textAlign = 'start';
+  return animating;
+}
+
 export default function ReplayBoard() {
   const [nights, setNights] = useState<NightSummary[] | null>(null);
   const [netErr, setNetErr] = useState(false);
@@ -73,47 +390,55 @@ export default function ReplayBoard() {
   const [pinned, setPinned] = useState<string | null>(null);
   const [tails, setTails] = useState(true);
   const [uiT, setUiT] = useState(0);
-  const [shownZone, setShownZone] = useState<string | null>(null);
-  const [counts, setCounts] = useState({ here: 0, elsewhere: 0 });
+  const [info, setInfo] = useState<{ zones: [string | null, string | null]; here: [number, number]; elsewhere: number; followAbsent: boolean }>(
+    { zones: [null, null], here: [0, 0], elsewhere: 0, followAbsent: false });
   const [state, setState] = useState<'ok' | 'buffering' | 'nodata' | 'failed'>('ok');
   const [maps, setMaps] = useState<Record<string, MapEntry>>({});
   const [mode, setMode] = useState<'2d' | '3d'>('2d');
   const [no3d, setNo3d] = useState(false);
+  const [floors, setFloors] = useState(true);
+  const [showBosses, setShowBosses] = useState(true);
+  const [picks, setPicks] = useState<Picks>(NO_PICKS);
+  const [urlReady, setUrlReady] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [groupBy, setGroupBy] = useState<'class' | 'alpha'>('class');
+  const [rosterVer, setRosterVer] = useState(0);
 
   const night = nights ? (nights.find(n => n.night_key === nightKey) ?? nights[0] ?? null) : null;
+  const split = info.zones[1] !== null;
 
   // ── refs: everything the drawing reads ─────────────────────────────────────
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const sizeRef = useRef({ w: 0, h: 0, dpr: 1 });
-  const viewRef = useRef<View | null>(null);
-  const followRef = useRef(true);
+  const [panes] = useState<Pane[]>(() => [newPane(), newPane()]);
   const nightRef = useRef<NightSummary | null>(null);
   const tRef = useRef(0);
   const playingRef = useRef(false);
   const speedRef = useRef(10);
   const tailsRef = useRef(true);
   const pinnedRef = useRef<string | null>(null);
+  const picksRef = useRef<Picks>(NO_PICKS);
+  const hlRef = useRef<Set<string>>(new Set());
   const autoZoneRef = useRef<string | null>(null);
-  const reportedZone = useRef<string | null>(null);
-  const viewZone = useRef<string | null>(null);
+  const splitRef = useRef<SplitState>(SPLIT_INIT);
   const framesRef = useRef<ReplayFrame[]>([]);
   const winFrames = useRef(new Map<number, ReplayFrame[]>());
   const wins = useRef(new Map<number, Win>());
   const gen = useRef(0);
   const mapsRef = useRef<Record<string, MapEntry>>({});
   const mapReqs = useRef(new Set<string>());
-  const drawn = useRef<Drawn[]>([]);
-  const hoverRef = useRef<string | null>(null);
-  const selectedRef = useRef<string | null>(null);
   const rafRef = useRef(0);
   const lastTs = useRef(0);
   const lastUi = useRef(0);
   const stepRef = useRef<(ts: number) => void>(() => {});
   const nextCache = useRef<{ frame: ReplayFrame | null; byName: Map<string, ReplayRaider> }>({ frame: null, byName: new Map() });
-  // 3D: while it is showing, paint() hands each frame's raiders to the 3D view instead of drawing the canvas.
+  const rosterRef = useRef(new Map<string, RosterEntry>());
+  const bossesRef = useRef<SpawnBoss[]>([]);
+  const showBossesRef = useRef(true);
+  // 3D: while it is showing, paint() hands each pane's raiders to its 3D view instead of drawing the canvas.
   const modeRef = useRef<'2d' | '3d'>('2d');
-  const bridge3d = useRef<Bridge3D | null>(null);
+  const bridgeA = useRef<Bridge3D | null>(null);
+  const bridgeB = useRef<Bridge3D | null>(null);
+  const bridges = [bridgeA, bridgeB];
 
   const schedule = useCallback(() => {
     if (rafRef.current) return;
@@ -168,8 +493,10 @@ export default function ReplayBoard() {
         if (!res.ok) throw new Error('bad');
         const j = await res.json();
         if (g !== gen.current) return;
-        winFrames.current.set(w, decodeRows(Array.isArray(j.rows) ? j.rows : []));
+        const decoded = decodeRows(Array.isArray(j.rows) ? j.rows : []);
+        winFrames.current.set(w, decoded);
         wins.current.set(w, { state: 'ok', at: Date.now() });
+        if (collectRoster(decoded, rosterRef.current)) setRosterVer(v => v + 1);
         rebuild();
       })
       .catch(() => {
@@ -187,14 +514,16 @@ export default function ReplayBoard() {
     winFrames.current.clear();
     wins.current.clear();
     framesRef.current = [];
+    rosterRef.current = new Map();
+    setRosterVer(v => v + 1);
     playingRef.current = false;
     setPlaying(false);
     pinnedRef.current = null;
     setPinned(null);
     autoZoneRef.current = null;
-    viewZone.current = null;
-    reportedZone.current = null;
-    setShownZone(null);
+    splitRef.current = SPLIT_INIT;
+    for (const p of panes) { p.zone = null; p.view = null; }
+    setInfo(i => (i.zones[0] === null && i.zones[1] === null ? i : { ...i, zones: [null, null] }));
     if (!night) return;
     tRef.current = Date.parse(night.first);
     setUiT(tRef.current);
@@ -203,7 +532,23 @@ export default function ReplayBoard() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [night?.night_key]);
 
-  // The map for the zone on screen: once per zone, kept for the visit.
+  // The night's killed bosses with their spawn points: for nights recorded before the recorder kept targets.
+  useEffect(() => {
+    bossesRef.current = [];
+    const key = night?.night_key;
+    if (!key) return;
+    const ac = new AbortController();
+    fetch('/api/spectator/replay/bosses?night=' + encodeURIComponent(key), { signal: ac.signal })
+      .then(async res => {
+        if (!res.ok) return;
+        bossesRef.current = parseBosses(await res.json());
+        schedule();
+      })
+      .catch(() => {});
+    return () => ac.abort();
+  }, [night?.night_key, schedule]);
+
+  // The map for a zone on screen: once per zone, kept for the visit.
   const loadMap = useCallback((z: string) => {
     if (mapReqs.current.has(z)) return;
     mapReqs.current.add(z);
@@ -224,45 +569,19 @@ export default function ReplayBoard() {
       .finally(() => mapReqs.current.delete(z));
   }, [schedule]);
   useEffect(() => {
-    if (shownZone && !maps[shownZone] && mode === '2d') loadMap(shownZone);   // the 3D view fetches its own mesh
-  }, [shownZone, maps, loadMap, mode]);
+    if (mode !== '2d') return;   // the 3D view fetches its own mesh
+    for (const z of info.zones) if (z && !maps[z]) loadMap(z);
+  }, [info.zones, maps, loadMap, mode]);
 
   // ── drawing ────────────────────────────────────────────────────────────────
   // Draws the picture at playhead `t`. Returns what the controls need to show.
-  const paint = useCallback((t: number) => {
+  const paint = useCallback((t: number): PaintInfo => {
     const frames = framesRef.current;
     const idx = frameIndexAt(frames, t);
     const a = idx >= 0 && t - frames[idx].t <= FRAME_GAP_MS ? frames[idx] : null;
-    const out = { zone: null as string | null, here: 0, elsewhere: 0, hasFrame: !!a };
-
-    // Which zone: the pin, else the busiest one (with a little stickiness), else the last one shown.
-    let zone = pinnedRef.current;
-    if (!zone && a) autoZoneRef.current = pickReplayZone(zoneCounts(a), autoZoneRef.current);
-    if (!zone) zone = autoZoneRef.current;
-    out.zone = zone;
-    // A new zone starts fresh: fit the raid, nobody picked.
-    if (zone !== viewZone.current) {
-      viewZone.current = zone;
-      viewRef.current = null;
-      followRef.current = true;
-      selectedRef.current = null;
-      hoverRef.current = null;
-    }
-
-    const cv = canvasRef.current;
-    const { w, h, dpr } = sizeRef.current;
-    if (!cv || !w || !h) return out;
-    const ctx = cv.getContext('2d');
-    if (!ctx) return out;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = BG;
-    ctx.fillRect(0, 0, w, h);
-    drawn.current = [];
-
-    const here = a && zone ? a.raiders.filter(r => r.zone === zone) : [];
-    out.here = here.length;
-    out.elsewhere = a ? a.raiders.length - here.length : 0;
+    const pk = picksRef.current;
+    const hl = hlRef.current;
+    const out: PaintInfo = { zones: [null, null], here: [0, 0], elsewhere: 0, hasFrame: !!a, followAbsent: false, animating: false };
 
     // The glide target: the next frame, if it is close enough in time to be the same movement.
     let b: ReplayFrame | null = null;
@@ -274,183 +593,78 @@ export default function ReplayBoard() {
       nextCache.current = { frame: b, byName: new Map(b ? b.raiders.map(r => [r.name, r]) : []) };
     }
     const f = a && b ? Math.min(1, Math.max(0, (t - a.t) / (b.t - a.t))) : 0;
-    const placed = here.map(r => {
+    const placedAll: Placed[] = a ? a.raiders.map(r => {
       const n = b ? nextCache.current.byName.get(r.name) : undefined;
       if (n && n.zone === r.zone && Math.hypot(n.x - r.x, n.y - r.y) < TELEPORT) {
         return { r, x: lerp(r.x, n.x, f), y: lerp(r.y, n.y, f), z: lerp(r.z, n.z, f) };
       }
       return { r, x: r.x, y: r.y, z: r.z };
-    });
+    }) : [];
 
-    if (modeRef.current === '3d') {
-      bridge3d.current?.feed(zone, placed.map(p => ({ name: p.r.name, cls: p.r.cls, hp: p.r.hp, x: p.x, y: p.y, z: p.z })));
-      return out;
+    // The followed raider, wherever they are.
+    const fol = pk.follow ? placedAll.find(q => isFollowed(pk, q.r.name)) ?? null : null;
+    out.followAbsent = !!pk.follow && !fol && !!a;
+
+    // Which zones: the pin, else the followed raider's, else the busiest (with a little stickiness), else the last one shown.
+    const counts = a ? zoneCounts(a) : new Map<string, number>();
+    let primary = pinnedRef.current;
+    if (!primary && fol?.r.zone) { primary = fol.r.zone; autoZoneRef.current = primary; }
+    if (!primary && a) autoZoneRef.current = pickReplayZone(counts, autoZoneRef.current);
+    if (!primary) primary = autoZoneRef.current;
+    let second: string | null = null;
+    if (pk.split === 'auto' && primary) {
+      if (a) splitRef.current = pickSplit(counts, primary, splitRef.current, t);
+      second = splitRef.current.second !== primary ? splitRef.current.second : null;
+    } else {
+      splitRef.current = SPLIT_INIT;
+    }
+    out.zones = [primary, second];
+
+    const targetsAll = glideTargets(a, b, f, TELEPORT);
+    let spawnsAll: ActiveSpawn[] = [];
+    if (showBossesRef.current && bossesRef.current.length) {
+      const recorded = new Set([...recentTargetNames(frames, idx, t, RECORDED_LOOKBACK_MS)].map(normMobName));
+      spawnsAll = activeSpawns(bossesRef.current, t, recorded);
     }
 
-    // The view: fit the raid once, then follow it only while it is about to leave the picture.
-    if (followRef.current && placed.length) {
-      const box = raidBox(coreRaiders(here))!;
-      const v = viewRef.current;
-      if (!v || needsRefit(v, box, w, h)) viewRef.current = fitView(box, w, h);
-    }
-    const v = viewRef.current;
-    if (!v) return out;
-    const ox = w / 2 - v.cx * v.scale;
-    const oy = h / 2 - v.cy * v.scale;
-    const refZ = median(here.map(r => r.z));
-
-    // The zone's map underneath.
-    const entry = zone ? mapsRef.current[zone] : undefined;
-    if (entry?.status === 'ready') {
-      const layers = effectiveLayers('brewall', entry.map);
-      const { prep } = entry;
-      const multi = prep.bands.length > 1 && refZ != null;
-      if (prep.bw && layers.brewall) {
-        ctx.lineCap = 'butt';
-        ctx.lineWidth = 1;
-        for (const bright of [false, true]) {
-          ctx.globalAlpha = bright ? 0.9 : 0.22;
-          for (const g of prep.bw.groups) {
-            ctx.strokeStyle = g.css;
-            ctx.beginPath();
-            for (let i = 0, n = g.band.length; i < n; i++) {
-              const near = !multi || lineNearZ(g.z[2 * i], g.z[2 * i + 1], refZ as number);
-              if (near !== bright) continue;
-              const x1 = g.xy[4 * i] * v.scale + ox, y1 = g.xy[4 * i + 1] * v.scale + oy;
-              const x2 = g.xy[4 * i + 2] * v.scale + ox, y2 = g.xy[4 * i + 3] * v.scale + oy;
-              if ((x1 < 0 && x2 < 0) || (x1 > w && x2 > w) || (y1 < 0 && y2 < 0) || (y1 > h && y2 > h)) continue;
-              ctx.moveTo(x1, y1);
-              ctx.lineTo(x2, y2);
-            }
-            ctx.stroke();
-          }
-        }
-        ctx.globalAlpha = 1;
+    let heldTotal = 0;
+    for (let i = 0; i < 2; i++) {
+      const zone = out.zones[i];
+      const pane = panes[i];
+      if (zone !== pane.zone) {
+        // A new zone in a pane starts fresh: fit the raid, nobody hovered.
+        pane.zone = zone;
+        pane.view = null;
+        pane.fit = true;
+        pane.hover = null;
+        pane.kick = false;
       }
-      if (prep.gen && layers.generated) {
-        const focus = multi ? nearestBand(prep.bands, refZ) : 0;
-        ctx.lineCap = 'round';
-        prep.gen.forEach((arr, bi) => {
-          const bright = bi === focus;
-          ctx.strokeStyle = bandColor(bi, prep.gen!.length, bright ? 0.85 : 0.2);
-          ctx.lineWidth = bright ? 1.4 : 1;
-          ctx.beginPath();
-          for (let i = 0; i < arr.length; i += 4) {
-            const x1 = arr[i] * v.scale + ox, y1 = arr[i + 1] * v.scale + oy;
-            const x2 = arr[i + 2] * v.scale + ox, y2 = arr[i + 3] * v.scale + oy;
-            if ((x1 < 0 && x2 < 0) || (x1 > w && x2 > w) || (y1 < 0 && y2 < 0) || (y1 > h && y2 > h)) continue;
-            ctx.moveTo(x1, y1);
-            ctx.lineTo(x2, y2);
-          }
-          ctx.stroke();
+      if (!zone) { pane.holdsFollow = false; continue; }
+      const here = placedAll.filter(q => q.r.zone === zone);
+      out.here[i] = here.length;
+      heldTotal += here.length;
+      const folHere = fol && fol.r.zone === zone ? fol : null;
+      const targets = targetsAll.filter(x => x.zone === zone);
+      const spawns = spawnsAll.filter(x => x.zone === zone);
+
+      if (modeRef.current === '3d') {
+        pane.holdsFollow = !!folHere;
+        bridges[i].current?.feed(zone, here.map(q => ({ name: q.r.name, cls: q.r.cls, hp: q.r.hp, x: q.x, y: q.y, z: q.z })), {
+          hl, follow: folHere ? pk.follow : null,
+          targets: targets.map(x => ({ name: x.name, n: x.n, x: x.x, y: x.y, z: x.z })),
+          spawns,
         });
+        continue;
       }
+      if (drawPane(pane, {
+        t, zone, here, targets, spawns, frames, idx, hasFrame: !!a, tails: tailsRef.current,
+        entry: mapsRef.current[zone], hl, picks: pk, fol: folHere,
+      })) out.animating = true;
     }
-    const sx = (x: number) => -x * v.scale + ox;
-    const sy = (y: number) => -y * v.scale + oy;
-
-    // Tails: where each raider in this zone was over the last TAIL_MS, fading toward the past.
-    if (tailsRef.current && a && zone) {
-      const since = t - TAIL_MS;
-      let j = idx;
-      while (j > 0 && frames[j - 1].t >= since) j--;
-      const last = new Map<string, { x: number; y: number }>();
-      ctx.lineCap = 'round';
-      ctx.lineWidth = 1.5;
-      for (let k = j; k <= idx; k++) {
-        const fr = frames[k];
-        const alpha = 0.55 * Math.max(0, (fr.t - since) / TAIL_MS);
-        for (const r of fr.raiders) {
-          if (r.zone !== zone) continue;
-          const prev = last.get(r.name);
-          if (prev && Math.hypot(r.x - prev.x, r.y - prev.y) < TELEPORT) {
-            ctx.globalAlpha = alpha;
-            ctx.strokeStyle = classColor(r.cls);
-            ctx.beginPath();
-            ctx.moveTo(sx(prev.x), sy(prev.y));
-            ctx.lineTo(sx(r.x), sy(r.y));
-            ctx.stroke();
-          }
-          last.set(r.name, { x: r.x, y: r.y });
-        }
-      }
-      ctx.globalAlpha = 1;
-    }
-
-    // Dots, the picked one last.
-    const sel = selectedRef.current;
-    placed.sort((p, q) => Number(p.r.name === sel) - Number(q.r.name === sel));
-    ctx.lineCap = 'butt';
-    for (const { r, x, y } of placed) {
-      const px = sx(x), py = sy(y);
-      if (px < -20 || px > w + 20 || py < -20 || py > h + 20) continue;
-      const color = classColor(r.cls);
-      if (r.h != null) {
-        const { dx, dy } = headingVec(r.h);
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(px + dx * DOT_R, py + dy * DOT_R);
-        ctx.lineTo(px + dx * (DOT_R + 6), py + dy * (DOT_R + 6));
-        ctx.stroke();
-      }
-      ctx.fillStyle = color;
-      ctx.strokeStyle = BG;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.arc(px, py, DOT_R, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      if (r.name === sel) {
-        ctx.strokeStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.arc(px, py, DOT_R + 3.5, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-      drawn.current.push({ name: r.name, cls: r.cls, hp: r.hp, px, py });
-    }
-
-    // Name labels: the hovered or tapped raider only.
-    ctx.font = FONT;
-    ctx.textBaseline = 'middle';
-    for (const name of new Set([hoverRef.current, sel])) {
-      const d = name ? drawn.current.find(q => q.name === name) : undefined;
-      if (!d) continue;
-      const text = `${d.name} · ${classAbbr(d.cls)}${d.hp != null ? ` · ${d.hp}%` : ''}`;
-      const tw = ctx.measureText(text).width + 12;
-      const lx = Math.max(4, Math.min(w - tw - 4, d.px + 10));
-      const ly = Math.max(14, Math.min(h - 14, d.py - 14));
-      ctx.fillStyle = PANEL;
-      ctx.strokeStyle = BORDER;
-      ctx.lineWidth = 1;
-      ctx.fillRect(lx, ly - 10, tw, 20);
-      ctx.strokeRect(lx + 0.5, ly - 9.5, tw - 1, 19);
-      ctx.fillStyle = TEXT;
-      ctx.fillText(text, lx + 6, ly);
-    }
-
-    // Scale bar and north.
-    const units = scaleBarUnits(v.scale);
-    const len = units * v.scale;
-    ctx.lineJoin = 'round';
-    ctx.strokeStyle = BG;
-    ctx.fillStyle = TEXT;
-    ctx.lineWidth = 3;
-    ctx.strokeText(`${units.toLocaleString()} units`, 14, h - 34);
-    ctx.fillText(`${units.toLocaleString()} units`, 14, h - 34);
-    ctx.strokeStyle = TEXT;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(14, h - 26); ctx.lineTo(14, h - 18); ctx.lineTo(14 + len, h - 18); ctx.lineTo(14 + len, h - 26);
-    ctx.stroke();
-    ctx.textAlign = 'center';
-    ctx.strokeStyle = BG;
-    ctx.lineWidth = 3;
-    ctx.strokeText('N', w - 22, 24);
-    ctx.fillText('N', w - 22, 24);
-    ctx.textAlign = 'start';
+    out.elsewhere = a ? a.raiders.length - heldTotal : 0;
     return out;
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panes]);
 
   // One pass: advance the playhead if playing, make sure the data is coming, draw, report to the controls.
   const step = useCallback((ts: number) => {
@@ -483,18 +697,20 @@ export default function ReplayBoard() {
       tRef.current = t;
     }
 
-    const info = paint(t);
+    const p = paint(t);
 
     const buffering = !loaded && here?.state !== 'err';
     const next = buffering ? 'buffering'
       : here?.state === 'err' ? 'failed'
-      : !info.hasFrame ? 'nodata' : 'ok';
+      : !p.hasFrame ? 'nodata' : 'ok';
     setState(next);
-    if (info.zone !== reportedZone.current) { reportedZone.current = info.zone; setShownZone(info.zone); }
-    setCounts(c => (c.here === info.here && c.elsewhere === info.elsewhere ? c : { here: info.here, elsewhere: info.elsewhere }));
+    setInfo(c => (
+      c.zones[0] === p.zones[0] && c.zones[1] === p.zones[1] && c.here[0] === p.here[0] && c.here[1] === p.here[1]
+      && c.elsewhere === p.elsewhere && c.followAbsent === p.followAbsent
+        ? c : { zones: p.zones, here: p.here, elsewhere: p.elsewhere, followAbsent: p.followAbsent }));
     if (!playingRef.current || ts - lastUi.current > 200) { lastUi.current = ts; setUiT(t); }
 
-    if (playingRef.current) schedule();
+    if (playingRef.current || p.animating) schedule();
   }, [ensureWindow, paint, schedule]);
   stepRef.current = step;
 
@@ -522,6 +738,7 @@ export default function ReplayBoard() {
 
   useEffect(() => { speedRef.current = speed; }, [speed]);
   useEffect(() => { tailsRef.current = tails; schedule(); }, [tails, schedule]);
+  useEffect(() => { showBossesRef.current = showBosses; schedule(); }, [showBosses, schedule]);
   // The same playhead, night and zone carry across: only where the frame is drawn changes.
   useEffect(() => { modeRef.current = mode; schedule(); }, [mode, schedule]);
   useEffect(() => {
@@ -529,136 +746,175 @@ export default function ReplayBoard() {
     schedule();
   }, [pinned, schedule]);
 
+  // Picks: from the URL once on arrival, back into it on every change (replaceState: no history entry per tap).
+  useEffect(() => {
+    try { setPicks(parsePicks(window.location.search)); } catch { /* no URL to read */ }
+    setUrlReady(true);
+  }, []);
+  useEffect(() => {
+    picksRef.current = picks;
+    hlRef.current = pickedSet(picks);
+    schedule();
+    if (!urlReady) return;
+    try {
+      const s = picksSearch(picks, window.location.search);
+      if (s !== window.location.search) window.history.replaceState(null, '', window.location.pathname + s + window.location.hash);
+    } catch { /* a blocked history API only costs the shareable link */ }
+  }, [picks, urlReady, schedule]);
+  // A new follow glides in from where the view was, and takes the zone pin off so the zone can follow the raider.
+  useEffect(() => {
+    for (const p of panes) p.kick = !!picks.follow;
+    if (picks.follow) setPinned(null);
+    schedule();
+  }, [picks.follow, panes, schedule]);
+
+  const pick = useCallback((name: string) => setPicks(p => togglePick(p, name)), []);
+  // Dragging the map takes it back from a follow (the raider stays highlighted).
+  const panAway = useCallback(() => setPicks(p => (p.follow ? { ...p, follow: null } : p)), []);
+
   // Canvas size: backing store at device pixels, drawn in CSS pixels.
   const ready = !!night;
   useEffect(() => {
-    const wrap = wrapRef.current;
-    const cv = canvasRef.current;
-    if (!wrap || !cv) return;
-    const measure = () => {
-      const r = wrap.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
-      const w = Math.floor(r.width), h = Math.floor(r.height);
-      sizeRef.current = { w, h, dpr };
-      cv.width = Math.max(1, Math.floor(w * dpr));
-      cv.height = Math.max(1, Math.floor(h * dpr));
-      schedule();
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(wrap);
-    return () => { ro.disconnect(); if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0; } };
-  }, [schedule, ready]);
+    const ros: ResizeObserver[] = [];
+    for (const p of panes) {
+      const wrap = p.wrap;
+      const cv = p.cv;
+      if (!wrap || !cv) continue;
+      const measure = () => {
+        const r = wrap.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        const w = Math.floor(r.width), h = Math.floor(r.height);
+        p.size = { w, h, dpr };
+        cv.width = Math.max(1, Math.floor(w * dpr));
+        cv.height = Math.max(1, Math.floor(h * dpr));
+        schedule();
+      };
+      measure();
+      const ro = new ResizeObserver(measure);
+      ro.observe(wrap);
+      ros.push(ro);
+    }
+    return () => { for (const ro of ros) ro.disconnect(); if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = 0; } };
+  }, [panes, schedule, ready]);
 
   // Wheel needs a non-passive listener to stop the page scrolling under the map.
   useEffect(() => {
-    const cv = canvasRef.current;
-    if (!cv) return;
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      const v = viewRef.current;
-      const { w, h } = sizeRef.current;
-      if (!v || !w) return;
-      const r = cv.getBoundingClientRect();
-      viewRef.current = zoomAt(v, e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - r.left, e.clientY - r.top, w, h);
-      followRef.current = false;
-      schedule();
-    };
-    cv.addEventListener('wheel', onWheel, { passive: false });
-    return () => cv.removeEventListener('wheel', onWheel);
-  }, [schedule, ready]);
+    const offs: (() => void)[] = [];
+    panes.forEach(p => {
+      const cv = p.cv;
+      if (!cv) return;
+      const onWheel = (e: WheelEvent) => {
+        e.preventDefault();
+        const v = p.view;
+        const { w, h } = p.size;
+        if (!v || !w) return;
+        const r = cv.getBoundingClientRect();
+        p.view = zoomAt(v, e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - r.left, e.clientY - r.top, w, h);
+        p.fit = false;
+        schedule();
+      };
+      cv.addEventListener('wheel', onWheel, { passive: false });
+      offs.push(() => cv.removeEventListener('wheel', onWheel));
+    });
+    return () => offs.forEach(f => f());
+  }, [panes, schedule, ready]);
 
-  const zoomBy = useCallback((factor: number, px?: number, py?: number) => {
-    if (modeRef.current === '3d') { bridge3d.current?.zoom(factor); return; }
-    const { w, h } = sizeRef.current;
-    const v = viewRef.current;
-    if (!v || !w) return;
-    viewRef.current = zoomAt(v, factor, px ?? w / 2, py ?? h / 2, w, h);
-    followRef.current = false;
+  const zoomBy = useCallback((factor: number, px?: number, py?: number, only?: Pane) => {
+    if (modeRef.current === '3d') { bridgeA.current?.zoom(factor); bridgeB.current?.zoom(factor); return; }
+    for (const p of only ? [only] : panes) {
+      const { w, h } = p.size;
+      const v = p.view;
+      if (!v || !w) continue;
+      p.view = zoomAt(v, factor, px ?? w / 2, py ?? h / 2, w, h);
+      p.fit = false;
+    }
     schedule();
-  }, [schedule]);
+  }, [panes, schedule]);
 
   const fitRaid = useCallback(() => {
-    if (modeRef.current === '3d') { bridge3d.current?.fitRaid(); return; }
-    viewRef.current = null;
-    followRef.current = true;
+    if (modeRef.current === '3d') { bridgeA.current?.fitRaid(); bridgeB.current?.fitRaid(); return; }
+    for (const p of panes) { p.view = null; p.fit = true; }
     schedule();
-  }, [schedule]);
+  }, [panes, schedule]);
 
   const fitZone = useCallback(() => {
-    if (modeRef.current === '3d') { bridge3d.current?.fitZone(); return; }
-    const { w, h } = sizeRef.current;
-    const z = reportedZone.current;
-    const e = z ? mapsRef.current[z] : undefined;
-    if (!e || e.status !== 'ready' || !w) return;
-    const box = layerBounds(e.map, effectiveLayers('brewall', e.map));
-    if (!box) return;
-    viewRef.current = fitView(mapBox(box), w, h, 16, 100);
-    followRef.current = false;
+    if (modeRef.current === '3d') { bridgeA.current?.fitZone(); bridgeB.current?.fitZone(); return; }
+    for (const p of panes) {
+      const e = p.zone ? mapsRef.current[p.zone] : undefined;
+      if (!e || e.status !== 'ready' || !p.size.w) continue;
+      const box = layerBounds(e.map, effectiveLayers('brewall', e.map));
+      if (!box) continue;
+      p.view = fitView(mapBox(box), p.size.w, p.size.h, 16, 100);
+      p.fit = false;
+    }
     schedule();
-  }, [schedule]);
+  }, [panes, schedule]);
 
-  // Hover / tap / drag / pinch.
-  const ptrs = useRef(new Map<number, { x: number; y: number }>());
-  const gesture = useRef({ moved: 0, pinch: 0 });
-  const local = (e: { clientX: number; clientY: number }) => {
-    const r = canvasRef.current!.getBoundingClientRect();
+  // Hover / tap / drag / pinch, per pane.
+  const local = (p: Pane, e: { clientX: number; clientY: number }) => {
+    const r = p.cv!.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   };
-  const hit = (px: number, py: number, reach: number): string | null => {
+  const hit = (p: Pane, px: number, py: number, reach: number): string | null => {
     let best: string | null = null;
     let bd = reach * reach;
-    for (const d of drawn.current) {
+    for (const d of p.drawn) {
       const q = (d.px - px) ** 2 + (d.py - py) ** 2;
       if (q <= bd) { bd = q; best = d.name; }
     }
     return best;
   };
-  const onPointerDown = (e: React.PointerEvent) => {
-    canvasRef.current?.setPointerCapture(e.pointerId);
-    ptrs.current.set(e.pointerId, local(e));
-    gesture.current.moved = 0;
-    if (ptrs.current.size === 2) {
-      const [a, b] = [...ptrs.current.values()];
-      gesture.current.pinch = Math.hypot(a.x - b.x, a.y - b.y);
-      gesture.current.moved = 99;
-    }
-  };
-  const onPointerMove = (e: React.PointerEvent) => {
-    const p = local(e);
-    const prev = ptrs.current.get(e.pointerId);
-    const v = viewRef.current;
-    if (!prev) {
-      if (e.pointerType === 'mouse') {
-        const name = hit(p.x, p.y, 12);
-        if (name !== hoverRef.current) { hoverRef.current = name; schedule(); }
+  const handlers = (p: Pane) => ({
+    onPointerDown: (e: React.PointerEvent) => {
+      p.cv?.setPointerCapture(e.pointerId);
+      p.ptrs.set(e.pointerId, local(p, e));
+      p.moved = 0;
+      if (p.ptrs.size === 2) {
+        const [a, b] = [...p.ptrs.values()];
+        p.pinch = Math.hypot(a.x - b.x, a.y - b.y);
+        p.moved = 99;
       }
-      return;
-    }
-    ptrs.current.set(e.pointerId, p);
-    if (!v) return;
-    if (ptrs.current.size === 1) {
-      const dx = p.x - prev.x, dy = p.y - prev.y;
-      gesture.current.moved += Math.abs(dx) + Math.abs(dy);
-      if (gesture.current.moved > 4) {
-        viewRef.current = { ...v, cx: v.cx - dx / v.scale, cy: v.cy - dy / v.scale };
-        followRef.current = false;
-        schedule();
+    },
+    onPointerMove: (e: React.PointerEvent) => {
+      const pt = local(p, e);
+      const prev = p.ptrs.get(e.pointerId);
+      const v = p.view;
+      if (!prev) {
+        if (e.pointerType === 'mouse') {
+          const name = hit(p, pt.x, pt.y, 12);
+          if (name !== p.hover) { p.hover = name; schedule(); }
+        }
+        return;
       }
-    } else if (ptrs.current.size === 2) {
-      const [a, b] = [...ptrs.current.values()];
-      const dist = Math.hypot(a.x - b.x, a.y - b.y);
-      if (gesture.current.pinch > 0 && dist > 0) zoomBy(dist / gesture.current.pinch, (a.x + b.x) / 2, (a.y + b.y) / 2);
-      gesture.current.pinch = dist;
-    }
-  };
-  const onPointerUp = (e: React.PointerEvent) => {
-    const wasTap = ptrs.current.size === 1 && gesture.current.moved <= 4;
-    const p = local(e);
-    ptrs.current.delete(e.pointerId);
-    if (wasTap) { selectedRef.current = hit(p.x, p.y, e.pointerType === 'mouse' ? 12 : 22); schedule(); }
-  };
-  const onPointerLeave = () => { if (hoverRef.current) { hoverRef.current = null; schedule(); } };
+      p.ptrs.set(e.pointerId, pt);
+      if (!v) return;
+      if (p.ptrs.size === 1) {
+        const dx = pt.x - prev.x, dy = pt.y - prev.y;
+        p.moved += Math.abs(dx) + Math.abs(dy);
+        if (p.moved > 4) {
+          p.view = { ...v, cx: v.cx - dx / v.scale, cy: v.cy - dy / v.scale };
+          p.fit = false;
+          if (p.holdsFollow) panAway();
+          schedule();
+        }
+      } else if (p.ptrs.size === 2) {
+        const [a, b] = [...p.ptrs.values()];
+        const dist = Math.hypot(a.x - b.x, a.y - b.y);
+        if (p.pinch > 0 && dist > 0) zoomBy(dist / p.pinch, (a.x + b.x) / 2, (a.y + b.y) / 2, p);
+        p.pinch = dist;
+      }
+    },
+    onPointerUp: (e: React.PointerEvent) => {
+      const wasTap = p.ptrs.size === 1 && p.moved <= 4;
+      const pt = local(p, e);
+      p.ptrs.delete(e.pointerId);
+      if (wasTap) {
+        const name = hit(p, pt.x, pt.y, e.pointerType === 'mouse' ? 12 : 22);
+        if (name) pick(name);
+      }
+    },
+    onPointerLeave: () => { if (p.hover) { p.hover = null; schedule(); } },
+  });
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === ' ') { e.preventDefault(); togglePlay(); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); seek(tRef.current - 10_000); }
@@ -667,6 +923,12 @@ export default function ReplayBoard() {
     else if (e.key === '-') zoomBy(1 / 1.4);
     else if (e.key === 'Home') fitRaid();
   };
+
+  // The picker's list: everyone seen in the windows loaded so far (the whole night once it has been played).
+  const roster = useMemo(() => [...rosterRef.current.values()], [rosterVer]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const groups = useMemo(() => groupRoster(roster, query, groupBy), [roster, query, groupBy]);
+  const hlNow = useMemo(() => pickedSet(picks), [picks]);
+  const clsOf = (name: string) => rosterRef.current.get(name.toLowerCase())?.cls ?? null;
 
   // ── render ─────────────────────────────────────────────────────────────────
   if (signedOut) {
@@ -679,8 +941,11 @@ export default function ReplayBoard() {
   const end = Date.parse(night.last) + MINUTE_MS;
   const total = Math.max(1, Math.round((end - start) / 1000));
   const pos = Math.min(total, Math.max(0, Math.round((uiT - start) / 1000)));
-  const entry = shownZone ? maps[shownZone] : undefined;
   const dur = Math.round((end - start) / 60_000);
+  const hereTotal = info.here[0] + info.here[1];
+  const where = split ? `${info.zones[0]} and ${info.zones[1]}` : (info.zones[0] ?? 'the raid');
+  const aria = (mode === '3d' ? '3D replay' : 'Replay') + ` of ${night.night_key}: ${where} with ${hereTotal} raiders. `
+    + 'Space plays or pauses, left and right arrows step ten seconds, plus and minus zoom, Home fits the raid.';
 
   return (
     <div className="min-w-0">
@@ -700,26 +965,43 @@ export default function ReplayBoard() {
           <span>Zone</span>
           <select value={pinned ?? ''} onChange={e => setPinned(e.target.value || null)}
             className="rounded border border-border bg-panel px-2 py-1.5 text-xs text-text">
-            <option value="">Auto (busiest){!pinned && shownZone ? `: ${shownZone}` : ''}</option>
+            <option value="">Auto (busiest){!pinned && info.zones[0] ? `: ${info.zones[0]}` : ''}</option>
             {night.zones.map(z => <option key={z} value={z}>{z}</option>)}
           </select>
         </label>
-        <span className="text-text">{shownZone ?? 'no zone'}</span>
-        <span>{counts.here} {counts.here === 1 ? 'raider' : 'raiders'} here</span>
-        {counts.elsewhere > 0 && <span>{counts.elsewhere} elsewhere</span>}
+        <span className="text-text">{split ? `${info.zones[0]} + ${info.zones[1]}` : (info.zones[0] ?? 'no zone')}</span>
+        <span>{hereTotal} {hereTotal === 1 ? 'raider' : 'raiders'} {split ? 'in these zones' : 'here'}</span>
+        {info.elsewhere > 0 && <span>{info.elsewhere} elsewhere</span>}
       </div>
 
       <div className="mb-2 flex flex-wrap items-center gap-1.5" role="group" aria-label="Map view">
         <button type="button" className={`${chip} ${chipIdle}`} onClick={() => zoomBy(1.4)} aria-label="Zoom in">+</button>
         <button type="button" className={`${chip} ${chipIdle}`} onClick={() => zoomBy(1 / 1.4)} aria-label="Zoom out">−</button>
         <button type="button" className={`${chip} ${chipIdle}`} onClick={fitRaid}>Fit raid</button>
-        <button type="button" className={`${chip} ${chipIdle} disabled:opacity-40`} onClick={fitZone}
-          disabled={mode === '2d' && entry?.status !== 'ready'}>Fit zone</button>
+        <button type="button" className={`${chip} ${chipIdle}`} onClick={fitZone}>Fit zone</button>
         {mode === '2d' && (
           <button type="button" aria-pressed={tails} className={`${chip} ${tails ? chipOn : chipIdle}`} onClick={() => setTails(t => !t)}>
             Tails
           </button>
         )}
+        {mode === '3d' && (
+          <button type="button" aria-pressed={floors} className={`${chip} ${floors ? chipOn : chipIdle}`} onClick={() => setFloors(f => !f)}>
+            Floors
+          </button>
+        )}
+        <button type="button" aria-pressed={showBosses} className={`${chip} ${showBosses ? chipOn : chipIdle}`} onClick={() => setShowBosses(b => !b)}>
+          Bosses
+        </button>
+        <button type="button" aria-expanded={pickerOpen} className={`${chip} ${pickerOpen ? chipOn : chipIdle}`} onClick={() => setPickerOpen(o => !o)}>
+          Raiders{picks.hl.length ? ` (${picks.hl.length})` : ''}
+        </button>
+        <div className="flex items-center gap-1.5" role="group" aria-label="Split screen">
+          <span className="text-xs text-dim">Split</span>
+          {(['auto', 'off'] as const).map(m => (
+            <button key={m} type="button" aria-pressed={picks.split === m} onClick={() => setPicks(p => ({ ...p, split: m }))}
+              className={`${chip} ${picks.split === m ? chipOn : chipIdle}`}>{m === 'auto' ? 'Auto' : 'Off'}</button>
+          ))}
+        </div>
         <div className="ml-auto flex gap-1.5" role="group" aria-label="Dimensions">
           {(['2d', '3d'] as const).map(m => (
             <button key={m} type="button" aria-pressed={mode === m} onClick={() => { setNo3d(false); setMode(m); }}
@@ -728,36 +1010,116 @@ export default function ReplayBoard() {
         </div>
       </div>
 
-      <div ref={wrapRef} className="relative h-[52vh] max-h-[720px] min-h-[320px] w-full overflow-hidden rounded-md border border-border bg-bg sm:h-[62vh]">
-        <canvas ref={canvasRef}
-          tabIndex={0}
-          role="img"
-          aria-label={`Replay of ${night.night_key}: top-down map of ${shownZone ?? 'the raid'} with ${counts.here} raiders. Space plays or pauses, left and right arrows step ten seconds, plus and minus zoom, Home fits the raid.`}
-          style={{ touchAction: 'none', width: '100%', height: '100%' }}
-          className={`block cursor-grab focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-blue active:cursor-grabbing${mode === '3d' ? ' invisible' : ''}`}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
-          onPointerLeave={onPointerLeave}
-          onKeyDown={onKeyDown} />
-        {mode === '3d' && (
-          <Replay3D zone={shownZone} bridgeRef={bridge3d} onReady={schedule} onKeyDown={onKeyDown}
-            onFail={() => { setNo3d(true); setMode('2d'); }}
-            label={`3D replay of ${night.night_key}: ${shownZone ?? 'the raid'} with ${counts.here} raiders. Space plays or pauses, left and right arrows step ten seconds, plus and minus zoom, Home fits the raid.`} />
-        )}
-        {no3d && <MapNote>3D needs WebGL, which this browser did not give us. Showing the 2D map.</MapNote>}
-        {state === 'buffering' && <MapNote>Loading this part of the night…</MapNote>}
-        {state === 'failed' && <MapNote>This part of the night did not load. Retrying.</MapNote>}
-        {state === 'nodata' && <MapNote>Nobody was recorded at this moment.</MapNote>}
-        {state === 'ok' && mode === '2d' && (!entry || entry.status === 'loading') && shownZone && <MapNote>Loading map…</MapNote>}
-        {state === 'ok' && mode === '2d' && entry?.status === 'none' && <MapNote>No wall map for {shownZone} yet. Showing raiders only.</MapNote>}
-        {state === 'ok' && mode === '2d' && entry?.status === 'error' && (
-          <MapNote>
-            The map did not load.{' '}
-            <button type="button" className="pointer-events-auto underline" onClick={() => shownZone && loadMap(shownZone)}>Retry</button>
-          </MapNote>
-        )}
+      {pickerOpen && (
+        <div className="mb-2 rounded-md border border-border bg-panel p-2 text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search raiders or classes"
+              aria-label="Search raiders"
+              className="min-w-[12rem] flex-1 rounded border border-border bg-bg px-2 py-1.5 text-xs text-text" />
+            <div className="flex gap-1.5" role="group" aria-label="Group raiders by">
+              {(['class', 'alpha'] as const).map(g => (
+                <button key={g} type="button" aria-pressed={groupBy === g} onClick={() => setGroupBy(g)}
+                  className={`${chip} ${groupBy === g ? chipOn : chipIdle}`}>{g === 'class' ? 'By class' : 'A to Z'}</button>
+              ))}
+            </div>
+            <span className="text-dim">{roster.length} seen so far</span>
+          </div>
+          <div className="mt-2 max-h-56 overflow-y-auto">
+            {groups.length === 0 && <p className="text-dim">{roster.length ? 'Nobody matches.' : 'Raiders appear here as the night loads.'}</p>}
+            {groups.map(g => (
+              <div key={g.label} className="mb-2">
+                {groupBy === 'class' && <h3 className="mb-1 text-[11px] uppercase tracking-wider text-dim">{g.label}</h3>}
+                <div className="flex flex-wrap gap-1.5">
+                  {g.raiders.map(r => {
+                    const on = isPicked(hlNow, r.name);
+                    return (
+                      <button key={r.name} type="button" aria-pressed={on} onClick={() => pick(r.name)}
+                        className={`${chip} ${on ? chipOn : chipIdle} inline-flex items-center gap-1.5`}>
+                        <span aria-hidden="true" className="inline-block h-2 w-2 rounded-full" style={{ background: classColor(r.cls) }} />
+                        {r.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {picks.hl.length > 0 && (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5" role="group" aria-label="Highlighted raiders">
+          {picks.hl.map(n => {
+            const fol = isFollowed(picks, n);
+            return (
+              <span key={n} className="inline-flex items-stretch overflow-hidden rounded border border-border bg-panel text-xs">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-text">
+                  <span aria-hidden="true" className="inline-block h-2 w-2 rounded-full" style={{ background: classColor(clsOf(n)) }} />
+                  {n}
+                </span>
+                <button type="button" aria-pressed={fol} onClick={() => setPicks(p => toggleFollow(p, n))}
+                  className={`border-l border-border px-2.5 py-1.5 ${fol ? 'bg-accent text-white' : 'text-text hover:bg-[#21262d]'}`}>
+                  {fol ? 'Following' : 'Follow'}
+                </button>
+                <button type="button" aria-label={`Stop highlighting ${n}`} onClick={() => pick(n)}
+                  className="border-l border-border px-2.5 py-1.5 text-dim hover:bg-[#21262d] hover:text-text">✕</button>
+              </span>
+            );
+          })}
+          <button type="button" className={`${chip} ${chipIdle}`} onClick={() => setPicks(p => ({ ...p, hl: [], follow: null }))}>Clear</button>
+          {picks.follow && info.followAbsent && state === 'ok' && (
+            <span className="text-xs text-dim">{picks.follow} is not recorded at this moment.</span>
+          )}
+        </div>
+      )}
+
+      <div className="relative h-[52vh] max-h-[720px] min-h-[320px] w-full overflow-hidden rounded-md border border-border bg-bg sm:h-[62vh]">
+        <div className="flex h-full flex-col md:flex-row">
+          {panes.map((p, i) => {
+            const z = info.zones[i];
+            const entry = z ? maps[z] : undefined;
+            return (
+              <div key={i}
+                className={`relative flex min-h-0 min-w-0 flex-1 flex-col${i === 1 ? (split ? ' border-t border-border md:border-l md:border-t-0' : ' hidden') : ''}`}>
+                {split && (
+                  <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border bg-panel px-2 py-1 text-xs">
+                    <span className="truncate text-text">{z}</span>
+                    <span className="whitespace-nowrap text-dim">{info.here[i]} {info.here[i] === 1 ? 'raider' : 'raiders'}</span>
+                  </div>
+                )}
+                <div ref={el => { p.wrap = el; }} className="relative min-h-0 flex-1">
+                  <canvas ref={el => { p.cv = el; }}
+                    tabIndex={0}
+                    role="img"
+                    aria-label={aria}
+                    style={{ touchAction: 'none', width: '100%', height: '100%' }}
+                    className={`absolute inset-0 block cursor-grab focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-blue active:cursor-grabbing${mode === '3d' ? ' invisible' : ''}`}
+                    {...handlers(p)}
+                    onPointerCancel={handlers(p).onPointerUp}
+                    onKeyDown={onKeyDown} />
+                  {mode === '3d' && z && (
+                    <Replay3D zone={z} floors={floors} bridgeRef={bridges[i]} onReady={schedule} onKeyDown={onKeyDown}
+                      onPick={pick} onPanAway={panAway}
+                      onFail={() => { setNo3d(true); setMode('2d'); }}
+                      label={aria} />
+                  )}
+                  {i === 0 && no3d && <MapNote>3D needs WebGL, which this browser did not give us. Showing the 2D map.</MapNote>}
+                  {i === 0 && state === 'buffering' && <MapNote>Loading this part of the night…</MapNote>}
+                  {i === 0 && state === 'failed' && <MapNote>This part of the night did not load. Retrying.</MapNote>}
+                  {i === 0 && state === 'nodata' && <MapNote>Nobody was recorded at this moment.</MapNote>}
+                  {state === 'ok' && mode === '2d' && (!entry || entry.status === 'loading') && z && <MapNote>Loading map…</MapNote>}
+                  {state === 'ok' && mode === '2d' && entry?.status === 'none' && <MapNote>No wall map for {z} yet. Showing raiders only.</MapNote>}
+                  {state === 'ok' && mode === '2d' && entry?.status === 'error' && (
+                    <MapNote>
+                      The map did not load.{' '}
+                      <button type="button" className="pointer-events-auto underline" onClick={() => z && loadMap(z)}>Retry</button>
+                    </MapNote>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       <div className="mt-3 rounded-md border border-border bg-panel p-3">
