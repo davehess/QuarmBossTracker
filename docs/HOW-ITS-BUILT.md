@@ -4074,8 +4074,13 @@ The raid on the zone map, live, for signed-in members.
   minute is ONE row in `raid_track_minutes` (compact JSON text: who, zones, frames), zone stamped per uploader
   from `character_live_state`. `exclude_from_stats` characters are never written. Kept indefinitely; the Tower
   archive (`scripts/lib/archive-merge.sql`) creates the table there and keeps every row. A sweep exists but is
-  off, and if turned on deletes only up to `bot_kv archive_watermark_raid_track_minutes`. No replay page yet:
-  the look is the guild lead's pick (§161).
+  off, and if turned on deletes only up to `bot_kv archive_watermark_raid_track_minutes`.
+- **Replay (`/spectator/replay`, web 1.8.160, §335):** `web/app/spectator/replay/ReplayBoard.tsx` (canvas, one
+  rAF loop while playing) reads `/api/spectator/replay` — `?nights=1` for the night list (60 days, summarised in
+  `web/lib/raidReplay.ts` `summarizeNights`), `?night&from&to` for at most 15 minute rows. `raidReplay.ts`
+  decodes a row (`decodeMinute`, applies the same axis swap), picks the zone to show, and finds the frame at a
+  time; `test/raid-replay-decode.test.js` builds rows with the bot's real `buildMinuteRow`. The map layers come
+  from the live board (`prepare`, `bandColor` exported from `SpectatorBoard.tsx`).
 - **Tests:** `test/spectator-positions.test.js`, `test/zone-map-slice.test.js`, `test/zone-map-brewall.test.js`,
   `test/raid-track.test.js`.
 

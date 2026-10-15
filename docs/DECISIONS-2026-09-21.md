@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Raid replay** (§335) | A live [beta] at `/spectator/replay` (web 1.8.160); C (3D walls) next | a session: build C on the same reader; the guild lead: check the heading direction in game |
 | **Database load, no upgrade** (§334) | The guild lead: no compute upgrade. The biggest cost was one unindexed read (live damage, ~70% of DB time), fixed in bot 3.1.272; the batched sweep trims snapshots nightly (3.1.271). Round two (bot 3.1.273): `who_directory_lookup` (1.27 s → ms), trigram indexes on three ilike reads, the 30-day damage board memoised | (1) the guild lead: paste `20261015080000_drop_unused_indexes.sql` into the Supabase SQL editor (the speed-up and merge-lock files are applied); (2) a session after the next raid: re-read `pg_stat_statements` |
 | **Slow mode ON wording** (§334) | Every boss gets 18 h inside the window (bot 3.1.269); agent 3.7.177 beta reads any Druzzil "thread of time" guild line as on/off | a session after the next slow-mode night: read `bot_kv` `slow_mode.set_line`, pin the exact ON text in the agent regex and `utils/slowMode.js` |
 | **Feedback popup** (§334) | On beta: agent 3.7.179 `fb30386f`; not tried in a live Electron yet | the guild lead: on the next beta build, click 💬 Feedback, type, restart the agent from the tray, confirm the text survives and sending works |
@@ -10882,3 +10883,21 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
     the lock) and `20261015070000` (the view is the per-key rewrite, 10 keys in ~7 ms; `who_directory_v2` gone).
     The drop file goes the same way. The rule: **anything that replaces or drops an existing object goes to the
     guild lead as a file to paste**; the MCP cancels it every time, retrying included.
+
+### 335. Raid replay: A (night scrubber) now, then C (3D walls); tonight's slides from our own flag data (web 1.8.160, 2026-10-15)
+- **The pick (the guild lead, 2026-10-15: *"A, then C"*):** the replay look left open in §161 is A, the night
+  scrubber, shipped live as a new [beta] page `https://wolfpack.quest/spectator/replay`; C, the recording inside
+  raised 3D walls from the EQEmu collision mesh (3D-A of §220), comes next and reuses the same reader. B (fight
+  replays on the raid review) is not planned.
+- **What last night looked like in the data:** 217 minutes, 00:00–03:41 UTC, ~210k samples, 64 characters, 12
+  zones (Tranquility as the hub; Disease, Innovation, Nightmare and its lair, Valor, Halls of Honor A, Bastion of
+  Thunder). The recorder's frame layout is `[dt, i,x,y,z,h,hp,zi, …]` with a per-sample zone index, so a raider in
+  the Bazaar is not drawn over the raid zone. Nine of the twelve zones already had map lines cached; the rest are
+  fetched on first view.
+- **Slides for 2026-10-15** (Bertox, Bastion of Thunder, Halls of Honor A trials, Mithaniel Marr, Tactics) were
+  written straight into `raid_screen_slides` (12 slides) from `web/lib/popGuide.ts`, `web/lib/popFlags.ts`, the
+  `pop-2026-10` trigger pack and `utils/hailBoard.js`. Flag counts come from `pop_flags` for the 62 characters with
+  60+ minutes in the last raid: 25 have no PoP flags recorded by Mimic, so the slides say "not seen", never
+  "missing". Marr's projection cap reads 144 in the script because one hail ticks twice; it is 72 people.
+- Open: the heading direction (unchanged from §161); whether the lower Crypt door needs each raider's Tarkil Adan
+  key (the guide marks the key `check: true`).

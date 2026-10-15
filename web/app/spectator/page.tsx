@@ -26,7 +26,8 @@ export default async function SpectatorPage() {
       <h1 className="text-2xl text-gold">Spectator</h1>
       <p className="mt-1 mb-4 text-sm text-dim">
         Everyone in the raid, where they are standing right now. Fed by Zeal through the raiders running Mimic;
-        positions older than 30 seconds drop off.
+        positions older than 30 seconds drop off.{' '}
+        <a href="/spectator/replay" className="underline hover:text-text">Replay a recorded night</a>.
       </p>
       <SpectatorBoard />
       <p className="mt-6 text-xs text-dim">

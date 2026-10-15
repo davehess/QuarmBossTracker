@@ -534,13 +534,14 @@ next touch one rather than assuming a missing row means a missing doc.
   game but your log is quiet for 5 min (state field only, no UI yet), a tail watchdog that recovers a hung read,
   bug-report excerpts that keep the newest lines, and no false "corrupt queue" on an empty queue. Open: the log
   archiving sweep never runs in watch mode (§162), and the on-screen warning is a UI call. DECISIONS-2026-09-21 §162.
-- **⏳ Raid replay: recorder built (bot 3.1.203, 2026-10-05), not on main yet; the replay page waits on a pick.**
-  Keeps every raid's positions, one sample per raider every 3 s, one row per minute in `raid_track_minutes`
-  (~2–4 MB a full night). **Every raid is kept until storage becomes an issue, and the Tower archive keeps its
-  own copy forever** (the guild lead, 2026-10-05); a sweep, if ever turned on, deletes only what Tower holds.
-  Migration applied; the code waits on `claude/sharp-lamport-dC0TW` for the guild lead to release it. Released
-  before Wednesday 2026-10-07, that is the first raid recorded. ⚠ Tower step below. The look (A night scrubber, B fight replays on the
-  raid review, C trails) is the guild lead's pick. DECISIONS-2026-09-21 §161.
+- **✅ Raid replay A: the night scrubber is live [beta] (web 1.8.160, 2026-10-15); C, 3D walls, is next.**
+  `https://wolfpack.quest/spectator/replay` plays `raid_track_minutes` back on the spectator map: night picker,
+  slider with the recorded stretches, play up to 60×, the map following the busiest zone (or a pinned one), 30 s
+  tails, the zones in visit order. Reads 15-minute windows (`/api/spectator/replay`, members only); decoder
+  `web/lib/raidReplay.ts`, tested against the bot's own encoder. The guild lead picked **A, then C** (2026-10-15).
+  The recorder (bot 3.1.203) keeps every raid's positions, one sample per raider every 3 s, ~2–5 MB a night, until
+  storage becomes an issue; the Tower archive keeps its own copy forever. ⚠ Tower step below. Still unchecked: the
+  heading direction. DECISIONS-2026-09-21 §161, §335.
 - **⏳ Queued, not started: our own zone map — A, a website map; then B, the same as a Mimic overlay (the guild lead,
   2026-10-02: "A then B, but not yet").** Spawn points by family, aggro and call-for-help rings, pather routes,
   floors; B adds live dots for you, your group and raid. First step: mirror `grid` / `grid_entries` into the
