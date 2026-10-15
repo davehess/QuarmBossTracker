@@ -11021,3 +11021,21 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
   status line and the Update confirm show "UI file last written <time>".
 - **Open:** the guild lead to check at the PC whether that time changes after /camp or zoning and stays put while only
   dragging windows (confirms or kills cause 2).
+- **Same day, "DELETE BUTTONS DON'T WORK IN UI STUDIO. LOAD DOES." (Mimic beta `2ee913cb`):** the chat-window 🗑 was the
+  broken one; the named-layout Delete works (driven end to end in jsdom against the real store). Three causes: the
+  refusal for unsaved window moves showed only as a note at the top of the chat block; a Save never re-baselined the
+  window positions, so the refusal stayed until the next Load; and any pointer wobble on a click counted as a move.
+  Fixed: the refusal shows in that window's card and the status bar and names the way out; a successful Save becomes
+  the new baseline (and the open inspector adopts the saved chat geometry, so a later delete cannot write stale
+  positions); a press must travel 4 px before it drags.
+
+### 340. Chat overlay: Loot, Random and Other channels (2026-10-15, agent 3.7.181 beta)
+- **The ask** (the guild lead): *"CHAT OVERLAY NEEDS THE REST OF THE CHANNELS AVAILABLE, LOOT, MONEY, OTHER, ETC"*.
+- **Built:** three opt-in groups (off until switched on in the ⚙ drawer, like Melee/Spells/Skills): **Loot** (your own
+  `--You have looted …--`), **Random** (both lines of a /random), **Other** (ChannelMap 22: any game line no other
+  group claims — XP, faction, death, enrage, snare, zone messages). Other runs last, re-asks every classifier whose
+  switch is off, and never takes chat of any channel, Zeal bracket lines, /tag broadcasts or combat; the
+  tells/group/officer/custom gates are unchanged, and none of it reaches an upload path (local `/api/chat` only).
+- **Not built:** Money — no real coin line ("You receive … from the corpse", "You split …") exists in the repo, so none
+  was invented; coin lines fall into Other until the guild lead pastes one. Others' loot does not reach your log.
+  Pet say, emotes, /who and Zeal spam have no sourced shapes or are deliberately dropped.
