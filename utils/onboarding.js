@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.277': [
+    '**Mimic\'s Chat overlay can show guild and raid chat from other members while you\'re out of game.** The bot keeps the last few minutes of guild and raid chat for Mimic to read (needs the next Mimic beta). Officer chat, tells and group chat are never part of it.',
+  ],
   '3.1.276': [
     '**Raid review now links to the full session review page.** The after-raid write-up has a "Full session review" button that opens the map replay, fights, loot and rolls, and attendance for that night (sign-in required).',
   ],

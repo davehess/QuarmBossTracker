@@ -424,6 +424,7 @@ client.once(Events.ClientReady, async (readyClient) => {
   startOpenDkpRegisterQueue(readyClient);
   startRaidHelperSync();
   startChatClockSkewFlush();
+  _preloadGuildChatFeed().catch(() => {});
   runStartupSequence(readyClient).catch(err => console.error('[startup] Error:', err?.message));
 
   // One-shot backfill: mirror every in-memory state.pvpKills entry into
@@ -1016,6 +1017,21 @@ function startRaidHelperSync() {
 // still reads `pulse` only. DESIGN-clock-correction.md §2.3 is explicit that
 // consumers migrate one at a time, each verifiable against a raid night; a new
 // estimator earns that by agreeing with the other two for a while first.
+// Seed the guild-chat feed (utils/guildChatFeed.js) with the last hour of /gu + /rs from chat_messages, so the
+// first Chat overlay to open after a deploy is not looking at an empty ring. Once, non-blocking, fail-open.
+async function _preloadGuildChatFeed() {
+  try {
+    const supabase = require('./utils/supabase');
+    if (!supabase.isEnabled()) return;
+    const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const rows = await supabase.select('chat_messages',
+      `select=ts,channel,speaker,text&guild_id=eq.${encodeURIComponent(supabase.guildId())}`
+      + `&channel=in.(guild,raid)&ts=gte.${encodeURIComponent(since)}&order=ts.desc&limit=300`);
+    const n = require('./utils/guildChatFeed').preload(rows);
+    console.log(`[guild-chat] preloaded ${n} line(s) from chat_messages`);
+  } catch (err) { console.warn('[guild-chat] preload failed:', err?.message); }
+}
+
 function startChatClockSkewFlush() {
   setInterval(async () => {
     try {
@@ -4999,6 +5015,15 @@ async function _handleAgentChat(req, res) {
       who:         whoForSpeaker || null,
       uploaded_by: identity.discord_id,
     });
+
+    // The in-memory guild-chat feed Mimic's Chat overlay reads while the player is out of game
+    // (utils/guildChatFeed.js). Post-dedup, so N uploaders of one line note it once; the module allow-lists
+    // guild + raid itself. Never able to break ingest.
+    try {
+      require('./utils/guildChatFeed').note({
+        t: msgTsSafe ? Date.parse(msgTsSafe) : Date.now(), ch: channel, who: effectiveSpeaker, text: String(text),
+      });
+    } catch { /* the feed is a nicety */ }
 
     // "% mana" self-report → mana_reports (see _MANA_PCT_RX above). Post-dedup
     // and post-speaker-resolution, so N agents hearing one macro write once,
@@ -12186,9 +12211,10 @@ const _SHED_KINDS = new Set([
   'corpse',                                                    // the corpse DM's off switch
   'xp_events',                                                 // XP board telemetry (FB-37)
   'kite_loop',                                                 // the kite-loop library's uploads (a nicety, never the raid's record)
+  'guild_chat',                                                // the GET feed for Mimic's out-of-game Chat overlay (a read of an in-memory ring)
 ]);
 const _SHED_NEVER = new Set(['encounter', 'chat', 'bosskill', 'lockout', 'historical_chat']);
-async function _isShedded(kind, res) {
+async function _isShedded(kind, res, ackBody) {
   // Durable exception OR an unrecognized kind → never sheddable (defense in depth:
   // a typo'd flag_shed_encounter can't take the parse pipe down).
   if (_SHED_NEVER.has(kind) || !_SHED_KINDS.has(kind)) return false;
@@ -12196,7 +12222,7 @@ async function _isShedded(kind, res) {
   try { tune = await _overlayTuningMap(); } catch { /* fail-open: never shed on error */ }
   if (Number(tune[`flag_shed_${kind}`]) >= 1) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, shed: kind }));
+    res.end(JSON.stringify(ackBody || { ok: true, shed: kind }));   // a GET passes the body its reader expects
     return true;
   }
   return false;
@@ -12284,6 +12310,8 @@ const _BUDGET_DEFAULTS = {
   // is the 200-ack-and-drop of the shed pattern; the GET is one pull per zone-in, 60 s cached at the bot.
   kite_loop:       { perMin: 30,  durable: false },
   kite_loops:      { perMin: 30,  durable: false, get: true },
+  // Mimic's out-of-game Chat overlay polls the guild-chat ring every few seconds (~12-20/min); 120 only trips a runaway client.
+  guild_chat:      { perMin: 120, durable: false, get: true },
   // Mimic Spawn map sync (GET poll + POST push share it). A poll every few seconds per open map is ~20/min;
   // over budget is a 429 the agent backs off on (get:true applies to both verbs).
   map_sync:        { perMin: 60,  durable: false, get: true },
@@ -17569,6 +17597,33 @@ async function _handleAgentKiteLoopsGet(req, res) {
   if (r.status === 400) return _ptsJson(res, 400, { error: 'unknown or invalid zone' });
   if (r.status !== 200) return _ptsJson(res, 503, { error: 'try again shortly' });
   return _ptsJson(res, 200, { loops: r.loops });
+}
+
+// GET /api/agent/guild-chat?since=<seq>&boot=<boot> — the guild's recent /gu and /rs chat from an in-memory ring
+// (utils/guildChatFeed.js), for Mimic's Chat overlay while the player is out of game. A client whose `boot` is
+// missing or is not this process's is holding a cursor from an older process, so its `since` counts as 0.
+// Players in game right now, from the reporter heartbeat registry (one entry per player's Mimic; a live log line
+// within 3 min = in game). Cached 15 s. null while the bot cannot know: no heartbeat has landed since boot (they
+// come every ~20 s, so 90 s of process uptime with an empty registry is a real 0).
+let _guildChatInGameCache = { at: 0, n: null };
+function _guildChatInGame() {
+  const now = Date.now();
+  if (now - _guildChatInGameCache.at < 15_000) return _guildChatInGameCache.n;
+  const book = _reporterRegistry.get(require('./utils/supabase').guildId());
+  let n = require('./utils/guildChatFeed').countInGame(book ? book.entries() : [], now, { ttlMs: REPORTER_TTL_MS, lineMs: 180_000 });
+  if (n === 0 && (!book || book.size === 0) && process.uptime() < 90) n = null;
+  _guildChatInGameCache = { at: now, n };
+  return n;
+}
+async function _handleAgentGuildChatGet(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const feed = require('./utils/guildChatFeed');
+  const q = new URL(req.url, 'http://x').searchParams;
+  const sameBoot = q.get('boot') === feed.currentBoot();
+  const out = feed.since(sameBoot ? q.get('since') : 0, q.get('limit'));
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  return res.end(JSON.stringify({ ok: true, boot: out.boot, seq: out.seq, ingame: _guildChatInGame(), lines: out.lines }));
 }
 
 // POST/GET /api/agent/map-sync — the Mimic Spawn map's synced spawn-point events (the guild lead,
@@ -23944,6 +23999,19 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentKiteLoopsGet(req, res); }
     catch (err) {
       console.error('[kite-loops] handler error:', err);
+      if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'internal error' })); }
+      return;
+    }
+  }
+
+  if (req.method === 'GET' && req.url.split('?')[0] === '/api/agent/guild-chat') {
+    // Shed ack keeps the reader's cursor where it is: the head seq, no lines.
+    const _gcHead = require('./utils/guildChatFeed').since(0, 1);
+    if (await _isShedded('guild_chat', res, { ok: true, boot: _gcHead.boot, seq: _gcHead.seq, ingame: null, lines: [] })) return;
+    if (await _overBudget('guild_chat', req, res)) return;
+    try { return await _handleAgentGuildChatGet(req, res); }
+    catch (err) {
+      console.error('[guild-chat] handler error:', err);
       if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'internal error' })); }
       return;
     }
