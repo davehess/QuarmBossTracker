@@ -1170,6 +1170,7 @@ contextBridge.exposeInMainWorld('mimic', {
   // Named layouts per character (uiLayouts.js): list / save (id = update in place) / rename / delete /
   // switch (queued for after logout when EQ is running) / cancel a queued switch / import from a backup.
   uiStudioLayoutList:     (character, eqDir) => ipcRenderer.invoke('ui-studio-layout-list', character, eqDir),
+  uiStudioLiveInfo:       (character, eqDir) => ipcRenderer.invoke('ui-studio-live-info', character, eqDir),
   uiStudioLayoutSave:     (params)  => ipcRenderer.invoke('ui-studio-layout-save', params),
   uiStudioLayoutRename:   (params)  => ipcRenderer.invoke('ui-studio-layout-rename', params),
   uiStudioLayoutDelete:   (params)  => ipcRenderer.invoke('ui-studio-layout-delete', params),

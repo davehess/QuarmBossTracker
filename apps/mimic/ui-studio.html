@@ -673,31 +673,116 @@
     document.addEventListener('keydown', esc);
   }
 
-  document.getElementById('loadBtn').addEventListener('click', loadAndRescale);
-  async function loadAndRescale(){
+  // ── Native load: pick a character, see their current UI as it is ─────────
+  // The guild lead, 2026-10-15: "selecting the character from the UI studio dropdown should just pull up
+  // the current configuration in the current format, no conversion target necessary." Picking a
+  // character reads the LIVE UI files off the disk (never a saved layout, never an earlier read) and
+  // shows them at the resolution the file holds: Source = Target, nothing rescaled. Rescaling stays
+  // its own step: set a Target, then click Load + Rescale.
+  //
+  // _nativeResolution: the resolution block holding the most windows (a tie goes to the larger
+  // screen). EQ keeps old XPos<W>x<H> blocks in the file after a resolution change, so a file can hold
+  // several; the one with the most windows is the one in real use. null when the file has none.
+  function _nativeResolution(counts){
+    var best = null, bestN = 0, bestArea = 0;
+    for (var k in counts) {
+      var p = k.split('x'), w = parseInt(p[0], 10), h = parseInt(p[1], 10), n = counts[k];
+      if (!w || !h) continue;
+      if (n > bestN || (n === bestN && w * h > bestArea)) { best = { w: w, h: h }; bestN = n; bestArea = w * h; }
+    }
+    return best;
+  }
+  // eqclient.ini [VideoMode] Width/Height (keys confirmed from a real file, DECISIONS 2026-09-18) → {w,h}, or
+  // null when the bundle has no eqclient.ini or the keys are missing / not positive (windowed -1 etc).
+  function _videoModeRes(bundle){
+    var name = Object.keys(bundle || {}).find(function(k){ return /^eqclient\.ini$/i.test(k); });
+    if (!name) return null;
+    var vm = null, w = 0, h = 0;
+    String(bundle[name]).split(/\r?\n/).forEach(function(line){
+      var sec = /^\s*\[([^\]]+)\]/.exec(line);
+      if (sec) { vm = /^videomode$/i.test(sec[1].trim()); return; }
+      if (!vm) return;
+      var kv = /^\s*(width|height)\s*=\s*(-?\d+)/i.exec(line);
+      if (!kv) return;
+      if (/^width$/i.test(kv[1])) w = parseInt(kv[2], 10); else h = parseInt(kv[2], 10);
+    });
+    return w > 0 && h > 0 ? { w: w, h: h } : null;
+  }
+  function _ageWords(ms, nowMs){
+    var s = Math.max(0, Math.round((nowMs - ms) / 1000));
+    if (s < 60) return 'just now';
+    var m = Math.round(s / 60);
+    if (m < 60) return m + ' min ago';
+    var h = Math.round(m / 60);
+    if (h < 48) return h + ' h ago';
+    return Math.round(h / 24) + ' days ago';
+  }
+  // "10/15/2026, 3:41:00 PM (12 min ago)" — when EverQuest last wrote the file, so an old file is
+  // visible rather than looking like a wrong read. '' when the time is unknown.
+  function _fileTimeText(ms){
+    if (!ms) return '';
+    return new Date(ms).toLocaleString() + ' (' + _ageWords(ms, Date.now()) + ')';
+  }
+  function _setSide(side, w, h){
+    document.getElementById(side + 'W').value = w;
+    document.getElementById(side + 'H').value = h;
+    _syncPresetFromInputs(side);
+  }
+  async function _liveFileInfo(){
+    try {
+      var r = await window.mimic.uiStudioLiveInfo(STATE.character, STATE.eqDir);
+      STATE.fileMs = (r && r.ok && r.newestMs) || null;
+    } catch (e) { STATE.fileMs = null; }
+  }
+
+  document.getElementById('charSelect').addEventListener('change', function(){
+    if (this.value) loadAndRescale(true).catch(function(e){ setStatus('read failed: ' + (e && e.message), 'err'); });
+  });
+  document.getElementById('loadBtn').addEventListener('click', function(){ loadAndRescale(); });
+  // native === true: the character pick. Source/Target come from the file, not the inputs.
+  async function loadAndRescale(native){
     var sel = document.getElementById('charSelect').value;
     if (!sel) { setStatus('pick a character', 'err'); return; }
     var parts = sel.split('|');
     STATE.character = parts[0];
     STATE.eqDir     = parts[1];
     _showEqDir(STATE.eqDir);
-    // Read the W/H inputs (source of truth — preset dropdown is just a picker).
-    var sW = parseInt(document.getElementById('srcW').value, 10);
-    var sH = parseInt(document.getElementById('srcH').value, 10);
-    var tW = parseInt(document.getElementById('tgtW').value, 10);
-    var tH = parseInt(document.getElementById('tgtH').value, 10);
-    if (!sW || !sH || !tW || !tH || sW < 640 || sH < 480 || tW < 640 || tH < 480) {
-      setStatus('enter valid Source/Target sizes (≥ 640×480)', 'err'); return;
+    STATE.nativeLoad = native === true;
+    if (!STATE.nativeLoad) {
+      // Read the W/H inputs (source of truth — preset dropdown is just a picker).
+      var sW = parseInt(document.getElementById('srcW').value, 10);
+      var sH = parseInt(document.getElementById('srcH').value, 10);
+      var tW = parseInt(document.getElementById('tgtW').value, 10);
+      var tH = parseInt(document.getElementById('tgtH').value, 10);
+      if (!sW || !sH || !tW || !tH || sW < 640 || sH < 480 || tW < 640 || tH < 480) {
+        setStatus('enter valid Source/Target sizes (≥ 640×480)', 'err'); return;
+      }
+      STATE.srcW = sW; STATE.srcH = sH;
+      STATE.tgtW = tW; STATE.tgtH = tH;
     }
-    STATE.srcW = sW; STATE.srcH = sH;
-    STATE.tgtW = tW; STATE.tgtH = tH;
     setStatus('loading ' + STATE.character + '…');
+    // Always a fresh read of the files on disk — nothing from an earlier load or a saved layout.
     try {
       STATE.bundle = await window.mimic.uiStudioReadBundle(STATE.character, STATE.eqDir);
     } catch (e) { setStatus('read failed: ' + e.message, 'err'); return; }
     if (!STATE.bundle || Object.keys(STATE.bundle).length === 0) {
       setStatus('no ini files for ' + STATE.character, 'err');
       return;
+    }
+    await _liveFileInfo();
+    STATE.otherRes = [];
+    if (STATE.nativeLoad) {
+      var counts = _detectResolutions(STATE.bundle);
+      // The game's own resolution (eqclient.ini [VideoMode] Width/Height) wins when the UI file holds
+      // a block for it; otherwise the block with the most windows.
+      var vm = _videoModeRes(STATE.bundle);
+      var nat = (vm && counts[vm.w + 'x' + vm.h]) ? vm : _nativeResolution(counts);
+      if (!nat) nat = { w: parseInt(document.getElementById('srcW').value, 10) || 2560, h: parseInt(document.getElementById('srcH').value, 10) || 1440 };
+      STATE.srcW = nat.w; STATE.srcH = nat.h;
+      STATE.tgtW = nat.w; STATE.tgtH = nat.h;     // no conversion until the member sets a Target
+      _setSide('src', STATE.srcW, STATE.srcH);
+      _setSide('tgt', STATE.tgtW, STATE.tgtH);
+      STATE.otherRes = Object.keys(counts).filter(function(k){ return k !== nat.w + 'x' + nat.h; });
     }
     // Scan the active UI skin's XML files for each window's design CX/CY —
     // gives us authoritative MAX sizes when the INI's W/H is stale (saved at a
@@ -948,6 +1033,10 @@
       if (STATE.fromCloud) {
         msg = '☁ restored ' + STATE.windows.length + ' windows from cloud backup · set Target to ' +
           'this machine\'s resolution, then Save to write ' + STATE.tgtW + '×' + STATE.tgtH + ' to ' + STATE.character + '\'s EQ folder';
+      } else if (STATE.nativeLoad) {
+        msg = 'showing ' + STATE.windows.length + ' windows as saved in the UI file now · ' + STATE.srcW + '×' + STATE.srcH;
+        if (STATE.otherRes && STATE.otherRes.length) msg += ' (the file also holds ' + STATE.otherRes.join(', ') + ')';
+        msg += ' · to move them to another screen size, set Target and click Load + Rescale';
       } else {
         msg = 'loaded ' + STATE.windows.length + ' windows · ' +
           STATE.srcW + '×' + STATE.srcH + ' → ' + STATE.tgtW + '×' + STATE.tgtH +
@@ -956,6 +1045,7 @@
           msg = 'file is saved at ' + STATE.srcW + '×' + STATE.srcH + ' — ' + msg;
         }
       }
+      if (!STATE.fromCloud && STATE.fileMs) msg += ' · UI file last written ' + _fileTimeText(STATE.fileMs);
       var _warn = _resMismatchWarning(STATE.srcW, STATE.srcH, STATE.tgtW, STATE.tgtH);
       if (_warn) msg += ' · ' + _warn;
       // Duplicates are worth naming, not hiding: the user needs to know a
@@ -1905,13 +1995,18 @@
   });
   _layEl('layoutUpdate').addEventListener('click', async function(){
     var who = _selectedCharEqDir(), p = _layPicked(); if (!who || !p) return;
-    if (!window.confirm('Replace the saved layout "' + p.name + '" with ' + who.character + '\'s current UI files?')) return;
+    // The copy comes from the UI file on disk right now; say when EverQuest last wrote it.
+    var info = await window.mimic.uiStudioLiveInfo(who.character, who.eqDir).catch(function(){ return null; });
+    var when = _fileTimeText(info && info.ok && info.newestMs);
+    if (!window.confirm('Replace the saved layout "' + p.name + '" with ' + who.character + '\'s current UI files?' +
+        (when ? '\n\nThe UI file on disk was last written ' + when + '.' : ''))) return;
     var r = await window.mimic.uiStudioLayoutSave({ character: who.character, eqDir: who.eqDir, id: p.id })
       .catch(function(e){ return { ok: false, error: e && e.message }; });
     if (!r || !r.ok) { _layMsg(_layErr(r), 'err'); return; }
     var up = await _layBackup(p.id, true);
     await _layRefresh(p.id);
-    _layMsg('updated "' + p.name + '"' + (up ? ' · ☁ backed up' : ' · ⚠ cloud backup failed — use ☁ Back up'), up ? 'ok' : 'err');
+    _layMsg('updated "' + p.name + '"' + (when ? ' from the UI file written ' + when : '') +
+      (up ? ' · ☁ backed up' : ' · ⚠ cloud backup failed — use ☁ Back up'), up ? 'ok' : 'err');
   });
   _layEl('layoutRename').addEventListener('click', async function(){
     var who = _selectedCharEqDir(), p = _layPicked(); if (!who || !p) return;
