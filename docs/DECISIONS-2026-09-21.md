@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Database load, no upgrade** (§334) | The guild lead: no compute upgrade. The biggest cost was one unindexed read (live damage, ~70% of DB time), fixed in bot 3.1.272; the batched sweep trims snapshots nightly (3.1.271) | a session after the next raid: re-read `pg_stat_statements` (reset at 2026-10-12 01:53 UTC; reset it again first so the raid stands alone) and fix the next-largest reads — `who_directory` (1.27 s × 7.5k calls) and the `p_guild_id, p_since, p_limit` RPC (0.5 s × 11.7k) |
+| **Database load, no upgrade** (§334) | The guild lead: no compute upgrade. The biggest cost was one unindexed read (live damage, ~70% of DB time), fixed in bot 3.1.272; the batched sweep trims snapshots nightly (3.1.271). Round two (bot 3.1.273): `who_directory_lookup` (1.27 s → ms), trigram indexes on three ilike reads, the 30-day damage board memoised | (1) the guild lead: paste `20261015070000_db_read_speedups.sql` and `20261015040000_merge_encounter_players_concurrency.sql` into the Supabase SQL editor (the MCP cancels replacements); (2) the guild lead: pick which unused indexes to drop (§334 last bullet); (3) a session after the next raid: re-read `pg_stat_statements` |
 | **Slow mode ON wording** (§334) | Every boss gets 18 h inside the window (bot 3.1.269); agent 3.7.177 beta reads any Druzzil "thread of time" guild line as on/off | a session after the next slow-mode night: read `bot_kv` `slow_mode.set_line`, pin the exact ON text in the agent regex and `utils/slowMode.js` |
 | **Feedback popup** (§334) | On beta: agent 3.7.179 `fb30386f`; not tried in a live Electron yet | the guild lead: on the next beta build, click 💬 Feedback, type, restart the agent from the tray, confirm the text survives and sending works |
 | **Dashboard drag stutter** (§334) | No code moves the window; cause unknown | the guild lead: drag after each of: hide all overlays, Map Full/Canvas off, GPU off, overlays-follow-EQ off; say which monitor/scale |
@@ -10856,3 +10856,24 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
 - **Alpha builds now follow beta** (ci `e1c776e0`): `sync-alpha.yml` dispatches `release-mimic.yml` on alpha whenever
   alpha's Mimic or agent differs from the `mimic-alpha` build (GITHUB_TOKEN pushes never start on-push builds, so alpha
   installs had sat a day behind the branch). First automatic build: 3.0.0-alpha.1085, 05:17 UTC.
+- **Read sweep, round two (bot 3.1.273 `9491d51a`; the guild lead: *"fix the who_directory read too, scan for any
+  other scenarios where the database should be much faster or we have overconstrained things"*).** Measured with
+  EXPLAIN ANALYZE on production, before → after:
+  - `who_directory` by key: 1,270 ms → ~4 ms for 60 keys. The view is six DISTINCT ON passes over all ~203k
+    `who_observations` rows, so a `character_key=in.(…)` filter applies only after the whole directory is built.
+    `who_directory_lookup(p_keys)` (migration `20261015071000`, live) returns the view's own row type, computed per
+    asked key with LATERAL reads on `who_obs_character_idx`; identical rows (EXCEPT ALL both ways = 0). The bot's
+    de-anon pass calls it and falls back to the view.
+  - Trigram GIN indexes (migration `20261015070000`, live) for PostgREST `ilike.Name` matches, which a btree cannot
+    serve: OpenDKP bids 765 → 0.9 ms, `encounter_players.character_name` 954 → 0.6 ms, `eqemu_npc_types.name`
+    70 → 0.7 ms.
+  - The 30-day damage board (`encounter_damage_by_character`, 0.5 s × 11.7k) is memoised 5 minutes in the bot.
+  - ⚠ **The MCP cancels any statement that replaces an existing object**: the `who_directory` view rewrite (same
+    file `20261015070000`) and the `merge_encounter_players` advisory lock (`20261015040000`). New objects went
+    through. **The GitHub integration did NOT apply `20261015040000` from main** (live function still has no lock,
+    checked 2026-10-15), so the line above saying it would is wrong. Both wait on the guild lead pasting the files
+    into the Supabase SQL editor; both are idempotent.
+  - Unused/redundant indexes (scan counts cover only ~3 days, so weekly jobs may not show): `idx_threat_snapshots_uploader`
+    157 MB / 9 scans (its `(guild_id, uploader)` prefix is the unique index's); `target_observations`' three indexes,
+    72 MB / 0 scans (the table is written and swept, never read); `faction_hits_char_faction_ts_idx` 24 MB, an exact
+    prefix of `faction_hits_dedup_idx`. Proposed, not dropped: dropping is the guild lead's call.
