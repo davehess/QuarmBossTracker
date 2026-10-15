@@ -526,6 +526,10 @@ next touch one rather than assuming a missing row means a missing doc.
   game but your log is quiet for 5 min (state field only, no UI yet), a tail watchdog that recovers a hung read,
   bug-report excerpts that keep the newest lines, and no false "corrupt queue" on an empty queue. Open: the log
   archiving sweep never runs in watch mode (§162), and the on-screen warning is a UI call. DECISIONS-2026-09-21 §162.
+- **✅ Raid session review + public share links on beta (web 1.8.165, 2026-10-15, §337):** `/raid/session` bounds the
+  replay to one session with attendance, kills, loot, rolls and parses; officers make `/share/raid/<token>` links
+  (no sign-in, window-bound, opted-out characters scrubbed, 7/30/90-day expiry, revocable; table `raid_shares`).
+  Beta also has parchment + shaded floors (1.8.164). Mimic beta agent 3.7.180: kite coach, guild loops, Tail slider.
 - **✅ Raid replay A: the night scrubber is live [beta] (web 1.8.160, 2026-10-15); C, 3D walls, is on beta
   (web 1.8.162, `https://b.wolfpack.quest/spectator/replay`: 2D/3D, follow + highlight, floors, boss markers,
   split screen), waiting on the guild lead's look. Bot 3.1.274 records the raid's NPC targets from 2026-10-15.**

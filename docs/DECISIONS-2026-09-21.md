@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Raid session share links** (§337) | Live on beta (web 1.8.165): `/raid/session` + public `/share/raid/<token>`; the first link (2026-10-14 daytime session) made for the guild lead | the guild lead: send it to the other guild's leaders; say when to graduate the replay stack to main |
 | **Raid replay** (§335) | A live [beta] at `/spectator/replay` (web 1.8.160). C (3D) plus follow/highlight, floors, boss markers and split screen on beta only: web 1.8.162, `https://b.wolfpack.quest/spectator/replay`. Bot 3.1.274 records NPC targets from tonight | the guild lead: try it on b.wolfpack.quest and say go (then graduate the files to main — the beta routes import `lib/guild`, which main lacks, so graduation brings that module or reverts to the literal) or what to change; check the heading direction in game |
 | **Database load, no upgrade** (§334) | The guild lead: no compute upgrade. The biggest cost was one unindexed read (live damage, ~70% of DB time), fixed in bot 3.1.272; the batched sweep trims snapshots nightly (3.1.271). Round two (bot 3.1.273): `who_directory_lookup` (1.27 s → ms), trigram indexes on three ilike reads, the 30-day damage board memoised | (1) the guild lead: paste `20261015080000_drop_unused_indexes.sql` into the Supabase SQL editor (the speed-up and merge-lock files are applied); (2) a session after the next raid: re-read `pg_stat_statements` |
 | **Slow mode ON wording** (§334) | Every boss gets 18 h inside the window (bot 3.1.269); agent 3.7.177 beta reads any Druzzil "thread of time" guild line as on/off | a session after the next slow-mode night: read `bot_kv` `slow_mode.set_line`, pin the exact ON text in the agent regex and `utils/slowMode.js` |
@@ -10948,3 +10949,27 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
   §220: the website gets none / lines / **parchment generated from our own walls, floors and spawn density**, and
   3D-A stays the EQEmu mesh **shaded with no textures**; painted art and real textures are Mimic-only via the local
   converter (3D-B). Building the web part on the replay page now; no new pick was needed.
+
+### 337. Raid session review + public share links; kite coach, Tail and parchment on beta; the npm build break (2026-10-15)
+- **The ask** (the guild lead): *"lets start merging the spectator replay and the raid's contents bound by the timeframe.
+  the morning raid yesterday would be ideal to send to the other guild's leadership for them to review, with rolls,
+  attendance, etc with a public sharing link that doesn't require discord permissions."*
+- **Built (web 1.8.165, beta only — it stands on the beta replay stack and `lib/guild`):** `/raid/session?from=&to=`
+  (members) = the replay bounded to one session + Attendance (from the recording), Kills (encounters ended in the
+  window), Loot (`looted_items`, `loot_observations`), Rolls (`roll_sets` + officer overrides), Parses; every time
+  seeks the replay. **Share links:** an officer makes one (7/30/90 days, default 30), revocable; table `raid_shares`
+  (migration `20261015130000`, applied) stores only the SHA-256 of a 32-byte token; `/share/raid/<token>` needs no
+  sign-in, renders a bare shell (no member links), `noindex`, and every read is bound to the share row's window —
+  nothing public takes a time from the URL. Opted-out characters (`exclude_from_stats` or `exclude_inventory`) are
+  scrubbed from every list and from the replay frames server-side. Unknown, expired and revoked tokens are one 404.
+  `docs/PRIVACY.md` says what a link exposes.
+- **The first link** — yesterday's daytime session, 2026-10-14 13:08–16:51 UTC (9:08 AM–12:51 PM ET), 79 raiders,
+  89 loot rows, 65 roll sets, no curated bosses — was created by this session for the guild lead to send (expires
+  2026-11-14). The link itself is not written here.
+- **Also on beta today:** agent 3.7.180 — the kite drift coach, guild loop rings and a **Tail** slider for the Map's
+  target trail (the guild lead: *"we need a slider for tail history"*; Off / 10 s–5 min, default 60 s); web 1.8.164 —
+  parchment background (2D) and shaded opaque floors (3D), per §220.
+- **The build break:** bot 3.1.275 failed twice on Railway at `npm install --omit=dev` ("reading 'edgesOut'" in npm's
+  peer resolver): with no lockfile, a fresh vitest release's optional peer set crashed npm 10 even though dev deps
+  are omitted. Production stayed on 3.1.274. Fix: `npm install --omit=dev --legacy-peer-deps` in the Dockerfile
+  (same production tree; no prod dependency needs an auto-installed peer). Deployed 15:22 UTC.
