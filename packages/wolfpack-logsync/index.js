@@ -12073,6 +12073,7 @@ function _endpointForKind(kind, botUrl) {
     case 'optin_summary':   return base + '/optin_summary';
     case 'bosskill':        return base + '/bosskill';
     case 'hatekill':        return base + '/hatekill';
+    case 'slow_mode':       return base + '/slow-mode';
     case 'lockout':         return base + '/lockout';
     case 'historical_chat': return base + '/historical_chat';
     case 'fun_event':       return base + '/fun_event';
@@ -37937,6 +37938,15 @@ function _dkpTickSnapshot() {
 // NOTE: "Druzzil Ro" has a space so it never matches the single-word (\w+) guild chat pattern above.
 const DRUZZIL_KILL_RX = /^\[(.+?)\]\s+Druzzil Ro tells the guild,\s*['"](\w+) of <(.+?)> has killed (.+?) in (.+?)!['"]/;
 
+// Guild-wide "slow mode" announcement — same speaker and channel as the kill line above, so it
+// rides the same pre-filter path. Only the OFF wording has ever been captured ("... has asked the
+// Timekeeper of Druzzil Ro to set its weave right. Beware! Time has returned to its natural pace
+// ..."); the ON wording is unknown, so ANY guild line from Druzzil Ro that mentions the thread of
+// time without the natural pace is read as ON. The private "Druzzil Ro's voice fills your mind"
+// line is not a "tells the guild" line and never matches.
+const SLOW_MODE_RX = /^\[(.+?)\]\s+Druzzil Ro tells the guild,\s*['"](.*?)['"]\s*$/;
+const SLOW_MODE_MAX_AGE_MS = 12 * 3600 * 1000;   // older lines (log replay) are not reported
+
 // ── PVP Druzzil Ro broadcast announcements ─────────────────────────────────
 // Server god broadcasts player deaths: "PVP Druzzil Ro BROADCASTS, 'text'"
 // Two phrasing styles must be covered or we silently lose kills:
@@ -38130,6 +38140,26 @@ function parseDruzzilKill(line) {
     boss:      m[4],
     zone:      m[5],
     ts:        ts ? ts.toISOString() : new Date().toISOString(),
+  };
+}
+
+// Slow-mode on/off announcement → { state, at, by, line } or null. Lines whose log timestamp is
+// older than SLOW_MODE_MAX_AGE_MS return null (the bot ignores stale ones anyway; don't spam).
+function parseSlowModeLine(line) {
+  if (line.indexOf('Druzzil Ro') === -1) return null;   // cheap gate
+  const m = SLOW_MODE_RX.exec(line);
+  if (!m) return null;
+  const text = m[2];
+  if (!/thread of time/i.test(text)) return null;
+  const state = /natural pace/i.test(text) ? 'off' : 'on';
+  const ts = parseEqTimestamp(line);
+  if (ts && Date.now() - ts.getTime() > SLOW_MODE_MAX_AGE_MS) return null;
+  const by = /(\w+) has asked the Timekeeper/.exec(text);
+  return {
+    state,
+    at:   (ts || new Date()).toISOString(),
+    by:   by ? by[1] : null,
+    line: text.slice(0, 400),
   };
 }
 
@@ -40718,6 +40748,18 @@ function uploadDruzzilKills(kills, { botUrl, token, dryRun }) {
     return Promise.resolve();
   }
   enqueueUpload('bosskill', { agent_version: AGENT_VERSION, kills });
+  return Promise.resolve();
+}
+
+// One slow-mode on/off event → POST /api/agent/slow-mode. The bot is idempotent (every raider's
+// agent hears the same line), so a plain durable-queue enqueue is enough.
+function uploadSlowMode(evt, { botUrl, token, dryRun } = {}) {
+  void botUrl; void token;
+  if (dryRun) {
+    console.log(`[slow-mode] ${evt.state}${evt.by ? ' (asked by ' + evt.by + ')' : ''}`);
+    return Promise.resolve();
+  }
+  enqueueUpload('slow_mode', { agent_version: AGENT_VERSION, ...evt });
   return Promise.resolve();
 }
 
@@ -55622,6 +55664,16 @@ async function main() {
         if (druzzilKill) {
           const _dkFp = 'druzzil|' + line.replace(/^\[.+?\]\s*/, '').toLowerCase().replace(/\s+/g, ' ').trim();
           if (!_sourceExcluded && !_crossLogDupe(_dkFp)) druzzilKillBuffer.push(druzzilKill);
+          return;
+        }
+
+        // Druzzil Ro slow-mode on/off announcement → bot (shared status banner). Same pre-filter
+        // position, exclusion gate and cross-log dedup as the kill line above; the bot is
+        // idempotent, so the dedup only saves a request.
+        const slowMode = parseSlowModeLine(line);
+        if (slowMode) {
+          const _smFp = 'slowmode|' + line.replace(/^\[.+?\]\s*/, '').toLowerCase().replace(/\s+/g, ' ').trim();
+          if (!_sourceExcluded && !_crossLogDupe(_smFp)) uploadSlowMode(slowMode, _uploadOpts || {}).catch(() => {});
           return;
         }
 
