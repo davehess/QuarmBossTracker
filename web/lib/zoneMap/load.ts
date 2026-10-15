@@ -27,6 +27,18 @@ export async function fetchEqemuLayer(zone: string): Promise<ZoneSlice | null> {
   return sliceZoneMap(V, I);
 }
 
+// The raw mesh for the 3D replay (lib/zoneMesh.ts packs it). The same source file as above, but this one asks
+// Next to keep the download for a day: the file never changes between EQEmu/maps commits. (Next's fetch cache
+// skips bodies over 2 MB and says so in the log; that costs a re-download, never a failure.)
+export async function fetchEqemuMesh(zone: string): Promise<{ V: Float32Array; I: Uint32Array } | null> {
+  const res = await fetch(eqemuMapUrl(zone), { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), next: { revalidate: 86400 } });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`EQEmu maps answered ${res.status}`);
+  const raw = Buffer.from(await res.arrayBuffer());
+  if (raw.length > MAX_MESH_BYTES) throw new Error('EQEmu map too large');
+  return parseEqemuMap(raw);
+}
+
 // The directory listing is the only way to learn the real case of a label file's name (see
 // brewallFileNames). It is one unauthenticated GitHub API call, which is rate-limited per address, so a
 // good answer is kept for hours and a failed one for a minute, in this process.
