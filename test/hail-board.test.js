@@ -21,6 +21,10 @@ import path from 'node:path';
 const require = createRequire(import.meta.url);
 const hailBoard = require('../utils/hailBoard.js');
 const popFlagStages = require('../utils/popFlagStages.js');
+const popSelfProof = require('../utils/popSelfProof.js');
+import { WHO_ZONE, whoProves } from '../web/lib/popWho.ts';
+import { GUIDE_ITEMS } from '../web/lib/popGuide.ts';
+import { SELF_TICK_KEYS, flagForTickKey } from '../web/lib/popSelfFlags.ts';
 
 const MIN = 60_000;
 const KILL = Date.parse('2026-10-05T23:30:00Z');
@@ -32,7 +36,7 @@ const rosterRows = (names, uploader, minAgo = 0) =>
 
 // One board over a fake database and a clock the test moves.
 function env(tables = {}, { enabled = true } = {}) {
-  const t = { raid_roster: [], pop_flags: [], bot_kv: [], ...tables };
+  const t = { raid_roster: [], pop_flags: [], pop_guide_ticks: [], bot_kv: [], ...tables };
   const fake = makeFakePostgrest(t);
   const upserts = [];
   let nextId = 1;
@@ -43,11 +47,14 @@ function env(tables = {}, { enabled = true } = {}) {
     // e.failRoster simulates a raid_roster read that times out (decided when the read ends); e.hold (a promise)
     // parks a raid_roster read until it resolves, a slow Supabase; e.rosterReads counts every attempt.
     selectAllPaged: (table, ...a) => {
+      if (table === 'pop_guide_ticks' && e.failTicks) return Promise.resolve(null);    // a tick read that timed out
       if (table !== 'raid_roster') return fake.selectAllPaged(table, ...a);
       e.rosterReads++;
       if (!e.hold) return e.failRoster ? Promise.resolve(null) : fake.selectAllPaged(table, ...a);
       return e.hold.then(() => (e.failRoster ? null : fake.selectAllPaged(table, ...a)));
     },
+    // e.rpc stands in for pop_who_sightings, which the fake does not carry; it may return null or throw.
+    rpc: (fn, p) => (e.rpc ? e.rpc(fn, p) : fake.rpc(fn, p)),
     upsert: async (table, rows) => {
       upserts.push({ table, rows: JSON.parse(JSON.stringify(rows)) });
       if (table === 'bot_kv') {
@@ -67,6 +74,10 @@ function env(tables = {}, { enabled = true } = {}) {
   e.flag = (character, flagKey, source, when, extra = {}) =>
     t.pop_flags.push({ id: nextId++, guild_id: 'g', character, flag_key: flagKey, source, npc: null, zone: null, earned_at: when, ...extra });
   e.advance = (ms) => { e.clock += ms; };
+  e.tick = (character, itemKey, when = at(5), guild = 'g') =>
+    t.pop_guide_ticks.push({ guild_id: guild, character_name: character, item_key: itemKey, ticked_at: when, ticked_by: null });
+  // A /who sighting row as pop_who_sightings returns it (one per character and zone).
+  e.sight = (character, zone, when = at(-3 * 24 * 60)) => ({ character_key: character.toLowerCase(), zone, first_seen: when, last_seen: when, seen: 3 });
   return e;
 }
 const flush = () => new Promise(r => setTimeout(r, 0));
@@ -334,6 +345,157 @@ describe('the board sorts every raider from what we already collect', () => {
     e.flag('Corvale', 'hail', 'hail_witnessed', at(3), { npc: 'A Planar Projection' });   // seen, not self-reported
     const [view] = (await e.hb.getBoard()).windows;
     expect(view.seen_by).toBe(3);
+  });
+});
+
+// ── Proof pop_flags does not hold: guide ticks and /who sightings ────────────────────────────────────────
+// The guild lead, raid night 2026-10-14: the board listed raiders who already had the flag. It decided "done"
+// from pop_flags alone; the site also counts a member's own tick on the PoP guide (pop_guide_ticks) and a /who
+// sighting in a plane the flag opens (pop_who_sightings). Both now settle a raider the same way the Seer does:
+// they prove the step is held, not when it began.
+
+describe('a raider the guide ticks and /who sightings settle is not listed', () => {
+  const night = async (bossId = 'bertoxxulous', names = RAID) => {
+    const e = env({ raid_roster: rosterRows(names, 'u1') });
+    await e.hb.openWindow({ bossId, killedAtMs: KILL });
+    return e;
+  };
+  const split = async (e) => {
+    const [view] = (await e.hb.getBoard()).windows;
+    return { view, already: view.already_flagged, still: view.still.map(s => s.name) };
+  };
+
+  it('a member\'s own tick of the step settles it, whenever the tick was stored', async () => {
+    const e = await night();
+    e.tick('Aldenmar', 'flag_bert');                       // the guide's "Kill Bertoxxulous", ticked after the kill
+    e.tick('Brackwyn', 'flag:bert_dead');                  // the same flag from the flag matrix
+    e.tick('Corvale', 'flag_grummus');                     // a step BEFORE this hail: not a done key
+    e.tick('Rethlan', 'flag_bert', at(5), 'another-guild');   // somebody else's guild
+    e.tick('Zarrin', 'justice_mavuin_hail');               // a step that is nowhere in this series
+    const { view, already, still } = await split(e);
+    expect(already).toEqual(['Aldenmar', 'Brackwyn']);
+    expect(still).toEqual(expect.arrayContaining(['Corvale', 'Rethlan', 'Zarrin']));
+    expect(still).not.toContain('Aldenmar');
+    // A tick is not a grant the NPC handed out: it never counts against the flag cap.
+    expect(view.hailed).toEqual([]);
+    expect(view.flags_granted).toBe(0);
+  });
+
+  it('a tick of a later step carries the steps it implies (Maelin\'s power-source reading settles the Mithaniel Marr hail)', async () => {
+    const e = await night('lord_mithaniel_marr', ['Aldenmar', 'Brackwyn']);
+    e.tick('Aldenmar', 'zebuxoruk_maelin');                // zebuxoruk 2 is built from Marr's notes: it implies marr_dead
+    const { already, still } = await split(e);
+    expect(already).toEqual(['Aldenmar']);
+    expect(still).toEqual(['Brackwyn']);
+  });
+
+  it('a /who sighting in a plane the flag opens settles it, before or after the kill; the RPC is asked only about the roster and the planes that matter', async () => {
+    const e = await night();
+    const asked = [];
+    e.rpc = (fn, p) => {
+      asked.push({ fn, p });
+      return [
+        e.sight('Aldenmar', 'potorment'),                              // Torment needs the Bertoxxulous thank-you
+        e.sight('Brackwyn', 'Plane of Time', at(4)),                   // first seen after the kill: still proof
+        e.sight('Corvale', 'codecay'),                                 // the Crypt proves only the Grummus step
+        e.sight('Rethlan', 'postorms'),                                // Storms proves the Justice flag
+      ];
+    };
+    const { already, still } = await split(e);
+    expect(already).toEqual(['Aldenmar', 'Brackwyn']);
+    expect(still).toEqual(expect.arrayContaining(['Corvale', 'Rethlan']));
+    expect(asked).toHaveLength(1);
+    expect(asked[0].fn).toBe('pop_who_sightings');
+    expect(asked[0].p.p_guild_id).toBe('g');
+    expect([...asked[0].p.p_names].sort()).toEqual(RAID.map(n => n.toLowerCase()).sort());
+    expect(asked[0].p.p_zones).toEqual(expect.arrayContaining(['potorment', 'torment, the plane of pain', 'plane of time']));
+    expect(asked[0].p.p_zones).not.toContain('postorms');
+    expect(asked[0].p.p_zones).not.toContain('codecay');
+  });
+
+  it('the Grummus ward step is not proven by standing in the Crypt, but is by standing past it', async () => {
+    const e = await night('grummus', ['Aldenmar', 'Brackwyn']);
+    e.rpc = () => [e.sight('Aldenmar', 'potorment'), e.sight('Brackwyn', 'codecay')];
+    const { already, still } = await split(e);
+    expect(already).toEqual(['Aldenmar']);
+    expect(still).toEqual(['Brackwyn']);
+  });
+
+  it('works with nothing from pop_flags at all, and still lists a hail the raider genuinely needs', async () => {
+    const e = await night('bertoxxulous', ['Aldenmar', 'Brackwyn']);
+    e.tick('Aldenmar', 'flag_bert');
+    e.flag('Brackwyn', 'fuirstel_3', 'recital', at(-5));
+    const { view } = await split(e);
+    expect(view.already_flagged).toEqual(['Aldenmar']);
+    expect(view.still).toEqual([{ name: 'Brackwyn', prior_missing: false }]);
+  });
+
+  it('fails open: a tick read or a /who read that fails leaves the pop_flags answer, and the board still comes back', async () => {
+    const e = await night();
+    e.flag('Aldenmar', 'fuirstel_5', 'event', at(-60 * 24));
+    e.tick('Brackwyn', 'flag_bert');
+    e.failTicks = true;
+    e.rpc = () => { throw new Error('rpc blew up'); };
+    let r = await split(e);
+    expect(r.already).toEqual(['Aldenmar']);
+    expect(r.still).toContain('Brackwyn');
+    // The other failure shapes: an RPC that answers null, and one that rejects.
+    for (const rpc of [() => null, () => Promise.reject(new Error('timeout'))]) {
+      e.advance(61_000); e.rpc = rpc;
+      r = await split(e);
+      expect(r.already).toEqual(['Aldenmar']);
+    }
+  });
+
+  it('keeps the last good proof for the same roster when a later refresh fails', async () => {
+    const e = await night();
+    e.tick('Aldenmar', 'flag_bert');
+    e.rpc = () => [e.sight('Brackwyn', 'potorment')];
+    expect((await split(e)).already).toEqual(['Aldenmar', 'Brackwyn']);
+    e.advance(61_000);
+    e.failTicks = true; e.rpc = () => null;
+    expect((await split(e)).already).toEqual(['Aldenmar', 'Brackwyn']);
+  });
+
+  it('costs one tick query and one /who call per refresh, for the roster only: a poll inside five seconds or a minute adds none', async () => {
+    const e = await night();
+    e.rpc = (fn, p) => { e.rpcCalls = (e.rpcCalls || 0) + 1; return []; };
+    await Promise.all([e.hb.getBoard(), e.hb.getBoard(), e.hb.getBoard()]);
+    e.advance(6_000);
+    await e.hb.getBoard();
+    expect(e.calls('pop_guide_ticks')).toBe(1);
+    expect(e.rpcCalls).toBe(1);
+    const q = e.fake.calls.find(c => c.table === 'pop_guide_ticks').query;
+    expect(q).toMatch(/guild_id=eq\.g/);
+    const inList = /character_name=in\.\(([^)]*)\)/.exec(q)[1].split(',').sort();
+    expect(inList).toEqual([...RAID].sort());
+    e.advance(61_000);
+    await e.hb.getBoard();
+    expect(e.calls('pop_guide_ticks')).toBe(2);
+    expect(e.rpcCalls).toBe(2);
+  });
+});
+
+// The bot cannot load the site's TypeScript, so utils/popSelfProof.js carries copies of two tables. They are
+// compared with the originals here, so a gate or guide step edited on the site cannot leave the board behind.
+describe('the bot\'s copies of the site\'s proof tables have not drifted', () => {
+  it('/who zones and what each proves match web/lib/popWho.ts', () => {
+    expect(popSelfProof.WHO_ZONE).toEqual(WHO_ZONE);
+    for (const zone of new Set(Object.values(WHO_ZONE))) {
+      expect(new Set(popSelfProof.WHO_PROVES[zone]), zone).toEqual(new Set(whoProves(zone)));
+    }
+    expect(Object.keys(popSelfProof.WHO_PROVES).sort()).toEqual([...new Set(Object.values(WHO_ZONE))].sort());
+  });
+
+  it('a guide tick reports the same flag as web/lib/popSelfFlags.ts, for every guide key and every flag: key', () => {
+    const fromGuide = Object.fromEntries(GUIDE_ITEMS.filter(i => i.flag).map(i => [i.key, i.flag]));
+    expect(popSelfProof.GUIDE_TICK_FLAG).toEqual(fromGuide);
+    for (const k of SELF_TICK_KEYS) {
+      const flag = flagForTickKey(k);
+      expect(popSelfProof.flagsForTickKey(k)[0], k).toBe(flag);
+    }
+    expect(popSelfProof.flagsForTickKey('not_a_step')).toEqual([]);
+    expect(popSelfProof.flagsForTickKey('flag:unmapped')).toEqual([]);
   });
 });
 

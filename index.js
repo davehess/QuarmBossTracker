@@ -2589,6 +2589,16 @@ async function handleWhoFamily(interaction) {
   return interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [embed] });
 }
 
+// ── Member left / kicked / banned ─────────────────────────────────────────────
+// Flip wolfpack_members.is_member to false now rather than at the next 6-hourly sync (needs the GuildMembers
+// intent, enabled above). Best-effort: markMemberLeft never throws; the sync's reconcile is the backstop.
+client.on(Events.GuildMemberRemove, (member) => {
+  try {
+    if (member.guild?.id !== process.env.DISCORD_GUILD_ID || member.user?.bot) return;
+    require('./utils/wolfpackMembers').markMemberLeft(member.id).catch(() => {});
+  } catch { /* best-effort */ }
+});
+
 // ── New member onboarding ─────────────────────────────────────────────────────
 client.on(Events.GuildMemberAdd, async (member) => {
   const pkg = require('./package.json');
@@ -3152,6 +3162,33 @@ function _threatDeleteCutoff({ archivedThrough, graphThrough, retentionCutoff })
   return new Date(Math.min(archivedThrough.getTime(), graphThrough.getTime(), retentionCutoff.getTime()));
 }
 
+// Delete threat snapshots older than `cutoffIso` in small bounded batches via the
+// prune_threat_snapshots RPC (migration 20261015041000), pausing between calls so a
+// small Supabase instance is never hammered. Stops when a call removes 0 rows
+// ('done'), the time budget is spent ('budget' — resumes next night), or a call
+// fails ('error' — the RPC answered null/non-number). Never throws.
+// `now`/`sleep` are injectable so the loop is testable without a clock or a database.
+async function _sweepThreatSnapshots(supabase, cutoffIso, {
+  batch = 2000, budgetMs = 120000, pauseMs = 1000,
+  now = Date.now, sleep = (ms) => new Promise(r => setTimeout(r, ms)),
+} = {}) {
+  const startedAt = now();
+  let deleted = 0, batches = 0, stop = 'budget';
+  try {
+    while (now() - startedAt < budgetMs) {
+      const n = await supabase.rpc('prune_threat_snapshots', { p_cutoff: cutoffIso, p_batch: batch });
+      if (typeof n !== 'number') { stop = 'error'; break; }
+      if (n === 0) { stop = 'done'; break; }
+      batches++; deleted += n;
+      await sleep(pauseMs);
+    }
+  } catch (err) {
+    stop = 'error';
+    console.warn('[midnight] threat snapshot prune failed:', err?.message);
+  }
+  return { deleted, batches, stop };
+}
+
 // ── Midnight tasks ─────────────────────────────────────────────────────────
 function scheduleMidnightSummary(readyClient) {
   const historyThreadId = process.env.HISTORIC_KILLS_THREAD_ID;
@@ -3367,11 +3404,15 @@ function scheduleMidnightSummary(readyClient) {
               + '. Nothing deleted; the table will grow until both report in. Deliberate: see the header above.');
           } else {
             const cutoff = cutoffDate.toISOString();
-            await supabase.del(
-              'encounter_threat_snapshots',
-              `snapshot_at=lt.${encodeURIComponent(cutoff)}`,
-            );
-            console.log(`[midnight] swept encounter_threat_snapshots older than ${cutoff} `
+            // BATCHED (2026-10-15): one DELETE over ~1M rows seq-scanned and hit the 10s
+            // abort every night. prune_threat_snapshots removes a bounded batch per call
+            // off existing indexes; this loops it with a pause inside a time budget and
+            // resumes tomorrow where it stopped. Never throws.
+            const batch = parseInt(process.env.THREAT_SWEEP_BATCH, 10) || 2000;
+            const budgetSec = parseInt(process.env.THREAT_SWEEP_BUDGET_SEC, 10) || 120;
+            const swept = await _sweepThreatSnapshots(supabase, cutoff, { batch, budgetMs: budgetSec * 1000 });
+            console.log(`[midnight] swept ${swept.deleted} encounter_threat_snapshots older than ${cutoff} `
+              + `in ${swept.batches} batch(es), stopped: ${swept.stop} `
               + `(retention ${keep}d; archived through ${archivedThrough.toISOString()}; `
               + `graphs through ${graphThrough.toISOString()})`);
           }

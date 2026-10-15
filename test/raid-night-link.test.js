@@ -33,6 +33,7 @@ const block = sliceBlock(
 function build({ enabled = true, nightRows = [{ id: 'night-uuid-1' }], insertFails = false } = {}) {
   const harness = `
     const calls = { inserts: [], selects: [], updates: [] };
+    const _raidNightIdByKey = new Map();
     function isEnabled() { return ${enabled}; }
     function _guildId() { return 'wolfpack'; }
     async function insertIgnoreDuplicates(table, rows) {
@@ -119,6 +120,34 @@ describe('linkEncounterToRaidNight', () => {
     expect(bad.calls.inserts).toHaveLength(2);
     expect(bad.calls.inserts[1].rows[0]).not.toHaveProperty('zone_main');
     expect(id, 'losing the zone label must not lose the link').toBe('night-uuid-1');
+  });
+
+  it('a night already known costs no insert and no select on later uploads', async () => {
+    const h = mk();
+    const a = await h.linkEncounterToRaidNight({ encounterId: 'e1', startedAtMs: SUN_2054_ET, zoneShort: 'thedeep' });
+    const b = await h.linkEncounterToRaidNight({ encounterId: 'e2', startedAtMs: SUN_2054_ET + 60_000, zoneShort: 'thedeep' });
+    expect(a).toBe('night-uuid-1');
+    expect(b).toBe('night-uuid-1');
+    expect(h.calls.inserts, 'second upload must not re-insert the night').toHaveLength(1);
+    expect(h.calls.selects, 'second upload must not re-read the night').toHaveLength(1);
+    // The encounter is still stamped each time.
+    expect(h.calls.updates.map((u) => u.q)).toEqual([
+      expect.stringContaining('id=eq.e1&'), expect.stringContaining('id=eq.e2&'),
+    ]);
+  });
+
+  it('a different night is not answered from the cache', async () => {
+    const h = mk();
+    await h.linkEncounterToRaidNight({ encounterId: 'e1', startedAtMs: SUN_2054_ET });
+    await h.linkEncounterToRaidNight({ encounterId: 'e2', startedAtMs: SPILLOVER });
+    expect(h.calls.inserts).toHaveLength(2);
+  });
+
+  it('an unresolved night is never cached (the next upload tries again)', async () => {
+    const h = mk({ nightRows: [] });
+    await h.linkEncounterToRaidNight({ encounterId: 'e1', startedAtMs: SUN_2054_ET });
+    await h.linkEncounterToRaidNight({ encounterId: 'e2', startedAtMs: SUN_2054_ET });
+    expect(h.calls.inserts).toHaveLength(2);
   });
 
   it('no-ops safely on bad input or a disabled backend', async () => {
