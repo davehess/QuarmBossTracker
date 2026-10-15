@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.276': [
+    '**Raid review now links to the full session review page.** The after-raid write-up has a "Full session review" button that opens the map replay, fights, loot and rolls, and attendance for that night (sign-in required).',
+  ],
   '3.1.275': [
     '**The guild now keeps a library of clean kite loops.** When your Mimic sees you run a steady, non-drifting circle, it shares just the circle (where it is, how big, how long a lap takes, how fast you ran), never your path and never who you are. Everyone\'s Map can then show the best loops at each spot (Mimic beta, coming next).',
   ],
