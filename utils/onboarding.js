@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.279': [
+    '**Mob Info now carries how far a mob\'s regular Rampage reaches.** For a mob that rampages, the lookup carries the reach, the chance per round and the damage, so Mimic\'s map can ring it too (needs the next Mimic beta).',
+  ],
   '3.1.278': [
     '**Mob Info can now say how wide a mob\'s Area Rampage reaches.** For a mob that area-rampages, the lookup carries the reach (standing and moving), the chance per round and how many it hits, so Mimic\'s map can ring it (needs the next Mimic beta).',
   ],
