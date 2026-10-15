@@ -6106,3 +6106,14 @@ submenu, overlay sets, UI Studio named layouts and chat windows, sounds / voices
 targets, DPS per-person time, Target Info hit types, Charm "Best pets here", roll ties, timer ✕, clean shutdown, flicker and refocus fixes. Web 1.8.159
 (roadmap). `apps/mimic/pop-quests.js` came with the web PoP graduation (web 1.8.158). Also tonight (§332): Linux `2.9.1-linux.41`, alpha
 re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). ⚠ Vercel's daily cap held back the web build; redeploy after the freeze.
+**Done 2026-10-15:** web 1.8.158/1.8.159 deployed (`0cf809fb` via the Vercel MCP), card posted 04:52 UTC.
+
+### 🧾 2026-10-14/15 — raid-night fixes (bot 3.1.268–3.1.271 · agent 3.7.177–3.7.179 beta, DECISIONS §334)
+- ✅ Buff landings no longer lost per batch (`insert_buff_casts`, 3.1.268 hotfix).
+- ✅ A stalled role lookup no longer demotes an officer (Admin tab, DKP tick 403; 3.1.270); dashboard shows the bot's refusal (agent 3.7.178).
+- ✅ Slow mode: 18 h for every boss we kill (3.1.269); the agent reads Druzzil's "thread of time" lines (3.7.177). ⏳ Pin the ON wording.
+- ✅ Hail board counts guide ticks + /who sightings; departed members flip to is_member=false; raid_nights + merge 409s; batched
+  threat sweep (`prune_threat_snapshots`) — all 3.1.271. ⏳ `VACUUM FULL`/`pg_repack` off-hours to give the space back.
+- ✅ Mimic chat wrap spacing (beta). ✅ Feedback in its own window with an autosaved draft (agent 3.7.179 beta; ⏳ live check).
+  ❓ Dashboard drag stutter (waiting on the guild lead's tests).
+- ⏳ Picks: compute upgrade A/B; pre-raid "typical" source; Vercel deploy hooks (secrets).
