@@ -1082,6 +1082,9 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   signature as the floating Save and never holding the token; `_offerDraft` at the end of `load()`;
   a `beforeunload` bar asks before closing. `before-quit` destroys the Settings window, because in
   Electron a cancelled unload also cancels the quit.
+- **Chat overlay — Loot / Random / Other** (agent 3.7.181 beta, §340): opt-in groups beside Melee/Spells/Skills
+  (`classifyLootLine`, `classifyRandomLine`, `classifyOtherLine` — Other last, re-asks the switched-off classifiers,
+  never takes chat), their own 300-line rings in `_chatExtraRings`, policy keys `loot/random/other`.
 - **Chat overlay** (`chat.html`, key `chat`, agent 3.7.165 · Mimic beta, §300): `classifyChatLine` (quoted and Zeal-abbreviated
   shapes) → `noteLocalChatLine` (beside the tell tap, inside `!_sourceExcluded`) → `_chatRing` (500, memory only) → `GET /api/chat`
   (`since`/`boot` cursor, page ≤200, `_localOriginOk`). Groups are data (`CHAT_GROUPS`, `{id,label,channels,gate}`); the page paints

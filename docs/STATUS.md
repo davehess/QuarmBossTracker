@@ -530,7 +530,10 @@ next touch one rather than assuming a missing row means a missing doc.
   commits (1.8.161–1.8.169) cherry-picked to main; the two entries below are now live on wolfpack.quest.
 - **✅ UI Studio shows the current UI (Mimic beta `5ce28ec4`, 2026-10-15, §339):** picking a character loads their
   live UI files at their own resolution, no target needed; the file's last-written time is shown. Waiting on the
-  guild lead's check of whether the time moves after /camp.
+  guild lead's check of whether the time moves after /camp. The chat-window 🗑 works again (`2ee913cb`): a refusal
+  shows on the card, Save resets the baseline, a click is not a drag.
+- **✅ Chat overlay Loot / Random / Other (agent 3.7.181 beta, 2026-10-15, §340):** opt-in in the chat ⚙. Money waits on
+  one real coin line from the guild lead.
 - **✅ Post-raid link + full parses (bot 3.1.276 main; web 1.8.171 beta, 2026-10-15, §338):** the final raid review
   in Discord gets a "Full session review" button to that night's `/raid/session`; on beta every fight in the
   session review (and on a share page) opens into a full parse table, loaded on open
