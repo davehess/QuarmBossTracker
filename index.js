@@ -7604,8 +7604,16 @@ async function _handleAgentServerPanel(req, res) {
       // Summed in the database: this used to total the 200 largest SINGLE-FIGHT rows and call that
       // the "30 d total" (a top-25 whose first place showed 5.5M over 19 fights against a real 15.8M
       // over 845, 2026-10-04) — a ranking of one-fight peaks, wrong by construction.
-      const rows = await supabase.rpc('encounter_damage_by_character',
-        { p_guild_id: guildId, p_since: since30d, p_limit: 25 });
+      // 5-minute memo: a 30-day total barely moves, and every Mimic dashboard polled this uncached — 11.7k calls at
+      // ~0.5 s each since 2026-10-12, the third-largest database cost behind the 2026-10-14 overload.
+      let rows;
+      if (globalThis._dmg30Cache && Date.now() - globalThis._dmg30Cache.at < 5 * 60_000) {
+        rows = globalThis._dmg30Cache.rows;
+      } else {
+        rows = await supabase.rpc('encounter_damage_by_character',
+          { p_guild_id: guildId, p_since: since30d, p_limit: 25 });
+        if (Array.isArray(rows)) globalThis._dmg30Cache = { at: Date.now(), rows };
+      }
       const list = (rows || []).map(r => ({
         character: r.character_name,
         totalDamage: Number(r.total_damage) || 0,
@@ -12177,6 +12185,7 @@ const _SHED_KINDS = new Set([
   'trigger_relay', 'ui_layout', 'tells',                       // fan-out / backup / side-record
   'corpse',                                                    // the corpse DM's off switch
   'xp_events',                                                 // XP board telemetry (FB-37)
+  'kite_loop',                                                 // the kite-loop library's uploads (a nicety, never the raid's record)
 ]);
 const _SHED_NEVER = new Set(['encounter', 'chat', 'bosskill', 'lockout', 'historical_chat']);
 async function _isShedded(kind, res) {
@@ -12271,6 +12280,10 @@ const _BUDGET_DEFAULTS = {
   zone_spawns:     { perMin: 30,  durable: false, get: true },
   // Charm overlay "Best pets here" (2026-10-14): same shape as zone_spawns, one GET per zone-in then a 304.
   charm_pets:      { perMin: 30,  durable: false, get: true },
+  // Kite-loop library (2026-10-15). The POST is ephemeral (a clean loop is re-found on the next run), so over budget
+  // is the 200-ack-and-drop of the shed pattern; the GET is one pull per zone-in, 60 s cached at the bot.
+  kite_loop:       { perMin: 30,  durable: false },
+  kite_loops:      { perMin: 30,  durable: false, get: true },
   // Mimic Spawn map sync (GET poll + POST push share it). A poll every few seconds per open map is ~20/min;
   // over budget is a 429 the agent backs off on (get:true applies to both verbs).
   map_sync:        { perMin: 60,  durable: false, get: true },
@@ -13716,6 +13729,8 @@ if (process.env.RAID_TICK_CAPTURE !== '0') {
 
 // Raid replay recorder (utils/raidTrack.js): folds the roster uploads into one row per minute.
 require('./utils/raidTrack').start();
+// …and the NPCs the raid has targeted ride each frame (counts only, never who): read lazily, the instance is built below.
+require('./utils/raidTrack').setTargetSource((isRaider) => _raidTargets().snapshot(isRaider));
 
 // Raid hold — tells every agent to hold its background file work for later
 // while a raid is active ("gracefully tell mimic to hold onto its files",
@@ -14603,12 +14618,22 @@ async function _handleAgentLiveDamage(req, res) {
     : '';
   let rows = [];
   try {
-    rows = await supabase.select('encounter_threat_snapshots',
-      `guild_id=eq.${encodeURIComponent(guildId)}`
-      + `&boss_name=eq.${encodeURIComponent(boss)}`
-      + `&snapshot_at=gte.${encodeURIComponent(since)}`
-      + fightClause
-      + `&select=uploader,snapshot_at,per_player&order=snapshot_at.desc&limit=400`) || [];
+    // live_damage_snapshots (migration 20261015060000) is the same read phrased on lower(boss_name), which the
+    // existing boss index serves: 153 ms → ~1–3 ms. As a plain `boss_name=eq.` select this was ~70% of all
+    // database time and part of the 2026-10-14 mid-raid overload. A failed call (null) falls back to the old read.
+    rows = await supabase.rpc('live_damage_snapshots', {
+      p_guild_id: guildId, p_boss: boss, p_since: since,
+      p_start_lo: oneFight ? new Date(fightStartMs - 20_000).toISOString() : null,
+      p_start_hi: oneFight ? new Date(fightStartMs + 20_000).toISOString() : null,
+    }).catch(() => null);
+    if (!Array.isArray(rows)) {
+      rows = await supabase.select('encounter_threat_snapshots',
+        `guild_id=eq.${encodeURIComponent(guildId)}`
+        + `&boss_name=eq.${encodeURIComponent(boss)}`
+        + `&snapshot_at=gte.${encodeURIComponent(since)}`
+        + fightClause
+        + `&select=uploader,snapshot_at,per_player&order=snapshot_at.desc&limit=400`) || [];
+    }
   } catch (err) {
     console.warn('[live-damage] select failed:', err?.message);
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -17511,6 +17536,41 @@ async function _handleAgentCharmPets(req, res) {
   res.end(gzip ? r.gz : r.body);
 }
 
+// POST /api/agent/kite-loop and GET /api/agent/kite-loops?zone=<short_name> — the guild's library of clean kite loops
+// (the guild lead, 2026-10-15). Mimic uploads ONLY a fitted circle; utils/kiteLoops.js validates, merges and serves it.
+// The uploader's discord id is the rate-limit key in memory and is never stored (the table has no such column).
+async function _handleAgentKiteLoopPost(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const kite = require('./utils/kiteLoops');
+  const supabase = require('./utils/supabase');
+  if (!kite.allowUpload(String(identity.discord_id || 'unknown'))) {
+    // Same shape as the admission-budget drop: the agent treats it as delivered and moves on.
+    return _ptsJson(res, 200, { ok: true, rate_limited: true });
+  }
+  const got = await _ptsReadBody(req, 8 * 1024);
+  if (got.tooBig) return _ptsJson(res, 413, { error: 'payload too large' });
+  if (got.error) return _ptsJson(res, 400, { error: 'read failed' });
+  let body; try { body = JSON.parse(got.text); } catch { return _ptsJson(res, 400, { error: 'invalid json' }); }
+  const v = kite.validateLoop(body, Date.now());
+  if (v.error) return _ptsJson(res, 400, { error: v.error });
+  if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'database unavailable' });
+  const r = await kite.ingest(supabase, supabase.guildId(), v.loop, Date.now());
+  if (r.status !== 200) return _ptsJson(res, 503, { error: 'try again shortly' });
+  return _ptsJson(res, 200, { ok: true, id: r.id, merged: r.merged });
+}
+async function _handleAgentKiteLoopsGet(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const kite = require('./utils/kiteLoops');
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'database unavailable' });
+  const r = await kite.query(supabase, supabase.guildId(), new URL(req.url, 'http://x').searchParams.get('zone'), Date.now());
+  if (r.status === 400) return _ptsJson(res, 400, { error: 'unknown or invalid zone' });
+  if (r.status !== 200) return _ptsJson(res, 503, { error: 'try again shortly' });
+  return _ptsJson(res, 200, { loops: r.loops });
+}
+
 // POST/GET /api/agent/map-sync — the Mimic Spawn map's synced spawn-point events (the guild lead,
 // 2026-10-12). The agent pushes CERTAIN attributions (utils/mapSync.js validates; a bad event is dropped,
 // a bad body or zone is a 400) and pulls everyone else's, so a zone's respawn timers match across the
@@ -17840,8 +17900,15 @@ async function _handleAgentWhoLookup(req, res) {
       const supabase = require('./utils/supabase');
       if (supabase.isEnabled()) {
         const inList = needDir.map(n => `"${String(n).toLowerCase().replace(/"/g, '')}"`).join(',');
-        const rows = await supabase.select('who_directory',
-          `character_key=in.(${encodeURIComponent(inList)})&select=character_key,observed_class,level,guild_name,last_seen,ever_zek_guild,ever_inferred_zek&limit=80`);
+        // who_directory_lookup (migration 20261015071000) returns the view's rows for just these names (~1–4 ms);
+        // filtering the view itself rebuilt the whole directory first (~1.27 s, the second-largest DB cost on
+        // 2026-10-14). The view read stays as the fallback when the function call fails.
+        let rows = await supabase.rpc('who_directory_lookup',
+          { p_keys: needDir.slice(0, 80).map(n => String(n).toLowerCase().replace(/"/g, '')) }).catch(() => null);
+        if (!Array.isArray(rows)) {
+          rows = await supabase.select('who_directory',
+            `character_key=in.(${encodeURIComponent(inList)})&select=character_key,observed_class,level,guild_name,last_seen,ever_zek_guild,ever_inferred_zek&limit=80`);
+        }
         if (Array.isArray(rows)) {
           for (const row of rows) {
             const key = String(row.character_key || '').toLowerCase();
@@ -23858,6 +23925,27 @@ const httpServer = http.createServer(async (req, res) => {
       console.error('[charm-pets] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/kite-loop') {
+    if (await _isShedded('kite_loop', res)) return;
+    if (await _overBudget('kite_loop', req, res)) return;
+    try { return await _handleAgentKiteLoopPost(req, res); }
+    catch (err) {
+      console.error('[kite-loop] handler error:', err);
+      if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'internal error' })); }
+      return;
+    }
+  }
+
+  if (req.method === 'GET' && req.url.split('?')[0] === '/api/agent/kite-loops') {
+    if (await _overBudget('kite_loops', req, res)) return;
+    try { return await _handleAgentKiteLoopsGet(req, res); }
+    catch (err) {
+      console.error('[kite-loops] handler error:', err);
+      if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'internal error' })); }
+      return;
     }
   }
 

@@ -2572,6 +2572,18 @@ first `opensOn` grant (`thelin_2` event / `cl_maze` checklist) whose zone resolv
 only grants in state 4, after the last construct, the shard and Terris-Thule's talk — and runs `minutes: 10` (his
 state-4 depop) from that grant; roster = the current raid. Hails open nothing (the 3.1.258 two-groups-hail opener
 fired at the maze's START). One window per NPC at a time. No Mimic change: `hailBoardHtml` draws it.
+**More proof (bot 3.1.271, 2026-10-15, §334):** "already flagged" also counts a member's own PoP-guide tick (`pop_guide_ticks`) and a
+/who sighting inside a plane that flag opens (`pop_who_sightings` RPC) — `readProof` in `utils/hailBoard.js`, tables in
+`utils/popSelfProof.js` (copies of `web/lib/popWho.ts` / `popGuide.ts`, drift-tested in `test/hail-board.test.js`). A failed read
+falls back to pop_flags only.
+**Slow mode (bot 3.1.244 → 3.1.269, agent 3.7.177 beta, §237 → §334):** `utils/slowMode.js`. A guild-wide window in `bot_kv`
+`slow_mode` (officer `/slowmode`, 8 h auto-off, or the agent's report of Druzzil Ro's "thread of time" guild line via
+`POST /api/agent/slow-mode`, which keeps the line as `set_line`/`off_line`). Any boss we kill inside the window gets
+`slowModeHours` or 18 h, applied once in `recordKill`'s wrapper and in the boot rebuild (`utils/reconcileKills.js`); the board tags it 🐢.
+**Feedback window (agent 3.7.179 beta, §334):** Mimic's 💬 Feedback (dashboard button + tray) opens `openFeedback()` in
+`apps/mimic/main.js`, a plain window on the dashboard page's feedback-only mode (`/?feedback=1`, `WP_FEEDBACK_MODE` in
+`dashboard.html`), so dashboard reloads never wipe a half-typed report; the draft autosaves (`_wpFbDraftSave`). A browser tab
+keeps the in-page card.
 
 ### Bristlebane — the raid-voice bot (bristlebane 0.1.0, bot 3.1.208, §166)
 Its own Discord application and container: `apps/bristlebane/` (`index.js` = Discord glue, `lib.js` = the
@@ -4159,8 +4171,17 @@ The raid on the zone map, live, for signed-in members.
   minute is ONE row in `raid_track_minutes` (compact JSON text: who, zones, frames), zone stamped per uploader
   from `character_live_state`. `exclude_from_stats` characters are never written. Kept indefinitely; the Tower
   archive (`scripts/lib/archive-merge.sql`) creates the table there and keeps every row. A sweep exists but is
-  off, and if turned on deletes only up to `bot_kv archive_watermark_raid_track_minutes`. No replay page yet:
-  the look is the guild lead's pick (§161).
+  off, and if turned on deletes only up to `bot_kv archive_watermark_raid_track_minutes`.
+  **Targets (bot 3.1.274, §335):** each frame also takes `utils/raidTargets.js` `snapshot()` — the NPCs the
+  frame's raiders have targeted (live-state, ~45 s heartbeat, sooner on a target change), most-targeted first, at
+  most 20 — written as optional `mobs` / `mf` keys (`[dt, mi, x, y, z, n, zi]`, x/y swapped back to the roster
+  frame, n = a count of targeters, never who).
+- **Replay (`/spectator/replay`, web 1.8.160, §335):** `web/app/spectator/replay/ReplayBoard.tsx` (canvas, one
+  rAF loop while playing) reads `/api/spectator/replay` — `?nights=1` for the night list (60 days, summarised in
+  `web/lib/raidReplay.ts` `summarizeNights`), `?night&from&to` for at most 15 minute rows. `raidReplay.ts`
+  decodes a row (`decodeMinute`, applies the same axis swap), picks the zone to show, and finds the frame at a
+  time; `test/raid-replay-decode.test.js` builds rows with the bot's real `buildMinuteRow`. The map layers come
+  from the live board (`prepare`, `bandColor` exported from `SpectatorBoard.tsx`).
 - **Tests:** `test/spectator-positions.test.js`, `test/zone-map-slice.test.js`, `test/zone-map-brewall.test.js`,
   `test/raid-track.test.js`.
 

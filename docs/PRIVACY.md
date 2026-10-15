@@ -149,6 +149,9 @@ then carries a personal token tied to your Discord account. **Signing Mimic out
   just killed, whether an XP potion is up, and **the names of your group** with
   their class and level. Not for a character you excluded from stats. Used to
   compare groups, zones and mobs for experience.
+- **Clean kite loops** (Mimic beta, coming next): when your own movement makes a
+  steady circle, only the circle goes up — zone, centre, size, lap time, speed.
+  Never the path you ran, and the bot stores nothing about who ran it.
 - Your inventory, spellbook and Quarmy exports, if the files exist.
 - Housekeeping: app versions, your main character, zone and a clock check.
 
@@ -365,7 +368,7 @@ server events, counted from the start).
 | What | Kept |
 |---|---|
 | Who targeted what | 1 day |
-| Where your target stands (for the Map's raid focus mark) | In the bot's memory only, about 90 seconds |
+| Where your target stands (for the Map's raid focus mark) | In the bot's memory, about 90 seconds. The monster's name, spawn id, position and how many raiders had it targeted (never who) are also kept with the raid replay recording, as long as the raid positions are |
 | An escort NPC's walked path (no player named) | 12 hours |
 | Raid roster with positions | about a day |
 | Raid positions kept for replay (one sample every few seconds) | Kept for now; the Archive's copy is permanent |
@@ -373,6 +376,7 @@ server events, counted from the start).
 | Per-hit parse detail | 7 days (the parse totals are kept) |
 | Threat snapshots | 30 days is the rule; the clean-up has fallen behind, so older ones exist today |
 | Experience gained (with your group's names) | 30 days |
+| Kite loops: the circle only (zone, centre, size, lap time, speed) — never the path or who ran it | Until a better loop at the same spot replaces it; at most 60 per zone |
 | `/who` sightings | 60 days, plus the most recent sighting of each character, indefinitely |
 | **Everything else** — chat, tells, parses, loot, rolls, crash reports, feedback, page views, sign-in records, your last live status, the Discord member list (including people who have left) | **No deletion date.** Kept until someone asks |
 

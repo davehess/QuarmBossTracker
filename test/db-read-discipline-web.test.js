@@ -538,6 +538,7 @@ const BIG_TABLES = `
   eqemu_npc_emotes eqemu_spells roll_sets character_lockouts charm_sessions eqemu_faction_list_full
   pvp_deaths agent_upload_stats bosses_local eqemu_npc_faction opendkp_ticks eqemu_zone_points
   eqemu_npc_spells eqemu_spell_pop eqemu_forage character_aas ui_socials_index character_live_state
+  raid_track_minutes
 `.split(/\s+/).filter(Boolean);
 const BIG_VIEWS = `
   character_data_floor character_rollup_coverage encounter_upload_counts item_with_proc opendkp_loot_recent
@@ -590,7 +591,9 @@ const UNIQUE_KEYS = {
   encounter_events: [['id']],
   opendkp_loot: [['id'], ['raid_id', 'character_name', 'dkp']],
   eqemu_spawn2: [['id']],
+  eqemu_spawnentry: [['spawngroup_id', 'npc_id']],   // pkey (spawngroup_id, npc_id), 20260525120000; /api/spectator/replay/bosses pages it
   pvp_boss_kills: [['id'], ['dedup_key']],
+  raid_track_minutes: [['minute_at']],   // pkey (guild_id, minute_at), 20261005020000; /spectator/replay pages the night list
 };
 
 const SOURCES = webSources().map(f => [f, stripJs(read(f))]);

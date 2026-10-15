@@ -536,13 +536,16 @@ next touch one rather than assuming a missing row means a missing doc.
   game but your log is quiet for 5 min (state field only, no UI yet), a tail watchdog that recovers a hung read,
   bug-report excerpts that keep the newest lines, and no false "corrupt queue" on an empty queue. Open: the log
   archiving sweep never runs in watch mode (§162), and the on-screen warning is a UI call. DECISIONS-2026-09-21 §162.
-- **⏳ Raid replay: recorder built (bot 3.1.203, 2026-10-05), not on main yet; the replay page waits on a pick.**
-  Keeps every raid's positions, one sample per raider every 3 s, one row per minute in `raid_track_minutes`
-  (~2–4 MB a full night). **Every raid is kept until storage becomes an issue, and the Tower archive keeps its
-  own copy forever** (the guild lead, 2026-10-05); a sweep, if ever turned on, deletes only what Tower holds.
-  Migration applied; the code waits on `claude/sharp-lamport-dC0TW` for the guild lead to release it. Released
-  before Wednesday 2026-10-07, that is the first raid recorded. ⚠ Tower step below. The look (A night scrubber, B fight replays on the
-  raid review, C trails) is the guild lead's pick. DECISIONS-2026-09-21 §161.
+- **✅ Raid replay A: the night scrubber is live [beta] (web 1.8.160, 2026-10-15); C, 3D walls, is on beta
+  (web 1.8.162, `https://b.wolfpack.quest/spectator/replay`: 2D/3D, follow + highlight, floors, boss markers,
+  split screen), waiting on the guild lead's look. Bot 3.1.274 records the raid's NPC targets from 2026-10-15.**
+  `https://wolfpack.quest/spectator/replay` plays `raid_track_minutes` back on the spectator map: night picker,
+  slider with the recorded stretches, play up to 60×, the map following the busiest zone (or a pinned one), 30 s
+  tails, the zones in visit order. Reads 15-minute windows (`/api/spectator/replay`, members only); decoder
+  `web/lib/raidReplay.ts`, tested against the bot's own encoder. The guild lead picked **A, then C** (2026-10-15).
+  The recorder (bot 3.1.203) keeps every raid's positions, one sample per raider every 3 s, ~2–5 MB a night, until
+  storage becomes an issue; the Tower archive keeps its own copy forever. ⚠ Tower step below. Still unchecked: the
+  heading direction. DECISIONS-2026-09-21 §161, §335.
 - **⏳ Queued, not started: our own zone map — A, a website map; then B, the same as a Mimic overlay (the guild lead,
   2026-10-02: "A then B, but not yet").** Spawn points by family, aggro and call-for-help rings, pather routes,
   floors; B adds live dots for you, your group and raid. First step: mirror `grid` / `grid_entries` into the
@@ -6122,3 +6125,14 @@ submenu, overlay sets, UI Studio named layouts and chat windows, sounds / voices
 targets, DPS per-person time, Target Info hit types, Charm "Best pets here", roll ties, timer ✕, clean shutdown, flicker and refocus fixes. Web 1.8.159
 (roadmap). `apps/mimic/pop-quests.js` came with the web PoP graduation (web 1.8.158). Also tonight (§332): Linux `2.9.1-linux.41`, alpha
 re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). ⚠ Vercel's daily cap held back the web build; redeploy after the freeze.
+**Done 2026-10-15:** web 1.8.158/1.8.159 deployed (`0cf809fb` via the Vercel MCP), card posted 04:52 UTC.
+
+### 🧾 2026-10-14/15 — raid-night fixes (bot 3.1.268–3.1.271 · agent 3.7.177–3.7.179 beta, DECISIONS §334)
+- ✅ Buff landings no longer lost per batch (`insert_buff_casts`, 3.1.268 hotfix).
+- ✅ A stalled role lookup no longer demotes an officer (Admin tab, DKP tick 403; 3.1.270); dashboard shows the bot's refusal (agent 3.7.178).
+- ✅ Slow mode: 18 h for every boss we kill (3.1.269); the agent reads Druzzil's "thread of time" lines (3.7.177). ⏳ Pin the ON wording.
+- ✅ Hail board counts guide ticks + /who sightings; departed members flip to is_member=false; raid_nights + merge 409s; batched
+  threat sweep (`prune_threat_snapshots`) — all 3.1.271. ⏳ `VACUUM FULL`/`pg_repack` off-hours to give the space back.
+- ✅ Mimic chat wrap spacing (beta). ✅ Feedback in its own window with an autosaved draft (agent 3.7.179 beta; ⏳ live check).
+  ❓ Dashboard drag stutter (waiting on the guild lead's tests).
+- ⏳ Picks: compute upgrade A/B; pre-raid "typical" source; Vercel deploy hooks (secrets).

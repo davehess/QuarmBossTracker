@@ -8,8 +8,11 @@ WORKDIR /app
 RUN apk add --no-cache ffmpeg
 
 # Install dependencies first (better layer caching)
+# --legacy-peer-deps: with no lockfile npm still resolves the dev tree, and on 2026-10-15 vitest's optional peer
+# set (browser runners, jsdom, canvas) started crashing npm 10's peer resolver ("reading 'edgesOut'") — two
+# Railway builds failed on it. No production dependency needs an auto-installed peer (checked the same day).
 COPY package.json ./
-RUN npm install --omit=dev
+RUN npm install --omit=dev --legacy-peer-deps
 
 # Copy source — .dockerignore excludes data/state.json so it's never baked in
 COPY . .

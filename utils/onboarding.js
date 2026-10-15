@@ -29,6 +29,9 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.275': [
+    '**The guild now keeps a library of clean kite loops.** When your Mimic sees you run a steady, non-drifting circle, it shares just the circle (where it is, how big, how long a lap takes, how fast you ran), never your path and never who you are. Everyone\'s Map can then show the best loops at each spot (Mimic beta, coming next).',
+  ],
   '3.1.271': [
     '**The hail board stops listing people who already have the flag.** It now also counts your own ticks on the PoP guide and /who sightings inside the planes that flag opens, not just what Mimic recorded.',
     '**People who leave the guild drop off our lists.** Members who left or were kicked stop showing up in officer pickers and lose their old roles in our tools.',
