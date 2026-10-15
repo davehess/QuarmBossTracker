@@ -10,7 +10,8 @@
 // stays (a Planar Projection: 20 minutes since the 2026-10-04 Quarm patch; Giwin Mirakon and Tylis Newleaf
 // still depop at 10 in their scripts). The raid at the kill is snapshotted into it. Read time then sorts every
 // name into one of four places, from what we already collect:
-//   already_flagged — their pop_flags progress already holds the step this hail gives (nothing to track).
+//   already_flagged — their pop_flags progress already holds the step this hail gives (nothing to track), or
+//                     their own guide tick / a /who sighting in a plane that gate opens says they do.
 //   hailed          — a flag or checklist grant landed after the kill ('flag'), a hail was witnessed ('seen'),
 //                     or somebody tapped the name ('marked', with who).
 //   still           — everyone else in the kill roster. prior_missing is set when we KNOW they lack the step
@@ -40,6 +41,7 @@
 'use strict';
 
 const popFlagStages = require('./popFlagStages');
+const popSelfProof = require('./popSelfProof');
 
 const MIN = 60_000;
 const WINDOW_MS      = 20 * MIN;   // a Planar Projection's stay
@@ -164,6 +166,11 @@ const HAIL_FLAGGERS = [
     done: ['thelin_2', 'thelin_3', 'thelin_4', 'hedge_event'], checklist: 'cl_maze', prior: [['thelin_1']] },
 ];
 
+// Row sources that prove a state HELD, not when it began, so they settle a raider whenever they were stored:
+// the Seer's recital, a member's own tick on the PoP guide ('tick'), and a /who sighting in a gated plane
+// ('who'). The last two are built in readProof below, never stored in pop_flags.
+const PROOF_SOURCES = new Set(['recital', 'tick', 'who']);
+
 // A catalog name ("#Aerin`Dar", "Terris_Thule") and a log name ("Terris Thule") are the same boss.
 function bossKey(name) {
   return String(name || '').trim().replace(/^#/, '').replace(/[_-]/g, ' ').replace(/'/g, '`')
@@ -212,7 +219,8 @@ function unionNames(...lists) {
 
 // ── The pure part ──────────────────────────────────────────────────────────────────────────────────
 // windows: the stored windows. data: { rows, known } — pop_flags rows ({character, flag_key, source, npc,
-// zone, earned_at}) for the roster, and the lower-case names we hold a Seer recital for.
+// zone, earned_at}) for the roster, plus the 'tick' / 'who' proof rows readProof builds, and the lower-case
+// names we hold a Seer recital for.
 // Returns one view per window, in the contract's shape.
 function buildViews(windows, data, nowMs) {
   const rows = (data && data.rows) || [];
@@ -246,7 +254,7 @@ function buildViews(windows, data, nowMs) {
       const grant = (r) => r.t >= cutoff && r.t <= until && (r.source === 'event' || r.source === 'checklist');
       const doneRows = mine.filter(r => cfg.done.includes(r.flag_key));
       // Held before the kill — or reported by the Seer, which proves the state and not when it began.
-      const before = doneRows.some(r => r.source === 'recital' || r.t < cutoff);
+      const before = doneRows.some(r => PROOF_SOURCES.has(r.source) || r.t < cutoff);
       const flagNow = doneRows.some(grant) || (cfg.checklist && mine.some(r => r.flag_key === cfg.checklist && grant(r)));
       if (mine.some(grant)) feeders.add('c:' + k);
       if (before) { already.push(name); continue; }
@@ -285,7 +293,7 @@ function create({ supabase, guildId, now = Date.now, log = console } = {}) {
   let loaded = false, loadedAt = 0, dirty = false;
   let version = 0;                     // bumped on every change: a mark never waits out the 5 s cache
   let cache = null;
-  let base = null;                     // { key, at, rows } — what each raider held, refreshed every minute
+  let base = null;                     // { key, at, rows, proof } — what each raider held, refreshed every minute
   const known = new Set();             // lower-case names we hold a Seer recital for
   const asked = new Map();             // lower-case name → when we last asked
   let rosterRetryAt = 0;               // when a pending roster was last (re)read
@@ -491,6 +499,32 @@ function create({ supabase, guildId, now = Date.now, log = console } = {}) {
     return added;
   }
 
+  // The proof pop_flags does not hold (the guild lead, 2026-10-14: the board listed raiders who already had the
+  // flag): a member's own ticks on the PoP guide and /who sightings in a gated plane, as `tick` / `who` rows
+  // shaped like pop_flags rows so buildViews reads them unchanged. One query per source, for the roster only.
+  // A failed read is null for that source and the board runs on what it has, never blocked on this.
+  async function readProof(names, keys) {
+    const want = new Set(keys);
+    const out = [];
+    const flagRows = (character, flags, earned_at) => {
+      for (const f of flags) if (want.has(f)) out.push({ character, flag_key: f, source: 'tick', earned_at });
+    };
+    const ticks = await supabase.selectAllPaged('pop_guide_ticks',
+      `guild_id=eq.${enc(gid())}&character_name=in.(${names.map(enc).join(',')})&select=character_name,item_key,ticked_at`,
+      'character_name,item_key').catch(() => null);
+    for (const r of ticks || []) flagRows(r.character_name, popSelfProof.flagsForTickKey(r.item_key), r.ticked_at || iso(now()));
+    const zones = popSelfProof.whoZonesProving(want);
+    const sights = zones.length ? await (async () => supabase.rpc('pop_who_sightings',
+      { p_guild_id: gid(), p_names: names.map(lc), p_zones: zones }))().catch(() => null) : [];
+    for (const r of Array.isArray(sights) ? sights : []) {
+      const chart = popSelfProof.WHO_ZONE[lc(r.zone)];
+      for (const f of (chart && popSelfProof.WHO_PROVES[chart]) || []) {
+        if (want.has(f)) out.push({ character: r.character_key, flag_key: f, source: 'who', earned_at: r.first_seen || iso(now()) });
+      }
+    }
+    return { rows: out, ok: Array.isArray(ticks) && Array.isArray(sights) };
+  }
+
   // The data a view is built from. A failed read leaves that part empty (nobody is claimed settled or missing).
   async function loadData(ws) {
     if (await addWitnessedHailers(ws)) save();    // persisted, not awaited: the response does not wait on a write
@@ -506,7 +540,12 @@ function create({ supabase, guildId, now = Date.now, log = console } = {}) {
       const rows = await supabase.selectAllPaged('pop_flags',
         `guild_id=eq.${enc(gid())}&character=${inList}&flag_key=in.(${keys.join(',')})&select=character,flag_key,source,earned_at`, 'id')
         .catch(() => null);
-      base = { key: baseKey, at: now(), rows: rows || (base && base.key === baseKey ? base.rows : []) };
+      const same = base && base.key === baseKey ? base : null;
+      // Moves as slowly as the history above, so it rides the same refresh. A source that failed keeps what the
+      // last good read held for this same roster, and the pop_flags rows alone are the floor.
+      const got = await readProof(names, keys).catch(() => null);
+      const proof = got && got.ok ? got.rows : [...(same ? same.proof : []), ...(got ? got.rows : [])];
+      base = { key: baseKey, at: now(), rows: rows || (same ? same.rows : []), proof };
     }
     const since = iso(Math.min(...ws.map(w => Date.parse(w.opened_at))) - FLAG_SLACK_MS);
     const recent = await supabase.selectAllPaged('pop_flags',
@@ -521,7 +560,7 @@ function create({ supabase, guildId, now = Date.now, log = console } = {}) {
         .catch(() => null);
       for (const r of rec || []) known.add(lc(r.character));
     }
-    return { rows: [...base.rows, ...(recent || [])], known };
+    return { rows: [...base.rows, ...base.proof, ...(recent || [])], known };
   }
 
   function computeAll() {
