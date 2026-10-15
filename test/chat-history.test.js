@@ -259,7 +259,7 @@ describe('buildChatHistory', () => {
     const f = mk('Aldenmar', [at(10, "Rethlan tells Wolfpackofficer:5, 'off'")]);
     await HIST([{ character: 'Aldenmar', file: f }], { officer: true });
     expect(agent._chatRingForTest()).toHaveLength(0);
-    expect(agent.chatPolicyNow()).toEqual({ tells: false, group: false, officer: false, custom: false, melee: false, spells: false, skills: false });
+    expect(agent.chatPolicyNow()).toEqual({ tells: false, group: false, officer: false, custom: false, melee: false, spells: false, skills: false, loot: false, random: false, other: false });
   });
 });
 
