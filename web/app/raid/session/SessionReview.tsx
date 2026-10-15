@@ -11,6 +11,7 @@ import { classColor } from '@/lib/spectator';
 import { MINUTE_MS, REPLAY_WINDOW_MS, type NightSummary } from '@/lib/raidReplay';
 import type { AttendeeRow, KillRow, LootEntry, RollEntry, SessionBundle, TickRow } from '@/lib/raidSession';
 import ReplayBoard, { type BoundedReplay } from '@/app/spectator/replay/ReplayBoard';
+import DataSources from './DataSources';
 
 export type ReviewMode = { kind: 'member' } | { kind: 'share'; token: string };
 
@@ -106,6 +107,8 @@ export default function SessionReview({ bundle, night, mode, extras }: {
         {tab === 'loot' && <LootAndRolls loot={bundle.loot} rolls={bundle.rolls} go={go} />}
         {tab === 'parses' && <Parses kills={bundle.kills} go={go} />}
       </div>
+
+      <DataSources />
     </div>
   );
 }
