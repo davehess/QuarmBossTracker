@@ -47,6 +47,15 @@
         ],
         "createdAt": "2026-10-05T15:42:20.097Z",
         "reason": "Repo rule (CLAUDE.md: overlays are read mid-raid over a moving 3D scene; frontend-design wins): the #alert halo is a legibility shadow behind the callout text, not decoration"
+      },
+      {
+        "rule": "layout-transition",
+        "value": "*",
+        "files": [
+          "web/app/globals.css"
+        ],
+        "createdAt": "2026-10-15T16:27:15.057Z",
+        "reason": "intentional, pre-existing (web 1.7.13): .wp-rail animates height on purpose — the comment above it says the lit rail's height IS the elapsed-time display and should visibly travel when scrubbed"
       }
     ]
   }
