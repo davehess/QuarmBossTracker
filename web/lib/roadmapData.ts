@@ -37,6 +37,20 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-8-160-2026-10-15',
+    title: 'Raid replay',
+    version: 'Web 1.8.160 · Bot 3.1.273',
+    date: '2026-10-15',
+    headline: 'Watch a raid night again on the zone map, and a quicker website and Discord bot after a busy raid night.',
+    features: [
+      { name: 'Spectator replay [beta]', blurb: 'wolfpack.quest/spectator/replay plays a recorded raid night back on the zone map. Drag the time slider or press play (up to 60× speed). The map follows the zone with the most raiders, or pick one to stay in it; the strip shows each zone in the order we visited it. Tap a dot for the name.' },
+      { name: 'Raid screen slides', blurb: 'The raid screen now has a slide deck for tonight’s targets: who needs which flag, what to say to whom, and the lines to watch for.' },
+    ],
+    fixes: [
+      'Looking up /anon players and the 30-day damage board were slow after the raid-night database rush; they are quick again.',
+    ],
+  },
+  {
     key: 'mimic-2-9-1-2026-10-14',
     title: 'Mimic 2.9.1',
     version: 'Mimic 2.9.1 · Agent 3.7.176 · Web 1.8.159',
