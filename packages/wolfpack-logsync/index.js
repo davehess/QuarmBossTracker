@@ -39547,13 +39547,46 @@ const GUILD_FEED_BACKOFF_MS = 10 * 60_000;     // an old bot with no such route:
 const GUILD_FEED_ERROR_BACKOFF_MS = 30_000;    // any other failure: be patient, say nothing
 const GUILD_FEED_ZEAL_FRESH_MS = 60_000;
 const GUILD_FEED_LOG_FRESH_MS = 90_000;
+// A camp is announced ("It will take you about 30 seconds to prepare your camp.") and finishes about 30 s later. Lines inside
+// this window are the camp's own tail; a line past it means the camp was cancelled without a word or a new session began.
+const GUILD_FEED_CAMP_TAIL_MS = 60_000;
 const _guildFeed = { cursor: 0, boot: '', nextAt: 0, inflight: false };
+// "In game" means LOGGED IN ON A CHARACTER (the guild lead, 2026-10-15: "the chat should show guild chat when you aren't
+// logged in on a character, you can be at character select or earlier in the login process"). Not "EverQuest is running":
+//   • a log (watchedLogs[].campAt, set by the tail callback) that announced a camp and has not been cancelled or logged
+//     back in is out, however recent its last line (the camp's tail lines are not play);
+//   • a Zeal entry counts only when it is fresh, its character is not one whose log camped, and it looks in-world: a zone
+//     or a position. The pipe stays open at character select, and the camped character's entry lingers up to a minute
+//     (Mimic retires it after 2 idle minutes), so freshness alone is not enough. What Zeal itself pushes at character select
+//     is not captured anywhere in this repo, so a zoneless, positionless entry is simply not taken as proof of a login;
+//   • a log line within 90 s counts for a log that has not camped (no Zeal, or a standing-still player).
+// Per raw log line, on the watched-log record: campAt is set on the camp announcement, cleared by the cancel line, by the
+// next login ("Welcome to EverQuest!"), or by any line past the camp's own tail. The same patterns the reporter's `_camping`
+// flag reads (that flag is never cleared by a camp that completes, so it cannot answer "logged in now").
+function _guildFeedNoteCampLine(watched, line, now) {
+  if (!watched || !line) return;
+  if (watched.campAt && now - watched.campAt > GUILD_FEED_CAMP_TAIL_MS) watched.campAt = 0;
+  if (/prepare your camp/i.test(line)) watched.campAt = now;
+  else if (/abandon your preparations to camp/i.test(line) || _WELCOME_RX.test(line)) watched.campAt = 0;
+}
+function _zealInWorld(st) {
+  if (!st || typeof st !== 'object') return false;
+  if (_lootZoneKnown(st.zone)) return true;
+  const l = st.loc;
+  return !!l && Number.isFinite(Number(l.x)) && Number.isFinite(Number(l.y)) && (Number(l.x) !== 0 || Number(l.y) !== 0);
+}
 function _eqInGameFrom(zealState, watchedLogs, now) {
+  const camped = new Set();
+  for (const w of (watchedLogs || [])) {
+    if (w && w.campAt && w.character) camped.add(String(w.character).toLowerCase());
+  }
   for (const ch of Object.keys(zealState || {})) {
-    if (now - ((zealState[ch] && zealState[ch].updatedAt) || 0) <= GUILD_FEED_ZEAL_FRESH_MS) return true;
+    const st = zealState[ch];
+    if (camped.has(String(ch).toLowerCase())) continue;
+    if (now - ((st && st.updatedAt) || 0) <= GUILD_FEED_ZEAL_FRESH_MS && _zealInWorld(st)) return true;
   }
   for (const w of (watchedLogs || [])) {
-    if (w && w.lastSeen && now - w.lastSeen <= GUILD_FEED_LOG_FRESH_MS) return true;
+    if (w && w.lastSeen && !w.campAt && now - w.lastSeen <= GUILD_FEED_LOG_FRESH_MS) return true;
   }
   return false;
 }
@@ -48678,17 +48711,23 @@ function _mapFocusTarget(character) {
   } catch { void 0; }
   return null;
 }
-// How far the target's Area Rampage reaches ({ radius_still, radius_moving, chance, targets, damage_pct }, game units),
-// off the same cached mob-info row Target Info reads (a zone pack on disk, else the bot's lookup, started here when
-// nothing else has). Null when the mob has none, or the bot predates the field (so older caches simply draw no ring).
+// How far the target's Area Rampage reaches ({ radius_still, radius_moving, chance, targets, damage_pct }, game units) and
+// its regular Rampage reaches ({ range, chance, damage_pct }), off the same cached mob-info row Target Info reads (a zone
+// pack on disk, else the bot's lookup, started here when nothing else has). Returns { ae, rampage }; either is null when
+// the mob has none, or the bot predates the field (so older caches simply draw no ring).
 // The Mob Info block sits outside this one, so it is guarded the way _npcMobInfoFor guards it.
 function _mapAeRampage(name, zoneId, character, now) {
-  if (typeof _mobInfoByName === 'undefined' || typeof _mobInfoCacheKey !== 'function') return null;
+  const none = { ae: null, rampage: null };
+  if (typeof _mobInfoByName === 'undefined' || typeof _mobInfoCacheKey !== 'function') return none;
   const key = _mobInfoCacheKey(name, zoneId);
   let hit = _mobInfoByName.get(key);
   if (!hit || (now - hit.at) >= MOB_INFO_TTL_MS) { fetchMobInfo(name, character, zoneId); hit = _mobInfoByName.get(key) || hit; }
-  const ae = hit && hit.mob ? hit.mob.ae_rampage : null;
-  return ae && Number(ae.radius_still) > 0 ? ae : null;
+  const mob = hit && hit.mob ? hit.mob : null;
+  const ae = mob ? mob.ae_rampage : null, rp = mob ? mob.rampage : null;
+  return {
+    ae: ae && Number(ae.radius_still) > 0 ? ae : null,
+    rampage: rp && Number(rp.range) > 0 ? rp : null,
+  };
 }
 function _mapStatePayload(have, now, haveLocal) {
   const character = _mapActiveCharacter(now);
@@ -48748,8 +48787,9 @@ function _mapStatePayload(have, now, haveLocal) {
     if (pin) out.target.point_id = pin.point_id;
     // Only an NPC target carries it (a corpse or a player never rampages).
     if (out.target.type == null || out.target.type === 1) {
-      const ae = _mapAeRampage(st.target_name, out.zone_id, character, now);
-      if (ae) out.target.ae_rampage = ae;
+      const reach = _mapAeRampage(st.target_name, out.zone_id, character, now);
+      if (reach.ae) out.target.ae_rampage = reach.ae;
+      if (reach.rampage) out.target.rampage = reach.rampage;
     }
   }
   // The raid's focus mob (_mapFocusTarget), placed only where we truly know it: your own target when it is that mob.
@@ -56046,6 +56086,8 @@ async function main() {
         // Machine-level (one client = one camp) and NOT gated on exclusion — the
         // handoff is about liveness, not data. Patterns kept loose to survive
         // the guild-hall / "5 seconds" variants.
+        // The guild feed's "logged in on a character" test (_eqInGameFrom) reads the same lines per LOG.
+        _guildFeedNoteCampLine(watched, line, Date.now());
         if (/prepare your camp/i.test(line)) {
           if (!_camping) {
             _camping = true;
@@ -56610,7 +56652,7 @@ module.exports = {
   classifySpellLine, classifySkillLine, noteSelfCast, _rebuildLandingIndexesForTest: () => { _rebuildBuffMatchers(); _rebuildMechanicMatchers(); }, _spellRingForTest: () => _spellRing, _skillRingForTest: () => _skillRing, CHAT_SPELL_RING_MAX, CHAT_SKILL_RING_MAX,
   classifyLootLine, classifyRandomLine, classifyOtherLine, _lootRingForTest: () => _lootRing, _randomRingForTest: () => _randomRing, _otherRingForTest: () => _otherRing, CHAT_LOOT_RING_MAX, CHAT_RANDOM_RING_MAX, CHAT_OTHER_RING_MAX,
   // Guild feed while out of game (2026-10-15): the poller, its in-game test, the ring and the control-plane setter its gate reads.
-  _pollGuildFeed, _eqInGameFrom, guildFeedTake, guildFeedClear, _guildFeedRingForTest: () => _guildFeedRing, _guildFeedStateForTest: () => _guildFeed,
+  _pollGuildFeed, _eqInGameFrom, guildFeedTake, guildFeedClear, _guildFeedNoteCampLine, _guildFeedRingForTest: () => _guildFeedRing, _guildFeedStateForTest: () => _guildFeed,
   _guildFeedResetForTest: _guildFeedReset, _applyControlPlane, CHAT_GUILD_RING_MAX,
   chatLineKey, chatSwapBetween, chatReadLogBackwards, chatHistoryFiles, buildChatHistory, getChatHistory,
   _handleLocalChatHistoryForTest: _handleLocalChatHistory, _resetChatHistoryForTest, CHAT_HISTORY_MAX, CHAT_SWAP_MIN_MS,
