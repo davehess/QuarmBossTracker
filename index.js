@@ -14603,12 +14603,22 @@ async function _handleAgentLiveDamage(req, res) {
     : '';
   let rows = [];
   try {
-    rows = await supabase.select('encounter_threat_snapshots',
-      `guild_id=eq.${encodeURIComponent(guildId)}`
-      + `&boss_name=eq.${encodeURIComponent(boss)}`
-      + `&snapshot_at=gte.${encodeURIComponent(since)}`
-      + fightClause
-      + `&select=uploader,snapshot_at,per_player&order=snapshot_at.desc&limit=400`) || [];
+    // live_damage_snapshots (migration 20261015060000) is the same read phrased on lower(boss_name), which the
+    // existing boss index serves: 153 ms → ~1–3 ms. As a plain `boss_name=eq.` select this was ~70% of all
+    // database time and part of the 2026-10-14 mid-raid overload. A failed call (null) falls back to the old read.
+    rows = await supabase.rpc('live_damage_snapshots', {
+      p_guild_id: guildId, p_boss: boss, p_since: since,
+      p_start_lo: oneFight ? new Date(fightStartMs - 20_000).toISOString() : null,
+      p_start_hi: oneFight ? new Date(fightStartMs + 20_000).toISOString() : null,
+    }).catch(() => null);
+    if (!Array.isArray(rows)) {
+      rows = await supabase.select('encounter_threat_snapshots',
+        `guild_id=eq.${encodeURIComponent(guildId)}`
+        + `&boss_name=eq.${encodeURIComponent(boss)}`
+        + `&snapshot_at=gte.${encodeURIComponent(since)}`
+        + fightClause
+        + `&select=uploader,snapshot_at,per_player&order=snapshot_at.desc&limit=400`) || [];
+    }
   } catch (err) {
     console.warn('[live-damage] select failed:', err?.message);
     res.writeHead(200, { 'Content-Type': 'application/json' });
