@@ -4075,6 +4075,10 @@ The raid on the zone map, live, for signed-in members.
   from `character_live_state`. `exclude_from_stats` characters are never written. Kept indefinitely; the Tower
   archive (`scripts/lib/archive-merge.sql`) creates the table there and keeps every row. A sweep exists but is
   off, and if turned on deletes only up to `bot_kv archive_watermark_raid_track_minutes`.
+  **Targets (bot 3.1.274, §335):** each frame also takes `utils/raidTargets.js` `snapshot()` — the NPCs the
+  frame's raiders have targeted (live-state, ~45 s heartbeat, sooner on a target change), most-targeted first, at
+  most 20 — written as optional `mobs` / `mf` keys (`[dt, mi, x, y, z, n, zi]`, x/y swapped back to the roster
+  frame, n = a count of targeters, never who).
 - **Replay (`/spectator/replay`, web 1.8.160, §335):** `web/app/spectator/replay/ReplayBoard.tsx` (canvas, one
   rAF loop while playing) reads `/api/spectator/replay` — `?nights=1` for the night list (60 days, summarised in
   `web/lib/raidReplay.ts` `summarizeNights`), `?night&from&to` for at most 15 minute rows. `raidReplay.ts`

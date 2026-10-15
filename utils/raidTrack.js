@@ -35,9 +35,22 @@
 // After a minute row lands, _writeMinute hands that minute's raiders to utils/raidAppearance.js, which
 // keeps a per-night snapshot of how they look (race, worn items → models; migration 20261006020000).
 //
+// TARGETS (the guild lead, 2026-10-15: "see bosses that we're targeting")
+// Each Mimic's current NPC target already sits in the bot's memory (utils/raidTargets.js, fed by the live-state
+// upload, about every 45 s and sooner when a target changes or moves). A frame also takes that snapshot, counting
+// only characters that are in the frame's placed raiders, and keeps the most-targeted TARGETS_PER_FRAME. The
+// positions arrive in the Map's SERVER frame (the agent swaps the pipe's x/y), but a row's raider x,y are loc_x /
+// loc_y exactly as the roster received them (the pipe frame), so a target is written swapped BACK: mf x = the
+// target's server y, mf y = its server x. The web then applies the same serverXY swap to both. The zone is the
+// target's own zone short name (the agent sends the name), put in the same `zones` list the frames use.
+// Only the COUNT of targeters is kept, never which raider: a target picked by an excluded character is still a
+// monster, but the row can say nothing about the person.
+//
 // ROW SHAPE (data is compact JSON text; see the migration header)
 //   { v:1, step_s, who:[[name,cls,group,level],...], zones:['short',...],
-//     f:[[dt, i,x,y,z,h,hp,zi, i,x,y,z,h,hp,zi, ...], ...] }
+//     f:[[dt, i,x,y,z,h,hp,zi, i,x,y,z,h,hp,zi, ...], ...],
+//     mobs:[[name, spawn_id|null],...],                 // optional: omitted when nothing was targeted
+//     mf:[[dt, mi,x,y,z,n,zi], ...] }                   // optional: dt as in f, mi into mobs, n = targeters
 //
 // Env:
 //   RAID_TRACK_ENABLED=0         turn the recorder off (start() does nothing)
@@ -62,8 +75,10 @@ const EXCLUDE_TTL_MS = 30 * 60 * 1000;
 const ZONE_TTL_MS = 24 * 60 * 60 * 1000;
 const LIVE_ZONE_MS = 10 * 60 * 1000;  // how fresh a character_live_state zone must be (the web uses the same)
 const NAME_CHUNK = 200;
+const TARGETS_PER_FRAME = 20;         // most-targeted NPCs kept in one frame
 
 let _deps = {};
+let _targetSource = null;             // (isRaider) → [{ name, id, zone, x, y, z, n }] — index.js wires raidTargets.snapshot
 const _sb = () => _deps.supabase || require('./supabase');
 const _clock = () => (typeof _deps.now === 'function' ? _deps.now() : Date.now());
 const _guildId = () => process.env.SUPABASE_GUILD_ID || 'wolfpack';
@@ -148,6 +163,19 @@ function _closeCurrent() {
   cur = null;
 }
 
+// The NPCs this frame's raiders have targeted, most-targeted first, at most TARGETS_PER_FRAME. Never throws.
+function _frameTargets(rows) {
+  if (typeof _targetSource !== 'function') return [];
+  try {
+    const here = new Set(rows.map(r => r.name.toLowerCase()));
+    const got = _targetSource((k) => here.has(k));
+    return Array.isArray(got) ? got.filter(m => m && m.name && Number.isFinite(m.x) && Number.isFinite(m.y)).slice(0, TARGETS_PER_FRAME) : [];
+  } catch { return []; }
+}
+
+/** Wire where frames read the raid's targets (index.js passes raidTargets' snapshot); null unwires. */
+function setTargetSource(fn) { _targetSource = typeof fn === 'function' ? fn : null; }
+
 /**
  * Cut a frame from the raiders seen in the last FRESH_MS. Returns the frame, or null when fewer than
  * MIN_PLACED raiders were placed (a frame of a few stragglers is not worth a row). A frame that lands in
@@ -161,7 +189,7 @@ function takeFrame(nowMs = _clock()) {
     if (age <= FRESH_MS) rows.push(e);
   }
   if (rows.length < minPlaced()) return null;
-  const frame = { t: nowMs, rows };
+  const frame = { t: nowMs, rows, mobs: _frameTargets(rows) };
   const minute = Math.floor(nowMs / 60_000);
   if (cur && cur.minute !== minute) _closeCurrent();
   if (!cur) cur = { minute, frames: [] };
@@ -335,6 +363,15 @@ function buildMinuteRow(minuteStartMs, frames, opts = {}) {
   const zones = [];
   const zoneIdx = new Map();
   const f = [];
+  const mobs = [];
+  const mobIdx = new Map();
+  const mf = [];
+  const zoneOf = (zs) => {
+    if (!zs) return -1;
+    let zi = zoneIdx.get(zs);
+    if (zi === undefined) { zi = zones.length; zoneIdx.set(zs, zi); zones.push(zs); }
+    return zi;
+  };
   for (const fr of frames) {
     const arr = [Math.min(59, Math.max(0, Math.floor((fr.t - minuteStartMs) / 1000)))];
     let placed = 0;
@@ -350,16 +387,20 @@ function buildMinuteRow(minuteStartMs, frames, opts = {}) {
         const w = who[i];
         who[i] = [r.name, r.cls ?? w[1], r.group ?? w[2], r.level ?? w[3]];
       }
-      const zs = srcZone.get(r.src) || null;
-      let zi = -1;
-      if (zs) {
-        zi = zoneIdx.get(zs);
-        if (zi === undefined) { zi = zones.length; zoneIdx.set(zs, zi); zones.push(zs); }
-      }
+      const zi = zoneOf(srcZone.get(r.src) || null);
       arr.push(i, _rnd(r.x), _rnd(r.y), _rnd(r.z), r.h == null ? -1 : _rnd(r.h), r.hp == null ? -1 : _rnd(r.hp), zi);
       placed++;
     }
-    if (placed) f.push(arr);
+    if (!placed) continue;
+    f.push(arr);
+    // Targets: the Map's server frame back to the raiders' roster frame (x and y swapped); see TARGETS above.
+    // Only the count n is written, never which raider.
+    for (const m of fr.mobs || []) {
+      const mk = m.name + '\u0000' + (m.id ?? '');
+      let mi = mobIdx.get(mk);
+      if (mi === undefined) { mi = mobs.length; mobIdx.set(mk, mi); mobs.push([m.name, Number.isFinite(m.id) ? m.id : null]); }
+      mf.push([arr[0], mi, _rnd(m.y), _rnd(m.x), _rnd(m.z || 0), m.n, zoneOf(m.zone || null)]);
+    }
   }
   if (!f.length) return null;
   return {
@@ -369,7 +410,7 @@ function buildMinuteRow(minuteStartMs, frames, opts = {}) {
     raiders: who.length,
     frames: f.length,
     zones: zones.slice(),
-    data: JSON.stringify({ v: 1, step_s: stepS(), who, zones, f }),
+    data: JSON.stringify({ v: 1, step_s: stepS(), who, zones, f, ...(mf.length ? { mobs, mf } : {}) }),
   };
 }
 
@@ -468,6 +509,7 @@ function _reset() {
   _excl = { at: 0, set: null };
   _zoneCache = { at: 0, map: new Map() };
   _deps = {};
+  _targetSource = null;
 }
 
 // Test-only: inject { supabase, now }.
@@ -480,7 +522,7 @@ function _state() {
 
 module.exports = {
   noteRows, takeFrame, closeFinished, liveSnapshot, liveRows, buildMinuteRow, resolveSrcZones, flush, start, stop,
-  stepS, minPlaced,
+  stepS, minPlaced, setTargetSource, TARGETS_PER_FRAME,
   STEP_S_DEFAULT, MIN_PLACED_DEFAULT, STICKY_MS, FRESH_MS, PRUNE_MS, MAX_TRACKED, MAX_PENDING_MINUTES,
   MAX_ATTEMPTS, RETRY_BACKOFF_MS, SAFETY_MS, EXCLUDE_TTL_MS, ZONE_TTL_MS, LIVE_ZONE_MS,
   _reset, _setDeps, _state,

@@ -519,3 +519,146 @@ describe('wiring in index.js and the migration (text, comments stripped)', () =>
     expect(sql).toMatch(/data\s+text\s+not null/i);
   });
 });
+
+// ── Targets in the replay (the guild lead, 2026-10-15: "see bosses that we're targeting") ──────────────────
+describe('targets ride the minute row (mobs + mf)', () => {
+  const rtMod = require('../utils/raidTargets.js');
+  const SIX = ['Aldenmar', 'Brackwyn', 'Corvale', 'Rethlan', 'Nyssara', 'Zarrin'];
+  // What the agent sends for a mob standing where a raider with roster (loc_x, loc_y) stands: the Map's server
+  // frame, which is the pipe's x/y swapped (packages/wolfpack-logsync/index.js _mapServerXY).
+  const serverOf = (locX, locY, z = 5) => ({ x: locY, y: locX, z });
+  const rec = (character, id, name, map, over = {}) => ({
+    character, zone: 'poinnovation', target_id: id, target_name: name, target_type: 1, target_map: map, ...over,
+  });
+  function setup() {
+    const clk = { t: T0 + 1000 };
+    const targets = rtMod.create({ now: () => clk.t, log: { warn() {} } });
+    rt.setTargetSource((isRaider) => targets.snapshot(isRaider));
+    rt.noteRows(SIX.map((n, i) => row(n, 100 + i, -200 - i)), 'u1', T0 + 1000);
+    return { clk, targets };
+  }
+  const build = (frames, opts = {}) => rt.buildMinuteRow(T0, frames, { guildId: 'wolfpack', ...opts });
+
+  it('writes mobs and mf with the right indexes, counts and zone', () => {
+    const { targets } = setup();
+    targets.noteSample(rec('Aldenmar', 901, 'a lava golem', serverOf(300, 400)));
+    targets.noteSample(rec('Brackwyn', 901, 'a lava golem', serverOf(300, 400)));
+    targets.noteSample(rec('Corvale', 902, 'Lord Nagafen', serverOf(-50, 60, 8)));
+    const fr = rt.takeFrame(T0 + 2000);
+    const d = parse(build([fr], { srcZone: new Map([['u1', 'poinnovation']]) }));
+    expect(d.v).toBe(1);
+    expect(d.mobs).toEqual([['a lava golem', 901], ['Lord Nagafen', 902]]);
+    expect(d.zones).toEqual(['poinnovation']);
+    // [dt, mi, x, y, z, n, zi]; most-targeted first
+    expect(d.mf).toEqual([[2, 0, 300, 400, 5, 2, 0], [2, 1, -50, 60, 8, 1, 0]]);
+  });
+
+  it('a target zone the raiders do not have yet is added to the same zones list', () => {
+    const { targets } = setup();
+    targets.noteSample(rec('Aldenmar', 5, 'a sand giant', serverOf(1, 2), { zone: 'tenebrous' }));
+    const d = parse(build([rt.takeFrame(T0 + 2000)], { srcZone: new Map([['u1', 'poinnovation']]) }));
+    expect(d.zones).toEqual(['poinnovation', 'tenebrous']);
+    expect(d.mf[0][6]).toBe(1);
+  });
+
+  it('one mob across frames is one entry in mobs; a null spawn id stays null', () => {
+    const { targets } = setup();
+    targets.noteSample(rec('Aldenmar', 901, 'a lava golem', serverOf(300, 400)));
+    const a = rt.takeFrame(T0 + 2000);
+    rt.noteRows(SIX.map((n, i) => row(n, 100 + i, -200 - i)), 'u1', T0 + 4000);
+    const b = rt.takeFrame(T0 + 5000);
+    const d = parse(build([a, b]));
+    expect(d.mobs).toEqual([['a lava golem', 901]]);
+    expect(d.mf.map(e => e[0])).toEqual([2, 5]);
+    expect(d.mf.every(e => e[1] === 0)).toBe(true);
+    const nullId = parse(build([{ t: T0 + 2000, rows: a.rows, mobs: [{ name: 'a thing', id: null, zone: 'x', x: 1, y: 2, z: 3, n: 1 }] }]));
+    expect(nullId.mobs).toEqual([['a thing', null]]);
+  });
+
+  it('no targets: neither key is written, and with no source wired nothing changes', () => {
+    setup();
+    const d = parse(build([rt.takeFrame(T0 + 2000)]));
+    expect('mobs' in d).toBe(false);
+    expect('mf' in d).toBe(false);
+    rt._reset();
+    rt.noteRows(SIX.map((n, i) => row(n, 100 + i, -200 - i)), 'u1', T0 + 1000);
+    const d2 = parse(build([rt.takeFrame(T0 + 2000)]));
+    expect(Object.keys(d2)).toEqual(['v', 'step_s', 'who', 'zones', 'f']);
+  });
+
+  it('keeps the most-targeted TARGETS_PER_FRAME when there are more', () => {
+    const clk = { t: T0 + 1000 };
+    const targets = rtMod.create({ now: () => clk.t, log: { warn() {} } });
+    rt.setTargetSource((isRaider) => targets.snapshot(isRaider));
+    const names = Array.from({ length: 40 }, (_, i) => 'Raider' + 'abcdefghijklmnopqrstuvwxyz'[i % 26] + (i >= 26 ? 'x' : ''));
+    rt.noteRows(names.map((n, i) => row(n, 100 + i, 200)), 'u1', T0 + 1000);
+    // 28 NPCs: the first is targeted by three raiders, the rest by one each.
+    for (let i = 0; i < 3; i++) targets.noteSample(rec(names[i], 1000, 'mob 0', serverOf(10, 10)));
+    for (let k = 1; k < 28; k++) targets.noteSample(rec(names[k + 2], 1000 + k, 'mob ' + k, serverOf(10 + k, 10)));
+    expect(targets.snapshot(() => true).length).toBe(28);
+    const fr = rt.takeFrame(T0 + 2000);
+    expect(fr.mobs).toHaveLength(rt.TARGETS_PER_FRAME);
+    const d = parse(build([fr]));
+    expect(d.mf).toHaveLength(rt.TARGETS_PER_FRAME);
+    expect(d.mobs).toHaveLength(rt.TARGETS_PER_FRAME);
+    expect(d.mobs[0]).toEqual(['mob 0', 1000]);
+    expect(d.mf[0][5]).toBe(3);
+  });
+
+  it('a stale sample is not recorded, and a target of someone outside the frame does not count', () => {
+    const { clk, targets } = setup();
+    targets.noteSample(rec('Aldenmar', 901, 'a lava golem', serverOf(300, 400)));
+    targets.noteSample(rec('Outsider', 901, 'a lava golem', serverOf(300, 400)));   // a Mimic user in no raid frame
+    targets.noteSample(rec('Brackwyn', 902, 'an old target', serverOf(1, 1)));
+    clk.t += rtMod.SAMPLE_FRESH_MS - 1000;
+    targets.noteSample(rec('Aldenmar', 901, 'a lava golem', serverOf(300, 400)));
+    clk.t += 2000;                                                                  // Brackwyn's is now past the TTL
+    rt.noteRows(SIX.map((n, i) => row(n, 100 + i, -200 - i)), 'u1', T0 + 1000 + rtMod.SAMPLE_FRESH_MS);
+    const fr = rt.takeFrame(T0 + 1000 + rtMod.SAMPLE_FRESH_MS + 500);
+    expect(fr.mobs.map(m => [m.name, m.n])).toEqual([['a lava golem', 1]]);
+  });
+
+  it('FRAME: a mob standing on a raider encodes to that raider\'s own x,y', () => {
+    const { targets } = setup();
+    // Aldenmar stands at roster (loc_x, loc_y) = (100, -200). A mob on his spot reaches the bot in the server
+    // frame (agent: server x = pipe y), and must be written in the raiders' frame so the web's one serverXY swap
+    // lands both on the same point.
+    targets.noteSample(rec('Brackwyn', 77, 'a mob on Aldenmar', serverOf(100, -200)));
+    const d = parse(build([rt.takeFrame(T0 + 2000)]));
+    const raider = d.f[0].slice(1, 8);                       // [i, x, y, z, h, hp, zi] for the first raider
+    const mob = d.mf[0];                                     // [dt, mi, x, y, z, n, zi]
+    expect(raider.slice(1, 3)).toEqual([100, -200]);
+    expect([mob[2], mob[3]]).toEqual([raider[1], raider[2]]);
+    // …and the web's decoder (serverXY(loc_x, loc_y) = { x: loc_y, y: loc_x }) puts them in one place.
+    const web = (x, y) => ({ x: y, y: x });
+    expect(web(mob[2], mob[3])).toEqual(web(raider[1], raider[2]));
+    expect(web(mob[2], mob[3])).toEqual({ x: -200, y: 100 });   // the sample as the agent sent it
+  });
+
+  it('never records which raider targeted what', () => {
+    const { targets } = setup();
+    targets.noteSample(rec('Aldenmar', 901, 'a lava golem', serverOf(300, 400)));
+    targets.noteSample(rec('Nyssara', 901, 'a lava golem', serverOf(300, 400)));
+    const fr = rt.takeFrame(T0 + 2000);
+    const r = build([fr], { excluded: new Set(['aldenmar']) });   // one of the two opted out of stats
+    const d = parse(r);
+    const targetPart = JSON.stringify({ mobs: d.mobs, mf: d.mf });
+    for (const n of SIX) expect(targetPart.toLowerCase()).not.toContain(n.toLowerCase());
+    expect(d.mf[0][5]).toBe(2);                                    // an NPC is not a person: the count includes them
+    expect(JSON.stringify(d.who)).not.toContain('Aldenmar');       // the excluded raider is still never written
+    expect(Object.keys(fr.mobs[0]).sort()).toEqual(['id', 'n', 'name', 'x', 'y', 'z', 'zone']);
+  });
+
+  it('a throwing target source cannot stop a frame', () => {
+    setup();
+    rt.setTargetSource(() => { throw new Error('boom'); });
+    const fr = rt.takeFrame(T0 + 2000);
+    expect(fr).not.toBeNull();
+    expect(fr.mobs).toEqual([]);
+  });
+
+  it('the bot wires raidTargets.snapshot into the recorder', () => {
+    const bot = stripJs(readSource(BOT_INDEX));
+    expect(bot).toMatch(/require\('\.\/utils\/raidTrack'\)\.setTargetSource\(\(isRaider\) => _raidTargets\(\)\.snapshot\(isRaider\)\);/);
+  });
+});
