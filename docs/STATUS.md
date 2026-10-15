@@ -526,7 +526,8 @@ next touch one rather than assuming a missing row means a missing doc.
   game but your log is quiet for 5 min (state field only, no UI yet), a tail watchdog that recovers a hung read,
   bug-report excerpts that keep the newest lines, and no false "corrupt queue" on an empty queue. Open: the log
   archiving sweep never runs in watch mode (§162), and the on-screen warning is a UI call. DECISIONS-2026-09-21 §162.
-- **✅ Raid replay A: the night scrubber is live [beta] (web 1.8.160, 2026-10-15); C, 3D walls, is next.**
+- **✅ Raid replay A: the night scrubber is live [beta] (web 1.8.160, 2026-10-15); C, 3D walls, is on beta
+  (web 1.8.161, `https://b.wolfpack.quest/spectator/replay`, a 2D/3D switch), waiting on the guild lead's look.**
   `https://wolfpack.quest/spectator/replay` plays `raid_track_minutes` back on the spectator map: night picker,
   slider with the recorded stretches, play up to 60×, the map following the busiest zone (or a pinned one), 30 s
   tails, the zones in visit order. Reads 15-minute windows (`/api/spectator/replay`, members only); decoder
