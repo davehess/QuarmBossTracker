@@ -1,6 +1,6 @@
-// test/slow-mode.test.js — Bastion of Thunder slow mode (the guild lead, 2026-10-11).
+// test/slow-mode.test.js — guild-instance slow mode (the guild lead, 2026-10-11 and 2026-10-14).
 //
-// While the server is in slow mode the four second-floor named respawn in 18h instead of 3h. The rule
+// While our instances are in slow mode every boss we kill respawns in 18h, whatever its usual timer. The rule
 // lives in utils/slowMode.js and is applied ONCE, in the exported recordKill wrapper of utils/state.js,
 // so these tests run the real wrapper (with state held in memory) rather than any copy of the rule.
 // Names in the log lines below are invented.
@@ -38,10 +38,23 @@ describe('the slow-mode timer rule, through the real recordKill', () => {
     expect(e.nextSpawn - e.killedAt).toBe(18 * H);
   });
 
-  it('keeps a first-floor named at 3h while slow mode is on', () => {
+  // The guild lead, 2026-10-14: "anything that died within our instances since 8pm should be 18 hour
+  // respawn" — every boss, shorter and longer timers alike, not only the four second-floor named.
+  it('gives EVERY boss 18h while slow mode is on: a 3h first-floor named, a 24h and a 66h PoP boss', () => {
     const { rk } = makeRecordKill();
-    const e = rk('gaukr_sandstorm', byId('gaukr_sandstorm').timerHours, 'u', T0 + 1 * H);
-    expect(e.nextSpawn - e.killedAt).toBe(3 * H);
+    for (const id of ['gaukr_sandstorm', 'grummus', 'manaetic_behemoth', 'terris_thule']) {
+      const b = byId(id);
+      expect(b, id).toBeTruthy();
+      expect(b.slowModeHours, id).toBeUndefined();
+      const e = rk(id, b.timerHours, 'u', T0 + 1 * H);
+      expect(e.nextSpawn - e.killedAt, id).toBe(18 * H);
+    }
+  });
+
+  it('a boss outside the window keeps its own timer', () => {
+    const { rk } = makeRecordKill();
+    const e = rk('manaetic_behemoth', byId('manaetic_behemoth').timerHours, 'u', T0 - 1 * H);
+    expect(e.nextSpawn - e.killedAt).toBe(byId('manaetic_behemoth').timerHours * H);
   });
 
   it('keeps a second-floor named at 3h once the switch is off', async () => {
@@ -73,21 +86,24 @@ describe('the slow-mode timer rule, through the real recordKill', () => {
   });
 });
 
-describe('the affected list is data', () => {
-  it('exactly the four second-floor named carry slowModeHours: 18', () => {
-    const slow = bosses.filter((b) => b.slowModeHours).map((b) => b.id).sort();
-    expect(slow).toEqual(['auliffe_chaoswind', 'brynju_thunderclap', 'eindride_icestorm', 'kuanbyr_hailstorm']);
-    for (const id of slow) { expect(byId(id).slowModeHours).toBe(18); expect(byId(id).timerHours).toBe(3); }
-    for (const id of ['gaukr_sandstorm', 'hreidar_lynhillig', 'laef_windfall', 'oreen_wavecrasher']) {
-      expect(byId(id).slowModeHours).toBeUndefined();
-    }
+describe('a per-boss override is still data', () => {
+  it('a boss row carrying slowModeHours uses it instead of 18', () => {
+    const custom = { id: 'x', timerHours: 3, slowModeHours: 12 };
+    const flag = { on: true, set_at: new Date(T0).toISOString(), auto_off_at: new Date(T0 + 8 * H).toISOString() };
+    expect(slowMode.effectiveTimerHours(custom, 3, T0 + H, flag)).toBe(12);
+    expect(slowMode.effectiveTimerHours({ id: 'y', timerHours: 66 }, 66, T0 + H, flag)).toBe(18);
+    expect(slowMode.effectiveTimerHours(null, 66, T0 + H, flag)).toBe(66);
   });
+});
 
-  it('marks a longer-than-usual timer on the board, and only for those bosses', () => {
-    const b = byId('auliffe_chaoswind');
-    expect(slowMode.isSlowModeTimer(b, { killedAt: T0, nextSpawn: T0 + 18 * H })).toBe(true);
-    expect(slowMode.isSlowModeTimer(b, { killedAt: T0, nextSpawn: T0 + 3 * H })).toBe(false);
-    expect(slowMode.isSlowModeTimer(byId('gaukr_sandstorm'), { killedAt: T0, nextSpawn: T0 + 18 * H })).toBe(false);
+describe('the board marks a slow-mode timer', () => {
+  beforeEach(async () => { await slowMode.setSlowMode(true, '111111111111111111', T0); });
+  it('for a kill inside the window whose length is not the boss\'s own, shorter or longer', () => {
+    const k = T0 + H;
+    expect(slowMode.isSlowModeTimer(byId('auliffe_chaoswind'), { killedAt: k, nextSpawn: k + 18 * H })).toBe(true);
+    expect(slowMode.isSlowModeTimer(byId('manaetic_behemoth'), { killedAt: k, nextSpawn: k + 18 * H })).toBe(true);
+    expect(slowMode.isSlowModeTimer(byId('auliffe_chaoswind'), { killedAt: k, nextSpawn: k + 3 * H })).toBe(false);
+    expect(slowMode.isSlowModeTimer(byId('manaetic_behemoth'), { killedAt: T0 - H, nextSpawn: T0 + 17 * H })).toBe(false);
   });
 });
 
@@ -144,12 +160,13 @@ describe('an agent reporting a state change', () => {
     expect((await slowMode.applyDetectedSlowMode('off', Date.now() + 3 * H)).reason).toBe('in-the-future');
   });
 
-  it('ON opens a window with the same 8h auto-off', async () => {
+  it('ON opens a window with the same 8h auto-off, and keeps the line that opened it', async () => {
     const at = Date.now() - 60000;
     await slowMode.setSlowMode(false, 'x', at - H);
-    const r = await slowMode.applyDetectedSlowMode('on', at, 'Aldenmar');
+    const r = await slowMode.applyDetectedSlowMode('on', at, 'Aldenmar', "Druzzil Ro tells the guild, '… thread of time …'");
     expect(r.changed).toBe(true);
     expect(Date.parse(slowMode.getSlowMode().auto_off_at) - at).toBe(8 * H);
+    expect(slowMode.getSlowMode().set_line).toMatch(/thread of time/);
   });
 });
 

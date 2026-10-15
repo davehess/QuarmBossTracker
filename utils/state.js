@@ -146,8 +146,8 @@ function recordKill(bossId, timerHours, killedBy, killedAtOverride) {
 // `recordKill` is the wrapper below; the function above is left exactly as it was.
 const _killListeners = [];
 function onKillRecorded(fn) { _killListeners.push(fn); }
-// This wrapper is also the ONE place the Bastion of Thunder slow-mode timer applies (the guild lead,
-// 2026-10-11): every kill path calls this exported `recordKill`, so the rule lives here once, judged by
+// This wrapper is also the ONE place the slow-mode timer (18h for every boss we kill) applies (the guild
+// lead, 2026-10-11/14): every kill path calls this exported `recordKill`, so the rule lives here once, judged by
 // the kill's own timestamp. utils/slowMode.js has the rule and the officer switch.
 function recordKillNotifying(bossId, timerHours, killedBy, killedAtOverride) {
   const killedAt = killedAtOverride || Date.now();
