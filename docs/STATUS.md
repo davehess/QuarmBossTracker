@@ -528,6 +528,10 @@ next touch one rather than assuming a missing row means a missing doc.
   archiving sweep never runs in watch mode (§162), and the on-screen warning is a UI call. DECISIONS-2026-09-21 §162.
 - **✅ Raid replay stack + session share links graduated to main (web 1.8.170, 2026-10-15):** the eleven beta
   commits (1.8.161–1.8.169) cherry-picked to main; the two entries below are now live on wolfpack.quest.
+- **✅ Post-raid link + full parses (bot 3.1.276 main; web 1.8.171 beta, 2026-10-15, §338):** the final raid review
+  in Discord gets a "Full session review" button to that night's `/raid/session`; on beta every fight in the
+  session review (and on a share page) opens into a full parse table, loaded on open
+  (`https://b.wolfpack.quest/raid/session`). Waiting on the guild lead's look before main.
 - **✅ Raid session review + public share links (web 1.8.165, 2026-10-15, §337):** `/raid/session` bounds the
   replay to one session with attendance, kills, loot, rolls and parses; officers make `/share/raid/<token>` links
   (no sign-in, window-bound, opted-out characters scrubbed, 7/30/90-day expiry, revocable; table `raid_shares`).
