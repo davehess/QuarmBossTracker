@@ -151,7 +151,7 @@ describe('(a) the midnight chain keeps its existing steps, in order', () => {
       'await consolidateNightlyParses(readyClient)',
       'await computeHotDiceNightAward()',
       "supabase.update(\n            'contributions'",
-      "'encounter_threat_snapshots'",
+      'await _sweepThreatSnapshots(supabase, cutoff',
       "supabase.del('buff_casts'",
       "supabase.del('raid_roster'",
       "supabase.rpc('prune_who_observations'",

@@ -480,6 +480,15 @@ async function claimThreatSnapshots({ encounterId, uploader, startedAtMs, durati
 // reject the whole insert — we retry once without it rather than lose the link.
 // insert-ignore (not upsert) means the FIRST encounter of the night sets the
 // zone and later ones leave it alone.
+//
+// Every agent upload for a night's encounter lands here, so a night that is
+// already known is answered from a per-process cache (guild+date → id): no
+// insert, no select. The insert is ignore-duplicates against the table's
+// (guild_id, date) unique constraint — a duplicate is a no-op, not a 409. A 409
+// that does come from this insert is an unknown zone_main tripping the
+// eqemu_zone FK (PostgREST reports 23503 as 409), which the retry below
+// absorbs; the cache keeps that to once per night per process.
+const _raidNightIdByKey = new Map();
 async function linkEncounterToRaidNight({ encounterId, startedAtMs, zoneShort = null }) {
   if (!isEnabled() || !encounterId) return null;
   const startMs = Number(startedAtMs);
@@ -492,20 +501,26 @@ async function linkEncounterToRaidNight({ encounterId, startedAtMs, zoneShort = 
   if (!m) return null;
   const dateIso = `${m[3]}-${m[1]}-${m[2]}`;
   const guildId = _guildId();
+  const cacheKey = `${guildId}|${dateIso}`;
 
   try {
-    const base = { guild_id: guildId, date: dateIso };
-    let created = await insertIgnoreDuplicates('raid_nights',
-      [zoneShort ? { ...base, zone_main: zoneShort } : base]);
-    // An unknown zone_short trips the eqemu_zone FK and returns null; the night
-    // matters more than the zone label, so try again without it.
-    if (created === null && zoneShort) {
-      created = await insertIgnoreDuplicates('raid_nights', [base]);
+    let nightId = _raidNightIdByKey.get(cacheKey) || null;
+    if (!nightId) {
+      const base = { guild_id: guildId, date: dateIso };
+      let created = await insertIgnoreDuplicates('raid_nights',
+        [zoneShort ? { ...base, zone_main: zoneShort } : base]);
+      // An unknown zone_short trips the eqemu_zone FK and returns null; the night
+      // matters more than the zone label, so try again without it.
+      if (created === null && zoneShort) {
+        created = await insertIgnoreDuplicates('raid_nights', [base]);
+      }
+      const rows = await select('raid_nights',
+        `guild_id=eq.${encodeURIComponent(guildId)}&date=eq.${encodeURIComponent(dateIso)}&select=id&limit=1`);
+      nightId = Array.isArray(rows) && rows[0]?.id;
+      if (!nightId) return null;
+      if (_raidNightIdByKey.size >= 64) _raidNightIdByKey.clear();   // a few nights at most; bound it anyway
+      _raidNightIdByKey.set(cacheKey, nightId);
     }
-    const rows = await select('raid_nights',
-      `guild_id=eq.${encodeURIComponent(guildId)}&date=eq.${encodeURIComponent(dateIso)}&select=id&limit=1`);
-    const nightId = Array.isArray(rows) && rows[0]?.id;
-    if (!nightId) return null;
     // Only stamp when unset — never re-point an encounter a previous run linked.
     await update('encounters', `id=eq.${encounterId}&raid_night_id=is.null`,
       { raid_night_id: nightId });
