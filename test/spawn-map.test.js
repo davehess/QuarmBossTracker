@@ -1283,9 +1283,9 @@ describe('pather routes', () => {
     expect(base.all.cfg.hidden).toBe(false);
     expect(base.all.cfgBtn.classList.contains('on')).toBe(true);
     const showRows = base.all.cfgShow.children, glyphRows = base.all.cfgGlyphs.children, colRows = base.all.cfgCols.children;
-    expect(showRows).toHaveLength(28);                                         // 25 + Kite coach + Guild kite loops (2026-10-15) + AE rampage ring
+    expect(showRows).toHaveLength(29);                                         // 25 + Kite coach + Guild kite loops (2026-10-15) + AE rampage ring + Rampage ring
     expect(glyphRows).toHaveLength(9);
-    expect(colRows).toHaveLength(28);
+    expect(colRows).toHaveLength(29);
     const walls = showRows[0].children[0];                                     // Walls
     walls.checked = false; walls.listeners.change.forEach(f => f());
     const eye = glyphRows[0].children[0];                                      // 👁
@@ -2914,11 +2914,120 @@ describe('the target\'s Area Rampage ring (agent 3.7.183)', () => {
       const js = stripJs(MAP_HTML);
       expect(js).toMatch(/var aer = SH\.aeRampage \? aeRampageRing\(P\.target\) : null;/);
       expect(js).toMatch(/if \(aer\) \{ aeRampageDraw\(tq\[0\], tq\[1\], aer\); S\.aeRing = \{ x: td\.x, y: td\.y, r: aer\.r, tip: aer\.tip \}; \}/);
-      expect(js).toMatch(/S\.aeRing = null;\n\s+if \(P\.target && P\.target\.x != null\) \{/);
+      expect(js).toMatch(/S\.aeRing = null; S\.rampRing = null;\n\s+if \(P\.target && P\.target\.x != null\) \{/);
       expect(js).toMatch(/if \(cv\.title !== tip\) cv\.title = tip;/);
       expect(H.CFG_SHOW.some(([k, label]) => k === 'aeRampage' && /AE rampage/.test(label))).toBe(true);
       expect(H.mapCfgDefaults().show.aeRampage).toBe(true);
       for (const s of Object.values(H.MAP_SCHEMES)) expect(s.aeRamp).toMatch(/^#[0-9a-f]{6}$/);
+    });
+  });
+});
+
+describe('the target\'s regular Rampage ring (agent 3.7.184)', () => {
+  const AE = { radius_still: 16.55, radius_moving: 14.55, chance: 5, targets: null, damage_pct: 100 };
+  const RP = { range: 75, chance: 20, damage_pct: 100 };
+  const MOB = { name: 'A Recuso Degenerate', level: 62, specials: ['Rampage'], rampage: RP };
+  const stand = (c, extra) => {
+    c._zealState.Aldenmar = Object.assign({ zone: 164, updatedAt: 1e18, loc: { x: 0, y: 0, z: 0 },
+      target_name: 'A Recuso Degenerate', target_id: 5, target_type: 1, target_hp_pct: 100, target_loc: { x: 7, y: 9, z: 0 } }, extra || {});
+  };
+
+  it('the target carries the cached mob info\'s rampage, untouched, next to ae_rampage when both exist', () => {
+    const { c } = localCore();
+    stand(c);
+    c._mobInfoByName.set('a recuso degenerate|164', { at: Date.now(), mob: Object.assign({}, MOB, { ae_rampage: AE }) });
+    const t = c._mapStatePayload('', T0 + 1000).target;
+    expect(t.rampage).toEqual(RP);
+    expect(t.ae_rampage).toEqual(AE);
+  });
+  it('a mob with only regular Rampage carries no ae_rampage, and one with only Area Rampage carries no rampage', () => {
+    const { c } = localCore();
+    stand(c);
+    c._mobInfoByName.set('a recuso degenerate|164', { at: Date.now(), mob: MOB });
+    expect(c._mapStatePayload('', T0 + 1000).target).not.toHaveProperty('ae_rampage');
+    c._mobInfoByName.set('a recuso degenerate|164', { at: Date.now(), mob: { name: 'x', ae_rampage: AE } });
+    expect(c._mapStatePayload('', T0 + 1000).target).not.toHaveProperty('rampage');
+  });
+  it('an older bot\'s row, or a zero range, has none', () => {
+    const { c } = localCore();
+    stand(c);
+    c._mobInfoByName.set('a recuso degenerate|164', { at: Date.now(), mob: { name: 'x', specials: [] } });
+    expect(c._mapStatePayload('', T0 + 1000).target).not.toHaveProperty('rampage');
+    c._mobInfoByName.set('a recuso degenerate|164', { at: Date.now(), mob: { name: 'x', rampage: { range: 0 } } });
+    expect(c._mapStatePayload('', T0 + 1000).target).not.toHaveProperty('rampage');
+  });
+  it('a player or a corpse never carries it', () => {
+    const { c } = localCore();
+    c._mobInfoByName.set('a recuso degenerate|164', { at: Date.now(), mob: MOB });
+    stand(c, { target_type: 0 });
+    expect(c._mapStatePayload('', T0 + 1000).target).not.toHaveProperty('rampage');
+    stand(c, { target_type: 2 });
+    expect(c._mapStatePayload('', T0 + 1000).target).not.toHaveProperty('rampage');
+  });
+
+  describe('the overlay (apps/mimic/map.html)', () => {
+    // eslint-disable-next-line no-new-func
+    const H = new Function(sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──')
+      + '\nreturn { rampageRing, aeRampageRing, CFG_SHOW, CFG_COLS, mapCfgDefaults, MAP_SCHEMES, inkStyle, hexA };')();
+    const t = (extra) => Object.assign({ name: 'A Recuso Degenerate', type: 1, hp_pct: 80, x: 10, y: 20, rampage: RP }, extra || {});
+    it('rings the target at range, in game units, labelled and explained', () => {
+      const r = H.rampageRing(t());
+      expect(r.r).toBe(75);
+      expect(r.label).toBe('Rampage · 75');
+      expect(H.rampageRing(t({ rampage: { range: 40.04, chance: 10 } })).label).toBe('Rampage · 40');
+      expect(r.tip).toBe('Hits ONE person: the first on its rampage list who isn\'t the tank, inside this ring · 20% per round');
+      expect(H.rampageRing(t({ rampage: { range: 30, chance: 8 } })).tip).toMatch(/ · 8% per round$/);
+    });
+    it('no ring without rampage, for a player or corpse, or for a range that is nothing or the whole zone', () => {
+      expect(H.rampageRing(t({ rampage: undefined }))).toBeNull();
+      expect(H.rampageRing(null)).toBeNull();
+      expect(H.rampageRing(t({ type: 0 }))).toBeNull();
+      expect(H.rampageRing(t({ name: "A Recuso Degenerate's corpse", type: null }))).toBeNull();
+      expect(H.rampageRing(t({ hp_pct: 0 }))).toBeNull();
+      expect(H.rampageRing(t({ rampage: { range: 0 } }))).toBeNull();
+      expect(H.rampageRing(t({ rampage: { range: 5000 } }))).toBeNull();
+    });
+    it('the AE ring and the rampage ring are independent: either, both or neither', () => {
+      const both = t({ ae_rampage: AE });
+      expect(H.aeRampageRing(both)).not.toBeNull();
+      expect(H.rampageRing(both)).not.toBeNull();
+      expect(H.aeRampageRing(t())).toBeNull();
+      expect(H.rampageRing(t({ rampage: undefined, ae_rampage: AE }))).toBeNull();
+    });
+
+    // The real rampageDraw over a recording canvas.
+    const src = sliceBlock(MAP_HTML, 'function rampageDraw(x, y, ring) {', '\n  }');
+    function draw(ring, scale) {
+      const ops = [], halos = [];
+      const ctx = { lineWidth: 1, strokeStyle: '',
+        beginPath() {}, setLineDash(d) { ops.push({ op: 'dash', d }); },
+        arc(x, y, r) { ops.push({ op: 'arc', x, y, r }); }, stroke() { ops.push({ op: 'stroke', style: ctx.strokeStyle }); } };
+      const S = { cfg: { col: { ramp: '#ff79c6' }, ink: 1 }, view: { scale } };
+      new Function('ctx', 'S', 'inkStyle', 'hexA', 'halo', 'labelFont', src + '\nreturn rampageDraw;')(
+        ctx, S, H.inkStyle, H.hexA, (text, x, y) => halos.push({ text, x, y }), () => '9px mono')(100, 200, ring);
+      return { ops, halos };
+    }
+    it('draws a dotted ring of range x scale in its own colour, with its label under it', () => {
+      const d = draw(H.rampageRing(t()), 2);
+      expect(d.ops.find(o => o.op === 'arc')).toEqual({ op: 'arc', x: 100, y: 200, r: 150 });
+      expect(d.ops.find(o => o.op === 'dash').d).toEqual([2, 5]);
+      expect(d.ops.find(o => o.op === 'stroke').style).toMatch(/^rgba\(255,121,198,/);
+      expect(d.halos).toEqual([{ text: 'Rampage · 75', x: 100, y: 200 + 150 + 12 }]);
+    });
+    it('is a speck when zoomed far out: not drawn', () => {
+      expect(draw(H.rampageRing(t()), 0.01)).toEqual({ ops: [], halos: [] });
+    });
+    it('is wired to the target only, behind its own switch (default on), cleared each frame, with a hover tip', () => {
+      const js = stripJs(MAP_HTML);
+      expect(js).toMatch(/var rr = SH\.rampage \? rampageRing\(P\.target\) : null;/);
+      expect(js).toMatch(/if \(rr\) \{ rampageDraw\(tq\[0\], tq\[1\], rr\); S\.rampRing = \{ x: td\.x, y: td\.y, r: rr\.r, tip: rr\.tip \}; \}/);
+      expect(js).toMatch(/\[S\.aeRing, S\.rampRing\]\.forEach/);
+      expect(H.CFG_SHOW.some(([k, label]) => k === 'rampage' && /Rampage ring/.test(label))).toBe(true);
+      expect(H.CFG_COLS.some(([k]) => k === 'ramp')).toBe(true);
+      expect(H.mapCfgDefaults().show.rampage).toBe(true);
+      for (const s of Object.values(H.MAP_SCHEMES)) expect(s.ramp).toMatch(/^#[0-9a-f]{6}$/);
+      // not the AE ring's colour in any scheme, so the two never read as one
+      for (const s of Object.values(H.MAP_SCHEMES)) expect(s.ramp).not.toBe(s.aeRamp);
     });
   });
 });

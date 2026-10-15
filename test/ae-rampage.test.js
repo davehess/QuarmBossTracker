@@ -119,6 +119,36 @@ describe('aeRampageInfo (the mob-info field)', () => {
   });
 });
 
+describe('rampageParams (regular Rampage, ability 3)', () => {
+  it('reads chance, range and damage from the parameters', () => {
+    expect(ae.rampageParams('1,1^3,1,10,40,50^31,1')).toEqual({ chance: 10, range: 40, damagePct: 50 });
+  });
+
+  it('defaults a blank or zero parameter: 20% chance, range 75, 100% damage', () => {
+    expect(ae.rampageParams('3,1')).toEqual({ chance: 20, range: 75, damagePct: 100 });
+    expect(ae.rampageParams('3,1,0,0,0')).toEqual({ chance: 20, range: 75, damagePct: 100 });
+    expect(ae.rampageParams('3,1,,,')).toEqual({ chance: 20, range: 75, damagePct: 100 });
+    expect(ae.rampageParams('3,1,30')).toEqual({ chance: 30, range: 75, damagePct: 100 });
+  });
+
+  it('treats a negative range as the 75 default', () => {
+    expect(ae.rampageParams('3,1,20,-5').range).toBe(75);
+  });
+
+  it('is null without ability 3 (Area Rampage alone does not count)', () => {
+    expect(ae.rampageParams('1,1^4,1,5')).toBeNull();
+    expect(ae.rampageParams('3,0,10')).toBeNull();
+    expect(ae.rampageParams('')).toBeNull();
+    expect(ae.rampageParams(null)).toBeNull();
+  });
+
+  it('rampageInfo is the mob-info shape, and needs no size', () => {
+    expect(ae.rampageInfo({ special_abilities: '3,1,15,60,80', size: null })).toEqual({ range: 60, chance: 15, damage_pct: 80 });
+    expect(ae.rampageInfo({ special_abilities: '4,1,5' })).toBeNull();
+    expect(ae.rampageInfo(null)).toBeNull();
+  });
+});
+
 describe('mob-info wiring', () => {
   const src = stripJs(fs.readFileSync(BOT_INDEX, 'utf8'));
 
@@ -131,5 +161,12 @@ describe('mob-info wiring', () => {
     expect(src).toMatch(/see_improved_hide,race,size,gender&limit=200/);
     expect(src).toMatch(/const aeRampage = mobSpecials\.aeRampageInfo\(r\);/);
     expect(src).toMatch(/\.\.\.\(aeRampage \? \{ ae_rampage: aeRampage \} : \{\}\)/);
+    expect(src).toMatch(/const rampage = mobSpecials\.rampageInfo\(r\);/);
+    expect(src).toMatch(/\.\.\.\(rampage \? \{ rampage \} : \{\}\)/);
+  });
+
+  it('mobSpecials hands the bot the regular Rampage answer too', () => {
+    const ms = require('../utils/mobSpecials.js');
+    expect(ms.rampageInfo({ special_abilities: '3,1,10,45' })).toEqual({ range: 45, chance: 10, damage_pct: 100 });
   });
 });

@@ -27,11 +27,20 @@
 // Worked example: A_Recuso_Degenerate (race 237, size 12, ability `4,1,5`): radius 6 × 12 / 5 =
 // 14.4, so the range is 0.75 × (14.4 + 5) = 14.55 while it walks and 16.55 standing, at 5%.
 //
+// REGULAR RAMPAGE sits in the same file (the guild lead, 2026-10-15: "show regular rampage range
+// too"). It is a different animal: it hits ONE entity per round, the first on the mob's rampage
+// list who is not its current target, not feigned, and within `range` of the mob (plain distance,
+// no radii, no height term). Ability 3's first parameter is the chance per attack round in percent
+// (blank or 0 means 20), the second the range (blank or under 1 means 75), the third the damage
+// as a percent of a normal round (blank or 0 means 100).
+//
 // Pure — no I/O — so the bot's mob-info endpoint and the tests share it.
 
 const { parseSpecials } = require('./mobSpecials');
 
 const AREA_RAMPAGE_CODE = 4;
+const RAMPAGE_CODE = 3;
+const DEFAULT_RAMPAGE_RANGE = 75;
 const PLAYER_RADIUS = 5;          // a player is always radius 5 (a playable race, size 5)
 
 const DEFAULT_RADIUS = 6.0;
@@ -96,4 +105,22 @@ function aeRampageInfo(row) {
   return { radius_still: r2(still), radius_moving: r2(moving), chance: p.chance, targets: p.targets, damage_pct: p.damagePct };
 }
 
-module.exports = { boundingRadius, aeRampageRadius, aeRampageParams, aeRampageInfo, PLAYER_RADIUS };
+// Ability 3 (regular Rampage) from a `special_abilities` string, or null when the mob has none.
+function rampageParams(specialAbilities) {
+  const ab = parseSpecials(specialAbilities).get(RAMPAGE_CODE);
+  if (!ab) return null;
+  const n = (i) => { const v = parseInt(ab.params[i], 10); return Number.isFinite(v) && v > 0 ? v : null; };
+  return {
+    chance: n(0) != null ? n(0) : DEFAULT_CHANCE,
+    range: n(1) != null ? n(1) : DEFAULT_RAMPAGE_RANGE,
+    damagePct: n(2) != null ? n(2) : DEFAULT_DAMAGE_PCT,
+  };
+}
+
+// The mob-info field for regular Rampage: { range, chance, damage_pct }, or null without the ability.
+function rampageInfo(row) {
+  const p = rampageParams(row && row.special_abilities);
+  return p ? { range: p.range, chance: p.chance, damage_pct: p.damagePct } : null;
+}
+
+module.exports = { boundingRadius, aeRampageRadius, aeRampageParams, aeRampageInfo, rampageParams, rampageInfo, PLAYER_RADIUS };
