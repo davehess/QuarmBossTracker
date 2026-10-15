@@ -11000,3 +11000,24 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
   outside the listed set is reachable by guessing ids. Opted-out characters are dropped before shares and totals are
   computed. The top-five read now covers 400 fights (was 60; the list itself was never capped).
 - Where: `https://b.wolfpack.quest/raid/session` (and any share link on b.). Graduates on the guild lead's word.
+- **Same day, web 1.8.172 (beta):** bosses on the replay are big red dots. A recorded target whose name is one of the
+  night's killed bosses is a filled red dot (white ring in 2D, red sphere in 3D) where the raid fought it; a boss's
+  SPAWN POINT (nights recorded before targets) is a red dashed ring labelled "spawn point". Recorded target positions
+  exist only from 2026-10-15 13:22 UTC on.
+
+### 339. UI Studio: picking a character shows their current UI as it is (2026-10-15, Mimic beta)
+- **The reports** (the guild lead): *"LOAD AND RESCALE in ui studio is not loading in my current configuration, only
+  the ones that i saved"*, *"Update from current did not update from what my current actually is"*, and *"selecting the
+  character from the UI studio dropdown should just pull up the current configuration in the current format, no
+  conversion target necessary."*
+- **What the code showed:** both buttons already re-read the live files on disk every time; neither reads a saved
+  layout. Likely causes: (1) Load + Rescale renders the block for the Source dropdown's resolution (default
+  2560×1440), and EverQuest keeps old `XPos<W>x<H>` blocks, so a stale block wins over the one in use; (2) EverQuest
+  writing window positions only on camp/zone/quit (unverified), so the disk lags the screen. "Update from current"
+  also never refreshes the canvas.
+- **Built (Mimic beta `5ce28ec4`):** picking a character loads their live files at their own resolution with no
+  conversion — eqclient.ini `[VideoMode]` Width/Height when the UI file has a block for it, else the block with the
+  most windows; other blocks are named on the status line. Load + Rescale stays the explicit conversion step. The
+  status line and the Update confirm show "UI file last written <time>".
+- **Open:** the guild lead to check at the PC whether that time changes after /camp or zoning and stays put while only
+  dragging windows (confirms or kills cause 2).
