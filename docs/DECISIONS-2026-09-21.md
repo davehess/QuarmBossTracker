@@ -114,8 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Raid session share links** (§337) | Live on beta (web 1.8.165): `/raid/session` + public `/share/raid/<token>`; the first link (2026-10-14 daytime session) made for the guild lead | the guild lead: send it to the other guild's leaders; say when to graduate the replay stack to main |
-| **Raid replay** (§335) | A live [beta] at `/spectator/replay` (web 1.8.160). C (3D) plus follow/highlight, floors, boss markers and split screen on beta only: web 1.8.162, `https://b.wolfpack.quest/spectator/replay`. Bot 3.1.274 records NPC targets from tonight | the guild lead: try it on b.wolfpack.quest and say go (then graduate the files to main — the beta routes import `lib/guild`, which main lacks, so graduation brings that module or reverts to the literal) or what to change; check the heading direction in game |
+| **Raid replay + session share links** (§335, §337) | **Graduated to main 2026-10-15 (web 1.8.170)** on the guild lead's word: replay 3D/floors/parchment/follow/bosses/split, guild-raid sessions, `/raid/session`, public `/share/raid/<token>` (works on wolfpack.quest and b.wolfpack.quest). Bot 3.1.274+ records NPC targets | the guild lead: send the share link; check the heading direction in game |
 | **Database load, no upgrade** (§334) | The guild lead: no compute upgrade. The biggest cost was one unindexed read (live damage, ~70% of DB time), fixed in bot 3.1.272; the batched sweep trims snapshots nightly (3.1.271). Round two (bot 3.1.273): `who_directory_lookup` (1.27 s → ms), trigram indexes on three ilike reads, the 30-day damage board memoised | (1) the guild lead: paste `20261015080000_drop_unused_indexes.sql` into the Supabase SQL editor (the speed-up and merge-lock files are applied); (2) a session after the next raid: re-read `pg_stat_statements` |
 | **Slow mode ON wording** (§334) | Every boss gets 18 h inside the window (bot 3.1.269); agent 3.7.177 beta reads any Druzzil "thread of time" guild line as on/off | a session after the next slow-mode night: read `bot_kv` `slow_mode.set_line`, pin the exact ON text in the agent regex and `utils/slowMode.js` |
 | **Feedback popup** (§334) | On beta: agent 3.7.179 `fb30386f`; not tried in a live Electron yet | the guild lead: on the next beta build, click 💬 Feedback, type, restart the agent from the tray, confirm the text survives and sending works |
@@ -10979,3 +10978,8 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
   peer resolver): with no lockfile, a fresh vitest release's optional peer set crashed npm 10 even though dev deps
   are omitted. Production stayed on 3.1.274. Fix: `npm install --omit=dev --legacy-peer-deps` in the Dockerfile
   (same production tree; no prod dependency needs an auto-installed peer). Deployed 15:22 UTC.
+- **Graduated to main** (the guild lead: *"graduate these to main"*), 2026-10-15 13:30 ET, outside the raid freeze:
+  the eleven beta commits c23af97e…1ef8c5eb cherry-picked onto main clean (`lib/guild` was already on main), the
+  full suite green but for the known my-logs-local failure, then web 1.8.170 rewrote the roadmap entry as a live
+  release in a SECOND push — after `sync-beta` had merged the cherry-picks — so main→beta stayed conflict-free.
+  The share link now works on both hosts; the officer panel copies the current host's address.
