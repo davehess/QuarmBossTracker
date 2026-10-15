@@ -1,9 +1,16 @@
-// utils/slowMode.js — Quarm's Bastion of Thunder "slow mode" (the guild lead, 2026-10-11).
+// utils/slowMode.js — Quarm's guild-instance "slow mode" (the guild lead, 2026-10-11 and 2026-10-14).
 //
-// While the server is in slow mode the second-floor named respawn 18 hours after death instead of the
-// usual 3 hours (the guild lead: "When we kill mobs in 'slowmode' it sets the spawn for those to 18
-// hours", then "Just the second floor BOT named tonight, not the first floor ones"). Which bosses are
-// affected is DATA: a boss row in data/bosses.json carries `slowModeHours`.
+// While our instances are in slow mode, EVERY boss we kill respawns 18 hours after death, whatever its
+// usual timer (the guild lead, 2026-10-14: "anything that died within our instances since 8pm should be
+// 18 hour respawn", "18 hours is the rule once the zones get converted to slow mode"). It is guild-wide:
+// "if one guild instance is slow mode they all are for us" (§250). It first shipped (2026-10-11) for the
+// four second-floor Bastion of Thunder named only, because those were the kills inside that night's
+// window; their `slowModeHours: 18` in data/bosses.json is now just the default spelled out. A boss row
+// can still carry its own `slowModeHours` if one ever differs.
+// Only kills judged OURS reach recordKill at all (utils/killContext.js: live and PvP-copy kills start no
+// timer), so "our instances" is already enforced upstream.
+// ponytail: an officer's manual /kill of an open-world boss inside the window also gets 18h; the window
+// is a raid night's 8h at most, so the switch off (/slowmode off) is the fix if that ever matters.
 //
 // The switch is officer-driven (/slowmode on | off | status); the server's own "time has returned to its
 // natural pace" message also turns it off, reported by an agent (POST /api/agent/slow-mode). It lives in
@@ -17,6 +24,7 @@
 
 const SLOW_MODE_KEY = 'slow_mode';
 const AUTO_OFF_MS = 8 * 3600000;
+const SLOW_MODE_HOURS = 18;
 
 let _flag = null;   // { on, set_by, set_at, auto_off_at, off_at? } — ISO strings, as stored in bot_kv
 
@@ -42,11 +50,11 @@ function slowModeOnAt(atMs, flag = _flag) {
 
 // THE rule. Called once, from recordKill's wrapper in utils/state.js, so the board button, /kill, the
 // agent's kill relay, the encounter upload and the rest all get it without knowing about it.
-// `boss` is a bosses.json row; a boss with no `slowModeHours` always keeps its own timer.
+// `boss` is a bosses.json row; inside the window every boss gets its `slowModeHours`, else 18.
 function effectiveTimerHours(boss, baseHours, killedAtMs, flag = _flag) {
-  const hours = Number(boss && boss.slowModeHours);
-  if (hours > 0 && slowModeOnAt(killedAtMs, flag)) return hours;
-  return baseHours;
+  if (!boss || !slowModeOnAt(killedAtMs, flag)) return baseHours;
+  const hours = Number(boss.slowModeHours);
+  return hours > 0 ? hours : SLOW_MODE_HOURS;
 }
 
 function _bossById(bossId) {
@@ -59,11 +67,13 @@ function timerHoursForKill(bossId, baseHours, killedAtMs) {
   return effectiveTimerHours(_bossById(bossId), baseHours, killedAtMs);
 }
 
-// A timer on the board that runs longer than the boss's own — slow mode, or an officer who corrected it
-// to the slow-mode length. Derived from the entry, so nothing extra is stored in state.json.
-function isSlowModeTimer(boss, entry) {
-  return !!(boss && boss.slowModeHours && entry && Number.isFinite(entry.killedAt)
-    && entry.nextSpawn - entry.killedAt > Number(boss.timerHours) * 3600000);
+// A timer on the board for a kill inside the slow-mode window whose length is not the boss's own (18h
+// where it is usually 3h, or 66h). Derived from the entry and the stored window, so nothing extra is
+// stored in state.json.
+function isSlowModeTimer(boss, entry, flag = _flag) {
+  if (!boss || !entry || !Number.isFinite(entry.killedAt)) return false;
+  return slowModeOnAt(entry.killedAt, flag)
+    && Math.abs(entry.nextSpawn - entry.killedAt - Number(boss.timerHours) * 3600000) > 60000;
 }
 
 function getSlowMode() { return _flag; }
@@ -88,13 +98,15 @@ async function loadSlowMode() {
 // Turn slow mode on or off AS OF `atMs` (an officer's command passes "now"; the server's own message
 // passes the time on its log line). Memory first (so the next kill sees it), then bot_kv.
 // Returns { flag, persisted }; persisted=false means it will not survive a restart.
-async function setSlowMode(on, by, atMs = Date.now()) {
+async function setSlowMode(on, by, atMs = Date.now(), line = null) {
   const atIso = new Date(atMs).toISOString();
   if (on) {
     _flag = { on: true, set_by: by || null, set_at: atIso, auto_off_at: new Date(atMs + AUTO_OFF_MS).toISOString() };
+    if (line) _flag.set_line = line;
   } else {
     // Keep the window it ran, so a kill from before this moment is still judged against it.
     _flag = { ...(_flag || { set_at: atIso, auto_off_at: atIso }), on: false, off_by: by || null, off_at: atIso };
+    if (line) _flag.off_line = line;
   }
   let persisted = false;
   try {
@@ -149,14 +161,14 @@ function parseSlowModeLine(line, parseStamp = Date.parse) {
 // The entry point for the agent's report. Idempotent, because every raider's agent hears the same line:
 // an OFF only lands if a window was open at `at`, an ON only if none was. A stale replay (an old OFF line
 // read from a backfill) falls outside the open window and changes nothing.
-async function applyDetectedSlowMode(state, atMs, by) {
+async function applyDetectedSlowMode(state, atMs, by, line = null) {
   if (state !== 'on' && state !== 'off') return { changed: false, reason: 'bad-state' };
   if (!Number.isFinite(atMs)) return { changed: false, reason: 'bad-time' };
   if (atMs > Date.now() + 10 * 60000) return { changed: false, reason: 'in-the-future' };
   const open = slowModeOnAt(atMs);
   if (state === 'off' && !open) return { changed: false, reason: 'no-open-window' };
   if (state === 'on' && open) return { changed: false, reason: 'already-on' };
-  const res = await setSlowMode(state === 'on', by ? `auto:${by}` : 'auto', atMs);
+  const res = await setSlowMode(state === 'on', by ? `auto:${by}` : 'auto', atMs, line);
   return { changed: true, ...res };
 }
 
