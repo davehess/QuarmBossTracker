@@ -547,6 +547,16 @@
     return false;
   }
   function specClass(label){ if (WARN_SPECS[label]) return 'chip warn'; if (label.indexOf('Immune')===0 || label.indexOf('Un')===0) return 'chip imm'; return 'chip'; }
+  // Display words for a catalog label whose name does not say what the game says (the guild lead, 2026-10-15: "This mob
+  // is immune to runspeed changes but it doesn't say it anywhere until you cast on him" — the chip read "Unsnareable").
+  // The label itself stays the data contract (the bot and tests key on it); only the chip text and its tooltip change.
+  var SPEC_SHOW = {
+    'Unsnareable': ['Snare / run speed immune', 'Your target is immune to changes in its run speed: snares and run-speed debuffs will not land'],
+  };
+  function specChip(label){
+    var s = SPEC_SHOW[label];
+    return '<span class="'+specClass(label)+'"'+(s ? ' title="'+esc(s[1])+'"' : '')+'>'+esc(s ? s[0] : label)+'</span>';
+  }
 
   // Sight chips — "will invis hide me from this?" (the guild lead, 2026-09-02).
   //
@@ -1395,7 +1405,7 @@
       if (mob && Array.isArray(mob.specials) && mob.specials.length){
         for (var sj=0; sj<mob.specials.length; sj++){
           var slab = mob.specials[sj];
-          specChips += '<span class="'+specClass(slab)+'">'+esc(slab)+'</span>';
+          specChips += specChip(slab);
         }
       }
       var specBlock = '<div class="spec" style="padding-top:18px">' + (specChips || '<span class="empty" style="color:#6e7681;font-style:italic">no abilities catalogued</span>') + '</div>';
@@ -1500,7 +1510,7 @@
       var spec = '';
       var chips = sightChips(mob) + lullChip(mi.target_lull);   // before the specials: asked before the pull
       if (mob && Array.isArray(mob.specials) && mob.specials.length){
-        for (var j=0;j<mob.specials.length;j++){ var lab=mob.specials[j]; chips += '<span class="'+specClass(lab)+'">'+esc(lab)+'</span>'; }
+        for (var j=0;j<mob.specials.length;j++){ var lab=mob.specials[j]; chips += specChip(lab); }
       }
       chips += hitsChip(mi.target_hits);   // after the specials: seen in the fight, not catalogued
       if (chips) spec = '<div class="spec">'+chips+'</div>';
