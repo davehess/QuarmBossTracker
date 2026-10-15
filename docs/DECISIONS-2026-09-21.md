@@ -10966,6 +10966,12 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
 - **The first link** — yesterday's daytime session, 2026-10-14 13:08–16:51 UTC (9:08 AM–12:51 PM ET), 79 raiders,
   89 loot rows, 65 roll sets, no curated bosses — was created by this session for the guild lead to send (expires
   2026-11-14). The link itself is not written here.
+- **Follow-ups the same day (the guild lead):** the officer panel now copies the link on the current host (a
+  wolfpack.quest share address 404s until the stack graduates; web 1.8.166); a collapsed **"How do you have this
+  data?"** under every session review explains the Zeal pipe (the raid window any raid member's client already
+  holds) and miMIC (reads the pipe and the player's own log locally; chat channels filtered on the machine), web
+  1.8.167; share pages get a **public top bar** — home, About, In short, Platform, Roadmap, Get started, Zeal marks,
+  Privacy and the miMIC downloads, nothing that needs an account (`web/components/PublicTopBar.tsx`, web 1.8.168).
 - **Also on beta today:** agent 3.7.180 — the kite drift coach, guild loop rings and a **Tail** slider for the Map's
   target trail (the guild lead: *"we need a slider for tail history"*; Off / 10 s–5 min, default 60 s); web 1.8.164 —
   parchment background (2D) and shaded opaque floors (3D), per §220.
