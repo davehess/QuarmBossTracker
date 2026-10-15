@@ -8635,7 +8635,7 @@ document.addEventListener('click', function (ev) {
       body: JSON.stringify({ slot: slot, players: players, points: points, dry_run: true }) })
       .then(function (r) { return r.json(); }).then(function (j) {
         if (!msg) return;
-        if (!j.ok) { _dkpTickPending = null; msg.innerHTML = '<span style="color:#f85149">✕ ' + esc(j.reason || 'cannot submit') + '</span>'; return; }
+        if (!j.ok) { _dkpTickPending = null; msg.innerHTML = '<span style="color:#f85149">✕ ' + esc(j.reason || j.error || 'cannot submit') + '</span>'; return; }
         var verb = j.action === 'would-overwrite' ? 'OVERWRITE' : (j.action === 'create-separate' ? 'create a separate raid for' : 'add');
         // Prefer the OpenDKP-matched count when present (only matched raiders
         // get credited); fall back to the raw attendee count.
@@ -8664,7 +8664,7 @@ document.addEventListener('click', function (ev) {
           var unm2 = Array.isArray(j.unmatched) ? j.unmatched : [];
           msg2.innerHTML = '<span style="color:#3fb950">✓ ' + esc(_slotLabel(p.slot)) + ' submitted — ' + j.count + ' credited to ' + esc(j.raidName || ('#' + j.raidId)) + '</span>'
             + (unm2.length ? '<br><span style="color:#f6c365;font-size:11px">⚠ not on OpenDKP: ' + esc(unm2.slice(0, 12).join(', ')) + (unm2.length > 12 ? '…' : '') + '</span>' : '');
-        } else msg2.innerHTML = '<span style="color:#f85149">✕ ' + esc(j.reason || 'submit failed') + '</span>';
+        } else msg2.innerHTML = '<span style="color:#f85149">✕ ' + esc(j.reason || j.error || 'submit failed') + '</span>';
       }).catch(function () { _dkpTickPending = null; if (msg2) msg2.innerHTML = '<span style="color:#f85149">✕ submit failed</span>'; });
     return;
   }
