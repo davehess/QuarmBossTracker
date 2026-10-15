@@ -170,6 +170,13 @@ describe('ingest: merge vs insert', () => {
     expect(sb.rows).toHaveLength(2);
   });
 
+  it('a loop on another floor (z more than 40 apart) is a different loop', async () => {
+    const sb = fakeSupabase([row(7, { cz: 3 })]);
+    const r = await kite.ingest(sb, 'wolfpack', loopOf({ cz: 90 }), NOW);
+    expect(r.merged).toBe(false);
+    expect(sb.rows).toHaveLength(2);
+  });
+
   it('the opposite turning direction is a different loop', async () => {
     const sb = fakeSupabase([row(7, { dir: 'cw' })]);
     const r = await kite.ingest(sb, 'wolfpack', loopOf({ dir: 'ccw' }), NOW);

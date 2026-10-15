@@ -93,12 +93,14 @@ function validateLoop(body, now = Date.now()) {
 }
 
 // The existing row at the same spot as `loop`, or null. With several candidates the nearest centre wins.
-// The centre test is x/y only (a loop is a flat circle; z drifts with slopes), so loops stacked on different
-// floors of one zone would merge. Accepted: it is rare, and the cleaner geometry wins either way.
+// The centre test is x/y (a loop is a flat circle; z drifts with slopes), plus a loose z band so loops stacked
+// on different floors of one zone stay apart.
+const MERGE_Z_UNITS = 40;
 function findSameSpot(rows, loop) {
   let best = null, bestD = Infinity;
   for (const row of rows) {
     if (row.dir !== loop.dir) continue;
+    if (Math.abs((Number(row.cz) || 0) - (Number(loop.cz) || 0)) > MERGE_Z_UNITS) continue;
     if (Math.abs(row.r - loop.r) > MERGE_RADIUS_FRAC * Math.max(row.r, loop.r)) continue;
     const d = Math.hypot(row.cx - loop.cx, row.cy - loop.cy);
     if (d > MERGE_CENTRE_FRAC * loop.r) continue;
