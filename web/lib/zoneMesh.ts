@@ -22,7 +22,7 @@
 // WIRE FORMAT (little endian, which is every host this runs on)
 //   0   u32  magic 'WPM1'
 //   4   u32  triangle count
-//   8   u32  flags (bit 0: floors included)
+//   8   u32  flags (bit 0: floors included, bit 1: ONLY floors; the walls come from the walls-only request)
 //   12  f32  centre x, y, z   (server frame; the middle of the packed bounding box)
 //   24  f32  scale x, y, z    (units per integer step)
 //   36  i16  9 per triangle: x0 y0 z0 x1 y1 z1 x2 y2 z2, each as round((v - centre) / scale)
@@ -32,6 +32,9 @@ export const MESH_MAGIC = 0x314d5057;   // 'W' 'P' 'M' '1' read as a little-endi
 export const HEADER_BYTES = 36;
 export const BYTES_PER_TRI = 18;
 export const DEFAULT_TRI_CAP = 100_000;
+// The floors request (floorsOnly) is a second, smaller layer drawn under the walls, so it has its own cap and
+// the walls keep their full budget: a toggle that hides it leaves the walls exactly as they were.
+export const DEFAULT_FLOOR_CAP = 60_000;
 
 // A triangle whose normal is within this of horizontal (|nz| at or above it) is floor or ceiling; below it,
 // a wall or a slope too steep to walk. ~45 degrees. The 2D slicer is stricter (0.30, true walls only) because
@@ -40,13 +43,14 @@ export const STEEP_NZ = 0.7;
 // A sliver smaller than this (square units) is noise at any zoom the view allows.
 export const MIN_TRI_AREA = 4;
 
-export type PackOptions = { floors?: boolean; cap?: number };
-export type PackStats = { raw: number; kept: number; packed: number; bytes: number; floors: boolean };
+export type PackOptions = { floors?: boolean; floorsOnly?: boolean; cap?: number };
+export type PackStats = { raw: number; kept: number; packed: number; bytes: number; floors: boolean; floorsOnly: boolean };
 export type PackedMesh = { buf: ArrayBuffer; stats: PackStats };
 export type UnpackedMesh = {
   tris: number;
   pos: Float32Array;   // 9 numbers a triangle, SERVER frame
   floors: boolean;
+  floorsOnly: boolean;
   min: [number, number, number];
   max: [number, number, number];
 };
@@ -73,8 +77,9 @@ export function positionsToThree(pos: Float32Array): Float32Array {
  * near-horizontal, then keeps the `cap` LARGEST by area, in their original order.
  */
 export function packMesh(V: Float32Array, I: Uint32Array, opts: PackOptions = {}): PackedMesh {
-  const floors = !!opts.floors;
-  const cap = Math.max(1, Math.floor(opts.cap ?? DEFAULT_TRI_CAP));
+  const floorsOnly = !!opts.floorsOnly;
+  const floors = !!opts.floors || floorsOnly;
+  const cap = Math.max(1, Math.floor(opts.cap ?? (floorsOnly ? DEFAULT_FLOOR_CAP : DEFAULT_TRI_CAP)));
   const nTri = Math.floor(I.length / 3);
 
   const keep: number[] = [];       // triangle numbers that pass the filters
@@ -91,7 +96,8 @@ export function packMesh(V: Float32Array, I: Uint32Array, opts: PackOptions = {}
     const nl = Math.sqrt(nx * nx + ny * ny + nz * nz);
     const a = nl / 2;
     if (!(a >= MIN_TRI_AREA)) continue;
-    if (!floors && Math.abs(nz / nl) >= STEEP_NZ) continue;
+    const flat = Math.abs(nz / nl) >= STEEP_NZ;
+    if (floorsOnly ? !flat : (!floors && flat)) continue;
     keep.push(t);
     area.push(a);
   }
@@ -134,7 +140,7 @@ export function packMesh(V: Float32Array, I: Uint32Array, opts: PackOptions = {}
   const dv = new DataView(buf);
   dv.setUint32(0, MESH_MAGIC, true);
   dv.setUint32(4, n, true);
-  dv.setUint32(8, floors ? 1 : 0, true);
+  dv.setUint32(8, (floors ? 1 : 0) | (floorsOnly ? 2 : 0), true);
   for (let k = 0; k < 3; k++) {
     dv.setFloat32(12 + 4 * k, centre[k], true);
     dv.setFloat32(24 + 4 * k, scale[k], true);
@@ -149,7 +155,7 @@ export function packMesh(V: Float32Array, I: Uint32Array, opts: PackOptions = {}
       }
     }
   }
-  return { buf, stats: { raw: nTri, kept: keep.length, packed: n, bytes: buf.byteLength, floors } };
+  return { buf, stats: { raw: nTri, kept: keep.length, packed: n, bytes: buf.byteLength, floors, floorsOnly } };
 }
 
 /** The wire buffer -> positions in the SERVER frame. Throws on anything that is not a mesh we wrote. */
@@ -159,7 +165,9 @@ export function unpackMesh(buf: ArrayBuffer): UnpackedMesh {
   if (dv.getUint32(0, true) !== MESH_MAGIC) throw new Error('not a zone mesh');
   const tris = dv.getUint32(4, true);
   if (buf.byteLength !== HEADER_BYTES + BYTES_PER_TRI * tris) throw new Error('mesh length does not match its triangle count');
-  const floors = (dv.getUint32(8, true) & 1) === 1;
+  const flags = dv.getUint32(8, true);
+  const floors = (flags & 1) === 1;
+  const floorsOnly = (flags & 2) === 2;
   const c = [0, 1, 2].map(k => dv.getFloat32(12 + 4 * k, true));
   const s = [0, 1, 2].map(k => dv.getFloat32(24 + 4 * k, true));
   const q = new Int16Array(buf, HEADER_BYTES, 9 * tris);
@@ -174,7 +182,7 @@ export function unpackMesh(buf: ArrayBuffer): UnpackedMesh {
     if (v > max[k]) max[k] = v;
   }
   if (!tris) { min.fill(0); max.fill(0); }
-  return { tris, pos, floors, min, max };
+  return { tris, pos, floors, floorsOnly, min, max };
 }
 
 /** The same low-cool, high-warm ramp as the 2D board's bandColor (SpectatorBoard.tsx), as a hue in degrees. */

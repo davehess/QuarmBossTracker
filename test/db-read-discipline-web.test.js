@@ -591,6 +591,7 @@ const UNIQUE_KEYS = {
   encounter_events: [['id']],
   opendkp_loot: [['id'], ['raid_id', 'character_name', 'dkp']],
   eqemu_spawn2: [['id']],
+  eqemu_spawnentry: [['spawngroup_id', 'npc_id']],   // pkey (spawngroup_id, npc_id), 20260525120000; /api/spectator/replay/bosses pages it
   pvp_boss_kills: [['id'], ['dedup_key']],
   raid_track_minutes: [['minute_at']],   // pkey (guild_id, minute_at), 20261005020000; /spectator/replay pages the night list
 };

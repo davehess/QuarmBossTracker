@@ -13,6 +13,15 @@
 //   hp  whole percent, or -1 when unknown
 //   zi  index into `zones`, or -1 when no zone could be worked out for that sample
 // A frame can list fewer raiders than the raid holds: only those placed in an uploader's own zone.
+//
+// OPTIONAL keys (rows written before the recorder learned them simply lack them):
+//   mobs:[[name, spawn_id], ...]            the mobs raiders had targeted, per minute like `who`
+//   mf:[[dt, mi, x, y, z, n, zi], ...]      one entry per mob per sample: dt as in `f`, mi an index into `mobs`,
+//       x,y,z in the SAME raw frame as a raider's x,y in `f` (so serverXY applies), n how many raiders had it
+//       targeted, zi an index into `zones` or -1
+// decodeMinute hangs each mf entry on the frame with the SAME dt. An entry whose dt has no frame (no raider was
+// placed at that sample) is dropped: a target is only ever seen through a raider, so it cannot happen on a
+// well-formed row, and a frame-less target would have no "frame in force" to age out of.
 
 import { serverXY } from './spectator';
 
@@ -41,7 +50,19 @@ export type ReplayRaider = {
   zone: string | null;    // eqemu_zone.short_name, null when the sample had none
 };
 
-export type ReplayFrame = { t: number; raiders: ReplayRaider[] };   // t: epoch ms
+/** A mob the raid had targeted, in the same frame as ReplayRaider (server frame, already swapped). */
+export type ReplayTarget = {
+  name: string;
+  sid: number | null;     // spawn id, null when the recorder had none
+  x: number;
+  y: number;
+  z: number;
+  n: number;              // raiders that had it targeted (at least 1)
+  zone: string | null;
+};
+
+/** `targets` is absent on a frame with none, and on every frame of a row recorded before targets existed. */
+export type ReplayFrame = { t: number; raiders: ReplayRaider[]; targets?: ReplayTarget[] };   // t: epoch ms
 
 const isNum = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 
@@ -52,12 +73,13 @@ const isNum = (n: unknown): n is number => typeof n === 'number' && Number.isFin
 export function decodeMinute(row: MinuteRow): ReplayFrame[] {
   const start = Date.parse(row.minute_at);
   if (!Number.isFinite(start)) return [];
-  let d: { v?: unknown; who?: unknown; zones?: unknown; f?: unknown };
+  let d: { v?: unknown; who?: unknown; zones?: unknown; f?: unknown; mobs?: unknown; mf?: unknown };
   try { d = JSON.parse(row.data); } catch { return []; }
   if (!d || d.v !== 1 || !Array.isArray(d.who) || !Array.isArray(d.f)) return [];
   const zones: unknown[] = Array.isArray(d.zones) ? d.zones : [];
   const who = d.who as unknown[];
   const frames: ReplayFrame[] = [];
+  const targetsByDt = decodeTargets(d.mobs, d.mf, zones);
   for (const fr of d.f) {
     if (!Array.isArray(fr) || !isNum(fr[0])) continue;
     const raiders: ReplayRaider[] = [];
@@ -81,11 +103,43 @@ export function decodeMinute(row: MinuteRow): ReplayFrame[] {
         zone,
       });
     }
-    if (raiders.length) frames.push({ t: start + fr[0] * 1000, raiders });
+    if (raiders.length) {
+      const targets = targetsByDt.get(fr[0]);
+      frames.push(targets ? { t: start + fr[0] * 1000, raiders, targets } : { t: start + fr[0] * 1000, raiders });
+    }
   }
   frames.sort((a, b) => a.t - b.t);
   return frames;
 }
+
+/** `mobs` + `mf` of one minute -> targets keyed by dt. Anything malformed is skipped; absent keys give an empty map. */
+function decodeTargets(mobsRaw: unknown, mfRaw: unknown, zones: unknown[]): Map<number, ReplayTarget[]> {
+  const out = new Map<number, ReplayTarget[]>();
+  if (!Array.isArray(mobsRaw) || !Array.isArray(mfRaw)) return out;
+  for (const e of mfRaw) {
+    if (!Array.isArray(e) || e.length < 7) continue;
+    const [dt, mi, rx, ry, z, n, zi] = e as unknown[];
+    if (!isNum(dt) || !isNum(mi) || !isNum(rx) || !isNum(ry)) continue;
+    const m = mobsRaw[mi];
+    if (!Array.isArray(m) || typeof m[0] !== 'string' || !m[0]) continue;
+    const { x, y } = serverXY(rx, ry);
+    const t: ReplayTarget = {
+      name: m[0],
+      // a spawn id of 0 means "no target" upstream, never spawn zero (CLAUDE.md, the buff_casts note)
+      sid: isNum(m[1]) && m[1] > 0 ? m[1] : null,
+      x, y,
+      z: isNum(z) ? z : 0,
+      n: isNum(n) && n >= 1 ? Math.floor(n) : 1,
+      zone: isNum(zi) && zi >= 0 && typeof zones[zi] === 'string' ? (zones[zi] as string) : null,
+    };
+    const a = out.get(dt);
+    if (a) a.push(t); else out.set(dt, [t]);
+  }
+  return out;
+}
+
+/** A target's identity across frames: the spawn id when there is one (twelve mobs can share a name), else the name. */
+export const targetKey = (t: Pick<ReplayTarget, 'name' | 'sid'>) => `${t.name}#${t.sid ?? ''}`;
 
 /** Several minute rows -> one time-ordered list of frames. */
 export function decodeRows(rows: MinuteRow[]): ReplayFrame[] {
@@ -134,6 +188,81 @@ export function frameIndexAt(frames: readonly ReplayFrame[], t: number): number 
 export function frameAt(frames: readonly ReplayFrame[], t: number, maxGapMs = FRAME_GAP_MS): ReplayFrame | null {
   const i = frameIndexAt(frames, t);
   return i >= 0 && t - frames[i].t <= maxGapMs ? frames[i] : null;
+}
+
+/**
+ * The recorded targets at playhead `t`, glided toward the next frame's like a raider: matched by spawn id (or
+ * name when there is none), and a mob that moved further than `teleport` between the two did not walk it, so it
+ * stays put. `a` is the frame in force, `b` the next one (null when it is too far off to be the same movement),
+ * `f` how far from a to b the playhead is (0-1).
+ */
+export function glideTargets(a: ReplayFrame | null, b: ReplayFrame | null, f: number, teleport: number): ReplayTarget[] {
+  if (!a?.targets?.length) return [];
+  const next = b?.targets?.length ? new Map(b.targets.map(t => [targetKey(t), t])) : null;
+  return a.targets.map(t => {
+    const n = next?.get(targetKey(t));
+    if (!n || n.zone !== t.zone || Math.hypot(n.x - t.x, n.y - t.y) >= teleport) return t;
+    return { ...t, x: t.x + (n.x - t.x) * f, y: t.y + (n.y - t.y) * f, z: t.z + (n.z - t.z) * f };
+  });
+}
+
+/** Names of every mob targeted in the frames from `windowMs` before `t` up to frame `idx`. Used to hide a boss's spawn-point marker while the real one is on the map. */
+export function recentTargetNames(frames: readonly ReplayFrame[], idx: number, t: number, windowMs: number): Set<string> {
+  const out = new Set<string>();
+  for (let j = idx; j >= 0 && frames[j].t >= t - windowMs; j--) for (const x of frames[j].targets ?? []) out.add(x.name);
+  return out;
+}
+
+// ── Split screen: when two zones each hold a real share of the raid ─────────────────────────────
+
+export const SPLIT_MIN_RAIDERS = 5;      // the second zone needs at least this many to open a split
+export const SPLIT_MIN_SHARE = 0.25;     // ... and at least this share of the busiest zone's count
+export const SPLIT_KEEP_RAIDERS = 3;     // an open split closes only below these (looser, so a head or two does not flap it)
+export const SPLIT_KEEP_SHARE = 0.15;
+export const SPLIT_HOLD_MS = 30_000;     // playback time a split stays open (or closed) before it may change
+export const SPLIT_RESET_MS = 60_000;    // a playhead jump this big (a scrub) forgets the history
+
+export type SplitState = { second: string | null; since: number; lastT: number };   // times are epoch ms of the PLAYHEAD
+export const SPLIT_INIT: SplitState = { second: null, since: 0, lastT: Number.NEGATIVE_INFINITY };
+
+/**
+ * Which zone, if any, gets the second pane. `primary` is the zone in the first pane (pinned, or the busiest one,
+ * or the followed raider's); the second pane is the busiest OTHER zone and opens only when it qualifies against
+ * the busiest count anywhere. Hysteresis, in playhead time so a fast replay does not flicker it: a change of
+ * state (open, close, or swap the second zone) waits SPLIT_HOLD_MS after the last one, an open split stays open
+ * while the zone is above the looser KEEP thresholds, and swapping the second zone takes pickReplayZone's
+ * half-again rule. A scrub of more than SPLIT_RESET_MS starts fresh, so a seek lands on the right picture.
+ */
+export function pickSplit(counts: Map<string, number>, primary: string | null, prev: SplitState, t: number): SplitState {
+  const reset = !Number.isFinite(prev.lastT) || Math.abs(t - prev.lastT) > SPLIT_RESET_MS;
+  // a primary that is the second zone, or none, is a different layout: forget the split rather than hold a clash
+  const was = reset || !primary || prev.second === primary ? null : prev.second;
+  const since = reset || was === null && prev.second === primary ? Number.NEGATIVE_INFINITY : prev.since;
+  const held = t - since < SPLIT_HOLD_MS;
+  const done = (second: string | null, at: number): SplitState => ({ second, since: at, lastT: t });
+  if (!primary) return done(null, since);
+
+  let max = 0;
+  const others = new Map<string, number>();
+  for (const [z, c] of counts) {
+    if (c > max) max = c;
+    if (z !== primary && c > 0) others.set(z, c);
+  }
+  let best: string | null = null;
+  let bn = 0;
+  for (const [z, c] of others) if (c > bn || (c === bn && best !== null && z < best)) { best = z; bn = c; }
+  const enters = (c: number) => c >= SPLIT_MIN_RAIDERS && c >= SPLIT_MIN_SHARE * max;
+  const keeps = (c: number) => c >= SPLIT_KEEP_RAIDERS && c >= SPLIT_KEEP_SHARE * max;
+
+  if (was !== null) {
+    if (held) return done(was, since);                                   // too soon to change anything
+    const have = others.get(was) ?? 0;
+    if (!keeps(have)) return best !== null && enters(bn) ? done(best, t) : done(null, t);
+    const pick = pickReplayZone(others, was);
+    return pick !== null && pick !== was ? done(pick, t) : done(was, since);
+  }
+  if (held && !reset) return done(null, since);                         // closed recently: stay closed
+  return best !== null && enters(bn) ? done(best, t) : done(null, since);
 }
 
 // ── The night list ──────────────────────────────────────────────────────────
