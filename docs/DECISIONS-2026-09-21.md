@@ -10927,3 +10927,24 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
     mimic-destroyed-window-guard, window-process-names — red on bare `origin/beta` too).
 - Open: the heading direction (unchanged from §161); whether the lower Crypt door needs each raider's Tarkil Adan
   key (the guide marks the key `check: true`).
+
+### 336. Kite loops: a live drift coach and a guild loop library (B + C); floor art follows §220 (2026-10-15)
+- **The ask** (the guild lead, with two Map screenshots of a kite): *"common non-drifting circles and speeds are worth
+  us hanging onto. [one raider]'s loop here is flawless. mine is not"*. The yellow loops on the Map are the TARGET's
+  crumb trail (`trailStep`), memory only, wiped on zoning; nothing kept loops before this.
+- **Picked B and C** (A, a local "keep this loop" pin, not taken):
+  - **C, drift coach (Mimic Map, local):** your own position at Zeal's rate, a circle fitted per lap, the last lap as
+    a ghost ring, and a chip with lap time, radius, centre drift (and its direction), wobble and speed %.
+  - **B, guild loop library:** after 3 clean laps Mimic sends ONE fitted circle (zone, centre, radius, lap time,
+    speed %, drift, wobble, laps, direction) — never the path, never who ran it — and every Map shows the guild's
+    best loops at each spot as guide rings with a pace dot, plus "vs guild" on the coach.
+- **Bot 3.1.275 (main):** `POST /api/agent/kite-loop`, `GET /api/agent/kite-loops?zone=` (`utils/kiteLoops.js`); table
+  `kite_loops` (migration `20261015120000`, applied 2026-10-15) with NO uploader column; the uploader is used only
+  for an in-memory rate limit (30/hour). Same spot = same direction, centre within 0.35 r, radius within 25 %, z
+  within 40 (another floor stays apart); the cleaner loop's geometry wins, `seen` counts repeats; 60 per zone.
+  quality = 0.45·drift score + 0.35·wobble score + 0.20·laps score. `kite_loop` is sheddable. PRIVACY.md updated.
+- **Mimic side (beta):** in progress at the time of writing.
+- **Floor art** (the guild lead: *"we could use some floor graphics, even if rudimentary"*) is already decided in
+  §220: the website gets none / lines / **parchment generated from our own walls, floors and spawn density**, and
+  3D-A stays the EQEmu mesh **shaded with no textures**; painted art and real textures are Mimic-only via the local
+  converter (3D-B). Building the web part on the replay page now; no new pick was needed.

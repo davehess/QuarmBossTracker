@@ -12185,6 +12185,7 @@ const _SHED_KINDS = new Set([
   'trigger_relay', 'ui_layout', 'tells',                       // fan-out / backup / side-record
   'corpse',                                                    // the corpse DM's off switch
   'xp_events',                                                 // XP board telemetry (FB-37)
+  'kite_loop',                                                 // the kite-loop library's uploads (a nicety, never the raid's record)
 ]);
 const _SHED_NEVER = new Set(['encounter', 'chat', 'bosskill', 'lockout', 'historical_chat']);
 async function _isShedded(kind, res) {
@@ -12279,6 +12280,10 @@ const _BUDGET_DEFAULTS = {
   zone_spawns:     { perMin: 30,  durable: false, get: true },
   // Charm overlay "Best pets here" (2026-10-14): same shape as zone_spawns, one GET per zone-in then a 304.
   charm_pets:      { perMin: 30,  durable: false, get: true },
+  // Kite-loop library (2026-10-15). The POST is ephemeral (a clean loop is re-found on the next run), so over budget
+  // is the 200-ack-and-drop of the shed pattern; the GET is one pull per zone-in, 60 s cached at the bot.
+  kite_loop:       { perMin: 30,  durable: false },
+  kite_loops:      { perMin: 30,  durable: false, get: true },
   // Mimic Spawn map sync (GET poll + POST push share it). A poll every few seconds per open map is ~20/min;
   // over budget is a 429 the agent backs off on (get:true applies to both verbs).
   map_sync:        { perMin: 60,  durable: false, get: true },
@@ -17529,6 +17534,41 @@ async function _handleAgentCharmPets(req, res) {
   res.writeHead(200, Object.assign({ 'Content-Type': 'application/json', 'ETag': r.etag, 'Cache-Control': 'max-age=21600' },
     gzip ? { 'Content-Encoding': 'gzip' } : {}));
   res.end(gzip ? r.gz : r.body);
+}
+
+// POST /api/agent/kite-loop and GET /api/agent/kite-loops?zone=<short_name> — the guild's library of clean kite loops
+// (the guild lead, 2026-10-15). Mimic uploads ONLY a fitted circle; utils/kiteLoops.js validates, merges and serves it.
+// The uploader's discord id is the rate-limit key in memory and is never stored (the table has no such column).
+async function _handleAgentKiteLoopPost(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const kite = require('./utils/kiteLoops');
+  const supabase = require('./utils/supabase');
+  if (!kite.allowUpload(String(identity.discord_id || 'unknown'))) {
+    // Same shape as the admission-budget drop: the agent treats it as delivered and moves on.
+    return _ptsJson(res, 200, { ok: true, rate_limited: true });
+  }
+  const got = await _ptsReadBody(req, 8 * 1024);
+  if (got.tooBig) return _ptsJson(res, 413, { error: 'payload too large' });
+  if (got.error) return _ptsJson(res, 400, { error: 'read failed' });
+  let body; try { body = JSON.parse(got.text); } catch { return _ptsJson(res, 400, { error: 'invalid json' }); }
+  const v = kite.validateLoop(body, Date.now());
+  if (v.error) return _ptsJson(res, 400, { error: v.error });
+  if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'database unavailable' });
+  const r = await kite.ingest(supabase, supabase.guildId(), v.loop, Date.now());
+  if (r.status !== 200) return _ptsJson(res, 503, { error: 'try again shortly' });
+  return _ptsJson(res, 200, { ok: true, id: r.id, merged: r.merged });
+}
+async function _handleAgentKiteLoopsGet(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const kite = require('./utils/kiteLoops');
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'database unavailable' });
+  const r = await kite.query(supabase, supabase.guildId(), new URL(req.url, 'http://x').searchParams.get('zone'), Date.now());
+  if (r.status === 400) return _ptsJson(res, 400, { error: 'unknown or invalid zone' });
+  if (r.status !== 200) return _ptsJson(res, 503, { error: 'try again shortly' });
+  return _ptsJson(res, 200, { loops: r.loops });
 }
 
 // POST/GET /api/agent/map-sync — the Mimic Spawn map's synced spawn-point events (the guild lead,
@@ -23885,6 +23925,27 @@ const httpServer = http.createServer(async (req, res) => {
       console.error('[charm-pets] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url === '/api/agent/kite-loop') {
+    if (await _isShedded('kite_loop', res)) return;
+    if (await _overBudget('kite_loop', req, res)) return;
+    try { return await _handleAgentKiteLoopPost(req, res); }
+    catch (err) {
+      console.error('[kite-loop] handler error:', err);
+      if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'internal error' })); }
+      return;
+    }
+  }
+
+  if (req.method === 'GET' && req.url.split('?')[0] === '/api/agent/kite-loops') {
+    if (await _overBudget('kite_loops', req, res)) return;
+    try { return await _handleAgentKiteLoopsGet(req, res); }
+    catch (err) {
+      console.error('[kite-loops] handler error:', err);
+      if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'internal error' })); }
+      return;
     }
   }
 
