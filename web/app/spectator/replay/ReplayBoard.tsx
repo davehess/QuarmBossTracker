@@ -57,7 +57,7 @@ const PANEL = '#161b22';
 const BORDER = '#30363d';
 const TEXT = '#c9d1d9';
 const TARGET_RED = '#ef4444';
-const SPAWN_AMBER = '#b7791f';
+const BOSS_R = 13;                     // a killed boss (where the raid fought it, or its spawn point): a big red dot
 const FONT = '12px "Cascadia Code", Consolas, ui-monospace, monospace';
 const DOT_R = 4.5;
 const TAIL_MS = 30_000;
@@ -104,6 +104,7 @@ const newPane = (): Pane => ({
 
 type PaneArgs = {
   t: number; zone: string | null; here: Placed[]; targets: ReplayTarget[]; spawns: ActiveSpawn[];
+  bosses: ReadonlySet<string>;   // normMobName of the night's killed bosses: a target in it draws as a big red dot
   frames: ReplayFrame[]; idx: number; hasFrame: boolean; tails: boolean; entry: MapEntry | undefined;
   hl: ReadonlySet<string>; picks: Picks; fol: Placed | null;
   snap: boolean;                 // the playhead jumped (a scrub, a new session): frame the raid at once, no glide
@@ -280,21 +281,25 @@ function drawPane(p: Pane, o: PaneArgs): boolean {
   const sx = (x: number) => -x * v.scale + ox;
   const sy = (y: number) => -y * v.scale + oy;
 
-  // Spawn points of the bosses fought now: dimmed, dashed, underneath everything else.
+  // Spawn points of the bosses fought now: a big red DASHED ring, underneath everything else — where the boss stands
+  // when it appears, not where the raid fought it (the filled dot below is that).
   ctx.font = FONT;
   ctx.textBaseline = 'middle';
   for (const s of o.spawns) {
     const px = sx(s.x), py = sy(s.y);
-    if (px < -20 || px > w + 20 || py < -20 || py > h + 20) continue;
-    ctx.globalAlpha = 0.65;
-    ctx.strokeStyle = SPAWN_AMBER;
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([3, 3]);
-    diamond(ctx, px, py, 7);
+    if (px < -24 || px > w + 24 || py < -24 || py > h + 24) continue;
+    ctx.fillStyle = TARGET_RED;
+    ctx.globalAlpha = 0.18;
+    ctx.beginPath();
+    ctx.arc(px, py, BOSS_R, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 0.85;
+    ctx.strokeStyle = TARGET_RED;
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([4, 3]);
     ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillStyle = SPAWN_AMBER;
-    ctx.fillText(`${s.name} · spawn point`, px + 11, py);
+    tag(ctx, w, h, `${s.name} · spawn point`, px + BOSS_R, py, TARGET_RED, '#fecaca');
     ctx.globalAlpha = 1;
   }
 
@@ -371,12 +376,22 @@ function drawPane(p: Pane, o: PaneArgs): boolean {
     p.drawn.push({ name: r.name, cls: r.cls, hp: r.hp, px, py });
   }
 
-  // Recorded targets: red diamonds, bigger the more raiders had it targeted.
+  // Recorded targets: red diamonds, bigger the more raiders had it targeted. A killed boss is a big red dot with a
+  // white ring, so it is the thing to point at on the raid screen.
   for (const tg of o.targets) {
     const px = sx(tg.x), py = sy(tg.y);
     if (px < -30 || px > w + 30 || py < -30 || py > h + 30) continue;
-    const r = Math.min(16, 6 + 2 * Math.sqrt(tg.n));
     ctx.fillStyle = TARGET_RED;
+    if (o.bosses.has(normMobName(tg.name))) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(px, py, BOSS_R, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      continue;
+    }
+    const r = Math.min(16, 6 + 2 * Math.sqrt(tg.n));
     ctx.strokeStyle = BG;
     ctx.lineWidth = 1.5;
     diamond(ctx, px, py, r);
@@ -395,7 +410,8 @@ function drawPane(p: Pane, o: PaneArgs): boolean {
   for (const tg of o.targets) {
     const px = sx(tg.x), py = sy(tg.y);
     if (px < -30 || px > w + 30 || py < -30 || py > h + 30) continue;
-    tag(ctx, w, h, `${tg.name}${tg.n > 1 ? ` ×${tg.n}` : ''}`, px + 6, py, TARGET_RED, '#fecaca');
+    const boss = o.bosses.has(normMobName(tg.name));
+    tag(ctx, w, h, `${tg.name}${tg.n > 1 ? ` ×${tg.n}` : ''}`, px + (boss ? BOSS_R : 6), py, TARGET_RED, boss ? '#ffffff' : '#fecaca');
   }
 
   // Scale bar and north.
@@ -517,6 +533,7 @@ export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {
   const lastPaintT = useRef<number | null>(null);
   const rosterRef = useRef(new Map<string, RosterEntry>());
   const bossesRef = useRef<SpawnBoss[]>([]);
+  const bossNamesRef = useRef<ReadonlySet<string>>(new Set());
   const showBossesRef = useRef(true);
   // 3D: while it is showing, paint() hands each pane's raiders to its 3D view instead of drawing the canvas.
   const modeRef = useRef<'2d' | '3d'>('2d');
@@ -627,6 +644,7 @@ export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {
   // The night's killed bosses with their spawn points: for nights recorded before the recorder kept targets.
   useEffect(() => {
     bossesRef.current = [];
+    bossNamesRef.current = new Set();
     const key = night?.night_key;
     if (!key) return;
     const u = urlsRef.current;
@@ -636,6 +654,7 @@ export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {
       .then(async res => {
         if (!res.ok) return;
         bossesRef.current = parseBosses(await res.json());
+        bossNamesRef.current = new Set(bossesRef.current.map(b => normMobName(b.name)));
         schedule();
       })
       .catch(() => {});
@@ -751,13 +770,13 @@ export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {
         pane.holdsFollow = !!folHere;
         bridges[i].current?.feed(zone, here.map(q => ({ name: q.r.name, cls: q.r.cls, hp: q.r.hp, x: q.x, y: q.y, z: q.z })), {
           hl, follow: folHere ? pk.follow : null,
-          targets: targets.map(x => ({ name: x.name, n: x.n, x: x.x, y: x.y, z: x.z })),
+          targets: targets.map(x => ({ name: x.name, n: x.n, x: x.x, y: x.y, z: x.z, boss: bossNamesRef.current.has(normMobName(x.name)) })),
           spawns, snap,
         });
         continue;
       }
       if (drawPane(pane, {
-        t, zone, here, targets, spawns, frames, idx, hasFrame: !!a, tails: tailsRef.current,
+        t, zone, here, targets, spawns, bosses: bossNamesRef.current, frames, idx, hasFrame: !!a, tails: tailsRef.current,
         entry: mapsRef.current[zone], hl, picks: pk, fol: folHere, snap, bg: bgRef.current, store: parchment,
       })) out.animating = true;
     }
