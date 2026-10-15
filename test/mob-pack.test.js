@@ -200,9 +200,9 @@ describe('a pack built to an older shape', () => {
   });
 
   it('a pack at the current version, inside its week, is left alone', async () => {
-    S.kv = [{ value: stored(220, { version: 6 }) }];
+    S.kv = [{ value: stored(220, { version: 7 }) }];
     const m = load();
-    expect(m._MOB_PACK_VERSION).toBe(6);   // 6: ae_rampage (2026-10-15); 5: quest_id on the mob (2026-10-10, FB-72); 4: procs (2026-10-07)
+    expect(m._MOB_PACK_VERSION).toBe(7);   // 7: rampage (2026-10-15); 6: ae_rampage (2026-10-15); 5: quest_id on the mob (2026-10-10, FB-72); 4: procs (2026-10-07)
     const res = await ask(m, 220);
     expect(res.code).toBe(200);
     await new Promise(r => setTimeout(r, 30));
