@@ -6,7 +6,7 @@
 //
 // Every line that has a time is a button that moves the replay's playhead there (the board's `seek` request), so
 // "who was at the kill at 10:42" is one tap from the picture of where they stood.
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { classColor } from '@/lib/spectator';
 import { MINUTE_MS, REPLAY_WINDOW_MS, type NightSummary } from '@/lib/raidReplay';
 import type { AttendeeRow, KillRow, LootEntry, RollEntry, SessionBundle, TickRow } from '@/lib/raidSession';
@@ -106,9 +106,9 @@ export default function SessionReview({ bundle, night, mode, extras }: {
 
       <div className="mt-3" role="tabpanel">
         {tab === 'attendance' && <Attendance rows={bundle.attendance} ticks={bundle.ticks} minutes={bundle.minutesRecorded} go={go} />}
-        {tab === 'kills' && <Kills kills={bundle.kills} go={go} />}
+        {tab === 'kills' && <Kills kills={bundle.kills} go={go} mode={mode} />}
         {tab === 'loot' && <LootAndRolls loot={bundle.loot} rolls={bundle.rolls} go={go} />}
-        {tab === 'parses' && <Parses kills={bundle.kills} go={go} />}
+        {tab === 'parses' && <Parses kills={bundle.kills} go={go} mode={mode} />}
       </div>
     </div>
   );
@@ -186,7 +186,7 @@ function Attendance({ rows, ticks, minutes, go }: { rows: AttendeeRow[]; ticks: 
 
 // ── Kills ────────────────────────────────────────────────────────────────────
 
-function Kills({ kills, go }: { kills: KillRow[]; go: (ms: number | null) => void }) {
+function Kills({ kills, go, mode }: { kills: KillRow[]; go: (ms: number | null) => void; mode: ReviewMode }) {
   const hasBoss = kills.some(k => k.boss);
   const [all, setAll] = useState(false);
   const shown = hasBoss && !all ? kills.filter(k => k.boss) : kills;
@@ -201,29 +201,125 @@ function Kills({ kills, go }: { kills: KillRow[]; go: (ms: number | null) => voi
           </button>
         )}
       </div>
-      <div className="overflow-x-auto rounded-md border border-border bg-panel">
-        <table className="w-full text-sm">
-          <thead><tr><th className={th}>Started</th><th className={th}>Mob</th><th className={th}>Zone</th><th className={th}>Length</th><th className={th}>Damage</th></tr></thead>
-          <tbody>
-            {shown.map(k => (
-              <tr key={k.id} className="border-t border-border/50">
-                <td className="px-2 py-1"><Seek ms={k.startMs} go={go}>{etClock.format(k.startMs)}</Seek></td>
-                <td className={`px-2 py-1 ${k.boss ? 'text-gold' : ''}`}>{k.name}</td>
-                <td className="px-2 py-1 text-dim">{k.zone ?? '—'}</td>
-                <td className="px-2 py-1 tabular-nums">{fmtDur(k.durationSec)}</td>
-                <td className="px-2 py-1 tabular-nums">{fmtDmg(k.totalDamage)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <p className="mb-1.5 text-xs text-dim">Tap a fight to open its full parse.</p>
+      <ul className="space-y-1.5">
+        {shown.map(k => (
+          <li key={k.id} className="rounded-md border border-border bg-panel">
+            <FightDetails id={k.id} mode={mode} summary={
+              <>
+                <Seek ms={k.startMs} go={go}>{etClock.format(k.startMs)}</Seek>
+                <span className={`min-w-0 flex-1 ${k.boss ? 'text-gold' : ''}`}>{k.name}</span>
+                <span className="text-xs text-dim">{k.zone ?? '—'}</span>
+                <span className="text-xs tabular-nums">{fmtDur(k.durationSec)}</span>
+                <span className="text-xs tabular-nums">{fmtDmg(k.totalDamage)}</span>
+                {mode.kind === 'member' && (
+                  <a href={`/parses/${k.id}`} className="whitespace-nowrap text-xs text-blue hover:underline">Parse page ↗</a>
+                )}
+              </>
+            } />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// ── One fight's full parse, loaded when its row is opened ────────────────────
+
+type ParseRow = { name: string; cls: string | null; damage: number; dps: number | null; pct: number; durationSec: number | null };
+type FightParse = { totalDamage: number; durationSec: number | null; players: ParseRow[] };
+type SortKey = 'name' | 'damage' | 'dps' | 'pct' | 'durationSec';
+
+/** The share variant sends a token and an encounter id, never a time; the server holds the window. */
+const parseUrl = (mode: ReviewMode, id: string) => (mode.kind === 'share'
+  ? `/api/share/raid/${mode.token}/parse?encounter=${encodeURIComponent(id)}`
+  : `/api/raid/session/parse?encounter=${encodeURIComponent(id)}`);
+
+/** A native <details> whose body is fetched the first time it opens. */
+function FightDetails({ id, mode, summary }: { id: string; mode: ReviewMode; summary: React.ReactNode }) {
+  const [opened, setOpened] = useState(false);
+  return (
+    <details className="group" onToggle={e => { if (e.currentTarget.open) setOpened(true); }}>
+      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm [&::-webkit-details-marker]:hidden">
+        <span aria-hidden="true" className="text-dim transition-transform group-open:rotate-90">▸</span>
+        {summary}
+      </summary>
+      {opened && <ParseTable id={id} mode={mode} />}
+    </details>
+  );
+}
+
+function ParseTable({ id, mode }: { id: string; mode: ReviewMode }) {
+  const [data, setData] = useState<FightParse | 'error' | null>(null);
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: 'damage', dir: -1 });
+  const token = mode.kind === 'share' ? mode.token : '';
+  useEffect(() => {
+    let live = true;
+    fetch(parseUrl(token ? { kind: 'share', token } : { kind: 'member' }, id))
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then(j => { if (live) setData(j.parse as FightParse); })
+      .catch(() => { if (live) setData('error'); });
+    return () => { live = false; };
+  }, [id, token]);
+
+  const rows = useMemo(() => {
+    if (!data || data === 'error') return [];
+    const { key, dir } = sort;
+    return data.players.slice().sort((a, b) => {
+      if (key === 'name') return dir * a.name.localeCompare(b.name);
+      return dir * ((a[key] ?? -1) - (b[key] ?? -1)) || a.name.localeCompare(b.name);
+    });
+  }, [data, sort]);
+
+  if (data === null) return <p className="border-t border-border/50 px-3 py-3 text-xs text-dim">Loading the parse…</p>;
+  if (data === 'error') return <p className="border-t border-border/50 px-3 py-3 text-xs text-dim">That parse could not be loaded.</p>;
+  if (!rows.length) return <p className="border-t border-border/50 px-3 py-3 text-xs text-dim">No damage was recorded for this fight.</p>;
+
+  const head = (key: SortKey, label: string, right = true) => (
+    <th className={`${th} ${right ? 'text-right' : ''}`} aria-sort={sort.key === key ? (sort.dir === -1 ? 'descending' : 'ascending') : 'none'}>
+      <button type="button" onClick={() => setSort(s => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: key === 'name' ? 1 : -1 }))}
+        className="uppercase tracking-wider hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue">
+        {label}{sort.key === key ? (sort.dir === -1 ? ' ▼' : ' ▲') : ''}
+      </button>
+    </th>
+  );
+  const raidDps = data.durationSec ? Math.round(data.totalDamage / data.durationSec) : null;
+  return (
+    <div className="overflow-x-auto border-t border-border/50">
+      <table className="w-full text-sm">
+        <thead><tr>{head('name', 'Player', false)}{head('damage', 'Damage')}{head('dps', 'DPS')}{head('pct', '%')}{head('durationSec', 'Time')}</tr></thead>
+        <tbody>
+          {rows.map(p => (
+            <tr key={p.name} className="border-t border-border/50">
+              <td className="px-2 py-1 whitespace-nowrap">
+                <span aria-hidden="true" className="mr-1.5 inline-block h-2 w-2 rounded-full" style={{ background: classColor(p.cls) }} />
+                {p.name}{p.cls ? <span className="ml-1.5 text-xs text-dim">{p.cls}</span> : null}
+              </td>
+              <td className="px-2 py-1 text-right tabular-nums">{fmtDmg(p.damage)}</td>
+              <td className="px-2 py-1 text-right tabular-nums">{p.dps != null ? fmtDmg(p.dps) : '—'}</td>
+              <td className="px-2 py-1 text-right tabular-nums">{p.pct.toFixed(1)}%</td>
+              <td className="px-2 py-1 text-right tabular-nums">{fmtDur(p.durationSec)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="border-t border-border text-text">
+            <td className="px-2 py-1">Total · {rows.length} {rows.length === 1 ? 'player' : 'players'}</td>
+            <td className="px-2 py-1 text-right tabular-nums">{fmtDmg(data.totalDamage)}</td>
+            <td className="px-2 py-1 text-right tabular-nums">{raidDps != null ? fmtDmg(raidDps) : '—'}</td>
+            <td className="px-2 py-1 text-right tabular-nums">100%</td>
+            <td className="px-2 py-1 text-right tabular-nums">{fmtDur(data.durationSec)}</td>
+          </tr>
+        </tfoot>
+      </table>
+      <p className="px-2 pb-2 text-xs text-dim">Shares are of the damage shown here; anyone who asked not to be shown is left out.</p>
     </div>
   );
 }
 
 // ── Parses ───────────────────────────────────────────────────────────────────
 
-function Parses({ kills, go }: { kills: KillRow[]; go: (ms: number | null) => void }) {
+function Parses({ kills, go, mode }: { kills: KillRow[]; go: (ms: number | null) => void; mode: ReviewMode }) {
   const withTop = kills.filter(k => k.top.length);
   const hasBoss = withTop.some(k => k.boss);
   const shown = hasBoss ? withTop.filter(k => k.boss) : withTop;
@@ -244,6 +340,9 @@ function Parses({ kills, go }: { kills: KillRow[]; go: (ms: number | null) => vo
               </li>
             ))}
           </ol>
+          <div className="-mx-3 -mb-3 mt-2 border-t border-border/50">
+            <FightDetails id={k.id} mode={mode} summary={<span className="text-xs text-dim">Full parse</span>} />
+          </div>
         </div>
       ))}
     </div>

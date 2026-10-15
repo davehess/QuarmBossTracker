@@ -37,6 +37,21 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-8-171-2026-10-15',
+    title: 'Full parses in the raid session review',
+    version: 'Web 1.8.171 · Bot 3.1.275',
+    date: '2026-10-15',
+    channel: 'beta',
+    headline: 'Every fight in a raid session review now opens into its full parse, not just the top five.',
+    features: [
+      { name: 'Full parse for every fight [beta]', blurb: 'On the raid session review, tap a fight to see everyone who did damage: their class, damage, DPS, share of the fight and time, with a total at the bottom. Tap a column heading to sort. Anyone who opted out of stats is left out, and the shares are worked out from who is shown.' },
+      { name: 'Open the parse page [beta]', blurb: 'Signed-in members get a link on each fight to its full parse page. Shared session links show the table only.' },
+    ],
+    fixes: [
+      'A long raid night used to show top damage for only the first 60 fights. It now covers the whole night.',
+    ],
+  },
+  {
     key: 'web-1-8-170-2026-10-15',
     title: 'Raid replay in 3D, and shareable raid sessions',
     version: 'Web 1.8.170 · Bot 3.1.275',
