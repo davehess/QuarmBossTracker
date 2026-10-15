@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Database load, no upgrade** (§334) | The guild lead: no compute upgrade. The biggest cost was one unindexed read (live damage, ~70% of DB time), fixed in bot 3.1.272; the batched sweep trims snapshots nightly (3.1.271). Round two (bot 3.1.273): `who_directory_lookup` (1.27 s → ms), trigram indexes on three ilike reads, the 30-day damage board memoised | (1) the guild lead: paste `20261015070000_db_read_speedups.sql` and `20261015040000_merge_encounter_players_concurrency.sql` into the Supabase SQL editor (the MCP cancels replacements); (2) the guild lead: pick which unused indexes to drop (§334 last bullet); (3) a session after the next raid: re-read `pg_stat_statements` |
+| **Database load, no upgrade** (§334) | The guild lead: no compute upgrade. The biggest cost was one unindexed read (live damage, ~70% of DB time), fixed in bot 3.1.272; the batched sweep trims snapshots nightly (3.1.271). Round two (bot 3.1.273): `who_directory_lookup` (1.27 s → ms), trigram indexes on three ilike reads, the 30-day damage board memoised | (1) the guild lead: paste `20261015080000_drop_unused_indexes.sql` into the Supabase SQL editor (the speed-up and merge-lock files are applied); (2) a session after the next raid: re-read `pg_stat_statements` |
 | **Slow mode ON wording** (§334) | Every boss gets 18 h inside the window (bot 3.1.269); agent 3.7.177 beta reads any Druzzil "thread of time" guild line as on/off | a session after the next slow-mode night: read `bot_kv` `slow_mode.set_line`, pin the exact ON text in the agent regex and `utils/slowMode.js` |
 | **Feedback popup** (§334) | On beta: agent 3.7.179 `fb30386f`; not tried in a live Electron yet | the guild lead: on the next beta build, click 💬 Feedback, type, restart the agent from the tray, confirm the text survives and sending works |
 | **Dashboard drag stutter** (§334) | No code moves the window; cause unknown | the guild lead: drag after each of: hide all overlays, Map Full/Canvas off, GPU off, overlays-follow-EQ off; say which monitor/scale |
@@ -10876,4 +10876,9 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
   - Unused/redundant indexes (scan counts cover only ~3 days, so weekly jobs may not show): `idx_threat_snapshots_uploader`
     157 MB / 9 scans (its `(guild_id, uploader)` prefix is the unique index's); `target_observations`' three indexes,
     72 MB / 0 scans (the table is written and swept, never read); `faction_hits_char_faction_ts_idx` 24 MB, an exact
-    prefix of `faction_hits_dedup_idx`. Proposed, not dropped: dropping is the guild lead's call.
+    prefix of `faction_hits_dedup_idx`. **The guild lead picked A and B**: all four go
+    (`20261015080000_drop_unused_indexes.sql`, about 230 MB); `target_observations_at_idx` stays.
+  - **Applied by the guild lead in the SQL editor, 2026-10-15:** `20261015040000` (the merge function now takes
+    the lock) and `20261015070000` (the view is the per-key rewrite, 10 keys in ~7 ms; `who_directory_v2` gone).
+    The drop file goes the same way. The rule: **anything that replaces or drops an existing object goes to the
+    guild lead as a file to paste**; the MCP cancels it every time, retrying included.
