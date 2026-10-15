@@ -33,6 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write     # to start the alpha build (last step)
     steps:
       - uses: actions/checkout@v5
         with:
@@ -92,3 +93,25 @@ jobs:
             git push origin alpha
             echo "alpha synced to beta $(git rev-parse --short origin/beta), main $(git rev-parse --short origin/main)"
           fi
+
+      # The push above uses GITHUB_TOKEN, which never starts `on: push` workflows, so beta's Mimic and
+      # agent changes reached the alpha BRANCH but not alpha INSTALLS until someone pushed alpha by hand
+      # (2026-10-15: the alpha build was a day and four beta fixes behind). A workflow_dispatch is the one
+      # event GITHUB_TOKEN may start, so: whenever alpha's Mimic or agent differs from what the rolling
+      # `mimic-alpha` release was built from, start that build. Alpha builds share one concurrency group,
+      # so a burst of syncs queues one build, not many.
+      - name: Start an alpha build if alpha's Mimic or agent moved
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git ls-remote --exit-code --heads origin alpha >/dev/null || exit 0
+          git fetch --force origin alpha 'refs/tags/mimic-alpha:refs/tags/mimic-alpha' || true
+          if git rev-parse -q --verify refs/tags/mimic-alpha >/dev/null \
+             && git diff --quiet refs/tags/mimic-alpha origin/alpha -- apps/mimic packages/wolfpack-logsync; then
+            echo "alpha build is current."
+            exit 0
+          fi
+          gh workflow run release-mimic.yml --repo "${{ github.repository }}" --ref alpha -f tag=alpha
+          echo "started an alpha build of $(git rev-parse --short origin/alpha)"
