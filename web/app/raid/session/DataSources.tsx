@@ -3,7 +3,7 @@
 // (the guild lead, 2026-10-15: "talks about the zeal pipe's exposure and miMIC"). Plain prose, no data reads.
 export default function DataSources() {
   return (
-    <details className="mt-6 rounded-md border border-border bg-panel p-3 text-sm text-dim">
+    <details className="rounded-md border border-border bg-panel p-3 text-sm text-dim">
       <summary className="cursor-pointer select-none font-medium text-text">How do you have this data?</summary>
       <div className="mt-2 space-y-2 leading-relaxed">
         <p>
