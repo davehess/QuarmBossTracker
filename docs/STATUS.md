@@ -540,6 +540,9 @@ next touch one rather than assuming a missing row means a missing doc.
   live UI files at their own resolution, no target needed; the file's last-written time is shown. Waiting on the
   guild lead's check of whether the time moves after /camp. The chat-window 🗑 works again (`2ee913cb`): a refusal
   shows on the card, Save resets the baseline, a click is not a drag.
+- **✅ Guild + raid chat while out of game (bot 3.1.277 main, agent 3.7.182 beta, 2026-10-15, §342):** the Chat overlay
+  relays the guild's /gu and /rs from other Mimics while you're not in game, with "N in game with Mimic" and a
+  "nobody in game" note. Waiting on the guild lead's out-of-game look.
 - **✅ Chat overlay Loot / Random / Other (agent 3.7.181 beta, 2026-10-15, §340):** opt-in in the chat ⚙. Money waits on
   one real coin line from the guild lead.
 - **✅ Post-raid link + full parses (bot 3.1.276 main; web 1.8.171 beta, 2026-10-15, §338):** the final raid review
