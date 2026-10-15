@@ -10264,23 +10264,31 @@ async function _handleAgentBuffCasts(req, res) {
   }
 
   let written = 0;
-  // The `on_conflict=` PostgREST parameter requires a NON-partial unique
-  // constraint or index — but buff_casts dedups via PARTIAL uniques split
-  // on (spell_id <> 0) vs (spell_id = 0), which PostgREST can't reference
-  // by column list. The old `upsert(...)` 400'd on every call (Supabase
-  // egress culprit #3: error responses × retry storm + the silent-data-loss
-  // bug). insertIgnoreDuplicates skips on_conflict, sends
-  // `Prefer: resolution=ignore-duplicates`, and lets the partial indexes
-  // catch dups server-side as a normal ON CONFLICT DO NOTHING.
-  if (resolved.length) {
-    const r = await supabase.insertIgnoreDuplicates('buff_casts', resolved)
-      .catch(err => { console.warn('[buff-casts] resolved insert failed:', err?.message); return null; });
-    if (Array.isArray(r)) written += r.length; else if (r !== null) written += resolved.length;
-  }
-  if (ambiguous.length) {
-    const r = await supabase.insertIgnoreDuplicates('buff_casts', ambiguous)
-      .catch(err => { console.warn('[buff-casts] ambiguous insert failed:', err?.message); return null; });
-    if (Array.isArray(r)) written += r.length; else if (r !== null) written += ambiguous.length;
+  // buff_casts dedups through two PARTIAL unique indexes (spell_id <> 0 / spell_id = 0), which PostgREST
+  // cannot name in `on_conflict=`. `Prefer: resolution=ignore-duplicates` without it only skips PRIMARY-KEY
+  // conflicts, so one duplicate landing 409'd the whole batch and every new landing in it was lost (raid
+  // night 2026-10-14: the Postgres log was mostly buff_casts_resolved_uniq violations). insert_buff_casts
+  // (migration 20261015014500) runs ON CONFLICT DO NOTHING with no target, which skips a hit on ANY unique
+  // index and a duplicate inside the batch, and returns how many rows it inserted. If the call itself fails
+  // (store down, function missing), the old two inserts below still run, so this is never worse than before.
+  const allRows = [...resolved, ...ambiguous];
+  const viaRpc = allRows.length
+    ? await supabase.rpc('insert_buff_casts', { p_rows: allRows })
+      .catch(err => { console.warn('[buff-casts] insert_buff_casts failed:', err?.message); return null; })
+    : 0;
+  if (typeof viaRpc === 'number') {
+    written = viaRpc;
+  } else {
+    if (resolved.length) {
+      const r = await supabase.insertIgnoreDuplicates('buff_casts', resolved)
+        .catch(err => { console.warn('[buff-casts] resolved insert failed:', err?.message); return null; });
+      if (Array.isArray(r)) written += r.length; else if (r !== null) written += resolved.length;
+    }
+    if (ambiguous.length) {
+      const r = await supabase.insertIgnoreDuplicates('buff_casts', ambiguous)
+        .catch(err => { console.warn('[buff-casts] ambiguous insert failed:', err?.message); return null; });
+      if (Array.isArray(r)) written += r.length; else if (r !== null) written += ambiguous.length;
+    }
   }
   // P1b: feed the coverage counter that ranks buff-reporter candidates per zone.
   // Recorded for ALL uploads (both index passes) regardless of the dedup flag so
