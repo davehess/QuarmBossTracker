@@ -71,9 +71,10 @@
 //                             ~20 agents over ~30s — they collapse into one edit)
 //   RAID_REVIEW_LIVE_MIN_SEC  floor between two live edits; default 300
 
-const { EmbedBuilder } = require('discord.js');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { getDefaultTz, partsInTzAt, localToUTC } = require('./timezone');
 const raidNight = require('./raidNight');
+const { raidSessionWindow, raidWindowFor, fetchBoundsFor } = require('./raidSessionWindow');
 const { dedupParseDeaths } = require('./parseDeaths');
 
 // Same thresholds web/lib/anomalies.ts uses to auto-hide a foreign raid from
@@ -1492,10 +1493,20 @@ async function postRaidNightReview(client, { atMs = Date.now(), dryRun = false, 
     // Same defect that was spamming the onboarding thread (2026-08-04); see
     // utils/threadAnchor.js for why an archived thread is the usual trigger.
     const { postOrEditCard } = require('./threadAnchor');
+    // The final write-up links to the full session review page (map replay, fights, loot, attendance). The live
+    // card does not: it would cost a Supabase read every 5 minutes, and the final edit adds it after midnight.
+    const payload = { embeds };
+    if (!live) {
+      const sessionUrl = await sessionReviewUrl(win);
+      if (sessionUrl) {
+        payload.components = [new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('Full session review').setURL(sessionUrl))];
+      }
+    }
     const res = await postOrEditCard(target.thread, {
       botId:   client.user.id,
       title:   embeds[0]?.data?.title || embeds[0]?.title,
-      payload: { embeds },
+      payload,
       getId:   () => _getReviewMessageId(win.nightKey),
       setId:   (id) => _setReviewMessageId(win.nightKey, id, target.thread.id),
       log:     (m) => console.log('[raid-review]', m),
@@ -1522,6 +1533,39 @@ async function postRaidNightReview(client, { atMs = Date.now(), dryRun = false, 
     console.warn('[raid-review] post failed:', err?.message);
     return { ok: false, reason: 'error', error: err?.message };
   }
+}
+
+/**
+ * The members-only session review page for the night's guild raid:
+ * /raid/session?from=<ISO>&to=<ISO>. The window is the recorded session (raid_track_minutes, minutes more than
+ * 20 min apart split, see utils/raidSessionWindow.js) that overlaps 19:30-00:30 ET; when the recording holds none
+ * (or the read fails) it falls back to that raid window itself, which still carries the fights, loot and rolls.
+ * Never throws; null only on a bad dateKey. Not a share link — the page needs a sign-in.
+ */
+async function sessionReviewUrl(win, { webBase } = {}) {
+  let span = null;
+  try {
+    const sb = _supa();
+    const bounds = fetchBoundsFor(win.dateKey);
+    if (bounds && sb.isEnabled() && typeof sb.selectAllPaged === 'function') {
+      const guildId = require('./supabase').guildId();
+      const rows = await sb.selectAllPaged('raid_track_minutes',
+        `select=minute_at&guild_id=eq.${encodeURIComponent(guildId)}` +
+        `&minute_at=gte.${encodeURIComponent(new Date(bounds.fromMs).toISOString())}` +
+        `&minute_at=lt.${encodeURIComponent(new Date(bounds.toMs).toISOString())}`,
+        'minute_at');
+      if (Array.isArray(rows)) span = raidSessionWindow(rows.map(r => r.minute_at), win.dateKey);
+    }
+  } catch (err) {
+    console.warn('[raid-review] session window read failed:', err?.message);
+  }
+  if (!span) {
+    const rw = raidWindowFor(win.dateKey);
+    if (!rw) return null;
+    span = { from: new Date(rw.fromMs).toISOString(), to: new Date(rw.toMs).toISOString() };
+  }
+  const base = webBase || process.env.WEB_BASE_URL || 'https://wolfpack.quest';
+  return `${base}/raid/session?from=${encodeURIComponent(span.from)}&to=${encodeURIComponent(span.to)}`;
 }
 
 // One pending timer at a time — a redeploy plus a catch-up must not stack two.
@@ -1708,7 +1752,7 @@ module.exports = {
   NIGHT_DEATH_DEDUP_MS, AUTO_FOREIGN_MAX_MEMBER_FRAC, AUTO_FOREIGN_MIN_PLAYERS,
   TIMELINE_CELLS,
   // fetch
-  collectNightData,
+  collectNightData, sessionReviewUrl,
   // trash tally
   noteTrashKill, trashSummary, trashBoundsFor, loadTrash, saveTrash, _resetTrashForTest,
   // post

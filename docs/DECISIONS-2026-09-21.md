@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Raid replay + session share links** (§335, §337) | **Graduated to main 2026-10-15 (web 1.8.170)** on the guild lead's word: replay 3D/floors/parchment/follow/bosses/split, guild-raid sessions, `/raid/session`, public `/share/raid/<token>` (works on wolfpack.quest and b.wolfpack.quest). Bot 3.1.274+ records NPC targets | the guild lead: send the share link; check the heading direction in game |
+| **Raid replay + session share links** (§335, §337) | **Graduated to main 2026-10-15 (web 1.8.170)** on the guild lead's word: replay 3D/floors/parchment/follow/bosses/split, guild-raid sessions, `/raid/session`, public `/share/raid/<token>` (works on wolfpack.quest and b.wolfpack.quest). Bot 3.1.274+ records NPC targets. §338: bot 3.1.276 puts a "Full session review" button on the final raid review (main); full per-fight parse tables on beta, web 1.8.171 (`https://b.wolfpack.quest/raid/session`) | the guild lead: send the share link; check the heading direction in game; look at the parse tables on beta, say graduate |
 | **Database load, no upgrade** (§334) | The guild lead: no compute upgrade. The biggest cost was one unindexed read (live damage, ~70% of DB time), fixed in bot 3.1.272; the batched sweep trims snapshots nightly (3.1.271). Round two (bot 3.1.273): `who_directory_lookup` (1.27 s → ms), trigram indexes on three ilike reads, the 30-day damage board memoised | (1) the guild lead: paste `20261015080000_drop_unused_indexes.sql` into the Supabase SQL editor (the speed-up and merge-lock files are applied); (2) a session after the next raid: re-read `pg_stat_statements` |
 | **Slow mode ON wording** (§334) | Every boss gets 18 h inside the window (bot 3.1.269); agent 3.7.177 beta reads any Druzzil "thread of time" guild line as on/off | a session after the next slow-mode night: read `bot_kv` `slow_mode.set_line`, pin the exact ON text in the agent regex and `utils/slowMode.js` |
 | **Feedback popup** (§334) | On beta: agent 3.7.179 `fb30386f`; not tried in a live Electron yet | the guild lead: on the next beta build, click 💬 Feedback, type, restart the agent from the tray, confirm the text survives and sending works |
@@ -10983,3 +10983,20 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
   full suite green but for the known my-logs-local failure, then web 1.8.170 rewrote the roadmap entry as a live
   release in a SECOND push — after `sync-beta` had merged the cherry-picks — so main→beta stayed conflict-free.
   The share link now works on both hosts; the officer panel copies the current host's address.
+
+### 338. The post-raid output links the session review; every fight gets its full parse (2026-10-15)
+- **The ask** (the guild lead): *"after raids we should build in this link into the output, we should see the full
+  parses and whatnot as well"*.
+- **Bot 3.1.276 (main):** the FINAL raid review (00:45 ET, or `/raidreview`) carries a **"Full session review"** link
+  button to `/raid/session?from=&to=`. The live card does not (it would add a read every 5 minutes). It is the
+  MEMBERS link: no public share is made automatically — a share stays an officer's deliberate act (§337). The window
+  is the `raid_track_minutes` session overlapping 19:30–00:30 ET (20-min gaps split, most minutes wins, the same
+  rules as the web's default session) from a `minute_at`-only read bounded 12:00 ET → 06:00 ET; with no recording
+  it falls back to the raid window itself. `utils/raidSessionWindow.js`, `test/raid-session-window.test.js`.
+- **Web 1.8.171 (beta — an existing page):** each fight on the Kills tab (and under each Parses card) opens into the
+  full table — every player with class, damage, DPS, share and time, sortable, with totals — fetched when opened.
+  Members: `/api/raid/session/parse`, plus a link to the fight's `/parses/<id>`. Share: `/api/share/raid/<token>/parse`
+  serves a fight only if it ENDED inside the share's window — the exact rule the page lists fights by, so nothing
+  outside the listed set is reachable by guessing ids. Opted-out characters are dropped before shares and totals are
+  computed. The top-five read now covers 400 fights (was 60; the list itself was never capped).
+- Where: `https://b.wolfpack.quest/raid/session` (and any share link on b.). Graduates on the guild lead's word.
