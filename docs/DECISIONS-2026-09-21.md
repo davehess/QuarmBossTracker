@@ -114,7 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Raid replay** (§335) | A live [beta] at `/spectator/replay` (web 1.8.160). C (3D walls, a 2D/3D switch on the same page) on beta only: web 1.8.161 `c23af97e`, `https://b.wolfpack.quest/spectator/replay` | the guild lead: try 3D on b.wolfpack.quest and say go (then graduate the files to main) or what to change; check the heading direction in game |
+| **Raid replay** (§335) | A live [beta] at `/spectator/replay` (web 1.8.160). C (3D) plus follow/highlight, floors, boss markers and split screen on beta only: web 1.8.162, `https://b.wolfpack.quest/spectator/replay`. Bot 3.1.274 records NPC targets from tonight | the guild lead: try it on b.wolfpack.quest and say go (then graduate the files to main — the beta routes import `lib/guild`, which main lacks, so graduation brings that module or reverts to the literal) or what to change; check the heading direction in game |
 | **Database load, no upgrade** (§334) | The guild lead: no compute upgrade. The biggest cost was one unindexed read (live damage, ~70% of DB time), fixed in bot 3.1.272; the batched sweep trims snapshots nightly (3.1.271). Round two (bot 3.1.273): `who_directory_lookup` (1.27 s → ms), trigram indexes on three ilike reads, the 30-day damage board memoised | (1) the guild lead: paste `20261015080000_drop_unused_indexes.sql` into the Supabase SQL editor (the speed-up and merge-lock files are applied); (2) a session after the next raid: re-read `pg_stat_statements` |
 | **Slow mode ON wording** (§334) | Every boss gets 18 h inside the window (bot 3.1.269); agent 3.7.177 beta reads any Druzzil "thread of time" guild line as on/off | a session after the next slow-mode night: read `bot_kv` `slow_mode.set_line`, pin the exact ON text in the agent regex and `utils/slowMode.js` |
 | **Feedback popup** (§334) | On beta: agent 3.7.179 `fb30386f`; not tried in a live Electron yet | the guild lead: on the next beta build, click 💬 Feedback, type, restart the agent from the tray, confirm the text survives and sending works |
@@ -10906,5 +10906,24 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
   capped at 100k triangles: Bastion of Thunder 33k triangles / 602 KB, Tranquility 42k / 764 KB. three.js
   0.169.0 loads only when 3D is first shown (130 KB gzipped). Axes checked on a real Tranquility minute: raiders
   stand 2–10 units above a mesh floor with the swap, on nothing without it. Not yet seen in a browser.
+- **The guild lead's first look at 3D** (*"it looks REALLY cool so far"*) asked for: follow and highlight players,
+  the bosses being targeted, filled-in walls, and split screen when two zones are busy. Landed the same day:
+  - **Bot 3.1.274 (main, `5a1e7228`): the recorder keeps the raid's NPC targets** — each frame takes
+    `utils/raidTargets.js` `snapshot()` (the most-targeted 20 NPCs among the frame's raiders), written as optional
+    `mobs` / `mf` keys in the minute row; position swapped back to the roster frame; a COUNT of targeters, never
+    who. Tonight (2026-10-15) is the first night recorded with targets. `docs/PRIVACY.md` retention line updated.
+  - **Web 1.8.162 (beta, `d16ad4ed` + `ef3062da`):** raider picker + tap-to-pick, highlight (others dim), Follow
+    (2D centre, 3D orbit target; survives zone changes; `?follow=` / `?hl=` in the link); floors as a second,
+    darker mesh layer (`/api/spectator/mesh?floors=only`, a Floors switch, default on); recorded targets drawn as
+    red markers sized by how many raiders were on them; **older nights get the curated bosses at their spawn points**
+    during each kill (`/api/spectator/replay/bosses`: encounters with `ended_at` and no classification, curated by
+    `bosses_local.auto_registered = false`, joined `eqemu_spawnentry` → `eqemu_spawn2`). Checked on 2026-10-14's
+    data: Manaetic Behemoth's spawn (1125, 0) sits where the raiders stood (1120, −2 after the swap), so spawn2 x/y
+    are the server frame as used. Event-spawned bosses (Terris Thule) have no spawn point and show nothing; a
+    wrong `encounters.zone_short` (Aerin`Dar filed as postorms) falls back to the NPC's real spawn zone.
+    **Split screen** opens when a second zone holds ≥ 5 raiders and ≥ 25% of the busiest (stays while ≥ 3 and
+    ≥ 15%, held 30 s), side by side or stacked on phones, two 3D views while split; `?split=off`.
+  - Beta's suite carries four Mimic test failures that predate this (tray-menu-layout, mimic-agent-only-mode,
+    mimic-destroyed-window-guard, window-process-names — red on bare `origin/beta` too).
 - Open: the heading direction (unchanged from §161); whether the lower Crypt door needs each raider's Tarkil Adan
   key (the guide marks the key `check: true`).
