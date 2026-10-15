@@ -16,9 +16,21 @@ import { readSource, sliceBlock, BOT_INDEX } from './_source-slice.js';
 const src = readSource(BOT_INDEX);
 const handler = sliceBlock(src, 'async function _handleAgentLiveDamage', '\n}');
 
-function run(url) {
+// Since 2026-10-15 the read goes through the live_damage_snapshots RPC (an indexable lower(boss_name) read) and
+// falls back to the old select only when the RPC fails. `queries` records both shapes as one query string each,
+// the RPC's params written in the select's own words, so the assertions below cover either path.
+function run(url, { rpcFails = false } = {}) {
   const queries = [];
-  const supabase = { isEnabled: () => true, select: async (_t, q) => { queries.push(q); return []; } };
+  const supabase = {
+    isEnabled: () => true,
+    select: async (_t, q) => { queries.push(q); return []; },
+    rpc: async (name, p) => {
+      if (rpcFails) return null;
+      queries.push(`rpc:${name}&boss=${p.p_boss}&snapshot_at=gte.${p.p_since}`
+        + (p.p_start_lo ? `&started_at=gte.${p.p_start_lo}&started_at=lte.${p.p_start_hi}` : ''));
+      return [];
+    },
+  };
   // eslint-disable-next-line no-new-func
   const fn = new Function('mimicLink', 'require', 'process', '_corroboratedDamage',
     handler + '\nreturn _handleAgentLiveDamage;')(
@@ -46,6 +58,17 @@ describe('/live-damage for one fight', () => {
     globalThis._liveDmgCache = new Map();
     const { queries } = await run('/api/agent/live-damage?boss=A%20brann%20geistlig');
     expect(decodeURIComponent(queries[0])).not.toContain('started_at=');
+  });
+
+  it('reads through the indexable RPC, and falls back to the old select when it fails', async () => {
+    globalThis._liveDmgCache = new Map();
+    const ok = await run('/api/agent/live-damage?boss=Terris%20Thule');
+    expect(ok.queries).toHaveLength(1);
+    expect(ok.queries[0]).toMatch(/^rpc:live_damage_snapshots&boss=Terris Thule/);
+    globalThis._liveDmgCache = new Map();
+    const fb = await run('/api/agent/live-damage?boss=Terris%20Thule', { rpcFails: true });
+    expect(fb.queries).toHaveLength(1);
+    expect(decodeURIComponent(fb.queries[0])).toContain('boss_name=eq.Terris Thule');
   });
 
   it('two fights of one name do not share a cached answer', async () => {
