@@ -11069,3 +11069,32 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
   clears the relayed lines.
 - **Privacy:** the same lines the bot already posts to Discord; officer, tells, group and custom channels are never
   uploaded and never enter the ring.
+- **Same day, "the chat should show guild chat when you aren't logged in on a character, you can be at character select
+  or earlier in the login process" (agent 3.7.184 beta):** "in game" now means logged in on a character. A camp
+  announcement ("prepare your camp") ends it at once (cleared by "abandon your preparations to camp", "Welcome to
+  EverQuest!" or any line 60 s later); a Zeal entry counts only when it has a zone or a position and does not belong to
+  a camped character; a log line counts only for a log that has not camped. What Zeal sends at character select is not
+  known from the repo.
+
+### 343. Rampage reach on the map, from the server's own rules (2026-10-15, bot 3.1.278–3.1.279, agent 3.7.183–3.7.184)
+- **The asks** (the guild lead): *"HOW WIDE IS AREA rampage FOR THIS MOB? IS IT THE SPACE AROUND THE TANK OR A RADIUS
+  AROUND HIM? CAN WE MARK THAT AREA RAMPAGE ON THE MAP"*, then *"show regular rampage range too"*.
+- **Read from the EQMacEmu source Quarm runs** (re-implemented in our words; GPL):
+  - **Area Rampage** (ability 4): centred on the MOB; hits everyone on its hate list except the current target (unless
+    the list has one entry), not feigned, within its melee reach: 0.75 × (mob bounding radius + player radius 5), at
+    least 14, +2 when the mob stands still, plus the height difference, at most 75 (60 if perma-rooted). Bounding
+    radius = per-race base (default 6) × size ÷ 5. Chance param0 (default 20%), targets param1 (unlimited), damage
+    param2 (100%). Example: A Recuso Degenerate (race 237, size 12) → 14.4 radius, reach 14.55 moving / 16.55 still, 5%.
+  - **Rampage** (ability 3): hits ONE entity — the first on the mob's rampage list that is not its target, not feigned,
+    within range param1 (default 75). Chance param0 (default 20%).
+  - **The rampage list** (the guild lead's "engagement slots"): every hate add (melee swing incl. misses, damage, any
+    detrimental landing incl. resists, the first bard pulse; heals/buffs on a hated member 50% within 500 units; a pet's
+    client owner) takes the first empty slot or appends; death, camp, zoning, invis/escape, resurrection, a far summon
+    or 10 min without hate empties it; feigned clients keep theirs; standing from FD drops you under level 35 always,
+    otherwise 35%. Unbounded (no 5-slot cap). DoT ticks do not add.
+- **Built:** `utils/aeRampage.js`; mob-info carries `ae_rampage` and `rampage` (`_MOB_PACK_VERSION` 7); the Mimic beta
+  Map draws, around the TARGET, a red dashed "AE rampage · r" ring and a dotted "Rampage · range" ring, each with its
+  own layer switch (default on). The rings are the equal-height reach; the server adds height difference.
+- **Open:** engagement slots in Target Info — research done (we can only reconstruct the list from logs; non-damaging
+  song pulses leave no trace); options A (this raider's log) / B (raid-wide merge at the bot) put to the guild lead,
+  A recommended. Not built.

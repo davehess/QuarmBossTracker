@@ -532,6 +532,8 @@ next touch one rather than assuming a missing row means a missing doc.
   live UI files at their own resolution, no target needed; the file's last-written time is shown. Waiting on the
   guild lead's check of whether the time moves after /camp. The chat-window 🗑 works again (`2ee913cb`): a refusal
   shows on the card, Save resets the baseline, a click is not a drag.
+- **✅ Rampage rings on the Map (bot 3.1.279 main, agent 3.7.184 beta, 2026-10-15, §343):** the target's Area Rampage
+  and Rampage reach, from the server's own rules. Engagement-slot list for Target Info: options A/B with the guild lead.
 - **✅ Guild + raid chat while out of game (bot 3.1.277 main, agent 3.7.182 beta, 2026-10-15, §342):** the Chat overlay
   relays the guild's /gu and /rs from other Mimics while you're not in game, with "N in game with Mimic" and a
   "nobody in game" note. Waiting on the guild lead's out-of-game look.
