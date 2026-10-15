@@ -65,6 +65,8 @@ export type Bridge3D = {
 type Props = {
   zone: string | null;
   floors: boolean;
+  /** Where the packed walls come from; the members' route when omitted (the public share page passes its own). */
+  meshUrl?: (zone: string, floors: '' | '1' | 'only') => string;
   bridgeRef: MutableRefObject<Bridge3D | null>;
   onReady: () => void;                      // the bridge is live: ask for a frame
   onFail: () => void;                       // no WebGL: the board goes back to 2D
@@ -191,7 +193,7 @@ function disposeMesh(c: Ctx, m: Mesh | null) {
   (m.material as MeshLambertMaterial | MeshBasicMaterial).dispose();
 }
 
-export default function Replay3D({ zone, floors, bridgeRef, onReady, onFail, onPick, onPanAway, onKeyDown, label }: Props) {
+export default function Replay3D({ zone, floors, meshUrl, bridgeRef, onReady, onFail, onPick, onPanAway, onKeyDown, label }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const ctxRef = useRef<Ctx | null>(null);
   const [status, setStatus] = useState<Status>('idle');
@@ -602,7 +604,7 @@ export default function Replay3D({ zone, floors, bridgeRef, onReady, onFail, onP
     const ac = new AbortController();
     setStatus('loading');
     setFloorStatus('idle');
-    fetch('/api/spectator/mesh?zone=' + encodeURIComponent(zone), { signal: ac.signal })
+    fetch(meshUrl ? meshUrl(zone, '') : '/api/spectator/mesh?zone=' + encodeURIComponent(zone), { signal: ac.signal })
       .then(async res => {
         if (ac.signal.aborted) return;
         if (res.status === 404) { setStatus('none'); return; }
@@ -653,7 +655,7 @@ export default function Replay3D({ zone, floors, bridgeRef, onReady, onFail, onP
     if (c.floor) { c.floor.visible = true; c.request(); return; }
     const ac = new AbortController();
     setFloorStatus('loading');
-    fetch('/api/spectator/mesh?floors=only&zone=' + encodeURIComponent(zone), { signal: ac.signal })
+    fetch(meshUrl ? meshUrl(zone, 'only') : '/api/spectator/mesh?floors=only&zone=' + encodeURIComponent(zone), { signal: ac.signal })
       .then(async res => {
         if (ac.signal.aborted) return;
         if (res.status === 404) { setFloorStatus('none'); return; }
