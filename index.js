@@ -6159,9 +6159,11 @@ async function _handleAgentOptinSummary(req, res) {
 // lockout (lower-case names). The guild lead, 2026-10-02, on the Oct 1 patch's
 // "Xanamech has no lockout": take him off the board.
 const _OFF_BOARD_NO_LOCKOUT = new Set(['xanamech nezmirthafen']);
-// POST /api/agent/slow-mode  { state: 'on'|'off', at: <ISO time from the log line>, by?: <character> }
+// POST /api/agent/slow-mode  { state: 'on'|'off', at: <ISO time from the log line>, by?: <character>, line?: <message> }
 // An agent reporting the server's own slow-mode message (the guild lead, 2026-10-11). Every raider's agent
-// hears the same line, so it is idempotent — see applyDetectedSlowMode. Only 'off' is sent today.
+// hears the same line, so it is idempotent — see applyDetectedSlowMode. The agent reads any Druzzil Ro
+// "thread of time" guild line as ON unless it says "natural pace" (OFF); the ON wording has never been
+// captured, so the line that opened the window is kept in the flag (set_line) to check it against.
 async function _handleAgentSlowMode(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -6179,7 +6181,8 @@ async function _handleAgentSlowMode(req, res) {
   const slowMode = require('./utils/slowMode');
   const state = payload?.state;
   const by = typeof payload?.by === 'string' ? payload.by.slice(0, 64) : null;
-  const result = await slowMode.applyDetectedSlowMode(state, Date.parse(payload?.at), by);
+  const line = typeof payload?.line === 'string' ? payload.line.slice(0, 400) : null;
+  const result = await slowMode.applyDetectedSlowMode(state, Date.parse(payload?.at), by, line);
   if (!result.changed && (result.reason === 'bad-state' || result.reason === 'bad-time')) {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: result.reason }));
@@ -6188,8 +6191,8 @@ async function _handleAgentSlowMode(req, res) {
   res.end(JSON.stringify({ ok: true, changed: !!result.changed, reason: result.reason || null }));
   if (result.changed) {
     slowMode.announce(client, state === 'off'
-      ? '🐢 Slow mode ended — Bastion of Thunder named are back on their usual timers. Kills before that moment keep their 18h.'
-      : '🐢 Slow mode is on — second-floor Bastion of Thunder named respawn in 18h.')
+      ? '🐢 Slow mode ended — bosses are back on their usual timers. Kills before that moment keep their 18h.'
+      : '🐢 Slow mode is on (from the server\'s message) — every boss we kill in our instances respawns in 18h.')
       .catch(() => {});
   }
 }

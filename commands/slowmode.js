@@ -1,22 +1,18 @@
 // commands/slowmode.js — /slowmode on | off | status (officers).
 //
-// Bastion of Thunder "slow mode" (the guild lead, 2026-10-11): while it is on, the second-floor named
-// (bosses.json `slowModeHours`) respawn in 18h instead of 3h. The rule and the stored switch live in
+// Guild-instance "slow mode" (the guild lead, 2026-10-11 and 2026-10-14): while it is on, every boss we
+// kill respawns in 18h, whatever its usual timer. The rule and the stored switch live in
 // utils/slowMode.js; this command only flips it and reports. The switch turns itself off 8 hours after
-// it goes on, and the server's own "time has returned to its natural pace" message turns it off too.
+// it goes on, and the server's own Druzzil Ro guild lines turn it on and off (reported by agents).
 
 const { SlashCommandBuilder, MessageFlags } = require('discord.js');
 const { hasOfficerRole, officerRolesList } = require('../utils/roles');
 const { discordAbsoluteTime } = require('../utils/timer');
 const slowMode = require('../utils/slowMode');
 
-function affectedNames() {
-  return require('../data/bosses.json').filter((b) => b.slowModeHours).map((b) => b.name);
-}
-
 function statusText() {
   const flag = slowMode.getSlowMode();
-  const names = affectedNames().join(', ') || 'none';
+  const names = 'every boss we kill in our instances (18h)';
   if (!flag) return `🐢 Slow mode: **off** (never set).\nAffected: ${names}`;
   const now = Date.now();
   const on = slowMode.slowModeOnAt(now);
@@ -33,7 +29,7 @@ function statusText() {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('slowmode')
-    .setDescription('Officers: Bastion of Thunder slow mode (second-floor named respawn in 18h)')
+    .setDescription('Officers: guild-instance slow mode (every boss we kill respawns in 18h)')
     .addStringOption((opt) =>
       opt.setName('action').setDescription('on, off, or status').setRequired(true)
         .addChoices(
@@ -58,7 +54,7 @@ module.exports = {
     await interaction.reply({ flags: MessageFlags.Ephemeral, content: `${statusText()}${warn}` });
     if (on) {
       await slowMode.announce(interaction.client,
-        '🐢 Slow mode is on — second-floor Bastion of Thunder named respawn in 18h. It switches itself off in 8 hours.');
+        '🐢 Slow mode is on — every boss we kill in our instances respawns in 18h. It switches itself off in 8 hours.');
     }
   },
 };

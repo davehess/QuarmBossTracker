@@ -30,6 +30,7 @@ const VERIFICATION_URL_DEFAULT = 'https://wolfpack.quest/auth/mimic-link';
 // agent forwards to the bot on every call — cache for 5 minutes per token.
 const _sessionCache = new Map();   // token → { resolvedAt, value }
 const SESSION_CACHE_TTL_MS = 5 * 60 * 1000;
+const SESSION_RETRY_MS = 15 * 1000;   // how soon a failed member read is tried again
 
 // Per-IP rate limit on the UNAUTHENTICATED /start — it does a Supabase INSERT
 // per call, so an open loop could spam mimic_link_codes (audit: unauthenticated
@@ -288,6 +289,17 @@ async function _lookupSessionToken(token) {
     'wolfpack_members',
     `${memberFilter}&select=nickname,global_name,role_names&limit=1`,
   ).catch(() => null);
+  // The member read FAILED (store timing out), as opposed to finding no row: keep the last good identity and
+  // retry in 15 s, rather than caching "no roles" for 5 minutes. Raid night 2026-10-14: one stall cached two
+  // officers as non-officers, so the Admin tab vanished and a DKP tick from Mimic came back "officers only".
+  if (memberRows === null) {
+    const value = (cached && cached.value) || {
+      user_id: row.user_id || null, discord_id: row.discord_id, display_name: row.discord_id,
+      role_names: [], is_officer: false,
+    };
+    _sessionCache.set(token, { resolvedAt: Date.now() - SESSION_CACHE_TTL_MS + SESSION_RETRY_MS, value });
+    return value;
+  }
   const member = Array.isArray(memberRows) ? memberRows[0] : null;
   const roleNames = Array.isArray(member?.role_names) ? member.role_names : [];
   const value = {
