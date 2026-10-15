@@ -45,6 +45,8 @@ function mockFetch(...answers) {
 }
 const ok = (body) => ({ status: 200, body: { ok: true, boot: 'b1', seq: 0, lines: [], ...body } });
 const L = (seq, ch, who, text, t = T0) => ({ seq, t, ch, who, text });
+// A Zeal entry for a character who is logged in: fresh, with a zone and a position (the player payload carries both).
+const WORLD = (updatedAt) => ({ updatedAt, zone: 164, loc: { x: 10, y: 20, z: 0 } });
 
 let envBefore;
 beforeEach(() => {
@@ -81,7 +83,7 @@ describe('poll gating: no bot call unless every gate is open', () => {
     expect(f.calls[0].init.body).toBeUndefined();
   });
   const CLOSED = [
-    ['the game is running (Zeal pushed state a moment ago)', 'in-game', () => agent._setZealStateForTest(ME, { updatedAt: T0 - 5_000 })],
+    ['the game is running (Zeal pushed state a moment ago)', 'in-game', () => agent._setZealStateForTest(ME, WORLD(T0 - 5_000))],
     ['`away` is off in the overlay', 'quiet', () => agent.setChatPolicy({ away: false, group: true }, T0)],
     ['the overlay went quiet (switches lapsed)', 'quiet', () => agent.setChatPolicy({ away: true }, T0 - agent.CHAT_POLICY_TTL_MS - 1)],
     ['the overlay never asked', 'quiet', () => agent._resetLocalChatForTest()],
@@ -108,11 +110,14 @@ describe('poll gating: no bot call unless every gate is open', () => {
   });
 });
 
-describe('"in game": the agent\'s own signal, no new process scan', () => {
+describe('"in game" = logged in on a character: the agent\'s own signals, no new process scan', () => {
   const NOW = T0;
-  it('a Zeal client that pushed state within the last minute means in game; older does not', () => {
-    expect(agent._eqInGameFrom({ [ME]: { updatedAt: NOW - 59_000 } }, [], NOW)).toBe(true);
-    expect(agent._eqInGameFrom({ [ME]: { updatedAt: NOW - 61_000 } }, [], NOW)).toBe(false);
+  const CAMP = `${TS} It will take you about 30 seconds to prepare your camp.`;
+  const ABANDON = `${TS} You abandon your preparations to camp.`;
+  const WELCOME = `${TS} Welcome to EverQuest!`;
+  it('a Zeal client in the world that pushed state within the last minute means in game; older does not', () => {
+    expect(agent._eqInGameFrom({ [ME]: WORLD(NOW - 59_000) }, [], NOW)).toBe(true);
+    expect(agent._eqInGameFrom({ [ME]: WORLD(NOW - 61_000) }, [], NOW)).toBe(false);
   });
   it('a watched log with a line in the last 90 s means in game (no Zeal, or a standing still player); older does not', () => {
     expect(agent._eqInGameFrom({}, [{ logPath: 'a', lastSeen: NOW - 89_000 }], NOW)).toBe(true);
@@ -122,12 +127,104 @@ describe('"in game": the agent\'s own signal, no new process scan', () => {
     expect(agent._eqInGameFrom({}, [], NOW)).toBe(false);
     expect(agent._eqInGameFrom(null, null, NOW)).toBe(false);
     expect(agent._eqInGameFrom({ x: {} }, [{ logPath: 'a' }], NOW)).toBe(false);   // a state with no stamp, a log never read
-    expect(agent._eqInGameFrom({ [ME]: { updatedAt: NOW - 1_000 } }, [{ logPath: 'a', lastSeen: NOW - 999_999 }], NOW)).toBe(true);
+    expect(agent._eqInGameFrom({ [ME]: WORLD(NOW - 1_000) }, [{ logPath: 'a', lastSeen: NOW - 999_999 }], NOW)).toBe(true);
   });
-  it('the source names those two signals and runs no process scan', () => {
+
+  describe('character select: the client is running, nobody is logged in', () => {
+    it('a fresh Zeal entry with no zone and no position is not a login, so the feed runs', async () => {
+      for (const st of [{ updatedAt: NOW - 1_000 }, { updatedAt: NOW - 1_000, zone: 0 }, { updatedAt: NOW - 1_000, zone: null, loc: null },
+        { updatedAt: NOW - 1_000, loc: { x: 0, y: 0, z: 0 } }, { updatedAt: NOW - 1_000, loc: { x: 'a', y: null } }]) {
+        expect(agent._eqInGameFrom({ [ME]: st }, [], NOW), JSON.stringify(st)).toBe(false);
+      }
+      agent._setZealStateForTest(ME, { updatedAt: T0 - 1_000 });
+      const f = mockFetch(ok({}));
+      expect(await agent._pollGuildFeed(T0, f)).toBe('ok');
+      expect(f.calls).toHaveLength(1);
+    });
+    it('a position alone (no zone id) is enough to look in-world', () => {
+      expect(agent._eqInGameFrom({ [ME]: { updatedAt: NOW - 1_000, loc: { x: 5, y: -7, z: 1 } } }, [], NOW)).toBe(true);
+    });
+    it('and in the world the feed stops', async () => {
+      const f = mockFetch(ok({}));
+      agent._setZealStateForTest(ME, WORLD(T0 - 1_000));
+      expect(await agent._pollGuildFeed(T0, f)).toBe('in-game');
+      expect(f.calls).toHaveLength(0);
+    });
+  });
+
+  describe('a camp ends "in game" at once, without waiting out the 90 s log window', () => {
+    const rec = () => ({ character: ME, logPath: 'a', lastSeen: NOW - 2_000 });
+    it('the camp announcement marks the log; its own lines do not count as play', () => {
+      const w = rec();
+      expect(agent._eqInGameFrom({}, [w], NOW)).toBe(true);                    // playing: a line two seconds ago
+      agent._guildFeedNoteCampLine(w, CAMP, NOW);
+      expect(w.campAt).toBe(NOW);
+      expect(agent._eqInGameFrom({}, [w], NOW)).toBe(false);                   // camping: the same recent line no longer counts
+      w.lastSeen = NOW + 20_000;                                               // a tail line a moment later
+      expect(agent._eqInGameFrom({}, [w], NOW + 20_000)).toBe(false);
+    });
+    it('the camped character\'s lingering Zeal entry (up to a minute) does not count either, but another character\'s does', () => {
+      const w = rec();
+      agent._guildFeedNoteCampLine(w, CAMP, NOW);
+      const zeal = { [ME]: WORLD(NOW - 3_000) };
+      expect(agent._eqInGameFrom(zeal, [w], NOW)).toBe(false);
+      expect(agent._eqInGameFrom({ ...zeal, Corvale: WORLD(NOW - 3_000) }, [w], NOW)).toBe(true);
+      expect(agent._eqInGameFrom({ [ME.toUpperCase()]: WORLD(NOW - 3_000) }, [w], NOW)).toBe(false);   // names compare without case
+    });
+    it('another character\'s log still counts while this one is camped', () => {
+      const w = rec();
+      agent._guildFeedNoteCampLine(w, CAMP, NOW);
+      expect(agent._eqInGameFrom({}, [w, { character: 'Corvale', logPath: 'b', lastSeen: NOW - 1_000 }], NOW)).toBe(true);
+    });
+    it('cancelling the camp, or logging back in, puts the log back in the game', () => {
+      for (const line of [ABANDON, WELCOME]) {
+        const w = rec();
+        agent._guildFeedNoteCampLine(w, CAMP, NOW);
+        agent._guildFeedNoteCampLine(w, line, NOW + 5_000);
+        expect(w.campAt, line).toBe(0);
+        w.lastSeen = NOW + 5_000;
+        expect(agent._eqInGameFrom({}, [w], NOW + 5_000), line).toBe(true);
+      }
+    });
+    it('a line well past the camp\'s own tail is a new session (a camp cancelled without a word), not the tail', () => {
+      const w = rec();
+      agent._guildFeedNoteCampLine(w, CAMP, NOW);
+      agent._guildFeedNoteCampLine(w, `${TS} You say, 'hello'`, NOW + 59_000);
+      expect(w.campAt).toBe(NOW);
+      agent._guildFeedNoteCampLine(w, `${TS} You say, 'hello'`, NOW + 61_000);
+      expect(w.campAt).toBe(0);
+    });
+    it('a log with no record, an empty line or an unrelated line changes nothing', () => {
+      const w = rec();
+      agent._guildFeedNoteCampLine(null, CAMP, NOW);
+      agent._guildFeedNoteCampLine(w, '', NOW);
+      agent._guildFeedNoteCampLine(w, `${TS} You have entered the Plane of Fire.`, NOW);
+      expect(w.campAt).toBeUndefined();
+    });
+    it('end to end: the feed polls right after the camp line, and stops when the player is back', async () => {
+      const w = { character: ME, logPath: 'a', lastSeen: T0 - 2_000 };
+      agent._setWatchedLogsForTest([w]);
+      try {
+        const f = mockFetch(ok({}));
+        expect(await agent._pollGuildFeed(T0, f)).toBe('in-game');             // playing
+        agent._guildFeedNoteCampLine(w, CAMP, T0);
+        expect(await agent._pollGuildFeed(T0 + 1_000, f)).toBe('ok');          // two seconds after the last line, not 90
+        expect(f.calls).toHaveLength(1);
+        agent._guildFeedNoteCampLine(w, WELCOME, T0 + 120_000);
+        w.lastSeen = T0 + 120_000;
+        expect(await agent._pollGuildFeed(T0 + 121_000, f)).toBe('in-game');
+        expect(f.calls).toHaveLength(1);
+      } finally { agent._setWatchedLogsForTest([]); }
+    });
+  });
+
+  it('the source names those signals and runs no process scan', () => {
     const code = stripJs(FEED_BLOCK);
     expect(code).toMatch(/_eqInGameFrom\(_zealState, stats\.watchedLogs, now\)/);
     expect(code).not.toMatch(/tasklist|child_process|execSync|spawn\(|pgrep|\bps\b/);
+  });
+  it('the tail callback feeds every raw log line to the camp note', () => {
+    expect(stripJs(AGENT_SRC)).toMatch(/_guildFeedNoteCampLine\(watched, line, Date\.now\(\)\);/);
   });
 });
 
@@ -266,7 +363,7 @@ describe('the game starting stops the poll and clears the ring', () => {
     const f = mockFetch(ok({ boot: 'b1', seq: 4, lines: [L(1, 'guild', 'Corvale', 'hi')] }));
     await agent._pollGuildFeed(T0, f);
     expect(feed({ away: true }).lines).toHaveLength(1);
-    agent._setZealStateForTest(ME, { updatedAt: T0 + 6_000 });
+    agent._setZealStateForTest(ME, WORLD(T0 + 6_000));
     expect(await agent._pollGuildFeed(T0 + 6_000, f)).toBe('in-game');
     expect(f.calls).toHaveLength(1);
     expect(agent._guildFeedRingForTest()).toHaveLength(0);
@@ -277,7 +374,7 @@ describe('the game starting stops the poll and clears the ring', () => {
   it('local lines then take over without duplicates, and a later away spell asks from 0 again', async () => {
     const f = mockFetch(ok({ boot: 'b1', seq: 4, lines: [L(4, 'guild', 'Corvale', 'pull in five')] }));
     await agent._pollGuildFeed(T0, f);
-    agent._setZealStateForTest(ME, { updatedAt: T0 + 6_000 });
+    agent._setZealStateForTest(ME, WORLD(T0 + 6_000));
     await agent._pollGuildFeed(T0 + 6_000, f);
     agent.noteLocalChatLine(`${TS} Corvale tells the guild, 'pull in five'`, ME, T0 + 7_000);
     const r = feed({ away: true, now: T0 + 7_000 });
@@ -292,7 +389,7 @@ describe('the game starting stops the poll and clears the ring', () => {
     let release;
     const slow = () => new Promise(r => { release = () => r({ status: 200, ok: true, json: async () => ({ ok: true, boot: 'b1', seq: 1, lines: [{ seq: 1, t: T0, ch: 'guild', who: 'Corvale', text: 'late' }] }) }); });
     const p = agent._pollGuildFeed(T0, slow);
-    agent._setZealStateForTest(ME, { updatedAt: T0 });
+    agent._setZealStateForTest(ME, WORLD(T0));
     release();
     expect(await p).toBe('in-game');
     expect(agent._guildFeedRingForTest()).toHaveLength(0);
@@ -318,7 +415,7 @@ describe('away.ingame passes through /api/chat', () => {
     expect(feed({ away: false }).away).toBeNull();
     expect(feed({ away: true, now: T0 + 31_000 }).away).toBeNull();
     expect(feed({ away: true, now: T0 + 29_000 }).away).toMatchObject({ on: true });
-    agent._setZealStateForTest(ME, { updatedAt: T0 + 1_000 });
+    agent._setZealStateForTest(ME, WORLD(T0 + 1_000));
     await agent._pollGuildFeed(T0 + 1_000, mockFetch(ok({})));
     expect(feed({ away: true, now: T0 + 1_000 }).away).toBeNull();
   });

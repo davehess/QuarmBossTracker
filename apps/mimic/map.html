@@ -521,6 +521,19 @@
     return { r: r, label: 'AE rampage · ' + (Math.round(r * 10) / 10),
       tip: 'Hits everyone on its hate list inside this ring except the tank · ' + ch + '% per round' + (n ? ' · up to ' + n + ' people' : '') };
   }
+  // Your target's regular Rampage ring (the guild lead, 2026-10-15: "show regular rampage range too"). Different from the AE
+  // one: a rampage hits ONE person per round, the first on the mob's rampage list who is not its current target, not feigned
+  // and inside `range` of the mob (plain distance, game units). The agent puts rampage { range, chance, damage_pct } on the
+  // target when its mob info has one; the range is 75 when the mob's ability leaves it blank. Same guards as the AE ring.
+  function rampageRing(t) {
+    var a = t && t.rampage, r = a ? Number(a.range) : 0;
+    if (!(r > 0) || r > AGGRO_MAX) return null;
+    if (t.type != null && t.type !== 1) return null;
+    if (t.hp_pct === 0 || /'s corpse\d*$/i.test(String(t.name))) return null;
+    var ch = Number(a.chance) > 0 ? Number(a.chance) : 20;
+    return { r: r, label: 'Rampage · ' + (Math.round(r * 10) / 10),
+      tip: 'Hits ONE person: the first on its rampage list who isn\'t the tank, inside this ring · ' + ch + '% per round' };
+  }
   // Mezzes and lulls on the rings (the guild lead, 2026-10-13: "add zzz's if it's mezzed" · "if it's truly pacified make
   // the circle light pink and have it fill in the outside like a clock wipe more red until the pacify wears off. bard
   // pacify is much shorter" · "druid harmony is still red on the inside at the lowered range, since it doesn't make
@@ -1135,7 +1148,7 @@
     ['walls', 'Walls'], ['rooms', 'Room names'], ['bosses', 'Boss names'], ['upLabel', 'Known mob: name + spawn id'],
     ['dots', 'Spawn points'], ['abilities', 'Ability icons'], ['pather', 'Walker mark ↻'], ['routes', 'Walker routes'],
     ['timers', 'Respawn timer rings'], ['candidates', '"?" maybe-died rings'], ['aggro', 'Aggro rings (◯)'],
-    ['aeRampage', 'AE rampage ring (target)'],
+    ['aeRampage', 'AE rampage ring (target)'], ['rampage', 'Rampage ring (target)'],
     ['you', 'You'], ['target', 'Target ring'], ['targetLine', 'Line to target'], ['distance', 'Distance to target'],
     ['targetName', 'Target name'], ['tot', 'Target\'s target (assist bar)'],
     ['pinLine', 'Target → its spawn point'], ['trail', 'Target\'s walked path'], ['conNames', 'Mob names in con colour'], ['group', 'Group'], ['groupNames', 'Group names'], ['raid', 'Raid'], ['raidNames', 'Raid names'],
@@ -1150,23 +1163,23 @@
     ['wall', 'Walls (one colour)'], ['oursWall', 'Walls (Wolf Pack)'], ['route', 'Walker routes'], ['routeTarget', 'Targeted walker route'],
     ['dot', 'Spawn point'], ['named', 'Named spawn'], ['raidTarget', 'Raid target'], ['up', 'Up / seen'],
     ['ringWait', 'Timer: not yet'], ['ringWindow', 'Timer: window open'], ['ringUp', 'Timer: up'], ['candidate', '"?" ring'], ['aggro', 'Aggro: KOS to you / unknown'],
-    ['aggroSafe', 'Aggro: not to you'], ['aggroNone', 'Aggro: nobody'], ['aeRamp', 'AE rampage ring'],
+    ['aggroSafe', 'Aggro: not to you'], ['aggroNone', 'Aggro: nobody'], ['aeRamp', 'AE rampage ring'], ['ramp', 'Rampage ring'],
     ['glyph', 'Ability icons'], ['pather', 'Walker mark'], ['bossLabel', 'Boss name'], ['raidLabel', 'Raid target name'],
     ['upLabel', 'Known mob name'], ['room', 'Room names'], ['you', 'You'], ['target', 'Target'], ['tot', 'Target\'s target'], ['pinLine', 'Target → spawn line'],
     ['group', 'Group'], ['raid', 'Raid'],
   ];
   var MAP_SCHEMES = {
     default: { wall: '#c8d6ea', oursWall: '#d6e6ff', route: '#39c5cf', routeTarget: '#7ee787', dot: '#c9d1d9', named: '#f2cc60',
-      raidTarget: '#ff7b72', up: '#56d364', ringWait: '#f85149', ringWindow: '#f0b429', ringUp: '#56d364', candidate: '#d2a8ff', aggro: '#e5534b', aggroSafe: '#e3b341', aggroNone: '#56d364', aeRamp: '#ff5c5c',
+      raidTarget: '#ff7b72', up: '#56d364', ringWait: '#f85149', ringWindow: '#f0b429', ringUp: '#56d364', candidate: '#d2a8ff', aggro: '#e5534b', aggroSafe: '#e3b341', aggroNone: '#56d364', aeRamp: '#ff5c5c', ramp: '#ff79c6',
       glyph: '#e6edf3', pather: '#9ecbff', bossLabel: '#f2cc60', raidLabel: '#ffa198', upLabel: '#7ee787', room: '#c9d9ee',
       you: '#58a6ff', target: '#f0883e', tot: '#f778ba', pinLine: '#7ee787', group: '#56d364', raid: '#a371f7', bg: '#131a26' },
     contrast: { wall: '#ffffff', oursWall: '#ffffff', route: '#00e5ff', routeTarget: '#00ff66', dot: '#ffffff', named: '#ffd700',
-      raidTarget: '#ff3b30', up: '#00ff66', ringWait: '#ff3b30', ringWindow: '#ffcc00', ringUp: '#00ff66', candidate: '#e040fb', aggro: '#ff3b30', aggroSafe: '#ffcc00', aggroNone: '#00ff66', aeRamp: '#ff3b30',
+      raidTarget: '#ff3b30', up: '#00ff66', ringWait: '#ff3b30', ringWindow: '#ffcc00', ringUp: '#00ff66', candidate: '#e040fb', aggro: '#ff3b30', aggroSafe: '#ffcc00', aggroNone: '#00ff66', aeRamp: '#ff3b30', ramp: '#ff80ab',
       glyph: '#ffffff', pather: '#00e5ff', bossLabel: '#ffd700', raidLabel: '#ff6b6b', upLabel: '#00ff66', room: '#ffffff',
       you: '#00b0ff', target: '#ff9100', tot: '#ff4fd8', pinLine: '#00ff66', group: '#00ff66', raid: '#e040fb', bg: '#000000' },
     // Okabe–Ito: no red/green pair carries a meaning (up is sky blue, "not yet" vermillion, the window yellow).
     cb: { wall: '#d9d9d9', oursWall: '#e0e0e0', route: '#56b4e9', routeTarget: '#f0e442', dot: '#d9d9d9', named: '#e69f00',
-      raidTarget: '#d55e00', up: '#56b4e9', ringWait: '#d55e00', ringWindow: '#f0e442', ringUp: '#56b4e9', candidate: '#cc79a7', aggro: '#d55e00', aggroSafe: '#f0e442', aggroNone: '#56b4e9', aeRamp: '#d55e00',
+      raidTarget: '#d55e00', up: '#56b4e9', ringWait: '#d55e00', ringWindow: '#f0e442', ringUp: '#56b4e9', candidate: '#cc79a7', aggro: '#d55e00', aggroSafe: '#f0e442', aggroNone: '#56b4e9', aeRamp: '#d55e00', ramp: '#f0e442',
       glyph: '#ffffff', pather: '#56b4e9', bossLabel: '#e69f00', raidLabel: '#d55e00', upLabel: '#56b4e9', room: '#d9d9d9',
       you: '#009e73', target: '#e69f00', tot: '#cc79a7', pinLine: '#f0e442', group: '#009e73', raid: '#cc79a7', bg: '#14171c' },
   };
@@ -1536,8 +1549,11 @@
     cursorLoc = inside && S.view ? screenToServer(e.clientX - r.left, e.clientY - r.top, S.view, S.w, S.h) : null;
     updateLocBar(Date.now());
     if (S.guild && (S.guild.loops.length || S.hoverLoop)) kiteHover(cursorLoc);   // a guild loop's label shows while the cursor is on its ring
-    // The target's AE rampage ring says what it is when the cursor is on its edge (within 9 px).
-    var ae = S.aeRing, tip = ae && cursorLoc && S.view && Math.abs(Math.hypot(cursorLoc.x - ae.x, cursorLoc.y - ae.y) - ae.r) <= 9 / S.view.scale ? ae.tip : '';
+    // The target's AE rampage ring and its regular rampage ring say what they are when the cursor is on an edge (within 9 px).
+    var tip = '';
+    [S.aeRing, S.rampRing].forEach(function (g) {
+      if (!tip && g && cursorLoc && S.view && Math.abs(Math.hypot(cursorLoc.x - g.x, cursorLoc.y - g.y) - g.r) <= 9 / S.view.scale) tip = g.tip;
+    });
     if (cv.title !== tip) cv.title = tip;
   }, { passive: true });
   document.addEventListener('mouseout', function (e) { if (!e.relatedTarget) { cursorLoc = null; updateLocBar(Date.now()); if (S.hoverLoop) kiteHover(null); } });
@@ -1890,6 +1906,16 @@
     ctx.lineWidth = I.ringW; ctx.strokeStyle = hexA(c, Math.max(0.85, I.ringLine)); ctx.stroke(); ctx.setLineDash([]);
     halo(ring.label, x, y - R - 7, labelFont('small'), c, 'center');
   }
+  // The target's regular Rampage ring (rampageRing) at (x, y) px: dotted, in its own colour (the AE ring is dashed red), with
+  // "Rampage · <r>" under it so the two labels never sit on top of each other. A speck of a ring is not drawn.
+  function rampageDraw(x, y, ring) {
+    var R = ring.r * S.view.scale;
+    if (R < 4) return;
+    var c = S.cfg.col.ramp || '#ff79c6', I = inkStyle(S.cfg.ink);
+    ctx.beginPath(); ctx.setLineDash([2, 5]); ctx.arc(x, y, R, 0, 6.2832);
+    ctx.lineWidth = I.ringW; ctx.strokeStyle = hexA(c, Math.max(0.85, I.ringLine)); ctx.stroke(); ctx.setLineDash([]);
+    halo(ring.label, x, y + R + 12, labelFont('small'), c, 'center');
+  }
   // The trail (trailStep): each stretch in the colour of what the mob was doing (classifyTrail: yellow pathing, red off
   // its home, reddish-orange walking back), a glowing red spot where it stepped off, the waypoint legs it was seen
   // walking (dashed, in the targeted-route colour), and an arrowhead the way its last few breadcrumbs went.
@@ -2241,7 +2267,7 @@
         }
       }
       // Target: a ring and a dotted line from you.
-      S.aeRing = null;
+      S.aeRing = null; S.rampRing = null;
       if (P.target && P.target.x != null) {
         var td = drawn(targetKey(P.target), P.target, rt), tq = wpt(td.x, td.y);
         if (P.self && SH.targetLine) {
@@ -2304,6 +2330,9 @@
         // for the hover tooltip (mousemove below).
         var aer = SH.aeRampage ? aeRampageRing(P.target) : null;
         if (aer) { aeRampageDraw(tq[0], tq[1], aer); S.aeRing = { x: td.x, y: td.y, r: aer.r, tip: aer.tip }; }
+        // And its regular Rampage reach, the same way (S.rampRing is its hover tooltip).
+        var rr = SH.rampage ? rampageRing(P.target) : null;
+        if (rr) { rampageDraw(tq[0], tq[1], rr); S.rampRing = { x: td.x, y: td.y, r: rr.r, tip: rr.tip }; }
         // Pinned: a thin line from the target to the spawn point it is tied to. A point that shares its route with
         // others (route twins, e.g. Plane of Valor's five golem roamers) is a guess between them: faint dashed lines
         // to every one of them instead of one confident line (the guild lead, 2026-10-13: "Why is this non-pathing mob
