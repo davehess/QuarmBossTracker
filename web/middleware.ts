@@ -111,6 +111,16 @@ export async function middleware(request: NextRequest, event: NextFetchEvent) {
     return NextResponse.rewrite(url);
   }
 
+  // Public share links (/share/raid/<token> and the routes behind it, 2026-10-15): the visitor is anonymous BY DESIGN
+  // and the token is the whole credential, so none of the session work below runs for them: no refresh, no
+  // lockout lookup, no page-view row, no cookie set. The page gets a bare shell (app/layout.tsx reads this header)
+  // so no link into a member page is on it.
+  if (request.nextUrl.pathname.startsWith('/share/') || request.nextUrl.pathname.startsWith('/api/share/')) {
+    const h = new Headers(request.headers);
+    if (request.nextUrl.pathname.startsWith('/share/')) h.set('x-wp-bare', '1'); else h.delete('x-wp-bare');
+    return NextResponse.next({ request: { headers: h } });
+  }
+
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(

@@ -7,6 +7,7 @@ import AuthBadge from '@/components/AuthBadge';
 import LocalDashboardLink from '@/components/LocalDashboardLink';
 import GlobalSearch from '@/components/GlobalSearch';
 import GuidedTour, { TourLauncher } from '@/components/GuidedTour';
+import BareShell from '@/components/BareShell';
 import BetaBanner from '@/components/BetaBanner';
 import BetaLink from '@/components/BetaLink';
 import { getSessionUser } from '@/lib/session';
@@ -78,6 +79,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         </body>
       </html>
     );
+  }
+
+  // A public share page (/share/*, 2026-10-15): the middleware sets the header and skips the session for it.
+  if (headers().get('x-wp-bare') === '1') {
+    return <BareShell fontClass={`${display.variable} ${proseFace.variable}`}>{children}</BareShell>;
   }
 
   // Officer check runs server-side per request so the Admin nav link only
