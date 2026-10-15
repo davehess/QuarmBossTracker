@@ -1,6 +1,7 @@
 // GET /api/spectator/replay: a recorded raid night, for /spectator/replay.
 //
-//   ?nights=1                         -> { nights: NightSummary[] }  newest first, the last 60 days
+//   ?nights=1                         -> { nights: NightSummary[] }  newest first, the last 60 days, each split into
+//                                        sessions (gaps over 20 min) with the guild raid session marked (19:30-00:30 ET)
 //   ?night=<key>&from=<iso>&to=<iso>  -> { night, from, to, rows: [{ minute_at, zones, data }] }
 //
 // Members-only, the same gate as /api/spectator/positions: a signed-in Supabase session, 401 otherwise.
@@ -41,7 +42,7 @@ export async function GET(req: Request) {
     if (q.get('nights')) {
       const since = new Date(Date.now() - NIGHTS_DAYS * 86_400_000).toISOString();
       const rows = await selectAll<NightMinute>((from, to) => admin.from('raid_track_minutes')
-        .select('night_key, minute_at, zones')
+        .select('night_key, minute_at, zones, raiders')
         .eq('guild_id', GUILD)
         .gte('minute_at', since)
         .order('minute_at')               // the primary key's second column: unique within a guild

@@ -12,20 +12,26 @@
 //     one are kept; the rest are dropped, so a whole night (~5.5 MB) is never held at once.
 //   * Between two recorded frames (about 3 s apart) a dot is interpolated, so it glides instead of hopping.
 //   * Picks (highlighted raiders, the followed one, the split mode) are state in the URL, see lib/replayFollow.ts.
+//   * A night (a whole calendar day) is replayed one SESSION at a time: the guild raid by default, the daytime and
+//     other groups as options. The slider and coverage track span only that session. `?session=` is in the URL.
+//   * Auto-framing holds the view still while the nearest 80% of the raid is in it and glides when it is not,
+//     snapping only on a scrub, a zone change or a session change (lib/replayFraming.ts).
 // The coordinate rules (axis swap, north up, heading) live in lib/spectator.ts; the decoding and the split rule
 // in lib/raidReplay.ts.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import {
-  classAbbr, classColor, coreRaiders, effectiveLayers, fitView, headingVec, layerBounds, lineNearZ, mapBox,
-  median, nearestBand, needsRefit, parseZoneMap, raidBox, scaleBarUnits, zoomAt,
+  classAbbr, classColor, effectiveLayers, fitView, headingVec, layerBounds, lineNearZ, mapBox,
+  median, nearestBand, parseZoneMap, scaleBarUnits, toScreen, zoomAt,
   type View, type ZoneMap,
 } from '@/lib/spectator';
 import {
-  FRAME_GAP_MS, MINUTE_MS, REPLAY_WINDOW_MS, SPLIT_INIT, decodeRows, frameIndexAt, glideTargets, nextSpanStart,
-  pickReplayZone, pickSplit, recentTargetNames, windowIndex, zoneCounts,
-  type NightSummary, type ReplayFrame, type ReplayRaider, type ReplayTarget, type SplitState,
+  FRAME_GAP_MS, MINUTE_MS, REPLAY_WINDOW_MS, SPLIT_INIT, decodeRows, defaultSessionIndex, frameIndexAt, glideTargets,
+  nextSpanStart, parseSessionParam, pickReplayZone, pickSplit, recentTargetNames, sessionLabel, sessionSearch,
+  windowIndex, zoneCounts,
+  type NightSummary, type ReplayFrame, type ReplayRaider, type ReplaySession, type ReplayTarget, type SplitState,
 } from '@/lib/raidReplay';
+import { FRAME_SNAP_MS, easeScale, frameStep } from '@/lib/replayFraming';
 import {
   NO_PICKS, collectRoster, decayOffset, groupRoster, isFollowed, isPicked, offsetSettled, parsePicks, pickedSet,
   picksSearch, toggleFollow, togglePick, type Offset, type Picks, type RosterEntry,
@@ -70,7 +76,10 @@ type Pane = {
   wrap: HTMLDivElement | null;
   size: { w: number; h: number; dpr: number };
   view: View | null;
-  fit: boolean;                  // the view follows the raid (re-fits when someone is about to leave it)
+  fit: boolean;                  // auto-framing: the view keeps the nearest 80% of the raid in it (lib/replayFraming.ts)
+  goal: View | null;             // the auto-framing glide under way, if any
+  snapPending: boolean;          // the playhead jumped: the next framing is a snap, not a glide
+  zoomGoal: number | null;       // the follow camera closing in: the zoom it is easing to
   zone: string | null;
   drawn: Drawn[];
   hover: string | null;
@@ -83,7 +92,7 @@ type Pane = {
   pinch: number;
 };
 const newPane = (): Pane => ({
-  cv: null, wrap: null, size: { w: 0, h: 0, dpr: 1 }, view: null, fit: true, zone: null, drawn: [], hover: null,
+  cv: null, wrap: null, size: { w: 0, h: 0, dpr: 1 }, view: null, fit: true, goal: null, snapPending: false, zoomGoal: null, zone: null, drawn: [], hover: null,
   off: { x: 0, y: 0 }, kick: false, lastTs: 0, holdsFollow: false, ptrs: new Map(), moved: 0, pinch: 0,
 });
 
@@ -91,6 +100,7 @@ type PaneArgs = {
   t: number; zone: string | null; here: Placed[]; targets: ReplayTarget[]; spawns: ActiveSpawn[];
   frames: ReplayFrame[]; idx: number; hasFrame: boolean; tails: boolean; entry: MapEntry | undefined;
   hl: ReadonlySet<string>; picks: Picks; fol: Placed | null;
+  snap: boolean;                 // the playhead jumped (a scrub, a new session): frame the raid at once, no glide
 };
 type PaintInfo = {
   zones: [string | null, string | null];
@@ -144,6 +154,7 @@ function drawPane(p: Pane, o: PaneArgs): boolean {
   const { w, h, dpr } = p.size;
   const cv = p.cv;
   p.holdsFollow = !!o.fol;
+  if (o.snap) p.snapPending = true;   // kept until a frame with raiders in this pane can be framed
   if (!cv || !w || !h) return false;
   const ctx = cv.getContext('2d');
   if (!ctx) return false;
@@ -160,7 +171,8 @@ function drawPane(p: Pane, o: PaneArgs): boolean {
   p.lastTs = now;
 
   // The view. Following a raider: centre on them, keep the zoom the viewer chose, glide in from where the view
-  // was when the follow began. Otherwise fit the raid once, then follow it only while it is about to leave the picture.
+  // was when the follow began. Otherwise auto-framing (lib/replayFraming.ts): the view holds still while the
+  // nearest 80% of the raid is in it, and glides to a new frame when it is clearly wrong; a snap re-frames at once.
   if (o.fol) {
     const tx = -o.fol.x, ty = -o.fol.y;
     let v = p.view;
@@ -168,20 +180,32 @@ function drawPane(p: Pane, o: PaneArgs): boolean {
       v = fitView({ minX: tx - FOLLOW_SPAN / 2, maxX: tx + FOLLOW_SPAN / 2, minY: ty - FOLLOW_SPAN / 2, maxY: ty + FOLLOW_SPAN / 2 }, w, h);
       p.off = { x: 0, y: 0 };
       p.kick = false;
+      p.zoomGoal = null;
     } else if (p.kick) {
       p.off = { x: v.cx - tx, y: v.cy - ty };
       p.kick = false;
       const need = Math.min(w, h) / (FOLLOW_SPAN * 1.5);
-      if (v.scale < need) v = { ...v, scale: need };   // zoomed far out: close in so the raider is more than a speck
+      p.zoomGoal = v.scale < need ? need : null;   // zoomed far out: ease in so the raider is more than a speck
+    }
+    if (p.zoomGoal != null) {
+      const e = easeScale(v.scale, p.zoomGoal, dtm);
+      v = { ...v, scale: e.scale };
+      if (e.done) p.zoomGoal = null; else animating = true;
     }
     p.off = decayOffset(p.off, dtm);
     if (!offsetSettled(p.off)) animating = true;
     p.view = { ...v, cx: tx + p.off.x, cy: ty + p.off.y };
     p.fit = false;
+    p.goal = null;
   } else if (p.fit && here.length) {
-    const box = raidBox(coreRaiders(here.map(q => q.r)))!;
-    const v = p.view;
-    if (!v || needsRefit(v, box, w, h)) p.view = fitView(box, w, h);
+    const fs = frameStep(
+      { view: p.view, goal: p.goal },
+      here.map(q => { const s = toScreen(q.x, q.y); return { x: s.sx, y: s.sy }; }),
+      w, h, dtm, p.snapPending);
+    p.snapPending = false;
+    p.view = fs.view;
+    p.goal = fs.goal;
+    if (fs.animating) animating = true;
   }
   const v = p.view;
   if (!v) return animating;
@@ -405,7 +429,26 @@ export default function ReplayBoard() {
   const [groupBy, setGroupBy] = useState<'class' | 'alpha'>('class');
   const [rosterVer, setRosterVer] = useState(0);
 
-  const night = nights ? (nights.find(n => n.night_key === nightKey) ?? nights[0] ?? null) : null;
+  // The session being replayed (`?session=` names it, and so its night, in a shared link). A night is a whole
+  // calendar day, so the night list's default is its guild raid; the other sessions are options (lib/raidReplay.ts).
+  const [sessionFrom, setSessionFrom] = useState<number | null>(null);
+  const chosen = useMemo(() => {
+    if (!nights) return null;
+    const n = (sessionFrom != null ? nights.find(x => x.sessions.some(s => s.from === sessionFrom)) : undefined)
+      ?? nights.find(x => x.night_key === nightKey) ?? nights[0];
+    if (!n) return null;
+    const i = n.sessions.findIndex(s => s.from === sessionFrom);
+    const session: ReplaySession | null = n.sessions[i >= 0 ? i : defaultSessionIndex(n.sessions)] ?? null;
+    return { night: n, session };
+  }, [nights, nightKey, sessionFrom]);
+  // Everything below plays the chosen session as if it were the whole night: its first and last minute, its
+  // coverage spans and its zone visits. The night_key stays the whole night's, which is what the data request needs.
+  const night = useMemo<NightSummary | null>(() => {
+    if (!chosen) return null;
+    const { night: n, session: s } = chosen;
+    if (!s) return n;
+    return { ...n, first: new Date(s.from).toISOString(), last: new Date(s.to - MINUTE_MS).toISOString(), minutes: s.minutes, zones: s.zones, runs: s.runs, spans: s.spans };
+  }, [chosen]);
   const split = info.zones[1] !== null;
 
   // ── refs: everything the drawing reads ─────────────────────────────────────
@@ -431,6 +474,7 @@ export default function ReplayBoard() {
   const lastUi = useRef(0);
   const stepRef = useRef<(ts: number) => void>(() => {});
   const nextCache = useRef<{ frame: ReplayFrame | null; byName: Map<string, ReplayRaider> }>({ frame: null, byName: new Map() });
+  const lastPaintT = useRef<number | null>(null);
   const rosterRef = useRef(new Map<string, RosterEntry>());
   const bossesRef = useRef<SpawnBoss[]>([]);
   const showBossesRef = useRef(true);
@@ -522,7 +566,8 @@ export default function ReplayBoard() {
     setPinned(null);
     autoZoneRef.current = null;
     splitRef.current = SPLIT_INIT;
-    for (const p of panes) { p.zone = null; p.view = null; }
+    for (const p of panes) { p.zone = null; p.view = null; p.goal = null; p.zoomGoal = null; p.snapPending = false; }
+    lastPaintT.current = null;   // the first picture of a new session is framed at once
     setInfo(i => (i.zones[0] === null && i.zones[1] === null ? i : { ...i, zones: [null, null] }));
     if (!night) return;
     tRef.current = Date.parse(night.first);
@@ -530,7 +575,7 @@ export default function ReplayBoard() {
     ensureWindow(0);
     schedule();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [night?.night_key]);
+  }, [night?.night_key, night?.first]);
 
   // The night's killed bosses with their spawn points: for nights recorded before the recorder kept targets.
   useEffect(() => {
@@ -582,6 +627,10 @@ export default function ReplayBoard() {
     const pk = picksRef.current;
     const hl = hlRef.current;
     const out: PaintInfo = { zones: [null, null], here: [0, 0], elsewhere: 0, hasFrame: !!a, followAbsent: false, animating: false };
+    // A playhead jump of a minute or more (a scrub, a break skipped, a new session) re-frames at once; playback glides.
+    const prevT = lastPaintT.current;
+    lastPaintT.current = t;
+    const snap = prevT === null || Math.abs(t - prevT) > FRAME_SNAP_MS;
 
     // The glide target: the next frame, if it is close enough in time to be the same movement.
     let b: ReplayFrame | null = null;
@@ -635,6 +684,8 @@ export default function ReplayBoard() {
         // A new zone in a pane starts fresh: fit the raid, nobody hovered.
         pane.zone = zone;
         pane.view = null;
+        pane.goal = null;
+        pane.zoomGoal = null;
         pane.fit = true;
         pane.hover = null;
         pane.kick = false;
@@ -652,13 +703,13 @@ export default function ReplayBoard() {
         bridges[i].current?.feed(zone, here.map(q => ({ name: q.r.name, cls: q.r.cls, hp: q.r.hp, x: q.x, y: q.y, z: q.z })), {
           hl, follow: folHere ? pk.follow : null,
           targets: targets.map(x => ({ name: x.name, n: x.n, x: x.x, y: x.y, z: x.z })),
-          spawns,
+          spawns, snap,
         });
         continue;
       }
       if (drawPane(pane, {
         t, zone, here, targets, spawns, frames, idx, hasFrame: !!a, tails: tailsRef.current,
-        entry: mapsRef.current[zone], hl, picks: pk, fol: folHere,
+        entry: mapsRef.current[zone], hl, picks: pk, fol: folHere, snap,
       })) out.animating = true;
     }
     out.elsewhere = a ? a.raiders.length - heldTotal : 0;
@@ -748,9 +799,22 @@ export default function ReplayBoard() {
 
   // Picks: from the URL once on arrival, back into it on every change (replaceState: no history entry per tap).
   useEffect(() => {
-    try { setPicks(parsePicks(window.location.search)); } catch { /* no URL to read */ }
+    try {
+      setPicks(parsePicks(window.location.search));
+      setSessionFrom(parseSessionParam(window.location.search));
+    } catch { /* no URL to read */ }
     setUrlReady(true);
   }, []);
+  // The session in the URL (so a link opens the same one). Always written once there is one: the default is not
+  // "no param", because the default moves as new nights are recorded.
+  const urlSession = chosen?.session?.from ?? null;
+  useEffect(() => {
+    if (!urlReady || urlSession == null) return;
+    try {
+      const s = sessionSearch(urlSession, window.location.search);
+      if (s !== window.location.search) window.history.replaceState(null, '', window.location.pathname + s + window.location.hash);
+    } catch { /* a blocked history API only costs the shareable link */ }
+  }, [urlSession, urlReady]);
   useEffect(() => {
     picksRef.current = picks;
     hlRef.current = pickedSet(picks);
@@ -810,7 +874,9 @@ export default function ReplayBoard() {
         if (!v || !w) return;
         const r = cv.getBoundingClientRect();
         p.view = zoomAt(v, e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - r.left, e.clientY - r.top, w, h);
-        p.fit = false;
+        p.fit = false;   // the viewer has the camera until Fit raid
+        p.goal = null;
+        p.zoomGoal = null;
         schedule();
       };
       cv.addEventListener('wheel', onWheel, { passive: false });
@@ -827,13 +893,15 @@ export default function ReplayBoard() {
       if (!v || !w) continue;
       p.view = zoomAt(v, factor, px ?? w / 2, py ?? h / 2, w, h);
       p.fit = false;
+      p.goal = null;
+      p.zoomGoal = null;
     }
     schedule();
   }, [panes, schedule]);
 
   const fitRaid = useCallback(() => {
     if (modeRef.current === '3d') { bridgeA.current?.fitRaid(); bridgeB.current?.fitRaid(); return; }
-    for (const p of panes) { p.view = null; p.fit = true; }
+    for (const p of panes) { p.view = null; p.goal = null; p.zoomGoal = null; p.fit = true; }
     schedule();
   }, [panes, schedule]);
 
@@ -894,6 +962,8 @@ export default function ReplayBoard() {
         if (p.moved > 4) {
           p.view = { ...v, cx: v.cx - dx / v.scale, cy: v.cy - dy / v.scale };
           p.fit = false;
+          p.goal = null;
+          p.zoomGoal = null;
           if (p.holdsFollow) panAway();
           schedule();
         }
@@ -952,12 +1022,22 @@ export default function ReplayBoard() {
       <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-dim">
         <label className="flex items-center gap-1.5">
           <span>Night</span>
-          <select value={night.night_key} onChange={e => setNightKey(e.target.value)}
+          <select value={night.night_key} onChange={e => { setSessionFrom(null); setNightKey(e.target.value); }}
             className="rounded border border-border bg-panel px-2 py-1.5 text-xs text-text">
             {nights.map(n => (
               <option key={n.night_key} value={n.night_key}>
-                {n.night_key} · {etDay.format(Date.parse(n.first))} · {Math.round(n.minutes / 6) / 10} h recorded
+                {n.night_key} · {etDay.format(Date.parse(n.first))} · {n.sessions.length} {n.sessions.length === 1 ? 'session' : 'sessions'}
+                {n.sessions.some(s => s.raid) ? ' · raid' : ''}
               </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-1.5">
+          <span>Session</span>
+          <select value={chosen?.session?.from ?? ''} onChange={e => setSessionFrom(Number(e.target.value))}
+            className="rounded border border-border bg-panel px-2 py-1.5 text-xs text-text">
+            {(chosen?.night.sessions ?? []).map(s => (
+              <option key={s.from} value={s.from}>{sessionLabel(s)}</option>
             ))}
           </select>
         </label>
@@ -1159,7 +1239,7 @@ export default function ReplayBoard() {
       </div>
 
       <div className="mt-3">
-        <h2 className="mb-1.5 text-xs uppercase tracking-wider text-dim">Zones tonight, in visit order</h2>
+        <h2 className="mb-1.5 text-xs uppercase tracking-wider text-dim">Zones in this session, in visit order</h2>
         <ol className="flex flex-wrap gap-1.5">
           {night.runs.map((r, i) => {
             const on = uiT >= r.from && uiT < r.to;
