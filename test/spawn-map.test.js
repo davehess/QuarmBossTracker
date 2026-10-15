@@ -29,7 +29,7 @@ const EXPORTS = ['_mapServerXY', '_mapZoneShort', '_mapNormName', '_mapAttribute
   '_mapTryPin', '_mapPinGet', '_mapSync', '_mapSyncStop', '_mapSyncFlush', '_mapSyncPull', '_mapApplyRemote', '_mapLocalEvent',
   '_mapSegDist', '_mapRouteDist', '_mapCopy', '_mapCopyNoteWho', '_mapCurrentCopy', '_mapCopyInfo', 'whoData',
   '_mapNoteCon', '_mapConsFor', '_mapMe', '_mapQuarmyIds', '_mapNoteLeg', '_mapNotePath', '_mapFocusTarget', '_extTargetCache', '_mapCcStates', '_buffLandingsByTarget', '_spellByNameLower',
-  'MAP_TRACKED_PATHS', 'MAP_CORPSE_RE', '_mapDist2', '_mapMergePath', '_mapShownPath', '_mapApplyShared'];
+  'MAP_TRACKED_PATHS', 'MAP_CORPSE_RE', '_mapDist2', '_mapMergePath', '_mapShownPath', '_mapApplyShared', '_mobInfoByName', '_mobInfoFetches'];
 // The agent's real /consider tiers, for _mapNoteCon (they live outside the map core).
 const CON_DEFS = AGENT.slice(AGENT.indexOf('const CON_STANDINGS = ['), AGENT.indexOf('\n', AGENT.indexOf('const _CON_RX = ')));
 // The agent's real lull line and mez test, for _mapCcStates (also outside the map core).
@@ -59,6 +59,11 @@ function loadCore({ dir, opts, net }) {
     ${LULL_DEFS}
     ${MEZ_DEF}
     ${CON_DEFS}
+    const _mobInfoByName = new Map();        // Target Info's mob-info cache: key -> { at, mob } (the Area Rampage ring reads it)
+    const MOB_INFO_TTL_MS = 6 * 60 * 60 * 1000;
+    const _mobInfoFetches = [];
+    function _mobInfoCacheKey(name, zoneId) { return String(name).toLowerCase() + '|' + (zoneId != null ? zoneId : '*'); }
+    function fetchMobInfo(name, ch, zoneId) { _mobInfoFetches.push([name, ch, zoneId]); }
     const _extTargetCache = new Map();       // the Extended Target aggregate: lower-cased character -> { at, payload }
     function fetchExtendedTarget() {}
     ${MAIN_TARGET_DEF}
@@ -536,7 +541,7 @@ describe('zone data: disk first, the bot second, local mode never', () => {
 describe('the overlay (apps/mimic/map.html)', () => {
   const helpers = sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──');
   // eslint-disable-next-line no-new-func
-  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, runPct, trailStep, wanderLeg, noteWanderLeg, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH, legArrow, LEG_ARROW_AT, classifyTrail, homeOf, homeDist, noteKills, trailShown, KILLS_FADE, TRAIL_COL, nearPack, followOffNow, labelMode, routeTwins, headingRay, toolDock, toolBox, nextFollow, spawnDistance, GATE_RANGE, inkStyle, INK_DEFAULT };')();
+  const H = new Function(helpers + '\nreturn { toScreen, headingVec, timerState, fmtDur, timerText, badgeGlyph, badgeWords, pointBadges, pointKind, bestName, fitView, FLASH_MS, lerpHeading, blendPos, trackAt, trackStep, trackMoving, SNAP_DIST, seenText, LEVEL_STEPS, levelLabel, inLevelRange, FIT_MODES, FIT_LABEL, nextFitMode, resolveFit, membersBounds, SMOOTH_MS, DIRECT_STALE_MS, useDirect, directMap, posAgeText, targetKey, upOn, upNpc, upLabel, mapCfgDefaults, mergeMapCfg, applyScheme, MAP_SCHEMES, CFG_SHOW, CFG_GLYPHS, CFG_COLS, hexA, totMember, aggroRadius, routeTarget, aggroKind, assistRadius, targetNpc, locText, screenToServer, speedOf, runPct, trailStep, wanderLeg, noteWanderLeg, levelCon, brewallLayer, namedNpc, trailStretch, trailSpeed, targetSpawnGroup, LEG_REACH, legArrow, LEG_ARROW_AT, classifyTrail, homeOf, homeDist, noteKills, trailShown, KILLS_FADE, TRAIL_COL, nearPack, followOffNow, labelMode, routeTwins, headingRay, toolDock, toolBox, nextFollow, spawnDistance, GATE_RANGE, inkStyle, INK_DEFAULT, aeRampageRing };')();
 
   it('draws north up: screen = (-x, -y), the same as the website', () => {
     expect(H.toScreen(10, 20)).toEqual({ sx: -10, sy: -20 });
@@ -1278,9 +1283,9 @@ describe('pather routes', () => {
     expect(base.all.cfg.hidden).toBe(false);
     expect(base.all.cfgBtn.classList.contains('on')).toBe(true);
     const showRows = base.all.cfgShow.children, glyphRows = base.all.cfgGlyphs.children, colRows = base.all.cfgCols.children;
-    expect(showRows).toHaveLength(27);                                         // 25 + Kite coach + Guild kite loops (2026-10-15)
+    expect(showRows).toHaveLength(28);                                         // 25 + Kite coach + Guild kite loops (2026-10-15) + AE rampage ring
     expect(glyphRows).toHaveLength(9);
-    expect(colRows).toHaveLength(27);
+    expect(colRows).toHaveLength(28);
     const walls = showRows[0].children[0];                                     // Walls
     walls.checked = false; walls.listeners.change.forEach(f => f());
     const eye = glyphRows[0].children[0];                                      // 👁
@@ -2815,5 +2820,105 @@ describe('live-state carries the target\'s position (agent 3.7.166)', () => {
   });
   it('the overlay draws a raid-placed focus ring at the shared position', () => {
     expect(stripJs(MAP_HTML)).toMatch(/else if \(fo\.at === 'raid' && fo\.x != null\) fp = \{ x: fo\.x, y: fo\.y \};/);
+  });
+});
+
+describe('the target\'s Area Rampage ring (agent 3.7.183)', () => {
+  const AE = { radius_still: 16.55, radius_moving: 14.55, chance: 5, targets: null, damage_pct: 100 };
+  const RECUSO = { name: 'A Recuso Degenerate', level: 62, specials: ['Area Rampage'], ae_rampage: AE };
+  const stand = (c, extra) => {
+    c._zealState.Aldenmar = Object.assign({ zone: 164, updatedAt: 1e18, loc: { x: 0, y: 0, z: 0 },
+      target_name: 'A Recuso Degenerate', target_id: 5, target_type: 1, target_hp_pct: 100, target_loc: { x: 7, y: 9, z: 0 } }, extra || {});
+  };
+
+  it('the target carries the cached mob info\'s ae_rampage, untouched', () => {
+    const { c } = localCore();
+    stand(c);
+    c._mobInfoByName.set('a recuso degenerate|164', { at: Date.now(), mob: RECUSO });
+    expect(c._mapStatePayload('', T0 + 1000).target.ae_rampage).toEqual(AE);
+    expect(c._mobInfoFetches).toEqual([]);   // fresh in the cache: no lookup
+  });
+  it('a mob without Area Rampage, or an older bot\'s row that predates the field, has none', () => {
+    const { c } = localCore();
+    stand(c);
+    c._mobInfoByName.set('a recuso degenerate|164', { at: Date.now(), mob: { name: 'A Recuso Degenerate', specials: [] } });
+    expect(c._mapStatePayload('', T0 + 1000).target).not.toHaveProperty('ae_rampage');
+    c._mobInfoByName.set('a recuso degenerate|164', { at: Date.now(), mob: { name: 'x', ae_rampage: { radius_still: 0 } } });
+    expect(c._mapStatePayload('', T0 + 1000).target).not.toHaveProperty('ae_rampage');
+  });
+  it('nothing cached yet asks for the mob info and sends no ring meanwhile', () => {
+    const { c } = localCore();
+    stand(c);
+    const p = c._mapStatePayload('', T0 + 1000);
+    expect(p.target).not.toHaveProperty('ae_rampage');
+    expect(c._mobInfoFetches).toEqual([['A Recuso Degenerate', 'Aldenmar', 164]]);
+  });
+  it('a player or a corpse never carries it', () => {
+    const { c } = localCore();
+    c._mobInfoByName.set('a recuso degenerate|164', { at: Date.now(), mob: RECUSO });
+    stand(c, { target_type: 0 });
+    expect(c._mapStatePayload('', T0 + 1000).target).not.toHaveProperty('ae_rampage');
+    stand(c, { target_type: 2 });
+    expect(c._mapStatePayload('', T0 + 1000).target).not.toHaveProperty('ae_rampage');
+  });
+
+  describe('the overlay (apps/mimic/map.html)', () => {
+    // eslint-disable-next-line no-new-func
+    const H = new Function(sliceBlock(MAP_HTML, '// ── pure helpers', '// ── end pure helpers ──')
+      + '\nreturn { aeRampageRing, CFG_SHOW, mapCfgDefaults, MAP_SCHEMES, inkStyle, hexA };')();
+    const t = (extra) => Object.assign({ name: 'A Recuso Degenerate', type: 1, hp_pct: 80, x: 10, y: 20, ae_rampage: AE }, extra || {});
+    it('rings the target at radius_still, in game units (the aggro rings\' scale), labelled and explained', () => {
+      const r = H.aeRampageRing(t());
+      expect(r.r).toBe(16.55);
+      expect(H.aeRampageRing(t({ ae_rampage: Object.assign({}, AE, { radius_still: 14.4 }) })).label).toBe('AE rampage · 14.4');
+      expect(H.aeRampageRing(t({ ae_rampage: Object.assign({}, AE, { radius_still: 40 }) })).label).toBe('AE rampage · 40');
+      expect(r.tip).toBe('Hits everyone on its hate list inside this ring except the tank · 5% per round');
+      expect(H.aeRampageRing(t({ ae_rampage: Object.assign({}, AE, { targets: 3 }) })).tip).toMatch(/ · up to 3 people$/);
+    });
+    it('no ring without ae_rampage, for a player or corpse, or for a radius that is nothing or the whole zone', () => {
+      expect(H.aeRampageRing(t({ ae_rampage: undefined }))).toBeNull();
+      expect(H.aeRampageRing(null)).toBeNull();
+      expect(H.aeRampageRing(t({ type: 0 }))).toBeNull();
+      expect(H.aeRampageRing(t({ name: "A Recuso Degenerate's corpse", type: null }))).toBeNull();
+      expect(H.aeRampageRing(t({ hp_pct: 0 }))).toBeNull();
+      expect(H.aeRampageRing(t({ ae_rampage: { radius_still: 0 } }))).toBeNull();
+      expect(H.aeRampageRing(t({ ae_rampage: { radius_still: 5000 } }))).toBeNull();
+    });
+    it('an older Zeal that sends no type still rings a live mob', () => {
+      expect(H.aeRampageRing(t({ type: null }))).not.toBeNull();
+    });
+
+    // The real aeRampageDraw over a recording canvas.
+    const src = sliceBlock(MAP_HTML, 'function aeRampageDraw(x, y, ring) {', '\n  }');
+    function draw(ring, scale) {
+      const ops = [], halos = [];
+      const ctx = { lineWidth: 1, strokeStyle: '',
+        beginPath() {}, setLineDash(d) { ops.push({ op: 'dash', d }); },
+        arc(x, y, r) { ops.push({ op: 'arc', x, y, r }); }, stroke() { ops.push({ op: 'stroke', style: ctx.strokeStyle }); } };
+      const S = { cfg: { col: { aeRamp: '#ff5c5c' }, ink: 1 }, view: { scale } };
+      new Function('ctx', 'S', 'inkStyle', 'hexA', 'halo', 'labelFont', src + '\nreturn aeRampageDraw;')(
+        ctx, S, H.inkStyle, H.hexA, (text, x, y) => halos.push({ text, x, y }), () => '9px mono')(100, 200, ring);
+      return { ops, halos };
+    }
+    it('draws a red dashed ring of radius x scale on the target, with its label above it', () => {
+      const d = draw(H.aeRampageRing(t()), 4);
+      expect(d.ops.find(o => o.op === 'arc')).toEqual({ op: 'arc', x: 100, y: 200, r: 16.55 * 4 });
+      expect(d.ops.find(o => o.op === 'dash').d.length).toBeGreaterThan(0);
+      expect(d.ops.find(o => o.op === 'stroke').style).toMatch(/^rgba\(255,92,92,/);
+      expect(d.halos).toEqual([{ text: 'AE rampage · 16.6', x: 100, y: 200 - 16.55 * 4 - 7 }]);
+    });
+    it('is a speck when zoomed far out: not drawn', () => {
+      expect(draw(H.aeRampageRing(t()), 0.1)).toEqual({ ops: [], halos: [] });
+    });
+    it('is wired to the target only, behind its own switch (default on), and cleared each frame', () => {
+      const js = stripJs(MAP_HTML);
+      expect(js).toMatch(/var aer = SH\.aeRampage \? aeRampageRing\(P\.target\) : null;/);
+      expect(js).toMatch(/if \(aer\) \{ aeRampageDraw\(tq\[0\], tq\[1\], aer\); S\.aeRing = \{ x: td\.x, y: td\.y, r: aer\.r, tip: aer\.tip \}; \}/);
+      expect(js).toMatch(/S\.aeRing = null;\n\s+if \(P\.target && P\.target\.x != null\) \{/);
+      expect(js).toMatch(/if \(cv\.title !== tip\) cv\.title = tip;/);
+      expect(H.CFG_SHOW.some(([k, label]) => k === 'aeRampage' && /AE rampage/.test(label))).toBe(true);
+      expect(H.mapCfgDefaults().show.aeRampage).toBe(true);
+      for (const s of Object.values(H.MAP_SCHEMES)) expect(s.aeRamp).toMatch(/^#[0-9a-f]{6}$/);
+    });
   });
 });
