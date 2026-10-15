@@ -98,6 +98,14 @@
   .ln .tm:hover{color:#7ee7c7;text-decoration:underline}
   .ln .tm.copied{color:#56d364;text-decoration:none}
   .ln .tx{flex:1 1 auto;min-width:0;color:var(--lc,#c9d1d9)}
+  /* a line relayed from another member's Mimic while you are out of game: a small dim mark after the text, nothing louder */
+  .ln .via{margin-left:6px;font-size:0.75em;font-style:italic;color:#6e7681;white-space:nowrap}
+  /* the title bar's hint while that feed is live */
+  .awayhint{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;color:#6e7681}
+  .awayhint[hidden]{display:none}
+  /* nobody with Mimic is in game, so there is nothing to relay: said once, dim, not an alarm */
+  .awaynote{flex:0 0 auto;font-size:10px;color:#6e7681;text-shadow:0 1px 2px #000;padding:0 2px}
+  .awaynote[hidden]{display:none}
   .ln .who{flex:0 0 auto;font-weight:bold;color:var(--lc,#c9d1d9)}
   .ln .who.you{opacity:0.75}
   .ln .who.npc{font-weight:normal;font-style:italic}
@@ -174,7 +182,7 @@
     <button id="exitSetupBtn">Done</button>
   </div>
   <div id="wrap">
-    <div class="title"><span id="conn" class="conn bad">○</span><span id="ttl">💬 Chat</span><input id="find" type="text" maxlength="24" spellcheck="false" autocomplete="off" placeholder="character…" title="Show only one character: what they said, or what was heard on that character of yours. Enter or Esc leaves the box."><button id="fpick" class="fbtn" title="Pick one of your characters">▾</button><span class="sp"></span><button id="histbtn" class="fbtn" title="Show the chat from before this window opened, read from the game's own log files on this PC">⏱</button><button id="linkbtn" class="fbtn" aria-pressed="false" title="Link this window to the chat windows touching it, so they move together">🔗</button><button id="gear" class="fbtn" aria-pressed="false" title="Text size, and the channels that are off until you switch them on">⚙</button></div>
+    <div class="title"><span id="conn" class="conn bad">○</span><span id="ttl">💬 Chat</span><span id="awayhint" class="awayhint" hidden title="You are out of game: the guild's /gu and /rs chat is coming from other members' Mimics. It stops when EverQuest starts.">away · guild feed</span><input id="find" type="text" maxlength="24" spellcheck="false" autocomplete="off" placeholder="character…" title="Show only one character: what they said, or what was heard on that character of yours. Enter or Esc leaves the box."><button id="fpick" class="fbtn" title="Pick one of your characters">▾</button><span class="sp"></span><button id="histbtn" class="fbtn" title="Show the chat from before this window opened, read from the game's own log files on this PC">⏱</button><button id="linkbtn" class="fbtn" aria-pressed="false" title="Link this window to the chat windows touching it, so they move together">🔗</button><button id="gear" class="fbtn" aria-pressed="false" title="Text size, and the channels that are off until you switch them on">⚙</button></div>
     <div id="cpick"></div>
     <div id="spanel">
       <div class="row"><span>Text size</span><button id="fsm" class="fbtn" title="Smaller">A−</button><span id="fsz">12</span><button id="fsp" class="fbtn" title="Larger">A+</button><button id="lsp" class="fbtn" title="Line spacing">compact</button></div>
@@ -192,6 +200,7 @@
       </div></details>
     </div>
     <div id="chips"></div>
+    <div id="awaynote" class="awaynote" hidden>Nobody is in game with Mimic running right now — no guild or raid chat to relay.</div>
     <div id="onlypill"><span id="onlytxt"></span><button type="button" id="onlyx" title="Show all channels again">✕</button></div>
     <div id="feedbox">
       <div id="feed"></div>
@@ -272,7 +281,7 @@
   var _lines = [];             // every line we hold, oldest first (the filter decides what shows)
   var _seq = 0, _lastN = 0, _boot = '';
   var _char = '';              // the character the chip choices are remembered for
-  var _prefs = { fontSize: 12, group: false, officer: false, custom: false, tells: false, melee: false, spells: false, skills: false, loot: false, random: false, other: false, meleeShow: { mine: true, on_me: true, others: true, misses: true }, spellShow: { mine: true, on_me: true, others: true }, skillShow: { mine: true, others: true }, off: [], offChannels: [], only: '' };
+  var _prefs = { fontSize: 12, group: false, officer: false, custom: false, tells: false, melee: false, spells: false, skills: false, loot: false, random: false, other: false, away: true, meleeShow: { mine: true, on_me: true, others: true, misses: true }, spellShow: { mine: true, on_me: true, others: true }, skillShow: { mine: true, others: true }, off: [], offChannels: [], only: '' };
   var _chanNames = {};         // "<character>|<slot number>" -> channel name, learned from lines that carry both (Zeal's /abc shows only the number)
   var _unread = 0;
   var _out = [];               // group ids broken out into their own windows (the Chat window leaves them out)
@@ -419,8 +428,9 @@
     else who = '<span class="who name">' + esc(l.who) + '</span>';
     if (l.to) who += '<span class="arrow">→</span><span class="who name">' + esc(l.to) + '</span>';
     var copied = l.n === _copiedN;
-    var otag = tag && l.on ? '<span class="otag" title="heard on ' + esc(l.on) + '">' + esc(l.on) + '</span>' : '';
-    return '<div class="ln' + (l.ch === 'zone' ? ' zone' : '') + '" style="--lc:' + esc(lineColor(l)) + '" data-n="' + l.n + '"><button type="button" class="tm' + (copied ? ' copied' : '') + '" title="Click to copy this line">' + (copied ? 'copied' : hhmm(l.t)) + '</button>' + tagHtml(l) + otag + who + '<span class="tx">' + (l.ch === 'zone' ? '→ ' : '') + esc(l.text) + '</span></div>';
+    var viaMark = l.via === 'guild' ? '<span class="via" title="Relayed from another member\'s Mimic while you are out of game">via guild</span>' : '';
+    var otag = tag && l.on ?'<span class="otag" title="heard on ' + esc(l.on) + '">' + esc(l.on) + '</span>' : '';
+    return '<div class="ln' + (l.ch === 'zone' ? ' zone' : '') + '" style="--lc:' + esc(lineColor(l)) + '" data-n="' + l.n + '"><button type="button" class="tm' + (copied ? ' copied' : '') + '" title="Click to copy this line">' + (copied ? 'copied' : hhmm(l.t)) + '</button>' + tagHtml(l) + otag + who + '<span class="tx">' + (l.ch === 'zone' ? '→ ' : '') + esc(l.text) + '</span>' + viaMark + '</div>';
   }
   // One row, with the "heard on" tag where the character changed from the row before it (a swap line resets
   // it: that line already says so). Rows the filter hides do not count, so a one-speaker search tags the
@@ -567,7 +577,7 @@
   // Lines the current switches no longer allow are dropped, not just hidden: turning Officer off should
   // leave nothing of it behind in this window.
   function purgeGated(){
-    _lines = _lines.filter(function(l){ if (l.sep) return true; var g = groupOf(l.ch); return !!g && gateOn(g); });
+    _lines = _lines.filter(function(l){ if (l.sep) return true; if (l.via && !_prefs.away) return false; var g = groupOf(l.ch); return !!g && gateOn(g); });
   }
 
   // The chips that are always on the row, in this order (the guild lead, 2026-10-14: "Guild/Raid/Party/Say/Tells/ooc/shout").
@@ -858,6 +868,7 @@
   var spanelEl = document.getElementById('spanel'), gearEl = document.getElementById('gear');
   // A fourth field of 1 puts the switch under "More settings" instead of on the drawer itself.
   var OPTINS = [
+    ['away',    'Guild and raid chat from the guild while I\'m out of game', 'When EverQuest is not running, show the guild\'s /gu and /rs chat relayed from other members\' Mimics. It stops when the game starts and is never sent anywhere. Needs a linked Wolf Pack account.'],
     ['group',   'Group chat',     'Your group\'s private chat'],
     ['officer', 'Officer chat',   'The officer channel'],
     ['custom',  'Custom channels','Other chat channels you have joined'],
@@ -1139,10 +1150,10 @@
   function takePrefs(p){
     if (!p) return;
     var tellsWas = _prefs.tells;
-    var meleeWas = _prefs.melee, spellsWas = _prefs.spells, skillsWas = _prefs.skills, extraWas = [_prefs.loot, _prefs.random, _prefs.other].join(), showWas = JSON.stringify([_prefs.meleeShow, _prefs.spellShow, _prefs.skillShow]);
+    var meleeWas = _prefs.melee, spellsWas = _prefs.spells, skillsWas = _prefs.skills, extraWas = [_prefs.loot, _prefs.random, _prefs.other, _prefs.away].join(), showWas = JSON.stringify([_prefs.meleeShow, _prefs.spellShow, _prefs.skillShow]);
     _prefs = {
       fontSize: p.fontSize || 12, group: !!p.group, officer: !!p.officer, custom: !!p.custom,
-      tells: !!p.tells, melee: !!p.melee, spells: !!p.spells, skills: !!p.skills, loot: !!p.loot, random: !!p.random, other: !!p.other,
+      tells: !!p.tells, melee: !!p.melee, spells: !!p.spells, skills: !!p.skills, loot: !!p.loot, random: !!p.random, other: !!p.other, away: p.away !== false,
       meleeShow: { mine: !p.meleeShow || p.meleeShow.mine !== false, on_me: !p.meleeShow || p.meleeShow.on_me !== false, others: !p.meleeShow || p.meleeShow.others !== false, misses: !p.meleeShow || p.meleeShow.misses !== false },
       spellShow: { mine: !p.spellShow || p.spellShow.mine !== false, on_me: !p.spellShow || p.spellShow.on_me !== false, others: !p.spellShow || p.spellShow.others !== false },
       skillShow: { mine: !p.skillShow || p.skillShow.mine !== false, others: !p.skillShow || p.skillShow.others !== false },
@@ -1152,7 +1163,7 @@
       win: (p.win && typeof p.win === 'object') ? p.win : {}
     };
     paintSettings();
-    if (tellsWas !== _prefs.tells || meleeWas !== _prefs.melee || spellsWas !== _prefs.spells || skillsWas !== _prefs.skills || extraWas !== [_prefs.loot, _prefs.random, _prefs.other].join() || showWas !== JSON.stringify([_prefs.meleeShow, _prefs.spellShow, _prefs.skillShow])) { purgeGated(); paintChips(); repaint(); }
+    if (tellsWas !== _prefs.tells || meleeWas !== _prefs.melee || spellsWas !== _prefs.spells || skillsWas !== _prefs.skills || extraWas !== [_prefs.loot, _prefs.random, _prefs.other, _prefs.away].join() || showWas !== JSON.stringify([_prefs.meleeShow, _prefs.spellShow, _prefs.skillShow])) { purgeGated(); paintChips(); repaint(); }
     // The history was read under one set of switches; a change (Tells, Group, Officer, Custom) re-reads it.
     if (_histHours && _connectedOnce && histQuery() !== _histSig) loadHistory();
   }
@@ -1189,7 +1200,8 @@
       '&tells=' + (_prefs.tells ? 1 : 0) + '&group=' + (_prefs.group ? 1 : 0) +
       '&officer=' + (_prefs.officer ? 1 : 0) + '&custom=' + (_prefs.custom ? 1 : 0) + '&melee=' + (_prefs.melee ? 1 : 0) +
       '&spells=' + (_prefs.spells ? 1 : 0) + '&skills=' + (_prefs.skills ? 1 : 0) +
-      '&loot=' + (_prefs.loot ? 1 : 0) + '&random=' + (_prefs.random ? 1 : 0) + '&other=' + (_prefs.other ? 1 : 0);
+      '&loot=' + (_prefs.loot ? 1 : 0) + '&random=' + (_prefs.random ? 1 : 0) + '&other=' + (_prefs.other ? 1 : 0) +
+      '&away=' + (_prefs.away ? 1 : 0);
   }
   // Channel colours come from the agent's list, so a new channel needs no change here; the chips are
   // repainted when that list changes.
@@ -1199,6 +1211,16 @@
     return bits;
   }
   var _lastStyle = '';
+  // The agent's `away` answer ({ on, ingame, at } while the guild feed is live, else null): the title-bar hint, with the
+  // count of members in game WITH MIMIC RUNNING when the bot knows it (others may be online without Mimic and cannot be
+  // seen), and one dim line when that count is 0 so an empty feed is explained. null = unknown = no count.
+  function paintAway(a){
+    var on = !!(a && a.on), n = on && typeof a.ingame === 'number' && a.ingame >= 0 ? Math.floor(a.ingame) : null;
+    var hint = document.getElementById('awayhint'), note = document.getElementById('awaynote');
+    hint.hidden = !on;
+    hint.textContent = 'away · guild feed' + (n === null ? '' : ' · ' + n + ' in game with Mimic');
+    note.hidden = !(on && n === 0);
+  }
   async function tick(){
     // Not before the first prefs: the agent keeps the LAST switches it was handed, and a window that has not
     // read them yet would hand it "everything off" under the others.
@@ -1208,6 +1230,7 @@
       var s = await r.json();
       var c = document.getElementById('conn'); c.className = 'conn ok'; c.textContent = '●';
       if (!s || !s.ok) return;
+      paintAway(_prefs.away ? s.away : null);
       var firstGroups = !_groups.length;
       _groups = s.groups || _groups; _channels = s.channels || _channels;
       var st = takeStyle();
@@ -1221,6 +1244,7 @@
       if (fresh.length) { _lastN = fresh[fresh.length - 1].n; addLines(fresh); } else paintEmpty();
     } catch (e) {
       var c2 = document.getElementById('conn'); c2.className = 'conn bad'; c2.textContent = '○';
+      paintAway(null);
     }
   }
   paintSettings(); paintEmpty(); loadPrefs();

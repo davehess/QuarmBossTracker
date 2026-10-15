@@ -219,7 +219,7 @@ describe('what the feed keeps and shows', () => {
     agent.setChatPolicy({ officer: true }, T0);
     expect(agent.noteLocalChatLine(L('Rethlan tells Wolfpackofficer:5, \'a\''), ME, T0 + 10_000)).toBe(true);
     expect(agent.noteLocalChatLine(L('Rethlan tells Wolfpackofficer:5, \'b\''), ME, T0 + agent.CHAT_POLICY_TTL_MS + 1)).toBe(false);
-    expect(agent.chatPolicyNow(T0 + agent.CHAT_POLICY_TTL_MS + 1)).toEqual({ tells: false, group: false, officer: false, custom: false, melee: false, spells: false, skills: false, loot: false, random: false, other: false });
+    expect(agent.chatPolicyNow(T0 + agent.CHAT_POLICY_TTL_MS + 1)).toEqual({ tells: false, group: false, officer: false, custom: false, melee: false, spells: false, skills: false, loot: false, random: false, other: false, away: false });
   });
   it('one person\'s main and alt logs hear the same guild line: one copy', () => {
     expect(agent.noteLocalChatLine(L('Corvale tells the guild, \'hi\''), 'Aldenmar', T0)).toBe(true);
@@ -548,7 +548,7 @@ describe('Mimic prefs: chips are remembered per character, tells follow the Tell
   beforeEach(() => { globalThis.__H = {}; globalThis.__S = []; globalThis.__P = []; });
   it('defaults: 12 px, group and channels on, officer off, nothing hidden, tells off', async () => {
     const m = load({});
-    expect(await m.get('Aldenmar')).toEqual({ fontSize: 12, group: true, officer: false, custom: true, tells: false, off: [], melee: false, spells: false, skills: false, loot: false, random: false, other: false, meleeShow: { mine: true, on_me: true, others: true, misses: true }, spellShow: { mine: true, on_me: true, others: true }, skillShow: { mine: true, others: true }, offChannels: [], only: '', win: {} });
+    expect(await m.get('Aldenmar')).toEqual({ fontSize: 12, group: true, officer: false, custom: true, tells: false, off: [], melee: false, spells: false, skills: false, loot: false, random: false, other: false, away: true, meleeShow: { mine: true, on_me: true, others: true, misses: true }, spellShow: { mine: true, on_me: true, others: true }, skillShow: { mine: true, others: true }, offChannels: [], only: '', win: {} });
   });
   it('group and channels stay off once switched off', async () => {
     const m = load({ chatPrefs: { group: false, custom: false } });
@@ -610,7 +610,7 @@ describe('Mimic prefs: chips are remembered per character, tells follow the Tell
     const m = load({ chatPrefs: old });
     expect(await m.get('Aldenmar')).toEqual({
       fontSize: 15, group: false, officer: true, custom: true, tells: false, off: ['raid'],
-      melee: false, spells: false, skills: false, loot: false, random: false, other: false, meleeShow: { mine: true, on_me: true, others: true, misses: true },
+      melee: false, spells: false, skills: false, loot: false, random: false, other: false, away: true, meleeShow: { mine: true, on_me: true, others: true, misses: true },
       spellShow: { mine: true, on_me: true, others: true }, skillShow: { mine: true, others: true }, offChannels: [], only: '', win: {},
     });
     await m.set('Aldenmar', { offChannels: ['general'] });
@@ -824,7 +824,7 @@ describe('chat.html: click a line\'s timestamp to copy it', () => {
       function esc(s){ return String(s == null ? '' : s); }
       ${sliceBlock(script, 'function learnChannel(l){', "esc(t) + ']</span>' : '';\n  }")}
       ${HHMM}
-      ${sliceBlock(script, 'function lineHtml(l, tag){',"+ esc(l.text) + '</span></div>';\n  }")}
+      ${sliceBlock(script, 'function lineHtml(l, tag){',"+ viaMark + '</div>';\n  }")}
     `, ['lineHtml', '_channels']);
     const html = lineHtml.lineHtml({ n: 7, t: T, ch: 'guild', who: 'Corvale', text: 'hi' });
     expect(html).toContain('<button type="button" class="tm" title="Click to copy this line">13:03</button>');
@@ -1567,7 +1567,7 @@ function overlay(prefs, opts = {}) {
     ${sliceBlock(s, 'function hhmm(t){', '}\n')}
     ${sliceBlock(s, 'function groupOf(ch){', 'return out;\n  }')}
     ${sliceBlock(s, 'function learnChannel(l){', "esc(t) + ']</span>' : '';\n  }")}
-    ${sliceBlock(s, 'function lineHtml(l, tag){', "+ esc(l.text) + '</span></div>';\n  }")}
+    ${sliceBlock(s, 'function lineHtml(l, tag){', "+ viaMark + '</div>';\n  }")}
     ${sliceBlock(s, 'function startsWithCI(s, q){', 'matchesFind(l, _findQ)); }')}
     ${sliceBlock(s, 'function winId(){', 'tags: w.tags !== false };\n  }')}
     ${sliceBlock(s, 'function seenChannels(){', 'return order.map(function(x){ return by[x]; });\n  }')}
@@ -2750,7 +2750,7 @@ describe('the ⚙ drawer: text and the three opt-in channels up front, the rest 
   it('Group, Officer and Custom are written to the visible row; Melee, Spells and Skills to the fold', () => {
     const els = paint({ melee: true });
     const ids = (h) => [...h.matchAll(/data-optin="(\w+)"/g)].map(m => m[1]);
-    expect(ids(els.optins.innerHTML)).toEqual(['group', 'officer', 'custom']);
+    expect(ids(els.optins.innerHTML)).toEqual(['away', 'group', 'officer', 'custom']);
     expect(ids(els.moreoptins.innerHTML)).toEqual(['melee', 'spells', 'skills', 'loot', 'random', 'other']);
     expect(els.moreoptins.innerHTML).toMatch(/data-optin="melee" checked/);
     expect(els.moreoptins.innerHTML).not.toMatch(/data-optin="spells" checked/);
@@ -3036,14 +3036,14 @@ describe('Loot, Random and Other: three more opt-in groups, built the way Skills
     for (const id of ['loot', 'random', 'other']) expect(code).toMatch(new RegExp(`\\['${id}',\\s+'${id[0].toUpperCase()}${id.slice(1)}',`));
     expect(code).toMatch(/'&loot=' \+ \(_prefs\.loot \? 1 : 0\) \+ '&random=' \+ \(_prefs\.random \? 1 : 0\) \+ '&other=' \+ \(_prefs\.other \? 1 : 0\)/);
     expect(code).toMatch(/loot: !!p\.loot, random: !!p\.random, other: !!p\.other/);
-    expect(code).toMatch(/loot: false, random: false, other: false, meleeShow/);         // off until switched on, before the first prefs arrive
+    expect(code).toMatch(/loot: false, random: false, other: false, away: true, meleeShow/);         // off until switched on, before the first prefs arrive
     // all three are the "more" kind (they sit in the fold with Melee/Spells/Skills), not the visible row
     const optins = sliceBlock(code, 'var OPTINS = [', '\n  ];');
     for (const id of ['loot', 'random', 'other']) expect(optins).toMatch(new RegExp(`\\['${id}',[^\\n]*, 1\\]`));
   });
   it('Mimic remembers the three switches (default off) and only as booleans', () => {
     const code = stripJs(MAIN);
-    expect(code).toMatch(/for \(const k of \['group', 'officer', 'custom', 'melee', 'spells', 'skills', 'loot', 'random', 'other'\]\) if \(typeof inc\[k\] === 'boolean'\)/);
+    expect(code).toMatch(/for \(const k of \['group', 'officer', 'custom', 'melee', 'spells', 'skills', 'loot', 'random', 'other', 'away'\]\) if \(typeof inc\[k\] === 'boolean'\)/);
     for (const id of ['loot', 'random', 'other']) expect(code).toContain(`${id}: p.${id} === true,`);
   });
 });
