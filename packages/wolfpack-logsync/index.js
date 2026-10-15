@@ -38716,7 +38716,9 @@ const CHAT_GROUPS = [
   { id: 'random',  label: 'Random',    channels: ['random'],  gate: 'random' },
   { id: 'other',   label: 'Other',     channels: ['other'],   gate: 'other' },
 ];
-const CHAT_POLICY_KEYS = ['tells', 'group', 'officer', 'custom', 'melee', 'spells', 'skills', 'loot', 'random', 'other'];
+// `away` is not a group gate: it asks for the guild feed (see "Guild feed while you are out of game" below) and
+// gates no channel, so no CHAT_GROUPS entry names it.
+const CHAT_POLICY_KEYS = ['tells', 'group', 'officer', 'custom', 'melee', 'spells', 'skills', 'loot', 'random', 'other', 'away'];
 
 // First-person lines ("You say, ..."). Group 1 is the text, except the custom-channel and told forms.
 const CHAT_SELF_PATTERNS = [
@@ -39134,7 +39136,7 @@ function setChatPolicy(p, now) {
 function chatPolicyNow(now) {
   const t = now == null ? Date.now() : now;
   if (_chatPolicy && t - _chatPolicyAt <= CHAT_POLICY_TTL_MS) return _chatPolicy;
-  return { tells: false, group: false, officer: false, custom: false, melee: false, spells: false, skills: false, loot: false, random: false, other: false };
+  return { tells: false, group: false, officer: false, custom: false, melee: false, spells: false, skills: false, loot: false, random: false, other: false, away: false };
 }
 function chatChannelAllowed(ch, policy) {
   const g = CHAT_GROUPS.find(x => x.channels.indexOf(ch) !== -1);
@@ -39198,6 +39200,56 @@ const _chatExtraRings = {
   random: { ring: _randomRing, max: CHAT_RANDOM_RING_MAX, gate: 'random' },
   other:  { ring: _otherRing,  max: CHAT_OTHER_RING_MAX,  gate: 'other' },
 };
+// The guild feed ring (the guild lead, 2026-10-15: guild and raid chat from other members' Mimics while this player is
+// out of game). DISPLAY ONLY: its lines come from the poller block below (a GET to the bot), land here with the
+// channel ids the local lines use ('guild' / 'raid', so they colour and filter alike) plus via: 'guild', and are served
+// by /api/chat to the overlay and nowhere else. Not the chat ring (a local log line and a relayed one never share
+// a buffer, so clearing one cannot touch the other), never a history source, never a trigger, tell or parse input.
+const CHAT_GUILD_RING_MAX = 300;
+const _guildFeedRing = [];
+const GUILD_FEED_LIVE_MS = 30_000;       // the title-bar hint holds while the last good poll is this recent
+let _guildFeedOkAt = 0;
+let _guildFeedIngame = null;             // members in game WITH MIMIC RUNNING per the bot's last answer; null = unknown
+// A relayed line this PC's own log already heard (same channel, speaker and text within 5 s): the bot hands a new
+// poll the recent backlog, which includes what the player read in game just before logging out. Your own line
+// is "You" locally and your name in the relay, so the character the line was heard on counts as the speaker too.
+function _guildFeedHeardLocally(ch, who, text, at) {
+  const w = who.toLowerCase();
+  for (let i = _chatRing.length - 1, n = 0; i >= 0 && n < 150; i--, n++) {
+    const x = _chatRing[i];
+    if (x.swap || x.ch !== ch || x.text !== text || Math.abs(x.t - at) > 5000) continue;
+    if (String(x.who).toLowerCase() === w || (x.self && String(x.on).toLowerCase() === w)) return true;
+  }
+  return false;
+}
+// Take the bot's lines ({ seq, t, ch, who, text }); returns how many landed. Anything that is not a plain guild or
+// raid line from a named speaker is dropped, and a line already held (same speaker, text and second) is not added twice
+// (a bot restart replays from 0 and must not repeat what the overlay shows).
+// `ingame` is the bot's count of guild members in game with Mimic feeding (others may be online without Mimic and
+// cannot be seen): a whole number, 0 = nobody, anything else = unknown (null).
+function guildFeedTake(lines, now, ingame) {
+  const t = now == null ? Date.now() : now;
+  _guildFeedOkAt = t;
+  const n_ = ingame == null || ingame === '' ? NaN : Number(ingame);
+  _guildFeedIngame = Number.isFinite(n_) && n_ >= 0 ? Math.floor(n_) : null;
+  let n = 0;
+  for (const r of (Array.isArray(lines) ? lines : [])) {
+    if (!r || (r.ch !== 'guild' && r.ch !== 'raid')) continue;
+    const who = String(r.who == null ? '' : r.who).trim().slice(0, 40);
+    const text = _chatCleanText(r.text);
+    if (!who || !text) continue;
+    const at = Number.isFinite(Number(r.t)) && Number(r.t) > 0 ? Number(r.t) : t;
+    const key = chatLineKey({ ch: r.ch, who, text, t: at }, '');
+    if (_guildFeedRing.some(x => x.k === key) || _guildFeedHeardLocally(r.ch, who, text, at)) continue;
+    _guildFeedRing.push({ seq: ++_chatSeq, k: key, t: at, ch: r.ch, who, to: null, text, self: false, npc: false, on: '', via: 'guild' });
+    n++;
+  }
+  const over = _guildFeedRing.length - CHAT_GUILD_RING_MAX;
+  if (over > 0) _guildFeedRing.splice(0, over);
+  return n;
+}
+// The game is running again: local lines take over, so nothing relayed stays to double them.
+function guildFeedClear() { _guildFeedRing.length = 0; _guildFeedOkAt = 0; _guildFeedIngame = null; }
 function noteLocalChatLine(line, character, now) {
   const policy = chatPolicyNow(now);
   let evt = classifyChatLine(line, character);
@@ -39258,6 +39310,7 @@ function serializeLocalChat(q, now) {
   // only read while its switch is on, so the common case is the chat ring alone.
   const feeds = [_chatRing];
   for (const x of Object.values(_chatExtraRings)) if (policy[x.gate]) feeds.push(x.ring);
+  if (policy.away) feeds.push(_guildFeedRing);   // relayed guild/raid lines: only while the overlay asked for them
   const at = feeds.map(r => r.length - 1);
   while (lines.length < CHAT_PAGE_MAX) {
     let best = -1, bestSeq = -1;
@@ -39276,10 +39329,15 @@ function serializeLocalChat(q, now) {
     if (l.cnum) o.cnum = l.cnum;
     if (l.cat) o.cat = l.cat;
     if (l.miss) o.miss = true;
+    if (l.via) o.via = l.via;
     lines.push(o);
   }
   lines.reverse();
-  return { ok: true, boot: CHAT_BOOT, seq: _chatSeq, reset, groups: CHAT_GROUPS, channels: CHAT_CHANNELS, lines };
+  // away: the guild feed is live right now (asked for, and the bot answered a moment ago), for the title-bar hint and the
+  // "nobody is in game" note. ingame = members in game with Mimic running (0 = nobody, null = unknown); null while the feed is not live.
+  const away = (policy.away && _guildFeedOkAt > 0 && t - _guildFeedOkAt <= GUILD_FEED_LIVE_MS)
+    ? { on: true, ingame: _guildFeedIngame, at: _guildFeedOkAt } : null;
+  return { ok: true, boot: CHAT_BOOT, seq: _chatSeq, reset, groups: CHAT_GROUPS, channels: CHAT_CHANNELS, away, lines };
 }
 function _handleLocalChat(req, res) {
   const send = (code, body) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(body); };
@@ -39295,7 +39353,7 @@ function _handleLocalChat(req, res) {
   return send(200, body);
 }
 function _resetLocalChatForTest() {
-  _chatRing.length = 0; _meleeRing.length = 0; _spellRing.length = 0; _skillRing.length = 0; _lootRing.length = 0; _randomRing.length = 0; _otherRing.length = 0; _chatSeq = 0; _chatPolicy = null; _chatPolicyAt = 0;
+  _chatRing.length = 0; _meleeRing.length = 0; _spellRing.length = 0; _skillRing.length = 0; _lootRing.length = 0; _randomRing.length = 0; _otherRing.length = 0; guildFeedClear(); _chatSeq = 0; _chatPolicy = null; _chatPolicyAt = 0;
 }
 // ── end Local chat window ──
 
@@ -39462,6 +39520,99 @@ async function _handleLocalChatHistory(req, res) {
 }
 function _resetChatHistoryForTest() { _chatHistCache = null; }
 // ── end Chat history ──
+
+// ── Guild feed while you are out of game ──────────────────────────────────────
+// The guild lead, 2026-10-15 (options A + X): the Chat overlay shows the guild's /gu and /rs chat, relayed from OTHER
+// members' Mimics, while this player is not in EverQuest. The bot half is GET <api base>/guild-chat?since=<seq>&boot=<boot>
+// -> { ok, boot, seq, ingame: <n|null>, lines: [{ seq, t, ch: 'guild'|'raid', who, text }] }. `ingame` is how many guild
+// members are in game WITH MIMIC RUNNING (0 = nobody, null = unknown); it rides /api/chat as away.ingame for the overlay.
+//
+// WHEN IT RUNS, all of these at once, otherwise NO call is made:
+//   • not local mode, a token is held, not a dry run, and the control plane has not stood this agent down (fleet kill or
+//     version floor: the same gates as the other polls);
+//   • the overlay is polling /api/chat right now (the switches lapse CHAT_POLICY_TTL_MS after it stops) and has `away` on;
+//   • EverQuest is not running for this player.
+// "NOT RUNNING" is this agent's own existing notion, the one the Set-up-for-me guard and the idle gate already use, and
+// no new process scan: EverQuest counts as running while EITHER a Zeal client has pushed live state within the last
+// minute (Mimic's pipe bridge only has state while the game and Zeal are up; the same cut-off the log-silent check uses)
+// OR a watched log has had a line within 90 s (the Set-up-for-me guard's cut-off). Zeal covers a quiet log and a
+// player standing still; the log covers a player without Zeal or a standalone agent with no bridge. Either one alone
+// would mistake a running game for an absent one; the union errs toward "in game", which costs a missed feed, never a
+// doubled line. The game starting again stops the poll and clears the relayed lines, so the local log takes over.
+//
+// DISPLAY ONLY: a GET. Nothing here is enqueued, uploaded, written to disk or handed to the trigger, tell or parse
+// code, and the lines live in guildFeedTake's ring (memory) until the game starts or Mimic restarts.
+const GUILD_FEED_POLL_MS = 5_000;
+const GUILD_FEED_BACKOFF_MS = 10 * 60_000;     // an old bot with no such route: ask again every 10 minutes
+const GUILD_FEED_ERROR_BACKOFF_MS = 30_000;    // any other failure: be patient, say nothing
+const GUILD_FEED_ZEAL_FRESH_MS = 60_000;
+const GUILD_FEED_LOG_FRESH_MS = 90_000;
+const _guildFeed = { cursor: 0, boot: '', nextAt: 0, inflight: false };
+function _eqInGameFrom(zealState, watchedLogs, now) {
+  for (const ch of Object.keys(zealState || {})) {
+    if (now - ((zealState[ch] && zealState[ch].updatedAt) || 0) <= GUILD_FEED_ZEAL_FRESH_MS) return true;
+  }
+  for (const w of (watchedLogs || [])) {
+    if (w && w.lastSeen && now - w.lastSeen <= GUILD_FEED_LOG_FRESH_MS) return true;
+  }
+  return false;
+}
+function _eqInGame(now) { return _eqInGameFrom(_zealState, stats.watchedLogs, now); }
+function _guildFeedReset() { _guildFeed.cursor = 0; _guildFeed.boot = ''; _guildFeed.nextAt = 0; }
+// One tick. Resolves a short word for what happened (the tests read it; nothing else does). `fetchImpl` is the test seam.
+async function _pollGuildFeed(now, fetchImpl) {
+  const t = now == null ? Date.now() : now;
+  if (_eqInGame(t)) {
+    if (_guildFeed.cursor || _guildFeed.boot || _guildFeedRing.length) { guildFeedClear(); _guildFeedReset(); }
+    return 'in-game';
+  }
+  if (_uploadOpts && _uploadOpts.dryRun) return 'dry-run';
+  if (_localOnly()) return 'local';
+  const base = _getApiBase();
+  const token = _getAgentToken();
+  if (!base || !token) return 'no-token';
+  if (_controlStandDown().down) return 'dormant';
+  if (!chatPolicyNow(t).away) return 'quiet';
+  if (t < _guildFeed.nextAt) return 'backoff';
+  if (_guildFeed.inflight) return 'busy';
+  _guildFeed.inflight = true;
+  try {
+    const url = base.replace(/\/+$/, '') + '/guild-chat?since=' + _guildFeed.cursor + '&boot=' + encodeURIComponent(_guildFeed.boot);
+    const res = await (fetchImpl || fetch)(url, {
+      headers: { 'Authorization': 'Bearer ' + token, 'Accept': 'application/json', 'User-Agent': 'wolfpack-logsync/' + AGENT_VERSION },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (res.status === 404) { _guildFeed.nextAt = t + GUILD_FEED_BACKOFF_MS; return 'unavailable'; }
+    if (!res.ok) { _guildFeed.nextAt = t + GUILD_FEED_ERROR_BACKOFF_MS; return 'error'; }
+    const data = await res.json();
+    if (!data || data.ok === false || !Array.isArray(data.lines)) { _guildFeed.nextAt = t + GUILD_FEED_ERROR_BACKOFF_MS; return 'error'; }
+    // The game may have started while we waited: do not put a relayed line back after the ring was cleared.
+    if (_eqInGame(now == null ? Date.now() : t)) return 'in-game';
+    const boot = data.boot == null ? '' : String(data.boot);
+    if (_guildFeed.boot && boot && boot !== _guildFeed.boot) {
+      // The bot restarted: its sequence numbers start over. Ask again from 0 and drop this answer (it was built from our old
+      // cursor). Lines asked for again are matched against the ring by guildFeedTake, so none show twice.
+      _guildFeed.boot = boot; _guildFeed.cursor = 0;
+      return 'boot-reset';
+    }
+    if (boot) _guildFeed.boot = boot;
+    const lines = data.lines.slice().sort((a, b) => (Number(a && a.seq) || 0) - (Number(b && b.seq) || 0));
+    guildFeedTake(lines, t, data.ingame);
+    // The cursor is the LAST RETURNED LINE's seq, never the response's `seq` (the bot's ring head): a page is capped at 200,
+    // so the head would skip the lines the page left out. An empty page (nothing new, or a shed) keeps the cursor.
+    let top = _guildFeed.cursor;
+    for (const r of lines) if (r && Number(r.seq) > top) top = Number(r.seq);
+    _guildFeed.cursor = top;
+    return 'ok';
+  } catch {
+    _guildFeed.nextAt = t + GUILD_FEED_ERROR_BACKOFF_MS;
+    return 'error';
+  } finally {
+    _guildFeed.inflight = false;
+  }
+}
+setInterval(() => { _pollGuildFeed().catch(() => {}); }, GUILD_FEED_POLL_MS).unref();
+// ── end Guild feed ──
 
 // ── /sll lockout parser ────────────────────────────────────────────────────
 // EQ /sll output in the log:
@@ -56441,6 +56592,9 @@ module.exports = {
   _chatRingForTest: () => _chatRing, _meleeRingForTest: () => _meleeRing, CHAT_MELEE_RING_MAX, _handleLocalChatForTest: _handleLocalChat,
   classifySpellLine, classifySkillLine, noteSelfCast, _rebuildLandingIndexesForTest: () => { _rebuildBuffMatchers(); _rebuildMechanicMatchers(); }, _spellRingForTest: () => _spellRing, _skillRingForTest: () => _skillRing, CHAT_SPELL_RING_MAX, CHAT_SKILL_RING_MAX,
   classifyLootLine, classifyRandomLine, classifyOtherLine, _lootRingForTest: () => _lootRing, _randomRingForTest: () => _randomRing, _otherRingForTest: () => _otherRing, CHAT_LOOT_RING_MAX, CHAT_RANDOM_RING_MAX, CHAT_OTHER_RING_MAX,
+  // Guild feed while out of game (2026-10-15): the poller, its in-game test, the ring and the control-plane setter its gate reads.
+  _pollGuildFeed, _eqInGameFrom, guildFeedTake, guildFeedClear, _guildFeedRingForTest: () => _guildFeedRing, _guildFeedStateForTest: () => _guildFeed,
+  _guildFeedResetForTest: _guildFeedReset, _applyControlPlane, CHAT_GUILD_RING_MAX,
   chatLineKey, chatSwapBetween, chatReadLogBackwards, chatHistoryFiles, buildChatHistory, getChatHistory,
   _handleLocalChatHistoryForTest: _handleLocalChatHistory, _resetChatHistoryForTest, CHAT_HISTORY_MAX, CHAT_SWAP_MIN_MS,
   _noteBuffDurationsFromState, buffDurationStats, buffDurationTable, _noteBuffDurationSample,

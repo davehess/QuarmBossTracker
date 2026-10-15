@@ -11039,3 +11039,13 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
 - **Not built:** Money — no real coin line ("You receive … from the corpse", "You split …") exists in the repo, so none
   was invented; coin lines fall into Other until the guild lead pastes one. Others' loot does not reach your log.
   Pet say, emotes, /who and Zeal spam have no sourced shapes or are deliberately dropped.
+
+### 341. Target Info: the snare-immune chip says so in the game's words (2026-10-15, Mimic beta `59e13ed1`)
+- **The report** (the guild lead, with a screenshot of Target Info on a PoP lieutenant): *"This mob is immune to
+  runspeed changes but it doesn't say it anywhere until you cast on him."* The flag WAS on screen — the chip read
+  "Unsnareable" (special ability 16) — but that word does not read as the game's "Your target is immune to changes in
+  its run speed".
+- **Built:** a display-only map in `apps/mimic/mobinfo.html` (`SPEC_SHOW` / `specChip`): the chip reads "Snare / run
+  speed immune" with the game's message as its tooltip, on both chip rows. The catalog label stays "Unsnareable"
+  because the bot (`utils/mobSpecials.js`), web (`web/lib/npcDecode.ts`) and the regression tests key on it. Other
+  "Un…" labels are unchanged; add a `SPEC_SHOW` entry if another one reads wrong.
