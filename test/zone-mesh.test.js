@@ -118,6 +118,35 @@ describe('pack / unpack', () => {
     expect(MIN_TRI_AREA).toBeGreaterThan(0.5);
   });
 
+  it('floorsOnly is the opposite filter: the near-horizontal triangles and nothing else, flagged as such', () => {
+    const m = room();
+    m.floor(300, 300, 400, 400, 5);                    // a second floor, 2 more triangles
+    const { V, I } = parseEqemuMap(encodeV2(m));
+    const walls = packMesh(V, I);
+    const only = packMesh(V, I, { floorsOnly: true });
+    expect(only.stats.packed).toBe(4);                 // the floors, not the 8 wall triangles
+    expect(walls.stats.packed).toBe(8);
+    const u = unpackMesh(only.buf);
+    expect(u.floorsOnly).toBe(true);
+    expect(u.floors).toBe(true);
+    expect(unpackMesh(walls.buf).floorsOnly).toBe(false);
+    // Every triangle that came back lies flat: its three z values are equal.
+    for (let t = 0; t < u.tris; t++) {
+      const z = [2, 5, 8].map(k => u.pos[9 * t + k]);
+      expect(Math.abs(z[0] - z[1]) + Math.abs(z[1] - z[2])).toBeLessThan(0.01);
+    }
+  });
+
+  it('floorsOnly has its own, smaller cap, and the walls request is untouched by it', () => {
+    const m = mesh();
+    for (let i = 0; i < 30; i++) m.floor(i * 100, 0, i * 100 + 10 + i, 10 + i, 0);   // 60 floor triangles, growing
+    m.wall(0, 0, 50, 0, 0, 20);
+    const { V, I } = parseEqemuMap(encodeV2(m));
+    expect(packMesh(V, I, { floorsOnly: true, cap: 10 }).stats.packed).toBe(10);
+    expect(packMesh(V, I, { floorsOnly: true }).stats.packed).toBe(60);
+    expect(packMesh(V, I).stats.packed).toBe(2);       // walls only, whatever the floors did
+  });
+
   it('an empty mesh is a valid zero-triangle buffer', () => {
     const u = unpackMesh(packMesh(new Float32Array(0), new Uint32Array(0)).buf);
     expect(u.tris).toBe(0);

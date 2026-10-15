@@ -17,11 +17,12 @@ import { NextResponse } from 'next/server';
 import { supabaseServer } from '@/lib/supabase-server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { selectAll } from '@/lib/selectAll';
+import { GUILD_TAG } from '@/lib/guild';
 import { REPLAY_WINDOW_MS, summarizeNights, type NightMinute } from '@/lib/raidReplay';
 
 export const dynamic = 'force-dynamic';
 
-const GUILD = 'wolfpack';
+const GUILD = GUILD_TAG;
 const NIGHTS_DAYS = 60;
 const NO_STORE = { 'Cache-Control': 'no-store' };
 const fail = (status: number, error: string) => NextResponse.json({ error }, { status, headers: NO_STORE });
