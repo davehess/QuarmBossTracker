@@ -99,12 +99,14 @@ export default function ShareControls({ fromIso, toIso, defaultTitle }: { fromIs
             <div className="mt-3 rounded border border-gold/50 bg-gold/10 p-2.5" role="status">
               <p className="text-xs text-gold">Copy it now. This address is shown once and cannot be looked up again.</p>
               <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                <input readOnly value={made.canonical} onFocus={e => e.currentTarget.select()} aria-label="Share link"
+                {/* The link on THIS host: share pages exist on beta before they reach wolfpack.quest, and a copied
+                    wolfpack.quest address would 404 until then (the guild lead, 2026-10-15). */}
+                <input readOnly value={made.url} onFocus={e => e.currentTarget.select()} aria-label="Share link"
                   className="min-w-[16rem] flex-1 rounded border border-border bg-bg px-2 py-1.5 font-mono text-xs text-text" />
-                <button type="button" onClick={() => copy(made.canonical)} className={`${chip} ${chipIdle}`}>{copied ? 'Copied' : 'Copy'}</button>
+                <button type="button" onClick={() => copy(made.url)} className={`${chip} ${chipIdle}`}>{copied ? 'Copied' : 'Copy'}</button>
               </div>
               {made.url !== made.canonical && (
-                <p className="mt-1.5 break-all text-xs text-dim">Until this page is on wolfpack.quest, the same link works here: {made.url}</p>
+                <p className="mt-1.5 break-all text-xs text-dim">Once share pages are on wolfpack.quest, the same link also works there: {made.canonical}</p>
               )}
             </div>
           )}
