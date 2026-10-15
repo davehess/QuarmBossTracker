@@ -11541,8 +11541,7 @@ async function _handleAgentItemCatalog(req, res, isPublic) {
 // pick-and-merge all live in utils/mobSpecials.js so the bot and the audit
 // script (scripts/audit-mob-specials.mjs) can never disagree about what a
 // special-ability code means. See docs/audit-mob-specials.md.
-const mobSpecials = require('./utils/mobSpecials');
-const npcProcs = require('./utils/npcProcs');
+const mobSpecials = require('./utils/mobSpecials');const npcProcs = require('./utils/npcProcs');
 const factionAssist = require('./utils/factionAssist');
 const _MOB_CLASS_NAMES = {
   1:'Warrior', 2:'Cleric', 3:'Paladin', 4:'Ranger', 5:'Shadow Knight', 6:'Druid',
@@ -16973,7 +16972,7 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
     // Vius showed as L1/16k HP "Immune Melee + Immune Magic". 200 is a hard
     // ceiling over the catalog's largest real-name cluster (34 rows; only the
     // junk "_" names go higher) so the payload stays bounded.
-    const _nameSel = `select=id,name,class,level,maxlevel,hp,mana,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,runspeed,npcspecialattks,special_abilities,raid_target,bodytype,npc_spells_id,see_invis,see_invis_undead,see_hide,see_improved_hide,race,gender&limit=200`;
+    const _nameSel = `select=id,name,class,level,maxlevel,hp,mana,ac,mr,fr,cr,pr,dr,mindmg,maxdmg,runspeed,npcspecialattks,special_abilities,raid_target,bodytype,npc_spells_id,see_invis,see_invis_undead,see_hide,see_improved_hide,race,size,gender&limit=200`;
     const rows = await supabase.select('eqemu_npc_types',
       `or=(name.ilike.${encPlain},name.ilike.${encHashed})&${_nameSel}`);
     // Pick-and-merge (docs/audit-mob-specials.md §"The fix"). The requester's
@@ -17247,6 +17246,7 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
       // #171 — movement facts, read off the PRIMARY row (never merged: "this
       // body is rooted, that one isn't" is two different mobs, not a warning).
       const move = mobSpecials.deriveMovement(r);
+      const aeRampage = mobSpecials.aeRampageInfo(r);
 
       // Faction consequences of killing this mob. ⚠ Reuses the bot's existing
       // resolver rather than re-deriving the npc_faction → faction_list chain:
@@ -17331,6 +17331,9 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
         // set). Placeholder rows are excluded whenever a real row exists, so
         // their "immune to everything" can't fabricate a false warning.
         specials: picked.specials,
+        // How far from this mob Area Rampage reaches, read off the PRIMARY body (utils/aeRampage.js).
+        // Absent, not null, when the mob has no Area Rampage; the Mimic map draws the ring from it.
+        ...(aeRampage ? { ae_rampage: aeRampage } : {}),
         // Provenance for the overlay/diagnostics: how many bodies were merged,
         // which preference tier won, and whether we had to fall back to a
         // placeholder because the name has no real row at all.
@@ -17379,7 +17382,8 @@ const _MOB_PACK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 //   3 (2026-10-06): special-ability labels in Quarm's numbering (utils/mobSpecials.js), Reverse Slow (FB-54)
 //   4 (2026-10-07): procs [{ kind, spell_id, name, chance, summary }]
 //   5 (2026-10-10): quest_id, the same-name body of the requester's zone the Quest tab reads (FB-72)
-const _MOB_PACK_VERSION = 5;
+//   6 (2026-10-15): ae_rampage { radius_still, radius_moving, chance, targets, damage_pct }
+const _MOB_PACK_VERSION = 6;
 const _MOB_PACK_PINNED = Array.from({ length: 24 }, (_, i) => 200 + i);
 const _mobPacks = new Map();          // zoneId → { etag, builtAt, body, gz, version }
 const _mobPackQueue = [];             // zone ids waiting to build

@@ -1082,6 +1082,9 @@ Tests: `test/feedback-log-slice.test.js` (agent + card), `test/feedback-ingest.t
   signature as the floating Save and never holding the token; `_offerDraft` at the end of `load()`;
   a `beforeunload` bar asks before closing. `before-quit` destroys the Settings window, because in
   Electron a cancelled unload also cancels the quit.
+- **Chat overlay — guild feed while away** (bot 3.1.277 `utils/guildChatFeed.js` + `GET /api/agent/guild-chat`; agent
+  3.7.182 `_pollGuildFeed` / `_guildFeedRing`, policy key `away`; §342): other Mimics' /gu and /rs relayed while this
+  player's game is not running; `ingame` count from the bot's reporter heartbeat registry.
 - **Chat overlay — Loot / Random / Other** (agent 3.7.181 beta, §340): opt-in groups beside Melee/Spells/Skills
   (`classifyLootLine`, `classifyRandomLine`, `classifyOtherLine` — Other last, re-asks the switched-off classifiers,
   never takes chat), their own 300-line rings in `_chatExtraRings`, policy keys `loot/random/other`.

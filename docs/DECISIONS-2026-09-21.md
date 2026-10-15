@@ -11049,3 +11049,23 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
   speed immune" with the game's message as its tooltip, on both chip rows. The catalog label stays "Unsnareable"
   because the bot (`utils/mobSpecials.js`), web (`web/lib/npcDecode.ts`) and the regression tests key on it. Other
   "Un…" labels are unchanged; add a `SPEC_SHOW` entry if another one reads wrong.
+
+### 342. The guild's /gu and /rs in the Chat overlay while you're out of game (2026-10-15, bot 3.1.277 + agent 3.7.182)
+- **The ask** (the guild lead): *"can we offer raid and guild chat in the overlay when out of the game via other
+  mimics? we're already capturing this"*; picked **A** (live relay from the bot's memory, not a database feed — reads
+  bill egress); **X** (only while not in game) was the session's default, not a pick. Then: *"it should note when
+  nobody is in game as well"* / *"with mimic running"*.
+- **Bot (main, 3.1.277):** `utils/guildChatFeed.js` keeps the last 300 guild + raid lines (allow-list of exactly those
+  two channels; cross-uploader dedupe), fed from the chat ingest after its dedup, preloaded from the last 60 min of
+  `chat_messages` at boot. `GET /api/agent/guild-chat?since=&boot=` is bearer-gated, no-store, sheddable
+  (`flag_shed_guild_chat`), budgeted 120/min. `ingame` = distinct PLAYERS whose reporter heartbeat is under 60 s old,
+  not camping, with a log line under 3 min (cached 15 s; `null` only in the first 90 s after a restart). An AFK player
+  with no log line for 3 minutes reads as out.
+- **Agent + Mimic (beta, 3.7.182):** polls every 5 s only while the Chat overlay is open, its "Guild and raid chat from
+  the guild while I'm out of game" switch is on (default on), and the game is NOT running (Zeal state < 60 s or a log
+  line < 90 s means in game). Relayed lines use the normal guild/raid colours with a dim "via guild" mark; the title
+  shows "away · guild feed · N in game with Mimic"; 0 shows "Nobody is in game with Mimic running right now — no guild
+  or raid chat to relay." Display only: never uploaded, never fed to triggers or history. Logging in stops the poll and
+  clears the relayed lines.
+- **Privacy:** the same lines the bot already posts to Discord; officer, tells, group and custom channels are never
+  uploaded and never enter the ring.
