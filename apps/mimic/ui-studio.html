@@ -1433,6 +1433,14 @@
 
   // ── Drag + resize ────────────────────────────────────────────────────────
   var DRAG = null;   // { i, mode, startX, startY, origX, origY, origW, origH }
+  // A press on a rectangle only SELECTS it until the pointer has really travelled. Without this a click
+  // that wobbled by a pixel moved the window (a pixel on screen is several in the layout, and snap pulls
+  // it up to 10 more), which marked a layout nobody meant to change as edited.
+  var DRAG_DEAD_ZONE = 4;   // screen pixels
+  function _dragPassedDeadZone(dxScreen, dyScreen) {
+    return Math.abs(dxScreen) >= DRAG_DEAD_ZONE || Math.abs(dyScreen) >= DRAG_DEAD_ZONE;
+  }
+  // /drag dead zone
 
   stage.addEventListener('mousedown', function(e){
     var el = e.target.closest('.win');
@@ -1490,6 +1498,10 @@
 
   document.addEventListener('mousemove', function(e){
     if (!DRAG) return;
+    if (!DRAG.moved) {
+      if (!_dragPassedDeadZone(e.clientX - DRAG.startMx, e.clientY - DRAG.startMy)) return;
+      DRAG.moved = true;
+    }
     var dx = (e.clientX - DRAG.startMx) / STATE.sliceScale;
     var dy = (e.clientY - DRAG.startMy) / STATE.sliceScale;
     var w = STATE.windows[DRAG.i];
@@ -1600,7 +1612,7 @@
       w.sizeEdited = false;
     }
     renderStage();
-    setStatus('reset to last load', 'ok');
+    setStatus('reset to last load or save', 'ok');
   });
   // What Save sends: KEY EDITS, [{ file, section, key, value }], not file texts
   // (the guild lead, 2026-10-05: "A for UI Studio"). Save used to rebuild whole
@@ -1629,6 +1641,18 @@
   }
   function _windowChanged(w){
     return w.x !== w.origX || w.y !== w.origY || _sizeChanged(w);
+  }
+  // A successful Save wrote the windows to the ini, so the ini is the baseline again: what a fresh Load
+  // would show. Without this every saved move stayed "changed" until the next Load, and anything that asks
+  // "is the layout unsaved?" (the chat window 🗑) refused for good after a Save. A size pinned here is in
+  // the ini now (hasWH; the raid bars' box has real edges), so it stops counting as an edit.
+  function _rebaselineWindows(wins) {
+    for (var i = 0; i < wins.length; i++) {
+      var w = wins[i];
+      if (w.sizeEdited) { if (w.zealBar === 'raidbars') { w.toEdgeR = false; w.toEdgeB = false; } else if (!w.zealBar) w.hasWH = true; }
+      w.sizeEdited = false;
+      w.origX = w.x; w.origY = w.y; w.origW = w.w; w.origH = w.h;
+    }
   }
   // Writes into the TARGET resolution's suffix block (XPos<W>x<H>); main adds
   // the keys when absent and leaves other-resolution blocks alone.
@@ -1678,6 +1702,8 @@
     var tgtSuffix = built.tgtSuffix;
     var res = await window.mimic.uiStudioWriteEdits(STATE.eqDir, built.edits, deferred ? { backupTag: 'eq' } : null);
     if (!res || !res.ok) { setStatus('save failed: ' + (res && res.error ? res.error : 'unknown'), 'err'); return false; }
+    _rebaselineWindows(STATE.windows);
+    if (INSPECTOR_SAVED) INSPECTOR_SAVED(built.edits);
     var resWarn = '';
     try {
       var disp = await window.mimic.uiStudioListDisplays();
@@ -2024,7 +2050,8 @@
     _layMsg('renamed to "' + r.layout.name + '" · ☁ Back up to put the new name on the cloud copy', 'ok');
   });
   _layEl('layoutDelete').addEventListener('click', async function(){
-    var who = _selectedCharEqDir(), p = _layPicked(); if (!who || !p) return;
+    var who = _selectedCharEqDir(), p = _layPicked();
+    if (!who || !p) { _layMsg(!who ? 'pick a character first' : 'pick a layout in the list first', 'err'); return; }
     if (!window.confirm('Delete the layout "' + p.name + '" from this computer?\n\nCloud backups of it stay; the UI files EQ is using now are not touched.')) return;
     var r = await window.mimic.uiStudioLayoutDelete({ character: who.character, id: p.id })
       .catch(function(e){ return { ok: false, error: e && e.message }; });
@@ -2665,6 +2692,27 @@
     return { ok: true, mode: chk.mode, model: { cm: cm2, geo: geo2 }, moved: moved, renumbered: renum, renamedSections: renamed,
       removedSection: names[idx] != null ? names[idx] : null, lastSection: names[last] != null ? names[last] : null };
   }
+  // Why a press on 🗑 will not go ahead, in words ('' = it will). `check` is _chatDeleteWindow's answer.
+  // The guild lead, 2026-10-15: "DELETE BUTTONS DON'T WORK IN UI STUDIO" — every refusal here used to be
+  // one line in a note at the top of the chat block, out of sight; the caller now shows this text at the
+  // window's own card and in the status bar, so a refusal can be read where the press was.
+  function _chatDeleteBlocked(check, layoutDirty) {
+    if (!check.ok) return check.error;
+    if (layoutDirty) return 'Not deleted: windows in the layout were moved or resized and are not saved yet. Deleting a chat window renumbers the ones after it, so those moves would land on the wrong window. Press Save (a save waiting for logout does not count) or Reset in the toolbar, then 🗑 again.';
+    return '';
+  }
+  // The toolbar Save wrote `edits` to the ini: bring this model's chat geometry blocks up to what is on
+  // disk now, as a fresh read would show it. Without it a delete after a Save copies the old positions
+  // from the model over the saved ones. Only sections the model already holds, only keys of `file`.
+  function _chatAdoptSaved(model, edits, file) {
+    for (var i = 0; i < edits.length; i++) {
+      var e = edits[i];
+      if (file && e.file !== file) continue;
+      if (_csSecIdx(e.section) == null) continue;
+      var s = _csLook(model.geo, e.section);
+      if (s != null) _csPut(model.geo[s], e.key, e.value);
+    }
+  }
   // <option>s for the font picker: 0..6, the current one selected. A missing or out-of-range value gets
   // its own disabled placeholder so the picker never claims a value the ini does not hold.
   function _chatFontOptions(cur) {
@@ -2719,10 +2767,12 @@
   // press itself is not replayed). A chip dragged out of the editor onto a rectangle is not a press
   // outside — it starts inside — so routing from the layout still works.
   var INSPECTOR_GUARD = null;   // set by openSocialsInspector while it is open: { isDirty, revert, close }
+  var INSPECTOR_SAVED = null;   // set with it: (edits) => the toolbar Save wrote these; refresh the chat geometry baseline
   function _closeInspectorNow() {
     var d = document.getElementById('socialsInspector');
     if (d) d.remove();
     INSPECTOR_GUARD = null;
+    INSPECTOR_SAVED = null;
     document.body.classList.remove('inspecting');
   }
   function _askDiscardHotbar(onAnswer) {
@@ -2845,6 +2895,7 @@
     var JOINED = Array.isArray(chat && chat.autojoin) ? chat.autojoin : null;
     var _chatLog = [];          // what is staged, in words, for the unsaved hint
     var _chatNoteMsg = '';      // the last refusal / explanation, shown under the block's title
+    var _chatWhy = null;        // { idx, msg }: why 🗑 on that window did nothing, shown inside its card
     var _chatStructural = false; // a window was added or deleted (layout rectangles changed too)
     function _chatBlockHtml(){
       var html = '';
@@ -2903,6 +2954,9 @@
             (delWhy ? ' disabled' : '') +
             ' style="background:none;border:1px solid #30363d;color:' + (delWhy ? '#484f58' : '#f87171') + ';cursor:' + (delWhy ? 'not-allowed' : 'pointer') + ';font-size:12px;line-height:1;padding:2px 6px;border-radius:3px">🗑</button>' +
           '</div>';
+        if (_chatWhy && _chatWhy.idx === cwn.index) {
+          html += '<div class="chatCardWhy" role="alert" style="margin-top:6px;padding:4px 6px;border:1px solid #f87171;border-radius:3px;color:#f6c365;font-size:11px;font-family:sans-serif">' + escapeHtml(_chatWhy.msg) + '</div>';
+        }
         // Channel chips row
         html += '<div class="chatChipRow" data-win="' + cwn.index + '" data-drop="' + (isTell?'0':'1') + '" ' +
           'style="margin-top:5px;display:flex;flex-wrap:wrap;gap:4px;min-height:18px">';
@@ -3229,6 +3283,14 @@
       },
       close: _closeInspectorNow,
     };
+    // The toolbar Save changed the chat windows' geometry blocks on disk: both copies of the model follow,
+    // so a delete afterwards starts from the saved positions, not the ones read when this opened.
+    INSPECTOR_SAVED = function(edits){
+      if (!CHAT_ORIG || !CHAT_MODEL || !chat) return;
+      _chatAdoptSaved(CHAT_ORIG, edits, chat.file);
+      _chatAdoptSaved(CHAT_MODEL, edits, chat.file);
+      _chatRebuildEdits();
+    };
     document.getElementById('uiInspectorClose').addEventListener('click', _inspectorTryLeave);
 
     // ── Chat routing interactions ────────────────────────────────────────────
@@ -3300,7 +3362,7 @@
       return out;
     }
     function _chatAfterChange(logLine){
-      if (logLine) _chatLog.push(logLine);
+      if (logLine) { _chatLog.push(logLine); _chatWhy = null; }
       _chatRebuildEdits();
       var host = document.getElementById('chatHost');
       if (host) { host.innerHTML = _chatBlockHtml(); _wireChat(); }
@@ -3366,9 +3428,18 @@
       if (t) t.click();
     }
     function _chatDelete(idx){
+      _chatWhy = null;
       var r = _chatDeleteWindow(CHAT_MODEL, idx);
-      if (!r.ok) { _chatNote(r.error); _chatAfterChange(); return; }
-      if (_chatLayoutDirty()) { _chatNote('You have unsaved window moves in the layout. Save or Reset them first: deleting a chat window renumbers the ones after it, and the moves would land on the wrong window.'); _chatAfterChange(); return; }
+      var why = _chatDeleteBlocked(r, _chatLayoutDirty());
+      if (why) {
+        // Said where the press was (inside the window's card) and in the status bar, not only in the note
+        // at the top of the block, which is out of sight whenever the list is scrolled.
+        _chatNote(why); _chatWhy = { idx: idx, msg: why }; setStatus(why, 'err');
+        _chatAfterChange();
+        var wEl = chatBlock && chatBlock.querySelector('.chatCardWhy');
+        if (wEl && wEl.scrollIntoView) wEl.scrollIntoView({ block: 'nearest' });
+        return;
+      }
       var v = _chatView(CHAT_MODEL), nm = '';
       for (var i = 0; i < v.windows.length; i++) if (v.windows[i].index === idx) nm = v.windows[i].name || ('Chat ' + idx);
       var movedNames = r.moved.map(function(id){ return _chatChannelInfo(id, JOINED).text; });
