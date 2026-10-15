@@ -69,8 +69,11 @@ const dirRow = (key, cls, level, extra = {}) => ({
 
 async function lookup({
   names, whoData = {}, roster = {}, overrides = {}, directory = [], xpRows = [], whoRows = [], rpc = null, enabled = true,
+  dirFn = false,
 }) {
-  const calls = { select: [], rpc: [] };
+  // dirFn: whether who_directory_lookup (migration 20261015071000) exists. Default off, so these tests drive the
+  // view fallback; its calls go to calls.dirFn, not calls.rpc (which the level tests count).
+  const calls = { select: [], rpc: [], dirFn: [] };
   const sb = {
     isEnabled: () => enabled,
     select: async (table, qs) => {
@@ -81,6 +84,10 @@ async function lookup({
       return directory.filter(r => wanted.has(r.character_key));
     },
     rpc: async (fn, params) => {
+      if (fn === 'who_directory_lookup') {
+        calls.dirFn.push(params);
+        return dirFn ? directory.filter(r => params.p_keys.includes(r.character_key)) : null;
+      }
       calls.rpc.push({ fn, params });
       return rpc ? rpc(fn, params) : sqlLatestLevels({ xpRows, whoRows }, params);
     },
@@ -131,6 +138,18 @@ describe('who-lookup — who_directory (pass 2) stays as it was', () => {
       overrides: { corvale: { class: 'Wizard', is_zek: false } },
     });
     expect(calls.select.some(c => c.table === 'who_directory')).toBe(false);
+    expect(calls.dirFn).toHaveLength(0);
+  });
+
+  it('asks who_directory_lookup first and skips the view when it answers', async () => {
+    const { results, calls } = await lookup({
+      names: ['Corvale', 'Brackwyn'], dirFn: true,
+      roster: { brackwyn: { class: 'Warrior' } },
+      directory: [dirRow('corvale', 'Enchanter', 62, { guild_name: 'Elsewhere' })],
+    });
+    expect(calls.dirFn).toEqual([{ p_keys: ['corvale'] }]);
+    expect(calls.select.some(c => c.table === 'who_directory')).toBe(false);
+    expect(results.corvale).toMatchObject({ class: 'Enchanter', level: 62, guild: 'Elsewhere', source: 'who_directory' });
   });
 
   it('is still asked for a name with no class, and can CREATE a result for a cross-guild name', async () => {

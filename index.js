@@ -7604,8 +7604,16 @@ async function _handleAgentServerPanel(req, res) {
       // Summed in the database: this used to total the 200 largest SINGLE-FIGHT rows and call that
       // the "30 d total" (a top-25 whose first place showed 5.5M over 19 fights against a real 15.8M
       // over 845, 2026-10-04) — a ranking of one-fight peaks, wrong by construction.
-      const rows = await supabase.rpc('encounter_damage_by_character',
-        { p_guild_id: guildId, p_since: since30d, p_limit: 25 });
+      // 5-minute memo: a 30-day total barely moves, and every Mimic dashboard polled this uncached — 11.7k calls at
+      // ~0.5 s each since 2026-10-12, the third-largest database cost behind the 2026-10-14 overload.
+      let rows;
+      if (globalThis._dmg30Cache && Date.now() - globalThis._dmg30Cache.at < 5 * 60_000) {
+        rows = globalThis._dmg30Cache.rows;
+      } else {
+        rows = await supabase.rpc('encounter_damage_by_character',
+          { p_guild_id: guildId, p_since: since30d, p_limit: 25 });
+        if (Array.isArray(rows)) globalThis._dmg30Cache = { at: Date.now(), rows };
+      }
       const list = (rows || []).map(r => ({
         character: r.character_name,
         totalDamage: Number(r.total_damage) || 0,
@@ -17850,8 +17858,15 @@ async function _handleAgentWhoLookup(req, res) {
       const supabase = require('./utils/supabase');
       if (supabase.isEnabled()) {
         const inList = needDir.map(n => `"${String(n).toLowerCase().replace(/"/g, '')}"`).join(',');
-        const rows = await supabase.select('who_directory',
-          `character_key=in.(${encodeURIComponent(inList)})&select=character_key,observed_class,level,guild_name,last_seen,ever_zek_guild,ever_inferred_zek&limit=80`);
+        // who_directory_lookup (migration 20261015071000) returns the view's rows for just these names (~1–4 ms);
+        // filtering the view itself rebuilt the whole directory first (~1.27 s, the second-largest DB cost on
+        // 2026-10-14). The view read stays as the fallback when the function call fails.
+        let rows = await supabase.rpc('who_directory_lookup',
+          { p_keys: needDir.slice(0, 80).map(n => String(n).toLowerCase().replace(/"/g, '')) }).catch(() => null);
+        if (!Array.isArray(rows)) {
+          rows = await supabase.select('who_directory',
+            `character_key=in.(${encodeURIComponent(inList)})&select=character_key,observed_class,level,guild_name,last_seen,ever_zek_guild,ever_inferred_zek&limit=80`);
+        }
         if (Array.isArray(rows)) {
           for (const row of rows) {
             const key = String(row.character_key || '').toLowerCase();
