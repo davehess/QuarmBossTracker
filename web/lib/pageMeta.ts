@@ -57,6 +57,7 @@ const STATIC_META: Record<string, PageMeta> = {
   '/bards':        { title: 'Bard Melodies', description: 'Live bard song rotations across the raid.' },
   '/raid':         { title: 'Live Raid', description: 'The raid right now — who’s in, groups, HP, and buffs, live from Zeal.' },
   '/spectator/replay': { title: '[beta] Spectator replay', description: 'A recorded raid night played back on the zone map — drag the time slider or press play to see where everyone stood.' },
+  '/raid/session': { title: '[beta] Raid session review', description: 'One recorded raid session: the replay with who was there, the kills, the loot, the rolls and the parses beside it.' },
   '/spectator':    { title: '[beta] Spectator', description: 'The raid on a map, live — everyone’s position in the zone they are in, with the zone’s walls underneath.' },
   '/screen':       { title: '[beta] Raid screen', description: 'One page the whole raid watches — the map, slides, loot or an overview, switched by the raid leader and followed live.' },
   '/mimic':        { title: 'Download Mimic', description: 'Mimic — the Wolf Pack desktop overlay: DPS/Tank Meter, triggers, buff queue, and log sync for Project Quarm.' },
@@ -291,6 +292,11 @@ export function metaForPath(rawPath: string): PageMeta {
   const guild = m ? guildByCode(safeDecode(m[1])) : undefined;
   if (guild) {
     return { title: `[beta] ${guild.name} — Zeal tag icon`, description: `${guild.name}'s banner and icon for Zeal /tag: ^F${guild.code}^ and ^I${guild.code}^.` };
+  }
+  // A shared raid session is a public page, but its card says only that it exists: the token is a secret and the
+  // title, window and contents are whatever the officer chose to share, none of it for an anonymous crawler.
+  if (/^\/share\/raid\/[^/]+$/.test(path)) {
+    return { title: '[beta] Shared raid session', description: 'A raid session shared by Wolf Pack: the replay with who was there, the kills, the loot and the rolls.' };
   }
   if (/^\/parses\/[^/]+$/.test(path)) {
     // Deliberately NOT the boss, date or DPS: a parse is guild data that /parses/<id> hides from a signed-out

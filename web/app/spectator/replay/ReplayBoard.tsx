@@ -421,8 +421,29 @@ function drawPane(p: Pane, o: PaneArgs): boolean {
   return animating;
 }
 
-export default function ReplayBoard() {
-  const [nights, setNights] = useState<NightSummary[] | null>(null);
+/**
+ * BOUNDED MODE (the raid session review and the public share page): the board plays ONE fixed window of a
+ * recording. `night` is that window as a NightSummary (first = the window's start, so the 15-minute windows line up
+ * with the server's), there is no night or session picker and nothing is written to `?session=`, and every fetch
+ * goes through `urls` so the caller decides which routes (and which credential) the data comes from. `seek` is a
+ * request from outside to move the playhead (a click on a kill, a roll or a loot line); `n` changes on every
+ * request so the same time can be asked for twice.
+ */
+export type BoundedReplay = {
+  night: NightSummary;
+  urls: {
+    window: (nightKey: string, fromIso: string, toIso: string) => string;
+    bosses: ((nightKey: string) => string) | null;
+    map: (zone: string) => string;
+    mesh: (zone: string, floors: '' | '1' | 'only') => string;
+  };
+  seek?: { t: number; n: number } | null;
+};
+
+export default function ReplayBoard({ bounded }: { bounded?: BoundedReplay } = {}) {
+  const urlsRef = useRef(bounded?.urls ?? null);
+  urlsRef.current = bounded?.urls ?? null;
+  const [nights, setNights] = useState<NightSummary[] | null>(bounded ? [bounded.night] : null);
   const [netErr, setNetErr] = useState(false);
   const [signedOut, setSignedOut] = useState(false);
   const [nightKey, setNightKey] = useState<string | null>(null);
@@ -514,6 +535,7 @@ export default function ReplayBoard() {
 
   // ── data ───────────────────────────────────────────────────────────────────
   useEffect(() => {
+    if (urlsRef.current) return;   // bounded: the one window came in as a prop
     let dead = false;
     fetch('/api/spectator/replay?nights=1')
       .then(async res => {
@@ -550,9 +572,11 @@ export default function ReplayBoard() {
     wins.current.set(w, { state: 'loading', at: Date.now() });
     const g = gen.current;
     const to = Math.min(from + REPLAY_WINDOW_MS, end);
-    const url = '/api/spectator/replay?night=' + encodeURIComponent(n.night_key)
-      + '&from=' + encodeURIComponent(new Date(from).toISOString())
-      + '&to=' + encodeURIComponent(new Date(to).toISOString());
+    const url = urlsRef.current
+      ? urlsRef.current.window(n.night_key, new Date(from).toISOString(), new Date(to).toISOString())
+      : '/api/spectator/replay?night=' + encodeURIComponent(n.night_key)
+        + '&from=' + encodeURIComponent(new Date(from).toISOString())
+        + '&to=' + encodeURIComponent(new Date(to).toISOString());
     fetch(url)
       .then(async res => {
         if (g !== gen.current) return;
@@ -605,8 +629,10 @@ export default function ReplayBoard() {
     bossesRef.current = [];
     const key = night?.night_key;
     if (!key) return;
+    const u = urlsRef.current;
+    if (u && !u.bosses) return;   // bounded, and the caller serves no boss markers
     const ac = new AbortController();
-    fetch('/api/spectator/replay/bosses?night=' + encodeURIComponent(key), { signal: ac.signal })
+    fetch(u?.bosses ? u.bosses(key) : '/api/spectator/replay/bosses?night=' + encodeURIComponent(key), { signal: ac.signal })
       .then(async res => {
         if (!res.ok) return;
         bossesRef.current = parseBosses(await res.json());
@@ -626,7 +652,7 @@ export default function ReplayBoard() {
       schedule();
     };
     put({ status: 'loading' });
-    fetch('/api/spectator/map?zone=' + encodeURIComponent(z))
+    fetch(urlsRef.current ? urlsRef.current.map(z) : '/api/spectator/map?zone=' + encodeURIComponent(z))
       .then(async res => {
         if (res.status === 404) return put({ status: 'none' });
         if (!res.ok) return put({ status: 'error' });
@@ -799,6 +825,16 @@ export default function ReplayBoard() {
     schedule();
   }, [schedule]);
 
+  // A request from outside (bounded mode): move the playhead there and pause, so the picture stays on that moment.
+  const seekN = bounded?.seek?.n ?? 0;
+  const seekT = bounded?.seek?.t ?? null;
+  useEffect(() => {
+    if (seekT == null || !seekN) return;
+    playingRef.current = false;
+    setPlaying(false);
+    seek(seekT);
+  }, [seekN, seekT, seek]);
+
   const togglePlay = useCallback(() => {
     const n = nightRef.current;
     if (!n) return;
@@ -833,7 +869,7 @@ export default function ReplayBoard() {
   // "no param", because the default moves as new nights are recorded.
   const urlSession = chosen?.session?.from ?? null;
   useEffect(() => {
-    if (!urlReady || urlSession == null) return;
+    if (!urlReady || urlSession == null || urlsRef.current) return;   // bounded: the page names the window, not ?session=
     try {
       const s = sessionSearch(urlSession, window.location.search);
       if (s !== window.location.search) window.history.replaceState(null, '', window.location.pathname + s + window.location.hash);
@@ -1054,6 +1090,7 @@ export default function ReplayBoard() {
   return (
     <div className="min-w-0">
       <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-dim">
+        {!bounded && (<>
         <label className="flex items-center gap-1.5">
           <span>Night</span>
           <select value={night.night_key} onChange={e => { setSessionFrom(null); setNightKey(e.target.value); }}
@@ -1075,6 +1112,11 @@ export default function ReplayBoard() {
             ))}
           </select>
         </label>
+        {chosen?.session && (
+          <a href={`/raid/session?from=${encodeURIComponent(new Date(chosen.session.from).toISOString())}&to=${encodeURIComponent(new Date(chosen.session.to).toISOString())}`}
+            className="underline hover:text-text">Review this session</a>
+        )}
+        </>)}
         <label className="flex items-center gap-1.5">
           <span>Zone</span>
           <select value={pinned ?? ''} onChange={e => setPinned(e.target.value || null)}
@@ -1221,7 +1263,7 @@ export default function ReplayBoard() {
                     onPointerCancel={handlers(p).onPointerUp}
                     onKeyDown={onKeyDown} />
                   {mode === '3d' && z && (
-                    <Replay3D zone={z} floors={floors} bridgeRef={bridges[i]} onReady={schedule} onKeyDown={onKeyDown}
+                    <Replay3D zone={z} floors={floors} meshUrl={bounded?.urls.mesh} bridgeRef={bridges[i]} onReady={schedule} onKeyDown={onKeyDown}
                       onPick={pick} onPanAway={panAway}
                       onFail={() => { setNo3d(true); setMode('2d'); }}
                       label={aria} />

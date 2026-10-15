@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-8-164-2026-10-15',
+    title: 'Web 1.8.164',
+    version: 'Web 1.8.164',
+    date: '2026-10-15',
+    headline: 'Review a whole raid session in one page, and send it to someone outside the guild with a link.',
+    features: [
+      { name: 'Raid session review [beta]', blurb: 'wolfpack.quest/raid/session shows one recorded raid session: the replay on the map, and beside it who was there and for how long, the fights, the loot, the rolls and the top damage. Tap any time in a list and the replay jumps to that moment.' },
+      { name: 'Share a session [beta]', blurb: 'Officers can make a public link to one session. Anyone with the link can read it without signing in, until it runs out (7, 30 or 90 days) or an officer cancels it. It shows only that session, and anyone who opted out of stats is left out.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-8-160-2026-10-15',
     title: 'Raid replay',
     version: 'Web 1.8.160 · Bot 3.1.273',
