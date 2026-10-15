@@ -11,6 +11,13 @@
 // Frame: lib/zoneMesh.ts serverToThree. Top-down it is the 2D board's picture (X = screen x, Z = screen y, Y up
 // is EQ's z). The camera starts south of the raid looking north, so the first picture is "north up" like the 2D.
 //
+// The camera (lib/replayCamera.ts) stays INSIDE the zone: it orbits the centre of the nearest 80% of the raiders,
+// a modest height above them, clamped to the mesh's extent and pulled in along the line to the target to just
+// short of any wall (a third-person game camera). It holds still until the picture is clearly wrong (the same
+// hysteresis as the 2D board), then glides to a new spot; a scrub, a zone change or Fit raid snaps. The wall test
+// is a grid lookup over the mesh's triangles, not a three.js raycast over all of them. Any orbit, pan or zoom by
+// the viewer takes the camera over until they press Fit raid; Fit zone is the one deliberate view from outside.
+//
 // Drawing rules: render on demand (a feed, a camera move, a resize, a follow still gliding), never a free-running
 // loop, so a paused replay costs nothing. Walls are one BufferGeometry, flat-shaded and tinted by height,
 // see-through and not written to the depth buffer; the floors are a second, darker and fainter one under them
@@ -28,9 +35,14 @@ import {
   Vector3, WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { classAbbr, classColor, coreRaiders } from '@/lib/spectator';
+import { classAbbr, classColor } from '@/lib/spectator';
 import { heightHue, positionsToThree, serverToThree, unpackMesh, type UnpackedMesh } from '@/lib/zoneMesh';
 import { FOLLOW_SETTLED, FOLLOW_TAU_MS } from '@/lib/replayFollow';
+import { exceedsHysteresis } from '@/lib/replayFraming';
+import {
+  boundsFromServer, buildTriGrid, constrainCamera, desiredRig, easeRig, raidFocus,
+  type Bounds3, type TriGrid, type V3,
+} from '@/lib/replayCamera';
 
 export type Placed3D = { name: string; cls: string | null; hp: number | null; x: number; y: number; z: number };   // server frame
 export type PlacedTarget3D = { name: string; n: number; x: number; y: number; z: number };
@@ -40,6 +52,7 @@ export type Feed3D = {
   follow: string | null;
   targets: PlacedTarget3D[];
   spawns: PlacedSpawn3D[];
+  snap: boolean;                        // the playhead jumped (a scrub or a new session): frame the raid at once
 };
 export type Bridge3D = {
   feed: (zone: string | null, raiders: Placed3D[], extra: Feed3D) => void;
@@ -73,6 +86,9 @@ const PALETTE = 64;
 const FOLLOW_SPAN = 700;          // how much ground a fresh fit on a followed raider shows
 const TARGET_RED = 0xef4444;
 const SPAWN_AMBER = 0xb7791f;
+const EDGE_NDC = 0.94;            // a raider past this (of the -1..1 screen) counts as outside the picture
+const MIN_ORBIT = 25;
+const MAX_ORBIT = 8000;           // until a mesh says how big the zone is
 
 type Status = 'idle' | 'loading' | 'ready' | 'none' | 'error';
 type Kind = 'pick' | 'hover' | 'target' | 'spawn';
@@ -84,6 +100,9 @@ type Ctx = {
   followName: string | null; kick: boolean; off: Vector3; lastDraw: number;
   feedZone: string | null; fitted: 'none' | 'mesh' | 'raid'; moved: boolean; hover: string | null;
   box: { cx: number; cy: number; cz: number; span: number } | null;     // the wall mesh, three frame
+  bounds: Bounds3 | null; wallGrid: TriGrid | null; floorGrid: TriGrid | null;   // what keeps the camera inside
+  snap: boolean;                                                       // frame the raid at once on the next draw
+  goal: { target: V3; pos: V3 } | null;                                // the glide under way, if any
   w: number; h: number; raf: number; dead: boolean;
   request: () => void; fitTo: (cx: number, cz: number, y: number, span: number) => void;
 };
@@ -191,8 +210,8 @@ export default function Replay3D({ zone, floors, bridgeRef, onReady, onFail, onP
 
     const controls = new OrbitControls(camera, dom);
     controls.screenSpacePanning = false;
-    controls.minDistance = 20;
-    controls.maxDistance = 30000;
+    controls.minDistance = MIN_ORBIT;
+    controls.maxDistance = MAX_ORBIT;
     controls.maxPolarAngle = Math.PI * 0.495;
 
     const dotGeo = new SphereGeometry(1, 12, 8);
@@ -231,6 +250,7 @@ export default function Replay3D({ zone, floors, bridgeRef, onReady, onFail, onP
       renderer, scene, camera, controls, inst, halo, tgt, spawn, wall: null, floor: null, tags: [],
       raiders: [], targets: [], spawns: [], hl: new Set(), followName: null, kick: false, off: new Vector3(), lastDraw: 0,
       feedZone: null, fitted: 'none', moved: false, hover: null, box: null,
+      bounds: null, wallGrid: null, floorGrid: null, snap: false, goal: null,
       w: 0, h: 0, raf: 0, dead: false,
       request: () => {
         if (c.raf || c.dead) return;
@@ -295,11 +315,61 @@ export default function Replay3D({ zone, floors, bridgeRef, onReady, onFail, onP
       for (let i = used; i < c.tags.length; i++) c.tags[i].style.display = 'none';
     };
 
+    // Share of the raiders outside the picture the camera shows now (behind it, or past the screen's edge).
+    const outsideShare = () => {
+      if (!c.raiders.length) return 0;
+      camera.updateMatrixWorld();
+      let out = 0;
+      for (const r of c.raiders) {
+        const [X, Y, Z] = serverToThree(r.x, r.y, r.z + LIFT);
+        tmpV.set(X, Y, Z).project(camera);
+        if (tmpV.z > 1 || Math.abs(tmpV.x) > EDGE_NDC || Math.abs(tmpV.y) > EDGE_NDC) out++;
+      }
+      return out / c.raiders.length;
+    };
+    const place = (target: V3, pos: V3) => {
+      controls.target.set(target[0], target[1], target[2]);
+      camera.position.set(pos[0], pos[1], pos[2]);
+      controls.update();
+    };
+    // Frames the nearest 80% of the raid from inside the zone. Returns true while a glide is still under way.
+    const autoFrame = (dt: number): boolean => {
+      if (c.moved || followed() || !c.raiders.length || !c.w || !c.h) return false;
+      const foc = raidFocus(c.raiders);
+      if (!foc) return false;
+      const rig = desiredRig(foc, c.w / c.h, FOV);
+      const goal = {
+        target: rig.target,
+        pos: constrainCamera(rig.target, rig.pos, { bounds: c.bounds, grids: [c.wallGrid, c.floorGrid] }).pos,
+      };
+      if (c.snap || c.fitted !== 'raid') {
+        c.snap = false;
+        c.goal = null;
+        c.fitted = 'raid';
+        place(goal.target, goal.pos);
+        return false;
+      }
+      if (!c.goal) {
+        const dist = (a: V3, b: V3) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+        const have = camera.position.distanceTo(controls.target);
+        const want = dist(goal.pos, goal.target);
+        if (want > 0 && exceedsHysteresis(have / want, outsideShare())) c.goal = goal;
+      }
+      if (!c.goal) return false;
+      const e = easeRig(
+        { target: [controls.target.x, controls.target.y, controls.target.z], pos: [camera.position.x, camera.position.y, camera.position.z] },
+        c.goal, dt);
+      place(e.target, e.pos);
+      if (e.done) c.goal = null;
+      return !e.done;
+    };
+
     function draw() {
       if (c.dead || !c.w || !c.h) return;
       const now = performance.now();
       const dt = c.lastDraw ? Math.min(100, now - c.lastDraw) : 0;
       c.lastDraw = now;
+      if (autoFrame(dt)) c.request();
 
       // Follow: the camera's target rides (followed raider + a decaying offset), the camera moves by the same step.
       const fp = followed();
@@ -423,18 +493,6 @@ export default function Replay3D({ zone, floors, bridgeRef, onReady, onFail, onP
     dom.addEventListener('pointerleave', onLeave);
 
     // The bridge ReplayBoard drives.
-    const raidCentre = () => {
-      const core = coreRaiders(c.raiders);
-      if (!core.length) return null;
-      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, zs = 0;
-      for (const r of core) {
-        x0 = Math.min(x0, r.x); x1 = Math.max(x1, r.x);
-        y0 = Math.min(y0, r.y); y1 = Math.max(y1, r.y);
-        zs += r.z;
-      }
-      const [cx, cy, cz] = serverToThree((x0 + x1) / 2, (y0 + y1) / 2, zs / core.length);
-      return { cx, cy, cz, span: Math.max(x1 - x0, y1 - y0) };
-    };
     const fitRaid = () => {
       const f = followed();
       if (f) {   // following: a close fit on the raider, not the whole raid
@@ -443,8 +501,7 @@ export default function Replay3D({ zone, floors, bridgeRef, onReady, onFail, onP
         c.fitTo(cx, cz, cy, FOLLOW_SPAN);
         return;
       }
-      const r = raidCentre();
-      if (r) { c.fitted = 'raid'; c.fitTo(r.cx, r.cz, r.cy, r.span); }
+      if (c.raiders.length) { c.snap = true; c.request(); }   // autoFrame frames it, inside the zone
       else if (c.box) { c.fitTo(c.box.cx, c.box.cz, c.box.cy, c.box.span); }
     };
     bridgeRef.current = {
@@ -454,13 +511,14 @@ export default function Replay3D({ zone, floors, bridgeRef, onReady, onFail, onP
           c.fitted = 'none';
           c.moved = false;
           c.hover = null;
+          c.goal = null;
         }
         c.raiders = raiders;
         c.targets = extra.targets;
         c.spawns = extra.spawns;
         c.hl = extra.hl;
+        if (extra.snap) { c.snap = true; c.goal = null; }
         if (extra.follow !== c.followName) { c.followName = extra.follow; c.kick = !!extra.follow; }
-        if (c.fitted !== 'raid' && !c.moved && raiders.length) fitRaid();
         c.request();
       },
       zoom: (factor) => {
@@ -471,8 +529,8 @@ export default function Replay3D({ zone, floors, bridgeRef, onReady, onFail, onP
         controls.update();
         c.request();
       },
-      fitRaid: () => { c.moved = false; fitRaid(); },
-      fitZone: () => { if (c.box) { c.moved = true; c.fitTo(c.box.cx, c.box.cz, c.box.cy, c.box.span); } },
+      fitRaid: () => { c.moved = false; c.goal = null; fitRaid(); },
+      fitZone: () => { if (c.box) { c.moved = true; c.goal = null; c.fitTo(c.box.cx, c.box.cz, c.box.cy, c.box.span); } },
     };
     readyRef.current();
 
@@ -526,11 +584,15 @@ export default function Replay3D({ zone, floors, bridgeRef, onReady, onFail, onP
         const wall = buildMesh(u, 'walls');
         c.scene.add(wall);
         c.wall = wall;
+        c.wallGrid = buildTriGrid(wall.geometry.getAttribute('position').array as Float32Array);
+        c.bounds = boundsFromServer(u.min, u.max);
 
         const sx = u.max[0] - u.min[0], sy = u.max[1] - u.min[1];
         const [cx, cy, cz] = serverToThree((u.min[0] + u.max[0]) / 2, (u.min[1] + u.max[1]) / 2, (u.min[2] + u.max[2]) / 2);
         c.box = { cx, cy, cz, span: Math.max(sx, sy) };
+        c.controls.maxDistance = Math.max(4000, c.box.span * 3);
         if (c.fitted === 'none' && !c.moved) { c.fitted = 'mesh'; c.fitTo(cx, cz, cy, c.box.span); }
+        else if (!c.moved) c.snap = true;   // the raid was framed before the walls were here: do it again inside them
         setStatus('ready');
         c.request();
       })
@@ -544,6 +606,11 @@ export default function Replay3D({ zone, floors, bridgeRef, onReady, onFail, onP
         c.wall = null;
         c.floor = null;
         c.box = null;
+        c.bounds = null;
+        c.wallGrid = null;
+        c.floorGrid = null;
+        c.goal = null;
+        c.controls.maxDistance = MAX_ORBIT;
         c.request();
       }
     };
@@ -568,6 +635,8 @@ export default function Replay3D({ zone, floors, bridgeRef, onReady, onFail, onP
         floor.visible = floorsRef.current;
         c.scene.add(floor);
         c.floor = floor;
+        // Floors and ceilings stop the camera too (a cave roof between it and the raid), shown or not.
+        c.floorGrid = buildTriGrid(floor.geometry.getAttribute('position').array as Float32Array);
         setFloorStatus('ready');
         c.request();
       })

@@ -25,7 +25,8 @@ export default async function SpectatorReplayPage() {
       <NewPageTag note="New page: a raid night, replayed on the map." />
       <h1 className="text-2xl text-gold">Spectator replay</h1>
       <p className="mt-1 mb-4 text-sm text-dim">
-        Pick a recorded night and drag the time slider, or press play. The map follows the zone with the most raiders;
+        Pick a recorded night and drag the time slider, or press play. A night opens on the guild raid; other groups
+        recorded that day are in the Session list. The map follows the zone with the most raiders;
         pick a zone to stay in it. <a href="/spectator" className="underline hover:text-text">Back to the live map</a>.
       </p>
       <ReplayBoard />
