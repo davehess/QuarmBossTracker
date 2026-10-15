@@ -12,6 +12,7 @@
 //   * Between two recorded frames (about 3 s apart) a dot is interpolated, so it glides instead of hopping.
 // The coordinate rules (axis swap, north up, heading) live in lib/spectator.ts; the decoding in lib/raidReplay.ts.
 import { useCallback, useEffect, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
 import {
   classAbbr, classColor, coreRaiders, effectiveLayers, fitView, headingVec, layerBounds, lineNearZ, mapBox,
   median, nearestBand, needsRefit, parseZoneMap, raidBox, scaleBarUnits, toScreen, zoomAt,
@@ -22,6 +23,13 @@ import {
   zoneCounts, type NightSummary, type ReplayFrame, type ReplayRaider,
 } from '@/lib/raidReplay';
 import { bandColor, prepare, type Prepared } from '../SpectatorBoard';
+import type { Bridge3D } from './Replay3D';
+
+// three.js is only fetched when the 3D view is first shown.
+const Replay3D = dynamic(() => import('./Replay3D'), {
+  ssr: false,
+  loading: () => <MapNote>Loading 3D…</MapNote>,
+});
 
 const BG = '#0d1117';
 const PANEL = '#161b22';
@@ -69,6 +77,8 @@ export default function ReplayBoard() {
   const [counts, setCounts] = useState({ here: 0, elsewhere: 0 });
   const [state, setState] = useState<'ok' | 'buffering' | 'nodata' | 'failed'>('ok');
   const [maps, setMaps] = useState<Record<string, MapEntry>>({});
+  const [mode, setMode] = useState<'2d' | '3d'>('2d');
+  const [no3d, setNo3d] = useState(false);
 
   const night = nights ? (nights.find(n => n.night_key === nightKey) ?? nights[0] ?? null) : null;
 
@@ -101,6 +111,9 @@ export default function ReplayBoard() {
   const lastUi = useRef(0);
   const stepRef = useRef<(ts: number) => void>(() => {});
   const nextCache = useRef<{ frame: ReplayFrame | null; byName: Map<string, ReplayRaider> }>({ frame: null, byName: new Map() });
+  // 3D: while it is showing, paint() hands each frame's raiders to the 3D view instead of drawing the canvas.
+  const modeRef = useRef<'2d' | '3d'>('2d');
+  const bridge3d = useRef<Bridge3D | null>(null);
 
   const schedule = useCallback(() => {
     if (rafRef.current) return;
@@ -211,8 +224,8 @@ export default function ReplayBoard() {
       .finally(() => mapReqs.current.delete(z));
   }, [schedule]);
   useEffect(() => {
-    if (shownZone && !maps[shownZone]) loadMap(shownZone);
-  }, [shownZone, maps, loadMap]);
+    if (shownZone && !maps[shownZone] && mode === '2d') loadMap(shownZone);   // the 3D view fetches its own mesh
+  }, [shownZone, maps, loadMap, mode]);
 
   // ── drawing ────────────────────────────────────────────────────────────────
   // Draws the picture at playhead `t`. Returns what the controls need to show.
@@ -264,10 +277,15 @@ export default function ReplayBoard() {
     const placed = here.map(r => {
       const n = b ? nextCache.current.byName.get(r.name) : undefined;
       if (n && n.zone === r.zone && Math.hypot(n.x - r.x, n.y - r.y) < TELEPORT) {
-        return { r, x: lerp(r.x, n.x, f), y: lerp(r.y, n.y, f) };
+        return { r, x: lerp(r.x, n.x, f), y: lerp(r.y, n.y, f), z: lerp(r.z, n.z, f) };
       }
-      return { r, x: r.x, y: r.y };
+      return { r, x: r.x, y: r.y, z: r.z };
     });
+
+    if (modeRef.current === '3d') {
+      bridge3d.current?.feed(zone, placed.map(p => ({ name: p.r.name, cls: p.r.cls, hp: p.r.hp, x: p.x, y: p.y, z: p.z })));
+      return out;
+    }
 
     // The view: fit the raid once, then follow it only while it is about to leave the picture.
     if (followRef.current && placed.length) {
@@ -504,6 +522,8 @@ export default function ReplayBoard() {
 
   useEffect(() => { speedRef.current = speed; }, [speed]);
   useEffect(() => { tailsRef.current = tails; schedule(); }, [tails, schedule]);
+  // The same playhead, night and zone carry across: only where the frame is drawn changes.
+  useEffect(() => { modeRef.current = mode; schedule(); }, [mode, schedule]);
   useEffect(() => {
     pinnedRef.current = pinned;
     schedule();
@@ -549,6 +569,7 @@ export default function ReplayBoard() {
   }, [schedule, ready]);
 
   const zoomBy = useCallback((factor: number, px?: number, py?: number) => {
+    if (modeRef.current === '3d') { bridge3d.current?.zoom(factor); return; }
     const { w, h } = sizeRef.current;
     const v = viewRef.current;
     if (!v || !w) return;
@@ -558,12 +579,14 @@ export default function ReplayBoard() {
   }, [schedule]);
 
   const fitRaid = useCallback(() => {
+    if (modeRef.current === '3d') { bridge3d.current?.fitRaid(); return; }
     viewRef.current = null;
     followRef.current = true;
     schedule();
   }, [schedule]);
 
   const fitZone = useCallback(() => {
+    if (modeRef.current === '3d') { bridge3d.current?.fitZone(); return; }
     const { w, h } = sizeRef.current;
     const z = reportedZone.current;
     const e = z ? mapsRef.current[z] : undefined;
@@ -691,10 +714,18 @@ export default function ReplayBoard() {
         <button type="button" className={`${chip} ${chipIdle}`} onClick={() => zoomBy(1 / 1.4)} aria-label="Zoom out">−</button>
         <button type="button" className={`${chip} ${chipIdle}`} onClick={fitRaid}>Fit raid</button>
         <button type="button" className={`${chip} ${chipIdle} disabled:opacity-40`} onClick={fitZone}
-          disabled={entry?.status !== 'ready'}>Fit zone</button>
-        <button type="button" aria-pressed={tails} className={`${chip} ${tails ? chipOn : chipIdle}`} onClick={() => setTails(t => !t)}>
-          Tails
-        </button>
+          disabled={mode === '2d' && entry?.status !== 'ready'}>Fit zone</button>
+        {mode === '2d' && (
+          <button type="button" aria-pressed={tails} className={`${chip} ${tails ? chipOn : chipIdle}`} onClick={() => setTails(t => !t)}>
+            Tails
+          </button>
+        )}
+        <div className="ml-auto flex gap-1.5" role="group" aria-label="Dimensions">
+          {(['2d', '3d'] as const).map(m => (
+            <button key={m} type="button" aria-pressed={mode === m} onClick={() => { setNo3d(false); setMode(m); }}
+              className={`${chip} ${mode === m ? chipOn : chipIdle}`}>{m === '2d' ? '2D' : '3D'}</button>
+          ))}
+        </div>
       </div>
 
       <div ref={wrapRef} className="relative h-[52vh] max-h-[720px] min-h-[320px] w-full overflow-hidden rounded-md border border-border bg-bg sm:h-[62vh]">
@@ -703,19 +734,25 @@ export default function ReplayBoard() {
           role="img"
           aria-label={`Replay of ${night.night_key}: top-down map of ${shownZone ?? 'the raid'} with ${counts.here} raiders. Space plays or pauses, left and right arrows step ten seconds, plus and minus zoom, Home fits the raid.`}
           style={{ touchAction: 'none', width: '100%', height: '100%' }}
-          className="block cursor-grab focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-blue active:cursor-grabbing"
+          className={`block cursor-grab focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-blue active:cursor-grabbing${mode === '3d' ? ' invisible' : ''}`}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
           onPointerLeave={onPointerLeave}
           onKeyDown={onKeyDown} />
+        {mode === '3d' && (
+          <Replay3D zone={shownZone} bridgeRef={bridge3d} onReady={schedule} onKeyDown={onKeyDown}
+            onFail={() => { setNo3d(true); setMode('2d'); }}
+            label={`3D replay of ${night.night_key}: ${shownZone ?? 'the raid'} with ${counts.here} raiders. Space plays or pauses, left and right arrows step ten seconds, plus and minus zoom, Home fits the raid.`} />
+        )}
+        {no3d && <MapNote>3D needs WebGL, which this browser did not give us. Showing the 2D map.</MapNote>}
         {state === 'buffering' && <MapNote>Loading this part of the night…</MapNote>}
         {state === 'failed' && <MapNote>This part of the night did not load. Retrying.</MapNote>}
         {state === 'nodata' && <MapNote>Nobody was recorded at this moment.</MapNote>}
-        {state === 'ok' && (!entry || entry.status === 'loading') && shownZone && <MapNote>Loading map…</MapNote>}
-        {state === 'ok' && entry?.status === 'none' && <MapNote>No wall map for {shownZone} yet. Showing raiders only.</MapNote>}
-        {state === 'ok' && entry?.status === 'error' && (
+        {state === 'ok' && mode === '2d' && (!entry || entry.status === 'loading') && shownZone && <MapNote>Loading map…</MapNote>}
+        {state === 'ok' && mode === '2d' && entry?.status === 'none' && <MapNote>No wall map for {shownZone} yet. Showing raiders only.</MapNote>}
+        {state === 'ok' && mode === '2d' && entry?.status === 'error' && (
           <MapNote>
             The map did not load.{' '}
             <button type="button" className="pointer-events-auto underline" onClick={() => shownZone && loadMap(shownZone)}>Retry</button>
