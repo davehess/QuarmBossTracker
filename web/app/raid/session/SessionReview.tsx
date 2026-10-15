@@ -84,7 +84,10 @@ export default function SessionReview({ bundle, night, mode, extras }: {
 
   return (
     <div className="min-w-0">
-      <div ref={boardRef} className="scroll-mt-16">
+      {/* Above the replay, so a reader from another guild meets "where did this come from?" first (the guild lead). */}
+      <DataSources />
+
+      <div ref={boardRef} className="mt-4 scroll-mt-16">
         {bounded
           ? <ReplayBoard bounded={bounded} />
           : <p className="rounded-md border border-border bg-panel p-4 text-sm text-dim">No replay was recorded in this window. The lists below are whatever else was logged in it.</p>}
@@ -107,8 +110,6 @@ export default function SessionReview({ bundle, night, mode, extras }: {
         {tab === 'loot' && <LootAndRolls loot={bundle.loot} rolls={bundle.rolls} go={go} />}
         {tab === 'parses' && <Parses kills={bundle.kills} go={go} />}
       </div>
-
-      <DataSources />
     </div>
   );
 }
