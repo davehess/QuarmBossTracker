@@ -48678,6 +48678,18 @@ function _mapFocusTarget(character) {
   } catch { void 0; }
   return null;
 }
+// How far the target's Area Rampage reaches ({ radius_still, radius_moving, chance, targets, damage_pct }, game units),
+// off the same cached mob-info row Target Info reads (a zone pack on disk, else the bot's lookup, started here when
+// nothing else has). Null when the mob has none, or the bot predates the field (so older caches simply draw no ring).
+// The Mob Info block sits outside this one, so it is guarded the way _npcMobInfoFor guards it.
+function _mapAeRampage(name, zoneId, character, now) {
+  if (typeof _mobInfoByName === 'undefined' || typeof _mobInfoCacheKey !== 'function') return null;
+  const key = _mobInfoCacheKey(name, zoneId);
+  let hit = _mobInfoByName.get(key);
+  if (!hit || (now - hit.at) >= MOB_INFO_TTL_MS) { fetchMobInfo(name, character, zoneId); hit = _mobInfoByName.get(key) || hit; }
+  const ae = hit && hit.mob ? hit.mob.ae_rampage : null;
+  return ae && Number(ae.radius_still) > 0 ? ae : null;
+}
 function _mapStatePayload(have, now, haveLocal) {
   const character = _mapActiveCharacter(now);
   const st = character ? _zealState[character] : null;
@@ -48734,6 +48746,11 @@ function _mapStatePayload(have, now, haveLocal) {
     // Pinned (see "Pins"): the spawn point this live target is tied to, for the overlay's line and "→ pinned".
     const pin = zone ? _mapPinGet(zone, out.target.id, st.target_name) : null;
     if (pin) out.target.point_id = pin.point_id;
+    // Only an NPC target carries it (a corpse or a player never rampages).
+    if (out.target.type == null || out.target.type === 1) {
+      const ae = _mapAeRampage(st.target_name, out.zone_id, character, now);
+      if (ae) out.target.ae_rampage = ae;
+    }
   }
   // The raid's focus mob (_mapFocusTarget), placed only where we truly know it: your own target when it is that mob.
   out.focus = _mapFocusTarget(character);
