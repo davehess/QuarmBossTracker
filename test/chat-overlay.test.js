@@ -155,9 +155,9 @@ describe('CHAT_GROUPS: the channel groups are a list of { id, label, channels[] 
     }
     expect(Object.keys(owner).sort()).toEqual(Object.keys(agent.CHAT_CHANNELS).sort());
   });
-  it('the gated groups are exactly tells, group, officer, custom, melee, spells and skills: the private ones, and the floods', () => {
+  it('the gated groups are exactly tells, group, officer, custom, melee, spells, skills, loot, random and other: the private ones, and the floods', () => {
     const gated = Object.fromEntries(agent.CHAT_GROUPS.filter(g => g.gate).map(g => [g.id, g.gate]));
-    expect(gated).toEqual({ tell: 'tells', group: 'group', officer: 'officer', custom: 'custom', melee: 'melee', spells: 'spells', skills: 'skills' });
+    expect(gated).toEqual({ tell: 'tells', group: 'group', officer: 'officer', custom: 'custom', melee: 'melee', spells: 'spells', skills: 'skills', loot: 'loot', random: 'random', other: 'other' });
   });
   it('the public channels have no gate', () => {
     for (const id of ['guild', 'raid', 'say', 'ooc', 'auction', 'npc']) {
@@ -219,7 +219,7 @@ describe('what the feed keeps and shows', () => {
     agent.setChatPolicy({ officer: true }, T0);
     expect(agent.noteLocalChatLine(L('Rethlan tells Wolfpackofficer:5, \'a\''), ME, T0 + 10_000)).toBe(true);
     expect(agent.noteLocalChatLine(L('Rethlan tells Wolfpackofficer:5, \'b\''), ME, T0 + agent.CHAT_POLICY_TTL_MS + 1)).toBe(false);
-    expect(agent.chatPolicyNow(T0 + agent.CHAT_POLICY_TTL_MS + 1)).toEqual({ tells: false, group: false, officer: false, custom: false, melee: false, spells: false, skills: false });
+    expect(agent.chatPolicyNow(T0 + agent.CHAT_POLICY_TTL_MS + 1)).toEqual({ tells: false, group: false, officer: false, custom: false, melee: false, spells: false, skills: false, loot: false, random: false, other: false });
   });
   it('one person\'s main and alt logs hear the same guild line: one copy', () => {
     expect(agent.noteLocalChatLine(L('Corvale tells the guild, \'hi\''), 'Aldenmar', T0)).toBe(true);
@@ -548,7 +548,7 @@ describe('Mimic prefs: chips are remembered per character, tells follow the Tell
   beforeEach(() => { globalThis.__H = {}; globalThis.__S = []; globalThis.__P = []; });
   it('defaults: 12 px, group and channels on, officer off, nothing hidden, tells off', async () => {
     const m = load({});
-    expect(await m.get('Aldenmar')).toEqual({ fontSize: 12, group: true, officer: false, custom: true, tells: false, off: [], melee: false, spells: false, skills: false, meleeShow: { mine: true, on_me: true, others: true, misses: true }, spellShow: { mine: true, on_me: true, others: true }, skillShow: { mine: true, others: true }, offChannels: [], only: '', win: {} });
+    expect(await m.get('Aldenmar')).toEqual({ fontSize: 12, group: true, officer: false, custom: true, tells: false, off: [], melee: false, spells: false, skills: false, loot: false, random: false, other: false, meleeShow: { mine: true, on_me: true, others: true, misses: true }, spellShow: { mine: true, on_me: true, others: true }, skillShow: { mine: true, others: true }, offChannels: [], only: '', win: {} });
   });
   it('group and channels stay off once switched off', async () => {
     const m = load({ chatPrefs: { group: false, custom: false } });
@@ -610,7 +610,7 @@ describe('Mimic prefs: chips are remembered per character, tells follow the Tell
     const m = load({ chatPrefs: old });
     expect(await m.get('Aldenmar')).toEqual({
       fontSize: 15, group: false, officer: true, custom: true, tells: false, off: ['raid'],
-      melee: false, spells: false, skills: false, meleeShow: { mine: true, on_me: true, others: true, misses: true },
+      melee: false, spells: false, skills: false, loot: false, random: false, other: false, meleeShow: { mine: true, on_me: true, others: true, misses: true },
       spellShow: { mine: true, on_me: true, others: true }, skillShow: { mine: true, others: true }, offChannels: [], only: '', win: {},
     });
     await m.set('Aldenmar', { offChannels: ['general'] });
@@ -1768,7 +1768,9 @@ describe('Melee: one combined group, off by default, in a ring of its own', () =
   });
   it('local only, excluded characters skipped: melee enters through the same guarded call as chat, and is never read elsewhere', () => {
     const code = stripJs(AGENT_SRC);
-    expect(code.match(/classifyMeleeLine\(/g)).toHaveLength(2);                  // its definition, and noteLocalChatLine
+    // its definition, noteLocalChatLine, and classifyOtherLine (which asks it so a swing is never "Other"; that one is
+    // only reachable from noteLocalChatLine: the Loot/Random/Other describe below pins it)
+    expect(code.match(/classifyMeleeLine\(/g)).toHaveLength(3);
     const note = sliceBlock(code, 'function noteLocalChatLine(line, character, now) {', '\n}\n');
     expect(note).toContain('classifyMeleeLine(line, character)');
     expect(note).not.toMatch(/chatBuffer|tellBuffer|enqueueUpload|fetch\(|writeFile/);
@@ -2749,7 +2751,7 @@ describe('the ⚙ drawer: text and the three opt-in channels up front, the rest 
     const els = paint({ melee: true });
     const ids = (h) => [...h.matchAll(/data-optin="(\w+)"/g)].map(m => m[1]);
     expect(ids(els.optins.innerHTML)).toEqual(['group', 'officer', 'custom']);
-    expect(ids(els.moreoptins.innerHTML)).toEqual(['melee', 'spells', 'skills']);
+    expect(ids(els.moreoptins.innerHTML)).toEqual(['melee', 'spells', 'skills', 'loot', 'random', 'other']);
     expect(els.moreoptins.innerHTML).toMatch(/data-optin="melee" checked/);
     expect(els.moreoptins.innerHTML).not.toMatch(/data-optin="spells" checked/);
   });
@@ -2809,6 +2811,243 @@ describe('the ⚙ drawer: text and the three opt-in channels up front, the rest 
   });
 });
 
+// ── Loot [LT], Random [RND] and Other [OT] (the guild lead, 2026-10-15: "chat overlay needs the rest of the channels
+// available, loot, money, other, etc"). Every line below is a shape the repo already parses or holds in a fixture:
+// trackLootedLine's "--You have looted--", the /random pair of trackRollLine, the XP line of _XP_LINE_RX, the faction
+// lines of parseFactionLine, and the golden line-families log. Money has no row (no coin line anywhere in the repo).
+describe('Loot, Random and Other: three more opt-in groups, built the way Skills was', () => {
+  beforeEach(() => agent._resetLocalChatForTest());
+  const LOOT = '--You have looted a Cloak of Flames.--';
+  const DIE = '**A Magic Die is rolled by Corvale.';
+  const RESULT = '**It could have been any number from 0 to 333, but this time it turned up a 116.';
+  // fixtures: me-hud-timers (xp), the agent's faction header comment, test/fixtures/golden/line-families.log (rest)
+  const OTHERS = [
+    'You gain experience!!', 'You gain party experience!!',
+    'Your faction standing with VeliumHounds got worse.', 'Your faction standing with KaladimCitizens got better.',
+    'Loading bandolier set [emp]', 'Bandolier set [1] is already equipped', 'You are too busy to equip bandolier set!',
+    'Sylvarra is an Officer of Wolf Pack.', 'Returning to home point, please wait...', 'You are bleeding to death!', 'You died.',
+    'Torvahk has become ENRAGED.', 'You are snared.', 'You throw your head back and let loose a piercing blast.',
+  ];
+
+  it('each group is a gated chip with a channel colour and an EQ-style tag', () => {
+    for (const [id, ch, tag] of [['loot', 'loot', 'LT'], ['random', 'random', 'RND'], ['other', 'other', 'OT']]) {
+      expect(agent.CHAT_GROUPS.find(g => g.id === id), id).toMatchObject({ channels: [ch], gate: id });
+      expect(agent.CHAT_CHANNELS[ch].tag).toBe(tag);
+      expect(agent.CHAT_CHANNELS[ch].color).toMatch(/^#[0-9a-f]{6}$/i);
+    }
+    const colours = Object.values(agent.CHAT_CHANNELS).map(c => c.color.toLowerCase());
+    expect(new Set(colours).size).toBe(colours.length);                      // a colour is a channel's identity: no two alike
+  });
+
+  it('Loot: your own looted line, whole, with no speaker; a quoted one is chat\'s, not Loot\'s', () => {
+    expect(agent.classifyLootLine(L(LOOT))).toMatchObject({ ch: 'loot', who: '', text: LOOT, self: true, npc: false });
+    expect(agent.classifyLootLine(L('You have looted a Cloak of Flames.'))).toBeNull();                       // the dashes are part of the shape
+    expect(agent.classifyLootLine(L('Corvale says, \'--You have looted a Cloak of Flames.--\''))).toBeNull();   // someone quoting it
+    expect(agent.classifyLootLine(L('Corvale has looted a Cloak of Flames.'))).toBeNull();                    // not a shape the repo has ever seen
+    expect(agent.classifyLootLine('')).toBeNull();
+  });
+  it('Random: both lines of the pair, and nothing resembling them', () => {
+    expect(agent.classifyRandomLine(L(DIE))).toMatchObject({ ch: 'random', who: '', text: DIE, self: false });
+    expect(agent.classifyRandomLine(L(RESULT))).toMatchObject({ ch: 'random', who: '', text: RESULT });
+    expect(agent.classifyRandomLine(L('A Magic Die is rolled by Corvale.'))).toBeNull();
+    expect(agent.classifyRandomLine(L('Corvale says, \'**A Magic Die is rolled by Brackwyn.\''))).toBeNull();
+  });
+  for (const t of OTHERS) {
+    it(`Other: "${t}" is a game line nothing else claims`, () => {
+      expect(agent.classifyOtherLine(L(t), ME), t).toMatchObject({ ch: 'other', who: '', text: t, npc: false });
+    });
+  }
+  it('Other is never Loot or Random, and Loot and Random are never Other', () => {
+    for (const t of [LOOT, DIE, RESULT]) expect(agent.classifyOtherLine(L(t), ME), t).toBeNull();
+    for (const t of OTHERS) { expect(agent.classifyLootLine(L(t)), t).toBeNull(); expect(agent.classifyRandomLine(L(t)), t).toBeNull(); }
+  });
+
+  it('nothing is captured until the overlay asks, and each switch is its own', () => {
+    for (const t of [LOOT, DIE, 'You gain experience!!']) expect(agent.noteLocalChatLine(L(t), ME, 1), t).toBe(false);   // no policy yet
+    agent.setChatPolicy({}, 1);
+    for (const t of [LOOT, DIE, 'You gain experience!!']) expect(agent.noteLocalChatLine(L(t), ME, 1), t).toBe(false);
+    agent.setChatPolicy({ loot: true }, 2);
+    expect(agent.noteLocalChatLine(L(LOOT), ME, 2)).toBe(true);
+    expect(agent.noteLocalChatLine(L(DIE), ME, 2)).toBe(false);
+    expect(agent.noteLocalChatLine(L('You gain experience!!'), ME, 2)).toBe(false);
+    agent.setChatPolicy({ random: true }, 3);
+    expect(agent.noteLocalChatLine(L(DIE), ME, 3)).toBe(true);
+    expect(agent.noteLocalChatLine(L(LOOT.replace('Cloak', 'Robe')), ME, 3)).toBe(false);
+    agent.setChatPolicy({ other: true }, 4);
+    expect(agent.noteLocalChatLine(L('You gain experience!!'), ME, 4)).toBe(true);
+    expect(agent.noteLocalChatLine(L(RESULT), ME, 4)).toBe(false);                    // Random's line is not Other's when Random is off
+    expect(agent.noteLocalChatLine(L(LOOT.replace('Cloak', 'Cape')), ME, 4)).toBe(false);
+    expect(agent._lootRingForTest().map(r => r.text)).toEqual([LOOT]);
+    expect(agent._randomRingForTest().map(r => r.text)).toEqual([DIE]);
+    expect(agent._otherRingForTest().map(r => r.text)).toEqual(['You gain experience!!']);
+    expect(agent.serializeLocalChat({ loot: true, random: true, other: true }, 5).lines.map(l => l.ch)).toEqual(['loot', 'random', 'other']);
+    expect(agent.serializeLocalChat({ random: true }, 5).lines.map(l => l.ch)).toEqual(['random']);
+    expect(agent.serializeLocalChat({}, 5).lines).toHaveLength(0);                     // asked off: held, not served
+  });
+  it('/api/chat reads loot=1, random=1 and other=1 as the switches', () => {
+    agent.setChatPolicy({ loot: true, random: true, other: true }, Date.now());
+    for (const t of [LOOT, DIE, 'You gain experience!!']) agent.noteLocalChatLine(L(t), ME);
+    const get = (qs) => { const res = { code: null, body: null, writeHead(c) { this.code = c; }, end(b) { this.body = b; } };
+      agent._handleLocalChatForTest({ url: '/api/chat?since=0' + qs, headers: {} }, res); return JSON.parse(res.body); };
+    expect(get('&loot=1&random=1&other=1').lines.map(l => l.ch)).toEqual(['loot', 'random', 'other']);
+    expect(get('&other=1').lines.map(l => l.ch)).toEqual(['other']);
+    expect(get('').lines).toEqual([]);
+    expect(get('&other=1').groups.map(g => g.id)).toEqual(expect.arrayContaining(['loot', 'random', 'other']));
+  });
+
+  // ── Other is a fallback: it must never take a line another group owns, and never a line that is speech ──
+  it('Other does not take a line Melee, Spells or Skills owns, whichever of their switches is on', () => {
+    const OWNED = ['You begin casting Spirit of Wolf.', 'You have become better at Swimming! (45)', 'You mend your wounds and heal some damage.',
+      'You have fallen to the ground.', 'Brackwyn begins to cast a spell.', 'You slash a goblin for 120 points of damage.',
+      'You try to kick a goblin, but miss!', 'Your spell fizzles!'];
+    for (const t of OWNED) expect(agent.classifyOtherLine(L(t), ME), t).toBeNull();
+    agent.setChatPolicy({ other: true }, 1);                                           // every owning switch OFF
+    for (const t of OWNED) expect(agent.noteLocalChatLine(L(t), ME, 1), t).toBe(false);
+    expect(agent._otherRingForTest()).toHaveLength(0);
+    agent.setChatPolicy({ other: true, melee: true, spells: true, skills: true }, 2);   // all ON: each line lands in its own ring only
+    for (const t of OWNED) expect(agent.noteLocalChatLine(L(t), ME, 2), t).toBe(true);
+    expect(agent._otherRingForTest()).toHaveLength(0);
+    expect(agent._meleeRingForTest().length + agent._spellRingForTest().length + agent._skillRingForTest().length).toBe(OWNED.length);
+  });
+  it('Other never takes chat of any channel, quoted or not, gated or not', () => {
+    const CHAT = ['Corvale tells the guild, \'pull in five\'', 'You say to your guild, \'on my way\'', 'Corvale tells you, \'got a minute?\'',
+      'You told Corvale, \'sure\'', 'Brackwyn tells the group, \'inc\'', 'You tell your party, \'ok\'', 'Rethlan tells Wolfpackofficer:5, \'keep this quiet\'',
+      'Zarrin tells General:2, \'anyone for a group\'', 'Zarrin says, \'hello there\'', 'Zarrin shouts, \'train to zone\'',
+      'a goblin warrior says, \'You will not leave this place alive\'', 'Gobn tells you, \'Attacking Lord Nagafen Master.\'',
+      '[G] [Corvale]: hello', '[2] [Zarrin]: a', '[Zz] [Corvale]: an unknown abbreviation tag',
+      'Corvale tells the guild, \'ZEALTAG | x\'', '[Zeal] ZT | 12 34'];
+    for (const t of CHAT) expect(agent.classifyOtherLine(L(t), ME), t).toBeNull();
+    // and through the real entry point, with Other on and EVERY private switch off
+    agent.setChatPolicy({ other: true }, 1);
+    for (const t of CHAT) agent.noteLocalChatLine(L(t), ME, 1);
+    expect(agent._otherRingForTest()).toHaveLength(0);
+    // the public channels are chat's own (they show by default); no private one leaked into the chat ring either
+    const PUBLIC = ['guild', 'raid', 'say', 'ooc', 'shout', 'auction', 'npc', 'zone'];
+    expect(agent._chatRingForTest().length).toBeGreaterThan(0);
+    for (const r of agent._chatRingForTest()) expect(PUBLIC, r.text).toContain(r.ch);
+  });
+  it('privacy gates are unchanged: with every new switch on, tells, group, officer and custom stay behind their own', () => {
+    agent.setChatPolicy({ loot: true, random: true, other: true }, 1);
+    const PRIVATE = ['Corvale tells you, \'got a minute?\'', 'Brackwyn tells the group, \'inc\'', 'Rethlan tells Wolfpackofficer:5, \'quiet\'',
+      'Zarrin tells General:2, \'anyone\'', 'You told Corvale, \'sure\''];
+    for (const t of PRIVATE) expect(agent.noteLocalChatLine(L(t), ME, 1), t).toBe(false);
+    expect(agent.serializeLocalChat({ loot: true, random: true, other: true }, 1).lines).toHaveLength(0);
+    // switching a private channel on shows it as itself, never as Other
+    agent.setChatPolicy({ other: true, officer: true }, 2);
+    expect(agent.noteLocalChatLine(L(PRIVATE[2]), ME, 2)).toBe(true);
+    expect(agent.serializeLocalChat({ other: true, officer: true }, 2).lines.map(l => l.ch)).toEqual(['officer']);
+    expect(agent._otherRingForTest()).toHaveLength(0);
+    // the default policy is still the public one
+    expect(agent.chatPolicyNow()).toMatchObject({ tells: false, group: false, officer: false, custom: false, loot: false, random: false, other: false });
+  });
+  it('combat damage and the loading banner are not Other', () => {
+    for (const t of ['You flying kick Lord Nagafen for 452 points of damage.', 'Lord Nagafen was hit by Ancient: Scourge of Nife for 1240 points of damage.',
+      'Torvahk tries to bash Lord Nagafen, but Lord Nagafen is INVULNERABLE!', 'LOADING, PLEASE WAIT...']) expect(agent.classifyOtherLine(L(t), ME), t).toBeNull();
+  });
+
+  it('a /random heard by two of your characters is one copy; your own loot and experience lines are each kept', () => {
+    agent.setChatPolicy({ loot: true, random: true, other: true }, 1);
+    expect(agent.noteLocalChatLine(L(DIE), 'Aldenmar', 1)).toBe(true);
+    expect(agent.noteLocalChatLine(L(DIE), 'Corvale', 1)).toBe(false);
+    expect(agent.noteLocalChatLine(L(LOOT), 'Aldenmar', 1)).toBe(true);
+    expect(agent.noteLocalChatLine(L(LOOT), 'Corvale', 1)).toBe(true);                  // two characters, two loots
+    expect(agent.noteLocalChatLine(L('You gain experience!!'), 'Aldenmar', 1)).toBe(true);
+    expect(agent.noteLocalChatLine(L('You gain experience!!'), 'Corvale', 1)).toBe(true);
+    expect(agent._lootRingForTest()).toHaveLength(2);
+    expect(agent._randomRingForTest()).toHaveLength(1);
+    expect(agent._otherRingForTest()).toHaveLength(2);
+  });
+  it('a flood cannot push anything out: a ring each, capped at 300, one cursor over all of them', () => {
+    agent.setChatPolicy({ loot: true, random: true, other: true }, 1);
+    for (let i = 0; i < 5; i++) agent.noteLocalChatLine(L(`Corvale tells the guild, 'line ${i}'`), ME, 1);
+    for (let i = 0; i < 400; i++) {
+      const s = String(i % 60).padStart(2, '0');
+      agent.noteLocalChatLine(`[Wed Oct 14 21:12:${s} 2026] --You have looted a Item Number ${i}.--`, ME, 1);
+      agent.noteLocalChatLine(`[Wed Oct 14 21:13:${s} 2026] **It could have been any number from 0 to 100, but this time it turned up a ${i % 100}.`, ME, 1);
+      agent.noteLocalChatLine(`[Wed Oct 14 21:14:${s} 2026] Your faction standing with Faction${i} got better.`, ME, 1);
+    }
+    expect([agent.CHAT_LOOT_RING_MAX, agent.CHAT_RANDOM_RING_MAX, agent.CHAT_OTHER_RING_MAX]).toEqual([300, 300, 300]);
+    expect(agent._lootRingForTest()).toHaveLength(300);
+    expect(agent._otherRingForTest()).toHaveLength(300);
+    expect(agent._otherRingForTest().pop().text).toBe('Your faction standing with Faction399 got better.');   // the newest are kept
+    expect(agent._chatRingForTest().filter(r => r.ch === 'guild')).toHaveLength(5);                      // chat untouched
+    const page = agent.serializeLocalChat({ loot: true, random: true, other: true }, 1);
+    const seqs = page.lines.map(l => l.n);
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+    expect(page.lines.length).toBeLessThanOrEqual(agent.CHAT_PAGE_MAX);
+    expect(agent.serializeLocalChat({ other: true }, 1).lines.every(l => l.ch === 'other')).toBe(true);   // a switch that is off leaves its ring unread
+  });
+
+  it('local only: the rows enter through the same guarded call as chat, touch no upload buffer, and are read nowhere else', () => {
+    const code = stripJs(AGENT_SRC);
+    expect(code.match(/classifyOtherLine\(/g)).toHaveLength(2);                          // its definition, and noteLocalChatLine
+    expect(code.match(/classifyLootLine\(/g)).toHaveLength(3);                            // its definition, noteLocalChatLine, classifyOtherLine
+    expect(code.match(/classifyRandomLine\(/g)).toHaveLength(3);
+    const note = sliceBlock(code, 'function noteLocalChatLine(line, character, now) {', '\n}\n');
+    for (const used of ['classifyLootLine(line)', 'classifyRandomLine(line)', 'classifyOtherLine(line, character,']) expect(note, used).toContain(used);
+    expect(note.indexOf('classifyOtherLine(')).toBeGreaterThan(note.indexOf('classifySpellLine('));   // asked last
+    const block = stripJs(AGENT_SRC.slice(AGENT_SRC.indexOf('// ── Loot, Random and Other rows'), AGENT_SRC.indexOf('// The overlay\'s switches, handed over')));
+    expect(block.length).toBeGreaterThan(1500);                                          // the anchors found the block
+    expect(block).not.toMatch(/chatBuffer|tellBuffer|enqueueUpload|fetch\(|writeFile|fs\./);
+    // the patterns are the existing parsers' own, not copies
+    expect(block).toContain('_LOOTED_RX.test(body)');
+    expect(block).toContain('_ROLL_DIE_RX.test(line)');
+    expect(block).toContain('_ROLL_RESULT_RX.test(line)');
+    // upload buffers do not move when the rows are captured
+    const before = agent._uploadBuffersForTest();
+    const sizes = [before.chatBuffer.length, before.tellBuffer.length, before.recentTells.length];
+    agent.setChatPolicy({ loot: true, random: true, other: true }, 1);
+    for (const t of [LOOT, DIE, RESULT, ...OTHERS]) agent.noteLocalChatLine(L(t), ME, 1);
+    const after = agent._uploadBuffersForTest();
+    expect([after.chatBuffer.length, after.tellBuffer.length, after.recentTells.length]).toEqual(sizes);
+  });
+  it('history stays chat only: none of the three is read back from the log files', () => {
+    expect(stripJs(HISTORY_BLOCK)).not.toMatch(/classifyLootLine|classifyRandomLine|classifyOtherLine/);
+  });
+
+  // ── the overlay ──
+  it('in the overlay all three stay out of the main view until their switch is on, then are chips like any group, tagged and nameless', () => {
+    const lines = {
+      loot: { n: 1, t: 0, ch: 'loot', who: '', text: LOOT, self: true },
+      random: { n: 2, t: 0, ch: 'random', who: '', text: RESULT },
+      other: { n: 3, t: 0, ch: 'other', who: '', text: 'You gain experience!!', self: true },
+    };
+    const off = overlay({});
+    for (const id of ['loot', 'random', 'other']) {
+      expect(off.shownGroupIds(), id).not.toContain(id);
+      expect(off.makeFilter(off.shownGroupIds())(lines[id]), id).toBe(false);
+      const on = overlay({ [id]: true });                                                // one switch does not bring the others
+      expect(on.shownGroupIds(), id).toContain(id);
+      expect(on.makeFilter(on.shownGroupIds())(lines[id]), id).toBe(true);
+      for (const other of Object.keys(lines).filter(x => x !== id)) expect(on.makeFilter(on.shownGroupIds())(lines[other]), `${id} on, ${other}`).toBe(false);
+      const brk = overlay({ [id]: true }, { brk: id });
+      expect(brk.makeFilter(brk.shownGroupIds())(lines[id]), `${id} breakout`).toBe(true);
+      const still = overlay({}, { brk: id });
+      expect(still.makeFilter(still.shownGroupIds())(lines[id]), `${id} breakout, still gated`).toBe(false);
+    }
+    const all = overlay({ loot: true, random: true, other: true });
+    for (const [id, tag] of [['loot', 'LT'], ['random', 'RND'], ['other', 'OT']]) {
+      expect(all.lineHtml(lines[id])).toContain(`[${tag}]`);
+      expect(all.lineHtml(lines[id])).not.toContain('class="who');                       // the log's own sentence: no speaker
+    }
+  });
+  it('the ⚙ lists the three switches in the fold, sends them with every poll, and reads them back with the prefs', () => {
+    const code = stripJs(CHAT_HTML);
+    for (const id of ['loot', 'random', 'other']) expect(code).toMatch(new RegExp(`\\['${id}',\\s+'${id[0].toUpperCase()}${id.slice(1)}',`));
+    expect(code).toMatch(/'&loot=' \+ \(_prefs\.loot \? 1 : 0\) \+ '&random=' \+ \(_prefs\.random \? 1 : 0\) \+ '&other=' \+ \(_prefs\.other \? 1 : 0\)/);
+    expect(code).toMatch(/loot: !!p\.loot, random: !!p\.random, other: !!p\.other/);
+    expect(code).toMatch(/loot: false, random: false, other: false, meleeShow/);         // off until switched on, before the first prefs arrive
+    // all three are the "more" kind (they sit in the fold with Melee/Spells/Skills), not the visible row
+    const optins = sliceBlock(code, 'var OPTINS = [', '\n  ];');
+    for (const id of ['loot', 'random', 'other']) expect(optins).toMatch(new RegExp(`\\['${id}',[^\\n]*, 1\\]`));
+  });
+  it('Mimic remembers the three switches (default off) and only as booleans', () => {
+    const code = stripJs(MAIN);
+    expect(code).toMatch(/for \(const k of \['group', 'officer', 'custom', 'melee', 'spells', 'skills', 'loot', 'random', 'other'\]\) if \(typeof inc\[k\] === 'boolean'\)/);
+    for (const id of ['loot', 'random', 'other']) expect(code).toContain(`${id}: p.${id} === true,`);
+  });
+});
+
 // Mutation checks run when this file was written (2026-10-14), each reverted after it went red:
 //   • moved the noteLocalChatLine call out of `if (!_sourceExcluded) {…}`     → red, but ONLY after the first draft of the nesting
 //     check was fixed: it counted the `try {` that wraps the call as an open guard and stayed green
@@ -2822,5 +3061,7 @@ describe('the ⚙ drawer: text and the three opt-in channels up front, the rest 
 //   • class="name" on the "You" span                                          → the class="name" test went red
 //   • (round 4) counted every chip under More instead of only the ones that are on  → the More-count test went red
 //   • (round 4) dropped the localStorage write in setMore                      → the per-window open-state test went red
+//   • (2026-10-15, Loot/Random/Other) removed the Skills re-ask from classifyOtherLine  → "Other does not take a line Melee, Spells or Skills owns" went red
+//   • (2026-10-15, Loot/Random/Other) removed the CHAT_OTHER_SPEECH_RX guard             → "Other never takes chat of any channel" went red
 // Not mutation-checked: the "call runs ahead of shouldKeep" ordering test (it asserts an index comparison that no
 // natural edit flips without also tripping the guard test).

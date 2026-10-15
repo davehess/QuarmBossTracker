@@ -272,7 +272,7 @@
   var _lines = [];             // every line we hold, oldest first (the filter decides what shows)
   var _seq = 0, _lastN = 0, _boot = '';
   var _char = '';              // the character the chip choices are remembered for
-  var _prefs = { fontSize: 12, group: false, officer: false, custom: false, tells: false, melee: false, spells: false, skills: false, meleeShow: { mine: true, on_me: true, others: true, misses: true }, spellShow: { mine: true, on_me: true, others: true }, skillShow: { mine: true, others: true }, off: [], offChannels: [], only: '' };
+  var _prefs = { fontSize: 12, group: false, officer: false, custom: false, tells: false, melee: false, spells: false, skills: false, loot: false, random: false, other: false, meleeShow: { mine: true, on_me: true, others: true, misses: true }, spellShow: { mine: true, on_me: true, others: true }, skillShow: { mine: true, others: true }, off: [], offChannels: [], only: '' };
   var _chanNames = {};         // "<character>|<slot number>" -> channel name, learned from lines that carry both (Zeal's /abc shows only the number)
   var _unread = 0;
   var _out = [];               // group ids broken out into their own windows (the Chat window leaves them out)
@@ -413,7 +413,7 @@
     // "Swapped to X": display only. No timestamp button, so there is nothing to copy; it is not a chat line.
     if (l.sep) return '<div class="sep" data-n="' + l.n + '"><span>' + esc(l.text) + '</span></div>';
     var you = !!l.self, who;
-    if (l.ch === 'zone' || l.ch === 'melee' || l.ch === 'spell' || l.ch === 'skill') who = '';
+    if (l.ch === 'zone' || /^(?:melee|spell|skill|loot|random|other)$/.test(l.ch)) who = '';   // the log's own sentence: no speaker
     else if (l.npc) who = '<span class="who npc">' + esc(l.who) + '</span>';
     else if (you) who = '<span class="who you">You</span>';
     else who = '<span class="who name">' + esc(l.who) + '</span>';
@@ -452,7 +452,7 @@
   function copyLineText(l){
     // a zone change copies as the plain log line, not as something a character said
     if (l.ch === 'zone') return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + 'You have entered ' + l.text + '.';
-    if (l.ch === 'melee' || l.ch === 'spell' || l.ch === 'skill') return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + l.text;
+    if (/^(?:melee|spell|skill|loot|random|other)$/.test(l.ch)) return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + l.text;
     var who = l.npc ? l.who : (l.self ? 'You' : l.who);
     if (l.to) who += ' → ' + l.to;
     var t = hhmm(l.t);
@@ -863,7 +863,10 @@
     ['custom',  'Custom channels','Other chat channels you have joined'],
     ['melee',   'Melee',          'Combined melee from the log: your hits and misses, theirs, and pets\'. Off keeps chat readable; right-click the Melee chip to give it a window of its own.', 1],
     ['spells',  'Spells',         'Your casts, spells landing on you and others, spell damage, resists, fizzles and fades. Right-click the Spells chip to give it a window of its own.', 1],
-    ['skills',  'Skills',         'Skill-ups, what your skills did (taunt, forage, mend, feign death, hide...), tradeskill combines and disciplines. Right-click the Skills chip to give it a window of its own.', 1]
+    ['skills',  'Skills',         'Skill-ups, what your skills did (taunt, forage, mend, feign death, hide...), tradeskill combines and disciplines. Right-click the Skills chip to give it a window of its own.', 1],
+    ['loot',    'Loot',           'Your own "You have looted ..." lines. Right-click the Loot chip to give it a window of its own.', 1],
+    ['random',  'Random',         'Everyone\'s /random rolls heard in the zone: who rolled, and the range and number that turned up.', 1],
+    ['other',   'Other',          'Game and system messages no other chip claims (experience, faction, bandolier and the like). Never chat, tells or any channel you have switched off.', 1]
   ];
   // ── this window's text settings ──────────────────────────────────────────
   // Every Chat window (the main one, and each breakout) keeps its own: win[<id>] in the prefs, id being 'main' or
@@ -1136,10 +1139,10 @@
   function takePrefs(p){
     if (!p) return;
     var tellsWas = _prefs.tells;
-    var meleeWas = _prefs.melee, spellsWas = _prefs.spells, skillsWas = _prefs.skills, showWas = JSON.stringify([_prefs.meleeShow, _prefs.spellShow, _prefs.skillShow]);
+    var meleeWas = _prefs.melee, spellsWas = _prefs.spells, skillsWas = _prefs.skills, extraWas = [_prefs.loot, _prefs.random, _prefs.other].join(), showWas = JSON.stringify([_prefs.meleeShow, _prefs.spellShow, _prefs.skillShow]);
     _prefs = {
       fontSize: p.fontSize || 12, group: !!p.group, officer: !!p.officer, custom: !!p.custom,
-      tells: !!p.tells, melee: !!p.melee, spells: !!p.spells, skills: !!p.skills,
+      tells: !!p.tells, melee: !!p.melee, spells: !!p.spells, skills: !!p.skills, loot: !!p.loot, random: !!p.random, other: !!p.other,
       meleeShow: { mine: !p.meleeShow || p.meleeShow.mine !== false, on_me: !p.meleeShow || p.meleeShow.on_me !== false, others: !p.meleeShow || p.meleeShow.others !== false, misses: !p.meleeShow || p.meleeShow.misses !== false },
       spellShow: { mine: !p.spellShow || p.spellShow.mine !== false, on_me: !p.spellShow || p.spellShow.on_me !== false, others: !p.spellShow || p.spellShow.others !== false },
       skillShow: { mine: !p.skillShow || p.skillShow.mine !== false, others: !p.skillShow || p.skillShow.others !== false },
@@ -1149,7 +1152,7 @@
       win: (p.win && typeof p.win === 'object') ? p.win : {}
     };
     paintSettings();
-    if (tellsWas !== _prefs.tells || meleeWas !== _prefs.melee || spellsWas !== _prefs.spells || skillsWas !== _prefs.skills || showWas !== JSON.stringify([_prefs.meleeShow, _prefs.spellShow, _prefs.skillShow])) { purgeGated(); paintChips(); repaint(); }
+    if (tellsWas !== _prefs.tells || meleeWas !== _prefs.melee || spellsWas !== _prefs.spells || skillsWas !== _prefs.skills || extraWas !== [_prefs.loot, _prefs.random, _prefs.other].join() || showWas !== JSON.stringify([_prefs.meleeShow, _prefs.spellShow, _prefs.skillShow])) { purgeGated(); paintChips(); repaint(); }
     // The history was read under one set of switches; a change (Tells, Group, Officer, Custom) re-reads it.
     if (_histHours && _connectedOnce && histQuery() !== _histSig) loadHistory();
   }
@@ -1185,7 +1188,8 @@
     return 'since=' + _seq + '&boot=' + encodeURIComponent(_boot) +
       '&tells=' + (_prefs.tells ? 1 : 0) + '&group=' + (_prefs.group ? 1 : 0) +
       '&officer=' + (_prefs.officer ? 1 : 0) + '&custom=' + (_prefs.custom ? 1 : 0) + '&melee=' + (_prefs.melee ? 1 : 0) +
-      '&spells=' + (_prefs.spells ? 1 : 0) + '&skills=' + (_prefs.skills ? 1 : 0);
+      '&spells=' + (_prefs.spells ? 1 : 0) + '&skills=' + (_prefs.skills ? 1 : 0) +
+      '&loot=' + (_prefs.loot ? 1 : 0) + '&random=' + (_prefs.random ? 1 : 0) + '&other=' + (_prefs.other ? 1 : 0);
   }
   // Channel colours come from the agent's list, so a new channel needs no change here; the chips are
   // repainted when that list changes.
