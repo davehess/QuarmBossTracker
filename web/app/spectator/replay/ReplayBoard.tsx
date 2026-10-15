@@ -16,6 +16,10 @@
 //     other groups as options. The slider and coverage track span only that session. `?session=` is in the URL.
 //   * Auto-framing holds the view still while the nearest 80% of the raid is in it and glides when it is not,
 //     snapping only on a scrub, a zone change or a session change (lib/replayFraming.ts).
+//   * The 2D background is None / Lines / Parchment (`?bg=`, one choice for both panes, default Parchment). The
+//     parchment is paper plus a floor wash generated from the EQEmu floors mesh (lib/zoneFloor.ts), painted once per
+//     zone and size bucket in idle time by lib/parchmentStore.ts and only blitted per frame; the wall lines go on
+//     top in ink. The 3D view has no background choice: its floors are the shaded surface (Replay3D.tsx).
 // The coordinate rules (axis swap, north up, heading) live in lib/spectator.ts; the decoding and the split rule
 // in lib/raidReplay.ts.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -38,6 +42,8 @@ import {
 } from '@/lib/replayFollow';
 import { activeSpawns, normMobName, parseBosses, type ActiveSpawn, type SpawnBoss } from '@/lib/replayBosses';
 import { bandColor, prepare, type Prepared } from '../SpectatorBoard';
+import { BGS, bgSearch, inkColor, parseBg, type Bg } from '@/lib/mapBackdrop';
+import { ParchmentStore, drawParchmentLayer, paintPaper } from '@/lib/parchmentStore';
 import type { Bridge3D } from './Replay3D';
 
 // three.js is only fetched when the 3D view is first shown.
@@ -101,6 +107,8 @@ type PaneArgs = {
   frames: ReplayFrame[]; idx: number; hasFrame: boolean; tails: boolean; entry: MapEntry | undefined;
   hl: ReadonlySet<string>; picks: Picks; fol: Placed | null;
   snap: boolean;                 // the playhead jumped (a scrub, a new session): frame the raid at once, no glide
+  bg: Bg;                        // none: raiders only; lines: the wall lines on the dark page; parchment: lines in ink on paper
+  store: ParchmentStore;
 };
 type PaintInfo = {
   zones: [string | null, string | null];
@@ -213,9 +221,18 @@ function drawPane(p: Pane, o: PaneArgs): boolean {
   const oy = h / 2 - v.cy * v.scale;
   const refZ = median(here.map(q => q.z));
 
+  // The parchment under the lines: paper over the whole pane, then the zone's floor wash (painted once per zone and
+  // size bucket by the store; null until it is ready, so the paper alone shows first). The lines go on top in ink.
+  const ink = o.bg === 'parchment';
+  if (ink) {
+    paintPaper(ctx, w, h);
+    const lay = o.zone ? o.store.layer(o.zone, w, h) : null;
+    if (lay) drawParchmentLayer(ctx, lay, v, ox, oy);
+  }
+
   // The zone's map underneath.
   const entry = o.entry;
-  if (entry?.status === 'ready') {
+  if (entry?.status === 'ready' && o.bg !== 'none') {
     const layers = effectiveLayers('brewall', entry.map);
     const { prep } = entry;
     const multi = prep.bands.length > 1 && refZ != null;
@@ -225,7 +242,7 @@ function drawPane(p: Pane, o: PaneArgs): boolean {
       for (const bright of [false, true]) {
         ctx.globalAlpha = bright ? 0.9 : 0.22;
         for (const g of prep.bw.groups) {
-          ctx.strokeStyle = g.css;
+          ctx.strokeStyle = ink ? inkColor(bright ? 0.9 : 0.3) : g.css;
           ctx.beginPath();
           for (let i = 0, n = g.band.length; i < n; i++) {
             const near = !multi || lineNearZ(g.z[2 * i], g.z[2 * i + 1], refZ as number);
@@ -246,7 +263,7 @@ function drawPane(p: Pane, o: PaneArgs): boolean {
       ctx.lineCap = 'round';
       prep.gen.forEach((arr, bi) => {
         const bright = bi === focus;
-        ctx.strokeStyle = bandColor(bi, prep.gen!.length, bright ? 0.85 : 0.2);
+        ctx.strokeStyle = ink ? inkColor(bright ? 0.85 : 0.28) : bandColor(bi, prep.gen!.length, bright ? 0.85 : 0.2);
         ctx.lineWidth = bright ? 1.4 : 1;
         ctx.beginPath();
         for (let i = 0; i < arr.length; i += 4) {
@@ -421,6 +438,8 @@ export default function ReplayBoard() {
   const [mode, setMode] = useState<'2d' | '3d'>('2d');
   const [no3d, setNo3d] = useState(false);
   const [floors, setFloors] = useState(true);
+  const [bg, setBg] = useState<Bg>(parseBg(''));   // the 2D background; `?bg=` in the URL, one choice for both panes
+  const [, setFloorTick] = useState(0);            // the parchment store's status changed: the notes re-read it
   const [showBosses, setShowBosses] = useState(true);
   const [picks, setPicks] = useState<Picks>(NO_PICKS);
   const [urlReady, setUrlReady] = useState(false);
@@ -488,6 +507,10 @@ export default function ReplayBoard() {
     if (rafRef.current) return;
     rafRef.current = requestAnimationFrame(ts => stepRef.current(ts));
   }, []);
+  // The parchment floors, fetched and painted once per zone and size bucket (lib/parchmentStore.ts).
+  const bgRef = useRef<Bg>(bg);
+  const parchment = useMemo(() => new ParchmentStore(() => { setFloorTick(n => n + 1); schedule(); }), [schedule]);
+  useEffect(() => () => parchment.dispose(), [parchment]);
 
   // ── data ───────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -709,13 +732,13 @@ export default function ReplayBoard() {
       }
       if (drawPane(pane, {
         t, zone, here, targets, spawns, frames, idx, hasFrame: !!a, tails: tailsRef.current,
-        entry: mapsRef.current[zone], hl, picks: pk, fol: folHere, snap,
+        entry: mapsRef.current[zone], hl, picks: pk, fol: folHere, snap, bg: bgRef.current, store: parchment,
       })) out.animating = true;
     }
     out.elsewhere = a ? a.raiders.length - heldTotal : 0;
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panes]);
+  }, [panes, parchment]);
 
   // One pass: advance the playhead if playing, make sure the data is coming, draw, report to the controls.
   const step = useCallback((ts: number) => {
@@ -802,6 +825,7 @@ export default function ReplayBoard() {
     try {
       setPicks(parsePicks(window.location.search));
       setSessionFrom(parseSessionParam(window.location.search));
+      setBg(parseBg(window.location.search));
     } catch { /* no URL to read */ }
     setUrlReady(true);
   }, []);
@@ -825,6 +849,16 @@ export default function ReplayBoard() {
       if (s !== window.location.search) window.history.replaceState(null, '', window.location.pathname + s + window.location.hash);
     } catch { /* a blocked history API only costs the shareable link */ }
   }, [picks, urlReady, schedule]);
+  // The background, both panes at once, kept in the URL like the picks (the default is left out of it).
+  useEffect(() => {
+    bgRef.current = bg;
+    schedule();
+    if (!urlReady) return;
+    try {
+      const s = bgSearch(bg, window.location.search);
+      if (s !== window.location.search) window.history.replaceState(null, '', window.location.pathname + s + window.location.hash);
+    } catch { /* a blocked history API only costs the shareable link */ }
+  }, [bg, urlReady, schedule]);
   // A new follow glides in from where the view was, and takes the zone pin off so the zone can follow the raider.
   useEffect(() => {
     for (const p of panes) p.kick = !!picks.follow;
@@ -1064,6 +1098,15 @@ export default function ReplayBoard() {
             Tails
           </button>
         )}
+        {mode === '2d' && (
+          <div className="flex items-center gap-1.5" role="group" aria-label="Map background">
+            <span className="text-xs text-dim">Background</span>
+            {BGS.map(b => (
+              <button key={b} type="button" aria-pressed={bg === b} onClick={() => setBg(b)}
+                className={`${chip} ${bg === b ? chipOn : chipIdle}`}>{b === 'none' ? 'None' : b === 'lines' ? 'Lines' : 'Parchment'}</button>
+            ))}
+          </div>
+        )}
         {mode === '3d' && (
           <button type="button" aria-pressed={floors} className={`${chip} ${floors ? chipOn : chipIdle}`} onClick={() => setFloors(f => !f)}>
             Floors
@@ -1189,6 +1232,15 @@ export default function ReplayBoard() {
                   {i === 0 && state === 'nodata' && <MapNote>Nobody was recorded at this moment.</MapNote>}
                   {state === 'ok' && mode === '2d' && (!entry || entry.status === 'loading') && z && <MapNote>Loading map…</MapNote>}
                   {state === 'ok' && mode === '2d' && entry?.status === 'none' && <MapNote>No wall map for {z} yet. Showing raiders only.</MapNote>}
+                  {mode === '2d' && bg === 'parchment' && z && parchment.status(z) === 'loading' && !(state === 'ok' && (!entry || entry.status === 'loading')) && (
+                    <MapNote>Loading the parchment floors…</MapNote>
+                  )}
+                  {mode === '2d' && bg === 'parchment' && z && parchment.status(z) === 'error' && (
+                    <MapNote>
+                      The floors did not load; showing the paper alone.{' '}
+                      <button type="button" className="pointer-events-auto underline" onClick={() => parchment.retry(z)}>Retry</button>
+                    </MapNote>
+                  )}
                   {state === 'ok' && mode === '2d' && entry?.status === 'error' && (
                     <MapNote>
                       The map did not load.{' '}

@@ -20,10 +20,11 @@
 //
 // Drawing rules: render on demand (a feed, a camera move, a resize, a follow still gliding), never a free-running
 // loop, so a paused replay costs nothing. Walls are one BufferGeometry, flat-shaded and tinted by height,
-// see-through and not written to the depth buffer; the floors are a second, darker and fainter one under them
-// (the 'floors=only' request, which the Floors toggle hides without a refetch). Raiders draw after both, so a
-// raider behind a wall is still seen. Sphere size follows camera distance so a dot stays about as big on screen
-// as the 2D board's, wherever the camera is.
+// see-through and not written to the depth buffer. The floors are a second, OPAQUE one: no textures, just vertex
+// colours baked once per mesh load by lib/zoneFloor.ts (height ramp x slope x a north-west light, unlit material,
+// roofs left out), fetched as 'floors=only', which the Floors toggle hides without a refetch. Raiders and marks
+// draw last with the depth test OFF, so one standing under a roof, on a lower storey or behind a wall is still seen.
+// Sphere size follows camera distance so a dot stays about as big on screen as the 2D board's, wherever the camera is.
 //
 // Following a raider moves the orbit TARGET and the camera by the same step, so the angle and the zoom the viewer
 // chose are kept. Only the offset between the camera's target and the raider decays (the glide to a newly picked
@@ -32,11 +33,12 @@ import { useEffect, useRef, useState, type MutableRefObject } from 'react';
 import {
   AmbientLight, BufferAttribute, BufferGeometry, Color, DirectionalLight, DoubleSide, InstancedMesh, Matrix4, Mesh,
   MeshBasicMaterial, MeshLambertMaterial, OctahedronGeometry, PerspectiveCamera, Quaternion, Scene, SphereGeometry,
-  Vector3, WebGLRenderer,
+  SRGBColorSpace, Vector3, WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { classAbbr, classColor } from '@/lib/spectator';
 import { heightHue, positionsToThree, serverToThree, unpackMesh, type UnpackedMesh } from '@/lib/zoneMesh';
+import { floorVertexColors, shadeFloors } from '@/lib/zoneFloor';
 import { FOLLOW_SETTLED, FOLLOW_TAU_MS } from '@/lib/replayFollow';
 import { exceedsHysteresis } from '@/lib/replayFraming';
 import {
@@ -130,14 +132,12 @@ const TAG_LOOK: Record<Kind, string> = {
   spawn: 'color:#a8884a;background:#161b22;border:1px dashed #6b5a2e;opacity:0.85',
 };
 
-/** Walls (kind 'walls') or floors (kind 'floors') of an unpacked mesh as a flat-shaded, height-tinted mesh. */
-function buildMesh(u: UnpackedMesh, kind: 'walls' | 'floors'): Mesh {
+/** The walls of an unpacked mesh as a flat-shaded, height-tinted, see-through mesh. */
+function buildMesh(u: UnpackedMesh): Mesh {
   const pos = positionsToThree(u.pos);
   const lo = u.min[2], span = Math.max(1, u.max[2] - u.min[2]);
-  const floor = kind === 'floors';
-  // Floors: the same height ramp, darker and greyer, so they read as ground and not as a second set of walls.
   const ramp = Array.from({ length: PALETTE }, (_, i) =>
-    new Color().setHSL(heightHue(i / (PALETTE - 1)) / 360, floor ? 0.3 : 0.42, floor ? 0.34 : 0.6));
+    new Color().setHSL(heightHue(i / (PALETTE - 1)) / 360, 0.42, 0.6));
   const col = new Float32Array(pos.length);
   for (let i = 0; i < pos.length; i += 3) {
     const k = ramp[Math.min(PALETTE - 1, Math.max(0, Math.round(((pos[i + 1] - lo) / span) * (PALETTE - 1))))];
@@ -148,19 +148,47 @@ function buildMesh(u: UnpackedMesh, kind: 'walls' | 'floors'): Mesh {
   geo.setAttribute('color', new BufferAttribute(col, 3));
   geo.computeVertexNormals();   // not indexed, so every triangle has its own: flat shading
   const mat = new MeshLambertMaterial({
-    vertexColors: true, flatShading: true, transparent: true, opacity: floor ? 0.22 : 0.5, side: DoubleSide, depthWrite: false,
+    vertexColors: true, flatShading: true, transparent: true, opacity: 0.5, side: DoubleSide, depthWrite: false,
   });
   const m = new Mesh(geo, mat);
-  m.renderOrder = floor ? 0 : 1;
+  m.renderOrder = 1;
   m.frustumCulled = false;
   return m;
+}
+
+/**
+ * The floors of an unpacked `floors=only` mesh as an opaque, unlit surface whose vertex colours were baked once
+ * (lib/zoneFloor.ts): height ramp x slope x a north-west light. Roofs are left out (a cave roof would hide the
+ * cave from above); the camera still treats them as solid through `grid`, which is built from every triangle.
+ */
+function buildFloorMesh(u: UnpackedMesh): { mesh: Mesh | null; grid: TriGrid | null } {
+  const all = positionsToThree(u.pos);
+  const grid = buildTriGrid(all);
+  const fs = shadeFloors(u.pos);
+  if (!fs.n) return { mesh: null, grid };
+  const pos = new Float32Array(fs.n * 9);
+  for (let i = 0; i < fs.n; i++) pos.set(all.subarray(9 * fs.tri[i], 9 * fs.tri[i] + 9), 9 * i);
+  const srgb = floorVertexColors(fs);
+  const col = new Float32Array(srgb.length);
+  for (let i = 0; i < srgb.length; i += 3) {
+    tmpC.setRGB(srgb[i], srgb[i + 1], srgb[i + 2], SRGBColorSpace);   // the renderer expects the working (linear) space
+    col[i] = tmpC.r; col[i + 1] = tmpC.g; col[i + 2] = tmpC.b;
+  }
+  const geo = new BufferGeometry();
+  geo.setAttribute('position', new BufferAttribute(pos, 3));
+  geo.setAttribute('color', new BufferAttribute(col, 3));
+  const mat = new MeshBasicMaterial({ vertexColors: true, side: DoubleSide });   // opaque, writes depth, no lights
+  const m = new Mesh(geo, mat);
+  m.renderOrder = 0;
+  m.frustumCulled = false;
+  return { mesh: m, grid };
 }
 
 function disposeMesh(c: Ctx, m: Mesh | null) {
   if (!m) return;
   c.scene.remove(m);
   m.geometry.dispose();
-  (m.material as MeshLambertMaterial).dispose();
+  (m.material as MeshLambertMaterial | MeshBasicMaterial).dispose();
 }
 
 export default function Replay3D({ zone, floors, bridgeRef, onReady, onFail, onPick, onPanAway, onKeyDown, label }: Props) {
@@ -215,7 +243,9 @@ export default function Replay3D({ zone, floors, bridgeRef, onReady, onFail, onP
     controls.maxPolarAngle = Math.PI * 0.495;
 
     const dotGeo = new SphereGeometry(1, 12, 8);
-    const dotMat = new MeshBasicMaterial({ transparent: true });   // transparent only to draw after the walls
+    // Dots and marks skip the depth test: the floors now write depth, and a raider on a lower storey, under a roof or
+    // a few units into a slope (the mesh and the reported z never agree exactly) must still be seen.
+    const dotMat = new MeshBasicMaterial({ transparent: true, depthTest: false });   // transparent only to draw after the walls
     const inst = new InstancedMesh(dotGeo, dotMat, MAX_RAIDERS);
     inst.count = 0;
     inst.frustumCulled = false;
@@ -224,7 +254,7 @@ export default function Replay3D({ zone, floors, bridgeRef, onReady, onFail, onP
     scene.add(inst);
 
     // A halo behind each highlighted raider: a bigger, faint white sphere.
-    const haloMat = new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, depthWrite: false });
+    const haloMat = new MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, depthWrite: false, depthTest: false });
     const halo = new InstancedMesh(dotGeo, haloMat, MAX_RAIDERS);
     halo.count = 0;
     halo.frustumCulled = false;
@@ -233,13 +263,13 @@ export default function Replay3D({ zone, floors, bridgeRef, onReady, onFail, onP
 
     // Targets: solid red diamonds. Spawn points: amber wireframe diamonds, dimmer, so they read as "here is where it spawns".
     const diaGeo = new OctahedronGeometry(1);
-    const tgtMat = new MeshBasicMaterial({ color: TARGET_RED, transparent: true });
+    const tgtMat = new MeshBasicMaterial({ color: TARGET_RED, transparent: true, depthTest: false });
     const tgt = new InstancedMesh(diaGeo, tgtMat, MAX_MARKS);
     tgt.count = 0;
     tgt.frustumCulled = false;
     tgt.renderOrder = 4;
     scene.add(tgt);
-    const spawnMat = new MeshBasicMaterial({ color: SPAWN_AMBER, wireframe: true, transparent: true, opacity: 0.7 });
+    const spawnMat = new MeshBasicMaterial({ color: SPAWN_AMBER, wireframe: true, transparent: true, opacity: 0.7, depthTest: false });
     const spawn = new InstancedMesh(diaGeo, spawnMat, MAX_MARKS);
     spawn.count = 0;
     spawn.frustumCulled = false;
@@ -581,7 +611,7 @@ export default function Replay3D({ zone, floors, bridgeRef, onReady, onFail, onP
         if (ac.signal.aborted || c.dead) return;
         if (!u.tris) { setStatus('none'); return; }
 
-        const wall = buildMesh(u, 'walls');
+        const wall = buildMesh(u);
         c.scene.add(wall);
         c.wall = wall;
         c.wallGrid = buildTriGrid(wall.geometry.getAttribute('position').array as Float32Array);
@@ -631,12 +661,14 @@ export default function Replay3D({ zone, floors, bridgeRef, onReady, onFail, onP
         const u = unpackMesh(await res.arrayBuffer());
         if (ac.signal.aborted || c.dead) return;
         if (!u.tris) { setFloorStatus('none'); return; }
-        const floor = buildMesh(u, 'floors');
+        const built = buildFloorMesh(u);
+        // Floors and ceilings stop the camera too (a cave roof between it and the raid), shown or not.
+        c.floorGrid = built.grid;
+        if (!built.mesh) { setFloorStatus('none'); c.request(); return; }
+        const floor = built.mesh;
         floor.visible = floorsRef.current;
         c.scene.add(floor);
         c.floor = floor;
-        // Floors and ceilings stop the camera too (a cave roof between it and the raid), shown or not.
-        c.floorGrid = buildTriGrid(floor.geometry.getAttribute('position').array as Float32Array);
         setFloorStatus('ready');
         c.request();
       })
