@@ -13724,6 +13724,8 @@ if (process.env.RAID_TICK_CAPTURE !== '0') {
 
 // Raid replay recorder (utils/raidTrack.js): folds the roster uploads into one row per minute.
 require('./utils/raidTrack').start();
+// …and the NPCs the raid has targeted ride each frame (counts only, never who): read lazily, the instance is built below.
+require('./utils/raidTrack').setTargetSource((isRaider) => _raidTargets().snapshot(isRaider));
 
 // Raid hold — tells every agent to hold its background file work for later
 // while a raid is active ("gracefully tell mimic to hold onto its files",
