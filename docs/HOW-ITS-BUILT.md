@@ -2572,6 +2572,18 @@ first `opensOn` grant (`thelin_2` event / `cl_maze` checklist) whose zone resolv
 only grants in state 4, after the last construct, the shard and Terris-Thule's talk — and runs `minutes: 10` (his
 state-4 depop) from that grant; roster = the current raid. Hails open nothing (the 3.1.258 two-groups-hail opener
 fired at the maze's START). One window per NPC at a time. No Mimic change: `hailBoardHtml` draws it.
+**More proof (bot 3.1.271, 2026-10-15, §334):** "already flagged" also counts a member's own PoP-guide tick (`pop_guide_ticks`) and a
+/who sighting inside a plane that flag opens (`pop_who_sightings` RPC) — `readProof` in `utils/hailBoard.js`, tables in
+`utils/popSelfProof.js` (copies of `web/lib/popWho.ts` / `popGuide.ts`, drift-tested in `test/hail-board.test.js`). A failed read
+falls back to pop_flags only.
+**Slow mode (bot 3.1.244 → 3.1.269, agent 3.7.177 beta, §237 → §334):** `utils/slowMode.js`. A guild-wide window in `bot_kv`
+`slow_mode` (officer `/slowmode`, 8 h auto-off, or the agent's report of Druzzil Ro's "thread of time" guild line via
+`POST /api/agent/slow-mode`, which keeps the line as `set_line`/`off_line`). Any boss we kill inside the window gets
+`slowModeHours` or 18 h, applied once in `recordKill`'s wrapper and in the boot rebuild (`utils/reconcileKills.js`); the board tags it 🐢.
+**Feedback window (agent 3.7.179 beta, §334):** Mimic's 💬 Feedback (dashboard button + tray) opens `openFeedback()` in
+`apps/mimic/main.js`, a plain window on the dashboard page's feedback-only mode (`/?feedback=1`, `WP_FEEDBACK_MODE` in
+`dashboard.html`), so dashboard reloads never wipe a half-typed report; the draft autosaves (`_wpFbDraftSave`). A browser tab
+keeps the in-page card.
 
 ### Bristlebane — the raid-voice bot (bristlebane 0.1.0, bot 3.1.208, §166)
 Its own Discord application and container: `apps/bristlebane/` (`index.js` = Discord glue, `lib.js` = the

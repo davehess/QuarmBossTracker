@@ -114,12 +114,15 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
-| **Web 1.8.158/1.8.159 not on production yet; the 2.9.1 #raid-chat card waits for it** (§332) | Code on main; Vercel refused the build ("Deployment rate limited", Hobby 100/day). Mimic 2.9.1 stable is out | a session (scheduled 00:40 ET): redeploy main's head on Vercel, confirm `/pop/latest` answers 307, confirm the card posted. The guild lead: decide whether beta pushes should stop building the site on busy days |
+| **Database overload: compute upgrade vs cleanup** (§334) | Micro (1 GB) swapped and timed out mid-raid; threat snapshots are 61% of the DB. The batched sweep (bot 3.1.271) starts trimming tonight | the guild lead: pick A (compute upgrade to Small) and/or B (cleanup); then a session schedules `VACUUM FULL`/`pg_repack` of `encounter_threat_snapshots` off-hours |
+| **Slow mode ON wording** (§334) | Every boss gets 18 h inside the window (bot 3.1.269); agent 3.7.177 beta reads any Druzzil "thread of time" guild line as on/off | a session after the next slow-mode night: read `bot_kv` `slow_mode.set_line`, pin the exact ON text in the agent regex and `utils/slowMode.js` |
+| **Feedback popup** (§334) | On beta: agent 3.7.179 `fb30386f`; not tried in a live Electron yet | the guild lead: on the next beta build, click 💬 Feedback, type, restart the agent from the tray, confirm the text survives and sending works |
+| **Dashboard drag stutter** (§334) | No code moves the window; cause unknown | the guild lead: drag after each of: hide all overlays, Map Full/Canvas off, GPU off, overlays-follow-EQ off; say which monitor/scale |
 | **Map: raid targets + shared escort trails** (§299) | Shipped: bot 3.1.263 on main, agent 3.7.166 on Mimic beta, `/privacy` updated | the guild lead: two Mimics in the hedge maze, one targets Thelin, the other's Map draws his trail; the MA targets a mob and the other's focus ring lands on it |
 | **Mimic Chat overlay, B** (§300) | Live in stable Mimic 2.9.1 (agent 3.7.176, §331): one feed, a chip per channel; officer off by default, tells follow Settings → Tells; local only | the guild lead: say whether officer, group and tells may show; check it on beta. A session: A (tabs + tear-off) next; confirm Zeal's abbreviated tags `S`/`O`/`Sh`/`A`/`To` from a real `/abc 2` log |
 | **/pop alts grouped under mains** (§302) | On beta (web 1.8.153): `?alts=group`, `&sort=latest`, `&open=1`; highlights for 24 h and 3 days | the guild lead: compare https://b.wolfpack.quest/pop?alts=group&sort=latest with https://b.wolfpack.quest/pop?view=matrix and pick; a session then graduates it to main |
 | **/pop "Latest flags" strip** (§297) | On beta (web 1.8.152): `?flags=a` newest first, `?flags=b` by step; no param = production | the guild lead: pick a or b at https://b.wolfpack.quest/pop?flags=a and https://b.wolfpack.quest/pop?flags=b. A session then graduates it to main as the default and deletes the other |
-| **Member lockout** (§252) | Live: `/admin/access` [beta], bot 3.1.251, web 1.8.143. Officers cannot be locked out (web 1.8.144). Untested against a real member | the guild lead: lock a test or alt account, confirm Mimic, the site and a bot command all refuse it within 30 s, then unlock |
+| **Member lockout** (§252, §334) | Live: `/admin/access` [beta], bot 3.1.251, web 1.8.143. Officers cannot be locked out (web 1.8.144). First real use 2026-10-14 (a kicked member): the row wrote; departed members now also drop to is_member=false (bot 3.1.271) | the guild lead: confirm that member's Mimic is refused |
 | **Map target-of-target never fires on real Zeal** (§251) | Zeal's `/assistbar` (1.4.7) knows it, but the pipe export was only our unsent draft, so the Map's ToT arrow and the pin rule's "not aggroed" check fail open. Ported onto current Zeal main as fork branch `tot-pipe` (`21f41f3`, local only: the push was refused by this session's permissions) | the guild lead: push `tot-pipe` to the fork (or allow it), then say whether it joins `test-all` for an in-game check |
 | **Zeal in-game test run + PoP flags export + `/spellid`** (§227, §229) | `test-all` `035d8a3` (build passed) = PoP flags `b27bb26` (overview + tiers 1–5, once each, kept out of chat) + roleplay guild marks + `spell-id-tooltip` `67cb705` (`/spellid on` puts the spell id on the buff/gem/spellbook info window, off by default). 67 test hotkeys (socials pages 4–10, say + `/log`, works at level 1) log what to look for and the target's spawn id; `tools/evidence.py` on the fork's `showcase` branch turns the log into an EVIDENCE.md per change. Every suggestion post has "Pull request" and "Testing evidence" lines waiting to be filled | the guild lead: (1) install `test-all`, paste the hotkeys, run pages 4–10, send the log + `<name>-PoPFlags.txt`; (2) file the PRs (smallest first, §228). A session: write EVIDENCE.md per change, fill the PR links (posts, showcase JSON `pr_url`) |
 | **Mimic 2.9: spawn map, zone-server directory, live mob dots** (§216) | **Refinements ledger: `docs/MAP-REFINEMENTS.md` (§264)** — every Map ask, what shipped, what is open (detachable timers, atlas, Target Info map tab, raiders' zones, Follow target, spawn distance + gate rule). Called 2026-10-10 as the 2.9 minor line. Research in: `dbg.txt` names the zone server on every zone-in (`Zone addr [<host>:<port>]` + `StartWorldDisplay: <zone>`), and one zone was seen on two ports within an hour, so a port is a per-boot instance token, not a zone id. Design doc written (`docs/DESIGN-mimic-2.9-spawn-map.md`). Hosting needs no plan change (§217); **Picked (§220):** 3D-A on web (from the EQEmu collision mesh), 3D-B in Mimic, routes from our import, Mimic layout C (tracker), tab-target dots, group sharing to the group + recent helpers (30-min grace) | a session: (1) route tables + spell range in the weekly import, (2) web: spawn layer + routes + 3D-A on `/spectator` beta, (3) agent group-position upload + PRIVACY line, (4) Mimic tracker overlay (Window/HUD), (5) the client-zone converter for painted + 3D in Mimic |
@@ -10799,3 +10802,47 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
   every 5 minutes for 24 hours. It reads the guild id through `supabase.guildId()`; an inline fallback broke `guild-tag-rest`'s ceiling (3.1.267).
 - **Golden log** had failed on beta since agent 3.7.172 (avoid lines now carry the swing verb) and on main since the cut: the
   expectations were never regenerated. Additive change, regenerated.
+
+### 334. Raid night 2026-10-14: an overloaded database, slow mode for every boss, and the post-raid fix batch (bot 3.1.268–3.1.271, agent 3.7.177–3.7.179)
+(§333 is the Vercel deploy-hook decision, still on branch `claude/sharp-lamport-dC0TW` until its secrets exist.)
+- **The database ran out of room mid-raid.** Supabase compute is Micro (1 GB): RAM 88–93%, swapping, CPU 92% mostly iowait, status
+  "Unhealthy"; bot requests hit the 10 s abort in bursts. The DB is 4.07 GB and `encounter_threat_snapshots` is 2.48 GB of it (61%) plus
+  ~370 MB of its indexes. Shed `flag_shed_threat_snapshot=1` at ~21:33 ET (timeouts stopped within 2 min); cleared after the raid.
+  **The real fix is the guild lead's pick: compute upgrade (A) and/or the cleanup below (B).**
+- **Buff landings lost whole batches** (bot 3.1.268 `[hotfix]` `e1bc98fb`): one duplicate on a partial unique index 409'd the batch.
+  `insert_buff_casts(jsonb)` (migration `20261015014500`, applied live) does `ON CONFLICT DO NOTHING` with no target; the old two inserts
+  remain the fallback. Two test rows with observer `__hotfix_test__` stay in `buff_casts` and age out in 7 days.
+- **Officers lost the Admin tab, then a Mimic DKP tick came back "cannot submit"** (bot 3.1.270 `757e79ea`): during a stall the session
+  lookup's `wolfpack_members` read failed and `_lookupSessionToken` cached roles `[]` for 5 minutes, so the bot answered 403 "officers only".
+  A failed read now keeps the last good identity and retries in 15 s (`test/mimic-session-member-retry.test.js`). The dashboard now shows
+  the bot's own refusal (`j.error`) instead of the generic text (agent 3.7.178 beta `777d6b59`).
+- **Slow mode = 18 h for EVERY boss we kill** (the guild lead: *"anything that died within our instances since 8pm should be 18 hour
+  respawn"*, *"18 hours is the rule once the zones get converted to slow mode, which should show up in the logs"*). Supersedes §237's
+  four-named list: `effectiveTimerHours` returns `slowModeHours` or 18 for any boss inside the window (bot 3.1.269 `aa991621`); only kills
+  judged ours reach `recordKill`, so live/PvP copies are untouched. Tonight's window (2026-10-15 00:00Z → 08:00Z, from guild chat) was written
+  to `bot_kv`, and the deploy's startup rebuild recovered 12 timers on it. Agent 3.7.177 (beta `254e7dc3`) reports Druzzil Ro's
+  "thread of time" guild lines: "natural pace" = off, any other = on, because **the ON wording has never been captured**. The bot keeps
+  the opening line as `slow_mode.set_line`: read it after the next slow-mode night and pin the exact text. Our chat relay does not store
+  Druzzil's lines, which is why it could not be found tonight.
+- **Member lockout works on a kicked member:** the lock wrote (`member_lockouts`, 02:37:43 UTC); the "Locked out now (0)" view was stale.
+  Found on the way: `wolfpack_members.is_member` was never set false. Bot 3.1.271 flips departed members (and clears their roles,
+  because the officer gate and Mimic identity read `role_names` without `is_member`) on the 6-hourly sync, guarded against a short fetch,
+  plus a `guildMemberRemove` listener. 75 of 413 rows on the first run.
+- **Post-raid batch (bot 3.1.271 `8bf34c67`)**, drafted by Sonnet agents and reviewed here:
+  - hail board counts guide ticks (`pop_guide_ticks`) and /who sightings (`pop_who_sightings`) as "already flagged"
+    (`utils/popSelfProof.js`, copies of the site's tables, drift-tested);
+  - `raid_nights` id cached per process (most of the 409s were the `zone_main` FK, not duplicates);
+  - `merge_encounter_players` takes `pg_advisory_xact_lock` per encounter (migration `20261015040000`; the MCP apply was cancelled, so the
+    GitHub integration applies it from main; the body is otherwise identical to live);
+  - the threat sweep is `prune_threat_snapshots` (migration `20261015041000`, applied live): 2,000-row batches off existing indexes, 2 min
+    a night, resumes next night, refuses a cutoff newer than 7 days. Space returns to disk only after `VACUUM FULL`/`pg_repack`, off-hours.
+- **Website:** production deploys of main's head CANCEL whenever the last commit doesn't touch `web/` (the `ignoreCommand`, §134), so
+  web 1.8.158/1.8.159 went up by deploying `0cf809fb` (its `web/` is identical to main's head) through the Vercel MCP. `/pop/latest`
+  answers 307; the 2.9.1 #raid-chat card posted at 04:52 UTC.
+- **Mimic:** chat lines wrap back under the line instead of down a column (beta `270b1cb7`). **Feedback opens in its own window**
+  (the guild lead picked A: *"leaving feedback sometimes will refresh the screen we're writing it on"*; cause: the dashboard reloads after
+  every agent restart and the form only kept its draft in memory). Agent 3.7.179 beta `fb30386f`: `openFeedback()` loads the dashboard
+  page in a feedback-only mode (`/?feedback=1`), the draft autosaves, tray and 💬 button share it. Not tried in a live Electron yet.
+- **Main window drag stutter** (the guild lead): nothing in Mimic moves the dashboard window (its `main.js` is identical to 2.9.1).
+  Asked the guild lead to bisect: hide all overlays, then Map Full/Canvas, GPU off, overlays-follow-EQ off, and say which monitor and scale.
+- Known red test: `test/my-logs-local.test.js` fails on main and beta, unrelated to tonight.
