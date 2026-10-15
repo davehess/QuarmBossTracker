@@ -29,6 +29,10 @@ let _supabaseEnabled    = false;
 // changesSince() uses semver-aware compare, so two-digit minor/patch (e.g.
 // "2.5.39") sorts correctly above "2.5.9".
 const CHANGELOGS = {
+  '3.1.271': [
+    '**The hail board stops listing people who already have the flag.** It now also counts your own ticks on the PoP guide and /who sightings inside the planes that flag opens, not just what Mimic recorded.',
+    '**People who leave the guild drop off our lists.** Members who left or were kicked stop showing up in officer pickers and lose their old roles in our tools.',
+  ],
   '3.1.269': [
     '**Slow mode means 18 hours for every boss.** While our instances are in slow mode, any boss we kill comes back in 18 hours on the board, whatever its usual timer (it used to apply only to the Bastion of Thunder second-floor named). Mimic will also turn slow mode on and off by itself from Druzzil Ro\'s guild message (Mimic beta, coming next).',
   ],

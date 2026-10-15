@@ -5715,6 +5715,44 @@ function openResources() {
   });
 }
 
+// Feedback — its own window as of 2026-10-15 (the guild lead picked it over the in-page card).
+// The dashboard form was wiped whenever Mimic reloaded the dashboard window (agent restart or
+// hot-swap -> navigateToDashboard, port drift, the self-heal reload), so a half-typed report was
+// lost to things the reporter never did. This window loads the same dashboard page in its
+// "feedback only" mode (/?feedback=1: the one card, nothing else rendered) and no dashboard
+// navigation ever touches it. Same form, same agent routes (/api/feedback-preview, -send), so the
+// screenshot capture IPC works unchanged: it fades whichever window asked.
+//
+// A plain window, NOT an overlay (frameless/always-on-top/click-through do not apply), so the
+// overlay feature-parity checklist, _overlayEntries and _HIDEALL_FLAGS stay out of it. Returns
+// false when the agent has no port yet, so the caller can fall back to the browser route.
+let feedbackWindow = null;
+function openFeedback() {
+  if (!agentPort) return false;
+  const url = `http://127.0.0.1:${agentPort}/?feedback=1`;
+  if (feedbackWindow && !feedbackWindow.isDestroyed()) {
+    try { if (feedbackWindow.isMinimized()) feedbackWindow.restore(); } catch (e) { void e; }
+    feedbackWindow.show();
+    feedbackWindow.focus();
+    // The agent came back on another port: this window is pointed at nothing, so follow it.
+    if (!feedbackWindow.webContents.getURL().startsWith(`http://127.0.0.1:${agentPort}/`)) {
+      feedbackWindow.loadURL(url).catch((err) => appendAgentLog(`[mimic] feedback window reload REJECTED — ${err && err.message}\n`));
+    }
+    return true;
+  }
+  feedbackWindow = new BrowserWindow({
+    width: 560, height: 720, minWidth: 400, minHeight: 420, resizable: true,
+    title: 'Wolf Pack miMIC — Feedback', backgroundColor: '#0d1117',
+    skipTaskbar: true,   // only the dashboard takes a taskbar slot (FB-61)
+    webPreferences: _wpPrefs('Feedback'),
+  });
+  feedbackWindow.setMenu(null);
+  feedbackWindow.loadURL(url)
+    .catch((err) => appendAgentLog(`[mimic] feedback window load REJECTED — ${err && err.message}\n`));
+  feedbackWindow.on('closed', () => { feedbackWindow = null; });
+  return true;
+}
+
 // UI Studio — graphical EQ-window editor. Loads per-character ini files
 // from the user's EQ folder, parses XPos/YPos/Size.cx/Size.cy from each
 // section, rescales 1440 → 1080 (or any source→target res), lets the user
@@ -10141,10 +10179,11 @@ function buildTrayMenu() {
       ] }] : []),
     // Tray ↔ dashboard parity (CLAUDE.md): the feedback card lives on the
     // dashboard, so it needs a tray route too. Same destination, same internals
-    // — this opens the dashboard with the card expanded rather than duplicating
-    // the form in a second window that would then drift.
+    // — Mimic's Feedback window (the dashboard page in feedback-only mode), the very
+    // window the dashboard's 💬 button opens. With no agent port yet there is no page
+    // to load, so the old browser route stays as the fallback.
     { label: 'Send feedback — bug or idea',
-      click: () => shell.openExternal(`http://127.0.0.1:${agentPort}/#feedback`) },
+      click: () => { if (!openFeedback()) shell.openExternal(`http://127.0.0.1:${agentPort}/#feedback`); } },
     { label: 'Restart agent', click: async () => {
         appendAgentLog('[mimic] tray "Restart agent" clicked\n');
         if (agentProc) { try { agentProc.kill(); } catch {} } else { await launchAgent(); }
@@ -12726,6 +12765,8 @@ ipcMain.handle('open-settings', (_e, section) => { openSettings(section); return
 // Dashboard ⏻ Quit — the tray's Quit, same internals (tray ↔ dashboard parity).
 ipcMain.handle('quit-app', () => { setImmediate(_quitMimic); return true; });
 ipcMain.handle('open-resources', () => { openResources(); return true; });
+// 💬 Feedback in its own window (the dashboard button and the tray item). False = no agent port yet.
+ipcMain.handle('open-feedback', () => openFeedback());
 // "Send this panel to its own overlay window" — increment 2d of the
 // customizable-dashboard work. Renderer passes a normalized panel key
 // (stable <h2> prefix); spawns a transparent always-on-top window that

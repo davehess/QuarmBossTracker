@@ -50,7 +50,7 @@ describe('the midnight job uses the gate on BOTH deletion paths', () => {
 
   it('builds the graphs before the sweep and the thinning', () => {
     const build = i("supabase.rpc('build_encounter_threat_graphs'");
-    expect(build).toBeLessThan(i("'encounter_threat_snapshots',\n              `snapshot_at=lt."));
+    expect(build).toBeLessThan(i('await _sweepThreatSnapshots(supabase, cutoff'));
     expect(build).toBeLessThan(i("supabase.rpc('thin_threat_snapshots'"));
   });
   it('the sweep deletes only when the gate returns a cutoff', () => {

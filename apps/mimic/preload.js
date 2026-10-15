@@ -895,6 +895,9 @@ contextBridge.exposeInMainWorld('mimic', {
   // Resource use in its own window — the dashboard's "what does Mimic cost?"
   // link calls this, same as the tray entry.
   openResources:       ()         => ipcRenderer.invoke('open-resources'),
+  // Feedback in its own window — the dashboard's 💬 Feedback button and the tray item.
+  // Resolves false when the agent has no port yet (the page then opens its in-page card).
+  openFeedback:        ()         => ipcRenderer.invoke('open-feedback'),
   createPanelOverlay:  (panelKey) => ipcRenderer.invoke('create-panel-overlay', panelKey),
   getConfig:     () => ipcRenderer.invoke('get-config'),
   isMuted:       () => _wpMuted,
