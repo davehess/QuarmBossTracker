@@ -27,7 +27,8 @@
 // Positions are in the Map's SERVER frame (the agent swaps the pipe's x/y before sending); the bot never swaps.
 //
 // Privacy: a target's name and position is game state, not chat. A sample is held for SAMPLE_FRESH_MS and then
-// forgotten; the trail rows hold an NPC's points and nothing else (no character, no discord id).
+// forgotten; the trail rows hold an NPC's points and nothing else (no character, no discord id). snapshot() feeds the
+// raid replay recording (utils/raidTrack.js) with each NPC's position and a COUNT of targeters, never who.
 //
 // Pure apart from the injected `supabase` (utils/supabase or a stand-in), clock and timer.
 'use strict';
@@ -257,6 +258,26 @@ function create({ supabase = null, guildId = null, now = Date.now, log = console
       .map(g => ({ name: g.name, id: g.id, type: 1, x: g.x, y: g.y, z: g.z, n: g.raiders.size, at: g.at }));
   }
 
+  // Every fresh targeted NPC in every zone, for the raid replay (utils/raidTrack.js): { name, id, zone, x, y, z, n }
+  // with n the number of targeters. Unscoped (it is not shown to a requester); `isRaider(lowercase character)` says
+  // whose samples count, so a Mimic user outside the raid is not a targeter. The targeters' names stay in here:
+  // only the count leaves.
+  function snapshot(isRaider) {
+    const tnow = now();
+    const by = new Map();
+    for (const [k, s] of samples) {
+      if (tnow - s.at > SAMPLE_FRESH_MS) { samples.delete(k); continue; }
+      if (typeof isRaider === 'function' && !isRaider(k)) continue;
+      const gk = s.zone + '|' + s.id;
+      let g = by.get(gk);
+      if (!g) { g = { name: s.name, id: s.id, zone: s.zone, x: s.x, y: s.y, z: s.z, at: s.at, n: 0 }; by.set(gk, g); }
+      g.n++;
+      if (s.at > g.at) Object.assign(g, { name: s.name, x: s.x, y: s.y, z: s.z, at: s.at });
+    }
+    return [...by.values()].sort((a, b) => b.n - a.n || b.at - a.at)
+      .map(g => ({ name: g.name, id: g.id, zone: g.zone, x: g.x, y: g.y, z: g.z, n: g.n }));
+  }
+
   // The zone's escort trails past `tsince` (the newest point time the reader already holds; 0 = everything). Only
   // stretches that moved PATH_MIN_SHOWN_UNITS are served; a stretch that crossed that line after `tsince` goes whole,
   // since the reader never held its early points.
@@ -284,7 +305,7 @@ function create({ supabase = null, guildId = null, now = Date.now, log = console
     for (const t of trails.values()) { if (t.timer) { clearTimer(t.timer); t.timer = null; } await doSave(t); }
   }
 
-  return { noteSample, forget, targetsFor, trailsFor, flush, _samples: samples, _trails: trails };
+  return { noteSample, forget, targetsFor, snapshot, trailsFor, flush, _samples: samples, _trails: trails };
 }
 
 module.exports = {

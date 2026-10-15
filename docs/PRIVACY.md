@@ -365,7 +365,7 @@ server events, counted from the start).
 | What | Kept |
 |---|---|
 | Who targeted what | 1 day |
-| Where your target stands (for the Map's raid focus mark) | In the bot's memory only, about 90 seconds |
+| Where your target stands (for the Map's raid focus mark) | In the bot's memory, about 90 seconds. The monster's name, spawn id, position and how many raiders had it targeted (never who) are also kept with the raid replay recording, as long as the raid positions are |
 | An escort NPC's walked path (no player named) | 12 hours |
 | Raid roster with positions | about a day |
 | Raid positions kept for replay (one sample every few seconds) | Kept for now; the Archive's copy is permanent |
