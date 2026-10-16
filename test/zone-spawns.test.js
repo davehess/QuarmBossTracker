@@ -78,7 +78,7 @@ function world() {
       npc(1006, '#Magi_Rokyl'),
       npc(1007, 'Fippy_Darkpaw'),
       npc(1008, 'a_pack_wolf'), npc(1009, 'Grimfang'),
-      npc(1010, 'Zone_Event_Mob'),
+      npc(1010, 'Zone_Event_Mob', { bodytype: 67, assistradius: 50 }),   // a zone helper NPC (scripted spawner / emote)
       npc(1011, 'Both_Eyes', { see_invis: true, see_invis_undead: true, see_hide: true }),
       npc(1012, 'Undead_Eyes', { see_invis_undead: true }),
       npc(1013, 'Sharp_Eyes', { see_improved_hide: true }),
@@ -191,6 +191,14 @@ describe('the response shape', () => {
     expect(npcNamed(b, 'a gnoll pup').aggro).toBeNull();                 // aggroradius 0
     expect(npcNamed(b, 'Lord Rax').aggro).toBe(70);
     expect(b.points.flatMap(p => p.npcs).filter(n => n.aggro === 70).length).toBeGreaterThan(5);
+  });
+
+  // the guild lead, 2026-10-16: "These emotes show up as red" — the zone's helper NPCs carry an aggro radius and a
+  // faction in the data but never fight.
+  it('a zone helper NPC (body type 65/66/67) gets no aggro ring, no faction and no social ring', async () => {
+    const b = await body();
+    expect(npcNamed(b, 'Zone Event Mob')).toMatchObject({ aggro: null, fac: 0, assist: null, pf: 0 });
+    expect(npcNamed(b, 'Lord Rax')).toMatchObject({ aggro: 70, fac: 1430 });   // a real mob keeps both
   });
 
   it('keeps the server frame (spawn2 x/y as stored) and only enabled points of THIS zone', async () => {
