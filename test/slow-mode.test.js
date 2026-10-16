@@ -182,3 +182,35 @@ describe('wiring', () => {
     expect(state).toMatch(/slowMode\.timerHoursForKill\(bossId, timerHours, killedAt\)/);
   });
 });
+
+// ── the announcement goes to #raid-chat and pings the raider roles (the guild lead, 2026-10-15) ──────────
+describe('slow-mode announcement', () => {
+  const sent = [];
+  const roles = new Map([
+    ['r1', { id: 'r1', name: 'Raid Pack' }], ['r2', { id: 'r2', name: 'Raid Recruit' }], ['r3', { id: 'r3', name: 'Officer' }],
+  ]);
+  const channel = (id) => ({ id, guild: { roles: { cache: roles } }, send: async (m) => { sent.push({ id, m }); } });
+  const client = (failIds = []) => ({ channels: { fetch: async (id) => { if (failIds.includes(id)) throw new Error('no access'); return channel(id); } } });
+  beforeEach(() => { sent.length = 0; delete process.env.RAID_CHAT_CHANNEL_ID; delete process.env.SLOWMODE_PING_ROLES; process.env.TIMER_CHANNEL_ID = 'timers'; });
+
+  it('posts to #raid-chat (the known id when RAID_CHAT_CHANNEL_ID is unset), not the timer channel', async () => {
+    expect(await slowMode.announce(client(), 'Slow mode is on')).toBe(true);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].id).toBe('1193692008812920863');
+  });
+  it('pings Raid Pack and Raid Recruit, and only those roles may ping', async () => {
+    await slowMode.announce(client(), 'Slow mode is on');
+    expect(sent[0].m.content).toBe('<@&r1> <@&r2> Slow mode is on');
+    expect(sent[0].m.allowedMentions).toEqual({ parse: [], roles: ['r1', 'r2'] });
+  });
+  it('honours RAID_CHAT_CHANNEL_ID and SLOWMODE_PING_ROLES', async () => {
+    process.env.RAID_CHAT_CHANNEL_ID = 'rc'; process.env.SLOWMODE_PING_ROLES = 'Officer';
+    await slowMode.announce(client(), 'x');
+    expect(sent[0].id).toBe('rc');
+    expect(sent[0].m.content).toBe('<@&r3> x');
+  });
+  it('falls back to the timer channel only when #raid-chat cannot be reached', async () => {
+    await slowMode.announce(client(['1193692008812920863']), 'x');
+    expect(sent[0].id).toBe('timers');
+  });
+});

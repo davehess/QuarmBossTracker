@@ -542,6 +542,8 @@ next touch one rather than assuming a missing row means a missing doc.
   live UI files at their own resolution, no target needed; the file's last-written time is shown. Waiting on the
   guild lead's check of whether the time moves after /camp. The chat-window 🗑 works again (`2ee913cb`): a refusal
   shows on the card, Save resets the baseline, a click is not a drag.
+- **✅ Rampage rings on the Map (bot 3.1.279 main, agent 3.7.184 beta, 2026-10-15, §343):** the target's Area Rampage
+  and Rampage reach, from the server's own rules. Engagement-slot list for Target Info: options A/B with the guild lead.
 - **✅ Guild + raid chat while out of game (bot 3.1.277 main, agent 3.7.182 beta, 2026-10-15, §342):** the Chat overlay
   relays the guild's /gu and /rs from other Mimics while you're not in game, with "N in game with Mimic" and a
   "nobody in game" note. Waiting on the guild lead's out-of-game look.
@@ -6150,6 +6152,8 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
 - ✅ Buff landings no longer lost per batch (`insert_buff_casts`, 3.1.268 hotfix).
 - ✅ A stalled role lookup no longer demotes an officer (Admin tab, DKP tick 403; 3.1.270); dashboard shows the bot's refusal (agent 3.7.178).
 - ✅ Slow mode: 18 h for every boss we kill (3.1.269); the agent reads Druzzil's "thread of time" lines (3.7.177). ⏳ Pin the ON wording.
+- ✅ Slow-mode announcement → #raid-chat, pings Raid Pack / Raid Recruit (3.1.280); a boss's hail slot opens from its first
+  flag grant when the kill has no death line (3.1.281) — both `[hotfix]` mid-raid, DECISIONS §344. ⏳ Lockout line as a kill (agent, beta).
 - ✅ Hail board counts guide ticks + /who sightings; departed members flip to is_member=false; raid_nights + merge 409s; batched
   threat sweep (`prune_threat_snapshots`) — all 3.1.271. ⏳ `VACUUM FULL`/`pg_repack` off-hours to give the space back.
 - ✅ Mimic chat wrap spacing (beta). ✅ Feedback in its own window with an autosaved draft (agent 3.7.179 beta; ⏳ live check).

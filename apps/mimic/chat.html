@@ -422,14 +422,20 @@
     // "Swapped to X": display only. No timestamp button, so there is nothing to copy; it is not a chat line.
     if (l.sep) return '<div class="sep" data-n="' + l.n + '"><span>' + esc(l.text) + '</span></div>';
     var you = !!l.self, who;
+    // A tell names YOUR character on every line, both ways — "Aldenmar → Brackwyn", "Brackwyn → Aldenmar" — so a
+    // conversation read across alts says which one sent or took each line (the guild lead, 2026-10-15: "know which
+    // character i sent it from"). No character known (an old line) falls back to "You".
+    var tellOn = l.ch === 'tell' && !l.npc && l.on ? String(l.on) : '';
     if (l.ch === 'zone' || /^(?:melee|spell|skill|loot|random|other)$/.test(l.ch)) who = '';   // the log's own sentence: no speaker
     else if (l.npc) who = '<span class="who npc">' + esc(l.who) + '</span>';
+    else if (you && tellOn) who = '<span class="who you" title="sent from ' + esc(tellOn) + '">' + esc(tellOn) + '</span>';
     else if (you) who = '<span class="who you">You</span>';
     else who = '<span class="who name">' + esc(l.who) + '</span>';
     if (l.to) who += '<span class="arrow">→</span><span class="who name">' + esc(l.to) + '</span>';
+    else if (tellOn && !you) who += '<span class="arrow">→</span><span class="who you" title="received on ' + esc(tellOn) + '">' + esc(tellOn) + '</span>';
     var copied = l.n === _copiedN;
     var viaMark = l.via === 'guild' ? '<span class="via" title="Relayed from another member\'s Mimic while you are out of game">via guild</span>' : '';
-    var otag = tag && l.on ?'<span class="otag" title="heard on ' + esc(l.on) + '">' + esc(l.on) + '</span>' : '';
+    var otag = tag && l.on && !tellOn ? '<span class="otag" title="heard on ' + esc(l.on) + '">' + esc(l.on) + '</span>' : '';
     return '<div class="ln' + (l.ch === 'zone' ? ' zone' : '') + '" style="--lc:' + esc(lineColor(l)) + '" data-n="' + l.n + '"><button type="button" class="tm' + (copied ? ' copied' : '') + '" title="Click to copy this line">' + (copied ? 'copied' : hhmm(l.t)) + '</button>' + tagHtml(l) + otag + who + '<span class="tx">' + (l.ch === 'zone' ? '→ ' : '') + esc(l.text) + '</span>' + viaMark + '</div>';
   }
   // One row, with the "heard on" tag where the character changed from the row before it (a swap line resets
@@ -443,12 +449,13 @@
   }
   // The search box. A name matches a line when it starts the SPEAKER's name, or the name of the character of
   // yours the line was heard on (case does not matter). A zone line has no speaker: it belongs to the
-  // character whose log it came from. A swap line is shown only with no search.
+  // character whose log it came from. A swap line is shown only with no search. A tell YOU sent matches the
+  // name it went to, so a search for one person shows the whole conversation, both sides.
   function startsWithCI(s, q){ return String(s == null ? '' : s).toLowerCase().indexOf(q) === 0; }
   function matchesFind(l, q){
     if (!q) return true;
     if (l.sep) return false;
-    return startsWithCI(l.on, q) || (!l.self && l.ch !== 'zone' && startsWithCI(l.who, q));
+    return startsWithCI(l.on, q) || (!l.self && l.ch !== 'zone' && startsWithCI(l.who, q)) || (l.ch === 'tell' && startsWithCI(l.to, q));
   }
   function lineVisible(f, l){ return l.sep ? (_findQ === '' && !onlyActive()) : (f(l) && chanShown(l) && matchesFind(l, _findQ)); }
   // The same key the agent de-duplicates its ring with, so a history line already in the live feed is not shown twice.
@@ -463,8 +470,10 @@
     // a zone change copies as the plain log line, not as something a character said
     if (l.ch === 'zone') return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + 'You have entered ' + l.text + '.';
     if (/^(?:melee|spell|skill|loot|random|other)$/.test(l.ch)) return (hhmm(l.t) ? '[' + hhmm(l.t) + '] ' : '') + l.text;
-    var who = l.npc ? l.who : (l.self ? 'You' : l.who);
+    var tellOn = l.ch === 'tell' && !l.npc && l.on ? String(l.on) : '';
+    var who = l.npc ? l.who : (l.self ? (tellOn || 'You') : l.who);
     if (l.to) who += ' → ' + l.to;
+    else if (tellOn && !l.self) who += ' → ' + tellOn;
     var t = hhmm(l.t);
     return (t ? '[' + t + '] ' : '') + who + ': ' + l.text;
   }

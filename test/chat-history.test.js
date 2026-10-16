@@ -491,6 +491,16 @@ describe('chat.html: search, history and rows', () => {
       expect(m.matchesFind(zone, 'brackwyn')).toBe(true);
       expect(m.matchesFind(zone, 'alden')).toBe(false);
     });
+    // the guild lead, 2026-10-15: "when i search for someone in tells i should see conversation with them"
+    it('a tell you sent matches the name it went to, so one search shows both sides of the conversation', () => {
+      const sent = ln(5, 'tell', 'You', 'yeah', 'Aldenmar', { self: true, to: 'Corvale' });
+      const got = ln(6, 'tell', 'Corvale', 'ah nice', 'Aldenmar');
+      expect(m.matchesFind(sent, 'corv')).toBe(true);
+      expect(m.matchesFind(got, 'corv')).toBe(true);
+      expect(m.matchesFind(sent, 'rethlan')).toBe(false);
+      // the recipient match is for tells only
+      expect(m.matchesFind(ln(7, 'say', 'You', 'hi', 'Aldenmar', { self: true, to: 'Corvale' }), 'corv')).toBe(false);
+    });
     it('an empty search matches everything; a swap line only shows with no search', () => {
       expect(m.matchesFind(heard, '')).toBe(true);
       const sep = { n: 9, sep: 1, from: 'A', to: 'B', text: 'Swapped to B' };
@@ -579,6 +589,21 @@ describe('chat.html: search, history and rows', () => {
     expect(html).not.toContain('class="tm');
     expect(html).not.toContain('<button');
     expect(html).toContain('Swapped to Brackwyn');
+  });
+  // the guild lead, 2026-10-15: "know which character i sent it from"
+  it('a tell names your character both ways, on the row and in the copied line; no character falls back to "You"', () => {
+    const m = make();
+    const sent = ln(1, 'tell', 'You', 'yeah', 'Aldenmar', { self: true, to: 'Corvale', t: new Date(2026, 9, 14, 22, 37, 0).getTime() });
+    const got = ln(2, 'tell', 'Corvale', 'ah nice', 'Aldenmar', { t: new Date(2026, 9, 14, 22, 38, 0).getTime() });
+    const old = ln(3, 'tell', 'You', 'hi', '', { self: true, to: 'Corvale', t: new Date(2026, 9, 14, 22, 39, 0).getTime() });
+    expect(m.lineHtml(sent)).toMatch(/<span class="who you"[^>]*>Aldenmar<\/span><span class="arrow">→<\/span><span class="who name">Corvale<\/span>/);
+    expect(m.lineHtml(got)).toMatch(/<span class="who name">Corvale<\/span><span class="arrow">→<\/span><span class="who you"[^>]*>Aldenmar<\/span>/);
+    expect(m.lineHtml(old)).toContain('<span class="who you">You</span>');
+    expect(m.copyLineText(sent)).toBe('[22:37] Aldenmar → Corvale: yeah');
+    expect(m.copyLineText(got)).toBe('[22:38] Corvale → Aldenmar: ah nice');
+    // the name is on the line, so the "heard on" tag never doubles it
+    expect(m.lineHtml(got, true)).not.toContain('class="otag"');
+    expect(m.lineHtml(ln(4, 'guild', 'Corvale', 'hi', 'Aldenmar'), true)).toContain('class="otag"');
   });
   it('a zone row is a dim line "→ Zone" with no speaker, and a timestamp click copies the plain log line', () => {
     const m = make();
