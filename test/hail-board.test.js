@@ -1116,3 +1116,33 @@ describe('the wiring in index.js', () => {
     expect(() => noteFn({ noteGrants: () => Promise.reject(new Error('x')) })([])).not.toThrow();
   });
 });
+
+// ── a boss's projection opens on its first flag grant when no kill was confirmed (the guild lead, 2026-10-15:
+// "still no Planar Projection on the command center" — Bertoxxulous died, 60 raiders were flagged, but the one
+// kill upload had no death line, so the kill-confirmed opener never ran) ──────────────────────────────────────
+describe('a boss window opens from its first fresh flag grant', () => {
+  const CODECAY = '200';                                               // the zone id the agent sends
+  const grant = (e, name, min, key = 'fuirstel_4', zone = CODECAY) => {
+    e.flag(name, key, 'event', at(min), { zone });
+    return { character: name, flag_key: key, source: 'event', earned_at: at(min), zone, npc: null };
+  };
+  it('Bertoxxulous: the first fuirstel_4 in the Crypt of Decay opens its projection window over the raid', async () => {
+    const e = env({ raid_roster: rosterRows(RAID, 'u1', 1) });
+    const w = await e.hb.noteGrants([grant(e, 'Aldenmar', 0)]);
+    expect(w).toMatchObject({ boss_id: 'bertoxxulous', npc_name: 'A Planar Projection', zone: 'The Crypt of Decay' });
+    expect(Date.parse(w.expires_at) - Date.parse(w.opened_at)).toBe(20 * MIN);
+    expect(w.roster.slice().sort()).toEqual(RAID.slice().sort());
+  });
+  it('a later stage of the series, or the right flag in another zone, opens nothing', async () => {
+    const e = env({ raid_roster: rosterRows(RAID, 'u1', 1) });
+    expect(await e.hb.noteGrants([grant(e, 'Aldenmar', 0, 'fuirstel_5')])).toBeNull();
+    expect(await e.hb.noteGrants([grant(e, 'Aldenmar', 0, 'fuirstel_4', '205')])).toBeNull();
+    expect(e.hb._windows()).toEqual([]);
+  });
+  it('a confirmed kill arriving afterwards joins the same window instead of opening a second', async () => {
+    const e = env({ raid_roster: rosterRows(RAID, 'u1', 1) });
+    await e.hb.noteGrants([grant(e, 'Aldenmar', 0)]);
+    await e.hb.openWindow({ bossName: 'Bertoxxulous', killedAtMs: KILL - MIN, participants: ['Brackwyn'] });
+    expect(e.hb._windows().filter(w => w.boss_id === 'bertoxxulous')).toHaveLength(1);
+  });
+});
