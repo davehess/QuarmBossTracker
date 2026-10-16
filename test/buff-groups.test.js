@@ -410,6 +410,9 @@ async function callHandler({ identity = { discord_id: 'u1' }, query = 'class=Cle
     './utils/raidBuffs': rb,
     './utils/range': rangeUtil,
     './utils/buffGroups': bg,
+    // the bundle's coalescing cache and the shared roster/characters snapshots (real: they only call the fake client)
+    './utils/ttlCache': require('../utils/ttlCache.js'),
+    './utils/readSnapshots': require('../utils/readSnapshots.js'),
   };
   const scope = {
     mimicLink: { requireAgentAuth: async () => identity },
