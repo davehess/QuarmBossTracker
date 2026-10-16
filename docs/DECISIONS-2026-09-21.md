@@ -11108,6 +11108,16 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
   `noteGrants` only knew the kill-less flaggers. `grantOpener()` in `utils/hailBoard.js` now lets a `HAIL_BOSSES` entry
   open from the first fresh grant of its own `done[0]` flag in its own zone; one window per NPC still holds.
 - **Shipped mid-raid** with `[hotfix]` because the raid was heading to Agnarr next. (Agnarr itself is not on the hail
-  board: Karana wants a phrase, not a hail.)
+  board: Karana wants a phrase, not a hail.) Live 01:32 UTC; tonight's Bertox grants (01:16–01:25 UTC) came before it,
+  and `noteGrants` only reads grants fresh at ingest (15 min), so tonight's slot was not back-filled — the next boss is
+  the first. The flags themselves were all recorded.
 - **Open:** the agent should read *"You have incurred a lockout for <boss>"* as a confirmed kill (Mimic beta), so a
   wipe on the last tick still confirms the kill. Not built.
+
+### 345. Chat overlay: a tell search shows the whole conversation, and names your character (2026-10-15, agent 3.7.185, beta)
+- **The ask** (the guild lead): *"when i search for someone in tells i should see conversation with them and know which
+  character i sent it from"*. The search matched the speaker, and your own tell's speaker is "You", so a name search
+  showed only their half.
+- **Built** (`apps/mimic/chat.html`): a tell you sent matches the name it went to; every tell row names your character
+  both ways ("Aldenmar → Corvale" sent, "Corvale → Aldenmar" received), and the copied line reads the same. A line with
+  no known character still says "You". Overlay-only: the agent already stamped each line with its character.
