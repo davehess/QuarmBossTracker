@@ -318,8 +318,9 @@ describe('the pieces group attribution depends on', () => {
     let query = '';
     const supabase = { selectAllPaged: async (_t, q) => { query = q; return raidRows(); } };
     const liveRaidSplit = new Function(
-      '_raidSplitCache', '_raidGroups', '_keepRaidSplit', raidSplitSrc + '\nreturn _liveRaidSplit;',
-    )({ split: null, at: 0 }, { RAID_LIVE_MS: 120000, groupRaids }, (s) => s);
+      '_raidSplitCache', '_raidGroups', '_keepRaidSplit', 'require', raidSplitSrc + '\nreturn _liveRaidSplit;',
+    )({ split: null, at: 0 }, { RAID_LIVE_MS: 120000, groupRaids }, (s) => s,
+      (p) => createRequire(import.meta.url)(p.replace('./utils/', '../utils/')));   // the handler's './utils/readSnapshots'
     const split = await liveRaidSplit(supabase, 'wolfpack');
     expect(query).toMatch(/select=[^&]*group_num/);
     expect(bot.mem._groupmatesFromSplit(split, 'Aldenmar').sort()).toEqual(['Brackwyn', 'Corvale', 'Rethlan']);

@@ -11755,19 +11755,23 @@ async function _maybeRecordChatLoot(chatRow, uploadedByDiscordId) {
 //
 // Requester zone is resolved from character_live_state.zone_name for the
 // requesting character (the agent now sends ?character=<self>, mirroring #113).
-// One 2s-cached read of the live-state zone snapshot is shared by all three
-// handlers; Supabase disabled/failed → empty map → requester zone unresolved →
-// fail-open (served unfiltered, exactly as before).
+// One 10s-cached read of the live-state zone snapshot is shared by all three
+// handlers (callers who arrive while it is loading share the one read); Supabase
+// disabled/failed → empty map → requester zone unresolved → fail-open (served
+// unfiltered, exactly as before; a failed read is not kept). The Map is SHARED:
+// read it, never edit it. 10s is far inside the 10-min freshness the rows are
+// read with, and a zone only decides which cross-client rows a raider is shown.
 let _liveZoneCache = { at: 0, map: new Map() };
-const LIVE_ZONE_TTL_MS = 2_000;
+const _liveZoneEntries = new Map();
+const LIVE_ZONE_TTL_MS = 10_000;
 async function _liveZoneMap() {
-  if (_liveZoneCache.map && (Date.now() - _liveZoneCache.at) < LIVE_ZONE_TTL_MS) return _liveZoneCache.map;
   const supabase = require('./utils/supabase');
-  const map = new Map();   // character(lower) → { zone_name, zone_id }
-  if (supabase.isEnabled()) {
-    const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
-    const since = new Date(Date.now() - 10 * 60 * 1000).toISOString();   // 10-min freshness
-    try {
+  if (!supabase.isEnabled()) return new Map();
+  try {
+    return await require('./utils/ttlCache').cached(_liveZoneEntries, 'zones', LIVE_ZONE_TTL_MS, async () => {
+      const map = new Map();   // character(lower) → { zone_name, zone_id }
+      const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+      const since = new Date(Date.now() - 10 * 60 * 1000).toISOString();   // 10-min freshness
       const rows = await supabase.select('character_live_state',
         `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(since)}` +
         `&select=character,zone_name,zone_id`);
@@ -11777,10 +11781,13 @@ async function _liveZoneMap() {
             { zone_name: r.zone_name || null, zone_id: (r.zone_id != null ? Number(r.zone_id) : null) });
         }
       }
-    } catch (err) { console.warn('[live-zone-map] fetch failed:', err && err.message); }
+      _liveZoneCache = { at: Date.now(), map };
+      return map;
+    });
+  } catch (err) {
+    console.warn('[live-zone-map] fetch failed:', err && err.message);
+    return new Map();
   }
-  _liveZoneCache = { at: Date.now(), map };
-  return map;
 }
 // Which ZONE a kill happened in, as an eqemu zone id, for routing its card to
 // the right event thread when two events overlap (the guild lead, 2026-09-07). Two
@@ -12021,13 +12028,14 @@ const _CURE_RANK = { curse: 0, blind: 1, poison: 2, disease: 3 };
 // can render "Allure (Sorvane)".
 // Short-TTL per-target cache (#73) — target-buffs was the only hot-path GET
 // that hit Supabase on EVERY request (audit); at 60 raiders a shared boss is
-// polled by everyone at once. Mirror the character-live-state relay cache: 2s
+// polled by everyone at once. Mirror the character-live-state relay cache: 5s
 // TTL keyed by target-lower collapses N simultaneous polls into one Supabase
-// read per window while staying live enough for a charm/debuff timer.
+// read per window (and callers arriving mid-read share it, utils/ttlCache.js)
+// while staying live enough for a charm/debuff timer.
 // (target-casts needs no cache — it reads the in-memory _castingByTarget relay,
 // never Supabase.)
-const TARGET_BUFFS_CACHE_MS = 2_000;
-const _targetBuffsRelayCache = new Map();   // nameLower → { at, payload }
+const TARGET_BUFFS_CACHE_MS = 5_000;
+const _targetBuffsRelayCache = new Map();   // cacheKey → ttlCache entry (the payload string)
 async function _handleAgentTargetBuffs(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
@@ -12056,21 +12064,17 @@ async function _handleAgentTargetBuffs(req, res) {
   // a cached list, and the cache silently undoes the filtering below.
   const cacheKey = name.trim().toLowerCase() + '|' + (requesterZone || '*')
                  + '|' + (targetId != null ? targetId : '*');
-  const cached = _targetBuffsRelayCache.get(cacheKey);
-  if (cached && Date.now() - cached.at < TARGET_BUFFS_CACHE_MS) {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(cached.payload);
-  }
   const supabase = require('./utils/supabase');
   if (!supabase.isEnabled()) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ buffs: [], note: 'supabase disabled' }));
   }
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+  try {
+    const payload = await require('./utils/ttlCache').cached(_targetBuffsRelayCache, cacheKey, TARGET_BUFFS_CACHE_MS, async () => {
   // 3h window covers the longest reasonable charm/buff lifetime; per-row
   // filter below drops anything past its catalog duration.
   const since = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
-  try {
     const rows = await supabase.select('buff_casts',
       `guild_id=eq.${encodeURIComponent(guildId)}&target=ilike.${encodeURIComponent(name)}` +
       `&cast_at=gte.${encodeURIComponent(since)}` +
@@ -12113,9 +12117,8 @@ async function _handleAgentTargetBuffs(req, res) {
         owner:          v.row.observer || null,
       });
     }
-    const payload = JSON.stringify({ buffs });
-    if (_targetBuffsRelayCache.size > 200) _targetBuffsRelayCache.clear();
-    _targetBuffsRelayCache.set(cacheKey, { at: Date.now(), payload });
+    return JSON.stringify({ buffs });
+    });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(payload);
   } catch (err) {
@@ -14038,25 +14041,27 @@ async function _handleAgentCharacterLiveState(req, res) {
 // cleric's readiness is meaningless). One cached payload serves the whole
 // raid's poll fan-in.
 const DI_STATUS_CACHE_MS = 3000;
-let _diStatusRelayCache = { at: 0, payload: null };
+const _diStatusEntries = new Map();   // 'payload' → ttlCache entry (the payload string)
 async function _handleAgentDiStatus(req, res) {
   const identity = await mimicLink.requireAgentAuth(req, res);
   if (!identity) return;
-  if (_diStatusRelayCache.payload && Date.now() - _diStatusRelayCache.at < DI_STATUS_CACHE_MS) {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(_diStatusRelayCache.payload);
-  }
   const supabase = require('./utils/supabase');
   if (!supabase.isEnabled()) { res.writeHead(503); return res.end(JSON.stringify({ error: 'supabase disabled' })); }
+  const payload = await require('./utils/ttlCache').cached(_diStatusEntries, 'payload', DI_STATUS_CACHE_MS, () => _buildDiStatusPayload(supabase));
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(payload);
+}
+async function _buildDiStatusPayload(supabase) {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const freshIso = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-  const [rows, healers] = await Promise.all([
+  const [rows, classed] = await Promise.all([
     supabase.select('character_live_state',
       `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(freshIso)}` +
       `&select=character,di_ready_at,di_mem,self_mana_pct,updated_at`).catch(() => []),
-    supabase.select('characters',
-      `guild_id=eq.${encodeURIComponent(guildId)}&class=in.(Cleric,Druid,Shaman)&select=name,class`).catch(() => []),
+    // The class list the buff queue reads too (utils/readSnapshots.js, 5-min snapshot); healers are its Cleric/Druid/Shaman rows.
+    require('./utils/readSnapshots').characterClasses(supabase, guildId).catch(() => []),
   ]);
+  const healers = (classed || []).filter(c => c && (c.class === 'Cleric' || c.class === 'Druid' || c.class === 'Shaman'));
   const healerClassByName = new Map((healers || []).map(c => [String(c.name || '').toLowerCase(), String(c.class || '')]));
   const out = [];
   // Piggybacked healer mana (the guild lead, 2026-07-15: "Command center should have
@@ -14076,10 +14081,7 @@ async function _handleAgentDiStatus(req, res) {
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
   healerMana.sort((a, b) => a.mana_pct - b.mana_pct);
-  const payload = JSON.stringify({ clerics: out, healer_mana: healerMana, updated_at: Date.now() });
-  _diStatusRelayCache = { at: Date.now(), payload };
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  return res.end(payload);
+  return JSON.stringify({ clerics: out, healer_mana: healerMana, updated_at: Date.now() });
 }
 
 // Server-side hurt-duration tracker for the Extended Target overlay. A single
@@ -14650,17 +14652,19 @@ async function _handleAgentLiveDamage(req, res) {
 
   // Memo per boss — a raid of ~20 agents polls this on the same fight, and the
   // query is identical for all of them. Same idiom as the extended-target
-  // bundle's 1.5s memo; without it this is 20x the reads for one answer.
+  // bundle's memo; without it this is 20x the reads for one answer. A caller
+  // that arrives while the read is in flight shares it (utils/ttlCache.js).
+  //   • the live ask (no fight_start): 5 s.
+  //   • one fight (the History's settle passes, 40 s and 100 s after the fight ended): the fight is over,
+  //     so the answer moves little. Every client names the fight by ITS OWN first line, a few seconds
+  //     apart, so the key is the start rounded to 10 s; the 20 s window the query uses covers the
+  //     difference. Kept 30 s, NOT longer: the two passes are 60 s apart because the 100 s one exists to
+  //     catch late snapshots, and a longer memo would hand it the 40 s answer.
   const oneFight = Number.isFinite(fightStartMs);
-  const key = boss.toLowerCase() + (oneFight ? '|' + fightStartMs : '');
-  const now = Date.now();
+  const key = boss.toLowerCase() + (oneFight ? '|' + Math.round(fightStartMs / 10_000) : '');
   globalThis._liveDmgCache = globalThis._liveDmgCache || new Map();
-  const hit = globalThis._liveDmgCache.get(key);
-  if (hit && now - hit.at < 2000) {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(hit.body);
-  }
-
+  const out = await require('./utils/ttlCache').cached(globalThis._liveDmgCache, key, oneFight ? 30_000 : 5_000, async () => {
+  const now = Date.now();
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   // 3 minutes back: long enough to cover a snapshot gap or a shed blip, short
   // enough that the PREVIOUS pull of the same boss cannot bleed in. Repeat
@@ -14694,8 +14698,7 @@ async function _handleAgentLiveDamage(req, res) {
     }
   } catch (err) {
     console.warn('[live-damage] select failed:', err?.message);
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    return res.end(JSON.stringify({ players: [], note: 'unavailable' }));
+    return { body: JSON.stringify({ players: [], note: 'unavailable' }), keep: false };
   }
 
   // Newest row per uploader. Ordered desc above, so the first sighting wins.
@@ -14780,15 +14783,11 @@ async function _handleAgentLiveDamage(req, res) {
     newest_sample_age_sec: newestAt ? Math.round((now - newestAt) / 1000) : null,
     oldest_sample_age_sec: oldestAt ? Math.round((now - oldestAt) / 1000) : null,
   });
-  globalThis._liveDmgCache.set(key, { at: now, body });
-  // Bound the memo — boss names are unbounded over a long uptime.
-  if (globalThis._liveDmgCache.size > 50) {
-    for (const [k, v] of globalThis._liveDmgCache) {
-      if (now - v.at > 60_000) globalThis._liveDmgCache.delete(k);
-    }
-  }
+  return { body, keep: true };
+  // Bounded at 50 keys — boss names are unbounded over a long uptime.
+  }, { shouldCache: (r) => r.keep, max: 50 });
   res.writeHead(200, { 'Content-Type': 'application/json' });
-  return res.end(body);
+  return res.end(out.body);
 }
 
 // GET /api/agent/my-parses?w=<1d|7d|30d|90d|exp|life>&scope=<bosses|all>&char=<name>&zone=<id>&q=<mob text>
@@ -14853,12 +14852,12 @@ function _keepRaidSplit(split) {
 }
 async function _liveRaidSplit(supabase, guildId, maxAgeMs = 5000) {
   if (_raidSplitCache.split && Date.now() - _raidSplitCache.at < maxAgeMs) return _raidSplitCache.split;
-  const since = new Date(Date.now() - _raidGroups.RAID_LIVE_MS).toISOString();
-  // Paged: one row per (uploader, name), ~1,000 at peak. A truncated read drops whole uploaders,
-  // and the split reads "one raid" when it cannot see the second.
-  const rows = await supabase.selectAllPaged('raid_roster',
-    `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(since)}` +
-    `&select=name,rank,uploaded_by_discord_id,captured_at,group_num`, 'uploaded_by_discord_id.asc,name').catch(() => null);
+  // The shared 15-minute roster snapshot (utils/readSnapshots.js, the same rows the buff queue and Extended
+  // Target read): groupRaids keeps only each uploader's latest upload and drops an uploader whose latest is
+  // past RAID_LIVE_MS, so the wider window names the same raids as a two-minute read did. Paged inside: one
+  // row per (uploader, name), ~1,000 at peak; a truncated read drops whole uploaders, and the split reads
+  // "one raid" when it cannot see the second.
+  const rows = await require('./utils/readSnapshots').raidRoster(supabase, guildId).catch(() => null);
   // `failed` tells groupScope that "no raids" here means "could not look": it keeps today's behaviour.
   if (!rows) return Object.assign(_raidGroups.groupRaids([]), { failed: true });
   return _keepRaidSplit(_raidGroups.groupRaids(rows));
@@ -14947,12 +14946,13 @@ async function _handleAgentExtendedTarget(req, res) {
   try {
     // Bundle memo (2026-07-07 review): ~20 agents poll this every ~2-3s and
     // the two selects are identical across them (scoping happens in JS after
-    // the fetch). One 1.5s memo cuts the Supabase traffic ~20x.
-    let liveRows, buffRows, rosterLocRows;
-    if (globalThis._extBundleCache && Date.now() - globalThis._extBundleCache.at < 1500) {
-      ({ liveRows, buffRows, rosterLocRows } = globalThis._extBundleCache);
-    } else {
-    [liveRows, buffRows, rosterLocRows] = await Promise.all([
+    // the fetch). One 4s memo cuts the Supabase traffic ~40x, and an agent that
+    // asks while the bundle is still loading shares that read instead of
+    // sending its own (utils/ttlCache.js). The rows are SHARED: this handler
+    // only reads them.
+    const { liveRows, buffRows, rosterLocRows } = await require('./utils/ttlCache').cached(
+      (globalThis._extBundleCache = globalThis._extBundleCache || new Map()), 'bundle', 4000, async () => {
+    const [liveRows, buffRows, rosterRows] = await Promise.all([
       supabase.select('character_live_state',
         `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(onlineSince)}` +
         `&select=character,zone_name,self_hp_pct,self_hp_cur,self_hp_max,target_name,target_hp_pct,target_id,pet_name,pet_hp_pct,` +
@@ -14968,13 +14968,14 @@ async function _handleAgentExtendedTarget(req, res) {
       // Mimic in the raid covers every member's loc; rows without loc_at are
       // pre-forwarding uploads and are skipped at use time. Best-effort — the
       // clustering works (with less coverage) when this returns nothing.
-      // Paged: one row per (uploader, name), ~1,000 at peak.
-      supabase.selectAllPaged('raid_roster',
-        `guild_id=eq.${encodeURIComponent(guildId)}&loc_at=gte.${encodeURIComponent(onlineSince)}` +
-        `&select=name,loc_x,loc_y,loc_z,heading,loc_at`, 'uploaded_by_discord_id.asc,name').catch(() => []),
+      // Paged: one row per (uploader, name), ~1,000 at peak. The shared roster
+      // snapshot (utils/readSnapshots.js), narrowed here to the rows whose loc_at is fresh.
+      require('./utils/readSnapshots').raidRoster(supabase, guildId).catch(() => null),
     ]);
-    globalThis._extBundleCache = { at: Date.now(), liveRows, buffRows, rosterLocRows };
-    }
+    const locSince = Date.parse(onlineSince);
+    const rosterLocRows = (rosterRows || []).filter(r => r && r.loc_at && Date.parse(r.loc_at) >= locSince);
+    return { liveRows, buffRows, rosterLocRows };
+    });
     const now = Date.now();
     const live = (liveRows || []).filter(r => r && r.character);
 
@@ -15768,7 +15769,6 @@ async function _handleAgentRaidBuffQueue(req, res) {
 
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const ROSTER_FRESH_MS = 15 * 60 * 1000;
-  const rosterSince = new Date(Date.now() - ROSTER_FRESH_MS).toISOString();
 
   try {
     // Buff_casts window — 3h covers Aegolism/POTG/SoW/etc. extended-duration
@@ -15783,21 +15783,22 @@ async function _handleAgentRaidBuffQueue(req, res) {
     const liveSince = new Date(Date.now() - ROSTER_FRESH_MS).toISOString();
     // Bundle memo (2026-07-07 review): identical guild-wide selects for every
     // polling agent (~1 bundle/2s each across the raid); per-buffer scoping
-    // happens in JS afterwards. One 2s memo collapses them.
-    let liveRows, rosterRows, charRows, buffCastRows;
-    if (globalThis._rbqBundleCache && Date.now() - globalThis._rbqBundleCache.at < 2000) {
-      ({ liveRows, rosterRows, charRows, buffCastRows } = globalThis._rbqBundleCache);
-    } else {
-    [liveRows, rosterRows, charRows, buffCastRows] = await Promise.all([
+    // happens in JS afterwards. One 4s memo collapses them, and an agent that
+    // asks while the bundle is still loading shares that read instead of
+    // sending its own (utils/ttlCache.js). The rows are SHARED: read them, and
+    // copy a row before changing it (the hp_pct backfill below does).
+    const { liveRows, rosterRows, charRows, buffCastRows } = await require('./utils/ttlCache').cached(
+      (globalThis._rbqBundleCache = globalThis._rbqBundleCache || new Map()), 'bundle', 4000, async () => {
+    const snapshots = require('./utils/readSnapshots');
+    const [liveRows, rosterRows, charRows, buffCastRows] = await Promise.all([
       supabase.select('character_live_state',
         `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(liveSince)}&select=character,buffs,buff_count,zone_name,self_hp_pct,loc_x,loc_y,loc_z,updated_at`),
       // Paged: one row per (uploader, name) is ~1,000 rows at peak (21 uploaders x 48), which is
       // PostgREST's silent per-response cap, so an unpaged read dropped raiders off the queue.
-      supabase.selectAllPaged('raid_roster',
-        `guild_id=eq.${encodeURIComponent(guildId)}&captured_at=gte.${encodeURIComponent(rosterSince)}&select=name,class,group_num,rank,level,hp_pct,uploaded_by_discord_id,captured_at`,
-        'uploaded_by_discord_id.asc,name'),
-      supabase.select('characters',
-        `guild_id=eq.${encodeURIComponent(guildId)}&class=not.is.null&select=name,class`),
+      // The shared 15-minute roster snapshot (utils/readSnapshots.js): the raid split and Extended Target read it too.
+      snapshots.raidRoster(supabase, guildId).catch(() => null),
+      // name + class of every classed character: the 5-minute snapshot di-status shares.
+      snapshots.characterClasses(supabase, guildId).catch(() => null),
       // The newest still-running row per (target, spell) — NOT the newest N rows. A busy 3h window
       // holds 7-15k buff_casts rows but only ~350 distinct running (target, spell) pairs; a
       // `limit=2000` read was really 1,000, i.e. the last ~4 minutes of the raid, so an Aegolism cast
@@ -15808,8 +15809,8 @@ async function _handleAgentRaidBuffQueue(req, res) {
         `p_guild_id=${encodeURIComponent(guildId)}&p_since=${encodeURIComponent(buffCastsSince)}`,
         'target.asc,spell_name'),
     ]);
-    globalThis._rbqBundleCache = { at: Date.now(), liveRows, rosterRows, charRows, buffCastRows };
-    }
+    return { liveRows, rosterRows, charRows, buffCastRows };
+    });
 
     // class lookup: OpenDKP roster wins, fall back to Zeal raid roster.
     const classByName = new Map();
@@ -15876,7 +15877,7 @@ async function _handleAgentRaidBuffQueue(req, res) {
     // null; without this, "freshest row wins" flickered HP on/off as the
     // two Mimics alternated heartbeats.
     for (const [k, r] of rosterByName) {
-      if (r.hp_pct == null && hpByName.has(k)) r.hp_pct = hpByName.get(k).hp_pct;
+      if (r.hp_pct == null && hpByName.has(k)) rosterByName.set(k, { ...r, hp_pct: hpByName.get(k).hp_pct });   // a copy: the row is shared
     }
     const classFor = (n) => classByName.get(String(n).toLowerCase()) || (rosterByName.get(String(n).toLowerCase()) || {}).class || null;
 
@@ -20709,7 +20710,7 @@ async function _requesterZones(discordId) {
   return out;
 }
 
-// The lowercased names of this account's live characters (the same 2s/5min caches as the zones).
+// The lowercased names of this account's live characters (the same 10s/5min caches as the zones).
 async function _requesterChars(discordId) {
   if (!discordId) return [];
   const [zoneByChar, discordByChar] = await Promise.all([_liveZoneMap(), _charDiscordMap()]);
@@ -22033,6 +22034,12 @@ async function _handleAgentBackfillRequests(req, res) {
 // Assemble the enabled guild-trigger set + its version. Shared by the standalone
 // GET /guild-triggers and the multiplexed GET /poll (#106). `version` is the max
 // updated_at across the filtered set — cheap, sufficient for a no-change gate.
+// The table read is kept 60s per category (the class filter below is JS, so every class set shares it):
+// every agent asks every 2 minutes, and a raid's worth of asks was one full read each. A trigger edit
+// therefore reaches agents up to a minute later than it did, on top of their 2-minute poll. The rows are
+// SHARED between callers; the filter below builds a new array and edits nothing.
+const GUILD_TRIGGERS_CACHE_MS = 60_000;
+const _guildTriggersEntries = new Map();   // category → ttlCache entry (the enabled rows)
 async function _guildTriggersFor({ classes = [], category = null } = {}) {
   const supabase = require('./utils/supabase');
   if (!supabase.isEnabled()) return { version: '0', triggers: [], note: 'supabase disabled' };
@@ -22044,7 +22051,9 @@ async function _guildTriggersFor({ classes = [], category = null } = {}) {
   // id to break ties. It was one unpaged read: 484 enabled rows today, but a
   // single import added 381 of them, so the 1,000-row cap was one import away
   // from silently dropping triggers off the end of every agent's set.
-  const rows = await supabase.selectAllPaged('guild_triggers', q, 'category,name,id');
+  // A failed read (null) is answered but not kept.
+  const rows = await require('./utils/ttlCache').cached(_guildTriggersEntries, category || '', GUILD_TRIGGERS_CACHE_MS,
+    () => supabase.selectAllPaged('guild_triggers', q, 'category,name,id'), { shouldCache: Array.isArray });
 
   // Server-side class targeting filter — applies_to_classes is text[]; we
   // include triggers where the column is null/empty OR overlaps the

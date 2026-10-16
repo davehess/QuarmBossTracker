@@ -163,7 +163,14 @@ async function syncRecent({ pageLimit = 4 } = {}) {
   // IncludeSignUps carries everything we need, so after 3 consecutive detail
   // failures stop asking — otherwise every 30-min sync burns one request + one
   // 404 warn line PER EVENT (284 events = ~13.6k log lines/day of pure noise).
-  let evCount = 0, sgCount = 0, detailFails = 0;
+  //
+  // One request per table, not one per event plus one per event's signups: ~290 events a sync, every 30
+  // minutes, was ~28,000 Supabase requests a day (the guild lead, 2026-10-16: "log ingestion is WAY over").
+  // Rows are collected through the loop and sent after it. A key that appears twice in one request makes
+  // Postgres refuse the whole batch ("cannot affect row a second time"), so the last copy wins.
+  const eventRows = new Map();      // id → row
+  const signupRows = new Map();     // event_id|signup_id → row
+  let detailFails = 0;
   for (const stub of list) {
     const id = String(stub.id || stub.eventId || stub.event_id || '');
     if (!id) continue;
@@ -172,21 +179,34 @@ async function syncRecent({ pageLimit = 4 } = {}) {
     const merged = { ...stub, ...(detail || {}) };
     const eventRow = _projectEvent(merged);
     if (!eventRow) continue;
-    const r = await supabase.upsert('rh_events', [eventRow], 'id');
-    if (r) evCount++;
+    eventRows.set(eventRow.id, eventRow);
 
     const sUps = Array.isArray(merged.signUps) ? merged.signUps
                : Array.isArray(merged.signups)  ? merged.signups
                : Array.isArray(merged.entries)  ? merged.entries
                : [];
-    if (sUps.length === 0) continue;
-    const rows = sUps.map((s, i) => _projectSignup(id, s, i)).filter(Boolean);
-    if (rows.length > 0) {
-      await supabase.upsert('rh_signups', rows, 'event_id,signup_id');
-      sgCount += rows.length;
-    }
+    sUps.forEach((s, i) => {
+      const row = _projectSignup(id, s, i);
+      if (row) signupRows.set(row.event_id + '|' + row.signup_id, row);
+    });
   }
+  // Events first: rh_signups follows rh_events.
+  const evCount = await _upsertChunked(supabase, 'rh_events', [...eventRows.values()], 'id');
+  const sgCount = await _upsertChunked(supabase, 'rh_signups', [...signupRows.values()], 'event_id,signup_id');
   return { events: evCount, signups: sgCount };
+}
+
+// 500 rows holds every event of a sync and the signups of an ordinary one, so that is normally one
+// request per table; a very large sync splits rather than sending a multi-megabyte body. Returns how many
+// rows went in (a chunk whose request failed counts none).
+const RH_UPSERT_CHUNK = 500;
+async function _upsertChunked(supabase, table, rows, onConflict) {
+  let n = 0;
+  for (let i = 0; i < rows.length; i += RH_UPSERT_CHUNK) {
+    const chunk = rows.slice(i, i + RH_UPSERT_CHUNK);
+    if (await supabase.upsert(table, chunk, onConflict)) n += chunk.length;
+  }
+  return n;
 }
 
 // ── Staleness check (#34) ────────────────────────────────────────────────────
