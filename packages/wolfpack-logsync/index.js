@@ -33275,6 +33275,7 @@ function startWebDashboard(port) {
         return res.end(JSON.stringify(_cb));
       }
       if (req.url === '/api/map-mark' && req.method === 'POST') return _handleMapMark(req, res);
+      if (req.url === '/api/map-watch' && req.method === 'POST') return _handleMapWatch(req, res);
       if (req.url === '/api/map-leg' && req.method === 'POST') return _handleMapLeg(req, res);
       // Kite coach (map.html): one loop summary out, the guild's loops for the zone in.
       if (req.url === '/api/kite-loop' && req.method === 'POST') return _handleKiteLoopPost(req, res);
@@ -48243,8 +48244,10 @@ function _mapCopyInfo(zone, now) {
 // The same pull also brings the raid's shared targets and the escort trails (bot 3.1.263, DECISIONS 299), kept here per
 // zone: `targets[zone]` = { rows, botNow, pulledAt }, `trails[zone][<name>]` = { name, at, live, pulledAt, pts, tmax }.
 // Memory only; the bot is where they persist. An older bot sends neither and nothing here changes.
+// `watches[zone][<point_id>]` = { point_id, named, inst, by, at, seenAt, synced }: the spots marked "watch for <named>"
+// (see "Watched spots" below). Memory only, like targets and trails: the bot is where they persist.
 const _mapSync = { q: [], flushTimer: null, backoffUntil: 0, pulling: false, pullAt: 0, pullZone: null, since: {}, keys: new Set(),
-  targets: {}, trails: {} };
+  targets: {}, trails: {}, watches: {}, watchOff: {}, watchBackoffUntil: 0 };
 const _mapSyncKey = (zone, e) => zone + '|' + e.point_id + '|' + e.kind + '|' + (e.spawn_id == null ? '' : e.spawn_id) + '|' + e.at;
 function _mapSyncRemember(key) { if (_mapSync.keys.size > 4000) _mapSync.keys.clear(); _mapSync.keys.add(key); }
 function _mapSyncStop() {
@@ -48273,12 +48276,12 @@ function _mapLocalEvent(zone, zd, character, ev, now) {
   _mapSync.q.push({ zone, character: String(ch), ev: e });
   _mapSyncSchedule();
 }
-function _mapSyncRequest(method, query, bodyObj, done) {
+function _mapSyncRequest(method, query, bodyObj, done, endpoint) {
   let finished = false;
   const fin = (err, status, buf) => { if (finished) return; finished = true; done(err, status, buf); };
   try {
     const opts = _uploadOpts;
-    const u = new URL(opts.botUrl.replace(/\/encounter(\?.*)?$/, '/map-sync') + query);
+    const u = new URL(opts.botUrl.replace(/\/encounter(\?.*)?$/, endpoint || '/map-sync') + query);
     const mod = u.protocol === 'https:' ? https : http;
     const headers = { 'Authorization': 'Bearer ' + opts.token, 'User-Agent': `wolfpack-logsync/${AGENT_VERSION}` };
     let payload = null;
@@ -48324,12 +48327,121 @@ function _mapSyncPull(zone, now) {
     if (status !== 200) return;
     try {
       const j = JSON.parse(buf.toString('utf8'));
+      if (j) _mapWatchApplyBot(zone, j, Date.now());   // first: a spot just watched takes its events from this same answer
       if (j && Array.isArray(j.events)) _mapApplyRemote(zone, j.events, Date.now());
       if (j) _mapApplyShared(zone, j, Date.now());
     } catch { /* an unreadable answer is ignored; the next pull asks again */ }
   });
   return true;
 }
+// ── Watched spots (the guild lead, 2026-10-16: "when we snipe a single mob we should be able to mark it and create a
+// timer for everyone with the named PH spot and map loc") ─────────────────────────────────────────────────────────────
+// A watch is "this spawn point is where <named> shows up": the click menu sets it, the bot shares it with the guild
+// (POST /api/agent/map-watch, answered 404 by an older bot and then asked again in 10 minutes, quietly; the watch just
+// stays on this machine), and the pull brings everyone else's back as `watches`. What a watch changes:
+//   * a death / empty at the spot is taken from anyone in the same copy of the zone, not only your raid (_mapApplyRemote);
+//   * the Map stars it (`watched` in /api/map-state);
+//   * its respawn window shows in the Mimic Timers window (_mapWatchTimerRows).
+// A watch for another copy of the zone (inst set on both sides and different) is ignored; null on either side is taken.
+const MAP_WATCH_MAX     = 40;                  // per zone
+const MAP_WATCH_KEEP_MS = 12 * 60 * 60 * 1000; // a watch nobody has refreshed for this long is dropped (a raid night)
+const MAP_WATCH_GRACE_MS = 30 * 1000;          // a toggle the bot has not echoed yet is not undone by a pull that raced it
+// The watches that apply to the copy of the zone you are in now: { <point_id>: watch }.
+function _mapWatchFor(zone, now) {
+  const out = {}, zw = _mapSync.watches[zone];
+  if (!zw) return out;
+  const mine = _mapCurrentCopy(zone, now);
+  for (const [pid, w] of Object.entries(zw)) {
+    if (!w || !(now - w.seenAt <= MAP_WATCH_KEEP_MS)) { delete zw[pid]; continue; }
+    if (w.inst && mine && w.inst !== mine.token) continue;
+    out[pid] = w;
+  }
+  return out;
+}
+// The bot's answer: `watches: [{ point_id, named, inst, by, at }]` for the zone. No such field (an older bot) changes
+// nothing. The bot is the truth for what it holds: a watch it no longer lists is dropped once it has been in sync for a
+// while, but one it never heard of (the POST failed) stays, and one turned off here moments ago is not brought back.
+function _mapWatchApplyBot(zone, j, now) {
+  if (!j || !Array.isArray(j.watches)) return;
+  const zw = _mapSync.watches[zone] || (_mapSync.watches[zone] = {});
+  const off = _mapSync.watchOff[zone] || {};
+  const listed = new Set();
+  for (const w of j.watches.slice(0, MAP_WATCH_MAX)) {
+    if (!w || w.point_id == null || typeof w.named !== 'string' || !w.named) continue;
+    const pid = String(w.point_id);
+    if (off[pid] && now - off[pid] < MAP_WATCH_GRACE_MS) continue;
+    listed.add(pid);
+    zw[pid] = { point_id: w.point_id, named: _mapPrettyName(w.named).slice(0, 80), inst: typeof w.inst === 'string' ? w.inst : null,
+      by: w.by ? String(w.by).slice(0, 40) : null, at: Number.isFinite(Number(w.at)) ? Number(w.at) : now, seenAt: now, synced: true };
+  }
+  for (const [pid, w] of Object.entries(zw)) {
+    if (w.synced && !listed.has(pid) && now - w.seenAt > MAP_WATCH_GRACE_MS) delete zw[pid];
+  }
+}
+// Turn a watch on or off here (the click menu, via POST /api/map-watch), then tell the bot. Returns { ok, watched, named }.
+function _mapWatchSet(zone, mark, now, character) {
+  const rec = _mapZones.get(zone);
+  if (!rec || !rec.body) return { ok: false, error: 'no spawn data for this zone' };
+  const pid = String(mark && mark.point_id), point = rec.byId.get(pid);
+  if (!point) return { ok: false, error: 'unknown spawn point' };
+  const on = !!(mark && mark.on);
+  const zw = _mapSync.watches[zone] || (_mapSync.watches[zone] = {});
+  const copy = _mapCurrentCopy(zone, now);
+  let named = _mapPrettyName(mark && mark.named).slice(0, 80);
+  if (on && !named) named = _mapBestName(point) || '';
+  if (on && !named) return { ok: false, error: 'a name to watch for is required' };
+  if (on) {
+    if (!zw[pid] && Object.keys(zw).length >= MAP_WATCH_MAX) return { ok: false, error: 'too many watched spots in this zone' };
+    zw[pid] = { point_id: point.id, named, inst: copy ? copy.token : null, by: character ? String(character).slice(0, 40) : null,
+      at: now, seenAt: now, synced: false };
+    if (_mapSync.watchOff[zone]) delete _mapSync.watchOff[zone][pid];
+  } else {
+    if (zw[pid]) named = named || zw[pid].named;
+    delete zw[pid];
+    (_mapSync.watchOff[zone] || (_mapSync.watchOff[zone] = {}))[pid] = now;
+  }
+  if (_mapFetchAllowed() && character && now >= _mapSync.watchBackoffUntil) {
+    const body = { zone, point_id: point.id, named, on, inst: copy ? copy.token : null, character: String(character) };
+    _mapSyncRequest('POST', '', body, (err, status, buf) => {
+      if (err) return;
+      if (status === 404) { _mapSync.watchBackoffUntil = now + MAP_SYNC_BACKOFF_MS; return; }   // an older bot: the watch stays here
+      if (status !== 200) return;
+      const w = _mapSync.watches[zone] && _mapSync.watches[zone][pid];
+      if (on && w) w.synced = true;
+      try { const j = JSON.parse(buf.toString('utf8')); if (j) _mapWatchApplyBot(zone, j, Date.now()); } catch { /* the answer is not needed */ }
+    }, '/map-watch');
+  }
+  return { ok: true, watched: on, named };
+}
+// Timers-window rows for the watched spots that have a running respawn window, rebuilt on every snapshot (nothing to
+// arm or expire here, like _builtinTimerRows). Before the window opens it counts to the EARLIEST time; once open it says
+// "up now" and counts to the latest time, then to the end of the MAP_TIMER_KEEP_MS tail (the same moment _mapPrune
+// drops the timer). The spot's /loc: the spawn point is in the SERVER frame (see FRAMES above) and EverQuest's /loc
+// prints Y first, then X - the numbers the Map's own readout shows (map.html locText) - so "/loc <point.y>, <point.x>".
+function _mapWatchTimerRows(now) {
+  const rows = [];
+  for (const zone of Object.keys(_mapSync.watches)) {
+    const rec = _mapZones.get(zone);
+    if (!rec || !rec.body) continue;
+    const watched = _mapWatchFor(zone, now);
+    const timers = _mapZoneDoc(zone).timers;
+    for (const [pid, w] of Object.entries(watched)) {
+      const t = timers[pid], point = rec.byId.get(pid);
+      if (!t || !point || !(now <= t.latest + MAP_TIMER_KEEP_MS)) continue;
+      const phase = now < t.earliest ? 'wait' : now < t.latest ? 'window' : 'tail';
+      const endMs = phase === 'wait' ? t.earliest : phase === 'window' ? t.latest : t.latest + MAP_TIMER_KEEP_MS;
+      const fromMs = phase === 'wait' ? t.died_at : phase === 'window' ? t.earliest : t.latest;
+      const label = '★ ' + w.named + ' PH' + (phase === 'wait' ? '' : ' · up now') + ' · spot #' + point.id
+        + ' · /loc ' + Math.round(point.y) + ', ' + Math.round(point.x);
+      rows.push({ rule_key: null, rule_mode: 'speak', id: 'named|' + zone + '|' + pid + '|' + t.died_at, name: label, target: null, effect: label,
+        remaining_ms: endMs - now, duration_sec: Math.max(1, Math.round((endMs - fromMs) / 1000)), color: null, end_text: null,
+        warning_ms: 0, warn_text: null, warnings: [], bar_color: phase === 'wait' ? '#d29922' : '#3fb950', pinned: false,
+        scope: 'personal', kind: 'named', dismissible: true, test: false, group: 'trigger' });
+    }
+  }
+  return rows;
+}
+// ── end Watched spots ──
 // Whose map events you take (the guild lead, 2026-10-13, option C: "A now, B later"): your raid, or your group when
 // you are not in a raid, plus yourself. Zeal sends the zone id but no instance id, so the open world, our guild copy
 // and the PvP copy of a zone all looked like one; a raid or group is nearly always in one copy. B (the zone
@@ -48361,6 +48473,7 @@ function _mapApplyRemote(zone, events, now) {
     .slice(0, 500).sort((a, b) => Number(a.at) - Number(b.at));
   const party = _mapPartyNames(now);
   const mine = _mapCurrentCopy(zone, now);
+  const watched = _mapWatchFor(zone, now);
   let applied = 0, maxAt = _mapSync.since[zone] || 0;
   for (const raw of list) {
     const at = Number(raw.at);
@@ -48368,9 +48481,12 @@ function _mapApplyRemote(zone, events, now) {
     if (at > maxAt) maxAt = at;
     // Same copy of the zone (both sides read dbg.txt): take it from anyone. A different copy: never, even from your
     // raid. Either side not knowing: your raid / group, as before (see _mapPartyNames).
+    // A WATCHED spot's death / empty is heard from anyone (the guild lead, 2026-10-16: the watch is the invitation);
+    // the copy check above still applies when both sides know it, and every other event keeps the party filter.
     const inst = typeof raw.inst === 'string' ? raw.inst : null;
     if (inst && mine) { if (inst !== mine.token) continue; }
-    else if (!raw.by || !party.has(String(raw.by).toLowerCase())) continue;
+    else if ((!raw.by || !party.has(String(raw.by).toLowerCase()))
+      && !((raw.kind === 'died' || raw.kind === 'empty') && watched[String(raw.point_id)])) continue;
     const e = { point_id: raw.point_id, kind: String(raw.kind), spawn_id: Number(raw.spawn_id) > 0 ? Number(raw.spawn_id) : null,
       name: raw.name ? String(raw.name).slice(0, 80) : null, at };
     const key = _mapSyncKey(zone, e);
@@ -48813,7 +48929,7 @@ function _mapStatePayload(have, now, haveLocal) {
   const character = _mapActiveCharacter(now);
   const st = character ? _zealState[character] : null;
   const out = { zone: null, long_name: null, zone_id: null, version: null, status: character ? 'ok' : 'no-pipe', local_only: _localOnly(),
-    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], copy: null, cc: [], paths: {}, now };
+    map: null, local_map: null, local_version: null, points: null, grids: null, self: null, group: [], raid: [], target: null, timers: [], seen: [], unassigned: [], copy: null, cc: [], paths: {}, watched: {}, now };
   if (!st) return out;
   out.zone_id = Number.isFinite(Number(st.zone)) ? Number(st.zone) : null;
   out.pos_at = Number.isFinite(st.updatedAt) ? st.updatedAt : null;   // when the agent last heard from Mimic: the overlay's "pos NNN ms"
@@ -48919,6 +49035,8 @@ function _mapStatePayload(have, now, haveLocal) {
   if (_mapPrune(zd, rec.body.points, now)) _mapSaveSoon();
   out.timers = Object.values(zd.timers).map(t => Object.assign({}, t, { state: _mapTimerState(t, now) })).sort((a, b) => a.earliest - b.earliest);
   out.unassigned = zd.unassigned.map(u => ({ id: u.id, name: u.name, died_at: u.died_at, candidates: u.candidates || [] }));
+  // Spots marked "watch for <named>" (see "Watched spots"): { <point_id>: { named, by } } for the Map's star.
+  for (const w of Object.values(_mapWatchFor(zone, now))) out.watched[String(w.point_id)] = { named: w.named, by: w.by || null };
   // Seen alive in the last 30 minutes with no later death on that point (yours or the guild's).
   out.seen = Object.values(zd.seen)
     .filter(s => s && now - s.at <= MAP_SEEN_KEEP_MS && !(zd.timers[String(s.point_id)] && zd.timers[String(s.point_id)].died_at >= s.at))
@@ -49031,6 +49149,22 @@ async function _handleMapMark(req, res) {
   if (live && zone !== live) return send(409, { error: 'that is not the zone you are in' });
   if (!b || b.point_id == null) return send(400, { error: 'point_id is required' });
   const r = _mapApplyMark(zone, { point_id: b.point_id, kind: b.kind }, now, ch);
+  send(r.ok ? 200 : 400, r);
+}
+// POST /api/map-watch { zone?, point_id, named, on } - the click menu's "Watch for <named>" (see "Watched spots").
+async function _handleMapWatch(req, res) {
+  const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  if (!_localOriginOk(req)) return send(403, { error: 'forbidden origin' });
+  let b = null;
+  try { b = JSON.parse((await _readBody(req, 2048)) || '{}'); } catch (e) { return send(/too large/.test(String(e && e.message)) ? 413 : 400, { error: 'bad body' }); }
+  const now = Date.now();
+  const ch = _mapActiveCharacter(now);
+  const live = ch ? _mapZoneShort(_zealState[ch].zone) : null;
+  const zone = b && b.zone ? String(b.zone).slice(0, 40) : live;
+  if (!zone) return send(400, { error: 'no zone' });
+  if (live && zone !== live) return send(409, { error: 'that is not the zone you are in' });
+  if (!b || b.point_id == null) return send(400, { error: 'point_id is required' });
+  const r = _mapWatchSet(zone, { point_id: b.point_id, named: b.named, on: b.on === true }, now, ch);
   send(r.ok ? 200 : 400, r);
 }
 // POST /api/map-leg { zone, grid, a, b } - a wander leg the overlay saw its target walk (_mapNoteLeg).
@@ -52918,6 +53052,8 @@ function _activeTimersSnapshot() {
   }
   try { for (const r of _builtinTimerRows(now)) out.push(r); }
   catch { /* a derived bar must never cost the trigger countdowns */ }
+  try { for (const r of _mapWatchTimerRows(now)) out.push(r); }   // watched Map spots (see "Watched spots"), same rule
+  catch { /* ditto */ }
   // Soonest-to-expire first — that's the most useful default for a stack of bars.
   // Pinned rows float as a GROUP above unpinned, then soonest-first within
   // each — so a 3-minute boss-cadence bar stays on top instead of sinking
