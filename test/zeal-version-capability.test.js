@@ -40,10 +40,39 @@ describe('the bot records both facts off agent_state', () => {
     expect(bot).not.toMatch(/_trackUpload\(\s*\{[^}]*zeal/i);
   });
 
-  it('passes them to the stat bump under the names the RPC declares', () => {
+  // Batched since 2026-10-16: the fields ride the row bump_agent_upload_stats reads (jsonb keys).
+  it('passes them to the stat bump under the keys the batch RPC reads', () => {
     const fn = sliceBlock(bot, 'function _trackUpload(', '\n}\n');
-    expect(fn).toContain('p_zeal_version:');
-    expect(fn).toContain('p_spawn_id_seen:');
+    expect(fn).toContain('r.zeal_version =');
+    expect(fn).toContain('r.spawn_id_seen = true');
+    const sql = readSource(path.join(ROOT, 'supabase', 'migrations', '20261016043000_bump_agent_upload_stats_batch.sql'));
+    expect(sql).toContain("r->>'zeal_version'");
+    expect(sql).toContain("r->>'spawn_id_seen'");
+  });
+
+  // the guild lead, 2026-10-15: "log ingestion is WAY over" — 164k stat calls a day, one per upload.
+  it('sums uploads in memory and sends ONE call per flush, one row per character and endpoint', () => {
+    const src = readSource(BOT_INDEX);
+    const calls = [];
+    const fakeSb = { isEnabled: () => true, rpc: (name, args) => { calls.push({ name, args }); return Promise.resolve(); } };
+    const block = sliceBlock(src, 'const _UPLOAD_STAT_FLUSH_MS', '\n}\n') + sliceBlock(src, 'function _trackUpload(', '\n}\n');
+    // eslint-disable-next-line no-new-func
+    const run = new Function('require', 'setTimeout', block + '\nreturn { _trackUpload, _flushUploadStats };');
+    const m = run(() => fakeSb, () => ({}));
+    m._trackUpload({ endpoint: 'encounter', character: 'Aldenmar', agentVersion: '3.7.1' });
+    m._trackUpload({ endpoint: 'encounter', character: 'Aldenmar', ok: false, statusCode: 500, errorMessage: 'boom' });
+    m._trackUpload({ endpoint: 'chat', character: '', agentState: { spawn_id_capable: true, zeal_version: '1.4.8' } });
+    expect(calls).toHaveLength(0);                       // nothing until the flush
+    m._flushUploadStats();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe('bump_agent_upload_stats');
+    const rows = calls[0].args.p_rows;
+    expect(rows).toHaveLength(2);
+    const enc = rows.find(r => r.endpoint === 'encounter');
+    expect(enc).toMatchObject({ character: 'Aldenmar', uploads: 2, errors: 1, error: 'boom', ok: false, status: 500, version: '3.7.1' });
+    expect(rows.find(r => r.endpoint === 'chat')).toMatchObject({ character: '(unknown)', uploads: 1, spawn_id_seen: true, zeal_version: '1.4.8' });
+    m._flushUploadStats();
+    expect(calls).toHaveLength(1);                       // an empty buffer sends nothing
   });
 
   // A version string is client-supplied text on an authenticated but
@@ -62,7 +91,7 @@ describe('the bot records both facts off agent_state', () => {
     // function is only one of many ways to spell "infer it from the version",
     // and the ones that don't use `>=` (a regex on the string, a lookup table)
     // are exactly as wrong. The line may not mention a version at all.
-    const line = fn.split('\n').find(l => l.includes('p_spawn_id_seen'));
+    const line = fn.split('\n').find(l => l.includes('r.spawn_id_seen = true'));
     expect(line).toBeTruthy();
     expect(line).toContain('spawn_id_capable');
     expect(line).not.toMatch(/version/i);

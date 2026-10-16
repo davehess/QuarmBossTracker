@@ -4669,24 +4669,55 @@ setInterval(() => {
 // observed id is the capability. A patched Zeal reports the same version
 // string as a stock one, so a version test would call a capable client
 // incapable — consumers branch on spawn_id_seen_at.
+// ⚠ BATCHED since 2026-10-16 (the guild lead: "log ingestion is WAY over"). One RPC per upload was
+// 164k API calls a day, each a logged gateway request; the counts now sum here per
+// (guild, character, endpoint) and go out as ONE bump_agent_upload_stats call a minute
+// (migration 20261016043000).
+// ponytail: up to a minute of counts is lost on a deploy or crash; the counters are
+// adoption stats, not records, so that is accepted rather than flushed on shutdown.
+const _UPLOAD_STAT_FLUSH_MS = 60 * 1000;
+const _uploadStatBuf = new Map();
+let _uploadStatTimer = null;
+function _flushUploadStats() {
+  _uploadStatTimer = null;
+  if (!_uploadStatBuf.size) return;
+  const rows = [..._uploadStatBuf.values()];
+  _uploadStatBuf.clear();
+  try {
+    require('./utils/supabase').rpc('bump_agent_upload_stats', { p_rows: rows })
+      .catch(err => console.warn('[agent-uploads] stat flush failed:', err?.message));
+  } catch (err) {
+    console.warn('[agent-uploads] stat flush failed:', err?.message);
+  }
+}
 function _trackUpload({ endpoint, character, agentVersion, ok = true, statusCode = 200, errorMessage = null, payloadBytes = null, agentState = null, uploadedBy = null }) {
   void payloadBytes;
   try {
     const supabase = require('./utils/supabase');
-    if (!supabase.isEnabled()) return;
-    supabase.rpc('bump_agent_upload_stat', {
-      p_guild:       process.env.SUPABASE_GUILD_ID || 'wolfpack',
-      p_character:   character || null,
-      p_endpoint:    endpoint,
-      p_version:     agentVersion || null,
-      p_ok:          !!ok,
-      p_status:      statusCode,
-      p_error:       errorMessage,
-      p_agent_state: agentState,
-      p_uploaded_by: uploadedBy || null,
-      p_zeal_version:  (agentState && agentState.zeal_version) ? String(agentState.zeal_version).slice(0, 40) : null,
-      p_spawn_id_seen: !!(agentState && agentState.spawn_id_capable),
-    }).catch(err => console.warn('[agent-uploads] stat bump failed:', err?.message));
+    if (!supabase.isEnabled() || !endpoint) return;
+    const guild = process.env.SUPABASE_GUILD_ID || 'wolfpack';
+    const ch = character || '(unknown)';   // the RPC's own normalisation, so one key is one row
+    const key = guild + '|' + ch + '|' + endpoint;
+    const nowIso = new Date().toISOString();
+    let r = _uploadStatBuf.get(key);
+    if (!r) {
+      r = { guild, character: ch, endpoint, uploads: 0, errors: 0, first_at: nowIso, spawn_id_seen: false };
+      _uploadStatBuf.set(key, r);
+    }
+    r.uploads += 1;
+    if (!ok) { r.errors += 1; r.error = errorMessage; }
+    r.last_at = nowIso;
+    r.ok = !!ok;
+    r.status = statusCode;
+    if (agentVersion) r.version = agentVersion;
+    if (agentState) r.agent_state = agentState;
+    if (uploadedBy) r.uploaded_by = uploadedBy;
+    if (agentState && agentState.zeal_version) r.zeal_version = String(agentState.zeal_version).slice(0, 40);
+    if (agentState && agentState.spawn_id_capable) r.spawn_id_seen = true;
+    if (!_uploadStatTimer) {
+      _uploadStatTimer = setTimeout(_flushUploadStats, _UPLOAD_STAT_FLUSH_MS);
+      if (_uploadStatTimer.unref) _uploadStatTimer.unref();
+    }
   } catch (err) {
     console.warn('[agent-uploads] track failed:', err?.message);
   }
