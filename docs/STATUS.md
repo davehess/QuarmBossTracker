@@ -6139,6 +6139,7 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
 - ✅ Slow-mode announcement → #raid-chat, pings Raid Pack / Raid Recruit (3.1.280); a boss's hail slot opens from its first
   flag grant when the kill has no death line (3.1.281) — both `[hotfix]` mid-raid, DECISIONS §344. ⏳ Lockout line as a kill (agent, beta).
 - ✅ Chat overlay: a tell search shows both sides; each tell names your character (agent 3.7.185, beta, DECISIONS §345).
+- ✅ Chat overlay Loot channel shows others' loot too (agent 3.7.186, beta, DECISIONS §346). ⏳ Confirm the line against a real log.
 - ✅ Hail board counts guide ticks + /who sightings; departed members flip to is_member=false; raid_nights + merge 409s; batched
   threat sweep (`prune_threat_snapshots`) — all 3.1.271. ⏳ `VACUUM FULL`/`pg_repack` off-hours to give the space back.
 - ✅ Mimic chat wrap spacing (beta). ✅ Feedback in its own window with an autosaved draft (agent 3.7.179 beta; ⏳ live check).

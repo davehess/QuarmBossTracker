@@ -11121,3 +11121,11 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
 - **Built** (`apps/mimic/chat.html`): a tell you sent matches the name it went to; every tell row names your character
   both ways ("Aldenmar → Corvale" sent, "Corvale → Aldenmar" received), and the copied line reads the same. A line with
   no known character still says "You". Overlay-only: the agent already stamped each line with its character.
+
+### 346. Chat overlay Loot channel: your loot AND others' (2026-10-15, agent 3.7.186, beta)
+- **The ask** (the guild lead, after the raid): *"Loot filter should be my loot AND others"*.
+- **The line, from the server code Quarm runs** (EQMacEmu `zone/string_ids.h` 466, beside 467 for your own):
+  `--<Name> has looted a <item>--`, sent to the looter's group, or to the whole raid when the looter has no group,
+  never for a player corpse. Not yet seen in one of our logs, so the match takes it with or without the period.
+- **Built:** `classifyLootLine` takes both shapes (dashes, one-word name, start of line); others' rows carry
+  `self: false` and no longer fall into Other. The #91 loot upload still reads only "You have looted".
