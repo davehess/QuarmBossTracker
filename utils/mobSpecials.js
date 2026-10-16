@@ -397,8 +397,27 @@ function questNpcId(rows, zoneId, pickedId) {
   return here[0].id;
 }
 
+// "Silences" / "Silences (AoE)" chip from the mob's own spell list (the guild lead, 2026-10-16: "ADD IN A CARD for
+// SILENCES or SILENCES(AOE) for mobs that silence", on a blood raven hatchling casting Deafening Screech). A
+// detrimental spell carrying SPA 96 is a silence; targettype 2/4/8/20/24/25/40 hits an area, not one target.
+// Every NPC silence in the catalog is an AE one (2026-10-16: 6 point-blank, type 4; 3 targeted, type 8).
+const _SILENCE_SPA = 96;
+const _AE_TARGETTYPES = new Set([2, 4, 8, 20, 24, 25, 40]);
+function silenceLabel(spellRows) {
+  let single = false;
+  for (const s of Array.isArray(spellRows) ? spellRows : []) {
+    if (!s || Number(s.good_effect) !== 0) continue;
+    const eff = Array.isArray(s.eff) ? s.eff : [s.effect_id_1, s.effect_id_2, s.effect_id_3];
+    if (!eff.some((e) => Number(e) === _SILENCE_SPA)) continue;
+    if (_AE_TARGETTYPES.has(Number(s.targettype))) return 'Silences (AoE)';
+    single = true;
+  }
+  return single ? 'Silences' : null;
+}
+
 module.exports = {
   questNpcId,
+  silenceLabel,
   MOB_SPECIAL_CODES,
   LEGACY_DECODED_CODES,
   NPCSPECIALATTKS_FLAGS,
