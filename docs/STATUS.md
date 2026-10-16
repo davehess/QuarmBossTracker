@@ -6145,8 +6145,9 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   (agent 3.7.187, beta, DECISIONS §349). ⏳ Check in game with two same-name mobs up.
 - ✅ Map: helper NPCs (emotes, spawners, traps — body types 65/66/67) get no aggro ring (bot 3.1.285, DECISIONS §349).
 - ✅ Target Info: "Silences" / "Silences (AoE)" card from the mob's spells (bot 3.1.286; warning colour agent 3.7.188 beta, DECISIONS §350).
-- ⏳ Name pronunciations "Save for the guild" fails: table never created; plus the unused-index drop never ran.
-  Both to paste in the Supabase SQL editor (DECISIONS §350). Migrations are not auto-applying.
+- ✅ Name pronunciations table created and the four unused indexes dropped, by hand in the SQL editor 2026-10-16
+  (verified: table + RLS + read policy present, indexes gone; DECISIONS §350). Not recorded in the migration history.
+  ⏳ Migrations are not auto-applying: find out why before the next one.
 - ✅ Log ingestion / CPU (DECISIONS §348): upload counters batched (3.1.282), shared in-flight reads + batched raid-helper
   sync (3.1.283); not an outside attack. ⏳ Re-measure after the next raid; nightly threat-graph build in small batches;
   Tower archive watermark (stuck at 2026-09-06); 915 k deletable threat rows (the guild lead's call: now vs nightly).
