@@ -11195,3 +11195,16 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
 - **Map helper NPCs** (the guild lead: *"These emotes show up as red"*): body types 65 (traps, voices), 66
   (invisible men, zone controllers) and 67 (scripted spawners, emote NPCs) go out with no aggro or faction ring
   (`utils/zoneSpawns.js`, bot 3.1.285). Race 127 alone is not the test — real fighters use it.
+
+### 350. Silence card on Target Info; two database changes the database never ran (2026-10-16, bot 3.1.286, agent 3.7.188 beta)
+- **Silences** (the guild lead: *"ADD IN A CARD for SILENCES or SILENCES(AOE) for mobs that silence"*). The bot reads
+  the mob's castable spells; a detrimental spell with effect 96 adds "Silences", or "Silences (AoE)" when its target
+  type hits an area. Every NPC silence in the catalog is AE today (6 point-blank, 3 targeted, on 24 spell lists). It
+  rides `specials`, so every Mimic shows it now; beta colours it as a warning with a tooltip.
+  `mobSpecials.silenceLabel`, `test/mob-silence-chip.test.js`.
+- **"Save for the guild" on name pronunciations always failed**: `name_pronunciations` (migration
+  `20261014120000`, bot 3.1.261) was never created in the database. The unused-index drop
+  (`20261015080000`, §334) never ran either; three other 10/15 migrations are live but unrecorded. So "the GitHub
+  integration applies migrations on merge" is NOT holding. The guild lead said go ahead on both; every write from
+  the session's database tool timed out before reaching the database (no lock, nothing running), so ⏳ both are
+  waiting to be pasted into the SQL editor.

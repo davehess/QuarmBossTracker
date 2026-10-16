@@ -92,7 +92,9 @@
     background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.18);color:#e6edf3;font:inherit;font-size:11px;cursor:pointer}
   #menu button:hover{border-color:#58a6ff;background:rgba(88,166,255,0.2)}
   #menu .x{color:#8b949e;margin-top:4px}
-  #side{flex:0 0 210px;display:flex;flex-direction:column;min-height:0;background:rgb(var(--map-bg, 19 26 38) / var(--map-bg-a, var(--bg-alpha)));
+  /* The list is text read over EverQuest's nameplates: its background never goes below 0.94, whatever the opacity slider says
+     for the map pane (the guild lead, 2026-10-16: nameplates showed through the respawn list). The colour is still --map-bg. */
+  #side{flex:0 0 210px;display:flex;flex-direction:column;min-height:0;background:rgb(var(--map-bg, 19 26 38) / max(0.94, var(--map-bg-a, var(--bg-alpha))));
     border-radius:6px;padding:6px 8px;text-shadow:0 1px 2px #000}
   #zone{font-size:12px;color:#79c0ff;padding-right:26px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   #posage{font-size:9px;color:#6e7681;min-height:11px;white-space:nowrap}
@@ -104,8 +106,11 @@
   .trow{display:grid;grid-template-columns:1fr auto;column-gap:6px;padding:2px 4px;margin-bottom:2px;
     border-left:3px solid #6e7681;background:rgba(255,255,255,0.05);border-radius:3px;cursor:pointer;font-size:10px}
   .trow .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e6edf3}
-  .trow .tm{font-variant-numeric:tabular-nums;text-align:right}
-  .trow .src{grid-column:1 / span 2;color:#6e7681;font-size:9px}
+  /* the time sits in its own right-aligned column, 2px bigger than the name; the source line is small and dim under the name */
+  .trow .tm{grid-column:2;grid-row:1 / span 2;align-self:center;font-size:12px;font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+  .trow .src{grid-column:1;color:#586069;font-size:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sec.watch{color:#f0b429}
+  .trow.watch .nm{font-weight:bold}
   .trow.wait{border-left-color:#f85149} .trow.wait .tm{color:#f85149}
   .trow.window{border-left-color:#f0b429} .trow.window .tm{color:#f0b429}
   .trow.flash{border-left-color:#f0b429;background:rgba(240,180,41,0.22)} .trow.flash .tm{color:#ffd866;font-weight:bold}
@@ -381,6 +386,45 @@
   // "Up · seen": a pinned mob was seen alive on a point. Hover words: "seen alive 2m ago · spawn #812 · by Corvale".
   function seenText(s, now) {
     return 'seen alive ' + fmtDur(now - s.at) + ' ago' + (s.spawn_id != null ? ' · spawn #' + s.spawn_id : '') + (s.by ? ' · by ' + s.by : '');
+  }
+  // Respawns, side list (the guild lead, 2026-10-16: "right now the spawn list is a little hard to read"): timers with the same
+  // name AND the same state fold into one row - "A blood raven ×4" - spoken for by the soonest of them. Order: soonest first.
+  function mergeTimers(timers, now) {
+    var groups = [], byKey = {};
+    (timers || []).forEach(function (t) {
+      var name = t.name || 'spawn', st = timerState(t, now), key = name + '|' + st, g = byKey[key];
+      if (!g) { g = byKey[key] = { name: name, state: st, n: 0, soonest: t }; groups.push(g); }
+      g.n++;
+      if (t.earliest < g.soonest.earliest) g.soonest = t;
+    });
+    return groups.sort(function (a, b) { return a.soonest.earliest - b.soonest.earliest; });
+  }
+  function prettyNpc(n) { return String(n && n.name || '').replace(/_/g, ' ').replace(/^[#!~]+/, ''); }
+  // The mob a spot can be watched for: its named / raid-target npc, or null (a spot of ordinary mobs has nothing to snipe).
+  function watchNpc(p) { var n = namedNpc(p); return n && (n.named || n.raid_target) ? n : null; }
+  // The placeholder of a watched spot: what actually died there when a timer says so, else the commonest ordinary mob.
+  function placeholderName(p, named, t) {
+    var nk = String(named || '').toLowerCase();
+    if (t && t.name && String(t.name).toLowerCase() !== nk) return String(t.name);
+    var best = null;
+    ((p && p.npcs) || []).forEach(function (n) {
+      if (!n || !n.name || n.named || n.raid_target || prettyNpc(n).toLowerCase() === nk) return;
+      if (!best || (Number(n.chance) || 0) > (Number(best.chance) || 0)) best = n;
+    });
+    return best ? prettyNpc(best) : null;
+  }
+  // The "★ Watched" section: one row per watched spot that the zone data knows, soonest timer first, spots with no timer after.
+  function watchedRows(watched, byId, timerBy, seenBy) {
+    var rows = [];
+    Object.keys(watched || {}).forEach(function (pid) {
+      var p = byId && byId[pid];
+      if (!p) return;
+      var w = watched[pid] || {}, t = (timerBy && timerBy[pid]) || null;
+      rows.push({ pid: pid, p: p, named: w.named || bestName(p), by: w.by || null, t: t, up: !!(seenBy && seenBy[pid]), ph: placeholderName(p, w.named, t) });
+    });
+    return rows.sort(function (a, b) {
+      return (a.t ? a.t.earliest : Infinity) - (b.t ? b.t.earliest : Infinity) || Number(a.pid) - Number(b.pid);
+    });
   }
   // A badge from the bot -> a tiny glyph. Unknown ones still show (first letter), so a new badge is never silent.
   function badgeGlyph(b) {
@@ -1342,7 +1386,7 @@
     view: { cx: 0, cy: 0, scale: 0.5 }, follow: true, panMode: false, levels: LEVEL_DEFAULT, fit: 'zone', hoverGrid: null,
     spawnLevels: LEVEL_STEPS.length - 1, sideOpen: true,   // spawns: all by default; the timers list starts slid out
     sideMode: 'grow',   // Timers button: 'grow' widens the window by the list (map keeps its size), 'share' shrinks the map
-    timerBy: {}, candBy: {}, seenBy: {}, menuPid: null, drag: null, w: 0, h: 0, fitted: false,
+    timerBy: {}, candBy: {}, seenBy: {}, watchBy: {}, menuPid: null, drag: null, w: 0, h: 0, fitted: false,
     trk: {}, sideAt: 0,
     local: null, localVer: null, walls: 'auto', labels: 'all',   // the player's own map files (prepLocal), the version held, Walls: Auto|Ours only, Labels all|targets|off
     followOff: { x: 0, y: 0 }, followLock: false, followWho: 'me', pointTrails: {}, kills: 0, killSeen: {},   // Follow me's screen spot + lock; killed mobs' paths (see noteKills)
@@ -1473,6 +1517,7 @@
     syncWallNote();
     noteClearKey();   // a new zone or character: read the keep-clear areas again
     S.timerBy = {}; S.candBy = {}; S.seenBy = {};
+    S.watchBy = p.watched && typeof p.watched === 'object' ? p.watched : {};   // spots marked "watch for <named>": { <point_id>: { named, by } }
     (p.timers || []).forEach(function (t) { S.timerBy[String(t.point_id)] = t; });
     noteKills(p, S.trails, S);
     (p.seen || []).forEach(function (s) { if (!S.timerBy[String(s.point_id)]) S.seenBy[String(s.point_id)] = s; });   // a timer on the point is newer
@@ -1590,6 +1635,14 @@
     if (!zone) return;
     fetch('http://127.0.0.1:' + PORT + '/api/map-mark', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ zone: zone, point_id: pid, kind: kind }) }).then(function () { S.sideAt = 0; poll(); }).catch(function () {});
+  }
+  // "Watch for <named>" / "Stop watching" in the click menu: the agent keeps the watch, shares it with the guild, and
+  // sends it back in the next poll as `watched`.
+  function postWatch(pid, named, on) {
+    var zone = S.p && S.p.zone;
+    if (!zone) return;
+    fetch('http://127.0.0.1:' + PORT + '/api/map-watch', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ zone: zone, point_id: pid, named: named, on: on }) }).then(function () { S.sideAt = 0; poll(); }).catch(function () {});
   }
   // A wander leg your target was seen walking end to end: the agent keeps it with a count (_mapNoteLeg).
   function postLeg(gid, leg) {
@@ -2216,6 +2269,7 @@
         var bd = SH.abilities ? pointBadges(un ? { npcs: [un] } : p, C.glyphsOff) : '';   // a known mob: its own symbols only
         if (bd) halo(bd, px + r + 3, py - r, fontSmall, CO.glyph);
         if (p.grid != null && SH.pather) halo('↻', px - r - 3, py - r, fontSmall, CO.pather, 'right');   // a pather: it walks a route
+        if (S.watchBy[String(p.id)]) halo('★', px - r - 3, py + r + 2, fontBoss, '#ffd866', 'right');   // watched: "watch for <named>"
       }
       // Named and raid-target names are drawn after the loop, at any zoom, through the label placer (bosses first).
       // A known mob's name + spawn id goes ahead of everything (tier -1).
@@ -2454,6 +2508,8 @@
     card.innerHTML = '';
     var up = upOn(pid, S.p, S.seenBy), un = upNpc(p, up);
     card.appendChild(el('div', 'h', up ? upLabel(up) : bestName(p)));
+    var wch = S.watchBy[String(pid)];
+    if (wch) card.appendChild(el('div', 't', '★ watched' + (wch.by ? ' by ' + wch.by : '') + (wch.named ? ' · for ' + wch.named : '')));
     var rs = Number(p.respawn_s) || 0, vr = Number(p.variance_s) || 0;
     card.appendChild(el('div', 's', rs && rs < 1000000 ? 'respawn ' + fmtDur(rs * 1000) + (vr ? ' ±' + fmtDur(vr * 1000) : '') : 'no respawn time'));
     if (p.grid != null) card.appendChild(el('div', 's', '↻ walks a route'));
@@ -2498,6 +2554,14 @@
     mk('Empty since now', 'empty');
     mk('Up', 'up');
     if (S.timerBy[pid] || S.seenBy[pid]) mk('Clear timer', 'clear');
+    // A spot with a named in its spawn list can be watched: everyone with the Map then gets its timer, its PH and its /loc.
+    var wn = watchNpc(p), wOn = S.watchBy[String(pid)];
+    if (wn || wOn) {
+      var nmW = wOn && wOn.named ? wOn.named : prettyNpc(wn);
+      var wb = el('button', null, wOn ? '☆ Stop watching ' + nmW : '★ Watch for ' + nmW); wb.type = 'button'; wb.setAttribute('data-wp-interact', '');
+      wb.addEventListener('click', function () { closeMenu(); postWatch(p.id, nmW, !wOn); });
+      menu.appendChild(wb);
+    }
     var x =el('button', 'x', 'Close'); x.type = 'button'; x.setAttribute('data-wp-interact', '');
     x.addEventListener('click', closeMenu); menu.appendChild(x);
     placeBox(menu, e);
@@ -2526,17 +2590,33 @@
     else tg.textContent = '';
     var box = document.getElementById('lists');
     box.innerHTML = '';
-    var timers = (P && P.timers) || [];
+    // ★ Watched first (the guild lead, 2026-10-16): the named, its placeholder and spot, and the time. A watched spot is
+    // listed here only, not again under Respawns / Up · seen.
+    var wrows = watchedRows(S.watchBy, S.byId, S.timerBy, S.seenBy);
+    if (wrows.length) {
+      box.appendChild(el('div', 'sec watch', '★ Watched (' + wrows.length + ')'));
+      wrows.forEach(function (w) {
+        var r = el('div', 'trow watch ' + (w.t ? timerState(w.t, now) : w.up ? 'seen' : '')); r.setAttribute('data-wp-interact', '');
+        if (w.by) r.title = 'watched by ' + w.by;
+        r.appendChild(el('span', 'nm', w.named)); r.appendChild(el('span', 'tm', w.t ? timerText(w.t, now) : w.up ? 'up' : 'watching'));
+        r.appendChild(el('span', 'src', 'PH: ' + (w.ph || '—') + ' · spot #' + w.pid));
+        r.addEventListener('click', function () { centreOn(w.p); });
+        box.appendChild(r);
+      });
+    }
+    var timers = ((P && P.timers) || []).filter(function (t) { return !S.watchBy[String(t.point_id)]; });
     box.appendChild(el('div', 'sec', 'Respawns (' + timers.length + ')'));
-    timers.forEach(function (t) {
-      var r = el('div', 'trow ' + timerState(t, now)); r.setAttribute('data-wp-interact', '');
-      r.appendChild(el('span', 'nm', t.name || 'spawn')); r.appendChild(el('span', 'tm', timerText(t, now)));
-      r.appendChild(el('span', 'src', (t.source === 'marked' ? 'marked' : 'seen') + (t.by ? ' · by ' + t.by : '')));
+    // Same name and same state fold into one row, spoken for by the soonest ("A blood raven ×4"); a click centres on that one.
+    mergeTimers(timers, now).forEach(function (g) {
+      var t = g.soonest;
+      var r = el('div', 'trow ' + g.state); r.setAttribute('data-wp-interact', '');
+      r.appendChild(el('span', 'nm', g.name + (g.n > 1 ? ' ×' + g.n : ''))); r.appendChild(el('span', 'tm', timerText(t, now)));
+      r.appendChild(el('span', 'src', (g.n > 1 ? 'next of ' + g.n + ' · ' : '') + (t.source === 'marked' ? 'marked' : 'seen') + (t.by ? ' · by ' + t.by : '')));
       r.addEventListener('click', function () { centreOn(S.byId[String(t.point_id)]); });
       box.appendChild(r);
     });
-    if (!timers.length) box.appendChild(el('div', null, 'no timers yet — a kill you see starts one, or click a dot')).id = 'empty';
-    var seenList = ((P && P.seen) || []).filter(function (s) { return !S.timerBy[String(s.point_id)]; });
+    if (!timers.length && !wrows.length) box.appendChild(el('div', null, 'no timers yet — a kill you see starts one, or click a dot')).id = 'empty';
+    var seenList = ((P && P.seen) || []).filter(function (s) { return !S.timerBy[String(s.point_id)] && !S.watchBy[String(s.point_id)]; });
     if (seenList.length) {
       box.appendChild(el('div', 'sec', 'Up · seen (' + seenList.length + ')'));
       seenList.forEach(function (s) {
