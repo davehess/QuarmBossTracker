@@ -11098,6 +11098,9 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
 - **Open:** engagement slots in Target Info — research done (we can only reconstruct the list from logs; non-damaging
   song pulses leave no trace); options A (this raider's log) / B (raid-wide merge at the bot) put to the guild lead,
   A recommended. Not built.
+- **Dropped 2026-10-15** (the guild lead): *"maybe we shouldn't do the ramp list since it's not going to be easy to
+  determine"*. The rings stay; the engagement-slot list is not built. Reopen only with a reliable source for every
+  hate add (a Zeal or server feed), not log reconstruction.
 
 ### 344. Two mid-raid hotfixes: slow mode to #raid-chat, and a boss hail slot without a death line (2026-10-15, bot 3.1.280–3.1.281, `[hotfix]` at the guild lead's call)
 - **Slow-mode announcement** (the guild lead: *"This should go in raid-chat channel 1193692008812920863"*, *"it should also
@@ -11121,3 +11124,58 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
 - **Built** (`apps/mimic/chat.html`): a tell you sent matches the name it went to; every tell row names your character
   both ways ("Aldenmar → Corvale" sent, "Corvale → Aldenmar" received), and the copied line reads the same. A line with
   no known character still says "You". Overlay-only: the agent already stamped each line with its character.
+
+### 346. Chat overlay Loot channel: your loot AND others' (2026-10-15, agent 3.7.186, beta)
+- **The ask** (the guild lead, after the raid): *"Loot filter should be my loot AND others"*.
+- **The line, from the server code Quarm runs** (EQMacEmu `zone/string_ids.h` 466, beside 467 for your own):
+  `--<Name> has looted a <item>--`, sent to the looter's group, or to the whole raid when the looter has no group,
+  never for a player corpse. Not yet seen in one of our logs, so the match takes it with or without the period.
+- **Built:** `classifyLootLine` takes both shapes (dashes, one-word name, start of line); others' rows carry
+  `self: false` and no longer fall into Other. The #91 loot upload still reads only "You have looted".
+
+### 347. Raider figures on the replay map: a paper doll from screenshots of each side, stylized (2026-10-15, call only)
+- **The ask** (the guild lead): *"can we start creating everyone's little models to display in the 3d mode or a 2d
+  format"*. Offered A (a figure built from the recorded race / armour dyes / weapon in `raid_night_appearance`),
+  B (a face coin from the film stills), C (real client models, Mimic only).
+- **The call:** *"Something repeatable, a paper doll would be cool, and show facing, we could make it with a screenshot
+  of each side of them then stylize"*: per raider, screenshots of the front, left, back and right of their own
+  character, stylized into one consistent sprite set, and the map shows the side matching their heading.
+- **Plan, cheapest proof first:** (1) stylize one character's four screenshots by hand with the image model the film
+  used, and look at it; (2) the replay draws the facing sprite (class dot when a raider has none); (3) a Mimic
+  "photo booth" captures the four sides on a hotkey, guided; (4) the bot stylizes and stores them in the private
+  `guild-media` bucket, re-runnable when gear changes.
+- **Boundary:** a stylized screenshot is derived from the client's art, the same family as §220's 3D-C, so the
+  sprites stay members-only (the replay is already member-gated) and are never committed to the repo.
+
+### 348. Log ingestion and database load: self-inflicted, cut at the bot (2026-10-16, bot 3.1.282–3.1.283)
+- **The asks** (the guild lead): Supabase log ingestion *"is WAY over"* (53 GB of 20 GB included this cycle,
+  ~2 GB/day; overage billing starts after the 2027 grace period), RaidBosses at 90% CPU on Micro, and *"is it
+  possible they are finding a way to spam a stream to us or is this all self inflicted?"* after a talk with a
+  competing guild.
+- **Measured (edge logs, 24 h to 2026-10-16 04:00 UTC, a raid night):** 1.18 M API-gateway requests, every one
+  with our service key: Railway (the bot) ~1.05 M, one Google Cloud address ~127 k (the SAME bot: Railway traffic
+  stopped in the 05:00 hour exactly as it began, and came back at the 3.1.282 deploy), the website's edge check
+  ~4.9 k, browser sign-ins ~15. Zero public-key requests, one 401 all day. The bot's own API took 2.5 M requests,
+  94% accepted (logged-in Mimics), tracking raid hours; 4xx steady with no burst. **Not an outside attack.**
+- **Cause:** every bot read cache was check → await → set with no in-flight sharing, so ~60 Mimics polling
+  every 1.5–6 s each sent their own copy of the same read; plus one stat RPC per upload (164 k/day).
+- **Shipped:** 3.1.282 batches the upload counters (one `bump_agent_upload_stats` call a minute, migration
+  `20261016043000`). 3.1.283 adds `utils/ttlCache.js` (shared in-flight reads) on the live zone map, target-buffs,
+  di-status, live damage, the Extended Target and buff-queue bundles and guild triggers (60 s: an edit now
+  reaches agents in ~3 min), one shared raid_roster snapshot for three readers (`utils/readSnapshots.js`), and a
+  batched raid-helper sync. Estimated 400–500 k fewer requests a day; **re-measure after the next raid.**
+- **Database size, same night:** `encounter_threat_snapshots` was 2.6 GB of 4.2 GB because the 30-day sweep never
+  ran: its graph watermark sat at 2025-01-14 since `build_encounter_threat_graphs(5000)` timed out every night
+  from 2026-09-28 (12,645 fights ungraphed). The backlog was built by hand in batches (graphs now through
+  2026-10-11); the archive watermark (Tower, set by hand 2026-09-23, through 2026-09-06) is now the limit, with
+  915 k rows deletable. ⏳ Nightly graph build in small batches; Tower archive watermark refresh; the guild lead's
+  call on deleting the 915 k now vs nightly. Next lever on request volume: Mimic polling less while nothing changes.
+- **Next lever picked: A — live raid state in bot memory** (the guild lead, 2026-10-16: *"going to have to be A, but
+  then are we getting riskier on state and redeploys?"*). Rejected: load-balancing the bot (each replica keeps its
+  own caches, so reads multiply, and the cast relays / guild feed / Discord connection assume one process) and
+  changing ingress/egress (the log bill counts requests, not direction or source). The promised safety rules:
+  (1) Supabase stays the record — every roster/live-state row is still written, batched every ~2 s; durable readers
+  (replay recorder, screen, web) keep reading Supabase; (2) a fresh process answers from Supabase until it has
+  received a stream for the reader's whole window (15 min roster, ~10 min live state), so a redeploy behaves like
+  today; (3) ONE bot replica — memory is complete only if one process receives every upload; (4) shed/budget
+  behaviour unchanged. Drafting on branch `claude/live-memory`; ships on a non-raid day after review and tests.

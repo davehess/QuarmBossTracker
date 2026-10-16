@@ -75,7 +75,7 @@ describe('the re-slow warning: a minute ahead, never for a bard slow (2026-10-13
     globalThis.out = out; globalThis.best = best;
     const t = evalBlock(
       'const _slowCalloutState = new Map([["grummus", { name: best.name, display: "Grummus" }]]);\n'
-      + 'const _bestSlowForTarget = () => best;\n'
+      + 'const _bestSlowForTarget = () => best;\nconst _watchedTargetId = () => null;\n'
       + 'const _isNameCurrentlyTargeted = () => true;\nconst _rampageOnMainTarget = () => true;\n'
       + 'const _slowCalloutMob = (d) => d;\nconst _slowShortName = (n) => n;\nconst _announceSlowDrop = () => {};\n'
       + 'const _pushOverlay = (o) => out.push(o);\n' + tick,

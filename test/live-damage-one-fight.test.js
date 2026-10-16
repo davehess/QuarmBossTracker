@@ -11,8 +11,10 @@
 // Run: npx vitest run test/live-damage-one-fight.test.js
 
 import { describe, it, expect } from 'vitest';
+import { createRequire } from 'node:module';
 import { readSource, sliceBlock, BOT_INDEX } from './_source-slice.js';
 
+const ttlCache = createRequire(BOT_INDEX)('./utils/ttlCache');   // the handler's memo + coalescing helper, real
 const src = readSource(BOT_INDEX);
 const handler = sliceBlock(src, 'async function _handleAgentLiveDamage', '\n}');
 
@@ -35,7 +37,7 @@ function run(url, { rpcFails = false } = {}) {
   const fn = new Function('mimicLink', 'require', 'process', '_corroboratedDamage',
     handler + '\nreturn _handleAgentLiveDamage;')(
     { requireAgentAuth: async () => ({ discord_id: '1' }) },
-    (p) => (String(p).endsWith('supabase') ? supabase : {}),
+    (p) => (String(p).endsWith('supabase') ? supabase : String(p).endsWith('ttlCache') ? ttlCache : {}),
     { env: {} },
     (v) => Math.max(0, ...(v || [])));
   const res = { writeHead() {}, end(b) { this.body = b; } };

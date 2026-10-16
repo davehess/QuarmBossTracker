@@ -527,7 +527,9 @@ describe('8a · _guildTriggersFor serves every enabled trigger', () => {
     .replace(/async function _handleAgentGuildTriggers\($/, '');
   const load = () => {
     // eslint-disable-next-line no-new-func
-    return new Function('require', '_pollTuningVersion', `${BLOCK}\nreturn _guildTriggersFor;`)(botRequire(), (parts) => parts.length + ':' + parts[0]);
+    // the two module-level bindings the function keeps its 60 s table read in; a fresh Map per load, so no case sees another's rows
+    const state = 'const GUILD_TRIGGERS_CACHE_MS = 60_000; const _guildTriggersEntries = new Map();\n';
+    return new Function('require', '_pollTuningVersion', `${state}${BLOCK}\nreturn _guildTriggersFor;`)(botRequire(), (parts) => parts.length + ':' + parts[0]);
   };
 
   it('1,100 enabled triggers (a single import added 381 of today\'s 484) all come back, in category/name order', async () => {

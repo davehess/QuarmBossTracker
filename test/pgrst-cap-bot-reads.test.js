@@ -349,8 +349,11 @@ describe('Extended Target keeps the debuffs that landed earlier in the 30-minute
       rpcs: { recent_debuff_landings: { args: ['p_guild_id', 'p_since'], run: (a) => recentDebuffLandings(fx.casts, a) } },
     });
     await call(sb);
-    const rosterCalls = sb.calls.filter(c => c.kind === 'select' && c.table === 'raid_roster' && /loc_at=gte/.test(c.qs));
+    const rosterCalls = sb.calls.filter(c => c.kind === 'select' && c.table === 'raid_roster');
     expect(rosterCalls.some(c => /offset=1000\b/.test(c.qs))).toBe(true);
+    // the positions and the raid split share ONE snapshot of the roster: its first page is asked for once
+    expect(rosterCalls.filter(c => /offset=0\b/.test(c.qs))).toHaveLength(1);
+    expect(rosterCalls.every(c => /loc_at/.test(c.qs))).toBe(true);
   });
 });
 
@@ -370,6 +373,7 @@ describe('the raid split sees every uploader', () => {
     const sb = makeCapFake({ tables: { raid_roster: rows } });
     const { _liveRaidSplit } = loadBotMany(['_liveRaidSplit'], {
       _keepRaidSplit: (split) => split, _raidGroups: requireBot('./utils/raidGroups'), _raidSplitCache: { at: 0, split: null },
+      require: requireBot,
     });
     const split = await _liveRaidSplit(sb, GUILD);
     expect(split.multi).toBe(true);
@@ -842,5 +846,146 @@ describe('migration 20261004140200_cap_safe_reads.sql', () => {
     for (const m of code.matchAll(/(?:rpc\(|selectAllPaged\()'(?:rpc\/)?(latest_buff_landings|recent_debuff_landings|encounter_damage_by_character|family_dkp_mirror)'/g)) called.add(m[1]);
     expect([...called].sort()).toEqual(['encounter_damage_by_character', 'family_dkp_mirror', 'latest_buff_landings', 'recent_debuff_landings']);
     expect(code).toMatch(/select\('eqemu_item_drop_owner'/);
+  });
+});
+
+// ── 7. agents polling in the same moment share one read (the 2026-10-16 log-ingestion cut) ──────────
+// The guild lead, 2026-10-16: "log ingestion is WAY over." ~60 agents poll the Extended Target and buff-queue
+// bundles every 2-3 s, and a cache that is check → await → set sends one read per request that arrives while
+// the first is still in flight. The bundles keep the pending promise now (utils/ttlCache.js), and the raid
+// split, Extended Target and the buff queue read ONE shared roster window (utils/readSnapshots.js).
+describe('bundles: agents polling in the same moment share one read', () => {
+  const reads = (sb, table) => sb.calls.filter(c => c.kind === 'select' && c.table === table);
+  const firstPages = (sb, table) => reads(sb, table).filter(c => !/offset=[1-9]/.test(c.qs));
+
+  function rbqFake() {
+    const fx = raidFixture();
+    return makeCapFake({
+      tables: { raid_roster: fx.roster, characters: fx.characters, buff_casts: fx.casts, character_live_state: [] },
+      rpcs: { latest_buff_landings: { args: ['p_guild_id', 'p_since'], run: (a) => latestBuffLandings(fx.casts, a) } },
+    });
+  }
+  const askRbq = async (handler) => {
+    const res = mkRes();
+    await handler({ url: '/api/agent/raid-buff-queue?class=cleric&character=Raider01', headers: {} }, res);
+    return res;
+  };
+
+  it('buff queue: forty polls at once are one read of each table, and all of them are answered', async () => {
+    delete globalThis._rbqBundleCache;
+    const sb = rbqFake();
+    const handler = buffQueueHandler(sb);
+    const all = await Promise.all(Array.from({ length: 40 }, () => askRbq(handler)));
+    expect(all.every(r => r.status === 200)).toBe(true);
+    expect(firstPages(sb, 'raid_roster')).toHaveLength(1);
+    expect(reads(sb, 'characters')).toHaveLength(1);
+    expect(reads(sb, 'character_live_state')).toHaveLength(1);
+    expect(firstPages(sb, 'rpc/latest_buff_landings')).toHaveLength(1);
+  });
+
+  it('buff queue: the bundle is kept 4 s (it was 2 s), then read again', async () => {
+    delete globalThis._rbqBundleCache;
+    const sb = rbqFake();
+    const handler = buffQueueHandler(sb);
+    const realNow = Date.now;
+    let offset = 0;
+    Date.now = () => realNow() + offset;
+    try {
+      await askRbq(handler);
+      offset = 3_500;
+      await askRbq(handler);
+      expect(reads(sb, 'character_live_state')).toHaveLength(1);
+      offset = 4_500;
+      await askRbq(handler);
+      expect(reads(sb, 'character_live_state')).toHaveLength(2);
+    } finally { Date.now = realNow; }
+  });
+
+  it('buff queue: the hp_pct backfill edits a copy, never the row the next poll will read', async () => {
+    delete globalThis._rbqBundleCache;
+    const fx = raidFixture();
+    // Raider01 is seen by two uploaders: the fresher row has no HP, the older one does (a Zeal gauge the
+    // fresher uploader missed). The backfill fills the fresher row from the older one, for THIS answer only.
+    const roster = fx.roster.filter(r => r.name !== 'Raider01');
+    roster.push({ guild_id: GUILD, uploaded_by_discord_id: 'u01', name: 'Raider01', class: 'Warrior', group_num: 1, rank: null, level: 65,
+      hp_pct: null, loc_x: 1, loc_y: 2, loc_z: 3, heading: 0, loc_at: ago(5_000), captured_at: ago(10_000) });
+    roster.push({ guild_id: GUILD, uploaded_by_discord_id: 'u02', name: 'Raider01', class: 'Warrior', group_num: 1, rank: null, level: 65,
+      hp_pct: 77, loc_x: 1, loc_y: 2, loc_z: 3, heading: 0, loc_at: ago(5_000), captured_at: ago(40_000) });
+    const sb = makeCapFake({
+      tables: { raid_roster: roster, characters: fx.characters, buff_casts: fx.casts, character_live_state: [] },
+      rpcs: { latest_buff_landings: { args: ['p_guild_id', 'p_since'], run: (a) => latestBuffLandings(fx.casts, a) } },
+    });
+    const out = json(await askRbq(buffQueueHandler(sb)));
+    expect(out.roster.find(r => r.name === 'Raider01').hp_pct).toBe(77);
+    const shared = await requireBot('./utils/readSnapshots').raidRoster(sb, GUILD);   // the snapshot the handler read: same client, still warm
+    expect(shared.find(r => r.name === 'Raider01' && r.uploaded_by_discord_id === 'u01').hp_pct).toBeNull();
+  });
+
+  it('Extended Target: forty polls at once are one read of live state, debuffs and roster', async () => {
+    delete globalThis._extBundleCache;
+    const fx = raidFixture();
+    const live = ['Raider01', 'Raider02'].map(character => ({
+      guild_id: GUILD, character, zone_name: 'Test Zone', self_hp_pct: 100, target_name: 'A Test Mob', target_hp_pct: 70, target_id: null,
+      pet_name: null, pet_hp_pct: null, incoming_mob: null, incoming_mob_since: null, loc_x: 1, loc_y: 2, loc_z: 3,
+      observed_tanks: null, zeal_tags: null, updated_at: ago(3_000),
+    }));
+    const sb = makeCapFake({
+      tables: { character_live_state: live, raid_roster: fx.roster },
+      rpcs: { recent_debuff_landings: { args: ['p_guild_id', 'p_since'], run: () => [] } },
+    });
+    const handler = loadExtTarget(sb)._handleAgentExtendedTarget;
+    const all = await Promise.all(Array.from({ length: 40 }, async () => {
+      const res = mkRes();
+      await handler({ url: '/api/agent/extended-target?character=Raider01', headers: {} }, res);
+      return res;
+    }));
+    expect(all.every(r => r.status === 200)).toBe(true);
+    expect(reads(sb, 'character_live_state')).toHaveLength(1);
+    expect(firstPages(sb, 'rpc/recent_debuff_landings')).toHaveLength(1);
+    expect(firstPages(sb, 'raid_roster')).toHaveLength(1);        // the positions AND the raid split
+  });
+
+  it('Extended Target: the bundle is kept 4 s (it was 1.5 s), then read again', async () => {
+    delete globalThis._extBundleCache;
+    const fx = raidFixture();
+    const sb = makeCapFake({
+      tables: { character_live_state: [], raid_roster: fx.roster },
+      rpcs: { recent_debuff_landings: { args: ['p_guild_id', 'p_since'], run: () => [] } },
+    });
+    const handler = loadExtTarget(sb)._handleAgentExtendedTarget;
+    const ask = () => handler({ url: '/api/agent/extended-target?character=Raider01', headers: {} }, mkRes());
+    const realNow = Date.now;
+    let offset = 0;
+    Date.now = () => realNow() + offset;
+    try {
+      await ask();
+      offset = 3_500;
+      await ask();
+      expect(reads(sb, 'character_live_state')).toHaveLength(1);
+      offset = 4_500;
+      await ask();
+      expect(reads(sb, 'character_live_state')).toHaveLength(2);
+    } finally { Date.now = realNow; }
+  });
+
+  it('Extended Target and the buff queue, one moment: ONE raid_roster window between them', async () => {
+    delete globalThis._extBundleCache; delete globalThis._rbqBundleCache;
+    const fx = raidFixture();
+    const sb = makeCapFake({
+      tables: { character_live_state: [], raid_roster: fx.roster, characters: fx.characters, buff_casts: fx.casts },
+      rpcs: {
+        latest_buff_landings: { args: ['p_guild_id', 'p_since'], run: (a) => latestBuffLandings(fx.casts, a) },
+        recent_debuff_landings: { args: ['p_guild_id', 'p_since'], run: () => [] },
+      },
+    });
+    const ext = loadExtTarget(sb)._handleAgentExtendedTarget;
+    const rbq = buffQueueHandler(sb);
+    const res = mkRes();
+    await Promise.all([
+      ext({ url: '/api/agent/extended-target?character=Raider01', headers: {} }, res),
+      askRbq(rbq),
+      ext({ url: '/api/agent/extended-target?character=Raider02', headers: {} }, mkRes()),
+    ]);
+    expect(firstPages(sb, 'raid_roster')).toHaveLength(1);
   });
 });

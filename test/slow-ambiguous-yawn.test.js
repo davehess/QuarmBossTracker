@@ -70,7 +70,7 @@ function build() {
     ${sliceBlock(src, 'function _isTimedDurationFormula(f)', '\n}')}
     ${sliceBlock(src, 'function _rebuildBuffMatchers()', '\n}\n')}
     ${sliceBlock(src, 'function parseDebuffLanding(line, observer)', '\n}')}
-    ${sliceBlock(src, 'function _bestSlowForTarget(targetLower, nowMs)', '\n}')}
+    ${sliceBlock(src, 'function _bestSlowForTarget(targetLower, nowMs, wantId)', '\n}')}
     ${sliceBlock(src, 'function _noteSlowForTarget(evt, caster)', '\n}')}
     _rebuildBuffMatchers();
     return { parseDebuffLanding, _noteSlowForTarget, _bestSlowForTarget, _slowsByTarget };
