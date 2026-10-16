@@ -80,9 +80,10 @@ export default function AccountBoard({ initial }: { initial: GameAccountsState }
             const v = e.target.value;
             if (v) move(c.name, v === 'unplaced' ? null : Number(v));
           }}
-          className="max-w-[7.5rem] rounded border border-border bg-panel px-1 py-0.5 text-xs text-dim"
+          // A narrow "Move" pinned right, so the name gets the row (the guild lead, 2026-10-16: names showed as "Bono…").
+          className="w-16 shrink-0 rounded border border-border bg-panel px-1 py-0.5 text-xs text-dim"
         >
-          <option value="">Move to…</option>
+          <option value="">Move</option>
           {at != null && <option value="unplaced">Unplaced</option>}
           {state.accounts.map(a => {
             const full = a.members.length >= MAX_PER_ACCOUNT && a.slot !== at;

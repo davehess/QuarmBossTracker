@@ -46,7 +46,7 @@ export default async function GameAccountsPage() {
             <p className="mt-1 max-w-3xl text-sm text-dim">
               One forum account holds up to {MAX_ACCOUNTS} game accounts, and a game account holds up to {MAX_PER_ACCOUNT} characters.
               The shared bank belongs to the game account, so knowing who shares one lets us count its items once.
-              Drag a character onto its account, or use <span className="text-text">Move to…</span> on a phone.
+              Drag a character onto its account, or use <span className="text-text">Move</span> on a phone.
               Click an account&apos;s name to give it your own. Private to you.
             </p>
           </div>
