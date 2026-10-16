@@ -869,6 +869,12 @@ That is exactly how the raid review's per-night message id ended up posting
 `bot_kv`, not `state.json`** — the trash tally and now the review id both do.
 Treat `state.json` as a within-process cache, never as memory across a deploy.
 
+⚠ **ONE bot replica, always (2026-10-16, bot 3.1.284).** `utils/liveMemory.js` holds the latest
+raid_roster and character_live_state rows in bot memory and answers the bot's own live reads from it
+(log-ingestion cut, DECISIONS §348). Memory is complete only if one process receives every upload, so
+never scale the bot service past one replica. Supabase stays the record (rows still written, batched every
+2 s) and a fresh process reads Supabase until it has received a reader's whole window (15 min roster).
+
 **Discord is the source of truth** for parses (`PARSES_LOG_THREAD_ID`
 reloaded on startup), hate state (hidden JSON embeds), and roster (chunked
 messages); `data/state.json` and `data/parses.json` are local mirrors with

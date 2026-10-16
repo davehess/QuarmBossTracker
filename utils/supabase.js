@@ -157,7 +157,9 @@ async function _request(path, opts = {}) {
       return null;
     }
     _breakerOnSuccess();
-    return parsed;
+    // A return=minimal write answers with an empty body, which reads as null, the same as a failure. A caller
+    // that must tell them apart (utils/liveMemory.js retries a failed batch) asks for okValue.
+    return (parsed == null && opts.okValue !== undefined) ? opts.okValue : parsed;
   } catch (err) {
     // AbortError (timeout) and network errors both land here → null, same as
     // the pre-#73 network-failure path. Both trip the breaker.
@@ -254,7 +256,8 @@ async function upsert(table, rows, onConflict, opts = {}) {
   const ret = opts.minimal ? 'return=minimal' : 'return=representation';
   const prefer = `${ret},resolution=merge-duplicates`;
   const path   = onConflict ? `/${table}?on_conflict=${onConflict}` : `/${table}`;
-  return _request(path, { method: 'POST', body: rows, prefer });
+  // opts.confirm (with minimal): resolve true on success, so null still means "failed".
+  return _request(path, { method: 'POST', body: rows, prefer, okValue: (opts.minimal && opts.confirm) ? true : undefined });
 }
 
 // Insert with silent dedup against ANY unique index/constraint that fires —

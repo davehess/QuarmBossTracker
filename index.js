@@ -11772,9 +11772,11 @@ async function _liveZoneMap() {
       const map = new Map();   // character(lower) → { zone_name, zone_id }
       const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
       const since = new Date(Date.now() - 10 * 60 * 1000).toISOString();   // 10-min freshness
-      const rows = await supabase.select('character_live_state',
-        `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(since)}` +
-        `&select=character,zone_name,zone_id`);
+      // Held in memory once warm (utils/liveMemory.js, the same 10-min window); cold → the original read.
+      const rows = require('./utils/liveMemory').liveStateRowsSince(guildId, 10 * 60 * 1000)
+        || await supabase.select('character_live_state',
+          `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(since)}` +
+          `&select=character,zone_name,zone_id`);
       for (const r of (rows || [])) {
         if (r && r.character) {
           map.set(String(r.character).toLowerCase(),
@@ -13954,9 +13956,15 @@ async function _handleAgentCharacterLiveState(req, res) {
   const supabase = require('./utils/supabase');
   if (!supabase.isEnabled()) { res.writeHead(503); return res.end(JSON.stringify({ error: 'supabase disabled' })); }
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
-  const rows = await supabase.select('character_live_state',
-    `guild_id=eq.${encodeURIComponent(guildId)}&character=ilike.${encodeURIComponent(name)}` +
-    `&select=character,zone_name,self_hp_pct,self_hp_cur,self_hp_max,buffs,cooldowns,updated_at&limit=1`).catch(() => []);
+  // Memory first (utils/liveMemory.js; the same 10-min window the freshness gate below uses): the bot received
+  // this row. Cold → the original read. The newest row wins if two rows differ only by case.
+  const liveMem = require('./utils/liveMemory');
+  const memRows = liveMem.liveStateRowsSince(guildId, 10 * 60 * 1000, name);
+  const rows = memRows
+    ? memRows.sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at))
+    : await supabase.select('character_live_state',
+      `guild_id=eq.${encodeURIComponent(guildId)}&character=ilike.${encodeURIComponent(name)}` +
+      `&select=character,zone_name,self_hp_pct,self_hp_cur,self_hp_max,buffs,cooldowns,updated_at&limit=1`).catch(() => []);
   const r = Array.isArray(rows) && rows[0];
   let state = null;
   if (r && r.updated_at) {
@@ -14000,9 +14008,13 @@ async function _handleAgentCharacterLiveState(req, res) {
   //      /pipeverbose groupmate supplied them.
   // So run whenever we lack either a live % or exact cur/max.
   if (!state || typeof state.self_hp_pct !== 'number' || typeof state.self_hp_cur !== 'number') {
-    const rr = await supabase.select('raid_roster',
-      `guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(name)}` +
-      `&hp_pct=not.is.null&select=name,hp_pct,hp_current,hp_max,captured_at&order=captured_at.desc&limit=1`).catch(() => []);
+    // Memory first (15-min roster window; cold → the original read): the newest row with an HP percent.
+    const rrMem = liveMem.rosterRowsSince(guildId, 15 * 60 * 1000, name);
+    const rr = rrMem
+      ? rrMem.filter(x => x.hp_pct != null).sort((a, b) => Date.parse(b.captured_at) - Date.parse(a.captured_at))
+      : await supabase.select('raid_roster',
+        `guild_id=eq.${encodeURIComponent(guildId)}&name=ilike.${encodeURIComponent(name)}` +
+        `&hp_pct=not.is.null&select=name,hp_pct,hp_current,hp_max,captured_at&order=captured_at.desc&limit=1`).catch(() => []);
     const rrRow = Array.isArray(rr) && rr[0];
     if (rrRow && rrRow.captured_at && typeof rrRow.hp_pct === 'number' &&
         (Date.now() - Date.parse(rrRow.captured_at)) < 90_000) {
@@ -14055,9 +14067,11 @@ async function _buildDiStatusPayload(supabase) {
   const guildId = process.env.SUPABASE_GUILD_ID || 'wolfpack';
   const freshIso = new Date(Date.now() - 10 * 60 * 1000).toISOString();
   const [rows, classed] = await Promise.all([
-    supabase.select('character_live_state',
-      `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(freshIso)}` +
-      `&select=character,di_ready_at,di_mem,self_mana_pct,updated_at`).catch(() => []),
+    // Memory first (utils/liveMemory.js, the same 10-min window); cold → the original read.
+    require('./utils/liveMemory').liveStateRowsSince(guildId, 10 * 60 * 1000)
+      || supabase.select('character_live_state',
+        `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(freshIso)}` +
+        `&select=character,di_ready_at,di_mem,self_mana_pct,updated_at`).catch(() => []),
     // The class list the buff queue reads too (utils/readSnapshots.js, 5-min snapshot); healers are its Cleric/Druid/Shaman rows.
     require('./utils/readSnapshots').characterClasses(supabase, guildId).catch(() => []),
   ]);
@@ -14953,10 +14967,12 @@ async function _handleAgentExtendedTarget(req, res) {
     const { liveRows, buffRows, rosterLocRows } = await require('./utils/ttlCache').cached(
       (globalThis._extBundleCache = globalThis._extBundleCache || new Map()), 'bundle', 4000, async () => {
     const [liveRows, buffRows, rosterRows] = await Promise.all([
-      supabase.select('character_live_state',
-        `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(onlineSince)}` +
-        `&select=character,zone_name,self_hp_pct,self_hp_cur,self_hp_max,target_name,target_hp_pct,target_id,pet_name,pet_hp_pct,` +
-        `incoming_mob,incoming_mob_since,loc_x,loc_y,loc_z,observed_tanks,zeal_tags,updated_at`),
+      // Memory first (utils/liveMemory.js, this read's own online window); cold → the original read.
+      require('./utils/liveMemory').liveStateRowsSince(guildId, extOnlineMs)
+        || supabase.select('character_live_state',
+          `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(onlineSince)}` +
+          `&select=character,zone_name,self_hp_pct,self_hp_cur,self_hp_max,target_name,target_hp_pct,target_id,pet_name,pet_hp_pct,` +
+          `incoming_mob,incoming_mob_since,loc_x,loc_y,loc_z,observed_tanks,zeal_tags,updated_at`),
       // Every landing still inside its duration, newest first, paged. A 30-minute window holds up to
       // ~4,250 buff_casts rows and `limit=600` kept the newest 600, i.e. the last few minutes, so
       // debuffs landed earlier fell off the board; the function drops the rows the loop below skips
@@ -15791,8 +15807,10 @@ async function _handleAgentRaidBuffQueue(req, res) {
       (globalThis._rbqBundleCache = globalThis._rbqBundleCache || new Map()), 'bundle', 4000, async () => {
     const snapshots = require('./utils/readSnapshots');
     const [liveRows, rosterRows, charRows, buffCastRows] = await Promise.all([
-      supabase.select('character_live_state',
-        `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(liveSince)}&select=character,buffs,buff_count,zone_name,self_hp_pct,loc_x,loc_y,loc_z,updated_at`),
+      // Memory first (utils/liveMemory.js, the same 15-min window); cold → the original read.
+      require('./utils/liveMemory').liveStateRowsSince(guildId, ROSTER_FRESH_MS)
+        || supabase.select('character_live_state',
+          `guild_id=eq.${encodeURIComponent(guildId)}&updated_at=gte.${encodeURIComponent(liveSince)}&select=character,buffs,buff_count,zone_name,self_hp_pct,loc_x,loc_y,loc_z,updated_at`),
       // Paged: one row per (uploader, name) is ~1,000 rows at peak (21 uploaders x 48), which is
       // PostgREST's silent per-response cap, so an unpaged read dropped raiders off the queue.
       // The shared 15-minute roster snapshot (utils/readSnapshots.js): the raid split and Extended Target read it too.
@@ -18701,7 +18719,11 @@ async function _handleAgentLiveState(req, res) {
     return res.end(JSON.stringify({ ok: true, stored: 0 }));
   }
   try {
-    if (rows.length) await supabase.upsert('character_live_state', rows, 'guild_id,character');
+    // Held in memory and written in a batch (utils/liveMemory.js): the newest row per character goes out as
+    // ONE upsert every 2 s, same on-conflict key; the ack does not wait for it (the upsert it replaces
+    // resolved null on failure, which this handler ignored, so a failed write never reached the agent).
+    const liveMem = require('./utils/liveMemory');
+    if (rows.length) liveMem.noteLiveStateRows(rows);
     // Target HISTORY (#target-obs). character_live_state is keyed
     // (guild_id, character), so the upsert above destroys the previous target
     // every time — see the migration header. Append the switch here, BEFORE
@@ -18718,7 +18740,11 @@ async function _handleAgentLiveState(req, res) {
     try { await _noteZealTags(rows); } catch (err) {
       console.warn('[zeal-tags] append failed:', err?.message);
     }
+    // The stamp is an UPDATE of a row that must already be in Supabase: memory takes it too, and any batch
+    // still waiting is written first, so the UPDATE cannot land before the row it patches.
+    if (swaps.length) await liveMem.flushLiveState();
     for (const s of swaps) {
+      liveMem.noteLiveStateSwap(guildId, s.character, { swapped_to: s.swapped_to, swapped_at: nowIso, updated_at: nowIso });
       await supabase.update('character_live_state',
         `guild_id=eq.${encodeURIComponent(guildId)}&character=eq.${encodeURIComponent(s.character)}`,
         { swapped_to: s.swapped_to, swapped_at: nowIso, updated_at: nowIso })
@@ -19471,7 +19497,11 @@ async function _handleAgentRaidRoster(req, res) {
     // as before — the read-side staleness window is the age-out mechanism, not
     // the delete. A cheap once-a-day prune (midnight chain) drops long-stale
     // rows so the table stays small; correctness never depends on it.
-    await supabase.upsert('raid_roster', rows, 'guild_id,uploaded_by_discord_id,name');
+    // Held in memory and written in a batch (utils/liveMemory.js): the newest row per key goes out as ONE
+    // upsert every 2 s, same on-conflict key. The ack no longer waits for Supabase; it never reported a
+    // failed write anyway (upsert resolves null on failure, which this handler ignored). A failed batch is
+    // kept and retried by the module.
+    require('./utils/liveMemory').noteRosterRows(rows);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, stored: rows.length }));
   } catch (err) {
@@ -24940,6 +24970,8 @@ function _gracefulShutdown(signal) {
   const drainMs = Number(process.env.SHUTDOWN_DRAIN_MS) || 10_000;
   console.log(`[shutdown] ${signal} received — health now 503, refusing new HTTP; draining in-flight for up to ${drainMs}ms`);
   try { httpServer.close(() => console.log('[shutdown] HTTP server closed (connections drained)')); } catch (e) { console.warn('[shutdown] server.close failed:', e && e.message); }
+  // Rows held for the next 2-second batch (utils/liveMemory.js) go out now, inside the drain window.
+  try { require('./utils/liveMemory').flushAll().catch(() => {}); } catch (e) { void e; }
   const done = () => {
     console.log('[shutdown] destroying Discord client + exiting');
     try { client.destroy(); } catch (e) { void e; }
