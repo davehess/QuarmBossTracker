@@ -6107,6 +6107,9 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
 - ✅ Chat overlay: a tell search shows both sides; each tell names your character (agent 3.7.185, beta, DECISIONS §345).
 - ✅ Chat overlay Loot channel shows others' loot too (agent 3.7.186, beta, DECISIONS §346). ⏳ Confirm the line against a real log.
 - ⏳ Raider paper dolls on the replay map (DECISIONS §347): waiting on one character's four side screenshots to test the stylize step.
+- ✅ Log ingestion / CPU (DECISIONS §348): upload counters batched (3.1.282), shared in-flight reads + batched raid-helper
+  sync (3.1.283); not an outside attack. ⏳ Re-measure after the next raid; nightly threat-graph build in small batches;
+  Tower archive watermark (stuck at 2026-09-06); 915 k deletable threat rows (the guild lead's call: now vs nightly).
 - ✅ Hail board counts guide ticks + /who sightings; departed members flip to is_member=false; raid_nights + merge 409s; batched
   threat sweep (`prune_threat_snapshots`) — all 3.1.271. ⏳ `VACUUM FULL`/`pg_repack` off-hours to give the space back.
 - ✅ Mimic chat wrap spacing (beta). ✅ Feedback in its own window with an autosaved draft (agent 3.7.179 beta; ⏳ live check).
