@@ -11129,3 +11129,17 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
   never for a player corpse. Not yet seen in one of our logs, so the match takes it with or without the period.
 - **Built:** `classifyLootLine` takes both shapes (dashes, one-word name, start of line); others' rows carry
   `self: false` and no longer fall into Other. The #91 loot upload still reads only "You have looted".
+
+### 347. Raider figures on the replay map: a paper doll from screenshots of each side, stylized (2026-10-15, call only)
+- **The ask** (the guild lead): *"can we start creating everyone's little models to display in the 3d mode or a 2d
+  format"*. Offered A (a figure built from the recorded race / armour dyes / weapon in `raid_night_appearance`),
+  B (a face coin from the film stills), C (real client models, Mimic only).
+- **The call:** *"Something repeatable, a paper doll would be cool, and show facing, we could make it with a screenshot
+  of each side of them then stylize"*: per raider, screenshots of the front, left, back and right of their own
+  character, stylized into one consistent sprite set, and the map shows the side matching their heading.
+- **Plan, cheapest proof first:** (1) stylize one character's four screenshots by hand with the image model the film
+  used, and look at it; (2) the replay draws the facing sprite (class dot when a raider has none); (3) a Mimic
+  "photo booth" captures the four sides on a hotkey, guided; (4) the bot stylizes and stores them in the private
+  `guild-media` bucket, re-runnable when gear changes.
+- **Boundary:** a stylized screenshot is derived from the client's art, the same family as §220's 3D-C, so the
+  sprites stay members-only (the replay is already member-gated) and are never committed to the repo.
