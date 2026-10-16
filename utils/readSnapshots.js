@@ -28,6 +28,10 @@ const _rows = (v) => Array.isArray(v);       // a failed read is null: answer th
 // uploads itself), Extended Target wants the rows whose loc_at is fresh. → rows, or null when the read failed.
 function raidRoster(supabase, guildId) {
   return cached(_mapFor(supabase, 'roster'), guildId, ROSTER_TTL_MS, () => {
+    // The bot receives every roster upload: once it has been receiving them for the whole window, the rows
+    // are already in memory (utils/liveMemory.js; null while cold, and then the read below runs as before).
+    const mem = require('./liveMemory').rosterRowsSince(guildId, ROSTER_WINDOW_MS);
+    if (mem) return mem;
     const since = new Date(Date.now() - ROSTER_WINDOW_MS).toISOString();
     // Paged: one row per (uploader, name), ~1,000 at peak. A truncated read drops whole uploaders.
     return supabase.selectAllPaged('raid_roster',

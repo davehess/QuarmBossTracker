@@ -480,7 +480,7 @@ describe('wiring in index.js and the migration (text, comments stripped)', () =>
     const hook = handler.indexOf("require('./utils/raidTrack').noteRows(rows, identity.discord_id)");
     expect(hook).toBeGreaterThan(-1);
     expect(hook).toBeGreaterThan(handler.indexOf('rows.length === 0'));
-    expect(hook).toBeLessThan(handler.indexOf("supabase.upsert('raid_roster'"));
+    expect(hook).toBeLessThan(handler.indexOf("require('./utils/liveMemory').noteRosterRows(rows)"));
     // inside its own try/catch: the nearest `try {` above is not already closed
     const tryAt = handler.lastIndexOf('try {', hook);
     expect(handler.slice(tryAt, hook)).not.toMatch(/catch/);
