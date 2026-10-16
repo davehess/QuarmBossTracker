@@ -11206,5 +11206,22 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
   `20261014120000`, bot 3.1.261) was never created in the database. The unused-index drop
   (`20261015080000`, §334) never ran either; three other 10/15 migrations are live but unrecorded. So "the GitHub
   integration applies migrations on merge" is NOT holding. The guild lead said go ahead on both; every write from
-  the session's database tool timed out before reaching the database (no lock, nothing running), so ⏳ both are
-  waiting to be pasted into the SQL editor.
+  the session's database tool timed out before reaching the database (no lock, nothing running), so the guild lead ran
+  both in the SQL editor the same day (verified after).
+
+### 351. Map: watch a named's placeholder spot — "A now, then C" (2026-10-16, bot 3.1.287, agent 3.7.189 beta)
+- **The ask** (the guild lead, on The Avatar of Anguish's spots): *"Lets add point of interest to targets on the map to
+  figure out what path we should take. And when we snipe a single mob we should be able to mark it and create a timer
+  for everyone with the named PH spot and map loc ... right now the spawn list is a little hard to read."*
+- **Options offered:** A — watch a spot (one click, guild timer); B — free labelled pins; C — hunt list (pick the
+  named, the map lights its spots and draws a route). **Picked: "A now, then C".** C builds on A.
+- **A shipped:** a spot whose spawn group holds a named gets "★ Watch for <named>"; watches are guild-shared per zone
+  copy for 12 h (bot_kv `map_watch:<zone>`, no migration); a placeholder death or empty mark there is taken from
+  anyone in the same copy, not just your raid; the window shows in the Timers window / Canvas as
+  "★ <named> PH · spot #id · /loc Y, X". Respawn list: a ★ Watched section first, same-name rows folded ("×4"), a
+  larger time column, a background that never drops below 94%.
+- ⏳ Check one watched spot's `/loc` in game against the label (axis order Y, X follows the Map's own readout).
+  ⏳ The timer rows exist only while the Map overlay is open (the zone data and sync live there). ⏳ C next.
+- **Corpses on the Map** (the guild lead: *"WE SHOULD show where people died on the map"*): options A (own corpses),
+  B (guild corpses, from the death Mimic already sends for the corpse DM), C (whole raid, from Zeal raid positions)
+  offered; ⏳ waiting on the pick.
