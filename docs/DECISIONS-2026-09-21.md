@@ -11146,3 +11146,27 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
   `guild-media` bucket, re-runnable when gear changes.
 - **Boundary:** a stylized screenshot is derived from the client's art, the same family as §220's 3D-C, so the
   sprites stay members-only (the replay is already member-gated) and are never committed to the repo.
+
+### 348. Log ingestion and database load: self-inflicted, cut at the bot (2026-10-16, bot 3.1.282–3.1.283)
+- **The asks** (the guild lead): Supabase log ingestion *"is WAY over"* (53 GB of 20 GB included this cycle,
+  ~2 GB/day; overage billing starts after the 2027 grace period), RaidBosses at 90% CPU on Micro, and *"is it
+  possible they are finding a way to spam a stream to us or is this all self inflicted?"* after a talk with a
+  competing guild.
+- **Measured (edge logs, 24 h to 2026-10-16 04:00 UTC, a raid night):** 1.18 M API-gateway requests, every one
+  with our service key: Railway (the bot) ~1.05 M, one Google Cloud address ~127 k (the SAME bot: Railway traffic
+  stopped in the 05:00 hour exactly as it began, and came back at the 3.1.282 deploy), the website's edge check
+  ~4.9 k, browser sign-ins ~15. Zero public-key requests, one 401 all day. The bot's own API took 2.5 M requests,
+  94% accepted (logged-in Mimics), tracking raid hours; 4xx steady with no burst. **Not an outside attack.**
+- **Cause:** every bot read cache was check → await → set with no in-flight sharing, so ~60 Mimics polling
+  every 1.5–6 s each sent their own copy of the same read; plus one stat RPC per upload (164 k/day).
+- **Shipped:** 3.1.282 batches the upload counters (one `bump_agent_upload_stats` call a minute, migration
+  `20261016043000`). 3.1.283 adds `utils/ttlCache.js` (shared in-flight reads) on the live zone map, target-buffs,
+  di-status, live damage, the Extended Target and buff-queue bundles and guild triggers (60 s: an edit now
+  reaches agents in ~3 min), one shared raid_roster snapshot for three readers (`utils/readSnapshots.js`), and a
+  batched raid-helper sync. Estimated 400–500 k fewer requests a day; **re-measure after the next raid.**
+- **Database size, same night:** `encounter_threat_snapshots` was 2.6 GB of 4.2 GB because the 30-day sweep never
+  ran: its graph watermark sat at 2025-01-14 since `build_encounter_threat_graphs(5000)` timed out every night
+  from 2026-09-28 (12,645 fights ungraphed). The backlog was built by hand in batches (graphs now through
+  2026-10-11); the archive watermark (Tower, set by hand 2026-09-23, through 2026-09-06) is now the limit, with
+  915 k rows deletable. ⏳ Nightly graph build in small batches; Tower archive watermark refresh; the guild lead's
+  call on deleting the 915 k now vs nightly. Next lever on request volume: Mimic polling less while nothing changes.
