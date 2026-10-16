@@ -6,13 +6,21 @@
 // if the target has room. The reason the page exists: the shared bank belongs to the account, so
 // /me/inventory has to know who shares one before it can count a shared stack once.
 //
-// Everything here takes the database client and the owner as arguments, and imports nothing at run time. The
+// The account label is encrypted at rest (the guild lead, 2026-10-16; web/lib/labelCrypto.ts). When
+// GAME_ACCOUNT_LABEL_KEY is set, a rename writes game_accounts.label_enc and nulls label, and a read moves any
+// leftover plaintext label over. With no key it behaves as before and writes label.
+// ⚠ The label_enc column (supabase/migrations/20261016210000_game_accounts_label_enc.sql) must exist BEFORE this
+// code ships: the read below selects it.
+//
+// Everything here takes the database client and the owner as arguments, and imports only the label crypto. The
 // callers (the /me/accounts page and its server actions) resolve the signed-in person and the characters they
 // own (ownedCharacters), which keeps the rules testable against a fake client.
 //
 // Membership rows are HISTORY: a move closes the character's open row (valid_to) and opens a new one, and
 // account_id is never updated in place. Owner key = the household ROOT Discord id, so merged members share
 // their accounts the way they share their characters.
+
+import { decryptLabel, encryptLabel, labelKeyReady } from './labelCrypto';
 
 export const MAX_ACCOUNTS = 10;
 export const MAX_PER_ACCOUNT = 8;
@@ -36,6 +44,10 @@ export type GameAccountsState = { accounts: AccountView[]; unplaced: PlacedChar[
 export type Result = { ok: boolean; error?: string; state?: GameAccountsState };
 
 type AccountRow = { id: string; slot: number; label: string | null };
+type StoredAccountRow = AccountRow & { label_enc: string | null };
+
+// What a ciphertext is bound to: this owner's account in this slot.
+const labelAad = (owner: string, slot: number) => `${owner}:${slot}`;
 type MemberRow = {
   id: number; character_name: string; account_id: string;
   valid_from: string; valid_to: string | null;
@@ -70,9 +82,22 @@ export async function ownerDiscordId(db: Db, userId: string): Promise<string | n
 async function ensureAccounts(db: Db, owner: string): Promise<AccountRow[]> {
   const read = async () => {
     const { data, error } = await db.from('game_accounts')
-      .select('id, slot, label').eq('guild_id', GUILD).eq('owner_discord_id', owner).order('slot');
+      .select('id, slot, label, label_enc').eq('guild_id', GUILD).eq('owner_discord_id', owner).order('slot');
     if (error) throw new Error(error.message);
-    return (data ?? []) as AccountRow[];
+    const ready = labelKeyReady();
+    const out: AccountRow[] = [];
+    for (const r of (data ?? []) as StoredAccountRow[]) {
+      const aad = labelAad(owner, r.slot);
+      out.push({ id: r.id, slot: r.slot, label: r.label_enc ? decryptLabel(r.label_enc, aad) : r.label });
+      if (ready && r.label && !r.label_enc) {
+        // Move a plaintext label over. Best effort: the guards keep it from overwriting a rename that raced it.
+        try {
+          await db.from('game_accounts').update({ label_enc: encryptLabel(r.label, aad), label: null })
+            .eq('id', r.id).eq('label', r.label).is('label_enc', null);
+        } catch { /* the page does not wait on this */ }
+      }
+    }
+    return out;
   };
   let rows = await read();
   if (rows.length < MAX_ACCOUNTS) {
@@ -198,7 +223,10 @@ export async function renameAccount(
   if (!clean.ok) return { ok: false, error: clean.error };
   try {
     await ensureAccounts(db, owner);
-    const { error } = await db.from('game_accounts').update({ label: clean.label })
+    const stored = labelKeyReady()
+      ? { label: null, label_enc: clean.label === null ? null : encryptLabel(clean.label, labelAad(owner, slot)) }
+      : { label: clean.label, label_enc: null };   // no key: plaintext, and no older ciphertext left to win on read
+    const { error } = await db.from('game_accounts').update(stored)
       .eq('guild_id', GUILD).eq('owner_discord_id', owner).eq('slot', slot);
     if (error) return { ok: false, error: error.message };
     return { ok: true, state: await loadGameAccounts(db, owner, owned) };
