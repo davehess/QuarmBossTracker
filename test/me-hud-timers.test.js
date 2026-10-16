@@ -38,6 +38,8 @@ const castChain = [
   agent.match(/const SELF_CAST_WINDOW_MS = [^\n]+/)[0],
   sliceBlock(agent, 'function _normMobName(v) {', '\n}'),
   sliceBlock(agent, 'function _provableTargetId(observer, targetName) {', '\n}'),
+  agent.match(/const _GENERIC_MOB_RX = [^\n]+/)[0],
+  sliceBlock(agent, 'function _landingTargetId(observer, evt) {', '\n}'),
   sliceBlock(agent, 'function _zealTargetForChar(charLower) {', '\n}'),
   sliceBlock(agent, 'function noteSelfCast(line, character) {', '\n}'),
   sliceBlock(agent, 'function resolveSelfCastLanding(line, observer) {', '\n}'),
@@ -51,7 +53,7 @@ const EXPORTS = ['_serializeMeState', '_meNoteRawLine', '_meTick', '_meSwingStat
   '_meNoteHit', '_meMobTallies', '_npcHtFor', '_meNoteCastFailed', '_tickEnrageWarn', '_meNoteMobDeath', '_dsKindOf', '_meClickies', '_noteClickyUse',
   '_noteClickyRecharged', '_noteClickyOutcomeLine',
   '_xpNoteRawLine', '_xpPending', '_xpFlush',
-  'noteSelfCast', 'resolveSelfCastLanding', '_meNoteMyLanding', '_provableTargetId'];
+  'noteSelfCast', 'resolveSelfCastLanding', '_meNoteMyLanding', '_provableTargetId', '_landingTargetId'];
 
 function load({ zeal = {}, victim = null, dsKnown = 0, player = null, spells = [] } = {}) {
   const pre = `
@@ -1137,7 +1139,7 @@ describe('procs and stuns/aggro put into the target', () => {
     const line = eqts(clock) + msg;
     h.noteSelfCast(line, 'Aldenmar');
     const ev = h.resolveSelfCastLanding(line, 'Aldenmar');
-    if (ev) { ev.target_id = h._provableTargetId('Aldenmar', ev.target); h._meNoteMyLanding('Aldenmar', ev); }
+    if (ev) { ev.target_id = h._landingTargetId('Aldenmar', ev); h._meNoteMyLanding('Aldenmar', ev); }
     h._meNoteRawLine(line, 'Aldenmar');
   };
   const cast = (h, spell, landing, who = MOB) => { tail(h, 'You begin casting ' + spell + '.'); clock += 2000; if (landing) tail(h, who + ' ' + landing); };
@@ -1253,7 +1255,7 @@ describe('procs and stuns/aggro put into the target', () => {
 
   it('the tail hands every landing of yours to the counter, after its spawn id is known', () => {
     const tailBody = stripJs(sliceBlock(agent, 'const bcEvt = (!_sourceExcluded ? resolveSelfCastLanding', 'if (!_shouldSuppressBuffLanding(bcEvt)'));
-    expect(tailBody).toMatch(/bcEvt\.target_id = _provableTargetId\(b\.character, bcEvt\.target\);\s*try \{ _meNoteMyLanding\(b\.character, bcEvt\); \}/);
+    expect(tailBody).toMatch(/bcEvt\.target_id = _landingTargetId\(b\.character, bcEvt\);\s*try \{ _meNoteMyLanding\(b\.character, bcEvt\); \}/);
   });
 });
 

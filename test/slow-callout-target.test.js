@@ -80,8 +80,8 @@ describe('the callouts carry the mob; speech stays short', () => {
 describe('the fading and drop paths use the landing\'s display name', () => {
   const clean = stripJs(src);
   it('the landing stores it, the tick keeps it, both callouts read it', () => {
-    expect(clean).toContain('_slowCalloutState.set(targetLower, { name: best.name, magnitude: best.magnitude, display });');
-    expect(clean).toContain('name: best.name, magnitude: best.magnitude, display: prev.display || null,');
+    expect(clean).toContain('_slowCalloutState.set(targetLower, { name: best.name, magnitude: best.magnitude, display, id: wantId });');
+    expect(clean).toContain('name: best.name, magnitude: best.magnitude, display: prev.display || null, id: prev.id ?? null,');
     expect(clean).toContain('const mob = _slowCalloutMob(prev.display, targetLower);');
     expect(clean).toContain('_announceSlowDrop(prev.name, _slowCalloutMob(prev.display, targetLower))');
   });

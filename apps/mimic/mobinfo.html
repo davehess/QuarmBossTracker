@@ -120,6 +120,10 @@
   .slowbadge .sm{color:#f0b429}
   .slowbadge .by{color:#c9a227;font-weight:400;font-style:italic;font-size:10px}
   .slowbadge .st2{color:#e6c34a;margin-left:auto}
+  /* FB-83 uncertain: a slow seen landing on a mob of this name, not proven to be THIS one — dimmed, dashed. */
+  .slowbadge.unc{opacity:.6;border-style:dashed}
+  .mini-row.slow.unc{opacity:.6}
+  .tbuff.unc{opacity:.6}
   /* FB-54 reverse slow: red, not amber — a slow on this mob hastes it. */
   .slowbadge.rev{background:rgba(248,81,73,0.16);border-color:rgba(248,81,73,0.6);color:#ff7b72}
   .slowbadge.rev .sc,.slowbadge.rev .sn,.slowbadge.rev .sm{color:#ff7b72}
@@ -454,8 +458,10 @@
     }
     var castBy = b.caster || b.owner;
     btTip += (btTip ? ' · ' : '') + (castBy ? 'cast by ' + castBy : 'caster unknown (only Mimic users’ casts are named)');
-    return '<div class="tbuff" title="'+tip+'">'
-         +    '<span class="bn">'+esc(b.name)+ownerStr+'</span>'
+    // FB-83: landed on a mob of this name, not proven to be this spawn — "?" and dimmed, never shown as fact.
+    if (b.unproven) tip = _slowUncertainTip('') + ' · ' + tip;
+    return '<div class="tbuff'+(b.unproven ? ' unc' : '')+'" title="'+tip+'">'
+         +    '<span class="bn">'+esc(b.name)+(b.unproven ? '?' : '')+ownerStr+'</span>'
          +    '<div class="bbar"><div style="width:'+pct.toFixed(0)+'%;background:'+col+'"></div></div>'
          +    '<span class="bt" title="'+esc(btTip)+'">'+bt+'</span>'
          +  '</div>';
@@ -1186,6 +1192,10 @@
          +   '<span class="mini-t wp-mini-num">' + (rem != null ? fmtSecs(rem) : '?') + '</span>'
          + '</div>';
   }
+  // FB-83: the agent knows this spawn's id but only saw the slow land as a bystander line (no id).
+  function _slowUncertainTip(nm){
+    return 'Seen landing on ' + esc(nm || 'a mob of this name') + ' — may not be this one';
+  }
   function _reverseSlowTip(sl){
     return 'Reverse slow — a slow on this mob hastes it'
       + (sl && sl.name ? ' (a slow landed: ' + sl.name + (sl.magnitude && !sl.ambiguous ? ', so it is hasted ~' + sl.magnitude + '%' : ', so it is hasted') + ')' : '')
@@ -1212,7 +1222,8 @@
     } else if (sl && sl.name) {
       var tip = sl.ambiguous ? 'Slowed — strength unknown: the game prints one message for several slows'
               : esc(sl.name) + (sl.magnitude ? ' · ' + sl.magnitude + '%' : '') + (sl.caster ? ' · by ' + esc(sl.caster) : '');
-      h += _miniTimerRow('slow', 'SLOW', sl.remaining_secs, sl.total_secs, tip);
+      if (sl.uncertain) tip = _slowUncertainTip(nm);
+      h += _miniTimerRow('slow' + (sl.uncertain ? ' unc' : ''), sl.uncertain ? 'SLOW?' : 'SLOW', sl.remaining_secs, sl.total_secs, tip);
     }
     return '<div class="mini">' + h + '</div>';
   }
@@ -1307,7 +1318,9 @@
               + (sl.remaining_secs != null ? ' · '+fmtSecs(sl.remaining_secs)+' left' : '')
               + ' · EQ slows do not stack — strongest shown';
       }
-      slowBadge = '<div class="slowbadge'+(slAmb ? ' amb' : '')+'" title="'+slTip+'">🐌 '+slCls+'<span class="sn">'+esc(slName)+'</span>'+slMag+slBy+slRem+'</div>';
+      // FB-83: only an id-less landing backs it — dimmed, "?" on the name, and the tooltip says why.
+      if (sl.uncertain) { slName += '?'; slTip = _slowUncertainTip(nm) + ' · ' + slTip; }
+      slowBadge = '<div class="slowbadge'+(slAmb ? ' amb' : '')+(sl.uncertain ? ' unc' : '')+'" title="'+slTip+'">🐌 '+slCls+'<span class="sn">'+esc(slName)+'</span>'+slMag+slBy+slRem+'</div>';
     }
     // FB-54: a reverse-slow mob (a slow on it hastes it) gets a red badge in the amber
     // one's place — "don't slow", or "hasted" when a slow did land.

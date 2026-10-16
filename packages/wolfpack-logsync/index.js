@@ -3651,6 +3651,20 @@ function _provableTargetId(observer, targetName) {
   }
   return null;
 }
+// FB-83 (the guild lead, 2026-10-16: "We're clearly not putting the right debuffs on the right mobs - this one
+// had Tepid Deeds display but it was not actually slowed"). A landing LINE names the mob type, not the spawn:
+// with two "A War Boar"s up, "A War Boar slows down." landing on boar B while this observer targets boar A
+// matched A's name above and was stamped with A's id, so A showed a PROVEN slow it never had. The id at land
+// time is proof only for our own cast (the target captured when we cast it, `_castTargetId`) or for a mob
+// whose name has no article (a named mob is one spawn). A generic "a/an/the …" landing stays id-less, and
+// the readers show it as unproven rather than as fact.
+const _GENERIC_MOB_RX = /^\s*(a|an|the)\s/i;
+function _landingTargetId(observer, evt) {
+  if (evt && Number(evt._castTargetId) > 0) return Number(evt._castTargetId);
+  const name = evt && evt.target;
+  if (!name || _GENERIC_MOB_RX.test(String(name))) return null;
+  return _provableTargetId(observer, name);
+}
 // ── Measured buff durations (the guild lead, 2026-09-02) ──────────────────────────────
 // "give it a more robust view of effects and timeframes ... provide an estimate
 // of how long cast buffs will last by character."
@@ -4032,6 +4046,10 @@ function targetBuffsFor(targetLower, wantId) {
       pacified: _isPacifySpell(b.name),
       pacify_ae: _isAePacify(b.name),
       unconfirmed: !!(b && b.unconfirmed),
+      // FB-83: no proven spawn on a generic "a/an/the …" name while a specific spawn is on screen — it landed on
+      // A mob of this name, maybe not this one. Shown marked, never as fact. (typeof: sliced tests lift this alone.)
+      unproven: wantId != null && b.target_id == null && typeof _GENERIC_MOB_RX !== 'undefined'
+        && _GENERIC_MOB_RX.test(String(b.target_name || targetLower)),
       tick_snapped: !!(fade && fade.snapped),
       owner: (b && b.owner) ? b.owner : null });
   }
@@ -4403,7 +4421,10 @@ function noteSelfCast(line, character) {
   let arr = _recentSelfCast.get(cl);
   if (!arr) { arr = []; _recentSelfCast.set(cl, arr); }
   const spellLower = m[1].trim().toLowerCase();
-  arr.push({ spellLower, name: m[1].trim(), atMs, target: _zealTargetForChar(cl) });
+  const castTarget = _zealTargetForChar(cl);
+  // FB-83: the spawn id of that target at CAST time (null on a Zeal that sends none; 0 = no target).
+  const castId = (castTarget && typeof _provableTargetId === 'function') ? _provableTargetId(cl, castTarget) : null;
+  arr.push({ spellLower, name: m[1].trim(), atMs, target: castTarget, targetId: castId > 0 ? castId : null });
   // DI availability — stamp the recast on every Divine Intervention cast.
   if (spellLower === 'divine intervention') _noteDiCast(cl, atMs);
   // Me overlay: long-recast timers (Theft of Thought, Harvest, …).
@@ -5407,6 +5428,8 @@ function resolveSelfCastLanding(line, observer) {
       dur_formula: e.durf,
       cast_at:     ts ? ts.toISOString() : new Date().toISOString(),
       observer:    observer,
+      // FB-83: the spawn we aimed at, only when the land names that same target (not a pet-buff exception).
+      _castTargetId: (rc.targetId > 0 && rc.target && String(rc.target).toLowerCase() === name.toLowerCase()) ? rc.targetId : null,
       _selfCast:   true,
     };
   }
@@ -7382,11 +7405,15 @@ function _slowShortName(name) {
   if (alias) return alias;
   return String(name || '').replace(/\s+(insects|deeds|pace|sleep)$/i, '').trim() || String(name || '');
 }
-// Active slows observed per target: targetLower → Map<spellLower,
-// { name, magnitude, caster, landedAtMs, expiresAtMs }>. `caster` is set only
+// Active slows observed per target NAME: targetLower → Map<key,
+// { name, magnitude, caster, targetId, landedAtMs, expiresAtMs }>. `caster` is set only
 // when we KNOW it (our own self-cast); a bystander-observed land carries null
 // (the same limitation the raid-review slows section documents). expiresAtMs 0 =
 // unknown catalog duration (rare — the classic slows are all catalog-timed).
+// FB-83: `key` is the lowercased spell name, plus "#<spawn id>" when the landing is
+// tied to one spawn (our own cast at our own Zeal target) — so two boars each slowed
+// by the same spell are two entries. `targetId` null = the id is unknown (a bystander
+// line names no spawn); readers that know their spawn id use it (_bestSlowForTarget).
 const _slowsByTarget = new Map();
 const SLOW_TARGET_CAP     = 200;
 const SLOW_PRUNE_GRACE_MS = 3000;
@@ -7416,8 +7443,13 @@ function _pickBestActiveSlow(entries, nowMs) {
   return best;
 }
 // Best active slow on a target for DISPLAY — { name, magnitude, caster,
-// remaining_secs, total_secs } or null. Prunes long-expired entries as it reads.
-function _bestSlowForTarget(targetLower, nowMs) {
+// remaining_secs, total_secs, uncertain } or null. Prunes long-expired entries as it reads.
+// FB-83: `wantId` is the spawn id of the mob the reader is showing, when it knows one
+// (null/absent = old Zeal: name only, as before). With it, an entry tied to THAT id is
+// certain, an entry tied to a DIFFERENT id is some other mob of the same name and is
+// left out, and an id-less entry (a bystander line) may or may not be this mob: it is
+// returned with `uncertain: true`, and only when no certain entry exists.
+function _bestSlowForTarget(targetLower, nowMs, wantId) {
   const mp = _slowsByTarget.get(targetLower);
   if (!mp || mp.size === 0) return null;
   const now = nowMs || Date.now();
@@ -7427,7 +7459,13 @@ function _bestSlowForTarget(targetLower, nowMs) {
     if (e) entries.push(e);
   }
   if (mp.size === 0) { _slowsByTarget.delete(targetLower); return null; }
-  const best = _pickBestActiveSlow(entries, now);
+  let pool = entries, uncertain = false;
+  if (wantId > 0) {
+    const certain = entries.filter(e => e.targetId === wantId);
+    if (_pickBestActiveSlow(certain, now)) pool = certain;
+    else { pool = entries.filter(e => !(e.targetId > 0)); uncertain = true; }
+  }
+  const best = _pickBestActiveSlow(pool, now);
   if (!best) return null;
   const remaining = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - now) / 1000)) : null;
   const total     = best.expiresAtMs > 0 ? Math.max(0, Math.round((best.expiresAtMs - best.landedAtMs) / 1000)) : null;
@@ -7438,12 +7476,12 @@ function _bestSlowForTarget(targetLower, nowMs) {
   if (best.ambiguous) {
     return { name: best.name, display_name: 'SLOWED', ambiguous: true,
              family: best.family || null,
-             magnitude: null, caster: null, cls: null,
+             magnitude: null, caster: null, cls: null, uncertain,
              remaining_secs: remaining, total_secs: total, landedAtMs: best.landedAtMs || 0 };
   }
   return { name: best.name, display_name: null, ambiguous: false, family: null,
            magnitude: best.magnitude, caster: best.caster || null,
-           cls: _slowClass(best.name),
+           cls: _slowClass(best.name), uncertain,
            remaining_secs: remaining, total_secs: total, landedAtMs: best.landedAtMs || 0 };
 }
 // #181 — the bystander land text for the classic slows is a bare shared emote:
@@ -7459,13 +7497,17 @@ const SLOW_AMBIG_FAMILIES = [
   { rx: /\byawns\.\s*$/i,      family: new Set(["turgur's insects", "togor's insects", "tagar's insects", "walking sleep", "drowsy"]) },
   { rx: /\bslows down\.\s*$/i, family: new Set(["tepid deeds", "forlorn deeds", "shiftless deeds", "languid pace"]) },
 ];
-function _refreshSlowFromAmbiguousLand(targetName, line, nowMs) {
+// FB-83: `curId` is the observer's own target id when it is this mob (null otherwise). The line names
+// no spawn, so an entry tied to a DIFFERENT spawn is left alone; id-less entries and ones tied to
+// `curId` are the only ones it cannot contradict. No `curId` (old Zeal) → every entry, as before.
+function _refreshSlowFromAmbiguousLand(targetName, line, nowMs, curId) {
   const mp = _slowsByTarget.get(String(targetName || '').toLowerCase());
   if (!mp || mp.size === 0) return false;
   for (const fam of SLOW_AMBIG_FAMILIES) {
     if (!fam.rx.test(line)) continue;
     for (const [k, e] of mp) {
-      if (!fam.family.has(k)) continue;
+      if (!fam.family.has(String(k).split('#')[0])) continue;
+      if (curId > 0 && e.targetId > 0 && e.targetId !== curId) continue;
       const at = nowMs || Date.now();
       const span = (e.expiresAtMs > 0 && e.landedAtMs) ? (e.expiresAtMs - e.landedAtMs) : 0;
       e.landedAtMs = at;
@@ -7544,12 +7586,19 @@ function _noteSlowForTarget(evt, caster) {
   const magnitude   = _slowMagnitude(evt.spell_name);
   let mp = _slowsByTarget.get(targetLower);
   if (!mp) { mp = new Map(); _slowsByTarget.set(targetLower, mp); }
+  // FB-83: tie the slow to a spawn only when our own cast proves it (resolveSelfCastLanding
+  // stamps the Zeal target id from cast time). A bystander line names no spawn → id-less.
+  const targetId = Number(evt._castTargetId) > 0 ? Number(evt._castTargetId) : null;
+  const key = targetId ? spellLower + '#' + targetId : spellLower;
+  for (const [k, e] of mp) {   // spawn-keyed entries pile up under one name: drop the long-expired
+    if (e && e.expiresAtMs > 0 && e.expiresAtMs <= atMs - SLOW_PRUNE_GRACE_MS) mp.delete(k);
+  }
   // An ambiguous crown is only a guess at WHICH slow landed, so the magnitude
   // that comes with it is a guess too. A named caster resolves it (a self-cast
   // or relayed cast names the spell exactly), so ambiguity clears the moment we
   // get one.
   const ambiguous = !caster && !!evt.ambiguous;
-  const existing = mp.get(spellLower);
+  const existing = mp.get(key);
   if (existing) {
     existing.landedAtMs = atMs;
     if (expiresAtMs) existing.expiresAtMs = expiresAtMs;
@@ -7559,8 +7608,8 @@ function _noteSlowForTarget(evt, caster) {
     else if (ambiguous) existing.ambiguous = true;
     if (evt.family) existing.family = evt.family;
   } else {
-    mp.set(spellLower, { name: evt.spell_name, magnitude, caster: caster || null,
-                         ambiguous, family: evt.family || null, landedAtMs: atMs, expiresAtMs });
+    mp.set(key, { name: evt.spell_name, magnitude, caster: caster || null, targetId,
+                  ambiguous, family: evt.family || null, landedAtMs: atMs, expiresAtMs });
   }
   if (_slowsByTarget.size > SLOW_TARGET_CAP) {
     const oldest = _slowsByTarget.keys().next().value;
@@ -7573,15 +7622,34 @@ function _noteSlowForTarget(evt, caster) {
 // stronger one, or a plain refresh, is silent (the best spell doesn't change).
 function _maybeAnnounceSlowLand(targetLower, targetName, nowMs) {
   if (!_rampageOnMainTarget(targetName)) return;   // #155-style main-target gate
-  const best = _bestSlowForTarget(targetLower, nowMs);
+  // FB-83: when a watched client's Zeal target names the one spawn we are looking at, a slow
+  // proven to be on a DIFFERENT spawn of the same name is not this mob's and stays silent.
+  const wantId = _watchedTargetId(targetName || targetLower);
+  const best = _bestSlowForTarget(targetLower, nowMs, wantId);
   if (!best) return;
   const prev = _slowCalloutState.get(targetLower);
-  const changed = !prev || String(best.name).toLowerCase() !== String(prev.name || '').toLowerCase();
+  const changed = !prev || String(best.name).toLowerCase() !== String(prev.name || '').toLowerCase()
+    || (prev.id != null && wantId != null && prev.id !== wantId);
   // `display` keeps the mob's name as the log cased it; the fading and drop
   // callouts run off the lowercased key alone and have no other source for it.
   const display = targetName || (prev && prev.display) || null;
-  _slowCalloutState.set(targetLower, { name: best.name, magnitude: best.magnitude, display });
+  _slowCalloutState.set(targetLower, { name: best.name, magnitude: best.magnitude, display, id: wantId });
   if (changed) _announceSlowLand(best, _slowCalloutMob(display, targetLower));
+}
+// The spawn id of the mob called `name` when the watched clients' Zeal targets agree on exactly one
+// (same proof rule as _slowCalloutMob below); null when none do, or when two disagree.
+function _watchedTargetId(name) {
+  const want = _normMobNameAgent(name);
+  if (!want) return null;
+  const ids = new Set();
+  const now = Date.now();
+  for (const ch of Object.keys(_zealState)) {
+    const st = _zealState[ch];
+    if (!st || (now - (st.updatedAt || 0)) > 60000) continue;
+    if (!Number.isFinite(st.target_id) || st.target_id <= 0) continue;
+    if (_normMobNameAgent(st.target_name) === want) ids.add(st.target_id);
+  }
+  return ids.size === 1 ? [...ids][0] : null;
 }
 // Which mob a slow callout is about — "A Plagued Soriz #4745" (a member,
 // 2026-09-23: "we should say the target these are based around, name of mob and
@@ -7662,7 +7730,11 @@ const SLOW_FADING_WARN_SECS = 60;
 function _tickSlowCallouts() {
   const now = Date.now();
   for (const [targetLower, prev] of _slowCalloutState) {
-    const best = _bestSlowForTarget(targetLower, now);
+    // FB-83: the watched target is now a different spawn of this name than the one the callout
+    // state was written for — that is a target switch, not the slow wearing off. Forget it silently.
+    const wantId = _watchedTargetId(targetLower);
+    if (prev.id != null && wantId != null && prev.id !== wantId) { _slowCalloutState.delete(targetLower); continue; }
+    const best = _bestSlowForTarget(targetLower, now, wantId);
     if (best) {
       const nameChanged = String(best.name).toLowerCase() !== String(prev.name || '').toLowerCase();
       // #181 — "re-slow soon" pre-warn: once per landing window, when the
@@ -7678,7 +7750,7 @@ function _tickSlowCallouts() {
         && _isNameCurrentlyTargeted(targetLower) && _rampageOnMainTarget(targetLower);
       if (nameChanged || warnDue) {
         _slowCalloutState.set(targetLower, {
-          name: best.name, magnitude: best.magnitude, display: prev.display || null,
+          name: best.name, magnitude: best.magnitude, display: prev.display || null, id: prev.id ?? null,
           warnedForLandMs: warnDue ? best.landedAtMs : prev.warnedForLandMs,
         });   // name change is a silent downgrade; warn stamps the window
       }
@@ -15546,7 +15618,7 @@ function _meTargetExtras(st, active, now) {
   const pipeTot = _pipeCandidateOf(st, 'target_of_target');
   const totName = pipeTot ? pipeTot.name : _victimForMob(tl, now);
   if (totName) tot = { name: totName, hp_pct: _meHpPctFor(String(totName).toLowerCase(), active, st), source: pipeTot ? 'zeal' : 'log' };
-  const slow = _bestSlowForTarget(tl, now);
+  const slow = _bestSlowForTarget(tl, now, st.target_id);   // FB-83: spawn-scoped when Zeal sends the id
   const until = _meEnraged.get(tl);
   if (until && until <= now) _meEnraged.delete(tl);
   const mine = _meMineFor(String(active || '').toLowerCase(), st.target_name, st.target_id, now);
@@ -15554,7 +15626,7 @@ function _meTargetExtras(st, active, now) {
     tot,
     // What you have put into it: procs landed, and stuns / aggro spells landed (see _meMineBump).
     my_procs: mine.procs, my_stuns: mine.stuns,
-    slow: slow ? { label: slow.display_name || slow.name, pct: slow.magnitude ?? null, remaining_secs: slow.remaining_secs ?? null } : null,
+    slow: slow ? { label: slow.display_name || slow.name, pct: slow.magnitude ?? null, remaining_secs: slow.remaining_secs ?? null, uncertain: !!slow.uncertain } : null,
     enrage: specials ? specials.includes('Enrage') : null,
     // A summoner starts pulling its target to it below 97% HP (the server's
     // default; a mob's own setting can move it, which the catalog row doesn't carry).
@@ -50745,7 +50817,8 @@ function buildMobInfo() {
     // #130 — best ACTIVE slow on the current target (strongest still-live,
     // observed-landing + catalog-duration derived; the only path for mobs, which
     // have no authoritative buff readout on the Zeal pipe). null when unslowed.
-    target_slow:    _bestSlowForTarget(tnameLower, Date.now()),
+    // FB-83: scoped to the spawn when Zeal sends its id; `uncertain` when only an id-less landing backs it.
+    target_slow:    _bestSlowForTarget(tnameLower, Date.now(), _curIdForRelay),
     // ── Target Info: mana + last cast (the guild lead, 2026-09-22) ──────────
     // Both null for the ~79% of the catalog with no mana pool and for any mob
     // we have not yet named a cast for. The overlay draws NOTHING in that case
@@ -56323,9 +56396,11 @@ async function main() {
                    || parseBuffLanding(line, b.character);
         if (bcEvt && !_sourceExcluded) {
           // Which spawn did this land on? Provable only when this observer was
-          // targeting it (see _provableTargetId). Stamped BEFORE the upload push
-          // below so the local map and buff_casts carry the same answer.
-          bcEvt.target_id = _provableTargetId(b.character, bcEvt.target);
+          // targeting it (see _provableTargetId), and never for a generic name a
+          // bystander line cannot pin to one spawn (FB-83, _landingTargetId).
+          // Stamped BEFORE the upload push below so the local map and buff_casts
+          // carry the same answer.
+          bcEvt.target_id = _landingTargetId(b.character, bcEvt);
           // Me HUD: a stun or an aggro spell of YOURS that landed counts toward the target's tally.
           try { _meNoteMyLanding(b.character, bcEvt); } catch (e) { void e; }
           const _bcFp = `buffcast|${bcEvt.target}|${bcEvt.spell_id}|${bcEvt.landing_text}|${bcEvt.cast_at}`;
@@ -56367,12 +56442,12 @@ async function main() {
             const _sm = line.match(/\]\s+(.+?)\s+(?:yawns|slows down)\.\s*$/);
             if (_sm && _sm[1]) {
               const _slowTs = parseEqTimestamp(line);   // tsMs is not in this callback's scope — derive from the line
-              try { _refreshSlowFromAmbiguousLand(_sm[1], line, _slowTs ? _slowTs.getTime() : Date.now()); } catch (e) { void e; }
+              try { _refreshSlowFromAmbiguousLand(_sm[1], line, _slowTs ? _slowTs.getTime() : Date.now(), _landingTargetId(b.character, { target: _sm[1] })); } catch (e) { void e; }
             }
           }
           const dbEvt = parseDebuffLanding(line, b.character);
           if (dbEvt && dbEvt.spell_name) {
-            dbEvt.target_id = _provableTargetId(b.character, dbEvt.target);
+            dbEvt.target_id = _landingTargetId(b.character, dbEvt);
             // Local Target Info — show the debuff on whatever's targeted (mob or
             // player), timed from the land. This is the emote-based path, so it
             // does NOT depend on a Zeal target-name match (the caster-self-cast
