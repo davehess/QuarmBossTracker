@@ -11170,3 +11170,12 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
   2026-10-11); the archive watermark (Tower, set by hand 2026-09-23, through 2026-09-06) is now the limit, with
   915 k rows deletable. ⏳ Nightly graph build in small batches; Tower archive watermark refresh; the guild lead's
   call on deleting the 915 k now vs nightly. Next lever on request volume: Mimic polling less while nothing changes.
+- **Next lever picked: A — live raid state in bot memory** (the guild lead, 2026-10-16: *"going to have to be A, but
+  then are we getting riskier on state and redeploys?"*). Rejected: load-balancing the bot (each replica keeps its
+  own caches, so reads multiply, and the cast relays / guild feed / Discord connection assume one process) and
+  changing ingress/egress (the log bill counts requests, not direction or source). The promised safety rules:
+  (1) Supabase stays the record — every roster/live-state row is still written, batched every ~2 s; durable readers
+  (replay recorder, screen, web) keep reading Supabase; (2) a fresh process answers from Supabase until it has
+  received a stream for the reader's whole window (15 min roster, ~10 min live state), so a redeploy behaves like
+  today; (3) ONE bot replica — memory is complete only if one process receives every upload; (4) shed/budget
+  behaviour unchanged. Drafting on branch `claude/live-memory`; ships on a non-raid day after review and tests.
