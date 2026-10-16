@@ -2843,8 +2843,17 @@ describe('Loot, Random and Other: three more opt-in groups, built the way Skills
     expect(agent.classifyLootLine(L(LOOT))).toMatchObject({ ch: 'loot', who: '', text: LOOT, self: true, npc: false });
     expect(agent.classifyLootLine(L('You have looted a Cloak of Flames.'))).toBeNull();                       // the dashes are part of the shape
     expect(agent.classifyLootLine(L('Corvale says, \'--You have looted a Cloak of Flames.--\''))).toBeNull();   // someone quoting it
-    expect(agent.classifyLootLine(L('Corvale has looted a Cloak of Flames.'))).toBeNull();                    // not a shape the repo has ever seen
+    expect(agent.classifyLootLine(L('Corvale has looted a Cloak of Flames.'))).toBeNull();                    // no dashes: not the server's line
     expect(agent.classifyLootLine('')).toBeNull();
+  });
+  // the guild lead, 2026-10-15: "Loot filter should be my loot AND others"
+  it('Loot: a groupmate\'s or raider\'s looted line (the server\'s "--<Name> has looted a <item>--"), with or without the period', () => {
+    for (const t of ['--Corvale has looted a Cloak of Flames.--', '--Corvale has looted a Cloak of Flames--']) {
+      expect(agent.classifyLootLine(L(t)), t).toMatchObject({ ch: 'loot', who: '', text: t, self: false, npc: false });
+      expect(agent.classifyOtherLine(L(t), ME), t).toBeNull();                                               // Loot's, not Other's
+    }
+    expect(agent.classifyLootLine(L('Corvale says, \'--Brackwyn has looted a Cloak of Flames.--\''))).toBeNull();   // quoted
+    expect(agent.classifyLootLine(L('--a froglok scout has looted a Cloak of Flames.--'))).toBeNull();             // not one word: no NPC "looters"
   });
   it('Random: both lines of the pair, and nothing resembling them', () => {
     expect(agent.classifyRandomLine(L(DIE))).toMatchObject({ ch: 'random', who: '', text: DIE, self: false });
