@@ -17763,11 +17763,67 @@ async function _handleAgentMapSyncGet(req, res) {
     _mapSyncCache.set(zone, hit);
   }
   const out = { zone, now, events: hit.events.filter(e => e.at > since) };
+  // The guild's ★ watched spots here (utils/mapWatch.js). Fail soft: a bot_kv hiccup is "no watches", never a failed pull.
+  out.watches = require('./utils/mapWatch').liveWatches(await _mapWatchList(zone).catch(() => null), now);
   // The raid's targets here and the escort trails (utils/raidTargets.js): memory and one cached bot_kv read, no Supabase
   // query per pull. Best-effort: a failure leaves the events exactly as before.
   try { Object.assign(out, await _raidTargetsFor(identity, zone, sp)); }
   catch (err) { console.warn('[map-sync] raid targets failed:', err && err.message); }
   return _ptsJson(res, 200, out);
+}
+
+// POST /api/agent/map-watch — mark / unmark a spawn point as WATCHED (the guild lead, 2026-10-16, "A — Watch a spot").
+// Guild-shared and stored per zone in bot_kv `map_watch:<zone>` = { watches: [...] } (no migration; map_spawn_events.kind
+// is CHECK-constrained). Rides back to every agent as `watches` on the map-sync GET. Shares the map_sync budget.
+// 30 s, not 5: every Map pull reads this, and Supabase bills per request (DECISIONS §348). The POST primes the cache,
+// so on the one bot replica (CLAUDE.md) a new watch is served at once; the TTL only bounds a stale read after a restart.
+const _MAP_WATCH_CACHE_MS = 30_000;
+const _mapWatchCache = new Map();                 // zone -> { at, list }
+// The stored list for a zone (null on a failed read — callers decide whether that is fatal). Cached 30 s.
+async function _mapWatchList(zone) {
+  const now = Date.now();
+  const hit = _mapWatchCache.get(zone);
+  if (hit && now - hit.at <= _MAP_WATCH_CACHE_MS) return hit.list;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return null;
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(supabase.guildId())}&key=eq.${encodeURIComponent('map_watch:' + zone)}&select=value&limit=1`);
+  if (!Array.isArray(rows)) return null;
+  const v = rows[0] && rows[0].value;
+  const list = v && Array.isArray(v.watches) ? v.watches : [];
+  if (_mapWatchCache.size >= 100) {
+    for (const [z, c] of _mapWatchCache) if (now - c.at > _MAP_WATCH_CACHE_MS) _mapWatchCache.delete(z);
+  }
+  _mapWatchCache.set(zone, { at: now, list });
+  return list;
+}
+
+async function _handleAgentMapWatch(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const mapWatch = require('./utils/mapWatch');
+  const supabase = require('./utils/supabase');
+  const got = await _ptsReadBody(req, 4 * 1024);
+  if (got.tooBig) return _ptsJson(res, 413, { error: 'payload too large' });
+  if (got.error) return _ptsJson(res, 400, { error: 'read failed' });
+  let body; try { body = JSON.parse(got.text); } catch { return _ptsJson(res, 400, { error: 'invalid json' }); }
+  const now = Date.now();
+  const w = mapWatch.validateWatch(body, now);
+  if (w.error) return _ptsJson(res, 400, { error: w.error });
+  if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'database unavailable' });
+
+  // Read-modify-write on one row, from the database rather than the 5 s cache; a failed read must not overwrite the list.
+  _mapWatchCache.delete(w.zone);
+  const current = await _mapWatchList(w.zone).catch(() => null);
+  if (!Array.isArray(current)) return _ptsJson(res, 503, { error: 'try again shortly' });
+  const watches = mapWatch.applyWatch(current, w, now);
+  const saved = await supabase.upsert('bot_kv', [{
+    guild_id: supabase.guildId(), key: 'map_watch:' + w.zone, value: { watches }, updated_at: new Date(now).toISOString(),
+  }], 'guild_id,key', { minimal: true, confirm: true }).catch(err => { console.error('[map-watch] save failed:', err?.message || err); return null; });
+  _mapWatchCache.delete(w.zone);
+  if (!saved) return _ptsJson(res, 503, { error: 'try again shortly' });
+  _mapWatchCache.set(w.zone, { at: now, list: watches });
+  return _ptsJson(res, 200, { ok: true, watches });
 }
 
 // Each Mimic's current target rides its live-state upload (_handleAgentLiveState); this is what the Map's pull gets
@@ -24103,6 +24159,16 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await (req.method === 'POST' ? _handleAgentMapSyncPost : _handleAgentMapSyncGet)(req, res); }
     catch (err) {
       console.error('[map-sync] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url.split('?')[0] === '/api/agent/map-watch') {
+    if (await _overBudget('map_sync', req, res)) return;
+    try { return await _handleAgentMapWatch(req, res); }
+    catch (err) {
+      console.error('[map-watch] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
