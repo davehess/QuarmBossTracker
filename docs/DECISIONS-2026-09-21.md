@@ -11178,4 +11178,20 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
   (replay recorder, screen, web) keep reading Supabase; (2) a fresh process answers from Supabase until it has
   received a stream for the reader's whole window (15 min roster, ~10 min live state), so a redeploy behaves like
   today; (3) ONE bot replica — memory is complete only if one process receives every upload; (4) shed/budget
-  behaviour unchanged. Drafting on branch `claude/live-memory`; ships on a non-raid day after review and tests.
+  behaviour unchanged. **Shipped bot 3.1.284** (`utils/liveMemory.js`; the one-replica rule is in CLAUDE.md).
+  ⏳ After the next raid: confirm roster/live-state writes arrive batched and the request count dropped.
+
+### 349. Same-name mobs: a debuff belongs to one spawn; Map helper NPCs get no ring (2026-10-16, agent 3.7.187 beta, bot 3.1.285)
+- **FB-83** (the guild lead): *"We're clearly not putting the right debuffs on the right mobs - this one had Tepid
+  Deeds display but it was not actually slowed."* Several "A War Boar" were up at once. Two faults: the slow tracker
+  was keyed by mob NAME (one boar's slow showed on all of them), and a landing line names only the mob TYPE, yet the
+  agent stamped the observer's current target id on any landing whose name matched it. So boar B's slow was
+  recorded as boar A's, as proven fact.
+- **The rule now:** a landing carries a spawn id only for our OWN cast (the target captured when we cast it) or for a
+  named mob (no "a/an/the" in front, so one spawn). A generic bystander landing stays id-less. Readers that know the
+  spawn treat an id'd entry as certain for that spawn and excluded for any other; an id-less entry on a generic name
+  shows as uncertain ("SLOW?" dimmed, "slowed?", a "?" on Target Info's effect chip) and never as fact. Old Zeal (no
+  spawn id) behaves as before. `_landingTargetId` in the agent; `test/slow-by-spawn.test.js`.
+- **Map helper NPCs** (the guild lead: *"These emotes show up as red"*): body types 65 (traps, voices), 66
+  (invisible men, zone controllers) and 67 (scripted spawners, emote NPCs) go out with no aggro or faction ring
+  (`utils/zoneSpawns.js`, bot 3.1.285). Race 127 alone is not the test — real fighters use it.

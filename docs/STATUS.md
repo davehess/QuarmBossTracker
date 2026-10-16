@@ -6157,6 +6157,9 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
 - ✅ Chat overlay: a tell search shows both sides; each tell names your character (agent 3.7.185, beta, DECISIONS §345).
 - ✅ Chat overlay Loot channel shows others' loot too (agent 3.7.186, beta, DECISIONS §346). ⏳ Confirm the line against a real log.
 - ⏳ Raider paper dolls on the replay map (DECISIONS §347): waiting on one character's four side screenshots to test the stylize step.
+- ✅ FB-83: a slow/debuff shows on the spawn it landed on, not every mob of that name; unproven ones marked "?"
+  (agent 3.7.187, beta, DECISIONS §349). ⏳ Check in game with two same-name mobs up.
+- ✅ Map: helper NPCs (emotes, spawners, traps — body types 65/66/67) get no aggro ring (bot 3.1.285, DECISIONS §349).
 - ✅ Log ingestion / CPU (DECISIONS §348): upload counters batched (3.1.282), shared in-flight reads + batched raid-helper
   sync (3.1.283); not an outside attack. ⏳ Re-measure after the next raid; nightly threat-graph build in small batches;
   Tower archive watermark (stuck at 2026-09-06); 915 k deletable threat rows (the guild lead's call: now vs nightly).

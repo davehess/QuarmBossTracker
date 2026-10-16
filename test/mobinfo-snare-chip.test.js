@@ -23,6 +23,14 @@ describe('Target Info special-ability chips', () => {
     expect(h).toContain('title="Your target is immune to changes in its run speed');
     expect(h).toContain('class="chip imm"');
   });
+  // The guild lead, 2026-10-16: "ADD IN A CARD for SILENCES or SILENCES(AOE)". The bot adds the label (bot 3.1.286).
+  it('a silencing mob gets a warning card, AoE or single, with a tooltip', () => {
+    const ae = specChip('Silences (AoE)');
+    expect(ae).toContain('class="chip warn"');
+    expect(ae).toContain('>Silences (AoE)<');
+    expect(ae).toContain('title="This mob casts an area silence');
+    expect(specChip('Silences')).toContain('class="chip warn"');
+  });
   it('leaves every other label as it was', () => {
     expect(specChip('Unslowable')).toBe('<span class="chip imm">Unslowable</span>');
     expect(specChip('Enrage')).toBe('<span class="chip warn">Enrage</span>');
