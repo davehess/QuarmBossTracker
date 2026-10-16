@@ -415,7 +415,7 @@ describe('the roster read the relay shares with Extended Target and the buff que
     const supabase = { selectAllPaged: async () => { reads++; return []; } };
     const { _liveRaidSplit } = loadBotMany(['_liveRaidSplit'], {
       _raidSplitCache: { at: Date.now() - 10_000, split: SENTINEL },
-      _keepRaidSplit: (s) => s, _raidGroups: raidGroups,
+      _keepRaidSplit: (s) => s, _raidGroups: raidGroups, require: requireBot,
     });
     return (maxAge === undefined ? _liveRaidSplit(supabase, GUILD) : _liveRaidSplit(supabase, GUILD, maxAge))
       .then(split => ({ split, reads }));
@@ -429,7 +429,7 @@ describe('the roster read the relay shares with Extended Target and the buff que
   it('a read that fails says so, so "no raids" is never mistaken for "could not look"', async () => {
     const supabase = { selectAllPaged: () => Promise.reject(new Error('down')) };
     const { _liveRaidSplit } = loadBotMany(['_liveRaidSplit'], {
-      _raidSplitCache: { at: 0, split: null }, _keepRaidSplit: (s) => s, _raidGroups: raidGroups,
+      _raidSplitCache: { at: 0, split: null }, _keepRaidSplit: (s) => s, _raidGroups: raidGroups, require: requireBot,
     });
     expect((await _liveRaidSplit(supabase, GUILD)).failed).toBe(true);
   });

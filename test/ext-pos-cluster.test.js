@@ -22,7 +22,9 @@
 // Run: npx vitest run test/ext-pos-cluster.test.js
 
 import { describe, it, expect } from 'vitest';
-import { readSource, sliceBlock, evalBlock, BOT_INDEX } from './_source-slice.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { readSource, sliceBlock, evalBlock, stripJs, BOT_INDEX, ROOT } from './_source-slice.js';
 
 const src = readSource(BOT_INDEX);
 const { _extHeadingPoint, _extPosCluster, _extBindInstances, _extAttributeDebuffs } = evalBlock(
@@ -440,8 +442,15 @@ describe('handler wiring', () => {
 
   it('the select carries loc + observed_tanks, and the roster loc ride-along exists', () => {
     expect(src).toMatch(/incoming_mob,incoming_mob_since,loc_x,loc_y,loc_z,observed_tanks,zeal_tags,updated_at/);
-    // paged: one row per (uploader, name) is ~1,000 at peak, PostgREST's silent cap
-    expect(src).toMatch(/supabase\.selectAllPaged\('raid_roster',[\s\S]{0,200}loc_at=gte\./);
+    // the positions come from the shared, paged raid_roster snapshot (one row per (uploader, name) is ~1,000 at
+    // peak, PostgREST's silent cap), narrowed to fresh loc_at in JS; the paging itself is run in
+    // pgrst-cap-bot-reads.test.js
+    const code = stripJs(src);
+    expect(code).toMatch(/require\('\.\/utils\/readSnapshots'\)\.raidRoster\(supabase, guildId\)/);
+    expect(code).toMatch(/r\.loc_at && Date\.parse\(r\.loc_at\) >= locSince/);
+    const snap = stripJs(fs.readFileSync(path.join(ROOT, 'utils', 'readSnapshots.js'), 'utf8'));
+    expect(snap).toMatch(/selectAllPaged\('raid_roster'/);
+    expect(snap).toMatch(/loc_x,loc_y,loc_z,heading,loc_at/);
   });
 
   it('a pos-split row recomputes HP from its own raiders', () => {
