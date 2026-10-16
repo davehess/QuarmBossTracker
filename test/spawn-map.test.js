@@ -2242,7 +2242,8 @@ describe('pinning a live target to its spawn point, and the guild sync', () => {
     });
     it('a dark slate background instead of black (the panes keep the opacity slider unless ⚙ sets its own strength)', () => {
       expect(MAP_HTML).toMatch(/#mapPane\{[^}]*background:rgb\(var\(--map-bg, 19 26 38\) \/ var\(--map-bg-a, var\(--bg-alpha\)\)\)/);
-      expect(MAP_HTML).toMatch(/#side\{[^}]*background:rgb\(var\(--map-bg, 19 26 38\) \/ var\(--map-bg-a, var\(--bg-alpha\)\)\)/);
+      // the list keeps the same colour and slider but never goes below 0.94 (the guild lead, 2026-10-16: nameplates showed through it)
+      expect(stripCss(MAP_HTML)).toMatch(/#side\{[^}]*background:rgb\(var\(--map-bg, 19 26 38\) \/ max\(0\.94, var\(--map-bg-a, var\(--bg-alpha\)\)\)\)/);
       expect(MAP_HTML).not.toMatch(/rgb\(0 0 0 \/ var\(--bg-alpha\)\)/);
       expect(js).toMatch(/if \(S\.cfg\.bgA == null\) root\.removeProperty\('--map-bg-a'\);/);   // off = follow Mimic's slider
     });
