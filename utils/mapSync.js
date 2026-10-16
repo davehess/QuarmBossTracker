@@ -56,4 +56,4 @@ function validateEvents(body, now = Date.now()) {
   return { zone: body.zone, character, events, dropped: body.events.length - events.length };
 }
 
-module.exports = { validateEvents, ZONE_RE, KINDS, MAX_EVENTS, MAX_FUTURE_MS, MAX_AGE_MS };
+module.exports = { validateEvents, ZONE_RE, INST_RE, KINDS, MAX_EVENTS, MAX_FUTURE_MS, MAX_AGE_MS };
