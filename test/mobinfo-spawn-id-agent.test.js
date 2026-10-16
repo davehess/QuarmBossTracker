@@ -26,7 +26,7 @@ function build() {
     'const _zealState = {};\n'
     + sliceBlock(src, 'function _normMobName(v) {', '\n// Record one observed landing under its TARGET NAME')
     + '\nfunction put(ch, name, id){ _zealState[ch] = { target_name: name, target_id: id }; }',
-    ['_normMobName', '_provableTargetId', 'put'],
+    ['_normMobName', '_provableTargetId', '_landingTargetId', 'put'],
   );
 }
 let h;
@@ -77,17 +77,80 @@ describe('proving which spawn a landing hit', () => {
   });
 });
 
+// FB-83: the landing line names the mob TYPE. With two "A War Boar"s up, a slow on boar B while this observer
+// targets boar A matches A's name, so _provableTargetId alone stamped A's id onto B's slow.
+describe('which landings may carry a spawn id (FB-83)', () => {
+  it('a bystander landing on a generic name gets no id, even when the names match', () => {
+    h.put('Hitya', 'A War Boar', 5101);
+    expect(h._landingTargetId('Hitya', { target: 'A War Boar' })).toBe(null);
+    expect(h._landingTargetId('Hitya', { target: 'an elder thought horror' })).toBe(null);
+    expect(h._landingTargetId('Hitya', { target: 'the Ishva Mal' })).toBe(null);
+  });
+
+  it('a named mob (no article) is one spawn, so the observer\'s target id proves it', () => {
+    h.put('Hitya', 'Lord of Ire', 7);
+    expect(h._landingTargetId('Hitya', { target: 'Lord of Ire' })).toBe(7);
+  });
+
+  it('our own cast carries the id captured at cast time, generic name or not', () => {
+    h.put('Hitya', 'A War Boar', 5101);   // targeting boar A now; the cast went to boar B
+    expect(h._landingTargetId('Hitya', { target: 'A War Boar', _castTargetId: 5102 })).toBe(5102);
+  });
+
+  it('is null-safe', () => {
+    expect(h._landingTargetId('Hitya', null)).toBe(null);
+    expect(h._landingTargetId('Hitya', {})).toBe(null);
+  });
+});
+
+// The read side: an id-less landing on a generic name, read for a specific spawn, comes back marked unproven.
+describe('targetBuffsFor marks an unproven landing (FB-83)', () => {
+  const { targetBuffsFor, _buffLandingsByTarget: STORE } = evalBlock(
+    `
+    const _buffLandingsByTarget = new Map();
+    const FELL_OFF_LINGER_MS = 300000;
+    function _isHotBuff(){ return false; }
+    function _spellGood(){ return 0; }
+    ` + src.match(/const _GENERIC_MOB_RX = [^\n]+/)[0] + '\n'
+      + sliceBlock(src, 'function targetBuffsFor(targetLower, wantId) {', '\n// ── Caster cast-correlation for buff landings ')
+      + '\n'
+      + sliceBlock(src, 'const PACIFY_SPELLS = new Set([', '\n// ── EQ class-title → base class '),
+    ['targetBuffsFor', '_buffLandingsByTarget'],
+  );
+  function seed(key, rows) {
+    STORE.clear();
+    STORE.set(key, new Map(rows.map(r => [r.name.toLowerCase(), { landed_at: Date.now(), dur_ticks: 10, ...r }])));
+  }
+
+  it('id-less on a generic name, read for a spawn: unproven', () => {
+    seed('a war boar', [{ name: 'Tepid Deeds', target_name: 'A War Boar', target_id: null }]);
+    expect(targetBuffsFor('a war boar', 5101)[0].unproven).toBe(true);
+  });
+  it('proven for this spawn: not unproven', () => {
+    seed('a war boar', [{ name: 'Tepid Deeds', target_name: 'A War Boar', target_id: 5101 }]);
+    expect(targetBuffsFor('a war boar', 5101)[0].unproven).toBe(false);
+  });
+  it('no spawn asked for (old Zeal): never marked', () => {
+    seed('a war boar', [{ name: 'Tepid Deeds', target_name: 'A War Boar', target_id: null }]);
+    expect(targetBuffsFor('a war boar', null)[0].unproven).toBe(false);
+  });
+  it('a named mob is never marked', () => {
+    seed('lord of ire', [{ name: 'Tepid Deeds', target_name: 'Lord of Ire', target_id: null }]);
+    expect(targetBuffsFor('lord of ire', 7)[0].unproven).toBe(false);
+  });
+});
+
 describe('wiring', () => {
   const agent = stripJs(src);
 
   it('stamps the id on both landing paths, before the upload push', () => {
-    expect(agent).toContain('bcEvt.target_id = _provableTargetId(b.character, bcEvt.target);');
-    expect(agent).toContain('dbEvt.target_id = _provableTargetId(b.character, dbEvt.target);');
+    expect(agent).toContain('bcEvt.target_id = _landingTargetId(b.character, bcEvt);');
+    expect(agent).toContain('dbEvt.target_id = _landingTargetId(b.character, dbEvt);');
     // ...and the stamp precedes THIS path's buff_casts enqueue, or the upload
     // ships without the id it just worked out. Scoped to the live-tail block:
     // there are three push sites and the other two are backfill (below).
     const live = sliceBlock(agent, '        if (bcEvt && !_sourceExcluded) {', '\n          recordTargetBuffLanding(bcEvt);');
-    const stampAt = live.indexOf('bcEvt.target_id = _provableTargetId');
+    const stampAt = live.indexOf('bcEvt.target_id = _landingTargetId');
     const pushAt  = live.indexOf('buffCastBuffer.push(bcEvt)');
     expect(stampAt).toBeGreaterThan(-1);
     expect(pushAt).toBeGreaterThan(stampAt);
@@ -105,6 +168,7 @@ describe('wiring', () => {
       const at = agent.indexOf(anchor);
       expect(at).toBeGreaterThan(-1);
       expect(agent.slice(at, at + 200)).not.toContain('_provableTargetId');
+      expect(agent.slice(at, at + 200)).not.toContain('_landingTargetId');
     }
   });
 
