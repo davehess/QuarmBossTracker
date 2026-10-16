@@ -11098,6 +11098,9 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
 - **Open:** engagement slots in Target Info — research done (we can only reconstruct the list from logs; non-damaging
   song pulses leave no trace); options A (this raider's log) / B (raid-wide merge at the bot) put to the guild lead,
   A recommended. Not built.
+- **Dropped 2026-10-15** (the guild lead): *"maybe we shouldn't do the ramp list since it's not going to be easy to
+  determine"*. The rings stay; the engagement-slot list is not built. Reopen only with a reliable source for every
+  hate add (a Zeal or server feed), not log reconstruction.
 
 ### 344. Two mid-raid hotfixes: slow mode to #raid-chat, and a boss hail slot without a death line (2026-10-15, bot 3.1.280–3.1.281, `[hotfix]` at the guild lead's call)
 - **Slow-mode announcement** (the guild lead: *"This should go in raid-chat channel 1193692008812920863"*, *"it should also
