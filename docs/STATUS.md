@@ -6110,6 +6110,9 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
 - ✅ FB-83: a slow/debuff shows on the spawn it landed on, not every mob of that name; unproven ones marked "?"
   (agent 3.7.187, beta, DECISIONS §349). ⏳ Check in game with two same-name mobs up.
 - ✅ Map: helper NPCs (emotes, spawners, traps — body types 65/66/67) get no aggro ring (bot 3.1.285, DECISIONS §349).
+- ✅ Target Info: "Silences" / "Silences (AoE)" card from the mob's spells (bot 3.1.286; warning colour agent 3.7.188 beta, DECISIONS §350).
+- ⏳ Name pronunciations "Save for the guild" fails: table never created; plus the unused-index drop never ran.
+  Both to paste in the Supabase SQL editor (DECISIONS §350). Migrations are not auto-applying.
 - ✅ Log ingestion / CPU (DECISIONS §348): upload counters batched (3.1.282), shared in-flight reads + batched raid-helper
   sync (3.1.283); not an outside attack. ⏳ Re-measure after the next raid; nightly threat-graph build in small batches;
   Tower archive watermark (stuck at 2026-09-06); 915 k deletable threat rows (the guild lead's call: now vs nightly).
