@@ -17185,6 +17185,7 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
       // Once entries are in hand, join eqemu_spells (catalog) to add the
       // human-readable name + mana + cast time per spell.
       let spells = [];
+      let silenceChip = null;   // "Silences" / "Silences (AoE)" off the castable spells (mobSpecials.silenceLabel)
       // The mob's PROCS (the guild lead, 2026-10-07: "Need to see mobs Procs as well, not
       // just spells"). They sit on the same list rows the walk below reads, so the walk
       // carries their columns along; utils/npcProcs.js resolves them, nearest list first.
@@ -17243,8 +17244,9 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
           const ids = inWindow.map(e => e.spellid).filter(Boolean);
             if (ids.length > 0) {
               const catRows = await supabase.select('eqemu_spells',
-                `id=in.(${ids.join(',')})&select=id,name,mana,cast_time,resist_type,resist_diff,good_effect,cast_on_other,cast_on_you&limit=80`);
+                `id=in.(${ids.join(',')})&select=id,name,mana,cast_time,resist_type,resist_diff,good_effect,cast_on_other,cast_on_you,targettype,eff:raw->eff&limit=80`);
               const cat = new Map((Array.isArray(catRows) ? catRows : []).map(s => [s.id, s]));
+              silenceChip = mobSpecials.silenceLabel(catRows);
               // npc_spells_entries.manacost = -1 means "use the spell's catalog
               // mana cost"; same convention for recast_delay (-1 = spell default).
               // Without this, the overlay rendered every spell at -1 because the
@@ -17381,7 +17383,7 @@ async function _buildMobInfo(supabase, { name, norm, caseKey, reqZoneId, reqGend
         // L56 Maestro rampages, the L53 doesn't — the raider needs the merged
         // set). Placeholder rows are excluded whenever a real row exists, so
         // their "immune to everything" can't fabricate a false warning.
-        specials: picked.specials,
+        specials: silenceChip ? [...(picked.specials || []), silenceChip] : picked.specials,
         // How far from this mob Area Rampage reaches, read off the PRIMARY body (utils/aeRampage.js).
         // Absent, not null, when the mob has no Area Rampage; the Mimic map draws the ring from it.
         ...(aeRampage ? { ae_rampage: aeRampage } : {}),
@@ -17437,7 +17439,8 @@ const _MOB_PACK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 //   5 (2026-10-10): quest_id, the same-name body of the requester's zone the Quest tab reads (FB-72)
 //   6 (2026-10-15): ae_rampage { radius_still, radius_moving, chance, targets, damage_pct }
 //   7 (2026-10-15): rampage { range, chance, damage_pct }
-const _MOB_PACK_VERSION = 7;
+//   8 (2026-10-16): "Silences" / "Silences (AoE)" in specials, from the mob's spell list
+const _MOB_PACK_VERSION = 8;
 const _MOB_PACK_PINNED = Array.from({ length: 24 }, (_, i) => 200 + i);
 const _mobPacks = new Map();          // zoneId → { etag, builtAt, body, gz, version }
 const _mobPackQueue = [];             // zone ids waiting to build
