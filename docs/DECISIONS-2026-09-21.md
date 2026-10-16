@@ -11098,3 +11098,16 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
 - **Open:** engagement slots in Target Info — research done (we can only reconstruct the list from logs; non-damaging
   song pulses leave no trace); options A (this raider's log) / B (raid-wide merge at the bot) put to the guild lead,
   A recommended. Not built.
+
+### 344. Two mid-raid hotfixes: slow mode to #raid-chat, and a boss hail slot without a death line (2026-10-15, bot 3.1.280–3.1.281, `[hotfix]` at the guild lead's call)
+- **Slow-mode announcement** (the guild lead: *"This should go in raid-chat channel 1193692008812920863"*, *"it should also
+  tag the raider roles"*): `utils/slowMode.js` `announce()` posts to `RAID_CHAT_CHANNEL_ID`, then the #raid-chat id,
+  then `TIMER_CHANNEL_ID`, and pings `SLOWMODE_PING_ROLES` (default `Raid Pack,Raid Recruit`; only those role ids may ping).
+- **Hail slot without a confirmed kill** (the guild lead: *"sTILL NO pLANAR PROJECTION on the command center"*,
+  *"many of us died, but we got a lockout"*): the Bertoxxulous upload had no death line, so `openWindow` never ran, and
+  `noteGrants` only knew the kill-less flaggers. `grantOpener()` in `utils/hailBoard.js` now lets a `HAIL_BOSSES` entry
+  open from the first fresh grant of its own `done[0]` flag in its own zone; one window per NPC still holds.
+- **Shipped mid-raid** with `[hotfix]` because the raid was heading to Agnarr next. (Agnarr itself is not on the hail
+  board: Karana wants a phrase, not a hail.)
+- **Open:** the agent should read *"You have incurred a lockout for <boss>"* as a confirmed kill (Mimic beta), so a
+  wipe on the last tick still confirms the kill. Not built.
