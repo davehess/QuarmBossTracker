@@ -396,13 +396,23 @@ function create({ supabase, guildId, now = Date.now, log = console } = {}) {
   // a raid hails Thelin to start the maze, long before he gives anything. Nothing is asked of the database
   // unless a row is a fresh grant of a flag NPC, and every failure means no window, never an exception: this
   // runs on the ingest path. → the opened window, or null.
+  // A boss's flag NPC opens here too, on the first fresh grant of its own flag in its own zone (`done[0]`): the
+  // guild lead, 2026-10-15, "still no Planar Projection on the command center" — Bertoxxulous died, the
+  // projection stood and 60 raiders were flagged, but the one kill upload carried no death line, so the
+  // kill-confirmed opener never ran. openFromGrant keeps one window per NPC, and a confirmed kill arriving later
+  // finds this window through openWindow's same-kill match, so the two openers never double up.
+  function grantOpener(r) {
+    const z = popFlagStages.zoneShort(r.zone);
+    return HAIL_FLAGGERS.find(x => x.opensOn.includes(r.flag_key) && z === x.zoneShort)
+      || HAIL_BOSSES.find(x => Array.isArray(x.done) && x.done[0] === r.flag_key && z === x.zoneShort);
+  }
   function noteGrants(rows) {
     if (!enabled()) return Promise.resolve(null);
     const t0 = now();
-    const first = new Map();                                        // flagger id → earliest fresh grant
+    const first = new Map();                                        // flagger / boss id → earliest fresh grant
     for (const r of rows || []) {
       const f = r && isCharName(r.character) && r.zone && (r.source === 'event' || r.source === 'checklist')
-        && HAIL_FLAGGERS.find(x => x.opensOn.includes(r.flag_key) && popFlagStages.zoneShort(r.zone) === x.zoneShort);
+        && grantOpener(r);
       const t = f && Date.parse(r.earned_at);
       if (!f || !Number.isFinite(t) || t < t0 - ROSTER_FRESH_MS || t > t0 + FLAG_SLACK_MS) continue;
       if (!first.has(f.id) || t < first.get(f.id).t) first.set(f.id, { t, name: String(r.character).trim() });
@@ -412,7 +422,7 @@ function create({ supabase, guildId, now = Date.now, log = console } = {}) {
       await load();
       prune();
       let opened = null;
-      for (const cfg of HAIL_FLAGGERS.filter(f => first.has(f.id))) opened = (await openFromGrant(cfg, first.get(cfg.id))) || opened;
+      for (const cfg of HAIL_FLAGGERS.concat(HAIL_BOSSES).filter(f => first.has(f.id))) opened = (await openFromGrant(cfg, first.get(cfg.id))) || opened;
       return opened;
     }).catch(err => { log.warn('[hail-board] grant open failed:', err && err.message); return null; });
   }
