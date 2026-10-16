@@ -39086,13 +39086,21 @@ function _chatLogBody(line) {
   const body = line.slice(at + 2).replace(/\s+$/, '');
   return body || null;
 }
+// Someone else's loot (the guild lead, 2026-10-15: "Loot filter should be my loot AND others"). The server sends
+// "--<Name> has looted a <item>--" (its string 466, next to 467 "--You have looted a <item>--") to the looter's
+// group, or to the whole raid when the looter has no group; never for a player corpse. Same strictness as the
+// self line: the dashes, a one-word name, the line starts with it. The period is optional because the server's
+// table omits it while the self line we read carries one.
+const _OTHER_LOOTED_RX = /^--([A-Za-z]+) has looted (.+?)\.?--$/;
 function classifyLootLine(line) {
   const body = _chatLogBody(line);
-  if (!body || body.charCodeAt(0) !== 45 /* - */ || !_LOOTED_RX.test(body) || !body.startsWith('--You have looted ')) return null;
+  if (!body || body.charCodeAt(0) !== 45 /* - */) return null;
+  const self = body.startsWith('--You have looted ') && _LOOTED_RX.test(body);
+  if (!self && !_OTHER_LOOTED_RX.test(body)) return null;
   const ts = parseEqTimestamp(line);
   const text = _chatCleanText(body);
   if (!ts || !text) return null;
-  return { ch: 'loot', who: '', text, t: ts.getTime(), self: true, npc: false };
+  return { ch: 'loot', who: '', text, t: ts.getTime(), self, npc: false };
 }
 function classifyRandomLine(line) {
   const body = _chatLogBody(line);
