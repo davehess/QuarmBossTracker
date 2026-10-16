@@ -546,7 +546,9 @@
   // Special attacks that are dangerous (call out red) vs immunities (blue).
   // FB-54: 'Reverse Slow' — a slow on it hastes it — is the one a raid must not miss.
   var WARN_SPECS = { 'Summon':1,'Enrage':1,'Rampage':1,'Area Rampage':1,'Flurry':1,'Bane':1,
-                     'Reverse Slow — slowing hastes it':1 };
+                     'Reverse Slow — slowing hastes it':1,
+                     // The bot adds these off the mob's spell list (bot 3.1.286, the guild lead 2026-10-16).
+                     'Silences':1,'Silences (AoE)':1 };
   function isReverseSlow(mob){
     if (!mob || !Array.isArray(mob.specials)) return false;
     for (var i = 0; i < mob.specials.length; i++) if (/^Reverse Slow/.test(mob.specials[i])) return true;
@@ -558,6 +560,8 @@
   // The label itself stays the data contract (the bot and tests key on it); only the chip text and its tooltip change.
   var SPEC_SHOW = {
     'Unsnareable': ['Snare / run speed immune', 'Your target is immune to changes in its run speed: snares and run-speed debuffs will not land'],
+    'Silences':       ['Silences', 'This mob casts a silence: casters it lands on cannot cast until it wears off'],
+    'Silences (AoE)': ['Silences (AoE)', 'This mob casts an area silence: every caster in range can be silenced at once — spread out or stay back'],
   };
   function specChip(label){
     var s = SPEC_SHOW[label];
