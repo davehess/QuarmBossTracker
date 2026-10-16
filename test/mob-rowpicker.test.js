@@ -452,7 +452,7 @@ describe('#171 the shipped endpoint uses the shared picker (not a stale copy)', 
   });
 
   it('the mob payload carries the merged specials + movement fields', () => {
-    expect(SRC).toContain('specials: picked.specials');
+    expect(SRC).toContain('specials: silenceChip ? [...(picked.specials || []), silenceChip] : picked.specials');
     expect(SRC).toContain('rooted:   move.rooted');
     expect(SRC).toContain('flees:    move.flees');
   });
