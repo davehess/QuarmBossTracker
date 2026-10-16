@@ -122,18 +122,33 @@ async function setSlowMode(on, by, atMs = Date.now(), line = null) {
   return { flag: _flag, persisted };
 }
 
-// One short line to the channel the raid timers live in (TIMER_CHANNEL_ID). Best effort, never throws.
+// One short line to #raid-chat, pinging the raider roles (the guild lead, 2026-10-15: "This should go in raid-chat
+// channel 1193692008812920863", "it should also tag the raider roles" — it had landed in #raid-mobs).
+// Channel: RAID_CHAT_CHANNEL_ID, then the known #raid-chat id, then TIMER_CHANNEL_ID as a last resort.
+// Roles: SLOWMODE_PING_ROLES (comma-separated names), default the two raid ranks; a name the guild lacks is skipped,
+// and only those role ids may ping. Best effort, never throws.
+const RAID_CHAT_FALLBACK_ID = '1193692008812920863';
+function pingRoleNames() {
+  return String(process.env.SLOWMODE_PING_ROLES || 'Raid Pack,Raid Recruit').split(',').map(s => s.trim()).filter(Boolean);
+}
 async function announce(client, text) {
-  try {
-    const id = process.env.TIMER_CHANNEL_ID;
-    if (!id || !client) return false;
-    const ch = await client.channels.fetch(id);
-    await ch.send({ content: text, allowedMentions: { parse: [] } });
-    return true;
-  } catch (err) {
-    console.warn('[slowmode] announce failed:', err?.message);
-    return false;
+  if (!client) return false;
+  const ids = [process.env.RAID_CHAT_CHANNEL_ID, RAID_CHAT_FALLBACK_ID, process.env.TIMER_CHANNEL_ID].filter(Boolean);
+  for (const id of ids) {
+    try {
+      const ch = await client.channels.fetch(id);
+      if (!ch || typeof ch.send !== 'function') continue;
+      const roles = ch.guild && ch.guild.roles && ch.guild.roles.cache;
+      const wanted = new Set(pingRoleNames().map(n => n.toLowerCase()));
+      const roleIds = roles ? [...roles.values()].filter(r => wanted.has(String(r.name).toLowerCase())).map(r => r.id) : [];
+      const mention = roleIds.map(r => `<@&${r}>`).join(' ');
+      await ch.send({ content: (mention ? mention + ' ' : '') + text, allowedMentions: { parse: [], roles: roleIds } });
+      return true;
+    } catch (err) {
+      console.warn('[slowmode] announce to', id, 'failed:', err?.message);
+    }
   }
+  return false;
 }
 
 // ── The server's own message (option B, the guild lead, 2026-10-11) ─────────────────────────────────────
