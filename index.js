@@ -11463,7 +11463,9 @@ async function _handleAgentPronunciationSet(req, res) {
     const root = await supabase.select('characters', q(row.main_name));
     mine = Array.isArray(root) && !!root[0] && !!root[0].discord_id && String(root[0].discord_id) === String(identity.discord_id);
   }
-  if (!mine) {
+  // An officer may set anyone's (the guild lead, 2026-10-17; same rule as the website's /admin/pronunciations).
+  // The character still has to exist, and set_by_discord_id records who did it.
+  if (!mine && !(row && identity.is_officer)) {
     res.writeHead(403, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ error: 'not your character' }));
   }

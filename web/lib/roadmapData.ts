@@ -37,6 +37,18 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-8-173-2026-10-17',
+    title: 'Say your name on the website',
+    version: 'Web 1.8.173 · Bot 3.1.289',
+    date: '2026-10-17',
+    headline: 'Set how Mimic says your characters’ names from the website, and hear it before you save.',
+    features: [
+      { name: 'Say your name [beta]', blurb: 'wolfpack.quest/me/voice lists your characters. Type how a name should sound, press ▶ to hear it, pick from suggestions, then save. Mimic picks up the change within about 10 minutes.' },
+      { name: 'Officers can fix any name [beta]', blurb: 'wolfpack.quest/admin/pronunciations lists every saved name with who set it. Officers can add, change or clear anyone’s, here or from Mimic.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-8-172-2026-10-17',
     title: 'Planes of Power: the October 17 server changes',
     version: 'Web 1.8.172 · Bot 3.1.288',
