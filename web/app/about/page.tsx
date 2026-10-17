@@ -541,6 +541,10 @@ export default async function AboutPage() {
                  className="px-5 py-2.5 rounded-lg border border-border bg-bg/40 text-dim text-sm hover:text-text transition-colors no-underline">
                 Read the code ↗
               </a>
+              <a href="https://ko-fi.com/davehess" target="_blank" rel="noreferrer"
+                 className="px-5 py-2.5 rounded-lg border border-border bg-bg/40 text-dim text-sm hover:text-text transition-colors no-underline">
+                ☕ Tip on Ko-fi ↗
+              </a>
             </div>
           </div>
         </Reveal>
