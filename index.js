@@ -17767,6 +17767,8 @@ async function _handleAgentMapSyncGet(req, res) {
   const out = { zone, now, events: hit.events.filter(e => e.at > since) };
   // The guild's ★ watched spots here (utils/mapWatch.js). Fail soft: a bot_kv hiccup is "no watches", never a failed pull.
   out.watches = require('./utils/mapWatch').liveWatches(await _mapWatchList(zone).catch(() => null), now);
+  // Corpses here (utils/mapCorpses.js), same fail-soft: a read failure is [], never a failed pull.
+  out.corpses = require('./utils/mapCorpses').liveCorpses(await _mapCorpseList(zone).catch(() => null), now);
   // The raid's targets here and the escort trails (utils/raidTargets.js): memory and one cached bot_kv read, no Supabase
   // query per pull. Best-effort: a failure leaves the events exactly as before.
   try { Object.assign(out, await _raidTargetsFor(identity, zone, sp)); }
@@ -17826,6 +17828,59 @@ async function _handleAgentMapWatch(req, res) {
   if (!saved) return _ptsJson(res, 503, { error: 'try again shortly' });
   _mapWatchCache.set(w.zone, { at: now, list: watches });
   return _ptsJson(res, 200, { ok: true, watches });
+}
+
+// POST /api/agent/map-corpse — corpse events from the Mimic Spawn map (the guild lead, 2026-10-17): where a corpse died,
+// was seen, was dragged or summoned to, or is gone. Stored per zone in bot_kv `map_corpses:<zone>` = { corpses: [...] }
+// (no migration), rides back to every agent as `corpses` on the map-sync GET. Shares the map_sync budget. Cached 30 s
+// and primed by the POST, exactly like the watches above (one bot replica, CLAUDE.md; every Map pull reads this).
+const _MAP_CORPSE_CACHE_MS = 30_000;
+const _mapCorpseCache = new Map();                // zone -> { at, list }
+async function _mapCorpseList(zone) {
+  const now = Date.now();
+  const hit = _mapCorpseCache.get(zone);
+  if (hit && now - hit.at <= _MAP_CORPSE_CACHE_MS) return hit.list;
+  const supabase = require('./utils/supabase');
+  if (!supabase.isEnabled()) return null;
+  const rows = await supabase.select('bot_kv',
+    `guild_id=eq.${encodeURIComponent(supabase.guildId())}&key=eq.${encodeURIComponent('map_corpses:' + zone)}&select=value&limit=1`);
+  if (!Array.isArray(rows)) return null;
+  const v = rows[0] && rows[0].value;
+  const list = v && Array.isArray(v.corpses) ? v.corpses : [];
+  if (_mapCorpseCache.size >= 100) {
+    for (const [z, c] of _mapCorpseCache) if (now - c.at > _MAP_CORPSE_CACHE_MS) _mapCorpseCache.delete(z);
+  }
+  _mapCorpseCache.set(zone, { at: now, list });
+  return list;
+}
+
+async function _handleAgentMapCorpse(req, res) {
+  const identity = await mimicLink.requireAgentAuth(req, res);
+  if (!identity) return;
+  const mapCorpses = require('./utils/mapCorpses');
+  const supabase = require('./utils/supabase');
+  const got = await _ptsReadBody(req, 8 * 1024);
+  if (got.tooBig) return _ptsJson(res, 413, { error: 'payload too large' });
+  if (got.error) return _ptsJson(res, 400, { error: 'read failed' });
+  let body; try { body = JSON.parse(got.text); } catch { return _ptsJson(res, 400, { error: 'invalid json' }); }
+  const now = Date.now();
+  const v = mapCorpses.validateCorpseEvents(body, now);
+  if (v.error) return _ptsJson(res, 400, { error: v.error });
+  if (!v.events.length) return _ptsJson(res, 200, { ok: true, stored: 0 });
+  if (!supabase.isEnabled()) return _ptsJson(res, 503, { error: 'database unavailable' });
+
+  // Read-modify-write on one row, from the database rather than the cache; a failed read must not overwrite the list.
+  _mapCorpseCache.delete(v.zone);
+  const current = await _mapCorpseList(v.zone).catch(() => null);
+  if (!Array.isArray(current)) return _ptsJson(res, 503, { error: 'try again shortly' });
+  const corpses = mapCorpses.applyCorpseEvents(current, v, now);
+  const saved = await supabase.upsert('bot_kv', [{
+    guild_id: supabase.guildId(), key: 'map_corpses:' + v.zone, value: { corpses }, updated_at: new Date(now).toISOString(),
+  }], 'guild_id,key', { minimal: true, confirm: true }).catch(err => { console.error('[map-corpse] save failed:', err?.message || err); return null; });
+  _mapCorpseCache.delete(v.zone);
+  if (!saved) return _ptsJson(res, 503, { error: 'try again shortly' });
+  _mapCorpseCache.set(v.zone, { at: now, list: corpses });
+  return _ptsJson(res, 200, { ok: true, stored: v.events.length, corpses });
 }
 
 // Each Mimic's current target rides its live-state upload (_handleAgentLiveState); this is what the Map's pull gets
@@ -24171,6 +24226,16 @@ const httpServer = http.createServer(async (req, res) => {
     try { return await _handleAgentMapWatch(req, res); }
     catch (err) {
       console.error('[map-watch] handler error:', err);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      return res.end(JSON.stringify({ error: 'internal error' }));
+    }
+  }
+
+  if (req.method === 'POST' && req.url.split('?')[0] === '/api/agent/map-corpse') {
+    if (await _overBudget('map_sync', req, res)) return;
+    try { return await _handleAgentMapCorpse(req, res); }
+    catch (err) {
+      console.error('[map-corpse] handler error:', err);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       return res.end(JSON.stringify({ error: 'internal error' }));
     }
