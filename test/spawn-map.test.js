@@ -1176,7 +1176,7 @@ describe('pather routes', () => {
       const js = stripJs(MAP_HTML);
       expect(js).toMatch(/function kickAnim\(\)[\s\S]{0,200}?if \(anyMoving\(Date\.now\(\)\)\) raf = requestAnimationFrame\(frame\);/);
       expect(js).toMatch(/for \(var k in S\.trk\) if \(!keep\[k\]\) delete S\.trk\[k\];/);
-      expect(js).toMatch(/if \(!animating \|\| rt - lastHits >= HITS_MS\) \{ lastHits = rt; layoutHits\(SH\.dots \? vis : \[\]\); \}/);
+      expect(js).toMatch(/if \(!animating \|\| rt - lastHits >= HITS_MS\) \{ lastHits = rt; layoutHits\(SH\.dots \? vis : \[\]\); layoutCorpseHits\(corpseVis\); \}/);
       expect(Number(/\bHITS_MS = (\d+)/.exec(js)[1])).toBeGreaterThanOrEqual(200);
       // Follow me rides the drawn spot of you, and the flashing ring still has its own timer
       expect(js).toMatch(/if \(S\.follow && S\.p && !S\.drag\) followTo\(followSubject\(rt\)\);/);
@@ -1283,9 +1283,9 @@ describe('pather routes', () => {
     expect(base.all.cfg.hidden).toBe(false);
     expect(base.all.cfgBtn.classList.contains('on')).toBe(true);
     const showRows = base.all.cfgShow.children, glyphRows = base.all.cfgGlyphs.children, colRows = base.all.cfgCols.children;
-    expect(showRows).toHaveLength(29);                                         // 25 + Kite coach + Guild kite loops (2026-10-15) + AE rampage ring + Rampage ring
+    expect(showRows).toHaveLength(30);                                         // 25 + Kite coach + Guild kite loops (2026-10-15) + AE rampage ring + Rampage ring + Guild corpses
     expect(glyphRows).toHaveLength(9);
-    expect(colRows).toHaveLength(29);
+    expect(colRows).toHaveLength(30);                                          // ...and the Corpses colour
     const walls = showRows[0].children[0];                                     // Walls
     walls.checked = false; walls.listeners.change.forEach(f => f());
     const eye = glyphRows[0].children[0];                                      // 👁
