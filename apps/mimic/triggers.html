@@ -523,10 +523,12 @@
   var SPEAK_QUEUE_MAX = 3;      // a raid can out-talk the engine; bound the backlog
   // The voice: the player's pick (cfg.voice in Mimic's config) over the agent's voice packs; see voice.js.
   // Re-read every few seconds so a change in Settings reaches the next callout without a restart.
-  var _voiceCfg = null, _voicePacks = [];
+  var _voiceCfg = null, _voicePacks = [], _voiceStatus = null;
   function _refreshVoice(){
     if (PART) return;   // a canvas panel never speaks
     try { if (window.mimic && window.mimic.getConfig) window.mimic.getConfig().then(function(c){ _voiceCfg = (c && c.voice) || null; }, function(){}); } catch (e) {}
+    // Which downloaded voices (Piper) are installed; null until Mimic answers = the Windows voice.
+    try { if (window.mimic && window.mimic.voiceStatus) window.mimic.voiceStatus().then(function(s){ _voiceStatus = s || null; }, function(){}); } catch (e) {}
     try {
       fetch('http://127.0.0.1:' + PORT + '/api/voice-packs').then(function(r){ return r.ok ? r.json() : null; })
         .then(function(j){ if (j && Array.isArray(j.packs)) _voicePacks = j.packs; }, function(){});
@@ -536,6 +538,20 @@
   setInterval(_refreshVoice, 5000);
   var _speakQ = [];
   var _speakingUtt = null, _speakingPrio = -1, _speakWatchdog = null;
+  var _speakingAudio = null;   // the <audio> of a downloaded voice that is talking now (see _speakNeural)
+
+  // The downloaded voice (Piper) this callout should use, or null for the Windows voice.
+  function _neuralChoice(){
+    try {
+      if (!window.WPVoice || !window.WPVoice.chooseEngine) return null;
+      var c = window.WPVoice.chooseEngine(_voiceCfg, _voiceStatus);
+      return c.engine === 'windows' ? null : c;
+    } catch (e) { return null; }
+  }
+  function _stopSpeech(){
+    try { window.speechSynthesis.cancel(); } catch (e) {}
+    if (_speakingAudio){ try { _speakingAudio.pause(); } catch (e) {} _speakingAudio = null; }
+  }
 
   function _speakPriority(meta){
     var t = String((meta && meta.trigger) || '');
@@ -551,13 +567,13 @@
   function speak(text, meta){
     if (PART) return;   // a canvas panel shows; the trigger window speaks
     if (_wpMutedNow()) return;
-    if (!window.speechSynthesis){ reportPlayback('error', 'no speechSynthesis API', meta); return; }
+    if (!window.speechSynthesis && !_neuralChoice()){ reportPlayback('error', 'no speechSynthesis API', meta); return; }
     var item = { text: text, meta: meta, prio: _speakPriority(meta), at: Date.now() };
     if (!_speakingUtt){ _speakNow(item); return; }
     if (item.prio > _speakingPrio){
       // Preempt. The interrupted one is DROPPED, not requeued — by the time the
       // higher-priority line finishes it would be stale anyway.
-      try { window.speechSynthesis.cancel(); } catch (e) {}
+      _stopSpeech();
       _speakingUtt = null;
       _speakNow(item);
       return;
@@ -584,6 +600,41 @@
   }
 
   function _speakNow(item){
+    var choice = _neuralChoice();
+    if (choice){ _speakNeural(item, choice); return; }
+    _speakWindows(item);
+  }
+
+  // A downloaded voice (Piper): Mimic makes the WAV, this plays it. ANY failure — no audio in time, a play error,
+  // a clip that will not start — speaks the same line with the Windows voice (_fallbackToWindows), so a callout
+  // is never lost to a download that broke. `tok` is this line's place in the queue, as `u` is for the Windows path.
+  function _speakNeural(item, choice){
+    var tok = { neural: true };
+    _speakingUtt = tok; _speakingPrio = item.prio;
+    var rate = 1.05;
+    try { rate = window.WPVoice.pick(_voicePacks, _voiceCfg, item.meta && item.meta.voice_pack, []).rate; } catch (e) {}
+    // Same watchdog as the Windows path: the queue drains on a timer even if nothing ever finishes.
+    var est = Math.min(20000, 3500 + String(item.text || '').length * 110);
+    _speakWatchdog = setTimeout(function(){
+      if (_speakingUtt === tok){ _stopSpeech(); _speakingUtt = null; _speakingPrio = -1; _speakPump(); }
+    }, est);
+    window.WPVoice.neuralAudio(item.text, rate, choice).then(function(a){
+      if (_speakingUtt !== tok) return;            // preempted, or the watchdog already moved on
+      if (!a){ _fallbackToWindows(item); return; }
+      _speakingAudio = a;
+      a.addEventListener('ended', function(){ if (_speakingUtt === tok){ _speakingAudio = null; _speakPump(); } });
+      a.addEventListener('error', function(){ if (_speakingUtt === tok){ _speakingAudio = null; _fallbackToWindows(item); } });
+      a.play().then(function(){ reportPlayback('started', choice.engine, item.meta); },
+        function(){ if (_speakingUtt === tok){ _speakingAudio = null; _fallbackToWindows(item); } });
+    }, function(){ if (_speakingUtt === tok) _fallbackToWindows(item); });
+  }
+  function _fallbackToWindows(item){
+    if (_speakWatchdog){ clearTimeout(_speakWatchdog); _speakWatchdog = null; }
+    _speakingUtt = null; _speakingPrio = -1;
+    _speakWindows(item);
+  }
+
+  function _speakWindows(item){
     try{
       const u = new SpeechSynthesisUtterance(item.text);
       u.rate = 1.05; u.volume = 1;

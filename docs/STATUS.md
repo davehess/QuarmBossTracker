@@ -6161,6 +6161,8 @@ re-synced, beta re-parked at 2.9.2, the one-time #raid-chat card (bot 3.1.267). 
   (agent 3.7.187, beta, DECISIONS §349). ⏳ Check in game with two same-name mobs up.
 - ✅ Map: helper NPCs (emotes, spawners, traps — body types 65/66/67) get no aggro ring (bot 3.1.285, DECISIONS §349).
 - ✅ Target Info: "Silences" / "Silences (AoE)" card from the mob's spells (bot 3.1.286; warning colour agent 3.7.188 beta, DECISIONS §350).
+- ✅ Map: ★ watch a named's placeholder spot, guild-shared timer with PH / spot / /loc; easier respawn list (bot 3.1.287,
+  agent 3.7.189 beta, DECISIONS §351). ⏳ In-game /loc check; ⏳ C (hunt list + route) next; ⏳ corpses-on-map pick.
 - ✅ Name pronunciations table created and the four unused indexes dropped, by hand in the SQL editor 2026-10-16
   (verified: table + RLS + read policy present, indexes gone; DECISIONS §350). Not recorded in the migration history.
   ⏳ Migrations are not auto-applying: find out why before the next one.

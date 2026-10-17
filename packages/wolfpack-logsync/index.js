@@ -31472,13 +31472,55 @@ function wpSoundOverrideHtml(t, ov) {
     }
     return { voice: voice, rate: rate, pitch: pitch };
   }
-  function speak(text, packId){
+  function speakWin(text, packId){
     if (!window.speechSynthesis) return;
     var v = pick(packId), u = new SpeechSynthesisUtterance(text);
     if (v.voice) u.voice = v.voice;
     u.rate = v.rate; u.pitch = v.pitch;
     try { window.speechSynthesis.cancel(); } catch (e) { void e; }
     window.speechSynthesis.speak(u);
+  }
+  // ENGINE (2026-10-17): the same rules as Mimic's voice.js chooseEngine — auto takes the best downloaded voice,
+  // an explicit pick takes that engine only, anything not installed is the Windows voice.
+  function chooseEngine(cfg, status) {
+    cfg = cfg || {};
+    var want = cfg.engine || 'auto';
+    var order = want === 'windows' ? [] : (want === 'auto' ? ['kokoro', 'piper'] : [want]);
+    for (var i = 0; i < order.length; i++) {
+      var e = order[i], s = status && status[e];
+      if (s && s.ready && Array.isArray(s.voices) && s.voices.length) {
+        var asked = cfg[e + 'Voice'];
+        return { engine: e, voice: s.voices.indexOf(asked) >= 0 ? asked : s.voices[0] };
+      }
+    }
+    return { engine: 'windows', voice: null };
+  }
+  var eng = { st: null, note: '', busy: false }, curAudio = null;
+  // A phrase from a downloaded voice, made by Mimic. Resolves true once it is playing, false on ANY trouble.
+  function playNeural(ch, text, packId){
+    var m = window.mimic;
+    if (!m || !m.voiceSynth) return Promise.resolve(false);
+    return new Promise(function(done){
+      var late = false, t = setTimeout(function(){ late = true; done(false); }, 2900);
+      Promise.resolve(m.voiceSynth(text, { engine: ch.engine, voice: ch.voice, rate: pick(packId).rate })).then(function(buf){
+        if (late) return;
+        clearTimeout(t);
+        if (!buf || !buf.byteLength) { done(false); return; }
+        try {
+          var url = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' })), a = new Audio(url);
+          a.onended = a.onerror = function(){ try { URL.revokeObjectURL(url); } catch (e) { void e; } };
+          if (curAudio) { try { curAudio.pause(); } catch (e) { void e; } }
+          curAudio = a;
+          a.play().then(function(){ done(true); }, function(){ done(false); });
+        } catch (e) { done(false); }
+      }, function(){ if (!late) { clearTimeout(t); done(false); } });
+    });
+  }
+  // Any trouble with a downloaded voice speaks the line with the Windows one instead.
+  function speak(text, packId){
+    var ch = chooseEngine(cfgVoice, eng.st);
+    if (ch.engine !== 'windows' && inMimic()) { playNeural(ch, text, packId).then(function(ok){ if (!ok) speakWin(text, packId); }); return; }
+    speakWin(text, packId);
   }
   function save(){ if (inMimic()) { try { window.mimic.saveConfig({ voice: cfgVoice }); } catch (e) { void e; } } }
   function pct(n){ return Math.round(n * 100) / 100; }
@@ -31510,8 +31552,80 @@ function wpSoundOverrideHtml(t, ov) {
       + '<button type="button" id="wpVoiceHear" style="background:#1f6feb;color:#fff;border:0;border-radius:4px;padding:5px 12px;cursor:pointer;font-family:inherit;font-size:12px">&#9654; Hear it</button>'
       + '<button type="button" id="wpVoiceReset" style="background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:5px 10px;cursor:pointer;font-family:inherit;font-size:12px"' + (inMimic() ? '' : ' disabled') + '>Back to the pack\\'s own</button>'
       + '</div>';
-    h += '<div class="dim" style="font-size:11px;margin-top:4px">A pack whose voices are not installed here still sets the speed and pitch. A trigger can also name its own pack in its editor.</div>';
+    h += '<div class="dim" style="font-size:11px;margin-top:4px">A pack whose voices are not installed here still sets the speed and pitch. A trigger can also name its own pack in its editor. Speed applies to every voice engine; pitch and the installed-voice pick apply to the Windows voice only.</div>';
     return h;
+  }
+  // 🗣 Voice engine (the guild lead, 2026-10-17): Windows voices, Piper (free, open source, downloaded on demand),
+  // Kokoro (the upgrade, not built yet). Mimic downloads and plays them; see apps/mimic/neuralVoice.js.
+  function mb(b){ var m = b / 1048576; return (m >= 10 ? Math.round(m) : Math.round(m * 10) / 10) + ' MB'; }
+  function btn(attrs, label, blue){
+    return '<button type="button" ' + attrs + ' style="background:' + (blue ? '#1f6feb;color:#fff;border:0' : 'var(--panel);color:var(--text);border:1px solid var(--border)') + ';border-radius:4px;padding:3px 10px;cursor:pointer;font-family:inherit;font-size:11px"' + (eng.busy ? ' disabled' : '') + '>' + label + '</button>';
+  }
+  function engineHtml(){
+    var st = eng.st, ch = chooseEngine(cfgVoice, st), mi = inMimic();
+    var box = function(on){ return 'display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;padding:4px 6px;border:1px solid ' + (on ? 'var(--blue)' : 'var(--border)') + ';border-radius:5px'; };
+    var h = '<h3 style="font-size:13px;margin:8px 0 4px">Voice engine</h3>'
+      + '<div class="dim" style="font-size:11px;margin-bottom:6px">' + (mi ? 'Downloads are free and open source, kept on this PC, and never part of the installer. ' : 'Mimic downloads and plays these voices; open this dashboard from Mimic to change them. ')
+      + 'If a downloaded voice is slow or fails, that callout is spoken with the Windows voice instead, so none is lost.</div>'
+      + '<div style="display:flex;flex-direction:column;gap:4px">';
+    h += '<div style="' + box(ch.engine === 'windows') + '"><label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer"><input type="radio" name="wpVoiceEngine" value="windows"' + (ch.engine === 'windows' ? ' checked' : '') + (mi ? '' : ' disabled') + '><b>Windows voices</b><span class="dim">Built in to Windows. Always works, and is the fallback.</span></label>'
+      + '<button type="button" data-vn-engtest="windows" style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px">&#9654; Test</button></div>';
+    var p = st && st.piper;
+    h += '<div style="' + box(ch.engine === 'piper') + ';align-items:flex-start;flex-direction:column"><div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%"><label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer"><input type="radio" name="wpVoiceEngine" value="piper"' + (ch.engine === 'piper' ? ' checked' : '') + (mi && p && p.ready ? '' : ' disabled') + '><b>Piper</b><span class="dim">' + esc((p && p.blurb) || 'Free and open source. Natural, quick, and light on older PCs.') + '</span></label>'
+      + (p && p.ready ? btn('data-vn-rm="piper"', 'Remove') : '') + '</div>';
+    if (!st) h += '<div class="dim" style="font-size:11px">' + (mi ? 'Checking what is installed…' : 'Not available outside Mimic.') + '</div>';
+    else if (!p.available) h += '<div class="dim" style="font-size:11px">' + esc(p.reason) + '</div>';
+    else {
+      for (var i = 0; i < p.catalog.length; i++) {
+        var v = p.catalog[i], sel = ch.engine === 'piper' && ch.voice === v.id;
+        h += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;padding-left:22px;font-size:12px">'
+          + '<label style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="radio" name="wpPiperVoice" value="' + esc(v.id) + '"' + (sel ? ' checked' : '') + (v.installed && mi ? '' : ' disabled') + '>' + esc(v.label) + '</label>'
+          + '<span class="dim" title="' + esc(v.credit) + '">' + esc(v.licence) + ' &mdash; ' + esc(v.credit) + '</span>'
+          + (v.installed ? '<button type="button" data-vn-engtest="piper:' + esc(v.id) + '" style="background:var(--panel);color:var(--green);border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;padding:2px 8px">&#9654; Test</button><span class="dim">Installed</span>'
+            : (mi ? btn('data-vn-dl="piper:' + esc(v.id) + '"', 'Download &middot; ' + mb(v.downloadBytes), true) : '')) + '</div>';
+      }
+      h += '<div class="dim" style="font-size:11px;padding-left:22px">Piper itself is MIT-licensed (rhasspy/piper). Speed applies to it; it has no pitch.</div>';
+    }
+    h += '</div>';
+    var k = st && st.kokoro;
+    h += '<div style="' + box(false) + ';opacity:.7"><label style="display:flex;align-items:center;gap:8px;flex:1"><input type="radio" name="wpVoiceEngine" value="kokoro" disabled><b>Kokoro</b><span class="dim">' + esc((k && k.blurb) || 'Sounds better, slower on older PCs.') + '</span></label>'
+      + '<span class="dim" style="font-size:11px">' + esc((k && k.reason) || 'Not available yet.') + '</span></div>';
+    h += '</div><div id="wpVoiceProg" class="dim" style="font-size:11px;margin-top:4px"></div><div id="wpVoiceNote" style="font-size:11px;margin-top:2px">' + esc(eng.note) + '</div>';
+    return h;
+  }
+  function setNote(t){ eng.note = t; var n = document.getElementById('wpVoiceNote'); if (n) n.textContent = t; }
+  async function refreshEngines(){
+    if (!inMimic() || !window.mimic.voiceStatus) return;
+    try { eng.st = await window.mimic.voiceStatus(); } catch (e) { void e; }
+  }
+  async function download(engine, voice){
+    if (eng.busy) return;
+    eng.busy = true; eng.note = ''; paint();
+    var poll = setInterval(function(){
+      window.mimic.voiceStatus().then(function(s){ var pr = s && s.progress, n = document.getElementById('wpVoiceProg'); if (n) n.textContent = pr ? pr.text + ' ' + pr.pct + '%' : ''; }, function(){});
+    }, 600);
+    try {
+      var r = await window.mimic.voiceInstall(engine, voice);
+      if (r && r.ok) { eng.st = r.status; eng.note = 'Installed. Callouts now use it' + ((cfgVoice.engine || 'auto') === 'auto' ? '.' : ' once you pick it above.'); }
+      else eng.note = (r && r.error) || 'The download did not finish. Nothing was changed.';
+    } catch (e) { eng.note = 'Could not reach Mimic to download.'; }
+    clearInterval(poll); eng.busy = false; paint();
+  }
+  async function removeEngine(engine){
+    if (eng.busy) return;
+    try {
+      var r = await window.mimic.voiceRemove(engine);
+      if (r && r.ok) { eng.st = r.status; eng.note = 'Removed. Callouts use the Windows voice.'; } else eng.note = (r && r.error) || 'Could not remove it.';
+    } catch (e) { eng.note = 'Could not reach Mimic.'; }
+    paint();
+  }
+  async function engineTest(spec){
+    var parts = spec.split(':'), line = sampleLine();
+    if (parts[0] === 'windows') { speakWin(line, null); return; }
+    setNote('Making it…');
+    var ok = await playNeural({ engine: parts[0], voice: parts[1] }, line, null);
+    if (ok) setNote('');
+    else { setNote('That voice did not answer in time, so the Windows voice spoke instead. Callouts do the same.'); speakWin(line, null); }
   }
   function namesHtml(){
     var h = '<h3 style="font-size:13px;margin:14px 0 4px">Say your name</h3>';
@@ -31553,11 +31667,12 @@ function wpSoundOverrideHtml(t, ov) {
   }
   function paint(){
     if (!el) return;
-    el.innerHTML = '<h2>🗣 Voice &amp; names <span class="dim" style="font-size:11px;font-weight:normal">(how callouts sound, and how your characters are said)</span></h2>' + voiceHtml() + namesHtml();
+    el.innerHTML = '<h2>🗣 Voice &amp; names <span class="dim" style="font-size:11px;font-weight:normal">(how callouts sound, and how your characters are said)</span></h2>' + engineHtml() + voiceHtml() + namesHtml();
   }
   async function loadAll(){
     await WPSounds.loadPacks();
     if (inMimic()) { try { var c = await window.mimic.getConfig(); if (c && c.voice) cfgVoice = Object.assign({ pack: 'default', voiceName: '', rate: null, pitch: null }, c.voice); } catch (e) { void e; } }
+    await refreshEngines();
     paint();
     try { var r = await fetch('/api/pronunciations'); pron = r.ok ? await r.json() : { characters: [], feature: 'off', signed_in: false }; } catch (e) { pron = { characters: [], feature: 'off', signed_in: false }; }
     paint();
@@ -31586,6 +31701,9 @@ function wpSoundOverrideHtml(t, ov) {
     if (!t) return;
     var b;
     if ((b = t.closest('[data-vn-sample]'))) { speak(sampleLine(), b.getAttribute('data-vn-sample')); return; }
+    if ((b = t.closest('[data-vn-engtest]'))) { engineTest(b.getAttribute('data-vn-engtest')); return; }
+    if ((b = t.closest('[data-vn-dl]'))) { var dl = b.getAttribute('data-vn-dl').split(':'); download(dl[0], dl[1]); return; }
+    if ((b = t.closest('[data-vn-rm]'))) { removeEngine(b.getAttribute('data-vn-rm')); return; }
     if (t.closest('#wpVoiceHear')) { speak(sampleLine()); return; }
     if (t.closest('#wpVoiceReset')) { cfgVoice.voiceName = ''; cfgVoice.rate = null; cfgVoice.pitch = null; save(); paint(); return; }
     var nm = charOf(t);
@@ -31602,6 +31720,8 @@ function wpSoundOverrideHtml(t, ov) {
   function onChange(e){
     var t = e.target; if (!t) return;
     if (t.name === 'wpVoicePack') { cfgVoice.pack = t.value; save(); paint(); return; }
+    if (t.name === 'wpVoiceEngine') { cfgVoice.engine = t.value; save(); paint(); return; }
+    if (t.name === 'wpPiperVoice') { cfgVoice.piperVoice = t.value; cfgVoice.engine = 'piper'; save(); paint(); return; }
     if (t.id === 'wpVoiceName') { cfgVoice.voiceName = t.value; save(); return; }
   }
   function onInput(e){
