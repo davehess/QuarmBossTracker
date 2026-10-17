@@ -4692,6 +4692,9 @@ function _flushUploadStats() {
 }
 function _trackUpload({ endpoint, character, agentVersion, ok = true, statusCode = 200, errorMessage = null, payloadBytes = null, agentState = null, uploadedBy = null }) {
   void payloadBytes;
+  // A dead character's Zeal name is "<Name>'s corpse<N>"; it is not a character, and /me listed it as one
+  // under "Characters we think are yours" (the guild lead, 2026-10-17).
+  if (character && require('./utils/raidBuffs').isCorpse(character)) character = null;
   try {
     const supabase = require('./utils/supabase');
     if (!supabase.isEnabled() || !endpoint) return;
@@ -9418,7 +9421,7 @@ async function _handleAgentTriggerFeedback(req, res) {
       direction:       String(v.direction),
       fired_at:        v.fired_at ? new Date(v.fired_at).toISOString() : null,
       voted_at:        v.voted_at ? new Date(v.voted_at).toISOString() : new Date().toISOString(),
-      voter_character: v.voter_character ? String(v.voter_character).slice(0, 80) : null,
+      voter_character: v.voter_character && !require('./utils/raidBuffs').isCorpse(v.voter_character) ? String(v.voter_character).slice(0, 80) : null,   // a dead voter's Zeal name is their corpse
       voter_discord_id: identity.discord_id,
       note:            v.note ? String(v.note).slice(0, 500) : null,
     }));
@@ -18675,6 +18678,7 @@ async function _handleAgentLiveState(req, res) {
   for (const st of states) {
     const character = String(st?.character || '').trim();
     if (!character || character.length > 64) continue;
+    if (require('./utils/raidBuffs').isCorpse(character)) continue;   // "<Name>'s corpse<N>": Zeal's name for a dead character, not a character
     // Character-swap record (agent v3.1.13+): the same EQ client logged a
     // different character in, so this one is gone. Stamp swapped_to WITHOUT
     // touching the rest of the row (buffs etc. stay as the last-known

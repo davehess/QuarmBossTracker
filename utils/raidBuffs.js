@@ -379,7 +379,7 @@ function isCurseBuff(name) {
   return CURSE_KEYWORDS.some(k => n.includes(k));
 }
 
-const CORPSE_RX = /'s\s+corpse\d*$/i;
+const CORPSE_RX = /[`'’]s[\s_]+corpse\d*$/i;
 function isCorpse(name) {
   return !!name && CORPSE_RX.test(String(name).trim());
 }
