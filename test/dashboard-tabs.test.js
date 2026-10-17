@@ -45,7 +45,7 @@ const sectionsBlock = (() => {
   if (i < 0 || j < 0) throw new Error('_sections table not found — did the render loop move?');
   return src.slice(i, j + 3);   // +3 keeps the LAST entry's own ']'
 })();
-const renderEntries = [...sectionsBlock.matchAll(/\['([a-z]+)', (render[A-Za-z]+)\]/g)]
+const renderEntries = [...sectionsBlock.matchAll(/\['([A-Za-z]+)', (render[A-Za-z]+)\]/g)]
   .map(m => ({ id: m[1], fn: m[2] }));
 
 // Which render fn emits a given placeholder id? Walk each `function renderX(s) {`
@@ -57,7 +57,7 @@ function bodyOf(fnName) {
   return src.slice(start, end < 0 ? src.length : end);
 }
 const SECTION_RENDERERS = ['renderDash', 'renderStats', 'renderInfo', 'renderTriggers',
-                           'renderDiag', 'renderOverlays', 'renderAdmin'];
+                           'renderDiag', 'renderOverlays', 'renderAdmin', 'renderVoice', 'renderReplayCard'];
 function emittersOf(placeholderId) {
   return SECTION_RENDERERS.filter(fn => bodyOf(fn).includes(`id="${placeholderId}"`));
 }
@@ -78,7 +78,7 @@ describe('the nav rail and the panes agree', () => {
   });
 
   it('still carries the tabs the split produced', () => {
-    for (const t of ['dash', 'overlays', 'raid', 'fights', 'stats', 'triggers', 'diag', 'info', 'optin', 'admin']) {
+    for (const t of ['dash', 'overlays', 'raid', 'buffs', 'fights', 'stats', 'triggers', 'voice', 'diag', 'info', 'optin', 'admin']) {
       expect(navTabs, `missing tab: ${t}`).toContain(t);
     }
   });
@@ -227,9 +227,13 @@ describe('the split actually moved the cards', () => {
 
   it('Triggers keeps the trigger config and loses the diagnostics', () => {
     const trig = bodyOf('renderTriggers');
-    for (const h of ['Suggested triggers', 'Personal triggers', 'Guild triggers',
-                     'Loot auction announce', 'Raid callout allow-list', 'Replay']) {
+    for (const h of ['Suggested triggers', 'Personal triggers', 'Guild triggers', 'Timing votes']) {
       expect(trig, `Triggers should still carry "${h}"`).toContain(h);
+    }
+    // 2026-10-17: the voice cards went to the Voice tab, Replay to Fights. Markup, not the phrase:
+    // renderTriggers keeps a comment saying where they went.
+    for (const m of ['<h2>💰 Loot auction announce', '<h2>&#128266; Raid callout allow-list', '<h2>⏪ Replay', 'id="wpVoice"', 'id="wpSounds"', 'id="wpTrigRules"']) {
+      expect(trig, `Triggers should no longer carry "${m}"`).not.toContain(m);
     }
   });
 
