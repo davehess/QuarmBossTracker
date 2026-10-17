@@ -905,6 +905,12 @@ contextBridge.exposeInMainWorld('mimic', {
   listSounds:       ()     => ipcRenderer.invoke('sounds:list'),
   resolveSound:     (name) => ipcRenderer.invoke('sounds:resolve', name),
   openSoundsFolder: ()     => ipcRenderer.invoke('sounds:open-folder'),
+  // Downloaded callout voices (neuralVoice.js): what is installed, fetch / delete one, and a phrase as a WAV
+  // (null = speak it with the Windows voice instead).
+  voiceStatus:      ()                    => ipcRenderer.invoke('voice:status'),
+  voiceInstall:     (engine, voice)       => ipcRenderer.invoke('voice:install', engine, voice),
+  voiceRemove:      (engine)              => ipcRenderer.invoke('voice:remove', engine),
+  voiceSynth:       (text, spec)          => ipcRenderer.invoke('voice:synth', text, spec),
   // A JSON POST to one of the engine's pronunciation routes (main keeps the list); → { ok, status, body }.
   agentPost:        (route, body) => ipcRenderer.invoke('agent-post', route, body),
   saveConfig:    (cfg) => ipcRenderer.invoke('save-config', cfg),

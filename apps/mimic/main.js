@@ -34,6 +34,7 @@ const { applyIniKeyEdits } = require('./iniKeyEdits');
 const { visibleUiRects, zealAreas, applyPicks, cleanPicks } = require('./uiClearRects');
 const uiLayouts = require('./uiLayouts');
 const soundLib = require('./sounds');
+const neuralVoice = require('./neuralVoice');
 
 // Hide the default File/Edit/View/Window/Help menubar — this is a focused
 // tray app, those entries just look unfinished. Must run before window
@@ -113,6 +114,8 @@ const BASE_PORT   = 7779; // 7777/7778 left for Parser.bat coexistence
 // folders through env so its dashboard can list and play them too (see _soundDirs in the agent).
 const SOUNDS_SHIPPED_DIR = () => (app.isPackaged ? path.join(process.resourcesPath, 'sounds') : path.join(__dirname, 'sounds'));
 const SOUNDS_USER_DIR    = () => path.join(app.getPath('userData'), 'sounds');
+// Downloaded callout voices (Piper), under the user's data folder, never in the installer. See neuralVoice.js.
+const VOICES_DIR         = () => path.join(app.getPath('userData'), 'voices');
 function _ensureSoundsDir() { try { fs.mkdirSync(SOUNDS_USER_DIR(), { recursive: true }); } catch { /* read-only profile: the library is just the shipped set */ } }
 function _openSoundsFolder() { _ensureSoundsDir(); return shell.openPath(SOUNDS_USER_DIR()); }
 
@@ -390,6 +393,9 @@ function defaultConfig() {
     runMode: 'full',
     // Spoken-callout voice (the guild lead, 2026-10-14): a voice pack id (the agent's VOICE_PACKS), optionally an installed
     // voice by name, and a speed / pitch that override the pack's own (null = the pack's). Read by triggers.html; see voice.js.
+    // Absent keys on it (2026-10-17): engine ('auto' = the best downloaded voice, else Windows; or 'windows' /
+    // 'piper' / 'kokoro') and piperVoice / kokoroVoice (the voice in each). Downloaded voices ignore voiceName
+    // and pitch. They are written only when the player picks, and read as auto when missing: voice.js chooseEngine.
     voice: { pack: 'default', voiceName: '', rate: null, pitch: null },
   };
 }
@@ -11824,6 +11830,28 @@ ipcMain.handle('get-config', () => configForRenderer(loadConfig()));
 ipcMain.handle('sounds:list', () => soundLib.listSounds(SOUNDS_SHIPPED_DIR(), SOUNDS_USER_DIR()));
 ipcMain.handle('sounds:resolve', (_e, name) => soundLib.resolveSoundUrl(name, SOUNDS_SHIPPED_DIR(), SOUNDS_USER_DIR()));
 ipcMain.handle('sounds:open-folder', () => _openSoundsFolder().then(() => SOUNDS_USER_DIR()));
+// Downloaded callout voices (neuralVoice.js; the guild lead, 2026-10-17). The engine pick itself is cfg.voice
+// (voice.js chooseEngine) and is saved with save-config like the rest. Failures come back as { ok:false, error }
+// in plain words; voice:synth returns the WAV or null, and null means "speak it with the Windows voice".
+ipcMain.handle('voice:status', () => neuralVoice.status(VOICES_DIR()));
+ipcMain.handle('voice:install', async (_e, engine, voice) => {
+  try {
+    const st = await neuralVoice.install(VOICES_DIR(), String(engine || ''), String(voice || ''));
+    appendAgentLog(`[voice] installed ${engine} ${voice || ''}\n`);
+    return { ok: true, status: st };
+  } catch (e) {
+    appendAgentLog(`[voice] install failed: ${e && e.message}\n`);
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+});
+ipcMain.handle('voice:remove', (_e, engine) => {
+  try { return { ok: true, status: neuralVoice.remove(VOICES_DIR(), String(engine || '')) }; }
+  catch (e) { return { ok: false, error: e && e.message ? e.message : String(e) }; }
+});
+ipcMain.handle('voice:synth', (_e, text, spec) => {
+  const s = spec && typeof spec === 'object' ? spec : {};
+  return neuralVoice.synthesize(VOICES_DIR(), { engine: s.engine, voice: s.voice, rate: s.rate, text });
+});
 // Mute (cfg.quietMode) reaches every overlay renderer as one boolean, so the
 // three places that speak or play a sound (triggers.html, chchain.html,
 // charm.html) check window.mimic.isMuted() with no config round-trip. Sent on
