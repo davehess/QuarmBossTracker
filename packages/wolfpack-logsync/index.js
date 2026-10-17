@@ -18860,8 +18860,8 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
   <button class="active" data-tab="dash">Dashboard</button>
   <button data-tab="overlays">🪟 Overlays</button>
   <button data-tab="raid">⚔ Raid</button>
-  <button data-tab="buffs">✨ Buffs</button>
-  <button data-tab="buffblocks">🔇 Buff blocks</button>
+  <!-- The Buff blocks picker now lives at the foot of this tab (the guild lead, 2026-10-17). -->
+  <button data-tab="buffs">✨ Buffs (and blocking)</button>
   <button data-tab="fights">⚔️ Fights</button>
   <!-- 📈 My parses (2026-10-06): your own fights from the guild's record, charted over a window you pick.
        The tray's "📈 My parses" opens this tab through the #myparses hash. -->
@@ -18875,6 +18875,8 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
   <button data-tab="loot">💰 Loot</button>
   <button data-tab="stats">📊 Stats</button>
   <button data-tab="triggers">⚡ Triggers</button>
+  <!-- 🗣 Voice (the guild lead, 2026-10-17): every card about how Mimic speaks, carved out of Triggers. -->
+  <button data-tab="voice">🗣 Voice</button>
   <button data-tab="diag">🩺 Diagnostics</button>
   <button data-tab="info">Info</button>
   <button data-tab="optin">Logsync</button>
@@ -18907,20 +18909,27 @@ body.wp-feedback-mode > *:not(#wpFeedback):not(#wpConnError):not(script):not(sty
 <div id="dash" class="section active"></div>
 <div id="overlays" class="section"></div>
 <div id="raid" class="section"></div>
-<div id="buffs" class="section"></div>
-<div id="buffblocks" class="section"></div>
+<!-- Buffs (and blocking): #buffsMain is renderBuffsTab's render-target; #buffblocks is the #blockbuff
+     picker, which builds and polls its own card (not a .section of its own any more). -->
+<div id="buffs" class="section">
+  <div id="buffsMain"></div>
+  <div id="buffblocks"></div>
+</div>
 <!-- Fights = Tanks/Healers + DPS combined. #tanks and #deeps are inner
      render-targets (renderTanks/renderDeeps still setSectionHTML into them),
-     not independent .section tabs, so both show whenever Fights is active. -->
+     not independent .section tabs, so both show whenever Fights is active.
+     #fightsReplay holds the ⏪ Replay card (renderReplayCard). -->
 <div id="fights" class="section">
   <div id="tanks"></div>
   <div id="deeps"></div>
+  <div id="fightsReplay"></div>
 </div>
 <div id="myparses" class="section"></div>
 <div id="loot" class="section"></div>
 <div id="stats" class="section"></div>
 <div id="info" class="section"></div>
 <div id="triggers" class="section"></div>
+<div id="voice" class="section"></div>
 <div id="diag" class="section"></div>
 <div id="optin" class="section"></div>
 <div id="admin" class="section"></div>
@@ -19585,7 +19594,7 @@ function _wpBuffSummary(list) {
 }
 // ── Buffs tab ───────────────────────────────────────────────────────────────
 function renderBuffsTab(s) {
-  var root = document.getElementById('buffs');
+  var root = document.getElementById('buffsMain');
   if (!root) return;
   var active = (s && s.buffsActive) || [];
   var durs   = (s && s.buffDurations) || [];
@@ -19715,7 +19724,7 @@ function renderBuffsTab(s) {
   h += '</div>';
 
   h += '</div>';
-  setSectionHTML('buffs', h);
+  setSectionHTML('buffsMain', h);
 }
 
 // ── The DOM write path ──────────────────────────────────────────────────────
@@ -22159,7 +22168,7 @@ function renderRecentFires(s) {
 // Byte-stable when idle (empty + hidden) so it never flickers the section.
 function renderReplayStatus(s) {
   var el = document.getElementById('wpReplayStatus');
-  if (!el) return;   // Triggers tab not painted yet
+  if (!el) return;   // Replay card (Fights tab) not painted yet
   var r = (s && s.replay) || {};
   if (!r.running && !r.done) {
     if (el.style.display !== 'none') el.style.display = 'none';
@@ -22896,32 +22905,18 @@ function wpMpLink(a) {
   return true;
 }
 
-function renderTriggers(s) {
-  let h = '';
-  h += '<div class="grid">';
-
-  // (The Zeal pipe / charm / pet-buff / trigger-journal / boss-mechanics
-  // diagnostic cards moved to the 🩺 Diagnostics tab — see renderDiag. Their
-  // render fns are unchanged; only the placeholder location moved.)
-
-  // ⚡ Recent fires (recent trigger matches) — its rows carry fmtAgo timestamps
-  // that tick every poll, so it MUST live in its own wp* placeholder filled by
-  // renderRecentFires() each poll. Rendered inline it made this whole section's
-  // HTML differ every 2s, forcing setSectionHTML to rewrite the guild-trigger
-  // table + remount the trigger editor and suggested list on every poll — the
-  // Triggers-tab "flash" the guild lead reported (#120). Isolating it keeps the
-  // section byte-stable when triggers don't change, so only this small card
-  // repaints (same pattern as wpZealCard / wpTriggerJournal). Clear buttons keep
-  // their ids; the section-root click delegation still routes them.
-  h += '<div id="wpRecentFires" class="card wide"></div>';
-
-  // ⏪ Replay (#101) — walk a slice of a watched log back through the real
-  // trigger pipeline (rehearsal-flagged; nothing uploads/relays). The FORM is
-  // byte-stable — its picker uses only stable watchedLog fields (character +
-  // logPath, plus level + hidden, which change once when /who or the prefs poll
-  // learns them, never per poll), so idle polls don't rewrite it and the user's
-  // from/to typing + datetime focus survive. The volatile progress/results live in the nested
-  // #wpReplayStatus placeholder filled by renderReplayStatus() every poll.
+// ⏪ Replay card — on the ⚔️ Fights tab since 2026-10-17 (the guild lead: "Replay should be on the fights
+// tab"); it was a Triggers card. Fills #fightsReplay. The replay start/stop buttons are routed by the
+// delegated click handler the trigger editor binds to #fights as well as #triggers.
+// ⏪ Replay (#101) — walk a slice of a watched log back through the real
+// trigger pipeline (rehearsal-flagged; nothing uploads/relays). The FORM is
+// byte-stable — its picker uses only stable watchedLog fields (character +
+// logPath, plus level + hidden, which change once when /who or the prefs poll
+// learns them, never per poll), so idle polls don't rewrite it and the user's
+// from/to typing + datetime focus survive. The volatile progress/results live in the nested
+// #wpReplayStatus placeholder filled by renderReplayStatus() every poll.
+function renderReplayCard(s) {
+  var h = '<div class="grid">';
   h += '<div class="card wide"><h2>⏪ Replay <span class="dim" style="font-size:11px;font-weight:normal">· walk part of a log back through the real trigger pipeline — hear the TTS, nothing uploads</span></h2>';
   var _rls = (s.watchedLogs || []).filter(function(w){ return w && w.logPath; });
   // Characters known to be under 46, or hidden by their owner, sit behind the same toggle as the Me card's
@@ -22960,6 +22955,41 @@ function renderTriggers(s) {
     h += '<div class="dim" style="font-size:11px;margin-top:6px">Replay fires are rehearsals — they speak + flash with a ⏪ tag but never upload, relay, or touch your live cooldowns. One replay at a time; blocked during a live fight. Real-time hears the fight as it happened; fast pauses briefly on each fire for a quick audit.</div>';
   }
   h += '</div>';
+  h += '</div>';
+  setSectionHTML('fightsReplay', h);
+}
+
+// 🗣 Voice tab (the guild lead, 2026-10-17: "All of the voice things are getting to be that they need their
+// own tab"). Every card about how Mimic speaks, carved out of Triggers: the voice engine + names, "What you
+// hear" (speak / overlay only / off), the raid callout allow-list, loot-post speech, and the sound library.
+// Each of the wp* placeholders is filled by the same mount fn it always had; only the section moved. The
+// loot and allow-list toggles keep their ids and are saved by the change handler the trigger editor
+// binds to #voice as well as #triggers.
+function renderVoice(s) {
+  let h = '';
+  h += '<div class="grid">';
+
+  // 🗣 Voice & names: engine (Windows / Piper / Kokoro), voice pack, speed and pitch, how names are said.
+  // Its own wp* placeholder, filled by setupVoiceNames, so this section's HTML stays byte-stable.
+  h += '<div id="wpVoice" class="card wide"></div>';
+
+  // 🔊 What you hear (the guild lead, 2026-10-12) — speak / overlay only / off for every callout,
+  // by group and per trigger. Its own wp* placeholder, filled by setupTriggerRules.
+  h += '<div id="wpTrigRules" class="card wide"></div>';
+
+  // #136 Raid callout allow-list — mutes guild-pushed + cross-client RELAYED
+  // voice fires outside the critical categories (slow, deaths, tank swaps,
+  // discs, deathtouches, charms + the curated boss-mechanic countdowns).
+  // Personal triggers the user made themselves always speak. No <details> here,
+  // so no wpKeep; the checked bit tracks server state and only flips on user
+  // action, keeping this HTML byte-stable across polls.
+  h += '<div class="card wide"><h2>&#128266; Raid callout allow-list <span class="dim" style="font-size:11px;font-weight:normal">(voice only the critical categories)</span></h2>';
+  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">';
+  h += '<input type="checkbox" id="calloutAllow"' + (s.calloutAllowlist !== false ? ' checked' : '') + '>';
+  h += '<span>Speak only high-value guild callouts &mdash; slow, deaths, tank swaps, discs, deathtouches, charms (plus the boss-mechanic countdowns)</span></label>';
+  h += '<div class="dim" style="font-size:11px;margin-top:5px">Guild-pushed and cross-client <b>relayed</b> trigger fires are the raid-wide firehose &mdash; every raider hears every other raider. With this on, those fires only <b>speak</b> when they match a critical category; the rest still <b>flash</b> on the trigger overlay, just silently. <b>Personal triggers you created yourself always speak.</b> The curated built-ins (rampage, buster, AoE dance, slow land/drop, CH GO, loot) are always audible.</div>';
+  h += '<span id="calloutMsg" class="dim" style="font-size:11px"></span>';
+  h += '</div>';
 
   // #107/#149 Loot auction announce — dashboard toggle + default-duration knob.
   // The countdown chip opens from the bot's loot-post broadcast regardless; this
@@ -22976,23 +23006,49 @@ function renderTriggers(s) {
   h += '<span id="lootAucMsg" class="dim" style="font-size:11px;margin-left:8px"></span>';
   h += '</div>';
 
-  // #136 Raid callout allow-list — mutes guild-pushed + cross-client RELAYED
-  // voice fires outside the critical categories (slow, deaths, tank swaps,
-  // discs, deathtouches, charms + the curated boss-mechanic countdowns).
-  // Personal triggers the user made themselves always speak. No <details> here,
-  // so no wpKeep; the checked bit tracks server state and only flips on user
-  // action, keeping this HTML byte-stable across polls.
-  h += '<div class="card wide"><h2>&#128266; Raid callout allow-list <span class="dim" style="font-size:11px;font-weight:normal">(voice only the critical categories)</span></h2>';
-  h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">';
-  h += '<input type="checkbox" id="calloutAllow"' + (s.calloutAllowlist !== false ? ' checked' : '') + '>';
-  h += '<span>Speak only high-value guild callouts &mdash; slow, deaths, tank swaps, discs, deathtouches, charms (plus the boss-mechanic countdowns)</span></label>';
-  h += '<div class="dim" style="font-size:11px;margin-top:5px">Guild-pushed and cross-client <b>relayed</b> trigger fires are the raid-wide firehose &mdash; every raider hears every other raider. With this on, those fires only <b>speak</b> when they match a critical category; the rest still <b>flash</b> on the trigger overlay, just silently. <b>Personal triggers you created yourself always speak.</b> The curated built-ins (rampage, buster, AoE dance, slow land/drop, CH GO, loot) are always audible.</div>';
-  h += '<span id="calloutMsg" class="dim" style="font-size:11px"></span>';
+  // 🔊 Sounds (the guild lead, 2026-10-14) — the sound library, a wp* placeholder filled by setupSounds.
+  h += '<div id="wpSounds" class="card wide"></div>';
+
   h += '</div>';
+  if (!setSectionHTML('voice', h)) return;
+  if (window._wpVoiceNames && window._wpVoiceNames.mount) {
+    window._wpVoiceNames.mount();
+  }
+  if (window._wpTrigRules && window._wpTrigRules.mount) {
+    window._wpTrigRules.mount();
+  }
+  if (window._wpSounds && window._wpSounds.mount) {
+    window._wpSounds.mount();
+  }
+}
+
+function renderTriggers(s) {
+  let h = '';
+  h += '<div class="grid">';
+
+  // (The Zeal pipe / charm / pet-buff / trigger-journal / boss-mechanics
+  // diagnostic cards moved to the 🩺 Diagnostics tab — see renderDiag. Their
+  // render fns are unchanged; only the placeholder location moved.)
+
+  // ⚡ Recent fires (recent trigger matches) — its rows carry fmtAgo timestamps
+  // that tick every poll, so it MUST live in its own wp* placeholder filled by
+  // renderRecentFires() each poll. Rendered inline it made this whole section's
+  // HTML differ every 2s, forcing setSectionHTML to rewrite the guild-trigger
+  // table + remount the trigger editor and suggested list on every poll — the
+  // Triggers-tab "flash" the guild lead reported (#120). Isolating it keeps the
+  // section byte-stable when triggers don't change, so only this small card
+  // repaints (same pattern as wpZealCard / wpTriggerJournal). Clear buttons keep
+  // their ids; the section-root click delegation still routes them.
+  h += '<div id="wpRecentFires" class="card wide"></div>';
+
+  // (The ⏪ Replay card moved to the ⚔️ Fights tab — renderReplayCard. The voice cards — voice & names,
+  // What you hear, the raid callout allow-list, loot-post speech and the sound library — moved to the
+  // 🗣 Voice tab — renderVoice. 2026-10-17.)
 
   // Timing votes (the guild lead, 2026-10-01: "Need to be able to opt out for tts timing
   // feedback"). Off: no « Earlier / ✓ Good! / » Too early row after a fire, and no callout
-  // timing (votes, ✕, age-outs) leaves this machine. Same byte-stable rule as the card above.
+  // timing (votes, ✕, age-outs) leaves this machine. Byte-stable across polls: the checked bit
+  // only flips on user action.
   h += '<div class="card wide"><h2>&#128499; Timing votes <span class="dim" style="font-size:11px;font-weight:normal">(after each callout)</span></h2>';
   h += '<label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">';
   h += '<input type="checkbox" id="timingVotes"' + (s.timingFeedback !== false ? ' checked' : '') + '>';
@@ -23000,16 +23056,6 @@ function renderTriggers(s) {
   h += '<div class="dim" style="font-size:11px;margin-top:5px">Your votes, and which callouts you clear with &#10005; or leave to run out, help the officers fix trigger timing. Untick to hide the buttons and send none of it. The &#128277; on the buttons does the same.</div>';
   h += '<span id="timingVotesMsg" class="dim" style="font-size:11px"></span>';
   h += '</div>';
-
-  // 🔊 What you hear (the guild lead, 2026-10-12) — speak / overlay only / off for every callout,
-  // by group and per trigger. Its own wp* placeholder, filled by setupTriggerRules below, so the
-  // section HTML here stays byte-stable and the card is not rewritten by a Triggers repaint.
-  h += '<div id="wpTrigRules" class="card wide"></div>';
-
-  // 🔊 Sounds and 🗣 Voice & names (the guild lead, 2026-10-14) — each its own wp* placeholder, filled by
-  // setupSounds / setupVoiceNames below, so this section's HTML stays byte-stable.
-  h += '<div id="wpSounds" class="card wide"></div>';
-  h += '<div id="wpVoice" class="card wide"></div>';
 
   // Suggested triggers — one-click catalog of pre-tested alerts grouped by
   // category. Toggling the Enable checkbox creates/removes a personal
@@ -23036,7 +23082,7 @@ function renderTriggers(s) {
 
   // Guild triggers — read-only (managed in wolfpack.quest/admin/triggers). Its own wp* placeholder,
   // filled by renderGuildTriggersCard: opening a row repaints just this card, so the Add form's
-  // half-typed text and the Replay inputs above are not wiped by it (FB-30).
+  // half-typed text is not wiped by it (FB-30).
   h += '<div id="wpGuildTriggers" class="card wide"></div>';
 
   h += '</div>';
@@ -23048,15 +23094,6 @@ function renderTriggers(s) {
   }
   if (window._wpSuggestedTriggers && window._wpSuggestedTriggers.mount) {
     window._wpSuggestedTriggers.mount();
-  }
-  if (window._wpTrigRules && window._wpTrigRules.mount) {
-    window._wpTrigRules.mount();
-  }
-  if (window._wpSounds && window._wpSounds.mount) {
-    window._wpSounds.mount();
-  }
-  if (window._wpVoiceNames && window._wpVoiceNames.mount) {
-    window._wpVoiceNames.mount();
   }
   if (window._wpTrigSync && window._wpTrigSync.mount) {
     window._wpTrigSync.mount();
@@ -25121,7 +25158,17 @@ function renderKillSwitches(s) {
       if (onLoc === onTun) delete _wpKill.local[lkk];
     }
   }
-  var h = '<h2>🛑 Kill switches <span class="dim" style="font-size:11px;font-weight:normal">— control-plane flags · officer · ~60s fleet-wide</span></h2>';
+  // Closed by default (the guild lead, 2026-10-17: "Minimize the kill switches so people don't
+  // accidentally hit them"). The title stays an h2 inside the summary so the card keeps its panel key;
+  // a count on the summary says when something is switched on while it is folded away.
+  var nKillOn = 0;
+  for (var kci = 0; kci < WP_KILL_FLAGS.length; kci++) {
+    var kcf = WP_KILL_FLAGS[kci], kcOn = _wpFlagIsOn(kcf, tuning);
+    if (kcf.defaultOn ? !kcOn : kcOn) nKillOn++;
+  }
+  var h = '<details ' + wpKeep('admin-killswitches') + '><summary style="cursor:pointer"><h2 style="display:inline;border:0;padding:0;margin:0">🛑 Kill switches (emergency only) <span class="dim" style="font-size:11px;font-weight:normal">— control-plane flags · officer · ~60s fleet-wide</span></h2>'
+    + (nKillOn ? ' <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(248,81,73,0.18);color:var(--red);border:1px solid rgba(248,81,73,0.4)">' + nKillOn + ' switched on</span>' : '')
+    + '</summary><div style="margin-top:12px">';
   h += '<div class="dim" style="font-size:11px;margin-bottom:7px">Live values from the tuning this agent polls. One click writes to the bot immediately (officer-authed + whitelisted); the fleet honors it within ~60s. Leave everything off in normal operation. The free-form numeric knobs stay on /admin/overlays.</div>';
   for (var i = 0; i < WP_KILL_FLAGS.length; i++) {
     var fl = WP_KILL_FLAGS[i];
@@ -25141,6 +25188,7 @@ function renderKillSwitches(s) {
   }
   h += _wpKillVersionFloorRow(tuning);
   h += '<div id="wpKillMsg" class="dim" style="font-size:11px;min-height:14px;margin-top:2px"></div>';
+  h += '</div></details>';
   morphInto(sec, h);
 }
 function _wpKillAgentKillRow(fl, tuning) {
@@ -25192,7 +25240,14 @@ function _wpKillVersionFloorRow(tuning) {
 document.addEventListener('click', function (ev) {
   var t = ev.target; if (!t || !t.closest) return;
   var tog = t.closest('.wpKillToggle');
-  if (tog) { _wpFlagOverride(tog.getAttribute('data-key'), (Number(tog.getAttribute('data-next')) >= 1 ? 1 : 0)); return; }
+  if (tog) {
+    // Every flip asks first: the card is emergency-only and a stray click should cost nothing.
+    var tkey = tog.getAttribute('data-key'), tfl = _wpKillFlagFor(tkey), tnext = Number(tog.getAttribute('data-next')) >= 1 ? 1 : 0;
+    var tmsg = (tnext === 1 ? 'Turn ON' : 'Turn OFF') + ' "' + (tfl ? tfl.label : tkey) + '" for the whole fleet?\\n\\nThe guild honors it within about a minute.';
+    if (!confirm(tmsg)) return;
+    _wpFlagOverride(tkey, tnext);
+    return;
+  }
   if (t.closest('.wpKillArm'))    { _wpKill.arm = true;  var mA = document.getElementById('wpKillMsg'); if (mA) mA.textContent = ''; return; }
   if (t.closest('.wpKillCancel')) { _wpKill.arm = false; return; }
   if (t.closest('.wpKillConfirm')) {
@@ -26779,8 +26834,9 @@ async function refresh() {
                      ['damagedone', renderDamageDoneCard],
                      ['healingcard', renderHealingCard], ['watchedlogs', renderWatchedLogsCard],
                      ['recenttells', renderRecentTellsCard], ['topdamage', renderTopDamageCard],
-                     ['tanks', renderTanks], ['deeps', renderDeeps],
+                     ['tanks', renderTanks], ['deeps', renderDeeps], ['fightsReplay', renderReplayCard],
                      ['triggers', renderTriggers], ['guildtriggers', renderGuildTriggersCard],
+                     ['voice', renderVoice],
                      // 🩺 Diagnostics owns the pipe/charm/pet/journal/mechanics/
                      // explorer placeholders — it MUST run before their fillers
                      // below, same rule as renderDash → renderMeCard.
@@ -26790,7 +26846,7 @@ async function refresh() {
                      ['recentfires', renderRecentFires], ['replaystatus', renderReplayStatus],
                      ['charmdiag', renderCharmDiag], ['petbuffdiag', renderPetBuffDiag], ['triggerjournal', renderTriggerJournal],
                      ['mechanics', renderMechanics],
-                     ['buffs', renderBuffsTab], ['overlays', renderOverlays], ['stats', renderStats], ['info', renderInfo],
+                     ['buffsMain', renderBuffsTab], ['overlays', renderOverlays], ['stats', renderStats], ['info', renderInfo],
                      ['loottab', renderLootTab],
                      // After info: fill the placeholders renderInfo/renderDiag
                      // just (re)painted, so they show same-tick. renderCrashReview
@@ -27034,9 +27090,22 @@ document.querySelectorAll('.nav button[data-tab]').forEach(b => b.addEventListen
   go();
   window.addEventListener('hashchange', go);
 })();
+// #buffblocks opens the blocking half of ✨ Buffs (and blocking): the picker was a tab of its own until
+// 2026-10-17, so an old link or shortcut to that tab lands on the Buffs tab, scrolled to the picker.
+(function () {
+  function go() {
+    if ((location.hash || '').toLowerCase() !== '#buffblocks') return;
+    var btn = document.querySelector('.nav button[data-tab="buffs"]');
+    if (btn) btn.click();
+    setTimeout(function () { var c = document.getElementById('wpBuffBlocks'); if (c && c.scrollIntoView) c.scrollIntoView({ block: 'start' }); }, 250);
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { void e; }
+  }
+  go();
+  window.addEventListener('hashchange', go);
+})();
 // ⏪ Replay deep-link (#101) — a link like #replay&from=<iso>&to=<iso> (built
 // by wolfpack.quest/parses on the "Replay this fight locally" link) opens the
-// Triggers tab with the Replay form prefilled. It never auto-starts — the user
+// Fights tab (where the Replay card lives since 2026-10-17) with the form prefilled. It never auto-starts — the user
 // still clicks Start. from/to arrive as ISO instants; we render them into the
 // datetime-local inputs as LOCAL wall-clock (the basis the agent parses EQ log
 // timestamps on this machine).
@@ -27067,7 +27136,7 @@ function _wpApplyReplayPrefill(attempt) {
     if (i > 0) { try { params[kv.slice(0, i)] = decodeURIComponent(kv.slice(i + 1)); } catch (e) { void e; } }
   });
   window._wpReplayPrefill = { from: params.from || '', to: params.to || '' };
-  var btn = document.querySelector('.nav button[data-tab="triggers"]');
+  var btn = document.querySelector('.nav button[data-tab="fights"]');
   if (btn) btn.click();
   _wpApplyReplayPrefill(0);
 })();
@@ -27644,7 +27713,7 @@ async function dismissTopDamage(key) {
     });
   }
   var obs = new MutationObserver(function(){ applyHidden(); });
-  ["dash","overlays","raid","fights","info","triggers","optin"].forEach(function(id){
+  ["dash","overlays","raid","fights","info","triggers","voice","optin"].forEach(function(id){
     var el = document.getElementById(id);
     if (el) obs.observe(el, { childList: true, subtree: true });
   });
@@ -27813,7 +27882,7 @@ async function dismissTopDamage(key) {
     try { if (window.mimic) window.mimic.createPanelOverlay(pk); } catch (err) {}
   }, true);
   var obs = new MutationObserver(decorateButtons);
-  ["dash","overlays","raid","fights","info","triggers","optin"].forEach(function(id){
+  ["dash","overlays","raid","fights","info","triggers","voice","optin"].forEach(function(id){
     var el = document.getElementById(id);
     if (el) obs.observe(el, { childList: true, subtree: true });
   });
@@ -27853,7 +27922,7 @@ async function dismissTopDamage(key) {
       return matched;
     }
     var obs2 = new MutationObserver(applyOverlayTarget);
-    ["dash","overlays","raid","fights","info","triggers","optin"].forEach(function(id){
+    ["dash","overlays","raid","fights","info","triggers","voice","optin"].forEach(function(id){
       var el = document.getElementById(id);
       if (el) obs2.observe(el, { childList: true, subtree: true });
     });
@@ -28018,7 +28087,7 @@ async function dismissTopDamage(key) {
     }
   }
   var obs = new MutationObserver(decorate);
-  ["dash","overlays","raid","fights","info","triggers","optin"].forEach(function(id){
+  ["dash","overlays","raid","fights","info","triggers","voice","optin"].forEach(function(id){
     var el = document.getElementById(id);
     if (el) obs.observe(el, { childList: true, subtree: true });
   });
@@ -29305,8 +29374,10 @@ async function dismissTopDamage(key) {
 })();
 
 // ── 🔇 Buff blocks: the #blockbuff picker (the guild lead, 2026-10-04) ───────
+// (2026-10-17: no tab of its own now. It is the "blocking" half of ✨ Buffs (and blocking),
+// below the buffs cards.)
 // Quarm's #blockbuff / #blockbuffif / #allowbuff commands keep other players'
-// buffs off you. This tab is the picker: a set list per character, bard-song
+// buffs off you. This is the picker: a set list per character, bard-song
 // starters, and two ways to use a set. Copy its lines (EQ's chat box takes one
 // line per paste), or have Mimic write them into social macros in the
 // character's ini: right away when the character is logged out, queued until
@@ -29320,6 +29391,8 @@ async function dismissTopDamage(key) {
 (function(){
   var sec = document.getElementById("buffblocks");
   if (!sec) return;
+  // The picker sits at the foot of the Buffs tab, so "the tab is showing" means #buffs is active.
+  var tab = document.getElementById("buffs") || sec;
   var data = null;          // the last /api/buffblocks answer
   var character = "";       // the picked character ("" = whichever the agent lists first)
   var ui = { lines: {}, msg: {}, q: {}, cond: {} };
@@ -29376,7 +29449,7 @@ async function dismissTopDamage(key) {
     });
   }
   function poll(){
-    if (!sec.classList.contains("active") || document.hidden) return;
+    if (!tab.classList.contains("active") || document.hidden) return;
     api("/api/buffblocks?character=" + encodeURIComponent(character)).catch(function(){});
   }
   function saveSets(sets){ return api("/api/buffblocks/sets", { character: character, sets: sets }).catch(function(){}); }
@@ -29737,7 +29810,7 @@ async function dismissTopDamage(key) {
     fillRes(id);
   });
 
-  var navBtn = document.querySelector('.nav button[data-tab="buffblocks"]');
+  var navBtn = document.querySelector('.nav button[data-tab="buffs"]');
   if (navBtn) navBtn.addEventListener("click", function(){ setTimeout(poll, 0); });
   setInterval(poll, 5000);
 })();
@@ -30887,9 +30960,9 @@ function wpTrigApplyForm(base, f) {
     // Clear-overlay buttons get re-rendered by renderTriggers every 2s poll,
     // so direct addEventListener would die on the first refresh. Use event
     // delegation on the section root — it survives every inner morph and
-    // routes clicks by element id.
-    if (!section._wpTrigClickBound) {
-      section.addEventListener('click', function(e){
+    // routes clicks by element id. The same handler is bound to #fights too: the ⏪ Replay
+    // card (Start / Stop / journal link) lives there since 2026-10-17.
+    var onSectionClick = function(e){
         var t = e.target;
         if (!t) return;
         // "Copy to personal" on a guild-trigger row — the data-attr may live on
@@ -30914,16 +30987,20 @@ function wpTrigApplyForm(base, f) {
         else if (t.id === 'replayStopBtn')    onReplayStop();
         else if (t.id === 'replayJournalLink') {
           if (e && e.preventDefault) e.preventDefault();
+          // The checkpoint journal is a 🩺 Diagnostics card, so open that tab first.
+          var dgBtn = document.querySelector('.nav button[data-tab="diag"]');
+          if (dgBtn) dgBtn.click();
           var j = document.getElementById('wpTriggerJournal');
           if (j) j.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
-      });
-      section._wpTrigClickBound = true;
-    }
+    };
+    [section, document.getElementById('fights')].forEach(function(host){
+      if (host && !host._wpTrigClickBound) { host.addEventListener('click', onSectionClick); host._wpTrigClickBound = true; }
+    });
     // Delegated change handler (survives the 2s section morph) for the loot
-    // auction announce toggle + default-duration knob (#107).
-    if (!section._wpTrigChangeBound) {
-      section.addEventListener('change', function(e){
+    // auction announce toggle + default-duration knob (#107). Bound to #voice as well as
+    // #triggers: the loot and raid-callout cards live on the 🗣 Voice tab since 2026-10-17.
+    var onSectionChange = function(e){
         var t = e.target;
         if (!t || !t.id) return;
         if (t.id === 'lootAucTts') {
@@ -30938,9 +31015,10 @@ function wpTrigApplyForm(base, f) {
         } else if (t.id === 'timingVotes') {
           saveCalloutPref({ timingFeedback: !!t.checked }, 'timingVotesMsg');
         }
-      });
-      section._wpTrigChangeBound = true;
-    }
+    };
+    [section, document.getElementById('voice')].forEach(function(host){
+      if (host && !host._wpTrigChangeBound) { host.addEventListener('change', onSectionChange); host._wpTrigChangeBound = true; }
+    });
     fetchAndRenderList();
     mounted = true;
   }
