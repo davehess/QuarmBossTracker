@@ -52,14 +52,15 @@
 
   // ENGINE (the guild lead, 2026-10-17): cfg.engine is 'auto' (or absent), 'windows', 'piper' or 'kokoro', and
   // cfg.piperVoice / cfg.kokoroVoice name the voice in each. `status` is Mimic's voice:status answer
-  // ({ piper: { ready, voices:[ids installed] }, kokoro: {...} }). Auto takes the best engine that is installed,
-  // an explicit pick takes that engine only, and anything not installed — or no answer from Mimic at all — is the
-  // Windows voice. Never throws, so a callout always has an engine to be spoken with.
+  // ({ piper: { ready, voices:[ids installed] }, kokoro: {...} }). Auto takes Piper first, Kokoro only when Piper is
+  // not installed: Piper is the default and Kokoro the upgrade you pick (the guild lead, 2026-10-17), because Kokoro
+  // often misses the 2.5 s callout limit on a slower PC. An explicit pick takes that engine only, and anything not
+  // installed — or no answer from Mimic at all — is the Windows voice. Never throws.
   // → { engine: 'windows'|'piper'|'kokoro', voice: id|null }
   function chooseEngine(cfg, status) {
     cfg = cfg || {};
     var want = cfg.engine || 'auto';
-    var order = want === 'windows' ? [] : (want === 'auto' ? ['kokoro', 'piper'] : [want]);
+    var order = want === 'windows' ? [] : (want === 'auto' ? ['piper', 'kokoro'] : [want]);
     for (var i = 0; i < order.length; i++) {
       var e = order[i], s = status && status[e];
       if (s && s.ready && Array.isArray(s.voices) && s.voices.length) {
@@ -71,17 +72,20 @@
   }
 
   var NEURAL_WAIT_MS = 2900;   // Mimic gives up on a phrase at 2.5 s (neuralVoice.js); this is the renderer's own backstop
+  var NEURAL_TEST_WAIT_MS = 12900;   // a ▶ Test waits on purpose (Mimic's own limit for it is 12 s)
 
   // Ask Mimic for the phrase in `choice`'s engine and hand back an <audio> element ready to .play(), or null for
   // ANY problem (no bridge, no answer in time, empty audio) — the caller then speaks with the Windows voice.
-  function neuralAudio(text, rate, choice, mimic) {
+  // `test` true is a person pressing a sample button: a longer wait, because Kokoro can take several seconds.
+  function neuralAudio(text, rate, choice, mimic, test) {
     mimic = mimic || root.mimic;
     if (!choice || choice.engine === 'windows' || !mimic || !mimic.voiceSynth) return Promise.resolve(null);
     return new Promise(function (resolve) {
       var late = false;
-      var timer = setTimeout(function () { late = true; resolve(null); }, NEURAL_WAIT_MS);
-      var ask;
-      try { ask = Promise.resolve(mimic.voiceSynth(String(text || ''), { engine: choice.engine, voice: choice.voice, rate: rate })); }
+      var timer = setTimeout(function () { late = true; resolve(null); }, test ? NEURAL_TEST_WAIT_MS : NEURAL_WAIT_MS);
+      var ask, spec = { engine: choice.engine, voice: choice.voice, rate: rate };
+      if (test) spec.test = true;
+      try { ask = Promise.resolve(mimic.voiceSynth(String(text || ''), spec)); }
       catch (e) { clearTimeout(timer); resolve(null); return; }
       ask.then(function (buf) {
         if (late) return;
@@ -120,7 +124,7 @@
       Promise.resolve(m.voiceStatus()).then(function (st) {
         var choice = chooseEngine(cfg, st);
         if (choice.engine === 'windows') return _sampleWindows(text, packs, cfg, packId);
-        return neuralAudio(text, pick(packs, cfg, packId, []).rate, choice).then(function (a) {
+        return neuralAudio(text, pick(packs, cfg, packId, []).rate, choice, undefined, true).then(function (a) {
           if (!a) return _sampleWindows(text, packs, cfg, packId);
           _sampleAudio = a;
           return a.play().catch(function () { _sampleWindows(text, packs, cfg, packId); });
@@ -131,7 +135,7 @@
     return _sampleWindows(text, packs, cfg, packId);
   }
 
-  var api = { pick: pick, sample: sample, chooseEngine: chooseEngine, neuralAudio: neuralAudio, DEFAULT_RATE: DEFAULT_RATE, DEFAULT_PITCH: DEFAULT_PITCH, NEURAL_WAIT_MS: NEURAL_WAIT_MS };
+  var api = { pick: pick, sample: sample, chooseEngine: chooseEngine, neuralAudio: neuralAudio, DEFAULT_RATE: DEFAULT_RATE, DEFAULT_PITCH: DEFAULT_PITCH, NEURAL_WAIT_MS: NEURAL_WAIT_MS, NEURAL_TEST_WAIT_MS: NEURAL_TEST_WAIT_MS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.WPVoice = api;
 })(typeof window !== 'undefined' ? window : this);

@@ -5,13 +5,18 @@
 //   · the WAV cache key + LRU, the speed mapping, the time limit that turns a slow synth into null
 //   · the download manifest: exact pinned URLs, byte sizes and sha256, plus each voice's licence line
 //   · the plan / checksum / zip-path guards that stop a bad download becoming a live install
-//   · a real child process: a fake piper.exe that succeeds, fails, or hangs (POSIX only)
+//   · a real child process: a fake piper.exe / sherpa-onnx CLI that succeeds, fails, or hangs (POSIX only)
+//   · Kokoro: the pinned sherpa-onnx + model archives, the tar unpack command and its path guard, the CLI argument
+//     list, the longer limit for a ▶ Test, the background warm-up
+//   · the three Piper tiers (free / non-commercial / research only): nothing downloads without the ticked boxes,
+//     the acceptance record sits next to the voice and goes with it
 //   · source checks (comments stripped) that every failure in the trigger window, the dashboard and the sample
 //     button ends in the Windows voice — a callout is never silenced by a download that broke
 //
 // Run: npx vitest run test/neural-voice.test.js
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -23,6 +28,7 @@ const require_ = createRequire(import.meta.url);
 const nv = require_('../apps/mimic/neuralVoice.js');
 const WPVoice = require_('../apps/mimic/voice.js');
 
+const HFV = 'https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/en/en_US/';
 const READY = { piper: { ready: true, voices: ['en_US-kristin-medium', 'en_US-john-medium'] }, kokoro: { ready: false, voices: [] } };
 const EMPTY = { piper: { ready: false, voices: [] }, kokoro: { ready: false, voices: [] } };
 
@@ -38,7 +44,7 @@ describe('engine chooser', () => {
     ['a voice that is not installed falls to the first one', { engine: 'piper', piperVoice: 'en_US-ryan-medium' }, READY, { engine: 'piper', voice: 'en_US-kristin-medium' }],
     ['an explicit Windows pick stays Windows', { engine: 'windows' }, READY, win],
     ['Piper picked but removed → Windows', { engine: 'piper' }, EMPTY, win],
-    ['Kokoro picked (a stub, never ready) → Windows', { engine: 'kokoro' }, READY, win],
+    ['Kokoro picked but not installed → Windows', { engine: 'kokoro' }, READY, win],
     ['an unknown engine name → Windows', { engine: 'espeak' }, READY, win],
     ['a status without voices → Windows', { engine: 'piper' }, { piper: { ready: true, voices: [] } }, win],
   ];
@@ -46,9 +52,18 @@ describe('engine chooser', () => {
     it(name, () => expect(WPVoice.chooseEngine(cfg, st)).toEqual(want));
   }
 
-  it('Kokoro outranks Piper under auto once it is ever ready (the upgrade)', () => {
+  // Piper is the default and Kokoro the upgrade you pick (the guild lead, 2026-10-17): auto keeps Piper when both are in.
+  it('auto prefers Piper when both are installed; Kokoro alone is used under auto', () => {
     const both = { piper: READY.piper, kokoro: { ready: true, voices: ['af_heart'] } };
-    expect(WPVoice.chooseEngine({ engine: 'auto' }, both)).toEqual({ engine: 'kokoro', voice: 'af_heart' });
+    expect(WPVoice.chooseEngine({ engine: 'auto' }, both)).toEqual({ engine: 'piper', voice: 'en_US-kristin-medium' });
+    expect(WPVoice.chooseEngine({ engine: 'auto' }, { kokoro: { ready: true, voices: ['af_heart'] } })).toEqual({ engine: 'kokoro', voice: 'af_heart' });
+  });
+
+  it('an explicit Kokoro pick takes its installed voice, or the first one; not installed → Windows', () => {
+    const k = { piper: READY.piper, kokoro: { ready: true, voices: ['af_bella', 'af_sarah', 'am_adam', 'am_michael'] } };
+    expect(WPVoice.chooseEngine({ engine: 'kokoro', kokoroVoice: 'am_adam' }, k)).toEqual({ engine: 'kokoro', voice: 'am_adam' });
+    expect(WPVoice.chooseEngine({ engine: 'kokoro', kokoroVoice: 'af_heart' }, k)).toEqual({ engine: 'kokoro', voice: 'af_bella' });
+    expect(WPVoice.chooseEngine({ engine: 'kokoro' }, READY)).toEqual({ engine: 'windows', voice: null });
   });
 
   it("the dashboard's copy of the chooser gives the same answers", () => {
@@ -104,6 +119,24 @@ describe('neuralAudio (the renderer side)', () => {
     let asked = 0; const win = load({ ...audioFakes(), mimic: { voiceSynth: () => { asked++; return Promise.resolve(buf); } } });
     expect(await win.WPVoice.neuralAudio('hi', 1, { engine: 'windows', voice: null })).toBeNull();
     expect(asked).toBe(0);
+  });
+  it('a ▶ Test asks for the longer limit and waits longer than a callout does (Kokoro is slow)', async () => {
+    const f = audioFakes(); const calls = [];
+    const win = load({ ...f, mimic: { voiceSynth: (t, s) => { calls.push(s); return Promise.resolve(buf); } } });
+    await win.WPVoice.neuralAudio('hi', 1, CH, undefined, true);
+    await win.WPVoice.neuralAudio('hi', 1, CH);
+    expect(calls).toEqual([{ engine: 'piper', voice: 'en_US-kristin-medium', rate: 1, test: true }, { engine: 'piper', voice: 'en_US-kristin-medium', rate: 1 }]);
+    expect(WPVoice.NEURAL_TEST_WAIT_MS).toBeGreaterThan(nv.TEST_TIMEOUT_MS);
+    vi.useFakeTimers();
+    try {
+      const w2 = load({ ...audioFakes(), setTimeout, clearTimeout, mimic: { voiceSynth: () => new Promise(() => {}) } });
+      let settled = false;
+      const p = w2.WPVoice.neuralAudio('hi', 1, CH, undefined, true); p.then(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(WPVoice.NEURAL_WAIT_MS + 10);
+      expect(settled).toBe(false);                                   // a callout would have given up by now
+      await vi.advanceTimersByTimeAsync(WPVoice.NEURAL_TEST_WAIT_MS);
+      expect(await p).toBeNull();
+    } finally { vi.useRealTimers(); }
   });
   it('→ null when the engine never answers, and a late answer is ignored', async () => {
     vi.useFakeTimers();
@@ -171,7 +204,10 @@ describe('synthOrNull (the 2.5 s limit)', () => {
     const r = await nv.synthOrNull((signal) => new Promise((_, rej) => signal.addEventListener('abort', () => { aborted = true; rej(new Error('stop')); })), 40);
     expect(r).toBeNull(); expect(aborted).toBe(true);
   });
-  it('the shipped limit is 2.5 s', () => expect(nv.SYNTH_TIMEOUT_MS).toBe(2500));
+  it('the shipped limit is 2.5 s for a callout and 12 s for a ▶ Test', () => {
+    expect(nv.SYNTH_TIMEOUT_MS).toBe(2500);
+    expect(nv.TEST_TIMEOUT_MS).toBe(12000);
+  });
 });
 
 describe('download manifest', () => {
@@ -188,7 +224,7 @@ describe('download manifest', () => {
 
   it('pins each voice to a Hugging Face COMMIT: exact URLs, sizes, sha256, licence', () => {
     expect(nv.PIPER_VOICES_REV).toBe(REV);
-    const got = nv.MANIFEST.piper.voices.map(v => ({ id: v.id, licence: v.licence, files: v.files.map(f => [f.name, f.url, f.size, f.sha256]) }));
+    const got = nv.MANIFEST.piper.voices.filter(v => v.tier === 'free').map(v => ({ id: v.id, licence: v.licence, files: v.files.map(f => [f.name, f.url, f.size, f.sha256]) }));
     expect(got).toEqual([
       { id: 'en_US-kristin-medium', licence: 'Public domain', files: [
         ['en_US-kristin-medium.onnx', HF + 'kristin/medium/en_US-kristin-medium.onnx', 63531379, '5849957f929cbf720c258f8458692d6103fff2f0e3d3b19c8259474bb06a18d4'],
@@ -202,7 +238,7 @@ describe('download manifest', () => {
   });
 
   it('every file is https, immutable (a tag or a commit, never a branch), sized and checksummed; every voice credits its source', () => {
-    const all = [nv.MANIFEST.piper.runtime, ...nv.MANIFEST.piper.voices.flatMap(v => v.files)];
+    const all = [nv.MANIFEST.piper.runtime, ...nv.MANIFEST.piper.voices.flatMap(v => v.files), nv.MANIFEST.kokoro.runtime, nv.MANIFEST.kokoro.model];
     for (const f of all) {
       expect(f.url).toMatch(/^https:\/\//);
       expect(f.url).not.toMatch(/\/(main|master)\//);
@@ -212,17 +248,85 @@ describe('download manifest', () => {
     for (const v of nv.MANIFEST.piper.voices) { expect(v.licence).toBeTruthy(); expect(v.credit).toBeTruthy(); }
   });
 
-  it('does not offer a voice whose licence forbids redistribution (lessac research licence, ryan non-commercial)', () => {
-    const ids = nv.MANIFEST.piper.voices.map(v => v.id).join(' ');
-    expect(ids).not.toMatch(/lessac|ryan/);
+  it('the pinned Piper tiers: free (public domain), non-commercial (ryan-high), research only (lessac and its fine-tunes)', () => {
+    const tiers = {};
+    for (const v of nv.MANIFEST.piper.voices) (tiers[v.tier] = tiers[v.tier] || []).push(v.id);
+    expect(tiers).toEqual({
+      free: ['en_US-kristin-medium', 'en_US-john-medium'],
+      nc: ['en_US-ryan-high'],
+      research: ['en_US-lessac-medium', 'en_US-joe-medium', 'en_US-ryan-medium'],
+    });
+    // free voices first, so "the first installed voice" (what auto picks) is never a gated one when a free one is there
+    expect(nv.MANIFEST.piper.voices.map(v => v.tier)).toEqual(['free', 'free', 'nc', 'research', 'research', 'research']);
+    for (const v of nv.MANIFEST.piper.voices.filter(x => x.tier === 'free')) expect(v.id).not.toMatch(/lessac|ryan|joe/);
+    expect(nv.MANIFEST.piper.voices.find(v => v.id === 'en_US-ryan-high').licence).toBe('CC BY-NC-SA 4.0');
+    // ryan-MEDIUM and joe are fine-tuned from lessac, so they carry its research-only terms, not just their own data's
+    for (const id of ['en_US-ryan-medium', 'en_US-joe-medium']) expect(nv.MANIFEST.piper.voices.find(v => v.id === id).licence).toMatch(/Lessac/);
   });
 
-  it('Kokoro is an honest stub: listed, never ready, install refuses with the reason', async () => {
-    const st = nv.status(fs.mkdtempSync(path.join(os.tmpdir(), 'nv-')), 'win32');
-    expect(st.kokoro).toMatchObject({ available: false, ready: false, voices: [] });
-    expect(st.kokoro.reason).toBe(nv.KOKORO_REASON);
-    await expect(nv.install(os.tmpdir(), 'kokoro', 'af_heart', 'win32')).rejects.toThrow(/not in this build/);
-    expect(await nv.synthesize(os.tmpdir(), { engine: 'kokoro', voice: 'af_heart', rate: 1, text: 'hi' }, 'win32')).toBeNull();
+  it('pins each gated voice to the same Hugging Face commit: exact URLs, sizes, sha256, and its model card', () => {
+    const got = nv.MANIFEST.piper.voices.filter(v => v.tier !== 'free').map(v => [v.id, v.modelCardUrl, v.files.map(f => [f.name, f.url, f.size, f.sha256])]);
+    const card = (d) => `https://huggingface.co/rhasspy/piper-voices/blob/${REV}/en/en_US/${d}/MODEL_CARD`;
+    expect(got).toEqual([
+      ['en_US-ryan-high', card('ryan/high'), [
+        ['en_US-ryan-high.onnx', HF + 'ryan/high/en_US-ryan-high.onnx', 120786792, 'b3990d7606e183ec8dbfba70a4607074f162de1a0c412e0180d1ff60bb154eca'],
+        ['en_US-ryan-high.onnx.json', HF + 'ryan/high/en_US-ryan-high.onnx.json', 4166, 'c6d3b98f08315cb4bebf0d49d50fc4ff491b503c64b940cd3d5ca28543b48011']]],
+      ['en_US-lessac-medium', card('lessac/medium'), [
+        ['en_US-lessac-medium.onnx', HF + 'lessac/medium/en_US-lessac-medium.onnx', 63201294, '5efe09e69902187827af646e1a6e9d269dee769f9877d17b16b1b46eeaaf019f'],
+        ['en_US-lessac-medium.onnx.json', HF + 'lessac/medium/en_US-lessac-medium.onnx.json', 4885, 'efe19c417bed055f2d69908248c6ba650fa135bc868b0e6abb3da181dab690a0']]],
+      ['en_US-joe-medium', card('joe/medium'), [
+        ['en_US-joe-medium.onnx', HF + 'joe/medium/en_US-joe-medium.onnx', 63201294, '58afce0321b8d9c46d7cdf9c16500cc55a793b4220212dba6b70fb788b3baf06'],
+        ['en_US-joe-medium.onnx.json', HF + 'joe/medium/en_US-joe-medium.onnx.json', 4794, '3d6d5410b3795cb1950595247ef8f06190719e6fdbfa3a2356d8ec368e1aad33']]],
+      ['en_US-ryan-medium', card('ryan/medium'), [
+        ['en_US-ryan-medium.onnx', HF + 'ryan/medium/en_US-ryan-medium.onnx', 63201294, 'abf4c274862564ed647ba0d2c47f8ee7c9b717d27bdad9219100eb310db4047a'],
+        ['en_US-ryan-medium.onnx.json', HF + 'ryan/medium/en_US-ryan-medium.onnx.json', 4883, '44034c056cb15681b2ad494307c7f3f2e4499d1253c700c711fa0a4607ffe78d']]],
+    ]);
+    for (const v of nv.MANIFEST.piper.voices.filter(x => x.tier !== 'free')) expect(v.credit).toBeTruthy();
+  });
+
+  it('pins Kokoro: the sherpa-onnx Windows tools and the int8 English model, exact URLs, sizes, sha256, licences', () => {
+    const K = nv.MANIFEST.kokoro;
+    expect(K.runtime).toMatchObject({
+      url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.0/sherpa-onnx-v1.13.0-win-x64-shared-MD-Release.tar.bz2',
+      size: 19059518,
+      sha256: '2d7342d3ed1a19ccb08631f3d82d4d494d699e2730053999b7aa9eb7dd76b740',
+      licence: 'Apache-2.0 (sherpa-onnx)',
+      top: 'sherpa-onnx-v1.13.0-win-x64-shared-MD-Release',
+    });
+    expect(K.runtime.keep).toEqual(['bin/sherpa-onnx-offline-tts.exe', 'bin/onnxruntime.dll', 'bin/onnxruntime_providers_shared.dll']);
+    expect(K.model).toMatchObject({
+      url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-en-v0_19.tar.bz2',
+      size: 103248205,
+      sha256: 'c9f0dd393615805b0bab050c340834d5e684e732aec91c0e860cd30e982c08bd',
+      licence: 'Apache-2.0 (Kokoro-82M)',
+      top: 'kokoro-int8-en-v0_19',
+    });
+    expect(K.model.required).toEqual(['model.int8.onnx', 'voices.bin', 'tokens.txt', 'espeak-ng-data']);
+    expect(K.licence).toBe('Apache-2.0');
+    expect(K.credit).toMatch(/hexgrad/);
+    expect(K.voices.map(v => [v.id, v.sid])).toEqual([['af_bella', 1], ['af_sarah', 3], ['am_adam', 5], ['am_michael', 6]]);
+  });
+
+  it('Kokoro status: not ready until BOTH archives are placed (pinned checksum in the marker); size and voices once it is', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nv-'));
+    try {
+      const K = nv.MANIFEST.kokoro, kp = nv.kokoroPaths(root);
+      let st = nv.status(root, 'win32').kokoro;
+      expect(st).toMatchObject({ available: true, ready: false, voices: [], downloadBytes: K.runtime.size + K.model.size, problem: '' });
+      expect(st.catalog.map(v => v.id)).toEqual(['af_bella', 'af_sarah', 'am_adam', 'am_michael']);
+      fs.mkdirSync(path.dirname(kp.exe), { recursive: true }); fs.writeFileSync(kp.exe, 'x');
+      fs.writeFileSync(path.join(kp.runtime, '.ok'), K.runtime.sha256);
+      expect(nv.status(root, 'win32').kokoro).toMatchObject({ ready: false, downloadBytes: K.model.size });
+      fs.mkdirSync(kp.dataDir, { recursive: true });
+      for (const f of ['model.int8.onnx', 'voices.bin', 'tokens.txt']) fs.writeFileSync(path.join(kp.model, f), 'x');
+      fs.writeFileSync(path.join(kp.model, '.ok'), 'an-older-pin');
+      expect(nv.status(root, 'win32').kokoro.ready).toBe(false);          // re-pinned manifest → old download reads as not installed
+      fs.writeFileSync(path.join(kp.model, '.ok'), K.model.sha256);
+      st = nv.status(root, 'win32').kokoro;
+      expect(st).toMatchObject({ ready: true, downloadBytes: 0, voices: ['af_bella', 'af_sarah', 'am_adam', 'am_michael'], licence: 'Apache-2.0' });
+      expect(nv.status(root, 'linux').kokoro).toMatchObject({ available: false, ready: false, voices: [] });
+      expect(nv.status(root, 'linux').kokoro.reason).toMatch(/Windows only/);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 });
 
@@ -261,8 +365,87 @@ describe('download plan and guards', () => {
     expect(st.piper.reason).toMatch(/Windows only/);
     const win = nv.status(root, 'win32');
     expect(win.piper).toMatchObject({ available: true, ready: false, runtimeInstalled: false });
-    expect(win.piper.catalog.map(c => [c.id, c.installed, c.downloadBytes])).toEqual([
-      ['en_US-kristin-medium', false, 22477236 + 63531379 + 4968], ['en_US-john-medium', false, 22477236 + 63531379 + 4965]]);
+    expect(win.piper.catalog.map(c => [c.id, c.tier, c.installed, c.downloadBytes])).toEqual([
+      ['en_US-kristin-medium', 'free', false, 22477236 + 63531379 + 4968], ['en_US-john-medium', 'free', false, 22477236 + 63531379 + 4965],
+      ['en_US-ryan-high', 'nc', false, 22477236 + 120786792 + 4166],
+      ['en_US-lessac-medium', 'research', false, 22477236 + 63201294 + 4885], ['en_US-joe-medium', 'research', false, 22477236 + 63201294 + 4794],
+      ['en_US-ryan-medium', 'research', false, 22477236 + 63201294 + 4883]]);
+    expect(win.piper.catalog.find(c => c.id === 'en_US-ryan-high').modelCardUrl).toMatch(/\/blob\/c10ece1[0-9a-f]+\/en\/en_US\/ryan\/high\/MODEL_CARD$/);
+  });
+
+  it('Kokoro installs on Windows only', async () => {
+    await expect(nv.install(os.tmpdir(), 'kokoro', '', 'linux')).rejects.toThrow(/Windows only/);
+  });
+});
+
+describe('the non-commercial and research-only tiers (accept first, record next to the download)', () => {
+  const RUNTIME_OK = (root) => {   // a Piper runtime already in place, so only the voice would be fetched
+    const p = nv.piperPaths(root);
+    fs.mkdirSync(path.dirname(p.exe), { recursive: true }); fs.writeFileSync(p.exe, 'x'); fs.writeFileSync(path.join(p.runtime, '.ok'), 'x');
+    return p;
+  };
+  const dirs = [];
+  const tmp = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'nv-')); dirs.push(d); return d; };
+  afterEach(() => { for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true }); });
+
+  it('the ticked boxes each tier needs: none for free; the terms for non-commercial; the terms AND research box for research', () => {
+    const by = (id) => nv.findVoice('piper', id);
+    for (const a of [undefined, null, {}, { terms: false }]) expect(nv.acceptanceProblem(by('en_US-kristin-medium'), a)).toBeNull();
+    for (const a of [undefined, null, {}, { terms: 'yes' }, { terms: false }, { research: true }]) expect(nv.acceptanceProblem(by('en_US-ryan-high'), a), JSON.stringify(a)).toMatch(/Accept the terms/);
+    expect(nv.acceptanceProblem(by('en_US-ryan-high'), { terms: true })).toBeNull();
+    for (const id of ['en_US-lessac-medium', 'en_US-joe-medium', 'en_US-ryan-medium']) {
+      expect(nv.acceptanceProblem(by(id), { terms: true })).toMatch(/research-only box/);
+      expect(nv.acceptanceProblem(by(id), { terms: true, research: 'true' })).toMatch(/research-only box/);
+      expect(nv.acceptanceProblem(by(id), { research: true })).toMatch(/Accept the terms/);
+      expect(nv.acceptanceProblem(by(id), { terms: true, research: true })).toBeNull();
+    }
+  });
+
+  it('install refuses a gated voice without the acceptance, before a single byte is requested', async () => {
+    const root = tmp(); const asked = [];
+    const get = async (u) => { asked.push(u); return Buffer.alloc(1); };
+    await expect(nv.install(root, 'piper', 'en_US-ryan-high', 'win32', { deps: { get } })).rejects.toThrow(/Accept the terms/);
+    await expect(nv.install(root, 'piper', 'en_US-lessac-medium', 'win32', { accept: { terms: true }, deps: { get } })).rejects.toThrow(/research-only box/);
+    expect(asked).toEqual([]);
+    expect(fs.existsSync(nv.piperPaths(root).base)).toBe(false);
+  });
+
+  it('with the boxes ticked the download starts, and is checked like any other (a wrong file is thrown away)', async () => {
+    const root = tmp(); RUNTIME_OK(root); const asked = [];
+    const get = async (u) => { asked.push(u); return Buffer.alloc(3); };
+    await expect(nv.install(root, 'piper', 'en_US-lessac-medium', 'win32', { accept: { terms: true, research: true }, deps: { get } })).rejects.toThrow(/wrong size/);
+    expect(asked).toEqual([HFV + 'lessac/medium/en_US-lessac-medium.onnx']);
+    expect(fs.existsSync(path.join(nv.piperPaths(root).voices, 'en_US-lessac-medium'))).toBe(false);
+  });
+
+  it('the acceptance record is written next to the voice (voice, licence, tier, time), counts as installed, and Remove deletes both', () => {
+    const root = tmp(); const p = RUNTIME_OK(root);
+    const v = nv.findVoice('piper', 'en_US-ryan-high'), k = nv.findVoice('piper', 'en_US-kristin-medium');
+    const accept = { terms: true };
+    nv.installVoiceFiles(p, v, [Buffer.from('a'), Buffer.from('b')], nv.acceptanceRecord(v, accept, new Date('2026-10-17T12:00:00Z')));
+    nv.installVoiceFiles(p, k, [Buffer.from('a'), Buffer.from('b')], null);
+    const file = path.join(p.voices, v.id, 'accepted.json');
+    expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toMatchObject({ voice: 'en_US-ryan-high', licence: 'CC BY-NC-SA 4.0', tier: 'nc', terms: true, acceptedAt: '2026-10-17T12:00:00.000Z' });
+    expect(fs.existsSync(path.join(p.voices, k.id, 'accepted.json'))).toBe(false);          // free voices keep no record
+    let st = nv.status(root, 'win32').piper;
+    expect(st.voices).toEqual(['en_US-kristin-medium', 'en_US-ryan-high']);
+    // a gated voice whose record is gone (or says another voice / tier) is NOT installed, whatever files are there
+    fs.writeFileSync(file, JSON.stringify({ voice: 'en_US-ryan-high', tier: 'research', terms: true }));
+    expect(nv.status(root, 'win32').piper.voices).toEqual(['en_US-kristin-medium']);
+    fs.unlinkSync(file);
+    expect(nv.status(root, 'win32').piper.voices).toEqual(['en_US-kristin-medium']);
+    nv.installVoiceFiles(p, v, [Buffer.from('a'), Buffer.from('b')], nv.acceptanceRecord(v, accept));
+    expect(nv.status(root, 'win32').piper.voices).toContain('en_US-ryan-high');
+    // Remove takes the voice AND its record, and nothing else
+    st = nv.remove(root, 'piper', 'win32', 'en_US-ryan-high').piper;
+    expect(fs.existsSync(path.join(p.voices, v.id))).toBe(false);
+    expect(st.voices).toEqual(['en_US-kristin-medium']);
+  });
+
+  it('a research voice\'s record keeps both ticks, and holds exactly these fields (nothing about the person)', () => {
+    const v = nv.findVoice('piper', 'en_US-joe-medium');
+    expect(nv.acceptanceRecord(v, { terms: true, research: true })).toMatchObject({ tier: 'research', terms: true, research: true });
+    expect(Object.keys(nv.acceptanceRecord(v, { terms: true, research: true })).sort()).toEqual(['acceptedAt', 'licence', 'modelCardUrl', 'research', 'terms', 'tier', 'voice']);
   });
 });
 
@@ -327,6 +510,307 @@ describe.skipIf(process.platform === 'win32')('synthesis through a real child pr
   });
 });
 
+describe('Kokoro: the command line, the unpack command, the start-up problems', () => {
+  it('the CLI arguments: model, voices, tokens, espeak data, speed = 1 / rate, speaker, threads, output, then the words', () => {
+    const p = nv.kokoroPaths('/r');
+    const J = (...a) => path.join('/r', 'kokoro', ...a);
+    expect(nv.kokoroArgs(p, 1, 1.25, '  Enrage   soon ', '/r/tmp/o.wav', 2)).toEqual([
+      '--kokoro-model=' + J('model', 'model.int8.onnx'), '--kokoro-voices=' + J('model', 'voices.bin'),
+      '--kokoro-tokens=' + J('model', 'tokens.txt'), '--kokoro-data-dir=' + J('model', 'espeak-ng-data'),
+      '--kokoro-length-scale=0.8', '--sid=1', '--num-threads=2', '--output-filename=/r/tmp/o.wav', 'Enrage soon',
+    ]);
+    expect(nv.kokoroArgs(p, 5, 0.5, 'x', 'o', 4)).toContain('--kokoro-length-scale=2');       // slower speech = larger scale
+    expect(nv.kokoroArgs(p, 5, 'fast', 'x', 'o', 4)).toContain('--kokoro-length-scale=1');
+    expect(nv.kokoroPaths('/r').exe).toBe(J('runtime', 'bin', 'sherpa-onnx-offline-tts.exe'));
+  });
+
+  it('words that start like a flag cannot become one (the parser would read them as an option)', () => {
+    const p = nv.kokoroPaths('/r');
+    for (const [said, sent] of [['--help me', 'help me'], ['-sid=9 go', 'sid=9 go'], ['== x', 'x'], ['Heal -up', 'Heal -up']]) {
+      const a = nv.kokoroArgs(p, 1, 1, said, 'o', 1);
+      expect(a[a.length - 1]).toBe(sent);
+    }
+  });
+
+  it("the unpack tool is Windows' own bsdtar by absolute path; elsewhere plain tar", () => {
+    expect(nv.tarPath('win32', { SystemRoot: 'C:\\Windows' })).toMatch(/^C:\\Windows.System32.tar\.exe$/);
+    expect(nv.tarPath('win32', {})).toMatch(/^C:\\Windows.System32.tar\.exe$/);
+    expect(nv.tarPath('linux')).toBe('tar');
+  });
+
+  it('the unpack runs as an argument array (list, validate, then extract into the target) — never a shell string', async () => {
+    const calls = [];
+    const dest = path.join(os.tmpdir(), 'nv-never-created-' + process.pid);
+    const run = async (file, args) => { calls.push([file, args]); return args[0] === '-tjf' ? 'pkg/\npkg/a.txt\n' : ''; };
+    await expect(nv.extractTarBz2('/x/a b.tar.bz2', dest, 'C:\\Windows\\System32\\tar.exe', run)).resolves.toBeUndefined();
+    expect(calls).toEqual([
+      ['C:\\Windows\\System32\\tar.exe', ['-tjf', '/x/a b.tar.bz2']],
+      ['C:\\Windows\\System32\\tar.exe', ['-xjf', '/x/a b.tar.bz2', '-C', dest]],
+    ]);
+    fs.rmSync(dest, { recursive: true, force: true });
+  });
+
+  it('a listing with a name outside the target is refused before anything is extracted', async () => {
+    for (const bad of ['../evil.dll', 'pkg/../../evil.dll', '/etc/passwd', 'C:\\Windows\\evil.dll', 'C:/x']) {
+      const calls = [];
+      const run = async (file, args) => { calls.push(args[0]); return args[0] === '-tjf' ? 'pkg/ok.txt\n' + bad + '\n' : ''; };
+      await expect(nv.extractTarBz2('/x/a.tar.bz2', path.join(os.tmpdir(), 'nv-nope'), 'tar', run), bad).rejects.toThrow(/unsafe file path/);
+      expect(calls).toEqual(['-tjf']);
+    }
+  });
+
+  it('a missing tar.exe is said in plain words, and the Windows voice is named as the fallback', async () => {
+    await expect(nv.extractTarBz2('/x/a.tar.bz2', path.join(os.tmpdir(), 'nv-nope'), path.join(os.tmpdir(), 'no-such-tar.exe'))).rejects.toThrow(nv.NO_TAR);
+    expect(nv.NO_TAR).toMatch(/Windows 10/);
+    expect(nv.NO_TAR).toMatch(/Windows voice keeps working/);
+  });
+
+  it('a program that will not start becomes a plain sentence: a missing Visual C++ runtime is named, any other code is said', () => {
+    for (const code of [3221225781, -1073741515]) expect(nv.kokoroStartProblem(code)).toBe(nv.NO_VCRT);
+    expect(nv.NO_VCRT).toMatch(/Visual C\+\+/);
+    expect(nv.kokoroStartProblem(3)).toMatch(/exit code 3.*Windows voice/);
+  });
+});
+
+// Real tar + bzip2 on POSIX, with hand-built archives so the hostile ones (../, absolute, symlink) are exact.
+describe.skipIf(process.platform === 'win32')('Kokoro: unpack and install through the real tar', () => {
+  const dirs = [];
+  const tmp = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'nv-')); dirs.push(d); return d; };
+  afterEach(() => { for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true }); });
+  const TAR = execFileSync('which', ['tar'], { encoding: 'utf8' }).trim();
+
+  function entry(name, body = '', type = '0', link = '') {
+    const b = Buffer.from(body), h = Buffer.alloc(512);
+    h.write(name, 0, 100); h.write('0000755\0', 100); h.write('0000000\0', 108); h.write('0000000\0', 116);
+    h.write(b.length.toString(8).padStart(11, '0') + '\0', 124); h.write('00000000000\0', 136); h.write('        ', 148);
+    h.write(type, 156); h.write(link, 157, 100); h.write('ustar\0', 257); h.write('00', 263);
+    let sum = 0; for (const x of h) sum += x;
+    h.write(sum.toString(8).padStart(6, '0') + '\0 ', 148);
+    return Buffer.concat([h, b, Buffer.alloc((512 - (b.length % 512)) % 512)]);
+  }
+  function bz2(dir, name, entries) {
+    const f = path.join(dir, name), raw = path.join(dir, 'raw-' + path.basename(name, '.bz2'));
+    fs.writeFileSync(raw, Buffer.concat([...entries, Buffer.alloc(1024)]));
+    execFileSync('bzip2', ['-f', raw]);          // → raw-….tar.bz2 → the name the test asked for
+    fs.renameSync(raw + '.bz2', f);
+    return f;
+  }
+  const SHERPA_SH = '#!/bin/sh\nfor a in "$@"; do case "$a" in --output-filename=*) OUT="${a#*=}";; --sid=*) SID="${a#*=}";; --kokoro-length-scale=*) LS="${a#*=}";; --*) ;; *) TEXT="$a";; esac; done\n';
+
+  it('unpacks a good archive into the target', async () => {
+    const d = tmp(), dest = path.join(d, 'out');
+    const f = bz2(d, 'ok.tar.bz2', [entry('pkg/', '', '5'), entry('pkg/bin/', '', '5'), entry('pkg/bin/a.txt', 'hello'), entry('pkg/b.txt', 'bee')]);
+    await nv.extractTarBz2(f, dest, TAR);
+    expect(fs.readFileSync(path.join(dest, 'pkg', 'bin', 'a.txt'), 'utf8')).toBe('hello');
+    expect(fs.readFileSync(path.join(dest, 'pkg', 'b.txt'), 'utf8')).toBe('bee');
+  });
+
+  it('refuses a ../ entry, an absolute entry and a symlink, and leaves nothing behind', async () => {
+    const d = tmp(); const sub = path.join(d, 'sub'); fs.mkdirSync(sub);
+    const cases = {
+      'a ../ entry': { archive: [entry('pkg/ok.txt', 'x'), entry('../evil.txt', 'bad')], re: /unsafe file path/ },
+      'an absolute entry': { archive: [entry('/tmp/nv-abs-evil.txt', 'bad')], re: /unsafe file path/ },
+      'a symlink': { archive: [entry('pkg/', '', '5'), entry('pkg/link', '', '2', '/etc/passwd')], re: /plain files/ },
+    };
+    for (const [name, c] of Object.entries(cases)) {
+      const dest = path.join(sub, 'out');
+      const f = bz2(d, 'bad.tar.bz2', c.archive);
+      await expect(nv.extractTarBz2(f, dest, TAR), name).rejects.toThrow(c.re);
+      expect(fs.existsSync(dest), name + ' left a folder').toBe(false);
+      expect(fs.existsSync(path.join(d, 'evil.txt')), name).toBe(false);
+      expect(fs.existsSync('/tmp/nv-abs-evil.txt'), name).toBe(false);
+    }
+  });
+
+  it('a file that is not a bzip2 archive is refused in plain words', async () => {
+    const d = tmp(), f = path.join(d, 'junk.tar.bz2'); fs.writeFileSync(f, 'this is not an archive');
+    await expect(nv.extractTarBz2(f, path.join(d, 'out'), TAR)).rejects.toThrow(/could not unpack the Kokoro download.*Windows voice keeps working/);
+    expect(fs.existsSync(path.join(d, 'out'))).toBe(false);
+  });
+
+  // The whole install with stand-in archives (and a stand-in manifest, since the real files are 120 MB): download →
+  // size + sha256 check → tar unpack → swap into place, keeping only the synthesiser and its two libraries.
+  function fixtures(d) {
+    const rt = bz2(d, 'rt.tar.bz2', [entry('rt/', '', '5'), entry('rt/bin/', '', '5'), entry('rt/lib/', '', '5'),
+      entry('rt/bin/sherpa-onnx-offline-tts.exe', SHERPA_SH), entry('rt/bin/onnxruntime.dll', 'dll'), entry('rt/bin/onnxruntime_providers_shared.dll', 'dll2'),
+      entry('rt/bin/sherpa-onnx-vad.exe', 'unwanted'), entry('rt/lib/big.lib', 'unwanted')]);
+    const md = bz2(d, 'md.tar.bz2', [entry('mdl/', '', '5'), entry('mdl/espeak-ng-data/', '', '5'), entry('mdl/espeak-ng-data/en_dict', 'd'),
+      entry('mdl/model.int8.onnx', 'm'), entry('mdl/voices.bin', 'v'), entry('mdl/tokens.txt', 't'), entry('mdl/LICENSE', 'apache')]);
+    const info = (f, url, top, extra) => { const b = fs.readFileSync(f); return { name: path.basename(f), url, size: b.length, sha256: require_('node:crypto').createHash('sha256').update(b).digest('hex'), top, ...extra }; };
+    const kokoro = {
+      ...nv.MANIFEST.kokoro,
+      runtime: info(rt, 'https://example.test/rt.tar.bz2', 'rt', { keep: nv.MANIFEST.kokoro.runtime.keep }),
+      model: info(md, 'https://example.test/md.tar.bz2', 'mdl', { required: nv.MANIFEST.kokoro.model.required }),
+    };
+    const files = { [kokoro.runtime.url]: fs.readFileSync(rt), [kokoro.model.url]: fs.readFileSync(md) };
+    return { kokoro, files };
+  }
+
+  it('installs: both archives verified and unpacked, only the needed files kept, the marker holds the pinned checksum', async () => {
+    const d = tmp(), root = path.join(d, 'voices'), { kokoro, files } = fixtures(d);
+    const asked = [], seen = [];
+    const get = async (u, o) => { asked.push(u); o.onProgress(10, 20); seen.push(nv.status(root, 'win32').progress); return files[u]; };
+    await nv.install(root, 'kokoro', '', 'win32', { deps: { get, tarExe: TAR, kokoro } });
+    const kp = nv.kokoroPaths(root);
+    expect(asked).toEqual([kokoro.runtime.url, kokoro.model.url]);
+    expect(seen.map(s => s && s.engine)).toEqual(['kokoro', 'kokoro']);
+    expect(fs.readFileSync(kp.exe, 'utf8')).toMatch(/^#!\/bin\/sh/);
+    expect(fs.readdirSync(path.join(kp.runtime, 'bin')).sort()).toEqual(['onnxruntime.dll', 'onnxruntime_providers_shared.dll', 'sherpa-onnx-offline-tts.exe']);
+    expect(fs.existsSync(path.join(kp.runtime, 'lib'))).toBe(false);
+    expect(fs.readFileSync(path.join(kp.runtime, '.ok'), 'utf8')).toBe(kokoro.runtime.sha256);
+    expect(fs.readFileSync(path.join(kp.model, 'voices.bin'), 'utf8')).toBe('v');
+    expect(fs.readFileSync(path.join(kp.dataDir, 'en_dict'), 'utf8')).toBe('d');
+    expect(fs.readFileSync(path.join(kp.model, '.ok'), 'utf8')).toBe(kokoro.model.sha256);
+    expect(fs.readdirSync(kp.base).sort()).toEqual(['model', 'runtime']);               // scratch folder removed
+    expect(nv.status(root, 'win32').progress).toBeNull();
+  });
+
+  it('a wrong download is thrown away: nothing live, no scratch left, and the next try starts clean', async () => {
+    const d = tmp(), root = path.join(d, 'voices'), { kokoro, files } = fixtures(d);
+    const bad = Buffer.from(files[kokoro.runtime.url]); bad[bad.length - 1] ^= 1;     // same size, different bytes
+    await expect(nv.install(root, 'kokoro', '', 'win32', { deps: { get: async () => bad, tarExe: TAR, kokoro } })).rejects.toThrow(/checksum/);
+    await expect(nv.install(root, 'kokoro', '', 'win32', { deps: { get: async () => Buffer.alloc(4), tarExe: TAR, kokoro } })).rejects.toThrow(/wrong size/);
+    const kp = nv.kokoroPaths(root);
+    expect(fs.existsSync(kp.runtime)).toBe(false);
+    expect(fs.readdirSync(kp.base)).toEqual([]);
+    await nv.install(root, 'kokoro', '', 'win32', { deps: { get: async (u) => files[u], tarExe: TAR, kokoro } });
+    expect(fs.existsSync(kp.exe)).toBe(true);
+  });
+
+  it('with no tar.exe nothing is downloaded and the reason is plain', async () => {
+    const d = tmp(), root = path.join(d, 'voices'), { kokoro } = fixtures(d); let asked = 0;
+    await expect(nv.install(root, 'kokoro', '', 'win32', { deps: { get: async () => { asked++; return Buffer.alloc(1); }, tarExe: path.join(d, 'no-tar.exe'), kokoro } })).rejects.toThrow(nv.NO_TAR);
+    expect(asked).toBe(0);
+    expect(nv.status(root, 'win32').progress).toBeNull();
+  });
+
+  it('a download that is not a tar leaves the engine not installed (and the error says the Windows voice keeps working)', async () => {
+    const d = tmp(), root = path.join(d, 'voices'), { kokoro } = fixtures(d);
+    const junk = Buffer.alloc(kokoro.runtime.size, 7);
+    const k2 = { ...kokoro, runtime: { ...kokoro.runtime, sha256: require_('node:crypto').createHash('sha256').update(junk).digest('hex') } };
+    await expect(nv.install(root, 'kokoro', '', 'win32', { deps: { get: async () => junk, tarExe: TAR, kokoro: k2 } })).rejects.toThrow(/Windows voice keeps working/);
+    expect(nv.status(root, 'win32').kokoro.ready).toBe(false);
+  });
+});
+
+// A stand-in for sherpa-onnx-offline-tts.exe: a shell script that honours its flags, so the REAL spawn path, argument
+// list, temp-file handling, limits and cache are exercised. POSIX only.
+describe.skipIf(process.platform === 'win32')('Kokoro: synthesis through a real child process', () => {
+  const made = [];
+  afterEach(() => { for (const r of made.splice(0)) fs.rmSync(r, { recursive: true, force: true }); });
+  const K = nv.MANIFEST.kokoro;
+  const PARSE = '#!/bin/sh\nfor a in "$@"; do case "$a" in --output-filename=*) OUT="${a#*=}";; --sid=*) SID="${a#*=}";; --kokoro-length-scale=*) LS="${a#*=}";; --*) ;; *) TEXT="$a";; esac; done\n';
+
+  function rig(body) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nv-')); made.push(root);
+    const kp = nv.kokoroPaths(root), log = path.join(root, 'calls.log');
+    fs.mkdirSync(path.dirname(kp.exe), { recursive: true });
+    fs.writeFileSync(kp.exe, PARSE + (typeof body === 'function' ? body(log) : body), { mode: 0o755 });
+    fs.writeFileSync(path.join(kp.runtime, '.ok'), K.runtime.sha256);
+    fs.mkdirSync(kp.dataDir, { recursive: true });
+    for (const f of ['model.int8.onnx', 'voices.bin', 'tokens.txt']) fs.writeFileSync(path.join(kp.model, f), 'x');
+    fs.writeFileSync(path.join(kp.model, '.ok'), K.model.sha256);
+    return { root, log, kp };
+  }
+  const spec = (over = {}) => ({ engine: 'kokoro', voice: 'af_bella', rate: 1.25, text: 'Enrage soon', ...over });
+  const calls = (log) => fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : [];
+
+  it('passes the speaker, the speed and the words; returns the WAV; a repeat is served from the cache', async () => {
+    const r = rig((l) => `echo "sid=$SID ls=$LS text=$TEXT" >> '${l}'\nprintf RIFFwav > "$OUT"\n`);
+    expect((await nv.synthesize(r.root, spec(), 'win32')).toString()).toBe('RIFFwav');
+    expect(calls(r.log)).toEqual(['sid=1 ls=0.8 text=Enrage soon']);
+    expect((await nv.synthesize(r.root, spec(), 'win32')).toString()).toBe('RIFFwav');
+    expect(calls(r.log)).toHaveLength(1);                                   // cached: no second process
+    expect(fs.readdirSync(r.kp.tmp)).toEqual([]);                          // temp WAV removed
+  });
+
+  it('each voice is its own speaker number; an id outside the manifest is refused', async () => {
+    const r = rig((l) => `echo "sid=$SID" >> '${l}'\nprintf RIFF > "$OUT"\n`);
+    for (const [voice, sid] of [['af_sarah', 3], ['am_adam', 5], ['am_michael', 6]]) {
+      await nv.synthesize(r.root, spec({ voice, text: 'who ' + voice }), 'win32');
+      expect(calls(r.log).pop()).toBe('sid=' + sid);
+    }
+    const before = calls(r.log).length;
+    expect(await nv.synthesize(r.root, spec({ voice: '../../x' }), 'win32')).toBeNull();
+    expect(await nv.synthesize(r.root, spec({ voice: 'af_heart' }), 'win32')).toBeNull();
+    expect(await nv.synthesize(r.root, spec({ text: '--- ' }), 'win32')).toBeNull();
+    expect(calls(r.log)).toHaveLength(before);
+  });
+
+  it('words that look like a flag reach the program as words', async () => {
+    const r = rig((l) => `echo "text=$TEXT" >> '${l}'\nprintf RIFF > "$OUT"\n`);
+    await nv.synthesize(r.root, spec({ text: '--sid=9 stack up' }), 'win32');
+    expect(calls(r.log)).toEqual(['text=sid=9 stack up']);
+  });
+
+  it('is null when the program fails, and says so in plain words on the status', async () => {
+    const r = rig('exit 3\n');
+    expect(await nv.synthesize(r.root, spec({ text: 'fails' }), 'win32')).toBeNull();
+    expect(nv.status(r.root, 'win32').kokoro.problem).toMatch(/did not start.*exit code 3.*Windows voice/);
+    const ok = rig('printf RIFF > "$OUT"\n');
+    await nv.synthesize(ok.root, spec({ text: 'works again' }), 'win32');
+    expect(nv.status(ok.root, 'win32').kokoro.problem).toBe('');           // a good run clears it
+  });
+
+  it('is null when the program writes nothing', async () => {
+    expect(await nv.synthesize(rig('exit 0\n').root, spec({ text: 'writes nothing' }), 'win32')).toBeNull();
+  });
+
+  it('is null when it hangs, at the 2.5 s callout limit, and the process is stopped', async () => {
+    const r = rig('exec sleep 30\n');
+    const t = Date.now();
+    expect(await nv.synthesize(r.root, spec({ text: 'hangs' }), 'win32')).toBeNull();
+    expect(Date.now() - t).toBeLessThan(nv.SYNTH_TIMEOUT_MS + 1500);
+    expect(nv.status(r.root, 'win32').kokoro.problem).toBe('');            // slow is not broken
+  }, 8000);
+
+  it('a ▶ Test gets the longer limit: a 3 s synthesis misses the callout limit but is spoken for a Test', async () => {
+    const r = rig('sleep 3\nprintf RIFFslow > "$OUT"\n');
+    expect(await nv.synthesize(r.root, spec({ text: 'slow callout' }), 'win32')).toBeNull();
+    const t = await nv.synthesize(r.root, spec({ text: 'slow test', test: true }), 'win32');
+    expect(t && t.toString()).toBe('RIFFslow');
+  }, 15000);
+
+  it('is null when nothing is installed or the install is only half there', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nv-')); made.push(root);
+    expect(await nv.synthesize(root, spec(), 'win32')).toBeNull();
+    const r = rig('printf RIFF > "$OUT"\n');
+    fs.rmSync(r.kp.model, { recursive: true });
+    expect(await nv.synthesize(r.root, spec({ text: 'half' }), 'win32')).toBeNull();
+    expect(await nv.synthesize(r.root, spec({ text: 'wrong os' }), 'linux')).toBeNull();
+  });
+
+  it('warm-up: speaks one word in the background only when Kokoro is the voice that would speak (or right after install)', async () => {
+    const r = rig((l) => `echo "text=$TEXT" >> '${l}'\nprintf RIFF > "$OUT"\n`);
+    expect(await nv.warmUp(r.root, { engine: 'windows' }, 'win32')).toBe(false);
+    expect(await nv.warmUp(r.root, { engine: 'piper' }, 'win32')).toBe(false);
+    expect(calls(r.log)).toEqual([]);
+    expect(await nv.warmUp(r.root, { engine: 'kokoro' }, 'win32')).toBe(true);
+    expect(calls(r.log)).toEqual(['text=' + nv.WARM_PHRASE]);
+    const auto = rig((l) => `echo "text=$TEXT" >> '${l}'\nprintf RIFF > "$OUT"\n`);
+    expect(await nv.warmUp(auto.root, null, 'win32')).toBe(true);           // auto: Kokoro is installed, so it is the best engine
+    const forced = rig((l) => `echo "text=$TEXT" >> '${l}'\nprintf RIFF > "$OUT"\n`);
+    expect(await nv.warmUp(forced.root, { engine: 'windows' }, 'win32', { force: true })).toBe(true);   // after an install
+    expect(await nv.warmUp(fs.mkdtempSync(path.join(os.tmpdir(), 'nv-')), { engine: 'kokoro' }, 'win32')).toBe(false);   // nothing installed
+    expect(await nv.warmUp(r.root, { engine: 'kokoro' }, 'linux')).toBe(false);
+  });
+
+  it('warm-up never throws or blocks: a broken program just resolves false', async () => {
+    nv.remove(fs.mkdtempSync(path.join(os.tmpdir(), 'nv-')), 'kokoro', 'win32');   // empties the phrase cache, so the program really runs
+    const r = rig('exit 9\n');
+    await expect(nv.warmUp(r.root, { engine: 'kokoro' }, 'win32')).resolves.toBe(false);
+    await expect(nv.lastWarmUp()).resolves.toBe(false);
+  });
+
+  it('Remove deletes the whole Kokoro download', () => {
+    const r = rig('printf RIFF > "$OUT"\n');
+    expect(nv.status(r.root, 'win32').kokoro.ready).toBe(true);
+    const st = nv.remove(r.root, 'kokoro', 'win32');
+    expect(st.kokoro).toMatchObject({ ready: false, voices: [] });
+    expect(fs.existsSync(r.kp.base)).toBe(false);
+  });
+});
+
 describe('every failure ends in the Windows voice (source, comments stripped)', () => {
   const trig = stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'triggers.html')));
   const dash = stripJs(readSource(path.join(ROOT, 'packages', 'wolfpack-logsync', 'dashboard.html')));
@@ -374,7 +858,7 @@ describe('every failure ends in the Windows voice (source, comments stripped)', 
     const sample = sliceBlock(voiceJs, 'function sample(text, packs, cfg, packId) {', 'return _sampleWindows(text, packs, cfg, packId);\n  }');
     expect((sample.match(/_sampleWindows\(text, packs, cfg, packId\)/g) || []).length).toBeGreaterThanOrEqual(5);
     const speak = sliceBlock(dash, 'function speak(text, packId){', 'speakWin(text, packId);\n  }');
-    expect(speak).toMatch(/playNeural\(ch, text, packId\)\.then\(function\(ok\)\{ if \(!ok\) speakWin\(text, packId\); \}\)/);
+    expect(speak).toMatch(/playNeural\(ch, text, packId, true\)\.then\(function\(ok\)\{ if \(!ok\) speakWin\(text, packId\); \}\)/);   // a pressed button is a Test: the longer wait
     expect(dash).toMatch(/else \{ setNote\('That voice did not answer in time, so the Windows voice spoke instead[^']*'\); speakWin\(line, null\); \}/);
   });
 
@@ -392,6 +876,64 @@ describe('every failure ends in the Windows voice (source, comments stripped)', 
     expect(nvSrc).toMatch(/require\('\.\/ghDownload'\)/);
     const pkg = JSON.parse(readSource(path.join(ROOT, 'apps', 'mimic', 'package.json')));
     expect(Object.keys(pkg.dependencies)).toEqual(['electron-updater']);   // no onnxruntime, no kokoro-js
-    expect(JSON.stringify(pkg.build)).not.toMatch(/piper|kokoro|onnx/i);
+    expect(JSON.stringify(pkg.build)).not.toMatch(/piper|kokoro|onnx|sherpa/i);
+  });
+
+  it('the Kokoro unpack is an argument array through execFile (no shell), by an absolute System32 path, and the voices need no new dependency', () => {
+    const nvSrc = stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'neuralVoice.js')));
+    expect(nvSrc).toMatch(/\['-tjf', archive\]/);
+    expect(nvSrc).toMatch(/\['-xjf', archive, '-C', destDir\]/);
+    expect(nvSrc).toMatch(/execFile\(file, args,/);
+    expect(nvSrc).not.toMatch(/\bexec\(|shell:\s*true|execSync/);
+    expect(nvSrc).toMatch(/path\.join\(env\.SystemRoot \|\| env\.windir \|\| 'C:\\\\Windows', 'System32', 'tar\.exe'\)/);
+    // the listing is validated against the target BEFORE the extract command runs
+    const body = sliceBlock(nvSrc, 'async function extractTarBz2(', 'walk(destDir);');
+    expect(body.indexOf('safeZipTarget(destDir, name)')).toBeGreaterThan(0);
+    expect(body.indexOf('safeZipTarget(destDir, name)')).toBeLessThan(body.indexOf("'-xjf'"));
+  });
+
+  it('main: the install handler passes only the two ticks, the warm-up runs in the background after boot, a Test reaches the engine', () => {
+    expect(mainJs).toMatch(/ipcMain\.handle\('voice:install', async \(_e, engine, voice, accept\)/);
+    expect(mainJs).toMatch(/terms: accept\.terms === true, research: accept\.research === true/);
+    expect(mainJs).toMatch(/neuralVoice\.install\(VOICES_DIR\(\), String\(engine \|\| ''\), String\(voice \|\| ''\), process\.platform, \{ accept: a \}\)/);
+    expect(mainJs).toMatch(/test: s\.test === true/);
+    expect(mainJs).toMatch(/setTimeout\(\(\) => \{ try \{ neuralVoice\.warmUp\(VOICES_DIR\(\), \(loadConfig\(\) \|\| \{\}\)\.voice\)\.catch/);
+    expect(preload).toMatch(/voiceInstall:\s*\(engine, voice, accept\) => ipcRenderer\.invoke\('voice:install', engine, voice, accept\)/);
+    // an install records the acceptance only for a gated voice, built from the same ticks that were checked
+    const nvSrc = stripJs(readSource(path.join(ROOT, 'apps', 'mimic', 'neuralVoice.js')));
+    expect(nvSrc).toMatch(/v\.tier === 'free' \? null : acceptanceRecord\(v, opts\.accept\)/);
+    expect(nvSrc.indexOf('acceptanceProblem(v, opts.accept)')).toBeLessThan(nvSrc.indexOf('const plan = downloadPlan(v.id'));
+  });
+
+  it('the dashboard: three groups, an accept screen with the licence, the model card link, the credit and the required wording', () => {
+    for (const g of ["['free', 'Free'", "['nc', 'Non-commercial &mdash; accept to download'", "['research', 'Research only &mdash; experimental'"]) expect(dash).toContain(g);
+    const acc = sliceBlock(dash, 'function acceptHtml(v){', 'return h;');
+    expect(acc).toContain('Research only and experimental.</b> This voice is built from data licensed for research use only. Using it for game callouts may fall outside that licence; you take that on yourself by downloading it. It may also sound or behave unexpectedly.');
+    expect(acc).toContain("For personal, non-commercial use. Mimic downloads it from its publisher for you; we don\\'t share it.");
+    expect(acc).toContain('I accept these terms');
+    expect(acc).toContain('I understand this voice is for research use only and is experimental');
+    expect(acc).toMatch(/Model card/);
+    expect(acc).toMatch(/esc\(v\.modelCardUrl\)/);
+    expect(acc).toMatch(/esc\(v\.credit\)/);
+    // research needs BOTH boxes; Download is disabled until they are ticked, and the click handler checks again
+    expect(acc).toMatch(/ok = a\.terms && \(!research \|\| a\.research\)/);
+    expect(acc).toMatch(/\(ok && !eng\.busy \? '' : ' disabled'\)/);
+    expect(acc).toMatch(/if \(research\) h \+= '<div style="border:2px solid var\(--red\)/);
+    expect(dash).toMatch(/data-vn-dl-gated\]'\)\)\) \{ if \(eng\.acc && eng\.acc\.terms\) download\('piper', b\.getAttribute\('data-vn-dl-gated'\), \{ terms: !!eng\.acc\.terms, research: !!eng\.acc\.research \}\)/);
+    // a gated voice is never offered a one-click Download
+    expect(dash).toMatch(/gated \? btn\('data-vn-acc-open="'/);
+    expect(dash).toMatch(/gated \? btn\('data-vn-acc-open="' \+ esc\(v\.id\) \+ '"', 'Read terms &amp; download'\) : btn\('data-vn-dl="piper:'/);
+  });
+
+  it('the dashboard Kokoro row: Download (size), voice pick, ▶ Test, Remove, the licence and credit line, and the honest wording', () => {
+    expect(dash).toMatch(/btn\('data-vn-dl="kokoro:all"', 'Download &middot; ' \+ mb\(k\.downloadBytes \|\| k\.totalBytes\), true\)/);
+    expect(dash).toMatch(/name="wpKokoroVoice"/);
+    expect(dash).toMatch(/data-vn-engtest="kokoro:'/);
+    expect(dash).toMatch(/btn\('data-vn-rm="kokoro"', 'Remove'\)/);
+    expect(dash).toMatch(/esc\(k\.licence \|\| 'Apache-2\.0'\) \+ ' &mdash; ' \+ esc\(k\.credit \|\| ''\)/);
+    expect(dash).toContain('Sounds better, slower on older PCs.');
+    expect(dash).toMatch(/Slower than Piper: on an older PC a quick callout may be spoken by the Windows voice instead/);
+    expect(dash).toMatch(/if \(k\.problem\) h \+= /);
+    expect(dash).not.toMatch(/not built yet|Not available yet/);
   });
 });
