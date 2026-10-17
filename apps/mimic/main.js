@@ -12414,9 +12414,13 @@ ipcMain.handle('sounds:open-folder', () => _openSoundsFolder().then(() => SOUNDS
 // (voice.js chooseEngine) and is saved with save-config like the rest. Failures come back as { ok:false, error }
 // in plain words; voice:synth returns the WAV or null, and null means "speak it with the Windows voice".
 ipcMain.handle('voice:status', () => neuralVoice.status(VOICES_DIR()));
-ipcMain.handle('voice:install', async (_e, engine, voice) => {
+// A non-commercial or research-only Piper voice downloads only with the user's ticked boxes in `accept`
+// ({ terms, research }); neuralVoice.install refuses without them, and writes the acceptance record next to the
+// download (this PC only). Kokoro installs as a whole (the voice argument is ignored).
+ipcMain.handle('voice:install', async (_e, engine, voice, accept) => {
   try {
-    const st = await neuralVoice.install(VOICES_DIR(), String(engine || ''), String(voice || ''));
+    const a = accept && typeof accept === 'object' ? { terms: accept.terms === true, research: accept.research === true } : {};
+    const st = await neuralVoice.install(VOICES_DIR(), String(engine || ''), String(voice || ''), process.platform, { accept: a });
     appendAgentLog(`[voice] installed ${engine} ${voice || ''}\n`);
     return { ok: true, status: st };
   } catch (e) {
@@ -12424,13 +12428,13 @@ ipcMain.handle('voice:install', async (_e, engine, voice) => {
     return { ok: false, error: e && e.message ? e.message : String(e) };
   }
 });
-ipcMain.handle('voice:remove', (_e, engine) => {
-  try { return { ok: true, status: neuralVoice.remove(VOICES_DIR(), String(engine || '')) }; }
+ipcMain.handle('voice:remove', (_e, engine, voice) => {
+  try { return { ok: true, status: neuralVoice.remove(VOICES_DIR(), String(engine || ''), process.platform, String(voice || '')) }; }
   catch (e) { return { ok: false, error: e && e.message ? e.message : String(e) }; }
 });
 ipcMain.handle('voice:synth', (_e, text, spec) => {
   const s = spec && typeof spec === 'object' ? spec : {};
-  return neuralVoice.synthesize(VOICES_DIR(), { engine: s.engine, voice: s.voice, rate: s.rate, text });
+  return neuralVoice.synthesize(VOICES_DIR(), { engine: s.engine, voice: s.voice, rate: s.rate, test: s.test === true, text });
 });
 // Mute (cfg.quietMode) reaches every overlay renderer as one boolean, so the
 // three places that speak or play a sound (triggers.html, chchain.html,
@@ -14229,6 +14233,9 @@ app.whenReady().then(async () => {
   _materializeEnabledOverlays();
   pushStatus();
   startZealCapture();
+  // Kokoro loads a 130 MB model per phrase: if it is the voice that will speak, say one word in the background a
+  // few seconds after boot so the first real callout is not the one that pays for the cold disk. Never awaited.
+  setTimeout(() => { try { neuralVoice.warmUp(VOICES_DIR(), (loadConfig() || {}).voice).catch(() => {}); } catch { /* optional */ } }, 15000);
 
   // UI Studio deferred saves — load any pending from a prior session and start
   // the background watcher that applies them once the character logs out.
