@@ -2658,6 +2658,16 @@ sounds, and a sound used *instead of* the spoken callout.
   (whole words, case-insensitive, longest first, one pass). The walkthrough's *Say your name* and the dashboard card
   fetch suggestions + tips from `pronunciation-suggest` and save through `POST /api/agent/pronunciation`.
   Speech built outside the trigger overlay (the Charm and CH-chain overlays say their own lines) is not rewritten.
+- **Where it lives on the dashboard (agent 3.7.193, beta, §353):** a 🗣 **Voice** tab of its own (after Triggers) holds
+  *Voice & names* (`#wpVoice`), *What you hear* (`#wpTrigRules`), the raid callout allow-list, loot auction announce and
+  the *Sounds* library (`#wpSounds`), painted by `renderVoice`. The per-trigger sound picker stays in the trigger editor.
+- **Free voices (agent 3.7.190–3.7.191, beta, §352/§353).** `apps/mimic/neuralVoice.js`: a pinned manifest (size +
+  sha256) per download, synthesis in Mimic's main process over IPC `voice:*`, a 2.5 s limit per callout (12 s for a ▶
+  test), the Windows voice on any failure. Engines: **Piper** (default; two public-domain voices free) and **Kokoro**
+  (sherpa-onnx v1.13.0 win-x64 + kokoro-int8-en-v0_19, unpacked with Windows' `tar.exe`, needs the Visual C++ runtime).
+  Gated Piper tiers `nc` (non-commercial) and `research` download only after the player accepts that voice's licence
+  (kept in `accepted.json`); the research tier is labelled research-only and experimental. `chooseEngine` in
+  `apps/mimic/voice.js` (and its dashboard twin): `auto` = Piper, then Kokoro, then Windows. Test: `test/neural-voice.test.js`.
 - **`after_my_melee_ms`.** A trigger (personal, or a guild row that carries it) fires only if one of the player's own
   melee hits on the SAME mob name was logged within that many ms (`_noteOwnMelee` / `_afterMyMeleeOk`, per character).
   Made for **Willsapper**: its proc casts Energy Sap (spell 1960), whose landing text `<mob> yawns.` ten other spells
@@ -4059,7 +4069,9 @@ authenticated-read unless private (socials index, pending edits, encrypted
 columns = service-role only); bot uses service_role.
 
 ### Buff blocks tab (agent 3.7.79 on beta, §157)
-A dashboard tab for Quarm's `#blockbuff` / `#blockbuffif` / `#allowbuff`, with per-character sets kept in
+⚠ Since agent 3.7.193 (§353) this is no longer a tab: the picker (`#buffblocks`) sits at the foot of **✨ Buffs (and
+blocking)**, and the `#buffblocks` hash opens Buffs and scrolls to it.
+A dashboard picker for Quarm's `#blockbuff` / `#blockbuffif` / `#allowbuff`, with per-character sets kept in
 `logsync.buffblocks.json`.
 - **Starter sets:** the bard songs that land on other players.
 - **Per set:**
@@ -4956,3 +4968,17 @@ on the site at **wolfpack.quest/roadmap** (source: `web/lib/roadmapData.ts`).*
   and `trails` (escort NPCs in `ESCORT_NPCS`, rules of the agent's `_mapNotePath`, `bot_kv` rows `escort_trail:<zone>:<name>`,
   saved at most every 10 s per trail, served only after 100 units of movement). Tests: `test/raid-targets.test.js`,
   `test/raid-targets-escort-list.test.js` (bot list = agent `MAP_TRACKED_PATHS`).
+- **Guild corpses ☠ (bot 3.1.290 main, agent 3.7.192 beta, 2026-10-17, §353).** The agent posts `died` (the confirmed
+  death behind the corpse DM), `seen` (a player corpse targeted; Zeal `target_type` 3), `drag_start` / `drag_move` /
+  `drag_stop` (the server's "You begin to drag %1." / "You stop dragging the corpse(s)." lines plus the dragger's pipe
+  position; zoning ends a drag where it was left), `summoned` ("Summoning your / %1's corpse.", the caster's spot) and
+  `gone` (the rez-experience line) to `POST /api/agent/map-corpse`; `utils/mapCorpses.js` keeps them in `bot_kv`
+  `map_corpses:<zone>` (24 h, 60 per zone) and the map-sync GET returns `corpses`. Every event is also kept locally,
+  so this machine's own corpses show with an older bot (404 → 10 min backoff). Map: ☠ marker, amber + dashed ring
+  while dragged, hover card linking the dragger, a Corpses side section and a ⚙ switch. No loot-emptied line and no
+  line for a no-experience rez exist, so those corpses age out. Tests: `test/map-corpses.test.js`,
+  `test/map-corpses-agent.test.js`.
+- **A corpse is never a character (bot 3.1.291, web 1.8.174, §353).** Zeal names a dead character
+  "<Name>'s corpse<N>"; `isCorpse` (`utils/raidBuffs.js`, twin in `web/lib/buffs.ts`) is checked in `_trackUpload`,
+  the trigger-feedback voter and live-state ingest, and /me's suspected-characters card. Test:
+  `test/corpse-not-character.test.js`.

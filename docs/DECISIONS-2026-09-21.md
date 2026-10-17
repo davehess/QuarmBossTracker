@@ -114,6 +114,7 @@ is ephemeral. It is a desktop-session job.
 
 | Item | Where it stands | Next |
 |---|---|---|
+| **Voices, corpses on the Map, Voice tab** (§352, §353) | On Mimic beta: agent 3.7.191 (Kokoro + licence-gated Piper voices, research tier marked experimental), 3.7.192 (☠ corpses, drag/summon), 3.7.193 (🗣 Voice tab, Replay on Fights, Buffs (and blocking), kill switches folded). Bot 3.1.290–3.1.291 on main | a Windows tester: install Kokoro, accept and play one research voice, drag a corpse with the Map open on a second PC; the guild lead: optional corpse cleanup SQL; a log line for a looted-empty corpse if one exists |
 | **Raid replay + session share links** (§335, §337) | **Graduated to main 2026-10-15 (web 1.8.170)** on the guild lead's word: replay 3D/floors/parchment/follow/bosses/split, guild-raid sessions, `/raid/session`, public `/share/raid/<token>` (works on wolfpack.quest and b.wolfpack.quest). Bot 3.1.274+ records NPC targets. §338: bot 3.1.276 puts a "Full session review" button on the final raid review (main); full per-fight parse tables on beta, web 1.8.171 (`https://b.wolfpack.quest/raid/session`) | the guild lead: send the share link; check the heading direction in game; look at the parse tables on beta, say graduate |
 | **Database load, no upgrade** (§334) | The guild lead: no compute upgrade. The biggest cost was one unindexed read (live damage, ~70% of DB time), fixed in bot 3.1.272; the batched sweep trims snapshots nightly (3.1.271). Round two (bot 3.1.273): `who_directory_lookup` (1.27 s → ms), trigram indexes on three ilike reads, the 30-day damage board memoised | (1) the guild lead: paste `20261015080000_drop_unused_indexes.sql` into the Supabase SQL editor (the speed-up and merge-lock files are applied); (2) a session after the next raid: re-read `pg_stat_statements` |
 | **Slow mode ON wording** (§334) | Every boss gets 18 h inside the window (bot 3.1.269); agent 3.7.177 beta reads any Druzzil "thread of time" guild line as on/off | a session after the next slow-mode night: read `bot_kv` `slow_mode.set_line`, pin the exact ON text in the agent regex and `utils/slowMode.js` |
@@ -11252,3 +11253,35 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
   the gap is time in combat, not a fault. Offered: upload them only in a group or raid. ⏳ The guild lead's yes/no.
 - **Supabase call map** dashboard (a claude.ai artifact on the edge logs, live). Today's fixes cut the upload counters to 0
   and raid-state reads by ~10×; the damage meter's live read now leads (~2.3k/h), the next thing to trim.
+
+### 353. Kokoro + gated voices, corpses on the Map, corpses off /me, a Voice tab (2026-10-17)
+- **Kokoro and restricted voices: "A&B but specifically with a warning that the B ones are meant to be research only
+  and are experimental."** Agent 3.7.191, beta. A: Kokoro is a scripted one-click install (sherpa-onnx v1.13.0 win-x64
+  + kokoro-int8-en-v0_19, pinned size and sha256, unpacked with Windows' `tar.exe`, needs the Visual C++ runtime). B: Piper
+  voices that may not be redistributed download only after the player accepts that voice's licence, in two tiers:
+  non-commercial and research; the research tier carries the research-only / experimental warning. Ryan (medium) is in
+  the research tier because it is fine-tuned from lessac. **Auto prefers Piper, then Kokoro** ("A as default, B as
+  upgrade", §352): Kokoro took 2.7–5 s per phrase on the test VM, past the 2.5 s callout limit, so under auto it would
+  often fall back to the Windows voice.
+- **Corpses on the Map** (the guild lead: *"add the corpses on to the map and give a link to someone that is dragging that
+  corpse ... start dragging ... stop dragging ... summoning corpse ... tell where that corpse landed"*). Bot 3.1.290 (main,
+  `POST /api/agent/map-corpse`, `bot_kv` `map_corpses:<zone>`, 24 h), agent 3.7.192 (beta). Log lines confirmed against the
+  server's string table: 4064 begin drag, 4066/4065 stop dragging the corpse(s), 429/430 summoning, 289 rez experience.
+  Zoning while dragging ends the drag where the corpse was left (the server drops it silently). ⏳ Not confirmed, so not
+  handled: a "corpse emptied" line (none exists in the string table) and a rez that gives no experience — those corpses
+  age out. With two corpses dragged, the singular stop line ends the oldest drag.
+- **Corpses off /me** (the guild lead: *"Corpses shouldn't show on the /me page"*, with "Melting's corpse480" under
+  *Characters we think are yours*). Cause: Zeal names a dead character "<Name>'s corpse<N>", and the trigger-feedback
+  upload used that as its voter, which wrote an upload-stats row. Bot 3.1.291 drops corpse names in `_trackUpload`,
+  the feedback voter and live-state ingest; web 1.8.174 skips them on the card. Measured before the fix: 67
+  upload-stats rows, 1,740 live-state rows, 105 feedback voters, 49 target observations. The agent itself is
+  unchanged: its death detection may lean on the corpse name, and the bot guard covers every path. ⏳ The guild lead
+  (optional): the cleanup SQL in that day's reply (match the `'s corpse<N>` suffix only; a real character's name
+  contains "corpse").
+- **Dashboard tabs** (the guild lead: *"voice things ... need their own tab ... Replay should be on the fights tab ... Buff
+  blocks can be on the buffs tab. make it Buffs (and blocking) ... Minimize the kill switches"*). Agent 3.7.193, beta: a
+  🗣 Voice tab (voice engine and names, What you hear, callout allow-list, loot announce, Sounds); ⏪ Replay at the foot of
+  ⚔️ Fights; ✨ Buffs (and blocking) with the picker under the buffs; 🛑 Kill switches folded into one closed card with an
+  "N switched on" badge and a confirm on every flip. *What you hear* and *Sounds* went to Voice (they are about what
+  Mimic says); the per-trigger sound picker stays in the trigger editor.
+- Account-label encryption (§352) now ships as web past **1.8.174**.
