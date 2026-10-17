@@ -37,6 +37,19 @@ export type Release = {
 
 export const releases: Release[] = [
   {
+    key: 'web-1-8-172-2026-10-17',
+    title: 'Planes of Power: the October 17 server changes',
+    version: 'Web 1.8.172 · Bot 3.1.288',
+    date: '2026-10-17',
+    headline: 'The PoP guide and the hail board follow the server’s new flagging rules and timers.',
+    features: [
+      { name: 'Claim your flag after camping out', blurb: 'The guide now says it: if you were in the raid or group that killed the boss, you can still hail the Planar Projection after camping out or switching groups, and late joiners count too.' },
+      { name: 'New numbers on the hail board', blurb: 'The Plane of Earth A projection flags up to 72 (was 54). Saryrn’s projection and Tylis Newleaf stay 30 minutes. The countdowns and flag counts use the new values.' },
+      { name: 'Torment and Bastion of Thunder steps', blurb: 'A second Tylis appears at the entrance for 30 minutes after the Keeper of Sorrows dies, and needs no Screaming Sphere. Askr and the vortex no longer leave after 55 minutes, and Karana stays 20 minutes.' },
+    ],
+    fixes: [],
+  },
+  {
     key: 'web-1-8-170-2026-10-15',
     title: 'Raid replay in 3D, and shareable raid sessions',
     version: 'Web 1.8.170 · Bot 3.1.275',

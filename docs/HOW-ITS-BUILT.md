@@ -2570,8 +2570,9 @@ into the `hail` key of the Command Center state; a witnessed or own flag-NPC hai
 **Flag cap + "leaves in" (bot 3.1.220 · agent 3.7.102 beta, 2026-10-07, the guild lead: "add the 72-flag cap to
 the hail board, and the countdown timers for when those mobs disappear"; §186):** each `HAIL_BOSSES` row carries
 its flagger script's `flagCap` (72 for every NPC; 144 = 72 × 2 with `flagTicks: 2` for Grummus and Mithaniel Marr,
-whose hail ticks twice; 54 keys for the Arbitor of Earth), read from `eqemu_quest_scripts` with each script's
-comparison noted. Windows carry `flag_cap` (in raiders), `flags_granted` (grants we SAW after the kill — a lower
+whose hail ticks twice; the Arbitor of Earth was 54 keys until the server's patch notes of 2026-10-17 made it 72), read from
+`eqemu_quest_scripts` with each script's comparison noted. The same notes set per-row `minutes` of 30 for Saryrn's
+projection (was the 20-minute default) and for Tylis Newleaf (was 10). Windows carry `flag_cap` (in raiders), `flags_granted` (grants we SAW after the kill — a lower
 bound), `flags_left`, `expires_at`, `ms_left`. The Command Center card shows "Flags: N / 72 used", warns "Only N
 flags left, M still to hail", and its clock (`hailClockState`) reads "leaves in m:ss" — amber at 5 min, red at 2,
 "gone" after. An older bot sends no cap and the card is byte-identical. No timer-window row: a plain timer would

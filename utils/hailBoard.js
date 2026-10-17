@@ -7,8 +7,9 @@
 // Mimic in the raid, and any raider can tap a name to mark it hailed.
 //
 // What it is: when a boss that spawns a hail NPC is recorded dead, a WINDOW opens for as long as that NPC
-// stays (a Planar Projection: 20 minutes since the 2026-10-04 Quarm patch; Giwin Mirakon and Tylis Newleaf
-// still depop at 10 in their scripts). The raid at the kill is snapshotted into it. Read time then sorts every
+// stays (a Planar Projection: 20 minutes since the 2026-10-04 Quarm patch, except Saryrn's, which the server's
+// patch notes of 2026-10-17 made 30; Tylis Newleaf is 30 since the same notes; Giwin Mirakon still depops at 10
+// in his script). The raid at the kill is snapshotted into it. Read time then sorts every
 // name into one of four places, from what we already collect:
 //   already_flagged — their pop_flags progress already holds the step this hail gives (nothing to track), or
 //                     their own guide tick / a /who sighting in a plane that gate opens says they do.
@@ -20,7 +21,10 @@
 // Each window also says how many flags its NPC can still give (flag_cap / flags_granted / flags_left — the
 // script's own cap, counted from the grants we saw) and when the NPC leaves (expires_at, ms_left).
 //
-// Only the raid at the kill can get credit (the NPC answers the group or raid holding the kill credit), so
+// Only the raid at the kill can get credit (the NPC answers the group or raid holding the kill credit; since the
+// server's patch notes of 2026-10-17 that credit survives camping out or changing raid/group, and a late joiner
+// to the killing raid/group qualifies — the roster snapshot below is a floor, not the whole eligible set, which
+// is why a hailer outside it is added), so
 // the board is the raid roster at the kill — plus anyone seen hailing the NPC, who stood at it (FB-71, a
 // member, 2026-10-10: a roster read that timed out during the post-kill upload burst froze the window on one
 // name and 47 hailers never showed). A failed or empty roster read opens the window `roster_pending` and the
@@ -75,15 +79,22 @@ const PROJECTION = ['planar projection', 'projection'];
 //   Cap 72, depop 20 min (the Planar Projections, all `<` unless noted):
 //     Bertoxxulous (codecay) — one gate over the whole hail, `flags < FLAG_LIMIT`.
 //     Terris-Thule (nightmareb) — real flag `flags < FLAG_LIMIT`, checklist flag `flags <= FLAG_LIMIT`.
-//     Aerin`Dar (povalor), Saryrn (potorment), Solusek Ro (solrotower), Tallon / Vallon / Rallos (potactics,
+//     Aerin`Dar (povalor), Solusek Ro (solrotower), Tallon / Vallon / Rallos (potactics,
 //     npc ids 214323 / 214324 / 214322) — one gate over the whole hail, `flags < FLAG_LIMIT`.
+//   Cap 72, depop 30 min — Saryrn (potorment): her projection lasts 30 minutes, was 20 (the server's patch
+//     notes, 2026-10-17; the cap is unchanged by them and the gate was `flags < FLAG_LIMIT` when read).
 //   Cap 72 × 2, depop 20 min — Grummus (podisease) and Lord Mithaniel Marr (hohonorb) declare
 //     `FLAG_LIMIT = 72 * 2` because one hail can tick twice (the flag or checklist flag, then a second global);
 //     one gate over the whole hail, `flags <= FLAG_LIMIT`.
-//   Cap 72, depop 10 min: Tylis Newleaf (real flag and checklist flag both `flags <= FLAG_LIMIT`) and
-//     Giwin Mirakon (real flag `flags <= FLAG_LIMIT`, checklist flag `flags < FLAG_LIMIT`).
-//   Cap 54 — the Arbitor of Earth has no FLAG_LIMIT but `MAX_KEYS = 54` (`keys < MAX_KEYS`): the NPC depops at
-//     once when the 54th key goes out, and its 20-minute timer is paused while it is in combat.
+//   Cap 72, depop 30 min: Tylis Newleaf (real flag and checklist flag both `flags <= FLAG_LIMIT`). When the
+//     Keeper of Sorrows dies a temporary entrance Tylis stands beside the rescued one and both stay 30 minutes
+//     (the rescued Tylis used to last 10), per the server's patch notes, 2026-10-17. Both answer to the same
+//     hail, so this is one window.
+//   Cap 72, depop 10 min: Giwin Mirakon (real flag `flags <= FLAG_LIMIT`, checklist flag `flags < FLAG_LIMIT`).
+//   Cap 72 — the Arbitor of Earth had no FLAG_LIMIT but `MAX_KEYS = 54` (`keys < MAX_KEYS`) when the script was
+//     read: the NPC depops at once when the last key goes out, and its 20-minute timer is paused while it is in
+//     combat. The server's patch notes of 2026-10-17 raise it to 72 players (was 54); the script has NOT been
+//     re-read, so the depop-at-the-last-key and the paused timer are assumed unchanged.
 const HAIL_BOSSES = [
   { id: 'grummus', name: 'Grummus', names: ['grummus'], zone: 'Plane of Disease', zoneShort: 'podisease',
     npc: 'A Planar Projection', npcKeys: PROJECTION, flagCap: 144, flagTicks: 2,
@@ -102,12 +113,12 @@ const HAIL_BOSSES = [
     // Silent: sets the `aerindar` global with no grant line, so only the Seer or a witnessed hail shows it.
     done: ['aerindar_2', 'aerindar_dead'], checklist: null, prior: [['mavuin_3', 'trial_justice']] },
   { id: 'saryrn', name: 'Saryrn', names: ['saryrn'], zone: 'Plane of Torment', zoneShort: 'potorment',
-    npc: 'A Planar Projection', npcKeys: PROJECTION, flagCap: 72,
+    npc: 'A Planar Projection', npcKeys: PROJECTION, minutes: 30, flagCap: 72,   // Saryrn's projection stays 30 minutes (was 20)
     // Real flag only at tylis 2; the cipher replaces it, so cipher_1 counts as done.
     done: ['saryrn_1', 'saryrn_dead', 'cipher_1'], checklist: 'cl_saryrn', prior: [['tylis_2', 'keeper_dead']] },
   { id: 'keeper_of_sorrows', name: 'The Keeper of Sorrows', names: ['the keeper of sorrows', 'keeper of sorrows'],
     zone: 'Plane of Torment', zoneShort: 'potorment',
-    npc: 'Tylis Newleaf', npcKeys: ['tylis newleaf', 'tylis'], minutes: 10, flagCap: 72,   // Tylis depops at 10 minutes
+    npc: 'Tylis Newleaf', npcKeys: ['tylis newleaf', 'tylis'], minutes: 30, flagCap: 72,   // Tylis (rescued and entrance) depops at 30 minutes (was 10)
     done: ['tylis_2', 'keeper_dead'], checklist: 'cl_keeper', prior: [['tylis_1']] },
   { id: 'lord_mithaniel_marr', name: 'Lord Mithaniel Marr', names: ['lord mithaniel marr', 'mithaniel marr'],
     zone: 'Temple of Marr', zoneShort: 'hohonorb',
@@ -139,8 +150,8 @@ const HAIL_BOSSES = [
   { id: 'arbitor_of_earth', name: 'A Mystical Arbitor of Earth',
     names: ['a mystical arbitor of earth', 'the arbitor of earth', 'arbitor of earth'],
     zone: 'Plane of Earth', zoneShort: 'poeartha',
-    npc: 'A Planar Projection', npcKeys: PROJECTION, flagCap: 54,
-    // No step before it, and 54 keys per spawn.
+    npc: 'A Planar Projection', npcKeys: PROJECTION, flagCap: 72,
+    // No step before it, and 72 keys per spawn (54 before the server's patch notes of 2026-10-17).
     done: ['earthb_key_1', 'arbitor_dead'], checklist: null, prior: [] },
 ];
 

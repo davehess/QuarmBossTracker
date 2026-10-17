@@ -88,11 +88,11 @@ export const STEP_MORE: Record<string, StepMore> = {
     turnIn: [{ to: at('bot_symbol'), give: 'the [[Symbol of Torden#9433]] on your cursor, then click', get: '5 minutes for your raid to follow you in' }],
   },
   bot_tower: {
-    expect: 'A raid. Everyone talks to Askr twice, once after each tower boss. Askr, the vortex and Karana stay 55 minutes.',
+    expect: 'A raid. Everyone talks to Askr twice, once after each tower boss. Askr (both floors) and the vortex have no 55-minute timer any more: once Karana is up they stay until his flagging window ends, and they do not vanish when he spawns. Killing Emmerik no longer removes the lower-floor Askr.',
     back: [at('flag_agnarr')],
   },
   flag_agnarr: {
-    expect: 'A raid. Karana answers up to 72 people from the raid with the kill. Ask for the path of the Fallen before “send me”, which casts Gate.',
+    expect: 'A raid. Karana stays up 20 minutes and answers up to 72 people from the raid with the kill; he no longer spends one of those flags on a player who already has his checklist flag. Ask for the path of the Fallen before “send me”, which casts Gate.',
     auto: FLAG_AUTO,
   },
 

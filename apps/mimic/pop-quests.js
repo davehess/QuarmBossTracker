@@ -1172,7 +1172,7 @@ window.POP_QUESTS = {
        "title": "Kill Grummus (Plane of Disease)",
        "who": "group",
        "must": true,
-       "detail": "Then hail A Planar Projection before anyone leaves. Then jump into the pit to reach the Crypt of Decay.",
+       "detail": "Then hail A Planar Projection. If you were in the raid or group that made the kill you can still claim it after camping out or changing groups, and so can anyone who joined that raid or group late. Then jump into the pit to reach the Crypt of Decay.",
        "seq": [
         {
          "kind": "kill",
@@ -2403,7 +2403,7 @@ window.POP_QUESTS = {
        "title": "Kill Terris Thule (Lair of Terris Thule)",
        "who": "raid",
        "must": true,
-       "detail": "Then hail A Planar Projection before anyone leaves.",
+       "detail": "Then hail A Planar Projection. If you were in the raid or group that made the kill you can still claim it after camping out or changing groups, and so can anyone who joined that raid or group late.",
        "seq": [
         {
          "kind": "kill",
@@ -2560,7 +2560,7 @@ window.POP_QUESTS = {
        "title": "Kill Bertoxxulous",
        "who": "raid",
        "must": true,
-       "detail": "Then hail A Planar Projection before anyone leaves.",
+       "detail": "Then hail A Planar Projection. If you were in the raid or group that made the kill you can still claim it after camping out or changing groups, and so can anyone who joined that raid or group late.",
        "seq": [
         {
          "kind": "kill",
@@ -2885,7 +2885,7 @@ window.POP_QUESTS = {
        "title": "Kill Aerin`Dar (Plane of Valor)",
        "who": "raid",
        "must": true,
-       "detail": "Then hail A Planar Projection before anyone leaves.",
+       "detail": "Then hail A Planar Projection. If you were in the raid or group that made the kill you can still claim it after camping out or changing groups, and so can anyone who joined that raid or group late.",
        "seq": [
         {
          "kind": "kill",
@@ -2958,13 +2958,13 @@ window.POP_QUESTS = {
        "key": "torment_sphere",
        "title": "Optional: A Screaming Sphere for Saryrn’s tower door",
        "who": "raid",
-       "detail": "One person needs it. An Unimaginable Horror now respawns in 30 minutes."
+       "detail": "One person needs it. An Unimaginable Horror now respawns in 30 minutes. For 30 minutes after the Keeper of Sorrows dies, the temporary entrance Tylis does not require it (you still need the Tylis pre-flag)."
       },
       {
        "key": "flag_keeper",
        "title": "The Keeper of Sorrows, then hail Tylis Newleaf",
        "who": "raid",
-       "detail": "A small raid; resets every 2 hours. Whoever asks for it must be flagged this far. Tylis stands in Torment after the kill. His hail gives the flag (your Tylis flag from 1 to 2) only if Fahlia’s “will go” came first; otherwise it is a checklist flag the Seer’s “unlock my memories” turns into the real one. “ready to return” asks him to send you out of the plane.",
+       "detail": "A small raid; resets every 2 hours. Whoever asks for it must be flagged this far. Tylis stands in Torment after the kill, and a second, temporary entrance Tylis appears beside him; both stay 30 minutes (the rescued Tylis used to stay 10). For those 30 minutes the entrance Tylis needs no Screaming Sphere, but you still need the Tylis pre-flag. His hail gives the flag (your Tylis flag from 1 to 2) only if Fahlia’s “will go” came first; otherwise it is a checklist flag the Seer’s “unlock my memories” turns into the real one. “ready to return” asks him to send you out of the plane.",
        "brief": "A small raid kills the Keeper, then hails Tylis. Do Fahlia’s step first or it is a checklist flag. Resets in 2 hours.",
        "says": [
         {
@@ -3015,7 +3015,7 @@ window.POP_QUESTS = {
        "title": "Kill Saryrn",
        "who": "raid",
        "must": true,
-       "detail": "Then hail A Planar Projection before anyone leaves.",
+       "detail": "Then hail A Planar Projection. If you were in the raid or group that made the kill you can still claim it after camping out or changing groups, and so can anyone who joined that raid or group late. Her projection stays 30 minutes (it used to be 20).",
        "seq": [
         {
          "kind": "kill",
@@ -3168,7 +3168,7 @@ window.POP_QUESTS = {
        "title": "In the tower: Evynd Firestorm, then Askr; Emmerik Skyfury, then Askr again",
        "who": "raid",
        "must": true,
-       "detail": "Everyone does both. When Evynd Firestorm dies, hail Askr the Lost and say “transport”. When Emmerik Skyfury dies, hail him again and say “what storm”; he opens A Chaotic Vortex. Click it to reach Agnarr. Askr, the vortex and Karana leave after 55 minutes.",
+       "detail": "Everyone does both. When Evynd Firestorm dies, hail Askr the Lost and say “transport”. When Emmerik Skyfury dies, hail him again and say “what storm”; he opens A Chaotic Vortex. Click it to reach Agnarr. Askr and the vortex stay until Karana’s flagging window ends.",
        "says": [
         {
          "to": "Askr the Lost",
@@ -3235,7 +3235,7 @@ window.POP_QUESTS = {
          "src": "bothunder/player.lua"
         }
        ],
-       "expect": "A raid. Everyone talks to Askr twice, once after each tower boss. Askr, the vortex and Karana stay 55 minutes.",
+       "expect": "A raid. Everyone talks to Askr twice, once after each tower boss. Askr (both floors) and the vortex have no 55-minute timer any more: once Karana is up they stay until his flagging window ends, and they do not vanish when he spawns. Killing Emmerik no longer removes the lower-floor Askr.",
        "back": [
         {
          "npc": "Karana",
@@ -3251,7 +3251,7 @@ window.POP_QUESTS = {
        "title": "Kill Agnarr the Storm Lord, then speak to Karana",
        "who": "raid",
        "must": true,
-       "detail": "Karana answers only the raid that got the kill, up to 72 people. “Follow the path of the Fallen” gives the real flag only if you came into the Bastion through the Storms shrine. “Send me on my path” casts Gate: you land at your bind point.",
+       "detail": "Karana answers only the raid that got the kill, up to 72 people, for 20 minutes. “Follow the path of the Fallen” gives the real flag only if you came into the Bastion through the Storms shrine. “Send me on my path” casts Gate: you land at your bind point.",
        "says": [
         {
          "to": "Karana",
@@ -3300,7 +3300,7 @@ window.POP_QUESTS = {
          "src": "bothunder/Karana.lua"
         }
        ],
-       "expect": "A raid. Karana answers up to 72 people from the raid with the kill. Ask for the path of the Fallen before “send me”, which casts Gate."
+       "expect": "A raid. Karana stays up 20 minutes and answers up to 72 people from the raid with the kill; he no longer spends one of those flags on a player who already has his checklist flag. Ask for the path of the Fallen before “send me”, which casts Gate."
       },
       {
        "key": "hoh_trial_dragon",
@@ -3501,7 +3501,7 @@ window.POP_QUESTS = {
        "title": "Kill Mithaniel Marr (Temple of Marr)",
        "who": "raid",
        "must": true,
-       "detail": "Then hail A Planar Projection before anyone leaves.",
+       "detail": "Then hail A Planar Projection. If you were in the raid or group that made the kill you can still claim it after camping out or changing groups, and so can anyone who joined that raid or group late.",
        "seq": [
         {
          "kind": "kill",
@@ -3645,7 +3645,7 @@ window.POP_QUESTS = {
        "key": "flag_vallon",
        "title": "Kill Vallon Zek",
        "who": "raid",
-       "detail": "Then hail A Planar Projection before anyone leaves.",
+       "detail": "Then hail A Planar Projection. If you were in the raid or group that made the kill you can still claim it after camping out or changing groups, and so can anyone who joined that raid or group late.",
        "seq": [
         {
          "kind": "kill",
@@ -3668,7 +3668,7 @@ window.POP_QUESTS = {
        "key": "flag_tallon",
        "title": "Kill Tallon Zek",
        "who": "raid",
-       "detail": "Then hail A Planar Projection before anyone leaves.",
+       "detail": "Then hail A Planar Projection. If you were in the raid or group that made the kill you can still claim it after camping out or changing groups, and so can anyone who joined that raid or group late.",
        "seq": [
         {
          "kind": "kill",
@@ -3734,7 +3734,7 @@ window.POP_QUESTS = {
        "title": "Kill Rallos Zek",
        "who": "raid",
        "must": true,
-       "detail": "Then hail A Planar Projection before anyone leaves.",
+       "detail": "Then hail A Planar Projection. If you were in the raid or group that made the kill you can still claim it after camping out or changing groups, and so can anyone who joined that raid or group late.",
        "seq": [
         {
          "kind": "kill",
@@ -4091,7 +4091,7 @@ window.POP_QUESTS = {
        "title": "Kill Solusek Ro",
        "who": "raid",
        "must": true,
-       "detail": "Then hail A Planar Projection before anyone leaves. Then drop into the lava pit in his chamber to reach the Plane of Fire.",
+       "detail": "Then hail A Planar Projection. If you were in the raid or group that made the kill you can still claim it after camping out or changing groups, and so can anyone who joined that raid or group late. Then drop into the lava pit in his chamber to reach the Plane of Fire.",
        "seq": [
         {
          "kind": "kill",
@@ -4345,7 +4345,7 @@ window.POP_QUESTS = {
        "who": "raid",
        "must": true,
        "check": true,
-       "detail": "Hail A Planar Projection for the Passkey of the Twelve, then click the door into Plane of Earth B.",
+       "detail": "Hail A Planar Projection for the Passkey of the Twelve, then click the door into Plane of Earth B. In Plane of Earth A the projection now flags up to 72 players (it was 54). If you were in the raid or group that made the kill you can still claim it after camping out or changing groups.",
        "seq": [
         {
          "kind": "kill",
