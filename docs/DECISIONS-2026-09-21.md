@@ -11225,3 +11225,30 @@ the popflags pages, links to latest"*, then *"make a raid chat post about all of
 - **Corpses on the Map** (the guild lead: *"WE SHOULD show where people died on the map"*): options A (own corpses),
   B (guild corpses, from the death Mimic already sends for the corpse DM), C (whole raid, from Zeal raid positions)
   offered; ⏳ waiting on the pick.
+
+### 352. Pronunciations on the website, free voices in Mimic, the server's Oct 5–17 patch notes, label encryption (2026-10-16/17)
+- **Pronunciations: picked A** (the guild lead: *"where can i update the pronounciation in the website and hear them? Can you
+  make it so that admins can update everyone's"*). `/me/voice` [beta] (your characters, ▶ in the browser voice, suggestions,
+  save/clear) and `/admin/pronunciations` [beta] (officer-only, every name with who set it). Officers may set any existing
+  character's, on the website and through Mimic's agent route. Web 1.8.173, bot 3.1.289. Beta also carries an older
+  per-character editor on the character page writing the same table; reconcile when beta's web graduates.
+- **Free voices: "A and B ... A as default, B as upgrade"** (Piper default, Kokoro upgrade). Agent 3.7.190 on beta: Piper
+  downloads on demand (pinned MIT 2023.11.14-2 Windows build) with two voices, Kristin and John, public domain. The
+  example voices lessac, ryan and joe were left out because their licences do not allow redistribution. Any failure or
+  >2.5 s synthesis speaks that callout with the Windows voice. **Kokoro is a stub**: its JavaScript route needs ~450 MB of
+  runtime in the installer; the next route is the sherpa-onnx command line (same shape as Piper). Charm and CH-chain
+  callouts still use the Windows voice. ⏳ A Windows tester: download, test, a rehearsed callout, remove.
+- **Server patch notes, Oct 5–17** (pasted by the guild lead). Applied (bot 3.1.288, web 1.8.172): Earth A projection 72 (was
+  54); Saryrn's projection 30 min; Tylis Newleaf 30 min plus an entrance Tylis needing no Screaming Sphere; Askr and the
+  vortex no longer leave at 55 min; Karana 20 min; projection/essence credit survives camping out or changing group and
+  late joiners qualify. ⏳ Not applied (no values given): which lower-plane loot lockouts were removed and which retry
+  timers shortened. ⏳ The guild lead: whether the same "claim later" wording covers Giwin, Tarkil, Nitram and the Halls of
+  Honor trials; whether officers may tap a late joiner onto the hail board.
+- **Account labels encrypted** (the guild lead: *"we should be encrypting game_accounts.label"*): AES-256-GCM in the website,
+  key `GAME_ACCOUNT_LABEL_KEY`, bound to owner and slot, new column `label_enc`. Parked on branch `claude/label-encrypt`
+  until the column exists (the read selects it). ⏳ The guild lead: run the column SQL, set the key in Vercel (Production and
+  Preview), say done; then it ships (re-bump web past 1.8.173).
+- **Threat snapshots** (asked why one character had ~130k more): every uploader runs ~6–7 snapshots per minute of combat;
+  the gap is time in combat, not a fault. Offered: upload them only in a group or raid. ⏳ The guild lead's yes/no.
+- **Supabase call map** dashboard (a claude.ai artifact on the edge logs, live). Today's fixes cut the upload counters to 0
+  and raid-state reads by ~10×; the damage meter's live read now leads (~2.3k/h), the next thing to trim.
